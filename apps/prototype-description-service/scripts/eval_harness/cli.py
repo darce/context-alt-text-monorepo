@@ -2663,7 +2663,7 @@ def _collect_exposure_notes(notes: list[str] | None, exposure_file: str | None) 
     collected = list(notes or [])
     if exposure_file:
         try:
-            collected.extend(Path(exposure_file).read_text().splitlines())
+            collected.extend(Path(exposure_file).read_text(encoding="utf-8").splitlines())
         except (OSError, UnicodeDecodeError):
             print(
                 f"draw-eval-split: exposure file not found/unreadable: {exposure_file}",
@@ -2709,7 +2709,20 @@ def _cmd_draw_eval_split(args: argparse.Namespace) -> None:
                 file=sys.stderr,
             )
             raise SystemExit(2)
-        source_sha = hashlib.sha256(Path(args.manifest).read_bytes()).hexdigest()
+        if not isinstance(artifact, dict):
+            print(
+                f"draw-eval-split: sealed split is not a JSON object: {out}",
+                file=sys.stderr,
+            )
+            raise SystemExit(2)
+        try:
+            source_sha = hashlib.sha256(Path(args.manifest).read_bytes()).hexdigest()
+        except OSError as exc:
+            print(
+                f"draw-eval-split: cannot read manifest: {args.manifest}: {exc}",
+                file=sys.stderr,
+            )
+            raise SystemExit(2)
         violations = verify_eval_split(
             artifact,
             manifest,
@@ -2732,7 +2745,14 @@ def _cmd_draw_eval_split(args: argparse.Namespace) -> None:
         raise SystemExit(3)
 
     source_path = _source_manifest_path_for_artifact(args.manifest)
-    source_sha = hashlib.sha256(Path(args.manifest).read_bytes()).hexdigest()
+    try:
+        source_sha = hashlib.sha256(Path(args.manifest).read_bytes()).hexdigest()
+    except OSError as exc:
+        print(
+            f"draw-eval-split: cannot read manifest: {args.manifest}: {exc}",
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
     artifact = draw_eval_split(
         manifest,
         seed=args.seed,
@@ -2743,8 +2763,15 @@ def _cmd_draw_eval_split(args: argparse.Namespace) -> None:
         pre_split_exposure=exposure_notes,
         partition_provenance=args.partition_provenance,
     )
-    out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(json.dumps(artifact, indent=2, sort_keys=True) + "\n")
+    try:
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(json.dumps(artifact, indent=2, sort_keys=True) + "\n")
+    except OSError as exc:
+        print(
+            f"draw-eval-split: cannot write sealed split: {out}: {exc}",
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
     print(out)
 
 

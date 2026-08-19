@@ -280,6 +280,7 @@ Notes:
 - Returns clusters using **tenant-wide size-priority selection**: largest unlabeled clusters across the entire tenant, ordered by `identity_count` descending, then `created_at` descending.
 - Excluded: clusters with `user_confirmed = true`, `dismissed_at` set, `identity_count < min_identity_count`, or auto-generated `cluster-*` labels that have been confirmed.
 - The `min_identity_count` filter defaults to 2, which excludes singletons from the naming queue.
+- Invariant: `identity_count ≥ representatives.length`; `representatives` is non-empty; `identity_count` reflects observed members when the member set is not truncated. Memberless clusters (stale `identity_count` with 0 `acx_identity_members` rows) are excluded.
 - `representatives` objects include `thumb_url` for UI display.
 
 ### PATCH /recognition/clusters/{cluster_id}

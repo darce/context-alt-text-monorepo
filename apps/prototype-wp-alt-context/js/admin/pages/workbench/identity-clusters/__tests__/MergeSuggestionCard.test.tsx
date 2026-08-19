@@ -72,7 +72,7 @@ describe('MergeSuggestionCard', () => {
   });
 
   // FIX-1 / A11Y-02 / HAI-01: auto cluster-* must not name a face on screen or in alt.
-  it('gates auto cluster-* labels to Unnamed cluster / Detected face alt', () => {
+  it('gates auto cluster-* labels to Unnamed face group / Detected face alt', () => {
     const { container } = render(
       <MergeSuggestionCard
         suggestion={withFaces({
@@ -94,8 +94,8 @@ describe('MergeSuggestionCard', () => {
     const alts = screen.getAllByRole('img').map((img) => img.getAttribute('alt') ?? '');
     expect(alts).toHaveLength(2);
     expect(alts.every((alt) => alt.includes('Detected face'))).toBe(true);
-    expect(screen.getByText('Unnamed cluster (2)')).toBeInTheDocument();
-    expect(screen.getByText('Unnamed cluster (5)')).toBeInTheDocument();
+    expect(screen.getByText('Unnamed face group (2)')).toBeInTheDocument();
+    expect(screen.getByText('Unnamed face group (5)')).toBeInTheDocument();
   });
 
   // Discriminates isHumanLabeledTarget (trims) from isMeaningfulMergeLabel (no trim).
@@ -120,7 +120,7 @@ describe('MergeSuggestionCard', () => {
     const alts = screen.getAllByRole('img').map((img) => img.getAttribute('alt') ?? '');
     expect(alts).toHaveLength(2);
     expect(alts.every((alt) => alt.includes('Detected face'))).toBe(true);
-    expect(screen.getByText('Unnamed cluster (3)')).toBeInTheDocument();
+    expect(screen.getByText('Unnamed face group (3)')).toBeInTheDocument();
   });
 
   it('keeps human labels as visible text and crop alt with identity count', () => {
@@ -145,7 +145,7 @@ describe('MergeSuggestionCard', () => {
   });
 
   // BR-28: case / underscore variants must not pass the display gate.
-  it('gates Cluster- and cluster_ auto-labels to Unnamed cluster / Detected face alt', () => {
+  it('gates Cluster- and cluster_ auto-labels to Unnamed face group / Detected face alt', () => {
     const { container } = render(
       <MergeSuggestionCard
         suggestion={withFaces({
@@ -164,8 +164,8 @@ describe('MergeSuggestionCard', () => {
     expect(container.textContent).not.toContain('cluster_abcdef12');
     expect(screen.queryByAltText('Cluster-abcdef12')).toBeNull();
     expect(screen.queryByAltText('cluster_abcdef12')).toBeNull();
-    expect(screen.getByText('Unnamed cluster (2)')).toBeInTheDocument();
-    expect(screen.getByText('Unnamed cluster (5)')).toBeInTheDocument();
+    expect(screen.getByText('Unnamed face group (2)')).toBeInTheDocument();
+    expect(screen.getByText('Unnamed face group (5)')).toBeInTheDocument();
     // Alts stay gated (exact side wording asserted in BR-30).
     const alts = screen.getAllByRole('img').map((img) => img.getAttribute('alt') ?? '');
     expect(alts).toHaveLength(2);
@@ -245,9 +245,9 @@ describe('MergeSuggestionCard', () => {
       />,
     );
 
-    // Visible fallback text stays the honest Unnamed cluster wording.
-    expect(screen.getByText('Unnamed cluster (2)')).toBeInTheDocument();
-    expect(screen.getByText('Unnamed cluster (5)')).toBeInTheDocument();
+    // Visible fallback text stays the honest Unnamed face group wording.
+    expect(screen.getByText('Unnamed face group (2)')).toBeInTheDocument();
+    expect(screen.getByText('Unnamed face group (5)')).toBeInTheDocument();
 
     const alts = screen.getAllByRole('img').map((img) => img.getAttribute('alt') ?? '');
     expect(alts).toHaveLength(2);
@@ -317,8 +317,8 @@ describe('MergeSuggestionCard', () => {
     // Per-card context (question + side differentiators + match) distinguishes pairs.
     expect(yesDescA).toMatch(/Are these the same person\?/);
     expect(yesDescB).toMatch(/Are these the same person\?/);
-    expect(yesDescA).toMatch(/first cluster/);
-    expect(yesDescB).toMatch(/first cluster/);
+    expect(yesDescA).toMatch(/first group/);
+    expect(yesDescB).toMatch(/first group/);
     expect(yesDescA).not.toBe(yesDescB);
     expect(noDescA).not.toBe(noDescB);
     expect(cards[0].getAttribute('aria-describedby')).not.toBe(
@@ -454,7 +454,7 @@ describe('MergeSuggestionCard', () => {
     expect(controlNames.join(' ')).not.toMatch(/suggestion \d+ of/);
 
     const yes = screen.getByRole('button', { name: 'Yes' });
-    expect(yes).toHaveAccessibleDescription(/first cluster.*second cluster.*87% match/i);
+    expect(yes).toHaveAccessibleDescription(/first group.*second group.*87% match/i);
     expect(yes).not.toHaveAccessibleDescription(/suggestion \d+ of/i);
   });
 
@@ -502,10 +502,10 @@ describe('MergeSuggestionCard', () => {
       const yes = screen.getByRole('button', { name: 'Yes' });
       const no = screen.getByRole('button', { name: 'No' });
       expect(yes, label).toHaveAccessibleDescription(
-        /first cluster.*second cluster.*87% match/i,
+        /first group.*second group.*87% match/i,
       );
       expect(no, label).toHaveAccessibleDescription(
-        /first cluster.*second cluster.*87% match/i,
+        /first group.*second group.*87% match/i,
       );
       expect(yes, label).not.toHaveAccessibleDescription(/of 0|NaN|Infinity|suggestion \d+ of/i);
       expect(no, label).not.toHaveAccessibleDescription(/of 0|NaN|Infinity|suggestion \d+ of/i);

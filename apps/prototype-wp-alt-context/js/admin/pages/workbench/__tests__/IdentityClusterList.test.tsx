@@ -385,8 +385,8 @@ describe('IdentityClusterList', () => {
     ).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Cluster 1' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Name this person|Edit label/i })).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /Remove from Cluster/i })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /Split cluster/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Remove from group/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Split group/i })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Pin representative|Unpin representative/i })).not.toBeInTheDocument();
   });
 
@@ -542,7 +542,7 @@ describe('IdentityClusterList', () => {
       await resolveFindClusterDeferreds(null);
     });
 
-    expect(screen.getByText('Ada Lovelace')).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: /Ada Lovelace \(Group\)/ })).toBeInTheDocument();
     await actFlow(async () => {
       await user.click(screen.getByRole('button', { name: /cancel/i }));
     });
@@ -821,7 +821,7 @@ describe('IdentityClusterList', () => {
 
     await waitFor(() => {
       expect(screen.getByRole('alert')).toHaveTextContent(
-        'That cluster is already named Existing Label - nothing to merge.',
+        'That group is already named Existing Label - nothing to merge.',
       );
     });
   });
@@ -960,10 +960,10 @@ describe('IdentityClusterList', () => {
 
     // Wait for the unlabeled button to appear and click it
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: /Unlabeled identity/i })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /Unnamed person/i })).toBeInTheDocument();
     });
     await actFlow(async () => {
-      await runWithTimers(() => user.click(screen.getByRole('button', { name: /Unlabeled identity/i })));
+      await runWithTimers(() => user.click(screen.getByRole('button', { name: /Unnamed person/i })));
     });
     expect(screen.getByRole('combobox')).toBeInTheDocument();
     await actFlow(async () => {
@@ -989,10 +989,10 @@ describe('IdentityClusterList', () => {
 
     // Wait for button to appear
     await waitFor(() => {
-      expect(screen.getByText('Remove from Cluster', { selector: 'button' })).toBeInTheDocument();
+      expect(screen.getByText('Remove from group', { selector: 'button' })).toBeInTheDocument();
     });
 
-    const wrongPersonButton = screen.getByText('Remove from Cluster', { selector: 'button' });
+    const wrongPersonButton = screen.getByText('Remove from group', { selector: 'button' });
     await actFlow(async () => {
       await user.click(wrongPersonButton);
     });
@@ -1021,7 +1021,7 @@ describe('IdentityClusterList', () => {
 
     await renderWithClient(<IdentityClusterList identities={[member1, member2]} />);
 
-    expect(screen.queryByRole('button', { name: /remove from cluster/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /remove from group/i })).not.toBeInTheDocument();
   });
 
   it('allows splitting a cluster', async () => {
@@ -1048,11 +1048,11 @@ describe('IdentityClusterList', () => {
 
     // Wait for split button to appear
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: /split cluster/i })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /split group/i })).toBeInTheDocument();
     });
 
     await actFlow(async () => {
-      await runWithTimers(() => user.click(screen.getByRole('button', { name: /split cluster/i })));
+      await runWithTimers(() => user.click(screen.getByRole('button', { name: /split group/i })));
     });
 
     await screen.findByRole('dialog');

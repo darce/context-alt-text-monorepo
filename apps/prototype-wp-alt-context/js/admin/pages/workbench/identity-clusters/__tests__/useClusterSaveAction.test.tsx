@@ -11,6 +11,7 @@ const baseMutations = () => ({
   assignToCluster: vi.fn(),
   rename: vi.fn(),
   createClusterForIdentity: vi.fn(),
+  bindToRosterEntry: vi.fn(),
 });
 
 const member = (overrides: Partial<ClusterGroup['members'][number]> = {}): ClusterGroup['members'][number] => ({
@@ -66,7 +67,7 @@ const renderSaveAction = (overrides: SaveActionOverrides = {}) => {
     useClusterSaveAction({
       clusterLabel: overrides.clusterLabel ?? 'Old',
       members: overrides.members ?? [member()],
-      editableClusterId: overrides.editableClusterId ?? 'editable',
+      editableClusterId: overrides.editableClusterId === undefined ? 'editable' : overrides.editableClusterId,
       anchorIdentityId: overrides.anchorIdentityId,
       canEdit: overrides.canEdit ?? true,
       canSearchForMatch: overrides.canSearchForMatch ?? false,
@@ -451,7 +452,7 @@ describe('useClusterSaveAction casing grid (B6)', () => {
 });
 
 const RESERVED_LABEL_MSG =
-  'This label format is reserved for automatic cluster IDs. Choose a descriptive name.';
+  'This label format is reserved for automatic group IDs. Choose a descriptive name.';
 
 describe('useClusterSaveAction reserved-label gate (BR-49)', () => {
   it('handleSave(cluster-7) rejects reserved machine label without lookup or mutation', async () => {
@@ -565,5 +566,90 @@ describe('useClusterSaveAction person-confirm reserved-label gate (BR-55)', () =
     expect(setError).not.toHaveBeenCalledWith(RESERVED_LABEL_MSG);
     expect(mutations.rename).toHaveBeenCalledWith('Pat Rivera', expect.any(AbortSignal));
     expect(queueSaveStatus).toHaveBeenCalled();
+  });
+
+  it('handlePersonSelect with rosterEntryId binds that id and does not rename (UXW2-3-R3-12)', () => {
+    const bindToRosterEntry = vi.fn();
+    const { result, mutations } = renderSaveAction({
+      clusterLabel: 'Old',
+      mutations: { ...baseMutations(), bindToRosterEntry },
+    });
+
+    act(() => {
+      result.current.handlePersonSelect('ALEX CARTER', 2);
+    });
+
+    expect(bindToRosterEntry).toHaveBeenCalledWith(2, 'ALEX CARTER', expect.any(AbortSignal));
+    expect(bindToRosterEntry).not.toHaveBeenCalledWith(1, expect.anything(), expect.anything());
+    expect(mutations.rename).not.toHaveBeenCalled();
+    expect(mutations.merge).not.toHaveBeenCalled();
+  });
+});
+
+describe('useClusterSaveAction singleton roster bind (UXW2-3-R7B-01)', () => {
+  it('singleton row picks a roster person via createClusterForIdentity (UXW2-3-R7B-01)', () => {
+    const { result, mutations, setError } = renderSaveAction({
+      clusterLabel: null,
+      editableClusterId: null,
+      anchorIdentityId: 'anchor-1',
+      canEdit: false,
+      canSearchForMatch: true,
+      members: [member({ cluster_id: null, identity_id: 'anchor-1' })],
+    });
+
+    act(() => {
+      result.current.handlePersonSelect('Alex Carter', 7);
+    });
+
+    expect(mutations.createClusterForIdentity).toHaveBeenCalledTimes(1);
+    expect(mutations.createClusterForIdentity).toHaveBeenCalledWith(
+      'anchor-1',
+      'Alex Carter',
+      expect.any(AbortSignal),
+      7,
+    );
+    expect(mutations.bindToRosterEntry).not.toHaveBeenCalled();
+    expect(setError).not.toHaveBeenCalledWith('Cannot bind this person: missing group.');
+  });
+
+  it('neither cluster id nor anchor still renders Cannot bind this person: missing group.', () => {
+    const { result, mutations, setError } = renderSaveAction({
+      clusterLabel: null,
+      editableClusterId: null,
+      anchorIdentityId: undefined,
+      canEdit: false,
+      canSearchForMatch: true,
+      members: [],
+    });
+
+    act(() => {
+      result.current.handlePersonSelect('Alex Carter', 7);
+    });
+
+    expect(setError).toHaveBeenCalledWith('Cannot bind this person: missing group.');
+    expect(setError).toHaveBeenCalledTimes(1);
+    expect(mutations.createClusterForIdentity).not.toHaveBeenCalled();
+    expect(mutations.bindToRosterEntry).not.toHaveBeenCalled();
+  });
+
+  it('clustered row still routes through bindToRosterEntry (UXW2-3-R7B-01)', () => {
+    const bindToRosterEntry = vi.fn();
+    const { result, mutations, setError } = renderSaveAction({
+      clusterLabel: 'Old',
+      editableClusterId: 'editable',
+      anchorIdentityId: 'id-1',
+      canEdit: true,
+      canSearchForMatch: false,
+      mutations: { ...baseMutations(), bindToRosterEntry },
+    });
+
+    act(() => {
+      result.current.handlePersonSelect('Alex Carter', 7);
+    });
+
+    expect(bindToRosterEntry).toHaveBeenCalledTimes(1);
+    expect(bindToRosterEntry).toHaveBeenCalledWith(7, 'Alex Carter', expect.any(AbortSignal));
+    expect(mutations.createClusterForIdentity).not.toHaveBeenCalled();
+    expect(setError).not.toHaveBeenCalled();
   });
 });

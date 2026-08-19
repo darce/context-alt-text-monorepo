@@ -201,7 +201,7 @@ export const SuggestionCard = ({
           {suggestion.identityCount && (
             <span className="acx-suggestion-card__count">
               {' '}
-              ({suggestion.identityCount} {__('in cluster', 'alt-context')})
+              ({suggestion.identityCount} {__('faces', 'alt-context')})
             </span>
           )}
           {isLowConfidence && (
@@ -241,7 +241,7 @@ export const SuggestionCard = ({
             type="button"
             className="button button-link acx-suggestion-card__review"
             onClick={() => onReview(suggestion.clusterId)}
-            title={__('Review cluster details', 'alt-context')}
+            title={__('Review these faces', 'alt-context')}
           >
             {__('Review details', 'alt-context')}
           </button>

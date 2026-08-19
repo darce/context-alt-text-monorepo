@@ -220,13 +220,13 @@
   letter-spacing: 0.02em;
 }
 
-.acx-badge--source-person {
+.acx-badge--source[data-source='person'] {
   border-color: var(--acx-color-panel-border);
   background-color: var(--acx-color-panel);
   color: var(--acx-color-text);
 }
 
-.acx-badge--source-cluster {
+.acx-badge--source[data-source='cluster'] {
   border-color: var(--acx-color-border);
   background-color: var(--acx-gray-100);
   color: var(--acx-color-text-muted);

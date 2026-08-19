@@ -259,6 +259,16 @@ describe('ClusterReviewPanel', () => {
     vi.resetAllMocks();
   });
 
+  it('headline uses plain language: Review these faces (UXW2-3 / NAV-13)', async () => {
+    vi.mocked(fetchClusterMembers).mockResolvedValue(makeClusterMembersResponse());
+
+    renderPanel();
+
+    expect(
+      await screen.findByRole('heading', { level: 2, name: 'Review these faces' }),
+    ).toBeInTheDocument();
+  });
+
   it('renders members from the cluster-members envelope', async () => {
     const fetchClusterMembersMock = vi.mocked(fetchClusterMembers);
 

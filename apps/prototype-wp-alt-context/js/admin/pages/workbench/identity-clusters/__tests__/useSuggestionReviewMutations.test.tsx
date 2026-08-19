@@ -18,6 +18,8 @@ import type {
   PendingMergeSuggestionsResponse,
   PendingNameSuggestion,
   PendingNameSuggestionsResponse,
+  TopUnlabeledCluster,
+  TopUnlabeledClustersResponse,
 } from '../../../../api/recognition/types';
 import * as recognitionApi from '../../../../api/recognition';
 import * as rosterApi from '../../../../api/rosterApi';
@@ -118,6 +120,25 @@ const makeNamePage = (suggestions: PendingNameSuggestion[]): PendingNameSuggesti
   data_source: DATA_SOURCE.LOCAL_PROJECTION,
 });
 
+const makeTopCluster = (id: string): TopUnlabeledCluster => ({
+  id,
+  tenant_id: 'test-tenant',
+  label: null,
+  is_labeled: false,
+  is_auto_label: true,
+  identity_count: 2,
+  user_confirmed: false,
+  representatives: [],
+});
+
+const makeTopUnlabeledPage = (clusters: TopUnlabeledCluster[]): TopUnlabeledClustersResponse => ({
+  clusters,
+  limit: 20,
+  total: clusters.length,
+  truncated: false,
+  data_source: DATA_SOURCE.LOCAL_PROJECTION,
+});
+
 const crossFamilyQueryKey = (target: string): readonly unknown[] => {
   switch (target) {
     case 'clusters.all':
@@ -140,7 +161,7 @@ const expectCrossFamilyPresent = (
   event: SuggestionProjectionInvalidationEvent,
 ): void => {
   for (const target of SUGGESTION_PROJECTION_INVALIDATION_EVENTS[event].keptCrossFamilyTargets) {
-    expect(spy).toHaveBeenCalledWith({ queryKey: crossFamilyQueryKey(target) });
+    expect(spy).toHaveBeenCalledWith(expect.objectContaining({ queryKey: crossFamilyQueryKey(target) }));
   }
 };
 
@@ -174,6 +195,7 @@ describe('useSuggestionReviewMutations (Slice 2 hold/flush)', () => {
     vi.mocked(recognitionApi.acceptMergeSuggestion).mockReset();
     vi.mocked(recognitionApi.rejectMergeSuggestion).mockReset();
     vi.mocked(recognitionApi.acceptNameSuggestion).mockReset();
+    vi.mocked(recognitionApi.bulkAcceptSuggestions).mockReset();
     vi.mocked(recognitionApi.rejectNameSuggestion).mockReset();
     vi.useFakeTimers();
     bulkActionRef = { current: false };
@@ -833,9 +855,9 @@ describe('useSuggestionReviewMutations (Slice 2 hold/flush)', () => {
     expect(
       queryClient.getQueryData<PendingMergeSuggestionsResponse>(mergePendingKey)?.suggestions.map((s) => s.id),
     ).toEqual(['merge-2']);
-    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: mergePendingKey });
+    expect(invalidateSpy).toHaveBeenCalledWith(expect.objectContaining({ queryKey: mergePendingKey }));
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.media.identities() });
-    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.clusters.all });
+    expect(invalidateSpy).toHaveBeenCalledWith(expect.objectContaining({ queryKey: queryKeys.clusters.all }));
     // Re-schedule same id is possible at hook level but item is gone from queue cache.
     expect(result.current.hold.phase).toBe('idle');
   });
@@ -906,7 +928,10 @@ describe('useSuggestionReviewMutations (Slice 2 hold/flush)', () => {
   });
 
   it('BR-18/20: acceptName hold→success removes from cache + invalidates namePending', async () => {
-    queryClient.setQueryData(namePendingKey, makeNamePage([makeName('name-1'), makeName('name-2')]));
+    queryClient.setQueryData(
+      namePendingKey,
+      makeNamePage([makeName('name-1'), { ...makeName('name-2'), id: 'name-2', cluster_id: 'cluster-other' }]),
+    );
     const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
     vi.mocked(recognitionApi.acceptNameSuggestion).mockResolvedValue({
       suggestion_id: 'name-1',
@@ -925,7 +950,7 @@ describe('useSuggestionReviewMutations (Slice 2 hold/flush)', () => {
     expect(
       queryClient.getQueryData<PendingNameSuggestionsResponse>(namePendingKey)?.suggestions.map((s) => s.id),
     ).toEqual(['name-2']);
-    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: namePendingKey });
+    expect(invalidateSpy).toHaveBeenCalledWith(expect.objectContaining({ queryKey: namePendingKey }));
     expect(result.current.hold.phase).toBe('idle');
   });
 
@@ -1293,9 +1318,9 @@ describe('useSuggestionReviewMutations (Slice 2 hold/flush)', () => {
       await promise;
     });
 
-    expect(invalidateSpy).toHaveBeenCalledWith({
-      queryKey: queryKeys.suggestions.projection.all,
-    });
+    expect(invalidateSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ queryKey: queryKeys.suggestions.projection.all }),
+    );
     expectCrossFamilyPresent(invalidateSpy, 'clusterLabelSetClear');
   });
 
@@ -1375,5 +1400,591 @@ describe('useSuggestionReviewMutations (Slice 2 hold/flush)', () => {
     // The committed cluster's row stays dropped; the other cluster's row survives.
     const remaining = queryClient.getQueryData<PendingNameSuggestionsResponse>(namePendingKey);
     expect(remaining?.suggestions.map((s) => s.id)).toEqual(['name-other']);
+  });
+
+  it('UXW2-2 (B6): person-commit drops the committed cluster from all four review caches', async () => {
+    queryClient.setQueryData(
+      reviewPageKey,
+      makePage([
+        makeItem({ suggestionId: 'sugg-x', clusterId: 'cluster-1' }),
+        makeItem({ suggestionId: 'sugg-source', clusterId: 'elsewhere' }),
+        makeItem({ suggestionId: 'sugg-y', clusterId: 'cluster-other' }),
+      ]),
+    );
+    queryClient.setQueryData(
+      namePendingKey,
+      makeNamePage([
+        makeName('name-1'),
+        { ...makeName('name-other'), id: 'name-other', cluster_id: 'cluster-other' },
+      ]),
+    );
+    queryClient.setQueryData(
+      mergePendingKey,
+      makeMergePage([
+        { ...makeMerge('merge-a-side'), cluster_a_id: 'cluster-1', cluster_b_id: 'b' },
+        { ...makeMerge('merge-b-side'), cluster_a_id: 'c', cluster_b_id: 'cluster-1' },
+        { ...makeMerge('merge-unrelated'), cluster_a_id: 'd', cluster_b_id: 'e' },
+      ]),
+    );
+    const topUnlabeledKey = queryKeys.clusters.topUnlabeled('test-tenant');
+    queryClient.setQueryData(
+      topUnlabeledKey,
+      makeTopUnlabeledPage([makeTopCluster('cluster-1'), makeTopCluster('cluster-other')]),
+    );
+    vi.mocked(rosterApi.commitClusterToRosterEntry).mockResolvedValue(rosterCommitFixture());
+
+    const { result } = renderMutations();
+    await act(async () => {
+      const promise = result.current.schedulePersonCommit({
+        clusterId: 'cluster-1',
+        newEntryName: 'Alex',
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+      await promise;
+    });
+
+    expect(
+      queryClient.getQueryData<SuggestionReviewPage>(reviewPageKey)?.items.map((item) => item.suggestionId),
+    ).toEqual(['sugg-source', 'sugg-y']);
+    expect(
+      queryClient.getQueryData<PendingNameSuggestionsResponse>(namePendingKey)?.suggestions.map((s) => s.id),
+    ).toEqual(['name-other']);
+    // R1-23: naming does not resolve a merge suggestion.
+    expect(
+      queryClient.getQueryData<PendingMergeSuggestionsResponse>(mergePendingKey)?.suggestions.map((s) => s.id),
+    ).toEqual(['merge-a-side', 'merge-b-side', 'merge-unrelated']);
+    expect(
+      queryClient.getQueryData<TopUnlabeledClustersResponse>(topUnlabeledKey)?.clusters.map((c) => c.id),
+    ).toEqual(['cluster-other']);
+  });
+
+  it('R1-18: person-commit four-cache drop survives active observers that still return the row', async () => {
+    const staleAssignment: SuggestionReviewPage = makePage([
+      makeItem({ suggestionId: 'sugg-x', clusterId: 'cluster-1' }),
+      makeItem({ suggestionId: 'sugg-y', clusterId: 'cluster-other' }),
+    ]);
+    const staleName = makeNamePage([
+      makeName('name-1'),
+      { ...makeName('name-other'), id: 'name-other', cluster_id: 'cluster-other' },
+    ]);
+    const staleMerge = makeMergePage([
+      { ...makeMerge('merge-live'), cluster_a_id: 'cluster-1', cluster_b_id: 'cluster-other' },
+    ]);
+    const topUnlabeledKey = queryKeys.clusters.topUnlabeled('test-tenant');
+    const staleTop = makeTopUnlabeledPage([makeTopCluster('cluster-1'), makeTopCluster('cluster-other')]);
+
+    const fetchAssignment = vi.fn().mockResolvedValue(staleAssignment);
+    const fetchName = vi.fn().mockResolvedValue(staleName);
+    const fetchMerge = vi.fn().mockResolvedValue(staleMerge);
+    const fetchTop = vi.fn().mockResolvedValue(staleTop);
+
+    queryClient.setQueryData(reviewPageKey, staleAssignment);
+    queryClient.setQueryData(namePendingKey, staleName);
+    queryClient.setQueryData(mergePendingKey, staleMerge);
+    queryClient.setQueryData(topUnlabeledKey, staleTop);
+    vi.mocked(rosterApi.commitClusterToRosterEntry).mockResolvedValue(rosterCommitFixture());
+
+    const { result } = renderHook(
+      () => {
+        const assignment = useQuery({ queryKey: reviewPageKey, queryFn: fetchAssignment, staleTime: 0 });
+        const name = useQuery({ queryKey: namePendingKey, queryFn: fetchName, staleTime: 0 });
+        const merge = useQuery({ queryKey: mergePendingKey, queryFn: fetchMerge, staleTime: 0 });
+        const top = useQuery({ queryKey: topUnlabeledKey, queryFn: fetchTop, staleTime: 0 });
+        const m = useSuggestionReviewMutations({ queryClient, bulkActionRef });
+        return { assignment, name, merge, top, m };
+      },
+      { wrapper },
+    );
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    fetchAssignment.mockClear();
+    fetchName.mockClear();
+    fetchMerge.mockClear();
+    fetchTop.mockClear();
+
+    await act(async () => {
+      const promise = result.current.m.schedulePersonCommit({
+        clusterId: 'cluster-1',
+        newEntryName: 'Alex',
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+      await promise;
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(fetchAssignment).not.toHaveBeenCalled();
+    expect(fetchName).not.toHaveBeenCalled();
+    expect(fetchMerge).not.toHaveBeenCalled();
+    expect(fetchTop).not.toHaveBeenCalled();
+    expect(
+      queryClient.getQueryData<SuggestionReviewPage>(reviewPageKey)?.items.map((item) => item.suggestionId),
+    ).toEqual(['sugg-y']);
+    expect(
+      queryClient.getQueryData<PendingNameSuggestionsResponse>(namePendingKey)?.suggestions.map((s) => s.id),
+    ).toEqual(['name-other']);
+    expect(
+      queryClient.getQueryData<PendingMergeSuggestionsResponse>(mergePendingKey)?.suggestions.map((s) => s.id),
+    ).toEqual(['merge-live']);
+    expect(
+      queryClient.getQueryData<TopUnlabeledClustersResponse>(topUnlabeledKey)?.clusters.map((c) => c.id),
+    ).toEqual(['cluster-other']);
+  });
+
+  it('R1-17: acceptMerge drops the retired source from all four caches and keeps the survivor', async () => {
+    queryClient.setQueryData(
+      reviewPageKey,
+      makePage([
+        makeItem({ suggestionId: 'sugg-retired', clusterId: 'cluster-1' }),
+        makeItem({ suggestionId: 'sugg-survivor', clusterId: 'cluster-2' }),
+      ]),
+    );
+    queryClient.setQueryData(
+      namePendingKey,
+      makeNamePage([
+        makeName('name-1'),
+        { ...makeName('name-surv'), id: 'name-surv', cluster_id: 'cluster-2' },
+      ]),
+    );
+    const mergeRow = {
+      ...makeMerge('merge-1'),
+      cluster_a_id: 'cluster-1',
+      cluster_b_id: 'cluster-2',
+      source_cluster_id: 'cluster-1',
+      target_cluster_id: 'cluster-2',
+    };
+    queryClient.setQueryData(
+      mergePendingKey,
+      makeMergePage([
+        mergeRow,
+        { ...makeMerge('merge-sib'), cluster_a_id: 'cluster-2', cluster_b_id: 'cluster-3' },
+      ]),
+    );
+    const topUnlabeledKey = queryKeys.clusters.topUnlabeled('test-tenant');
+    queryClient.setQueryData(
+      topUnlabeledKey,
+      makeTopUnlabeledPage([makeTopCluster('cluster-1'), makeTopCluster('cluster-2')]),
+    );
+    vi.mocked(recognitionApi.acceptMergeSuggestion).mockResolvedValue(mergeRow);
+
+    const { result } = renderMutations();
+    act(() => {
+      void result.current.scheduleAcceptMerge('merge-1');
+    });
+    await expireHold();
+
+    expect(
+      queryClient.getQueryData<SuggestionReviewPage>(reviewPageKey)?.items.map((item) => item.suggestionId),
+    ).toEqual(['sugg-survivor']);
+    expect(
+      queryClient.getQueryData<PendingNameSuggestionsResponse>(namePendingKey)?.suggestions.map((s) => s.id),
+    ).toEqual(['name-surv']);
+    expect(
+      queryClient.getQueryData<PendingMergeSuggestionsResponse>(mergePendingKey)?.suggestions.map((s) => s.id),
+    ).toEqual(['merge-sib']);
+    expect(
+      queryClient.getQueryData<TopUnlabeledClustersResponse>(topUnlabeledKey)?.clusters.map((c) => c.id),
+    ).toEqual(['cluster-2']);
+  });
+
+  it('R3-08: unmount during acceptMerge still drops the retired source', async () => {
+    const mergeRow = {
+      ...makeMerge('merge-1'),
+      cluster_a_id: 'cluster-1',
+      cluster_b_id: 'cluster-2',
+      source_cluster_id: 'cluster-1',
+      target_cluster_id: 'cluster-2',
+    };
+    queryClient.setQueryData(mergePendingKey, makeMergePage([mergeRow, makeMerge('merge-sib')]));
+    const topUnlabeledKey = queryKeys.clusters.topUnlabeled('test-tenant');
+    queryClient.setQueryData(
+      topUnlabeledKey,
+      makeTopUnlabeledPage([makeTopCluster('cluster-1'), makeTopCluster('cluster-2')]),
+    );
+
+    let resolveAccept: (value: PendingMergeSuggestion) => void = () => undefined;
+    vi.mocked(recognitionApi.acceptMergeSuggestion).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveAccept = resolve;
+        }),
+    );
+
+    const { result, unmount } = renderMutations();
+    act(() => {
+      void result.current.scheduleAcceptMerge('merge-1');
+    });
+    unmount();
+
+    await act(async () => {
+      resolveAccept(mergeRow);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(
+      queryClient.getQueryData<PendingMergeSuggestionsResponse>(mergePendingKey)?.suggestions.map((s) => s.id),
+    ).toEqual(['merge-sib']);
+    expect(
+      queryClient.getQueryData<TopUnlabeledClustersResponse>(topUnlabeledKey)?.clusters.map((c) => c.id),
+    ).toEqual(['cluster-2']);
+  });
+
+  it('R1-21: foreign source_cluster_id does not evict an innocent group', async () => {
+    queryClient.setQueryData(
+      reviewPageKey,
+      makePage([makeItem({ suggestionId: 'sugg-innocent', clusterId: 'innocent' })]),
+    );
+    queryClient.setQueryData(namePendingKey, makeNamePage([{ ...makeName('name-inn'), cluster_id: 'innocent' }]));
+    const topUnlabeledKey = queryKeys.clusters.topUnlabeled('test-tenant');
+    queryClient.setQueryData(topUnlabeledKey, makeTopUnlabeledPage([makeTopCluster('innocent')]));
+    const foreign: PendingMergeSuggestion = {
+      ...makeMerge('merge-1'),
+      cluster_a_id: 'cluster-a',
+      cluster_b_id: 'cluster-b',
+      source_cluster_id: 'innocent',
+      target_cluster_id: 'cluster-b',
+    };
+    queryClient.setQueryData(mergePendingKey, makeMergePage([foreign]));
+    vi.mocked(recognitionApi.acceptMergeSuggestion).mockResolvedValue(foreign);
+
+    const { result } = renderMutations();
+    act(() => {
+      void result.current.scheduleAcceptMerge('merge-1');
+    });
+    await expireHold();
+
+    expect(
+      queryClient.getQueryData<SuggestionReviewPage>(reviewPageKey)?.items.map((item) => item.suggestionId),
+    ).toEqual(['sugg-innocent']);
+    expect(
+      queryClient.getQueryData<PendingNameSuggestionsResponse>(namePendingKey)?.suggestions.map((s) => s.id),
+    ).toEqual(['name-inn']);
+    expect(
+      queryClient.getQueryData<TopUnlabeledClustersResponse>(topUnlabeledKey)?.clusters.map((c) => c.id),
+    ).toEqual(['innocent']);
+  });
+
+  it('R1-24: acceptName drops the accepted group from namePending and topUnlabeled', async () => {
+    queryClient.setQueryData(
+      namePendingKey,
+      makeNamePage([makeName('name-1'), { ...makeName('name-2'), id: 'name-2', cluster_id: 'cluster-other' }]),
+    );
+    const topUnlabeledKey = queryKeys.clusters.topUnlabeled('test-tenant');
+    queryClient.setQueryData(
+      topUnlabeledKey,
+      makeTopUnlabeledPage([makeTopCluster('cluster-1'), makeTopCluster('cluster-other')]),
+    );
+    vi.mocked(recognitionApi.acceptNameSuggestion).mockResolvedValue({
+      suggestion_id: 'name-1',
+      resolution: 'accepted',
+      identity_id: 'identity-1',
+      cluster_id: 'cluster-1',
+      message: 'ok',
+    });
+
+    const { result } = renderMutations();
+    act(() => {
+      void result.current.scheduleAcceptName('name-1');
+    });
+    await expireHold();
+
+    expect(
+      queryClient.getQueryData<PendingNameSuggestionsResponse>(namePendingKey)?.suggestions.map((s) => s.id),
+    ).toEqual(['name-2']);
+    expect(
+      queryClient.getQueryData<TopUnlabeledClustersResponse>(topUnlabeledKey)?.clusters.map((c) => c.id),
+    ).toEqual(['cluster-other']);
+  });
+
+  it('R8-03: matching accepted_count still refetches when the response has no ids', async () => {
+    queryClient.setQueryData(
+      namePendingKey,
+      makeNamePage([
+        { ...makeName('name-1'), confidence_score: 0.95 },
+        { ...makeName('name-2'), id: 'name-2', cluster_id: 'cluster-2', confidence_score: 0.9 },
+      ]),
+    );
+    const topUnlabeledKey = queryKeys.clusters.topUnlabeled('test-tenant');
+    queryClient.setQueryData(
+      topUnlabeledKey,
+      makeTopUnlabeledPage([makeTopCluster('cluster-1'), makeTopCluster('cluster-2')]),
+    );
+    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+    vi.mocked(recognitionApi.bulkAcceptSuggestions).mockResolvedValue({
+      accepted_count: 2,
+      skipped_count: 0,
+    });
+
+    const { result } = renderMutations();
+    await act(async () => {
+      await result.current.mutations.bulkAccept.mutateAsync({
+        suggestion_type: 'name',
+        min_confidence: 0.8,
+      });
+    });
+
+    // Same cardinality as matched.length, different member set is possible.
+    // Without accepted ids the client cannot evict — refetch instead.
+    expect(
+      queryClient.getQueryData<PendingNameSuggestionsResponse>(namePendingKey)?.suggestions.map((s) => s.id),
+    ).toEqual(['name-1', 'name-2']);
+    expect(
+      queryClient.getQueryData<TopUnlabeledClustersResponse>(topUnlabeledKey)?.clusters.map((c) => c.id),
+    ).toEqual(['cluster-1', 'cluster-2']);
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: namePendingKey });
+    expect(invalidateSpy).toHaveBeenCalledWith({
+      queryKey: [...queryKeys.clusters.all, 'top-unlabeled'],
+    });
+  });
+
+  it('R1-24: bulkAccept name type does not guess which above-threshold row the server accepted', async () => {
+    queryClient.setQueryData(
+      namePendingKey,
+      makeNamePage([
+        { ...makeName('name-1'), confidence_score: 0.95 },
+        { ...makeName('name-low'), id: 'name-low', cluster_id: 'cluster-low', confidence_score: 0.2 },
+      ]),
+    );
+    const topUnlabeledKey = queryKeys.clusters.topUnlabeled('test-tenant');
+    queryClient.setQueryData(
+      topUnlabeledKey,
+      makeTopUnlabeledPage([makeTopCluster('cluster-1'), makeTopCluster('cluster-low')]),
+    );
+    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+    vi.mocked(recognitionApi.bulkAcceptSuggestions).mockResolvedValue({
+      accepted_count: 1,
+      skipped_count: 0,
+    });
+
+    const { result } = renderMutations();
+    await act(async () => {
+      await result.current.mutations.bulkAccept.mutateAsync({
+        suggestion_type: 'name',
+        min_confidence: 0.8,
+      });
+    });
+
+    expect(
+      queryClient.getQueryData<PendingNameSuggestionsResponse>(namePendingKey)?.suggestions.map((s) => s.id),
+    ).toEqual(['name-1', 'name-low']);
+    expect(
+      queryClient.getQueryData<TopUnlabeledClustersResponse>(topUnlabeledKey)?.clusters.map((c) => c.id),
+    ).toEqual(['cluster-1', 'cluster-low']);
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: namePendingKey });
+  });
+
+  it('R5-01: a 200 with accepted_count 0 evicts nothing', async () => {
+    queryClient.setQueryData(
+      namePendingKey,
+      makeNamePage([
+        { ...makeName('name-1'), confidence_score: 0.95 },
+        { ...makeName('name-low'), id: 'name-low', cluster_id: 'cluster-low', confidence_score: 0.2 },
+      ]),
+    );
+    const topUnlabeledKey = queryKeys.clusters.topUnlabeled('test-tenant');
+    queryClient.setQueryData(
+      topUnlabeledKey,
+      makeTopUnlabeledPage([makeTopCluster('cluster-1'), makeTopCluster('cluster-low')]),
+    );
+    vi.mocked(recognitionApi.bulkAcceptSuggestions).mockResolvedValue({
+      accepted_count: 0,
+      skipped_count: 2,
+    });
+
+    const { result } = renderMutations();
+    await act(async () => {
+      await result.current.mutations.bulkAccept.mutateAsync({
+        suggestion_type: 'name',
+        min_confidence: 0.8,
+      });
+    });
+
+    expect(
+      queryClient.getQueryData<PendingNameSuggestionsResponse>(namePendingKey)?.suggestions.map((s) => s.id),
+    ).toEqual(['name-1', 'name-low']);
+  });
+
+  it('R5-01: a partial accept refetches instead of guessing', async () => {
+    const namePage = makeNamePage([
+      { ...makeName('name-1'), confidence_score: 0.95 },
+      { ...makeName('name-low'), id: 'name-low', cluster_id: 'cluster-low', confidence_score: 0.2 },
+    ]);
+    const topUnlabeledKey = queryKeys.clusters.topUnlabeled('test-tenant');
+    const topPage = makeTopUnlabeledPage([makeTopCluster('cluster-1'), makeTopCluster('cluster-low')]);
+    queryClient.setQueryData(namePendingKey, namePage);
+    queryClient.setQueryData(topUnlabeledKey, topPage);
+    const fetchName = vi.fn().mockResolvedValue(namePage);
+    const fetchTop = vi.fn().mockResolvedValue(topPage);
+    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+    vi.mocked(recognitionApi.bulkAcceptSuggestions).mockResolvedValue({
+      accepted_count: 1,
+      skipped_count: 1,
+    });
+
+    const { result } = renderHook(
+      () => {
+        const name = useQuery({ queryKey: namePendingKey, queryFn: fetchName, staleTime: 0 });
+        const top = useQuery({ queryKey: topUnlabeledKey, queryFn: fetchTop, staleTime: 0 });
+        const m = useSuggestionReviewMutations({ queryClient, bulkActionRef });
+        return { name, top, m };
+      },
+      { wrapper },
+    );
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    fetchName.mockClear();
+    fetchTop.mockClear();
+
+    await act(async () => {
+      await result.current.m.mutations.bulkAccept.mutateAsync({
+        suggestion_type: 'name',
+        min_confidence: 0.8,
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: namePendingKey });
+    expect(invalidateSpy).toHaveBeenCalledWith({
+      queryKey: [...queryKeys.clusters.all, 'top-unlabeled'],
+    });
+    expect(fetchName).toHaveBeenCalled();
+    expect(fetchTop).toHaveBeenCalled();
+    expect(
+      queryClient.getQueryData<PendingNameSuggestionsResponse>(namePendingKey)?.suggestions.map((s) => s.id),
+    ).toEqual(['name-1', 'name-low']);
+    expect(
+      queryClient.getQueryData<TopUnlabeledClustersResponse>(topUnlabeledKey)?.clusters.map((c) => c.id),
+    ).toEqual(['cluster-1', 'cluster-low']);
+  });
+
+  it('R7-07: full accept that disagrees with local cache invalidates instead of evicting', async () => {
+    queryClient.setQueryData(
+      namePendingKey,
+      makeNamePage([
+        { ...makeName('name-1'), confidence_score: 0.95 },
+        { ...makeName('name-2'), id: 'name-2', cluster_id: 'cluster-2', confidence_score: 0.9 },
+      ]),
+    );
+    const topUnlabeledKey = queryKeys.clusters.topUnlabeled('test-tenant');
+    queryClient.setQueryData(
+      topUnlabeledKey,
+      makeTopUnlabeledPage([makeTopCluster('cluster-1'), makeTopCluster('cluster-2')]),
+    );
+    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+    vi.mocked(recognitionApi.bulkAcceptSuggestions).mockResolvedValue({
+      accepted_count: 1,
+      skipped_count: 0,
+    });
+
+    const { result } = renderMutations();
+    await act(async () => {
+      await result.current.mutations.bulkAccept.mutateAsync({
+        suggestion_type: 'name',
+        min_confidence: 0.8,
+      });
+    });
+
+    expect(
+      queryClient.getQueryData<PendingNameSuggestionsResponse>(namePendingKey)?.suggestions.map((s) => s.id),
+    ).toEqual(['name-1', 'name-2']);
+    expect(
+      queryClient.getQueryData<TopUnlabeledClustersResponse>(topUnlabeledKey)?.clusters.map((c) => c.id),
+    ).toEqual(['cluster-1', 'cluster-2']);
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: namePendingKey });
+    expect(invalidateSpy).toHaveBeenCalledWith({
+      queryKey: [...queryKeys.clusters.all, 'top-unlabeled'],
+    });
+  });
+
+  it('R1-24: bulkAccept name type invalidates the header source instead of locally decrementing', async () => {
+    queryClient.setQueryData(
+      namePendingKey,
+      makeNamePage([
+        { ...makeName('name-1'), confidence_score: 0.95 },
+        { ...makeName('name-2'), id: 'name-2', cluster_id: 'cluster-2', confidence_score: 0.9 },
+      ]),
+    );
+    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+    vi.mocked(recognitionApi.bulkAcceptSuggestions).mockResolvedValue({
+      accepted_count: 2,
+      skipped_count: 0,
+    });
+
+    const { result } = renderMutations();
+    await act(async () => {
+      await result.current.mutations.bulkAccept.mutateAsync({
+        suggestion_type: 'name',
+        min_confidence: 0.8,
+      });
+    });
+
+    expect(queryClient.getQueryData<PendingNameSuggestionsResponse>(namePendingKey)?.suggestions).toHaveLength(2);
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: namePendingKey });
+  });
+
+  it('R1-24: bulkAccept assignment type is scoped out (no silent drop)', async () => {
+    queryClient.setQueryData(
+      reviewPageKey,
+      makePage([makeItem({ suggestionId: 'sugg-a', clusterId: 'cluster-1', similarity: 0.95 })]),
+    );
+    const topUnlabeledKey = queryKeys.clusters.topUnlabeled('test-tenant');
+    queryClient.setQueryData(topUnlabeledKey, makeTopUnlabeledPage([makeTopCluster('cluster-1')]));
+
+    const { result } = renderMutations();
+    await expect(
+      result.current.mutations.bulkAccept.mutateAsync({
+        suggestion_type: 'assignment',
+        min_confidence: 0.5,
+      }),
+    ).rejects.toThrow('Bulk accept is only available for name suggestions.');
+
+    expect(
+      queryClient.getQueryData<SuggestionReviewPage>(reviewPageKey)?.items.map((item) => item.suggestionId),
+    ).toEqual(['sugg-a']);
+    expect(
+      queryClient.getQueryData<TopUnlabeledClustersResponse>(topUnlabeledKey)?.clusters.map((c) => c.id),
+    ).toEqual(['cluster-1']);
+  });
+
+  it('R1-24: bulkAccept merge type is scoped out (no silent drop)', async () => {
+    const mergeRow = {
+      ...makeMerge('merge-1'),
+      cluster_a_id: 'cluster-1',
+      cluster_b_id: 'cluster-2',
+      source_cluster_id: 'cluster-1',
+      target_cluster_id: 'cluster-2',
+      similarity: 0.95,
+    };
+    queryClient.setQueryData(mergePendingKey, makeMergePage([mergeRow]));
+    const topUnlabeledKey = queryKeys.clusters.topUnlabeled('test-tenant');
+    queryClient.setQueryData(
+      topUnlabeledKey,
+      makeTopUnlabeledPage([makeTopCluster('cluster-1'), makeTopCluster('cluster-2')]),
+    );
+
+    const { result } = renderMutations();
+    await expect(
+      result.current.mutations.bulkAccept.mutateAsync({
+        suggestion_type: 'merge',
+        min_confidence: 0.5,
+      }),
+    ).rejects.toThrow('Bulk accept is only available for name suggestions.');
+
+    expect(
+      queryClient.getQueryData<PendingMergeSuggestionsResponse>(mergePendingKey)?.suggestions.map((s) => s.id),
+    ).toEqual(['merge-1']);
+    expect(
+      queryClient.getQueryData<TopUnlabeledClustersResponse>(topUnlabeledKey)?.clusters.map((c) => c.id),
+    ).toEqual(['cluster-1', 'cluster-2']);
   });
 });

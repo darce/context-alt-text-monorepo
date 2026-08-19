@@ -6,15 +6,35 @@
 ## Goals
 
 - Operator runs the full recognize -> name -> curate loop and edits alt-text/descriptions without leaving one surface (control-left, library-right)
-- Read cluster structure at a glance via a UMAP scatter and act on the selection in the same viewport
+- Read face-group structure at a glance via a UMAP scatter and act on the selection in the same viewport
 - Decompose the 2-pane redesign from screens/zones/states/flows instead of inventing IA mid-plan
+
+## Vocabulary
+
+Controlled say/don't-say list for operator-facing workbench copy (UXW2-3; NAV-13/NAV-14).
+Engineering terms stay legal in code identifiers, `acx_*` CSS classes, and job ids — never in
+rendered strings on the review surfaces. Roster page and dashboard/jobs/ops surfaces are owned
+by other lanes and are not yet covered by this list.
+
+| Don't say | Say | Notes |
+| --- | --- | --- |
+| cluster | face group (unnamed) / person (once named) | A cluster the operator has not named yet is "these faces" / "this face group"; after naming it is the person |
+| identities / instances | faces | Members of a group are faces |
+| Review Cluster | Review these faces | Panel headline + review triggers |
+| %d faces in cluster | %d faces | Count of member faces on a review card |
+| Skip this cluster for now | Skip these faces for now | |
+| Unnamed cluster | Unnamed face group | Merge suggestion sides |
+| first/second cluster | first/second group | Merge suggestion alt text + context |
+| This cluster is no longer available. | These faces are no longer available. | Queue empty-item fallback |
+| Cluster member / Remove from cluster | Face / Remove this face | Review panel member rows + removal dialog |
+| Just label — don't add to roster | (removed) | Naming always creates/binds a roster person; the roster is a consequence, not a decision |
 
 ## Jobs
 
-- `job-cluster-recognize` — Cluster & recognize faces (build/refresh clusters, run recognition)
-- `job-name-curate` — Name & curate identities (confirm/correct/merge/split, assign names)
+- `job-cluster-recognize` — Build & recognize face groups (refresh groups, run recognition)
+- `job-name-curate` — Name & curate people (confirm/correct/merge/split, assign names)
 - `job-caption-library` — Caption & describe media (alt-text + long description on library rows)
-- `job-triage-sync` — Triage identity conflicts / failed sync (overlays)
+- `job-triage-sync` — Triage people conflicts / failed sync (overlays)
 
 ## Screens
 
@@ -33,7 +53,7 @@
 ```
 +------------------------------------------------------------+
 | Workbench (2-pane)  [screen]  #/workbench                  |
-| Two-pane operator surface: left control (cluster/recogniz… |
+| Two-pane operator surface: left control (face-group/recog… |
 +------------------------------------------------------------+
 | ZONES                                                      |
 |   - Workbench header + recognition endpoint (read-only st… |
@@ -43,7 +63,7 @@
 |   - Overlay host (conflicts | dead-letter) (other) states… |
 +------------------------------------------------------------+
 | ACTIONS                                                    |
-|   [PRIMARY] Run / refresh recognition + clustering -> job… |
+|   [PRIMARY] Run / refresh recognition + grouping -> job-p… |
 |   [secondary] Open Conflict Inbox -> workbench-conflicts   |
 |   [secondary] Open Failed Sync Queue -> workbench-dead-le… |
 +------------------------------------------------------------+
@@ -56,22 +76,25 @@
 ```
 +------------------------------------------------------------+
 | Control surface (left pane)  [screen]  #/workbench?pane=c… |
-| Cluster, recognize, name, and curate: recognition endpoin… |
+| Recognize, name, and curate: recognition endpoint + healt… |
 +------------------------------------------------------------+
 | ZONES                                                      |
 |   - Recognition endpoint + health (read-only: InsightFace… |
-|   - Cluster/recognition controls (run, refresh, threshold… |
-|   - UMAP cluster scatter (2D projection of face embedding… |
-|   - Cluster list / selection (size, confidence, unnamed-f… |
-|   - Name & curate (assign name; confirm / correct / merge… |
+|   - Face-group/recognition controls (run, refresh, thresh… |
+|   - UMAP face-group scatter (2D projection of faces)       |
+|   - Face-group list / selection + NameFaceControl (queue)  |
+|   - Name this person (NameFaceControl) (forced_choice)     |
+|     z-name-curate states=[default,loading,empty,error,     |
+|     pending,suggestions-open,roster-error,ambiguous,       |
+|     overlay-closed,duplicate-guard]                        |
 +------------------------------------------------------------+
 | ACTIONS                                                    |
-|   [PRIMARY] Run / refresh recognition + clustering -> job… |
-|   [PRIMARY] Assign name to cluster -> identity-store (cos… |
-|   [PRIMARY] Select cluster (UMAP or list) -> workbench-li… |
+|   [PRIMARY] Run / refresh recognition + grouping -> job-p… |
+|   [PRIMARY] Save name (NameFaceControl) -> identity-store  |
+|   [PRIMARY] Select face group (UMAP or list) -> library    |
 |   [secondary] Go to Roster -> exit-roster                  |
 |   [secondary] View / change recognition endpoint (Setting… |
-|   [DESTRUCTIVE] Merge / split / correct cluster -> identi… |
+|   [DESTRUCTIVE] Merge / split / correct group -> identity… |
 +------------------------------------------------------------+
 | states: default | loading | empty | error | first_time | … |
 +------------------------------------------------------------+
@@ -85,10 +108,10 @@
 | Media library table with alt-text caption and long-descri… |
 +------------------------------------------------------------+
 | ZONES                                                      |
-|   - Library filters (status, has-alt, has-description, cl… |
+|   - Library filters (status, has-alt, has-description, fa… |
 |   - Media library table (thumb | title | status | alt-tex… |
-|   - Inline alt-text / long-description editor (per row) (… |
-|   - AI caption/description suggestions (evidence-linked; … |
+|   - Inline person naming (NameFaceControl) + alt editor    |
+|   - AI name / caption suggestions (ai_review)              |
 |   - Bulk describe / scan CTAs + job progress (job) states… |
 +------------------------------------------------------------+
 | ACTIONS                                                    |
@@ -106,7 +129,7 @@
 ```
 +------------------------------------------------------------+
 | Conflict Inbox  [overlay]  #/workbench?panel=conflicts     |
-| Review identity conflicts; commit human judgment with evi… |
+| Review people conflicts; commit human judgment with evide… |
 +------------------------------------------------------------+
 | ZONES                                                      |
 |   - Conflict list (queue) states=[default,loading,empty]   |
@@ -169,16 +192,16 @@
 
 ## Flows
 
-### Run recognition -> select cluster -> name/curate -> library people column updates (`flow-recognize-name-curate`)
+### Run recognition -> select face group -> name/curate -> library people column updates (`flow-recognize-name-curate`)
 
 ```mermaid
 flowchart TD
-  %% flow: Run recognition -> select cluster -> name/curate -> library people column updates job=job-name-curate
+  %% flow: Run recognition -> select face group -> name/curate -> library people column updates job=job-name-curate
   n_workbench_2pane_shell["Workbench (2-pane) (screen)"]
   n_workbench_control["Control surface (left pane) (screen)"]
   n_workbench_2pane_shell -->|enter| n_workbench_control
   n_workbench_control -->|run recognition (preview cost)| n_workbench_control
-  n_workbench_control -->|select cluster (umap/list)| n_workbench_control
+  n_workbench_control -->|select face group (umap/list)| n_workbench_control
   n_workbench_library["Media library (right pane) (screen)"]
   n_workbench_control -->|name / curate| n_workbench_library
 ```
@@ -193,15 +216,16 @@ flowchart TD
   n_workbench_library -->|accept/edit AI caption| n_workbench_library
 ```
 
-### UMAP scatter -> select cluster -> right library filters to cluster media (`flow-umap-select-to-library`)
+### UMAP scatter -> select face group -> right library filters to face-group media (`flow-umap-select-to-library`)
 
 ```mermaid
 flowchart TD
-  %% flow: UMAP scatter -> select cluster -> right library filters to cluster media job=job-cluster-recognize
+  %% flow: UMAP scatter -> select face group -> right library filters to face-group media job=job-cluster-recognize
   n_workbench_control["Control surface (left pane) (screen)"]
   n_workbench_control -->|umap scatter| n_workbench_control
   n_workbench_library["Media library (right pane) (screen)"]
-  n_workbench_control -->|select cluster point/region| n_workbench_library
+  n_workbench_control -->|select face-group point/region| n_workbench_library
+  n_workbench_library -->|face-group= filters library| n_workbench_library
 ```
 
 ### Recognition produces conflicts -> conflict overlay -> resolve -> roster if needed (`flow-scan-to-conflict`)
@@ -230,15 +254,23 @@ flowchart TD
 
 ## Open questions
 
-- DEP: long-description has no data field yet (WorkbenchMediaItem has only altText). The long-description column depends on a new media schema field + REST + backend. Ship alt-text column first, long-description behind the field? [FORM]
-- DEP: no 2D projection data exists (only bbox + 3D head pose; 'embeddings' is banned UI vocab). The cluster-map scatter depends on a new backend 2D-projection endpoint. Ship left pane as cluster LIST first, scatter as fast-follow? [VIZ-01,VIZ-15]
-- Cluster-map label: user-facing name must avoid 'embeddings' (banned vocab) — 'cluster map' / 'face map'? [copy]
-- Selecting a cluster in the map/list: filter the right library pane, open the naming form, or both (coordinated views)? [VIZ-15]
-- Naming form ordering: adopt commit-before-reveal (operator judges before model candidates shown) or reveal-first? confirm-only logs agreement, not verification [HAI-15]
-- Endpoint switch (:10010 InsightFace 512d vs FIR/SFace 128d) changes embedding dimensionality server-side; do existing clusters invalidate + need re-projection on switch? [HAI-02]
-- Left/right min-width + left-collapse on narrow (<1100px) viewports; control collapses to a drawer, library stays reachable? [NAV-08,A11Y-08]
-- Alt-text vs long-description: two fixed columns or one expandable row-detail? column-width vs scannability [PERC-01,UI-04]
-- Bulk-describe cost preview granularity: per-image cost surfaced before start? [INT-07]
+- OPEN: long-description has no data field yet (media items have only alt text). Ship the alt-text column first, long-description behind a new field? [FORM]
+- OPEN: no 2D projection data exists (only bbox + 3D head pose). Ship the left pane as a face-group list first; scatter map is a fast-follow once a projection endpoint exists? [VIZ-01,VIZ-15]
+- RESOLVED: operator vocab is group / person / face — never cluster / identities / embeddings. Enforced by the banned-vocabulary sweep.
+- OPEN: Selecting a face group in the map/list: filter the right library pane, open the naming form, or both (coordinated views)? [VIZ-15]
+- RESOLVED: one naming surface (NameFaceControl) with a single-gesture Save name; overlay candidates and confirm share that control.
+- OPEN: Endpoint switch (InsightFace vs FIR/SFace) changes the recognition model server-side; do existing face groups invalidate and need a fresh grouping on switch? [HAI-02]
+- OPEN: Left/right min-width + left-collapse on narrow (<1100px) viewports; control collapses to a drawer, library stays reachable? [NAV-08,A11Y-08]
+- OPEN: Alt-text vs long-description: two fixed columns or one expandable row-detail? [PERC-01,UI-04]
+- OPEN: Bulk-describe cost preview granularity: per-image cost surfaced before start? [INT-07]
+
+## Parity index
+
+Zone ids: z-topbar z-left-host z-splitter z-right-host z-overlay-host z-endpoint z-recognition-controls z-cluster-umap z-cluster-list z-name-curate z-lib-filters z-lib-table z-lib-inline-edit z-lib-ai-suggest z-lib-actions z-conflict-list z-conflict-detail z-conflict-actions z-dl-list z-dl-actions z-roster-entry z-settings-form
+
+Action ids: act-run-recognition act-select-cluster act-name-cluster act-curate-cluster act-view-endpoint-settings act-edit-alt act-edit-desc act-accept-ai-caption act-bulk-describe act-open-conflicts act-open-dead-letter act-resolve-conflict act-retry-dead-letter act-discard-dead-letter act-goto-roster
+
+States (all zones): default loading empty error pending suggestions-open roster-error ambiguous overlay-closed duplicate-guard first_time degraded offline edge_input
 
 ## Not doing
 

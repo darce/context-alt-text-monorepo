@@ -221,6 +221,8 @@ export const ScanTabContent = (): React.JSX.Element => {
                 onClose={() => dispatchClusterPanel({ type: 'close' })}
                 onLabel={() => {
                   dispatchClusterPanel({ type: 'close' });
+                  announceReviewLifecycle(__('Name saved. Back to review suggestions.', 'alt-context'));
+                  focusQueueRoot();
                 }}
               />
             ) : reviewClusterId !== null ? (
@@ -249,8 +251,8 @@ export const ScanTabContent = (): React.JSX.Element => {
                 selectedIds={selectedSuggestionIds}
                 onSelectedIdsChange={setSelectedSuggestionIds}
                 emptyStateAnchorRef={findingsDetailRef}
-                onLabel={(clusterId: string) => dispatchClusterPanel({ type: 'open_label', clusterId })}
                 onReview={(clusterId: string) => dispatchClusterPanel({ type: 'open_review', clusterId })}
+                onLabel={(clusterId: string) => dispatchClusterPanel({ type: 'open_label', clusterId })}
                 onCardPrimaryPresenceChange={setCardPrimaryPresent}
               />
             )}

@@ -27,7 +27,13 @@ interface ClusterSaveMutations {
     suggestionId?: string,
   ) => void;
   rename: (label: string, signal?: AbortSignal) => void;
-  createClusterForIdentity: (identityId: string, label: string, signal?: AbortSignal) => void;
+  createClusterForIdentity: (
+    identityId: string,
+    label: string,
+    signal?: AbortSignal,
+    rosterEntryId?: number,
+  ) => void;
+  bindToRosterEntry?: (rosterEntryId: number, label: string, signal?: AbortSignal) => void;
 }
 
 interface UseClusterSaveHandlersOptions {

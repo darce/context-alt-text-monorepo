@@ -214,3 +214,65 @@ describe('useClusterActionMutations assign accept-by-id (L1R-07 / BR-16)', () =>
     expect(next?.items.map((item) => item.suggestionId)).toEqual(['sug-keep']);
   });
 });
+
+describe('useClusterActionMutations create-for-identity roster bind (UXW2-3-R7B-01)', () => {
+  const renderCreate = () => {
+    const onError = vi.fn();
+    const invalidateQueries = vi.fn();
+    const onRenameSuccess = vi.fn();
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+    );
+    const { result } = renderHook(
+      () =>
+        useClusterActionMutations({
+          clusterId: null,
+          onError,
+          onRenameSuccess,
+          invalidateQueries,
+        }),
+      { wrapper },
+    );
+    return { result, onError, invalidateQueries, onRenameSuccess };
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    offline = false;
+  });
+
+  it('passes rosterEntryId through to createClusterForIdentity', async () => {
+    vi.mocked(recognitionApi.createClusterForIdentity).mockResolvedValue({
+      cluster_id: 'c-new',
+      label: 'Alex',
+      identity_id: 'anchor-1',
+      message: 'ok',
+    });
+    const { result, invalidateQueries } = renderCreate();
+
+    result.current.createClusterForIdentity('anchor-1', 'Alex', undefined, 7);
+
+    await waitFor(() => expect(invalidateQueries).toHaveBeenCalled());
+    expect(recognitionApi.createClusterForIdentity).toHaveBeenCalledTimes(1);
+    expect(recognitionApi.createClusterForIdentity).toHaveBeenCalledWith(
+      { identityId: 'anchor-1', label: 'Alex', rosterEntryId: 7 },
+      undefined,
+    );
+  });
+
+  it('on acx_cluster_created_bind_failed surfaces bind error and still invalidates', async () => {
+    vi.mocked(recognitionApi.createClusterForIdentity).mockRejectedValue(
+      new Error(
+        'Request to /create-for-identity failed (409): {"code":"acx_cluster_created_bind_failed","data":{"cluster_id":"c-new"}}',
+      ),
+    );
+    const { result, onError, invalidateQueries } = renderCreate();
+
+    result.current.createClusterForIdentity('anchor-1', 'Alex', undefined, 7);
+
+    await waitFor(() => expect(onError).toHaveBeenCalled());
+    expect(onError).toHaveBeenCalledWith('The group was created but the person was not bound.');
+    expect(invalidateQueries).toHaveBeenCalled();
+  });
+});

@@ -116,7 +116,7 @@ class ClustersController extends AbstractRecognitionProxyController implements C
 				)
 			)
 		);
-		add_action( self::BOOTSTRAP_SYNC_HOOK, array( $this, 'perform_bootstrap_sync' ), 10, 1 );
+		add_action( self::BOOTSTRAP_SYNC_HOOK, array( $this, 'perform_bootstrap_sync' ), 10, 2 );
 	}
 
 	public function register_routes(): void {
@@ -205,8 +205,11 @@ class ClustersController extends AbstractRecognitionProxyController implements C
 		return $this->read_service->get_cluster_members( $request );
 	}
 
-	public function perform_bootstrap_sync( string $tenant_id ): void {
-		$this->projection_sync_service->perform_bootstrap_sync( $tenant_id );
+	/**
+	 * @param string[] $cluster_ids
+	 */
+	public function perform_bootstrap_sync( string $tenant_id, array $cluster_ids = array() ): void {
+		$this->projection_sync_service->perform_bootstrap_sync( $tenant_id, $cluster_ids );
 	}
 
 	public function get_clusters_repository(): ClustersRepositoryInterface {

@@ -4,7 +4,7 @@
   "title": "Recognition Cluster Top Unlabeled Response",
   "description": "WordPress recognition proxy envelope for the top-unlabeled naming queue.",
   "type": "object",
-  "required": ["clusters", "limit", "total", "truncated", "data_source"],
+  "required": ["clusters", "limit", "total", "truncated", "data_source", "repair_pending"],
   "properties": {
     "clusters": {
       "type": "array",
@@ -45,7 +45,8 @@
           },
           "identity_count": {
             "type": "integer",
-            "minimum": 0
+            "minimum": 0,
+            "description": "Observed member-row count when the representative preview is not truncated. When the preview is truncated, identity_count = max(projected, representatives.length). Always identity_count >= representatives.length."
           },
           "user_confirmed": {
             "type": "boolean"
@@ -66,6 +67,8 @@
           },
           "representatives": {
             "type": "array",
+            "minItems": 1,
+            "description": "Preview of observed members (cap 4). Non-empty for top-unlabeled queue rows. identity_count reflects observed members when this array is shorter than the preview cap.",
             "items": {
               "type": "object",
               "required": ["id", "media_id", "is_pinned"],
@@ -113,11 +116,15 @@
     "total": {
       "type": "integer",
       "minimum": 0,
-      "description": "Total number of qualifying unlabeled clusters available for the current request."
+      "description": "Pre-filter qualifying unlabeled cluster count (COUNT(*) OVER()). Mapper/proxy drops set repair_pending and do not shrink total."
     },
     "truncated": {
       "type": "boolean",
-      "description": "Whether additional unlabeled clusters exist beyond this response."
+      "description": "Whether additional unlabeled clusters exist beyond this response. Paging only — invariant filtering does not set this flag."
+    },
+    "repair_pending": {
+      "type": "boolean",
+      "description": "True when this response requested targeted projection repair or dropped invariant-failing rows. Drives the review-queue Resync affordance."
     },
     "singleton_count": {
       "type": "integer",

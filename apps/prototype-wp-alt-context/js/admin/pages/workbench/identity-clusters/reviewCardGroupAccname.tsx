@@ -45,11 +45,11 @@ export const formatReviewCardGroupLabel = (
       return hasOrdinal
         ? sprintf(
             /* translators: 1: 1-based position, 2: queue total */
-            __('Cluster review %1$d of %2$d', 'alt-context'),
+            __('Face group review %1$d of %2$d', 'alt-context'),
             queuePosition,
             queueTotal,
           )
-        : __('Cluster review', 'alt-context');
+        : __('Face group review', 'alt-context');
   }
 };
 

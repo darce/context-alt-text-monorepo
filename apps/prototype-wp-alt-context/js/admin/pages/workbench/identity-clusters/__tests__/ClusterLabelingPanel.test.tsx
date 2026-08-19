@@ -1346,6 +1346,83 @@ describe('ClusterLabelingPanel', () => {
     release?.();
   });
 
+  it('Save name clicked twice in the same tick fires the mutation once (UXW2-3-R3-21)', async () => {
+    renderPanel();
+    await typePanelName('Pat Rivera');
+    const save = screen.getByRole('button', { name: 'Save name' });
+    fireEvent.click(save);
+    fireEvent.click(save);
+    await waitFor(() => {
+      expect(updateClusterLabel).toHaveBeenCalledTimes(1);
+    });
+    expect(updateClusterLabel).toHaveBeenCalledWith(
+      'source-cluster-id',
+      'Pat Rivera',
+      expect.any(AbortSignal),
+    );
+    expect(commitClusterToRosterEntry).not.toHaveBeenCalled();
+  });
+
+  it('Save name clicked again while the first write is in flight fires once (UXW2-3-R3-21)', async () => {
+    let release: (() => void) | undefined;
+    vi.mocked(updateClusterLabel).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          release = () => resolve(undefined);
+        }),
+    );
+    renderPanel();
+    await typePanelName('Pat Rivera');
+    fireEvent.click(screen.getByRole('button', { name: 'Save name' }));
+    await waitFor(() => {
+      expect(updateClusterLabel).toHaveBeenCalledTimes(1);
+    });
+    fireEvent.click(await screen.findByRole('button', { name: 'Saving...' }));
+    expect(updateClusterLabel).toHaveBeenCalledTimes(1);
+    release?.();
+  });
+
+  it('Rename anyway clicked twice in the same tick fires the mutation once (UXW2-3-R3-21)', async () => {
+    vi.mocked(listRecognitionClusters).mockResolvedValue(makeClusterListResponse());
+    renderPanel();
+    await typePanelName('Slate Willow');
+    await userEvent.click(await screen.findByRole('option', { name: /confirm match/i }));
+    const renameAnyway = await screen.findByRole('button', { name: 'Rename anyway' });
+    fireEvent.click(renameAnyway);
+    fireEvent.click(renameAnyway);
+    await waitFor(() => {
+      expect(updateClusterLabel).toHaveBeenCalledTimes(1);
+    });
+    expect(updateClusterLabel).toHaveBeenCalledWith(
+      'source-cluster-id',
+      'Slate Willow',
+      expect.any(AbortSignal),
+    );
+  });
+
+  it('Save name after a settled submit fires again (UXW2-3-R3-21)', async () => {
+    renderPanel();
+    await typePanelName('Pat Rivera');
+    await userEvent.click(screen.getByRole('button', { name: 'Save name' }));
+    await waitFor(() => {
+      expect(updateClusterLabel).toHaveBeenCalledTimes(1);
+    });
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Save name' })).toBeEnabled();
+    });
+    await typePanelName('Sam Rivera');
+    await userEvent.click(screen.getByRole('button', { name: 'Save name' }));
+    await waitFor(() => {
+      expect(updateClusterLabel).toHaveBeenCalledTimes(2);
+    });
+    expect(updateClusterLabel).toHaveBeenNthCalledWith(
+      2,
+      'source-cluster-id',
+      'Sam Rivera',
+      expect.any(AbortSignal),
+    );
+  });
+
   it('two rapid Enter presses fire the mutation once (UXW2-3-R1-04 / R2-02)', async () => {
     let release: (() => void) | undefined;
     vi.mocked(listRecognitionClusters).mockImplementation(

@@ -43,7 +43,7 @@ From `apps/prototype-wp-alt-context`:
 | --- | --- | --- | --- |
 | R1-15 | `fix(roster): drawer error/empty and board-up` | `ClusterDrawerPanel.offline` error/loading; no empty copy | error branch falls through to `No faces found in this face group.` |
 | R1-16 | `fix(roster): drawer error/empty and board-up` | `RosterPage.container` Move to count 0 + honest reason | drop `reassignUnavailableReason` → `No other face groups available` lie |
-| R1-17 | `fix(nav\|tests): panel owner` | `ScanTabContent.reviewUrl` history + same-tick | drop `{replace:true}` on close → `navigate(-1)` reopens |
+| R1-17 | `fix(nav\|tests): panel owner` | `ScanTabContent.reviewUrl` mount queue, open, Back, `navigate(-1)` | drop `{replace:true}` on close → `navigate(-1)` reopens (queue missing) |
 | R1-18 | `fix(workbench): Review these faces heading` | `reviewUrl` + `controlPaneOrder` role+level matcher | h2 `__('Review this face group')` → Unable to find heading `/review these faces/i` |
 | R1-19 | `fix(roster\|tests): member jargon and vocab sweep` | `banned-vocabulary` mounts ClusterReviewPanel + attrs | alt `Identity %d` → review leaked `"identity"` |
 | R1-20 | `fix(roster): plural count and empty status` | `RosterPage.reviewCta` total=1 | `sprintf(__('%d face groups waiting'))` → `1 face group waiting` missing |
@@ -51,7 +51,7 @@ From `apps/prototype-wp-alt-context`:
 | R1-22 | `fix(nav\|tests): panel owner` | `reviewUrl` Review button `toHaveFocus` | delete `focusQueueRoot()` → Review not focused |
 | R1-23 | `fix(roster\|tests): member jargon and vocab sweep` | `banned-vocabulary` SURFACE_BANNED + attrs | `Projection status: %s` → expected `data status` / leaked `"projection"` |
 | R1-24 | `fix(tests): e2e reads AltContextAdmin` | `roster-keyboard-walk` + spec.guard | rename global to `acxAdmin` → guard `not.toMatch(/\bacxAdmin\b/)` |
-| R1-25 | `fix(nav\|tests): panel owner` | `reviewUrl` createMemoryRouter, real filters/lifecycle | same RED as the history/stateRef row above |
+| R1-25 | `fix(nav\|tests): panel owner` | `reviewUrl` five clause mutants (UXW2-4-fix-r7c-report) | drop `rq` / retire no-op / close-push / split close / drop `role=status` |
 | R1-26 | `fix(tests): drop vacuous List Person negative` | `RosterPage.container` competing-row test | resolve workspace by name → competing-row fails |
 | R1-27 | `fix(roster): delete orphan bulk merge/dismiss` | banned-vocabulary source sweep | re-add `__('Merge failed for cluster %s.')` → `/for cluster %s/` |
 | R1-28 | `fix(nav\|tests): panel owner` | `appLinks` `readReviewFromParams` round-trip | stop emitting `cluster` with `panel=review` → mode none |
@@ -62,9 +62,10 @@ From `apps/prototype-wp-alt-context`:
 | R2-15 | `docs: FE report R2` (this file) | closure table ids verbatim | n/a (artifact) |
 | R2-16 | `fix(tests): settled probe for top-unlabeled total` | `useTopUnlabeledTotal` isFetched + total:0 control | drop `COUNTED_SOURCES` → unavailable/endpoint_error after settle |
 | R2-17 | `fix(roster): plural count and empty status` | `reviewCta` empty status then 7 | conditional `role` → null-state `getByRole('status')` throws |
+| R2-18 | `test(nav): UXW2-4-r7c review URL suite kill-power` | `ClusterPanelContext` same-tick identity dispatch | delete `stateRef.current = next` → URL drops `panel=review` |
 | R2-19 | `docs(uxmap): person workspace labels without identities` | grep identities only in ids | operator-facing `identities` label |
 
-Same-tick `stateRef.current = next` behaviour is unproven. Deleting that assignment does not fail `same-tick open then close does not leave panel=review in the URL` (ClusterPanelContext or ScanTabContent.reviewUrl). UXW2-4-R2-18 is still open.
+R2-18 kill is the identity-dispatch case in `ClusterPanelContext.test.tsx`, not `same-tick open then close does not leave panel=review in the URL`. That open-then-close case stays green if the assignment is deleted (reducer fully replaces). See UXW2-4-fix-r7c-report.
 
 ### Canon (re-verified `~/uxw2/canon/lexicons/`)
 

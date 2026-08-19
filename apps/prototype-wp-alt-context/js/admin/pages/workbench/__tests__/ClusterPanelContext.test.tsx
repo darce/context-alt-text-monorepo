@@ -4,7 +4,11 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter, useSearchParams } from 'react-router-dom';
 import { describe, expect, it } from 'vitest';
 
-import { ClusterPanelProvider, useClusterPanel } from '../ClusterPanelContext';
+import {
+  ClusterPanelProvider,
+  useClusterPanel,
+  type ClusterPanelAction,
+} from '../ClusterPanelContext';
 
 const RouteProbe = (): React.JSX.Element => {
   const [searchParams] = useSearchParams();
@@ -115,6 +119,24 @@ describe('ClusterPanelContext same-tick URL writer (UXW2-4-R1-17)', () => {
     expect(screen.getByTestId('route-probe').textContent).toContain('cluster=c-new');
     expect(screen.getByTestId('panel-mode').textContent).toBe('review');
     expect(screen.getByTestId('panel-cluster').textContent).toBe('c-new');
+  });
+
+  it('same-tick second dispatch reads the first result via stateRef', async () => {
+    const user = userEvent.setup();
+    renderPanel(
+      '/workbench?tab=scan',
+      <SameTickDriver
+        first={{ type: 'open_review', clusterId: 'c-ref' }}
+        second={{ type: 'identity' } as unknown as ClusterPanelAction}
+      />,
+    );
+
+    await user.click(screen.getByRole('button', { name: 'same-tick' }));
+
+    expect(screen.getByTestId('route-probe').textContent).toContain('panel=review');
+    expect(screen.getByTestId('route-probe').textContent).toContain('cluster=c-ref');
+    expect(screen.getByTestId('panel-mode').textContent).toBe('review');
+    expect(screen.getByTestId('panel-cluster').textContent).toBe('c-ref');
   });
 
   it('closing review after open restores a prior overlay', async () => {

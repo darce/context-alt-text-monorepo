@@ -29,6 +29,7 @@ import {
   findCollisionsForLabel,
   NAMING_GROUP_ALL_LABELS,
   namingOptionValue,
+  parseNamingOptionValue,
   uniqueClusterCollisionTarget,
   unwrapClusterOptionId,
   type NamingOption,
@@ -45,6 +46,8 @@ interface ClusterLabelingPanelProps {
   clusterId: string;
   onClose: () => void;
   onLabel: (label: string) => void;
+  /** Prefill the name field (roster name + Enter binds; UXW2-3-R1-08c). */
+  initialLabel?: string;
 }
 
 interface DuplicateGuardState {
@@ -101,8 +104,13 @@ const withTimeout = async <T,>(
   }
 };
 
-export const ClusterLabelingPanel = ({ clusterId, onClose, onLabel }: ClusterLabelingPanelProps): React.JSX.Element => {
-  const [labelInput, setLabelInput] = useState('');
+export const ClusterLabelingPanel = ({
+  clusterId,
+  onClose,
+  onLabel,
+  initialLabel = '',
+}: ClusterLabelingPanelProps): React.JSX.Element => {
+  const [labelInput, setLabelInput] = useState(initialLabel);
   const [error, setError] = useState<string | null>(null);
   const [duplicateGuard, setDuplicateGuard] = useState<DuplicateGuardState | null>(null);
   const [allowRenameAnyway, setAllowRenameAnyway] = useState(false);
@@ -116,13 +124,13 @@ export const ClusterLabelingPanel = ({ clusterId, onClose, onLabel }: ClusterLab
   // Reset panel-local state when the labeled cluster changes (FIX-4). key= at call site remounts;
   // this effect covers non-key remounts / prop-only updates.
   useEffect(() => {
-    setLabelInput('');
+    setLabelInput(initialLabel);
     setError(null);
     setDuplicateGuard(null);
     setAllowRenameAnyway(false);
     setLastMerge(null);
     setShowAllAnnouncement(null);
-  }, [clusterId]);
+  }, [clusterId, initialLabel]);
 
   const handleLabelSuccess = (label: string) => {
     setError(null);
@@ -391,6 +399,21 @@ export const ClusterLabelingPanel = ({ clusterId, onClose, onLabel }: ClusterLab
     }
   };
 
+  const handleOptionConfirm = (option: ComboboxOption): void => {
+    if (submittingRef.current || labelMutation.isPending || mergeMutation.isPending) {
+      return;
+    }
+    if (option.source === 'person') {
+      const parsed = parseNamingOptionValue(String(option.value));
+      const rosterEntryId = Number.parseInt(parsed?.id ?? '', 10);
+      if (Number.isFinite(rosterEntryId)) {
+        resolveCommit({ kind: 'roster', rosterEntryId, name: option.label.trim() });
+        return;
+      }
+    }
+    handleSelectOption(String(option.value));
+  };
+
   const handleSelectOption = (optionValue: string): void => {
     if (submittingRef.current || labelMutation.isPending || mergeMutation.isPending) {
       return;
@@ -594,7 +617,7 @@ export const ClusterLabelingPanel = ({ clusterId, onClose, onLabel }: ClusterLab
             value={labelInput}
             onValueChange={handleTypedValueChange}
             onCommit={resolveCommit}
-            onOptionConfirm={(option) => handleSelectOption(String(option.value))}
+            onOptionConfirm={handleOptionConfirm}
             isPending={labelMutation.isPending || mergeMutation.isPending}
             isLoading={rosterLoading}
             inputDisabled={mergeMutation.isPending}
@@ -607,7 +630,11 @@ export const ClusterLabelingPanel = ({ clusterId, onClose, onLabel }: ClusterLab
             searchPlaceholder={__('Enter name...', 'alt-context')}
             inputId="cluster-label-input"
             autoFocus={false}
-            suggestionsHeader={__('Matches', 'alt-context')}
+            suggestionsHeader={
+              labelInput.trim()
+                ? __('Matches', 'alt-context')
+                : __('Suggested', 'alt-context')
+            }
             className="acx-cluster-labeling-panel__input-group"
             classPrefix="acx-cluster-labeling-panel"
           />

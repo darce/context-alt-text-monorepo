@@ -14,6 +14,10 @@ from pathlib import Path
 
 import pytest
 
+from scene.tests.test_eval_harness_cli import (
+    _assert_child_ascii_locale,
+    _c_locale_child_env,
+)
 from scripts.eval_harness.cli import (
     _UNDECODABLE_PATH_PREFIX,
     _printable_path,
@@ -22,37 +26,10 @@ from scripts.eval_harness.cli import (
 )
 
 _SERVICE_ROOT = Path(__file__).resolve().parents[2]
-_ASCII_LOCALE_ENV = {
-    "LC_ALL": "C",
-    "LANG": "C",
-    "PYTHONUTF8": "0",
-    "PYTHONCOERCECLOCALE": "0",
-}
-_ASCII_PARENT_KEYS = (
-    "LC_ALL",
-    "LANG",
-    "LC_CTYPE",
-    "LC_MESSAGES",
-    "LANGUAGE",
-    "PYTHONUTF8",
-    "PYTHONCOERCECLOCALE",
-)
 _CAFE_UTF8 = b"caf\xc3\xa9"
+_CAFE_LATIN1 = b"caf\xe9"  # lone 0xe9 — invalid UTF-8 on every host
 _SURROGATE_LEAK = b"\\udc"
 _BACKSLASHREPLACE_LIE = b"\\xe9"
-
-
-def _c_locale_child_env() -> dict[str, str]:
-    env = os.environ.copy()
-    for key in _ASCII_PARENT_KEYS:
-        env.pop(key, None)
-    env.update(_ASCII_LOCALE_ENV)
-    env["PYTHONIOENCODING"] = "ascii"
-    # load_manifest may warn with the raw argv path (manifest.py; not this lane).
-    env["PYTHONWARNINGS"] = "ignore"
-    extra = env.get("PYTHONPATH")
-    env["PYTHONPATH"] = str(_SERVICE_ROOT) + (os.pathsep + extra if extra else "")
-    return env
 
 
 def _run_python_bytes(
@@ -61,10 +38,14 @@ def _run_python_bytes(
     *,
     cwd: bytes | None = None,
 ) -> subprocess.CompletedProcess[bytes]:
+    _assert_child_ascii_locale()
+    env = _c_locale_child_env()
+    # load_manifest may warn with the raw argv path (manifest.py; not this lane).
+    env["PYTHONWARNINGS"] = "ignore"
     return subprocess.run(
         [os.fsencode(sys.executable), b"-c", script, *(argv or [])],
         cwd=cwd if cwd is not None else os.fsencode(_SERVICE_ROOT),
-        env=_c_locale_child_env(),
+        env=env,
         capture_output=True,
     )
 
@@ -77,6 +58,45 @@ def _run_cli_bytes(
 ) -> subprocess.CompletedProcess[bytes]:
     code = setup + b"import sys; from scripts.eval_harness.cli import main; main(sys.argv[1:])"
     return _run_python_bytes(code, argv, cwd=cwd)
+
+
+_SURROGATE_ARGV_SKIP = (
+    "host C-locale child does not produce PEP 383 surrogate-escaped argv "
+    "(measured: valid-UTF-8 café bytes arrive as clean unicode, not surrogates); "
+    "product _printable_path café-from-C-locale recovery is untested "
+    "(AGT-06 / VLM6-RV15-L-01)"
+)
+_SURROGATE_ARGV_PROBE: bool | None = None
+
+
+def _host_can_produce_surrogate_escaped_argv() -> bool:
+    """Measure whether a C-locale child receives café UTF-8 as PEP 383 surrogates.
+
+    Darwin hard-wires getfilesystemencoding() to utf-8, so café arrives clean.
+    Do not branch on sys.platform — probe a real child argv (AGT-06).
+    """
+    global _SURROGATE_ARGV_PROBE
+    if _SURROGATE_ARGV_PROBE is None:
+        script = (
+            b"import sys;"
+            b"p=sys.argv[1];"
+            b"sys.stdout.buffer.write("
+            b"b'1' if any(0xDC00 <= ord(c) <= 0xDCFF for c in p) else b'0')"
+        )
+        proc = _run_python_bytes(script, [_CAFE_UTF8])
+        _SURROGATE_ARGV_PROBE = proc.returncode == 0 and proc.stdout == b"1"
+    return _SURROGATE_ARGV_PROBE
+
+
+@pytest.fixture(autouse=True)
+def _skip_c_parent_when_host_cannot_surrogate_escape_argv(
+    request: pytest.FixtureRequest,
+) -> None:
+    if "under_c_parent" not in request.node.name:
+        return
+    if _host_can_produce_surrogate_escaped_argv():
+        return
+    pytest.skip(_SURROGATE_ARGV_SKIP)
 
 
 def _documented_round_trip(rendered: str) -> bytes:
@@ -610,3 +630,73 @@ def test_printable_path_marker_and_undecodable_differ_on_cli_stderr(tmp_path: Pa
     assert marked == b"\\" + _L02_MARKED_NAME
     assert _documented_round_trip(marked.decode("ascii")) == _L02_MARKED_NAME
     assert _documented_round_trip(undec.decode("ascii")) == _Q2_01_RAW
+
+
+# ---------------------------------------------------------------------------
+# ME — VLM6-RV15-Q2-04: imported C-locale helpers, no decorative fork
+# ---------------------------------------------------------------------------
+
+
+def test_stdio_module_uses_imported_c_locale_helpers() -> None:
+    """Q2-04 / TEST-15: no private C-locale env fork (sr-001)."""
+    import scene.tests.test_eval_harness_cli as cli_mod
+    import scene.tests.test_eval_harness_cli_stdio as stdio
+
+    assert stdio._c_locale_child_env is cli_mod._c_locale_child_env
+    assert stdio._assert_child_ascii_locale is cli_mod._assert_child_ascii_locale
+    assert not hasattr(stdio, "_ASCII_LOCALE_ENV")
+    assert not hasattr(stdio, "_ASCII_PARENT_KEYS")
+
+
+def test_run_python_bytes_invokes_imported_assert_child_ascii_locale(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Q2-04: every child process is gated by imported _assert_child_ascii_locale."""
+    calls: list[int] = []
+
+    def _spy() -> None:
+        calls.append(1)
+
+    monkeypatch.setattr(sys.modules[__name__], "_assert_child_ascii_locale", _spy)
+    proc = _run_python_bytes(b"import sys; sys.stdout.buffer.write(b'ok')")
+    assert calls == [1], "child runner never called imported _assert_child_ascii_locale (Q2-04)"
+    assert proc.returncode == 0
+    assert proc.stdout == b"ok"
+
+
+# ---------------------------------------------------------------------------
+# ME — VLM6-RV15-L-01: host-independent 0xe9 oracle + named residual gap
+# ---------------------------------------------------------------------------
+
+
+def test_printable_path_latin1_byte_uses_undecodable_fallback() -> None:
+    """L-01: lone 0xe9 hits _printable_path fallback on every host (TEST-15)."""
+    text = os.fsdecode(_CAFE_LATIN1 + b".json")
+    out = _printable_path(text)
+    assert out.startswith(_UNDECODABLE_PATH_PREFIX)
+    assert "\\xe9" in out
+    assert _documented_round_trip(out) == _CAFE_LATIN1 + b".json"
+
+
+def test_score_missing_latin1_run_record_stderr_uses_undecodable_prefix(
+    tmp_path: Path,
+) -> None:
+    """L-01: 0xe9 CLI argv exercises undecodable: even when fs encoding is utf-8."""
+    man = tmp_path / "man.json"
+    man.write_text("{}", encoding="utf-8")
+    missing = os.fsencode(tmp_path) + b"/missing-" + _CAFE_LATIN1 + b".json"
+    proc = _run_cli_bytes(
+        [
+            b"score",
+            b"--manifest",
+            os.fsencode(man),
+            b"--run-record",
+            missing,
+        ]
+    )
+    assert proc.returncode == 2
+    line = next(ln for ln in proc.stderr.splitlines() if _SCORE_UNREADABLE_PREFIX in ln)
+    rendered = line.split(_SCORE_UNREADABLE_PREFIX, 1)[1]
+    assert rendered.startswith(_UNDECODABLE_PATH_PREFIX.encode("ascii"))
+    assert b"\\xe9" in rendered
+    assert _documented_round_trip(rendered.decode("ascii")) == missing

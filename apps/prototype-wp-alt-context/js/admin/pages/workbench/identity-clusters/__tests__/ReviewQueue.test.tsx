@@ -2831,6 +2831,125 @@ describe('ReviewQueue', () => {
     expect(liveRegion()?.getAttribute('data-announce-seq')).toBe(seq);
   });
 
+  it('R7-02: drain after repair clears the repair live sentence', async () => {
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [],
+      limit: 10,
+      offset: 0,
+    });
+    vi.mocked(fetchTopUnlabeledClusters).mockResolvedValue({
+      clusters: [],
+      limit: 20,
+      total: 5,
+      truncated: true,
+      repair_pending: true,
+      singleton_count: 0,
+      data_source: DATA_SOURCE.LOCAL_PROJECTION,
+    });
+
+    const { container, queryClient } = renderQueue();
+    await screen.findByTestId('acx-review-queue-repair');
+    const liveRegion = () => container.querySelector('.acx-review-queue__live');
+    expect(within(liveRegion() as HTMLElement).getByText(/missing face data/i)).toBeInTheDocument();
+
+    queryClient.setQueryData(queryKeys.clusters.topUnlabeled('test-tenant-id'), {
+      clusters: [],
+      limit: 20,
+      total: 0,
+      truncated: false,
+      repair_pending: false,
+      singleton_count: 0,
+      data_source: DATA_SOURCE.LOCAL_PROJECTION,
+    });
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(liveRegion()).not.toHaveTextContent(/missing face data/i);
+    expect(liveRegion()).toHaveTextContent(REVIEW_QUEUE_DRAIN_MESSAGE);
+  });
+
+  it('R7-02: filtered-empty repair first-mount announces exactly once across rerenders', async () => {
+    const original = useAriaAnnounceMod.useAriaAnnounce;
+    const announceSpy = vi.fn();
+    let realAnnounce: ((message: string) => void) | null = null;
+    const wrappedAnnounce = (message: string): void => {
+      announceSpy(message);
+      realAnnounce?.(message);
+    };
+    const spy = vi.spyOn(useAriaAnnounceMod, 'useAriaAnnounce').mockImplementation(() => {
+      const result = original();
+      realAnnounce = result.announce;
+      return {
+        ...result,
+        announce: wrappedAnnounce,
+      };
+    });
+
+    try {
+      vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+        suggestions: [
+          {
+            id: 'sugg-1',
+            identity_id: 'identity-1',
+            suggested_cluster_id: 'cluster-1',
+            representative_similarity: 0.9,
+            avg_member_similarity: 0.85,
+            cluster_label: 'Alex',
+            cluster_identity_count: 3,
+          },
+        ],
+        limit: 10,
+        offset: 0,
+      });
+      vi.mocked(fetchTopUnlabeledClusters).mockResolvedValue({
+        clusters: [],
+        limit: 20,
+        total: 5,
+        truncated: true,
+        repair_pending: true,
+        singleton_count: 0,
+        data_source: DATA_SOURCE.LOCAL_PROJECTION,
+      });
+
+      const { queryClient } = renderQueue({ initialKind: 'merge' });
+      await screen.findByRole('button', { name: 'Clear filters' });
+
+      const filteredAnnounceCount = (): number =>
+        announceSpy.mock.calls.filter(
+          (call) => typeof call[0] === 'string' && call[0].includes('No items match the current filters.'),
+        ).length;
+
+      expect(filteredAnnounceCount()).toBe(1);
+      const seqAfterFirst = document.querySelector('.acx-review-queue__live')?.getAttribute('data-announce-seq');
+      expect(seqAfterFirst).toBeTruthy();
+
+      const topKey = queryKeys.clusters.topUnlabeled('test-tenant-id');
+      for (let bump = 1; bump <= 3; bump += 1) {
+        queryClient.setQueryData(topKey, {
+          clusters: [],
+          limit: 20,
+          total: 5 + bump,
+          truncated: true,
+          repair_pending: true,
+          singleton_count: 0,
+          data_source: DATA_SOURCE.LOCAL_PROJECTION,
+        });
+        await act(async () => {
+          await Promise.resolve();
+        });
+      }
+
+      expect(filteredAnnounceCount()).toBe(1);
+      expect(document.querySelector('.acx-review-queue__live')?.getAttribute('data-announce-seq')).toBe(
+        seqAfterFirst,
+      );
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
   it('R5-07: the queue header count decrements after a full bulk accept', async () => {
     vi.mocked(fetchPendingSuggestions).mockResolvedValue({
       suggestions: [],

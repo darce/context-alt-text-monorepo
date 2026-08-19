@@ -189,8 +189,8 @@ class ClusterLabelService {
 				}
 
 				$writer = new ClusterCurationWriter( $wpdb->prefix . 'acx_clusters' );
-				$bound  = $writer->bind_person_to_cluster( $cluster_id, (int) $resolved['person_id'], true );
-				if ( $bound < 0 ) {
+				$bound  = $writer->bind_person_to_cluster( $cluster_id, (int) $resolved['person_id'], $tenant_id, true );
+				if ( false === $bound ) {
 					return new WP_Error( 'acx_db_error', 'Could not bind person to cluster.', array( 'status' => 500 ) );
 				}
 

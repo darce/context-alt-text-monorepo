@@ -77,11 +77,15 @@ class ClusterProjectionWriter {
 				}
 			);
 			if ( ! is_wp_error( $resolved ) ) {
-				( new ClusterCurationWriter( $this->table_name ) )->bind_person_to_cluster(
+				$bound = ( new ClusterCurationWriter( $this->table_name ) )->bind_person_to_cluster(
 					$normalized_cluster_uuid,
 					(int) $resolved['person_id'],
+					$normalized_tenant_id,
 					false
 				);
+				if ( false === $bound ) {
+					return 0;
+				}
 			}
 		}
 

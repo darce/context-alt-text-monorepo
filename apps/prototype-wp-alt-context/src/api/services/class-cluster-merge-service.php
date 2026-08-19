@@ -363,7 +363,10 @@ class ClusterMergeService {
 		}
 
 		$writer = new ClusterCurationWriter( $wpdb->prefix . 'acx_clusters' );
-		$writer->bind_person_to_cluster( $cluster_id, (int) $resolved['person_id'], true );
+		$bound  = $writer->bind_person_to_cluster( $cluster_id, (int) $resolved['person_id'], $this->host->get_tenant_id(), true );
+		if ( false === $bound ) {
+			return new WP_Error( 'acx_db_error', 'Could not bind person to cluster.', array( 'status' => 500 ) );
+		}
 
 		if ( ! $this->host->enqueue_curation_operation(
 			'cluster_person_bound',

@@ -87,6 +87,32 @@ class ClusterLabelServiceTest extends TestCase
         $this->assertTrue($data['roster_bound']);
         $bindUpdate = $this->findQueryContaining($wpdb->queries, 'person_id = 77');
         $this->assertStringContainsString("cluster_uuid = 'cluster-xyz'", $bindUpdate);
+        $this->assertStringContainsString('tenant_id =', $bindUpdate);
+    }
+
+    public function testUpdateClusterLabelSurfacesBindFailure(): void
+    {
+        global $wpdb;
+
+        $wpdb->insert_id = 77;
+        $wpdb->updateResultsByTable['wp_acx_clusters'] = false;
+        $wpdb->tableRows['wp_acx_clusters'] = [
+            [
+                'cluster_uuid' => 'cluster-xyz',
+                'tenant_id' => self::currentTenantId(),
+                'label' => 'Old',
+                'person_id' => null,
+            ],
+        ];
+
+        $request = new WP_REST_Request('PATCH', '/acx/v1/recognition/clusters/cluster-xyz');
+        $request->set_param('cluster_id', 'cluster-xyz');
+        $request->set_param('label', 'Known Person');
+
+        $response = $this->service->update_cluster_label($request);
+
+        $this->assertInstanceOf(\WP_Error::class, $response);
+        $this->assertSame('acx_db_error', $response->get_error_code());
     }
 
     public function testUpdateClusterLabelCreatesPersonAndBindingOnUnlabeledCluster(): void

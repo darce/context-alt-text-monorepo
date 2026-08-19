@@ -1808,6 +1808,45 @@ describe('useSuggestionReviewMutations (Slice 2 hold/flush)', () => {
     ).toEqual(['cluster-1', 'cluster-low']);
   });
 
+  it('R7-07: full accept that disagrees with local cache invalidates instead of evicting', async () => {
+    queryClient.setQueryData(
+      namePendingKey,
+      makeNamePage([
+        { ...makeName('name-1'), confidence_score: 0.95 },
+        { ...makeName('name-2'), id: 'name-2', cluster_id: 'cluster-2', confidence_score: 0.9 },
+      ]),
+    );
+    const topUnlabeledKey = queryKeys.clusters.topUnlabeled('test-tenant');
+    queryClient.setQueryData(
+      topUnlabeledKey,
+      makeTopUnlabeledPage([makeTopCluster('cluster-1'), makeTopCluster('cluster-2')]),
+    );
+    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+    vi.mocked(recognitionApi.bulkAcceptSuggestions).mockResolvedValue({
+      accepted_count: 1,
+      skipped_count: 0,
+    });
+
+    const { result } = renderMutations();
+    await act(async () => {
+      await result.current.mutations.bulkAccept.mutateAsync({
+        suggestion_type: 'name',
+        min_confidence: 0.8,
+      });
+    });
+
+    expect(
+      queryClient.getQueryData<PendingNameSuggestionsResponse>(namePendingKey)?.suggestions.map((s) => s.id),
+    ).toEqual(['name-1', 'name-2']);
+    expect(
+      queryClient.getQueryData<TopUnlabeledClustersResponse>(topUnlabeledKey)?.clusters.map((c) => c.id),
+    ).toEqual(['cluster-1', 'cluster-2']);
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: namePendingKey });
+    expect(invalidateSpy).toHaveBeenCalledWith({
+      queryKey: [...queryKeys.clusters.all, 'top-unlabeled'],
+    });
+  });
+
   it('R1-24: bulkAccept name type decrements the header count', async () => {
     queryClient.setQueryData(
       namePendingKey,

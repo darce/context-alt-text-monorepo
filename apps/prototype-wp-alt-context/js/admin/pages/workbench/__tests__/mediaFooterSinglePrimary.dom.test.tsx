@@ -187,11 +187,24 @@ const ReconciledViewport = ({
       ) : (
         <ReviewQueue
           index={index}
-          onIndexChange={setIndex}
+          onClampIndex={setIndex}
+          onStepIndex={(delta, length) => {
+            setIndex((prev) => {
+              if (length <= 0) {
+                return 0;
+              }
+              const clamped = Math.min(Math.max(0, prev), length - 1);
+              return Math.min(Math.max(0, clamped + delta), length - 1);
+            });
+          }}
           kind={kind}
-          onKindChange={setKind}
+          onKindChange={(next) => {
+            setKind(next);
+            setIndex(0);
+          }}
           band="all"
           onBandChange={vi.fn()}
+          onClearFilters={vi.fn()}
           selectedIds={selectedIds}
           onSelectedIdsChange={setSelectedIds}
           onCardPrimaryPresenceChange={setCardPrimaryPresent}

@@ -1,6 +1,7 @@
 import { __ } from '@wordpress/i18n';
 import type { RosterEntry } from '../../api/rosterApi';
 import { APP_LINK_PARAMS, toWorkbench } from '../../navigation/appLinks';
+import { serializeQueueState } from '../../hooks/workbenchQueueUrl';
 
 /**
  * E21-9 Slice 5a + E21-10 Slice 4 (lands-second): Clusters tab retired; getLegacyTab gone.
@@ -206,6 +207,7 @@ export const isUnlabeledCluster = (cluster: { label?: string | null }): boolean 
 export const workbenchReviewQueueUrl = (): string => {
   // rq stays E21-5-owned; contract supplies route base + param *names* only.
   const base = toWorkbench({ tab: 'scan' });
+  const serialized = serializeQueueState({ kind: 'assignment', band: 'all', index: 0 });
   const separator = base.includes('?') ? '&' : '?';
-  return `${base}${separator}${APP_LINK_PARAMS.rq}=assignment.all.0`;
+  return `${base}${separator}${APP_LINK_PARAMS.rq}=${serialized ?? ''}`;
 };

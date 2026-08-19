@@ -62,6 +62,11 @@
 |   - Media selection table (queue) states=[default,loading… |
 |   - Scan / analyze CTAs + job progress (job) states=[defa… |
 |   - Identity / findings preview (AI-assisted) (ai_review)… |
+|   - Review Suggestions queue header / count (status)       |
+|     states=[default,loading,empty,error,filtered,repair]   |
+|     code_ref=ReviewQueue.tsx                               |
+|   - Top-of-queue group card (ai_review)                    |
+|     states=[default,loading,empty,error,filtered]          |
 +------------------------------------------------------------+
 | ACTIONS                                                    |
 |   [PRIMARY] Scan selected media -> job-pipeline (costly,p… |

@@ -604,12 +604,7 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
             findings.zeroEvidenceClusterCount,
             findings.counts.unlabeledClusters,
           );
-          setLiveMessage(
-            `${__(REVIEW_QUEUE_DRAIN_MESSAGE, 'alt-context')} ${gatedClusterCopy(
-              gatedCount,
-              findings.topUnlabeledTruncated,
-            )}`,
-          );
+          setLiveMessage(gatedClusterCopy(gatedCount, findings.topUnlabeledTruncated));
         } else {
           setLiveMessage(__(REVIEW_QUEUE_DRAIN_MESSAGE, 'alt-context'));
         }
@@ -1310,9 +1305,11 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
                 </div>
               ) : data.isTopUnlabeledError ? null : (
                 <>
-                  <p className="acx-review-queue__empty">
-                    {__(REVIEW_QUEUE_DRAIN_MESSAGE, 'alt-context')}
-                  </p>
+                  {!findings.repairPending ? (
+                    <p className="acx-review-queue__empty">
+                      {__(REVIEW_QUEUE_DRAIN_MESSAGE, 'alt-context')}
+                    </p>
+                  ) : null}
                   {findings.repairPending ? (
                     <div className="acx-review-queue__repair" data-testid="acx-review-queue-repair">
                       <p id="acx-review-queue-repair-copy">

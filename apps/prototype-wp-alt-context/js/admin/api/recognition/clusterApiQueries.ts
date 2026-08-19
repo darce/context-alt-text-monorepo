@@ -138,6 +138,12 @@ export const fetchTopUnlabeledClusters = async (
     signal,
   });
 
+  return normalizeTopUnlabeledClustersResponse(payload);
+};
+
+export const normalizeTopUnlabeledClustersResponse = (
+  payload: TopUnlabeledClustersResponsePayload,
+): TopUnlabeledClustersResponse => {
   if (!Array.isArray(payload.clusters)) {
     throw new Error('Top-unlabeled clusters response must include a clusters array.');
   }

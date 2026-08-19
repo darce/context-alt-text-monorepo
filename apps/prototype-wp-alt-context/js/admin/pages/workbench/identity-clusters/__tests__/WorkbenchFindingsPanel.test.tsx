@@ -1165,7 +1165,10 @@ describe('WorkbenchFindingsPanel', () => {
     render(<WorkbenchFindingsPanel onTargetFindings={vi.fn()} />);
 
     expect(screen.getByRole('button', { name: 'Resync' })).toBeInTheDocument();
-    expect(screen.queryByText('All caught up — no items need review')).not.toBeInTheDocument();
+    expect(
+      screen.queryByText('No findings yet. Run a scan and new findings will appear here automatically.'),
+    ).not.toBeInTheDocument();
+    expect(screen.getByText(/missing face data/i)).toBeInTheDocument();
   });
 
   it('S2: aggregate repair row renders with the gated cluster count', () => {

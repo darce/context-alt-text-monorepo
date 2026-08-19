@@ -1,11 +1,12 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { act, render, renderHook, screen, waitFor, within } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   acceptMergeSuggestion,
+  acceptNameSuggestion,
   acceptSuggestion,
   bulkAcceptSuggestions,
   fetchClusterMembers,
@@ -2975,7 +2976,7 @@ describe('ReviewQueue', () => {
     }
   });
 
-  it('R5-07: the queue header count decrements after a full bulk accept', async () => {
+  it('R7-06: queue header decrements after accepting names through ReviewQueue', async () => {
     vi.mocked(fetchPendingSuggestions).mockResolvedValue({
       suggestions: [],
       limit: 25,
@@ -3005,32 +3006,29 @@ describe('ReviewQueue', () => {
       limit: 25,
       offset: 0,
     });
-    vi.mocked(bulkAcceptSuggestions).mockResolvedValue({
-      accepted_count: 2,
-      skipped_count: 0,
-    });
+    vi.mocked(acceptNameSuggestion).mockImplementation(async (suggestionId) => ({
+      suggestion_id: suggestionId,
+      resolution: 'accepted',
+      identity_id: `identity-${suggestionId}`,
+      cluster_id: suggestionId === 'name-1' ? 'cluster-1' : 'cluster-2',
+      message: 'ok',
+    }));
 
-    const { queryClient, container } = renderQueue();
+    const { container } = renderQueue();
     await waitFor(() => {
       expect(container.querySelector('.acx-review-queue__count')?.textContent).toBe(
         '2 left to review on this page',
       );
     });
 
-    const bulkActionRef = { current: false };
-    const { result } = renderHook(
-      () => useSuggestionReviewMutations({ queryClient, bulkActionRef }),
-      {
-        wrapper: ({ children }) => withQueueProviders(queryClient, children),
-      },
-    );
-    await act(async () => {
-      await result.current.mutations.bulkAccept.mutateAsync({
-        suggestion_type: 'name',
-        min_confidence: 0.8,
-      });
+    await clickAndCommitHold(await screen.findByRole('button', { name: 'Accept suggestion' }));
+    await waitFor(() => {
+      expect(container.querySelector('.acx-review-queue__count')?.textContent).toBe(
+        '1 left to review on this page',
+      );
     });
 
+    await clickAndCommitHold(await screen.findByRole('button', { name: 'Accept suggestion' }));
     await waitFor(() => {
       expect(container.querySelector('.acx-review-queue__count')).toBeNull();
     });

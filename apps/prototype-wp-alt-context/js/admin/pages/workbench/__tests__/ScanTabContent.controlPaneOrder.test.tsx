@@ -68,7 +68,7 @@ vi.mock('../identity-clusters', () => ({
   ClusterLabelingPanel: () => <div data-testid="label-panel" />,
   ClusterReviewPanel: () => (
     <div data-testid="review-panel">
-      <h2 id="acx-workbench-queue-heading">Review this face group</h2>
+      <h2 id="acx-workbench-queue-heading">Review these faces</h2>
     </div>
   ),
   ReviewQueue: React.forwardRef<unknown, Record<string, unknown>>(function ReviewQueueStub() {
@@ -248,7 +248,8 @@ describe('ScanTabContent — E21-18 S1 control-pane reorder', () => {
     expect(screen.queryByTestId('review-queue')).toBeNull();
     const heading = queueSection?.querySelector('#acx-workbench-queue-heading');
     expect(heading).toBeTruthy();
-    expect(heading?.textContent).toBe('Review this face group');
+    expect(heading?.textContent).toMatch(/review these faces/i);
+    expect(heading?.textContent ?? '').not.toMatch(/cluster|face group/i);
   });
 
   it('L3R-08: queue region heading exists when ClusterLabelingPanel replaces ReviewQueue', () => {

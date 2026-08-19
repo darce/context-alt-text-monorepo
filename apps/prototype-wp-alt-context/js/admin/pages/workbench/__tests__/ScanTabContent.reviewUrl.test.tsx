@@ -147,8 +147,11 @@ describe('ScanTabContent — UXW2-4 review panel legibility', () => {
 
     expect(screen.getByTestId('route-probe').textContent).toContain('panel=review');
     expect(screen.getByTestId('route-probe').textContent).toContain('cluster=cluster-42');
-    expect(screen.getByRole('heading', { level: 2, name: 'Review this face group' })).toBeInTheDocument();
+    const heading = screen.getByRole('heading', { level: 2, name: /review these faces/i });
+    expect(heading).toBeInTheDocument();
+    expect(heading.textContent ?? '').not.toMatch(/cluster|face group/i);
     expect(screen.getByRole('button', { name: '← Back to Review Suggestions' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /close face-group review/i })).not.toBeInTheDocument();
     expect(screen.getByRole('status')).toHaveTextContent(
       'Reviewing faces — press Back to return to suggestions',
     );
@@ -159,7 +162,7 @@ describe('ScanTabContent — UXW2-4 review panel legibility', () => {
   it('mounting at panel=review&cluster=<id> restores the review panel', () => {
     renderScanTab('/workbench?tab=scan&panel=review&cluster=cluster-42');
 
-    expect(screen.getByRole('heading', { level: 2, name: 'Review this face group' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { level: 2, name: /review these faces/i })).toBeInTheDocument();
     expect(screen.queryByTestId('review-queue')).not.toBeInTheDocument();
   });
 
@@ -181,14 +184,14 @@ describe('ScanTabContent — UXW2-4 review panel legibility', () => {
     renderScanTab('/workbench?tab=scan&cluster=cluster-42');
 
     expect(screen.getByTestId('review-queue')).toBeInTheDocument();
-    expect(screen.queryByRole('heading', { level: 2, name: 'Review this face group' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('heading', { level: 2, name: /review these faces/i })).not.toBeInTheDocument();
   });
 
   it('panel=conflicts is not treated as review and survives', () => {
     renderScanTab('/workbench?tab=scan&panel=conflicts&cluster=x');
 
     expect(screen.getByTestId('review-queue')).toBeInTheDocument();
-    expect(screen.queryByRole('heading', { level: 2, name: 'Review this face group' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('heading', { level: 2, name: /review these faces/i })).not.toBeInTheDocument();
     expect(screen.getByTestId('route-probe').textContent).toContain('panel=conflicts');
   });
 
@@ -196,6 +199,6 @@ describe('ScanTabContent — UXW2-4 review panel legibility', () => {
     renderScanTab('/workbench?tab=scan&panel=review');
 
     expect(screen.getByTestId('review-queue')).toBeInTheDocument();
-    expect(screen.queryByRole('heading', { level: 2, name: 'Review this face group' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('heading', { level: 2, name: /review these faces/i })).not.toBeInTheDocument();
   });
 });

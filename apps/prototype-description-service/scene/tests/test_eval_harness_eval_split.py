@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import hashlib
+import io
 import json
 from pathlib import Path
 
@@ -1540,3 +1541,112 @@ def test_cli_check_malformed_out_json_exits_2(tmp_path, capsys):
     captured = capsys.readouterr()
     assert "draw-eval-split: sealed split not found/unreadable:" in captured.err
     assert str(bad) in captured.err
+
+
+def _latin1_when_unspecified(encoding, stacklevel=2):
+    """Python 3.12 Path.read_text() consults io.text_encoding, not locale.
+
+    utf8_mode=1 (this venv) makes locale.getpreferredencoding a no-op; LC_ALL=
+    en_US.ISO8859-1 is not generated so subprocess falls back to ASCII
+    UnicodeDecodeError, not mojibake. Patching io.text_encoding(None) is the
+    route that actually reproduces caf\\xc3\\xa9 at HEAD (VLM6-RV9-Q1-01).
+    """
+    if encoding is None:
+        return "iso8859-1"
+    return encoding
+
+
+def test_cli_draw_utf8_exposure_file_pins_encoding(tmp_path, monkeypatch):
+    # VLM6-RV9-Q1-01 / EVAL-10 / AGT-21: sealed pre_split_exposure must not
+    # depend on the host locale. MUT[drop_encoding_pin]: bare read_text()
+    # decodes UTF-8 café as ISO-8859-1 -> this assertion fails with cafÃ©.
+    monkeypatch.setattr(io, "text_encoding", _latin1_when_unspecified)
+    exposure = tmp_path / "notes.txt"
+    exposure.write_bytes(b"caf\xc3\xa9 exposure note\n")
+    out, argv = _draw_with_exposure_file(tmp_path, exposure)
+    assert main(argv) is None
+    sealed = json.loads(out.read_text(encoding="utf-8"))
+    assert sealed["pre_split_exposure"] == ["caf\u00e9 exposure note"]
+
+
+@pytest.mark.parametrize("payload", ["[]", "null", "1", '"x"'])
+def test_cli_check_non_object_artifact_exits_2(tmp_path, capsys, payload):
+    # VLM6-RV9-L-01 / VLM6-RV9-Q2-01: --check must name-exit 2 on non-object
+    # JSON, not AttributeError from artifact.get in strata.
+    # MUT[drop_dict_guard]: delete the isinstance(dict) guard -> AttributeError.
+    out = tmp_path / "sealed.json"
+    out.write_text(payload, encoding="utf-8")
+    with pytest.raises(SystemExit) as excinfo:
+        main(_check_cli_args(out))
+    assert excinfo.value.code == 2
+    captured = capsys.readouterr()
+    assert "draw-eval-split: sealed split is not a JSON object:" in captured.err
+    assert str(out) in captured.err
+
+
+def test_cli_draw_out_parent_is_file_exits_2(tmp_path, capsys):
+    # VLM6-RV9-Q3-01: mkdir on a regular-file parent must be named exit 2,
+    # not FileExistsError traceback. MUT[unguarded_write]: drop the OSError
+    # wrap around mkdir/write_text -> FileExistsError.
+    parent = tmp_path / "not-a-dir"
+    parent.write_text("blocker", encoding="utf-8")
+    out = parent / "split.json"
+    argv = [
+        "draw-eval-split",
+        "--manifest",
+        str(_SEED_MANIFEST),
+        "--out",
+        str(out),
+        "--seed",
+        _DRAW_SEED,
+        "--held-out-fraction",
+        "0.5",
+        "--draw-timestamp",
+        _DRAW_TIMESTAMP,
+        "--partition-provenance",
+        _PARTITION_PROVENANCE,
+        "--exposure-note",
+        "fixture exposure",
+        "--force",
+    ]
+    with pytest.raises(SystemExit) as excinfo:
+        main(argv)
+    assert excinfo.value.code == 2
+    captured = capsys.readouterr()
+    assert "draw-eval-split: cannot write sealed split:" in captured.err
+    assert str(out) in captured.err
+    assert not out.exists()
+
+
+def test_cli_draw_out_is_directory_force_exits_2(tmp_path, capsys):
+    # VLM6-RV9-Q3-01: --out directory + --force must be named exit 2, not
+    # IsADirectoryError traceback. MUT[unguarded_write]: drop the OSError wrap
+    # -> IsADirectoryError.
+    out = tmp_path / "split-dir"
+    out.mkdir()
+    argv = [
+        "draw-eval-split",
+        "--manifest",
+        str(_SEED_MANIFEST),
+        "--out",
+        str(out),
+        "--seed",
+        _DRAW_SEED,
+        "--held-out-fraction",
+        "0.5",
+        "--draw-timestamp",
+        _DRAW_TIMESTAMP,
+        "--partition-provenance",
+        _PARTITION_PROVENANCE,
+        "--exposure-note",
+        "fixture exposure",
+        "--force",
+    ]
+    with pytest.raises(SystemExit) as excinfo:
+        main(argv)
+    assert excinfo.value.code == 2
+    captured = capsys.readouterr()
+    assert "draw-eval-split: cannot write sealed split:" in captured.err
+    assert str(out) in captured.err
+    assert out.is_dir()
+    assert list(out.iterdir()) == []

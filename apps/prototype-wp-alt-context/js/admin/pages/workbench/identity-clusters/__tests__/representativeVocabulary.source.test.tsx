@@ -33,6 +33,7 @@ vi.mock('../representativeVocabulary', () => ({
     imageUnavailable: SENTINEL,
   },
   gatedClusterCopy: () => SENTINEL_GATED,
+  repairGatedCount: (zeroEvidence: number, unlabeled: number) => (zeroEvidence > 0 ? zeroEvidence : unlabeled),
 }));
 
 vi.mock('../useWorkbenchFindings', async () => {
@@ -186,6 +187,7 @@ describe('missing-representative vocabulary source', () => {
         },
       ],
       zeroEvidenceClusterCount: 0,
+      repairPending: false,
       topUnlabeledTruncated: false,
       hasFindings: true,
       isLoading: false,
@@ -213,6 +215,7 @@ describe('missing-representative vocabulary source', () => {
       counts: { assignments: 1, merges: 0, names: 0, unlabeledClusters: 1, total: 2 },
       previews: [],
       zeroEvidenceClusterCount: 2,
+      repairPending: true,
       topUnlabeledTruncated: false,
       hasFindings: true,
       isLoading: false,

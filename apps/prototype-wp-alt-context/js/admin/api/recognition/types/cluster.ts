@@ -77,6 +77,8 @@ export interface TopUnlabeledClustersResponse {
   limit: number;
   total: number;
   truncated: boolean;
+  /** Envelope repair signal; drives Resync when local_projection cannot emit zero-evidence rows. */
+  repair_pending?: boolean;
   singleton_count?: number;
   has_clusters?: boolean;
   data_source: DataSource;

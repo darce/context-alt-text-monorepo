@@ -25,7 +25,7 @@ const pagesDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../
 
 /** Page modules that live directly under js/admin/pages/*.tsx */
 const pageModulesOnDisk = readdirSync(pagesDir)
-  .filter((name) => name.endsWith('Page.tsx') || name === 'DescribeRunApplyView.tsx')
+  .filter((name) => !name.startsWith('._') && (name.endsWith('Page.tsx') || name === 'DescribeRunApplyView.tsx'))
   .map((name) => name.replace(/\.tsx$/, ''))
   .sort();
 
@@ -498,32 +498,6 @@ vi.mock('../api/recognition', async () => {
   };
 });
 
-vi.mock('../pages/workbench/identity-clusters/useShowAllClusterMembers', () => ({
-  useShowAllClusterMembers: vi.fn(() => ({
-    members: [
-      {
-        identity_id: 'identity-1',
-        media_id: 1,
-        similarity: 0.9,
-        confidence: 0.9,
-        bbox: null,
-        thumb_url: null,
-        media_url: null,
-        attachment_url: null,
-      },
-    ],
-    isLoading: false,
-    isError: false,
-    truncated: false,
-    total: 1,
-    isFullyLoaded: true,
-    isExpanding: false,
-    expandError: null,
-    showAll: vi.fn(),
-    refetch: vi.fn(),
-  })),
-}));
-
 import { DashboardPage } from '../pages/DashboardPage';
 import { DescribeRunApplyView } from '../pages/DescribeRunApplyView';
 import { DescriptionHistoryPage } from '../pages/DescriptionHistoryPage';
@@ -531,6 +505,41 @@ import { RetentionPage } from '../pages/RetentionPage';
 import { RosterPage } from '../pages/RosterPage';
 import { SettingsPage } from '../pages/SettingsPage';
 import { WorkbenchPage } from '../pages/WorkbenchPage';
+import type { ClusterIdentity, ClusterSummary } from '../api/recognition';
+import type { RosterEntry } from '../api/rosterApi';
+import { ClusterDrawerPanel } from '../pages/roster/ClusterDrawerPanel';
+import { PersonWorkspacePanel } from '../pages/roster/PersonWorkspacePanel';
+import { ClusterReviewPanel } from '../pages/workbench/identity-clusters/ClusterReviewPanel';
+
+const reviewMembersState = vi.hoisted(() => ({
+  members: [
+    {
+      identity_id: 'face-1',
+      media_id: 7,
+      similarity: 0.9,
+      confidence: 0.9,
+      bbox: null,
+      thumb_url: 'https://example.com/face-7.jpg',
+      attachment_url: null,
+      media_url: 'https://example.com/face-7.jpg',
+    },
+  ],
+}));
+
+vi.mock('../pages/workbench/identity-clusters/useShowAllClusterMembers', () => ({
+  useShowAllClusterMembers: vi.fn(() => ({
+    members: reviewMembersState.members,
+    isLoading: false,
+    isError: false,
+    truncated: false,
+    total: reviewMembersState.members.length,
+    isFullyLoaded: true,
+    isExpanding: false,
+    expandError: null,
+    showAll: vi.fn(),
+    refetch: vi.fn(),
+  })),
+}));
 
 const pageRenderers: Record<PageName, () => React.JSX.Element> = {
   DashboardPage: () => <DashboardPage />,
@@ -613,6 +622,25 @@ const collectUxMapOperatorCopy = (value: unknown, key?: string): string[] => {
     return Object.entries(value).flatMap(([childKey, child]) => collectUxMapOperatorCopy(child, childKey));
   }
   return [];
+};
+
+const collectVisibleText = (container: HTMLElement): string => {
+  const attrBits = Array.from(
+    container.querySelectorAll('[alt],[aria-label],[aria-description],[title],[placeholder]'),
+  )
+    .map((el) =>
+      [
+        el.getAttribute('alt'),
+        el.getAttribute('aria-label'),
+        el.getAttribute('aria-description'),
+        el.getAttribute('title'),
+        el.getAttribute('placeholder'),
+      ]
+        .filter((value): value is string => Boolean(value))
+        .join(' '),
+    )
+    .join(' ');
+  return `${container.textContent ?? ''} ${attrBits}`;
 };
 
 describe('banned vocabulary across js/admin pages', () => {
@@ -890,11 +918,13 @@ describe('banned vocabulary across js/admin pages', () => {
         <survivors.MergeSurvivorProvider>
           <queue.ReviewQueue
             index={0}
-            onIndexChange={() => undefined}
+            onClampIndex={() => undefined}
+            onStepIndex={() => undefined}
             kind="all"
             onKindChange={() => undefined}
             band="all"
             onBandChange={() => undefined}
+            onClearFilters={() => undefined}
             selectedIds={new Set()}
             onSelectedIdsChange={() => undefined}
           />
@@ -1068,6 +1098,121 @@ describe('banned vocabulary across js/admin pages', () => {
   });
 
   /**
+   * UXW2-4: Roster surfaces say "faces" / "face group" / "person" — never
+   * cluster / identities / projected instances (NAV-13 controlled vocabulary).
+   * The RosterPage empty-fixture sweep cannot reach the drawer (`?cluster=`
+   * deep-link shim) or the person workspace (`?person=`), so both panels are
+   * rendered directly here with representative fixtures.
+   */
+  it('roster surfaces render without cluster/identity jargon', () => {
+    const ROSTER_BANNED = ['cluster', 'identity', 'identities', 'member', 'projected instances'] as const;
+    const SURFACE_BANNED = [...BANNED_STRINGS, ...ROSTER_BANNED];
+
+    const drawerCluster: ClusterSummary = {
+      id: 'drawer-fixture-1',
+      label: null,
+      identity_count: 2,
+      member_ids: ['face-1', 'face-2'],
+      representative_identity: { media_id: 7, bbox: { x: 0, y: 0, width: 100, height: 100 } },
+      sample_identities: [],
+    };
+    const drawerFaces: ClusterIdentity[] = [
+      { identity_id: 'face-1', media_id: 7, similarity: 0.9, confidence: 0.9, bbox: null },
+    ];
+    const { container: drawerContainer } = render(
+      wrap(
+        <ClusterDrawerPanel
+          cluster={drawerCluster}
+          identities={drawerFaces}
+          mediaMap={{}}
+          onClose={vi.fn()}
+          onRescanCluster={vi.fn()}
+          isRescanning={false}
+          onCommitCluster={vi.fn()}
+          onOpenPersonWorkspace={vi.fn()}
+          isCommitting={false}
+          rosterEntries={[]}
+          isDetailLoading={false}
+          onFaceDragStart={vi.fn()}
+          onFaceDragEnd={vi.fn()}
+          onDropTargetChange={vi.fn()}
+          dropTarget={null}
+          isDragging={false}
+          onDiscardDrop={vi.fn()}
+        />,
+      ),
+    );
+
+    const rosterEntry: RosterEntry = {
+      id: 1,
+      person_uuid: 'person-fixture-1',
+      name: 'Alice',
+      tags: [],
+      cluster_count: 1,
+      clusters: [
+        {
+          cluster_id: 'drawer-fixture-1',
+          identity_count: 1,
+          representative_identity: {
+            identity_id: 'face-1',
+            media_id: 7,
+            media_url: 'https://example.com/face-7.jpg',
+            bbox: { x: 10, y: 20, width: 30, height: 40 },
+            similarity: 0.95,
+            similarity_threshold: 0.8,
+          },
+          instances: [
+            {
+              identity_id: 'face-1',
+              media_id: 7,
+              media_url: 'https://example.com/face-7.jpg',
+              bbox: { x: 10, y: 20, width: 30, height: 40 },
+              similarity: 0.95,
+              similarity_threshold: 0.8,
+            },
+          ],
+        },
+      ],
+      queue_memberships: [],
+      updated_at: '2026-05-07T12:00:00Z',
+      source_version: 11,
+      projection_status: 'current',
+      projection_refreshed_at: '2026-05-07T12:00:00Z',
+    };
+    const { container: workspaceContainer } = render(
+      wrap(<PersonWorkspacePanel entry={rosterEntry} onOpenQueue={vi.fn()} />),
+    );
+
+    const { container: pageContainer } = render(wrap(<RosterPage />));
+
+    const { container: reviewContainer } = render(
+      wrap(<ClusterReviewPanel clusterId="review-fixture-1" onClose={vi.fn()} />),
+    );
+
+    const drawerText = collectVisibleText(drawerContainer).toLowerCase();
+    expect(drawerText).toContain('unnamed face group');
+    const workspaceText = collectVisibleText(workspaceContainer).toLowerCase();
+    expect(workspaceText).toContain('alice');
+    expect(workspaceText).toContain('data status');
+    const pageText = collectVisibleText(pageContainer).toLowerCase();
+    expect(pageText).toMatch(/unnamed faces|face groups waiting|reviewed in the workbench/);
+    const reviewText = collectVisibleText(reviewContainer).toLowerCase();
+    expect(reviewText).toContain('review these faces');
+
+    for (const [label, text] of [
+      ['drawer', drawerText],
+      ['workspace', workspaceText],
+      ['page', pageText],
+      ['review', reviewText],
+    ] as const) {
+      for (const banned of SURFACE_BANNED) {
+        expect(text, `${label} leaked "${banned}"`).not.toContain(banned.toLowerCase());
+      }
+      expect(text).not.toMatch(UUID_REGEX);
+    }
+  });
+
+  /**
    * UXP-4 BR-02: PurgeDialog options are not mounted by the RetentionPage
    * empty fixture (dialog closed), so scope-option constants are swept via
    * import * (retentionCardCopy pattern).
@@ -1105,5 +1250,30 @@ describe('banned vocabulary across js/admin pages', () => {
     const notDoing = map.not_doing;
     expect(Array.isArray(openQuestions) ? openQuestions.join(' ') : '').toMatch(/\bcluster\b/i);
     expect(Array.isArray(notDoing) ? notDoing.join(' ') : '').toMatch(/\bcluster/i);
+  });
+
+  it('js/admin production source has no cluster-jargon toasts or bulk merge/dismiss', () => {
+    const adminDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+    const files: string[] = [];
+    const walk = (dir: string): void => {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const full = path.join(dir, entry.name);
+        if (entry.isDirectory()) {
+          if (entry.name === '__tests__' || entry.name === 'node_modules') {
+            continue;
+          }
+          walk(full);
+          continue;
+        }
+        if (/\.(ts|tsx)$/.test(entry.name)) {
+          files.push(full);
+        }
+      }
+    };
+    walk(adminDir);
+    const joined = files.map((file) => readFileSync(file, 'utf8')).join('\n');
+    expect(joined).not.toMatch(/for cluster %s/);
+    expect(joined).not.toMatch(/bulkMergeMutation|bulkDismissMutation/);
+    expect(joined).not.toMatch(/Clusters merged successfully|Clusters dismissed/);
   });
 });

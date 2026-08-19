@@ -14,7 +14,12 @@ use WP_REST_Request;
 use WP_REST_Response;
 
 use function absint;
+use function array_merge;
+use function array_slice;
+use function array_unique;
+use function array_values;
 use function count;
+use function sort;
 use function is_array;
 use function is_bool;
 use function is_numeric;
@@ -35,6 +40,7 @@ class ClusterReadService {
 	private const LIST_CLUSTERS_MAX_LIMIT = 500;
 	private const LIST_TOP_UNLABELED_CLUSTERS_DEFAULT_LIMIT = 10;
 	private const LIST_TOP_UNLABELED_CLUSTERS_MAX_LIMIT = 500;
+	public const TARGETED_REPAIR_ID_CEILING = 25;
 	/**
 	 * Per-cluster sample size for list / top-unlabeled cards. Canonical value
 	 * lives on the repository interface (PREVIEW_IDENTITIES_PER_CLUSTER); do not
@@ -42,6 +48,7 @@ class ClusterReadService {
 	 * (sr-007, E21-14-R3-COORDINATOR-02).
 	 */
 	private const PREVIEW_IDENTITIES_PER_CLUSTER = IdentityMembersRepositoryInterface::PREVIEW_IDENTITIES_PER_CLUSTER;
+	private const PREVIEW_IDENTITIES_FETCH_LIMIT = IdentityMembersRepositoryInterface::PREVIEW_IDENTITIES_FETCH_LIMIT;
 	/**
 	 * Cluster detail member page size. Canonical value lives on the repository
 	 * interface (DEFAULT_CLUSTER_MEMBER_LIMIT); do not re-state the magnitude.
@@ -77,8 +84,9 @@ class ClusterReadService {
 				);
 
 				$preview_limit      = self::PREVIEW_IDENTITIES_PER_CLUSTER;
-				$members_by_cluster = $this->load_members_by_cluster( $rows, $preview_limit );
+				$members_by_cluster = $this->load_members_by_cluster( $rows, self::PREVIEW_IDENTITIES_FETCH_LIMIT );
 				$clusters           = $this->dependencies->cluster_mapper->map_cluster_list( $rows, $members_by_cluster, $preview_limit );
+				$this->schedule_repair_from_mapper( $tenant_id );
 
 				return new WP_REST_Response( $this->dependencies->response_envelope_service->build_cluster_list_envelope( $rows, $clusters, $limit ), 200 );
 			} catch ( ProjectionQueryException $exception ) {
@@ -137,6 +145,11 @@ class ClusterReadService {
 				$data = $normalized->get_data();
 				if ( is_array( $data ) ) {
 					$data['data_source'] = $this->dependencies->config->data_source_backend_proxy;
+					// Guarantee the schema-required key. Omission normalizes to
+					// false — never invent true from a missing upstream field.
+					if ( ! array_key_exists( 'repair_pending', $data ) || ! is_bool( $data['repair_pending'] ) ) {
+						$data['repair_pending'] = false;
+					}
 					return new WP_REST_Response( $data, 200 );
 				}
 			}
@@ -151,6 +164,7 @@ class ClusterReadService {
 					'limit' => $limit,
 					'total' => 0,
 					'truncated' => false,
+					'repair_pending'    => false,
 					'singleton_count'   => 0,
 					'data_source'       => $this->dependencies->config->data_source_unavailable,
 					'projection_status' => $this->dependencies->config->projection_status_bootstrapping,
@@ -163,13 +177,6 @@ class ClusterReadService {
 			// Query errors throw before empty-member repair — repair only heals
 			// true projection gaps, not MySQL 1054 / read failures (RLSE-05).
 			$sovereign_data = $this->dependencies->cluster_facade->list_top_unlabeled( $tenant_id, $limit );
-			$cluster_ids_to_repair = $this->dependencies->projection_sync_service->find_clusters_missing_projected_members(
-				$sovereign_data['clusters'],
-				$sovereign_data['members']
-			);
-			if ( ! empty( $cluster_ids_to_repair ) && $this->dependencies->projection_sync_service->repair_targeted_projection( $tenant_id, $cluster_ids_to_repair ) ) {
-				$sovereign_data = $this->dependencies->cluster_facade->list_top_unlabeled( $tenant_id, $limit );
-			}
 
 			$has_clusters     = $this->dependencies->clusters_repository->has_projection_rows_for_tenant( $tenant_id );
 			$preview_limit    = self::PREVIEW_IDENTITIES_PER_CLUSTER;
@@ -179,17 +186,33 @@ class ClusterReadService {
 				$tenant_id,
 				$preview_limit
 			);
-			$total = count( $unlabeled_items );
-			if ( isset( $sovereign_data['clusters'][0]['total_count'] ) && is_numeric( $sovereign_data['clusters'][0]['total_count'] ) ) {
-				$total = max( 0, (int) $sovereign_data['clusters'][0]['total_count'] );
+			$mapper_ids = $this->normalize_repair_cluster_ids(
+				$this->dependencies->cluster_mapper->requested_repair_cluster_ids()
+			);
+			$extra_ids  = array();
+			if ( count( $mapper_ids ) < self::TARGETED_REPAIR_ID_CEILING ) {
+				$extra_ids = $this->dependencies->clusters_repository->list_unlabeled_identity_count_drift( $tenant_id );
 			}
+			$scheduled_ids = $this->schedule_repair_from_mapper( $tenant_id, $extra_ids, $mapper_ids );
+			$dropped       = $this->dependencies->cluster_mapper->dropped_cluster_count();
+			$fetched_page  = count( $sovereign_data['clusters'] );
+			$total_count   = null;
+			if ( isset( $sovereign_data['clusters'][0]['total_count'] ) && is_numeric( $sovereign_data['clusters'][0]['total_count'] ) ) {
+				$total_count = (int) $sovereign_data['clusters'][0]['total_count'];
+				$total       = max( 0, $total_count );
+			} else {
+				// Missing COUNT(*) OVER() window: do not shrink on mapper drops.
+				$total = $fetched_page;
+			}
+			$repair_pending = array() !== $scheduled_ids || $dropped > 0;
 
 			return new WP_REST_Response(
 				array(
 					'clusters' => $unlabeled_items,
 					'limit' => $limit,
 					'total' => $total,
-					'truncated' => $total > count( $unlabeled_items ),
+					'truncated' => null !== $total_count && $total_count > $fetched_page,
+					'repair_pending' => $repair_pending,
 					'singleton_count' => max( 0, (int) ( $sovereign_data['singleton_count'] ?? 0 ) ),
 					'has_clusters' => $has_clusters,
 					'data_source' => $this->dependencies->config->data_source_local_projection,
@@ -248,8 +271,14 @@ class ClusterReadService {
 				$cluster_row = $this->dependencies->clusters_repository->find_by_uuid( $cluster_id );
 				if ( is_array( $cluster_row ) ) {
 					$member_limit = self::CLUSTER_DETAIL_MEMBER_LIMIT;
-					$members      = $this->dependencies->members_repository->list_for_cluster( $cluster_id, $member_limit, 0, $tenant_id );
-					$payload      = $this->dependencies->cluster_mapper->map_cluster_detail( $cluster_row, $members, $member_limit );
+					$members      = $this->dependencies->members_repository->list_for_cluster(
+						$cluster_id,
+						IdentityMembersRepositoryInterface::DEFAULT_CLUSTER_MEMBER_FETCH_LIMIT,
+						0,
+						$tenant_id
+					);
+					$payload = $this->dependencies->cluster_mapper->map_cluster_detail( $cluster_row, $members, $member_limit );
+					$this->schedule_repair_from_mapper( $tenant_id );
 					return new WP_REST_Response( $payload, 200 );
 				}
 
@@ -386,6 +415,50 @@ class ClusterReadService {
 		}
 
 		return $this->dependencies->members_repository->list_for_cluster_uuids( $cluster_uuids, $limit );
+	}
+
+	/**
+	 * @param list<string> $ids
+	 * @return list<string>
+	 */
+	private function normalize_repair_cluster_ids( array $ids ): array {
+		$normalized = array();
+		foreach ( $ids as $cluster_id ) {
+			$id = sanitize_text_field( (string) $cluster_id );
+			if ( '' !== $id ) {
+				$normalized[] = $id;
+			}
+		}
+
+		return array_values( array_unique( $normalized ) );
+	}
+
+	/**
+	 * Mapper-requested ids take the ceiling first; extras top up only if room remains.
+	 *
+	 * @param list<string>      $extra_ids
+	 * @param list<string>|null $mapper_ids Already-normalized mapper ids; fetched when null.
+	 * @return list<string> Normalized ids dispatched to repair, or empty when nothing was scheduled.
+	 */
+	private function schedule_repair_from_mapper( string $tenant_id, array $extra_ids = array(), ?array $mapper_ids = null ): array {
+		$mapper_ids = $this->normalize_repair_cluster_ids(
+			$mapper_ids ?? $this->dependencies->cluster_mapper->requested_repair_cluster_ids()
+		);
+		$mapper_ids = array_slice( $mapper_ids, 0, self::TARGETED_REPAIR_ID_CEILING );
+		$room       = self::TARGETED_REPAIR_ID_CEILING - count( $mapper_ids );
+		$top_up     = array();
+		if ( $room > 0 ) {
+			$top_up = $this->normalize_repair_cluster_ids( $extra_ids );
+			$top_up = array_values( array_diff( $top_up, $mapper_ids ) );
+			sort( $top_up );
+			$top_up = array_slice( $top_up, 0, $room );
+		}
+		$normalized = array_merge( $mapper_ids, $top_up );
+		if ( array() !== $normalized ) {
+			$this->dependencies->projection_sync_service->repair_targeted_projection( $tenant_id, $normalized );
+		}
+
+		return $normalized;
 	}
 
 	/**

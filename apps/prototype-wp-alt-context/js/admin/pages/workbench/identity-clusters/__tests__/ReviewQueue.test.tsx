@@ -2,14 +2,16 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { QueryClient, QueryClientProvider, useQueryClient } from '@tanstack/react-query';
 import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import React from 'react';
+import { MemoryRouter, Route, Routes, useLocation, useSearchParams } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   acceptMergeSuggestion,
+  acceptNameSuggestion,
   acceptSuggestion,
   bulkAcceptSuggestions,
   fetchClusterMembers,
@@ -17,6 +19,7 @@ import {
   fetchPendingNameSuggestions,
   fetchPendingSuggestions,
   fetchTopUnlabeledClusters,
+  listRecognitionClusters,
   rejectSuggestion,
   updateClusterLabel,
   type PendingSuggestionsResponse,
@@ -29,10 +32,18 @@ import {
   listRosterEntries,
   type RosterClusterCommitResponse,
 } from '../../../../api/rosterApi';
+import { resetPendingSearchWritesForTests } from '../../../../hooks/pendingSearchWrites';
+import {
+  QUEUE_ACTION,
+  type QueueAction,
+  useWorkbenchFilters,
+} from '../../../../hooks/useWorkbenchFilters';
 import type {
   ReviewQueueBandParam,
   ReviewQueueKindParam,
+  WorkbenchQueueState,
 } from '../../../../hooks/workbenchQueueUrl';
+import * as workbenchFilters from '../../../../hooks/useWorkbenchFilters';
 import {
   MODEL_OUTPUT_DISCLOSURE,
   PERSON_COMMIT_COMBOBOX_ARIA,
@@ -41,7 +52,10 @@ import {
   viewInRosterHref,
 } from '../personCommitCopy';
 import { MergeSurvivorProvider } from '../MergeSurvivorContext';
+import { ClusterLabelingPanel } from '../ClusterLabelingPanel';
 import { CommitHoldRegion, ReviewQueue, type ReviewQueueHandle } from '../ReviewQueue';
+import { dropClusterFromReviewCaches, REVIEW_DROP_MODE } from '../suggestionProjection';
+import { WorkbenchFindingsPanel } from '../WorkbenchFindingsPanel';
 import { ReviewCardGroupShell } from '../reviewCardGroupAccname';
 import { REVIEW_QUEUE_DRAIN_MESSAGE } from '../reviewQueueDriver';
 import * as useAriaAnnounceMod from '../useAriaAnnounce';
@@ -49,9 +63,11 @@ import {
   HOLD_COMMITTING_STATUS_COPY,
   HOLD_STATUS_COPY,
   UNDO_HOLD_MS,
+  useSuggestionReviewMutations,
 } from '../useSuggestionReviewMutations';
 import { LIVE_TARGET_CLOSE_ANNOUNCE } from '../useLiveReviewTarget';
 import { HTTPError } from '../../../../utils/http';
+import { ScanTabContent } from '../../ScanTabContent';
 
 const rosterCommitFixture = (
   overrides: Partial<RosterClusterCommitResponse> = {},
@@ -152,6 +168,7 @@ vi.mock('../../../../api/recognition', async () => {
       truncated: false,
     }),
     fetchTopUnlabeledClusters: vi.fn(),
+    listRecognitionClusters: vi.fn(),
     dismissCluster: vi.fn().mockResolvedValue(undefined),
     mergeCluster: vi.fn().mockResolvedValue(undefined),
     updateClusterLabel: vi.fn().mockResolvedValue(undefined),
@@ -183,6 +200,53 @@ vi.mock('../../../../api/rosterApi', () => ({
   ]),
 }));
 
+vi.mock('../../../../hooks/useScrollRestoration', () => ({
+  useScrollRestoration: () => undefined,
+}));
+
+vi.mock('../../Panels', () => ({
+  ScanActionPanel: () => <div data-testid="scan-action-panel" />,
+  isClusteringActive: () => false,
+}));
+
+vi.mock('../../JobTimeline', () => ({
+  JobTimeline: () => <div data-testid="job-timeline" />,
+}));
+
+vi.mock('../useOpenReviewTargetLifecycle', () => ({
+  useOpenReviewTargetLifecycle: () => ({ reviewClusterId: null }),
+}));
+
+vi.mock('../../JobPipelineContext', () => ({
+  useJobPipeline: () => ({
+    scanRun: { isScanning: false, progress: null },
+    status: {
+      scanProgress: null,
+      clusterProgress: null,
+      currentPhase: 'idle',
+      projectionSyncState: 'idle',
+    },
+    history: { activeJobIds: [], jobId: null },
+    cancelScan: vi.fn(),
+    retryScanStream: vi.fn(),
+  }),
+}));
+
+vi.mock('../../ClusterPanelContext', () => ({
+  useClusterPanel: () => ({
+    clusterPanel: { mode: 'none', clusterId: null },
+    dispatchClusterPanel: vi.fn(),
+  }),
+}));
+
+vi.mock('../../WorkbenchMediaContext', () => ({
+  useWorkbenchMediaContext: () => ({ mediaQueue: { hasIdentities: true } }),
+}));
+
+vi.mock('../../ReviewSurfaceContext', () => ({
+  useReviewSurface: () => ({ cardPrimaryPresent: false, setCardPrimaryPresent: vi.fn() }),
+}));
+
 interface HarnessProps {
   initialIndex?: number;
   initialKind?: ReviewQueueKindParam;
@@ -193,42 +257,117 @@ interface HarnessProps {
   onLabel?: (clusterId: string) => void;
   /** Expose selection for M2 asserts (optional). */
   selectionRef?: React.MutableRefObject<Set<string>>;
+  onKindChange?: (kind: ReviewQueueKindParam) => void;
+  onBandChange?: (band: ReviewQueueBandParam) => void;
+  onClampIndex?: (index: number) => void;
+  onStepIndex?: (delta: number, length: number) => void;
+  onClearFilters?: () => void;
 }
 
-const ReviewQueueHarness = ({
+/** Reducer-semantic parent state — every ReviewQueue harness must go through this. */
+const useQueueHarnessState = (
   initialIndex = 0,
-  initialKind = 'all',
-  initialBand = 'all',
-  emptyStateAnchorRef,
-  queueRef,
-  onReview,
-  onLabel,
-  selectionRef,
-}: HarnessProps): React.JSX.Element => {
-  const [index, setIndex] = React.useState(initialIndex);
-  const [kind, setKind] = React.useState<ReviewQueueKindParam>(initialKind);
-  const [band, setBand] = React.useState<ReviewQueueBandParam>(initialBand);
+  initialKind: ReviewQueueKindParam = 'all',
+  initialBand: ReviewQueueBandParam = 'all',
+) => {
+  const [queueState, setQueueState] = React.useState<WorkbenchQueueState>({
+    index: initialIndex,
+    kind: initialKind,
+    band: initialBand,
+  });
   const [selectedIds, setSelectedIds] = React.useState<Set<string>>(() => new Set());
-  if (selectionRef) {
-    selectionRef.current = selectedIds;
-  }
-  return (
-    <ReviewQueue
-      ref={queueRef}
-      index={index}
-      onIndexChange={setIndex}
-      kind={kind}
-      onKindChange={setKind}
-      band={band}
-      onBandChange={setBand}
-      selectedIds={selectedIds}
-      onSelectedIdsChange={setSelectedIds}
-      emptyStateAnchorRef={emptyStateAnchorRef}
-      onReview={onReview}
-      onLabel={onLabel}
-    />
-  );
+  const dispatch = (action: QueueAction): void => {
+    setQueueState((prev) => workbenchFilters.reduceQueueAction(prev, action));
+  };
+  return {
+    index: queueState.index,
+    kind: queueState.kind,
+    band: queueState.band,
+    selectedIds,
+    setSelectedIds,
+    queueCallbacks: {
+      onClampIndex: (next: number): void => {
+        dispatch({ type: QUEUE_ACTION.CLAMP_INDEX, index: next });
+      },
+      onStepIndex: (delta: number, length: number): void => {
+        dispatch({ type: QUEUE_ACTION.STEP_INDEX, delta, length });
+      },
+      onKindChange: (next: ReviewQueueKindParam): void => {
+        dispatch({ type: QUEUE_ACTION.SET_KIND, kind: next });
+      },
+      onBandChange: (next: ReviewQueueBandParam): void => {
+        dispatch({ type: QUEUE_ACTION.SET_BAND, band: next });
+      },
+      onClearFilters: (): void => {
+        dispatch({ type: QUEUE_ACTION.CLEAR_FILTERS });
+      },
+    },
+  };
 };
+
+const makeQueueHarness = (defaults: HarnessProps = {}) => {
+  return function ReviewQueueHarness(props: HarnessProps = {}): React.JSX.Element {
+    const merged = { ...defaults, ...props };
+    const {
+      initialIndex = 0,
+      initialKind = 'all',
+      initialBand = 'all',
+      emptyStateAnchorRef,
+      queueRef,
+      onLabel,
+      onReview,
+      selectionRef,
+      onKindChange: onKindChangeSpy,
+      onBandChange: onBandChangeSpy,
+      onClampIndex: onClampIndexSpy,
+      onStepIndex: onStepIndexSpy,
+      onClearFilters: onClearFiltersSpy,
+    } = merged;
+    const { index, kind, band, selectedIds, setSelectedIds, queueCallbacks } = useQueueHarnessState(
+      initialIndex,
+      initialKind,
+      initialBand,
+    );
+    if (selectionRef) {
+      selectionRef.current = selectedIds;
+    }
+    return (
+      <ReviewQueue
+        ref={queueRef}
+        index={index}
+        kind={kind}
+        band={band}
+        selectedIds={selectedIds}
+        onSelectedIdsChange={setSelectedIds}
+        emptyStateAnchorRef={emptyStateAnchorRef}
+        onLabel={onLabel}
+        onReview={onReview}
+        onClampIndex={(next) => {
+          onClampIndexSpy?.(next);
+          queueCallbacks.onClampIndex(next);
+        }}
+        onStepIndex={(delta, length) => {
+          onStepIndexSpy?.(delta, length);
+          queueCallbacks.onStepIndex(delta, length);
+        }}
+        onKindChange={(next) => {
+          onKindChangeSpy?.(next);
+          queueCallbacks.onKindChange(next);
+        }}
+        onBandChange={(next) => {
+          onBandChangeSpy?.(next);
+          queueCallbacks.onBandChange(next);
+        }}
+        onClearFilters={() => {
+          onClearFiltersSpy?.();
+          queueCallbacks.onClearFilters();
+        }}
+      />
+    );
+  };
+};
+
+const ReviewQueueHarness = makeQueueHarness();
 
 const withQueueProviders = (queryClient: QueryClient, children: React.ReactNode) => (
   <QueryClientProvider client={queryClient}>
@@ -248,9 +387,59 @@ const renderQueue = (props: HarnessProps = {}) => {
   return { queryClient, ...utils };
 };
 
+type SuggestionReviewMutations = ReturnType<typeof useSuggestionReviewMutations>;
+
+/** Second hook instance on the same QueryClient — ReviewQueue has no bulk-accept chrome. */
+const ReviewMutationDriver = ({
+  readyRef,
+}: {
+  readyRef: React.MutableRefObject<SuggestionReviewMutations | null>;
+}): null => {
+  const queryClient = useQueryClient();
+  const bulkActionRef = React.useRef(false);
+  const mutations = useSuggestionReviewMutations({ queryClient, bulkActionRef });
+  readyRef.current = mutations;
+  return null;
+};
+
+const twoNameSuggestions = [
+  {
+    id: 'name-1',
+    cluster_id: 'cluster-1',
+    suggested_name: 'Alex',
+    confidence_score: 0.95,
+    source: 'test',
+    created_at: '2026-01-01T00:00:00Z',
+    expires_at: null,
+  },
+  {
+    id: 'name-2',
+    cluster_id: 'cluster-2',
+    suggested_name: 'Bea',
+    confidence_score: 0.9,
+    source: 'test',
+    created_at: '2026-01-01T00:00:00Z',
+    expires_at: null,
+  },
+];
+
+const unlabeledCluster = (id: string, repId: string) => ({
+  id,
+  tenant_id: 'test-tenant-id',
+  label: null,
+  is_labeled: false,
+  is_auto_label: true,
+  identity_count: 4,
+  user_confirmed: false,
+  suggested_label: null,
+  suggested_target_cluster_id: null,
+  representatives: [{ id: repId, media_id: 1, is_pinned: false }],
+});
+
 describe('ReviewQueue', () => {
   afterEach(() => {
     vi.clearAllMocks();
+    resetPendingSearchWritesForTests();
   });
 
   beforeEach(() => {
@@ -336,7 +525,7 @@ describe('ReviewQueue', () => {
 
     await screen.findByRole('button', { name: 'Yes' });
     expect(screen.getAllByTestId('acx-review-card')).toHaveLength(1);
-    expect(screen.getByText('1 of 2')).toBeInTheDocument();
+    expect(screen.getByText('1 of 2 on this page')).toBeInTheDocument();
   });
 
   it('navigates with prev/next without changing index on accept (PR-54 live-queue semantics)', async () => {
@@ -383,7 +572,7 @@ describe('ReviewQueue', () => {
     renderQueue();
 
     await screen.findByText(/Is this/);
-    expect(screen.getByText('1 of 2')).toBeInTheDocument();
+    expect(screen.getByText('1 of 2 on this page')).toBeInTheDocument();
     // Face label + question both render the name — assert via card textContent.
     expect(screen.getByTestId('acx-review-card')).toHaveTextContent(/Is this\s*Alex/);
 
@@ -391,13 +580,13 @@ describe('ReviewQueue', () => {
     await waitFor(() => {
       expect(screen.getByTestId('acx-review-card')).toHaveTextContent(/Is this\s*Jordan/);
     });
-    expect(screen.getByText('2 of 2')).toBeInTheDocument();
+    expect(screen.getByText('2 of 2 on this page')).toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: 'Previous review item' }));
     await waitFor(() => {
       expect(screen.getByTestId('acx-review-card')).toHaveTextContent(/Is this\s*Alex/);
     });
-    expect(screen.getByText('1 of 2')).toBeInTheDocument();
+    expect(screen.getByText('1 of 2 on this page')).toBeInTheDocument();
 
     await clickAndCommitHold(screen.getByRole('button', { name: 'Yes' }));
     await waitFor(() => {
@@ -405,7 +594,7 @@ describe('ReviewQueue', () => {
     });
     // BR-08: index stays at head; next card occupies the slot after removal.
     await waitFor(() => {
-      expect(screen.getByText('1 of 1')).toBeInTheDocument();
+      expect(screen.getByText('1 of 1 on this page')).toBeInTheDocument();
       expect(screen.getByTestId('acx-review-card')).toHaveTextContent(/Is this\s*Jordan/);
     });
   });
@@ -551,23 +740,323 @@ describe('ReviewQueue', () => {
     renderQueue();
 
     await screen.findByText(/Is this/);
-    expect(screen.getByText('1 of 2')).toBeInTheDocument();
+    expect(screen.getByText('1 of 2 on this page')).toBeInTheDocument();
     // BR-14: two KIND chips only — no third "All" button.
     expect(screen.queryByRole('button', { name: 'All' })).not.toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: 'Possible duplicates' }));
     expect(await screen.findByText('Are these the same person?')).toBeInTheDocument();
     expect(screen.getAllByTestId('acx-review-card')).toHaveLength(1);
-    expect(screen.getByText('1 of 1')).toBeInTheDocument();
+    expect(screen.getByText('1 of 1 shown')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Possible duplicates' })).toHaveAttribute('aria-pressed', 'true');
 
     // Toggle active chip → unfiltered/all.
     await user.click(screen.getByRole('button', { name: 'Possible duplicates' }));
     await waitFor(() => {
-      expect(screen.getByText('1 of 2')).toBeInTheDocument();
+      expect(screen.getByText('1 of 2 on this page')).toBeInTheDocument();
     });
     expect(screen.getByRole('button', { name: 'Possible duplicates' })).toHaveAttribute('aria-pressed', 'false');
     expect(screen.getByRole('button', { name: 'Close matches' })).toHaveAttribute('aria-pressed', 'false');
+  });
+
+  it('kind chip calls onKindChange once and never dispatches SET_INDEX (R1-06/R2-04)', async () => {
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [
+        {
+          id: 'sugg-1',
+          identity_id: 'identity-1',
+          suggested_cluster_id: 'cluster-1',
+          representative_similarity: 0.9,
+          avg_member_similarity: 0.85,
+          cluster_label: 'Alex',
+          cluster_identity_count: 3,
+        },
+      ],
+      limit: 10,
+      offset: 0,
+    });
+    const onKindChange = vi.fn();
+    const onBandChange = vi.fn();
+    const onClampIndex = vi.fn();
+    const onStepIndex = vi.fn();
+    const reduceSpy = vi.spyOn(workbenchFilters, 'reduceQueueAction');
+    const Harness = makeQueueHarness({ onKindChange, onBandChange, onClampIndex, onStepIndex });
+    const user = userEvent.setup();
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, retryDelay: 0 } },
+    });
+    render(withQueueProviders(queryClient, <Harness />));
+    await screen.findByText(/Is this/);
+    onKindChange.mockClear();
+    onBandChange.mockClear();
+    onClampIndex.mockClear();
+    onStepIndex.mockClear();
+    reduceSpy.mockClear();
+    await user.click(screen.getByRole('button', { name: 'Close matches' }));
+    expect(onKindChange).toHaveBeenCalledTimes(1);
+    expect(onKindChange).toHaveBeenCalledWith('assignment');
+    expect(onClampIndex).not.toHaveBeenCalled();
+    expect(onStepIndex).not.toHaveBeenCalled();
+    expect(reduceSpy.mock.calls.some(([, action]) => action.type === QUEUE_ACTION.SET_KIND)).toBe(true);
+    expect(reduceSpy.mock.calls.every(([, action]) => action.type === QUEUE_ACTION.SET_KIND)).toBe(true);
+    expect(onBandChange).not.toHaveBeenCalled();
+    reduceSpy.mockRestore();
+  });
+
+  it('band chip calls onBandChange once and never dispatches SET_INDEX (R1-06/R2-04)', async () => {
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [
+        {
+          id: 'sugg-1',
+          identity_id: 'identity-1',
+          suggested_cluster_id: 'cluster-1',
+          representative_similarity: 0.9,
+          avg_member_similarity: 0.85,
+          cluster_label: 'Alex',
+          cluster_identity_count: 3,
+        },
+      ],
+      limit: 10,
+      offset: 0,
+    });
+    const onKindChange = vi.fn();
+    const onBandChange = vi.fn();
+    const onClampIndex = vi.fn();
+    const onStepIndex = vi.fn();
+    const reduceSpy = vi.spyOn(workbenchFilters, 'reduceQueueAction');
+    const Harness = makeQueueHarness({ onKindChange, onBandChange, onClampIndex, onStepIndex });
+    const user = userEvent.setup();
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, retryDelay: 0 } },
+    });
+    render(withQueueProviders(queryClient, <Harness />));
+    await screen.findByText(/Is this/);
+    onKindChange.mockClear();
+    onBandChange.mockClear();
+    onClampIndex.mockClear();
+    onStepIndex.mockClear();
+    reduceSpy.mockClear();
+    await user.click(screen.getByRole('button', { name: 'Strong matches' }));
+    expect(onBandChange).toHaveBeenCalledTimes(1);
+    expect(onBandChange).toHaveBeenCalledWith('strong');
+    expect(onClampIndex).not.toHaveBeenCalled();
+    expect(onStepIndex).not.toHaveBeenCalled();
+    expect(reduceSpy.mock.calls.some(([, action]) => action.type === QUEUE_ACTION.SET_BAND)).toBe(true);
+    expect(reduceSpy.mock.calls.every(([, action]) => action.type === QUEUE_ACTION.SET_BAND)).toBe(true);
+    expect(onKindChange).not.toHaveBeenCalled();
+    reduceSpy.mockRestore();
+  });
+
+  it('after an abandoned rq write, chip aria-pressed matches the URL (UXW2-1-R4-04)', async () => {
+    resetPendingSearchWritesForTests();
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [
+        {
+          id: 'sugg-1',
+          identity_id: 'identity-1',
+          suggested_cluster_id: 'cluster-1',
+          representative_similarity: 0.9,
+          avg_member_similarity: 0.85,
+          cluster_label: 'Alex',
+          cluster_identity_count: 3,
+        },
+      ],
+      limit: 10,
+      offset: 0,
+    });
+    const UrlOwnedQueue = (): React.JSX.Element => {
+      const { queueState, dispatchQueue, handleSearchChange } = useWorkbenchFilters();
+      const [, setSearchParams] = useSearchParams();
+      const loc = useLocation();
+      const [selectedIds, setSelectedIds] = React.useState<Set<string>>(() => new Set());
+      return (
+        <div>
+          <ReviewQueue
+            index={queueState.index}
+            kind={queueState.kind}
+            band={queueState.band}
+            selectedIds={selectedIds}
+            onSelectedIdsChange={setSelectedIds}
+            onClampIndex={(next) => dispatchQueue({ type: QUEUE_ACTION.CLAMP_INDEX, index: next })}
+            onStepIndex={(delta, length) =>
+              dispatchQueue({ type: QUEUE_ACTION.STEP_INDEX, delta, length })
+            }
+            onKindChange={(next) => dispatchQueue({ type: QUEUE_ACTION.SET_KIND, kind: next })}
+            onBandChange={(next) => dispatchQueue({ type: QUEUE_ACTION.SET_BAND, band: next })}
+            onClearFilters={() => dispatchQueue({ type: QUEUE_ACTION.CLEAR_FILTERS })}
+          />
+          <button
+            type="button"
+            onClick={() => {
+              dispatchQueue({ type: QUEUE_ACTION.SET_KIND, kind: 'assignment' });
+              setSearchParams(new URLSearchParams('tab=scan&panel=conflicts'), { replace: true });
+            }}
+          >
+            overlay-abandon
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              handleSearchChange({ target: { value: 'cat' } } as React.ChangeEvent<HTMLInputElement>);
+            }}
+          >
+            unrelated-search
+          </button>
+          <output data-testid="loc">{loc.search}</output>
+        </div>
+      );
+    };
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, retryDelay: 0 } },
+    });
+    render(
+      <MemoryRouter initialEntries={['/']}>
+        <Routes>
+          <Route path="/" element={withQueueProviders(queryClient, <UrlOwnedQueue />)} />
+        </Routes>
+      </MemoryRouter>,
+    );
+    await screen.findByText(/Is this/);
+    act(() => {
+      screen.getByText('overlay-abandon').click();
+    });
+    act(() => {
+      screen.getByText('unrelated-search').click();
+    });
+    const loc = screen.getByTestId('loc').textContent ?? '';
+    const assignmentPressed =
+      screen.getByRole('button', { name: 'Close matches' }).getAttribute('aria-pressed') === 'true';
+    expect(loc.includes('rq=assignment')).toBe(assignmentPressed);
+    expect(assignmentPressed).toBe(false);
+  });
+
+  it('kind chip on ScanTabContent dispatch writes rq=assignment.all.0 and presses the chip (UXW2-1-R3-07)', async () => {
+    resetPendingSearchWritesForTests();
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [
+        {
+          id: 'sugg-1',
+          identity_id: 'identity-1',
+          suggested_cluster_id: 'cluster-1',
+          representative_similarity: 0.9,
+          avg_member_similarity: 0.85,
+          cluster_label: 'Alex',
+          cluster_identity_count: 3,
+        },
+        {
+          id: 'sugg-2',
+          identity_id: 'identity-2',
+          suggested_cluster_id: 'cluster-2',
+          representative_similarity: 0.8,
+          avg_member_similarity: 0.75,
+          cluster_label: 'Jordan',
+          cluster_identity_count: 2,
+        },
+        {
+          id: 'sugg-3',
+          identity_id: 'identity-3',
+          suggested_cluster_id: 'cluster-3',
+          representative_similarity: 0.7,
+          avg_member_similarity: 0.65,
+          cluster_label: 'Casey',
+          cluster_identity_count: 2,
+        },
+      ],
+      limit: 10,
+      offset: 0,
+    });
+    const LocationProbe = (): React.JSX.Element => {
+      const loc = useLocation();
+      return <output data-testid="loc">{loc.search}</output>;
+    };
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, retryDelay: 0 } },
+    });
+    const user = userEvent.setup();
+    render(
+      <MemoryRouter initialEntries={['/?rq=all.all.2']}>
+        <Routes>
+          <Route
+            path="/"
+            element={withQueueProviders(
+              queryClient,
+              <>
+                <ScanTabContent />
+                <LocationProbe />
+              </>,
+            )}
+          />
+        </Routes>
+      </MemoryRouter>,
+    );
+    expect(await screen.findByText('3 of 3 on this page')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Close matches' }));
+    await waitFor(() => {
+      expect(screen.getByTestId('loc').textContent).toContain('rq=assignment.all.0');
+    });
+    const loc = screen.getByTestId('loc').textContent ?? '';
+    expect(loc).not.toContain('rq=assignment.all.2');
+    expect(loc).not.toContain('rq=assignment.all.1');
+    expect(screen.getByRole('button', { name: 'Close matches' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
+    expect(screen.getByRole('button', { name: 'Possible duplicates' })).toHaveAttribute(
+      'aria-pressed',
+      'false',
+    );
+    expect(screen.getByRole('button', { name: 'Strong matches' })).toHaveAttribute(
+      'aria-pressed',
+      'false',
+    );
+    expect(screen.getByText('1 of 3 shown')).toBeInTheDocument();
+  });
+
+  it('two synchronous Next clicks advance index by 2 (R1-05)', async () => {
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [
+        {
+          id: 'sugg-1',
+          identity_id: 'identity-1',
+          suggested_cluster_id: 'cluster-1',
+          representative_similarity: 0.95,
+          avg_member_similarity: 0.9,
+          cluster_label: 'Alex',
+          cluster_identity_count: 3,
+        },
+        {
+          id: 'sugg-2',
+          identity_id: 'identity-2',
+          suggested_cluster_id: 'cluster-2',
+          representative_similarity: 0.8,
+          avg_member_similarity: 0.75,
+          cluster_label: 'Jordan',
+          cluster_identity_count: 2,
+        },
+        {
+          id: 'sugg-3',
+          identity_id: 'identity-3',
+          suggested_cluster_id: 'cluster-3',
+          representative_similarity: 0.7,
+          avg_member_similarity: 0.65,
+          cluster_label: 'Casey',
+          cluster_identity_count: 2,
+        },
+      ],
+      limit: 10,
+      offset: 0,
+    });
+    renderQueue();
+    await screen.findByRole('button', { name: 'Yes' });
+    expect(screen.getByText('1 of 3 on this page')).toBeInTheDocument();
+    const next = screen.getByRole('button', { name: 'Next review item' });
+    act(() => {
+      next.click();
+      next.click();
+    });
+    await waitFor(() => {
+      expect(screen.getByText('3 of 3 on this page')).toBeInTheDocument();
+    });
   });
 
   it('fires existing accept mutation and invalidates projection keys', async () => {
@@ -894,10 +1383,7 @@ describe('ReviewQueue', () => {
     });
 
     const Parent = (): React.JSX.Element => {
-      const [index, setIndex] = React.useState(1);
-      const [kind, setKind] = React.useState<ReviewQueueKindParam>('all');
-      const [band, setBand] = React.useState<ReviewQueueBandParam>('all');
-      const [selectedIds, setSelectedIds] = React.useState<Set<string>>(() => new Set());
+      const { index, kind, band, selectedIds, setSelectedIds, queueCallbacks } = useQueueHarnessState(1);
       const [mounted, setMounted] = React.useState(true);
       return (
         <div>
@@ -907,13 +1393,11 @@ describe('ReviewQueue', () => {
           {mounted ? (
             <ReviewQueue
               index={index}
-              onIndexChange={setIndex}
               kind={kind}
-              onKindChange={setKind}
               band={band}
-              onBandChange={setBand}
               selectedIds={selectedIds}
               onSelectedIdsChange={setSelectedIds}
+              {...queueCallbacks}
             />
           ) : (
             <p>panel-mode</p>
@@ -937,7 +1421,7 @@ describe('ReviewQueue', () => {
     await waitFor(() => {
       expect(screen.getByTestId('acx-review-card')).toHaveTextContent(/Is this\s*Jordan/);
     });
-    expect(screen.getByText('2 of 2')).toBeInTheDocument();
+    expect(screen.getByText('2 of 2 on this page')).toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: 'toggle-panel' }));
     expect(screen.getByText('panel-mode')).toBeInTheDocument();
@@ -946,7 +1430,7 @@ describe('ReviewQueue', () => {
     await waitFor(() => {
       expect(screen.getByTestId('acx-review-card')).toHaveTextContent(/Is this\s*Jordan/);
     });
-    expect(screen.getByText('2 of 2')).toBeInTheDocument();
+    expect(screen.getByText('2 of 2 on this page')).toBeInTheDocument();
   });
 
   it('announces card transitions via role=status live region', async () => {
@@ -1119,22 +1603,17 @@ describe('ReviewQueue', () => {
 
     // Seeded like rq=…all.3 — controlled index 3 owned by parent (ScanTabContent).
     const Parent = (): React.JSX.Element => {
-      const [index, setIndex] = React.useState(3);
-      const [kind, setKind] = React.useState<ReviewQueueKindParam>('all');
-      const [band, setBand] = React.useState<ReviewQueueBandParam>('all');
-      const [selectedIds, setSelectedIds] = React.useState<Set<string>>(() => new Set());
+      const { index, kind, band, selectedIds, setSelectedIds, queueCallbacks } = useQueueHarnessState(3);
       return (
         <div>
           <span data-testid="parent-index">{index}</span>
           <ReviewQueue
             index={index}
-            onIndexChange={setIndex}
             kind={kind}
-            onKindChange={setKind}
             band={band}
-            onBandChange={setBand}
             selectedIds={selectedIds}
             onSelectedIdsChange={setSelectedIds}
+            {...queueCallbacks}
           />
         </div>
       );
@@ -1215,7 +1694,7 @@ describe('ReviewQueue', () => {
     // Full queue: [Alex, c1, c2, c3, c4] — index 3 is cluster-c3.
     await waitFor(() => {
       expect(screen.getByTestId('parent-index')).toHaveTextContent('3');
-      expect(screen.getByText('4 of 5')).toBeInTheDocument();
+      expect(screen.getByText('4 of 5 on this page')).toBeInTheDocument();
       expect(screen.getByTestId('acx-review-card')).toHaveAttribute('data-review-kind', 'cluster');
     });
   });
@@ -1266,7 +1745,7 @@ describe('ReviewQueue', () => {
     });
     // Still on first merge card (failure leaves item at head).
     expect(screen.getByText('Are these the same person?')).toBeInTheDocument();
-    expect(screen.getByText('1 of 2')).toBeInTheDocument();
+    expect(screen.getByText('1 of 2 on this page')).toBeInTheDocument();
     // Persistent failure alert.
     expect(screen.getByRole('alert')).toBeInTheDocument();
 
@@ -1275,7 +1754,7 @@ describe('ReviewQueue', () => {
 
     await user.click(screen.getByRole('button', { name: 'Next review item' }));
     await waitFor(() => {
-      expect(screen.getByText('2 of 2')).toBeInTheDocument();
+      expect(screen.getByText('2 of 2 on this page')).toBeInTheDocument();
     });
     // Stale pending-focus must not auto-focus the primary after Next.
     expect(screen.getByRole('button', { name: 'Yes' })).not.toHaveFocus();
@@ -1397,36 +1876,15 @@ describe('ReviewQueue', () => {
       offset: 0,
     });
 
-    const onKindChange = vi.fn();
-    const onBandChange = vi.fn();
+    const onClearFilters = vi.fn();
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false, retryDelay: 0 } },
     });
 
-    const FilteredEmptyHarness = (): React.JSX.Element => {
-      const [index, setIndex] = React.useState(0);
-      const [kind, setKind] = React.useState<ReviewQueueKindParam>('merge');
-      const [band, setBand] = React.useState<ReviewQueueBandParam>('all');
-      const [selectedIds, setSelectedIds] = React.useState<Set<string>>(() => new Set());
-      return (
-        <ReviewQueue
-          index={index}
-          onIndexChange={setIndex}
-          kind={kind}
-          onKindChange={(next) => {
-            onKindChange(next);
-            setKind(next);
-          }}
-          band={band}
-          onBandChange={(next) => {
-            onBandChange(next);
-            setBand(next);
-          }}
-          selectedIds={selectedIds}
-          onSelectedIdsChange={setSelectedIds}
-        />
-      );
-    };
+    const FilteredEmptyHarness = makeQueueHarness({
+      initialKind: 'merge',
+      onClearFilters,
+    });
 
     const user = userEvent.setup();
     render(withQueueProviders(queryClient, <FilteredEmptyHarness />));
@@ -1439,11 +1897,41 @@ describe('ReviewQueue', () => {
     expect(clearBtn).toBeInTheDocument();
 
     await user.click(clearBtn);
-    expect(onKindChange).toHaveBeenCalledWith('all');
-    expect(onBandChange).toHaveBeenCalledWith('all');
+    expect(onClearFilters).toHaveBeenCalledTimes(1);
     await waitFor(() => {
       expect(screen.getByTestId('acx-review-card')).toBeInTheDocument();
     });
+    await waitFor(() => {
+      expect(document.querySelector('.acx-review-queue__live')).toHaveTextContent('Review item 1 of 1');
+    });
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Yes' })).toHaveFocus();
+    });
+  });
+
+  it('R7-04: filtered-empty-with-work does not announce 0 of 0', async () => {
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [
+        {
+          id: 'assign-1',
+          identity_id: 'identity-1',
+          suggested_cluster_id: 'cluster-1',
+          representative_similarity: 0.9,
+          avg_member_similarity: 0.85,
+          cluster_label: 'Alex',
+          cluster_identity_count: 2,
+        },
+      ],
+      limit: 10,
+      offset: 0,
+    });
+
+    renderQueue({ initialKind: 'merge' });
+
+    await screen.findByText('No items match the current filters.');
+    const position = document.querySelector('.acx-review-queue__position');
+    expect(position).not.toHaveTextContent('0 of 0');
+    expect(position).toHaveTextContent('Position unavailable');
   });
 
   it('shows true drain copy when unfiltered queue is empty', async () => {
@@ -1558,7 +2046,7 @@ describe('ReviewQueue', () => {
     renderQueue();
 
     await screen.findByText('Are these the same person?');
-    expect(screen.getByText('1 of 2')).toBeInTheDocument();
+    expect(screen.getByText('1 of 2 on this page')).toBeInTheDocument();
     const card = screen.getByTestId('acx-review-card');
     expect(card).toHaveAccessibleName(/Merge suggestion 1 of 2/);
     expect(card).toHaveAccessibleName(/Are these the same person\?/);
@@ -1597,7 +2085,7 @@ describe('ReviewQueue', () => {
     renderQueue();
 
     await screen.findByRole('button', { name: 'Yes' });
-    expect(screen.getByText('1 of 2')).toBeInTheDocument();
+    expect(screen.getByText('1 of 2 on this page')).toBeInTheDocument();
     const card = screen.getByTestId('acx-review-card');
     expect(card).toHaveAccessibleName(/Face suggestion 1 of 2/);
   });
@@ -1636,9 +2124,185 @@ describe('ReviewQueue', () => {
     renderQueue();
 
     await screen.findByText(/Suggested name:/);
-    expect(screen.getByText('1 of 2')).toBeInTheDocument();
+    expect(screen.getByText('1 of 2 on this page')).toBeInTheDocument();
     const card = screen.getByTestId('acx-review-card');
     expect(card).toHaveAccessibleName(/Name suggestion 1 of 2/);
+  });
+
+  // UXW2-2-R1-15/28/29: label from the real XOR composition (queue unmounts
+  // while the panel is open). Fetchers keep returning the pre-curation rows;
+  // the header copy must stay decremented after remount.
+  it('header count decrements after a label commit remount with stale fetchers', async () => {
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [],
+      limit: 25,
+      offset: 0,
+    });
+    const staleNames = {
+      suggestions: [
+        {
+          id: 'name-x',
+          cluster_id: 'cluster-x',
+          suggested_name: 'Xavier',
+          confidence_score: 0.9,
+          source: 'test',
+          created_at: '2026-01-01T00:00:00Z',
+          expires_at: null,
+        },
+        {
+          id: 'name-y',
+          cluster_id: 'cluster-y',
+          suggested_name: 'Yara',
+          confidence_score: 0.8,
+          source: 'test',
+          created_at: '2026-01-01T00:00:00Z',
+          expires_at: null,
+        },
+      ],
+      limit: 25,
+      offset: 0,
+    };
+    vi.mocked(fetchPendingNameSuggestions).mockResolvedValue(staleNames);
+    vi.mocked(listRecognitionClusters).mockResolvedValue({
+      clusters: [],
+      limit: 10,
+      total: 0,
+      truncated: false,
+    });
+
+    const { queryClient, unmount } = renderQueue();
+    const countEl = () => document.querySelector('.acx-review-queue__count');
+    const positionEl = () => document.querySelector('.acx-review-queue__position');
+    await waitFor(() => expect(countEl()).toHaveTextContent('2 left to review on this page'));
+    expect(countEl()?.textContent).toBe('2 left to review on this page');
+    expect(positionEl()?.textContent).toBe('1 of 2 on this page');
+    expect(countEl()?.textContent).not.toMatch(/\(loaded\)|cluster/i);
+
+    unmount();
+
+    const panel = render(
+      <QueryClientProvider client={queryClient}>
+        <ClusterLabelingPanel clusterId="cluster-x" onClose={vi.fn()} onLabel={vi.fn()} />
+      </QueryClientProvider>,
+    );
+    const user = userEvent.setup();
+    const input = await screen.findByRole('combobox', { name: 'Name' });
+    await user.type(input, 'Zed Newperson');
+    await user.click(screen.getByRole('button', { name: 'Save name' }));
+    await waitFor(() =>
+      expect(updateClusterLabel).toHaveBeenCalledWith('cluster-x', 'Zed Newperson', expect.any(AbortSignal)),
+    );
+    panel.unmount();
+
+    render(withQueueProviders(queryClient, <ReviewQueueHarness />));
+    await waitFor(() => expect(countEl()?.textContent).toBe('1 left to review on this page'));
+    expect(positionEl()?.textContent).toBe('1 of 1 on this page');
+  });
+
+  it('R1-22: queue header and findings unlabeled count agree after a drop', async () => {
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [],
+      limit: 25,
+      offset: 0,
+    });
+    vi.mocked(fetchTopUnlabeledClusters).mockResolvedValue({
+      clusters: [
+        {
+          id: 'cluster-x',
+          tenant_id: 'test-tenant-id',
+          label: null,
+          is_labeled: false,
+          is_auto_label: true,
+          identity_count: 4,
+          user_confirmed: false,
+          suggested_label: null,
+          suggested_target_cluster_id: null,
+          representatives: [{ id: 'rep-1', media_id: 1, is_pinned: false }],
+        },
+        {
+          id: 'cluster-y',
+          tenant_id: 'test-tenant-id',
+          label: null,
+          is_labeled: false,
+          is_auto_label: true,
+          identity_count: 3,
+          user_confirmed: false,
+          suggested_label: null,
+          suggested_target_cluster_id: null,
+          representatives: [{ id: 'rep-2', media_id: 2, is_pinned: false }],
+        },
+      ],
+      limit: 20,
+      total: 2,
+      truncated: false,
+      singleton_count: 0,
+      data_source: DATA_SOURCE.LOCAL_PROJECTION,
+    });
+
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, retryDelay: 0 } },
+    });
+    render(
+      withQueueProviders(
+        queryClient,
+        <>
+          <ReviewQueueHarness />
+          <WorkbenchFindingsPanel />
+        </>,
+      ),
+    );
+
+    await waitFor(() => {
+      expect(document.querySelector('.acx-review-queue__count')?.textContent).toBe(
+        '2 left to review on this page',
+      );
+    });
+    expect(screen.getByText('2 unlabeled groups')).toBeInTheDocument();
+
+    dropClusterFromReviewCaches(queryClient, 'cluster-x', { mode: REVIEW_DROP_MODE.LABEL });
+
+    await waitFor(() => {
+      expect(document.querySelector('.acx-review-queue__count')?.textContent).toBe(
+        '1 left to review on this page',
+      );
+    });
+    expect(screen.getByText('1 unlabeled group')).toBeInTheDocument();
+  });
+
+  it('R1-29: filtered header uses shown copy, not a false remaining total', async () => {
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [
+        {
+          id: 's-1',
+          identity_id: 'id-1',
+          suggested_cluster_id: 'c1',
+          representative_similarity: 0.9,
+          cluster_label: 'Maria',
+          cluster_identity_count: 2,
+        },
+        {
+          id: 's-2',
+          identity_id: 'id-2',
+          suggested_cluster_id: 'c2',
+          representative_similarity: 0.4,
+          cluster_label: 'Alex',
+          cluster_identity_count: 2,
+        },
+      ],
+      limit: 25,
+      offset: 0,
+    });
+    const user = userEvent.setup();
+    renderQueue();
+    await screen.findByTestId('acx-review-card');
+    expect(document.querySelector('.acx-review-queue__count')?.textContent).toBe(
+      '2 left to review on this page',
+    );
+    await user.click(screen.getByRole('button', { name: 'Close matches' }));
+    await waitFor(() => {
+      expect(document.querySelector('.acx-review-queue__count')?.textContent).toBe('2 shown');
+    });
+    expect(document.querySelector('.acx-review-queue__position')?.textContent).toBe('1 of 2 shown');
   });
 
   it('BR-41: CLUSTER card receives queue ordinal from position chrome', async () => {
@@ -1684,7 +2348,7 @@ describe('ReviewQueue', () => {
     renderQueue();
 
     await screen.findByTestId('acx-review-card');
-    expect(screen.getByText('1 of 2')).toBeInTheDocument();
+    expect(screen.getByText('1 of 2 on this page')).toBeInTheDocument();
     const card = screen.getByTestId('acx-review-card');
     expect(card).toHaveAccessibleName(/Face group review 1 of 2/);
   });
@@ -2536,14 +3200,14 @@ describe('ReviewQueue', () => {
     renderQueue();
 
     expect(await screen.findByText('2 groups missing face data')).toBeInTheDocument();
-    expect(screen.getByText(REVIEW_QUEUE_DRAIN_MESSAGE)).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Resync' })).toBeInTheDocument();
+    expect(screen.queryByText(REVIEW_QUEUE_DRAIN_MESSAGE)).toBeNull();
+    expect(screen.getByRole('button', { name: /^Resync review queue$/ })).toBeInTheDocument();
     expect(screen.queryByTestId('acx-review-card')).not.toBeInTheDocument();
   });
 
   // REV2-09 / TEST-15: repair copy without Resync is a dead end. Dropping
   // refetchTopUnlabeled (or omitting the button) leaves this call count at 1.
-  it('REV2-09: empty-queue Resync refetches top-unlabeled and keeps the drain confirmation', async () => {
+  it('REV2-09: empty-queue Resync refetches top-unlabeled without drain confirmation', async () => {
     vi.mocked(fetchPendingSuggestions).mockResolvedValue({
       suggestions: [],
       limit: 10,
@@ -2574,9 +3238,10 @@ describe('ReviewQueue', () => {
 
     renderQueue();
 
-    expect(await screen.findByText(REVIEW_QUEUE_DRAIN_MESSAGE)).toBeInTheDocument();
-    expect(screen.getByText('1 group missing face data')).toBeInTheDocument();
-    const resync = screen.getByRole('button', { name: 'Resync' });
+    const repair = await screen.findByTestId('acx-review-queue-repair');
+    expect(within(repair).getByText('1 group missing face data')).toBeInTheDocument();
+    expect(screen.queryByText(REVIEW_QUEUE_DRAIN_MESSAGE)).toBeNull();
+    const resync = screen.getByRole('button', { name: /^Resync review queue$/ });
     expect(resync.closest('[role="status"]')).toBeNull();
     expect(resync).toHaveAttribute('aria-describedby', 'acx-review-queue-repair-copy');
     const callsBefore = topMock.mock.calls.length;
@@ -2586,7 +3251,624 @@ describe('ReviewQueue', () => {
     await waitFor(() => {
       expect(topMock.mock.calls.length).toBeGreaterThan(callsBefore);
     });
-    expect(screen.getByText(REVIEW_QUEUE_DRAIN_MESSAGE)).toBeInTheDocument();
+    expect(screen.queryByText(REVIEW_QUEUE_DRAIN_MESSAGE)).toBeNull();
+    expect(within(screen.getByTestId('acx-review-queue-repair')).getByText('1 group missing face data')).toBeInTheDocument();
+  });
+
+  it('R2-12: repair_pending with empty served page mounts Resync and does not drain-only', async () => {
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [],
+      limit: 10,
+      offset: 0,
+    });
+    vi.mocked(fetchTopUnlabeledClusters).mockResolvedValue({
+      clusters: [],
+      limit: 20,
+      total: 5,
+      truncated: true,
+      repair_pending: true,
+      singleton_count: 0,
+      data_source: DATA_SOURCE.LOCAL_PROJECTION,
+    });
+
+    renderQueue();
+
+    expect(await screen.findByRole('button', { name: /^Resync review queue$/ })).toBeInTheDocument();
+    expect(screen.queryByTestId('acx-review-card')).not.toBeInTheDocument();
+    expect(screen.queryByText(REVIEW_QUEUE_DRAIN_MESSAGE)).toBeNull();
+    const live = screen.getByRole('status');
+    expect(live.textContent).not.toBe(REVIEW_QUEUE_DRAIN_MESSAGE);
+    expect(live.textContent).not.toContain('All caught up');
+  });
+
+  it('R5-09: findings Resync and queue Resync have distinct accessible names', async () => {
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [],
+      limit: 10,
+      offset: 0,
+    });
+    vi.mocked(fetchTopUnlabeledClusters).mockResolvedValue({
+      clusters: [],
+      limit: 20,
+      total: 5,
+      truncated: true,
+      repair_pending: true,
+      singleton_count: 0,
+      data_source: DATA_SOURCE.LOCAL_PROJECTION,
+    });
+
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, retryDelay: 0 } },
+    });
+    render(
+      withQueueProviders(
+        queryClient,
+        <>
+          <WorkbenchFindingsPanel onTargetFindings={vi.fn()} />
+          <ReviewQueueHarness />
+        </>,
+      ),
+    );
+
+    expect(await screen.findByRole('button', { name: /^Resync findings$/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^Resync review queue$/ })).toBeInTheDocument();
+    expect(screen.getAllByRole('button', { name: /^Resync findings$/ })).toHaveLength(1);
+    expect(screen.getAllByRole('button', { name: /^Resync review queue$/ })).toHaveLength(1);
+    expect(screen.queryAllByRole('button', { name: /^Resync$/ })).toHaveLength(0);
+  });
+
+  it('R8-01: zero-evidence-only page panel and queue announce the same non-elsewhere claim', async () => {
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [],
+      limit: 10,
+      offset: 0,
+    });
+    vi.mocked(fetchTopUnlabeledClusters).mockResolvedValue({
+      clusters: [
+        {
+          id: 'zero-1',
+          tenant_id: 'test-tenant-id',
+          label: null,
+          is_labeled: false,
+          is_auto_label: true,
+          identity_count: 0,
+          user_confirmed: false,
+          suggested_label: null,
+          suggested_target_cluster_id: null,
+          representatives: [{ id: 'rep-zero-1', media_id: 1, is_pinned: false }],
+        },
+        {
+          id: 'zero-2',
+          tenant_id: 'test-tenant-id',
+          label: null,
+          is_labeled: false,
+          is_auto_label: true,
+          identity_count: 0,
+          user_confirmed: false,
+          suggested_label: null,
+          suggested_target_cluster_id: null,
+          representatives: [{ id: 'rep-zero-2', media_id: 2, is_pinned: false }],
+        },
+        {
+          id: 'zero-3',
+          tenant_id: 'test-tenant-id',
+          label: null,
+          is_labeled: false,
+          is_auto_label: true,
+          identity_count: 0,
+          user_confirmed: false,
+          suggested_label: null,
+          suggested_target_cluster_id: null,
+          representatives: [{ id: 'rep-zero-3', media_id: 3, is_pinned: false }],
+        },
+      ],
+      limit: 20,
+      total: 7,
+      truncated: false,
+      singleton_count: 0,
+      data_source: DATA_SOURCE.LOCAL_PROJECTION,
+    });
+
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, retryDelay: 0 } },
+    });
+    const { container } = render(
+      withQueueProviders(
+        queryClient,
+        <>
+          <WorkbenchFindingsPanel onTargetFindings={vi.fn()} />
+          <ReviewQueueHarness />
+        </>,
+      ),
+    );
+
+    await screen.findByTestId('acx-review-queue-repair');
+    await waitFor(() => {
+      expect(document.getElementById('acx-findings-panel-repair-copy')).toHaveTextContent(
+        '3 groups missing face data',
+      );
+      expect(container.querySelector('.acx-review-queue__live')).toHaveTextContent(
+        '3 groups missing face data',
+      );
+    });
+
+    const panelClaim = (document.getElementById('acx-findings-panel-repair-copy')?.textContent ?? '')
+      .replace(/\s+/g, ' ')
+      .trim();
+    const queueLiveClaim = (container.querySelector('.acx-review-queue__live')?.textContent ?? '').trim();
+    const queueVisualClaim = (document.getElementById('acx-review-queue-repair-copy')?.textContent ?? '')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+    expect(panelClaim).toBe('3 groups missing face data');
+    expect(queueLiveClaim).toBe('3 groups missing face data');
+    expect(queueVisualClaim).toBe('3 groups missing face data');
+    expect(panelClaim).toBe(queueLiveClaim);
+    expect(panelClaim).toBe(queueVisualClaim);
+    expect(panelClaim).not.toMatch(/elsewhere/);
+    expect(queueLiveClaim).not.toMatch(/elsewhere/);
+  });
+
+  it('R5-02: the repair-empty page does not claim groups are on this page', async () => {
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [],
+      limit: 10,
+      offset: 0,
+    });
+    vi.mocked(fetchTopUnlabeledClusters).mockResolvedValue({
+      clusters: [],
+      limit: 20,
+      total: 24,
+      truncated: true,
+      repair_pending: true,
+      singleton_count: 0,
+      data_source: DATA_SOURCE.LOCAL_PROJECTION,
+    });
+
+    renderQueue();
+
+    const repair = await screen.findByTestId('acx-review-queue-repair');
+    expect(repair).not.toHaveTextContent(/on this page/);
+  });
+
+  it('R5-03: the repair-empty page does not announce 0 of 0', async () => {
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [],
+      limit: 10,
+      offset: 0,
+    });
+    vi.mocked(fetchTopUnlabeledClusters).mockResolvedValue({
+      clusters: [],
+      limit: 20,
+      total: 5,
+      truncated: true,
+      repair_pending: true,
+      singleton_count: 0,
+      data_source: DATA_SOURCE.LOCAL_PROJECTION,
+    });
+
+    renderQueue();
+
+    await screen.findByTestId('acx-review-queue-repair');
+    expect(screen.queryByText('0 of 0')).not.toBeInTheDocument();
+    expect(screen.getByText('Position unavailable')).toBeInTheDocument();
+  });
+
+  it('R5-04: an already-empty repair_pending mount announces the repair state', async () => {
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [],
+      limit: 10,
+      offset: 0,
+    });
+    vi.mocked(fetchTopUnlabeledClusters).mockResolvedValue({
+      clusters: [],
+      limit: 20,
+      total: 5,
+      truncated: true,
+      repair_pending: true,
+      singleton_count: 0,
+      data_source: DATA_SOURCE.LOCAL_PROJECTION,
+    });
+
+    const { container } = renderQueue();
+    await screen.findByTestId('acx-review-queue-repair');
+    const liveRegion = container.querySelector('.acx-review-queue__live');
+    expect(liveRegion).toBeTruthy();
+    expect(within(liveRegion as HTMLElement).getByText(/missing face data/i)).toBeInTheDocument();
+  });
+
+  it('R5-04: the repair-empty mount announces only once across a re-render', async () => {
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [],
+      limit: 10,
+      offset: 0,
+    });
+    vi.mocked(fetchTopUnlabeledClusters).mockResolvedValue({
+      clusters: [],
+      limit: 20,
+      total: 5,
+      truncated: true,
+      repair_pending: true,
+      singleton_count: 0,
+      data_source: DATA_SOURCE.LOCAL_PROJECTION,
+    });
+
+    const { container, queryClient } = renderQueue();
+    await screen.findByTestId('acx-review-queue-repair');
+    const liveRegion = () => container.querySelector('.acx-review-queue__live');
+    expect(within(liveRegion() as HTMLElement).getByText(/missing face data/i)).toBeInTheDocument();
+    const seq = liveRegion()?.getAttribute('data-announce-seq');
+
+    const topKey = queryKeys.clusters.topUnlabeled('test-tenant-id');
+    queryClient.setQueryData(topKey, {
+      clusters: [],
+      limit: 20,
+      total: 5,
+      truncated: true,
+      repair_pending: true,
+      singleton_count: 0,
+      data_source: DATA_SOURCE.LOCAL_PROJECTION,
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(within(liveRegion() as HTMLElement).getByText(/missing face data/i)).toBeInTheDocument();
+    expect(liveRegion()?.getAttribute('data-announce-seq')).toBe(seq);
+  });
+
+  it('R8-02: repair count change 7 to 2 re-announces; identical data stays silent', async () => {
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [],
+      limit: 10,
+      offset: 0,
+    });
+    vi.mocked(fetchTopUnlabeledClusters).mockResolvedValue({
+      clusters: [],
+      limit: 20,
+      total: 7,
+      truncated: true,
+      repair_pending: true,
+      singleton_count: 0,
+      data_source: DATA_SOURCE.LOCAL_PROJECTION,
+    });
+
+    const { container, queryClient } = renderQueue();
+    await screen.findByTestId('acx-review-queue-repair');
+    const liveRegion = () => container.querySelector('.acx-review-queue__live');
+    await waitFor(() => {
+      expect(liveRegion()).toHaveTextContent('7 groups elsewhere are missing face data');
+    });
+    const seqAfterSeven = liveRegion()?.getAttribute('data-announce-seq');
+    expect(seqAfterSeven).toBeTruthy();
+
+    const topKey = queryKeys.clusters.topUnlabeled('test-tenant-id');
+    queryClient.setQueryData(topKey, {
+      clusters: [],
+      limit: 20,
+      total: 2,
+      truncated: true,
+      repair_pending: true,
+      singleton_count: 0,
+      data_source: DATA_SOURCE.LOCAL_PROJECTION,
+    });
+    await waitFor(() => {
+      expect(liveRegion()).toHaveTextContent('2 groups elsewhere are missing face data');
+    });
+    const seqAfterTwo = liveRegion()?.getAttribute('data-announce-seq');
+    expect(seqAfterTwo).not.toBe(seqAfterSeven);
+    expect(liveRegion()).not.toHaveTextContent('7 groups elsewhere are missing face data');
+
+    queryClient.setQueryData(topKey, {
+      clusters: [],
+      limit: 20,
+      total: 2,
+      truncated: true,
+      repair_pending: true,
+      singleton_count: 0,
+      data_source: DATA_SOURCE.LOCAL_PROJECTION,
+    });
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(liveRegion()).toHaveTextContent('2 groups elsewhere are missing face data');
+    expect(liveRegion()?.getAttribute('data-announce-seq')).toBe(seqAfterTwo);
+  });
+
+  it('R7-02: drain after repair clears the repair live sentence', async () => {
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [],
+      limit: 10,
+      offset: 0,
+    });
+    vi.mocked(fetchTopUnlabeledClusters).mockResolvedValue({
+      clusters: [],
+      limit: 20,
+      total: 5,
+      truncated: true,
+      repair_pending: true,
+      singleton_count: 0,
+      data_source: DATA_SOURCE.LOCAL_PROJECTION,
+    });
+
+    const { container, queryClient } = renderQueue();
+    await screen.findByTestId('acx-review-queue-repair');
+    const liveRegion = () => container.querySelector('.acx-review-queue__live');
+    expect(within(liveRegion() as HTMLElement).getByText(/missing face data/i)).toBeInTheDocument();
+
+    queryClient.setQueryData(queryKeys.clusters.topUnlabeled('test-tenant-id'), {
+      clusters: [],
+      limit: 20,
+      total: 0,
+      truncated: false,
+      repair_pending: false,
+      singleton_count: 0,
+      data_source: DATA_SOURCE.LOCAL_PROJECTION,
+    });
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(liveRegion()).not.toHaveTextContent(/missing face data/i);
+    expect(liveRegion()).toHaveTextContent(REVIEW_QUEUE_DRAIN_MESSAGE);
+  });
+
+  it('R7-02: filtered-empty repair first-mount announces exactly once across rerenders', async () => {
+    const original = useAriaAnnounceMod.useAriaAnnounce;
+    const announceSpy = vi.fn();
+    let realAnnounce: ((message: string) => void) | null = null;
+    const wrappedAnnounce = (message: string): void => {
+      announceSpy(message);
+      realAnnounce?.(message);
+    };
+    const spy = vi.spyOn(useAriaAnnounceMod, 'useAriaAnnounce').mockImplementation(() => {
+      const result = original();
+      realAnnounce = result.announce;
+      return {
+        ...result,
+        announce: wrappedAnnounce,
+      };
+    });
+
+    try {
+      vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+        suggestions: [
+          {
+            id: 'sugg-1',
+            identity_id: 'identity-1',
+            suggested_cluster_id: 'cluster-1',
+            representative_similarity: 0.9,
+            avg_member_similarity: 0.85,
+            cluster_label: 'Alex',
+            cluster_identity_count: 3,
+          },
+        ],
+        limit: 10,
+        offset: 0,
+      });
+      vi.mocked(fetchTopUnlabeledClusters).mockResolvedValue({
+        clusters: [],
+        limit: 20,
+        total: 5,
+        truncated: true,
+        repair_pending: true,
+        singleton_count: 0,
+        data_source: DATA_SOURCE.LOCAL_PROJECTION,
+      });
+
+      const { queryClient } = renderQueue({ initialKind: 'merge' });
+      await screen.findByRole('button', { name: 'Clear filters' });
+
+      const filteredAnnounceCount = (): number =>
+        announceSpy.mock.calls.filter(
+          (call) => typeof call[0] === 'string' && call[0].includes('No items match the current filters.'),
+        ).length;
+
+      expect(filteredAnnounceCount()).toBe(1);
+      const seqAfterFirst = document.querySelector('.acx-review-queue__live')?.getAttribute('data-announce-seq');
+      expect(seqAfterFirst).toBeTruthy();
+
+      const topKey = queryKeys.clusters.topUnlabeled('test-tenant-id');
+      for (let bump = 1; bump <= 3; bump += 1) {
+        queryClient.setQueryData(topKey, {
+          clusters: [],
+          limit: 20,
+          total: 5 + bump,
+          truncated: true,
+          repair_pending: true,
+          singleton_count: 0,
+          data_source: DATA_SOURCE.LOCAL_PROJECTION,
+        });
+        await act(async () => {
+          await Promise.resolve();
+        });
+      }
+
+      expect(filteredAnnounceCount()).toBe(1);
+      expect(document.querySelector('.acx-review-queue__live')?.getAttribute('data-announce-seq')).toBe(
+        seqAfterFirst,
+      );
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('R7-06: queue header decrements after accepting names through ReviewQueue', async () => {
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [],
+      limit: 25,
+      offset: 0,
+    });
+    vi.mocked(fetchPendingNameSuggestions).mockResolvedValue({
+      suggestions: [
+        {
+          id: 'name-1',
+          cluster_id: 'cluster-1',
+          suggested_name: 'Alex',
+          confidence_score: 0.95,
+          source: 'test',
+          created_at: '2026-01-01T00:00:00Z',
+          expires_at: null,
+        },
+        {
+          id: 'name-2',
+          cluster_id: 'cluster-2',
+          suggested_name: 'Bea',
+          confidence_score: 0.9,
+          source: 'test',
+          created_at: '2026-01-01T00:00:00Z',
+          expires_at: null,
+        },
+      ],
+      limit: 25,
+      offset: 0,
+    });
+    vi.mocked(acceptNameSuggestion).mockImplementation(async (suggestionId) => ({
+      suggestion_id: suggestionId,
+      resolution: 'accepted',
+      identity_id: `identity-${suggestionId}`,
+      cluster_id: suggestionId === 'name-1' ? 'cluster-1' : 'cluster-2',
+      message: 'ok',
+    }));
+
+    const { container } = renderQueue();
+    await waitFor(() => {
+      expect(container.querySelector('.acx-review-queue__count')?.textContent).toBe(
+        '2 left to review on this page',
+      );
+    });
+
+    await clickAndCommitHold(await screen.findByRole('button', { name: 'Accept suggestion' }));
+    await waitFor(() => {
+      expect(container.querySelector('.acx-review-queue__count')?.textContent).toBe(
+        '1 left to review on this page',
+      );
+    });
+
+    await clickAndCommitHold(await screen.findByRole('button', { name: 'Accept suggestion' }));
+    await waitFor(() => {
+      expect(container.querySelector('.acx-review-queue__count')).toBeNull();
+    });
+  });
+
+  // ReviewQueue has no Bulk-accept chrome (queryByText('Bulk accept') is null;
+  // useBulkReviewCommit.ts: "Zero calls to legacy bulk-accept"). Drive the
+  // real bulkAccept mutation against the rendered queue's QueryClient and let
+  // the namePending refetch shrink .acx-review-queue__count.
+  it('R5-07: the queue header count decrements after a full bulk accept', async () => {
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [],
+      limit: 25,
+      offset: 0,
+    });
+    vi.mocked(fetchPendingNameSuggestions).mockResolvedValue({
+      suggestions: twoNameSuggestions,
+      limit: 25,
+      offset: 0,
+    });
+    vi.mocked(bulkAcceptSuggestions).mockResolvedValue({
+      accepted_count: 2,
+      skipped_count: 0,
+    });
+
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, retryDelay: 0 }, mutations: { retry: false } },
+    });
+    const readyRef: React.MutableRefObject<SuggestionReviewMutations | null> = { current: null };
+    const { container } = render(
+      withQueueProviders(
+        queryClient,
+        <>
+          <ReviewMutationDriver readyRef={readyRef} />
+          <ReviewQueueHarness />
+        </>,
+      ),
+    );
+
+    await waitFor(() => {
+      expect(container.querySelector('.acx-review-queue__count')?.textContent).toBe(
+        '2 left to review on this page',
+      );
+    });
+
+    vi.mocked(fetchPendingNameSuggestions).mockResolvedValue({
+      suggestions: [],
+      limit: 25,
+      offset: 0,
+    });
+
+    await act(async () => {
+      await readyRef.current?.mutations.bulkAccept.mutateAsync({
+        suggestion_type: 'name',
+        min_confidence: 0.8,
+      });
+    });
+
+    await waitFor(() => {
+      expect(container.querySelector('.acx-review-queue__count')).toBeNull();
+    });
+  });
+
+  // acceptNameMutation.onSuccess (not the hold/schedule path) drops the
+  // accepted cluster from namePending + topUnlabeled. Header is both sources.
+  it('R1-24: acceptName mutation decrements the rendered queue header', async () => {
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [],
+      limit: 25,
+      offset: 0,
+    });
+    vi.mocked(fetchPendingNameSuggestions).mockResolvedValue({
+      suggestions: twoNameSuggestions,
+      limit: 25,
+      offset: 0,
+    });
+    vi.mocked(fetchTopUnlabeledClusters).mockResolvedValue({
+      clusters: [unlabeledCluster('cluster-1', 'rep-1'), unlabeledCluster('cluster-2', 'rep-2')],
+      limit: 20,
+      total: 2,
+      truncated: false,
+      singleton_count: 0,
+      data_source: DATA_SOURCE.LOCAL_PROJECTION,
+    });
+    vi.mocked(acceptNameSuggestion).mockResolvedValue({
+      suggestion_id: 'name-1',
+      resolution: 'accepted',
+      identity_id: 'identity-1',
+      cluster_id: 'cluster-1',
+      message: 'ok',
+    });
+
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, retryDelay: 0 }, mutations: { retry: false } },
+    });
+    const readyRef: React.MutableRefObject<SuggestionReviewMutations | null> = { current: null };
+    const { container } = render(
+      withQueueProviders(
+        queryClient,
+        <>
+          <ReviewMutationDriver readyRef={readyRef} />
+          <ReviewQueueHarness />
+        </>,
+      ),
+    );
+
+    await waitFor(() => {
+      expect(container.querySelector('.acx-review-queue__count')?.textContent).toBe(
+        '4 left to review on this page',
+      );
+    });
+
+    await act(async () => {
+      await readyRef.current?.mutations.acceptName.mutateAsync('name-1');
+    });
+
+    await waitFor(() => {
+      expect(container.querySelector('.acx-review-queue__count')?.textContent).toBe(
+        '2 left to review on this page',
+      );
+    });
   });
 
   // REV2-08 / TEST-15: queue Retry must refetch name suggestions too.
@@ -3129,10 +4411,7 @@ describe('ReviewQueue', () => {
       const user = userEvent.setup();
 
       const Parent = (): React.JSX.Element => {
-        const [index, setIndex] = React.useState(0);
-        const [kind, setKind] = React.useState<ReviewQueueKindParam>('all');
-        const [band, setBand] = React.useState<ReviewQueueBandParam>('all');
-        const [selectedIds, setSelectedIds] = React.useState<Set<string>>(() => new Set());
+        const { index, kind, band, selectedIds, setSelectedIds, queueCallbacks } = useQueueHarnessState();
         const [mounted, setMounted] = React.useState(true);
         return (
           <div>
@@ -3143,13 +4422,11 @@ describe('ReviewQueue', () => {
             {mounted ? (
               <ReviewQueue
                 index={index}
-                onIndexChange={setIndex}
                 kind={kind}
-                onKindChange={setKind}
                 band={band}
-                onBandChange={setBand}
                 selectedIds={selectedIds}
                 onSelectedIdsChange={setSelectedIds}
+                {...queueCallbacks}
               />
             ) : (
               <p>panel-mode</p>
@@ -3227,7 +4504,7 @@ describe('ReviewQueue', () => {
 
       await screen.findByText(/Is this/);
       // 2 assignments + 1 merge
-      expect(screen.getByText('1 of 3')).toBeInTheDocument();
+      expect(screen.getByText('1 of 3 on this page')).toBeInTheDocument();
       expect(screen.getByRole('button', { name: 'Strong matches' })).toHaveAttribute(
         'aria-pressed',
         'false',
@@ -3236,7 +4513,7 @@ describe('ReviewQueue', () => {
       await user.click(screen.getByRole('button', { name: 'Strong matches' }));
       await waitFor(() => {
         // strong-1 (0.50) only — merge-1 excluded from bands (BR-60); weak-1 dropped
-        expect(screen.getByText('1 of 1')).toBeInTheDocument();
+        expect(screen.getByText('1 of 1 shown')).toBeInTheDocument();
       });
       expect(screen.getByRole('button', { name: 'Strong matches' })).toHaveAttribute(
         'aria-pressed',
@@ -3247,7 +4524,7 @@ describe('ReviewQueue', () => {
       // KIND ∩ band: Close matches ∩ Strong → still only strong-1
       await user.click(screen.getByRole('button', { name: 'Close matches' }));
       await waitFor(() => {
-        expect(screen.getByText('1 of 1')).toBeInTheDocument();
+        expect(screen.getByText('1 of 1 shown')).toBeInTheDocument();
       });
       expect(screen.getByTestId('acx-review-card')).toHaveTextContent(/Maria/);
 
@@ -3255,20 +4532,22 @@ describe('ReviewQueue', () => {
       await user.click(screen.getByRole('button', { name: 'Strong matches' }));
       await waitFor(() => {
         // assignment only: strong + weak
-        expect(screen.getByText('1 of 2')).toBeInTheDocument();
+        expect(screen.getByText('1 of 2 shown')).toBeInTheDocument();
       });
 
       // Merge stays reachable under band=all via its KIND chip.
       await user.click(screen.getByRole('button', { name: 'Close matches' }));
       await user.click(screen.getByRole('button', { name: 'Possible duplicates' }));
       await waitFor(() => {
-        expect(screen.getByText('1 of 1')).toBeInTheDocument();
+        expect(screen.getByText('1 of 1 shown')).toBeInTheDocument();
       });
       // Merge ∩ strong band → empty (merge similarity is a different domain).
       await user.click(screen.getByRole('button', { name: 'Strong matches' }));
       await waitFor(() => {
-        expect(screen.getByText('0 of 0')).toBeInTheDocument();
+        expect(screen.getByRole('button', { name: 'Clear filters' })).toBeInTheDocument();
       });
+      expect(screen.queryByText('0 of 0')).not.toBeInTheDocument();
+      expect(screen.getByText('Position unavailable')).toBeInTheDocument();
     });
 
     it('matrix M2 surface: bulk preview/commit label uses selection ∩ band ∩ kind; fired ids = intersection (BR-61); split tray copy (BR-63)', async () => {
@@ -3312,10 +4591,7 @@ describe('ReviewQueue', () => {
 
       // Seed selection after settle (avoid prune-on-empty-queue wiping ids).
       const Parent = (): React.JSX.Element => {
-        const [index, setIndex] = React.useState(0);
-        const [kind, setKind] = React.useState<ReviewQueueKindParam>('all');
-        const [band, setBand] = React.useState<ReviewQueueBandParam>('all');
-        const [selectedIds, setSelectedIds] = React.useState<Set<string>>(() => new Set());
+        const { index, kind, band, selectedIds, setSelectedIds, queueCallbacks } = useQueueHarnessState();
         return (
           <div>
             <button
@@ -3329,21 +4605,18 @@ describe('ReviewQueue', () => {
               type="button"
               data-testid="apply-strong-band"
               onClick={() => {
-                setBand('strong');
-                setIndex(0);
+                queueCallbacks.onBandChange('strong');
               }}
             >
               strong-band
             </button>
             <ReviewQueue
               index={index}
-              onIndexChange={setIndex}
               kind={kind}
-              onKindChange={setKind}
               band={band}
-              onBandChange={setBand}
               selectedIds={selectedIds}
               onSelectedIdsChange={setSelectedIds}
+              {...queueCallbacks}
             />
           </div>
         );
@@ -3362,7 +4635,7 @@ describe('ReviewQueue', () => {
       );
 
       await waitFor(() => {
-        expect(screen.getByText('1 of 2')).toBeInTheDocument();
+        expect(screen.getByText('1 of 2 on this page')).toBeInTheDocument();
       });
       await user.click(screen.getByTestId('seed-selection'));
       expect(screen.getByTestId('acx-review-selection-tray')).toHaveTextContent('2 selected');
@@ -3370,7 +4643,7 @@ describe('ReviewQueue', () => {
       // Activate strong band → queue shows only s-strong; selection still 2.
       await user.click(screen.getByTestId('apply-strong-band'));
       await waitFor(() => {
-        expect(screen.getByText('1 of 1')).toBeInTheDocument();
+        expect(screen.getByText('1 of 1 shown')).toBeInTheDocument();
       });
       expect(screen.getByTestId('acx-review-card')).toHaveTextContent('Maria');
       // BR-63: split copy — selection extends beyond the active filter view.
@@ -3467,10 +4740,7 @@ describe('ReviewQueue', () => {
       );
 
       const Parent = (): React.JSX.Element => {
-        const [index, setIndex] = React.useState(0);
-        const [kind, setKind] = React.useState<ReviewQueueKindParam>('all');
-        const [band, setBand] = React.useState<ReviewQueueBandParam>('all');
-        const [selectedIds, setSelectedIds] = React.useState<Set<string>>(() => new Set());
+        const { index, kind, band, selectedIds, setSelectedIds, queueCallbacks } = useQueueHarnessState();
         return (
           <div>
             <button
@@ -3484,8 +4754,7 @@ describe('ReviewQueue', () => {
               type="button"
               data-testid="apply-strong-band"
               onClick={() => {
-                setBand('strong');
-                setIndex(0);
+                queueCallbacks.onBandChange('strong');
               }}
             >
               strong-band
@@ -3494,21 +4763,18 @@ describe('ReviewQueue', () => {
               type="button"
               data-testid="apply-all-band"
               onClick={() => {
-                setBand('all');
-                setIndex(0);
+                queueCallbacks.onBandChange('all');
               }}
             >
               all-band
             </button>
             <ReviewQueue
               index={index}
-              onIndexChange={setIndex}
               kind={kind}
-              onKindChange={setKind}
               band={band}
-              onBandChange={setBand}
               selectedIds={selectedIds}
               onSelectedIdsChange={setSelectedIds}
+              {...queueCallbacks}
             />
           </div>
         );
@@ -3527,7 +4793,7 @@ describe('ReviewQueue', () => {
       );
 
       await waitFor(() => {
-        expect(screen.getByText('1 of 2')).toBeInTheDocument();
+        expect(screen.getByText('1 of 2 on this page')).toBeInTheDocument();
       });
       await user.click(screen.getByTestId('seed-selection'));
 
@@ -3577,7 +4843,7 @@ describe('ReviewQueue', () => {
 
       renderQueue({ initialBand: 'weaker' });
       await waitFor(() => {
-        expect(screen.getByText('1 of 1')).toBeInTheDocument();
+        expect(screen.getByText('1 of 1 shown')).toBeInTheDocument();
       });
       expect(screen.getByTestId('acx-review-card')).toHaveTextContent(/WeakPerson/);
       expect(screen.getByRole('button', { name: 'Weaker matches' })).toHaveAttribute(

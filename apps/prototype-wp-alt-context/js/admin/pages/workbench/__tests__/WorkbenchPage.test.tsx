@@ -151,6 +151,7 @@ const makeFindingsViewModel = (overrides: Partial<WorkbenchFindingsViewModel> = 
   counts: { assignments: 0, merges: 0, names: 0, unlabeledClusters: 0, total: 0 },
   previews: [],
   zeroEvidenceClusterCount: 0,
+  repairPending: false,
   topUnlabeledTruncated: false,
   hasFindings: false,
   isLoading: false,
@@ -216,8 +217,7 @@ describe('WorkbenchPage', () => {
     handleSearchChange: vi.fn(),
     handleStatusChange: vi.fn(),
     queueState: { kind: 'all' as const, band: 'all' as const, index: 0 },
-    getQueueState: () => ({ kind: 'all' as const, band: 'all' as const, index: 0 }),
-    setQueueState: vi.fn(),
+    dispatchQueue: vi.fn(),
     ...overrides,
   });
 

@@ -10,7 +10,7 @@
  */
 
 import React from 'react';
-import { __, sprintf } from '@wordpress/i18n';
+import { __, _n, sprintf } from '@wordpress/i18n';
 import { AlertTriangle } from 'lucide-react';
 
 import { DATA_SOURCE } from '../../../api/recognition/types';
@@ -38,8 +38,6 @@ import {
   intersectSelectionWithFilters,
   NEXT_ACTION_CHIP_LABEL,
   NEXT_ACTION_KIND,
-  nextQueueIndex,
-  prevQueueIndex,
   REVIEW_QUEUE_BAND,
   REVIEW_QUEUE_BAND_CHIP_LABEL,
   REVIEW_QUEUE_FILTER,
@@ -47,7 +45,7 @@ import {
   type ReviewQueueFilter,
   type ReviewQueueItem,
 } from './reviewQueueDriver';
-import { gatedClusterCopy } from './representativeVocabulary';
+import { gatedClusterCopy, repairGatedCount } from './representativeVocabulary';
 import { SuggestionCard, type FaceOriginalTarget, type ReviewSuggestion } from './SuggestionCards';
 import { ReviewCardGroupShell } from './reviewCardGroupAccname';
 import { TopClusterCard } from './TopClusterCard';
@@ -76,6 +74,12 @@ import { useAriaAnnounce } from './useAriaAnnounce';
 import { useLiveReviewTarget } from './useLiveReviewTarget';
 import { useWorkbenchFindings } from './useWorkbenchFindings';
 import { ACCENT_PRIMARY_ATTR } from '../mediaFooterCtaState';
+
+/** aria-live position line — carries the loaded-page / filtered scope (A11Y-21). */
+export const REVIEW_QUEUE_POSITION_PAGE = '%1$d of %2$d on this page';
+export const REVIEW_QUEUE_POSITION_FILTERED = '%1$d of %2$d shown';
+
+export const REVIEW_QUEUE_LABEL_SAVED_ANNOUNCE = 'Name saved. Back to review suggestions.';
 
 /** Cluster id for person-commit chrome / orphaned status surface (item.clusterId authoritative). */
 const itemClusterId = (item: ReviewQueueItem): string | null => {
@@ -111,13 +115,33 @@ export interface ReviewQueueHandle {
 export interface ReviewQueueProps {
   /** Controlled queue index (lifted — survives panel unmount). */
   index: number;
-  onIndexChange: (index: number) => void;
-  /** Controlled kind filter from URL. */
+  /**
+   * Absolute clamp after queue length is known. Parent MUST dispatch
+   * `CLAMP_INDEX` (not `SET_INDEX`) so NaN/negatives cannot wipe `rq`.
+   */
+  onClampIndex: (index: number) => void;
+  /**
+   * Relative next/prev. Parent MUST reduce `STEP_INDEX {delta, length}`
+   * against pending queue state so two taps before re-render advance by 2.
+   */
+  onStepIndex: (delta: number, length: number) => void;
+  /**
+   * Controlled kind filter from URL.
+   * Parent MUST reset index to 0 on kind change (reducer SET_KIND does this).
+   */
   kind: ReviewQueueKindParam;
   onKindChange: (kind: ReviewQueueKindParam) => void;
-  /** Controlled band filter from URL (`rq=` band enum). */
+  /**
+   * Controlled band filter from URL (`rq=` band enum).
+   * Parent MUST reset index to 0 on band change (reducer SET_BAND does this).
+   */
   band: ReviewQueueBandParam;
   onBandChange: (band: ReviewQueueBandParam) => void;
+  /**
+   * UXW2-1: single-write escape hatch — clears kind AND band (and resets the
+   * index) in ONE owner dispatch. Never wire this to per-filter callbacks.
+   */
+  onClearFilters: () => void;
   /**
    * PR-31: id-keyed selection set lifted to ScanTabContent (survives panel
    * unmount). Default empty; controlled prop pair into bulk hooks.
@@ -236,11 +260,13 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
   function ReviewQueue(
     {
       index,
-      onIndexChange,
+      onClampIndex,
+      onStepIndex,
       kind,
       onKindChange,
       band,
       onBandChange,
+      onClearFilters,
       selectedIds,
       onSelectedIdsChange,
       onReview,
@@ -267,6 +293,8 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
     const [retrying, setRetrying] = React.useState(false);
     const [retryFailed, setRetryFailed] = React.useState(false);
     const previousItemKeyRef = React.useRef<string | null>(null);
+    const repairAnnouncedRef = React.useRef(false);
+    const repairAnnouncedMessageRef = React.useRef<string | null>(null);
     const pendingFocusAfterRemovalRef = React.useRef(false);
 
     const filter: ReviewQueueFilter = kindParamToFilter(kind);
@@ -427,17 +455,17 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
     // assignment+merge resolve must not wipe a restored rq= index.
     const queueSettled = findings.queueSettled;
 
-    // Clamp restored/oversized index back to parent (PR-54).
+    // Clamp restored/oversized index back to parent (PR-54 / R1-03).
     React.useEffect(() => {
       if (!queueSettled) {
         return;
       }
       if (length > 0 && index !== safeIndex) {
-        onIndexChange(safeIndex);
+        onClampIndex(safeIndex);
       } else if (length === 0 && index !== 0) {
-        onIndexChange(0);
+        onClampIndex(0);
       }
-    }, [index, safeIndex, length, onIndexChange, queueSettled]);
+    }, [index, safeIndex, length, onClampIndex, queueSettled]);
 
     const currentItem = length > 0 ? filteredQueue[safeIndex] : null;
     const currentKey = currentItem ? queueItemKey(currentItem) : null;
@@ -531,10 +559,14 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
 
     React.useImperativeHandle(ref, () => ({ focusCurrentCard }), [focusCurrentCard]);
 
+    const prevFilteredEmptyRef = React.useRef(filteredEmptyWithWork);
+
     // Card transition announce + post-removal focus placement.
     React.useEffect(() => {
+      const recoveredFromFilteredEmpty = prevFilteredEmptyRef.current && !filteredEmptyWithWork;
+      prevFilteredEmptyRef.current = filteredEmptyWithWork;
       if (currentKey && currentKey !== previousItemKeyRef.current) {
-        if (previousItemKeyRef.current !== null) {
+        if (previousItemKeyRef.current !== null || recoveredFromFilteredEmpty) {
           setLiveMessage(
             sprintf(
               /* translators: 1: current 1-based position, 2: total */
@@ -545,6 +577,8 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
           );
         }
         previousItemKeyRef.current = currentKey;
+        repairAnnouncedRef.current = false;
+        repairAnnouncedMessageRef.current = null;
         if (pendingFocusAfterRemovalRef.current) {
           pendingFocusAfterRemovalRef.current = false;
           requestAnimationFrame(() => focusPrimaryInCard());
@@ -552,40 +586,65 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
         return;
       }
 
-      if (!currentKey && previousItemKeyRef.current !== null) {
-        previousItemKeyRef.current = null;
-        // UI-04: drain copy is for a successful empty only — projection failure
-        // must announce the error, not "all caught up" (RLSE-05 / A11Y).
-        // [rg-003] the outage must not silence the filtered-empty announcement:
-        // when filters hide real work, AT hears both the failure and the hint
-        // that an escape hatch exists, matching the visual (both are rendered).
-        if (data.isTopUnlabeledError) {
-          const errorCopy = __('Unable to load unlabeled faces.', 'alt-context');
-          setLiveMessage(
-            filteredEmptyWithWork
-              ? `${errorCopy} ${__('No items match the current filters.', 'alt-context')}`
-              : errorCopy,
-          );
-        } else if (filteredEmptyWithWork) {
-          // [COG-03]/[A11Y-06] AT parity with visual: filtered-empty ≠ true drain.
-          setLiveMessage(__('No items match the current filters.', 'alt-context'));
-        } else if (findings.zeroEvidenceClusterCount > 0) {
-          // REV2-09: the queue is genuinely empty — keep the drain confirmation
-          // and name the gated clusters that still need a resync.
-          setLiveMessage(
-            `${__('All caught up — no items need review', 'alt-context')} ${gatedClusterCopy(
-              findings.zeroEvidenceClusterCount,
+      if (!currentKey) {
+        const repairCopy = findings.repairPending
+          ? gatedClusterCopy(
+              repairGatedCount(
+                findings.zeroEvidenceClusterCount,
+                findings.counts.unlabeledClusters,
+              ),
               findings.topUnlabeledTruncated,
-            )}`,
-          );
-        } else {
-          setLiveMessage(__('All caught up — no items need review', 'alt-context'));
-        }
-        if (pendingFocusAfterRemovalRef.current) {
-          pendingFocusAfterRemovalRef.current = false;
-          requestAnimationFrame(() => {
-            emptyStateAnchorRef?.current?.focus({ preventScroll: true });
-          });
+              topUnlabeledClusters.length,
+            )
+          : null;
+        const repairCopyChanged =
+          repairCopy !== null &&
+          !data.isTopUnlabeledError &&
+          !filteredEmptyWithWork &&
+          repairAnnouncedMessageRef.current !== null &&
+          repairAnnouncedMessageRef.current !== repairCopy;
+        if (
+          previousItemKeyRef.current !== null ||
+          (findings.repairPending && !repairAnnouncedRef.current) ||
+          (!findings.repairPending && repairAnnouncedRef.current) ||
+          repairCopyChanged
+        ) {
+          previousItemKeyRef.current = null;
+          // UI-04: drain copy is for a successful empty only — projection failure
+          // must announce the error, not "all caught up" (RLSE-05 / A11Y).
+          // [rg-003] the outage must not silence the filtered-empty announcement:
+          // when filters hide real work, AT hears both the failure and the hint
+          // that an escape hatch exists, matching the visual (both are rendered).
+          // R8-02 / A11Y-21: latch the announced sentence, not only a boolean, so a
+          // count or wording change re-fires and an identical rerender stays quiet.
+          if (data.isTopUnlabeledError) {
+            const errorCopy = __('Unable to load unlabeled faces.', 'alt-context');
+            const nextEmptyMessage = filteredEmptyWithWork
+              ? `${errorCopy} ${__('No items match the current filters.', 'alt-context')}`
+              : errorCopy;
+            setLiveMessage(nextEmptyMessage);
+            repairAnnouncedRef.current = findings.repairPending;
+            repairAnnouncedMessageRef.current = nextEmptyMessage;
+          } else if (filteredEmptyWithWork) {
+            const nextEmptyMessage = __('No items match the current filters.', 'alt-context');
+            setLiveMessage(nextEmptyMessage);
+            repairAnnouncedRef.current = findings.repairPending;
+            repairAnnouncedMessageRef.current = nextEmptyMessage;
+          } else if (findings.repairPending && repairCopy) {
+            setLiveMessage(repairCopy);
+            repairAnnouncedRef.current = true;
+            repairAnnouncedMessageRef.current = repairCopy;
+          } else {
+            setLiveMessage(__('All caught up — no items need review', 'alt-context'));
+            repairAnnouncedRef.current = false;
+            repairAnnouncedMessageRef.current = null;
+          }
+          if (pendingFocusAfterRemovalRef.current) {
+            pendingFocusAfterRemovalRef.current = false;
+            requestAnimationFrame(() => {
+              emptyStateAnchorRef?.current?.focus({ preventScroll: true });
+            });
+          }
         }
       }
     }, [
@@ -594,11 +653,14 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
       emptyStateAnchorRef,
       filteredEmptyWithWork,
       findings.zeroEvidenceClusterCount,
+      findings.repairPending,
+      findings.counts.unlabeledClusters,
       findings.topUnlabeledTruncated,
       focusPrimaryInCard,
       length,
       safeIndex,
       setLiveMessage,
+      topUnlabeledClusters.length,
     ]);
 
     const markAdvanceFocus = React.useCallback((): void => {
@@ -703,16 +765,16 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
       data.personCommit.clusterId != null &&
       !personCommitSurfacedOnCard;
 
+    // UXW2-1: ONE callback per click — the owner resets the index inside the
+    // reducer; a second same-tick write would read a stale URL snapshot.
     const handleFilterClick = (nextFilter: ReviewQueueFilter): void => {
       navigateAfterFlush(() => {
         // BR-14: KIND chips toggle — active chip returns to unfiltered/all.
         if (nextFilter === filter) {
           onKindChange(filterToKindParam(REVIEW_QUEUE_FILTER.ALL));
-          onIndexChange(0);
           return;
         }
         onKindChange(filterToKindParam(nextFilter));
-        onIndexChange(0);
       });
     };
 
@@ -721,23 +783,21 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
         // Band chips toggle like KIND chips — active → all.
         if (nextBand === activeBand) {
           onBandChange(bandToBandParam(REVIEW_QUEUE_BAND.ALL));
-          onIndexChange(0);
           return;
         }
         onBandChange(bandToBandParam(nextBand));
-        onIndexChange(0);
       });
     };
 
     const handlePrev = (): void => {
       navigateAfterFlush(() => {
-        onIndexChange(prevQueueIndex(safeIndex, length));
+        onStepIndex(-1, length);
       });
     };
 
     const handleNext = (): void => {
       navigateAfterFlush(() => {
-        onIndexChange(nextQueueIndex(safeIndex, length));
+        onStepIndex(1, length);
       });
     };
 
@@ -931,7 +991,17 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
           </h3>
           {length > 0 ? (
             <span className="acx-review-queue__count" aria-hidden="true">
-              {length}
+              {sprintf(
+                filtersActive
+                  ? _n('%d shown', '%d shown', length, 'alt-context')
+                  : _n(
+                      '%d left to review on this page',
+                      '%d left to review on this page',
+                      length,
+                      'alt-context',
+                    ),
+                length,
+              )}
             </span>
           ) : null}
         </header>
@@ -988,14 +1058,19 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
           <div className="acx-review-queue__nav">
             <span className="acx-review-queue__position" aria-live="polite">
               {length === 0
-                ? data.isTopUnlabeledError
+                ? data.isTopUnlabeledError || findings.repairPending || filteredEmptyWithWork
                   ? // [A11Y] a bare em dash announces as punctuation and loses the
                     // position entirely; state the unmeasurable count explicitly.
+                    // R5-03: repair-empty is not an authoritative drain — same
+                    // unmeasurable-count copy as the projection-failure path.
+                    // R7-04 / RLSE-04: filtered-empty-with-work is also not 0 of 0.
                     __('Position unavailable', 'alt-context')
                   : __('0 of 0', 'alt-context')
                 : sprintf(
-                    /* translators: 1: current 1-based position, 2: total */
-                    __('%1$d of %2$d', 'alt-context'),
+                    /* translators: 1: current 1-based position, 2: loaded count on this page or in the active filter */
+                    filtersActive
+                      ? __('%1$d of %2$d shown', 'alt-context')
+                      : __('%1$d of %2$d on this page', 'alt-context'),
                     safeIndex + 1,
                     length,
                   )}
@@ -1259,8 +1334,10 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
                     type="button"
                     className="button"
                     onClick={() => {
-                      onKindChange(filterToKindParam(REVIEW_QUEUE_FILTER.ALL));
-                      onBandChange(bandToBandParam(REVIEW_QUEUE_BAND.ALL));
+                      navigateAfterFlush(() => {
+                        pendingFocusAfterRemovalRef.current = true;
+                        onClearFilters();
+                      });
                     }}
                   >
                     {__('Clear filters', 'alt-context')}
@@ -1268,16 +1345,22 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
                 </div>
               ) : data.isTopUnlabeledError ? null : (
                 <>
-                  <p className="acx-review-queue__empty">
-                    {__('All caught up — no items need review', 'alt-context')}
-                  </p>
-                  {findings.zeroEvidenceClusterCount > 0 ? (
+                  {!findings.repairPending ? (
+                    <p className="acx-review-queue__empty">
+                      {__('All caught up — no items need review', 'alt-context')}
+                    </p>
+                  ) : null}
+                  {findings.repairPending ? (
                     <div className="acx-review-queue__repair" data-testid="acx-review-queue-repair">
                       <p id="acx-review-queue-repair-copy">
                         <AlertTriangle aria-hidden="true" size={16} />
                         {gatedClusterCopy(
-                          findings.zeroEvidenceClusterCount,
+                          repairGatedCount(
+                            findings.zeroEvidenceClusterCount,
+                            findings.counts.unlabeledClusters,
+                          ),
                           findings.topUnlabeledTruncated,
+                          topUnlabeledClusters.length,
                         )}
                       </p>
                       <button
@@ -1285,6 +1368,7 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
                         className="button"
                         onClick={() => void data.refetchTopUnlabeled()}
                         aria-describedby="acx-review-queue-repair-copy"
+                        aria-label={__('Resync review queue', 'alt-context')}
                       >
                         {__('Resync', 'alt-context')}
                       </button>

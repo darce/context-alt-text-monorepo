@@ -14,6 +14,7 @@
         "required": [
           "id",
           "label",
+          "label_state",
           "identity_count",
           "member_ids",
           "representative_identity",
@@ -29,6 +30,11 @@
             "type": "string",
             "description": "Resolved cluster label presented by the admin UI."
           },
+          "label_state": {
+            "type": "string",
+            "enum": ["person", "unlabeled", "unbound"],
+            "description": "Named label authority: person (bound person name), unlabeled (empty/null or reserved cluster-*), unbound (human label with no person bind)."
+          },
           "is_auto_label": {
             "type": "boolean",
             "description": "Whether the label is system-derived."
@@ -36,7 +42,7 @@
           "identity_count": {
             "type": "integer",
             "minimum": 0,
-            "description": "Total number of identities currently assigned to the cluster."
+            "description": "Observed member-row count when the member fetch is not truncated (list preview cap PREVIEW_IDENTITIES_PER_CLUSTER=4; detail cap DEFAULT_CLUSTER_MEMBER_LIMIT=500). When the fetch returns more than the cap, this is the projected column and representatives/samples are sliced to the cap."
           },
           "member_ids": {
             "type": "array",

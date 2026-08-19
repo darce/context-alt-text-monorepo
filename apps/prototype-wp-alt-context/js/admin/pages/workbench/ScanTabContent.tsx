@@ -2,6 +2,7 @@ import React from 'react';
 import { __ } from '@wordpress/i18n';
 import { ErrorBoundary } from '../../../components/ErrorBoundary';
 import {
+  QUEUE_ACTION,
   useWorkbenchFilters,
   type ReviewQueueBandParam,
   type ReviewQueueKindParam,
@@ -44,7 +45,7 @@ export const ScanTabContent = (): React.JSX.Element => {
   const { scanRun, status, history, cancelScan, retryScanStream } = useJobPipeline();
   const { clusterPanel, dispatchClusterPanel } = useClusterPanel();
   const { hasIdentities } = useWorkbenchMediaContext().mediaQueue;
-  const { queueState, setQueueState } = useWorkbenchFilters();
+  const { queueState, dispatchQueue } = useWorkbenchFilters();
 
   const findingsDetailRef = React.useRef<HTMLDivElement>(null);
   const reviewQueueRef = React.useRef<ReviewQueueHandle>(null);
@@ -58,7 +59,19 @@ export const ScanTabContent = (): React.JSX.Element => {
   } = useAriaAnnounce();
 
   const focusQueueRoot = React.useCallback((): void => {
-    findingsDetailRef.current?.focus({ preventScroll: true });
+    const restore = (): void => {
+      const trigger = findingsDetailRef.current?.querySelector<HTMLElement>('[data-acx-review-trigger]');
+      if (trigger) {
+        trigger.focus({ preventScroll: true });
+        return;
+      }
+      findingsDetailRef.current?.focus({ preventScroll: true });
+    };
+    if (findingsDetailRef.current?.querySelector('[data-acx-review-trigger]')) {
+      restore();
+      return;
+    }
+    queueMicrotask(restore);
   }, []);
 
   // Open-target retirement lifecycle (§11 / FBT-1 ⑤). Owned here (always mounted)
@@ -75,53 +88,62 @@ export const ScanTabContent = (): React.JSX.Element => {
     // panel reducer and the mounted review target agree.
     onRebindSync: (survivorId) => dispatchClusterPanel({ type: 'open_review', clusterId: survivorId }),
   });
+
+  const lastAnnouncedReviewId = React.useRef<string | null>(null);
+  React.useEffect(() => {
+    if (reviewClusterId !== null && lastAnnouncedReviewId.current !== reviewClusterId) {
+      lastAnnouncedReviewId.current = reviewClusterId;
+      announceReviewLifecycle(__('Reviewing faces — press Back to return to suggestions', 'alt-context'));
+    }
+    if (reviewClusterId === null) {
+      lastAnnouncedReviewId.current = null;
+    }
+  }, [announceReviewLifecycle, reviewClusterId]);
   // §7 / BR-75/BR-82/BR-83: the queue reports whether IT owns the viewport's single accent
   // primary (its card marker or bulk-commit marker) via the shared ReviewSurfaceContext. The
   // READER — the media footer's CTA demotion — lives in the sibling library host
   // (WorkbenchPageContent); ScanTabContent is the SETTER side only (WBUX-5 S1c-2).
   const { setCardPrimaryPresent } = useReviewSurface();
 
-  // Lifted queue index + kind + band — survives label/review panel unmount of ReviewQueue.
-  const [queueIndex, setQueueIndex] = React.useState(queueState.index);
-  const [queueKind, setQueueKind] = React.useState<ReviewQueueKindParam>(queueState.kind);
-  const [queueBand, setQueueBand] = React.useState<ReviewQueueBandParam>(queueState.band);
+  // UXW2-1: URL (`rq=`) is the single owner of queue kind/band/index (DATA-14,
+  // REF-09 — derive, don't mirror). One user action → one dispatchQueue write;
+  // kind/band/clear reset the index inside the reducer.
   // PR-31: id-keyed selection lifted beside index — panel round-trips preserve it.
   const [selectedSuggestionIds, setSelectedSuggestionIds] = React.useState<Set<string>>(
     () => new Set(),
   );
 
-  // URL → local (reload / external writer).
-  React.useEffect(() => {
-    setQueueIndex(queueState.index);
-    setQueueKind(queueState.kind);
-    setQueueBand(queueState.band);
-  }, [queueState.index, queueState.kind, queueState.band]);
-
-  const handleIndexChange = React.useCallback(
+  const handleClampIndex = React.useCallback(
     (nextIndex: number): void => {
-      setQueueIndex(nextIndex);
-      setQueueState({ index: nextIndex });
+      dispatchQueue({ type: QUEUE_ACTION.CLAMP_INDEX, index: nextIndex });
     },
-    [setQueueState],
+    [dispatchQueue],
+  );
+
+  const handleStepIndex = React.useCallback(
+    (delta: number, length: number): void => {
+      dispatchQueue({ type: QUEUE_ACTION.STEP_INDEX, delta, length });
+    },
+    [dispatchQueue],
   );
 
   const handleKindChange = React.useCallback(
     (nextKind: ReviewQueueKindParam): void => {
-      setQueueKind(nextKind);
-      setQueueState({ kind: nextKind, index: 0 });
-      setQueueIndex(0);
+      dispatchQueue({ type: QUEUE_ACTION.SET_KIND, kind: nextKind });
     },
-    [setQueueState],
+    [dispatchQueue],
   );
 
   const handleBandChange = React.useCallback(
     (nextBand: ReviewQueueBandParam): void => {
-      setQueueBand(nextBand);
-      setQueueState({ band: nextBand, index: 0 });
-      setQueueIndex(0);
+      dispatchQueue({ type: QUEUE_ACTION.SET_BAND, band: nextBand });
     },
-    [setQueueState],
+    [dispatchQueue],
   );
+
+  const handleClearFilters = React.useCallback((): void => {
+    dispatchQueue({ type: QUEUE_ACTION.CLEAR_FILTERS });
+  }, [dispatchQueue]);
 
   const handleTargetFindings = (): void => {
     const anchor = findingsDetailRef.current;
@@ -190,10 +212,6 @@ export const ScanTabContent = (): React.JSX.Element => {
             <h3 id="acx-workbench-queue-heading" className="screen-reader-text">
               {__('Name this person', 'alt-context')}
             </h3>
-          ) : reviewClusterId !== null ? (
-            <h3 id="acx-workbench-queue-heading" className="screen-reader-text">
-              {__('Review these faces', 'alt-context')}
-            </h3>
           ) : null}
           <div ref={findingsDetailRef} className="acx-findings-detail-anchor" tabIndex={-1}>
             {clusterPanel.mode === 'label' && clusterPanel.clusterId ? (
@@ -203,23 +221,33 @@ export const ScanTabContent = (): React.JSX.Element => {
                 onClose={() => dispatchClusterPanel({ type: 'close' })}
                 onLabel={() => {
                   dispatchClusterPanel({ type: 'close' });
+                  announceReviewLifecycle(__('Name saved. Back to review suggestions.', 'alt-context'));
+                  focusQueueRoot();
                 }}
               />
             ) : reviewClusterId !== null ? (
               <ClusterReviewPanel
                 key={reviewClusterId}
                 clusterId={reviewClusterId}
-                onClose={() => dispatchClusterPanel({ type: 'close' })}
+                onClose={() => {
+                  dispatchClusterPanel({ type: 'close' });
+                  announceReviewLifecycle(
+                    __('Returned to review suggestions', 'alt-context'),
+                  );
+                  focusQueueRoot();
+                }}
               />
             ) : (
               <ReviewQueue
                 ref={reviewQueueRef}
-                index={queueIndex}
-                onIndexChange={handleIndexChange}
-                kind={queueKind}
+                index={queueState.index}
+                onClampIndex={handleClampIndex}
+                onStepIndex={handleStepIndex}
+                kind={queueState.kind}
                 onKindChange={handleKindChange}
-                band={queueBand}
+                band={queueState.band}
                 onBandChange={handleBandChange}
+                onClearFilters={handleClearFilters}
                 selectedIds={selectedSuggestionIds}
                 onSelectedIdsChange={setSelectedSuggestionIds}
                 emptyStateAnchorRef={findingsDetailRef}

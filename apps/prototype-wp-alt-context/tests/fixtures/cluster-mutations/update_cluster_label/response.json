@@ -1,1 +1,1 @@
-{"type":"response","status":200,"data":{"cluster_id":"cluster-xyz","label":"Known Person","synced":false,"status":"pending"}}
+{"type":"response","status":200,"data":{"cluster_id":"cluster-xyz","label":"Known Person","synced":false,"status":"pending","person_id":1,"roster_bound":true}}

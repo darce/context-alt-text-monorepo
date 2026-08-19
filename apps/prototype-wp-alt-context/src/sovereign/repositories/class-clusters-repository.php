@@ -102,6 +102,13 @@ class ClustersRepository implements ClustersRepositoryInterface {
 	}
 
 	/**
+	 * @return list<string>
+	 */
+	public function list_unlabeled_identity_count_drift( string $tenant_id, int $limit = 50 ): array {
+		return $this->read_repository->list_unlabeled_identity_count_drift( $tenant_id, $limit );
+	}
+
+	/**
 	 * @return array<string,mixed>|null
 	 */
 	public function find_by_uuid( string $cluster_uuid ): ?array {
@@ -128,7 +135,7 @@ class ClustersRepository implements ClustersRepositoryInterface {
 		return $this->curation_writer->update_representative_state( $cluster_uuid, $representative_id, $is_pinned, $is_local_curation );
 	}
 
-	public function create_local_cluster( string $tenant_id, string $cluster_uuid, string $label, int $identity_count = 1 ): int {
+	public function create_local_cluster( string $tenant_id, string $cluster_uuid, string $label, int $identity_count = 1 ): int|\WP_Error {
 		return $this->projection_writer->create_local_cluster( $tenant_id, $cluster_uuid, $label, $identity_count );
 	}
 

@@ -17,6 +17,8 @@ import {
   type ClusterMembersResponse,
 } from '../../../../api/recognition';
 import { commitClusterToRosterEntry } from '../../../../api/rosterApi';
+import { DATA_SOURCE } from '../../../../api/recognition/types';
+import type { TopUnlabeledClustersResponse } from '../../../../api/recognition/types/cluster';
 import { useRosterEntries } from '../../../../hooks/useRosterHooks';
 import { createMockQuery } from '../../../../test-utils/mockHooks';
 
@@ -53,7 +55,7 @@ vi.mock('../../../../api/rosterApi', async () => {
   };
 });
 
-const renderPanel = (onLabel: (label: string) => void = vi.fn(), clusterId = 'source-cluster-id') => {
+const renderPanel = (onLabel: (label: string) => void = vi.fn(), clusterId = 'panel-cluster-id') => {
   const queryClient = new QueryClient({
     defaultOptions: {
       queries: {
@@ -141,7 +143,7 @@ describe('ClusterLabelingPanel', () => {
       updated_at: '',
     });
     vi.mocked(mergeCluster).mockResolvedValue({
-      source_id: 'source-cluster-id',
+      source_id: 'retired-source-id',
       source_label: null,
       target_id: 'target-cluster-id',
       target_label: 'Slate Willow',
@@ -150,7 +152,7 @@ describe('ClusterLabelingPanel', () => {
       target_identity_count: 10,
     });
     vi.mocked(revertMergeCluster).mockResolvedValue({
-      restored_cluster_id: 'source-cluster-id',
+      restored_cluster_id: 'panel-cluster-id',
       restored_label: null,
       restored_identity_count: 5,
       target_cluster_id: 'target-cluster-id',
@@ -199,7 +201,7 @@ describe('ClusterLabelingPanel', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Merge into group "Slate Willow"' }));
 
     await waitFor(() => {
-      expect(mergeCluster).toHaveBeenCalledWith('source-cluster-id', 'target-cluster-id', 'Slate Willow');
+      expect(mergeCluster).toHaveBeenCalledWith('panel-cluster-id', 'target-cluster-id', 'Slate Willow');
     });
     expect(await screen.findByText(/Merged into/)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Undo merge' })).toBeInTheDocument();
@@ -216,6 +218,70 @@ describe('ClusterLabelingPanel', () => {
     await waitFor(() => {
       expect(document.activeElement).toBe(mergeButton);
     });
+  });
+
+  it('R1-17: merge success drops result.source_id from topUnlabeled', async () => {
+    vi.mocked(listRecognitionClusters).mockResolvedValue(makeClusterListResponse());
+    vi.mocked(mergeCluster).mockResolvedValue({
+      source_id: 'retired-source-id',
+      source_label: 'Source',
+      target_id: 'target-cluster-id',
+      target_label: 'Slate Willow',
+      identities_moved: 1,
+      moved_identity_ids: ['id-1'],
+      target_identity_count: 11,
+    });
+    const { queryClient } = renderPanel();
+    const topKey = queryKeys.clusters.topUnlabeled('t');
+    queryClient.setQueryData<TopUnlabeledClustersResponse>(topKey, {
+      clusters: [
+        {
+          id: 'retired-source-id',
+          tenant_id: 't',
+          label: null,
+          is_labeled: false,
+          is_auto_label: true,
+          identity_count: 2,
+          user_confirmed: false,
+          representatives: [],
+        },
+        {
+          id: 'panel-cluster-id',
+          tenant_id: 't',
+          label: null,
+          is_labeled: false,
+          is_auto_label: true,
+          identity_count: 2,
+          user_confirmed: false,
+          representatives: [],
+        },
+        {
+          id: 'target-cluster-id',
+          tenant_id: 't',
+          label: null,
+          is_labeled: false,
+          is_auto_label: true,
+          identity_count: 10,
+          user_confirmed: false,
+          representatives: [],
+        },
+      ],
+      limit: 20,
+      total: 3,
+      truncated: false,
+      has_clusters: true,
+      data_source: DATA_SOURCE.LOCAL_PROJECTION,
+    });
+
+    await typePanelName('Slate Willow');
+    await userEvent.click(await screen.findByRole('option', { name: /confirm match/i }));
+    await userEvent.click(screen.getByRole('button', { name: 'Merge into group "Slate Willow"' }));
+    await waitFor(() => {
+      expect(mergeCluster).toHaveBeenCalled();
+    });
+    expect(
+      queryClient.getQueryData<TopUnlabeledClustersResponse>(topKey)?.clusters.map((cluster) => cluster.id),
+    ).toEqual(['panel-cluster-id', 'target-cluster-id']);
   });
 
   it('person-only collision binds instead of offering rename-anyway (UXW2-3-R2-07)', async () => {
@@ -250,7 +316,7 @@ describe('ClusterLabelingPanel', () => {
 
     await waitFor(() => {
       expect(commitClusterToRosterEntry).toHaveBeenCalledWith({
-        clusterId: 'source-cluster-id',
+        clusterId: 'panel-cluster-id',
         rosterEntryId: 11,
       });
     });
@@ -265,7 +331,7 @@ describe('ClusterLabelingPanel', () => {
       makeClusterListResponse([
         {
           ...duplicateClusterMatch,
-          id: 'source-cluster-id',
+          id: 'panel-cluster-id',
           label: 'Self Name',
         },
       ]),
@@ -277,7 +343,7 @@ describe('ClusterLabelingPanel', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Save name' }));
 
     await waitFor(() => {
-      expect(updateClusterLabel).toHaveBeenCalledWith('source-cluster-id', 'Self Name', expect.any(AbortSignal));
+      expect(updateClusterLabel).toHaveBeenCalledWith('panel-cluster-id', 'Self Name', expect.any(AbortSignal));
     });
     expect(screen.queryByText(/already exists/)).not.toBeInTheDocument();
     await waitFor(() => {
@@ -294,7 +360,7 @@ describe('ClusterLabelingPanel', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Save name' }));
 
     await waitFor(() => {
-      expect(updateClusterLabel).toHaveBeenCalledWith('source-cluster-id', 'A New Person', expect.any(AbortSignal));
+      expect(updateClusterLabel).toHaveBeenCalledWith('panel-cluster-id', 'A New Person', expect.any(AbortSignal));
     });
     expect(mergeCluster).not.toHaveBeenCalled();
     await waitFor(() => {
@@ -353,7 +419,7 @@ describe('ClusterLabelingPanel', () => {
     const { container } = renderPanel();
 
     await waitFor(() => {
-      expect(fetchClusterMembers).toHaveBeenCalledWith('source-cluster-id');
+      expect(fetchClusterMembers).toHaveBeenCalledWith('panel-cluster-id');
     });
 
     await waitFor(() => {
@@ -413,7 +479,7 @@ describe('ClusterLabelingPanel', () => {
       expect(container.querySelectorAll('.acx-cluster-labeling-panel__face')).toHaveLength(2);
     });
     expect(screen.queryByRole('button', { name: 'Show all (2)' })).not.toBeInTheDocument();
-    expect(fetchMock).toHaveBeenCalledWith('source-cluster-id', { limit: 1, offset: 1 });
+    expect(fetchMock).toHaveBeenCalledWith('panel-cluster-id', { limit: 1, offset: 1 });
 
     // AT affordance: completion is announced and focus lands on the member
     // grid because the show-all button just unmounted.
@@ -439,7 +505,7 @@ describe('ClusterLabelingPanel', () => {
     const { container } = renderPanel();
 
     await waitFor(() => {
-      expect(fetchClusterMembers).toHaveBeenCalledWith('source-cluster-id');
+      expect(fetchClusterMembers).toHaveBeenCalledWith('panel-cluster-id');
     });
 
     expect(container.querySelector('.acx-face-thumbnail')).not.toBeNull();
@@ -469,7 +535,7 @@ describe('ClusterLabelingPanel', () => {
     const { container } = renderPanel();
 
     await waitFor(() => {
-      expect(fetchClusterMembers).toHaveBeenCalledWith('source-cluster-id');
+      expect(fetchClusterMembers).toHaveBeenCalledWith('panel-cluster-id');
     });
 
     expect(container.querySelector('.acx-face-thumbnail')).toBeNull();
@@ -497,7 +563,7 @@ describe('ClusterLabelingPanel', () => {
     const { container } = renderPanel();
 
     await waitFor(() => {
-      expect(fetchClusterMembers).toHaveBeenCalledWith('source-cluster-id');
+      expect(fetchClusterMembers).toHaveBeenCalledWith('panel-cluster-id');
     });
 
     expect(container.querySelector('.acx-face-thumbnail')).not.toBeNull();
@@ -548,7 +614,7 @@ describe('ClusterLabelingPanel', () => {
   it('shows projection-not-ready error inline with alert role', async () => {
     vi.mocked(updateClusterLabel).mockRejectedValueOnce(
       new Error(
-        'Request to /recognition/clusters/source-cluster-id failed (409): {"code":"projection_not_ready","message":"Local projection is not ready for curation yet. Retry sync and try again."}',
+        'Request to /recognition/clusters/panel-cluster-id failed (409): {"code":"projection_not_ready","message":"Local projection is not ready for curation yet. Retry sync and try again."}',
       ),
     );
 
@@ -661,7 +727,7 @@ describe('ClusterLabelingPanel', () => {
     );
     rerender(
       <QueryClientProvider client={queryClient}>
-        <ClusterLabelingPanel clusterId="source-cluster-id" onClose={() => undefined} onLabel={vi.fn()} />
+        <ClusterLabelingPanel clusterId="panel-cluster-id" onClose={() => undefined} onLabel={vi.fn()} />
       </QueryClientProvider>,
     );
 
@@ -682,7 +748,7 @@ describe('ClusterLabelingPanel', () => {
     });
     const { rerender } = render(
       <QueryClientProvider client={queryClient}>
-        <ClusterLabelingPanel clusterId="source-cluster-id" onClose={() => undefined} onLabel={vi.fn()} />
+        <ClusterLabelingPanel clusterId="panel-cluster-id" onClose={() => undefined} onLabel={vi.fn()} />
       </QueryClientProvider>,
     );
 
@@ -829,7 +895,7 @@ describe('ClusterLabelingPanel', () => {
 
     await user.click(mergeButton);
     await waitFor(() => {
-      expect(mergeCluster).toHaveBeenCalledWith('source-cluster-id', 'real-match-id', 'Pat Rivera');
+      expect(mergeCluster).toHaveBeenCalledWith('panel-cluster-id', 'real-match-id', 'Pat Rivera');
     });
   });
 
@@ -860,7 +926,7 @@ describe('ClusterLabelingPanel', () => {
         true,
       );
       expect(updateClusterLabel).toHaveBeenCalledWith(
-        'source-cluster-id',
+        'panel-cluster-id',
         'Unique Name Zq',
         expect.any(AbortSignal),
       );
@@ -909,7 +975,7 @@ describe('ClusterLabelingPanel', () => {
 
     await waitFor(() => {
       expect(updateClusterLabel).toHaveBeenCalledWith(
-        'source-cluster-id',
+        'panel-cluster-id',
         'Cluster-Dad',
         expect.any(AbortSignal),
       );
@@ -969,7 +1035,7 @@ describe('ClusterLabelingPanel', () => {
       makeClusterListResponse([
         {
           ...duplicateClusterMatch,
-          id: 'source-cluster-id',
+          id: 'panel-cluster-id',
           label: 'Self Name',
         },
       ]),
@@ -981,7 +1047,7 @@ describe('ClusterLabelingPanel', () => {
     await user.click(screen.getByRole('button', { name: 'Save name' }));
 
     await waitFor(() => {
-      expect(updateClusterLabel).toHaveBeenCalledWith('source-cluster-id', 'self name', expect.any(AbortSignal));
+      expect(updateClusterLabel).toHaveBeenCalledWith('panel-cluster-id', 'self name', expect.any(AbortSignal));
     });
     expect(screen.queryByText(/already exists/)).not.toBeInTheDocument();
   });
@@ -1038,7 +1104,7 @@ describe('ClusterLabelingPanel', () => {
     const user = await typePanelName('Pat Rivera');
     await user.keyboard('{Enter}');
     await waitFor(() => {
-      expect(updateClusterLabel).toHaveBeenCalledWith('source-cluster-id', 'Pat Rivera', expect.anything());
+      expect(updateClusterLabel).toHaveBeenCalledWith('panel-cluster-id', 'Pat Rivera', expect.anything());
     });
     expect(commitClusterToRosterEntry).not.toHaveBeenCalled();
   });
@@ -1050,7 +1116,7 @@ describe('ClusterLabelingPanel', () => {
     await user.keyboard('{Enter}');
     await waitFor(() => {
       expect(commitClusterToRosterEntry).toHaveBeenCalledWith({
-        clusterId: 'source-cluster-id',
+        clusterId: 'panel-cluster-id',
         rosterEntryId: 42,
       });
     });
@@ -1160,7 +1226,7 @@ describe('ClusterLabelingPanel', () => {
     await userEvent.click(await screen.findByRole('option', { name: /Confirm match with Alex Carter/i }));
     await waitFor(() => {
       expect(commitClusterToRosterEntry).toHaveBeenCalledWith({
-        clusterId: 'source-cluster-id',
+        clusterId: 'panel-cluster-id',
         rosterEntryId: 42,
       });
     });
@@ -1253,12 +1319,12 @@ describe('ClusterLabelingPanel', () => {
     await userEvent.click(confirmOptions[1]);
     await waitFor(() => {
       expect(commitClusterToRosterEntry).toHaveBeenCalledWith({
-        clusterId: 'source-cluster-id',
+        clusterId: 'panel-cluster-id',
         rosterEntryId: 2,
       });
     });
     expect(commitClusterToRosterEntry).not.toHaveBeenCalledWith({
-      clusterId: 'source-cluster-id',
+      clusterId: 'panel-cluster-id',
       rosterEntryId: 1,
     });
     expect(updateClusterLabel).not.toHaveBeenCalled();
@@ -1316,7 +1382,7 @@ describe('ClusterLabelingPanel', () => {
     });
     expect(commitClusterToRosterEntry).toHaveBeenCalledTimes(1);
     expect(commitClusterToRosterEntry).toHaveBeenCalledWith({
-      clusterId: 'source-cluster-id',
+      clusterId: 'panel-cluster-id',
       rosterEntryId: 42,
     });
     expect(updateClusterLabel).not.toHaveBeenCalled();
@@ -1356,7 +1422,7 @@ describe('ClusterLabelingPanel', () => {
       expect(updateClusterLabel).toHaveBeenCalledTimes(1);
     });
     expect(updateClusterLabel).toHaveBeenCalledWith(
-      'source-cluster-id',
+      'panel-cluster-id',
       'Pat Rivera',
       expect.any(AbortSignal),
     );
@@ -1394,7 +1460,7 @@ describe('ClusterLabelingPanel', () => {
       expect(updateClusterLabel).toHaveBeenCalledTimes(1);
     });
     expect(updateClusterLabel).toHaveBeenCalledWith(
-      'source-cluster-id',
+      'panel-cluster-id',
       'Slate Willow',
       expect.any(AbortSignal),
     );
@@ -1417,7 +1483,7 @@ describe('ClusterLabelingPanel', () => {
     });
     expect(updateClusterLabel).toHaveBeenNthCalledWith(
       2,
-      'source-cluster-id',
+      'panel-cluster-id',
       'Sam Rivera',
       expect.any(AbortSignal),
     );
@@ -1569,7 +1635,7 @@ describe('ClusterLabelingPanel', () => {
     await user.keyboard('{ArrowDown}{Enter}');
     await waitFor(() => {
       expect(commitClusterToRosterEntry).toHaveBeenCalledWith({
-        clusterId: 'source-cluster-id',
+        clusterId: 'panel-cluster-id',
         rosterEntryId: 42,
       });
     });
@@ -1587,7 +1653,7 @@ describe('ClusterLabelingPanel', () => {
     await user.keyboard('{Enter}');
     await waitFor(() => {
       expect(commitClusterToRosterEntry).toHaveBeenCalledWith({
-        clusterId: 'source-cluster-id',
+        clusterId: 'panel-cluster-id',
         rosterEntryId: target.id,
       });
     });

@@ -8,6 +8,7 @@ use AltContext\Api\ClustersHostInterface;
 use AltContext\Api\Services\ClusterProjectionSyncService;
 use AltContext\Sovereign\Sync\SyncPullJobInterface;
 use AltContext\Sovereign\Sync\SyncPullResult;
+use AltContext\Sovereign\Sync\TargetedSyncPullJobInterface;
 use AltContext\Tests\TestCase;
 use AltContext\Tests\Stubs\NullClustersRepository;
 use AltContext\Tests\Stubs\NullIdentityMembersRepository;
@@ -29,6 +30,73 @@ class ClusterProjectionSyncServiceTest extends TestCase
         $this->assertFalse($service->cluster_row_should_have_members([]));
         $this->assertFalse($service->cluster_row_should_have_members(['identity_count' => 0]));
         $this->assertTrue($service->cluster_row_should_have_members(['identity_count' => 2]));
+    }
+
+    public function testRepairTargetedProjectionSchedulesClusterIdsAndDoesNotPullInline(): void
+    {
+        $GLOBALS['__ac_scheduled'] = [];
+        $syncJob = new SpySyncPullJob();
+        $service = $this->makeService(sync_pull_job: $syncJob);
+
+        $this->assertFalse(
+            $service->repair_targeted_projection('tenant-1', ['cluster-a', '', 'cluster-a', 'cluster-b'])
+        );
+        $this->assertSame([], $syncJob->performCalls);
+        $this->assertSame([], $syncJob->bypassCalls);
+        $this->assertCount(1, $GLOBALS['__ac_scheduled']);
+        $scheduled = array_values($GLOBALS['__ac_scheduled'])[0];
+        $this->assertSame(['tenant-1', ['cluster-a', 'cluster-b']], $scheduled['args']);
+    }
+
+    public function testRepairTargetedProjectionNoopsOnEmptyIds(): void
+    {
+        $GLOBALS['__ac_scheduled'] = [];
+        $service = $this->makeService();
+
+        $this->assertFalse($service->repair_targeted_projection('tenant-1', []));
+        $this->assertFalse($service->repair_targeted_projection('tenant-1', ['', ' ']));
+        $this->assertCount(0, $GLOBALS['__ac_scheduled']);
+    }
+
+    public function testPerformBootstrapSyncWithClusterIdsRunsTargetedSnapshot(): void
+    {
+        $targeted = [];
+        $syncJob = new class($targeted) implements TargetedSyncPullJobInterface {
+            /** @var list<array{0:string,1:list<string>}> */
+            private array $targeted;
+
+            /** @param list<array{0:string,1:list<string>}> $targeted */
+            public function __construct(array &$targeted)
+            {
+                $this->targeted = &$targeted;
+            }
+
+            public function perform(string $tenant_id): SyncPullResult
+            {
+                return SyncPullResult::ok();
+            }
+
+            public function perform_bypass_cooldown(string $tenant_id): SyncPullResult
+            {
+                return SyncPullResult::ok();
+            }
+
+            public function perform_projection_payload(string $tenant_id, array $payload): SyncPullResult
+            {
+                return SyncPullResult::ok();
+            }
+
+            public function perform_targeted_snapshot(string $tenant_id, array $cluster_ids): SyncPullResult
+            {
+                $this->targeted[] = [$tenant_id, $cluster_ids];
+                return SyncPullResult::ok();
+            }
+        };
+
+        $service = $this->makeService(sync_pull_job: $syncJob);
+        $service->perform_bootstrap_sync('tenant-1', ['cluster-a', 'cluster-a']);
+
+        $this->assertSame([['tenant-1', ['cluster-a']]], $targeted);
     }
 
     public function testMaybeBootstrapAfterProxyReadSchedulesCronWhenInlineSyncFails(): void

@@ -114,6 +114,16 @@ export const useClusterIdentities = (options?: UseMutationOptions<ClusterRespons
     ...options,
   });
 
+/**
+ * Quarantined. Zero roster/UI callers — RosterPage uses useRecognitionCluster
+ * (detail) only. Kept solely as UXP-2 cooldown-gate membership: the six-poller
+ * contract in recognitionCooldown.ts + recognitionCooldownGate.test.tsx mounts
+ * this hook. Those files are outside this lane; deleting the export here would
+ * shrink the gated set without a replacement poller.
+ * Follow-up: UXW2-5 drop useRecognitionClusters from the UXP-2 poller set and
+ * delete this export once a cooldown-gate lane owns that contract. Not a bulk
+ * surface to re-attach.
+ */
 export const useRecognitionClusters = (params: ClusterListParams = {}) =>
   useQuery<ClusterListResponse>({
     queryKey: queryKeys.clusters.list(params),

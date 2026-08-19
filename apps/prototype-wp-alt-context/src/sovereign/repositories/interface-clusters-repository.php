@@ -65,6 +65,15 @@ interface ClustersRepositoryInterface {
 	public function count_top_unlabeled_singletons( string $tenant_id ): int;
 
 	/**
+	 * Bounded unlabeled clusters whose projected identity_count disagrees with
+	 * observed member rows. Used to schedule async projection heal off the
+	 * naming-queue page (R1-07).
+	 *
+	 * @return list<string>
+	 */
+	public function list_unlabeled_identity_count_drift( string $tenant_id, int $limit = 50 ): array;
+
+	/**
 	 * Return one projected cluster row when present.
 	 *
 	 * @return array<string,mixed>|null
@@ -103,7 +112,7 @@ interface ClustersRepositoryInterface {
 	/**
 	 * Create a projected local cluster row.
 	 */
-	public function create_local_cluster( string $tenant_id, string $cluster_uuid, string $label, int $identity_count = 1 ): int;
+	public function create_local_cluster( string $tenant_id, string $cluster_uuid, string $label, int $identity_count = 1 ): int|\WP_Error;
 
 	/**
 	 * Create or update a projected cluster row from backend-authored topology state.

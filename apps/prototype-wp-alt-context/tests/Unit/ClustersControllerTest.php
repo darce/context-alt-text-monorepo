@@ -52,6 +52,25 @@ class ClustersControllerTest extends TestCase
         return $events;
     }
 
+    /**
+     * Append-only wp_schedule_single_event invocations (including those
+     * inside repair_targeted_projection). The keyed map overwrites.
+     *
+     * @return list<array{hook:string,args:array<int,mixed>,timestamp:int}>
+     */
+    private function scheduledBootstrapEventCalls(): array
+    {
+        $hook = RecognitionDataSource::BOOTSTRAP_SYNC_HOOK;
+        $calls = [];
+        foreach (($GLOBALS['__ac_schedule_single_event_calls'] ?? []) as $call) {
+            if (($call['hook'] ?? '') === $hook) {
+                $calls[] = $call;
+            }
+        }
+
+        return $calls;
+    }
+
     public function testRegisterRoutesIncludesReadOnlyClusterSurfaces(): void
     {
         $this->controller->register_routes();
@@ -1912,6 +1931,11 @@ class ClustersControllerTest extends TestCase
         $events = $this->scheduledBootstrapEvents();
         $this->assertLessThanOrEqual(2, count($events));
         $this->assertCount(2, $events);
+
+        // R2-05: the keyed map overwrites; the ceiling is proven against the
+        // append-only wp_schedule_single_event call log.
+        $calls = $this->scheduledBootstrapEventCalls();
+        $this->assertCount(2, $calls);
     }
 }
 

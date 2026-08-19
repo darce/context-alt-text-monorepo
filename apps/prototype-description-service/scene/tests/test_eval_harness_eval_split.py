@@ -1725,3 +1725,18 @@ def test_cli_check_raw_utf8_artifact_pins_read_encoding(tmp_path, monkeypatch):
     out = tmp_path / "split.json"
     out.write_bytes((json.dumps(artifact, indent=2, sort_keys=True, ensure_ascii=False) + "\n").encode("utf-8"))
     assert main(_check_cli_args(out, exposure_notes=[note])) is None
+
+
+def test_cli_check_bom_prefixed_artifact_accepts_utf8_sig(tmp_path):
+    # VLM6-RV11-Q1-02 / EVAL-07: --check must accept a UTF-8 BOM-prefixed copy
+    # of a valid sealed artifact. MUT[check_sig_to_utf8]: encoding="utf-8"
+    # leaves U+FEFF → json.loads JSONDecodeError → exit 2 not-found/unreadable.
+    note = "caf\u00e9 note"
+    artifact = _draw_golden(
+        source_manifest_sha256=hashlib.sha256(_SEED_MANIFEST.read_bytes()).hexdigest(),
+        pre_split_exposure=[note],
+    )
+    out = tmp_path / "split.json"
+    body = (json.dumps(artifact, indent=2, sort_keys=True, ensure_ascii=False) + "\n").encode("utf-8")
+    out.write_bytes(b"\xef\xbb\xbf" + body)
+    assert main(_check_cli_args(out, exposure_notes=[note])) is None

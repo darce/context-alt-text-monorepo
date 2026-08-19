@@ -31,14 +31,14 @@ CONFIRMED by executable repro (7/7 symptom assertions fail on baseline, control 
 ## Slices
 
 ### Slice 1 — RED: repro tests pinned in-repo
-- [ ] `js/admin/hooks/__tests__/useWorkbenchFilters.doubleWrite.test.tsx` (from scratchpad `d1/rqDoubleWrite.test.tsx`): two writes in one `act` both land — RED on baseline.
-- [ ] `js/admin/pages/workbench/__tests__/ScanTabContent.reviewQueueUrl.test.tsx` (real router): chip → `aria-pressed` + `rq=assignment.all.0`; Next → still pressed `rq=assignment.all.1`; chip again → `rq` removed; band+kind → `rq=assignment.strong.0`; Clear filters → both unpressed; mount at `rq=merge.all.1` → pressed + second card — RED on baseline.
+- [x] `js/admin/hooks/__tests__/useWorkbenchFilters.rqDoubleWrite.test.tsx` (filename `rqDoubleWrite`, not `doubleWrite`): two writes in one `act` both land — RED on baseline.
+- [x] `js/admin/pages/workbench/__tests__/ScanTabContent.reviewQueueUrl.test.tsx` (real router): chip → `aria-pressed` + `rq=assignment.all.0`; Next → still pressed `rq=assignment.all.1`; chip again → `rq` removed; band+kind → `rq=assignment.strong.0`; Clear filters → both unpressed; mount at `rq=merge.all.1` → pressed + second card — RED on baseline.
 ### Slice 2 — GREEN: single owner + one write per action
-- [ ] `useWorkbenchFilters.ts`: `dispatchQueue` reducer + `pendingRef`; `setQueueState` internal.
-- [ ] `ScanTabContent.tsx`: delete `queueIndex/queueKind/queueBand` state + mirror effect; read from `queueState`.
-- [ ] `ReviewQueue.tsx`: `handleFilterClick`/`handleBandClick` one callback each; `onClearFilters` prop; `ReviewQueue.test.tsx` harness updated.
-- [ ] `docs/ux-maps/workbench-operator-loop.uxmap.json`: `rq` on `workbench-scan`; `z-review-queue` zone `default|filtered_empty|drained|error`.
-- [ ] Commit `fix(workbench): UXW2-1 single URL owner for review-queue rq= state`.
+- [x] `useWorkbenchFilters.ts`: `dispatchQueue` reducer + `pendingRef`; `setQueueState` internal.
+- [x] `ScanTabContent.tsx`: delete `queueIndex/queueKind/queueBand` state + mirror effect; read from `queueState`.
+- [x] `ReviewQueue.tsx`: `handleFilterClick`/`handleBandClick` one callback each; `onClearFilters` prop; `ReviewQueue.test.tsx` harness updated.
+- [x] `docs/ux-maps/workbench-operator-loop.uxmap.json`: `rq` on `workbench-scan`; `z-review-queue` zone `default|filtered_empty|drained|error`.
+- [x] Commit `fix(workbench): UXW2-1 single URL owner for review-queue rq= state`.
 
 ## Verification
 

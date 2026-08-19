@@ -801,14 +801,18 @@ def _load_ignore_list(source_dir: Path) -> dict[str, Any] | None:
     try:
         payload = json.loads(path.read_text(encoding="utf-8-sig"))
     except (OSError, ValueError) as exc:
-        raise ManifestError(f"{path} is unreadable or malformed JSON: {exc}") from exc
+        raise ManifestError(
+            f"{_printable_path(path)} is unreadable or malformed JSON: {_printable_exc(exc)}"
+        ) from exc
     if not isinstance(payload, dict):
-        raise ManifestError(f"{path} must contain a JSON object")
+        raise ManifestError(f"{_printable_path(path)} must contain a JSON object")
     wrong = payload.get("wrong_names", [])
     if not isinstance(wrong, list) or not all(
         isinstance(pair, list) and len(pair) == 2 and all(isinstance(part, str) for part in pair) for pair in wrong
     ):
-        raise ManifestError(f"{path}: 'wrong_names' must be a list of [path, name] string pairs")
+        raise ManifestError(
+            f"{_printable_path(path)}: 'wrong_names' must be a list of [path, name] string pairs"
+        )
     return payload
 
 
@@ -1547,7 +1551,7 @@ def _refuse_report_overwrite(paths: list[Path], *, allow: bool, label: str) -> N
     protected = [p for p in paths if p.exists() and _is_committed_report_tree(p)]
     if not protected:
         return
-    listed = ", ".join(str(p) for p in protected)
+    listed = ", ".join(_printable_path(p) for p in protected)
     # Stable class token first (RF-04 / rg-015); label is suffix only.
     _score_gate_fail(
         f"{SCORE_GATE_PREFIX_REFUSE_OVERWRITE} {label}: existing committed "
@@ -2571,9 +2575,12 @@ def _cmd_compare(args: argparse.Namespace) -> None:
     candidate_path = Path(args.candidate)
     try:
         baseline = json.loads(baseline_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        sys.exit(f"compare: failed to load report JSON: {_printable_path(baseline_path)}")
+    try:
         candidate = json.loads(candidate_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        sys.exit(f"compare: failed to load report JSON: {exc}")
+    except (OSError, json.JSONDecodeError):
+        sys.exit(f"compare: failed to load report JSON: {_printable_path(candidate_path)}")
     if not isinstance(baseline, dict) or not isinstance(candidate, dict):
         sys.exit("compare: baseline and candidate must be JSON objects")
 
@@ -3208,7 +3215,7 @@ def main(argv: list[str] | None = None) -> None:
     ) as exc:
         invariant = getattr(exc, "invariant", None)
         suffix = f" [{invariant}]" if invariant else ""
-        sys.exit(f"{type(exc).__name__}: {exc}{suffix}")
+        sys.exit(f"{type(exc).__name__}: {_printable_exc(exc)}{suffix}")
 
 
 if __name__ == "__main__":

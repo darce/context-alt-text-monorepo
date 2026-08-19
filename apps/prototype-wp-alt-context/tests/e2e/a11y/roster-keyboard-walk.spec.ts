@@ -2,6 +2,7 @@ import { expect, test, type Page } from '@playwright/test';
 
 import { requireBaseUrl } from '../fixtures/axe';
 import { getAcxAdminRouteUrl, getAcxAdminRouteUrlWithParams } from '../fixtures/acx-routes';
+import { discoverUnlabeledClusterId } from '../fixtures/seeded-state';
 
 const ROSTER_SHELL_SELECTOR = '.acx-roster';
 
@@ -79,40 +80,9 @@ test('keyboard member-fix loop: cluster= shim opens drawer with honest Move copy
   const base = requireBaseUrl(baseURL);
   await openRoster(base, page);
 
-  const clusterId = await page.evaluate(async () => {
-    const seeded = (
-      window as unknown as { acxE2eSeed?: { unlabeledClusterId?: string } }
-    ).acxE2eSeed?.unlabeledClusterId;
-    if (seeded) {
-      return seeded;
-    }
-    const config = (
-      window as unknown as {
-        AltContextAdmin?: {
-          nonce?: string;
-          tenant_id?: string;
-          endpoints?: Record<string, string>;
-        };
-      }
-    ).AltContextAdmin;
-    const clustersBase = config?.endpoints?.recognitionClusters;
-    if (!clustersBase || !config?.nonce) {
-      return null;
-    }
-    const url = new URL(`${clustersBase.replace(/\/?$/, '/')}top-unlabeled`, window.location.origin);
-    if (config.tenant_id) {
-      url.searchParams.set('tenant_id', config.tenant_id);
-    }
-    url.searchParams.set('limit', '1');
-    const response = await fetch(url.toString(), {
-      headers: { 'X-WP-Nonce': config.nonce },
-    });
-    if (!response.ok) {
-      return null;
-    }
-    const payload = (await response.json()) as { clusters?: { id?: string }[] };
-    return payload.clusters?.[0]?.id ?? null;
-  });
+  // Seed producer lives in seeded-state.ts: plants acxE2eSeed.unlabeledClusterId
+  // from window.acxE2eSeed or AltContextAdmin.endpoints.recognitionClusters /top-unlabeled.
+  const clusterId = await discoverUnlabeledClusterId(page);
 
   if (!clusterId) {
     test.skip(

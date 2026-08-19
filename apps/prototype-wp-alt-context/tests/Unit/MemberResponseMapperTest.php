@@ -239,4 +239,56 @@ class MemberResponseMapperTest extends TestCase
         $this->assertNull($payload[0]['attachment_url']);
         $this->assertNull($payload[0]['bbox']);
     }
+
+    /**
+     * UXW2-4-R8-02 / M3: member + media-identities REST rows must copy SQL
+     * label_state, and fall back to the trait when the column is absent.
+     */
+    public function testMapClusterMembersAndMediaIdentitiesEmitLabelState(): void
+    {
+        $members = $this->mapper->map_cluster_members(
+            [
+                [
+                    'identity_uuid' => 'id-person',
+                    'attachment_id' => 11,
+                    'cluster_label' => 'Ada',
+                    'person_name' => 'Ada Lovelace',
+                    'label_state' => 'person',
+                    'bbox_json' => '{"pixels":{"x":1,"y":1,"width":1,"height":1}}',
+                ],
+            ]
+        );
+
+        $this->assertArrayHasKey('label_state', $members[0]);
+        $this->assertSame('person', $members[0]['label_state']);
+
+        $media = $this->mapper->map_media_identities(
+            [
+                [
+                    'identity_uuid' => 'id-unbound',
+                    'attachment_id' => 22,
+                    'cluster_label' => 'Tory Guzman',
+                    'label_state' => 'unbound',
+                    'bbox_json' => '{"pixels":{"x":1,"y":1,"width":1,"height":1}}',
+                ],
+            ]
+        );
+
+        $this->assertArrayHasKey('label_state', $media['22'][0]);
+        $this->assertSame('unbound', $media['22'][0]['label_state']);
+
+        $fallback = $this->mapper->map_cluster_members(
+            [
+                [
+                    'identity_uuid' => 'id-fallback',
+                    'attachment_id' => 33,
+                    'cluster_label' => 'Tory Guzman',
+                    'bbox_json' => '{"pixels":{"x":1,"y":1,"width":1,"height":1}}',
+                ],
+            ]
+        );
+
+        $this->assertArrayHasKey('label_state', $fallback[0]);
+        $this->assertSame('unbound', $fallback[0]['label_state']);
+    }
 }

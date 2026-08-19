@@ -119,6 +119,7 @@ export const ClusterLabelingPanel = ({
   const wasExpandingRef = useRef(false);
   const submittingRef = useRef(false);
   const rosterRetryRef = useRef<HTMLButtonElement | null>(null);
+  const duplicateGuardFirstActionRef = useRef<HTMLButtonElement | null>(null);
   const queryClient = useQueryClient();
 
   // Reset panel-local state when the labeled cluster changes (FIX-4). key= at call site remounts;
@@ -194,6 +195,12 @@ export const ClusterLabelingPanel = ({
       rosterRetryRef.current?.focus();
     }
   }, [rosterError]);
+
+  useEffect(() => {
+    if (duplicateGuard) {
+      duplicateGuardFirstActionRef.current?.focus();
+    }
+  }, [duplicateGuard]);
 
   // Labeled clusters for the union (shared builder; debounced free-text still uses persons + full list).
   const { data: labeledClusters = [] } = useQuery({
@@ -645,8 +652,15 @@ export const ClusterLabelingPanel = ({
           )}
 
           {duplicateGuard && (
-            <div className="acx-cluster-labeling-panel__duplicate-guard" role="status" aria-live="polite">
-              <p className="acx-cluster-labeling-panel__suggestion-text">
+            <div
+              className="acx-cluster-labeling-panel__duplicate-guard"
+              role="group"
+              aria-labelledby="acx-cluster-labeling-panel-duplicate-guard-label"
+            >
+              <p
+                id="acx-cluster-labeling-panel-duplicate-guard-label"
+                className="acx-cluster-labeling-panel__suggestion-text"
+              >
                 {sprintf(
                   __('A name matching "%s" already exists. Choose how to proceed.', 'alt-context'),
                   duplicateGuard.label,
@@ -671,6 +685,7 @@ export const ClusterLabelingPanel = ({
               <div className="acx-cluster-labeling-panel__suggestion-actions">
                 {canOfferMerge && mergeTargetId ? (
                   <button
+                    ref={duplicateGuardFirstActionRef}
                     type="button"
                     className="button button-primary"
                     disabled={mergeMutation.isPending || labelMutation.isPending}
@@ -689,6 +704,7 @@ export const ClusterLabelingPanel = ({
                   </button>
                 ) : null}
                 <button
+                  ref={canOfferMerge && mergeTargetId ? undefined : duplicateGuardFirstActionRef}
                   type="button"
                   className="button"
                   disabled={mergeMutation.isPending || labelMutation.isPending}

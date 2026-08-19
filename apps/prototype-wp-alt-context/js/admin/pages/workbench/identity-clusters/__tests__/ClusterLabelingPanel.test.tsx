@@ -164,6 +164,19 @@ describe('ClusterLabelingPanel', () => {
     expect(screen.getByRole('button', { name: 'Undo merge' })).toBeInTheDocument();
   });
 
+  it('moves focus to the first duplicate-guard action when the guard opens (UXW2-3-R6-06)', async () => {
+    vi.mocked(listRecognitionClusters).mockResolvedValue(makeClusterListResponse());
+    renderPanel();
+
+    await typePanelName('Slate Willow');
+    await userEvent.click(await screen.findByRole('option', { name: /confirm match/i }));
+
+    const mergeButton = await screen.findByRole('button', { name: 'Merge into group "Slate Willow"' });
+    await waitFor(() => {
+      expect(document.activeElement).toBe(mergeButton);
+    });
+  });
+
   it('person-only collision binds instead of offering rename-anyway (UXW2-3-R2-07)', async () => {
     vi.mocked(listRecognitionClusters).mockResolvedValue(makeClusterListResponse([]));
     vi.mocked(useRosterEntries).mockReturnValue(

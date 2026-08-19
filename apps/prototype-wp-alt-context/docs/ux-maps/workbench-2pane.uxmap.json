@@ -194,7 +194,8 @@
             "suggestions-open",
             "roster-error",
             "ambiguous",
-            "overlay-closed"
+            "overlay-closed",
+            "duplicate-guard"
           ]
         }
       ]

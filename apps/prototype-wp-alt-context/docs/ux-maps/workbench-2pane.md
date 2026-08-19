@@ -86,7 +86,7 @@ by other lanes and are not yet covered by this list.
 |   - Name this person (NameFaceControl) (forced_choice)     |
 |     z-name-curate states=[default,loading,empty,error,     |
 |     pending,suggestions-open,roster-error,ambiguous,       |
-|     overlay-closed]                                        |
+|     overlay-closed,duplicate-guard]                        |
 +------------------------------------------------------------+
 | ACTIONS                                                    |
 |   [PRIMARY] Run / refresh recognition + grouping -> job-p… |
@@ -270,7 +270,7 @@ Zone ids: z-topbar z-left-host z-splitter z-right-host z-overlay-host z-endpoint
 
 Action ids: act-run-recognition act-select-cluster act-name-cluster act-curate-cluster act-view-endpoint-settings act-edit-alt act-edit-desc act-accept-ai-caption act-bulk-describe act-open-conflicts act-open-dead-letter act-resolve-conflict act-retry-dead-letter act-discard-dead-letter act-goto-roster
 
-States (all zones): default loading empty error pending suggestions-open roster-error ambiguous overlay-closed first_time degraded offline edge_input
+States (all zones): default loading empty error pending suggestions-open roster-error ambiguous overlay-closed duplicate-guard first_time degraded offline edge_input
 
 ## Not doing
 

@@ -1717,7 +1717,7 @@ describe('useSuggestionReviewMutations (Slice 2 hold/flush)', () => {
     );
     vi.mocked(recognitionApi.bulkAcceptSuggestions).mockResolvedValue({
       accepted_count: 1,
-      skipped_count: 1,
+      skipped_count: 0,
     });
 
     const { result } = renderMutations();
@@ -1736,6 +1736,73 @@ describe('useSuggestionReviewMutations (Slice 2 hold/flush)', () => {
     ).toEqual(['cluster-low']);
     // Header count for NAME is the remaining name-pending rows.
     expect(queryClient.getQueryData<PendingNameSuggestionsResponse>(namePendingKey)?.suggestions).toHaveLength(1);
+  });
+
+  it('R5-01: a 200 with accepted_count 0 evicts nothing', async () => {
+    queryClient.setQueryData(
+      namePendingKey,
+      makeNamePage([
+        { ...makeName('name-1'), confidence_score: 0.95 },
+        { ...makeName('name-low'), id: 'name-low', cluster_id: 'cluster-low', confidence_score: 0.2 },
+      ]),
+    );
+    const topUnlabeledKey = queryKeys.clusters.topUnlabeled('test-tenant');
+    queryClient.setQueryData(
+      topUnlabeledKey,
+      makeTopUnlabeledPage([makeTopCluster('cluster-1'), makeTopCluster('cluster-low')]),
+    );
+    vi.mocked(recognitionApi.bulkAcceptSuggestions).mockResolvedValue({
+      accepted_count: 0,
+      skipped_count: 2,
+    });
+
+    const { result } = renderMutations();
+    await act(async () => {
+      await result.current.mutations.bulkAccept.mutateAsync({
+        suggestion_type: 'name',
+        min_confidence: 0.8,
+      });
+    });
+
+    expect(
+      queryClient.getQueryData<PendingNameSuggestionsResponse>(namePendingKey)?.suggestions.map((s) => s.id),
+    ).toEqual(['name-1', 'name-low']);
+  });
+
+  it('R5-01: a partial accept refetches instead of guessing', async () => {
+    queryClient.setQueryData(
+      namePendingKey,
+      makeNamePage([
+        { ...makeName('name-1'), confidence_score: 0.95 },
+        { ...makeName('name-low'), id: 'name-low', cluster_id: 'cluster-low', confidence_score: 0.2 },
+      ]),
+    );
+    const topUnlabeledKey = queryKeys.clusters.topUnlabeled('test-tenant');
+    queryClient.setQueryData(
+      topUnlabeledKey,
+      makeTopUnlabeledPage([makeTopCluster('cluster-1'), makeTopCluster('cluster-low')]),
+    );
+    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+    vi.mocked(recognitionApi.bulkAcceptSuggestions).mockResolvedValue({
+      accepted_count: 1,
+      skipped_count: 1,
+    });
+
+    const { result } = renderMutations();
+    await act(async () => {
+      await result.current.mutations.bulkAccept.mutateAsync({
+        suggestion_type: 'name',
+        min_confidence: 0.8,
+      });
+    });
+
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: namePendingKey });
+    expect(
+      queryClient.getQueryData<PendingNameSuggestionsResponse>(namePendingKey)?.suggestions.map((s) => s.id),
+    ).toEqual(['name-1', 'name-low']);
+    expect(
+      queryClient.getQueryData<TopUnlabeledClustersResponse>(topUnlabeledKey)?.clusters.map((c) => c.id),
+    ).toEqual(['cluster-1', 'cluster-low']);
   });
 
   it('R1-24: bulkAccept name type decrements the header count', async () => {

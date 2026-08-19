@@ -1044,6 +1044,61 @@ class SuggestionsControllerTest extends TestCase
         $this->assertSame($winner, $data['candidates'][0]['cluster_id']);
     }
 
+    public function testGetRosterCandidatesKeepsHigherSimilarityWhenLowerDuplicateArrivesFirst(): void
+    {
+        $winner = 'aaaaaaaa-bbbb-cccc-dddd-000000000111';
+        $loser = 'bbbbbbbb-cccc-dddd-eeee-000000000222';
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => json_encode([
+                'model_id' => 'opencv-sface+cv5@128d/l2/cosine',
+                'embedding_model' => 'opencv-sface+cv5@128d/l2/cosine',
+                'computed_at' => '2026-08-18T12:00:00+00:00',
+                'probe_face_count' => 1,
+                'reference_face_count' => 2,
+                'quality_flag' => 'ok',
+                'thresholds' => [
+                    'suggestion_floor' => 0.35,
+                    'suggestion_ceiling' => 0.55,
+                    'similarity_threshold' => 0.55,
+                ],
+                'candidates' => [
+                    [
+                        'cluster_id' => $loser,
+                        'name' => 'Ada-cluster-b',
+                        'similarity' => 0.70,
+                        'band' => 'possible',
+                    ],
+                    [
+                        'cluster_id' => $winner,
+                        'name' => 'Ada-cluster-a',
+                        'similarity' => 0.91,
+                        'band' => 'strong',
+                    ],
+                ],
+            ], JSON_THROW_ON_ERROR),
+        ]);
+
+        global $wpdb;
+        $wpdb->mockResults = [
+            ['cluster_uuid' => $winner, 'person_id' => 42, 'name' => 'Ada Lovelace'],
+            ['cluster_uuid' => $loser, 'person_id' => 42, 'name' => 'Ada Lovelace'],
+        ];
+
+        $request = new WP_REST_Request('GET', '/acx/v1/recognition/clusters/cccccccc-dddd-eeee-ffff-000000000001/roster-candidates');
+        $request->set_param('cluster_id', 'cccccccc-dddd-eeee-ffff-000000000001');
+        $request->set_param('top_k', 10);
+
+        $response = $this->controller->get_roster_candidates($request);
+        $data = $response->get_data();
+        $this->assertCount(1, $data['candidates']);
+        $this->assertSame(42, $data['candidates'][0]['roster_entry_id']);
+        $this->assertSame(0.91, $data['candidates'][0]['similarity']);
+        $this->assertSame('strong', $data['candidates'][0]['band']);
+        $this->assertSame('Ada Lovelace', $data['candidates'][0]['name']);
+        $this->assertSame($winner, $data['candidates'][0]['cluster_id']);
+    }
+
     public function testGetRosterCandidatesRejectsInvalidTopKWithoutSignFlip(): void
     {
         $request = new WP_REST_Request('GET', '/acx/v1/recognition/clusters/cccccccc-dddd-eeee-ffff-000000000001/roster-candidates');

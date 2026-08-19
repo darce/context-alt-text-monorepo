@@ -1020,6 +1020,150 @@ class ClusterReadServiceTest extends TestCase
         );
     }
 
+    /**
+     * R10A-02: raw extra_ids that normalize to nothing must not publish
+     * repair_pending. Mapper requests nothing; dropped is 0.
+     * Mutant M1: $repair_pending = array() !== $extra_ids.
+     * Mutant M2: schedule_repair_from_mapper returns raw $extra_ids.
+     */
+    public function testListTopUnlabeledMalformedDriftIdsDoNotSetRepairPending(): void
+    {
+        $GLOBALS['__ac_scheduled'] = [];
+        $host = $this->localHost();
+
+        $mapper = new class() extends ClusterResponseMapper {
+            public function requested_repair_cluster_ids(): array
+            {
+                return [];
+            }
+        };
+
+        $clustersRepo = new class() extends NullClustersRepository {
+            public function has_projection_rows_for_tenant(string $tenant_id): bool
+            {
+                return true;
+            }
+
+            public function list_top_unlabeled(string $tenant_id, int $limit = 10): array
+            {
+                return [
+                    [
+                        'cluster_uuid' => 'cluster-keep',
+                        'label' => '',
+                        'identity_count' => 2,
+                        'is_user_confirmed' => 0,
+                    ],
+                ];
+            }
+
+            public function list_unlabeled_identity_count_drift(string $tenant_id, int $limit = 50): array
+            {
+                return ['', '   ', ''];
+            }
+        };
+
+        $membersRepo = new class() extends NullIdentityMembersRepository {
+            public function list_for_cluster_uuids(array $cluster_uuids, int $limit_per_cluster): array
+            {
+                return [
+                    'cluster-keep' => [
+                        ['identity_uuid' => 'id-k1', 'attachment_id' => 1],
+                        ['identity_uuid' => 'id-k2', 'attachment_id' => 2],
+                    ],
+                ];
+            }
+        };
+
+        $service = $this->makeService(
+            $host,
+            use_local_projection: true,
+            clusters_repository: $clustersRepo,
+            members_repository: $membersRepo,
+            cluster_mapper: $mapper
+        );
+
+        $response = $service->list_top_unlabeled_clusters(new WP_REST_Request('GET', '/acx/v1/recognition/clusters/top-unlabeled'));
+        $this->assertInstanceOf(WP_REST_Response::class, $response);
+        $data = $response->get_data();
+        $this->assertFalse(
+            $data['repair_pending'],
+            'malformed drift ids must not publish repair_pending'
+        );
+        $this->assertSame([], $GLOBALS['__ac_scheduled']);
+    }
+
+    /**
+     * R10A-02 true-positive: a drift id that survives normalize and fits
+     * in the remaining room still sets repair_pending.
+     */
+    public function testListTopUnlabeledNormalizedDriftIdSetsRepairPending(): void
+    {
+        $GLOBALS['__ac_scheduled'] = [];
+        $host = $this->localHost();
+
+        $mapper = new class() extends ClusterResponseMapper {
+            public function requested_repair_cluster_ids(): array
+            {
+                return [];
+            }
+        };
+
+        $clustersRepo = new class() extends NullClustersRepository {
+            public function has_projection_rows_for_tenant(string $tenant_id): bool
+            {
+                return true;
+            }
+
+            public function list_top_unlabeled(string $tenant_id, int $limit = 10): array
+            {
+                return [
+                    [
+                        'cluster_uuid' => 'cluster-keep',
+                        'label' => '',
+                        'identity_count' => 2,
+                        'is_user_confirmed' => 0,
+                    ],
+                ];
+            }
+
+            public function list_unlabeled_identity_count_drift(string $tenant_id, int $limit = 50): array
+            {
+                return ['cluster-off-page'];
+            }
+        };
+
+        $membersRepo = new class() extends NullIdentityMembersRepository {
+            public function list_for_cluster_uuids(array $cluster_uuids, int $limit_per_cluster): array
+            {
+                return [
+                    'cluster-keep' => [
+                        ['identity_uuid' => 'id-k1', 'attachment_id' => 1],
+                        ['identity_uuid' => 'id-k2', 'attachment_id' => 2],
+                    ],
+                ];
+            }
+        };
+
+        $service = $this->makeService(
+            $host,
+            use_local_projection: true,
+            clusters_repository: $clustersRepo,
+            members_repository: $membersRepo,
+            cluster_mapper: $mapper
+        );
+
+        $response = $service->list_top_unlabeled_clusters(new WP_REST_Request('GET', '/acx/v1/recognition/clusters/top-unlabeled'));
+        $this->assertInstanceOf(WP_REST_Response::class, $response);
+        $data = $response->get_data();
+        $this->assertTrue(
+            $data['repair_pending'],
+            'a normalized drift id that fits in the room must publish repair_pending'
+        );
+        $this->assertCount(1, $GLOBALS['__ac_scheduled']);
+        $scheduled = array_values($GLOBALS['__ac_scheduled'])[0]['args'][1];
+        $this->assertSame(['cluster-off-page'], $scheduled);
+    }
+
     public function testListTopUnlabeledProxyBootstrappingFallbackEnvelope(): void
     {
         $GLOBALS['__ac_scheduled'] = [];

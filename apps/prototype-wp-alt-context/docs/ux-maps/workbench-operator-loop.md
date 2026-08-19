@@ -68,11 +68,11 @@ url_params: `tab`, `panel`, `advanced`, `status`, `media`, `rq`, `queue`, `face`
 
 Purpose: Filter and select library media; run scan faces / describe pipeline
 
-url_params: `tab`, `status`, `media`, `s`, `p`, `perPage`, `panel`, `cluster`
+url_params: `tab`, `status`, `media`, `s`, `p`, `perPage`, `rq`, `panel`, `cluster`
 
 | zone id | label | role | states |
 | --- | --- | --- | --- |
-| `z-review-queue` | Review Suggestions queue header / count | queue | default, loading, empty |
+| `z-review-queue` | Review queue header / count with kind+band filter chips, card-at-a-time (rq= URL is the single owner of chip state) | queue | default, loading, empty, filtered_empty, drained, error |
 | `z-review-panel` | Face-group review panel (panel=review&cluster=) | ai_review | default, loading, error, empty |
 | `z-filters` | Status / search filters | form | default, edge_input |
 | `z-media-queue` | Media selection table | queue | default, loading, empty, error |
@@ -86,12 +86,12 @@ url_params: `tab`, `status`, `media`, `s`, `p`, `perPage`, `panel`, `cluster`
 | pipeline                                                   |
 +------------------------------------------------------------+
 | ZONES                                                      |
-|   - Review Suggestions queue header / count (queue)        |
-|   - Face-group review panel (panel=review&cluster=)        |
-|   - Status / search filters (form)                         |
-|   - Media selection table (queue)                          |
-|   - Scan / analyze CTAs + job progress (job)               |
-|   - Identity / findings preview (AI-assisted) (ai_review)  |
+|   - Review queue header / count with kind+band filter ch… |
+|   - Face-group review panel (panel=review&cluster=) (ai_… |
+|   - Status / search filters (form) states=[default,edge_i… |
+|   - Media selection table (queue) states=[default,loading… |
+|   - Scan / analyze CTAs + job progress (job) states=[defa… |
+|   - Identity / findings preview (AI-assisted) (ai_review)… |
 +------------------------------------------------------------+
 | ACTIONS                                                    |
 |   [PRIMARY] Scan selected media -> job-pipeline (costly,p… |

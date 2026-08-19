@@ -10,6 +10,11 @@ from typing import TypeVar
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from recognition.application.orchestration import ClusterService
+from recognition.application.suggestions.roster_candidates import (
+    DEFAULT_ROSTER_CANDIDATES_TOP_K,
+    MAX_ROSTER_CANDIDATES_TOP_K,
+    list_roster_candidates,
+)
 from recognition.application.suggestions.service import SuggestionService
 from recognition.config.security import get_security_settings
 from recognition.domain.cluster import IdentityCluster, ReservedClusterLabelError, is_reserved_label_shape
@@ -46,6 +51,9 @@ from recognition.interface_adapters.http.schemas.responses import (
     MergeSuggestionResponse,
     NameSuggestionResponse,
     RepresentativeResponse,
+    RosterCandidateResponse,
+    RosterCandidateThresholdsResponse,
+    RosterCandidatesResponse,
     SuggestionResponse,
 )
 from recognition.interface_adapters.http.validation import validate_entity_id, validate_paging, validate_top_k
@@ -108,6 +116,49 @@ async def list_pending_merge_suggestions(
     else:
         suggestions = await repo.list_pending_with_details(_tenant_id, limit=limit, offset=offset)
     return [_to_merge_response(s) for s in suggestions]
+
+
+@router.get("/clusters/{cluster_id}/roster-candidates", response_model=RosterCandidatesResponse)
+async def get_roster_candidates(
+    cluster_id: str,
+    _tenant_id: str = Depends(get_tenant_id),
+    top_k: int = Query(default=DEFAULT_ROSTER_CANDIDATES_TOP_K),
+    cluster_repo=Depends(get_cluster_repository),
+) -> RosterCandidatesResponse:
+    """Rank labelled clusters against this probe. Band from live settings; no raw % contract."""
+    validate_entity_id(cluster_id, field_name="cluster_id")
+    validate_top_k(top_k, max_top_k=MAX_ROSTER_CANDIDATES_TOP_K)
+    try:
+        result = await list_roster_candidates(
+            _tenant_id,
+            cluster_id,
+            cluster_repository=cluster_repo,
+            top_k=top_k,
+        )
+    except LookupError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Cluster not found") from None
+    return RosterCandidatesResponse(
+        model_id=result.model_id,
+        embedding_model=result.embedding_model,
+        computed_at=result.computed_at,
+        probe_face_count=result.probe_face_count,
+        reference_face_count=result.reference_face_count,
+        quality_flag=result.quality_flag.value,
+        thresholds=RosterCandidateThresholdsResponse(
+            suggestion_floor=result.thresholds.suggestion_floor,
+            suggestion_ceiling=result.thresholds.suggestion_ceiling,
+            similarity_threshold=result.thresholds.similarity_threshold,
+        ),
+        candidates=[
+            RosterCandidateResponse(
+                cluster_id=row.cluster_id,
+                name=row.name,
+                similarity=row.similarity,
+                band=row.band.value,
+            )
+            for row in result.candidates
+        ],
+    )
 
 
 @router.get("/identities/suggestions", response_model=IdentityBatchSuggestionsResponse)

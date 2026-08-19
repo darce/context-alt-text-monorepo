@@ -1,10 +1,23 @@
-import type { ChangeEvent } from 'react';
-import { act, renderHook } from '@testing-library/react';
-import type { ReactNode } from 'react';
-import { MemoryRouter, Route, Routes } from 'react-router-dom';
-import { describe, expect, it } from 'vitest';
+import { useState, type ChangeEvent, type ReactNode } from 'react';
+import { act, render, renderHook, screen } from '@testing-library/react';
+import { MemoryRouter, Route, Routes, useLocation, useSearchParams } from 'react-router-dom';
+import { beforeEach, describe, expect, it } from 'vitest';
 
-import { useWorkbenchFilters } from '../useWorkbenchFilters';
+import { useOverlayParam } from '../useOverlayParam';
+import { usePanesParam } from '../usePanesParam';
+import { useTabParam } from '../useTabParam';
+import {
+  peekPendingSearchWritesForTests,
+  queuePendingPage,
+  queuePendingQueueState,
+  reconcilePendingSearchWrites,
+  resetPendingSearchWritesForTests,
+} from '../pendingSearchWrites';
+import {
+  QUEUE_ACTION,
+  useWorkbenchFilters,
+} from '../useWorkbenchFilters';
+import { useWorkbenchNav, WorkbenchNavProvider } from '../../pages/workbench/WorkbenchNavContext';
 
 const wrapper = ({ children }: { children: ReactNode }) => (
   <MemoryRouter initialEntries={['/']}>
@@ -25,6 +38,10 @@ const wrapperForUrl =
   );
 
 describe('useWorkbenchFilters', () => {
+  beforeEach(() => {
+    resetPendingSearchWritesForTests();
+  });
+
   it('defaults to page 1, empty search, and all status', () => {
     const { result } = renderHook(() => useWorkbenchFilters(), { wrapper });
 
@@ -96,7 +113,6 @@ describe('useWorkbenchFilters', () => {
     const { result } = renderHook(() => useWorkbenchFilters(), { wrapper });
 
     expect(result.current.queueState).toEqual({ kind: 'all', band: 'all', index: 0 });
-    expect(result.current.getQueueState()).toEqual({ kind: 'all', band: 'all', index: 0 });
   });
 
   it('parses rq=kind.band.index and falls back on malformed values', () => {
@@ -111,17 +127,630 @@ describe('useWorkbenchFilters', () => {
     expect(bad.current.queueState).toEqual({ kind: 'all', band: 'all', index: 0 });
   });
 
-  it('setQueueState merges into rq without dropping other params', () => {
+  it('dispatchQueue merges into rq without dropping other params', () => {
     const { result } = renderHook(() => useWorkbenchFilters(), {
       wrapper: wrapperForUrl('/?s=face&p=2&rq=all.all.1'),
     });
 
     act(() => {
-      result.current.setQueueState({ kind: 'merge', index: 4 });
+      result.current.dispatchQueue({ type: QUEUE_ACTION.SET_KIND, kind: 'merge' });
+      result.current.dispatchQueue({ type: QUEUE_ACTION.SET_INDEX, index: 4 });
     });
 
     expect(result.current.queueState).toEqual({ kind: 'merge', band: 'all', index: 4 });
     expect(result.current.searchQuery).toBe('face');
     expect(result.current.currentPage).toBe(2);
+  });
+
+  it('dispatchQueue set_kind resets index inside the reducer (one write)', () => {
+    const { result } = renderHook(() => useWorkbenchFilters(), {
+      wrapper: wrapperForUrl('/?rq=all.all.3'),
+    });
+
+    act(() => {
+      result.current.dispatchQueue({ type: QUEUE_ACTION.SET_KIND, kind: 'assignment' });
+    });
+
+    expect(result.current.queueState).toEqual({ kind: 'assignment', band: 'all', index: 0 });
+  });
+
+  it('dispatchQueue set_band preserves kind and resets index', () => {
+    const { result } = renderHook(() => useWorkbenchFilters(), {
+      wrapper: wrapperForUrl('/?rq=assignment.all.2'),
+    });
+
+    act(() => {
+      result.current.dispatchQueue({ type: QUEUE_ACTION.SET_BAND, band: 'strong' });
+    });
+
+    expect(result.current.queueState).toEqual({ kind: 'assignment', band: 'strong', index: 0 });
+  });
+
+  it('dispatchQueue set_index preserves kind and band', () => {
+    const { result } = renderHook(() => useWorkbenchFilters(), {
+      wrapper: wrapperForUrl('/?rq=merge.weaker.0'),
+    });
+
+    act(() => {
+      result.current.dispatchQueue({ type: QUEUE_ACTION.SET_INDEX, index: 2 });
+    });
+
+    expect(result.current.queueState).toEqual({ kind: 'merge', band: 'weaker', index: 2 });
+  });
+
+  it('dispatchQueue clamp_index never goes below zero', () => {
+    const { result } = renderHook(() => useWorkbenchFilters(), {
+      wrapper: wrapperForUrl('/?rq=assignment.all.1'),
+    });
+
+    act(() => {
+      result.current.dispatchQueue({ type: QUEUE_ACTION.CLAMP_INDEX, index: -4 });
+    });
+
+    expect(result.current.queueState).toEqual({ kind: 'assignment', band: 'all', index: 0 });
+  });
+
+  it('dispatchQueue clear_filters removes rq from loc.search', () => {
+    const Probe = (): React.ReactElement => {
+      const { dispatchQueue, queueState } = useWorkbenchFilters();
+      const loc = useLocation();
+      return (
+        <div>
+          <button type="button" onClick={() => dispatchQueue({ type: QUEUE_ACTION.CLEAR_FILTERS })}>
+            clear
+          </button>
+          <output data-testid="loc">{loc.search}</output>
+          <output data-testid="state">{`${queueState.kind}.${queueState.band}.${queueState.index}`}</output>
+        </div>
+      );
+    };
+
+    render(
+      <MemoryRouter initialEntries={['/?rq=assignment.strong.2']}>
+        <Routes>
+          <Route path="/" element={<Probe />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByTestId('loc').textContent).toContain('rq=');
+    act(() => {
+      screen.getByText('clear').click();
+    });
+    expect(screen.getByTestId('state').textContent).toBe('all.all.0');
+    expect(screen.getByTestId('loc').textContent ?? '').not.toContain('rq=');
+  });
+
+  it('dispatchQueue set_index rejects NaN and negatives without dropping kind', () => {
+    const { result } = renderHook(() => useWorkbenchFilters(), {
+      wrapper: wrapperForUrl('/?rq=assignment.all.1'),
+    });
+
+    act(() => {
+      result.current.dispatchQueue({ type: QUEUE_ACTION.SET_INDEX, index: Number.NaN });
+    });
+    expect(result.current.queueState).toEqual({ kind: 'assignment', band: 'all', index: 0 });
+
+    act(() => {
+      result.current.dispatchQueue({ type: QUEUE_ACTION.SET_INDEX, index: 2 });
+    });
+    act(() => {
+      result.current.dispatchQueue({ type: QUEUE_ACTION.SET_INDEX, index: -4 });
+    });
+    expect(result.current.queueState).toEqual({ kind: 'assignment', band: 'all', index: 0 });
+  });
+
+  it('two STEP_INDEX dispatches in one tick advance by 2 (RLSE-06)', () => {
+    const { result } = renderHook(() => useWorkbenchFilters(), {
+      wrapper: wrapperForUrl('/?rq=assignment.all.0'),
+    });
+
+    act(() => {
+      result.current.dispatchQueue({ type: QUEUE_ACTION.STEP_INDEX, delta: 1, length: 5 });
+      result.current.dispatchQueue({ type: QUEUE_ACTION.STEP_INDEX, delta: 1, length: 5 });
+    });
+
+    expect(result.current.queueState).toEqual({ kind: 'assignment', band: 'all', index: 2 });
+  });
+
+  it('two dispatchQueue calls in one tick both land (RLSE-06 write-through)', () => {
+    const { result } = renderHook(() => useWorkbenchFilters(), {
+      wrapper: wrapperForUrl('/?rq=all.all.3'),
+    });
+
+    act(() => {
+      result.current.dispatchQueue({ type: QUEUE_ACTION.SET_KIND, kind: 'assignment' });
+      result.current.dispatchQueue({ type: QUEUE_ACTION.SET_BAND, band: 'strong' });
+    });
+
+    expect(result.current.queueState).toEqual({ kind: 'assignment', band: 'strong', index: 0 });
+  });
+
+  it('external navigate after a pending rq write is not resurrected by setCurrentPage (R2-02)', () => {
+    const Probe = (): React.JSX.Element => {
+      const { dispatchQueue, setCurrentPage } = useWorkbenchFilters();
+      const [, setSearchParams] = useSearchParams();
+      const loc = useLocation();
+      return (
+        <div>
+          <button
+            type="button"
+            onClick={() => {
+              dispatchQueue({ type: QUEUE_ACTION.SET_KIND, kind: 'assignment' });
+              setSearchParams(new URLSearchParams('rq=merge.all.0'), { replace: true });
+            }}
+          >
+            race
+          </button>
+          <button type="button" onClick={() => setCurrentPage(2)}>
+            page
+          </button>
+          <output data-testid="loc">{loc.search}</output>
+        </div>
+      );
+    };
+
+    render(
+      <MemoryRouter initialEntries={['/']}>
+        <Routes>
+          <Route path="/" element={<Probe />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    act(() => {
+      screen.getByText('race').click();
+    });
+    act(() => {
+      screen.getByText('page').click();
+    });
+    expect(screen.getByTestId('loc').textContent).toContain('rq=merge.all.0');
+    expect(screen.getByTestId('loc').textContent).not.toContain('assignment');
+  });
+
+  it('unmounting the last hook instance clears the pending search buffer (R2-02)', () => {
+    const Probe = (): React.JSX.Element => {
+      const { dispatchQueue } = useWorkbenchFilters();
+      const [, setSearchParams] = useSearchParams();
+      return (
+        <div>
+          <button
+            type="button"
+            onClick={() => {
+              dispatchQueue({ type: QUEUE_ACTION.SET_KIND, kind: 'assignment' });
+              setSearchParams(new URLSearchParams('rq=merge.all.0'), { replace: true });
+            }}
+          >
+            fill
+          </button>
+        </div>
+      );
+    };
+
+    const { unmount } = render(
+      <MemoryRouter initialEntries={['/?rq=merge.all.0']}>
+        <Routes>
+          <Route path="/" element={<Probe />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    act(() => {
+      screen.getByText('fill').click();
+    });
+    expect(peekPendingSearchWritesForTests().rq).toEqual({
+      kind: 'assignment',
+      band: 'all',
+      index: 0,
+    });
+    unmount();
+    expect(peekPendingSearchWritesForTests()).toEqual({});
+  });
+
+  it('unmounting one of two mounted instances keeps the pending buffer alive (UXW2-1-R3-05)', () => {
+    const Second = (): null => {
+      useWorkbenchFilters();
+      return null;
+    };
+
+    const Dual = (): React.JSX.Element => {
+      const [showSecond, setShowSecond] = useState(true);
+      const { dispatchQueue } = useWorkbenchFilters();
+      const [, setSearchParams] = useSearchParams();
+      return (
+        <div>
+          {showSecond ? <Second /> : null}
+          <button
+            type="button"
+            onClick={() => {
+              dispatchQueue({ type: QUEUE_ACTION.SET_KIND, kind: 'assignment' });
+              setSearchParams(new URLSearchParams('rq=merge.all.0'), { replace: true });
+            }}
+          >
+            fill
+          </button>
+          <button type="button" onClick={() => setShowSecond(false)}>
+            drop-one
+          </button>
+        </div>
+      );
+    };
+
+    const { unmount } = render(
+      <MemoryRouter initialEntries={['/?rq=merge.all.0']}>
+        <Routes>
+          <Route path="/" element={<Dual />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    act(() => {
+      screen.getByText('fill').click();
+    });
+    expect(peekPendingSearchWritesForTests().rq).toBeDefined();
+    act(() => {
+      screen.getByText('drop-one').click();
+    });
+    expect(peekPendingSearchWritesForTests().rq).toBeDefined();
+    unmount();
+    expect(peekPendingSearchWritesForTests()).toEqual({});
+  });
+
+  it('a p write snapshotted from a bare URL is abandoned when the destination also omits p (UXW2-1-R4-01)', () => {
+    const Probe = (): React.JSX.Element => {
+      const { setCurrentPage, dispatchQueue } = useWorkbenchFilters();
+      const [, setSearchParams] = useSearchParams();
+      const loc = useLocation();
+      return (
+        <div>
+          <button
+            type="button"
+            onClick={() => {
+              setCurrentPage(2);
+              setSearchParams(new URLSearchParams('tab=scan&panel=conflicts'), { replace: true });
+            }}
+          >
+            overlay-nav-p
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              dispatchQueue({ type: QUEUE_ACTION.SET_KIND, kind: 'assignment' });
+            }}
+          >
+            unrelated-rq
+          </button>
+          <output data-testid="loc">{loc.search}</output>
+        </div>
+      );
+    };
+
+    render(
+      <MemoryRouter initialEntries={['/']}>
+        <Routes>
+          <Route path="/" element={<Probe />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    act(() => {
+      screen.getByText('overlay-nav-p').click();
+    });
+    expect(peekPendingSearchWritesForTests().p).toBeUndefined();
+    expect(peekPendingSearchWritesForTests().pSnapshot).toBeUndefined();
+    act(() => {
+      screen.getByText('unrelated-rq').click();
+    });
+    expect(screen.getByTestId('loc').textContent).not.toContain('p=2');
+  });
+
+  it('a p write abandoned by an external navigate does not resurrect (UXW2-1-R3-05)', () => {
+    const Probe = (): React.JSX.Element => {
+      const { setCurrentPage } = useWorkbenchFilters();
+      const [, setSearchParams] = useSearchParams();
+      const loc = useLocation();
+      return (
+        <div>
+          <button
+            type="button"
+            onClick={() => {
+              setCurrentPage(2);
+              setSearchParams(new URLSearchParams('p=3'), { replace: true });
+            }}
+          >
+            race-p
+          </button>
+          <output data-testid="loc">{loc.search}</output>
+        </div>
+      );
+    };
+
+    render(
+      <MemoryRouter initialEntries={['/?p=1']}>
+        <Routes>
+          <Route path="/" element={<Probe />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    act(() => {
+      screen.getByText('race-p').click();
+    });
+    expect(peekPendingSearchWritesForTests().p).toBeUndefined();
+    expect(screen.getByTestId('loc').textContent).toContain('p=3');
+  });
+
+  it('a queue write snapshotted from a bare URL is abandoned when the destination also omits rq (UXW2-1-R3-06)', () => {
+    const Probe = (): React.JSX.Element => {
+      const { dispatchQueue } = useWorkbenchFilters();
+      const [, setSearchParams] = useSearchParams();
+      return (
+        <div>
+          <button
+            type="button"
+            onClick={() => {
+              dispatchQueue({ type: QUEUE_ACTION.SET_KIND, kind: 'assignment' });
+              setSearchParams(new URLSearchParams('tab=scan&panel=conflicts'), { replace: true });
+            }}
+          >
+            overlay-nav
+          </button>
+        </div>
+      );
+    };
+
+    render(
+      <MemoryRouter initialEntries={['/']}>
+        <Routes>
+          <Route path="/" element={<Probe />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    act(() => {
+      screen.getByText('overlay-nav').click();
+    });
+    expect(peekPendingSearchWritesForTests().rq).toBeUndefined();
+  });
+
+  it('the abandoned rq does not resurrect on the next unrelated commit (UXW2-1-R3-06)', () => {
+    const Probe = (): React.JSX.Element => {
+      const { dispatchQueue, handleSearchChange } = useWorkbenchFilters();
+      const [, setSearchParams] = useSearchParams();
+      const loc = useLocation();
+      return (
+        <div>
+          <button
+            type="button"
+            onClick={() => {
+              dispatchQueue({ type: QUEUE_ACTION.SET_KIND, kind: 'assignment' });
+              setSearchParams(new URLSearchParams('tab=scan&panel=conflicts'), { replace: true });
+            }}
+          >
+            overlay-nav
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              handleSearchChange({ target: { value: 'cat' } } as ChangeEvent<HTMLInputElement>);
+            }}
+          >
+            search
+          </button>
+          <output data-testid="loc">{loc.search}</output>
+        </div>
+      );
+    };
+
+    render(
+      <MemoryRouter initialEntries={['/']}>
+        <Routes>
+          <Route path="/" element={<Probe />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    act(() => {
+      screen.getByText('overlay-nav').click();
+    });
+    act(() => {
+      screen.getByText('search').click();
+    });
+    expect(screen.getByTestId('loc').textContent).not.toContain('rq=');
+  });
+
+  it('useTabParam in the same tick merges pending rq instead of ghosting it (R2-02)', () => {
+    const Probe = (): React.JSX.Element => {
+      const { dispatchQueue } = useWorkbenchFilters();
+      const [, setTab] = useTabParam('tab', 'scan', ['scan'] as const);
+      const loc = useLocation();
+      return (
+        <div>
+          <button
+            type="button"
+            onClick={() => {
+              dispatchQueue({ type: QUEUE_ACTION.SET_KIND, kind: 'assignment' });
+              setTab('scan');
+            }}
+          >
+            race-tab
+          </button>
+          <output data-testid="loc">{loc.search}</output>
+        </div>
+      );
+    };
+
+    render(
+      <MemoryRouter initialEntries={['/']}>
+        <Routes>
+          <Route path="/" element={<Probe />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    act(() => {
+      screen.getByText('race-tab').click();
+    });
+    expect(screen.getByTestId('loc').textContent).toContain('rq=assignment.all.0');
+  });
+
+  it('useOverlayParam in the same tick merges pending rq instead of ghosting it (UXW2-1-R3-04)', () => {
+    const Probe = (): React.JSX.Element => {
+      const { dispatchQueue } = useWorkbenchFilters();
+      const [, setOverlay] = useOverlayParam('panel', ['conflicts'] as const);
+      const loc = useLocation();
+      return (
+        <div>
+          <button
+            type="button"
+            onClick={() => {
+              dispatchQueue({ type: QUEUE_ACTION.SET_KIND, kind: 'assignment' });
+              setOverlay('conflicts');
+            }}
+          >
+            race-overlay
+          </button>
+          <output data-testid="loc">{loc.search}</output>
+        </div>
+      );
+    };
+
+    render(
+      <MemoryRouter initialEntries={['/']}>
+        <Routes>
+          <Route path="/" element={<Probe />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    act(() => {
+      screen.getByText('race-overlay').click();
+    });
+    expect(screen.getByTestId('loc').textContent).toContain('rq=assignment.all.0');
+    expect(screen.getByTestId('loc').textContent).toContain('panel=conflicts');
+  });
+
+  it('usePanesParam in the same tick merges pending rq instead of ghosting it (UXW2-1-R3-04)', () => {
+    const Probe = (): React.JSX.Element => {
+      const { dispatchQueue } = useWorkbenchFilters();
+      const [, setPanes] = usePanesParam();
+      const loc = useLocation();
+      return (
+        <div>
+          <button
+            type="button"
+            onClick={() => {
+              dispatchQueue({ type: QUEUE_ACTION.SET_KIND, kind: 'assignment' });
+              setPanes('control-collapsed');
+            }}
+          >
+            race-panes
+          </button>
+          <output data-testid="loc">{loc.search}</output>
+        </div>
+      );
+    };
+
+    render(
+      <MemoryRouter initialEntries={['/']}>
+        <Routes>
+          <Route path="/" element={<Probe />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    act(() => {
+      screen.getByText('race-panes').click();
+    });
+    expect(screen.getByTestId('loc').textContent).toContain('rq=assignment.all.0');
+    expect(screen.getByTestId('loc').textContent).toContain('panes=control-collapsed');
+  });
+
+  it('setAdvancedOpen in the same tick merges pending rq instead of ghosting it (UXW2-1-R3-04)', () => {
+    window.AltContextAdmin = {
+      nonce: 'test-nonce',
+      ajaxUrl: '/wp-admin/admin-ajax.php',
+      endpoints: {},
+    };
+    const Probe = (): React.JSX.Element => {
+      const { dispatchQueue } = useWorkbenchFilters();
+      const { setAdvancedOpen } = useWorkbenchNav();
+      const loc = useLocation();
+      return (
+        <div>
+          <button
+            type="button"
+            onClick={() => {
+              dispatchQueue({ type: QUEUE_ACTION.SET_KIND, kind: 'assignment' });
+              setAdvancedOpen(true);
+            }}
+          >
+            race-advanced
+          </button>
+          <output data-testid="loc">{loc.search}</output>
+        </div>
+      );
+    };
+
+    render(
+      <MemoryRouter initialEntries={['/']}>
+        <Routes>
+          <Route
+            path="/"
+            element={
+              <WorkbenchNavProvider>
+                <Probe />
+              </WorkbenchNavProvider>
+            }
+          />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    act(() => {
+      screen.getByText('race-advanced').click();
+    });
+    expect(screen.getByTestId('loc').textContent).toContain('rq=assignment.all.0');
+    expect(screen.getByTestId('loc').textContent).toContain('advanced=open');
+  });
+
+  it('UXW2-1-R5-01: p buffer with a non-null snapshot is dropped when URL p matches neither pending nor snapshot', () => {
+    queuePendingPage(2, '1');
+    expect(peekPendingSearchWritesForTests()).toEqual({ p: 2, pSnapshot: '1' });
+
+    reconcilePendingSearchWrites(new URLSearchParams('p=3'));
+
+    expect(peekPendingSearchWritesForTests().p).toBeUndefined();
+    expect(peekPendingSearchWritesForTests().pSnapshot).toBeUndefined();
+  });
+
+  it('UXW2-1-R5-01: p buffer snapshotted from a bare URL is dropped when dest still has no p and pending page is > 1', () => {
+    queuePendingPage(2, null);
+    expect(peekPendingSearchWritesForTests()).toEqual({ p: 2, pSnapshot: null });
+
+    reconcilePendingSearchWrites(new URLSearchParams(''));
+
+    expect(peekPendingSearchWritesForTests().p).toBeUndefined();
+    expect(peekPendingSearchWritesForTests().pSnapshot).toBeUndefined();
+  });
+
+  it('UXW2-1-R5-02: queued page-1 from a bare URL lands via pageMatches on the pre-write URL so null-snapshot abandon is unreachable', () => {
+    queuePendingPage(1, null);
+    reconcilePendingSearchWrites(new URLSearchParams(''));
+    expect(peekPendingSearchWritesForTests().p).toBeUndefined();
+    expect(peekPendingSearchWritesForTests().pSnapshot).toBeUndefined();
+  });
+
+  it('UXW2-1-R5-02: in-flight p write is kept while URL still equals the non-null snapshot', () => {
+    queuePendingPage(2, '1');
+    reconcilePendingSearchWrites(new URLSearchParams('p=1'));
+    expect(peekPendingSearchWritesForTests()).toEqual({ p: 2, pSnapshot: '1' });
+  });
+
+  it('UXW2-1-R5-02: rq buffer snapshotted from a bare URL is dropped when dest still has no rq', () => {
+    queuePendingQueueState({ kind: 'assignment', band: 'all', index: 0 }, null);
+    reconcilePendingSearchWrites(new URLSearchParams(''));
+    expect(peekPendingSearchWritesForTests().rq).toBeUndefined();
+    expect(peekPendingSearchWritesForTests().rqSnapshot).toBeUndefined();
   });
 });

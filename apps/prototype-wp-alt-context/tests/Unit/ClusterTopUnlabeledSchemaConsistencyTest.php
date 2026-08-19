@@ -86,24 +86,74 @@ class ClusterTopUnlabeledSchemaConsistencyTest extends TestCase
         $this->assertSchemaValid($schema, $invalid);
     }
 
+    /**
+     * R6-04: drive the identity_count >= representatives invariant from a
+     * glob, not a hand-enumerated fixture list. An empty glob must fail.
+     */
+    private const FIXTURE_RESPONSES_GLOB = __DIR__ . '/../fixtures/clusters-read/*/response.json';
+
     public function testEveryGoldenSatisfiesIdentityCountInvariant(): void
     {
-        $this->assertIdentityCountCoversRepresentatives(
-            $this->loadJson($this->resolveRepoPath(self::GOLDEN_RELATIVE)),
-            'contract-golden'
+        $paths = $this->globFixtureResponses(self::FIXTURE_RESPONSES_GLOB);
+        $this->assertNotEmpty(
+            $paths,
+            'clusters-read response glob must match at least one fixture'
         );
-        $this->assertIdentityCountCoversRepresentatives(
-            $this->loadJson(self::LOCAL_FIXTURE)['data'],
-            'local-projection'
-        );
-        $this->assertIdentityCountCoversRepresentatives(
-            $this->loadJson(self::PROXY_SUCCESS_FIXTURE)['data'],
-            'proxy-success'
-        );
-        $this->assertIdentityCountCoversRepresentatives(
-            $this->loadJson(self::PROXY_CANONICAL_FIXTURE)['data'],
-            'proxy-canonical'
-        );
+        $paths[] = $this->resolveRepoPath(self::GOLDEN_RELATIVE);
+
+        foreach ($paths as $path) {
+            $this->assertIdentityCountCoversRepresentatives(
+                $this->extractResponseEnvelope($this->loadJson($path)),
+                $path
+            );
+        }
+    }
+
+    /**
+     * R6-04: mutating identity_count below representatives.length must fail.
+     */
+    public function testIdentityCountBelowRepresentativesFailsInvariant(): void
+    {
+        $payload = $this->loadJson($this->resolveRepoPath(self::GOLDEN_RELATIVE));
+        $this->assertNotEmpty($payload['clusters'][0]['representatives']);
+        $payload['clusters'][0]['identity_count'] = count($payload['clusters'][0]['representatives']) - 1;
+
+        try {
+            $this->assertIdentityCountCoversRepresentatives($payload, 'mutated-below');
+            $this->fail('identity_count below representatives.length must fail the invariant');
+        } catch (\PHPUnit\Framework\ExpectationFailedException $exception) {
+            $this->assertStringContainsString(
+                'identity_count must cover representatives',
+                $exception->getMessage()
+            );
+        }
+    }
+
+    /**
+     * @return list<string>
+     */
+    private function globFixtureResponses(string $pattern): array
+    {
+        $matches = glob($pattern);
+
+        return is_array($matches) ? $matches : [];
+    }
+
+    /**
+     * @param array<string,mixed> $decoded
+     * @return array<string,mixed>
+     */
+    private function extractResponseEnvelope(array $decoded): array
+    {
+        if (($decoded['type'] ?? null) === 'response' && isset($decoded['data']) && is_array($decoded['data'])) {
+            return $decoded['data'];
+        }
+
+        if (($decoded['type'] ?? null) === 'error') {
+            return [];
+        }
+
+        return $decoded;
     }
 
     /**
@@ -112,7 +162,13 @@ class ClusterTopUnlabeledSchemaConsistencyTest extends TestCase
     private function assertIdentityCountCoversRepresentatives(array $payload, string $label): void
     {
         foreach ($payload['clusters'] ?? [] as $index => $cluster) {
-            $reps = $cluster['representatives'] ?? [];
+            if (! is_array($cluster) || ! array_key_exists('representatives', $cluster)) {
+                continue;
+            }
+            $reps = $cluster['representatives'];
+            if (! is_array($reps)) {
+                continue;
+            }
             $this->assertGreaterThanOrEqual(
                 count($reps),
                 (int) ($cluster['identity_count'] ?? -1),

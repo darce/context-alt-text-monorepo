@@ -1040,6 +1040,7 @@ export const useSuggestionReviewMutations = ({
         void queryClient.invalidateQueries({
           queryKey: [...queryKeys.clusters.all, 'top-unlabeled'],
         });
+        invalidateReviewCachesWithoutRefetch(queryClient);
         return;
       }
       for (const item of matched) {

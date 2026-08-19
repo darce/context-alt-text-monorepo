@@ -414,7 +414,7 @@ class ClustersControllerTest extends TestCase
             [
                 'clusters' => [],
                 'limit' => 10,
-                'total' => 0,
+                'total' => 1,
                 'truncated' => false,
                 'repair_pending' => true,
                 'data_source' => 'backend_proxy',
@@ -487,7 +487,7 @@ class ClustersControllerTest extends TestCase
         $data = $response->get_data();
         $this->assertCount(1, $data['clusters']);
         $this->assertSame('cluster-proxy-kept', $data['clusters'][0]['id']);
-        $this->assertSame(1, $data['total']);
+        $this->assertSame(2, $data['total']);
         $this->assertTrue($data['repair_pending']);
         $this->assertSame('backend_proxy', $data['data_source']);
     }

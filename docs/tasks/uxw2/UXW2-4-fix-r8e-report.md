@@ -8,7 +8,7 @@ All three findings closed.
 - **R8-02.** `resolve_emitted_label_state` lives on `MapsResponseFields`. `MemberResponseMapper` copies `label_state` onto member and media-identities rows. Known-gap sentence in `clustering-api.md` deleted.
 - **R8-03.** Cluster list, top-unlabeled, and members schemas require `label_state` with `enum: ["person", "unlabeled", "unbound"]`. Shared-contract goldens updated. `python3 scripts/check_shared_contract_fixtures.py` validates 4 fixtures.
 
-`file:line` cites re-derived with `sed -n '<N>p' <file>` after last code commit `d9d20ce2da7908d3c72e73ec8e953479fb9d4ae2`.
+`file:line` cites re-derived with `sed -n '<N>p' <file>` after last code commit subject `test(php): UXW2-4-R8-03 cluster schema label_state enum` (lane-local SHA was unresolvable in the merged tree).
 
 ## Closure
 
@@ -112,12 +112,14 @@ Delta: **+4 tests, +53 assertions**.
 
 ## Commits
 
-- `851184d429a5b2bd44168e6d5c198f9640c6ce57` `fix(php): UXW2-4-R8-01 tenant-scope legacy roster import`
-- `bcda6de9f246ec3c497e6bb1c39e715b3ba8da54` `test(php): UXW2-4-R8-01 tenant-scope legacy roster import`
-- `b9ed3d4b273d68a41bdba806db392158e720dedd` `fix(php): UXW2-4-R8-02 emit member label_state`
-- `7f15a65e4ed4aeb8224a8e2d64303a0ea3182c06` `test(php): UXW2-4-R8-02 emit member label_state`
-- `69ea842ed91b6655d9d7ad904c7b562a53aaebc8` `docs(contracts): UXW2-4-R8-03 add label_state to cluster schemas`
-- `d9d20ce2da7908d3c72e73ec8e953479fb9d4ae2` `test(php): UXW2-4-R8-03 cluster schema label_state enum`
+Lane-local SHAs from that lane clone are unresolvable on the merged tree; cite subjects only.
+
+- `fix(php): UXW2-4-R8-01 tenant-scope legacy roster import`
+- `test(php): UXW2-4-R8-01 tenant-scope legacy roster import`
+- `fix(php): UXW2-4-R8-02 emit member label_state`
+- `test(php): UXW2-4-R8-02 emit member label_state`
+- `docs(contracts): UXW2-4-R8-03 add label_state to cluster schemas`
+- `test(php): UXW2-4-R8-03 cluster schema label_state enum`
 
 ## Undone
 

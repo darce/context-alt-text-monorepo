@@ -147,7 +147,9 @@ class ClusterResponseEnvelopeService {
 					++$dropped;
 					continue;
 				}
-				$kept[] = $cluster;
+				// Plugin owns the emitted envelope: backfill label_state the same
+				// way local mapping does when older upstream rows omit the key.
+				$kept[] = $this->cluster_mapper->ensure_emitted_label_state( $cluster );
 			}
 
 			$total = max( 0, (int) $data['total'] );

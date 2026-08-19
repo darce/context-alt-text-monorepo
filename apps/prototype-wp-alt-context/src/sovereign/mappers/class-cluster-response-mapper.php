@@ -38,6 +38,20 @@ class ClusterResponseMapper {
 	}
 
 	/**
+	 * Guarantee schema-required label_state on a plugin-owned cluster envelope.
+	 * Keep a non-empty upstream string; otherwise derive person|unlabeled|unbound
+	 * from label/person so older proxy payloads cannot omit the key.
+	 *
+	 * @param array<string,mixed> $cluster
+	 * @return array<string,mixed>
+	 */
+	public function ensure_emitted_label_state( array $cluster ): array {
+		$cluster['label_state'] = $this->resolve_emitted_label_state( $cluster );
+
+		return $cluster;
+	}
+
+	/**
 	 * @param array<int,array<string,mixed>> $cluster_rows
 	 * @param array<string,array<int,array<string,mixed>>> $members_by_cluster
 	 * @param int|null $preview_limit Per-cluster member fetch cap; when set, members were

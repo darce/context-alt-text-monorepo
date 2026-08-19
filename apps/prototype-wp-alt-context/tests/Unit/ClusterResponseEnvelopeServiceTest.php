@@ -87,6 +87,62 @@ class ClusterResponseEnvelopeServiceTest extends TestCase
         $this->assertSame(1, $data['total']);
         $this->assertFalse($data['truncated']);
         $this->assertFalse($data['repair_pending']);
+        $this->assertSame('unlabeled', $data['clusters'][0]['label_state']);
+    }
+
+    /**
+     * Plugin-owned proxy envelope backfills omitted label_state from label.
+     */
+    public function testNormalizeTopUnlabeledResponseBackfillsOmittedLabelState(): void
+    {
+        $response = new WP_REST_Response([
+            'clusters' => [
+                [
+                    'id' => 'cluster-omit',
+                    'label' => null,
+                    'identity_count' => 2,
+                    'representatives' => [
+                        ['id' => 'r1', 'media_id' => 1, 'is_pinned' => false],
+                    ],
+                ],
+            ],
+            'limit' => 10,
+            'total' => 1,
+            'truncated' => false,
+        ], 200);
+
+        $result = $this->service->normalize_top_unlabeled_response($response);
+
+        $this->assertInstanceOf(WP_REST_Response::class, $result);
+        $this->assertSame('unlabeled', $result->get_data()['clusters'][0]['label_state']);
+    }
+
+    /**
+     * A valid upstream label_state must not be overwritten.
+     */
+    public function testNormalizeTopUnlabeledResponsePreservesUpstreamLabelState(): void
+    {
+        $response = new WP_REST_Response([
+            'clusters' => [
+                [
+                    'id' => 'cluster-person',
+                    'label' => 'Ada',
+                    'label_state' => 'person',
+                    'identity_count' => 2,
+                    'representatives' => [
+                        ['id' => 'r1', 'media_id' => 1, 'is_pinned' => false],
+                    ],
+                ],
+            ],
+            'limit' => 10,
+            'total' => 1,
+            'truncated' => false,
+        ], 200);
+
+        $result = $this->service->normalize_top_unlabeled_response($response);
+
+        $this->assertInstanceOf(WP_REST_Response::class, $result);
+        $this->assertSame('person', $result->get_data()['clusters'][0]['label_state']);
     }
 
     /**

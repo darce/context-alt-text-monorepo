@@ -190,18 +190,6 @@ vi.mock('../../JobTimeline', () => ({
   JobTimeline: () => <div data-testid="job-timeline" />,
 }));
 
-vi.mock('../WorkbenchFindingsPanel', () => ({
-  WorkbenchFindingsPanel: () => <div data-testid="findings-panel" />,
-}));
-
-vi.mock('../ClusterLabelingPanel', () => ({
-  ClusterLabelingPanel: () => <div data-testid="label-panel" />,
-}));
-
-vi.mock('../ClusterReviewPanel', () => ({
-  ClusterReviewPanel: () => <div data-testid="review-panel" />,
-}));
-
 vi.mock('../useOpenReviewTargetLifecycle', () => ({
   useOpenReviewTargetLifecycle: () => ({ reviewClusterId: null }),
 }));
@@ -972,7 +960,7 @@ describe('ReviewQueue', () => {
         </Routes>
       </MemoryRouter>,
     );
-    expect(await screen.findByText('3 of 3')).toBeInTheDocument();
+    expect(await screen.findByText('3 of 3 on this page')).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Close matches' }));
     await waitFor(() => {
       expect(screen.getByTestId('loc').textContent).toContain('rq=assignment.all.0');
@@ -992,7 +980,7 @@ describe('ReviewQueue', () => {
       'aria-pressed',
       'false',
     );
-    expect(screen.getByText('1 of 3')).toBeInTheDocument();
+    expect(screen.getByText('1 of 3 shown')).toBeInTheDocument();
   });
 
   it('two synchronous Next clicks advance index by 2 (R1-05)', async () => {
@@ -1031,14 +1019,14 @@ describe('ReviewQueue', () => {
     });
     renderQueue();
     await screen.findByRole('button', { name: 'Yes' });
-    expect(screen.getByText('1 of 3')).toBeInTheDocument();
+    expect(screen.getByText('1 of 3 on this page')).toBeInTheDocument();
     const next = screen.getByRole('button', { name: 'Next review item' });
     act(() => {
       next.click();
       next.click();
     });
     await waitFor(() => {
-      expect(screen.getByText('3 of 3')).toBeInTheDocument();
+      expect(screen.getByText('3 of 3 on this page')).toBeInTheDocument();
     });
   });
 

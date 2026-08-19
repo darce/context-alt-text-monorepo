@@ -334,7 +334,7 @@ describe('ScanTabContent review-queue chips → rq= URL (single owner)', () => {
     await waitFor(() => {
       expect(screen.getByRole('button', { name: 'Possible duplicates' })).toHaveAttribute('aria-pressed', 'true');
     });
-    expect(await screen.findByText('2 of 2')).toBeInTheDocument();
+    expect(await screen.findByText('2 of 2 shown')).toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: 'Previous review item' }));
     await waitFor(() => {
@@ -369,7 +369,7 @@ describe('ScanTabContent review-queue chips → rq= URL (single owner)', () => {
     await waitFor(() => {
       expect(screen.getByRole('button', { name: 'Close matches' })).toHaveAttribute('aria-pressed', 'true');
     });
-    expect(await screen.findByText('2 of 2')).toBeInTheDocument();
+    expect(await screen.findByText('2 of 2 shown')).toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: 'Strong matches' }));
     await waitFor(() => {
@@ -387,7 +387,7 @@ describe('ScanTabContent review-queue chips → rq= URL (single owner)', () => {
       expect(screen.getByRole('button', { name: 'Close matches' })).toHaveAttribute('aria-pressed', 'true');
     });
     expect(screen.getByRole('button', { name: 'Strong matches' })).toHaveAttribute('aria-pressed', 'true');
-    expect(await screen.findByText('2 of 2')).toBeInTheDocument();
+    expect(await screen.findByText('2 of 2 shown')).toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: 'Previous review item' }));
     await waitFor(() => {
@@ -420,7 +420,7 @@ describe('ScanTabContent review-queue chips → rq= URL (single owner)', () => {
     await waitFor(() => {
       expect(locSearch()).toContain('rq=assignment.all.1');
     });
-    expect(screen.getByText('2 of 2')).toBeInTheDocument();
+    expect(screen.getByText('2 of 2 shown')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Close matches' })).toHaveAttribute('aria-pressed', 'true');
   });
 });

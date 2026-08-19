@@ -4,6 +4,8 @@ import type { ReactNode } from 'react';
 import { MemoryRouter, Route, Routes, useLocation, useSearchParams } from 'react-router-dom';
 import { beforeEach, describe, expect, it } from 'vitest';
 
+import { useOverlayParam } from '../useOverlayParam';
+import { usePanesParam } from '../usePanesParam';
 import { useTabParam } from '../useTabParam';
 import {
   QUEUE_ACTION,
@@ -12,6 +14,7 @@ import {
   seedPendingSearchWritesForTests,
   useWorkbenchFilters,
 } from '../useWorkbenchFilters';
+import { useWorkbenchNav, WorkbenchNavProvider } from '../../pages/workbench/WorkbenchNavContext';
 
 const wrapper = ({ children }: { children: ReactNode }) => (
   <MemoryRouter initialEntries={['/']}>
@@ -345,5 +348,125 @@ describe('useWorkbenchFilters', () => {
       screen.getByText('race-tab').click();
     });
     expect(screen.getByTestId('loc').textContent).toContain('rq=assignment.all.0');
+  });
+
+  it('useOverlayParam in the same tick merges pending rq instead of ghosting it (UXW2-1-R3-04)', () => {
+    const Probe = (): React.JSX.Element => {
+      const { dispatchQueue } = useWorkbenchFilters();
+      const [, setOverlay] = useOverlayParam('panel', ['conflicts'] as const);
+      const loc = useLocation();
+      return (
+        <div>
+          <button
+            type="button"
+            onClick={() => {
+              dispatchQueue({ type: QUEUE_ACTION.SET_KIND, kind: 'assignment' });
+              setOverlay('conflicts');
+            }}
+          >
+            race-overlay
+          </button>
+          <output data-testid="loc">{loc.search}</output>
+        </div>
+      );
+    };
+
+    render(
+      <MemoryRouter initialEntries={['/']}>
+        <Routes>
+          <Route path="/" element={<Probe />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    act(() => {
+      screen.getByText('race-overlay').click();
+    });
+    expect(screen.getByTestId('loc').textContent).toContain('rq=assignment.all.0');
+    expect(screen.getByTestId('loc').textContent).toContain('panel=conflicts');
+  });
+
+  it('usePanesParam in the same tick merges pending rq instead of ghosting it (UXW2-1-R3-04)', () => {
+    const Probe = (): React.JSX.Element => {
+      const { dispatchQueue } = useWorkbenchFilters();
+      const [, setPanes] = usePanesParam();
+      const loc = useLocation();
+      return (
+        <div>
+          <button
+            type="button"
+            onClick={() => {
+              dispatchQueue({ type: QUEUE_ACTION.SET_KIND, kind: 'assignment' });
+              setPanes('control-collapsed');
+            }}
+          >
+            race-panes
+          </button>
+          <output data-testid="loc">{loc.search}</output>
+        </div>
+      );
+    };
+
+    render(
+      <MemoryRouter initialEntries={['/']}>
+        <Routes>
+          <Route path="/" element={<Probe />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    act(() => {
+      screen.getByText('race-panes').click();
+    });
+    expect(screen.getByTestId('loc').textContent).toContain('rq=assignment.all.0');
+    expect(screen.getByTestId('loc').textContent).toContain('panes=control-collapsed');
+  });
+
+  it('setAdvancedOpen in the same tick merges pending rq instead of ghosting it (UXW2-1-R3-04)', () => {
+    window.AltContextAdmin = {
+      nonce: 'test-nonce',
+      ajaxUrl: '/wp-admin/admin-ajax.php',
+      endpoints: {},
+    };
+    const Probe = (): React.JSX.Element => {
+      const { dispatchQueue } = useWorkbenchFilters();
+      const { setAdvancedOpen } = useWorkbenchNav();
+      const loc = useLocation();
+      return (
+        <div>
+          <button
+            type="button"
+            onClick={() => {
+              dispatchQueue({ type: QUEUE_ACTION.SET_KIND, kind: 'assignment' });
+              setAdvancedOpen(true);
+            }}
+          >
+            race-advanced
+          </button>
+          <output data-testid="loc">{loc.search}</output>
+        </div>
+      );
+    };
+
+    render(
+      <MemoryRouter initialEntries={['/']}>
+        <Routes>
+          <Route
+            path="/"
+            element={
+              <WorkbenchNavProvider>
+                <Probe />
+              </WorkbenchNavProvider>
+            }
+          />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    act(() => {
+      screen.getByText('race-advanced').click();
+    });
+    expect(screen.getByTestId('loc').textContent).toContain('rq=assignment.all.0');
+    expect(screen.getByTestId('loc').textContent).toContain('advanced=open');
   });
 });

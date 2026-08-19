@@ -79,16 +79,17 @@
       "route": "#/workbench?tab=scan",
       "job_entry": true,
       "deep_link": true,
-      "url_params": ["tab", "status", "media", "s", "p", "perPage", "panel", "cluster"],
+      "url_params": ["tab", "status", "media", "s", "p", "perPage", "rq", "panel", "cluster"],
       "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/workbench/ScanTabContent.tsx",
       "primary_action_id": "act-scan-selected",
       "states": ["default", "loading", "empty", "error", "first_time", "edge_input", "reviewing"],
       "zones": [
         {
           "id": "z-review-queue",
-          "label": "Review Suggestions queue header / count",
+          "label": "Review queue header / count with kind+band filter chips, card-at-a-time (rq= URL is the single owner of chip state)",
           "role": "queue",
-          "states": ["default", "loading", "empty"]
+          "evidence_linked": true,
+          "states": ["default", "loading", "empty", "filtered_empty", "drained", "error"]
         },
         {
           "id": "z-review-panel",

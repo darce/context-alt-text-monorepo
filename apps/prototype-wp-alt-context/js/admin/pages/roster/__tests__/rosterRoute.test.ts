@@ -119,4 +119,11 @@ describe('workbench deep link (E21-9 Slice 5b contract; UXW2-4 rail retired)', (
     const params = new URLSearchParams(q === -1 ? '' : href.slice(q + 1));
     expect(parseQueueState(params.get('rq'))).toEqual(DEFAULT_QUEUE_STATE);
   });
+
+  it('encodes rq from the shared queue vocabulary (REF-09, no hand-coded token)', () => {
+    // UXW2-1 REF-09 forbids a literal token; UXW2-4 R1-21 pins the value to the
+    // default queue state so the CTA lands where parseQueueState says it lands.
+    const encoded = `${DEFAULT_QUEUE_STATE.kind}.${DEFAULT_QUEUE_STATE.band}.${DEFAULT_QUEUE_STATE.index}`;
+    expect(workbenchReviewQueueUrl()).toBe(`#/workbench?tab=scan&rq=${encoded}`);
+  });
 });

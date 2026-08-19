@@ -442,7 +442,7 @@ Notes:
 - `data_source: "unavailable"` remains the degraded HTTP `200` response only for non-503 upstream failures (for example other `5xx` or transport errors).
 - Successful backend-proxy responses must resolve to one canonical envelope: either an upstream `identities_by_media` object or a bare array of identity rows that each include `media_id`. Any other `200` payload shape is rejected with `invalid_media_identities_payload` and HTTP `502`.
 - TypeScript consumers now require `data_source` to be present on successful envelopes instead of defaulting missing metadata locally.
-- **Label authority (UXW2-4):** human label ⇒ bound person. On the local-projection path, `cluster_label` is the person name or the auto label (`cluster-%` / unlabeled). Unbound human labels are not returned.
+- **Label authority (UXW2-4):** human label ⇒ bound person. On the local-projection path, `cluster_label` is the person name or the auto label. Auto/reserved labels match `DetectsSystemDefinedLabels::is_reserved_label_shape()`: unicode-whitespace trim, then case-insensitive prefix `cluster-` or `cluster_` (`/^cluster[-_]/i`). `Cluster_ab12ef34` is reserved, not a human name. Unbound human labels are not returned.
 
 ## POST /recognition/clusters/reassign
 

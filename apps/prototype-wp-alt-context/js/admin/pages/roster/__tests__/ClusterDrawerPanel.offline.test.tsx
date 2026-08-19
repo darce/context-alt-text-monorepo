@@ -171,4 +171,25 @@ describe('ClusterDrawerPanel rescan state matrix (RES-15, A11Y-24)', () => {
     expect(screen.queryByText(/No other face groups available/i)).not.toBeInTheDocument();
     expect(screen.getByText('Face moves happen in the Workbench review queue.')).toBeInTheDocument();
   });
+
+  it('does not make faces draggable or accept drops when reassign is boarded up', () => {
+    const onDiscardDrop = vi.fn();
+    const onFaceDragStart = vi.fn();
+    render(
+      <ClusterDrawerPanel
+        {...baseProps}
+        reassignUnavailableReason="Face moves happen in the Workbench review queue."
+        isDragging
+        onDiscardDrop={onDiscardDrop}
+        onFaceDragStart={onFaceDragStart}
+      />,
+    );
+
+    const face = screen.getByRole('figure', { name: /Face from media 1/i });
+    expect(face).not.toHaveAttribute('draggable', 'true');
+    fireEvent.dragStart(face);
+    expect(onFaceDragStart).not.toHaveBeenCalled();
+    expect(screen.queryByText('Drop faces here to remove them from this face group.')).not.toBeInTheDocument();
+    expect(onDiscardDrop).not.toHaveBeenCalled();
+  });
 });

@@ -121,39 +121,42 @@ export const ClusterDrawerPanel = ({
   const restoreMoveFocusRef = React.useRef(false);
   const pendingReassignRef = React.useRef<{ faceId: string; targetLabel: string } | null>(null);
 
+  const hideReassign = Boolean(reassignUnavailableReason);
+
   const createFaceDragStart = React.useCallback(
     (faceId: string) => (event: React.DragEvent<HTMLElement>) => {
-      if (!cluster) {
+      if (!cluster || hideReassign) {
+        event.preventDefault();
         return;
       }
       event.dataTransfer?.setData('text/plain', faceId);
       event.dataTransfer?.setDragImage(event.currentTarget, 0, 0);
       onFaceDragStart(cluster.id, faceId);
     },
-    [onFaceDragStart, cluster],
+    [onFaceDragStart, cluster, hideReassign],
   );
 
   const handleDropzoneDragOver = React.useCallback(
     (event: React.DragEvent<HTMLDivElement>) => {
-      if (!isDragging) {
+      if (!isDragging || hideReassign) {
         return;
       }
       event.preventDefault();
       onDropTargetChange('discard');
     },
-    [isDragging, onDropTargetChange],
+    [hideReassign, isDragging, onDropTargetChange],
   );
 
   const handleDropzoneDrop = React.useCallback(
     (event: React.DragEvent<HTMLDivElement>) => {
-      if (!isDragging) {
+      if (!isDragging || hideReassign) {
         return;
       }
       event.preventDefault();
       onDropTargetChange(null);
       onDiscardDrop();
     },
-    [isDragging, onDiscardDrop, onDropTargetChange],
+    [hideReassign, isDragging, onDiscardDrop, onDropTargetChange],
   );
 
   React.useEffect(() => {
@@ -289,7 +292,6 @@ export const ClusterDrawerPanel = ({
   const drawerState = cluster ? getClusterDrawerState(cluster) : null;
   const identitiesToDisplay = identities ?? [];
   const hasIdentities = identitiesToDisplay.length > 0;
-  const hideReassign = Boolean(reassignUnavailableReason);
   const hasReassignTargets = !hideReassign && reassignTargets.length > 0;
   // Native disabled only for busy/missing handler — empty targets stay focusable (aria-disabled).
   const moveNativelyDisabled = isReassigning || !onReassignFace;
@@ -406,10 +408,15 @@ export const ClusterDrawerPanel = ({
                   <figure
                     key={identity.identity_id}
                     className="acx-cluster-drawer__face"
-                    draggable
-                    aria-label={sprintf(__('Move face from media %d', 'alt-context'), identity.media_id)}
-                    onDragStart={createFaceDragStart(identity.identity_id)}
-                    onDragEnd={onFaceDragEnd}
+                    draggable={!hideReassign}
+                    aria-label={sprintf(
+                      hideReassign
+                        ? __('Face from media %d', 'alt-context')
+                        : __('Move face from media %d', 'alt-context'),
+                      identity.media_id,
+                    )}
+                    onDragStart={hideReassign ? undefined : createFaceDragStart(identity.identity_id)}
+                    onDragEnd={hideReassign ? undefined : onFaceDragEnd}
                   >
                     <a href={mediaEditUrl(identity.media_id)} target="_blank" rel="noopener noreferrer">
                       <IdentityThumbnail
@@ -502,7 +509,7 @@ export const ClusterDrawerPanel = ({
           <p className="acx-cluster-drawer__status acx-cluster-drawer__status--error">{detailError}</p>
         ) : null}
 
-        {cluster ? (
+        {cluster && !hideReassign ? (
         <div className="acx-cluster-drawer__dropzone-wrapper">
           <div
             className={`acx-cluster-drawer__dropzone${dropTarget === 'discard' ? ' is-drop-target' : ''}`}

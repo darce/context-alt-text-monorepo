@@ -116,9 +116,18 @@ export const RosterPage = (): React.JSX.Element => {
     onCommitSettled: dragDrop.resetDragState,
   });
 
+  const reassignUnavailableReason =
+    selectedClusterId === null
+      ? null
+      : __('Face moves happen in the Workbench review queue.', 'alt-context');
+
   const handleDropFace = (targetClusterId: string | null): void => {
     const payload = dragDrop.dragPayload;
     if (!payload) {
+      return;
+    }
+    if (reassignUnavailableReason) {
+      dragDrop.handleFaceDragEnd();
       return;
     }
     if (targetClusterId && targetClusterId === payload.fromClusterId) {
@@ -238,11 +247,7 @@ export const RosterPage = (): React.JSX.Element => {
       <ClusterDrawerPanel
         cluster={selectedClusterId === null ? null : drawerCluster}
         requestedClusterId={selectedClusterId}
-        reassignUnavailableReason={
-          selectedClusterId === null
-            ? null
-            : __('Face moves happen in the Workbench review queue.', 'alt-context')
-        }
+        reassignUnavailableReason={reassignUnavailableReason}
         identities={drawerIdentities}
         isDetailLoading={clusterDetailQuery.isLoading}
         detailError={

@@ -67,6 +67,9 @@ export const PersonCommitControl = ({
   const [reservedError, setReservedError] = React.useState<string | null>(null);
   const isBusy = phase === PERSON_COMMIT_PHASE.COMMITTING || disabled;
   const queryClient = useQueryClient();
+  // Honest machine-suggestion signal: ReviewQueue wires NAME suggested_name and
+  // CLUSTER suggested_label here; ASSIGNMENT and unlabeled CLUSTER pass null.
+  const hasMachineSuggestion = Boolean(suggestedCreateName?.trim());
 
   const rosterQuery = useQuery({
     queryKey: queryKeys.roster.entries(),
@@ -154,12 +157,14 @@ export const PersonCommitControl = ({
       data-testid="acx-person-commit"
       data-person-commit-primary={isPrimary ? 'true' : 'false'}
     >
-      <p className="acx-person-commit__disclosure">
-        {__(
-          'Suggested by face matching based on similarity — confirm before treating it as fact.',
-          'alt-context',
-        )}
-      </p>
+      {hasMachineSuggestion ? (
+        <p className="acx-person-commit__disclosure">
+          {__(
+            'Suggested by face matching based on similarity — confirm before treating it as fact.',
+            'alt-context',
+          )}
+        </p>
+      ) : null}
 
       {rosterQuery.isError ? (
         <div className="acx-person-commit__failure" role="alert">

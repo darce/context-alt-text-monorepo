@@ -7,7 +7,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { queryKeys } from '../../../../api/queryKeys';
 import { listRosterEntries } from '../../../../api/rosterApi';
 import { PersonCommitControl } from '../PersonCommitControl';
-import { PERSON_COMMIT_CONFIRM_COPY } from '../personCommitCopy';
+import { MODEL_OUTPUT_DISCLOSURE, PERSON_COMMIT_CONFIRM_COPY } from '../personCommitCopy';
 
 vi.mock('@wordpress/i18n', () => ({
   __: (text: string) => text,
@@ -154,6 +154,16 @@ describe('PersonCommitControl single-gesture naming (UXW2-3)', () => {
     renderControl({ onCurateGroup });
     await userEvent.setup().click(screen.getByRole('button', { name: 'Merge or split this group' }));
     expect(onCurateGroup).toHaveBeenCalledWith('cluster-1');
+  });
+
+  it('renders the model-output disclosure when suggestedCreateName is present (UXW2-3-R6-05)', () => {
+    renderControl({ suggestedCreateName: 'Morgan' });
+    expect(screen.getByText(MODEL_OUTPUT_DISCLOSURE)).toBeInTheDocument();
+  });
+
+  it('does not render the model-output disclosure when suggestedCreateName is null (UXW2-3-R6-05)', () => {
+    renderControl({ suggestedCreateName: null });
+    expect(screen.queryByText(MODEL_OUTPUT_DISCLOSURE)).not.toBeInTheDocument();
   });
 
   it('prefills a suggested create name and Enter commits it', async () => {

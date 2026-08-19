@@ -61,7 +61,7 @@
 |   - Status / search filters (form) states=[default,edge_i… |
 |   - Media selection table (queue) states=[default,loading… |
 |   - Scan / analyze CTAs + job progress (job) states=[defa… |
-|   - Review suggestions + Name this person (NameFaceControl) (ai_review) states=[default,empty,loading,error,pending,suggestions-open] |
+|   - Review suggestions + Name this person (NameFaceControl) (ai_review) states=[default,empty,loading,error,pending,suggestions-open,suggested] |
 +------------------------------------------------------------+
 | ACTIONS                                                    |
 |   [PRIMARY] Scan selected media -> job-pipeline (costly,p… |

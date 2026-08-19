@@ -228,6 +228,7 @@ export const NameFaceControl = ({
   const listboxId = `acx-name-face-listbox-${reactId}`;
   const [activeIndex, setActiveIndex] = useState(-1);
   const [announcedTotal, setAnnouncedTotal] = useState<number | null>(null);
+  const [chosenOptionValue, setChosenOptionValue] = useState<string | null>(null);
   const isDisabled = isPending || disabled || isLoading;
   const isInputDisabled = disabled || isLoading || (inputDisabled ?? isPending);
 
@@ -241,12 +242,16 @@ export const NameFaceControl = ({
   }, []);
 
   const matchingOptions = React.useMemo(() => matchingOptionsFor(options, value), [options, value]);
-  const displayedOptions = React.useMemo(() => budgetOverlayOptions(options), [options]);
+  const displayedOptions = React.useMemo(
+    () => budgetOverlayOptions(matchingOptions),
+    [matchingOptions],
+  );
   const matchTotal = matchingOptions.length;
   const overlayOpen = displayedOptions.length > 0 && !isPending && !isLoading;
 
   useEffect(() => {
     setActiveIndex(-1);
+    setChosenOptionValue(null);
   }, [value, matchTotal]);
 
   useEffect(() => {
@@ -266,7 +271,7 @@ export const NameFaceControl = ({
     () => (value.trim() ? personMatchesFor(options, value) : []),
     [options, value],
   );
-  const isAmbiguous = ambiguousMatches.length > 1;
+  const isAmbiguous = ambiguousMatches.length > 1 && chosenOptionValue === null;
 
   const resultCountAnnouncement = React.useMemo(() => {
     if (isLoading) {
@@ -309,12 +314,17 @@ export const NameFaceControl = ({
         return;
       }
       if (optionSource(option) === 'person') {
-        commitValue(option.label);
+        const parsed = parseNamingOptionValue(String(option.value));
+        const rosterEntryId = Number.parseInt(parsed?.id ?? '', 10);
+        if (Number.isFinite(rosterEntryId) && !isPending && !isLoading) {
+          setChosenOptionValue(String(option.value));
+          onCommit({ kind: 'roster', rosterEntryId, name: option.label.trim() });
+        }
         return;
       }
       onValueChange(option.label);
     },
-    [onOptionConfirm, commitValue, onValueChange],
+    [onOptionConfirm, onCommit, onValueChange, isPending, isLoading],
   );
 
   const handleKeyDown = (e: React.KeyboardEvent) => {

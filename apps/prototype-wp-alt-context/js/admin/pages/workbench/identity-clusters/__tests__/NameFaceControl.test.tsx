@@ -43,17 +43,40 @@ const defaultProps = {
 
 const renderControl = (overrides: Partial<React.ComponentProps<typeof NameFaceControl>> = {}) => {
   const onCommit = overrides.onCommit ?? vi.fn();
-  const onOptionConfirm = overrides.onOptionConfirm ?? vi.fn();
+  const onOptionConfirm =
+    'onOptionConfirm' in overrides ? overrides.onOptionConfirm : vi.fn();
   const onValueChange = overrides.onValueChange ?? vi.fn();
   const props: React.ComponentProps<typeof NameFaceControl> = {
     ...defaultProps,
     onCommit,
-    onOptionConfirm,
     onValueChange,
     ...overrides,
   };
+  if (!('onOptionConfirm' in overrides) && onOptionConfirm) {
+    props.onOptionConfirm = onOptionConfirm;
+  }
   const view = render(<NameFaceControl {...props} />);
   return { ...view, onCommit, onOptionConfirm, onValueChange };
+};
+
+const TypedNameFace = ({
+  options = defaultProps.options,
+  onCommit,
+}: {
+  options?: readonly ComboboxOption[];
+  onCommit: ReturnType<typeof vi.fn>;
+}): React.JSX.Element => {
+  const [value, setValue] = React.useState('');
+  return (
+    <NameFaceControl
+      options={options}
+      value={value}
+      onValueChange={setValue}
+      onCommit={onCommit}
+      commitLabel="Save name"
+      ariaLabel="Name this person"
+    />
+  );
 };
 
 describe('NameFaceControl combobox pattern (UXW2-3-R1-01)', () => {
@@ -124,7 +147,29 @@ describe('NameFaceControl create-vs-bind (UXW2-3-R1-07)', () => {
     });
   });
 
-  it('binds a roster person who fell outside the display budget', async () => {
+  it('typed Zed shows Zed Offslice; typed Gra does not (UXW2-3-R2-01)', async () => {
+    const options = [
+      ...Array.from({ length: 6 }, (_, index) => person(index + 1, `Suggested ${index}`)),
+      person(99, 'Zed Offslice'),
+    ];
+    const { rerender, onCommit } = renderControl({ options, value: 'Zed' });
+
+    expect(screen.getByRole('option', { name: /Zed Offslice/ })).toBeInTheDocument();
+
+    rerender(
+      <NameFaceControl
+        options={options}
+        value="Gra"
+        onValueChange={onCommit}
+        onCommit={onCommit}
+        commitLabel="Save name"
+        ariaLabel="Name this person"
+      />,
+    );
+    expect(screen.queryByRole('option', { name: /Zed Offslice/ })).not.toBeInTheDocument();
+  });
+
+  it('binds a roster person who fell outside the unfiltered display budget', async () => {
     const options = [
       ...Array.from({ length: 6 }, (_, index) => person(index + 1, `Suggested ${index}`)),
       person(99, 'Zed Offslice'),
@@ -132,7 +177,7 @@ describe('NameFaceControl create-vs-bind (UXW2-3-R1-07)', () => {
     const { onCommit } = renderControl({ options, value: 'zed offslice' });
     const user = userEvent.setup();
 
-    expect(screen.queryByText('Zed Offslice')).not.toBeInTheDocument();
+    expect(screen.getByRole('option', { name: /Zed Offslice/ })).toBeInTheDocument();
     await user.type(screen.getByRole('combobox'), '{Enter}');
 
     expect(onCommit).toHaveBeenCalledWith({
@@ -140,6 +185,44 @@ describe('NameFaceControl create-vs-bind (UXW2-3-R1-07)', () => {
       rosterEntryId: 99,
       name: 'Zed Offslice',
     });
+  });
+
+  it('type Gra, ArrowDown, Enter binds Grace and never a non-match (UXW2-3-R2-01a)', async () => {
+    const onCommit = vi.fn();
+    render(<TypedNameFace onCommit={onCommit} />);
+    const user = userEvent.setup();
+    const input = screen.getByRole('combobox', { name: 'Name this person' });
+
+    await user.type(input, 'Gra');
+    await user.keyboard('{ArrowDown}{Enter}');
+
+    expect(onCommit).toHaveBeenCalledTimes(1);
+    expect(onCommit).toHaveBeenCalledWith({
+      kind: 'roster',
+      rosterEntryId: 2,
+      name: 'Grace Hopper',
+    });
+  });
+
+  it('clicking confirm on the second same-fold person binds that id (UXW2-3-R2-01b)', async () => {
+    const options = [person(1, 'Alex Carter'), person(2, 'ALEX CARTER')];
+    const { onCommit } = renderControl({
+      options,
+      value: 'alex carter',
+      onOptionConfirm: undefined,
+    });
+    const user = userEvent.setup();
+
+    const confirmButtons = screen.getAllByRole('button', { name: /Confirm match with/ });
+    expect(confirmButtons).toHaveLength(2);
+    await user.click(confirmButtons[1]);
+
+    expect(onCommit).toHaveBeenCalledWith({
+      kind: 'roster',
+      rosterEntryId: 2,
+      name: 'ALEX CARTER',
+    });
+    expect(screen.getByRole('button', { name: 'Save name' })).toBeEnabled();
   });
 
   it('forces an explicit choice when two roster people fold to the same name', async () => {

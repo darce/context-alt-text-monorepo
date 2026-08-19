@@ -178,8 +178,9 @@ class ClusterReadServiceTest extends TestCase
         $data = $response->get_data();
         $this->assertCount(1, $data['clusters']);
         $this->assertSame('cluster-keep', $data['clusters'][0]['id']);
-        $this->assertSame(1, $data['total']);
+        $this->assertSame(2, $data['total']);
         $this->assertFalse($data['truncated']);
+        $this->assertTrue($data['repair_pending']);
     }
 
     /**
@@ -323,8 +324,74 @@ class ClusterReadServiceTest extends TestCase
         $this->assertCount(1, $data['clusters']);
         $this->assertSame('cluster-keep', $data['clusters'][0]['id']);
         $this->assertTrue($data['repair_pending']);
-        $this->assertSame(1, $data['total']);
+        $this->assertSame(2, $data['total']);
         $this->assertSame(1, $driftCalls);
+    }
+
+    /**
+     * R3-04: total is the pre-filter qualifying COUNT(*) OVER() (total_count).
+     * Page-local mapper drops do not shrink it; repair_pending carries the signal.
+     * Mutant: subtract $dropped from total.
+     */
+    public function testListTopUnlabeledTotalIsPreFilterQualifyingCount(): void
+    {
+        $host = $this->localHost();
+
+        $clustersRepo = new class() extends NullClustersRepository {
+            public function has_projection_rows_for_tenant(string $tenant_id): bool
+            {
+                return true;
+            }
+
+            public function list_top_unlabeled(string $tenant_id, int $limit = 10): array
+            {
+                return [
+                    [
+                        'cluster_uuid' => 'cluster-drop-matched',
+                        'label' => '',
+                        'identity_count' => 1,
+                        'is_user_confirmed' => 0,
+                        'total_count' => 2,
+                    ],
+                    [
+                        'cluster_uuid' => 'cluster-keep',
+                        'label' => '',
+                        'identity_count' => 2,
+                        'is_user_confirmed' => 0,
+                        'total_count' => 2,
+                    ],
+                ];
+            }
+        };
+
+        $membersRepo = new class() extends NullIdentityMembersRepository {
+            public function list_for_cluster_uuids(array $cluster_uuids, int $limit_per_cluster): array
+            {
+                return [
+                    'cluster-drop-matched' => [
+                        ['identity_uuid' => 'id-d1', 'attachment_id' => 1],
+                    ],
+                    'cluster-keep' => [
+                        ['identity_uuid' => 'id-k1', 'attachment_id' => 2],
+                        ['identity_uuid' => 'id-k2', 'attachment_id' => 3],
+                    ],
+                ];
+            }
+        };
+
+        $service = $this->makeService(
+            $host,
+            use_local_projection: true,
+            clusters_repository: $clustersRepo,
+            members_repository: $membersRepo
+        );
+
+        $response = $service->list_top_unlabeled_clusters(new WP_REST_Request('GET', '/acx/v1/recognition/clusters/top-unlabeled'));
+        $this->assertInstanceOf(WP_REST_Response::class, $response);
+        $data = $response->get_data();
+        $this->assertCount(1, $data['clusters']);
+        $this->assertSame(2, $data['total']);
+        $this->assertTrue($data['repair_pending']);
     }
 
     /**

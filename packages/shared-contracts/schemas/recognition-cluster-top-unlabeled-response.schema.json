@@ -110,7 +110,7 @@
     "total": {
       "type": "integer",
       "minimum": 0,
-      "description": "Total number of qualifying unlabeled clusters available for the current request."
+      "description": "Pre-filter qualifying unlabeled cluster count (COUNT(*) OVER()). Mapper/proxy drops set repair_pending and do not shrink total."
     },
     "truncated": {
       "type": "boolean",

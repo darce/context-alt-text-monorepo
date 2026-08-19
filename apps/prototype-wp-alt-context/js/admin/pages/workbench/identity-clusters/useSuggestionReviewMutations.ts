@@ -1020,10 +1020,10 @@ export const useSuggestionReviewMutations = ({
         const dropped = new Set<string>();
         for (const item of page?.items ?? []) {
           if (item.similarity >= request.min_confidence) {
-            const sourceId = item.sourceClusterId;
-            if (sourceId && !dropped.has(sourceId)) {
-              dropped.add(sourceId);
-              dropClusterFromReviewCaches(queryClient, sourceId, { mode: REVIEW_DROP_MODE.LABEL });
+            const dropId = item.clusterId;
+            if (dropId && !dropped.has(dropId)) {
+              dropped.add(dropId);
+              dropClusterFromReviewCaches(queryClient, dropId, { mode: REVIEW_DROP_MODE.LABEL });
             }
           }
         }

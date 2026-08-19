@@ -16,8 +16,6 @@ export interface PendingSuggestion {
   id: string;
   identity_id: string;
   suggested_cluster_id: string;
-  /** Current/source group of the identity when the wire distinguishes it from the suggested target. */
-  identity_cluster_id?: string | null;
   representative_similarity: number;
   avg_member_similarity?: number;
   confidence_score?: number;

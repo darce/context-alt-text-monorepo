@@ -81,12 +81,6 @@ export interface ProjectedSuggestion {
   suggestionId?: string;
   identityId: string;
   clusterId: string;
-  /**
-   * Identity's current/source group when the payload supplies it. Distinct from
-   * `clusterId` (suggested target). Used so label-drops do not hide unfinished
-   * identity→target assignment work (UXW2-2-R1-26).
-   */
-  sourceClusterId?: string;
   label?: string | null;
   similarity: number;
   identityCount?: number;
@@ -207,10 +201,6 @@ export const fromPendingRow = (row: PendingSuggestion): ProjectedSuggestion => {
   }
   if (row.resolution !== undefined) {
     projected.resolution = row.resolution;
-  }
-  const sourceClusterId = row.identity_cluster_id;
-  if (typeof sourceClusterId === 'string' && sourceClusterId !== '') {
-    projected.sourceClusterId = sourceClusterId;
   }
   const enrichment = buildEnrichment(row);
   if (enrichment !== undefined) {
@@ -440,14 +430,11 @@ export const pruneReviewDropTombstones = (
 export const assignmentRowTouchesDroppedGroup = (
   item: ProjectedSuggestion,
   clusterId: string,
-  mode: ReviewDropMode,
+  _mode: ReviewDropMode,
 ): boolean => {
-  if (mode === REVIEW_DROP_MODE.MERGE) {
-    return item.clusterId === clusterId || item.sourceClusterId === clusterId;
-  }
-  // Label/commit: only the identity's current/source group is resolved.
-  // item.clusterId is the suggested target (E21-5 3870) and stays reviewable.
-  return item.sourceClusterId === clusterId;
+  // Wire never supplies a distinct source group (rg-015). The FE key is the
+  // suggested target the mapper already copies (`clusterId` ← `suggested_cluster_id`).
+  return item.clusterId === clusterId;
 };
 
 export const applyAssignmentTombstones = <T extends { items: ProjectedSuggestion[] }>(
@@ -455,10 +442,7 @@ export const applyAssignmentTombstones = <T extends { items: ProjectedSuggestion
   page: T,
 ): T => {
   const filtered = page.items.filter((item) => {
-    if (
-      item.sourceClusterId &&
-      isReviewGroupTombstoned(queryClient, REVIEW_DROP_SCOPE.ASSIGNMENT, item.sourceClusterId)
-    ) {
+    if (isReviewGroupTombstoned(queryClient, REVIEW_DROP_SCOPE.ASSIGNMENT, item.clusterId)) {
       return false;
     }
     // Merge-retired groups cannot remain as a suggested target.
@@ -515,9 +499,8 @@ export const applyTopUnlabeledTombstones = (
  * UXW2-2 (B6) + R1-15/23/26: optimistically drop review rows for a resolved group
  * and tombstone the id so a remount refetch of still-uncurated rows cannot restore it.
  *
- * Label/commit (`mode: 'label'`): namePending + topUnlabeled + assignment rows whose
- * *source* group is the labelled id. Merge suggestions stay — naming does not
- * resolve a merge. Assignment rows keyed only as a suggested *target* stay.
+ * Label/commit (`mode: 'label'`): namePending + topUnlabeled + assignment rows
+ * whose suggested target (`clusterId`) is the labelled id. Merge suggestions stay.
  *
  * Merge (`mode: 'merge'`): also drops mergePending rows on either side and assignment
  * rows whose suggested target or source is the retired id.

@@ -76,7 +76,7 @@ export const useSuggestionReviewQueries = () => {
       pruneReviewDropTombstones(
         queryClient,
         REVIEW_DROP_SCOPE.ASSIGNMENT,
-        page.items.flatMap((item) => (item.sourceClusterId ? [item.sourceClusterId] : [])),
+        page.items.map((item) => item.clusterId),
       );
       return page;
     },

@@ -158,6 +158,11 @@ export interface UseBulkReviewCommitResult {
   /** Drop ids that left the projection; returns dropped count (for announce). */
   pruneMissingIds: (presentIds: ReadonlySet<string>) => number;
   initiateBulk: () => Promise<void>;
+  /**
+   * Group-accept path: hold+sequence an explicit item list, ignoring the
+   * current selection ∩ filter intersection (the ids are already the group).
+   */
+  initiateBulkFromItems: (items: readonly BulkCommitItem[]) => Promise<void>;
   undoBulk: () => void;
   setBulkHoldPaused: (paused: boolean) => void;
   /**
@@ -179,6 +184,8 @@ interface HeldBulk {
   deadlineMs: number;
   paused: boolean;
   timerId: ReturnType<typeof setTimeout> | null;
+  /** Skip live selection ∩ filter re-cut at fire time (group-accept ids). */
+  pinItems: boolean;
 }
 
 /** BR-46: live sequence state the loop and unmount cleanup share. */
@@ -494,16 +501,22 @@ export const useBulkReviewCommit = ({
       heldBulkRef.current = null;
       // BR-50: re-filter snapshot against live selection at fire time (prune during hold).
       // pruneMissingIds keeps selection honest, so intersection drops pruned ids.
+      // Pinned group-accept lists skip the live selection ∩ filter re-cut — those
+      // ids are the explicit write set, not a tray selection.
       const live = selectedIdsRef.current;
-      const stillSelected = held.items.filter((i) => live.has(i.suggestionId));
+      const stillSelected = held.pinItems
+        ? held.items
+        : held.items.filter((i) => live.has(i.suggestionId));
       // BR-62: also re-resolve against current filters at fire time — a URL-driven
       // KIND/band change during the hold narrows the fired set to the live
       // selection ∩ filters intersection (never wider than the current view).
-      const allowedNow = new Set(
-        resolveItemsRef.current(stillSelected.map((i) => i.suggestionId)).map(
-          (i) => i.suggestionId,
-        ),
-      );
+      const allowedNow = held.pinItems
+        ? new Set(stillSelected.map((i) => i.suggestionId))
+        : new Set(
+            resolveItemsRef.current(stillSelected.map((i) => i.suggestionId)).map(
+              (i) => i.suggestionId,
+            ),
+          );
       const filtered = stillSelected.filter((i) => allowedNow.has(i.suggestionId));
       const items = options.limitToFirstOnly ? filtered.slice(0, 1) : filtered;
       held.resolve();
@@ -534,7 +547,7 @@ export const useBulkReviewCommit = ({
   }, [clearHeldTimer, fireHeldBulk]);
 
   const openBulkHold = React.useCallback(
-    (items: BulkCommitItem[]): void => {
+    (items: BulkCommitItem[], pinItems = false): void => {
       if (!mountedRef.current || items.length === 0) {
         return;
       }
@@ -546,6 +559,7 @@ export const useBulkReviewCommit = ({
         deadlineMs: Date.now() + UNDO_HOLD_MS,
         paused: false,
         timerId: null,
+        pinItems,
       };
       heldBulkRef.current = entry;
       setBulkSafe({
@@ -628,6 +642,63 @@ export const useBulkReviewCommit = ({
     initiatePromiseRef.current = run;
     await run;
   }, [clearBulkInitiateLatch, dropFromSelection, openBulkHold]);
+
+  const initiateBulkFromItems = React.useCallback(
+    async (items: readonly BulkCommitItem[]): Promise<void> => {
+      if (bulkInitiateInFlightRef.current) {
+        return;
+      }
+      if (
+        phaseRef.current === BULK_COMMIT_PHASE.HOLDING ||
+        phaseRef.current === BULK_COMMIT_PHASE.COMMITTING
+      ) {
+        return;
+      }
+      if (items.length === 0) {
+        return;
+      }
+
+      bulkInitiateInFlightRef.current = true;
+      isBulkActiveRef.current = true;
+      if (mountedRef.current) {
+        setBulkInitiatePending(true);
+      }
+
+      const snapshot = items.map((item) => ({ ...item }));
+      const run = (async (): Promise<void> => {
+        try {
+          const prior = await flushHeldSingleRef.current();
+          if (prior?.outcome === 'failed') {
+            return;
+          }
+
+          if (!mountedRef.current) {
+            return;
+          }
+
+          if (prior?.outcome === 'committed') {
+            dropFromSelection(prior.suggestionId);
+          }
+
+          let nextItems = snapshot;
+          if (prior?.outcome === 'committed') {
+            nextItems = snapshot.filter((i) => i.suggestionId !== prior.suggestionId);
+          }
+          if (nextItems.length === 0) {
+            return;
+          }
+
+          openBulkHold(nextItems, true);
+        } finally {
+          clearBulkInitiateLatch();
+          initiatePromiseRef.current = null;
+        }
+      })();
+      initiatePromiseRef.current = run;
+      await run;
+    },
+    [clearBulkInitiateLatch, dropFromSelection, openBulkHold],
+  );
 
   const undoBulk = React.useCallback((): void => {
     const held = heldBulkRef.current;
@@ -742,11 +813,18 @@ export const useBulkReviewCommit = ({
       heldBulkRef.current = null;
       held.resolve();
       // BR-50/BR-62: unmount flush re-filters against live selection + filters (was raw items[0])
+      // Pinned group-accept lists skip that re-cut so the explicit write set still fires.
       const live = selectedIdsRef.current;
-      const stillSelected = held.items.filter((i) => live.has(i.suggestionId));
-      const allowedNow = new Set(
-        resolveItemsRef.current(stillSelected.map((i) => i.suggestionId)).map((i) => i.suggestionId),
-      );
+      const stillSelected = held.pinItems
+        ? held.items
+        : held.items.filter((i) => live.has(i.suggestionId));
+      const allowedNow = held.pinItems
+        ? new Set(stillSelected.map((i) => i.suggestionId))
+        : new Set(
+            resolveItemsRef.current(stillSelected.map((i) => i.suggestionId)).map(
+              (i) => i.suggestionId,
+            ),
+          );
       const first = stillSelected.find((i) => allowedNow.has(i.suggestionId));
       if (first) {
         setBulkActionActiveRef.current(true);
@@ -779,6 +857,7 @@ export const useBulkReviewCommit = ({
     clearSelection,
     pruneMissingIds,
     initiateBulk,
+    initiateBulkFromItems,
     undoBulk,
     setBulkHoldPaused,
     awaitBulkIdleOrFlush,

@@ -244,6 +244,28 @@ export const ClusterLabelingPanel = ({
     [namingOptions],
   );
 
+  // Full unfiltered union for create-vs-bind (UXW2-3-R1-07). Displayed options
+  // stay filter-before-slice; resolution must not inherit that truncation.
+  const resolutionOptions: ComboboxOption[] = useMemo(
+    () =>
+      buildNamingOptions({
+        rosterEntries: rosterError ? [] : persons,
+        labelMatches: labeledClusters.filter(
+          (cluster): cluster is typeof cluster & { label: string } =>
+            typeof cluster.label === 'string' && cluster.label.trim() !== '',
+        ),
+        limit: null,
+        excludeClusterId: clusterId,
+      }).options.map((option) => ({
+        value: option.value,
+        label: option.label,
+        source: option.source,
+        identityCount: option.identityCount,
+        group: NAMING_GROUP_ALL_LABELS,
+      })),
+    [persons, rosterError, labeledClusters, clusterId],
+  );
+
   const labelMutation = useMutation({
     mutationFn: (newLabel: string) =>
       withTimeout(
@@ -643,6 +665,7 @@ export const ClusterLabelingPanel = ({
           <label htmlFor="cluster-label-input">{__('Name', 'alt-context')}</label>
           <NameFaceControl
             options={comboboxOptions}
+            resolutionOptions={resolutionOptions}
             value={labelInput}
             onValueChange={handleTypedValueChange}
             onCommit={resolveCommit}

@@ -73,8 +73,10 @@ uv run --extra dev python -m scripts.eval_harness.cli score \
 | --- | --- |
 | **0** | Clean score, or refused metrics **with** `--allow-refused` |
 | **1** | Partial corpus (`failed>0`), determinism failure, `ManifestError`/`ReportError`, env failures |
-| **2** | argparse |
+| **2** | argparse / unreadable operator input |
 | **3** | Detection and/or identification **REFUSED** and no `--allow-refused` |
+
+Exit **2** is argparse or unreadable operator input (e.g. missing/unreadable `--run-record` → `score: run record not found/unreadable: <path>`, `EVAL_EXIT_USAGE`). A `ManifestError` on a missing MANIFEST still exits **1** — that class is not usage.
 
 Partial is checked before refusal, so partial+refused exits **1**. `score-face` accepts `--allow-refused [METRIC]` (repeatable; bare form = all); unconsented refused identification/detection exits 3 (S2R5-02); partial still wins with exit 1. Pin: `test_score_face_exits_3_on_refused_identification`.
 
@@ -462,7 +464,9 @@ Pre-gate hard failures (no report write for that invocation):
 | --- | --- | --- |
 | identity shape | `ReportError: … identities[…] must be a dict identity row … got str` | Re-fetch or migrate run-record identity rows (code/record lane). |
 | missing args | argparse exit 2 (`--run-record` required) | Pass a real run-record path. |
-| missing file | `FileNotFoundError` on `--run-record` | Point at an existing record. |
+| missing/unreadable `--run-record` | `score: run record not found/unreadable: <path>` (exit 2 / `EVAL_EXIT_USAGE`; same class as `draw-eval-split`) | Point at an existing readable record. |
+
+Exit **2** is argparse **or** unreadable operator input (`--run-record` missing/unreadable). A `ManifestError` on a missing or unreadable `--manifest` still exits **1** — that is not usage/operator-input (the asymmetry is intentional).
 
 ### Determinism guard: ERROR vs FAILED vs ANCHOR_MISMATCH vs pass (**OBS-04**)
 

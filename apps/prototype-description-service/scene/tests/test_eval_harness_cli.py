@@ -2627,10 +2627,10 @@ def test_score_report_records_rubric_gate_flag(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     # Default enforce is recorded even when the gate does not fire.
     assert main(["score", "--manifest", str(manifest_path), "--run-record", str(record_path)]) is None
-    report = json.loads(record_path.with_name("run-rubric-flag-report.json").read_text())
+    report = json.loads(record_path.with_name("run-rubric-flag-report.json").read_text(encoding="utf-8"))
     assert report["verdict"]["rubric_gate"] == "enforce"
     assert report["verdict"]["verdict"] == ScoreVerdict.PASS.value
-    md = record_path.with_name("run-rubric-flag-report.md").read_text()
+    md = record_path.with_name("run-rubric-flag-report.md").read_text(encoding="utf-8")
     assert "rubric_gate" in md
     assert "enforce" in md
 
@@ -4375,7 +4375,7 @@ def test_score_aborted_record_exits_nonzero(tmp_path, monkeypatch):
     assert excinfo.value.code != 0
     msg = str(excinfo.value).lower()
     assert "aborted-record" in msg
-    report = json.loads(record_path.with_name("run-aborted-report.json").read_text())
+    report = json.loads(record_path.with_name("run-aborted-report.json").read_text(encoding="utf-8"))
     assert report["verdict"]["verdict"] == ScoreVerdict.FAIL.value
     assert any("aborted" in r.lower() for r in report["verdict"]["reasons"])
 

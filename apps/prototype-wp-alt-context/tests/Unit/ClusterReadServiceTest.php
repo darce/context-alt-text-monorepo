@@ -250,6 +250,84 @@ class ClusterReadServiceTest extends TestCase
     }
 
     /**
+     * R2-11 residual: a drop whose id the mapper did not request repair for
+     * still sets repair_pending. Mutant: delete || $dropped > 0.
+     */
+    public function testListTopUnlabeledDropWithoutMapperRepairIdSetsRepairPending(): void
+    {
+        $host = $this->localHost();
+        $driftCalls = 0;
+
+        $clustersRepo = new class($driftCalls) extends NullClustersRepository {
+            public function __construct(private int &$driftCalls)
+            {
+            }
+
+            public function has_projection_rows_for_tenant(string $tenant_id): bool
+            {
+                return true;
+            }
+
+            public function list_top_unlabeled(string $tenant_id, int $limit = 10): array
+            {
+                return [
+                    [
+                        'cluster_uuid' => 'cluster-drop-matched',
+                        'label' => '',
+                        'identity_count' => 1,
+                        'is_user_confirmed' => 0,
+                        'total_count' => 2,
+                    ],
+                    [
+                        'cluster_uuid' => 'cluster-keep',
+                        'label' => '',
+                        'identity_count' => 2,
+                        'is_user_confirmed' => 0,
+                        'total_count' => 2,
+                    ],
+                ];
+            }
+
+            public function list_unlabeled_identity_count_drift(string $tenant_id, int $limit = 50): array
+            {
+                ++$this->driftCalls;
+                return [];
+            }
+        };
+
+        $membersRepo = new class() extends NullIdentityMembersRepository {
+            public function list_for_cluster_uuids(array $cluster_uuids, int $limit_per_cluster): array
+            {
+                return [
+                    'cluster-drop-matched' => [
+                        ['identity_uuid' => 'id-d1', 'attachment_id' => 1],
+                    ],
+                    'cluster-keep' => [
+                        ['identity_uuid' => 'id-k1', 'attachment_id' => 2],
+                        ['identity_uuid' => 'id-k2', 'attachment_id' => 3],
+                    ],
+                ];
+            }
+        };
+
+        $service = $this->makeService(
+            $host,
+            use_local_projection: true,
+            clusters_repository: $clustersRepo,
+            members_repository: $membersRepo
+        );
+
+        $response = $service->list_top_unlabeled_clusters(new WP_REST_Request('GET', '/acx/v1/recognition/clusters/top-unlabeled'));
+        $this->assertInstanceOf(WP_REST_Response::class, $response);
+        $data = $response->get_data();
+        $this->assertCount(1, $data['clusters']);
+        $this->assertSame('cluster-keep', $data['clusters'][0]['id']);
+        $this->assertTrue($data['repair_pending']);
+        $this->assertSame(1, $data['total']);
+        $this->assertSame(1, $driftCalls);
+    }
+
+    /**
      * R2-11: drift ids for clusters absent from this page merge into the repair event.
      */
     public function testListTopUnlabeledMergesOffPageDriftIdsIntoRepairEvent(): void

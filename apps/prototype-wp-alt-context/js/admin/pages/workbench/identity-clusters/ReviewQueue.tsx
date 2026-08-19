@@ -143,7 +143,6 @@ export interface ReviewQueueProps {
    */
   selectedIds: ReadonlySet<string>;
   onSelectedIdsChange: (next: Set<string>) => void;
-  onLabel?: (clusterId: string) => void;
   onReview?: (clusterId: string) => void;
   /** Anchor div for drain-focus (tabIndex=-1). */
   emptyStateAnchorRef?: React.RefObject<HTMLElement | null>;
@@ -261,14 +260,12 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
       onBandChange,
       selectedIds,
       onSelectedIdsChange,
-      onLabel: _onLabel,
       onReview,
       emptyStateAnchorRef,
       onCardPrimaryPresenceChange,
     },
     ref,
   ): React.JSX.Element | null {
-    void _onLabel;
     const findings = useWorkbenchFindings();
     const data = useSuggestionReviewData();
     const { topUnlabeledClusters } = useSuggestionReviewQueries();

@@ -177,7 +177,6 @@ interface HarnessProps {
   initialBand?: ReviewQueueBandParam;
   emptyStateAnchorRef?: React.RefObject<HTMLElement | null>;
   queueRef?: React.RefObject<ReviewQueueHandle>;
-  onLabel?: (clusterId: string) => void;
   onReview?: (clusterId: string) => void;
   /** Expose selection for M2 asserts (optional). */
   selectionRef?: React.MutableRefObject<Set<string>>;
@@ -189,7 +188,6 @@ const ReviewQueueHarness = ({
   initialBand = 'all',
   emptyStateAnchorRef,
   queueRef,
-  onLabel,
   onReview,
   selectionRef,
 }: HarnessProps): React.JSX.Element => {
@@ -212,7 +210,6 @@ const ReviewQueueHarness = ({
       selectedIds={selectedIds}
       onSelectedIdsChange={setSelectedIds}
       emptyStateAnchorRef={emptyStateAnchorRef}
-      onLabel={onLabel}
       onReview={onReview}
     />
   );

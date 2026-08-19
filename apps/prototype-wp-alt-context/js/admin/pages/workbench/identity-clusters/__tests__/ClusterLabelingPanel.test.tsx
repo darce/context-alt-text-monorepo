@@ -164,7 +164,7 @@ describe('ClusterLabelingPanel', () => {
     expect(screen.getByRole('button', { name: 'Undo merge' })).toBeInTheDocument();
   });
 
-  it('offers rename-anyway without merge when only a person collides (no unique cluster target)', async () => {
+  it('person-only collision binds instead of offering rename-anyway (UXW2-3-R2-07)', async () => {
     vi.mocked(listRecognitionClusters).mockResolvedValue(makeClusterListResponse([]));
     vi.mocked(useRosterEntries).mockReturnValue(
       createMockQuery({
@@ -1029,13 +1029,107 @@ describe('ClusterLabelingPanel', () => {
         refetch: vi.fn(),
       }),
     );
-    renderPanel();
-    const user = await typePanelName('Alex Carter');
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <ClusterLabelingPanel
+          clusterId="source-cluster-id"
+          onClose={() => undefined}
+          onLabel={vi.fn()}
+          initialLabel="Alex Carter"
+        />
+      </QueryClientProvider>,
+    );
+    const user = userEvent.setup();
+    const input = await screen.findByRole('combobox', { name: 'Name' });
+    expect(input).toHaveValue('Alex Carter');
+    input.focus();
     await user.keyboard('{Enter}');
     await waitFor(() => {
       expect(updateClusterLabel).toHaveBeenCalledWith('source-cluster-id', 'Alex Carter', expect.anything());
     });
     expect(mergeCluster).not.toHaveBeenCalled();
+    expect(screen.queryByText(/already exists/)).not.toBeInTheDocument();
+  });
+
+  it('confirm on a person row writes a bind (UXW2-3-R2-07)', async () => {
+    vi.mocked(useRosterEntries).mockReturnValue(
+      createMockQuery({
+        data: [
+          {
+            id: 42,
+            name: 'Alex Carter',
+            person_uuid: 'p42',
+            tags: [],
+            cluster_count: 0,
+            clusters: [],
+            queue_memberships: [],
+            updated_at: '',
+            source_version: 0,
+            projection_status: 'current',
+            projection_refreshed_at: '',
+          },
+        ],
+        isLoading: false,
+        isError: false,
+        refetch: vi.fn(),
+      }),
+    );
+    renderPanel();
+    await typePanelName('Alex');
+    await userEvent.click(await screen.findByRole('button', { name: /Confirm match with Alex Carter/i }));
+    await waitFor(() => {
+      expect(updateClusterLabel).toHaveBeenCalledWith('source-cluster-id', 'Alex Carter', expect.anything());
+    });
+    expect(mergeCluster).not.toHaveBeenCalled();
+  });
+
+  it('does not wrap naming in a form (UXW2-3-R1-16a)', () => {
+    const { container } = renderPanel();
+    expect(container.querySelector('form')).toBeNull();
+  });
+
+  it('uses a per-state suggestions header (UXW2-3-R1-16b)', async () => {
+    vi.mocked(useRosterEntries).mockReturnValue(
+      createMockQuery({
+        data: [
+          {
+            id: 1,
+            name: 'Ada Lovelace',
+            person_uuid: 'p1',
+            tags: [],
+            cluster_count: 0,
+            clusters: [],
+            queue_memberships: [],
+            updated_at: '',
+            source_version: 0,
+            projection_status: 'current',
+            projection_refreshed_at: '',
+          },
+        ],
+        isLoading: false,
+        isError: false,
+        refetch: vi.fn(),
+      }),
+    );
+    renderPanel();
+    expect(screen.getByText('Suggested')).toBeInTheDocument();
+    await typePanelName('Ada');
+    expect(screen.getByText('Matches')).toBeInTheDocument();
+    expect(screen.queryByText('Suggested')).not.toBeInTheDocument();
+  });
+
+  it('ReviewQueue and ScanTab drop dead onLabel / open_label (UXW2-3-R2-07)', async () => {
+    const { readFileSync } = await import('node:fs');
+    const { resolve, dirname } = await import('node:path');
+    const { fileURLToPath } = await import('node:url');
+    const here = dirname(fileURLToPath(import.meta.url));
+    const queue = readFileSync(resolve(here, '../ReviewQueue.tsx'), 'utf8');
+    const scan = readFileSync(resolve(here, '../../ScanTabContent.tsx'), 'utf8');
+    expect(queue).not.toMatch(/onLabel:\s*_onLabel/);
+    expect(scan).not.toMatch(/type:\s*'open_label'/);
   });
 
   it('two rapid Enter presses fire the mutation once (UXW2-3-R1-04 / R2-02)', async () => {

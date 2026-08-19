@@ -490,6 +490,39 @@ class ClusterLabelServiceTest extends TestCase
         $this->assertContains('Proxy Person', $names);
     }
 
+    public function testProxyLabelWriteReportsRosterBoundFalseWhenBindFails(): void
+    {
+        global $wpdb;
+
+        $this->repository->localClusterRows = [];
+        $wpdb->insert_id = 33;
+        $wpdb->tableRows['wp_acx_persons'] = [];
+        $wpdb->tableRows['wp_acx_clusters'] = [
+            [
+                'cluster_uuid' => 'cluster-xyz',
+                'tenant_id' => self::currentTenantId(),
+                'label' => 'Old',
+                'person_id' => null,
+            ],
+        ];
+        $wpdb->updateResultsByTable['wp_acx_clusters'] = false;
+        $this->setOption('acx_recognition_url', 'https://recognition.test');
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => '{"cluster_id":"cluster-xyz","label":"Proxy Person","synced":true}',
+        ]);
+
+        $request = new WP_REST_Request('PATCH', '/acx/v1/recognition/clusters/cluster-xyz');
+        $request->set_param('cluster_id', 'cluster-xyz');
+        $request->set_param('label', 'Proxy Person');
+
+        $response = $this->service->update_cluster_label($request);
+
+        $this->assertInstanceOf(WP_REST_Response::class, $response);
+        $data = $response->get_data();
+        $this->assertFalse($data['roster_bound']);
+    }
+
     public function testProxyLabelWriteDoesNotPersistPersonOnProxyFailure(): void
     {
         global $wpdb;

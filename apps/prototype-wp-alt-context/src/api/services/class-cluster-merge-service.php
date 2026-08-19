@@ -107,16 +107,23 @@ class ClusterMergeService {
 			}
 
 			if ( '' !== $target_label ) {
-				$bound = $this->persist_local_person_for_label( $target_label );
-				if ( is_wp_error( $bound ) ) {
-					return $bound;
+				$persisted = $this->persist_local_person_for_label( $target_label );
+				if ( is_wp_error( $persisted ) ) {
+					return $persisted;
 				}
 				$data = $proxied->get_data();
 				if ( ! is_array( $data ) ) {
 					$data = array();
 				}
-				$data['person_id']    = (int) $bound['person_id'];
-				$data['roster_bound'] = true;
+				$data['person_id']    = (int) $persisted['person_id'];
+				$writer               = new ClusterCurationWriter( $wpdb->prefix . 'acx_clusters' );
+				$bind_result          = $writer->bind_person_to_cluster(
+					$target_cluster_id,
+					(int) $persisted['person_id'],
+					$tenant_id,
+					true
+				);
+				$data['roster_bound'] = false !== $bind_result;
 				$proxied->set_data( $data );
 			}
 

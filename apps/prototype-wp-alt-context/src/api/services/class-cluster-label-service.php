@@ -100,8 +100,8 @@ class ClusterLabelService {
 			if ( ! is_array( $data ) ) {
 				$data = array();
 			}
-			$data['person_id']     = (int) $resolved['person_id'];
-			$data['roster_bound']  = true;
+			$data['person_id']    = (int) $resolved['person_id'];
+			$data['roster_bound'] = $this->bind_persisted_person( $cluster_id, (int) $resolved['person_id'], $tenant_id );
 			$proxied->set_data( $data );
 
 			return $proxied;
@@ -240,6 +240,18 @@ class ClusterLabelService {
 	 *
 	 * @return array{person_id:int,person_uuid:string,name:string,outcome:string}|WP_Error
 	 */
+	private function bind_persisted_person( string $cluster_id, int $person_id, string $tenant_id ): bool {
+		global $wpdb;
+
+		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'update' ) ) {
+			return false;
+		}
+
+		$writer = new ClusterCurationWriter( $wpdb->prefix . 'acx_clusters' );
+		$bound  = $writer->bind_person_to_cluster( $cluster_id, $person_id, $tenant_id, true );
+		return false !== $bound;
+	}
+
 	private function persist_local_person_for_label( string $label ): array|WP_Error {
 		$result = $this->run_transactional(
 			function () use ( $label ): array|WP_Error {

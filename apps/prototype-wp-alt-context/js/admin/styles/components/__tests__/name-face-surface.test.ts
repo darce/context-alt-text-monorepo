@@ -47,6 +47,20 @@ describe('acx-name-face-surface mixin (UXW2-3-R1-03)', () => {
     }
   });
 
+  it('the hidden suggestion-reject is not click-targetable (UXW2-3-R3-15)', () => {
+    const compiled = sass.compile(path.join(componentsDir, '_name-face.scss'), {
+      loadPaths: [stylesDir, componentsDir],
+      style: 'expanded',
+    });
+    const css = compiled.css;
+    expect(css, 'expected compiled css to match /__suggestion-reject[^}]*pointer-events:\\s*none/').toMatch(
+      /__suggestion-reject[^}]*pointer-events:\s*none/,
+    );
+    expect(css, 'reveal selector must restore pointer-events: auto').toMatch(
+      /__suggestion-reject[^}]*pointer-events:\s*auto/,
+    );
+  });
+
   it('source includes the mixin on every naming prefix (mutant: drop one @include)', () => {
     const nameFace = readFileSync(path.join(componentsDir, '_name-face.scss'), 'utf8');
     const list = readFileSync(path.join(componentsDir, '_identity-cluster-list.scss'), 'utf8');

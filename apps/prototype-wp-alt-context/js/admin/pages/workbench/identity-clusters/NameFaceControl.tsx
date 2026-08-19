@@ -284,22 +284,41 @@ export const NameFaceControl = ({
     if (isPending && pendingLabel) {
       return pendingLabel;
     }
-    if (previewCommit && commitResolution?.kind === 'roster') {
+    // overlayOpen is false while pending; keep the highlighted row so
+    // pendingLabel is the only thing that beats the active-row preview.
+    const activeOption =
+      listOpen && !isLoading && activeIndex >= 0 ? displayedOptions[activeIndex] : undefined;
+    const resolution =
+      previewCommit && activeOption
+        ? resolveNameFaceInput(options, activeOption.label)
+        : commitResolution;
+    if (previewCommit && resolution?.kind === 'roster') {
       return sprintf(
         /* translators: %s: existing roster person label the commit will bind */
         __('Save as %s', 'alt-context'),
-        commitResolution.name,
+        resolution.name,
       );
     }
-    if (previewCommit && commitResolution?.kind === 'create') {
+    if (previewCommit && resolution?.kind === 'create') {
       return sprintf(
         /* translators: %s: typed name the commit will create as a new person */
         __('Create person "%s"', 'alt-context'),
-        commitResolution.name,
+        resolution.name,
       );
     }
     return commitLabel;
-  }, [isPending, pendingLabel, previewCommit, commitResolution, commitLabel]);
+  }, [
+    isPending,
+    pendingLabel,
+    previewCommit,
+    commitResolution,
+    commitLabel,
+    listOpen,
+    isLoading,
+    activeIndex,
+    displayedOptions,
+    options,
+  ]);
 
   const ambiguousMatches = React.useMemo(
     () => (value.trim() ? personMatchesFor(options, value) : []),

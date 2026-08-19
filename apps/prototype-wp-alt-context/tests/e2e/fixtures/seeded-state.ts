@@ -38,6 +38,18 @@ export const skipUnlessPopulatedWorkbench = async (page: Page): Promise<void> =>
   );
 };
 
+/**
+ * Prefer `window.acxE2eSeed.unlabeledClusterId` when the fixture is present.
+ * Discovery via AltContextAdmin.endpoints.recognitionClusters /top-unlabeled
+ * is fallback only. Skip naming this fixture when both are absent.
+ */
+export const readSeededUnlabeledClusterId = async (page: Page): Promise<string | null> =>
+  page.evaluate(() => {
+    const seeded = (window as unknown as { acxE2eSeed?: { unlabeledClusterId?: string } }).acxE2eSeed
+      ?.unlabeledClusterId;
+    return seeded ?? null;
+  });
+
 export const skipUnlessPopulatedRoster = async (page: Page): Promise<void> => {
   await page.waitForLoadState('networkidle');
 

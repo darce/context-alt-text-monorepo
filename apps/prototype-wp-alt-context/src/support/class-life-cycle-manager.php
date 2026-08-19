@@ -75,10 +75,17 @@ class LifecycleManager {
 	);
 
 	/**
-	 * Legacy UNIQUE on acx_persons.name from pre-E21-9 DDL. dbDelta never DROP
-	 * INDEXes, so this must be removed explicitly (LO-03).
+	 * Legacy UNIQUE indexes on acx_persons that dbDelta will never DROP.
+	 * idx_name: pre-E21-9 UNIQUE on name.
+	 * idx_normalized_name: pre-tenant-scope UNIQUE on normalized_name only.
+	 * dbDelta does not alter same-name indexes, so a column-list change on
+	 * idx_normalized_name is a no-op on existing installs — drop it and let
+	 * CREATE TABLE add idx_tenant_normalized_name.
 	 */
-	private const LEGACY_PERSONS_NAME_UNIQUE_INDEX = 'idx_name';
+	private const LEGACY_PERSONS_UNIQUE_INDEXES = array(
+		'idx_name',
+		'idx_normalized_name',
+	);
 
 	public function __construct() {
 		if ( function_exists( 'add_action' ) ) {
@@ -640,7 +647,8 @@ class LifecycleManager {
 
 		// E21-9: uniqueness is product policy via normalized_name (utf8mb4_bin), not
 		// collation-folded idx_name. Tenant-scoped — two tenants may share a name.
-		// Greenfield — edit CREATE TABLE directly; no migration.
+		// Greenfield — edit CREATE TABLE directly; no migration. Index renamed so
+		// dbDelta ADDs the composite unique; legacy idx_normalized_name is DROPped.
 		$persons_sql = "CREATE TABLE {$persons_table} (
 			id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
 			person_uuid char(36) NOT NULL,
@@ -654,7 +662,7 @@ class LifecycleManager {
 			created_at datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
 			updated_at datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
 			PRIMARY KEY  (id),
-			UNIQUE KEY idx_normalized_name (tenant_id, normalized_name),
+			UNIQUE KEY idx_tenant_normalized_name (tenant_id, normalized_name),
 			UNIQUE KEY idx_person_uuid (person_uuid)
 		) {$charset_collate};";
 
@@ -979,8 +987,8 @@ class LifecycleManager {
 			}
 		}
 
-		// LO-03: dbDelta never DROP INDEXes; remove the pre-E21-9 UNIQUE on name.
-		if ( ! $this->drop_legacy_persons_name_unique_index( (string) $wpdb->prefix . 'acx_persons' ) ) {
+		// LO-03: dbDelta never DROP INDEXes; remove retired UNIQUE keys on persons.
+		if ( ! $this->drop_legacy_persons_unique_indexes( (string) $wpdb->prefix . 'acx_persons' ) ) {
 			return false;
 		}
 
@@ -1138,13 +1146,26 @@ class LifecycleManager {
 	}
 
 	/**
-	 * Greenfield cleanup: drop the pre-E21-9 UNIQUE idx_name on acx_persons.name.
-	 * Idempotent — no-op when the index is absent. Verifier stays column-only
+	 * Greenfield cleanup: drop retired UNIQUE indexes on acx_persons.
+	 * Idempotent — no-op when an index is absent. Verifier stays column-only
 	 * (extra indexes do not refuse the stamp; see LO-03 report rationale).
 	 *
 	 * @return bool False only when a probe/drop query errors.
 	 */
-	private function drop_legacy_persons_name_unique_index( string $persons_table ): bool {
+	private function drop_legacy_persons_unique_indexes( string $persons_table ): bool {
+		foreach ( self::LEGACY_PERSONS_UNIQUE_INDEXES as $index_name ) {
+			if ( ! $this->drop_legacy_persons_unique_index( $persons_table, $index_name ) ) {
+				return false;
+			}
+		}
+
+		return true;
+	}
+
+	/**
+	 * @return bool False only when a probe/drop query errors.
+	 */
+	private function drop_legacy_persons_unique_index( string $persons_table, string $index_name ): bool {
 		global $wpdb;
 
 		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'get_results' ) ) {
@@ -1155,8 +1176,7 @@ class LifecycleManager {
 			$wpdb->last_error = '';
 		}
 
-		$index_name = self::LEGACY_PERSONS_NAME_UNIQUE_INDEX;
-		$query      = null;
+		$query = null;
 		if ( method_exists( $wpdb, 'prepare' ) ) {
 			// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- %i table placeholder.
 			$query = $wpdb->prepare(

@@ -176,7 +176,7 @@ class PersonCrudTest extends TestCase
         $this->assertIsString($personsSql);
         $this->assertNotSame('', $personsSql);
         $this->assertMatchesRegularExpression(
-            '/UNIQUE\s+KEY\s+idx_normalized_name\s*\(\s*tenant_id\s*,\s*normalized_name\s*\)/i',
+            '/UNIQUE\s+KEY\s+idx_tenant_normalized_name\s*\(\s*tenant_id\s*,\s*normalized_name\s*\)/i',
             $personsSql,
             'UNIQUE(normalized_name) alone would reject tenant B Jane Doe after tenant A created it'
         );

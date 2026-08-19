@@ -2638,14 +2638,14 @@ describe('ReviewQueue', () => {
     renderQueue();
 
     expect(await screen.findByText('2 groups missing face data')).toBeInTheDocument();
-    expect(screen.getByText(REVIEW_QUEUE_DRAIN_MESSAGE)).toBeInTheDocument();
+    expect(screen.queryByText(REVIEW_QUEUE_DRAIN_MESSAGE)).toBeNull();
     expect(screen.getByRole('button', { name: 'Resync' })).toBeInTheDocument();
     expect(screen.queryByTestId('acx-review-card')).not.toBeInTheDocument();
   });
 
   // REV2-09 / TEST-15: repair copy without Resync is a dead end. Dropping
   // refetchTopUnlabeled (or omitting the button) leaves this call count at 1.
-  it('REV2-09: empty-queue Resync refetches top-unlabeled and keeps the drain confirmation', async () => {
+  it('REV2-09: empty-queue Resync refetches top-unlabeled without drain confirmation', async () => {
     vi.mocked(fetchPendingSuggestions).mockResolvedValue({
       suggestions: [],
       limit: 10,
@@ -2676,8 +2676,8 @@ describe('ReviewQueue', () => {
 
     renderQueue();
 
-    expect(await screen.findByText(REVIEW_QUEUE_DRAIN_MESSAGE)).toBeInTheDocument();
-    expect(screen.getByText('1 group missing face data')).toBeInTheDocument();
+    expect(await screen.findByText('1 group missing face data')).toBeInTheDocument();
+    expect(screen.queryByText(REVIEW_QUEUE_DRAIN_MESSAGE)).toBeNull();
     const resync = screen.getByRole('button', { name: 'Resync' });
     expect(resync.closest('[role="status"]')).toBeNull();
     expect(resync).toHaveAttribute('aria-describedby', 'acx-review-queue-repair-copy');
@@ -2688,7 +2688,8 @@ describe('ReviewQueue', () => {
     await waitFor(() => {
       expect(topMock.mock.calls.length).toBeGreaterThan(callsBefore);
     });
-    expect(screen.getByText(REVIEW_QUEUE_DRAIN_MESSAGE)).toBeInTheDocument();
+    expect(screen.queryByText(REVIEW_QUEUE_DRAIN_MESSAGE)).toBeNull();
+    expect(screen.getByText('1 group missing face data')).toBeInTheDocument();
   });
 
   it('R2-12: repair_pending with empty served page mounts Resync and does not drain-only', async () => {

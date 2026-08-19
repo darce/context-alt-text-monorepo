@@ -1315,9 +1315,6 @@ class SuggestionsControllerTest extends TestCase
     {
         $far = 'ffffffff-0000-0000-0000-00000000000f';
         $ann = 'aaaaaaaa-0000-0000-0000-00000000000a';
-        foreach ([$far, $ann] as $id) {
-            $this->assertMatchesRegularExpression('/^[a-f0-9-]+$/', $id, 'fixture id must match the route regex');
-        }
         $this->queueHttpResponse([
             'response' => ['code' => 200, 'message' => 'OK'],
             'body' => json_encode([
@@ -1351,6 +1348,16 @@ class SuggestionsControllerTest extends TestCase
 
         $response = $this->controller->get_roster_candidates($request);
         $data = $response->get_data();
+
+        $this->assertNotEmpty($data['candidates'] ?? []);
+        $uuidPattern = '/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i';
+        foreach (array_column($data['candidates'], 'cluster_id') as $emitted) {
+            $this->assertMatchesRegularExpression(
+                $uuidPattern,
+                (string) $emitted,
+                'emitted cluster_id must match schema format uuid'
+            );
+        }
 
         $this->assertSame(
             [$ann, $far],

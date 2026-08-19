@@ -1650,3 +1650,51 @@ def test_cli_draw_out_is_directory_force_exits_2(tmp_path, capsys):
     assert str(out) in captured.err
     assert out.is_dir()
     assert list(out.iterdir()) == []
+
+
+def _inject_manifest_read_oserror(monkeypatch, manifest: Path) -> None:
+    # Scoped so load_manifest (read_text) still succeeds; only the post-load
+    # Path(args.manifest).read_bytes() hash pin raises (VLM6-RV10-Q2-01).
+    original = Path.read_bytes
+    target = manifest.resolve()
+
+    def _boom(self: Path, *args, **kwargs) -> bytes:
+        if Path(self).resolve() == target:
+            raise OSError("injected")
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_bytes", _boom)
+
+
+def test_cli_check_cannot_read_manifest_exits_2(tmp_path, capsys, monkeypatch):
+    # VLM6-RV10-Q2-01 / TEST-15: post-load read_bytes OSError on --check
+    # must be named SystemExit 2, not a traceback.
+    # MUT[manifest_guard_exit_1]: both new sites 2→1 -> code == 2 fails.
+    # MUT[manifest_guard_needle]: cannot read manifest: → unable to hash
+    #   manifest: -> needle assertion fails.
+    # MUT[manifest_guard_removed]: drop this try/except -> raw OSError.
+    _inject_manifest_read_oserror(monkeypatch, _SEED_MANIFEST)
+    with pytest.raises(SystemExit) as excinfo:
+        main(_check_cli_args(_SEALED_SPLIT))
+    assert excinfo.value.code == 2
+    captured = capsys.readouterr()
+    assert "cannot read manifest:" in captured.err
+    assert str(_SEED_MANIFEST) in captured.err
+
+
+def test_cli_draw_cannot_read_manifest_exits_2(tmp_path, capsys, monkeypatch):
+    # VLM6-RV10-Q2-01 / TEST-15: post-load read_bytes OSError on draw
+    # must be named SystemExit 2 and must not write --out.
+    # MUT[manifest_guard_exit_1] / MUT[manifest_guard_needle] as above.
+    # MUT[manifest_guard_removed] on the draw site -> raw OSError.
+    exposure = tmp_path / "notes.txt"
+    exposure.write_text("fixture exposure\n", encoding="utf-8")
+    out, argv = _draw_with_exposure_file(tmp_path, exposure)
+    _inject_manifest_read_oserror(monkeypatch, _SEED_MANIFEST)
+    with pytest.raises(SystemExit) as excinfo:
+        main(argv)
+    assert excinfo.value.code == 2
+    captured = capsys.readouterr()
+    assert "cannot read manifest:" in captured.err
+    assert str(_SEED_MANIFEST) in captured.err
+    assert not out.exists()

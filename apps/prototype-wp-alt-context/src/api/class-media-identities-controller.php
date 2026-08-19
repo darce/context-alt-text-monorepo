@@ -320,22 +320,6 @@ class MediaIdentitiesController extends AbstractRecognitionProxyController {
 	 * @return array<string,mixed>
 	 */
 	private function apply_label_authority_to_identity( array $identity ): array {
-		$person = trim( (string) ( $identity['person_name'] ?? '' ) );
-		if ( '' !== $person ) {
-			$identity['cluster_label'] = $person;
-			return $identity;
-		}
-
-		$label = $identity['cluster_label'] ?? null;
-		if ( ! is_string( $label ) ) {
-			return $identity;
-		}
-
-		$trimmed = trim( $label );
-		if ( '' !== $trimmed && ! $this->is_reserved_label_shape( $trimmed ) ) {
-			$identity['cluster_label'] = null;
-		}
-
-		return $identity;
+		return $this->member_mapper->apply_label_authority( $identity );
 	}
 }

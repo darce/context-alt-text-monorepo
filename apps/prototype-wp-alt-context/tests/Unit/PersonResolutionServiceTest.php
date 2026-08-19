@@ -54,6 +54,7 @@ class PersonResolutionServiceTest extends TestCase
                 'person_uuid' => sprintf('aaaaaaaa-bbbb-cccc-dddd-%012d', $suffix),
                 'name' => $name,
                 'normalized_name' => PersonResolutionService::normalize_name($name),
+                'tenant_id' => self::currentTenantId(),
             ];
         }
         $wpdb->tableRows['wp_acx_persons'] = $rows;

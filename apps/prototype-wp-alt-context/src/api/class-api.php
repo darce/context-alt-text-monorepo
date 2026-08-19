@@ -680,8 +680,13 @@ class Api {
 			);
 		}
 
+		$tenant_id = TenantIdentity::resolve()['value'] ?? '';
+		if ( ! is_string( $tenant_id ) || '' === trim( $tenant_id ) ) {
+			return new WP_Error( 'acx_db_error', __( 'Tenant identity is unavailable.', 'alt-context' ), array( 'status' => 500 ) );
+		}
+
 			$table_name = $wpdb->prefix . 'acx_persons';
-			$person     = $wpdb->get_row( $wpdb->prepare( 'SELECT * FROM %i WHERE id = %d', $table_name, $id ) );
+			$person     = $wpdb->get_row( $wpdb->prepare( 'SELECT * FROM %i WHERE id = %d AND tenant_id = %s', $table_name, $id, $tenant_id ) );
 
 		if ( ! $person ) {
 			return new WP_Error( 'acx_person_not_found', __( 'Person not found.', 'alt-context' ), array( 'status' => 404 ) );
@@ -697,10 +702,11 @@ class Api {
 			if ( $name !== $person->name ) {
 				$conflict = $wpdb->get_var(
 					$wpdb->prepare(
-						'SELECT id FROM %i WHERE normalized_name = %s AND id != %d',
+						'SELECT id FROM %i WHERE normalized_name = %s AND id != %d AND tenant_id = %s',
 						$table_name,
 						$normalized_name,
-						$id
+						$id,
+						$tenant_id
 					)
 				);
 				if ( $conflict ) {
@@ -730,7 +736,7 @@ class Api {
 			return new WP_Error( 'acx_db_error', __( 'Could not start local transaction.', 'alt-context' ), array( 'status' => 500 ) );
 		}
 
-		$result = $wpdb->update( $table_name, $update_data, array( 'id' => $id ), $update_fmt, array( '%d' ) );
+		$result = $wpdb->update( $table_name, $update_data, array( 'id' => $id, 'tenant_id' => $tenant_id ), $update_fmt, array( '%d', '%s' ) );
 
 		if ( false === $result ) {
 			$this->rollback_database_transaction();
@@ -744,9 +750,10 @@ class Api {
 
 		$person_revision_updated = $wpdb->query(
 			$wpdb->prepare(
-				'UPDATE %i SET local_revision = local_revision + 1 WHERE id = %d',
+				'UPDATE %i SET local_revision = local_revision + 1 WHERE id = %d AND tenant_id = %s',
 				$table_name,
-				$id
+				$id,
+				$tenant_id
 			)
 		);
 		if ( false === $person_revision_updated ) {
@@ -755,10 +762,10 @@ class Api {
 		}
 
 		$local_revision = (int) $wpdb->get_var(
-			$wpdb->prepare( 'SELECT local_revision FROM %i WHERE id = %d', $table_name, $id )
+			$wpdb->prepare( 'SELECT local_revision FROM %i WHERE id = %d AND tenant_id = %s', $table_name, $id, $tenant_id )
 		);
 
-			$updated_person = $wpdb->get_row( $wpdb->prepare( 'SELECT * FROM %i WHERE id = %d', $table_name, $id ) );
+			$updated_person = $wpdb->get_row( $wpdb->prepare( 'SELECT * FROM %i WHERE id = %d AND tenant_id = %s', $table_name, $id, $tenant_id ) );
 		if ( isset( $updated_person->tags ) && is_string( $updated_person->tags ) ) {
 			$updated_person->tags = json_decode( $updated_person->tags, true );
 		}

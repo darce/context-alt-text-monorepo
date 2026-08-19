@@ -1141,7 +1141,7 @@ def _run_determinism_children(
             if not payload_path.is_file():
                 sys.exit(
                     f"determinism check ERROR [{label}]: payload file missing "
-                    f"seed={hash_seed} path={payload_path} ({regime}); "
+                    f"seed={hash_seed} path={_printable_path(payload_path)} ({regime}); "
                     f"stderr={proc.stderr!r}"
                 )
             try:
@@ -1149,7 +1149,7 @@ def _run_determinism_children(
             except OSError as read_exc:
                 sys.exit(
                     f"determinism check ERROR [{label}]: payload file unreadable "
-                    f"seed={hash_seed} path={payload_path}: {read_exc} ({regime}); "
+                    f"seed={hash_seed} path={_printable_path(payload_path)}: {read_exc} ({regime}); "
                     f"stderr={proc.stderr!r}"
                 )
             try:
@@ -1157,13 +1157,13 @@ def _run_determinism_children(
             except json.JSONDecodeError as dec_exc:
                 sys.exit(
                     f"determinism check ERROR [{label}]: payload file unparseable "
-                    f"seed={hash_seed} path={payload_path}: {dec_exc} ({regime}); "
+                    f"seed={hash_seed} path={_printable_path(payload_path)}: {dec_exc} ({regime}); "
                     f"stderr={proc.stderr!r}"
                 )
             if not isinstance(payload, dict) or "json" not in payload or "md" not in payload:
                 sys.exit(
                     f"determinism check ERROR [{label}]: payload file unparseable "
-                    f"seed={hash_seed} path={payload_path}: expected object with "
+                    f"seed={hash_seed} path={_printable_path(payload_path)}: expected object with "
                     f"'json' and 'md' keys ({regime}); stderr={proc.stderr!r}"
                 )
             sub_json = payload["json"]
@@ -1171,7 +1171,7 @@ def _run_determinism_children(
             if not isinstance(sub_json, str) or not isinstance(sub_md, str):
                 sys.exit(
                     f"determinism check ERROR [{label}]: payload file unparseable "
-                    f"seed={hash_seed} path={payload_path}: 'json' and 'md' must be "
+                    f"seed={hash_seed} path={_printable_path(payload_path)}: 'json' and 'md' must be "
                     f"strings ({regime}); stderr={proc.stderr!r}"
                 )
             # F2c / C-01: prove the child bound the same build_reports module as
@@ -1181,7 +1181,7 @@ def _run_determinism_children(
                 sys.exit(
                     f"determinism check ERROR [{label}]: payload missing "
                     f"build_reports_file provenance seed={hash_seed} "
-                    f"path={payload_path} ({regime}); stderr={proc.stderr!r}"
+                    f"path={_printable_path(payload_path)} ({regime}); stderr={proc.stderr!r}"
                 )
             child_reports_file = Path(child_reports_raw).resolve()
             if child_reports_file != parent_reports_file:
@@ -1296,19 +1296,19 @@ def _check_expect_report(
     resolved = expect_report.resolve()
     if not resolved.is_file():
         sys.exit(
-            f"determinism check ERROR [{label}]: --expect-report path missing or not a file: {resolved} ({regime})"
+            f"determinism check ERROR [{label}]: --expect-report path missing or not a file: {_printable_path(resolved)} ({regime})"
         )
     try:
         expected = resolved.read_text(encoding="utf-8")
     except OSError as read_exc:
         sys.exit(
-            f"determinism check ERROR [{label}]: --expect-report unreadable path={resolved}: {read_exc} ({regime})"
+            f"determinism check ERROR [{label}]: --expect-report unreadable path={_printable_path(resolved)}: {read_exc} ({regime})"
         )
     if expected == base_json:
         print(
             f"determinism check passed [{label}]: cross-process re-score is "
             f"bit-identical under varied PYTHONHASHSEED ({regime}); "
-            f"matches --expect-report {resolved}"
+            f"matches --expect-report {_printable_path(resolved)}"
         )
         return
     artifact_dir.mkdir(parents=True, exist_ok=True)
@@ -1317,7 +1317,7 @@ def _check_expect_report(
         [
             f"gate={label}",
             f"regime={regime}",
-            f"expect_report={resolved}",
+            f"expect_report={_printable_path(resolved)}",
             "outcome=ANCHOR_MISMATCH",
             "",
             "=== expected (--expect-report) JSON ===",
@@ -1334,7 +1334,7 @@ def _check_expect_report(
         artifact_ref = f"(could not write artifact: {write_exc})"
     sys.exit(
         f"determinism check ANCHOR_MISMATCH [{label}]: fresh re-score does not "
-        f"match --expect-report {resolved} ({regime}; artifact={artifact_ref}). "
+        f"match --expect-report {_printable_path(resolved)} ({regime}; artifact={artifact_ref}). "
         f"This is neither seed divergence (FAILED) nor environment drift (ERROR). "
         f"Two legitimate causes — choose carefully: "
         f"(1) the frozen report or the run-record was corrupted — investigate, "

@@ -1,6 +1,6 @@
 import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import {
   RouterProvider,
@@ -10,7 +10,8 @@ import {
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { fetchClusterMembers } from '../../../api/recognition';
-import { ClusterPanelProvider, useClusterPanel } from '../ClusterPanelContext';
+import { HTTPError } from '../../../utils/http';
+import { ClusterPanelProvider } from '../ClusterPanelContext';
 import { MergeSurvivorProvider } from '../identity-clusters/MergeSurvivorContext';
 import { ScanTabContent } from '../ScanTabContent';
 
@@ -121,7 +122,7 @@ interface ReviewQueueStubProps {
 
 vi.mock('../identity-clusters', async () => {
   const actual = await vi.importActual<typeof import('../identity-clusters')>('../identity-clusters');
-  const ReviewQueueStub = React.forwardRef<unknown, ReviewQueueStubProps>(function ReviewQueueStub(props) {
+  const ReviewQueueStub = React.forwardRef<unknown, ReviewQueueStubProps>(function ReviewQueueStub(props, _ref) {
     return (
       <div data-testid="review-queue">
         <h3 id="acx-workbench-queue-heading">Review Suggestions</h3>
@@ -144,23 +145,31 @@ const RouteProbe = (): React.JSX.Element => {
   return <div data-testid="route-probe">{searchParams.toString()}</div>;
 };
 
-const SameTickDriver = (): React.JSX.Element => {
-  const { dispatchClusterPanel } = useClusterPanel();
-  return (
-    <button
-      type="button"
-      onClick={() => {
-        dispatchClusterPanel({ type: 'open_review', clusterId: 'c-same' });
-        dispatchClusterPanel({ type: 'close' });
-      }}
-    >
-      same-tick
-    </button>
-  );
-};
+const clusterNotFound = (clusterId: string): HTTPError =>
+  new HTTPError({
+    status: 404,
+    retryAfterSeconds: undefined,
+    endpoint: `/acx/v1/recognition/clusters/${clusterId}/members`,
+    bodyPreview: 'cluster_not_found',
+    message: 'cluster not found',
+  });
+
+const functionalWrites = (): Array<[(prev: URLSearchParams) => URLSearchParams, unknown?]> =>
+  setSearchParamsSpy.mock.calls.filter((call) => typeof call[0] === 'function') as Array<
+    [(prev: URLSearchParams) => URLSearchParams, unknown?]
+  >;
+
+/** status live regions are unnamed; pin role + text via the `name` callback. */
+const statusNamed =
+  (text: string) =>
+  (_accessibleName: string, element: Element): boolean =>
+    (element.textContent ?? '').trim() === text;
+
+const queryClients: QueryClient[] = [];
 
 const renderScanTab = (initialEntry: string) => {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  queryClients.push(client);
   const router = createMemoryRouter(
     [
       {
@@ -171,7 +180,6 @@ const renderScanTab = (initialEntry: string) => {
               <ClusterPanelProvider>
                 <ScanTabContent />
                 <RouteProbe />
-                <SameTickDriver />
               </ClusterPanelProvider>
             </MergeSurvivorProvider>
           </QueryClientProvider>
@@ -195,7 +203,12 @@ describe('ScanTabContent — UXW2-4 review panel legibility', () => {
     });
   });
 
-  afterEach(cleanup);
+  afterEach(async () => {
+    const clients = queryClients.splice(0);
+    await Promise.all(clients.map((client) => client.cancelQueries()));
+    clients.forEach((client) => client.clear());
+    cleanup();
+  });
 
   it('opening review persists panel=review&cluster=<id> in the URL', async () => {
     const user = userEvent.setup();
@@ -212,14 +225,19 @@ describe('ScanTabContent — UXW2-4 review panel legibility', () => {
     expect(heading.textContent ?? '').not.toMatch(/cluster|face group/i);
     expect(screen.getByRole('button', { name: '← Back to Review Suggestions' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /close face-group review/i })).not.toBeInTheDocument();
-    expect(screen.getByRole('status')).toHaveTextContent(
-      'Reviewing faces — press Back to return to suggestions',
-    );
+    expect(
+      screen.getByRole('status', {
+        name: statusNamed('Reviewing faces — press Back to return to suggestions'),
+      }),
+    ).toBeInTheDocument();
     expect(screen.queryByTestId('review-queue')).not.toBeInTheDocument();
     expect(screen.getByTestId('route-probe').textContent).toContain('tab=scan');
-    const writes = setSearchParamsSpy.mock.calls.filter((call) => typeof call[0] === 'function');
-    expect(writes.length).toBeGreaterThanOrEqual(1);
-    expect(writes[writes.length - 1]?.[1]).toEqual({ replace: true });
+    const writes = functionalWrites();
+    expect(writes).toHaveLength(1);
+    const opened = writes[0]?.[0](new URLSearchParams('tab=scan'));
+    expect(opened.get('panel')).toBe('review');
+    expect(opened.get('cluster')).toBe('cluster-42');
+    expect(writes[0]?.[1]).toEqual({ replace: true });
   });
 
   it('mounting at panel=review&cluster=<id> restores the review panel', async () => {
@@ -231,8 +249,14 @@ describe('ScanTabContent — UXW2-4 review panel legibility', () => {
 
   it('Back returns to the queue, restores focus, and keeps rq=/tab=', async () => {
     const user = userEvent.setup();
-    const router = renderScanTab('/workbench?tab=scan&rq=assignment.all.0&panel=review&cluster=cluster-42');
+    const router = renderScanTab('/workbench?tab=scan&rq=assignment.all.0');
 
+    await user.click(screen.getByRole('button', { name: 'Review' }));
+    await waitFor(() => {
+      expect(screen.getByTestId('route-probe').textContent).toContain('panel=review');
+    });
+
+    setSearchParamsSpy.mockClear();
     await user.click(await screen.findByRole('button', { name: '← Back to Review Suggestions' }));
 
     expect(screen.getByTestId('review-queue')).toBeInTheDocument();
@@ -240,24 +264,43 @@ describe('ScanTabContent — UXW2-4 review panel legibility', () => {
     expect(screen.getByTestId('route-probe').textContent).not.toContain('cluster=');
     expect(screen.getByTestId('route-probe').textContent).toContain('tab=scan');
     expect(screen.getByTestId('route-probe').textContent).toContain('rq=assignment.all.0');
-    expect(screen.getByRole('status')).toHaveTextContent('Returned to review suggestions');
+    expect(
+      screen.getByRole('status', { name: statusNamed('Returned to review suggestions') }),
+    ).toBeInTheDocument();
+
+    const closeWrites = functionalWrites();
+    expect(closeWrites).toHaveLength(1);
+    const closed = closeWrites[0]?.[0](
+      new URLSearchParams('tab=scan&rq=assignment.all.0&panel=review&cluster=cluster-42'),
+    );
+    expect(closed.get('panel')).toBeNull();
+    expect(closed.get('cluster')).toBeNull();
+    expect(closed.get('rq')).toBe('assignment.all.0');
+    expect(closed.get('tab')).toBe('scan');
+
     await waitFor(() => {
       expect(screen.getByRole('button', { name: 'Review' })).toHaveFocus();
     });
 
-    await router.navigate(-1);
+    await act(async () => {
+      await router.navigate(-1);
+    });
     expect(screen.getByTestId('review-queue')).toBeInTheDocument();
     expect(screen.getByTestId('route-probe').textContent).not.toContain('panel=review');
   });
 
   it('same-tick open then retire-close does not leave panel=review in the URL', async () => {
+    vi.mocked(fetchClusterMembers).mockRejectedValue(clusterNotFound('cluster-42'));
     const user = userEvent.setup();
     renderScanTab('/workbench?tab=scan');
 
-    await user.click(screen.getByRole('button', { name: 'same-tick' }));
+    await user.click(screen.getByRole('button', { name: 'Review' }));
 
-    expect(screen.getByTestId('route-probe').textContent).not.toContain('panel=review');
-    expect(screen.getByTestId('route-probe').textContent).not.toContain('cluster=c-same');
+    await waitFor(() => {
+      expect(screen.getByTestId('route-probe').textContent).not.toContain('panel=review');
+    });
+    expect(screen.getByTestId('route-probe').textContent).not.toContain('cluster=cluster-42');
+    expect(screen.getByTestId('review-queue')).toBeInTheDocument();
   });
 
   it('opening review over an overlay restores that overlay on close', async () => {

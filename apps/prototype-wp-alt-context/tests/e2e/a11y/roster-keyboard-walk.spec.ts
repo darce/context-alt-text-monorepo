@@ -132,6 +132,9 @@ test('keyboard member-fix loop: cluster= shim opens drawer with honest Move copy
 test('roster review CTA follows to the workbench default review queue', async ({ page, baseURL }) => {
   await openRoster(requireBaseUrl(baseURL), page);
   await page.getByRole('link', { name: /Review in Workbench/i }).click();
-  await expect(page).toHaveURL(/page=alt-context-workbench/);
+  // Hash SPA: the CTA href is `#/workbench?…`, not a WP `page=` rewrite.
   await expect.poll(() => page.evaluate(() => window.location.hash)).toBe('#/workbench?tab=scan&rq=all.all.0');
+  await expect(page).toHaveURL(/#\/workbench\?tab=scan&rq=all\.all\.0/);
+  await expect(page.locator('.acx-workbench')).toBeVisible();
+  await expect(page.locator('.acx-review-queue')).toBeVisible();
 });

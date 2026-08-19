@@ -2833,6 +2833,18 @@ if (!isset($GLOBALS['wpdb'])) {
         private function applyRawQueryToRows(string $sql): ?int
         {
             if (preg_match(
+                '/^INSERT INTO\s+`?(?P<table>[^\s`]+)`?\s*\((?P<cols>[^)]+)\)\s*VALUES\s*\((?P<values>.*)\)\s*ON DUPLICATE KEY UPDATE/is',
+                $sql,
+                $insertMatches
+            ) === 1) {
+                return $this->applyInsertOnDuplicateToRows(
+                    $insertMatches['table'],
+                    $insertMatches['cols'],
+                    $insertMatches['values']
+                );
+            }
+
+            if (preg_match(
                 '/^UPDATE\s+`?(?P<table>[^\s`]+)`?\s+SET\s+(?P<set>.+?)\s+WHERE\s+(?P<where>.+)$/is',
                 $sql,
                 $matches
@@ -2894,9 +2906,95 @@ if (!isset($GLOBALS['wpdb'])) {
             return $conditions;
         }
 
+        private function applyInsertOnDuplicateToRows(string $table, string $columnList, string $valueList): int
+        {
+            if (!isset($this->tableRows[$table])) {
+                $this->tableRows[$table] = [];
+            }
+
+            $columns = array_map(
+                static fn(string $column): string => trim($column, " `\t\n\r"),
+                explode(',', $columnList)
+            );
+            $rawValues = $this->splitSqlValueList($valueList);
+            $row = [];
+            foreach ($columns as $index => $column) {
+                $row[$column] = $this->evaluateSqlAssignment($rawValues[$index] ?? 'NULL', []);
+            }
+
+            $pk = $row['cluster_uuid'] ?? $row['id'] ?? null;
+            foreach ($this->tableRows[$table] as $index => $existing) {
+                $existingPk = $existing['cluster_uuid'] ?? $existing['id'] ?? null;
+                if ((string) $existingPk !== (string) $pk) {
+                    continue;
+                }
+                $userConfirmed = (int) ($existing['is_user_confirmed'] ?? 0) === 1;
+                if (!$userConfirmed && array_key_exists('label', $row)) {
+                    $existing['label'] = $row['label'];
+                }
+                if (array_key_exists('snapshot_version', $row)) {
+                    $incomingVersion = (int) $row['snapshot_version'];
+                    $cleared = (int) ($existing['label_cleared_revision'] ?? 0);
+                    if ($incomingVersion > $cleared) {
+                        $existing['label_cleared_revision'] = null;
+                    }
+                    $existing['snapshot_version'] = max((int) ($existing['snapshot_version'] ?? 0), $incomingVersion);
+                }
+                if (array_key_exists('identity_count', $row)) {
+                    $existing['identity_count'] = $row['identity_count'];
+                }
+                $this->tableRows[$table][$index] = $existing;
+                return 2;
+            }
+
+            $this->tableRows[$table][] = $row;
+            return 1;
+        }
+
+        /** @return list<string> */
+        private function splitSqlValueList(string $values): array
+        {
+            $items = [];
+            $current = '';
+            $inQuote = false;
+            $depth = 0;
+            $length = strlen($values);
+            for ($i = 0; $i < $length; $i++) {
+                $ch = $values[$i];
+                if ($ch === "'" && ($i === 0 || $values[$i - 1] !== '\\')) {
+                    if ($depth === 0) {
+                        $inQuote = !$inQuote;
+                    }
+                    $current .= $ch;
+                    continue;
+                }
+                if (!$inQuote && $ch === '(') {
+                    ++$depth;
+                    $current .= $ch;
+                    continue;
+                }
+                if (!$inQuote && $ch === ')') {
+                    $depth = max(0, $depth - 1);
+                    $current .= $ch;
+                    continue;
+                }
+                if (!$inQuote && $depth === 0 && $ch === ',') {
+                    $items[] = trim($current);
+                    $current = '';
+                    continue;
+                }
+                $current .= $ch;
+            }
+            if (trim($current) !== '') {
+                $items[] = trim($current);
+            }
+
+            return $items;
+        }
+
         private function evaluateSqlAssignment(string $expression, array $row): mixed
         {
-            if (strcasecmp($expression, 'NULL') === 0) {
+            if (strcasecmp($expression, 'NULL') === 0 || preg_match("/^NULLIF\(\s*''\s*,\s*''\s*\)$/i", $expression) === 1) {
                 return null;
             }
             if (preg_match('/^\'(.*)\'$/', $expression, $match) === 1) {

@@ -105,18 +105,24 @@ class ClusterSnapshotMerger {
 				continue;
 			}
 
-			$label       = $this->normalize_label( $cluster );
-			$thumb_path  = $this->resolve_representative_thumb_path( $cluster, $cluster_uuid );
-			$inserted_at = $now_utc;
+			$incoming_label = $this->normalize_label( $cluster );
+			$existing       = $this->load_existing_cluster( $cluster_uuid, $normalized_tenant_id );
+			$cleared_rev    = is_numeric( $existing['label_cleared_revision'] ?? null )
+				? (int) $existing['label_cleared_revision']
+				: 0;
+			$keep_cleared = $cleared_rev > 0 && $snapshot_version <= $cleared_rev;
+			$label        = $keep_cleared ? '' : $incoming_label;
+			$thumb_path   = $this->resolve_representative_thumb_path( $cluster, $cluster_uuid );
+			$inserted_at  = $now_utc;
 
-			// COR-1: gate each overwritten data column on the incoming version so
-			// an out-of-order (older) snapshot cannot regress newer projection data.
+			// Tombstone is decided in PHP (revision-aware). SQL stays dumb.
 			$sql = $this->prepare_query(
 				'INSERT INTO %i
 				(cluster_uuid, tenant_id, label, curation_state, representative_thumb_path, representative_id, is_pinned, identity_count, snapshot_version, is_user_confirmed, created_at, updated_at, last_synced_at, suggested_label, suggested_label_source, suggested_label_confidence, suggested_target_cluster_id)
 				VALUES (%s, %s, %s, %s, %s, %s, %d, %d, %d, %d, %s, %s, %s, NULLIF(%s, \'\'), NULLIF(%s, \'\'), NULLIF(%s, \'\'), NULLIF(%s, \'\'))
 				ON DUPLICATE KEY UPDATE
-					label = IF(is_user_confirmed = 1, label, IF(label IS NULL AND person_id IS NULL, label, VALUES(label))),
+					label = IF(is_user_confirmed = 1, label, VALUES(label)),
+					label_cleared_revision = IF(VALUES(snapshot_version) > IFNULL(label_cleared_revision, 0), NULL, label_cleared_revision),
 					curation_state = IF(is_user_confirmed = 1, curation_state, VALUES(curation_state)),
 					is_user_confirmed = IF(is_user_confirmed = 1, is_user_confirmed, VALUES(is_user_confirmed)),
 					person_id = IF(is_user_confirmed = 1, person_id, person_id),
@@ -312,6 +318,29 @@ class ClusterSnapshotMerger {
 			// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
 			$wpdb->query( $sql );
 		}
+	}
+
+	/**
+	 * @return array<string,mixed>|null
+	 */
+	private function load_existing_cluster( string $cluster_uuid, string $tenant_id ): ?array {
+		global $wpdb;
+
+		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'get_row' ) ) {
+			return null;
+		}
+
+		$sql = $this->prepare_query(
+			'SELECT label, person_id, is_user_confirmed, label_cleared_revision, snapshot_version FROM %i WHERE cluster_uuid = %s AND tenant_id = %s',
+			array( $this->table_name, $cluster_uuid, $tenant_id )
+		);
+		if ( ! is_string( $sql ) || '' === $sql ) {
+			return null;
+		}
+
+		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
+		$row = $wpdb->get_row( $sql, ARRAY_A );
+		return is_array( $row ) ? $row : null;
 	}
 
 	/**

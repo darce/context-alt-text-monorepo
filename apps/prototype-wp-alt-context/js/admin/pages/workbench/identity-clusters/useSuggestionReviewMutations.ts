@@ -926,6 +926,7 @@ export const useSuggestionReviewMutations = ({
         (response) => {
           if (held.kind === 'acceptMerge' && response) {
             recordMergeSurvivorFromSuggestion(response as PendingMergeSuggestion);
+            dropRetiredMergeCluster(response as PendingMergeSuggestion);
           }
           applySuccessSideEffects(held.kind, held.suggestionId);
         },
@@ -934,7 +935,7 @@ export const useSuggestionReviewMutations = ({
         },
       );
     };
-  }, [applySuccessSideEffects, clearHeldTimer, fireCommitApi, recordMergeSurvivorFromSuggestion]);
+  }, [applySuccessSideEffects, clearHeldTimer, dropRetiredMergeCluster, fireCommitApi, recordMergeSurvivorFromSuggestion]);
 
   // Raw mutations remain for bulkAccept and any direct callers; assignment accept/reject
   // no longer use optimistic onMutate — ReviewQueue schedules through the hold API.

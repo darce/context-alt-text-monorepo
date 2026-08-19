@@ -45,11 +45,29 @@ class ClusterLabelServiceTest extends TestCase
         $this->service = new ClusterLabelService($host, $this->repository, $this->syncStateRepository);
     }
 
+    /** @param array<string,mixed> $overrides */
+    private function seedClusterRow(string $clusterUuid = 'cluster-xyz', array $overrides = []): void
+    {
+        global $wpdb;
+        $wpdb->tableRows['wp_acx_clusters'] = [
+            array_merge(
+                [
+                    'cluster_uuid' => $clusterUuid,
+                    'tenant_id' => self::currentTenantId(),
+                    'label' => 'Old',
+                    'person_id' => null,
+                ],
+                $overrides
+            ),
+        ];
+    }
+
     public function testUpdateClusterLabelQueuesReplayInsideTransaction(): void
     {
         global $wpdb;
 
         $wpdb->insert_id = 77;
+        $this->seedClusterRow();
 
         $request = new WP_REST_Request('PATCH', '/acx/v1/recognition/clusters/cluster-xyz');
         $request->set_param('cluster_id', 'cluster-xyz');
@@ -121,6 +139,7 @@ class ClusterLabelServiceTest extends TestCase
 
         $wpdb->insert_id = 55;
         $wpdb->tableRows['wp_acx_persons'] = [];
+        $this->seedClusterRow();
 
         $request = new WP_REST_Request('PATCH', '/acx/v1/recognition/clusters/cluster-xyz');
         $request->set_param('cluster_id', 'cluster-xyz');
@@ -179,6 +198,7 @@ class ClusterLabelServiceTest extends TestCase
                 'tags' => '[]',
             ],
         ];
+        $this->seedClusterRow();
 
         $request = new WP_REST_Request('PATCH', '/acx/v1/recognition/clusters/cluster-xyz');
         $request->set_param('cluster_id', 'cluster-xyz');
@@ -329,6 +349,7 @@ class ClusterLabelServiceTest extends TestCase
         ];
         $wpdb->insert_id = 66;
         $wpdb->tableRows['wp_acx_persons'] = [];
+        $this->seedClusterRow();
 
         $request = new WP_REST_Request('PATCH', '/acx/v1/recognition/clusters/cluster-xyz');
         $request->set_param('cluster_id', 'cluster-xyz');
@@ -454,6 +475,7 @@ class ClusterLabelServiceTest extends TestCase
         $this->repository->localClusterRows = [];
         $wpdb->insert_id = 33;
         $wpdb->tableRows['wp_acx_persons'] = [];
+        $this->seedClusterRow();
         $this->setOption('acx_recognition_url', 'https://recognition.test');
         $this->queueHttpResponse([
             'response' => ['code' => 200, 'message' => 'OK'],
@@ -554,6 +576,25 @@ class ClusterLabelServiceTest extends TestCase
             )
         );
         $this->assertCount(0, $personInserts);
+    }
+
+    public function testLocalLabelWriteReportsRosterBoundFalseWhenClusterRowVanished(): void
+    {
+        global $wpdb;
+
+        $wpdb->insert_id = 77;
+        $wpdb->tableRows['wp_acx_persons'] = [];
+        $wpdb->tableRows['wp_acx_clusters'] = [];
+
+        $request = new WP_REST_Request('PATCH', '/acx/v1/recognition/clusters/cluster-xyz');
+        $request->set_param('cluster_id', 'cluster-xyz');
+        $request->set_param('label', 'Known Person');
+
+        $response = $this->service->update_cluster_label($request);
+
+        $this->assertInstanceOf(WP_REST_Response::class, $response);
+        $data = $response->get_data();
+        $this->assertFalse($data['roster_bound']);
     }
 
     public function testPersonResolutionServiceIsLoadableViaRequireOnceChain(): void

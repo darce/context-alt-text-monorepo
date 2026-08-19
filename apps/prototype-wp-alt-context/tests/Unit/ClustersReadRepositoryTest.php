@@ -113,6 +113,7 @@ class ClustersReadRepositoryTest extends TestCase
         $this->assertSame('cluster-find', $row['cluster_uuid']);
         $this->assertStringContainsString('p.person_uuid', $wpdb->queries[0]);
         $this->assertStringContainsString("WHERE c.cluster_uuid = 'cluster-find'", $wpdb->queries[0]);
+        $this->assertStringContainsString('c.tenant_id =', $wpdb->queries[0]);
     }
 
     public function testListForTenantLabeledOnlyIncludesPersonUuid(): void

@@ -246,15 +246,24 @@ class ClusterCurationWriter {
 		return is_int( $query_result ) ? $query_result : 0;
 	}
 
+	public const BIND_ALREADY_BOUND = -1;
+
+	/**
+	 * True when the cluster is bound to the requested person (updated or already bound).
+	 */
+	public static function bind_succeeded( int|false $bound ): bool {
+		return false !== $bound && 0 !== $bound;
+	}
+
 	/**
 	 * Single bind end-state for every person-to-cluster write.
 	 *
 	 * User-initiated ($confirm=true): person_id + curation_state=confirmed + is_user_confirmed=1.
 	 * Heal/automatic ($confirm=false): person_id only (R1-07 — do not invent user intent).
-	 * Already-bound to the same person is a no-op (0 rows).
-	 * DB failure is false — never conflated with a 0-row no-op.
+	 * Already-bound to the same person returns BIND_ALREADY_BOUND.
+	 * Missing cluster row returns 0. DB failure is false.
 	 *
-	 * @return int|false Rows updated (0 = no-op) or false on DB failure.
+	 * @return int|false Rows updated, 0 when no row matched, BIND_ALREADY_BOUND, or false on DB failure.
 	 */
 	public function bind_person_to_cluster( string $cluster_uuid, int $person_id, string $tenant_id, bool $confirm = false ): int|false {
 		global $wpdb;
@@ -265,7 +274,7 @@ class ClusterCurationWriter {
 			return 0;
 		}
 
-		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'update' ) || ! method_exists( $wpdb, 'get_var' ) ) {
+		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'update' ) || ! method_exists( $wpdb, 'get_row' ) ) {
 			return false;
 		}
 
@@ -273,15 +282,19 @@ class ClusterCurationWriter {
 			'SELECT person_id FROM %i WHERE cluster_uuid = %s AND tenant_id = %s',
 			array( $this->table_name, $normalized_cluster_uuid, $normalized_tenant_id )
 		);
-		$existing_person_id = 0;
-		if ( is_string( $existing_sql ) && '' !== $existing_sql ) {
-			// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
-			$existing_raw       = $wpdb->get_var( $existing_sql );
-			$existing_person_id = is_numeric( $existing_raw ) ? (int) $existing_raw : 0;
+		if ( ! is_string( $existing_sql ) || '' === $existing_sql ) {
+			return false;
 		}
 
-		if ( $existing_person_id === $person_id ) {
+		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
+		$existing_row = $wpdb->get_row( $existing_sql, ARRAY_A );
+		if ( ! is_array( $existing_row ) ) {
 			return 0;
+		}
+
+		$existing_person_id = is_numeric( $existing_row['person_id'] ?? null ) ? (int) $existing_row['person_id'] : 0;
+		if ( $existing_person_id === $person_id ) {
+			return self::BIND_ALREADY_BOUND;
 		}
 
 		$data = array(

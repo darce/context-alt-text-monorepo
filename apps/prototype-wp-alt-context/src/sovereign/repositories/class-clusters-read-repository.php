@@ -7,7 +7,9 @@ namespace AltContext\Sovereign\Repositories;
 require_once __DIR__ . '/trait-prepares-sql-queries.php';
 require_once __DIR__ . '/trait-resolves-persons-table-name.php';
 require_once dirname( __DIR__, 2 ) . '/support/trait-detects-system-defined-labels.php';
+require_once dirname( __DIR__, 2 ) . '/api/class-tenant-identity.php';
 
+use AltContext\Api\TenantIdentity;
 use AltContext\Support\DetectsSystemDefinedLabels;
 
 use function is_array;
@@ -309,17 +311,24 @@ class ClustersReadRepository {
 			return null;
 		}
 
+		$tenant_id = trim( (string) ( TenantIdentity::resolve()['value'] ?? '' ) );
+		if ( '' === $tenant_id ) {
+			return null;
+		}
+
 		$persons_table = $this->resolve_persons_table_name();
 		$sql = $this->prepare_projection_read_query(
 			"SELECT c.*, p.person_uuid, {$this->projected_cluster_label_sql( 'p.name', 'c.label' )} as label 
 			 FROM %i c 
 			 LEFT JOIN %i p ON c.person_id = p.id
 			 WHERE c.cluster_uuid = %s 
+			   AND c.tenant_id = %s
 			 LIMIT 1",
 				array(
 					$this->table_name,
 					$persons_table,
 					$normalized_cluster_uuid,
+					$tenant_id,
 				)
 			);
 

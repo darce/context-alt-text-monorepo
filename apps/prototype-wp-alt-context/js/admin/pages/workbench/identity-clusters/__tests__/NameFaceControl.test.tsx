@@ -567,3 +567,27 @@ describe('NameFaceControl header + loading (UXW2-3-R1-16)', () => {
     expect(screen.getByRole('combobox')).toBeDisabled();
   });
 });
+
+describe('NameFaceControl accessible name (UXW2-3-R6-08)', () => {
+  it('visible label Alpha wins over ariaLabel Beta and omits aria-label', () => {
+    renderControl({
+      visibleLabel: 'Alpha',
+      ariaLabel: 'Beta',
+      inputId: 'name-face-visible-label',
+      value: 'Pat',
+    });
+    const input = screen.getByRole('combobox', { name: 'Alpha' });
+    expect(input).toHaveAccessibleName('Alpha');
+    expect(input).not.toHaveAttribute('aria-label');
+  });
+
+  it('ariaLabel names the input when there is no visible label', () => {
+    renderControl({
+      ariaLabel: 'Beta',
+      value: 'Pat',
+    });
+    const input = screen.getByRole('combobox', { name: 'Beta' });
+    expect(input).toHaveAccessibleName('Beta');
+    expect(input).toHaveAttribute('aria-label', 'Beta');
+  });
+});

@@ -268,7 +268,7 @@ describe('TopClusterCard', () => {
       <TopClusterCard
         cluster={buildCluster({
           suggested_label: null,
-          identity_count: 3,
+          identity_count: 7,
           representatives: [
             buildRepresentative({ id: 'rep-1' }),
             buildRepresentative({ id: 'rep-2' }),
@@ -280,8 +280,8 @@ describe('TopClusterCard', () => {
     );
 
     const meta = document.querySelector('.acx-top-cluster-card__meta');
-    expect(meta).toHaveTextContent('3 faces');
-    expect(meta?.textContent).not.toMatch(/3 faces in cluster|0 faces|\+3 more/i);
+    expect(meta?.textContent).toBe('7 faces');
+    expect(meta?.textContent).not.toMatch(/3 faces in cluster|0 faces|\+3 more|3 of 7/i);
   });
 
   // UXW2-2-R1-27: restore E21-20 — 39px cells hide the overflow missing-state label.

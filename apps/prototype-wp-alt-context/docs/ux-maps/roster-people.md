@@ -26,52 +26,77 @@ Controlled vocabulary for all Roster surfaces (NAV-13), enforced by `js/admin/__
 Backend write units stay `cluster`/`identity` in code and API contracts; only operator-facing copy uses the plain-language nouns.
 
 ## Screens
-| id | kind | route | title |
-| --- | --- | --- | --- |
-| `roster-shell` | screen | `#/roster` | Roster (People) |
-| `roster-person-workspace` | screen | `#/roster?person=` | Person workspace |
-| `roster-cluster-drawer` | overlay | `#/roster?cluster=` | Face-group drawer (shim) |
-| `roster-face-lightbox` | overlay | `#/roster?person= (in-panel dialog; no dedicated route)` | Face evidence lightbox |
-| `exit-workbench` | exit | `#/workbench` | Workbench |
+| id | kind | route | title | url_params |
+| --- | --- | --- | --- | --- |
+| `roster-shell` | screen | `#/roster` | Roster (People) | `person`, `personFilter`, `queue`, `face`, `cluster` |
+| `roster-person-workspace` | screen | `#/roster?person=` | Person workspace | `person`, `queue`, `face` |
+| `roster-cluster-drawer` | overlay | `#/roster?cluster=` | Face-group drawer (deep-link shim) | `cluster` |
+| `roster-face-lightbox` | overlay | `#/roster?person= (in-panel dialog; no dedicated route)` | Face evidence lightbox | — |
+| `exit-workbench` | exit | `#/workbench` | Workbench | `tab`, `panel`, `media` |
 
 ### Roster (People) (`roster-shell`)
+
+Purpose: People-first roster: entries table, Workbench review CTA, person workspace host, face-group drawer shim
+
+url_params: `person`, `personFilter`, `queue`, `face`, `cluster`
+
+| zone id | label | role | states |
+| --- | --- | --- | --- |
+| `z-entries` | Roster entries table | content | default, loading, empty, error |
+| `z-review-cta` | Unnamed faces CTA → Workbench review queue | content | default, loading, empty |
+| `z-projection-gate` | Projection status gate notices | status | default, loading, error, degraded |
+| `z-person-host` | Person workspace host | other | default, empty |
+| `z-cluster-host` | Face-group drawer host (cluster= shim) | other | default, empty, loading, error |
 
 ```
 +------------------------------------------------------------+
 | Roster (People)  [screen]  #/roster                        |
-| People-first roster: entries table + Workbench review CTA  |
+| People-first roster: entries table, Workbench review CTA,  |
+| person workspace host, face-group drawer shim              |
 +------------------------------------------------------------+
 | ZONES                                                      |
-|   - Roster entries table (content) states=[default,loadin… |
-|   - Unnamed faces CTA -> Workbench review queue (content)  |
-|     (needs-assignment rail RETIRED UXW2-4; queue lives in  |
-|     the Workbench, Roster links out with server count)     |
-|   - Projection status gate notices (status) states=[defau… |
-|   - Person workspace host (other) states=[default,empty]   |
-|   - Face-group drawer host (other) states=[default,empty]  |
+|   - Roster entries table (content)                         |
+|   - Unnamed faces CTA → Workbench review queue (content)   |
+|   - Projection status gate notices (status)                |
+|   - Person workspace host (other)                          |
+|   - Face-group drawer host (cluster= shim) (other)         |
 +------------------------------------------------------------+
 | ACTIONS                                                    |
 |   [PRIMARY] Filter unassigned -> personFilter=unassigned   |
 |   [PRIMARY] Open person workspace -> roster-person-worksp… |
 |   [secondary] Go to Workbench -> exit-workbench            |
-|   [secondary] Open cluster drawer -> roster-cluster-drawer |
+|   [secondary] Open face-group drawer -> roster-cluster-dr… |
 +------------------------------------------------------------+
-| states: default | loading | empty | error | degraded | fi… |
+| states: default | loading | empty | error | degraded | first_time |
 +------------------------------------------------------------+
 ```
 
 ### Person workspace (`roster-person-workspace`)
 
+Purpose: Deep-linked person panel: faces, media, gated when data status is not current
+
+url_params: `person`, `queue`, `face`
+
+| zone id | label | role | states |
+| --- | --- | --- | --- |
+| `z-person-header` | Person header | content | default, loading |
+| `z-person-identities` | Linked faces | ai_review | default, empty, loading |
+| `z-person-evidence` | Cluster evidence thumbnails (cropped face crop; raw media fallback for uncroppable bbox; labelled visible no-image state) | ai_review | default, loading, empty, error, degraded |
+| `z-person-actions` | Save / assign / open queue | form | default, error |
+
 ```
 +------------------------------------------------------------+
 | Person workspace  [screen]  #/roster?person=               |
-| Deep-linked person panel: identities, media, projection-g… |
+| Deep-linked person panel: faces, media, gated when data    |
+| status is not current                                      |
 +------------------------------------------------------------+
 | ZONES                                                      |
-|   - Person identity header (content) states=[default,load… |
-|   - Linked identities / faces (ai_review) states=[default… |
-|   - Cluster evidence thumbnails (cropped face crop; raw m… |
-|   - Save / assign / open queue (form) states=[default,err… |
+|   - Person header (content)                                |
+|   - Linked faces (ai_review)                               |
+|   - Cluster evidence thumbnails (cropped face crop; raw    |
+|     media fallback for uncroppable bbox; labelled visible  |
+|     no-image state) (ai_review)                            |
+|   - Save / assign / open queue (form)                      |
 +------------------------------------------------------------+
 | ACTIONS                                                    |
 |   [PRIMARY] Save person changes -> roster-person-workspac… |
@@ -81,17 +106,27 @@ Backend write units stay `cluster`/`identity` in code and API contracts; only op
 +------------------------------------------------------------+
 ```
 
-### Face-group drawer (`roster-cluster-drawer`)
+### Face-group drawer (deep-link shim) (`roster-cluster-drawer`)
+
+Purpose: Person-first face-group sample drawer (clusters tab retired; cluster= shim opens drawer)
+
+url_params: `cluster`
+
+| zone id | label | role | states |
+| --- | --- | --- | --- |
+| `z-cluster-samples` | Sample faces | forced_choice | default, loading, empty, error |
+| `z-cluster-actions` | Assign / dismiss drawer | form | default |
 
 ```
 +------------------------------------------------------------+
-| Face-group drawer  [overlay]  #/roster?cluster=            |
+| Face-group drawer (deep-link shim)  [overlay]              |
+| #/roster?cluster=                                          |
 | Person-first face-group sample drawer (clusters tab        |
-| retired; cluster= is an E21-10 deep-link shim)             |
+| retired; cluster= shim opens drawer)                       |
 +------------------------------------------------------------+
 | ZONES                                                      |
-|   - Sample faces (forced_choice) states=[default,loadin…   |
-|   - Assign / dismiss drawer (form) states=[default]        |
+|   - Sample faces (forced_choice)                           |
+|   - Assign / dismiss drawer (form)                         |
 +------------------------------------------------------------+
 | ACTIONS                                                    |
 |   [PRIMARY] Assign face group to person (costly,preview)   |
@@ -102,14 +137,21 @@ Backend write units stay `cluster`/`identity` in code and API contracts; only op
 
 ### Face evidence lightbox (`roster-face-lightbox`)
 
+Purpose: Full-size face/media evidence dialog opened from workspace evidence thumbnails; closes via dialog affordance and resets when the selected person identity changes
+
+| zone id | label | role | states |
+| --- | --- | --- | --- |
+| `z-lightbox-media` | Enlarged evidence media with accessible ordinal name | ai_review | default, error |
+| `z-lightbox-controls` | Close affordance | form | default |
+
 ```
 +------------------------------------------------------------+
 | Face evidence lightbox  [overlay]  #/roster?person= (in-p… |
 | Full-size face/media evidence dialog opened from workspac… |
 +------------------------------------------------------------+
 | ZONES                                                      |
-|   - Enlarged evidence media with accessible ordinal name … |
-|   - Close affordance (form) states=[default]               |
+|   - Enlarged evidence media with accessible ordinal name   |
+|   - Close affordance (form)                                |
 +------------------------------------------------------------+
 | ACTIONS                                                    |
 |   [secondary] Close lightbox -> roster-person-workspace    |
@@ -120,13 +162,21 @@ Backend write units stay `cluster`/`identity` in code and API contracts; only op
 
 ### Workbench (`exit-workbench`)
 
+Purpose: Return to media queue / scan after assignment
+
+url_params: `tab`, `panel`, `media`
+
+| zone id | label | role | states |
+| --- | --- | --- | --- |
+| `z-wb-entry` | Workbench entry | nav | default |
+
 ```
 +------------------------------------------------------------+
 | Workbench  [exit]  #/workbench                             |
 | Return to media queue / scan after assignment              |
 +------------------------------------------------------------+
 | ZONES                                                      |
-|   - Workbench entry (nav) states=[default]                 |
+|   - Workbench entry (nav)                                  |
 +------------------------------------------------------------+
 | states: default | loading | error                          |
 +------------------------------------------------------------+
@@ -139,22 +189,24 @@ Backend write units stay `cluster`/`identity` in code and API contracts; only op
 flowchart TD
   %% flow: Filter unassigned → open person → save assignment job=job-assign-faces
   n_roster_shell["Roster (People) (screen)"]
-  n_roster_shell -->|enter roster| n_roster_shell
   n_roster_person_workspace["Person workspace (screen)"]
-  n_roster_shell -->|personFilter=unassigned| n_roster_person_workspace
-  n_roster_person_workspace -->|open person| n_roster_shell
+  n_roster_shell -->|enter roster| n_roster_shell
+  n_roster_shell -->|personFilter=unassigned| n_roster_shell
+  n_roster_shell -->|open person| n_roster_person_workspace
+  n_roster_person_workspace -->|save / return| n_roster_shell
 ```
 
-### Open cluster drawer → assign → person workspace (`flow-cluster-to-person`)
+### Open face-group drawer → assign → person workspace (`flow-cluster-to-person`)
 
 ```mermaid
 flowchart TD
-  %% flow: Open cluster drawer → assign → person workspace job=job-cluster-review
+  %% flow: Open face-group drawer → assign → person workspace job=job-cluster-review
   n_roster_shell["Roster (People) (screen)"]
-  n_roster_cluster_drawer["Cluster drawer (overlay)"]
+  n_roster_cluster_drawer["Face-group drawer (deep-link shim) (overlay)"]
   n_roster_shell -->|from entries/clusters| n_roster_cluster_drawer
   n_roster_person_workspace["Person workspace (screen)"]
   n_roster_cluster_drawer -->|cluster= drawer| n_roster_person_workspace
+  n_roster_person_workspace -->|assign identity| n_roster_person_workspace
 ```
 
 ### Roster → Workbench continue scan (`flow-return-workbench`)
@@ -169,7 +221,6 @@ flowchart TD
 
 ## Open questions
 - Is person workspace a route-owned screen or always an in-page panel? (modeled as deep-linkable screen with person=)
-- ~~Should needs-assignment be its own screen_id or remain a zone on roster-shell?~~ Resolved (UXW2-4): rail retired; unnamed faces live only in the Workbench review queue (`#/workbench?tab=scan&rq=all.all.0`), Roster keeps a CTA card.
 - Face-group drawer max_candidates=8 — confirm product top-k policy
 
 ## Not doing

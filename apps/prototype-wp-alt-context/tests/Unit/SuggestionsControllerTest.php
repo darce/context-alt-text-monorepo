@@ -894,6 +894,7 @@ class SuggestionsControllerTest extends TestCase
         $description = (string) ($topK['description'] ?? '');
         $this->assertStringNotContainsString('Forwarded verbatim', $description);
         $this->assertStringContainsStringIgnoringCase('people-grain', $description);
+        $this->assertStringNotContainsString('ROSTER_CANDIDATES_PYTHON_WINDOW', $description);
     }
 
     /**

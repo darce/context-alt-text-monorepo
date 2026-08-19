@@ -23,19 +23,19 @@ TEST-15: R1-01 watched fail (`ValueError`) then pass (`cluster.label is None`). 
 ## Closure
 | ID | Commit | Test | TEST-15 |
 | --- | --- | --- | --- |
-| R1-01 | `245674d061a486998dd5580a3c07cd0e2a8c79f9` | `test_cluster_label_updated_with_null_label_clears_backend_label` | killed (ValueError) |
-| R1-02 | `7c72dbbab36adff590585098474c2673fcbb4936` | `testDeleteThenSnapshotMergeDoesNotRecreatePerson` | killed (person insert) |
-| R1-03 | `2d7b641691a90583036b2089ee4b286d70aa948d` | `testMaybeUpgradeHealsUnboundHumanLabelsIncludingUnderscoreSkip` | killed (no `cluster\_`) |
-| R1-04 | `7c72dbbab36adff590585098474c2673fcbb4936` | `testBackfillResolvesAgainstStoredLabelWhenIncomingDiffers` | killed (Incoming Name insert) |
-| R1-05 | `2b8479e394c99ba176471e11e9f114df379e9df1` | `testProxyLabelWriteDoesNotPersistPersonOnProxyFailure` | killed (person persist) |
-| R1-06 | `2b8479e394c99ba176471e11e9f114df379e9df1` | `testMergeRejectsRebindToDifferentPerson` | killed (no 409) |
-| R1-07 | `72333dd986a320633f0b5b962b32dc6fa8b1e68a` | `testBackfillMarksRejectedRowsSeenAndDoesNotStall` + `BindUnboundLabelsCommandTest` | killed (stall) |
-| R1-08 | `72333dd986a320633f0b5b962b32dc6fa8b1e68a` | `testAutomaticBindCreatesDistinctPersonOnNameCollision` | killed (reuse person 3) |
-| R1-09 | `72333dd…` / `d8ea4be…` | list SQL predicate + idempotent second pass keeps `person_id` | killed (mockResults=[]) |
-| R1-10 | `dcd1d9f4fc20d2f60b9ac63283f9a2f7667e0679` | `testMergeClusterGolden` | killed (first-op-only) |
-| R1-11 | `0c61306b611b7205ff6d344cc956b1d728cc5f04` | `testMapMediaIdentitiesAppliesLabelAuthorityRows` + controller | killed (unbound shows name) |
-| R1-12 | `0c61306b611b7205ff6d344cc956b1d728cc5f04` | proxy normalizer + `create_local_cluster` bind | killed (COALESCE / no person) |
-| R1-13 | `d8ea4be07909471985eb9a4969ab63c06981ec81` | `testDeletePersonClearsHumanLabel…` + singleton count | killed (no `clusters_dissociated`) |
+| R1-01 | `fix(roster): UXW2-4-R1-01 accept cluster_label_updated label null` | `test_cluster_label_updated_with_null_label_clears_backend_label` | killed (ValueError) |
+| R1-02 | `fix(sovereign): UXW2-4-R1-02 R1-04 tombstone upsert and shared bind` | `testDeleteThenSnapshotMergeDoesNotRecreatePerson` | killed (person insert) |
+| R1-03 | `fix(sovereign): UXW2-4-R1-03 shared reserved-label SQL + upgrade heal` | `testMaybeUpgradeHealsUnboundHumanLabelsIncludingUnderscoreSkip` | killed (no `cluster\_`) |
+| R1-04 | `fix(sovereign): UXW2-4-R1-02 R1-04 tombstone upsert and shared bind` | `testBackfillResolvesAgainstStoredLabelWhenIncomingDiffers` | killed (Incoming Name insert) |
+| R1-05 | `fix(api): UXW2-4-R1-05 R1-06 proxy-first label and merge 409` | `testProxyLabelWriteDoesNotPersistPersonOnProxyFailure` | killed (person persist) |
+| R1-06 | `fix(api): UXW2-4-R1-05 R1-06 proxy-first label and merge 409` | `testMergeRejectsRebindToDifferentPerson` | killed (no 409) |
+| R1-07 | `fix(api): UXW2-4-R1-07 R1-08 backfill seen/skip and name-collision` | `testBackfillMarksRejectedRowsSeenAndDoesNotStall` + `BindUnboundLabelsCommandTest` | killed (stall) |
+| R1-08 | `fix(api): UXW2-4-R1-07 R1-08 backfill seen/skip and name-collision` | `testAutomaticBindCreatesDistinctPersonOnNameCollision` | killed (reuse person 3) |
+| R1-09 | `fix(api): UXW2-4-R1-07 R1-08 backfill seen/skip and name-collision` / `fix(api): UXW2-4-R1-13 delete_person run_transactional reset_curation` | list SQL predicate + idempotent second pass keeps `person_id` | killed (mockResults=[]) |
+| R1-10 | `fix(api): UXW2-4-R1-10 ordered outbox operations in goldens` | `testMergeClusterGolden` | killed (first-op-only) |
+| R1-11 | `fix(sovereign): UXW2-4-R1-11 R1-12 label authority on remaining reads` | `testMapMediaIdentitiesAppliesLabelAuthorityRows` + controller | killed (unbound shows name) |
+| R1-12 | `fix(sovereign): UXW2-4-R1-11 R1-12 label authority on remaining reads` | proxy normalizer + `create_local_cluster` bind | killed (COALESCE / no person) |
+| R1-13 | `fix(api): UXW2-4-R1-13 delete_person run_transactional reset_curation` | `testDeletePersonClearsHumanLabel…` + singleton count | killed (no `clusters_dissociated`) |
 | R1-14 | this REPORT commit | SHA `git cat-file -e` | n/a |
 
 ## Canon (grepped)
@@ -61,17 +61,17 @@ TEST-15: R1-01 watched fail (`ValueError`) then pass (`cluster.label is None`). 
 - FE copy `"Just label — don't add to roster"` (PHP lane).
 - Live #6731 still needs site upgrade / `wp acx bind-unbound-labels`.
 - `list_labels` still DISTINCT on raw `c.label` (typeahead hole).
-- `docs/workbay/contracts/` gitignored here; force-added `curation-sync-api.md` + `clustering-api.md`.
+- Contract docs live under `docs/workbay/contracts/` and are tracked in the canonical repo. This mirror omits that directory from version control; intended contract edits are recorded as diffs in the R3 report.
 
 ## Commits
-- `245674d061a486998dd5580a3c07cd0e2a8c79f9` `fix(roster): UXW2-4-R1-01 accept cluster_label_updated label null`
-- `2d7b641691a90583036b2089ee4b286d70aa948d` `fix(sovereign): UXW2-4-R1-03 shared reserved-label SQL + upgrade heal`
-- `7c72dbbab36adff590585098474c2673fcbb4936` `fix(sovereign): UXW2-4-R1-02 R1-04 tombstone upsert and shared bind`
-- `72333dd986a320633f0b5b962b32dc6fa8b1e68a` `fix(api): UXW2-4-R1-07 R1-08 backfill seen/skip and name-collision`
-- `2b8479e394c99ba176471e11e9f114df379e9df1` `fix(api): UXW2-4-R1-05 R1-06 proxy-first label and merge 409`
-- `d8ea4be07909471985eb9a4969ab63c06981ec81` `fix(api): UXW2-4-R1-13 delete_person run_transactional reset_curation`
-- `0c61306b611b7205ff6d344cc956b1d728cc5f04` `fix(sovereign): UXW2-4-R1-11 R1-12 label authority on remaining reads`
-- `dcd1d9f4fc20d2f60b9ac63283f9a2f7667e0679` `fix(api): UXW2-4-R1-10 ordered outbox operations in goldens`
+- `fix(roster): UXW2-4-R1-01 accept cluster_label_updated label null` `fix(roster): UXW2-4-R1-01 accept cluster_label_updated label null`
+- `fix(sovereign): UXW2-4-R1-03 shared reserved-label SQL + upgrade heal` `fix(sovereign): UXW2-4-R1-03 shared reserved-label SQL + upgrade heal`
+- `fix(sovereign): UXW2-4-R1-02 R1-04 tombstone upsert and shared bind` `fix(sovereign): UXW2-4-R1-02 R1-04 tombstone upsert and shared bind`
+- `fix(api): UXW2-4-R1-07 R1-08 backfill seen/skip and name-collision` `fix(api): UXW2-4-R1-07 R1-08 backfill seen/skip and name-collision`
+- `fix(api): UXW2-4-R1-05 R1-06 proxy-first label and merge 409` `fix(api): UXW2-4-R1-05 R1-06 proxy-first label and merge 409`
+- `fix(api): UXW2-4-R1-13 delete_person run_transactional reset_curation` `fix(api): UXW2-4-R1-13 delete_person run_transactional reset_curation`
+- `fix(sovereign): UXW2-4-R1-11 R1-12 label authority on remaining reads` `fix(sovereign): UXW2-4-R1-11 R1-12 label authority on remaining reads`
+- `fix(api): UXW2-4-R1-10 ordered outbox operations in goldens` `fix(api): UXW2-4-R1-10 ordered outbox operations in goldens`
 
 HEAD: this REPORT commit (`git rev-parse HEAD`).
 

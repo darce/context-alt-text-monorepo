@@ -61,7 +61,10 @@
 |   - Status / search filters (form) states=[default,edge_i… |
 |   - Media selection table (queue) states=[default,loading… |
 |   - Scan / analyze CTAs + job progress (job) states=[defa… |
-|   - Identity / findings preview (AI-assisted) (ai_review)… |
+|   - Identity / findings preview (AI-assisted) (ai_review)  |
+|     states=[default,empty,loading,error,degraded,          |
+|             unavailable,repair,zero_evidence]              |
+|     code_ref=WorkbenchFindingsPanel.tsx                    |
 |   - Review Suggestions queue header / count (status)       |
 |     states=[default,loading,empty,error,filtered,repair]   |
 |     code_ref=ReviewQueue.tsx                               |

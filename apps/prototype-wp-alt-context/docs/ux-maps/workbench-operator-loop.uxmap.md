@@ -45,6 +45,9 @@ Deep-link param SSOT: `js/admin/navigation/appLinks.ts` (`APP_LINK_PARAMS`).
 | job progress: idle | running | error                         |
 |--------------------------------------------------------------|
 | AI findings preview (evidence-linked)                        |
+| states: default | empty | loading | error | degraded         |
+|         | unavailable | repair | zero_evidence               |
+| code_ref: WorkbenchFindingsPanel.tsx                         |
 |--------------------------------------------------------------|
 | REVIEW SUGGESTIONS HEADER  N left to review on this page     |
 | position: 1 of N on this page | kind chips | band chips      |

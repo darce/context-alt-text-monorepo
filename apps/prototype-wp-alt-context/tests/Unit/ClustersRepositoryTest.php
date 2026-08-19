@@ -58,7 +58,7 @@ class ClustersRepositoryTest extends TestCase
         $this->assertStringNotContainsString('FIND_IN_SET(cluster_uuid', $mergedSql);
 
         $this->assertStringContainsString('INSERT INTO `wp_acx_clusters`', $mergedSql);
-        $this->assertStringContainsString('label = IF(is_user_confirmed = 1, label, IF(label IS NULL AND person_id IS NULL, label, VALUES(label)))', $mergedSql);
+        $this->assertStringContainsString('label = IF(is_user_confirmed = 1, label, VALUES(label))', $mergedSql);
         $this->assertStringContainsString('curation_state = IF(is_user_confirmed = 1, curation_state, VALUES(curation_state))', $mergedSql);
         $this->assertStringContainsString('person_id = IF(is_user_confirmed = 1, person_id, person_id)', $mergedSql);
         $this->assertStringContainsString('local_revision = IF(is_user_confirmed = 1, local_revision, local_revision)', $mergedSql);

@@ -4,6 +4,9 @@ declare(strict_types=1);
 
 namespace AltContext\Api\Services;
 
+require_once dirname( __DIR__ ) . '/class-tenant-identity.php';
+
+use AltContext\Api\TenantIdentity;
 use WP_Error;
 
 /**
@@ -63,12 +66,22 @@ class PersonResolutionService {
 			return $existing;
 		}
 
+		$tenant_id = TenantIdentity::resolve()['value'] ?? '';
+		if ( ! \is_string( $tenant_id ) || '' === \trim( $tenant_id ) ) {
+			return new WP_Error(
+				'acx_db_error',
+				__( 'Tenant identity is unavailable.', 'alt-context' ),
+				array( 'status' => 500 )
+			);
+		}
+
 		$person_uuid       = \wp_generate_uuid4();
 		$person_created_at = \current_time( 'mysql' );
 		$inserted          = $wpdb->insert(
 			$table_persons,
 			array(
 				'person_uuid'     => $person_uuid,
+				'tenant_id'       => $tenant_id,
 				'name'            => $display_name,
 				'normalized_name' => $normalized,
 				'tags'            => \wp_json_encode( array() ),
@@ -76,7 +89,7 @@ class PersonResolutionService {
 				'created_at'      => $person_created_at,
 				'updated_at'      => $person_created_at,
 			),
-			array( '%s', '%s', '%s', '%s', '%d', '%s', '%s' )
+			array( '%s', '%s', '%s', '%s', '%s', '%d', '%s', '%s' )
 		);
 
 		if ( false === $inserted ) {

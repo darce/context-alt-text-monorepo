@@ -310,6 +310,43 @@ class PersonCrudTest extends TestCase
         $this->assertStringContainsString('c.identity_count <= 1', $sql);
     }
 
+    public function testDeletePersonDoesNotDeleteOtherTenantSharingPersonId(): void
+    {
+        $this->api->register_routes();
+        global $wpdb;
+
+        $currentTenant = self::currentTenantId();
+        $wpdb->tableRows['wp_acx_persons'] = [
+            [
+                'id' => 7,
+                'tenant_id' => $currentTenant,
+                'name' => 'Alice',
+                'person_uuid' => 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+                'local_revision' => 1,
+            ],
+            [
+                'id' => 7,
+                'tenant_id' => 'other-tenant',
+                'name' => 'Bob',
+                'person_uuid' => 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb',
+                'local_revision' => 1,
+            ],
+        ];
+        $wpdb->mockRow = $wpdb->tableRows['wp_acx_persons'][0];
+
+        $request = new WP_REST_Request('DELETE', '/acx/v1/roster/persons/7');
+        $request->set_param('id', 7);
+        $response = $this->api->delete_person($request);
+
+        $this->assertNotInstanceOf(\WP_Error::class, $response);
+        $remaining = $wpdb->tableRows['wp_acx_persons'];
+        $this->assertCount(1, $remaining);
+        $this->assertSame('other-tenant', $remaining[0]['tenant_id']);
+        $this->assertSame('Bob', $remaining[0]['name']);
+        $deleteQuery = $this->findQueryContaining($wpdb->queries, 'DELETE FROM wp_acx_persons');
+        $this->assertStringContainsString('tenant_id =', $deleteQuery);
+    }
+
     public function testDeletePersonSurfacesResetCurationFailure(): void
     {
         $this->api->register_routes();

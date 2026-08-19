@@ -14,24 +14,50 @@ from pathlib import Path
 _UNDECODABLE_PATH_PREFIX = "undecodable:"
 
 
-def _printable_message(message: str) -> str:
+class EncodedText(str):
+    """Already-encoded operator-facing text.
+
+    Re-feeding to ``_printable_path`` or ``_printable_message`` is a no-op
+    so the two encoders cannot compose into a third wire form (VLM6-W18-F1-01).
+    """
+
+    __slots__ = ()
+
+
+class PathText(EncodedText):
+    """Wire-form <path-text>. Produced by ``_printable_path``."""
+
+    __slots__ = ()
+
+
+class MessageText(EncodedText):
+    """Wire-form operator message. Produced by ``_printable_message``."""
+
+    __slots__ = ()
+
+
+def _printable_message(message: str) -> EncodedText:
     """Make operator text printable without claiming it is a filename (API-11).
 
     Recovers PEP 383 surrogates the same way ``_printable_path`` recovers argv,
     but never applies the ``undecodable:`` path-slot marker and never prepends
     a backslash for an already-marked string. Idempotent: a second pass is a
-    no-op (VLM6-RV16-L-02 / L-03).
+    no-op (VLM6-RV16-L-02 / L-03). Already-encoded ``EncodedText`` is
+    returned unchanged so this encoder cannot compose with ``_printable_path``
+    (VLM6-W18-F1-01).
     """
+    if isinstance(message, EncodedText):
+        return message  # WHY: re-wrap drops PathText identity and allows later path re-escape
     try:
         message.encode("utf-8")
     except UnicodeEncodeError:
         raw = os.fsencode(message)
         try:
-            return raw.decode("utf-8")
+            return MessageText(raw.decode("utf-8"))
         except UnicodeDecodeError:
             doubled = raw.replace(b"\\", b"\\\\")
-            return doubled.decode("utf-8", errors="backslashreplace")
-    return message
+            return MessageText(doubled.decode("utf-8", errors="backslashreplace"))
+    return MessageText(message)
 
 
 def _escape_undecodable_marker(text: str) -> str:
@@ -46,7 +72,7 @@ def _escape_undecodable_marker(text: str) -> str:
     return text
 
 
-def _printable_path(path: Path | str) -> str:
+def _printable_path(path: Path | str) -> EncodedText:
     """OBS-08: machine-consumable path text for stdout/stderr.
 
     Fast path: if the path text encodes as UTF-8, return it (no fsencode
@@ -74,16 +100,22 @@ def _printable_path(path: Path | str) -> str:
       ``undecodable:``, strip exactly one leading backslash; the rest is
       the UTF-8 filename.
     - Otherwise the text is the UTF-8 filename as-is.
+
+    Already-encoded ``EncodedText`` is returned unchanged: applying this
+    encoder twice, or applying it to ``_printable_message`` output, must
+    not add another marker-escape (VLM6-W18-F1-01).
     """
+    if isinstance(path, EncodedText):
+        return path  # WHY: second pass prepends \\ onto undecodable: wire form
     text = os.fspath(path)
     try:
         text.encode("utf-8")
     except UnicodeEncodeError:
         raw = os.fsencode(text)
         try:
-            return _escape_undecodable_marker(raw.decode("utf-8"))
+            return PathText(_escape_undecodable_marker(raw.decode("utf-8")))
         except UnicodeDecodeError:
             doubled = raw.replace(b"\\", b"\\\\")
             escaped = doubled.decode("utf-8", errors="backslashreplace")
-            return f"{_UNDECODABLE_PATH_PREFIX}{escaped}"
-    return _escape_undecodable_marker(text)
+            return PathText(f"{_UNDECODABLE_PATH_PREFIX}{escaped}")
+    return PathText(_escape_undecodable_marker(text))

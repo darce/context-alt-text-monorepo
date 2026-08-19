@@ -26,15 +26,10 @@ import {
 } from '../../../hooks/workbenchQueueUrl';
 import { UserFacingErrorNotice } from '../../../components/ui/UserFacingErrorNotice';
 import { EmptyStateWarning } from './EmptyStateWarning';
-import { QUERY_RETRY_COPY, QueryRetryButton, settledRefetchFailed } from './queryRetry';
+import { QueryRetryButton, settledRefetchFailed } from './queryRetry';
 import { MergeSuggestionCard } from './MergeSuggestionCard';
 import { PersonCommitControl } from './PersonCommitControl';
-import {
-  PERSON_COMMIT_FAILURE_COPY,
-  PERSON_COMMIT_SUCCESS_COPY,
-  VIEW_IN_ROSTER_COPY,
-  VIEW_IN_ROSTER_HREF,
-} from './personCommitCopy';
+import { VIEW_IN_ROSTER_HREF } from './personCommitCopy';
 import { shouldShowPersonCommit, isPersonCommitPrimaryKind } from './personCommitVisibility';
 import { ReviewCardLightbox } from './ReviewCardLightbox';
 import {
@@ -47,9 +42,7 @@ import {
   prevQueueIndex,
   REVIEW_QUEUE_BAND,
   REVIEW_QUEUE_BAND_CHIP_LABEL,
-  REVIEW_QUEUE_DRAIN_MESSAGE,
   REVIEW_QUEUE_FILTER,
-  SELECTION_SPLIT_MESSAGE,
   type ReviewQueueBand,
   type ReviewQueueFilter,
   type ReviewQueueItem,
@@ -68,8 +61,6 @@ import { useSelectedClusterTruncation } from './useSelectedClusterTruncation';
 import { useSuggestionReviewData } from './useSuggestionReviewData';
 import {
   COMMIT_HOLD_PHASE,
-  HOLD_COMMITTING_STATUS_COPY,
-  HOLD_STATUS_COPY,
   PERSON_COMMIT_PHASE,
   type CommitHoldPhase,
   type PersonCommitRequest,
@@ -83,18 +74,6 @@ import { useAriaAnnounce } from './useAriaAnnounce';
 import { useLiveReviewTarget } from './useLiveReviewTarget';
 import { useWorkbenchFindings } from './useWorkbenchFindings';
 import { ACCENT_PRIMARY_ATTR } from '../mediaFooterCtaState';
-
-/**
- * Filtered-empty copy — visual + AT share one string.
- * [COG-03] not a true drain when filters hide work; [A11Y-06] second channel.
- */
-const REVIEW_QUEUE_FILTERED_EMPTY_MESSAGE = 'No items match the current filters.';
-
-/** Top-unlabeled projection outage copy — one canonical string for visual + AT. */
-const REVIEW_QUEUE_TOP_UNLABELED_ERROR_MESSAGE = 'Unable to load unlabeled groups.';
-
-/** Empty-queue position copy when the projection outage makes the count unmeasurable. */
-const REVIEW_QUEUE_POSITION_UNAVAILABLE_MESSAGE = 'Position unavailable';
 
 /** aria-live position line — carries the loaded-page / filtered scope (A11Y-21). */
 export const REVIEW_QUEUE_POSITION_PAGE = '%1$d of %2$d on this page';
@@ -417,7 +396,7 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
       selectedIds.size !== filteredSelectedIds.length
         ? sprintf(
             /* translators: 1: total selected review items, 2: selected items within active filters */
-            __(SELECTION_SPLIT_MESSAGE, 'alt-context'),
+            __('%1$d selected — %2$d in current filter', 'alt-context'),
             selectedIds.size,
             filteredSelectedIds.length,
           )
@@ -612,15 +591,15 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
           // R8-02 / A11Y-21: latch the announced sentence, not only a boolean, so a
           // count or wording change re-fires and an identical rerender stays quiet.
           if (data.isTopUnlabeledError) {
-            const errorCopy = __(REVIEW_QUEUE_TOP_UNLABELED_ERROR_MESSAGE, 'alt-context');
+            const errorCopy = __('Unable to load unlabeled groups.', 'alt-context');
             const nextEmptyMessage = filteredEmptyWithWork
-              ? `${errorCopy} ${__(REVIEW_QUEUE_FILTERED_EMPTY_MESSAGE, 'alt-context')}`
+              ? `${errorCopy} ${__('No items match the current filters.', 'alt-context')}`
               : errorCopy;
             setLiveMessage(nextEmptyMessage);
             repairAnnouncedRef.current = findings.repairPending;
             repairAnnouncedMessageRef.current = nextEmptyMessage;
           } else if (filteredEmptyWithWork) {
-            const nextEmptyMessage = __(REVIEW_QUEUE_FILTERED_EMPTY_MESSAGE, 'alt-context');
+            const nextEmptyMessage = __('No items match the current filters.', 'alt-context');
             setLiveMessage(nextEmptyMessage);
             repairAnnouncedRef.current = findings.repairPending;
             repairAnnouncedMessageRef.current = nextEmptyMessage;
@@ -629,7 +608,7 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
             repairAnnouncedRef.current = true;
             repairAnnouncedMessageRef.current = repairCopy;
           } else {
-            setLiveMessage(__(REVIEW_QUEUE_DRAIN_MESSAGE, 'alt-context'));
+            setLiveMessage(__('All caught up — no items need review', 'alt-context'));
             repairAnnouncedRef.current = false;
             repairAnnouncedMessageRef.current = null;
           }
@@ -941,8 +920,8 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
                 <>
                   <AlertTriangle aria-hidden="true" className="acx-review-queue__status-icon" size={16} />
                   {retryFailed
-                    ? __(QUERY_RETRY_COPY.RETRY_FAILED_SUGGESTIONS, 'alt-context')
-                    : __(QUERY_RETRY_COPY.LOAD_FAILED_SUGGESTIONS, 'alt-context')}
+                    ? __('Retry failed. Could not load suggestions.', 'alt-context')
+                    : __('Failed to load suggestions.', 'alt-context')}
                 </>
               )}
             </p>
@@ -950,7 +929,7 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
           <QueryRetryButton
             describedBy="acx-review-queue-error"
             retrying={retrying}
-            retryingLabel={__(QUERY_RETRY_COPY.RETRYING_SUGGESTIONS, 'alt-context')}
+            retryingLabel={__('Retrying suggestions…', 'alt-context')}
             statusId="acx-review-queue-retrying"
             statusClassName="acx-review-queue__status"
             onClick={retrySuggestionQueries}
@@ -1060,14 +1039,13 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
                     // R5-03: repair-empty is not an authoritative drain — same
                     // unmeasurable-count copy as the projection-failure path.
                     // R7-04 / RLSE-04: filtered-empty-with-work is also not 0 of 0.
-                    __(REVIEW_QUEUE_POSITION_UNAVAILABLE_MESSAGE, 'alt-context')
+                    __('Position unavailable', 'alt-context')
                   : __('0 of 0', 'alt-context')
                 : sprintf(
                     /* translators: 1: current 1-based position, 2: loaded count on this page or in the active filter */
-                    __(
-                      filtersActive ? REVIEW_QUEUE_POSITION_FILTERED : REVIEW_QUEUE_POSITION_PAGE,
-                      'alt-context',
-                    ),
+                    filtersActive
+                      ? __('%1$d of %2$d shown', 'alt-context')
+                      : __('%1$d of %2$d on this page', 'alt-context'),
                     safeIndex + 1,
                     length,
                   )}
@@ -1251,7 +1229,7 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
             data-testid="acx-person-commit-queue-fallback"
           >
             <p className="acx-person-commit__failure-message">
-              {data.personCommit.errorMessage ?? __(PERSON_COMMIT_FAILURE_COPY, 'alt-context')}
+              {data.personCommit.errorMessage ?? __('Could not add to roster. Retry to try again.', 'alt-context')}
             </p>
             <button
               type="button"
@@ -1272,10 +1250,10 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
             data-testid="acx-person-commit-queue-fallback"
           >
             <p className="acx-person-commit__success-message">
-              {__(PERSON_COMMIT_SUCCESS_COPY, 'alt-context')}
+              {__('Added to roster.', 'alt-context')}
             </p>
             <a className="acx-person-commit__roster-link" href={VIEW_IN_ROSTER_HREF}>
-              {__(VIEW_IN_ROSTER_COPY, 'alt-context')}
+              {__('View in roster →', 'alt-context')}
             </a>
           </div>
         ) : null}
@@ -1313,7 +1291,7 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
                   role="alert"
                   data-testid="acx-review-queue-top-unlabeled-error"
                 >
-                  <p>{__(REVIEW_QUEUE_TOP_UNLABELED_ERROR_MESSAGE, 'alt-context')}</p>
+                  <p>{__('Unable to load unlabeled groups.', 'alt-context')}</p>
                   <button
                     type="button"
                     className="button"
@@ -1326,7 +1304,7 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
               {filteredEmptyWithWork ? (
                 // [COG-03] filters hide work; [NAV-07] escape hatch; [INT-06] clear label; [rg-003]
                 <div className="acx-review-queue__empty">
-                  <p>{__(REVIEW_QUEUE_FILTERED_EMPTY_MESSAGE, 'alt-context')}</p>
+                  <p>{__('No items match the current filters.', 'alt-context')}</p>
                   <button
                     type="button"
                     className="button"
@@ -1342,7 +1320,7 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
                 <>
                   {!findings.repairPending ? (
                     <p className="acx-review-queue__empty">
-                      {__(REVIEW_QUEUE_DRAIN_MESSAGE, 'alt-context')}
+                      {__('All caught up — no items need review', 'alt-context')}
                     </p>
                   ) : null}
                   {findings.repairPending ? (
@@ -1388,7 +1366,7 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
                   role="alert"
                   data-testid="acx-review-queue-top-unlabeled-error"
                 >
-                  <p>{__(REVIEW_QUEUE_TOP_UNLABELED_ERROR_MESSAGE, 'alt-context')}</p>
+                  <p>{__('Unable to load unlabeled groups.', 'alt-context')}</p>
                   <button
                     type="button"
                     className="button"
@@ -1614,9 +1592,6 @@ export const CommitHoldRegion = ({
     );
   }
 
-  const holdMessage =
-    phase === COMMIT_HOLD_PHASE.COMMITTING ? HOLD_COMMITTING_STATUS_COPY : HOLD_STATUS_COPY;
-
   return (
     <div
       className="acx-review-queue__hold"
@@ -1632,7 +1607,11 @@ export const CommitHoldRegion = ({
       onPointerEnter={() => onPausedChange(true)}
       onPointerLeave={() => onPausedChange(false)}
     >
-      <span className="acx-review-queue__hold-message">{__(holdMessage, 'alt-context')}</span>
+      <span className="acx-review-queue__hold-message">
+        {phase === COMMIT_HOLD_PHASE.COMMITTING
+          ? __('Saving…', 'alt-context')
+          : __('Saving… — Undo', 'alt-context')}
+      </span>
       {phase === COMMIT_HOLD_PHASE.HOLDING ? (
         <button type="button" className="button acx-review-queue__undo" onClick={onUndo}>
           {__('Undo', 'alt-context')}
@@ -1973,7 +1952,7 @@ const CurrentCard = ({
               role="alert"
               data-testid="acx-review-queue-top-unlabeled-error"
             >
-              <p>{__(REVIEW_QUEUE_TOP_UNLABELED_ERROR_MESSAGE, 'alt-context')}</p>
+              <p>{__('Unable to load unlabeled groups.', 'alt-context')}</p>
               <button type="button" className="button" onClick={onRetryTopUnlabeled}>
                 {__('Retry', 'alt-context')}
               </button>

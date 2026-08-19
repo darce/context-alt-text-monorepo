@@ -191,6 +191,81 @@ class ClusterSnapshotMergerTest extends TestCase
         $this->assertStringContainsString('cluster-human', $bindUpdate);
     }
 
+    public function testDeleteThenSnapshotMergeDoesNotRecreatePerson(): void
+    {
+        global $wpdb;
+
+        $tenant = self::currentTenantId();
+        $clusterUuid = 'cluster-tory-delete';
+        $wpdb->insert_id = 99;
+        $wpdb->mockRow = [
+            'id' => 4,
+            'name' => 'Tory Guzman',
+            'person_uuid' => '7fa30d6d-5d89-4d09-b4fb-b5fe11111111',
+            'local_revision' => 2,
+            'tenant_id' => $tenant,
+        ];
+        $wpdb->tableRows['wp_acx_persons'] = [
+            [
+                'id' => 4,
+                'name' => 'Tory Guzman',
+                'person_uuid' => '7fa30d6d-5d89-4d09-b4fb-b5fe11111111',
+                'local_revision' => 2,
+                'tenant_id' => $tenant,
+            ],
+        ];
+        $wpdb->tableRows['wp_acx_clusters'] = [
+            [
+                'cluster_uuid' => $clusterUuid,
+                'tenant_id' => $tenant,
+                'label' => 'Tory Guzman',
+                'person_id' => 4,
+                'is_user_confirmed' => 1,
+                'local_revision' => 5,
+                'snapshot_version' => 14,
+                'curation_state' => 'confirmed',
+            ],
+        ];
+
+        $api = new \AltContext\Api\Api();
+        $request = new \WP_REST_Request('DELETE', '/acx/v1/roster/persons/4');
+        $request->set_param('id', 4);
+        $response = $api->delete_person($request);
+        $this->assertNotInstanceOf(\WP_Error::class, $response);
+
+        $wpdb->mockRow = null;
+        $wpdb->queries = [];
+        $wpdb->insert_id = 100;
+
+        $this->merger->merge_snapshot_batch_for_tenant(
+            $tenant,
+            [
+                [
+                    'cluster_uuid' => $clusterUuid,
+                    'label' => 'Tory Guzman',
+                    'identity_count' => 3,
+                ],
+            ],
+            15
+        );
+
+        $personInserts = array_values(
+            array_filter(
+                $wpdb->queries,
+                static fn(string $query): bool => str_contains($query, 'INSERT INTO wp_acx_persons')
+            )
+        );
+        $this->assertCount(0, $personInserts, 'delete must survive a stale-label snapshot; person must not be recreated');
+        $this->assertNull(
+            $wpdb->tableRows['wp_acx_clusters'][0]['label'],
+            'cleared label must persist as NULL, not an empty string or the stale name'
+        );
+        $this->assertTrue(
+            $wpdb->tableRows['wp_acx_clusters'][0]['person_id'] === null
+            || (int) $wpdb->tableRows['wp_acx_clusters'][0]['person_id'] === 0
+        );
+    }
+
     /**
      * @dataProvider clearedLabelSnapshotVersions
      */
@@ -245,7 +320,7 @@ class ClusterSnapshotMergerTest extends TestCase
             || (int) $wpdb->tableRows['wp_acx_clusters'][0]['person_id'] === 0
         );
         $upsert = $this->findQueryContaining($wpdb->queries, 'INSERT INTO `wp_acx_clusters`');
-        $this->assertStringContainsString("VALUES ('cluster-tory', 'tenant-merge', '', 'Tory Guzman'", $upsert);
+        $this->assertStringContainsString("VALUES ('cluster-tory', 'tenant-merge', NULLIF('', ''), 'Tory Guzman'", $upsert);
     }
 
     /**

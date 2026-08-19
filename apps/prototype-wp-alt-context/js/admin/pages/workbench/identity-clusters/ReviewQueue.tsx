@@ -96,10 +96,6 @@ const REVIEW_QUEUE_TOP_UNLABELED_ERROR_MESSAGE = 'Unable to load unlabeled group
 /** Empty-queue position copy when the projection outage makes the count unmeasurable. */
 const REVIEW_QUEUE_POSITION_UNAVAILABLE_MESSAGE = 'Position unavailable';
 
-/** Visual count when the full loaded page is in view (no kind/band chip). */
-export const REVIEW_QUEUE_COUNT_PAGE = '%d left to review on this page';
-/** Visual count when a kind or strength-band chip is active. */
-export const REVIEW_QUEUE_COUNT_FILTERED = '%d shown';
 /** aria-live position line — carries the loaded-page / filtered scope (A11Y-21). */
 export const REVIEW_QUEUE_POSITION_PAGE = '%1$d of %2$d on this page';
 export const REVIEW_QUEUE_POSITION_FILTERED = '%1$d of %2$d shown';
@@ -962,8 +958,13 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
             <span className="acx-review-queue__count" aria-hidden="true">
               {sprintf(
                 filtersActive
-                  ? _n(REVIEW_QUEUE_COUNT_FILTERED, REVIEW_QUEUE_COUNT_FILTERED, length, 'alt-context')
-                  : _n(REVIEW_QUEUE_COUNT_PAGE, REVIEW_QUEUE_COUNT_PAGE, length, 'alt-context'),
+                  ? _n('%d shown', '%d shown', length, 'alt-context')
+                  : _n(
+                      '%d left to review on this page',
+                      '%d left to review on this page',
+                      length,
+                      'alt-context',
+                    ),
                 length,
               )}
             </span>

@@ -1336,6 +1336,7 @@ class ClusterReadServiceTest extends TestCase
         $this->assertSame('backend_proxy', $data['data_source']);
         $this->assertArrayHasKey('repair_pending', $data);
         $this->assertFalse($data['repair_pending']);
+        $this->assertSame('unlabeled', $data['clusters'][0]['label_state']);
         TopUnlabeledSchemaValidator::validate($data);
     }
 

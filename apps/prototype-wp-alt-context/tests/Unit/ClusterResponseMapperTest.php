@@ -1550,4 +1550,15 @@ class ClusterResponseMapperTest extends TestCase
         $this->assertSame('unlabeled', $reserved[0]['label_state']);
         $this->assertTrue($reserved[0]['is_auto_label']);
     }
+
+    public function testEnsureEmittedLabelStateBackfillsUnlabeledWhenOmitted(): void
+    {
+        $ensured = $this->mapper->ensure_emitted_label_state([
+            'id' => 'cluster-proxy',
+            'label' => null,
+            'identity_count' => 2,
+        ]);
+
+        $this->assertSame('unlabeled', $ensured['label_state']);
+    }
 }

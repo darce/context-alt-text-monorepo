@@ -530,7 +530,7 @@ class ClustersReadRepositoryTest extends TestCase
     private function expectedTopUnlabeledWhereClause(string $tenant_id): string
     {
         return $this->normalizeSql(
-            "c.tenant_id = '{$tenant_id}' AND c.is_user_confirmed = 0 AND (c.label IS NULL OR c.label = '' OR c.label LIKE 'cluster-%%') AND ( SELECT COUNT(*) FROM `wp_acx_identity_members` m WHERE m.cluster_uuid = c.cluster_uuid ) >= 2 AND (c.curation_state IS NULL OR c.curation_state <> 'dismissed')"
+            "c.tenant_id = '{$tenant_id}' AND c.is_user_confirmed = 0 AND (c.label IS NULL OR c.label = '' OR (LOWER(c.label) LIKE 'cluster-%%' OR LOWER(c.label) LIKE 'cluster\\_%%')) AND ( SELECT COUNT(*) FROM `wp_acx_identity_members` m WHERE m.cluster_uuid = c.cluster_uuid ) >= 2 AND (c.curation_state IS NULL OR c.curation_state <> 'dismissed')"
         );
     }
 

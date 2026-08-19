@@ -587,6 +587,7 @@ class ClustersControllerTest extends TestCase
                 'limit' => 10,
                 'total' => 0,
                 'truncated' => false,
+                'repair_pending' => false,
                 'singleton_count' => 0,
                 'data_source' => 'unavailable',
                 'projection_status' => 'bootstrapping',

@@ -145,6 +145,11 @@ class ClusterReadService {
 				$data = $normalized->get_data();
 				if ( is_array( $data ) ) {
 					$data['data_source'] = $this->dependencies->config->data_source_backend_proxy;
+					// Guarantee the schema-required key. Omission normalizes to
+					// false — never invent true from a missing upstream field.
+					if ( ! array_key_exists( 'repair_pending', $data ) || ! is_bool( $data['repair_pending'] ) ) {
+						$data['repair_pending'] = false;
+					}
 					return new WP_REST_Response( $data, 200 );
 				}
 			}
@@ -159,6 +164,7 @@ class ClusterReadService {
 					'limit' => $limit,
 					'total' => 0,
 					'truncated' => false,
+					'repair_pending'    => false,
 					'singleton_count'   => 0,
 					'data_source'       => $this->dependencies->config->data_source_unavailable,
 					'projection_status' => $this->dependencies->config->projection_status_bootstrapping,

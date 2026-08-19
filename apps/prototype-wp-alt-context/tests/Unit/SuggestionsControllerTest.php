@@ -1412,6 +1412,29 @@ class SuggestionsControllerTest extends TestCase
         $this->assertArrayNotHasKey('candidates', (array) $response->get_error_data());
     }
 
+    public function testGetRosterCandidatesUpstream400IsEndpointErrorNotMappedPayload(): void
+    {
+        $this->queueHttpResponse([
+            'response' => ['code' => 400, 'message' => 'Bad Request'],
+            'body' => '{"detail":"top_k out of range"}',
+        ]);
+
+        $request = new WP_REST_Request('GET', '/acx/v1/recognition/clusters/cccccccc-dddd-eeee-ffff-000000000001/roster-candidates');
+        $request->set_param('cluster_id', 'cccccccc-dddd-eeee-ffff-000000000001');
+
+        $response = $this->controller->get_roster_candidates($request);
+        $this->assertInstanceOf(
+            \WP_Error::class,
+            $response,
+            'upstream 400 must not pass through as a mapped candidate payload'
+        );
+        $this->assertSame('recognition_endpoint_error', $response->get_error_code());
+        $this->assertSame(502, $response->get_error_data()['status'] ?? null);
+        $this->assertArrayNotHasKey('candidates', (array) $response->get_error_data());
+        $this->assertArrayNotHasKey('total', (array) $response->get_error_data());
+        $this->assertArrayNotHasKey('limit', (array) $response->get_error_data());
+    }
+
     public function testRosterCandidatesTopKValidatorIsNotPublicApi(): void
     {
         $method = new \ReflectionMethod(SuggestionsController::class, 'validate_roster_candidates_top_k');

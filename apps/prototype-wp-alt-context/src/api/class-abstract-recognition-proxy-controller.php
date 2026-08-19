@@ -332,9 +332,13 @@ abstract class AbstractRecognitionProxyController implements RecognitionRouteCon
 	 * Reachable-but-erroring: the backend answered with a 5xx (excluding the 503
 	 * overload signal handled by is_backend_overloaded). Honest provenance is
 	 * ENDPOINT_ERROR, not UNAVAILABLE — the endpoint is up but failing.
+	 *
+	 * Roster-candidates passes $min_status=400 so an upstream validate_top_k
+	 * 400 is classified as an endpoint error instead of a mappable payload.
+	 * Other routes keep the 5xx default and do not widen.
 	 */
-	protected function is_proxy_endpoint_error( WP_REST_Response|WP_Error $response ): bool {
-		return ! is_wp_error( $response ) && $response->get_status() >= 500;
+	protected function is_proxy_endpoint_error( WP_REST_Response|WP_Error $response, int $min_status = 500 ): bool {
+		return ! is_wp_error( $response ) && $response->get_status() >= $min_status;
 	}
 
 	protected function is_backend_overloaded( WP_REST_Response|WP_Error $response ): bool {

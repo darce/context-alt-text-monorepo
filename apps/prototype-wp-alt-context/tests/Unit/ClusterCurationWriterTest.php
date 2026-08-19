@@ -73,6 +73,48 @@ class ClusterCurationWriterTest extends TestCase
         $this->assertStringContainsString('local_revision = local_revision + 1', $query);
     }
 
+    public function testBindPersonToClusterReturnsFalseOnUpdateFailure(): void
+    {
+        global $wpdb;
+
+        $wpdb->defaultUpdateResult = false;
+        $wpdb->tableRows['wp_acx_clusters'] = [
+            [
+                'cluster_uuid' => 'cluster-bind',
+                'tenant_id' => self::currentTenantId(),
+                'person_id' => null,
+            ],
+        ];
+
+        $result = $this->writer->bind_person_to_cluster('cluster-bind', 9, self::currentTenantId(), false);
+
+        $this->assertFalse($result);
+    }
+
+    public function testBindPersonToClusterDoesNotTouchOtherTenantRow(): void
+    {
+        global $wpdb;
+
+        $wpdb->tableRows['wp_acx_clusters'] = [
+            [
+                'cluster_uuid' => 'shared-uuid',
+                'tenant_id' => 'tenant-a',
+                'person_id' => 1,
+            ],
+            [
+                'cluster_uuid' => 'shared-uuid',
+                'tenant_id' => 'tenant-b',
+                'person_id' => 2,
+            ],
+        ];
+
+        $result = $this->writer->bind_person_to_cluster('shared-uuid', 99, 'tenant-a', false);
+
+        $this->assertSame(1, $result);
+        $this->assertSame(99, $wpdb->tableRows['wp_acx_clusters'][0]['person_id']);
+        $this->assertSame(2, $wpdb->tableRows['wp_acx_clusters'][1]['person_id']);
+    }
+
     public function testResetCurationClearsLabelAndUserConfirmed(): void
     {
         global $wpdb;

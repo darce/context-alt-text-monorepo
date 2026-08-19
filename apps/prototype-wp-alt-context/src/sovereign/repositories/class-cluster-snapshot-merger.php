@@ -222,7 +222,10 @@ class ClusterSnapshotMerger {
 				continue;
 			}
 
-			$writer->bind_person_to_cluster( $cluster_uuid, (int) $resolved['person_id'], false );
+			$bound = $writer->bind_person_to_cluster( $cluster_uuid, (int) $resolved['person_id'], $tenant_id, false );
+			if ( false === $bound ) {
+				continue;
+			}
 		}
 	}
 

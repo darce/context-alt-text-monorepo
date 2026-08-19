@@ -2277,6 +2277,8 @@ if (!isset($GLOBALS['wpdb'])) {
         public $defaultUpdateResult = 1;
         /** @var array<string,mixed> */
         public array $updateResults = [];
+        /** @var array<string,mixed> Per-table override for update() (checked before defaultUpdateResult). */
+        public array $updateResultsByTable = [];
         /** @var array<string,array<int,array<string,mixed>>> */
         public array $tableRows = [];
         /** @var array<string,array<int,string>> */
@@ -2631,6 +2633,9 @@ if (!isset($GLOBALS['wpdb'])) {
             $this->queries[] = $sql;
 
             $result = $this->defaultUpdateResult;
+            if (array_key_exists($table, $this->updateResultsByTable)) {
+                $result = $this->updateResultsByTable[$table];
+            }
             if (array_key_exists($sql, $this->updateResults)) {
                 $result = $this->updateResults[$sql];
             }
@@ -2860,6 +2865,7 @@ if (!isset($GLOBALS['wpdb'])) {
             $this->insertResults = [];
             $this->defaultUpdateResult = 1;
             $this->updateResults = [];
+            $this->updateResultsByTable = [];
             $this->tableRows = [];
             $this->tableColumns = [];
             $this->tableIndexes = [];

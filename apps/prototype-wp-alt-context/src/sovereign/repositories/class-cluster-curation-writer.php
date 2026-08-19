@@ -252,22 +252,26 @@ class ClusterCurationWriter {
 	 * User-initiated ($confirm=true): person_id + curation_state=confirmed + is_user_confirmed=1.
 	 * Heal/automatic ($confirm=false): person_id only (R1-07 — do not invent user intent).
 	 * Already-bound to the same person is a no-op (0 rows).
+	 * DB failure is false — never conflated with a 0-row no-op.
+	 *
+	 * @return int|false Rows updated (0 = no-op) or false on DB failure.
 	 */
-	public function bind_person_to_cluster( string $cluster_uuid, int $person_id, bool $confirm = false ): int {
+	public function bind_person_to_cluster( string $cluster_uuid, int $person_id, string $tenant_id, bool $confirm = false ): int|false {
 		global $wpdb;
 
 		$normalized_cluster_uuid = trim( $cluster_uuid );
-		if ( '' === $normalized_cluster_uuid || $person_id <= 0 ) {
+		$normalized_tenant_id    = trim( $tenant_id );
+		if ( '' === $normalized_cluster_uuid || '' === $normalized_tenant_id || $person_id <= 0 ) {
 			return 0;
 		}
 
 		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'update' ) || ! method_exists( $wpdb, 'get_var' ) ) {
-			return 0;
+			return false;
 		}
 
 		$existing_sql = $this->prepare_query(
-			'SELECT person_id FROM %i WHERE cluster_uuid = %s',
-			array( $this->table_name, $normalized_cluster_uuid )
+			'SELECT person_id FROM %i WHERE cluster_uuid = %s AND tenant_id = %s',
+			array( $this->table_name, $normalized_cluster_uuid, $normalized_tenant_id )
 		);
 		$existing_person_id = 0;
 		if ( is_string( $existing_sql ) && '' !== $existing_sql ) {
@@ -295,12 +299,15 @@ class ClusterCurationWriter {
 		$updated = $wpdb->update(
 			$this->table_name,
 			$data,
-			array( 'cluster_uuid' => $normalized_cluster_uuid ),
+			array(
+				'cluster_uuid' => $normalized_cluster_uuid,
+				'tenant_id'    => $normalized_tenant_id,
+			),
 			$format,
-			array( '%s' )
+			array( '%s', '%s' )
 		);
 
-		return false === $updated ? 0 : (int) $updated;
+		return false === $updated ? false : (int) $updated;
 	}
 
 	public function reset_curation( string $cluster_uuid, string $tenant_id ): int {

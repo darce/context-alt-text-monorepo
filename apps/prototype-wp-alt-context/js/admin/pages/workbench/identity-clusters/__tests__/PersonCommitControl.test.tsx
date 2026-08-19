@@ -177,6 +177,43 @@ describe('PersonCommitControl single-gesture naming (UXW2-3)', () => {
     expect(screen.queryByText(MODEL_OUTPUT_DISCLOSURE)).not.toBeInTheDocument();
   });
 
+  it('clicking Confirm match on a visible roster row binds rosterEntryId (UXW2-3-R1-08b)', async () => {
+    const { onCommit } = renderControl({}, [rosterEntry(42, 'Alex Carter')]);
+    const user = userEvent.setup();
+
+    const option = await screen.findByRole('option', { name: /Confirm match with Alex Carter/ });
+    await user.click(option);
+
+    expect(onCommit).toHaveBeenCalledWith({
+      clusterId: 'cluster-1',
+      rosterEntryId: 42,
+    });
+    expect(onCommit).not.toHaveBeenCalledWith(
+      expect.objectContaining({ newEntryName: expect.anything() }),
+    );
+  });
+
+  it('prefill that matches a roster entry + Enter binds rosterEntryId, not a create (UXW2-3-R1-08b)', async () => {
+    const { onCommit } = renderControl(
+      { suggestedCreateName: 'Alex Carter' },
+      [rosterEntry(42, 'Alex Carter')],
+    );
+    const user = userEvent.setup();
+
+    const input = screen.getByRole('combobox', { name: INPUT_NAME });
+    await waitFor(() => expect(input).toHaveValue('Alex Carter'));
+    await screen.findByRole('option', { name: /Alex Carter/ });
+    await user.type(input, '{Enter}');
+
+    expect(onCommit).toHaveBeenCalledWith({
+      clusterId: 'cluster-1',
+      rosterEntryId: 42,
+    });
+    expect(onCommit).not.toHaveBeenCalledWith(
+      expect.objectContaining({ newEntryName: expect.anything() }),
+    );
+  });
+
   it('overlay header is People on a roster-only list (UXW2-3-R1-16b)', async () => {
     renderControl({}, [rosterEntry(42, 'Alex Carter')]);
     await screen.findByRole('option', { name: /Alex Carter/ });

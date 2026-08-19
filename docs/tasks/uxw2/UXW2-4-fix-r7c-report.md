@@ -65,7 +65,7 @@ From `apps/prototype-wp-alt-context`:
   - `ClusterPanelContext.test.tsx` `-t 'second dispatch reads'` → **1 passed | 4 skipped (5)**
 - PHP untouched. `composer test` skipped.
 
-## file:line (re-derived with `sed -n` after the last commit)
+## file:line (re-derived with `sed -n` after subject `test(nav): UXW2-4-r7c review URL suite kill-power`)
 
 | Claim | `sed -n` |
 | --- | --- |

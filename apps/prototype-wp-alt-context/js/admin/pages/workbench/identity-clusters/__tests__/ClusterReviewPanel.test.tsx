@@ -256,6 +256,8 @@ describe('ClusterReviewPanel', () => {
   });
 
   it('headline uses plain language: Review these faces (UXW2-3 / NAV-13)', async () => {
+    vi.mocked(fetchClusterMembers).mockResolvedValue(makeClusterMembersResponse());
+
     renderPanel();
 
     expect(

@@ -1,10 +1,11 @@
 import type { ReactNode } from 'react';
 import { act, renderHook } from '@testing-library/react';
 import { MemoryRouter, Route, Routes, useSearchParams } from 'react-router-dom';
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 
 import { useOverlayParam } from '../useOverlayParam';
 import { usePanesParam } from '../usePanesParam';
+import { resetPendingSearchWritesForTests } from '../useWorkbenchFilters';
 
 const wrapperForUrl =
   (url: string) =>
@@ -23,6 +24,10 @@ const useSearchString = (): string => {
 };
 
 describe('usePanesParam', () => {
+  beforeEach(() => {
+    resetPendingSearchWritesForTests();
+  });
+
   it('defaults to both when panes param is absent', () => {
     const { result } = renderHook(() => usePanesParam(), {
       wrapper: wrapperForUrl('/'),

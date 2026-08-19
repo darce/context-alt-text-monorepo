@@ -95,6 +95,67 @@ def test_roster_candidates_empty_when_cluster_exists_without_roster(
     assert body["quality_flag"] == "ok"
 
 
+def test_roster_candidates_empty_probe_when_all_reps_fail_quality_gate(
+    api_client, tenant_id, fake_cluster_service, fake_cluster_repository, monkeypatch
+) -> None:
+    """R3-05: no usable probe faces → 200, empty candidates, low_quality, probe_face_count 0."""
+    same_model = "opencv-sface+cv5@128d/l2/cosine"
+    monkeypatch.setattr(
+        "recognition.application.suggestions.roster_candidates.resolve_effective_clustering_settings",
+        lambda: ClusteringSettings(
+            suggestion_floor=0.40,
+            suggestion_ceiling=0.80,
+            similarity_threshold=0.77,
+            fatal_quality_floor=0.20,
+            fatal_confidence_floor=0.30,
+        ),
+    )
+    probe = seed_cluster(
+        fake_cluster_service,
+        tenant_id,
+        label=None,
+        fake_cluster_repository=fake_cluster_repository,
+    )
+    labeled = seed_cluster(
+        fake_cluster_service,
+        tenant_id,
+        label="Ada",
+        fake_cluster_repository=fake_cluster_repository,
+    )
+    fake_cluster_repository.seed(
+        probe.id,
+        tenant_id,
+        label=None,
+        representatives=[
+            _rep(
+                embedding=np.array([]),
+                embedding_model=same_model,
+                quality_score=0.01,
+                landmark_quality=0.01,
+                det_score=0.01,
+            )
+        ],
+    )
+    fake_cluster_repository.seed(
+        labeled.id,
+        tenant_id,
+        label="Ada",
+        representatives=[_rep(embedding=_normalize(np.array([1.0, 0.0, 0.0])), embedding_model=same_model)],
+    )
+
+    resp = api_client.get(
+        f"/recognition/clusters/{probe.id}/roster-candidates",
+        headers={"X-Tenant-ID": tenant_id},
+    )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    jsonschema.validate(body, _schema())
+    assert body["candidates"] == []
+    assert body["quality_flag"] == "low_quality"
+    assert body["probe_face_count"] == 0
+
+
 def test_roster_candidates_missing_cluster_is_404(api_client, tenant_id) -> None:
     resp = api_client.get(
         f"/recognition/clusters/{uuid.uuid4()}/roster-candidates",

@@ -43,6 +43,7 @@ class LifecycleManager {
 	 */
 	private const MAX_HEAL_BATCHES_PER_LOAD = 5;
 	private const OPTION_LEGACY_ROSTER_MIGRATION_CURSOR = 'acx_legacy_roster_migration_cursor';
+	private const OPTION_LEGACY_ROSTER_IMPORT_ERROR = 'acx_legacy_roster_import_error';
 	private const LEGACY_ROSTER_MIGRATION_HOOK = 'acx_continue_legacy_roster_migration';
 	private const MAX_LEGACY_MIGRATION_CHUNK = 100;
 	private const SNAPSHOT_SYNC_HOOK  = 'acx_sync_pull_snapshot';
@@ -247,19 +248,45 @@ class LifecycleManager {
 	}
 
 	/**
+	 * Same resolver as Api::create_person — never persist an empty tenant_id.
+	 */
+	protected function resolve_active_tenant_id(): string {
+		$tenant_id = TenantIdentity::resolve()['value'] ?? '';
+		if ( ! is_string( $tenant_id ) ) {
+			return '';
+		}
+
+		return trim( $tenant_id );
+	}
+
+	/**
 	 * Migrates data from legacy WP options to custom tables.
 	 *
 	 * @H-PCRUD-4: Ensure data persistence during upgrade.
+	 * @return \WP_Error|null Explicit error when the import is refused; null otherwise.
 	 */
-	private function migrate_legacy_roster_data(): void {
+	protected function migrate_legacy_roster_data(): ?\WP_Error {
 		$legacy_entries     = get_option( 'acx_roster_entries', array() );
 		$legacy_assignments = get_option( 'acx_roster_assignments', array() );
 
 		if ( empty( $legacy_entries ) && empty( $legacy_assignments ) ) {
 			$this->clear_legacy_roster_migration_schedule();
 			delete_option( self::OPTION_LEGACY_ROSTER_MIGRATION_CURSOR );
-			return;
+			return null;
 		}
+
+		$tenant_id = $this->resolve_active_tenant_id();
+		if ( '' === $tenant_id ) {
+			$error = new \WP_Error(
+				'acx_legacy_roster_tenant_unresolved',
+				__( 'Tenant identity is unavailable.', 'alt-context' )
+			);
+			update_option( self::OPTION_LEGACY_ROSTER_IMPORT_ERROR, $error->get_error_code() );
+			Telemetry::log_line( '[acx] legacy roster import aborted: tenant identity is unavailable' );
+			return $error;
+		}
+
+		delete_option( self::OPTION_LEGACY_ROSTER_IMPORT_ERROR );
 
 		global $wpdb;
 		$table_persons  = $wpdb->prefix . 'acx_persons';
@@ -274,7 +301,7 @@ class LifecycleManager {
 		$migration_complete = true;
 
 		foreach ( \array_slice( (array) $legacy_entries, $entry_offset, $remaining ) as $entry ) {
-			if ( ! $this->import_legacy_roster_entry( $entry, $table_persons, $wpdb, $id_map ) ) {
+			if ( ! $this->import_legacy_roster_entry( $entry, $table_persons, $wpdb, $id_map, $tenant_id ) ) {
 				$migration_complete = false;
 				break;
 			}
@@ -285,18 +312,18 @@ class LifecycleManager {
 
 		if ( ! $migration_complete ) {
 			$this->persist_legacy_roster_migration_cursor( $entry_offset, $assignment_offset );
-			return;
+			return null;
 		}
 
 		if ( $entry_offset < $entries_count ) {
 			$this->persist_legacy_roster_migration_cursor( $entry_offset, $assignment_offset );
-			return;
+			return null;
 		}
 
 		$legacy_entry_names_by_id = $this->index_legacy_entry_names_by_id( (array) $legacy_entries );
 
 		foreach ( \array_slice( (array) $legacy_assignments, $assignment_offset, $remaining, true ) as $cluster_id => $data ) {
-			if ( ! $this->import_legacy_roster_assignment( $cluster_id, $data, $id_map, $legacy_entry_names_by_id, $table_persons, $table_clusters, $wpdb ) ) {
+			if ( ! $this->import_legacy_roster_assignment( $cluster_id, $data, $id_map, $legacy_entry_names_by_id, $table_persons, $table_clusters, $wpdb, $tenant_id ) ) {
 				$migration_complete = false;
 				break;
 			}
@@ -307,18 +334,19 @@ class LifecycleManager {
 
 		if ( ! $migration_complete ) {
 			$this->persist_legacy_roster_migration_cursor( $entry_offset, $assignment_offset );
-			return;
+			return null;
 		}
 
 		if ( $assignment_offset < $assignments_count ) {
 			$this->persist_legacy_roster_migration_cursor( $entry_offset, $assignment_offset );
-			return;
+			return null;
 		}
 
 		$this->clear_legacy_roster_migration_schedule();
 		delete_option( 'acx_roster_entries' );
 		delete_option( 'acx_roster_assignments' );
 		delete_option( self::OPTION_LEGACY_ROSTER_MIGRATION_CURSOR );
+		return null;
 	}
 
 	public function continue_legacy_roster_migration(): void {
@@ -326,7 +354,7 @@ class LifecycleManager {
 		$this->migrate_legacy_roster_data();
 	}
 
-	private function import_legacy_roster_entry( mixed $entry, string $table_persons, object $wpdb, array &$id_map ): bool {
+	private function import_legacy_roster_entry( mixed $entry, string $table_persons, object $wpdb, array &$id_map, string $tenant_id ): bool {
 		if ( ! is_array( $entry ) || ! isset( $entry['id'], $entry['name'] ) ) {
 			return true;
 		}
@@ -341,7 +369,12 @@ class LifecycleManager {
 		$tags             = isset( $entry['tags'] ) ? (array) $entry['tags'] : array();
 		$normalized_name  = PersonResolutionService::normalize_name( $name );
 		$existing_id      = $wpdb->get_var(
-			$wpdb->prepare( 'SELECT id FROM %i WHERE normalized_name = %s', $table_persons, $normalized_name )
+			$wpdb->prepare(
+				'SELECT id FROM %i WHERE normalized_name = %s AND tenant_id = %s',
+				$table_persons,
+				$normalized_name,
+				$tenant_id
+			)
 		);
 
 		if ( $existing_id ) {
@@ -355,6 +388,7 @@ class LifecycleManager {
 			$table_persons,
 			array(
 				'person_uuid'     => $person_uuid,
+				'tenant_id'       => $tenant_id,
 				'name'            => $name,
 				'normalized_name' => $normalized_name,
 				'tags'            => wp_json_encode( $tags ),
@@ -371,7 +405,7 @@ class LifecycleManager {
 		return true;
 	}
 
-	private function import_legacy_roster_assignment( mixed $legacy_cluster_id, mixed $data, array $id_map, array $legacy_entry_names_by_id, string $table_persons, string $table_clusters, object $wpdb ): bool {
+	private function import_legacy_roster_assignment( mixed $legacy_cluster_id, mixed $data, array $id_map, array $legacy_entry_names_by_id, string $table_persons, string $table_clusters, object $wpdb, string $tenant_id ): bool {
 		if ( ! \is_array( $data ) ) {
 			return true;
 		}
@@ -391,9 +425,10 @@ class LifecycleManager {
 			$legacy_name = $legacy_entry_names_by_id[ $legacy_entry_id ];
 			$existing_id = $wpdb->get_var(
 				$wpdb->prepare(
-					'SELECT id FROM %i WHERE normalized_name = %s',
+					'SELECT id FROM %i WHERE normalized_name = %s AND tenant_id = %s',
 					$table_persons,
-					PersonResolutionService::normalize_name( $legacy_name )
+					PersonResolutionService::normalize_name( $legacy_name ),
+					$tenant_id
 				)
 			);
 			if ( $existing_id ) {
@@ -402,7 +437,12 @@ class LifecycleManager {
 		} elseif ( '' !== \trim( $new_name ) ) {
 			$normalized_name = PersonResolutionService::normalize_name( $new_name );
 			$existing_id     = $wpdb->get_var(
-				$wpdb->prepare( 'SELECT id FROM %i WHERE normalized_name = %s', $table_persons, $normalized_name )
+				$wpdb->prepare(
+					'SELECT id FROM %i WHERE normalized_name = %s AND tenant_id = %s',
+					$table_persons,
+					$normalized_name,
+					$tenant_id
+				)
 			);
 			if ( $existing_id ) {
 				$final_person_id = (int) $existing_id;
@@ -413,6 +453,7 @@ class LifecycleManager {
 					$table_persons,
 					array(
 						'person_uuid'     => $person_uuid,
+						'tenant_id'       => $tenant_id,
 						'name'            => $new_name,
 						'normalized_name' => $normalized_name,
 						'tags'            => wp_json_encode( array() ),
@@ -568,6 +609,7 @@ class LifecycleManager {
 		delete_option( self::OPTION_HEAL_COMPLETE );
 		delete_option( self::OPTION_HEAL_ATTEMPTS );
 		delete_option( self::OPTION_HEAL_BLOCKED_REASON );
+		delete_option( self::OPTION_LEGACY_ROSTER_IMPORT_ERROR );
 		wp_clear_scheduled_hook( self::SNAPSHOT_SYNC_HOOK );
 		$this->clear_legacy_roster_migration_schedule();
 		$this->clear_curation_outbox_drain_schedule();

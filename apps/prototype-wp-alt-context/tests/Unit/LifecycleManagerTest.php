@@ -172,7 +172,8 @@ class LifecycleManagerTest extends TestCase
                 'roster_entry_id' => 7,
             ],
         ]);
-        $wpdb->queryResults["SELECT id FROM `wp_acx_persons` WHERE normalized_name = 'ada lovelace'"] = null;
+        $tenant = self::currentTenantId();
+        $wpdb->queryResults["SELECT id FROM `wp_acx_persons` WHERE normalized_name = 'ada lovelace' AND tenant_id = '{$tenant}'"] = null;
 
         $this->manager->activate();
 
@@ -206,7 +207,8 @@ class LifecycleManagerTest extends TestCase
 
         $this->setOption('acx_roster_entries', $legacyEntries);
         $this->setOption('acx_roster_assignments', $legacyAssignments);
-        $wpdb->queryResults["SELECT id FROM `wp_acx_persons` WHERE normalized_name = 'grace hopper'"] = null;
+        $tenant = self::currentTenantId();
+        $wpdb->queryResults["SELECT id FROM `wp_acx_persons` WHERE normalized_name = 'grace hopper' AND tenant_id = '{$tenant}'"] = null;
         $wpdb->defaultUpdateResult = 0;
 
         $this->manager->activate();
@@ -237,7 +239,8 @@ class LifecycleManagerTest extends TestCase
             ],
         ]);
 
-        $wpdb->queryResults["SELECT id FROM `wp_acx_persons` WHERE normalized_name = 'katherine johnson'"] = 13;
+        $tenant = self::currentTenantId();
+        $wpdb->queryResults["SELECT id FROM `wp_acx_persons` WHERE normalized_name = 'katherine johnson' AND tenant_id = '{$tenant}'"] = 13;
         $wpdb->queryResults["SELECT person_id FROM `wp_acx_clusters` WHERE cluster_uuid = 'cluster-321' LIMIT 1"] = 13;
         $wpdb->defaultUpdateResult = 0;
 
@@ -272,7 +275,8 @@ class LifecycleManagerTest extends TestCase
             ],
             'cluster-invalid' => 'skip-me',
         ]);
-        $wpdb->queryResults["SELECT id FROM `wp_acx_persons` WHERE normalized_name = 'dorothy vaughan'"] = null;
+        $tenant = self::currentTenantId();
+        $wpdb->queryResults["SELECT id FROM `wp_acx_persons` WHERE normalized_name = 'dorothy vaughan' AND tenant_id = '{$tenant}'"] = null;
 
         $this->manager->activate();
 

@@ -140,6 +140,17 @@ describe('PersonCommitControl single-gesture naming (UXW2-3)', () => {
     expect(screen.getByText('Name this person').tagName).toBe('LABEL');
   });
 
+  it('takes the accessible name from the visible label, not aria-label (UXW2-3-R6-08)', () => {
+    renderControl();
+    const input = screen.getByRole('combobox');
+    expect(input).toHaveAccessibleName('Name this person');
+    expect(screen.getByLabelText('Name this person')).toBe(input);
+    const label = screen.getByText('Name this person');
+    expect(label.tagName).toBe('LABEL');
+    expect(label).toHaveAttribute('for', input.id);
+    expect(input).not.toHaveAttribute('aria-label');
+  });
+
   it('no "Just label" tertiary control is present', () => {
     renderControl();
 

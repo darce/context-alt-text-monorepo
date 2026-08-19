@@ -195,7 +195,6 @@ export const PersonCommitControl = ({
           pendingLabel={__('Saving name…', 'alt-context')}
           placeholder={__('Type a name…', 'alt-context')}
           searchPlaceholder={__('Type a name…', 'alt-context')}
-          ariaLabel={__('Name this person', 'alt-context')}
           visibleLabel={__('Name this person', 'alt-context')}
           inputId={`acx-person-commit-${clusterId}`}
           autoFocus={false}

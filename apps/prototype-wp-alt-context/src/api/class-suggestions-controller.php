@@ -38,6 +38,8 @@ class SuggestionsController extends AbstractRecognitionProxyController {
 	private const REQUEST_CLASS_POST_SCAN_READ = 'post_scan_read';
 	private const ROSTER_CANDIDATES_TOP_K_MIN = 1;
 	private const ROSTER_CANDIDATES_TOP_K_MAX = 50;
+	/** Coupled to recognition.application.suggestions.roster_candidates.MAX_ROSTER_CANDIDATES_TOP_K (roster_candidates.py:19). */
+	private const ROSTER_CANDIDATES_PYTHON_WINDOW = 50;
 	private const INVALID_TOP_K_CODE = 'invalid_top_k';
 	private const INVALID_TOP_K_MESSAGE = 'top_k must be an integer between 1 and 50.';
 
@@ -224,7 +226,7 @@ class SuggestionsController extends AbstractRecognitionProxyController {
 						'default'     => 10,
 						'minimum'     => self::ROSTER_CANDIDATES_TOP_K_MIN,
 						'maximum'     => self::ROSTER_CANDIDATES_TOP_K_MAX,
-						'description' => 'Maximum ranked candidates to return (1-50). Forwarded verbatim; not absint-clamped.',
+						'description' => 'People-grain cap after PHP collapse (1-50). Not forwarded; PHP always fetches the Python cluster-grain window ROSTER_CANDIDATES_PYTHON_WINDOW.',
 					),
 				),
 			)
@@ -388,7 +390,7 @@ class SuggestionsController extends AbstractRecognitionProxyController {
 			'tenant_id' => $this->get_tenant_id(),
 			// Cluster-grain window: fetch the Python max so a person split across
 			// N clusters cannot starve later people before PHP collapses + slices.
-			'top_k'     => self::ROSTER_CANDIDATES_TOP_K_MAX,
+			'top_k'     => self::ROSTER_CANDIDATES_PYTHON_WINDOW,
 		);
 
 		$response = $this->proxy_request(

@@ -516,6 +516,88 @@ class LifecycleManagerTest extends TestCase
         $this->assertNotEmpty($personInserts);
     }
 
+    public function testMaybeUpgradeDoesNotMarkHealCompleteWhenStalledAndRetries(): void
+    {
+        $this->setOption('acx_version', ACX_VERSION);
+        $this->setOption('acx_schema_fingerprint', $this->manager->compute_projection_schema_fingerprint());
+
+        $manager = new class() extends LifecycleManager {
+            public int $healRuns = 0;
+
+            protected function run_label_heal(string $tenant_id): array
+            {
+                ++$this->healRuns;
+                return array(
+                    'bound' => 0,
+                    'created' => 0,
+                    'persons' => 0,
+                    'skipped' => 0,
+                    'examined' => 3,
+                    'collisions' => 0,
+                    'stalls' => 3,
+                    'stalled' => true,
+                    'empty' => false,
+                );
+            }
+        };
+
+        $manager->maybe_upgrade();
+        $this->assertSame(1, $manager->healRuns);
+        $this->assertNotSame('1', (string) get_option('acx_label_heal_complete', ''));
+
+        $manager->maybe_upgrade();
+        $this->assertSame(2, $manager->healRuns, 'stalled heal must re-run on the next load');
+        $this->assertNotSame('1', (string) get_option('acx_label_heal_complete', ''));
+    }
+
+    public function testMaybeUpgradeMarksHealCompleteWhenHealFinishes(): void
+    {
+        $this->setOption('acx_version', ACX_VERSION);
+        $this->setOption('acx_schema_fingerprint', $this->manager->compute_projection_schema_fingerprint());
+
+        $manager = new class() extends LifecycleManager {
+            protected function run_label_heal(string $tenant_id): array
+            {
+                return array(
+                    'bound' => 1,
+                    'created' => 1,
+                    'persons' => 1,
+                    'skipped' => 0,
+                    'examined' => 1,
+                    'collisions' => 0,
+                    'stalls' => 0,
+                    'stalled' => false,
+                    'empty' => false,
+                );
+            }
+        };
+
+        $manager->maybe_upgrade();
+        $this->assertSame('1', (string) get_option('acx_label_heal_complete'));
+
+        $manager = new class() extends LifecycleManager {
+            public int $healRuns = 0;
+
+            protected function run_label_heal(string $tenant_id): array
+            {
+                ++$this->healRuns;
+                return array(
+                    'bound' => 0,
+                    'created' => 0,
+                    'persons' => 0,
+                    'skipped' => 0,
+                    'examined' => 0,
+                    'collisions' => 0,
+                    'stalls' => 0,
+                    'stalled' => false,
+                    'empty' => true,
+                );
+            }
+        };
+        $manager->maybe_upgrade();
+        $this->assertSame(0, $manager->healRuns, 'completed heal must not re-run');
+    }
+
     public function testMaybeUpgradeCreatesTablesAndSetsVersionWhenStoredMissing(): void
     {
         $this->assertFalse(get_option('acx_version'));

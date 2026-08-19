@@ -21,6 +21,7 @@
 | ----------------------- | ------- | ------------------------------- | ------------------------------- |
 | `workbench-shell`       | screen  | `#/workbench`                   | Workbench                       |
 | `workbench-scan`        | screen  | `#/workbench?tab=scan`          | Scan media queue                |
+| `workbench-review-panel` | screen | `#/workbench?tab=scan&panel=review&cluster=` | Review these faces |
 | `workbench-conflicts`   | overlay | `#/workbench?panel=conflicts`   | Conflict Inbox                  |
 | `workbench-dead-letter` | overlay | `#/workbench?panel=dead-letter` | Failed Sync Queue (Dead Letter) |
 | `exit-roster`           | exit    | `#/roster`                      | Roster (person workspace)       |
@@ -68,6 +69,29 @@
 |   [secondary] Go to Roster -> exit-roster                  |
 +------------------------------------------------------------+
 | states: default | loading | empty | error | first_time | … |
++------------------------------------------------------------+
+```
+
+### Review these faces (`workbench-review-panel`)
+
+```
++------------------------------------------------------------+
+| Review these faces  [screen]                               |
+| #/workbench?tab=scan&panel=review&cluster=                 |
+| Review the faces in one unnamed group; Back returns to     |
+| Review Suggestions                                         |
++------------------------------------------------------------+
+| ZONES                                                      |
+|   - Header + Back (nav) states=[default]                   |
+|   - Faces grid (ai_review) states=[default,loading,error,  |
+|     empty]                                                 |
+|   - Name control (form) states=[default]                   |
++------------------------------------------------------------+
+| ACTIONS                                                    |
+|   [PRIMARY] Back to Review Suggestions -> workbench-scan   |
++------------------------------------------------------------+
+| states: default | loading | error | empty                  |
+| code_ref: ClusterReviewPanel.tsx                           |
 +------------------------------------------------------------+
 ```
 

@@ -95,10 +95,10 @@ def test_roster_candidates_empty_when_cluster_exists_without_roster(
     assert body["quality_flag"] == "ok"
 
 
-def test_roster_candidates_empty_probe_when_all_reps_fail_quality_gate(
+def test_roster_candidates_empty_probe_when_reps_have_zero_dim_embeddings(
     api_client, tenant_id, fake_cluster_service, fake_cluster_repository, monkeypatch
 ) -> None:
-    """R3-05: no usable probe faces → 200, empty candidates, low_quality, probe_face_count 0."""
+    """Zero-dim reps dropped at roster_candidates.py:186-190; flag from empty-samples default at :94."""
     same_model = "opencv-sface+cv5@128d/l2/cosine"
     monkeypatch.setattr(
         "recognition.application.suggestions.roster_candidates.resolve_effective_clustering_settings",

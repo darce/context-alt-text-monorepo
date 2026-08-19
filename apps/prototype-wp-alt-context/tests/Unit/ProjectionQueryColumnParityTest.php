@@ -293,7 +293,7 @@ class ProjectionQueryColumnParityTest extends TestCase
         $derivedUnits = [];
         foreach ($extraction['units'] as $unit) {
             if (
-                str_contains($unit['sql'], 'SELECT label, person_id FROM')
+                str_contains($unit['sql'], 'SELECT DISTINCT label FROM')
                 && str_contains($unit['sql'], 'reserved_label_sql_predicate')
             ) {
                 $this->assertSame(

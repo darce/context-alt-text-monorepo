@@ -152,7 +152,7 @@ class ClustersReadRepository {
 
 		if ( '' !== $normalized_search && method_exists( $wpdb, 'esc_like' ) ) {
 			$sql = $this->prepare_projection_read_query(
-				"SELECT label, person_id FROM %i WHERE tenant_id = %s AND label IS NOT NULL AND label != '' AND person_id IS NOT NULL AND NOT {$this->reserved_label_sql_predicate( 'label' )} AND label LIKE %s ORDER BY label ASC LIMIT %d",
+				"SELECT COUNT(*) OVER() AS total_count, filtered.label FROM (SELECT DISTINCT label FROM %i WHERE tenant_id = %s AND label IS NOT NULL AND label != '' AND person_id IS NOT NULL AND NOT {$this->reserved_label_sql_predicate( 'label' )} AND label LIKE %s ORDER BY label ASC) filtered LIMIT %d",
 				array(
 					$this->table_name,
 					$normalized_tenant_id,
@@ -162,7 +162,7 @@ class ClustersReadRepository {
 			);
 		} else {
 			$sql = $this->prepare_projection_read_query(
-				"SELECT label, person_id FROM %i WHERE tenant_id = %s AND label IS NOT NULL AND label != '' AND person_id IS NOT NULL AND NOT {$this->reserved_label_sql_predicate( 'label' )} ORDER BY label ASC LIMIT %d",
+				"SELECT COUNT(*) OVER() AS total_count, filtered.label FROM (SELECT DISTINCT label FROM %i WHERE tenant_id = %s AND label IS NOT NULL AND label != '' AND person_id IS NOT NULL AND NOT {$this->reserved_label_sql_predicate( 'label' )} ORDER BY label ASC) filtered LIMIT %d",
 				array(
 					$this->table_name,
 					$normalized_tenant_id,
@@ -180,32 +180,15 @@ class ClustersReadRepository {
 		}
 
 		$labels = array();
-		$seen   = array();
 		foreach ( $rows as $row ) {
 			$label = trim( (string) ( $row['label'] ?? '' ) );
 			if ( '' === $label || $this->is_reserved_label_shape( $label ) ) {
 				continue;
 			}
-			$person_id = $row['person_id'] ?? null;
-			if ( ! is_numeric( $person_id ) || (int) $person_id <= 0 ) {
-				continue;
-			}
-			if ( isset( $seen[ $label ] ) ) {
-				continue;
-			}
-			$seen[ $label ] = true;
-			$labels[]       = array(
+			$labels[] = array(
 				'label'       => $label,
-				'total_count' => 0,
+				'total_count' => max( 0, (int) ( $row['total_count'] ?? 0 ) ),
 			);
-			if ( count( $labels ) >= $normalized_limit ) {
-				break;
-			}
-		}
-
-		$total = count( $labels );
-		foreach ( $labels as $index => $entry ) {
-			$labels[ $index ]['total_count'] = $total;
 		}
 
 		return $labels;

@@ -237,12 +237,22 @@ class PersonResolutionService {
 	 * @return array{person_id:int,person_uuid:string,name:string,outcome:string}|WP_Error
 	 */
 	public function create_distinct( string $display_name, callable $enqueue_person_created ): array|WP_Error {
+		global $wpdb;
+
 		$base = \sanitize_text_field( $display_name );
 		if ( '' === $base ) {
 			return new WP_Error(
 				'acx_invalid_name',
 				__( 'Person name cannot be empty.', 'alt-context' ),
 				array( 'status' => 400 )
+			);
+		}
+
+		if ( ! isset( $wpdb ) || ! \is_object( $wpdb ) || ! \method_exists( $wpdb, 'prepare' ) || ! \method_exists( $wpdb, 'get_row' ) || ! \method_exists( $wpdb, 'insert' ) ) {
+			return new WP_Error(
+				'acx_db_error',
+				__( 'Database access is unavailable.', 'alt-context' ),
+				array( 'status' => 500 )
 			);
 		}
 

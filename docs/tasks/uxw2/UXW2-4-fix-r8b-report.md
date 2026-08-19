@@ -21,6 +21,36 @@ Private `resolve_label_state()` renamed to `resolve_label_flags()` (booleans). S
 
 Each mutant restored after RED. Production `git diff` after restore was the intended change only. Same filters were **1 / 1** on the unmutated tree before the mutant (non-zero).
 
+### Mutant RED (verbatim)
+
+**M1** `testProjectedLabelStateSqlClassifiesBoundPersonVersusUnboundHumanOnRealRows` — swap `unbound`/`unlabeled` arms in `projected_cluster_label_state_sql`:
+
+```
+Failed asserting that two strings are identical.
+--- Expected
++++ Actual
+@@ @@
+-'unbound'
++'unlabeled'
+```
+
+**M2** `testMapClusterListAndTopUnlabeledEmitLabelState` — drop `label_state` from both mapper emit arrays:
+
+```
+Failed asserting that an array has the key 'label_state'.
+```
+
+**M3** `testClusterReadsAgreeWithIdentityMembersOnLabelStateShape` — revert clusters-read SELECT change:
+
+```
+Failed asserting that 'SELECT COUNT(*) OVER() AS total_count, c.*, p.person_uuid, CASE WHEN p.name IS NOT NULL AND p.name <> '' THEN p.name WHEN c.label IS NULL OR c.label = '' OR (LOWER(c.label) LIKE 'cluster-%%' OR LOWER(c.label) LIKE 'cluster\_%%') THEN c.label ELSE NULL END as label
+ FROM `wp_acx_clusters` c
+ LEFT JOIN `wp_acx_persons` p ON c.person_id = p.id
+ WHERE c.tenant_id = '33380427-1819-5ad2-922b-cdd246fac3a0'
+ ORDER BY c.updated_at DESC, c.cluster_uuid ASC
+ LIMIT 10 OFFSET 0' [ASCII](length: 489) contains "AS label_state" [ASCII](length: 14).
+```
+
 ## Contract delta
 
 `clustering-api.md`:

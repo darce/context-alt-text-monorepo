@@ -78,7 +78,7 @@ export const ClusterEditForm = ({
   const prefillRef = React.useRef(labelInput);
   const selectedSuggestionRef = React.useRef<ComboboxOption | null>(null);
   const inputId = `acx-identity-cluster-name-${React.useId()}`;
-  const saveButtonLabel = saveLabel ?? (isPending ? __('Saving…', 'alt-context') : __('Save', 'alt-context'));
+  const saveButtonLabel = saveLabel ?? (isPending ? __('Saving name…', 'alt-context') : __('Save name', 'alt-context'));
   const showAtRestTruncationHint = atRestTruncated && isAtRestMode;
   const atRestHintId = `acx-identity-cluster-at-rest-hint-${React.useId()}`;
 

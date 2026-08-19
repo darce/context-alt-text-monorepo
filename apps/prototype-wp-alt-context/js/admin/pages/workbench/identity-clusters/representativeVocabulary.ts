@@ -10,11 +10,10 @@ export const REPRESENTATIVE_VOCABULARY = {
   imageUnavailable: REPRESENTATIVE_IMAGE_UNAVAILABLE,
 } as const;
 
-export function repairGatedCount(zeroEvidenceClusterCount: number, unlabeledClusters: number): number {
-  return zeroEvidenceClusterCount > 0 ? zeroEvidenceClusterCount : unlabeledClusters;
-}
+export const repairGatedCount = (zeroEvidenceClusterCount: number, unlabeledClusters: number): number =>
+  zeroEvidenceClusterCount > 0 ? zeroEvidenceClusterCount : unlabeledClusters;
 
-export function gatedClusterCopy(count: number, truncated = false): string {
+export const gatedClusterCopy = (count: number, truncated = false): string => {
   if (count <= 0) {
     return __('Some groups are missing face data', 'alt-context');
   }
@@ -33,4 +32,4 @@ export function gatedClusterCopy(count: number, truncated = false): string {
     _n('%d group missing face data', '%d groups missing face data', count, 'alt-context'),
     count,
   );
-}
+};

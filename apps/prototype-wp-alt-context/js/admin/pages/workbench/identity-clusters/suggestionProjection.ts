@@ -427,11 +427,7 @@ export const pruneReviewDropTombstones = (
   }
 };
 
-export const assignmentRowTouchesDroppedGroup = (
-  item: ProjectedSuggestion,
-  clusterId: string,
-  _mode: ReviewDropMode,
-): boolean => {
+export const assignmentRowTouchesDroppedGroup = (item: ProjectedSuggestion, clusterId: string): boolean => {
   // Wire never supplies a distinct source group (rg-015). The FE key is the
   // suggested target the mapper already copies (`clusterId` ← `suggested_cluster_id`).
   return item.clusterId === clusterId;
@@ -522,7 +518,7 @@ export const dropClusterFromReviewCaches = (
       if (!current) {
         return current;
       }
-      const filtered = current.items.filter((item) => !assignmentRowTouchesDroppedGroup(item, clusterId, mode));
+      const filtered = current.items.filter((item) => !assignmentRowTouchesDroppedGroup(item, clusterId));
       return filtered.length === current.items.length ? current : { ...current, items: filtered };
     },
   );

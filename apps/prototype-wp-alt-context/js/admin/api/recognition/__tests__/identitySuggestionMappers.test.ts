@@ -3,7 +3,6 @@ import { describe, expect, it } from 'vitest';
 import {
   assignmentRowTouchesDroppedGroup,
   fromPendingRow,
-  REVIEW_DROP_MODE,
 } from '../../../pages/workbench/identity-clusters/suggestionProjection';
 import {
   mapPendingMergeSuggestion,
@@ -83,12 +82,8 @@ describe('mapPendingSuggestions', () => {
     const projected = fromPendingRow(mapped.suggestions[0]);
 
     expect(projected.clusterId).toBe('cluster-target');
-    expect(assignmentRowTouchesDroppedGroup(projected, 'cluster-target', REVIEW_DROP_MODE.LABEL)).toBe(
-      true,
-    );
-    expect(assignmentRowTouchesDroppedGroup(projected, 'cluster-src', REVIEW_DROP_MODE.LABEL)).toBe(
-      false,
-    );
+    expect(assignmentRowTouchesDroppedGroup(projected, 'cluster-target')).toBe(true);
+    expect(assignmentRowTouchesDroppedGroup(projected, 'cluster-src')).toBe(false);
   });
 });
 

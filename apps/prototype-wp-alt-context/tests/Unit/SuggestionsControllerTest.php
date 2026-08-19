@@ -1449,7 +1449,7 @@ class SuggestionsControllerTest extends TestCase
         $this->assertSame(1, $method->getNumberOfParameters());
     }
 
-    public function testPythonWindowConstantMatchesPythonCapSource(): void
+    public function testRosterCandidatesPythonWindowConstantMatchesPythonCapSource(): void
     {
         $py = dirname(__DIR__, 4) . '/apps/prototype-description-service/recognition/application/suggestions/roster_candidates.py';
         $this->assertFileExists($py); // never markTestSkipped — a skip here is a vacuous guard

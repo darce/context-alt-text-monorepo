@@ -118,6 +118,7 @@ export const ClusterLabelingPanel = ({
   const memberGridRef = useRef<HTMLDivElement | null>(null);
   const wasExpandingRef = useRef(false);
   const submittingRef = useRef(false);
+  const rosterRetryRef = useRef<HTMLButtonElement | null>(null);
   const queryClient = useQueryClient();
 
   // Reset panel-local state when the labeled cluster changes (FIX-4). key= at call site remounts;
@@ -187,6 +188,12 @@ export const ClusterLabelingPanel = ({
     isError: rosterError,
     refetch: refetchRoster,
   } = useRosterEntries();
+
+  useEffect(() => {
+    if (rosterError) {
+      rosterRetryRef.current?.focus();
+    }
+  }, [rosterError]);
 
   // Labeled clusters for the union (shared builder; debounced free-text still uses persons + full list).
   const { data: labeledClusters = [] } = useQuery({
@@ -589,13 +596,13 @@ export const ClusterLabelingPanel = ({
         ) : null}
 
         <div className="acx-cluster-labeling-panel__form">
-          <label htmlFor="cluster-label-input">{__('Name', 'alt-context')}</label>
           {rosterError ? (
             <div className="acx-cluster-labeling-panel__failure" role="alert">
               <p className="acx-cluster-labeling-panel__failure-message">
                 {__('Unable to load people. Retry before naming someone new.', 'alt-context')}
               </p>
               <button
+                ref={rosterRetryRef}
                 type="button"
                 className="button acx-cluster-labeling-panel__retry"
                 onClick={() => {
@@ -606,6 +613,8 @@ export const ClusterLabelingPanel = ({
               </button>
             </div>
           ) : (
+          <>
+          <label htmlFor="cluster-label-input">{__('Name', 'alt-context')}</label>
           <NameFaceControl
             options={comboboxOptions}
             value={labelInput}
@@ -632,6 +641,7 @@ export const ClusterLabelingPanel = ({
             className="acx-cluster-labeling-panel__input-group"
             classPrefix="acx-cluster-labeling-panel"
           />
+          </>
           )}
 
           {duplicateGuard && (

@@ -1,6 +1,6 @@
-"""VLM6-RV16-L-02 / L-03 / RV15-L-05: gate wire format + stdout path wraps.
+"""VLM6-RV16-L-02 / L-03 / RV15-L-05 / W17-A-01: gate wire format + encoder pins.
 
-Lane A owns this module. Do not add tests to test_eval_harness_cli*.py.
+Do not add tests to test_eval_harness_cli*.py.
 """
 
 from __future__ import annotations
@@ -396,3 +396,58 @@ def test_compare_meet_or_beat_pass_line_prints_latin1_via_printable_path(tmp_pat
     cand_text, base_text = rest.split(b" baseline=", 1)
     _assert_latin1_path_line(cand_text)
     _assert_latin1_path_line(base_text)
+
+
+# ---------------------------------------------------------------------------
+# VLM6-W17-A-01 — pin the two unpinned encoder behaviours (TEST-15 / OBS-08)
+# ---------------------------------------------------------------------------
+
+
+def test_reconfigure_stdio_error_mode_is_backslashreplace_under_c_parent() -> None:
+    """MUT cli.py `_reconfigure_stdio` errors='backslashreplace' -> 'surrogateescape'.
+
+    Wrapped path prints stay green under that mutation (already ASCII). This
+    oracle reads the handler back and emits an unwrapped latin-1 surrogate so
+    the stream error mode is actually exercised.
+    """
+    script = b"""
+import json
+import sys
+from scripts.eval_harness.cli import _reconfigure_stdio
+_reconfigure_stdio()
+sys.stdout.buffer.write(
+    b"MODE "
+    + json.dumps({"out": sys.stdout.errors, "err": sys.stderr.errors}).encode("ascii")
+    + b"\\n"
+)
+sys.stdout.buffer.flush()
+print("RAW caf\\udce9", flush=True)
+"""
+    proc = _run_python_bytes(script)
+    assert proc.returncode == 0, proc.stderr
+    lines = [ln for ln in proc.stdout.splitlines() if ln]
+    mode_line = next(ln for ln in lines if ln.startswith(b"MODE "))
+    payload = json.loads(mode_line[5:].decode("ascii"))
+    assert payload["out"] == "backslashreplace", payload
+    assert payload["err"] == "backslashreplace", payload
+    raw_line = next(ln for ln in lines if ln.startswith(b"RAW "))
+    assert _SURROGATE_LEAK in raw_line, raw_line
+    assert b"\xe9" not in raw_line, raw_line
+    assert _CAFE_LATIN1 not in raw_line, raw_line
+
+
+def test_printable_message_fallback_backslashreplace_bytes() -> None:
+    """MUT `_printable_message` errors='backslashreplace' -> 'surrogateescape'.
+
+    Byte-level kill test. café never enters the fallback (fsencode + utf-8
+    succeeds). A lone latin-1 0xe9 must emit `\\xHH`, no raw 0xe9, no `\\udc`.
+    Control: the same mutation on `_printable_path` must leave this green.
+    """
+    text = os.fsdecode(_CAFE_LATIN1)
+    out = _printable_message(text)
+    wire = out.encode("utf-8", errors="surrogateescape")
+    assert _BACKSLASHREPLACE_XE9 in wire, wire
+    assert b"\xe9" not in wire, wire
+    assert _CAFE_LATIN1 not in wire, wire
+    assert _SURROGATE_LEAK not in wire, wire
+    assert not out.startswith(_UNDECODABLE_PATH_PREFIX), out

@@ -37,11 +37,15 @@ class PersonDedupeSchemaParityTest extends TestCase
 		$personsSql = $this->personsCreateTableFromDbDelta();
 		$structure  = $this->parseCreateTable($personsSql);
 
-		$this->assertArrayHasKey('idx_normalized_name', $structure['unique_keys']);
+		$this->assertArrayHasKey('idx_tenant_normalized_name', $structure['unique_keys']);
+		$this->assertArrayNotHasKey('idx_normalized_name', $structure['unique_keys']);
+		// Stronger than the prior single-column pin: that assertion encoded the
+		// defect (a global unique on normalized_name, which locks a name to the
+		// first tenant). Uniqueness is tenant-scoped, matching uq_projection_conflict.
 		$this->assertSame(
-			['normalized_name'],
-			$structure['unique_keys']['idx_normalized_name'],
-			'UNIQUE KEY idx_normalized_name must cover normalized_name'
+			['tenant_id', 'normalized_name'],
+			$structure['unique_keys']['idx_tenant_normalized_name'],
+			'UNIQUE KEY idx_tenant_normalized_name must be composite (tenant_id, normalized_name)'
 		);
 	}
 

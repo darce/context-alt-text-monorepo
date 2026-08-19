@@ -11,7 +11,7 @@ import type { ClusterGroup } from './types';
  *
  * - If no cluster ID, returns the raw label as-is
  * - If a user-assigned label exists (not auto-shape), returns that
- * - Otherwise generates a display name from the cluster ID
+ * - Otherwise returns null; the caller owns unlabeled copy
  *
  * Display honesty: even when `isAutoLabel` is false/omitted, auto-shape labels
  * (`cluster-*`) must not render as confirmed person names (E21-15-BR-27).
@@ -19,7 +19,7 @@ import type { ClusterGroup } from './types';
  * @param clusterId - The cluster UUID or null
  * @param rawLabel - The label from the API
  * @param isAutoLabel - Whether the label was auto-generated
- * @returns Formatted label for display
+ * @returns Human display label, or null when the caller should supply unlabeled copy
  */
 export const formatClusterLabel = (
   clusterId: string | null,
@@ -34,8 +34,7 @@ export const formatClusterLabel = (
     return rawLabel;
   }
 
-  const normalizedId = clusterId.replace(/-/g, '');
-  return `cluster-${normalizedId}`;
+  return null;
 };
 
 /**

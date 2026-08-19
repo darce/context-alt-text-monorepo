@@ -157,6 +157,20 @@ class ClusterRepository(Protocol):
         """
         ...
 
+    async def get_representative_embeddings_with_quality(
+        self, cluster_id: str
+    ) -> tuple[list[np.ndarray], str | None, list[tuple[float | None, float | None, float | None]]]:
+        """Same ranking rows as ``get_representative_embeddings_with_model`` plus quality.
+
+        Returns:
+            ``(embeddings, chosen_embedding_model, qualities)`` where each quality
+            triple is ``(representative_quality, identity_quality, detection_confidence)``
+            aligned 1:1 with ``embeddings``. Missing metrics are ``None`` (callers
+            fail closed — None stays None). Legacy ``_to_domain`` debug_metrics
+            aliased identity_quality as ``landmark_quality`` (or 1.0).
+        """
+        ...
+
     async def get_member_fallback_embeddings(self, cluster_id: str, limit: int = 4) -> Sequence[np.ndarray]:
         """Fetch top member embeddings for fallback similarity checks."""
         ...
@@ -169,6 +183,18 @@ class ClusterRepository(Protocol):
         Returns:
             ``(embeddings, chosen_embedding_model)`` — same semantics as
             ``get_representative_embeddings_with_model``.
+        """
+        ...
+
+    async def get_member_fallback_embeddings_with_quality(
+        self, cluster_id: str, limit: int = 4
+    ) -> tuple[list[np.ndarray], str | None, list[tuple[float | None, float | None, float | None]]]:
+        """Same member-fallback rows as the with_model loader plus quality triples.
+
+        Triple slots are ``(representative_quality, identity_quality,
+        detection_confidence)``. This path has no representative row, so
+        representative_quality is NULL. Fail closed: None stays None (unlike
+        legacy debug_metrics ``landmark_quality`` alias which used ``or 1.0``).
         """
         ...
 

@@ -68,10 +68,10 @@ describe('ClusterDrawerPanel keyboard member-fix (E21-9 Slice 3)', () => {
       <ClusterDrawerPanel {...baseProps} reassignTargets={reassignTargets} onReassignFace={onReassignFace} />,
     );
 
-    const moveButton = screen.getByRole('button', { name: /Move to… identity from media 10/i });
+    const moveButton = screen.getByRole('button', { name: /Move to… face from media 10/i });
     await user.click(moveButton);
 
-    const picker = screen.getByRole('menu', { name: /Choose a target cluster/i });
+    const picker = screen.getByRole('menu', { name: /Choose a target face group/i });
     expect(picker).toBeInTheDocument();
     expect(within(picker).queryByRole('menuitem', { name: 'Source Cluster' })).not.toBeInTheDocument();
     expect(within(picker).queryByRole('menuitem', { name: /cluster-1/i })).not.toBeInTheDocument();
@@ -92,13 +92,13 @@ describe('ClusterDrawerPanel keyboard member-fix (E21-9 Slice 3)', () => {
       <ClusterDrawerPanel {...baseProps} reassignTargets={reassignTargets} onReassignFace={onReassignFace} />,
     );
 
-    await user.click(screen.getByRole('button', { name: /Move to… identity from media 10/i }));
+    await user.click(screen.getByRole('button', { name: /Move to… face from media 10/i }));
     await user.click(screen.getByRole('menuitem', { name: 'Target Beta' }));
 
     const status = screen.getByRole('status', { name: '' });
     // role=status region is present and carries the outcome copy (A11Y-21).
     expect(status).toHaveAttribute('role', 'status');
-    expect(status).toHaveTextContent(/Moving identity to Target Beta|Moved identity to Target Beta/i);
+    expect(status).toHaveTextContent(/Moving face to Target Beta|Moved face to Target Beta/i);
     expect(screen.getByTestId('cluster-drawer-reassign-status')).toBe(status);
   });
 
@@ -113,7 +113,7 @@ describe('ClusterDrawerPanel keyboard member-fix (E21-9 Slice 3)', () => {
       />,
     );
 
-    const moveButton = screen.getByRole('button', { name: /Move to… identity from media 10/i });
+    const moveButton = screen.getByRole('button', { name: /Move to… face from media 10/i });
     expect(moveButton).toBeEnabled();
     fireEvent.click(moveButton);
     expect(screen.queryByRole('menuitem', { name: 'Source Cluster' })).not.toBeInTheDocument();
@@ -123,7 +123,7 @@ describe('ClusterDrawerPanel keyboard member-fix (E21-9 Slice 3)', () => {
       <ClusterDrawerPanel {...baseProps} reassignTargets={[]} onReassignFace={onReassignFace} />,
     );
 
-    const emptyTargetsMove = screen.getByRole('button', { name: /Move to… identity from media 10/i });
+    const emptyTargetsMove = screen.getByRole('button', { name: /Move to… face from media 10/i });
     // BR-09: aria-disabled (not native disabled) so the control stays focusable.
     expect(emptyTargetsMove).not.toBeDisabled();
     expect(emptyTargetsMove).toHaveAttribute('aria-disabled', 'true');
@@ -132,7 +132,7 @@ describe('ClusterDrawerPanel keyboard member-fix (E21-9 Slice 3)', () => {
       'acx-cluster-drawer-no-move-targets-reason',
     );
     expect(emptyTargetsMove).not.toHaveAttribute('title');
-    expect(screen.getByText('No other clusters available to move this identity into.')).toBeInTheDocument();
+    expect(screen.getByText('No other face groups available to move this face into.')).toBeInTheDocument();
     emptyTargetsMove.focus();
     expect(emptyTargetsMove).toHaveFocus();
     // Never hidden when empty (rg-003 / A11Y-14): control remains in the DOM.
@@ -149,7 +149,7 @@ describe('ClusterDrawerPanel keyboard member-fix (E21-9 Slice 3)', () => {
       />,
     );
 
-    const moveButton = screen.getByRole('button', { name: /Move to… identity from media 10/i });
+    const moveButton = screen.getByRole('button', { name: /Move to… face from media 10/i });
     // Discriminating: control exists in the default (no-hover) tree and is not hover-gated.
     expect(moveButton).toBeVisible();
     expect(moveButton).toHaveClass('acx-cluster-drawer__move-btn');
@@ -172,7 +172,7 @@ describe('ClusterDrawerPanel keyboard member-fix (E21-9 Slice 3)', () => {
       <ClusterDrawerPanel {...baseProps} reassignTargets={reassignTargets} onReassignFace={onReassignFace} />,
     );
 
-    const moveButton = screen.getByRole('button', { name: /Move to… identity from media 10/i });
+    const moveButton = screen.getByRole('button', { name: /Move to… face from media 10/i });
     moveButton.focus();
     expect(moveButton).toHaveFocus();
 
@@ -202,7 +202,7 @@ describe('ClusterDrawerPanel keyboard member-fix (E21-9 Slice 3)', () => {
       />,
     );
 
-    const moveButton = screen.getByRole('button', { name: /Move to… identity from media 10/i });
+    const moveButton = screen.getByRole('button', { name: /Move to… face from media 10/i });
     await user.click(moveButton);
     expect(screen.getByRole('menu')).toBeInTheDocument();
 
@@ -222,7 +222,7 @@ describe('ClusterDrawerPanel keyboard member-fix (E21-9 Slice 3)', () => {
       <ClusterDrawerPanel {...baseProps} reassignTargets={reassignTargets} onReassignFace={onReassignFace} />,
     );
 
-    const moveButton = screen.getByRole('button', { name: /Move to… identity from media 10/i });
+    const moveButton = screen.getByRole('button', { name: /Move to… face from media 10/i });
     await user.click(moveButton);
     await user.click(screen.getByRole('menuitem', { name: 'Cancel' }));
 
@@ -233,7 +233,7 @@ describe('ClusterDrawerPanel keyboard member-fix (E21-9 Slice 3)', () => {
 });
 
 const RESERVED_LABEL_MESSAGE =
-  'This label format is reserved for automatic cluster IDs. Choose a descriptive name.';
+  'This name format is reserved for automatic face group IDs. Choose a descriptive name.';
 
 const createAndConfirmAssignment = async (name: string, onCommitCluster = vi.fn()) => {
   const user = userEvent.setup();
@@ -387,7 +387,7 @@ describe('ClusterDrawerPanel reserved-status lifecycle (BR-64 / BR-65)', () => {
 
     const { rerender } = render(<ClusterDrawerPanel {...panelProps} isReassigning={false} />);
 
-    await user.click(screen.getByRole('button', { name: /Move to… identity from media 10/i }));
+    await user.click(screen.getByRole('button', { name: /Move to… face from media 10/i }));
     await user.click(screen.getByRole('menuitem', { name: 'Target Alpha' }));
 
     // Toggle isReassigning like the parent mutation hook: pending → settled → Moved.
@@ -395,7 +395,7 @@ describe('ClusterDrawerPanel reserved-status lifecycle (BR-64 / BR-65)', () => {
     rerender(<ClusterDrawerPanel {...panelProps} isReassigning={false} />);
 
     const status = screen.getByTestId('cluster-drawer-reassign-status');
-    expect(status).toHaveTextContent('Moved identity to Target Alpha.');
+    expect(status).toHaveTextContent('Moved face to Target Alpha.');
 
     // handleCreate → clearReservedStatus; must not wipe the reassign success copy.
     await user.click(screen.getByRole('combobox', { name: /Commit to roster entry/i }));
@@ -405,13 +405,13 @@ describe('ClusterDrawerPanel reserved-status lifecycle (BR-64 / BR-65)', () => {
     await user.click(screen.getByRole('button', { name: 'Create "Pat Rivera"' }));
 
     expect(screen.getByTestId('cluster-drawer-reassign-status')).toHaveTextContent(
-      'Moved identity to Target Alpha.',
+      'Moved face to Target Alpha.',
     );
   });
 });
 
 describe('ClusterDrawerPanel heading fallback (BR-51 / E21-16)', () => {
-  it('renders Unnamed cluster when label is empty string', () => {
+  it('renders Unnamed face group when label is empty string', () => {
     render(
       <ClusterDrawerPanel
         {...baseProps}
@@ -419,12 +419,12 @@ describe('ClusterDrawerPanel heading fallback (BR-51 / E21-16)', () => {
       />,
     );
 
-    const heading = screen.getByRole('heading', { level: 3, name: 'Unnamed cluster' });
+    const heading = screen.getByRole('heading', { level: 3, name: 'Unnamed face group' });
     // BR-61: exact textContent (role accessible-name normalizes whitespace).
-    expect(heading.textContent).toBe('Unnamed cluster');
+    expect(heading.textContent).toBe('Unnamed face group');
   });
 
-  it('renders Unnamed cluster when label is null', () => {
+  it('renders Unnamed face group when label is null', () => {
     render(
       <ClusterDrawerPanel
         {...baseProps}
@@ -432,10 +432,10 @@ describe('ClusterDrawerPanel heading fallback (BR-51 / E21-16)', () => {
       />,
     );
 
-    expect(screen.getByRole('heading', { level: 3, name: 'Unnamed cluster' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { level: 3, name: 'Unnamed face group' })).toBeInTheDocument();
   });
 
-  it('renders Unnamed cluster when label is whitespace-only', () => {
+  it('renders Unnamed face group when label is whitespace-only', () => {
     render(
       <ClusterDrawerPanel
         {...baseProps}
@@ -443,9 +443,9 @@ describe('ClusterDrawerPanel heading fallback (BR-51 / E21-16)', () => {
       />,
     );
 
-    const heading = screen.getByRole('heading', { level: 3, name: 'Unnamed cluster' });
+    const heading = screen.getByRole('heading', { level: 3, name: 'Unnamed face group' });
     // BR-61: exact textContent kills concat(whitespace + fallback) false-greens.
-    expect(heading.textContent).toBe('Unnamed cluster');
+    expect(heading.textContent).toBe('Unnamed face group');
   });
 
   it('renders the human label when present', () => {

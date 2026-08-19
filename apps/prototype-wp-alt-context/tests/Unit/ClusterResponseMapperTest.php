@@ -974,4 +974,109 @@ class ClusterResponseMapperTest extends TestCase
             $payload['representative_identity']['bbox']
         );
     }
+
+    /**
+     * M2: REST-facing cluster list + top-unlabeled must carry the three-valued
+     * label_state string. Dropping the key from either emitted array fails this.
+     */
+    public function testMapClusterListAndTopUnlabeledEmitLabelState(): void
+    {
+        $list = $this->mapper->map_cluster_list(
+            [
+                [
+                    'cluster_uuid' => 'cluster-bound',
+                    'label' => 'Ada Lovelace',
+                    'label_state' => 'person',
+                    'person_uuid' => '11111111-1111-1111-1111-111111111111',
+                    'identity_count' => 1,
+                ],
+            ],
+            []
+        );
+
+        $this->assertArrayHasKey('label_state', $list[0]);
+        $this->assertSame('person', $list[0]['label_state']);
+
+        $detail = $this->mapper->map_cluster_detail(
+            [
+                'cluster_uuid' => 'cluster-detail',
+                'label' => 'Dana',
+                'label_state' => 'person',
+                'identity_count' => 1,
+            ],
+            []
+        );
+        $this->assertArrayHasKey('label_state', $detail);
+        $this->assertSame('person', $detail['label_state']);
+
+        $top = $this->mapper->map_top_unlabeled_clusters(
+            [
+                [
+                    'cluster_uuid' => 'cluster-top',
+                    'label' => '',
+                    'identity_count' => 2,
+                    'is_user_confirmed' => 0,
+                ],
+            ],
+            [],
+            'tenant-1'
+        );
+
+        $this->assertArrayHasKey('label_state', $top[0]);
+        $this->assertSame('unlabeled', $top[0]['label_state']);
+    }
+
+    public function testMapClusterListPrefersSqlLabelStateAndFallsBackWhenColumnMissing(): void
+    {
+        $fromSql = $this->mapper->map_cluster_list(
+            [
+                [
+                    'cluster_uuid' => 'cluster-sql-person',
+                    'label' => 'Tory Guzman',
+                    'label_state' => 'person',
+                    'identity_count' => 1,
+                ],
+            ],
+            []
+        );
+        $this->assertSame('person', $fromSql[0]['label_state']);
+
+        $unbound = $this->mapper->map_cluster_list(
+            [
+                [
+                    'cluster_uuid' => 'cluster-unbound',
+                    'label' => 'Tory Guzman',
+                    'identity_count' => 1,
+                ],
+            ],
+            []
+        );
+        $this->assertSame('unbound', $unbound[0]['label_state']);
+
+        $boundViaUuid = $this->mapper->map_cluster_list(
+            [
+                [
+                    'cluster_uuid' => 'cluster-uuid-person',
+                    'label' => 'Ada Lovelace',
+                    'person_uuid' => '11111111-1111-1111-1111-111111111111',
+                    'identity_count' => 1,
+                ],
+            ],
+            []
+        );
+        $this->assertSame('person', $boundViaUuid[0]['label_state']);
+
+        $reserved = $this->mapper->map_cluster_list(
+            [
+                [
+                    'cluster_uuid' => 'cluster-reserved',
+                    'label' => 'cluster-12345678',
+                    'identity_count' => 1,
+                ],
+            ],
+            []
+        );
+        $this->assertSame('unlabeled', $reserved[0]['label_state']);
+        $this->assertTrue($reserved[0]['is_auto_label']);
+    }
 }

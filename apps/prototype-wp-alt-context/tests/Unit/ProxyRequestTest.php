@@ -10,6 +10,7 @@ use AltContext\Api\RecognitionController;
 use AltContext\Api\RecognitionCircuitKeys;
 use AltContext\Tests\TestCase;
 use WP_REST_Request;
+use WP_REST_Response;
 use WP_Error;
 
 /**
@@ -1392,6 +1393,48 @@ PHP;
         $this->assertSame(
             'recognition_unexpected_redirect',
             AbstractRecognitionProxyController::ERROR_CODE_REDIRECT_REFUSED
+        );
+    }
+
+    /**
+     * UXW2-5-R7-01: is_proxy_endpoint_error pins the 5xx boundary as a literal,
+     * not a caller-supplied threshold. 500 is an endpoint error; 499 and WP_Error are not.
+     */
+    public function testIsProxyEndpointErrorPinsFiveHundredBoundary(): void
+    {
+        $method = new \ReflectionMethod(
+            AbstractRecognitionProxyController::class,
+            'is_proxy_endpoint_error'
+        );
+        $this->assertSame(
+            1,
+            $method->getNumberOfParameters(),
+            'is_proxy_endpoint_error must not expose a status-threshold widening lever'
+        );
+
+        $classifier = new class() extends AnalysisJobsController {
+            public function classify(WP_REST_Response|WP_Error $response): bool
+            {
+                return $this->is_proxy_endpoint_error($response);
+            }
+        };
+
+        $fiveHundred = new WP_REST_Response(['error' => 'boom'], 500);
+        $this->assertTrue(
+            $classifier->classify($fiveHundred),
+            'status 500 must be classified as endpoint error'
+        );
+
+        $fourNinetyNine = new WP_REST_Response(['error' => 'client'], 499);
+        $this->assertFalse(
+            $classifier->classify($fourNinetyNine),
+            'status 499 must not be classified as endpoint error'
+        );
+
+        $transport = new WP_Error('http_request_failed', 'timeout');
+        $this->assertFalse(
+            $classifier->classify($transport),
+            'WP_Error must not be classified as endpoint error'
         );
     }
 

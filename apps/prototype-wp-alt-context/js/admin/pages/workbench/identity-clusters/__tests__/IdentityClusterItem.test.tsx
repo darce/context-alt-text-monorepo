@@ -37,27 +37,45 @@ vi.mock('../useClusterMutations', () => ({
   }),
 }));
 
+const CLUSTER_ID = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
+
+const member = (overrides: Partial<ClusterGroup['members'][number]> = {}): ClusterGroup['members'][number] => ({
+  identity_id: 'id-1',
+  representative_id: 'rep-1',
+  media_id: 1,
+  cluster_id: 'editable',
+  cluster_label: 'bob',
+  is_auto_label: false,
+  is_pinned: false,
+  bbox: { x: 0, y: 0, width: 1, height: 1 },
+  confidence: 1,
+  similarity: 1,
+  detected_at: '',
+  ...overrides,
+});
+
 const bobCluster = (): ClusterGroup => ({
   key: 'editable',
   clusterId: 'editable',
   label: 'bob',
   isAutoLabel: false,
   clusteringPending: false,
+  members: [member()],
+});
+
+const unlabeledCluster = (overrides: Partial<ClusterGroup> = {}): ClusterGroup => ({
+  key: 'unlabeled',
+  clusterId: CLUSTER_ID,
+  label: null,
+  isAutoLabel: false,
+  clusteringPending: false,
   members: [
-    {
-      identity_id: 'id-1',
-      representative_id: 'rep-1',
-      media_id: 1,
-      cluster_id: 'editable',
-      cluster_label: 'bob',
-      is_auto_label: false,
-      is_pinned: false,
-      bbox: { x: 0, y: 0, width: 1, height: 1 },
-      confidence: 1,
-      similarity: 1,
-      detected_at: '',
-    },
+    member({
+      cluster_id: CLUSTER_ID,
+      cluster_label: null,
+    }),
   ],
+  ...overrides,
 });
 
 const renderItem = (cluster: ClusterGroup = bobCluster()) => {
@@ -202,5 +220,30 @@ describe('IdentityClusterItem at-rest hint wiring (REV2-01)', () => {
     expect(screen.getByRole('combobox', { name: 'Cluster label' })).toHaveAccessibleDescription(
       hint.textContent ?? '',
     );
+  });
+});
+
+describe('IdentityClusterItem unlabeled copy (UXW2-4-R7E-02)', () => {
+  afterEach(() => {
+    cleanup();
+  });
+
+  it('renders Unlabeled identity when the cluster has a UUID and no human label', () => {
+    renderItem(unlabeledCluster());
+
+    expect(screen.getByRole('button', { name: 'Unlabeled identity' })).toBeInTheDocument();
+    expect(screen.queryByText(/cluster-[0-9a-f]{8}/i)).not.toBeInTheDocument();
+  });
+
+  it('does not render auto-shape cluster-* as a person name', () => {
+    renderItem(
+      unlabeledCluster({
+        label: 'cluster-7',
+        members: [member({ cluster_id: CLUSTER_ID, cluster_label: 'cluster-7' })],
+      }),
+    );
+
+    expect(screen.queryByRole('button', { name: 'cluster-7' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Unlabeled identity' })).toBeInTheDocument();
   });
 });

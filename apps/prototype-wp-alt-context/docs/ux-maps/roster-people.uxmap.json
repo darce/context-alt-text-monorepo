@@ -17,7 +17,7 @@
     },
     {
       "id": "job-cluster-review",
-      "label": "Review recognition cluster in drawer"
+      "label": "Review face-group deep-link (shim)"
     }
   ],
   "screens": [
@@ -25,7 +25,7 @@
       "id": "roster-shell",
       "kind": "screen",
       "title": "Roster (People)",
-      "purpose": "People-first roster: entries table, needs-assignment queue, person workspace host, cluster drawer host",
+      "purpose": "People-first roster: entries table, Workbench review CTA, person workspace host, face-group drawer shim",
       "route": "#/roster",
       "wp_page": "alt-context-roster",
       "job_entry": true,
@@ -60,9 +60,10 @@
           ]
         },
         {
-          "id": "z-needs-assignment",
-          "label": "Needs assignment / unassigned faces",
-          "role": "queue",
+          "id": "z-review-cta",
+          "label": "Unnamed faces CTA → Workbench review queue",
+          "role": "content",
+          "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/RosterPage.tsx:215-244",
           "states": [
             "default",
             "loading",
@@ -91,11 +92,13 @@
         },
         {
           "id": "z-cluster-host",
-          "label": "Cluster drawer host",
+          "label": "Face-group drawer host (cluster= shim)",
           "role": "other",
           "states": [
             "default",
-            "empty"
+            "empty",
+            "loading",
+            "error"
           ]
         }
       ]
@@ -104,7 +107,7 @@
       "id": "roster-person-workspace",
       "kind": "screen",
       "title": "Person workspace",
-      "purpose": "Deep-linked person panel: identities, media, projection-gated when status is not current",
+      "purpose": "Deep-linked person panel: faces, media, gated when data status is not current",
       "route": "#/roster?person=",
       "job_entry": true,
       "deep_link": true,
@@ -125,7 +128,7 @@
       "zones": [
         {
           "id": "z-person-header",
-          "label": "Person identity header",
+          "label": "Person header",
           "role": "content",
           "states": [
             "default",
@@ -134,7 +137,7 @@
         },
         {
           "id": "z-person-identities",
-          "label": "Linked identities / faces",
+          "label": "Linked faces",
           "role": "ai_review",
           "evidence_linked": true,
           "states": [
@@ -170,8 +173,8 @@
     {
       "id": "roster-cluster-drawer",
       "kind": "overlay",
-      "title": "Cluster drawer",
-      "purpose": "Person-first cluster sample identities drawer (clusters tab retired; cluster= opens drawer)",
+      "title": "Face-group drawer (deep-link shim)",
+      "purpose": "Person-first face-group sample drawer (clusters tab retired; cluster= shim opens drawer)",
       "route": "#/roster?cluster=",
       "job_entry": false,
       "deep_link": true,
@@ -189,14 +192,15 @@
       "zones": [
         {
           "id": "z-cluster-samples",
-          "label": "Sample identities",
+          "label": "Sample faces",
           "role": "forced_choice",
           "evidence_linked": true,
           "max_candidates": 8,
           "states": [
             "default",
             "loading",
-            "empty"
+            "empty",
+            "error"
           ]
         },
         {
@@ -309,7 +313,7 @@
     },
     {
       "id": "act-open-cluster",
-      "verb": "Open cluster drawer",
+      "verb": "Open face-group drawer",
       "target": "roster-cluster-drawer",
       "hierarchy": "secondary",
       "costly": false,
@@ -319,7 +323,7 @@
     },
     {
       "id": "act-assign-cluster",
-      "verb": "Assign cluster identity",
+      "verb": "Assign face group to person",
       "target": "person",
       "hierarchy": "primary",
       "costly": true,
@@ -385,7 +389,7 @@
     {
       "id": "flow-cluster-to-person",
       "job": "job-cluster-review",
-      "label": "Open cluster drawer → assign → person workspace",
+      "label": "Open face-group drawer → assign → person workspace",
       "steps": [
         {
           "screen_id": "roster-shell",
@@ -419,8 +423,7 @@
   ],
   "open_questions": [
     "Is person workspace a route-owned screen or always an in-page panel? (modeled as deep-linkable screen with person=)",
-    "Should needs-assignment be its own screen_id or remain a zone on roster-shell?",
-    "Cluster drawer max_candidates=8 — confirm product top-k policy"
+    "Face-group drawer max_candidates=8 — confirm product top-k policy"
   ],
   "not_doing": [
     "Resurrect Clusters tab surface (retired; cluster= drawer only)",

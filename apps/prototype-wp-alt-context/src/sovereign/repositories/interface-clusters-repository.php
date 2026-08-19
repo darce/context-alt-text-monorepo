@@ -103,7 +103,7 @@ interface ClustersRepositoryInterface {
 	/**
 	 * Create a projected local cluster row.
 	 */
-	public function create_local_cluster( string $tenant_id, string $cluster_uuid, string $label, int $identity_count = 1 ): int;
+	public function create_local_cluster( string $tenant_id, string $cluster_uuid, string $label, int $identity_count = 1 ): int|\WP_Error;
 
 	/**
 	 * Create or update a projected cluster row from backend-authored topology state.

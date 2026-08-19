@@ -1,10 +1,15 @@
 import type { ReactNode } from 'react';
 import { act, renderHook } from '@testing-library/react';
 import { MemoryRouter, Route, Routes, useSearchParams } from 'react-router-dom';
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 
 import { useOverlayParam } from '../useOverlayParam';
 import { usePanesParam } from '../usePanesParam';
+import {
+  queuePendingPage,
+  queuePendingQueueState,
+  resetPendingSearchWritesForTests,
+} from '../pendingSearchWrites';
 
 const wrapperForUrl =
   (url: string) =>
@@ -23,6 +28,15 @@ const useSearchString = (): string => {
 };
 
 describe('usePanesParam', () => {
+  beforeEach(() => {
+    queuePendingQueueState({ kind: 'assignment', band: 'all', index: 0 }, null);
+    queuePendingPage(2, null);
+  });
+
+  beforeEach(() => {
+    resetPendingSearchWritesForTests();
+  });
+
   it('defaults to both when panes param is absent', () => {
     const { result } = renderHook(() => usePanesParam(), {
       wrapper: wrapperForUrl('/'),
@@ -59,12 +73,18 @@ describe('usePanesParam', () => {
     });
     expect(result.current.panes).toBe('library-collapsed');
     expect(result.current.search).toContain('panes=library-collapsed');
+    expect(result.current.search).toBe('panes=library-collapsed');
+    expect(result.current.search).not.toContain('rq=');
+    expect(result.current.search).not.toContain('p=');
 
     act(() => {
       result.current.setPanes('both');
     });
     expect(result.current.panes).toBe('both');
     expect(result.current.search).not.toContain('panes=');
+    expect(result.current.search).toBe('');
+    expect(result.current.search).not.toContain('rq=');
+    expect(result.current.search).not.toContain('p=');
   });
 
   // [NAV-11] panes and panel restore independently

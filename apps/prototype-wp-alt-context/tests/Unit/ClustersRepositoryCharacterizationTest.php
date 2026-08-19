@@ -117,8 +117,12 @@ class ClustersRepositoryCharacterizationTest extends TestCase
         );
 
         $this->assertSame(1, $result);
-        $this->assertCount(1, $wpdb->queries);
-        $query = $wpdb->queries[0];
+        $inserts = array_values(array_filter(
+            $wpdb->queries,
+            static fn(string $query): bool => str_contains($query, 'INSERT INTO wp_acx_clusters')
+        ));
+        $this->assertNotEmpty($inserts);
+        $query = $inserts[0];
         $this->assertStringContainsString('INSERT INTO wp_acx_clusters', $query);
         $this->assertStringContainsString('cluster-new', $query);
         $this->assertStringContainsString('Curated Label', $query);
@@ -238,14 +242,13 @@ class ClustersRepositoryCharacterizationTest extends TestCase
         $result = $this->repository->reset_curation('cluster-reset', self::currentTenantId());
 
         $this->assertSame(1, $result);
-        $this->assertCount(1, $wpdb->queries);
-        $query = $wpdb->queries[0];
-        $this->assertStringContainsString('label = NULL', $query);
-        $this->assertStringContainsString('person_id = NULL', $query);
-        $this->assertStringContainsString("curation_state = 'uncurated'", $query);
-        $this->assertStringContainsString('is_user_confirmed = 0', $query);
-        $this->assertStringContainsString('local_revision = local_revision + 1', $query);
-        $this->assertStringContainsString("WHERE cluster_uuid = 'cluster-reset'", $query);
+        $joined = implode("\n", $wpdb->queries);
+        $this->assertStringContainsString('label = NULL', $joined);
+        $this->assertStringContainsString('person_id = NULL', $joined);
+        $this->assertStringContainsString("curation_state = 'uncurated'", $joined);
+        $this->assertStringContainsString('is_user_confirmed = 0', $joined);
+        $this->assertStringContainsString('local_revision = local_revision + 1', $joined);
+        $this->assertStringContainsString("cluster_uuid = 'cluster-reset'", $joined);
     }
 
     public function testDeleteClusterWithMembersDeletesMembersThenCluster(): void

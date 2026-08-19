@@ -541,7 +541,7 @@ describe('RosterEntriesSection directory search [NAV-10]', () => {
 });
 
 const RESERVED_LABEL_MESSAGE =
-  'This label format is reserved for automatic cluster IDs. Choose a descriptive name.';
+  'This name format is reserved for automatic face group IDs. Choose a descriptive name.';
 
 describe('RosterEntriesSection create reserved-label gate (BR-60)', () => {
   it('rejects cluster-7 without calling createPerson and shows reserved message', async () => {

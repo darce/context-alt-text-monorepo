@@ -2,6 +2,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import React from 'react';
+import { MemoryRouter, Route, Routes, useLocation, useSearchParams } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -25,10 +26,18 @@ import {
   listRosterEntries,
   type RosterClusterCommitResponse,
 } from '../../../../api/rosterApi';
+import { resetPendingSearchWritesForTests } from '../../../../hooks/pendingSearchWrites';
+import {
+  QUEUE_ACTION,
+  type QueueAction,
+  useWorkbenchFilters,
+} from '../../../../hooks/useWorkbenchFilters';
 import type {
   ReviewQueueBandParam,
   ReviewQueueKindParam,
+  WorkbenchQueueState,
 } from '../../../../hooks/workbenchQueueUrl';
+import * as workbenchFilters from '../../../../hooks/useWorkbenchFilters';
 import {
   JUST_LABEL_COPY,
   MODEL_OUTPUT_DISCLOSURE,
@@ -44,6 +53,7 @@ import * as useAriaAnnounceMod from '../useAriaAnnounce';
 import { HOLD_STATUS_COPY, UNDO_HOLD_MS } from '../useSuggestionReviewMutations';
 import { LIVE_TARGET_CLOSE_ANNOUNCE } from '../useLiveReviewTarget';
 import { HTTPError } from '../../../../utils/http';
+import { ScanTabContent } from '../../ScanTabContent';
 
 const rosterCommitFixture = (
   overrides: Partial<RosterClusterCommitResponse> = {},
@@ -157,6 +167,65 @@ vi.mock('../../../../api/rosterApi', () => ({
   ]),
 }));
 
+vi.mock('../../../../hooks/useScrollRestoration', () => ({
+  useScrollRestoration: () => undefined,
+}));
+
+vi.mock('../../Panels', () => ({
+  ScanActionPanel: () => <div data-testid="scan-action-panel" />,
+  isClusteringActive: () => false,
+}));
+
+vi.mock('../../JobTimeline', () => ({
+  JobTimeline: () => <div data-testid="job-timeline" />,
+}));
+
+vi.mock('../WorkbenchFindingsPanel', () => ({
+  WorkbenchFindingsPanel: () => <div data-testid="findings-panel" />,
+}));
+
+vi.mock('../ClusterLabelingPanel', () => ({
+  ClusterLabelingPanel: () => <div data-testid="label-panel" />,
+}));
+
+vi.mock('../ClusterReviewPanel', () => ({
+  ClusterReviewPanel: () => <div data-testid="review-panel" />,
+}));
+
+vi.mock('../useOpenReviewTargetLifecycle', () => ({
+  useOpenReviewTargetLifecycle: () => ({ reviewClusterId: null }),
+}));
+
+vi.mock('../../JobPipelineContext', () => ({
+  useJobPipeline: () => ({
+    scanRun: { isScanning: false, progress: null },
+    status: {
+      scanProgress: null,
+      clusterProgress: null,
+      currentPhase: 'idle',
+      projectionSyncState: 'idle',
+    },
+    history: { activeJobIds: [], jobId: null },
+    cancelScan: vi.fn(),
+    retryScanStream: vi.fn(),
+  }),
+}));
+
+vi.mock('../../ClusterPanelContext', () => ({
+  useClusterPanel: () => ({
+    clusterPanel: { mode: 'none', clusterId: null },
+    dispatchClusterPanel: vi.fn(),
+  }),
+}));
+
+vi.mock('../../WorkbenchMediaContext', () => ({
+  useWorkbenchMediaContext: () => ({ mediaQueue: { hasIdentities: true } }),
+}));
+
+vi.mock('../../ReviewSurfaceContext', () => ({
+  useReviewSurface: () => ({ cardPrimaryPresent: false, setCardPrimaryPresent: vi.fn() }),
+}));
+
 interface HarnessProps {
   initialIndex?: number;
   initialKind?: ReviewQueueKindParam;
@@ -167,42 +236,117 @@ interface HarnessProps {
   onReview?: (clusterId: string) => void;
   /** Expose selection for M2 asserts (optional). */
   selectionRef?: React.MutableRefObject<Set<string>>;
+  onKindChange?: (kind: ReviewQueueKindParam) => void;
+  onBandChange?: (band: ReviewQueueBandParam) => void;
+  onClampIndex?: (index: number) => void;
+  onStepIndex?: (delta: number, length: number) => void;
+  onClearFilters?: () => void;
 }
 
-const ReviewQueueHarness = ({
+/** Reducer-semantic parent state — every ReviewQueue harness must go through this. */
+const useQueueHarnessState = (
   initialIndex = 0,
-  initialKind = 'all',
-  initialBand = 'all',
-  emptyStateAnchorRef,
-  queueRef,
-  onLabel,
-  onReview,
-  selectionRef,
-}: HarnessProps): React.JSX.Element => {
-  const [index, setIndex] = React.useState(initialIndex);
-  const [kind, setKind] = React.useState<ReviewQueueKindParam>(initialKind);
-  const [band, setBand] = React.useState<ReviewQueueBandParam>(initialBand);
+  initialKind: ReviewQueueKindParam = 'all',
+  initialBand: ReviewQueueBandParam = 'all',
+) => {
+  const [queueState, setQueueState] = React.useState<WorkbenchQueueState>({
+    index: initialIndex,
+    kind: initialKind,
+    band: initialBand,
+  });
   const [selectedIds, setSelectedIds] = React.useState<Set<string>>(() => new Set());
-  if (selectionRef) {
-    selectionRef.current = selectedIds;
-  }
-  return (
-    <ReviewQueue
-      ref={queueRef}
-      index={index}
-      onIndexChange={setIndex}
-      kind={kind}
-      onKindChange={setKind}
-      band={band}
-      onBandChange={setBand}
-      selectedIds={selectedIds}
-      onSelectedIdsChange={setSelectedIds}
-      emptyStateAnchorRef={emptyStateAnchorRef}
-      onLabel={onLabel}
-      onReview={onReview}
-    />
-  );
+  const dispatch = (action: QueueAction): void => {
+    setQueueState((prev) => workbenchFilters.reduceQueueAction(prev, action));
+  };
+  return {
+    index: queueState.index,
+    kind: queueState.kind,
+    band: queueState.band,
+    selectedIds,
+    setSelectedIds,
+    queueCallbacks: {
+      onClampIndex: (next: number): void => {
+        dispatch({ type: QUEUE_ACTION.CLAMP_INDEX, index: next });
+      },
+      onStepIndex: (delta: number, length: number): void => {
+        dispatch({ type: QUEUE_ACTION.STEP_INDEX, delta, length });
+      },
+      onKindChange: (next: ReviewQueueKindParam): void => {
+        dispatch({ type: QUEUE_ACTION.SET_KIND, kind: next });
+      },
+      onBandChange: (next: ReviewQueueBandParam): void => {
+        dispatch({ type: QUEUE_ACTION.SET_BAND, band: next });
+      },
+      onClearFilters: (): void => {
+        dispatch({ type: QUEUE_ACTION.CLEAR_FILTERS });
+      },
+    },
+  };
 };
+
+const makeQueueHarness = (defaults: HarnessProps = {}) => {
+  return function ReviewQueueHarness(props: HarnessProps = {}): React.JSX.Element {
+    const merged = { ...defaults, ...props };
+    const {
+      initialIndex = 0,
+      initialKind = 'all',
+      initialBand = 'all',
+      emptyStateAnchorRef,
+      queueRef,
+      onLabel,
+      onReview,
+      selectionRef,
+      onKindChange: onKindChangeSpy,
+      onBandChange: onBandChangeSpy,
+      onClampIndex: onClampIndexSpy,
+      onStepIndex: onStepIndexSpy,
+      onClearFilters: onClearFiltersSpy,
+    } = merged;
+    const { index, kind, band, selectedIds, setSelectedIds, queueCallbacks } = useQueueHarnessState(
+      initialIndex,
+      initialKind,
+      initialBand,
+    );
+    if (selectionRef) {
+      selectionRef.current = selectedIds;
+    }
+    return (
+      <ReviewQueue
+        ref={queueRef}
+        index={index}
+        kind={kind}
+        band={band}
+        selectedIds={selectedIds}
+        onSelectedIdsChange={setSelectedIds}
+        emptyStateAnchorRef={emptyStateAnchorRef}
+        onLabel={onLabel}
+        onReview={onReview}
+        onClampIndex={(next) => {
+          onClampIndexSpy?.(next);
+          queueCallbacks.onClampIndex(next);
+        }}
+        onStepIndex={(delta, length) => {
+          onStepIndexSpy?.(delta, length);
+          queueCallbacks.onStepIndex(delta, length);
+        }}
+        onKindChange={(next) => {
+          onKindChangeSpy?.(next);
+          queueCallbacks.onKindChange(next);
+        }}
+        onBandChange={(next) => {
+          onBandChangeSpy?.(next);
+          queueCallbacks.onBandChange(next);
+        }}
+        onClearFilters={() => {
+          onClearFiltersSpy?.();
+          queueCallbacks.onClearFilters();
+        }}
+      />
+    );
+  };
+};
+
+const ReviewQueueHarness = makeQueueHarness();
 
 const withQueueProviders = (queryClient: QueryClient, children: React.ReactNode) => (
   <QueryClientProvider client={queryClient}>
@@ -225,6 +369,7 @@ const renderQueue = (props: HarnessProps = {}) => {
 describe('ReviewQueue', () => {
   afterEach(() => {
     vi.clearAllMocks();
+    resetPendingSearchWritesForTests();
   });
 
   beforeEach(() => {
@@ -536,6 +681,306 @@ describe('ReviewQueue', () => {
     });
     expect(screen.getByRole('button', { name: 'Possible duplicates' })).toHaveAttribute('aria-pressed', 'false');
     expect(screen.getByRole('button', { name: 'Close matches' })).toHaveAttribute('aria-pressed', 'false');
+  });
+
+  it('kind chip calls onKindChange once and never dispatches SET_INDEX (R1-06/R2-04)', async () => {
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [
+        {
+          id: 'sugg-1',
+          identity_id: 'identity-1',
+          suggested_cluster_id: 'cluster-1',
+          representative_similarity: 0.9,
+          avg_member_similarity: 0.85,
+          cluster_label: 'Alex',
+          cluster_identity_count: 3,
+        },
+      ],
+      limit: 10,
+      offset: 0,
+    });
+    const onKindChange = vi.fn();
+    const onBandChange = vi.fn();
+    const onClampIndex = vi.fn();
+    const onStepIndex = vi.fn();
+    const reduceSpy = vi.spyOn(workbenchFilters, 'reduceQueueAction');
+    const Harness = makeQueueHarness({ onKindChange, onBandChange, onClampIndex, onStepIndex });
+    const user = userEvent.setup();
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, retryDelay: 0 } },
+    });
+    render(withQueueProviders(queryClient, <Harness />));
+    await screen.findByText(/Is this/);
+    onKindChange.mockClear();
+    onBandChange.mockClear();
+    onClampIndex.mockClear();
+    onStepIndex.mockClear();
+    reduceSpy.mockClear();
+    await user.click(screen.getByRole('button', { name: 'Close matches' }));
+    expect(onKindChange).toHaveBeenCalledTimes(1);
+    expect(onKindChange).toHaveBeenCalledWith('assignment');
+    expect(onClampIndex).not.toHaveBeenCalled();
+    expect(onStepIndex).not.toHaveBeenCalled();
+    expect(reduceSpy.mock.calls.some(([, action]) => action.type === QUEUE_ACTION.SET_KIND)).toBe(true);
+    expect(reduceSpy.mock.calls.every(([, action]) => action.type === QUEUE_ACTION.SET_KIND)).toBe(true);
+    expect(onBandChange).not.toHaveBeenCalled();
+    reduceSpy.mockRestore();
+  });
+
+  it('band chip calls onBandChange once and never dispatches SET_INDEX (R1-06/R2-04)', async () => {
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [
+        {
+          id: 'sugg-1',
+          identity_id: 'identity-1',
+          suggested_cluster_id: 'cluster-1',
+          representative_similarity: 0.9,
+          avg_member_similarity: 0.85,
+          cluster_label: 'Alex',
+          cluster_identity_count: 3,
+        },
+      ],
+      limit: 10,
+      offset: 0,
+    });
+    const onKindChange = vi.fn();
+    const onBandChange = vi.fn();
+    const onClampIndex = vi.fn();
+    const onStepIndex = vi.fn();
+    const reduceSpy = vi.spyOn(workbenchFilters, 'reduceQueueAction');
+    const Harness = makeQueueHarness({ onKindChange, onBandChange, onClampIndex, onStepIndex });
+    const user = userEvent.setup();
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, retryDelay: 0 } },
+    });
+    render(withQueueProviders(queryClient, <Harness />));
+    await screen.findByText(/Is this/);
+    onKindChange.mockClear();
+    onBandChange.mockClear();
+    onClampIndex.mockClear();
+    onStepIndex.mockClear();
+    reduceSpy.mockClear();
+    await user.click(screen.getByRole('button', { name: 'Strong matches' }));
+    expect(onBandChange).toHaveBeenCalledTimes(1);
+    expect(onBandChange).toHaveBeenCalledWith('strong');
+    expect(onClampIndex).not.toHaveBeenCalled();
+    expect(onStepIndex).not.toHaveBeenCalled();
+    expect(reduceSpy.mock.calls.some(([, action]) => action.type === QUEUE_ACTION.SET_BAND)).toBe(true);
+    expect(reduceSpy.mock.calls.every(([, action]) => action.type === QUEUE_ACTION.SET_BAND)).toBe(true);
+    expect(onKindChange).not.toHaveBeenCalled();
+    reduceSpy.mockRestore();
+  });
+
+  it('after an abandoned rq write, chip aria-pressed matches the URL (UXW2-1-R4-04)', async () => {
+    resetPendingSearchWritesForTests();
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [
+        {
+          id: 'sugg-1',
+          identity_id: 'identity-1',
+          suggested_cluster_id: 'cluster-1',
+          representative_similarity: 0.9,
+          avg_member_similarity: 0.85,
+          cluster_label: 'Alex',
+          cluster_identity_count: 3,
+        },
+      ],
+      limit: 10,
+      offset: 0,
+    });
+    const UrlOwnedQueue = (): React.JSX.Element => {
+      const { queueState, dispatchQueue, handleSearchChange } = useWorkbenchFilters();
+      const [, setSearchParams] = useSearchParams();
+      const loc = useLocation();
+      const [selectedIds, setSelectedIds] = React.useState<Set<string>>(() => new Set());
+      return (
+        <div>
+          <ReviewQueue
+            index={queueState.index}
+            kind={queueState.kind}
+            band={queueState.band}
+            selectedIds={selectedIds}
+            onSelectedIdsChange={setSelectedIds}
+            onClampIndex={(next) => dispatchQueue({ type: QUEUE_ACTION.CLAMP_INDEX, index: next })}
+            onStepIndex={(delta, length) =>
+              dispatchQueue({ type: QUEUE_ACTION.STEP_INDEX, delta, length })
+            }
+            onKindChange={(next) => dispatchQueue({ type: QUEUE_ACTION.SET_KIND, kind: next })}
+            onBandChange={(next) => dispatchQueue({ type: QUEUE_ACTION.SET_BAND, band: next })}
+            onClearFilters={() => dispatchQueue({ type: QUEUE_ACTION.CLEAR_FILTERS })}
+          />
+          <button
+            type="button"
+            onClick={() => {
+              dispatchQueue({ type: QUEUE_ACTION.SET_KIND, kind: 'assignment' });
+              setSearchParams(new URLSearchParams('tab=scan&panel=conflicts'), { replace: true });
+            }}
+          >
+            overlay-abandon
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              handleSearchChange({ target: { value: 'cat' } } as React.ChangeEvent<HTMLInputElement>);
+            }}
+          >
+            unrelated-search
+          </button>
+          <output data-testid="loc">{loc.search}</output>
+        </div>
+      );
+    };
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, retryDelay: 0 } },
+    });
+    render(
+      <MemoryRouter initialEntries={['/']}>
+        <Routes>
+          <Route path="/" element={withQueueProviders(queryClient, <UrlOwnedQueue />)} />
+        </Routes>
+      </MemoryRouter>,
+    );
+    await screen.findByText(/Is this/);
+    act(() => {
+      screen.getByText('overlay-abandon').click();
+    });
+    act(() => {
+      screen.getByText('unrelated-search').click();
+    });
+    const loc = screen.getByTestId('loc').textContent ?? '';
+    const assignmentPressed =
+      screen.getByRole('button', { name: 'Close matches' }).getAttribute('aria-pressed') === 'true';
+    expect(loc.includes('rq=assignment')).toBe(assignmentPressed);
+    expect(assignmentPressed).toBe(false);
+  });
+
+  it('kind chip on ScanTabContent dispatch writes rq=assignment.all.0 and presses the chip (UXW2-1-R3-07)', async () => {
+    resetPendingSearchWritesForTests();
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [
+        {
+          id: 'sugg-1',
+          identity_id: 'identity-1',
+          suggested_cluster_id: 'cluster-1',
+          representative_similarity: 0.9,
+          avg_member_similarity: 0.85,
+          cluster_label: 'Alex',
+          cluster_identity_count: 3,
+        },
+        {
+          id: 'sugg-2',
+          identity_id: 'identity-2',
+          suggested_cluster_id: 'cluster-2',
+          representative_similarity: 0.8,
+          avg_member_similarity: 0.75,
+          cluster_label: 'Jordan',
+          cluster_identity_count: 2,
+        },
+        {
+          id: 'sugg-3',
+          identity_id: 'identity-3',
+          suggested_cluster_id: 'cluster-3',
+          representative_similarity: 0.7,
+          avg_member_similarity: 0.65,
+          cluster_label: 'Casey',
+          cluster_identity_count: 2,
+        },
+      ],
+      limit: 10,
+      offset: 0,
+    });
+    const LocationProbe = (): React.JSX.Element => {
+      const loc = useLocation();
+      return <output data-testid="loc">{loc.search}</output>;
+    };
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, retryDelay: 0 } },
+    });
+    const user = userEvent.setup();
+    render(
+      <MemoryRouter initialEntries={['/?rq=all.all.2']}>
+        <Routes>
+          <Route
+            path="/"
+            element={withQueueProviders(
+              queryClient,
+              <>
+                <ScanTabContent />
+                <LocationProbe />
+              </>,
+            )}
+          />
+        </Routes>
+      </MemoryRouter>,
+    );
+    expect(await screen.findByText('3 of 3')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Close matches' }));
+    await waitFor(() => {
+      expect(screen.getByTestId('loc').textContent).toContain('rq=assignment.all.0');
+    });
+    const loc = screen.getByTestId('loc').textContent ?? '';
+    expect(loc).not.toContain('rq=assignment.all.2');
+    expect(loc).not.toContain('rq=assignment.all.1');
+    expect(screen.getByRole('button', { name: 'Close matches' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
+    expect(screen.getByRole('button', { name: 'Possible duplicates' })).toHaveAttribute(
+      'aria-pressed',
+      'false',
+    );
+    expect(screen.getByRole('button', { name: 'Strong matches' })).toHaveAttribute(
+      'aria-pressed',
+      'false',
+    );
+    expect(screen.getByText('1 of 3')).toBeInTheDocument();
+  });
+
+  it('two synchronous Next clicks advance index by 2 (R1-05)', async () => {
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [
+        {
+          id: 'sugg-1',
+          identity_id: 'identity-1',
+          suggested_cluster_id: 'cluster-1',
+          representative_similarity: 0.95,
+          avg_member_similarity: 0.9,
+          cluster_label: 'Alex',
+          cluster_identity_count: 3,
+        },
+        {
+          id: 'sugg-2',
+          identity_id: 'identity-2',
+          suggested_cluster_id: 'cluster-2',
+          representative_similarity: 0.8,
+          avg_member_similarity: 0.75,
+          cluster_label: 'Jordan',
+          cluster_identity_count: 2,
+        },
+        {
+          id: 'sugg-3',
+          identity_id: 'identity-3',
+          suggested_cluster_id: 'cluster-3',
+          representative_similarity: 0.7,
+          avg_member_similarity: 0.65,
+          cluster_label: 'Casey',
+          cluster_identity_count: 2,
+        },
+      ],
+      limit: 10,
+      offset: 0,
+    });
+    renderQueue();
+    await screen.findByRole('button', { name: 'Yes' });
+    expect(screen.getByText('1 of 3')).toBeInTheDocument();
+    const next = screen.getByRole('button', { name: 'Next review item' });
+    act(() => {
+      next.click();
+      next.click();
+    });
+    await waitFor(() => {
+      expect(screen.getByText('3 of 3')).toBeInTheDocument();
+    });
   });
 
   it('fires existing accept mutation and invalidates projection keys', async () => {
@@ -862,10 +1307,7 @@ describe('ReviewQueue', () => {
     });
 
     const Parent = (): React.JSX.Element => {
-      const [index, setIndex] = React.useState(1);
-      const [kind, setKind] = React.useState<ReviewQueueKindParam>('all');
-      const [band, setBand] = React.useState<ReviewQueueBandParam>('all');
-      const [selectedIds, setSelectedIds] = React.useState<Set<string>>(() => new Set());
+      const { index, kind, band, selectedIds, setSelectedIds, queueCallbacks } = useQueueHarnessState(1);
       const [mounted, setMounted] = React.useState(true);
       return (
         <div>
@@ -875,13 +1317,11 @@ describe('ReviewQueue', () => {
           {mounted ? (
             <ReviewQueue
               index={index}
-              onIndexChange={setIndex}
               kind={kind}
-              onKindChange={setKind}
               band={band}
-              onBandChange={setBand}
               selectedIds={selectedIds}
               onSelectedIdsChange={setSelectedIds}
+              {...queueCallbacks}
             />
           ) : (
             <p>panel-mode</p>
@@ -1087,22 +1527,17 @@ describe('ReviewQueue', () => {
 
     // Seeded like rq=…all.3 — controlled index 3 owned by parent (ScanTabContent).
     const Parent = (): React.JSX.Element => {
-      const [index, setIndex] = React.useState(3);
-      const [kind, setKind] = React.useState<ReviewQueueKindParam>('all');
-      const [band, setBand] = React.useState<ReviewQueueBandParam>('all');
-      const [selectedIds, setSelectedIds] = React.useState<Set<string>>(() => new Set());
+      const { index, kind, band, selectedIds, setSelectedIds, queueCallbacks } = useQueueHarnessState(3);
       return (
         <div>
           <span data-testid="parent-index">{index}</span>
           <ReviewQueue
             index={index}
-            onIndexChange={setIndex}
             kind={kind}
-            onKindChange={setKind}
             band={band}
-            onBandChange={setBand}
             selectedIds={selectedIds}
             onSelectedIdsChange={setSelectedIds}
+            {...queueCallbacks}
           />
         </div>
       );
@@ -1365,36 +1800,15 @@ describe('ReviewQueue', () => {
       offset: 0,
     });
 
-    const onKindChange = vi.fn();
-    const onBandChange = vi.fn();
+    const onClearFilters = vi.fn();
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false, retryDelay: 0 } },
     });
 
-    const FilteredEmptyHarness = (): React.JSX.Element => {
-      const [index, setIndex] = React.useState(0);
-      const [kind, setKind] = React.useState<ReviewQueueKindParam>('merge');
-      const [band, setBand] = React.useState<ReviewQueueBandParam>('all');
-      const [selectedIds, setSelectedIds] = React.useState<Set<string>>(() => new Set());
-      return (
-        <ReviewQueue
-          index={index}
-          onIndexChange={setIndex}
-          kind={kind}
-          onKindChange={(next) => {
-            onKindChange(next);
-            setKind(next);
-          }}
-          band={band}
-          onBandChange={(next) => {
-            onBandChange(next);
-            setBand(next);
-          }}
-          selectedIds={selectedIds}
-          onSelectedIdsChange={setSelectedIds}
-        />
-      );
-    };
+    const FilteredEmptyHarness = makeQueueHarness({
+      initialKind: 'merge',
+      onClearFilters,
+    });
 
     const user = userEvent.setup();
     render(withQueueProviders(queryClient, <FilteredEmptyHarness />));
@@ -1407,10 +1821,15 @@ describe('ReviewQueue', () => {
     expect(clearBtn).toBeInTheDocument();
 
     await user.click(clearBtn);
-    expect(onKindChange).toHaveBeenCalledWith('all');
-    expect(onBandChange).toHaveBeenCalledWith('all');
+    expect(onClearFilters).toHaveBeenCalledTimes(1);
     await waitFor(() => {
       expect(screen.getByTestId('acx-review-card')).toBeInTheDocument();
+    });
+    await waitFor(() => {
+      expect(document.querySelector('.acx-review-queue__live')).toHaveTextContent('Review item 1 of 1');
+    });
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Yes' })).toHaveFocus();
     });
   });
 
@@ -3056,10 +3475,7 @@ describe('ReviewQueue', () => {
       const user = userEvent.setup();
 
       const Parent = (): React.JSX.Element => {
-        const [index, setIndex] = React.useState(0);
-        const [kind, setKind] = React.useState<ReviewQueueKindParam>('all');
-        const [band, setBand] = React.useState<ReviewQueueBandParam>('all');
-        const [selectedIds, setSelectedIds] = React.useState<Set<string>>(() => new Set());
+        const { index, kind, band, selectedIds, setSelectedIds, queueCallbacks } = useQueueHarnessState();
         const [mounted, setMounted] = React.useState(true);
         return (
           <div>
@@ -3070,13 +3486,11 @@ describe('ReviewQueue', () => {
             {mounted ? (
               <ReviewQueue
                 index={index}
-                onIndexChange={setIndex}
                 kind={kind}
-                onKindChange={setKind}
                 band={band}
-                onBandChange={setBand}
                 selectedIds={selectedIds}
                 onSelectedIdsChange={setSelectedIds}
+                {...queueCallbacks}
               />
             ) : (
               <p>panel-mode</p>
@@ -3239,10 +3653,7 @@ describe('ReviewQueue', () => {
 
       // Seed selection after settle (avoid prune-on-empty-queue wiping ids).
       const Parent = (): React.JSX.Element => {
-        const [index, setIndex] = React.useState(0);
-        const [kind, setKind] = React.useState<ReviewQueueKindParam>('all');
-        const [band, setBand] = React.useState<ReviewQueueBandParam>('all');
-        const [selectedIds, setSelectedIds] = React.useState<Set<string>>(() => new Set());
+        const { index, kind, band, selectedIds, setSelectedIds, queueCallbacks } = useQueueHarnessState();
         return (
           <div>
             <button
@@ -3256,21 +3667,18 @@ describe('ReviewQueue', () => {
               type="button"
               data-testid="apply-strong-band"
               onClick={() => {
-                setBand('strong');
-                setIndex(0);
+                queueCallbacks.onBandChange('strong');
               }}
             >
               strong-band
             </button>
             <ReviewQueue
               index={index}
-              onIndexChange={setIndex}
               kind={kind}
-              onKindChange={setKind}
               band={band}
-              onBandChange={setBand}
               selectedIds={selectedIds}
               onSelectedIdsChange={setSelectedIds}
+              {...queueCallbacks}
             />
           </div>
         );
@@ -3394,10 +3802,7 @@ describe('ReviewQueue', () => {
       );
 
       const Parent = (): React.JSX.Element => {
-        const [index, setIndex] = React.useState(0);
-        const [kind, setKind] = React.useState<ReviewQueueKindParam>('all');
-        const [band, setBand] = React.useState<ReviewQueueBandParam>('all');
-        const [selectedIds, setSelectedIds] = React.useState<Set<string>>(() => new Set());
+        const { index, kind, band, selectedIds, setSelectedIds, queueCallbacks } = useQueueHarnessState();
         return (
           <div>
             <button
@@ -3411,8 +3816,7 @@ describe('ReviewQueue', () => {
               type="button"
               data-testid="apply-strong-band"
               onClick={() => {
-                setBand('strong');
-                setIndex(0);
+                queueCallbacks.onBandChange('strong');
               }}
             >
               strong-band
@@ -3421,21 +3825,18 @@ describe('ReviewQueue', () => {
               type="button"
               data-testid="apply-all-band"
               onClick={() => {
-                setBand('all');
-                setIndex(0);
+                queueCallbacks.onBandChange('all');
               }}
             >
               all-band
             </button>
             <ReviewQueue
               index={index}
-              onIndexChange={setIndex}
               kind={kind}
-              onKindChange={setKind}
               band={band}
-              onBandChange={setBand}
               selectedIds={selectedIds}
               onSelectedIdsChange={setSelectedIds}
+              {...queueCallbacks}
             />
           </div>
         );

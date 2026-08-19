@@ -10,7 +10,7 @@ import { toWorkbench } from '../../navigation/appLinks';
 import { isHumanLabeledTarget } from '../workbench/identity-clusters/suggestionProjection';
 
 const RESERVED_LABEL_MESSAGE = __(
-  'This label format is reserved for automatic cluster IDs. Choose a descriptive name.',
+  'This name format is reserved for automatic face group IDs. Choose a descriptive name.',
   'alt-context',
 );
 

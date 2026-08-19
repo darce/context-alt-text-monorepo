@@ -114,11 +114,31 @@ const ReviewQueueHarness = ({ initialIndex = 0, queueRef }: HarnessProps): React
     <ReviewQueue
       ref={queueRef}
       index={index}
-      onIndexChange={setIndex}
+      onClampIndex={(next) => setIndex(Math.max(0, next))}
+      onStepIndex={(delta, length) => {
+        setIndex((prev) => {
+          if (length <= 0) {
+            return 0;
+          }
+          const clamped = Math.min(Math.max(0, prev), length - 1);
+          return Math.min(Math.max(0, clamped + delta), length - 1);
+        });
+      }}
       kind={kind}
-      onKindChange={setKind}
+      onKindChange={(next) => {
+        setKind(next);
+        setIndex(0);
+      }}
       band={band}
-      onBandChange={setBand}
+      onBandChange={(next) => {
+        setBand(next);
+        setIndex(0);
+      }}
+      onClearFilters={() => {
+        setKind('all');
+        setBand('all');
+        setIndex(0);
+      }}
       selectedIds={selectedIds}
       onSelectedIdsChange={setSelectedIds}
     />

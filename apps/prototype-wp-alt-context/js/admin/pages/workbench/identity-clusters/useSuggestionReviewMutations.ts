@@ -1028,12 +1028,22 @@ export const useSuggestionReviewMutations = ({
         });
         return;
       }
-      // Full accept: accepted_count === the rows the request targeted.
+      // Full accept: evict only when the local match set equals accepted_count.
+      // rg-015 / DATA-14: a stale page, tie-break, or rounding drift must not
+      // invent which rows the server accepted.
       const names = queryClient.getQueryData<PendingNameSuggestionsResponse>(namePendingKey);
-      for (const item of names?.suggestions ?? []) {
-        if ((item.confidence_score ?? 0) >= request.min_confidence) {
-          dropClusterFromReviewCaches(queryClient, item.cluster_id, { mode: REVIEW_DROP_MODE.LABEL });
-        }
+      const matched = (names?.suggestions ?? []).filter(
+        (item) => (item.confidence_score ?? 0) >= request.min_confidence,
+      );
+      if (matched.length !== data.accepted_count) {
+        void queryClient.invalidateQueries({ queryKey: namePendingKey });
+        void queryClient.invalidateQueries({
+          queryKey: [...queryKeys.clusters.all, 'top-unlabeled'],
+        });
+        return;
+      }
+      for (const item of matched) {
+        dropClusterFromReviewCaches(queryClient, item.cluster_id, { mode: REVIEW_DROP_MODE.LABEL });
       }
       invalidateReviewCachesWithoutRefetch(queryClient);
     },

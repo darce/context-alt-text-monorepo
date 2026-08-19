@@ -352,7 +352,7 @@ class SuggestionsController extends AbstractRecognitionProxyController {
 		return $response;
 	}
 
-	public function validate_roster_candidates_top_k( $value, $request, $param ): bool|WP_Error {
+	private function validate_roster_candidates_top_k( $value ): bool|WP_Error {
 		if ( ! is_numeric( $value ) ) {
 			return $this->invalid_top_k_error();
 		}
@@ -380,7 +380,7 @@ class SuggestionsController extends AbstractRecognitionProxyController {
 		if ( null === $raw_top_k || '' === $raw_top_k ) {
 			$raw_top_k = 10;
 		}
-		$valid_top_k = $this->validate_roster_candidates_top_k( $raw_top_k, $request, 'top_k' );
+		$valid_top_k = $this->validate_roster_candidates_top_k( $raw_top_k );
 		if ( $valid_top_k instanceof WP_Error ) {
 			return $valid_top_k;
 		}

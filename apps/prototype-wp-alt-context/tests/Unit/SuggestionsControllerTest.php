@@ -898,14 +898,13 @@ class SuggestionsControllerTest extends TestCase
     }
 
     /**
-     * WP_REST_Server-equivalent has_valid_params: a validate_callback WP_Error
-     * is wrapped as rest_invalid_param (message under data.params.top_k).
-     * Schema type/min/max alone do not short-circuit; the route callback owns
-     * the invalid_top_k envelope.
+     * Invoke the roster-candidates route callback directly.
+     * No validate_callback is registered (guarded at testRegisterRoutesIncludesRosterCandidates),
+     * so WP_REST_Request::has_valid_params validates nothing and the route callback owns the 400.
      *
      * @param mixed $topK
      */
-    private function dispatchRosterCandidatesTopK($topK): \WP_REST_Response|\WP_Error
+    private function invokeRosterCandidatesRoute($topK): \WP_REST_Response|\WP_Error
     {
         $this->controller->register_routes();
         $definitions = array_values(array_filter(
@@ -916,41 +915,13 @@ class SuggestionsControllerTest extends TestCase
         $request = new WP_REST_Request('GET', '/acx/v1/recognition/clusters/cccccccc-dddd-eeee-ffff-000000000001/roster-candidates');
         $request->set_param('cluster_id', 'cccccccc-dddd-eeee-ffff-000000000001');
         $request->set_param('top_k', $topK);
-        $validate = $definitions[0]['args']['args']['top_k']['validate_callback'] ?? null;
-        if (is_callable($validate)) {
-            $valid = $validate($topK, $request, 'top_k');
-            if ($valid instanceof \WP_Error) {
-                return new \WP_Error(
-                    'rest_invalid_param',
-                    'Invalid parameter(s): top_k',
-                    [
-                        'status' => 400,
-                        'params' => ['top_k' => $valid->get_error_message()],
-                        'details' => [
-                            'top_k' => [
-                                'code' => $valid->get_error_code(),
-                                'message' => $valid->get_error_message(),
-                                'data' => $valid->get_error_data(),
-                            ],
-                        ],
-                    ]
-                );
-            }
-            if (false === $valid) {
-                return new \WP_Error(
-                    'rest_invalid_param',
-                    'Invalid parameter(s): top_k',
-                    ['status' => 400, 'params' => ['top_k' => 'Invalid parameter.']]
-                );
-            }
-        }
         return $this->controller->get_roster_candidates($request);
     }
 
     public function testDispatchRosterCandidatesInvalidTopKUsesSpecificError(): void
     {
         foreach ([-5, 0, 51, 'abc'] as $topK) {
-            $response = $this->dispatchRosterCandidatesTopK($topK);
+            $response = $this->invokeRosterCandidatesRoute($topK);
             $this->assertInstanceOf(\WP_Error::class, $response, 'top_k=' . var_export($topK, true));
             $this->assertSame('invalid_top_k', $response->get_error_code(), 'top_k=' . var_export($topK, true));
             $this->assertSame('top_k must be an integer between 1 and 50.', $response->get_error_message());
@@ -1436,6 +1407,13 @@ class SuggestionsControllerTest extends TestCase
         $this->assertArrayNotHasKey('total', (array) $response->get_error_data());
         $this->assertArrayNotHasKey('limit', (array) $response->get_error_data());
         $this->assertArrayNotHasKey('candidates', (array) $response->get_error_data());
+    }
+
+    public function testRosterCandidatesTopKValidatorIsNotPublicApi(): void
+    {
+        $method = new \ReflectionMethod(SuggestionsController::class, 'validate_roster_candidates_top_k');
+        $this->assertFalse($method->isPublic(), 'validator is internal; no validate_callback is registered');
+        $this->assertSame(1, $method->getNumberOfParameters());
     }
 
     public function testPythonWindowConstantMatchesPythonCapSource(): void

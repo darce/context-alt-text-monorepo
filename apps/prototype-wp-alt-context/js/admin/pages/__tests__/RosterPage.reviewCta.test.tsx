@@ -6,7 +6,6 @@ import type { RosterClusterCommitResponse, RosterEntry } from '../../api/rosterA
 import type { BatchAnalyzeResponse, ClusterSummary } from '../../api/recognition';
 import { useRecognitionCluster } from '../../hooks/useRecognitionHooks';
 import { useCreatePerson, useDeletePerson, useRosterEntries, useUpdatePerson } from '../../hooks/useRosterHooks';
-import { useClusterSelection } from '../../hooks/useClusterSelection';
 import { createMockMutation, createMockQuery } from '../../test-utils/mockHooks';
 import { RosterPage } from '../RosterPage';
 import { useClusterActions } from '../roster/hooks/useClusterActions';
@@ -39,10 +38,6 @@ vi.mock('../../hooks/useRosterHooks', () => ({
   useCreatePerson: vi.fn(),
   useUpdatePerson: vi.fn(),
   useDeletePerson: vi.fn(),
-}));
-
-vi.mock('../../hooks/useClusterSelection', () => ({
-  useClusterSelection: vi.fn(),
 }));
 
 vi.mock('../roster/hooks/useClusterMediaMap', () => ({
@@ -91,19 +86,6 @@ const clusterActionState = {
     mutate: vi.fn(),
     isPending: false,
   }),
-  bulkMergeMutation: createMockMutation<void, Error, { clusterIds: string[] }>({
-    mutate: vi.fn(),
-    mutateAsync: vi.fn(),
-    isPending: false,
-  }),
-  bulkDismissMutation: createMockMutation<void, Error, { clusterIds: string[] }>({
-    mutate: vi.fn(),
-    mutateAsync: vi.fn(),
-    isPending: false,
-  }),
-  bulkMergeProgress: null,
-  bulkMergeFailure: null,
-  clearBulkMergeFailure: vi.fn(),
   rescanGate: {
     disabled: false,
     'aria-disabled': undefined as true | undefined,
@@ -111,18 +93,6 @@ const clusterActionState = {
   },
   errorMessage: null,
   resetAll: vi.fn(),
-};
-
-const selectionState = {
-  selectedIds: new Set<string>(),
-  toggle: vi.fn(),
-  selectRange: vi.fn(),
-  selectAll: vi.fn(),
-  retainVisible: vi.fn(),
-  clear: vi.fn(),
-  isAllSelected: vi.fn(() => false),
-  isSelected: vi.fn(() => false),
-  count: 0,
 };
 
 const renderRosterPage = (route = '/'): ReturnType<typeof render> => {
@@ -155,7 +125,6 @@ describe('RosterPage workbench review CTA (UXW2-4 rail retirement)', () => {
     vi.mocked(useCreatePerson).mockReturnValue(createMockMutation({ mutate: vi.fn(), isPending: false }));
     vi.mocked(useUpdatePerson).mockReturnValue(createMockMutation({ mutate: vi.fn(), isPending: false }));
     vi.mocked(useDeletePerson).mockReturnValue(createMockMutation({ mutate: vi.fn(), isPending: false }));
-    vi.mocked(useClusterSelection).mockReturnValue(selectionState);
     vi.mocked(useClusterMediaMap).mockReturnValue({});
     vi.mocked(useClusterDragDrop).mockReturnValue(dragDropState);
     vi.mocked(useClusterActions).mockReturnValue(clusterActionState);

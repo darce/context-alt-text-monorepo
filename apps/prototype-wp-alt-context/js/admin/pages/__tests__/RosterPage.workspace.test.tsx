@@ -7,7 +7,6 @@ import type { RosterClusterCommitResponse, RosterEntry } from '../../api/rosterA
 import type { BatchAnalyzeResponse, ClusterSummary } from '../../api/recognition';
 import { useRecognitionCluster } from '../../hooks/useRecognitionHooks';
 import { useCreatePerson, useDeletePerson, useRosterEntries, useUpdatePerson } from '../../hooks/useRosterHooks';
-import { useClusterSelection } from '../../hooks/useClusterSelection';
 import { createMockMutation, createMockQuery } from '../../test-utils/mockHooks';
 import { RosterPage } from '../RosterPage';
 import { PersonWorkspacePanel } from '../roster/PersonWorkspacePanel';
@@ -37,10 +36,6 @@ vi.mock('../../hooks/useRosterHooks', () => ({
   useCreatePerson: vi.fn(),
   useUpdatePerson: vi.fn(),
   useDeletePerson: vi.fn(),
-}));
-
-vi.mock('../../hooks/useClusterSelection', () => ({
-  useClusterSelection: vi.fn(),
 }));
 
 vi.mock('../roster/hooks/useClusterMediaMap', () => ({
@@ -102,19 +97,6 @@ const clusterActionState = {
       isPending: false,
     },
   ),
-  bulkMergeMutation: createMockMutation<void, Error, { clusterIds: string[] }>({
-    mutate: vi.fn(),
-    mutateAsync: vi.fn().mockResolvedValue(undefined),
-    isPending: false,
-  }),
-  bulkDismissMutation: createMockMutation<void, Error, { clusterIds: string[] }>({
-    mutate: vi.fn(),
-    mutateAsync: vi.fn().mockResolvedValue(undefined),
-    isPending: false,
-  }),
-  bulkMergeProgress: null,
-  bulkMergeFailure: null,
-  clearBulkMergeFailure: vi.fn(),
   rescanGate: {
     disabled: false,
     'aria-disabled': undefined as true | undefined,
@@ -122,18 +104,6 @@ const clusterActionState = {
   },
   errorMessage: null,
   resetAll: vi.fn(),
-};
-
-const selectionState = {
-  selectedIds: new Set<string>(),
-  toggle: vi.fn(),
-  selectRange: vi.fn(),
-  selectAll: vi.fn(),
-  retainVisible: vi.fn(),
-  clear: vi.fn(),
-  isAllSelected: vi.fn(() => false),
-  isSelected: vi.fn(() => false),
-  count: 0,
 };
 
 const RouteStateProbe = (): React.JSX.Element => {
@@ -189,7 +159,6 @@ describe('RosterPage projection-aware workspace shell', () => {
   const mockedUseCreatePerson = vi.mocked(useCreatePerson);
   const mockedUseUpdatePerson = vi.mocked(useUpdatePerson);
   const mockedUseDeletePerson = vi.mocked(useDeletePerson);
-  const mockedUseClusterSelection = vi.mocked(useClusterSelection);
   const mockedUseClusterMediaMap = vi.mocked(useClusterMediaMap);
   const mockedUseClusterDragDrop = vi.mocked(useClusterDragDrop);
   const mockedUseClusterActions = vi.mocked(useClusterActions);
@@ -203,7 +172,6 @@ describe('RosterPage projection-aware workspace shell', () => {
     mockedUseCreatePerson.mockReturnValue(createMockMutation({ mutate: vi.fn(), isPending: false }));
     mockedUseUpdatePerson.mockReturnValue(createMockMutation({ mutate: vi.fn(), isPending: false }));
     mockedUseDeletePerson.mockReturnValue(createMockMutation({ mutate: vi.fn(), isPending: false }));
-    mockedUseClusterSelection.mockReturnValue(selectionState);
     mockedUseClusterMediaMap.mockReturnValue({});
     mockedUseClusterDragDrop.mockReturnValue(dragDropState);
     mockedUseClusterActions.mockReturnValue(clusterActionState);

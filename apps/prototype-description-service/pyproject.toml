@@ -243,6 +243,7 @@ markers = [
     "integration: marks tests as integration tests (require database)",
     "pg: marks tests requiring a local PostgreSQL (schema/RLS/matview behavior; skip when unreachable)",
     "timing: marks wall-clock-sensitive tests (latency budgets, expiry races); run serial via test-integration, excluded from the parallel fast lane",
+    "requires_surrogate_argv: C-locale child needs PEP 383 surrogate-escaped UTF-8 argv; skip when the host cannot produce it (AGT-06)",
 ]
 norecursedirs = [
     "apps/archived-recognition-service",

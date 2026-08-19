@@ -12,24 +12,17 @@ import sys
 from pathlib import Path
 from typing import Any
 
+import pytest
+
+from scene.tests.test_eval_harness_cli_stdio import (
+    _assert_child_ascii_locale,
+    _c_locale_child_env,
+    _enforce_surrogate_argv_marker,
+    apply_surrogate_argv_gate,
+)
 from scripts.eval_harness.report import ScoreVerdict
 
 _SERVICE_ROOT = Path(__file__).resolve().parents[2]
-_ASCII_LOCALE_ENV = {
-    "LC_ALL": "C",
-    "LANG": "C",
-    "PYTHONUTF8": "0",
-    "PYTHONCOERCECLOCALE": "0",
-}
-_ASCII_PARENT_KEYS = (
-    "LC_ALL",
-    "LANG",
-    "LC_CTYPE",
-    "LC_MESSAGES",
-    "LANGUAGE",
-    "PYTHONUTF8",
-    "PYTHONCOERCECLOCALE",
-)
 _CAFE_UTF8 = b"caf\xc3\xa9"
 _SURROGATE_LEAK = b"\\udc"
 
@@ -54,17 +47,14 @@ _cli.main(["fetch", "--manifest", "unused.json", "--keep", "1"])
 """
 
 
-def _c_locale_child_env() -> dict[str, str]:
-    env = os.environ.copy()
-    for key in _ASCII_PARENT_KEYS:
-        env.pop(key, None)
-    env.update(_ASCII_LOCALE_ENV)
-    extra = env.get("PYTHONPATH")
-    env["PYTHONPATH"] = str(_SERVICE_ROOT) + (os.pathsep + extra if extra else "")
-    return env
+@pytest.fixture(autouse=True)
+def _surrogate_argv_gate(request: pytest.FixtureRequest) -> None:
+    apply_surrogate_argv_gate(request)
 
 
 def _run_python_bytes(script: bytes, argv: list[bytes] | None = None) -> subprocess.CompletedProcess[bytes]:
+    _assert_child_ascii_locale()
+    _enforce_surrogate_argv_marker(argv)
     return subprocess.run(
         [os.fsencode(sys.executable), b"-c", script, *(argv or [])],
         cwd=os.fsencode(_SERVICE_ROOT),
@@ -161,6 +151,7 @@ def _adoption_compare_report() -> dict[str, Any]:
     }
 
 
+@pytest.mark.requires_surrogate_argv
 def test_compare_meet_or_beat_pass_line_prints_utf8_paths(tmp_path: Path) -> None:
     """MUT cli.py:2652 — unwrap either `_printable_path` on the PASS line -> red."""
     body = json.dumps(_adoption_compare_report()).encode("utf-8")
@@ -180,6 +171,7 @@ def test_compare_meet_or_beat_pass_line_prints_utf8_paths(tmp_path: Path) -> Non
     assert _SURROGATE_LEAK not in base_text, base_text
 
 
+@pytest.mark.requires_surrogate_argv
 def test_fetch_record_path_stdout_prints_utf8(tmp_path: Path) -> None:
     """MUT cli.py:955 — unwrap `print(_printable_path(record_path))` -> red."""
     out_dir = _cafe_named(tmp_path, b"out", suffix=b"")
@@ -192,3 +184,30 @@ def test_fetch_record_path_stdout_prints_utf8(tmp_path: Path) -> None:
     assert _CAFE_UTF8 in printed, printed
     assert _SURROGATE_LEAK not in printed, printed
     assert _SURROGATE_LEAK not in proc.stdout
+
+
+def test_stdout_module_uses_imported_c_locale_helpers() -> None:
+    """C-02 / TEST-15: no private C-locale env fork (sr-001)."""
+    import scene.tests.test_eval_harness_cli_stdio as stdio
+    import scene.tests.test_eval_harness_cli_stdout as stdout
+
+    assert stdout._c_locale_child_env is stdio._c_locale_child_env
+    assert stdout._assert_child_ascii_locale is stdio._assert_child_ascii_locale
+    assert not hasattr(stdout, "_ASCII_LOCALE_ENV")
+    assert not hasattr(stdout, "_ASCII_PARENT_KEYS")
+
+
+def test_run_python_bytes_invokes_imported_assert_child_ascii_locale(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """C-02: every stdout child process is gated by imported _assert_child_ascii_locale."""
+    calls: list[int] = []
+
+    def _spy() -> None:
+        calls.append(1)
+
+    monkeypatch.setattr(sys.modules[__name__], "_assert_child_ascii_locale", _spy)
+    proc = _run_python_bytes(b"import sys; sys.stdout.buffer.write(b'ok')")
+    assert calls == [1], "child runner never called imported _assert_child_ascii_locale (C-02)"
+    assert proc.returncode == 0
+    assert proc.stdout == b"ok"

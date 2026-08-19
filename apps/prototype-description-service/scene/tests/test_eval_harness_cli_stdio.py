@@ -32,6 +32,52 @@ _SURROGATE_LEAK = b"\\udc"
 _BACKSLASHREPLACE_LIE = b"\\xe9"
 
 
+_CURRENT_REQUEST: pytest.FixtureRequest | None = None
+
+
+def _argv_has_utf8_non_ascii(argv: list[bytes] | None) -> bool:
+    if not argv:
+        return False
+    for part in argv:
+        try:
+            text = part.decode("utf-8")
+        except UnicodeDecodeError:
+            continue
+        if any(ord(ch) > 127 for ch in text):
+            return True
+    return False
+
+
+def _enforce_surrogate_argv_marker(argv: list[bytes] | None) -> None:
+    """FAIL unmarked C-locale café-argv children (C-01 / sr-001 / PRINCIPLE 10)."""
+    if not _argv_has_utf8_non_ascii(argv):
+        return
+    req = _CURRENT_REQUEST
+    name = req.node.name if req is not None else "<no-pytest-request>"
+    marked = (
+        req is not None
+        and req.node.get_closest_marker("requires_surrogate_argv") is not None
+    )
+    if marked:
+        return
+    pytest.fail(
+        f"{name}: C-locale child with UTF-8 non-ASCII argv requires "
+        "@pytest.mark.requires_surrogate_argv (AGT-06 / PRINCIPLE 10); "
+        "a name substring is not a gate (sr-001)"
+    )
+
+
+def apply_surrogate_argv_gate(request: pytest.FixtureRequest) -> None:
+    """Fixture-time Darwin skip bound to the marker, not a test name (C-01)."""
+    global _CURRENT_REQUEST
+    _CURRENT_REQUEST = request
+    if request.node.get_closest_marker("requires_surrogate_argv") is None:
+        return
+    if _host_can_produce_surrogate_escaped_argv():
+        return
+    pytest.skip(_SURROGATE_ARGV_SKIP)
+
+
 def _run_python_bytes(
     script: bytes,
     argv: list[bytes] | None = None,
@@ -39,6 +85,7 @@ def _run_python_bytes(
     cwd: bytes | None = None,
 ) -> subprocess.CompletedProcess[bytes]:
     _assert_child_ascii_locale()
+    _enforce_surrogate_argv_marker(argv)
     env = _c_locale_child_env()
     # load_manifest may warn with the raw argv path (manifest.py; not this lane).
     env["PYTHONWARNINGS"] = "ignore"
@@ -92,11 +139,7 @@ def _host_can_produce_surrogate_escaped_argv() -> bool:
 def _skip_c_parent_when_host_cannot_surrogate_escape_argv(
     request: pytest.FixtureRequest,
 ) -> None:
-    if "under_c_parent" not in request.node.name:
-        return
-    if _host_can_produce_surrogate_escaped_argv():
-        return
-    pytest.skip(_SURROGATE_ARGV_SKIP)
+    apply_surrogate_argv_gate(request)
 
 
 def _documented_round_trip(rendered: str) -> bytes:
@@ -217,6 +260,7 @@ def _draw_argv(manifest: Path, out: bytes, *, extra: list[bytes] | None = None) 
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.requires_surrogate_argv
 def test_score_missing_non_ascii_run_record_stderr_is_utf8_under_c_parent(tmp_path: Path) -> None:
     """score: missing café record prints real UTF-8 path bytes on stderr."""
     man = tmp_path / "man.json"
@@ -237,6 +281,7 @@ def test_score_missing_non_ascii_run_record_stderr_is_utf8_under_c_parent(tmp_pa
     assert _SURROGATE_LEAK not in proc.stderr
 
 
+@pytest.mark.requires_surrogate_argv
 def test_score_face_missing_non_ascii_run_record_stderr_is_utf8_under_c_parent(
     tmp_path: Path,
 ) -> None:
@@ -259,6 +304,7 @@ def test_score_face_missing_non_ascii_run_record_stderr_is_utf8_under_c_parent(
     assert _SURROGATE_LEAK not in proc.stderr
 
 
+@pytest.mark.requires_surrogate_argv
 def test_draw_eval_split_missing_non_ascii_exposure_stderr_is_utf8_under_c_parent(
     tmp_path: Path,
 ) -> None:
@@ -284,6 +330,7 @@ def test_draw_eval_split_missing_non_ascii_exposure_stderr_is_utf8_under_c_paren
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.requires_surrogate_argv
 def test_score_face_stdout_prints_printable_non_ascii_md_path(tmp_path: Path) -> None:
     """MUT b: print(md_path) without _printable_path must go red (TEST-15)."""
     from scene.tests.test_eval_harness_cli import _valid_face_manifest_and_record
@@ -310,6 +357,7 @@ def test_score_face_stdout_prints_printable_non_ascii_md_path(tmp_path: Path) ->
     assert _BACKSLASHREPLACE_LIE not in proc.stdout
 
 
+@pytest.mark.requires_surrogate_argv
 def test_draw_eval_split_stdout_prints_printable_non_ascii_out_path(tmp_path: Path) -> None:
     """MUT c: print(out) without _printable_path must go red (TEST-15)."""
     man = _tiny_split_manifest(tmp_path)
@@ -322,6 +370,7 @@ def test_draw_eval_split_stdout_prints_printable_non_ascii_out_path(tmp_path: Pa
     assert _BACKSLASHREPLACE_LIE not in proc.stdout
 
 
+@pytest.mark.requires_surrogate_argv
 def test_score_audience_public_stdout_prints_printable_non_ascii_public_md(
     tmp_path: Path,
 ) -> None:
@@ -453,6 +502,7 @@ def test_reconfigure_stdio_still_zero_arg_and_sets_utf8(monkeypatch: pytest.Monk
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.requires_surrogate_argv
 def test_run_score_gate_non_ascii_record_stderr_is_utf8_under_c_parent(tmp_path: Path) -> None:
     """MUT 2011: unwrap _printable_path(record_path) on RUN_RECORD stderr -> red."""
     cafe_rec = _cafe_named(tmp_path, b"rec")
@@ -463,6 +513,7 @@ def test_run_score_gate_non_ascii_record_stderr_is_utf8_under_c_parent(tmp_path:
     assert _SURROGATE_LEAK not in proc.stderr
 
 
+@pytest.mark.requires_surrogate_argv
 def test_draw_check_missing_non_ascii_sealed_split_stderr_is_utf8_under_c_parent(
     tmp_path: Path,
 ) -> None:
@@ -476,6 +527,7 @@ def test_draw_check_missing_non_ascii_sealed_split_stderr_is_utf8_under_c_parent
     assert _SURROGATE_LEAK not in proc.stderr
 
 
+@pytest.mark.requires_surrogate_argv
 def test_draw_check_non_object_non_ascii_sealed_split_stderr_is_utf8_under_c_parent(
     tmp_path: Path,
 ) -> None:
@@ -491,6 +543,7 @@ def test_draw_check_non_object_non_ascii_sealed_split_stderr_is_utf8_under_c_par
     assert _SURROGATE_LEAK not in proc.stderr
 
 
+@pytest.mark.requires_surrogate_argv
 def test_draw_check_cannot_read_non_ascii_manifest_stderr_is_utf8_under_c_parent(
     tmp_path: Path,
 ) -> None:
@@ -507,6 +560,7 @@ def test_draw_check_cannot_read_non_ascii_manifest_stderr_is_utf8_under_c_parent
     assert _SURROGATE_LEAK not in proc.stderr
 
 
+@pytest.mark.requires_surrogate_argv
 def test_draw_refuse_overwrite_non_ascii_sealed_split_stderr_is_utf8_under_c_parent(
     tmp_path: Path,
 ) -> None:
@@ -522,6 +576,7 @@ def test_draw_refuse_overwrite_non_ascii_sealed_split_stderr_is_utf8_under_c_par
     assert _SURROGATE_LEAK not in proc.stderr
 
 
+@pytest.mark.requires_surrogate_argv
 def test_draw_cannot_read_non_ascii_manifest_stderr_is_utf8_under_c_parent(
     tmp_path: Path,
 ) -> None:
@@ -539,6 +594,7 @@ def test_draw_cannot_read_non_ascii_manifest_stderr_is_utf8_under_c_parent(
     assert not (tmp_path / "split.json").exists()
 
 
+@pytest.mark.requires_surrogate_argv
 def test_draw_cannot_write_non_ascii_sealed_split_stderr_is_utf8_under_c_parent(
     tmp_path: Path,
 ) -> None:
@@ -561,6 +617,7 @@ def test_draw_cannot_write_non_ascii_sealed_split_stderr_is_utf8_under_c_parent(
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.requires_surrogate_argv
 def test_run_score_gate_summary_non_ascii_record_is_utf8_under_c_parent(tmp_path: Path) -> None:
     """MUT L-04: raw record_path in gate_failures.append -> summary leaks / no café."""
     ascii_rec = os.fsencode(tmp_path / "rec-ascii.json")
@@ -577,6 +634,7 @@ def test_run_score_gate_summary_non_ascii_record_is_utf8_under_c_parent(tmp_path
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.requires_surrogate_argv
 def test_draw_cannot_write_non_ascii_exc_tail_has_no_surrogate_under_c_parent(
     tmp_path: Path,
 ) -> None:
@@ -700,3 +758,84 @@ def test_score_missing_latin1_run_record_stderr_uses_undecodable_prefix(
     assert rendered.startswith(_UNDECODABLE_PATH_PREFIX.encode("ascii"))
     assert b"\\xe9" in rendered
     assert _documented_round_trip(rendered.decode("ascii")) == missing
+
+
+# ---------------------------------------------------------------------------
+# Lane B — VLM6-RV16-C-01: marker gate, not a name substring (PRINCIPLE 10)
+# ---------------------------------------------------------------------------
+
+
+def test_c01_autouse_does_not_key_on_under_c_parent_substring() -> None:
+    """C-01 / PRINCIPLE 10: a rename must not drop the Darwin skip."""
+    src = Path(__file__).read_text(encoding="utf-8")
+    start = src.index("def apply_surrogate_argv_gate")
+    end = src.index("\ndef ", start + 1)
+    body = src[start:end]
+    assert "under_c_parent" not in body
+    assert "requires_surrogate_argv" in body
+    assert "@pytest.mark.requires_surrogate_argv" in src
+
+
+def test_c01_requires_surrogate_argv_marker_registered(pytestconfig: pytest.Config) -> None:
+    """C-01: the marker is a real registered pytest marker, not a comment."""
+    markers = pytestconfig.getini("markers")
+    assert any(str(m).startswith("requires_surrogate_argv") for m in markers), markers
+
+
+def test_c01_under_c_parent_tests_carry_the_marker() -> None:
+    """C-01: every leftover *_under_c_parent name is also explicitly marked."""
+    this = sys.modules[__name__]
+    missing: list[str] = []
+    for name, obj in list(this.__dict__.items()):
+        if not name.startswith("test_") or name.startswith("test_c01_"):
+            continue
+        if "under_c_parent" not in name:
+            continue
+        marks = getattr(obj, "pytestmark", [])
+        if not isinstance(marks, list):
+            marks = [marks]
+        if not any(getattr(m, "name", None) == "requires_surrogate_argv" for m in marks):
+            missing.append(name)
+    assert missing == []
+
+
+def test_c01_unmarked_utf8_cafe_argv_fails_enforcement(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Round 16 rename: unmarked café argv must FAIL, not pass (sr-001)."""
+
+    class _Node:
+        name = "test_score_missing_non_ascii_run_record_stderr_is_utf8_c_locale"
+
+        def get_closest_marker(self, name: str) -> object | None:
+            return None
+
+    class _Req:
+        node = _Node()
+
+    monkeypatch.setattr(sys.modules[__name__], "_CURRENT_REQUEST", _Req())
+    with pytest.raises(pytest.fail.Exception, match="requires_surrogate_argv"):
+        _enforce_surrogate_argv_marker([b"score", b"caf\xc3\xa9.json"])
+
+
+def test_c01_marked_rename_skips_when_probe_false(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Round 16: force probe False + rename; marker still SKIPS (AGT-06)."""
+
+    class _Node:
+        name = "test_score_missing_non_ascii_run_record_stderr_is_utf8_c_locale"
+
+        def get_closest_marker(self, name: str) -> object | None:
+            return object() if name == "requires_surrogate_argv" else None
+
+    class _Req:
+        node = _Node()
+
+    monkeypatch.setattr(
+        sys.modules[__name__],
+        "_host_can_produce_surrogate_escaped_argv",
+        lambda: False,
+    )
+    with pytest.raises(pytest.skip.Exception, match="PEP 383"):
+        apply_surrogate_argv_gate(_Req())  # type: ignore[arg-type]

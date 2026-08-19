@@ -2749,6 +2749,98 @@ describe('ReviewQueue', () => {
     expect(live.textContent).not.toContain('All caught up');
   });
 
+  it('R8-01: zero-evidence-only page panel and queue announce the same non-elsewhere claim', async () => {
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [],
+      limit: 10,
+      offset: 0,
+    });
+    vi.mocked(fetchTopUnlabeledClusters).mockResolvedValue({
+      clusters: [
+        {
+          id: 'zero-1',
+          tenant_id: 'test-tenant-id',
+          label: null,
+          is_labeled: false,
+          is_auto_label: true,
+          identity_count: 0,
+          user_confirmed: false,
+          suggested_label: null,
+          suggested_target_cluster_id: null,
+          representatives: [{ id: 'rep-zero-1', media_id: 1, is_pinned: false }],
+        },
+        {
+          id: 'zero-2',
+          tenant_id: 'test-tenant-id',
+          label: null,
+          is_labeled: false,
+          is_auto_label: true,
+          identity_count: 0,
+          user_confirmed: false,
+          suggested_label: null,
+          suggested_target_cluster_id: null,
+          representatives: [{ id: 'rep-zero-2', media_id: 2, is_pinned: false }],
+        },
+        {
+          id: 'zero-3',
+          tenant_id: 'test-tenant-id',
+          label: null,
+          is_labeled: false,
+          is_auto_label: true,
+          identity_count: 0,
+          user_confirmed: false,
+          suggested_label: null,
+          suggested_target_cluster_id: null,
+          representatives: [{ id: 'rep-zero-3', media_id: 3, is_pinned: false }],
+        },
+      ],
+      limit: 20,
+      total: 7,
+      truncated: false,
+      singleton_count: 0,
+      data_source: DATA_SOURCE.LOCAL_PROJECTION,
+    });
+
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, retryDelay: 0 } },
+    });
+    const { container } = render(
+      withQueueProviders(
+        queryClient,
+        <>
+          <WorkbenchFindingsPanel onTargetFindings={vi.fn()} />
+          <ReviewQueueHarness />
+        </>,
+      ),
+    );
+
+    await screen.findByTestId('acx-review-queue-repair');
+    await waitFor(() => {
+      expect(document.getElementById('acx-findings-panel-repair-copy')).toHaveTextContent(
+        '3 groups missing face data',
+      );
+      expect(container.querySelector('.acx-review-queue__live')).toHaveTextContent(
+        '3 groups missing face data',
+      );
+    });
+
+    const panelClaim = (document.getElementById('acx-findings-panel-repair-copy')?.textContent ?? '')
+      .replace(/\s+/g, ' ')
+      .trim();
+    const queueLiveClaim = (container.querySelector('.acx-review-queue__live')?.textContent ?? '').trim();
+    const queueVisualClaim = (document.getElementById('acx-review-queue-repair-copy')?.textContent ?? '')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+    expect(panelClaim).toBe('3 groups missing face data');
+    expect(queueLiveClaim).toBe('3 groups missing face data');
+    expect(queueVisualClaim).toBe('3 groups missing face data');
+    expect(panelClaim).toBe(queueLiveClaim);
+    expect(panelClaim).toBe(queueVisualClaim);
+    expect(panelClaim).not.toMatch(/elsewhere/);
+    expect(queueLiveClaim).not.toMatch(/elsewhere/);
+  });
+
   it('R5-02: the repair-empty page does not claim groups are on this page', async () => {
     vi.mocked(fetchPendingSuggestions).mockResolvedValue({
       suggestions: [],

@@ -424,13 +424,14 @@ export const WorkbenchFindingsPanel = ({
                 {gatedClusterCopy(
                   // DATA-14 / rg-015: unlabeledClusters is server-wide.
                   // repairGatedCount's fallback is honest only when this
-                  // surface served nothing (elsewhere). Do not Math.max
-                  // previews with page zeros — that invents a served length.
+                  // surface served no gated clusters. Evidence-preview
+                  // length is the wrong servedCount — zeros are the gated
+                  // groups, and they can be on this page with no chips.
                   previews.length === 0
                     ? repairGatedCount(zeroEvidenceClusterCount, counts.unlabeledClusters)
                     : zeroEvidenceClusterCount,
                   topUnlabeledTruncated,
-                  previews.length,
+                  zeroEvidenceClusterCount,
                 )}
               </p>
               <p className="acx-findings-panel__hint">

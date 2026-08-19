@@ -291,7 +291,8 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
     const [retrying, setRetrying] = React.useState(false);
     const [retryFailed, setRetryFailed] = React.useState(false);
     const previousItemKeyRef = React.useRef<string | null>(null);
-    const repairAnnouncedRef = React.useRef<string | null>(null);
+    const repairAnnouncedRef = React.useRef(false);
+    const repairAnnouncedMessageRef = React.useRef<string | null>(null);
     const pendingFocusAfterRemovalRef = React.useRef(false);
 
     const filter: ReviewQueueFilter = kindParamToFilter(kind);
@@ -570,7 +571,8 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
           );
         }
         previousItemKeyRef.current = currentKey;
-        repairAnnouncedRef.current = null;
+        repairAnnouncedRef.current = false;
+        repairAnnouncedMessageRef.current = null;
         if (pendingFocusAfterRemovalRef.current) {
           pendingFocusAfterRemovalRef.current = false;
           requestAnimationFrame(() => focusPrimaryInCard());
@@ -579,39 +581,64 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
       }
 
       if (!currentKey) {
-        previousItemKeyRef.current = null;
-        // UI-04: drain copy is for a successful empty only — projection failure
-        // must announce the error, not "all caught up" (RLSE-05 / A11Y).
-        // [rg-003] the outage must not silence the filtered-empty announcement:
-        // when filters hide real work, AT hears both the failure and the hint
-        // that an escape hatch exists, matching the visual (both are rendered).
-        // R8-02 / A11Y-21: latch the announced sentence, not a boolean, so a
-        // count or wording change re-fires and an identical rerender stays quiet.
-        const nextEmptyMessage = data.isTopUnlabeledError
-          ? filteredEmptyWithWork
-            ? `${__(REVIEW_QUEUE_TOP_UNLABELED_ERROR_MESSAGE, 'alt-context')} ${__(REVIEW_QUEUE_FILTERED_EMPTY_MESSAGE, 'alt-context')}`
-            : __(REVIEW_QUEUE_TOP_UNLABELED_ERROR_MESSAGE, 'alt-context')
-          : filteredEmptyWithWork
-            ? __(REVIEW_QUEUE_FILTERED_EMPTY_MESSAGE, 'alt-context')
-            : findings.repairPending
-              ? gatedClusterCopy(
-                  repairGatedCount(
-                    findings.zeroEvidenceClusterCount,
-                    findings.counts.unlabeledClusters,
-                  ),
-                  findings.topUnlabeledTruncated,
-                  topUnlabeledClusters.length,
-                )
-              : __(REVIEW_QUEUE_DRAIN_MESSAGE, 'alt-context');
-        if (repairAnnouncedRef.current !== nextEmptyMessage) {
-          setLiveMessage(nextEmptyMessage);
-          repairAnnouncedRef.current = nextEmptyMessage;
-        }
-        if (pendingFocusAfterRemovalRef.current) {
-          pendingFocusAfterRemovalRef.current = false;
-          requestAnimationFrame(() => {
-            emptyStateAnchorRef?.current?.focus({ preventScroll: true });
-          });
+        const repairCopy = findings.repairPending
+          ? gatedClusterCopy(
+              repairGatedCount(
+                findings.zeroEvidenceClusterCount,
+                findings.counts.unlabeledClusters,
+              ),
+              findings.topUnlabeledTruncated,
+              topUnlabeledClusters.length,
+            )
+          : null;
+        const repairCopyChanged =
+          repairCopy !== null &&
+          !data.isTopUnlabeledError &&
+          !filteredEmptyWithWork &&
+          repairAnnouncedMessageRef.current !== null &&
+          repairAnnouncedMessageRef.current !== repairCopy;
+        if (
+          previousItemKeyRef.current !== null ||
+          (findings.repairPending && !repairAnnouncedRef.current) ||
+          (!findings.repairPending && repairAnnouncedRef.current) ||
+          repairCopyChanged
+        ) {
+          previousItemKeyRef.current = null;
+          // UI-04: drain copy is for a successful empty only — projection failure
+          // must announce the error, not "all caught up" (RLSE-05 / A11Y).
+          // [rg-003] the outage must not silence the filtered-empty announcement:
+          // when filters hide real work, AT hears both the failure and the hint
+          // that an escape hatch exists, matching the visual (both are rendered).
+          // R8-02 / A11Y-21: latch the announced sentence, not only a boolean, so a
+          // count or wording change re-fires and an identical rerender stays quiet.
+          if (data.isTopUnlabeledError) {
+            const errorCopy = __(REVIEW_QUEUE_TOP_UNLABELED_ERROR_MESSAGE, 'alt-context');
+            const nextEmptyMessage = filteredEmptyWithWork
+              ? `${errorCopy} ${__(REVIEW_QUEUE_FILTERED_EMPTY_MESSAGE, 'alt-context')}`
+              : errorCopy;
+            setLiveMessage(nextEmptyMessage);
+            repairAnnouncedRef.current = findings.repairPending;
+            repairAnnouncedMessageRef.current = nextEmptyMessage;
+          } else if (filteredEmptyWithWork) {
+            const nextEmptyMessage = __(REVIEW_QUEUE_FILTERED_EMPTY_MESSAGE, 'alt-context');
+            setLiveMessage(nextEmptyMessage);
+            repairAnnouncedRef.current = findings.repairPending;
+            repairAnnouncedMessageRef.current = nextEmptyMessage;
+          } else if (findings.repairPending && repairCopy) {
+            setLiveMessage(repairCopy);
+            repairAnnouncedRef.current = true;
+            repairAnnouncedMessageRef.current = repairCopy;
+          } else {
+            setLiveMessage(__(REVIEW_QUEUE_DRAIN_MESSAGE, 'alt-context'));
+            repairAnnouncedRef.current = false;
+            repairAnnouncedMessageRef.current = null;
+          }
+          if (pendingFocusAfterRemovalRef.current) {
+            pendingFocusAfterRemovalRef.current = false;
+            requestAnimationFrame(() => {
+              emptyStateAnchorRef?.current?.focus({ preventScroll: true });
+            });
+          }
         }
       }
     }, [

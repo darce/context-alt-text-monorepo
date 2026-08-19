@@ -1313,8 +1313,11 @@ class SuggestionsControllerTest extends TestCase
 
     public function testGetRosterCandidatesTieBreaksEqualSimilarityByClusterIdAsc(): void
     {
-        $zed = 'zzzzzzzz-0000-0000-0000-00000000000z';
+        $far = 'ffffffff-0000-0000-0000-00000000000f';
         $ann = 'aaaaaaaa-0000-0000-0000-00000000000a';
+        foreach ([$far, $ann] as $id) {
+            $this->assertMatchesRegularExpression('/^[a-f0-9-]+$/', $id, 'fixture id must match the route regex');
+        }
         $this->queueHttpResponse([
             'response' => ['code' => 200, 'message' => 'OK'],
             'body' => json_encode([
@@ -1330,7 +1333,7 @@ class SuggestionsControllerTest extends TestCase
                     'similarity_threshold' => 0.55,
                 ],
                 'candidates' => [
-                    ['cluster_id' => $zed, 'name' => 'Zed-c', 'similarity' => 0.80, 'band' => 'strong'],
+                    ['cluster_id' => $far, 'name' => 'Far-c', 'similarity' => 0.80, 'band' => 'strong'],
                     ['cluster_id' => $ann, 'name' => 'Ann-c', 'similarity' => 0.80, 'band' => 'strong'],
                 ],
             ], JSON_THROW_ON_ERROR),
@@ -1338,7 +1341,7 @@ class SuggestionsControllerTest extends TestCase
 
         global $wpdb;
         $wpdb->mockResults = [
-            ['cluster_uuid' => $zed, 'person_id' => 10, 'name' => 'Zed'],
+            ['cluster_uuid' => $far, 'person_id' => 10, 'name' => 'Far'],
             ['cluster_uuid' => $ann, 'person_id' => 11, 'name' => 'Ann'],
         ];
 
@@ -1350,7 +1353,7 @@ class SuggestionsControllerTest extends TestCase
         $data = $response->get_data();
 
         $this->assertSame(
-            [$ann, $zed],
+            [$ann, $far],
             array_column($data['candidates'], 'cluster_id')
         );
         $this->assertSame([11, 10], array_column($data['candidates'], 'roster_entry_id'));

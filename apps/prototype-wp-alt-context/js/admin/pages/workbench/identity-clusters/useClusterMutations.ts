@@ -47,16 +47,14 @@ export const useClusterMutations = ({
   const queryClient = useQueryClient();
 
   const invalidateQueries = useCallback(() => {
-    void queryClient.invalidateQueries({ queryKey: queryKeys.media.identities(), refetchType: 'none' });
-    void queryClient.invalidateQueries({ queryKey: queryKeys.clusters.labels(), refetchType: 'none' });
-    void queryClient.invalidateQueries({ queryKey: queryKeys.clusters.all, refetchType: 'none' });
+    void queryClient.invalidateQueries({ queryKey: queryKeys.media.identities() });
+    void queryClient.invalidateQueries({ queryKey: queryKeys.clusters.labels() });
+    void queryClient.invalidateQueries({ queryKey: queryKeys.clusters.all });
     void queryClient.invalidateQueries({
       queryKey: queryKeys.suggestions.projection.all,
-      refetchType: 'none',
     });
     void queryClient.invalidateQueries({
       queryKey: queryKeys.suggestions.mergePending(),
-      refetchType: 'none',
     });
   }, [queryClient]);
 

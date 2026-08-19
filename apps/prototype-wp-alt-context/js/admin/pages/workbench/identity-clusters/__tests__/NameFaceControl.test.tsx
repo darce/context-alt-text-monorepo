@@ -8,6 +8,7 @@ import {
   NameFaceControl,
   normalizeNameFaceLabel,
   resolveNameFaceInput,
+  type NameFaceResolution,
 } from '../NameFaceControl';
 import { namingOptionValue } from '../buildNamingOptions';
 
@@ -64,7 +65,7 @@ const TypedNameFace = ({
   onCommit,
 }: {
   options?: readonly ComboboxOption[];
-  onCommit: ReturnType<typeof vi.fn>;
+  onCommit: (resolution: NameFaceResolution) => void;
 }): React.JSX.Element => {
   const [value, setValue] = React.useState('');
   return (
@@ -160,7 +161,7 @@ describe('NameFaceControl create-vs-bind (UXW2-3-R1-07)', () => {
       <NameFaceControl
         options={options}
         value="Gra"
-        onValueChange={onCommit}
+        onValueChange={vi.fn()}
         onCommit={onCommit}
         commitLabel="Save name"
         ariaLabel="Name this person"

@@ -84,6 +84,9 @@ by other lanes and are not yet covered by this list.
 |   - UMAP face-group scatter (2D projection of faces)       |
 |   - Face-group list / selection + NameFaceControl (queue)  |
 |   - Name this person (NameFaceControl) (forced_choice)     |
+|     z-name-curate states=[default,loading,empty,error,     |
+|     pending,suggestions-open,roster-error,ambiguous,       |
+|     overlay-closed]                                        |
 +------------------------------------------------------------+
 | ACTIONS                                                    |
 |   [PRIMARY] Run / refresh recognition + grouping -> job-p… |
@@ -251,15 +254,23 @@ flowchart TD
 
 ## Open questions
 
-- DEP: long-description has no data field yet (WorkbenchMediaItem has only altText). The long-description column depends on a new media schema field + REST + backend. Ship alt-text column first, long-description behind the field? [FORM]
-- DEP: no 2D projection data exists (only bbox + 3D head pose; 'embeddings' is banned UI vocab). The cluster-map scatter depends on a new backend 2D-projection endpoint. Ship left pane as cluster LIST first, scatter as fast-follow? [VIZ-01,VIZ-15]
-- Cluster-map label: user-facing name must avoid 'embeddings' (banned vocab) — 'cluster map' / 'face map'? [copy]
-- Selecting a cluster in the map/list: filter the right library pane, open the naming form, or both (coordinated views)? [VIZ-15]
-- Naming form ordering: adopt commit-before-reveal (operator judges before model candidates shown) or reveal-first? confirm-only logs agreement, not verification [HAI-15]
-- Endpoint switch (:10010 InsightFace 512d vs FIR/SFace 128d) changes embedding dimensionality server-side; do existing clusters invalidate + need re-projection on switch? [HAI-02]
-- Left/right min-width + left-collapse on narrow (<1100px) viewports; control collapses to a drawer, library stays reachable? [NAV-08,A11Y-08]
-- Alt-text vs long-description: two fixed columns or one expandable row-detail? column-width vs scannability [PERC-01,UI-04]
-- Bulk-describe cost preview granularity: per-image cost surfaced before start? [INT-07]
+- OPEN: long-description has no data field yet (media items have only alt text). Ship the alt-text column first, long-description behind a new field? [FORM]
+- OPEN: no 2D projection data exists (only bbox + 3D head pose). Ship the left pane as a face-group list first; scatter map is a fast-follow once a projection endpoint exists? [VIZ-01,VIZ-15]
+- RESOLVED: operator vocab is group / person / face — never cluster / identities / embeddings. Enforced by the banned-vocabulary sweep.
+- OPEN: Selecting a face group in the map/list: filter the right library pane, open the naming form, or both (coordinated views)? [VIZ-15]
+- RESOLVED: one naming surface (NameFaceControl) with a single-gesture Save name; overlay candidates and confirm share that control.
+- OPEN: Endpoint switch (InsightFace vs FIR/SFace) changes the recognition model server-side; do existing face groups invalidate and need a fresh grouping on switch? [HAI-02]
+- OPEN: Left/right min-width + left-collapse on narrow (<1100px) viewports; control collapses to a drawer, library stays reachable? [NAV-08,A11Y-08]
+- OPEN: Alt-text vs long-description: two fixed columns or one expandable row-detail? [PERC-01,UI-04]
+- OPEN: Bulk-describe cost preview granularity: per-image cost surfaced before start? [INT-07]
+
+## Parity index
+
+Zone ids: z-topbar z-left-host z-splitter z-right-host z-overlay-host z-endpoint z-recognition-controls z-cluster-umap z-cluster-list z-name-curate z-lib-filters z-lib-table z-lib-inline-edit z-lib-ai-suggest z-lib-actions z-conflict-list z-conflict-detail z-conflict-actions z-dl-list z-dl-actions z-roster-entry z-settings-form
+
+Action ids: act-run-recognition act-select-cluster act-name-cluster act-curate-cluster act-view-endpoint-settings act-edit-alt act-edit-desc act-accept-ai-caption act-bulk-describe act-open-conflicts act-open-dead-letter act-resolve-conflict act-retry-dead-letter act-discard-dead-letter act-goto-roster
+
+States (all zones): default loading empty error pending suggestions-open roster-error ambiguous overlay-closed first_time degraded offline edge_input
 
 ## Not doing
 

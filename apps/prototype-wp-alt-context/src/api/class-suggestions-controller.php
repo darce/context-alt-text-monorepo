@@ -38,6 +38,8 @@ class SuggestionsController extends AbstractRecognitionProxyController {
 	private const REQUEST_CLASS_POST_SCAN_READ = 'post_scan_read';
 	private const ROSTER_CANDIDATES_TOP_K_MIN = 1;
 	private const ROSTER_CANDIDATES_TOP_K_MAX = 50;
+	private const INVALID_TOP_K_CODE = 'invalid_top_k';
+	private const INVALID_TOP_K_MESSAGE = 'top_k must be an integer between 1 and 50.';
 
 	private ?ClustersReadRepository $clusters_read_repository;
 
@@ -218,12 +220,11 @@ class SuggestionsController extends AbstractRecognitionProxyController {
 				'permission_callback' => array( $this, 'can_manage_recognition' ),
 				'args'                => array(
 					'top_k' => array(
-						'type'              => 'integer',
-						'default'           => 10,
-						'minimum'           => self::ROSTER_CANDIDATES_TOP_K_MIN,
-						'maximum'           => self::ROSTER_CANDIDATES_TOP_K_MAX,
-						'validate_callback' => array( $this, 'validate_roster_candidates_top_k' ),
-						'description'       => 'Maximum ranked candidates to return (1-50). Forwarded verbatim; not absint-clamped.',
+						'type'        => 'integer',
+						'default'     => 10,
+						'minimum'     => self::ROSTER_CANDIDATES_TOP_K_MIN,
+						'maximum'     => self::ROSTER_CANDIDATES_TOP_K_MAX,
+						'description' => 'Maximum ranked candidates to return (1-50). Forwarded verbatim; not absint-clamped.',
 					),
 				),
 			)
@@ -351,7 +352,7 @@ class SuggestionsController extends AbstractRecognitionProxyController {
 
 	public function validate_roster_candidates_top_k( $value, $request, $param ): bool|WP_Error {
 		if ( ! is_numeric( $value ) ) {
-			return new WP_Error( 'invalid_top_k', 'top_k must be an integer between 1 and 50.', array( 'status' => 400 ) );
+			return $this->invalid_top_k_error();
 		}
 		$int = (int) $value;
 		if ( $int >= self::ROSTER_CANDIDATES_TOP_K_MIN
@@ -359,7 +360,11 @@ class SuggestionsController extends AbstractRecognitionProxyController {
 			&& (float) $value === (float) $int ) {
 			return true;
 		}
-		return new WP_Error( 'invalid_top_k', 'top_k must be an integer between 1 and 50.', array( 'status' => 400 ) );
+		return $this->invalid_top_k_error();
+	}
+
+	private function invalid_top_k_error(): WP_Error {
+		return new WP_Error( self::INVALID_TOP_K_CODE, self::INVALID_TOP_K_MESSAGE, array( 'status' => 400 ) );
 	}
 
 	public function get_roster_candidates( WP_REST_Request $request ): WP_REST_Response|WP_Error {
@@ -376,9 +381,6 @@ class SuggestionsController extends AbstractRecognitionProxyController {
 		$valid_top_k = $this->validate_roster_candidates_top_k( $raw_top_k, $request, 'top_k' );
 		if ( $valid_top_k instanceof WP_Error ) {
 			return $valid_top_k;
-		}
-		if ( ! $valid_top_k ) {
-			return new WP_Error( 'invalid_top_k', 'top_k must be an integer between 1 and 50.', array( 'status' => 400 ) );
 		}
 		$top_k = (int) $raw_top_k;
 

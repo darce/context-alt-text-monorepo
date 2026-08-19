@@ -1336,6 +1336,7 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
                         className="button"
                         onClick={() => void data.refetchTopUnlabeled()}
                         aria-describedby="acx-review-queue-repair-copy"
+                        aria-label={__('Resync review queue', 'alt-context')}
                       >
                         {__('Resync', 'alt-context')}
                       </button>

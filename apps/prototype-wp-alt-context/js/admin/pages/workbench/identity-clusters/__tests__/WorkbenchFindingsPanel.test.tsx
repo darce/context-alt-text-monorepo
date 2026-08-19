@@ -1164,7 +1164,7 @@ describe('WorkbenchFindingsPanel', () => {
 
     render(<WorkbenchFindingsPanel onTargetFindings={vi.fn()} />);
 
-    expect(screen.getByRole('button', { name: 'Resync' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^Resync findings$/ })).toBeInTheDocument();
     expect(
       screen.queryByText('No findings yet. Run a scan and new findings will appear here automatically.'),
     ).not.toBeInTheDocument();
@@ -1198,7 +1198,7 @@ describe('WorkbenchFindingsPanel', () => {
 
     expect(screen.getByText('2 groups missing face data')).toBeInTheDocument();
     expect(screen.getByText('They are hidden from review until their faces sync.')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Resync' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^Resync findings$/ })).toBeInTheDocument();
     expect(screen.getByText('1 unlabeled group')).toBeInTheDocument();
   });
 
@@ -1274,7 +1274,7 @@ describe('WorkbenchFindingsPanel', () => {
       screen.queryByText('No findings yet. Run a scan and new findings will appear here automatically.'),
     ).not.toBeInTheDocument();
     expect(screen.getByText('3 groups missing face data')).toBeInTheDocument();
-    await userEvent.click(screen.getByRole('button', { name: 'Resync' }));
+    await userEvent.click(screen.getByRole('button', { name: /^Resync findings$/ }));
     expect(refetchTopUnlabeled).toHaveBeenCalledTimes(1);
   });
 
@@ -1353,7 +1353,7 @@ describe('WorkbenchFindingsPanel', () => {
     const { container } = render(<WorkbenchFindingsPanel onTargetFindings={vi.fn()} />);
 
     expect(screen.getByText('3 groups missing face data')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Resync' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^Resync findings$/ })).toBeInTheDocument();
     expect(container.querySelector('[data-findings-state]')).toHaveAttribute(
       'data-findings-state',
       'data',
@@ -1482,13 +1482,13 @@ describe('WorkbenchFindingsPanel', () => {
     expect(liveRegions).toHaveLength(1);
     expect(liveRegions[0]).toHaveTextContent('2 groups missing face data');
     expect(liveRegions[0]).toHaveTextContent('1 to review');
-    expect(within(liveRegions[0]).queryByRole('button', { name: 'Resync' })).not.toBeInTheDocument();
+    expect(within(liveRegions[0]).queryByRole('button', { name: /^Resync findings$/ })).not.toBeInTheDocument();
     for (const region of liveRegions) {
       expect(within(region).queryByRole('button')).not.toBeInTheDocument();
       expect(within(region).queryByRole('link')).not.toBeInTheDocument();
     }
 
-    const resync = screen.getByRole('button', { name: 'Resync' });
+    const resync = screen.getByRole('button', { name: /^Resync findings$/ });
     expect(resync.closest('[role="status"]')).toBeNull();
     expect(resync).toHaveAttribute('aria-describedby', 'acx-findings-panel-repair-copy');
     const described = document.getElementById('acx-findings-panel-repair-copy');

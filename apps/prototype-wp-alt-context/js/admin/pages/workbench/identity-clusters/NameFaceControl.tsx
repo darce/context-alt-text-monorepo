@@ -471,6 +471,12 @@ export const NameFaceControl = ({
   const activeOptionId =
     overlayOpen && activeIndex >= 0 ? `${listboxId}-opt-${activeIndex}` : undefined;
 
+  const derivedSuggestionsHeader = displayedOptions.some(
+    (option) => option.group === NAMING_GROUP_SUGGESTED,
+  )
+    ? __('Suggested', 'alt-context')
+    : __('People', 'alt-context');
+
   return (
     <div className={className ?? classPrefix}>
       {visibleLabel && inputId ? (
@@ -510,7 +516,7 @@ export const NameFaceControl = ({
             aria-labelledby={`${listboxId}-label`}
           >
             <div className={`${classPrefix}__suggestions-header`} id={`${listboxId}-label`}>
-              {suggestionsHeader ?? __('Suggested', 'alt-context')}
+              {suggestionsHeader ?? derivedSuggestionsHeader}
             </div>
             {displayedOptions.map((option, index) => {
               const optionId = `${listboxId}-opt-${index}`;

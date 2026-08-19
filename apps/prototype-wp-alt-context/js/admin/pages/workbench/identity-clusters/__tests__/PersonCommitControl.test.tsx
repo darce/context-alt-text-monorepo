@@ -177,6 +177,19 @@ describe('PersonCommitControl single-gesture naming (UXW2-3)', () => {
     expect(screen.queryByText(MODEL_OUTPUT_DISCLOSURE)).not.toBeInTheDocument();
   });
 
+  it('overlay header is People on a roster-only list (UXW2-3-R1-16b)', async () => {
+    renderControl({}, [rosterEntry(42, 'Alex Carter')]);
+    await screen.findByRole('option', { name: /Alex Carter/ });
+    expect(screen.getByText('People')).toBeInTheDocument();
+    expect(screen.queryByText('Suggested')).not.toBeInTheDocument();
+  });
+
+  it('omits whitespace-only roster names via buildNamingOptions (UXW2-3-R1-07)', async () => {
+    renderControl({}, [rosterEntry(42, 'Alex Carter'), rosterEntry(7, '   ')]);
+    await screen.findByRole('option', { name: /Alex Carter/ });
+    expect(screen.getAllByRole('option')).toHaveLength(1);
+  });
+
   it('prefills a suggested create name and Enter commits it', async () => {
     const { onCommit } = renderControl({ suggestedCreateName: 'Pat Rivera' });
     const user = userEvent.setup();

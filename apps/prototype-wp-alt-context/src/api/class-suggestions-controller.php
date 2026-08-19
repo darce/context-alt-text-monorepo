@@ -226,7 +226,7 @@ class SuggestionsController extends AbstractRecognitionProxyController {
 						'default'     => 10,
 						'minimum'     => self::ROSTER_CANDIDATES_TOP_K_MIN,
 						'maximum'     => self::ROSTER_CANDIDATES_TOP_K_MAX,
-						'description' => 'People-grain cap after PHP collapse (1-50). Not forwarded; PHP always fetches the Python cluster-grain window ROSTER_CANDIDATES_PYTHON_WINDOW.',
+						'description' => 'People-grain cap (1-50) applied after PHP collapses upstream cluster rows to one row per roster person. Not forwarded upstream: PHP always requests the full 50-row cluster-grain window.',
 					),
 				),
 			)

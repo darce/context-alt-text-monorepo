@@ -1213,6 +1213,111 @@ class SuggestionsControllerTest extends TestCase
         $this->assertSame('Bob', $data['candidates'][1]['name']);
     }
 
+    public function testGetRosterCandidatesReordersAndSlicesOutOfOrderPythonWindow(): void
+    {
+        $dave = 'dddddddd-0000-0000-0000-000000000004';
+        $bob = 'bbbbbbbb-0000-0000-0000-000000000002';
+        $carol = 'cccccccc-0000-0000-0000-000000000003';
+        $aliceLow = 'aaaaaaaa-0000-0000-0000-00000000000a';
+        $aliceHigh = 'aaaaaaaa-0000-0000-0000-00000000000b';
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => json_encode([
+                'model_id' => 'opencv-sface+cv5@128d/l2/cosine',
+                'embedding_model' => 'opencv-sface+cv5@128d/l2/cosine',
+                'computed_at' => '2026-08-18T12:00:00+00:00',
+                'probe_face_count' => 1,
+                'reference_face_count' => 5,
+                'quality_flag' => 'ok',
+                'thresholds' => [
+                    'suggestion_floor' => 0.35,
+                    'suggestion_ceiling' => 0.55,
+                    'similarity_threshold' => 0.55,
+                ],
+                'candidates' => [
+                    ['cluster_id' => $dave, 'name' => 'Dave-c', 'similarity' => 0.40, 'band' => 'possible'],
+                    ['cluster_id' => $bob, 'name' => 'Bob-c', 'similarity' => 0.89, 'band' => 'strong'],
+                    ['cluster_id' => $carol, 'name' => 'Carol-c', 'similarity' => 0.70, 'band' => 'strong'],
+                    ['cluster_id' => $aliceLow, 'name' => 'Alice-low', 'similarity' => 0.50, 'band' => 'possible'],
+                    ['cluster_id' => $aliceHigh, 'name' => 'Alice-high', 'similarity' => 0.91, 'band' => 'strong'],
+                ],
+            ], JSON_THROW_ON_ERROR),
+        ]);
+
+        global $wpdb;
+        $wpdb->mockResults = [
+            ['cluster_uuid' => $dave, 'person_id' => 4, 'name' => 'Dave'],
+            ['cluster_uuid' => $bob, 'person_id' => 2, 'name' => 'Bob'],
+            ['cluster_uuid' => $carol, 'person_id' => 3, 'name' => 'Carol'],
+            ['cluster_uuid' => $aliceLow, 'person_id' => 1, 'name' => 'Alice'],
+            ['cluster_uuid' => $aliceHigh, 'person_id' => 1, 'name' => 'Alice'],
+        ];
+
+        $request = new WP_REST_Request('GET', '/acx/v1/recognition/clusters/cccccccc-dddd-eeee-ffff-000000000001/roster-candidates');
+        $request->set_param('cluster_id', 'cccccccc-dddd-eeee-ffff-000000000001');
+        $request->set_param('top_k', 2);
+
+        $response = $this->controller->get_roster_candidates($request);
+        $data = $response->get_data();
+
+        $this->assertCount(2, $data['candidates']);
+        $this->assertSame(
+            [1, 2],
+            array_column($data['candidates'], 'roster_entry_id')
+        );
+        $this->assertSame(
+            [$aliceHigh, $bob],
+            array_column($data['candidates'], 'cluster_id')
+        );
+        $this->assertSame([0.91, 0.89], array_column($data['candidates'], 'similarity'));
+        $this->assertSame(['Alice', 'Bob'], array_column($data['candidates'], 'name'));
+    }
+
+    public function testGetRosterCandidatesTieBreaksEqualSimilarityByClusterIdAsc(): void
+    {
+        $zed = 'zzzzzzzz-0000-0000-0000-00000000000z';
+        $ann = 'aaaaaaaa-0000-0000-0000-00000000000a';
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => json_encode([
+                'model_id' => 'opencv-sface+cv5@128d/l2/cosine',
+                'embedding_model' => 'opencv-sface+cv5@128d/l2/cosine',
+                'computed_at' => '2026-08-18T12:00:00+00:00',
+                'probe_face_count' => 1,
+                'reference_face_count' => 2,
+                'quality_flag' => 'ok',
+                'thresholds' => [
+                    'suggestion_floor' => 0.35,
+                    'suggestion_ceiling' => 0.55,
+                    'similarity_threshold' => 0.55,
+                ],
+                'candidates' => [
+                    ['cluster_id' => $zed, 'name' => 'Zed-c', 'similarity' => 0.80, 'band' => 'strong'],
+                    ['cluster_id' => $ann, 'name' => 'Ann-c', 'similarity' => 0.80, 'band' => 'strong'],
+                ],
+            ], JSON_THROW_ON_ERROR),
+        ]);
+
+        global $wpdb;
+        $wpdb->mockResults = [
+            ['cluster_uuid' => $zed, 'person_id' => 10, 'name' => 'Zed'],
+            ['cluster_uuid' => $ann, 'person_id' => 11, 'name' => 'Ann'],
+        ];
+
+        $request = new WP_REST_Request('GET', '/acx/v1/recognition/clusters/cccccccc-dddd-eeee-ffff-000000000001/roster-candidates');
+        $request->set_param('cluster_id', 'cccccccc-dddd-eeee-ffff-000000000001');
+        $request->set_param('top_k', 2);
+
+        $response = $this->controller->get_roster_candidates($request);
+        $data = $response->get_data();
+
+        $this->assertSame(
+            [$ann, $zed],
+            array_column($data['candidates'], 'cluster_id')
+        );
+        $this->assertSame([11, 10], array_column($data['candidates'], 'roster_entry_id'));
+    }
+
     public function testGetRosterCandidatesRejectsInvalidTopKWithoutSignFlip(): void
     {
         $request = new WP_REST_Request('GET', '/acx/v1/recognition/clusters/cccccccc-dddd-eeee-ffff-000000000001/roster-candidates');

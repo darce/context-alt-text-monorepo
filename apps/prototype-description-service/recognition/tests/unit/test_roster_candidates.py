@@ -15,6 +15,7 @@ from recognition.application.suggestions.roster_candidates import (
     MAX_ROSTER_CANDIDATES_TOP_K,
     QualityFlag,
     SimilarityBand,
+    _quality_flag_from_samples,
     band_for,
     list_roster_candidates,
 )
@@ -698,3 +699,8 @@ def test_php_python_window_matches_python_cap() -> None:
     m = re.search(r"ROSTER_CANDIDATES_PYTHON_WINDOW\s*=\s*(\d+)\s*;", php)
     assert m is not None, "PHP window constant not found"
     assert int(m.group(1)) == MAX_ROSTER_CANDIDATES_TOP_K
+
+
+def test_quality_flag_from_empty_samples_fails_closed() -> None:
+    settings = ClusteringSettings(fatal_quality_floor=0.20, fatal_confidence_floor=0.30)
+    assert _quality_flag_from_samples([], settings) is QualityFlag.LOW_QUALITY

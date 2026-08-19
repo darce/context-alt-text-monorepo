@@ -197,7 +197,7 @@ async def list_roster_candidates(
             computed_at=computed_at,
             probe_face_count=len(usable_probes),
             reference_face_count=0,
-            quality_flag=quality_flag if usable_probes else QualityFlag.LOW_QUALITY,
+            quality_flag=quality_flag,
             thresholds=thresholds,
             candidates=[],
         )

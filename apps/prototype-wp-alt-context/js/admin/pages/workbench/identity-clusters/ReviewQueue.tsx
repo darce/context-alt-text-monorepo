@@ -128,7 +128,6 @@ export interface ReviewQueueHandle {
 export interface ReviewQueueProps {
   /** Controlled queue index (lifted — survives panel unmount). */
   index: number;
-  onIndexChange: (index: number) => void;
   /**
    * Absolute clamp after queue length is known. Parent MUST dispatch
    * `CLAMP_INDEX` (not `SET_INDEX`) so NaN/negatives cannot wipe `rq`.
@@ -273,7 +272,6 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
   function ReviewQueue(
     {
       index,
-      onIndexChange: _onIndexChange,
       onClampIndex,
       onStepIndex,
       kind,

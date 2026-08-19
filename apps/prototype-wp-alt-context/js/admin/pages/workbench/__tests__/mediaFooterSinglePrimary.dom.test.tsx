@@ -187,7 +187,6 @@ const ReconciledViewport = ({
       ) : (
         <ReviewQueue
           index={index}
-          onIndexChange={setIndex}
           onClampIndex={setIndex}
           onStepIndex={(delta, length) => {
             setIndex((prev) => {

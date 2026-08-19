@@ -291,6 +291,7 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
     const [retrying, setRetrying] = React.useState(false);
     const [retryFailed, setRetryFailed] = React.useState(false);
     const previousItemKeyRef = React.useRef<string | null>(null);
+    const repairAnnouncedRef = React.useRef(false);
     const pendingFocusAfterRemovalRef = React.useRef(false);
 
     const filter: ReviewQueueFilter = kindParamToFilter(kind);
@@ -569,6 +570,7 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
           );
         }
         previousItemKeyRef.current = currentKey;
+        repairAnnouncedRef.current = false;
         if (pendingFocusAfterRemovalRef.current) {
           pendingFocusAfterRemovalRef.current = false;
           requestAnimationFrame(() => focusPrimaryInCard());
@@ -576,7 +578,10 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
         return;
       }
 
-      if (!currentKey && previousItemKeyRef.current !== null) {
+      if (
+        !currentKey &&
+        (previousItemKeyRef.current !== null || (findings.repairPending && !repairAnnouncedRef.current))
+      ) {
         previousItemKeyRef.current = null;
         // UI-04: drain copy is for a successful empty only — projection failure
         // must announce the error, not "all caught up" (RLSE-05 / A11Y).
@@ -601,6 +606,7 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
             findings.counts.unlabeledClusters,
           );
           setLiveMessage(gatedClusterCopy(gatedCount, findings.topUnlabeledTruncated, length));
+          repairAnnouncedRef.current = true;
         } else {
           setLiveMessage(__(REVIEW_QUEUE_DRAIN_MESSAGE, 'alt-context'));
         }

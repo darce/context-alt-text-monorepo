@@ -2763,6 +2763,69 @@ describe('ReviewQueue', () => {
     expect(screen.getByText('Position unavailable')).toBeInTheDocument();
   });
 
+  it('R5-04: an already-empty repair_pending mount announces the repair state', async () => {
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [],
+      limit: 10,
+      offset: 0,
+    });
+    vi.mocked(fetchTopUnlabeledClusters).mockResolvedValue({
+      clusters: [],
+      limit: 20,
+      total: 5,
+      truncated: true,
+      repair_pending: true,
+      singleton_count: 0,
+      data_source: DATA_SOURCE.LOCAL_PROJECTION,
+    });
+
+    const { container } = renderQueue();
+    await screen.findByTestId('acx-review-queue-repair');
+    const liveRegion = container.querySelector('.acx-review-queue__live');
+    expect(liveRegion).toBeTruthy();
+    expect(within(liveRegion as HTMLElement).getByText(/missing face data/i)).toBeInTheDocument();
+  });
+
+  it('R5-04: the repair-empty mount announces only once across a re-render', async () => {
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [],
+      limit: 10,
+      offset: 0,
+    });
+    vi.mocked(fetchTopUnlabeledClusters).mockResolvedValue({
+      clusters: [],
+      limit: 20,
+      total: 5,
+      truncated: true,
+      repair_pending: true,
+      singleton_count: 0,
+      data_source: DATA_SOURCE.LOCAL_PROJECTION,
+    });
+
+    const { container, queryClient } = renderQueue();
+    await screen.findByTestId('acx-review-queue-repair');
+    const liveRegion = () => container.querySelector('.acx-review-queue__live');
+    expect(within(liveRegion() as HTMLElement).getByText(/missing face data/i)).toBeInTheDocument();
+    const seq = liveRegion()?.getAttribute('data-announce-seq');
+
+    const topKey = queryKeys.clusters.topUnlabeled('test-tenant-id');
+    queryClient.setQueryData(topKey, {
+      clusters: [],
+      limit: 20,
+      total: 6,
+      truncated: true,
+      repair_pending: true,
+      singleton_count: 0,
+      data_source: DATA_SOURCE.LOCAL_PROJECTION,
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(within(liveRegion() as HTMLElement).getByText(/missing face data/i)).toBeInTheDocument();
+    expect(liveRegion()?.getAttribute('data-announce-seq')).toBe(seq);
+  });
+
   // REV2-08 / TEST-15: queue Retry must refetch name suggestions too.
   // Omitting data.refetchName() leaves this call count at the initial 1.
   it('REV2-08: error Retry refetches name suggestions with the other findings queries', async () => {

@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 
 import { useOverlayParam } from '../useOverlayParam';
 import { usePanesParam } from '../usePanesParam';
-import { resetPendingSearchWritesForTests } from '../useWorkbenchFilters';
+import { resetPendingSearchWritesForTests } from '../pendingSearchWrites';
 
 const wrapperForUrl =
   (url: string) =>

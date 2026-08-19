@@ -3,7 +3,7 @@ import { useSearchParams } from 'react-router-dom';
 import { getConfig } from '../../api/config';
 import { useTabParam } from '../../hooks/useTabParam';
 import { useOverlayParam } from '../../hooks/useOverlayParam';
-import { commitSearchParams } from '../../hooks/useWorkbenchFilters';
+import { commitSearchParams } from '../../hooks/pendingSearchWrites';
 import type { WorkbenchOverlay } from '../../api/recognition';
 import { APP_LINK_PARAMS, APP_LINK_VALUES } from '../../navigation/appLinks';
 

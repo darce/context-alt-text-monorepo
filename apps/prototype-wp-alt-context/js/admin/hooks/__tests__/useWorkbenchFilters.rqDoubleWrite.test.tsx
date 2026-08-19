@@ -3,7 +3,8 @@ import { act, renderHook } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { QUEUE_ACTION, resetPendingSearchWritesForTests, useWorkbenchFilters } from '../useWorkbenchFilters';
+import { resetPendingSearchWritesForTests } from '../pendingSearchWrites';
+import { QUEUE_ACTION, useWorkbenchFilters } from '../useWorkbenchFilters';
 
 const wrapperForUrl = (url: string) => ({ children }: { children: ReactNode }) => (
   <MemoryRouter initialEntries={[url]}>

@@ -6065,16 +6065,18 @@ def test_cmd_score_face_writes_utf8_report_under_c_locale(tmp_path):
 
 
 def test_cmd_score_non_ascii_run_record_path_under_c_locale(tmp_path):
-    """VLM6-RV12-L-03 / EVAL-10: print(md_path) must not crash ASCII stdout.
+    """VLM6-RV13-L-01 / L-02 / Q1-02: print(md_path) emits real UTF-8 path bytes.
 
-    cp the clean run record to run-café.json, score under C locale. After
-    reports land, print(md_path) raises UnicodeEncodeError on ASCII stdout
-    unless the CLI entry reconfigures stdout/stderr (errors=backslashreplace).
-    Reverting the reconfigure makes this test fail.
+    Fixture path is bytes so parent pytest under LC_ALL=C can still create it
+    (AGT-06: no skip). Child is captured in binary so the assertion cannot be
+    fooled by the parent's decoder. Printed path must be the real UTF-8
+    basename (OBS-08), not the backslashreplace lie.
     """
     manifest_path, record_path = _clean_score_manifest_and_record(tmp_path, stem="run-clean")
-    cafe_record = tmp_path / "run-café.json"
-    cafe_record.write_bytes(record_path.read_bytes())
+    dir_b = os.fsencode(tmp_path)
+    cafe_record_b = dir_b + b"/" + b"run-caf\xc3\xa9.json"
+    with open(cafe_record_b, "wb") as fh:
+        fh.write(record_path.read_bytes())
     # PYTHONIOENCODING=ascii forces errors=strict. C-locale pipes default to
     # surrogateescape, which would swallow print(md_path) of a non-ASCII stem.
     env = os.environ.copy()
@@ -6083,21 +6085,67 @@ def test_cmd_score_non_ascii_run_record_path_under_c_locale(tmp_path):
     env["PYTHONPATH"] = str(_SERVICE_ROOT) + (os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
     proc = subprocess.run(
         [
-            sys.executable,
-            "-c",
-            "import sys; from scripts.eval_harness.cli import main; main(sys.argv[1:])",
-            "score",
-            "--manifest",
-            str(manifest_path),
-            "--run-record",
-            str(cafe_record),
+            os.fsencode(sys.executable),
+            b"-c",
+            b"import sys; from scripts.eval_harness.cli import main; main(sys.argv[1:])",
+            b"score",
+            b"--manifest",
+            os.fsencode(manifest_path),
+            b"--run-record",
+            cafe_record_b,
         ],
-        cwd=str(_SERVICE_ROOT),
+        cwd=os.fsencode(_SERVICE_ROOT),
         env=env,
         capture_output=True,
-        text=True,
-        encoding="utf-8",
     )
     assert proc.returncode == 0, proc.stderr
-    assert (tmp_path / "run-café-report.json").exists()
-    assert (tmp_path / "run-café-report.md").exists()
+    md_path_basename = b"run-caf\xc3\xa9-report.md"
+    json_path_basename = b"run-caf\xc3\xa9-report.json"
+    assert os.path.exists(dir_b + b"/" + json_path_basename)
+    assert os.path.exists(dir_b + b"/" + md_path_basename)
+    # Path is the first line; a stats line follows, so strip() does not end
+    # with the basename. Pin the machine-consumable line (OBS-08 / L-02).
+    first_line = proc.stdout.splitlines()[0]
+    assert first_line.endswith(os.fsencode(md_path_basename))
+    assert b"run-caf\\xe9-report.md" not in proc.stdout
+
+
+def test_reconfigure_stdio_utf8_stdout_and_stderr(monkeypatch):
+    """VLM6-RV13-Q2-04 / TEST-15: both halves of the reconfigure loop are pinned.
+
+    In-process: ascii/strict TextIOWrappers, then _reconfigure_stdio(), then a
+    true Unicode write (not via argv). Underlying buffers must hold UTF-8
+    bytes, not the backslashreplace escape. MUT c (stdout-only loop) fails
+    the stderr half; MUT L-01 (drop encoding=utf-8) fails both; MUT b
+    (errors=strict) fails the errors pin.
+    """
+    import io
+
+    from scripts.eval_harness.cli import _reconfigure_stdio
+
+    stdout_buf = io.BytesIO()
+    stderr_buf = io.BytesIO()
+    fake_stdout = io.TextIOWrapper(stdout_buf, encoding="ascii", errors="strict", newline="")
+    fake_stderr = io.TextIOWrapper(stderr_buf, encoding="ascii", errors="strict", newline="")
+    monkeypatch.setattr(sys, "stdout", fake_stdout)
+    monkeypatch.setattr(sys, "stderr", fake_stderr)
+
+    _reconfigure_stdio()
+
+    assert fake_stdout.encoding.lower() in {"utf-8", "utf8"}
+    assert fake_stderr.encoding.lower() in {"utf-8", "utf8"}
+    assert fake_stdout.errors == "backslashreplace"
+    assert fake_stderr.errors == "backslashreplace"
+
+    payload = "run-café-report.md"
+    fake_stdout.write(payload)
+    fake_stdout.flush()
+    fake_stderr.write(payload)
+    fake_stderr.flush()
+
+    utf8_payload = b"run-caf\xc3\xa9-report.md"
+    escaped_payload = b"run-caf\\xe9-report.md"
+    assert utf8_payload in stdout_buf.getvalue()
+    assert escaped_payload not in stdout_buf.getvalue()
+    assert utf8_payload in stderr_buf.getvalue()
+    assert escaped_payload not in stderr_buf.getvalue()

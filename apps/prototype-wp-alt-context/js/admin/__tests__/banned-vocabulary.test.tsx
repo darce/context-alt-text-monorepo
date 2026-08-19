@@ -557,8 +557,6 @@ const wrap = (node: React.JSX.Element) => {
   );
 };
 
-const collectVisibleText = (container: HTMLElement): string => container.textContent ?? '';
-
 const ACCESSIBLE_ATTRS = ['aria-label', 'title', 'alt', 'placeholder', 'aria-description'] as const;
 
 const collectReviewSurfaceText = (root: HTMLElement = document.body): string => {
@@ -594,7 +592,7 @@ describe('banned vocabulary across js/admin pages', () => {
 
   it.each(PAGE_SWEEP)('renders %s without banned jargon', (pageName) => {
     const { container } = render(wrap(pageRenderers[pageName]()));
-    const text = collectVisibleText(container);
+    const text = collectReviewSurfaceText(container);
 
     for (const banned of BANNED_STRINGS) {
       expect(text.toLowerCase()).not.toContain(banned.toLowerCase());
@@ -606,11 +604,11 @@ describe('banned vocabulary across js/admin pages', () => {
     const { container } = render(
       wrap(
         <div>
-          <span>topology backlog leak</span>
+          <span aria-label="topology backlog leak" />
         </div>,
       ),
     );
-    const text = collectVisibleText(container);
+    const text = collectReviewSurfaceText(container);
     expect(text.toLowerCase()).toContain('topology');
   });
 

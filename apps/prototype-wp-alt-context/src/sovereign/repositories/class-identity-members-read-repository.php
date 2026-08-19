@@ -54,7 +54,7 @@ class IdentityMembersReadRepository {
 
 		if ( null !== $tenant_id && '' !== trim( $tenant_id ) ) {
 			$sql = $this->prepare_projection_read_query(
-				"SELECT COUNT(*) OVER() AS total_count, m.*, {$this->projected_cluster_label_sql()} AS cluster_label, c.curation_state, c.is_user_confirmed, c.representative_id, c.is_pinned
+				"SELECT COUNT(*) OVER() AS total_count, m.*, {$this->projected_cluster_label_sql( 'p.name', 'c.label' )} AS cluster_label, c.curation_state, c.is_user_confirmed, c.representative_id, c.is_pinned
 				FROM %i m
 				INNER JOIN %i c ON c.cluster_uuid = m.cluster_uuid
 				LEFT JOIN %i p ON p.id = c.person_id
@@ -72,7 +72,7 @@ class IdentityMembersReadRepository {
 			);
 		} else {
 			$sql = $this->prepare_projection_read_query(
-				"SELECT COUNT(*) OVER() AS total_count, m.*, {$this->projected_cluster_label_sql()} AS cluster_label, c.curation_state, c.is_user_confirmed, c.representative_id, c.is_pinned
+				"SELECT COUNT(*) OVER() AS total_count, m.*, {$this->projected_cluster_label_sql( 'p.name', 'c.label' )} AS cluster_label, c.curation_state, c.is_user_confirmed, c.representative_id, c.is_pinned
 				FROM %i m
 				LEFT JOIN %i c ON c.cluster_uuid = m.cluster_uuid
 				LEFT JOIN %i p ON p.id = c.person_id
@@ -133,7 +133,7 @@ class IdentityMembersReadRepository {
 
 		$sql = $this->prepare_projection_read_query(
 			"SELECT * FROM (
-				SELECT m.*, {$this->projected_cluster_label_sql()} AS cluster_label, c.curation_state, c.is_user_confirmed, c.representative_id, c.is_pinned, ROW_NUMBER() OVER (PARTITION BY m.cluster_uuid ORDER BY m.assigned_at ASC, m.identity_uuid) as rn
+				SELECT m.*, {$this->projected_cluster_label_sql( 'p.name', 'c.label' )} AS cluster_label, c.curation_state, c.is_user_confirmed, c.representative_id, c.is_pinned, ROW_NUMBER() OVER (PARTITION BY m.cluster_uuid ORDER BY m.assigned_at ASC, m.identity_uuid) as rn
 				FROM %i m
 				LEFT JOIN %i c ON c.cluster_uuid = m.cluster_uuid
 				LEFT JOIN %i p ON p.id = c.person_id
@@ -214,7 +214,7 @@ class IdentityMembersReadRepository {
 		$placeholders  = implode( ', ', array_fill( 0, count( $normalized_ids ), '%d' ) );
 		$persons_table = $this->resolve_persons_table_name();
 		$sql           = $this->prepare_projection_read_query(
-			"SELECT m.*, {$this->projected_cluster_label_sql()} AS cluster_label, p.name AS person_name, c.curation_state, c.is_user_confirmed, c.representative_id, c.is_pinned
+			"SELECT m.*, {$this->projected_cluster_label_sql( 'p.name', 'c.label' )} AS cluster_label, p.name AS person_name, c.curation_state, c.is_user_confirmed, c.representative_id, c.is_pinned
 			FROM %i m
 			INNER JOIN %i c ON c.cluster_uuid = m.cluster_uuid
 			LEFT JOIN %i p ON p.id = c.person_id

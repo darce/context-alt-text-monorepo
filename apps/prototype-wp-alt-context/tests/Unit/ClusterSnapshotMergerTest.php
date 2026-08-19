@@ -191,7 +191,10 @@ class ClusterSnapshotMergerTest extends TestCase
         $this->assertStringContainsString('cluster-human', $bindUpdate);
     }
 
-    public function testDeleteThenSnapshotMergeDoesNotRecreatePerson(): void
+    /**
+     * @dataProvider clearedLabelSnapshotVersions
+     */
+    public function testClearedLabelSurvivesSnapshotVersion(int $existingSnapshotVersion, int $mergeVersion): void
     {
         global $wpdb;
 
@@ -205,7 +208,7 @@ class ClusterSnapshotMergerTest extends TestCase
                 'person_id' => 4,
                 'is_user_confirmed' => 1,
                 'local_revision' => 5,
-                'snapshot_version' => 14,
+                'snapshot_version' => $existingSnapshotVersion,
             ],
         ];
 
@@ -222,7 +225,7 @@ class ClusterSnapshotMergerTest extends TestCase
                     'identity_count' => 3,
                 ],
             ],
-            14
+            $mergeVersion
         );
 
         $personInserts = array_values(
@@ -242,7 +245,20 @@ class ClusterSnapshotMergerTest extends TestCase
             || (int) $wpdb->tableRows['wp_acx_clusters'][0]['person_id'] === 0
         );
         $upsert = $this->findQueryContaining($wpdb->queries, 'INSERT INTO `wp_acx_clusters`');
-        $this->assertStringNotContainsString("'Tory Guzman'", $upsert);
+        $this->assertStringContainsString("VALUES ('cluster-tory', 'tenant-merge', '', 'Tory Guzman'", $upsert);
+    }
+
+    /**
+     * @return array<string,array{0:int,1:int}>
+     */
+    public static function clearedLabelSnapshotVersions(): array
+    {
+        return [
+            'older than cleared_rev' => [14, 13],
+            'equal to cleared_rev' => [14, 14],
+            'newer than cleared_rev' => [14, 15],
+            'locally created cluster' => [0, 1],
+        ];
     }
 
     public function testNewerSnapshotAfterClearRelabelsCluster(): void
@@ -272,7 +288,7 @@ class ClusterSnapshotMergerTest extends TestCase
             [
                 [
                     'cluster_uuid' => 'cluster-tory',
-                    'label' => 'Tory Guzman',
+                    'label' => 'Ada Lovelace',
                     'identity_count' => 3,
                 ],
             ],
@@ -285,8 +301,8 @@ class ClusterSnapshotMergerTest extends TestCase
                 static fn(string $query): bool => str_contains($query, 'INSERT INTO wp_acx_persons')
             )
         );
-        $this->assertNotEmpty($personInserts, 'a newer backend revision must be allowed to re-label');
-        $this->assertStringContainsString("'Tory Guzman'", $personInserts[0]);
+        $this->assertNotEmpty($personInserts, 'a newer snapshot may re-label only when the incoming label differs');
+        $this->assertStringContainsString("'Ada Lovelace'", $personInserts[0]);
     }
 
     public function testBackfillResolvesAgainstStoredLabelWhenIncomingDiffers(): void

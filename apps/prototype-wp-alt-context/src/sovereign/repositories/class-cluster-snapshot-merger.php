@@ -107,22 +107,26 @@ class ClusterSnapshotMerger {
 
 			$incoming_label = $this->normalize_label( $cluster );
 			$existing       = $this->load_existing_cluster( $cluster_uuid, $normalized_tenant_id );
+			$cleared_label  = trim( (string) ( $existing['label_cleared_label'] ?? '' ) );
 			$cleared_rev    = is_numeric( $existing['label_cleared_revision'] ?? null )
 				? (int) $existing['label_cleared_revision']
 				: 0;
-			$keep_cleared = $cleared_rev > 0 && $snapshot_version <= $cleared_rev;
+			$keep_cleared = '' !== $cleared_label && $incoming_label === $cleared_label;
 			$label        = $keep_cleared ? '' : $incoming_label;
-			$thumb_path   = $this->resolve_representative_thumb_path( $cluster, $cluster_uuid );
-			$inserted_at  = $now_utc;
+			$persisted_cleared_label = $keep_cleared ? $cleared_label : '';
+			$persisted_cleared_rev   = $keep_cleared ? $cleared_rev : 0;
+			$thumb_path              = $this->resolve_representative_thumb_path( $cluster, $cluster_uuid );
+			$inserted_at             = $now_utc;
 
-			// Tombstone is decided in PHP (revision-aware). SQL stays dumb.
+			// Tombstone is decided in PHP (cleared-label match). SQL stays dumb.
 			$sql = $this->prepare_query(
 				'INSERT INTO %i
-				(cluster_uuid, tenant_id, label, curation_state, representative_thumb_path, representative_id, is_pinned, identity_count, snapshot_version, is_user_confirmed, created_at, updated_at, last_synced_at, suggested_label, suggested_label_source, suggested_label_confidence, suggested_target_cluster_id)
-				VALUES (%s, %s, %s, %s, %s, %s, %d, %d, %d, %d, %s, %s, %s, NULLIF(%s, \'\'), NULLIF(%s, \'\'), NULLIF(%s, \'\'), NULLIF(%s, \'\'))
+				(cluster_uuid, tenant_id, label, label_cleared_label, label_cleared_revision, curation_state, representative_thumb_path, representative_id, is_pinned, identity_count, snapshot_version, is_user_confirmed, created_at, updated_at, last_synced_at, suggested_label, suggested_label_source, suggested_label_confidence, suggested_target_cluster_id)
+				VALUES (%s, %s, %s, %s, %d, %s, %s, %s, %d, %d, %d, %d, %s, %s, %s, NULLIF(%s, \'\'), NULLIF(%s, \'\'), NULLIF(%s, \'\'), NULLIF(%s, \'\'))
 				ON DUPLICATE KEY UPDATE
 					label = IF(is_user_confirmed = 1, label, VALUES(label)),
-					label_cleared_revision = IF(VALUES(snapshot_version) > IFNULL(label_cleared_revision, 0), NULL, label_cleared_revision),
+					label_cleared_label = IF(is_user_confirmed = 1, label_cleared_label, VALUES(label_cleared_label)),
+					label_cleared_revision = IF(is_user_confirmed = 1, label_cleared_revision, VALUES(label_cleared_revision)),
 					curation_state = IF(is_user_confirmed = 1, curation_state, VALUES(curation_state)),
 					is_user_confirmed = IF(is_user_confirmed = 1, is_user_confirmed, VALUES(is_user_confirmed)),
 					person_id = IF(is_user_confirmed = 1, person_id, person_id),
@@ -143,6 +147,8 @@ class ClusterSnapshotMerger {
 					$cluster_uuid,
 					$normalized_tenant_id,
 					$label,
+					$persisted_cleared_label,
+					$persisted_cleared_rev,
 					$this->normalize_curation_state( $cluster ),
 					$thumb_path,
 					$this->normalize_representative_id( $cluster ),
@@ -331,7 +337,7 @@ class ClusterSnapshotMerger {
 		}
 
 		$sql = $this->prepare_query(
-			'SELECT label, person_id, is_user_confirmed, label_cleared_revision, snapshot_version FROM %i WHERE cluster_uuid = %s AND tenant_id = %s',
+			'SELECT label, person_id, is_user_confirmed, label_cleared_revision, label_cleared_label, snapshot_version FROM %i WHERE cluster_uuid = %s AND tenant_id = %s',
 			array( $this->table_name, $cluster_uuid, $tenant_id )
 		);
 		if ( ! is_string( $sql ) || '' === $sql ) {

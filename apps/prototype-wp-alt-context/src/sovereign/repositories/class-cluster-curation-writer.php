@@ -331,7 +331,7 @@ class ClusterCurationWriter {
 
 		$now_utc = gmdate( 'Y-m-d H:i:s' );
 		$sql     = $this->prepare_query(
-			'UPDATE %i SET label = NULL, person_id = NULL, curation_state = %s, is_user_confirmed = 0, local_revision = local_revision + 1, label_cleared_revision = snapshot_version, updated_at = %s WHERE cluster_uuid = %s AND tenant_id = %s',
+			'UPDATE %i SET label_cleared_label = label, label = NULL, person_id = NULL, curation_state = %s, is_user_confirmed = 0, local_revision = local_revision + 1, label_cleared_revision = snapshot_version, updated_at = %s WHERE cluster_uuid = %s AND tenant_id = %s',
 			array(
 				$this->table_name,
 				'uncurated',

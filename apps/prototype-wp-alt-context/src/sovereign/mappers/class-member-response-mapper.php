@@ -7,6 +7,7 @@ namespace AltContext\Sovereign\Mappers;
 require_once __DIR__ . '/trait-maps-response-fields.php';
 
 use function absint;
+use function is_string;
 use function trim;
 
 class MemberResponseMapper {
@@ -29,6 +30,21 @@ class MemberResponseMapper {
 	 * @param array<int,array<string,mixed>> $member_rows
 	 * @return array<int,list<array<string,mixed>>> Media-id-keyed groups; PHP coerces the numeric string key to int.
 	 */
+	/**
+	 * @param array<string,mixed> $identity
+	 * @return array<string,mixed>
+	 */
+	public function apply_label_authority( array $identity ): array {
+		$identity['cluster_label'] = $this->normalize_cluster_label(
+			array(
+				'person_name'   => $identity['person_name'] ?? '',
+				'cluster_label' => is_string( $identity['cluster_label'] ?? null ) ? $identity['cluster_label'] : '',
+			)
+		);
+
+		return $identity;
+	}
+
 	public function map_media_identities( array $member_rows ): array {
 		$grouped = array();
 		foreach ( $member_rows as $row ) {

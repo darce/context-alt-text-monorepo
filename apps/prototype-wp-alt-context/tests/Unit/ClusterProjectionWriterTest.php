@@ -45,6 +45,75 @@ class ClusterProjectionWriterTest extends TestCase
         $this->assertSame(3, $row['identity_count']);
     }
 
+    public function testCreateLocalClusterUsesAutomaticBindAndEnqueuesPersonCreated(): void
+    {
+        global $wpdb;
+
+        $wpdb->insert_id = 40;
+        $wpdb->tableRows['wp_acx_persons'] = [];
+        $wpdb->tableRows['wp_acx_clusters'] = [];
+
+        $result = $this->writer->create_local_cluster(
+            self::currentTenantId(),
+            'cluster-new',
+            'Ada Lovelace',
+            1
+        );
+
+        $this->assertSame(1, $result);
+        $outbox = array_values(array_filter(
+            $wpdb->queries,
+            static fn(string $query): bool => str_contains($query, 'INSERT INTO wp_acx_sync_outbox')
+        ));
+        $this->assertNotEmpty($outbox, 'create_local_cluster must enqueue person_created');
+        $this->assertStringContainsString("'person_created'", $outbox[0]);
+        $this->assertSame(40, $wpdb->tableRows['wp_acx_clusters'][0]['person_id'] ?? $wpdb->insert_id);
+    }
+
+    public function testCreateLocalClusterCreatesDistinctPersonOnNameCollision(): void
+    {
+        global $wpdb;
+
+        $wpdb->insert_id = 41;
+        $wpdb->tableRows['wp_acx_persons'] = [
+            [
+                'id' => 3,
+                'person_uuid' => 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+                'name' => 'Ada Lovelace',
+                'normalized_name' => \AltContext\Api\Services\PersonResolutionService::normalize_name('Ada Lovelace'),
+                'tenant_id' => self::currentTenantId(),
+            ],
+        ];
+        $wpdb->tableRows['wp_acx_clusters'] = [
+            [
+                'cluster_uuid' => 'cluster-other',
+                'tenant_id' => self::currentTenantId(),
+                'label' => 'Ada Lovelace',
+                'person_id' => 3,
+            ],
+        ];
+
+        $this->writer->create_local_cluster(
+            self::currentTenantId(),
+            'cluster-new',
+            'Ada Lovelace',
+            1
+        );
+
+        $personInserts = array_values(array_filter(
+            $wpdb->queries,
+            static fn(string $query): bool => str_contains($query, 'INSERT INTO wp_acx_persons')
+        ));
+        $this->assertNotEmpty($personInserts);
+        $this->assertStringContainsString("'Ada Lovelace (2)'", $personInserts[0]);
+        $ids = array_values(array_unique(array_map(
+            static fn(array $row): int => (int) ($row['id'] ?? 0),
+            $wpdb->tableRows['wp_acx_persons']
+        )));
+        $this->assertContains(3, $ids);
+        $this->assertGreaterThan(1, count($ids), 'collision must create a distinct person id');
+    }
+
     public function testUpsertProjectionClusterLeavesUserConfirmedUnset(): void
     {
         global $wpdb;

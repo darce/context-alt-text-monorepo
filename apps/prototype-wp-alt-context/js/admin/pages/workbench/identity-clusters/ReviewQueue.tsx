@@ -291,7 +291,7 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
     const [retrying, setRetrying] = React.useState(false);
     const [retryFailed, setRetryFailed] = React.useState(false);
     const previousItemKeyRef = React.useRef<string | null>(null);
-    const repairAnnouncedRef = React.useRef(false);
+    const repairAnnouncedRef = React.useRef<string | null>(null);
     const pendingFocusAfterRemovalRef = React.useRef(false);
 
     const filter: ReviewQueueFilter = kindParamToFilter(kind);
@@ -570,7 +570,7 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
           );
         }
         previousItemKeyRef.current = currentKey;
-        repairAnnouncedRef.current = false;
+        repairAnnouncedRef.current = null;
         if (pendingFocusAfterRemovalRef.current) {
           pendingFocusAfterRemovalRef.current = false;
           requestAnimationFrame(() => focusPrimaryInCard());
@@ -578,47 +578,34 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
         return;
       }
 
-      if (
-        !currentKey &&
-        (previousItemKeyRef.current !== null ||
-          (findings.repairPending && !repairAnnouncedRef.current) ||
-          (!findings.repairPending && repairAnnouncedRef.current))
-      ) {
+      if (!currentKey) {
         previousItemKeyRef.current = null;
         // UI-04: drain copy is for a successful empty only — projection failure
         // must announce the error, not "all caught up" (RLSE-05 / A11Y).
         // [rg-003] the outage must not silence the filtered-empty announcement:
         // when filters hide real work, AT hears both the failure and the hint
         // that an escape hatch exists, matching the visual (both are rendered).
-        // RLSE-06: latch every first-mount repair consumer so AT is not
-        // re-interrupted on every re-render; clear the latch when repair
-        // itself drains, not only when an item arrives.
-        if (data.isTopUnlabeledError) {
-          const errorCopy = __(REVIEW_QUEUE_TOP_UNLABELED_ERROR_MESSAGE, 'alt-context');
-          setLiveMessage(
-            filteredEmptyWithWork
-              ? `${errorCopy} ${__(REVIEW_QUEUE_FILTERED_EMPTY_MESSAGE, 'alt-context')}`
-              : errorCopy,
-          );
-          repairAnnouncedRef.current = findings.repairPending;
-        } else if (filteredEmptyWithWork) {
-          // [COG-03]/[A11Y-06] AT parity with visual: filtered-empty ≠ true drain.
-          setLiveMessage(__(REVIEW_QUEUE_FILTERED_EMPTY_MESSAGE, 'alt-context'));
-          repairAnnouncedRef.current = findings.repairPending;
-        } else if (findings.repairPending) {
-          // R2-12: envelope repair_pending (or total>served empty page) — never
-          // announce drain-only while work remains on the server.
-          const gatedCount = repairGatedCount(
-            findings.zeroEvidenceClusterCount,
-            findings.counts.unlabeledClusters,
-          );
-          setLiveMessage(
-            gatedClusterCopy(gatedCount, findings.topUnlabeledTruncated, topUnlabeledClusters.length),
-          );
-          repairAnnouncedRef.current = true;
-        } else {
-          setLiveMessage(__(REVIEW_QUEUE_DRAIN_MESSAGE, 'alt-context'));
-          repairAnnouncedRef.current = false;
+        // R8-02 / A11Y-21: latch the announced sentence, not a boolean, so a
+        // count or wording change re-fires and an identical rerender stays quiet.
+        const nextEmptyMessage = data.isTopUnlabeledError
+          ? filteredEmptyWithWork
+            ? `${__(REVIEW_QUEUE_TOP_UNLABELED_ERROR_MESSAGE, 'alt-context')} ${__(REVIEW_QUEUE_FILTERED_EMPTY_MESSAGE, 'alt-context')}`
+            : __(REVIEW_QUEUE_TOP_UNLABELED_ERROR_MESSAGE, 'alt-context')
+          : filteredEmptyWithWork
+            ? __(REVIEW_QUEUE_FILTERED_EMPTY_MESSAGE, 'alt-context')
+            : findings.repairPending
+              ? gatedClusterCopy(
+                  repairGatedCount(
+                    findings.zeroEvidenceClusterCount,
+                    findings.counts.unlabeledClusters,
+                  ),
+                  findings.topUnlabeledTruncated,
+                  topUnlabeledClusters.length,
+                )
+              : __(REVIEW_QUEUE_DRAIN_MESSAGE, 'alt-context');
+        if (repairAnnouncedRef.current !== nextEmptyMessage) {
+          setLiveMessage(nextEmptyMessage);
+          repairAnnouncedRef.current = nextEmptyMessage;
         }
         if (pendingFocusAfterRemovalRef.current) {
           pendingFocusAfterRemovalRef.current = false;

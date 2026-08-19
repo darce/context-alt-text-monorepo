@@ -2935,7 +2935,7 @@ describe('ReviewQueue', () => {
     queryClient.setQueryData(topKey, {
       clusters: [],
       limit: 20,
-      total: 6,
+      total: 5,
       truncated: true,
       repair_pending: true,
       singleton_count: 0,
@@ -2947,6 +2947,65 @@ describe('ReviewQueue', () => {
 
     expect(within(liveRegion() as HTMLElement).getByText(/missing face data/i)).toBeInTheDocument();
     expect(liveRegion()?.getAttribute('data-announce-seq')).toBe(seq);
+  });
+
+  it('R8-02: repair count change 7 to 2 re-announces; identical data stays silent', async () => {
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [],
+      limit: 10,
+      offset: 0,
+    });
+    vi.mocked(fetchTopUnlabeledClusters).mockResolvedValue({
+      clusters: [],
+      limit: 20,
+      total: 7,
+      truncated: true,
+      repair_pending: true,
+      singleton_count: 0,
+      data_source: DATA_SOURCE.LOCAL_PROJECTION,
+    });
+
+    const { container, queryClient } = renderQueue();
+    await screen.findByTestId('acx-review-queue-repair');
+    const liveRegion = () => container.querySelector('.acx-review-queue__live');
+    await waitFor(() => {
+      expect(liveRegion()).toHaveTextContent('7 groups elsewhere are missing face data');
+    });
+    const seqAfterSeven = liveRegion()?.getAttribute('data-announce-seq');
+    expect(seqAfterSeven).toBeTruthy();
+
+    const topKey = queryKeys.clusters.topUnlabeled('test-tenant-id');
+    queryClient.setQueryData(topKey, {
+      clusters: [],
+      limit: 20,
+      total: 2,
+      truncated: true,
+      repair_pending: true,
+      singleton_count: 0,
+      data_source: DATA_SOURCE.LOCAL_PROJECTION,
+    });
+    await waitFor(() => {
+      expect(liveRegion()).toHaveTextContent('2 groups elsewhere are missing face data');
+    });
+    const seqAfterTwo = liveRegion()?.getAttribute('data-announce-seq');
+    expect(seqAfterTwo).not.toBe(seqAfterSeven);
+    expect(liveRegion()).not.toHaveTextContent('7 groups elsewhere are missing face data');
+
+    queryClient.setQueryData(topKey, {
+      clusters: [],
+      limit: 20,
+      total: 2,
+      truncated: true,
+      repair_pending: true,
+      singleton_count: 0,
+      data_source: DATA_SOURCE.LOCAL_PROJECTION,
+    });
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(liveRegion()).toHaveTextContent('2 groups elsewhere are missing face data');
+    expect(liveRegion()?.getAttribute('data-announce-seq')).toBe(seqAfterTwo);
   });
 
   it('R7-02: drain after repair clears the repair live sentence', async () => {

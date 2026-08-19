@@ -1557,7 +1557,7 @@ def _cmd_score(args: argparse.Namespace) -> None:
         record = json.loads(record_path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         print(
-            f"score: run record not found/unreadable: {record_path}",
+            f"score: run record not found/unreadable: {_printable_path(record_path)}",
             file=sys.stderr,
         )
         raise SystemExit(2)
@@ -2008,7 +2008,7 @@ def _cmd_run(args: argparse.Namespace) -> None:
             gate_failures.append(f"{record_path}: {exc}")
             # Fixed prefix; path after colon (RF-05 / rg-006).
             print(
-                f"{SCORE_GATE_PREFIX_RUN_RECORD} {record_path}: {exc}",
+                f"{SCORE_GATE_PREFIX_RUN_RECORD} {_printable_path(record_path)}: {exc}",
                 file=sys.stderr,
             )
     if gate_failures:
@@ -2278,7 +2278,7 @@ def _cmd_score_face(args: argparse.Namespace) -> None:
         record = json.loads(record_path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         print(
-            f"score-face: run record not found/unreadable: {record_path}",
+            f"score-face: run record not found/unreadable: {_printable_path(record_path)}",
             file=sys.stderr,
         )
         raise SystemExit(2)
@@ -2682,7 +2682,7 @@ def _collect_exposure_notes(notes: list[str] | None, exposure_file: str | None) 
             collected.extend(Path(exposure_file).read_text(encoding="utf-8-sig").splitlines())
         except (OSError, UnicodeDecodeError):
             print(
-                f"draw-eval-split: exposure file not found/unreadable: {exposure_file}",
+                f"draw-eval-split: exposure file not found/unreadable: {_printable_path(exposure_file)}",
                 file=sys.stderr,
             )
             raise SystemExit(2)
@@ -2721,13 +2721,13 @@ def _cmd_draw_eval_split(args: argparse.Namespace) -> None:
             artifact = json.loads(out.read_text(encoding="utf-8-sig"))
         except (OSError, ValueError):
             print(
-                f"draw-eval-split: sealed split not found/unreadable: {out}",
+                f"draw-eval-split: sealed split not found/unreadable: {_printable_path(out)}",
                 file=sys.stderr,
             )
             raise SystemExit(2)
         if not isinstance(artifact, dict):
             print(
-                f"draw-eval-split: sealed split is not a JSON object: {out}",
+                f"draw-eval-split: sealed split is not a JSON object: {_printable_path(out)}",
                 file=sys.stderr,
             )
             raise SystemExit(2)
@@ -2735,7 +2735,7 @@ def _cmd_draw_eval_split(args: argparse.Namespace) -> None:
             source_sha = hashlib.sha256(Path(args.manifest).read_bytes()).hexdigest()
         except OSError as exc:
             print(
-                f"draw-eval-split: cannot read manifest: {args.manifest}: {exc}",
+                f"draw-eval-split: cannot read manifest: {_printable_path(args.manifest)}: {exc}",
                 file=sys.stderr,
             )
             raise SystemExit(2)
@@ -2757,7 +2757,7 @@ def _cmd_draw_eval_split(args: argparse.Namespace) -> None:
         return
 
     if out.exists() and not args.force:
-        print(f"refusing to overwrite sealed split {out} without --force", file=sys.stderr)
+        print(f"refusing to overwrite sealed split {_printable_path(out)} without --force", file=sys.stderr)
         raise SystemExit(3)
 
     source_path = _source_manifest_path_for_artifact(args.manifest)
@@ -2765,7 +2765,7 @@ def _cmd_draw_eval_split(args: argparse.Namespace) -> None:
         source_sha = hashlib.sha256(Path(args.manifest).read_bytes()).hexdigest()
     except OSError as exc:
         print(
-            f"draw-eval-split: cannot read manifest: {args.manifest}: {exc}",
+            f"draw-eval-split: cannot read manifest: {_printable_path(args.manifest)}: {exc}",
             file=sys.stderr,
         )
         raise SystemExit(2)
@@ -2784,26 +2784,48 @@ def _cmd_draw_eval_split(args: argparse.Namespace) -> None:
         out.write_text(json.dumps(artifact, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     except OSError as exc:
         print(
-            f"draw-eval-split: cannot write sealed split: {out}: {exc}",
+            f"draw-eval-split: cannot write sealed split: {_printable_path(out)}: {exc}",
             file=sys.stderr,
         )
         raise SystemExit(2)
     print(_printable_path(out))
 
 
-def _printable_path(path: Path | str) -> str:
-    """OBS-08: machine-consumable path text for stdout.
+_UNDECODABLE_PATH_PREFIX = "undecodable:"
 
-    ASCII-locale argv stores non-ASCII filenames as surrogate-escaped UTF-8
-    bytes. Those surrogates keep file I/O working via os.fsencode, but print()
-    of the raw str is a silent lie. Recover UTF-8 so a utf-8 stdout emits the
-    real filename bytes (and ascii/backslashreplace would emit \\xe9 instead).
+
+def _printable_path(path: Path | str) -> str:
+    """OBS-08: machine-consumable path text for stdout/stderr.
+
+    Fast path: if the path text encodes as UTF-8, return it unchanged
+    (byte-identical; no fsencode round-trip). A name that literally
+    contains the four characters ``\\xe9`` therefore prints as those
+    four characters.
+
+    Fallback: PEP 383 surrogates (C-locale argv) are recovered via
+    ``os.fsencode``. Valid UTF-8 sequences become the real filename so a
+    utf-8 stream emits the real path bytes (café, not ``\\udcc3\\udca9``).
+    Remaining undecodable bytes use backslashreplace (``\\xHH``) after
+    doubling any literal backslash so the escape is invertible, and are
+    prefixed with ``undecodable:`` so a consumer can tell
+    ``run-caf\\xe9-report.md`` (literal) from
+    ``undecodable:run-caf\\xe9-report.md`` (byte 0xe9).
+
+    Round-trip of a prefixed fallback:
+    - strip the ``undecodable:`` prefix
+    - interpret ``\\\\`` as one backslash and ``\\xHH`` as one byte
     """
     text = os.fspath(path)
     try:
         text.encode("utf-8")
     except UnicodeEncodeError:
-        return os.fsencode(text).decode("utf-8", errors="backslashreplace")
+        raw = os.fsencode(text)
+        try:
+            return raw.decode("utf-8")
+        except UnicodeDecodeError:
+            doubled = raw.replace(b"\\", b"\\\\")
+            escaped = doubled.decode("utf-8", errors="backslashreplace")
+            return f"{_UNDECODABLE_PATH_PREFIX}{escaped}"
     return text
 
 
@@ -2826,6 +2848,43 @@ def _reconfigure_stdio() -> None:
             reconfigure(encoding="utf-8", errors="backslashreplace")
         except (OSError, ValueError):
             continue
+
+
+@contextlib.contextmanager
+def _stdio_encoding_guard():
+    """Save/restore stdout+stderr (encoding, errors) around in-process reconfigure.
+
+    `_reconfigure_stdio()` mutates process-global stdio. In-process tests that
+    call it (or `main()`) must wrap the call so utf-8/backslashreplace cannot
+    leak into a later test (VLM6-RV14-L-05 / TEST-15). Production CLI leaves
+    the reconfigure in place — the process is exiting. `_reconfigure_stdio`
+    stays zero-arg.
+    """
+    snapshot: list[tuple[object, str | None, str | None]] = []
+    for stream in (sys.stdout, sys.stderr):
+        snapshot.append(
+            (
+                stream,
+                getattr(stream, "encoding", None),
+                getattr(stream, "errors", None),
+            )
+        )
+    try:
+        yield
+    finally:
+        for stream, encoding, errors in snapshot:
+            if stream is None or encoding is None:
+                continue
+            reconfigure = getattr(stream, "reconfigure", None)
+            if reconfigure is None:
+                continue
+            try:
+                kwargs: dict[str, str] = {"encoding": encoding}
+                if errors is not None:
+                    kwargs["errors"] = errors
+                reconfigure(**kwargs)
+            except (OSError, ValueError):
+                continue
 
 
 def main(argv: list[str] | None = None) -> None:

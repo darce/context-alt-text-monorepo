@@ -16,11 +16,26 @@ from scripts.eval_harness.gallery_split import (
 )
 
 
-def _roster(*pairs: tuple[str, tuple[str, ...]]) -> dict[str, list[str]]:
-    return {subject: list(ids) for subject, ids in pairs}
+def _roster(*pairs: tuple[str, tuple[str, ...]]) -> dict[str, list[Template]]:
+    """Unique media per template so string-id fixtures keep subject independence."""
+    by_subject: dict[str, list[Template]] = {}
+    media_id = 1
+    for subject, ids in pairs:
+        templates: list[Template] = []
+        for template_id in ids:
+            templates.append(
+                Template(
+                    template_id=template_id,
+                    subject_id=subject,
+                    media_ids=(media_id,),
+                )
+            )
+            media_id += 1
+        by_subject[subject] = templates
+    return by_subject
 
 
-def _two_plus_roster() -> dict[str, list[str]]:
+def _two_plus_roster() -> dict[str, list[Template]]:
     """≥2 subjects, each with ≥2 templates — the EVAL-18 minimum."""
     return _roster(
         ("alice", ("a1", "a2", "a3")),
@@ -38,7 +53,13 @@ def test_empty_roster_raises():
 def test_subject_with_no_templates_raises_rather_than_drop():
     with pytest.raises(GallerySplitError, match="no templates"):
         build_disjoint_galleries(
-            templates_by_subject={"alice": ["a1", "a2"], "bob": []},
+            templates_by_subject={
+                "alice": [
+                    Template(template_id="a1", subject_id="alice", media_ids=(1,)),
+                    Template(template_id="a2", subject_id="alice", media_ids=(2,)),
+                ],
+                "bob": [],
+            },
             seed=0,
         )
 
@@ -236,3 +257,36 @@ def test_only_shared_still_subject_is_enrolled_not_dropped():
     assigned = set(split.g1) | set(split.g2)
     assert assigned == {"alice", "bob", "carol"}
     assert ("alice" in split.g1) == ("bob" in split.g1)
+
+
+def test_string_templates_parse_media_ids_and_coassign_shared_still():
+    """'{media}:{subject}' strings must not empty media_ids (JANUS 2.2 / MLDATA-09).
+
+    Defaulting the convenience path to media_ids=() makes every media-disjointness
+    invariant a no-op: alice and bob sharing still 99 land in different galleries.
+    """
+    roster = {
+        "alice": ["99:alice"],
+        "bob": ["99:bob"],
+        "carol": ["1:carol", "2:carol"],
+    }
+    split = build_disjoint_galleries(templates_by_subject=roster, seed=0)
+    assert ("alice" in split.g1) == ("bob" in split.g1)
+    enrolled_alice = split.g1.get("alice") or split.g2["alice"]
+    enrolled_bob = split.g1.get("bob") or split.g2["bob"]
+    assert enrolled_alice.media_ids == (99,)
+    assert enrolled_bob.media_ids == (99,)
+    g1_media = {mid for t in split.g1.values() for mid in t.media_ids}
+    g2_media = {mid for t in split.g2.values() for mid in t.media_ids}
+    assert g1_media
+    assert g2_media
+    assert g1_media.isdisjoint(g2_media)
+
+
+def test_string_template_without_media_id_raises():
+    """Refuse a string template that cannot supply media ids. Empty () is not a default."""
+    with pytest.raises(GallerySplitError, match="media"):
+        build_disjoint_galleries(
+            templates_by_subject={"alice": ["a1"], "bob": ["b1"]},
+            seed=0,
+        )

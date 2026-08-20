@@ -1,10 +1,27 @@
-# FIR-12 round-3 fix merge (F8 + F9)
+# F13 — FIR-12 split + scorer boundary hygiene
 
-BR-07: `score_run(..., overall_nonmated=)` scores the overall IET point from that list; per-stratum foils are never pooled, and omitting it while any stratum has non-mated searches raises `FirBakeoffRunError`. Tests: `test_overall_nonmated_is_declared_once_not_pooled`, `test_omitting_overall_nonmated_with_stratum_nonmated_raises`, `test_mated_searches_still_pool_across_strata`. Mutant `/tmp/fir12-f8-mutants/br07.py` restored `extend` pooling → `overall.fpi==4` / `n_nonmated==8` (wanted 1 / 2) and omit no longer raised.
-BR-09: every populated `PROBE_STRATA` name with `manifest_images > 0` (not declared-empty, not `E_clean`) must appear as a `searches` key; missing keys raise listing them; explicit `{"mated": [], "nonmated": [...]}` stays legal and unmeasured. Tests: `test_missing_populated_probe_stratum_raises`, `test_empty_searches_raises_for_populated_probe_strata`, `test_explicit_empty_mated_list_is_unmeasured_not_missing`. Mutant `/tmp/fir12-f8-mutants/br09.py` dropped the missing-key check → omit `B_eyewear` / `searches={}` did not raise.
-BR-10: `n_enrolled_gallery_subjects` defaults to `len(g1)+len(g2)` and mismatches raise naming both counts; non-finite `tau` raises; `to_rows()` carries `tau`, `fpi_per_enrolled_subject`, `n_enrolled_gallery_subjects`. Tests: `test_enrolled_gallery_mismatch_raises`, `test_enrolled_gallery_defaults_to_split_size`, `test_non_finite_tau_raises`, `test_to_rows_carries_tau_and_enrolled_normalization`. Mutant `/tmp/fir12-f8-mutants/br10.py` skipped the checks and stripped those columns → mismatch/nan did not raise, `KeyError: 'tau'`.
+## BR-19 (medium) — CLOSED (commit `00693367`)
 
-# FIR-12 F9
+Non-finite IET inputs no longer score as a clean measurement.
 
-- BR-08: `build_disjoint_galleries` now co-assigns subject×media connected components, `_templates_from_e_clean` restores real group `media_ids`, and colliding leftovers land on `GallerySplit.withheld_probe_templates`. Covered by `test_shared_still_coassigns_subjects_and_keeps_probe_media_disjoint`, `test_only_shared_still_subject_is_enrolled_not_dropped`, `test_frozen_manifest_galleries_media_disjoint_across_seeds`, `test_frozen_manifest_withholds_shared_probe_stills_at_seed_0`. Mutant `/tmp/mut-br08-media` restored `media_ids=()` → seed-0 sweep RED `{353,554,632} != set()`; mutant `/tmp/mut-br08-assign` restored per-subject assignment → unit RED `gallery media ids are not disjoint: [7]`. Seed 0: G1=53 / G2=56 (skew 3); withheld=2 (`353:Pewter Hollow`, `632:Burnished Ridgeway`); Tidal Quarry and Dappled Meadow both enrolled in G2.
-- BR-11: `_identities` and `_entry_identities` raise on non-list/non-tuple `present_identities` (`FirBakeoffRunError` / `StratumJoinError`); list, tuple, empty list, and missing key stay legal. Covered by `test_present_identities_rejects_str_and_dict` and `test_present_identities_list_and_absent_are_legal`. Mutant `/tmp/mut-br11` restored the bare-string wrap → RED `DID NOT RAISE FirBakeoffRunError`.
+- `fnir_fpi_at_threshold` now requires finite `tau` (`_require_finite`) so `iet_curve` and direct callers cannot skip the bakeoff `score_run` gate.
+- `_is_fnir_miss` / `_is_fpi` reject a non-finite `top1_score` on a detected search instead of letting IEEE NaN comparisons count as a mate hit.
+
+Tests: `test_non_finite_tau_is_not_a_clean_measurement`, `test_non_finite_detected_score_is_not_a_hit`.
+Canon: EVAL-18 / EVAL-16.
+Landed on a previous turn; not re-mutated here.
+
+## BR-21 (medium) — CLOSED
+
+String convenience templates no longer default `media_ids=()`. `_as_template` parses `'{media}:{subject}'` (the form this module generates) or raises `GallerySplitError`. Existing string-id fixtures now go through `Template(..., media_ids=(n,))` so independent-subject tests stay independent.
+
+Tests: `test_string_templates_parse_media_ids_and_coassign_shared_still`, `test_string_template_without_media_id_raises`.
+Mutant: restored `return Template(template_id=value, subject_id=subject_id)` (empty media default).
+RED:
+- `test_string_templates_parse_media_ids_and_coassign_shared_still` — `assert ('alice' in split.g1) == ('bob' in split.g1)` failed; alice and bob sharing still 99 landed in different galleries with `media_ids=()`.
+- `test_string_template_without_media_id_raises` — `DID NOT RAISE GallerySplitError`.
+Canon: JANUS 2.2 / MLDATA-09.
+
+## BR-13 (medium) — OPEN
+
+Empty-gallery invariant not yet added.

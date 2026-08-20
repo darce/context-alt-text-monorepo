@@ -8,11 +8,17 @@ set ``closed_set=True`` and cannot be reached by omitting foils.
 EVAL-19: FPI stays an integer count when measured; enrolled-gallery
 normalization follows the declared search gallery, never ``len(g1)+len(g2)``.
 EVAL-16: undetected mated probes stay in the injected lists — this module does not
-filter them out of the error budget.
+filter them out of the error budget. Completeness counts distinct
+``MatedSearchUnit`` keys, never ``len(mated)``; a duplicate submission is a
+caller error, not extra coverage of a dropped mate.
+EVAL-18: foil (still, gallery) units are the FPI exposure. A truncated or
+duplicated foil set cannot render as a complete FPI cell.
 MLDATA-09: unmeasured FNIR renders via ``BakeoffIETPoint.format_fnir``
 ("not measured"); declared-empty cells stay in the table.
 MLDATA-07 / rg-015: ``manifest_images`` and unique-subject counts pass through
 from ``join_by_stratum``; coverage gaps delegate to ``StratumReport``.
+An overall FNIR built over an incomplete probe stratum prints ``incomplete``,
+never a bare number.
 """
 
 from __future__ import annotations
@@ -65,6 +71,7 @@ __all__ = [
     "both_gallery_search_count",
     "build_run_plan",
     "expected_mated_search_count",
+    "expected_nonmated_search_count",
     "mated_galleries_for",
     "mated_identities_for",
     "occluded_probes_for",
@@ -95,6 +102,7 @@ class BakeoffIETPoint:
     measured: bool
     n_enrolled_gallery_subjects: int | None = None
     galleries: tuple[GalleryName, ...] = ()
+    incomplete: bool = False
 
     def __post_init__(self) -> None:
         if self.measured:
@@ -125,6 +133,8 @@ class BakeoffIETPoint:
     def format_fnir(self) -> str:
         if not self.measured or self.fnir is None:
             return "not measured"
+        if self.incomplete:
+            return "incomplete"
         return f"{self.fnir:.3f}"
 
 
@@ -181,6 +191,7 @@ class RunReport:
     seed: int
     withheld_probe_templates: tuple[Template, ...] = ()
     search_shortfalls: Mapping[str, int] = field(default_factory=dict)
+    nonmated_shortfalls: Mapping[str, int] = field(default_factory=dict)
 
     def coverage_gaps(self) -> list[dict[str, Any]]:
         return self.stratum_report.coverage_gaps()
@@ -190,6 +201,10 @@ class RunReport:
         n_withheld = len(self.withheld_probe_templates)
         for base in self.stratum_report.to_rows():
             shortfall = int(self.search_shortfalls.get(base["stratum"], 0))
+            foil_shortfall = int(self.nonmated_shortfalls.get(base["stratum"], 0))
+            cell_incomplete = bool(
+                base["incomplete"] or shortfall > 0 or foil_shortfall > 0
+            )
             if base["stratum"] == GALLERY_STRATUM:
                 rows.append(
                     {
@@ -202,7 +217,7 @@ class RunReport:
                         "n_nonmated": 0,
                         "declared_empty": base["declared_empty"],
                         "measured": False,
-                        "incomplete": bool(base["incomplete"] or shortfall > 0),
+                        "incomplete": cell_incomplete,
                         "manifest_images": base["manifest_images"],
                         "tau": self.tau,
                         "fpi_per_enrolled_subject": None,
@@ -212,6 +227,7 @@ class RunReport:
                         "gallery": (),
                         "n_withheld_probe_templates": n_withheld,
                         "search_shortfall": shortfall,
+                        "nonmated_shortfall": foil_shortfall,
                     }
                 )
                 continue
@@ -227,7 +243,7 @@ class RunReport:
                     "n_nonmated": point.n_nonmated,
                     "declared_empty": base["declared_empty"],
                     "measured": point.measured,
-                    "incomplete": bool(base["incomplete"] or shortfall > 0),
+                    "incomplete": cell_incomplete,
                     "manifest_images": base["manifest_images"],
                     "tau": self.tau,
                     "fpi_per_enrolled_subject": point.fpi_per_enrolled_subject,
@@ -235,6 +251,7 @@ class RunReport:
                     "gallery": tuple(g.value for g in point.galleries),
                     "n_withheld_probe_templates": n_withheld,
                     "search_shortfall": shortfall,
+                    "nonmated_shortfall": foil_shortfall,
                 }
             )
         return rows
@@ -346,6 +363,14 @@ def expected_mated_search_count(plan: RunPlan, *, stratum: str) -> int:
     return len(_mated_search_units(plan, stratum=stratum))
 
 
+def expected_nonmated_search_count(plan: RunPlan, *, stratum: str) -> int:
+    """Foil (still, gallery) units the stratum must cover.
+
+    Foils stay still-level (BR-29). Derived from ``occluded_probes_for``[1].
+    """
+    return len(_foil_search_units(plan, stratum=stratum))
+
+
 def score_run(
     *,
     plan: RunPlan,
@@ -382,10 +407,14 @@ def score_run(
         )
 
     stratum_report = join_by_stratum(_join_records(plan), plan.index)
+    coverage_incomplete = {
+        row["stratum"]: bool(row["incomplete"]) for row in stratum_report.to_rows()
+    }
     points: dict[str, BakeoffIETPoint] = {}
     all_mated: list[SearchResult] = []
     strata_with_nonmated: list[str] = []
     search_shortfalls: dict[str, int] = {}
+    nonmated_shortfalls: dict[str, int] = {}
     for name in _row_names(stratum_report):
         if name == GALLERY_STRATUM:
             # Gallery join records are enrolled, not probed (MLDATA-09).
@@ -394,13 +423,21 @@ def score_run(
         _validate_stratum_searches(
             plan, stratum=name, mated=mated, nonmated=nonmated
         )
-        search_shortfalls[name] = _search_shortfall(
-            plan, stratum=name, mated=mated
+        mated_shortfall = _search_shortfall(plan, stratum=name, mated=mated)
+        foil_shortfall = _nonmated_search_shortfall(
+            plan, stratum=name, nonmated=nonmated, closed_set=closed_set
         )
+        search_shortfalls[name] = mated_shortfall
+        nonmated_shortfalls[name] = foil_shortfall
         all_mated.extend(mated)
         if len(nonmated) > 0:
             strata_with_nonmated.append(name)
         galleries = _galleries_of(plan, (*mated, *nonmated))
+        cell_incomplete = bool(
+            coverage_incomplete.get(name, False)
+            or mated_shortfall > 0
+            or foil_shortfall > 0
+        )
         points[name] = _publish_point(
             fnir_fpi_at_threshold(
                 mated=mated,
@@ -414,6 +451,7 @@ def score_run(
             ),
             closed_set=closed_set,
             galleries=galleries,
+            incomplete=cell_incomplete,
         )
     if overall_nonmated is not None:
         overall_foils = overall_nonmated
@@ -430,6 +468,9 @@ def score_run(
         )
     _validate_overall_nonmated(plan, overall_foils)
     overall_galleries = _galleries_of(plan, (*all_mated, *overall_foils))
+    overall_incomplete = any(
+        points[name].incomplete for name in PROBE_STRATA if name in points
+    )
     overall = _publish_point(
         fnir_fpi_at_threshold(
             mated=all_mated,
@@ -443,6 +484,7 @@ def score_run(
         ),
         closed_set=closed_set,
         galleries=overall_galleries,
+        incomplete=overall_incomplete,
     )
     return RunReport(
         points=points,
@@ -452,6 +494,7 @@ def score_run(
         seed=plan.seed,
         withheld_probe_templates=plan.withheld_probe_templates,
         search_shortfalls=search_shortfalls,
+        nonmated_shortfalls=nonmated_shortfalls,
     )
 
 
@@ -460,6 +503,7 @@ def _publish_point(
     *,
     closed_set: bool,
     galleries: tuple[GalleryName, ...] = (),
+    incomplete: bool = False,
 ) -> BakeoffIETPoint:
     """Map an IET scorer point onto the bakeoff publication contract.
 
@@ -481,6 +525,7 @@ def _publish_point(
         measured=point.measured,
         n_enrolled_gallery_subjects=point.n_enrolled_gallery_subjects,
         galleries=galleries,
+        incomplete=incomplete,
     )
 
 
@@ -551,6 +596,36 @@ def _mated_search_units(
     )
 
 
+def _foil_search_units(
+    plan: RunPlan, *, stratum: str | None = None
+) -> tuple[tuple[ProbeEntry, GalleryName], ...]:
+    return tuple(
+        (entry, gallery)
+        for gallery in _declared_galleries(plan)
+        for entry in occluded_probes_for(plan, gallery=gallery)[1]
+        if stratum is None or entry.stratum == stratum
+    )
+
+
+def _mated_unit_key(
+    search: SearchResult, *, plan: RunPlan
+) -> tuple[int, GalleryName, str]:
+    gallery = _as_declared_gallery(search.gallery, declared=plan.probe_sets)
+    if search.true_name is None:
+        raise FirBakeoffRunError(
+            f"mated search media_id={search.media_id} gallery={gallery.value} "
+            "is missing true_name"
+        )
+    return (search.media_id, gallery, search.true_name)
+
+
+def _foil_unit_key(
+    search: SearchResult, *, plan: RunPlan
+) -> tuple[int, GalleryName]:
+    gallery = _as_declared_gallery(search.gallery, declared=plan.probe_sets)
+    return (search.media_id, gallery)
+
+
 def _as_declared_gallery(
     value: GalleryName | str, *, declared: Mapping[GalleryName, ProbeSet]
 ) -> GalleryName:
@@ -604,6 +679,8 @@ def _validate_stratum_searches(
 ) -> None:
     by_media = {entry.media_id: entry for entry in plan.probe_entries.get(stratum, ())}
     appeared: dict[int, set[GalleryName]] = {}
+    seen_mated: set[tuple[int, GalleryName, str]] = set()
+    seen_foils: set[tuple[int, GalleryName]] = set()
     for filed_as_mated, group in ((True, mated), (False, nonmated)):
         for search in group:
             entry = by_media.get(search.media_id)
@@ -615,6 +692,22 @@ def _validate_stratum_searches(
                 search, entry=entry, plan=plan, filed_as_mated=filed_as_mated
             )
             appeared.setdefault(search.media_id, set()).add(gallery)
+            if filed_as_mated:
+                key = _mated_unit_key(search, plan=plan)
+                if key in seen_mated:
+                    raise FirBakeoffRunError(
+                        f"duplicate mated search media_id={search.media_id} "
+                        f"gallery={gallery.value} true_name={search.true_name!r}"
+                    )
+                seen_mated.add(key)
+            else:
+                foil_key = _foil_unit_key(search, plan=plan)
+                if foil_key in seen_foils:
+                    raise FirBakeoffRunError(
+                        f"duplicate non-mated search media_id={search.media_id} "
+                        f"gallery={gallery.value}"
+                    )
+                seen_foils.add(foil_key)
     needed_by_media: dict[int, set[GalleryName]] = {}
     for unit in _mated_search_units(plan, stratum=stratum):
         needed_by_media.setdefault(unit.entry.media_id, set()).add(unit.gallery)
@@ -639,15 +732,23 @@ def _validate_overall_nonmated(
         for stratum in PROBE_STRATA
         for entry in plan.probe_entries.get(stratum, ())
     }
+    seen_foils: set[tuple[int, GalleryName]] = set()
     for search in foils:
         entry = by_media.get(search.media_id)
         if entry is None:
             raise FirBakeoffRunError(
                 f"overall_nonmated media_id={search.media_id} is not a probe entry"
             )
-        _validate_search_against_entry(
+        gallery = _validate_search_against_entry(
             search, entry=entry, plan=plan, filed_as_mated=False
         )
+        foil_key = (search.media_id, gallery)
+        if foil_key in seen_foils:
+            raise FirBakeoffRunError(
+                f"duplicate overall_nonmated media_id={search.media_id} "
+                f"gallery={gallery.value}"
+            )
+        seen_foils.add(foil_key)
 
 
 def _search_shortfall(
@@ -660,11 +761,39 @@ def _search_shortfall(
 
     EVAL-16 / EVAL-19: dropping undetected mates or co-subjects must not
     render as a complete unmeasured cell. Non-probe strata have no shortfall.
-    Count is ``expected_mated_search_count``, not a second independent tally.
+    Count is distinct ``MatedSearchUnit`` keys against
+    ``expected_mated_search_count``, never ``len(mated)``.
     """
     if stratum not in PROBE_STRATA:
         return 0
-    return max(0, expected_mated_search_count(plan, stratum=stratum) - len(mated))
+    expected = {
+        (unit.entry.media_id, unit.gallery, unit.subject_id)
+        for unit in _mated_search_units(plan, stratum=stratum)
+    }
+    submitted = {_mated_unit_key(search, plan=plan) for search in mated}
+    return max(0, len(expected) - len(submitted & expected))
+
+
+def _nonmated_search_shortfall(
+    plan: RunPlan,
+    *,
+    stratum: str,
+    nonmated: Sequence[SearchResult],
+    closed_set: bool,
+) -> int:
+    """How many foil (still, gallery) units are missing from the injected list.
+
+    Closed-set runs declare no foil workload. Open-set FPI is a count against
+    the declared gallery (JANUS 2.3.4); a truncated foil set understates it.
+    """
+    if closed_set or stratum not in PROBE_STRATA:
+        return 0
+    expected = {
+        (entry.media_id, gallery)
+        for entry, gallery in _foil_search_units(plan, stratum=stratum)
+    }
+    submitted = {_foil_unit_key(search, plan=plan) for search in nonmated}
+    return max(0, len(expected) - len(submitted & expected))
 
 
 def _missing_required_probe_searches(

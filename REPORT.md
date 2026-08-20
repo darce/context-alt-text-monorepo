@@ -84,3 +84,23 @@ Did not edit files outside the exclusive set. Coordinator must add the three lin
 2. `benchmarks/manifests/golden150-draft-20260723.json` entries[149] (media_id 648) — two operator facts have only `annotator_id="pre-program-operator"`. Same three fields need a backfill (same pattern as the earlier annotator_id backfill). Until then `test_golden150_draft_parses_with_backfilled_fact_annotators` fails via `load_legacy_manifest`.
 
 Full `scene/tests` (excluding known PGPASSWORD boot failures): **2 failed, 1213 passed, 4 skipped** — those two unowned fixtures only. No back-compat shim on the model; v2 load still goes through `ReferenceFact`.
+
+# Lane F18 — DESCQUAL-2 lineage backfill (BR-20 leftover fixtures)
+
+Do not redo BR-21 / BR-25(code) / BR-20. This lane only backfills the two fixtures BR-20 correctly left broken, plus the `majority_vote` → `majority-vote` token rename.
+
+## 1. `test_disagreement_survives_adjudication`
+
+Operator fact already had `annotator_id` + both pre-adjudication labels; BR-20 made `annotation_batch`, `annotated_at`, `source_pool` required on human-confirmed facts (MLDATA-04). Backfilled those three from `_full_payload()` in the same file (`batch-2026-08-20`, `2026-08-20T12:00:00Z`, `golden-646-pool`) — no second set of magic strings. Model not relaxed.
+
+Test: `test_disagreement_survives_adjudication` (existing; now also asserts the three fields equal `_full_payload()`).
+
+Mutant: omit `annotation_batch=` from the constructor. RED:
+
+```
+FAILED scene/tests/test_eval_harness_manifest_reference_fact_lineage.py::test_disagreement_survives_adjudication
+Value error, human-confirmed reference_fact requires annotation_batch
+(confirmed_by=<ConfirmationSource.OPERATOR: 'operator'>; MLDATA-04)
+```
+
+Canon: MLDATA-03, MLDATA-04, HITL-07, TEST-15. Mutant restored.

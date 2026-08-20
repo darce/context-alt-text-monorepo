@@ -17,7 +17,7 @@ from __future__ import annotations
 import json
 import math
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -100,6 +100,7 @@ class RunReport:
     tau: float
     seed: int
     withheld_probe_templates: tuple[Template, ...] = ()
+    search_shortfalls: Mapping[str, int] = field(default_factory=dict)
 
     def coverage_gaps(self) -> list[dict[str, Any]]:
         return self.stratum_report.coverage_gaps()
@@ -109,6 +110,7 @@ class RunReport:
         n_withheld = len(self.withheld_probe_templates)
         for base in self.stratum_report.to_rows():
             point = self.points[base["stratum"]]
+            shortfall = int(self.search_shortfalls.get(base["stratum"], 0))
             rows.append(
                 {
                     "stratum": base["stratum"],
@@ -120,12 +122,13 @@ class RunReport:
                     "n_nonmated": point.n_nonmated,
                     "declared_empty": base["declared_empty"],
                     "measured": point.measured,
-                    "incomplete": base["incomplete"],
+                    "incomplete": bool(base["incomplete"] or shortfall > 0),
                     "manifest_images": base["manifest_images"],
                     "tau": self.tau,
                     "fpi_per_enrolled_subject": point.fpi_per_enrolled_subject,
                     "n_enrolled_gallery_subjects": point.n_enrolled_gallery_subjects,
                     "n_withheld_probe_templates": n_withheld,
+                    "search_shortfall": shortfall,
                 }
             )
         return rows
@@ -195,8 +198,12 @@ def score_run(
     points: dict[str, IETPoint] = {}
     all_mated: list[SearchResult] = []
     strata_with_nonmated: list[str] = []
+    search_shortfalls: dict[str, int] = {}
     for name in _row_names(stratum_report):
         mated, nonmated = _searches_for(searches, stratum=name)
+        search_shortfalls[name] = _search_shortfall(
+            plan, stratum=name, mated=mated
+        )
         all_mated.extend(mated)
         if len(nonmated) > 0:
             strata_with_nonmated.append(name)
@@ -228,7 +235,25 @@ def score_run(
         tau=float(tau),
         seed=plan.seed,
         withheld_probe_templates=plan.withheld_probe_templates,
+        search_shortfalls=search_shortfalls,
     )
+
+
+def _search_shortfall(
+    plan: RunPlan,
+    *,
+    stratum: str,
+    mated: Sequence[SearchResult],
+) -> int:
+    """How many plan probe entries are missing from the injected mated list.
+
+    EVAL-16 / EVAL-19: dropping undetected mates or zero-face probes must not
+    render as a complete unmeasured cell. Non-probe strata have no shortfall.
+    """
+    if stratum not in PROBE_STRATA:
+        return 0
+    expected = len(plan.probe_entries.get(stratum, ()))
+    return max(0, expected - len(mated))
 
 
 def _missing_required_probe_searches(

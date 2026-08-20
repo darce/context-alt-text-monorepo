@@ -229,6 +229,8 @@ def test_zero_mated_stratum_renders_unmeasured_fnir_and_keeps_fpi(
     assert row["n_mated"] == 0
     assert row["n_nonmated"] == 2
     assert row["declared_empty"] is False
+    assert row["search_shortfall"] == 1
+    assert row["incomplete"] is True
 
 
 def test_declared_empty_cells_stay_in_the_table(tmp_path: Path) -> None:
@@ -343,6 +345,8 @@ def test_undetected_mated_probe_counts_as_fnir_miss(tmp_path: Path) -> None:
     row = {item["stratum"]: item for item in report.to_rows()}["A_true_occluder"]
     assert row["fnir"] == "0.500"
     assert row["measured"] is True
+    assert row["search_shortfall"] == 0
+    assert row["incomplete"] is False
 
 
 def test_fpi_is_integer_count_not_rate_over_nonmated(tmp_path: Path) -> None:
@@ -545,6 +549,34 @@ def test_empty_searches_raises_for_populated_probe_strata(tmp_path: Path) -> Non
         assert name in msg
 
 
+def test_empty_search_lists_on_populated_probe_cell_are_incomplete() -> None:
+    """BR-17 / EVAL-16 / EVAL-19: a present key with empty lists is not complete-and-zero.
+
+    Round-3 BR-09 required the key. Reconcile len(mated) against the plan so a
+    caller who drops undetected mates or zero-face non-mates cannot look measured.
+    """
+    plan = build_run_plan(selection_manifest_path=_frozen_manifest(), seed=0)
+    assert len(plan.probe_entries["A_true_occluder"]) == 32
+    report = score_run(
+        plan=plan,
+        searches=_probe_searches(),
+        tau=0.50,
+    )
+    row = {item["stratum"]: item for item in report.to_rows()}["A_true_occluder"]
+    assert row["n_images"] == 32
+    assert row["n_mated"] == 0
+    assert row["search_shortfall"] == 32
+    assert row["incomplete"] is True
+    assert row["measured"] is False
+    assert row["fnir"] == "not measured"
+    for name in PROBE_STRATA:
+        cell = {item["stratum"]: item for item in report.to_rows()}[name]
+        expected = len(plan.probe_entries[name])
+        assert cell["search_shortfall"] == expected
+        assert cell["incomplete"] is True
+        assert cell["n_mated"] == 0
+
+
 def test_explicit_empty_mated_list_is_unmeasured_not_missing(tmp_path: Path) -> None:
     plan = _plan(tmp_path)
     foils = [_nonmated_hit("Alice", 0.90)]
@@ -565,6 +597,8 @@ def test_explicit_empty_mated_list_is_unmeasured_not_missing(tmp_path: Path) -> 
     assert row["fnir"] == "not measured"
     assert row["measured"] is False
     assert row["declared_empty"] is False
+    assert row["search_shortfall"] == 1
+    assert row["incomplete"] is True
 
 
 def test_enrolled_gallery_mismatch_raises(tmp_path: Path) -> None:

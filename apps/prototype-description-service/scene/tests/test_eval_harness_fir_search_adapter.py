@@ -578,11 +578,25 @@ def test_zero_detection_foil_still_scores(tmp_path: Path) -> None:
     assert report.points["D_capture"].n_nonmated == len(foil_galleries)
 
 
-def test_overall_nonmated_keeps_declared_foil_count(tmp_path: Path) -> None:
-    carol_item, carol_boxes = _empty_named_item(13, ["Carol"])
+@pytest.mark.parametrize(
+    "carol_detected",
+    [False, True],
+    ids=["zero_detection", "detected"],
+)
+def test_overall_nonmated_keeps_declared_foil_count(
+    tmp_path: Path, carol_detected: bool
+) -> None:
+    vecs = _vecs()
+    if carol_detected:
+        carol_item, carol_boxes = _named_item(13, ["Carol"], vecs)
+    else:
+        carol_item, carol_boxes = _empty_named_item(13, ["Carol"])
     plan, items, gt = _full_plan_items_with_carol(tmp_path, carol_item, carol_boxes)
-    _, overall = searches_from_run_records(items, gt, plan=plan)
-    assert len(overall) == _declared_foil_unit_count(plan)
+    searches, overall = searches_from_run_records(items, gt, plan=plan)
+    declared = _declared_foil_unit_count(plan)
+    assert len(overall) == declared
+    stratum_foils = sum(len(payload["nonmated"]) for payload in searches.values())
+    assert stratum_foils == declared
 
 
 def test_unmatched_detection_reaches_the_gallery(tmp_path: Path) -> None:
@@ -629,3 +643,93 @@ def test_unmatched_detections_do_not_inflate_the_denominator(tmp_path: Path) -> 
     )
     assert report.overall.incomplete is False
     assert report.nonmated_shortfalls["D_capture"] == 0
+
+
+def test_adapter_publishes_raw_foil_smax_on_both_sides_of_tau(tmp_path: Path) -> None:
+    extra = [_entry(13, "D_capture", ["Carol"], "h")]
+    plan = _two_subject_plan(tmp_path, extra=extra)
+    vecs = _vecs()
+    items, gt = _enrollment_records(plan, vecs)
+    carol_vecs = {**vecs, "Carol": vecs["Alice"]}
+    probe, boxes = _named_item(13, ["Carol"], carol_vecs)
+    items.append(probe)
+    gt[13] = boxes
+
+    alice_gallery = _gallery_of(plan, "Alice")
+    bob_gallery = _gallery_of(plan, "Bob")
+    matched, _, _, _ = collect_matched_faces(items, gt)
+    alice_proto = mean_prototype(
+        [
+            face.embedding_array()
+            for face in matched
+            if face.media_id in _enrolled_template(plan, "Alice").media_ids
+            and face.true_name == "Alice"
+        ]
+    )
+    bob_proto = mean_prototype(
+        [
+            face.embedding_array()
+            for face in matched
+            if face.media_id in _enrolled_template(plan, "Bob").media_ids
+            and face.true_name == "Bob"
+        ]
+    )
+    probe_face = next(face for face in matched if face.media_id == 13)
+    s_alice, name_alice = argmax_gallery(
+        probe_face.embedding_array(), {"Alice": alice_proto}
+    )
+    s_bob, name_bob = argmax_gallery(probe_face.embedding_array(), {"Bob": bob_proto})
+    assert name_alice == "Alice"
+    assert name_bob == "Bob"
+    assert s_alice > 0.50
+    assert s_bob < 0.50
+
+    searches, _ = searches_from_run_records(items, gt, plan=plan)
+    foils = [
+        row
+        for row in searches["D_capture"]["nonmated"]
+        if row.media_id == 13
+    ]
+    assert len(foils) == 2
+    by_gallery = {row.gallery: row for row in foils}
+    high = by_gallery[alice_gallery]
+    low = by_gallery[bob_gallery]
+    for row in foils:
+        assert row.top1_score is not None
+        assert row.detected is True
+        assert row.true_name is None
+    assert high.top1_name == "Alice"
+    assert high.top1_score == pytest.approx(s_alice)
+    assert high.top1_score > 0.50
+    assert low.top1_name == "Bob"
+    assert low.top1_score == pytest.approx(s_bob)
+    assert low.top1_score < 0.50
+
+
+def test_padded_gt_name_still_emits_mated_search(tmp_path: Path) -> None:
+    plan = _two_subject_plan(tmp_path)
+    vecs = _vecs()
+    items, gt = _enrollment_records(plan, vecs)
+    layout = _layout(1)
+    cx, cy, w, h, bbox = layout[0]
+    items.append(_item(10, [_face(bbox, vecs["Alice"])]))
+    gt[10] = [_gt(cx, cy, w, h, "Alice ")]
+
+    matched, associations, _, _ = collect_matched_faces(items, gt)
+    probe_faces = [face for face in matched if face.media_id == 10]
+    assert [face.true_name for face in probe_faces] == ["Alice "]
+    assert associations[10].unmatched_gt == ()
+
+    searches, _ = searches_from_run_records(items, gt, plan=plan)
+    alice_gallery = _gallery_of(plan, "Alice")
+    mated = [
+        row
+        for row in searches["A_true_occluder"]["mated"]
+        if row.media_id == 10 and row.gallery == alice_gallery
+    ]
+    assert len(mated) == 1
+    row = mated[0]
+    assert row.detected is True
+    assert row.true_name == "Alice"
+    assert row.top1_score is not None
+    assert row.top1_name == "Alice"

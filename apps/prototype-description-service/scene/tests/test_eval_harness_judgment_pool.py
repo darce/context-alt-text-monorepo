@@ -10,7 +10,7 @@ from scripts.eval_harness.judgment_pool import (
     build_pool,
     incompleteness_report,
 )
-from scripts.eval_harness.manifest import FactPolarity
+from scripts.eval_harness.manifest import FactPolarity, ReferenceFact
 
 
 def _complementary_red_hat_pool():
@@ -21,6 +21,7 @@ def _complementary_red_hat_pool():
                 CandidateFact(text="red hat", polarity=FactPolarity.FALSE),
             ],
             "model_a": [CandidateFact(text="red hat", polarity=FactPolarity.TRUE)],
+            "model_b": [CandidateFact(text="red hat", polarity=FactPolarity.TRUE)],
         },
         depth=5,
     )
@@ -31,6 +32,7 @@ def test_overlapping_facts_deduped_and_pooled_from_both():
         contributions={
             "model_a": ["red hat", "blue coat", "lake"],
             "model_b": ["RED HAT", "green boots"],
+            "human": ["lake"],
         },
         depth=5,
     )
@@ -52,8 +54,8 @@ def test_single_contributor_pool_raises():
 @pytest.mark.parametrize(
     ("depth", "expected"),
     [
-        (2, ["a1", "a2", "b1", "b2"]),
-        (3, ["a1", "a2", "a3", "b1", "b2", "b3"]),
+        (2, ["a1", "a2", "b1", "b2", "h1", "h2"]),
+        (3, ["a1", "a2", "a3", "b1", "b2", "b3", "h1", "h2", "h3"]),
     ],
 )
 def test_depth_truncates_per_contributor_not_globally(depth, expected):
@@ -61,6 +63,7 @@ def test_depth_truncates_per_contributor_not_globally(depth, expected):
         contributions={
             "model_a": ["a1", "a2", "a3", "a4"],
             "model_b": ["b1", "b2", "b3", "b4"],
+            "human": ["h1", "h2", "h3", "h4"],
         },
         depth=depth,
     )
@@ -74,6 +77,7 @@ def test_incompleteness_counts_unjudged_and_zero_unique_for_pure_duplicate_contr
         contributions={
             "model_a": ["red hat", "blue coat", "lake"],
             "model_b": ["red hat", "blue coat"],
+            "human": ["red hat"],
         },
         depth=5,
     )
@@ -87,7 +91,11 @@ def test_incompleteness_counts_unjudged_and_zero_unique_for_pure_duplicate_contr
 
 def test_unjudged_are_not_negatives_disclosure_present():
     pool = build_pool(
-        contributions={"human": ["lake"], "model_a": ["lake", "red hat"]},
+        contributions={
+            "human": ["lake"],
+            "model_a": ["lake", "red hat"],
+            "model_b": ["lake"],
+        },
         depth=3,
     )
     report = incompleteness_report(pool=pool, judged=[])
@@ -151,6 +159,7 @@ def test_unique_bare_string_judgment_resolves():
                 CandidateFact(text="blue coat", polarity=FactPolarity.TRUE),
             ],
             "model_a": [CandidateFact(text="red hat", polarity=FactPolarity.FALSE)],
+            "model_b": [CandidateFact(text="blue coat", polarity=FactPolarity.TRUE)],
         },
         depth=5,
     )
@@ -173,3 +182,74 @@ def test_bare_string_pool_key_marks_one_polarity():
     assert pooled.judged_count == 1
     assert pooled.unjudged_count == 1
     assert pooled.unjudged_are_not_negatives is True
+
+
+def test_same_model_family_prompt_variants_are_not_independent():
+    """EVAL-25: model_a and model_a_t07 are one family, not two contributors.
+
+    A human pass does not make prompt variants independent — otherwise the
+    family check is dead and only the human check fires.
+    """
+    with pytest.raises(ValueError, match="family"):
+        build_pool(
+            contributions={
+                "human": ["lake"],
+                "model_a": ["red hat"],
+                "model_a_t07": ["blue coat"],
+            },
+            depth=5,
+        )
+
+
+def test_pool_without_human_contributor_raises():
+    """EVAL-25: distinct model families still self-grade without a human pass."""
+    with pytest.raises(ValueError, match="human"):
+        build_pool(
+            contributions={
+                "model_a": ["red hat"],
+                "model_b": ["blue coat"],
+            },
+            depth=5,
+        )
+
+
+def test_gold_facts_without_source_pool_cannot_be_bound():
+    """EVAL-25: gold that never went through a pool cannot be used."""
+    from scripts.eval_harness.judgment_pool import bind_gold
+
+    pool = build_pool(
+        contributions={
+            "human": ["red hat"],
+            "model_a": ["blue coat"],
+            "model_b": ["green boots"],
+        },
+        depth=5,
+    )
+    gold = [
+        ReferenceFact(text="red hat", kind="object", phrases=["red hat"]),
+    ]
+    with pytest.raises(ValueError, match="source_pool"):
+        bind_gold(pool=pool, gold=gold)
+
+
+def test_gold_facts_from_a_named_pool_bind():
+    from scripts.eval_harness.judgment_pool import bind_gold
+
+    pool = build_pool(
+        contributions={
+            "human": ["red hat"],
+            "model_a": ["blue coat"],
+            "model_b": ["green boots"],
+        },
+        depth=5,
+    )
+    gold = [
+        ReferenceFact(
+            text="red hat",
+            kind="object",
+            phrases=["red hat"],
+            source_pool="pilot-pool-v1",
+        ),
+    ]
+    bound = bind_gold(pool=pool, gold=gold)
+    assert bound[0].source_pool == "pilot-pool-v1"

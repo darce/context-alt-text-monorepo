@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import math
+import random
 from pathlib import Path
 
 import pytest
@@ -13,12 +14,17 @@ from scripts.eval_harness.audit_sampling import (
     AuditSamplingError,
     ClusterSpec,
     DeffOrder,
+    FramePsuPartition,
     allocate,
     design_effect,
     draw,
+    draw_two_stage,
+    estimate_icc,
     kish_effective_cluster_size,
+    project_frame_psu_image_counts,
     project_strata_image_counts,
     project_strata_subject_image_counts,
+    project_whole_frame_subject_image_counts,
     sample_size_for_margin,
     size_for_margin,
 )
@@ -43,13 +49,17 @@ FIR12_IMAGE_N = {
     "E_clean": 407,
 }
 
-# Frozen-frame Kish a = Σ m_i² / Σ m_i (AUDIT-11); not the arithmetic mean.
-WHOLE_FRAME_KISH_A = 12.90
 B_EYEWEAR_KISH_A = 2.36
 
 
-def _entry(stratum: str, identities: list[str]) -> dict[str, object]:
-    return {"stratum": stratum, "present_identities": identities}
+def _entry(
+    stratum: str, identities: list[str], media_id: int | str = 1
+) -> dict[str, object]:
+    return {
+        "stratum": stratum,
+        "present_identities": identities,
+        "media_id": media_id,
+    }
 
 
 def _strata_counts() -> dict[str, dict[str, int]]:
@@ -63,6 +73,25 @@ def _strata_counts() -> dict[str, dict[str, int]]:
 
 
 FIR12_STRATA = project_strata_image_counts(_strata_counts())
+
+# Vendored FIR-12 frame: DESCQUAL-2 clone does not otherwise ship this JSON.
+# Derived whole-frame Kish a (AUDIT-11); identities joined across strata.
+def _fir12_entries() -> list[object]:
+    if not _FIR12_MANIFEST.is_file():
+        raise FileNotFoundError(
+            f"vendored FIR-12 frame missing at {_FIR12_MANIFEST}"
+        )
+    payload = json.loads(_FIR12_MANIFEST.read_text())
+    entries = payload["entries"]
+    if not isinstance(entries, list) or not entries:
+        raise AuditSamplingError("fir12-selection-v1.json entries must be a non-empty list")
+    return entries
+
+
+WHOLE_FRAME = project_whole_frame_subject_image_counts(_fir12_entries())
+WHOLE_FRAME_KISH_A = kish_effective_cluster_size(WHOLE_FRAME.sizes)
+FRAME_PSU = project_frame_psu_image_counts(_fir12_entries())
+FRAME_PSU_KISH_A = kish_effective_cluster_size(FRAME_PSU.sizes)
 
 
 def _members(sizes: dict[str, int] | None = None) -> dict[str, list[str]]:
@@ -122,6 +151,157 @@ def test_kish_effective_cluster_size_is_not_the_mean():
     assert kish_effective_cluster_size((3, 3, 3)) == pytest.approx(3.0)
 
 
+def test_whole_frame_join_merges_identity_across_strata():
+    entries = [
+        _entry("A_true_occluder", ["alice"]),
+        _entry("B_eyewear", ["alice"]),
+        _entry("B_eyewear", ["bob"]),
+    ]
+    frame = project_whole_frame_subject_image_counts(entries)
+    assert sorted(frame.sizes) == [1, 2]
+    assert kish_effective_cluster_size(frame.sizes) == pytest.approx(5 / 3)
+    concat = [
+        m
+        for v in project_strata_subject_image_counts(entries).values()
+        for m in v
+    ]
+    assert sorted(concat) == [1, 1, 1]
+    assert kish_effective_cluster_size(concat) == pytest.approx(1.0)
+
+
+def test_whole_frame_counts_unlabeled_and_multi_identity_images():
+    entries = [
+        _entry("E_clean", []),
+        _entry("E_clean", []),
+        _entry("B_eyewear", ["alice", "bob"]),
+        _entry("C_pose", ["alice", "bob", "cara"]),
+        _entry("D_capture", ["dana"]),
+    ]
+    frame = project_whole_frame_subject_image_counts(entries)
+    assert frame.n_entries == 5
+    assert frame.n_unlabeled == 2
+    assert frame.n_multi_identity_images == 2
+    assert frame.extra_memberships == 3
+    assert sorted(frame.sizes) == [1, 1, 2, 2]
+
+
+def test_whole_frame_kish_a_joins_identities_across_strata():
+    entries = json.loads(_FIR12_MANIFEST.read_text())["entries"]
+    assert len(entries) == 640
+    frame = project_whole_frame_subject_image_counts(entries)
+    assert frame.n_entries == 640
+    assert len(frame.sizes) == 130
+    assert sum(frame.sizes) == 544
+    assert sum(m * m for m in frame.sizes) == 7020
+    assert sum(m * (m - 1) for m in frame.sizes) == 6476
+    assert frame.n_unlabeled == 115
+    assert frame.n_multi_identity_images == 16
+    assert frame.extra_memberships == 19
+    a = kish_effective_cluster_size(frame.sizes)
+    assert a == pytest.approx(7020 / 544)
+    assert a == pytest.approx(12.904412, abs=1e-6)
+    assert WHOLE_FRAME_KISH_A == pytest.approx(a)
+
+    # The obvious composition splits a subject who appears in two strata
+    # into two clusters and understates deff (a = 7.41 over 231 clusters).
+    per_stratum = project_strata_subject_image_counts(entries)
+    concat = [m for v in per_stratum.values() for m in v]
+    assert len(concat) == 231
+    split_a = kish_effective_cluster_size(concat)
+    assert split_a == pytest.approx(7.408088, rel=1e-6)
+    assert split_a < a
+
+
+def test_frame_psu_partition_assigns_first_listed_or_unlabeled_singleton():
+    entries = [
+        _entry("E_clean", ["alice", "bob"], media_id=1),
+        _entry("B_eyewear", ["alice"], media_id=2),
+        _entry("C_pose", ["cara", "bob"], media_id=3),
+        _entry("E_clean", [], media_id=99),
+        _entry("D_capture", ["dana", "erin"], media_id=4),
+    ]
+    part = project_frame_psu_image_counts(entries)
+    # alice: 2, cara: 1, dana: 1, unlabeled:99: 1. bob and erin are never first.
+    assert sorted(part.sizes) == [1, 1, 1, 2]
+    assert part.n_entries == 5
+    assert part.n_psus == 4
+    assert sum(part.sizes) == part.n_entries
+    assert part.n_unlabeled_singletons == 1
+    assert part.never_first_identities == ("bob", "erin")
+
+
+def test_frame_psu_partition_requires_sizes_sum_to_n_entries():
+    with pytest.raises(AuditSamplingError, match="partition"):
+        FramePsuPartition(
+            sizes=(1, 2, 3),
+            n_entries=7,
+            n_psus=3,
+            n_unlabeled_singletons=0,
+            never_first_identities=(),
+        )
+
+
+def test_frame_psu_partition_requires_media_id():
+    with pytest.raises(AuditSamplingError, match="media_id"):
+        project_frame_psu_image_counts(
+            [{"stratum": "E_clean", "present_identities": []}]
+        )
+    with pytest.raises(AuditSamplingError, match="media_id"):
+        project_frame_psu_image_counts(
+            [{"stratum": "E_clean", "present_identities": ["alice"], "media_id": ""}]
+        )
+    with pytest.raises(AuditSamplingError, match="media_id"):
+        project_frame_psu_image_counts(
+            [{"stratum": "E_clean", "present_identities": ["alice"], "media_id": True}]
+        )
+
+
+def test_frame_psu_kish_a_is_partition_of_640():
+    entries = json.loads(_FIR12_MANIFEST.read_text())["entries"]
+    part = project_frame_psu_image_counts(entries)
+    assert part.n_entries == 640
+    assert part.n_psus == 241
+    assert len(part.sizes) == 241
+    assert sum(part.sizes) == 640
+    assert sum(m * m for m in part.sizes) == 6942
+    assert part.n_unlabeled_singletons == 115
+    assert part.never_first_identities == (
+        "Auburn Hollow",
+        "Tidal Quarry",
+        "Vellum Warren",
+        "Verdant Beacon",
+    )
+    a = kish_effective_cluster_size(part.sizes)
+    assert a == pytest.approx(6942 / 640)
+    assert a == pytest.approx(10.846875)
+    assert FRAME_PSU_KISH_A == pytest.approx(a)
+    assert FRAME_PSU.n_psus == 241
+    # Labeled-subject a is still the overlapping 130-vector (BR-18 / diagnostic).
+    assert WHOLE_FRAME_KISH_A == pytest.approx(12.904412, abs=1e-6)
+    assert FRAME_PSU_KISH_A != pytest.approx(WHOLE_FRAME_KISH_A)
+
+
+@pytest.mark.parametrize(
+    ("icc", "n", "deff"),
+    [
+        (0.0, 84, 1.000),
+        (0.05, 118, 1.492),
+        (0.1, 148, 1.985),
+        (0.2, 198, 2.969),
+        (0.3, 239, 3.954),
+        (0.5, 302, 5.923),
+    ],
+)
+def test_planning_n_on_frame_psu_kish_a(icc: float, n: int, deff: float):
+    record = size_for_margin(
+        margin=0.10, population=640, cluster_size=FRAME_PSU_KISH_A, icc=icc
+    )
+    assert record.n == n
+    assert round(record.deff, 3) == deff
+    assert record.deff == pytest.approx(1.0 + (FRAME_PSU_KISH_A - 1.0) * icc)
+    assert record.cluster_size == FRAME_PSU_KISH_A
+
+
 def test_kish_effective_cluster_size_rejects_empty_and_non_positive():
     with pytest.raises(AuditSamplingError, match="non-empty"):
         kish_effective_cluster_size(())
@@ -136,10 +316,16 @@ def test_kish_effective_cluster_size_rejects_empty_and_non_positive():
 
 
 def test_design_effect_kish_effective_size():
-    assert design_effect(cluster_size=WHOLE_FRAME_KISH_A, icc=0.2) == pytest.approx(3.38)
+    assert design_effect(cluster_size=WHOLE_FRAME_KISH_A, icc=0.2) == pytest.approx(
+        1.0 + (WHOLE_FRAME_KISH_A - 1.0) * 0.2
+    )
 
 
-def test_clustered_size_applies_deff_to_n0_before_fpc():
+def test_deff_then_fpc_ordering_on_labeled_subject_a_not_planning_n():
+    # Ordering pin only: deff-then-fpc (216) vs the wrong fpc-then-deff (284).
+    # cluster_size is the labeled-subject a (WHOLE_FRAME_KISH_A, Σm=544 over
+    # 130 overlapping identities). That vector is not a PSU partition of the
+    # 640-image frame. Planning n uses FRAME_PSU_KISH_A → 198, not 216.
     record = size_for_margin(
         margin=0.10, population=640, cluster_size=WHOLE_FRAME_KISH_A, icc=0.2
     )
@@ -147,17 +333,27 @@ def test_clustered_size_applies_deff_to_n0_before_fpc():
     assert record.deff_order is DeffOrder.DEFF_THEN_FPC
     assert record.deff_order == "deff_then_fpc"
     assert record.cluster_size == WHOLE_FRAME_KISH_A
+    assert record.cluster_size != FRAME_PSU_KISH_A
     assert record.icc == 0.2
-    assert record.deff == pytest.approx(3.38)
+    assert record.deff == pytest.approx(1.0 + (WHOLE_FRAME_KISH_A - 1.0) * 0.2)
     assert record.n_deff == pytest.approx(record.n0 * record.deff)
     expected = math.ceil(record.n_deff / (1.0 + (record.n_deff - 1.0) / 640))
     assert record.n == expected == 216
     old_order = math.ceil(sample_size_for_margin(margin=0.10, population=640) * record.deff)
     assert old_order == 284
     assert record.n != old_order
-    mean_n = size_for_margin(margin=0.10, population=640, cluster_size=4.9, icc=0.2).n
-    assert mean_n == 136
-    assert record.n - mean_n == 80
+    # Mean of the cluster vector is Σm / 130 = 544/130 ≈ 4.18, not 640/130 = 4.92
+    # (that puts the 115 unlabeled images in the numerator).
+    mean_m = sum(WHOLE_FRAME.sizes) / len(WHOLE_FRAME.sizes)
+    assert mean_m == pytest.approx(544 / 130)
+    mean_n = size_for_margin(margin=0.10, population=640, cluster_size=mean_m, icc=0.2).n
+    assert mean_n == 127
+    assert record.n - mean_n == 89
+    planning = size_for_margin(
+        margin=0.10, population=640, cluster_size=FRAME_PSU_KISH_A, icc=0.2
+    )
+    assert planning.n == 198
+    assert planning.n != record.n
 
 
 def test_allocate_sums_to_n():
@@ -180,6 +376,20 @@ def test_precision_floor_raises_b_above_proportional():
     assert record.deff == 1.0
     assert record.cluster_size is None
     assert record.icc is None
+
+
+def test_allocate_refuses_when_precision_floors_exceed_n():
+    # n=30 pilot: proportional B=4; B_eyewear ±10 pp floor needs 44 unclustered.
+    proportional = allocate(strata_sizes=FIR12_STRATA, n=30)
+    assert proportional["B_eyewear"] == 4
+    with pytest.raises(
+        AuditSamplingError, match=r"precision floors require n>=44, got n=30"
+    ):
+        allocate(
+            strata_sizes=FIR12_STRATA,
+            n=30,
+            precision_floors={"B_eyewear": 0.10},
+        )
 
 
 def test_draw_is_deterministic_without_replacement_and_carries_pi():
@@ -362,6 +572,21 @@ def test_design_effect_rejects_non_finite_as_audit_error():
         size_for_margin(margin=0.10, population=80, cluster_size=float("inf"), icc=0.2)
 
 
+def test_size_for_margin_rejects_overflow_derived_nan_as_audit_error():
+    # Finite inputs that overflow n_deff to inf, then n = inf/inf = nan,
+    # which math.ceil used to raise a raw ValueError (BR-10 only covered input nan).
+    spec = ClusterSpec(cluster_size=1e308, icc=1.0)
+    with pytest.raises(AuditSamplingError, match="non-finite"):
+        size_for_margin(
+            margin=0.10,
+            population=640,
+            cluster_size=spec.cluster_size,
+            icc=spec.icc,
+        )
+    with pytest.raises(AuditSamplingError, match="non-finite"):
+        size_for_margin(margin=0.10, population=640, cluster_size=1e308, icc=1.0)
+
+
 def test_allocate_rejects_unknown_cluster_params_stratum():
     with pytest.raises(AuditSamplingError, match="cluster_params"):
         allocate(
@@ -423,3 +648,148 @@ def test_allocation_item_assignment_raises():
         alloc["E_clean"] = 0
     with pytest.raises(TypeError):
         alloc.counts["E_clean"] = 0
+
+
+def _anova_clusters_icc(*, n_psu: int, icc: float) -> list[tuple[float, ...]]:
+    """Balanced k=3 clusters whose ANOVA ICC equals `icc` (MSW=1)."""
+    k = 3
+    f_ratio = (1.0 + (k - 1.0) * icc) / (1.0 - icc)
+    target_ss = f_ratio * (n_psu - 1) / k
+    center = (n_psu - 1) / 2.0
+    raw = [i - center for i in range(n_psu)]
+    scale = math.sqrt(target_ss / sum(x * x for x in raw))
+    return [(scale * x - 1.0, scale * x, scale * x + 1.0) for x in raw]
+
+
+def _gaussian_clusters(
+    *, n_psu: int, n_within: int, rho: float, seed: int
+) -> list[tuple[float, ...]]:
+    rng = random.Random(seed)
+    sd_a = math.sqrt(rho)
+    sd_e = math.sqrt(1.0 - rho)
+    clusters = []
+    for _ in range(n_psu):
+        intercept = rng.gauss(0.0, sd_a)
+        clusters.append(
+            tuple(intercept + rng.gauss(0.0, sd_e) for _ in range(n_within))
+        )
+    return clusters
+
+
+def test_fir12_icc_eligible_subject_counts():
+    assert sum(1 for m in WHOLE_FRAME.sizes if m >= 2) == 76
+    assert sum(1 for m in WHOLE_FRAME.sizes if m >= 3) == 65
+
+
+def test_draw_two_stage_replicates_within_psu():
+    clusters = {f"s{i}": [f"s{i}-{j}" for j in range(4)] for i in range(12)}
+    sample = draw_two_stage(clusters=clusters, n_psu=6, n_within=3, seed=21)
+    by_psu: dict[object, int] = {}
+    for unit in sample.units:
+        assert unit.psu_id is not None
+        by_psu[unit.psu_id] = by_psu.get(unit.psu_id, 0) + 1
+        assert str(unit.unit_id).startswith(str(unit.psu_id))
+    assert len(by_psu) == 6
+    assert set(by_psu.values()) == {3}
+    assert len(sample.units) == 18
+
+
+def test_draw_two_stage_is_deterministic_and_order_invariant():
+    clusters = {f"s{i}": [f"s{i}-{j}" for j in range(5)] for i in range(10)}
+    reversed_clusters = {
+        name: list(reversed(units)) for name, units in reversed(list(clusters.items()))
+    }
+    a = draw_two_stage(clusters=clusters, n_psu=4, n_within=2, seed=11)
+    b = draw_two_stage(clusters=clusters, n_psu=4, n_within=2, seed=11)
+    c = draw_two_stage(clusters=reversed_clusters, n_psu=4, n_within=2, seed=11)
+    other = draw_two_stage(clusters=clusters, n_psu=4, n_within=2, seed=7)
+    assert a.units == b.units
+    assert {(u.psu_id, u.unit_id) for u in a.units} == {
+        (u.psu_id, u.unit_id) for u in c.units
+    }
+    assert {(u.psu_id, u.unit_id) for u in a.units} != {
+        (u.psu_id, u.unit_id) for u in other.units
+    }
+
+
+def test_draw_two_stage_carries_two_stage_inclusion_probability():
+    clusters = {"alice": ["a1", "a2", "a3", "a4"], "bob": ["b1", "b2", "b3"]}
+    sample = draw_two_stage(clusters=clusters, n_psu=2, n_within=2, seed=3)
+    assert len(sample.units) == 4
+    by_psu = {u.psu_id: u for u in sample.units}
+    alice_pi = 1.0 * (2 / 4)
+    bob_pi = 1.0 * (2 / 3)
+    for unit in sample.units:
+        expected = alice_pi if unit.psu_id == "alice" else bob_pi
+        assert unit.inclusion_probability == pytest.approx(expected)
+    assert set(by_psu) == {"alice", "bob"}
+
+
+def test_draw_two_stage_refuses_n_within_below_2():
+    clusters = {"s0": ["a", "b", "c"]}
+    with pytest.raises(AuditSamplingError, match="n_within must be >= 2"):
+        draw_two_stage(clusters=clusters, n_psu=1, n_within=1, seed=1)
+
+
+def test_draw_two_stage_refuses_psu_smaller_than_n_within():
+    clusters = {"s0": ["a", "b"], "s1": ["c", "d", "e"]}
+    with pytest.raises(AuditSamplingError, match="n_within"):
+        draw_two_stage(clusters=clusters, n_psu=2, n_within=3, seed=1)
+
+
+def test_two_stage_census_of_m3_subjects_is_195_images():
+    clusters = {
+        f"s{i}": tuple(f"s{i}-{j}" for j in range(m))
+        for i, m in enumerate(WHOLE_FRAME.sizes)
+        if m >= 3
+    }
+    assert len(clusters) == 65
+    sample = draw_two_stage(clusters=clusters, n_psu=65, n_within=3, seed=20260820)
+    assert len(sample.units) == 195
+    assert len({u.psu_id for u in sample.units}) == 65
+
+
+def test_estimate_icc_anova_known_fixture():
+    clusters = [(1.0, 2.0), (3.0, 4.0), (5.0, 6.0)]
+    est = estimate_icc(clusters)
+    assert est.n_psu == 3
+    assert est.n_within == pytest.approx(2.0)
+    assert est.n_obs == 6
+    assert est.msb == pytest.approx(8.0)
+    assert est.msw == pytest.approx(0.5)
+    assert est.icc == pytest.approx(15 / 17)
+
+
+def test_estimate_icc_fisher_z_ci_for_g65_k3_at_rho_02():
+    clusters = _anova_clusters_icc(n_psu=65, icc=0.2)
+    est = estimate_icc(clusters)
+    assert est.icc == pytest.approx(0.2)
+    assert est.n_psu == 65
+    assert est.n_within == pytest.approx(3.0)
+    assert est.lower == pytest.approx(0.045, abs=5e-4)
+    assert est.upper == pytest.approx(0.360, abs=5e-4)
+    low_n = size_for_margin(
+        margin=0.10, population=640, cluster_size=WHOLE_FRAME_KISH_A, icc=0.045
+    ).n
+    high_n = size_for_margin(
+        margin=0.10, population=640, cluster_size=WHOLE_FRAME_KISH_A, icc=0.360
+    ).n
+    assert low_n == 121
+    assert high_n == 284
+
+
+def test_estimate_icc_recovers_rho_on_synthetic_clusters():
+    clusters = _gaussian_clusters(n_psu=65, n_within=3, rho=0.2, seed=20260820)
+    est = estimate_icc(clusters)
+    assert est.lower < 0.2 < est.upper
+    assert est.lower == pytest.approx(0.045, abs=0.15)
+    assert est.upper == pytest.approx(0.360, abs=0.15)
+
+
+def test_estimate_icc_rejects_singletons_and_too_few_psus():
+    with pytest.raises(AuditSamplingError, match="at least 2"):
+        estimate_icc([(1.0, 2.0, 3.0), (4.0,)])
+    with pytest.raises(AuditSamplingError, match="n_psu"):
+        estimate_icc([(1.0, 2.0), (3.0, 4.0)])
+    with pytest.raises(AuditSamplingError, match="non-empty"):
+        estimate_icc([])

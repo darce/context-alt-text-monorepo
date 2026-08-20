@@ -1,12 +1,16 @@
 """Stratified probability-sample sizing and drawing for DESCQUAL-2 audits.
 
 n is computed from a target margin of error plus the finite-population
-correction (AUDIT-09), never as a percent of N. Independent draws per stratum
-carry inclusion probabilities (AUDIT-08 / AUDIT-10). Images cluster within
-subject, so sizing inflates n0 by the Kish design effect *before* the fpc
-(AUDIT-11) using the Kish effective cluster size a = Σ m_i² / Σ m_i, not
-the mean. FIR-12 ``strata_counts`` values are per-stratum objects; project
-image counts before allocate() rather than passing the index through.
+correction (AUDIT-09), never as a percent of N. Independent image draws per
+stratum carry inclusion probabilities (AUDIT-08 / AUDIT-10). Images cluster
+within subject, so sizing inflates n0 by the Kish design effect *before* the
+fpc (AUDIT-11) using the Kish effective cluster size a = Σ m_i² / Σ m_i, not
+the mean. ``size_for_margin`` consumes an ICC; ``estimate_icc`` produces it
+(one-way ANOVA + Fisher-Z CI) from a subject-stage draw (``draw_two_stage``).
+FIR-12 ``strata_counts`` values are per-stratum objects; project image counts
+before allocate() rather than passing the index through. Whole-frame Kish a
+for planning n uses ``project_frame_psu_image_counts`` (a genuine PSU
+partition of the 640-image frame), not the labeled-subject membership vector.
 """
 
 from __future__ import annotations
@@ -39,6 +43,7 @@ class SampledUnit:
     unit_id: Hashable
     stratum: str
     inclusion_probability: float
+    psu_id: Hashable | None = None
 
 
 @dataclass(frozen=True)
@@ -49,6 +54,20 @@ class Sample:
     @property
     def unit_ids(self) -> tuple[Hashable, ...]:
         return tuple(unit.unit_id for unit in self.units)
+
+
+@dataclass(frozen=True)
+class IccEstimate:
+    """One-way ANOVA ICC with Fisher-Z interval (AUDIT-11)."""
+
+    icc: float
+    lower: float
+    upper: float
+    n_psu: int
+    n_within: float
+    n_obs: int
+    msb: float
+    msw: float
 
 
 @dataclass(frozen=True)
@@ -153,14 +172,70 @@ def project_strata_image_counts(
     return sizes
 
 
-def project_strata_subject_image_counts(
-    entries: Sequence[object],
-) -> dict[str, tuple[int, ...]]:
-    """Project selection-manifest entries into per-stratum per-subject image counts.
+@dataclass(frozen=True)
+class WholeFrameSubjectCounts:
+    """Per-subject image counts with identities joined across strata (AUDIT-11).
 
-    Each entry contributes one image to every named identity in its stratum.
-    The resulting size vector is the Kish-a input for that cell (AUDIT-11).
+    Concatenating per-stratum vectors from ``project_strata_subject_image_counts``
+    splits a subject who appears in two strata into two clusters and understates
+    Kish a. This object is the whole-frame join.
     """
+
+    sizes: tuple[int, ...]
+    n_entries: int
+    n_unlabeled: int
+    n_multi_identity_images: int
+    extra_memberships: int
+
+
+@dataclass(frozen=True)
+class FramePsuPartition:
+    """Image-level PSU partition of a selection frame (AUDIT-11).
+
+    PSU = first-listed ``present_identities`` name, else an unlabeled
+    singleton keyed by ``media_id``. ``sum(sizes) == n_entries`` is a
+    partition invariant, not a test-only assertion.
+    """
+
+    sizes: tuple[int, ...]
+    n_entries: int
+    n_psus: int
+    n_unlabeled_singletons: int
+    never_first_identities: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        if sum(self.sizes) != self.n_entries:
+            raise AuditSamplingError(
+                "PSU sizes must partition the frame: "
+                f"sum(sizes)={sum(self.sizes)} != n_entries={self.n_entries}"
+            )
+        if self.n_psus != len(self.sizes):
+            raise AuditSamplingError(
+                f"n_psus={self.n_psus} != len(sizes)={len(self.sizes)}"
+            )
+
+
+def _parse_media_id(entry: Mapping[object, object], index: int) -> Hashable:
+    if "media_id" not in entry:
+        raise AuditSamplingError(f"entries[{index}] missing 'media_id'")
+    media_id = entry["media_id"]
+    if isinstance(media_id, bool) or not isinstance(media_id, (int, str)):
+        raise AuditSamplingError(
+            f"entries[{index}]['media_id'] must be a non-bool int or str, "
+            f"got {media_id!r}"
+        )
+    if isinstance(media_id, str) and not media_id:
+        raise AuditSamplingError(
+            f"entries[{index}]['media_id'] must be a non-empty str, "
+            f"got {media_id!r}"
+        )
+    return media_id
+
+
+def _parse_selection_entries(
+    entries: Sequence[object],
+) -> list[tuple[str, Hashable, tuple[str, ...]]]:
+    """Return (stratum, media_id, unique identities) per entry; empty identities stay."""
     if isinstance(entries, (str, bytes)) or not isinstance(entries, Sequence):
         raise AuditSamplingError(
             "entries must be a sequence of objects, "
@@ -168,12 +243,12 @@ def project_strata_subject_image_counts(
         )
     if not entries:
         raise AuditSamplingError("entries must be non-empty")
-    counts: dict[str, dict[str, int]] = {}
+    parsed: list[tuple[str, Hashable, tuple[str, ...]]] = []
     for index, entry in enumerate(entries):
         if not isinstance(entry, Mapping):
             raise AuditSamplingError(
-                f"entries[{index}] must be an object with 'stratum' and "
-                f"'present_identities', got {type(entry).__name__}"
+                f"entries[{index}] must be an object with 'stratum', "
+                f"'present_identities', and 'media_id', got {type(entry).__name__}"
             )
         if "stratum" not in entry:
             raise AuditSamplingError(f"entries[{index}] missing 'stratum'")
@@ -191,9 +266,8 @@ def project_strata_subject_image_counts(
                 f"entries[{index}]['present_identities'] must be a sequence of "
                 f"names, got {type(identities).__name__}"
             )
-        # Empty present_identities are not subject-clustered; they contribute
-        # no cluster. Dropping them is the design, not a silent skip bug.
         seen: set[str] = set()
+        unique: list[str] = []
         for identity in identities:
             if not isinstance(identity, str) or not identity:
                 raise AuditSamplingError(
@@ -203,12 +277,94 @@ def project_strata_subject_image_counts(
             if identity in seen:
                 continue
             seen.add(identity)
+            unique.append(identity)
+        parsed.append((stratum, _parse_media_id(entry, index), tuple(unique)))
+    return parsed
+
+
+def project_strata_subject_image_counts(
+    entries: Sequence[object],
+) -> dict[str, tuple[int, ...]]:
+    """Project selection-manifest entries into per-stratum per-subject image counts.
+
+    Each entry contributes one image to every named identity in its stratum.
+    The resulting size vector is the Kish-a input for that cell (AUDIT-11).
+    """
+    counts: dict[str, dict[str, int]] = {}
+    for stratum, _media_id, identities in _parse_selection_entries(entries):
+        # Empty present_identities are not subject-clustered; they contribute
+        # no cluster. Dropping them is the design, not a silent skip bug.
+        for identity in identities:
             cell = counts.setdefault(stratum, {})
             cell[identity] = cell.get(identity, 0) + 1
     return {
         stratum: tuple(cell[name] for name in sorted(cell))
         for stratum, cell in counts.items()
     }
+
+
+def project_whole_frame_subject_image_counts(
+    entries: Sequence[object],
+) -> WholeFrameSubjectCounts:
+    """Join the same identity across strata into one cluster per subject.
+
+    The whole-frame Kish a is Σ m_i² / Σ m_i over this joined size vector.
+    """
+    counts: dict[str, int] = {}
+    n_unlabeled = 0
+    n_multi = 0
+    extra = 0
+    parsed = _parse_selection_entries(entries)
+    for _stratum, _media_id, identities in parsed:
+        if not identities:
+            n_unlabeled += 1
+            continue
+        if len(identities) > 1:
+            n_multi += 1
+            extra += len(identities) - 1
+        for identity in identities:
+            counts[identity] = counts.get(identity, 0) + 1
+    return WholeFrameSubjectCounts(
+        sizes=tuple(counts[name] for name in sorted(counts)),
+        n_entries=len(parsed),
+        n_unlabeled=n_unlabeled,
+        n_multi_identity_images=n_multi,
+        extra_memberships=extra,
+    )
+
+
+def project_frame_psu_image_counts(
+    entries: Sequence[object],
+) -> FramePsuPartition:
+    """Assign each image to exactly one PSU of the frame being sized.
+
+    Non-empty ``present_identities`` → PSU = the first-listed identity.
+    Empty ``present_identities`` → singleton PSU ``unlabeled:{media_id}``.
+    Extra memberships are not a second cluster. Unlabeled images stay in N.
+    """
+    parsed = _parse_selection_entries(entries)
+    counts: dict[str, int] = {}
+    all_identities: set[str] = set()
+    first_listed: set[str] = set()
+    n_unlabeled = 0
+    for _stratum, media_id, identities in parsed:
+        all_identities.update(identities)
+        if not identities:
+            n_unlabeled += 1
+            key = f"unlabeled:{media_id}"
+            counts[key] = counts.get(key, 0) + 1
+            continue
+        first = identities[0]
+        first_listed.add(first)
+        counts[first] = counts.get(first, 0) + 1
+    sizes = tuple(counts[name] for name in sorted(counts))
+    return FramePsuPartition(
+        sizes=sizes,
+        n_entries=len(parsed),
+        n_psus=len(sizes),
+        n_unlabeled_singletons=n_unlabeled,
+        never_first_identities=tuple(sorted(all_identities - first_listed)),
+    )
 
 
 def kish_effective_cluster_size(sizes: Sequence[int | float]) -> float:
@@ -275,6 +431,11 @@ def size_for_margin(
     else:
         raise AuditSamplingError("cluster_size and icc must be provided together")
     n = n_deff / (1.0 + (n_deff - 1.0) / population)
+    if not math.isfinite(n_deff) or not math.isfinite(n):
+        raise AuditSamplingError(
+            "computed sample size is non-finite; "
+            f"n_deff={n_deff!r} n={n!r} cluster_size={cluster_size!r} icc={icc!r}"
+        )
     return SampleSize(
         n=min(population, math.ceil(n)),
         n0=n0,
@@ -459,6 +620,169 @@ def draw(
             for unit_id in drawn
         )
     return Sample(seed=seed, units=tuple(selected))
+
+
+def draw_two_stage(
+    *,
+    clusters: Mapping[Hashable, Sequence[Hashable]],
+    n_psu: int,
+    n_within: int,
+    seed: int,
+) -> Sample:
+    """SRS of subject PSUs, then SRS of n_within images inside each drawn PSU.
+
+    Image-level ``draw`` cannot estimate a subject-clustered ICC: an n=30
+    SRS is almost all singletons. n_within must be >= 2 so each drawn PSU
+    carries replicates (AUDIT-11).
+    """
+    if not isinstance(clusters, Mapping) or isinstance(clusters, (str, bytes)):
+        raise AuditSamplingError(
+            f"clusters must be a mapping of PSU id -> units, got {type(clusters).__name__}"
+        )
+    if not clusters:
+        raise AuditSamplingError("clusters must be non-empty")
+    if isinstance(n_psu, bool) or not isinstance(n_psu, int) or n_psu < 1:
+        raise AuditSamplingError(f"n_psu must be an int >= 1, got {n_psu!r}")
+    if isinstance(n_within, bool) or not isinstance(n_within, int) or n_within < 2:
+        raise AuditSamplingError(f"n_within must be >= 2, got {n_within!r}")
+
+    frames: dict[Hashable, list[Hashable]] = {}
+    for psu_id, units in clusters.items():
+        if isinstance(units, (str, bytes)) or not isinstance(units, Sequence):
+            raise AuditSamplingError(
+                f"clusters[{psu_id!r}] must be a sequence of unit ids, "
+                f"got {type(units).__name__}"
+            )
+        frame = _ordered_unique(units)
+        if len(frame) != len(list(units)):
+            raise AuditSamplingError(f"PSU {psu_id!r} has duplicate unit ids")
+        if len(frame) < n_within:
+            raise AuditSamplingError(
+                f"PSU {psu_id!r} has m={len(frame)} < n_within={n_within}"
+            )
+        frames[psu_id] = frame
+
+    psu_ids = _ordered_unique(list(frames))
+    if n_psu > len(psu_ids):
+        raise AuditSamplingError(
+            f"n_psu={n_psu} exceeds number of clusters N={len(psu_ids)}"
+        )
+
+    rng = random.Random(seed)
+    drawn_psus = rng.sample(psu_ids, n_psu)
+    pi_psu = n_psu / len(psu_ids)
+    selected: list[SampledUnit] = []
+    for psu_id in drawn_psus:
+        frame = frames[psu_id]
+        drawn_units = rng.sample(frame, n_within)
+        pi = pi_psu * (n_within / len(frame))
+        selected.extend(
+            SampledUnit(
+                unit_id=unit_id,
+                stratum="frame",
+                inclusion_probability=pi,
+                psu_id=psu_id,
+            )
+            for unit_id in drawn_units
+        )
+    return Sample(seed=seed, units=tuple(selected))
+
+
+def estimate_icc(
+    clusters: Sequence[Sequence[float]],
+    *,
+    z: float = _DEFAULT_Z,
+) -> IccEstimate:
+    """One-way random-effects ANOVA ICC with Fisher-Z 95% CI (AUDIT-11).
+
+    Balanced k: ICC = (MSB − MSW) / (MSB + (k − 1) MSW). Unbalanced uses
+    n0 in place of k. The interval is Fisher's ICC transform, not artanh(ρ).
+    """
+    if isinstance(clusters, (str, bytes)) or not isinstance(clusters, Sequence):
+        raise AuditSamplingError(
+            f"clusters must be a sequence of observation groups, "
+            f"got {type(clusters).__name__}"
+        )
+    if not clusters:
+        raise AuditSamplingError("clusters must be non-empty")
+    groups: list[list[float]] = []
+    for index, raw in enumerate(clusters):
+        if isinstance(raw, (str, bytes)) or not isinstance(raw, Sequence):
+            raise AuditSamplingError(
+                f"clusters[{index}] must be a sequence of numbers, "
+                f"got {type(raw).__name__}"
+            )
+        if len(raw) < 2:
+            raise AuditSamplingError(
+                f"each cluster must have at least 2 observations, "
+                f"clusters[{index}] has {len(raw)}"
+            )
+        group: list[float] = []
+        for inner, value in enumerate(raw):
+            if not _finite_number(value):
+                raise AuditSamplingError(
+                    f"clusters[{index}][{inner}] must be a finite number, "
+                    f"got {value!r}"
+                )
+            group.append(float(value))
+        groups.append(group)
+    n_psu = len(groups)
+    if n_psu <= 2:
+        raise AuditSamplingError(f"Fisher-Z ICC CI requires n_psu > 2, got {n_psu}")
+    if not _finite_number(z) or z <= 0:
+        raise AuditSamplingError(f"z must be > 0, got {z!r}")
+
+    n_i = [len(group) for group in groups]
+    n_obs = sum(n_i)
+    grand = sum(sum(group) for group in groups) / n_obs
+    means = [sum(group) / len(group) for group in groups]
+    ssb = sum(n * (mean - grand) ** 2 for n, mean in zip(n_i, means))
+    ssw = sum(
+        (value - mean) ** 2 for group, mean in zip(groups, means) for value in group
+    )
+    msb = ssb / (n_psu - 1)
+    msw = ssw / (n_obs - n_psu)
+    if all(n == n_i[0] for n in n_i):
+        k = float(n_i[0])
+    else:
+        k = (n_obs - sum(n * n for n in n_i) / n_obs) / (n_psu - 1)
+    denom = msb + (k - 1.0) * msw
+    if denom == 0.0:
+        raise AuditSamplingError("ICC is undefined when MSB and MSW are both 0")
+    icc = (msb - msw) / denom
+    if msw == 0.0 and msb > 0.0:
+        lower, upper = 1.0, 1.0
+        icc = 1.0
+    else:
+        lower, upper = _fisher_z_icc_interval(icc, n_psu=n_psu, k=k, z=z)
+    return IccEstimate(
+        icc=icc,
+        lower=lower,
+        upper=upper,
+        n_psu=n_psu,
+        n_within=k,
+        n_obs=n_obs,
+        msb=msb,
+        msw=msw,
+    )
+
+
+def _fisher_z_icc_interval(
+    icc: float, *, n_psu: int, k: float, z: float
+) -> tuple[float, float]:
+    """Invert Fisher's ICC z = (1/2) log((1+(k−1)ρ)/(1−ρ)); SE = √(k / (2(G−2)(k−1)))."""
+    lo_bound = -1.0 / (k - 1.0)
+    span = 1.0 - lo_bound
+    eps = max(1e-12, span * 1e-12)
+    rho = min(1.0 - eps, max(lo_bound + eps, icc))
+    transformed = 0.5 * math.log((1.0 + (k - 1.0) * rho) / (1.0 - rho))
+    se = math.sqrt(k / (2.0 * (n_psu - 2.0) * (k - 1.0)))
+
+    def _invert(value: float) -> float:
+        exponential = math.exp(2.0 * value)
+        return (exponential - 1.0) / (exponential + k - 1.0)
+
+    return _invert(transformed - z * se), _invert(transformed + z * se)
 
 
 def _check_frame(

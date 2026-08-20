@@ -4,7 +4,8 @@ n is computed from a target margin of error plus the finite-population
 correction (AUDIT-09), never as a percent of N. Independent draws per stratum
 carry inclusion probabilities (AUDIT-08 / AUDIT-10). Images cluster within
 subject, so sizing inflates n0 by the Kish design effect *before* the fpc
-(AUDIT-11). FIR-12 ``strata_counts`` values are per-stratum objects; project
+(AUDIT-11) using the Kish effective cluster size a = Σ m_i² / Σ m_i, not
+the mean. FIR-12 ``strata_counts`` values are per-stratum objects; project
 image counts before allocate() rather than passing the index through.
 """
 
@@ -67,12 +68,32 @@ class SampleSize:
     icc: float | None = None
 
 
+def _finite_number(value: object) -> bool:
+    return (
+        isinstance(value, (int, float))
+        and not isinstance(value, bool)
+        and math.isfinite(value)
+    )
+
+
 @dataclass(frozen=True)
 class ClusterSpec:
-    """Per-stratum mean cluster size M and ICC for Kish deff (AUDIT-11)."""
+    """Per-stratum Kish effective cluster size a and ICC for Kish deff (AUDIT-11)."""
 
+    # 1+(M−1)·ICC is the equal-size form, so an unequal-size frame must
+    # supply a = Σ m_i² / Σ m_i, not the arithmetic mean.
     cluster_size: float
     icc: float
+
+    def __post_init__(self) -> None:
+        if not _finite_number(self.cluster_size) or self.cluster_size < 1:
+            raise AuditSamplingError(
+                f"cluster_size must be a finite number >= 1, got {self.cluster_size!r}"
+            )
+        if not _finite_number(self.icc) or not 0 <= self.icc <= 1:
+            raise AuditSamplingError(
+                f"icc must be a finite number in [0, 1], got {self.icc!r}"
+            )
 
 
 @dataclass(frozen=True)
@@ -121,6 +142,81 @@ def project_strata_image_counts(
     return sizes
 
 
+def project_strata_subject_image_counts(
+    entries: Sequence[object],
+) -> dict[str, tuple[int, ...]]:
+    """Project selection-manifest entries into per-stratum per-subject image counts.
+
+    Each entry contributes one image to every named identity in its stratum.
+    The resulting size vector is the Kish-a input for that cell (AUDIT-11).
+    """
+    if isinstance(entries, (str, bytes)) or not isinstance(entries, Sequence):
+        raise AuditSamplingError(
+            "entries must be a sequence of objects, "
+            f"got {type(entries).__name__}"
+        )
+    if not entries:
+        raise AuditSamplingError("entries must be non-empty")
+    counts: dict[str, dict[str, int]] = {}
+    for index, entry in enumerate(entries):
+        if not isinstance(entry, Mapping):
+            raise AuditSamplingError(
+                f"entries[{index}] must be an object with 'stratum' and "
+                f"'present_identities', got {type(entry).__name__}"
+            )
+        if "stratum" not in entry:
+            raise AuditSamplingError(f"entries[{index}] missing 'stratum'")
+        stratum = entry["stratum"]
+        if not isinstance(stratum, str) or not stratum:
+            raise AuditSamplingError(
+                f"entries[{index}]['stratum'] must be a non-empty str, "
+                f"got {stratum!r}"
+            )
+        if "present_identities" not in entry:
+            raise AuditSamplingError(f"entries[{index}] missing 'present_identities'")
+        identities = entry["present_identities"]
+        if isinstance(identities, (str, bytes)) or not isinstance(identities, Sequence):
+            raise AuditSamplingError(
+                f"entries[{index}]['present_identities'] must be a sequence of "
+                f"names, got {type(identities).__name__}"
+            )
+        # Empty present_identities are not subject-clustered; they contribute
+        # no cluster. Dropping them is the design, not a silent skip bug.
+        seen: set[str] = set()
+        for identity in identities:
+            if not isinstance(identity, str) or not identity:
+                raise AuditSamplingError(
+                    f"entries[{index}]['present_identities'] items must be "
+                    f"non-empty str, got {identity!r}"
+                )
+            if identity in seen:
+                continue
+            seen.add(identity)
+            cell = counts.setdefault(stratum, {})
+            cell[identity] = cell.get(identity, 0) + 1
+    return {
+        stratum: tuple(cell[name] for name in sorted(cell))
+        for stratum, cell in counts.items()
+    }
+
+
+def kish_effective_cluster_size(sizes: Sequence[int | float]) -> float:
+    """Kish effective cluster size a = Σ m_i² / Σ m_i from per-cluster sizes."""
+    if not sizes:
+        raise AuditSamplingError("cluster sizes must be non-empty")
+    total = 0.0
+    sum_sq = 0.0
+    for index, raw in enumerate(sizes):
+        if not _finite_number(raw) or raw <= 0:
+            raise AuditSamplingError(
+                f"cluster sizes[{index}] must be a finite number > 0, got {raw!r}"
+            )
+        m = float(raw)
+        total += m
+        sum_sq += m * m
+    return sum_sq / total
+
+
 def sample_size_for_margin(
     *,
     margin: float,
@@ -153,18 +249,20 @@ def size_for_margin(
         raise AuditSamplingError(f"p must be in (0, 1), got {p!r}")
     if z <= 0:
         raise AuditSamplingError(f"z must be > 0, got {z!r}")
-    if (cluster_size is None) != (icc is None):
-        raise AuditSamplingError("cluster_size and icc must be provided together")
 
     n0 = (z * z) * p * (1.0 - p) / (margin * margin)
-    if cluster_size is None:
+    if cluster_size is None and icc is None:
         deff = 1.0
         n_deff = n0
         order = DeffOrder.FPC_ONLY
-    else:
+    elif cluster_size is not None and icc is not None:
+        # Post-pilot the honest path is deff = V̂_cluster / V̂_SRS from the
+        # draw, which already folds in unequal sizes, rather than any M.
         deff = design_effect(cluster_size=cluster_size, icc=icc)
         n_deff = n0 * deff
         order = DeffOrder.DEFF_THEN_FPC
+    else:
+        raise AuditSamplingError("cluster_size and icc must be provided together")
     n = n_deff / (1.0 + (n_deff - 1.0) / population)
     return SampleSize(
         n=min(population, math.ceil(n)),
@@ -183,10 +281,12 @@ def size_for_margin(
 
 def design_effect(*, cluster_size: float, icc: float) -> float:
     """Kish design effect: 1 + (M − 1) × ICC (AUDIT-11)."""
-    if cluster_size < 1:
-        raise AuditSamplingError(f"cluster_size must be >= 1, got {cluster_size!r}")
-    if not 0 <= icc <= 1:
-        raise AuditSamplingError(f"icc must be in [0, 1], got {icc!r}")
+    if not _finite_number(cluster_size) or cluster_size < 1:
+        raise AuditSamplingError(
+            f"cluster_size must be a finite number >= 1, got {cluster_size!r}"
+        )
+    if not _finite_number(icc) or not 0 <= icc <= 1:
+        raise AuditSamplingError(f"icc must be a finite number in [0, 1], got {icc!r}")
     return 1.0 + (cluster_size - 1.0) * icc
 
 
@@ -202,10 +302,12 @@ def allocate(
     A precision floor is a per-stratum target margin: that stratum is sized from
     ``size_for_margin`` against its own N_h, and the remainder of n is allocated
     proportionally to the other strata (AUDIT-10). ``cluster_params`` is a
-    per-stratum (M, ICC) map because mean cluster size differs by cell; omitted
-    entries keep today's unclustered floor. Each floor's SampleSize is on the
-    returned Allocation so deff, n_eff = n/deff, and ordering can be read back
-    (AUDIT-11).
+    per-stratum (a, ICC) map because Kish effective cluster size differs by
+    cell; omitted keys keep the unclustered floor. Every ``cluster_params`` key
+    must name a precision floor — a spec with no floor would silently no-op.
+    ``cluster_params=None`` stays deff-blind (ICC is measured, not assumed).
+    Each floor's SampleSize is on the returned Allocation so deff, n_eff =
+    n/deff, and ordering can be read back (AUDIT-11).
     """
     if n < 0:
         raise AuditSamplingError(f"n must be >= 0, got {n!r}")
@@ -238,25 +340,31 @@ def allocate(
         raise AuditSamplingError(
             f"cluster_params name unknown strata: {sorted(unknown_clusters)}"
         )
-    for name, spec in clusters.items():
-        if not isinstance(spec, ClusterSpec):
+    for name, cluster in clusters.items():
+        if not isinstance(cluster, ClusterSpec):
             raise AuditSamplingError(
-                f"cluster_params[{name!r}] must be a ClusterSpec, got {type(spec).__name__}"
+                f"cluster_params[{name!r}] must be a ClusterSpec, got {type(cluster).__name__}"
             )
+    unfloored_clusters = set(clusters) - set(floors)
+    if unfloored_clusters:
+        raise AuditSamplingError(
+            "cluster_params name strata with no precision floor: "
+            f"{sorted(unfloored_clusters)}"
+        )
 
     assigned = {name: 0 for name in strata_sizes}
     floor_records: dict[str, SampleSize] = {}
     reserved = 0
     for name, margin in floors.items():
-        spec = clusters.get(name)
-        if spec is None:
+        floor_spec = clusters.get(name)
+        if floor_spec is None:
             record = size_for_margin(margin=margin, population=strata_sizes[name])
         else:
             record = size_for_margin(
                 margin=margin,
                 population=strata_sizes[name],
-                cluster_size=spec.cluster_size,
-                icc=spec.icc,
+                cluster_size=floor_spec.cluster_size,
+                icc=floor_spec.icc,
             )
         n_h = min(record.n, strata_sizes[name])
         assigned[name] = n_h

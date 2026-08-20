@@ -297,7 +297,8 @@ def test_declared_empty_cells_stay_in_the_table(tmp_path: Path) -> None:
         assert rows[cell]["n_images"] == 0
         assert rows[cell]["unique_subjects"] == 0
         assert rows[cell]["manifest_images"] == 0
-        assert type(rows[cell]["fpi"]) is int
+        assert rows[cell]["fpi"] is None
+        assert rows[cell]["n_nonmated"] == 0
 
 
 def test_unique_subjects_on_every_row(tmp_path: Path) -> None:
@@ -507,6 +508,88 @@ def test_frozen_manifest_plan_counts() -> None:
     for cell in _EMPTY_CELLS:
         assert rows[cell]["declared_empty"] is True
         assert rows[cell]["fnir"] == "not measured"
+
+
+def test_explicit_empty_overall_nonmated_is_unmeasured_fpi(tmp_path: Path) -> None:
+    """BR-15 / EVAL-18: overall_nonmated=() is not an FPI of zero.
+
+    Stratum cells can still count their own foils; the headline must not
+    publish perfect open-set rejection over an undeclared non-mated set.
+    """
+    plan = _plan(tmp_path)
+    foils = [_nonmated_hit("Alice", 0.90)]
+    searches = {
+        name: {"mated": [_hit("Alice", 0.90)], "nonmated": foils} for name in PROBE_STRATA
+    }
+    report = score_run(
+        plan=plan,
+        searches=searches,
+        tau=0.50,
+        overall_nonmated=(),
+    )
+    assert report.points["A_true_occluder"].fpi == 1
+    assert report.overall.n_mated == 4
+    assert report.overall.measured is True
+    assert report.overall.n_nonmated == 0
+    assert report.overall.fpi is None
+    assert report.overall.fpi != 0
+    assert report.overall.fpi_per_enrolled_subject is None
+
+
+def test_omitted_foils_do_not_score_perfect_open_set_rejection(tmp_path: Path) -> None:
+    """BR-15 / EVAL-18: no strangers met → FPI unmeasured, not 0 / 0.0 rate."""
+    plan = _plan(tmp_path)
+    report = score_run(
+        plan=plan,
+        searches=_probe_searches(
+            A_true_occluder={
+                "mated": [_hit("Alice", 0.90)],
+                "nonmated": [],
+            },
+        ),
+        tau=0.50,
+    )
+    assert report.overall.n_mated == 1
+    assert report.overall.fnir == pytest.approx(0.0)
+    assert report.overall.n_nonmated == 0
+    assert report.overall.measured is True
+    assert report.overall.fpi is None
+    assert report.overall.fpi != 0
+    assert report.overall.fpi_per_enrolled_subject is None
+    assert report.overall.fpi_per_enrolled_subject != pytest.approx(0.0)
+    row = {item["stratum"]: item for item in report.to_rows()}["A_true_occluder"]
+    assert row["fpi"] is None
+    assert row["fpi"] != 0
+
+
+def test_closed_set_fpi_zero_requires_explicit_flag(tmp_path: Path) -> None:
+    """BR-15: a genuine closed-set FPI of 0 is declared, never reached by omission."""
+    plan = _plan(tmp_path)
+    searches = _probe_searches(
+        A_true_occluder={
+            "mated": [_hit("Alice", 0.90)],
+            "nonmated": [],
+        },
+    )
+    omitted = score_run(plan=plan, searches=searches, tau=0.50)
+    declared = score_run(
+        plan=plan,
+        searches=searches,
+        tau=0.50,
+        closed_set=True,
+    )
+    assert omitted.overall.fpi is None
+    assert declared.overall.fpi == 0
+    assert type(declared.overall.fpi) is int
+    assert declared.overall.n_nonmated == 0
+    with pytest.raises(FirBakeoffRunError, match="closed_set"):
+        score_run(
+            plan=plan,
+            searches=searches,
+            tau=0.50,
+            closed_set=True,
+            overall_nonmated=[_nonmated_hit("Bob", 0.80)],
+        )
 
 
 def test_overall_nonmated_is_declared_once_not_pooled(tmp_path: Path) -> None:

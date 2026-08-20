@@ -2,12 +2,15 @@
 
 Does not run detect→embed→search. Callers inject ``SearchResult`` lists.
 
-EVAL-18: per-stratum FNIR/FPI plus an overall IET point.
-EVAL-19: FPI stays an integer count; enrolled-gallery normalization is caller-supplied.
+EVAL-18: per-stratum FNIR/FPI plus an overall IET point. An empty foil set is
+unmeasured FPI (``fpi is None``), not a count of zero; a closed-set run must
+set ``closed_set=True`` and cannot be reached by omitting foils.
+EVAL-19: FPI stays an integer count when measured; enrolled-gallery
+normalization is caller-supplied.
 EVAL-16: undetected mated probes stay in the injected lists — this module does not
 filter them out of the error budget.
-MLDATA-09: unmeasured FNIR renders via ``IETPoint.format_fnir`` ("not measured");
-declared-empty cells stay in the table.
+MLDATA-09: unmeasured FNIR renders via ``BakeoffIETPoint.format_fnir``
+("not measured"); declared-empty cells stay in the table.
 MLDATA-07 / rg-015: ``manifest_images`` and unique-subject counts pass through
 from ``join_by_stratum``; coverage gaps delegate to ``StratumReport``.
 """
@@ -51,6 +54,7 @@ PROBE_STRATA: tuple[str, ...] = (
 __all__ = [
     "GALLERY_STRATUM",
     "PROBE_STRATA",
+    "BakeoffIETPoint",
     "FirBakeoffRunError",
     "ProbeEntry",
     "RunPlan",
@@ -62,6 +66,57 @@ __all__ = [
 
 class FirBakeoffRunError(ValueError):
     """Run plan or score payload that would hide a measurement cell."""
+
+
+@dataclass(frozen=True)
+class BakeoffIETPoint:
+    """IET point as published by a bakeoff run.
+
+    ``measured`` is the FNIR half (n_mated > 0). FPI is ``None`` when the
+    non-mated set was never declared — there is no FPI of zero over an
+    undeclared foil list (EVAL-18). ``fpi=0`` is legal only for an explicit
+    closed-set run or a declared foil list that produced no hits.
+    """
+
+    tau: float
+    fnir: float | None
+    fpi: int | None
+    n_mated: int
+    n_fnir_misses: int
+    n_nonmated: int
+    measured: bool
+    n_enrolled_gallery_subjects: int | None = None
+
+    def __post_init__(self) -> None:
+        if self.measured:
+            if self.fnir is None:
+                raise ValueError("measured point requires fnir")
+            if self.n_mated <= 0:
+                raise ValueError("measured point requires n_mated > 0")
+        else:
+            if self.fnir is not None:
+                raise ValueError("unmeasured FNIR must not carry a number")
+            if self.n_mated != 0:
+                raise ValueError("unmeasured FNIR requires n_mated == 0")
+        if self.fpi is None:
+            if self.n_nonmated != 0:
+                raise ValueError("unmeasured FPI requires n_nonmated == 0")
+        elif isinstance(self.fpi, bool) or not isinstance(self.fpi, int) or self.fpi < 0:
+            raise ValueError(f"FPI must be a non-negative int or None, got {self.fpi!r}")
+
+    @property
+    def fpi_per_enrolled_subject(self) -> float | None:
+        if self.fpi is None:
+            return None
+        n = self.n_enrolled_gallery_subjects
+        if n is None or n <= 0:
+            return None
+        return self.fpi / n
+
+    def format_fnir(self) -> str:
+        if not self.measured or self.fnir is None:
+            return "not measured"
+        return f"{self.fnir:.3f}"
 
 
 @dataclass(frozen=True)
@@ -94,8 +149,8 @@ class RunPlan:
 class RunReport:
     """Per-stratum IET points, overall point, and the joined coverage table."""
 
-    points: Mapping[str, IETPoint]
-    overall: IETPoint
+    points: Mapping[str, BakeoffIETPoint]
+    overall: BakeoffIETPoint
     stratum_report: StratumReport
     tau: float
     seed: int
@@ -191,8 +246,12 @@ def score_run(
     tau: float,
     n_enrolled_gallery_subjects: int | None = None,
     overall_nonmated: Sequence[SearchResult] | None = None,
+    closed_set: bool = False,
 ) -> RunReport:
-    """Score injected searches per stratum. Does not filter detection misses."""
+    """Score injected searches per stratum. Does not filter detection misses.
+
+    Empty foil lists are unmeasured for FPI unless ``closed_set=True``.
+    """
     if not math.isfinite(tau):
         raise FirBakeoffRunError(f"tau must be finite, got {tau!r}")
 
@@ -219,7 +278,7 @@ def score_run(
         )
 
     stratum_report = join_by_stratum(_join_records(plan), plan.index)
-    points: dict[str, IETPoint] = {}
+    points: dict[str, BakeoffIETPoint] = {}
     all_mated: list[SearchResult] = []
     strata_with_nonmated: list[str] = []
     search_shortfalls: dict[str, int] = {}
@@ -234,11 +293,14 @@ def score_run(
         all_mated.extend(mated)
         if len(nonmated) > 0:
             strata_with_nonmated.append(name)
-        points[name] = fnir_fpi_at_threshold(
-            mated=mated,
-            nonmated=nonmated,
-            tau=tau,
-            n_enrolled_gallery_subjects=n_enrolled,
+        points[name] = _publish_point(
+            fnir_fpi_at_threshold(
+                mated=mated,
+                nonmated=nonmated,
+                tau=tau,
+                n_enrolled_gallery_subjects=n_enrolled,
+            ),
+            closed_set=closed_set,
         )
     if overall_nonmated is not None:
         overall_foils = overall_nonmated
@@ -249,11 +311,18 @@ def score_run(
         )
     else:
         overall_foils = ()
-    overall = fnir_fpi_at_threshold(
-        mated=all_mated,
-        nonmated=overall_foils,
-        tau=tau,
-        n_enrolled_gallery_subjects=n_enrolled,
+    if closed_set and (len(overall_foils) > 0 or strata_with_nonmated):
+        raise FirBakeoffRunError(
+            "closed_set=True cannot carry a non-mated (foil) workload (EVAL-18)"
+        )
+    overall = _publish_point(
+        fnir_fpi_at_threshold(
+            mated=all_mated,
+            nonmated=overall_foils,
+            tau=tau,
+            n_enrolled_gallery_subjects=n_enrolled,
+        ),
+        closed_set=closed_set,
     )
     return RunReport(
         points=points,
@@ -263,6 +332,29 @@ def score_run(
         seed=plan.seed,
         withheld_probe_templates=plan.withheld_probe_templates,
         search_shortfalls=search_shortfalls,
+    )
+
+
+def _publish_point(point: IETPoint, *, closed_set: bool) -> BakeoffIETPoint:
+    """Map an IET scorer point onto the bakeoff publication contract.
+
+    IETPoint.fpi is always an int (unowned scorer). An empty foil list is
+    unmeasured here unless the caller declared a closed-set run.
+    """
+    fpi: int | None
+    if point.n_nonmated > 0 or closed_set:
+        fpi = point.fpi
+    else:
+        fpi = None
+    return BakeoffIETPoint(
+        tau=point.tau,
+        fnir=point.fnir,
+        fpi=fpi,
+        n_mated=point.n_mated,
+        n_fnir_misses=point.n_fnir_misses,
+        n_nonmated=point.n_nonmated,
+        measured=point.measured,
+        n_enrolled_gallery_subjects=point.n_enrolled_gallery_subjects,
     )
 
 

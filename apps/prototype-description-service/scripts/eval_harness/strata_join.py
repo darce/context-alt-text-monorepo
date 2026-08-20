@@ -257,11 +257,11 @@ def _entry_identities(entry: Mapping[str, Any], *, where: str) -> tuple[str, ...
     value = entry["present_identities"]
     if value is None:
         return ()
-    if isinstance(value, str):
-        return (value,) if value else ()
-    if isinstance(value, list):
+    if isinstance(value, (list, tuple)):
         return tuple(str(item) for item in value if item)
-    raise StratumJoinError(f"{where}.present_identities must be a list of strings")
+    raise StratumJoinError(
+        f"{where}.present_identities must be a list of strings, got {type(value).__name__}"
+    )
 
 
 def _reject_stratum_conflict(

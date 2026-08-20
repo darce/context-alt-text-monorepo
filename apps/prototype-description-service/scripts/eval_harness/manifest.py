@@ -449,10 +449,10 @@ class ConfirmationSource(StrEnum):
     AGENT = "agent"
 
 
-# Non-agent confirmation is human gold (MLDATA-04). Derived from the enum so a
-# new human source is gold and a typo cannot be promoted (sr-007).
+# Allowlist, not complement-of-AGENT: a new member must be named here to become
+# human gold. Complement would silently promote DISTILLED/HEURISTIC (MLDATA-04).
 HUMAN_CONFIRMATION_SOURCES: frozenset[ConfirmationSource] = frozenset(
-    member for member in ConfirmationSource if member is not ConfirmationSource.AGENT
+    {ConfirmationSource.OPERATOR}
 )
 
 

@@ -148,3 +148,11 @@ Failed: DID NOT RAISE ValidationError
 ```
 
 Canon: sr-007, TEST-15, MLDATA-03. Mutant restored. Did not touch `audit_sampling.py` or the scope doc.
+
+## Gate
+
+```
+4 failed, 1264 passed, 4 skipped, 10 warnings in 48.33s
+```
+
+Exactly the known PGPASSWORD boot quartet (`test_create_app_registers_route_and_upload_cap` + three `test_describe_run_reclaim` startup tests). The two BR-20 leftover fixtures are green. Nothing left unclosed in owned files.

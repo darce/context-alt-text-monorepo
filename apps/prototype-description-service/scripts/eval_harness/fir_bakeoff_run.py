@@ -84,6 +84,11 @@ class RunPlan:
     index: StratumIndex
     gallery_entries: tuple[ProbeEntry, ...]
 
+    @property
+    def withheld_probe_templates(self) -> tuple[Template, ...]:
+        """Leftover templates the split withheld from search (MLDATA-09)."""
+        return self.split.withheld_probe_templates
+
 
 @dataclass(frozen=True)
 class RunReport:
@@ -94,12 +99,14 @@ class RunReport:
     stratum_report: StratumReport
     tau: float
     seed: int
+    withheld_probe_templates: tuple[Template, ...] = ()
 
     def coverage_gaps(self) -> list[dict[str, Any]]:
         return self.stratum_report.coverage_gaps()
 
     def to_rows(self) -> list[dict[str, Any]]:
         rows: list[dict[str, Any]] = []
+        n_withheld = len(self.withheld_probe_templates)
         for base in self.stratum_report.to_rows():
             point = self.points[base["stratum"]]
             rows.append(
@@ -118,6 +125,7 @@ class RunReport:
                     "tau": self.tau,
                     "fpi_per_enrolled_subject": point.fpi_per_enrolled_subject,
                     "n_enrolled_gallery_subjects": point.n_enrolled_gallery_subjects,
+                    "n_withheld_probe_templates": n_withheld,
                 }
             )
         return rows
@@ -219,6 +227,7 @@ def score_run(
         stratum_report=stratum_report,
         tau=float(tau),
         seed=plan.seed,
+        withheld_probe_templates=plan.withheld_probe_templates,
     )
 
 

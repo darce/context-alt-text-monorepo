@@ -6,6 +6,7 @@ TEST-15: each assertion is proven live against a /tmp mutant of fir_bakeoff_run.
 from __future__ import annotations
 
 import json
+import unicodedata
 from pathlib import Path
 from typing import Any
 
@@ -2139,24 +2140,59 @@ def test_padded_g2_roster_key_keeps_mated_partition(tmp_path: Path) -> None:
     assert "Alice " not in padded.split.g2
 
 
-_IDENTITY_KEY_SAMPLES: tuple[object, ...] = (
-    "Bob",
-    " Bob",
-    "Bob ",
-    " Bob ",
-    "\tBob",
-    "Bob\t",
-    "\tBob\t",
-    "Van Dyke",
-    " Van Dyke ",
-    "VanDyke",
-    "",
-    "   ",
-    "\t",
-    123,
-    None,
-    True,
+_UNICODE_WHITESPACE_PADDING: tuple[str, ...] = (
+    " ",  # ASCII space
+    "\t",  # tab
+    "\n",  # LF
+    "\r",  # CR
+    "\r\n",  # CRLF
+    " ",  # NBSP
+    " ",  # em space
+    " ",  # line separator
 )
+
+
+def _generate_identity_key_samples() -> tuple[object, ...]:
+    """Unicode whitespace + NFC/NFD alphabet for the twin-normaliser test (BR-74).
+
+    The prior literal tuple was ASCII-space/tab only. Both
+    ``_normalise_subject_id`` twins (this module and ``gallery_split``, the
+    latter out of scope here) strip via bare ``str.strip()``, which treats
+    every code point in ``_UNICODE_WHITESPACE_PADDING`` as strippable — so an
+    ASCII-only denylist would miss a future divergence (e.g. one twin
+    switching to an ASCII-only strip) for a subject id padded with NBSP,
+    em-space, a line separator, or a bare CR/LF. The NFC/NFD pair pins that
+    both twins treat a not-byte-identical-but-visually-identical name the
+    same way as each other, even though neither applies Unicode
+    normalisation itself.
+    """
+    base = "Bob"
+    samples: list[object] = [base]
+    for pad in _UNICODE_WHITESPACE_PADDING:
+        samples.append(f"{pad}{base}")
+        samples.append(f"{base}{pad}")
+        samples.append(f"{pad}{base}{pad}")
+    samples.extend(
+        [
+            "Van Dyke",
+            " Van Dyke ",
+            "VanDyke",
+            "",
+            "   ",
+            "\t",
+            123,
+            None,
+            True,
+        ]
+    )
+    nfc = unicodedata.normalize("NFC", "Café")
+    nfd = unicodedata.normalize("NFD", "Café")
+    assert nfc != nfd, "fixture sanity: NFC/NFD forms must be distinct code point sequences"
+    samples.extend([nfc, nfd, f" {nfc} ", f" {nfd} "])
+    return tuple(samples)
+
+
+_IDENTITY_KEY_SAMPLES: tuple[object, ...] = _generate_identity_key_samples()
 
 
 def _normalise_outcome(fn: Any, raw: object) -> str | None:

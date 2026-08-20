@@ -51,6 +51,14 @@ class GoldKind(StrEnum):
     HARD = "hard"
 
 
+# HITL-03 three-way mix. Remainder after one-of-each is round-robin in this order.
+GOLD_MIX_ORDER: tuple[GoldKind, ...] = (
+    GoldKind.HARD,
+    GoldKind.BATCH_MATCHED,
+    GoldKind.RANDOM,
+)
+
+
 class GoldAnswerSource(StrEnum):
     OPERATOR_CONFIRMED_REFERENCE_FACTS = "operator_confirmed_reference_facts"
     SME_ARBITRATED = "sme_arbitrated"
@@ -132,6 +140,7 @@ class PilotDraw:
     frame_sizes: Mapping[str, int]
     declared_empty_cells: tuple[object, ...]
     declared_strata_counts: Mapping[str, int]
+    frame_sha256s: frozenset[str]
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "frame_sizes", MappingProxyType(dict(self.frame_sizes)))
@@ -141,6 +150,7 @@ class PilotDraw:
             MappingProxyType(dict(self.declared_strata_counts)),
         )
         object.__setattr__(self, "declared_empty_cells", tuple(self.declared_empty_cells))
+        object.__setattr__(self, "frame_sha256s", frozenset(self.frame_sha256s))
 
     def report_rows(self) -> tuple[dict[str, object], ...]:
         rows: list[dict[str, object]] = []
@@ -266,7 +276,7 @@ def draw_pilot(
         raise PilotDrawError(
             f"strata_counts names unknown strata: {sorted(unknown_declared)}"
         )
-    members, _by_sha = _parse_entries(payload["entries"])
+    members, by_sha = _parse_entries(payload["entries"])
     frame_sizes = {name: len(units) for name, units in members.items()}
     if frame_sizes != declared_counts:
         raise PilotDrawError(
@@ -286,6 +296,7 @@ def draw_pilot(
         frame_sizes=frame_sizes,
         declared_empty_cells=tuple(declared_empty),
         declared_strata_counts=declared_counts,
+        frame_sha256s=frozenset(by_sha),
     )
 
 
@@ -334,7 +345,16 @@ def _is_hard_entry(entry: Mapping[str, object]) -> bool:
 
 
 def _gold_count(n: int) -> int:
-    return n * GOLD_RATE_PERCENT // 100
+    """Gold is GOLD_RATE_PERCENT of the annotation QUEUE (sample + gold), not of the sample."""
+    rate = GOLD_RATE_PERCENT / 100
+    return round(n * rate / (1 - rate))
+
+
+def _min_sample_n_for_gold_count(gold_n: int) -> int:
+    sample_n = 0
+    while _gold_count(sample_n) < gold_n:
+        sample_n += 1
+    return sample_n
 
 
 def _plurality_stratum(pilot: PilotDraw) -> StratumName:
@@ -380,6 +400,20 @@ def select_gold_items(
             f"gold rate {GOLD_RATE_PERCENT}% of n={n} selects zero units; "
             "a QC scheme that embeds no gold is not a QC scheme (HITL-03)"
         )
+    mix_n = len(GOLD_MIX_ORDER)
+    if gold_n < mix_n:
+        kinds = ", ".join(kind.value for kind in GOLD_MIX_ORDER)
+        min_n = _min_sample_n_for_gold_count(mix_n)
+        raise PilotDrawError(
+            f"gold_n={gold_n} from n={n} cannot cover the HITL-03 mix ({kinds}); "
+            f"three gold items become available at n={min_n}"
+        )
+    foreign = sorted(sha for sha in entries_by_sha256 if sha not in pilot.frame_sha256s)
+    if foreign:
+        raise PilotDrawError(
+            "entries_by_sha256 contains sha256 values not in the frozen frame: "
+            f"{foreign}"
+        )
     drawn = {str(unit.unit_id) for unit in pilot.sample.units}
     remaining = sorted(sha for sha in entries_by_sha256 if sha not in drawn)
     if len(remaining) < gold_n:
@@ -393,34 +427,26 @@ def select_gold_items(
         if "stratum" not in entries_by_sha256[sha]:
             raise PilotDrawError(f"entry {sha!r} missing stratum")
     plurality = _plurality_stratum(pilot)
-    hard_candidates = [sha for sha in remaining if _is_hard_entry(entries_by_sha256[sha])]
-    matched_candidates = [
-        sha
-        for sha in remaining
-        if _parse_stratum(entries_by_sha256[sha].get("stratum"), label="entry['stratum']")
-        is plurality
-    ]
+    candidates_by_kind: dict[GoldKind, Sequence[str]] = {
+        GoldKind.HARD: [sha for sha in remaining if _is_hard_entry(entries_by_sha256[sha])],
+        GoldKind.BATCH_MATCHED: [
+            sha
+            for sha in remaining
+            if _parse_stratum(entries_by_sha256[sha].get("stratum"), label="entry['stratum']")
+            is plurality
+        ],
+        GoldKind.RANDOM: remaining,
+    }
+    mix = [(kind, candidates_by_kind[kind]) for kind in GOLD_MIX_ORDER]
     rng = random.Random(seed)
     used: set[str] = set()
     picked: list[tuple[GoldKind, str]] = []
-    mix: list[tuple[GoldKind, Sequence[str]]] = [
-        (GoldKind.HARD, hard_candidates),
-        (GoldKind.BATCH_MATCHED, matched_candidates),
-        (GoldKind.RANDOM, remaining),
-    ]
-    for kind, candidates in mix[: min(3, gold_n)]:
+    for kind, candidates in mix:
         picked.append((kind, _pick_one(rng, candidates, used=used, kind=kind)))
     extra = gold_n - len(picked)
-    if extra > 0:
-        available = [sha for sha in remaining if sha not in used]
-        if len(available) < extra:
-            raise PilotDrawError(
-                "gold must be drawn from the frame outside the sample "
-                f"(need {extra} extra, have {len(available)})"
-            )
-        for sha in rng.sample(available, extra):
-            used.add(sha)
-            picked.append((GoldKind.RANDOM, sha))
+    for offset in range(extra):
+        kind, candidates = mix[offset % len(mix)]
+        picked.append((kind, _pick_one(rng, candidates, used=used, kind=kind)))
     items: list[GoldItem] = []
     for kind, sha in picked:
         entry = entries_by_sha256[sha]

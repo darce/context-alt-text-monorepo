@@ -20,6 +20,7 @@ from scripts.eval_harness.manifest import (
 )
 from scripts.eval_harness.pilot_draw import (
     BAKEOFF_SELECTION_SCHEMA,
+    GOLD_MIX_ORDER,
     GOLD_RATE_PERCENT,
     PILOT_ANNOTATOR_SLOTS,
     PILOT_GOLD_SME,
@@ -28,6 +29,7 @@ from scripts.eval_harness.pilot_draw import (
     GoldKind,
     PilotDrawError,
     StratumName,
+    _gold_count,
     draw_pilot,
     emit_annotation_packet,
     select_gold_items,
@@ -249,7 +251,7 @@ def test_gold_items_are_outside_the_drawn_sample():
     assert gold_ids.isdisjoint(sampled)
     assert len(gold) == 3
     assert len(gold_ids) == 3
-    assert _PILOT_N * GOLD_RATE_PERCENT // 100 == 3
+    assert _gold_count(_PILOT_N) == 3
 
 
 def test_gold_mix_is_random_batch_matched_and_hard():
@@ -287,8 +289,10 @@ def test_gold_selection_is_deterministic_under_seed():
 
 def test_gold_rate_zero_on_nonempty_draw_raises(tmp_path: Path):
     path = _write_manifest(tmp_path / "small.json", n_per=4)
-    pilot = draw_pilot(selection_manifest_path=path, n=5, seed=1)
-    assert len(pilot.sample.units) == 5
+    n = 4
+    assert _gold_count(n) == 0
+    pilot = draw_pilot(selection_manifest_path=path, n=n, seed=1)
+    assert len(pilot.sample.units) == n
     entries = {entry["sha256"]: entry for entry in json.loads(path.read_text())["entries"]}
     with pytest.raises(PilotDrawError, match="zero units"):
         select_gold_items(pilot=pilot, entries_by_sha256=entries, seed=1)
@@ -407,6 +411,7 @@ def test_gold_kind_and_stratum_are_enums():
     assert GoldKind.RANDOM == "random"
     assert GoldKind.BATCH_MATCHED == "batch_matched"
     assert GoldKind.HARD == "hard"
+    assert GOLD_MIX_ORDER == (GoldKind.HARD, GoldKind.BATCH_MATCHED, GoldKind.RANDOM)
     assert {member.value for member in StratumName} == {
         "A_true_occluder",
         "B_eyewear",
@@ -414,3 +419,182 @@ def test_gold_kind_and_stratum_are_enums():
         "D_capture",
         "E_clean",
     }
+
+
+@pytest.mark.parametrize(
+    ("n", "expected_g"),
+    [
+        (30, 3),
+        (84, 9),
+        (198, 22),
+    ],
+)
+def test_gold_count_is_rate_of_annotation_queue(n: int, expected_g: int):
+    g = _gold_count(n)
+    assert g == expected_g
+    rate = GOLD_RATE_PERCENT / 100
+    queue = n + g
+    assert abs(g - rate * queue) <= 0.5
+    assert abs(g / queue - rate) * queue <= 0.5
+
+
+def test_three_gold_items_become_available_at_n_23():
+    assert _gold_count(22) == 2
+    assert _gold_count(23) == 3
+
+
+def test_gold_mix_refuses_truncation_when_gold_n_below_three(tmp_path: Path):
+    path = _write_manifest(tmp_path / "mix.json", n_per=8)
+    n = 14
+    assert _gold_count(n) == 2
+    pilot = draw_pilot(selection_manifest_path=path, n=n, seed=1)
+    entries = {entry["sha256"]: entry for entry in json.loads(path.read_text())["entries"]}
+    with pytest.raises(PilotDrawError, match="HITL-03 mix") as caught:
+        select_gold_items(pilot=pilot, entries_by_sha256=entries, seed=1)
+    message = str(caught.value)
+    assert "gold_n=2" in message
+    assert "random" in message
+    assert "batch_matched" in message
+    assert "hard" in message
+    assert "n=23" in message
+
+
+def test_gold_mix_round_robin_remainder_not_dumped_on_one_kind():
+    n = 84
+    assert _gold_count(n) == 9
+    payload = _payload()
+    entries = _entries_by_sha256(payload)
+    gold = select_gold_items(pilot=_draw(n=n), entries_by_sha256=entries, seed=_PILOT_SEED)
+    counts = {kind: 0 for kind in GOLD_MIX_ORDER}
+    for item in gold:
+        counts[item.kind] += 1
+    assert len(gold) == 9
+    assert counts == {
+        GoldKind.HARD: 3,
+        GoldKind.BATCH_MATCHED: 3,
+        GoldKind.RANDOM: 3,
+    }
+
+
+def test_select_gold_items_rejects_sha_outside_frozen_frame():
+    payload = _payload()
+    entries = dict(_entries_by_sha256(payload))
+    entries["not-in-frame-deadbeef"] = {
+        "sha256": "not-in-frame-deadbeef",
+        "media_id": 999999,
+        "stratum": StratumName.E_CLEAN.value,
+        "source_path": "/tmp/foreign.jpg",
+        "present_identities": ["x"],
+    }
+    with pytest.raises(PilotDrawError, match="not in the frozen frame"):
+        select_gold_items(
+            pilot=_draw(),
+            entries_by_sha256=entries,
+            seed=_PILOT_SEED,
+        )
+
+
+def _mutate_loader_payload(payload: dict[str, object], case: str) -> None:
+    if case == "missing_strata_counts":
+        del payload["strata_counts"]
+        return
+    if case == "missing_entries":
+        del payload["entries"]
+        return
+    if case == "duplicate_sha256":
+        entries = payload["entries"]
+        if not isinstance(entries, list):
+            raise TypeError("entries")
+        entries.append(dict(entries[0]))
+        return
+    if case == "missing_sha256":
+        entries = payload["entries"]
+        if not isinstance(entries, list):
+            raise TypeError("entries")
+        del entries[0]["sha256"]
+        return
+    if case == "missing_media_id":
+        entries = payload["entries"]
+        if not isinstance(entries, list):
+            raise TypeError("entries")
+        del entries[0]["media_id"]
+        return
+    if case == "missing_source_path":
+        entries = payload["entries"]
+        if not isinstance(entries, list):
+            raise TypeError("entries")
+        del entries[0]["source_path"]
+        return
+    if case == "missing_present_identities":
+        entries = payload["entries"]
+        if not isinstance(entries, list):
+            raise TypeError("entries")
+        del entries[0]["present_identities"]
+        return
+    if case == "present_identities_type":
+        entries = payload["entries"]
+        if not isinstance(entries, list):
+            raise TypeError("entries")
+        entries[0]["present_identities"] = "veil"
+        return
+    if case == "empty_source_path":
+        entries = payload["entries"]
+        if not isinstance(entries, list):
+            raise TypeError("entries")
+        entries[0]["source_path"] = ""
+        return
+    if case == "empty_entries":
+        payload["entries"] = []
+        return
+    if case == "unknown_strata_counts_key":
+        counts = payload["strata_counts"]
+        if not isinstance(counts, dict):
+            raise TypeError("strata_counts")
+        counts["Z_bogus"] = {"images": 0, "unique_subjects_faces_gt0": 0}
+        return
+    if case == "declared_empty_cells_type":
+        payload["declared_empty_cells"] = "veil"
+        return
+    raise ValueError(f"unknown loader case {case}")
+
+
+@pytest.mark.parametrize(
+    ("case", "fragment"),
+    [
+        ("missing_strata_counts", "missing strata_counts"),
+        ("missing_entries", "missing entries"),
+        ("duplicate_sha256", "duplicate sha256"),
+        ("missing_sha256", "missing sha256"),
+        ("missing_media_id", "missing media_id"),
+        ("missing_source_path", "missing source_path"),
+        ("missing_present_identities", "missing present_identities"),
+        ("present_identities_type", "present_identities.*must be a sequence"),
+        ("empty_source_path", "source_path.*must be a non-empty str"),
+        ("empty_entries", "entries must be non-empty"),
+        ("unknown_strata_counts_key", "unknown strata"),
+        ("declared_empty_cells_type", "declared_empty_cells must be a JSON list"),
+    ],
+    ids=[
+        "missing_strata_counts",
+        "missing_entries",
+        "duplicate_sha256",
+        "missing_sha256",
+        "missing_media_id",
+        "missing_source_path",
+        "missing_present_identities",
+        "present_identities_type",
+        "empty_source_path",
+        "empty_entries",
+        "unknown_strata_counts_key",
+        "declared_empty_cells_type",
+    ],
+)
+def test_draw_pilot_rejects_loader_guard_violations(
+    tmp_path: Path, case: str, fragment: str
+):
+    path = _write_manifest(tmp_path / "guard.json", n_per=8)
+    payload = json.loads(path.read_text())
+    _mutate_loader_payload(payload, case)
+    path.write_text(json.dumps(payload))
+    with pytest.raises(PilotDrawError, match=fragment):
+        draw_pilot(selection_manifest_path=path, n=10, seed=1)

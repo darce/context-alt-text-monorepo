@@ -6,7 +6,7 @@ No live leg detector during generation (firewall). Both legs re-detect+embed
 on the **identical** occluded pixels after generation.
 
 Occlusion metric = open-set paired accuracy: accept only when
-``s_max >= tau`` and ``name* == true_name`` against a gallery = identity
+``accept_predicate.accepts(s_max, tau)`` and ``name* == true_name`` against a gallery = identity
 un-occluded faces excluding twin source media_id + other identities'
 un-occluded prototypes. Guards: outcome-independent structural gallery
 eligibility first (distinct-image min-gallery + multi-identity; EXP-22),
@@ -41,6 +41,7 @@ from typing import Any, Literal
 import cv2
 import numpy as np
 
+from .accept_predicate import accepts
 from .face_assignment import (
     MatchedFace,
     argmax_gallery,
@@ -81,7 +82,7 @@ SYNTHETIC_OCCLUSION_PROTOCOL_DISCLOSURES: tuple[str, ...] = (
     "MASKED/sunglasses/occlusion_other slice tags — not photo-realistic masks",
     "twin universe = cached clean detections only; hard clean-detection "
     "failures are structurally absent (EVAL-17)",
-    "occlusion recovery uses open-set threshold (s_max >= tau), not closed-set "
+    "occlusion recovery uses open-set threshold (accept_predicate.accepts), not closed-set "
     "argmax; each twin is scored at its source identity's held-out fold tau_k "
     "(entity-disjoint — CAL-07/EVAL-07); pooled tau_op is a last-resort "
     "fallback gated behind an explicit per-identity opt-in "
@@ -549,7 +550,7 @@ def score_occlusion_pair(
 
     emb = np.asarray(twin_embedding, dtype=np.float64)
     s_max, name_star = argmax_gallery(emb, gallery)
-    accept = name_star is not None and s_max >= float(tau)
+    accept = name_star is not None and accepts(s_max, float(tau))
     correct = bool(accept and name_star == true_name)
     return OcclusionPairResult(
         media_id=source_media_id,

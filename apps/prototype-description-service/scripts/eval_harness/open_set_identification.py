@@ -22,6 +22,7 @@ import math
 from collections.abc import Sequence
 from dataclasses import dataclass
 
+from scripts.eval_harness.accept_predicate import is_fnir_miss, is_fpi
 from scripts.eval_harness.gallery_split import GalleryName
 
 
@@ -108,7 +109,7 @@ def _is_fnir_miss(search: SearchResult, *, tau: float) -> bool:
         _require_finite(search.top1_score, name="top1_score")
     if search.top1_name is None or search.top1_score is None:
         return True
-    return search.top1_name != search.true_name or search.top1_score < tau
+    return search.top1_name != search.true_name or is_fnir_miss(search.top1_score, tau)
 
 
 def _is_fpi(search: SearchResult, *, tau: float) -> bool:
@@ -121,7 +122,7 @@ def _is_fpi(search: SearchResult, *, tau: float) -> bool:
         _require_finite(search.top1_score, name="top1_score")
     if search.top1_name is None or search.top1_score is None:
         return False
-    return search.top1_score > tau
+    return is_fpi(search.top1_score, tau)
 
 
 def fnir_fpi_at_threshold(

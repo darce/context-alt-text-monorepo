@@ -6,8 +6,12 @@ curve) and does not reuse ``build_loo_gallery`` (gallery restriction is an
 assertion, not a silent filter).
 
 EVAL-16: a missed named GT box is a mated ``detected=False`` search.
+EVAL-16: a declared foil with no searchable detection is a non-mated
+``detected=False`` search (score below every threshold, not an absent trial).
 EVAL-18 / JANUS 2.2: mated-ness is per gallery; foils are still-level.
-EVAL-19: a missed unnamed box is not a search — it cannot mint FPI.
+EVAL-18: unmatched detections on a foil still fold into the same
+``(media_id, gallery)`` unit so a false alarm can produce FPI.
+EVAL-19: a missed unnamed box is not an extra search — it cannot mint FPI.
 MLDATA-09: an empty gallery raises rather than publishing ``-inf``.
 """
 
@@ -66,6 +70,7 @@ def searches_from_run_records(
     by_media: dict[int, list[MatchedFace]] = defaultdict(list)
     for face in matched:
         by_media[face.media_id].append(face)
+    items_by_media = {int(item["media_id"]): item for item in run_items}
 
     searches: dict[str, dict[str, list[SearchResult]]] = {
         name: {"mated": [], "nonmated": []} for name in PROBE_STRATA
@@ -98,7 +103,7 @@ def searches_from_run_records(
             )
             for face in faces:
                 s_max, name_star = _search_gallery(
-                    face, prototypes=prototypes, gallery=gallery
+                    face.embedding_array(), prototypes=prototypes, gallery=gallery
                 )
                 box_scores.append((key, s_max, name_star))
 
@@ -138,13 +143,35 @@ def searches_from_run_records(
         foil_scores: list[tuple[SearchUnitKey, float, str | None]] = []
         for entry in foil_entries:
             _reject_probe_enrolled_in_gallery(entry.media_id, gallery_media, gallery)
-            faces = by_media.get(entry.media_id, ())
-            if not faces:
+            item = items_by_media.get(entry.media_id)
+            if item is None:
                 continue
+            faces = by_media.get(entry.media_id, ())
+            unmatched_embeddings = _unmatched_detection_embeddings(
+                item,
+                associations.get(entry.media_id),
+            )
             key = (entry.media_id, gallery, _FOIL_UNIT_SUBJECT)
+            if not faces and not unmatched_embeddings:
+                result = SearchResult(
+                    detected=False,
+                    top1_score=None,
+                    top1_name=None,
+                    true_name=None,
+                    gallery=gallery,
+                    media_id=entry.media_id,
+                )
+                searches[entry.stratum]["nonmated"].append(result)
+                overall_nonmated.append(result)
+                continue
             for face in faces:
                 s_max, name_star = _search_gallery(
-                    face, prototypes=prototypes, gallery=gallery
+                    face.embedding_array(), prototypes=prototypes, gallery=gallery
+                )
+                foil_scores.append((key, s_max, name_star))
+            for embedding in unmatched_embeddings:
+                s_max, name_star = _search_gallery(
+                    embedding, prototypes=prototypes, gallery=gallery
                 )
                 foil_scores.append((key, s_max, name_star))
 
@@ -212,18 +239,32 @@ def _reject_probe_enrolled_in_gallery(
 
 
 def _search_gallery(
-    face: MatchedFace,
+    embedding: Any,
     *,
     prototypes: Mapping[str, Any],
     gallery: GalleryName,
 ) -> tuple[float, str | None]:
-    s_max, name_star = argmax_gallery(face.embedding_array(), prototypes)
+    s_max, name_star = argmax_gallery(embedding, prototypes)
     if name_star is None or not math.isfinite(s_max):
         raise FirBakeoffRunError(
             f"empty gallery {gallery.value}: argmax_gallery returned "
             f"non-finite s_max={s_max!r} (refusing -inf)"
         )
     return s_max, name_star
+
+
+def _unmatched_detection_embeddings(
+    item: Mapping[str, Any] | None,
+    assoc: Any | None,
+) -> tuple[Any, ...]:
+    if item is None or assoc is None:
+        return ()
+    faces = item.get("faces") or []
+    return tuple(
+        faces[index]["embedding"]
+        for index in assoc.unmatched_detections
+        if 0 <= index < len(faces)
+    )
 
 
 def _box_name(gt: Any) -> str | None:

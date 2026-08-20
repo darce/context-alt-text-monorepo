@@ -36,6 +36,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from scripts.eval_harness.accept_predicate import is_fpi
+
 # Pinned face_bakeoff report schema v1 (FIR-5 report.py serialization; LC-06/GR-08).
 REPORT_KIND = "face_bakeoff"
 REPORT_SCHEMA = "acx-eval/v1"
@@ -643,13 +645,13 @@ def fmr_at(scores: Sequence[float], tau: float) -> float | None:
     """Impostor acceptance rate at ``tau``.
 
     JANUS 2.3.4 FPI: a non-mated rank-1 is a false positive only when score
-    is strictly greater than ``t``. A tie at tau is not accepted, matching
-    ``open_set_identification._is_fpi`` so the FMR this module calibrates is
-    the operating point the scorer publishes.
+    is strictly greater than ``t``. Delegates to ``accept_predicate.is_fpi``
+    so this stays in lockstep with ``open_set_identification._is_fpi`` — the
+    FMR this module calibrates is the operating point the scorer publishes.
     """
     if not scores:
         return None
-    accepted = sum(1 for s in scores if s > tau)
+    accepted = sum(1 for s in scores if is_fpi(s, tau))
     return accepted / len(scores)
 
 
@@ -784,7 +786,7 @@ def _oof_metrics_for_stratum(
                     n_gen_miss += 1
             for s in i_read:
                 n_imp_oof += 1
-                if s > tau:  # JANUS 2.3.4 FPI; lockstep with fmr_at
+                if is_fpi(s, tau):  # JANUS 2.3.4 FPI; lockstep with fmr_at
                     n_imp_accept += 1
 
         fold_rows.append(

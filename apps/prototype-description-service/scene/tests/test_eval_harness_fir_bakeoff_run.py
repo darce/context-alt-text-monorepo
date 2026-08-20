@@ -125,6 +125,17 @@ def _plan(tmp_path: Path, *, a_images: int = 1, seed: int = 7):
     return build_run_plan(selection_manifest_path=path, seed=seed)
 
 
+def _plan_with_padded_e_clean(tmp_path: Path, subject: str, *, seed: int = 7) -> RunPlan:
+    entries: list[dict[str, Any]] = []
+    for item in _base_entries():
+        identities = list(item["present_identities"])
+        if item["stratum"] == GALLERY_STRATUM:
+            identities = [f"{name} " if name == subject else name for name in identities]
+        entries.append({**item, "present_identities": identities})
+    path = _write_manifest(tmp_path, entries, strata_counts=_base_counts())
+    return build_run_plan(selection_manifest_path=path, seed=seed)
+
+
 def _gallery_of(plan, subject: str) -> GalleryName:
     if subject in plan.split.g1:
         return GalleryName.G1
@@ -1918,4 +1929,44 @@ def test_coverage_gap_marks_complete_searches_incomplete(tmp_path: Path) -> None
     assert row["incomplete"] is True
     assert report.points["B_eyewear"].incomplete is False
     assert report.points["C_pose"].incomplete is False
+
+
+def test_padded_g1_roster_key_keeps_mated_partition(tmp_path: Path) -> None:
+    """BR-56 / EVAL-18: g1 whitespace must not move an enrolled probe into the foil set."""
+    clean = _plan(tmp_path)
+    assert "Bob" in clean.split.g1
+    clean_mated, clean_foils = occluded_probes_for(clean, gallery=GalleryName.G1)
+    assert [unit.subject_id for unit in clean_mated] == ["Bob"]
+    assert len(clean_mated) == 1
+    assert len(clean_foils) == 3
+
+    padded = _plan_with_padded_e_clean(tmp_path, "Bob")
+    mated, foils = occluded_probes_for(padded, gallery=GalleryName.G1)
+    assert [unit.subject_id for unit in mated] == ["Bob"]
+    assert len(mated) == 1
+    assert len(foils) == 3
+    assert len(mated) == len(clean_mated)
+    assert len(foils) == len(clean_foils)
+    assert "Bob" in padded.split.g1
+    assert "Bob " not in padded.split.g1
+
+
+def test_padded_g2_roster_key_keeps_mated_partition(tmp_path: Path) -> None:
+    """BR-56 / EVAL-18: g2 whitespace must not move an enrolled probe into the foil set."""
+    clean = _plan(tmp_path)
+    assert "Alice" in clean.split.g2
+    clean_mated, clean_foils = occluded_probes_for(clean, gallery=GalleryName.G2)
+    assert [unit.subject_id for unit in clean_mated] == ["Alice", "Alice"]
+    assert len(clean_mated) == 2
+    assert len(clean_foils) == 2
+
+    padded = _plan_with_padded_e_clean(tmp_path, "Alice")
+    mated, foils = occluded_probes_for(padded, gallery=GalleryName.G2)
+    assert [unit.subject_id for unit in mated] == ["Alice", "Alice"]
+    assert len(mated) == 2
+    assert len(foils) == 2
+    assert len(mated) == len(clean_mated)
+    assert len(foils) == len(clean_foils)
+    assert "Alice" in padded.split.g2
+    assert "Alice " not in padded.split.g2
 

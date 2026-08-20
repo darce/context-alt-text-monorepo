@@ -324,3 +324,19 @@ Canon: TEST-15, EVAL-18, EVAL-19, MLDATA-04, rg-005. Touched only `fir_search_ad
 
 Two-file gate: 77 passed (F32's 74 + 1 parametrize case + 2 new tests).
 
+########## lane/f35
+
+# FIR-12-BR-56 — normalise identity keys at the plan/split boundary — CLOSED
+
+Canon: EVAL-13, EVAL-18, JANUS 2.2, rg-015, TEST-15. Touched `gallery_split.py` + bakeoff/gallery_split tests. Did not touch `fir_search_adapter.py` (F33's `_roster` strip is downstream of this partition and cannot repair it).
+
+**What changed.** `GallerySplit.__post_init__` and `build_disjoint_galleries` ingest now run `_normalise_subject_id`: strip once, reject blank/non-string with `GallerySplitError` naming the gallery and `repr(value)`. Roster keys and `Template.subject_id` are canonical before `occluded_probes_for` / `mated_identities_for` partition. No second per-consumer strip.
+
+- T1 `test_padded_g1_roster_key_keeps_mated_partition`: seed-7 g1 (Bob) E_clean key `"Bob "` still yields mated=`['Bob']` n_mated=1 n_foils=3. Mutant `/tmp/f35-mutants/m1.py` reverted `key = value.strip()` → `key = value`. RED: `assert [] == ['Bob']`.
+- T2 `test_padded_g2_roster_key_keeps_mated_partition`: seed-7 g2 (Alice) E_clean key `"Alice "` still yields mated=`['Alice','Alice']` n_mated=2 n_foils=2. Mutant `/tmp/f35-mutants/m2.py` same strip skip. RED: `assert [] == ['Alice', 'Alice']`.
+- T3 `test_blank_gallery_subject_id_is_rejected`: `GallerySplit(g1={"   ": ...})` raises `GallerySplitError` matching `g1 subject_id must be a non-empty string, got '   '`. Mutant `/tmp/f35-mutants/m3.py` deleted the `if not key: raise GallerySplitError(...)` block. RED: `DID NOT RAISE GallerySplitError`.
+- T4 `test_non_string_gallery_subject_id_is_rejected`: `g2={None: Template(subject_id=None)}` raises matching `g2 subject_id must be a non-empty string, got None` (does not become key `'None'`). Mutant `/tmp/f35-mutants/m4.py` replaced the `isinstance` reject with `value = str(value)`. RED: `DID NOT RAISE GallerySplitError`.
+
+Two-file + gallery_split gate: 101 passed (parent 77 on adapter+bakeoff + 2 new bakeoff + gallery_split including 2 new). Adapter file stayed green. Full `scene/tests` (ignore reclaim, deselect route): **1333 passed, 4 skipped, 1 deselected**.
+
+

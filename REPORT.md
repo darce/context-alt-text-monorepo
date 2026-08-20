@@ -718,3 +718,63 @@ rg-006, AUDIT-09, TEST-15.
 Nothing in this finding. Allocation fence (`# 44` / `# 36` / `# 29`) is a
 third fence and was not in the brief.
 
+########## F26
+
+# Lane F26 — DESCQUAL-2-BR-33 and BR-32
+
+Owned files: `apps/prototype-description-service/scene/tests/test_eval_harness_audit_sampling.py`,
+`docs/scopes/descqual-2-fact-annotation-pilot.md`. `audit_sampling.py` untouched.
+
+## DESCQUAL-2-BR-33 (high) — closed
+
+B_eyewear floor was 48 in the doc (frame-PSU a=2.1 over 80 images) and 49 in the
+test (labeled-membership a=2.36=177/75 applied to population=80). AUDIT-11:
+a must be a PSU partition of the frame being sized.
+
+**What changed.** Deleted `B_EYEWEAR_KISH_A`. B-cell `a` now comes from
+`project_frame_psu_image_counts` over the `B_eyewear` slice (55 PSUs, Σm=80,
+Σm²=168, a=2.1). Four 49 pins are 48; allocation is B=48, E_clean=26.
+Renamed `test_clustered_b_eyewear_precision_floor_is_49` → `_is_48`.
+Labeled a=2.36 kept only as a diagnostic sized against its own frame
+(population=75 → n=47), never against 80.
+`test_estimate_icc_fisher_z_ci_for_g65_k3_at_rho_02` renamed to
+`..._labeled_g65_...` and named as a labeled-`a` diagnostic (k=65 overlapping
+m≥3, WHOLE_FRAME_KISH_A → 121/284), not published CI n (114/261 on
+FRAME_PSU_KISH_A at k=64). Kept, not removed.
+
+**Test.** `test_clustered_b_eyewear_precision_floor_is_48`;
+`test_b_eyewear_labeled_subject_a_is_sized_against_its_own_frame`;
+`test_estimate_icc_fisher_z_ci_for_labeled_g65_k3_at_rho_02`.
+
+**Mutant.** `/tmp/br33-mutant-test.py`: restore `cluster_size = 2.36`.
+RED: `assert 2.36 == 2.1 ± 2.1e-06`. Extra: four `== 48` → `== 49` with
+derived a kept. RED: `assert math.ceil(n_raw) == 49` (got 48).
+
+## DESCQUAL-2-BR-32 (low) — closed
+
+Third fence (doc ~80–85) published `# 44` / `# 36` / `# 29` with no pin, no
+imports, unbound `strata_counts` (rg-006). Mutating `# 44` → `# 999` left
+both BR-31 fence tests GREEN.
+
+**What changed.** Fence is self-contained (imports + `strata_counts` from
+`fir12-selection-v1.json`). New
+`test_every_scope_doc_size_for_margin_fence_published_n_matches_eval`
+execs every fence containing `size_for_margin(`, not a per-fence allowlist.
+
+**Test.** `test_every_scope_doc_size_for_margin_fence_published_n_matches_eval`
+(existing CI/planning identity tests kept).
+
+**Mutants.** `/tmp/br32-ci-mutant.md` `# 114`→`# 999` RED `assert 114 == 999`.
+`/tmp/br32-planning-mutant.md` `# 198`→`# 999` RED `assert 198 == 999`.
+`/tmp/br32-bfloor-mutant.md` `# 44`→`# 999` RED `assert 44 == 999` on the
+general test; named CI+planning tests stayed GREEN (old hole).
+
+61/61 in `test_eval_harness_audit_sampling.py`.
+
+### Canon
+
+AUDIT-11, AUDIT-09, rg-006, TEST-15.
+
+### Not closed
+
+Nothing in this finding.

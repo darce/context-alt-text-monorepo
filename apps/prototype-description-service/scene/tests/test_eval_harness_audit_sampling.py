@@ -50,9 +50,6 @@ FIR12_IMAGE_N = {
     "E_clean": 407,
 }
 
-B_EYEWEAR_KISH_A = 2.36
-
-
 def _entry(
     stratum: str, identities: list[str], media_id: int | str = 1
 ) -> dict[str, object]:
@@ -370,6 +367,15 @@ def _fence_containing(text: str, needle: str) -> str:
     raise AssertionError(f"no fenced block contains {needle!r}")
 
 
+def _scope_doc_size_for_margin_fences(text: str) -> list[str]:
+    # BR-32: pin every fence that publishes n, not an allowlist of needles.
+    return [
+        block.strip()
+        for index, block in enumerate(text.split("```"))
+        if index % 2 == 1 and "size_for_margin(" in block
+    ]
+
+
 def _exec_scope_fence(
     block: str, monkeypatch: pytest.MonkeyPatch
 ) -> dict[str, object]:
@@ -456,6 +462,17 @@ def test_scope_doc_planning_n_fence_runs_as_written(monkeypatch: pytest.MonkeyPa
     _assert_fence_published_n_matches_eval(block, namespace)
 
 
+def test_every_scope_doc_size_for_margin_fence_published_n_matches_eval(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    doc = _SCOPE_DOC.read_text()
+    fences = _scope_doc_size_for_margin_fences(doc)
+    assert fences, "scope doc has no size_for_margin fences to pin"
+    for block in fences:
+        namespace = _exec_scope_fence(block, monkeypatch)
+        _assert_fence_published_n_matches_eval(block, namespace)
+
+
 def test_allocate_sums_to_n():
     allocation = allocate(strata_sizes=FIR12_STRATA, n=84)
     assert sum(allocation.values()) == 84
@@ -537,14 +554,27 @@ def test_sample_size_rejects_non_positive_margin():
         sample_size_for_margin(margin=0.0, population=640)
 
 
-def test_clustered_b_eyewear_precision_floor_is_49():
+def test_clustered_b_eyewear_precision_floor_is_48():
+    # AUDIT-11 / BR-33: a is the PSU partition of the 80-image B frame, not
+    # the labeled-membership join (47 subjects, Σm=75, a=2.36) applied to 80.
+    entries = json.loads(_FIR12_MANIFEST.read_text())["entries"]
+    b_entries = [e for e in entries if e["stratum"] == "B_eyewear"]
+    part = project_frame_psu_image_counts(b_entries)
+    assert len(b_entries) == 80
+    assert part.n_entries == 80
+    assert part.n_psus == 55
+    assert sum(part.sizes) == 80
+    assert sum(m * m for m in part.sizes) == 168
+    cluster_size = kish_effective_cluster_size(part.sizes)
+    assert cluster_size == pytest.approx(168 / 80)
+    assert cluster_size == pytest.approx(2.1)
+
     n0 = (1.96 * 1.96) * 0.5 * 0.5 / (0.10 * 0.10)
-    cluster_size = B_EYEWEAR_KISH_A
     icc = 0.2
     deff = 1.0 + (cluster_size - 1.0) * icc
     n_deff = n0 * deff
     n_raw = n_deff / (1.0 + (n_deff - 1.0) / 80)
-    assert math.ceil(n_raw) == 49
+    assert math.ceil(n_raw) == 48
     assert math.ceil(n0 / (1.0 + (n0 - 1.0) / 80)) == 44
     mean_n = size_for_margin(margin=0.10, population=80, cluster_size=80 / 47, icc=icc).n
     assert mean_n == 47
@@ -553,7 +583,7 @@ def test_clustered_b_eyewear_precision_floor_is_49():
     expected = size_for_margin(
         margin=0.10, population=80, cluster_size=cluster_size, icc=icc
     )
-    assert expected.n == 49
+    assert expected.n == 48
     assert expected.deff_order is DeffOrder.DEFF_THEN_FPC
     assert expected.deff == pytest.approx(deff)
     assert expected.n_deff == pytest.approx(n_deff)
@@ -569,18 +599,47 @@ def test_clustered_b_eyewear_precision_floor_is_49():
     )
     assert isinstance(clustered, Allocation)
     assert unclustered["B_eyewear"] == 44
-    assert clustered["B_eyewear"] == 49
+    assert clustered["B_eyewear"] == 48
+    assert clustered["E_clean"] == 26
     assert clustered["B_eyewear"] != unclustered["B_eyewear"]
     assert sum(clustered.values()) == 84
     record = clustered.floors["B_eyewear"]
     assert record == expected
-    assert record.n == 49
+    assert record.n == 48
     assert record.deff_order is DeffOrder.DEFF_THEN_FPC
     assert record.deff_order == "deff_then_fpc"
-    assert record.deff == pytest.approx(1.272)
+    assert record.deff == pytest.approx(1.22)
     assert record.cluster_size == pytest.approx(cluster_size)
     assert record.icc == 0.2
-    assert record.n / record.deff == pytest.approx(49 / deff)
+    assert record.n / record.deff == pytest.approx(48 / deff)
+
+
+def test_b_eyewear_labeled_subject_a_is_sized_against_its_own_frame():
+    # Labeled-membership a=2.36 (177/75 over 47 overlapping subjects) is a
+    # diagnostic of that join. AUDIT-11 forbids applying it to the 80-image
+    # B frame; size it against population=75.
+    entries = json.loads(_FIR12_MANIFEST.read_text())["entries"]
+    b_entries = [e for e in entries if e["stratum"] == "B_eyewear"]
+    labeled = project_strata_subject_image_counts(b_entries)["B_eyewear"]
+    assert len(labeled) == 47
+    assert sum(labeled) == 75
+    assert sum(m * m for m in labeled) == 177
+    labeled_a = kish_effective_cluster_size(labeled)
+    assert labeled_a == pytest.approx(177 / 75)
+    assert labeled_a == pytest.approx(2.36)
+    own_frame = size_for_margin(
+        margin=0.10, population=75, cluster_size=labeled_a, icc=0.2
+    )
+    assert own_frame.n == 47
+    b_frame_a = kish_effective_cluster_size(
+        project_frame_psu_image_counts(b_entries).sizes
+    )
+    planning = size_for_margin(
+        margin=0.10, population=80, cluster_size=b_frame_a, icc=0.2
+    )
+    assert planning.n == 48
+    assert own_frame.n != planning.n
+    assert labeled_a != pytest.approx(b_frame_a)
 
 
 def test_allocate_without_cluster_params_stays_deff_blind():
@@ -860,7 +919,10 @@ def test_estimate_icc_anova_known_fixture():
     assert est.icc == pytest.approx(15 / 17)
 
 
-def test_estimate_icc_fisher_z_ci_for_g65_k3_at_rho_02():
+def test_estimate_icc_fisher_z_ci_for_labeled_g65_k3_at_rho_02():
+    # Labeled-a diagnostic, not planning n: k=65 is overlapping m≥3
+    # (WHOLE_FRAME, Σm=544), so 121/284. Published CI n is 114/261 on
+    # FRAME_PSU_KISH_A at k=64, icc=0.044/0.361 (AUDIT-11).
     clusters = _anova_clusters_icc(n_psu=65, icc=0.2)
     est = estimate_icc(clusters)
     assert est.icc == pytest.approx(0.2)
@@ -876,6 +938,15 @@ def test_estimate_icc_fisher_z_ci_for_g65_k3_at_rho_02():
     ).n
     assert low_n == 121
     assert high_n == 284
+    published_low = size_for_margin(
+        margin=0.10, population=640, cluster_size=FRAME_PSU_KISH_A, icc=0.044
+    ).n
+    published_high = size_for_margin(
+        margin=0.10, population=640, cluster_size=FRAME_PSU_KISH_A, icc=0.361
+    ).n
+    assert published_low == 114
+    assert published_high == 261
+    assert (low_n, high_n) != (published_low, published_high)
 
 
 def test_estimate_icc_recovers_rho_on_synthetic_clusters():

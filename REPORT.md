@@ -193,5 +193,40 @@ above (allocate returns 11 and 5; ceil returns 36 and 29).
 
 ---
 
+## BR-25 (doc half) — gold items and a written disagreement rule
+
+**Canon:** HITL-03, HITL-05, HITL-07, MLDATA-03.
+
+**What changed.** Gold items were named with no rate, provenance, or
+per-annotator bar. The disagreement rule was "a written disagreement rule"
+with no writing. Specified:
+
+- Gold rate **10% of the queue** (3 images on the ~30-image pilot), mix
+  random + batch-matched + hard, injected *in addition to* the probability
+  sample.
+- Provenance: known answers exist before the batch; not from annotators under
+  test; not from the judged caption pool; operator-confirmed `reference_facts`
+  or SME-arbitrated gold.
+- Per-annotator gold-fact accuracy bar **≥ 0.80**; below it, hold live labels
+  and retrain/replace; do not drop annotators to chase α (HITL-05).
+- Written rule: agree → store shared label, keep both in `pre_adjudication`;
+  disagree → SME escalation, token **`disagreement-escalate-to-sme`**; gold
+  known-answers are never overwritten. Sibling enum must match that token.
+  This lane did not edit the model.
+
+**Calls.** None — no sampling number in this finding.
+
+**Mutant (TEST-15).** Restore "gold-embedded items seeded into each batch"
+with no rate/provenance/threshold, and "with a written disagreement rule"
+with no rule. RED against HITL-03 ("What fraction of tasks are gold, and is
+per-annotator gold accuracy tracked?") and MLDATA-03 ("What is the written
+rule when annotators disagree?").
+
+**Could not close.** The `adjudication_rule` enum lives in a sibling-owned
+file (`manifest.py`). Prose pins the token; the enum must match.
+
+---
+
+
 
 

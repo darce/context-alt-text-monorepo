@@ -186,28 +186,73 @@ produce the ICC the full-study n is divided by.
    incompleteness explicitly; unjudged candidates are **not** negatives (EVAL-25).
 3. **Annotate** each pooled candidate as a v4 `ReferenceFact` carrying per-label lineage —
    annotator id, batch, timestamp, source pool (MLDATA-04).
-4. **Two annotators per image on an overlap subset**, with a written disagreement rule.
-   Both pre-adjudication labels are retained on the fact; the adjudicated value goes in the
-   top-level fields (MLDATA-03). SME adjudication is recorded with `adjudicated_by` and
-   `adjudication_rule` (HITL-07).
-5. **QC**: gold-embedded items seeded into each annotation batch (HITL-03). Agreement is
-   read as a diagnostic on the instrument, not as a score for the annotators (HITL-05,
-   α ≈ 0.8 as the working target).
+4. **Two annotators per image.** The pilot is 100% dual-annotated so α is
+   measurable (full-study overlap may drop to 20% only after the pilot α clears
+   0.8). Both pre-adjudication labels are retained on the fact; the adjudicated
+   value goes in the top-level fields (MLDATA-03). SME adjudication is recorded
+   with `adjudicated_by` and `adjudication_rule` (HITL-07).
+5. **Gold-embedded QC (HITL-03)** — rate, provenance, and a per-annotator
+   threshold, specified below. Agreement is a diagnostic on the instrument, not
+   a score for the annotators (HITL-05, α ≈ 0.8 as the working target). Without
+   gold, α certifies shared rater bias, not truth.
 6. **Measure** from the pilot: minutes-per-image (hence cost per image and total
-   annotation cost); rubric Krippendorff α on the overlap subset (instrument diagnostic,
-   HITL-05); gold-item QC (HITL-03). Do **not** estimate the intra-subject ICC or derive
-   full-sample n from this draw.
+   annotation cost); rubric Krippendorff α on the dual-annotated set (instrument
+   diagnostic, HITL-05); per-annotator gold accuracy (HITL-03). Do **not**
+   estimate the intra-subject ICC or derive full-sample n from this draw.
+
+### Written disagreement rule (MLDATA-03)
+
+When two annotators label the same pooled candidate:
+
+1. **Agree** (same `polarity` and `kind` on the same candidate text): that
+   shared label is stored in the top-level fields. Both labels still go in
+   `pre_adjudication`.
+2. **Disagree**: no coin-flip, no silent merge. Escalate to an SME who produced
+   neither label. The SME label is written to the top-level fields; both
+   original labels stay in `pre_adjudication`; `adjudicated_by` names the SME;
+   `adjudication_rule` is stored as the token **`disagreement-escalate-to-sme`**.
+3. Gold items never have their known answer overwritten by this rule. A
+   disagreement on gold is a QC event (counts against gold accuracy) and still
+   records both live labels; the reference stays the pre-authored gold.
+
+A sibling lane is converting `adjudication_rule` from free text to a
+constrained enum. The enum member **must match** `disagreement-escalate-to-sme`.
+This scope doc does not edit the model.
+
+### Gold items (HITL-03)
+
+- **Rate.** Gold items are **10% of the annotation queue**, injected unannounced,
+  *in addition to* the probability sample so they do not consume design-based n
+  and are excluded from `fabricated_fact_rate`. On the ~30-image pilot that is
+  **3 gold images**. Mix, as HITL-03 requires: **random + batch-matched + hard**
+  (pilot: one of each — random from the frozen frame outside the drawn n; one
+  matched to the batch's plurality stratum; one hard cell: `B_eyewear`,
+  `A_true_occluder`, or multi-identity).
+- **Provenance.** Known answers exist before the batch is drawn. They are not
+  authored by the annotators under test and not taken from the caption pool
+  being judged. Eligible sources: independently operator-confirmed
+  `reference_facts`, or items arbitrated for gold by an SME who will not
+  annotate the live queue.
+- **Per-annotator threshold.** Gold accuracy is the fraction of gold *facts*
+  (not images) on which the annotator matches the known answer on polarity and
+  kind. The pre-registered bar is **≥ 0.80**. Below it, that annotator's live
+  labels in the batch are held for SME review and the annotator is retrained or
+  replaced. Annotators are not dropped in order to chase α (HITL-05). At pilot
+  gold volume (3 images) report the raw k/n; the 0.80 bar is the full-study
+  gate and a diagnostic here.
 
 ## Success criteria
 
-- The pilot reports minutes per image, rubric α, and gold-item QC. It does not output
+- The pilot reports minutes per image, rubric α, and per-annotator gold
+  accuracy (10% gold, bar 0.80, provenance as specified). It does not output
   a measured ICC or a design effect used to size the full sample.
+- Disagreements follow the written rule `disagreement-escalate-to-sme`; both
+  pre-adjudication labels survive in the stored record. An implementation that
+  overwrites them, coin-flips, or omits `adjudication_rule` fails a test.
 - Full-sample n is the pre-registered planning value **n = 198** at ICC=0.20
   (sensitivity **n = 239** at ICC=0.30), not a number derived from the 30-image draw.
 - Every drawn unit carries its inclusion probability; no convenience or first-n draw exists
   anywhere in the code path.
-- Disagreements survive adjudication in the stored record — an implementation that
-  overwrites them fails a test.
 - The judgment pool has ≥2 independent contributors and ships an incompleteness disclosure.
 - Cost per image and total projected annotation cost are reported alongside the design.
 

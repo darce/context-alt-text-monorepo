@@ -931,3 +931,108 @@ def test_cli_gate_commands_do_not_reach_load_legacy_manifest(tmp_path, monkeypat
         )
     assert "score_face_run_record refuses roster_only" in str(exc_info.value)
     assert hits == []
+
+
+def test_adjudication_rule_rejects_free_text():
+    """MLDATA-03: a written rule is a closed enum, not unconstrained prose."""
+    with pytest.raises(ValidationError, match="adjudication_rule"):
+        ReferenceFact(
+            text="wearing a red hat",
+            kind="attribute",
+            phrases=["red hat"],
+            adjudicated_by="sme-03",
+            adjudication_rule="coin-flip",
+        )
+
+
+def test_adjudicated_by_requires_written_rule():
+    """MLDATA-03: claiming SME adjudication without a named rule is incomplete."""
+    with pytest.raises(ValidationError, match="adjudication_rule"):
+        ReferenceFact(
+            text="wearing a red hat",
+            kind="attribute",
+            phrases=["red hat"],
+            adjudicated_by="sme-03",
+        )
+
+
+def test_named_adjudication_rule_is_accepted():
+    fact = ReferenceFact(
+        text="wearing a red hat",
+        kind="attribute",
+        phrases=["red hat"],
+        adjudicated_by="sme-03",
+        adjudication_rule="disagreement-escalate-to-sme",
+        pre_adjudication=[
+            {
+                "annotator_id": "ann-01",
+                "polarity": "true",
+                "text": "wearing a red hat",
+                "noted_at": "2026-08-19T09:00:00Z",
+            },
+            {
+                "annotator_id": "ann-02",
+                "polarity": "false",
+                "text": "wearing a red hat",
+                "noted_at": "2026-08-19T09:01:00Z",
+            },
+        ],
+    )
+    assert fact.adjudication_rule.value == "disagreement-escalate-to-sme"
+
+
+def _operator_gold_payload(**overrides) -> dict:
+    payload = {
+        "text": "a red bicycle",
+        "kind": "object",
+        "phrases": ["red bicycle"],
+        "confirmed_by": "operator",
+        "annotator_id": "ann-07",
+        "annotation_batch": "batch-2026-08-20",
+        "annotated_at": "2026-08-20T12:00:00Z",
+        "source_pool": "golden-646-pool",
+    }
+    payload.update(overrides)
+    return payload
+
+
+@pytest.mark.parametrize("missing", ["annotation_batch", "annotated_at", "source_pool"])
+def test_human_confirmed_fact_missing_lineage_field_raises(missing):
+    """MLDATA-04: per-label lineage is mandatory on human gold, not presence-if-supplied."""
+    payload = _operator_gold_payload()
+    payload[missing] = None
+    with pytest.raises(ValidationError, match=missing):
+        ReferenceFact.model_validate(payload)
+
+
+@pytest.mark.parametrize("blank", ["annotation_batch", "annotated_at", "source_pool"])
+def test_human_confirmed_fact_blank_lineage_field_raises(blank):
+    payload = _operator_gold_payload()
+    payload[blank] = "   "
+    with pytest.raises(ValidationError, match=blank):
+        ReferenceFact.model_validate(payload)
+
+
+def test_operator_gold_with_no_lineage_raises():
+    """M9: operator gold with batch/at/pool all None must not validate."""
+    with pytest.raises(ValidationError, match="annotation_batch"):
+        ReferenceFact(
+            text="a red bicycle",
+            kind="object",
+            phrases=["red bicycle"],
+            confirmed_by="operator",
+            annotator_id="ann-07",
+        )
+
+
+def test_adjudicated_fact_with_empty_pre_adjudication_raises():
+    """M10: SME adjudication without stored pre-labels leaves no disagreement trail."""
+    with pytest.raises(ValidationError, match="pre_adjudication"):
+        ReferenceFact(
+            text="wearing a red hat",
+            kind="attribute",
+            phrases=["red hat"],
+            adjudicated_by="sme-03",
+            adjudication_rule="disagreement-escalate-to-sme",
+            pre_adjudication=[],
+        )

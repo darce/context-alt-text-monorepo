@@ -92,3 +92,144 @@ test_estimate_icc_fisher_z_ci_for_g65_k3_at_rho_02
 
 `scene/tests/test_eval_harness_audit_sampling.py` → 46 passed. Full `scene/tests` → 1263 passed, 4 skipped; the 4 failures are the known pre-existing PGPASSWORD / `InsecureProductionConfigError` boots (`test_describe_route.py::test_create_app_registers_route_and_upload_cap` and the three `test_describe_run_reclaim.py` startup tests).
 
+# Lane F16 — DESCQUAL-2 provenance (BR-21, BR-25 code, BR-20)
+
+## AdjudicationRule enum (carry this into the scope doc)
+
+Closed set on `scripts.eval_harness.manifest.AdjudicationRule`. Doc lane must name **these exact tokens**, not free text:
+
+- `disagreement-escalate-to-sme`
+- `majority-vote`
+- `unanimous`
+
+Required whenever `adjudicated_by` is set. Free text (`coin-flip`) is refused.
+
+## BR-21 (already on branch: `331bb53f`) — closed
+
+`build_pool` now refuses non-independent contributors (distinct model families + a human pass), not just `len < 2`. `bind_gold` refuses gold with no `source_pool`. EVAL-25.
+
+Tests: `test_same_model_family_prompt_variants_are_not_independent`, `test_pool_without_human_contributor_raises`, `test_gold_facts_without_source_pool_cannot_be_bound`.
+
+## BR-25 code half (already on branch: `5fcb93fd`) — closed
+
+`adjudication_rule` is `AdjudicationRule` (see tokens above), required when `adjudicated_by` is set. MLDATA-03.
+
+Tests: `test_adjudication_rule_rejects_free_text`, `test_adjudicated_by_requires_written_rule`, `test_named_adjudication_rule_is_accepted`.
+
+Doc half (gold-item rate, provenance, per-annotator gold-accuracy threshold) is out of scope here.
+
+## BR-20 — closed in owned files
+
+Human-confirmed facts (`confirmed_by` in `HUMAN_CONFIRMATION_SOURCES`) now require non-blank `annotator_id`, `annotation_batch`, `annotated_at`, and `source_pool`. `adjudicated_by` now requires a non-empty `pre_adjudication` list so a disagreement is stored, not erased. MLDATA-03, MLDATA-04, HITL-07. TEST-15.
+
+Owned tests (all raise `ValidationError` on the under-populated variant):
+
+- `test_human_confirmed_fact_missing_lineage_field_raises` (param: `annotation_batch` / `annotated_at` / `source_pool` = None)
+- `test_human_confirmed_fact_blank_lineage_field_raises` (same fields = `"   "`)
+- `test_operator_gold_with_no_lineage_raises` (M9 constructor: operator + annotator_id, all other lineage omitted)
+- `test_adjudicated_fact_with_empty_pre_adjudication_raises` (M10: `adjudicated_by='sme-03'`, `pre_adjudication=[]`)
+
+`test_named_adjudication_rule_is_accepted` fixture now carries two pre-adjudication labels so it still constructs after the M10 check.
+
+### Mutants (both RED)
+
+**M9** — `required = ("annotator_id",)` only (lineage optional again):
+
+```
+FAILED test_human_confirmed_fact_missing_lineage_field_raises[annotation_batch]
+FAILED test_human_confirmed_fact_missing_lineage_field_raises[annotated_at]
+FAILED test_human_confirmed_fact_missing_lineage_field_raises[source_pool]
+FAILED test_human_confirmed_fact_blank_lineage_field_raises[...]
+FAILED test_operator_gold_with_no_lineage_raises
+Failed: DID NOT RAISE ValidationError
+```
+
+**M10** — `_adjudication_requires_pre_labels` short-circuited with `if False and ...`:
+
+```
+FAILED test_adjudicated_fact_with_empty_pre_adjudication_raises
+Failed: DID NOT RAISE ValidationError
+```
+
+Mutants restored. Owned files: `scene/tests/test_eval_harness_manifest.py` + `test_eval_harness_judgment_pool.py` → 79 passed, 1 skipped.
+
+## Could not close (unowned fixtures)
+
+Did not edit files outside the exclusive set. Coordinator must add the three lineage fields by hand:
+
+1. `scene/tests/test_eval_harness_manifest_reference_fact_lineage.py::test_disagreement_survives_adjudication` — operator fact has `annotator_id` + pre-labels but omits `annotation_batch`, `annotated_at`, `source_pool`. Add the same three strings used in `_full_payload()` in that file.
+2. `benchmarks/manifests/golden150-draft-20260723.json` entries[149] (media_id 648) — two operator facts have only `annotator_id="pre-program-operator"`. Same three fields need a backfill (same pattern as the earlier annotator_id backfill). Until then `test_golden150_draft_parses_with_backfilled_fact_annotators` fails via `load_legacy_manifest`.
+
+Full `scene/tests` (excluding known PGPASSWORD boot failures): **2 failed, 1213 passed, 4 skipped** — those two unowned fixtures only. No back-compat shim on the model; v2 load still goes through `ReferenceFact`.
+
+# Lane F18 — DESCQUAL-2 lineage backfill (BR-20 leftover fixtures)
+
+Do not redo BR-21 / BR-25(code) / BR-20. This lane only backfills the two fixtures BR-20 correctly left broken, plus the `majority_vote` → `majority-vote` token rename.
+
+## 1. `test_disagreement_survives_adjudication`
+
+Operator fact already had `annotator_id` + both pre-adjudication labels; BR-20 made `annotation_batch`, `annotated_at`, `source_pool` required on human-confirmed facts (MLDATA-04). Backfilled those three from `_full_payload()` in the same file (`batch-2026-08-20`, `2026-08-20T12:00:00Z`, `golden-646-pool`) — no second set of magic strings. Model not relaxed.
+
+Test: `test_disagreement_survives_adjudication` (existing; now also asserts the three fields equal `_full_payload()`).
+
+Mutant: omit `annotation_batch=` from the constructor. RED:
+
+```
+FAILED scene/tests/test_eval_harness_manifest_reference_fact_lineage.py::test_disagreement_survives_adjudication
+Value error, human-confirmed reference_fact requires annotation_batch
+(confirmed_by=<ConfirmationSource.OPERATOR: 'operator'>; MLDATA-04)
+```
+
+Canon: MLDATA-03, MLDATA-04, HITL-07, TEST-15. Mutant restored.
+
+## 2. `golden150-draft-20260723.json` entries[149] (media_id 648)
+
+Two operator facts had only `annotator_id="pre-program-operator"`. No existing convention for batch/at/pool (the earlier backfill stopped at annotator_id). Established honest pre-program placeholders — **not** `_full_payload()` values, which would imply `batch-2026-08-20` / `golden-646-pool` ran:
+
+- `annotation_batch`: `"pre-program"`
+- `annotated_at`: `"1970-01-01T00:00:00Z"` (epoch sentinel; same unknown-time convention as `LEGACY_IMPORT_LABELED_AT`)
+- `source_pool`: `"pre-program"`
+
+Prefix matches `pre-program-operator`. Did not weaken `load_legacy_manifest`. Greenfield: fix the data.
+
+Test: `test_golden150_draft_parses_with_backfilled_fact_annotators` (extended to assert the three fields).
+
+Mutant: drop `annotation_batch` on entries[149].reference_facts[0]. RED:
+
+```
+FAILED scene/tests/test_eval_harness_manifest_reference_fact_lineage.py::test_golden150_draft_parses_with_backfilled_fact_annotators
+legacy manifest schema violation: ... entries.149.reference_facts.0
+Value error, human-confirmed reference_fact requires annotation_batch
+(confirmed_by=<ConfirmationSource.OPERATOR: 'operator'>; MLDATA-04)
+```
+
+Canon: MLDATA-04, TEST-15, rg-008. Mutant restored. No back-compat shim.
+
+## 3. `AdjudicationRule.MAJORITY_VOTE` token style
+
+Scope-doc lane pinned `disagreement-escalate-to-sme` (hyphens). `majority_vote` (underscore) was the mixed-separator outlier. `UNANIMOUS = "unanimous"` has no separator. Value change only: `majority_vote` → `majority-vote`. sr-007.
+
+Grep **before**: `MAJORITY_VOTE = "majority_vote"` in `manifest.py` plus this report and `.lane/PROMPT.txt`. No test or fixture used the underscore literal.
+
+Grep **after**: `MAJORITY_VOTE = "majority-vote"` in `manifest.py`; leftover `majority_vote` only in this report's mutant notes / prompt.
+
+Tests: `test_majority_vote_token_is_hyphenated`, `test_underscore_majority_vote_token_is_rejected`.
+
+Mutant: restore `MAJORITY_VOTE = "majority_vote"`. RED:
+
+```
+FAILED ...::test_majority_vote_token_is_hyphenated
+AssertionError: assert 'majority_vote' == 'majority-vote'
+FAILED ...::test_underscore_majority_vote_token_is_rejected
+Failed: DID NOT RAISE ValidationError
+```
+
+Canon: sr-007, TEST-15, MLDATA-03. Mutant restored. Did not touch `audit_sampling.py` or the scope doc.
+
+## Gate
+
+```
+4 failed, 1264 passed, 4 skipped, 10 warnings in 48.33s
+```
+
+Exactly the known PGPASSWORD boot quartet (`test_create_app_registers_route_and_upload_cap` + three `test_describe_run_reclaim` startup tests). The two BR-20 leftover fixtures are green. Nothing left unclosed in owned files.

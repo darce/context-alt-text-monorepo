@@ -112,6 +112,7 @@ def test_disagreement_survives_adjudication():
             noted_at="2026-08-19T09:01:00Z",
         ),
     ]
+    lineage = _full_payload()
     fact = ReferenceFact(
         text="wearing a red hat",
         kind=FactKind.ATTRIBUTE,
@@ -119,10 +120,16 @@ def test_disagreement_survives_adjudication():
         phrases=["red hat"],
         confirmed_by="operator",
         annotator_id="sme-03",
+        annotation_batch=lineage["annotation_batch"],
+        annotated_at=lineage["annotated_at"],
+        source_pool=lineage["source_pool"],
         pre_adjudication=list(originals),
         adjudicated_by="sme-03",
         adjudication_rule="disagreement-escalate-to-sme",
     )
+    assert fact.annotation_batch == lineage["annotation_batch"]
+    assert fact.annotated_at == lineage["annotated_at"]
+    assert fact.source_pool == lineage["source_pool"]
     assert len(fact.pre_adjudication) == 2
     assert fact.pre_adjudication[0].annotator_id == "ann-01"
     assert fact.pre_adjudication[0].polarity is FactPolarity.TRUE

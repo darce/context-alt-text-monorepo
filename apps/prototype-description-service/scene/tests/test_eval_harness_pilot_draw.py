@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ast
 import inspect
+import itertools
 import json
 import math
 import random
@@ -458,12 +459,25 @@ _LICENSED_PACKET_ROW_KEYS = frozenset(
         "reference_facts",
     }
 )
+
+
+def _icc_groups_of_size(k: int) -> tuple[tuple[float, ...], ...]:
+    # Distinct cluster means + within-group spread so ICC is not 0/1/a data leaf.
+    return tuple(
+        (float(10 * i), float(10 * i + 1), float(10 * i + 3)) for i in range(k)
+    )
+
+
 _ICC_PROBE_GROUPS: tuple[tuple[tuple[float, ...], ...], ...] = (
     ((1.0, 1.0, 1.0), (0.0, 0.0, 0.0), (1.0, 0.0, 1.0)),
     ((2.0, 3.0, 4.0), (8.0, 9.0, 10.0), (0.0, 1.0, 2.0), (20.0, 21.0, 22.0)),
+    _icc_groups_of_size(5),
+    _icc_groups_of_size(8),
+    _icc_groups_of_size(16),
+    _icc_groups_of_size(32),
+    _icc_groups_of_size(64),
 )
 _GROUPS_PARAM_NAMES = frozenset({"groups", "clusters", "cluster", "icc_groups", "ys"})
-_UNCALLABLE = object()
 _UNPROBEABLE = object()
 _MISSING = object()
 
@@ -710,55 +724,71 @@ def _place_arg(
     return (value,), {}
 
 
-def _bind_required_args(
+def _unknown_param_fillers(
+    groups: Sequence[Sequence[float]],
+) -> tuple[object, ...]:
+    as_tuples = tuple(tuple(group) for group in groups)
+    k = len(as_tuples)
+    n = sum(len(group) for group in as_tuples)
+    return (
+        as_tuples,
+        None,
+        1.0,
+        True,
+        (),
+        tuple(1.0 for _ in range(k)),
+        tuple(1.0 for _ in range(n)),
+        "probe",
+    )
+
+
+def _param_candidate_values(
+    param: inspect.Parameter,
+    groups: Sequence[Sequence[float]],
+    fixtures: Mapping[str, object],
+) -> list[object]:
+    as_tuples = tuple(tuple(group) for group in groups)
+    if param.name in _GROUPS_PARAM_NAMES:
+        return [as_tuples]
+    if param.name in fixtures:
+        bound = fixtures[param.name]
+        return [set(bound) if isinstance(bound, set) else bound]
+    typed = _typed_fixture(_annotation_str(param.annotation), fixtures, as_tuples)
+    if typed is not _MISSING:
+        return [typed]
+    return list(_unknown_param_fillers(as_tuples))
+
+
+def _iter_bindings(
     fn: object,
     groups: Sequence[Sequence[float]],
     fixtures: Mapping[str, object],
-) -> tuple[tuple[object, ...], dict[str, object]] | None:
+) -> list[tuple[tuple[object, ...], dict[str, object]]]:
     required = _required_params(fn)
     if required is None:
-        return None
+        return []
     as_tuples = tuple(tuple(group) for group in groups)
+    if not required:
+        return [((), {})]
     if len(required) == 1:
-        args, kwargs = _place_arg(required[0], as_tuples)
-        return args, kwargs
-    args: list[object] = []
-    kwargs: dict[str, object] = {}
-    for param in required:
-        value: object = _MISSING
-        if param.name in _GROUPS_PARAM_NAMES:
-            value = as_tuples
-        elif param.name in fixtures:
-            bound = fixtures[param.name]
-            value = set(bound) if isinstance(bound, set) else bound
-        else:
-            value = _typed_fixture(_annotation_str(param.annotation), fixtures, as_tuples)
-        if value is _MISSING:
-            # BR-51: a required param we cannot fill is the estimator hiding place, not a skip.
-            return None
-        extra_args, extra_kwargs = _place_arg(param, value)
-        args.extend(extra_args)
-        kwargs.update(extra_kwargs)
-    return tuple(args), kwargs
-
-
-def _try_call_with_groups(
-    fn: object,
-    groups: Sequence[Sequence[float]],
-    fixtures: Mapping[str, object],
-) -> object:
-    bound = _bind_required_args(fn, groups, fixtures)
-    if bound is None:
-        return _UNPROBEABLE
-    args, kwargs = bound
-    try:
-        return fn(*args, **kwargs)  # type: ignore[operator]
-    except Exception:
-        return _UNCALLABLE
+        return [_place_arg(required[0], as_tuples)]
+    value_lists = [
+        _param_candidate_values(param, as_tuples, fixtures) for param in required
+    ]
+    bindings: list[tuple[tuple[object, ...], dict[str, object]]] = []
+    for combo in itertools.product(*value_lists):
+        args: list[object] = []
+        kwargs: dict[str, object] = {}
+        for param, value in zip(required, combo, strict=True):
+            extra_args, extra_kwargs = _place_arg(param, value)
+            args.extend(extra_args)
+            kwargs.update(extra_kwargs)
+        bindings.append((tuple(args), kwargs))
+    return bindings
 
 
 def _matches_one_way_icc(got: object, groups: Sequence[Sequence[float]]) -> bool:
-    if got is _UNCALLABLE or got is _UNPROBEABLE:
+    if got is _UNPROBEABLE:
         return False
     want = _one_way_icc(groups)
     return any(
@@ -770,14 +800,21 @@ def _matches_one_way_icc(got: object, groups: Sequence[Sequence[float]]) -> bool
 def _returns_one_way_icc(
     fn: object, fixtures: Mapping[str, object] | None = None
 ) -> bool:
+    # BR-51: a raise on one fixture (min-n) is not "not an estimator"; try the rest.
     probe_fixtures = fixtures if fixtures is not None else _probe_fixture_map()
     for groups in _ICC_PROBE_GROUPS:
-        got = _try_call_with_groups(fn, groups, probe_fixtures)
-        if got is _UNCALLABLE or got is _UNPROBEABLE:
-            return False
-        if not _matches_one_way_icc(got, groups):
-            return False
-    return True
+        for args, kwargs in _iter_bindings(fn, groups, probe_fixtures):
+            try:
+                got = fn(*args, **kwargs)  # type: ignore[operator]
+            except Exception:
+                continue
+            if _matches_one_way_icc(got, groups):
+                return True
+    return False
+
+
+def _callable_is_unprobeable(fn: object) -> bool:
+    return _required_params(fn) is None
 
 
 def _reliability_estimator_violations(
@@ -789,16 +826,14 @@ def _reliability_estimator_violations(
     for name, obj in _owned_callables(module):
         if inspect.isclass(obj):
             continue
-        first = _try_call_with_groups(obj, _ICC_PROBE_GROUPS[0], fixtures)
-        if first is _UNPROBEABLE:
+        if _callable_is_unprobeable(obj):
             unprobeable.append(name)
             continue
         if _returns_one_way_icc(obj, fixtures):
             icc_offenders.append(name)
     tree = ast.parse(Path(module.__file__).read_text())  # type: ignore[union-attr]
     for name, fn in _isolated_functions(tree):
-        first = _try_call_with_groups(fn, _ICC_PROBE_GROUPS[0], fixtures)
-        if first is _UNPROBEABLE:
+        if _callable_is_unprobeable(fn):
             unprobeable.append(f"isolated:{name}")
             continue
         if _returns_one_way_icc(fn, fixtures):
@@ -809,9 +844,8 @@ def _reliability_estimator_violations(
 def _assert_no_reliability_estimator(module: object = pilot_draw_mod) -> None:
     icc_offenders, unprobeable = _reliability_estimator_violations(module)
     assert unprobeable == [], (
-        "module-level callable(s) cannot be exercised by the ICC probe from "
-        "known fixtures; an unprobeable signature is the BR-51 hiding place "
-        "(AUDIT-11, TEST-15): "
+        "module-level callable(s) have no inspectable signature, so the ICC "
+        "probe cannot call them (AUDIT-11, TEST-15): "
         f"{unprobeable}"
     )
     assert icc_offenders == [], (
@@ -1225,8 +1259,7 @@ def test_no_module_callable_returns_one_way_icc():
     _assert_no_reliability_estimator()
 
 
-_COORDINATOR_ICC_EXTRA_ARG = """\
-def _agreement_ratio2(groups, weights):
+_ONE_WAY_ICC_BODY = """\
     flat = [x for group in groups for x in group]
     n = len(flat)
     k = len(groups)
@@ -1241,24 +1274,99 @@ def _agreement_ratio2(groups, weights):
     return (msb - msw) / (msb + (mean_size - 1) * msw)
 """
 
-_ORDINARY_EXTRA_ARG_HELPER = """\
+_COORDINATOR_ICC_EXTRA_ARG = f"""\
+def _agreement_ratio2(groups, weights):
+{_ONE_WAY_ICC_BODY}
+"""
+
+_NEUTRAL_EXTRA_ARG_ICC = f"""\
+def _item_overlap(xs, extra):
+    groups = xs
+{_ONE_WAY_ICC_BODY}
+"""
+
+_MIN_N_ICC_TEMPLATE = f"""\
+def __NAME__(groups):
+    if len(groups) < 5:
+        raise ValueError("need at least five groups")
+{_ONE_WAY_ICC_BODY}
+"""
+
+_ORDINARY_HELPER_SOURCES: tuple[tuple[str, str], ...] = (
+    (
+        "annotated_kwonly_helper",
+        """\
+def annotated_kwonly_helper(*, left: str, right: str) -> str:
+    return f"{left}:{right}"
+""",
+    ),
+    (
+        "unannotated_kwonly_helper",
+        """\
+def unannotated_kwonly_helper(*, left, right):
+    return f"{left}:{right}"
+""",
+    ),
+    (
+        "annotated_positional_helper",
+        """\
+def annotated_positional_helper(left: str, right: str) -> str:
+    return f"{left}:{right}"
+""",
+    ),
+    (
+        "unannotated_positional_helper",
+        """\
+def unannotated_positional_helper(left, right):
+    return f"{left}:{right}"
+""",
+    ),
+    (
+        "_join_labels",
+        """\
 def _join_labels(left: str, right: str) -> str:
     return f"{left}:{right}"
-"""
+""",
+    ),
+)
 
 
 def test_estimator_with_extra_required_parameter_is_rejected():
     with _inject_module_callable(_COORDINATOR_ICC_EXTRA_ARG, "_agreement_ratio2"):
         icc_offenders, unprobeable = _reliability_estimator_violations()
-        assert "_agreement_ratio2" in unprobeable
-        assert "_agreement_ratio2" not in icc_offenders
+        assert "_agreement_ratio2" not in unprobeable
+        assert "_agreement_ratio2" in icc_offenders
 
 
-def test_ordinary_helper_with_extra_required_args_is_allowed():
-    with _inject_module_callable(_ORDINARY_EXTRA_ARG_HELPER, "_join_labels"):
+def test_estimator_with_neutral_extra_parameter_names_is_rejected():
+    with _inject_module_callable(_NEUTRAL_EXTRA_ARG_ICC, "_item_overlap"):
         icc_offenders, unprobeable = _reliability_estimator_violations()
-        assert "_join_labels" not in unprobeable
-        assert "_join_labels" not in icc_offenders
+        assert "_item_overlap" not in unprobeable
+        assert "_item_overlap" in icc_offenders
+
+
+@pytest.mark.parametrize(
+    "name",
+    ["_cluster_agreement", "_within_share"],
+)
+def test_min_n_guarded_icc_estimator_is_rejected(name: str):
+    source = _MIN_N_ICC_TEMPLATE.replace("__NAME__", name)
+    with _inject_module_callable(source, name):
+        icc_offenders, unprobeable = _reliability_estimator_violations()
+        assert name not in unprobeable
+        assert name in icc_offenders
+
+
+@pytest.mark.parametrize(
+    ("name", "source"),
+    _ORDINARY_HELPER_SOURCES,
+    ids=[name for name, _source in _ORDINARY_HELPER_SOURCES],
+)
+def test_ordinary_helper_is_not_a_reliability_estimator(name: str, source: str):
+    with _inject_module_callable(source, name):
+        icc_offenders, unprobeable = _reliability_estimator_violations()
+        assert name not in unprobeable
+        assert name not in icc_offenders
         _assert_no_reliability_estimator()
 
 

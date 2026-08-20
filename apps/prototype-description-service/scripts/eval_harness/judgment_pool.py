@@ -1,20 +1,35 @@
 """Multi-contributor judgment pooling with incompleteness disclosure (EVAL-25).
 
-Candidate facts come from more than one source (caption models, prompt variants,
-a human pass). A single source pooling itself is the named EVAL-25 bias: every
-fact that source never mentioned stays invisible, and unjudged material silently
-becomes a negative. This module refuses that construction and requires the
+Candidate facts come from more than one *independent* source (distinct model
+families plus a human pass). A single source pooling itself — including two
+prompt variants of the same model, or models with no human pass — is the named
+EVAL-25 bias: every fact that source never mentioned stays invisible, and
+unjudged material silently becomes a negative. Gold facts must name the pool
+they came from (``source_pool``); a gold set that never went through a pool
+cannot be used. This module refuses those constructions and requires the
 report renderer to print that unjudged pooled items are not negatives.
 """
 
 from __future__ import annotations
 
+import re
 import unicodedata
 from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass, field
 from types import MappingProxyType
 
-from .manifest import FactPolarity
+from .manifest import FactPolarity, ReferenceFact
+
+# Prompt/temperature suffixes of the same model are one family (EVAL-25).
+# ``model_a`` and ``model_a_t07`` must not count as independent contributors.
+_VARIANT_SUFFIX = re.compile(r"_t\d+$", re.IGNORECASE)
+
+# Contributor ids whose family (or first underscore token) is one of these
+# are the human pass. Complement-of-model would silently treat a new machine
+# id as human (same allowlist shape as HUMAN_CONFIRMATION_SOURCES).
+HUMAN_CONTRIBUTOR_FAMILIES: frozenset[str] = frozenset(
+    {"human", "operator", "annotator", "sme"}
+)
 
 UNJUDGED_ARE_NOT_NEGATIVES_DISCLOSURE = (
     "unjudged_are_not_negatives=true: unjudged pooled candidates are not "
@@ -26,8 +41,30 @@ class SingleContributorPoolError(ValueError):
     """Fewer than two contributors: a self-pool is EVAL-25's named bias, not a degraded mode."""
 
 
+class NonIndependentPoolError(ValueError):
+    """Contributors are not independent: one model family, or no human pass (EVAL-25)."""
+
+
+class GoldSetNotFromPoolError(ValueError):
+    """Gold facts with no source_pool never went through a pool (EVAL-25)."""
+
+
 class AmbiguousJudgmentError(ValueError):
     """A bare string matched more than one pooled fact; polarity is required."""
+
+
+def contributor_family(contributor_id: str) -> str:
+    """Strip prompt/temperature variants so ``model_a`` and ``model_a_t07`` share a family."""
+    return _VARIANT_SUFFIX.sub("", contributor_id.strip())
+
+
+def is_human_contributor(contributor_id: str) -> bool:
+    """True when the contributor id is a named human pass, not a caption model."""
+    family = contributor_family(contributor_id).casefold()
+    if family in HUMAN_CONTRIBUTOR_FAMILIES:
+        return True
+    head = family.split("_", 1)[0]
+    return head in HUMAN_CONTRIBUTOR_FAMILIES
 
 
 @dataclass(frozen=True)
@@ -123,9 +160,11 @@ def build_pool(
     contributions: Mapping[str, Sequence[CandidateFact | str]],
     depth: int,
 ) -> JudgmentPool:
-    """Union the top ``depth`` candidates per contributor; refuse a single-source pool.
+    """Union the top ``depth`` candidates per contributor; refuse a non-independent pool.
 
-    ``pool_rank`` is 1-based position in that contributor's truncated list.
+    Independence is distinct model families plus a human pass, not raw list
+    cardinality (EVAL-25). ``pool_rank`` is 1-based position in that
+    contributor's truncated list.
     """
     if type(depth) is not int or depth < 1:
         raise ValueError(f"depth must be a positive int, got {depth!r}")
@@ -138,6 +177,24 @@ def build_pool(
         )
     if any(not cid or not str(cid).strip() for cid in contributor_ids):
         raise ValueError("contributor id must be non-empty")
+    model_families = {
+        contributor_family(cid)
+        for cid in contributor_ids
+        if not is_human_contributor(cid)
+    }
+    if len(model_families) < 2:
+        raise NonIndependentPoolError(
+            f"EVAL-25 refuses a pool whose model contributors collapse to "
+            f"{len(model_families)} family {sorted(model_families)}; prompt "
+            "variants of the same model are not independent. Pass distinct "
+            "model families."
+        )
+    human_ids = [cid for cid in contributor_ids if is_human_contributor(cid)]
+    if not human_ids:
+        raise NonIndependentPoolError(
+            "EVAL-25 refuses a pool with no human contributor; distinct model "
+            "families still let a model grade itself. Pass a human pass."
+        )
 
     seen: dict[str, _Accumulator] = {}
     for cid, raw_facts in contributions.items():
@@ -169,6 +226,32 @@ def build_pool(
         for key, acc in seen.items()
     )
     return JudgmentPool(items=items, contributors=contributor_ids, depth=depth)
+
+
+def bind_gold(
+    *,
+    pool: JudgmentPool,
+    gold: Sequence[ReferenceFact],
+) -> tuple[ReferenceFact, ...]:
+    """Refuse a gold set that never went through a pool (EVAL-25).
+
+    ``source_pool`` is the lineage pointer. A fact that omits it was never
+    pooled and cannot be used as gold, even when ``pool`` itself is legal.
+    """
+    if not pool.contributors:
+        raise GoldSetNotFromPoolError(
+            "EVAL-25 refuses gold bound to a contributor-less pool"
+        )
+    bound: list[ReferenceFact] = []
+    for fact in gold:
+        source = fact.source_pool
+        if not source or not str(source).strip():
+            raise GoldSetNotFromPoolError(
+                f"EVAL-25 refuses gold without source_pool (text={fact.text!r}); "
+                "a gold set that never went through a pool cannot be used"
+            )
+        bound.append(fact)
+    return tuple(bound)
 
 
 def _judged_keys(

@@ -41,7 +41,7 @@ from typing import Any, Literal
 import cv2
 import numpy as np
 
-from .accept_predicate import accepts
+from scripts.eval_harness.accept_predicate import accepts
 from .face_assignment import (
     MatchedFace,
     argmax_gallery,
@@ -82,7 +82,7 @@ SYNTHETIC_OCCLUSION_PROTOCOL_DISCLOSURES: tuple[str, ...] = (
     "MASKED/sunglasses/occlusion_other slice tags — not photo-realistic masks",
     "twin universe = cached clean detections only; hard clean-detection "
     "failures are structurally absent (EVAL-17)",
-    "occlusion recovery uses open-set threshold (accept_predicate.accepts), not closed-set "
+    "occlusion recovery uses open-set threshold (s_max >= tau; see accept_predicate.accepts), not closed-set "
     "argmax; each twin is scored at its source identity's held-out fold tau_k "
     "(entity-disjoint — CAL-07/EVAL-07); pooled tau_op is a last-resort "
     "fallback gated behind an explicit per-identity opt-in "

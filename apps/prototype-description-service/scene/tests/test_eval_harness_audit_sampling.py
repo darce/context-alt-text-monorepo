@@ -14,12 +14,14 @@ from scripts.eval_harness.audit_sampling import (
     AuditSamplingError,
     ClusterSpec,
     DeffOrder,
+    FramePsuPartition,
     allocate,
     design_effect,
     draw,
     draw_two_stage,
     estimate_icc,
     kish_effective_cluster_size,
+    project_frame_psu_image_counts,
     project_strata_image_counts,
     project_strata_subject_image_counts,
     project_whole_frame_subject_image_counts,
@@ -50,8 +52,14 @@ FIR12_IMAGE_N = {
 B_EYEWEAR_KISH_A = 2.36
 
 
-def _entry(stratum: str, identities: list[str]) -> dict[str, object]:
-    return {"stratum": stratum, "present_identities": identities}
+def _entry(
+    stratum: str, identities: list[str], media_id: int | str = 1
+) -> dict[str, object]:
+    return {
+        "stratum": stratum,
+        "present_identities": identities,
+        "media_id": media_id,
+    }
 
 
 def _strata_counts() -> dict[str, dict[str, int]]:
@@ -82,6 +90,8 @@ def _fir12_entries() -> list[object]:
 
 WHOLE_FRAME = project_whole_frame_subject_image_counts(_fir12_entries())
 WHOLE_FRAME_KISH_A = kish_effective_cluster_size(WHOLE_FRAME.sizes)
+FRAME_PSU = project_frame_psu_image_counts(_fir12_entries())
+FRAME_PSU_KISH_A = kish_effective_cluster_size(FRAME_PSU.sizes)
 
 
 def _members(sizes: dict[str, int] | None = None) -> dict[str, list[str]]:
@@ -202,6 +212,96 @@ def test_whole_frame_kish_a_joins_identities_across_strata():
     assert split_a < a
 
 
+def test_frame_psu_partition_assigns_first_listed_or_unlabeled_singleton():
+    entries = [
+        _entry("E_clean", ["alice", "bob"], media_id=1),
+        _entry("B_eyewear", ["alice"], media_id=2),
+        _entry("C_pose", ["cara", "bob"], media_id=3),
+        _entry("E_clean", [], media_id=99),
+        _entry("D_capture", ["dana", "erin"], media_id=4),
+    ]
+    part = project_frame_psu_image_counts(entries)
+    # alice: 2, cara: 1, dana: 1, unlabeled:99: 1. bob and erin are never first.
+    assert sorted(part.sizes) == [1, 1, 1, 2]
+    assert part.n_entries == 5
+    assert part.n_psus == 4
+    assert sum(part.sizes) == part.n_entries
+    assert part.n_unlabeled_singletons == 1
+    assert part.never_first_identities == ("bob", "erin")
+
+
+def test_frame_psu_partition_requires_sizes_sum_to_n_entries():
+    with pytest.raises(AuditSamplingError, match="partition"):
+        FramePsuPartition(
+            sizes=(1, 2, 3),
+            n_entries=7,
+            n_psus=3,
+            n_unlabeled_singletons=0,
+            never_first_identities=(),
+        )
+
+
+def test_frame_psu_partition_requires_media_id():
+    with pytest.raises(AuditSamplingError, match="media_id"):
+        project_frame_psu_image_counts(
+            [{"stratum": "E_clean", "present_identities": []}]
+        )
+    with pytest.raises(AuditSamplingError, match="media_id"):
+        project_frame_psu_image_counts(
+            [{"stratum": "E_clean", "present_identities": ["alice"], "media_id": ""}]
+        )
+    with pytest.raises(AuditSamplingError, match="media_id"):
+        project_frame_psu_image_counts(
+            [{"stratum": "E_clean", "present_identities": ["alice"], "media_id": True}]
+        )
+
+
+def test_frame_psu_kish_a_is_partition_of_640():
+    entries = json.loads(_FIR12_MANIFEST.read_text())["entries"]
+    part = project_frame_psu_image_counts(entries)
+    assert part.n_entries == 640
+    assert part.n_psus == 241
+    assert len(part.sizes) == 241
+    assert sum(part.sizes) == 640
+    assert sum(m * m for m in part.sizes) == 6942
+    assert part.n_unlabeled_singletons == 115
+    assert part.never_first_identities == (
+        "Auburn Hollow",
+        "Tidal Quarry",
+        "Vellum Warren",
+        "Verdant Beacon",
+    )
+    a = kish_effective_cluster_size(part.sizes)
+    assert a == pytest.approx(6942 / 640)
+    assert a == pytest.approx(10.846875)
+    assert FRAME_PSU_KISH_A == pytest.approx(a)
+    assert FRAME_PSU.n_psus == 241
+    # Labeled-subject a is still the overlapping 130-vector (BR-18 / diagnostic).
+    assert WHOLE_FRAME_KISH_A == pytest.approx(12.904412, abs=1e-6)
+    assert FRAME_PSU_KISH_A != pytest.approx(WHOLE_FRAME_KISH_A)
+
+
+@pytest.mark.parametrize(
+    ("icc", "n", "deff"),
+    [
+        (0.0, 84, 1.000),
+        (0.05, 118, 1.492),
+        (0.1, 148, 1.985),
+        (0.2, 198, 2.969),
+        (0.3, 239, 3.954),
+        (0.5, 302, 5.923),
+    ],
+)
+def test_planning_n_on_frame_psu_kish_a(icc: float, n: int, deff: float):
+    record = size_for_margin(
+        margin=0.10, population=640, cluster_size=FRAME_PSU_KISH_A, icc=icc
+    )
+    assert record.n == n
+    assert round(record.deff, 3) == deff
+    assert record.deff == pytest.approx(1.0 + (FRAME_PSU_KISH_A - 1.0) * icc)
+    assert record.cluster_size == FRAME_PSU_KISH_A
+
+
 def test_kish_effective_cluster_size_rejects_empty_and_non_positive():
     with pytest.raises(AuditSamplingError, match="non-empty"):
         kish_effective_cluster_size(())
@@ -221,7 +321,11 @@ def test_design_effect_kish_effective_size():
     )
 
 
-def test_clustered_size_applies_deff_to_n0_before_fpc():
+def test_deff_then_fpc_ordering_on_labeled_subject_a_not_planning_n():
+    # Ordering pin only: deff-then-fpc (216) vs the wrong fpc-then-deff (284).
+    # cluster_size is the labeled-subject a (WHOLE_FRAME_KISH_A, Σm=544 over
+    # 130 overlapping identities). That vector is not a PSU partition of the
+    # 640-image frame. Planning n uses FRAME_PSU_KISH_A → 198, not 216.
     record = size_for_margin(
         margin=0.10, population=640, cluster_size=WHOLE_FRAME_KISH_A, icc=0.2
     )
@@ -229,6 +333,7 @@ def test_clustered_size_applies_deff_to_n0_before_fpc():
     assert record.deff_order is DeffOrder.DEFF_THEN_FPC
     assert record.deff_order == "deff_then_fpc"
     assert record.cluster_size == WHOLE_FRAME_KISH_A
+    assert record.cluster_size != FRAME_PSU_KISH_A
     assert record.icc == 0.2
     assert record.deff == pytest.approx(1.0 + (WHOLE_FRAME_KISH_A - 1.0) * 0.2)
     assert record.n_deff == pytest.approx(record.n0 * record.deff)
@@ -244,6 +349,11 @@ def test_clustered_size_applies_deff_to_n0_before_fpc():
     mean_n = size_for_margin(margin=0.10, population=640, cluster_size=mean_m, icc=0.2).n
     assert mean_n == 127
     assert record.n - mean_n == 89
+    planning = size_for_margin(
+        margin=0.10, population=640, cluster_size=FRAME_PSU_KISH_A, icc=0.2
+    )
+    assert planning.n == 198
+    assert planning.n != record.n
 
 
 def test_allocate_sums_to_n():

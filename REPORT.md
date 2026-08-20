@@ -256,3 +256,17 @@ FAILED test_report_names_searched_gallery
 - BR-25 m5: kept the `if name not in declared` branch (reachable: public `RunPlan` with `probe_sets` omitting G2). Test: `test_search_against_omitted_declared_gallery_raises`. Mutant: delete that branch. RED: `DID NOT RAISE FirBakeoffRunError`.
 
 Did not touch `gallery_split.py`, `strata_join.py`, or `open_set_identification.py`. Did not add a second gallery concept beside BR-18 `SearchResult.gallery`.
+
+########## lane/f25
+
+# FIR-12 BR-30 — Template | str gallery split must agree — CLOSED
+
+Chose **canonical co-assignment key**, not "require media_ids on Template". Empty `media_ids` on a still with no `{media}:{subject}` id is independence (a legal open-set split), not a missing-id error. Requiring media_ids would reject that roster in both forms and re-create the too-strict guard (MLDATA-09). Both forms now run through `_canonical_template`: explicit `media_ids` win; otherwise parse `'{media}:{subject}'`; otherwise `()`.
+
+- BR-30 object path: `Template(template_id='99:alice')` / `'99:bob'` with default `media_ids=()` now co-assign like the string form, seeds 0–15. Test: `test_shared_still_coassigns_in_both_forms_across_seeds`. Mutant: `_as_template` returned Template objects without `_canonical_template`. RED: 16/16 seeds unequal; seed 0 alice/bob not co-assigned (`coassign`).
+- BR-30 string guard: `{"alice": ["a1"], "bob": ["b1"]}` is accepted, matching empty-media Template objects. Test: `test_independent_single_still_roster_accepted_in_both_forms` (replaces `test_string_template_without_media_id_raises`). Mutant: string branch re-raised when parse yielded `()`. RED: `GallerySplitError: string template 'a1' cannot supply media ids`; object path still accepted.
+
+Frozen seed 0 (explicit): **g1=53, g2=56, overlap=0**. Pinned by `test_frozen_frame_seed_0_gallery_sizes`.
+
+Canon: JANUS 2.2, MLDATA-09, rg-015. Did not touch `fir_bakeoff_run.py`, `strata_join.py`, or `open_set_identification.py`.
+

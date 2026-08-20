@@ -132,14 +132,25 @@ class ProbeSet:
         return len({t.subject_id for t in (*self.mated, *self.nonmated)})
 
 
-def _media_ids_from_string_template(template_id: str) -> tuple[int, ...]:
-    """Parse ``'{media}:{subject}'`` (the bakeoff string form). Empty media is not a default."""
+def _media_ids_from_template_id(template_id: str) -> tuple[int, ...]:
+    """Parse ``'{media}:{subject}'`` when present. No match means no shared still."""
     prefix, sep, rest = template_id.partition(":")
     if sep and prefix.isdigit() and rest:
         return (int(prefix),)
-    raise GallerySplitError(
-        f"string template {template_id!r} cannot supply media ids; "
-        "use '{media}:{subject}' or Template(..., media_ids=...)"
+    return ()
+
+
+def _canonical_template(template: Template) -> Template:
+    """Same co-assignment key for Template | str: explicit media_ids, else '{media}:{subject}'."""
+    if template.media_ids:
+        return template
+    parsed = _media_ids_from_template_id(template.template_id)
+    if not parsed:
+        return template
+    return Template(
+        template_id=template.template_id,
+        subject_id=template.subject_id,
+        media_ids=parsed,
     )
 
 
@@ -152,15 +163,11 @@ def _as_template(value: Template | str, *, subject_id: str) -> Template:
             )
         if not value.template_id:
             raise GallerySplitError("template id must be a non-empty string")
-        return value
+        return _canonical_template(value)
     if isinstance(value, str):
         if not value:
             raise GallerySplitError("template id must be a non-empty string")
-        return Template(
-            template_id=value,
-            subject_id=subject_id,
-            media_ids=_media_ids_from_string_template(value),
-        )
+        return _canonical_template(Template(template_id=value, subject_id=subject_id))
     raise GallerySplitError(f"unsupported template type: {type(value).__name__}")
 
 

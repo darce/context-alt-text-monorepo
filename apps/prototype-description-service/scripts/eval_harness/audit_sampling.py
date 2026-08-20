@@ -8,7 +8,9 @@ fpc (AUDIT-11) using the Kish effective cluster size a = Σ m_i² / Σ m_i, not
 the mean. ``size_for_margin`` consumes an ICC; ``estimate_icc`` produces it
 (one-way ANOVA + Fisher-Z CI) from a subject-stage draw (``draw_two_stage``).
 FIR-12 ``strata_counts`` values are per-stratum objects; project image counts
-before allocate() rather than passing the index through.
+before allocate() rather than passing the index through. Whole-frame Kish a
+for planning n uses ``project_frame_psu_image_counts`` (a genuine PSU
+partition of the 640-image frame), not the labeled-subject membership vector.
 """
 
 from __future__ import annotations
@@ -186,10 +188,54 @@ class WholeFrameSubjectCounts:
     extra_memberships: int
 
 
+@dataclass(frozen=True)
+class FramePsuPartition:
+    """Image-level PSU partition of a selection frame (AUDIT-11).
+
+    PSU = first-listed ``present_identities`` name, else an unlabeled
+    singleton keyed by ``media_id``. ``sum(sizes) == n_entries`` is a
+    partition invariant, not a test-only assertion.
+    """
+
+    sizes: tuple[int, ...]
+    n_entries: int
+    n_psus: int
+    n_unlabeled_singletons: int
+    never_first_identities: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        if sum(self.sizes) != self.n_entries:
+            raise AuditSamplingError(
+                "PSU sizes must partition the frame: "
+                f"sum(sizes)={sum(self.sizes)} != n_entries={self.n_entries}"
+            )
+        if self.n_psus != len(self.sizes):
+            raise AuditSamplingError(
+                f"n_psus={self.n_psus} != len(sizes)={len(self.sizes)}"
+            )
+
+
+def _parse_media_id(entry: Mapping[object, object], index: int) -> Hashable:
+    if "media_id" not in entry:
+        raise AuditSamplingError(f"entries[{index}] missing 'media_id'")
+    media_id = entry["media_id"]
+    if isinstance(media_id, bool) or not isinstance(media_id, (int, str)):
+        raise AuditSamplingError(
+            f"entries[{index}]['media_id'] must be a non-bool int or str, "
+            f"got {media_id!r}"
+        )
+    if isinstance(media_id, str) and not media_id:
+        raise AuditSamplingError(
+            f"entries[{index}]['media_id'] must be a non-empty str, "
+            f"got {media_id!r}"
+        )
+    return media_id
+
+
 def _parse_selection_entries(
     entries: Sequence[object],
-) -> list[tuple[str, tuple[str, ...]]]:
-    """Return (stratum, unique identities) per entry; empty identities stay."""
+) -> list[tuple[str, Hashable, tuple[str, ...]]]:
+    """Return (stratum, media_id, unique identities) per entry; empty identities stay."""
     if isinstance(entries, (str, bytes)) or not isinstance(entries, Sequence):
         raise AuditSamplingError(
             "entries must be a sequence of objects, "
@@ -197,12 +243,12 @@ def _parse_selection_entries(
         )
     if not entries:
         raise AuditSamplingError("entries must be non-empty")
-    parsed: list[tuple[str, tuple[str, ...]]] = []
+    parsed: list[tuple[str, Hashable, tuple[str, ...]]] = []
     for index, entry in enumerate(entries):
         if not isinstance(entry, Mapping):
             raise AuditSamplingError(
-                f"entries[{index}] must be an object with 'stratum' and "
-                f"'present_identities', got {type(entry).__name__}"
+                f"entries[{index}] must be an object with 'stratum', "
+                f"'present_identities', and 'media_id', got {type(entry).__name__}"
             )
         if "stratum" not in entry:
             raise AuditSamplingError(f"entries[{index}] missing 'stratum'")
@@ -232,7 +278,7 @@ def _parse_selection_entries(
                 continue
             seen.add(identity)
             unique.append(identity)
-        parsed.append((stratum, tuple(unique)))
+        parsed.append((stratum, _parse_media_id(entry, index), tuple(unique)))
     return parsed
 
 
@@ -245,7 +291,7 @@ def project_strata_subject_image_counts(
     The resulting size vector is the Kish-a input for that cell (AUDIT-11).
     """
     counts: dict[str, dict[str, int]] = {}
-    for stratum, identities in _parse_selection_entries(entries):
+    for stratum, _media_id, identities in _parse_selection_entries(entries):
         # Empty present_identities are not subject-clustered; they contribute
         # no cluster. Dropping them is the design, not a silent skip bug.
         for identity in identities:
@@ -269,7 +315,7 @@ def project_whole_frame_subject_image_counts(
     n_multi = 0
     extra = 0
     parsed = _parse_selection_entries(entries)
-    for _stratum, identities in parsed:
+    for _stratum, _media_id, identities in parsed:
         if not identities:
             n_unlabeled += 1
             continue
@@ -284,6 +330,40 @@ def project_whole_frame_subject_image_counts(
         n_unlabeled=n_unlabeled,
         n_multi_identity_images=n_multi,
         extra_memberships=extra,
+    )
+
+
+def project_frame_psu_image_counts(
+    entries: Sequence[object],
+) -> FramePsuPartition:
+    """Assign each image to exactly one PSU of the frame being sized.
+
+    Non-empty ``present_identities`` → PSU = the first-listed identity.
+    Empty ``present_identities`` → singleton PSU ``unlabeled:{media_id}``.
+    Extra memberships are not a second cluster. Unlabeled images stay in N.
+    """
+    parsed = _parse_selection_entries(entries)
+    counts: dict[str, int] = {}
+    all_identities: set[str] = set()
+    first_listed: set[str] = set()
+    n_unlabeled = 0
+    for _stratum, media_id, identities in parsed:
+        all_identities.update(identities)
+        if not identities:
+            n_unlabeled += 1
+            key = f"unlabeled:{media_id}"
+            counts[key] = counts.get(key, 0) + 1
+            continue
+        first = identities[0]
+        first_listed.add(first)
+        counts[first] = counts.get(first, 0) + 1
+    sizes = tuple(counts[name] for name in sorted(counts))
+    return FramePsuPartition(
+        sizes=sizes,
+        n_entries=len(parsed),
+        n_psus=len(sizes),
+        n_unlabeled_singletons=n_unlabeled,
+        never_first_identities=tuple(sorted(all_identities - first_listed)),
     )
 
 

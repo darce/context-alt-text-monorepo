@@ -107,11 +107,22 @@ unlabeled singletons), Σm = N = 640, Σm² = 6942. Cluster sizes run 1 to 49
 (labeled cv=1.46). Kish `a = Σmᵢ²/Σmᵢ = 6942/640 = 10.846875`. `deff` is
 applied to the infinite-population n₀ **before** the finite-population
 correction (the Kish/Lohr order). Regenerated from
-`project_frame_psu_image_counts` (AUDIT-09).
+`benchmarks/manifests/fir12-selection-v1.json` through
+`project_frame_psu_image_counts` (AUDIT-09). Repo-root REPL with
+`PYTHONPATH=apps/prototype-description-service`:
 
 ```
+import json
+from pathlib import Path
+from scripts.eval_harness.audit_sampling import (
+    kish_effective_cluster_size,
+    project_frame_psu_image_counts,
+    size_for_margin,
+)
+
+entries = json.loads(Path("benchmarks/manifests/fir12-selection-v1.json").read_text())["entries"]
 frame = project_frame_psu_image_counts(entries)   # 241 PSUs, Σm=640, Σm²=6942
-a = kish_effective_cluster_size(frame.sizes)      # 10.846875  (FRAME_PSU_KISH_A)
+a = kish_effective_cluster_size(frame.sizes)      # 10.846875
 size_for_margin(margin=0.10, population=640, cluster_size=a, icc=0.2).n  # 198
 size_for_margin(margin=0.10, population=640, cluster_size=a, icc=0.3).n  # 239
 size_for_margin(margin=0.10, population=80,  cluster_size=2.1, icc=0.2).n  # 48  (B_eyewear)
@@ -131,7 +142,7 @@ appear first (`Auburn Hollow`, `Tidal Quarry`, `Vellum Warren`, `Verdant Beacon`
 | 0.3 | 3.954 | **239** (sensitivity) |
 | 0.5 | 5.923 | 302 |
 
-`n` is `size_for_margin(..., cluster_size=FRAME_PSU_KISH_A, icc=...).n` —
+`n` is `size_for_margin(..., cluster_size=a, icc=...).n` —
 unrounded `a` from `project_frame_psu_image_counts` (`a = 10.846875`), then
 `math.ceil`. `deff` is display-rounded to three decimals; recomputing n
 from the printed deff reproduces every cell. Two-decimal deff does not (ICC=0.1
@@ -161,7 +172,7 @@ Monte Carlo on `fir12-selection-v1.json`: mean k with nᵢ ≥ 2 = 3.53, p5=1, p
 P(k ≤ 2)=0.22). The sample Kish a is then ~1.5, not 10.85. Fisher-Z 95% CI at true
 ρ=0.2 with k=4 clusters of size 2 is [−0.83, 0.92] — effectively [0, 1] — and the
 implied n over that CI is 84..397, which is the entire table above plus the ICC=1
-cap (`size_for_margin(..., cluster_size=FRAME_PSU_KISH_A, icc=1.0).n` → 397). Plugging a
+cap (`size_for_margin(..., cluster_size=a, icc=1.0).n` → 397). Plugging a
 30-image ICC point estimate into `size_for_margin` is cargo-cult precision (AUDIT-11).
 
 There is no sourced ICC for this estimand in the repo or the canon. `design_effect`
@@ -285,11 +296,24 @@ SE(z) = sqrt(m / (2(k-2)(m-1)))
 
 At the planning ρ=0.20, k=64, m=3, the Fisher-Z 95% CI is **[0.044, 0.361]**. The
 study reports the **upper CI bound**, not the point estimate. Implied n on the
-partition Kish a from `project_frame_psu_image_counts` (a=10.846875):
+partition Kish a, regenerated from `benchmarks/manifests/fir12-selection-v1.json`
+through shipped `project_frame_psu_image_counts` (a=10.846875). Same REPL as
+the planning-n block above:
 
 ```
-size_for_margin(margin=0.10, population=640, cluster_size=FRAME_PSU_KISH_A, icc=0.044).n  # 114
-size_for_margin(margin=0.10, population=640, cluster_size=FRAME_PSU_KISH_A, icc=0.361).n  # 261
+import json
+from pathlib import Path
+from scripts.eval_harness.audit_sampling import (
+    kish_effective_cluster_size,
+    project_frame_psu_image_counts,
+    size_for_margin,
+)
+
+entries = json.loads(Path("benchmarks/manifests/fir12-selection-v1.json").read_text())["entries"]
+frame = project_frame_psu_image_counts(entries)
+a = kish_effective_cluster_size(frame.sizes)  # 10.846875
+size_for_margin(margin=0.10, population=640, cluster_size=a, icc=0.044).n  # 114
+size_for_margin(margin=0.10, population=640, cluster_size=a, icc=0.361).n  # 261
 ```
 
 so 114..261. The 30-image image-SRS is not a cheaper substitute for this design.

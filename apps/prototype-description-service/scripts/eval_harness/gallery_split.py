@@ -370,13 +370,8 @@ def _assert_invariants(
             f"subject enrolled in both galleries; dual enrollment empties the "
             f"non-mated stratum (EVAL-18): {sorted(both)!r}"
         )
-    for gallery_name, gallery in (("g1", g1), ("g2", g2)):
-        for subject_id, template in gallery.items():
-            if template.subject_id != subject_id:
-                raise GallerySplitError(
-                    f"{gallery_name} key {subject_id!r} holds template for "
-                    f"{template.subject_id!r}"
-                )
+    # Gallery key/template identity is checked before _with_subject canonicalises
+    # it in _normalise_gallery_map; repeating that check here cannot observe input.
     media_g1 = _media_ids(list(g1.values()))
     media_g2 = _media_ids(list(g2.values()))
     media_probe = _media_ids(probes)

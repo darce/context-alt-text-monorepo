@@ -189,3 +189,8 @@ def test_golden150_draft_parses_with_backfilled_fact_annotators():
     assert len(entry.reference_facts) == 2
     assert all(fact.confirmed_by is ConfirmationSource.OPERATOR for fact in entry.reference_facts)
     assert all(fact.annotator_id == "pre-program-operator" for fact in entry.reference_facts)
+    # Honest pre-program placeholders: no DESCQUAL-2 batch/pool ever ran for
+    # these two facts. Epoch sentinel matches LEGACY_IMPORT_LABELED_AT (unknown).
+    assert all(fact.annotation_batch == "pre-program" for fact in entry.reference_facts)
+    assert all(fact.annotated_at == "1970-01-01T00:00:00Z" for fact in entry.reference_facts)
+    assert all(fact.source_pool == "pre-program" for fact in entry.reference_facts)

@@ -302,6 +302,12 @@ def _assert_invariants(
             f"reserved probe media ids collide with a gallery: "
             f"{sorted(gallery_media & set(media_probe))!r}"
         )
+    if not g1 or not g2:
+        empty = "g1" if not g1 else "g2"
+        raise GallerySplitError(
+            f"empty gallery {empty}: a 1:N search requires both G1 and G2 "
+            "to be populated"
+        )
 
 
 def build_disjoint_galleries(
@@ -312,8 +318,9 @@ def build_disjoint_galleries(
     """Partition subjects into disjoint G1/G2 galleries (one template each).
 
     Raises ``GallerySplitError`` on an empty roster, a subject with no
-    templates, duplicate template ids, or any invariant failure. Does not
-    drop singleton subjects.
+    templates, duplicate template ids, an empty G1 or G2 (one connected
+    component cannot support a 1:N search against both galleries), or
+    any other invariant failure. Does not drop singleton subjects.
     """
     if not templates_by_subject:
         raise GallerySplitError(

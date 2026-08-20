@@ -120,6 +120,21 @@ appear first (`Auburn Hollow`, `Tidal Quarry`, `Vellum Warren`, `Verdant Beacon`
 | 0.3 | 3.95 | **239** (sensitivity) |
 | 0.5 | 5.92 | 302 |
 
+**Estimand grain is the image, not the fact.** The headline estimand
+`fabricated_fact_rate` is already image-level: the fraction of *images* that
+trip any trap (an image counts once however many traps it trips). The
+margin-of-error n is an image count. Kish `a` is images per subject PSU.
+The planning ICC of 0.20 is therefore the **image-within-subject** correlation
+of that image-level Y. An image is the coded unit: Y_i = 1 if the image is
+caught fabricating, 0 otherwise (the `over='all'` rate). Facts nest in
+images which nest in subjects, but `deff = 1 + (a−1)ρ` prices only
+image-within-subject correlation of an image-level outcome. A fact-level ρ
+plugged into this `a` is the wrong design effect. Fact-within-image
+dependence is absorbed into the image-level aggregate and is not a second
+term in this n. A later fact-level analysis would have to state a
+facts-per-image cluster size and compose the two design effects explicitly;
+that is not the sizing used here.
+
 **Planning n is not measured from the ~30-image draw.** ICC information lives only in
 within-subject pairs. An image-SRS of 30 on this frame yields E[within-subject pairs]
 = C(30,2) × 6476 / (640 × 639) = 6.89, spread over ~3.5 replicated subjects (20k-draw
@@ -190,9 +205,11 @@ produce the ICC the full-study n is divided by.
 
 If a measured ICC is required before the remaining spend, the smallest honest design
 on this frame is a **subject-stage draw over the 64 partition PSUs with m ≥ 3
-(192 images: 3 images × 64 subjects)**. Named, conditional follow-on — not the
-baseline. (Overlapping identity membership has 65 subjects with m ≥ 3; one of
-those never reaches m = 3 as a first-listed PSU.)
+(192 images: 3 images × 64 subjects)**. The ICC estimated there is the same
+image-within-subject correlation of the image-level Y defined above, not a
+fact-level ICC. Named, conditional follow-on — not the baseline. (Overlapping
+identity membership has 65 subjects with m ≥ 3; one of those never reaches
+m = 3 as a first-listed PSU.)
 
 Fisher-Z transform of the ICC (equal cluster size m, k groups):
 
@@ -231,8 +248,10 @@ so 114..261. The 30-image image-SRS is not a cheaper substitute for this design.
 ## Assumptions
 
 - The 640-entry selection manifest stays frozen for the life of this task.
-- Planning ICC = 0.20 is a declared assumption, not a measurement. The sensitivity
-  row at 0.30 is printed; neither is sourced from this corpus.
+- Planning ICC = 0.20 is a declared assumption, not a measurement: it is the
+  image-within-subject correlation of the image-level fabricated-fact
+  indicator, not a fact-level ICC. The sensitivity row at 0.30 is printed;
+  neither is sourced from this corpus.
 - Kish `a` and N share one PSU partition: unlabeled images are singleton
   clusters; a multi-identity image is assigned to its first-listed
   `present_identities` name. Overlapping membership counts are not a design

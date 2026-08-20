@@ -662,6 +662,30 @@ def test_frozen_manifest_withholds_shared_probe_stills_at_seed_0() -> None:
     assert withheld_ids.isdisjoint(plan.split.g2_template_ids)
 
 
+def test_withheld_probe_templates_reach_report_at_seed_0() -> None:
+    """BR-14 / MLDATA-07 / MLDATA-09: a filter that removes probes must be in the table.
+
+    Frozen seed 0 withholds exactly two leftover templates whose media collide
+    with enrollment. Withholding 2 and withholding 40 must not render the same.
+    """
+    plan = build_run_plan(selection_manifest_path=_frozen_manifest(), seed=0)
+    withheld_ids = {t.template_id for t in plan.withheld_probe_templates}
+    assert withheld_ids == {"632:Burnished Ridgeway", "353:Pewter Hollow"}
+    assert len(plan.withheld_probe_templates) == 2
+    report = score_run(
+        plan=plan,
+        searches=_probe_searches(),
+        tau=0.50,
+    )
+    assert report.withheld_probe_templates == plan.withheld_probe_templates
+    assert len(report.withheld_probe_templates) == 2
+    rows = report.to_rows()
+    assert rows
+    for row in rows:
+        assert row["n_withheld_probe_templates"] == 2
+        assert row["n_withheld_probe_templates"] != 0
+
+
 def test_present_identities_rejects_str_and_dict() -> None:
     with pytest.raises(FirBakeoffRunError, match="present_identities"):
         _identities({"present_identities": "Alice"})

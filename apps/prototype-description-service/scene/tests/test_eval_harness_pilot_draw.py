@@ -816,3 +816,70 @@ def test_draw_pilot_rejects_loader_guard_violations(
     path.write_text(json.dumps(payload))
     with pytest.raises(PilotDrawError, match=fragment):
         draw_pilot(selection_manifest_path=path, n=10, seed=1)
+
+
+def test_select_gold_items_rejects_catalog_missing_frame_sha256s():
+    """A truncated catalog must not silently shrink the gold universe (MLDATA-09)."""
+    payload = _payload()
+    entries = dict(_entries_by_sha256(payload))
+    pilot = _draw()
+    drawn = {str(unit.unit_id) for unit in pilot.sample.units}
+    undrawn = [sha for sha in entries if sha not in drawn]
+    drop_n = 3
+    assert len(undrawn) >= drop_n
+    dropped = undrawn[:drop_n]
+    for sha in dropped:
+        del entries[sha]
+    with pytest.raises(PilotDrawError, match=rf"missing {drop_n} frozen-frame") as caught:
+        select_gold_items(
+            pilot=pilot,
+            entries_by_sha256=entries,
+            seed=_PILOT_SEED,
+        )
+    message = str(caught.value)
+    for sha in dropped:
+        assert sha not in message
+
+
+def test_draw_pilot_rejects_non_str_sha256(tmp_path: Path):
+    path = _write_manifest(tmp_path / "guard.json", n_per=8)
+    payload = json.loads(path.read_text())
+    payload["entries"][0]["sha256"] = 12345
+    path.write_text(json.dumps(payload))
+    with pytest.raises(PilotDrawError, match=r"sha256.*must be a non-empty str"):
+        draw_pilot(selection_manifest_path=path, n=10, seed=1)
+
+
+def test_draw_pilot_rejects_empty_sha256(tmp_path: Path):
+    path = _write_manifest(tmp_path / "guard.json", n_per=8)
+    payload = json.loads(path.read_text())
+    payload["entries"][0]["sha256"] = ""
+    path.write_text(json.dumps(payload))
+    with pytest.raises(PilotDrawError, match=r"sha256.*must be a non-empty str"):
+        draw_pilot(selection_manifest_path=path, n=10, seed=1)
+
+
+def test_draw_pilot_rejects_non_str_source_path(tmp_path: Path):
+    path = _write_manifest(tmp_path / "guard.json", n_per=8)
+    payload = json.loads(path.read_text())
+    payload["entries"][0]["source_path"] = 99
+    path.write_text(json.dumps(payload))
+    with pytest.raises(PilotDrawError, match=r"source_path.*must be a non-empty str"):
+        draw_pilot(selection_manifest_path=path, n=10, seed=1)
+
+
+def test_gold_draw_is_invariant_to_catalog_insertion_order():
+    items = list(_entries_by_sha256().items())
+    forward = dict(items)
+    reverse = dict(reversed(items))
+    assert list(forward) != list(reverse)
+    assert set(forward) == set(reverse)
+    pilot = _draw()
+    first = select_gold_items(
+        pilot=pilot, entries_by_sha256=forward, seed=_PILOT_SEED
+    )
+    second = select_gold_items(
+        pilot=pilot, entries_by_sha256=reverse, seed=_PILOT_SEED
+    )
+    assert [item.sha256 for item in first] == [item.sha256 for item in second]
+    assert [item.kind for item in first] == [item.kind for item in second]

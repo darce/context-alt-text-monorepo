@@ -414,6 +414,11 @@ def select_gold_items(
             "entries_by_sha256 contains sha256 values not in the frozen frame: "
             f"{foreign}"
         )
+    missing_n = sum(1 for sha in pilot.frame_sha256s if sha not in entries_by_sha256)
+    if missing_n:
+        raise PilotDrawError(
+            f"entries_by_sha256 is missing {missing_n} frozen-frame sha256 values"
+        )
     drawn = {str(unit.unit_id) for unit in pilot.sample.units}
     remaining = sorted(sha for sha in entries_by_sha256 if sha not in drawn)
     if len(remaining) < gold_n:

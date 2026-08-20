@@ -819,3 +819,14 @@ Owned files: `apps/prototype-description-service/scripts/eval_harness/pilot_draw
 - **DESCQUAL-2-BR-38** — E[within-subject pairs] is now C(30,2)×6302/(640×639)=6.70 from the image-PSU partition (`Σm(m−1)=6942−640`); overlapping-join 6476/6.89 is the same ~1.5 sample Kish a, so planning n does not move. Live fence covered by the BR-34 pin. Mutant `/tmp/br38-mutant.md` (`# 6476` / `# 6.89`): RED `publishes 6476 ... but eval returned 6302`.
 
 `scene/tests/test_eval_harness_audit_sampling.py`: **61 passed**.
+
+########## N12
+
+# Lane N12 — DESCQUAL-2 BR-43, BR-46, BR-47, BR-50: pilot_draw boundary + provenance
+
+- **DESCQUAL-2-BR-43** — `select_gold_items` now raises `PilotDrawError` when any `pilot.frame_sha256s` value is absent from `entries_by_sha256` (message names the missing count; does not dump the list). Test: `test_select_gold_items_rejects_catalog_missing_frame_sha256s`. Mutant `/tmp/n12-proof/br43` deleted the complement guard. RED: `DID NOT RAISE PilotDrawError`.
+- **DESCQUAL-2-BR-46** — production sha256 guard unchanged. Tests: `test_draw_pilot_rejects_non_str_sha256`, `test_draw_pilot_rejects_empty_sha256`. Mutant `/tmp/n12-proof/br46-nonstr` deleted the whole guard → RED `DID NOT RAISE`. Mutant `/tmp/n12-proof/br46-empty` weakened to `if not isinstance(sha256, str):` → RED `DID NOT RAISE`.
+- **DESCQUAL-2-BR-47** — production source_path guard unchanged. Test: `test_draw_pilot_rejects_non_str_source_path`. Mutant `/tmp/n12-proof/br47` weakened to `if not source_path:`. RED: `DID NOT RAISE PilotDrawError`.
+- **DESCQUAL-2-BR-50** — production `sorted(...)` unchanged. Test: `test_gold_draw_is_invariant_to_catalog_insertion_order`. Mutant `/tmp/n12-proof/br50` dropped `sorted`. RED: gold sha lists differed across reversed catalog insertion order (`6f6fb0ab…` vs `39ec0c9e…` at index 0).
+
+`scene/tests/test_eval_harness_pilot_draw.py`: **50 passed** (was 45).

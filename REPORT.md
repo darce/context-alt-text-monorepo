@@ -121,3 +121,36 @@ rounding of deff (1.98 vs 1.985 → n 147 vs 148) is BR-28.
 
 ---
 
+## BR-19 (high) — estimand grain is the image
+
+**Canon:** AUDIT-11.
+
+**What changed.** The doc mixed three grains: n and `fabricated_fact_rate` are
+image-level, Kish `a` is images per subject, but the (now-removed) pilot
+language measured "ICC on fact-level correctness". Picked **image-level** and
+defined Y_i as the image's fabricated-fact indicator (caught / not), matching
+`fabricated_fact_rate` (`over='all'`). Planning ICC 0.20 is image-within-subject
+correlation of that Y. Fact-within-image correlation is absorbed into the
+image-level aggregate and is not a second `deff` term. A fact-level n would
+need a facts-per-image cluster size and composed design effects; that is not
+this study.
+
+**Why image, not fact.** n is already an image count; the PSU partition from
+BR-22 is images-within-subject; `fabricated_fact_rate` is documented as
+"Fraction of IMAGES caught fabricating". Facts-per-image is unknown before
+annotation, so a fact-level `a` would be another assumed input the 30-image
+pilot is not sized to estimate.
+
+**Calls.** None new — this finding does not change a number. The table from
+BR-22 still holds because it already sized an image-level proportion.
+
+**Mutant (TEST-15).** Restore "intra-subject ICC on fact-level correctness"
+as the quantity plugged into `deff = 1+(a−1)ρ` with a = images/subject.
+That multiplies a fact-level ρ by an image-cluster `a` — the wrong `deff`.
+RED against the grain paragraph.
+
+**Could not close.** Nothing.
+
+---
+
+

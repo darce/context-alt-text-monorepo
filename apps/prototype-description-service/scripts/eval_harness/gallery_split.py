@@ -105,9 +105,7 @@ class GallerySplit:
         object.__setattr__(
             self,
             "withheld_probe_templates",
-            _normalise_template_tuple(
-                self.withheld_probe_templates, gallery="withheld_probe_templates"
-            ),
+            tuple(self.withheld_probe_templates),
         )
 
     @property

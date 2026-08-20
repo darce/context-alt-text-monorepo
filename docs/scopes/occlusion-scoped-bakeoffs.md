@@ -64,7 +64,7 @@ Tagged from the captions above; `faces>0` uses manifest ground truth.
 | `small_face` | 10 | 9 | 7 |
 | `crowd` | 39 | 33 | 23 |
 
-Rolled into strata: **A** true occluder (25 img / 20 subj), **B** eyewear (68 / 47), **C** pose (22 / 15), **D** capture conditions (68 / 40), **E** clean control (338 / 109).
+Rolled into strata over the 640 unique-sha256 entries (authoritative values are `strata_counts` in `benchmarks/manifests/fir12-selection-v1.json`): **A** true occluder (32 img / 20 subj), **B** eyewear (80 / 47), **C** pose (34 / 15), **D** capture conditions (87 / 40), **E** clean control (407 / 109). Cells overlap — an image tagged both `sunglasses` and `lowlight` is assigned by strata precedence A > B > C > D > E, so the stratum totals do not equal the sum of the tag rows above.
 
 This distribution is *expected*, not defective: the occluded-FR survey records that "sunglasses and scarves dominate real sets" (§VII.A).
 
@@ -82,7 +82,7 @@ Inside. The shipped path is detect → embed → search, so a failed detection o
 **Clean gallery × occluded probe.** The survey states this is the normal OFR production configuration and that clean–clean operating points must not be transferred to it without re-measure (§I). Concretely: gallery templates drawn from stratum E, probes from A/B/C/D.
 
 **Q4 — Can this corpus support an occlusion-robustness claim?**
-Partly, and the boundary is sharp. EVAL-28 asks which real or realistic-accessory occlusion cells support the claim; MLDATA-07 requires per-intersection unique-subject counts before any global claim. Only **B eyewear** (68 img / 47 subj) is populated enough to carry a comparative claim. **A true-occluder** (25 / 20) is descriptive-only. `mask`, `veil`, `goggles`, `hair_occl` are **declared empty cells** — reported as such, never silently absorbed into an aggregate.
+Partly, and the boundary is sharp. EVAL-28 asks which real or realistic-accessory occlusion cells support the claim; MLDATA-07 requires per-intersection unique-subject counts before any global claim. Only **B eyewear** (80 img / 47 subj) is populated enough to carry a comparative claim. **A true-occluder** (32 / 20) is descriptive-only. `mask`, `veil`, `goggles`, `hair_occl` are **declared empty cells** — reported as such, never silently absorbed into an aggregate.
 
 **Q5 — May the empty cells be filled synthetically to unblock the claim?**
 No. EVAL-28 rules that synthetic rectangles, noise, and unrelated-image fills are not representative of real accessory occlusion, and the survey's five-scenario ladder ranks them least real (§VII.A). Our corpus sits at scenario (1), real occlusions — the strongest tier — and must not be diluted down to preserve a claim. Synthetic occlusion remains legitimate as *training* augmentation (ORFE, §III.B.4); that is a different question from eval.

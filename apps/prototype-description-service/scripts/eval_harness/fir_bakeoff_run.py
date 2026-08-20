@@ -15,6 +15,7 @@ from ``join_by_stratum``; coverage gaps delegate to ``StratumReport``.
 from __future__ import annotations
 
 import json
+import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -114,6 +115,9 @@ class RunReport:
                     "measured": point.measured,
                     "incomplete": base["incomplete"],
                     "manifest_images": base["manifest_images"],
+                    "tau": self.tau,
+                    "fpi_per_enrolled_subject": point.fpi_per_enrolled_subject,
+                    "n_enrolled_gallery_subjects": point.n_enrolled_gallery_subjects,
                 }
             )
         return rows
@@ -150,32 +154,64 @@ def score_run(
     plan: RunPlan,
     searches: Mapping[str, Mapping[str, Sequence[SearchResult]]],
     tau: float,
-    n_enrolled_gallery_subjects: int,
+    n_enrolled_gallery_subjects: int | None = None,
+    overall_nonmated: Sequence[SearchResult] | None = None,
 ) -> RunReport:
     """Score injected searches per stratum. Does not filter detection misses."""
+    if not math.isfinite(tau):
+        raise FirBakeoffRunError(f"tau must be finite, got {tau!r}")
+
+    expected_enrolled = len(plan.split.g1) + len(plan.split.g2)
+    if n_enrolled_gallery_subjects is None:
+        n_enrolled = expected_enrolled
+    elif n_enrolled_gallery_subjects != expected_enrolled:
+        raise FirBakeoffRunError(
+            f"n_enrolled_gallery_subjects={n_enrolled_gallery_subjects} "
+            f"does not match gallery size {expected_enrolled} (len(g1)+len(g2))"
+        )
+    else:
+        n_enrolled = n_enrolled_gallery_subjects
+
     unknown = sorted(set(searches) - _known_strata(plan.index))
     if unknown:
         raise FirBakeoffRunError(f"searches contain undeclared strata: {unknown!r}")
 
+    missing = _missing_required_probe_searches(plan, searches)
+    if missing:
+        raise FirBakeoffRunError(
+            f"searches missing required probe strata {missing!r}: "
+            "every populated probe stratum must have a searches key"
+        )
+
     stratum_report = join_by_stratum(_join_records(plan), plan.index)
     points: dict[str, IETPoint] = {}
     all_mated: list[SearchResult] = []
-    all_nonmated: list[SearchResult] = []
+    strata_with_nonmated: list[str] = []
     for name in _row_names(stratum_report):
         mated, nonmated = _searches_for(searches, stratum=name)
         all_mated.extend(mated)
-        all_nonmated.extend(nonmated)
+        if len(nonmated) > 0:
+            strata_with_nonmated.append(name)
         points[name] = fnir_fpi_at_threshold(
             mated=mated,
             nonmated=nonmated,
             tau=tau,
-            n_enrolled_gallery_subjects=n_enrolled_gallery_subjects,
+            n_enrolled_gallery_subjects=n_enrolled,
         )
+    if overall_nonmated is not None:
+        overall_foils = overall_nonmated
+    elif strata_with_nonmated:
+        raise FirBakeoffRunError(
+            "open-set workload must be declared once via overall_nonmated; "
+            f"non-mated searches present on strata {strata_with_nonmated!r}"
+        )
+    else:
+        overall_foils = ()
     overall = fnir_fpi_at_threshold(
         mated=all_mated,
-        nonmated=all_nonmated,
+        nonmated=overall_foils,
         tau=tau,
-        n_enrolled_gallery_subjects=n_enrolled_gallery_subjects,
+        n_enrolled_gallery_subjects=n_enrolled,
     )
     return RunReport(
         points=points,
@@ -184,6 +220,22 @@ def score_run(
         tau=float(tau),
         seed=plan.seed,
     )
+
+
+def _missing_required_probe_searches(
+    plan: RunPlan,
+    searches: Mapping[str, Mapping[str, Sequence[SearchResult]]],
+) -> list[str]:
+    empty = set(plan.index.declared_empty_cells)
+    missing: list[str] = []
+    for name in PROBE_STRATA:
+        if name in empty:
+            continue
+        if plan.index.declared_images.get(name, 0) <= 0:
+            continue
+        if name not in searches:
+            missing.append(name)
+    return missing
 
 
 def _known_strata(index: StratumIndex) -> set[str]:

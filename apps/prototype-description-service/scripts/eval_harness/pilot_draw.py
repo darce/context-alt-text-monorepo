@@ -31,6 +31,19 @@ BAKEOFF_SELECTION_SCHEMA = "bakeoff-selection/1"
 GOLD_RATE_PERCENT = 10
 PILOT_ANNOTATOR_SLOTS: tuple[str, str] = ("ann-01", "ann-02")
 PILOT_GOLD_SME = "sme-gold"
+# Exact annotator-facing schema (BR-48): an extra key is an unvetted instruction.
+ANNOTATION_PACKET_ROW_KEYS: frozenset[str] = frozenset(
+    {
+        "sha256",
+        "media_id",
+        "stratum",
+        "inclusion_probability",
+        "annotation_batch",
+        "source_path",
+        "annotator_slots",
+        "reference_facts",
+    }
+)
 
 
 class PilotDrawError(ValueError):
@@ -319,18 +332,24 @@ def emit_annotation_packet(
             raise PilotDrawError(f"entry {sha256!r} missing media_id")
         if "source_path" not in entry:
             raise PilotDrawError(f"entry {sha256!r} missing source_path")
-        packets.append(
-            {
-                "sha256": sha256,
-                "media_id": entry["media_id"],
-                "stratum": unit.stratum,
-                "inclusion_probability": unit.inclusion_probability,
-                "annotation_batch": batch_id,
-                "source_path": entry["source_path"],
-                "annotator_slots": [PILOT_ANNOTATOR_SLOTS[0], PILOT_ANNOTATOR_SLOTS[1]],
-                "reference_facts": [],
-            }
-        )
+        row: dict[str, object] = {
+            "sha256": sha256,
+            "media_id": entry["media_id"],
+            "stratum": unit.stratum,
+            "inclusion_probability": unit.inclusion_probability,
+            "annotation_batch": batch_id,
+            "source_path": entry["source_path"],
+            "annotator_slots": [PILOT_ANNOTATOR_SLOTS[0], PILOT_ANNOTATOR_SLOTS[1]],
+            "reference_facts": [],
+        }
+        if set(row) != ANNOTATION_PACKET_ROW_KEYS:
+            extra = sorted(set(row) - ANNOTATION_PACKET_ROW_KEYS)
+            missing = sorted(ANNOTATION_PACKET_ROW_KEYS - set(row))
+            raise PilotDrawError(
+                "annotation packet row keys must equal the licensed schema "
+                f"(extra={extra}, missing={missing})"
+            )
+        packets.append(row)
     return tuple(packets)
 
 

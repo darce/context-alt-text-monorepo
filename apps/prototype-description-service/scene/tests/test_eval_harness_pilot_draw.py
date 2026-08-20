@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import ast
 import inspect
 import json
+import math
 import re
 from collections.abc import Mapping, Sequence
 from pathlib import Path
@@ -11,8 +13,8 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from scripts.eval_harness.audit_sampling import allocate, draw, project_strata_image_counts
 from scripts.eval_harness import pilot_draw as pilot_draw_mod
+from scripts.eval_harness.audit_sampling import allocate, draw, project_strata_image_counts
 from scripts.eval_harness.manifest import (
     ConfirmationSource,
     FactKind,
@@ -20,6 +22,7 @@ from scripts.eval_harness.manifest import (
     ReferenceFact,
 )
 from scripts.eval_harness.pilot_draw import (
+    ANNOTATION_PACKET_ROW_KEYS,
     BAKEOFF_SELECTION_SCHEMA,
     GOLD_MIX_ORDER,
     GOLD_RATE_PERCENT,
@@ -244,6 +247,7 @@ def test_emit_annotation_packet_is_one_dual_annotator_row_per_drawn_image():
         assert packet["annotator_slots"] == [PILOT_ANNOTATOR_SLOTS[0], PILOT_ANNOTATOR_SLOTS[1]]
         assert len(packet["annotator_slots"]) == 2
         assert packet["reference_facts"] == []
+        assert set(packet) == _LICENSED_PACKET_ROW_KEYS
     json.dumps(packets)
 
 
@@ -440,6 +444,23 @@ _PUBLIC_METHODS_BY_CLASS = {
 _DESIGN_STAT_KEYS = frozenset(
     {"icc", "rho", "deff", "design_effect", "n_eff", "msb", "msw"}
 )
+_LICENSED_PACKET_ROW_KEYS = frozenset(
+    {
+        "sha256",
+        "media_id",
+        "stratum",
+        "inclusion_probability",
+        "annotation_batch",
+        "source_path",
+        "annotator_slots",
+        "reference_facts",
+    }
+)
+_ICC_PROBE_GROUPS: tuple[tuple[tuple[float, ...], ...], ...] = (
+    ((1.0, 1.0, 1.0), (0.0, 0.0, 0.0), (1.0, 0.0, 1.0)),
+    ((2.0, 3.0, 4.0), (8.0, 9.0, 10.0), (0.0, 1.0, 2.0), (20.0, 21.0, 22.0)),
+)
+_UNCALLABLE = object()
 
 
 def _owned_callables() -> list[tuple[str, object]]:
@@ -540,6 +561,146 @@ def test_public_surface_has_no_replacement_draw_path():
             )
 
 
+def _name_carries_design_stat_token(name: str) -> bool:
+    lowered = name.lower().replace("-", "_")
+    return any(token in lowered for token in _DESIGN_STAT_KEYS)
+
+
+def _defined_symbol_names(tree: ast.AST) -> list[str]:
+    names: list[str] = []
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            names.append(node.name)
+    if isinstance(tree, ast.Module):
+        for node in tree.body:
+            if isinstance(node, ast.Assign):
+                for target in node.targets:
+                    if isinstance(target, ast.Name):
+                        names.append(target.id)
+            elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+                names.append(node.target.id)
+            elif isinstance(node, (ast.Import, ast.ImportFrom)):
+                for alias in node.names:
+                    names.append(alias.asname or alias.name)
+    return names
+
+
+def _one_way_icc(groups: Sequence[Sequence[float]]) -> float:
+    # Oracle for BR-48: the one-way ANOVA ICC this pilot is not licensed to produce.
+    flat = [x for group in groups for x in group]
+    n = len(flat)
+    k = len(groups)
+    grand = sum(flat) / n
+    msb = sum(len(group) * (sum(group) / len(group) - grand) ** 2 for group in groups) / (
+        k - 1
+    )
+    msw = sum(
+        (value - sum(group) / len(group)) ** 2 for group in groups for value in group
+    ) / (n - k)
+    mean_size = n / k
+    return (msb - msw) / (msb + (mean_size - 1) * msw)
+
+
+def _numeric_leaves(value: object, *, depth: int = 0) -> list[float]:
+    if depth > 4 or value is None or isinstance(value, bool):
+        return []
+    if isinstance(value, (int, float)):
+        return [float(value)]
+    if isinstance(value, Mapping):
+        leaves: list[float] = []
+        for item in value.values():
+            leaves.extend(_numeric_leaves(item, depth=depth + 1))
+        return leaves
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
+        leaves = []
+        for item in value:
+            leaves.extend(_numeric_leaves(item, depth=depth + 1))
+        return leaves
+    leaves = []
+    for attr in _DESIGN_STAT_KEYS:
+        if hasattr(value, attr):
+            leaves.extend(_numeric_leaves(getattr(value, attr), depth=depth + 1))
+    return leaves
+
+
+def _try_call_with_groups(fn: object, groups: Sequence[Sequence[float]]) -> object:
+    as_lists = [list(group) for group in groups]
+    as_tuples = tuple(tuple(group) for group in groups)
+    payloads: list[object] = [as_tuples, as_lists, groups]
+    attempts: list[tuple[object, ...]] = [(payload,) for payload in payloads]
+    kwargs_attempts: list[dict[str, object]] = []
+    try:
+        sig = inspect.signature(fn)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        sig = None
+    if sig is not None:
+        required = [
+            param
+            for param in sig.parameters.values()
+            if param.default is param.empty
+            and param.kind
+            in (param.POSITIONAL_ONLY, param.POSITIONAL_OR_KEYWORD, param.KEYWORD_ONLY)
+            and param.name not in {"self", "cls"}
+        ]
+        if len(required) == 1:
+            for payload in payloads:
+                kwargs_attempts.append({required[0].name: payload})
+    for args in attempts:
+        try:
+            return fn(*args)  # type: ignore[operator]
+        except Exception:
+            continue
+    for kwargs in kwargs_attempts:
+        try:
+            return fn(**kwargs)  # type: ignore[operator]
+        except Exception:
+            continue
+    return _UNCALLABLE
+
+
+def _returns_one_way_icc(fn: object) -> bool:
+    for groups in _ICC_PROBE_GROUPS:
+        got = _try_call_with_groups(fn, groups)
+        if got is _UNCALLABLE:
+            return False
+        want = _one_way_icc(groups)
+        if not any(
+            math.isclose(number, want, rel_tol=1e-9, abs_tol=1e-12)
+            for number in _numeric_leaves(got)
+        ):
+            return False
+    return True
+
+
+def _isolated_functions(tree: ast.AST) -> list[tuple[str, object]]:
+    found: list[tuple[str, object]] = []
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            module = ast.Module(body=[node], type_ignores=[])
+            ast.fix_missing_locations(module)
+            namespace: dict[str, object] = {}
+            try:
+                exec(compile(module, "<pilot-icc-probe>", "exec"), namespace)
+            except Exception:
+                continue
+            fn = namespace.get(node.name)
+            if callable(fn):
+                found.append((node.name, fn))
+            continue
+        if not (isinstance(node, ast.Assign) and isinstance(node.value, ast.Lambda)):
+            continue
+        labels = [target.id for target in node.targets if isinstance(target, ast.Name)]
+        expr = ast.Expression(body=node.value)
+        ast.fix_missing_locations(expr)
+        try:
+            fn = eval(compile(expr, "<pilot-icc-lambda>", "eval"), {})
+        except Exception:
+            continue
+        if callable(fn):
+            found.append((labels[0] if labels else "<lambda>", fn))
+    return found
+
+
 def test_pilot_module_does_not_estimate_icc_or_deff():
     source = inspect.getsource(pilot_draw_mod)
     assert "estimate_icc" not in source
@@ -554,6 +715,19 @@ def test_pilot_module_does_not_estimate_icc_or_deff():
             actual=actual,
             expected=_PUBLIC_MODULE_CALLABLES,
         )
+    tree = ast.parse(Path(pilot_draw_mod.__file__).read_text())
+    named = [
+        name
+        for name in _defined_symbol_names(tree)
+        if _name_carries_design_stat_token(name)
+    ]
+    assert named == []
+    owned_named = [
+        name
+        for name, _obj in _owned_callables()
+        if _name_carries_design_stat_token(name)
+    ]
+    assert owned_named == []
 
 
 def test_drawn_unit_set_never_grows_and_entrypoints_return_no_icc():
@@ -575,6 +749,8 @@ def test_drawn_unit_set_never_grows_and_entrypoints_return_no_icc():
     packet_ids = {row["sha256"] for row in packets}
     assert packet_ids == drawn
     assert not packet_ids > drawn
+    for row in packets:
+        assert set(row) == _LICENSED_PACKET_ROW_KEYS
 
     gold = select_gold_items(
         pilot=first, entries_by_sha256=entries, seed=_PILOT_SEED
@@ -866,6 +1042,40 @@ def test_draw_pilot_rejects_non_str_source_path(tmp_path: Path):
     path.write_text(json.dumps(payload))
     with pytest.raises(PilotDrawError, match=r"source_path.*must be a non-empty str"):
         draw_pilot(selection_manifest_path=path, n=10, seed=1)
+
+
+def test_annotation_packet_row_schema_is_exact():
+    packets = emit_annotation_packet(
+        pilot=_draw(),
+        entries_by_sha256=_entries_by_sha256(),
+        batch_id="pilot-2026-08-20",
+    )
+    assert packets
+    for packet in packets:
+        assert set(packet) == _LICENSED_PACKET_ROW_KEYS
+    assert ANNOTATION_PACKET_ROW_KEYS == _LICENSED_PACKET_ROW_KEYS
+    assert set(packets[0]) == ANNOTATION_PACKET_ROW_KEYS
+
+
+def test_no_module_callable_returns_one_way_icc():
+    offenders = [
+        name
+        for name, obj in _owned_callables()
+        if not inspect.isclass(obj) and _returns_one_way_icc(obj)
+    ]
+    tree = ast.parse(Path(pilot_draw_mod.__file__).read_text())
+    isolated = [
+        name for name, fn in _isolated_functions(tree) if _returns_one_way_icc(fn)
+    ]
+    assert offenders == [], (
+        "pilot module callables returned a one-way ICC estimate, which the "
+        "cost-and-instrument pilot is not licensed to produce (BR-17, AUDIT-11): "
+        f"{offenders}"
+    )
+    assert isolated == [], (
+        "a function defined in pilot_draw returned a one-way ICC estimate "
+        f"(BR-17, AUDIT-11): {isolated}"
+    )
 
 
 def test_gold_draw_is_invariant_to_catalog_insertion_order():

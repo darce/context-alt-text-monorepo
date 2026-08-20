@@ -40,6 +40,7 @@ import random
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
+from types import MappingProxyType
 
 __all__ = [
     "GalleryName",
@@ -79,6 +80,8 @@ class GallerySplit:
     ``g1`` / ``g2`` map subject_id → the single enrolled template.
     Keys are stripped at construction so every consumer partitions on the
     same identity; a blank or non-string subject_id is rejected (EVAL-18).
+    Maps are stored read-only so a caller cannot desynchronise that identity
+    after construction (EVAL-13 / rg-015).
     ``probe_templates`` are leftovers enrolled in neither gallery.
     ``withheld_probe_templates`` are leftovers whose media collides with
     an enrolled still in the same component; they are not searched.
@@ -86,8 +89,8 @@ class GallerySplit:
     promotes them to non-mated probes at search time.
     """
 
-    g1: dict[str, Template]
-    g2: dict[str, Template]
+    g1: Mapping[str, Template]
+    g2: Mapping[str, Template]
     probe_templates: tuple[Template, ...]
     withheld_probe_templates: tuple[Template, ...] = ()
 
@@ -175,7 +178,7 @@ def _with_subject(template: Template, subject_id: str) -> Template:
 
 def _normalise_gallery_map(
     gallery_map: Mapping[object, Template], *, gallery: str
-) -> dict[str, Template]:
+) -> Mapping[str, Template]:
     out: dict[str, Template] = {}
     for subject_id, template in gallery_map.items():
         key = _normalise_subject_id(subject_id, gallery=gallery)
@@ -190,7 +193,7 @@ def _normalise_gallery_map(
                 f"(offending value {subject_id!r})"
             )
         out[key] = _with_subject(template, key)
-    return {subject: out[subject] for subject in sorted(out)}
+    return MappingProxyType({subject: out[subject] for subject in sorted(out)})
 
 
 def _normalise_template_tuple(

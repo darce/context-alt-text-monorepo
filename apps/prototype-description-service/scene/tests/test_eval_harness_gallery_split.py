@@ -6,6 +6,7 @@ TEST-15: each assertion is can-fail against a LOO-style dual-enroll impl.
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -492,3 +493,125 @@ def test_gallery_and_probe_order_are_sorted_independent_of_insertion() -> None:
         ("Ann", "n1"),
         ("Zoe", "z1"),
     ]
+
+
+def _two_subject_split() -> GallerySplit:
+    return GallerySplit(
+        g1={
+            "Alice": Template(template_id="a1", subject_id="Alice", media_ids=(1,)),
+        },
+        g2=_legal_other_gallery(),
+        probe_templates=(),
+    )
+
+
+def test_gallery_maps_reject_in_place_mutation() -> None:
+    """BR-62: construction-time identity cannot be mutated in place (EVAL-13)."""
+    split = _two_subject_split()
+    alice = split.g1["Alice"]
+    bob = split.g2["Bob"]
+
+    with pytest.raises(TypeError):
+        split.g1["Alice"] = alice
+    with pytest.raises(TypeError):
+        split.g1["Eve"] = alice
+    with pytest.raises(TypeError):
+        split.g2["Bob"] = bob
+    with pytest.raises(TypeError):
+        split.g2["Eve"] = bob
+
+    with pytest.raises(TypeError):
+        del split.g1["Alice"]
+    with pytest.raises(TypeError):
+        del split.g2["Bob"]
+
+    with pytest.raises((TypeError, AttributeError)):
+        split.g1.pop("Alice")
+    with pytest.raises((TypeError, AttributeError)):
+        split.g2.pop("Bob")
+    with pytest.raises((TypeError, AttributeError)):
+        split.g1.update({"Eve": alice})
+    with pytest.raises((TypeError, AttributeError)):
+        split.g2.update({"Eve": bob})
+
+    assert list(split.g1) == ["Alice"]
+    assert list(split.g2) == ["Bob"]
+    assert split.g1["Alice"] is alice
+    assert split.g2["Bob"] is bob
+
+
+def test_gallery_map_reads_survive_readonly_wrapper() -> None:
+    """BR-62: len / in / get / values / iteration order stay the published API."""
+    split = GallerySplit(
+        g1={
+            "Bob": Template(template_id="b1", subject_id="Bob", media_ids=(1,)),
+            "Alice": Template(template_id="a1", subject_id="Alice", media_ids=(2,)),
+        },
+        g2=_legal_other_gallery(),
+        probe_templates=(),
+    )
+    assert len(split.g1) == 2
+    assert "Alice" in split.g1
+    assert "Carol" not in split.g1
+    assert split.g1.get("Alice") is split.g1["Alice"]
+    assert split.g1.get("Carol") is None
+    assert [t.template_id for t in split.g1.values()] == ["a1", "b1"]
+    assert list(split.g1) == ["Alice", "Bob"]
+    assert len(split.g2) == 1
+    assert "Bob" in split.g2
+    assert split.g2.get("Bob") is split.g2["Bob"]
+    assert [t.template_id for t in split.g2.values()] == ["b1"]
+    assert list(split.g2) == ["Bob"]
+
+
+def test_replace_and_readonly_input_rerun_post_init() -> None:
+    """BR-62: dataclasses.replace and already-read-only maps re-normalise."""
+    split = _two_subject_split()
+    again = replace(split)
+    assert again == split
+    assert list(again.g1) == ["Alice"]
+    assert list(again.g2) == ["Bob"]
+    with pytest.raises(TypeError):
+        again.g1["Alice"] = split.g1["Alice"]
+    with pytest.raises(TypeError):
+        again.g2["Bob"] = split.g2["Bob"]
+
+    rebuilt = GallerySplit(
+        g1=split.g1,
+        g2=split.g2,
+        probe_templates=split.probe_templates,
+    )
+    assert rebuilt == split
+    assert list(rebuilt.g1) == ["Alice"]
+    with pytest.raises(TypeError):
+        rebuilt.g1["Eve"] = split.g1["Alice"]
+    with pytest.raises(TypeError):
+        rebuilt.g2["Eve"] = split.g2["Bob"]
+
+    padded = replace(
+        split,
+        g1={" Alice ": split.g1["Alice"]},
+    )
+    assert list(padded.g1) == ["Alice"]
+    with pytest.raises(TypeError):
+        padded.g1["Alice "] = padded.g1["Alice"]
+
+
+def test_internal_whitespace_subject_id_is_kept() -> None:
+    """Internal spaces are identity, not padding — still a legal read-only key."""
+    split = GallerySplit(
+        g1={
+            "Alice Smith": Template(
+                template_id="a1", subject_id="Alice Smith", media_ids=(1,)
+            ),
+        },
+        g2=_legal_other_gallery(),
+        probe_templates=(),
+    )
+    assert list(split.g1) == ["Alice Smith"]
+    assert "Alice Smith" in split.g1
+    assert split.g1.get("Alice Smith") is split.g1["Alice Smith"]
+    reconstructed = {**split.g1}
+    assert list(reconstructed) == ["Alice Smith"]
+    with pytest.raises(TypeError):
+        split.g1["Alice Smith"] = split.g1["Alice Smith"]

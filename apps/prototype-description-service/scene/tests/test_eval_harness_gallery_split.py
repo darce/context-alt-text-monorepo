@@ -294,13 +294,55 @@ def test_string_templates_parse_media_ids_and_coassign_shared_still():
     assert g1_media.isdisjoint(g2_media)
 
 
-def test_string_template_without_media_id_raises():
-    """Refuse a string template that cannot supply media ids. Empty () is not a default."""
-    with pytest.raises(GallerySplitError, match="media"):
-        build_disjoint_galleries(
-            templates_by_subject={"alice": ["a1"], "bob": ["b1"]},
-            seed=0,
-        )
+def _shared_still_string_roster() -> dict[str, list[str]]:
+    return {
+        "alice": ["99:alice"],
+        "bob": ["99:bob"],
+        "carol": ["1:carol", "2:carol"],
+    }
+
+
+def _shared_still_object_roster_empty_media() -> dict[str, list[Template]]:
+    """Same shared still as the string roster, default media_ids=() (BR-30)."""
+    return {
+        "alice": [Template(template_id="99:alice", subject_id="alice")],
+        "bob": [Template(template_id="99:bob", subject_id="bob")],
+        "carol": [
+            Template(template_id="1:carol", subject_id="carol"),
+            Template(template_id="2:carol", subject_id="carol"),
+        ],
+    }
+
+
+def test_shared_still_coassigns_in_both_forms_across_seeds():
+    """JANUS 2.2: '{media}:{subject}' co-assigns for Template | str, seeds 0–15."""
+    strings = _shared_still_string_roster()
+    objects = _shared_still_object_roster_empty_media()
+    for seed in range(16):
+        from_strings = build_disjoint_galleries(templates_by_subject=strings, seed=seed)
+        from_objects = build_disjoint_galleries(templates_by_subject=objects, seed=seed)
+        assert from_strings == from_objects
+        assert ("alice" in from_objects.g1) == ("bob" in from_objects.g1)
+        enrolled_alice = from_objects.g1.get("alice") or from_objects.g2["alice"]
+        enrolled_bob = from_objects.g1.get("bob") or from_objects.g2["bob"]
+        assert enrolled_alice.media_ids == (99,)
+        assert enrolled_bob.media_ids == (99,)
+
+
+def test_independent_single_still_roster_accepted_in_both_forms():
+    """Two components with no shared still are a legal open-set split (MLDATA-09)."""
+    strings = {"alice": ["a1"], "bob": ["b1"]}
+    objects = {
+        "alice": [Template(template_id="a1", subject_id="alice")],
+        "bob": [Template(template_id="b1", subject_id="bob")],
+    }
+    from_strings = build_disjoint_galleries(templates_by_subject=strings, seed=0)
+    from_objects = build_disjoint_galleries(templates_by_subject=objects, seed=0)
+    assert from_strings == from_objects
+    assigned = set(from_strings.g1) | set(from_strings.g2)
+    assert assigned == {"alice", "bob"}
+    assert set(from_strings.g1).isdisjoint(set(from_strings.g2))
+    assert from_strings.g1 and from_strings.g2
 
 
 def _frozen_e_clean_roster() -> dict[str, list[Template]]:
@@ -345,3 +387,12 @@ def test_frozen_frame_both_galleries_nonempty_across_seeds():
         if not split.g1 or not split.g2:
             empty.append(seed)
     assert empty == []
+
+
+def test_frozen_frame_seed_0_gallery_sizes():
+    """FIR-12 runner depends on seed 0: g1=53, g2=56, overlap=0. Do not weaken."""
+    roster = _frozen_e_clean_roster()
+    split = build_disjoint_galleries(templates_by_subject=roster, seed=0)
+    assert len(split.g1) == 53
+    assert len(split.g2) == 56
+    assert set(split.g1).isdisjoint(set(split.g2))

@@ -297,3 +297,18 @@ Canon: MLDATA-07, EVAL-16, EVAL-19, JANUS 2.3.4, TEST-15.
 - BR-38 (low): no production change. Test `test_duplicate_overall_nonmated_search_is_rejected` submits a duplicated `overall_nonmated` foil (per-stratum list unique) and asserts `FirBakeoffRunError` matching `duplicate overall_nonmated`. Mutant (`/tmp/lane-f28-mutants/br38`): `if foil_key in seen_foils:` → `if False:` in `_validate_overall_nonmated`. RED: `DID NOT RAISE FirBakeoffRunError`.
 - BR-39 (medium): `both_gallery_search_count` now sums `len(mated_identities_for(...))` over co-present stills × galleries (seed 0: 14, not 12). Docstring no longer says "2 per still". Tests: `test_both_gallery_search_count_counts_identity_units`, `test_frozen_seed0_six_occluded_stills_are_enrolled_in_both_galleries` (`n_searches == 14`), renamed `test_frozen_seed0_copresent_first_identity_injection_is_incomplete` (first-identity injection of 12; asserts mated shortfall on A and D). Mutant (`/tmp/lane-f28-mutants/br39`): revert helper to `len(mated_galleries_for(...))`. RED: `assert 12 == 14`. BR-37/BR-38 tests stayed GREEN under that revert.
 
+########## lane/f32
+
+# FIR-12 BR-45 / BR-46 — foil arm can measure FPI
+
+Canon: EVAL-16, EVAL-18, EVAL-19, JANUS 2.3.4, TEST-15. Touched only `fir_search_adapter.py` + its test. FTA is emitted only for foil media present in `run_items` (missing items stay a completeness shortfall, not a fake miss).
+
+- BR-45 (high): a declared foil in the run with no matched faces and no unmatched detections now emits one non-mated `SearchResult` per gallery (`detected=False`, `top1_score=None`, `top1_name=None`) into both the stratum `nonmated` list and `overall_nonmated`. A detector miss is a trial below every threshold, not an absent unit. Tests: `test_zero_detection_foil_still_scores`, `test_overall_nonmated_keeps_declared_foil_count`. Existing `test_missed_named_gt_emits_fta_mated_search` / `test_missed_stranger_gt_emits_zero_searches` now also expect the same still's foil FTA (Alice vs the other gallery; unnamed C_pose foil vs both).
+- BR-46 (high): unmatched detections on a foil still are searched with `argmax_gallery` and folded into the same `(media_id, gallery, _FOIL_UNIT_SUBJECT)` key, so a false-alarm box that matches an enrolled subject can produce FPI. Tests: `test_unmatched_detection_reaches_the_gallery`, `test_unmatched_detections_do_not_inflate_the_denominator`.
+- T1 `test_zero_detection_foil_still_scores`: Carol media 13 zero-det with GT box → 2 FTA non-mated (both galleries), `overall.incomplete is False`. Mutant `/tmp/f32-mutants/m1.py` restored `if not faces: continue`. RED: `assert 0 == 2`.
+- T2 `test_overall_nonmated_keeps_declared_foil_count`: `len(overall_nonmated) == sum(len(occluded_probes_for(...)[1]))` (not a literal). Mutant `/tmp/f32-mutants/m2.py` dropped FTA from `overall_nonmated` only. RED: `assert 3 == 5`.
+- T3 `test_unmatched_detection_reaches_the_gallery`: Carol matched stranger box + unmatched Alice embedding vs Alice's gallery → `top1_score > 0.99`, `top1_name == "Alice"`. Mutant `/tmp/f32-mutants/m3.py` stopped searching unmatched detections. RED: `assert 0.0 > 0.99`.
+- T4 `test_unmatched_detections_do_not_inflate_the_denominator`: same fixture, exactly one non-mated result per `(media 13, Alice gallery)`. Mutant `/tmp/f32-mutants/m4.py` gave unmatched detections their own search-unit key and emitted it. RED: `assert 2 == 1`.
+
+Two-file gate: 74 passed (70 baseline + 4 new).
+

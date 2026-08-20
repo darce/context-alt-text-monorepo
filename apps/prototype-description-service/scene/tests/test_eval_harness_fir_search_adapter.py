@@ -24,6 +24,7 @@ from scripts.eval_harness.fir_bakeoff_run import (
     FirBakeoffRunError,
     RunPlan,
     build_run_plan,
+    occluded_probes_for,
     score_run,
 )
 from scripts.eval_harness.fir_search_adapter import (
@@ -281,9 +282,7 @@ def test_missed_named_gt_emits_fta_mated_search(tmp_path: Path) -> None:
     searches, overall = searches_from_run_records([item], {10: boxes}, plan=plan)
     results = _flatten(searches)
     mated = [row for row in results if row.true_name is not None]
-    assert len(results) == 1
     assert len(mated) == 1
-    assert overall == []
     row = mated[0]
     assert row.detected is False
     assert row.top1_score is None
@@ -291,6 +290,22 @@ def test_missed_named_gt_emits_fta_mated_search(tmp_path: Path) -> None:
     assert row.true_name == "Alice"
     assert row.media_id == 10
     assert row.gallery == _gallery_of(plan, "Alice")
+    foil_galleries = [
+        gallery
+        for gallery in plan.probe_sets
+        if any(
+            entry.media_id == 10
+            for entry in occluded_probes_for(plan, gallery=gallery)[1]
+        )
+    ]
+    nonmated = [row for row in results if row.true_name is None]
+    assert len(nonmated) == len(foil_galleries)
+    assert overall == nonmated
+    for foil in nonmated:
+        assert foil.detected is False
+        assert foil.top1_score is None
+        assert foil.top1_name is None
+        assert foil.media_id == 10
 
 
 def test_missed_stranger_gt_emits_zero_searches(tmp_path: Path) -> None:
@@ -298,12 +313,24 @@ def test_missed_stranger_gt_emits_zero_searches(tmp_path: Path) -> None:
     plan = _two_subject_plan(tmp_path, extra=extra)
     item, boxes = _empty_named_item(12, [None])
     searches, overall = searches_from_run_records([item], {12: boxes}, plan=plan)
-    assert _flatten(searches) == []
-    assert overall == []
-    assert all(
-        payload["mated"] == [] and payload["nonmated"] == []
-        for payload in searches.values()
-    )
+    foil_galleries = [
+        gallery
+        for gallery in plan.probe_sets
+        if any(
+            entry.media_id == 12
+            for entry in occluded_probes_for(plan, gallery=gallery)[1]
+        )
+    ]
+    nonmated = [row for row in _flatten(searches) if row.true_name is None]
+    assert len(nonmated) == len(foil_galleries)
+    assert len(overall) == len(foil_galleries)
+    for row in nonmated:
+        assert row.detected is False
+        assert row.top1_score is None
+        assert row.top1_name is None
+        assert row.media_id == 12
+        assert row.gallery in foil_galleries
+    assert all(payload["mated"] == [] for payload in searches.values())
 
 
 def test_adapter_publishes_raw_smax_below_kfold_tau(tmp_path: Path) -> None:
@@ -478,3 +505,127 @@ def test_round_trip_score_run_complete_finite_fnir(tmp_path: Path) -> None:
         assert report.search_shortfalls[name] == 0
         assert report.nonmated_shortfalls[name] == 0
         assert report.points[name].incomplete is False
+
+
+def _declared_foil_unit_count(plan: RunPlan) -> int:
+    return sum(
+        len(occluded_probes_for(plan, gallery=gallery)[1])
+        for gallery in plan.probe_sets
+    )
+
+
+def _full_plan_items_with_carol(
+    tmp_path: Path,
+    carol_item: dict[str, Any],
+    carol_boxes: list[dict[str, Any]],
+) -> tuple[RunPlan, list[dict[str, Any]], dict[int, list[dict[str, Any]]]]:
+    plan = _full_plan(tmp_path)
+    vecs = _vecs()
+    items, gt = _enrollment_records(plan, vecs)
+    for media_id, names in ((10, ["Alice"]), (11, ["Bob"]), (12, ["Alice"])):
+        item, boxes = _named_item(media_id, names, vecs)
+        items.append(item)
+        gt[media_id] = boxes
+    items.append(carol_item)
+    gt[13] = carol_boxes
+    return plan, items, gt
+
+
+def _carol_with_unmatched_alice(
+    vecs: dict[str, list[float]],
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    layout = _layout(2)
+    cx, cy, w, h, bbox_gt = layout[0]
+    _, _, _, _, bbox_fa = layout[1]
+    item = _item(
+        13,
+        [_face(bbox_gt, vecs["Carol"]), _face(bbox_fa, vecs["Alice"])],
+    )
+    return item, [_gt(cx, cy, w, h, "Carol")]
+
+
+def test_zero_detection_foil_still_scores(tmp_path: Path) -> None:
+    carol_item, carol_boxes = _empty_named_item(13, ["Carol"])
+    plan, items, gt = _full_plan_items_with_carol(tmp_path, carol_item, carol_boxes)
+    searches, overall = searches_from_run_records(items, gt, plan=plan)
+    foil_galleries = [
+        gallery
+        for gallery in plan.probe_sets
+        if any(
+            entry.media_id == 13
+            for entry in occluded_probes_for(plan, gallery=gallery)[1]
+        )
+    ]
+    carol = [
+        row
+        for row in searches["D_capture"]["nonmated"]
+        if row.media_id == 13
+    ]
+    assert len(foil_galleries) > 0
+    assert len(carol) == len(foil_galleries)
+    assert {row.gallery for row in carol} == set(foil_galleries)
+    for row in carol:
+        assert row.detected is False
+        assert row.top1_score is None
+        assert row.top1_name is None
+        assert row.true_name is None
+    report = score_run(
+        plan=plan, searches=searches, overall_nonmated=overall, tau=0.50
+    )
+    assert report.overall.incomplete is False
+    assert report.nonmated_shortfalls["D_capture"] == 0
+    assert report.points["D_capture"].incomplete is False
+    assert report.points["D_capture"].n_nonmated == len(foil_galleries)
+
+
+def test_overall_nonmated_keeps_declared_foil_count(tmp_path: Path) -> None:
+    carol_item, carol_boxes = _empty_named_item(13, ["Carol"])
+    plan, items, gt = _full_plan_items_with_carol(tmp_path, carol_item, carol_boxes)
+    _, overall = searches_from_run_records(items, gt, plan=plan)
+    assert len(overall) == _declared_foil_unit_count(plan)
+
+
+def test_unmatched_detection_reaches_the_gallery(tmp_path: Path) -> None:
+    vecs = _vecs()
+    carol_item, carol_boxes = _carol_with_unmatched_alice(vecs)
+    plan, items, gt = _full_plan_items_with_carol(tmp_path, carol_item, carol_boxes)
+    _, associations, _, _ = collect_matched_faces(items, gt)
+    assert associations[13].unmatched_detections == (1,)
+    searches, _ = searches_from_run_records(items, gt, plan=plan)
+    alice_gallery = _gallery_of(plan, "Alice")
+    foil = [
+        row
+        for row in searches["D_capture"]["nonmated"]
+        if row.media_id == 13 and row.gallery == alice_gallery
+    ]
+    assert len(foil) == 1
+    row = foil[0]
+    assert row.detected is True
+    assert row.top1_name == "Alice"
+    assert row.top1_score is not None
+    assert row.top1_score > 0.99
+
+
+def test_unmatched_detections_do_not_inflate_the_denominator(tmp_path: Path) -> None:
+    vecs = _vecs()
+    carol_item, carol_boxes = _carol_with_unmatched_alice(vecs)
+    plan, items, gt = _full_plan_items_with_carol(tmp_path, carol_item, carol_boxes)
+    searches, overall = searches_from_run_records(items, gt, plan=plan)
+    alice_gallery = _gallery_of(plan, "Alice")
+    stratum_hits = [
+        row
+        for row in searches["D_capture"]["nonmated"]
+        if row.media_id == 13 and row.gallery == alice_gallery
+    ]
+    overall_hits = [
+        row
+        for row in overall
+        if row.media_id == 13 and row.gallery == alice_gallery
+    ]
+    assert len(stratum_hits) == 1
+    assert len(overall_hits) == 1
+    report = score_run(
+        plan=plan, searches=searches, overall_nonmated=overall, tau=0.50
+    )
+    assert report.overall.incomplete is False
+    assert report.nonmated_shortfalls["D_capture"] == 0

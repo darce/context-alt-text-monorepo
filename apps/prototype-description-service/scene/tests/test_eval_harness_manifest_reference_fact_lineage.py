@@ -8,6 +8,7 @@ import pytest
 from pydantic import ValidationError
 
 from scripts.eval_harness.manifest import (
+    AdjudicationRule,
     ConfirmationSource,
     FactKind,
     FactPolarity,
@@ -194,3 +195,20 @@ def test_golden150_draft_parses_with_backfilled_fact_annotators():
     assert all(fact.annotation_batch == "pre-program" for fact in entry.reference_facts)
     assert all(fact.annotated_at == "1970-01-01T00:00:00Z" for fact in entry.reference_facts)
     assert all(fact.source_pool == "pre-program" for fact in entry.reference_facts)
+
+
+def test_majority_vote_token_is_hyphenated():
+    """sr-007: AdjudicationRule values share hyphen separators, not mixed styles."""
+    assert AdjudicationRule.MAJORITY_VOTE.value == "majority-vote"
+    assert "_" not in AdjudicationRule.MAJORITY_VOTE.value
+    payload = _full_payload()
+    payload["adjudication_rule"] = "majority-vote"
+    fact = ReferenceFact.model_validate(payload)
+    assert fact.adjudication_rule is AdjudicationRule.MAJORITY_VOTE
+
+
+def test_underscore_majority_vote_token_is_rejected():
+    payload = _full_payload()
+    payload["adjudication_rule"] = "majority_vote"
+    with pytest.raises(ValidationError, match="adjudication_rule"):
+        ReferenceFact.model_validate(payload)

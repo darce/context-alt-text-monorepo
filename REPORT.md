@@ -22,7 +22,7 @@ Scope pins for the table: whole-frame clustered n=216 (Kish a=12.90, ICC=0.2, e=
 Closed set on `scripts.eval_harness.manifest.AdjudicationRule`. Doc lane must name **these exact tokens**, not free text:
 
 - `disagreement-escalate-to-sme`
-- `majority_vote`
+- `majority-vote`
 - `unanimous`
 
 Required whenever `adjudicated_by` is set. Free text (`coin-flip`) is refused.
@@ -127,3 +127,24 @@ Value error, human-confirmed reference_fact requires annotation_batch
 ```
 
 Canon: MLDATA-04, TEST-15, rg-008. Mutant restored. No back-compat shim.
+
+## 3. `AdjudicationRule.MAJORITY_VOTE` token style
+
+Scope-doc lane pinned `disagreement-escalate-to-sme` (hyphens). `majority_vote` (underscore) was the mixed-separator outlier. `UNANIMOUS = "unanimous"` has no separator. Value change only: `majority_vote` → `majority-vote`. sr-007.
+
+Grep **before**: `MAJORITY_VOTE = "majority_vote"` in `manifest.py` plus this report and `.lane/PROMPT.txt`. No test or fixture used the underscore literal.
+
+Grep **after**: `MAJORITY_VOTE = "majority-vote"` in `manifest.py`; leftover `majority_vote` only in this report's mutant notes / prompt.
+
+Tests: `test_majority_vote_token_is_hyphenated`, `test_underscore_majority_vote_token_is_rejected`.
+
+Mutant: restore `MAJORITY_VOTE = "majority_vote"`. RED:
+
+```
+FAILED ...::test_majority_vote_token_is_hyphenated
+AssertionError: assert 'majority_vote' == 'majority-vote'
+FAILED ...::test_underscore_majority_vote_token_is_rejected
+Failed: DID NOT RAISE ValidationError
+```
+
+Canon: sr-007, TEST-15, MLDATA-03. Mutant restored. Did not touch `audit_sampling.py` or the scope doc.

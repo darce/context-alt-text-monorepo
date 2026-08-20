@@ -615,3 +615,140 @@ def test_internal_whitespace_subject_id_is_kept() -> None:
     assert list(reconstructed) == ["Alice Smith"]
     with pytest.raises(TypeError):
         split.g1["Alice Smith"] = split.g1["Alice Smith"]
+
+
+@pytest.mark.parametrize(
+    ("g1", "g2", "key", "held"),
+    (
+        (
+            {
+                "Alice": Template(
+                    template_id="a1", subject_id="Carol", media_ids=(1,)
+                ),
+            },
+            _legal_other_gallery(),
+            "Alice",
+            "Carol",
+        ),
+        (
+            {
+                "Alice": Template(
+                    template_id="a1", subject_id="Alice", media_ids=(1,)
+                ),
+            },
+            {
+                "Bob": Template(
+                    template_id="b1", subject_id="Carol", media_ids=(2,)
+                ),
+            },
+            "Bob",
+            "Carol",
+        ),
+    ),
+    ids=("g1", "g2"),
+)
+def test_gallery_map_key_subject_mismatch_raises(
+    g1: dict[str, Template],
+    g2: dict[str, Template],
+    key: str,
+    held: str,
+) -> None:
+    """BR-65: map key vs template.subject_id that strip to different identities fail loud (EVAL-18).
+
+    The raise sits before _with_subject rewrites the template onto the key; a
+    silent rewrite would enroll Carol's media under Alice.
+    """
+    with pytest.raises(GallerySplitError) as caught:
+        GallerySplit(g1=g1, g2=g2, probe_templates=())
+    message = str(caught.value)
+    assert repr(key) in message
+    assert repr(held) in message
+
+
+def test_builder_roster_key_subject_mismatch_raises() -> None:
+    """BR-65: build_disjoint_galleries refuses Carol enrolled under roster key alice."""
+    with pytest.raises(GallerySplitError) as caught:
+        build_disjoint_galleries(
+            templates_by_subject={
+                "alice": [
+                    Template(template_id="a1", subject_id="Carol", media_ids=(1,)),
+                    Template(template_id="a2", subject_id="Carol", media_ids=(2,)),
+                ],
+                "bob": [
+                    Template(template_id="b1", subject_id="bob", media_ids=(3,)),
+                    Template(template_id="b2", subject_id="bob", media_ids=(4,)),
+                ],
+            },
+            seed=0,
+        )
+    message = str(caught.value)
+    assert repr("alice") in message
+    assert repr("Carol") in message
+
+
+def test_gallery_key_and_subject_id_padding_is_same_identity() -> None:
+    """BR-65: key and subject_id that differ only by surrounding whitespace are accepted."""
+    split = GallerySplit(
+        g1={
+            " Alice ": Template(template_id="a1", subject_id="Alice", media_ids=(1,)),
+        },
+        g2=_legal_other_gallery(),
+        probe_templates=(),
+    )
+    assert list(split.g1) == ["Alice"]
+    assert split.g1["Alice"].subject_id == "Alice"
+    assert split.g1["Alice"].template_id == "a1"
+
+    split_template_pad = GallerySplit(
+        g1={
+            "Alice": Template(template_id="a1", subject_id=" Alice ", media_ids=(1,)),
+        },
+        g2={
+            " Bob ": Template(template_id="b1", subject_id="Bob", media_ids=(2,)),
+        },
+        probe_templates=(),
+    )
+    assert list(split_template_pad.g1) == ["Alice"]
+    assert split_template_pad.g1["Alice"].subject_id == "Alice"
+    assert list(split_template_pad.g2) == ["Bob"]
+    assert split_template_pad.g2["Bob"].subject_id == "Bob"
+
+    built = build_disjoint_galleries(
+        templates_by_subject={
+            " alice ": [
+                Template(template_id="a1", subject_id="alice", media_ids=(1,)),
+                Template(template_id="a2", subject_id=" alice ", media_ids=(2,)),
+            ],
+            "bob": [
+                Template(template_id="b1", subject_id="bob", media_ids=(3,)),
+                Template(template_id="b2", subject_id="bob", media_ids=(4,)),
+            ],
+        },
+        seed=0,
+    )
+    assigned = set(built.g1) | set(built.g2)
+    assert assigned == {"alice", "bob"}
+    enrolled_alice = built.g1.get("alice") or built.g2["alice"]
+    assert enrolled_alice.subject_id == "alice"
+
+
+def test_withheld_probe_templates_are_sorted_and_stripped_independent_of_insertion() -> None:
+    """BR-66: constructor-site withheld normalisation is pinned (EVAL-13), not the builder pre-sort."""
+    withheld = (
+        Template(template_id="z1", subject_id="Zoe ", media_ids=(3,)),
+        Template(template_id="n1", subject_id="Ann ", media_ids=(4,)),
+    )
+    split = GallerySplit(
+        g1={
+            "Alice": Template(template_id="a1", subject_id="Alice", media_ids=(1,)),
+        },
+        g2=_legal_other_gallery(),
+        probe_templates=(),
+        withheld_probe_templates=withheld,
+    )
+    assert [
+        (t.subject_id, t.template_id) for t in split.withheld_probe_templates
+    ] == [
+        ("Ann", "n1"),
+        ("Zoe", "z1"),
+    ]

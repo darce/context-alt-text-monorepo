@@ -139,6 +139,9 @@ def _write_json(path: Path, payload: dict) -> Path:
     return path
 
 
+_REAL_CLI_ENV = {"ACX_EVAL_PYTHON": sys.executable}
+
+
 def _run_regen(
     args: list[str],
     *,
@@ -146,6 +149,7 @@ def _run_regen(
     env: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
     merged = os.environ.copy()
+    merged.pop("ACX_EVAL_PYTHON", None)
     if env:
         merged.update(env)
     return subprocess.run(
@@ -201,6 +205,7 @@ def test_real_cli_refused_does_not_publish_and_exits_3(tmp_path: Path) -> None:
             str(out_md),
         ],
         cwd=_REPO_ROOT,
+        env=_REAL_CLI_ENV,
     )
     combined = proc.stdout + proc.stderr
     assert proc.returncode == 3, combined
@@ -227,6 +232,7 @@ def test_real_cli_refused_allow_refused_publishes_and_still_exits_3(
             "--allow-refused",
         ],
         cwd=_REPO_ROOT,
+        env=_REAL_CLI_ENV,
     )
     combined = proc.stdout + proc.stderr
     assert proc.returncode == 3, combined
@@ -262,6 +268,7 @@ def test_real_cli_partial_does_not_publish_and_exits_1(tmp_path: Path) -> None:
             str(out_md),
         ],
         cwd=_REPO_ROOT,
+        env=_REAL_CLI_ENV,
     )
     combined = proc.stdout + proc.stderr
     assert proc.returncode == 1, combined
@@ -288,12 +295,111 @@ def test_real_cli_partial_not_overridden_by_allow_refused(tmp_path: Path) -> Non
             "--allow-refused",
         ],
         cwd=_REPO_ROOT,
+        env=_REAL_CLI_ENV,
     )
     combined = proc.stdout + proc.stderr
     assert proc.returncode == 1, combined
     assert "partial-corpus" in combined
     assert not out_json.is_file()
     assert not out_md.is_file()
+
+
+# ---------------------------------------------------------------------------
+# Interpreter override (FIR-12-BR-67)
+# ---------------------------------------------------------------------------
+
+
+def test_invalid_override_errors_and_does_not_fall_back(tmp_path: Path) -> None:
+    """A set-but-unusable ACX_EVAL_PYTHON must not fall back to .venv."""
+    repo = _scratch_repo(tmp_path)
+    argv_log = _install_stub_python(repo)
+    run_record, manifest, out_json, out_md = _stub_paths(repo)
+    junk = tmp_path / "neutral-helper.bin"
+    junk.write_text("not an interpreter\n", encoding="utf-8")
+    proc = _run_regen(
+        [
+            "--run-record",
+            str(run_record),
+            "--manifest",
+            str(manifest),
+            "--out-json",
+            str(out_json),
+            "--out-md",
+            str(out_md),
+        ],
+        cwd=repo,
+        env={"ACX_EVAL_PYTHON": str(junk), "STUB_SCORE_EXIT": "0"},
+    )
+    combined = proc.stdout + proc.stderr
+    assert proc.returncode == 2, combined
+    assert "invalid ACX_EVAL_PYTHON" in combined
+    assert "not an executable file" in combined
+    assert str(junk) in combined
+    assert "missing service venv python" not in combined
+    assert not argv_log.is_file()
+
+
+def test_unset_override_missing_venv_keeps_original_error(tmp_path: Path) -> None:
+    repo = _scratch_repo(tmp_path)
+    run_record, manifest, out_json, out_md = _stub_paths(repo)
+    proc = _run_regen(
+        [
+            "--run-record",
+            str(run_record),
+            "--manifest",
+            str(manifest),
+            "--out-json",
+            str(out_json),
+            "--out-md",
+            str(out_md),
+        ],
+        cwd=repo,
+    )
+    combined = proc.stdout + proc.stderr
+    assert proc.returncode == 2, combined
+    expected = (
+        repo / "apps" / "prototype-description-service" / ".venv" / "bin" / "python"
+    )
+    assert f"missing service venv python: {expected}" in combined
+    assert "invalid ACX_EVAL_PYTHON" not in combined
+
+
+def test_resolve_eval_python_override_wins_without_venv(tmp_path: Path) -> None:
+    regen = _load_regen()
+    chosen = regen.resolve_eval_python(
+        tmp_path, environ={"ACX_EVAL_PYTHON": sys.executable}
+    )
+    assert chosen == Path(sys.executable)
+
+
+def test_resolve_eval_python_accepts_neutrally_named_executable(
+    tmp_path: Path,
+) -> None:
+    regen = _load_regen()
+    helper = tmp_path / "worker"
+    helper.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    helper.chmod(helper.stat().st_mode | stat.S_IXUSR)
+    chosen = regen.resolve_eval_python(
+        tmp_path, environ={"ACX_EVAL_PYTHON": str(helper)}
+    )
+    assert chosen == helper
+
+
+def test_resolve_eval_python_empty_override_is_invalid_not_missing(
+    tmp_path: Path,
+) -> None:
+    regen = _load_regen()
+    default = (
+        tmp_path / "apps" / "prototype-description-service" / ".venv" / "bin" / "python"
+    )
+    default.parent.mkdir(parents=True, exist_ok=True)
+    default.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    default.chmod(default.stat().st_mode | stat.S_IXUSR)
+    with pytest.raises(regen.EvalPythonError) as ei:
+        regen.resolve_eval_python(tmp_path, environ={"ACX_EVAL_PYTHON": ""})
+    message = str(ei.value)
+    assert "invalid ACX_EVAL_PYTHON" in message
+    assert "missing service venv python" not in message
 
 
 # ---------------------------------------------------------------------------
@@ -567,6 +673,7 @@ def test_real_cli_allow_refused_prints_identification_audit_trail(
             "--allow-refused",
         ],
         cwd=_REPO_ROOT,
+        env=_REAL_CLI_ENV,
     )
     combined = proc.stdout + proc.stderr
     assert proc.returncode == 3, combined

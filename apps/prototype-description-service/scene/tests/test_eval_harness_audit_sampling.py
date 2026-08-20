@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import math
 import random
+import re
 from pathlib import Path
 
 import pytest
@@ -358,6 +359,8 @@ def test_deff_then_fpc_ordering_on_labeled_subject_a_not_planning_n():
 
 _SCOPE_DOC = _REPO_ROOT / "docs/scopes/descqual-2-fact-annotation-pilot.md"
 
+_TRAILING_PUBLISHED_N = re.compile(r"^(.*?)\s+#\s*(\d+)\s*(?:\([^)]*\))?\s*$")
+
 
 def _fence_containing(text: str, needle: str) -> str:
     parts = text.split("```")
@@ -365,6 +368,42 @@ def _fence_containing(text: str, needle: str) -> str:
         if index % 2 == 1 and needle in block:
             return block.strip()
     raise AssertionError(f"no fenced block contains {needle!r}")
+
+
+def _exec_scope_fence(
+    block: str, monkeypatch: pytest.MonkeyPatch
+) -> dict[str, object]:
+    monkeypatch.chdir(_REPO_ROOT)
+    monkeypatch.syspath_prepend(str(_REPO_ROOT / "apps/prototype-description-service"))
+    namespace: dict[str, object] = {}
+    exec(compile(block, str(_SCOPE_DOC), "exec"), namespace)
+    return namespace
+
+
+def _assert_fence_published_n_matches_eval(
+    block: str, namespace: dict[str, object]
+) -> None:
+    # BR-31: exec discards bare `.n` expressions; pin each trailing `# <int>`
+    # to eval of the same line so a doc edit is what the test measures.
+    pinned = 0
+    for raw in block.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        match = _TRAILING_PUBLISHED_N.fullmatch(line)
+        if "size_for_margin(" in line:
+            assert match is not None, (
+                f"size_for_margin line has no trailing # <int> published n: {line}"
+            )
+        if match is None:
+            continue
+        expr, published = match.group(1), int(match.group(2))
+        computed = eval(expr, namespace)
+        assert computed == published, (
+            f"fence publishes {published} for {expr!r} but eval returned {computed!r}"
+        )
+        pinned += 1
+    assert pinned > 0, "fence has no trailing # <int> n comments to pin"
 
 
 def test_published_cells_regenerate_from_fir12_selection_manifest():
@@ -393,15 +432,28 @@ def test_scope_doc_ci_n_fence_runs_as_written(monkeypatch: pytest.MonkeyPatch):
     assert "kish_effective_cluster_size" in block
     assert "size_for_margin" in block
     assert "cluster_size=a" in block
-    monkeypatch.chdir(_REPO_ROOT)
-    monkeypatch.syspath_prepend(str(_REPO_ROOT / "apps/prototype-description-service"))
-    namespace: dict[str, object] = {}
-    exec(compile(block, str(_SCOPE_DOC), "exec"), namespace)
+    namespace = _exec_scope_fence(block, monkeypatch)
     a = namespace["a"]
     assert isinstance(a, float)
     assert a == pytest.approx(10.846875)
-    assert size_for_margin(margin=0.10, population=640, cluster_size=a, icc=0.044).n == 114
-    assert size_for_margin(margin=0.10, population=640, cluster_size=a, icc=0.361).n == 261
+    _assert_fence_published_n_matches_eval(block, namespace)
+
+
+def test_scope_doc_planning_n_fence_runs_as_written(monkeypatch: pytest.MonkeyPatch):
+    doc = _SCOPE_DOC.read_text()
+    block = _fence_containing(doc, "cluster_size=2.1")
+    assert "benchmarks/manifests/fir12-selection-v1.json" in block
+    assert "project_frame_psu_image_counts" in block
+    assert "kish_effective_cluster_size" in block
+    assert "size_for_margin" in block
+    assert "cluster_size=a" in block
+    assert "icc=0.2" in block
+    assert "icc=0.3" in block
+    namespace = _exec_scope_fence(block, monkeypatch)
+    a = namespace["a"]
+    assert isinstance(a, float)
+    assert a == pytest.approx(10.846875)
+    _assert_fence_published_n_matches_eval(block, namespace)
 
 
 def test_allocate_sums_to_n():

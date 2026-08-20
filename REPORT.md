@@ -657,3 +657,64 @@ AUDIT-09, rg-006, TEST-15.
 
 Nothing in this finding.
 
+########## F23
+
+# Lane F23 — DESCQUAL-2-BR-31
+
+## DESCQUAL-2-BR-31 (medium) — closed
+
+`test_scope_doc_ci_n_fence_runs_as_written` exec'd the CI fence but discarded
+bare `size_for_margin(...).n` expressions; trailing `# 114` / `# 261` were
+compared to nothing. The test then re-asserted 114/261 from its own literals.
+Same hole on the planning-n fence (`# 198` / `# 239` / `# 48`).
+
+### What changed
+
+- Helper `_assert_fence_published_n_matches_eval` walks each fence line,
+  regex-matches trailing `# <int>` (optional parenthetical so
+  `# 48  (B_eyewear)` counts), `eval`s the annotated expression in the
+  exec'd namespace, and compares. Numbers are read from the doc, not
+  transcribed into the test.
+- Existing CI exec test kept and extended with that helper (hand-transcribed
+  114/261 asserts removed).
+- New sibling `test_scope_doc_planning_n_fence_runs_as_written` execs the
+  planning-n fence and pins 198/239/48 the same way.
+- `audit_sampling.py` untouched. Doc comments already matched shipped
+  `size_for_margin` (114, 261, 198, 239, 48); no number correction.
+
+### Tests
+
+- `test_scope_doc_ci_n_fence_runs_as_written` — exec + pin `# 114`/`# 261`
+- `test_scope_doc_planning_n_fence_runs_as_written` — exec + pin `# 198`/`# 239`/`# 48`
+
+59/59 in `test_eval_harness_audit_sampling.py`.
+
+### Mutants (TEST-15)
+
+**Mutant 1** — `/tmp/br31-ci-mutant.md`: `# 114` → `# 999` in the CI fence.
+
+RED: `test_scope_doc_ci_n_fence_runs_as_written` — `assert 114 == 999`.
+Planning-n test stayed GREEN (fence isolation).
+
+**Mutant 2** — `/tmp/br31-planning-mutant.md`: `# 198` → `# 999` in the
+planning-n fence.
+
+RED: `test_scope_doc_planning_n_fence_runs_as_written` — `assert 198 == 999`.
+CI test stayed GREEN.
+
+**Mutant 3** — `/tmp/br31-b-eyewear-mutant.md`: `# 48  (B_eyewear)` → `# 999`.
+
+RED: `test_scope_doc_planning_n_fence_runs_as_written` — `assert 48 == 999`.
+
+Doc restored from `/tmp/br31-orig.md`. Coordinator pre-fix mutant
+(`# 114` → `# 999` left both tests GREEN) is now RED.
+
+### Canon
+
+rg-006, AUDIT-09, TEST-15.
+
+### Not closed
+
+Nothing in this finding. Allocation fence (`# 44` / `# 36` / `# 29`) is a
+third fence and was not in the brief.
+

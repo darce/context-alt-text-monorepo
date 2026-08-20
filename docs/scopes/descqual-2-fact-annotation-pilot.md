@@ -67,12 +67,22 @@ with z=1.96 and the conservative p=0.5:
 | ±5 pp | 241 |
 
 **AUDIT-10**: proportional allocation of n=84 across the five strata gives
-A=4, B=10, C=4, D=11, E=53. That is useless for B — the one stratum populated enough to
-carry a comparative occlusion claim. B therefore gets a **precision floor** and is sized
-from its own margin: **B_eyewear needs 44 of its 80 images for ±10 pp** unclustered
-(35 for ±12.5 pp, 28 for ±15 pp), rising to **48** once its own clustering is priced in
-(Kish a=2.1 on the PSU partition below, ICC=0.2). Allocation is disproportional by design, and the inclusion
-probability of every drawn unit is recorded so a design-based interval remains computable (AUDIT-08).
+A=4, B=11, C=5, D=11, E=53 (Hamilton remainders applied; the floors alone are
+B=10, C=4 and sum to 82). That is still thin for B — the one stratum populated
+enough to carry a comparative occlusion claim. B therefore gets a **precision
+floor** and is sized from its own margin: **B_eyewear needs 44 of its 80 images
+for ±10 pp** unclustered (36 for ±12.5 pp, 29 for ±15 pp), rising to **48** once
+its own clustering is priced in (Kish a=2.1 on the PSU partition below, ICC=0.2).
+Allocation is disproportional by design, and the inclusion probability of every
+drawn unit is recorded so a design-based interval remains computable (AUDIT-08).
+
+```
+allocate(strata_sizes=project_strata_image_counts(strata_counts), n=84)
+# {'A_true_occluder': 4, 'B_eyewear': 11, 'C_pose': 5, 'D_capture': 11, 'E_clean': 53}
+size_for_margin(margin=0.10,  population=80).n  # 44
+size_for_margin(margin=0.125, population=80).n  # 36   (ceil of 35.007; not 35)
+size_for_margin(margin=0.15,  population=80).n  # 29   (ceil of 28.062; not 28)
+```
 
 **AUDIT-11**: images cluster within subject, and Kish `deff = 1 + (a−1)·ICC` assumes
 a **partition** of the frame — one PSU per image. The published `a = 12.90` was

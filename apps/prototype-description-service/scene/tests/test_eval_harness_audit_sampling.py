@@ -376,6 +376,21 @@ def test_design_effect_rejects_non_finite_as_audit_error():
         size_for_margin(margin=0.10, population=80, cluster_size=float("inf"), icc=0.2)
 
 
+def test_size_for_margin_rejects_overflow_derived_nan_as_audit_error():
+    # Finite inputs that overflow n_deff to inf, then n = inf/inf = nan,
+    # which math.ceil used to raise a raw ValueError (BR-10 only covered input nan).
+    spec = ClusterSpec(cluster_size=1e308, icc=1.0)
+    with pytest.raises(AuditSamplingError, match="non-finite"):
+        size_for_margin(
+            margin=0.10,
+            population=640,
+            cluster_size=spec.cluster_size,
+            icc=spec.icc,
+        )
+    with pytest.raises(AuditSamplingError, match="non-finite"):
+        size_for_margin(margin=0.10, population=640, cluster_size=1e308, icc=1.0)
+
+
 def test_allocate_rejects_unknown_cluster_params_stratum():
     with pytest.raises(AuditSamplingError, match="cluster_params"):
         allocate(

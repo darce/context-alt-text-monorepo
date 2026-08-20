@@ -11,6 +11,11 @@ partial corpus and is never published. Exit 3 is a refused metric: publish
 only with ``--allow-refused`` (default off) and still exit 3. Any other
 nonzero exit is unrecognized and is not swallowed.
 
+The inner interpreter is ``$ACX_EVAL_PYTHON`` when that variable is set
+(must be an executable file; a bad override is an error, not a fall-back).
+When it is unset, the service ``.venv/bin/python`` is required — this
+script does not fall back to ``sys.executable``.
+
 Usage (from repo root):
 
     python3 scripts/regen_eval_report.py \\
@@ -24,12 +29,16 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shutil
 import subprocess
 import sys
 import tempfile
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
+
+EVAL_PYTHON_ENV = "ACX_EVAL_PYTHON"
 
 _SCRIPTS_DIR = Path(__file__).resolve().parent
 if str(_SCRIPTS_DIR) not in sys.path:
@@ -43,6 +52,10 @@ from eval_exit_contract import (  # noqa: E402
 )
 
 
+class EvalPythonError(Exception):
+    """The score-CLI interpreter path could not be resolved."""
+
+
 @dataclass(frozen=True)
 class ScoreExitDecision:
     """Publication decision derived from the scorer's actual exit code."""
@@ -51,6 +64,37 @@ class ScoreExitDecision:
     exit_code: int
     reason: str
     message: str
+
+
+def _is_executable_file(path: Path) -> bool:
+    return path.is_file() and os.access(path, os.X_OK)
+
+
+def resolve_eval_python(
+    root: Path,
+    *,
+    environ: Mapping[str, str] | None = None,
+) -> Path:
+    """Return the interpreter the score CLI must run under.
+
+    A set ``ACX_EVAL_PYTHON`` that is not an executable file is an error —
+    never a silent fall-back to the service venv or to ``sys.executable``.
+    Unset keeps the historical ``.venv/bin/python`` requirement.
+    """
+    env: Mapping[str, str] = os.environ if environ is None else environ
+    if EVAL_PYTHON_ENV in env:
+        python = Path(env[EVAL_PYTHON_ENV])
+        if not _is_executable_file(python):
+            raise EvalPythonError(
+                f"invalid {EVAL_PYTHON_ENV}: not an executable file: {python}"
+            )
+        return python
+    python = (
+        root / "apps" / "prototype-description-service" / ".venv" / "bin" / "python"
+    )
+    if not python.is_file():
+        raise EvalPythonError(f"missing service venv python: {python}")
+    return python
 
 
 def classify_score_exit(returncode: int, *, allow_refused: bool) -> ScoreExitDecision:
@@ -289,9 +333,10 @@ def main(argv: list[str] | None = None) -> int:
     before_ident_md = md_identification_line(out_md if out_md.is_file() else None)
 
     service = root / "apps" / "prototype-description-service"
-    python = service / ".venv" / "bin" / "python"
-    if not python.is_file():
-        print(f"missing service venv python: {python}", file=sys.stderr)
+    try:
+        python = resolve_eval_python(root)
+    except EvalPythonError as exc:
+        print(str(exc), file=sys.stderr)
         return 2
 
     with tempfile.TemporaryDirectory(prefix="regen-eval-") as tmp:

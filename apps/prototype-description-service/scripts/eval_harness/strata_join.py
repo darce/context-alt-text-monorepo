@@ -279,10 +279,38 @@ def _entry_identities(entry: Mapping[str, Any], *, where: str) -> tuple[str, ...
     if value is None:
         return ()
     if isinstance(value, (list, tuple)):
-        return tuple(str(item) for item in value if item)
+        return tuple(
+            _normalise_identity_item(item, where=where) for item in value
+        )
     raise StratumJoinError(
         f"{where}.present_identities must be a list of strings, got {type(value).__name__}"
     )
+
+
+def _normalise_identity_item(value: object, *, where: str) -> str:
+    """Ingest-time identity normalisation (BR-75).
+
+    Same alphabet as ``fir_bakeoff_run._normalise_subject_id`` /
+    ``gallery_split._normalise_subject_id``: strip and reject non-string or
+    blank-after-strip items. Applied here, at manifest parse, so membership
+    (roster lookup) and the census (unique-subject count) see the same
+    canonical key instead of diverging on unstripped whitespace. A blank or
+    malformed item is a manifest defect and must fail closed at the
+    boundary (sr-006) rather than pass through and crash later at point of
+    use, or silently vanish.
+    """
+    if not isinstance(value, str):
+        raise StratumJoinError(
+            f"{where}.present_identities item must be a non-empty string, "
+            f"got {value!r}"
+        )
+    key = value.strip()
+    if not key:
+        raise StratumJoinError(
+            f"{where}.present_identities item must be a non-empty string, "
+            f"got {value!r}"
+        )
+    return key
 
 
 def _reject_stratum_conflict(

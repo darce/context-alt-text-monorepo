@@ -6,6 +6,7 @@ TEST-15: each assertion is proven live against a /tmp mutant of fir_bakeoff_run.
 from __future__ import annotations
 
 import json
+import unicodedata
 from pathlib import Path
 from typing import Any
 
@@ -1191,6 +1192,97 @@ def test_present_identities_list_and_absent_are_legal(tmp_path: Path) -> None:
     assert assigned == {"Alice", "Bob"}
 
 
+def test_present_identities_strips_whitespace_padding() -> None:
+    """BR-75: ingest normalises the same alphabet membership already used.
+
+    Before the fix, ``_identities``/``_entry_identities`` did a bare
+    ``str(item)`` with no strip, so 'Bob ' survived ingest unstripped and
+    only ``mated_identities_for`` ever normalised it.
+    """
+    assert _identities({"present_identities": ["Bob "]}) == ("Bob",)
+    assert _identities({"present_identities": [" Bob"]}) == ("Bob",)
+    assert _entry_identities(
+        {"present_identities": ["Bob "]}, where="entries[0]"
+    ) == ("Bob",)
+
+
+def test_present_identities_rejects_non_string_item() -> None:
+    """BR-75(b): a non-string item must fail at ingest, not coerce silently.
+
+    Before the fix, ``_identities({'present_identities': [123]})`` returned
+    ``('123',)`` via a bare ``str(item)`` and manifest ingest never reached
+    a type check.
+    """
+    with pytest.raises(FirBakeoffRunError, match="present_identities"):
+        _identities({"present_identities": [123]})
+    with pytest.raises(StratumJoinError, match="present_identities"):
+        _entry_identities({"present_identities": [123]}, where="entries[0]")
+
+
+def test_present_identities_rejects_blank_item_at_ingest() -> None:
+    """BR-75(c): a blank/whitespace-only item must fail closed at ingest.
+
+    Before the fix, ``_identities({'present_identities': ['Bob', ' ']})``
+    returned ``('Bob', ' ')`` and the crash only surfaced later inside
+    ``mated_identities_for`` — silently dropping every mate on that still,
+    including a genuine 'Bob' mate, rather than rejecting the manifest.
+    """
+    with pytest.raises(FirBakeoffRunError, match="present_identities"):
+        _identities({"present_identities": ["Bob", " "]})
+    with pytest.raises(StratumJoinError, match="present_identities"):
+        _entry_identities(
+            {"present_identities": ["Bob", " "]}, where="entries[0]"
+        )
+
+
+def test_census_normalises_padded_duplicate_subject(tmp_path: Path) -> None:
+    """BR-75(a): a stratum with 'Bob' and 'Bob ' is one subject, not two.
+
+    Before the fix, ``unique_subjects`` split on the unstripped name (5),
+    while the gallery builder merged the two spellings into one roster key
+    — a published census that disagreed with the enrollment it described.
+    """
+    entries = [
+        _entry(1, "E_clean", ["Alice"], "a"),
+        _entry(2, "E_clean", ["Alice"], "b"),
+        _entry(3, "E_clean", ["Bob"], "c"),
+        _entry(4, "E_clean", ["Bob "], "d"),
+        _entry(5, "E_clean", ["Dale", "Eve"], "i"),
+        _entry(10, "A_true_occluder", ["Alice"], "e"),
+        _entry(11, "B_eyewear", ["Bob"], "f"),
+        _entry(12, "C_pose", ["Alice"], "g"),
+        _entry(13, "D_capture", ["Carol"], "h"),
+    ]
+    path = _write_manifest(tmp_path, entries, strata_counts=_base_counts())
+    plan = build_run_plan(selection_manifest_path=path, seed=7)
+    report = score_run(plan=plan, searches=_probe_searches(), tau=0.50)
+    rows = {item["stratum"]: item for item in report.to_rows()}
+    assert rows["E_clean"]["unique_subjects"] == 4
+    assert set(plan.split.g1) | set(plan.split.g2) == {"Alice", "Bob", "Dale", "Eve"}
+
+
+def test_mated_identities_for_dedupes_repeated_subject(tmp_path: Path) -> None:
+    """BR-73: a still listing one subject twice is one mated search, not two.
+
+    Constructs the ``ProbeEntry`` directly with a post-ingest duplicate
+    ('Bob', 'Bob') — the exact shape BR-75 ingest normalisation produces
+    when a manifest lists two spellings of the same subject on one still.
+    Before the fix, both mentions matched the roster and both were
+    appended, doubling that subject's contribution to FNIR's denominator.
+    """
+    plan = _plan(tmp_path)
+    gallery = _gallery_of(plan, "Bob")
+    entry = ProbeEntry(
+        media_id=999,
+        sha256="f" * 64,
+        stratum="A_true_occluder",
+        present_identities=("Bob", "Bob"),
+    )
+    matched = mated_identities_for(entry, split=plan.split, gallery=gallery)
+    assert matched == ("Bob",)
+    assert len(matched) == 1
+
+
 def _copresent_plan(tmp_path: Path, *, seed: int = 7):
     entries = [
         _entry(1, "E_clean", ["Alice"], "a"),
@@ -1949,6 +2041,65 @@ def test_coverage_gap_marks_complete_searches_incomplete(tmp_path: Path) -> None
     assert report.points["C_pose"].incomplete is False
 
 
+def _plan_without_d_capture(tmp_path: Path, *, seed: int = 7) -> RunPlan:
+    """A manifest that never declares D_capture at all (BR-68 fixture).
+
+    D_capture is entirely absent from ``strata_counts`` and
+    ``declared_empty_cells`` — not just zero-images or declared-empty. No
+    entry carries stratum 'D_capture' either, so ``load_stratum_index``
+    never sees the name and ``join_by_stratum`` produces zero rows for it.
+    """
+    entries = [item for item in _base_entries() if item["stratum"] != "D_capture"]
+    counts = _base_counts()
+    del counts["D_capture"]
+    path = _write_manifest(tmp_path, entries, strata_counts=counts)
+    return build_run_plan(selection_manifest_path=path, seed=seed)
+
+
+def test_overall_incomplete_true_when_declared_probe_stratum_never_measured(
+    tmp_path: Path,
+) -> None:
+    """BR-68: a PROBE_STRATA member with zero join rows must mark overall incomplete.
+
+    ``overall_incomplete`` used to be ``any(points[name].incomplete for name
+    in PROBE_STRATA if name in points)`` — a stratum absent from ``points``
+    (because it produced no join rows at all) was silently skipped by
+    ``if name in points``, contributing neither True nor False, even though
+    ``_missing_required_probe_searches`` also exempts it (declared_images
+    defaults to 0 for a name absent from strata_counts). The two guards'
+    blind spots line up exactly, so a run missing an entire declared probe
+    stratum published "complete".
+
+    The converse control lives in the first half of this test: the same
+    base plan with all four probe strata present and fully searched must
+    still report ``overall.incomplete is False``.
+    """
+    complete_plan = _plan(tmp_path)
+    complete_searches, complete_foils = _complete_probe_searches(complete_plan)
+    complete = score_run(
+        plan=complete_plan,
+        searches=complete_searches,
+        tau=0.50,
+        overall_nonmated=complete_foils,
+    )
+    assert complete.overall.incomplete is False
+    assert complete.never_measured_probe_strata == ()
+
+    gap_plan = _plan_without_d_capture(tmp_path)
+    searches, overall_foils = _complete_probe_searches(gap_plan)
+    del searches["D_capture"]
+    report = score_run(
+        plan=gap_plan,
+        searches=searches,
+        tau=0.50,
+        overall_nonmated=overall_foils,
+    )
+    assert "D_capture" not in report.points
+    assert "D_capture" not in gap_plan.index.declared_empty_cells
+    assert report.never_measured_probe_strata == ("D_capture",)
+    assert report.overall.incomplete is True
+
+
 def test_padded_g1_roster_key_keeps_mated_partition(tmp_path: Path) -> None:
     """BR-56 / EVAL-18: g1 whitespace must not move an enrolled probe into the foil set."""
     clean = _plan(tmp_path)
@@ -1989,24 +2140,59 @@ def test_padded_g2_roster_key_keeps_mated_partition(tmp_path: Path) -> None:
     assert "Alice " not in padded.split.g2
 
 
-_IDENTITY_KEY_SAMPLES: tuple[object, ...] = (
-    "Bob",
-    " Bob",
-    "Bob ",
-    " Bob ",
-    "\tBob",
-    "Bob\t",
-    "\tBob\t",
-    "Van Dyke",
-    " Van Dyke ",
-    "VanDyke",
-    "",
-    "   ",
-    "\t",
-    123,
-    None,
-    True,
+_UNICODE_WHITESPACE_PADDING: tuple[str, ...] = (
+    " ",  # ASCII space
+    "\t",  # tab
+    "\n",  # LF
+    "\r",  # CR
+    "\r\n",  # CRLF
+    " ",  # NBSP
+    " ",  # em space
+    " ",  # line separator
 )
+
+
+def _generate_identity_key_samples() -> tuple[object, ...]:
+    """Unicode whitespace + NFC/NFD alphabet for the twin-normaliser test (BR-74).
+
+    The prior literal tuple was ASCII-space/tab only. Both
+    ``_normalise_subject_id`` twins (this module and ``gallery_split``, the
+    latter out of scope here) strip via bare ``str.strip()``, which treats
+    every code point in ``_UNICODE_WHITESPACE_PADDING`` as strippable — so an
+    ASCII-only denylist would miss a future divergence (e.g. one twin
+    switching to an ASCII-only strip) for a subject id padded with NBSP,
+    em-space, a line separator, or a bare CR/LF. The NFC/NFD pair pins that
+    both twins treat a not-byte-identical-but-visually-identical name the
+    same way as each other, even though neither applies Unicode
+    normalisation itself.
+    """
+    base = "Bob"
+    samples: list[object] = [base]
+    for pad in _UNICODE_WHITESPACE_PADDING:
+        samples.append(f"{pad}{base}")
+        samples.append(f"{base}{pad}")
+        samples.append(f"{pad}{base}{pad}")
+    samples.extend(
+        [
+            "Van Dyke",
+            " Van Dyke ",
+            "VanDyke",
+            "",
+            "   ",
+            "\t",
+            123,
+            None,
+            True,
+        ]
+    )
+    nfc = unicodedata.normalize("NFC", "Café")
+    nfd = unicodedata.normalize("NFD", "Café")
+    assert nfc != nfd, "fixture sanity: NFC/NFD forms must be distinct code point sequences"
+    samples.extend([nfc, nfd, f" {nfc} ", f" {nfd} "])
+    return tuple(samples)
+
+
+_IDENTITY_KEY_SAMPLES: tuple[object, ...] = _generate_identity_key_samples()
 
 
 def _normalise_outcome(fn: Any, raw: object) -> str | None:

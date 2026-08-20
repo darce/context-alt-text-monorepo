@@ -359,21 +359,44 @@ def test_deff_then_fpc_ordering_on_labeled_subject_a_not_planning_n():
 _SCOPE_DOC = _REPO_ROOT / "docs/scopes/descqual-2-fact-annotation-pilot.md"
 
 _TRAILING_COMMENT = re.compile(r"^(.*?)\s+#\s*(.*)$")
-_DISPLAY_MATH_FENCE_LANG = "text"
-_EXECUTABLE_FENCE_LANGS = frozenset({"", "python", "py"})
 _FENCE_LANG_TAG = re.compile(r"^[A-Za-z][\w+-]*$")
+_AUDIT_SKIP_TOKEN = "audit-skip"
+_PSU_CENSUS_COMMENT = re.compile(
+    r"^(?P<n_psus>\d+)\s+PSUs,\s*"
+    r"(?:Σm|Sm)\s*=\s*(?P<sum_m>\d+),\s*"
+    r"(?:Σm²|Σm2|Sm2)\s*=\s*(?P<sum_m2>\d+)\s*$"
+)
 
 
-def _fence_language_and_source(block: str) -> tuple[str, str]:
-    # BR-34: skip display-math by the doc's `text` tag, not by matching content.
+def _parse_fence_block(block: str) -> tuple[str, frozenset[str], str]:
+    """Return (lang, info_tokens, source). Unknown/absent tags are not a skip."""
     if "\n" not in block:
         info = block.strip()
-        return (info.lower(), "") if _FENCE_LANG_TAG.fullmatch(info) else ("", block)
+        tokens = tuple(info.split()) if info else ()
+        if tokens and _FENCE_LANG_TAG.fullmatch(tokens[0]):
+            lowered = tuple(token.lower() for token in tokens)
+            return lowered[0], frozenset(lowered), ""
+        return "", frozenset(), block
     first, rest = block.split("\n", 1)
     info = first.strip()
-    if _FENCE_LANG_TAG.fullmatch(info):
-        return info.lower(), rest
-    return "", block
+    tokens = tuple(info.split()) if info else ()
+    if tokens and _FENCE_LANG_TAG.fullmatch(tokens[0]):
+        lowered = tuple(token.lower() for token in tokens)
+        return lowered[0], frozenset(lowered), rest
+    return "", frozenset(), block
+
+
+def _fence_is_opted_out(tokens: frozenset[str]) -> bool:
+    return _AUDIT_SKIP_TOKEN in tokens
+
+
+def _block_has_audit_skip(block: str) -> bool:
+    info = block.split("\n", 1)[0].strip()
+    return _AUDIT_SKIP_TOKEN in {token.lower() for token in info.split()}
+
+
+def _scope_doc_fence_blocks(text: str) -> list[str]:
+    return [block for index, block in enumerate(text.split("```")) if index % 2 == 1]
 
 
 def _fence_containing(text: str, needle: str) -> str:
@@ -385,15 +408,11 @@ def _fence_containing(text: str, needle: str) -> str:
 
 
 def _scope_doc_executable_fences(text: str) -> list[str]:
-    # BR-34: pin every executable python fence, not an allowlist of size_for_margin.
+    # BR-44: check every fence; skip only an explicit audit-skip token.
     fences: list[str] = []
-    for index, block in enumerate(text.split("```")):
-        if index % 2 != 1:
-            continue
-        lang, source = _fence_language_and_source(block)
-        if lang == _DISPLAY_MATH_FENCE_LANG:
-            continue
-        if lang not in _EXECUTABLE_FENCE_LANGS:
+    for block in _scope_doc_fence_blocks(text):
+        _lang, tokens, source = _parse_fence_block(block)
+        if _fence_is_opted_out(tokens):
             continue
         stripped = source.strip()
         if stripped:
@@ -459,11 +478,37 @@ def _assert_published_matches(computed: object, published: object, expr: str) ->
     assert computed == published, message
 
 
+def _comment_is_opted_out(comment: str) -> bool:
+    return comment.strip().lower() == _AUDIT_SKIP_TOKEN
+
+
+def _assert_psu_census_comment_matches(
+    computed: object,
+    published_n_psus: int,
+    published_sum_m: int,
+    published_sum_m2: int,
+    expr: str,
+) -> None:
+    if not isinstance(computed, FramePsuPartition):
+        raise AssertionError(
+            f"PSU census comment on {expr!r} but eval returned {computed!r}"
+        )
+    actual_sum = sum(computed.sizes)
+    actual_sum_sq = sum(m * m for m in computed.sizes)
+    message = (
+        f"fence publishes {published_n_psus} PSUs, Σm={published_sum_m}, "
+        f"Σm²={published_sum_m2} for {expr!r} but eval returned "
+        f"n_psus={computed.n_psus}, Σm={actual_sum}, Σm²={actual_sum_sq}"
+    )
+    assert computed.n_psus == published_n_psus, message
+    assert actual_sum == published_sum_m, message
+    assert actual_sum_sq == published_sum_m2, message
+
+
 def _assert_fence_published_comments_match_eval(
     block: str, namespace: dict[str, object]
 ) -> None:
-    # BR-31 / BR-34: exec discards bare expressions; pin each published trailing
-    # comment (int, float, or dict) to eval of the same line.
+    # BR-31 / BR-34 / BR-45: pin every trailing comment; unparseable is a fail.
     pinned = 0
     for raw in block.splitlines():
         line = raw.strip()
@@ -480,10 +525,27 @@ def _assert_fence_published_comments_match_eval(
         if match is None:
             continue
         expr, comment = match.group(1), match.group(2)
+        if _comment_is_opted_out(comment):
+            continue
+        census = _PSU_CENSUS_COMMENT.fullmatch(comment.strip())
+        computed = _eval_fence_line(expr, namespace)
+        if census is not None:
+            _assert_psu_census_comment_matches(
+                computed,
+                int(census.group("n_psus")),
+                int(census.group("sum_m")),
+                int(census.group("sum_m2")),
+                expr,
+            )
+            pinned += 1
+            continue
         published = _published_literal(comment)
         if published is None:
-            continue
-        computed = _eval_fence_line(expr, namespace)
+            raise AssertionError(
+                "unparseable trailing comment inside collected fence "
+                f"(not a published literal, not a PSU census, not {_AUDIT_SKIP_TOKEN}): "
+                f"{line}"
+            )
         _assert_published_matches(computed, published, expr)
         pinned += 1
     assert pinned > 0, "fence has no published trailing comments to pin"
@@ -553,17 +615,64 @@ def test_every_scope_doc_executable_fence_published_comment_matches_eval(
     doc = _SCOPE_DOC.read_text()
     fences = _scope_doc_executable_fences(doc)
     assert fences, "scope doc has no executable fences to pin"
-    raw_fences = [block for index, block in enumerate(doc.split("```")) if index % 2 == 1]
-    tagged_text = [
-        _fence_language_and_source(block)[1].strip()
-        for block in raw_fences
-        if _fence_language_and_source(block)[0] == _DISPLAY_MATH_FENCE_LANG
-    ]
-    assert tagged_text, "display-math fences must be tagged text, not left untagged"
-    assert all(body not in fences for body in tagged_text)
+    raw_fences = _scope_doc_fence_blocks(doc)
+    opted_out = [block for block in raw_fences if _block_has_audit_skip(block)]
+    assert opted_out, "display-math fences must be explicitly opted out with audit-skip"
+    assert len(fences) == len(raw_fences) - len(opted_out)
     for block in fences:
         namespace = _exec_scope_fence(block, monkeypatch)
         _assert_fence_published_comments_match_eval(block, namespace)
+
+
+def test_scope_doc_fence_collector_count_is_all_fences_minus_opt_outs():
+    doc = _SCOPE_DOC.read_text()
+    raw_fences = _scope_doc_fence_blocks(doc)
+    opted_out = [block for block in raw_fences if _block_has_audit_skip(block)]
+    collected = _scope_doc_executable_fences(doc)
+    assert raw_fences, "scope doc has no fenced blocks"
+    assert len(collected) == len(raw_fences) - len(opted_out)
+    assert len(opted_out) == 1
+    assert all(_AUDIT_SKIP_TOKEN in _parse_fence_block(block)[1] for block in opted_out)
+
+
+def test_scope_doc_fence_collector_keeps_unknown_and_non_python_tags():
+    sample = (
+        "intro\n"
+        "```\nuntagged  # 1\n```\n"
+        "```python3\npython3_tagged  # 2\n```\n"
+        "```text\ntext_tagged  # 3\n```\n"
+        "```text audit-skip\nopted_out  # 4\n```\n"
+        "```rs\nrust_tagged  # 5\n```\n"
+    )
+    raw_fences = _scope_doc_fence_blocks(sample)
+    opted_out = [block for block in raw_fences if _block_has_audit_skip(block)]
+    collected = _scope_doc_executable_fences(sample)
+    assert len(raw_fences) == 5
+    assert len(opted_out) == 1
+    assert len(collected) == len(raw_fences) - len(opted_out) == 4
+    joined = "\n".join(collected)
+    assert "untagged" in joined
+    assert "python3_tagged" in joined
+    assert "text_tagged" in joined
+    assert "rust_tagged" in joined
+    assert "opted_out" not in joined
+
+
+def test_unparseable_trailing_comment_fails_instead_of_skipping():
+    with pytest.raises(AssertionError, match="unparseable trailing comment"):
+        _assert_fence_published_comments_match_eval("x = 1  # not-a-literal", {"x": 1})
+
+
+def test_psu_census_trailing_comment_is_checked():
+    namespace = {
+        "project_frame_psu_image_counts": project_frame_psu_image_counts,
+        "entries": _fir12_entries(),
+    }
+    truth = "frame = project_frame_psu_image_counts(entries)  # 241 PSUs, Σm=640, Σm²=6942"
+    _assert_fence_published_comments_match_eval(truth, namespace)
+    lie = "frame = project_frame_psu_image_counts(entries)  # 999 PSUs, Σm=640, Σm²=6942"
+    with pytest.raises(AssertionError, match="999"):
+        _assert_fence_published_comments_match_eval(lie, namespace)
 
 
 def test_allocate_sums_to_n():
@@ -999,6 +1108,24 @@ def test_two_stage_census_of_m3_subjects_is_195_images():
     sample = draw_two_stage(clusters=clusters, n_psu=65, n_within=3, seed=20260820)
     assert len(sample.units) == 195
     assert len({u.psu_id for u in sample.units}) == 65
+
+
+def test_partition_census_of_m3_psus_is_192_images():
+    n_m3 = sum(1 for m in FRAME_PSU.sizes if m >= 3)
+    assert n_m3 == 64
+    clusters = {
+        f"s{i}": tuple(f"s{i}-{j}" for j in range(m))
+        for i, m in enumerate(FRAME_PSU.sizes)
+        if m >= 3
+    }
+    assert len(clusters) == 64
+    sample = draw_two_stage(clusters=clusters, n_psu=64, n_within=3, seed=20260820)
+    assert len(sample.units) == 192
+    assert len({u.psu_id for u in sample.units}) == 64
+    assert sum(1 for m in FRAME_PSU.sizes if m >= 2) == 76
+    assert sum(1 for m in WHOLE_FRAME.sizes if m >= 3) == 65
+    assert n_m3 != 65
+    assert len(sample.units) != 195
 
 
 def test_estimate_icc_anova_known_fixture():

@@ -182,6 +182,20 @@ def test_precision_floor_raises_b_above_proportional():
     assert record.icc is None
 
 
+def test_allocate_refuses_when_precision_floors_exceed_n():
+    # n=30 pilot: proportional B=4; B_eyewear ±10 pp floor needs 44 unclustered.
+    proportional = allocate(strata_sizes=FIR12_STRATA, n=30)
+    assert proportional["B_eyewear"] == 4
+    with pytest.raises(
+        AuditSamplingError, match=r"precision floors require n>=44, got n=30"
+    ):
+        allocate(
+            strata_sizes=FIR12_STRATA,
+            n=30,
+            precision_floors={"B_eyewear": 0.10},
+        )
+
+
 def test_draw_is_deterministic_without_replacement_and_carries_pi():
     members = _members()
     allocation = allocate(strata_sizes=FIR12_STRATA, n=84, precision_floors={"B_eyewear": 0.10})

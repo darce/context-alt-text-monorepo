@@ -796,3 +796,13 @@ Cost-and-instrument pilot only (BR-17): no ICC, no deff, no full-study n.
 
 `scene/tests/test_eval_harness_pilot_draw.py`: **23 passed**.
 Full `scene/tests`: **4 failed, 1316 passed, 4 skipped** (four PGPASSWORD boot failures pre-existing).
+
+########## N9
+
+# Lane N9 — DESCQUAL-2: scope-doc fences regenerate their own numbers
+
+- **DESCQUAL-2-BR-37** — B floor fence now derives `b_a` from the B-slice PSU partition (`b_entries` → `project_frame_psu_image_counts` → Kish a=2.1) instead of a `cluster_size=2.1` literal; `test_published_cells_regenerate_from_fir12_selection_manifest` pins `size_for_margin(..., cluster_size=b_a, icc=0.2).n == 48` from `fir12-selection-v1.json`; planning-fence needle is `cluster_size=b_a` (2.1 allowlist dropped). Mutant `/tmp/br37-mutant.md` (`cluster_size=2.36` + `# 49`): RED `no fenced block contains 'cluster_size=b_a'`. Same 2.36 plug into the manifest pin: RED `assert 49 == 48`.
+- **DESCQUAL-2-BR-34** — selector is every executable python fence; trailing `# <int>` and `# {dict}` both pin via `ast.literal_eval` (`allocate(...)` dict moved onto the call line); Fisher-Z block is a `text` fence, skipped by language tag not by content. Test: `test_every_scope_doc_executable_fence_published_comment_matches_eval`. Mutant `/tmp/br34-mutant-red.md` (`A_true_occluder`: 5): RED `publishes {...5...} but eval returned Allocation(...4...)`. Matching copy `/tmp/br34-mutant-green.md`: GREEN.
+- **DESCQUAL-2-BR-38** — E[within-subject pairs] is now C(30,2)×6302/(640×639)=6.70 from the image-PSU partition (`Σm(m−1)=6942−640`); overlapping-join 6476/6.89 is the same ~1.5 sample Kish a, so planning n does not move. Live fence covered by the BR-34 pin. Mutant `/tmp/br38-mutant.md` (`# 6476` / `# 6.89`): RED `publishes 6476 ... but eval returned 6302`.
+
+`scene/tests/test_eval_harness_audit_sampling.py`: **61 passed**.

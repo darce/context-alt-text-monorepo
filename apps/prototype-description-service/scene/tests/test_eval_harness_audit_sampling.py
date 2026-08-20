@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import ast
 import json
 import math
 import random
 import re
+from collections.abc import Mapping
 from pathlib import Path
 
 import pytest
@@ -356,7 +358,22 @@ def test_deff_then_fpc_ordering_on_labeled_subject_a_not_planning_n():
 
 _SCOPE_DOC = _REPO_ROOT / "docs/scopes/descqual-2-fact-annotation-pilot.md"
 
-_TRAILING_PUBLISHED_N = re.compile(r"^(.*?)\s+#\s*(\d+)\s*(?:\([^)]*\))?\s*$")
+_TRAILING_COMMENT = re.compile(r"^(.*?)\s+#\s*(.*)$")
+_DISPLAY_MATH_FENCE_LANG = "text"
+_EXECUTABLE_FENCE_LANGS = frozenset({"", "python", "py"})
+_FENCE_LANG_TAG = re.compile(r"^[A-Za-z][\w+-]*$")
+
+
+def _fence_language_and_source(block: str) -> tuple[str, str]:
+    # BR-34: skip display-math by the doc's `text` tag, not by matching content.
+    if "\n" not in block:
+        info = block.strip()
+        return (info.lower(), "") if _FENCE_LANG_TAG.fullmatch(info) else ("", block)
+    first, rest = block.split("\n", 1)
+    info = first.strip()
+    if _FENCE_LANG_TAG.fullmatch(info):
+        return info.lower(), rest
+    return "", block
 
 
 def _fence_containing(text: str, needle: str) -> str:
@@ -367,13 +384,21 @@ def _fence_containing(text: str, needle: str) -> str:
     raise AssertionError(f"no fenced block contains {needle!r}")
 
 
-def _scope_doc_size_for_margin_fences(text: str) -> list[str]:
-    # BR-32: pin every fence that publishes n, not an allowlist of needles.
-    return [
-        block.strip()
-        for index, block in enumerate(text.split("```"))
-        if index % 2 == 1 and "size_for_margin(" in block
-    ]
+def _scope_doc_executable_fences(text: str) -> list[str]:
+    # BR-34: pin every executable python fence, not an allowlist of size_for_margin.
+    fences: list[str] = []
+    for index, block in enumerate(text.split("```")):
+        if index % 2 != 1:
+            continue
+        lang, source = _fence_language_and_source(block)
+        if lang == _DISPLAY_MATH_FENCE_LANG:
+            continue
+        if lang not in _EXECUTABLE_FENCE_LANGS:
+            continue
+        stripped = source.strip()
+        if stripped:
+            fences.append(stripped)
+    return fences
 
 
 def _exec_scope_fence(
@@ -386,30 +411,82 @@ def _exec_scope_fence(
     return namespace
 
 
-def _assert_fence_published_n_matches_eval(
+def _published_literal(comment: str) -> object | None:
+    text = comment.strip()
+    try:
+        return ast.literal_eval(text)
+    except (ValueError, SyntaxError):
+        pass
+    stripped = re.sub(r"\s*\([^)]*\)\s*$", "", text).strip()
+    if stripped == text:
+        return None
+    try:
+        return ast.literal_eval(stripped)
+    except (ValueError, SyntaxError):
+        return None
+
+
+def _eval_fence_line(line: str, namespace: dict[str, object]) -> object:
+    tree = ast.parse(line, mode="exec")
+    if len(tree.body) != 1:
+        raise AssertionError(f"expected a single statement, got {line!r}")
+    stmt = tree.body[0]
+    if isinstance(stmt, ast.Assign):
+        value = stmt.value
+    elif isinstance(stmt, ast.Expr):
+        value = stmt.value
+    else:
+        raise AssertionError(f"fence line is not an assignment or expression: {line}")
+    return eval(compile(ast.Expression(value), str(_SCOPE_DOC), "eval"), namespace)
+
+
+def _assert_published_matches(computed: object, published: object, expr: str) -> None:
+    message = (
+        f"fence publishes {published!r} for {expr!r} but eval returned {computed!r}"
+    )
+    if isinstance(published, dict):
+        actual: object = dict(computed) if isinstance(computed, Mapping) else computed
+        assert actual == published, message
+        return
+    if (
+        isinstance(published, (int, float))
+        and not isinstance(published, bool)
+        and isinstance(computed, (int, float))
+        and not isinstance(computed, bool)
+    ):
+        assert computed == pytest.approx(published), message
+        return
+    assert computed == published, message
+
+
+def _assert_fence_published_comments_match_eval(
     block: str, namespace: dict[str, object]
 ) -> None:
-    # BR-31: exec discards bare `.n` expressions; pin each trailing `# <int>`
-    # to eval of the same line so a doc edit is what the test measures.
+    # BR-31 / BR-34: exec discards bare expressions; pin each published trailing
+    # comment (int, float, or dict) to eval of the same line.
     pinned = 0
     for raw in block.splitlines():
         line = raw.strip()
         if not line or line.startswith("#"):
             continue
-        match = _TRAILING_PUBLISHED_N.fullmatch(line)
+        match = _TRAILING_COMMENT.fullmatch(line)
         if "size_for_margin(" in line:
             assert match is not None, (
-                f"size_for_margin line has no trailing # <int> published n: {line}"
+                f"size_for_margin line has no trailing published comment: {line}"
+            )
+            assert _published_literal(match.group(2)) is not None, (
+                f"size_for_margin line comment is not a published literal: {line}"
             )
         if match is None:
             continue
-        expr, published = match.group(1), int(match.group(2))
-        computed = eval(expr, namespace)
-        assert computed == published, (
-            f"fence publishes {published} for {expr!r} but eval returned {computed!r}"
-        )
+        expr, comment = match.group(1), match.group(2)
+        published = _published_literal(comment)
+        if published is None:
+            continue
+        computed = _eval_fence_line(expr, namespace)
+        _assert_published_matches(computed, published, expr)
         pinned += 1
-    assert pinned > 0, "fence has no trailing # <int> n comments to pin"
+    assert pinned > 0, "fence has no published trailing comments to pin"
 
 
 def test_published_cells_regenerate_from_fir12_selection_manifest():
@@ -426,6 +503,9 @@ def test_published_cells_regenerate_from_fir12_selection_manifest():
     assert size_for_margin(margin=0.10, population=640, cluster_size=a, icc=0.2).n == 198
     assert size_for_margin(margin=0.10, population=640, cluster_size=a, icc=0.3).n == 239
     assert size_for_margin(margin=0.10, population=640, cluster_size=a, icc=1.0).n == 397
+    b_entries = [e for e in entries if e["stratum"] == "B_eyewear"]
+    b_a = kish_effective_cluster_size(project_frame_psu_image_counts(b_entries).sizes)
+    assert size_for_margin(margin=0.10, population=80, cluster_size=b_a, icc=0.2).n == 48
 
 
 def test_scope_doc_ci_n_fence_runs_as_written(monkeypatch: pytest.MonkeyPatch):
@@ -442,12 +522,13 @@ def test_scope_doc_ci_n_fence_runs_as_written(monkeypatch: pytest.MonkeyPatch):
     a = namespace["a"]
     assert isinstance(a, float)
     assert a == pytest.approx(10.846875)
-    _assert_fence_published_n_matches_eval(block, namespace)
+    _assert_fence_published_comments_match_eval(block, namespace)
 
 
 def test_scope_doc_planning_n_fence_runs_as_written(monkeypatch: pytest.MonkeyPatch):
     doc = _SCOPE_DOC.read_text()
-    block = _fence_containing(doc, "cluster_size=2.1")
+    block = _fence_containing(doc, "cluster_size=b_a")
+    assert "cluster_size=2.1" not in block
     assert "benchmarks/manifests/fir12-selection-v1.json" in block
     assert "project_frame_psu_image_counts" in block
     assert "kish_effective_cluster_size" in block
@@ -459,18 +540,30 @@ def test_scope_doc_planning_n_fence_runs_as_written(monkeypatch: pytest.MonkeyPa
     a = namespace["a"]
     assert isinstance(a, float)
     assert a == pytest.approx(10.846875)
-    _assert_fence_published_n_matches_eval(block, namespace)
+    b_a = namespace["b_a"]
+    assert isinstance(b_a, float)
+    assert b_a == pytest.approx(2.1)
+    assert size_for_margin(margin=0.10, population=80, cluster_size=b_a, icc=0.2).n == 48
+    _assert_fence_published_comments_match_eval(block, namespace)
 
 
-def test_every_scope_doc_size_for_margin_fence_published_n_matches_eval(
+def test_every_scope_doc_executable_fence_published_comment_matches_eval(
     monkeypatch: pytest.MonkeyPatch,
 ):
     doc = _SCOPE_DOC.read_text()
-    fences = _scope_doc_size_for_margin_fences(doc)
-    assert fences, "scope doc has no size_for_margin fences to pin"
+    fences = _scope_doc_executable_fences(doc)
+    assert fences, "scope doc has no executable fences to pin"
+    raw_fences = [block for index, block in enumerate(doc.split("```")) if index % 2 == 1]
+    tagged_text = [
+        _fence_language_and_source(block)[1].strip()
+        for block in raw_fences
+        if _fence_language_and_source(block)[0] == _DISPLAY_MATH_FENCE_LANG
+    ]
+    assert tagged_text, "display-math fences must be tagged text, not left untagged"
+    assert all(body not in fences for body in tagged_text)
     for block in fences:
         namespace = _exec_scope_fence(block, monkeypatch)
-        _assert_fence_published_n_matches_eval(block, namespace)
+        _assert_fence_published_comments_match_eval(block, namespace)
 
 
 def test_allocate_sums_to_n():

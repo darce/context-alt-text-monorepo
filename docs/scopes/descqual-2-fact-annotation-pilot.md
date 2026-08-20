@@ -123,12 +123,19 @@ appear first (`Auburn Hollow`, `Tidal Quarry`, `Vellum Warren`, `Verdant Beacon`
 
 | ICC | deff | n for ±10 pp over N=640, a=10.846875 |
 | --- | --- | --- |
-| 0.0 | 1.00 | 84 |
-| 0.05 | 1.49 | 118 |
-| 0.1 | 1.98 | 148 |
-| 0.2 | 2.97 | **198** (planning) |
-| 0.3 | 3.95 | **239** (sensitivity) |
-| 0.5 | 5.92 | 302 |
+| 0.0 | 1.000 | 84 |
+| 0.05 | 1.492 | 118 |
+| 0.1 | 1.985 | 148 |
+| 0.2 | 2.969 | **198** (planning) |
+| 0.3 | 3.954 | **239** (sensitivity) |
+| 0.5 | 5.923 | 302 |
+
+`n` is `size_for_margin(..., cluster_size=10.846875, icc=...).n` — unrounded `a`,
+then `math.ceil`. `deff` is display-rounded to three decimals; recomputing n
+from the printed deff reproduces every cell. Two-decimal deff does not (ICC=0.1
+printed 1.98 → n=147, not 148). The older pin `a=12.90` produced n=327 at
+ICC=0.5; exact labeled-only `a=12.904412` produces 328. This table does not
+use that pin.
 
 **Estimand grain is the image, not the fact.** The headline estimand
 `fabricated_fact_rate` is already image-level: the fraction of *images* that

@@ -227,6 +227,61 @@ file (`manifest.py`). Prose pins the token; the enum must match.
 
 ---
 
+## BR-28 (low) — print deff to three decimals so n is reproducible from the table
+
+**Canon:** AUDIT-09.
+
+**What changed.** Two-decimal deff was display-rounded independently of the n
+beside it. On the BR-22 partition, ICC=0.1 printed deff 1.98 recomputes to
+n=147, not the table's 148. Printed deff to **three decimals**; n is still
+from unrounded `a=10.846875` via `size_for_margin` (ceil). The old
+`a=12.90` → 327 vs exact 12.904412 → 328 defect is gone because the table
+no longer uses that pin.
+
+| ICC | OLD deff (2dp) | NEW deff (3dp) | n (unchanged, from unrounded a) |
+| --- | --- | --- | --- |
+| 0.05 | 1.49 | **1.492** | 118 |
+| 0.1 | 1.98 | **1.985** | 148 |
+| 0.2 | 2.97 | **2.969** | 198 |
+| 0.3 | 3.95 | **3.954** | 239 |
+| 0.5 | 5.92 | **5.923** | 302 |
+
+**Calls.**
+
+```
+>>> a = 10.846875
+>>> for icc in (0.05, 0.1, 0.2, 0.3, 0.5):
+...     ss = size_for_margin(margin=0.10, population=640, cluster_size=a, icc=icc)
+...     print(icc, round(ss.deff, 3), ss.n)
+0.05 1.492 118
+0.1 1.985 148
+0.2 2.969 198
+0.3 3.954 239
+0.5 5.923 302
+```
+
+Recomputing n from the printed 3dp deff matches every cell. Mutant: print
+ICC=0.1 deff as 1.98 → n_from_printed=147, table n=148 (RED).
+
+**Could not close.** Nothing.
+
+---
+
+## Summary
+
+Six findings, six commits, all inside `docs/scopes/descqual-2-fact-annotation-pilot.md`.
+No production code. No sibling-owned files.
+
+| finding | commit subject | closed |
+| --- | --- | --- |
+| BR-17 | demote 30-image draw to cost-and-instrument pilot | yes |
+| BR-22 | one image-level PSU partition; planning n 216→198 | yes |
+| BR-19 | estimand grain = image-level fabricated_fact_rate | yes |
+| BR-23 | allocate B=11 C=5; B parentheticals 36/29 | yes |
+| BR-25 | gold 10%/0.80 + written `disagreement-escalate-to-sme` | yes (enum is sibling) |
+| BR-28 | deff to three decimals | yes |
+
+
 
 
 

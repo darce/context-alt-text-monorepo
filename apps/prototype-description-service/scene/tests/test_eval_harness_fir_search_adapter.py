@@ -14,6 +14,7 @@ import numpy as np
 import pytest
 
 from scripts.eval_harness.face_assignment import (
+    AssociationResult,
     argmax_gallery,
     assign_open_set_kfold,
     collect_matched_faces,
@@ -28,6 +29,9 @@ from scripts.eval_harness.fir_bakeoff_run import (
     score_run,
 )
 from scripts.eval_harness.fir_search_adapter import (
+    _prototypes_from_templates,
+    _roster,
+    _unmatched_detection_embeddings,
     max_score_per_search_unit,
     searches_from_run_records,
 )
@@ -160,7 +164,7 @@ def _two_subject_plan(tmp_path: Path, *, extra: list[dict[str, Any]] | None = No
     return build_run_plan(selection_manifest_path=path, seed=7)
 
 
-def _full_plan(tmp_path: Path) -> RunPlan:
+def _full_plan(tmp_path: Path, *, extra: list[dict[str, Any]] | None = None) -> RunPlan:
     entries = [
         _entry(1, "E_clean", ["Alice"], "a"),
         _entry(2, "E_clean", ["Alice"], "b"),
@@ -172,13 +176,19 @@ def _full_plan(tmp_path: Path) -> RunPlan:
         _entry(12, "C_pose", ["Alice"], "g"),
         _entry(13, "D_capture", ["Carol"], "h"),
     ]
-    path = _write_manifest(
-        tmp_path,
-        entries,
-        strata_counts=_counts(
-            A_true_occluder=1, B_eyewear=1, C_pose=1, D_capture=1, E_clean=5
-        ),
+    counts = _counts(
+        A_true_occluder=1, B_eyewear=1, C_pose=1, D_capture=1, E_clean=5
     )
+    if extra:
+        entries.extend(extra)
+        for item in extra:
+            stratum = str(item["stratum"])
+            current = counts[stratum]["images"]
+            counts[stratum] = {
+                "images": current + 1,
+                "unique_subjects_faces_gt0": 0,
+            }
+    path = _write_manifest(tmp_path, entries, strata_counts=counts)
     return build_run_plan(selection_manifest_path=path, seed=7)
 
 
@@ -733,3 +743,239 @@ def test_padded_gt_name_still_emits_mated_search(tmp_path: Path) -> None:
     assert row.true_name == "Alice"
     assert row.top1_score is not None
     assert row.top1_name == "Alice"
+
+
+def _two_subject_items_with_probes(
+    tmp_path: Path, *, extra: list[dict[str, Any]] | None = None
+) -> tuple[RunPlan, list[dict[str, Any]], dict[int, list[dict[str, Any]]]]:
+    plan = _two_subject_plan(tmp_path, extra=extra)
+    vecs = _vecs()
+    items, gt = _enrollment_records(plan, vecs)
+    for media_id, name in ((10, "Alice"), (11, "Bob")):
+        item, boxes = _named_item(media_id, [name], vecs)
+        items.append(item)
+        gt[media_id] = boxes
+    return plan, items, gt
+
+
+@pytest.mark.parametrize("gallery", list(GalleryName), ids=lambda g: g.value)
+def test_each_gallery_uses_its_own_enrolled_roster(
+    tmp_path: Path, gallery: GalleryName
+) -> None:
+    plan, items, gt = _two_subject_items_with_probes(tmp_path)
+    enrolled = dict(plan.split.g1 if gallery is GalleryName.G1 else plan.split.g2)
+    other_gallery = (
+        GalleryName.G2 if gallery is GalleryName.G1 else GalleryName.G1
+    )
+    other = dict(
+        plan.split.g2 if gallery is GalleryName.G1 else plan.split.g1
+    )
+    assert enrolled
+    assert set(enrolled).isdisjoint(other)
+    assert set(_roster(plan, gallery)) == set(enrolled)
+    assert set(_roster(plan, other_gallery)) == set(other)
+    assert set(_roster(plan, gallery)).isdisjoint(_roster(plan, other_gallery))
+    subject = next(iter(enrolled))
+    searches, _ = searches_from_run_records(items, gt, plan=plan)
+    mated = [
+        row
+        for row in _flatten(searches)
+        if row.true_name == subject and row.gallery == gallery
+    ]
+    assert len(mated) == 1
+    assert mated[0].top1_name == subject
+    assert mated[0].top1_name not in other
+
+
+def test_group_photo_prototype_is_per_subject_not_media(tmp_path: Path) -> None:
+    extra = [_entry(20, "A_true_occluder", ["Dale", "Eve"], "j")]
+    plan = _full_plan(tmp_path, extra=extra)
+    vecs = _vecs()
+    items, gt = _enrollment_records(plan, vecs)
+    for media_id, names in (
+        (10, ["Alice"]),
+        (11, ["Bob"]),
+        (12, ["Alice"]),
+        (13, ["Carol"]),
+        (20, ["Dale", "Eve"]),
+    ):
+        item, boxes = _named_item(media_id, names, vecs)
+        items.append(item)
+        gt[media_id] = boxes
+
+    gallery = _gallery_of(plan, "Dale")
+    assert _gallery_of(plan, "Eve") is gallery
+    matched, _, _, _ = collect_matched_faces(items, gt)
+    group_faces = [
+        face
+        for face in matched
+        if face.media_id == 5 and face.true_name in {"Dale", "Eve"}
+    ]
+    assert {face.true_name for face in group_faces} == {"Dale", "Eve"}
+    dale_emb = next(face.embedding_array() for face in group_faces if face.true_name == "Dale")
+    eve_emb = next(face.embedding_array() for face in group_faces if face.true_name == "Eve")
+    dale_only = mean_prototype([dale_emb])
+    eve_only = mean_prototype([eve_emb])
+    blended = mean_prototype([dale_emb, eve_emb])
+    assert not np.allclose(dale_only, blended)
+    assert not np.allclose(eve_only, blended)
+
+    prototypes = _prototypes_from_templates(_roster(plan, gallery), matched)
+    assert np.allclose(prototypes["Dale"], dale_only)
+    assert np.allclose(prototypes["Eve"], eve_only)
+    assert not np.allclose(prototypes["Dale"], prototypes["Eve"])
+
+    searches, _ = searches_from_run_records(items, gt, plan=plan)
+    by_subject = {
+        row.true_name: row
+        for row in searches["A_true_occluder"]["mated"]
+        if row.media_id == 20 and row.gallery == gallery
+    }
+    assert set(by_subject) == {"Dale", "Eve"}
+    s_dale, name_dale = argmax_gallery(dale_emb, {"Dale": dale_only, "Eve": eve_only})
+    s_eve, name_eve = argmax_gallery(eve_emb, {"Dale": dale_only, "Eve": eve_only})
+    s_dale_blend, _ = argmax_gallery(dale_emb, {"Dale": blended, "Eve": blended})
+    assert name_dale == "Dale"
+    assert name_eve == "Eve"
+    assert s_dale != pytest.approx(s_dale_blend)
+    assert by_subject["Dale"].top1_name == "Dale"
+    assert by_subject["Eve"].top1_name == "Eve"
+    assert by_subject["Dale"].top1_score == pytest.approx(s_dale)
+    assert by_subject["Eve"].top1_score == pytest.approx(s_eve)
+    assert by_subject["Dale"].top1_score != pytest.approx(s_dale_blend)
+
+
+def test_foil_units_keep_distinct_media_ids(tmp_path: Path) -> None:
+    extra = [_entry(13, "D_capture", ["Carol"], "h")]
+    plan, items, gt = _two_subject_items_with_probes(tmp_path, extra=extra)
+    vecs = _vecs()
+    carol_vecs = {**vecs, "Carol": vecs["Alice"]}
+    carol_item, carol_boxes = _named_item(13, ["Carol"], carol_vecs)
+    items.append(carol_item)
+    gt[13] = carol_boxes
+
+    alice_gallery = _gallery_of(plan, "Alice")
+    foil_entries = occluded_probes_for(plan, gallery=alice_gallery)[1]
+    foil_media = [entry.media_id for entry in foil_entries]
+    assert len(foil_media) >= 2
+    assert len(set(foil_media)) == len(foil_media)
+
+    searches, overall = searches_from_run_records(items, gt, plan=plan)
+    gallery_overall = [row for row in overall if row.gallery == alice_gallery]
+    overall_ids = [row.media_id for row in gallery_overall]
+    assert len(overall_ids) == len(foil_media)
+    assert sorted(overall_ids) == sorted(foil_media)
+    assert len(set(overall_ids)) == len(overall_ids)
+
+    by_media = {row.media_id: row for row in gallery_overall}
+    high = by_media[13]
+    low = by_media[11]
+    assert high.top1_score is not None
+    assert low.top1_score is not None
+    assert high.top1_name == "Alice"
+    assert high.top1_score > 0.99
+    assert low.top1_score < 0.50
+    assert high.top1_score != pytest.approx(low.top1_score)
+    stratum_ids = [
+        row.media_id
+        for row in searches["D_capture"]["nonmated"] + searches["B_eyewear"]["nonmated"]
+        if row.gallery == alice_gallery
+    ]
+    assert sorted(stratum_ids) == sorted(foil_media)
+
+
+def test_probe_on_non_first_enrolled_template_raises(tmp_path: Path) -> None:
+    extra = [_entry(20, "A_true_occluder", ["Eve"], "j")]
+    plan = _full_plan(tmp_path, extra=extra)
+    broken = _with_probe_in_gallery(plan, subject="Eve", probe_media_id=20)
+    own = _gallery_of(broken, "Eve")
+    roster = broken.split.g1 if own is GalleryName.G1 else broken.split.g2
+    assert list(roster)[0] != "Eve"
+    assert 20 in roster["Eve"].media_ids
+    assert 20 not in next(iter(roster.values())).media_ids
+
+    vecs = _vecs()
+    items, gt = _enrollment_records(broken, vecs)
+    probe, boxes = _named_item(20, ["Eve"], vecs)
+    items.append(probe)
+    gt[20] = boxes
+    with pytest.raises(FirBakeoffRunError, match=r"media_id=20"):
+        searches_from_run_records(items, gt, plan=broken)
+
+
+@pytest.mark.parametrize(
+    "first, second",
+    [("Alice", "Bob"), ("Bob", "Alice")],
+    ids=["alice_first", "bob_first"],
+)
+def test_tied_scores_keep_first_name_star(first: str, second: str) -> None:
+    key = (10, GalleryName.G1, "Alice")
+    reduced = max_score_per_search_unit(
+        [
+            (key, 0.80, first),
+            (key, 0.80, second),
+        ]
+    )
+    assert list(reduced) == [key]
+    assert reduced[key][0] == pytest.approx(0.80)
+    assert reduced[key][1] == first
+
+
+def _carol_with_last_unmatched_alice(
+    vecs: dict[str, list[float]],
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    layout = _layout(3)
+    cx, cy, w, h, bbox_gt = layout[0]
+    item = _item(
+        13,
+        [
+            _face(bbox_gt, vecs["Carol"]),
+            _face(layout[1][4], vecs["_stranger"]),
+            _face(layout[2][4], vecs["Alice"]),
+        ],
+    )
+    return item, [_gt(cx, cy, w, h, "Carol")]
+
+
+def test_out_of_range_unmatched_detection_index_raises() -> None:
+    vecs = _vecs()
+    item = _item(13, [_face([0.0, 0.0, 20.0, 20.0], vecs["Carol"])])
+    assoc = AssociationResult(
+        pairs=(),
+        unmatched_detections=(len(item["faces"]),),
+        unmatched_gt=(),
+        ious=(),
+    )
+    with pytest.raises(FirBakeoffRunError, match=r"media_id=13"):
+        _unmatched_detection_embeddings(item, assoc)
+
+
+def test_last_in_range_unmatched_detection_reaches_overall_nonmated(
+    tmp_path: Path,
+) -> None:
+    vecs = _vecs()
+    carol_item, carol_boxes = _carol_with_last_unmatched_alice(vecs)
+    plan, items, gt = _full_plan_items_with_carol(tmp_path, carol_item, carol_boxes)
+    _, associations, _, _ = collect_matched_faces(items, gt)
+    last = len(carol_item["faces"]) - 1
+    assert last in associations[13].unmatched_detections
+    assert last == 2
+    searches, overall = searches_from_run_records(items, gt, plan=plan)
+    alice_gallery = _gallery_of(plan, "Alice")
+    foil = [
+        row
+        for row in overall
+        if row.media_id == 13 and row.gallery == alice_gallery
+    ]
+    assert len(foil) == 1
+    row = foil[0]
+    assert row.detected is True
+    assert row.top1_name == "Alice"
+    assert row.top1_score is not None
+    assert row.top1_score > 0.99
+    stratum = [
+        hit
+        for hit in searches["D_capture"]["nonmated"]
+        if hit.media_id == 13 and hit.gallery == alice_gallery
+    ]
+    assert stratum == foil

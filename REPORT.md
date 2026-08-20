@@ -324,3 +324,19 @@ Canon: TEST-15, EVAL-18, EVAL-19, MLDATA-04, rg-005. Touched only `fir_search_ad
 
 Two-file gate: 77 passed (F32's 74 + 1 parametrize case + 2 new tests).
 
+########## lane/f34
+
+# FIR-12 BR-50..BR-55 — six unpinned search-adapter seams
+
+Canon: TEST-15, EVAL-13, EVAL-16, EVAL-19, MLDATA-07, rg-006. Tests-only for BR-50..BR-54. Production edit is only `_unmatched_detection_embeddings` (BR-55). F32/F33 foil FTA and identity-key paths unchanged.
+
+- BR-50 (high): no production change. `test_each_gallery_uses_its_own_enrolled_roster` parametrizes over both `GalleryName` members; `_roster(plan, gallery)` keys must match that gallery's split and a mated search must return that gallery's enrolled subject. Mutant `/tmp/f34-mutants/m-br50.py` (`if gallery is GalleryName.G1 or True`). RED both params: `assert {'Alice'} == {'Bob'}` (`_roster(G2)` served G1). Restore GREEN.
+- BR-51 (high): no production change. `test_group_photo_prototype_is_per_subject_not_media` enrolls Dale+Eve on media 5; each prototype equals that subject's mean, not the blend, and probe 20 scores match the per-subject gallery. Mutant `/tmp/f34-mutants/m-br51.py` (all three `(media_id, true_name)` anchors coarsened to `media_id`). RED: `np.allclose(blend, dale_only)` (`[0.5, 0.5, 0.707]` vs `[0, 0, 1]`). Restore GREEN.
+- BR-52 (high): no production change. `test_foil_units_keep_distinct_media_ids` — N declared foil media in Alice's gallery yield N `overall_nonmated` rows with distinct `media_id`s, and Carol (Alice embedding) keeps s>0.99 while Bob foil stays <0.50. Mutant `/tmp/f34-mutants/m-br52.py` (both `key = (entry.media_id, gallery, _FOIL_UNIT_SUBJECT)` sites → `(0, gallery, ...)`). Distinct ids stayed GREEN (emission still iterates entries); score pin RED: `assert 1.0 < 0.5` (Bob foil inherited Carol's max). Restore GREEN.
+- BR-53 (medium): no production change. `test_probe_on_non_first_enrolled_template_raises` puts Eve last in G1 (`Bob, Dale, Eve`) and adds probe 20 onto Eve's template. Mutant `/tmp/f34-mutants/m-br53.py` (`next(iter(roster.values()))` only). RED: `DID NOT RAISE FirBakeoffRunError`. Restore GREEN.
+- BR-54 (low): no production change. `test_tied_scores_keep_first_name_star` (Alice-first and Bob-first) asserts `max_score_per_search_unit` keeps the first-seen `name_star` on equal scores. Mutant `/tmp/f34-mutants/m-br54.py` (`s_max > current[0]` → `>=`). RED: `assert 'Bob' == 'Alice'` / `assert 'Alice' == 'Bob'`. Restore GREEN.
+- BR-55A (low): `_unmatched_detection_embeddings` now raises `FirBakeoffRunError` naming `media_id` on an out-of-range unmatched index (silent `if 0 <= index < len(faces)` filter gone). Test `test_out_of_range_unmatched_detection_index_raises`. Restore-filter mutant `/tmp/f34-mutants/m-br55-restore-filter.py` RED: `DID NOT RAISE`. Widen `index < len(faces)` to `<=` (`/tmp/f34-mutants/m-br55-filter-le.py` and raise-bound twin `m-br55-widen-le.py`) RED: `IndexError` (index==len(faces) indexed) not `FirBakeoffRunError`. Restore GREEN.
+- BR-55B (low): `test_last_in_range_unmatched_detection_reaches_overall_nonmated` — 3 faces, unmatched last index 2 searched vs Alice's gallery, `overall_nonmated` s>0.99. Named `index <= len(faces)` mutants stayed GREEN here (last in-range is still included; Test A caught that too-wide bound). Drop-last mutant `/tmp/f34-mutants/m-br55-drop-last.py` (`index >= n_faces - 1`) RED: raise on index=2 / media_id=13. Restore GREEN. Did not weaken the last-in-range assertion.
+
+Two-file gate: 24 passed (F33 adapter file 15 + 2 BR-50 params + BR-51 + BR-52 + BR-53 + 2 BR-54 params + BR-55A + BR-55B).
+

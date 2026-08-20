@@ -293,11 +293,16 @@ def _unmatched_detection_embeddings(
     if item is None or assoc is None:
         return ()
     faces = item.get("faces") or []
-    return tuple(
-        faces[index]["embedding"]
-        for index in assoc.unmatched_detections
-        if 0 <= index < len(faces)
-    )
+    n_faces = len(faces)
+    embeddings: list[Any] = []
+    for index in assoc.unmatched_detections:
+        if index < 0 or index >= n_faces:
+            raise FirBakeoffRunError(
+                f"unmatched_detections index={index} is out of range for "
+                f"media_id={item.get('media_id')} ({n_faces} faces)"
+            )
+        embeddings.append(faces[index]["embedding"])
+    return tuple(embeddings)
 
 
 def _box_name(gt: Any) -> str | None:

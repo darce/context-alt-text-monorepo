@@ -243,3 +243,40 @@ def test_allocate_rejects_unknown_cluster_params_stratum():
             precision_floors={"B_eyewear": 0.10},
             cluster_params={"not_a_stratum": ClusterSpec(cluster_size=2.0, icc=0.2)},
         )
+
+
+def test_allocation_source_dicts_cannot_mutate_constructed_object():
+    counts = {"E_clean": 10, "B_eyewear": 4}
+    floors = {}
+    alloc = Allocation(counts=counts, floors=floors)
+    counts["E_clean"] = 0
+    floors["B_eyewear"] = size_for_margin(margin=0.10, population=80)
+    assert alloc["E_clean"] == 10
+    assert dict(alloc) == {"E_clean": 10, "B_eyewear": 4}
+    assert "B_eyewear" not in alloc.floors
+
+
+def test_allocation_hash_equal_for_equal_mappings():
+    floor = size_for_margin(margin=0.10, population=80)
+    a = Allocation(
+        counts={"E_clean": 10, "B_eyewear": 4},
+        floors={"B_eyewear": floor},
+    )
+    b = Allocation(
+        counts={"B_eyewear": 4, "E_clean": 10},
+        floors={"B_eyewear": floor},
+    )
+    assert a == b
+    assert hash(a) == hash(b)
+    assert len({a, b}) == 1
+    different = Allocation(counts={"E_clean": 10, "B_eyewear": 4}, floors={})
+    assert a != different
+    assert hash(a) != hash(different)
+
+
+def test_allocation_item_assignment_raises():
+    alloc = Allocation(counts={"E_clean": 10}, floors={})
+    with pytest.raises(TypeError):
+        alloc["E_clean"] = 0
+    with pytest.raises(TypeError):
+        alloc.counts["E_clean"] = 0

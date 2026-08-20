@@ -70,3 +70,54 @@ the published n is not identified at this pilot size.
 hand-typed cells are BR-23.
 
 ---
+
+## BR-22 (high) — one PSU partition for both Kish `a` and `N`
+
+**Canon:** AUDIT-11.
+
+**What changed.** Declared a single image-level PSU partition used for both `a`
+and `N`: unlabeled images stay in N=640 as singleton clusters; a multi-identity
+image is assigned to its **first-listed** `present_identities` name. Planning
+table regenerated on that partition.
+
+| quantity | OLD | NEW |
+| --- | --- | --- |
+| Kish `a` (whole frame) | 12.90 (130 labeled subjects, Σm=544, applied to N=640) | **10.846875** = 6942/640 (241 PSUs, Σm=N=640) |
+| planning n (ICC=0.20) | 216 | **198** |
+| sensitivity n (ICC=0.30) | 261 | **239** |
+| ICC table n | 84/124/159/216/261/327 | **84/118/148/198/239/302** |
+| B_eyewear Kish `a` | 2.36 (75 memberships / 47 subjects, applied to N_h=80) | **2.1** = 168/80 |
+| B_eyewear clustered floor | 49 | **48** |
+| follow-on ICC draw | 65 subjects × 3 = 195; CI [0.045, 0.360]; n 121..284 | **64 PSUs × 3 = 192**; CI [0.044, 0.361]; n **114..261** |
+
+The brief's overlapping-plus-singletons construction (a=10.827, n=198) keeps the
+16-image overlap and is cited as a contrast, not the partition. First-listed
+assignment changes `a` (10.846875 vs 10.827) but not n at ICC=0.2.
+
+**Calls.**
+
+```
+# PSU = first present_identity, else unlabeled:{media_id}
+sizes = tuple(partition_counts.values())   # 241 PSUs, sum 640, sum_sq 6942
+a = kish_effective_cluster_size(sizes)     # 10.846875
+size_for_margin(margin=0.10, population=640, cluster_size=10.846875, icc=0.2).n  # 198
+size_for_margin(margin=0.10, population=640, cluster_size=10.846875, icc=0.3).n  # 239
+size_for_margin(margin=0.10, population=80,  cluster_size=2.1, icc=0.2).n       # 48
+size_for_margin(margin=0.10, population=640, cluster_size=10.846875, icc=1.0).n  # 397
+size_for_margin(margin=0.10, population=640, cluster_size=10.846875, icc=0.044).n # 114
+size_for_margin(margin=0.10, population=640, cluster_size=10.846875, icc=0.361).n # 261
+```
+
+Frame: 16 multi-identity images, 19 extra memberships, 115 empty
+`present_identities`. Four identities never appear first and are not PSUs:
+Auburn Hollow, Tidal Quarry, Vellum Warren, Verdant Beacon.
+
+**Mutant (TEST-15).** Restore labeled-only `a=12.90` against N=640:
+`size_for_margin(..., cluster_size=12.90, icc=0.2).n` → **216** (RED against
+the published 198). Same hole at B: `cluster_size=2.36` → 49, not 48.
+
+**Could not close.** Grain of the estimand (image vs fact) is BR-19. Display
+rounding of deff (1.98 vs 1.985 → n 147 vs 148) is BR-28.
+
+---
+

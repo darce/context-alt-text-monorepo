@@ -843,3 +843,27 @@ Owned: `scene/tests/test_eval_harness_audit_sampling.py` + Fisher-Z fence opener
 - **DESCQUAL-2-BR-49 (medium)** — partition census 64 PSUs × 3 = 192 is now asserted from `FRAME_PSU.sizes`, independent of overlapping 65/195. Test: `test_partition_census_of_m3_psus_is_192_images`. Mutant M12 `/tmp/n14-proof/m12b` (`identities[0]`→`identities[-1]` in a throwaway `audit_sampling.py`) → RED `assert 63 == 64` on the new test; `test_two_stage_census_of_m3_subjects_is_195_images` and `test_fir12_icc_eligible_subject_counts` stayed GREEN (2 passed).
 
 `scene/tests/test_eval_harness_audit_sampling.py`: **66 passed**.
+########## N13
+
+# Lane N13 — DESCQUAL-2-BR-48: packet schema + estimator guard past public names
+
+Owned: `scripts/eval_harness/pilot_draw.py`, `scene/tests/test_eval_harness_pilot_draw.py`. N12's draw/gold guards left untouched.
+
+- **DESCQUAL-2-BR-48** — annotation-packet rows now have an exhaustive licensed key set (`ANNOTATION_PACKET_ROW_KEYS`); `emit_annotation_packet` raises `PilotDrawError` on any extra/missing key. Tests pin that set by equality (not containment): `test_annotation_packet_row_schema_is_exact` plus the same equality in `test_emit_annotation_packet_is_one_dual_annotator_row_per_drawn_image` and `test_drawn_unit_set_never_grows_and_entrypoints_return_no_icc`. Estimator guard now (1) token-scans every defined symbol including private FunctionDef names (`_rho_hat` matches `rho`) and (2) probes every owned/isolated callable with two one-way ICC fixtures and fails if the return matches the ANOVA ICC the pilot is not licensed to produce. Tests: `test_pilot_module_does_not_estimate_icc_or_deff` (widened), `test_no_module_callable_returns_one_way_icc`. Existing public-name denylist (`estimate_icc` in source, public callable allowlist, report_rows `_DESIGN_STAT_KEYS`) kept.
+
+Mutants under `/tmp/n13-proof-before` and `/tmp/n13-proof-after` (coordinator ICC body inserted above `_is_hard_entry`):
+
+| mutant | before (N12, 50 tests) | after (N13, 52 tests) |
+| --- | --- | --- |
+| h5b `_rho_hat` private one-way ICC, no denylisted public name | GREEN 50 | RED `test_pilot_module_does_not_estimate_icc_or_deff` (`_rho_hat`) + `test_no_module_callable_returns_one_way_icc` |
+| h6b `_rho_hat` published as `"rho_hat"` on every packet row | GREEN 50 | RED `test_annotation_packet_row_schema_is_exact` (`extra=['rho_hat']`) + estimator tests |
+| h8 `"totally_unvetted_field"` on every packet row | GREEN 50 | RED `test_annotation_packet_row_schema_is_exact` (`extra=['totally_unvetted_field']`) |
+| h7 `"icc"` key on `report_rows` | RED | RED (same `test_drawn_unit_set_never_grows_and_entrypoints_return_no_icc`) |
+| h9 public `estimate_icc` | RED | RED (source denylist + public surface + behavioural probe) |
+| h10 private `_estimate_icc` | RED | RED (source denylist + behavioural probe) |
+
+Extra TEST-15: `_one_way` (no design-stat token in the name) `/tmp/n13-proof-after/h5b_one_way.py` → RED `test_no_module_callable_returns_one_way_icc` only (name denylist missed it; behaviour caught it). h8 with the production schema raise deleted `/tmp/n13-proof-after/h8_no_prod_guard.py` → RED `assert set(packet) == _LICENSED_PACKET_ROW_KEYS` on `test_annotation_packet_row_schema_is_exact`.
+
+`scene/tests/test_eval_harness_pilot_draw.py`: **52 passed** (was 50).
+
+**Residual (coordinator).** A callable that needs extra required args we do not fill, or that returns a different reliability formula than one-way ANOVA ICC, and whose symbol name avoids `{icc, rho, deff, design_effect, n_eff, msb, msw}`, is not caught. Packet extra keys are closed regardless.

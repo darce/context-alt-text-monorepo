@@ -31,6 +31,12 @@ pass-1 facts of an existing ``--two-pass`` run through the pass-2 weave
 TEXT-ONLY (no image part) against this endpoint — the CPU synthesis cell.
 Provenance carries ``weave_bench: true`` + the source record's identity/sha.
 
+``--caption-length {standard,long}`` is the caption-length A/B axis on the v3
+three-surface weave: it swaps only the caption sentence band and raises the
+pass-2 token budget to match, so the two arms differ in length and nothing else.
+Both the band and the budget are stamped into provenance; records from different
+bands are different treatments and must not be pooled [EXP-16].
+
 VLM6-LEX adds ``--depiction-lexicon <canon-checkout>``: the A/B arm that
 appends the heuristics-canon depiction rules (ATTRIB/BOUND) to the
 prose-writing pass. Off by default, so the lexicon-off leg is byte-identical
@@ -167,6 +173,26 @@ PROMPT_VARIANTS: dict[str, PromptVariant] = {
 }
 DEFAULT_PROMPT_VARIANT = "v1"
 
+# --- caption-length A/B axis (v3 three-surface only) -------------------------
+# The caption band is the treatment, so it is a named axis rather than a free
+# integer: a run record says which band it ran, and two records are comparable
+# only when the band matches. Longer descriptions are a product hypothesis to be
+# measured, not assumed, so both legs are first-class [EXP-03 declare the OEC].
+CAPTION_BANDS: dict[str, str] = {
+    "standard": "2-5 sentences",
+    "long": "8-14 sentences",
+}
+DEFAULT_CAPTION_LENGTH = "standard"
+
+# Per-band pass-2 budget. 512 tokens cannot hold a 14-sentence caption plus a
+# title, an alt and the JSON envelope; the long leg would be truncated mid-string
+# and would then lose on a length it was never allowed to spend -- a measurement
+# artefact indistinguishable from a real effect [EXP-06 Twyman before narrative].
+# A truncated weave is malformed JSON, so it fails closed as a typed per-item
+# error (ThreeSurfaceParseError) instead of scoring as a short caption.
+WEAVE_MAX_TOKENS: dict[str, int] = {"standard": _CAPTION_MAX_TOKENS, "long": 2048}
+assert set(WEAVE_MAX_TOKENS) == set(CAPTION_BANDS)
+
 # Pass-1 of the two-pass pipeline (findings §2.1): image only, NO context —
 # structured objective facts the weave pass must not overwrite. No names, no
 # speculation (the "contextual inference" stage-1 fields the HMMR paper used
@@ -197,30 +223,36 @@ _WEAVE_INSTRUCTIONS = (
     "only the man and never mentions Maria Chen."
 )
 
+
 # v3 three-surface output contract (ALTQ-1): the weave returns ONE fenced JSON
 # object carrying all three publish surfaces in a single call, superseding the
 # dual-length compression call for this variant. Every concrete detail in every
 # field must come from the committed pass-1 facts or the supplied context — the
 # CapRL failure mode (evocative captions inventing specifics) is the
 # anti-pattern this fences out.
-_V3_THREE_SURFACE_INSTRUCTIONS = (
-    "Output format: instead of one plain-prose alt text, return a single JSON "
-    "object inside a fenced ```json code block, with exactly these three string "
-    "fields and nothing else:\n"
-    '- "title": a terse 3-8 word label of the image subject. Front-load the '
-    "subject. No trailing period. Supplied names may appear when they fit "
-    "naturally.\n"
-    '- "alt": functional alt text of at most 125 characters, following every '
-    "style rule above: front-load the subject and their action, factual "
-    "register, plain prose. Weave the supplied identities in, with their "
-    "positional binding when more than one person is present.\n"
-    '- "caption": a free-form evocative caption of 2-5 sentences. A lyrical '
-    "register is welcome here, but every concrete detail — objects, legible "
-    "text, places, counts, names — must come from the committed facts or the "
-    "supplied context. Never invent specifics. Weave the supplied names in "
-    "naturally.\n"
-    "The never-guess and pixels-win rules apply to all three fields."
-)
+def _three_surface_instructions(caption_length: str = DEFAULT_CAPTION_LENGTH) -> str:
+    """The v3 output contract, with the caption band substituted from the
+    selected length arm. Only the band differs between arms, so the A/B
+    compares caption length and not a second hidden prompt edit."""
+    return (
+        "Output format: instead of one plain-prose alt text, return a single JSON "
+        "object inside a fenced ```json code block, with exactly these three string "
+        "fields and nothing else:\n"
+        '- "title": a terse 3-8 word label of the image subject. Front-load the '
+        "subject. No trailing period. Supplied names may appear when they fit "
+        "naturally.\n"
+        '- "alt": functional alt text of at most 125 characters, following every '
+        "style rule above: front-load the subject and their action, factual "
+        "register, plain prose. Weave the supplied identities in, with their "
+        "positional binding when more than one person is present.\n"
+        f'- "caption": a free-form evocative caption of {CAPTION_BANDS[caption_length]}. A lyrical '
+        "register is welcome here, but every concrete detail — objects, legible "
+        "text, places, counts, names — must come from the committed facts or the "
+        "supplied context. Never invent specifics. Weave the supplied names in "
+        "naturally.\n"
+        "The never-guess and pixels-win rules apply to all three fields."
+    )
+
 
 # Text-only compression (findings §4): the short alt is derived FROM the
 # committed long description, so the short can never contradict the long by
@@ -383,6 +415,7 @@ def _stamp_pipeline_provenance(
     face_gate: bool,
     eval_mode: str,
     depiction_lexicon: DepictionLexicon | None = None,
+    caption_length: str = DEFAULT_CAPTION_LENGTH,
 ) -> None:
     """Stamp the pipeline config into run-record provenance (attribution, as --eval-mode).
 
@@ -390,6 +423,11 @@ def _stamp_pipeline_provenance(
     non-standard ``eval_mode`` are stamped only when active so pre-Slice-2
     records and standard runs keep their existing shape (additive schema)."""
     provenance["prompt_variant"] = prompt_variant
+    if caption_length != DEFAULT_CAPTION_LENGTH:
+        # Both the treatment and the budget it was given: a reader comparing two
+        # records must be able to see that the long leg was not silently capped.
+        provenance["caption_length"] = caption_length
+        provenance["weave_max_tokens"] = WEAVE_MAX_TOKENS[caption_length]
     if two_pass:
         provenance["two_pass"] = True
     if dual_length:
@@ -428,6 +466,7 @@ class BakeoffClient(RemoteSceneClient):
         entry_traits: dict[int, dict[str, list[str]]] | None = None,
         roster: list[str] | None = None,
         prompt_variant: str = DEFAULT_PROMPT_VARIANT,
+        caption_length: str = DEFAULT_CAPTION_LENGTH,
         two_pass: bool = False,
         dual_length: bool = False,
         face_gate: bool = False,
@@ -447,6 +486,8 @@ class BakeoffClient(RemoteSceneClient):
             raise ValueError(f"eval_mode {eval_mode!r} requires entry_traits (per-media_id identities)")
         if prompt_variant not in PROMPT_VARIANTS:
             raise ValueError(f"unknown prompt_variant {prompt_variant!r}; expected one of {sorted(PROMPT_VARIANTS)}")
+        if caption_length not in CAPTION_BANDS:
+            raise ValueError(f"unknown caption_length {caption_length!r}; expected one of {sorted(CAPTION_BANDS)}")
         if PROMPT_VARIANTS[prompt_variant].three_surface:
             # rg-008 fail-fast: the three-surface contract lives in the pass-2
             # weave; without two_pass it would never reach the model.
@@ -460,6 +501,14 @@ class BakeoffClient(RemoteSceneClient):
                     f"prompt_variant {prompt_variant!r} already emits the long surface in the weave; "
                     "dual_length is incompatible (drop --dual-length)"
                 )
+        elif caption_length != DEFAULT_CAPTION_LENGTH:
+            # rg-008 fail-fast: only the three-surface contract carries a caption
+            # band. Accepting it elsewhere would stamp a treatment into the record
+            # that never reached the model -- a silently mislabelled arm.
+            raise ValueError(
+                f"caption_length {caption_length!r} applies to the three-surface weave; "
+                f"prompt_variant {prompt_variant!r} does not emit a caption"
+            )
         if face_gate and face_fixtures is None:
             raise ValueError("face_gate requires face_fixtures (per-media_id manifest face_boxes dicts)")
         if face_gate and not (roster or entry_traits):
@@ -470,6 +519,7 @@ class BakeoffClient(RemoteSceneClient):
         self.entry_traits = entry_traits or {}
         self.roster = list(roster or [])
         self.prompt_variant = prompt_variant
+        self.caption_length = caption_length
         self.two_pass = two_pass
         self.dual_length = dual_length
         self.face_gate = face_gate
@@ -506,6 +556,7 @@ class BakeoffClient(RemoteSceneClient):
                 self._weave_messages(facts_raw, context_pack, image_part=image_part),
                 pass_name="ground_weave",
                 passes=passes,
+                max_tokens=WEAVE_MAX_TOKENS[self.caption_length],
             )
             if PROMPT_VARIANTS[self.prompt_variant].three_surface:
                 # malformed/incomplete three-surface JSON => typed per-item failure
@@ -525,6 +576,7 @@ class BakeoffClient(RemoteSceneClient):
             "model_id": self.model_id,
             "model_version": self.model_version,
             "prompt_variant": self.prompt_variant,
+            **({"caption_length": self.caption_length} if self.caption_length != DEFAULT_CAPTION_LENGTH else {}),
             **stamps,
         }
         if surfaces is not None:
@@ -569,12 +621,14 @@ class BakeoffClient(RemoteSceneClient):
             self._weave_bench_messages(facts_raw, context_pack),
             pass_name="weave_bench",
             passes=passes,
+            max_tokens=WEAVE_MAX_TOKENS[self.caption_length],
         )
         return {
             "adapter": "bakeoff",
             "model_id": self.model_id,
             "model_version": self.model_version,
             "prompt_variant": self.prompt_variant,
+            **({"caption_length": self.caption_length} if self.caption_length != DEFAULT_CAPTION_LENGTH else {}),
             **stamps,
             "alt_text_draft": caption,
             "passes": passes,
@@ -638,7 +692,7 @@ class BakeoffClient(RemoteSceneClient):
             content.insert(0, image_part)
         system = f"{self._system_prompt()}\n\n{_WEAVE_INSTRUCTIONS}"
         if PROMPT_VARIANTS[self.prompt_variant].three_surface:
-            system = f"{system}\n\n{_V3_THREE_SURFACE_INSTRUCTIONS}"
+            system = f"{system}\n\n{_three_surface_instructions(self.caption_length)}"
         return [
             {"role": "system", "content": system},
             {"role": "user", "content": content},
@@ -1010,6 +1064,16 @@ def main(argv: list[str] | None = None) -> None:
         ),
     )
     parser.add_argument(
+        "--caption-length",
+        choices=sorted(CAPTION_BANDS),
+        default=DEFAULT_CAPTION_LENGTH,
+        help=(
+            "caption band for the v3 three-surface weave: standard=2-5 sentences (frozen baseline), "
+            "long=8-14 sentences. The long arm also raises the pass-2 token budget so it is not "
+            "truncated. Stamped into run-record provenance; only comparable against the same band."
+        ),
+    )
+    parser.add_argument(
         "--two-pass",
         action="store_true",
         help=(
@@ -1097,6 +1161,11 @@ def main(argv: list[str] | None = None) -> None:
                 f"--prompt-variant {args.prompt_variant} already emits the long surface in the weave; "
                 "drop --dual-length"
             )
+    elif args.caption_length != DEFAULT_CAPTION_LENGTH:
+        sys.exit(
+            f"--caption-length {args.caption_length} applies to the three-surface weave; "
+            f"--prompt-variant {args.prompt_variant} does not emit a caption"
+        )
 
     lexicon_knobs = {
         "--lexicon-families": args.lexicon_families,
@@ -1168,6 +1237,7 @@ def main(argv: list[str] | None = None) -> None:
         entry_traits=entry_traits,
         roster=roster,
         prompt_variant=args.prompt_variant,
+        caption_length=args.caption_length,
         two_pass=args.two_pass,
         dual_length=args.dual_length,
         face_gate=args.face_gate,
@@ -1225,6 +1295,7 @@ def main(argv: list[str] | None = None) -> None:
             exc.partial_record.setdefault("provenance", {}),
             prompt_variant=args.prompt_variant,
             two_pass=args.two_pass,
+            caption_length=args.caption_length,
             dual_length=args.dual_length,
             face_gate=args.face_gate,
             eval_mode=args.eval_mode,
@@ -1243,6 +1314,7 @@ def main(argv: list[str] | None = None) -> None:
         face_gate=args.face_gate,
         eval_mode=args.eval_mode,
         depiction_lexicon=depiction_lexicon,
+        caption_length=args.caption_length,
     )
     record_path.write_text(json.dumps(record, indent=2, sort_keys=True) + "\n")
     prune_out_dir(str(out_dir), keep=args.keep)

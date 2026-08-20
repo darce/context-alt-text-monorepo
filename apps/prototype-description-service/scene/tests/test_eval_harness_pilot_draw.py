@@ -5,6 +5,7 @@ from __future__ import annotations
 import inspect
 import json
 import re
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 
 import pytest
@@ -412,14 +413,131 @@ def test_report_rows_do_not_recompute_declared_empty_cells(tmp_path: Path):
     assert "never-recompute-me" in declared
 
 
-def test_public_surface_has_no_replacement_draw_path():
-    owned = [
-        name
+# Fail-closed public surface. A new public callable or method is a review
+# checkpoint: the pilot must not grow an ICC/deff estimator (AUDIT-11) or a
+# replacement-draw path (AUDIT-13). Do not silently append to these sets.
+_PUBLIC_MODULE_CALLABLES = frozenset(
+    {
+        "GoldAnswerSource",
+        "GoldItem",
+        "GoldKind",
+        "PilotDraw",
+        "PilotDrawError",
+        "StratumName",
+        "draw_pilot",
+        "emit_annotation_packet",
+        "select_gold_items",
+    }
+)
+_PUBLIC_METHODS_BY_CLASS = {
+    "GoldAnswerSource": frozenset(),
+    "GoldItem": frozenset(),
+    "GoldKind": frozenset(),
+    "PilotDraw": frozenset({"report_rows"}),
+    "PilotDrawError": frozenset(),
+    "StratumName": frozenset(),
+}
+_DESIGN_STAT_KEYS = frozenset(
+    {"icc", "rho", "deff", "design_effect", "n_eff", "msb", "msw"}
+)
+
+
+def _owned_callables() -> list[tuple[str, object]]:
+    return [
+        (name, obj)
         for name, obj in inspect.getmembers(pilot_draw_mod)
         if callable(obj) and inspect.getmodule(obj) is pilot_draw_mod
     ]
+
+
+def _public_module_callables() -> frozenset[str]:
+    return frozenset(name for name, _obj in _owned_callables() if not name.startswith("_"))
+
+
+def _own_public_methods(cls: type) -> frozenset[str]:
+    names: set[str] = set()
+    for name, member in vars(cls).items():
+        if name.startswith("_"):
+            continue
+        if isinstance(member, (staticmethod, classmethod, property)) or callable(member):
+            names.add(name)
+    return frozenset(names)
+
+
+def _fail_surface_change(*, label: str, actual: frozenset[str], expected: frozenset[str]) -> None:
+    added = sorted(actual - expected)
+    removed = sorted(expected - actual)
+    pytest.fail(
+        f"{label} changed: added={added} removed={removed}. "
+        "This frozen set is the review checkpoint for the cost-and-instrument "
+        "pilot (BR-17): justify a new public callable or method against "
+        "AUDIT-11 (pilot must not estimate ICC/deff) and AUDIT-13 (no "
+        "replacement-draw path, including methods such as PilotDraw.fill_gaps "
+        "that inspect.getmembers on the module cannot see). Do not silently "
+        "append to the allowlist."
+    )
+
+
+def _id_set_from_collection(value: object) -> set[str] | None:
+    if isinstance(value, (str, bytes)) or not isinstance(value, Sequence):
+        units = getattr(value, "units", None)
+        if units is None:
+            return None
+        return {str(getattr(unit, "unit_id", unit)) for unit in units}
+    ids: set[str] = set()
+    found = False
+    for item in value:
+        if isinstance(item, str):
+            ids.add(item)
+            found = True
+            continue
+        if isinstance(item, Mapping) and isinstance(item.get("sha256"), str):
+            ids.add(item["sha256"])
+            found = True
+            continue
+        sha = getattr(item, "sha256", None)
+        unit_id = getattr(item, "unit_id", None)
+        if isinstance(sha, str):
+            ids.add(sha)
+            found = True
+        elif unit_id is not None:
+            ids.add(str(unit_id))
+            found = True
+    return ids if found else None
+
+
+def test_public_surface_has_no_replacement_draw_path():
+    owned = [name for name, _obj in _owned_callables()]
     offenders = [name for name in owned if re.search(r"replac|refill|redraw|substitut", name, re.I)]
     assert offenders == []
+    actual = _public_module_callables()
+    if actual != _PUBLIC_MODULE_CALLABLES:
+        _fail_surface_change(
+            label="pilot_draw public module-level callable surface",
+            actual=actual,
+            expected=_PUBLIC_MODULE_CALLABLES,
+        )
+    public_classes = {
+        name
+        for name, obj in inspect.getmembers(pilot_draw_mod)
+        if inspect.isclass(obj)
+        and inspect.getmodule(obj) is pilot_draw_mod
+        and not name.startswith("_")
+    }
+    if public_classes != frozenset(_PUBLIC_METHODS_BY_CLASS):
+        _fail_surface_change(
+            label="pilot_draw public class surface",
+            actual=public_classes,
+            expected=frozenset(_PUBLIC_METHODS_BY_CLASS),
+        )
+    for cls_name, expected in _PUBLIC_METHODS_BY_CLASS.items():
+        actual_methods = _own_public_methods(getattr(pilot_draw_mod, cls_name))
+        if actual_methods != expected:
+            _fail_surface_change(
+                label=f"{cls_name} public methods",
+                actual=actual_methods,
+                expected=expected,
+            )
 
 
 def test_pilot_module_does_not_estimate_icc_or_deff():
@@ -429,6 +547,67 @@ def test_pilot_module_does_not_estimate_icc_or_deff():
     assert "draw_two_stage" not in source
     assert "cluster_params" not in source
     assert "size_for_margin" not in source
+    actual = _public_module_callables()
+    if actual != _PUBLIC_MODULE_CALLABLES:
+        _fail_surface_change(
+            label="pilot_draw public module-level callable surface",
+            actual=actual,
+            expected=_PUBLIC_MODULE_CALLABLES,
+        )
+
+
+def test_drawn_unit_set_never_grows_and_entrypoints_return_no_icc():
+    """Behaviour behind BR-17: the draw is a fixed subset; no ICC/deff out."""
+    first = _draw()
+    drawn = {str(unit.unit_id) for unit in first.sample.units}
+    assert drawn <= set(first.frame_sha256s)
+    assert len(drawn) == _PILOT_N
+    assert len(set(first.sample.unit_ids)) == _PILOT_N
+    second = _draw()
+    assert {str(unit.unit_id) for unit in second.sample.units} == drawn
+
+    entries = _entries_by_sha256()
+    packets = emit_annotation_packet(
+        pilot=first,
+        entries_by_sha256=entries,
+        batch_id="pilot-2026-08-20",
+    )
+    packet_ids = {row["sha256"] for row in packets}
+    assert packet_ids == drawn
+    assert not packet_ids > drawn
+
+    gold = select_gold_items(
+        pilot=first, entries_by_sha256=entries, seed=_PILOT_SEED
+    )
+    gold_ids = {item.sha256 for item in gold}
+    assert gold_ids.isdisjoint(drawn)
+    assert not gold_ids > drawn
+
+    for row in first.report_rows():
+        keys = {str(key).lower() for key in row}
+        assert not (keys & _DESIGN_STAT_KEYS)
+        if "declared_empty" in row:
+            assert set(row) == {"declared_empty"}
+        else:
+            assert set(row) == {"stratum", "N_h", "n_h", "inclusion_probability"}
+
+    for name in sorted(_own_public_methods(type(first))):
+        bound = getattr(first, name)
+        try:
+            result = bound()
+        except TypeError:
+            continue
+        collection = _id_set_from_collection(result)
+        if collection is not None:
+            assert not collection > drawn, (
+                f"public method {name} returned a proper superset of the draw "
+                f"(AUDIT-13: nonresponse is bias, not a larger n)"
+            )
+        if isinstance(result, Sequence) and not isinstance(result, (str, bytes)):
+            for item in result:
+                if isinstance(item, Mapping):
+                    keys = {str(key).lower() for key in item}
+                    assert not (keys & _DESIGN_STAT_KEYS)
 
 
 def test_precision_floors_are_passed_to_allocate():

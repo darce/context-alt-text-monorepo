@@ -156,6 +156,53 @@ def test_seed_is_recorded_and_reproducible(tmp_path: Path) -> None:
     assert a.split != c.split or a.split.g1_template_ids != c.split.g1_template_ids
 
 
+def test_gallery_stratum_renders_enrolled_not_probed() -> None:
+    """BR-16 / MLDATA-09: E_clean is enrolled, not an untested probe cell."""
+    plan = build_run_plan(selection_manifest_path=_frozen_manifest(), seed=0)
+    report = score_run(
+        plan=plan,
+        searches=_probe_searches(),
+        tau=0.50,
+    )
+    assert GALLERY_STRATUM not in report.points
+    row = {item["stratum"]: item for item in report.to_rows()}[GALLERY_STRATUM]
+    assert row["n_images"] == 342
+    assert row["declared_empty"] is False
+    assert row["measured"] is False
+    assert row["fnir"] == "enrolled, not probed"
+    assert row["fnir"] != "not measured"
+    assert row["n_mated"] == 0
+    assert row["search_shortfall"] == 0
+
+
+def test_gallery_searches_are_not_pooled_into_overall_fnir(tmp_path: Path) -> None:
+    """BR-16: an E_clean key must not dilute the occluded-probe headline."""
+    plan = _plan(tmp_path)
+    foils = [_nonmated_hit("Bob", 0.80)]
+    searches = _probe_searches(
+        A_true_occluder={
+            "mated": [_undetected_mated("Alice")],
+            "nonmated": foils,
+        },
+    )
+    searches[GALLERY_STRATUM] = {
+        "mated": [_hit("Alice", 0.90), _hit("Bob", 0.90), _hit("Dale", 0.90)],
+        "nonmated": [],
+    }
+    report = score_run(
+        plan=plan,
+        searches=searches,
+        tau=0.50,
+        overall_nonmated=foils,
+    )
+    assert GALLERY_STRATUM not in report.points
+    assert report.overall.n_mated == 1
+    assert report.overall.fnir == pytest.approx(1.0)
+    assert report.overall.fnir != pytest.approx(0.25)
+    row = {item["stratum"]: item for item in report.to_rows()}[GALLERY_STRATUM]
+    assert row["fnir"] == "enrolled, not probed"
+
+
 def test_gallery_templates_come_from_e_clean_only(tmp_path: Path) -> None:
     plan = _plan(tmp_path)
     enrolled_ids = set(plan.split.g1) | set(plan.split.g2)

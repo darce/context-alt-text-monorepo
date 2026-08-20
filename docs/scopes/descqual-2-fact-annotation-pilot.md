@@ -312,7 +312,7 @@ m = 3 as a first-listed PSU.)
 
 Fisher-Z transform of the ICC (equal cluster size m, k groups):
 
-```text
+```text audit-skip
 z = (1/2) ln((1+(m-1)ρ)/(1-ρ))
 SE(z) = sqrt(m / (2(k-2)(m-1)))
 ρ = (e^{2z} - 1) / (e^{2z} + (m-1))

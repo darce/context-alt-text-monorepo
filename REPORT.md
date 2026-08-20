@@ -819,3 +819,16 @@ Owned files: `apps/prototype-description-service/scripts/eval_harness/pilot_draw
 - **DESCQUAL-2-BR-38** — E[within-subject pairs] is now C(30,2)×6302/(640×639)=6.70 from the image-PSU partition (`Σm(m−1)=6942−640`); overlapping-join 6476/6.89 is the same ~1.5 sample Kish a, so planning n does not move. Live fence covered by the BR-34 pin. Mutant `/tmp/br38-mutant.md` (`# 6476` / `# 6.89`): RED `publishes 6476 ... but eval returned 6302`.
 
 `scene/tests/test_eval_harness_audit_sampling.py`: **61 passed**.
+########## N14
+
+# Lane N14 — DESCQUAL-2-BR-44 / BR-45 / BR-49
+
+Owned: `scene/tests/test_eval_harness_audit_sampling.py` + Fisher-Z fence opener `text` → `text audit-skip`. `audit_sampling.py` untouched.
+
+- **DESCQUAL-2-BR-44 (high)** — collector is opt-out: every fenced block is checked unless the info line carries `audit-skip`; `python3`/`text`/unknown/absent tags are not a skip. Tests: `test_scope_doc_fence_collector_keeps_unknown_and_non_python_tags`, `test_scope_doc_fence_collector_count_is_all_fences_minus_opt_outs`. Doc lie `/tmp/n14-proof`: retag allocate-fence to `text` or `python3` and `# 44`→`# 99` → RED `assert 44 == 99` on `test_every_scope_doc_executable_fence_published_comment_matches_eval`; truthful `python3` retag GREEN. Impl mutant restore language allowlist `{python, py, untagged}` → RED `len(collected)==1` vs `5-1==4` on the unknown-tag test.
+
+- **DESCQUAL-2-BR-45 (medium)** — trailing comments inside a collected fence must parse as a literal or as `# <n> PSUs, Σm=<n>, Σm²=<n>` checked against `FramePsuPartition`; otherwise fail. Tests: `test_unparseable_trailing_comment_fails_instead_of_skipping`, `test_psu_census_trailing_comment_is_checked`. Doc lie `# 241 PSUs`→`# 999 PSUs` (unicode and ASCII `Sm=`/`Sm2=`) → RED `assert 241 == 999`. Impl mutant restore `if published is None: continue` → RED, expected `unparseable trailing comment`, got `fence has no published trailing comments to pin`.
+
+- **DESCQUAL-2-BR-49 (medium)** — partition census 64 PSUs × 3 = 192 is now asserted from `FRAME_PSU.sizes`, independent of overlapping 65/195. Test: `test_partition_census_of_m3_psus_is_192_images`. Mutant M12 `/tmp/n14-proof/m12b` (`identities[0]`→`identities[-1]` in a throwaway `audit_sampling.py`) → RED `assert 63 == 64` on the new test; `test_two_stage_census_of_m3_subjects_is_195_images` and `test_fir12_icc_eligible_subject_counts` stayed GREEN (2 passed).
+
+`scene/tests/test_eval_harness_audit_sampling.py`: **66 passed**.

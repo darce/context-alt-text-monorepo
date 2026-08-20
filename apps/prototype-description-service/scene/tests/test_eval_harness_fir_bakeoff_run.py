@@ -15,7 +15,10 @@ from scripts.eval_harness.fir_bakeoff_run import (
     GALLERY_STRATUM,
     PROBE_STRATA,
     FirBakeoffRunError,
+    MatedSearchUnit,
+    ProbeEntry,
     RunPlan,
+    _declared_galleries,
     _identities,
     both_gallery_probe_entries,
     both_gallery_search_count,
@@ -229,6 +232,66 @@ def _probe_searches(**cells: dict[str, list]) -> dict[str, dict[str, list]]:
     }
     payload.update(cells)
     return payload
+
+
+def _g1_only_plan(plan: RunPlan) -> RunPlan:
+    return RunPlan(
+        split=plan.split,
+        probe_entries=plan.probe_entries,
+        seed=plan.seed,
+        index=plan.index,
+        gallery_entries=plan.gallery_entries,
+        probe_sets={GalleryName.G1: plan.probe_sets[GalleryName.G1]},
+    )
+
+
+def _still_level_first_identity_searches(plan: RunPlan) -> dict[str, list[SearchResult]]:
+    """One search per (still, gallery) using the first enrolled identity."""
+    by_stratum: dict[str, list[SearchResult]] = {name: [] for name in PROBE_STRATA}
+    for gallery in _declared_galleries(plan):
+        for stratum in PROBE_STRATA:
+            for entry in plan.probe_entries.get(stratum, ()):
+                identities = mated_identities_for(
+                    entry, split=plan.split, gallery=gallery
+                )
+                if not identities:
+                    continue
+                by_stratum[stratum].append(
+                    _hit(
+                        identities[0],
+                        0.90,
+                        gallery=gallery,
+                        media_id=entry.media_id,
+                    )
+                )
+    return by_stratum
+
+
+def _subject_level_mated_searches(plan: RunPlan) -> dict[str, list[SearchResult]]:
+    """One search per (still, gallery, enrolled subject) from occluded_probes_for."""
+    by_stratum: dict[str, list[SearchResult]] = {name: [] for name in PROBE_STRATA}
+    for gallery in _declared_galleries(plan):
+        for unit in occluded_probes_for(plan, gallery=gallery)[0]:
+            by_stratum[unit.entry.stratum].append(
+                _hit(
+                    unit.subject_id,
+                    0.90,
+                    gallery=unit.gallery,
+                    media_id=unit.entry.media_id,
+                )
+            )
+    return by_stratum
+
+
+def _searches_from_buckets(
+    by_stratum: dict[str, list[SearchResult]],
+) -> dict[str, dict[str, list]]:
+    return _probe_searches(
+        **{
+            name: {"mated": items, "nonmated": []}
+            for name, items in by_stratum.items()
+        }
+    )
 
 
 def test_keyword_only_public_entrypoints(tmp_path: Path) -> None:
@@ -1278,6 +1341,109 @@ def test_frozen_seed0_copresent_stills_yield_twelve_searches() -> None:
     assert scored != 6
 
 
+def test_group_still_yields_one_mated_unit_per_enrolled_subject(
+    tmp_path: Path,
+) -> None:
+    """BR-29 / JANUS 2.2 / EVAL-18: the mated unit is the enrolled subject."""
+    plan = _plan(tmp_path)
+    subjects = tuple(plan.split.g1)
+    assert len(subjects) >= 2
+    extra = ProbeEntry(
+        media_id=99,
+        sha256="0" * 64,
+        stratum="B_eyewear",
+        present_identities=subjects,
+    )
+    buckets = {name: tuple(items) for name, items in plan.probe_entries.items()}
+    buckets["B_eyewear"] = (*buckets["B_eyewear"], extra)
+    custom = RunPlan(
+        split=plan.split,
+        probe_entries=buckets,
+        seed=plan.seed,
+        index=plan.index,
+        gallery_entries=plan.gallery_entries,
+        probe_sets=plan.probe_sets,
+    )
+    units = [
+        unit
+        for unit in occluded_probes_for(custom, gallery=GalleryName.G1)[0]
+        if unit.entry.media_id == 99
+    ]
+    assert len(units) == len(subjects)
+    assert len(units) != 1
+    assert all(isinstance(unit, MatedSearchUnit) for unit in units)
+    assert {unit.subject_id for unit in units} == set(subjects)
+    assert {unit.gallery for unit in units} == {GalleryName.G1}
+    assert expected_mated_search_count(custom, stratum="B_eyewear") == (
+        expected_mated_search_count(plan, stratum="B_eyewear") + len(subjects)
+    )
+
+
+def test_frozen_seed0_mated_unit_is_subject_not_still() -> None:
+    """BR-29: seed-0 identity-level expectation is 171, not 167 stills.
+
+    First-identity (still-level) injection must surface the 4 dropped
+    co-subjects as shortfall; full subject-level injection is complete.
+    """
+    plan = build_run_plan(selection_manifest_path=_frozen_manifest(), seed=0)
+    still_n = sum(
+        1
+        for gallery in _declared_galleries(plan)
+        for stratum in PROBE_STRATA
+        for entry in plan.probe_entries.get(stratum, ())
+        if mated_identities_for(entry, split=plan.split, gallery=gallery)
+    )
+    identity_n = sum(
+        expected_mated_search_count(plan, stratum=name) for name in PROBE_STRATA
+    )
+    assert still_n == 167
+    assert identity_n == 171
+    assert identity_n != still_n
+    units_154 = [
+        unit
+        for gallery in _declared_galleries(plan)
+        for unit in occluded_probes_for(plan, gallery=gallery)[0]
+        if unit.entry.media_id == 154
+    ]
+    assert len(units_154) == 3
+    assert {unit.subject_id for unit in units_154} == {
+        "Citrine Bramble",
+        "Slate Willow",
+        "Plumb Tanner",
+    }
+    assert {unit.gallery for unit in units_154} == {GalleryName.G2}
+    still_report = score_run(
+        plan=plan,
+        searches=_searches_from_buckets(_still_level_first_identity_searches(plan)),
+        tau=0.50,
+    )
+    assert still_report.overall.n_mated == 167
+    assert still_report.overall.n_mated != 171
+    assert still_report.search_shortfalls["A_true_occluder"] == 1
+    assert still_report.search_shortfalls["B_eyewear"] == 2
+    assert still_report.search_shortfalls["C_pose"] == 0
+    assert still_report.search_shortfalls["D_capture"] == 1
+    assert sum(still_report.search_shortfalls[name] for name in PROBE_STRATA) == 4
+    rows = {item["stratum"]: item for item in still_report.to_rows()}
+    assert rows["B_eyewear"]["incomplete"] is True
+    assert rows["A_true_occluder"]["incomplete"] is True
+    assert rows["D_capture"]["incomplete"] is True
+    full_report = score_run(
+        plan=plan,
+        searches=_searches_from_buckets(_subject_level_mated_searches(plan)),
+        tau=0.50,
+    )
+    assert full_report.overall.n_mated == 171
+    assert full_report.overall.n_mated != 167
+    for name in PROBE_STRATA:
+        assert full_report.search_shortfalls[name] == 0
+        assert full_report.points[name].n_mated == expected_mated_search_count(
+            plan, stratum=name
+        )
+        cell = {item["stratum"]: item for item in full_report.to_rows()}[name]
+        assert cell["search_shortfall"] == 0
+
+
 def test_honest_per_gallery_count_is_accepted_at_seed_0() -> None:
     """BR-12 inversion: 53 at seed 0 is the honest G1 size and must not raise."""
     plan = build_run_plan(selection_manifest_path=_frozen_manifest(), seed=0)
@@ -1429,14 +1595,7 @@ def test_mated_identities_for_unknown_gallery_raises(tmp_path: Path) -> None:
 
 def test_search_against_omitted_declared_gallery_raises(tmp_path: Path) -> None:
     plan = _plan(tmp_path)
-    g1_only = RunPlan(
-        split=plan.split,
-        probe_entries=plan.probe_entries,
-        seed=plan.seed,
-        index=plan.index,
-        gallery_entries=plan.gallery_entries,
-        probe_sets={GalleryName.G1: plan.probe_sets[GalleryName.G1]},
-    )
+    g1_only = _g1_only_plan(plan)
     search = _hit("Alice", 0.90, gallery=GalleryName.G2, media_id=10)
     with pytest.raises(FirBakeoffRunError, match="declared gallery"):
         score_run(
@@ -1445,5 +1604,42 @@ def test_search_against_omitted_declared_gallery_raises(tmp_path: Path) -> None:
                 A_true_occluder={"mated": [search], "nonmated": []},
             ),
             tau=0.50,
+        )
+
+
+def test_single_declared_gallery_report_never_mentions_the_other(
+    tmp_path: Path,
+) -> None:
+    """BR-31 / BR-18: _declared_galleries reads plan.probe_sets, not (G1, G2)."""
+    plan = _plan(tmp_path)
+    g1_only = _g1_only_plan(plan)
+    assert _declared_galleries(g1_only) == (GalleryName.G1,)
+    assert GalleryName.G2 not in g1_only.probe_sets
+    with pytest.raises(FirBakeoffRunError, match="declared gallery"):
+        occluded_probes_for(g1_only, gallery=GalleryName.G2)
+    g1_units = occluded_probes_for(g1_only, gallery=GalleryName.G1)[0]
+    both_n = sum(
+        expected_mated_search_count(plan, stratum=name) for name in PROBE_STRATA
+    )
+    g1_n = sum(
+        expected_mated_search_count(g1_only, stratum=name) for name in PROBE_STRATA
+    )
+    assert g1_n == len(g1_units)
+    assert g1_n != both_n
+    report = score_run(
+        plan=g1_only,
+        searches=_searches_from_buckets(_subject_level_mated_searches(g1_only)),
+        tau=0.50,
+    )
+    assert GalleryName.G2 not in report.overall.galleries
+    for point in report.points.values():
+        assert GalleryName.G2 not in point.galleries
+        assert point.galleries in ((), (GalleryName.G1,))
+    for row in report.to_rows():
+        assert "g2" not in row["gallery"]
+    for name in PROBE_STRATA:
+        assert report.search_shortfalls[name] == 0
+        assert report.points[name].n_mated == expected_mated_search_count(
+            g1_only, stratum=name
         )
 

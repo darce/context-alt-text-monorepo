@@ -440,6 +440,27 @@ def _install_stub_python(repo: Path) -> Path:
     return argv_log
 
 
+def _install_env_override_stub(tmp_path: Path, *, exit_code: int) -> Path:
+    """A resolvable ``ACX_EVAL_PYTHON`` override that never writes a report.
+
+    FIR-12-BR-70: `resolve_eval_python` only checks that the override is an
+    executable file — it cannot see whether the inner CLI subprocess will
+    actually produce a report. This stub is deterministic stand-in for a
+    real-but-broken interpreter (e.g. a system python lacking the eval
+    package's third-party deps: verified repro is
+    ``ACX_EVAL_PYTHON=/usr/bin/python3`` -> inner ``ModuleNotFoundError`` ->
+    inner exit 1, no report written) without depending on any particular
+    system python's installed package set.
+    """
+    stub = tmp_path / f"override-python-exit{exit_code}"
+    stub.write_text(
+        f"#!/usr/bin/env python3\nraise SystemExit({exit_code})\n",
+        encoding="utf-8",
+    )
+    stub.chmod(stub.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+    return stub
+
+
 _STUB_PUBLISHED_JSON = "{}\n"
 _STUB_PUBLISHED_MD = "# stub\n"
 
@@ -540,6 +561,139 @@ def test_allow_refused_is_not_forwarded_to_score_cli(tmp_path: Path) -> None:
     argv = argv_log.read_text(encoding="utf-8")
     assert "--allow-refused" not in argv
     _assert_stub_published(out_json, out_md)
+
+
+# ---------------------------------------------------------------------------
+# FIR-12-BR-70: env/startup failure must not alias the CLI's own
+# publication-contract exit codes (broken interpreter vs. genuine partial
+# corpus; silent no-op vs. genuine clean score)
+# ---------------------------------------------------------------------------
+
+
+def test_broken_real_interpreter_no_report_is_not_partial_corpus(
+    tmp_path: Path,
+) -> None:
+    """A resolvable-but-broken ACX_EVAL_PYTHON must not exit 1.
+
+    Exit 1 is this script's "partial corpus, never published" contract
+    (module docstring). A broken real interpreter that crashes before
+    writing anything is an environment failure, not a corpus-quality
+    result, and must not collapse onto that code.
+    """
+    repo = _scratch_repo(tmp_path)
+    (repo / "apps" / "prototype-description-service").mkdir(parents=True)
+    run_record, manifest, out_json, out_md = _stub_paths(repo)
+    broken = _install_env_override_stub(tmp_path, exit_code=1)
+    proc = _run_regen(
+        [
+            "--run-record",
+            str(run_record),
+            "--manifest",
+            str(manifest),
+            "--out-json",
+            str(out_json),
+            "--out-md",
+            str(out_md),
+        ],
+        cwd=repo,
+        env={"ACX_EVAL_PYTHON": str(broken)},
+    )
+    combined = proc.stdout + proc.stderr
+    assert proc.returncode == 2, combined
+    assert "environment/startup failure" in combined
+    assert not out_json.is_file()
+    assert not out_md.is_file()
+
+
+def test_interpreter_exits_0_without_report_is_not_clean_score(
+    tmp_path: Path,
+) -> None:
+    """A silent no-op override (exit 0, no report) must not exit 0.
+
+    Exit 0 is this script's "clean score, published" contract. An
+    interpreter that exits 0 without writing anything is a broken
+    environment, not a clean score, and there is nothing to publish.
+    """
+    repo = _scratch_repo(tmp_path)
+    (repo / "apps" / "prototype-description-service").mkdir(parents=True)
+    run_record, manifest, out_json, out_md = _stub_paths(repo)
+    silent = _install_env_override_stub(tmp_path, exit_code=0)
+    proc = _run_regen(
+        [
+            "--run-record",
+            str(run_record),
+            "--manifest",
+            str(manifest),
+            "--out-json",
+            str(out_json),
+            "--out-md",
+            str(out_md),
+        ],
+        cwd=repo,
+        env={"ACX_EVAL_PYTHON": str(silent)},
+    )
+    combined = proc.stdout + proc.stderr
+    assert proc.returncode == 2, combined
+    assert "environment/startup failure" in combined
+    assert not out_json.is_file()
+    assert not out_md.is_file()
+
+
+def test_env_failures_are_distinguishable_from_genuine_partial_corpus(
+    tmp_path: Path,
+) -> None:
+    """TEST-15 three-way pin: broken interpreter, silent no-op, and a real
+    partial-corpus result from the real score CLI must not be confusable —
+    the two env failures share exit 2 (neither is a corpus outcome) and
+    both are distinct from the genuine partial-corpus exit 1.
+    """
+    repo = _scratch_repo(tmp_path)
+    (repo / "apps" / "prototype-description-service").mkdir(parents=True)
+    run_record, manifest, out_json, out_md = _stub_paths(repo)
+    broken = _install_env_override_stub(tmp_path, exit_code=1)
+    silent = _install_env_override_stub(tmp_path, exit_code=0)
+
+    def _returncode(env: dict[str, str]) -> int:
+        return _run_regen(
+            [
+                "--run-record",
+                str(run_record),
+                "--manifest",
+                str(manifest),
+                "--out-json",
+                str(out_json),
+                "--out-md",
+                str(out_md),
+            ],
+            cwd=repo,
+            env=env,
+        ).returncode
+
+    broken_code = _returncode({"ACX_EVAL_PYTHON": str(broken)})
+    silent_code = _returncode({"ACX_EVAL_PYTHON": str(silent)})
+
+    real_run_record, real_manifest, real_out_json, real_out_md = _real_inputs(
+        tmp_path, _failed_item_record()
+    )
+    partial_code = _run_regen(
+        [
+            "--run-record",
+            str(real_run_record),
+            "--manifest",
+            str(real_manifest),
+            "--out-json",
+            str(real_out_json),
+            "--out-md",
+            str(real_out_md),
+        ],
+        cwd=_REPO_ROOT,
+        env=_REAL_CLI_ENV,
+    ).returncode
+
+    assert broken_code == 2
+    assert silent_code == 2
+    assert partial_code == 1
+    assert partial_code not in (broken_code, silent_code)
 
 
 # ---------------------------------------------------------------------------

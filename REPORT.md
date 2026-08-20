@@ -104,3 +104,26 @@ Value error, human-confirmed reference_fact requires annotation_batch
 ```
 
 Canon: MLDATA-03, MLDATA-04, HITL-07, TEST-15. Mutant restored.
+
+## 2. `golden150-draft-20260723.json` entries[149] (media_id 648)
+
+Two operator facts had only `annotator_id="pre-program-operator"`. No existing convention for batch/at/pool (the earlier backfill stopped at annotator_id). Established honest pre-program placeholders — **not** `_full_payload()` values, which would imply `batch-2026-08-20` / `golden-646-pool` ran:
+
+- `annotation_batch`: `"pre-program"`
+- `annotated_at`: `"1970-01-01T00:00:00Z"` (epoch sentinel; same unknown-time convention as `LEGACY_IMPORT_LABELED_AT`)
+- `source_pool`: `"pre-program"`
+
+Prefix matches `pre-program-operator`. Did not weaken `load_legacy_manifest`. Greenfield: fix the data.
+
+Test: `test_golden150_draft_parses_with_backfilled_fact_annotators` (extended to assert the three fields).
+
+Mutant: drop `annotation_batch` on entries[149].reference_facts[0]. RED:
+
+```
+FAILED scene/tests/test_eval_harness_manifest_reference_fact_lineage.py::test_golden150_draft_parses_with_backfilled_fact_annotators
+legacy manifest schema violation: ... entries.149.reference_facts.0
+Value error, human-confirmed reference_fact requires annotation_batch
+(confirmed_by=<ConfirmationSource.OPERATOR: 'operator'>; MLDATA-04)
+```
+
+Canon: MLDATA-04, TEST-15, rg-008. Mutant restored. No back-compat shim.

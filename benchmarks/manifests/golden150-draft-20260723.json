@@ -7535,7 +7535,10 @@
             "SADIST"
           ],
           "confirmed_by": "operator",
-          "annotator_id": "pre-program-operator"
+          "annotator_id": "pre-program-operator",
+          "annotation_batch": "pre-program",
+          "annotated_at": "1970-01-01T00:00:00Z",
+          "source_pool": "pre-program"
         },
         {
           "text": "The bracelet does NOT read 'SAINT' (model caption error trap)",
@@ -7545,7 +7548,10 @@
             "SAINT"
           ],
           "confirmed_by": "operator",
-          "annotator_id": "pre-program-operator"
+          "annotator_id": "pre-program-operator",
+          "annotation_batch": "pre-program",
+          "annotated_at": "1970-01-01T00:00:00Z",
+          "source_pool": "pre-program"
         }
       ]
     }

@@ -640,13 +640,26 @@ def assert_fit_side_impostor_disjointness(
 
 
 def fmr_at(scores: Sequence[float], tau: float) -> float | None:
+    """Impostor acceptance rate at ``tau``.
+
+    JANUS 2.3.4 FPI: a non-mated rank-1 is a false positive only when score
+    is strictly greater than ``t``. A tie at tau is not accepted, matching
+    ``open_set_identification._is_fpi`` so the FMR this module calibrates is
+    the operating point the scorer publishes.
+    """
     if not scores:
         return None
-    accepted = sum(1 for s in scores if s >= tau)
+    accepted = sum(1 for s in scores if s > tau)
     return accepted / len(scores)
 
 
 def fnmr_at(scores: Sequence[float], tau: float) -> float | None:
+    """Genuine miss rate at ``tau``.
+
+    JANUS 2.3.4 FNIR: a mated search misses when it does not return the mate
+    at or above ``t`` (score < tau). A tie at tau is a hit, matching
+    ``open_set_identification._is_fnir_miss``.
+    """
     if not scores:
         return None
     missed = sum(1 for s in scores if s < tau)
@@ -660,6 +673,9 @@ def select_threshold(
     fmr_target: float,
 ) -> float | None:
     """Pre-registered rule: minimum tau with fit FMR ≤ target.
+
+    FMR is JANUS 2.3.4 FPI (``fmr_at``: score > tau); a candidate equal to an
+    observed impostor score is therefore a valid FMR=0 point.
 
     Returns ``None`` (abstain) when there are zero fit impostors **or** every
     impostor score is non-finite (-inf / no-match only) — never fail-open to
@@ -768,7 +784,7 @@ def _oof_metrics_for_stratum(
                     n_gen_miss += 1
             for s in i_read:
                 n_imp_oof += 1
-                if s >= tau:
+                if s > tau:  # JANUS 2.3.4 FPI; lockstep with fmr_at
                     n_imp_accept += 1
 
         fold_rows.append(

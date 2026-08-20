@@ -20,10 +20,12 @@ from scripts.eval_harness.fir_bakeoff_run import (
     RunPlan,
     _declared_galleries,
     _identities,
+    _search_shortfall,
     both_gallery_probe_entries,
     both_gallery_search_count,
     build_run_plan,
     expected_mated_search_count,
+    expected_nonmated_search_count,
     mated_galleries_for,
     mated_identities_for,
     occluded_probes_for,
@@ -422,7 +424,6 @@ def test_zero_mated_stratum_renders_unmeasured_fnir_and_keeps_fpi(
     plan = _plan(tmp_path)
     foils = [
         _alice_foil(plan, "Alice", 0.90),
-        _alice_foil(plan, "Bob", 0.20),
     ]
     report = score_run(
         plan=plan,
@@ -436,7 +437,7 @@ def test_zero_mated_stratum_renders_unmeasured_fnir_and_keeps_fpi(
     assert point.measured is False
     assert point.fnir is None
     assert point.fpi == 1
-    assert point.n_nonmated == 2
+    assert point.n_nonmated == 1
     row = {item["stratum"]: item for item in report.to_rows()}["A_true_occluder"]
     assert row["fnir"] == "not measured"
     assert row["fnir"] != 0
@@ -445,7 +446,7 @@ def test_zero_mated_stratum_renders_unmeasured_fnir_and_keeps_fpi(
     assert type(row["fpi"]) is int
     assert row["measured"] is False
     assert row["n_mated"] == 0
-    assert row["n_nonmated"] == 2
+    assert row["n_nonmated"] == 1
     assert row["declared_empty"] is False
     assert row["search_shortfall"] == 1
     assert row["incomplete"] is True
@@ -546,48 +547,64 @@ def test_mated_entry_with_true_name_none_raises(tmp_path: Path) -> None:
 
 def test_undetected_mated_probe_counts_as_fnir_miss(tmp_path: Path) -> None:
     plan = _plan(tmp_path)
+    foils = [_alice_foil(plan, "Bob", 0.20)]
+    assert expected_nonmated_search_count(plan, stratum="A_true_occluder") == 1
     report = score_run(
         plan=plan,
         searches=_probe_searches(
             A_true_occluder={
-                "mated": [_alice_hit(plan), _alice_miss(plan)],
-                "nonmated": [],
+                "mated": [_alice_miss(plan)],
+                "nonmated": foils,
             },
         ),
         tau=0.50,
+        overall_nonmated=foils,
     )
     point = report.points["A_true_occluder"]
     assert point.measured is True
-    assert point.fnir == pytest.approx(0.5)
+    assert point.fnir == pytest.approx(1.0)
     assert point.n_fnir_misses == 1
     row = {item["stratum"]: item for item in report.to_rows()}["A_true_occluder"]
-    assert row["fnir"] == "0.500"
+    assert row["fnir"] == "1.000"
     assert row["measured"] is True
     assert row["search_shortfall"] == 0
+    assert row["nonmated_shortfall"] == 0
     assert row["incomplete"] is False
 
 
 def test_fpi_is_integer_count_not_rate_over_nonmated(tmp_path: Path) -> None:
-    plan = _plan(tmp_path)
+    entries = _base_entries() + [
+        _entry(21, "B_eyewear", ["Frank"], "p"),
+        _entry(22, "B_eyewear", ["Gina"], "q"),
+        _entry(23, "B_eyewear", ["Hank"], "r"),
+        _entry(24, "B_eyewear", ["Ivy"], "s"),
+    ]
+    path = _write_manifest(
+        tmp_path,
+        entries,
+        strata_counts=_counts(
+            A_true_occluder=1, B_eyewear=5, C_pose=1, D_capture=1, E_clean=5
+        ),
+    )
+    plan = build_run_plan(selection_manifest_path=path, seed=7)
     foil_gallery = _other_gallery(plan, "Bob")
     enrolled = _roster_n(plan, foil_gallery)
     union = _union_enrolled(plan)
     baseline_foils = [
         _bob_foil(plan, "Alice", 0.85),
-        _bob_foil(plan, "Alice", 0.10),
     ]
     flooded_foils = [
         _bob_foil(plan, "Alice", 0.85),
-        _bob_foil(plan, "Alice", 0.10),
-        _bob_foil(plan, "Alice", 0.05),
-        _bob_foil(plan, "Bob", 0.00),
+        _nonmated_hit("Alice", 0.10, gallery=foil_gallery, media_id=21),
+        _nonmated_hit("Alice", 0.05, gallery=foil_gallery, media_id=22),
+        _nonmated_hit("Bob", 0.00, gallery=foil_gallery, media_id=23),
         SearchResult(
             detected=False,
             top1_score=None,
             top1_name=None,
             true_name=None,
             gallery=foil_gallery,
-            media_id=11,
+            media_id=24,
         ),
     ]
     baseline = score_run(
@@ -786,19 +803,15 @@ def _stratum_foils(plan) -> dict[str, list[SearchResult]]:
     return {
         "A_true_occluder": [
             _alice_foil(plan, "Alice", 0.90),
-            _alice_foil(plan, "Bob", 0.20),
         ],
         "B_eyewear": [
             _bob_foil(plan, "Alice", 0.90),
-            _bob_foil(plan, "Bob", 0.20),
         ],
         "C_pose": [
             _alice_foil(plan, "Alice", 0.90, media_id=12),
-            _alice_foil(plan, "Bob", 0.20, media_id=12),
         ],
         "D_capture": [
             _nonmated_hit("Alice", 0.90, gallery=GalleryName.G1, media_id=13),
-            _nonmated_hit("Bob", 0.20, gallery=GalleryName.G1, media_id=13),
         ],
     }
 
@@ -819,11 +832,11 @@ def test_overall_nonmated_is_declared_once_not_pooled(tmp_path: Path) -> None:
     for name in PROBE_STRATA:
         point = report.points[name]
         assert point.fpi == 1
-        assert point.n_nonmated == 2
+        assert point.n_nonmated == 1
     assert report.overall.fpi == 1
-    assert report.overall.n_nonmated == 2
+    assert report.overall.n_nonmated == 1
     assert report.overall.fpi != 4
-    assert report.overall.n_nonmated != 8
+    assert report.overall.n_nonmated != 4
     with pytest.raises(FirBakeoffRunError, match="declared once"):
         score_run(plan=plan, searches=searches, tau=0.50)
 
@@ -1642,4 +1655,164 @@ def test_single_declared_gallery_report_never_mentions_the_other(
         assert report.points[name].n_mated == expected_mated_search_count(
             g1_only, stratum=name
         )
+
+
+def _foil_searches_by_stratum(plan: RunPlan) -> dict[str, list[SearchResult]]:
+    by_stratum: dict[str, list[SearchResult]] = {name: [] for name in PROBE_STRATA}
+    for gallery in _declared_galleries(plan):
+        for entry in occluded_probes_for(plan, gallery=gallery)[1]:
+            by_stratum[entry.stratum].append(
+                _nonmated_hit(
+                    "Nobody", 0.10, gallery=gallery, media_id=entry.media_id
+                )
+            )
+    return by_stratum
+
+
+def _complete_probe_searches(
+    plan: RunPlan,
+) -> tuple[dict[str, dict[str, list[SearchResult]]], list[SearchResult]]:
+    mated_by = _subject_level_mated_searches(plan)
+    foil_by = _foil_searches_by_stratum(plan)
+    searches = _probe_searches(
+        **{
+            name: {"mated": mated_by[name], "nonmated": foil_by[name]}
+            for name in PROBE_STRATA
+        }
+    )
+    overall_foils = [item for name in PROBE_STRATA for item in foil_by[name]]
+    return searches, overall_foils
+
+
+def test_search_shortfall_counts_distinct_mated_units_not_list_length() -> None:
+    """BR-27: padding one unit to the expected length must not hide dropped mates."""
+    plan = build_run_plan(selection_manifest_path=_frozen_manifest(), seed=0)
+    expected = expected_mated_search_count(plan, stratum="A_true_occluder")
+    units = [
+        unit
+        for gallery in _declared_galleries(plan)
+        for unit in occluded_probes_for(plan, gallery=gallery)[0]
+        if unit.entry.stratum == "A_true_occluder"
+    ]
+    assert expected == len(units)
+    assert expected > 1
+    first = units[0]
+    padded = [
+        _hit(
+            first.subject_id,
+            0.90,
+            gallery=first.gallery,
+            media_id=first.entry.media_id,
+        )
+    ] * expected
+    assert len(padded) == expected
+    shortfall = _search_shortfall(plan, stratum="A_true_occluder", mated=padded)
+    assert shortfall == expected - 1
+    assert shortfall != 0
+
+
+def test_duplicate_mated_search_is_rejected(tmp_path: Path) -> None:
+    """BR-27: a duplicate is a caller bug, not extra coverage of a dropped mate."""
+    plan = _plan(tmp_path)
+    with pytest.raises(FirBakeoffRunError, match="duplicate mated"):
+        score_run(
+            plan=plan,
+            searches=_probe_searches(
+                A_true_occluder={
+                    "mated": [_alice_hit(plan), _alice_miss(plan)],
+                    "nonmated": [],
+                },
+            ),
+            tau=0.50,
+        )
+
+
+def test_duplicate_foil_search_is_rejected(tmp_path: Path) -> None:
+    """BR-27: duplicated foils cannot pad a truncated FPI exposure."""
+    plan = _plan(tmp_path)
+    foil = _alice_foil(plan, "Alice", 0.90)
+    with pytest.raises(FirBakeoffRunError, match="duplicate non-mated"):
+        score_run(
+            plan=plan,
+            searches=_probe_searches(
+                A_true_occluder={"mated": [], "nonmated": [foil, foil]},
+            ),
+            tau=0.50,
+            overall_nonmated=[foil],
+        )
+
+
+def test_truncated_foil_set_is_incomplete(tmp_path: Path) -> None:
+    """BR-27 / JANUS 2.3.4: a short foil list cannot render a complete FPI cell."""
+    entries = _base_entries() + [_entry(14, "A_true_occluder", ["Frank"], "j")]
+    path = _write_manifest(
+        tmp_path,
+        entries,
+        strata_counts=_counts(
+            A_true_occluder=2, B_eyewear=1, C_pose=1, D_capture=1, E_clean=5
+        ),
+    )
+    plan = build_run_plan(selection_manifest_path=path, seed=7)
+    expected_foils = expected_nonmated_search_count(plan, stratum="A_true_occluder")
+    assert expected_foils > 1
+    kept = [_alice_foil(plan, "Alice", 0.90)]
+    report = score_run(
+        plan=plan,
+        searches=_probe_searches(
+            A_true_occluder={"mated": [_alice_hit(plan)], "nonmated": kept},
+        ),
+        tau=0.50,
+        overall_nonmated=kept,
+    )
+    row = {item["stratum"]: item for item in report.to_rows()}["A_true_occluder"]
+    assert row["search_shortfall"] == 0
+    assert row["nonmated_shortfall"] == expected_foils - 1
+    assert row["nonmated_shortfall"] > 0
+    assert row["incomplete"] is True
+    assert row["fpi"] == 1
+    assert report.points["A_true_occluder"].measured is True
+    assert report.points["A_true_occluder"].incomplete is True
+
+
+def test_overall_point_degrades_when_one_stratum_is_short(tmp_path: Path) -> None:
+    """BR-28 / MLDATA-07: overall FNIR must not hide an incomplete probe cell."""
+    plan = _plan(tmp_path)
+    searches, overall_foils = _complete_probe_searches(plan)
+    complete = score_run(
+        plan=plan,
+        searches=searches,
+        tau=0.50,
+        overall_nonmated=overall_foils,
+    )
+    assert complete.overall.incomplete is False
+    assert complete.overall.measured is True
+    assert complete.overall.fnir is not None
+    assert complete.overall.format_fnir() == f"{complete.overall.fnir:.3f}"
+    assert complete.overall.format_fnir() != "incomplete"
+    assert complete.overall.format_fnir() != "not measured"
+
+    short_searches = {
+        name: {
+            "mated": list(payload["mated"]),
+            "nonmated": list(payload["nonmated"]),
+        }
+        for name, payload in searches.items()
+    }
+    assert short_searches["A_true_occluder"]["mated"]
+    short_searches["A_true_occluder"]["mated"] = short_searches["A_true_occluder"][
+        "mated"
+    ][1:]
+    report = score_run(
+        plan=plan,
+        searches=short_searches,
+        tau=0.50,
+        overall_nonmated=overall_foils,
+    )
+    assert report.points["A_true_occluder"].incomplete is True
+    assert report.search_shortfalls["A_true_occluder"] >= 1
+    assert report.overall.incomplete is True
+    assert report.overall.measured is True
+    assert report.overall.fnir is not None
+    assert report.overall.format_fnir() == "incomplete"
+    assert report.overall.format_fnir() != f"{report.overall.fnir:.3f}"
 

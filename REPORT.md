@@ -312,3 +312,15 @@ Canon: EVAL-16, EVAL-18, EVAL-19, JANUS 2.3.4, TEST-15. Touched only `fir_search
 
 Two-file gate: 74 passed (70 baseline + 4 new).
 
+########## lane/f33
+
+# FIR-12 BR-47 / BR-48 / BR-49 — overall foil denominator, foil tau seam, identity-key normalisation
+
+Canon: TEST-15, EVAL-18, EVAL-19, MLDATA-04, rg-005. Touched only `fir_search_adapter.py` + its test. F32 FTA path (`detected=False`, `top1_score=None`) is unchanged.
+
+- BR-47 (high): no production change. Extended `test_overall_nonmated_keeps_declared_foil_count` to zero-detection and detected Carol, asserting `len(overall_nonmated) == sum(len(occluded_probes_for(...)[1]))` and that per-stratum `nonmated` lists sum to the same count. Mutant `/tmp/f33-mutants/m-br47.py` deleted the scored-loop `overall_nonmated.append(result)`. RED: `[zero_detection] assert 2 == 5`; `[detected] assert 0 == 5`.
+- BR-48 (high): no production change. Foil twin of the mated tau-independence test: `test_adapter_publishes_raw_foil_smax_on_both_sides_of_tau` (Carol embedding = Alice; scores >0.5 vs Alice's gallery and <0.5 vs Bob's). Asserts scored foils keep `top1_score is not None` and the raw s_max. Mutant `/tmp/f33-mutants/m-br48.py` baked `detected=s_max >= 0.5` / `top1_score=s_max if s_max >= 0.5 else None`. RED: `assert None is not None` (below-tau Bob foil).
+- BR-49 (medium): identity keys are stripped once at the adapter boundary (`_identity_key` shared with `_box_name`; applied to matched `true_name`s, roster keys, and mated-unit subject ids). Test: `test_padded_gt_name_still_emits_mated_search` (`collect_matched_faces` still sees `"Alice "`, unmatched_gt empty, adapter emits one mated search with `true_name=="Alice"`). Mutant `/tmp/f33-mutants/m-br49.py` skipped `_normalise_face`. RED: `assert 0 == 1`.
+
+Two-file gate: 77 passed (F32's 74 + 1 parametrize case + 2 new tests).
+

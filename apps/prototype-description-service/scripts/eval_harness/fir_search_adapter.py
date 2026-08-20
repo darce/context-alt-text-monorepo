@@ -20,6 +20,7 @@ from __future__ import annotations
 import math
 from collections import defaultdict
 from collections.abc import Mapping, Sequence
+from dataclasses import replace
 from typing import Any
 
 from scripts.eval_harness.face_assignment import (
@@ -31,6 +32,7 @@ from scripts.eval_harness.face_assignment import (
 from scripts.eval_harness.fir_bakeoff_run import (
     PROBE_STRATA,
     FirBakeoffRunError,
+    MatedSearchUnit,
     RunPlan,
     occluded_probes_for,
 )
@@ -67,6 +69,8 @@ def searches_from_run_records(
 ) -> tuple[dict[str, dict[str, list[SearchResult]]], list[SearchResult]]:
     """``(searches keyed by stratum, overall_nonmated)`` — ``score_run``'s args."""
     matched, associations, _, _ = collect_matched_faces(run_items, gt_by_media)
+    # Strip identity keys once so GT/roster padding cannot drop a detected mate.
+    matched = [_normalise_face(face) for face in matched]
     by_media: dict[int, list[MatchedFace]] = defaultdict(list)
     for face in matched:
         by_media[face.media_id].append(face)
@@ -83,6 +87,7 @@ def searches_from_run_records(
         gallery_media = _enrolled_media_ids(roster)
         prototypes = _prototypes_from_templates(roster, matched)
         mated_units, foil_entries = occluded_probes_for(plan, gallery=gallery)
+        mated_units = [_normalise_unit(unit) for unit in mated_units]
 
         box_scores: list[tuple[SearchUnitKey, float, str | None]] = []
         for unit in mated_units:
@@ -195,10 +200,38 @@ def searches_from_run_records(
     return searches, overall_nonmated
 
 
+def _identity_key(name: Any) -> str | None:
+    if name is None:
+        return None
+    text = str(name).strip()
+    return text or None
+
+
+def _normalise_face(face: MatchedFace) -> MatchedFace:
+    key = _identity_key(face.true_name)
+    if key == face.true_name:
+        return face
+    return replace(face, true_name=key)
+
+
+def _normalise_unit(unit: MatedSearchUnit) -> MatedSearchUnit:
+    key = _identity_key(unit.subject_id)
+    if key is None or key == unit.subject_id:
+        return unit
+    return replace(unit, subject_id=key)
+
+
 def _roster(plan: RunPlan, gallery: GalleryName) -> Mapping[str, Template]:
-    if gallery is GalleryName.G1:
-        return plan.split.g1
-    return plan.split.g2
+    raw = plan.split.g1 if gallery is GalleryName.G1 else plan.split.g2
+    normalised: dict[str, Template] = {}
+    for subject_id, template in raw.items():
+        key = _identity_key(subject_id)
+        if key is None:
+            raise FirBakeoffRunError(
+                f"gallery {gallery.value} subject_id={subject_id!r} is blank"
+            )
+        normalised[key] = template
+    return normalised
 
 
 def _enrolled_media_ids(roster: Mapping[str, Template]) -> frozenset[int]:
@@ -272,10 +305,7 @@ def _box_name(gt: Any) -> str | None:
         name = gt.get("name")
     else:
         name = getattr(gt, "name", None)
-    if name is None:
-        return None
-    text = str(name).strip()
-    return text or None
+    return _identity_key(name)
 
 
 def _unmatched_named(

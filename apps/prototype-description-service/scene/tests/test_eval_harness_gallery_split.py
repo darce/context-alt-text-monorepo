@@ -144,6 +144,23 @@ def test_single_subject_searching_own_gallery_has_empty_nonmated_and_raises():
         probes_for(split, gallery=GalleryName.G1)
 
 
+def test_all_singleton_roster_declares_empty_mated_not_a_hidden_cell():
+    """Empty mated is returned, not raised, and fnir_measurable is False.
+
+    Owner of unmeasured FNIR is fnir_fpi_at_threshold (IETPoint.measured).
+    Raising here would suppress independently meaningful FPI.
+    """
+    roster = _roster(("alice", ("a1",)), ("bob", ("b1",)))
+    split = build_disjoint_galleries(templates_by_subject=roster, seed=0)
+    for gallery in (GalleryName.G1, GalleryName.G2):
+        probes = probes_for(split, gallery=gallery)
+        assert probes.n_mated == 0
+        assert probes.mated == ()
+        assert probes.fnir_measurable is False
+        assert probes.n_nonmated > 0
+        assert probes.nonmated
+
+
 def test_media_ids_are_disjoint_across_galleries_and_reserved_probes():
     roster = {
         "alice": [

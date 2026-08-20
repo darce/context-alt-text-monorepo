@@ -778,3 +778,21 @@ AUDIT-11, AUDIT-09, rg-006, TEST-15.
 ### Not closed
 
 Nothing in this finding.
+
+########## N8
+
+# Lane N8 — DESCQUAL-2 pilot draw and annotation packet
+
+New `scripts/eval_harness/pilot_draw.py` + `scene/tests/test_eval_harness_pilot_draw.py`.
+Cost-and-instrument pilot only (BR-17): no ICC, no deff, no full-study n.
+
+- **draw_pilot** — `allocate` then `draw`; every unit keeps `inclusion_probability`; same seed+manifest → identical sha256 list. Test: `test_draw_pilot_is_reproducible_under_seed`. Mutant `/tmp/pilot_draw_mutant_ignore_seed.py`: `draw(..., seed=0)` ignoring caller seed. RED: `assert first_ids != other_ids` (lists equal).
+- **emit_annotation_packet** — one packet per drawn image; two `annotator_slots`; `reference_facts: []`; skeleton `ReferenceFact(confirmed_by=operator, annotator_id=slot)` constructs. Tests: `test_emit_annotation_packet_is_one_dual_annotator_row_per_drawn_image`, `test_packet_reference_fact_skeleton_requires_annotator_id`.
+- **select_gold_items** — 10% of n (3 on the ~30-image pilot), from the frozen frame *outside* the drawn sample, mix random + batch-matched + hard. Test: `test_gold_items_are_outside_the_drawn_sample`. Mutant `/tmp/pilot_draw_mutant_gold_from_sample.py`: remaining = sample unit ids. RED: `assert gold_ids.isdisjoint(sampled)`.
+- **GoldItem provenance** — constructor refuses caption-pool source and a live-queue author (HITL-03). Tests: `test_gold_item_refuses_caption_pool_source`, `test_gold_item_refuses_live_queue_author`.
+- **report_rows** — per-stratum `N_h`/`n_h`/`inclusion_probability` plus `declared_empty_cells` passed through verbatim (MLDATA-09, rg-015). Test: `test_report_rows_do_not_recompute_declared_empty_cells`. Mutant `/tmp/pilot_draw_mutant_recompute_empty.py`: emit empty-count strata instead of the JSON list. RED: `[] == ['never-recompute-me', 'mask_sufficient_n']`.
+- **No replacement draws** (AUDIT-13). Test: `test_public_surface_has_no_replacement_draw_path`.
+- **No ICC/deff** (BR-17). Test: `test_pilot_module_does_not_estimate_icc_or_deff`.
+
+`scene/tests/test_eval_harness_pilot_draw.py`: **23 passed**.
+Full `scene/tests`: **4 failed, 1316 passed, 4 skipped** (four PGPASSWORD boot failures pre-existing).

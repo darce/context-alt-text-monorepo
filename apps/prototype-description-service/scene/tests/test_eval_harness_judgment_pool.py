@@ -12,6 +12,19 @@ from scripts.eval_harness.judgment_pool import (
 from scripts.eval_harness.manifest import FactPolarity
 
 
+def _complementary_red_hat_pool():
+    return build_pool(
+        contributions={
+            "human": [
+                CandidateFact(text="red hat", polarity=FactPolarity.TRUE),
+                CandidateFact(text="red hat", polarity=FactPolarity.FALSE),
+            ],
+            "model_a": [CandidateFact(text="red hat", polarity=FactPolarity.TRUE)],
+        },
+        depth=5,
+    )
+
+
 def test_overlapping_facts_deduped_and_pooled_from_both():
     pool = build_pool(
         contributions={
@@ -35,18 +48,24 @@ def test_single_contributor_pool_raises():
         build_pool(contributions={}, depth=5)
 
 
-def test_depth_truncates_per_contributor_not_globally():
+@pytest.mark.parametrize(
+    ("depth", "expected"),
+    [
+        (2, ["a1", "a2", "b1", "b2"]),
+        (3, ["a1", "a2", "a3", "b1", "b2", "b3"]),
+    ],
+)
+def test_depth_truncates_per_contributor_not_globally(depth, expected):
     pool = build_pool(
         contributions={
             "model_a": ["a1", "a2", "a3", "a4"],
             "model_b": ["b1", "b2", "b3", "b4"],
         },
-        depth=2,
+        depth=depth,
     )
     texts = [item.text for item in pool.items]
-    assert texts == ["a1", "a2", "b1", "b2"]
-    assert "a3" not in texts and "b3" not in texts
-    assert pool.depth == 2
+    assert texts == expected
+    assert pool.depth == depth
 
 
 def test_incompleteness_counts_unjudged_and_zero_unique_for_pure_duplicate_contributor():
@@ -78,16 +97,7 @@ def test_unjudged_are_not_negatives_disclosure_present():
 
 
 def test_pool_holds_true_and_false_polarity():
-    pool = build_pool(
-        contributions={
-            "human": [
-                CandidateFact(text="red hat", polarity=FactPolarity.TRUE),
-                CandidateFact(text="red hat", polarity=FactPolarity.FALSE),
-            ],
-            "model_a": [CandidateFact(text="red hat", polarity=FactPolarity.TRUE)],
-        },
-        depth=5,
-    )
+    pool = _complementary_red_hat_pool()
     by_polarity = {item.polarity: item for item in pool.items}
     assert len(pool.items) == 2
     assert set(by_polarity) == {FactPolarity.TRUE, FactPolarity.FALSE}
@@ -96,3 +106,38 @@ def test_pool_holds_true_and_false_polarity():
     assert true_item.key != false_item.key
     assert true_item.text.casefold() == "red hat"
     assert false_item.text.casefold() == "red hat"
+
+
+def test_candidate_fact_judgment_does_not_mark_complementary_polarity():
+    pool = _complementary_red_hat_pool()
+    true_item = next(item for item in pool.items if item.polarity is FactPolarity.TRUE)
+    false_item = next(item for item in pool.items if item.polarity is FactPolarity.FALSE)
+    judged_true = CandidateFact(text="red hat", polarity=FactPolarity.TRUE)
+
+    report = incompleteness_report(pool=pool, judged=[judged_true])
+    assert report.pooled_count == 2
+    assert report.judged_count == 1
+    assert report.unjudged_count == 1
+
+    # Union with the TRUE pooled slot is a no-op: same key, complement still open.
+    # An inverted-polarity mutant marks FALSE instead, so this union would close the pool.
+    same_slot = incompleteness_report(pool=pool, judged=[judged_true, true_item])
+    assert same_slot.judged_count == 1
+    assert same_slot.unjudged_count == 1
+
+    both = incompleteness_report(pool=pool, judged=[judged_true, false_item])
+    assert both.judged_count == 2
+    assert both.unjudged_count == 0
+
+
+def test_bare_string_judgment_marks_every_polarity_sharing_that_text():
+    pool = _complementary_red_hat_pool()
+    report = incompleteness_report(pool=pool, judged=["red hat"])
+    assert report.pooled_count == 2
+    assert report.judged_count == 2
+    assert report.unjudged_count == 0
+
+    true_item = next(item for item in pool.items if item.polarity is FactPolarity.TRUE)
+    by_key = incompleteness_report(pool=pool, judged=[true_item.key])
+    assert by_key.judged_count == 1
+    assert by_key.unjudged_count == 1

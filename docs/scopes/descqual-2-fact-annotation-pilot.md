@@ -69,21 +69,34 @@ with z=1.96 and the conservative p=0.5:
 **AUDIT-10**: proportional allocation of n=84 across the five strata gives
 A=4, B=10, C=4, D=11, E=53. That is useless for B — the one stratum populated enough to
 carry a comparative occlusion claim. B therefore gets a **precision floor** and is sized
-from its own margin: **B_eyewear needs 44 of its 80 images for ±10 pp** (35 for ±12.5 pp,
-28 for ±15 pp). Allocation is disproportional by design, and the inclusion probability of
-every drawn unit is recorded so a design-based interval remains computable (AUDIT-08).
+from its own margin: **B_eyewear needs 44 of its 80 images for ±10 pp** unclustered
+(35 for ±12.5 pp, 28 for ±15 pp), rising to **49** once its own clustering is priced in
+(Kish a=2.36, ICC=0.2). Allocation is disproportional by design, and the inclusion
+probability of every drawn unit is recorded so a design-based interval remains computable (AUDIT-08).
 
-**AUDIT-11**: images cluster within subject. With M = 640/130 ≈ 4.9 images per subject,
-`deff ≈ 1 + (M−1)·ICC`:
+**AUDIT-11**: images cluster within subject, and the clusters are strongly unequal
+(subject sizes run 1 to 49; cv=1.44). Kish's `deff = 1 + (M−1)·ICC` is derived for
+*equal-sized* clusters, so the input is the **Kish effective cluster size**
+`a = Σmᵢ²/Σmᵢ = 12.90`, not the arithmetic mean 640/130 ≈ 4.9. Using the mean
+understates n by ~37% at ICC=0.2 (136 vs 216). `deff` is applied to the infinite-population
+n₀ **before** the finite-population correction (the Kish/Lohr order).
 
-| ICC | deff | inflated n for ±10 pp |
+| ICC | deff | n for ±10 pp over N=640 |
 | --- | --- | --- |
-| 0.1 | 1.39 | 117 |
-| 0.2 | 1.78 | 150 |
-| 0.3 | 2.18 | 183 |
+| 0.0 | 1.00 | 84 |
+| 0.05 | 1.60 | 124 |
+| 0.1 | 2.19 | 159 |
+| 0.2 | 3.38 | 216 |
+| 0.3 | 4.57 | 261 |
+| 0.5 | 6.95 | 327 |
 
-The spread between 117 and 183 is the whole reason for a pilot. **ICC is measured, not
-assumed.**
+The spread between 84 and 327 is the whole reason for a pilot. **ICC is measured, not
+assumed.** There is no sourced ICC for this estimand anywhere in the repo or canon:
+`design_effect` and `size_for_margin` both require the caller to pass one and ship no
+default, and the ICC=0.2 that appears in tests and in the row above is a **worked
+assumption, not evidence**. The pre-pilot draw is therefore sized ICC-blind
+(`allocate(cluster_params=None)`, `DeffOrder.FPC_ONLY`); every quoted figure that is not
+ICC-blind must name the ICC and deff it used (AUDIT-11).
 
 ---
 

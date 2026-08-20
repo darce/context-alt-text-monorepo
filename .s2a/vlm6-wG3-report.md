@@ -58,7 +58,7 @@ equal? True
 ### Fix
 
 1. **Do not bend `golden.json`.** Shared 37-entry seed stays `0/37 face_boxes` (other tests / face_metrics π=0 pins depend on it). Freeze corpus is a **dedicated caption anchor manifest** under bakeoff-results (owned path; wF4 face-manifest precedent, adapted).
-2. **Media 39** `mock_images/y-missing-mixed-order.jpg`: named **Caitlin Weaver** with `y=0.1` + named **Bea Burke** **missing `y`** (same `x=0.5`). Mixed shape — not all-missing. Roster names only. Additive `media_id=39` (no renumber of 1–38).
+2. **Media 39** `mock_images/y-missing-mixed-order.jpg`: named **Russet Fathom** with `y=0.1` + named **Hollow Pennant** **missing `y`** (same `x=0.5`). Mixed shape — not all-missing. Roster names only. Additive `media_id=39` (no renumber of 1–38).
 3. **`build_caption_anchor_manifest(base)`** appends the trap to golden entries; **`write_anchor`** promotes man+run+reports from that extended corpus. Generator default seed remains golden; freeze man is the output.
 4. **Man + run regenerated in lockstep**; **report freezes not rewritten** (regen stage owns them).
 5. **`provenance.corpus_traps`** on the run-record (GoldenManifest `extra=forbid` — same place as wF4; no model change).
@@ -152,7 +152,7 @@ cd apps/prototype-description-service
 
 | Test | Cause |
 | --- | --- |
-| `test_generator_regenerates_byte_identical_committed_anchor` | **Man+run match.** Report JSON/MD still stale: pre-existing scoring-field drift **plus wG3 corpus**: `counts.scored/total` 37→38, detection tp 51→53 / precision+recall shift, identity_ordering `order_unknown_excluded` 37→38, **new** `labeled_y_missing_images=1` + paths, identification evaluated_images/P/R/macro_recall/per_identity (Bea Burke + Caitlin Weaver +1 tp each), wrong_name_rate 0.1081→0.1053, coverage_gaps totals 37→38 and face_boxes 0→1, verdict wrong_name_rate. Reports **not** regenerated (this lane). |
+| `test_generator_regenerates_byte_identical_committed_anchor` | **Man+run match.** Report JSON/MD still stale: pre-existing scoring-field drift **plus wG3 corpus**: `counts.scored/total` 37→38, detection tp 51→53 / precision+recall shift, identity_ordering `order_unknown_excluded` 37→38, **new** `labeled_y_missing_images=1` + paths, identification evaluated_images/P/R/macro_recall/per_identity (Hollow Pennant + Russet Fathom +1 tp each), wrong_name_rate 0.1081→0.1053, coverage_gaps totals 37→38 and face_boxes 0→1, verdict wrong_name_rate. Reports **not** regenerated (this lane). |
 | `test_expect_report_matches_committed_freeze_green` | Same caption report staleness vs live re-score of extended man+run. |
 | `test_face_generator_regenerates_byte_identical_committed_anchor` | **Pre-existing** face report freeze (wF4 corpus + coupling_flag + sampling_frame). Not caused by wG3. |
 | `test_face_expect_report_matches_committed_freeze_green` | Same face report staleness. |
@@ -203,7 +203,7 @@ JSON `sha256:c2fcfa34…` · MD `sha256:dc7bf054…`
 | `faces.identity_ordering.positional_images` | 0 | 0 |
 | `faces.identification.evaluated_images` | 37 | 38 |
 | `faces.identification.precision` / `recall` / `macro_recall` | (prior) | slight ↑ from trap true-positives |
-| `faces.identification.per_identity` Bea Burke / Caitlin Weaver tp | | +1 each |
+| `faces.identification.per_identity` Hollow Pennant / Russet Fathom tp | | +1 each |
 | `wrong_name_rate` | 0.1081 | 0.1053 (4/38 vs 4/37) |
 | `provenance.coverage_gaps.*.total` | 37 | 38 |
 | `provenance.coverage_gaps.face_boxes.populated` | 0 | 1 |

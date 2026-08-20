@@ -14,7 +14,7 @@ The 2026-07-15 walkthrough surfaced 16 issues. Root-causing shows they cluster i
 
 1. **No 429/backoff discipline in the frontend fetch layer.** Every React Query poller retries status-blind; the recognition service rate-limits (60 rpm/tenant, burst 10) and the UI immediately saturates it, producing the console 429 storm.
 2. **Service status is inferred from traffic, not measured.** The offline/"Waiting for service" banner reads a circuit-breaker transient that only changes when proxied requests fail; when idle, the UI can't know the OCI VM's real state (it reports healthy while down, and looks "dormant" after jobs stop).
-3. **Two identity stores with a one-way seam.** Cluster labels live in the recognition service; `wp_acx_persons` rows only exist after roster commit. This single seam produces the duplicate "Tory Guzman" rows, the empty Entries tab, dashboard People=0-while-Pending=17, and the typeahead's apparent failure to surface curated names.
+3. **Two identity stores with a one-way seam.** Cluster labels live in the recognition service; `wp_acx_persons` rows only exist after roster commit. This single seam produces the duplicate "Flaxen Yarrow" rows, the empty Entries tab, dashboard People=0-while-Pending=17, and the typeahead's apparent failure to surface curated names.
 4. **View state is transient and traffic-coupled.** Media-table collapse is a `useState` reset on a findings rising edge — no URL/localStorage persistence — so the table "disappears" after clustering and on every navigation.
 5. **Copy and disclosure debt.** Data-science jargon ("Clusters", "Delta sync", "Retention posture"), an always-expanded clustering glossary, and ambiguous threshold semantics leak implementation vocabulary into an operator surface.
 
@@ -81,7 +81,7 @@ Format: observed → root cause (evidence) → heuristic → recommendation → 
 - **Consolidation:** filter/slice fix is **NEW (quick win)**; suggestion-source unification belongs to **E21-9 / E15-17**.
 
 ### UXA-09 · Roster duplicates; Entries vs Clusters split (blocker, structural)
-- **Observed:** "Tory Guzman" appears twice with separate identity counts; unmerged; "Entries" tab exists but renders empty; "Clusters" is data-science vocabulary.
+- **Observed:** "Flaxen Yarrow" appears twice with separate identity counts; unmerged; "Entries" tab exists but renders empty; "Clusters" is data-science vocabulary.
 - **Root cause:** two stores. Entries = WP `wp_acx_persons` projection (`GET acx/v1/roster/entries`, `class-api.php:158-162`); Clusters = recognition-service data via proxy. Cluster labels are free text per cluster; nothing groups same-label clusters into one person until commit (`class-api.php:359,511` dedupes person rows by exact name only at create/commit). Empty Entries = no commits yet — the same seam that zeroes the dashboard People count.
 - **Heuristic:** sr-007 analog (single canonical definition of domain state); match system vocabulary to operator vocabulary (writing lexicon).
 - **Recommendation:** person-first roster: group clusters by resolved person/label server-side (cluster read service or recognition query), retire the Clusters tab as an operator surface, and make label-curation create/attach the person projection so Entries is never empty after naming.

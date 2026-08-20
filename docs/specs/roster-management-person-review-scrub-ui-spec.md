@@ -26,7 +26,7 @@ The in-app browser was inspected on 2026-05-05 at:
 - `http://localhost:10010/wp-admin/admin.php?page=alt-context-roster#/roster?tab=entries`
 - `http://localhost:10010/wp-admin/admin.php?page=alt-context-roster#/roster?tab=clusters`
 
-The current Entries tab renders `No people yet. Add one manually or assign a cluster.` even though the Clusters tab has curated Tory Guzman clusters. The Clusters tab presents several raw cluster cards, including duplicate Tory Guzman cards and unresolved singleton cards. This makes successful curation feel invisible.
+The current Entries tab renders `No people yet. Add one manually or assign a cluster.` even though the Clusters tab has curated Flaxen Yarrow clusters. The Clusters tab presents several raw cluster cards, including duplicate Flaxen Yarrow cards and unresolved singleton cards. This makes successful curation feel invisible.
 
 Relevant implementation anchors:
 
@@ -117,7 +117,7 @@ The default Roster page should show people first. Each person row should include
 - Last curated time.
 - Suggestion refresh status when present.
 
-Clusters bound to the same `person_uuid` should collapse under the same person context. Duplicate Tory Guzman cards should become one Tory Guzman person row with multiple supporting clusters.
+Clusters bound to the same `person_uuid` should collapse under the same person context. Duplicate Flaxen Yarrow cards should become one Flaxen Yarrow person row with multiple supporting clusters.
 
 **Done when:**
 
@@ -324,10 +324,10 @@ The route should deep-link the selected person and selected face. Cluster links 
 
 ## Acceptance Checklist
 
-- A curated Tory Guzman cluster creates or updates one Tory Guzman roster person.
-- Duplicate Tory Guzman clusters appear under one person review surface.
+- A curated Flaxen Yarrow cluster creates or updates one Flaxen Yarrow roster person.
+- Duplicate Flaxen Yarrow clusters appear under one person review surface.
 - The singleton `cluster-e22d355c86504443896d9bd73c54b80e` appears in the singleton proposals queue when suggested.
-- The person review surface can scrub all Tory Guzman face instances.
+- The person review surface can scrub all Flaxen Yarrow face instances.
 - Face selection supports representative, accept, reject, split, and hard-example decisions.
 - The Entries empty state is not shown after successful user curation.
 - Similarity copy explains what the current score can and cannot mean.

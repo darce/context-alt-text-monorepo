@@ -437,8 +437,8 @@ describe('useClusterSuggestions', () => {
     fetchIdentitiesSuggestionsMock.mockResolvedValue({
       matches: {
         'identity-1': [
-          { cluster_id: 'cluster-self', label: 'Emilie Chartrand', similarity: 0.99, identity_count: 3 },
-          { cluster_id: 'cluster-other', label: 'Emilie Chartrand Archive', similarity: 0.75, identity_count: 7 },
+          { cluster_id: 'cluster-self', label: 'Saffron Cypress', similarity: 0.99, identity_count: 3 },
+          { cluster_id: 'cluster-other', label: 'Saffron Cypress Archive', similarity: 0.75, identity_count: 7 },
         ],
       },
     });
@@ -454,8 +454,8 @@ describe('useClusterSuggestions', () => {
 
     listRecognitionClustersMock.mockResolvedValue({
       clusters: [
-        { ...baseCluster, id: 'cluster-self', label: 'Emilie Chartrand', identity_count: 3 },
-        { ...baseCluster, id: 'cluster-other', label: 'Emilie Chartrand Archive', identity_count: 7 },
+        { ...baseCluster, id: 'cluster-self', label: 'Saffron Cypress', identity_count: 3 },
+        { ...baseCluster, id: 'cluster-other', label: 'Saffron Cypress Archive', identity_count: 7 },
       ],
       limit: 20,
       total: 2,
@@ -467,7 +467,7 @@ describe('useClusterSuggestions', () => {
         useClusterSuggestions({
           identityId: 'identity-1',
           enabled: true,
-          labelInput: 'Emilie',
+          labelInput: 'saffron',
           debounceMs: 0,
           editableClusterId: 'cluster-self',
         }),
@@ -477,7 +477,7 @@ describe('useClusterSuggestions', () => {
     await waitFor(() => expect(result.current.options).toHaveLength(1));
     expect(result.current.options[0]?.value).toBe(namingOptionValue('cluster', 'cluster-other'));
 
-    const exactMatch = await result.current.findClusterByLabel('Emilie Chartrand');
+    const exactMatch = await result.current.findClusterByLabel('Saffron Cypress');
     expect(exactMatch).toBeNull();
 
     queryClient.clear();
@@ -773,7 +773,7 @@ describe('useClusterSuggestions', () => {
     };
 
     it('renders a labelled cluster at rest with no matching roster person', async () => {
-      // Predicted first failure (pre-fix): Tory Guzman absent — labelled search
+      // Predicted first failure (pre-fix): Flaxen Yarrow absent — labelled search
       // is disabled until 2+ chars, so at-rest union is suggestions + roster only.
       // ORCH-11: All Labels is sliced at NAMING_OPTIONS_LIMIT even when the
       // at-rest labelled page is larger.
@@ -781,7 +781,7 @@ describe('useClusterSuggestions', () => {
       mockEmptySuggestions();
       const listRecognitionClustersMock = vi.mocked(recognitionApi.listRecognitionClusters);
       const labeledPage = [
-        { ...baseCluster, id: 'cluster-tory', label: 'Tory Guzman', identity_count: 4 },
+        { ...baseCluster, id: 'cluster-flaxen', label: 'Flaxen Yarrow', identity_count: 4 },
         ...Array.from({ length: 24 }, (_, index) => ({
           ...baseCluster,
           id: `cluster-extra-${index}`,
@@ -802,11 +802,11 @@ describe('useClusterSuggestions', () => {
       );
 
       await waitFor(() =>
-        expect(result.current.options.some((option) => option.label === 'Tory Guzman')).toBe(true),
+        expect(result.current.options.some((option) => option.label === 'Flaxen Yarrow')).toBe(true),
       );
       expect(
         result.current.options.some(
-          (option) => option.value === namingOptionValue('cluster', 'cluster-tory') && option.group === NAMING_GROUP_ALL_LABELS,
+          (option) => option.value === namingOptionValue('cluster', 'cluster-flaxen') && option.group === NAMING_GROUP_ALL_LABELS,
         ),
       ).toBe(true);
       const optionLabels = result.current.options.map((option) => option.label);
@@ -869,7 +869,7 @@ describe('useClusterSuggestions', () => {
           };
         }
         return {
-          clusters: [{ ...baseCluster, id: 'cluster-tory', label: 'Tory Guzman', identity_count: 4 }],
+          clusters: [{ ...baseCluster, id: 'cluster-flaxen', label: 'Flaxen Yarrow', identity_count: 4 }],
           limit: 50,
           total: 1,
           truncated: false,
@@ -883,7 +883,7 @@ describe('useClusterSuggestions', () => {
       );
 
       await waitFor(() =>
-        expect(result.current.options.some((option) => option.label === 'Tory Guzman')).toBe(true),
+        expect(result.current.options.some((option) => option.label === 'Flaxen Yarrow')).toBe(true),
       );
 
       rerender({ labelInput: 'Ma' });
@@ -900,7 +900,7 @@ describe('useClusterSuggestions', () => {
         expect(result.current.options.some((option) => option.label === 'Maya Chen')).toBe(true),
       );
       // Production replaces the at-rest page rather than unioning it with search hits.
-      expect(result.current.options.some((option) => option.label === 'Tory Guzman')).toBe(false);
+      expect(result.current.options.some((option) => option.label === 'Flaxen Yarrow')).toBe(false);
 
       queryClient.clear();
     });
@@ -940,7 +940,7 @@ describe('useClusterSuggestions', () => {
       const listRecognitionClustersMock = vi.mocked(recognitionApi.listRecognitionClusters);
       listRecognitionClustersMock.mockResolvedValue({
         clusters: [
-          { ...baseCluster, id: 'cluster-self', label: 'Tory Guzman', identity_count: 4 },
+          { ...baseCluster, id: 'cluster-self', label: 'Flaxen Yarrow', identity_count: 4 },
           { ...baseCluster, id: 'cluster-other', label: 'Pat Nguyen', identity_count: 6 },
         ],
         limit: 50,
@@ -966,7 +966,7 @@ describe('useClusterSuggestions', () => {
       expect(result.current.options.some((option) => option.value === namingOptionValue('cluster', 'cluster-self'))).toBe(
         false,
       );
-      expect(result.current.options.some((option) => option.label === 'Tory Guzman')).toBe(false);
+      expect(result.current.options.some((option) => option.label === 'Flaxen Yarrow')).toBe(false);
 
       queryClient.clear();
     });
@@ -991,7 +991,7 @@ describe('useClusterSuggestions', () => {
           return pendingSearch;
         }
         return Promise.resolve({
-          clusters: [{ ...baseCluster, id: 'cluster-tory', label: 'Tory Guzman', identity_count: 4 }],
+          clusters: [{ ...baseCluster, id: 'cluster-flaxen', label: 'Flaxen Yarrow', identity_count: 4 }],
           limit: 50,
           total: 1,
           truncated: false,
@@ -1005,12 +1005,15 @@ describe('useClusterSuggestions', () => {
       );
 
       await waitFor(() =>
-        expect(result.current.options.some((option) => option.label === 'Tory Guzman')).toBe(true),
+        expect(result.current.options.some((option) => option.label === 'Flaxen Yarrow')).toBe(true),
       );
       expect(result.current.isAtRestMode).toBe(true);
 
       vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
-      rerender({ labelInput: 'To' });
+      // buildNamingOptions prefix-filters the label list, so the query has to
+      // prefix both the at-rest label and the deferred search result for each to
+      // be visible in its own phase.
+      rerender({ labelInput: 'Fl' });
       expect(result.current.isAtRestMode).toBe(true);
 
       await act(async () => {
@@ -1020,23 +1023,23 @@ describe('useClusterSuggestions', () => {
       });
 
       expect(result.current.isAtRestMode).toBe(false);
-      expect(result.current.options.some((option) => option.label === 'Tory Guzman')).toBe(true);
+      expect(result.current.options.some((option) => option.label === 'Flaxen Yarrow')).toBe(true);
       expect(
-        result.current.options.some((option) => option.value === namingOptionValue('cluster', 'cluster-tory')),
+        result.current.options.some((option) => option.value === namingOptionValue('cluster', 'cluster-flaxen')),
       ).toBe(true);
 
       vi.useRealTimers();
       resolveSearch({
-        clusters: [{ ...baseCluster, id: 'cluster-tova', label: 'Tova Lin', identity_count: 3 }],
+        clusters: [{ ...baseCluster, id: 'cluster-flint', label: 'Flint Compass', identity_count: 3 }],
         limit: 20,
         total: 1,
         truncated: false,
       });
 
       await waitFor(() =>
-        expect(result.current.options.some((option) => option.label === 'Tova Lin')).toBe(true),
+        expect(result.current.options.some((option) => option.label === 'Flint Compass')).toBe(true),
       );
-      expect(result.current.options.some((option) => option.label === 'Tory Guzman')).toBe(false);
+      expect(result.current.options.some((option) => option.label === 'Flaxen Yarrow')).toBe(false);
 
       queryClient.clear();
     });
@@ -1098,7 +1101,7 @@ describe('useClusterSuggestions', () => {
       mockEmptySuggestions();
       const listRecognitionClustersMock = vi.mocked(recognitionApi.listRecognitionClusters);
       const atRestPage = [
-        { ...baseCluster, id: 'cluster-self', label: 'Tory Guzman', identity_count: 4 },
+        { ...baseCluster, id: 'cluster-self', label: 'Flaxen Yarrow', identity_count: 4 },
         { ...baseCluster, id: 'cluster-other', label: 'Pat Nguyen', identity_count: 6 },
         { ...baseCluster, id: 'cluster-third', label: 'Dana Ruiz', identity_count: 2 },
       ];
@@ -1122,7 +1125,7 @@ describe('useClusterSuggestions', () => {
       );
 
       await waitFor(() => expect(result.current.atRestTotal).toBe(12));
-      expect(result.current.options.some((option) => option.label === 'Tory Guzman')).toBe(false);
+      expect(result.current.options.some((option) => option.label === 'Flaxen Yarrow')).toBe(false);
 
       queryClient.clear();
     });

@@ -129,7 +129,7 @@
   },
   "canonical_clusters": [
     {
-      "canonical_label": "Amanda Row",
+      "canonical_label": "Citrine Fathom",
       "final_cluster_id": "e3dec27f-a4b2-491c-b075-6bc76908b905",
       "final_representatives": [
         {
@@ -140,14 +140,14 @@
             "bbox_y": 123,
             "media_id": 6687
           },
-          "media_url": "http://localhost:10010/wp-content/uploads/2025/12/hillz-amanda1909607_523509312701_4258_n.jpg",
+          "media_url": "http://localhost:10010/wp-content/uploads/2025/12/hillz-citrine1909607_523509312701_4258_n.jpg",
           "quality_score": 0.664
         }
       ],
       "member_identities": [
         {
           "curation": {
-            "final_label": "Amanda Row"
+            "final_label": "Citrine Fathom"
           },
           "identity_locator": {
             "bbox_height": 58,
@@ -164,7 +164,7 @@
       }
     },
     {
-      "canonical_label": "Hillary Sampliner",
+      "canonical_label": "Russet Ridgeway",
       "final_cluster_id": "62bac8df-ff1a-45e8-952d-7f8f257543c7",
       "final_representatives": [
         {
@@ -186,14 +186,14 @@
             "bbox_y": 99,
             "media_id": 6687
           },
-          "media_url": "http://localhost:10010/wp-content/uploads/2025/12/hillz-amanda1909607_523509312701_4258_n.jpg",
+          "media_url": "http://localhost:10010/wp-content/uploads/2025/12/hillz-citrine1909607_523509312701_4258_n.jpg",
           "quality_score": 0.635
         }
       ],
       "member_identities": [
         {
           "curation": {
-            "final_label": "Hillary Sampliner"
+            "final_label": "Russet Ridgeway"
           },
           "identity_locator": {
             "bbox_height": 70,
@@ -205,7 +205,7 @@
         },
         {
           "curation": {
-            "final_label": "Hillary Sampliner"
+            "final_label": "Russet Ridgeway"
           },
           "identity_locator": {
             "bbox_height": 162,
@@ -222,7 +222,7 @@
       }
     },
     {
-      "canonical_label": "Lindsay Blair",
+      "canonical_label": "Burnished Ridgeway",
       "final_cluster_id": "3a99ad00-72de-4fe6-be1d-6ae84f90447d",
       "final_representatives": [
         {
@@ -284,7 +284,7 @@
       "member_identities": [
         {
           "curation": {
-            "final_label": "Lindsay Blair"
+            "final_label": "Burnished Ridgeway"
           },
           "identity_locator": {
             "bbox_height": 143,
@@ -296,7 +296,7 @@
         },
         {
           "curation": {
-            "final_label": "Lindsay Blair"
+            "final_label": "Burnished Ridgeway"
           },
           "identity_locator": {
             "bbox_height": 214,
@@ -308,7 +308,7 @@
         },
         {
           "curation": {
-            "final_label": "Lindsay Blair"
+            "final_label": "Burnished Ridgeway"
           },
           "identity_locator": {
             "bbox_height": 145,
@@ -320,7 +320,7 @@
         },
         {
           "curation": {
-            "final_label": "Lindsay Blair"
+            "final_label": "Burnished Ridgeway"
           },
           "identity_locator": {
             "bbox_height": 147,
@@ -332,7 +332,7 @@
         },
         {
           "curation": {
-            "final_label": "Lindsay Blair"
+            "final_label": "Burnished Ridgeway"
           },
           "identity_locator": {
             "bbox_height": 288,
@@ -349,7 +349,7 @@
       }
     },
     {
-      "canonical_label": "Maddie Pesavento",
+      "canonical_label": "Wicker Orchard",
       "final_cluster_id": "da0f8481-7709-4c2f-9a38-a068f9322175",
       "final_representatives": [
         {
@@ -382,14 +382,14 @@
             "bbox_y": 58,
             "media_id": 6696
           },
-          "media_url": "http://localhost:10010/wp-content/uploads/2025/12/maddie1557676_3626719383842_918745936140612965_n.jpg",
+          "media_url": "http://localhost:10010/wp-content/uploads/2025/12/wicker1557676_3626719383842_918745936140612965_n.jpg",
           "quality_score": 0.769
         }
       ],
       "member_identities": [
         {
           "curation": {
-            "final_label": "Maddie Pesavento"
+            "final_label": "Wicker Orchard"
           },
           "identity_locator": {
             "bbox_height": 282,
@@ -401,7 +401,7 @@
         },
         {
           "curation": {
-            "final_label": "Maddie Pesavento"
+            "final_label": "Wicker Orchard"
           },
           "identity_locator": {
             "bbox_height": 124,
@@ -413,7 +413,7 @@
         },
         {
           "curation": {
-            "final_label": "Maddie Pesavento"
+            "final_label": "Wicker Orchard"
           },
           "identity_locator": {
             "bbox_height": 109,
@@ -430,7 +430,7 @@
       }
     },
     {
-      "canonical_label": "Maria Correonero",
+      "canonical_label": "Slate Willow",
       "final_cluster_id": "22969473-b36d-4db6-bc4b-bdef19cc4674",
       "final_representatives": [
         {
@@ -507,7 +507,7 @@
             "bbox_y": -1,
             "media_id": 6685
           },
-          "media_url": "http://localhost:10010/wp-content/uploads/2025/12/amanda1909607_523509292741_2166_n.jpg",
+          "media_url": "http://localhost:10010/wp-content/uploads/2025/12/citrine1909607_523509292741_2166_n.jpg",
           "quality_score": 0.792
         },
         {
@@ -540,14 +540,14 @@
             "bbox_y": 123,
             "media_id": 6687
           },
-          "media_url": "http://localhost:10010/wp-content/uploads/2025/12/hillz-amanda1909607_523509312701_4258_n.jpg",
+          "media_url": "http://localhost:10010/wp-content/uploads/2025/12/hillz-citrine1909607_523509312701_4258_n.jpg",
           "quality_score": 0.664
         }
       ],
       "member_identities": [
         {
           "curation": {
-            "final_label": "Maria Correonero"
+            "final_label": "Slate Willow"
           },
           "identity_locator": {
             "bbox_height": 315,
@@ -559,7 +559,7 @@
         },
         {
           "curation": {
-            "final_label": "Maria Correonero"
+            "final_label": "Slate Willow"
           },
           "identity_locator": {
             "bbox_height": 125,
@@ -571,7 +571,7 @@
         },
         {
           "curation": {
-            "final_label": "Maria Correonero"
+            "final_label": "Slate Willow"
           },
           "identity_locator": {
             "bbox_height": 131,
@@ -583,7 +583,7 @@
         },
         {
           "curation": {
-            "final_label": "Maria Correonero"
+            "final_label": "Slate Willow"
           },
           "identity_locator": {
             "bbox_height": 261,
@@ -595,7 +595,7 @@
         },
         {
           "curation": {
-            "final_label": "Maria Correonero"
+            "final_label": "Slate Willow"
           },
           "identity_locator": {
             "bbox_height": 212,
@@ -607,7 +607,7 @@
         },
         {
           "curation": {
-            "final_label": "Maria Correonero"
+            "final_label": "Slate Willow"
           },
           "identity_locator": {
             "bbox_height": 114,
@@ -619,7 +619,7 @@
         },
         {
           "curation": {
-            "final_label": "Maria Correonero"
+            "final_label": "Slate Willow"
           },
           "identity_locator": {
             "bbox_height": 261,
@@ -631,7 +631,7 @@
         },
         {
           "curation": {
-            "final_label": "Maria Correonero"
+            "final_label": "Slate Willow"
           },
           "identity_locator": {
             "bbox_height": 252,
@@ -643,7 +643,7 @@
         },
         {
           "curation": {
-            "final_label": "Maria Correonero"
+            "final_label": "Slate Willow"
           },
           "identity_locator": {
             "bbox_height": 245,
@@ -655,7 +655,7 @@
         },
         {
           "curation": {
-            "final_label": "Maria Correonero"
+            "final_label": "Slate Willow"
           },
           "identity_locator": {
             "bbox_height": 184,
@@ -667,7 +667,7 @@
         },
         {
           "curation": {
-            "final_label": "Maria Correonero"
+            "final_label": "Slate Willow"
           },
           "identity_locator": {
             "bbox_height": 160,
@@ -679,7 +679,7 @@
         },
         {
           "curation": {
-            "final_label": "Maria Correonero"
+            "final_label": "Slate Willow"
           },
           "identity_locator": {
             "bbox_height": 145,
@@ -691,7 +691,7 @@
         },
         {
           "curation": {
-            "final_label": "Maria Correonero"
+            "final_label": "Slate Willow"
           },
           "identity_locator": {
             "bbox_height": 94,
@@ -703,7 +703,7 @@
         },
         {
           "curation": {
-            "final_label": "Maria Correonero"
+            "final_label": "Slate Willow"
           },
           "identity_locator": {
             "bbox_height": 413,
@@ -715,7 +715,7 @@
         },
         {
           "curation": {
-            "final_label": "Maria Correonero"
+            "final_label": "Slate Willow"
           },
           "identity_locator": {
             "bbox_height": 402,
@@ -727,7 +727,7 @@
         },
         {
           "curation": {
-            "final_label": "Maria Correonero"
+            "final_label": "Slate Willow"
           },
           "identity_locator": {
             "bbox_height": 145,
@@ -739,7 +739,7 @@
         },
         {
           "curation": {
-            "final_label": "Maria Correonero"
+            "final_label": "Slate Willow"
           },
           "identity_locator": {
             "bbox_height": 366,
@@ -751,7 +751,7 @@
         },
         {
           "curation": {
-            "final_label": "Maria Correonero"
+            "final_label": "Slate Willow"
           },
           "identity_locator": {
             "bbox_height": 234,
@@ -763,7 +763,7 @@
         },
         {
           "curation": {
-            "final_label": "Maria Correonero"
+            "final_label": "Slate Willow"
           },
           "identity_locator": {
             "bbox_height": 125,
@@ -775,7 +775,7 @@
         },
         {
           "curation": {
-            "final_label": "Maria Correonero"
+            "final_label": "Slate Willow"
           },
           "identity_locator": {
             "bbox_height": 162,
@@ -787,7 +787,7 @@
         },
         {
           "curation": {
-            "final_label": "Maria Correonero"
+            "final_label": "Slate Willow"
           },
           "identity_locator": {
             "bbox_height": 645,
@@ -799,7 +799,7 @@
         },
         {
           "curation": {
-            "final_label": "Maria Correonero"
+            "final_label": "Slate Willow"
           },
           "identity_locator": {
             "bbox_height": 123,
@@ -811,7 +811,7 @@
         },
         {
           "curation": {
-            "final_label": "Maria Correonero"
+            "final_label": "Slate Willow"
           },
           "identity_locator": {
             "bbox_height": 168,
@@ -828,7 +828,7 @@
       }
     },
     {
-      "canonical_label": "Self",
+      "canonical_label": "Indigo Pennant",
       "final_cluster_id": "72aa6ebe-f577-4b1e-8f8c-d2cdbf6c4484",
       "final_representatives": [
         {
@@ -890,7 +890,7 @@
       "member_identities": [
         {
           "curation": {
-            "final_label": "Self"
+            "final_label": "Indigo Pennant"
           },
           "identity_locator": {
             "bbox_height": 298,
@@ -902,7 +902,7 @@
         },
         {
           "curation": {
-            "final_label": "Self"
+            "final_label": "Indigo Pennant"
           },
           "identity_locator": {
             "bbox_height": 205,
@@ -914,7 +914,7 @@
         },
         {
           "curation": {
-            "final_label": "Self"
+            "final_label": "Indigo Pennant"
           },
           "identity_locator": {
             "bbox_height": 157,
@@ -926,7 +926,7 @@
         },
         {
           "curation": {
-            "final_label": "Self"
+            "final_label": "Indigo Pennant"
           },
           "identity_locator": {
             "bbox_height": 149,
@@ -938,7 +938,7 @@
         },
         {
           "curation": {
-            "final_label": "Self"
+            "final_label": "Indigo Pennant"
           },
           "identity_locator": {
             "bbox_height": 148,
@@ -955,7 +955,7 @@
       }
     },
     {
-      "canonical_label": "Tory Guzman",
+      "canonical_label": "Flaxen Yarrow",
       "final_cluster_id": "58e37b8c-a720-4ed7-8817-b639e7ff8b4f",
       "final_representatives": [
         {
@@ -1072,7 +1072,7 @@
       "member_identities": [
         {
           "curation": {
-            "final_label": "Tory Guzman"
+            "final_label": "Flaxen Yarrow"
           },
           "identity_locator": {
             "bbox_height": 243,
@@ -1084,7 +1084,7 @@
         },
         {
           "curation": {
-            "final_label": "Tory Guzman"
+            "final_label": "Flaxen Yarrow"
           },
           "identity_locator": {
             "bbox_height": 86,
@@ -1096,7 +1096,7 @@
         },
         {
           "curation": {
-            "final_label": "Tory Guzman"
+            "final_label": "Flaxen Yarrow"
           },
           "identity_locator": {
             "bbox_height": 110,
@@ -1108,7 +1108,7 @@
         },
         {
           "curation": {
-            "final_label": "Tory Guzman"
+            "final_label": "Flaxen Yarrow"
           },
           "identity_locator": {
             "bbox_height": 165,
@@ -1120,7 +1120,7 @@
         },
         {
           "curation": {
-            "final_label": "Tory Guzman"
+            "final_label": "Flaxen Yarrow"
           },
           "identity_locator": {
             "bbox_height": 148,
@@ -1132,7 +1132,7 @@
         },
         {
           "curation": {
-            "final_label": "Tory Guzman"
+            "final_label": "Flaxen Yarrow"
           },
           "identity_locator": {
             "bbox_height": 63,
@@ -1144,7 +1144,7 @@
         },
         {
           "curation": {
-            "final_label": "Tory Guzman"
+            "final_label": "Flaxen Yarrow"
           },
           "identity_locator": {
             "bbox_height": 96,
@@ -1156,7 +1156,7 @@
         },
         {
           "curation": {
-            "final_label": "Tory Guzman"
+            "final_label": "Flaxen Yarrow"
           },
           "identity_locator": {
             "bbox_height": 110,
@@ -1168,7 +1168,7 @@
         },
         {
           "curation": {
-            "final_label": "Tory Guzman"
+            "final_label": "Flaxen Yarrow"
           },
           "identity_locator": {
             "bbox_height": 110,
@@ -1180,7 +1180,7 @@
         },
         {
           "curation": {
-            "final_label": "Tory Guzman"
+            "final_label": "Flaxen Yarrow"
           },
           "identity_locator": {
             "bbox_height": 88,
@@ -1192,7 +1192,7 @@
         },
         {
           "curation": {
-            "final_label": "Tory Guzman"
+            "final_label": "Flaxen Yarrow"
           },
           "identity_locator": {
             "bbox_height": 119,
@@ -1204,7 +1204,7 @@
         },
         {
           "curation": {
-            "final_label": "Tory Guzman"
+            "final_label": "Flaxen Yarrow"
           },
           "identity_locator": {
             "bbox_height": 98,
@@ -1216,7 +1216,7 @@
         },
         {
           "curation": {
-            "final_label": "Tory Guzman"
+            "final_label": "Flaxen Yarrow"
           },
           "identity_locator": {
             "bbox_height": 154,
@@ -1228,7 +1228,7 @@
         },
         {
           "curation": {
-            "final_label": "Tory Guzman"
+            "final_label": "Flaxen Yarrow"
           },
           "identity_locator": {
             "bbox_height": 159,
@@ -1240,7 +1240,7 @@
         },
         {
           "curation": {
-            "final_label": "Tory Guzman"
+            "final_label": "Flaxen Yarrow"
           },
           "identity_locator": {
             "bbox_height": 328,
@@ -1252,7 +1252,7 @@
         },
         {
           "curation": {
-            "final_label": "Tory Guzman"
+            "final_label": "Flaxen Yarrow"
           },
           "identity_locator": {
             "bbox_height": 96,
@@ -1264,7 +1264,7 @@
         },
         {
           "curation": {
-            "final_label": "Tory Guzman"
+            "final_label": "Flaxen Yarrow"
           },
           "identity_locator": {
             "bbox_height": 86,

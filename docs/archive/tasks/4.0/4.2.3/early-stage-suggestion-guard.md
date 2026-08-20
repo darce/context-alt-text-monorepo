@@ -9,8 +9,8 @@
 
 During early stage training (< 30 labeled clusters), the system makes clustering decisions with insufficient data, leading to:
 
-1. **False Positives**: Different people merged into same cluster (e.g., wrong face added to "Luisa Wiseman" at 81% match)
-2. **False Negatives**: Same person split across clusters (e.g., Ryann Wiseman split at 71% direct similarity, 85.1% representative match)
+1. **False Positives**: Different people merged into same cluster (e.g., wrong face added to "Cobalt Verity" at 81% match)
+2. **False Negatives**: Same person split across clusters (e.g., Muted Yarrow split at 71% direct similarity, 85.1% representative match)
 
 ### Root Cause
 

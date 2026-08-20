@@ -182,6 +182,50 @@ Keep at most one smoke test asserting the real config file loads without error.
 
 ---
 
+## Verification Tiers (which check fires when)
+
+Three different questions, three different phases. None substitutes for another.
+
+| Phase | Question | Instrument | Canon |
+| --- | --- | --- | --- |
+| **Write** (every turn) | Can this assertion ever fail? | Predict the exact failure message, run RED, confirm it failed for the intended reason. `make slice-start` pins the evidence. | `TEST-06` |
+| **Slice close** | Does it pass at this HEAD? | `record_event(test_result, passed=true)` bound to the current commit SHA. | `AGT-04` |
+| **Review gate** | Would a real regression turn this green test red? | Targeted single-point mutation, **only** on tests guarding an invariant, single-source count, security property, or state property. | `TEST-15` |
+| **Feature intake** | Is the model/pipeline output any good? | An eval set defined at `/scope`, before the task plan. | `EVAL-01`, `EVAL-10` |
+
+Mutation testing is a review-gate lens, not a per-turn practice: `TEST-15` is phase-tagged review, and a blanket per-turn mutation score becomes exactly the gameable target `TEST-11` warns about. Reviewers emit `mutants_to_prove` (file, line, old → new, the test that must go red); remote lanes execute them. See [branch-review-guide.md](branch-review-guide.md) § Mutation Lens.
+
+---
+
+## ML Evaluation Gates
+
+Deterministic unit tests cannot gate a generated caption, a ranked candidate list, or an identification threshold. Those surfaces — the description service, recognition, and retrieval — are gated by an **eval set**, and the eval set is a construction, not a leftover sample. Rules are cited by ID against the `ml-systems` lexicon in the private heuristics canon; resolve bodies there, never copy them into this repo.
+
+**Define at `/scope`, before the plan exists.** A feature that produces any of the following owes an eval-set section in its scope note:
+
+| If the feature produces… | Owe | Canon |
+| --- | --- | --- |
+| a ranked list a human scans | a test collection: corpus + real information needs + relevance judgments, gated at the depth the operator actually reads — not top-1 or EER | `EVAL-24`, `EVAL-21` |
+| pooled relevance labels over a large corpus | a multi-strategy pool protocol with disclosed pool depth; unjudged ≠ nonrelevant | `EVAL-25` |
+| generated open-ended text | a scorer that is not sole exact-match: functional/oracle check, rubric, or multiple references | `EVAL-11` |
+| an LLM-as-judge score | judge validated against blinded human labels, and a pinned judge model/prompt/rubric/decoding/seed/order protocol | `EVAL-12`, `EVAL-13`, `EVAL-14` |
+| an accept/reject threshold | an **entity-disjoint** calibration split (subject/account/source, not record or pair) | `CAL-07`, `EVAL-07` |
+| identification against a gallery that may not contain the subject | non-mated probes and a score threshold, not rank metrics | `EVAL-18` |
+| a multi-stage detect → associate → compare path | at least one metric where an upstream miss counts as an end-to-end failure | `EVAL-16` |
+
+**Always, for any eval set:**
+
+- [ ] **Baselines named** — Δ versus random, zero-rule, a simple heuristic, and current production, on the same split. Without them the number is uninterpretable. (`EVAL-01`)
+- [ ] **Test set frozen before iteration 0** — sealed random + out-of-distribution split, never reachable from the tuning loop. (`EVAL-10`, `EVAL-07`)
+- [ ] **Slices, not one number** — report and floor per critical slice; watch for the aggregate flipping the within-slice ranking. (`EVAL-04`, `FAIR-*`)
+- [ ] **Perturbation matches production** — score on inputs carrying production's noise, not clean capture. (`EVAL-06`)
+- [ ] **Readiness is the weakest category** — data, model, infrastructure, monitoring scored separately; report the minimum, not the average. (`EVAL-23`)
+- [ ] **Determinism** — same version, N runs, identical results, or the evaluation certifies nothing. (`TEST-08`)
+
+Existing instrument: `apps/prototype-description-service/scripts/eval_harness/` (open-set identification, gallery split, face and caption metrics, perf budgets). A scope-defined eval set should be expressible as a run of that harness.
+
+---
+
 ## Next Steps
 
 Consult your language-specific testing guide:

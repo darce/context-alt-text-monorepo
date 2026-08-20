@@ -68,4 +68,8 @@
   --acx-shadow-dialog-primary: 0 20px 25px -5px rgb(15 23 42 / 20%);
   --acx-shadow-dialog-secondary: 0 10px 10px -5px rgb(15 23 42 / 10%);
   --acx-shadow-inset-danger: inset 0 0 0 1px var(--acx-color-danger);
+
+  /* Overlay affordance opacity (sr-004) */
+  --acx-opacity-hidden: 0;
+  --acx-opacity-visible: 1;
 }

@@ -1,38 +1,28 @@
 /**
  * E21-5 Slice 3 — roster person-commit chrome for the review card.
  *
- * Creatable combobox → commitClusterToRosterEntry (not updateClusterLabel).
- * Success: generic "View in roster →" (#/roster). Failure: persistent role=alert + retry.
- * Tertiary "just label" routes open_label via onJustLabel.
+ * UXW2-3: single-gesture naming via NameFaceControl — inline text input with
+ * roster typeahead; Enter or "Save name" commits. Exact roster match binds
+ * (rosterEntryId); a novel name creates the person (newEntryName) — creation
+ * is the default outcome. Success: "View in roster →" deep-links the person.
+ * Failure: persistent role=alert + retry.
  */
 
 import React from 'react';
-import { __, sprintf } from '@wordpress/i18n';
-import { useQuery } from '@tanstack/react-query';
+import { __ } from '@wordpress/i18n';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 
-import { Combobox } from '../../../../components/ui/combobox';
 import { queryKeys } from '../../../api/queryKeys';
 import { listRosterEntries } from '../../../api/rosterApi';
-import {
-  JUST_LABEL_COPY,
-  MODEL_OUTPUT_DISCLOSURE,
-  PERSON_COMMIT_COMBOBOX_ARIA,
-  PERSON_COMMIT_COMMITTING_COPY,
-  PERSON_COMMIT_CONFIRM_COPY,
-  PERSON_COMMIT_CREATE_NEW_COPY,
-  PERSON_COMMIT_FAILURE_COPY,
-  PERSON_COMMIT_PLACEHOLDER,
-  PERSON_COMMIT_SUCCESS_COPY,
-  VIEW_IN_ROSTER_COPY,
-  VIEW_IN_ROSTER_HREF,
-} from './personCommitCopy';
-import { isHumanLabeledTarget } from './suggestionProjection';
+import { NameFaceControl, type NameFaceResolution } from './NameFaceControl';
+import { buildNamingOptions } from './buildNamingOptions';
+import { viewInRosterHref } from './personCommitCopy';
+import { getReservedLabelMessage, isReservedLabel } from './reservedLabel';
 import {
   PERSON_COMMIT_PHASE,
   type PersonCommitPhase,
   type PersonCommitRequest,
 } from './useSuggestionReviewMutations';
-import { ACCENT_PRIMARY_ATTR } from '../mediaFooterCtaState';
 
 export interface PersonCommitControlProps {
   clusterId: string;
@@ -44,16 +34,19 @@ export interface PersonCommitControlProps {
   disabled?: boolean;
   onCommit: (request: PersonCommitRequest) => void;
   onRetry: () => void;
-  onJustLabel?: (clusterId: string) => void;
   /** Optional prefilled create name (e.g. NAME suggestion). */
   suggestedCreateName?: string | null;
+  /** Person uuid after a successful commit — drives the roster deep-link. */
+  committedPersonUuid?: string | null;
   /**
    * §7 single accent primary: when this control is the card's primary (NAME/CLUSTER),
-   * the Confirm button carries the `data-acx-accent-primary` marker + accent chrome
-   * (COL-03). The success surface has no Confirm; it is a transient post-commit state
-   * as the card advances, so no marker is emitted there.
+   * the commit button carries the `data-acx-accent-primary` marker + accent chrome
+   * (COL-03). The success surface has no commit button; it is a transient post-commit
+   * state as the card advances, so no marker is emitted there.
    */
   accentPrimary?: boolean;
+  /** Opens the labeling panel so the operator can merge / split / correct the group. */
+  onCurateGroup?: (clusterId: string) => void;
 }
 
 export const PersonCommitControl = ({
@@ -64,22 +57,19 @@ export const PersonCommitControl = ({
   disabled = false,
   onCommit,
   onRetry,
-  onJustLabel,
   suggestedCreateName = null,
+  committedPersonUuid = null,
   accentPrimary = false,
+  onCurateGroup,
 }: PersonCommitControlProps): React.JSX.Element => {
-  const [selectedEntryId, setSelectedEntryId] = React.useState('');
-  const [newEntryName, setNewEntryName] = React.useState('');
-  /** BR-35: live combobox search draft for the always-available create action. */
-  const [draftInput, setDraftInput] = React.useState('');
+  const [draft, setDraft] = React.useState('');
   /** BR-59: reserved create-name rejection (inline, same role=alert pattern as commit failure). */
   const [reservedError, setReservedError] = React.useState<string | null>(null);
   const isBusy = phase === PERSON_COMMIT_PHASE.COMMITTING || disabled;
-
-  const reservedLabelMessage = __(
-    'This label format is reserved for automatic cluster IDs. Choose a descriptive name.',
-    'alt-context',
-  );
+  const queryClient = useQueryClient();
+  // Honest machine-suggestion signal: ReviewQueue wires NAME suggested_name and
+  // CLUSTER suggested_label here; ASSIGNMENT and unlabeled CLUSTER pass null.
+  const hasMachineSuggestion = Boolean(suggestedCreateName?.trim());
 
   const rosterQuery = useQuery({
     queryKey: queryKeys.roster.entries(),
@@ -87,73 +77,67 @@ export const PersonCommitControl = ({
     staleTime: 30_000,
   });
 
-  const rosterEntries = rosterQuery.data ?? [];
-
-  // Prefill create path from a suggested name once per cluster.
   React.useEffect(() => {
-    setSelectedEntryId('');
-    setNewEntryName('');
-    setDraftInput('');
-    setReservedError(null);
-    const trimmed = suggestedCreateName?.trim() ?? '';
-    if (trimmed.length > 0) {
-      setSelectedEntryId('create');
-      setNewEntryName(trimmed);
-      setDraftInput(trimmed);
+    if (phase !== PERSON_COMMIT_PHASE.SUCCEEDED) {
+      return;
     }
+    void queryClient.invalidateQueries({ queryKey: queryKeys.roster.entries() });
+  }, [phase, queryClient]);
+
+  // Full roster for create-vs-bind (R1-07). Overlay budgets the display slice.
+  // Queue card has no cluster/similarity source; pass empty labelMatches and
+  // limit: null so the shared helper does not truncate the roster.
+  const options = React.useMemo(
+    () =>
+      buildNamingOptions({
+        rosterEntries: rosterQuery.data ?? [],
+        labelMatches: [],
+        limit: null,
+      }).options.map((option) => ({
+        value: option.value,
+        label: option.label,
+        source: option.source,
+      })),
+    [rosterQuery.data],
+  );
+
+  const boundPersonUuid = React.useMemo(() => {
+    if (committedPersonUuid) {
+      return committedPersonUuid;
+    }
+    const bound = (rosterQuery.data ?? []).find((entry) => entry.name === draft);
+    return bound?.person_uuid ?? null;
+  }, [committedPersonUuid, draft, rosterQuery.data]);
+
+  // Prefill create path from a suggested name once per cluster (FORM-04).
+  React.useEffect(() => {
+    setReservedError(null);
+    setDraft(suggestedCreateName?.trim() ?? '');
   }, [clusterId, suggestedCreateName]);
 
-  const handleCreate = (name: string): void => {
-    const trimmed = name.trim();
-    if (!trimmed) {
-      return;
-    }
+  const handleValueChange = (value: string): void => {
     setReservedError(null);
-    setSelectedEntryId('create');
-    setNewEntryName(trimmed);
-    setDraftInput(trimmed);
+    setDraft(value);
   };
 
-  const handleSelectEntry = (nextValue: string): void => {
-    setReservedError(null);
-    setSelectedEntryId(nextValue);
-    if (nextValue !== 'create') {
-      setNewEntryName('');
-    }
-  };
-
-  const isCreatingEntry = selectedEntryId === 'create';
-  const canCommit =
-    !isBusy &&
-    ((isCreatingEntry && newEntryName.trim().length > 0) ||
-      (!isCreatingEntry && selectedEntryId !== ''));
-
-  const createCandidate = (isCreatingEntry ? newEntryName : draftInput).trim();
-  const exactRosterMatch = rosterEntries.some(
-    (entry) => entry.name.trim().toLowerCase() === createCandidate.toLowerCase(),
-  );
-  // BR-35: always offer create when typed name is non-empty and not an exact match
-  // (shared combobox only surfaces Create on zero substring matches).
-  const showExplicitCreate =
-    !isBusy && createCandidate.length > 0 && !exactRosterMatch && !isCreatingEntry;
-
-  const handleConfirm = (): void => {
-    if (!canCommit) {
+  const handleCommitResolution = (resolution: NameFaceResolution): void => {
+    if (isBusy || rosterQuery.isLoading || rosterQuery.isError) {
       return;
     }
-    if (isCreatingEntry) {
-      const trimmed = newEntryName.trim();
-      // BR-59: reject reserved machine-shaped create names before POST.
-      if (!isHumanLabeledTarget(trimmed)) {
-        setReservedError(reservedLabelMessage);
-        return;
-      }
+    if (resolution.kind === 'ambiguous') {
+      return;
+    }
+    if (resolution.kind === 'roster') {
       setReservedError(null);
-      onCommit({ clusterId, newEntryName: trimmed });
+      onCommit({ clusterId, rosterEntryId: resolution.rosterEntryId });
+      return;
+    }
+    if (isReservedLabel(resolution.name)) {
+      setReservedError(getReservedLabelMessage());
       return;
     }
     setReservedError(null);
-    onCommit({ clusterId, rosterEntryId: Number.parseInt(selectedEntryId, 10) });
+    onCommit({ clusterId, newEntryName: resolution.name });
   };
 
   if (phase === PERSON_COMMIT_PHASE.SUCCEEDED) {
@@ -164,10 +148,10 @@ export const PersonCommitControl = ({
         data-person-commit-primary={isPrimary ? 'true' : 'false'}
       >
         <p className="acx-person-commit__success-message" role="status">
-          {__(PERSON_COMMIT_SUCCESS_COPY, 'alt-context')}
+          {__('Name saved.', 'alt-context')}
         </p>
-        <a className="acx-person-commit__roster-link" href={VIEW_IN_ROSTER_HREF}>
-          {__(VIEW_IN_ROSTER_COPY, 'alt-context')}
+        <a className="acx-person-commit__roster-link" href={viewInRosterHref(boundPersonUuid)}>
+          {__('View in roster →', 'alt-context')}
         </a>
       </div>
     );
@@ -179,55 +163,61 @@ export const PersonCommitControl = ({
       data-testid="acx-person-commit"
       data-person-commit-primary={isPrimary ? 'true' : 'false'}
     >
-      <p className="acx-person-commit__disclosure">{__(MODEL_OUTPUT_DISCLOSURE, 'alt-context')}</p>
+      {hasMachineSuggestion ? (
+        <p className="acx-person-commit__disclosure">
+          {__(
+            'Suggested by face matching based on similarity — confirm before treating it as fact.',
+            'alt-context',
+          )}
+        </p>
+      ) : null}
 
-      <div className="acx-person-commit__controls">
-        <Combobox
-          options={rosterEntries.map((entry) => ({
-            value: entry.id.toString(),
-            label: entry.name,
-          }))}
-          value={isCreatingEntry ? newEntryName : selectedEntryId}
-          onSelect={handleSelectEntry}
-          onCreate={handleCreate}
-          onValueChange={setDraftInput}
-          ariaLabel={__(PERSON_COMMIT_COMBOBOX_ARIA, 'alt-context')}
-          placeholder={__(PERSON_COMMIT_PLACEHOLDER, 'alt-context')}
-          className="acx-person-commit__combobox"
-          id={`acx-person-commit-${clusterId}`}
-          disabled={isBusy}
+      {rosterQuery.isError ? (
+        <div className="acx-person-commit__failure" role="alert">
+          <p className="acx-person-commit__failure-message">
+            {__('Unable to load people. Retry before naming someone new.', 'alt-context')}
+          </p>
+          <button
+            type="button"
+            className="button acx-person-commit__retry"
+            onClick={() => {
+              void rosterQuery.refetch();
+            }}
+            disabled={isBusy}
+          >
+            {__('Retry', 'alt-context')}
+          </button>
+        </div>
+      ) : (
+        <NameFaceControl
+          options={options}
+          value={draft}
+          onValueChange={handleValueChange}
+          onCommit={handleCommitResolution}
+          isPending={phase === PERSON_COMMIT_PHASE.COMMITTING}
           isLoading={rosterQuery.isLoading}
-        />
-
-        <button
-          type="button"
-          className={
+          disabled={disabled || rosterQuery.isError}
+          commitLabel={__('Save name', 'alt-context')}
+          pendingLabel={__('Saving name…', 'alt-context')}
+          previewCommit
+          placeholder={__('Type a name…', 'alt-context')}
+          searchPlaceholder={__('Type a name…', 'alt-context')}
+          visibleLabel={__('Name this person', 'alt-context')}
+          inputId={`acx-person-commit-${clusterId}`}
+          autoFocus={false}
+          accentPrimary={isPrimary && accentPrimary}
+          suggestionsHeader={__('People', 'alt-context')}
+          commitButtonClassName={
             isPrimary
               ? accentPrimary
                 ? 'button button-primary acx-person-commit__confirm acx-accent-primary-action'
                 : 'button button-primary acx-person-commit__confirm'
               : 'button acx-person-commit__confirm'
           }
-          onClick={handleConfirm}
-          disabled={!canCommit}
-          {...(isPrimary && accentPrimary ? { [ACCENT_PRIMARY_ATTR]: true } : {})}
-        >
-          {phase === PERSON_COMMIT_PHASE.COMMITTING
-            ? __(PERSON_COMMIT_COMMITTING_COPY, 'alt-context')
-            : __(PERSON_COMMIT_CONFIRM_COPY, 'alt-context')}
-        </button>
-      </div>
-
-      {showExplicitCreate ? (
-        <button
-          type="button"
-          className="button button-link acx-person-commit__create-new"
-          onClick={() => handleCreate(createCandidate)}
-          disabled={isBusy}
-        >
-          {sprintf(__(PERSON_COMMIT_CREATE_NEW_COPY, 'alt-context'), createCandidate)}
-        </button>
-      ) : null}
+          className="acx-person-commit__controls"
+          classPrefix="acx-person-commit"
+        />
+      )}
 
       {reservedError ? (
         <p className="acx-person-commit__failure-message" role="alert">
@@ -238,7 +228,7 @@ export const PersonCommitControl = ({
       {phase === PERSON_COMMIT_PHASE.FAILED ? (
         <div className="acx-person-commit__failure" role="alert">
           <p className="acx-person-commit__failure-message">
-            {errorMessage ?? __(PERSON_COMMIT_FAILURE_COPY, 'alt-context')}
+            {errorMessage ?? __('Could not save the name. Retry to try again.', 'alt-context')}
           </p>
           <button
             type="button"
@@ -251,14 +241,14 @@ export const PersonCommitControl = ({
         </div>
       ) : null}
 
-      {onJustLabel ? (
+      {onCurateGroup ? (
         <button
           type="button"
-          className="button button-link acx-person-commit__just-label"
-          onClick={() => onJustLabel(clusterId)}
+          className="button button-link acx-person-commit__curate"
+          onClick={() => onCurateGroup(clusterId)}
           disabled={isBusy}
         >
-          {__(JUST_LABEL_COPY, 'alt-context')}
+          {__('Merge or split this group', 'alt-context')}
         </button>
       ) : null}
     </div>

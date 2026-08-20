@@ -106,6 +106,8 @@ export interface WorkbenchFindingsQueues {
   topUnlabeledTotal: number;
   /** Server envelope: the loaded top-unlabeled page is not the full backlog. */
   topUnlabeledTruncated: boolean;
+  /** Server envelope: targeted repair was requested or invariant rows were dropped. */
+  topUnlabeledRepairPending: boolean;
 }
 
 export interface WorkbenchFindingsSourceState {
@@ -138,6 +140,11 @@ export interface WorkbenchFindingsViewModel {
    * qualify the page-local zero count (E21-20-REV2-04).
    */
   topUnlabeledTruncated: boolean;
+  /**
+   * Envelope or derived repair signal. Resync / repair live-region key off this
+   * so AT never hears drain while server total still exceeds the served page.
+   */
+  repairPending: boolean;
   hasFindings: boolean;
   isLoading: boolean;
   isError: boolean;
@@ -378,6 +385,10 @@ export const buildWorkbenchFindings = (
     unlabeledClusters,
     total: queues.assignmentTotal + queues.mergeTotal + queues.nameTotal + unlabeledClusters,
   };
+  const repairPending =
+    queues.topUnlabeledRepairPending ||
+    zeroEvidenceClusterCount > 0 ||
+    (unlabeledClusters > 0 && evidenceClusters.length === 0);
 
   // WHY: assignment + top-unlabeled are the canonical availability signals; merge/name
   // outages degrade gracefully to a partial summary instead of hiding the panel.
@@ -404,6 +415,7 @@ export const buildWorkbenchFindings = (
     previews: collectPreviews(queues, evidenceClusters),
     zeroEvidenceClusterCount,
     topUnlabeledTruncated: queues.topUnlabeledTruncated,
+    repairPending,
     hasFindings: counts.total > 0,
     isLoading: state.isLoading,
     isError,
@@ -439,6 +451,7 @@ export const useWorkbenchFindings = (): WorkbenchFindingsViewModel => {
     topUnlabeledClusters,
     topUnlabeledTotal,
     topUnlabeledTruncated,
+    topUnlabeledRepairPending,
     topUnlabeledDataSource,
     reviewItems,
   } = useSuggestionReviewQueries();
@@ -482,6 +495,7 @@ export const useWorkbenchFindings = (): WorkbenchFindingsViewModel => {
       topUnlabeledClusters,
       topUnlabeledTotal: resolvedTopUnlabeledTotal,
       topUnlabeledTruncated,
+      topUnlabeledRepairPending: topUnlabeledRepairPending === true,
     },
     {
       assignmentDataSource,

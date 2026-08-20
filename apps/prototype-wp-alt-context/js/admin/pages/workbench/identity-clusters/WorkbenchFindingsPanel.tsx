@@ -20,7 +20,7 @@ import {
   type WorkbenchNextAction,
 } from './useWorkbenchFindings';
 import { QUERY_RETRY_COPY, QueryRetryButton, settledRefetchFailed } from './queryRetry';
-import { gatedClusterCopy, REPRESENTATIVE_VOCABULARY } from './representativeVocabulary';
+import { gatedClusterCopy, repairGatedCount, REPRESENTATIVE_VOCABULARY } from './representativeVocabulary';
 import { useSuggestionReviewQueries } from './useSuggestionReviewQueries';
 
 /** Panel-level fallback chain (design B.2). First match wins. */
@@ -135,7 +135,7 @@ const FindingsRetryButton = ({
   <QueryRetryButton
     describedBy={describedBy}
     retrying={retrying}
-    retryingLabel={__(QUERY_RETRY_COPY.RETRYING_FINDINGS, 'alt-context')}
+    retryingLabel={QUERY_RETRY_COPY.RETRYING_FINDINGS}
     statusId={FINDINGS_RETRY_STATUS_ID}
     statusClassName="acx-findings-panel__status"
     onClick={onClick}
@@ -186,6 +186,7 @@ export const WorkbenchFindingsPanel = ({
     counts,
     previews,
     zeroEvidenceClusterCount,
+    repairPending,
     topUnlabeledTruncated,
     hasFindings,
     isLoading,
@@ -316,8 +317,8 @@ export const WorkbenchFindingsPanel = ({
             {retrying
               ? null
               : retryFailed
-                ? __(QUERY_RETRY_COPY.RETRY_FAILED_FINDINGS, 'alt-context')
-                : __(QUERY_RETRY_COPY.LOAD_FAILED_FINDINGS, 'alt-context')}
+                ? QUERY_RETRY_COPY.RETRY_FAILED_FINDINGS
+                : QUERY_RETRY_COPY.LOAD_FAILED_FINDINGS}
           </p>
         </div>
         <FindingsRetryButton
@@ -385,7 +386,7 @@ export const WorkbenchFindingsPanel = ({
 
       {/* One live region for counts + repair copy. Hidden on true empty so only
           the empty-state region announces the zero state. Resync stays outside. */}
-      {(hasFindings || zeroEvidenceClusterCount > 0) && (
+      {(hasFindings || repairPending) && (
         <div role="status" aria-live="polite">
           {hasFindings && (
             <ul className="acx-findings-panel__counts">
@@ -416,11 +417,22 @@ export const WorkbenchFindingsPanel = ({
               </li>
             </ul>
           )}
-          {zeroEvidenceClusterCount > 0 && (
+          {repairPending && (
             <>
               <p id="acx-findings-panel-repair-copy" className="acx-findings-panel__status">
                 <AlertTriangle aria-hidden="true" className="acx-findings-panel__status-icon" size={16} />
-                {gatedClusterCopy(zeroEvidenceClusterCount, topUnlabeledTruncated)}
+                {gatedClusterCopy(
+                  // DATA-14 / rg-015: unlabeledClusters is server-wide.
+                  // repairGatedCount's fallback is honest only when this
+                  // surface served no gated clusters. Evidence-preview
+                  // length is the wrong servedCount — zeros are the gated
+                  // groups, and they can be on this page with no chips.
+                  previews.length === 0
+                    ? repairGatedCount(zeroEvidenceClusterCount, counts.unlabeledClusters)
+                    : zeroEvidenceClusterCount,
+                  topUnlabeledTruncated,
+                  zeroEvidenceClusterCount,
+                )}
               </p>
               <p className="acx-findings-panel__hint">
                 {__('They are hidden from review until their faces sync.', 'alt-context')}
@@ -449,13 +461,14 @@ export const WorkbenchFindingsPanel = ({
         </div>
       )}
 
-      {zeroEvidenceClusterCount > 0 && (
+      {repairPending && (
         <div className="acx-findings-panel__repair" data-cluster-evidence={CLUSTER_EVIDENCE.ZERO}>
           <button
             type="button"
             className="acx-button acx-button--secondary acx-button--small"
             onClick={handleRetryTopUnlabeled}
             aria-describedby="acx-findings-panel-repair-copy"
+            aria-label={__('Resync findings', 'alt-context')}
           >
             {__('Resync', 'alt-context')}
           </button>
@@ -470,7 +483,7 @@ export const WorkbenchFindingsPanel = ({
           set. Announcing "No findings yet" there tells the operator the backlog
           is clear while the primary review queue is down. Same treatment as the
           top-unlabeled degraded chip: name the outage, offer the retry. */}
-      {!hasFindings && zeroEvidenceClusterCount === 0 && isAssignmentError && (
+      {!hasFindings && !repairPending && isAssignmentError && (
         <>
           <p
             id="acx-findings-panel-assignment-outage"
@@ -492,7 +505,7 @@ export const WorkbenchFindingsPanel = ({
         </>
       )}
 
-      {!hasFindings && zeroEvidenceClusterCount === 0 && !isAssignmentError && (
+      {!hasFindings && !repairPending && !isAssignmentError && (
         <p className="acx-findings-panel__empty" role="status" aria-live="polite">
           {__('No findings yet. Run a scan and new findings will appear here automatically.', 'alt-context')}
         </p>

@@ -7,7 +7,7 @@ namespace AltContext\Tests\Unit;
 use AltContext\Tests\TestCase;
 
 /**
- * R20-BR-26 / R21-BR-11: all six WP-CLI command entry files must be require_once'd
+ * R20-BR-26 / R21-BR-11: all seven WP-CLI command entry files must be require_once'd
  * in the alt-context.php WP_CLI block so a stale Composer classmap cannot leave
  * the command classes undeclared when `acx_register_cli_commands()` runs.
  *
@@ -42,11 +42,12 @@ class CliCommandAutoloadTest extends TestCase
         'AltContext\\Cli\\DescriptionRefreshCommand',
         'AltContext\\Cli\\XmpBackfillCommand',
         'AltContext\\Cli\\ResetProjectionCommand',
+        'AltContext\\Cli\\BindUnboundLabelsCommand',
     ];
 
     /**
      * Require lines the WP_CLI block must carry (relative to ACX_PLUGIN_DIR).
-     * Order matches alt-context.php: deps first, then the six command entries.
+     * Order matches alt-context.php: deps first, then the seven command entries.
      *
      * @var list<string>
      */
@@ -59,6 +60,7 @@ class CliCommandAutoloadTest extends TestCase
         'src/cli/class-description-refresh-command.php',
         'src/cli/class-xmp-backfill-command.php',
         'src/cli/class-reset-projection-command.php',
+        'src/cli/class-bind-unbound-labels-command.php',
     ];
 
     public function testEntrypointExplicitlyRequiresAllCliCommandFiles(): void
@@ -151,7 +153,7 @@ class CliCommandAutoloadTest extends TestCase
         $this->assertSame(
             'ok',
             $output,
-            'The WP_CLI require block must declare all six command classes and their '
+            'The WP_CLI require block must declare all seven command classes and their '
                 . 'constructors must be instantiable (classmap primary for ctor deps); got: '
                 . var_export($output, true)
         );

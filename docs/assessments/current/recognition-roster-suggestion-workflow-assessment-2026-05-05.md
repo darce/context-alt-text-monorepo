@@ -28,7 +28,7 @@
 
 The current product expectation is person-centric: once a user curates an entity cluster, the system should treat that curation as training signal, surface nearby candidate clusters or singleton faces, adjust similarity context after curation, and create a roster entry where all images and face instances for that person can be reviewed. The codebase currently implements pieces of that model, but the pieces are not composed into one reliable workflow.
 
-The most likely explanation for the reported batch job behavior, including singleton `cluster-e22d355c86504443896d9bd73c54b80e` being left behind instead of being suggested into the Tory Guzman cluster, is that suggestion surfacing is only triggered on selected backend paths. A backend `PATCH /clusters/{id}` label update can schedule `surface_for_newly_labeled_cluster`, but the WordPress local roster commit path writes a local person binding and emits `cluster_person_bound`; backend curation sync applies `roster_id` without deriving the person label or invoking the same suggestion refresh path. Merge follow-up is also narrow: the curation job calls `refresh_for_cluster`, which updates existing pending suggestions for a target cluster but does not create missing suggestions when none exist.
+The most likely explanation for the reported batch job behavior, including singleton `cluster-e22d355c86504443896d9bd73c54b80e` being left behind instead of being suggested into the Flaxen Yarrow cluster, is that suggestion surfacing is only triggered on selected backend paths. A backend `PATCH /clusters/{id}` label update can schedule `surface_for_newly_labeled_cluster`, but the WordPress local roster commit path writes a local person binding and emits `cluster_person_bound`; backend curation sync applies `roster_id` without deriving the person label or invoking the same suggestion refresh path. Merge follow-up is also narrow: the curation job calls `refresh_for_cluster`, which updates existing pending suggestions for a target cluster but does not create missing suggestions when none exist.
 
 The roster and cluster UI confusion follows from the same split. The cluster tab lists raw cluster rows, not a person-consolidated read model, so multiple clusters can remain visible for the same identity after workbench merges. The roster entries contract returns only person metadata and `cluster_count`, so entries can appear empty or non-reviewable even after curation. Thumbnail and similarity UI add friction because face crops are forced into square/circular thumbnails and similarity values are not explained as face-to-representative, face-to-centroid, threshold, floor, or post-curation deltas.
 
@@ -43,7 +43,7 @@ This outline is intended as the cross-reference checklist for follow-on artifact
 | User issue | Assessment findings | Recommended direction |
 | ---------- | ------------------- | --------------------- |
 | Batch job `4f7236f5-55ed-4b55-8eae-51e5b7d256f4` left `cluster-e22d355c86504443896d9bd73c54b80e` as a singleton | F2, F3, F4, F9 | Reproduce the job against DB/API state, then define a durable post-curation suggestion refresh contract |
-| Singleton should be suggested into Tory Guzman cluster after initial curation | F1, F2, F3 | Make local roster binding and backend curation replay invoke the same newly-labeled-cluster suggestion workflow |
+| Singleton should be suggested into Flaxen Yarrow cluster after initial curation | F1, F2, F3 | Make local roster binding and backend curation replay invoke the same newly-labeled-cluster suggestion workflow |
 | Similarity percentage should adjust after user curation | F2, F3, F8 | Recompute and expose suggestion similarity context after curation, not only on initial clustering |
 | Suggestion workflow no longer surfaces in UI | F1, F2, F3, F4, F8 | Connect curation sync, suggestion refresh, and UI suggestion surfaces with durable status |
 | Apple recognition literature is present but not obvious to user | F9 | Surface curriculum/singleton/proposal state as user-facing review queues, not generic cluster copy |
@@ -300,7 +300,7 @@ The assessment also should not claim that the description service lacks refactor
 
 ### Recommendations the assessment is missing
 
-R-MISS-1: The spec should include a concrete reproduction harness for job `4f7236f5-55ed-4b55-8eae-51e5b7d256f4` and singleton `cluster-e22d355c86504443896d9bd73c54b80e`. The repo contains older Tory Guzman references, but this exact job evidence was not available through file search alone; verification likely requires DB/API inspection.
+R-MISS-1: The spec should include a concrete reproduction harness for job `4f7236f5-55ed-4b55-8eae-51e5b7d256f4` and singleton `cluster-e22d355c86504443896d9bd73c54b80e`. The repo contains older Flaxen Yarrow references, but this exact job evidence was not available through file search alone; verification likely requires DB/API inspection.
 
 R-MISS-2: The spec should define metrics and status surfaces for curation-driven suggestion refresh: queued, running, completed, no candidates, candidates created, candidates refreshed, timed out, and failed.
 

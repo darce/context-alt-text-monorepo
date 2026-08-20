@@ -159,7 +159,7 @@ describe('buildNamingOptions', () => {
   });
 
   it('excludes a machine-labeled cluster row from clusterCandidates (BR-48 candidate lock)', () => {
-    // Human control row defeats vacuous-green (matchesPrefix starvation / fixture typo).
+    // Human control row defeats vacuous-green (matchesFilter starvation / fixture typo).
     const { options } = buildNamingOptions({
       rosterEntries: [],
       labelMatches: [
@@ -180,15 +180,49 @@ describe('buildNamingOptions', () => {
     const { options, collisionsByLabel } = buildNamingOptions({
       rosterEntries: [],
       labelMatches: [
-        { id: 'self', label: 'Emilie', identity_count: 2 },
-        { id: 'other', label: 'Emilie Archive', identity_count: 1 },
+        { id: 'self', label: 'thistle', identity_count: 2 },
+        { id: 'other', label: 'thistle Archive', identity_count: 1 },
       ],
       excludeClusterId: 'self',
       limit: null,
     });
 
-    expect(options.map((option) => option.label)).toEqual(['Emilie Archive']);
-    expect(findCollisionsForLabel(collisionsByLabel, 'Emilie', 'self')).toHaveLength(0);
+    expect(options.map((option) => option.label)).toEqual(['thistle Archive']);
+    expect(findCollisionsForLabel(collisionsByLabel, 'thistle', 'self')).toHaveLength(0);
+  });
+
+  it('returns a mid-label substring match for filter carter (UXW2-3-R1-07)', () => {
+    const { options } = buildNamingOptions({
+      rosterEntries: [{ id: 1, name: 'Alex Carter' }],
+      labelMatches: [],
+      filter: 'carter',
+      limit: null,
+    });
+
+    expect(options.map((option) => option.label)).toEqual(['Alex Carter']);
+    expect(options[0]).toMatchObject({
+      source: 'person',
+      value: namingOptionValue('person', 1),
+    });
+  });
+
+  it('ranks exact, then prefix, then substring matches without alphabetical sort (UXW2-3-R1-07)', () => {
+    const { options } = buildNamingOptions({
+      rosterEntries: [
+        { id: 1, name: 'Carter Zhao' },
+        { id: 2, name: 'Alex Carter' },
+        { id: 3, name: 'Carter' },
+      ],
+      labelMatches: [],
+      filter: 'carter',
+      limit: null,
+    });
+
+    expect(options.map((option) => option.label)).toEqual([
+      'Carter',
+      'Carter Zhao',
+      'Alex Carter',
+    ]);
   });
 
   it('uniqueClusterCollisionTarget is null when no unique cluster target exists', () => {

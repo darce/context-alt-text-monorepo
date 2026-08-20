@@ -46,6 +46,21 @@ class ClusterMutationsCharacterizationTest extends TestCase
             null,
             $this->topologyCommandRepository
         );
+        global $wpdb;
+        $wpdb->tableRows['wp_acx_clusters'] = [
+            [
+                'cluster_uuid' => 'cluster-xyz',
+                'tenant_id' => self::currentTenantId(),
+                'label' => 'Old',
+                'person_id' => null,
+            ],
+            [
+                'cluster_uuid' => 'cluster-target',
+                'tenant_id' => self::currentTenantId(),
+                'label' => 'Old',
+                'person_id' => null,
+            ],
+        ];
     }
 
     public function testClusterMediaIsBackendProxyMutation(): void
@@ -64,7 +79,7 @@ class ClusterMutationsCharacterizationTest extends TestCase
             'classification' => 'backend_proxy_mutation',
             'http_calls' => count($this->getHttpCalls()),
             'touched_tenant_id' => $this->syncStateRepository->lastTouchedTenantId,
-            'outbox_operation' => '',
+            'outbox_operations' => [],
             'transaction_queries' => [],
             'topology_command_type' => '',
             'refresh_curation_metrics' => $this->syncStateRepository->refreshCurationMetricsCalled,
@@ -193,7 +208,7 @@ class ClusterMutationsCharacterizationTest extends TestCase
 
         return [
             'touched_tenant_id' => $this->syncStateRepository->lastTouchedTenantId,
-            'outbox_operation' => $this->findOutboxOperation($wpdb->queries ?? []),
+            'outbox_operations' => $this->findOutboxOperations($wpdb->queries ?? []),
             'transaction_queries' => $this->captureTransactionQueries($wpdb->queries ?? []),
             'topology_command_type' => $this->topologyCommandRepository->lastCommandType,
             'refresh_curation_metrics' => $this->syncStateRepository->refreshCurationMetricsCalled,
@@ -218,19 +233,21 @@ class ClusterMutationsCharacterizationTest extends TestCase
 
     /**
      * @param array<int,string> $queries
+     * @return list<string>
      */
-    private function findOutboxOperation(array $queries): string
+    private function findOutboxOperations(array $queries): array
     {
+        $operations = [];
         foreach ($queries as $query) {
             if (! str_contains($query, 'INSERT INTO wp_acx_sync_outbox')) {
                 continue;
             }
             if (preg_match("/'([a-z_]+)'/", $query, $matches) === 1) {
-                return $matches[1];
+                $operations[] = $matches[1];
             }
         }
 
-        return '';
+        return $operations;
     }
 
     /**

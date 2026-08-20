@@ -232,7 +232,7 @@ describe('RosterEntriesTable', () => {
     await userEvent.click(screen.getAllByRole('button', { name: 'Delete person' })[0]);
 
     expect(
-      screen.getByText('Are you sure you want to delete this person? Assigned clusters will be dissociated.'),
+      screen.getByText('Are you sure you want to delete this person? Assigned faces return to the review queue.'),
     ).toBeInTheDocument();
 
     await userEvent.click(screen.getAllByRole('button', { name: 'Delete' }).at(-1)!);
@@ -328,7 +328,7 @@ describe('RosterEntriesTable', () => {
           representative_identity: {
             identity_id: 'identity-sarah-rep',
             media_id: 501,
-            media_url: 'https://example.com/sarah-rep.jpg',
+            media_url: 'https://example.com/opaline-rep.jpg',
             bbox: null,
             similarity: 0.95,
           },
@@ -362,7 +362,7 @@ describe('RosterEntriesTable', () => {
           representative_identity: {
             identity_id: 'identity-sarah-rep',
             media_id: 501,
-            media_url: 'https://example.com/sarah-rep.jpg',
+            media_url: 'https://example.com/opaline-rep.jpg',
             bbox: { x: 10, y: 20, width: 30, height: 40 },
             similarity: 0.95,
           },

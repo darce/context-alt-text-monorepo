@@ -44,7 +44,7 @@ def _prior(caption: str = CAPTION, *, objects: list[str] | None = None) -> Visua
 
 
 def _identity_item(
-    name: str = "Maria Correonero",
+    name: str = "Slate Willow",
     *,
     cluster_id: str | None = "cluster-maria",
     identity_id: str | None = "identity-maria",
@@ -100,7 +100,7 @@ def test_object_attach_identity_via_merge_containment():
     assert att.decision is AttachmentDecision.OBJECT
     assert att.altitude is AttachmentAltitude.OBJECT
     assert att.visible is True
-    assert att.fact_label == "Maria Correonero"
+    assert att.fact_label == "Slate Willow"
     assert att.target_evidence == "person"
     assert att.review_reason is None
     assert att.fact_id == "identity:cluster:cluster-maria"
@@ -212,11 +212,11 @@ def test_object_attach_brand_when_detected():
 
 def test_detector_backed_conflict_drop_face_not_detected():
     """Name in pack whose face is not among confirmed detections → dropped + reason."""
-    item = _identity_item("Maria Correonero")
+    item = _identity_item("Slate Willow")
     pack = _pack_with_identity(item)
     # Different person detected — Maria's face is not present.
     other = make_face(
-        "Bea Burke",
+        "Hollow Pennant",
         box=FACE_BOX,
         cluster_id="cluster-bea",
         identity_id="identity-bea",
@@ -247,14 +247,14 @@ def test_same_label_mismatched_ids_does_not_object_attach():
     face center is inside a phrase box.
     """
     item = _identity_item(
-        "Maria Correonero",
+        "Slate Willow",
         cluster_id="cluster-a",
         identity_id="id-a",
     )
     pack = _pack_with_identity(item)
     # Same display name, different recognition ids — label fallback would FP.
     wrong_face = make_face(
-        "Maria Correonero",
+        "Slate Willow",
         box=FACE_BOX,
         cluster_id="cluster-b",
         identity_id="id-b",
@@ -484,8 +484,8 @@ def test_two_identities_one_phrase_box_both_dropped_ambiguous():
     merge.py's 1:1 same-region guard must see the FULL face set — neither
     identity may object-attach when the region is contested.
     """
-    maria = _identity_item("Maria Correonero", cluster_id="c-a", identity_id="i-a")
-    bea = _identity_item("Bea Burke", cluster_id="c-b", identity_id="i-b")
+    maria = _identity_item("Slate Willow", cluster_id="c-a", identity_id="i-a")
+    bea = _identity_item("Hollow Pennant", cluster_id="c-b", identity_id="i-b")
     pack = _pack_with_identity(maria, bea)
     face_a = make_face(
         maria.name,

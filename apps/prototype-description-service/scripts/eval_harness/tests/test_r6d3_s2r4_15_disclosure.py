@@ -50,7 +50,7 @@ def test_646_notes_name_s2r3_07_caption_and_failure_path_moves() -> None:
         assert "0.685" in blob and "0.684" in blob, f"{label} missing name_precision 0.685→0.684"
         assert "203" in blob and "204" in blob, f"{label} missing wrong_name_images 203→204"
         assert "24" in blob and "25" in blob, f"{label} missing title hallucinated 24→25"
-        assert "Talvi Faustmann" in blob, f"{label} missing new hallucinated name"
+        assert "Sable Current" in blob, f"{label} missing new hallucinated name"
         assert "19" in blob and "20" in blob, f"{label} missing true_rejections 19→20"
         assert "0.635" in blob and "0.634" in blob, f"{label} missing long name_precision"
         assert "262" in blob and "263" in blob, f"{label} missing long wrong_name_images"

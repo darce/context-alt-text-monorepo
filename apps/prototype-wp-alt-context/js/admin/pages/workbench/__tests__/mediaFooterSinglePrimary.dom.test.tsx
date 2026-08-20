@@ -33,7 +33,6 @@ import { HTTPError } from '../../../utils/http';
 import type { DescribeRunProgress } from '../../../hooks/useDescribeRunProgress';
 import { MergeSurvivorProvider } from '../identity-clusters/MergeSurvivorContext';
 import {
-  PERSON_COMMIT_CONFIRM_COPY,
   VIEW_IN_ROSTER_COPY,
 } from '../identity-clusters/personCommitCopy';
 import { ReviewQueue } from '../identity-clusters';
@@ -187,11 +186,24 @@ const ReconciledViewport = ({
       ) : (
         <ReviewQueue
           index={index}
-          onIndexChange={setIndex}
+          onClampIndex={setIndex}
+          onStepIndex={(delta, length) => {
+            setIndex((prev) => {
+              if (length <= 0) {
+                return 0;
+              }
+              const clamped = Math.min(Math.max(0, prev), length - 1);
+              return Math.min(Math.max(0, clamped + delta), length - 1);
+            });
+          }}
           kind={kind}
-          onKindChange={setKind}
+          onKindChange={(next) => {
+            setKind(next);
+            setIndex(0);
+          }}
           band="all"
           onBandChange={vi.fn()}
+          onClearFilters={vi.fn()}
           selectedIds={selectedIds}
           onSelectedIdsChange={setSelectedIds}
           onCardPrimaryPresenceChange={setCardPrimaryPresent}
@@ -404,7 +416,8 @@ describe('§7 single-accent-primary DOM invariant (Slice 8 / BR-72)', () => {
     const { container } = renderViewport();
 
     // Before commit: the card's person-commit Confirm is the single accent primary.
-    const confirm = await screen.findByRole('button', { name: PERSON_COMMIT_CONFIRM_COPY });
+    // previewCommit names the create outcome from the prefilled suggested_label.
+    const confirm = await screen.findByRole('button', { name: 'Create person "Alex"' });
     await waitFor(() => expect(markerCount(container)).toBe(1));
     expect(container.querySelector(ACCENT_PRIMARY_SELECTOR)).toBe(confirm);
 

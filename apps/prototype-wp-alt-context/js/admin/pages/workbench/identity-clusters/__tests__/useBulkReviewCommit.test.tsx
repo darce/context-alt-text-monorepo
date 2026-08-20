@@ -672,6 +672,54 @@ describe('useBulkReviewCommit (PR-30 state machine)', () => {
     expect(result.current.bulk.phase).toBe('idle');
     expect(commitCalls).toEqual([]);
   });
+
+  it('UXW2-6: initiateBulkFromItems sequences pinned ids even when selection is empty', async () => {
+    selectedIds = new Set();
+    const { result } = renderBulk();
+
+    await act(async () => {
+      await result.current.initiateBulkFromItems([items.a, items.b]);
+    });
+    expect(result.current.bulk.phase).toBe('holding');
+    expect(result.current.bulkHoldAnnounce).toBe('Saving 2… — Undo');
+    expect(commitCalls).toEqual([]);
+
+    await expireBulkHold();
+    expect(commitCalls).toEqual(['a', 'b']);
+    expect(recognitionApi.bulkAcceptSuggestions).not.toHaveBeenCalled();
+  });
+
+  it('UXW2-6: pinned group-accept items fire even when resolveItems would drop them', async () => {
+    selectedIds = new Set();
+    const { result } = renderHook(() =>
+      useBulkReviewCommit({
+        selectedIds,
+        onSelectedIdsChange,
+        resolveItems: () => [],
+        flushHeldSingle,
+        commitOne,
+        heldSingleSuggestionId: null,
+        setBulkActionActive,
+        isBulkActiveRef,
+        awaitBulkIdleOrFlushRef,
+      }),
+    );
+
+    await act(async () => {
+      await result.current.initiateBulkFromItems([items.a, items.c]);
+    });
+    await expireBulkHold();
+    expect(commitCalls).toEqual(['a', 'c']);
+  });
+
+  it('UXW2-6: initiateBulkFromItems no-ops on an empty item list', async () => {
+    const { result } = renderBulk();
+    await act(async () => {
+      await result.current.initiateBulkFromItems([]);
+    });
+    expect(result.current.bulk.phase).toBe('idle');
+    expect(commitCalls).toEqual([]);
+  });
 });
 
 describe('matrix M1 single / review-each / bulk (BR-51)', () => {

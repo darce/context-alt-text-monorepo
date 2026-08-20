@@ -73,9 +73,9 @@ describe('PersonWorkspacePanel evidence images', () => {
   it('renders FaceThumbnail for croppable instances, not a raw 96px img', () => {
     renderPanel(<PersonWorkspacePanel entry={baseEntry()} onOpenQueue={vi.fn()} />);
 
-    const clusterRegion = screen.getByRole('region', { name: 'Cluster 1' });
+    const clusterRegion = screen.getByRole('region', { name: 'Face group 1' });
     const instanceImg = within(clusterRegion).getByRole('img', {
-      name: 'Instance 101 for Cluster 1',
+      name: 'Face from media 101 in face group 1',
     });
     expect(instanceImg.closest('.acx-face-thumbnail')).not.toBeNull();
     expect(instanceImg).not.toHaveAttribute('width', '96');
@@ -274,7 +274,7 @@ describe('PersonWorkspacePanel evidence images', () => {
     renderPanel(<PersonWorkspacePanel entry={baseEntry()} onOpenQueue={vi.fn()} />);
 
     expect(screen.getByText('No image')).toBeInTheDocument();
-    expect(screen.getByRole('img', { name: 'Instance 102 for Cluster 1' })).toHaveTextContent('No image');
+    expect(screen.getByRole('img', { name: 'Face from media 102 in face group 1' })).toHaveTextContent('No image');
   });
 
   it('falls back to raw lazy img for invalid-but-truthy bbox', () => {
@@ -302,7 +302,7 @@ describe('PersonWorkspacePanel evidence images', () => {
       />,
     );
 
-    const image = screen.getByRole('img', { name: 'Instance 303 for Cluster 1' });
+    const image = screen.getByRole('img', { name: 'Face from media 303 in face group 1' });
     expect(image.tagName).toBe('IMG');
     expect(image).toHaveAttribute('loading', 'lazy');
     expect(image).toHaveAttribute('src', 'https://example.com/zero-bbox.jpg');
@@ -348,10 +348,10 @@ describe('PersonWorkspacePanel evidence images', () => {
       />,
     );
 
-    const croppable = screen.getByRole('img', { name: 'Instance 101 for Cluster 1' });
+    const croppable = screen.getByRole('img', { name: 'Face from media 101 in face group 1' });
     expect(croppable).toHaveAttribute('loading', 'lazy');
 
-    const rawFallback = screen.getByRole('img', { name: 'Instance 104 for Cluster 1' });
+    const rawFallback = screen.getByRole('img', { name: 'Face from media 104 in face group 1' });
     expect(rawFallback.tagName).toBe('IMG');
     expect(rawFallback).toHaveAttribute('loading', 'lazy');
   });
@@ -359,40 +359,40 @@ describe('PersonWorkspacePanel evidence images', () => {
   it('keeps thumbnail button accessible name when FaceThumbnail errors', async () => {
     renderPanel(<PersonWorkspacePanel entry={baseEntry()} onOpenQueue={vi.fn()} />);
 
-    const openButton = screen.getByRole('option', { name: 'Instance 101 for Cluster 1' });
+    const openButton = screen.getByRole('option', { name: 'Face from media 101 in face group 1' });
     const img = within(openButton).getByRole('img');
     fireEvent.error(img);
 
     await waitFor(() => {
-      expect(screen.getByRole('option', { name: 'Instance 101 for Cluster 1' })).toBeInTheDocument();
+      expect(screen.getByRole('option', { name: 'Face from media 101 in face group 1' })).toBeInTheDocument();
       expect(within(openButton).getByRole('img', { name: 'Face image unavailable' })).toBeInTheDocument();
     });
     expect(screen.queryByRole('option', { name: 'Face image unavailable' })).not.toBeInTheDocument();
   });
 
-  it('shows Cluster 1 and Media captions without visible uuids', () => {
+  it('shows Face group 1 and Media captions without visible uuids', () => {
     renderPanel(<PersonWorkspacePanel entry={baseEntry()} onOpenQueue={vi.fn()} />);
 
-    expect(screen.getByRole('heading', { level: 5, name: 'Cluster 1' })).toBeInTheDocument();
-    expect(screen.getByRole('region', { name: 'Cluster 1' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { level: 5, name: 'Face group 1' })).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: 'Face group 1' })).toBeInTheDocument();
     expect(screen.getByText('Media 101')).toBeInTheDocument();
     expect(screen.queryByText(CLUSTER_UUID)).not.toBeInTheDocument();
     expect(screen.queryByText(/Identity /)).not.toBeInTheDocument();
   });
 
-  it('uses ordinal cluster alts and never exposes fixture uuid in accessible names', () => {
+  it('uses ordinal face group alts and never exposes fixture uuid in accessible names', () => {
     renderPanel(<PersonWorkspacePanel entry={baseEntry()} onOpenQueue={vi.fn()} />);
 
-    expect(screen.getByRole('img', { name: 'Representative face for Cluster 1' })).toBeInTheDocument();
-    expect(screen.getByRole('img', { name: 'Instance 101 for Cluster 1' })).toBeInTheDocument();
-    expect(screen.getByRole('img', { name: 'Instance 102 for Cluster 1' })).toBeInTheDocument();
+    expect(screen.getByRole('img', { name: 'Representative face for face group 1' })).toBeInTheDocument();
+    expect(screen.getByRole('img', { name: 'Face from media 101 in face group 1' })).toBeInTheDocument();
+    expect(screen.getByRole('img', { name: 'Face from media 102 in face group 1' })).toBeInTheDocument();
 
     for (const role of ['img', 'button', 'region'] as const) {
       expect(screen.queryByRole(role, { name: new RegExp(CLUSTER_UUID, 'i') })).toBeNull();
     }
   });
 
-  it('renders distinct ordinal accessible names for multi-cluster evidence', () => {
+  it('renders distinct ordinal accessible names for multi-group evidence', () => {
     const clusterA = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
     const clusterB = 'bbbbbbbb-bbbb-cccc-dddd-ffffffffffff';
     renderPanel(
@@ -446,21 +446,21 @@ describe('PersonWorkspacePanel evidence images', () => {
       />,
     );
 
-    const repCluster1 = screen.getByRole('img', { name: 'Representative face for Cluster 1' });
-    const repCluster2 = screen.getByRole('img', { name: 'Representative face for Cluster 2' });
+    const repCluster1 = screen.getByRole('img', { name: 'Representative face for face group 1' });
+    const repCluster2 = screen.getByRole('img', { name: 'Representative face for face group 2' });
     expect(repCluster1).toBeInTheDocument();
     expect(repCluster2).toBeInTheDocument();
     expect(repCluster1).not.toBe(repCluster2);
 
-    expect(screen.getByRole('img', { name: 'Instance 201 for Cluster 2' })).toBeInTheDocument();
+    expect(screen.getByRole('img', { name: 'Face from media 201 in face group 2' })).toBeInTheDocument();
 
     for (const role of ['img', 'button', 'region'] as const) {
       expect(screen.queryByRole(role, { name: new RegExp(clusterA, 'i') })).toBeNull();
       expect(screen.queryByRole(role, { name: new RegExp(clusterB, 'i') })).toBeNull();
     }
 
-    const cluster2Region = screen.getByRole('region', { name: 'Cluster 2' });
+    const cluster2Region = screen.getByRole('region', { name: 'Face group 2' });
     expect(within(cluster2Region).getByText('Media 201')).toBeInTheDocument();
-    expect(within(screen.getByRole('region', { name: 'Cluster 1' })).getByText('Media 101')).toBeInTheDocument();
+    expect(within(screen.getByRole('region', { name: 'Face group 1' })).getByText('Media 101')).toBeInTheDocument();
   });
 });

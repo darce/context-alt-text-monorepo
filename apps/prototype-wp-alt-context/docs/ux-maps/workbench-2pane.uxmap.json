@@ -4,17 +4,17 @@
   "source_fixture": "apps/prototype-wp-alt-context/docs/ux-maps/workbench-2pane.uxmap.json",
   "goals": [
     "Operator runs the full recognize -> name -> curate loop and edits alt-text/descriptions without leaving one surface (control-left, library-right)",
-    "Read cluster structure at a glance via a UMAP scatter and act on the selection in the same viewport",
+    "Read face-group structure at a glance via a UMAP scatter and act on the selection in the same viewport",
     "Decompose the 2-pane redesign from screens/zones/states/flows instead of inventing IA mid-plan"
   ],
   "jobs": [
     {
       "id": "job-cluster-recognize",
-      "label": "Cluster & recognize faces (build/refresh clusters, run recognition)"
+      "label": "Build & recognize face groups (refresh groups, run recognition)"
     },
     {
       "id": "job-name-curate",
-      "label": "Name & curate identities (confirm/correct/merge/split, assign names)"
+      "label": "Name & curate people (confirm/correct/merge/split, assign names)"
     },
     {
       "id": "job-caption-library",
@@ -22,7 +22,7 @@
     },
     {
       "id": "job-triage-sync",
-      "label": "Triage identity conflicts / failed sync (overlays)"
+      "label": "Triage people conflicts / failed sync (overlays)"
     }
   ],
   "screens": [
@@ -30,45 +30,81 @@
       "id": "workbench-2pane-shell",
       "kind": "screen",
       "title": "Workbench (2-pane)",
-      "purpose": "Two-pane operator surface: left control (cluster/recognize/name/curate), right media library (alt-text + long-description). Overlays host conflicts and dead-letter.",
+      "purpose": "Two-pane operator surface: left control (face-group/recognize/name/curate), right media library (alt-text + long-description). Overlays host conflicts and dead-letter.",
       "route": "#/workbench",
       "wp_page": "alt-context-workbench",
       "job_entry": true,
       "deep_link": true,
-      "url_params": ["pane", "cluster", "media", "panel", "status", "endpoint", "s", "p", "perPage"],
+      "url_params": [
+        "pane",
+        "cluster",
+        "media",
+        "panel",
+        "status",
+        "endpoint",
+        "s",
+        "p",
+        "perPage"
+      ],
       "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/WorkbenchPage.tsx",
       "primary_action_id": "act-run-recognition",
-      "states": ["default", "loading", "error", "degraded", "offline"],
+      "states": [
+        "default",
+        "loading",
+        "error",
+        "degraded",
+        "offline"
+      ],
       "zones": [
         {
           "id": "z-topbar",
           "label": "Workbench header + recognition endpoint (read-only status; server-resolved) + sync/projection status strip",
           "role": "status",
-          "states": ["default", "loading", "error", "degraded"]
+          "states": [
+            "default",
+            "loading",
+            "error",
+            "degraded"
+          ]
         },
         {
           "id": "z-left-host",
           "label": "Left pane host (control surface)",
           "role": "content",
-          "states": ["default", "loading", "empty", "error"]
+          "states": [
+            "default",
+            "loading",
+            "empty",
+            "error"
+          ]
         },
         {
           "id": "z-splitter",
           "label": "Pane divider / collapse-left control",
           "role": "other",
-          "states": ["default"]
+          "states": [
+            "default"
+          ]
         },
         {
           "id": "z-right-host",
           "label": "Right pane host (media library)",
           "role": "content",
-          "states": ["default", "loading", "empty", "error"]
+          "states": [
+            "default",
+            "loading",
+            "empty",
+            "error"
+          ]
         },
         {
           "id": "z-overlay-host",
           "label": "Overlay host (conflicts | dead-letter)",
           "role": "other",
-          "states": ["default", "empty"]
+          "states": [
+            "default",
+            "empty"
+          ]
         }
       ]
     },
@@ -76,47 +112,91 @@
       "id": "workbench-control",
       "kind": "screen",
       "title": "Control surface (left pane)",
-      "purpose": "Cluster, recognize, name, and curate: recognition endpoint + health, UMAP cluster scatter, cluster list, run/refresh controls, and the name/curate forced-choice form.",
+      "purpose": "Recognize, name, and curate: recognition endpoint + health, UMAP face-group scatter, face-group list, run/refresh controls, and the name/curate forced-choice form.",
       "route": "#/workbench?pane=control",
       "job_entry": true,
       "deep_link": true,
-      "url_params": ["pane", "cluster", "endpoint"],
+      "url_params": [
+        "pane",
+        "cluster",
+        "endpoint"
+      ],
       "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/workbench/ControlPane.tsx",
       "primary_action_id": "act-run-recognition",
-      "states": ["default", "loading", "empty", "error", "first_time", "degraded"],
+      "states": [
+        "default",
+        "loading",
+        "empty",
+        "error",
+        "first_time",
+        "degraded"
+      ],
       "zones": [
         {
           "id": "z-endpoint",
           "label": "Recognition endpoint + health (read-only: InsightFace :10010 interim; FIR when stable; target is server-resolved via ACX_RECOGNITION_URL, no UI toggle per RECOG-1)",
           "role": "status",
-          "states": ["default", "loading", "error", "degraded"]
+          "states": [
+            "default",
+            "loading",
+            "error",
+            "degraded"
+          ]
         },
         {
           "id": "z-recognition-controls",
-          "label": "Cluster/recognition controls (run, refresh, threshold)",
+          "label": "Face-group/recognition controls (run, refresh, threshold)",
           "role": "job",
-          "states": ["default", "loading", "error"]
+          "states": [
+            "default",
+            "loading",
+            "error"
+          ]
         },
         {
           "id": "z-cluster-umap",
-          "label": "UMAP cluster scatter (2D projection of face embeddings; select to drive right pane)",
+          "label": "UMAP face-group scatter (2D projection of faces; select to drive right pane)",
           "role": "ai_review",
           "evidence_linked": true,
-          "states": ["default", "loading", "empty", "error", "first_time"]
+          "states": [
+            "default",
+            "loading",
+            "empty",
+            "error",
+            "first_time"
+          ]
         },
         {
           "id": "z-cluster-list",
-          "label": "Cluster list / selection (size, confidence, unnamed-first)",
+          "label": "Face-group list / selection (size, confidence, unnamed-first) + NameFaceControl",
           "role": "queue",
-          "states": ["default", "loading", "empty"]
+          "states": [
+            "default",
+            "loading",
+            "empty",
+            "error",
+            "pending",
+            "suggestions-open"
+          ]
         },
         {
           "id": "z-name-curate",
-          "label": "Name & curate (assign name; confirm / correct / merge / split; forced-choice candidates)",
+          "label": "Name this person (NameFaceControl; confirm / correct / merge / split; forced-choice)",
           "role": "forced_choice",
           "evidence_linked": true,
           "max_candidates": 5,
-          "states": ["default", "loading", "empty", "error"]
+          "states": [
+            "default",
+            "loading",
+            "empty",
+            "error",
+            "pending",
+            "suggestions-open",
+            "roster-error",
+            "ambiguous",
+            "overlay-closed",
+            "duplicate-guard"
+          ]
         }
       ]
     },
@@ -128,41 +208,82 @@
       "route": "#/workbench?pane=library",
       "job_entry": true,
       "deep_link": true,
-      "url_params": ["pane", "media", "cluster", "status", "s", "p", "perPage"],
+      "url_params": [
+        "pane",
+        "media",
+        "cluster",
+        "status",
+        "s",
+        "p",
+        "perPage"
+      ],
       "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/workbench/LibraryPane.tsx",
       "primary_action_id": "act-edit-alt",
-      "states": ["default", "loading", "empty", "error", "first_time", "edge_input"],
+      "states": [
+        "default",
+        "loading",
+        "empty",
+        "error",
+        "first_time",
+        "edge_input"
+      ],
       "zones": [
         {
           "id": "z-lib-filters",
-          "label": "Library filters (status, has-alt, has-description, cluster, search)",
+          "label": "Library filters (status, has-alt, has-description, face group, search)",
           "role": "form",
-          "states": ["default", "edge_input"]
+          "states": [
+            "default",
+            "edge_input"
+          ]
         },
         {
           "id": "z-lib-table",
           "label": "Media library table (thumb | title | status | alt-text | long description | people)",
           "role": "queue",
-          "states": ["default", "loading", "empty", "error"]
+          "states": [
+            "default",
+            "loading",
+            "empty",
+            "error"
+          ]
         },
         {
           "id": "z-lib-inline-edit",
-          "label": "Inline alt-text / long-description editor (per row)",
+          "label": "Inline person naming (NameFaceControl) + alt-text / long-description editor",
           "role": "form",
-          "states": ["default", "error"]
+          "states": [
+            "default",
+            "loading",
+            "empty",
+            "error",
+            "pending",
+            "suggestions-open"
+          ]
         },
         {
           "id": "z-lib-ai-suggest",
-          "label": "AI caption/description suggestions (evidence-linked; editable before accept)",
+          "label": "AI name / caption suggestions (evidence-linked; editable before accept)",
           "role": "ai_review",
           "evidence_linked": true,
-          "states": ["default", "empty", "loading"]
+          "states": [
+            "default",
+            "empty",
+            "loading",
+            "error",
+            "pending",
+            "suggestions-open"
+          ]
         },
         {
           "id": "z-lib-actions",
           "label": "Bulk describe / scan CTAs + job progress",
           "role": "job",
-          "states": ["default", "loading", "error"]
+          "states": [
+            "default",
+            "loading",
+            "error"
+          ]
         }
       ]
     },
@@ -170,20 +291,31 @@
       "id": "workbench-conflicts",
       "kind": "overlay",
       "title": "Conflict Inbox",
-      "purpose": "Review identity conflicts; commit human judgment with evidence",
+      "purpose": "Review people conflicts; commit human judgment with evidence",
       "route": "#/workbench?panel=conflicts",
       "job_entry": false,
       "deep_link": true,
-      "url_params": ["panel"],
+      "url_params": [
+        "panel"
+      ],
       "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/workbench/ConflictInbox.tsx",
       "primary_action_id": "act-resolve-conflict",
-      "states": ["default", "loading", "empty", "error"],
+      "states": [
+        "default",
+        "loading",
+        "empty",
+        "error"
+      ],
       "zones": [
         {
           "id": "z-conflict-list",
           "label": "Conflict list",
           "role": "queue",
-          "states": ["default", "loading", "empty"]
+          "states": [
+            "default",
+            "loading",
+            "empty"
+          ]
         },
         {
           "id": "z-conflict-detail",
@@ -191,13 +323,19 @@
           "role": "forced_choice",
           "evidence_linked": true,
           "max_candidates": 5,
-          "states": ["default", "loading", "empty"]
+          "states": [
+            "default",
+            "loading",
+            "empty"
+          ]
         },
         {
           "id": "z-conflict-actions",
           "label": "Resolve / defer actions",
           "role": "form",
-          "states": ["default"]
+          "states": [
+            "default"
+          ]
         }
       ]
     },
@@ -209,22 +347,35 @@
       "route": "#/workbench?panel=dead-letter",
       "job_entry": false,
       "deep_link": true,
-      "url_params": ["panel"],
+      "url_params": [
+        "panel"
+      ],
       "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/workbench/DeadLetterPanel.tsx",
       "primary_action_id": "act-retry-dead-letter",
-      "states": ["default", "loading", "empty", "error"],
+      "states": [
+        "default",
+        "loading",
+        "empty",
+        "error"
+      ],
       "zones": [
         {
           "id": "z-dl-list",
           "label": "Dead-letter items",
           "role": "queue",
-          "states": ["default", "loading", "empty"]
+          "states": [
+            "default",
+            "loading",
+            "empty"
+          ]
         },
         {
           "id": "z-dl-actions",
           "label": "Retry / discard",
           "role": "form",
-          "states": ["default"]
+          "states": [
+            "default"
+          ]
         }
       ]
     },
@@ -237,15 +388,25 @@
       "wp_page": "alt-context-roster",
       "job_entry": true,
       "deep_link": true,
-      "url_params": ["personFilter", "person"],
+      "url_params": [
+        "personFilter",
+        "person"
+      ],
       "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/RosterPage.tsx",
-      "states": ["default", "loading", "empty", "error"],
+      "states": [
+        "default",
+        "loading",
+        "empty",
+        "error"
+      ],
       "zones": [
         {
           "id": "z-roster-entry",
           "label": "Roster entry",
           "role": "nav",
-          "states": ["default"]
+          "states": [
+            "default"
+          ]
         }
       ]
     },
@@ -260,13 +421,20 @@
       "deep_link": true,
       "url_params": [],
       "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/SettingsPage.tsx",
-      "states": ["default", "loading", "error"],
+      "states": [
+        "default",
+        "loading",
+        "error"
+      ],
       "zones": [
         {
           "id": "z-settings-form",
           "label": "Settings form + test connection",
           "role": "form",
-          "states": ["default", "error"]
+          "states": [
+            "default",
+            "error"
+          ]
         }
       ]
     }
@@ -274,7 +442,7 @@
   "actions": [
     {
       "id": "act-run-recognition",
-      "verb": "Run / refresh recognition + clustering",
+      "verb": "Run / refresh recognition + grouping",
       "target": "job-pipeline",
       "hierarchy": "primary",
       "costly": true,
@@ -284,7 +452,7 @@
     },
     {
       "id": "act-select-cluster",
-      "verb": "Select cluster (UMAP or list)",
+      "verb": "Select face group (UMAP or list)",
       "target": "workbench-library",
       "hierarchy": "primary",
       "costly": false,
@@ -294,7 +462,7 @@
     },
     {
       "id": "act-name-cluster",
-      "verb": "Assign name to cluster",
+      "verb": "Save name (NameFaceControl)",
       "target": "identity-store",
       "hierarchy": "primary",
       "costly": true,
@@ -304,7 +472,7 @@
     },
     {
       "id": "act-curate-cluster",
-      "verb": "Merge / split / correct cluster",
+      "verb": "Merge / split / correct group",
       "target": "identity-store",
       "hierarchy": "destructive",
       "costly": true,
@@ -427,7 +595,7 @@
     {
       "id": "flow-recognize-name-curate",
       "job": "job-name-curate",
-      "label": "Run recognition -> select cluster -> name/curate -> library people column updates",
+      "label": "Run recognition -> select face group -> name/curate -> library people column updates",
       "steps": [
         {
           "screen_id": "workbench-2pane-shell",
@@ -439,7 +607,7 @@
         },
         {
           "screen_id": "workbench-control",
-          "branch_label": "select cluster (umap/list)"
+          "branch_label": "select face group (umap/list)"
         },
         {
           "screen_id": "workbench-control",
@@ -473,7 +641,7 @@
     {
       "id": "flow-umap-select-to-library",
       "job": "job-cluster-recognize",
-      "label": "UMAP scatter -> select cluster -> right library filters to cluster media",
+      "label": "UMAP scatter -> select face group -> right library filters to face-group media",
       "steps": [
         {
           "screen_id": "workbench-control",
@@ -481,11 +649,11 @@
         },
         {
           "screen_id": "workbench-control",
-          "branch_label": "select cluster point/region"
+          "branch_label": "select face-group point/region"
         },
         {
           "screen_id": "workbench-library",
-          "branch_label": "cluster= filters library"
+          "branch_label": "face-group= filters library"
         }
       ]
     },
@@ -533,15 +701,15 @@
     }
   ],
   "open_questions": [
-    "DEP: long-description has no data field yet (WorkbenchMediaItem has only altText). The long-description column depends on a new media schema field + REST + backend. Ship alt-text column first, long-description behind the field? [FORM]",
-    "DEP: no 2D projection data exists (only bbox + 3D head pose; 'embeddings' is banned UI vocab). The cluster-map scatter depends on a new backend 2D-projection endpoint. Ship left pane as cluster LIST first, scatter as fast-follow? [VIZ-01,VIZ-15]",
-    "Cluster-map label: user-facing name must avoid 'embeddings' (banned vocab) — 'cluster map' / 'face map'? [copy]",
-    "Selecting a cluster in the map/list: filter the right library pane, open the naming form, or both (coordinated views)? [VIZ-15]",
-    "Naming form ordering: adopt commit-before-reveal (operator judges before model candidates shown) or reveal-first? confirm-only logs agreement, not verification [HAI-15]",
-    "Endpoint switch (:10010 InsightFace 512d vs FIR/SFace 128d) changes embedding dimensionality server-side; do existing clusters invalidate + need re-projection on switch? [HAI-02]",
-    "Left/right min-width + left-collapse on narrow (<1100px) viewports; control collapses to a drawer, library stays reachable? [NAV-08,A11Y-08]",
-    "Alt-text vs long-description: two fixed columns or one expandable row-detail? column-width vs scannability [PERC-01,UI-04]",
-    "Bulk-describe cost preview granularity: per-image cost surfaced before start? [INT-07]"
+    "OPEN: long-description has no data field yet (media items have only alt text). Ship the alt-text column first, long-description behind a new field? [FORM]",
+    "OPEN: no 2D projection data exists (only bbox + 3D head pose). Ship the left pane as a face-group list first; scatter map is a fast-follow once a projection endpoint exists? [VIZ-01,VIZ-15]",
+    "RESOLVED: operator vocab is group / person / face \u2014 never cluster / identities / embeddings. Enforced by the banned-vocabulary sweep.",
+    "OPEN: Selecting a face group in the map/list: filter the right library pane, open the naming form, or both (coordinated views)? [VIZ-15]",
+    "RESOLVED: one naming surface (NameFaceControl) with a single-gesture Save name; overlay candidates and confirm share that control.",
+    "OPEN: Endpoint switch (InsightFace vs FIR/SFace) changes the recognition model server-side; do existing face groups invalidate and need a fresh grouping on switch? [HAI-02]",
+    "OPEN: Left/right min-width + left-collapse on narrow (<1100px) viewports; control collapses to a drawer, library stays reachable? [NAV-08,A11Y-08]",
+    "OPEN: Alt-text vs long-description: two fixed columns or one expandable row-detail? [PERC-01,UI-04]",
+    "OPEN: Bulk-describe cost preview granularity: per-image cost surfaced before start? [INT-07]"
   ],
   "not_doing": [
     "Clusters tab inside Roster (retired; cluster structure lives in Workbench left pane now)",

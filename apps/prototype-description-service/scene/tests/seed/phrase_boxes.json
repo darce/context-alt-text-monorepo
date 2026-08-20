@@ -10,10 +10,10 @@
         { "center": [0.72, 0.09] }
       ],
       "phrase_boxes": [
-        { "phrase": "Caitlin Weaver", "box": [0.15, 0.04, 0.48, 0.45] }
+        { "phrase": "Russet Fathom", "box": [0.15, 0.04, 0.48, 0.45] }
       ],
       "expected_containment": [
-        { "face_center": [0.33, 0.12], "resolved_identity": "Caitlin Weaver" },
+        { "face_center": [0.33, 0.12], "resolved_identity": "Russet Fathom" },
         { "face_center": [0.72, 0.09], "resolved_identity": null }
       ]
     },
@@ -25,71 +25,71 @@
         { "center": [0.54, 0.38] }
       ],
       "phrase_boxes": [
-        { "phrase": "Kirstie Mccarrel", "box": [0.28, 0.22, 0.5, 0.6] }
+        { "phrase": "Auburn Current", "box": [0.28, 0.22, 0.5, 0.6] }
       ],
       "expected_containment": [
-        { "face_center": [0.42, 0.31], "resolved_identity": "Kirstie Mccarrel" },
+        { "face_center": [0.42, 0.31], "resolved_identity": "Auburn Current" },
         { "face_center": [0.54, 0.38], "resolved_identity": null }
       ]
     },
     "21": {
       "media_id": 21,
-      "path": "mock_images/kirstie-boat.jpg",
+      "path": "mock_images/auburn-boat.jpg",
       "face_centers": [
         { "center": [0.5, 0.25] },
         { "center": [0.62, 0.29] },
         { "center": [0.31, 0.31] }
       ],
       "phrase_boxes": [
-        { "phrase": "Kirstie Mccarrel", "box": [0.55, 0.18, 0.75, 0.45] }
+        { "phrase": "Auburn Current", "box": [0.55, 0.18, 0.75, 0.45] }
       ],
       "expected_containment": [
         { "face_center": [0.5, 0.25], "resolved_identity": null },
-        { "face_center": [0.62, 0.29], "resolved_identity": "Kirstie Mccarrel" },
+        { "face_center": [0.62, 0.29], "resolved_identity": "Auburn Current" },
         { "face_center": [0.31, 0.31], "resolved_identity": null }
       ]
     },
     "23": {
       "media_id": 23,
-      "path": "mock_images/kirstie-daniel-sunglasses.jpg",
+      "path": "mock_images/auburn-daniel-sunglasses.jpg",
       "face_centers": [
         { "center": [0.2, 0.28] },
         { "center": [0.83, 0.48] }
       ],
       "phrase_boxes": [
-        { "phrase": "Kirstie Mccarrel", "box": [0.03, 0.1, 0.45, 0.55] },
+        { "phrase": "Auburn Current", "box": [0.03, 0.1, 0.45, 0.55] },
         { "phrase": "Daniel Arce", "box": [0.62, 0.28, 0.99, 0.75] }
       ],
       "expected_containment": [
-        { "face_center": [0.2, 0.28], "resolved_identity": "Kirstie Mccarrel" },
+        { "face_center": [0.2, 0.28], "resolved_identity": "Auburn Current" },
         { "face_center": [0.83, 0.48], "resolved_identity": "Daniel Arce" }
       ]
     },
     "30": {
       "media_id": 30,
-      "path": "mock_images/maria-pool.jpg",
+      "path": "mock_images/slate-pool.jpg",
       "face_centers": [
         { "center": [0.4, 0.32] }
       ],
       "phrase_boxes": [
-        { "phrase": "Maria Correonero", "box": [0.28, 0.2, 0.55, 0.5] }
+        { "phrase": "Slate Willow", "box": [0.28, 0.2, 0.55, 0.5] }
       ],
       "expected_containment": [
-        { "face_center": [0.4, 0.32], "resolved_identity": "Maria Correonero" }
+        { "face_center": [0.4, 0.32], "resolved_identity": "Slate Willow" }
       ]
     },
     "38": {
       "media_id": 38,
-      "path": "mock_images/ryann-party.jpg",
+      "path": "mock_images/muted-party.jpg",
       "face_centers": [
         { "center": [0.36, 0.31] },
         { "center": [0.6, 0.31] }
       ],
       "phrase_boxes": [
-        { "phrase": "Ryann Wiseman", "box": [0.22, 0.17, 0.5, 0.58] }
+        { "phrase": "Muted Yarrow", "box": [0.22, 0.17, 0.5, 0.58] }
       ],
       "expected_containment": [
-        { "face_center": [0.36, 0.31], "resolved_identity": "Ryann Wiseman" },
+        { "face_center": [0.36, 0.31], "resolved_identity": "Muted Yarrow" },
         { "face_center": [0.6, 0.31], "resolved_identity": null }
       ]
     }

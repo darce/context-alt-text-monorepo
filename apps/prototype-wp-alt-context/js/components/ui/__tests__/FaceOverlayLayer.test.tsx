@@ -404,6 +404,68 @@ describe('FaceOverlayLayer', () => {
     });
   });
 
+  describe('review face ? chip (UXW2-6)', () => {
+    it('renders a keyboard-operable ? chip named as the face under review', async () => {
+      const user = userEvent.setup();
+      const onReviewActivate = vi.fn();
+      const onActivate = vi.fn();
+      render(
+        <FaceOverlayLayer
+          identities={[
+            {
+              identity_id: 'reviewed',
+              bbox: { x: 10, y: 10, width: 40, height: 40 },
+              cluster_label: null,
+              is_auto_label: true,
+            },
+            {
+              identity_id: 'other',
+              bbox: { x: 200, y: 10, width: 40, height: 40 },
+              cluster_label: null,
+              is_auto_label: true,
+            },
+          ]}
+          naturalSize={naturalSize}
+          reviewFaceId="reviewed"
+          onActivate={onActivate}
+          onReviewActivate={onReviewActivate}
+        />,
+      );
+
+      const reviewChip = screen.getByRole('button', { name: 'Face under review' });
+      expect(reviewChip).toHaveTextContent('?');
+      expect(reviewChip).toHaveClass('acx-face-overlay__chip--review');
+      expect(screen.getByRole('button', { name: 'Unnamed face 1 of 1' })).toBeInTheDocument();
+
+      reviewChip.focus();
+      expect(reviewChip).toHaveFocus();
+      await user.keyboard('{Enter}');
+      expect(onReviewActivate).toHaveBeenCalledWith('reviewed');
+      expect(onActivate).not.toHaveBeenCalled();
+    });
+
+    it('pairs the review accessible name with a human label when the face is named', () => {
+      render(
+        <FaceOverlayLayer
+          identities={[
+            {
+              identity_id: 'named-review',
+              bbox: { x: 10, y: 10, width: 40, height: 40 },
+              cluster_label: 'Pat Rivera',
+              is_auto_label: false,
+            },
+          ]}
+          naturalSize={naturalSize}
+          reviewFaceId="named-review"
+        />,
+      );
+
+      const reviewChip = screen.getByRole('button', { name: 'Face under review: Pat Rivera' });
+      expect(reviewChip).toHaveTextContent('?');
+      expect(screen.queryByRole('button', { name: 'Pat Rivera' })).not.toBeInTheDocument();
+    });
+  });
+
   describe('onActivate', () => {
     it('invokes onActivate with the face id when a chip is clicked', async () => {
       const user = userEvent.setup();

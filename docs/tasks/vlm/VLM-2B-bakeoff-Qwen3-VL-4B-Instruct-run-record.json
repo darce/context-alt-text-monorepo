@@ -3,7 +3,7 @@
     {
       "describe": {
         "adapter": "bakeoff",
-        "alt_text_draft": "Caitlin Weaver smiles gently with her eyes closed, wearing a black hooded jacket and a white hydration vest, standing on a muddy, rocky shore in Antarctica. Behind her, a calm blue lake stretches toward distant, snow-dusted mountains under a pale sky. This photo captures her during her 2023 research residency on the Antarctic peninsula.",
+        "alt_text_draft": "Russet Fathom smiles gently with her eyes closed, wearing a black hooded jacket and a white hydration vest, standing on a muddy, rocky shore in Antarctica. Behind her, a calm blue lake stretches toward distant, snow-dusted mountains under a pale sky. This photo captures her during her 2023 research residency on the Antarctic peninsula.",
         "model_id": "Qwen3-VL-4B-Instruct",
         "model_version": "Q4_K_M"
       },
@@ -16,7 +16,7 @@
     {
       "describe": {
         "adapter": "bakeoff",
-        "alt_text_draft": "Bea Burke takes a playful selfie in a bathroom, wearing a \"YOOHOO YACHTIE\" tiara and a sparkly phone case, with her tongue out and wide eyes. She\u2019s dressed in a light blue crop top and white pants, accessorized with a scrunchie and a delicate necklace. The mirror reflects a tiled shower and a bathtub, suggesting a casual, personal moment.",
+        "alt_text_draft": "Hollow Pennant takes a playful selfie in a bathroom, wearing a \"YOOHOO YACHTIE\" tiara and a sparkly phone case, with her tongue out and wide eyes. She\u2019s dressed in a light blue crop top and white pants, accessorized with a scrunchie and a delicate necklace. The mirror reflects a tiled shower and a bathtub, suggesting a casual, personal moment.",
         "model_id": "Qwen3-VL-4B-Instruct",
         "model_version": "Q4_K_M"
       },
@@ -24,12 +24,12 @@
       "face_count": 0,
       "identities": [],
       "media_id": 2,
-      "path": "mock_images/bea-nye.jpg"
+      "path": "mock_images/quiet-nye.jpg"
     },
     {
       "describe": {
         "adapter": "bakeoff",
-        "alt_text_draft": "Caitlin Weaver and Erika Hansen Miller smile down at the camera in a mirrored reflection, with two other friends visible in the background. The scene is warmly lit by a vertical light source, and the image is captured from an upside-down perspective. The two unnamed friends are seen in the mirror\u2019s reflection, one holding a phone and the other near a glass.",
+        "alt_text_draft": "Russet Fathom and Muted Current smile down at the camera in a mirrored reflection, with two other friends visible in the background. The scene is warmly lit by a vertical light source, and the image is captured from an upside-down perspective. The two unnamed friends are seen in the mirror\u2019s reflection, one holding a phone and the other near a glass.",
         "model_id": "Qwen3-VL-4B-Instruct",
         "model_version": "Q4_K_M"
       },
@@ -37,12 +37,12 @@
       "face_count": 0,
       "identities": [],
       "media_id": 5,
-      "path": "mock_images/ccqw-erika.jpg"
+      "path": "mock_images/ccqw-candid.jpg"
     },
     {
       "describe": {
         "adapter": "bakeoff",
-        "alt_text_draft": "Kirstie Mccarrel and Daniel Arce relax on a blue and purple checkered towel at the coast, both wearing sunglasses. Kirstie, in a black bikini top and a tan New York Yankees cap, smiles while Daniel, shirtless with gray hair, looks toward the camera.",
+        "alt_text_draft": "Auburn Current and Daniel Arce relax on a blue and purple checkered towel at the coast, both wearing sunglasses. Auburn, in a black bikini top and a tan New York Yankees cap, smiles while Daniel, shirtless with gray hair, looks toward the camera.",
         "model_id": "Qwen3-VL-4B-Instruct",
         "model_version": "Q4_K_M"
       },
@@ -50,12 +50,12 @@
       "face_count": 0,
       "identities": [],
       "media_id": 23,
-      "path": "mock_images/kirstie-daniel-sunglasses.jpg"
+      "path": "mock_images/auburn-daniel-sunglasses.jpg"
     },
     {
       "describe": {
         "adapter": "bakeoff",
-        "alt_text_draft": "Ryann Wiseman, in a pink satin dress, celebrates with friends at her birthday party, surrounded by coworkers. The group poses in front of a glittery pink backdrop with large number \"2\" balloons, smiling and holding party items like a candle and a bottle.",
+        "alt_text_draft": "Muted Yarrow, in a pink satin dress, celebrates with friends at her birthday party, surrounded by coworkers. The group poses in front of a glittery pink backdrop with large number \"2\" balloons, smiling and holding party items like a candle and a bottle.",
         "model_id": "Qwen3-VL-4B-Instruct",
         "model_version": "Q4_K_M"
       },
@@ -63,7 +63,7 @@
       "face_count": 0,
       "identities": [],
       "media_id": 37,
-      "path": "mock_images/ryann-group-party.jpg"
+      "path": "mock_images/muted-group-party.jpg"
     },
     {
       "describe": {
@@ -76,12 +76,12 @@
       "face_count": 0,
       "identities": [],
       "media_id": 30,
-      "path": "mock_images/maria-pool.jpg"
+      "path": "mock_images/slate-pool.jpg"
     },
     {
       "describe": {
         "adapter": "bakeoff",
-        "alt_text_draft": "This is an abstract portrait by Liam Maloney, titled \"Untitled No. 7,\" painted in 2024. The artwork, an oil on linen, depicts a stylized figure with dark hair and a neutral expression, wearing a jacket with pockets. The piece is presented in a gold-framed canvas hanging on a light-colored wall.",
+        "alt_text_draft": "This is an abstract portrait by Linen Kestrel, titled \"Untitled No. 7,\" painted in 2024. The artwork, an oil on linen, depicts a stylized figure with dark hair and a neutral expression, wearing a jacket with pockets. The piece is presented in a gold-framed canvas hanging on a light-colored wall.",
         "model_id": "Qwen3-VL-4B-Instruct",
         "model_version": "Q4_K_M"
       },
@@ -89,12 +89,12 @@
       "face_count": 0,
       "identities": [],
       "media_id": 27,
-      "path": "mock_images/liam-maloney-painting.jpg"
+      "path": "mock_images/linen-kestrel-painting.jpg"
     },
     {
       "describe": {
         "adapter": "bakeoff",
-        "alt_text_draft": "Ryann Wiseman stands at a bar counter in a pink-lit room, holding a drink with a lemon slice, wearing a black top and patterned leggings. Behind her is a vintage radiator and a framed mirror, while a large Pink Panther poster hangs on the wall.",
+        "alt_text_draft": "Muted Yarrow stands at a bar counter in a pink-lit room, holding a drink with a lemon slice, wearing a black top and patterned leggings. Behind her is a vintage radiator and a framed mirror, while a large Pink Panther poster hangs on the wall.",
         "model_id": "Qwen3-VL-4B-Instruct",
         "model_version": "Q4_K_M"
       },
@@ -102,12 +102,12 @@
       "face_count": 0,
       "identities": [],
       "media_id": 36,
-      "path": "mock_images/ryann-bar.jpg"
+      "path": "mock_images/muted-bar.jpg"
     },
     {
       "describe": {
         "adapter": "bakeoff",
-        "alt_text_draft": "Maria Correonero crouches inside the wreckage of a plane, framed by its broken metal frame, against a backdrop of black sand and a flat, overcast sky. The scene is a stark, desolate landscape, contrasting with the caption\u2019s description of a summer garden picnic.",
+        "alt_text_draft": "Slate Willow crouches inside the wreckage of a plane, framed by its broken metal frame, against a backdrop of black sand and a flat, overcast sky. The scene is a stark, desolate landscape, contrasting with the caption\u2019s description of a summer garden picnic.",
         "model_id": "Qwen3-VL-4B-Instruct",
         "model_version": "Q4_K_M"
       },

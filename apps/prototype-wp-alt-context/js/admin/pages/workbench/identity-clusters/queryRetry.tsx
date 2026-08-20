@@ -10,13 +10,13 @@ import React from 'react';
 import { __ } from '@wordpress/i18n';
 
 export const QUERY_RETRY_COPY = {
-  RETRY: 'Retry',
-  RETRYING_FINDINGS: 'Retrying recognition findings…',
-  RETRY_FAILED_FINDINGS: 'Retry failed. Could not load recognition findings.',
-  LOAD_FAILED_FINDINGS: 'Could not load recognition findings.',
-  RETRYING_SUGGESTIONS: 'Retrying suggestions…',
-  RETRY_FAILED_SUGGESTIONS: 'Retry failed. Could not load suggestions.',
-  LOAD_FAILED_SUGGESTIONS: 'Failed to load suggestions.',
+  RETRY: __('Retry', 'alt-context'),
+  RETRYING_FINDINGS: __('Retrying recognition findings…', 'alt-context'),
+  RETRY_FAILED_FINDINGS: __('Retry failed. Could not load recognition findings.', 'alt-context'),
+  LOAD_FAILED_FINDINGS: __('Could not load recognition findings.', 'alt-context'),
+  RETRYING_SUGGESTIONS: __('Retrying suggestions…', 'alt-context'),
+  RETRY_FAILED_SUGGESTIONS: __('Retry failed. Could not load suggestions.', 'alt-context'),
+  LOAD_FAILED_SUGGESTIONS: __('Failed to load suggestions.', 'alt-context'),
 } as const;
 
 export type SettledRefetchResult = { isError?: unknown } | null | undefined;
@@ -58,7 +58,7 @@ export const QueryRetryButton = ({
       aria-describedby={describedBy}
       aria-busy={retrying || undefined}
     >
-      {__(QUERY_RETRY_COPY.RETRY, 'alt-context')}
+      {QUERY_RETRY_COPY.RETRY}
     </button>
   </>
 );

@@ -361,7 +361,7 @@ describe('ClusterDrawerPanel', () => {
 
     await userEvent.selectOptions(screen.getByRole('combobox', { name: /Commit to roster entry/i }), '42');
 
-    expect(screen.getByText('Unresolved cluster')).toBeInTheDocument();
+    expect(screen.getByText('Unresolved face group')).toBeInTheDocument();
     expect(screen.queryByRole('link', { name: /Open person review/i })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Open person/i })).not.toBeInTheDocument();
   });

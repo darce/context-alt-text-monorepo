@@ -79,11 +79,25 @@
       "route": "#/workbench?tab=scan",
       "job_entry": true,
       "deep_link": true,
-      "url_params": ["tab", "status", "media", "s", "p", "perPage"],
+      "url_params": ["tab", "status", "media", "s", "p", "perPage", "rq", "panel", "cluster"],
       "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/workbench/ScanTabContent.tsx",
       "primary_action_id": "act-scan-selected",
-      "states": ["default", "loading", "empty", "error", "first_time", "edge_input"],
+      "states": ["default", "loading", "empty", "error", "first_time", "edge_input", "reviewing"],
       "zones": [
+        {
+          "id": "z-review-queue",
+          "label": "Review queue header / count with kind+band filter chips, card-at-a-time (rq= URL is the single owner of chip state)",
+          "role": "queue",
+          "evidence_linked": true,
+          "states": ["default", "loading", "empty", "filtered_empty", "drained", "error"]
+        },
+        {
+          "id": "z-review-panel",
+          "label": "Face-group review panel (panel=review&cluster=)",
+          "role": "ai_review",
+          "evidence_linked": true,
+          "states": ["default", "loading", "error", "empty"]
+        },
         {
           "id": "z-filters",
           "label": "Status / search filters",
@@ -107,7 +121,22 @@
           "label": "Identity / findings preview (AI-assisted)",
           "role": "ai_review",
           "evidence_linked": true,
-          "states": ["default", "empty", "loading"]
+          "states": ["default", "empty", "loading", "error", "degraded", "unavailable", "repair", "zero_evidence"],
+          "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/WorkbenchFindingsPanel.tsx"
+        },
+        {
+          "id": "z-review-suggestions-header",
+          "label": "Review Suggestions queue header / count",
+          "role": "status",
+          "states": ["default", "loading", "empty", "error", "filtered", "repair"],
+          "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/ReviewQueue.tsx"
+        },
+        {
+          "id": "z-review-suggestions-group-card",
+          "label": "Top-of-queue group card + Name this person (NameFaceControl)",
+          "role": "ai_review",
+          "states": ["default", "suggested_label", "busy", "read_only", "missing_image", "pending", "suggestions-open", "suggested"],
+          "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/TopClusterCard.tsx"
         }
       ]
     },
@@ -170,6 +199,34 @@
           "label": "Retry / discard",
           "role": "form",
           "states": ["default"]
+        }
+      ]
+    },
+    {
+      "id": "workbench-review-panel",
+      "kind": "screen",
+      "title": "Review these faces",
+      "purpose": "Review the faces in one unnamed group; Back returns to Review Suggestions",
+      "route": "#/workbench?tab=scan&panel=review&cluster=",
+      "job_entry": false,
+      "deep_link": true,
+      "url_params": ["tab", "panel", "cluster", "rq"],
+      "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/ClusterReviewPanel.tsx",
+      "primary_action_id": "act-review-back",
+      "states": ["default", "loading", "error", "empty"],
+      "zones": [
+        {
+          "id": "z-review-header",
+          "label": "Header + Back",
+          "role": "nav",
+          "states": ["default"]
+        },
+        {
+          "id": "z-review-faces",
+          "label": "Faces grid",
+          "role": "ai_review",
+          "evidence_linked": true,
+          "states": ["default", "loading", "error", "empty"]
         }
       ]
     },
@@ -286,6 +343,16 @@
       "irreversible": true,
       "preview_required": true,
       "screen_id": "workbench-dead-letter"
+    },
+    {
+      "id": "act-review-back",
+      "verb": "Back to Review Suggestions",
+      "target": "workbench-scan",
+      "hierarchy": "primary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "workbench-review-panel"
     },
     {
       "id": "act-goto-roster",

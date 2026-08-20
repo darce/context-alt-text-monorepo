@@ -35,7 +35,7 @@ class TestValidatePairwiseSimilarities:
         """Simulate the false positive where 14.7% similar faces were grouped.
 
         This test verifies that the fix would reject the cluster that
-        incorrectly grouped Faith Coggin (6665) with Laura Sampliner (6689).
+        incorrectly grouped Ochre Ridgeway (6665) with Sable Verity (6689).
         """
         # Simulate ~14.7% cosine similarity
         vec_faith = np.array([1.0, 0.0, 0.0], dtype=np.float32)

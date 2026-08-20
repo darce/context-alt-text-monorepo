@@ -29,12 +29,15 @@ describe('top-unlabeled clusters contract fixture', () => {
   ) as TopUnlabeledClustersResponse;
 
   it('declares the top-unlabeled envelope in the shared schema', () => {
-    expect(schema.required).toEqual(expect.arrayContaining(['clusters', 'limit', 'total', 'truncated', 'data_source']));
+    expect(new Set(schema.required)).toEqual(
+      new Set(['clusters', 'limit', 'total', 'truncated', 'data_source', 'repair_pending']),
+    );
     expect(schema.properties?.clusters?.type).toBe('array');
     expect(schema.properties?.limit?.type).toBe('integer');
     expect(schema.properties?.total?.type).toBe('integer');
     expect(schema.properties?.truncated?.type).toBe('boolean');
     expect(schema.properties?.data_source?.type).toBe('string');
+    expect(schema.properties?.repair_pending?.type).toBe('boolean');
   });
 
   it('matches the frontend top-unlabeled response shape', () => {

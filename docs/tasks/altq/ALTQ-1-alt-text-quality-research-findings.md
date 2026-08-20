@@ -73,7 +73,7 @@ llama.cpp multi-image prompts: labeled face crops ("image 2 is Alice").
 
 ### 2.3 Context format: structured entity list beats prose
 
-`People present: Caitlin Weaver (center)` as a first-class field; keep the pack
+`People present: Russet Fathom (center)` as a first-class field; keep the pack
 tight. EAMA: oracle entity-list (90.44 CIDEr) beat oracle sentences (87.56); whole
 articles ≈ no gain; length-matched irrelevant context *hurt*. DFKI: NE context beat
 full text. Both RAG papers: sentence-level, top-1 source, less-is-more.

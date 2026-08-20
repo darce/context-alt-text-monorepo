@@ -97,6 +97,8 @@ Timeout expectations:
 - `suggested_label_source` values: `"identity"`, `"roster"`, `"similar_cluster"`, `"none"`. Null when no inference was attempted.
 - `suggested_label_confidence` is a float in `[0.0, 1.0]`. Null when no inference was attempted.
 - Plugin stale-row cleanup deletes only non-curated rows absent from incoming snapshot.
+- **Label authority (UXW2-4):** a human cluster label (not NULL, not `''`, and not a reserved shape) MUST have a bound `person_id`. Reserved shape is `DetectsSystemDefinedLabels::is_reserved_label_shape()`: unicode-whitespace trim, then case-insensitive prefix `cluster-` or `cluster_` (`/^cluster[-_]/i`). `Cluster_ab12` is reserved, not a human name. Snapshot merge backfills `acx_persons` + bind for label-only rows in the current batch. `cluster_label` on media-identities is the person name or the auto label.
+- **Label tombstone (UXW2-4):** `reset_curation` persists both tombstone fields in one write: `label_cleared_label = label`, `label_cleared_revision = snapshot_version`, and nulls `label` / `person_id`. Snapshot merge loads those fields and computes `$keep_cleared` when `label_cleared_label` is non-empty and the incoming label equals that cleared value. A match stores `label` as NULL and rewrites both tombstone columns unchanged, regardless of `snapshot_version`. Only a genuinely different incoming label releases the tombstone (both `label_cleared_label` and `label_cleared_revision` cleared). A snapshot producer that repeats the cleared name therefore sees a no-op, not a restore.
 - Representative metadata semantics:
   - `representative_id` identifies the currently selected backend representative for the cluster.
   - `is_pinned=true` means that representative was explicitly user-selected upstream.

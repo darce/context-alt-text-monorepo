@@ -18,7 +18,7 @@ def test_create_cluster_for_identity(api_client, tenant_id: str) -> None:
         json={
             "tenant_id": tenant_id,
             "identity_id": identity_id,
-            "label": "Ryann Wiseman",
+            "label": "Muted Yarrow",
             "desired_cluster_id": desired_cluster_id,
         },
     )
@@ -26,7 +26,7 @@ def test_create_cluster_for_identity(api_client, tenant_id: str) -> None:
     assert resp.status_code == 200
     payload = resp.json()
     assert payload["identity_id"] == identity_id
-    assert payload["label"] == "Ryann Wiseman"
+    assert payload["label"] == "Muted Yarrow"
     assert payload["cluster_id"] == desired_cluster_id
     assert payload["message"]
 

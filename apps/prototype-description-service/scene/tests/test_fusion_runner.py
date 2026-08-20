@@ -104,8 +104,8 @@ def test_multi_identity_entries_object_attach_with_distinct_geometry(manifest):
     """
     record = run_fusion_eval(manifest, mode="staged", head_sha="a" * 40, started_at="2026-07-09T00:00:00Z")
     for suffix, names in (
-        ("ccqw-erika.jpg", ("Caitlin Weaver", "Erika Hansen Miller")),
-        ("kirstie-daniel-sunglasses.jpg", ("Daniel Arce", "Kirstie Mccarrel")),
+        ("ccqw-candid.jpg", ("Russet Fathom", "Muted Current")),
+        ("auburn-daniel-sunglasses.jpg", ("Daniel Arce", "Auburn Current")),
     ):
         item = next(i for i in record["items"] if i["path"].endswith(suffix))
         facts = {f["fact_label"]: f for f in item["describe"]["attachment_provenance"]["facts"]}
@@ -120,7 +120,7 @@ def test_mcm_planecrash_success_criterion(manifest):
     record = run_fusion_eval(manifest, mode="staged", head_sha="e" * 40, started_at="2026-07-09T00:00:00Z")
     item = next(i for i in record["items"] if i["path"].endswith("mcm-planecrash.jpg"))
     facts = {f["fact_id"]: f for f in item["describe"]["attachment_provenance"]["facts"]}
-    identity = facts["identity:cluster:cluster-maria-correonero"]
+    identity = facts["identity:cluster:cluster-slate-willow"]
     assert identity["decision"] == "dropped"
     assert identity["altitude"] == "none"
     assert identity["visible"] is False
@@ -140,20 +140,20 @@ def test_mcm_planecrash_success_criterion(manifest):
 def test_context_pack_derives_from_fixture_not_labels(manifest):
     """Pack identities come from context text + present_identities, not labels."""
     roster = manifest.roster
-    painting = next(e for e in manifest.entries if e.path.endswith("liam-maloney-painting.jpg"))
+    painting = next(e for e in manifest.entries if e.path.endswith("linen-kestrel-painting.jpg"))
     pack = build_typed_context_pack(painting, roster)
     assert pack is not None and pack.identity is not None
-    (liam,) = pack.identity.identities
+    (linen,) = pack.identity.identities
     # Mentioned in context text but not site-confirmed → name-only (unconfirmed).
-    assert liam.name == "Liam Maloney"
-    assert liam.cluster_id is None and liam.identity_id is None
+    assert linen.name == "Linen Kestrel"
+    assert linen.cluster_id is None and linen.identity_id is None
 
     plane = next(e for e in manifest.entries if e.path.endswith("mcm-planecrash.jpg"))
     pack = build_typed_context_pack(plane, roster)
     assert pack is not None and pack.identity is not None
     (maria,) = pack.identity.identities
     # Site-confirmed (present_identities) → recognition ids attached.
-    assert maria.cluster_id == "cluster-maria-correonero"
+    assert maria.cluster_id == "cluster-slate-willow"
     # Taxonomy terms come from the fixture's context_pack.taxonomy_terms.
     assert {(t.taxonomy, t.slug) for t in pack.taxonomy_terms} == {
         ("event", "garden-picnic"),
@@ -165,35 +165,35 @@ def test_scorer_negative_control_flipped_label_is_flagged(manifest):
     """The scorer discriminates: flipping an expected label must produce a hit."""
     record = run_fusion_eval(manifest, mode="staged", head_sha="a" * 40, started_at="2026-07-09T00:00:00Z")
     flipped = manifest.model_copy(deep=True)
-    caitlin = next(
+    russet = next(
         a
         for e in flipped.entries
         if e.path.endswith("ccqw-antartica.jpg")
         for a in e.expected_attachments
-        if a.fact_label == "Caitlin Weaver"
+        if a.fact_label == "Russet Fathom"
     )
-    caitlin.decision = "dropped"
-    caitlin.visible = False
+    russet.decision = "dropped"
+    russet.visible = False
     mis = score_misattachments(record, flipped)
     assert mis["misattachments"] == 1
-    assert mis["hits"][0]["fact_label"] == "Caitlin Weaver"
+    assert mis["hits"][0]["fact_label"] == "Russet Fathom"
     assert mis["hits"][0]["reason"] == "decision_or_visible_mismatch"
 
 
 def test_adhoc_claims_derive_from_generated_caption(manifest):
     """Ad-hoc arm: fusion disabled, claims parsed from the caption text."""
     record = run_fusion_eval(manifest, mode="adhoc", head_sha="a" * 40, started_at="2026-07-09T00:00:00Z")
-    item = next(i for i in record["items"] if i["path"].endswith("liam-maloney-painting.jpg"))
+    item = next(i for i in record["items"] if i["path"].endswith("linen-kestrel-painting.jpg"))
     describe = item["describe"]
     # Same service path, model-free stub adapter (report banner keys off this).
     assert describe["adapter"] == "seeded"
     assert describe["attachment_provenance"]["derivation"] == "adhoc-caption-assertion"
     caption = describe["visual_facts"]["caption"]
-    (liam,) = describe["attachment_provenance"]["facts"]
+    (linen,) = describe["attachment_provenance"]["facts"]
     # The parroted context caption asserts the name; the claim mirrors that.
-    assert "Liam Maloney" in caption
-    assert liam["decision"] == "object" and liam["visible"] is True
-    assert liam["target_evidence"] == "adhoc-caption-assertion"
+    assert "Linen Kestrel" in caption
+    assert linen["decision"] == "object" and linen["visible"] is True
+    assert linen["target_evidence"] == "adhoc-caption-assertion"
 
 
 def test_adhoc_report_carries_stub_adapter_banner(manifest):
@@ -217,7 +217,7 @@ def test_degrade_missing_labels_and_empty_context(manifest):
 
 
 def test_policy_disabled_pool_yields_no_typed_pack(manifest):
-    pool = next(e for e in manifest.entries if e.path.endswith("maria-pool.jpg"))
+    pool = next(e for e in manifest.entries if e.path.endswith("slate-pool.jpg"))
     assert pool.policy.recognition_enabled is False
     assert build_typed_context_pack(pool, manifest.roster) is None
 

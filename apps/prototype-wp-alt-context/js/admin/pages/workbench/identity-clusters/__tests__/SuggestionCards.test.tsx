@@ -1,5 +1,6 @@
 import React from 'react';
 import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { ReviewSuggestion } from '../suggestionReviewItems';
@@ -7,6 +8,7 @@ import { SuggestionCard } from '../SuggestionCards';
 
 vi.mock('@wordpress/i18n', () => ({
   __: (text: string) => text,
+  _n: (single: string, plural: string, number: number) => (number === 1 ? single : plural),
   sprintf: (template: string, ...args: (string | number)[]) => {
     let idx = 0;
     return template.replace(/%(\d+\$)?[sd]/g, () => String(args[idx++] ?? ''));
@@ -111,6 +113,109 @@ describe('SuggestionCard BR-41 group accname', () => {
     const card = screen.getByTestId('acx-review-card');
     expect(card).toHaveAccessibleName('Face suggestion');
     expect(screen.queryByText(/Face suggestion \d+ of \d+/)).toBeNull();
+  });
+
+  it('Yes fires onAccept once and does not preview a close-match group on the card', async () => {
+    const onAccept = vi.fn();
+    const user = userEvent.setup();
+    render(
+      <SuggestionCard
+        suggestion={baseSuggestion}
+        onAccept={onAccept}
+        onReject={vi.fn()}
+        isPending={false}
+        lowConfidenceThreshold={0.5}
+      />,
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Yes' }));
+    expect(onAccept).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(screen.queryByText(/close matches/i)).not.toBeInTheDocument();
+  });
+
+  it('renders the face-count string and review title (UXW2-3-R1-11)', () => {
+    render(
+      <SuggestionCard
+        suggestion={baseSuggestion}
+        onAccept={vi.fn()}
+        onReject={vi.fn()}
+        onReview={vi.fn()}
+        isPending={false}
+        lowConfidenceThreshold={0.5}
+      />,
+    );
+
+    expect(screen.getByText(/3 faces/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Review details' })).toHaveAttribute(
+      'title',
+      'Review these faces',
+    );
+  });
+});
+
+describe('SuggestionCard lightbox target (UXW2-6)', () => {
+  it('passes identity media id and face id when opening the candidate original', async () => {
+    const onOpenOriginal = vi.fn();
+    const user = userEvent.setup();
+    render(
+      <SuggestionCard
+        suggestion={{
+          ...baseSuggestion,
+          identityId: 'identity-1',
+          enrichment: {
+            identityMediaId: 42,
+            identityMediaUrl: 'https://example.com/candidate.jpg',
+            identityBbox: { x: 5, y: 6, width: 40, height: 50 },
+          },
+        }}
+        onAccept={vi.fn()}
+        onReject={vi.fn()}
+        onOpenOriginal={onOpenOriginal}
+        isPending={false}
+        lowConfidenceThreshold={0.5}
+      />,
+    );
+
+    await user.click(screen.getByRole('button', { name: 'View original photo' }));
+    expect(onOpenOriginal).toHaveBeenCalledWith({
+      mediaUrl: 'https://example.com/candidate.jpg',
+      bbox: { x: 5, y: 6, width: 40, height: 50 },
+      label: 'Candidate face',
+      mediaId: 42,
+      identityId: 'identity-1',
+    });
+  });
+
+  it('omits mediaId when the candidate media id is missing so the lightbox does not fetch', async () => {
+    const onOpenOriginal = vi.fn();
+    const user = userEvent.setup();
+    render(
+      <SuggestionCard
+        suggestion={{
+          ...baseSuggestion,
+          identityId: 'identity-1',
+          enrichment: {
+            identityMediaUrl: 'https://example.com/candidate.jpg',
+            identityBbox: { x: 5, y: 6, width: 40, height: 50 },
+          },
+        }}
+        onAccept={vi.fn()}
+        onReject={vi.fn()}
+        onOpenOriginal={onOpenOriginal}
+        isPending={false}
+        lowConfidenceThreshold={0.5}
+      />,
+    );
+
+    await user.click(screen.getByRole('button', { name: 'View original photo' }));
+    expect(onOpenOriginal).toHaveBeenCalledWith({
+      mediaUrl: 'https://example.com/candidate.jpg',
+      bbox: { x: 5, y: 6, width: 40, height: 50 },
+      label: 'Candidate face',
+      identityId: 'identity-1',
+    });
+    expect(onOpenOriginal.mock.calls[0][0]).not.toHaveProperty('mediaId');
   });
 });
 

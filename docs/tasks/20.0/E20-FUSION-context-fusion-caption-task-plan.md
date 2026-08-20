@@ -218,4 +218,4 @@ Proof: committed REPORTs + memo with `Must-Right`/insertion/`Easy-Wrong`/mis-att
 - [ ] One committed bake-off REPORT compares staged fusion vs ad-hoc on `bakeoff_golden.json`, re-score bit-identical.
 - [ ] Adopted **iff** it lowers mis-attachment + `Easy-Wrong` without lowering `Must-Right`/insertion.
 - [ ] Every description carries per-fact attachment provenance (object/caption/dropped + reason).
-- [ ] A **detector-backed** conflict (`mcm-planecrash`: `Maria Correonero`'s face not confirmed → the name is **not object-attached**; caption-level stays non-asserted) is handled deterministically with a `review_reason`; semantic event/place conflict-drop is the LLM-judge stretch. A decorative image is skipped.
+- [ ] A **detector-backed** conflict (`mcm-planecrash`: `Slate Willow`'s face not confirmed → the name is **not object-attached**; caption-level stays non-asserted) is handled deterministically with a `review_reason`; semantic event/place conflict-drop is the LLM-judge stretch. A decorative image is skipped.

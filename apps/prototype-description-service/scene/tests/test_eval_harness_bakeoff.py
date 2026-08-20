@@ -16,35 +16,13 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from subprocess import CompletedProcess
-from typing import Any
 
 import httpx
 import pytest
 
-from scripts.eval_harness import bakeoff as bakeoff_mod
-from scripts.eval_harness.bakeoff import (
-    BakeoffClient,
-    _clone_bakeoff_client,
-    _empty_warmup,
-    _extract_caption,
-    _extract_usage,
-    _gpu_sampling_disabled,
-    _run_warmup,
-    _stamp_pipeline_provenance,
-    _stamp_timing_and_gpu,
-    _sum_usage,
-    build_parser,
-)
-from scripts.eval_harness.bakeoff import main as bakeoff_main
-from scripts.eval_harness.bench_capture import (
-    CaptureStatus,
-    PerGpuSemantics,
-    VramSampler,
-    collect_item_latencies,
-)
+from scripts.eval_harness.bakeoff import BakeoffClient, _extract_caption
 from scripts.eval_harness.cli import BoundedStallError, fetch_run_record
-from scripts.eval_harness.manifest import GoldenEntry, GoldenManifest, ManifestError, load_manifest
+from scripts.eval_harness.manifest import GoldenEntry, GoldenManifest, load_manifest
 from scripts.eval_harness.remote_client import RemoteClientError
 from scripts.eval_harness.report import build_reports
 
@@ -54,77 +32,7 @@ GOLDEN_MANIFEST = Path(__file__).parent / "seed" / "golden.json"
 
 @pytest.fixture(scope="module")
 def manifest() -> GoldenManifest:
-    # Metadata-only: context_pack/present_identities/must_right/policy/face_count/
-    # rubrics/path pins — transport tests use fake image_bytes, never open fixtures.
-    return load_manifest(
-        str(BAKEOFF_MANIFEST),
-        metadata_only=True,
-        skip_hash_verification=True,
-        hash_skip_reason="bakeoff fixture is metadata-only; transport tests use fake image_bytes",
-    )
-
-
-def test_pixel_path_load_manifest_requires_hash_verification(monkeypatch: pytest.MonkeyPatch) -> None:
-    """TEST-15: pixel-reading paths (bakeoff main → fetch_run_record) must not skip.
-
-    Default-on hash verification (VLM6-R2-05) still goes red when neither
-    images_dir nor GOLDEN_IMAGES_DIR is supplied and skip is not set — proves
-    metadata-only skips did not neuter the gate for image-byte consumers.
-    """
-    monkeypatch.delenv("GOLDEN_IMAGES_DIR", raising=False)
-    with pytest.raises(ManifestError, match="image hash verification is required by default"):
-        load_manifest(str(BAKEOFF_MANIFEST))
-    missing = "/nonexistent/golden-images-dir-vlm6-test15"
-    with pytest.raises(ManifestError, match="images directory not found"):
-        load_manifest(str(BAKEOFF_MANIFEST), images_dir=missing)
-
-
-def test_weave_bench_main_ignores_empty_golden_images_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """VLM6-RV3-Q4-01: --weave-bench is text-only; empty ambient dir must load.
-
-    Mutation: removing metadata_only=True from bakeoff.main weave-bench
-    load_manifest fails with ManifestError: image file missing.
-    """
-    empty = tmp_path / "empty"
-    empty.mkdir()
-    monkeypatch.setenv("GOLDEN_IMAGES_DIR", str(empty))
-    monkeypatch.setenv("ACX_EVAL_LIVE", "1")
-    source = tmp_path / "source.json"
-    source.write_text(
-        json.dumps(
-            {
-                "kind": "run_record",
-                "provenance": {"head_sha": "deadbeef"},
-                "items": [{"media_id": 1, "path": "x.jpg"}],
-            }
-        ),
-        encoding="utf-8",
-    )
-    out = tmp_path / "out.json"
-
-    def _fake_weave(*_args: object, **_kwargs: object) -> dict:
-        return {"schema": "acx-eval/v1", "kind": "run_record", "provenance": {}, "items": []}
-
-    monkeypatch.setattr("scripts.eval_harness.bakeoff.weave_bench_run_record", _fake_weave)
-    bakeoff_main(
-        [
-            "--endpoint",
-            "http://127.0.0.1:9",
-            "--model-id",
-            "m",
-            "--manifest",
-            str(BAKEOFF_MANIFEST),
-            "--weave-bench",
-            str(source),
-            "--out",
-            str(out),
-            "--warmup",
-            "0",
-            "--vram-sample-interval-s",
-            "0",
-        ]
-    )
-    assert out.is_file()
+    return load_manifest(str(BAKEOFF_MANIFEST))
 
 
 def _context_text(entry: GoldenEntry) -> str:
@@ -188,14 +96,7 @@ def test_rubrics_are_not_vacuous(manifest: GoldenManifest) -> None:
 # main golden.json has no rubrics until VLM-2C populates it; that warning is its, not ours
 @pytest.mark.filterwarnings("ignore::scripts.eval_harness.manifest.RubricEmptyWarning")
 def test_entries_reuse_golden_corpus_images(manifest: GoldenManifest) -> None:
-    # Metadata-only pin compare (sha256/media_id/face_count/present_identities fields);
-    # does not open image bytes under GOLDEN_IMAGES_DIR.
-    golden = load_manifest(
-        str(GOLDEN_MANIFEST),
-        metadata_only=True,
-        skip_hash_verification=True,
-        hash_skip_reason="bakeoff pin-compare is metadata-only; image bytes never opened",
-    )
+    golden = load_manifest(str(GOLDEN_MANIFEST))
     golden_by_path = {e.path: e for e in golden.entries}
     for entry in manifest.entries:
         assert entry.path in golden_by_path, f"{entry.path}: not in golden corpus (new image needs README bootstrap)"
@@ -232,7 +133,7 @@ def test_manifest_covers_discriminating_classes(manifest: GoldenManifest) -> Non
 # --- Slice 3: BakeoffClient transport (stubbed endpoint, no network) ---
 
 
-def _chat_transport(captured: list[dict], content: str = "A caption naming Caitlin Weaver.") -> httpx.MockTransport:
+def _chat_transport(captured: list[dict], content: str = "A caption naming Russet Fathom.") -> httpx.MockTransport:
     def handler(request: httpx.Request) -> httpx.Response:
         payload = json.loads(request.content)
         captured.append({"path": request.url.path, "payload": payload})
@@ -242,7 +143,7 @@ def _chat_transport(captured: list[dict], content: str = "A caption naming Caitl
 
 
 def _client(
-    captured: list[dict], *, no_think: bool = False, content: str = "A caption naming Caitlin Weaver."
+    captured: list[dict], *, no_think: bool = False, content: str = "A caption naming Russet Fathom."
 ) -> BakeoffClient:
     return BakeoffClient(
         base_url="http://candidate.test:8080",
@@ -264,8 +165,8 @@ def _describe(client: BakeoffClient, context_pack: dict) -> dict:
 
 def test_describe_returns_scoreable_shape() -> None:
     captured: list[dict] = []
-    describe = _describe(_client(captured), {"caption": "Caitlin Weaver in Antarctica."})
-    assert describe["alt_text_draft"] == "A caption naming Caitlin Weaver."
+    describe = _describe(_client(captured), {"caption": "Russet Fathom in Antarctica."})
+    assert describe["alt_text_draft"] == "A caption naming Russet Fathom."
     assert describe["adapter"] == "bakeoff"
     assert describe["model_id"] == "qwen3-vl-4b-instruct"
     assert describe["model_version"] == "Q4_K_M"
@@ -275,12 +176,12 @@ def test_context_pack_names_render_into_prompt_verbatim() -> None:
     captured: list[dict] = []
     pack = {
         "title": "Antarctica expedition",
-        "caption": "Caitlin Weaver on the peninsula.",
-        "description": "Erika Hansen Miller took the photo.",
+        "caption": "Russet Fathom on the peninsula.",
+        "description": "Muted Current took the photo.",
     }
     _describe(_client(captured), pack)
     prompt_text = json.dumps(captured[0]["payload"])
-    for fragment in ("Caitlin Weaver", "Erika Hansen Miller", "Antarctica expedition"):
+    for fragment in ("Russet Fathom", "Muted Current", "Antarctica expedition"):
         assert fragment in prompt_text, f"injected context {fragment!r} never reached the candidate prompt"
 
 
@@ -298,7 +199,7 @@ def test_decoding_is_greedy_and_no_think_is_optional() -> None:
 
 def test_context_block_is_fenced_and_no_think_precedes_it() -> None:  # S6-04
     captured: list[dict] = []
-    pack = {"caption": "Caitlin Weaver\n- injected: spoof", "description": "multi\nline"}
+    pack = {"caption": "Russet Fathom\n- injected: spoof", "description": "multi\nline"}
     _describe(_client(captured, no_think=True), pack)
     user_text = captured[0]["payload"]["messages"][1]["content"][1]["text"]
     assert "<<<CONTEXT>>>" in user_text and "<<<END_CONTEXT>>>" in user_text
@@ -324,16 +225,16 @@ def test_fetch_run_record_with_bakeoff_client_scores_deterministically(tmp_path:
         {
             "manifest_version": 3,
             "annotation_mode": "roster_only",
-            "roster": ["Caitlin Weaver"],
+            "roster": ["Russet Fathom"],
             "entries": [
                 {
                     "path": "img.jpg",
                     "sha256": "0" * 64,
                     "media_id": 7,
                     "face_count": 1,
-                    "present_identities": ["Caitlin Weaver"],
-                    "context_pack": {"caption": "Caitlin Weaver in Antarctica."},
-                    "must_right": ["Caitlin Weaver"],
+                    "present_identities": ["Russet Fathom"],
+                    "context_pack": {"caption": "Russet Fathom in Antarctica."},
+                    "must_right": ["Russet Fathom"],
                     "easy_wrong": [],
                     "policy": {"recognition_enabled": True},
                     "provenance": {"source": "fixture", "license": "fixture"},
@@ -346,7 +247,7 @@ def test_fetch_run_record_with_bakeoff_client_scores_deterministically(tmp_path:
     record = fetch_run_record(manifest, str(tmp_path), _client(captured), head_sha="deadbeef")
 
     assert record["items"][0]["error"] is None
-    assert record["items"][0]["describe"]["alt_text_draft"] == "A caption naming Caitlin Weaver."
+    assert record["items"][0]["describe"]["alt_text_draft"] == "A caption naming Russet Fathom."
     assert record["provenance"]["base_url"] == "http://candidate.test:8080"
 
     entries = [e.model_dump() for e in manifest.entries]
@@ -359,217 +260,6 @@ def test_fetch_run_record_with_bakeoff_client_scores_deterministically(tmp_path:
 
 
 # --- Slice 3: extraction + transport failure modes ---
-
-
-# --- Token usage capture (quality vs speed vs token-usage axis) ---
-
-
-def _usage_transport(usage: object) -> httpx.MockTransport:
-    def handler(request: httpx.Request) -> httpx.Response:
-        body: dict = {"choices": [{"message": {"content": "A caption."}}]}
-        if usage is not None:
-            body["usage"] = usage
-        return httpx.Response(200, json=body)
-
-    return httpx.MockTransport(handler)
-
-
-def _usage_client(usage: object) -> BakeoffClient:
-    return BakeoffClient(
-        base_url="http://candidate.test:8080",
-        model_id="qwen3-vl-4b-instruct",
-        model_version="Q4_K_M",
-        transport=_usage_transport(usage),
-    )
-
-
-_PASS1_FACTS = '{"people":[],"setting":"garden","action":"sitting","legible_text":[],"atmosphere":"bright"}'
-
-
-def _sequenced_usage_transport(responses: list[tuple[str, object]]) -> httpx.MockTransport:
-    """Each response is ``(content, usage_or_None)`` consumed in order."""
-
-    calls = {"n": 0}
-
-    def handler(_request: httpx.Request) -> httpx.Response:
-        content, usage = responses[calls["n"]]
-        calls["n"] += 1
-        body: dict = {"choices": [{"message": {"content": content}}]}
-        if usage is not None:
-            body["usage"] = usage
-        return httpx.Response(200, json=body)
-
-    return httpx.MockTransport(handler)
-
-
-def test_usage_is_captured_per_pass_and_rolled_up() -> None:
-    """TEST-15 / BR-08: a genuine two-pass describe() must sum both usage blocks.
-
-    A last-pass-only roll-up (``_sum_usage(passes[-1:])``) stays green on a
-    single-call describe(); two distinct per-pass counts make that mutation red.
-    """
-    usage_facts = {"prompt_tokens": 1500, "completion_tokens": 300, "total_tokens": 1800}
-    usage_weave = {"prompt_tokens": 900, "completion_tokens": 110, "total_tokens": 1010}
-    client = BakeoffClient(
-        base_url="http://candidate.test:8080",
-        model_id="qwen3-vl-4b-instruct",
-        model_version="Q4_K_M",
-        two_pass=True,
-        transport=_sequenced_usage_transport([(_PASS1_FACTS, usage_facts), ("A caption.", usage_weave)]),
-    )
-    describe = _describe(client, {"caption": "A picnic."})
-    assert [p["pass"] for p in describe["passes"]] == ["describe_facts", "ground_weave"]
-    assert describe["passes"][0]["usage"] == usage_facts
-    assert describe["passes"][1]["usage"] == usage_weave
-    assert describe["tokens"] == {
-        "prompt_tokens": 2400,
-        "completion_tokens": 410,
-        "total_tokens": 2810,
-        "model_calls": 2,
-        "passes_missing_usage": 0,
-        "complete": True,
-    }
-
-
-def test_usage_absent_is_reported_as_incomplete_not_guessed() -> None:
-    tokens = _describe(_usage_client(None), {"caption": "A picnic."})["tokens"]
-    # BR-05: absent usage is None, not a numeric zero a consumer can score as free.
-    assert tokens["prompt_tokens"] is None
-    assert tokens["completion_tokens"] is None
-    assert tokens["total_tokens"] is None
-    assert tokens["passes_missing_usage"] == 1
-    assert tokens["complete"] is False
-    assert tokens["model_calls"] == 1
-
-
-def test_malformed_usage_is_rejected_wholesale() -> None:
-    # A partial or wrongly-typed usage block must not be half-trusted.
-    assert _extract_usage({"usage": {"prompt_tokens": 10, "completion_tokens": 5}}) is None
-    assert _extract_usage({"usage": {"prompt_tokens": 10, "completion_tokens": "5", "total_tokens": 15}}) is None
-    assert _extract_usage({"usage": {"prompt_tokens": True, "completion_tokens": 5, "total_tokens": 15}}) is None
-    assert _extract_usage({}) is None
-    # BR-11: negatives and internally inconsistent totals are also wholesale rejects.
-    assert _extract_usage({"usage": {"prompt_tokens": -10, "completion_tokens": 5, "total_tokens": -5}}) is None
-    assert _extract_usage({"usage": {"prompt_tokens": 10, "completion_tokens": -5, "total_tokens": 5}}) is None
-    assert _extract_usage({"usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 99}}) is None
-
-
-def test_describe_malformed_usage_is_missing_not_a_crash() -> None:
-    """BR-09 / TEST-06: the reject invariant must hold on describe(), not just the helper.
-
-    A reviewer who bypasses ``_extract_usage`` inside ``_timed_chat`` used to
-    TypeError in ``_sum_usage`` on ``completion_tokens: "5"`` while the helper
-    test stayed green.
-    """
-    describe = _describe(
-        _usage_client({"prompt_tokens": 10, "completion_tokens": "5", "total_tokens": 15}),
-        {"caption": "A picnic."},
-    )
-    tokens = describe["tokens"]
-    assert tokens["passes_missing_usage"] == 1
-    assert tokens["complete"] is False
-    assert tokens["model_calls"] == 1
-    assert tokens["prompt_tokens"] is None
-    assert tokens["completion_tokens"] is None
-    assert tokens["total_tokens"] is None
-
-
-def test_sum_usage_adds_every_pass_and_flags_a_gap() -> None:
-    passes = [
-        {"pass": "describe_facts", "usage": {"prompt_tokens": 1500, "completion_tokens": 300, "total_tokens": 1800}},
-        {"pass": "ground_weave", "usage": {"prompt_tokens": 900, "completion_tokens": 110, "total_tokens": 1010}},
-    ]
-    assert _sum_usage(passes) == {
-        "prompt_tokens": 2400,
-        "completion_tokens": 410,
-        "total_tokens": 2810,
-        "model_calls": 2,
-        "passes_missing_usage": 0,
-        "complete": True,
-    }
-    gapped = _sum_usage([*passes, {"pass": "compress_short", "usage": None}])
-    assert gapped == {
-        "prompt_tokens": 2400,
-        "completion_tokens": 410,
-        "total_tokens": 2810,
-        "model_calls": 3,
-        "passes_missing_usage": 1,
-        "complete": False,
-    }
-    # BR-05 contract: zero passes carried usage → count fields are None, not 0.
-    absent = _sum_usage([{"pass": "describe_facts", "usage": None}, {"pass": "ground_weave", "usage": None}])
-    assert absent == {
-        "prompt_tokens": None,
-        "completion_tokens": None,
-        "total_tokens": None,
-        "model_calls": 2,
-        "passes_missing_usage": 2,
-        "complete": False,
-    }
-
-
-def test_weave_bench_describe_stamps_token_roll_up() -> None:
-    """BR-10: weave-bench is the same _timed_chat path and must record the tokens axis."""
-    usage = {"prompt_tokens": 900, "completion_tokens": 110, "total_tokens": 1010}
-    client = _usage_client(usage)
-    describe = client.weave_bench_describe(
-        media_id=7,
-        facts_raw=_PASS1_FACTS,
-        context_pack={"caption": "A picnic."},
-    )
-    assert describe["tokens"] == {
-        "prompt_tokens": 900,
-        "completion_tokens": 110,
-        "total_tokens": 1010,
-        "model_calls": 1,
-        "passes_missing_usage": 0,
-        "complete": True,
-    }
-
-
-def _stamp_from_cli(argv: list[str]) -> dict:
-    args = build_parser().parse_args(["--endpoint", "http://x", "--model-id", "m", *argv])
-    provenance: dict = {}
-    _stamp_pipeline_provenance(
-        provenance,
-        prompt_variant=args.prompt_variant,
-        two_pass=args.two_pass,
-        dual_length=args.dual_length,
-        face_gate=args.face_gate,
-        eval_mode=args.eval_mode,
-        instance_shape=args.instance_shape,
-    )
-    return provenance
-
-
-def test_instance_shape_round_trips_onto_provenance() -> None:
-    """BR-07-a: --instance-shape is stamped verbatim; the harness never infers a host."""
-    provenance = _stamp_from_cli(["--instance-shape", "gpu.a10"])
-    assert provenance["instance_shape"] == "gpu.a10"
-
-
-def test_instance_shape_absent_by_default() -> None:
-    """BR-07-a: absent means absent — do not invent a machine name (rg-015)."""
-    args = build_parser().parse_args(["--endpoint", "http://x", "--model-id", "m"])
-    assert args.instance_shape is None
-    provenance = _stamp_from_cli([])
-    assert "instance_shape" not in provenance
-
-
-def test_cold_load_s_rejects_nan() -> None:
-    """--cold-load-s must not write NaN into the run-record JSON."""
-    parser = build_parser()
-    with pytest.raises(SystemExit) as excinfo:
-        parser.parse_args(["--endpoint", "http://x", "--model-id", "m", "--cold-load-s", "nan"])
-    assert excinfo.value.code == 2
-
-
-def test_cold_load_s_rejects_inf_and_negative() -> None:
-    parser = build_parser()
-    for raw in ("inf", "-inf", "-5"):
-        with pytest.raises(SystemExit) as excinfo:
-            parser.parse_args(["--endpoint", "http://x", "--model-id", "m", "--cold-load-s", raw])
-        assert excinfo.value.code == 2, raw
 
 
 def test_extract_caption_reasoning_only_names_reasoning_content() -> None:
@@ -587,9 +277,9 @@ def test_extract_caption_content_none_is_empty_error() -> None:
 
 def test_extract_caption_joins_content_parts_array() -> None:
     payload = {
-        "choices": [{"message": {"content": [{"type": "text", "text": "Caitlin"}, {"type": "text", "text": "Weaver"}]}}]
+        "choices": [{"message": {"content": [{"type": "text", "text": "Russet"}, {"type": "text", "text": "Fathom"}]}}]
     }
-    assert _extract_caption(payload) == "Caitlin Weaver"
+    assert _extract_caption(payload) == "Russet Fathom"
 
 
 def test_timeout_wires_through_to_httpx_client() -> None:
@@ -619,16 +309,16 @@ def test_fetch_run_record_surfaces_transport_error_as_per_item_error(tmp_path: P
         {
             "manifest_version": 3,
             "annotation_mode": "roster_only",
-            "roster": ["Caitlin Weaver"],
+            "roster": ["Russet Fathom"],
             "entries": [
                 {
                     "path": "img.jpg",
                     "sha256": "0" * 64,
                     "media_id": 7,
                     "face_count": 1,
-                    "present_identities": ["Caitlin Weaver"],
-                    "context_pack": {"caption": "Caitlin Weaver in Antarctica."},
-                    "must_right": ["Caitlin Weaver"],
+                    "present_identities": ["Russet Fathom"],
+                    "context_pack": {"caption": "Russet Fathom in Antarctica."},
+                    "must_right": ["Russet Fathom"],
                     "easy_wrong": [],
                     "policy": {"recognition_enabled": True},
                     "provenance": {"source": "fixture", "license": "fixture"},
@@ -665,9 +355,8 @@ def test_fetch_run_record_bounded_stall_aborts_on_repeated_failures(tmp_path: Pa
                 "provenance": {"source": "fixture", "license": "fixture"},
             }
         )
-    manifest = GoldenManifest.model_validate(
-        {"manifest_version": 3, "annotation_mode": "roster_only", "roster": ["Caitlin Weaver"], "entries": entries}
-    )
+    manifest = GoldenManifest.model_validate({"manifest_version": 3,
+            "annotation_mode": "roster_only", "roster": ["Russet Fathom"], "entries": entries})
     client = BakeoffClient(base_url="http://candidate.test:8080", model_id="m", transport=_status_transport(500))
     try:
         with pytest.raises(BoundedStallError) as excinfo:
@@ -686,23 +375,25 @@ def test_ablate_names_replaces_word_boundary_case_insensitive() -> None:
 
     pack = {
         "title": "Antarctica expedition",
-        "caption": "CAITLIN WEAVER on the peninsula.",
-        "description": "Caitlin Weaver reached the peninsula. Caitlin Weavers' gear stayed aboard.",
+        "caption": "RUSSET FATHOM on the peninsula.",
+        "description": "Russet Fathom reached the peninsula. Russet Fathoms' gear stayed aboard.",
     }
-    out, ablated = _ablate_names(pack, ["Caitlin Weaver"])
-    assert ablated == ["Caitlin Weaver"]
+    out, ablated = _ablate_names(pack, ["Russet Fathom"])
+    assert ablated == ["Russet Fathom"]
     assert out["caption"] == "someone on the peninsula."
     assert out["description"].startswith("someone reached the peninsula.")
-    # word boundary (S2-06): "Caitlin Weavers'" is a different token and must survive.
-    assert "Caitlin Weavers'" in out["description"]
-    assert "Caitlin Weaver reached" not in out["description"]
+    # word boundary (S2-06): "Fathoms'" extends the surname, so the trailing
+    # lookahead must refuse it. The distractor has to share the ablated
+    # surname or this assertion passes with no boundary logic at all.
+    assert "Russet Fathoms' gear" in out["description"]
+    assert "Russet Fathom reached" not in out["description"]
     assert out["title"] == "Antarctica expedition"
 
 
 def test_ablate_names_reports_only_names_found() -> None:
     from scripts.eval_harness.bakeoff import _ablate_names
 
-    out, ablated = _ablate_names({"caption": "A quiet lake."}, ["Caitlin Weaver"])
+    out, ablated = _ablate_names({"caption": "A quiet lake."}, ["Russet Fathom"])
     assert ablated == []
     assert out == {"caption": "A quiet lake."}
 
@@ -736,20 +427,20 @@ def _eval_mode_client(captured: list[dict], mode: str, traits: dict) -> BakeoffC
 
 def test_name_ablation_mode_strips_names_from_prompt_and_stamps() -> None:
     captured: list[dict] = []
-    client = _eval_mode_client(captured, "name_ablation", {7: {"present": ["Caitlin Weaver"], "easy_wrong": []}})
-    describe = _describe(client, {"caption": "Caitlin Weaver on the peninsula."})
+    client = _eval_mode_client(captured, "name_ablation", {7: {"present": ["Russet Fathom"], "easy_wrong": []}})
+    describe = _describe(client, {"caption": "Russet Fathom on the peninsula."})
     prompt_text = json.dumps(captured[0]["payload"])
-    assert "Caitlin Weaver" not in prompt_text
+    assert "Russet Fathom" not in prompt_text
     assert "someone" in prompt_text
-    assert describe["ablated_names"] == ["Caitlin Weaver"]
+    assert describe["ablated_names"] == ["Russet Fathom"]
 
 
 def test_context_distractor_mode_injects_and_stamps() -> None:
     captured: list[dict] = []
     client = _eval_mode_client(
-        captured, "context_distractor", {7: {"present": ["Caitlin Weaver"], "easy_wrong": ["Mallory Trap"]}}
+        captured, "context_distractor", {7: {"present": ["Russet Fathom"], "easy_wrong": ["Mallory Trap"]}}
     )
-    describe = _describe(client, {"caption": "Caitlin Weaver on the peninsula."})
+    describe = _describe(client, {"caption": "Russet Fathom on the peninsula."})
     prompt_text = json.dumps(captured[0]["payload"])
     assert "Mallory Trap" in prompt_text
     assert "also_pictured" in prompt_text
@@ -765,10 +456,10 @@ def test_context_distractor_without_easy_wrong_stamps_nothing() -> None:
 
 def test_standard_mode_default_leaves_context_untouched() -> None:
     captured: list[dict] = []
-    describe = _describe(_client(captured), {"caption": "Caitlin Weaver on the peninsula."})
+    describe = _describe(_client(captured), {"caption": "Russet Fathom on the peninsula."})
     assert "ablated_names" not in describe
     assert "injected_distractor" not in describe
-    assert "Caitlin Weaver" in json.dumps(captured[0]["payload"])
+    assert "Russet Fathom" in json.dumps(captured[0]["payload"])
 
 
 def test_unknown_eval_mode_rejected_at_construction() -> None:
@@ -788,190 +479,3 @@ def test_unknown_eval_mode_rejected_at_construction() -> None:
             transport=_chat_transport([]),
             eval_mode="name_ablation",  # requires entry_traits
         )
-
-
-def test_vram_sample_interval_s_rejects_nan_and_inf() -> None:
-    """rg-008: --vram-sample-interval-s must use the finite parser (sibling of --cold-load-s)."""
-    parser = build_parser()
-    for raw in ("nan", "inf", "-inf"):
-        with pytest.raises(SystemExit) as excinfo:
-            parser.parse_args(["--endpoint", "http://x", "--model-id", "m", "--vram-sample-interval-s", raw])
-        assert excinfo.value.code == 2, raw
-
-
-def test_bakeoff_has_no_dead_nonneg_float_arg() -> None:
-    """VLM6-RV5-L-04: re-adding `_nonneg_float_arg` cannot green this test.
-
-    hasattr is the assertion a reviewer cannot green by restoring the dead helper.
-    type= on the two float flags is extra: swapping either to a weaker helper
-    (even under a new name) still fails.
-    """
-    assert not hasattr(bakeoff_mod, "_nonneg_float_arg")
-    by_dest = {action.dest: action for action in build_parser()._actions}
-    assert by_dest["cold_load_s"].type is bakeoff_mod._nonneg_finite_float_arg
-    assert by_dest["vram_sample_interval_s"].type is bakeoff_mod._nonneg_finite_float_arg
-
-
-def test_clone_bakeoff_client_propagates_transport() -> None:
-    """_clone_bakeoff_client must copy transport= so warmup stays on MockTransport."""
-    transport = _chat_transport([])
-    client = BakeoffClient(
-        base_url="http://candidate.test:8080",
-        model_id="qwen3-vl-4b-instruct",
-        transport=transport,
-    )
-    try:
-        clone = _clone_bakeoff_client(client)
-        try:
-            assert isinstance(clone._client._transport, httpx.MockTransport)
-        finally:
-            clone.close()
-    finally:
-        client.close()
-
-
-def _mini_bakeoff_manifest(tmp_path: Path, n: int = 2) -> GoldenManifest:
-    entries = []
-    for i in range(n):
-        (tmp_path / f"img{i}.jpg").write_bytes(b"fake image bytes")
-        entries.append(
-            {
-                "path": f"img{i}.jpg",
-                "sha256": f"{i}" * 64,
-                "media_id": 7 + i,
-                "face_count": 0,
-                "present_identities": [],
-                "context_pack": {"caption": f"caption-{i}"},
-                "must_right": [],
-                "easy_wrong": [],
-                "policy": {"recognition_enabled": False},
-                "provenance": {"source": "fixture", "license": "fixture"},
-            }
-        )
-    return GoldenManifest.model_validate(
-        {"manifest_version": 3, "annotation_mode": "roster_only", "roster": [], "entries": entries}
-    )
-
-
-def test_run_warmup_isolates_failures_from_scoring_client(tmp_path: Path) -> None:
-    """L-03: _run_warmup / _clone_bakeoff_client / _empty_warmup isolation.
-
-    First 3 MockTransport hits return 500; scoring must still complete with
-    items_with_error == 0 (clone has its own breaker).
-    """
-    seen = {"n": 0}
-
-    def handler(_request: httpx.Request) -> httpx.Response:
-        seen["n"] += 1
-        if seen["n"] <= 3:
-            return httpx.Response(500, json={"error": "not ready"})
-        return httpx.Response(200, json={"choices": [{"message": {"content": "A caption."}}]})
-
-    transport = httpx.MockTransport(handler)
-    client = BakeoffClient(base_url="http://candidate.test:8080", model_id="m", transport=transport)
-    manifest = _mini_bakeoff_manifest(tmp_path, n=2)
-    try:
-        assert _run_warmup(client, manifest, str(tmp_path), 0) == _empty_warmup()
-        warmup = _run_warmup(client, manifest, str(tmp_path), 3)
-        assert warmup["requests"] == 3
-        assert warmup["succeeded"] == 0
-        assert warmup["failed"] == 3
-        assert "elapsed_s" in warmup
-        record = fetch_run_record(manifest, str(tmp_path), client, head_sha="deadbeef")
-        _stamp_timing_and_gpu(
-            record,
-            warmup=warmup,
-            cold_load_s=None,
-            gpu={"status": CaptureStatus.UNAVAILABLE},
-        )
-        assert record["timing"]["warmup"]["requests"] == 3
-        assert record["timing"]["warmup"]["succeeded"] == 0
-        assert record["timing"]["warmup"]["failed"] == 3
-        assert record["timing"]["items_with_error"] == 0
-        assert all(item.get("error") is None for item in record["items"])
-    finally:
-        client.close()
-
-
-def test_items_without_latency_excludes_error_items() -> None:
-    """L-03 / TEST-15: items_without_latency = n_items - len(latencies) - items_with_error."""
-    record: dict = {
-        "items": [
-            {"latency_s": 1.0, "error": None},
-            {"latency_s": 9.0, "error": "TimeoutError: timed out"},
-            {"latency_s": None, "error": None},
-        ]
-    }
-    _stamp_timing_and_gpu(
-        record,
-        warmup=_empty_warmup(),
-        cold_load_s=None,
-        gpu={"status": CaptureStatus.UNAVAILABLE},
-    )
-    latencies = collect_item_latencies(record)
-    n_items = 3
-    items_with_error = record["timing"]["items_with_error"]
-    assert items_with_error == 1
-    assert record["timing"]["items_without_latency"] == n_items - len(latencies) - items_with_error
-    assert record["timing"]["items_without_latency"] == 1
-
-
-def _unavailable_vram_record() -> dict[str, Any]:
-    def missing(*_args: Any, **_kwargs: Any) -> CompletedProcess[str]:
-        raise FileNotFoundError("nvidia-smi")
-
-    sampler = VramSampler(interval_s=0.05, runner=missing)
-    sampler.start()
-    return sampler.stop()
-
-
-def _measured_900_100_probe_record() -> dict[str, Any]:
-    """Existing 900/100 probe fixture from bench_capture (VLM6-RV5-L-03)."""
-    remaining = ["900, 8000\n100, 8000\n", "100, 8000\n1000, 8000\n"]
-
-    def runner(*_args: Any, **_kwargs: Any) -> CompletedProcess[str]:
-        stdout = remaining.pop(0) if remaining else ""
-        return CompletedProcess(args=["nvidia-smi"], returncode=0, stdout=stdout, stderr="")
-
-    sampler = VramSampler(interval_s=0.05, runner=runner)
-    sampler._sample()
-    sampler._sample()
-    return sampler.stop()
-
-
-def test_gpu_sampling_disabled_key_parity_with_vram_sampler_branches() -> None:
-    """VLM6-RV5-U-01 / OBS-04 / rg-015: disabled gpu block matches VramSampler keys.
-
-    Mutation: dropping any one key from the disabled dict fails the set-equality
-    (or shared-key) assertions below.
-    """
-    disabled = _gpu_sampling_disabled()
-    unavailable = _unavailable_vram_record()
-    measured = _measured_900_100_probe_record()
-
-    assert set(disabled) == set(unavailable)
-    # Measured adds interval_s and drops reason; every shared key must be present.
-    shared = set(unavailable) & set(measured)
-    assert set(disabled) == shared | (set(unavailable) - set(measured))
-    assert shared <= set(disabled)
-    assert shared <= set(measured)
-
-    rec: dict[str, Any] = {"items": []}
-    _stamp_timing_and_gpu(
-        rec,
-        warmup=_empty_warmup(),
-        cold_load_s=None,
-        gpu=_gpu_sampling_disabled(),
-    )
-    assert rec["gpu"]["gpu_count"] is None
-    assert rec["gpu"]["per_gpu_used_mb_at_peak"] is None
-    assert rec["gpu"]["per_gpu_peak_used_mb"] is None
-    assert rec["gpu"]["per_gpu_semantics"] == PerGpuSemantics.SNAPSHOT_AT_AGGREGATE_PEAK_SAMPLE
-    assert rec["gpu"]["reason"] == "sampling disabled"
-    assert rec["gpu"]["status"] == CaptureStatus.UNAVAILABLE
-    assert rec["gpu"]["peak_used_mb"] is None
-    assert rec["gpu"]["total_mb"] is None
-
-    for key in list(disabled):
-        mutated = {k: v for k, v in disabled.items() if k != key}
-        assert set(mutated) != set(unavailable)

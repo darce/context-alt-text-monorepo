@@ -77,6 +77,15 @@ Allocation is disproportional by design, and the inclusion probability of every
 drawn unit is recorded so a design-based interval remains computable (AUDIT-08).
 
 ```
+import json
+from pathlib import Path
+from scripts.eval_harness.audit_sampling import (
+    allocate,
+    project_strata_image_counts,
+    size_for_margin,
+)
+
+strata_counts = json.loads(Path("benchmarks/manifests/fir12-selection-v1.json").read_text())["strata_counts"]
 allocate(strata_sizes=project_strata_image_counts(strata_counts), n=84)
 # {'A_true_occluder': 4, 'B_eyewear': 11, 'C_pose': 5, 'D_capture': 11, 'E_clean': 53}
 size_for_margin(margin=0.10,  population=80).n  # 44

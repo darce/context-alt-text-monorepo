@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import math
 import random
-from collections.abc import Hashable, Mapping, Sequence
+from collections.abc import Hashable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 
@@ -65,6 +65,31 @@ class SampleSize:
     deff_order: DeffOrder
     cluster_size: float | None = None
     icc: float | None = None
+
+
+@dataclass(frozen=True)
+class ClusterSpec:
+    """Per-stratum mean cluster size M and ICC for Kish deff (AUDIT-11)."""
+
+    cluster_size: float
+    icc: float
+
+
+@dataclass(frozen=True)
+class Allocation(Mapping[str, int]):
+    """Per-stratum n_h; ``floors`` is the SampleSize that sized each precision floor."""
+
+    counts: Mapping[str, int]
+    floors: Mapping[str, SampleSize]
+
+    def __getitem__(self, key: str) -> int:
+        return self.counts[key]
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self.counts)
+
+    def __len__(self) -> int:
+        return len(self.counts)
 
 
 def project_strata_image_counts(
@@ -170,12 +195,17 @@ def allocate(
     strata_sizes: Mapping[str, int],
     n: int,
     precision_floors: Mapping[str, float] | None = None,
-) -> dict[str, int]:
+    cluster_params: Mapping[str, ClusterSpec] | None = None,
+) -> Allocation:
     """Allocate n across strata; proportional default, disproportional for floors.
 
     A precision floor is a per-stratum target margin: that stratum is sized from
-    ``sample_size_for_margin`` against its own N_h, and the remainder of n is
-    allocated proportionally to the other strata (AUDIT-10).
+    ``size_for_margin`` against its own N_h, and the remainder of n is allocated
+    proportionally to the other strata (AUDIT-10). ``cluster_params`` is a
+    per-stratum (M, ICC) map because mean cluster size differs by cell; omitted
+    entries keep today's unclustered floor. Each floor's SampleSize is on the
+    returned Allocation so deff, n_eff = n/deff, and ordering can be read back
+    (AUDIT-11).
     """
     if n < 0:
         raise AuditSamplingError(f"n must be >= 0, got {n!r}")
@@ -194,7 +224,7 @@ def allocate(
     if total_n == 0:
         if n > 0:
             raise AuditSamplingError("cannot allocate n>0 across empty strata")
-        return {name: 0 for name in strata_sizes}
+        return Allocation(counts={name: 0 for name in strata_sizes}, floors={})
 
     target = min(n, total_n)
     floors = dict(precision_floors or {})
@@ -202,12 +232,35 @@ def allocate(
     if unknown:
         raise AuditSamplingError(f"precision_floors name unknown strata: {sorted(unknown)}")
 
+    clusters = dict(cluster_params or {})
+    unknown_clusters = set(clusters) - set(strata_sizes)
+    if unknown_clusters:
+        raise AuditSamplingError(
+            f"cluster_params name unknown strata: {sorted(unknown_clusters)}"
+        )
+    for name, spec in clusters.items():
+        if not isinstance(spec, ClusterSpec):
+            raise AuditSamplingError(
+                f"cluster_params[{name!r}] must be a ClusterSpec, got {type(spec).__name__}"
+            )
+
     assigned = {name: 0 for name in strata_sizes}
+    floor_records: dict[str, SampleSize] = {}
     reserved = 0
     for name, margin in floors.items():
-        n_h = sample_size_for_margin(margin=margin, population=strata_sizes[name])
-        n_h = min(n_h, strata_sizes[name])
+        spec = clusters.get(name)
+        if spec is None:
+            record = size_for_margin(margin=margin, population=strata_sizes[name])
+        else:
+            record = size_for_margin(
+                margin=margin,
+                population=strata_sizes[name],
+                cluster_size=spec.cluster_size,
+                icc=spec.icc,
+            )
+        n_h = min(record.n, strata_sizes[name])
         assigned[name] = n_h
+        floor_records[name] = record
         reserved += n_h
     if reserved > target:
         raise AuditSamplingError(
@@ -222,7 +275,7 @@ def allocate(
         leftover = _pour(assigned, leftover, capacity)
     if leftover:
         raise AuditSamplingError(f"unable to place {leftover} leftover units")
-    return assigned
+    return Allocation(counts=assigned, floors=floor_records)
 
 
 def _pour(assigned: dict[str, int], leftover: int, weights: Mapping[str, int]) -> int:

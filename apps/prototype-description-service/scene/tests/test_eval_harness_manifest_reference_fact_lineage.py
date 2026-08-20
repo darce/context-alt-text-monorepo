@@ -11,6 +11,7 @@ from scripts.eval_harness.manifest import (
     ConfirmationSource,
     FactKind,
     FactPolarity,
+    HUMAN_CONFIRMATION_SOURCES,
     PreAdjudicationLabel,
     ReferenceFact,
     load_legacy_manifest,
@@ -146,6 +147,18 @@ def test_human_confirmed_fact_without_annotator_id_raises():
             phrases=["red bicycle"],
             confirmed_by="operator",
         )
+
+
+def test_human_confirmation_sources_are_an_explicit_allowlist():
+    named_human = frozenset({ConfirmationSource.OPERATOR})
+    named_machine = frozenset({ConfirmationSource.AGENT})
+    assert HUMAN_CONFIRMATION_SOURCES == named_human
+    assert ConfirmationSource.AGENT not in HUMAN_CONFIRMATION_SOURCES
+    leftover = set(ConfirmationSource) - named_human - named_machine
+    assert leftover == set(), (
+        f"ConfirmationSource members {sorted(m.value for m in leftover)} must be "
+        "named as human gold or machine; do not inherit human via complement-of-AGENT"
+    )
 
 
 def test_unknown_confirmation_source_raises_not_promoted_to_human():

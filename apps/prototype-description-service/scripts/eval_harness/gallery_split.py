@@ -77,6 +77,8 @@ class GallerySplit:
     """Disjoint G1/G2 enrollment plus templates reserved as probes.
 
     ``g1`` / ``g2`` map subject_id → the single enrolled template.
+    Keys are stripped at construction so every consumer partitions on the
+    same identity; a blank or non-string subject_id is rejected (EVAL-18).
     ``probe_templates`` are leftovers enrolled in neither gallery.
     ``withheld_probe_templates`` are leftovers whose media collides with
     an enrolled still in the same component; they are not searched.
@@ -88,6 +90,22 @@ class GallerySplit:
     g2: dict[str, Template]
     probe_templates: tuple[Template, ...]
     withheld_probe_templates: tuple[Template, ...] = ()
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "g1", _normalise_gallery_map(self.g1, gallery="g1"))
+        object.__setattr__(self, "g2", _normalise_gallery_map(self.g2, gallery="g2"))
+        object.__setattr__(
+            self,
+            "probe_templates",
+            _normalise_template_tuple(self.probe_templates, gallery="probe_templates"),
+        )
+        object.__setattr__(
+            self,
+            "withheld_probe_templates",
+            _normalise_template_tuple(
+                self.withheld_probe_templates, gallery="withheld_probe_templates"
+            ),
+        )
 
     @property
     def g1_template_ids(self) -> frozenset[str]:
@@ -132,6 +150,62 @@ class ProbeSet:
         return len({t.subject_id for t in (*self.mated, *self.nonmated)})
 
 
+def _normalise_subject_id(value: object, *, gallery: str) -> str:
+    if not isinstance(value, str):
+        raise GallerySplitError(
+            f"{gallery} subject_id must be a non-empty string, got {value!r}"
+        )
+    key = value.strip()
+    if not key:
+        raise GallerySplitError(
+            f"{gallery} subject_id must be a non-empty string, got {value!r}"
+        )
+    return key
+
+
+def _with_subject(template: Template, subject_id: str) -> Template:
+    if template.subject_id == subject_id:
+        return template
+    return Template(
+        template_id=template.template_id,
+        subject_id=subject_id,
+        media_ids=template.media_ids,
+    )
+
+
+def _normalise_gallery_map(
+    gallery_map: Mapping[object, Template], *, gallery: str
+) -> dict[str, Template]:
+    out: dict[str, Template] = {}
+    for subject_id, template in gallery_map.items():
+        key = _normalise_subject_id(subject_id, gallery=gallery)
+        template_key = _normalise_subject_id(template.subject_id, gallery=gallery)
+        if template_key != key:
+            raise GallerySplitError(
+                f"{gallery} key {key!r} holds template for {template.subject_id!r}"
+            )
+        if key in out:
+            raise GallerySplitError(
+                f"{gallery} subject_id {key!r} collides after normalisation "
+                f"(offending value {subject_id!r})"
+            )
+        out[key] = _with_subject(template, key)
+    return {subject: out[subject] for subject in sorted(out)}
+
+
+def _normalise_template_tuple(
+    templates: Sequence[Template], *, gallery: str
+) -> tuple[Template, ...]:
+    out = [
+        _with_subject(
+            template,
+            _normalise_subject_id(template.subject_id, gallery=gallery),
+        )
+        for template in templates
+    ]
+    return tuple(sorted(out, key=lambda t: (t.subject_id, t.template_id)))
+
+
 def _media_ids_from_template_id(template_id: str) -> tuple[int, ...]:
     """Parse ``'{media}:{subject}'`` when present. No match means no shared still."""
     prefix, sep, rest = template_id.partition(":")
@@ -155,19 +229,23 @@ def _canonical_template(template: Template) -> Template:
 
 
 def _as_template(value: Template | str, *, subject_id: str) -> Template:
+    canonical_subject = _normalise_subject_id(subject_id, gallery="roster")
     if isinstance(value, Template):
-        if value.subject_id != subject_id:
+        template_subject = _normalise_subject_id(value.subject_id, gallery="template")
+        if template_subject != canonical_subject:
             raise GallerySplitError(
                 f"template {value.template_id!r} subject_id {value.subject_id!r} "
                 f"does not match roster key {subject_id!r}"
             )
         if not value.template_id:
             raise GallerySplitError("template id must be a non-empty string")
-        return _canonical_template(value)
+        return _canonical_template(_with_subject(value, canonical_subject))
     if isinstance(value, str):
         if not value:
             raise GallerySplitError("template id must be a non-empty string")
-        return _canonical_template(Template(template_id=value, subject_id=subject_id))
+        return _canonical_template(
+            Template(template_id=value, subject_id=canonical_subject)
+        )
     raise GallerySplitError(f"unsupported template type: {type(value).__name__}")
 
 
@@ -334,11 +412,16 @@ def build_disjoint_galleries(
             "empty roster: refusing two empty galleries (no open-set stratum)"
         )
 
+    roster: dict[str, list[Template | str]] = {}
+    for subject_id, raw_templates in templates_by_subject.items():
+        key = _normalise_subject_id(subject_id, gallery="roster")
+        roster.setdefault(key, []).extend(raw_templates)
+
     rng = random.Random(seed)
     seen_ids: set[str] = set()
     by_subject: dict[str, list[Template]] = {}
-    for subject_id in sorted(templates_by_subject):
-        raw = list(templates_by_subject[subject_id])
+    for subject_id in sorted(roster):
+        raw = list(roster[subject_id])
         if not raw:
             raise GallerySplitError(
                 f"subject {subject_id!r} has no templates; refusing silent drop"

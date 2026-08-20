@@ -4,8 +4,8 @@
 - adapter(s): `seeded` model(s): `seeded-fixtures` version(s): `1`
 - head_sha: `null`
 - base_url: seeded-stub://offline
-- fetch manifest_sha256: `51e9456b4f8c91ade5f8d5da42fc948631e7b285ea4a4d71d63e0e1bfdcf72b7`
-- score manifest_sha256: `51e9456b4f8c91ade5f8d5da42fc948631e7b285ea4a4d71d63e0e1bfdcf72b7` (matches fetch: true)
+- fetch manifest_sha256: `18d7fc6f3b0ef568da93df91694859ed3f2dc4e87cb237fb26375b077edc6eb3`
+- score manifest_sha256: `18d7fc6f3b0ef568da93df91694859ed3f2dc4e87cb237fb26375b077edc6eb3` (matches fetch: true)
 - started_at: null
 - images: 39/39 scored, 0 failed
 - quality_floor_caveat: position_accuracy/placement floors are binary-chance (0.5); accuracy at the floor fails the gate
@@ -52,9 +52,9 @@
 - mean context duplication: 0.000
 - name front-loaded rate: 0.000
 - sentence band [1, 4] ok rate: 1.000
-- mean FKRE: 65.120
-- mean repetition ratio: 0.057
-- mean tag coverage: 0.684
+- mean FKRE: 66.120
+- mean repetition ratio: 0.065
+- mean tag coverage: 0.607
 - first-sentence gist ok rate: 1.000
 
 ## Face detection (identity-agnostic)

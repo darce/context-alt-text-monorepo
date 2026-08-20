@@ -48,10 +48,10 @@
         "exact_order_rate": 0.0,
         "excluded_images": [
           "mock_images/Breiðamerkurjökull.jpg",
-          "mock_images/bea-nye.jpg",
+          "mock_images/quiet-nye.jpg",
           "mock_images/ccqw-antartica.jpg",
           "mock_images/ccqw-bar.jpg",
-          "mock_images/ccqw-erika.jpg",
+          "mock_images/ccqw-candid.jpg",
           "mock_images/ccqw-flowers.jpg",
           "mock_images/ccqw-hair.jpg",
           "mock_images/ccqw-occlusion-2.jpg",
@@ -63,27 +63,27 @@
           "mock_images/ccqw-sunglasses.jpg",
           "mock_images/ccqw-underexposed.jpg",
           "mock_images/ccqw.blurry.jpg",
-          "mock_images/cristina-1.jpg",
-          "mock_images/example-ellynheald-goldleaf.jpeg",
+          "mock_images/tidal-1.jpg",
+          "mock_images/example-gildedcypress-goldleaf.jpeg",
           "mock_images/k.mcc-1.jpg",
-          "mock_images/kirstie-1.jpeg",
-          "mock_images/kirstie-boat.jpg",
-          "mock_images/kirstie-daniel-sunglasses.jpg",
-          "mock_images/kirstie-pool.jpg",
-          "mock_images/liam-maloney-2.jpg",
-          "mock_images/liam-maloney-home.jpg",
-          "mock_images/liam-maloney-painting.jpg",
-          "mock_images/maria-cocktail.jpg",
-          "mock_images/maria-party.jpg",
-          "mock_images/maria-pool.jpg",
+          "mock_images/auburn-1.jpeg",
+          "mock_images/auburn-boat.jpg",
+          "mock_images/auburn-daniel-sunglasses.jpg",
+          "mock_images/auburn-pool.jpg",
+          "mock_images/linen-kestrel-2.jpg",
+          "mock_images/linen-kestrel-home.jpg",
+          "mock_images/linen-kestrel-painting.jpg",
+          "mock_images/slate-cocktail.jpg",
+          "mock_images/slate-party.jpg",
+          "mock_images/slate-pool.jpg",
           "mock_images/mcm-eye-blocked.jpg",
           "mock_images/mcm-icecave.jpg",
           "mock_images/mcm-planecrash.jpg",
           "mock_images/nina-machiavelli.jpeg",
           "mock_images/rrw-mirror.jpg",
-          "mock_images/ryann-bar.jpg",
-          "mock_images/ryann-group-party.jpg",
-          "mock_images/ryann-party.jpg",
+          "mock_images/muted-bar.jpg",
+          "mock_images/muted-group-party.jpg",
+          "mock_images/muted-party.jpg",
           "mock_images/y-missing-mixed-order.jpg"
         ],
         "position_accuracy": 0.0,
@@ -114,7 +114,7 @@
   "failures": [],
   "hallucination": {
     "by_kind": {},
-    "count_advisory_images": 3,
+    "count_advisory_images": 6,
     "fabricated_fact_rate": null,
     "fabricated_fact_rate_trapped": null,
     "fabricated_instances": 0,
@@ -169,11 +169,11 @@
       "cache_hit": false,
       "context_duplication_ratio": 0.0,
       "first_sentence_gist_ok": true,
-      "fkre": 92.97,
+      "fkre": 31.55,
       "gated_score": 0.0,
       "hallucinated_names": [],
       "hallucination": {
-        "count_advisory": null,
+        "count_advisory": "claims >=2 people; face_count=1 (advisory: faces subset people)",
         "coverage": null,
         "covered_facts": [],
         "fabricated": false,
@@ -191,7 +191,7 @@
         "Hollow Pennant"
       ],
       "name_front_loaded": false,
-      "path": "mock_images/bea-nye.jpg",
+      "path": "mock_images/quiet-nye.jpg",
       "placement": {
         "abstained": [],
         "accuracy": null,
@@ -200,9 +200,9 @@
         "wrong": []
       },
       "policy_violation": false,
-      "repetition_ratio": 0.125,
+      "repetition_ratio": 0.0,
       "sentence_count": 1,
-      "tag_coverage": 1.0,
+      "tag_coverage": 0.0,
       "wrong_name_hits": []
     },
     {
@@ -289,7 +289,7 @@
       "cache_hit": false,
       "context_duplication_ratio": 0.0,
       "first_sentence_gist_ok": true,
-      "fkre": 75.5,
+      "fkre": 71.82,
       "gated_score": 0.0,
       "hallucinated_names": [],
       "hallucination": {
@@ -313,7 +313,7 @@
         "Muted Current"
       ],
       "name_front_loaded": false,
-      "path": "mock_images/ccqw-erika.jpg",
+      "path": "mock_images/ccqw-candid.jpg",
       "placement": {
         "abstained": [],
         "accuracy": null,
@@ -322,9 +322,9 @@
         "wrong": []
       },
       "policy_violation": false,
-      "repetition_ratio": 0.1111,
+      "repetition_ratio": 0.125,
       "sentence_count": 1,
-      "tag_coverage": 0.5,
+      "tag_coverage": 1.0,
       "wrong_name_hits": []
     },
     {
@@ -771,7 +771,7 @@
       "cache_hit": false,
       "context_duplication_ratio": 0.0,
       "first_sentence_gist_ok": true,
-      "fkre": 50.67,
+      "fkre": 75.5,
       "gated_score": 0.0,
       "hallucinated_names": [],
       "hallucination": {
@@ -793,7 +793,7 @@
         "Tidal Harbor"
       ],
       "name_front_loaded": false,
-      "path": "mock_images/cristina-1.jpg",
+      "path": "mock_images/tidal-1.jpg",
       "placement": {
         "abstained": [],
         "accuracy": null,
@@ -802,9 +802,9 @@
         "wrong": []
       },
       "policy_violation": false,
-      "repetition_ratio": 0.0,
+      "repetition_ratio": 0.1111,
       "sentence_count": 1,
-      "tag_coverage": 1.0,
+      "tag_coverage": 0.5,
       "wrong_name_hits": []
     },
     {
@@ -833,7 +833,7 @@
         "Gilded Cypress"
       ],
       "name_front_loaded": false,
-      "path": "mock_images/example-ellynheald-goldleaf.jpeg",
+      "path": "mock_images/example-gildedcypress-goldleaf.jpeg",
       "placement": {
         "abstained": [],
         "accuracy": null,
@@ -891,7 +891,7 @@
       "cache_hit": false,
       "context_duplication_ratio": 0.0,
       "first_sentence_gist_ok": true,
-      "fkre": 50.67,
+      "fkre": 88.0,
       "gated_score": 0.0,
       "hallucinated_names": [],
       "hallucination": {
@@ -913,7 +913,7 @@
         "Auburn Current"
       ],
       "name_front_loaded": false,
-      "path": "mock_images/kirstie-1.jpeg",
+      "path": "mock_images/auburn-1.jpeg",
       "placement": {
         "abstained": [],
         "accuracy": null,
@@ -922,7 +922,7 @@
         "wrong": []
       },
       "policy_violation": false,
-      "repetition_ratio": 0.0,
+      "repetition_ratio": 0.1818,
       "sentence_count": 1,
       "tag_coverage": 1.0,
       "wrong_name_hits": []
@@ -931,7 +931,7 @@
       "cache_hit": false,
       "context_duplication_ratio": 0.0,
       "first_sentence_gist_ok": true,
-      "fkre": 31.55,
+      "fkre": 45.65,
       "gated_score": 0.0,
       "hallucinated_names": [],
       "hallucination": {
@@ -953,7 +953,7 @@
         "Auburn Current"
       ],
       "name_front_loaded": false,
-      "path": "mock_images/kirstie-boat.jpg",
+      "path": "mock_images/auburn-boat.jpg",
       "placement": {
         "abstained": [],
         "accuracy": null,
@@ -964,14 +964,14 @@
       "policy_violation": false,
       "repetition_ratio": 0.0,
       "sentence_count": 1,
-      "tag_coverage": 0.0,
+      "tag_coverage": 0.3333333333333333,
       "wrong_name_hits": []
     },
     {
       "cache_hit": false,
       "context_duplication_ratio": 0.0,
       "first_sentence_gist_ok": true,
-      "fkre": 31.55,
+      "fkre": 88.0,
       "gated_score": 0.0,
       "hallucinated_names": [],
       "hallucination": {
@@ -995,7 +995,7 @@
         "Auburn Current"
       ],
       "name_front_loaded": false,
-      "path": "mock_images/kirstie-daniel-sunglasses.jpg",
+      "path": "mock_images/auburn-daniel-sunglasses.jpg",
       "placement": {
         "abstained": [],
         "accuracy": null,
@@ -1004,20 +1004,20 @@
         "wrong": []
       },
       "policy_violation": false,
-      "repetition_ratio": 0.0,
+      "repetition_ratio": 0.1818,
       "sentence_count": 1,
-      "tag_coverage": 0.0,
+      "tag_coverage": 1.0,
       "wrong_name_hits": []
     },
     {
       "cache_hit": false,
       "context_duplication_ratio": 0.0,
       "first_sentence_gist_ok": true,
-      "fkre": 50.67,
+      "fkre": 31.55,
       "gated_score": 0.0,
       "hallucinated_names": [],
       "hallucination": {
-        "count_advisory": null,
+        "count_advisory": "claims >=2 people; face_count=1 (advisory: faces subset people)",
         "coverage": null,
         "covered_facts": [],
         "fabricated": false,
@@ -1035,7 +1035,7 @@
         "Auburn Current"
       ],
       "name_front_loaded": false,
-      "path": "mock_images/kirstie-pool.jpg",
+      "path": "mock_images/auburn-pool.jpg",
       "placement": {
         "abstained": [],
         "accuracy": null,
@@ -1046,18 +1046,18 @@
       "policy_violation": false,
       "repetition_ratio": 0.0,
       "sentence_count": 1,
-      "tag_coverage": 1.0,
+      "tag_coverage": 0.0,
       "wrong_name_hits": []
     },
     {
       "cache_hit": false,
       "context_duplication_ratio": 0.0,
       "first_sentence_gist_ok": true,
-      "fkre": 50.67,
+      "fkre": 31.55,
       "gated_score": 0.0,
       "hallucinated_names": [],
       "hallucination": {
-        "count_advisory": null,
+        "count_advisory": "claims >=2 people; face_count=1 (advisory: faces subset people)",
         "coverage": null,
         "covered_facts": [],
         "fabricated": false,
@@ -1075,7 +1075,7 @@
         "Linen Kestrel"
       ],
       "name_front_loaded": false,
-      "path": "mock_images/liam-maloney-2.jpg",
+      "path": "mock_images/linen-kestrel-2.jpg",
       "placement": {
         "abstained": [],
         "accuracy": null,
@@ -1086,7 +1086,7 @@
       "policy_violation": false,
       "repetition_ratio": 0.0,
       "sentence_count": 1,
-      "tag_coverage": 1.0,
+      "tag_coverage": 0.0,
       "wrong_name_hits": []
     },
     {
@@ -1115,7 +1115,7 @@
         "Linen Kestrel"
       ],
       "name_front_loaded": false,
-      "path": "mock_images/liam-maloney-home.jpg",
+      "path": "mock_images/linen-kestrel-home.jpg",
       "placement": {
         "abstained": [],
         "accuracy": null,
@@ -1133,7 +1133,7 @@
       "cache_hit": false,
       "context_duplication_ratio": 0.0,
       "first_sentence_gist_ok": true,
-      "fkre": 50.67,
+      "fkre": 88.0,
       "gated_score": null,
       "hallucinated_names": [],
       "hallucination": {
@@ -1151,7 +1151,7 @@
       "missing_identities": [],
       "must_right_failures": [],
       "name_front_loaded": null,
-      "path": "mock_images/liam-maloney-painting.jpg",
+      "path": "mock_images/linen-kestrel-painting.jpg",
       "placement": {
         "abstained": [],
         "accuracy": null,
@@ -1160,87 +1160,7 @@
         "wrong": []
       },
       "policy_violation": false,
-      "repetition_ratio": 0.0,
-      "sentence_count": 1,
-      "tag_coverage": 1.0,
-      "wrong_name_hits": []
-    },
-    {
-      "cache_hit": false,
-      "context_duplication_ratio": 0.0,
-      "first_sentence_gist_ok": true,
-      "fkre": 50.67,
-      "gated_score": 0.0,
-      "hallucinated_names": [],
-      "hallucination": {
-        "count_advisory": null,
-        "coverage": null,
-        "covered_facts": [],
-        "fabricated": false,
-        "fabricated_facts": [],
-        "missing_facts": [],
-        "trap_count": 0
-      },
-      "inserted_identities": [],
-      "media_id": 28,
-      "meta_framing_hits": [],
-      "missing_identities": [
-        "Slate Willow"
-      ],
-      "must_right_failures": [
-        "Slate Willow"
-      ],
-      "name_front_loaded": false,
-      "path": "mock_images/maria-cocktail.jpg",
-      "placement": {
-        "abstained": [],
-        "accuracy": null,
-        "claims": 0,
-        "correct": [],
-        "wrong": []
-      },
-      "policy_violation": false,
-      "repetition_ratio": 0.0,
-      "sentence_count": 1,
-      "tag_coverage": 1.0,
-      "wrong_name_hits": []
-    },
-    {
-      "cache_hit": false,
-      "context_duplication_ratio": 0.0,
-      "first_sentence_gist_ok": true,
-      "fkre": 92.97,
-      "gated_score": 0.0,
-      "hallucinated_names": [],
-      "hallucination": {
-        "count_advisory": null,
-        "coverage": null,
-        "covered_facts": [],
-        "fabricated": false,
-        "fabricated_facts": [],
-        "missing_facts": [],
-        "trap_count": 0
-      },
-      "inserted_identities": [],
-      "media_id": 29,
-      "meta_framing_hits": [],
-      "missing_identities": [
-        "Slate Willow"
-      ],
-      "must_right_failures": [
-        "Slate Willow"
-      ],
-      "name_front_loaded": false,
-      "path": "mock_images/maria-party.jpg",
-      "placement": {
-        "abstained": [],
-        "accuracy": null,
-        "claims": 0,
-        "correct": [],
-        "wrong": []
-      },
-      "policy_violation": false,
-      "repetition_ratio": 0.125,
+      "repetition_ratio": 0.1818,
       "sentence_count": 1,
       "tag_coverage": 1.0,
       "wrong_name_hits": []
@@ -1262,6 +1182,86 @@
         "trap_count": 0
       },
       "inserted_identities": [],
+      "media_id": 28,
+      "meta_framing_hits": [],
+      "missing_identities": [
+        "Slate Willow"
+      ],
+      "must_right_failures": [
+        "Slate Willow"
+      ],
+      "name_front_loaded": false,
+      "path": "mock_images/slate-cocktail.jpg",
+      "placement": {
+        "abstained": [],
+        "accuracy": null,
+        "claims": 0,
+        "correct": [],
+        "wrong": []
+      },
+      "policy_violation": false,
+      "repetition_ratio": 0.125,
+      "sentence_count": 1,
+      "tag_coverage": 1.0,
+      "wrong_name_hits": []
+    },
+    {
+      "cache_hit": false,
+      "context_duplication_ratio": 0.0,
+      "first_sentence_gist_ok": true,
+      "fkre": 45.65,
+      "gated_score": 0.0,
+      "hallucinated_names": [],
+      "hallucination": {
+        "count_advisory": null,
+        "coverage": null,
+        "covered_facts": [],
+        "fabricated": false,
+        "fabricated_facts": [],
+        "missing_facts": [],
+        "trap_count": 0
+      },
+      "inserted_identities": [],
+      "media_id": 29,
+      "meta_framing_hits": [],
+      "missing_identities": [
+        "Slate Willow"
+      ],
+      "must_right_failures": [
+        "Slate Willow"
+      ],
+      "name_front_loaded": false,
+      "path": "mock_images/slate-party.jpg",
+      "placement": {
+        "abstained": [],
+        "accuracy": null,
+        "claims": 0,
+        "correct": [],
+        "wrong": []
+      },
+      "policy_violation": false,
+      "repetition_ratio": 0.0,
+      "sentence_count": 1,
+      "tag_coverage": 0.3333333333333333,
+      "wrong_name_hits": []
+    },
+    {
+      "cache_hit": false,
+      "context_duplication_ratio": 0.0,
+      "first_sentence_gist_ok": true,
+      "fkre": 92.97,
+      "gated_score": 0.0,
+      "hallucinated_names": [],
+      "hallucination": {
+        "count_advisory": null,
+        "coverage": null,
+        "covered_facts": [],
+        "fabricated": false,
+        "fabricated_facts": [],
+        "missing_facts": [],
+        "trap_count": 0
+      },
+      "inserted_identities": [],
       "media_id": 30,
       "meta_framing_hits": [],
       "missing_identities": [
@@ -1271,7 +1271,7 @@
         "Slate Willow"
       ],
       "name_front_loaded": false,
-      "path": "mock_images/maria-pool.jpg",
+      "path": "mock_images/slate-pool.jpg",
       "placement": {
         "abstained": [],
         "accuracy": null,
@@ -1481,7 +1481,7 @@
       "cache_hit": false,
       "context_duplication_ratio": 0.0,
       "first_sentence_gist_ok": true,
-      "fkre": 75.5,
+      "fkre": 45.65,
       "gated_score": 0.0,
       "hallucinated_names": [],
       "hallucination": {
@@ -1503,7 +1503,7 @@
         "Muted Yarrow"
       ],
       "name_front_loaded": false,
-      "path": "mock_images/ryann-bar.jpg",
+      "path": "mock_images/muted-bar.jpg",
       "placement": {
         "abstained": [],
         "accuracy": null,
@@ -1512,9 +1512,9 @@
         "wrong": []
       },
       "policy_violation": false,
-      "repetition_ratio": 0.1111,
+      "repetition_ratio": 0.0,
       "sentence_count": 1,
-      "tag_coverage": 0.5,
+      "tag_coverage": 0.3333333333333333,
       "wrong_name_hits": []
     },
     {
@@ -1543,7 +1543,7 @@
         "Muted Yarrow"
       ],
       "name_front_loaded": false,
-      "path": "mock_images/ryann-group-party.jpg",
+      "path": "mock_images/muted-group-party.jpg",
       "placement": {
         "abstained": [],
         "accuracy": null,
@@ -1561,7 +1561,7 @@
       "cache_hit": false,
       "context_duplication_ratio": 0.0,
       "first_sentence_gist_ok": true,
-      "fkre": 71.82,
+      "fkre": 78.87,
       "gated_score": 0.0,
       "hallucinated_names": [],
       "hallucination": {
@@ -1583,7 +1583,7 @@
         "Muted Yarrow"
       ],
       "name_front_loaded": false,
-      "path": "mock_images/ryann-party.jpg",
+      "path": "mock_images/muted-party.jpg",
       "placement": {
         "abstained": [],
         "accuracy": null,
@@ -1592,9 +1592,9 @@
         "wrong": []
       },
       "policy_violation": false,
-      "repetition_ratio": 0.125,
+      "repetition_ratio": 0.0,
       "sentence_count": 1,
-      "tag_coverage": 1.0,
+      "tag_coverage": 0.5,
       "wrong_name_hits": []
     },
     {
@@ -1747,7 +1747,7 @@
     "generator": "scripts.eval_harness.generate_determinism_anchor",
     "head_sha": null,
     "manifest_matches_fetch": true,
-    "manifest_sha256": "51e9456b4f8c91ade5f8d5da42fc948631e7b285ea4a4d71d63e0e1bfdcf72b7",
+    "manifest_sha256": "18d7fc6f3b0ef568da93df91694859ed3f2dc4e87cb237fb26375b077edc6eb3",
     "metric_backing_refusals": {
       "demographic_cohort": "cannot certify metric backed by 'demographic_cohort': 0/39 entries populate that field (vacuous corpus-wide; per-stratum gate would collapse to a single bucket). Declared coverage gap: owner=FIR-5; action=label roster_cohorts / demographic_cohort after operator cohort definitions land — no labelled source exists yet.",
       "reference_facts": "cannot certify metric backed by 'reference_facts': 0/39 entries populate that field (vacuous corpus-wide; per-stratum gate would collapse to a single bucket). Declared coverage gap: owner=VLM-6-operator; action=author polarity-tagged reference_facts per image after a visual pass — cannot be derived from filename/face_count alone.",
@@ -1767,15 +1767,15 @@
     "note": "byte-stability anchor from the seeded offline adapter; no model, no real image bytes. Proves the scoring path is deterministic and that corruption goes red — not that captions or faces are good. Face/identity predictions are ground_truth_derived_fixture with a fixed seeded deviation (TEST-15); face_metrics_evidential=false. fixture_revision/canonical_timestamp are byte-stability sentinels, not git/wall-clock provenance. Freeze corpus is golden.json + media 39 mixed-y order_degraded trap (VLM6-R2-G-01 / wG3) so labeled_y_missing_images is freeze-observable; see provenance.corpus_traps. Media 40 centre-x-tie trap (VLM6-R2-G-02) so positional_images is freeze-observable; see provenance.corpus_traps. See eval_harness/README.md § Corpus coverage boundary.",
     "predictions_source": "ground_truth_derived_fixture",
     "quality_floor_caveat": "position_accuracy/placement floors are binary-chance (0.5); accuracy at the floor fails the gate",
-    "score_manifest_sha256": "51e9456b4f8c91ade5f8d5da42fc948631e7b285ea4a4d71d63e0e1bfdcf72b7",
+    "score_manifest_sha256": "18d7fc6f3b0ef568da93df91694859ed3f2dc4e87cb237fb26375b077edc6eb3",
     "started_at": null
   },
   "quality": {
     "first_sentence_gist_ok_rate": 1.0,
     "mean_context_duplication": 0.0,
-    "mean_fkre": 65.12,
-    "mean_repetition_ratio": 0.0567,
-    "mean_tag_coverage": 0.6838,
+    "mean_fkre": 66.12,
+    "mean_repetition_ratio": 0.0646,
+    "mean_tag_coverage": 0.6068,
     "meta_framing_images": 0,
     "name_front_loaded_rate": 0.0,
     "sentence_band": [

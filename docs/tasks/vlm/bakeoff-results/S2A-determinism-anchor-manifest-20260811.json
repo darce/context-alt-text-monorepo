@@ -32,8 +32,8 @@
       ],
       "provenance": {
         "license": "fixture",
-        "note": "VLM-2A mock_images corpus; not publishable as research gallery without re-screen",
-        "publishable": false,
+        "note": "vendored eval-corpus fixture",
+        "publishable": null,
         "source": "fixture",
         "url": null
       },
@@ -64,7 +64,7 @@
       "must_right": [
         "Hollow Pennant"
       ],
-      "path": "mock_images/bea-nye.jpg",
+      "path": "mock_images/quiet-nye.jpg",
       "policy": {
         "recognition_enabled": true
       },
@@ -73,8 +73,8 @@
       ],
       "provenance": {
         "license": "fixture",
-        "note": "VLM-2A mock_images corpus; not publishable as research gallery without re-screen",
-        "publishable": false,
+        "note": "vendored eval-corpus fixture",
+        "publishable": null,
         "source": "fixture",
         "url": null
       },
@@ -114,8 +114,8 @@
       ],
       "provenance": {
         "license": "fixture",
-        "note": "VLM-2A mock_images corpus; not publishable as research gallery without re-screen",
-        "publishable": false,
+        "note": "vendored eval-corpus fixture",
+        "publishable": null,
         "source": "fixture",
         "url": null
       },
@@ -155,8 +155,8 @@
       ],
       "provenance": {
         "license": "fixture",
-        "note": "VLM-2A mock_images corpus; not publishable as research gallery without re-screen",
-        "publishable": false,
+        "note": "vendored eval-corpus fixture",
+        "publishable": null,
         "source": "fixture",
         "url": null
       },
@@ -188,7 +188,7 @@
         "Russet Fathom",
         "Muted Current"
       ],
-      "path": "mock_images/ccqw-erika.jpg",
+      "path": "mock_images/ccqw-candid.jpg",
       "policy": {
         "recognition_enabled": true
       },
@@ -198,8 +198,8 @@
       ],
       "provenance": {
         "license": "fixture",
-        "note": "VLM-2A mock_images corpus; not publishable as research gallery without re-screen",
-        "publishable": false,
+        "note": "vendored eval-corpus fixture",
+        "publishable": null,
         "source": "fixture",
         "url": null
       },
@@ -239,8 +239,8 @@
       ],
       "provenance": {
         "license": "fixture",
-        "note": "VLM-2A mock_images corpus; not publishable as research gallery without re-screen",
-        "publishable": false,
+        "note": "vendored eval-corpus fixture",
+        "publishable": null,
         "source": "fixture",
         "url": null
       },
@@ -280,8 +280,8 @@
       ],
       "provenance": {
         "license": "fixture",
-        "note": "VLM-2A mock_images corpus; not publishable as research gallery without re-screen",
-        "publishable": false,
+        "note": "vendored eval-corpus fixture",
+        "publishable": null,
         "source": "fixture",
         "url": null
       },
@@ -321,8 +321,8 @@
       ],
       "provenance": {
         "license": "fixture",
-        "note": "VLM-2A mock_images corpus; not publishable as research gallery without re-screen",
-        "publishable": false,
+        "note": "vendored eval-corpus fixture",
+        "publishable": null,
         "source": "fixture",
         "url": null
       },
@@ -364,8 +364,8 @@
       ],
       "provenance": {
         "license": "fixture",
-        "note": "VLM-2A mock_images corpus; not publishable as research gallery without re-screen",
-        "publishable": false,
+        "note": "vendored eval-corpus fixture",
+        "publishable": null,
         "source": "fixture",
         "url": null
       },
@@ -407,8 +407,8 @@
       ],
       "provenance": {
         "license": "fixture",
-        "note": "VLM-2A mock_images corpus; not publishable as research gallery without re-screen",
-        "publishable": false,
+        "note": "vendored eval-corpus fixture",
+        "publishable": null,
         "source": "fixture",
         "url": null
       },
@@ -448,8 +448,8 @@
       ],
       "provenance": {
         "license": "fixture",
-        "note": "VLM-2A mock_images corpus; not publishable as research gallery without re-screen",
-        "publishable": false,
+        "note": "vendored eval-corpus fixture",
+        "publishable": null,
         "source": "fixture",
         "url": null
       },
@@ -489,8 +489,8 @@
       ],
       "provenance": {
         "license": "fixture",
-        "note": "VLM-2A mock_images corpus; not publishable as research gallery without re-screen",
-        "publishable": false,
+        "note": "vendored eval-corpus fixture",
+        "publishable": null,
         "source": "fixture",
         "url": null
       },
@@ -530,8 +530,8 @@
       ],
       "provenance": {
         "license": "fixture",
-        "note": "VLM-2A mock_images corpus; not publishable as research gallery without re-screen",
-        "publishable": false,
+        "note": "vendored eval-corpus fixture",
+        "publishable": null,
         "source": "fixture",
         "url": null
       },
@@ -573,8 +573,8 @@
       ],
       "provenance": {
         "license": "fixture",
-        "note": "VLM-2A mock_images corpus; not publishable as research gallery without re-screen",
-        "publishable": false,
+        "note": "vendored eval-corpus fixture",
+        "publishable": null,
         "source": "fixture",
         "url": null
       },
@@ -616,8 +616,8 @@
       ],
       "provenance": {
         "license": "fixture",
-        "note": "VLM-2A mock_images corpus; not publishable as research gallery without re-screen",
-        "publishable": false,
+        "note": "vendored eval-corpus fixture",
+        "publishable": null,
         "source": "fixture",
         "url": null
       },
@@ -657,8 +657,8 @@
       ],
       "provenance": {
         "license": "fixture",
-        "note": "VLM-2A mock_images corpus; not publishable as research gallery without re-screen",
-        "publishable": false,
+        "note": "vendored eval-corpus fixture",
+        "publishable": null,
         "source": "fixture",
         "url": null
       },
@@ -691,7 +691,7 @@
       "must_right": [
         "Tidal Harbor"
       ],
-      "path": "mock_images/cristina-1.jpg",
+      "path": "mock_images/tidal-1.jpg",
       "policy": {
         "recognition_enabled": true
       },
@@ -700,8 +700,8 @@
       ],
       "provenance": {
         "license": "fixture",
-        "note": "VLM-2A mock_images corpus; not publishable as research gallery without re-screen",
-        "publishable": false,
+        "note": "vendored eval-corpus fixture",
+        "publishable": null,
         "source": "fixture",
         "url": null
       },
@@ -732,7 +732,7 @@
       "must_right": [
         "Gilded Cypress"
       ],
-      "path": "mock_images/example-ellynheald-goldleaf.jpeg",
+      "path": "mock_images/example-gildedcypress-goldleaf.jpeg",
       "policy": {
         "recognition_enabled": true
       },
@@ -741,8 +741,8 @@
       ],
       "provenance": {
         "license": "fixture",
-        "note": "VLM-2A mock_images corpus; not publishable as research gallery without re-screen",
-        "publishable": false,
+        "note": "vendored eval-corpus fixture",
+        "publishable": null,
         "source": "fixture",
         "url": null
       },
@@ -782,8 +782,8 @@
       ],
       "provenance": {
         "license": "fixture",
-        "note": "VLM-2A mock_images corpus; not publishable as research gallery without re-screen",
-        "publishable": false,
+        "note": "vendored eval-corpus fixture",
+        "publishable": null,
         "source": "fixture",
         "url": null
       },
@@ -814,7 +814,7 @@
       "must_right": [
         "Auburn Current"
       ],
-      "path": "mock_images/kirstie-1.jpeg",
+      "path": "mock_images/auburn-1.jpeg",
       "policy": {
         "recognition_enabled": true
       },
@@ -823,8 +823,8 @@
       ],
       "provenance": {
         "license": "fixture",
-        "note": "VLM-2A mock_images corpus; not publishable as research gallery without re-screen",
-        "publishable": false,
+        "note": "vendored eval-corpus fixture",
+        "publishable": null,
         "source": "fixture",
         "url": null
       },
@@ -855,7 +855,7 @@
       "must_right": [
         "Auburn Current"
       ],
-      "path": "mock_images/kirstie-boat.jpg",
+      "path": "mock_images/auburn-boat.jpg",
       "policy": {
         "recognition_enabled": true
       },
@@ -864,8 +864,8 @@
       ],
       "provenance": {
         "license": "fixture",
-        "note": "VLM-2A mock_images corpus; not publishable as research gallery without re-screen",
-        "publishable": false,
+        "note": "vendored eval-corpus fixture",
+        "publishable": null,
         "source": "fixture",
         "url": null
       },
@@ -897,7 +897,7 @@
         "Daniel Arce",
         "Auburn Current"
       ],
-      "path": "mock_images/kirstie-daniel-sunglasses.jpg",
+      "path": "mock_images/auburn-daniel-sunglasses.jpg",
       "policy": {
         "recognition_enabled": true
       },
@@ -907,8 +907,8 @@
       ],
       "provenance": {
         "license": "fixture",
-        "note": "VLM-2A mock_images corpus; not publishable as research gallery without re-screen",
-        "publishable": false,
+        "note": "vendored eval-corpus fixture",
+        "publishable": null,
         "source": "fixture",
         "url": null
       },
@@ -941,7 +941,7 @@
       "must_right": [
         "Auburn Current"
       ],
-      "path": "mock_images/kirstie-pool.jpg",
+      "path": "mock_images/auburn-pool.jpg",
       "policy": {
         "recognition_enabled": true
       },
@@ -950,8 +950,8 @@
       ],
       "provenance": {
         "license": "fixture",
-        "note": "VLM-2A mock_images corpus; not publishable as research gallery without re-screen",
-        "publishable": false,
+        "note": "vendored eval-corpus fixture",
+        "publishable": null,
         "source": "fixture",
         "url": null
       },
@@ -981,7 +981,7 @@
       "must_right": [
         "Linen Kestrel"
       ],
-      "path": "mock_images/liam-maloney-2.jpg",
+      "path": "mock_images/linen-kestrel-2.jpg",
       "policy": {
         "recognition_enabled": true
       },
@@ -990,8 +990,8 @@
       ],
       "provenance": {
         "license": "fixture",
-        "note": "VLM-2A mock_images corpus; not publishable as research gallery without re-screen",
-        "publishable": false,
+        "note": "vendored eval-corpus fixture",
+        "publishable": null,
         "source": "fixture",
         "url": null
       },
@@ -1021,7 +1021,7 @@
       "must_right": [
         "Linen Kestrel"
       ],
-      "path": "mock_images/liam-maloney-home.jpg",
+      "path": "mock_images/linen-kestrel-home.jpg",
       "policy": {
         "recognition_enabled": true
       },
@@ -1030,8 +1030,8 @@
       ],
       "provenance": {
         "license": "fixture",
-        "note": "VLM-2A mock_images corpus; not publishable as research gallery without re-screen",
-        "publishable": false,
+        "note": "vendored eval-corpus fixture",
+        "publishable": null,
         "source": "fixture",
         "url": null
       },
@@ -1060,15 +1060,15 @@
       "face_count": 0,
       "media_id": 27,
       "must_right": [],
-      "path": "mock_images/liam-maloney-painting.jpg",
+      "path": "mock_images/linen-kestrel-painting.jpg",
       "policy": {
         "recognition_enabled": true
       },
       "present_identities": [],
       "provenance": {
         "license": "fixture",
-        "note": "VLM-2A mock_images corpus; not publishable as research gallery without re-screen",
-        "publishable": false,
+        "note": "vendored eval-corpus fixture",
+        "publishable": null,
         "source": "fixture",
         "url": null
       },
@@ -1099,7 +1099,7 @@
       "must_right": [
         "Slate Willow"
       ],
-      "path": "mock_images/maria-cocktail.jpg",
+      "path": "mock_images/slate-cocktail.jpg",
       "policy": {
         "recognition_enabled": true
       },
@@ -1108,8 +1108,8 @@
       ],
       "provenance": {
         "license": "fixture",
-        "note": "VLM-2A mock_images corpus; not publishable as research gallery without re-screen",
-        "publishable": false,
+        "note": "vendored eval-corpus fixture",
+        "publishable": null,
         "source": "fixture",
         "url": null
       },
@@ -1140,7 +1140,7 @@
       "must_right": [
         "Slate Willow"
       ],
-      "path": "mock_images/maria-party.jpg",
+      "path": "mock_images/slate-party.jpg",
       "policy": {
         "recognition_enabled": true
       },
@@ -1149,8 +1149,8 @@
       ],
       "provenance": {
         "license": "fixture",
-        "note": "VLM-2A mock_images corpus; not publishable as research gallery without re-screen",
-        "publishable": false,
+        "note": "vendored eval-corpus fixture",
+        "publishable": null,
         "source": "fixture",
         "url": null
       },
@@ -1181,7 +1181,7 @@
       "must_right": [
         "Slate Willow"
       ],
-      "path": "mock_images/maria-pool.jpg",
+      "path": "mock_images/slate-pool.jpg",
       "policy": {
         "recognition_enabled": true
       },
@@ -1190,8 +1190,8 @@
       ],
       "provenance": {
         "license": "fixture",
-        "note": "VLM-2A mock_images corpus; not publishable as research gallery without re-screen",
-        "publishable": false,
+        "note": "vendored eval-corpus fixture",
+        "publishable": null,
         "source": "fixture",
         "url": null
       },
@@ -1231,8 +1231,8 @@
       ],
       "provenance": {
         "license": "fixture",
-        "note": "VLM-2A mock_images corpus; not publishable as research gallery without re-screen",
-        "publishable": false,
+        "note": "vendored eval-corpus fixture",
+        "publishable": null,
         "source": "fixture",
         "url": null
       },
@@ -1248,7 +1248,7 @@
       "base_caption_optional": false,
       "context_pack": {
         "caption": "Slate Willow crouched under glacier ice with her camera.",
-        "description": "Slate Willow, in a white Black Diamond helmet with headlamp, fur-hooded parka, and crampon-fitted boots, crouches on rocks inside a glacial ice cave with a DSLR at her knee.",
+        "description": "Slate Willow, in a white Black Bramble helmet with headlamp, fur-hooded parka, and crampon-fitted boots, crouches on rocks inside a glacial ice cave with a DSLR at her knee.",
         "title": "Slate Willow in the ice cave"
       },
       "demographic_cohort": null,
@@ -1274,8 +1274,8 @@
       ],
       "provenance": {
         "license": "fixture",
-        "note": "VLM-2A mock_images corpus; not publishable as research gallery without re-screen",
-        "publishable": false,
+        "note": "vendored eval-corpus fixture",
+        "publishable": null,
         "source": "fixture",
         "url": null
       },
@@ -1315,8 +1315,8 @@
       ],
       "provenance": {
         "license": "fixture",
-        "note": "VLM-2A mock_images corpus; not publishable as research gallery without re-screen",
-        "publishable": false,
+        "note": "vendored eval-corpus fixture",
+        "publishable": null,
         "source": "fixture",
         "url": null
       },
@@ -1352,8 +1352,8 @@
       "present_identities": [],
       "provenance": {
         "license": "fixture",
-        "note": "VLM-2A mock_images corpus; not publishable as research gallery without re-screen",
-        "publishable": false,
+        "note": "vendored eval-corpus fixture",
+        "publishable": null,
         "source": "fixture",
         "url": null
       },
@@ -1389,8 +1389,8 @@
       "present_identities": [],
       "provenance": {
         "license": "fixture",
-        "note": "VLM-2A mock_images corpus; not publishable as research gallery without re-screen",
-        "publishable": false,
+        "note": "vendored eval-corpus fixture",
+        "publishable": null,
         "source": "fixture",
         "url": null
       },
@@ -1421,7 +1421,7 @@
       "must_right": [
         "Muted Yarrow"
       ],
-      "path": "mock_images/ryann-bar.jpg",
+      "path": "mock_images/muted-bar.jpg",
       "policy": {
         "recognition_enabled": true
       },
@@ -1430,8 +1430,8 @@
       ],
       "provenance": {
         "license": "fixture",
-        "note": "VLM-2A mock_images corpus; not publishable as research gallery without re-screen",
-        "publishable": false,
+        "note": "vendored eval-corpus fixture",
+        "publishable": null,
         "source": "fixture",
         "url": null
       },
@@ -1462,7 +1462,7 @@
       "must_right": [
         "Muted Yarrow"
       ],
-      "path": "mock_images/ryann-group-party.jpg",
+      "path": "mock_images/muted-group-party.jpg",
       "policy": {
         "recognition_enabled": true
       },
@@ -1471,8 +1471,8 @@
       ],
       "provenance": {
         "license": "fixture",
-        "note": "VLM-2A mock_images corpus; not publishable as research gallery without re-screen",
-        "publishable": false,
+        "note": "vendored eval-corpus fixture",
+        "publishable": null,
         "source": "fixture",
         "url": null
       },
@@ -1503,7 +1503,7 @@
       "must_right": [
         "Muted Yarrow"
       ],
-      "path": "mock_images/ryann-party.jpg",
+      "path": "mock_images/muted-party.jpg",
       "policy": {
         "recognition_enabled": true
       },
@@ -1512,8 +1512,8 @@
       ],
       "provenance": {
         "license": "fixture",
-        "note": "VLM-2A mock_images corpus; not publishable as research gallery without re-screen",
-        "publishable": false,
+        "note": "vendored eval-corpus fixture",
+        "publishable": null,
         "source": "fixture",
         "url": null
       },

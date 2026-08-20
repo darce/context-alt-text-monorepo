@@ -796,3 +796,17 @@ Cost-and-instrument pilot only (BR-17): no ICC, no deff, no full-study n.
 
 `scene/tests/test_eval_harness_pilot_draw.py`: **23 passed**.
 Full `scene/tests`: **4 failed, 1316 passed, 4 skipped** (four PGPASSWORD boot failures pre-existing).
+
+########## N10a
+
+# Lane N10a — DESCQUAL-2-BR-36 / BR-41 / BR-42
+
+Owned files: `apps/prototype-description-service/scripts/eval_harness/pilot_draw.py`, `apps/prototype-description-service/scene/tests/test_eval_harness_pilot_draw.py`.
+
+- **DESCQUAL-2-BR-36 (high)** — `select_gold_items` no longer prefix-slices the HITL-03 mix; `gold_n < 3` raises `PilotDrawError` naming `hard, batch_matched, random` and `n=23`. Remainder after one-of-each is round-robin over `GOLD_MIX_ORDER`. Tests: `test_gold_mix_refuses_truncation_when_gold_n_below_three` (n=14 → gold_n=2), `test_gold_mix_round_robin_remainder_not_dumped_on_one_kind` (n=84 → 3 of each). Mutant `/tmp/n10a-proof` prefix slice `mix[: min(3, gold_n)]` + drop mix raise: RED `DID NOT RAISE PilotDrawError` at gold_n=2. Mutant remainder `mix[0]` (HARD): RED `{HARD: 7, BATCH_MATCHED: 1, RANDOM: 1} != {3,3,3}`.
+
+- **DESCQUAL-2-BR-41 (medium)** — loader guards unchanged; pinned by parametrized `test_draw_pilot_rejects_loader_guard_violations` (12 cases: missing strata_counts/entries/sha256/media_id/source_path/present_identities, duplicate sha256, present_identities type, empty source_path, empty entries, unknown strata_counts key, declared_empty_cells type `"veil"`). Mutant: delete each guard in turn under `/tmp/n10a-proof`; parametrized case RED **12/12**.
+
+- **DESCQUAL-2-BR-42 (medium)** — (1) `_gold_count` is `round(n * rate / (1 - rate))` so gold is `GOLD_RATE_PERCENT` of the annotation queue `n+g` (n=30→3, 84→9, 198→22). (2) Rate pinned by `test_gold_count_is_rate_of_annotation_queue` plus `g/(n+g)` within half an item of 10%; `test_three_gold_items_become_available_at_n_23`. Mutant `if n < 10: return n * GOLD_RATE_PERCENT // 100; return 3`: RED `assert 3 == 9` at n=84 and `assert 3 == 22` at n=198 (n=30 stayed GREEN). (3) `PilotDraw.frame_sha256s` carried from the FIR-12 frame; `select_gold_items` hard-errors on any caller sha not in that set. Test: `test_select_gold_items_rejects_sha_outside_frozen_frame`. Mutant drop the foreign-sha check: RED `DID NOT RAISE PilotDrawError`.
+
+`scene/tests/test_eval_harness_pilot_draw.py`: **42 passed** (was 23).

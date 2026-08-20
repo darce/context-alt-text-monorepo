@@ -8,6 +8,7 @@ import pytest
 from pydantic import ValidationError
 
 from scripts.eval_harness.manifest import (
+    AdjudicationRule,
     ConfirmationSource,
     FactKind,
     FactPolarity,
@@ -112,6 +113,7 @@ def test_disagreement_survives_adjudication():
             noted_at="2026-08-19T09:01:00Z",
         ),
     ]
+    lineage = _full_payload()
     fact = ReferenceFact(
         text="wearing a red hat",
         kind=FactKind.ATTRIBUTE,
@@ -119,10 +121,16 @@ def test_disagreement_survives_adjudication():
         phrases=["red hat"],
         confirmed_by="operator",
         annotator_id="sme-03",
+        annotation_batch=lineage["annotation_batch"],
+        annotated_at=lineage["annotated_at"],
+        source_pool=lineage["source_pool"],
         pre_adjudication=list(originals),
         adjudicated_by="sme-03",
         adjudication_rule="disagreement-escalate-to-sme",
     )
+    assert fact.annotation_batch == lineage["annotation_batch"]
+    assert fact.annotated_at == lineage["annotated_at"]
+    assert fact.source_pool == lineage["source_pool"]
     assert len(fact.pre_adjudication) == 2
     assert fact.pre_adjudication[0].annotator_id == "ann-01"
     assert fact.pre_adjudication[0].polarity is FactPolarity.TRUE
@@ -182,3 +190,25 @@ def test_golden150_draft_parses_with_backfilled_fact_annotators():
     assert len(entry.reference_facts) == 2
     assert all(fact.confirmed_by is ConfirmationSource.OPERATOR for fact in entry.reference_facts)
     assert all(fact.annotator_id == "pre-program-operator" for fact in entry.reference_facts)
+    # Honest pre-program placeholders: no DESCQUAL-2 batch/pool ever ran for
+    # these two facts. Epoch sentinel matches LEGACY_IMPORT_LABELED_AT (unknown).
+    assert all(fact.annotation_batch == "pre-program" for fact in entry.reference_facts)
+    assert all(fact.annotated_at == "1970-01-01T00:00:00Z" for fact in entry.reference_facts)
+    assert all(fact.source_pool == "pre-program" for fact in entry.reference_facts)
+
+
+def test_majority_vote_token_is_hyphenated():
+    """sr-007: AdjudicationRule values share hyphen separators, not mixed styles."""
+    assert AdjudicationRule.MAJORITY_VOTE.value == "majority-vote"
+    assert "_" not in AdjudicationRule.MAJORITY_VOTE.value
+    payload = _full_payload()
+    payload["adjudication_rule"] = "majority-vote"
+    fact = ReferenceFact.model_validate(payload)
+    assert fact.adjudication_rule is AdjudicationRule.MAJORITY_VOTE
+
+
+def test_underscore_majority_vote_token_is_rejected():
+    payload = _full_payload()
+    payload["adjudication_rule"] = "majority_vote"
+    with pytest.raises(ValidationError, match="adjudication_rule"):
+        ReferenceFact.model_validate(payload)

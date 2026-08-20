@@ -186,3 +186,53 @@ def test_keyword_only_public_entrypoints():
     split = build_disjoint_galleries(templates_by_subject=_two_plus_roster(), seed=0)
     with pytest.raises(TypeError):
         probes_for(split, "g1")  # type: ignore[misc]
+
+
+def _gallery_media(split) -> set[int]:
+    return {
+        mid
+        for gallery in (split.g1, split.g2)
+        for template in gallery.values()
+        for mid in template.media_ids
+    }
+
+
+def test_shared_still_coassigns_subjects_and_keeps_probe_media_disjoint():
+    roster = {
+        "alice": [
+            Template(template_id="a-group", subject_id="alice", media_ids=(7,)),
+            Template(template_id="a-solo", subject_id="alice", media_ids=(1,)),
+        ],
+        "bob": [
+            Template(template_id="b-group", subject_id="bob", media_ids=(7,)),
+        ],
+    }
+    split = build_disjoint_galleries(templates_by_subject=roster, seed=0)
+    assert ("alice" in split.g1) == ("bob" in split.g1)
+    assert "alice" in split.g1 or "alice" in split.g2
+    assert "bob" in split.g1 or "bob" in split.g2
+    gallery_media = _gallery_media(split)
+    probe_media = {mid for t in split.probe_templates for mid in t.media_ids}
+    assert gallery_media.isdisjoint(probe_media)
+    enrolled_alice = split.g1.get("alice") or split.g2["alice"]
+    enrolled_bob = split.g1.get("bob") or split.g2["bob"]
+    assert enrolled_alice.template_id == "a-solo"
+    assert enrolled_bob.template_id == "b-group"
+    withheld_ids = {t.template_id for t in split.withheld_probe_templates}
+    assert withheld_ids == {"a-group"}
+    assert "a-group" not in split.probe_template_ids
+
+
+def test_only_shared_still_subject_is_enrolled_not_dropped():
+    roster = {
+        "alice": [Template(template_id="a1", subject_id="alice", media_ids=(3,))],
+        "bob": [Template(template_id="b1", subject_id="bob", media_ids=(3,))],
+        "carol": [
+            Template(template_id="c1", subject_id="carol", media_ids=(8,)),
+            Template(template_id="c2", subject_id="carol", media_ids=(9,)),
+        ],
+    }
+    split = build_disjoint_galleries(templates_by_subject=roster, seed=1)
+    assigned = set(split.g1) | set(split.g2)
+    assert assigned == {"alice", "bob", "carol"}
+    assert ("alice" in split.g1) == ("bob" in split.g1)

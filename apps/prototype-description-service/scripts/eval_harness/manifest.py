@@ -449,8 +449,9 @@ class ConfirmationSource(StrEnum):
     AGENT = "agent"
 
 
-# Allowlist, not complement-of-AGENT: a new member must be named here to become
-# human gold. Complement would silently promote DISTILLED/HEURISTIC (MLDATA-04).
+# Allowlist, not complement-of-AGENT: any future ConfirmationSource member must
+# be named here to become human gold. Complement-of-AGENT would silently promote
+# a new non-human member (MLDATA-04).
 HUMAN_CONFIRMATION_SOURCES: frozenset[ConfirmationSource] = frozenset(
     {ConfirmationSource.OPERATOR}
 )

@@ -16,7 +16,9 @@ from scripts.eval_harness.audit_sampling import (
     allocate,
     design_effect,
     draw,
+    kish_effective_cluster_size,
     project_strata_image_counts,
+    project_strata_subject_image_counts,
     sample_size_for_margin,
     size_for_margin,
 )
@@ -40,6 +42,14 @@ FIR12_IMAGE_N = {
     "D_capture": 87,
     "E_clean": 407,
 }
+
+# Frozen-frame Kish a = Σ m_i² / Σ m_i (AUDIT-11); not the arithmetic mean.
+WHOLE_FRAME_KISH_A = 12.90
+B_EYEWEAR_KISH_A = 2.36
+
+
+def _entry(stratum: str, identities: list[str]) -> dict[str, object]:
+    return {"stratum": stratum, "present_identities": identities}
 
 
 def _strata_counts() -> dict[str, dict[str, int]]:
@@ -104,24 +114,50 @@ def test_allocate_accepts_projected_real_frame():
     assert set(allocation) == set(FIR12_IMAGE_N)
 
 
-def test_design_effect_mean_images_per_subject():
-    assert design_effect(cluster_size=4.9, icc=0.2) == pytest.approx(1.78)
+def test_kish_effective_cluster_size_is_not_the_mean():
+    sizes = (1, 1, 4)
+    assert kish_effective_cluster_size(sizes) == pytest.approx(3.0)
+    assert sum(sizes) / len(sizes) == pytest.approx(2.0)
+    assert kish_effective_cluster_size(sizes) != pytest.approx(sum(sizes) / len(sizes))
+    assert kish_effective_cluster_size((3, 3, 3)) == pytest.approx(3.0)
+
+
+def test_kish_effective_cluster_size_rejects_empty_and_non_positive():
+    with pytest.raises(AuditSamplingError, match="non-empty"):
+        kish_effective_cluster_size(())
+    with pytest.raises(AuditSamplingError, match="finite number > 0"):
+        kish_effective_cluster_size((1, 0))
+    with pytest.raises(AuditSamplingError, match="finite number > 0"):
+        kish_effective_cluster_size((1, -2))
+    with pytest.raises(AuditSamplingError, match="finite number > 0"):
+        kish_effective_cluster_size((1, float("nan")))
+    with pytest.raises(AuditSamplingError, match="finite number > 0"):
+        kish_effective_cluster_size((1, float("inf")))
+
+
+def test_design_effect_kish_effective_size():
+    assert design_effect(cluster_size=WHOLE_FRAME_KISH_A, icc=0.2) == pytest.approx(3.38)
 
 
 def test_clustered_size_applies_deff_to_n0_before_fpc():
-    record = size_for_margin(margin=0.10, population=640, cluster_size=4.9, icc=0.2)
-    assert record.n == 136
+    record = size_for_margin(
+        margin=0.10, population=640, cluster_size=WHOLE_FRAME_KISH_A, icc=0.2
+    )
+    assert record.n == 216
     assert record.deff_order is DeffOrder.DEFF_THEN_FPC
     assert record.deff_order == "deff_then_fpc"
-    assert record.cluster_size == 4.9
+    assert record.cluster_size == WHOLE_FRAME_KISH_A
     assert record.icc == 0.2
-    assert record.deff == pytest.approx(1.78)
+    assert record.deff == pytest.approx(3.38)
     assert record.n_deff == pytest.approx(record.n0 * record.deff)
     expected = math.ceil(record.n_deff / (1.0 + (record.n_deff - 1.0) / 640))
-    assert record.n == expected == 136
+    assert record.n == expected == 216
     old_order = math.ceil(sample_size_for_margin(margin=0.10, population=640) * record.deff)
-    assert old_order == 150
+    assert old_order == 284
     assert record.n != old_order
+    mean_n = size_for_margin(margin=0.10, population=640, cluster_size=4.9, icc=0.2).n
+    assert mean_n == 136
+    assert record.n - mean_n == 80
 
 
 def test_allocate_sums_to_n():
@@ -191,21 +227,23 @@ def test_sample_size_rejects_non_positive_margin():
         sample_size_for_margin(margin=0.0, population=640)
 
 
-def test_clustered_b_eyewear_precision_floor_is_47():
+def test_clustered_b_eyewear_precision_floor_is_49():
     n0 = (1.96 * 1.96) * 0.5 * 0.5 / (0.10 * 0.10)
-    cluster_size = 80 / 47
+    cluster_size = B_EYEWEAR_KISH_A
     icc = 0.2
     deff = 1.0 + (cluster_size - 1.0) * icc
     n_deff = n0 * deff
     n_raw = n_deff / (1.0 + (n_deff - 1.0) / 80)
-    assert math.ceil(n_raw) == 47
+    assert math.ceil(n_raw) == 49
     assert math.ceil(n0 / (1.0 + (n0 - 1.0) / 80)) == 44
+    mean_n = size_for_margin(margin=0.10, population=80, cluster_size=80 / 47, icc=icc).n
+    assert mean_n == 47
 
     spec = ClusterSpec(cluster_size=cluster_size, icc=icc)
     expected = size_for_margin(
         margin=0.10, population=80, cluster_size=cluster_size, icc=icc
     )
-    assert expected.n == 47
+    assert expected.n == 49
     assert expected.deff_order is DeffOrder.DEFF_THEN_FPC
     assert expected.deff == pytest.approx(deff)
     assert expected.n_deff == pytest.approx(n_deff)
@@ -221,18 +259,107 @@ def test_clustered_b_eyewear_precision_floor_is_47():
     )
     assert isinstance(clustered, Allocation)
     assert unclustered["B_eyewear"] == 44
-    assert clustered["B_eyewear"] == 47
+    assert clustered["B_eyewear"] == 49
     assert clustered["B_eyewear"] != unclustered["B_eyewear"]
     assert sum(clustered.values()) == 84
     record = clustered.floors["B_eyewear"]
     assert record == expected
-    assert record.n == 47
+    assert record.n == 49
     assert record.deff_order is DeffOrder.DEFF_THEN_FPC
     assert record.deff_order == "deff_then_fpc"
-    assert record.deff == pytest.approx(1.1404255319148937)
+    assert record.deff == pytest.approx(1.272)
     assert record.cluster_size == pytest.approx(cluster_size)
     assert record.icc == 0.2
-    assert record.n / record.deff == pytest.approx(47 / deff)
+    assert record.n / record.deff == pytest.approx(49 / deff)
+
+
+def test_allocate_without_cluster_params_stays_deff_blind():
+    allocation = allocate(
+        strata_sizes=FIR12_STRATA, n=84, precision_floors={"B_eyewear": 0.10}
+    )
+    record = allocation.floors["B_eyewear"]
+    assert allocation["B_eyewear"] == 44
+    assert record.deff_order is DeffOrder.FPC_ONLY
+    assert record.deff == 1.0
+    assert record.cluster_size is None
+
+
+def test_subject_image_counts_feed_kish_a():
+    entries = [
+        _entry("B_eyewear", ["alice"]),
+        _entry("B_eyewear", ["alice"]),
+        _entry("B_eyewear", ["alice"]),
+        _entry("B_eyewear", ["alice"]),
+        _entry("B_eyewear", ["bob"]),
+        _entry("B_eyewear", ["cara"]),
+        _entry("E_clean", ["dana"]),
+        _entry("E_clean", ["dana"]),
+        _entry("E_clean", []),
+    ]
+    sizes = project_strata_subject_image_counts(entries)
+    assert sizes == {"B_eyewear": (4, 1, 1), "E_clean": (2,)}
+    assert kish_effective_cluster_size(sizes["B_eyewear"]) == pytest.approx(3.0)
+    assert kish_effective_cluster_size(sizes["E_clean"]) == pytest.approx(2.0)
+    a = kish_effective_cluster_size(sizes["B_eyewear"])
+    spec = ClusterSpec(cluster_size=a, icc=0.2)
+    record = size_for_margin(
+        margin=0.10, population=80, cluster_size=spec.cluster_size, icc=spec.icc
+    )
+    mean_record = size_for_margin(margin=0.10, population=80, cluster_size=2.0, icc=0.2)
+    assert a == pytest.approx(3.0)
+    assert spec.cluster_size != pytest.approx(2.0)
+    assert record.n == 51
+    assert mean_record.n == 48
+    assert record.n != mean_record.n
+
+
+def test_empty_present_identities_contribute_no_cluster():
+    sizes = project_strata_subject_image_counts(
+        [
+            _entry("E_clean", ["Pat"]),
+            _entry("E_clean", []),
+            _entry("A_true_occluder", []),
+        ]
+    )
+    assert sizes == {"E_clean": (1,)}
+    assert "A_true_occluder" not in sizes
+
+
+def test_subject_image_counts_reject_bare_string_identities():
+    with pytest.raises(AuditSamplingError, match="sequence of names"):
+        project_strata_subject_image_counts(
+            [{"stratum": "E_clean", "present_identities": "Pat"}]
+        )
+    with pytest.raises(AuditSamplingError, match="sequence of objects"):
+        project_strata_subject_image_counts("not-entries")  # type: ignore[arg-type]
+    with pytest.raises(AuditSamplingError, match="missing 'stratum'"):
+        project_strata_subject_image_counts([{"present_identities": ["Pat"]}])
+    with pytest.raises(AuditSamplingError, match="non-empty str"):
+        project_strata_subject_image_counts([_entry("E_clean", [""])])
+
+
+def test_cluster_spec_rejects_out_of_bounds():
+    with pytest.raises(AuditSamplingError, match="cluster_size"):
+        ClusterSpec(cluster_size=0.5, icc=0.2)
+    with pytest.raises(AuditSamplingError, match="cluster_size"):
+        ClusterSpec(cluster_size=float("nan"), icc=0.2)
+    with pytest.raises(AuditSamplingError, match="cluster_size"):
+        ClusterSpec(cluster_size=float("inf"), icc=0.2)
+    with pytest.raises(AuditSamplingError, match="icc"):
+        ClusterSpec(cluster_size=2.0, icc=-0.1)
+    with pytest.raises(AuditSamplingError, match="icc"):
+        ClusterSpec(cluster_size=2.0, icc=2.0)
+    with pytest.raises(AuditSamplingError, match="icc"):
+        ClusterSpec(cluster_size=2.0, icc=float("nan"))
+
+
+def test_design_effect_rejects_non_finite_as_audit_error():
+    with pytest.raises(AuditSamplingError, match="cluster_size"):
+        design_effect(cluster_size=float("nan"), icc=0.2)
+    with pytest.raises(AuditSamplingError, match="cluster_size"):
+        size_for_margin(margin=0.10, population=80, cluster_size=float("nan"), icc=0.2)
+    with pytest.raises(AuditSamplingError, match="cluster_size"):
+        size_for_margin(margin=0.10, population=80, cluster_size=float("inf"), icc=0.2)
 
 
 def test_allocate_rejects_unknown_cluster_params_stratum():
@@ -242,4 +369,20 @@ def test_allocate_rejects_unknown_cluster_params_stratum():
             n=84,
             precision_floors={"B_eyewear": 0.10},
             cluster_params={"not_a_stratum": ClusterSpec(cluster_size=2.0, icc=0.2)},
+        )
+
+
+def test_allocate_rejects_cluster_params_without_precision_floor():
+    with pytest.raises(AuditSamplingError, match="no precision floor"):
+        allocate(
+            strata_sizes=FIR12_STRATA,
+            n=84,
+            cluster_params={"E_clean": ClusterSpec(cluster_size=2.0, icc=0.2)},
+        )
+    with pytest.raises(AuditSamplingError, match="no precision floor"):
+        allocate(
+            strata_sizes=FIR12_STRATA,
+            n=84,
+            precision_floors={"B_eyewear": 0.10},
+            cluster_params={"E_clean": ClusterSpec(cluster_size=2.0, icc=0.2)},
         )

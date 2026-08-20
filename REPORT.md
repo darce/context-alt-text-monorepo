@@ -14,3 +14,39 @@ Scope pins for the table: whole-frame clustered n=216 (Kish a=12.90, ICC=0.2, e=
 - BR-07: `_judged_keys` raises `AmbiguousJudgmentError` (names the text + candidate keys; tells the caller to pass `PooledFact`/`CandidateFact`) when a bare string matches more than one pooled fact; unique bare strings and `PooledFact`/`CandidateFact` judgments are unchanged. Tests: `test_ambiguous_bare_string_judgment_raises`, `test_unique_bare_string_judgment_resolves`, `test_bare_string_pool_key_marks_one_polarity`, `test_candidate_fact_judgment_does_not_mark_complementary_polarity`. Mutant `/tmp/br07` restored `matched.update(by_text...)` → ambiguous test DID NOT RAISE; `/tmp/br07b` used `len(candidates) >= 1` → unique test RED (`AmbiguousJudgmentError` on `"BLUE COAT"`).
 - BR-11: `Allocation.__post_init__` copies `counts`/`floors` into `MappingProxyType`; custom `__hash__` over sorted items. Tests: `test_allocation_source_dicts_cannot_mutate_constructed_object`, `test_allocation_hash_equal_for_equal_mappings`, `test_allocation_item_assignment_raises`. Mutant `/tmp/br11a` wrapped without `dict()` copy → `assert alloc["E_clean"] == 10` saw 0; `/tmp/br11b` dropped `__hash__` → `TypeError: unhashable type: 'dict'`; `/tmp/br11c` left a live dict → `alloc.counts["E_clean"] = 0` DID NOT RAISE.
 - BR-13: Rewrote the `HUMAN_CONFIRMATION_SOURCES` comment as a rule about any future `ConfirmationSource` member; allowlist unchanged. No behaviour test (comment-only). Mutant `/tmp/br13` restored `DISTILLED/HEURISTIC`; original `manifest.py` grep has neither name.
+
+# Lane F15 — DESCQUAL-2 sampler
+
+BR-26 and BR-27 were already committed on `lane/f15` before this continuation (`ec245fd4`, `a365e440`).
+
+## BR-24 — whole-frame Kish `a` (AUDIT-11, TEST-15)
+
+**Status:** closed.
+
+**What changed.** `project_whole_frame_subject_image_counts` joins the same identity across strata into one cluster. Concatenating `project_strata_subject_image_counts` vectors splits a cross-stratum subject into two clusters and understates Kish `a` (7.41 over 231 clusters vs 12.90 over 130). The test pin is derived from that projector against the vendored FIR-12 frame (`benchmarks/manifests/fir12-selection-v1.json`), not a hardcoded `12.90`. The Kish-vs-mean contrast uses the actual cluster-vector mean `544/130 = 4.18` (not `640/130 = 4.92`).
+
+**Tests.**
+- `test_whole_frame_join_merges_identity_across_strata`
+- `test_whole_frame_counts_unlabeled_and_multi_identity_images`
+- `test_whole_frame_kish_a_joins_identities_across_strata`
+
+**Mutant (TEST-15).** Join key `identity` → `f"{stratum}::{identity}"` (per-stratum split).
+
+**RED.**
+```
+test_whole_frame_join_merges_identity_across_strata
+  assert sorted(frame.sizes) == [1, 2]
+  assert [1, 1, 1] == [1, 2]
+
+test_whole_frame_kish_a_joins_identities_across_strata
+  assert len(frame.sizes) == 130
+  assert 231 == 130
+```
+
+**Canon.** AUDIT-11, TEST-15.
+
+**Vendored frame.** `benchmarks/manifests/fir12-selection-v1.json` (421226 bytes). DESCQUAL-2 clone does not otherwise ship it; CI recomputes `a = 7020/544 = 12.904412` from this copy.
+
+## BR-18 — subject-stage sampler + ICC estimator (AUDIT-11)
+
+**Status:** not started. Next.

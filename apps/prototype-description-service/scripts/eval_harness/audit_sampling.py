@@ -153,14 +153,26 @@ def project_strata_image_counts(
     return sizes
 
 
-def project_strata_subject_image_counts(
-    entries: Sequence[object],
-) -> dict[str, tuple[int, ...]]:
-    """Project selection-manifest entries into per-stratum per-subject image counts.
+@dataclass(frozen=True)
+class WholeFrameSubjectCounts:
+    """Per-subject image counts with identities joined across strata (AUDIT-11).
 
-    Each entry contributes one image to every named identity in its stratum.
-    The resulting size vector is the Kish-a input for that cell (AUDIT-11).
+    Concatenating per-stratum vectors from ``project_strata_subject_image_counts``
+    splits a subject who appears in two strata into two clusters and understates
+    Kish a. This object is the whole-frame join.
     """
+
+    sizes: tuple[int, ...]
+    n_entries: int
+    n_unlabeled: int
+    n_multi_identity_images: int
+    extra_memberships: int
+
+
+def _parse_selection_entries(
+    entries: Sequence[object],
+) -> list[tuple[str, tuple[str, ...]]]:
+    """Return (stratum, unique identities) per entry; empty identities stay."""
     if isinstance(entries, (str, bytes)) or not isinstance(entries, Sequence):
         raise AuditSamplingError(
             "entries must be a sequence of objects, "
@@ -168,7 +180,7 @@ def project_strata_subject_image_counts(
         )
     if not entries:
         raise AuditSamplingError("entries must be non-empty")
-    counts: dict[str, dict[str, int]] = {}
+    parsed: list[tuple[str, tuple[str, ...]]] = []
     for index, entry in enumerate(entries):
         if not isinstance(entry, Mapping):
             raise AuditSamplingError(
@@ -191,9 +203,8 @@ def project_strata_subject_image_counts(
                 f"entries[{index}]['present_identities'] must be a sequence of "
                 f"names, got {type(identities).__name__}"
             )
-        # Empty present_identities are not subject-clustered; they contribute
-        # no cluster. Dropping them is the design, not a silent skip bug.
         seen: set[str] = set()
+        unique: list[str] = []
         for identity in identities:
             if not isinstance(identity, str) or not identity:
                 raise AuditSamplingError(
@@ -203,12 +214,60 @@ def project_strata_subject_image_counts(
             if identity in seen:
                 continue
             seen.add(identity)
+            unique.append(identity)
+        parsed.append((stratum, tuple(unique)))
+    return parsed
+
+
+def project_strata_subject_image_counts(
+    entries: Sequence[object],
+) -> dict[str, tuple[int, ...]]:
+    """Project selection-manifest entries into per-stratum per-subject image counts.
+
+    Each entry contributes one image to every named identity in its stratum.
+    The resulting size vector is the Kish-a input for that cell (AUDIT-11).
+    """
+    counts: dict[str, dict[str, int]] = {}
+    for stratum, identities in _parse_selection_entries(entries):
+        # Empty present_identities are not subject-clustered; they contribute
+        # no cluster. Dropping them is the design, not a silent skip bug.
+        for identity in identities:
             cell = counts.setdefault(stratum, {})
             cell[identity] = cell.get(identity, 0) + 1
     return {
         stratum: tuple(cell[name] for name in sorted(cell))
         for stratum, cell in counts.items()
     }
+
+
+def project_whole_frame_subject_image_counts(
+    entries: Sequence[object],
+) -> WholeFrameSubjectCounts:
+    """Join the same identity across strata into one cluster per subject.
+
+    The whole-frame Kish a is Σ m_i² / Σ m_i over this joined size vector.
+    """
+    counts: dict[str, int] = {}
+    n_unlabeled = 0
+    n_multi = 0
+    extra = 0
+    parsed = _parse_selection_entries(entries)
+    for _stratum, identities in parsed:
+        if not identities:
+            n_unlabeled += 1
+            continue
+        if len(identities) > 1:
+            n_multi += 1
+            extra += len(identities) - 1
+        for identity in identities:
+            counts[identity] = counts.get(identity, 0) + 1
+    return WholeFrameSubjectCounts(
+        sizes=tuple(counts[name] for name in sorted(counts)),
+        n_entries=len(parsed),
+        n_unlabeled=n_unlabeled,
+        n_multi_identity_images=n_multi,
+        extra_memberships=extra,
+    )
 
 
 def kish_effective_cluster_size(sizes: Sequence[int | float]) -> float:

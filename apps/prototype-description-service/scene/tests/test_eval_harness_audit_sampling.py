@@ -19,6 +19,7 @@ from scripts.eval_harness.audit_sampling import (
     kish_effective_cluster_size,
     project_strata_image_counts,
     project_strata_subject_image_counts,
+    project_whole_frame_subject_image_counts,
     sample_size_for_margin,
     size_for_margin,
 )
@@ -43,8 +44,6 @@ FIR12_IMAGE_N = {
     "E_clean": 407,
 }
 
-# Frozen-frame Kish a = Σ m_i² / Σ m_i (AUDIT-11); not the arithmetic mean.
-WHOLE_FRAME_KISH_A = 12.90
 B_EYEWEAR_KISH_A = 2.36
 
 
@@ -63,6 +62,23 @@ def _strata_counts() -> dict[str, dict[str, int]]:
 
 
 FIR12_STRATA = project_strata_image_counts(_strata_counts())
+
+# Vendored FIR-12 frame: DESCQUAL-2 clone does not otherwise ship this JSON.
+# Derived whole-frame Kish a (AUDIT-11); identities joined across strata.
+def _fir12_entries() -> list[object]:
+    if not _FIR12_MANIFEST.is_file():
+        raise FileNotFoundError(
+            f"vendored FIR-12 frame missing at {_FIR12_MANIFEST}"
+        )
+    payload = json.loads(_FIR12_MANIFEST.read_text())
+    entries = payload["entries"]
+    if not isinstance(entries, list) or not entries:
+        raise AuditSamplingError("fir12-selection-v1.json entries must be a non-empty list")
+    return entries
+
+
+WHOLE_FRAME = project_whole_frame_subject_image_counts(_fir12_entries())
+WHOLE_FRAME_KISH_A = kish_effective_cluster_size(WHOLE_FRAME.sizes)
 
 
 def _members(sizes: dict[str, int] | None = None) -> dict[str, list[str]]:
@@ -122,6 +138,67 @@ def test_kish_effective_cluster_size_is_not_the_mean():
     assert kish_effective_cluster_size((3, 3, 3)) == pytest.approx(3.0)
 
 
+def test_whole_frame_join_merges_identity_across_strata():
+    entries = [
+        _entry("A_true_occluder", ["alice"]),
+        _entry("B_eyewear", ["alice"]),
+        _entry("B_eyewear", ["bob"]),
+    ]
+    frame = project_whole_frame_subject_image_counts(entries)
+    assert sorted(frame.sizes) == [1, 2]
+    assert kish_effective_cluster_size(frame.sizes) == pytest.approx(5 / 3)
+    concat = [
+        m
+        for v in project_strata_subject_image_counts(entries).values()
+        for m in v
+    ]
+    assert sorted(concat) == [1, 1, 1]
+    assert kish_effective_cluster_size(concat) == pytest.approx(1.0)
+
+
+def test_whole_frame_counts_unlabeled_and_multi_identity_images():
+    entries = [
+        _entry("E_clean", []),
+        _entry("E_clean", []),
+        _entry("B_eyewear", ["alice", "bob"]),
+        _entry("C_pose", ["alice", "bob", "cara"]),
+        _entry("D_capture", ["dana"]),
+    ]
+    frame = project_whole_frame_subject_image_counts(entries)
+    assert frame.n_entries == 5
+    assert frame.n_unlabeled == 2
+    assert frame.n_multi_identity_images == 2
+    assert frame.extra_memberships == 3
+    assert sorted(frame.sizes) == [1, 1, 2, 2]
+
+
+def test_whole_frame_kish_a_joins_identities_across_strata():
+    entries = json.loads(_FIR12_MANIFEST.read_text())["entries"]
+    assert len(entries) == 640
+    frame = project_whole_frame_subject_image_counts(entries)
+    assert frame.n_entries == 640
+    assert len(frame.sizes) == 130
+    assert sum(frame.sizes) == 544
+    assert sum(m * m for m in frame.sizes) == 7020
+    assert sum(m * (m - 1) for m in frame.sizes) == 6476
+    assert frame.n_unlabeled == 115
+    assert frame.n_multi_identity_images == 16
+    assert frame.extra_memberships == 19
+    a = kish_effective_cluster_size(frame.sizes)
+    assert a == pytest.approx(7020 / 544)
+    assert a == pytest.approx(12.904412, abs=1e-6)
+    assert WHOLE_FRAME_KISH_A == pytest.approx(a)
+
+    # The obvious composition splits a subject who appears in two strata
+    # into two clusters and understates deff (a = 7.41 over 231 clusters).
+    per_stratum = project_strata_subject_image_counts(entries)
+    concat = [m for v in per_stratum.values() for m in v]
+    assert len(concat) == 231
+    split_a = kish_effective_cluster_size(concat)
+    assert split_a == pytest.approx(7.408088, rel=1e-6)
+    assert split_a < a
+
+
 def test_kish_effective_cluster_size_rejects_empty_and_non_positive():
     with pytest.raises(AuditSamplingError, match="non-empty"):
         kish_effective_cluster_size(())
@@ -136,7 +213,9 @@ def test_kish_effective_cluster_size_rejects_empty_and_non_positive():
 
 
 def test_design_effect_kish_effective_size():
-    assert design_effect(cluster_size=WHOLE_FRAME_KISH_A, icc=0.2) == pytest.approx(3.38)
+    assert design_effect(cluster_size=WHOLE_FRAME_KISH_A, icc=0.2) == pytest.approx(
+        1.0 + (WHOLE_FRAME_KISH_A - 1.0) * 0.2
+    )
 
 
 def test_clustered_size_applies_deff_to_n0_before_fpc():
@@ -148,16 +227,20 @@ def test_clustered_size_applies_deff_to_n0_before_fpc():
     assert record.deff_order == "deff_then_fpc"
     assert record.cluster_size == WHOLE_FRAME_KISH_A
     assert record.icc == 0.2
-    assert record.deff == pytest.approx(3.38)
+    assert record.deff == pytest.approx(1.0 + (WHOLE_FRAME_KISH_A - 1.0) * 0.2)
     assert record.n_deff == pytest.approx(record.n0 * record.deff)
     expected = math.ceil(record.n_deff / (1.0 + (record.n_deff - 1.0) / 640))
     assert record.n == expected == 216
     old_order = math.ceil(sample_size_for_margin(margin=0.10, population=640) * record.deff)
     assert old_order == 284
     assert record.n != old_order
-    mean_n = size_for_margin(margin=0.10, population=640, cluster_size=4.9, icc=0.2).n
-    assert mean_n == 136
-    assert record.n - mean_n == 80
+    # Mean of the cluster vector is Σm / 130 = 544/130 ≈ 4.18, not 640/130 = 4.92
+    # (that puts the 115 unlabeled images in the numerator).
+    mean_m = sum(WHOLE_FRAME.sizes) / len(WHOLE_FRAME.sizes)
+    assert mean_m == pytest.approx(544 / 130)
+    mean_n = size_for_margin(margin=0.10, population=640, cluster_size=mean_m, icc=0.2).n
+    assert mean_n == 127
+    assert record.n - mean_n == 89
 
 
 def test_allocate_sums_to_n():

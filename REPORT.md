@@ -867,3 +867,51 @@ Extra TEST-15: `_one_way` (no design-stat token in the name) `/tmp/n13-proof-aft
 `scene/tests/test_eval_harness_pilot_draw.py`: **52 passed** (was 50).
 
 **Residual (coordinator).** A callable that needs extra required args we do not fill, or that returns a different reliability formula than one-way ANOVA ICC, and whose symbol name avoids `{icc, rho, deff, design_effect, n_eff, msb, msw}`, is not caught. Packet extra keys are closed regardless.
+
+########## N15
+
+# Lane N15 — DESCQUAL-2-BR-51: estimator guard signature-shaped escape hatch
+
+Owned: `scene/tests/test_eval_harness_pilot_draw.py` only. Production `pilot_draw.py` untouched. `_LICENSED_PACKET_ROW_KEYS` literal cross-check kept.
+
+N13's behavioural ICC probe skipped a module-level callable when it could not synthesise arguments (`_UNCALLABLE` → not an offender). Coordinator mutant `_agreement_ratio2(groups, weights)` with the one-way ANOVA ICC body (no denylisted token, extra required arg) was GREEN on parent `2e7352f1`.
+
+**What changed.** Probe is signature-aware. Required params are bound from the test's existing fixtures (or the ICC groups payload for a sole required param / groups-named param). A required param that cannot be filled is `_UNPROBEABLE` and the guard **fails**. Name denylist not extended.
+
+Tests:
+- `test_estimator_with_extra_required_parameter_is_rejected` — exec-injects the coordinator body `_agreement_ratio2(groups, weights)` into `pilot_draw`; asserts it lands in `unprobeable`.
+- `test_ordinary_helper_with_extra_required_args_is_allowed` — exec-injects `_join_labels(left: str, right: str)`; asserts it is neither unprobeable nor an ICC offender. Existing `_require_int(name, value)` stays green.
+
+**Mutant 1** (`/tmp/br51-mutant-skip-unprobeable.py`): restore skip-on-unprobeable (`if first is _UNPROBEABLE: continue`). Injected estimator:
+
+```
+def _agreement_ratio2(groups, weights):
+    ... one-way ANOVA ICC of groups, weights unused ...
+```
+
+RED:
+```
+FAILED scene/tests/_br51_mutant_skip.py::test_estimator_with_extra_required_parameter_is_rejected
+AssertionError: assert '_agreement_ratio2' in []
+1 failed in 0.42s
+```
+
+Control `test_ordinary_helper_with_extra_required_args_is_allowed` stayed GREEN (`1 passed in 0.30s`).
+
+**Mutant 2** (`/tmp/br51-mutant-ban-extra-args.py`): `if len(required) != 1: return None` (any extra required arg banned). Injected control `_join_labels(left: str, right: str)`.
+
+RED:
+```
+FAILED scene/tests/_br51_mutant_ban.py::test_ordinary_helper_with_extra_required_args_is_allowed
+AssertionError: assert '_join_labels' not in ['_join_labels', '_parse_stratum', '_pick_one', '_require_int', 'draw_pilot', 'emit_annotation_packet', ...]
+1 failed in 0.41s
+```
+
+Estimator test stayed GREEN under mutant 2 (`1 passed in 0.22s`) — still unprobeable, not "any two-arg function is banned" inverted.
+
+Canon: MLDATA-07, AUDIT-11, TEST-15.
+
+`scene/tests/test_eval_harness_pilot_draw.py`: **54 passed** (was 52).
+Full `scene/tests` (ignore reclaim, deselect route upload-cap): **1348 passed, 4 skipped, 1 deselected** (was 1346).
+
+Could not close: a different reliability formula than one-way ANOVA ICC whose name also avoids the token denylist. Not this finding.

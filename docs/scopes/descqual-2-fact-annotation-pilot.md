@@ -86,8 +86,7 @@ from scripts.eval_harness.audit_sampling import (
 )
 
 strata_counts = json.loads(Path("benchmarks/manifests/fir12-selection-v1.json").read_text())["strata_counts"]
-allocate(strata_sizes=project_strata_image_counts(strata_counts), n=84)
-# {'A_true_occluder': 4, 'B_eyewear': 11, 'C_pose': 5, 'D_capture': 11, 'E_clean': 53}
+allocate(strata_sizes=project_strata_image_counts(strata_counts), n=84)  # {'A_true_occluder': 4, 'B_eyewear': 11, 'C_pose': 5, 'D_capture': 11, 'E_clean': 53}
 size_for_margin(margin=0.10,  population=80).n  # 44
 size_for_margin(margin=0.125, population=80).n  # 36   (ceil of 35.007; not 35)
 size_for_margin(margin=0.15,  population=80).n  # 29   (ceil of 28.062; not 28)
@@ -134,7 +133,9 @@ frame = project_frame_psu_image_counts(entries)   # 241 PSUs, Σm=640, Σm²=694
 a = kish_effective_cluster_size(frame.sizes)      # 10.846875
 size_for_margin(margin=0.10, population=640, cluster_size=a, icc=0.2).n  # 198
 size_for_margin(margin=0.10, population=640, cluster_size=a, icc=0.3).n  # 239
-size_for_margin(margin=0.10, population=80,  cluster_size=2.1, icc=0.2).n  # 48  (B_eyewear)
+b_entries = [e for e in entries if e["stratum"] == "B_eyewear"]
+b_a = kish_effective_cluster_size(project_frame_psu_image_counts(b_entries).sizes)  # 2.1
+size_for_margin(margin=0.10, population=80, cluster_size=b_a, icc=0.2).n  # 48  (B_eyewear)
 ```
 
 The overlapping-membership construction (130 subjects, Σm=544, plus 115
@@ -176,10 +177,24 @@ that is not the sizing used here.
 
 **Planning n is not measured from the ~30-image draw.** ICC information lives only in
 within-subject pairs. An image-SRS of 30 on this frame yields E[within-subject pairs]
-= C(30,2) × 6476 / (640 × 639) = 6.89, spread over ~3.5 replicated subjects (20k-draw
+= C(30,2) × 6302 / (640 × 639) = 6.70, spread over ~3.5 replicated subjects (20k-draw
 Monte Carlo on `fir12-selection-v1.json`: mean k with nᵢ ≥ 2 = 3.53, p5=1, p95=6,
-P(k ≤ 2)=0.22). The sample Kish a is then ~1.5, not 10.85. Fisher-Z 95% CI at true
-ρ=0.2 with k=4 clusters of size 2 is [−0.83, 0.92] — effectively [0, 1] — and the
+P(k ≤ 2)=0.22). The sample Kish a is then ~1.5, not 10.85; the overlapping-join
+reading (6476 / 6.89) is the same ~1.5, so the planning n does not move.
+
+```
+import json
+from math import comb
+from pathlib import Path
+from scripts.eval_harness.audit_sampling import project_frame_psu_image_counts
+
+entries = json.loads(Path("benchmarks/manifests/fir12-selection-v1.json").read_text())["entries"]
+frame = project_frame_psu_image_counts(entries)
+sum_m_m_minus_1 = sum(m * (m - 1) for m in frame.sizes)  # 6302
+round(comb(30, 2) * sum_m_m_minus_1 / (640 * 639), 2)  # 6.70
+```
+
+Fisher-Z 95% CI at true ρ=0.2 with k=4 clusters of size 2 is [−0.83, 0.92] — effectively [0, 1] — and the
 implied n over that CI is 84..397, which is the entire table above plus the ICC=1
 cap (`size_for_margin(..., cluster_size=a, icc=1.0).n` → 397). Plugging a
 30-image ICC point estimate into `size_for_margin` is cargo-cult precision (AUDIT-11).
@@ -297,7 +312,7 @@ m = 3 as a first-listed PSU.)
 
 Fisher-Z transform of the ICC (equal cluster size m, k groups):
 
-```
+```text
 z = (1/2) ln((1+(m-1)ρ)/(1-ρ))
 SE(z) = sqrt(m / (2(k-2)(m-1)))
 ρ = (e^{2z} - 1) / (e^{2z} + (m-1))

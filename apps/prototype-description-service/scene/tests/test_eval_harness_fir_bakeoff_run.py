@@ -1298,17 +1298,36 @@ def test_copresent_probe_yields_two_searches(tmp_path: Path) -> None:
     assert report.points["A_true_occluder"].n_mated != 1
 
 
+def test_both_gallery_search_count_counts_identity_units() -> None:
+    """BR-39 / EVAL-16: co-present workload is identity units, not gallery pairs."""
+    plan = build_run_plan(selection_manifest_path=_frozen_manifest(), seed=0)
+    both = both_gallery_probe_entries(plan)
+    gallery_pairs = sum(len(mated_galleries_for(entry, plan=plan)) for entry in both)
+    identity_n = sum(
+        len(mated_identities_for(entry, split=plan.split, gallery=gallery))
+        for entry in both
+        for gallery in mated_galleries_for(entry, plan=plan)
+    )
+    assert gallery_pairs == 12
+    assert identity_n == 14
+    assert both_gallery_search_count(plan) == identity_n
+    assert both_gallery_search_count(plan) != gallery_pairs
+
+
 def test_frozen_seed0_six_occluded_stills_are_enrolled_in_both_galleries() -> None:
-    """Seed-0 frozen frame: 6 co-present stills → 12 searches, not 6."""
+    """BR-39: seed-0 frozen frame: 6 co-present stills → 14 identity units, not 12."""
     plan = build_run_plan(selection_manifest_path=_frozen_manifest(), seed=0)
     both = both_gallery_probe_entries(plan)
     n_stills = len(both)
     n_searches = both_gallery_search_count(plan)
     assert n_stills == 6
-    assert n_searches == 12
+    assert n_searches == 14
+    assert n_searches != 12
     assert n_searches != n_stills
     assert n_searches == sum(
-        len(mated_galleries_for(entry, plan=plan)) for entry in both
+        len(mated_identities_for(entry, split=plan.split, gallery=gallery))
+        for entry in both
+        for gallery in mated_galleries_for(entry, plan=plan)
     )
     by_stratum: dict[str, list[SearchResult]] = {name: [] for name in PROBE_STRATA}
     for entry in both:
@@ -1328,10 +1347,12 @@ def test_frozen_seed0_six_occluded_stills_are_enrolled_in_both_galleries() -> No
         score_run(plan=plan, searches=searches, tau=0.50)
 
 
-def test_frozen_seed0_copresent_stills_yield_twelve_searches() -> None:
+def test_frozen_seed0_copresent_first_identity_injection_is_incomplete() -> None:
+    """BR-39: first-identity copresent injection drops G1 co-subjects on 200/201."""
     plan = build_run_plan(selection_manifest_path=_frozen_manifest(), seed=0)
     both = both_gallery_probe_entries(plan)
     assert len(both) == 6
+    assert both_gallery_search_count(plan) == 14
     by_stratum: dict[str, list[SearchResult]] = {name: [] for name in PROBE_STRATA}
     for entry in both:
         for gallery in mated_galleries_for(entry, plan=plan):
@@ -1341,6 +1362,7 @@ def test_frozen_seed0_copresent_stills_yield_twelve_searches() -> None:
             )
     injected = sum(len(items) for items in by_stratum.values())
     assert injected == 12
+    assert injected != both_gallery_search_count(plan)
     searches = _probe_searches(
         **{
             name: {"mated": items, "nonmated": []}
@@ -1349,9 +1371,10 @@ def test_frozen_seed0_copresent_stills_yield_twelve_searches() -> None:
         }
     )
     report = score_run(plan=plan, searches=searches, tau=0.50)
-    scored = sum(report.points[name].n_mated for name in PROBE_STRATA)
-    assert scored == 12
-    assert scored != 6
+    assert report.search_shortfalls["A_true_occluder"] > 0
+    assert report.search_shortfalls["D_capture"] > 0
+    assert report.points["A_true_occluder"].incomplete is True
+    assert report.points["D_capture"].incomplete is True
 
 
 def test_group_still_yields_one_mated_unit_per_enrolled_subject(
@@ -1742,6 +1765,21 @@ def test_duplicate_foil_search_is_rejected(tmp_path: Path) -> None:
         )
 
 
+def test_duplicate_overall_nonmated_search_is_rejected(tmp_path: Path) -> None:
+    """BR-38 / EVAL-19 / JANUS 2.3.4: a duplicated overall foil inflates FPI."""
+    plan = _plan(tmp_path)
+    foil = _alice_foil(plan, "Alice", 0.90)
+    with pytest.raises(FirBakeoffRunError, match="duplicate overall_nonmated"):
+        score_run(
+            plan=plan,
+            searches=_probe_searches(
+                A_true_occluder={"mated": [_alice_hit(plan)], "nonmated": [foil]},
+            ),
+            tau=0.50,
+            overall_nonmated=[foil, foil],
+        )
+
+
 def test_truncated_foil_set_is_incomplete(tmp_path: Path) -> None:
     """BR-27 / JANUS 2.3.4: a short foil list cannot render a complete FPI cell."""
     entries = _base_entries() + [_entry(14, "A_true_occluder", ["Frank"], "j")]
@@ -1815,4 +1853,37 @@ def test_overall_point_degrades_when_one_stratum_is_short(tmp_path: Path) -> Non
     assert report.overall.fnir is not None
     assert report.overall.format_fnir() == "incomplete"
     assert report.overall.format_fnir() != f"{report.overall.fnir:.3f}"
+
+
+def test_coverage_gap_marks_complete_searches_incomplete(tmp_path: Path) -> None:
+    """BR-37 / MLDATA-07: n_images < manifest_images must not publish a bare FNIR.
+
+    Both search shortfalls are zero; coverage is the only incompleteness arm.
+    """
+    plan = _plan(tmp_path, a_images=4)
+    searches, overall_foils = _complete_probe_searches(plan)
+    report = score_run(
+        plan=plan,
+        searches=searches,
+        tau=0.50,
+        overall_nonmated=overall_foils,
+    )
+    for name in PROBE_STRATA:
+        assert report.search_shortfalls[name] == 0
+        assert report.nonmated_shortfalls[name] == 0
+    point = report.points["A_true_occluder"]
+    assert point.measured is True
+    assert point.incomplete is True
+    assert point.format_fnir() == "incomplete"
+    assert point.format_fnir() != "0.000"
+    assert report.overall.measured is True
+    assert report.overall.incomplete is True
+    assert report.overall.format_fnir() == "incomplete"
+    assert report.overall.format_fnir() != "0.000"
+    row = {item["stratum"]: item for item in report.to_rows()}["A_true_occluder"]
+    assert row["n_images"] == 1
+    assert row["manifest_images"] == 4
+    assert row["incomplete"] is True
+    assert report.points["B_eyewear"].incomplete is False
+    assert report.points["C_pose"].incomplete is False
 

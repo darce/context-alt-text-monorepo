@@ -319,10 +319,11 @@ def both_gallery_probe_entries(plan: RunPlan) -> tuple[ProbeEntry, ...]:
 
 
 def both_gallery_search_count(plan: RunPlan) -> int:
-    """Search units from co-present stills (2 per still, never 1)."""
+    """Mated (still, gallery, enrolled subject) units from co-present stills."""
     return sum(
-        len(mated_galleries_for(entry, plan=plan))
+        len(mated_identities_for(entry, split=plan.split, gallery=gallery))
         for entry in both_gallery_probe_entries(plan)
+        for gallery in mated_galleries_for(entry, plan=plan)
     )
 
 

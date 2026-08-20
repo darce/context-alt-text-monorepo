@@ -234,6 +234,7 @@ ignore_missing_imports = true
 ignore_errors = true
 
 [tool.pytest.ini_options]
+collection_scope_receipt = "/tmp/prototype-description-service-pytest-collection-scope.json"
 markers = [
     "integration: marks tests as integration tests (require database)",
     "pg: marks tests requiring a local PostgreSQL (schema/RLS/matview behavior; skip when unreachable)",

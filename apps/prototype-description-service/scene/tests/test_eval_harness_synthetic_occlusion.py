@@ -18,6 +18,7 @@ from scripts.eval_harness.landmark_cache import (
 )
 from scripts.eval_harness.synthetic_occlusion import (
     ELIGIBLE_PAIR_FLOOR,
+    SYNTHETIC_OCCLUSION_PROTOCOL_DISCLOSURES,
     WALK_STABILITY_DELTA_BOUND,
     anatomy_region_stats,
     apply_occlusion,
@@ -839,3 +840,32 @@ def test_a_s_a_r_a_clean_are_distinct_quantities():
     assert a_s.accuracy != a_clean.accuracy
     assert a_s.accuracy < a_clean.accuracy  # occlusion degrades vs clean baseline
     assert a_s is not a_r and a_s is not a_clean
+
+
+def test_threshold_rule_disclosure_is_self_contained_published_text():
+    """FIR-12-BR-77/78: the threshold-rule disclosure is PUBLISHED output
+    (spliced into FACE_BAKEOFF_PROTOCOL_DISCLOSURES by report.py and consumed
+    by _entry_is_publishable), not source prose. An external reader of an eval
+    report cannot evaluate ``accept_predicate.accepts`` — they can evaluate
+    ``s_max >= tau``. This pins the exact string so a future reword of
+    published output is a deliberate golden update, not a refactor side
+    effect (a prior refactor pass substituted the inequality for a bare
+    module pointer here and the full suite stayed green)."""
+    threshold_disclosures = [
+        d for d in SYNTHETIC_OCCLUSION_PROTOCOL_DISCLOSURES if "open-set threshold" in d
+    ]
+    assert len(threshold_disclosures) == 1
+    assert threshold_disclosures[0] == (
+        "occlusion recovery uses open-set threshold (s_max >= tau; see "
+        "accept_predicate.accepts), not closed-set "
+        "argmax; each twin is scored at its source identity's held-out fold tau_k "
+        "(entity-disjoint — CAL-07/EVAL-07); pooled tau_op is a last-resort "
+        "fallback gated behind an explicit per-identity opt-in "
+        "(allow_tau_fallback_for) for identities with no held-out probe decision "
+        "— not guaranteed entity-disjoint if the identity still entered fit "
+        "galleries; single-identity galleries are excluded from the denominator "
+        "(EVAL-18)"
+    )
+    # The mathematical statement must survive in the published text, not just
+    # a pointer to source — a reader cannot evaluate the module, only the math.
+    assert "s_max >= tau" in threshold_disclosures[0]

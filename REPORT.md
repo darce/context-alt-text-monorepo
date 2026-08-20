@@ -222,3 +222,37 @@ Existing-test contract (not silent skips):
 - `test_empty_search_lists_on_populated_probe_cell_are_incomplete` previously expected `search_shortfall == n_images` (32 on A). That encoded 1-search-per-still and counted strangers as expected mates. Shortfall is now expected mated `(probe, gallery)` units from `occluded_probes_for`; `n_images==32` stays pinned and `shortfall != 32` is pinned.
 - `test_explicit_empty_overall_nonmated_is_unmeasured_fpi` `overall.n_mated` 4→3: stuffing Alice onto D_capture (Carol, a stranger) is now refused as a mated search.
 - `test_mated_entry_with_true_name_none_raises` now `FirBakeoffRunError` at the seam (`true_name` not enrolled) instead of leaking scorer `ValueError`.
+
+########## lane/f22
+
+# FIR-12 BR-12 / BR-24 / BR-25 — FPI denominator + surviving mutants — CLOSED
+
+Canon: JANUS 2.3.4, EVAL-19, MLDATA-07, MLDATA-09, rg-015, TEST-15.
+
+- BR-12: `score_run` no longer defaults `n_enrolled_gallery_subjects` to `len(g1)+len(g2)`. Each IET point takes the unique declared `SearchResult.gallery` of the searches that compose it (`_enrolled_for` / `_roster_size`). Caller-supplied 53 at seed 0 is accepted; 109 is rejected. Rows carry `gallery`. A pooled overall point that spans both galleries has `n_enrolled_gallery_subjects is None` (no synthesized union). Tests: `test_honest_per_gallery_count_is_accepted_at_seed_0`, `test_enrolled_gallery_follows_declared_search_gallery` (replaces `test_enrolled_gallery_defaults_to_split_size`), `test_report_names_searched_gallery`, `test_overall_pooled_point_has_unmeasured_enrolled_denominator`, `test_enrolled_gallery_mismatch_raises`. Mutant: restore union default + `!= len(g1)+len(g2)` guard. RED:
+```
+FAILED test_honest_per_gallery_count_is_accepted_at_seed_0
+  FirBakeoffRunError: n_enrolled_gallery_subjects=53 does not match gallery size 109 (len(g1)+len(g2))
+FAILED test_enrolled_gallery_follows_declared_search_gallery
+  AssertionError: assert 4 == 3
+FAILED test_overall_pooled_point_has_unmeasured_enrolled_denominator
+  AssertionError: assert 4 is None
+FAILED test_report_names_searched_gallery
+  AssertionError: assert 4 == 3
+```
+
+- BR-24 m12: `test_overall_point_pools_injected_searches` now uses two A hits + one C miss so search-weighted FNIR is 1/3 and the unweighted cell mean is 0.5. Mutant: `object.__setattr__(overall, "fnir", mean(cell FNIRs))`. RED: `assert 0.5 == 0.3333333333333333`.
+
+- BR-24 m6: skip-E_clean-when-pooling is the correct source (BR-16). Inverse mutant (drop the `GALLERY_STRATUM` continue) is now RED: `test_gallery_searches_are_not_pooled_into_overall_fnir` (`search media_id=10 is not a probe in stratum 'E_clean'`) and `test_gallery_stratum_renders_enrolled_not_probed` (`assert 'E_clean' not in report.points`).
+
+- BR-24 union-only-when-omitted: `test_overall_nonmated_is_declared_once_not_pooled` now also calls `score_run` without `overall_nonmated` and expects `FirBakeoffRunError`. Mutant: union stratum foils when the kwarg is omitted. RED: `DID NOT RAISE FirBakeoffRunError`.
+
+- BR-24 strip-media_ids in `_templates_from_e_clean`: `test_group_photo_subjects_are_not_dropped` now asserts Dale/Eve `media_ids==(5,)`. Mutant: `media_ids = ()`. RED: `assert () == (5,)`.
+
+- BR-24 drop finite-tau + enrolled-mismatch guards: `test_to_rows_carries_tau_and_enrolled_normalization` now expects empty-search `n_enrolled is None` (not the deleted union default), union count raises, and non-finite tau raises. Mutant: delete both guards. RED: `DID NOT RAISE FirBakeoffRunError` (union 4).
+
+- BR-25 m3: `test_mated_identities_for_unknown_gallery_raises` — `mated_identities_for(..., gallery="banana")` raises `FirBakeoffRunError`. Mutant: swallow `ValueError` and substitute `GalleryName.G1`. RED: `DID NOT RAISE FirBakeoffRunError`.
+
+- BR-25 m5: kept the `if name not in declared` branch (reachable: public `RunPlan` with `probe_sets` omitting G2). Test: `test_search_against_omitted_declared_gallery_raises`. Mutant: delete that branch. RED: `DID NOT RAISE FirBakeoffRunError`.
+
+Did not touch `gallery_split.py`, `strata_join.py`, or `open_set_identification.py`. Did not add a second gallery concept beside BR-18 `SearchResult.gallery`.

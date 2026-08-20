@@ -183,6 +183,45 @@ def test_draw_pilot_rejects_missing_declared_empty_cells(tmp_path: Path):
         draw_pilot(selection_manifest_path=path, n=10, seed=1)
 
 
+@pytest.mark.parametrize(
+    ("declared_delta",),
+    [
+        (6,),   # declared > observed
+        (-2,),  # declared < observed
+    ],
+    ids=["declared_gt_observed", "declared_lt_observed"],
+)
+def test_draw_pilot_rejects_declared_vs_entry_count_mismatch(
+    tmp_path: Path, declared_delta: int
+):
+    """Pin the frame-size parity guard (AUDIT-08 / rg-005 / rg-015).
+
+    report_rows publishes pi = n_h / DECLARED N_h. A silent mismatch
+    between strata_counts and the entries actually present biases every
+    design-based weight. Both directions must raise this guard's message,
+    not an unrelated PilotDrawError.
+    """
+    path = _write_manifest(tmp_path / "mismatch.json", n_per=8)
+    payload = json.loads(path.read_text())
+    stratum = StratumName.B_EYEWEAR.value
+    observed = payload["strata_counts"][stratum]["images"]
+    assert observed == 8
+    declared = observed + declared_delta
+    assert declared != observed
+    payload["strata_counts"][stratum]["images"] = declared
+    path.write_text(json.dumps(payload))
+    with pytest.raises(
+        PilotDrawError,
+        match="entry counts per stratum do not match declared strata_counts",
+    ) as caught:
+        draw_pilot(selection_manifest_path=path, n=10, seed=1)
+    message = str(caught.value)
+    assert "entries=" in message
+    assert "declared=" in message
+    assert f"'{stratum}': {observed}" in message
+    assert f"'{stratum}': {declared}" in message
+
+
 def test_emit_annotation_packet_is_one_dual_annotator_row_per_drawn_image():
     payload = _payload()
     entries = _entries_by_sha256(payload)

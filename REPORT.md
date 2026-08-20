@@ -256,3 +256,12 @@ FAILED test_report_names_searched_gallery
 - BR-25 m5: kept the `if name not in declared` branch (reachable: public `RunPlan` with `probe_sets` omitting G2). Test: `test_search_against_omitted_declared_gallery_raises`. Mutant: delete that branch. RED: `DID NOT RAISE FirBakeoffRunError`.
 
 Did not touch `gallery_split.py`, `strata_join.py`, or `open_set_identification.py`. Did not add a second gallery concept beside BR-18 `SearchResult.gallery`.
+
+########## lane/f24
+
+# FIR-12 BR-29 / BR-31 — mated unit is the enrolled subject; declared galleries come from probe_sets
+
+**Unit (for the shortfall-keying lane):** one FNIR unit is `(still, gallery, enrolled subject)` (`MatedSearchUnit`). Foils stay still-level. `_search_shortfall` and `_validate_stratum_searches` both derive from `occluded_probes_for` via `_mated_search_units` / `expected_mated_search_count`. Did not change shortfall *keying* (BR-27) or overall-measured (BR-28). `both_gallery_search_count` stays the BR-18 copresent-gallery count (12 at seed 0), not the subject tally.
+
+- BR-29 (high): `occluded_probes_for` yields one `MatedSearchUnit` per enrolled subject on a still against a declared gallery; `expected_mated_search_count` is `len` of that list (never an independent still tally). Seed-0 identity total is 171 (media 154 → 3 G2 units; 200/201 each add one extra G1 co-subject). Still-level first-identity injection scores `n_mated=167` with shortfall A=1/B=2/C=0/D=1 (incomplete); full subject injection is 171 with shortfall 0. Tests: `test_group_still_yields_one_mated_unit_per_enrolled_subject`, `test_frozen_seed0_mated_unit_is_subject_not_still`. Mutant A (`/tmp/br29-mutant`): append first identity only. RED: `assert 167 == 171`; `assert 1 == 3` on media 99. Mutant B (`/tmp/br29-shortfall-mutant`): `_search_shortfall` recounts first-identity stills. RED: `assert 0 == 1` (`A_true_occluder` shortfall). Canon: JANUS 2.2, EVAL-16, EVAL-18.
+- BR-31 (low): `_declared_galleries` already reads `plan.probe_sets`; the missing pin is a G1-only `RunPlan` whose scored report never mentions G2. Test: `test_single_declared_gallery_report_never_mentions_the_other`. Mutant (`/tmp/br31-mutant`): `return (GalleryName.G1, GalleryName.G2)`. Existing `test_build_run_plan_consumes_probes_for` / `test_frozen_seed0_copresent_stills_yield_twelve_searches` / `test_search_against_undeclared_gallery_raises` stay GREEN; new test RED: `assert (G1, G2) == (G1,)`.

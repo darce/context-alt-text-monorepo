@@ -116,10 +116,10 @@ class StratumReport:
 def load_stratum_index(path: str | Path) -> StratumIndex:
     """Load the selection manifest and index every entry by sha256 and media_id."""
     payload = _read_selection_payload(path)
-    by_sha256, by_media_id, subjects_by_sha256, subjects_by_media_id = _index_entries(
-        payload["entries"]
-    )
     declared_images = _declared_images_map(payload["strata_counts"])
+    by_sha256, by_media_id, subjects_by_sha256, subjects_by_media_id = _index_entries(
+        payload["entries"], declared_strata=declared_images
+    )
     empty = payload["declared_empty_cells"]
     if not isinstance(empty, list) or not all(isinstance(cell, str) for cell in empty):
         raise StratumJoinError(
@@ -155,13 +155,12 @@ def join_by_stratum(
         images[resolved.stratum].add(resolved.image_key)
         subjects[resolved.stratum].update(_subjects_for(record, resolved, index))
     order = tuple(index.strata_counts)
+    extra = sorted(set(images) - set(order))
+    if extra:
+        raise StratumJoinError(f"joined strata {extra} are not in strata_counts")
     buckets: dict[str, StratumBucket] = {}
     for name in order:
         buckets[name] = _bucket(name, images, subjects, index)
-    extra = sorted(set(images) - set(order))
-    for name in extra:
-        buckets[name] = _bucket(name, images, subjects, index)
-        order = order + (name,)
     return StratumReport(
         buckets=buckets,
         declared_empty_cells=index.declared_empty_cells,
@@ -179,7 +178,7 @@ def _bucket(
         stratum=name,
         n_images=len(images.get(name, ())),
         unique_subjects=len(subjects.get(name, ())),
-        manifest_images=index.declared_images.get(name, 0),
+        manifest_images=index.declared_images[name],
     )
 
 
@@ -208,6 +207,8 @@ def _read_selection_payload(path: str | Path) -> dict[str, Any]:
 
 def _index_entries(
     entries: object,
+    *,
+    declared_strata: Mapping[str, Any],
 ) -> tuple[
     dict[str, str],
     dict[int, str],
@@ -222,6 +223,10 @@ def _index_entries(
     subjects_by_media_id: dict[int, tuple[str, ...]] = {}
     for i, entry in enumerate(entries):
         sha256, media_id, stratum, identities = _parse_entry(entry, i)
+        if stratum not in declared_strata:
+            raise StratumJoinError(
+                f"entries[{i}].stratum {stratum!r} is not in strata_counts"
+            )
         _reject_stratum_conflict(by_sha256, sha256, stratum, kind="sha256")
         _reject_stratum_conflict(by_media_id, media_id, stratum, kind="media_id")
         by_sha256[sha256] = stratum

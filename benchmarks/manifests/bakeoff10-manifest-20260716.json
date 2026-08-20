@@ -1,0 +1,362 @@
+{
+  "manifest_version": 2,
+  "roster": [
+    "Al Pacino",
+    "Citrine Bramble",
+    "Hollow Pennant",
+    "Russet Fathom",
+    "Gilded Cypress",
+    "Emma Stone",
+    "Muted Current",
+    "Slate Willow",
+    "Plumb Tanner",
+    "Indigo Pennant"
+  ],
+  "entries": [
+    {
+      "media_id": 400,
+      "path": "personal/unlabeled_0400.jpg",
+      "sha256": "f5aa25d98aaa9c2afe47f9e5d40fea992dff28284869cda7f5b72dddd8a40a1c",
+      "face_count": 0,
+      "present_identities": [],
+      "must_right": [],
+      "easy_wrong": [],
+      "policy": {
+        "recognition_enabled": true
+      },
+      "face_boxes": [],
+      "context_pack": {},
+      "provenance": {
+        "source": "localwp",
+        "license": "consented"
+      },
+      "base_caption": ""
+    },
+    {
+      "media_id": 378,
+      "path": "personal/unlabeled_0378.jpg",
+      "sha256": "9a3e939f6f8e1546a28b3cafe3931239d10cdad959bd9d51dfff26fb942505ca",
+      "face_count": 0,
+      "present_identities": [],
+      "must_right": [],
+      "easy_wrong": [],
+      "policy": {
+        "recognition_enabled": true
+      },
+      "face_boxes": [],
+      "context_pack": {},
+      "provenance": {
+        "source": "localwp",
+        "license": "consented"
+      },
+      "base_caption": ""
+    },
+    {
+      "media_id": 200,
+      "path": "personal/russet_fathom_200.jpg",
+      "sha256": "633b61fd487d4e264381a36e1dd1e5a854b784099e4954d19c427a07eb0ff3de",
+      "face_count": 3,
+      "present_identities": [
+        "Russet Fathom",
+        "Muted Current",
+        "Indigo Pennant"
+      ],
+      "must_right": [
+        "Russet Fathom",
+        "Muted Current",
+        "Indigo Pennant"
+      ],
+      "easy_wrong": [],
+      "policy": {
+        "recognition_enabled": true
+      },
+      "face_boxes": [
+        {
+          "x": 796.0,
+          "y": 378.5,
+          "w": 134.0,
+          "h": 185.0,
+          "name": "Russet Fathom",
+          "source": "workbench"
+        },
+        {
+          "x": 1847.5,
+          "y": 1046.5,
+          "w": 409.0,
+          "h": 479.0,
+          "name": "Muted Current",
+          "source": "workbench"
+        },
+        {
+          "x": 581.0,
+          "y": 225.0,
+          "w": 152.0,
+          "h": 190.0,
+          "name": "Indigo Pennant",
+          "source": "workbench"
+        }
+      ],
+      "context_pack": {
+        "people": "Russet Fathom, Muted Current, Indigo"
+      },
+      "provenance": {
+        "source": "localwp",
+        "license": "consented"
+      },
+      "base_caption": ""
+    },
+    {
+      "media_id": 154,
+      "path": "personal/slate_willow_154.jpg",
+      "sha256": "cade8067430b4778e6ec007f93db8dfd217e368c17ed6e7017bdc539daa6aba9",
+      "face_count": 3,
+      "present_identities": [
+        "Citrine Bramble",
+        "Slate Willow",
+        "Plumb Tanner"
+      ],
+      "must_right": [
+        "Citrine Bramble",
+        "Slate Willow",
+        "Plumb Tanner"
+      ],
+      "easy_wrong": [],
+      "policy": {
+        "recognition_enabled": true
+      },
+      "face_boxes": [
+        {
+          "x": 413.0,
+          "y": 246.5,
+          "w": 148.0,
+          "h": 201.0,
+          "name": "Slate Willow",
+          "source": "workbench"
+        },
+        {
+          "x": 697.0,
+          "y": 288.0,
+          "w": 154.0,
+          "h": 212.0,
+          "name": "Citrine Bramble",
+          "source": "workbench"
+        },
+        {
+          "x": 550.5,
+          "y": 330.5,
+          "w": 131.0,
+          "h": 239.0,
+          "name": "Plumb Tanner",
+          "source": "workbench"
+        }
+      ],
+      "context_pack": {
+        "people": "Citrine Bramble, Slate Willow, Plumb Tanner"
+      },
+      "provenance": {
+        "source": "localwp",
+        "license": "consented"
+      },
+      "base_caption": ""
+    },
+    {
+      "media_id": 98,
+      "path": "personal/gilded_cypress_98.jpg",
+      "sha256": "bfd6df5f3db20cdaa2affd350064588c4a870e9b4edac689a41b552403059135",
+      "face_count": 1,
+      "present_identities": [
+        "Gilded Cypress"
+      ],
+      "must_right": [
+        "Gilded Cypress"
+      ],
+      "easy_wrong": [],
+      "policy": {
+        "recognition_enabled": true
+      },
+      "face_boxes": [
+        {
+          "x": 327.5,
+          "y": 533.0,
+          "w": 185.0,
+          "h": 262.0,
+          "name": "Gilded Cypress",
+          "source": "workbench"
+        }
+      ],
+      "context_pack": {
+        "people": "Gilded Cypress"
+      },
+      "provenance": {
+        "source": "localwp",
+        "license": "consented"
+      },
+      "base_caption": ""
+    },
+    {
+      "media_id": 93,
+      "path": "personal/gilded_cypress_93.jpg",
+      "sha256": "fe212728d1f4322588d5869f958673f7cde55a006d2a2a70f170844e133d229f",
+      "face_count": 2,
+      "present_identities": [
+        "Gilded Cypress",
+        "Indigo Pennant"
+      ],
+      "must_right": [
+        "Gilded Cypress",
+        "Indigo Pennant"
+      ],
+      "easy_wrong": [],
+      "policy": {
+        "recognition_enabled": true
+      },
+      "face_boxes": [
+        {
+          "x": 587.0,
+          "y": 556.0,
+          "w": 120.0,
+          "h": 158.0,
+          "name": "Gilded Cypress",
+          "source": "workbench"
+        },
+        {
+          "x": 431.0,
+          "y": 557.5,
+          "w": 124.0,
+          "h": 161.0,
+          "name": "Indigo Pennant",
+          "source": "workbench"
+        }
+      ],
+      "context_pack": {
+        "people": "Gilded Cypress, Indigo"
+      },
+      "provenance": {
+        "source": "localwp",
+        "license": "consented"
+      },
+      "base_caption": ""
+    },
+    {
+      "media_id": 62,
+      "path": "personal/hollow_pennant_62.jpg",
+      "sha256": "900cb92615de6c3fbb92496a0202c5feb7395759b29a4964408c241e05b0aae8",
+      "face_count": 1,
+      "present_identities": [
+        "Hollow Pennant"
+      ],
+      "must_right": [
+        "Hollow Pennant"
+      ],
+      "easy_wrong": [],
+      "policy": {
+        "recognition_enabled": true
+      },
+      "face_boxes": [
+        {
+          "x": 529.0,
+          "y": 392.5,
+          "w": 250.0,
+          "h": 379.0,
+          "name": "Hollow Pennant",
+          "source": "workbench"
+        }
+      ],
+      "context_pack": {
+        "people": "Hollow Pennant"
+      },
+      "provenance": {
+        "source": "localwp",
+        "license": "consented"
+      },
+      "base_caption": ""
+    },
+    {
+      "media_id": 46,
+      "path": "celebs/emma_stone_46.jpg",
+      "sha256": "da8bbd84db00d16e45f4d21a5ce5f49d8b44e7cb153839ed577719e549cf4198",
+      "face_count": 1,
+      "present_identities": [
+        "Emma Stone"
+      ],
+      "must_right": [
+        "Emma Stone"
+      ],
+      "easy_wrong": [],
+      "policy": {
+        "recognition_enabled": true
+      },
+      "face_boxes": [
+        {
+          "x": 571.5,
+          "y": 587.5,
+          "w": 571.0,
+          "h": 861.0,
+          "name": "Emma Stone",
+          "source": "workbench"
+        }
+      ],
+      "context_pack": {
+        "people": "Emma Stone"
+      },
+      "provenance": {
+        "source": "localwp",
+        "license": "consented"
+      },
+      "base_caption": ""
+    },
+    {
+      "media_id": 11,
+      "path": "celebs/anne_hathaway_11.jpg",
+      "sha256": "d5ca0a6058899b6a88118dbad05ac9d9f8128599a165933656b52e1d28603533",
+      "face_count": 0,
+      "present_identities": [],
+      "must_right": [],
+      "easy_wrong": [],
+      "policy": {
+        "recognition_enabled": true
+      },
+      "face_boxes": [],
+      "context_pack": {},
+      "provenance": {
+        "source": "localwp",
+        "license": "consented"
+      },
+      "base_caption": ""
+    },
+    {
+      "media_id": 6,
+      "path": "celebs/al_pacino_6.jpg",
+      "sha256": "c11055c58bba9bf69907dc601271925f525904a39c9af0ba5572e02d26f3da7e",
+      "face_count": 1,
+      "present_identities": [
+        "Al Pacino"
+      ],
+      "must_right": [
+        "Al Pacino"
+      ],
+      "easy_wrong": [],
+      "policy": {
+        "recognition_enabled": true
+      },
+      "face_boxes": [
+        {
+          "x": 1320.5,
+          "y": 820.5,
+          "w": 507.0,
+          "h": 711.0,
+          "name": "Al Pacino",
+          "source": "workbench"
+        }
+      ],
+      "context_pack": {
+        "people": "Al Pacino"
+      },
+      "provenance": {
+        "source": "localwp",
+        "license": "consented"
+      },
+      "base_caption": ""
+    }
+  ]
+}

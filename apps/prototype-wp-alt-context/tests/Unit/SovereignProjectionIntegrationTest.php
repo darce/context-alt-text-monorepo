@@ -158,7 +158,7 @@ class SovereignProjectionIntegrationTest extends TestCase
 
         // The ON DUPLICATE KEY UPDATE guard must preserve the user-curated label.
         $this->assertStringContainsString(
-            'IF(is_user_confirmed = 1, label, VALUES(label))',
+            'label = IF(is_user_confirmed = 1, label, VALUES(label))',
             $clusterInsert,
             'Cluster upsert must guard user-curated labels with is_user_confirmed check'
         );

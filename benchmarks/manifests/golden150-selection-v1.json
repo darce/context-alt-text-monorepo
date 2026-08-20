@@ -1,0 +1,2633 @@
+{
+ "selection_version": 1,
+ "name": "golden150",
+ "built_at": "2026-07-28T18:26:44+00:00",
+ "corpus_manifest": "corpus-manifest-v3.json",
+ "corpus_manifest_sha256": "fbd9d5b7ae546b6f364b8e1dcdd07f9c6ece0411034905636886446919b5cd9d",
+ "size": 150,
+ "sampling_frame": {
+  "corpus_entries": 646,
+  "eligible": 643,
+  "excluded": {
+   "duplicate_content": [
+    "personal/gilded_cypress_468.jpg",
+    "personal/saffron_cypress_471.jpg",
+    "personal/unlabeled_0488.jpg"
+   ]
+  },
+  "quotas": {
+   "recognition_core": 100,
+   "multi_face": 20,
+   "distractor": 20,
+   "celeb": 10
+  },
+  "max_per_identity": 3,
+  "low_res_min_side": 480,
+  "tie_break": "sha256",
+  "ordering": "hardness: known hard tags desc, low-res first, sha256"
+ },
+ "strata_derivable": [
+  "bucket",
+  "named_face_count",
+  "identity_support",
+  "low_res",
+  "profile"
+ ],
+ "coverage_gaps": [
+  "Occlusion strata (occlusion_other, sunglasses, masked, blur) are known for only 150 of 646 corpus images, all hand-tagged. A full-corpus detector pass did NOT close this: calibrated against those 150 labels, every occlusion signal scored at chance (AUC 0.59-0.68), so no threshold can extend them. Natural-occlusion coverage needs either operator tagging or synthetic generation (synthetic_occlusion.py), not more detection.",
+  "`profile` IS derived corpus-wide (AUC 0.782) but at ~0.67 precision it is a shortlist: roughly a third of derived profile media are not profile. Selection uses it for ordering only, and slice_tags_derived is never merged into slice_tags. The operator should confirm pose on the 150 selected images.",
+  "Identity labels descend from operator cluster merges, so they are ground truth for naming but must not be reused to score the clustering that produced them."
+ ],
+ "realized": {
+  "by_stratum": {
+   "celeb": 10,
+   "multi_face": 20,
+   "distractor": 20,
+   "recognition_core": 100
+  },
+  "by_bucket": {
+   "personal": 140,
+   "celebs": 10
+  },
+  "named_face_count": {
+   "0": 20,
+   "1": 110,
+   "2": 14,
+   "3": 5,
+   "8": 1
+  },
+  "low_res": 12,
+  "identities": 67,
+  "identities_enrollable": 60,
+  "named_probes": 142,
+  "slice_tags_known": 86,
+  "slice_tags": {
+   "masked": 5,
+   "profile": 42,
+   "blur": 24,
+   "occlusion_other": 18,
+   "low_res": 20,
+   "sunglasses": 12
+  },
+  "slice_tags_derived": {
+   "profile": 99
+  },
+  "detected_faces_total": 610,
+  "with_detected_faces": 149
+ },
+ "gallery": {
+  "wicker_fathom": "personal/wicker_fathom_217.jpg",
+  "dappled_juniper": "personal/dappled_juniper_318.jpg",
+  "russet_harbor": "personal/russet_harbor_421.jpg",
+  "citrine_fathom": "personal/citrine_fathom_426.jpg",
+  "candid_ridgeway": "personal/candid_ridgeway_430.jpg",
+  "brisk_current": "personal/brisk_current_434.jpg",
+  "citrine_bramble": "personal/citrine_bramble_347.jpg",
+  "muted_fathom": "personal/muted_fathom_384.jpg",
+  "hollow_pennant": "personal/hollow_pennant_70.jpg",
+  "bob_dylan": "celebs/bob_dylan_23.jpg",
+  "russet_fathom": "personal/russet_fathom_221.jpg",
+  "russet_lantern": "personal/russet_lantern_453.jpg",
+  "vellum_falcon": "personal/vellum_falcon_457.jpg",
+  "candid_yarrow": "personal/candid_yarrow_459.jpg",
+  "pewter_hollow": "personal/pewter_hollow_354.jpg",
+  "gilded_cypress": "personal/gilded_cypress_84.jpeg",
+  "saffron_cypress": "personal/saffron_cypress_194.jpg",
+  "muted_current": "personal/muted_current_482.jpg",
+  "ochre_ridgeway": "personal/ochre_ridgeway_491.jpg",
+  "sylvan_fathom": "personal/sylvan_fathom_493.jpg",
+  "verdant_verity": "personal/verdant_verity_418.jpeg",
+  "cobalt_beacon": "personal/cobalt_beacon_499.jpg",
+  "russet_ridgeway": "personal/russet_ridgeway_233.jpeg",
+  "plumb_ferry": "personal/plumb_ferry_505.jpg",
+  "onyx_beacon": "personal/onyx_beacon_510.jpg",
+  "auburn_ridgeway": "personal/auburn_ridgeway_513.jpg",
+  "muted_hollow": "personal/muted_hollow_517.jpg",
+  "umber_compass": "personal/umber_compass_243.jpeg",
+  "ochre_willow": "personal/ochre_willow_520.jpg",
+  "candid_orchard": "personal/candid_orchard_604.jpg",
+  "ochre_harbor": "personal/ochre_harbor_246.jpg",
+  "wicker_marsh": "personal/wicker_marsh_527.jpg",
+  "auburn_current": "personal/auburn_current_530.jpg",
+  "tidal_bramble": "personal/tidal_bramble_531.jpg",
+  "onyx_marsh": "personal/onyx_marsh_623.jpg",
+  "sable_verity": "personal/sable_verity_151.jpg",
+  "linen_kestrel": "personal/linen_kestrel_252.jpg",
+  "burnished_ridgeway": "personal/pewter_ridgeway_538.jpg",
+  "brisk_rookery": "personal/brisk_rookery_546.jpg",
+  "wicker_orchard": "personal/wicker_orchard_362.jpg",
+  "saffron_orchard": "personal/saffron_orchard_191.jpg",
+  "saffron_beacon": "personal/saffron_beacon_403.jpg",
+  "slate_willow": "personal/slate_willow_553.jpg",
+  "indigo_ridgeway": "personal/indigo_ridgeway_556.jpeg",
+  "plumb_tanner": "personal/plumb_tanner_554.jpg",
+  "citrine_juniper": "personal/citrine_juniper_563.jpg",
+  "onyx_lantern": "personal/onyx_lantern_508.jpg",
+  "sylvan_orchard": "personal/sylvan_orchard_569.jpg",
+  "tidal_rookery": "personal/tidal_rookery_572.jpg",
+  "umber_willow": "personal/umber_willow_629.png",
+  "muted_yarrow": "personal/muted_yarrow_260.jpg",
+  "candid_lantern": "personal/candid_lantern_579.jpg",
+  "sylvan_beacon": "personal/sylvan_beacon_586.jpg",
+  "indigo_pennant": "personal/indigo_132.jpg",
+  "sylvan_ridgeway": "personal/sylvan_ridgeway_590.jpg",
+  "onyx_harbor": "personal/onyx_harbor_591.png",
+  "sable_current": "personal/sable_current_268.jpg",
+  "plumb_verity": "personal/plumb_verity_598.jpg",
+  "flaxen_yarrow": "personal/flaxen_yarrow_313.jpg",
+  "brisk_compass": "personal/brisk_compass_277.jpeg"
+ },
+ "probe_only_identities": [
+  "angelina_jolie",
+  "bad_bunny",
+  "bob_ross",
+  "christian_bale",
+  "drew_barrymore",
+  "elizabeth_taylor",
+  "leonard_cohen"
+ ],
+ "probe_only_celebs_external_gallery": [
+  "angelina_jolie",
+  "bad_bunny",
+  "bob_ross",
+  "christian_bale",
+  "drew_barrymore",
+  "elizabeth_taylor",
+  "leonard_cohen"
+ ],
+ "selection": [
+  {
+   "stratum": "recognition_core",
+   "media_id": 276,
+   "path": "personal/slate_willow_276.jpg",
+   "sha256": "13af6a16b656e1c3bc52d68b7c83e36f2c222eeda7a7bc827489847af9cd7416",
+   "slug": "slate_willow",
+   "named_identities": [
+    "Slate Willow"
+   ],
+   "slice_tags": [
+    "masked",
+    "profile",
+    "blur"
+   ],
+   "slice_tags_derived": [],
+   "slice_tags_source": "operator_hand",
+   "detected_face_count": 4
+  },
+  {
+   "stratum": "recognition_core",
+   "media_id": 616,
+   "path": "personal/russet_ridgeway_616.jpg",
+   "sha256": "c342c0a13fa8ab9b55565bc1c2b71f6468cf7d2d12e551838f590c9cd77c11c8",
+   "slug": "russet_ridgeway",
+   "named_identities": [
+    "Russet Ridgeway"
+   ],
+   "slice_tags": [
+    "blur",
+    "occlusion_other"
+   ],
+   "slice_tags_derived": [],
+   "slice_tags_source": "operator_hand",
+   "detected_face_count": 6
+  },
+  {
+   "stratum": "recognition_core",
+   "media_id": 363,
+   "path": "personal/russet_ridgeway_363.jpg",
+   "sha256": "0f22a28f806673c8f0f469752050e138980dae66573e658669325fa731f580ae",
+   "slug": "russet_ridgeway",
+   "named_identities": [
+    "Russet Ridgeway"
+   ],
+   "slice_tags": [
+    "profile",
+    "low_res",
+    "blur"
+   ],
+   "slice_tags_derived": [
+    "profile"
+   ],
+   "slice_tags_source": "operator_hand",
+   "detected_face_count": 24
+  },
+  {
+   "stratum": "recognition_core",
+   "media_id": 555,
+   "path": "personal/indigo_ridgeway_555.jpeg",
+   "sha256": "6314e53094be51a8b44265842e747822655df8d7b533b009b5718f18fbdc331c",
+   "slug": "indigo_ridgeway",
+   "named_identities": [
+    "Indigo Ridgeway"
+   ],
+   "slice_tags": [
+    "profile",
+    "low_res",
+    "blur"
+   ],
+   "slice_tags_derived": [
+    "profile"
+   ],
+   "slice_tags_source": "operator_hand",
+   "detected_face_count": 6
+  },
+  {
+   "stratum": "recognition_core",
+   "media_id": 388,
+   "path": "personal/verdant_verity_388.jpg",
+   "sha256": "01bf3882459c898b901decd4476d5f4665969b1a2895dd9b3f244cdc612fbfbc",
+   "slug": "verdant_verity",
+   "named_identities": [
+    "Verdant Verity"
+   ],
+   "slice_tags": [
+    "sunglasses",
+    "profile",
+    "low_res"
+   ],
+   "slice_tags_derived": [],
+   "slice_tags_source": "operator_hand",
+   "detected_face_count": 9
+  },
+  {
+   "stratum": "recognition_core",
+   "media_id": 244,
+   "path": "personal/ochre_harbor_244.jpg",
+   "sha256": "042dfec326f991090b5efa1c6d7214983587cd299e71580f9be524290915f1ca",
+   "slug": "ochre_harbor",
+   "named_identities": [
+    "Ochre Harbor"
+   ],
+   "slice_tags": [
+    "sunglasses",
+    "profile",
+    "low_res"
+   ],
+   "slice_tags_derived": [],
+   "slice_tags_source": "operator_hand",
+   "detected_face_count": 16
+  },
+  {
+   "stratum": "recognition_core",
+   "media_id": 341,
+   "path": "personal/sable_verity_341.jpg",
+   "sha256": "3d88b00dea7a3bbd876bf07a3939f868a71e7917d97f3f6ea05c28266cf7fbb0",
+   "slug": "sable_verity",
+   "named_identities": [
+    "Sable Verity"
+   ],
+   "slice_tags": [
+    "profile",
+    "low_res",
+    "blur"
+   ],
+   "slice_tags_derived": [],
+   "slice_tags_source": "operator_hand",
+   "detected_face_count": 11
+  },
+  {
+   "stratum": "recognition_core",
+   "media_id": 118,
+   "path": "personal/gilded_cypress_118.jpg",
+   "sha256": "774c0723fa609595c579293838b2bcddaa5e8ad20279e2af7a127747ec4595c5",
+   "slug": "gilded_cypress",
+   "named_identities": [
+    "Gilded Cypress"
+   ],
+   "slice_tags": [
+    "sunglasses",
+    "profile",
+    "low_res"
+   ],
+   "slice_tags_derived": [],
+   "slice_tags_source": "operator_hand",
+   "detected_face_count": 8
+  },
+  {
+   "stratum": "recognition_core",
+   "media_id": 589,
+   "path": "personal/sylvan_ridgeway_589.jpg",
+   "sha256": "bb0f918ef362390e6b1a2a909a444b4fb949e7cf63382da6eae94ca09424b7d2",
+   "slug": "sylvan_ridgeway",
+   "named_identities": [
+    "Sylvan Ridgeway"
+   ],
+   "slice_tags": [
+    "sunglasses",
+    "profile",
+    "low_res"
+   ],
+   "slice_tags_derived": [],
+   "slice_tags_source": "operator_hand",
+   "detected_face_count": 10
+  },
+  {
+   "stratum": "recognition_core",
+   "media_id": 128,
+   "path": "personal/onyx_lantern_128.jpg",
+   "sha256": "2c7142131db0e979d6a0ff986a2ab8912981a2052f5ac6778fdc06d29a3887af",
+   "slug": "onyx_lantern",
+   "named_identities": [
+    "Onyx Lantern"
+   ],
+   "slice_tags": [
+    "sunglasses",
+    "profile"
+   ],
+   "slice_tags_derived": [
+    "profile"
+   ],
+   "slice_tags_source": "operator_hand",
+   "detected_face_count": 7
+  },
+  {
+   "stratum": "recognition_core",
+   "media_id": 323,
+   "path": "personal/sable_verity_323.jpg",
+   "sha256": "4308cf70957d1ec3bda5a8ec1e7b952a859f943184edc3d274de0f8861f401e6",
+   "slug": "sable_verity",
+   "named_identities": [
+    "Sable Verity"
+   ],
+   "slice_tags": [
+    "sunglasses",
+    "low_res"
+   ],
+   "slice_tags_derived": [
+    "profile"
+   ],
+   "slice_tags_source": "operator_hand",
+   "detected_face_count": 8
+  },
+  {
+   "stratum": "recognition_core",
+   "media_id": 587,
+   "path": "personal/sylvan_beacon_587.jpg",
+   "sha256": "519e38b61fef43c9c0986252d551dad15f1d1c1e40a64873060a6153b1883c11",
+   "slug": "sylvan_beacon",
+   "named_identities": [
+    "Sylvan Beacon"
+   ],
+   "slice_tags": [
+    "occlusion_other",
+    "profile"
+   ],
+   "slice_tags_derived": [
+    "profile"
+   ],
+   "slice_tags_source": "operator_hand",
+   "detected_face_count": 1
+  },
+  {
+   "stratum": "recognition_core",
+   "media_id": 267,
+   "path": "personal/sable_current_267.jpg",
+   "sha256": "b99220793d91e14536c376d7dce5648157e7372a752615d81d5c8755e9cc5844",
+   "slug": "sable_current",
+   "named_identities": [
+    "Sable Current"
+   ],
+   "slice_tags": [
+    "profile",
+    "blur"
+   ],
+   "slice_tags_derived": [
+    "profile"
+   ],
+   "slice_tags_source": "operator_hand",
+   "detected_face_count": 1
+  },
+  {
+   "stratum": "recognition_core",
+   "media_id": 293,
+   "path": "personal/cobalt_beacon_293.jpg",
+   "sha256": "e20a68d5a5cd86fc4ec678f5bda9d192b5ce3ec717016c3d1b7067ff3fa6d0b6",
+   "slug": "cobalt_beacon",
+   "named_identities": [
+    "Cobalt Beacon"
+   ],
+   "slice_tags": [
+    "occlusion_other",
+    "profile"
+   ],
+   "slice_tags_derived": [
+    "profile"
+   ],
+   "slice_tags_source": "operator_hand",
+   "detected_face_count": 1
+  },
+  {
+   "stratum": "recognition_core",
+   "media_id": 504,
+   "path": "personal/plumb_ferry_504.jpg",
+   "sha256": "f792802e58af57eb3c5f9b5b6c1ee05b708f1f0ac36bb7e93df2d371db945631",
+   "slug": "plumb_ferry",
+   "named_identities": [
+    "Plumb Ferry"
+   ],
+   "slice_tags": [
+    "occlusion_other",
+    "profile"
+   ],
+   "slice_tags_derived": [
+    "profile"
+   ],
+   "slice_tags_source": "operator_hand",
+   "detected_face_count": 1
+  },
+  {
+   "stratum": "recognition_core",
+   "media_id": 361,
+   "path": "personal/onyx_lantern_361.jpg",
+   "sha256": "1204b46cc2f00c0910931615a0cd3a6f2ce535e5c3e01bffee2483aefb7a7427",
+   "slug": "onyx_lantern",
+   "named_identities": [
+    "Onyx Lantern"
+   ],
+   "slice_tags": [
+    "low_res",
+    "blur"
+   ],
+   "slice_tags_derived": [],
+   "slice_tags_source": "operator_hand",
+   "detected_face_count": 6
+  },
+  {
+   "stratum": "recognition_core",
+   "media_id": 218,
+   "path": "personal/wicker_fathom_218.jpg",
+   "sha256": "4a7b51a7d5f7000ff0437a839b646355ca5232e5493f2936c6120e1abebfee41",
+   "slug": "wicker_fathom",
+   "named_identities": [
+    "Wicker Fathom"
+   ],
+   "slice_tags": [
+    "profile",
+    "blur"
+   ],
+   "slice_tags_derived": [],
+   "slice_tags_source": "operator_hand",
+   "detected_face_count": 6
+  },
+  {
+   "stratum": "recognition_core",
+   "media_id": 306,
+   "path": "personal/dappled_juniper_306.jpg",
+   "sha256": "824831b754f093d0bb711822deec0612e64fc1c7a8de488264ba534534061a8a",
+   "slug": "dappled_juniper",
+   "named_identities": [
+    "Dappled Juniper"
+   ],
+   "slice_tags": [
+    "occlusion_other",
+    "low_res"
+   ],
+   "slice_tags_derived": [],
+   "slice_tags_source": "operator_hand",
+   "detected_face_count": 3
+  },
+  {
+   "stratum": "recognition_core",
+   "media_id": 271,
+   "path": "personal/pewter_hollow_271.jpg",
+   "sha256": "a680fa294b92967faa23ac7fc38328a7b07e39786f8d5f9408bf946ef85568ea",
+   "slug": "pewter_hollow",
+   "named_identities": [
+    "Pewter Hollow"
+   ],
+   "slice_tags": [
+    "masked",
+    "profile"
+   ],
+   "slice_tags_derived": [],
+   "slice_tags_source": "operator_hand",
+   "detected_face_count": 0
+  },
+  {
+   "stratum": "recognition_core",
+   "media_id": 605,
+   "path": "personal/candid_orchard_605.png",
+   "sha256": "ad76ce2866655995536cf532b37fa2da5b473c49fc1c59b89b0ea5e59f777db9",
+   "slug": "candid_orchard",
+   "named_identities": [
+    "Candid Orchard"
+   ],
+   "slice_tags": [
+    "profile",
+    "blur"
+   ],
+   "slice_tags_derived": [],
+   "slice_tags_source": "operator_hand",
+   "detected_face_count": 2
+  },
+  {
+   "stratum": "recognition_core",
+   "media_id": 358,
+   "path": "personal/dappled_juniper_358.jpg",
+   "sha256": "0dc007ead650cf9941207d592b253230c48c677d0db1dfbdeab600907ee91179",
+   "slug": "dappled_juniper",
+   "named_identities": [
+    "Dappled Juniper"
+   ],
+   "slice_tags": [
+    "blur"
+   ],
+   "slice_tags_derived": [
+    "profile"
+   ],
+   "slice_tags_source": "operator_hand",
+   "detected_face_count": 3
+  },
+  {
+   "stratum": "recognition_core",
+   "media_id": 535,
+   "path": "personal/candid_orchard_535.jpg",
+   "sha256": "17fcf679bd3a04309711d7ddae3e27d76350b8851f758b00dc3b3cf2373d3477",
+   "slug": "candid_orchard",
+   "named_identities": [
+    "Candid Orchard"
+   ],
+   "slice_tags": [
+    "occlusion_other"
+   ],
+   "slice_tags_derived": [
+    "profile"
+   ],
+   "slice_tags_source": "operator_hand",
+   "detected_face_count": 2
+  },
+  {
+   "stratum": "recognition_core",
+   "media_id": 334,
+   "path": "personal/dappled_juniper_334.jpg",
+   "sha256": "39ec0c9e4658d1443bae1e41021824d3bca80c46d647588cf108969e23440969",
+   "slug": "dappled_juniper",
+   "named_identities": [
+    "Dappled Juniper"
+   ],
+   "slice_tags": [
+    "sunglasses"
+   ],
+   "slice_tags_derived": [
+    "profile"
+   ],
+   "slice_tags_source": "operator_hand",
+   "detected_face_count": 1
+  },
+  {
+   "stratum": "recognition_core",
+   "media_id": 94,
+   "path": "personal/gilded_cypress_94.jpg",
+   "sha256": "94ca060f60d3e5d5fc011a164cf62e9d7f61f30841d1dbaf6c7fdffbd5be513f",
+   "slug": "gilded_cypress",
+   "named_identities": [
+    "Gilded Cypress"
+   ],
+   "slice_tags": [
+    "occlusion_other"
+   ],
+   "slice_tags_derived": [
+    "profile"
+   ],
+   "slice_tags_source": "operator_hand",
+   "detected_face_count": 2
+  },
+  {
+   "stratum": "recognition_core",
+   "media_id": 494,
+   "path": "personal/sylvan_fathom_494.jpg",
+   "sha256": "64a340b35652db4278e5fb3579e5967f04c936d9f4d2a42d0b9db023755dbb04",
+   "slug": "sylvan_fathom",
+   "named_identities": [
+    "Sylvan Fathom"
+   ],
+   "slice_tags": [
+    "blur"
+   ],
+   "slice_tags_derived": [],
+   "slice_tags_source": "operator_hand",
+   "detected_face_count": 1
+  },
+  {
+   "stratum": "recognition_core",
+   "media_id": 398,
+   "path": "personal/muted_fathom_398.jpg",
+   "sha256": "77d2da6301ed9e67edbb5b11d901d994440108e853fd9f0c3393dec3c69a43f5",
+   "slug": "muted_fathom",
+   "named_identities": [
+    "Muted Fathom"
+   ],
+   "slice_tags": [
+    "sunglasses"
+   ],
+   "slice_tags_derived": [],
+   "slice_tags_source": "operator_hand",
+   "detected_face_count": 2
+  },
+  {
+   "stratum": "recognition_core",
+   "media_id": 270,
+   "path": "personal/pewter_hollow_270.jpg",
+   "sha256": "01a8d9f2046b893a4e5070a3ed58d2dc0d8a54e500f5403faba454d24aaaaaf1",
+   "slug": "pewter_hollow",
+   "named_identities": [
+    "Pewter Hollow"
+   ],
+   "slice_tags": [
+    "blur"
+   ],
+   "slice_tags_derived": [],
+   "slice_tags_source": "operator_hand",
+   "detected_face_count": 3
+  },
+  {
+   "stratum": "recognition_core",
+   "media_id": 140,
+   "path": "personal/sable_current_140.jpg",
+   "sha256": "03204724213e1cae7c5669da10a77d4e1168248e0fccbf432c9e689821c16aa0",
+   "slug": "sable_current",
+   "named_identities": [
+    "Sable Current"
+   ],
+   "slice_tags": [
+    "occlusion_other"
+   ],
+   "slice_tags_derived": [],
+   "slice_tags_source": "operator_hand",
+   "detected_face_count": 3
+  },
+  {
+   "stratum": "recognition_core",
+   "media_id": 387,
+   "path": "personal/ochre_ridgeway_387.jpeg",
+   "sha256": "0bcc7b211f2c4633b67a09c5272afaadf16a42aa825e9fb0d74beb9543a9a44e",
+   "slug": "ochre_ridgeway",
+   "named_identities": [
+    "Ochre Ridgeway"
+   ],
+   "slice_tags": [
+    "occlusion_other"
+   ],
+   "slice_tags_derived": [],
+   "slice_tags_source": "operator_hand",
+   "detected_face_count": 6
+  },
+  {
+   "stratum": "recognition_core",
+   "media_id": 254,
+   "path": "personal/wicker_fathom_254.jpg",
+   "sha256": "113b758992de19c47ea0c7d1729eee82d2b77f88cd8fc70abd52e3fa96c4051b",
+   "slug": "wicker_fathom",
+   "named_identities": [
+    "Wicker Fathom"
+   ],
+   "slice_tags": [
+    "blur"
+   ],
+   "slice_tags_derived": [],
+   "slice_tags_source": "operator_hand",
+   "detected_face_count": 6
+  },
+  {
+   "stratum": "recognition_core",
+   "media_id": 162,
+   "path": "personal/saffron_orchard_162.jpg",
+   "sha256": "37dba38a0722d82854eac4b48569a08504606e92f266e1be13bc51630d600f7b",
+   "slug": "saffron_orchard",
+   "named_identities": [
+    "Saffron Orchard"
+   ],
+   "slice_tags": [
+    "masked"
+   ],
+   "slice_tags_derived": [],
+   "slice_tags_source": "operator_hand",
+   "detected_face_count": 2
+  },
+  {
+   "stratum": "recognition_core",
+   "media_id": 532,
+   "path": "personal/tidal_bramble_532.jpg",
+   "sha256": "3850cf1ce602bda71bd35c5b4730d138755dc565a96f2c6485bc444bcca13931",
+   "slug": "tidal_bramble",
+   "named_identities": [
+    "Tidal Bramble"
+   ],
+   "slice_tags": [
+    "sunglasses"
+   ],
+   "slice_tags_derived": [],
+   "slice_tags_source": "operator_hand",
+   "detected_face_count": 1
+  },
+  {
+   "stratum": "recognition_core",
+   "media_id": 305,
+   "path": "personal/onyx_beacon_305.jpg",
+   "sha256": "508c4b78dd51a72162e84bf7be66cba66ed5bdf175db0d4929debf281cb83993",
+   "slug": "onyx_beacon",
+   "named_identities": [
+    "Onyx Beacon"
+   ],
+   "slice_tags": [
+    "sunglasses"
+   ],
+   "slice_tags_derived": [],
+   "slice_tags_source": "operator_hand",
+   "detected_face_count": 2
+  },
+  {
+   "stratum": "recognition_core",
+   "media_id": 536,
+   "path": "personal/indigo_ridgeway_536.jpg",
+   "sha256": "6084fb1eae3496db731aef58d3d99e7efec6e131e293d733801398961a4c9437",
+   "slug": "indigo_ridgeway",
+   "named_identities": [
+    "Indigo Ridgeway"
+   ],
+   "slice_tags": [
+    "masked"
+   ],
+   "slice_tags_derived": [],
+   "slice_tags_source": "operator_hand",
+   "detected_face_count": 1
+  },
+  {
+   "stratum": "recognition_core",
+   "media_id": 228,
+   "path": "personal/cobalt_beacon_228.jpg",
+   "sha256": "6e79f976dd4dabb47025f7a47135d2512b5dda47adb96f5a5ab38cb7ea742eec",
+   "slug": "cobalt_beacon",
+   "named_identities": [
+    "Cobalt Beacon"
+   ],
+   "slice_tags": [
+    "blur"
+   ],
+   "slice_tags_derived": [],
+   "slice_tags_source": "operator_hand",
+   "detected_face_count": 5
+  },
+  {
+   "stratum": "recognition_core",
+   "media_id": 214,
+   "path": "personal/russet_fathom_214.jpg",
+   "sha256": "81945a9c02a2871637d55b5be133469e7f142c88c85015d2ce1cd41ec77e7af5",
+   "slug": "russet_fathom",
+   "named_identities": [
+    "Russet Fathom"
+   ],
+   "slice_tags": [
+    "sunglasses"
+   ],
+   "slice_tags_derived": [],
+   "slice_tags_source": "operator_hand",
+   "detected_face_count": 2
+  },
+  {
+   "stratum": "recognition_core",
+   "media_id": 192,
+   "path": "personal/saffron_cypress_192.jpg",
+   "sha256": "8ba48555cd2bf8d100143d52f8020cbb68dea78a38d139921b62a10ad7c05409",
+   "slug": "saffron_cypress",
+   "named_identities": [
+    "Saffron Cypress"
+   ],
+   "slice_tags": [
+    "occlusion_other"
+   ],
+   "slice_tags_derived": [],
+   "slice_tags_source": "operator_hand",
+   "detected_face_count": 1
+  },
+  {
+   "stratum": "recognition_core",
+   "media_id": 226,
+   "path": "personal/cobalt_beacon_226.jpg",
+   "sha256": "9c620725fda1ea6229bcbb3ae5e19667bbf3fb2cd2016330bcf4576f152945ae",
+   "slug": "cobalt_beacon",
+   "named_identities": [
+    "Cobalt Beacon"
+   ],
+   "slice_tags": [
+    "blur"
+   ],
+   "slice_tags_derived": [],
+   "slice_tags_source": "operator_hand",
+   "detected_face_count": 2
+  },
+  {
+   "stratum": "recognition_core",
+   "media_id": 512,
+   "path": "personal/onyx_beacon_512.jpg",
+   "sha256": "9f7ee769165e8c4ed78afeb42607bbbd32d55f202660d5168a18f755ebffd19c",
+   "slug": "onyx_beacon",
+   "named_identities": [
+    "Onyx Beacon"
+   ],
+   "slice_tags": [
+    "masked"
+   ],
+   "slice_tags_derived": [],
+   "slice_tags_source": "operator_hand",
+   "detected_face_count": 3
+  },
+  {
+   "stratum": "recognition_core",
+   "media_id": 454,
+   "path": "personal/russet_lantern_454.jpg",
+   "sha256": "9fc0f7778d4e43dc92fd927ca7f991cc2a5a66212ac9525b10d39a6c3f96e671",
+   "slug": "russet_lantern",
+   "named_identities": [
+    "Russet Lantern"
+   ],
+   "slice_tags": [
+    "occlusion_other"
+   ],
+   "slice_tags_derived": [],
+   "slice_tags_source": "operator_hand",
+   "detected_face_count": 2
+  },
+  {
+   "stratum": "recognition_core",
+   "media_id": 422,
+   "path": "personal/russet_harbor_422.jpg",
+   "sha256": "a36eb20878e0c92c60e7fe5901cd270ad5b2fb3ec5f9ab0a127ca0b4e4f8a2d2",
+   "slug": "russet_harbor",
+   "named_identities": [
+    "Russet Harbor"
+   ],
+   "slice_tags": [
+    "occlusion_other"
+   ],
+   "slice_tags_derived": [],
+   "slice_tags_source": "operator_hand",
+   "detected_face_count": 2
+  },
+  {
+   "stratum": "recognition_core",
+   "media_id": 309,
+   "path": "personal/umber_willow_309.jpg",
+   "sha256": "b0920057d0453349a7ddfe8441d1fb6215b188371cc8627cce7e55d0c4d8c19a",
+   "slug": "umber_willow",
+   "named_identities": [
+    "Umber Willow"
+   ],
+   "slice_tags": [
+    "blur"
+   ],
+   "slice_tags_derived": [],
+   "slice_tags_source": "operator_hand",
+   "detected_face_count": 1
+  },
+  {
+   "stratum": "recognition_core",
+   "media_id": 237,
+   "path": "personal/onyx_lantern_237.jpeg",
+   "sha256": "c766baba74dc1e3c43e4c90b3445cdb4a299e1a55dc552ad6463af2d41a15576",
+   "slug": "onyx_lantern",
+   "named_identities": [
+    "Onyx Lantern"
+   ],
+   "slice_tags": [
+    "blur"
+   ],
+   "slice_tags_derived": [],
+   "slice_tags_source": "operator_hand",
+   "detected_face_count": 1
+  },
+  {
+   "stratum": "recognition_core",
+   "media_id": 178,
+   "path": "personal/saffron_orchard_178.jpg",
+   "sha256": "e4a4621ac270648e7a68acf5b1114fad82d512ef173e6da34e1f229bc2bd3438",
+   "slug": "saffron_orchard",
+   "named_identities": [
+    "Saffron Orchard"
+   ],
+   "slice_tags": [
+    "occlusion_other"
+   ],
+   "slice_tags_derived": [],
+   "slice_tags_source": "operator_hand",
+   "detected_face_count": 2
+  },
+  {
+   "stratum": "recognition_core",
+   "media_id": 455,
+   "path": "personal/russet_lantern_455.jpg",
+   "sha256": "eea47889d197da36169388e73bd09ebcb474708ff229921ac45c9924b56aa482",
+   "slug": "russet_lantern",
+   "named_identities": [
+    "Russet Lantern"
+   ],
+   "slice_tags": [
+    "blur"
+   ],
+   "slice_tags_derived": [],
+   "slice_tags_source": "operator_hand",
+   "detected_face_count": 1
+  },
+  {
+   "stratum": "recognition_core",
+   "media_id": 357,
+   "path": "personal/indigo_357.jpg",
+   "sha256": "0e004dfd80634add3e1fc9dd9f065aa05f6c63cc76370da8c2ef35c61442e70e",
+   "slug": "indigo_pennant",
+   "named_identities": [
+    "Indigo Pennant"
+   ],
+   "slice_tags": [
+    "profile",
+    "low_res"
+   ],
+   "slice_tags_derived": [
+    "profile"
+   ],
+   "slice_tags_source": "operator_hand",
+   "detected_face_count": 19
+  },
+  {
+   "stratum": "recognition_core",
+   "media_id": 284,
+   "path": "personal/ochre_ridgeway_284.jpg",
+   "sha256": "1217beaaeb1ccacc5de68019720cec9a3e0555d86d15ab9de6de5dfbd0f50d42",
+   "slug": "ochre_ridgeway",
+   "named_identities": [
+    "Ochre Ridgeway"
+   ],
+   "slice_tags": [
+    "profile",
+    "low_res"
+   ],
+   "slice_tags_derived": [],
+   "slice_tags_source": "operator_hand",
+   "detected_face_count": 4
+  },
+  {
+   "stratum": "recognition_core",
+   "media_id": 480,
+   "path": "personal/muted_current_480.jpg",
+   "sha256": "c2e0d5e0e3036e04936b28b3c564f9e61b7746eaeb18f47c18d618cf43740824",
+   "slug": "muted_current",
+   "named_identities": [
+    "Muted Current"
+   ],
+   "slice_tags": [
+    "profile",
+    "low_res"
+   ],
+   "slice_tags_derived": [],
+   "slice_tags_source": "operator_hand",
+   "detected_face_count": 13
+  },
+  {
+   "stratum": "recognition_core",
+   "media_id": 365,
+   "path": "personal/wicker_orchard_365.jpg",
+   "sha256": "07a658a7c7ff77c5c34a38d7f06c0b94d54106195f13007dd62edcb505490ac4",
+   "slug": "wicker_orchard",
+   "named_identities": [
+    "Wicker Orchard"
+   ],
+   "slice_tags": [
+    "profile"
+   ],
+   "slice_tags_derived": [
+    "profile"
+   ],
+   "slice_tags_source": "operator_hand",
+   "detected_face_count": 5
+  },
+  {
+   "stratum": "recognition_core",
+   "media_id": 549,
+   "path": "personal/saffron_orchard_549.jpg",
+   "sha256": "1a533f5b705690acc6376acbcdd155d2a56a21a9aff3cb953b629ec0af2a8dca",
+   "slug": "saffron_orchard",
+   "named_identities": [
+    "Saffron Orchard"
+   ],
+   "slice_tags": [
+    "profile"
+   ],
+   "slice_tags_derived": [
+    "profile"
+   ],
+   "slice_tags_source": "operator_hand",
+   "detected_face_count": 4
+  },
+  {
+   "stratum": "recognition_core",
+   "media_id": 336,
+   "path": "personal/wicker_orchard_336.jpg",
+   "sha256": "11b666287611756357c80df415ebf8b705b0fc7327864f93d4200db9cf2f6155",
+   "slug": "wicker_orchard",
+   "named_identities": [
+    "Wicker Orchard"
+   ],
+   "slice_tags": [
+    "profile"
+   ],
+   "slice_tags_derived": [
+    "profile"
+   ],
+   "slice_tags_source": "operator_hand",
+   "detected_face_count": 1
+  },
+  {
+   "stratum": "recognition_core",
+   "media_id": 533,
+   "path": "personal/tidal_bramble_533.jpg",
+   "sha256": "1526d20b00999ca05fb7307ce31e3ecf80852aabb873b54e2b3a23dfe9f11f2b",
+   "slug": "tidal_bramble",
+   "named_identities": [
+    "Tidal Bramble"
+   ],
+   "slice_tags": [
+    "profile"
+   ],
+   "slice_tags_derived": [
+    "profile"
+   ],
+   "slice_tags_source": "operator_hand",
+   "detected_face_count": 3
+  },
+  {
+   "stratum": "recognition_core",
+   "media_id": 456,
+   "path": "personal/vellum_falcon_456.jpeg",
+   "sha256": "249a154ba0089815389c5e4a70a7c4db7436578d4d676979ffbc3f0eaacb3762",
+   "slug": "vellum_falcon",
+   "named_identities": [
+    "Vellum Falcon"
+   ],
+   "slice_tags": [
+    "profile"
+   ],
+   "slice_tags_derived": [
+    "profile"
+   ],
+   "slice_tags_source": "operator_hand",
+   "detected_face_count": 1
+  },
+  {
+   "stratum": "recognition_core",
+   "media_id": 514,
+   "path": "personal/auburn_ridgeway_514.jpg",
+   "sha256": "334dc8a120afd9321d026c2f2951c2e99ef28db7a7e6e368c435225b24a62b0c",
+   "slug": "auburn_ridgeway",
+   "named_identities": [
+    "Auburn Ridgeway"
+   ],
+   "slice_tags": [
+    "profile"
+   ],
+   "slice_tags_derived": [
+    "profile"
+   ],
+   "slice_tags_source": "operator_hand",
+   "detected_face_count": 1
+  },
+  {
+   "stratum": "recognition_core",
+   "media_id": 294,
+   "path": "personal/flaxen_yarrow_294.jpg",
+   "sha256": "37b0e972e31efaaf422c3167deeb0db7b36b1cc0397e10a5435afdc1bd75e666",
+   "slug": "flaxen_yarrow",
+   "named_identities": [
+    "Flaxen Yarrow"
+   ],
+   "slice_tags": [
+    "profile"
+   ],
+   "slice_tags_derived": [
+    "profile"
+   ],
+   "slice_tags_source": "operator_hand",
+   "detected_face_count": 1
+  },
+  {
+   "stratum": "recognition_core",
+   "media_id": 416,
+   "path": "personal/hollow_pennant_416.jpg",
+   "sha256": "3931def03b1347027c3e43b61aec6f4f4f703df1fe17bd7aade483c0662439c2",
+   "slug": "hollow_pennant",
+   "named_identities": [
+    "Hollow Pennant"
+   ],
+   "slice_tags": [
+    "profile"
+   ],
+   "slice_tags_derived": [
+    "profile"
+   ],
+   "slice_tags_source": "operator_hand",
+   "detected_face_count": 2
+  },
+  {
+   "stratum": "recognition_core",
+   "media_id": 431,
+   "path": "personal/candid_ridgeway_431.jpg",
+   "sha256": "4bea0a04d04fbc37ecb7ef3173201d22c3a32dd48dad3dcf81b6187fce9d6690",
+   "slug": "candid_ridgeway",
+   "named_identities": [
+    "Candid Ridgeway"
+   ],
+   "slice_tags": [
+    "profile"
+   ],
+   "slice_tags_derived": [
+    "profile"
+   ],
+   "slice_tags_source": "operator_hand",
+   "detected_face_count": 1
+  },
+  {
+   "stratum": "recognition_core",
+   "media_id": 190,
+   "path": "personal/saffron_cypress_190.jpg",
+   "sha256": "6a0a013bbce47bd06165d18e98d9b7745dd92287a578925cf9e76123853cffa6",
+   "slug": "saffron_cypress",
+   "named_identities": [
+    "Saffron Cypress"
+   ],
+   "slice_tags": [
+    "profile"
+   ],
+   "slice_tags_derived": [
+    "profile"
+   ],
+   "slice_tags_source": "operator_hand",
+   "detected_face_count": 1
+  },
+  {
+   "stratum": "recognition_core",
+   "media_id": 278,
+   "path": "personal/brisk_compass_278.jpeg",
+   "sha256": "6bdadd7b28781114806d25ee780047546cfc08b4b6797018a8a4e83fba44c998",
+   "slug": "brisk_compass",
+   "named_identities": [
+    "Brisk Compass"
+   ],
+   "slice_tags": [
+    "profile"
+   ],
+   "slice_tags_derived": [
+    "profile"
+   ],
+   "slice_tags_source": "operator_hand",
+   "detected_face_count": 1
+  },
+  {
+   "stratum": "recognition_core",
+   "media_id": 339,
+   "path": "personal/citrine_fathom_339.jpg",
+   "sha256": "7f78f3641436ea0a5ca127f41938260d6a2d5299b28d1f9e4476af11c9520044",
+   "slug": "citrine_fathom",
+   "named_identities": [
+    "Citrine Fathom"
+   ],
+   "slice_tags": [
+    "profile"
+   ],
+   "slice_tags_derived": [
+    "profile"
+   ],
+   "slice_tags_source": "operator_hand",
+   "detected_face_count": 1
+  },
+  {
+   "stratum": "recognition_core",
+   "media_id": 460,
+   "path": "personal/candid_yarrow_460.jpg",
+   "sha256": "b01e04eb5bfca9de14e873ecf3a9f5ec6aa2abe32d375662deac9a97ccb78ef4",
+   "slug": "candid_yarrow",
+   "named_identities": [
+    "Candid Yarrow"
+   ],
+   "slice_tags": [
+    "profile"
+   ],
+   "slice_tags_derived": [
+    "profile"
+   ],
+   "slice_tags_source": "operator_hand",
+   "detected_face_count": 1
+  },
+  {
+   "stratum": "recognition_core",
+   "media_id": 621,
+   "path": "personal/ochre_harbor_621.jpg",
+   "sha256": "d6e6a344e0e076a60e4c8fa3982735e62d50e9af70cf77733b2bf22f01e012b3",
+   "slug": "ochre_harbor",
+   "named_identities": [
+    "Ochre Harbor"
+   ],
+   "slice_tags": [
+    "profile"
+   ],
+   "slice_tags_derived": [
+    "profile"
+   ],
+   "slice_tags_source": "operator_hand",
+   "detected_face_count": 1
+  },
+  {
+   "stratum": "recognition_core",
+   "media_id": 515,
+   "path": "personal/auburn_ridgeway_515.jpg",
+   "sha256": "daba85b8ad1d9e26a2c399736a227f2491a104e169fba631cb8a710abda05528",
+   "slug": "auburn_ridgeway",
+   "named_identities": [
+    "Auburn Ridgeway"
+   ],
+   "slice_tags": [
+    "profile"
+   ],
+   "slice_tags_derived": [
+    "profile"
+   ],
+   "slice_tags_source": "operator_hand",
+   "detected_face_count": 1
+  },
+  {
+   "stratum": "recognition_core",
+   "media_id": 518,
+   "path": "personal/muted_hollow_518.jpg",
+   "sha256": "de317a9ea775d00b46030f1e9b238a8dfaa0845a5b355879143b440f57c6959a",
+   "slug": "muted_hollow",
+   "named_identities": [
+    "Muted Hollow"
+   ],
+   "slice_tags": [
+    "profile"
+   ],
+   "slice_tags_derived": [
+    "profile"
+   ],
+   "slice_tags_source": "operator_hand",
+   "detected_face_count": 2
+  },
+  {
+   "stratum": "recognition_core",
+   "media_id": 383,
+   "path": "personal/muted_fathom_383.jpg",
+   "sha256": "e92769de370b6a20c4cb7d8c1fe587e235ae21cf4ab0664ad065719bc4aae8cd",
+   "slug": "muted_fathom",
+   "named_identities": [
+    "Muted Fathom"
+   ],
+   "slice_tags": [
+    "profile"
+   ],
+   "slice_tags_derived": [
+    "profile"
+   ],
+   "slice_tags_source": "operator_hand",
+   "detected_face_count": 3
+  },
+  {
+   "stratum": "recognition_core",
+   "media_id": 492,
+   "path": "personal/sylvan_fathom_492.jpg",
+   "sha256": "cd9569cdc72f86d7ac715e03f5645ac828009fd2827e64669c0cfcfd9aac27ba",
+   "slug": "sylvan_fathom",
+   "named_identities": [
+    "Sylvan Fathom"
+   ],
+   "slice_tags": [
+    "low_res"
+   ],
+   "slice_tags_derived": [],
+   "slice_tags_source": "operator_hand",
+   "detected_face_count": 1
+  },
+  {
+   "stratum": "recognition_core",
+   "media_id": 62,
+   "path": "personal/hollow_pennant_62.jpg",
+   "sha256": "e3182846eb6bf0918b3d632cf03c04eccab522e973447715b1ab64ff4648a5aa",
+   "slug": "hollow_pennant",
+   "named_identities": [
+    "Hollow Pennant"
+   ],
+   "slice_tags": [
+    "low_res"
+   ],
+   "slice_tags_derived": [],
+   "slice_tags_source": "operator_hand",
+   "detected_face_count": 2
+  },
+  {
+   "stratum": "recognition_core",
+   "media_id": 227,
+   "path": "personal/brisk_compass_227.jpeg",
+   "sha256": "ee69be85115d2cb5a9b8eaae1d62925891e36473821dec04bff7f88a1b64d97d",
+   "slug": "brisk_compass",
+   "named_identities": [
+    "Brisk Compass"
+   ],
+   "slice_tags": [
+    "low_res"
+   ],
+   "slice_tags_derived": [],
+   "slice_tags_source": "operator_hand",
+   "detected_face_count": 24
+  },
+  {
+   "stratum": "recognition_core",
+   "media_id": 198,
+   "path": "personal/russet_fathom_198.jpg",
+   "sha256": "f7b9afaca6ba580bc51e288bae8aeea3e93c47cee580d9299bfa2f1b1911e10d",
+   "slug": "russet_fathom",
+   "named_identities": [
+    "Russet Fathom"
+   ],
+   "slice_tags": [
+    "profile"
+   ],
+   "slice_tags_derived": [],
+   "slice_tags_source": "operator_hand",
+   "detected_face_count": 6
+  },
+  {
+   "stratum": "recognition_core",
+   "media_id": 283,
+   "path": "personal/ochre_ridgeway_283.jpg",
+   "sha256": "a4d3d4f30a0e3a67b20d7153bd8f5951050480955775532c5e37021a8c5a03db",
+   "slug": "ochre_ridgeway",
+   "named_identities": [
+    "Ochre Ridgeway"
+   ],
+   "slice_tags": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
+   "slice_tags_source": null,
+   "detected_face_count": 2
+  },
+  {
+   "stratum": "recognition_core",
+   "media_id": 367,
+   "path": "personal/onyx_beacon_367.jpg",
+   "sha256": "01dec6f59d3fae070f8ba6b00c526fa6e603e97b2e15067e742e632e21a7db0c",
+   "slug": "onyx_beacon",
+   "named_identities": [
+    "Onyx Beacon"
+   ],
+   "slice_tags": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
+   "slice_tags_source": "operator_hand",
+   "detected_face_count": 7
+  },
+  {
+   "stratum": "recognition_core",
+   "media_id": 519,
+   "path": "personal/ochre_willow_519.jpg",
+   "sha256": "1163a5c746e5da7031ad82dfb19a6e89c5a51fd21077dbf80bbe945e6dd7e9f5",
+   "slug": "ochre_willow",
+   "named_identities": [
+    "Ochre Willow"
+   ],
+   "slice_tags": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
+   "slice_tags_source": null,
+   "detected_face_count": 2
+  },
+  {
+   "stratum": "recognition_core",
+   "media_id": 274,
+   "path": "personal/umber_willow_274.jpg",
+   "sha256": "1a5855af986b73075ca46c8b9e7a457e9b53d37f01c068d7850d35da0d837a12",
+   "slug": "umber_willow",
+   "named_identities": [
+    "Umber Willow"
+   ],
+   "slice_tags": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
+   "slice_tags_source": null,
+   "detected_face_count": 1
+  },
+  {
+   "stratum": "recognition_core",
+   "media_id": 570,
+   "path": "personal/tidal_rookery_570.jpg",
+   "sha256": "1d2630c3da943c9ef909206c957479c6ddabbb74fcbe62f9749e1272a9996047",
+   "slug": "tidal_rookery",
+   "named_identities": [
+    "Tidal Rookery"
+   ],
+   "slice_tags": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
+   "slice_tags_source": null,
+   "detected_face_count": 1
+  },
+  {
+   "stratum": "recognition_core",
+   "media_id": 262,
+   "path": "personal/muted_yarrow_262.jpg",
+   "sha256": "1d43000080109c959fa14bbbfa4bd329274fb245788cd6b4a5d81dcd060dd7f0",
+   "slug": "muted_yarrow",
+   "named_identities": [
+    "Muted Yarrow"
+   ],
+   "slice_tags": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
+   "slice_tags_source": null,
+   "detected_face_count": 2
+  },
+  {
+   "stratum": "recognition_core",
+   "media_id": 585,
+   "path": "personal/sylvan_beacon_585.jpg",
+   "sha256": "31177d98a9b2582fc01b6272f761bbe08fd20bb676b47318872de6cf00dd919a",
+   "slug": "sylvan_beacon",
+   "named_identities": [
+    "Sylvan Beacon"
+   ],
+   "slice_tags": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
+   "slice_tags_source": "operator_hand",
+   "detected_face_count": 1
+  },
+  {
+   "stratum": "recognition_core",
+   "media_id": 634,
+   "path": "personal/onyx_harbor_634.jpg",
+   "sha256": "3885fecf969aae0f113f1a58f2a49d5310b996391f23c41da78f882a697702b7",
+   "slug": "onyx_harbor",
+   "named_identities": [
+    "Onyx Harbor"
+   ],
+   "slice_tags": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
+   "slice_tags_source": null,
+   "detected_face_count": 5
+  },
+  {
+   "stratum": "recognition_core",
+   "media_id": 576,
+   "path": "personal/muted_yarrow_576.jpg",
+   "sha256": "39ccc3e8e92c0f4413549cb2d312c44deaf705443c6704e8b45d78821bbc416d",
+   "slug": "muted_yarrow",
+   "named_identities": [
+    "Muted Yarrow"
+   ],
+   "slice_tags": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
+   "slice_tags_source": null,
+   "detected_face_count": 2
+  },
+  {
+   "stratum": "recognition_core",
+   "media_id": 409,
+   "path": "personal/sylvan_ridgeway_409.jpg",
+   "sha256": "3c84e827ea55ed3bfb346d47659ac0dc9941b012b5136451b2e03df13cfbcb54",
+   "slug": "sylvan_ridgeway",
+   "named_identities": [
+    "Sylvan Ridgeway"
+   ],
+   "slice_tags": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
+   "slice_tags_source": null,
+   "detected_face_count": 3
+  },
+  {
+   "stratum": "recognition_core",
+   "media_id": 433,
+   "path": "personal/brisk_current_433.jpg",
+   "sha256": "591d14893c37e863d65330c1f6cad9c6e8d4c5cb9eea209d1dc33b2a99733b24",
+   "slug": "brisk_current",
+   "named_identities": [
+    "Brisk Current"
+   ],
+   "slice_tags": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
+   "slice_tags_source": null,
+   "detected_face_count": 7
+  },
+  {
+   "stratum": "recognition_core",
+   "media_id": 601,
+   "path": "personal/flaxen_yarrow_601.png",
+   "sha256": "5d97ced04ec3aa5ff99b1c0214ccc765f91202d7de20b982b71d3b5a8e59e2e9",
+   "slug": "flaxen_yarrow",
+   "named_identities": [
+    "Flaxen Yarrow"
+   ],
+   "slice_tags": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
+   "slice_tags_source": null,
+   "detected_face_count": 3
+  },
+  {
+   "stratum": "recognition_core",
+   "media_id": 193,
+   "path": "personal/saffron_cypress_193.jpg",
+   "sha256": "60708711d00b75e2e44049f34faeec7d561c7315e1aed1fa9be57ca6e67b3739",
+   "slug": "saffron_cypress",
+   "named_identities": [
+    "Saffron Cypress"
+   ],
+   "slice_tags": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
+   "slice_tags_source": null,
+   "detected_face_count": 1
+  },
+  {
+   "stratum": "recognition_core",
+   "media_id": 640,
+   "path": "personal/onyx_harbor_640.jpg",
+   "sha256": "66fa00ae8d5531a9234ab928749db1c816f8efeaf4ef2e1875bc264c62dbad99",
+   "slug": "onyx_harbor",
+   "named_identities": [
+    "Onyx Harbor"
+   ],
+   "slice_tags": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
+   "slice_tags_source": null,
+   "detected_face_count": 9
+  },
+  {
+   "stratum": "recognition_core",
+   "media_id": 314,
+   "path": "personal/citrine_bramble_314.jpg",
+   "sha256": "67a8630b1dab45381dd9e08a95177a8e42b224ea86b587f189c5ebbfedfd97f5",
+   "slug": "citrine_bramble",
+   "named_identities": [
+    "Citrine Bramble"
+   ],
+   "slice_tags": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
+   "slice_tags_source": null,
+   "detected_face_count": 1
+  },
+  {
+   "stratum": "recognition_core",
+   "media_id": 77,
+   "path": "personal/auburn_current_77.jpg",
+   "sha256": "6cc86f781777a8e0f756eba3dae317fb4d92bb1e0cbc282949f6834e9e42df0b",
+   "slug": "auburn_current",
+   "named_identities": [
+    "Auburn Current"
+   ],
+   "slice_tags": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
+   "slice_tags_source": null,
+   "detected_face_count": 2
+  },
+  {
+   "stratum": "recognition_core",
+   "media_id": 349,
+   "path": "personal/candid_lantern_349.jpg",
+   "sha256": "7bcc5c184c3c27e50e67306303c6cd02f73a35d397990e775436c356acffd238",
+   "slug": "candid_lantern",
+   "named_identities": [
+    "Candid Lantern"
+   ],
+   "slice_tags": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
+   "slice_tags_source": null,
+   "detected_face_count": 1
+  },
+  {
+   "stratum": "recognition_core",
+   "media_id": 526,
+   "path": "personal/wicker_marsh_526.jpg",
+   "sha256": "810b22fd64fbca4905f3d964e16f711751e4515a540ad9634d17999a0bd0fa84",
+   "slug": "wicker_marsh",
+   "named_identities": [
+    "Wicker Marsh"
+   ],
+   "slice_tags": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
+   "slice_tags_source": null,
+   "detected_face_count": 3
+  },
+  {
+   "stratum": "recognition_core",
+   "media_id": 599,
+   "path": "personal/plumb_verity_599.jpg",
+   "sha256": "822e846dc8658ad2e59c69ec6167213e52469d44052c4a3ac5ca6b167cde0c27",
+   "slug": "plumb_verity",
+   "named_identities": [
+    "Plumb Verity"
+   ],
+   "slice_tags": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
+   "slice_tags_source": null,
+   "detected_face_count": 2
+  },
+  {
+   "stratum": "recognition_core",
+   "media_id": 547,
+   "path": "personal/brisk_rookery_547.jpg",
+   "sha256": "88cc82b9ae50e081e04dd6b8a32b2191511adb8297abebad5a45ca1361f72374",
+   "slug": "brisk_rookery",
+   "named_identities": [
+    "Brisk Rookery"
+   ],
+   "slice_tags": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
+   "slice_tags_source": null,
+   "detected_face_count": 5
+  },
+  {
+   "stratum": "recognition_core",
+   "media_id": 242,
+   "path": "personal/umber_compass_242.jpeg",
+   "sha256": "8d1a3b8bad74e845061a4fa0dbdd670a5f72a30a842be6d92d57e4104d2ba38d",
+   "slug": "umber_compass",
+   "named_identities": [
+    "Umber Compass"
+   ],
+   "slice_tags": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
+   "slice_tags_source": null,
+   "detected_face_count": 1
+  },
+  {
+   "stratum": "recognition_core",
+   "media_id": 402,
+   "path": "personal/saffron_beacon_402.jpg",
+   "sha256": "916700495f49e823a9aaba23cc08e2ecf6810a898205e7bd134a6b21885284dc",
+   "slug": "saffron_beacon",
+   "named_identities": [
+    "Saffron Beacon"
+   ],
+   "slice_tags": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
+   "slice_tags_source": null,
+   "detected_face_count": 9
+  },
+  {
+   "stratum": "recognition_core",
+   "media_id": 506,
+   "path": "personal/plumb_ferry_506.jpg",
+   "sha256": "97467bc7af47e42d752c86604eddea550e507724aacd61d5ec12e9164df1a95f",
+   "slug": "plumb_ferry",
+   "named_identities": [
+    "Plumb Ferry"
+   ],
+   "slice_tags": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
+   "slice_tags_source": null,
+   "detected_face_count": 1
+  },
+  {
+   "stratum": "recognition_core",
+   "media_id": 580,
+   "path": "personal/candid_lantern_580.jpeg",
+   "sha256": "a2d1c5e9faee0a2f2217a80a05448d3798c0fd294df3b964daecf9367198e01c",
+   "slug": "candid_lantern",
+   "named_identities": [
+    "Candid Lantern"
+   ],
+   "slice_tags": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
+   "slice_tags_source": null,
+   "detected_face_count": 1
+  },
+  {
+   "stratum": "recognition_core",
+   "media_id": 249,
+   "path": "personal/onyx_marsh_249.jpg",
+   "sha256": "a897e073610795a5b2e7f131c13247695ae695fa9121666c54b8198df2574c81",
+   "slug": "onyx_marsh",
+   "named_identities": [
+    "Onyx Marsh"
+   ],
+   "slice_tags": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
+   "slice_tags_source": null,
+   "detected_face_count": 1
+  },
+  {
+   "stratum": "recognition_core",
+   "media_id": 73,
+   "path": "personal/auburn_current_73.jpg",
+   "sha256": "b3ff7c2004f0f4e5c1351dcd85abc3485ef42c7e7f58f96abe0bde6e497a2316",
+   "slug": "auburn_current",
+   "named_identities": [
+    "Auburn Current"
+   ],
+   "slice_tags": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
+   "slice_tags_source": "operator_hand",
+   "detected_face_count": 2
+  },
+  {
+   "stratum": "recognition_core",
+   "media_id": 636,
+   "path": "personal/linen_kestrel_636.jpg",
+   "sha256": "d6b7e7557532d14b52f95184ba0c1011d9219ca788456ab3f23399ed3b8e7712",
+   "slug": "linen_kestrel",
+   "named_identities": [
+    "Linen Kestrel"
+   ],
+   "slice_tags": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
+   "slice_tags_source": null,
+   "detected_face_count": 2
+  },
+  {
+   "stratum": "recognition_core",
+   "media_id": 537,
+   "path": "personal/pewter_ridgeway_537.jpg",
+   "sha256": "e1f3b89070c95831310aabde77bd8ea3be9f961f9e96ea9af6e0a2e6b0ba5e94",
+   "slug": "burnished_ridgeway",
+   "named_identities": [
+    "Burnished Ridgeway"
+   ],
+   "slice_tags": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
+   "slice_tags_source": null,
+   "detected_face_count": 1
+  },
+  {
+   "stratum": "recognition_core",
+   "media_id": 561,
+   "path": "personal/citrine_juniper_561.jpg",
+   "sha256": "e61ddf4b2c885172677e504e97741bc6a5971b56d1f3598cbfcaf64f8f327e3d",
+   "slug": "citrine_juniper",
+   "named_identities": [
+    "Citrine Juniper"
+   ],
+   "slice_tags": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
+   "slice_tags_source": null,
+   "detected_face_count": 6
+  },
+  {
+   "stratum": "recognition_core",
+   "media_id": 581,
+   "path": "personal/candid_lantern_581.jpg",
+   "sha256": "efe63793ead39af92971e215ec4844fe22300046a210ba96d01e66c42f9b43d4",
+   "slug": "candid_lantern",
+   "named_identities": [
+    "Candid Lantern"
+   ],
+   "slice_tags": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
+   "slice_tags_source": null,
+   "detected_face_count": 3
+  },
+  {
+   "stratum": "recognition_core",
+   "media_id": 369,
+   "path": "personal/plumb_tanner_369.jpg",
+   "sha256": "07b538e3823e75b26be96a8458b533d8c6ddbcd4fbb32254046e182dd53d662b",
+   "slug": "plumb_tanner",
+   "named_identities": [
+    "Plumb Tanner"
+   ],
+   "slice_tags": [],
+   "slice_tags_derived": [],
+   "slice_tags_source": null,
+   "detected_face_count": 1
+  },
+  {
+   "stratum": "multi_face",
+   "media_id": 256,
+   "path": "personal/sylvan_orchard_256.jpg",
+   "sha256": "757a70a73a78c6fa9ddf67d3c935119217d01f1abb254591733bb25a6136b33f",
+   "slug": "sylvan_orchard",
+   "named_identities": [
+    "Sylvan Orchard"
+   ],
+   "slice_tags": [
+    "profile",
+    "blur",
+    "occlusion_other"
+   ],
+   "slice_tags_derived": [],
+   "slice_tags_source": "operator_hand",
+   "detected_face_count": 16
+  },
+  {
+   "stratum": "multi_face",
+   "media_id": 429,
+   "path": "personal/candid_ridgeway_429.jpg",
+   "sha256": "584d0d250bfc83a7e9a6b484a5e5ca29f9e450902d056db17a1d520a54cddfba",
+   "slug": "candid_ridgeway",
+   "named_identities": [
+    "Candid Ridgeway"
+   ],
+   "slice_tags": [
+    "occlusion_other"
+   ],
+   "slice_tags_derived": [
+    "profile"
+   ],
+   "slice_tags_source": "operator_hand",
+   "detected_face_count": 11
+  },
+  {
+   "stratum": "multi_face",
+   "media_id": 415,
+   "path": "personal/hollow_pennant_415.jpg",
+   "sha256": "8e056676635c1f9766eecbbcafd2048b628054cf33adf30628033d1b7c8cefba",
+   "slug": "hollow_pennant",
+   "named_identities": [
+    "Hollow Pennant"
+   ],
+   "slice_tags": [
+    "blur"
+   ],
+   "slice_tags_derived": [
+    "profile"
+   ],
+   "slice_tags_source": "operator_hand",
+   "detected_face_count": 4
+  },
+  {
+   "stratum": "multi_face",
+   "media_id": 93,
+   "path": "personal/gilded_cypress_93.jpg",
+   "sha256": "3d54a9faa7a341b2807a50de361c83e491502625c1a076e3aa53cb7c37d9a1ab",
+   "slug": "gilded_cypress",
+   "named_identities": [
+    "Gilded Cypress",
+    "Indigo Pennant"
+   ],
+   "slice_tags": [
+    "sunglasses"
+   ],
+   "slice_tags_derived": [],
+   "slice_tags_source": "operator_hand",
+   "detected_face_count": 3
+  },
+  {
+   "stratum": "multi_face",
+   "media_id": 201,
+   "path": "personal/russet_fathom_201.jpg",
+   "sha256": "6c38cde5015f31e4ab1e753ebd570fd3c387052092f7695c099662a7dd58c7ee",
+   "slug": "russet_fathom",
+   "named_identities": [
+    "Russet Fathom",
+    "Muted Current",
+    "Indigo Pennant"
+   ],
+   "slice_tags": [
+    "occlusion_other"
+   ],
+   "slice_tags_derived": [],
+   "slice_tags_source": "operator_hand",
+   "detected_face_count": 4
+  },
+  {
+   "stratum": "multi_face",
+   "media_id": 407,
+   "path": "personal/sylvan_beacon_407.jpeg",
+   "sha256": "c009ebfc3edaac9c340749a2c9403a13395a37c6f407a994e39fd8da7a71e57f",
+   "slug": "sylvan_beacon",
+   "named_identities": [
+    "Sylvan Beacon"
+   ],
+   "slice_tags": [
+    "blur"
+   ],
+   "slice_tags_derived": [],
+   "slice_tags_source": "operator_hand",
+   "detected_face_count": 4
+  },
+  {
+   "stratum": "multi_face",
+   "media_id": 368,
+   "path": "personal/citrine_bramble_368.jpg",
+   "sha256": "039f6ba3758be7ccfdb28b737d0786f3b3241dd81c2a50336033d6214e6334ab",
+   "slug": "citrine_bramble",
+   "named_identities": [
+    "Citrine Bramble"
+   ],
+   "slice_tags": [
+    "profile",
+    "low_res"
+   ],
+   "slice_tags_derived": [],
+   "slice_tags_source": "operator_hand",
+   "detected_face_count": 8
+  },
+  {
+   "stratum": "multi_face",
+   "media_id": 251,
+   "path": "personal/muted_yarrow_251.jpg",
+   "sha256": "4df92edf5542bd065fb337abf759f5ff7f591a97e990ea7f199237e933982bf8",
+   "slug": "muted_yarrow",
+   "named_identities": [
+    "Onyx Marsh",
+    "Muted Yarrow"
+   ],
+   "slice_tags": [
+    "profile",
+    "low_res"
+   ],
+   "slice_tags_derived": [],
+   "slice_tags_source": "operator_hand",
+   "detected_face_count": 69
+  },
+  {
+   "stratum": "multi_face",
+   "media_id": 220,
+   "path": "personal/muted_fathom_220.jpg",
+   "sha256": "6ab9f2803b32a02f1038890384f6d7d6404737143eb62728972aa092847212f1",
+   "slug": "muted_fathom",
+   "named_identities": [
+    "Muted Fathom",
+    "Auburn Hollow"
+   ],
+   "slice_tags": [
+    "profile",
+    "low_res"
+   ],
+   "slice_tags_derived": [],
+   "slice_tags_source": "operator_hand",
+   "detected_face_count": 6
+  },
+  {
+   "stratum": "multi_face",
+   "media_id": 211,
+   "path": "personal/sylvan_orchard_211.jpg",
+   "sha256": "0647f5eb8254309315487631a31a311272c5d0abfd4e4b2661a4543692cef492",
+   "slug": "sylvan_orchard",
+   "named_identities": [
+    "Sylvan Orchard"
+   ],
+   "slice_tags": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
+   "slice_tags_source": null,
+   "detected_face_count": 4
+  },
+  {
+   "stratum": "multi_face",
+   "media_id": 612,
+   "path": "personal/candid_orchard_612.jpg",
+   "sha256": "0ac2450ad0cbbcf8526f090b9fa9c699e6380e2bf3ec207db74b21d52843392d",
+   "slug": "candid_orchard",
+   "named_identities": [
+    "Candid Orchard",
+    "Verdant Beacon"
+   ],
+   "slice_tags": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
+   "slice_tags_source": null,
+   "detected_face_count": 4
+  },
+  {
+   "stratum": "multi_face",
+   "media_id": 210,
+   "path": "personal/sylvan_orchard_210.jpg",
+   "sha256": "220a5416e16a17a9e3c46c7655e33a5f44077db427867909216088e6288a4b2c",
+   "slug": "sylvan_orchard",
+   "named_identities": [
+    "Sylvan Orchard"
+   ],
+   "slice_tags": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
+   "slice_tags_source": null,
+   "detected_face_count": 4
+  },
+  {
+   "stratum": "multi_face",
+   "media_id": 602,
+   "path": "personal/flaxen_yarrow_602.png",
+   "sha256": "3007b8ef8bb5581b31b761094bb4f52749917394116666884b128e86ac6222c2",
+   "slug": "flaxen_yarrow",
+   "named_identities": [
+    "Indigo Pennant",
+    "Flaxen Yarrow"
+   ],
+   "slice_tags": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
+   "slice_tags_source": null,
+   "detected_face_count": 3
+  },
+  {
+   "stratum": "multi_face",
+   "media_id": 528,
+   "path": "personal/auburn_current_528.png",
+   "sha256": "32cdf62da9a6f06fdb2d8dcb1fec5e837643ee56414261431c332334686e9a3a",
+   "slug": "auburn_current",
+   "named_identities": [
+    "Auburn Current"
+   ],
+   "slice_tags": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
+   "slice_tags_source": null,
+   "detected_face_count": 3
+  },
+  {
+   "stratum": "multi_face",
+   "media_id": 353,
+   "path": "personal/pewter_hollow_353.jpg",
+   "sha256": "782a9faf8e8b5100d6407d15d8ee162abd7707a246bb1a69dd825dbc6402bd22",
+   "slug": "pewter_hollow",
+   "named_identities": [
+    "Pewter Hollow",
+    "Tidal Quarry"
+   ],
+   "slice_tags": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
+   "slice_tags_source": null,
+   "detected_face_count": 2
+  },
+  {
+   "stratum": "multi_face",
+   "media_id": 525,
+   "path": "personal/wicker_marsh_525.jpg",
+   "sha256": "98581ec38abceab51a6f4e2e2ac3b1e841fd749aec0287b3137a8e5be8760b71",
+   "slug": "wicker_marsh",
+   "named_identities": [
+    "Wicker Marsh",
+    "Indigo Pennant"
+   ],
+   "slice_tags": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
+   "slice_tags_source": null,
+   "detected_face_count": 3
+  },
+  {
+   "stratum": "multi_face",
+   "media_id": 154,
+   "path": "personal/slate_willow_154.jpg",
+   "sha256": "cade8067430b4778e6ec007f93db8dfd217e368c17ed6e7017bdc539daa6aba9",
+   "slug": "slate_willow",
+   "named_identities": [
+    "Citrine Bramble",
+    "Slate Willow",
+    "Plumb Tanner"
+   ],
+   "slice_tags": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
+   "slice_tags_source": "operator_hand",
+   "detected_face_count": 3
+  },
+  {
+   "stratum": "multi_face",
+   "media_id": 311,
+   "path": "personal/slate_willow_311.jpg",
+   "sha256": "db5ae2c31519f14968e4820e7685cc60c00b66103ba4c728f76178195afd6a2a",
+   "slug": "slate_willow",
+   "named_identities": [
+    "Slate Willow"
+   ],
+   "slice_tags": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
+   "slice_tags_source": null,
+   "detected_face_count": 9
+  },
+  {
+   "stratum": "multi_face",
+   "media_id": 266,
+   "path": "personal/sable_current_266.jpeg",
+   "sha256": "fc51b4a96b4e243869d678cfbbb91bacceea34d5a6becf69ce05e6ce14afa24f",
+   "slug": "sable_current",
+   "named_identities": [
+    "Sable Current"
+   ],
+   "slice_tags": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
+   "slice_tags_source": null,
+   "detected_face_count": 2
+  },
+  {
+   "stratum": "multi_face",
+   "media_id": 172,
+   "path": "personal/russet_ridgeway_172.jpg",
+   "sha256": "849ddad34de8f0b5a9348a071eb3e3c3efa37a8391ee8a6cb179cc322d77a5e6",
+   "slug": "russet_ridgeway",
+   "named_identities": [
+    "Russet Ridgeway",
+    "Sable Verity"
+   ],
+   "slice_tags": [],
+   "slice_tags_derived": [],
+   "slice_tags_source": null,
+   "detected_face_count": 4
+  },
+  {
+   "stratum": "distractor",
+   "media_id": 633,
+   "path": "personal/unlabeled_0633.jpg",
+   "sha256": "261441be356c31fa069bf9785eff0c370a48926a6fbbbdffeb8f215240bd1bbb",
+   "slug": "unlabeled",
+   "named_identities": [],
+   "slice_tags": [
+    "blur"
+   ],
+   "slice_tags_derived": [],
+   "slice_tags_source": "operator_hand",
+   "detected_face_count": 1
+  },
+  {
+   "stratum": "distractor",
+   "media_id": 603,
+   "path": "personal/unlabeled_0603.jpg",
+   "sha256": "fcc39ba3d1b9d7e531725990ce0db37316c1ef98436a61c3885d184b84ea3f27",
+   "slug": "unlabeled",
+   "named_identities": [],
+   "slice_tags": [
+    "profile",
+    "low_res"
+   ],
+   "slice_tags_derived": [],
+   "slice_tags_source": "operator_hand",
+   "detected_face_count": 9
+  },
+  {
+   "stratum": "distractor",
+   "media_id": 436,
+   "path": "personal/unlabeled_0436.jpg",
+   "sha256": "04af7834a14226b913d99d289fd50a8d9c93210f073596327e9de4a1bba7d5d8",
+   "slug": "unlabeled",
+   "named_identities": [],
+   "slice_tags": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
+   "slice_tags_source": null,
+   "detected_face_count": 4
+  },
+  {
+   "stratum": "distractor",
+   "media_id": 617,
+   "path": "personal/unlabeled_0617.png",
+   "sha256": "2449bf71e56473ddc51f1a9ba42a6dae015c1574e7714cb96b3a6387d408b2df",
+   "slug": "unlabeled",
+   "named_identities": [],
+   "slice_tags": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
+   "slice_tags_source": null,
+   "detected_face_count": 1
+  },
+  {
+   "stratum": "distractor",
+   "media_id": 619,
+   "path": "personal/unlabeled_0619.jpg",
+   "sha256": "253bc481185b8b5ef907362f4978d12b7257d81bac11468ee6d9998eef02582d",
+   "slug": "unlabeled",
+   "named_identities": [],
+   "slice_tags": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
+   "slice_tags_source": null,
+   "detected_face_count": 3
+  },
+  {
+   "stratum": "distractor",
+   "media_id": 475,
+   "path": "personal/unlabeled_0475.jpg",
+   "sha256": "37cb86ff3d4ec3a24faa0e42089ee23ab1b0ba773d615231ecfb867a7cfea23d",
+   "slug": "unlabeled",
+   "named_identities": [],
+   "slice_tags": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
+   "slice_tags_source": null,
+   "detected_face_count": 3
+  },
+  {
+   "stratum": "distractor",
+   "media_id": 374,
+   "path": "personal/unlabeled_0374.jpeg",
+   "sha256": "41c01d910df4ee7023a2d36010c45b49f4e24aa1070a460a816d1c0df696f36b",
+   "slug": "unlabeled",
+   "named_identities": [],
+   "slice_tags": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
+   "slice_tags_source": null,
+   "detected_face_count": 1
+  },
+  {
+   "stratum": "distractor",
+   "media_id": 137,
+   "path": "personal/unlabeled_0137.jpg",
+   "sha256": "427c8907917f1c01182e0fa6a951411caa43f6e594ff34ef34d155db53b1abed",
+   "slug": "unlabeled",
+   "named_identities": [],
+   "slice_tags": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
+   "slice_tags_source": null,
+   "detected_face_count": 1
+  },
+  {
+   "stratum": "distractor",
+   "media_id": 543,
+   "path": "personal/unlabeled_0543.jpeg",
+   "sha256": "4877b57da5958cc9db39bea2ef724769bc8f658f2b0d16418f4295588adbfee1",
+   "slug": "unlabeled",
+   "named_identities": [],
+   "slice_tags": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
+   "slice_tags_source": null,
+   "detected_face_count": 2
+  },
+  {
+   "stratum": "distractor",
+   "media_id": 236,
+   "path": "personal/unlabeled_0236.jpg",
+   "sha256": "4b7af7db53c468b7621521686b23b44d1c9e1f3b611a3fc30bfdabab29c45fda",
+   "slug": "unlabeled",
+   "named_identities": [],
+   "slice_tags": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
+   "slice_tags_source": null,
+   "detected_face_count": 2
+  },
+  {
+   "stratum": "distractor",
+   "media_id": 112,
+   "path": "personal/unlabeled_0112.jpg",
+   "sha256": "4eeee82573c5ad807fd614d98fee908b938ec564c203369e1a1f687be67b6c57",
+   "slug": "unlabeled",
+   "named_identities": [],
+   "slice_tags": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
+   "slice_tags_source": null,
+   "detected_face_count": 1
+  },
+  {
+   "stratum": "distractor",
+   "media_id": 637,
+   "path": "personal/unlabeled_0637.jpg",
+   "sha256": "61e3631b1bbc72a8536120b3a4b7abff3381f5395fb4d1b58af2ad9ab798c08a",
+   "slug": "unlabeled",
+   "named_identities": [],
+   "slice_tags": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
+   "slice_tags_source": null,
+   "detected_face_count": 2
+  },
+  {
+   "stratum": "distractor",
+   "media_id": 376,
+   "path": "personal/unlabeled_0376.jpg",
+   "sha256": "76324b3a6b1ffa00a51c457b9cebaa68d4bf7fb17d518a940352c16ac1afa1ac",
+   "slug": "unlabeled",
+   "named_identities": [],
+   "slice_tags": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
+   "slice_tags_source": null,
+   "detected_face_count": 2
+  },
+  {
+   "stratum": "distractor",
+   "media_id": 638,
+   "path": "personal/unlabeled_0638.jpg",
+   "sha256": "817f3d8da7c11994401d40623d9af772ba1d64ff0af2e6322de02ffdd3c16739",
+   "slug": "unlabeled",
+   "named_identities": [],
+   "slice_tags": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
+   "slice_tags_source": null,
+   "detected_face_count": 5
+  },
+  {
+   "stratum": "distractor",
+   "media_id": 377,
+   "path": "personal/unlabeled_0377.jpg",
+   "sha256": "82a651fe283a3703764f9e3dca100b00513ec7db943ba599af1db94b14983215",
+   "slug": "unlabeled",
+   "named_identities": [],
+   "slice_tags": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
+   "slice_tags_source": null,
+   "detected_face_count": 1
+  },
+  {
+   "stratum": "distractor",
+   "media_id": 370,
+   "path": "personal/unlabeled_0370.jpg",
+   "sha256": "95aa2b9cb92e6ab9d48c1e087396f9ba51f3f5b50672e64fe5adc85835693c64",
+   "slug": "unlabeled",
+   "named_identities": [],
+   "slice_tags": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
+   "slice_tags_source": null,
+   "detected_face_count": 2
+  },
+  {
+   "stratum": "distractor",
+   "media_id": 131,
+   "path": "personal/unlabeled_0131.jpg",
+   "sha256": "a14f6d081621fe8c17c103e4053c06262b5b030b038ae65e0d4c8419173a378d",
+   "slug": "unlabeled",
+   "named_identities": [],
+   "slice_tags": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
+   "slice_tags_source": null,
+   "detected_face_count": 4
+  },
+  {
+   "stratum": "distractor",
+   "media_id": 292,
+   "path": "personal/unlabeled_0292.jpg",
+   "sha256": "acb3efdf5ca751d231a7c7f93b223bb40aa0920da2bcddf7992bfdaee3b5e66f",
+   "slug": "unlabeled",
+   "named_identities": [],
+   "slice_tags": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
+   "slice_tags_source": null,
+   "detected_face_count": 1
+  },
+  {
+   "stratum": "distractor",
+   "media_id": 646,
+   "path": "personal/unlabeled_0646.jpg",
+   "sha256": "afee030dfb9952b5ad0da465c311c67bafca9d9a69e10c35f1edf2b476e1d070",
+   "slug": "unlabeled",
+   "named_identities": [],
+   "slice_tags": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
+   "slice_tags_source": null,
+   "detected_face_count": 5
+  },
+  {
+   "stratum": "distractor",
+   "media_id": 406,
+   "path": "personal/unlabeled_0406.jpeg",
+   "sha256": "b7c19e5ba98175432ab6da902cebde097df17f8622f675e6438b029a78aba70d",
+   "slug": "unlabeled",
+   "named_identities": [],
+   "slice_tags": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
+   "slice_tags_source": null,
+   "detected_face_count": 1
+  },
+  {
+   "stratum": "celeb",
+   "media_id": 21,
+   "path": "celebs/bob_dylan_21.jpg",
+   "sha256": "883477533785d7d13d0316310b82dba61b42e55283aeb1b14d7aac95c9d1efa4",
+   "slug": "bob_dylan",
+   "named_identities": [
+    "Bob Dylan"
+   ],
+   "slice_tags": [
+    "occlusion_other",
+    "blur"
+   ],
+   "slice_tags_derived": [
+    "profile"
+   ],
+   "slice_tags_source": "operator_hand",
+   "detected_face_count": 3
+  },
+  {
+   "stratum": "celeb",
+   "media_id": 22,
+   "path": "celebs/bob_dylan_22.jpg",
+   "sha256": "48893326a9e48a1d55e662238842779ccf0dc5527ac69749b6268ade14d25d46",
+   "slug": "bob_dylan",
+   "named_identities": [
+    "Bob Dylan"
+   ],
+   "slice_tags": [
+    "blur",
+    "occlusion_other"
+   ],
+   "slice_tags_derived": [],
+   "slice_tags_source": "operator_hand",
+   "detected_face_count": 1
+  },
+  {
+   "stratum": "celeb",
+   "media_id": 25,
+   "path": "celebs/bob_ross_25.webp",
+   "sha256": "0eaec7a977121eb0e3414836da7f8fb5f8e590233e6fceb3d86ba6694dbd30d2",
+   "slug": "bob_ross",
+   "named_identities": [
+    "Bob Ross"
+   ],
+   "slice_tags": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
+   "slice_tags_source": null,
+   "detected_face_count": 1
+  },
+  {
+   "stratum": "celeb",
+   "media_id": 45,
+   "path": "celebs/elizabeth_taylor_45.webp",
+   "sha256": "4dc317d36f837795d577c552da8cc7002adfd843f8bd5ec5191543f635467edb",
+   "slug": "elizabeth_taylor",
+   "named_identities": [
+    "Elizabeth Taylor"
+   ],
+   "slice_tags": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
+   "slice_tags_source": null,
+   "detected_face_count": 2
+  },
+  {
+   "stratum": "celeb",
+   "media_id": 17,
+   "path": "celebs/bad_bunny_17.webp",
+   "sha256": "622d3ed7992a151fe4b367a2806d300abeb2f5039f376bdcfc35ee8084f0445a",
+   "slug": "bad_bunny",
+   "named_identities": [
+    "Bad Bunny"
+   ],
+   "slice_tags": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
+   "slice_tags_source": null,
+   "detected_face_count": 1
+  },
+  {
+   "stratum": "celeb",
+   "media_id": 56,
+   "path": "celebs/leonard_cohen_56.jpeg",
+   "sha256": "629b62c5fc387ac81565d9a7cfb4b18acabb22b2ca81f6386e9e9f27e108143d",
+   "slug": "leonard_cohen",
+   "named_identities": [
+    "Leonard Cohen"
+   ],
+   "slice_tags": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
+   "slice_tags_source": null,
+   "detected_face_count": 1
+  },
+  {
+   "stratum": "celeb",
+   "media_id": 10,
+   "path": "celebs/angelina_jolie_10.jpg",
+   "sha256": "9cc191107db2922b5d8c896c82cf65999f0946401db38c98e99d69b4e4cfcfd1",
+   "slug": "angelina_jolie",
+   "named_identities": [
+    "Angelina Jolie"
+   ],
+   "slice_tags": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
+   "slice_tags_source": null,
+   "detected_face_count": 3
+  },
+  {
+   "stratum": "celeb",
+   "media_id": 57,
+   "path": "celebs/leonard_cohen_57.jpg",
+   "sha256": "ba55977c20fb20260dd113d3d35c270c7c67c08a3bae7f8a9019654551d67556",
+   "slug": "leonard_cohen",
+   "named_identities": [
+    "Leonard Cohen"
+   ],
+   "slice_tags": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
+   "slice_tags_source": null,
+   "detected_face_count": 2
+  },
+  {
+   "stratum": "celeb",
+   "media_id": 34,
+   "path": "celebs/christian_bale_34.webp",
+   "sha256": "d37ca9eb04ca2e24e50c221c8f5c6119109c201a0ca2ad805d4cea0bc1ec7fc2",
+   "slug": "christian_bale",
+   "named_identities": [
+    "Christian Bale"
+   ],
+   "slice_tags": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
+   "slice_tags_source": null,
+   "detected_face_count": 2
+  },
+  {
+   "stratum": "celeb",
+   "media_id": 44,
+   "path": "celebs/drew_barrymore_44.jpg",
+   "sha256": "f13a4276b05f1ea9ac7b809c4e6f8567768c17259df9cb7b1621c95abdbc5493",
+   "slug": "drew_barrymore",
+   "named_identities": [
+    "Drew Barrymore"
+   ],
+   "slice_tags": [],
+   "slice_tags_derived": [
+    "profile"
+   ],
+   "slice_tags_source": null,
+   "detected_face_count": 3
+  }
+ ]
+}

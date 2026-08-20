@@ -1,0 +1,397 @@
+{
+  "text": "{ \"projects\": [ { \"name\": \"face_recognition (ageitgey)\", \"what_it_is\": \"dlib-based face detection + recognition Python wrapper\", \"license_code\": \"MIT (package); dlib dependencies may differ\", \"license_weights\": \"Uses dlib ResNet face model trained on research corpora — weights not clean for commercial FIR training path\", \"dataset_taint\": \"High — pretrained dlib models typically use FaceScrub/VGG-Face style research data\", \"fir_relevance\": \"none for shipping/training; possible internal comparison only\", \"material_help\": \"no\", \"time_saved_estimate\": \"0 — we already have YuNet+SFace and Golden-150\", \"traps\": \"Easy to pull in tainted weights; not occlusion-focused; outdated vs FIR stack\", \"evidence\": [] }, { \"name\": \"torchvision v0.28.0\", \"what_it_is\": \"PyTorch vision training infra (transforms, detection references)\", \"license_code\": \"BSD-3-Clause\", \"license_weights\": \"Reference model weights vary; use only as infra, not FR weights\", \"dataset_taint\": \"Low if used as training infra only without research FR weights\", \"fir_relevance\": \"retrain campaign — detection references, transforms, training utilities\", \"material_help\": \"yes\", \"time_saved_estimate\": \"days–weeks of infra boilerplate if retrain campaign proceeds\", \"traps\": \"Do not pull ImageNet/COCO pretrained FR-adjacent models into commercial face training without license review\", \"evidence\": [] }, { \"name\": \"DeepSpeed\", \"what_it_is\": \"Microsoft distributed training / ZeRO / large-model optimizer suite\", \"license_code\": \"Apache-2.0\", \"license_weights\": \"N/A (infra)\", \"dataset_taint\": \"N/A\", \"fir_relevance\": \"retrain campaign (optional infra) — overkill for single small face model on one GPU\", \"material_help\": \"no\", \"time_saved_estimate\": \"negative — setup cost exceeds benefit for single A100/H100 face models\", \"traps\": \"Complexity tax for small models; not needed for YuNet/SCRFD/AdaFace-scale training\", \"evidence\": [] }, { \"name\": \"CVLface\", \"what_it_is\": \"SOTA FR research framework (recipes, aligners, AdaFace etc.)\", \"license_code\": \"Unknown/check\", \"license_weights\": \"Pretrained AdaFace/etc on MS1M/WebFace — tainted for commercial\", \"dataset_taint\": \"High for weights; code may be reusable if license allows\", \"fir_relevance\": \"retrain campaign — training recipes if code license clean; discard weights\", \"material_help\": \"marginal\", \"time_saved_estimate\": \"weeks of recipe engineering IF code is permissive and dataset-agnostic\", \"traps\": \"Recipes assume research datasets; pretrained weights hard ban; judge contamination risk\", \"evidence\": [] }, { \"name\": \"AdaFace\", \"what_it_is\": \"Quality-adaptive margin loss for face recognition (paper + code)\", \"license_code\": \"MIT (likely)\", \"license_weights\": \"MS1MV2/WebFace4M pretrained — tainted\", \"dataset_taint\": \"Weights tainted; loss math reimplementable cleanly\", \"fir_relevance\": \"retrain campaign — loss implementation only\", \"material_help\": \"yes\", \"time_saved_estimate\": \"days for loss + training loop patterns if MIT\", \"traps\": \"Do not load released checkpoints into any FIR path\", \"evidence\": [] }, { \"name\": \"DCFace\", \"what_it_is\": \"Dual Condition Face generator for synthetic identity training data\", \"license_code\": \"Unknown/check\", \"license_weights\": \"Generator trained on FFHQ/CASIA-class data — gray-zone for synthetic outputs\", \"dataset_taint\": \"Generator training data research-tainted; synthetic output inheritance unsettled\", \"fir_relevance\": \"FIR-7 / retrain campaign — synthetic-identity source candidate\", \"material_help\": \"yes\", \"time_saved_estimate\": \"weeks if generator usable under stated terms\", \"traps\": \"Synthetic data gray zone; explicit usage terms critical\", \"evidence\": [] }, { \"name\": \"huggingface.co/minchul/models\", \"what_it_is\": \"Collection of Minchul Kim model artifacts on HF\", \"license_code\": \"Per-model tags\", \"license_weights\": \"Most FR models research-dataset trained — tainted\", \"dataset_taint\": \"High for FR checkpoints\", \"fir_relevance\": \"retrain campaign reference only; not ship\", \"material_help\": \"marginal\", \"time_saved_estimate\": \"hours for enumeration of baselines, not product\", \"traps\": \"License tags may not match training-data commercial reality\", \"evidence\": [] }, { \"name\": \"caface\", \"what_it_is\": \"Cluster and Aggregate face template aggregation\", \"license_code\": \"Unknown/check\", \"license_weights\": \"Research weights if any — tainted\", \"dataset_taint\": \"Depends on pretrained components\", \"fir_relevance\": \"FIR-7 Slice-0 template pooling / EMB-02/EMB-07 quality-weighted pooling ideas\", \"material_help\": \"marginal\", \"time_saved_estimate\": \"days if reimplementing aggregation ideas only\", \"traps\": \"Reuse ideas not weights; integration with 128-D SFace templates\", \"evidence\": [] }, { \"name\": \"sapiensid\", \"what_it_is\": \"Body/person recognition (WebBody-related)\", \"license_code\": \"Unknown/check\", \"license_weights\": \"Likely research body datasets — tainted for commercial\", \"dataset_taint\": \"High if WebBody research-only\", \"fir_relevance\": \"body-torso expansion ideas; reimplement techniques only\", \"material_help\": \"marginal\", \"time_saved_estimate\": \"research weeks for productization path, not drop-in\", \"traps\": \"Dataset licenses; different modality from face FIR path\", \"evidence\": [] }, { \"name\": \"arxiv 2504.04708\", \"what_it_is\": \"TBD — fetch paper\", \"license_code\": \"arXiv preprint (ideas free to reimplement)\", \"license_weights\": \"N/A paper\", \"dataset_taint\": \"Check datasets used in paper\", \"fir_relevance\": \"TBD\", \"material_help\": \"marginal\", \"time_saved_estimate\": \"ideas only\", \"traps\": \"Do not use associated code/weights without license check\", \"evidence\": [] }, { \"name\": \"attend-and-compare\", \"what_it_is\": \"Older attention/comparison FR work\", \"license_code\": \"Unknown\", \"license_weights\": \"Research\", \"dataset_taint\": \"High\", \"fir_relevance\": \"none / low historical interest\", \"material_help\": \"no\", \"time_saved_estimate\": \"0\", \"traps\": \"Low relevance; outdated\", \"evidence\": [] }, { \"name\": \"arxiv 2007.07506\", \"what_it_is\": \"TBD — fetch paper\", \"license_code\": \"arXiv preprint\", \"license_weights\": \"N/A\", \"dataset_taint\": \"Check paper\", \"fir_relevance\": \"TBD\", \"material_help\": \"no\", \"time_saved_estimate\": \"0\", \"traps\": \"Identify first\", \"evidence\": [] }, { \"name\": \"deepface\", \"what_it_is\": \"Wrapper framework over many FR backends\", \"license_code\": \"MIT (package) with backend-specific traps\", \"license_weights\": \"Many backends NC/AGPL (buffalo, YOLO, etc.)\", \"dataset_taint\": \"High via backends\", \"fir_relevance\": \"internal-bench judge pool only; not shipping\", \"material_help\": \"marginal\", \"time_saved_estimate\": \"hours for multi-model bench if carefully sandboxed\", \"traps\": \"YOLO AGPL + buffalo NC; accidental shipping contamination\", \"evidence\": [] } ], \"top_picks\": [\"AdaFace loss code only\", \"torchvision training infra\", \"DCFace (if synthetic terms clear)\"], \"summary_for_decision\": \"Placeholder — awaiting primary-source confirmation.\" }{ \"projects\": [ { \"name\": \"face_recognition\", \"what_it_is\": \"Python dlib wrapper for face detection/recognition\", \"license_code\": \"MIT\", \"license_weights\": \"dlib models research-trained — not clean for commercial FIR training\", \"dataset_taint\": \"High\", \"fir_relevance\": \"none\", \"material_help\": \"no\", \"time_saved_estimate\": \"0\", \"traps\": \"Tainted weights; outdated vs YuNet+SFace\", \"evidence\": [] }, { \"name\": \"torchvision v0.28\", \"what_it_is\": \"PyTorch vision training infra\", \"license_code\": \"BSD-3-Clause\", \"license_weights\": \"Infra only; avoid research FR weights\", \"dataset_taint\": \"Low if infra-only\", \"fir_relevance\": \"retrain campaign\", \"material_help\": \"yes\", \"time_saved_estimate\": \"days-weeks\", \"traps\": \"Don't pull tainted pretrained FR models\", \"evidence\": [] }, { \"name\": \"DeepSpeed\", \"what_it_is\": \"Distributed training framework\", \"license_code\": \"Apache-2.0\", \"license_weights\": \"N/A\", \"dataset_taint\": \"N/A\", \"fir_relevance\": \"retrain campaign optional\", \"material_help\": \"no\", \"time_saved_estimate\": \"negative for single GPU small models\", \"traps\": \"Overkill complexity\", \"evidence\": [] }, { \"name\": \"CVLface\", \"what_it_is\": \"FR research training framework\", \"license_code\": \"check\", \"license_weights\": \"Tainted pretrained\", \"dataset_taint\": \"High for weights\", \"fir_relevance\": \"retrain campaign recipes\", \"material_help\": \"marginal\", \"time_saved_estimate\": \"weeks if code clean\", \"traps\": \"Dataset assumptions; weight taint\", \"evidence\": [] }, { \"name\": \"AdaFace\", \"what_it_is\": \"Adaptive margin FR loss\", \"license_code\": \"MIT\", \"license_weights\": \"MS1M/WebFace tainted\", \"dataset_taint\": \"Weights high; loss clean to reimplement\", \"fir_relevance\": \"retrain campaign loss\", \"material_help\": \"yes\", \"time_saved_estimate\": \"days\", \"traps\": \"No pretrained weights\", \"evidence\": [] }, { \"name\": \"DCFace\", \"what_it_is\": \"Synthetic face generator\", \"license_code\": \"check\", \"license_weights\": \"Generator research-trained gray zone\", \"dataset_taint\": \"Generator taint; synthetic inheritance unsettled\", \"fir_relevance\": \"FIR-7 synthetic source\", \"material_help\": \"yes\", \"time_saved_estimate\": \"weeks if terms OK\", \"traps\": \"Gray-zone synthetic taint\", \"evidence\": [] }, { \"name\": \"minchul HF models\", \"what_it_is\": \"HF model collection\", \"license_code\": \"per-model\", \"license_weights\": \"Most tainted\", \"dataset_taint\": \"High\", \"fir_relevance\": \"reference only\", \"material_help\": \"marginal\", \"time_saved_estimate\": \"hours\", \"traps\": \"License tags != commercial clean\", \"evidence\": [] }, { \"name\": \"caface\", \"what_it_is\": \"Cluster-and-aggregate templates\", \"license_code\": \"check\", \"license_weights\": \"research\", \"dataset_taint\": \"varies\", \"fir_relevance\": \"template pooling EMB-02/07\", \"material_help\": \"marginal\", \"time_saved_estimate\": \"days reimplement\", \"traps\": \"Ideas not weights\", \"evidence\": [] }, { \"name\": \"sapiensid\", \"what_it_is\": \"Body/person recognition\", \"license_code\": \"check\", \"license_weights\": \"likely tainted\", \"dataset_taint\": \"High WebBody\", \"fir_relevance\": \"body-torso expansion\", \"material_help\": \"marginal\", \"time_saved_estimate\": \"research weeks\", \"traps\": \"Dataset licenses\", \"evidence\": [] }, { \"name\": \"arxiv 2504.04708\", \"what_it_is\": \"pending fetch\", \"license_code\": \"paper ideas free\", \"license_weights\": \"N/A\", \"dataset_taint\": \"check\", \"fir_relevance\": \"pending\", \"material_help\": \"marginal\", \"time_saved_estimate\": \"ideas\", \"traps\": \"verify code separately\", \"evidence\": [] }, { \"name\": \"attend-and-compare\", \"what_it_is\": \"Older attention FR\", \"license_code\": \"check\", \"license_weights\": \"research\", \"dataset_taint\": \"High\", \"fir_relevance\": \"none\", \"material_help\": \"no\", \"time_saved_estimate\": \"0\", \"traps\": \"Low relevance\", \"evidence\": [] }, { \"name\": \"arxiv 2007.07506\", \"what_it_is\": \"pending fetch\", \"license_code\": \"paper\", \"license_weights\": \"N/A\", \"dataset_taint\": \"check\", \"fir_relevance\": \"pending\", \"material_help\": \"no\", \"time_saved_estimate\": \"0\", \"traps\": \"identify first\", \"evidence\": [] }, { \"name\": \"deepface\", \"what_it_is\": \"Multi-backend FR wrapper\", \"license_code\": \"MIT + backend traps\", \"license_weights\": \"many NC/AGPL\", \"dataset_taint\": \"High via backends\", \"fir_relevance\": \"internal bench only\", \"material_help\": \"marginal\", \"time_saved_estimate\": \"hours sandboxed\", \"traps\": \"YOLO AGPL buffalo NC shipping risk\", \"evidence\": [] } ], \"top_picks\": [\"AdaFace loss\", \"torchvision\", \"DCFace if terms OK\"], \"summary_for_decision\": \"Awaiting primary sources\" }{ \"projects\": [], \"top_picks\": [], \"summary_for_decision\": \"\" }{\"projects\":[{\"name\":\"face_recognition (ageitgey/dlib wrapper)\",\"what_it_is\":\"Popular Python wrapper around dlib HOG/CNN face detection + ResNet-29 128-D face embedding; CLI + simple API for verify/find.\",\"license_code\":\"MIT (wrapper package)\",\"license_weights\":\"dlib face-recognition ResNet model: author states public-domain distribution; trained on ~3M faces from FaceScrub + VGG-Face + web scrape (not a clean commercial training corpus under FIR gates).\",\"dataset_taint\":\"HIGH for weights — FaceScrub/VGG-style research corpora and web-scraped identities. Not usable in any FIR commercial training path even if model binary is PD.\",\"fir_relevance\":\"none — does not help FIR-7 occlusion levers, PEFT adapters, retrain campaign, or Golden-150. Already superseded by YuNet+SFace (Apache-2.0).\",\"material_help\":\"no\",\"time_saved_estimate\":\"0 — integration would cost time and add no occlusion or commercial-clean capability.\",\"traps\":\"Easy accidental pull of research-trained dlib weights into product; poor on children/ethnicity bias documented in README; not occlusion-robust; 2017-era stack vs FIR plan.\",\"evidence\":[{\"claim\":\"face_recognition package LICENSE is MIT (Copyright Adam Geitgey).\",\"url\":\"https://raw.githubusercontent.com/ageitgey/face_recognition/master/LICENSE\",\"grade\":\"CONFIRMED\"},{\"claim\":\"Built on dlib deep face recognition; uses dlib pretrained models.\",\"url\":\"https://raw.githubusercontent.com/ageitgey/face_recognition/master/README.md\",\"grade\":\"CONFIRMED\"},{\"claim\":\"dlib ResNet face model trained on ~3M faces derived from FaceScrub, VGG dataset, and web scrape; author claims pretrained model public domain.\",\"url\":\"http://blog.dlib.net/2017/02/high-quality-face-recognition-with-deep.html\",\"grade\":\"CONFIRMED\"}]},{\"name\":\"torchvision v0.28.0 (PyTorch Vision)\",\"what_it_is\":\"Standard PyTorch vision library: datasets, transforms/TVTensors, detection/segmentation reference models, IO. Evaluated as training infra for FIR retrain campaign.\",\"license_code\":\"BSD-3-Clause\",\"license_weights\":\"N/A when used as transforms/training infra only. Reference detection weights (COCO etc.) are separate artifacts — do not mix into commercial face training without review.\",\"dataset_taint\":\"LOW if limited to transforms, DataLoader helpers, and training utilities. Avoid shipping or fine-tuning research FR weights from torchvision.models.\",\"fir_relevance\":\"retrain campaign — transforms, TVTensor pipelines, detection reference code for SCRFD-arch / person→face cascade training on synthetic+consented data.\",\"material_help\":\"yes\",\"time_saved_estimate\":\"days of boilerplate for clean training pipeline; v0.28 itself is a minor release (not a paradigm shift).\",\"traps\":\"v0.28 changes are small (transform metadata wrap, string interpolation for resize, NEAREST_EXACT mask fix, GIF decoder safety) — do not expect new face-specific modules. Never pull ImageNet/COCO-pretrained FR-adjacent heads into commercial face path without license/data review.\",\"evidence\":[{\"claim\":\"torchvision LICENSE is BSD 3-Clause.\",\"url\":\"https://raw.githubusercontent.com/pytorch/vision/main/LICENSE\",\"grade\":\"CONFIRMED\"},{\"claim\":\"v0.28.0 release notes: transforms wrap() metadata, string interpolation param, NEAREST_EXACT mask resize fix, GIF decoder OOB fix — no face-recognition modules.\",\"url\":\"https://github.com/pytorch/vision/releases/tag/v0.28.0\",\"grade\":\"CONFIRMED\"}]},{\"name\":\"DeepSpeed (deepspeedai/DeepSpeed)\",\"what_it_is\":\"Microsoft/LF distributed training stack (ZeRO, offload, 3D-parallel, MoE, etc.) aimed at very large models.\",\"license_code\":\"Apache-2.0\",\"license_weights\":\"N/A (training infra only).\",\"dataset_taint\":\"N/A\",\"fir_relevance\":\"retrain campaign optional infra only — not required for planned single rented A100/H100 SCRFD + AdaFace-scale 512-D embedder.\",\"material_help\":\"no\",\"time_saved_estimate\":\"negative — setup/config/debug tax exceeds benefit for small face models on ONE GPU.\",\"traps\":\"Overkill: designed for 100B+ LLM-class training. Face models (IR50/IR101/SCRFD scale) fit in single-GPU memory with vanilla PyTorch + AMP. Complexity, ops JIT, and multi-node assumptions add risk without material speedup on one GPU.\",\"evidence\":[{\"claim\":\"DeepSpeed LICENSE is Apache License 2.0.\",\"url\":\"https://raw.githubusercontent.com/deepspeedai/DeepSpeed/master/LICENSE\",\"grade\":\"CONFIRMED\"},{\"claim\":\"Project positioning: extreme scale DL training (MT-530B, BLOOM, ZeRO for trillion-param class); integrates with Transformers/Lightning for large models.\",\"url\":\"https://raw.githubusercontent.com/deepspeedai/DeepSpeed/master/README.md\",\"grade\":\"CONFIRMED\"}]},{\"name\":\"CVLface (mk-minchul/CVLface)\",\"what_it_is\":\"MSU CVLab all-in-one FR research toolkit: multi-GPU Lightning training, AdaFace/ArcFace/CosFace/KP-RPE losses, aligners, HF pretrained model hub, eval on LFW/IJB/TinyFace. Successor home for AdaFace recipes.\",\"license_code\":\"MIT\",\"license_weights\":\"All published pretrained FR checkpoints trained on WebFace4M/12M, MS1MV2/3, CASIA, VGG2 — research-only dataset licenses; commercial use of weights is tainted regardless of MIT code.\",\"dataset_taint\":\"HIGH for weights. Training recipes document CASIA-WebFace, VGG2, MS1MV2, MS1MV3, WebFace4M, WebFace12M — all research-gated for commercial training. Code can point at synthetic datasets (synthetic.yaml mock exists).\",\"fir_relevance\":\"retrain campaign — reusable TRAINING CODE (losses, PartialFC, Lightning loops, aligners) if run only on synthetic+consented data; discard all pretrained weights. Not for ship path or FIR-7 PEFT on SFace.\",\"material_help\":\"marginal\",\"time_saved_estimate\":\"1–3 weeks of training-stack engineering IF team ports recipes onto clean data only; 0 if only tempted by pretrained SOTA boards.\",\"traps\":\"Recipes default to research datasets; HF models advertise SOTA but inherit training-data license. Risk of judge contamination if IJB/eval paths pull InsightFace helpers. PartialFC + multi-GPU assumed — overkill for single-GPU campaign unless useful as reference. Do not use pretrained models as teachers (distillation taint).\",\"evidence\":[{\"claim\":\"CVLface LICENSE is MIT (Copyright Minchul Kim 2022).\",\"url\":\"https://raw.githubusercontent.com/mk-minchul/CVLface/main/LICENSE\",\"grade\":\"CONFIRMED\"},{\"claim\":\"Documents training datasets: CASIA-WebFace, VGG2, MS1MV2, MS1MV3, WebFace4M, WebFace12M; pretrained models on HF named by those datasets.\",\"url\":\"https://raw.githubusercontent.com/mk-minchul/CVLface/main/README.md\",\"grade\":\"CONFIRMED\"},{\"claim\":\"Performance board lists IR/ViT models trained on WebFace12M/4M, MS1MV2/3, CASIA, VGG2 with AdaFace/ArcFace.\",\"url\":\"https://raw.githubusercontent.com/mk-minchul/CVLface/main/cvlface/pretrained_models/README.md\",\"grade\":\"CONFIRMED\"}]},{\"name\":\"AdaFace (mk-minchul/AdaFace)\",\"what_it_is\":\"CVPR 2022 quality-adaptive margin loss for face recognition; official repo with head.py loss, training scripts, and many pretrained IR backbones. FIR retrain campaign already names AdaFace-style loss.\",\"license_code\":\"MIT\",\"license_weights\":\"All released checkpoints (R18/R50/R100 on CASIA-WebFace, VGGFace2, MS1MV2, MS1MV3, WebFace4M, WebFace12M) are research-dataset-trained → tainted for commercial FIR use.\",\"dataset_taint\":\"Weights: HARD TAINT. Loss math and training-loop structure: clean to reimplement / copy under MIT with attribution. Do not load released .ckpt into any FIR training/eval production path.\",\"fir_relevance\":\"retrain campaign — take LOSS IMPLEMENTATION ONLY (quality-adaptive margin via feature-norm approximation). CVLface is the maintained PartialFC home.\",\"material_help\":\"yes\",\"time_saved_estimate\":\"2–5 days vs re-deriving AdaFace loss from paper alone; weeks if also lifting data loaders (but those assume research .rec datasets — do not).\",\"traps\":\"Pretrained model table is the honey pot; BGR/cv2 input convention differs from InsightFace RGB — easy integration footgun. InsightFace train.rec path in README is a contamination vector. Official home moved to CVLface.\",\"evidence\":[{\"claim\":\"AdaFace LICENSE is MIT (Copyright Minchul Kim 2022).\",\"url\":\"https://raw.githubusercontent.com/mk-minchul/AdaFace/master/LICENSE\",\"grade\":\"CONFIRMED\"},{\"claim\":\"Pretrained models table lists CASIA-WebFace, VGGFace2, WebFace4M, MS1MV2, MS1MV3, WebFace12M training sets.\",\"url\":\"https://raw.githubusercontent.com/mk-minchul/AdaFace/master/README.md\",\"grade\":\"CONFIRMED\"},{\"claim\":\"Usage example shows AdaFace head on 512-D embeddings with margin params m/h/s/t_alpha.\",\"url\":\"https://raw.githubusercontent.com/mk-minchul/AdaFace/master/README.md\",\"grade\":\"CONFIRMED\"}]},{\"name\":\"DCFace (mk-minchul/dcface)\",\"what_it_is\":\"CVPR 2023 Dual Condition Face generator: Stage-1 unconditional ID diffusion (G_id) + Stage-2 dual-condition mixer (G_mix) combining ID image and style image for synthetic labeled FR training sets. FIR-7 already lists DCFace as synthetic-identity candidate.\",\"license_code\":\"NO LICENSE FILE in repository; open GitHub issue #27 (Apr 2024) requesting model/dataset license remains unanswered — treat code as all-rights-reserved / uncleared for commercial reuse until clarified.\",\"license_weights\":\"Pretrained generators distributed via Google Drive without stated license. G_id based on unconditional DDPM trained on FFHQ; G_mix trained using CASIA-WebFace pairs; style bank from real labeled faces (CASIA path in train docs). Released synthetic datasets (dcface_0.5m / 1.2m) also lack clear commercial terms.\",\"dataset_taint\":\"GENERATOR TRAINING: HIGH — FFHQ (dataset metadata CC BY-NC-SA 4.0; many source images NC) + CASIA-WebFace (research-only). SYNTHETIC OUTPUTS: GRAY ZONE — project markets synthetic data as privacy-friendly alternative to web-crawled faces, but no explicit commercial-use grant; community legal consensus unsettled on whether generator training-data licenses poison outputs. FIR should prefer re-training generator on consented/clean data, or independent synthetic stack (e.g. Vec2Face), over shipping prebuilt DCFace weights/outputs into commercial training.\",\"fir_relevance\":\"FIR-7 / retrain campaign — synthetic-identity source candidate (methods + pipeline ideas). Highest material value among synthetic generators reviewed IF license path cleared.\",\"material_help\":\"yes\",\"time_saved_estimate\":\"weeks of synthetic-pipeline design if code+weights become license-clear; currently blocked by missing LICENSE — plan alternative or legal review first.\",\"traps\":\"(1) No LICENSE file — commercial code reuse uncleared. (2) FFHQ + CASIA training of generators. (3) Style bank / train path uses InsightFace CASIA packaging. (4) Synthetic inheritance of taint is gray — do not assume 'synthetic = clean'. (5) FR teacher F for ID loss is a frozen pretrained FR model (research-trained).\",\"evidence\":[{\"claim\":\"DCFace repo file listing has README, install.sh, requirements.txt, assets, dcface/ — no LICENSE file.\",\"url\":\"https://github.com/mk-minchul/dcface\",\"grade\":\"CONFIRMED\"},{\"claim\":\"Open issue #27 'What is the license?' for model and dataset (Apr 11 2024) with no maintainer license grant in page content.\",\"url\":\"https://github.com/mk-minchul/dcface/issues/27\",\"grade\":\"CONFIRMED\"},{\"claim\":\"Training docs: download CASIA-WebFace from InsightFace; place faces_webface_112x112 under DATA_ROOT for generator training.\",\"url\":\"https://raw.githubusercontent.com/mk-minchul/dcface/master/README.md\",\"grade\":\"CONFIRMED\"},{\"claim\":\"Paper: G_id is unconditional DDPM trained on FFHQ; dual-condition mixer uses labeled training data; style bank from real faces.\",\"url\":\"https://arxiv.org/pdf/2304.07060\",\"grade\":\"CONFIRMED\"},{\"claim\":\"FFHQ dataset itself (metadata/docs) is CC BY-NC-SA 4.0 by NVIDIA; individual images mixed CC including NC.\",\"url\":\"https://github.com/nvlabs/ffhq-dataset\",\"grade\":\"CONFIRMED\"},{\"claim\":\"Released synthetic datasets dcface_0.5m and 1.2m via Google Drive without stated commercial license on README.\",\"url\":\"https://raw.githubusercontent.com/mk-minchul/dcface/master/README.md\",\"grade\":\"CONFIRMED\"}]},{\"name\":\"huggingface.co/minchul models\",\"what_it_is\":\"17 public HF model repos under author minchul: CVLface AdaFace/ArcFace IR18/50/101 and ViT/KP-RPE variants on CASIA/VGG2/MS1MV2/MS1MV3/WebFace4M/WebFace12M; DFA MobileNet/ResNet50 aligners; private_retinaface_resnet50.\",\"license_code\":\"No license tag present on HF model cards/API tags for these artifacts; cards instruct 'follow the license of the training dataset'.\",\"license_weights\":\"Per-model: effectively bound to research-only training datasets (WebFace4M/12M, MS1MV2/3, CASIA, VGG2). Not commercial-clean for FIR shipping or training.\",\"dataset_taint\":\"HIGH for all FR embedders. Aligners (DFA) and RetinaFace also research-context — treat as non-ship.\",\"fir_relevance\":\"retrain campaign reference / internal-bench baselines only; not ship, not teacher, not PEFT init.\",\"material_help\":\"marginal\",\"time_saved_estimate\":\"hours for enumerating SOTA baselines for Golden-150 comparison; 0 for product path.\",\"traps\":\"Absence of license: tag does not mean permissive. Model card 'follow training dataset license' + WebFace/MS1M research terms = commercial ban. Easy to accidentally download into training path.\",\"evidence\":[{\"claim\":\"HF API lists 17 minchul models (AdaFace/ArcFace IR/ViT variants, DFA aligners, private_retinaface); tags lack license: fields.\",\"url\":\"https://huggingface.co/api/models?author=minchul\",\"grade\":\"CONFIRMED\"},{\"claim\":\"Example model card for adaface_ir101_webface4m: 'Please cite the original paper and follow the license of the training dataset.'\",\"url\":\"https://huggingface.co/minchul/cvlface_adaface_ir101_webface4m/raw/main/README.md\",\"grade\":\"CONFIRMED\"},{\"claim\":\"WebFace4M/12M pretrained models cannot be used for commercial purposes (community restatement of WebFace license).\",\"url\":\"https://github.com/leondgarse/Keras_insightface\",\"grade\":\"ANECDOTAL\"}]},{\"name\":\"caface (Cluster and Aggregate)\",\"what_it_is\":\"NeurIPS 2022 two-stage feature fusion for multi-image/video probes: Cluster (linear assign N frames → M centers) + Aggregate (fuse M centers) with order-invariant sequential update; designed for large low-quality probe sets (IJB-B/S).\",\"license_code\":\"MIT\",\"license_weights\":\"Released CAFace ckpt trained on AdaFace WebFace4M backbone + WebFace4M subset features — research-tainted weights.\",\"dataset_taint\":\"HIGH for pretrained CAFace and backbone. Method/code structure clean under MIT if reimplemented or retrained on clean embeddings.\",\"fir_relevance\":\"FIR-7 Slice-0 / template pooling (EMB-02 / EMB-07 quality-weighted multi-image template aggregation) — ideas highly relevant; reimplement quality-aware fusion over SFace 128-D templates rather than load WebFace-trained fusion net.\",\"material_help\":\"marginal\",\"time_saved_estimate\":\"3–7 days to reimplement cluster-and-aggregate / quality-weighted pooling from paper+code patterns onto existing 128-D templates; weeks if trying to run their WebFace training path (don't).\",\"traps\":\"Pretrained fusion net is tied to AdaFace-WebFace4M 512-D features — dimension and training-data mismatch with shipped SFace 128-D. InsightFace IJB helpers in eval path. Prefer ideas over weights.\",\"evidence\":[{\"claim\":\"caface LICENSE is MIT (Copyright Minchul Kim 2022).\",\"url\":\"https://raw.githubusercontent.com/mk-minchul/caface/master/LICENSE\",\"grade\":\"CONFIRMED\"},{\"claim\":\"README: backbone trained on WebFace4M; CAFace trained on WebFace4M subset; pretrained model + class centers released.\",\"url\":\"https://raw.githubusercontent.com/mk-minchul/caface/master/README.md\",\"grade\":\"CONFIRMED\"},{\"claim\":\"Abstract: Cluster and Aggregate for large-N low-quality probe fusion; order-invariant sequential update; IJB-B/IJB-S.\",\"url\":\"https://raw.githubusercontent.com/mk-minchul/caface/master/README.md\",\"grade\":\"CONFIRMED\"}]},{\"name\":\"sapiensid (mk-minchul/sapiensid)\",\"what_it_is\":\"CVPR 2025 SapiensID: unified human recognition foundation model for face + body ReID across pose/scale; WebBody4M dataset tooling; pretrained models. Paper = arxiv 2504.04708.\",\"license_code\":\"CC BY-NC 4.0 (NonCommercial) — forbids commercial use of licensed material.\",\"license_weights\":\"Pretrained models under same NC license; cannot ship or commercially train derivatives.\",\"dataset_taint\":\"HIGH — WebBody4M is large-scale web-collected human images; research/web-crawl provenance; NC repo license hard-blocks commercial.\",\"fir_relevance\":\"body-torso expansion (Apple-style person embeddings beyond face) — IDEAS only: RetinaPatch multi-ROI tokenization (whole/upper-torso/face), Masked Recognition Model, Semantic Attention Head over keypoints. Reimplement techniques; do not use code/weights/dataset.\",\"material_help\":\"marginal\",\"time_saved_estimate\":\"ideas may save 1–2 weeks of architecture exploration for torso path; code/weights unusable commercially (NC).\",\"traps\":\"CC BY-NC 4.0 is a hard commercial ban (not just dataset taint). Web-collected body data privacy/consent issues. Different modality and heavy ViT training budget vs FIR single-GPU face campaign.\",\"evidence\":[{\"claim\":\"sapiensid LICENSE is Creative Commons Attribution-NonCommercial 4.0 International.\",\"url\":\"https://raw.githubusercontent.com/mk-minchul/sapiensid/main/LICENSE\",\"grade\":\"CONFIRMED\"},{\"claim\":\"README: official repo for SapiensID CVPR 2025 (arxiv.org/pdf/2504.04708); components SapiensID modeling + WebBody dataset.\",\"url\":\"https://raw.githubusercontent.com/mk-minchul/sapiensid/main/README.md\",\"grade\":\"CONFIRMED\"},{\"claim\":\"Paper introduces RetinaPatch, Masked Recognition Model, Semantic Attention Head; WebBody4M large-scale dataset; SOTA body ReID + competitive face.\",\"url\":\"https://arxiv.org/pdf/2504.04708\",\"grade\":\"CONFIRMED\"}]},{\"name\":\"arxiv 2504.04708 (SapiensID paper)\",\"what_it_is\":\"SapiensID: Foundation for Human Recognition (CVPR 2025) — unified face+body metric learning with RetinaPatch (dynamic ROI patch allocation for face/torso/full), Masked Recognition Model (variable token length), Semantic Attention Head (keypoint-centered pooling). Introduces WebBody4M and Cross Pose-Scale ReID challenge.\",\"license_code\":\"Paper text: ideas free to reimplement. Associated code/weights: CC BY-NC 4.0 (see sapiensid).\",\"license_weights\":\"N/A for paper. Official weights NC.\",\"dataset_taint\":\"Paper experiments use WebBody4M (web-collected) + standard ReID sets (Market-1501, MSMT17, PRCC, LTCC, etc.) — research context. Techniques reimplementation on consented/synthetic data is clean.\",\"fir_relevance\":\"body-torso expansion + occlusion/pose robustness ideas; secondary interest for alignment-free recognition. Not a drop-in for FIR-7 face path.\",\"material_help\":\"marginal\",\"time_saved_estimate\":\"architecture ideas only — weeks of research reading, not product weeks saved.\",\"traps\":\"Do not use associated NC code/weights. WebBody4M not for commercial training. Heavy compute vs single-GPU FIR plan.\",\"evidence\":[{\"claim\":\"Paper title SapiensID: Foundation for Human Recognition; methods RP, MRM, SAH; WebBody4M; arXiv:2504.04708.\",\"url\":\"https://arxiv.org/pdf/2504.04708\",\"grade\":\"CONFIRMED\"},{\"claim\":\"Official code repo under CC BY-NC 4.0.\",\"url\":\"https://raw.githubusercontent.com/mk-minchul/sapiensid/main/LICENSE\",\"grade\":\"CONFIRMED\"}]},{\"name\":\"attend-and-compare (mk-minchul/attend-and-compare)\",\"what_it_is\":\"ECCV 2020 Attend-and-Compare Module (ACM): context module that explicitly subtracts features of distant regions for comparison; validated on chest X-ray (CXR14) and COCO detection/segmentation — not face recognition.\",\"license_code\":\"No LICENSE file in repository (only README, context_module.py, cxr14/, coco/, images/).\",\"license_weights\":\"N/A / experiment checkpoints if any are research medical/COCO context.\",\"dataset_taint\":\"N/A for FIR (wrong domain).\",\"fir_relevance\":\"none — medical imaging / general context modeling, not FR, occlusion FR, template pooling, or body ReID as used by FIR.\",\"material_help\":\"no\",\"time_saved_estimate\":\"0\",\"traps\":\"Name similarity to FR 'attention' work can mislead; no LICENSE file; zero FIR task fit.\",\"evidence\":[{\"claim\":\"README: official implementation of Learning Visual Context by Comparison (arxiv 2007.07506); ACM for CXR14 and COCO.\",\"url\":\"https://raw.githubusercontent.com/mk-minchul/attend-and-compare/master/README.md\",\"grade\":\"CONFIRMED\"},{\"claim\":\"Repo listing has no LICENSE file.\",\"url\":\"https://github.com/mk-minchul/attend-and-compare\",\"grade\":\"CONFIRMED\"}]},{\"name\":\"arxiv 2007.07506 (Learning Visual Context by Comparison)\",\"what_it_is\":\"ECCV 2020 paper proposing Attend-and-Compare Module (ACM) that models difference between object-of-interest and context via subtraction of attended features; motivated by radiologist left-right comparison on chest X-rays; also tested on COCO.\",\"license_code\":\"Paper ideas free to reimplement.\",\"license_weights\":\"N/A\",\"dataset_taint\":\"Paper uses CXR14-family and COCO — irrelevant to face commercial training.\",\"fir_relevance\":\"none — not face recognition, not occlusion-robust FR, not SapiensID. (User may have linked via author Minchul Kim lineage.)\",\"material_help\":\"no\",\"time_saved_estimate\":\"0\",\"traps\":\"Author overlap with AdaFace/CAFace/SapiensID can cause false relevance association; domain is medical/COCO.\",\"evidence\":[{\"claim\":\"Paper: Learning Visual Context by Comparison; ACM for chest X-ray recognition and COCO; code at github.com/mk-minchul/attend-and-compare.\",\"url\":\"https://arxiv.org/pdf/2007.07506\",\"grade\":\"CONFIRMED\"}]},{\"name\":\"deepface (serengil/deepface)\",\"what_it_is\":\"MIT hybrid FR + attribute framework wrapping many backends: VGG-Face, FaceNet, OpenFace, DeepFace, DeepID, ArcFace, Dlib, SFace, GhostFaceNet, Buffalo_L; detectors include OpenCV, SSD, Dlib, MTCNN, RetinaFace, MediaPipe, YOLO (v8/v11/v12), YuNet, CenterFace.\",\"license_code\":\"MIT for deepface package itself\",\"license_weights\":\"Per-backend inheritance (README explicit): Buffalo_L = InsightFace NC research-only; YOLO family = AGPL; SFace = Apache-2.0 (OpenCV Zoo — already FIR shipped); GhostFaceNet code MIT but training-data of released weights needs separate review; ArcFace/VGG-Face/etc. typically research-trained.\",\"dataset_taint\":\"HIGH via default and popular backends (Buffalo_L, ArcFace MS1M-class, VGG-Face). SFace path is clean-license but already in FIR stack.\",\"fir_relevance\":\"internal-bench judge pool only (like buffalo_l internal-bench) — multi-model ensemble scoring on Golden-150 without shipping. Not for production path. MediaPipe/YuNet detector wrappers could inform FIR-7 detector A/B but better call those libs directly.\",\"material_help\":\"marginal\",\"time_saved_estimate\":\"hours–1 day to stand up multi-judge bench if carefully sandboxed; negative if used as product dependency.\",\"traps\":\"(1) MIT package ≠ clean product — README states license types are inherited from models. (2) Buffalo_L NC + judge contamination if outputs enter training. (3) YOLO AGPL copyleft trap if detector backend linked into shipped binary. (4) Default model is VGG-Face (research). (5) No occlusion-specific clean backend beyond SFace/YuNet already owned.\",\"evidence\":[{\"claim\":\"deepface LICENSE is MIT (Copyright Sefik Ilkin Serengil 2019).\",\"url\":\"https://raw.githubusercontent.com/serengil/deepface/master/LICENSE\",\"grade\":\"CONFIRMED\"},{\"claim\":\"README lists backends including Buffalo_L, SFace, GhostFaceNet, ArcFace, YOLO detectors, YuNet, MediaPipe.\",\"url\":\"https://raw.githubusercontent.com/serengil/deepface/master/README.md\",\"grade\":\"CONFIRMED\"},{\"claim\":\"README Licence section: 'License types will be inherited when you intend to utilize those models' and links Buffalo_L to InsightFace README and YOLO to Ultralytics AGPL LICENSE.\",\"url\":\"https://raw.githubusercontent.com/serengil/deepface/master/README.md\",\"grade\":\"CONFIRMED\"},{\"claim\":\"OpenCV Zoo SFace LICENSE is Apache-2.0.\",\"url\":\"https://raw.githubusercontent.com/opencv/opencv_zoo/main/models/face_recognition_sface/LICENSE\",\"grade\":\"CONFIRMED\"},{\"claim\":\"GhostFaceNets code LICENSE is MIT.\",\"url\":\"https://raw.githubusercontent.com/HamadYA/GhostFaceNets/main/LICENSE\",\"grade\":\"CONFIRMED\"}]}],\"top_picks\":[\"AdaFace loss implementation only (MIT code; discard all pretrained weights)\",\"torchvision transforms/training infra for retrain campaign (BSD-3)\",\"caface method ideas for quality-weighted multi-image template pooling (reimplement on SFace 128-D; discard WebFace weights)\",\"DCFace methods as synthetic pipeline design reference — BUT block pretrained generators/outputs until LICENSE + FFHQ/CASIA taint path is legally cleared; prefer retrain generator on clean data or Vec2Face-class alternative\",\"CVLface training recipes/PartialFC scaffolding under MIT — only if hard-gated to synthetic+consented data and zero pretrained weight load\"],\"summary_for_decision\":\"FIR should treat the Minchul Kim stack as a split: LOSS + TRAINING-CODE recipes (AdaFace MIT, CVLface MIT, caface MIT) are useful if — and only if — all pretrained weights and research datasets (MS1M/WebFace/CASIA/VGG/FFHQ) are hard-excluded from every training and ship path. DCFace is the highest-leverage synthetic candidate already named in FIR-7, but the repo has NO LICENSE, generators were trained on FFHQ+CASIA, and synthetic-output commercial cleanliness is an unsettled gray zone — do not ingest released DCFace weights or 0.5M/1.2M packs into commercial training without legal clearance; reimplement dual-condition ideas on clean generators instead. SapiensID (arxiv 2504.04708) and its CC BY-NC code are useful only as body/torso architecture inspiration (RetinaPatch, SAH), not as dependencies. arxiv 2007.07506 / attend-and-compare is chest-X-ray context modeling — irrelevant. DeepSpeed is overkill for one-GPU face models. face_recognition and deepface expand the horizon but add license traps (dlib research training data; Buffalo_L NC + YOLO AGPL); deepface may serve as a sandboxed multi-judge pool alongside buffalo_l internal-bench, never as ship code. Golden-150 remains the mandatory harness — no new eval framework needed. Net: adopt AdaFace loss + torchvision + reimplemented template-pooling ideas; keep DCFace as design reference pending license fix; ban all listed research pretrained FR/body weights and InsightFace/YOLO backends from commercial paths.\"}",
+  "stopReason": "EndTurn",
+  "sessionId": "019f909a-9c30-78d2-a0f6-37087394f7d3",
+  "requestId": "ded0e678-3c3d-45c8-8513-0bbc6069ac02",
+  "thought": "The user wants me to research 13 projects/papers for material relevance to the FIR program. I need to use web search and fetch to evaluate each one carefully regarding licenses, dataset taint, and FIR...Good progress. Let me continue fetching more sources for the remaining projects.Good progress. Let me fetch more details - DCFace license (maybe different path), caface, arxiv papers, deepface, HF models, dlib model training data, etc.Let me continue fetching more specific information - arxiv papers, DCFace license issue, caface, dlib model training, HF model licenses, etc.Let me get more details from the papers, HF model cards, DCFace paper for training data, dlib face recognition model training data, SFace license, and attend-and-compare license.I need more details on DCFace training data, HF model licenses, CVLFace training data, and a few more specifics. Let me also get the DCFace paper abstract and WebFace license info.Let me get DCFace paper details and a few more HF model license tags, WebFace license, SFace, GhostFaceNet, etc.I have enough information to synthesize a comprehensive evaluation. Let me also check a couple more things:\nI have comprehensive primary-source evidence. Let me synthesize the final JSON now.\n{\n  \"projects\": [\n    {\n      \"name\": \"github.",
+  "usage": {
+    "input_tokens": 126989,
+    "cache_read_input_tokens": 556160,
+    "output_tokens": 13429,
+    "reasoning_tokens": 2576,
+    "total_tokens": 696578
+  },
+  "num_turns": 9,
+  "total_cost_usd": 0.5364,
+  "total_cost_usd_ticks": 5364000000,
+  "modelUsage": {
+    "grok-4.5-build": {
+      "inputTokens": 126989,
+      "outputTokens": 13429,
+      "cacheReadInputTokens": 556160,
+      "modelCalls": 9,
+      "costUSD": 0.5364
+    }
+  },
+  "structuredOutput": {
+    "projects": [
+      {
+        "name": "face_recognition (ageitgey/dlib wrapper)",
+        "what_it_is": "Popular Python wrapper around dlib HOG/CNN face detection + ResNet-29 128-D face embedding; CLI + simple API for verify/find.",
+        "license_code": "MIT (wrapper package)",
+        "license_weights": "dlib face-recognition ResNet model: author states public-domain distribution; trained on ~3M faces from FaceScrub + VGG-Face + web scrape (not a clean commercial training corpus under FIR gates).",
+        "dataset_taint": "HIGH for weights — FaceScrub/VGG-style research corpora and web-scraped identities. Not usable in any FIR commercial training path even if model binary is PD.",
+        "fir_relevance": "none — does not help FIR-7 occlusion levers, PEFT adapters, retrain campaign, or Golden-150. Already superseded by YuNet+SFace (Apache-2.0).",
+        "material_help": "no",
+        "time_saved_estimate": "0 — integration would cost time and add no occlusion or commercial-clean capability.",
+        "traps": "Easy accidental pull of research-trained dlib weights into product; poor on children/ethnicity bias documented in README; not occlusion-robust; 2017-era stack vs FIR plan.",
+        "evidence": [
+          {
+            "claim": "face_recognition package LICENSE is MIT (Copyright Adam Geitgey).",
+            "url": "https://raw.githubusercontent.com/ageitgey/face_recognition/master/LICENSE",
+            "grade": "CONFIRMED"
+          },
+          {
+            "claim": "Built on dlib deep face recognition; uses dlib pretrained models.",
+            "url": "https://raw.githubusercontent.com/ageitgey/face_recognition/master/README.md",
+            "grade": "CONFIRMED"
+          },
+          {
+            "claim": "dlib ResNet face model trained on ~3M faces derived from FaceScrub, VGG dataset, and web scrape; author claims pretrained model public domain.",
+            "url": "http://blog.dlib.net/2017/02/high-quality-face-recognition-with-deep.html",
+            "grade": "CONFIRMED"
+          }
+        ]
+      },
+      {
+        "name": "torchvision v0.28.0 (PyTorch Vision)",
+        "what_it_is": "Standard PyTorch vision library: datasets, transforms/TVTensors, detection/segmentation reference models, IO. Evaluated as training infra for FIR retrain campaign.",
+        "license_code": "BSD-3-Clause",
+        "license_weights": "N/A when used as transforms/training infra only. Reference detection weights (COCO etc.) are separate artifacts — do not mix into commercial face training without review.",
+        "dataset_taint": "LOW if limited to transforms, DataLoader helpers, and training utilities. Avoid shipping or fine-tuning research FR weights from torchvision.models.",
+        "fir_relevance": "retrain campaign — transforms, TVTensor pipelines, detection reference code for SCRFD-arch / person→face cascade training on synthetic+consented data.",
+        "material_help": "yes",
+        "time_saved_estimate": "days of boilerplate for clean training pipeline; v0.28 itself is a minor release (not a paradigm shift).",
+        "traps": "v0.28 changes are small (transform metadata wrap, string interpolation for resize, NEAREST_EXACT mask fix, GIF decoder safety) — do not expect new face-specific modules. Never pull ImageNet/COCO-pretrained FR-adjacent heads into commercial face path without license/data review.",
+        "evidence": [
+          {
+            "claim": "torchvision LICENSE is BSD 3-Clause.",
+            "url": "https://raw.githubusercontent.com/pytorch/vision/main/LICENSE",
+            "grade": "CONFIRMED"
+          },
+          {
+            "claim": "v0.28.0 release notes: transforms wrap() metadata, string interpolation param, NEAREST_EXACT mask resize fix, GIF decoder OOB fix — no face-recognition modules.",
+            "url": "https://github.com/pytorch/vision/releases/tag/v0.28.0",
+            "grade": "CONFIRMED"
+          }
+        ]
+      },
+      {
+        "name": "DeepSpeed (deepspeedai/DeepSpeed)",
+        "what_it_is": "Microsoft/LF distributed training stack (ZeRO, offload, 3D-parallel, MoE, etc.) aimed at very large models.",
+        "license_code": "Apache-2.0",
+        "license_weights": "N/A (training infra only).",
+        "dataset_taint": "N/A",
+        "fir_relevance": "retrain campaign optional infra only — not required for planned single rented A100/H100 SCRFD + AdaFace-scale 512-D embedder.",
+        "material_help": "no",
+        "time_saved_estimate": "negative — setup/config/debug tax exceeds benefit for small face models on ONE GPU.",
+        "traps": "Overkill: designed for 100B+ LLM-class training. Face models (IR50/IR101/SCRFD scale) fit in single-GPU memory with vanilla PyTorch + AMP. Complexity, ops JIT, and multi-node assumptions add risk without material speedup on one GPU.",
+        "evidence": [
+          {
+            "claim": "DeepSpeed LICENSE is Apache License 2.0.",
+            "url": "https://raw.githubusercontent.com/deepspeedai/DeepSpeed/master/LICENSE",
+            "grade": "CONFIRMED"
+          },
+          {
+            "claim": "Project positioning: extreme scale DL training (MT-530B, BLOOM, ZeRO for trillion-param class); integrates with Transformers/Lightning for large models.",
+            "url": "https://raw.githubusercontent.com/deepspeedai/DeepSpeed/master/README.md",
+            "grade": "CONFIRMED"
+          }
+        ]
+      },
+      {
+        "name": "CVLface (mk-minchul/CVLface)",
+        "what_it_is": "MSU CVLab all-in-one FR research toolkit: multi-GPU Lightning training, AdaFace/ArcFace/CosFace/KP-RPE losses, aligners, HF pretrained model hub, eval on LFW/IJB/TinyFace. Successor home for AdaFace recipes.",
+        "license_code": "MIT",
+        "license_weights": "All published pretrained FR checkpoints trained on WebFace4M/12M, MS1MV2/3, CASIA, VGG2 — research-only dataset licenses; commercial use of weights is tainted regardless of MIT code.",
+        "dataset_taint": "HIGH for weights. Training recipes document CASIA-WebFace, VGG2, MS1MV2, MS1MV3, WebFace4M, WebFace12M — all research-gated for commercial training. Code can point at synthetic datasets (synthetic.yaml mock exists).",
+        "fir_relevance": "retrain campaign — reusable TRAINING CODE (losses, PartialFC, Lightning loops, aligners) if run only on synthetic+consented data; discard all pretrained weights. Not for ship path or FIR-7 PEFT on SFace.",
+        "material_help": "marginal",
+        "time_saved_estimate": "1–3 weeks of training-stack engineering IF team ports recipes onto clean data only; 0 if only tempted by pretrained SOTA boards.",
+        "traps": "Recipes default to research datasets; HF models advertise SOTA but inherit training-data license. Risk of judge contamination if IJB/eval paths pull InsightFace helpers. PartialFC + multi-GPU assumed — overkill for single-GPU campaign unless useful as reference. Do not use pretrained models as teachers (distillation taint).",
+        "evidence": [
+          {
+            "claim": "CVLface LICENSE is MIT (Copyright Minchul Kim 2022).",
+            "url": "https://raw.githubusercontent.com/mk-minchul/CVLface/main/LICENSE",
+            "grade": "CONFIRMED"
+          },
+          {
+            "claim": "Documents training datasets: CASIA-WebFace, VGG2, MS1MV2, MS1MV3, WebFace4M, WebFace12M; pretrained models on HF named by those datasets.",
+            "url": "https://raw.githubusercontent.com/mk-minchul/CVLface/main/README.md",
+            "grade": "CONFIRMED"
+          },
+          {
+            "claim": "Performance board lists IR/ViT models trained on WebFace12M/4M, MS1MV2/3, CASIA, VGG2 with AdaFace/ArcFace.",
+            "url": "https://raw.githubusercontent.com/mk-minchul/CVLface/main/cvlface/pretrained_models/README.md",
+            "grade": "CONFIRMED"
+          }
+        ]
+      },
+      {
+        "name": "AdaFace (mk-minchul/AdaFace)",
+        "what_it_is": "CVPR 2022 quality-adaptive margin loss for face recognition; official repo with head.py loss, training scripts, and many pretrained IR backbones. FIR retrain campaign already names AdaFace-style loss.",
+        "license_code": "MIT",
+        "license_weights": "All released checkpoints (R18/R50/R100 on CASIA-WebFace, VGGFace2, MS1MV2, MS1MV3, WebFace4M, WebFace12M) are research-dataset-trained → tainted for commercial FIR use.",
+        "dataset_taint": "Weights: HARD TAINT. Loss math and training-loop structure: clean to reimplement / copy under MIT with attribution. Do not load released .ckpt into any FIR training/eval production path.",
+        "fir_relevance": "retrain campaign — take LOSS IMPLEMENTATION ONLY (quality-adaptive margin via feature-norm approximation). CVLface is the maintained PartialFC home.",
+        "material_help": "yes",
+        "time_saved_estimate": "2–5 days vs re-deriving AdaFace loss from paper alone; weeks if also lifting data loaders (but those assume research .rec datasets — do not).",
+        "traps": "Pretrained model table is the honey pot; BGR/cv2 input convention differs from InsightFace RGB — easy integration footgun. InsightFace train.rec path in README is a contamination vector. Official home moved to CVLface.",
+        "evidence": [
+          {
+            "claim": "AdaFace LICENSE is MIT (Copyright Minchul Kim 2022).",
+            "url": "https://raw.githubusercontent.com/mk-minchul/AdaFace/master/LICENSE",
+            "grade": "CONFIRMED"
+          },
+          {
+            "claim": "Pretrained models table lists CASIA-WebFace, VGGFace2, WebFace4M, MS1MV2, MS1MV3, WebFace12M training sets.",
+            "url": "https://raw.githubusercontent.com/mk-minchul/AdaFace/master/README.md",
+            "grade": "CONFIRMED"
+          },
+          {
+            "claim": "Usage example shows AdaFace head on 512-D embeddings with margin params m/h/s/t_alpha.",
+            "url": "https://raw.githubusercontent.com/mk-minchul/AdaFace/master/README.md",
+            "grade": "CONFIRMED"
+          }
+        ]
+      },
+      {
+        "name": "DCFace (mk-minchul/dcface)",
+        "what_it_is": "CVPR 2023 Dual Condition Face generator: Stage-1 unconditional ID diffusion (G_id) + Stage-2 dual-condition mixer (G_mix) combining ID image and style image for synthetic labeled FR training sets. FIR-7 already lists DCFace as synthetic-identity candidate.",
+        "license_code": "NO LICENSE FILE in repository; open GitHub issue #27 (Apr 2024) requesting model/dataset license remains unanswered — treat code as all-rights-reserved / uncleared for commercial reuse until clarified.",
+        "license_weights": "Pretrained generators distributed via Google Drive without stated license. G_id based on unconditional DDPM trained on FFHQ; G_mix trained using CASIA-WebFace pairs; style bank from real labeled faces (CASIA path in train docs). Released synthetic datasets (dcface_0.5m / 1.2m) also lack clear commercial terms.",
+        "dataset_taint": "GENERATOR TRAINING: HIGH — FFHQ (dataset metadata CC BY-NC-SA 4.0; many source images NC) + CASIA-WebFace (research-only). SYNTHETIC OUTPUTS: GRAY ZONE — project markets synthetic data as privacy-friendly alternative to web-crawled faces, but no explicit commercial-use grant; community legal consensus unsettled on whether generator training-data licenses poison outputs. FIR should prefer re-training generator on consented/clean data, or independent synthetic stack (e.g. Vec2Face), over shipping prebuilt DCFace weights/outputs into commercial training.",
+        "fir_relevance": "FIR-7 / retrain campaign — synthetic-identity source candidate (methods + pipeline ideas). Highest material value among synthetic generators reviewed IF license path cleared.",
+        "material_help": "yes",
+        "time_saved_estimate": "weeks of synthetic-pipeline design if code+weights become license-clear; currently blocked by missing LICENSE — plan alternative or legal review first.",
+        "traps": "(1) No LICENSE file — commercial code reuse uncleared. (2) FFHQ + CASIA training of generators. (3) Style bank / train path uses InsightFace CASIA packaging. (4) Synthetic inheritance of taint is gray — do not assume 'synthetic = clean'. (5) FR teacher F for ID loss is a frozen pretrained FR model (research-trained).",
+        "evidence": [
+          {
+            "claim": "DCFace repo file listing has README, install.sh, requirements.txt, assets, dcface/ — no LICENSE file.",
+            "url": "https://github.com/mk-minchul/dcface",
+            "grade": "CONFIRMED"
+          },
+          {
+            "claim": "Open issue #27 'What is the license?' for model and dataset (Apr 11 2024) with no maintainer license grant in page content.",
+            "url": "https://github.com/mk-minchul/dcface/issues/27",
+            "grade": "CONFIRMED"
+          },
+          {
+            "claim": "Training docs: download CASIA-WebFace from InsightFace; place faces_webface_112x112 under DATA_ROOT for generator training.",
+            "url": "https://raw.githubusercontent.com/mk-minchul/dcface/master/README.md",
+            "grade": "CONFIRMED"
+          },
+          {
+            "claim": "Paper: G_id is unconditional DDPM trained on FFHQ; dual-condition mixer uses labeled training data; style bank from real faces.",
+            "url": "https://arxiv.org/pdf/2304.07060",
+            "grade": "CONFIRMED"
+          },
+          {
+            "claim": "FFHQ dataset itself (metadata/docs) is CC BY-NC-SA 4.0 by NVIDIA; individual images mixed CC including NC.",
+            "url": "https://github.com/nvlabs/ffhq-dataset",
+            "grade": "CONFIRMED"
+          },
+          {
+            "claim": "Released synthetic datasets dcface_0.5m and 1.2m via Google Drive without stated commercial license on README.",
+            "url": "https://raw.githubusercontent.com/mk-minchul/dcface/master/README.md",
+            "grade": "CONFIRMED"
+          }
+        ]
+      },
+      {
+        "name": "huggingface.co/minchul models",
+        "what_it_is": "17 public HF model repos under author minchul: CVLface AdaFace/ArcFace IR18/50/101 and ViT/KP-RPE variants on CASIA/VGG2/MS1MV2/MS1MV3/WebFace4M/WebFace12M; DFA MobileNet/ResNet50 aligners; private_retinaface_resnet50.",
+        "license_code": "No license tag present on HF model cards/API tags for these artifacts; cards instruct 'follow the license of the training dataset'.",
+        "license_weights": "Per-model: effectively bound to research-only training datasets (WebFace4M/12M, MS1MV2/3, CASIA, VGG2). Not commercial-clean for FIR shipping or training.",
+        "dataset_taint": "HIGH for all FR embedders. Aligners (DFA) and RetinaFace also research-context — treat as non-ship.",
+        "fir_relevance": "retrain campaign reference / internal-bench baselines only; not ship, not teacher, not PEFT init.",
+        "material_help": "marginal",
+        "time_saved_estimate": "hours for enumerating SOTA baselines for Golden-150 comparison; 0 for product path.",
+        "traps": "Absence of license: tag does not mean permissive. Model card 'follow training dataset license' + WebFace/MS1M research terms = commercial ban. Easy to accidentally download into training path.",
+        "evidence": [
+          {
+            "claim": "HF API lists 17 minchul models (AdaFace/ArcFace IR/ViT variants, DFA aligners, private_retinaface); tags lack license: fields.",
+            "url": "https://huggingface.co/api/models?author=minchul",
+            "grade": "CONFIRMED"
+          },
+          {
+            "claim": "Example model card for adaface_ir101_webface4m: 'Please cite the original paper and follow the license of the training dataset.'",
+            "url": "https://huggingface.co/minchul/cvlface_adaface_ir101_webface4m/raw/main/README.md",
+            "grade": "CONFIRMED"
+          },
+          {
+            "claim": "WebFace4M/12M pretrained models cannot be used for commercial purposes (community restatement of WebFace license).",
+            "url": "https://github.com/leondgarse/Keras_insightface",
+            "grade": "ANECDOTAL"
+          }
+        ]
+      },
+      {
+        "name": "caface (Cluster and Aggregate)",
+        "what_it_is": "NeurIPS 2022 two-stage feature fusion for multi-image/video probes: Cluster (linear assign N frames → M centers) + Aggregate (fuse M centers) with order-invariant sequential update; designed for large low-quality probe sets (IJB-B/S).",
+        "license_code": "MIT",
+        "license_weights": "Released CAFace ckpt trained on AdaFace WebFace4M backbone + WebFace4M subset features — research-tainted weights.",
+        "dataset_taint": "HIGH for pretrained CAFace and backbone. Method/code structure clean under MIT if reimplemented or retrained on clean embeddings.",
+        "fir_relevance": "FIR-7 Slice-0 / template pooling (EMB-02 / EMB-07 quality-weighted multi-image template aggregation) — ideas highly relevant; reimplement quality-aware fusion over SFace 128-D templates rather than load WebFace-trained fusion net.",
+        "material_help": "marginal",
+        "time_saved_estimate": "3–7 days to reimplement cluster-and-aggregate / quality-weighted pooling from paper+code patterns onto existing 128-D templates; weeks if trying to run their WebFace training path (don't).",
+        "traps": "Pretrained fusion net is tied to AdaFace-WebFace4M 512-D features — dimension and training-data mismatch with shipped SFace 128-D. InsightFace IJB helpers in eval path. Prefer ideas over weights.",
+        "evidence": [
+          {
+            "claim": "caface LICENSE is MIT (Copyright Minchul Kim 2022).",
+            "url": "https://raw.githubusercontent.com/mk-minchul/caface/master/LICENSE",
+            "grade": "CONFIRMED"
+          },
+          {
+            "claim": "README: backbone trained on WebFace4M; CAFace trained on WebFace4M subset; pretrained model + class centers released.",
+            "url": "https://raw.githubusercontent.com/mk-minchul/caface/master/README.md",
+            "grade": "CONFIRMED"
+          },
+          {
+            "claim": "Abstract: Cluster and Aggregate for large-N low-quality probe fusion; order-invariant sequential update; IJB-B/IJB-S.",
+            "url": "https://raw.githubusercontent.com/mk-minchul/caface/master/README.md",
+            "grade": "CONFIRMED"
+          }
+        ]
+      },
+      {
+        "name": "sapiensid (mk-minchul/sapiensid)",
+        "what_it_is": "CVPR 2025 SapiensID: unified human recognition foundation model for face + body ReID across pose/scale; WebBody4M dataset tooling; pretrained models. Paper = arxiv 2504.04708.",
+        "license_code": "CC BY-NC 4.0 (NonCommercial) — forbids commercial use of licensed material.",
+        "license_weights": "Pretrained models under same NC license; cannot ship or commercially train derivatives.",
+        "dataset_taint": "HIGH — WebBody4M is large-scale web-collected human images; research/web-crawl provenance; NC repo license hard-blocks commercial.",
+        "fir_relevance": "body-torso expansion (Apple-style person embeddings beyond face) — IDEAS only: RetinaPatch multi-ROI tokenization (whole/upper-torso/face), Masked Recognition Model, Semantic Attention Head over keypoints. Reimplement techniques; do not use code/weights/dataset.",
+        "material_help": "marginal",
+        "time_saved_estimate": "ideas may save 1–2 weeks of architecture exploration for torso path; code/weights unusable commercially (NC).",
+        "traps": "CC BY-NC 4.0 is a hard commercial ban (not just dataset taint). Web-collected body data privacy/consent issues. Different modality and heavy ViT training budget vs FIR single-GPU face campaign.",
+        "evidence": [
+          {
+            "claim": "sapiensid LICENSE is Creative Commons Attribution-NonCommercial 4.0 International.",
+            "url": "https://raw.githubusercontent.com/mk-minchul/sapiensid/main/LICENSE",
+            "grade": "CONFIRMED"
+          },
+          {
+            "claim": "README: official repo for SapiensID CVPR 2025 (arxiv.org/pdf/2504.04708); components SapiensID modeling + WebBody dataset.",
+            "url": "https://raw.githubusercontent.com/mk-minchul/sapiensid/main/README.md",
+            "grade": "CONFIRMED"
+          },
+          {
+            "claim": "Paper introduces RetinaPatch, Masked Recognition Model, Semantic Attention Head; WebBody4M large-scale dataset; SOTA body ReID + competitive face.",
+            "url": "https://arxiv.org/pdf/2504.04708",
+            "grade": "CONFIRMED"
+          }
+        ]
+      },
+      {
+        "name": "arxiv 2504.04708 (SapiensID paper)",
+        "what_it_is": "SapiensID: Foundation for Human Recognition (CVPR 2025) — unified face+body metric learning with RetinaPatch (dynamic ROI patch allocation for face/torso/full), Masked Recognition Model (variable token length), Semantic Attention Head (keypoint-centered pooling). Introduces WebBody4M and Cross Pose-Scale ReID challenge.",
+        "license_code": "Paper text: ideas free to reimplement. Associated code/weights: CC BY-NC 4.0 (see sapiensid).",
+        "license_weights": "N/A for paper. Official weights NC.",
+        "dataset_taint": "Paper experiments use WebBody4M (web-collected) + standard ReID sets (Market-1501, MSMT17, PRCC, LTCC, etc.) — research context. Techniques reimplementation on consented/synthetic data is clean.",
+        "fir_relevance": "body-torso expansion + occlusion/pose robustness ideas; secondary interest for alignment-free recognition. Not a drop-in for FIR-7 face path.",
+        "material_help": "marginal",
+        "time_saved_estimate": "architecture ideas only — weeks of research reading, not product weeks saved.",
+        "traps": "Do not use associated NC code/weights. WebBody4M not for commercial training. Heavy compute vs single-GPU FIR plan.",
+        "evidence": [
+          {
+            "claim": "Paper title SapiensID: Foundation for Human Recognition; methods RP, MRM, SAH; WebBody4M; arXiv:2504.04708.",
+            "url": "https://arxiv.org/pdf/2504.04708",
+            "grade": "CONFIRMED"
+          },
+          {
+            "claim": "Official code repo under CC BY-NC 4.0.",
+            "url": "https://raw.githubusercontent.com/mk-minchul/sapiensid/main/LICENSE",
+            "grade": "CONFIRMED"
+          }
+        ]
+      },
+      {
+        "name": "attend-and-compare (mk-minchul/attend-and-compare)",
+        "what_it_is": "ECCV 2020 Attend-and-Compare Module (ACM): context module that explicitly subtracts features of distant regions for comparison; validated on chest X-ray (CXR14) and COCO detection/segmentation — not face recognition.",
+        "license_code": "No LICENSE file in repository (only README, context_module.py, cxr14/, coco/, images/).",
+        "license_weights": "N/A / experiment checkpoints if any are research medical/COCO context.",
+        "dataset_taint": "N/A for FIR (wrong domain).",
+        "fir_relevance": "none — medical imaging / general context modeling, not FR, occlusion FR, template pooling, or body ReID as used by FIR.",
+        "material_help": "no",
+        "time_saved_estimate": "0",
+        "traps": "Name similarity to FR 'attention' work can mislead; no LICENSE file; zero FIR task fit.",
+        "evidence": [
+          {
+            "claim": "README: official implementation of Learning Visual Context by Comparison (arxiv 2007.07506); ACM for CXR14 and COCO.",
+            "url": "https://raw.githubusercontent.com/mk-minchul/attend-and-compare/master/README.md",
+            "grade": "CONFIRMED"
+          },
+          {
+            "claim": "Repo listing has no LICENSE file.",
+            "url": "https://github.com/mk-minchul/attend-and-compare",
+            "grade": "CONFIRMED"
+          }
+        ]
+      },
+      {
+        "name": "arxiv 2007.07506 (Learning Visual Context by Comparison)",
+        "what_it_is": "ECCV 2020 paper proposing Attend-and-Compare Module (ACM) that models difference between object-of-interest and context via subtraction of attended features; motivated by radiologist left-right comparison on chest X-rays; also tested on COCO.",
+        "license_code": "Paper ideas free to reimplement.",
+        "license_weights": "N/A",
+        "dataset_taint": "Paper uses CXR14-family and COCO — irrelevant to face commercial training.",
+        "fir_relevance": "none — not face recognition, not occlusion-robust FR, not SapiensID. (User may have linked via author Minchul Kim lineage.)",
+        "material_help": "no",
+        "time_saved_estimate": "0",
+        "traps": "Author overlap with AdaFace/CAFace/SapiensID can cause false relevance association; domain is medical/COCO.",
+        "evidence": [
+          {
+            "claim": "Paper: Learning Visual Context by Comparison; ACM for chest X-ray recognition and COCO; code at github.com/mk-minchul/attend-and-compare.",
+            "url": "https://arxiv.org/pdf/2007.07506",
+            "grade": "CONFIRMED"
+          }
+        ]
+      },
+      {
+        "name": "deepface (serengil/deepface)",
+        "what_it_is": "MIT hybrid FR + attribute framework wrapping many backends: VGG-Face, FaceNet, OpenFace, DeepFace, DeepID, ArcFace, Dlib, SFace, GhostFaceNet, Buffalo_L; detectors include OpenCV, SSD, Dlib, MTCNN, RetinaFace, MediaPipe, YOLO (v8/v11/v12), YuNet, CenterFace.",
+        "license_code": "MIT for deepface package itself",
+        "license_weights": "Per-backend inheritance (README explicit): Buffalo_L = InsightFace NC research-only; YOLO family = AGPL; SFace = Apache-2.0 (OpenCV Zoo — already FIR shipped); GhostFaceNet code MIT but training-data of released weights needs separate review; ArcFace/VGG-Face/etc. typically research-trained.",
+        "dataset_taint": "HIGH via default and popular backends (Buffalo_L, ArcFace MS1M-class, VGG-Face). SFace path is clean-license but already in FIR stack.",
+        "fir_relevance": "internal-bench judge pool only (like buffalo_l internal-bench) — multi-model ensemble scoring on Golden-150 without shipping. Not for production path. MediaPipe/YuNet detector wrappers could inform FIR-7 detector A/B but better call those libs directly.",
+        "material_help": "marginal",
+        "time_saved_estimate": "hours–1 day to stand up multi-judge bench if carefully sandboxed; negative if used as product dependency.",
+        "traps": "(1) MIT package ≠ clean product — README states license types are inherited from models. (2) Buffalo_L NC + judge contamination if outputs enter training. (3) YOLO AGPL copyleft trap if detector backend linked into shipped binary. (4) Default model is VGG-Face (research). (5) No occlusion-specific clean backend beyond SFace/YuNet already owned.",
+        "evidence": [
+          {
+            "claim": "deepface LICENSE is MIT (Copyright Sefik Ilkin Serengil 2019).",
+            "url": "https://raw.githubusercontent.com/serengil/deepface/master/LICENSE",
+            "grade": "CONFIRMED"
+          },
+          {
+            "claim": "README lists backends including Buffalo_L, SFace, GhostFaceNet, ArcFace, YOLO detectors, YuNet, MediaPipe.",
+            "url": "https://raw.githubusercontent.com/serengil/deepface/master/README.md",
+            "grade": "CONFIRMED"
+          },
+          {
+            "claim": "README Licence section: 'License types will be inherited when you intend to utilize those models' and links Buffalo_L to InsightFace README and YOLO to Ultralytics AGPL LICENSE.",
+            "url": "https://raw.githubusercontent.com/serengil/deepface/master/README.md",
+            "grade": "CONFIRMED"
+          },
+          {
+            "claim": "OpenCV Zoo SFace LICENSE is Apache-2.0.",
+            "url": "https://raw.githubusercontent.com/opencv/opencv_zoo/main/models/face_recognition_sface/LICENSE",
+            "grade": "CONFIRMED"
+          },
+          {
+            "claim": "GhostFaceNets code LICENSE is MIT.",
+            "url": "https://raw.githubusercontent.com/HamadYA/GhostFaceNets/main/LICENSE",
+            "grade": "CONFIRMED"
+          }
+        ]
+      }
+    ],
+    "top_picks": [
+      "AdaFace loss implementation only (MIT code; discard all pretrained weights)",
+      "torchvision transforms/training infra for retrain campaign (BSD-3)",
+      "caface method ideas for quality-weighted multi-image template pooling (reimplement on SFace 128-D; discard WebFace weights)",
+      "DCFace methods as synthetic pipeline design reference — BUT block pretrained generators/outputs until LICENSE + FFHQ/CASIA taint path is legally cleared; prefer retrain generator on clean data or Vec2Face-class alternative",
+      "CVLface training recipes/PartialFC scaffolding under MIT — only if hard-gated to synthetic+consented data and zero pretrained weight load"
+    ],
+    "summary_for_decision": "FIR should treat the Minchul Kim stack as a split: LOSS + TRAINING-CODE recipes (AdaFace MIT, CVLface MIT, caface MIT) are useful if — and only if — all pretrained weights and research datasets (MS1M/WebFace/CASIA/VGG/FFHQ) are hard-excluded from every training and ship path. DCFace is the highest-leverage synthetic candidate already named in FIR-7, but the repo has NO LICENSE, generators were trained on FFHQ+CASIA, and synthetic-output commercial cleanliness is an unsettled gray zone — do not ingest released DCFace weights or 0.5M/1.2M packs into commercial training without legal clearance; reimplement dual-condition ideas on clean generators instead. SapiensID (arxiv 2504.04708) and its CC BY-NC code are useful only as body/torso architecture inspiration (RetinaPatch, SAH), not as dependencies. arxiv 2007.07506 / attend-and-compare is chest-X-ray context modeling — irrelevant. DeepSpeed is overkill for one-GPU face models. face_recognition and deepface expand the horizon but add license traps (dlib research training data; Buffalo_L NC + YOLO AGPL); deepface may serve as a sandboxed multi-judge pool alongside buffalo_l internal-bench, never as ship code. Golden-150 remains the mandatory harness — no new eval framework needed. Net: adopt AdaFace loss + torchvision + reimplemented template-pooling ideas; keep DCFace as design reference pending license fix; ban all listed research pretrained FR/body weights and InsightFace/YOLO backends from commercial paths."
+  }
+}

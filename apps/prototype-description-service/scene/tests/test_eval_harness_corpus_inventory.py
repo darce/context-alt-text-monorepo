@@ -29,7 +29,7 @@ _IPTC_XMP = (
     b"<Iptc4xmpExt:rbY>0.5</Iptc4xmpExt:rbY><Iptc4xmpExt:rbW>0.2</Iptc4xmpExt:rbW>"
     b"<Iptc4xmpExt:rbH>0.2</Iptc4xmpExt:rbH></Iptc4xmpExt:RegionBoundary>"
     b'<Iptc4xmpExt:Name xmlns:Iptc4xmpExt="http://iptc.org/std/Iptc4xmpExt/2008-02-29/">'
-    b"Maria Correonero</Iptc4xmpExt:Name></rdf:li></rdf:Bag></Iptc4xmpExt:ImageRegion>"
+    b"Slate Willow</Iptc4xmpExt:Name></rdf:li></rdf:Bag></Iptc4xmpExt:ImageRegion>"
     b"</rdf:Description></rdf:RDF></x:xmpmeta>"
 )
 
@@ -75,7 +75,7 @@ def test_xmp_names_and_face_count(tmp_path):
     p = tmp_path / "family.jpg"
     _save(p, (90, 90, 90), xmp=_IPTC_XMP)
     rec = inventory_image(p, tmp_path)
-    assert rec.xmp_names == ["Maria Correonero"] and rec.xmp_face_count == 1
+    assert rec.xmp_names == ["Slate Willow"] and rec.xmp_face_count == 1
 
 
 def test_unreadable_image_degrades_to_metadata(tmp_path):

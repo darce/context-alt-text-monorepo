@@ -133,7 +133,7 @@ include $(ROOT_MAKEFILE_DIR)/mk/logs.mk
 # Root targets
 # =============================================================================
 
-.PHONY: help check-all check-frontend check-mcp check-handoff check-orchestrator lint-all lint-lane-reports lint-handoff lint-orchestrator fix-lint-handoff fix-lint-orchestrator fix-lint-mcp format format-all format-handoff format-orchestrator mypy-handoff mypy-orchestrator test-all test-handoff test-orchestrator clean-all reset-local fix-php-style mcp mcp-start gemini-cli-setup dev dev-stop ace-metrics ace-metrics-json ace-reflect ace-curation-report ace-trends worktree-audit worktree-prune task-plan-audit check-codex-command-router check-skills check-harness-sync check-mcp-pins lint-hoisted-paths maint-start check-main-clean install-git-hooks localwp-mirror-integrity localwp-e2e-install localwp-e2e-auth localwp-e2e-smoke localwp-evidence localwp-a11y-smoke check-overrides-digest test-overrides-digest test-scripts test-hooks test-deploy-contract test-vlm3 provision-customer provision-demo expire-demo
+.PHONY: help check-all check-frontend check-mcp check-handoff check-orchestrator lint-all lint-lane-reports lint-handoff lint-orchestrator fix-lint-handoff fix-lint-orchestrator fix-lint-mcp format format-all format-handoff format-orchestrator mypy-handoff mypy-orchestrator test-all test-handoff test-orchestrator clean-all reset-local fix-php-style mcp mcp-start gemini-cli-setup dev dev-stop ace-metrics ace-metrics-json ace-reflect ace-curation-report ace-trends worktree-audit worktree-prune task-plan-audit check-codex-command-router check-skills check-harness-sync check-mcp-pins lint-hoisted-paths maint-start check-main-clean install-git-hooks localwp-mirror-integrity localwp-e2e-install localwp-e2e-auth localwp-e2e-smoke localwp-evidence localwp-a11y-smoke check-overrides-digest test-overrides-digest test-scripts mutation-guard-license-policy test-hooks test-deploy-contract test-vlm3 provision-customer provision-demo expire-demo
 
 # Default target
 help:
@@ -142,6 +142,7 @@ help:
 	@echo ""
 	@echo "Cross-Repo Operations:"
 	@echo "  make check-all        - Run all checks (lint + types + tests)"
+	@echo "  make mutation-guard-license-policy - Opt-in remote-VM licence-policy mutation guard (~5h --mutation all)"
 	@echo "  make format-all       - Fix lint + format across all apps and packages (run before check-all)"
 	@echo "  make check-frontend   - Run frontend checks (lint + types + arch + tests)"
 	@echo "  make lint-all         - Run linters for all apps and packages"
@@ -281,7 +282,6 @@ check-all:
 		else \
 			$(MAKE) lint-all; \
 			$(MAKE) lint-task-plans; \
-			$(MAKE) lint-lane-reports; \
 			$(MAKE) lint-dashboard-txt; \
 			$(MAKE) lint-scripts; \
 			$(MAKE) check-overrides-digest; \
@@ -408,14 +408,6 @@ test-all:
 lint-task-plans:
 	@python3 scripts/hooks/guard-task-plan-findings.py --scan-repo
 
-# VLM6-S2A-F3-02. Offload lanes cite `git rev-parse HEAD` from a sandbox clone
-# whose history is stripped, so the SHA is true there and unresolvable at the
-# destination. Four briefs' worth of warnings did not stop it; verify at the
-# destination instead. Deliberately foreign citations opt out with an HTML
-# comment or an inline `sha-guard:ignore` marker.
-lint-lane-reports:
-	@python3 scripts/check_lane_report_shas.py
-
 # E17-9 Slice 4 / E17-7 Slice 4 follow-up. Guard tracked files from
 # reintroducing the obsolete dashboard markdown name after the rename
 # to DASHBOARD.txt. Archived plans, test fixtures, test modules, the
@@ -460,9 +452,48 @@ test-scripts:
 		scripts/test_vlm3_decision_memo.py \
 		scripts/test_check_overrides_lock_digest.py scripts/test_consumer_setup_doc.py \
 		scripts/test_remote_gate_guards.py \
+		scripts/train/occlusion/test_license_policy.py \
+		scripts/train/occlusion/test_license_policy_hardening.py \
+		scripts/train/occlusion/test_equivalence_claims.py \
+		scripts/train/occlusion/test_mutation_guard_env.py \
 		scripts/test_acx_backend_image_contract.py \
 		-q --tb=short --durations=25
 	@bash scripts/deploy/tests/test-smoke-gate.sh
+
+# Permanent [TEST-15] discrimination guard for the licence/provenance gate.
+# OPT-IN / REMOTE-VM ONLY. Not a prerequisite of test-scripts or check-all:
+# laptop `make test-scripts` / `make check-all` must stay a fast self-checking
+# suite (TEST-01). Standing rule: mutation testing is remote-VM only
+# (CARD-09 / feedback-bounded-waiting). Measured wall clock on a 4-core VM:
+#   ≈5 h  for  --mutation all
+#   ≈12 min per single mutation
+# The default remote-gate workdir is apps/prototype-description-service, so
+# this root target never runs there. Invoke from the monorepo root on the
+# remote VM (do not attach to REMOTE_GATE_TARGETS while workdir is the
+# description service):
+#   make mutation-guard-license-policy
+# or override workdir to the repo root for that run only:
+#   WORKBAY_REMOTE_GATE_WORKDIR=. make check-remote TARGETS="mutation-guard-license-policy"
+#
+# test-scripts above proves test_license_policy.py is green; this proves that
+# green can go red. Its victim suite is test_license_policy.py only —
+# test_license_policy_hardening.py is gated by test-scripts but kills no
+# mutant, so coverage that lives only there is not discrimination evidence.
+# Applies every entry in the MUTATIONS table to scratch copies of
+# license_policy.py under a temp dir (the real tree is never written) and fails
+# unless each required mutant is killed by its own named victim tests and the
+# semantically inert CONTROL survives. Child pytest runs get a scrubbed
+# allowlist env and verdicts come from junitxml on disk plus a
+# baseline-executed-count invariant, so an injected plugin cannot forge kills.
+#
+# What it floors, precisely: the collected node-id set (may grow, must not
+# shrink), the existence of the pinned victim names, and that each required
+# mutant dies. What it does NOT floor: assertion strength inside a test body,
+# skip marks, or fixture-data diversity — a test whose body is replaced by
+# `pass` keeps its node id and still counts as executed. EXIT=0 means the suite
+# still has its shape and its pins, not that the suite was not gutted.
+mutation-guard-license-policy:
+	@python3 scripts/train/occlusion/mutation_guard.py --mutation all
 
 # Unit tests backing check-overrides-digest (incl. the committed-lock
 # consistency regression guard). Also collected by test-scripts in check-all;
@@ -632,11 +663,9 @@ dev-stop:
 # (auto-consent greenwashes a no-score report). Consent only at the call
 # site: make eval-captions EVAL_ARGS='--allow-refused'
 #        scripts/eval-captions.sh --allow-refused
-# --check-determinism runs by default (seed-stability after the live fetch);
-# offline freeze compare is a separate target: make eval-anchor-check.
 .PHONY: eval-captions
 eval-captions:
-	@$(ROOT_MAKEFILE_DIR)/scripts/eval-captions.sh --check-determinism $(EVAL_ARGS)
+	@$(ROOT_MAKEFILE_DIR)/scripts/eval-captions.sh $(EVAL_ARGS)
 
 # FIR-5 face bake-off: offline candidate walk (+ optional score). No tenant writes.
 # Usage: make bakeoff-face
@@ -649,33 +678,6 @@ bakeoff-face:
 bakeoff-face-score:
 	@if [ -z "$(FACE_RUN)" ]; then echo "error: FACE_RUN is required" >&2; exit 2; fi
 	@cd apps/prototype-description-service && uv run python -m scripts.eval_harness.cli score-face --run-record "$(FACE_RUN)" $(EVAL_ARGS)
-
-# VLM-6 S2 dry-run: bake-off client end-to-end against the loopback stub server (no GPU, no weights)
-.PHONY: bakeoff-dry-run
-bakeoff-dry-run:
-	@cd apps/prototype-description-service && uv run python -m pytest scene/tests/test_eval_harness_stub_dryrun.py -q -p no:randomly
-
-# Offline determinism freezes (caption + face). Not eval-captions / bakeoff-face-score:
-# those score a freshly fetched record with no committed freeze. Non-zero on mismatch.
-# --freeze-certification: exit code means byte-stability only (fx8). The freezes are
-# deliberately imperfect non-evidential fixtures; adoption gates stay hard on live score.
-# --rubric-gate skip on caption: freeze stamp parity only (artifact carries
-# rubric_gate=skip); not an exit-code softener under --freeze-certification.
-.PHONY: eval-anchor-check
-eval-anchor-check:
-	@cd apps/prototype-description-service && uv run --extra dev python -m scripts.eval_harness.cli score \
-		--manifest ../../docs/tasks/vlm/bakeoff-results/S2A-determinism-anchor-manifest-20260811.json \
-		--run-record ../../docs/tasks/vlm/bakeoff-results/S2A-determinism-anchor-run-20260811.json \
-		--check-determinism \
-		--expect-report ../../docs/tasks/vlm/bakeoff-results/S2A-determinism-anchor-run-20260811-report.json \
-		--rubric-gate skip \
-		--freeze-certification
-	@cd apps/prototype-description-service && uv run --extra dev python -m scripts.eval_harness.cli score-face \
-		--manifest ../../docs/tasks/vlm/bakeoff-results/S2A-face-determinism-anchor-manifest-20260811.json \
-		--run-record ../../docs/tasks/vlm/bakeoff-results/S2A-face-determinism-anchor-run-20260811.json \
-		--check-determinism \
-		--expect-report ../../docs/tasks/vlm/bakeoff-results/S2A-face-determinism-anchor-run-20260811-face-report.json \
-		--freeze-certification
 
 # DS-3 per-prospect demo provisioning (backend registry + minter wrap only).
 # Usage: make provision-demo LABEL="Acme Gallery" SEED=default

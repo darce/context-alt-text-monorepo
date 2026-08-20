@@ -99,7 +99,7 @@ def test_phrase_boxes_include_stranger_null_case():
     nulls = [e for e in stranger["expected_containment"] if e["resolved_identity"] is None]
     assert len(nulls) == 1, "stranger face must resolve to no name (never a guessed name)"
     named = [e for e in stranger["expected_containment"] if e["resolved_identity"]]
-    assert [e["resolved_identity"] for e in named] == ["Ryann Wiseman"]
+    assert [e["resolved_identity"] for e in named] == ["Muted Yarrow"]
 
 
 def test_phrase_boxes_loader_rejects_bad_schema(tmp_path):

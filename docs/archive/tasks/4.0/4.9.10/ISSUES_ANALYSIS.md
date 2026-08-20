@@ -111,11 +111,11 @@ async def move_members(self, from_cluster_id: str, to_cluster_id: str) -> int:
 7 RENAMED log entries in 250ms for the same cluster ([recognition.log#L294-301](../../../../apps/prototype-description-service/logs/recognition.log)):
 
 ```
-15:03:15,967 RENAMED old_label='None' new_label='Tory Guzman'
-15:03:15,970 RENAMED old_label='None' new_label='Tory Guzman'  # 3ms later
-15:03:16,041 RENAMED old_label='Tory Guzman' new_label='Tory Guzman'  # 71ms later
+15:03:15,967 RENAMED old_label='None' new_label='Flaxen Yarrow'
+15:03:15,970 RENAMED old_label='None' new_label='Flaxen Yarrow'  # 3ms later
+15:03:16,041 RENAMED old_label='Flaxen Yarrow' new_label='Flaxen Yarrow'  # 71ms later
 ...
-15:03:16,208 RENAMED old_label='Tory Guzman' new_label='Tory Guzman'
+15:03:16,208 RENAMED old_label='Flaxen Yarrow' new_label='Flaxen Yarrow'
 ```
 
 **Root Cause Candidates**:

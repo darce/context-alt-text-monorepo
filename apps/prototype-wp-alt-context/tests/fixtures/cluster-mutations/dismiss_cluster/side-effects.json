@@ -1,1 +1,1 @@
-{"touched_tenant_id":"","outbox_operation":"cluster_dismissed","transaction_queries":["START TRANSACTION","COMMIT"],"topology_command_type":"","refresh_curation_metrics":false}
+{"touched_tenant_id":"","outbox_operations":["cluster_dismissed"],"transaction_queries":["START TRANSACTION","COMMIT"],"topology_command_type":"","refresh_curation_metrics":false}

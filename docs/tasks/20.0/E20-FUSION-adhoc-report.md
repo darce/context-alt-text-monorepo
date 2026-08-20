@@ -42,8 +42,8 @@
 
 - labeled facts: 12
 - mis-attachments: 4
-- `mock_images/liam-maloney-painting.jpg` identity/Liam Maloney: expected dropped visible=False, actual object visible=True (decision_or_visible_mismatch)
-- `mock_images/mcm-planecrash.jpg` identity/Maria Correonero: expected dropped visible=False, actual object visible=True (decision_or_visible_mismatch)
+- `mock_images/linen-kestrel-painting.jpg` identity/Linen Kestrel: expected dropped visible=False, actual object visible=True (decision_or_visible_mismatch)
+- `mock_images/mcm-planecrash.jpg` identity/Slate Willow: expected dropped visible=False, actual object visible=True (decision_or_visible_mismatch)
 - `mock_images/mcm-planecrash.jpg` event/Garden picnic: expected caption visible=False, actual object visible=True (decision_or_visible_mismatch)
 - `mock_images/mcm-planecrash.jpg` place/Summer garden: expected caption visible=False, actual object visible=True (decision_or_visible_mismatch)
 

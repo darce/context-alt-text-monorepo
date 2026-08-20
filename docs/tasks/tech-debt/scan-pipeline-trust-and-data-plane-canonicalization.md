@@ -12,7 +12,7 @@ A live demo run on 2026-05-03 surfaced a class of correctness, observability, an
 - **Job 1** (`676c07ef-3b27-49f7-b9b2-de3ee77596c5`) stalled at `Processed 95/100 · Phase: Queued · Queued 5 items…`. Spinner never resolved.
 - **Job 2** (`ed877f4f-fb06-455d-93fe-a25a8dedf77e`) showed `Processed 11/11 · Phase: Complete · ✓ Scan complete 11 images` — silently dropping 89 of the 100 submitted items.
 - "Review Suggestions" panel showed `No suggestions to review yet` after the "successful" run.
-- A merge action against cluster `a60a64dc-132b-4e61-8810-fdd25d47b523` (label "Emilie Chartrand") returned a raw 400: `{"code":"invalid_target_cluster_id","message":"Source and target cluster IDs must differ."}` — the UI offered to merge a cluster with itself.
+- A merge action against cluster `a60a64dc-132b-4e61-8810-fdd25d47b523` (label "Saffron Cypress") returned a raw 400: `{"code":"invalid_target_cluster_id","message":"Source and target cluster IDs must differ."}` — the UI offered to merge a cluster with itself.
 
 These are downstream symptoms of one upstream cause (Section "Root Cause") plus a set of independent UX/observability gaps that compound the user's inability to recover. Quoting the operator: *"poor UI, observability, usability."*
 
@@ -111,15 +111,15 @@ made by ... AltContext\Api\Api->get_dashboard_stats
 
 ### E8. Self-merge offered when label search returns the source cluster
 
-`IdentityClusterItem.tsx:184–215` runs `findClusterByLabel(trimmed)` while editing. The guard at line 193 only skips when `trimmed === currentLabel`. Once `useClusterSaveAction.ts:104` re-runs `findClusterByLabel` on save, the lookup returns the source cluster itself (it does not exclude `editableClusterId` from results); the UI sets `matchedCluster.id = sourceId`, renders "Merge with Emilie Chartrand", and posts `target_cluster_id == source_id`. Backend rejects at `class-cluster-mutations-controller.php:473` with a 400 the user sees as a raw JSON dump.
+`IdentityClusterItem.tsx:184–215` runs `findClusterByLabel(trimmed)` while editing. The guard at line 193 only skips when `trimmed === currentLabel`. Once `useClusterSaveAction.ts:104` re-runs `findClusterByLabel` on save, the lookup returns the source cluster itself (it does not exclude `editableClusterId` from results); the UI sets `matchedCluster.id = sourceId`, renders "Merge with Saffron Cypress", and posts `target_cluster_id == source_id`. Backend rejects at `class-cluster-mutations-controller.php:473` with a 400 the user sees as a raw JSON dump.
 
 ```sql
 -- mysql confirms only one cluster has this label
-SELECT cluster_uuid, label FROM wp_acx_clusters WHERE label LIKE '%Emilie%';
--- a60a64dc-132b-4e61-8810-fdd25d47b523 | Emilie Chartrand
+SELECT cluster_uuid, label FROM wp_acx_clusters WHERE label LIKE '%thistle%';
+-- a60a64dc-132b-4e61-8810-fdd25d47b523 | Saffron Cypress
 ```
 
-There ARE genuine duplicate-labeled clusters (`Maria Correonero` ×3, `Lindsay Blair` ×2, `Coral Osborne` ×2) where the same code path will work correctly; the bug is purely the self-match case.
+There ARE genuine duplicate-labeled clusters (`Slate Willow` ×3, `Burnished Ridgeway` ×2, `Pewter Hollow` ×2) where the same code path will work correctly; the bug is purely the self-match case.
 
 ## Root Cause
 
@@ -365,7 +365,7 @@ Closed during planning review on 2026-05-03 with operator authorization. These a
 | Stale clusters for media 6622–6626 | E2 | E16-1a (root cause), E16-1g (cleanup) |
 | Media 6624 has 6× similarity=1.0 assignments | E2 | E16-1h |
 | Dashboard SQL error in debug.log | E4 | E16-1f |
-| Self-merge offered on Emilie Chartrand cluster | E8 | E16-1e |
+| Indigo-merge offered on Saffron Cypress cluster | E8 | E16-1e |
 | `make reset-local` does not produce expected clean state | E3 | E16-1a |
 
 ---

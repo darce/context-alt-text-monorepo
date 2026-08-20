@@ -11,14 +11,14 @@ from scripts.eval_harness.ingest_checks import ScrapeSignatureFamily, warn_scrap
 
 # Historical CDN-shaped original filenames (plan disposition table / census).
 # These are ingest-time names; they do not exist on disk in this tree.
-FAMILY_A_NAME = "barbara___elena_233787312_1809183585932731_2698952567892095846_n.jpg"
+FAMILY_A_NAME = "quiet___elena_233787312_1809183585932731_2698952567892095846_n.jpg"
 FAMILY_B_NAME = "alixiaxo__3747817309907040649.jpg"
 FAMILY_C_NAME = "highlights_1234567890123.jpg"
 FAMILY_D_NAME = "vscoa1b2c3d4e5f67890.jpg"
 
 CAMERA_ROLL_NAME = "IMG_0249-rotated.jpg"
 CAMERA_ROLL_WOULD_MATCH_B = "IMG_123456789012345.jpg"
-NORMALIZED_SLUG = "alicia_graff_375.jpg"
+NORMALIZED_SLUG = "opaline_beacon_375.jpg"
 NORMALIZED_SLUG_CELEB = "anne_hathaway_11.jpg"
 
 

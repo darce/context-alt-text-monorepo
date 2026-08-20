@@ -131,7 +131,7 @@ async def test_stale_accepted_suggestion_is_relisted_for_review(db_session, tena
         IdentityCluster(
             id=None,
             tenant_id=str(tenant.id),
-            label="Maria Correonero",
+            label="Slate Willow",
             is_labeled=True,
             identity_count=1,
             created_at=None,
@@ -724,7 +724,7 @@ async def test_background_backfill_surfaces_suggestions_for_later_batch_cluster(
         IdentityCluster(
             id=None,
             tenant_id=str(tenant.id),
-            label="Maria Correonero",
+            label="Slate Willow",
             is_labeled=True,
             identity_count=1,
             created_at=None,
@@ -818,14 +818,14 @@ async def test_background_backfill_surfaces_suggestions_for_later_batch_cluster(
 
 @pytest.mark.asyncio
 async def test_top_unlabeled_cards_show_known_label_ctas_for_later_batch_clusters(db_session, tenant) -> None:
-    """Later-batch unlabeled cards should infer known labels (Laura/Talvi/Jen-style), including low confidence."""
+    """Later-batch unlabeled cards should infer known labels (Sable/Jen-style), including low confidence."""
     cluster_service = await dependencies.build_cluster_service(session=db_session, tenant_id=str(tenant.id))
     cluster_repo = cluster_service.assignment_writer.cluster_repository
     member_repo = cluster_service.assignment_writer.member_repository
 
     confirmed_specs = [
         ("Laura", 4001, [1.0] + [0.0] * 511),
-        ("Talvi", 4002, [0.0, 1.0] + [0.0] * 510),
+        ("Sable", 4002, [0.0, 1.0] + [0.0] * 510),
         ("Jen", 4003, [0.0, 0.0, 1.0] + [0.0] * 509),
     ]
     expected_labels_by_unlabeled_id: dict[str, str] = {}
@@ -871,7 +871,7 @@ async def test_top_unlabeled_cards_show_known_label_ctas_for_later_batch_cluster
     # Later-batch unlabeled clusters. Jen stays in the low-confidence UI band (<0.6) but above inference floor.
     unlabeled_specs = [
         ("Laura", 4101, [0.95, math.sqrt(1.0 - 0.95**2)] + [0.0] * 510),
-        ("Talvi", 4102, [0.0, 0.9, math.sqrt(1.0 - 0.9**2)] + [0.0] * 509),
+        ("Sable", 4102, [0.0, 0.9, math.sqrt(1.0 - 0.9**2)] + [0.0] * 509),
         ("Jen", 4103, [0.0, 0.0, 0.55, math.sqrt(1.0 - 0.55**2)] + [0.0] * 508),
     ]
 

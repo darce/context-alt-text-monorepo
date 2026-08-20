@@ -41,6 +41,39 @@ export function isUsableNaturalSize(size: NaturalSize): boolean {
   );
 }
 
+/** True when a media id is a finite number strictly greater than zero. */
+export function isPositiveMediaId(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0;
+}
+
+export interface ContainFit {
+  scale: number;
+  displayWidth: number;
+  displayHeight: number;
+  offsetX: number;
+  offsetY: number;
+}
+
+/**
+ * Object-fit: contain math: scale a natural image into a frame, letter/pillar-box.
+ * Shared by FaceLightbox fallback bbox and the overlay-layer wrapper.
+ */
+export function containFit(natural: NaturalSize, frame: NaturalSize): ContainFit | null {
+  if (!isUsableNaturalSize(natural) || !isUsableNaturalSize(frame)) {
+    return null;
+  }
+  const scale = Math.min(frame.width / natural.width, frame.height / natural.height);
+  const displayWidth = natural.width * scale;
+  const displayHeight = natural.height * scale;
+  return {
+    scale,
+    displayWidth,
+    displayHeight,
+    offsetX: (frame.width - displayWidth) / 2,
+    offsetY: (frame.height - displayHeight) / 2,
+  };
+}
+
 /**
  * True when bbox has all four edges as finite numbers (runtime API may omit fields).
  * Does not require positive width/height — zero-extent boxes are still positionable.

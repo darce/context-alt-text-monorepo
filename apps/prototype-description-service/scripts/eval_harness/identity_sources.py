@@ -21,7 +21,7 @@ from dataclasses import dataclass
 # A per-figure disambiguator is SHORT (celebs01 runs 1-2 digits). Bounding the
 # strip is what separates `madonna_7` from a scraped `handle_3134640125107970990`:
 # an unbounded `_\d+$` ate the 19-digit social post id and left a clean handle,
-# which then passed the no-digits check and yielded the fake label "Ellynheald".
+# which then passed the no-digits check and yielded the fake label "GildedCypress".
 _TRAILING_INDEX = re.compile(r"_\d{1,3}$")
 _EXT = re.compile(r"\.(jpe?g|png|webp|gif|heic)$", re.IGNORECASE)
 _HAS_ALPHA_WORD = re.compile(r"[A-Za-z]{2,}")

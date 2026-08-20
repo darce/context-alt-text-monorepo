@@ -124,12 +124,16 @@ export const createClusterForIdentity = async (
 ): Promise<CreateClusterForIdentityResponse> => {
   const base = getEndpoint('recognitionCreateClusterForIdentity');
   const url = stripTrailingSlash(base);
+  const body: Record<string, unknown> = {
+    identity_id: request.identityId,
+    label: request.label,
+  };
+  if (typeof request.rosterEntryId === 'number') {
+    body.roster_entry_id = request.rosterEntryId;
+  }
   return fetchRequiredApi<CreateClusterForIdentityResponse>(url, {
     method: 'POST',
-    body: {
-      identity_id: request.identityId,
-      label: request.label,
-    },
+    body,
     restNonce: getConfig().nonce,
     signal,
   });

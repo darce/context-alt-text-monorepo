@@ -83,20 +83,20 @@ await cluster_repo.delete(source_cluster_id)  # ❌ PROBLEM
                   id                  | media_id |              cluster_id              |      label       
 --------------------------------------+----------+--------------------------------------+------------------
  8afaacee-c1dd-4bbf-b76d-b72079053847 |     6702 | 25e1d8a4-90ca-4a45-b285-977d4ca103ef | Laura Dresser
- 00583ee2-3f87-4283-999e-aeb89e25ced3 |     6702 | 8f5c73f7-f371-442c-968c-9d928d097f9e | Maria Correonero
- 29e6a293-aa66-42e2-b1fd-e6f90a069025 |     6703 | 25e1d8a4-90ca-4a45-b285-977d4ca103ef | Laura Dresser
- 0c7ae9ef-31d1-4678-8f22-687123f0d423 |     6703 | 8f5c73f7-f371-442c-968c-9d928d097f9e | Maria Correonero
+ 00583ee2-3f87-4283-999e-aeb89e25ced3 |     6702 | 8f5c73f7-f371-442c-968c-9d928d097f9e | Slate Willow
+ 29e6a293-aa66-42e2-b1fd-e6f90a069025 |     6703 | 25e1d8a4-90ca-4a45-b285-977d4ca103ef | Sable Dresser
+ 0c7ae9ef-31d1-4678-8f22-687123f0d423 |     6703 | 8f5c73f7-f371-442c-968c-9d928d097f9e | Slate Willow
  f16da274-fec9-42b5-950c-241f09ebb5c0 |     6705 | c8d17a77-5e2c-4f28-9955-54d5fd218773 | (unlabeled)
  6084a67f-1e0f-42e4-b92a-ce9d4a198eda |     6705 | 06e29c3d-cbb5-411c-950c-20c33d1f3c1e | (unlabeled)
  d550f092-ddfd-4216-8a7e-4c7902f143c3 |     6705 | 25e1d8a4-90ca-4a45-b285-977d4ca103ef | Laura Dresser
- 913bc4d4-4a10-4491-983b-09b65b940808 |     6705 | 8f5c73f7-f371-442c-968c-9d928d097f9e | Maria Correonero
+ 913bc4d4-4a10-4491-983b-09b65b940808 |     6705 | 8f5c73f7-f371-442c-968c-9d928d097f9e | Slate Willow
 (8 rows)
 ```
 
 **Key Finding:** Each media item has **MULTIPLE FACES** (2-4 faces detected per image):
-- Media 6702: 2 faces (Laura Dresser + Maria Correonero)
-- Media 6703: 2 faces (Laura Dresser + Maria Correonero)
-- Media 6705: 4 faces (2 unlabeled + Laura Dresser + Maria Correonero)
+- Media 6702: 2 faces (Sable Dresser + Slate Willow)
+- Media 6703: 2 faces (Sable Dresser + Slate Willow)
+- Media 6705: 4 faces (2 unlabeled + Sable Dresser + Slate Willow)
 
 ### Root Cause Analysis
 

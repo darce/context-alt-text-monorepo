@@ -53,7 +53,7 @@
       "gated_score": 1.0,
       "hallucinated_names": [],
       "inserted_identities": [
-        "Caitlin Weaver"
+        "Russet Fathom"
       ],
       "media_id": 3,
       "meta_framing_hits": [],
@@ -75,14 +75,14 @@
       "gated_score": 1.0,
       "hallucinated_names": [],
       "inserted_identities": [
-        "Bea Burke"
+        "Hollow Pennant"
       ],
       "media_id": 2,
       "meta_framing_hits": [],
       "missing_identities": [],
       "must_right_failures": [],
       "name_front_loaded": true,
-      "path": "mock_images/bea-nye.jpg",
+      "path": "mock_images/quiet-nye.jpg",
       "policy_violation": false,
       "repetition_ratio": 0.3548,
       "sentence_count": 4,
@@ -97,8 +97,8 @@
       "gated_score": 1.0,
       "hallucinated_names": [],
       "inserted_identities": [
-        "Caitlin Weaver",
-        "Erika Hansen Miller"
+        "Russet Fathom",
+        "Muted Current"
       ],
       "media_id": 5,
       "meta_framing_hits": [
@@ -107,7 +107,7 @@
       "missing_identities": [],
       "must_right_failures": [],
       "name_front_loaded": true,
-      "path": "mock_images/ccqw-erika.jpg",
+      "path": "mock_images/ccqw-candid.jpg",
       "policy_violation": false,
       "repetition_ratio": 0.3333,
       "sentence_count": 4,
@@ -123,14 +123,14 @@
       "hallucinated_names": [],
       "inserted_identities": [
         "Daniel Arce",
-        "Kirstie Mccarrel"
+        "Auburn Current"
       ],
       "media_id": 23,
       "meta_framing_hits": [],
       "missing_identities": [],
       "must_right_failures": [],
       "name_front_loaded": true,
-      "path": "mock_images/kirstie-daniel-sunglasses.jpg",
+      "path": "mock_images/auburn-daniel-sunglasses.jpg",
       "policy_violation": false,
       "repetition_ratio": 0.3636,
       "sentence_count": 4,
@@ -145,14 +145,14 @@
       "gated_score": 1.0,
       "hallucinated_names": [],
       "inserted_identities": [
-        "Ryann Wiseman"
+        "Muted Yarrow"
       ],
       "media_id": 37,
       "meta_framing_hits": [],
       "missing_identities": [],
       "must_right_failures": [],
       "name_front_loaded": true,
-      "path": "mock_images/ryann-group-party.jpg",
+      "path": "mock_images/muted-group-party.jpg",
       "policy_violation": false,
       "repetition_ratio": 0.2333,
       "sentence_count": 4,
@@ -170,11 +170,11 @@
       "media_id": 30,
       "meta_framing_hits": [],
       "missing_identities": [
-        "Maria Correonero"
+        "Slate Willow"
       ],
       "must_right_failures": [],
       "name_front_loaded": null,
-      "path": "mock_images/maria-pool.jpg",
+      "path": "mock_images/slate-pool.jpg",
       "policy_violation": false,
       "repetition_ratio": 0.3333,
       "sentence_count": 3,
@@ -188,7 +188,7 @@
       "fkre": 71.03,
       "gated_score": 0.0,
       "hallucinated_names": [
-        "Liam Maloney"
+        "Linen Kestrel"
       ],
       "inserted_identities": [],
       "media_id": 27,
@@ -196,7 +196,7 @@
       "missing_identities": [],
       "must_right_failures": [],
       "name_front_loaded": null,
-      "path": "mock_images/liam-maloney-painting.jpg",
+      "path": "mock_images/linen-kestrel-painting.jpg",
       "policy_violation": false,
       "repetition_ratio": 0.1333,
       "sentence_count": 5,
@@ -211,14 +211,14 @@
       "gated_score": 1.0,
       "hallucinated_names": [],
       "inserted_identities": [
-        "Ryann Wiseman"
+        "Muted Yarrow"
       ],
       "media_id": 36,
       "meta_framing_hits": [],
       "missing_identities": [],
       "must_right_failures": [],
       "name_front_loaded": true,
-      "path": "mock_images/ryann-bar.jpg",
+      "path": "mock_images/muted-bar.jpg",
       "policy_violation": false,
       "repetition_ratio": 0.32,
       "sentence_count": 4,
@@ -233,7 +233,7 @@
       "gated_score": 1.0,
       "hallucinated_names": [],
       "inserted_identities": [
-        "Maria Correonero"
+        "Slate Willow"
       ],
       "media_id": 33,
       "meta_framing_hits": [

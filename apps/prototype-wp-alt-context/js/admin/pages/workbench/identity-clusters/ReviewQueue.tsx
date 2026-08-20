@@ -10,7 +10,7 @@
  */
 
 import React from 'react';
-import { __, sprintf } from '@wordpress/i18n';
+import { __, _n, sprintf } from '@wordpress/i18n';
 import { AlertTriangle } from 'lucide-react';
 
 import { DATA_SOURCE } from '../../../api/recognition/types';
@@ -24,37 +24,36 @@ import {
   type ReviewQueueBandParam,
   type ReviewQueueKindParam,
 } from '../../../hooks/workbenchQueueUrl';
+import { faceOverlayDomId } from '../../../../components/ui/FaceOverlayLayer';
 import { UserFacingErrorNotice } from '../../../components/ui/UserFacingErrorNotice';
 import { EmptyStateWarning } from './EmptyStateWarning';
 import { QUERY_RETRY_COPY, QueryRetryButton, settledRefetchFailed } from './queryRetry';
 import { MergeSuggestionCard } from './MergeSuggestionCard';
 import { PersonCommitControl } from './PersonCommitControl';
-import {
-  PERSON_COMMIT_FAILURE_COPY,
-  PERSON_COMMIT_SUCCESS_COPY,
-  VIEW_IN_ROSTER_COPY,
-  VIEW_IN_ROSTER_HREF,
-} from './personCommitCopy';
+import { viewInRosterHref } from './personCommitCopy';
 import { shouldShowPersonCommit, isPersonCommitPrimaryKind } from './personCommitVisibility';
+import {
+  CloseMatchAcceptOffer,
+  closeMatchAcceptedAnnouncement,
+} from './CloseMatchAcceptOffer';
+import { LightboxNameFace, LIGHTBOX_NAME_SAVED_ANNOUNCE } from './LightboxNameFace';
 import { ReviewCardLightbox } from './ReviewCardLightbox';
 import {
   clampQueueIndex,
+  closeMatchGroupForAccept,
   filterReviewQueueComposite,
   intersectSelectionWithFilters,
   NEXT_ACTION_CHIP_LABEL,
   NEXT_ACTION_KIND,
-  nextQueueIndex,
-  prevQueueIndex,
   REVIEW_QUEUE_BAND,
   REVIEW_QUEUE_BAND_CHIP_LABEL,
-  REVIEW_QUEUE_DRAIN_MESSAGE,
   REVIEW_QUEUE_FILTER,
-  SELECTION_SPLIT_MESSAGE,
+  type AssignmentQueueItem,
   type ReviewQueueBand,
   type ReviewQueueFilter,
   type ReviewQueueItem,
 } from './reviewQueueDriver';
-import { gatedClusterCopy } from './representativeVocabulary';
+import { gatedClusterCopy, repairGatedCount } from './representativeVocabulary';
 import { SuggestionCard, type FaceOriginalTarget, type ReviewSuggestion } from './SuggestionCards';
 import { ReviewCardGroupShell } from './reviewCardGroupAccname';
 import { TopClusterCard } from './TopClusterCard';
@@ -84,17 +83,11 @@ import { useLiveReviewTarget } from './useLiveReviewTarget';
 import { useWorkbenchFindings } from './useWorkbenchFindings';
 import { ACCENT_PRIMARY_ATTR } from '../mediaFooterCtaState';
 
-/**
- * Filtered-empty copy — visual + AT share one string.
- * [COG-03] not a true drain when filters hide work; [A11Y-06] second channel.
- */
-const REVIEW_QUEUE_FILTERED_EMPTY_MESSAGE = 'No items match the current filters.';
+/** aria-live position line — carries the loaded-page / filtered scope (A11Y-21). */
+export const REVIEW_QUEUE_POSITION_PAGE = '%1$d of %2$d on this page';
+export const REVIEW_QUEUE_POSITION_FILTERED = '%1$d of %2$d shown';
 
-/** Top-unlabeled projection outage copy — one canonical string for visual + AT. */
-const REVIEW_QUEUE_TOP_UNLABELED_ERROR_MESSAGE = 'Unable to load unlabeled clusters.';
-
-/** Empty-queue position copy when the projection outage makes the count unmeasurable. */
-const REVIEW_QUEUE_POSITION_UNAVAILABLE_MESSAGE = 'Position unavailable';
+export const REVIEW_QUEUE_LABEL_SAVED_ANNOUNCE = 'Name saved. Back to review suggestions.';
 
 /** Cluster id for person-commit chrome / orphaned status surface (item.clusterId authoritative). */
 const itemClusterId = (item: ReviewQueueItem): string | null => {
@@ -130,21 +123,42 @@ export interface ReviewQueueHandle {
 export interface ReviewQueueProps {
   /** Controlled queue index (lifted — survives panel unmount). */
   index: number;
-  onIndexChange: (index: number) => void;
-  /** Controlled kind filter from URL. */
+  /**
+   * Absolute clamp after queue length is known. Parent MUST dispatch
+   * `CLAMP_INDEX` (not `SET_INDEX`) so NaN/negatives cannot wipe `rq`.
+   */
+  onClampIndex: (index: number) => void;
+  /**
+   * Relative next/prev. Parent MUST reduce `STEP_INDEX {delta, length}`
+   * against pending queue state so two taps before re-render advance by 2.
+   */
+  onStepIndex: (delta: number, length: number) => void;
+  /**
+   * Controlled kind filter from URL.
+   * Parent MUST reset index to 0 on kind change (reducer SET_KIND does this).
+   */
   kind: ReviewQueueKindParam;
   onKindChange: (kind: ReviewQueueKindParam) => void;
-  /** Controlled band filter from URL (`rq=` band enum). */
+  /**
+   * Controlled band filter from URL (`rq=` band enum).
+   * Parent MUST reset index to 0 on band change (reducer SET_BAND does this).
+   */
   band: ReviewQueueBandParam;
   onBandChange: (band: ReviewQueueBandParam) => void;
+  /**
+   * UXW2-1: single-write escape hatch — clears kind AND band (and resets the
+   * index) in ONE owner dispatch. Never wire this to per-filter callbacks.
+   */
+  onClearFilters: () => void;
   /**
    * PR-31: id-keyed selection set lifted to ScanTabContent (survives panel
    * unmount). Default empty; controlled prop pair into bulk hooks.
    */
   selectedIds: ReadonlySet<string>;
   onSelectedIdsChange: (next: Set<string>) => void;
-  onLabel?: (clusterId: string) => void;
   onReview?: (clusterId: string) => void;
+  /** Opens the labeling panel for merge / split / correct-group. */
+  onLabel?: (clusterId: string) => void;
   /** Anchor div for drain-focus (tabIndex=-1). */
   emptyStateAnchorRef?: React.RefObject<HTMLElement | null>;
   /**
@@ -254,15 +268,17 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
   function ReviewQueue(
     {
       index,
-      onIndexChange,
+      onClampIndex,
+      onStepIndex,
       kind,
       onKindChange,
       band,
       onBandChange,
+      onClearFilters,
       selectedIds,
       onSelectedIdsChange,
-      onLabel,
       onReview,
+      onLabel,
       emptyStateAnchorRef,
       onCardPrimaryPresenceChange,
     },
@@ -274,6 +290,16 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
     const { resolveSurvivor } = useMergeSurvivors();
     const cardRegionRef = React.useRef<HTMLDivElement>(null);
     const [lightbox, setLightbox] = React.useState<FaceOriginalTarget | null>(null);
+    const [lightboxNaming, setLightboxNaming] = React.useState(false);
+    const [closeMatchOffer, setCloseMatchOffer] = React.useState<{
+      acceptedId: string;
+      label: string | null;
+      included: AssignmentQueueItem[];
+      omitted: number;
+      truncated: boolean;
+    } | null>(null);
+    const closeMatchAnnounceRef = React.useRef<{ count: number; omitted: number } | null>(null);
+    const closeMatchBulkPhaseRef = React.useRef<string>(BULK_COMMIT_PHASE.IDLE);
     // [REF-19] single AT-announce module; [A11Y-06] status second channel — BR-68/HARM-02
     // seq-keyed sink so repeat-identical strings still re-fire (plain useState Object.is bail-out).
     const { message: liveMessage, seq: liveSeq, announce: setLiveMessage } = useAriaAnnounce();
@@ -285,6 +311,8 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
     const [retrying, setRetrying] = React.useState(false);
     const [retryFailed, setRetryFailed] = React.useState(false);
     const previousItemKeyRef = React.useRef<string | null>(null);
+    const repairAnnouncedRef = React.useRef(false);
+    const repairAnnouncedMessageRef = React.useRef<string | null>(null);
     const pendingFocusAfterRemovalRef = React.useRef(false);
 
     const filter: ReviewQueueFilter = kindParamToFilter(kind);
@@ -362,6 +390,33 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
       awaitBulkIdleOrFlushRef: data.awaitBulkIdleOrFlushRef,
     });
 
+    React.useEffect(() => {
+      const previous = closeMatchBulkPhaseRef.current;
+      closeMatchBulkPhaseRef.current = bulk.bulk.phase;
+      const pending = closeMatchAnnounceRef.current;
+      if (!pending) {
+        return;
+      }
+      if (
+        previous === BULK_COMMIT_PHASE.COMMITTING &&
+        bulk.bulk.phase === BULK_COMMIT_PHASE.IDLE
+      ) {
+        setLiveMessage(closeMatchAcceptedAnnouncement(pending.count, pending.omitted));
+        closeMatchAnnounceRef.current = null;
+        return;
+      }
+      if (bulk.bulk.phase === BULK_COMMIT_PHASE.PARTIAL_FAILED) {
+        closeMatchAnnounceRef.current = null;
+        return;
+      }
+      if (
+        previous === BULK_COMMIT_PHASE.HOLDING &&
+        bulk.bulk.phase === BULK_COMMIT_PHASE.IDLE
+      ) {
+        closeMatchAnnounceRef.current = null;
+      }
+    }, [bulk.bulk.phase, setLiveMessage]);
+
     // BR-59: the truncation gate targets only the clusters the commit can fire —
     // the filter-intersected selection, not the full selectedIds set.
     const selectedTargetClusterIds = React.useMemo(() => {
@@ -409,7 +464,7 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
       selectedIds.size !== filteredSelectedIds.length
         ? sprintf(
             /* translators: 1: total selected review items, 2: selected items within active filters */
-            __(SELECTION_SPLIT_MESSAGE, 'alt-context'),
+            __('%1$d selected — %2$d in current filter', 'alt-context'),
             selectedIds.size,
             filteredSelectedIds.length,
           )
@@ -445,17 +500,17 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
     // assignment+merge resolve must not wipe a restored rq= index.
     const queueSettled = findings.queueSettled;
 
-    // Clamp restored/oversized index back to parent (PR-54).
+    // Clamp restored/oversized index back to parent (PR-54 / R1-03).
     React.useEffect(() => {
       if (!queueSettled) {
         return;
       }
       if (length > 0 && index !== safeIndex) {
-        onIndexChange(safeIndex);
+        onClampIndex(safeIndex);
       } else if (length === 0 && index !== 0) {
-        onIndexChange(0);
+        onClampIndex(0);
       }
-    }, [index, safeIndex, length, onIndexChange, queueSettled]);
+    }, [index, safeIndex, length, onClampIndex, queueSettled]);
 
     const currentItem = length > 0 ? filteredQueue[safeIndex] : null;
     const currentKey = currentItem ? queueItemKey(currentItem) : null;
@@ -497,8 +552,8 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
       return map;
     }, [topUnlabeledClusters]);
 
-    // BR-27: per-kind primary — NAME/CLUSTER prefer person-commit (combobox when confirm
-    // disabled); skip disabled elements before falling back; never land on body.
+    // BR-27 / R6-02: NAME/CLUSTER prefer person-commit. Combobox first so a
+    // prefilled Save cannot take Enter/Space before the operator reads the name.
     const focusPrimaryInCard = React.useCallback((): void => {
       const root = cardRegionRef.current;
       if (!root) {
@@ -511,8 +566,8 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
         currentItem?.kind === NEXT_ACTION_KIND.CLUSTER;
 
       const personCommitSelectors = [
-        '.acx-person-commit__confirm:not([disabled])',
         '.acx-person-commit [role="combobox"]:not([disabled])',
+        '.acx-person-commit__confirm:not([disabled])',
         '.acx-person-commit button:not([disabled])',
         '.acx-person-commit a[href]',
       ] as const;
@@ -549,10 +604,14 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
 
     React.useImperativeHandle(ref, () => ({ focusCurrentCard }), [focusCurrentCard]);
 
+    const prevFilteredEmptyRef = React.useRef(filteredEmptyWithWork);
+
     // Card transition announce + post-removal focus placement.
     React.useEffect(() => {
+      const recoveredFromFilteredEmpty = prevFilteredEmptyRef.current && !filteredEmptyWithWork;
+      prevFilteredEmptyRef.current = filteredEmptyWithWork;
       if (currentKey && currentKey !== previousItemKeyRef.current) {
-        if (previousItemKeyRef.current !== null) {
+        if (previousItemKeyRef.current !== null || recoveredFromFilteredEmpty) {
           setLiveMessage(
             sprintf(
               /* translators: 1: current 1-based position, 2: total */
@@ -563,6 +622,8 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
           );
         }
         previousItemKeyRef.current = currentKey;
+        repairAnnouncedRef.current = false;
+        repairAnnouncedMessageRef.current = null;
         if (pendingFocusAfterRemovalRef.current) {
           pendingFocusAfterRemovalRef.current = false;
           requestAnimationFrame(() => focusPrimaryInCard());
@@ -570,40 +631,65 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
         return;
       }
 
-      if (!currentKey && previousItemKeyRef.current !== null) {
-        previousItemKeyRef.current = null;
-        // UI-04: drain copy is for a successful empty only — projection failure
-        // must announce the error, not "all caught up" (RLSE-05 / A11Y).
-        // [rg-003] the outage must not silence the filtered-empty announcement:
-        // when filters hide real work, AT hears both the failure and the hint
-        // that an escape hatch exists, matching the visual (both are rendered).
-        if (data.isTopUnlabeledError) {
-          const errorCopy = __(REVIEW_QUEUE_TOP_UNLABELED_ERROR_MESSAGE, 'alt-context');
-          setLiveMessage(
-            filteredEmptyWithWork
-              ? `${errorCopy} ${__(REVIEW_QUEUE_FILTERED_EMPTY_MESSAGE, 'alt-context')}`
-              : errorCopy,
-          );
-        } else if (filteredEmptyWithWork) {
-          // [COG-03]/[A11Y-06] AT parity with visual: filtered-empty ≠ true drain.
-          setLiveMessage(__(REVIEW_QUEUE_FILTERED_EMPTY_MESSAGE, 'alt-context'));
-        } else if (findings.zeroEvidenceClusterCount > 0) {
-          // REV2-09: the queue is genuinely empty — keep the drain confirmation
-          // and name the gated clusters that still need a resync.
-          setLiveMessage(
-            `${__(REVIEW_QUEUE_DRAIN_MESSAGE, 'alt-context')} ${gatedClusterCopy(
-              findings.zeroEvidenceClusterCount,
+      if (!currentKey) {
+        const repairCopy = findings.repairPending
+          ? gatedClusterCopy(
+              repairGatedCount(
+                findings.zeroEvidenceClusterCount,
+                findings.counts.unlabeledClusters,
+              ),
               findings.topUnlabeledTruncated,
-            )}`,
-          );
-        } else {
-          setLiveMessage(__(REVIEW_QUEUE_DRAIN_MESSAGE, 'alt-context'));
-        }
-        if (pendingFocusAfterRemovalRef.current) {
-          pendingFocusAfterRemovalRef.current = false;
-          requestAnimationFrame(() => {
-            emptyStateAnchorRef?.current?.focus({ preventScroll: true });
-          });
+              topUnlabeledClusters.length,
+            )
+          : null;
+        const repairCopyChanged =
+          repairCopy !== null &&
+          !data.isTopUnlabeledError &&
+          !filteredEmptyWithWork &&
+          repairAnnouncedMessageRef.current !== null &&
+          repairAnnouncedMessageRef.current !== repairCopy;
+        if (
+          previousItemKeyRef.current !== null ||
+          (findings.repairPending && !repairAnnouncedRef.current) ||
+          (!findings.repairPending && repairAnnouncedRef.current) ||
+          repairCopyChanged
+        ) {
+          previousItemKeyRef.current = null;
+          // UI-04: drain copy is for a successful empty only — projection failure
+          // must announce the error, not "all caught up" (RLSE-05 / A11Y).
+          // [rg-003] the outage must not silence the filtered-empty announcement:
+          // when filters hide real work, AT hears both the failure and the hint
+          // that an escape hatch exists, matching the visual (both are rendered).
+          // R8-02 / A11Y-21: latch the announced sentence, not only a boolean, so a
+          // count or wording change re-fires and an identical rerender stays quiet.
+          if (data.isTopUnlabeledError) {
+            const errorCopy = __('Unable to load unlabeled faces.', 'alt-context');
+            const nextEmptyMessage = filteredEmptyWithWork
+              ? `${errorCopy} ${__('No items match the current filters.', 'alt-context')}`
+              : errorCopy;
+            setLiveMessage(nextEmptyMessage);
+            repairAnnouncedRef.current = findings.repairPending;
+            repairAnnouncedMessageRef.current = nextEmptyMessage;
+          } else if (filteredEmptyWithWork) {
+            const nextEmptyMessage = __('No items match the current filters.', 'alt-context');
+            setLiveMessage(nextEmptyMessage);
+            repairAnnouncedRef.current = findings.repairPending;
+            repairAnnouncedMessageRef.current = nextEmptyMessage;
+          } else if (findings.repairPending && repairCopy) {
+            setLiveMessage(repairCopy);
+            repairAnnouncedRef.current = true;
+            repairAnnouncedMessageRef.current = repairCopy;
+          } else {
+            setLiveMessage(__('All caught up — no items need review', 'alt-context'));
+            repairAnnouncedRef.current = false;
+            repairAnnouncedMessageRef.current = null;
+          }
+          if (pendingFocusAfterRemovalRef.current) {
+            pendingFocusAfterRemovalRef.current = false;
+            requestAnimationFrame(() => {
+              emptyStateAnchorRef?.current?.focus({ preventScroll: true });
+            });
+          }
         }
       }
     }, [
@@ -612,11 +698,14 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
       emptyStateAnchorRef,
       filteredEmptyWithWork,
       findings.zeroEvidenceClusterCount,
+      findings.repairPending,
+      findings.counts.unlabeledClusters,
       findings.topUnlabeledTruncated,
       focusPrimaryInCard,
       length,
       safeIndex,
       setLiveMessage,
+      topUnlabeledClusters.length,
     ]);
 
     const markAdvanceFocus = React.useCallback((): void => {
@@ -721,16 +810,16 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
       data.personCommit.clusterId != null &&
       !personCommitSurfacedOnCard;
 
+    // UXW2-1: ONE callback per click — the owner resets the index inside the
+    // reducer; a second same-tick write would read a stale URL snapshot.
     const handleFilterClick = (nextFilter: ReviewQueueFilter): void => {
       navigateAfterFlush(() => {
         // BR-14: KIND chips toggle — active chip returns to unfiltered/all.
         if (nextFilter === filter) {
           onKindChange(filterToKindParam(REVIEW_QUEUE_FILTER.ALL));
-          onIndexChange(0);
           return;
         }
         onKindChange(filterToKindParam(nextFilter));
-        onIndexChange(0);
       });
     };
 
@@ -739,23 +828,21 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
         // Band chips toggle like KIND chips — active → all.
         if (nextBand === activeBand) {
           onBandChange(bandToBandParam(REVIEW_QUEUE_BAND.ALL));
-          onIndexChange(0);
           return;
         }
         onBandChange(bandToBandParam(nextBand));
-        onIndexChange(0);
       });
     };
 
     const handlePrev = (): void => {
       navigateAfterFlush(() => {
-        onIndexChange(prevQueueIndex(safeIndex, length));
+        onStepIndex(-1, length);
       });
     };
 
     const handleNext = (): void => {
       navigateAfterFlush(() => {
-        onIndexChange(nextQueueIndex(safeIndex, length));
+        onStepIndex(1, length);
       });
     };
 
@@ -873,10 +960,14 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
     // so the card keeps it. Guarded so exactly one element carries the accent.
     const bulkCommitOwnsAccent =
       selectionOpen && filteredSelectedIds.length > 0 && !truncationBlocksCommit;
+    const closeMatchOfferOwnsAccent = closeMatchOffer !== null;
 
     // The queue owns the viewport's single accent primary when either the card marker
     // renders or the bulk commit does — this is what drives footer demotion.
-    const queueOwnsAccentPrimary = cardPrimaryPresent || bulkCommitOwnsAccent;
+    const queueOwnsAccentPrimary =
+      (cardPrimaryPresent && !closeMatchOfferOwnsAccent) ||
+      bulkCommitOwnsAccent ||
+      closeMatchOfferOwnsAccent;
 
     // BR-80: report presence in a layout effect (fires before paint) so the footer
     // demotion and the card/bulk marker commit in the SAME visual frame — no transient
@@ -903,8 +994,8 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
                 <>
                   <AlertTriangle aria-hidden="true" className="acx-review-queue__status-icon" size={16} />
                   {retryFailed
-                    ? __(QUERY_RETRY_COPY.RETRY_FAILED_SUGGESTIONS, 'alt-context')
-                    : __(QUERY_RETRY_COPY.LOAD_FAILED_SUGGESTIONS, 'alt-context')}
+                    ? QUERY_RETRY_COPY.RETRY_FAILED_SUGGESTIONS
+                    : QUERY_RETRY_COPY.LOAD_FAILED_SUGGESTIONS}
                 </>
               )}
             </p>
@@ -912,7 +1003,7 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
           <QueryRetryButton
             describedBy="acx-review-queue-error"
             retrying={retrying}
-            retryingLabel={__(QUERY_RETRY_COPY.RETRYING_SUGGESTIONS, 'alt-context')}
+            retryingLabel={QUERY_RETRY_COPY.RETRYING_SUGGESTIONS}
             statusId="acx-review-queue-retrying"
             statusClassName="acx-review-queue__status"
             onClick={retrySuggestionQueries}
@@ -949,7 +1040,17 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
           </h3>
           {length > 0 ? (
             <span className="acx-review-queue__count" aria-hidden="true">
-              {length}
+              {sprintf(
+                filtersActive
+                  ? _n('%d shown', '%d shown', length, 'alt-context')
+                  : _n(
+                      '%d left to review on this page',
+                      '%d left to review on this page',
+                      length,
+                      'alt-context',
+                    ),
+                length,
+              )}
             </span>
           ) : null}
         </header>
@@ -1006,14 +1107,19 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
           <div className="acx-review-queue__nav">
             <span className="acx-review-queue__position" aria-live="polite">
               {length === 0
-                ? data.isTopUnlabeledError
+                ? data.isTopUnlabeledError || findings.repairPending || filteredEmptyWithWork
                   ? // [A11Y] a bare em dash announces as punctuation and loses the
                     // position entirely; state the unmeasurable count explicitly.
-                    __(REVIEW_QUEUE_POSITION_UNAVAILABLE_MESSAGE, 'alt-context')
+                    // R5-03: repair-empty is not an authoritative drain — same
+                    // unmeasurable-count copy as the projection-failure path.
+                    // R7-04 / RLSE-04: filtered-empty-with-work is also not 0 of 0.
+                    __('Position unavailable', 'alt-context')
                   : __('0 of 0', 'alt-context')
                 : sprintf(
-                    /* translators: 1: current 1-based position, 2: total */
-                    __('%1$d of %2$d', 'alt-context'),
+                    /* translators: 1: current 1-based position, 2: loaded count on this page or in the active filter */
+                    filtersActive
+                      ? __('%1$d of %2$d shown', 'alt-context')
+                      : __('%1$d of %2$d on this page', 'alt-context'),
                     safeIndex + 1,
                     length,
                   )}
@@ -1197,7 +1303,7 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
             data-testid="acx-person-commit-queue-fallback"
           >
             <p className="acx-person-commit__failure-message">
-              {data.personCommit.errorMessage ?? __(PERSON_COMMIT_FAILURE_COPY, 'alt-context')}
+              {data.personCommit.errorMessage ?? __('Could not save the name. Retry to try again.', 'alt-context')}
             </p>
             <button
               type="button"
@@ -1218,10 +1324,10 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
             data-testid="acx-person-commit-queue-fallback"
           >
             <p className="acx-person-commit__success-message">
-              {__(PERSON_COMMIT_SUCCESS_COPY, 'alt-context')}
+              {__('Name saved.', 'alt-context')}
             </p>
-            <a className="acx-person-commit__roster-link" href={VIEW_IN_ROSTER_HREF}>
-              {__(VIEW_IN_ROSTER_COPY, 'alt-context')}
+            <a className="acx-person-commit__roster-link" href={viewInRosterHref(data.personCommit.personUuid)}>
+              {__('View in roster →', 'alt-context')}
             </a>
           </div>
         ) : null}
@@ -1259,7 +1365,7 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
                   role="alert"
                   data-testid="acx-review-queue-top-unlabeled-error"
                 >
-                  <p>{__(REVIEW_QUEUE_TOP_UNLABELED_ERROR_MESSAGE, 'alt-context')}</p>
+                  <p>{__('Unable to load unlabeled faces.', 'alt-context')}</p>
                   <button
                     type="button"
                     className="button"
@@ -1272,13 +1378,15 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
               {filteredEmptyWithWork ? (
                 // [COG-03] filters hide work; [NAV-07] escape hatch; [INT-06] clear label; [rg-003]
                 <div className="acx-review-queue__empty">
-                  <p>{__(REVIEW_QUEUE_FILTERED_EMPTY_MESSAGE, 'alt-context')}</p>
+                  <p>{__('No items match the current filters.', 'alt-context')}</p>
                   <button
                     type="button"
                     className="button"
                     onClick={() => {
-                      onKindChange(filterToKindParam(REVIEW_QUEUE_FILTER.ALL));
-                      onBandChange(bandToBandParam(REVIEW_QUEUE_BAND.ALL));
+                      navigateAfterFlush(() => {
+                        pendingFocusAfterRemovalRef.current = true;
+                        onClearFilters();
+                      });
                     }}
                   >
                     {__('Clear filters', 'alt-context')}
@@ -1286,16 +1394,22 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
                 </div>
               ) : data.isTopUnlabeledError ? null : (
                 <>
-                  <p className="acx-review-queue__empty">
-                    {__(REVIEW_QUEUE_DRAIN_MESSAGE, 'alt-context')}
-                  </p>
-                  {findings.zeroEvidenceClusterCount > 0 ? (
+                  {!findings.repairPending ? (
+                    <p className="acx-review-queue__empty">
+                      {__('All caught up — no items need review', 'alt-context')}
+                    </p>
+                  ) : null}
+                  {findings.repairPending ? (
                     <div className="acx-review-queue__repair" data-testid="acx-review-queue-repair">
                       <p id="acx-review-queue-repair-copy">
                         <AlertTriangle aria-hidden="true" size={16} />
                         {gatedClusterCopy(
-                          findings.zeroEvidenceClusterCount,
+                          repairGatedCount(
+                            findings.zeroEvidenceClusterCount,
+                            findings.counts.unlabeledClusters,
+                          ),
                           findings.topUnlabeledTruncated,
+                          topUnlabeledClusters.length,
                         )}
                       </p>
                       <button
@@ -1303,6 +1417,7 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
                         className="button"
                         onClick={() => void data.refetchTopUnlabeled()}
                         aria-describedby="acx-review-queue-repair-copy"
+                        aria-label={__('Resync review queue', 'alt-context')}
                       >
                         {__('Resync', 'alt-context')}
                       </button>
@@ -1327,7 +1442,7 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
                   role="alert"
                   data-testid="acx-review-queue-top-unlabeled-error"
                 >
-                  <p>{__(REVIEW_QUEUE_TOP_UNLABELED_ERROR_MESSAGE, 'alt-context')}</p>
+                  <p>{__('Unable to load unlabeled faces.', 'alt-context')}</p>
                   <button
                     type="button"
                     className="button"
@@ -1341,7 +1456,9 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
               item={currentItem}
               // BR-82: the card primary steps down to neutral while the bulk commit owns
               // the accent, so exactly one element carries the accent per viewport.
-              accentPrimary={!bulkCommitOwnsAccent}
+              accentPrimary={!bulkCommitOwnsAccent && !closeMatchOfferOwnsAccent}
+              reviewQueueItems={findings.queue}
+              onCloseMatchOffer={setCloseMatchOffer}
               // BR-35: same 1-based numbers as the visible position span; omit when the
               // REVIEW_QUEUE_POSITION_UNAVAILABLE outage path makes count unmeasurable
               // (length===0 — CurrentCard is not mounted then, but keep the gate explicit).
@@ -1377,7 +1494,17 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
               isBulkActive={bulk.isBulkActive || bulk.bulkInitiatePending}
               onReview={onReview}
               onLabel={onLabel}
-              onOpenOriginal={(target) => setLightbox(target)}
+              onOpenOriginal={(target) => {
+                setLightboxNaming(false);
+                if (currentItem.kind === NEXT_ACTION_KIND.ASSIGNMENT) {
+                  setLightbox({
+                    ...target,
+                    ...(currentItem.clusterId ? { clusterId: currentItem.clusterId } : {}),
+                  });
+                  return;
+                }
+                setLightbox(target);
+              }}
               markAdvanceFocus={markAdvanceFocus}
               clearAdvanceFocus={clearAdvanceFocus}
               announce={setLiveMessage}
@@ -1407,6 +1534,60 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
                   : undefined
               }
             />
+            <CloseMatchAcceptOffer
+              open={closeMatchOffer !== null}
+              count={closeMatchOffer?.included.length ?? 0}
+              omitted={closeMatchOffer?.omitted ?? 0}
+              truncated={closeMatchOffer?.truncated ?? false}
+              onOpenChange={(open) => {
+                if (!open) {
+                  setCloseMatchOffer(null);
+                }
+              }}
+              onConfirm={() => {
+                if (!closeMatchOffer) {
+                  return;
+                }
+                const items: BulkCommitItem[] = [
+                  {
+                    suggestionId: closeMatchOffer.acceptedId,
+                    commitKind: 'accept',
+                    label: closeMatchOffer.label,
+                  },
+                  ...closeMatchOffer.included.map((row) => ({
+                    suggestionId: row.suggestionId,
+                    commitKind: 'accept' as const,
+                    label: row.label,
+                  })),
+                ];
+                closeMatchAnnounceRef.current = {
+                  count: closeMatchOffer.included.length,
+                  omitted: closeMatchOffer.omitted,
+                };
+                setCloseMatchOffer(null);
+                markAdvanceFocus();
+                void bulk.initiateBulkFromItems(items);
+              }}
+              onSkip={() => {
+                const acceptedId = closeMatchOffer?.acceptedId;
+                setCloseMatchOffer(null);
+                if (!acceptedId) {
+                  return;
+                }
+                markAdvanceFocus();
+                void data.scheduleAccept(acceptedId).then((result) => {
+                  if (result.outcome !== 'committed') {
+                    clearAdvanceFocus();
+                  }
+                  if (result.outcome === 'not_attempted_prior_failed') {
+                    setLiveMessage(
+                      __('Retry the item that failed to save before reviewing another.', 'alt-context'),
+                    );
+                  }
+                });
+              }}
+              accentPrimary={closeMatchOfferOwnsAccent}
+            />
             </>
           )}
         </div>
@@ -1417,11 +1598,66 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
             onOpenChange={(open) => {
               if (!open) {
                 setLightbox(null);
+                setLightboxNaming(false);
               }
             }}
             mediaUrl={lightbox.mediaUrl}
             bbox={lightbox.bbox}
             label={lightbox.label}
+            mediaId={lightbox.mediaId}
+            activeFaceId={lightbox.identityId}
+            onReviewFaceActivate={() => {
+              if (lightbox.clusterId) {
+                setLightboxNaming(true);
+              }
+            }}
+            reviewNaming={
+              lightboxNaming && lightbox.clusterId ? (
+                <LightboxNameFace
+                  clusterId={lightbox.clusterId}
+                  phase={
+                    data.personCommit.clusterId === null ||
+                    data.personCommit.clusterId === lightbox.clusterId
+                      ? data.personCommit.phase
+                      : PERSON_COMMIT_PHASE.IDLE
+                  }
+                  errorMessage={
+                    data.personCommit.clusterId === lightbox.clusterId
+                      ? data.personCommit.errorMessage
+                      : null
+                  }
+                  disabled={
+                    data.personCommit.phase === PERSON_COMMIT_PHASE.COMMITTING ||
+                    data.personCommitPending
+                  }
+                  onCommit={(request) => {
+                    void data.schedulePersonCommit(request).then((result) => {
+                      if (result.outcome === 'committed') {
+                        setLiveMessage(LIGHTBOX_NAME_SAVED_ANNOUNCE);
+                        setLightboxNaming(false);
+                        setLightbox(null);
+                      } else if (result.outcome === 'not_attempted_prior_failed') {
+                        setLiveMessage(
+                          __(
+                            'Retry the item that failed to save before assigning a person.',
+                            'alt-context',
+                          ),
+                        );
+                      }
+                    });
+                  }}
+                  onCancel={() => {
+                    setLightboxNaming(false);
+                    if (lightbox.identityId) {
+                      document.getElementById(faceOverlayDomId(lightbox.identityId))?.focus();
+                    }
+                  }}
+                  onRetry={() => {
+                    void data.retryPersonCommit();
+                  }}
+                />
+              ) : null
+            }
           />
         ) : null}
       </div>
@@ -1483,6 +1719,14 @@ interface CurrentCardProps {
   isSelected: boolean;
   isSelectDisabled: boolean;
   onToggleSelect?: () => void;
+  reviewQueueItems: readonly ReviewQueueItem[];
+  onCloseMatchOffer: (offer: {
+    acceptedId: string;
+    label: string | null;
+    included: AssignmentQueueItem[];
+    omitted: number;
+    truncated: boolean;
+  }) => void;
 }
 
 /** Per-card Select affordance (PA-14) — accumulates into the lifted selection set. */
@@ -1554,7 +1798,9 @@ export const CommitHoldRegion = ({
   }
 
   const holdMessage =
-    phase === COMMIT_HOLD_PHASE.COMMITTING ? HOLD_COMMITTING_STATUS_COPY : HOLD_STATUS_COPY;
+    phase === COMMIT_HOLD_PHASE.COMMITTING
+      ? HOLD_COMMITTING_STATUS_COPY
+      : HOLD_STATUS_COPY;
 
   return (
     <div
@@ -1571,7 +1817,7 @@ export const CommitHoldRegion = ({
       onPointerEnter={() => onPausedChange(true)}
       onPointerLeave={() => onPausedChange(false)}
     >
-      <span className="acx-review-queue__hold-message">{__(holdMessage, 'alt-context')}</span>
+      <span className="acx-review-queue__hold-message">{holdMessage}</span>
       {phase === COMMIT_HOLD_PHASE.HOLDING ? (
         <button type="button" className="button acx-review-queue__undo" onClick={onUndo}>
           {__('Undo', 'alt-context')}
@@ -1619,6 +1865,8 @@ const CurrentCard = ({
   isSelected,
   isSelectDisabled,
   onToggleSelect,
+  reviewQueueItems,
+  onCloseMatchOffer,
 }: CurrentCardProps): React.JSX.Element | null => {
   // Arm focus before the POST so removal→key-change can place it; clear on
   // undo/failure (BR-13) so a later key change does not surprise-focus.
@@ -1646,6 +1894,7 @@ const CurrentCard = ({
     }
     return (
       <CommitHoldRegion
+        key={hold.phase}
         phase={
           hold.phase === COMMIT_HOLD_PHASE.FAILED
             ? COMMIT_HOLD_PHASE.FAILED
@@ -1702,6 +1951,8 @@ const CurrentCard = ({
           personCommit.phase === PERSON_COMMIT_PHASE.COMMITTING || personCommitPending || isBulkActive
         }
         suggestedCreateName={options?.suggestedCreateName}
+        committedPersonUuid={personCommit.personUuid}
+        onCurateGroup={onLabel}
         onCommit={(request) => {
           // BR-27: person-commit success may remove the NAME card — arm advance focus.
           void schedulePersonCommit(request).then((result) => {
@@ -1720,7 +1971,6 @@ const CurrentCard = ({
             }
           });
         }}
-        onJustLabel={onLabel}
       />
     );
   };
@@ -1762,7 +2012,23 @@ const CurrentCard = ({
             queueTotal={queueTotal}
             lowConfidenceThreshold={LOW_CONFIDENCE_THRESHOLD}
             onAccept={() => {
-              runScheduled(() => scheduleAccept(suggestion.suggestionId));
+              const group = closeMatchGroupForAccept(reviewQueueItems, item);
+              if (group.included.length === 0) {
+                runScheduled(() => scheduleAccept(suggestion.suggestionId));
+                return;
+              }
+              const offer = {
+                acceptedId: suggestion.suggestionId,
+                label: item.label,
+                included: group.included,
+                omitted: group.omitted,
+                truncated: group.truncated,
+              };
+              // Open after the Yes click finishes so Radix does not treat that
+              // pointer as an outside-dismiss of the new dialog.
+              window.setTimeout(() => {
+                onCloseMatchOffer(offer);
+              }, 0);
             }}
             onReject={() => {
               runScheduled(() => scheduleReject(suggestion.suggestionId));
@@ -1912,7 +2178,7 @@ const CurrentCard = ({
               role="alert"
               data-testid="acx-review-queue-top-unlabeled-error"
             >
-              <p>{__(REVIEW_QUEUE_TOP_UNLABELED_ERROR_MESSAGE, 'alt-context')}</p>
+              <p>{__('Unable to load unlabeled faces.', 'alt-context')}</p>
               <button type="button" className="button" onClick={onRetryTopUnlabeled}>
                 {__('Retry', 'alt-context')}
               </button>
@@ -1920,7 +2186,7 @@ const CurrentCard = ({
           );
         }
         return (
-          <p className="acx-review-queue__empty">{__('This cluster is no longer available.', 'alt-context')}</p>
+          <p className="acx-review-queue__empty">{__('These faces are no longer available.', 'alt-context')}</p>
         );
       }
       return (
@@ -1928,7 +2194,6 @@ const CurrentCard = ({
           {/* isReadOnly: person-commit is primary; label demoted to tertiary below. */}
           <TopClusterCard
             cluster={cluster}
-            onLabel={() => undefined}
             isReadOnly
             onReview={onReview}
             // BR-41: pass ordinal only when both are defined (position chrome available).

@@ -36,8 +36,8 @@ Man/run digests unchanged (wG3 pins hold). Only report artifacts rewritten from 
 | `faces.identification.precision` | slight ↑ | 0.8857142857142857 (was 0.8787…) | **yes** |
 | `faces.identification.recall` | slight ↑ | 0.8157894736842105 (was 0.8055…) | **yes** |
 | `faces.identification.macro_recall` | slight ↑ | 0.8980952380952381 (was 0.8966…) | **yes** |
-| `faces.identification.per_identity["Bea Burke"].tp` | +1 → 2 | 2 | **yes** |
-| `faces.identification.per_identity["Caitlin Weaver"].tp` | +1 → 12 | 12 | **yes** |
+| `faces.identification.per_identity["Hollow Pennant"].tp` | +1 → 2 | 2 | **yes** |
+| `faces.identification.per_identity["Russet Fathom"].tp` | +1 → 12 | 12 | **yes** |
 | `verdict.wrong_name_rate` | 0.1053 (4/38) | 0.1053 | **yes** |
 | `provenance.coverage_gaps.*.total` | 38 | 38 | **yes** |
 | `provenance.coverage_gaps.face_boxes.populated` | 1 | 1 | **yes** |
@@ -62,7 +62,7 @@ Man/run digests unchanged (wG3 pins hold). Only report artifacts rewritten from 
 | `identity_ordering.labeled_y_missing_*` **added** (1 + path) | **wd-A/wE1 publish** + **wG3** corpus makes counter non-zero; freeze predated keys |
 | `identity_ordering.order_unknown_excluded` 37→38 | **wG3** |
 | `identification.evaluated_images` 37→38; P/R/macro_recall ↑ | **wG3** |
-| `per_identity` Bea tp 1→2; Caitlin tp 11→12 / recall 0.786→0.8 | **wG3** |
+| `per_identity` Hollow tp 1→2; Russet tp 11→12 / recall 0.786→0.8 | **wG3** |
 | `positional.excluded_images` +trap path | **wG3** (trap still order-unknown for L→R) |
 | `per_image[37]` added (media 39) | **wG3** |
 | `placement.images_scored` 37→38 | **wG3** |
@@ -148,8 +148,8 @@ setup: source-aggregation mutation (in-process; scripts/ untouched)
   [RED] faces.identification.recall: freeze=0.8157894736842105  mutant=None
   [RED] faces.identification.macro_recall: freeze=0.8980952380952381  mutant=None
   [still-GREEN] faces.identification.evaluated_images: freeze=38  mutant=38  # (pinned by 3a)
-  [RED] faces.identification.per_identity.Bea Burke.tp: freeze=2  mutant='<ABSENT>'
-  [RED] faces.identification.per_identity.Caitlin Weaver.tp: freeze=12  mutant='<ABSENT>'
+  [RED] faces.identification.per_identity.Hollow Pennant.tp: freeze=2  mutant='<ABSENT>'
+  [RED] faces.identification.per_identity.Russet Fathom.tp: freeze=12  mutant='<ABSENT>'
   regenerated report JSON == committed freeze? False
   FREEZE GATE: RED (good — byte-identity / ANCHOR_MISMATCH)
   mutant digest: 697f320942d4dca0349f626429f4e93b8dd7b955d19c81f28c744ee32f8e8c6f

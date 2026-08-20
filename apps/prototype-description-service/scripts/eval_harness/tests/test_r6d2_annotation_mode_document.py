@@ -61,7 +61,7 @@ def test_on_disk_exhaustive_per_entry_stamp_also_refused(tmp_path: Path) -> None
     err = exc_info.value
     assert err.invariant == "annotation_mode_is_document_level"
     assert err.entry_index == 1
-    assert err.entry_path == "fixtures/bea_example_102.jpg"
+    assert err.entry_path == "fixtures/quiet_example_102.jpg"
 
 
 def test_golden_entry_still_has_no_annotation_mode_field() -> None:

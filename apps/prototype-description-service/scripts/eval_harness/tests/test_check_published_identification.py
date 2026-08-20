@@ -98,7 +98,7 @@ def test_precision_null_recall_zero_populated_table_is_flagged(tmp_path: Path) -
         "macro_precision": None,
         "macro_recall": 0.0,
         "per_identity": {
-            "Caitlin Weaver": {
+            "Russet Fathom": {
                 "precision": None,
                 "recall": 0.0,
                 "tp": 0,

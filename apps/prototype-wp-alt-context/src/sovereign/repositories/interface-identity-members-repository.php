@@ -8,11 +8,23 @@ interface IdentityMembersRepositoryInterface {
 	public const DEFAULT_CLUSTER_MEMBER_LIMIT = 500;
 
 	/**
+	 * Detail fetch is one past the served cap so observed == cap is exact and
+	 * observed > cap is truncation (R1-12).
+	 */
+	public const DEFAULT_CLUSTER_MEMBER_FETCH_LIMIT = self::DEFAULT_CLUSTER_MEMBER_LIMIT + 1;
+
+	/**
 	 * Per-cluster sample size for list / top-unlabeled card previews.
 	 * Canonical source for both the members fetch and the mapper preview_limit
 	 * so truncation logic cannot desynchronise (sr-007, E21-14-R3-COORDINATOR-02).
 	 */
 	public const PREVIEW_IDENTITIES_PER_CLUSTER = 4;
+
+	/**
+	 * Preview fetch is one past the served cap so observed == cap is exact
+	 * and observed > cap is truncation (R1-12).
+	 */
+	public const PREVIEW_IDENTITIES_FETCH_LIMIT = self::PREVIEW_IDENTITIES_PER_CLUSTER + 1;
 
 	/**
 	 * Merge identity-member rows from a snapshot payload.

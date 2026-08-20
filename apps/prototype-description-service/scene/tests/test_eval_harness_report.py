@@ -321,10 +321,10 @@ def test_detection_uses_face_count_and_counts_stranger_true_rejection():  # S3-0
             {  # group photo: 1 roster person correctly named + 2 strangers, no wrong name
                 "media_id": 1,
                 "path": "mock_images/group.jpg",
-                "describe": {"alt_text_draft": "Ryann and friends.", "visual_facts": {"objects": []}},
+                "describe": {"alt_text_draft": "Muted and friends.", "visual_facts": {"objects": []}},
                 "identities": [
                     {
-                        "name": "Ryann Wiseman",
+                        "name": "Muted Yarrow",
                         "bbox": {"x": 10.0, "y": 40.0, "width": 50.0, "height": 60.0},
                         "unpositioned": False,
                     }
@@ -339,14 +339,14 @@ def test_detection_uses_face_count_and_counts_stranger_true_rejection():  # S3-0
             "path": "mock_images/group.jpg",
             "media_id": 1,
             "face_count": 3,  # ground truth: 3 faces present
-            "present_identities": ["Ryann Wiseman"],
+            "present_identities": ["Muted Yarrow"],
             "must_right": [],
             "easy_wrong": [],
             "policy": {"recognition_enabled": True},
             "face_boxes": [
-                _named_box("Ryann Wiseman"),
-                {**_named_box("Ryann Wiseman"), "x": 0.2, "name": None},
-                {**_named_box("Ryann Wiseman"), "x": 0.8, "name": None},
+                _named_box("Muted Yarrow"),
+                {**_named_box("Muted Yarrow"), "x": 0.2, "name": None},
+                {**_named_box("Muted Yarrow"), "x": 0.8, "name": None},
             ],
         }
     ]

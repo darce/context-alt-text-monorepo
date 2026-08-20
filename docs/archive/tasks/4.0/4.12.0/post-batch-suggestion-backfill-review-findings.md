@@ -285,4 +285,4 @@ All 35 backfill plan items verified complete. See previous version of this docum
 | Newly created unlabeled clusters surface suggestions | :white_check_mark: |
 | Clusters with null `representative_identity_id` receive suggestions | :white_check_mark: |
 | Previously rejected suggestions never mutated by backend | :white_check_mark: |
-| Automated tests cover Laura/Talvi/Jen-style scenarios | :white_check_mark: |
+| Automated tests cover Sable/Sable/Jen-style scenarios | :white_check_mark: |

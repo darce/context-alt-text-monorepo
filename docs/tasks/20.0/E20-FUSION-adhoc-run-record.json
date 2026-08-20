@@ -3,15 +3,15 @@
     {
       "describe": {
         "adapter": "seeded",
-        "alt_text_draft": "Caitlin Weaver. Antarctica expedition. Caitlin Weaver on the Antarctic peninsula during her 2023 research residency.. Caitlin Weaver reached the peninsula by icebreaker after a two-day crossing of the Drake Passage.. A person is present.",
+        "alt_text_draft": "Russet Fathom. Antarctica expedition. Russet Fathom on the Antarctic peninsula during her 2023 research residency.. Russet Fathom reached the peninsula by icebreaker after a two-day crossing of the Drake Passage.. A person is present.",
         "attachment_provenance": {
           "derivation": "adhoc-caption-assertion",
           "facts": [
             {
               "altitude": "object",
               "decision": "object",
-              "fact_id": "identity:cluster:cluster-caitlin-weaver",
-              "fact_label": "Caitlin Weaver",
+              "fact_id": "identity:cluster:cluster-russet-fathom",
+              "fact_label": "Russet Fathom",
               "fact_source": "identity",
               "review_reason": null,
               "target_evidence": "adhoc-caption-assertion",
@@ -23,7 +23,7 @@
         "model_id": "fusion-eval-adhoc-stub",
         "model_version": "1",
         "visual_facts": {
-          "caption": "Caitlin Weaver. Antarctica expedition. Caitlin Weaver on the Antarctic peninsula during her 2023 research residency.. Caitlin Weaver reached the peninsula by icebreaker after a two-day crossing of the Drake Passage.. A person is present.",
+          "caption": "Russet Fathom. Antarctica expedition. Russet Fathom on the Antarctic peninsula during her 2023 research residency.. Russet Fathom reached the peninsula by icebreaker after a two-day crossing of the Drake Passage.. A person is present.",
           "objects": [
             "person",
             "scene"
@@ -33,7 +33,7 @@
       "error": null,
       "face_count": 1,
       "identities": [
-        "Caitlin Weaver"
+        "Russet Fathom"
       ],
       "media_id": 3,
       "path": "mock_images/ccqw-antartica.jpg"
@@ -41,15 +41,15 @@
     {
       "describe": {
         "adapter": "seeded",
-        "alt_text_draft": "Bea Burke. Bea Burke at the science fair.. Bea Burke volunteered as a judge at the regional science fair; she has judged the fair three years running.. A person is present.",
+        "alt_text_draft": "Hollow Pennant. Hollow Pennant at the science fair.. Hollow Pennant volunteered as a judge at the regional science fair; she has judged the fair three years running.. A person is present.",
         "attachment_provenance": {
           "derivation": "adhoc-caption-assertion",
           "facts": [
             {
               "altitude": "object",
               "decision": "object",
-              "fact_id": "identity:cluster:cluster-bea-burke",
-              "fact_label": "Bea Burke",
+              "fact_id": "identity:cluster:cluster-hollow-pennant",
+              "fact_label": "Hollow Pennant",
               "fact_source": "identity",
               "review_reason": null,
               "target_evidence": "adhoc-caption-assertion",
@@ -61,7 +61,7 @@
         "model_id": "fusion-eval-adhoc-stub",
         "model_version": "1",
         "visual_facts": {
-          "caption": "Bea Burke. Bea Burke at the science fair.. Bea Burke volunteered as a judge at the regional science fair; she has judged the fair three years running.. A person is present.",
+          "caption": "Hollow Pennant. Hollow Pennant at the science fair.. Hollow Pennant volunteered as a judge at the regional science fair; she has judged the fair three years running.. A person is present.",
           "objects": [
             "person",
             "scene"
@@ -71,23 +71,23 @@
       "error": null,
       "face_count": 1,
       "identities": [
-        "Bea Burke"
+        "Hollow Pennant"
       ],
       "media_id": 2,
-      "path": "mock_images/bea-nye.jpg"
+      "path": "mock_images/quiet-nye.jpg"
     },
     {
       "describe": {
         "adapter": "seeded",
-        "alt_text_draft": "Caitlin Weaver and Erika Hansen Miller. Caitlin Weaver and Erika Hansen Miller with friends.. Caitlin Weaver and Erika Hansen Miller met up downtown; the other two people in the photo asked not to be named.. A person is present.",
+        "alt_text_draft": "Russet Fathom and Muted Current. Russet Fathom and Muted Current with friends.. Russet Fathom and Muted Current met up downtown; the other two people in the photo asked not to be named.. A person is present.",
         "attachment_provenance": {
           "derivation": "adhoc-caption-assertion",
           "facts": [
             {
               "altitude": "object",
               "decision": "object",
-              "fact_id": "identity:cluster:cluster-caitlin-weaver",
-              "fact_label": "Caitlin Weaver",
+              "fact_id": "identity:cluster:cluster-russet-fathom",
+              "fact_label": "Russet Fathom",
               "fact_source": "identity",
               "review_reason": null,
               "target_evidence": "adhoc-caption-assertion",
@@ -96,8 +96,8 @@
             {
               "altitude": "object",
               "decision": "object",
-              "fact_id": "identity:cluster:cluster-erika-hansen-miller",
-              "fact_label": "Erika Hansen Miller",
+              "fact_id": "identity:cluster:cluster-muted-current",
+              "fact_label": "Muted Current",
               "fact_source": "identity",
               "review_reason": null,
               "target_evidence": "adhoc-caption-assertion",
@@ -109,7 +109,7 @@
         "model_id": "fusion-eval-adhoc-stub",
         "model_version": "1",
         "visual_facts": {
-          "caption": "Caitlin Weaver and Erika Hansen Miller. Caitlin Weaver and Erika Hansen Miller with friends.. Caitlin Weaver and Erika Hansen Miller met up downtown; the other two people in the photo asked not to be named.. A person is present.",
+          "caption": "Russet Fathom and Muted Current. Russet Fathom and Muted Current with friends.. Russet Fathom and Muted Current met up downtown; the other two people in the photo asked not to be named.. A person is present.",
           "objects": [
             "person",
             "scene"
@@ -119,24 +119,24 @@
       "error": null,
       "face_count": 4,
       "identities": [
-        "Caitlin Weaver",
-        "Erika Hansen Miller"
+        "Russet Fathom",
+        "Muted Current"
       ],
       "media_id": 5,
-      "path": "mock_images/ccqw-erika.jpg"
+      "path": "mock_images/ccqw-candid.jpg"
     },
     {
       "describe": {
         "adapter": "seeded",
-        "alt_text_draft": "Daniel Arce and Kirstie Mccarrel. Kirstie Mccarrel and Daniel Arce on vacation.. Kirstie Mccarrel and Daniel Arce spent the afternoon at the coast; both wore sunglasses the whole day.. A person is present.",
+        "alt_text_draft": "Daniel Arce and Auburn Current. Auburn Current and Daniel Arce on vacation.. Auburn Current and Daniel Arce spent the afternoon at the coast; both wore sunglasses the whole day.. A person is present.",
         "attachment_provenance": {
           "derivation": "adhoc-caption-assertion",
           "facts": [
             {
               "altitude": "object",
               "decision": "object",
-              "fact_id": "identity:cluster:cluster-kirstie-mccarrel",
-              "fact_label": "Kirstie Mccarrel",
+              "fact_id": "identity:cluster:cluster-auburn-current",
+              "fact_label": "Auburn Current",
               "fact_source": "identity",
               "review_reason": null,
               "target_evidence": "adhoc-caption-assertion",
@@ -158,7 +158,7 @@
         "model_id": "fusion-eval-adhoc-stub",
         "model_version": "1",
         "visual_facts": {
-          "caption": "Daniel Arce and Kirstie Mccarrel. Kirstie Mccarrel and Daniel Arce on vacation.. Kirstie Mccarrel and Daniel Arce spent the afternoon at the coast; both wore sunglasses the whole day.. A person is present.",
+          "caption": "Daniel Arce and Auburn Current. Auburn Current and Daniel Arce on vacation.. Auburn Current and Daniel Arce spent the afternoon at the coast; both wore sunglasses the whole day.. A person is present.",
           "objects": [
             "person",
             "scene"
@@ -169,23 +169,23 @@
       "face_count": 2,
       "identities": [
         "Daniel Arce",
-        "Kirstie Mccarrel"
+        "Auburn Current"
       ],
       "media_id": 23,
-      "path": "mock_images/kirstie-daniel-sunglasses.jpg"
+      "path": "mock_images/auburn-daniel-sunglasses.jpg"
     },
     {
       "describe": {
         "adapter": "seeded",
-        "alt_text_draft": "Ryann Wiseman. Ryann Wiseman celebrating with friends.. Ryann Wiseman hosted the birthday party; the guests around her are coworkers who are not on the site roster.. A person is present.",
+        "alt_text_draft": "Muted Yarrow. Muted Yarrow celebrating with friends.. Muted Yarrow hosted the birthday party; the guests around her are coworkers who are not on the site roster.. A person is present.",
         "attachment_provenance": {
           "derivation": "adhoc-caption-assertion",
           "facts": [
             {
               "altitude": "object",
               "decision": "object",
-              "fact_id": "identity:cluster:cluster-ryann-wiseman",
-              "fact_label": "Ryann Wiseman",
+              "fact_id": "identity:cluster:cluster-muted-yarrow",
+              "fact_label": "Muted Yarrow",
               "fact_source": "identity",
               "review_reason": null,
               "target_evidence": "adhoc-caption-assertion",
@@ -197,7 +197,7 @@
         "model_id": "fusion-eval-adhoc-stub",
         "model_version": "1",
         "visual_facts": {
-          "caption": "Ryann Wiseman. Ryann Wiseman celebrating with friends.. Ryann Wiseman hosted the birthday party; the guests around her are coworkers who are not on the site roster.. A person is present.",
+          "caption": "Muted Yarrow. Muted Yarrow celebrating with friends.. Muted Yarrow hosted the birthday party; the guests around her are coworkers who are not on the site roster.. A person is present.",
           "objects": [
             "person",
             "scene"
@@ -207,10 +207,10 @@
       "error": null,
       "face_count": 6,
       "identities": [
-        "Ryann Wiseman"
+        "Muted Yarrow"
       ],
       "media_id": 37,
-      "path": "mock_images/ryann-group-party.jpg"
+      "path": "mock_images/muted-group-party.jpg"
     },
     {
       "describe": {
@@ -235,20 +235,20 @@
       "face_count": 0,
       "identities": [],
       "media_id": 30,
-      "path": "mock_images/maria-pool.jpg"
+      "path": "mock_images/slate-pool.jpg"
     },
     {
       "describe": {
         "adapter": "seeded",
-        "alt_text_draft": "Untitled No. 7. Abstract painting by Liam Maloney.. Liam Maloney painted this piece in 2024 for the group show at the riverside gallery; it is oil on linen.. A person is present.",
+        "alt_text_draft": "Untitled No. 7. Abstract painting by Linen Kestrel.. Linen Kestrel painted this piece in 2024 for the group show at the riverside gallery; it is oil on linen.. A person is present.",
         "attachment_provenance": {
           "derivation": "adhoc-caption-assertion",
           "facts": [
             {
               "altitude": "object",
               "decision": "object",
-              "fact_id": "identity:0:Liam Maloney",
-              "fact_label": "Liam Maloney",
+              "fact_id": "identity:0:Linen Kestrel",
+              "fact_label": "Linen Kestrel",
               "fact_source": "identity",
               "review_reason": null,
               "target_evidence": "adhoc-caption-assertion",
@@ -260,7 +260,7 @@
         "model_id": "fusion-eval-adhoc-stub",
         "model_version": "1",
         "visual_facts": {
-          "caption": "Untitled No. 7. Abstract painting by Liam Maloney.. Liam Maloney painted this piece in 2024 for the group show at the riverside gallery; it is oil on linen.. A person is present.",
+          "caption": "Untitled No. 7. Abstract painting by Linen Kestrel.. Linen Kestrel painted this piece in 2024 for the group show at the riverside gallery; it is oil on linen.. A person is present.",
           "objects": [
             "person",
             "scene"
@@ -271,20 +271,20 @@
       "face_count": 0,
       "identities": [],
       "media_id": 27,
-      "path": "mock_images/liam-maloney-painting.jpg"
+      "path": "mock_images/linen-kestrel-painting.jpg"
     },
     {
       "describe": {
         "adapter": "seeded",
-        "alt_text_draft": "Ryann Wiseman. Ryann Wiseman at the neighborhood bar.. Ryann Wiseman stopped by the neighborhood bar after work on a Friday evening.. A person is present.",
+        "alt_text_draft": "Muted Yarrow. Muted Yarrow at the neighborhood bar.. Muted Yarrow stopped by the neighborhood bar after work on a Friday evening.. A person is present.",
         "attachment_provenance": {
           "derivation": "adhoc-caption-assertion",
           "facts": [
             {
               "altitude": "object",
               "decision": "object",
-              "fact_id": "identity:cluster:cluster-ryann-wiseman",
-              "fact_label": "Ryann Wiseman",
+              "fact_id": "identity:cluster:cluster-muted-yarrow",
+              "fact_label": "Muted Yarrow",
               "fact_source": "identity",
               "review_reason": null,
               "target_evidence": "adhoc-caption-assertion",
@@ -296,7 +296,7 @@
         "model_id": "fusion-eval-adhoc-stub",
         "model_version": "1",
         "visual_facts": {
-          "caption": "Ryann Wiseman. Ryann Wiseman at the neighborhood bar.. Ryann Wiseman stopped by the neighborhood bar after work on a Friday evening.. A person is present.",
+          "caption": "Muted Yarrow. Muted Yarrow at the neighborhood bar.. Muted Yarrow stopped by the neighborhood bar after work on a Friday evening.. A person is present.",
           "objects": [
             "person",
             "scene"
@@ -306,23 +306,23 @@
       "error": null,
       "face_count": 1,
       "identities": [
-        "Ryann Wiseman"
+        "Muted Yarrow"
       ],
       "media_id": 36,
-      "path": "mock_images/ryann-bar.jpg"
+      "path": "mock_images/muted-bar.jpg"
     },
     {
       "describe": {
         "adapter": "seeded",
-        "alt_text_draft": "Maria Correonero at a summer garden picnic.. Maria Correonero at what the album labels a summer garden picnic; the photo itself shows the black-sand plane wreck site.. A person is present.",
+        "alt_text_draft": "Slate Willow at a summer garden picnic.. Slate Willow at what the album labels a summer garden picnic; the photo itself shows the black-sand plane wreck site.. A person is present.",
         "attachment_provenance": {
           "derivation": "adhoc-caption-assertion",
           "facts": [
             {
               "altitude": "object",
               "decision": "object",
-              "fact_id": "identity:cluster:cluster-maria-correonero",
-              "fact_label": "Maria Correonero",
+              "fact_id": "identity:cluster:cluster-slate-willow",
+              "fact_label": "Slate Willow",
               "fact_source": "identity",
               "review_reason": null,
               "target_evidence": "adhoc-caption-assertion",
@@ -354,7 +354,7 @@
         "model_id": "fusion-eval-adhoc-stub",
         "model_version": "1",
         "visual_facts": {
-          "caption": "Maria Correonero at a summer garden picnic.. Maria Correonero at what the album labels a summer garden picnic; the photo itself shows the black-sand plane wreck site.. A person is present.",
+          "caption": "Slate Willow at a summer garden picnic.. Slate Willow at what the album labels a summer garden picnic; the photo itself shows the black-sand plane wreck site.. A person is present.",
           "objects": [
             "person",
             "scene"

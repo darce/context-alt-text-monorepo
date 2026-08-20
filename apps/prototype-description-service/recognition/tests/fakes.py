@@ -104,6 +104,7 @@ class FakeClusterRepository:
     def __init__(self) -> None:
         self.clusters: dict[str, FakeClusterForRepo] = {}
         self.members_by_cluster: dict[str, list[tuple[IdentityMember, MediaIdentity]]] = {}
+        self._rep_records: dict[str, list] = {}
         self._snapshot_version = 1
 
     def seed(
@@ -115,6 +116,7 @@ class FakeClusterRepository:
         backend_version: int = 0,
         *,
         user_confirmed: bool | None = None,
+        representatives: list | None = None,
     ) -> None:
         self.clusters[cluster_id] = FakeClusterForRepo(
             cluster_id,
@@ -124,7 +126,16 @@ class FakeClusterRepository:
             backend_version,
             user_confirmed=user_confirmed,
         )
+        # Production get_by_id does not load representatives. Ranking rows live here.
+        if representatives is not None:
+            self._rep_records[cluster_id] = list(representatives)
         self._snapshot_version += 1
+
+    def _reps_for(self, cluster_id: str) -> list:
+        if cluster_id in self._rep_records:
+            return list(self._rep_records[cluster_id])
+        cluster = self.clusters.get(cluster_id)
+        return list(getattr(cluster, "representatives", None) or [])
 
     def seed_member(self, *, tenant_id: str, cluster_id: str, identity_id: str, media_id: str = "1") -> None:
         member = IdentityMember(
@@ -192,6 +203,50 @@ class FakeClusterRepository:
 
     async def get_by_id(self, cluster_id: str) -> FakeClusterForRepo | None:
         return self.clusters.get(cluster_id)
+
+    async def get_representative_embeddings_with_model(self, cluster_id: str) -> tuple[list, str | None]:
+        embeddings, model, _ = await self.get_representative_embeddings_with_quality(cluster_id)
+        return embeddings, model
+
+    async def get_representative_embeddings_with_quality(
+        self, cluster_id: str
+    ) -> tuple[list, str | None, list[tuple[float | None, float | None, float | None]]]:
+        if cluster_id not in self.clusters:
+            return [], None, []
+        embeddings = []
+        qualities: list[tuple[float | None, float | None, float | None]] = []
+        model: str | None = None
+        for rep in self._reps_for(cluster_id):
+            embedding = getattr(rep, "embedding", None)
+            if embedding is None:
+                continue
+            embeddings.append(np.asarray(embedding, dtype=np.float32))
+            model = getattr(rep, "embedding_model", None) or model
+            metrics = getattr(rep, "debug_metrics", None) or {}
+            landmark = metrics.get("landmark_quality") if isinstance(metrics, dict) else None
+            det_score = metrics.get("det_score") if isinstance(metrics, dict) else None
+            qualities.append((getattr(rep, "quality_score", None), landmark, det_score))
+        return embeddings, model, qualities
+
+    async def get_member_fallback_embeddings_with_model(
+        self, cluster_id: str, limit: int = 4
+    ) -> tuple[list, str | None]:
+        return [], None
+
+    async def get_member_fallback_embeddings_with_quality(
+        self, cluster_id: str, limit: int = 4
+    ) -> tuple[list, str | None, list[tuple[float | None, float | None, float | None]]]:
+        return [], None, []
+
+    async def get_labeled_with_representatives(self, tenant_id: str):
+        labeled = []
+        for cluster in self.clusters.values():
+            if cluster.tenant_id != tenant_id:
+                continue
+            if not cluster.label or not cluster.user_confirmed:
+                continue
+            labeled.append((cluster, self._reps_for(cluster.id)))
+        return labeled
 
     async def get_by_ids(self, cluster_ids: Sequence[str]) -> list[FakeClusterForRepo]:
         return [self.clusters[cluster_id] for cluster_id in cluster_ids if cluster_id in self.clusters]

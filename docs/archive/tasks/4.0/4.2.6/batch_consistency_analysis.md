@@ -21,7 +21,7 @@ The goal is for the system to be deterministic regardless of batch splitting.
 
 ### Test Scenarios Compared
 
-| Scenario | Batch 1 | Batch 2 | Ryann Wiseman Cluster |
+| Scenario | Batch 1 | Batch 2 | Muted Yarrow Cluster |
 |----------|---------|---------|----------------------|
 | **Single Batch** (19:16) | 75 + 106 identities in sequence | — | 39 + 46 = **85 members** (via Graph transitivity + manual merges) |
 | **Split Batch w/ FPS** (21:16) | 75 identities → 20 clusters | 162 identities → **0 matched**, 49 new clusters | Batch 2 identities NOT discovered as candidates |

@@ -278,9 +278,20 @@ describe('AttachmentFacesApp five designed states', () => {
     const { readFileSync } = await import('node:fs');
     const { join } = await import('node:path');
     const scssPath = join(__dirname, '..', 'attachment-edit.scss');
+    const overlayScssPath = join(
+      __dirname,
+      '..',
+      '..',
+      'admin',
+      'styles',
+      'components',
+      '_face-overlay.scss',
+    );
     const scss = readFileSync(scssPath, 'utf8');
+    const overlayScss = readFileSync(overlayScssPath, 'utf8');
     expect(scss).toMatch(/@use\s+['"]\.\.\/admin\/styles\/tokens\/colors['"]/);
-    expect(scss).toMatch(/&__chip--curated\s*\{[^}]*background-color:\s*var\(--acx-color-success-bg\)/);
+    expect(scss).toMatch(/@use\s+['"]\.\.\/admin\/styles\/components\/face-overlay['"]/);
+    expect(overlayScss).toMatch(/&__chip--curated\s*\{[^}]*background-color:\s*var\(--acx-color-success-bg\)/);
   });
 });
 

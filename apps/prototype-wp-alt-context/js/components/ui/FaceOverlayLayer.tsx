@@ -29,6 +29,10 @@ export interface FaceOverlayLayerProps {
   onActivate?: (faceId: string) => void;
   highlightedFaceId?: string | null;
   onHighlightChange?: (faceId: string | null) => void;
+  /** Face currently under review — rendered as a "?" chip, not a name/marker. */
+  reviewFaceId?: string | null;
+  /** Review "?" chip only. Curated/uncurated chips keep `onActivate`. */
+  onReviewActivate?: (faceId: string) => void;
 }
 
 /**
@@ -78,6 +82,17 @@ export function faceOverlayDomId(faceId: string): string {
   return `acx-face-overlay-${sanitizeDomIdToken(faceId)}`;
 }
 
+function reviewAccessibleName(identity: FaceOverlayIdentity): string {
+  if (isHumanLabeledTarget(identity.cluster_label) && identity.cluster_label) {
+    return sprintf(
+      /* translators: %s: person name on the face currently under review */
+      __('Face under review: %s', 'alt-context'),
+      identity.cluster_label,
+    );
+  }
+  return __('Face under review', 'alt-context');
+}
+
 function outlineStyle(bbox: BoundingBox, naturalSize: NaturalSize): React.CSSProperties {
   const rect = overlayRectFor(bbox, naturalSize);
   return {
@@ -105,6 +120,8 @@ export const FaceOverlayLayer: React.FC<FaceOverlayLayerProps> = ({
   onActivate,
   highlightedFaceId = null,
   onHighlightChange,
+  reviewFaceId = null,
+  onReviewActivate,
 }) => {
   // Local hover/focus so outline reveal works without waiting on a parent re-render.
   const [interactionFaceId, setInteractionFaceId] = React.useState<string | null>(null);
@@ -114,14 +131,32 @@ export const FaceOverlayLayer: React.FC<FaceOverlayLayerProps> = ({
     [identities],
   );
 
+  const isReviewFace = React.useCallback(
+    (faceId: string): boolean => reviewFaceId != null && faceId === reviewFaceId,
+    [reviewFaceId],
+  );
+
+  const reviewFaces = React.useMemo(
+    () => withBbox.filter((face) => isReviewFace(face.identity_id)).slice().sort(compareBboxReadingOrder),
+    [withBbox, isReviewFace],
+  );
+
   const curated = React.useMemo(
-    () => withBbox.filter(isCuratedFace).slice().sort(compareBboxReadingOrder),
-    [withBbox],
+    () =>
+      withBbox
+        .filter((face) => isCuratedFace(face) && !isReviewFace(face.identity_id))
+        .slice()
+        .sort(compareBboxReadingOrder),
+    [withBbox, isReviewFace],
   );
 
   const uncurated = React.useMemo(
-    () => withBbox.filter((id) => !isCuratedFace(id)).slice().sort(compareBboxReadingOrder),
-    [withBbox],
+    () =>
+      withBbox
+        .filter((face) => !isCuratedFace(face) && !isReviewFace(face.identity_id))
+        .slice()
+        .sort(compareBboxReadingOrder),
+    [withBbox, isReviewFace],
   );
 
   const uncuratedCount = uncurated.length;
@@ -169,6 +204,54 @@ export const FaceOverlayLayer: React.FC<FaceOverlayLayerProps> = ({
 
   return (
     <div className="acx-face-overlay" data-testid="acx-face-overlay-layer">
+      {/* Review chip first so the face under review is the first overlay tab stop. */}
+      {reviewFaces.map((face) => {
+        const highlighted = isHighlighted(face.identity_id);
+        const accessibleName = reviewAccessibleName(face);
+        return (
+          <React.Fragment key={face.identity_id}>
+            <div
+              className={[
+                'acx-face-overlay__outline',
+                'acx-face-overlay__outline--halo',
+                'acx-face-overlay__outline--review',
+                'acx-face-overlay__outline--revealed',
+                highlighted ? 'acx-face-overlay__outline--highlighted' : '',
+              ]
+                .filter(Boolean)
+                .join(' ')}
+              style={outlineStyle(face.bbox, naturalSize)}
+              aria-hidden="true"
+              data-face-id={face.identity_id}
+            />
+            <button
+              type="button"
+              id={faceOverlayDomId(face.identity_id)}
+              className={[
+                'acx-face-overlay__chip',
+                'acx-face-overlay__chip--review',
+                highlighted ? 'acx-face-overlay__chip--highlighted' : '',
+              ]
+                .filter(Boolean)
+                .join(' ')}
+              style={controlStyle(face.bbox, naturalSize)}
+              aria-label={accessibleName}
+              onClick={() => onReviewActivate?.(face.identity_id)}
+              onFocus={() => handleEnter(face.identity_id)}
+              onBlur={() => handleLeave(face.identity_id)}
+              onMouseEnter={() => handleEnter(face.identity_id)}
+              onMouseLeave={() => handleLeave(face.identity_id)}
+              onKeyDown={handleEscBlur}
+            >
+              <span className="acx-face-overlay__chip-glyph" aria-hidden="true">
+                ?
+              </span>
+              <span className="acx-face-overlay__sr-only">{accessibleName}</span>
+            </button>
+          </React.Fragment>
+        );
+      })}
+
       {/* Curated chips first (bbox.y, bbox.x), then uncurated markers — DOM = focus order. */}
       {curated.map((face) => {
         const label = face.cluster_label ?? '';

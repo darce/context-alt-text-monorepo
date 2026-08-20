@@ -7,7 +7,12 @@ import { __, _n, sprintf } from '@wordpress/i18n';
 
 import { Avatar } from '../../../../components/ui/avatar';
 import { DurableFaceThumb } from '../../../../components/ui/DurableFaceThumb';
-import type { FaceThumbSource } from '../../../../components/ui/faceThumbDisplay';
+import {
+  FACE_THUMB_MODE,
+  LOAD_STATUS,
+  resolveFaceThumbDisplay,
+  type FaceThumbSource,
+} from '../../../../components/ui/faceThumbDisplay';
 import type { BoundingBox } from '../../../api/recognition/types/identity';
 import type { TopUnlabeledCluster } from '../../../api/recognition/types/cluster';
 import { REPRESENTATIVE_VOCABULARY } from './representativeVocabulary';
@@ -38,6 +43,24 @@ const toFaceThumbSource = (representative: TopUnlabeledCluster['representatives'
   };
 };
 
+const IDLE_THUMB_LOAD = { blobStatus: LOAD_STATUS.idle, cropStatus: LOAD_STATUS.idle } as const;
+
+/** True when resolveFaceThumbDisplay would render an image hop, not the missing state. */
+const hasUsableFaceImage = (representative: TopUnlabeledCluster['representatives'][number]): boolean =>
+  resolveFaceThumbDisplay(toFaceThumbSource(representative), IDLE_THUMB_LOAD).mode !== FACE_THUMB_MODE.none;
+
+const formatGroupFaceCount = (groupSize: number, shownCount: number): string => {
+  if (shownCount <= 0 || shownCount >= groupSize) {
+    return sprintf(_n('%d face', '%d faces', groupSize, 'alt-context'), groupSize);
+  }
+  return sprintf(
+    /* translators: 1: number of face thumbnails shown, 2: total faces in the group */
+    _n('%1$d of %2$d face shown', '%1$d of %2$d faces shown', groupSize, 'alt-context'),
+    shownCount,
+    groupSize,
+  );
+};
+
 const getMostRepresentative = (
   representatives: TopUnlabeledCluster['representatives'],
 ): TopUnlabeledCluster['representatives'][number] | null => {
@@ -58,7 +81,7 @@ const getMostRepresentative = (
 
 interface TopClusterCardProps {
   cluster: TopUnlabeledCluster;
-  onLabel: (clusterId: string) => void;
+  onLabel?: (clusterId: string) => void;
   onReview?: (clusterId: string) => void;
   isReadOnly?: boolean;
   onConfirmSuggestedLabel?: (
@@ -108,7 +131,11 @@ export const TopClusterCard = ({
   const columnCount = reps.length <= 1 ? 1 : 2;
   const rowCount = reps.length <= 2 ? 1 : 2;
   const cellSize = (gridSizePx - gapPx * (columnCount - 1)) / columnCount;
+  // E21-20 REV7-01/REV8-01: ≥2-rep cards use ~39px cells; hide the overflow
+  // missing-state label. Single 80px cells keep the visible "No image" copy.
   const hideMissingLabel = columnCount > 1;
+  const shownFaceCount = reps.filter(hasUsableFaceImage).length;
+  const groupFaceCountCopy = formatGroupFaceCount(Math.max(0, faceCount), shownFaceCount);
   const gridHeight = cellSize * rowCount + gapPx * (rowCount - 1);
   const gridClassName =
     columnCount === 1 ? 'acx-top-cluster-card__grid acx-top-cluster-card__grid--single' : 'acx-top-cluster-card__grid';
@@ -134,7 +161,7 @@ export const TopClusterCard = ({
       onDismiss(cluster.id);
       return;
     }
-    onLabel(cluster.id);
+    onLabel?.(cluster.id);
   };
 
   return (
@@ -182,7 +209,7 @@ export const TopClusterCard = ({
             <button
               type="button"
               className="acx-top-cluster-card__title-action acx-identity-cluster__label acx-identity-cluster__label--action"
-              onClick={() => onLabel(cluster.id)}
+              onClick={() => onLabel?.(cluster.id)}
               disabled={isBusy}
               title={__('Open labeling form', 'alt-context')}
             >
@@ -192,9 +219,7 @@ export const TopClusterCard = ({
             <span>{title}</span>
           )}
         </p>
-        <p className="acx-top-cluster-card__meta">
-          {sprintf(_n('%d face in cluster', '%d faces in cluster', faceCount, 'alt-context'), faceCount)}
-        </p>
+        <p className="acx-top-cluster-card__meta">{groupFaceCountCopy}</p>
       </div>
 
       <div className="acx-top-cluster-card__actions">
@@ -226,6 +251,7 @@ export const TopClusterCard = ({
           <button
             type="button"
             className="button acx-top-cluster-card__review-btn"
+            data-acx-review-trigger="true"
             onClick={() => onReview(cluster.id)}
             disabled={isBusy}
           >
@@ -238,7 +264,7 @@ export const TopClusterCard = ({
             className="button button-link acx-top-cluster-card__skip-btn"
             onClick={() => onDismiss(cluster.id)}
             disabled={isBusy}
-            title={__('Skip this cluster for now', 'alt-context')}
+            title={__('Skip this group for now', 'alt-context')}
           >
             {__('Skip', 'alt-context')}
           </button>

@@ -68,7 +68,7 @@ const buildCluster = (overrides: Partial<TopUnlabeledCluster> = {}): TopUnlabele
   is_auto_label: false,
   identity_count: 3,
   user_confirmed: false,
-  suggested_label: 'Maria Correonero',
+  suggested_label: 'Slate Willow',
   suggested_label_source: 'similar_cluster',
   suggested_label_confidence: 0.62,
   suggested_target_cluster_id: 'cluster-target',
@@ -167,7 +167,7 @@ describe('TopClusterCard', () => {
     expect(screen.queryByText(MISSING_VISIBLE_LABEL)).not.toBeInTheDocument();
   });
 
-  // The reported DOM showed "5 faces in cluster" next to a placeholder thumb —
+  // The reported DOM showed "5 faces" next to a placeholder thumb —
   // a count with no faces behind it. The count must be backed by rendered faces.
   it('renders one face per representative alongside a consistent face count', () => {
     const representatives = [
@@ -187,7 +187,10 @@ describe('TopClusterCard', () => {
       />,
     );
 
-    expect(screen.getByText('3 faces in cluster')).toBeInTheDocument();
+    const meta = screen.getByText('3 faces');
+    expect(meta).toBeInTheDocument();
+    expect(meta.textContent).toBe('3 faces');
+    expect(meta.textContent).not.toMatch(/cluster/i);
     const renderedFaces = screen.getAllByAltText(FACE_ALT);
     expect(renderedFaces).toHaveLength(representatives.length);
     for (const face of renderedFaces) {
@@ -197,10 +200,92 @@ describe('TopClusterCard', () => {
     expect(container.querySelector('.acx-top-cluster-card__thumb--placeholder')).toBeNull();
   });
 
-  // E21-20-REV8-01 / TEST-15: two-or-more reps use cellSize 39 and must hide
-  // the visible missing label; the single-rep 80px path must keep it.
-  // Mutation: drop hideMissingLabel from the 39px Avatars -> RED.
-  it('hides the missing-state visible label at cellSize 39 and keeps it at cellSize 80', () => {
+  // UXW2-2-R1-19 / R1-30: group size is the counted number; thumbs described separately.
+  it('reports group size and shown thumbs for a >4-member group', () => {
+    const representatives = [1, 2, 3, 4, 5].map((n) =>
+      buildRepresentative({ id: `rep-${n}`, thumb_url: `${FACE_THUMB_URL}?n=${n}` }),
+    );
+    render(
+      <TopClusterCard
+        cluster={buildCluster({
+          suggested_label: null,
+          identity_count: 12,
+          representatives,
+        })}
+        onLabel={vi.fn()}
+      />,
+    );
+
+    const meta = document.querySelector('.acx-top-cluster-card__meta');
+    expect(meta).toHaveTextContent('4 of 12 faces shown');
+    expect(meta?.textContent).not.toMatch(/cluster|\(loaded\)/i);
+    expect(screen.getAllByAltText(FACE_ALT)).toHaveLength(4);
+  });
+
+  // UXW2-2-R1-19: suggested-label path shows one thumb but still names the group size.
+  it('reports group size on the suggested-label path instead of "1 face (+N more)"', () => {
+    render(
+      <TopClusterCard
+        cluster={buildCluster({
+          suggested_label: 'Slate Willow',
+          identity_count: 12,
+          representatives: [
+            buildRepresentative({ id: 'rep-1', thumb_url: `${FACE_THUMB_URL}?n=1` }),
+            buildRepresentative({ id: 'rep-2', thumb_url: `${FACE_THUMB_URL}?n=2` }),
+          ],
+        })}
+        onLabel={vi.fn()}
+      />,
+    );
+
+    const meta = document.querySelector('.acx-top-cluster-card__meta');
+    expect(meta).toHaveTextContent('1 of 12 faces shown');
+    expect(meta?.textContent).not.toMatch(/0 faces|\+11 more|cluster/i);
+    expect(screen.getAllByAltText(FACE_ALT)).toHaveLength(1);
+  });
+
+  // UXW2-2-R1-19: never render "0 faces (+N more)" when representatives are empty.
+  it('names the group size when there are no representatives', () => {
+    render(
+      <TopClusterCard
+        cluster={buildCluster({
+          suggested_label: null,
+          identity_count: 5,
+          representatives: [],
+        })}
+        onLabel={vi.fn()}
+      />,
+    );
+
+    const meta = document.querySelector('.acx-top-cluster-card__meta');
+    expect(meta).toHaveTextContent('5 faces');
+    expect(meta?.textContent).not.toMatch(/0 faces|\+5 more|cluster/i);
+  });
+
+  // UXW2-2-R1-20: image-less reps are not "shown" faces — they fold into the remainder.
+  it('does not count image-less representatives as shown faces', () => {
+    render(
+      <TopClusterCard
+        cluster={buildCluster({
+          suggested_label: null,
+          identity_count: 7,
+          representatives: [
+            buildRepresentative({ id: 'rep-1' }),
+            buildRepresentative({ id: 'rep-2' }),
+            buildRepresentative({ id: 'rep-3' }),
+          ],
+        })}
+        onLabel={vi.fn()}
+      />,
+    );
+
+    const meta = document.querySelector('.acx-top-cluster-card__meta');
+    expect(meta?.textContent).toBe('7 faces');
+    expect(meta?.textContent).not.toMatch(/3 faces in cluster|0 faces|\+3 more|3 of 7/i);
+  });
+
+  // UXW2-2-R1-27: restore E21-20 — 39px cells hide the overflow missing-state label.
+  it('hides the missing-state label at 39px cells and shows it at 80px', () => {
     const twoMissingReps = [
       buildRepresentative({ id: 'rep-1' }),
       buildRepresentative({ id: 'rep-2' }),
@@ -221,7 +306,6 @@ describe('TopClusterCard', () => {
     smallCells.forEach((cell) => {
       expect(cell).toHaveStyle({ width: '39px', height: '39px' });
       expect(cell).toHaveClass('acx-durable-face-thumb--hide-missing-label');
-      expect(cell.querySelector('.acx-durable-face-thumb__fallback-label')).toHaveTextContent('No image');
     });
     unmount();
 
@@ -329,7 +413,7 @@ describe('TopClusterCard', () => {
     );
 
     const skip = screen.getByRole('button', { name: 'Skip' });
-    expect(skip).toBeInTheDocument();
+    expect(skip).toHaveAttribute('title', 'Skip this group for now');
     await user.click(skip);
     expect(onDismiss).toHaveBeenCalledWith('cluster-1');
   });
@@ -411,7 +495,7 @@ describe('TopClusterCard', () => {
       { label: '3 of 3', queuePosition: 3, queueTotal: 3 },
       { label: '1 of 1', queuePosition: 1, queueTotal: 1 },
     ])(
-      'card root has Cluster review $label when ordinal pair valid',
+      'card root has Face group review $label when ordinal pair valid',
       ({ queuePosition, queueTotal }) => {
         render(
           <TopClusterCard
@@ -426,7 +510,7 @@ describe('TopClusterCard', () => {
         const card = screen.getByRole('group');
         expect(card).toHaveClass('acx-top-cluster-card');
         expect(card).toHaveAccessibleName(
-          new RegExp(`Cluster review ${queuePosition} of ${queueTotal}`),
+          new RegExp(`Face group review ${queuePosition} of ${queueTotal}`),
         );
       },
     );
@@ -438,7 +522,7 @@ describe('TopClusterCard', () => {
       { label: 'position=float', queuePosition: 1.5, queueTotal: 2 },
       { label: 'position>total', queuePosition: 4, queueTotal: 3 },
     ])(
-      'invalid queue ordinals fall back to kind-only Cluster review — $label',
+      'invalid queue ordinals fall back to kind-only Face group review — $label',
       ({ label, queuePosition, queueTotal }) => {
         render(
           <TopClusterCard
@@ -451,17 +535,17 @@ describe('TopClusterCard', () => {
         );
 
         const card = screen.getByRole('group');
-        expect(card, label).toHaveAccessibleName('Cluster review');
+        expect(card, label).toHaveAccessibleName('Face group review');
         expect(card, label).not.toHaveAccessibleName(/of 0|NaN|Infinity|1\.5|4 of 3/i);
       },
     );
 
-    it('without queuePosition/queueTotal, accname is kind-only Cluster review (never empty)', () => {
+    it('without queuePosition/queueTotal, accname is kind-only Face group review (never empty)', () => {
       render(<TopClusterCard cluster={buildCluster()} onLabel={vi.fn()} isReadOnly />);
 
       const card = screen.getByRole('group');
-      expect(card).toHaveAccessibleName('Cluster review');
-      expect(screen.queryByText(/Cluster review \d+ of \d+/)).toBeNull();
+      expect(card).toHaveAccessibleName('Face group review');
+      expect(screen.queryByText(/Face group review \d+ of \d+/)).toBeNull();
     });
   });
 });

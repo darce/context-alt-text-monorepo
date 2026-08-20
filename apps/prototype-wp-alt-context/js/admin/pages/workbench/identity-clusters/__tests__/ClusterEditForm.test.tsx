@@ -1,7 +1,24 @@
-import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
+import React from 'react';
+import { act, render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { describe, it, expect, vi } from 'vitest';
 import { ClusterEditForm } from '../ClusterEditForm';
 import { selectClusterSuggestions } from '../useClusterSuggestions';
+
+const nameFacePropsRef = vi.hoisted(() => ({
+  current: null as null | { ariaLabel?: string; visibleLabel?: string },
+}));
+
+vi.mock('../NameFaceControl', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../NameFaceControl')>();
+  function NameFaceControlSpy(props: React.ComponentProps<typeof actual.NameFaceControl>) {
+    nameFacePropsRef.current = props;
+    return actual.NameFaceControl(props);
+  }
+  return {
+    ...actual,
+    NameFaceControl: NameFaceControlSpy,
+  };
+});
 
 describe('ClusterEditForm', () => {
   const defaultProps = {
@@ -33,13 +50,29 @@ describe('ClusterEditForm', () => {
     expect(onLabelChange).toHaveBeenCalledWith('New Label');
   });
 
-  it('calls onSave when Enter is pressed', () => {
+  it('calls onSave when Enter is pressed on a changed name', () => {
     const onSave = vi.fn();
-    render(<ClusterEditForm {...defaultProps} onSave={onSave} />);
-    const input = screen.getByDisplayValue('Test Cluster');
+    const { rerender } = render(<ClusterEditForm {...defaultProps} onSave={onSave} />);
+    rerender(<ClusterEditForm {...defaultProps} labelInput="New Name" onSave={onSave} />);
+    fireEvent.keyDown(screen.getByDisplayValue('New Name'), { key: 'Enter', code: 'Enter' });
+    expect(onSave).toHaveBeenCalledWith('New Name');
+  });
 
-    fireEvent.keyDown(input, { key: 'Enter', code: 'Enter' });
-    expect(onSave).toHaveBeenCalled();
+  it('no-ops Enter when the resolved name matches the prefill (UXW2-3-R1-13)', () => {
+    const onSave = vi.fn();
+    const onPersonSelect = vi.fn();
+    render(
+      <ClusterEditForm
+        {...defaultProps}
+        labelInput="Pat Roster"
+        options={[{ value: 'person:42', label: 'Pat Roster', source: 'person', group: 'All Labels' }]}
+        onSave={onSave}
+        onPersonSelect={onPersonSelect}
+      />,
+    );
+    fireEvent.keyDown(screen.getByDisplayValue('Pat Roster'), { key: 'Enter', code: 'Enter' });
+    expect(onSave).not.toHaveBeenCalled();
+    expect(onPersonSelect).not.toHaveBeenCalled();
   });
 
   it('calls onCancel when Escape is pressed', () => {
@@ -54,7 +87,7 @@ describe('ClusterEditForm', () => {
   it('shows suggestions overlay when typing a partial match', () => {
     render(<ClusterEditForm {...defaultProps} labelInput="Per" />);
 
-    expect(screen.getByText('Person A')).toBeInTheDocument();
+    expect(document.querySelector('.acx-identity-cluster__suggestion-row')).not.toBeNull();
     expect(screen.getByText(/95%/)).toBeInTheDocument();
   });
 
@@ -78,7 +111,7 @@ describe('ClusterEditForm', () => {
     expect(screen.getByText('medium')).toBeInTheDocument();
   });
 
-  it('calls onLabelChange when a suggestion is clicked, and onConfirmSuggestion when confirm is clicked', async () => {
+  it('suggestion row click fills the name and does not commit (UXW2-3-R3-27)', () => {
     const onLabelChange = vi.fn();
     const onSave = vi.fn();
     const onConfirmSuggestion = vi.fn();
@@ -92,18 +125,67 @@ describe('ClusterEditForm', () => {
       />,
     );
 
-    // Clicking the suggestion item only changes label
-    const suggestion = screen.getByText('Person B');
-    fireEvent.click(suggestion);
+    fireEvent.click(screen.getAllByRole('option', { name: /confirm match/i })[1]);
     expect(onLabelChange).toHaveBeenCalledWith('Person B');
     expect(onSave).not.toHaveBeenCalled();
+    expect(onConfirmSuggestion).not.toHaveBeenCalled();
+  });
 
-    // Clicking the confirm button unwraps namespaced cluster: ids.
-    const confirmButton = screen.getAllByRole('button', { name: /confirm match/i })[1]; // Index 1 for Person B
-    fireEvent.click(confirmButton);
+  it('calls onLabelChange when a suggestion is clicked, and onConfirmSuggestion when confirm is clicked', async () => {
+    const onLabelChange = vi.fn();
+    const onSave = vi.fn();
+    const onConfirmSuggestion = vi.fn();
+    const { rerender } = render(
+      <ClusterEditForm
+        {...defaultProps}
+        labelInput="P"
+        onLabelChange={onLabelChange}
+        onSave={onSave}
+        onConfirmSuggestion={onConfirmSuggestion}
+      />,
+    );
+
+    const confirmOption = screen.getAllByRole('option', { name: /confirm match/i })[1]; // Index 1 for Person B
+    fireEvent.click(confirmOption);
+    expect(onLabelChange).toHaveBeenCalledWith('Person B');
+    expect(onSave).not.toHaveBeenCalled();
+    expect(onConfirmSuggestion).not.toHaveBeenCalled();
+
+    rerender(
+      <ClusterEditForm
+        {...defaultProps}
+        labelInput="Person B"
+        onLabelChange={onLabelChange}
+        onSave={onSave}
+        onConfirmSuggestion={onConfirmSuggestion}
+      />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Save name' }));
     await waitFor(() =>
       expect(onConfirmSuggestion).toHaveBeenCalledWith('2', 'Person B', undefined),
     );
+  });
+
+  it('clicking the second of two same-fold people binds that roster id (UXW2-3-R3-12)', async () => {
+    const onPersonSelect = vi.fn();
+    render(
+      <ClusterEditForm
+        {...defaultProps}
+        labelInput="alex carter"
+        options={[
+          { value: 'person:1', label: 'Alex Carter', source: 'person', group: 'All Labels' },
+          { value: 'person:2', label: 'ALEX CARTER', source: 'person', group: 'All Labels' },
+        ]}
+        onPersonSelect={onPersonSelect}
+      />,
+    );
+
+    const confirmOptions = screen.getAllByRole('option', { name: /Confirm match with/ });
+    expect(confirmOptions).toHaveLength(2);
+    fireEvent.click(confirmOptions[1]);
+    await waitFor(() => expect(onPersonSelect).toHaveBeenCalledWith('ALEX CARTER', 2));
+    expect(onPersonSelect).not.toHaveBeenCalledWith('Alex Carter', 1);
+    expect(onPersonSelect).not.toHaveBeenCalledWith('ALEX CARTER', 1);
   });
 
   it('person-source confirm uses onPersonSelect and never onConfirmSuggestion (PR-16 / FIX-1)', async () => {
@@ -122,8 +204,8 @@ describe('ClusterEditForm', () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole('button', { name: /confirm match/i }));
-    await waitFor(() => expect(onPersonSelect).toHaveBeenCalledWith('Pat Roster'));
+    fireEvent.click(screen.getByRole('option', { name: /confirm match/i }));
+    await waitFor(() => expect(onPersonSelect).toHaveBeenCalledWith('Pat Roster', 42));
     expect(onSave).not.toHaveBeenCalled();
     expect(onConfirmSuggestion).not.toHaveBeenCalled();
   });
@@ -139,7 +221,7 @@ describe('ClusterEditForm', () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole('button', { name: /confirm match/i }));
+    fireEvent.click(screen.getByRole('option', { name: /confirm match/i }));
     await waitFor(() => expect(onSave).toHaveBeenCalledWith('Pat Roster'));
   });
 
@@ -157,13 +239,13 @@ describe('ClusterEditForm', () => {
     ];
     render(<ClusterEditForm {...defaultProps} labelInput="A" options={options} />);
 
-    expect(screen.getByText('Alice Person')).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: /Alice Person/ })).toBeInTheDocument();
     expect(screen.queryByText('Suggested 3')).not.toBeInTheDocument();
     expect(screen.queryByText('Suggested 4')).not.toBeInTheDocument();
   });
 
   it('announces option count in a polite live region (A11Y-21 / FIX-7)', () => {
-    // Predicted first failure: no role=status live region
+    vi.useFakeTimers();
     render(
       <ClusterEditForm
         {...defaultProps}
@@ -175,9 +257,13 @@ describe('ClusterEditForm', () => {
       />,
     );
 
+    act(() => {
+      vi.advanceTimersByTime(400);
+    });
     const status = screen.getByRole('status');
     expect(status).toHaveAttribute('aria-live', 'polite');
     expect(status).toHaveTextContent(/2 naming options/);
+    vi.useRealTimers();
   });
 
   it('includes source in Suggested cluster accessible names (A11Y-04 / FIX-7)', () => {
@@ -190,30 +276,65 @@ describe('ClusterEditForm', () => {
       />,
     );
 
-    expect(screen.getByRole('button', { name: /Person A \(Cluster\)/i })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: /Person A \(Group\)/i })).toBeInTheDocument();
   });
 
   it('unwraps cluster: namespaced values on confirm', async () => {
     const onConfirmSuggestion = vi.fn();
-    render(
+    const onLabelChange = vi.fn();
+    const { rerender } = render(
       <ClusterEditForm
         {...defaultProps}
         labelInput="B"
         options={[{ value: 'cluster:c-bob', label: 'Bob', source: 'cluster', group: 'Suggested' }]}
+        onLabelChange={onLabelChange}
         onConfirmSuggestion={onConfirmSuggestion}
       />,
     );
 
-    fireEvent.click(screen.getByRole('button', { name: /confirm match/i }));
+    fireEvent.click(screen.getByRole('option', { name: /confirm match/i }));
+    expect(onConfirmSuggestion).not.toHaveBeenCalled();
+    rerender(
+      <ClusterEditForm
+        {...defaultProps}
+        labelInput="Bob"
+        options={[{ value: 'cluster:c-bob', label: 'Bob', source: 'cluster', group: 'Suggested' }]}
+        onLabelChange={onLabelChange}
+        onConfirmSuggestion={onConfirmSuggestion}
+      />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Save name' }));
     await waitFor(() =>
       expect(onConfirmSuggestion).toHaveBeenCalledWith('c-bob', 'Bob', undefined),
     );
   });
 
+  it('roster-only Library overlay is headed People (UXW2-3-R1-16b)', () => {
+    render(
+      <ClusterEditForm
+        {...defaultProps}
+        labelInput="Pat"
+        options={[{ value: 'person:42', label: 'Pat Roster', source: 'person', group: 'All Labels' }]}
+      />,
+    );
+    expect(document.querySelector('.acx-identity-cluster__suggestions-header')).toHaveTextContent('People');
+    expect(screen.queryByText('Suggested')).not.toBeInTheDocument();
+  });
+
+  it('default idle commit button is Save name (UXW2-3-R1-16i)', () => {
+    render(<ClusterEditForm {...defaultProps} />);
+    expect(screen.getByRole('button', { name: 'Save name' })).toHaveAccessibleName('Save name');
+  });
+
+  it('default pending commit button is Saving name… (UXW2-3-R1-16i)', () => {
+    render(<ClusterEditForm {...defaultProps} isPending />);
+    expect(screen.getByRole('button', { name: 'Saving name…' })).toBeDisabled();
+  });
+
   it('is disabled when isPending is true', () => {
     render(<ClusterEditForm {...defaultProps} isPending={true} />);
     const input = screen.getByDisplayValue('Test Cluster');
-    const saveButton = screen.getByRole('button', { name: 'Saving…' });
+    const saveButton = screen.getByRole('button', { name: 'Saving name…' });
 
     expect(input).toBeDisabled();
     expect(saveButton).toBeDisabled();
@@ -235,10 +356,10 @@ describe('ClusterEditForm', () => {
     expect(screen.getByRole('button', { name: 'Saved!' })).toBeInTheDocument();
   });
 
-  it('announces Saving… in the field live region while pending without custom label', () => {
+  it('announces Saving name… in the field live region while pending without custom label', () => {
     render(<ClusterEditForm {...defaultProps} isPending />);
 
-    expect(screen.getByRole('status')).toHaveTextContent('Saving…');
+    expect(screen.getByRole('status')).toHaveTextContent('Saving name…');
   });
 
   it('calls onRejectSuggestion when Reject button is clicked', () => {
@@ -336,9 +457,9 @@ describe('ClusterEditForm', () => {
       />,
     );
 
-    const renderedOptionRows = screen.getAllByRole('button', { name: /confirm match/i });
+    const renderedOptionRows = screen.getAllByRole('option', { name: /confirm match/i });
     expect(screen.getByText(`Showing ${renderedOptionRows.length} of 80 labels — type to search for more`)).toBeInTheDocument();
-    expect(screen.getByRole('combobox', { name: 'Cluster label' })).toHaveAccessibleDescription(
+    expect(screen.getByRole('combobox', { name: 'Person name' })).toHaveAccessibleDescription(
       `Showing ${renderedOptionRows.length} of 80 labels — type to search for more`,
     );
   });
@@ -373,10 +494,10 @@ describe('ClusterEditForm', () => {
     const hintB = formB.getByText('Showing 2 of 40 labels — type to search for more');
 
     expect(hintA.id).not.toBe(hintB.id);
-    expect(formA.getByRole('combobox', { name: 'Cluster label' })).toHaveAccessibleDescription(
+    expect(formA.getByRole('combobox', { name: 'Person name' })).toHaveAccessibleDescription(
       'Showing 2 of 80 labels — type to search for more',
     );
-    expect(formB.getByRole('combobox', { name: 'Cluster label' })).toHaveAccessibleDescription(
+    expect(formB.getByRole('combobox', { name: 'Person name' })).toHaveAccessibleDescription(
       'Showing 2 of 40 labels — type to search for more',
     );
   });
@@ -412,7 +533,7 @@ describe('ClusterEditForm', () => {
     // Predicted first failure on f54f7c87 production: called with (clusterId, label) only —
     // confirm branch dropped option.suggestion_id so the pending row was never resolved by id.
     const onConfirmSuggestion = vi.fn();
-    render(
+    const { rerender } = render(
       <ClusterEditForm
         {...defaultProps}
         labelInput="A"
@@ -430,7 +551,26 @@ describe('ClusterEditForm', () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole('button', { name: /confirm match/i }));
+    fireEvent.click(screen.getByRole('option', { name: /confirm match/i }));
+    expect(onConfirmSuggestion).not.toHaveBeenCalled();
+    rerender(
+      <ClusterEditForm
+        {...defaultProps}
+        labelInput="Alice"
+        options={[
+          {
+            value: 'cluster:cluster-alice',
+            label: 'Alice',
+            source: 'cluster',
+            group: 'Suggested',
+            similarity: 0.91,
+            suggestion_id: 'sug-confirm-alice',
+          },
+        ]}
+        onConfirmSuggestion={onConfirmSuggestion}
+      />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Save name' }));
     await waitFor(() =>
       expect(onConfirmSuggestion).toHaveBeenCalledWith(
         'cluster-alice',
@@ -438,5 +578,17 @@ describe('ClusterEditForm', () => {
         'sug-confirm-alice',
       ),
     );
+  });
+
+  it('names the person-name input from the visible label only (UXW2-3-R6-08)', () => {
+    render(<ClusterEditForm {...defaultProps} />);
+    const input = screen.getByRole('combobox', { name: 'Person name' });
+    expect(input).toHaveAccessibleName('Person name');
+    expect(input).not.toHaveAttribute('aria-label');
+    const visible = document.querySelector(`label[for="${input.id}"]`);
+    expect(visible).not.toBeNull();
+    expect(visible).toHaveTextContent('Person name');
+    expect(nameFacePropsRef.current?.ariaLabel).toBeUndefined();
+    expect(nameFacePropsRef.current?.visibleLabel).toBe('Person name');
   });
 });

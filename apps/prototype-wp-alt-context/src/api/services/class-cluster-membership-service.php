@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace AltContext\Api\Services;
 
 require_once __DIR__ . '/../../support/trait-runs-transactional.php';
+require_once __DIR__ . '/class-cluster-person-bind-service.php';
 
 use AltContext\Api\ClusterMutationHostInterface;
 use AltContext\Support\RunsTransactional;
@@ -18,12 +19,14 @@ use WP_Error;
 use WP_REST_Request;
 use WP_REST_Response;
 
+use function absint;
 use function array_filter;
 use function array_values;
 use function get_current_user_id;
 use function is_array;
 use function is_object;
 use function is_wp_error;
+use function max;
 use function method_exists;
 use function rest_sanitize_boolean;
 use function sanitize_text_field;
@@ -134,6 +137,14 @@ class ClusterMembershipService {
 
 		$identity_id = sanitize_text_field( (string) $request->get_param( 'identity_id' ) );
 		$label       = sanitize_text_field( (string) $request->get_param( 'label' ) );
+		$roster_raw  = $request->get_param( 'roster_entry_id' );
+		$roster_entry_id = null;
+		if ( null !== $roster_raw && '' !== $roster_raw ) {
+			$roster_entry_id = absint( $roster_raw );
+			if ( $roster_entry_id <= 0 ) {
+				return new WP_Error( 'invalid_roster_entry_id', 'roster_entry_id must be a positive integer.', array( 'status' => 400 ) );
+			}
+		}
 
 		if ( '' === $identity_id ) {
 			return new WP_Error( 'missing_identity_id', 'Identity ID is required.', array( 'status' => 400 ) );
@@ -144,20 +155,34 @@ class ClusterMembershipService {
 		}
 
 		if ( $this->host->should_proxy_mutation_to_backend( $tenant_id ) ) {
+			$payload = array(
+				'tenant_id'   => $tenant_id,
+				'identity_id' => $identity_id,
+				'label'       => $label,
+			);
+			if ( null !== $roster_entry_id ) {
+				$payload['roster_entry_id'] = $roster_entry_id;
+			}
+
 			return $this->host->proxy_cluster_mutation(
 				'POST',
 				'/recognition/clusters/create-for-identity',
-				array(
-					'tenant_id'   => $tenant_id,
-					'identity_id' => $identity_id,
-					'label'       => $label,
-				)
+				$payload
 			);
 		}
 
 		$existing_member = $this->members_repository->find_by_identity_uuid( $identity_id );
 		if ( ! is_array( $existing_member ) ) {
 			return new WP_Error( 'identity_not_found', 'Identity is not present in the local projection.', array( 'status' => 404 ) );
+		}
+
+		$binder          = new ClusterPersonBindService();
+		$resolved_person = null;
+		if ( null !== $roster_entry_id ) {
+			$resolved_person = $binder->resolve_person( $roster_entry_id );
+			if ( is_wp_error( $resolved_person ) ) {
+				return $resolved_person;
+			}
 		}
 
 		$new_cluster_id = wp_generate_uuid4();
@@ -168,8 +193,12 @@ class ClusterMembershipService {
 		}
 
 		$result = $this->run_transactional(
-			function () use ( $tenant_id, $new_cluster_id, $label, $identity_id, $source_cluster_id ): WP_REST_Response|WP_Error {
-				if ( $this->clusters_repository->create_local_cluster( $tenant_id, $new_cluster_id, $label, 1 ) <= 0 ) {
+			function () use ( $tenant_id, $new_cluster_id, $label, $identity_id, $source_cluster_id, $binder, $resolved_person ): WP_REST_Response|WP_Error {
+				$created = $this->clusters_repository->create_local_cluster( $tenant_id, $new_cluster_id, $label, 1 );
+				if ( is_wp_error( $created ) ) {
+					return $created;
+				}
+				if ( $created <= 0 ) {
 					return new WP_Error( 'acx_db_error', 'Could not create local cluster projection.', array( 'status' => 500 ) );
 				}
 
@@ -194,15 +223,48 @@ class ClusterMembershipService {
 					return new WP_Error( 'acx_db_error', 'Could not queue create-cluster replay operation.', array( 'status' => 500 ) );
 				}
 
+				$person_id   = null;
+				$person_uuid = null;
+				$person_name = null;
+				if ( is_array( $resolved_person ) ) {
+					$bound = $binder->bind_cluster_to_person(
+						$new_cluster_id,
+						$resolved_person['person_id'],
+						function ( string $operation_type, string $bound_cluster_id, int $local_revision, array $bound_payload ): bool {
+							return $this->host->enqueue_curation_operation(
+								$operation_type,
+								$bound_cluster_id,
+								array(
+									'cluster_uuid'     => $bound_cluster_id,
+									'snapshot_version' => 0,
+									'local_revision'   => max( 0, $local_revision - 1 ),
+								),
+								$bound_payload
+							);
+						},
+						$resolved_person['person_uuid'],
+						$resolved_person['person_name']
+					);
+					if ( is_wp_error( $bound ) ) {
+						return $bound;
+					}
+					$person_id   = $bound['person_id'];
+					$person_uuid = $bound['person_uuid'];
+					$person_name = $bound['person_name'];
+				}
+
 				$this->sync_state_repository->touch_local_curation_marker( $tenant_id );
 
 				return new WP_REST_Response(
 					array(
-						'cluster_id' => $new_cluster_id,
-						'identity_id' => $identity_id,
-						'label' => $label,
-						'synced' => false,
-						'status' => 'pending',
+						'cluster_id'   => $new_cluster_id,
+						'identity_id'  => $identity_id,
+						'label'        => $label,
+						'synced'       => false,
+						'status'       => 'pending',
+						'person_id'    => $person_id,
+						'person_uuid'  => $person_uuid,
+						'person_name'  => $person_name,
 					),
 					200
 				);

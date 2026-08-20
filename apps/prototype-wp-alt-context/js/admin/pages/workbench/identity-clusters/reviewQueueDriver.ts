@@ -200,6 +200,55 @@ export const matchesSimilarityBand = (
   return similarity < STRONG_SIMILARITY_MIN;
 };
 
+/** Max close-match suggestions a group-accept will write (one POST each). */
+export const REVIEW_GROUP_ACCEPT_CAP = 25;
+
+export type AssignmentQueueItem = Extract<
+  ReviewQueueItem,
+  { kind: typeof NEXT_ACTION_KIND.ASSIGNMENT }
+>;
+
+export interface CloseMatchGroup {
+  included: AssignmentQueueItem[];
+  omitted: number;
+  truncated: boolean;
+}
+
+/**
+ * Pending ASSIGNMENT items sharing the accepted item's cluster, excluding the
+ * accepted item, that pass the strong similarity band. Cap is applied in queue
+ * order; omitted/truncated report how many strong matches were not included.
+ */
+export const closeMatchGroupForAccept = (
+  items: readonly ReviewQueueItem[],
+  accepted: ReviewQueueItem,
+): CloseMatchGroup => {
+  if (accepted.kind !== NEXT_ACTION_KIND.ASSIGNMENT || !accepted.clusterId) {
+    return { included: [], omitted: 0, truncated: false };
+  }
+
+  const candidates: AssignmentQueueItem[] = [];
+  for (const item of items) {
+    if (item.kind !== NEXT_ACTION_KIND.ASSIGNMENT) {
+      continue;
+    }
+    if (item.suggestionId === accepted.suggestionId) {
+      continue;
+    }
+    if (item.clusterId !== accepted.clusterId) {
+      continue;
+    }
+    if (!matchesSimilarityBand(queueItemSimilarity(item), REVIEW_QUEUE_BAND.STRONG)) {
+      continue;
+    }
+    candidates.push(item);
+  }
+
+  const included = candidates.slice(0, REVIEW_GROUP_ACCEPT_CAP);
+  const omitted = Math.max(0, candidates.length - included.length);
+  return { included, omitted, truncated: omitted > 0 };
+};
+
 export interface ReviewQueueSources {
   reviewItems: readonly SuggestionReviewItem[];
   mergeSuggestions: readonly PendingMergeSuggestion[];

@@ -99,8 +99,8 @@ _PREDICTIONS_SOURCE = "ground_truth_derived_fixture"
 _TRAP_MEDIA_ID = 39
 _TRAP_PATH = "mock_images/y-missing-mixed-order.jpg"
 _TRAP_SHA256 = "5" * 64
-_NAME_Y_PRESENT = "Caitlin Weaver"  # real y
-_NAME_Y_MISSING = "Bea Burke"  # y omitted
+_NAME_Y_PRESENT = "Russet Fathom"  # real y
+_NAME_Y_MISSING = "Hollow Pennant"  # y omitted
 _GT_BOX_Y_PRESENT = {
     "x": 0.5,
     "y": 0.1,
@@ -124,14 +124,14 @@ _GT_BOX_Y_MISSING = {
 
 # VLM6-R2-G-02: centre-x-tie positional trap. Two named boxes share centre x
 # with clearly distinct y so (x, y, name) is distinguishable from a y-blind or
-# y-reversed key. Correct order is Maria (y=0.1) then Caitlin (y=0.8); reversing
-# y flips to Caitlin,Maria. Additive media_id 40 — never renumbers 1..39.
+# y-reversed key. Correct order is Slate (y=0.1) then Russet (y=0.8); reversing
+# y flips to Russet,Slate. Additive media_id 40 — never renumbers 1..39.
 # Media 39 stays the mixed-y trap; do not reuse it for this gate.
 _POS_TRAP_MEDIA_ID = 40
 _POS_TRAP_PATH = "mock_images/centre-x-tie-order.jpg"
 _POS_TRAP_SHA256 = "6" * 64
-_NAME_POS_TOP = "Maria Correonero"  # smaller y → first under correct key
-_NAME_POS_BOTTOM = "Caitlin Weaver"  # larger y → second; y-reverse leads
+_NAME_POS_TOP = "Slate Willow"  # smaller y → first under correct key
+_NAME_POS_BOTTOM = "Russet Fathom"  # larger y → second; y-reverse leads
 _GT_BOX_POS_TOP = {
     "x": 0.5,
     "y": 0.1,

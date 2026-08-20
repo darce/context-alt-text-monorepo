@@ -33,7 +33,7 @@ Bare-functionality eval harness for the description service that measures captio
 
 **Q6 — Where do fixtures live?** 59 MB total (38 MB images + 21 MB crops) → **not vendored in git**. Manifest (small, in-repo at `scene/tests/seed/golden.json`) carries per-image `sha256` + relative path; images live in an operator-provided `GOLDEN_IMAGES_DIR` bootstrapped by a documented one-line `rsync` from the archive volume. Missing/mismatched hash → fail fast at load (rg-008: validate config/fixtures at load time).
 
-**Q7 — Ground-truth labeling?** Roster = the 18 `entity-*` filenames (names parsed from filename). Presence labels per scene photo: draft generated from filename heuristics (`ccqw-erika.jpg` → erika…), then a **single human confirmation pass** over the 38 images recorded into the manifest. The celebrity-style dataset (names-in-filename convention) is the same convention; per operator instruction the 38-image test bed is the corpus — no external celebrity/LFW ingestion.
+**Q7 — Ground-truth labeling?** Roster = the 18 `entity-*` filenames (names parsed from filename). Presence labels per scene photo: draft generated from filename heuristics (`ccqw-candid.jpg` → candid…), then a **single human confirmation pass** over the 38 images recorded into the manifest. The celebrity-style dataset (names-in-filename convention) is the same convention; per operator instruction the 38-image test bed is the corpus — no external celebrity/LFW ingestion.
 
 ## MVP scope
 

@@ -17,7 +17,7 @@ region, **including** a mirror reflection that shows a face (a detector sees it
 as a face), but **excluding** depicted faces (paintings, phone/screen images,
 posters) and backs of heads. `face_count >= len(present_identities)` is enforced
 at load; the difference is the stranger-face count feeding true-rejection. Ten
-entries carry stranger deltas; `mock_images/ryann-party.jpg` (`media_id` 38) is
+entries carry stranger deltas; `mock_images/muted-party.jpg` (`media_id` 38) is
 the operator-designated stranger fixture (one roster identity + one genuine
 non-roster face — the minimal mixed true-rejection case).
 
@@ -29,7 +29,7 @@ zero-identity scenes, whose `must_right` is necessarily empty); the Easy-Wrong
 wrong-name trap is active corpus-wide. `must_right_defined_images: 37` counts
 entries with either rubric defined, and the loader emits no
 `RubricEmptyWarning`. Rubric lists are roster-closed by the loader. A
-face-detection-annotated derivative (`kirstie-boat_detected.jpg`) was removed
+face-detection-annotated derivative (`auburn-boat_detected.jpg`) was removed
 so no near-duplicate biases the metrics.
 
 `phrase_boxes.json` (`phrase_boxes/v1`) is the E19-4a coordination fixture:

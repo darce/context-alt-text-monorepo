@@ -133,7 +133,7 @@ Scoped TDD per slice locally (never local full-suite); `make check-remote` green
 ### Review Readiness
 
 - [x] Per-slice adversarial review (≥1 remote grok HIGH reviewer + local adversarial subagent), findings cite heuristic IDs, batch-recorded in MCP; all findings fixed/deferred with evidence + full 40-char SHA — 30 code findings across S2–S5, all resolved
-- [x] Real-corpus dark smoke recorded (56 eval-fixture imgs: stamps, counts vs FIR-3 baseline, observability output) — handoff test id 919: 39 faces/29 imgs, 0 stamp/dim/norm/phash violations, min cosine 0.99999988; sole EXIF-orientation "mismatch" (ccqw-erika) confirms decode-faithful-to-incumbent, not drift
+- [x] Real-corpus dark smoke recorded (56 eval-fixture imgs: stamps, counts vs FIR-3 baseline, observability output) — handoff test id 919: 39 faces/29 imgs, 0 stamp/dim/norm/phash violations, min cosine 0.99999988; sole EXIF-orientation "mismatch" (ccqw-candid) confirms decode-faithful-to-incumbent, not drift
 - [x] `make check-remote` green at HEAD; zero open findings; slice decisions recorded — 2154 passed @dd4a686c; decisions 2698/2705/2712/2723/2730
 - [ ] `handoff_close_check(enforce=True)` passes — **operator-gated**: requires the plan baseline committed on `main` via `plan-accept` (write-to-main is blocked for `docs/tasks/**`)
 

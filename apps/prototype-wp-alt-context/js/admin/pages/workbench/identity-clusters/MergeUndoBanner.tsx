@@ -20,7 +20,7 @@ interface MergeUndoBannerProps {
  * Banner showing merge success with undo option.
  */
 export const MergeUndoBanner = ({ mergeResult, isReverting, onUndo }: MergeUndoBannerProps): React.JSX.Element => {
-  const targetLabel = mergeResult.target_label ?? __('existing cluster', 'alt-context');
+  const targetLabel = mergeResult.target_label ?? __('existing group', 'alt-context');
   const canUndo = mergeResult.moved_identity_ids.length > 0;
 
   return (

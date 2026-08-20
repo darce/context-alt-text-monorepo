@@ -73,7 +73,7 @@ def _identity_pack(*, person_naming: str = "allowed") -> ContextPack:
             policy=IdentityPolicyContext(person_naming=person_naming),
             identities=[
                 IdentityContextItem(
-                    name="Maria Correonero",
+                    name="Slate Willow",
                     identity_id="identity-maria",
                     cluster_id="cluster-maria",
                     source="roster",
@@ -158,7 +158,7 @@ def test_service_surfaces_provenance_for_context_pack_facts():
     phrase = make_phrase_box("person", CAPTION, box=PERSON_BOX)
     adapter = _CaptionAdapter(phrase_boxes=[phrase])
     face = make_face(
-        "Maria Correonero",
+        "Slate Willow",
         box=FACE_BOX,
         cluster_id="cluster-maria",
         identity_id="identity-maria",
@@ -331,7 +331,7 @@ def _describe(svc, *, context, confirmed_faces=(), naming_policy=None, media_id=
 
 def _maria_face():
     return make_face(
-        "Maria Correonero",
+        "Slate Willow",
         box=FACE_BOX,
         cluster_id="cluster-maria",
         identity_id="identity-maria",

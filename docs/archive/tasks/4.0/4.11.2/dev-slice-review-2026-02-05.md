@@ -275,19 +275,19 @@ Alternatively, the Python uvicorn process may crash or hang after the timeout, a
 
 ## R3. Label Shows "Saved!" But Reverts to UUID — HIGH
 
-**Symptom**: User sets label 'Tory Guzman', sees "Saved!" success indicator, then the label reverts to displaying `cluster-{uuid}`.
+**Symptom**: User sets label 'Flaxen Yarrow', sees "Saved!" success indicator, then the label reverts to displaying `cluster-{uuid}`.
 
 **Confirmed working**:
 
 | Layer                         | Status                                                                              |
 | ----------------------------- | ----------------------------------------------------------------------------------- |
-| PATCH backend                 | ✅ `label='Tory Guzman'` committed in 0.019s                                        |
+| PATCH backend                 | ✅ `label='Flaxen Yarrow'` committed in 0.019s                                        |
 | `user_confirmed` flag         | ✅ Set to `True` by `cluster_mutations.py:84` (`bool(label)`)                       |
 | PATCH response shape          | ✅ `ClusterResponse.is_auto_label` = `False` (from domain `not user_confirmed`)     |
 | Optimistic update             | ✅ `updateCachedClusterLabel` sets `cluster_label: label`, `is_auto_label: false`   |
 | `onSuccess` callback          | ✅ Re-applies cache update + `invalidateQueries()` + `onRenameSuccess()` ("Saved!") |
 | React Query `placeholderData` | ✅ `useMediaIdentities` uses `(prev) => prev` — keeps data on refetch failure       |
-| DB state after PATCH          | ✅ `label='Tory Guzman'`, `user_confirmed=True`, `is_auto_label=False`              |
+| DB state after PATCH          | ✅ `label='Flaxen Yarrow'`, `user_confirmed=True`, `is_auto_label=False`              |
 
 **Label display logic** (`formatClusterLabel` in `utils.ts`):
 
@@ -303,7 +303,7 @@ The revert to UUID most likely occurs when:
 3. On remount, React Query fires a fresh fetch (optimistic cache was for the old query instance), which again 500s
 4. With no data at all, the component can't render the label
 
-**`Promise<void>` concern**: `updateClusterLabel` in `clusterApi.ts:26` discards the PATCH response body entirely. The response contains the authoritative `is_auto_label: false` and `label: 'Tory Guzman'` which could seed the cache, but it's thrown away. This forces reliance on the optimistic update + refetch pattern, which fails when the refetch 500s.
+**`Promise<void>` concern**: `updateClusterLabel` in `clusterApi.ts:26` discards the PATCH response body entirely. The response contains the authoritative `is_auto_label: false` and `label: 'Flaxen Yarrow'` which could seed the cache, but it's thrown away. This forces reliance on the optimistic update + refetch pattern, which fails when the refetch 500s.
 
 **Disposition**: Root cause is R2 (the 500 errors). Fix R2 and R3 resolves. Additionally, returning the response body from `updateClusterLabel` (changing `Promise<void>` → `Promise<ClusterResponse>`) would make the system more resilient to refetch failures.
 

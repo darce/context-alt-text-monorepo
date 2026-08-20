@@ -3,15 +3,15 @@
   "annotation_mode": "roster_only",
   "roster": [
     "Al Pacino",
-    "Ashley Ruetenik",
-    "Bea Burke",
-    "Caitlin Weaver",
-    "Ellyn Heald",
+    "Citrine Bramble",
+    "Hollow Pennant",
+    "Russet Fathom",
+    "Gilded Cypress",
     "Emma Stone",
-    "Erika Hansen Miller",
-    "Maria Correonero",
-    "Michelle Cortese",
-    "Self"
+    "Muted Current",
+    "Slate Willow",
+    "Plumb Tanner",
+    "Indigo Pennant"
   ],
   "entries": [
     {
@@ -54,18 +54,18 @@
     },
     {
       "media_id": 200,
-      "path": "personal/caitlin_weaver_200.jpg",
+      "path": "personal/russet_fathom_200.jpg",
       "sha256": "633b61fd487d4e264381a36e1dd1e5a854b784099e4954d19c427a07eb0ff3de",
       "face_count": 3,
       "present_identities": [
-        "Caitlin Weaver",
-        "Erika Hansen Miller",
-        "Self"
+        "Russet Fathom",
+        "Muted Current",
+        "Indigo Pennant"
       ],
       "must_right": [
-        "Caitlin Weaver",
-        "Erika Hansen Miller",
-        "Self"
+        "Russet Fathom",
+        "Muted Current",
+        "Indigo Pennant"
       ],
       "easy_wrong": [],
       "policy": {
@@ -77,7 +77,7 @@
           "y": 378.5,
           "w": 134.0,
           "h": 185.0,
-          "name": "Caitlin Weaver",
+          "name": "Russet Fathom",
           "source": "workbench",
           "lineage": {
             "labeler_id": "legacy-import",
@@ -98,7 +98,7 @@
           "y": 1046.5,
           "w": 409.0,
           "h": 479.0,
-          "name": "Erika Hansen Miller",
+          "name": "Muted Current",
           "source": "workbench",
           "lineage": {
             "labeler_id": "legacy-import",
@@ -119,7 +119,7 @@
           "y": 225.0,
           "w": 152.0,
           "h": 190.0,
-          "name": "Self",
+          "name": "Indigo Pennant",
           "source": "workbench",
           "lineage": {
             "labeler_id": "legacy-import",
@@ -137,7 +137,7 @@
         }
       ],
       "context_pack": {
-        "people": "Caitlin Weaver, Erika Hansen Miller, Self"
+        "people": "Russet Fathom, Muted Current, Indigo"
       },
       "provenance": {
         "source": "localwp",
@@ -147,18 +147,18 @@
     },
     {
       "media_id": 154,
-      "path": "personal/maria_correonero_154.jpg",
+      "path": "personal/slate_willow_154.jpg",
       "sha256": "cade8067430b4778e6ec007f93db8dfd217e368c17ed6e7017bdc539daa6aba9",
       "face_count": 3,
       "present_identities": [
-        "Ashley Ruetenik",
-        "Maria Correonero",
-        "Michelle Cortese"
+        "Citrine Bramble",
+        "Slate Willow",
+        "Plumb Tanner"
       ],
       "must_right": [
-        "Ashley Ruetenik",
-        "Maria Correonero",
-        "Michelle Cortese"
+        "Citrine Bramble",
+        "Slate Willow",
+        "Plumb Tanner"
       ],
       "easy_wrong": [],
       "policy": {
@@ -170,7 +170,7 @@
           "y": 246.5,
           "w": 148.0,
           "h": 201.0,
-          "name": "Maria Correonero",
+          "name": "Slate Willow",
           "source": "workbench",
           "lineage": {
             "labeler_id": "legacy-import",
@@ -191,7 +191,7 @@
           "y": 288.0,
           "w": 154.0,
           "h": 212.0,
-          "name": "Ashley Ruetenik",
+          "name": "Citrine Bramble",
           "source": "workbench",
           "lineage": {
             "labeler_id": "legacy-import",
@@ -212,7 +212,7 @@
           "y": 330.5,
           "w": 131.0,
           "h": 239.0,
-          "name": "Michelle Cortese",
+          "name": "Plumb Tanner",
           "source": "workbench",
           "lineage": {
             "labeler_id": "legacy-import",
@@ -230,7 +230,7 @@
         }
       ],
       "context_pack": {
-        "people": "Ashley Ruetenik, Maria Correonero, Michelle Cortese"
+        "people": "Citrine Bramble, Slate Willow, Plumb Tanner"
       },
       "provenance": {
         "source": "localwp",
@@ -240,14 +240,14 @@
     },
     {
       "media_id": 98,
-      "path": "personal/ellyn_heald_98.jpg",
+      "path": "personal/gilded_cypress_98.jpg",
       "sha256": "bfd6df5f3db20cdaa2affd350064588c4a870e9b4edac689a41b552403059135",
       "face_count": 1,
       "present_identities": [
-        "Ellyn Heald"
+        "Gilded Cypress"
       ],
       "must_right": [
-        "Ellyn Heald"
+        "Gilded Cypress"
       ],
       "easy_wrong": [],
       "policy": {
@@ -259,7 +259,7 @@
           "y": 533.0,
           "w": 185.0,
           "h": 262.0,
-          "name": "Ellyn Heald",
+          "name": "Gilded Cypress",
           "source": "workbench",
           "lineage": {
             "labeler_id": "legacy-import",
@@ -277,7 +277,7 @@
         }
       ],
       "context_pack": {
-        "people": "Ellyn Heald"
+        "people": "Gilded Cypress"
       },
       "provenance": {
         "source": "localwp",
@@ -287,16 +287,16 @@
     },
     {
       "media_id": 93,
-      "path": "personal/ellyn_heald_93.jpg",
+      "path": "personal/gilded_cypress_93.jpg",
       "sha256": "fe212728d1f4322588d5869f958673f7cde55a006d2a2a70f170844e133d229f",
       "face_count": 2,
       "present_identities": [
-        "Ellyn Heald",
-        "Self"
+        "Gilded Cypress",
+        "Indigo Pennant"
       ],
       "must_right": [
-        "Ellyn Heald",
-        "Self"
+        "Gilded Cypress",
+        "Indigo Pennant"
       ],
       "easy_wrong": [],
       "policy": {
@@ -308,7 +308,7 @@
           "y": 556.0,
           "w": 120.0,
           "h": 158.0,
-          "name": "Ellyn Heald",
+          "name": "Gilded Cypress",
           "source": "workbench",
           "lineage": {
             "labeler_id": "legacy-import",
@@ -329,7 +329,7 @@
           "y": 557.5,
           "w": 124.0,
           "h": 161.0,
-          "name": "Self",
+          "name": "Indigo Pennant",
           "source": "workbench",
           "lineage": {
             "labeler_id": "legacy-import",
@@ -347,7 +347,7 @@
         }
       ],
       "context_pack": {
-        "people": "Ellyn Heald, Self"
+        "people": "Gilded Cypress, Indigo"
       },
       "provenance": {
         "source": "localwp",
@@ -357,14 +357,14 @@
     },
     {
       "media_id": 62,
-      "path": "personal/bea_burke_62.jpg",
+      "path": "personal/hollow_pennant_62.jpg",
       "sha256": "900cb92615de6c3fbb92496a0202c5feb7395759b29a4964408c241e05b0aae8",
       "face_count": 1,
       "present_identities": [
-        "Bea Burke"
+        "Hollow Pennant"
       ],
       "must_right": [
-        "Bea Burke"
+        "Hollow Pennant"
       ],
       "easy_wrong": [],
       "policy": {
@@ -376,7 +376,7 @@
           "y": 392.5,
           "w": 250.0,
           "h": 379.0,
-          "name": "Bea Burke",
+          "name": "Hollow Pennant",
           "source": "workbench",
           "lineage": {
             "labeler_id": "legacy-import",
@@ -394,7 +394,7 @@
         }
       ],
       "context_pack": {
-        "people": "Bea Burke"
+        "people": "Hollow Pennant"
       },
       "provenance": {
         "source": "localwp",

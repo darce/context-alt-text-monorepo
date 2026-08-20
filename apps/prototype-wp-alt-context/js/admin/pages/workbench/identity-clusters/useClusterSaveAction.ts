@@ -9,7 +9,7 @@ import type { ComboboxOption } from '../../../../components/ui/combobox';
 import type { ClusterGroup } from './types';
 import type { SaveDialogAction } from './useClusterConfirmDialog';
 import type { SaveStatus } from './useClusterSaveStatus';
-import { isHumanLabeledTarget } from './suggestionProjection';
+import { getReservedLabelMessage, isReservedLabel } from './reservedLabel';
 import { useClusterMatchAction, type ClusterLabelMatch } from './useClusterMatchAction';
 import { filterEditableClusterMatch } from './utils';
 
@@ -30,7 +30,13 @@ interface ClusterSaveMutations {
     suggestionId?: string,
   ) => void;
   rename: (label: string, signal?: AbortSignal) => void;
-  createClusterForIdentity: (identityId: string, label: string, signal?: AbortSignal) => void;
+  createClusterForIdentity: (
+    identityId: string,
+    label: string,
+    signal?: AbortSignal,
+    rosterEntryId?: number,
+  ) => void;
+  bindToRosterEntry?: (rosterEntryId: number, label: string, signal?: AbortSignal) => void;
 }
 
 interface UseClusterSaveActionOptions {
@@ -111,10 +117,8 @@ export const useClusterSaveAction = ({
         return false;
       }
       // BR-55: shared sink rejects reserved machine labels (defense-in-depth).
-      if (!isHumanLabeledTarget(trimmed)) {
-        setError(
-          __('This label format is reserved for automatic cluster IDs. Choose a descriptive name.', 'alt-context'),
-        );
+      if (isReservedLabel(trimmed)) {
+        setError(getReservedLabelMessage());
         return false;
       }
       if (editableClusterId) {
@@ -125,14 +129,14 @@ export const useClusterSaveAction = ({
         mutations.createClusterForIdentity(anchorIdentityId, trimmed, abortController.signal);
         return true;
       }
-      setError(__('Cannot create cluster: no identity ID', 'alt-context'));
+      setError(__('Cannot save this name: missing person.', 'alt-context'));
       return false;
     },
     [anchorIdentityId, editableClusterId, mutations, setError],
   );
 
   const handlePersonSelect = React.useCallback(
-    (label: string) => {
+    (label: string, rosterEntryId?: number) => {
       if (saveStatus !== 'idle' || mutations.isPending) {
         return;
       }
@@ -154,10 +158,8 @@ export const useClusterSaveAction = ({
       }
 
       // BR-55: reject machine-shaped / reserved auto-ID labels (same early reject as empty label).
-      if (!isHumanLabeledTarget(canonical)) {
-        setError(
-          __('This label format is reserved for automatic cluster IDs. Choose a descriptive name.', 'alt-context'),
-        );
+      if (isReservedLabel(canonical)) {
+        setError(getReservedLabelMessage());
         return;
       }
 
@@ -170,7 +172,24 @@ export const useClusterSaveAction = ({
       queueSaveStatus();
       let mutationStarted = false;
       try {
-        mutationStarted = applyPersonLabel(canonical, abortController);
+        if (typeof rosterEntryId === 'number') {
+          if (editableClusterId && mutations.bindToRosterEntry) {
+            mutations.bindToRosterEntry(rosterEntryId, canonical, abortController.signal);
+            mutationStarted = true;
+          } else if (anchorIdentityId) {
+            mutations.createClusterForIdentity(
+              anchorIdentityId,
+              canonical,
+              abortController.signal,
+              rosterEntryId,
+            );
+            mutationStarted = true;
+          } else {
+            setError(__('Cannot bind this person: missing group.', 'alt-context'));
+          }
+        } else {
+          mutationStarted = applyPersonLabel(canonical, abortController);
+        }
         if (!mutationStarted) {
           resetSaveStatus();
         }
@@ -191,11 +210,13 @@ export const useClusterSaveAction = ({
     },
     [
       applyPersonLabel,
+      anchorIdentityId,
       canEdit,
       canSearchForMatch,
       cancelEditing,
       clusterLabel,
-      mutations.isPending,
+      editableClusterId,
+      mutations,
       queueSaveStatus,
       resetSaveStatus,
       saveAbortRef,
@@ -228,10 +249,8 @@ export const useClusterSaveAction = ({
       }
 
       // BR-49: reject machine-shaped / reserved auto-ID labels (same early reject as empty label).
-      if (!isHumanLabeledTarget(trimmed)) {
-        setError(
-          __('This label format is reserved for automatic cluster IDs. Choose a descriptive name.', 'alt-context'),
-        );
+      if (isReservedLabel(trimmed)) {
+        setError(getReservedLabelMessage());
         return;
       }
 

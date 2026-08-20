@@ -2,11 +2,11 @@
   "assignment_rule": "hmac-sha256(seed, image_sha256)[:8]/2**64 < held_out_fraction",
   "disjointness": {
     "identities_spanning_both_halves": [
-      "Caitlin Weaver",
-      "Kirstie Mccarrel",
-      "Liam Maloney",
-      "Maria Correonero",
-      "Ryann Wiseman"
+      "Russet Fathom",
+      "Auburn Current",
+      "Linen Kestrel",
+      "Slate Willow",
+      "Muted Yarrow"
     ],
     "note": "identity labels are per-image, not per-cluster; a person in both halves means their images were split by content hash \u2014 acceptable for description eval, must be resolved (move to train) before any face-identification eval uses held_out",
     "partition_provenance": "per-image roster labels on the VLM-2A fixture corpus (golden.json v3); no cluster partition, disjointness computed on present_identities only",
@@ -28,14 +28,14 @@
   },
   "held_out": {
     "identities": [
-      "Bea Burke",
-      "Caitlin Weaver",
-      "Ellyn Heald",
-      "Erika Hansen Miller",
-      "Kirstie Mccarrel",
-      "Liam Maloney",
-      "Maria Correonero",
-      "Ryann Wiseman"
+      "Hollow Pennant",
+      "Russet Fathom",
+      "Gilded Cypress",
+      "Muted Current",
+      "Auburn Current",
+      "Linen Kestrel",
+      "Slate Willow",
+      "Muted Yarrow"
     ],
     "media_ids": [
       1,
@@ -98,13 +98,13 @@
   },
   "train": {
     "identities": [
-      "Caitlin Weaver",
-      "Cristina Quintana",
+      "Russet Fathom",
+      "Tidal Harbor",
       "Daniel Arce",
-      "Kirstie Mccarrel",
-      "Liam Maloney",
-      "Maria Correonero",
-      "Ryann Wiseman"
+      "Auburn Current",
+      "Linen Kestrel",
+      "Slate Willow",
+      "Muted Yarrow"
     ],
     "media_ids": [
       3,

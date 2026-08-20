@@ -181,26 +181,26 @@ def test_provenance_stamp_records_variant_and_enabled_pipeline_flags() -> None:
 
 def test_two_pass_pass1_sees_no_context_and_asks_objective_json() -> None:
     captured: list[dict] = []
-    client = _client(captured, [_FACTS_JSON, "Caitlin Weaver stands at the waterline."], two_pass=True)
-    _describe(client, {"caption": "Caitlin Weaver on the peninsula."})
+    client = _client(captured, [_FACTS_JSON, "Russet Fathom stands at the waterline."], two_pass=True)
+    _describe(client, {"caption": "Russet Fathom on the peninsula."})
     assert len(captured) == 2
     pass1 = captured[0]["payload"]
     assert _has_image_part(pass1)
-    assert "Caitlin Weaver" not in json.dumps(pass1), "pass-1 must be context-free (describe-first)"
+    assert "Russet Fathom" not in json.dumps(pass1), "pass-1 must be context-free (describe-first)"
     assert "JSON object" in _system_text(pass1)
     assert "Do not name anyone" in _system_text(pass1)
 
 
 def test_two_pass_pass2_carries_facts_context_and_mismatch_fewshot() -> None:
     captured: list[dict] = []
-    client = _client(captured, [_FACTS_JSON, "Caitlin Weaver stands at the waterline."], two_pass=True)
-    _describe(client, {"caption": "Caitlin Weaver on the peninsula."})
+    client = _client(captured, [_FACTS_JSON, "Russet Fathom stands at the waterline."], two_pass=True)
+    _describe(client, {"caption": "Russet Fathom on the peninsula."})
     pass2 = captured[1]["payload"]
     assert _has_image_part(pass2)
     user = _user_text(pass2)
     assert "<<<FACTS>>>" in user and "<<<END_FACTS>>>" in user
     assert "rocky shoreline" in user  # committed pass-1 facts reach the weave
-    assert "Caitlin Weaver" in user  # context reaches the weave
+    assert "Russet Fathom" in user  # context reaches the weave
     assert "<<<CONTEXT>>>" in user
     system = _system_text(pass2)
     assert "Maria Chen" in system, "mismatch few-shot exemplar missing from weave prompt (findings §2.4)"
@@ -209,19 +209,19 @@ def test_two_pass_pass2_carries_facts_context_and_mismatch_fewshot() -> None:
 
 def test_two_pass_final_caption_is_pass2_output() -> None:
     captured: list[dict] = []
-    client = _client(captured, [_FACTS_JSON, "Caitlin Weaver stands at the waterline."], two_pass=True)
-    describe = _describe(client, {"caption": "Caitlin Weaver on the peninsula."})
-    assert describe["alt_text_draft"] == "Caitlin Weaver stands at the waterline."
+    client = _client(captured, [_FACTS_JSON, "Russet Fathom stands at the waterline."], two_pass=True)
+    describe = _describe(client, {"caption": "Russet Fathom on the peninsula."})
+    assert describe["alt_text_draft"] == "Russet Fathom stands at the waterline."
 
 
 def test_two_pass_records_per_pass_raw_and_latency() -> None:
     captured: list[dict] = []
-    client = _client(captured, [_FACTS_JSON, "Caitlin Weaver stands at the waterline."], two_pass=True)
-    describe = _describe(client, {"caption": "Caitlin Weaver on the peninsula."})
+    client = _client(captured, [_FACTS_JSON, "Russet Fathom stands at the waterline."], two_pass=True)
+    describe = _describe(client, {"caption": "Russet Fathom on the peninsula."})
     passes = describe["passes"]
     assert [p["pass"] for p in passes] == ["describe_facts", "ground_weave"]
     assert passes[0]["raw"] == _FACTS_JSON
-    assert passes[1]["raw"] == "Caitlin Weaver stands at the waterline."
+    assert passes[1]["raw"] == "Russet Fathom stands at the waterline."
     assert all(isinstance(p["latency_s"], float) and p["latency_s"] >= 0 for p in passes)
 
 
@@ -230,8 +230,8 @@ def test_two_pass_pass1_gets_larger_token_budget_than_the_caption() -> None:
     # the caption budget on text-dense images -> PassOneJSONError (646-run: 5 lost).
     assert _PASS1_MAX_TOKENS > _CAPTION_MAX_TOKENS
     captured: list[dict] = []
-    client = _client(captured, [_FACTS_JSON, "Caitlin Weaver stands at the waterline."], two_pass=True)
-    _describe(client, {"caption": "Caitlin Weaver on the peninsula."})
+    client = _client(captured, [_FACTS_JSON, "Russet Fathom stands at the waterline."], two_pass=True)
+    _describe(client, {"caption": "Russet Fathom on the peninsula."})
     assert captured[0]["payload"]["max_tokens"] == _PASS1_MAX_TOKENS  # describe_facts
     assert captured[1]["payload"]["max_tokens"] == _CAPTION_MAX_TOKENS  # ground_weave
 
@@ -290,16 +290,16 @@ def test_parse_pass1_json_rejects_non_object() -> None:
 # --- Deliverable 3: long-first generation + text-only compression -------------
 
 _LONG_TEXT = (
-    "Caitlin Weaver stands at the waterline of a rocky shoreline in a red jacket. "
+    "Russet Fathom stands at the waterline of a rocky shoreline in a red jacket. "
     "The sky is overcast and the water is calm. She looks toward the horizon."
 )
-_SHORT_TEXT = "Caitlin Weaver stands at a rocky shoreline in a red jacket."
+_SHORT_TEXT = "Russet Fathom stands at a rocky shoreline in a red jacket."
 
 
 def test_dual_length_long_generated_first_then_text_only_compression() -> None:
     captured: list[dict] = []
     client = _client(captured, [_LONG_TEXT, _SHORT_TEXT], dual_length=True)
-    describe = _describe(client, {"caption": "Caitlin Weaver on the peninsula."})
+    describe = _describe(client, {"caption": "Russet Fathom on the peninsula."})
     assert len(captured) == 2
     # generation call asks for the long surface and carries the image
     assert _has_image_part(captured[0]["payload"])
@@ -324,7 +324,7 @@ def test_dual_length_compression_failure_keeps_long_and_marks_short() -> None:
     """[AGT-10] degrade loudly: compression 500 keeps the long surface + a typed short_error stamp."""
     captured: list[dict] = []
     client = _client(captured, [_LONG_TEXT, 500], dual_length=True)
-    describe = _describe(client, {"caption": "Caitlin Weaver on the peninsula."})
+    describe = _describe(client, {"caption": "Russet Fathom on the peninsula."})
     assert describe["alt_text_long"] == _LONG_TEXT
     assert "alt_text_draft" not in describe
     assert describe["short_error"].startswith("RemoteClientError:")
@@ -335,7 +335,7 @@ def test_dual_length_compression_failure_keeps_long_and_marks_short() -> None:
 def test_two_pass_plus_dual_length_compose_three_passes() -> None:
     captured: list[dict] = []
     client = _client(captured, [_FACTS_JSON, _LONG_TEXT, _SHORT_TEXT], two_pass=True, dual_length=True)
-    describe = _describe(client, {"caption": "Caitlin Weaver on the peninsula."})
+    describe = _describe(client, {"caption": "Russet Fathom on the peninsula."})
     assert [p["pass"] for p in describe["passes"]] == ["describe_facts", "ground_weave", "compress_short"]
     # the weave (pass 2) generates the LONG surface when dual-length is on
     assert "4-8" in _system_text(captured[1]["payload"])
@@ -347,10 +347,10 @@ def test_two_pass_plus_dual_length_compose_three_passes() -> None:
 
 _FACE_BOXES = [
     # real FaceBox shape (manifest.py): normalized centre x/y + w/h, name, source
-    {"x": 0.2, "y": 0.4, "w": 0.1, "h": 0.15, "name": "Caitlin Weaver", "source": "iptc"},
+    {"x": 0.2, "y": 0.4, "w": 0.1, "h": 0.15, "name": "Russet Fathom", "source": "iptc"},
     {"x": 0.8, "y": 0.4, "w": 0.1, "h": 0.15, "name": None, "source": "mwg"},  # anonymous stranger
 ]
-_ROSTER = ["Caitlin Weaver", "Erika Hansen Miller", "Bob Builder"]
+_ROSTER = ["Russet Fathom", "Muted Current", "Bob Builder"]
 
 
 def _gate_client(captured: list[dict], responses: list[object], fixtures: dict, **kwargs) -> BakeoffClient:
@@ -369,14 +369,14 @@ def test_face_gate_suppresses_context_names_without_face_match() -> None:
     client = _gate_client(captured, ["A caption."], {7: _FACE_BOXES})
     describe = _describe(
         client,
-        {"caption": "Caitlin Weaver on the peninsula.", "description": "Erika Hansen Miller took the photo."},
+        {"caption": "Russet Fathom on the peninsula.", "description": "Muted Current took the photo."},
     )
     prompt = json.dumps(captured[0]["payload"])
-    assert "Caitlin Weaver" in prompt  # face-confirmed: eligible
-    assert "Erika Hansen Miller" not in prompt, "name without a face match must never reach the prompt"
+    assert "Russet Fathom" in prompt  # face-confirmed: eligible
+    assert "Muted Current" not in prompt, "name without a face match must never reach the prompt"
     assert describe["face_gate"] == {
-        "eligible_names": ["Caitlin Weaver"],
-        "suppressed_names": ["Erika Hansen Miller"],
+        "eligible_names": ["Russet Fathom"],
+        "suppressed_names": ["Muted Current"],
     }
 
 
@@ -384,29 +384,29 @@ def test_face_gate_fails_closed_with_no_face_matches() -> None:
     captured: list[dict] = []
     # no boxes for this media_id at all -> nothing eligible
     client = _gate_client(captured, ["A caption."], {})
-    describe = _describe(client, {"caption": "Caitlin Weaver on the peninsula."})
-    assert "Caitlin Weaver" not in json.dumps(captured[0]["payload"])
+    describe = _describe(client, {"caption": "Russet Fathom on the peninsula."})
+    assert "Russet Fathom" not in json.dumps(captured[0]["payload"])
     assert describe["face_gate"]["eligible_names"] == []
-    assert describe["face_gate"]["suppressed_names"] == ["Caitlin Weaver"]
+    assert describe["face_gate"]["suppressed_names"] == ["Russet Fathom"]
 
     captured.clear()
     # anonymous-only boxes (name=None) are NOT matches -> still fail closed
     client = _gate_client(captured, ["A caption."], {7: [_FACE_BOXES[1]]})
-    describe = _describe(client, {"caption": "Caitlin Weaver on the peninsula."})
-    assert "Caitlin Weaver" not in json.dumps(captured[0]["payload"])
+    describe = _describe(client, {"caption": "Russet Fathom on the peninsula."})
+    assert "Russet Fathom" not in json.dumps(captured[0]["payload"])
     assert describe["face_gate"]["eligible_names"] == []
 
 
 def test_face_gate_adds_positional_binding_for_eligible_names() -> None:
     captured: list[dict] = []
     boxes = [
-        {"x": 0.15, "y": 0.4, "w": 0.1, "h": 0.15, "name": "Caitlin Weaver", "source": "iptc"},
+        {"x": 0.15, "y": 0.4, "w": 0.1, "h": 0.15, "name": "Russet Fathom", "source": "iptc"},
         {"x": 0.85, "y": 0.4, "w": 0.1, "h": 0.15, "name": "Bob Builder", "source": "iptc"},
     ]
     client = _gate_client(captured, ["A caption."], {7: boxes})
-    _describe(client, {"caption": "Caitlin Weaver and Bob Builder at the shoreline."})
+    _describe(client, {"caption": "Russet Fathom and Bob Builder at the shoreline."})
     user = _user_text(captured[0]["payload"])
-    assert "Caitlin Weaver, on the left" in user
+    assert "Russet Fathom, on the left" in user
     assert "Bob Builder, on the right" in user
 
 
@@ -415,13 +415,13 @@ def test_face_gate_never_adds_names_absent_from_context() -> None:
     alone (Bob Builder) must not inject a name the context never supplied."""
     captured: list[dict] = []
     boxes = [
-        {"x": 0.2, "y": 0.4, "w": 0.1, "h": 0.15, "name": "Caitlin Weaver", "source": "iptc"},
+        {"x": 0.2, "y": 0.4, "w": 0.1, "h": 0.15, "name": "Russet Fathom", "source": "iptc"},
         {"x": 0.8, "y": 0.4, "w": 0.1, "h": 0.15, "name": "Bob Builder", "source": "iptc"},
     ]
     client = _gate_client(captured, ["A caption."], {7: boxes})
-    describe = _describe(client, {"caption": "Caitlin Weaver on the peninsula."})
+    describe = _describe(client, {"caption": "Russet Fathom on the peninsula."})
     assert "Bob Builder" not in json.dumps(captured[0]["payload"])
-    assert describe["face_gate"]["eligible_names"] == ["Caitlin Weaver"]
+    assert describe["face_gate"]["eligible_names"] == ["Russet Fathom"]
 
 
 def test_face_gate_composes_with_name_ablation_without_reintroducing_names() -> None:
@@ -433,21 +433,21 @@ def test_face_gate_composes_with_name_ablation_without_reintroducing_names() -> 
         ["A caption."],
         {7: _FACE_BOXES},
         eval_mode="name_ablation",
-        entry_traits={7: {"present": ["Caitlin Weaver"], "easy_wrong": []}},
+        entry_traits={7: {"present": ["Russet Fathom"], "easy_wrong": []}},
     )
-    describe = _describe(client, {"caption": "Caitlin Weaver on the peninsula."})
+    describe = _describe(client, {"caption": "Russet Fathom on the peninsula."})
     prompt = json.dumps(captured[0]["payload"])
-    assert "Caitlin Weaver" not in prompt
+    assert "Russet Fathom" not in prompt
     assert "people_present" not in prompt
     assert describe["face_gate"]["eligible_names"] == []
 
 
 def test_apply_face_gate_is_pure_and_deterministic() -> None:
-    pack = {"caption": "Caitlin Weaver on the peninsula.", "description": "Erika Hansen Miller took the photo."}
+    pack = {"caption": "Russet Fathom on the peninsula.", "description": "Muted Current took the photo."}
     first = _apply_face_gate(pack, _FACE_BOXES, _ROSTER)
     second = _apply_face_gate(pack, _FACE_BOXES, _ROSTER)
     assert first == second
-    assert pack["caption"] == "Caitlin Weaver on the peninsula."  # input never mutated
+    assert pack["caption"] == "Russet Fathom on the peninsula."  # input never mutated
 
 
 def test_apply_face_gate_keys_on_normalized_name_not_raw_str() -> None:
@@ -605,7 +605,7 @@ def test_new_shape_record_rescore_bit_identical() -> None:
 
 # --- ALTQ-1 Slice 3: --weave-bench replay (pass-2 text-only, no image) ---------
 
-_WEAVE_CAPTION = "Caitlin Weaver stands at the waterline."
+_WEAVE_CAPTION = "Russet Fathom stands at the waterline."
 
 
 def _weave_source_item(media_id: int, path: str, facts: str = _FACTS_JSON) -> dict:
@@ -657,7 +657,7 @@ def _weave_manifest(media_ids: list[int]) -> GoldenManifest:
                 "media_id": media_id,
                 "face_count": 0,
                 "present_identities": [],
-                "context_pack": {"caption": "Caitlin Weaver on the peninsula."},
+                "context_pack": {"caption": "Russet Fathom on the peninsula."},
                 "must_right": [],
                 "easy_wrong": [],
                 "policy": {"recognition_enabled": True},
@@ -665,12 +665,12 @@ def _weave_manifest(media_ids: list[int]) -> GoldenManifest:
             }
         )
     return GoldenManifest.model_validate({"manifest_version": 3,
-            "annotation_mode": "roster_only", "roster": ["Caitlin Weaver"], "entries": entries})
+            "annotation_mode": "roster_only", "roster": ["Russet Fathom"], "entries": entries})
 
 
 def test_weave_bench_messages_match_live_pass2_without_image() -> None:
     """The replay weave message is byte-identical to live pass-2 minus ONLY the image part."""
-    pack = {"caption": "Caitlin Weaver on the peninsula."}
+    pack = {"caption": "Russet Fathom on the peninsula."}
     captured_live: list[dict] = []
     live = _client(captured_live, [_FACTS_JSON, _WEAVE_CAPTION], two_pass=True, prompt_variant="v2")
     _describe(live, dict(pack))
@@ -890,9 +890,9 @@ def test_weave_bench_cli_aborts_on_malformed_source_without_images_dir(
 
 _V3_SURFACES = {
     "title": "Woman at a rocky shoreline",
-    "alt": "Caitlin Weaver stands at the waterline of a rocky shoreline in a red jacket.",
+    "alt": "Russet Fathom stands at the waterline of a rocky shoreline in a red jacket.",
     "caption": (
-        "Caitlin Weaver pauses where the rocks meet the water, her red jacket bright "
+        "Russet Fathom pauses where the rocks meet the water, her red jacket bright "
         "against the grey. The sky hangs low and overcast. The shoreline is quiet."
     ),
 }
@@ -929,7 +929,7 @@ def test_v3_cli_rejects_without_two_pass_and_with_dual_length() -> None:
 
 def test_v3_weave_message_carries_three_field_contract_facts_and_context() -> None:
     captured: list[dict] = []
-    _describe(_v3_client(captured, [_FACTS_JSON, _V3_FENCED]), {"caption": "Caitlin Weaver on the peninsula."})
+    _describe(_v3_client(captured, [_FACTS_JSON, _V3_FENCED]), {"caption": "Russet Fathom on the peninsula."})
     assert len(captured) == 2
     system = _system_text(captured[1]["payload"])
     # structured three-field output contract
@@ -942,9 +942,9 @@ def test_v3_weave_message_carries_three_field_contract_facts_and_context() -> No
     assert "Never name or guess about anyone the context does not name." in system
     user = _user_text(captured[1]["payload"])
     assert "<<<FACTS>>>" in user and "rocky shoreline" in user
-    assert "<<<CONTEXT>>>" in user and "Caitlin Weaver" in user
+    assert "<<<CONTEXT>>>" in user and "Russet Fathom" in user
     # pass-1 stays context-free and unchanged by v3
-    assert "Caitlin Weaver" not in json.dumps(captured[0]["payload"])
+    assert "Russet Fathom" not in json.dumps(captured[0]["payload"])
 
 
 def test_v3_happy_path_parses_three_surfaces_into_describe_keys() -> None:

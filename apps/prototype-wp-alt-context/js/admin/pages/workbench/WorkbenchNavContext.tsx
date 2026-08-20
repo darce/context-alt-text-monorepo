@@ -3,6 +3,7 @@ import { useSearchParams } from 'react-router-dom';
 import { getConfig } from '../../api/config';
 import { useTabParam } from '../../hooks/useTabParam';
 import { useOverlayParam } from '../../hooks/useOverlayParam';
+import { commitSearchParams } from '../../hooks/pendingSearchWrites';
 import type { WorkbenchOverlay } from '../../api/recognition';
 import { APP_LINK_PARAMS, APP_LINK_VALUES } from '../../navigation/appLinks';
 
@@ -33,6 +34,10 @@ const WorkbenchNavContext = createContext<WorkbenchNavContextValue | null>(null)
 export const WorkbenchNavProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [searchParams, setSearchParams] = useSearchParams();
   const [activeSection, setActiveSection] = useTabParam<WorkbenchTab>('tab', TAB_IDS.scan, [TAB_IDS.scan]);
+  // Legal `panel` values: `review` | `conflicts` | `dead-letter`.
+  // This overlay host owns conflicts/dead-letter (review is ignored here so
+  // ClusterReviewPanel can occupy the same key). ClusterPanelContext restores
+  // a previously-open overlay on review close instead of deleting `panel`.
   const [activeOverlay, setActiveOverlay] = useOverlayParam<Exclude<WorkbenchOverlay, null>>('panel', [
     'conflicts',
     'dead-letter',
@@ -46,18 +51,13 @@ export const WorkbenchNavProvider: React.FC<{ children: React.ReactNode }> = ({ 
 
   const setAdvancedOpen = React.useCallback(
     (open: boolean): void => {
-      setSearchParams(
-        (prev) => {
-          const next = new URLSearchParams(prev);
-          if (open) {
-            next.set(ADVANCED_PARAM, ADVANCED_OPEN_VALUE);
-          } else {
-            next.delete(ADVANCED_PARAM);
-          }
-          return next;
-        },
-        { replace: true },
-      );
+      commitSearchParams(setSearchParams, (next) => {
+        if (open) {
+          next.set(ADVANCED_PARAM, ADVANCED_OPEN_VALUE);
+        } else {
+          next.delete(ADVANCED_PARAM);
+        }
+      });
     },
     [setSearchParams],
   );

@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import pytest
 
+from scripts.eval_harness.calibrate_face_thresholds import fmr_at, fnmr_at, select_threshold
 from scripts.eval_harness.gallery_split import GalleryName
 from scripts.eval_harness.open_set_identification import (
     IETPoint,
@@ -387,6 +388,36 @@ def test_search_result_requires_gallery_and_media_id():
             gallery=GalleryName.G1,
             media_id=True,  # type: ignore[arg-type]
         )
+
+
+def test_calibrated_tau_agrees_with_published_fpi_and_fnir_on_tie():
+    """FIR-12-BR-63: calibration FMR/FNMR at tau equals published FPI/FNIR.
+
+    JANUS 2.3.4: FPI is rank-1 score > t; FNIR miss is mate not at or above t.
+    ``select_threshold`` draws candidates from observed scores, so the chosen
+    tau routinely equals an impostor score. Agreement on that tie is the
+    operating point the run publishes. Genuine 0.55 sits on the same tau so
+    FNIR agreement is pinned, not only FPI.
+    """
+    impostor_scores = [0.6, 0.55, 0.4]
+    genuine_scores = [0.9, 0.55, 0.4]
+    fmr_target = 1.0 / 3.0
+    tau = select_threshold(genuine_scores, impostor_scores, fmr_target=fmr_target)
+    assert tau is not None
+    assert tau in impostor_scores
+
+    cal_fmr = fmr_at(impostor_scores, tau)
+    cal_fnmr = fnmr_at(genuine_scores, tau)
+    assert cal_fmr is not None and cal_fnmr is not None
+    assert cal_fmr <= fmr_target + 1e-12
+
+    point = fnir_fpi_at_threshold(
+        mated=[_hit("Alice", s) for s in genuine_scores],
+        nonmated=[_nonmated_hit("Alice", s) for s in impostor_scores],
+        tau=tau,
+    )
+    assert cal_fmr * len(impostor_scores) == pytest.approx(point.fpi)
+    assert cal_fnmr == pytest.approx(point.fnir)
 
 
 def test_same_probe_different_gallery_are_distinct_searches():

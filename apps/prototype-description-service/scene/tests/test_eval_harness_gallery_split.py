@@ -5,6 +5,9 @@ TEST-15: each assertion is can-fail against a LOO-style dual-enroll impl.
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 import pytest
 
 from scripts.eval_harness.gallery_split import (
@@ -16,11 +19,26 @@ from scripts.eval_harness.gallery_split import (
 )
 
 
-def _roster(*pairs: tuple[str, tuple[str, ...]]) -> dict[str, list[str]]:
-    return {subject: list(ids) for subject, ids in pairs}
+def _roster(*pairs: tuple[str, tuple[str, ...]]) -> dict[str, list[Template]]:
+    """Unique media per template so string-id fixtures keep subject independence."""
+    by_subject: dict[str, list[Template]] = {}
+    media_id = 1
+    for subject, ids in pairs:
+        templates: list[Template] = []
+        for template_id in ids:
+            templates.append(
+                Template(
+                    template_id=template_id,
+                    subject_id=subject,
+                    media_ids=(media_id,),
+                )
+            )
+            media_id += 1
+        by_subject[subject] = templates
+    return by_subject
 
 
-def _two_plus_roster() -> dict[str, list[str]]:
+def _two_plus_roster() -> dict[str, list[Template]]:
     """≥2 subjects, each with ≥2 templates — the EVAL-18 minimum."""
     return _roster(
         ("alice", ("a1", "a2", "a3")),
@@ -38,7 +56,13 @@ def test_empty_roster_raises():
 def test_subject_with_no_templates_raises_rather_than_drop():
     with pytest.raises(GallerySplitError, match="no templates"):
         build_disjoint_galleries(
-            templates_by_subject={"alice": ["a1", "a2"], "bob": []},
+            templates_by_subject={
+                "alice": [
+                    Template(template_id="a1", subject_id="alice", media_ids=(1,)),
+                    Template(template_id="a2", subject_id="alice", media_ids=(2,)),
+                ],
+                "bob": [],
+            },
             seed=0,
         )
 
@@ -133,15 +157,19 @@ def test_singleton_is_assigned_not_dropped():
     assert enrolled not in own_probes.nonmated
 
 
-def test_single_subject_searching_own_gallery_has_empty_nonmated_and_raises():
-    split = build_disjoint_galleries(
-        templates_by_subject=_roster(("alice", ("a1", "a2"))),
-        seed=0,
-    )
-    assert list(split.g1) == ["alice"]
-    assert split.g2 == {}
-    with pytest.raises(GallerySplitError, match="empty non-mated"):
-        probes_for(split, gallery=GalleryName.G1)
+def test_single_component_roster_refuses_empty_gallery():
+    """One connected component fills G1 and leaves G2 empty — not a 1:N split."""
+    with pytest.raises(GallerySplitError, match="empty gallery"):
+        build_disjoint_galleries(
+            templates_by_subject=_roster(("alice", ("a1", "a2"))),
+            seed=0,
+        )
+    shared = {
+        "alice": [Template(template_id="a1", subject_id="alice", media_ids=(1,))],
+        "bob": [Template(template_id="b1", subject_id="bob", media_ids=(1,))],
+    }
+    with pytest.raises(GallerySplitError, match="empty gallery"):
+        build_disjoint_galleries(templates_by_subject=shared, seed=0)
 
 
 def test_all_singleton_roster_declares_empty_mated_not_a_hidden_cell():
@@ -206,6 +234,10 @@ def test_shared_still_coassigns_subjects_and_keeps_probe_media_disjoint():
         "bob": [
             Template(template_id="b-group", subject_id="bob", media_ids=(7,)),
         ],
+        "carol": [
+            Template(template_id="c1", subject_id="carol", media_ids=(8,)),
+            Template(template_id="c2", subject_id="carol", media_ids=(9,)),
+        ],
     }
     split = build_disjoint_galleries(templates_by_subject=roster, seed=0)
     assert ("alice" in split.g1) == ("bob" in split.g1)
@@ -236,3 +268,80 @@ def test_only_shared_still_subject_is_enrolled_not_dropped():
     assigned = set(split.g1) | set(split.g2)
     assert assigned == {"alice", "bob", "carol"}
     assert ("alice" in split.g1) == ("bob" in split.g1)
+
+
+def test_string_templates_parse_media_ids_and_coassign_shared_still():
+    """'{media}:{subject}' strings must not empty media_ids (JANUS 2.2 / MLDATA-09).
+
+    Defaulting the convenience path to media_ids=() makes every media-disjointness
+    invariant a no-op: alice and bob sharing still 99 land in different galleries.
+    """
+    roster = {
+        "alice": ["99:alice"],
+        "bob": ["99:bob"],
+        "carol": ["1:carol", "2:carol"],
+    }
+    split = build_disjoint_galleries(templates_by_subject=roster, seed=0)
+    assert ("alice" in split.g1) == ("bob" in split.g1)
+    enrolled_alice = split.g1.get("alice") or split.g2["alice"]
+    enrolled_bob = split.g1.get("bob") or split.g2["bob"]
+    assert enrolled_alice.media_ids == (99,)
+    assert enrolled_bob.media_ids == (99,)
+    g1_media = {mid for t in split.g1.values() for mid in t.media_ids}
+    g2_media = {mid for t in split.g2.values() for mid in t.media_ids}
+    assert g1_media
+    assert g2_media
+    assert g1_media.isdisjoint(g2_media)
+
+
+def test_string_template_without_media_id_raises():
+    """Refuse a string template that cannot supply media ids. Empty () is not a default."""
+    with pytest.raises(GallerySplitError, match="media"):
+        build_disjoint_galleries(
+            templates_by_subject={"alice": ["a1"], "bob": ["b1"]},
+            seed=0,
+        )
+
+
+def _frozen_e_clean_roster() -> dict[str, list[Template]]:
+    here = Path(__file__).resolve()
+    manifest = None
+    for parent in here.parents:
+        candidate = parent / "benchmarks" / "manifests" / "fir12-selection-v1.json"
+        if candidate.is_file():
+            manifest = candidate
+            break
+    if manifest is None:
+        raise RuntimeError("cannot locate fir12-selection-v1.json from test path")
+    payload = json.loads(manifest.read_text())
+    by_subject: dict[str, list[Template]] = {}
+    for entry in payload["entries"]:
+        if entry.get("stratum") != "E_clean":
+            continue
+        identities = entry.get("present_identities")
+        if not isinstance(identities, list) or not identities:
+            continue
+        media_id = int(entry["media_id"])
+        for subject_id in identities:
+            by_subject.setdefault(subject_id, []).append(
+                Template(
+                    template_id=f"{media_id}:{subject_id}",
+                    subject_id=subject_id,
+                    media_ids=(media_id,),
+                )
+            )
+    return by_subject
+
+
+def test_frozen_frame_both_galleries_nonempty_across_seeds():
+    """Latent on the frozen frame: seeds 0–63 already yield two non-empty galleries.
+
+    If this fails, the split or the frame changed — do not loosen the assertion.
+    """
+    roster = _frozen_e_clean_roster()
+    empty: list[int] = []
+    for seed in range(64):
+        split = build_disjoint_galleries(templates_by_subject=roster, seed=seed)
+        if not split.g1 or not split.g2:
+            empty.append(seed)
+    assert empty == []

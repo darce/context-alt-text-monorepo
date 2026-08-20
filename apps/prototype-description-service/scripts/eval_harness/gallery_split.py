@@ -132,6 +132,17 @@ class ProbeSet:
         return len({t.subject_id for t in (*self.mated, *self.nonmated)})
 
 
+def _media_ids_from_string_template(template_id: str) -> tuple[int, ...]:
+    """Parse ``'{media}:{subject}'`` (the bakeoff string form). Empty media is not a default."""
+    prefix, sep, rest = template_id.partition(":")
+    if sep and prefix.isdigit() and rest:
+        return (int(prefix),)
+    raise GallerySplitError(
+        f"string template {template_id!r} cannot supply media ids; "
+        "use '{media}:{subject}' or Template(..., media_ids=...)"
+    )
+
+
 def _as_template(value: Template | str, *, subject_id: str) -> Template:
     if isinstance(value, Template):
         if value.subject_id != subject_id:
@@ -145,7 +156,11 @@ def _as_template(value: Template | str, *, subject_id: str) -> Template:
     if isinstance(value, str):
         if not value:
             raise GallerySplitError("template id must be a non-empty string")
-        return Template(template_id=value, subject_id=subject_id)
+        return Template(
+            template_id=value,
+            subject_id=subject_id,
+            media_ids=_media_ids_from_string_template(value),
+        )
     raise GallerySplitError(f"unsupported template type: {type(value).__name__}")
 
 
@@ -287,6 +302,12 @@ def _assert_invariants(
             f"reserved probe media ids collide with a gallery: "
             f"{sorted(gallery_media & set(media_probe))!r}"
         )
+    if not g1 or not g2:
+        empty = "g1" if not g1 else "g2"
+        raise GallerySplitError(
+            f"empty gallery {empty}: a 1:N search requires both G1 and G2 "
+            "to be populated"
+        )
 
 
 def build_disjoint_galleries(
@@ -297,8 +318,9 @@ def build_disjoint_galleries(
     """Partition subjects into disjoint G1/G2 galleries (one template each).
 
     Raises ``GallerySplitError`` on an empty roster, a subject with no
-    templates, duplicate template ids, or any invariant failure. Does not
-    drop singleton subjects.
+    templates, duplicate template ids, an empty G1 or G2 (one connected
+    component cannot support a 1:N search against both galleries), or
+    any other invariant failure. Does not drop singleton subjects.
     """
     if not templates_by_subject:
         raise GallerySplitError(

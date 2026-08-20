@@ -156,6 +156,53 @@ def test_seed_is_recorded_and_reproducible(tmp_path: Path) -> None:
     assert a.split != c.split or a.split.g1_template_ids != c.split.g1_template_ids
 
 
+def test_gallery_stratum_renders_enrolled_not_probed() -> None:
+    """BR-16 / MLDATA-09: E_clean is enrolled, not an untested probe cell."""
+    plan = build_run_plan(selection_manifest_path=_frozen_manifest(), seed=0)
+    report = score_run(
+        plan=plan,
+        searches=_probe_searches(),
+        tau=0.50,
+    )
+    assert GALLERY_STRATUM not in report.points
+    row = {item["stratum"]: item for item in report.to_rows()}[GALLERY_STRATUM]
+    assert row["n_images"] == 342
+    assert row["declared_empty"] is False
+    assert row["measured"] is False
+    assert row["fnir"] == "enrolled, not probed"
+    assert row["fnir"] != "not measured"
+    assert row["n_mated"] == 0
+    assert row["search_shortfall"] == 0
+
+
+def test_gallery_searches_are_not_pooled_into_overall_fnir(tmp_path: Path) -> None:
+    """BR-16: an E_clean key must not dilute the occluded-probe headline."""
+    plan = _plan(tmp_path)
+    foils = [_nonmated_hit("Bob", 0.80)]
+    searches = _probe_searches(
+        A_true_occluder={
+            "mated": [_undetected_mated("Alice")],
+            "nonmated": foils,
+        },
+    )
+    searches[GALLERY_STRATUM] = {
+        "mated": [_hit("Alice", 0.90), _hit("Bob", 0.90), _hit("Dale", 0.90)],
+        "nonmated": [],
+    }
+    report = score_run(
+        plan=plan,
+        searches=searches,
+        tau=0.50,
+        overall_nonmated=foils,
+    )
+    assert GALLERY_STRATUM not in report.points
+    assert report.overall.n_mated == 1
+    assert report.overall.fnir == pytest.approx(1.0)
+    assert report.overall.fnir != pytest.approx(0.25)
+    row = {item["stratum"]: item for item in report.to_rows()}[GALLERY_STRATUM]
+    assert row["fnir"] == "enrolled, not probed"
+
+
 def test_gallery_templates_come_from_e_clean_only(tmp_path: Path) -> None:
     plan = _plan(tmp_path)
     enrolled_ids = set(plan.split.g1) | set(plan.split.g2)
@@ -229,6 +276,8 @@ def test_zero_mated_stratum_renders_unmeasured_fnir_and_keeps_fpi(
     assert row["n_mated"] == 0
     assert row["n_nonmated"] == 2
     assert row["declared_empty"] is False
+    assert row["search_shortfall"] == 1
+    assert row["incomplete"] is True
 
 
 def test_declared_empty_cells_stay_in_the_table(tmp_path: Path) -> None:
@@ -248,7 +297,8 @@ def test_declared_empty_cells_stay_in_the_table(tmp_path: Path) -> None:
         assert rows[cell]["n_images"] == 0
         assert rows[cell]["unique_subjects"] == 0
         assert rows[cell]["manifest_images"] == 0
-        assert type(rows[cell]["fpi"]) is int
+        assert rows[cell]["fpi"] is None
+        assert rows[cell]["n_nonmated"] == 0
 
 
 def test_unique_subjects_on_every_row(tmp_path: Path) -> None:
@@ -343,6 +393,8 @@ def test_undetected_mated_probe_counts_as_fnir_miss(tmp_path: Path) -> None:
     row = {item["stratum"]: item for item in report.to_rows()}["A_true_occluder"]
     assert row["fnir"] == "0.500"
     assert row["measured"] is True
+    assert row["search_shortfall"] == 0
+    assert row["incomplete"] is False
 
 
 def test_fpi_is_integer_count_not_rate_over_nonmated(tmp_path: Path) -> None:
@@ -458,6 +510,88 @@ def test_frozen_manifest_plan_counts() -> None:
         assert rows[cell]["fnir"] == "not measured"
 
 
+def test_explicit_empty_overall_nonmated_is_unmeasured_fpi(tmp_path: Path) -> None:
+    """BR-15 / EVAL-18: overall_nonmated=() is not an FPI of zero.
+
+    Stratum cells can still count their own foils; the headline must not
+    publish perfect open-set rejection over an undeclared non-mated set.
+    """
+    plan = _plan(tmp_path)
+    foils = [_nonmated_hit("Alice", 0.90)]
+    searches = {
+        name: {"mated": [_hit("Alice", 0.90)], "nonmated": foils} for name in PROBE_STRATA
+    }
+    report = score_run(
+        plan=plan,
+        searches=searches,
+        tau=0.50,
+        overall_nonmated=(),
+    )
+    assert report.points["A_true_occluder"].fpi == 1
+    assert report.overall.n_mated == 4
+    assert report.overall.measured is True
+    assert report.overall.n_nonmated == 0
+    assert report.overall.fpi is None
+    assert report.overall.fpi != 0
+    assert report.overall.fpi_per_enrolled_subject is None
+
+
+def test_omitted_foils_do_not_score_perfect_open_set_rejection(tmp_path: Path) -> None:
+    """BR-15 / EVAL-18: no strangers met → FPI unmeasured, not 0 / 0.0 rate."""
+    plan = _plan(tmp_path)
+    report = score_run(
+        plan=plan,
+        searches=_probe_searches(
+            A_true_occluder={
+                "mated": [_hit("Alice", 0.90)],
+                "nonmated": [],
+            },
+        ),
+        tau=0.50,
+    )
+    assert report.overall.n_mated == 1
+    assert report.overall.fnir == pytest.approx(0.0)
+    assert report.overall.n_nonmated == 0
+    assert report.overall.measured is True
+    assert report.overall.fpi is None
+    assert report.overall.fpi != 0
+    assert report.overall.fpi_per_enrolled_subject is None
+    assert report.overall.fpi_per_enrolled_subject != pytest.approx(0.0)
+    row = {item["stratum"]: item for item in report.to_rows()}["A_true_occluder"]
+    assert row["fpi"] is None
+    assert row["fpi"] != 0
+
+
+def test_closed_set_fpi_zero_requires_explicit_flag(tmp_path: Path) -> None:
+    """BR-15: a genuine closed-set FPI of 0 is declared, never reached by omission."""
+    plan = _plan(tmp_path)
+    searches = _probe_searches(
+        A_true_occluder={
+            "mated": [_hit("Alice", 0.90)],
+            "nonmated": [],
+        },
+    )
+    omitted = score_run(plan=plan, searches=searches, tau=0.50)
+    declared = score_run(
+        plan=plan,
+        searches=searches,
+        tau=0.50,
+        closed_set=True,
+    )
+    assert omitted.overall.fpi is None
+    assert declared.overall.fpi == 0
+    assert type(declared.overall.fpi) is int
+    assert declared.overall.n_nonmated == 0
+    with pytest.raises(FirBakeoffRunError, match="closed_set"):
+        score_run(
+            plan=plan,
+            searches=searches,
+            tau=0.50,
+            closed_set=True,
+            overall_nonmated=[_nonmated_hit("Bob", 0.80)],
+        )
+
+
 def test_overall_nonmated_is_declared_once_not_pooled(tmp_path: Path) -> None:
     plan = _plan(tmp_path)
     foils = [
@@ -545,6 +679,34 @@ def test_empty_searches_raises_for_populated_probe_strata(tmp_path: Path) -> Non
         assert name in msg
 
 
+def test_empty_search_lists_on_populated_probe_cell_are_incomplete() -> None:
+    """BR-17 / EVAL-16 / EVAL-19: a present key with empty lists is not complete-and-zero.
+
+    Round-3 BR-09 required the key. Reconcile len(mated) against the plan so a
+    caller who drops undetected mates or zero-face non-mates cannot look measured.
+    """
+    plan = build_run_plan(selection_manifest_path=_frozen_manifest(), seed=0)
+    assert len(plan.probe_entries["A_true_occluder"]) == 32
+    report = score_run(
+        plan=plan,
+        searches=_probe_searches(),
+        tau=0.50,
+    )
+    row = {item["stratum"]: item for item in report.to_rows()}["A_true_occluder"]
+    assert row["n_images"] == 32
+    assert row["n_mated"] == 0
+    assert row["search_shortfall"] == 32
+    assert row["incomplete"] is True
+    assert row["measured"] is False
+    assert row["fnir"] == "not measured"
+    for name in PROBE_STRATA:
+        cell = {item["stratum"]: item for item in report.to_rows()}[name]
+        expected = len(plan.probe_entries[name])
+        assert cell["search_shortfall"] == expected
+        assert cell["incomplete"] is True
+        assert cell["n_mated"] == 0
+
+
 def test_explicit_empty_mated_list_is_unmeasured_not_missing(tmp_path: Path) -> None:
     plan = _plan(tmp_path)
     foils = [_nonmated_hit("Alice", 0.90)]
@@ -565,6 +727,8 @@ def test_explicit_empty_mated_list_is_unmeasured_not_missing(tmp_path: Path) -> 
     assert row["fnir"] == "not measured"
     assert row["measured"] is False
     assert row["declared_empty"] is False
+    assert row["search_shortfall"] == 1
+    assert row["incomplete"] is True
 
 
 def test_enrolled_gallery_mismatch_raises(tmp_path: Path) -> None:
@@ -660,6 +824,30 @@ def test_frozen_manifest_withholds_shared_probe_stills_at_seed_0() -> None:
     assert withheld_ids.isdisjoint(plan.split.probe_template_ids)
     assert withheld_ids.isdisjoint(plan.split.g1_template_ids)
     assert withheld_ids.isdisjoint(plan.split.g2_template_ids)
+
+
+def test_withheld_probe_templates_reach_report_at_seed_0() -> None:
+    """BR-14 / MLDATA-07 / MLDATA-09: a filter that removes probes must be in the table.
+
+    Frozen seed 0 withholds exactly two leftover templates whose media collide
+    with enrollment. Withholding 2 and withholding 40 must not render the same.
+    """
+    plan = build_run_plan(selection_manifest_path=_frozen_manifest(), seed=0)
+    withheld_ids = {t.template_id for t in plan.withheld_probe_templates}
+    assert withheld_ids == {"632:Burnished Ridgeway", "353:Pewter Hollow"}
+    assert len(plan.withheld_probe_templates) == 2
+    report = score_run(
+        plan=plan,
+        searches=_probe_searches(),
+        tau=0.50,
+    )
+    assert report.withheld_probe_templates == plan.withheld_probe_templates
+    assert len(report.withheld_probe_templates) == 2
+    rows = report.to_rows()
+    assert rows
+    for row in rows:
+        assert row["n_withheld_probe_templates"] == 2
+        assert row["n_withheld_probe_templates"] != 0
 
 
 def test_present_identities_rejects_str_and_dict() -> None:

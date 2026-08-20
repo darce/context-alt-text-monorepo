@@ -49,4 +49,46 @@ test_whole_frame_kish_a_joins_identities_across_strata
 
 ## BR-18 — subject-stage sampler + ICC estimator (AUDIT-11)
 
-**Status:** not started. Next.
+**Status:** closed.
+
+**What changed.** `draw()` remains image-level SRS. New `draw_two_stage` draws subject PSUs then `n_within>=2` images inside each PSU, with two-stage inclusion probabilities. New `estimate_icc` is the one-way ANOVA ICC plus Fisher-Z interval (ICC transform, not Pearson artanh). On the honest G=65, k=3 design at ρ=0.2 the CI is [0.045, 0.360], which sizes n to 121..284 against the whole-frame Kish a.
+
+**Tests.**
+- `test_draw_two_stage_replicates_within_psu`
+- `test_draw_two_stage_is_deterministic_and_order_invariant`
+- `test_draw_two_stage_carries_two_stage_inclusion_probability`
+- `test_draw_two_stage_refuses_n_within_below_2`
+- `test_draw_two_stage_refuses_psu_smaller_than_n_within`
+- `test_two_stage_census_of_m3_subjects_is_195_images`
+- `test_fir12_icc_eligible_subject_counts` (76 with m≥2, 65 with m≥3)
+- `test_estimate_icc_anova_known_fixture`
+- `test_estimate_icc_fisher_z_ci_for_g65_k3_at_rho_02`
+- `test_estimate_icc_recovers_rho_on_synthetic_clusters`
+- `test_estimate_icc_rejects_singletons_and_too_few_psus`
+
+**Mutant (TEST-15), two-stage → image SRS.** Flatten clusters and `rng.sample(flat, n_psu * n_within)` with `psu_id=None`.
+
+**RED.**
+```
+test_draw_two_stage_replicates_within_psu
+  assert unit.psu_id is not None
+  AssertionError: assert None is not None
+
+test_two_stage_census_of_m3_subjects_is_195_images
+  assert len({u.psu_id for u in sample.units}) == 65
+  assert 1 == 65
+```
+
+**Mutant (TEST-15), ICC CI → Pearson artanh.** `z = artanh(ρ)`, `SE = 1/√(G−3)`.
+
+**RED.**
+```
+test_estimate_icc_fisher_z_ci_for_g65_k3_at_rho_02
+  assert est.lower == pytest.approx(0.045, abs=5e-4)
+  assert -0.030303697997921163 == 0.045 ± 5.0e-04
+```
+
+**Canon.** AUDIT-11, TEST-15.
+
+`scene/tests/test_eval_harness_audit_sampling.py` → 46 passed. Full `scene/tests` → 1263 passed, 4 skipped; the 4 failures are the known pre-existing PGPASSWORD / `InsecureProductionConfigError` boots (`test_describe_route.py::test_create_app_registers_route_and_upload_cap` and the three `test_describe_run_reclaim.py` startup tests).
+

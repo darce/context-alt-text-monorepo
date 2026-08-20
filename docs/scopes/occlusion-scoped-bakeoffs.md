@@ -97,7 +97,12 @@ No. EMB-11 states occlusion is spatial support, not a scalar penalty: scaling a 
 Because descriptions bind names to faces by left-to-right face-box position, description-naming correctness is downstream of identity correctness: a description bake-off run before FIR is pinned measures two coupled error sources as one number. The survey's ordering agrees at pipeline level (detection → recognition precedes downstream consumption). FIR also runs on CPU and is the cheaper leg, so the expensive GPU leg is not spent on a moving identity baseline.
 
 **Q9 — What can the GPU description bake-off actually score?**
-Identity-grounded metrics only: `must_right`, `easy_wrong`, `hallucinated_names`, `missing_identities`, `wrong_name_hits`, `tag_coverage` — all populated. **Fact-level hallucination and spatial placement are not scoreable**: `reference_facts` and `spatial_facts` are non-empty on 0 of 646 entries and absent from the v3 schema. Any hallucination-first ranking over facts requires a v4 schema plus annotation, which is out of this scope.
+Identity-grounded metrics only: `must_right` (530/646), `hallucinated_names`, `missing_identities`, `wrong_name_hits`, `tag_coverage`. **Fact-level hallucination is not scoreable**: `reference_facts` is absent from the v3 entry schema and non-empty on 0/646 (the `golden150-draft` has the field but only 1/150 annotated). Any hallucination-first ranking over facts needs a v4 schema plus an operator annotation pass — out of this scope.
+
+Two corrections to the naive reading of that limit:
+
+- `easy_wrong` is **also 0/646**. This does not disable wrong-name scoring: `bakeoff.py` builds the trap set as `present_identities ∪ must_right ∪ easy_wrong ∪ roster`, so the 130-name roster supplies the distractors. What is lost is only the ALTQ-1 `context_distractor` transform, which injects an entry's first `easy_wrong` name into the context pack — that specific adversarial condition cannot run.
+- Spatial placement is **partly derivable, not absent**. `export_identities.spatial_facts_from_regions` synthesises `left_of` facts from named face-box centres with no human annotation. Over this manifest that yields **17 images / 23 pairs** (only 17 entries carry ≥2 distinctly named boxes). Report as a diagnostic; 17 images cannot carry a placement claim (MLDATA-07).
 
 **Q10 — Noisy ground-truth boxes?**
 Report under an explicit include/exclude policy, ideally both tables (`janus-benchmark-c` ignore-flags mechanism). The 116 entries with `face_count = 0` serve as natural non-mated / distractor media for the open-set leg.
@@ -134,7 +139,8 @@ Report under an explicit include/exclude policy, ideally both tables (`janus-ben
 
 - No mask / veil / goggles robustness claim — cells are empty.
 - No synthetic occlusion to fill eval cells (EVAL-28). Training-side augmentation is a separate question.
-- No fact-level hallucination or spatial-placement scoring — `reference_facts` / `spatial_facts` are 0/646; needs a v4 schema.
+- No fact-level hallucination scoring — `reference_facts` is 0/646 and absent from the v3 schema; needs a v4 schema + operator annotation pass.
+- No placement *claim* — the 17 derivable-pair images are reported as a diagnostic only.
 - No re-litigation of the 357 scrape-signature provenance entries — FIR-11 owns that remediation.
 - No recovery attempt on `media_id` 260/261/262 — pinned bytes are gone and FIR-11 excludes them anyway.
 - No new image sourcing in this task.

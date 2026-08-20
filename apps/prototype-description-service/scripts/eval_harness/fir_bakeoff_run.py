@@ -6,7 +6,7 @@ EVAL-18: per-stratum FNIR/FPI plus an overall IET point. An empty foil set is
 unmeasured FPI (``fpi is None``), not a count of zero; a closed-set run must
 set ``closed_set=True`` and cannot be reached by omitting foils.
 EVAL-19: FPI stays an integer count when measured; enrolled-gallery
-normalization is caller-supplied.
+normalization follows the declared search gallery, never ``len(g1)+len(g2)``.
 EVAL-16: undetected mated probes stay in the injected lists — this module does not
 filter them out of the error budget.
 MLDATA-09: unmeasured FNIR renders via ``BakeoffIETPoint.format_fnir``
@@ -93,6 +93,7 @@ class BakeoffIETPoint:
     n_nonmated: int
     measured: bool
     n_enrolled_gallery_subjects: int | None = None
+    galleries: tuple[GalleryName, ...] = ()
 
     def __post_init__(self) -> None:
         if self.measured:
@@ -192,6 +193,7 @@ class RunReport:
                         "n_enrolled_gallery_subjects": (
                             self.overall.n_enrolled_gallery_subjects
                         ),
+                        "gallery": (),
                         "n_withheld_probe_templates": n_withheld,
                         "search_shortfall": shortfall,
                     }
@@ -214,6 +216,7 @@ class RunReport:
                     "tau": self.tau,
                     "fpi_per_enrolled_subject": point.fpi_per_enrolled_subject,
                     "n_enrolled_gallery_subjects": point.n_enrolled_gallery_subjects,
+                    "gallery": tuple(g.value for g in point.galleries),
                     "n_withheld_probe_templates": n_withheld,
                     "search_shortfall": shortfall,
                 }
@@ -339,20 +342,14 @@ def score_run(
     Classifies each ``ProbeEntry`` against ``plan.split`` / ``plan.probe_sets``:
     a search is mated iff the probe carries an identity enrolled in its
     declared gallery (EVAL-18 / JANUS 2.2).
+    FPI per enrolled subject uses the unique declared gallery of the
+    searches that compose the point (EVAL-19 / JANUS 2.3.4). A pooled
+    point that spans both galleries has no honest denominator.
     """
     if not math.isfinite(tau):
         raise FirBakeoffRunError(f"tau must be finite, got {tau!r}")
 
-    expected_enrolled = len(plan.split.g1) + len(plan.split.g2)
-    if n_enrolled_gallery_subjects is None:
-        n_enrolled = expected_enrolled
-    elif n_enrolled_gallery_subjects != expected_enrolled:
-        raise FirBakeoffRunError(
-            f"n_enrolled_gallery_subjects={n_enrolled_gallery_subjects} "
-            f"does not match gallery size {expected_enrolled} (len(g1)+len(g2))"
-        )
-    else:
-        n_enrolled = n_enrolled_gallery_subjects
+    _reject_union_enrolled_count(plan, n_enrolled_gallery_subjects)
 
     unknown = sorted(set(searches) - _known_strata(plan.index))
     if unknown:
@@ -389,14 +386,20 @@ def score_run(
         all_mated.extend(mated)
         if len(nonmated) > 0:
             strata_with_nonmated.append(name)
+        galleries = _galleries_of(plan, (*mated, *nonmated))
         points[name] = _publish_point(
             fnir_fpi_at_threshold(
                 mated=mated,
                 nonmated=nonmated,
                 tau=tau,
-                n_enrolled_gallery_subjects=n_enrolled,
+                n_enrolled_gallery_subjects=_enrolled_for(
+                    plan,
+                    galleries,
+                    supplied=n_enrolled_gallery_subjects,
+                ),
             ),
             closed_set=closed_set,
+            galleries=galleries,
         )
     if overall_nonmated is not None:
         overall_foils = overall_nonmated
@@ -412,14 +415,20 @@ def score_run(
             "closed_set=True cannot carry a non-mated (foil) workload (EVAL-18)"
         )
     _validate_overall_nonmated(plan, overall_foils)
+    overall_galleries = _galleries_of(plan, (*all_mated, *overall_foils))
     overall = _publish_point(
         fnir_fpi_at_threshold(
             mated=all_mated,
             nonmated=overall_foils,
             tau=tau,
-            n_enrolled_gallery_subjects=n_enrolled,
+            n_enrolled_gallery_subjects=_enrolled_for(
+                plan,
+                overall_galleries,
+                supplied=n_enrolled_gallery_subjects,
+            ),
         ),
         closed_set=closed_set,
+        galleries=overall_galleries,
     )
     return RunReport(
         points=points,
@@ -432,7 +441,12 @@ def score_run(
     )
 
 
-def _publish_point(point: IETPoint, *, closed_set: bool) -> BakeoffIETPoint:
+def _publish_point(
+    point: IETPoint,
+    *,
+    closed_set: bool,
+    galleries: tuple[GalleryName, ...] = (),
+) -> BakeoffIETPoint:
     """Map an IET scorer point onto the bakeoff publication contract.
 
     IETPoint.fpi is always an int (unowned scorer). An empty foil list is
@@ -452,7 +466,60 @@ def _publish_point(point: IETPoint, *, closed_set: bool) -> BakeoffIETPoint:
         n_nonmated=point.n_nonmated,
         measured=point.measured,
         n_enrolled_gallery_subjects=point.n_enrolled_gallery_subjects,
+        galleries=galleries,
     )
+
+
+def _roster_size(plan: RunPlan, gallery: GalleryName) -> int:
+    if gallery is GalleryName.G1:
+        return len(plan.split.g1)
+    return len(plan.split.g2)
+
+
+def _reject_union_enrolled_count(
+    plan: RunPlan, supplied: int | None
+) -> None:
+    if supplied is None:
+        return
+    legal = {_roster_size(plan, GalleryName.G1), _roster_size(plan, GalleryName.G2)}
+    if supplied not in legal:
+        raise FirBakeoffRunError(
+            f"n_enrolled_gallery_subjects={supplied} does not match a declared "
+            f"gallery size (g1={_roster_size(plan, GalleryName.G1)}, "
+            f"g2={_roster_size(plan, GalleryName.G2)})"
+        )
+
+
+def _galleries_of(
+    plan: RunPlan, searches: Sequence[SearchResult]
+) -> tuple[GalleryName, ...]:
+    names = {
+        _as_declared_gallery(search.gallery, declared=plan.probe_sets)
+        for search in searches
+    }
+    return tuple(sorted(names, key=lambda gallery: gallery.value))
+
+
+def _enrolled_for(
+    plan: RunPlan,
+    galleries: tuple[GalleryName, ...],
+    *,
+    supplied: int | None,
+) -> int | None:
+    if len(galleries) != 1:
+        if supplied is not None and len(galleries) > 1:
+            raise FirBakeoffRunError(
+                f"n_enrolled_gallery_subjects={supplied} cannot normalize FPI "
+                f"across galleries {[g.value for g in galleries]!r}"
+            )
+        return None
+    n = _roster_size(plan, galleries[0])
+    if supplied is not None and supplied != n:
+        raise FirBakeoffRunError(
+            f"n_enrolled_gallery_subjects={supplied} does not match gallery "
+            f"{galleries[0].value} size {n}"
+        )
+    return n
 
 
 def _declared_galleries(plan: RunPlan) -> tuple[GalleryName, ...]:

@@ -57,6 +57,7 @@ __all__ = [
     "PROBE_STRATA",
     "BakeoffIETPoint",
     "FirBakeoffRunError",
+    "MatedSearchUnit",
     "ProbeEntry",
     "RunPlan",
     "RunReport",
@@ -135,6 +136,21 @@ class ProbeEntry:
     sha256: str
     stratum: str
     present_identities: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class MatedSearchUnit:
+    """One FNIR unit: (still, gallery, enrolled subject).
+
+    JANUS 2.2 is one template per subject. A still with three enrolled
+    subjects is three mated searches, never one. EVAL-16 keeps a dropped
+    co-subject in the error budget; EVAL-18 requires this unit to be
+    declared rather than inferred from still count.
+    """
+
+    entry: ProbeEntry
+    gallery: GalleryName
+    subject_id: str
 
 
 @dataclass(frozen=True)
@@ -295,36 +311,39 @@ def both_gallery_search_count(plan: RunPlan) -> int:
 
 def occluded_probes_for(
     plan: RunPlan, *, gallery: GalleryName | str
-) -> tuple[tuple[ProbeEntry, ...], tuple[ProbeEntry, ...]]:
-    """Mated / foil occluded stills for a 1:N search against ``gallery``.
+) -> tuple[tuple[MatedSearchUnit, ...], tuple[ProbeEntry, ...]]:
+    """Mated subject-units / foil stills for a 1:N search against ``gallery``.
 
-    Consumes ``plan.probe_sets`` (the stored ``probes_for`` result) as the
-    declared-gallery set. A still co-present in both galleries is mated here
-    *and* mated against the other gallery — two searches, never one.
+    Consumes ``plan.probe_sets`` as the declared-gallery set. The mated
+    unit is one enrolled subject on one still against this gallery
+    (JANUS 2.2 / EVAL-16 / EVAL-18). A still co-present in both galleries
+    yields one unit per enrolled subject per gallery, never one unit for
+    the still.
     """
     name = _as_declared_gallery(gallery, declared=plan.probe_sets)
-    mated: list[ProbeEntry] = []
+    mated: list[MatedSearchUnit] = []
     foils: list[ProbeEntry] = []
     for stratum in PROBE_STRATA:
         for entry in plan.probe_entries.get(stratum, ()):
-            if mated_identities_for(entry, split=plan.split, gallery=name):
-                mated.append(entry)
+            identities = mated_identities_for(entry, split=plan.split, gallery=name)
+            if identities:
+                for subject_id in identities:
+                    mated.append(
+                        MatedSearchUnit(
+                            entry=entry, gallery=name, subject_id=subject_id
+                        )
+                    )
             else:
                 foils.append(entry)
     return tuple(mated), tuple(foils)
 
 
 def expected_mated_search_count(plan: RunPlan, *, stratum: str) -> int:
-    """Mated (probe, gallery) units the stratum must cover.
+    """Mated (still, gallery, enrolled subject) units the stratum must cover.
 
-    Co-present stills count twice — once per gallery — via ``occluded_probes_for``.
+    Derived from ``occluded_probes_for``; never counted independently.
     """
-    return sum(
-        1
-        for gallery in _declared_galleries(plan)
-        for entry in occluded_probes_for(plan, gallery=gallery)[0]
-        if entry.stratum == stratum
-    )
+    return len(_mated_search_units(plan, stratum=stratum))
 
 
 def score_run(
@@ -362,11 +381,6 @@ def score_run(
             "every populated probe stratum must have a searches key"
         )
 
-    occluded = {
-        gallery: occluded_probes_for(plan, gallery=gallery)
-        for gallery in _declared_galleries(plan)
-    }
-
     stratum_report = join_by_stratum(_join_records(plan), plan.index)
     points: dict[str, BakeoffIETPoint] = {}
     all_mated: list[SearchResult] = []
@@ -381,7 +395,7 @@ def score_run(
             plan, stratum=name, mated=mated, nonmated=nonmated
         )
         search_shortfalls[name] = _search_shortfall(
-            plan, stratum=name, mated=mated, occluded=occluded
+            plan, stratum=name, mated=mated
         )
         all_mated.extend(mated)
         if len(nonmated) > 0:
@@ -526,6 +540,17 @@ def _declared_galleries(plan: RunPlan) -> tuple[GalleryName, ...]:
     return tuple(sorted(plan.probe_sets, key=lambda gallery: gallery.value))
 
 
+def _mated_search_units(
+    plan: RunPlan, *, stratum: str | None = None
+) -> tuple[MatedSearchUnit, ...]:
+    return tuple(
+        unit
+        for gallery in _declared_galleries(plan)
+        for unit in occluded_probes_for(plan, gallery=gallery)[0]
+        if stratum is None or unit.entry.stratum == stratum
+    )
+
+
 def _as_declared_gallery(
     value: GalleryName | str, *, declared: Mapping[GalleryName, ProbeSet]
 ) -> GalleryName:
@@ -590,14 +615,16 @@ def _validate_stratum_searches(
                 search, entry=entry, plan=plan, filed_as_mated=filed_as_mated
             )
             appeared.setdefault(search.media_id, set()).add(gallery)
-    for entry in plan.probe_entries.get(stratum, ()):
-        needed = set(mated_galleries_for(entry, plan=plan))
+    needed_by_media: dict[int, set[GalleryName]] = {}
+    for unit in _mated_search_units(plan, stratum=stratum):
+        needed_by_media.setdefault(unit.entry.media_id, set()).add(unit.gallery)
+    for media_id, needed in needed_by_media.items():
         if len(needed) < 2:
             continue
-        seen = appeared.get(entry.media_id, set())
+        seen = appeared.get(media_id, set())
         if seen and seen != needed:
             raise FirBakeoffRunError(
-                f"probe media_id={entry.media_id} is enrolled in both galleries "
+                f"probe media_id={media_id} is enrolled in both galleries "
                 f"but appears with "
                 f"{[g.value for g in sorted(seen, key=lambda g: g.value)]!r} "
                 "in searches"
@@ -628,25 +655,16 @@ def _search_shortfall(
     *,
     stratum: str,
     mated: Sequence[SearchResult],
-    occluded: Mapping[
-        GalleryName, tuple[tuple[ProbeEntry, ...], tuple[ProbeEntry, ...]]
-    ],
 ) -> int:
-    """How many mated (probe, gallery) units are missing from the injected list.
+    """How many mated (still, gallery, enrolled subject) units are missing.
 
-    EVAL-16 / EVAL-19: dropping undetected mates or zero-face probes must not
+    EVAL-16 / EVAL-19: dropping undetected mates or co-subjects must not
     render as a complete unmeasured cell. Non-probe strata have no shortfall.
-    Co-present stills contribute one unit per gallery (JANUS 2.2).
+    Count is ``expected_mated_search_count``, not a second independent tally.
     """
     if stratum not in PROBE_STRATA:
         return 0
-    expected = sum(
-        1
-        for mated_entries, _foils in occluded.values()
-        for entry in mated_entries
-        if entry.stratum == stratum
-    )
-    return max(0, expected - len(mated))
+    return max(0, expected_mated_search_count(plan, stratum=stratum) - len(mated))
 
 
 def _missing_required_probe_searches(

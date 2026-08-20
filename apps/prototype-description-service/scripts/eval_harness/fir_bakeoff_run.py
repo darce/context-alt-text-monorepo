@@ -283,11 +283,13 @@ def _read_entries(path: Path) -> list[dict[str, Any]]:
 
 def _identities(entry: Mapping[str, Any]) -> tuple[str, ...]:
     value = entry.get("present_identities")
-    if not value:
+    if value is None:
         return ()
-    if isinstance(value, str):
-        return (value,) if value else ()
-    return tuple(str(item) for item in value if item)
+    if isinstance(value, (list, tuple)):
+        return tuple(str(item) for item in value if item)
+    raise FirBakeoffRunError(
+        f"present_identities must be a list of strings, got {type(value).__name__}"
+    )
 
 
 def _as_probe_entry(entry: Mapping[str, Any], *, stratum: str) -> ProbeEntry:
@@ -315,14 +317,11 @@ def _templates_from_e_clean(
         identities = _identities(entry)
         if not identities:
             continue
-        media_id = entry["media_id"]
-        # Group photos share one media_id across subjects; gallery_split
-        # forbids that id in two galleries or in gallery+reserved probes.
-        media_ids = (int(media_id),) if len(identities) == 1 else ()
+        media_ids = (int(entry["media_id"]),)
         for subject_id in identities:
             by_subject.setdefault(subject_id, []).append(
                 Template(
-                    template_id=f"{media_id}:{subject_id}",
+                    template_id=f"{entry['media_id']}:{subject_id}",
                     subject_id=subject_id,
                     media_ids=media_ids,
                 )

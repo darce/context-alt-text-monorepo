@@ -15,10 +15,12 @@ from scripts.eval_harness.fir_bakeoff_run import (
     GALLERY_STRATUM,
     PROBE_STRATA,
     FirBakeoffRunError,
+    _identities,
     build_run_plan,
     score_run,
 )
 from scripts.eval_harness.open_set_identification import SearchResult
+from scripts.eval_harness.strata_join import StratumJoinError, _entry_identities, load_stratum_index
 
 _EMPTY_CELLS = ["mask_sufficient_n", "veil", "goggles", "hair_occl"]
 _DECLARED_IMAGES = {
@@ -624,3 +626,84 @@ def test_to_rows_carries_tau_and_enrolled_normalization(tmp_path: Path) -> None:
         assert "fpi_per_enrolled_subject" in row
         assert row["n_enrolled_gallery_subjects"] == expected
 
+def _still_media(templates) -> set[int]:
+    """Include `{media}:{subject}` prefixes so stripped media_ids cannot hide a leak."""
+    media: set[int] = set()
+    for template in templates:
+        media.update(template.media_ids)
+        prefix, sep, _rest = template.template_id.partition(":")
+        if sep and prefix.isdigit():
+            media.add(int(prefix))
+    return media
+
+
+def test_frozen_manifest_galleries_media_disjoint_across_seeds() -> None:
+    path = _frozen_manifest()
+    for seed in range(64):
+        plan = build_run_plan(selection_manifest_path=path, seed=seed)
+        g1_media = _still_media(plan.split.g1.values())
+        g2_media = _still_media(plan.split.g2.values())
+        probe_media = _still_media(plan.split.probe_templates)
+        assert g1_media & g2_media == set(), seed
+        assert (g1_media | g2_media) & probe_media == set(), seed
+        assert (g1_media | g2_media) & set(plan.split.probe_media_ids) == set(), seed
+
+
+def test_frozen_manifest_withholds_shared_probe_stills_at_seed_0() -> None:
+    plan = build_run_plan(selection_manifest_path=_frozen_manifest(), seed=0)
+    assigned = set(plan.split.g1) | set(plan.split.g2)
+    assert "Tidal Quarry" in assigned
+    assert "Dappled Meadow" in assigned
+    withheld = plan.split.withheld_probe_templates
+    assert withheld
+    withheld_ids = {t.template_id for t in withheld}
+    assert withheld_ids.isdisjoint(plan.split.probe_template_ids)
+    assert withheld_ids.isdisjoint(plan.split.g1_template_ids)
+    assert withheld_ids.isdisjoint(plan.split.g2_template_ids)
+
+
+def test_present_identities_rejects_str_and_dict() -> None:
+    with pytest.raises(FirBakeoffRunError, match="present_identities"):
+        _identities({"present_identities": "Alice"})
+    with pytest.raises(FirBakeoffRunError, match="present_identities"):
+        _identities({"present_identities": {"Alice": 1}})
+    with pytest.raises(StratumJoinError, match="present_identities"):
+        _entry_identities({"present_identities": "Alice"}, where="entries[0]")
+    with pytest.raises(StratumJoinError, match="present_identities"):
+        _entry_identities({"present_identities": {"Alice": 1}}, where="entries[0]")
+
+
+def test_present_identities_list_and_absent_are_legal(tmp_path: Path) -> None:
+    assert _identities({}) == ()
+    assert _identities({"present_identities": []}) == ()
+    assert _identities({"present_identities": ["Alice"]}) == ("Alice",)
+    assert _identities({"present_identities": ("Alice",)}) == ("Alice",)
+    assert _entry_identities({}, where="entries[0]") is None
+    assert _entry_identities({"present_identities": []}, where="entries[0]") == ()
+    assert _entry_identities({"present_identities": ["Alice"]}, where="entries[0]") == (
+        "Alice",
+    )
+    entries = [
+        _entry(1, "E_clean", ["Alice"], "a"),
+        _entry(2, "E_clean", ["Alice"], "b"),
+        _entry(3, "E_clean", ["Bob"], "c"),
+        _entry(4, "E_clean", ["Bob"], "d"),
+        {"sha256": "z" * 64, "media_id": 9, "stratum": "E_clean"},
+        _entry(10, "A_true_occluder", ["Alice"], "e"),
+        _entry(11, "B_eyewear", ["Bob"], "f"),
+        _entry(12, "C_pose", ["Alice"], "g"),
+        _entry(13, "D_capture", ["Carol"], "h"),
+    ]
+    path = _write_manifest(
+        tmp_path,
+        entries,
+        strata_counts=_counts(
+            A_true_occluder=1, B_eyewear=1, C_pose=1, D_capture=1, E_clean=5
+        ),
+    )
+    index = load_stratum_index(path)
+    assert index.subjects_by_media_id[1] == ("Alice",)
+    assert 9 not in index.subjects_by_media_id
+    plan = build_run_plan(selection_manifest_path=path, seed=0)
+    assigned = set(plan.split.g1) | set(plan.split.g2)
+    assert assigned == {"Alice", "Bob"}

@@ -109,8 +109,32 @@ class RunReport:
         rows: list[dict[str, Any]] = []
         n_withheld = len(self.withheld_probe_templates)
         for base in self.stratum_report.to_rows():
-            point = self.points[base["stratum"]]
             shortfall = int(self.search_shortfalls.get(base["stratum"], 0))
+            if base["stratum"] == GALLERY_STRATUM:
+                rows.append(
+                    {
+                        "stratum": base["stratum"],
+                        "n_images": base["n_images"],
+                        "unique_subjects": base["unique_subjects"],
+                        "fnir": "enrolled, not probed",
+                        "fpi": None,
+                        "n_mated": 0,
+                        "n_nonmated": 0,
+                        "declared_empty": base["declared_empty"],
+                        "measured": False,
+                        "incomplete": bool(base["incomplete"] or shortfall > 0),
+                        "manifest_images": base["manifest_images"],
+                        "tau": self.tau,
+                        "fpi_per_enrolled_subject": None,
+                        "n_enrolled_gallery_subjects": (
+                            self.overall.n_enrolled_gallery_subjects
+                        ),
+                        "n_withheld_probe_templates": n_withheld,
+                        "search_shortfall": shortfall,
+                    }
+                )
+                continue
+            point = self.points[base["stratum"]]
             rows.append(
                 {
                     "stratum": base["stratum"],
@@ -200,6 +224,9 @@ def score_run(
     strata_with_nonmated: list[str] = []
     search_shortfalls: dict[str, int] = {}
     for name in _row_names(stratum_report):
+        if name == GALLERY_STRATUM:
+            # Gallery join records are enrolled, not probed (MLDATA-09).
+            continue
         mated, nonmated = _searches_for(searches, stratum=name)
         search_shortfalls[name] = _search_shortfall(
             plan, stratum=name, mated=mated

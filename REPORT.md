@@ -1,16 +1,72 @@
-# Lane F10 — DESCQUAL-2 BR-14, BR-06 residual, BR-10, BR-12
+# Lane F17 — DESCQUAL-2 scope doc redesign (prose and arithmetic only)
 
-Scope pins for the table: whole-frame clustered n=216 (Kish a=12.90, ICC=0.2, e=0.10, N=640); B_eyewear clustered floor n=49 (a=2.36); unclustered B remains 44.
+Owned file: `docs/scopes/descqual-2-fact-annotation-pilot.md`.
+No production code. Frozen frame: `/home/ubuntu/l1/fir12-n3/benchmarks/manifests/fir12-selection-v1.json`.
+Shipped module: `scripts.eval_harness.audit_sampling`.
+Python: `/home/ubuntu/vlm6-fix/apps/prototype-description-service/.venv/bin/python`.
 
-- BR-14: `ClusterSpec.cluster_size` is the Kish effective size `a=Σm²/Σm` (WHY: `1+(M−1)·ICC` is the equal-size form); added `kish_effective_cluster_size`; whole-frame test pinned at 216 not 136. Tests: `test_kish_effective_cluster_size_is_not_the_mean`, `test_clustered_size_applies_deff_to_n0_before_fpc`, `test_clustered_b_eyewear_precision_floor_is_49`. Mutants (all RED): helper returns the mean; `design_effect` hardcodes M=4.9; allocate floor uses `80/47` instead of `spec.cluster_size`.
-- BR-06: `project_strata_subject_image_counts(entries)` returns per-stratum per-subject size vectors that feed Kish `a`; empty `present_identities` add no cluster; `allocate(cluster_params=None)` stays deff-blind (`FPC_ONLY`). Tests: `test_subject_image_counts_feed_kish_a`, `test_empty_present_identities_contribute_no_cluster`, `test_subject_image_counts_reject_bare_string_identities`, `test_allocate_without_cluster_params_stays_deff_blind`. Mutants (RED): empty identities become a 0-count cluster; bare-string `present_identities` is accepted.
-- BR-10: `ClusterSpec.__post_init__` rejects `cluster_size<1`, ICC outside `[0,1]`, and non-finite values; `allocate` rejects `cluster_params` keys with no precision floor; nan/inf raise `AuditSamplingError` not `math.ceil` `ValueError`. Tests: `test_cluster_spec_rejects_out_of_bounds`, `test_allocate_rejects_cluster_params_without_precision_floor`, `test_design_effect_rejects_non_finite_as_audit_error`. Mutants (RED): empty `__post_init__`; drop the unfloored-key check; drop the finite check so NaN hits `math.ceil`.
-- BR-12: renamed the floor-loop binding to `floor_spec` (validation loop is `cluster`). `mypy --explicit-package-bases scripts/eval_harness/audit_sampling.py` is clean of the assignment/unreachable pair at the old :251/:253. No remaining errors in this file (the pre-existing `icc: float | None` arg-type on `design_effect` was closed by the `size_for_margin` if/elif narrowing we already owned). The pyproject unused-section note is not an error.
+This lane has no pytest of its own. Evidence for every published number is the
+exact call against the shipped module and frozen frame, pasted below.
+TEST-15 for prose: OLD vs NEW numbers, and a mutant that would republish the
+rejected design.
 
-`PYTHONPATH=$PWD …/python -m pytest scene/tests/test_eval_harness_audit_sampling.py -q` → 27 passed.
+---
 
-# Lane F11 — DESCQUAL-2
+## BR-17 (GATE-BLOCKING) — demote the ~30-image draw; pre-register planning ICC
 
-- BR-07: `_judged_keys` raises `AmbiguousJudgmentError` (names the text + candidate keys; tells the caller to pass `PooledFact`/`CandidateFact`) when a bare string matches more than one pooled fact; unique bare strings and `PooledFact`/`CandidateFact` judgments are unchanged. Tests: `test_ambiguous_bare_string_judgment_raises`, `test_unique_bare_string_judgment_resolves`, `test_bare_string_pool_key_marks_one_polarity`, `test_candidate_fact_judgment_does_not_mark_complementary_polarity`. Mutant `/tmp/br07` restored `matched.update(by_text...)` → ambiguous test DID NOT RAISE; `/tmp/br07b` used `len(candidates) >= 1` → unique test RED (`AmbiguousJudgmentError` on `"BLUE COAT"`).
-- BR-11: `Allocation.__post_init__` copies `counts`/`floors` into `MappingProxyType`; custom `__hash__` over sorted items. Tests: `test_allocation_source_dicts_cannot_mutate_constructed_object`, `test_allocation_hash_equal_for_equal_mappings`, `test_allocation_item_assignment_raises`. Mutant `/tmp/br11a` wrapped without `dict()` copy → `assert alloc["E_clean"] == 10` saw 0; `/tmp/br11b` dropped `__hash__` → `TypeError: unhashable type: 'dict'`; `/tmp/br11c` left a live dict → `alloc.counts["E_clean"] = 0` DID NOT RAISE.
-- BR-13: Rewrote the `HUMAN_CONFIRMATION_SOURCES` comment as a rule about any future `ConfirmationSource` member; allowlist unchanged. No behaviour test (comment-only). Mutant `/tmp/br13` restored `DISTILLED/HEURISTIC`; original `manifest.py` grep has neither name.
+**Canon:** AUDIT-11, AUDIT-09.
+
+**What changed.** The ~30-image draw is now a **cost and instrument pilot**
+(minutes per image, rubric α, gold-item QC). It is not the source of `deff`.
+Full-study n is a **pre-registered planning ICC of 0.20 → n = 216**, with the
+**0.30 → n = 261** sensitivity row printed beside it. A **subject-stage draw
+over the 65 subjects with m ≥ 3 (195 images)** is a named conditional follow-on,
+not the baseline; that design reports the Fisher-Z **upper** CI bound.
+
+OLD success criterion: "the pilot outputs a measured ICC and a design effect,
+and the full-sample n is derived from them rather than chosen."
+NEW: pilot does not output a measured ICC; n = 216 (planning) / 261 (sensitivity).
+
+OLD table (HEAD `9879c2e8`, arithmetic-mean M=4.9): ICC 0.1/0.2/0.3 → n 117/150/183,
+and "ICC is measured, not assumed."
+NEW table (Kish a=12.90, N=640): 84/124/159/**216**/**261**/327.
+
+**Calls (frame + module).**
+
+Frame facts used in the redesign (not `size_for_margin` outputs):
+
+```
+N=640, labeled subjects=130, Σm=544, empty present_identities=115
+sum m(m-1)=6476
+m≥2: 76 subjects; m≥3: 65 subjects
+E[within-subject pairs at n=30] = C(30,2)*6476/(640*639) = 6.888350938967136
+```
+
+```
+>>> from scripts.eval_harness.audit_sampling import size_for_margin, design_effect
+>>> size_for_margin(margin=0.10, population=640, cluster_size=12.90, icc=0.2).n
+216
+>>> size_for_margin(margin=0.10, population=640, cluster_size=12.90, icc=0.3).n
+261
+>>> size_for_margin(margin=0.10, population=640, cluster_size=12.90, icc=0.045).n
+121
+>>> size_for_margin(margin=0.10, population=640, cluster_size=12.90, icc=0.360).n
+284
+>>> size_for_margin(margin=0.10, population=640, cluster_size=12.90, icc=1.0).n
+423
+```
+
+Fisher-Z 95% CI at ρ=0.20, k=65, m=3: **[0.0449, 0.3595]** → published **[0.045, 0.360]**.
+Implied n on a=12.90: **121..284**.
+k=4, m=2, ρ=0.20: **[−0.828, 0.920]** → published [−0.83, 0.92]; implied n 84..423.
+
+**Mutant (TEST-15).** Restore the OLD success criterion and plug a 30-image ICC
+point estimate into `size_for_margin`. Fisher-Z 95% CI at true ρ=0.2 with k=4
+clusters of size 2 is [−0.83, 0.92] (effectively [0, 1]). Implied n over that
+CI is 84..423 — the entire planning table plus the ICC=1 cap. That is the RED:
+the published n is not identified at this pilot size.
+
+**Could not close.** Nothing. Partition (`a` vs `N`) is BR-22; grain is BR-19;
+hand-typed cells are BR-23.
+
+---

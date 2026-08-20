@@ -69,25 +69,62 @@ with z=1.96 and the conservative p=0.5:
 **AUDIT-10**: proportional allocation of n=84 across the five strata gives
 A=4, B=10, C=4, D=11, E=53. That is useless for B — the one stratum populated enough to
 carry a comparative occlusion claim. B therefore gets a **precision floor** and is sized
-from its own margin: **B_eyewear needs 44 of its 80 images for ±10 pp** (35 for ±12.5 pp,
-28 for ±15 pp). Allocation is disproportional by design, and the inclusion probability of
-every drawn unit is recorded so a design-based interval remains computable (AUDIT-08).
+from its own margin: **B_eyewear needs 44 of its 80 images for ±10 pp** unclustered
+(35 for ±12.5 pp, 28 for ±15 pp), rising to **49** once its own clustering is priced in
+(Kish a=2.36, ICC=0.2). Allocation is disproportional by design, and the inclusion
+probability of every drawn unit is recorded so a design-based interval remains computable (AUDIT-08).
 
-**AUDIT-11**: images cluster within subject. With M = 640/130 ≈ 4.9 images per subject,
-`deff ≈ 1 + (M−1)·ICC`:
+**AUDIT-11**: images cluster within subject, and the clusters are strongly unequal
+(subject sizes run 1 to 49; cv=1.44). Kish's `deff = 1 + (M−1)·ICC` is derived for
+*equal-sized* clusters, so the input is the **Kish effective cluster size**
+`a = Σmᵢ²/Σmᵢ = 12.90`, not the arithmetic mean 640/130 ≈ 4.9. Using the mean
+understates n by ~37% at ICC=0.2 (136 vs 216). `deff` is applied to the infinite-population
+n₀ **before** the finite-population correction (the Kish/Lohr order).
 
-| ICC | deff | inflated n for ±10 pp |
+| ICC | deff | n for ±10 pp over N=640 |
 | --- | --- | --- |
-| 0.1 | 1.39 | 117 |
-| 0.2 | 1.78 | 150 |
-| 0.3 | 2.18 | 183 |
+| 0.0 | 1.00 | 84 |
+| 0.05 | 1.60 | 124 |
+| 0.1 | 2.19 | 159 |
+| 0.2 | 3.38 | **216** (planning) |
+| 0.3 | 4.57 | **261** (sensitivity) |
+| 0.5 | 6.95 | 327 |
 
-The spread between 117 and 183 is the whole reason for a pilot. **ICC is measured, not
-assumed.**
+**Planning n is not measured from the ~30-image draw.** ICC information lives only in
+within-subject pairs. An image-SRS of 30 on this frame yields E[within-subject pairs]
+= C(30,2) × 6476 / (640 × 639) = 6.89, spread over ~3.5 replicated subjects (20k-draw
+Monte Carlo on `fir12-selection-v1.json`: mean k with nᵢ ≥ 2 = 3.53, p5=1, p95=6,
+P(k ≤ 2)=0.22). The sample Kish a is then ~1.5, not 12.90. Fisher-Z 95% CI at true
+ρ=0.2 with k=4 clusters of size 2 is [−0.83, 0.92] — effectively [0, 1] — and the
+implied n over that CI is 84..423, which is the entire table above plus the ICC=1
+cap. Plugging a 30-image ICC point estimate into `size_for_margin` is cargo-cult
+precision (AUDIT-11).
+
+There is no sourced ICC for this estimand in the repo or the canon. `design_effect`
+and `size_for_margin` both require the caller to pass one and ship no default. The
+full study is sized from a **pre-registered planning ICC of 0.20 → n = 216**,
+declared as an assumption, with the **0.30 → n = 261** sensitivity row printed
+beside it:
+
+```
+size_for_margin(margin=0.10, population=640, cluster_size=12.90, icc=0.2).n  # 216
+size_for_margin(margin=0.10, population=640, cluster_size=12.90, icc=0.3).n  # 261
+```
+
+The ~30-image draw stays ICC-blind (`allocate(cluster_params=None)`,
+`DeffOrder.FPC_ONLY`). Every quoted figure that is not ICC-blind names the ICC and
+deff it used (AUDIT-11).
+
+**Frame cap.** On the frozen frame (`fir12-selection-v1.json`, N=640, 130 labeled
+subjects, Σm=544) only **76** subjects have m ≥ 2 and **65** have m ≥ 3.
 
 ---
 
-## MVP scope — the ~30-image pilot
+## MVP scope — the ~30-image cost and instrument pilot
+
+The ~30-image draw is a **cost and instrument pilot**. Its outputs are minutes per
+image, rubric α, and gold-item QC. It is not the source of `deff` and does not
+produce the ICC the full-study n is divided by.
 
 1. **Draw** a stratified probability sample of ~30 images across A/B/C/D/E with recorded
    inclusion probabilities (`audit_sampling.draw`, seeded and reproducible).
@@ -104,20 +141,48 @@ assumed.**
 5. **QC**: gold-embedded items seeded into each annotation batch (HITL-03). Agreement is
    read as a diagnostic on the instrument, not as a score for the annotators (HITL-05,
    α ≈ 0.8 as the working target).
-6. **Measure** from the pilot: inter-annotator agreement, the intra-subject ICC on
-   fact-level correctness, hence deff, hence the real n; and minutes-per-image, hence cost
-   per image and total annotation cost.
+6. **Measure** from the pilot: minutes-per-image (hence cost per image and total
+   annotation cost); rubric Krippendorff α on the overlap subset (instrument diagnostic,
+   HITL-05); gold-item QC (HITL-03). Do **not** estimate the intra-subject ICC or derive
+   full-sample n from this draw.
 
 ## Success criteria
 
-- The pilot outputs a measured ICC and a design effect, and the full-sample n is derived
-  from them rather than chosen.
+- The pilot reports minutes per image, rubric α, and gold-item QC. It does not output
+  a measured ICC or a design effect used to size the full sample.
+- Full-sample n is the pre-registered planning value **n = 216** at ICC=0.20
+  (sensitivity **n = 261** at ICC=0.30), not a number derived from the 30-image draw.
 - Every drawn unit carries its inclusion probability; no convenience or first-n draw exists
   anywhere in the code path.
 - Disagreements survive adjudication in the stored record — an implementation that
   overwrites them fails a test.
 - The judgment pool has ≥2 independent contributors and ships an incompleteness disclosure.
 - Cost per image and total projected annotation cost are reported alongside the design.
+
+## Conditional follow-on — subject-stage ICC (not the baseline)
+
+If a measured ICC is required before the remaining spend, the smallest honest design
+on this frame is a **subject-stage draw over the 65 subjects with m ≥ 3 (195 images:
+3 images × 65 subjects)**. Named, conditional follow-on — not the baseline.
+
+Fisher-Z transform of the ICC (equal cluster size m, k groups):
+
+```
+z = (1/2) ln((1+(m-1)ρ)/(1-ρ))
+SE(z) = sqrt(m / (2(k-2)(m-1)))
+ρ = (e^{2z} - 1) / (e^{2z} + (m-1))
+```
+
+At the planning ρ=0.20, k=65, m=3, the Fisher-Z 95% CI is **[0.045, 0.360]**. The
+study reports the **upper CI bound**, not the point estimate. Implied n on the current
+Kish a=12.90:
+
+```
+size_for_margin(margin=0.10, population=640, cluster_size=12.90, icc=0.045).n  # 121
+size_for_margin(margin=0.10, population=640, cluster_size=12.90, icc=0.360).n  # 284
+```
+
+so 121..284. The 30-image image-SRS is not a cheaper substitute for this design.
 
 ## Not doing
 
@@ -131,9 +196,13 @@ assumed.**
   seed and ordering pinned (EVAL-13).
 - No nonresponse patching by drawing more units. Unannotatable images are bias to be
   reported, not a reason for a bigger n (AUDIT-13).
+- No ICC / deff estimated from the ~30-image cost-and-instrument draw, and no
+  full-sample n derived from that draw's point estimate.
 
 ## Assumptions
 
 - The 640-entry selection manifest stays frozen for the life of this task.
+- Planning ICC = 0.20 is a declared assumption, not a measurement. The sensitivity
+  row at 0.30 is printed; neither is sourced from this corpus.
 - `/Volumes/Butter` stays mounted for the annotation passes.
 - Annotator time is the binding constraint, not compute.

@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import math
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -942,10 +943,15 @@ def test_blank_roster_subject_id_raises(
     tmp_path: Path, gallery: GalleryName
 ) -> None:
     plan = _two_subject_plan(tmp_path)
-    raw = plan.split.g1 if gallery is GalleryName.G1 else plan.split.g2
+    field = "g1" if gallery is GalleryName.G1 else "g2"
+    published = getattr(plan.split, field)
     assert _roster(plan, gallery)
     blank = "  "
-    raw[blank] = next(iter(raw.values()))
+    with pytest.raises(TypeError):
+        published[blank] = next(iter(published.values()))
+    planted = dict(published)
+    planted[blank] = next(iter(published.values()))
+    object.__setattr__(plan.split, field, planted)
     with pytest.raises(
         FirBakeoffRunError,
         match=rf"gallery {gallery.value} subject_id={blank!r} is blank",
@@ -956,7 +962,19 @@ def test_blank_roster_subject_id_raises(
 def test_roster_keeps_internal_whitespace_subject_id(tmp_path: Path) -> None:
     plan = _two_subject_plan(tmp_path)
     name = "Alice Smith"
-    plan.split.g1[name] = next(iter(plan.split.g1.values()))
+    sample = next(iter(plan.split.g1.values()))
+    extra = Template(
+        template_id="alice-smith-1",
+        subject_id=name,
+        media_ids=sample.media_ids,
+    )
+    split = GallerySplit(
+        g1={**plan.split.g1, name: extra},
+        g2=dict(plan.split.g2),
+        probe_templates=plan.split.probe_templates,
+        withheld_probe_templates=plan.split.withheld_probe_templates,
+    )
+    plan = replace(plan, split=split)
     assert name in _roster(plan, GalleryName.G1)
     assert "Alice" in _roster(plan, GalleryName.G1)
 

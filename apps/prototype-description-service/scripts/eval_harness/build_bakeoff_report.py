@@ -20,8 +20,9 @@ For a large corpus (hundreds of images) omit --embed-images: the report stays
 light and text-only. --embed-images is intended for small comparison sets.
 
 Comparability gate: every run record is checked against the manifest it is being
-reported under, via the ``provenance.manifest_sha256`` the harness already stamps.
-A record from a different corpus exits ``3`` and writes nothing; pass
+reported under — structurally (media_ids the manifest does not contain) and, for a
+v3 manifest, against the ``provenance.manifest_sha256`` the harness stamps.
+A record from a different corpus exits ``4`` and writes nothing; pass
 ``--allow-foreign-run LABEL`` to keep it as an explicitly badged, non-comparable
 reference column instead.
 """
@@ -30,6 +31,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import hashlib
 import html
 import io
 import json
@@ -176,8 +178,9 @@ def _card_html(mid: int, entry: dict, runs: dict[str, dict], thumb: str | None, 
             cost = (f' · ${hourly_rate * lat_v / 3600:.5f}/img'
                     if hourly_rate is not None and isinstance(lat_v, (int, float)) else "")
             perf = f'<span class="perf">{lat}{cost} · {s.get("model_calls", "?")} call(s)</span>'
+        cls = "model warn" if NON_COMPARABLE_BADGE in label else "model"
         blocks.append(
-            f'<div class="run"><div class="runhead"><span class="model">{html.escape(label)}</span>{perf}</div>{body}</div>'
+            f'<div class="run"><div class="runhead"><span class="{cls}">{html.escape(label)}</span>{perf}</div>{body}</div>'
         )
     return (
         f'<article class="card">'
@@ -220,6 +223,7 @@ main{max-width:64rem;margin:0 auto;padding:1.1rem 1.25rem}
 .run{border-top:1px solid var(--line);padding-top:.55rem}
 .runhead{display:flex;align-items:baseline;gap:.6rem;margin-bottom:.25rem}
 .model{font:600 .82rem/1 inherit;color:var(--accent)}
+.model.warn{color:var(--err)}
 .perf{margin-left:auto;font:.72rem/1 ui-monospace,Menlo,monospace;color:var(--perf);font-variant-numeric:tabular-nums}
 .surf{margin:.15rem 0;max-width:64ch}
 .lab{display:inline-block;min-width:3.6rem;font:600 .64rem/1.4 inherit;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}
@@ -279,11 +283,41 @@ def build(
 
 
 NON_COMPARABLE_BADGE = " ⚠ NOT COMPARABLE"
-EXIT_NOT_COMPARABLE = 3
+# Distinct from cli.REFUSED_METRIC_EXIT_CODE / face_pass's 3: a comparability
+# refusal is not a refused metric, and callers branch on the two differently.
+EXIT_NOT_COMPARABLE = 4
 
 
 class ComparabilityError(RuntimeError):
     """A run record was produced against a different corpus than the one being reported."""
+
+
+def _manifest_sha(manifest: Any) -> str:
+    """Canonical manifest digest — byte-identical to ``cli._manifest_sha``.
+
+    Inlined rather than imported: ``cli`` pulls cv2/onnxruntime/httpx, which this
+    otherwise-stdlib report script must not require to refuse a bad input.
+    """
+    return hashlib.sha256(json.dumps(manifest.model_dump(), sort_keys=True).encode()).hexdigest()
+
+
+def _fusion_manifest_sha(manifest: Any) -> str:
+    """The *other* in-tree digest recipe, from ``fusion_runner._build_record``.
+
+    Fusion run records stamp a field-subset digest with compact separators. It is
+    a different string for the same manifest, so a gate that knows only the
+    canonical recipe would refuse every native fusion record as foreign.
+    """
+    canonical = json.dumps(
+        {
+            "manifest_version": manifest.manifest_version,
+            "roster": manifest.roster,
+            "entries": [e.model_dump(mode="json") for e in manifest.entries],
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode()
+    return hashlib.sha256(canonical).hexdigest()
 
 
 def _run_provenance(path: str) -> dict[str, Any]:
@@ -291,60 +325,89 @@ def _run_provenance(path: str) -> dict[str, Any]:
     return prov if isinstance(prov, dict) else {}
 
 
-def _manifest_identity(path: str) -> tuple[str | None, str]:
-    """Canonical ``manifest_sha256`` for ``path``, matching ``cli._manifest_sha``.
+def _expected_shas(path: str) -> tuple[set[str], str]:
+    """Every digest a record legitimately produced from ``path`` could carry.
 
-    Returns ``(sha, mode)``. A v3 manifest is loaded through the real validator so
-    the digest is byte-identical to the one every run record stamps. Anything that
-    is structurally not a v3 manifest (ad-hoc fixtures) yields ``(None, ...)`` and
-    downgrades the check to cross-run agreement — the branch is decided by the
+    Returns ``(shas, mode)``. Structurally-not-v3 manifests (ad-hoc fixtures)
+    yield an empty set: the digest anchor is unavailable, and the structural
+    corpus check below carries the gate alone. The branch is decided by the
     declared ``manifest_version``, never by swallowing a load failure.
     """
     raw = json.loads(Path(path).read_text())
-    if not isinstance(raw, dict) or raw.get("manifest_version") != 3:
-        return None, "cross-run only (manifest is not v3)"
-    from scripts.eval_harness.cli import _manifest_sha  # heavy import: v3 path only
-    from scripts.eval_harness.manifest import load_manifest
-
-    return _manifest_sha(load_manifest(path)), "verified against manifest"
+    if not isinstance(raw, dict) or str(raw.get("manifest_version")) != "3":
+        return set(), "structural only (manifest is not v3)"
+    try:
+        from scripts.eval_harness.manifest import ManifestError, load_manifest
+    except ImportError:  # invoked by file path rather than as a module
+        from .manifest import ManifestError, load_manifest  # type: ignore[no-redef]
+    try:
+        manifest = load_manifest(path)
+    except ManifestError as exc:
+        raise ComparabilityError(
+            f"--manifest {path} declares manifest_version 3 but does not load as one: {exc}. "
+            "Fix the manifest, or report against the manifest the runs were actually made on."
+        ) from exc
+    return {_manifest_sha(manifest), _fusion_manifest_sha(manifest)}, "structural + manifest digest"
 
 
 def _check_comparability(
-    manifest_path: str, provenances: dict[str, dict[str, Any]], consented: set[str]
+    manifest_ids: set[int],
+    run_ids: dict[str, set[int]],
+    provenances: dict[str, dict[str, Any]],
+    consented: set[str],
+    manifest_path: str,
 ) -> tuple[dict[str, str], str]:
     """Refuse to render run records drawn from a different split [EVAL-01, EXP-07].
 
     A 646-image run record is a *superset* of a 10-image manifest, so every cell
     populates and the column renders as an unmarked control while measuring a
-    different corpus. The identity that makes the two distinguishable —
-    ``provenance.manifest_sha256`` — is already stamped on every record, so the
-    mismatch is detectable and is treated as fatal rather than cosmetic.
+    different corpus. Two independent signals catch that:
+
+    1. **Structural** — media_ids present in the record but absent from the
+       manifest. Version-independent, derived from data in hand, and trusts no
+       self-declared metadata. This is what catches 646-vs-10.
+    2. **Digest** — ``provenance.manifest_sha256`` against either in-tree recipe.
+       Catches same-or-subset corpora that the structural check cannot see, but
+       only when the manifest is a loadable v3.
 
     Returns ``(foreign_reasons, mode)``; raises ``ComparabilityError`` for any
-    mismatch the operator has not explicitly consented to via
-    ``--allow-foreign-run``. Consented runs stay in the report but carry a
-    permanent badge so they can never be read as a like-for-like control.
+    mismatch the operator has not consented to via ``--allow-foreign-run``.
+    Consented runs stay in the report but carry a permanent badge, so they can
+    never be read as a like-for-like control.
     """
-    expected, mode = _manifest_identity(manifest_path)
-    shas = {label: (prov.get("manifest_sha256") or "") for label, prov in provenances.items()}
+    expected, mode = _expected_shas(manifest_path)
+    shas: dict[str, str] = {}
+    for label, prov in provenances.items():
+        raw = prov.get("manifest_sha256")
+        shas[label] = raw if isinstance(raw, str) else ("" if raw is None else str(raw))
 
     reasons: dict[str, str] = {}
-    for label, sha in shas.items():
-        if not sha:
-            reasons[label] = "run record carries no provenance.manifest_sha256"
-        elif expected is not None and sha != expected:
-            reasons[label] = f"ran against manifest {sha[:12]}, report declares {expected[:12]}"
-    if expected is None:
+    for label, ids in run_ids.items():
+        extra = sorted(ids - manifest_ids)
+        if extra:
+            sample = ", ".join(str(i) for i in extra[:3]) + ("…" if len(extra) > 3 else "")
+            reasons[label] = (
+                f"covers {len(ids)} media_ids, {len(extra)} of which this "
+                f"{len(manifest_ids)}-image manifest does not contain ({sample})"
+            )
+
+    if expected:
+        for label, sha in shas.items():
+            if label in reasons:
+                continue
+            if not sha:
+                reasons[label] = "run record carries no provenance.manifest_sha256 to verify against this manifest"
+            elif sha not in expected:
+                reasons[label] = f"ran against manifest {sha[:12]}, report declares {sorted(expected)[0][:12]}"
+    else:
         # No manifest-side anchor: runs must at least agree with each other, else
         # the columns are measuring different corpora regardless of the header.
         distinct = {s for s in shas.values() if s}
         if len(distinct) > 1:
             majority = max(distinct, key=lambda s: sum(1 for v in shas.values() if v == s))
             for label, sha in shas.items():
-                if sha and sha != majority:
+                if sha and sha != majority and label not in reasons:
                     reasons[label] = f"ran against manifest {sha[:12]}, other runs used {majority[:12]}"
-        elif not distinct:
-            reasons.clear()  # nothing anywhere carries provenance: nothing to contradict
 
     unconsented = {label: why for label, why in reasons.items() if label not in consented}
     if unconsented:
@@ -392,17 +455,31 @@ def main(argv: list[str] | None = None) -> int:
         if "=" not in spec:
             ap.error(f"--run must be LABEL=PATH, got {spec!r}")
         label, path = spec.split("=", 1)
+        if label in runs:
+            ap.error(f"duplicate --run label {label!r}; one column would silently overwrite the other")
         runs[label] = _index_run(path)
         provenances[label] = _run_provenance(path)
 
     try:
-        foreign, identity_mode = _check_comparability(args.manifest, provenances, set(args.allow_foreign_run))
+        foreign, identity_mode = _check_comparability(
+            set(manifest),
+            {label: set(cells) for label, cells in runs.items()},
+            provenances,
+            set(args.allow_foreign_run),
+            args.manifest,
+        )
     except ComparabilityError as exc:
         print(f"error: {exc}", file=sys.stderr)
+        if Path(args.out).exists():
+            print(f"warning: {args.out} was NOT rewritten and still holds an older report", file=sys.stderr)
         return EXIT_NOT_COMPARABLE
     if foreign:
-        runs = {(f"{label}{NON_COMPARABLE_BADGE} ({foreign[label]})" if label in foreign else label): cells
-                for label, cells in runs.items()}
+        badged = {(f"{label}{NON_COMPARABLE_BADGE} ({foreign[label]})" if label in foreign else label): cells
+                  for label, cells in runs.items()}
+        if len(badged) != len(runs):
+            print("error: badged run labels collide; rename the --run labels", file=sys.stderr)
+            return EXIT_NOT_COMPARABLE
+        runs = badged
 
     if args.media_ids:
         media_ids = [int(x) for x in args.media_ids.split(",") if x.strip()]

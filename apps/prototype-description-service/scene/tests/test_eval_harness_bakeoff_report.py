@@ -122,19 +122,31 @@ def test_subtitle_cost_total_rendered_only_with_flag(tmp_path: Path) -> None:
 # A 646-image run record is a superset of a 10-image manifest, so every cell
 # populates and the column renders as an unmarked "(control)". The gate refuses
 # that silently-wrong comparison [EVAL-01 same split, EXP-07 mismatched
-# allocation invalidates]. Each assertion is paired with a discrimination guard
-# [TEST-15]: the same path with a *matching* sha must exit 0 and carry no badge,
-# so a green here proves the gate reacts to provenance rather than always firing.
+# allocation invalidates] on two independent signals: media_ids the manifest
+# does not contain (structural, version-independent) and the stamped
+# provenance sha (only when the manifest is a loadable v3).
+#
+# Every refusal assertion is paired with a discrimination guard [TEST-15]: the
+# same path with comparable inputs must exit 0 and carry no badge, so a green
+# here proves the gate reacts to the input rather than always firing.
 
 _V3_MANIFEST = str(Path(__file__).resolve().parents[2] / "scripts/eval_harness/bakeoff10-manifest-20260716.json")
+_NOT_COMPARABLE = 4
+
+
+def _load_v3():
+    from scripts.eval_harness.manifest import load_manifest
+
+    return load_manifest(_V3_MANIFEST)
 
 
 def _v3_sha() -> str:
-    from scripts.eval_harness.build_bakeoff_report import _manifest_identity
+    from scripts.eval_harness.build_bakeoff_report import _expected_shas, _manifest_sha
 
-    sha, mode = _manifest_identity(_V3_MANIFEST)
-    assert mode == "verified against manifest"
-    assert sha
+    shas, mode = _expected_shas(_V3_MANIFEST)
+    assert mode == "structural + manifest digest"
+    sha = _manifest_sha(_load_v3())
+    assert sha in shas
     return sha
 
 
@@ -142,7 +154,7 @@ def _v3_media_ids() -> list[int]:
     return [int(e["media_id"]) for e in json.loads(Path(_V3_MANIFEST).read_text())["entries"]][:2]
 
 
-def _run_record(tmp_path: Path, name: str, media_ids: list[int], sha: str | None) -> Path:
+def _run_record(tmp_path: Path, name: str, media_ids: list[int], sha: object) -> Path:
     rec: dict = {"items": [{"media_id": m, "describe": {"alt_text_draft": f"d{m}", "passes": [{"latency_s": 1.0}]}}
                            for m in media_ids]}
     if sha is not None:
@@ -170,27 +182,66 @@ def test_matching_manifest_sha_renders_unbadged(tmp_path: Path) -> None:
     assert rc == 0
     doc = out.read_text()
     assert "NOT COMPARABLE" not in doc
-    assert "manifest identity: verified against manifest" in doc
+    assert "manifest identity: structural + manifest digest" in doc
+
+
+def test_fusion_runner_digest_recipe_is_accepted(tmp_path: Path) -> None:
+    """fusion_runner stamps a field-subset digest; it is native, not foreign."""
+    from scripts.eval_harness.build_bakeoff_report import _fusion_manifest_sha, _manifest_sha
+
+    fusion_sha = _fusion_manifest_sha(_load_v3())
+    assert fusion_sha != _manifest_sha(_load_v3())  # the recipes really do differ
+    rec = _run_record(tmp_path, "fusion.json", _v3_media_ids(), fusion_sha)
+    rc, out = _build(tmp_path, [f"Fusion={rec}"])
+    assert rc == 0
+    assert "NOT COMPARABLE" not in out.read_text()
 
 
 def test_foreign_manifest_sha_is_fatal_and_writes_nothing(tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
     ids = _v3_media_ids()
     rec = _run_record(tmp_path, "foreign.json", ids, "f" * 64)
     rc, out = _build(tmp_path, [f"Qwen3-VL-30B (control)={rec}"])
-    assert rc == 3
+    assert rc == _NOT_COMPARABLE
     assert not out.exists()  # a refused report must not leave a readable artifact
     err = capsys.readouterr().err
     assert "ffffffffffff" in err and _v3_sha()[:12] in err  # both shas named
     assert "--allow-foreign-run" in err  # the error tells the operator the way out
 
 
+def test_refusal_warns_that_a_pre_existing_report_is_stale(tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
+    rec = _run_record(tmp_path, "foreign3.json", _v3_media_ids(), "f" * 64)
+    stale = tmp_path / "stale.html"
+    stale.write_text("<html>older report</html>")
+    from scripts.eval_harness.build_bakeoff_report import main as build_main
+
+    rc = build_main(["--manifest", _V3_MANIFEST, "--out", str(stale),
+                     "--media-ids", ",".join(str(m) for m in _v3_media_ids()), "--run", f"C={rec}"])
+    assert rc == _NOT_COMPARABLE
+    assert stale.read_text() == "<html>older report</html>"  # untouched, not half-written
+    assert "still holds an older report" in capsys.readouterr().err
+
+
 def test_missing_provenance_is_fatal_against_a_real_manifest(tmp_path: Path) -> None:
     rec = _run_record(tmp_path, "noprov.json", _v3_media_ids(), None)
     rc, _ = _build(tmp_path, [f"Candidate={rec}"])
-    assert rc == 3
+    assert rc == _NOT_COMPARABLE
+
+
+def test_non_string_provenance_sha_is_refused_not_crashed(tmp_path: Path) -> None:
+    rec = _run_record(tmp_path, "intsha.json", _v3_media_ids(), 12345)
+    rc, _ = _build(tmp_path, [f"Candidate={rec}"])
+    assert rc == _NOT_COMPARABLE  # coerced and compared, not a TypeError traceback
+
+
+def test_duplicate_run_labels_are_rejected(tmp_path: Path) -> None:
+    rec = _run_record(tmp_path, "dup.json", _v3_media_ids(), _v3_sha())
+    with pytest.raises(SystemExit):
+        _build(tmp_path, [f"Candidate={rec}", f"Candidate={rec}"])
 
 
 def test_consent_keeps_the_column_but_badges_it(tmp_path: Path) -> None:
+    from scripts.eval_harness.build_bakeoff_report import NON_COMPARABLE_BADGE
+
     ids = _v3_media_ids()
     foreign = _run_record(tmp_path, "foreign2.json", ids, "a" * 64)
     native = _run_record(tmp_path, "native.json", ids, _v3_sha())
@@ -198,10 +249,67 @@ def test_consent_keeps_the_column_but_badges_it(tmp_path: Path) -> None:
                      "--allow-foreign-run", "Control")
     assert rc == 0
     doc = out.read_text()
-    assert "NOT COMPARABLE" in doc
-    # The badge names the offending sha, and only the foreign column carries it.
-    assert doc.count("NOT COMPARABLE") >= 1
+    # Exactly one column is badged, it is the foreign one, and it names the sha.
+    assert doc.count(NON_COMPARABLE_BADGE.strip()) == len(ids)  # once per rendered card
     assert "aaaaaaaaaaaa" in doc
+    for chunk in doc.split('<div class="run">')[1:]:
+        head = chunk[:300]
+        if "Candidate" in head:
+            assert NON_COMPARABLE_BADGE.strip() not in head  # the native column stays clean
+    assert "model warn" in doc  # badged column is not styled as an ordinary accent header
+
+
+def test_structural_mismatch_is_fatal_even_with_a_matching_sha(tmp_path: Path) -> None:
+    """The 646-vs-10 case: extra media_ids alone condemn the run [EXP-07]."""
+    rec = _run_record(tmp_path, "superset.json", _v3_media_ids() + [999001, 999002], _v3_sha())
+    rc, out = _build(tmp_path, [f"Control={rec}"])
+    assert rc == _NOT_COMPARABLE
+    assert not out.exists()
+
+
+def test_structural_mismatch_is_fatal_under_a_non_v3_manifest(tmp_path: Path) -> None:
+    """No digest anchor available: the structural check must still refuse."""
+    mpath, _ = _write_fixtures(tmp_path)  # toy manifest: no manifest_version
+    from scripts.eval_harness.build_bakeoff_report import main as build_main
+
+    superset = _run_record(tmp_path, "toy_superset.json", [1, 2, 424242], None)
+    out_bad = tmp_path / "toy_bad.html"
+    assert build_main(["--manifest", str(mpath), "--run", f"A={superset}",
+                       "--media-ids", "1,2", "--out", str(out_bad)]) == _NOT_COMPARABLE
+    assert not out_bad.exists()
+
+    # Discrimination guard: same manifest, in-corpus run => renders.
+    inside = _run_record(tmp_path, "toy_inside.json", [1, 2], None)
+    out_ok = tmp_path / "toy_ok.html"
+    assert build_main(["--manifest", str(mpath), "--run", f"A={inside}",
+                       "--media-ids", "1,2", "--out", str(out_ok)]) == 0
+    assert "manifest identity: structural only" in out_ok.read_text()
+
+
+def test_manifest_version_as_string_still_anchors_the_digest(tmp_path: Path) -> None:
+    """A stringly-typed version must not silently downgrade the gate."""
+    from scripts.eval_harness.build_bakeoff_report import _expected_shas
+
+    raw = json.loads(Path(_V3_MANIFEST).read_text())
+    raw["manifest_version"] = "3"
+    stringly = tmp_path / "stringly.json"
+    stringly.write_text(json.dumps(raw))
+    _, mode = _expected_shas(str(stringly))
+    assert mode == "structural + manifest digest"
+
+
+def test_declared_v3_that_does_not_load_is_refused_with_a_message(
+    tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    broken = tmp_path / "broken.json"
+    broken.write_text(json.dumps({"manifest_version": 3, "entries": [{"media_id": "not-an-int"}]}))
+    rec = _run_record(tmp_path, "any.json", [1], None)
+    from scripts.eval_harness.build_bakeoff_report import main as build_main
+
+    out = tmp_path / "never.html"
+    rc = build_main(["--manifest", str(broken), "--run", f"A={rec}", "--media-ids", "1", "--out", str(out)])
+    assert rc == _NOT_COMPARABLE
+    assert "does not load as one" in capsys.readouterr().err  # diagnosed, not a traceback
 
 
 def test_non_v3_manifest_falls_back_to_cross_run_agreement(tmp_path: Path) -> None:
@@ -215,10 +323,10 @@ def test_non_v3_manifest_falls_back_to_cross_run_agreement(tmp_path: Path) -> No
     out_ok = tmp_path / "ok.html"
     assert build_main(["--manifest", str(mpath), "--run", f"A={a}", "--run", f"B={b_same}",
                        "--media-ids", "1,2", "--out", str(out_ok)]) == 0
-    assert "manifest identity: cross-run only" in out_ok.read_text()
+    assert "manifest identity: structural only" in out_ok.read_text()
 
     # Discrimination guard: same code path, one disagreeing sha => fatal.
     out_bad = tmp_path / "bad.html"
     assert build_main(["--manifest", str(mpath), "--run", f"A={a}", "--run", f"B={b_diff}",
-                       "--media-ids", "1,2", "--out", str(out_bad)]) == 3
+                       "--media-ids", "1,2", "--out", str(out_bad)]) == _NOT_COMPARABLE
     assert not out_bad.exists()

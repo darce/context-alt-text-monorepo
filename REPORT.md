@@ -278,3 +278,12 @@ Frozen seed 0 (explicit): **g1=53, g2=56, overlap=0**. Pinned by `test_frozen_fr
 
 Canon: JANUS 2.2, MLDATA-09, rg-015. Did not touch `fir_bakeoff_run.py`, `strata_join.py`, or `open_set_identification.py`.
 
+########## lane/f27
+
+# FIR-12 BR-27 / BR-28 — completeness gate counts distinct units; overall inherits cells
+
+Chose **reject** for duplicate submissions (`FirBakeoffRunError`): a duplicate is a caller bug, not extra coverage. Shortfall still unique-counts BR-29 `MatedSearchUnit` keys `(media_id, gallery, subject_id)` and foil `(media_id, gallery)` so padding cannot zero the gate even if reject is bypassed. Foils stay still-level (BR-29). Overall keeps `measured=True` when some mated searches exist but sets `incomplete=True`; `format_fnir` prints `incomplete`, never a bare number.
+
+- BR-27 (high): `_search_shortfall` is distinct mated keys vs `expected_mated_search_count`, not `len(mated)`; `_validate_stratum_searches` rejects duplicate mated/foil keys; `_nonmated_search_shortfall` / `expected_nonmated_search_count` consume `occluded_probes_for(...)[1]` so a truncated foil set marks the cell `incomplete` (row `nonmated_shortfall`). Tests: `test_search_shortfall_counts_distinct_mated_units_not_list_length`, `test_duplicate_mated_search_is_rejected`, `test_duplicate_foil_search_is_rejected`, `test_truncated_foil_set_is_incomplete`. Mutant A (restore `expected - len(mated)`): RED `assert 0 == (24 - 1)`. Mutant B (drop duplicate raises): RED `DID NOT RAISE` on both duplicate tests. Mutant C (omit foil_shortfall from `incomplete`): RED `assert False is True` on truncated-foil `incomplete`. Canon: EVAL-16, EVAL-19, JANUS 2.3.4.
+- BR-28 (high): `score_run` sets `overall.incomplete` if any probe-stratum point is incomplete (coverage, mated shortfall, or foil shortfall). `BakeoffIETPoint.format_fnir` returns `"incomplete"` when `incomplete` and measured. Test: `test_overall_point_degrades_when_one_stratum_is_short` (complete run prints the number; drop A's mates → `overall.format_fnir()=="incomplete"`). Mutant D (`overall_incomplete = False`): RED `assert False is True` (`overall.incomplete`, published `fnir=0.0 measured=True` over an unmeasured A cell). Mutant E (format_fnir ignores `incomplete`): RED `assert '0.000' == 'incomplete'`. Canon: MLDATA-07, EVAL-18.
+

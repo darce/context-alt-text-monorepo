@@ -12,6 +12,7 @@ import pytest
 
 from scripts.eval_harness.gallery_split import (
     GalleryName,
+    GallerySplit,
     GallerySplitError,
     Template,
     build_disjoint_galleries,
@@ -396,3 +397,39 @@ def test_frozen_frame_seed_0_gallery_sizes():
     assert len(split.g1) == 53
     assert len(split.g2) == 56
     assert set(split.g1).isdisjoint(set(split.g2))
+
+
+def _legal_other_gallery() -> dict[str, Template]:
+    return {
+        "Bob": Template(template_id="b1", subject_id="Bob", media_ids=(2,)),
+    }
+
+
+def test_blank_gallery_subject_id_is_rejected() -> None:
+    """BR-56: whitespace-only roster key is a corrupt gallery, not a subject."""
+    with pytest.raises(GallerySplitError, match=r"g1 subject_id must be a non-empty string, got '   '"):
+        GallerySplit(
+            g1={
+                "   ": Template(template_id="a1", subject_id="   ", media_ids=(1,)),
+            },
+            g2=_legal_other_gallery(),
+            probe_templates=(),
+        )
+
+
+def test_non_string_gallery_subject_id_is_rejected() -> None:
+    """BR-56: None must not stringify into a roster key like 'None'."""
+    with pytest.raises(GallerySplitError, match=r"g2 subject_id must be a non-empty string, got None"):
+        GallerySplit(
+            g1={
+                "Alice": Template(template_id="a1", subject_id="Alice", media_ids=(1,)),
+            },
+            g2={
+                None: Template(  # type: ignore[dict-item]
+                    template_id="b1",
+                    subject_id=None,  # type: ignore[arg-type]
+                    media_ids=(2,),
+                ),
+            },
+            probe_templates=(),
+        )

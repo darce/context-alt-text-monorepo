@@ -1,12 +1,14 @@
 """Stratified probability-sample sizing and drawing for DESCQUAL-2 audits.
 
 n is computed from a target margin of error plus the finite-population
-correction (AUDIT-09), never as a percent of N. Independent draws per stratum
-carry inclusion probabilities (AUDIT-08 / AUDIT-10). Images cluster within
-subject, so sizing inflates n0 by the Kish design effect *before* the fpc
-(AUDIT-11) using the Kish effective cluster size a = Σ m_i² / Σ m_i, not
-the mean. FIR-12 ``strata_counts`` values are per-stratum objects; project
-image counts before allocate() rather than passing the index through.
+correction (AUDIT-09), never as a percent of N. Independent image draws per
+stratum carry inclusion probabilities (AUDIT-08 / AUDIT-10). Images cluster
+within subject, so sizing inflates n0 by the Kish design effect *before* the
+fpc (AUDIT-11) using the Kish effective cluster size a = Σ m_i² / Σ m_i, not
+the mean. ``size_for_margin`` consumes an ICC; ``estimate_icc`` produces it
+(one-way ANOVA + Fisher-Z CI) from a subject-stage draw (``draw_two_stage``).
+FIR-12 ``strata_counts`` values are per-stratum objects; project image counts
+before allocate() rather than passing the index through.
 """
 
 from __future__ import annotations
@@ -39,6 +41,7 @@ class SampledUnit:
     unit_id: Hashable
     stratum: str
     inclusion_probability: float
+    psu_id: Hashable | None = None
 
 
 @dataclass(frozen=True)
@@ -49,6 +52,20 @@ class Sample:
     @property
     def unit_ids(self) -> tuple[Hashable, ...]:
         return tuple(unit.unit_id for unit in self.units)
+
+
+@dataclass(frozen=True)
+class IccEstimate:
+    """One-way ANOVA ICC with Fisher-Z interval (AUDIT-11)."""
+
+    icc: float
+    lower: float
+    upper: float
+    n_psu: int
+    n_within: float
+    n_obs: int
+    msb: float
+    msw: float
 
 
 @dataclass(frozen=True)
@@ -523,6 +540,169 @@ def draw(
             for unit_id in drawn
         )
     return Sample(seed=seed, units=tuple(selected))
+
+
+def draw_two_stage(
+    *,
+    clusters: Mapping[Hashable, Sequence[Hashable]],
+    n_psu: int,
+    n_within: int,
+    seed: int,
+) -> Sample:
+    """SRS of subject PSUs, then SRS of n_within images inside each drawn PSU.
+
+    Image-level ``draw`` cannot estimate a subject-clustered ICC: an n=30
+    SRS is almost all singletons. n_within must be >= 2 so each drawn PSU
+    carries replicates (AUDIT-11).
+    """
+    if not isinstance(clusters, Mapping) or isinstance(clusters, (str, bytes)):
+        raise AuditSamplingError(
+            f"clusters must be a mapping of PSU id -> units, got {type(clusters).__name__}"
+        )
+    if not clusters:
+        raise AuditSamplingError("clusters must be non-empty")
+    if isinstance(n_psu, bool) or not isinstance(n_psu, int) or n_psu < 1:
+        raise AuditSamplingError(f"n_psu must be an int >= 1, got {n_psu!r}")
+    if isinstance(n_within, bool) or not isinstance(n_within, int) or n_within < 2:
+        raise AuditSamplingError(f"n_within must be >= 2, got {n_within!r}")
+
+    frames: dict[Hashable, list[Hashable]] = {}
+    for psu_id, units in clusters.items():
+        if isinstance(units, (str, bytes)) or not isinstance(units, Sequence):
+            raise AuditSamplingError(
+                f"clusters[{psu_id!r}] must be a sequence of unit ids, "
+                f"got {type(units).__name__}"
+            )
+        frame = _ordered_unique(units)
+        if len(frame) != len(list(units)):
+            raise AuditSamplingError(f"PSU {psu_id!r} has duplicate unit ids")
+        if len(frame) < n_within:
+            raise AuditSamplingError(
+                f"PSU {psu_id!r} has m={len(frame)} < n_within={n_within}"
+            )
+        frames[psu_id] = frame
+
+    psu_ids = _ordered_unique(list(frames))
+    if n_psu > len(psu_ids):
+        raise AuditSamplingError(
+            f"n_psu={n_psu} exceeds number of clusters N={len(psu_ids)}"
+        )
+
+    rng = random.Random(seed)
+    drawn_psus = rng.sample(psu_ids, n_psu)
+    pi_psu = n_psu / len(psu_ids)
+    selected: list[SampledUnit] = []
+    for psu_id in drawn_psus:
+        frame = frames[psu_id]
+        drawn_units = rng.sample(frame, n_within)
+        pi = pi_psu * (n_within / len(frame))
+        selected.extend(
+            SampledUnit(
+                unit_id=unit_id,
+                stratum="frame",
+                inclusion_probability=pi,
+                psu_id=psu_id,
+            )
+            for unit_id in drawn_units
+        )
+    return Sample(seed=seed, units=tuple(selected))
+
+
+def estimate_icc(
+    clusters: Sequence[Sequence[float]],
+    *,
+    z: float = _DEFAULT_Z,
+) -> IccEstimate:
+    """One-way random-effects ANOVA ICC with Fisher-Z 95% CI (AUDIT-11).
+
+    Balanced k: ICC = (MSB − MSW) / (MSB + (k − 1) MSW). Unbalanced uses
+    n0 in place of k. The interval is Fisher's ICC transform, not artanh(ρ).
+    """
+    if isinstance(clusters, (str, bytes)) or not isinstance(clusters, Sequence):
+        raise AuditSamplingError(
+            f"clusters must be a sequence of observation groups, "
+            f"got {type(clusters).__name__}"
+        )
+    if not clusters:
+        raise AuditSamplingError("clusters must be non-empty")
+    groups: list[list[float]] = []
+    for index, raw in enumerate(clusters):
+        if isinstance(raw, (str, bytes)) or not isinstance(raw, Sequence):
+            raise AuditSamplingError(
+                f"clusters[{index}] must be a sequence of numbers, "
+                f"got {type(raw).__name__}"
+            )
+        if len(raw) < 2:
+            raise AuditSamplingError(
+                f"each cluster must have at least 2 observations, "
+                f"clusters[{index}] has {len(raw)}"
+            )
+        group: list[float] = []
+        for inner, value in enumerate(raw):
+            if not _finite_number(value):
+                raise AuditSamplingError(
+                    f"clusters[{index}][{inner}] must be a finite number, "
+                    f"got {value!r}"
+                )
+            group.append(float(value))
+        groups.append(group)
+    n_psu = len(groups)
+    if n_psu <= 2:
+        raise AuditSamplingError(f"Fisher-Z ICC CI requires n_psu > 2, got {n_psu}")
+    if not _finite_number(z) or z <= 0:
+        raise AuditSamplingError(f"z must be > 0, got {z!r}")
+
+    n_i = [len(group) for group in groups]
+    n_obs = sum(n_i)
+    grand = sum(sum(group) for group in groups) / n_obs
+    means = [sum(group) / len(group) for group in groups]
+    ssb = sum(n * (mean - grand) ** 2 for n, mean in zip(n_i, means))
+    ssw = sum(
+        (value - mean) ** 2 for group, mean in zip(groups, means) for value in group
+    )
+    msb = ssb / (n_psu - 1)
+    msw = ssw / (n_obs - n_psu)
+    if all(n == n_i[0] for n in n_i):
+        k = float(n_i[0])
+    else:
+        k = (n_obs - sum(n * n for n in n_i) / n_obs) / (n_psu - 1)
+    denom = msb + (k - 1.0) * msw
+    if denom == 0.0:
+        raise AuditSamplingError("ICC is undefined when MSB and MSW are both 0")
+    icc = (msb - msw) / denom
+    if msw == 0.0 and msb > 0.0:
+        lower, upper = 1.0, 1.0
+        icc = 1.0
+    else:
+        lower, upper = _fisher_z_icc_interval(icc, n_psu=n_psu, k=k, z=z)
+    return IccEstimate(
+        icc=icc,
+        lower=lower,
+        upper=upper,
+        n_psu=n_psu,
+        n_within=k,
+        n_obs=n_obs,
+        msb=msb,
+        msw=msw,
+    )
+
+
+def _fisher_z_icc_interval(
+    icc: float, *, n_psu: int, k: float, z: float
+) -> tuple[float, float]:
+    """Invert Fisher's ICC z = (1/2) log((1+(k−1)ρ)/(1−ρ)); SE = √(k / (2(G−2)(k−1)))."""
+    lo_bound = -1.0 / (k - 1.0)
+    span = 1.0 - lo_bound
+    eps = max(1e-12, span * 1e-12)
+    rho = min(1.0 - eps, max(lo_bound + eps, icc))
+    transformed = 0.5 * math.log((1.0 + (k - 1.0) * rho) / (1.0 - rho))
+    se = math.sqrt(k / (2.0 * (n_psu - 2.0) * (k - 1.0)))
+
+    def _invert(value: float) -> float:
+        exponential = math.exp(2.0 * value)
+        return (exponential - 1.0) / (exponential + k - 1.0)
+
+    return _invert(transformed - z * se), _invert(transformed + z * se)
 
 
 def _check_frame(

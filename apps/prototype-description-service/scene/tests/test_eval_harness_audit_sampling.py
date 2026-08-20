@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import math
+import random
 from pathlib import Path
 
 import pytest
@@ -16,6 +17,8 @@ from scripts.eval_harness.audit_sampling import (
     allocate,
     design_effect,
     draw,
+    draw_two_stage,
+    estimate_icc,
     kish_effective_cluster_size,
     project_strata_image_counts,
     project_strata_subject_image_counts,
@@ -535,3 +538,148 @@ def test_allocation_item_assignment_raises():
         alloc["E_clean"] = 0
     with pytest.raises(TypeError):
         alloc.counts["E_clean"] = 0
+
+
+def _anova_clusters_icc(*, n_psu: int, icc: float) -> list[tuple[float, ...]]:
+    """Balanced k=3 clusters whose ANOVA ICC equals `icc` (MSW=1)."""
+    k = 3
+    f_ratio = (1.0 + (k - 1.0) * icc) / (1.0 - icc)
+    target_ss = f_ratio * (n_psu - 1) / k
+    center = (n_psu - 1) / 2.0
+    raw = [i - center for i in range(n_psu)]
+    scale = math.sqrt(target_ss / sum(x * x for x in raw))
+    return [(scale * x - 1.0, scale * x, scale * x + 1.0) for x in raw]
+
+
+def _gaussian_clusters(
+    *, n_psu: int, n_within: int, rho: float, seed: int
+) -> list[tuple[float, ...]]:
+    rng = random.Random(seed)
+    sd_a = math.sqrt(rho)
+    sd_e = math.sqrt(1.0 - rho)
+    clusters = []
+    for _ in range(n_psu):
+        intercept = rng.gauss(0.0, sd_a)
+        clusters.append(
+            tuple(intercept + rng.gauss(0.0, sd_e) for _ in range(n_within))
+        )
+    return clusters
+
+
+def test_fir12_icc_eligible_subject_counts():
+    assert sum(1 for m in WHOLE_FRAME.sizes if m >= 2) == 76
+    assert sum(1 for m in WHOLE_FRAME.sizes if m >= 3) == 65
+
+
+def test_draw_two_stage_replicates_within_psu():
+    clusters = {f"s{i}": [f"s{i}-{j}" for j in range(4)] for i in range(12)}
+    sample = draw_two_stage(clusters=clusters, n_psu=6, n_within=3, seed=21)
+    by_psu: dict[object, int] = {}
+    for unit in sample.units:
+        assert unit.psu_id is not None
+        by_psu[unit.psu_id] = by_psu.get(unit.psu_id, 0) + 1
+        assert str(unit.unit_id).startswith(str(unit.psu_id))
+    assert len(by_psu) == 6
+    assert set(by_psu.values()) == {3}
+    assert len(sample.units) == 18
+
+
+def test_draw_two_stage_is_deterministic_and_order_invariant():
+    clusters = {f"s{i}": [f"s{i}-{j}" for j in range(5)] for i in range(10)}
+    reversed_clusters = {
+        name: list(reversed(units)) for name, units in reversed(list(clusters.items()))
+    }
+    a = draw_two_stage(clusters=clusters, n_psu=4, n_within=2, seed=11)
+    b = draw_two_stage(clusters=clusters, n_psu=4, n_within=2, seed=11)
+    c = draw_two_stage(clusters=reversed_clusters, n_psu=4, n_within=2, seed=11)
+    other = draw_two_stage(clusters=clusters, n_psu=4, n_within=2, seed=7)
+    assert a.units == b.units
+    assert {(u.psu_id, u.unit_id) for u in a.units} == {
+        (u.psu_id, u.unit_id) for u in c.units
+    }
+    assert {(u.psu_id, u.unit_id) for u in a.units} != {
+        (u.psu_id, u.unit_id) for u in other.units
+    }
+
+
+def test_draw_two_stage_carries_two_stage_inclusion_probability():
+    clusters = {"alice": ["a1", "a2", "a3", "a4"], "bob": ["b1", "b2", "b3"]}
+    sample = draw_two_stage(clusters=clusters, n_psu=2, n_within=2, seed=3)
+    assert len(sample.units) == 4
+    by_psu = {u.psu_id: u for u in sample.units}
+    alice_pi = 1.0 * (2 / 4)
+    bob_pi = 1.0 * (2 / 3)
+    for unit in sample.units:
+        expected = alice_pi if unit.psu_id == "alice" else bob_pi
+        assert unit.inclusion_probability == pytest.approx(expected)
+    assert set(by_psu) == {"alice", "bob"}
+
+
+def test_draw_two_stage_refuses_n_within_below_2():
+    clusters = {"s0": ["a", "b", "c"]}
+    with pytest.raises(AuditSamplingError, match="n_within must be >= 2"):
+        draw_two_stage(clusters=clusters, n_psu=1, n_within=1, seed=1)
+
+
+def test_draw_two_stage_refuses_psu_smaller_than_n_within():
+    clusters = {"s0": ["a", "b"], "s1": ["c", "d", "e"]}
+    with pytest.raises(AuditSamplingError, match="n_within"):
+        draw_two_stage(clusters=clusters, n_psu=2, n_within=3, seed=1)
+
+
+def test_two_stage_census_of_m3_subjects_is_195_images():
+    clusters = {
+        f"s{i}": tuple(f"s{i}-{j}" for j in range(m))
+        for i, m in enumerate(WHOLE_FRAME.sizes)
+        if m >= 3
+    }
+    assert len(clusters) == 65
+    sample = draw_two_stage(clusters=clusters, n_psu=65, n_within=3, seed=20260820)
+    assert len(sample.units) == 195
+    assert len({u.psu_id for u in sample.units}) == 65
+
+
+def test_estimate_icc_anova_known_fixture():
+    clusters = [(1.0, 2.0), (3.0, 4.0), (5.0, 6.0)]
+    est = estimate_icc(clusters)
+    assert est.n_psu == 3
+    assert est.n_within == pytest.approx(2.0)
+    assert est.n_obs == 6
+    assert est.msb == pytest.approx(8.0)
+    assert est.msw == pytest.approx(0.5)
+    assert est.icc == pytest.approx(15 / 17)
+
+
+def test_estimate_icc_fisher_z_ci_for_g65_k3_at_rho_02():
+    clusters = _anova_clusters_icc(n_psu=65, icc=0.2)
+    est = estimate_icc(clusters)
+    assert est.icc == pytest.approx(0.2)
+    assert est.n_psu == 65
+    assert est.n_within == pytest.approx(3.0)
+    assert est.lower == pytest.approx(0.045, abs=5e-4)
+    assert est.upper == pytest.approx(0.360, abs=5e-4)
+    low_n = size_for_margin(
+        margin=0.10, population=640, cluster_size=WHOLE_FRAME_KISH_A, icc=0.045
+    ).n
+    high_n = size_for_margin(
+        margin=0.10, population=640, cluster_size=WHOLE_FRAME_KISH_A, icc=0.360
+    ).n
+    assert low_n == 121
+    assert high_n == 284
+
+
+def test_estimate_icc_recovers_rho_on_synthetic_clusters():
+    clusters = _gaussian_clusters(n_psu=65, n_within=3, rho=0.2, seed=20260820)
+    est = estimate_icc(clusters)
+    assert est.lower < 0.2 < est.upper
+    assert est.lower == pytest.approx(0.045, abs=0.15)
+    assert est.upper == pytest.approx(0.360, abs=0.15)
+
+
+def test_estimate_icc_rejects_singletons_and_too_few_psus():
+    with pytest.raises(AuditSamplingError, match="at least 2"):
+        estimate_icc([(1.0, 2.0, 3.0), (4.0,)])
+    with pytest.raises(AuditSamplingError, match="n_psu"):
+        estimate_icc([(1.0, 2.0), (3.0, 4.0)])
+    with pytest.raises(AuditSamplingError, match="non-empty"):
+        estimate_icc([])

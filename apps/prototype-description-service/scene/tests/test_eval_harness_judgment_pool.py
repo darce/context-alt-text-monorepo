@@ -82,13 +82,17 @@ def test_pool_holds_true_and_false_polarity():
         contributions={
             "human": [
                 CandidateFact(text="red hat", polarity=FactPolarity.TRUE),
-                CandidateFact(text="unicorn", polarity=FactPolarity.FALSE),
+                CandidateFact(text="red hat", polarity=FactPolarity.FALSE),
             ],
             "model_a": [CandidateFact(text="red hat", polarity=FactPolarity.TRUE)],
         },
         depth=5,
     )
-    polarities = {item.polarity for item in pool.items}
-    assert FactPolarity.TRUE in polarities
-    assert FactPolarity.FALSE in polarities
+    by_polarity = {item.polarity: item for item in pool.items}
     assert len(pool.items) == 2
+    assert set(by_polarity) == {FactPolarity.TRUE, FactPolarity.FALSE}
+    true_item = by_polarity[FactPolarity.TRUE]
+    false_item = by_polarity[FactPolarity.FALSE]
+    assert true_item.key != false_item.key
+    assert true_item.text.casefold() == "red hat"
+    assert false_item.text.casefold() == "red hat"

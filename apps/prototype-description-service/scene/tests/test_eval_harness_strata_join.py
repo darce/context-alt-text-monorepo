@@ -285,6 +285,18 @@ def test_join_record_subjects_reject_str_and_dict(tmp_path: Path) -> None:
         )
 
 
+def test_load_rejects_entry_stratum_missing_from_strata_counts(
+    tmp_path: Path,
+) -> None:
+    path = _write_manifest(
+        tmp_path,
+        [_entry(1, "Z_undeclared", ["Alice"], "a")],
+        strata_counts={"E_clean": {"images": 1, "unique_subjects_faces_gt0": 1}},
+    )
+    with pytest.raises(StratumJoinError, match="not in strata_counts"):
+        load_stratum_index(path)
+
+
 def test_join_record_subjects_list_is_legal(tmp_path: Path) -> None:
     path = _write_manifest(
         tmp_path,

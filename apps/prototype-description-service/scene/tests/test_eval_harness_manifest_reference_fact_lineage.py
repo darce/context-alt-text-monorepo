@@ -1,14 +1,29 @@
 """ReferenceFact v4 annotation lineage: per-label provenance + pre-adjudication."""
 
+from __future__ import annotations
+
+from pathlib import Path
+
 import pytest
 from pydantic import ValidationError
 
 from scripts.eval_harness.manifest import (
+    ConfirmationSource,
     FactKind,
     FactPolarity,
     PreAdjudicationLabel,
     ReferenceFact,
+    load_legacy_manifest,
 )
+
+
+def _golden150_path() -> Path:
+    here = Path(__file__).resolve()
+    for parent in here.parents:
+        candidate = parent / "benchmarks" / "manifests" / "golden150-draft-20260723.json"
+        if candidate.is_file():
+            return candidate
+    raise RuntimeError("cannot locate golden150-draft-20260723.json")
 
 
 def _v3_payload() -> dict:
@@ -71,7 +86,7 @@ def test_v3_shape_parses_with_empty_lineage():
     assert fact.kind is FactKind.OBJECT
     assert fact.polarity is FactPolarity.TRUE
     assert fact.phrases == ["red bicycle", "red bike"]
-    assert fact.confirmed_by == "agent"
+    assert fact.confirmed_by is ConfirmationSource.AGENT
     assert fact.annotator_id is None
     assert fact.annotation_batch is None
     assert fact.annotated_at is None
@@ -131,3 +146,26 @@ def test_human_confirmed_fact_without_annotator_id_raises():
             phrases=["red bicycle"],
             confirmed_by="operator",
         )
+
+
+def test_unknown_confirmation_source_raises_not_promoted_to_human():
+    # annotator_id is present so a != AGENT string-promotion would accept this.
+    with pytest.raises(ValidationError, match="operatr") as exc_info:
+        ReferenceFact(
+            text="a red bicycle",
+            kind=FactKind.OBJECT,
+            polarity=FactPolarity.TRUE,
+            phrases=["red bicycle"],
+            confirmed_by="operatr",
+            annotator_id="ann-01",
+        )
+    assert "annotator_id" not in str(exc_info.value)
+
+
+def test_golden150_draft_parses_with_backfilled_fact_annotators():
+    path = _golden150_path()
+    manifest = load_legacy_manifest(str(path))
+    entry = next(row for row in manifest.entries if row.media_id == 648)
+    assert len(entry.reference_facts) == 2
+    assert all(fact.confirmed_by is ConfirmationSource.OPERATOR for fact in entry.reference_facts)
+    assert all(fact.annotator_id == "pre-program-operator" for fact in entry.reference_facts)

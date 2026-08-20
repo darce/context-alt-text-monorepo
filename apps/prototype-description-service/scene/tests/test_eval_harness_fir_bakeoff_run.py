@@ -1812,6 +1812,38 @@ def test_truncated_foil_set_is_incomplete(tmp_path: Path) -> None:
     assert report.points["A_true_occluder"].incomplete is True
 
 
+def test_single_foil_shortfall_is_incomplete(tmp_path: Path) -> None:
+    """BR-43 / TEST-15 / MLDATA-09: foil_shortfall == 1 must not publish COMPLETE.
+
+    The truncated-foil test keeps 1 of 3 foils (shortfall == 2), which still
+    fails ``foil_shortfall > 1``. D_capture on the base plan is the common
+    case: expected_foils == 2, one foil submitted, shortfall == 1.
+    """
+    plan = _plan(tmp_path)
+    stratum = "D_capture"
+    expected_foils = expected_nonmated_search_count(plan, stratum=stratum)
+    assert expected_foils == 2
+    all_foils = _foil_searches_by_stratum(plan)[stratum]
+    assert len(all_foils) == expected_foils
+    kept = all_foils[: expected_foils - 1]
+    mated = _subject_level_mated_searches(plan)[stratum]
+    report = score_run(
+        plan=plan,
+        searches=_probe_searches(
+            D_capture={"mated": mated, "nonmated": kept},
+        ),
+        tau=0.50,
+        overall_nonmated=kept,
+    )
+    row = {item["stratum"]: item for item in report.to_rows()}[stratum]
+    assert row["search_shortfall"] == 0
+    assert row["nonmated_shortfall"] == expected_foils - 1
+    assert row["nonmated_shortfall"] == 1
+    assert row["incomplete"] is True
+    assert report.points[stratum].incomplete is True
+    assert report.points[stratum].measured is False
+
+
 def test_overall_point_degrades_when_one_stratum_is_short(tmp_path: Path) -> None:
     """BR-28 / MLDATA-07: overall FNIR must not hide an incomplete probe cell."""
     plan = _plan(tmp_path)

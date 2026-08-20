@@ -590,3 +590,70 @@ AUDIT-09, AUDIT-10, AUDIT-11, TEST-15, rg-005, sr-007.
 
 Nothing in this finding. Did not touch `manifest.py`, lineage fixtures,
 or FIR-12 files.
+
+########## F21
+
+# Lane F21 — DESCQUAL-2-BR-30
+
+## DESCQUAL-2-BR-30 (low) — closed
+
+Published cells `n=114` / `n=261` cited `FRAME_PSU_KISH_A`, a test-module
+name at `scene/tests/test_eval_harness_audit_sampling.py:94`. Importing
+from `scripts.eval_harness.audit_sampling` raised `ImportError`. The
+documented command did not run as written (rg-006); the cell was not
+regenerable from shipped code (AUDIT-09).
+
+Did **not** add `FRAME_PSU_KISH_A = 10.846875` to the shipped module.
+
+### What changed
+
+- Scope-doc fences now load `benchmarks/manifests/fir12-selection-v1.json`,
+  call `project_frame_psu_image_counts`, `kish_effective_cluster_size`,
+  then `size_for_margin`. Repo-root REPL with
+  `PYTHONPATH=apps/prototype-description-service`.
+- Every `KISH_A` citation in the doc is gone (planning table, ICC=1 cap
+  `n=397`, Fisher-Z CI `n=114`/`n=261`). They use derived `a`.
+- `WHOLE_FRAME_KISH_A` / `FRAME_PSU_KISH_A` stay as test fixtures.
+- `audit_sampling.py` unchanged: existing four calls suffice; no Kish-a
+  literal.
+
+Published numbers unchanged: `a=10.846875`, `n=114`, `n=261`, ICC CI
+`[0.044, 0.361]`, planning `n=198`/`239`, ICC=1 cap `n=397`. 64-vs-65
+untouched.
+
+### Tests
+
+- `test_published_cells_regenerate_from_fir12_selection_manifest` — frozen
+  manifest → shipped path → `114`/`261`/`198`/`239`/`397`.
+- `test_scope_doc_ci_n_fence_runs_as_written` — execs the doc fence;
+  asserts no `FRAME_PSU_KISH_A` / `WHOLE_FRAME_KISH_A`.
+
+58/58 in `test_eval_harness_audit_sampling.py`.
+
+### Mutants (TEST-15)
+
+**Mutant 1** — `/tmp/br30-mutant`: `kish_effective_cluster_size` returns
+the arithmetic mean (`total/len(sizes)`) instead of `Σm²/Σm`.
+
+RED: `assert 2.6556016597510372 == 10.846875 ± 1.1e-05` on both new tests.
+
+**Mutant 2** — `/tmp/br30-mutant-floor`: `math.ceil` → `math.floor` in
+`size_for_margin`.
+
+RED: `assert 113 == 114`.
+
+**Mutant 3** — `/tmp/br30-doc-mutant.md`: restore
+`cluster_size=FRAME_PSU_KISH_A` in the CI fence.
+
+RED: `FRAME_PSU_KISH_A` present; `cluster_size=a` missing.
+
+Mutants restored. Real module untouched.
+
+### Canon
+
+AUDIT-09, rg-006, TEST-15.
+
+### Not closed
+
+Nothing in this finding.
+

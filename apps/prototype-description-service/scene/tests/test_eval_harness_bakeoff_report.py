@@ -249,14 +249,15 @@ def test_consent_keeps_the_column_but_badges_it(tmp_path: Path) -> None:
                      "--allow-foreign-run", "Control")
     assert rc == 0
     doc = out.read_text()
-    # Exactly one column is badged, it is the foreign one, and it names the sha.
-    assert doc.count(NON_COMPARABLE_BADGE.strip()) == len(ids)  # once per rendered card
+    # Exactly one column per card is badged, and it is the foreign one. An
+    # implementation that badged every column fails here [TEST-15].
+    assert doc.count('class="model warn"') == len(ids)
+    assert doc.count('class="model"') == len(ids)  # the native column stays clean
     assert "aaaaaaaaaaaa" in doc
     for chunk in doc.split('<div class="run">')[1:]:
         head = chunk[:300]
         if "Candidate" in head:
-            assert NON_COMPARABLE_BADGE.strip() not in head  # the native column stays clean
-    assert "model warn" in doc  # badged column is not styled as an ordinary accent header
+            assert NON_COMPARABLE_BADGE.strip() not in head
 
 
 def test_structural_mismatch_is_fatal_even_with_a_matching_sha(tmp_path: Path) -> None:
@@ -286,16 +287,25 @@ def test_structural_mismatch_is_fatal_under_a_non_v3_manifest(tmp_path: Path) ->
     assert "manifest identity: structural only" in out_ok.read_text()
 
 
-def test_manifest_version_as_string_still_anchors_the_digest(tmp_path: Path) -> None:
-    """A stringly-typed version must not silently downgrade the gate."""
-    from scripts.eval_harness.build_bakeoff_report import _expected_shas
+def test_manifest_version_as_string_fails_closed(tmp_path: Path) -> None:
+    """A stringly-typed version must not silently downgrade to the weaker mode.
+
+    It is claimed as v3, so the gate holds it to v3: it either loads and anchors
+    the digest, or it is refused. What it must never do is fall through to
+    ``structural only`` and quietly drop the digest check.
+    """
+    from scripts.eval_harness.build_bakeoff_report import ComparabilityError, _expected_shas
 
     raw = json.loads(Path(_V3_MANIFEST).read_text())
     raw["manifest_version"] = "3"
     stringly = tmp_path / "stringly.json"
     stringly.write_text(json.dumps(raw))
-    _, mode = _expected_shas(str(stringly))
-    assert mode == "structural + manifest digest"
+    try:
+        shas, mode = _expected_shas(str(stringly))
+    except ComparabilityError as exc:
+        assert "does not load as one" in str(exc)
+    else:
+        assert mode == "structural + manifest digest" and shas
 
 
 def test_declared_v3_that_does_not_load_is_refused_with_a_message(

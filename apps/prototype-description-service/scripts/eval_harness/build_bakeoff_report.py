@@ -356,7 +356,8 @@ def _check_comparability(
     provenances: dict[str, dict[str, Any]],
     consented: set[str],
     manifest_path: str,
-) -> tuple[dict[str, str], str]:
+    expected: set[str],
+) -> dict[str, str]:
     """Refuse to render run records drawn from a different split [EVAL-01, EXP-07].
 
     A 646-image run record is a *superset* of a 10-image manifest, so every cell
@@ -370,12 +371,11 @@ def _check_comparability(
        Catches same-or-subset corpora that the structural check cannot see, but
        only when the manifest is a loadable v3.
 
-    Returns ``(foreign_reasons, mode)``; raises ``ComparabilityError`` for any
-    mismatch the operator has not consented to via ``--allow-foreign-run``.
-    Consented runs stay in the report but carry a permanent badge, so they can
-    never be read as a like-for-like control.
+    Returns the per-label reasons; raises ``ComparabilityError`` for any mismatch
+    the operator has not consented to via ``--allow-foreign-run``. Consented runs
+    stay in the report but carry a permanent badge, so they can never be read as
+    a like-for-like control.
     """
-    expected, mode = _expected_shas(manifest_path)
     shas: dict[str, str] = {}
     for label, prov in provenances.items():
         raw = prov.get("manifest_sha256")
@@ -398,7 +398,8 @@ def _check_comparability(
             if not sha:
                 reasons[label] = "run record carries no provenance.manifest_sha256 to verify against this manifest"
             elif sha not in expected:
-                reasons[label] = f"ran against manifest {sha[:12]}, report declares {sorted(expected)[0][:12]}"
+                accepted = " or ".join(sorted(e[:12] for e in expected))
+                reasons[label] = f"ran against manifest {sha[:12]}, report declares {accepted}"
     else:
         # No manifest-side anchor: runs must at least agree with each other, else
         # the columns are measuring different corpora regardless of the header.
@@ -420,7 +421,7 @@ def _check_comparability(
         )
     for label in sorted(consented - set(reasons)):
         print(f"note: --allow-foreign-run {label!r} is stale; that run matches this manifest", file=sys.stderr)
-    return reasons, mode
+    return reasons
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -448,6 +449,14 @@ def main(argv: list[str] | None = None) -> int:
         if _val is not None and _val < 0:
             ap.error(f"{_name} must be non-negative, got {_val}")
 
+    # Resolve the digest anchor first: a declared-v3 manifest that does not load
+    # must be a diagnosed refusal, not a ValueError out of _load_manifest.
+    try:
+        expected_shas, identity_mode = _expected_shas(args.manifest)
+    except ComparabilityError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return EXIT_NOT_COMPARABLE
+
     manifest = _load_manifest(args.manifest)
     runs: dict[str, dict[int, dict]] = {}
     provenances: dict[str, dict[str, Any]] = {}
@@ -461,12 +470,13 @@ def main(argv: list[str] | None = None) -> int:
         provenances[label] = _run_provenance(path)
 
     try:
-        foreign, identity_mode = _check_comparability(
+        foreign = _check_comparability(
             set(manifest),
             {label: set(cells) for label, cells in runs.items()},
             provenances,
             set(args.allow_foreign_run),
             args.manifest,
+            expected_shas,
         )
     except ComparabilityError as exc:
         print(f"error: {exc}", file=sys.stderr)

@@ -27,6 +27,7 @@ from typing import Any
 from scripts.eval_harness.gallery_split import (
     GalleryName,
     GallerySplit,
+    ProbeSet,
     Template,
     build_disjoint_galleries,
     probes_for,
@@ -59,7 +60,13 @@ __all__ = [
     "ProbeEntry",
     "RunPlan",
     "RunReport",
+    "both_gallery_probe_entries",
+    "both_gallery_search_count",
     "build_run_plan",
+    "expected_mated_search_count",
+    "mated_galleries_for",
+    "mated_identities_for",
+    "occluded_probes_for",
     "score_run",
 ]
 
@@ -138,6 +145,7 @@ class RunPlan:
     seed: int
     index: StratumIndex
     gallery_entries: tuple[ProbeEntry, ...]
+    probe_sets: Mapping[GalleryName, ProbeSet]
 
     @property
     def withheld_probe_templates(self) -> tuple[Template, ...]:
@@ -227,15 +235,92 @@ def build_run_plan(*, selection_manifest_path: str | Path, seed: int) -> RunPlan
         templates_by_subject=templates_by_subject,
         seed=seed,
     )
-    # Fail fast if the split cannot produce an open-set (non-mated) search.
-    probes_for(split, gallery=GalleryName.G1)
-    probes_for(split, gallery=GalleryName.G2)
+    probe_sets = {
+        GalleryName.G1: probes_for(split, gallery=GalleryName.G1),
+        GalleryName.G2: probes_for(split, gallery=GalleryName.G2),
+    }
     return RunPlan(
         split=split,
         probe_entries=_probe_entries(entries),
         seed=seed,
         index=index,
         gallery_entries=_gallery_entries(entries),
+        probe_sets=probe_sets,
+    )
+
+
+def mated_identities_for(
+    entry: ProbeEntry, *, split: GallerySplit, gallery: GalleryName | str
+) -> tuple[str, ...]:
+    """Identities on ``entry`` enrolled in ``gallery`` (empty → foil for it)."""
+    try:
+        name = GalleryName(gallery)
+    except ValueError as exc:
+        raise FirBakeoffRunError(
+            f"gallery {gallery!r} is not a declared gallery of the split"
+        ) from exc
+    roster = split.g1 if name is GalleryName.G1 else split.g2
+    return tuple(subject_id for subject_id in entry.present_identities if subject_id in roster)
+
+
+def mated_galleries_for(entry: ProbeEntry, *, plan: RunPlan) -> tuple[GalleryName, ...]:
+    """Declared galleries this still is mated against (one or both)."""
+    return tuple(
+        gallery
+        for gallery in _declared_galleries(plan)
+        if mated_identities_for(entry, split=plan.split, gallery=gallery)
+    )
+
+
+def both_gallery_probe_entries(plan: RunPlan) -> tuple[ProbeEntry, ...]:
+    """Occluded stills with identities enrolled in both G1 and G2."""
+    return tuple(
+        entry
+        for stratum in PROBE_STRATA
+        for entry in plan.probe_entries.get(stratum, ())
+        if len(mated_galleries_for(entry, plan=plan)) == 2
+    )
+
+
+def both_gallery_search_count(plan: RunPlan) -> int:
+    """Search units from co-present stills (2 per still, never 1)."""
+    return sum(
+        len(mated_galleries_for(entry, plan=plan))
+        for entry in both_gallery_probe_entries(plan)
+    )
+
+
+def occluded_probes_for(
+    plan: RunPlan, *, gallery: GalleryName | str
+) -> tuple[tuple[ProbeEntry, ...], tuple[ProbeEntry, ...]]:
+    """Mated / foil occluded stills for a 1:N search against ``gallery``.
+
+    Consumes ``plan.probe_sets`` (the stored ``probes_for`` result) as the
+    declared-gallery set. A still co-present in both galleries is mated here
+    *and* mated against the other gallery — two searches, never one.
+    """
+    name = _as_declared_gallery(gallery, declared=plan.probe_sets)
+    mated: list[ProbeEntry] = []
+    foils: list[ProbeEntry] = []
+    for stratum in PROBE_STRATA:
+        for entry in plan.probe_entries.get(stratum, ()):
+            if mated_identities_for(entry, split=plan.split, gallery=name):
+                mated.append(entry)
+            else:
+                foils.append(entry)
+    return tuple(mated), tuple(foils)
+
+
+def expected_mated_search_count(plan: RunPlan, *, stratum: str) -> int:
+    """Mated (probe, gallery) units the stratum must cover.
+
+    Co-present stills count twice — once per gallery — via ``occluded_probes_for``.
+    """
+    return sum(
+        1
+        for gallery in _declared_galleries(plan)
+        for entry in occluded_probes_for(plan, gallery=gallery)[0]
+        if entry.stratum == stratum
     )
 
 
@@ -251,6 +336,9 @@ def score_run(
     """Score injected searches per stratum. Does not filter detection misses.
 
     Empty foil lists are unmeasured for FPI unless ``closed_set=True``.
+    Classifies each ``ProbeEntry`` against ``plan.split`` / ``plan.probe_sets``:
+    a search is mated iff the probe carries an identity enrolled in its
+    declared gallery (EVAL-18 / JANUS 2.2).
     """
     if not math.isfinite(tau):
         raise FirBakeoffRunError(f"tau must be finite, got {tau!r}")
@@ -277,6 +365,11 @@ def score_run(
             "every populated probe stratum must have a searches key"
         )
 
+    occluded = {
+        gallery: occluded_probes_for(plan, gallery=gallery)
+        for gallery in _declared_galleries(plan)
+    }
+
     stratum_report = join_by_stratum(_join_records(plan), plan.index)
     points: dict[str, BakeoffIETPoint] = {}
     all_mated: list[SearchResult] = []
@@ -287,8 +380,11 @@ def score_run(
             # Gallery join records are enrolled, not probed (MLDATA-09).
             continue
         mated, nonmated = _searches_for(searches, stratum=name)
+        _validate_stratum_searches(
+            plan, stratum=name, mated=mated, nonmated=nonmated
+        )
         search_shortfalls[name] = _search_shortfall(
-            plan, stratum=name, mated=mated
+            plan, stratum=name, mated=mated, occluded=occluded
         )
         all_mated.extend(mated)
         if len(nonmated) > 0:
@@ -315,6 +411,7 @@ def score_run(
         raise FirBakeoffRunError(
             "closed_set=True cannot carry a non-mated (foil) workload (EVAL-18)"
         )
+    _validate_overall_nonmated(plan, overall_foils)
     overall = _publish_point(
         fnir_fpi_at_threshold(
             mated=all_mated,
@@ -358,20 +455,130 @@ def _publish_point(point: IETPoint, *, closed_set: bool) -> BakeoffIETPoint:
     )
 
 
+def _declared_galleries(plan: RunPlan) -> tuple[GalleryName, ...]:
+    return tuple(sorted(plan.probe_sets, key=lambda gallery: gallery.value))
+
+
+def _as_declared_gallery(
+    value: GalleryName | str, *, declared: Mapping[GalleryName, ProbeSet]
+) -> GalleryName:
+    try:
+        name = GalleryName(value)
+    except ValueError as exc:
+        raise FirBakeoffRunError(
+            f"search gallery {value!r} is not a declared gallery of the split"
+        ) from exc
+    if name not in declared:
+        raise FirBakeoffRunError(
+            f"search gallery {name.value!r} is not a declared gallery of the split"
+        )
+    return name
+
+
+def _validate_search_against_entry(
+    search: SearchResult,
+    *,
+    entry: ProbeEntry,
+    plan: RunPlan,
+    filed_as_mated: bool,
+) -> GalleryName:
+    gallery = _as_declared_gallery(search.gallery, declared=plan.probe_sets)
+    identities = mated_identities_for(entry, split=plan.split, gallery=gallery)
+    if filed_as_mated:
+        if not identities:
+            raise FirBakeoffRunError(
+                f"search media_id={search.media_id} gallery={gallery.value} "
+                "has no identity enrolled in that gallery but was filed as mated"
+            )
+        if search.true_name not in identities:
+            raise FirBakeoffRunError(
+                f"mated search true_name={search.true_name!r} is not enrolled in "
+                f"gallery {gallery.value} on media_id={search.media_id}"
+            )
+    elif identities:
+        raise FirBakeoffRunError(
+            f"search media_id={search.media_id} gallery={gallery.value} "
+            "carries an identity enrolled in that gallery but was filed as non-mated"
+        )
+    return gallery
+
+
+def _validate_stratum_searches(
+    plan: RunPlan,
+    *,
+    stratum: str,
+    mated: Sequence[SearchResult],
+    nonmated: Sequence[SearchResult],
+) -> None:
+    by_media = {entry.media_id: entry for entry in plan.probe_entries.get(stratum, ())}
+    appeared: dict[int, set[GalleryName]] = {}
+    for filed_as_mated, group in ((True, mated), (False, nonmated)):
+        for search in group:
+            entry = by_media.get(search.media_id)
+            if entry is None:
+                raise FirBakeoffRunError(
+                    f"search media_id={search.media_id} is not a probe in stratum {stratum!r}"
+                )
+            gallery = _validate_search_against_entry(
+                search, entry=entry, plan=plan, filed_as_mated=filed_as_mated
+            )
+            appeared.setdefault(search.media_id, set()).add(gallery)
+    for entry in plan.probe_entries.get(stratum, ()):
+        needed = set(mated_galleries_for(entry, plan=plan))
+        if len(needed) < 2:
+            continue
+        seen = appeared.get(entry.media_id, set())
+        if seen and seen != needed:
+            raise FirBakeoffRunError(
+                f"probe media_id={entry.media_id} is enrolled in both galleries "
+                f"but appears with "
+                f"{[g.value for g in sorted(seen, key=lambda g: g.value)]!r} "
+                "in searches"
+            )
+
+
+def _validate_overall_nonmated(
+    plan: RunPlan, foils: Sequence[SearchResult]
+) -> None:
+    by_media = {
+        entry.media_id: entry
+        for stratum in PROBE_STRATA
+        for entry in plan.probe_entries.get(stratum, ())
+    }
+    for search in foils:
+        entry = by_media.get(search.media_id)
+        if entry is None:
+            raise FirBakeoffRunError(
+                f"overall_nonmated media_id={search.media_id} is not a probe entry"
+            )
+        _validate_search_against_entry(
+            search, entry=entry, plan=plan, filed_as_mated=False
+        )
+
+
 def _search_shortfall(
     plan: RunPlan,
     *,
     stratum: str,
     mated: Sequence[SearchResult],
+    occluded: Mapping[
+        GalleryName, tuple[tuple[ProbeEntry, ...], tuple[ProbeEntry, ...]]
+    ],
 ) -> int:
-    """How many plan probe entries are missing from the injected mated list.
+    """How many mated (probe, gallery) units are missing from the injected list.
 
     EVAL-16 / EVAL-19: dropping undetected mates or zero-face probes must not
     render as a complete unmeasured cell. Non-probe strata have no shortfall.
+    Co-present stills contribute one unit per gallery (JANUS 2.2).
     """
     if stratum not in PROBE_STRATA:
         return 0
-    expected = len(plan.probe_entries.get(stratum, ()))
+    expected = sum(
+        1
+        for mated_entries, _foils in occluded.values()
+        for entry in mated_entries
+        if entry.stratum == stratum
+    )
     return max(0, expected - len(mated))
 
 

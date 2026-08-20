@@ -201,3 +201,24 @@ Canon: **rg-015** (no invented dual envelope; canonical id comes from the manife
 ## Not closed
 
 Nothing. BR-20, BR-22, BR-23 all landed. Did not touch `fir_bakeoff_run.py`, `gallery_split.py`, or `open_set_identification.py`.
+
+########## lane/f20
+
+# FIR-12 BR-18 — probe identity survives the (probe image, gallery) seam — CLOSED
+
+Canon: JANUS 2.2 (disjoint galleries), EVAL-18, sr-007.
+
+- BR-18: `SearchResult` is now a `(probe image, gallery)` pair (`gallery: GalleryName | str`, `media_id: int`); `build_run_plan` stores `probes_for` on `RunPlan.probe_sets`; `score_run` classifies each `ProbeEntry` against `plan.split` / `probe_sets` (mated iff the still carries an identity enrolled in the declared gallery; otherwise foil). Tests: `test_search_result_requires_gallery_and_media_id`, `test_build_run_plan_consumes_probes_for`. Mutant: defaulted `gallery`/`media_id` → `test_search_result_requires_gallery_and_media_id` DID NOT RAISE TypeError.
+- BR-18 undeclared gallery: `score_run` raises `FirBakeoffRunError` (not `assert`) when `SearchResult.gallery` is not a declared gallery of the split (`plan.probe_sets` keys). Test: `test_search_against_undeclared_gallery_raises`. Mutant: coerce unknown gallery to G1 → regex `'declared gallery'` missed (fell through as "filed as mated").
+- BR-18 mated `true_name` must be enrolled in the declared gallery. Test: `test_mated_true_name_not_enrolled_in_declared_gallery_raises`. Mutant: skipped the `true_name not in identities` check → DID NOT RAISE.
+- BR-18 failure mode 2 (silent drop of a co-present / enrolled identity): a non-mated filing whose probe *does* carry an enrolled identity in that gallery raises. Test: `test_nonmated_search_that_drops_enrolled_identity_raises`. Mutant: skipped the `elif identities` raise → DID NOT RAISE.
+- BR-18 failure mode 1 (G1∪G2 as one closed set): a still enrolled in both galleries that appears with only one gallery in `searches` raises. Tests: `test_copresent_probe_with_one_gallery_raises`, `test_frozen_seed0_six_occluded_stills_are_enrolled_in_both_galleries`. Mutant: skipped the `seen != needed` raise → both DID NOT RAISE.
+- BR-18 seed-0 fact (derived, not hardcoded in three places): `both_gallery_probe_entries(plan)` is 6 stills at seed 0; `both_gallery_search_count(plan)` is 12, not 6. Tests: `test_frozen_seed0_six_occluded_stills_are_enrolled_in_both_galleries`, `test_frozen_seed0_copresent_stills_yield_twelve_searches`, `test_copresent_probe_yields_two_searches`. Mutant: `both_gallery_search_count` returned `len(stills)` → `assert 6 == 12`.
+- BR-18 failure mode 3 (stranger scored as FNIR miss): a probe-only stranger filed as mated raises. Test: `test_stranger_probe_filed_as_mated_raises`. Mutant: skipped the empty-identities mated check → error text no longer matched `'filed as mated'` (fell through to true_name-not-enrolled).
+
+Did not touch FPI denominator / `n_enrolled_gallery_subjects` (FIR-12-BR-12), `gallery_split.py`, or `strata_join.py`.
+
+Existing-test contract (not silent skips):
+- `test_empty_search_lists_on_populated_probe_cell_are_incomplete` previously expected `search_shortfall == n_images` (32 on A). That encoded 1-search-per-still and counted strangers as expected mates. Shortfall is now expected mated `(probe, gallery)` units from `occluded_probes_for`; `n_images==32` stays pinned and `shortfall != 32` is pinned.
+- `test_explicit_empty_overall_nonmated_is_unmeasured_fpi` `overall.n_mated` 4→3: stuffing Alice onto D_capture (Carol, a stranger) is now refused as a mated search.
+- `test_mated_entry_with_true_name_none_raises` now `FirBakeoffRunError` at the seam (`true_name` not enrolled) instead of leaking scorer `ValueError`.

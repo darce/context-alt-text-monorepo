@@ -22,6 +22,8 @@ import math
 from collections.abc import Sequence
 from dataclasses import dataclass
 
+from scripts.eval_harness.gallery_split import GalleryName
+
 
 def _require_finite(value: float, *, name: str) -> None:
     if not math.isfinite(value):
@@ -30,12 +32,23 @@ def _require_finite(value: float, *, name: str) -> None:
 
 @dataclass(frozen=True)
 class SearchResult:
-    """One 1:N search. ``true_name is None`` means the probe is non-mated."""
+    """One 1:N search: a (probe image, gallery) pair.
+
+    ``true_name is None`` means the probe is non-mated against ``gallery``.
+    Mated-ness is per gallery, not per still — a still enrolled in both
+    galleries is two searches (JANUS 2.2 / EVAL-18).
+    """
 
     detected: bool
     top1_score: float | None
     top1_name: str | None
     true_name: str | None
+    gallery: GalleryName | str
+    media_id: int
+
+    def __post_init__(self) -> None:
+        if isinstance(self.media_id, bool) or not isinstance(self.media_id, int):
+            raise ValueError(f"media_id must be an int, got {self.media_id!r}")
 
 
 @dataclass(frozen=True)

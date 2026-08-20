@@ -23,7 +23,11 @@ Probes against G1
     Non-mated: reserved leftovers of G2 subjects *plus* G2 enrollment
     templates (so G2 singletons are a probe source, not a silent drop).
     Symmetric for G2. An empty non-mated list raises — EVAL-18 forbids a
-    silently closed-set search.
+    silently closed-set search. An empty mated list is returned with
+    ``n_mated == 0`` / ``fnir_measurable is False`` (declared-empty FNIR
+    cell, not a construction error): FPI over the non-mated probes is still
+    a meaningful count. Unmeasured FNIR is owned by
+    ``fnir_fpi_at_threshold`` (``IETPoint.measured=False``, ``fnir=None``).
 """
 
 from __future__ import annotations
@@ -106,6 +110,11 @@ class ProbeSet:
     @property
     def n_mated(self) -> int:
         return len(self.mated)
+
+    @property
+    def fnir_measurable(self) -> bool:
+        """False when this gallery has no mated probes (MLDATA-09 empty cell)."""
+        return bool(self.mated)
 
     @property
     def n_nonmated(self) -> int:
@@ -256,7 +265,9 @@ def probes_for(split: GallerySplit, *, gallery: GalleryName | str) -> ProbeSet:
     """Mated / non-mated probes for a 1:N search against ``gallery``.
 
     A subject enrolled only in the *other* gallery yields non-mated probes
-    (EVAL-18 open-set stratum). Raises if that stratum is empty.
+    (EVAL-18 open-set stratum). Raises if that stratum is empty. Empty
+    mated is not raised: ``fnir_measurable`` is False so the caller cannot
+    miss it, and FPI remains independently countable.
     """
     name = GalleryName(gallery)
     if name is GalleryName.G1:
@@ -279,6 +290,9 @@ def probes_for(split: GallerySplit, *, gallery: GalleryName | str) -> ProbeSet:
             f"empty non-mated stratum for gallery {name.value!r}: every probe "
             "has a mate in the searched gallery (EVAL-18)"
         )
+    # Empty mated is a declared-empty FNIR cell, not a construction error:
+    # FPI over `nonmated` stays meaningful. IETPoint.measured owns the
+    # unmeasured-FNIR seam (MLDATA-09). ProbeSet.fnir_measurable is False.
 
     return ProbeSet(
         gallery=name,

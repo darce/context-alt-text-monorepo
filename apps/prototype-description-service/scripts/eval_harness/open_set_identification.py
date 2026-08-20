@@ -12,6 +12,8 @@ denominator is ``n_enrolled_gallery_subjects`` supplied by the caller — fixed
 outside the system (enrolled gallery size), not a volume the detector mints.
 EVAL-16: a mated probe with ``detected=False`` is an FNIR miss; detection sits
 inside the identification error budget.
+MLDATA-09: empty mated is an unmeasured cell (``measured=False``, ``fnir=None``),
+never FNIR 0.0. FPI stays an integer count and is still reported.
 """
 
 from __future__ import annotations
@@ -35,12 +37,26 @@ class IETPoint:
     """FNIR vs FPI at one score threshold (Identification Error Tradeoff)."""
 
     tau: float
-    fnir: float
+    fnir: float | None
     fpi: int
     n_mated: int
     n_fnir_misses: int
     n_nonmated: int
+    measured: bool
     n_enrolled_gallery_subjects: int | None = None
+
+    def __post_init__(self) -> None:
+        if self.measured:
+            if self.fnir is None:
+                raise ValueError("measured IETPoint requires fnir")
+            if self.n_mated <= 0:
+                raise ValueError("measured IETPoint requires n_mated > 0")
+        else:
+            if self.fnir is not None:
+                # Unmeasured FNIR must not look like a perfect 0.0 (MLDATA-09).
+                raise ValueError("unmeasured IETPoint must not carry an FNIR number")
+            if self.n_mated != 0:
+                raise ValueError("unmeasured IETPoint requires n_mated == 0")
 
     @property
     def fpi_per_enrolled_subject(self) -> float | None:
@@ -56,6 +72,12 @@ class IETPoint:
             return None
         return self.fpi / n
 
+    def format_fnir(self) -> str:
+        """Render FNIR; unmeasured cells are never a number (MLDATA-09)."""
+        if not self.measured or self.fnir is None:
+            return "not measured"
+        return f"{self.fnir:.3f}"
+
 
 def _is_fnir_miss(search: SearchResult, *, tau: float) -> bool:
     """True when a mated search does not return its mate at or above ``tau``."""
@@ -70,6 +92,8 @@ def _is_fnir_miss(search: SearchResult, *, tau: float) -> bool:
 
 def _is_fpi(search: SearchResult, *, tau: float) -> bool:
     """True when a non-mated search returns rank-1 with score strictly > ``tau``."""
+    if search.true_name is not None:
+        raise ValueError("nonmated SearchResult requires true_name is None")
     if not search.detected:
         return False
     if search.top1_name is None or search.top1_score is None:
@@ -88,7 +112,8 @@ def fnir_fpi_at_threshold(
 
     FNIR: proportion of ``mated`` searches that do not return the mated gallery
     template at or above ``tau``. Undetected mated probes are misses (EVAL-16).
-    Empty ``mated`` → FNIR 0.0 (no ZeroDivisionError).
+    Empty ``mated`` → ``measured=False``, ``fnir=None`` (MLDATA-09: unmeasured
+    is not a perfect score). FPI is still counted.
 
     FPI: integer count of ``nonmated`` searches returning a rank-1 candidate
     with score > ``tau``. Not a rate over ``len(nonmated)`` (EVAL-19).
@@ -98,7 +123,8 @@ def fnir_fpi_at_threshold(
 
     n_mated = len(mated)
     n_misses = sum(1 for search in mated if _is_fnir_miss(search, tau=tau))
-    fnir = 0.0 if n_mated == 0 else n_misses / n_mated
+    measured = n_mated > 0
+    fnir: float | None = None if not measured else n_misses / n_mated
     fpi = sum(1 for search in nonmated if _is_fpi(search, tau=tau))
     return IETPoint(
         tau=float(tau),
@@ -107,6 +133,7 @@ def fnir_fpi_at_threshold(
         n_mated=n_mated,
         n_fnir_misses=n_misses,
         n_nonmated=len(nonmated),
+        measured=measured,
         n_enrolled_gallery_subjects=n_enrolled_gallery_subjects,
     )
 

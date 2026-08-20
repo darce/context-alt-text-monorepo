@@ -114,6 +114,35 @@ def test_undetected_mated_probe_counts_as_fnir_miss():
     assert with_miss.fnir > detected_only.fnir
 
 
+def test_detected_false_with_mate_score_is_fnir_miss():
+    """EVAL-16: detection miss counts even when a mate score is present.
+
+    The None-score fallback must not be the only path that marks this a miss;
+    otherwise deleting ``if not search.detected`` still passes.
+    """
+    mated = [
+        SearchResult(detected=False, top1_score=0.99, top1_name="Bob", true_name="Bob")
+    ]
+    point = fnir_fpi_at_threshold(mated=mated, nonmated=(), tau=0.50)
+    assert point.measured is True
+    assert point.n_fnir_misses == 1
+    assert point.fnir == pytest.approx(1.0)
+
+
+def test_nonmated_with_true_name_raises():
+    mated = [_hit("Alice", 0.90)]
+    misfiled = SearchResult(
+        detected=True, top1_score=0.90, top1_name="Alice", true_name="Alice"
+    )
+    with pytest.raises(ValueError, match="true_name is None"):
+        fnir_fpi_at_threshold(mated=mated, nonmated=[misfiled], tau=0.50)
+    misfiled_undetected = SearchResult(
+        detected=False, top1_score=None, top1_name=None, true_name="Bob"
+    )
+    with pytest.raises(ValueError, match="true_name is None"):
+        fnir_fpi_at_threshold(mated=mated, nonmated=[misfiled_undetected], tau=0.50)
+
+
 def test_fnir_fpi_monotone_in_tau():
     mated = [
         _hit("Alice", 0.80),
@@ -138,26 +167,69 @@ def test_fnir_fpi_monotone_in_tau():
     assert fpis[0] > fpis[-1]
 
 
-def test_empty_mated_and_empty_nonmated_do_not_divide_by_zero():
-    hit = _hit("Alice", 0.90)
+def test_empty_mated_is_unmeasured_not_perfect():
+    """MLDATA-09: n_mated==0 is a declared-empty cell, never FNIR 0.0."""
     stranger = _nonmated_hit("Alice", 0.80)
     empty_mated = fnir_fpi_at_threshold(mated=(), nonmated=[stranger], tau=0.50)
-    assert empty_mated.fnir == 0.0
+    assert empty_mated.measured is False
+    assert empty_mated.fnir is None
     assert empty_mated.n_fnir_misses == 0
+    assert empty_mated.n_mated == 0
     assert empty_mated.fpi == 1
+    assert empty_mated.format_fnir() == "not measured"
+    hit = _hit("Alice", 0.90)
     empty_nonmated = fnir_fpi_at_threshold(mated=[hit], nonmated=(), tau=0.50)
+    assert empty_nonmated.measured is True
     assert empty_nonmated.fnir == pytest.approx(0.0)
     assert empty_nonmated.fpi == 0
+    assert empty_nonmated.format_fnir() == "0.000"
     both_empty = fnir_fpi_at_threshold(mated=(), nonmated=(), tau=0.50)
-    assert both_empty.fnir == 0.0
+    assert both_empty.measured is False
+    assert both_empty.fnir is None
     assert both_empty.fpi == 0
+    assert both_empty.format_fnir() == "not measured"
     both_empty_enrolled = fnir_fpi_at_threshold(
         mated=(),
         nonmated=(),
         tau=0.50,
         n_enrolled_gallery_subjects=0,
     )
+    assert both_empty_enrolled.measured is False
+    assert both_empty_enrolled.fnir is None
     assert both_empty_enrolled.fpi_per_enrolled_subject is None
+
+
+def test_unmeasured_iet_point_rejects_numeric_fnir():
+    with pytest.raises(ValueError, match="must not carry an FNIR number"):
+        IETPoint(
+            tau=0.50,
+            fnir=0.0,
+            fpi=1,
+            n_mated=0,
+            n_fnir_misses=0,
+            n_nonmated=1,
+            measured=False,
+        )
+    with pytest.raises(ValueError, match="requires fnir"):
+        IETPoint(
+            tau=0.50,
+            fnir=None,
+            fpi=0,
+            n_mated=1,
+            n_fnir_misses=0,
+            n_nonmated=0,
+            measured=True,
+        )
+    with pytest.raises(ValueError, match="n_mated == 0"):
+        IETPoint(
+            tau=0.50,
+            fnir=None,
+            fpi=0,
+            n_mated=1,
+            n_fnir_misses=0,
+            n_nonmated=0,
+            measured=False,
+        )
 
 
 def test_fpi_uses_strict_gt_fnir_uses_at_or_above():

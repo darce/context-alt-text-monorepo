@@ -433,3 +433,62 @@ def test_non_string_gallery_subject_id_is_rejected() -> None:
             },
             probe_templates=(),
         )
+
+
+def test_post_normalisation_key_collision_raises_with_offending_raw_value() -> None:
+    """BR-59: a silent overwrite would drop a gallery mate from the FNIR denominator (EVAL-18)."""
+    colliding: dict[str, Template] = {}
+    colliding["Alice"] = Template(template_id="a1", subject_id="Alice", media_ids=(1,))
+    colliding["Alice "] = Template(template_id="a2", subject_id="Alice ", media_ids=(3,))
+    with pytest.raises(GallerySplitError) as caught:
+        GallerySplit(
+            g1=colliding,
+            g2=_legal_other_gallery(),
+            probe_templates=(),
+        )
+    message = str(caught.value)
+    assert "collides after normalisation" in message
+    assert repr("Alice ") in message
+
+
+def test_distinct_stripped_gallery_keys_are_kept() -> None:
+    """Whitespace-padded keys that strip to different subjects are not a collision."""
+    split = GallerySplit(
+        g1={
+            "Alice": Template(template_id="a1", subject_id="Alice", media_ids=(1,)),
+            "Bob ": Template(template_id="b1", subject_id="Bob ", media_ids=(3,)),
+        },
+        g2=_legal_other_gallery(),
+        probe_templates=(
+            Template(template_id="p2", subject_id="Ann ", media_ids=(5,)),
+            Template(template_id="p1", subject_id="Ann", media_ids=(4,)),
+        ),
+    )
+    assert list(split.g1) == ["Alice", "Bob"]
+    assert split.g1["Bob"].subject_id == "Bob"
+    assert split.g1["Bob"].template_id == "b1"
+    assert [(t.subject_id, t.template_id) for t in split.probe_templates] == [
+        ("Ann", "p1"),
+        ("Ann", "p2"),
+    ]
+
+
+def test_gallery_and_probe_order_are_sorted_independent_of_insertion() -> None:
+    """BR-60: EVAL-13 pins gallery keys and probe templates to sorted order, not insertion."""
+    g1: dict[str, Template] = {}
+    g1["Bob"] = Template(template_id="b1", subject_id="Bob", media_ids=(1,))
+    g1["Alice"] = Template(template_id="a1", subject_id="Alice", media_ids=(2,))
+    probes = (
+        Template(template_id="z1", subject_id="Zoe", media_ids=(3,)),
+        Template(template_id="n1", subject_id="Ann", media_ids=(4,)),
+    )
+    split = GallerySplit(
+        g1=g1,
+        g2=_legal_other_gallery(),
+        probe_templates=probes,
+    )
+    assert list(split.g1) == ["Alice", "Bob"]
+    assert [(t.subject_id, t.template_id) for t in split.probe_templates] == [
+        ("Ann", "n1"),
+        ("Zoe", "z1"),
+    ]

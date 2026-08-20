@@ -356,6 +356,54 @@ def test_deff_then_fpc_ordering_on_labeled_subject_a_not_planning_n():
     assert planning.n != record.n
 
 
+_SCOPE_DOC = _REPO_ROOT / "docs/scopes/descqual-2-fact-annotation-pilot.md"
+
+
+def _fence_containing(text: str, needle: str) -> str:
+    parts = text.split("```")
+    for index, block in enumerate(parts):
+        if index % 2 == 1 and needle in block:
+            return block.strip()
+    raise AssertionError(f"no fenced block contains {needle!r}")
+
+
+def test_published_cells_regenerate_from_fir12_selection_manifest():
+    # BR-30: published n must come from the frozen frame through shipped
+    # projectors, not a test-module Kish-a name.
+    entries = json.loads(_FIR12_MANIFEST.read_text())["entries"]
+    frame = project_frame_psu_image_counts(entries)
+    a = kish_effective_cluster_size(frame.sizes)
+    assert _FIR12_MANIFEST.name == "fir12-selection-v1.json"
+    assert frame.n_entries == 640
+    assert a == pytest.approx(10.846875)
+    assert size_for_margin(margin=0.10, population=640, cluster_size=a, icc=0.044).n == 114
+    assert size_for_margin(margin=0.10, population=640, cluster_size=a, icc=0.361).n == 261
+    assert size_for_margin(margin=0.10, population=640, cluster_size=a, icc=0.2).n == 198
+    assert size_for_margin(margin=0.10, population=640, cluster_size=a, icc=0.3).n == 239
+    assert size_for_margin(margin=0.10, population=640, cluster_size=a, icc=1.0).n == 397
+
+
+def test_scope_doc_ci_n_fence_runs_as_written(monkeypatch: pytest.MonkeyPatch):
+    doc = _SCOPE_DOC.read_text()
+    assert "FRAME_PSU_KISH_A" not in doc
+    assert "WHOLE_FRAME_KISH_A" not in doc
+    block = _fence_containing(doc, "icc=0.044")
+    assert "benchmarks/manifests/fir12-selection-v1.json" in block
+    assert "project_frame_psu_image_counts" in block
+    assert "kish_effective_cluster_size" in block
+    assert "size_for_margin" in block
+    assert "cluster_size=a" in block
+    monkeypatch.chdir(_REPO_ROOT)
+    monkeypatch.syspath_prepend(str(_REPO_ROOT / "apps/prototype-description-service"))
+    namespace: dict[str, object] = {}
+    exec(compile(block, str(_SCOPE_DOC), "exec"), namespace)
+    a = namespace["a"]
+    assert isinstance(a, float)
+    assert a == pytest.approx(10.846875)
+    assert size_for_margin(margin=0.10, population=640, cluster_size=a, icc=0.044).n == 114
+    assert size_for_margin(margin=0.10, population=640, cluster_size=a, icc=0.361).n == 261
+
+
 def test_allocate_sums_to_n():
     allocation = allocate(strata_sizes=FIR12_STRATA, n=84)
     assert sum(allocation.values()) == 84

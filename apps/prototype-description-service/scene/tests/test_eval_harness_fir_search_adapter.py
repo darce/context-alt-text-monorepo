@@ -937,17 +937,59 @@ def _carol_with_last_unmatched_alice(
     return item, [_gt(cx, cy, w, h, "Carol")]
 
 
-def test_out_of_range_unmatched_detection_index_raises() -> None:
+@pytest.mark.parametrize("gallery", list(GalleryName), ids=lambda g: g.value)
+def test_blank_roster_subject_id_raises(
+    tmp_path: Path, gallery: GalleryName
+) -> None:
+    plan = _two_subject_plan(tmp_path)
+    raw = plan.split.g1 if gallery is GalleryName.G1 else plan.split.g2
+    assert _roster(plan, gallery)
+    blank = "  "
+    raw[blank] = next(iter(raw.values()))
+    with pytest.raises(
+        FirBakeoffRunError,
+        match=rf"gallery {gallery.value} subject_id={blank!r} is blank",
+    ):
+        _roster(plan, gallery)
+
+
+def test_roster_keeps_internal_whitespace_subject_id(tmp_path: Path) -> None:
+    plan = _two_subject_plan(tmp_path)
+    name = "Alice Smith"
+    plan.split.g1[name] = next(iter(plan.split.g1.values()))
+    assert name in _roster(plan, GalleryName.G1)
+    assert "Alice" in _roster(plan, GalleryName.G1)
+
+
+@pytest.mark.parametrize(
+    "index",
+    [-1, 2],
+    ids=["negative", "over_large"],
+)
+def test_out_of_range_unmatched_detection_index_raises(index: int) -> None:
     vecs = _vecs()
-    item = _item(13, [_face([0.0, 0.0, 20.0, 20.0], vecs["Carol"])])
+    item = _item(
+        7,
+        [
+            _face([0.0, 0.0, 20.0, 20.0], vecs["Carol"]),
+            _face([40.0, 0.0, 20.0, 20.0], vecs["Alice"]),
+        ],
+    )
+    assert len(item["faces"]) == 2
     assoc = AssociationResult(
         pairs=(),
-        unmatched_detections=(len(item["faces"]),),
+        unmatched_detections=(index,),
         unmatched_gt=(),
         ious=(),
     )
-    with pytest.raises(FirBakeoffRunError, match=r"media_id=13"):
+    with pytest.raises(FirBakeoffRunError, match=rf"index={index}") as caught:
         _unmatched_detection_embeddings(item, assoc)
+    message = str(caught.value)
+    assert (
+        f"unmatched_detections index={index} is out of range for media_id=7"
+        in message
+    )
+    assert "(2 faces)" in message
 
 
 def test_last_in_range_unmatched_detection_reaches_overall_nonmated(

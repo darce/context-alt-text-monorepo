@@ -223,15 +223,14 @@ def _normalise_unit(unit: MatedSearchUnit) -> MatedSearchUnit:
 
 def _roster(plan: RunPlan, gallery: GalleryName) -> Mapping[str, Template]:
     raw = plan.split.g1 if gallery is GalleryName.G1 else plan.split.g2
-    normalised: dict[str, Template] = {}
+    out: dict[str, Template] = {}
     for subject_id, template in raw.items():
-        key = _identity_key(subject_id)
-        if key is None:
+        if _identity_key(subject_id) is None:
             raise FirBakeoffRunError(
                 f"gallery {gallery.value} subject_id={subject_id!r} is blank"
             )
-        normalised[key] = template
-    return normalised
+        out[subject_id] = template
+    return out
 
 
 def _enrolled_media_ids(roster: Mapping[str, Template]) -> frozenset[int]:

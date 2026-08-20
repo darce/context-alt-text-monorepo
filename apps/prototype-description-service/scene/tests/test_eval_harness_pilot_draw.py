@@ -6,8 +6,10 @@ import ast
 import inspect
 import json
 import math
+import random
 import re
 from collections.abc import Mapping, Sequence
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
@@ -460,14 +462,17 @@ _ICC_PROBE_GROUPS: tuple[tuple[tuple[float, ...], ...], ...] = (
     ((1.0, 1.0, 1.0), (0.0, 0.0, 0.0), (1.0, 0.0, 1.0)),
     ((2.0, 3.0, 4.0), (8.0, 9.0, 10.0), (0.0, 1.0, 2.0), (20.0, 21.0, 22.0)),
 )
+_GROUPS_PARAM_NAMES = frozenset({"groups", "clusters", "cluster", "icc_groups", "ys"})
 _UNCALLABLE = object()
+_UNPROBEABLE = object()
+_MISSING = object()
 
 
-def _owned_callables() -> list[tuple[str, object]]:
+def _owned_callables(module: object = pilot_draw_mod) -> list[tuple[str, object]]:
     return [
         (name, obj)
-        for name, obj in inspect.getmembers(pilot_draw_mod)
-        if callable(obj) and inspect.getmodule(obj) is pilot_draw_mod
+        for name, obj in inspect.getmembers(module)
+        if callable(obj) and inspect.getmodule(obj) is module
     ]
 
 
@@ -623,53 +628,212 @@ def _numeric_leaves(value: object, *, depth: int = 0) -> list[float]:
     return leaves
 
 
-def _try_call_with_groups(fn: object, groups: Sequence[Sequence[float]]) -> object:
-    as_lists = [list(group) for group in groups]
-    as_tuples = tuple(tuple(group) for group in groups)
-    payloads: list[object] = [as_tuples, as_lists, groups]
-    attempts: list[tuple[object, ...]] = [(payload,) for payload in payloads]
-    kwargs_attempts: list[dict[str, object]] = []
+def _required_params(fn: object) -> list[inspect.Parameter] | None:
     try:
         sig = inspect.signature(fn)  # type: ignore[arg-type]
     except (TypeError, ValueError):
-        sig = None
-    if sig is not None:
-        required = [
-            param
-            for param in sig.parameters.values()
-            if param.default is param.empty
-            and param.kind
-            in (param.POSITIONAL_ONLY, param.POSITIONAL_OR_KEYWORD, param.KEYWORD_ONLY)
-            and param.name not in {"self", "cls"}
-        ]
-        if len(required) == 1:
-            for payload in payloads:
-                kwargs_attempts.append({required[0].name: payload})
-    for args in attempts:
-        try:
-            return fn(*args)  # type: ignore[operator]
-        except Exception:
-            continue
-    for kwargs in kwargs_attempts:
-        try:
-            return fn(**kwargs)  # type: ignore[operator]
-        except Exception:
-            continue
-    return _UNCALLABLE
+        return None
+    return [
+        param
+        for param in sig.parameters.values()
+        if param.default is param.empty
+        and param.kind
+        in (param.POSITIONAL_ONLY, param.POSITIONAL_OR_KEYWORD, param.KEYWORD_ONLY)
+        and param.name not in {"self", "cls"}
+    ]
 
 
-def _returns_one_way_icc(fn: object) -> bool:
+def _annotation_str(annotation: object) -> str:
+    if annotation is inspect.Parameter.empty:
+        return ""
+    if isinstance(annotation, str):
+        return annotation.strip()
+    return getattr(annotation, "__name__", str(annotation)).strip()
+
+
+def _probe_fixture_map() -> dict[str, object]:
+    payload = _payload()
+    entries_by_sha256 = _entries_by_sha256(payload)
+    return {
+        "pilot": _draw(),
+        "entries_by_sha256": entries_by_sha256,
+        "selection_manifest_path": _FIR12_MANIFEST,
+        "n": _PILOT_N,
+        "seed": _PILOT_SEED,
+        "gold_n": 3,
+        "batch_id": "pilot-2026-08-20",
+        "kind": GoldKind.RANDOM,
+        "rng": random.Random(_PILOT_SEED),
+        "candidates": sorted(entries_by_sha256)[:8],
+        "used": set(),
+        "entries": payload["entries"],
+        "entry": next(iter(entries_by_sha256.values())),
+        "name": "n",
+        "value": _PILOT_N,
+        "raw": StratumName.E_CLEAN.value,
+        "label": "stratum",
+    }
+
+
+def _typed_fixture(
+    annotation: str, fixtures: Mapping[str, object], groups: object
+) -> object:
+    key = annotation.replace(" ", "")
+    if key == "str":
+        return fixtures["batch_id"]
+    if key == "int":
+        return fixtures["n"]
+    if key in {"Path", "str|Path", "Path|str"}:
+        return fixtures["selection_manifest_path"]
+    if key == "PilotDraw":
+        return fixtures["pilot"]
+    if key == "GoldKind":
+        return fixtures["kind"]
+    if "Random" in key:
+        return fixtures["rng"]
+    if key.startswith("set["):
+        return set()
+    if key in {"Sequence[str]", "list[str]", "tuple[str,...]", "tuple[str, ...]"}:
+        return fixtures["candidates"]
+    if "Mapping" in key:
+        return fixtures["entries_by_sha256"]
+    if key == "object":
+        return groups
+    return _MISSING
+
+
+def _place_arg(
+    param: inspect.Parameter, value: object
+) -> tuple[tuple[object, ...], dict[str, object]]:
+    if param.kind is param.KEYWORD_ONLY:
+        return (), {param.name: value}
+    return (value,), {}
+
+
+def _bind_required_args(
+    fn: object,
+    groups: Sequence[Sequence[float]],
+    fixtures: Mapping[str, object],
+) -> tuple[tuple[object, ...], dict[str, object]] | None:
+    required = _required_params(fn)
+    if required is None:
+        return None
+    as_tuples = tuple(tuple(group) for group in groups)
+    if len(required) == 1:
+        args, kwargs = _place_arg(required[0], as_tuples)
+        return args, kwargs
+    args: list[object] = []
+    kwargs: dict[str, object] = {}
+    for param in required:
+        value: object = _MISSING
+        if param.name in _GROUPS_PARAM_NAMES:
+            value = as_tuples
+        elif param.name in fixtures:
+            bound = fixtures[param.name]
+            value = set(bound) if isinstance(bound, set) else bound
+        else:
+            value = _typed_fixture(_annotation_str(param.annotation), fixtures, as_tuples)
+        if value is _MISSING:
+            # BR-51: a required param we cannot fill is the estimator hiding place, not a skip.
+            return None
+        extra_args, extra_kwargs = _place_arg(param, value)
+        args.extend(extra_args)
+        kwargs.update(extra_kwargs)
+    return tuple(args), kwargs
+
+
+def _try_call_with_groups(
+    fn: object,
+    groups: Sequence[Sequence[float]],
+    fixtures: Mapping[str, object],
+) -> object:
+    bound = _bind_required_args(fn, groups, fixtures)
+    if bound is None:
+        return _UNPROBEABLE
+    args, kwargs = bound
+    try:
+        return fn(*args, **kwargs)  # type: ignore[operator]
+    except Exception:
+        return _UNCALLABLE
+
+
+def _matches_one_way_icc(got: object, groups: Sequence[Sequence[float]]) -> bool:
+    if got is _UNCALLABLE or got is _UNPROBEABLE:
+        return False
+    want = _one_way_icc(groups)
+    return any(
+        math.isclose(number, want, rel_tol=1e-9, abs_tol=1e-12)
+        for number in _numeric_leaves(got)
+    )
+
+
+def _returns_one_way_icc(
+    fn: object, fixtures: Mapping[str, object] | None = None
+) -> bool:
+    probe_fixtures = fixtures if fixtures is not None else _probe_fixture_map()
     for groups in _ICC_PROBE_GROUPS:
-        got = _try_call_with_groups(fn, groups)
-        if got is _UNCALLABLE:
+        got = _try_call_with_groups(fn, groups, probe_fixtures)
+        if got is _UNCALLABLE or got is _UNPROBEABLE:
             return False
-        want = _one_way_icc(groups)
-        if not any(
-            math.isclose(number, want, rel_tol=1e-9, abs_tol=1e-12)
-            for number in _numeric_leaves(got)
-        ):
+        if not _matches_one_way_icc(got, groups):
             return False
     return True
+
+
+def _reliability_estimator_violations(
+    module: object = pilot_draw_mod,
+) -> tuple[list[str], list[str]]:
+    fixtures = _probe_fixture_map()
+    icc_offenders: list[str] = []
+    unprobeable: list[str] = []
+    for name, obj in _owned_callables(module):
+        if inspect.isclass(obj):
+            continue
+        first = _try_call_with_groups(obj, _ICC_PROBE_GROUPS[0], fixtures)
+        if first is _UNPROBEABLE:
+            unprobeable.append(name)
+            continue
+        if _returns_one_way_icc(obj, fixtures):
+            icc_offenders.append(name)
+    tree = ast.parse(Path(module.__file__).read_text())  # type: ignore[union-attr]
+    for name, fn in _isolated_functions(tree):
+        first = _try_call_with_groups(fn, _ICC_PROBE_GROUPS[0], fixtures)
+        if first is _UNPROBEABLE:
+            unprobeable.append(f"isolated:{name}")
+            continue
+        if _returns_one_way_icc(fn, fixtures):
+            icc_offenders.append(f"isolated:{name}")
+    return icc_offenders, unprobeable
+
+
+def _assert_no_reliability_estimator(module: object = pilot_draw_mod) -> None:
+    icc_offenders, unprobeable = _reliability_estimator_violations(module)
+    assert unprobeable == [], (
+        "module-level callable(s) cannot be exercised by the ICC probe from "
+        "known fixtures; an unprobeable signature is the BR-51 hiding place "
+        "(AUDIT-11, TEST-15): "
+        f"{unprobeable}"
+    )
+    assert icc_offenders == [], (
+        "pilot module callables returned a one-way ICC estimate, which the "
+        "cost-and-instrument pilot is not licensed to produce (BR-17, AUDIT-11): "
+        f"{icc_offenders}"
+    )
+
+
+@contextmanager
+def _inject_module_callable(source: str, name: str):
+    if hasattr(pilot_draw_mod, name):
+        raise RuntimeError(f"{name} already exists on pilot_draw")
+    exec(source, pilot_draw_mod.__dict__)
+    try:
+        injected = getattr(pilot_draw_mod, name, None)
+        if not callable(injected):
+            raise RuntimeError(f"exec did not define callable {name}")
+        yield injected
+    finally:
+        if hasattr(pilot_draw_mod, name):
+            delattr(pilot_draw_mod, name)
 
 
 def _isolated_functions(tree: ast.AST) -> list[tuple[str, object]]:
@@ -1058,24 +1222,44 @@ def test_annotation_packet_row_schema_is_exact():
 
 
 def test_no_module_callable_returns_one_way_icc():
-    offenders = [
-        name
-        for name, obj in _owned_callables()
-        if not inspect.isclass(obj) and _returns_one_way_icc(obj)
-    ]
-    tree = ast.parse(Path(pilot_draw_mod.__file__).read_text())
-    isolated = [
-        name for name, fn in _isolated_functions(tree) if _returns_one_way_icc(fn)
-    ]
-    assert offenders == [], (
-        "pilot module callables returned a one-way ICC estimate, which the "
-        "cost-and-instrument pilot is not licensed to produce (BR-17, AUDIT-11): "
-        f"{offenders}"
+    _assert_no_reliability_estimator()
+
+
+_COORDINATOR_ICC_EXTRA_ARG = """\
+def _agreement_ratio2(groups, weights):
+    flat = [x for group in groups for x in group]
+    n = len(flat)
+    k = len(groups)
+    grand = sum(flat) / n
+    msb = sum(len(group) * (sum(group) / len(group) - grand) ** 2 for group in groups) / (
+        k - 1
     )
-    assert isolated == [], (
-        "a function defined in pilot_draw returned a one-way ICC estimate "
-        f"(BR-17, AUDIT-11): {isolated}"
-    )
+    msw = sum(
+        (value - sum(group) / len(group)) ** 2 for group in groups for value in group
+    ) / (n - k)
+    mean_size = n / k
+    return (msb - msw) / (msb + (mean_size - 1) * msw)
+"""
+
+_ORDINARY_EXTRA_ARG_HELPER = """\
+def _join_labels(left: str, right: str) -> str:
+    return f"{left}:{right}"
+"""
+
+
+def test_estimator_with_extra_required_parameter_is_rejected():
+    with _inject_module_callable(_COORDINATOR_ICC_EXTRA_ARG, "_agreement_ratio2"):
+        icc_offenders, unprobeable = _reliability_estimator_violations()
+        assert "_agreement_ratio2" in unprobeable
+        assert "_agreement_ratio2" not in icc_offenders
+
+
+def test_ordinary_helper_with_extra_required_args_is_allowed():
+    with _inject_module_callable(_ORDINARY_EXTRA_ARG_HELPER, "_join_labels"):
+        icc_offenders, unprobeable = _reliability_estimator_violations()
+        assert "_join_labels" not in unprobeable
+        assert "_join_labels" not in icc_offenders
+        _assert_no_reliability_estimator()
 
 
 def test_gold_draw_is_invariant_to_catalog_insertion_order():

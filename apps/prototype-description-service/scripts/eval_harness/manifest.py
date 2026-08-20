@@ -449,9 +449,11 @@ class ConfirmationSource(StrEnum):
     AGENT = "agent"
 
 
-# Non-agent confirmation is treated as human gold (MLDATA-04). An unattributed
-# "operator-verified" fact is the provenance hole this set exists to close.
-HUMAN_CONFIRMATION_SOURCES: frozenset[str] = frozenset({ConfirmationSource.OPERATOR})
+# Non-agent confirmation is human gold (MLDATA-04). Derived from the enum so a
+# new human source is gold and a typo cannot be promoted (sr-007).
+HUMAN_CONFIRMATION_SOURCES: frozenset[ConfirmationSource] = frozenset(
+    member for member in ConfirmationSource if member is not ConfirmationSource.AGENT
+)
 
 
 class PreAdjudicationLabel(BaseModel):
@@ -490,7 +492,7 @@ class ReferenceFact(BaseModel):
     kind: FactKind
     polarity: FactPolarity = FactPolarity.TRUE
     phrases: list[str] = Field(default_factory=list)
-    confirmed_by: str | None = None  # operator | agent
+    confirmed_by: ConfirmationSource | None = None
     annotator_id: str | None = None
     annotation_batch: str | None = None
     annotated_at: str | None = None
@@ -510,11 +512,9 @@ class ReferenceFact(BaseModel):
 
     @model_validator(mode="after")
     def _human_confirmation_requires_annotator(self) -> ReferenceFact:
-        source = (self.confirmed_by or "").strip()
-        is_human = source in HUMAN_CONFIRMATION_SOURCES or (
-            bool(source) and source != ConfirmationSource.AGENT
-        )
-        if is_human and not (self.annotator_id and self.annotator_id.strip()):
+        if self.confirmed_by in HUMAN_CONFIRMATION_SOURCES and not (
+            self.annotator_id and self.annotator_id.strip()
+        ):
             raise ValueError(
                 "human-confirmed reference_fact requires annotator_id "
                 f"(confirmed_by={self.confirmed_by!r})"

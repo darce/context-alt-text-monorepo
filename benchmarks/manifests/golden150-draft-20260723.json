@@ -7534,7 +7534,8 @@
           "phrases": [
             "SADIST"
           ],
-          "confirmed_by": "operator"
+          "confirmed_by": "operator",
+          "annotator_id": "pre-program-operator"
         },
         {
           "text": "The bracelet does NOT read 'SAINT' (model caption error trap)",
@@ -7543,7 +7544,8 @@
           "phrases": [
             "SAINT"
           ],
-          "confirmed_by": "operator"
+          "confirmed_by": "operator",
+          "annotator_id": "pre-program-operator"
         }
       ]
     }

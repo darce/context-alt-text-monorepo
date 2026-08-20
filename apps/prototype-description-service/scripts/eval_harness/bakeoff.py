@@ -30,6 +30,12 @@ ALTQ-1 Slice 3 adds ``--weave-bench <run_record.json>``: replay the committed
 pass-1 facts of an existing ``--two-pass`` run through the pass-2 weave
 TEXT-ONLY (no image part) against this endpoint — the CPU synthesis cell.
 Provenance carries ``weave_bench: true`` + the source record's identity/sha.
+
+VLM6-LEX adds ``--depiction-lexicon <canon-checkout>``: the A/B arm that
+appends the heuristics-canon depiction rules (ATTRIB/BOUND) to the
+prose-writing pass. Off by default, so the lexicon-off leg is byte-identical
+to every run record already on disk and the delta is attributable to the
+lexicon alone. See ``depiction_lexicon`` for the loader and its provenance.
 """
 
 from __future__ import annotations
@@ -60,6 +66,14 @@ from .cli import (
     _manifest_sha,
     fetch_run_record,
     prune_out_dir,
+)
+from .depiction_lexicon import (
+    DETAIL_LEVELS,
+    KNOWN_FAMILIES,
+    KNOWN_TIERS,
+    DepictionLexicon,
+    LexiconError,
+    load_depiction_lexicon,
 )
 from .manifest import GoldenManifest, ManifestError, load_manifest
 from .remote_client import RemoteClientError, RemoteSceneClient
@@ -368,6 +382,7 @@ def _stamp_pipeline_provenance(
     dual_length: bool,
     face_gate: bool,
     eval_mode: str,
+    depiction_lexicon: DepictionLexicon | None = None,
 ) -> None:
     """Stamp the pipeline config into run-record provenance (attribution, as --eval-mode).
 
@@ -383,6 +398,8 @@ def _stamp_pipeline_provenance(
         provenance["face_gate"] = True
     if eval_mode != "standard":
         provenance["eval_mode"] = eval_mode
+    if depiction_lexicon is not None:
+        provenance["depiction_lexicon"] = depiction_lexicon.provenance()
 
 
 class BakeoffClient(RemoteSceneClient):
@@ -415,6 +432,7 @@ class BakeoffClient(RemoteSceneClient):
         dual_length: bool = False,
         face_gate: bool = False,
         face_fixtures: dict[int, list[dict[str, Any]]] | None = None,
+        depiction_lexicon: DepictionLexicon | None = None,
     ) -> None:
         kwargs: dict[str, Any] = {"transport": transport}
         if timeout_s is not None:
@@ -456,6 +474,7 @@ class BakeoffClient(RemoteSceneClient):
         self.dual_length = dual_length
         self.face_gate = face_gate
         self.face_fixtures = face_fixtures or {}
+        self.depiction_lexicon = depiction_lexicon
 
     def describe(
         self,
@@ -592,8 +611,19 @@ class BakeoffClient(RemoteSceneClient):
         return context_pack, stamps
 
     def _system_prompt(self) -> str:
+        """Variant system prompt, plus the canon depiction rules when the A/B arm is on.
+
+        Appended here rather than folded into a PROMPT_VARIANTS entry so the
+        lexicon composes with every variant instead of doubling the registry,
+        and so the lexicon-off leg keeps the exact prompt string earlier run
+        records were produced with. Pass-1 is deliberately excluded — it emits
+        objective JSON facts and asserts nothing about who is depicted, so the
+        measured delta belongs to the pass that makes claims."""
         variant = PROMPT_VARIANTS[self.prompt_variant]
-        return variant.system_long if self.dual_length else variant.system
+        system = variant.system_long if self.dual_length else variant.system
+        if self.depiction_lexicon is not None:
+            system = f"{system}\n\n{self.depiction_lexicon.render()}"
+        return system
 
     def _weave_messages(
         self, facts_raw: str, context_pack: dict[str, Any], *, image_part: dict[str, Any] | None
@@ -920,6 +950,14 @@ def _safe_model_slug(model_id: str) -> str:
     return re.sub(r"[^A-Za-z0-9._-]+", "_", model_id).strip("_") or "model"
 
 
+def _csv_arg(raw: str | None) -> list[str] | None:
+    """Split a comma-separated CLI list; None (flag absent) stays None so the
+    loader can tell "not narrowed" from "narrowed to nothing"."""
+    if raw is None:
+        return None
+    return [part.strip() for part in raw.split(",") if part.strip()]
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(
         prog="bakeoff",
@@ -997,6 +1035,44 @@ def main(argv: list[str] | None = None) -> None:
         ),
     )
     parser.add_argument(
+        "--depiction-lexicon",
+        default=None,
+        metavar="CANON_PATH",
+        help=(
+            "VLM6-LEX A/B arm: append the heuristics-canon depiction rules (ATTRIB/BOUND) to the "
+            "prose-writing system prompt. Takes a canon checkout root or the lexicons/depiction.md "
+            "file itself; the rules are read at run time and never vendored into this repo. Omit it "
+            "for the lexicon-off leg (the byte-identical baseline). Rule ids, sha256 and canon tag "
+            "land in run-record provenance."
+        ),
+    )
+    parser.add_argument(
+        "--lexicon-families",
+        default=None,
+        metavar="FAM[,FAM]",
+        help=f"restrict the injected rules to these canon families (default: all of {','.join(KNOWN_FAMILIES)})",
+    )
+    parser.add_argument(
+        "--lexicon-tiers",
+        default=None,
+        metavar="TIER[,TIER]",
+        help=(
+            "restrict the injected rules by canon tier: B(locker), S(hould), J(udgment). "
+            f"Default: all of {','.join(KNOWN_TIERS)}."
+        ),
+    )
+    parser.add_argument(
+        "--lexicon-detail",
+        choices=DETAIL_LEVELS,
+        default="full",
+        help="full keeps each rule's consequence clause; brief drops it (~20%% fewer prompt tokens)",
+    )
+    parser.add_argument(
+        "--lexicon-version",
+        default=None,
+        help="override the canon version stamped into provenance (default: git describe of the canon checkout)",
+    )
+    parser.add_argument(
         "--weave-bench",
         default=None,
         metavar="RUN_RECORD",
@@ -1021,6 +1097,37 @@ def main(argv: list[str] | None = None) -> None:
                 f"--prompt-variant {args.prompt_variant} already emits the long surface in the weave; "
                 "drop --dual-length"
             )
+
+    lexicon_knobs = {
+        "--lexicon-families": args.lexicon_families,
+        "--lexicon-tiers": args.lexicon_tiers,
+        "--lexicon-version": args.lexicon_version,
+    }
+    orphaned = [flag for flag, value in lexicon_knobs.items() if value is not None]
+    if args.lexicon_detail != "full":
+        orphaned.append("--lexicon-detail")
+    if args.depiction_lexicon is None and orphaned:
+        # rg-008 fail-fast: silently ignoring these would ship a lexicon-off run
+        # that the operator believes was narrowed to a family or tier.
+        sys.exit(f"{' '.join(orphaned)} require --depiction-lexicon; without it no rules are injected")
+
+    depiction_lexicon: DepictionLexicon | None = None
+    if args.depiction_lexicon is not None:
+        try:
+            depiction_lexicon = load_depiction_lexicon(
+                args.depiction_lexicon,
+                families=_csv_arg(args.lexicon_families),
+                tiers=_csv_arg(args.lexicon_tiers),
+                detail=args.lexicon_detail,
+                version=args.lexicon_version,
+            )
+        except LexiconError as exc:
+            sys.exit(f"LexiconError: {exc}")
+        print(
+            f"depiction lexicon: {depiction_lexicon.version} "
+            f"({depiction_lexicon.rule_count_summary()}, {len(depiction_lexicon.render())} chars)",
+            file=sys.stderr,
+        )
 
     if os.environ.get("ACX_EVAL_LIVE") != "1":
         sys.exit("bakeoff fetch requires ACX_EVAL_LIVE=1 (safety gate, as VLM-2A live pattern)")
@@ -1065,6 +1172,7 @@ def main(argv: list[str] | None = None) -> None:
         dual_length=args.dual_length,
         face_gate=args.face_gate,
         face_fixtures=face_fixtures,
+        depiction_lexicon=depiction_lexicon,
     )
     started_at = datetime.now(tz=UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
     stamp = started_at.replace(":", "").replace("-", "").replace("T", "-").rstrip("Z")
@@ -1120,6 +1228,7 @@ def main(argv: list[str] | None = None) -> None:
             dual_length=args.dual_length,
             face_gate=args.face_gate,
             eval_mode=args.eval_mode,
+            depiction_lexicon=depiction_lexicon,
         )
         aborted_path.write_text(json.dumps(exc.partial_record, indent=2, sort_keys=True) + "\n")
         sys.exit(f"BoundedStallError: {exc} — partial record saved to {aborted_path}")
@@ -1133,6 +1242,7 @@ def main(argv: list[str] | None = None) -> None:
         dual_length=args.dual_length,
         face_gate=args.face_gate,
         eval_mode=args.eval_mode,
+        depiction_lexicon=depiction_lexicon,
     )
     record_path.write_text(json.dumps(record, indent=2, sort_keys=True) + "\n")
     prune_out_dir(str(out_dir), keep=args.keep)

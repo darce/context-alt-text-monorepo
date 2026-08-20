@@ -388,16 +388,24 @@ def test_empty_gallery_raises(tmp_path: Path) -> None:
         )
 
 
-def test_two_boxes_same_subject_one_search_max_score(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "high_first",
+    [True, False],
+    ids=["high_then_low", "low_then_high"],
+)
+def test_two_boxes_same_subject_one_search_max_score(
+    tmp_path: Path, high_first: bool
+) -> None:
     plan = _two_subject_plan(tmp_path)
     vecs = _vecs()
     items, gt = _enrollment_records(plan, vecs)
     high = [0.95, math.sqrt(1.0 - 0.95**2), 0.0]
     low = [0.30, math.sqrt(1.0 - 0.30**2), 0.0]
     layout = _layout(2)
+    first_vec, second_vec = (high, low) if high_first else (low, high)
     faces = [
-        _face(layout[0][4], high),
-        _face(layout[1][4], low),
+        _face(layout[0][4], first_vec),
+        _face(layout[1][4], second_vec),
     ]
     boxes = [
         _gt(*layout[0][:4], "Alice"),
@@ -418,10 +426,11 @@ def test_two_boxes_same_subject_one_search_max_score(tmp_path: Path) -> None:
     s_low, _ = argmax_gallery(np.asarray(_unit(low)), {"Alice": proto})
     assert s_high > s_low
 
+    first_s, second_s = (s_high, s_low) if high_first else (s_low, s_high)
     reduced = max_score_per_search_unit(
         [
-            ((10, gallery, "Alice"), s_high, "Alice"),
-            ((10, gallery, "Alice"), s_low, "Alice"),
+            ((10, gallery, "Alice"), first_s, "Alice"),
+            ((10, gallery, "Alice"), second_s, "Alice"),
         ]
     )
     assert list(reduced) == [(10, gallery, "Alice")]

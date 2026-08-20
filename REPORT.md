@@ -35,9 +35,40 @@ FAILED test_gallery_searches_are_not_pooled_into_overall_fnir
 
 **Canon.** MLDATA-09 (a populated, deliberately-not-probed enrollment stratum must not look like an untested probe cell; pooling it dilutes the occluded-probe claim).
 
-## BR-15 (high) — empty foil set scored as measured overall IET — OPEN
+## BR-15 (high) — empty foil set scored as measured overall IET — CLOSED
 
-Next.
+**What changed.** Bakeoff publication now uses `BakeoffIETPoint` with `fpi: int | None`. Empty foil lists (`n_nonmated == 0`) publish `fpi=None` and `fpi_per_enrolled_subject=None` unless the caller sets `closed_set=True`. `overall_nonmated=()` is no longer a silent FPI of zero. `closed_set=True` with any foil list raises. Unowned `IETPoint.fpi: int` in `open_set_identification.py` is unchanged; `_publish_point` maps the scorer onto the bakeoff contract.
+
+**Tests.** `test_explicit_empty_overall_nonmated_is_unmeasured_fpi`, `test_omitted_foils_do_not_score_perfect_open_set_rejection`, `test_closed_set_fpi_zero_requires_explicit_flag`. Existing `test_declared_empty_cells_stay_in_the_table` now expects `fpi is None` (no foil workload on those cells) — contract correction, not a skip.
+
+**AFTER reproductions (frozen seed 0):**
+```
+overall_nonmated=() with 1 foil on each of A/B/C/D:
+  overall fpi=None n_nonmated=0 measured=True fnir=0.0
+  points['A_true_occluder'].fpi=1
+no foils anywhere (mated hits so FNIR is measured):
+  overall fnir=0.0 fpi=None n_nonmated=0 measured=True fpi_per_enrolled_subject=None
+closed_set=True, no foils: overall fpi=0
+```
+Second reproduction no longer prints `measured=True` with `fpi=0`.
+
+**Mutant.** `_publish_point` always passed through `point.fpi` (empty foil list still publishes 0).
+
+**RED output:**
+```
+FAILED test_explicit_empty_overall_nonmated_is_unmeasured_fpi
+  AssertionError: assert 0 is None  (BakeoffIETPoint.fpi=0, measured=True)
+FAILED test_omitted_foils_do_not_score_perfect_open_set_rejection
+  AssertionError: assert 0 is None
+FAILED test_closed_set_fpi_zero_requires_explicit_flag
+  AssertionError: assert 0 is None  (omitted.overall.fpi)
+```
+
+**Canon.** EVAL-18 (JANUS IET: FPI is an integer count over a declared non-mated set; no FPI of zero over an undeclared one). EVAL-19 (do not publish a rate/count whose denominator the run never declared).
+
+**Could not close.** Did not edit `open_set_identification.py` (`IETPoint.fpi` stays `int` there). The bakeoff layer is the publication surface this lane owns.
+
+---
 
 ---
 

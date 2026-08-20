@@ -643,18 +643,29 @@ def _numeric_leaves(value: object, *, depth: int = 0) -> list[float]:
 
 
 def _required_params(fn: object) -> list[inspect.Parameter] | None:
+    # BR-53: a groups-like param must receive the probe even when defaulted,
+    # *args, or **kwargs; otherwise the estimator is scored on the wrong groups.
     try:
         sig = inspect.signature(fn)  # type: ignore[arg-type]
     except (TypeError, ValueError):
         return None
-    return [
-        param
-        for param in sig.parameters.values()
-        if param.default is param.empty
-        and param.kind
-        in (param.POSITIONAL_ONLY, param.POSITIONAL_OR_KEYWORD, param.KEYWORD_ONLY)
-        and param.name not in {"self", "cls"}
-    ]
+    named_kinds = (
+        inspect.Parameter.POSITIONAL_ONLY,
+        inspect.Parameter.POSITIONAL_OR_KEYWORD,
+        inspect.Parameter.KEYWORD_ONLY,
+    )
+    bindable: list[inspect.Parameter] = []
+    for param in sig.parameters.values():
+        if param.name in {"self", "cls"}:
+            continue
+        if param.kind in (param.VAR_POSITIONAL, param.VAR_KEYWORD):
+            bindable.append(param)
+            continue
+        if param.kind not in named_kinds:
+            continue
+        if param.default is param.empty or param.name in _GROUPS_PARAM_NAMES:
+            bindable.append(param)
+    return bindable
 
 
 def _annotation_str(annotation: object) -> str:
@@ -768,22 +779,43 @@ def _iter_bindings(
     if required is None:
         return []
     as_tuples = tuple(tuple(group) for group in groups)
-    if not required:
-        return [((), {})]
-    if len(required) == 1:
-        return [_place_arg(required[0], as_tuples)]
-    value_lists = [
-        _param_candidate_values(param, as_tuples, fixtures) for param in required
+    var_positional = [
+        param for param in required if param.kind is param.VAR_POSITIONAL
     ]
-    bindings: list[tuple[tuple[object, ...], dict[str, object]]] = []
-    for combo in itertools.product(*value_lists):
-        args: list[object] = []
-        kwargs: dict[str, object] = {}
-        for param, value in zip(required, combo, strict=True):
-            extra_args, extra_kwargs = _place_arg(param, value)
-            args.extend(extra_args)
-            kwargs.update(extra_kwargs)
-        bindings.append((tuple(args), kwargs))
+    var_keyword = [param for param in required if param.kind is param.VAR_KEYWORD]
+    regular = [
+        param
+        for param in required
+        if param.kind
+        in (param.POSITIONAL_ONLY, param.POSITIONAL_OR_KEYWORD, param.KEYWORD_ONLY)
+    ]
+    if not regular:
+        bases: list[tuple[tuple[object, ...], dict[str, object]]] = [((), {})]
+    elif len(regular) == 1:
+        bases = [_place_arg(regular[0], as_tuples)]
+    else:
+        value_lists = [
+            _param_candidate_values(param, as_tuples, fixtures) for param in regular
+        ]
+        bases = []
+        for combo in itertools.product(*value_lists):
+            args: list[object] = []
+            kwargs: dict[str, object] = {}
+            for param, value in zip(regular, combo, strict=True):
+                extra_args, extra_kwargs = _place_arg(param, value)
+                args.extend(extra_args)
+                kwargs.update(extra_kwargs)
+            bases.append((tuple(args), kwargs))
+    bindings: list[tuple[tuple[object, ...], dict[str, object]]] = list(bases)
+    if var_positional:
+        for args, kwargs in bases:
+            bindings.append((args + as_tuples, dict(kwargs)))
+    if var_keyword:
+        for args, kwargs in bases:
+            for name in sorted(_GROUPS_PARAM_NAMES):
+                merged = dict(kwargs)
+                merged[name] = as_tuples
+                bindings.append((args, merged))
     return bindings
 
 
@@ -1292,6 +1324,61 @@ def __NAME__(groups):
 {_ONE_WAY_ICC_BODY}
 """
 
+_BR53_ICC_SHAPES: tuple[tuple[str, str], ...] = (
+    (
+        "_beta_share",
+        f"""\
+def _beta_share(groups=((1.0, 2.0), (3.0, 4.0))):
+{_ONE_WAY_ICC_BODY}
+""",
+    ),
+    (
+        "_payload_fold",
+        f"""\
+def _payload_fold(*groups):
+{_ONE_WAY_ICC_BODY}
+""",
+    ),
+    (
+        "_slot_pack",
+        f"""\
+def _slot_pack(**kwargs):
+    groups = kwargs["groups"]
+{_ONE_WAY_ICC_BODY}
+""",
+    ),
+)
+
+_BR53_ORDINARY_VARIADIC_SOURCES: tuple[tuple[str, str], ...] = (
+    (
+        "_plain_mean",
+        """\
+def _plain_mean(xs=(1.0, 2.0, 3.0, 4.0)):
+    return sum(xs) / len(xs)
+""",
+    ),
+    (
+        "_sum_fold",
+        """\
+def _sum_fold(*values):
+    flat = []
+    for value in values:
+        if isinstance(value, (list, tuple)):
+            flat.extend(float(item) for item in value)
+        elif isinstance(value, (int, float)):
+            flat.append(float(value))
+    return sum(flat) / len(flat) if flat else 0.0
+""",
+    ),
+    (
+        "_label_join",
+        """\
+def _label_join(**kwargs):
+    return ":".join(sorted(str(key) for key in kwargs))
+""",
+    ),
+)
+
 _ORDINARY_HELPER_SOURCES: tuple[tuple[str, str], ...] = (
     (
         "annotated_kwonly_helper",
@@ -1363,6 +1450,35 @@ def test_min_n_guarded_icc_estimator_is_rejected(name: str):
     ids=[name for name, _source in _ORDINARY_HELPER_SOURCES],
 )
 def test_ordinary_helper_is_not_a_reliability_estimator(name: str, source: str):
+    with _inject_module_callable(source, name):
+        icc_offenders, unprobeable = _reliability_estimator_violations()
+        assert name not in unprobeable
+        assert name not in icc_offenders
+        _assert_no_reliability_estimator()
+
+
+@pytest.mark.parametrize(
+    ("name", "source"),
+    _BR53_ICC_SHAPES,
+    ids=["defaulted_groups", "varargs_groups", "kwargs_only_groups"],
+)
+def test_estimator_with_optional_or_variadic_groups_is_rejected(
+    name: str, source: str
+):
+    with _inject_module_callable(source, name):
+        icc_offenders, unprobeable = _reliability_estimator_violations()
+        assert name not in unprobeable
+        assert name in icc_offenders
+
+
+@pytest.mark.parametrize(
+    ("name", "source"),
+    _BR53_ORDINARY_VARIADIC_SOURCES,
+    ids=["defaulted_mean", "varargs_mean", "kwargs_join"],
+)
+def test_ordinary_optional_or_variadic_helper_is_not_a_reliability_estimator(
+    name: str, source: str
+):
     with _inject_module_callable(source, name):
         icc_offenders, unprobeable = _reliability_estimator_violations()
         assert name not in unprobeable

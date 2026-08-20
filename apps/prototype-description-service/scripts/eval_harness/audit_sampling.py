@@ -3,7 +3,9 @@
 n is computed from a target margin of error plus the finite-population
 correction (AUDIT-09), never as a percent of N. Independent draws per stratum
 carry inclusion probabilities (AUDIT-08 / AUDIT-10). Images cluster within
-subject, so sizing can inflate by the cluster design effect (AUDIT-11).
+subject, so sizing inflates n0 by the Kish design effect *before* the fpc
+(AUDIT-11). FIR-12 ``strata_counts`` values are per-stratum objects; project
+image counts before allocate() rather than passing the index through.
 """
 
 from __future__ import annotations
@@ -12,6 +14,7 @@ import math
 import random
 from collections.abc import Hashable, Mapping, Sequence
 from dataclasses import dataclass
+from enum import StrEnum
 
 # Conservative Bernoulli variance (AUDIT-09): p=0.5 maximises p(1-p).
 _DEFAULT_P = 0.5
@@ -21,6 +24,13 @@ _DEFAULT_Z = 1.96
 
 class AuditSamplingError(ValueError):
     """Invalid sizing, allocation, or draw inputs."""
+
+
+class DeffOrder(StrEnum):
+    """Order of Kish inflation vs finite-population correction (AUDIT-11)."""
+
+    DEFF_THEN_FPC = "deff_then_fpc"
+    FPC_ONLY = "fpc_only"
 
 
 @dataclass(frozen=True)
@@ -40,6 +50,52 @@ class Sample:
         return tuple(unit.unit_id for unit in self.units)
 
 
+@dataclass(frozen=True)
+class SampleSize:
+    """Reproducible sizing record: n0, deff inputs, ordering, and final n."""
+
+    n: int
+    n0: float
+    n_deff: float
+    deff: float
+    population: int
+    margin: float
+    p: float
+    z: float
+    deff_order: DeffOrder
+    cluster_size: float | None = None
+    icc: float | None = None
+
+
+def project_strata_image_counts(
+    strata_counts: Mapping[str, object],
+) -> dict[str, int]:
+    """Project FIR-12 ``strata_counts[k]["images"]`` into allocate() sizes.
+
+    The frozen frame stores per-stratum objects, not ints. allocate() takes
+    image counts; this adapter is the only supported conversion (rg-015).
+    """
+    if not strata_counts:
+        raise AuditSamplingError("strata_counts must be non-empty")
+    sizes: dict[str, int] = {}
+    for name, row in strata_counts.items():
+        if not isinstance(row, Mapping):
+            raise AuditSamplingError(
+                f"strata_counts[{name!r}] must be an object with 'images', "
+                f"got {type(row).__name__}"
+            )
+        if "images" not in row:
+            raise AuditSamplingError(f"strata_counts[{name!r}] missing 'images'")
+        images = row["images"]
+        if isinstance(images, bool) or not isinstance(images, int) or images < 0:
+            raise AuditSamplingError(
+                f"strata_counts[{name!r}]['images'] must be a non-negative int, "
+                f"got {images!r}"
+            )
+        sizes[name] = images
+    return sizes
+
+
 def sample_size_for_margin(
     *,
     margin: float,
@@ -51,6 +107,19 @@ def sample_size_for_margin(
 
     n0 = z² p (1-p) / e², then n = n0 / (1 + (n0 - 1) / N), rounded up.
     """
+    return size_for_margin(margin=margin, population=population, p=p, z=z).n
+
+
+def size_for_margin(
+    *,
+    margin: float,
+    population: int,
+    p: float = _DEFAULT_P,
+    z: float = _DEFAULT_Z,
+    cluster_size: float | None = None,
+    icc: float | None = None,
+) -> SampleSize:
+    """Size n from margin of error; apply Kish deff to n0 *before* the fpc."""
     if not 0 < margin:
         raise AuditSamplingError(f"margin must be > 0, got {margin!r}")
     if population < 1:
@@ -59,9 +128,32 @@ def sample_size_for_margin(
         raise AuditSamplingError(f"p must be in (0, 1), got {p!r}")
     if z <= 0:
         raise AuditSamplingError(f"z must be > 0, got {z!r}")
+    if (cluster_size is None) != (icc is None):
+        raise AuditSamplingError("cluster_size and icc must be provided together")
+
     n0 = (z * z) * p * (1.0 - p) / (margin * margin)
-    n = n0 / (1.0 + (n0 - 1.0) / population)
-    return min(population, math.ceil(n))
+    if cluster_size is None:
+        deff = 1.0
+        n_deff = n0
+        order = DeffOrder.FPC_ONLY
+    else:
+        deff = design_effect(cluster_size=cluster_size, icc=icc)
+        n_deff = n0 * deff
+        order = DeffOrder.DEFF_THEN_FPC
+    n = n_deff / (1.0 + (n_deff - 1.0) / population)
+    return SampleSize(
+        n=min(population, math.ceil(n)),
+        n0=n0,
+        n_deff=n_deff,
+        deff=deff,
+        population=population,
+        margin=margin,
+        p=p,
+        z=z,
+        deff_order=order,
+        cluster_size=cluster_size,
+        icc=icc,
+    )
 
 
 def design_effect(*, cluster_size: float, icc: float) -> float:
@@ -71,15 +163,6 @@ def design_effect(*, cluster_size: float, icc: float) -> float:
     if not 0 <= icc <= 1:
         raise AuditSamplingError(f"icc must be in [0, 1], got {icc!r}")
     return 1.0 + (cluster_size - 1.0) * icc
-
-
-def inflate_for_clustering(*, n: int, deff: float) -> int:
-    """Nominal n so that n / deff recovers the independent-unit target."""
-    if n < 0:
-        raise AuditSamplingError(f"n must be >= 0, got {n!r}")
-    if deff < 1:
-        raise AuditSamplingError(f"deff must be >= 1, got {deff!r}")
-    return math.ceil(n * deff)
 
 
 def allocate(
@@ -99,6 +182,11 @@ def allocate(
     if not strata_sizes:
         raise AuditSamplingError("strata_sizes must be non-empty")
     for name, size in strata_sizes.items():
+        if isinstance(size, bool) or not isinstance(size, int):
+            raise AuditSamplingError(
+                f"stratum {name!r} size must be an int image count; "
+                f"project strata_counts via project_strata_image_counts(), got {size!r}"
+            )
         if size < 0:
             raise AuditSamplingError(f"stratum {name!r} size must be >= 0, got {size!r}")
 

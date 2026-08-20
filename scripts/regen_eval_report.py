@@ -16,6 +16,27 @@ The inner interpreter is ``$ACX_EVAL_PYTHON`` when that variable is set
 When it is unset, the service ``.venv/bin/python`` is required — this
 script does not fall back to ``sys.executable``.
 
+This script's own exit codes (FIR-12-BR-70: distinct from the inner CLI's
+publication contract above — a code here never inherits meaning from a
+subprocess return value that carried no publication outcome):
+
+    0    Clean score, published. The CLI exited 0 and wrote a report.
+    1    Partial-corpus score gate. The CLI exited 1 *and wrote a report*;
+         held, not published. This is a genuine corpus-quality outcome.
+    2    Resolution/environment/usage failure, never a corpus outcome:
+         missing ``--run-record``/``--manifest`` input, an unresolvable
+         ``ACX_EVAL_PYTHON`` (unset with no service venv, or set to a
+         non-executable path — see ``EvalPythonError``), or the CLI
+         produced *no report at all* regardless of its own exit code
+         (crashed before writing one, or exited 0 without writing one).
+         The inner subprocess return code is never passed through here —
+         no report means no publication meaning to inherit, so a broken
+         real interpreter (e.g. missing a dependency, inner exit 1) is
+         never confusable with case 1's genuine partial corpus.
+    3    Refused metrics (CLI exited 3); held unless ``--allow-refused``.
+    *    Any other CLI exit *with a report on disk* is unrecognized and
+         held, not swallowed.
+
 Usage (from repo root):
 
     python3 scripts/regen_eval_report.py \\
@@ -39,6 +60,11 @@ from dataclasses import dataclass
 from pathlib import Path
 
 EVAL_PYTHON_ENV = "ACX_EVAL_PYTHON"
+
+# FIR-12-BR-70: this script's own resolution/environment/usage exit code —
+# reused (not a passthrough) for every failure that carries no publication
+# meaning. See the module docstring's exit-code table.
+EXIT_RESOLUTION_OR_ENV_FAILURE = 2
 
 _SCRIPTS_DIR = Path(__file__).resolve().parent
 if str(_SCRIPTS_DIR) not in sys.path:
@@ -320,10 +346,10 @@ def main(argv: list[str] | None = None) -> int:
     out_md = (root / args.out_md).resolve()
     if not run_record.is_file():
         print(f"missing run-record: {run_record}", file=sys.stderr)
-        return 2
+        return EXIT_RESOLUTION_OR_ENV_FAILURE
     if not manifest.is_file():
         print(f"missing manifest: {manifest}", file=sys.stderr)
-        return 2
+        return EXIT_RESOLUTION_OR_ENV_FAILURE
 
     before_json = detection_summary(out_json if out_json.is_file() else None)
     before_ident_json = identification_summary(
@@ -337,7 +363,7 @@ def main(argv: list[str] | None = None) -> int:
         python = resolve_eval_python(root)
     except EvalPythonError as exc:
         print(str(exc), file=sys.stderr)
-        return 2
+        return EXIT_RESOLUTION_OR_ENV_FAILURE
 
     with tempfile.TemporaryDirectory(prefix="regen-eval-") as tmp:
         tmp_dir = Path(tmp)
@@ -358,11 +384,22 @@ def main(argv: list[str] | None = None) -> int:
         tmp_json = tmp_dir / "run-report.json"
         tmp_md = tmp_dir / "run-report.md"
         if not tmp_json.is_file() or not tmp_md.is_file():
+            # FIR-12-BR-70: the inner returncode carries no publication
+            # meaning here — no report was written, so there is nothing to
+            # classify via classify_score_exit's CLI exit-code contract.
+            # Passing proc.returncode straight through used to alias a
+            # broken-but-real ACX_EVAL_PYTHON (inner ModuleNotFoundError,
+            # exit 1) onto this script's own exit 1, which the docstring
+            # defines as "partial corpus, never published" — indistinguishable
+            # from a genuine partial-corpus result. Always report the
+            # dedicated env/resolution failure code instead.
             print(
-                f"CLI did not write expected reports in {tmp_dir} (exit {proc.returncode})",
+                f"CLI did not write expected reports in {tmp_dir} "
+                f"(inner exit {proc.returncode}); treating as an "
+                "environment/startup failure, not a corpus outcome",
                 file=sys.stderr,
             )
-            return proc.returncode or 2
+            return EXIT_RESOLUTION_OR_ENV_FAILURE
         decision = classify_score_exit(
             proc.returncode, allow_refused=args.allow_refused
         )

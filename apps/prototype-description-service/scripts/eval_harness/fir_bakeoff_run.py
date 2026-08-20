@@ -192,6 +192,9 @@ class RunReport:
     withheld_probe_templates: tuple[Template, ...] = ()
     search_shortfalls: Mapping[str, int] = field(default_factory=dict)
     nonmated_shortfalls: Mapping[str, int] = field(default_factory=dict)
+    never_measured_probe_strata: tuple[str, ...] = ()
+    """Declared PROBE_STRATA absent from ``points`` (BR-68): never measured,
+    as distinct from measured-and-short (``points[name].incomplete``)."""
 
     def coverage_gaps(self) -> list[dict[str, Any]]:
         return self.stratum_report.coverage_gaps()
@@ -285,10 +288,35 @@ def build_run_plan(*, selection_manifest_path: str | Path, seed: int) -> RunPlan
     )
 
 
+def _normalise_subject_id(value: object, *, gallery: str) -> str:
+    """Same alphabet as gallery_split._normalise_subject_id (BR-64 / EVAL-18)."""
+    if not isinstance(value, str):
+        raise FirBakeoffRunError(
+            f"{gallery} subject_id must be a non-empty string, got {value!r}"
+        )
+    key = value.strip()
+    if not key:
+        raise FirBakeoffRunError(
+            f"{gallery} subject_id must be a non-empty string, got {value!r}"
+        )
+    return key
+
+
 def mated_identities_for(
     entry: ProbeEntry, *, split: GallerySplit, gallery: GalleryName | str
 ) -> tuple[str, ...]:
-    """Identities on ``entry`` enrolled in ``gallery`` (empty → foil for it)."""
+    """Identities on ``entry`` enrolled in ``gallery`` (empty → foil for it).
+
+    Deduplicated by normalised key (BR-73): the MatedSearchUnit contract is
+    one enrolled subject, one mated search, never one per mention. Without
+    this guard two spellings of the same subject on one still (e.g. 'Bob'
+    and 'Bob ', which now normalise to the same roster key at ingest —
+    BR-75) would each append, doubling that subject's search and biasing
+    FNIR's denominator downward. A duplicate mention is treated as the same
+    search unit rather than a manifest error: by the time it reaches here
+    the identity has already passed ingest validation (BR-75), so a repeat
+    reads as "this subject is present" stated twice, not as corrupt data.
+    """
     try:
         name = GalleryName(gallery)
     except ValueError as exc:
@@ -296,7 +324,14 @@ def mated_identities_for(
             f"gallery {gallery!r} is not a declared gallery of the split"
         ) from exc
     roster = split.g1 if name is GalleryName.G1 else split.g2
-    return tuple(subject_id for subject_id in entry.present_identities if subject_id in roster)
+    matched: list[str] = []
+    seen: set[str] = set()
+    for subject_id in entry.present_identities:
+        key = _normalise_subject_id(subject_id, gallery=name.value)
+        if key in roster and key not in seen:
+            matched.append(key)
+            seen.add(key)
+    return tuple(matched)
 
 
 def mated_galleries_for(entry: ProbeEntry, *, plan: RunPlan) -> tuple[GalleryName, ...]:
@@ -469,7 +504,8 @@ def score_run(
         )
     _validate_overall_nonmated(plan, overall_foils)
     overall_galleries = _galleries_of(plan, (*all_mated, *overall_foils))
-    overall_incomplete = any(
+    never_measured = _never_measured_probe_strata(plan, points)
+    overall_incomplete = bool(never_measured) or any(
         points[name].incomplete for name in PROBE_STRATA if name in points
     )
     overall = _publish_point(
@@ -496,6 +532,27 @@ def score_run(
         withheld_probe_templates=plan.withheld_probe_templates,
         search_shortfalls=search_shortfalls,
         nonmated_shortfalls=nonmated_shortfalls,
+        never_measured_probe_strata=never_measured,
+    )
+
+
+def _never_measured_probe_strata(
+    plan: RunPlan, points: Mapping[str, BakeoffIETPoint]
+) -> tuple[str, ...]:
+    """Declared probe strata that never produced a measured/short point (BR-68).
+
+    Rolls up over the DECLARED ``PROBE_STRATA`` set, not the observed
+    ``points`` keys: a stratum absent from ``points`` because it produced
+    zero join rows (never appeared in ``stratum_report``) must count as
+    incomplete for a different reason than "measured and short"
+    (``points[name].incomplete``) — it was never measured at all. The only
+    explicit, documented exemption is a stratum the manifest itself
+    declares empty (``declared_empty_cells``); that is a legitimate
+    zero-workload cell, not an accidental gap.
+    """
+    empty = set(plan.index.declared_empty_cells)
+    return tuple(
+        name for name in PROBE_STRATA if name not in points and name not in empty
     )
 
 
@@ -857,11 +914,25 @@ def _read_entries(path: Path) -> list[dict[str, Any]]:
 
 
 def _identities(entry: Mapping[str, Any]) -> tuple[str, ...]:
+    """Ingest-time identity normalisation (BR-75).
+
+    Applies the same alphabet as ``_normalise_subject_id`` (strip, reject
+    non-string / blank-after-strip) at manifest parse, so membership
+    (``mated_identities_for``) and the published unique-subject census
+    (``strata_join``) see one canonical key per subject instead of
+    diverging on unstripped whitespace or a silent ``str()`` coercion. A
+    blank or malformed item is rejected here — fail closed at the boundary
+    (sr-006) — rather than reaching ``mated_identities_for`` and crashing
+    at point of use, or silently dropping a genuine mate.
+    """
     value = entry.get("present_identities")
     if value is None:
         return ()
     if isinstance(value, (list, tuple)):
-        return tuple(str(item) for item in value if item)
+        return tuple(
+            _normalise_subject_id(item, gallery="present_identities")
+            for item in value
+        )
     raise FirBakeoffRunError(
         f"present_identities must be a list of strings, got {type(value).__name__}"
     )

@@ -36,7 +36,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from scripts.eval_harness.accept_predicate import is_fpi
+from scripts.eval_harness.accept_predicate import is_fnir_miss, is_fpi
 
 # Pinned face_bakeoff report schema v1 (FIR-5 report.py serialization; LC-06/GR-08).
 REPORT_KIND = "face_bakeoff"
@@ -664,7 +664,7 @@ def fnmr_at(scores: Sequence[float], tau: float) -> float | None:
     """
     if not scores:
         return None
-    missed = sum(1 for s in scores if s < tau)
+    missed = sum(1 for s in scores if is_fnir_miss(s, tau))
     return missed / len(scores)
 
 
@@ -676,8 +676,12 @@ def select_threshold(
 ) -> float | None:
     """Pre-registered rule: minimum tau with fit FMR ≤ target.
 
-    FMR is JANUS 2.3.4 FPI (``fmr_at``: score > tau); a candidate equal to an
-    observed impostor score is therefore a valid FMR=0 point.
+    FMR is JANUS 2.3.4 FPI (``fmr_at``: score > tau). Candidate thresholds are
+    midpoints between consecutive unique finite observed scores (plus the 0.0
+    and 1.0 bounds), so an interior candidate cannot tie an observed score.
+    This makes the published FPI rule and operational apply rule agree on all
+    observed scores, including the fixture's media_id=301 impostor at 0.58
+    that was exactly the old proposed tau.
 
     Returns ``None`` (abstain) when there are zero fit impostors **or** every
     impostor score is non-finite (-inf / no-match only) — never fail-open to
@@ -686,8 +690,7 @@ def select_threshold(
     When no candidate meets the target, fail-closed to max(1.0, peak observed
     finite score). Empty genuines are allowed (threshold from impostors only).
 
-    Candidate thresholds are the sorted unique finite scores from fit trials
-    (plus 0.0 and 1.0 bounds). Deterministic; no RNG.
+    Deterministic; no RNG.
     """
     if fmr_target < 0.0 or fmr_target > 1.0:
         raise CalibrationError(f"fmr_target must be in [0,1], got {fmr_target}")
@@ -701,8 +704,16 @@ def select_threshold(
     if not any(math.isfinite(float(s)) for s in impostor_scores):
         return None
 
-    finite = [float(s) for s in list(genuine_scores) + list(impostor_scores) if math.isfinite(float(s))]
-    candidates = sorted(set(finite) | {0.0, 1.0})
+    finite = [
+        float(s)
+        for s in list(genuine_scores) + list(impostor_scores)
+        if math.isfinite(float(s))
+    ]
+    observed = sorted(set(finite))
+    midpoints = [
+        (lower + upper) / 2.0 for lower, upper in zip(observed, observed[1:])
+    ]
+    candidates = sorted(set(midpoints) | {0.0, 1.0})
     # Prefer lower tau among those meeting FMR (higher acceptance). Walk ascending.
     for tau in candidates:
         fmr = fmr_at(impostor_scores, tau)
@@ -711,7 +722,7 @@ def select_threshold(
             return float(tau)
 
     # No tau meets target — fail closed to "accept nothing".
-    peak = max(candidates) if candidates else 1.0
+    peak = max(observed) if observed else 1.0
     return float(max(peak, 1.0))
 
 
@@ -782,7 +793,7 @@ def _oof_metrics_for_stratum(
             fold_fnmr = fnmr_at(g_read, tau)
             for s in g_read:
                 n_gen_oof += 1
-                if s < tau:
+                if is_fnir_miss(s, tau):
                     n_gen_miss += 1
             for s in i_read:
                 n_imp_oof += 1
@@ -1160,7 +1171,10 @@ def calibrate(
             "parity). Non-enrolled named probes are also silent-dropped (zero "
             "trials). "
             f"Selection rule {SELECTION_RULE_ID!r} is pre-registered on fit folds "
-            "only before any held fold is read (FIR6RC-07). "
+            "only before any held fold is read (FIR6RC-07). Candidate taus are "
+            "midpoints between consecutive unique finite fit scores, plus 0.0 "
+            "and 1.0 bounds, so interior candidates cannot tie observed scores "
+            "and JANUS FPI and operational acceptance agree on fit observations. "
             "The calibration artifact is deterministic: bit-identical re-runs "
             "with the same report+manifest+fmr_target (no wall-clock or unpinned "
             "RNG; PYTHONHASHSEED-independent serialization). "

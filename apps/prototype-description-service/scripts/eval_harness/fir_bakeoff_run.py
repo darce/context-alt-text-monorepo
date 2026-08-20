@@ -302,7 +302,18 @@ def _normalise_subject_id(value: object, *, gallery: str) -> str:
 def mated_identities_for(
     entry: ProbeEntry, *, split: GallerySplit, gallery: GalleryName | str
 ) -> tuple[str, ...]:
-    """Identities on ``entry`` enrolled in ``gallery`` (empty → foil for it)."""
+    """Identities on ``entry`` enrolled in ``gallery`` (empty → foil for it).
+
+    Deduplicated by normalised key (BR-73): the MatedSearchUnit contract is
+    one enrolled subject, one mated search, never one per mention. Without
+    this guard two spellings of the same subject on one still (e.g. 'Bob'
+    and 'Bob ', which now normalise to the same roster key at ingest —
+    BR-75) would each append, doubling that subject's search and biasing
+    FNIR's denominator downward. A duplicate mention is treated as the same
+    search unit rather than a manifest error: by the time it reaches here
+    the identity has already passed ingest validation (BR-75), so a repeat
+    reads as "this subject is present" stated twice, not as corrupt data.
+    """
     try:
         name = GalleryName(gallery)
     except ValueError as exc:
@@ -311,10 +322,12 @@ def mated_identities_for(
         ) from exc
     roster = split.g1 if name is GalleryName.G1 else split.g2
     matched: list[str] = []
+    seen: set[str] = set()
     for subject_id in entry.present_identities:
         key = _normalise_subject_id(subject_id, gallery=name.value)
-        if key in roster:
+        if key in roster and key not in seen:
             matched.append(key)
+            seen.add(key)
     return tuple(matched)
 
 

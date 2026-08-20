@@ -1260,6 +1260,28 @@ def test_census_normalises_padded_duplicate_subject(tmp_path: Path) -> None:
     assert set(plan.split.g1) | set(plan.split.g2) == {"Alice", "Bob", "Dale", "Eve"}
 
 
+def test_mated_identities_for_dedupes_repeated_subject(tmp_path: Path) -> None:
+    """BR-73: a still listing one subject twice is one mated search, not two.
+
+    Constructs the ``ProbeEntry`` directly with a post-ingest duplicate
+    ('Bob', 'Bob') — the exact shape BR-75 ingest normalisation produces
+    when a manifest lists two spellings of the same subject on one still.
+    Before the fix, both mentions matched the roster and both were
+    appended, doubling that subject's contribution to FNIR's denominator.
+    """
+    plan = _plan(tmp_path)
+    gallery = _gallery_of(plan, "Bob")
+    entry = ProbeEntry(
+        media_id=999,
+        sha256="f" * 64,
+        stratum="A_true_occluder",
+        present_identities=("Bob", "Bob"),
+    )
+    matched = mated_identities_for(entry, split=plan.split, gallery=gallery)
+    assert matched == ("Bob",)
+    assert len(matched) == 1
+
+
 def _copresent_plan(tmp_path: Path, *, seed: int = 7):
     entries = [
         _entry(1, "E_clean", ["Alice"], "a"),

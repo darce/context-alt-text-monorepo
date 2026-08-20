@@ -26,6 +26,10 @@ class SingleContributorPoolError(ValueError):
     """Fewer than two contributors: a self-pool is EVAL-25's named bias, not a degraded mode."""
 
 
+class AmbiguousJudgmentError(ValueError):
+    """A bare string matched more than one pooled fact; polarity is required."""
+
+
 @dataclass(frozen=True)
 class CandidateFact:
     """One contributor's offered fact. Polarity is first-class (MLDATA-30)."""
@@ -190,7 +194,14 @@ def _judged_keys(
         if raw in by_key:
             matched.add(raw)
             continue
-        matched.update(by_text.get(normalize_fact_text(raw), ()))
+        candidates = by_text.get(normalize_fact_text(raw), [])
+        if len(candidates) > 1:
+            raise AmbiguousJudgmentError(
+                f"bare string {raw!r} is ambiguous: matches {len(candidates)} "
+                f"pooled facts {candidates}; pass a PooledFact or a CandidateFact "
+                f"(which carries polarity)"
+            )
+        matched.update(candidates)
     return matched
 
 

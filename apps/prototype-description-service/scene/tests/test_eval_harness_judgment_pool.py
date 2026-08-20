@@ -4,6 +4,7 @@ import pytest
 
 from scripts.eval_harness.judgment_pool import (
     UNJUDGED_ARE_NOT_NEGATIVES_DISCLOSURE,
+    AmbiguousJudgmentError,
     CandidateFact,
     SingleContributorPoolError,
     build_pool,
@@ -118,6 +119,7 @@ def test_candidate_fact_judgment_does_not_mark_complementary_polarity():
     assert report.pooled_count == 2
     assert report.judged_count == 1
     assert report.unjudged_count == 1
+    assert report.unjudged_are_not_negatives is True
 
     # Union with the TRUE pooled slot is a no-op: same key, complement still open.
     # An inverted-polarity mutant marks FALSE instead, so this union would close the pool.
@@ -130,14 +132,44 @@ def test_candidate_fact_judgment_does_not_mark_complementary_polarity():
     assert both.unjudged_count == 0
 
 
-def test_bare_string_judgment_marks_every_polarity_sharing_that_text():
+def test_ambiguous_bare_string_judgment_raises():
     pool = _complementary_red_hat_pool()
-    report = incompleteness_report(pool=pool, judged=["red hat"])
-    assert report.pooled_count == 2
-    assert report.judged_count == 2
-    assert report.unjudged_count == 0
+    with pytest.raises(AmbiguousJudgmentError, match="red hat") as exc_info:
+        incompleteness_report(pool=pool, judged=["red hat"])
+    message = str(exc_info.value)
+    assert "true:red hat" in message
+    assert "false:red hat" in message
+    assert "PooledFact" in message
+    assert "CandidateFact" in message
 
+
+def test_unique_bare_string_judgment_resolves():
+    pool = build_pool(
+        contributions={
+            "human": [
+                CandidateFact(text="red hat", polarity=FactPolarity.TRUE),
+                CandidateFact(text="blue coat", polarity=FactPolarity.TRUE),
+            ],
+            "model_a": [CandidateFact(text="red hat", polarity=FactPolarity.FALSE)],
+        },
+        depth=5,
+    )
+    report = incompleteness_report(pool=pool, judged=["BLUE COAT"])
+    assert report.pooled_count == 3
+    assert report.judged_count == 1
+    assert report.unjudged_count == 2
+    assert report.unjudged_are_not_negatives is True
+
+
+def test_bare_string_pool_key_marks_one_polarity():
+    pool = _complementary_red_hat_pool()
     true_item = next(item for item in pool.items if item.polarity is FactPolarity.TRUE)
-    by_key = incompleteness_report(pool=pool, judged=[true_item.key])
-    assert by_key.judged_count == 1
-    assert by_key.unjudged_count == 1
+    report = incompleteness_report(pool=pool, judged=[true_item.key])
+    assert report.judged_count == 1
+    assert report.unjudged_count == 1
+    assert report.unjudged_are_not_negatives is True
+
+    pooled = incompleteness_report(pool=pool, judged=[true_item])
+    assert pooled.judged_count == 1
+    assert pooled.unjudged_count == 1
+    assert pooled.unjudged_are_not_negatives is True

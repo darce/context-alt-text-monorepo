@@ -103,6 +103,17 @@ class Allocation(Mapping[str, int]):
     counts: Mapping[str, int]
     floors: Mapping[str, SampleSize]
 
+    def __post_init__(self) -> None:
+        from types import MappingProxyType
+
+        object.__setattr__(self, "counts", MappingProxyType(dict(self.counts)))
+        object.__setattr__(self, "floors", MappingProxyType(dict(self.floors)))
+
+    def __hash__(self) -> int:
+        return hash(
+            (tuple(sorted(self.counts.items())), tuple(sorted(self.floors.items())))
+        )
+
     def __getitem__(self, key: str) -> int:
         return self.counts[key]
 

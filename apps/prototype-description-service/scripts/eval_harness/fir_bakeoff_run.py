@@ -192,6 +192,9 @@ class RunReport:
     withheld_probe_templates: tuple[Template, ...] = ()
     search_shortfalls: Mapping[str, int] = field(default_factory=dict)
     nonmated_shortfalls: Mapping[str, int] = field(default_factory=dict)
+    never_measured_probe_strata: tuple[str, ...] = ()
+    """Declared PROBE_STRATA absent from ``points`` (BR-68): never measured,
+    as distinct from measured-and-short (``points[name].incomplete``)."""
 
     def coverage_gaps(self) -> list[dict[str, Any]]:
         return self.stratum_report.coverage_gaps()
@@ -501,7 +504,8 @@ def score_run(
         )
     _validate_overall_nonmated(plan, overall_foils)
     overall_galleries = _galleries_of(plan, (*all_mated, *overall_foils))
-    overall_incomplete = any(
+    never_measured = _never_measured_probe_strata(plan, points)
+    overall_incomplete = bool(never_measured) or any(
         points[name].incomplete for name in PROBE_STRATA if name in points
     )
     overall = _publish_point(
@@ -528,6 +532,27 @@ def score_run(
         withheld_probe_templates=plan.withheld_probe_templates,
         search_shortfalls=search_shortfalls,
         nonmated_shortfalls=nonmated_shortfalls,
+        never_measured_probe_strata=never_measured,
+    )
+
+
+def _never_measured_probe_strata(
+    plan: RunPlan, points: Mapping[str, BakeoffIETPoint]
+) -> tuple[str, ...]:
+    """Declared probe strata that never produced a measured/short point (BR-68).
+
+    Rolls up over the DECLARED ``PROBE_STRATA`` set, not the observed
+    ``points`` keys: a stratum absent from ``points`` because it produced
+    zero join rows (never appeared in ``stratum_report``) must count as
+    incomplete for a different reason than "measured and short"
+    (``points[name].incomplete``) — it was never measured at all. The only
+    explicit, documented exemption is a stratum the manifest itself
+    declares empty (``declared_empty_cells``); that is a legitimate
+    zero-workload cell, not an accidental gap.
+    """
+    empty = set(plan.index.declared_empty_cells)
+    return tuple(
+        name for name in PROBE_STRATA if name not in points and name not in empty
     )
 
 

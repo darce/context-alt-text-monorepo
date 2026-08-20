@@ -2040,6 +2040,65 @@ def test_coverage_gap_marks_complete_searches_incomplete(tmp_path: Path) -> None
     assert report.points["C_pose"].incomplete is False
 
 
+def _plan_without_d_capture(tmp_path: Path, *, seed: int = 7) -> RunPlan:
+    """A manifest that never declares D_capture at all (BR-68 fixture).
+
+    D_capture is entirely absent from ``strata_counts`` and
+    ``declared_empty_cells`` — not just zero-images or declared-empty. No
+    entry carries stratum 'D_capture' either, so ``load_stratum_index``
+    never sees the name and ``join_by_stratum`` produces zero rows for it.
+    """
+    entries = [item for item in _base_entries() if item["stratum"] != "D_capture"]
+    counts = _base_counts()
+    del counts["D_capture"]
+    path = _write_manifest(tmp_path, entries, strata_counts=counts)
+    return build_run_plan(selection_manifest_path=path, seed=seed)
+
+
+def test_overall_incomplete_true_when_declared_probe_stratum_never_measured(
+    tmp_path: Path,
+) -> None:
+    """BR-68: a PROBE_STRATA member with zero join rows must mark overall incomplete.
+
+    ``overall_incomplete`` used to be ``any(points[name].incomplete for name
+    in PROBE_STRATA if name in points)`` — a stratum absent from ``points``
+    (because it produced no join rows at all) was silently skipped by
+    ``if name in points``, contributing neither True nor False, even though
+    ``_missing_required_probe_searches`` also exempts it (declared_images
+    defaults to 0 for a name absent from strata_counts). The two guards'
+    blind spots line up exactly, so a run missing an entire declared probe
+    stratum published "complete".
+
+    The converse control lives in the first half of this test: the same
+    base plan with all four probe strata present and fully searched must
+    still report ``overall.incomplete is False``.
+    """
+    complete_plan = _plan(tmp_path)
+    complete_searches, complete_foils = _complete_probe_searches(complete_plan)
+    complete = score_run(
+        plan=complete_plan,
+        searches=complete_searches,
+        tau=0.50,
+        overall_nonmated=complete_foils,
+    )
+    assert complete.overall.incomplete is False
+    assert complete.never_measured_probe_strata == ()
+
+    gap_plan = _plan_without_d_capture(tmp_path)
+    searches, overall_foils = _complete_probe_searches(gap_plan)
+    del searches["D_capture"]
+    report = score_run(
+        plan=gap_plan,
+        searches=searches,
+        tau=0.50,
+        overall_nonmated=overall_foils,
+    )
+    assert "D_capture" not in report.points
+    assert "D_capture" not in gap_plan.index.declared_empty_cells
+    assert report.never_measured_probe_strata == ("D_capture",)
+    assert report.overall.incomplete is True
+
+
 def test_padded_g1_roster_key_keeps_mated_partition(tmp_path: Path) -> None:
     """BR-56 / EVAL-18: g1 whitespace must not move an enrolled probe into the foil set."""
     clean = _plan(tmp_path)

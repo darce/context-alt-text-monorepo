@@ -115,3 +115,48 @@ plus golden updates, and `accept_predicate.py` is shaped to make that trivial:
 - `calibrate_face_thresholds.fnmr_at` and the OOF sweep's FNIR-miss counter:
   not part of the seven-site inventory; left untouched to avoid scope creep.
 - No golden/pin files changed; none should have, and none did.
+
+## Follow-up commit (FIR-12-BR-77/78, coordinator-flagged)
+
+Coordinator caught a brief error I followed correctly: the brief said "update
+the two prose comments in synthetic_occlusion (lines 9 and 84)". Line 9
+(module docstring) is genuinely source prose and the original edit there was
+correct. Line ~85 is not a comment — it's an entry in
+`SYNTHETIC_OCCLUSION_PROTOCOL_DISCLOSURES`, which `report.py:162` splices
+into `FACE_BAKEOFF_PROTOCOL_DISCLOSURES` (published output consumed by
+`_entry_is_publishable`). My original edit had replaced the mathematical
+statement `(s_max >= tau)` with a bare module pointer
+`(accept_predicate.accepts)` in that published string — an external report
+reader can evaluate the math, not the module.
+
+**Fix**: restored the inequality and appended the pointer rather than
+substituting it: `"... open-set threshold (s_max >= tau; see
+accept_predicate.accepts), not closed-set ..."`. Also fixed
+`synthetic_occlusion.py`'s `accept_predicate` import from relative
+(`from .accept_predicate import accepts`) to the absolute form
+(`from scripts.eval_harness.accept_predicate import accepts`) used by the
+other three routed sites, for consistency.
+
+**New golden test**: added
+`test_threshold_rule_disclosure_is_self_contained_published_text` to
+`scene/tests/test_eval_harness_synthetic_occlusion.py`, pinning the exact
+disclosure string (verified byte-for-byte against the source AST, not
+hand-transcribed) and asserting `"s_max >= tau"` is present in it.
+
+**Post-fix gate** (full suite, r7-pred @ 07ae29670):
+```
+1685 passed, 4 skipped, 1 deselected, 14 warnings in 63.93s (0:01:03)
+```
++1 over the prior 1684, exactly the new golden test. Zero failures.
+
+**Control mutant** — reworded the disclosure back to the bare-pointer form,
+pushed, gated filtered to the new test, confirmed RED, reverted (`git
+revert`), confirmed post-revert diff empty against `07ae29670`, then
+squashed the mutant/revert pair out of history with `git reset --soft`:
+```
+FAILED scene/tests/test_eval_harness_synthetic_occlusion.py::test_threshold_rule_disclosure_is_self_contained_published_text
+1 failed, 1689 deselected in 4.79s
+```
+
+Final history: three substantive commits (`f269eefa0`, `1914eb524`,
+`07ae29670`), no mutant noise.

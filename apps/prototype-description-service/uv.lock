@@ -2111,6 +2111,7 @@ dashboard = [
 dev = [
     { name = "aiosqlite" },
     { name = "fastmcp" },
+    { name = "huggingface-hub" },
     { name = "mypy" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
@@ -2144,6 +2145,7 @@ requires-dist = [
     { name = "greenlet", specifier = ">=3.3.0,<4.0.0" },
     { name = "hdbscan", specifier = ">=0.8.44,<1.0.0" },
     { name = "httpx", specifier = ">=0.28.0,<0.35.0" },
+    { name = "huggingface-hub", marker = "extra == 'dev'", specifier = ">=0.36.0,<1.0.0" },
     { name = "imagehash", specifier = ">=4.3.0" },
     { name = "insightface", marker = "extra == 'bench'", specifier = ">=0.7.3,<1.0.0" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.7.0,<2.0.0" },

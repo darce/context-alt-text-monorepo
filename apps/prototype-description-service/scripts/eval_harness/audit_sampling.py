@@ -275,6 +275,11 @@ def size_for_margin(
     else:
         raise AuditSamplingError("cluster_size and icc must be provided together")
     n = n_deff / (1.0 + (n_deff - 1.0) / population)
+    if not math.isfinite(n_deff) or not math.isfinite(n):
+        raise AuditSamplingError(
+            "computed sample size is non-finite; "
+            f"n_deff={n_deff!r} n={n!r} cluster_size={cluster_size!r} icc={icc!r}"
+        )
     return SampleSize(
         n=min(population, math.ceil(n)),
         n0=n0,

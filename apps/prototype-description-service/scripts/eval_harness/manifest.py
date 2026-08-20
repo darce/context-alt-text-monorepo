@@ -493,10 +493,11 @@ class ReferenceFact(BaseModel):
     ``confirmed_by`` records whether an operator or the agent draft confirmed it.
 
     Lineage fields (``annotator_id``, ``annotation_batch``, ``annotated_at``,
-    ``source_pool``) are optional so v3 facts still load. A human-confirmed
-    fact must name its annotator (MLDATA-04). Pre-adjudication labels are
-    kept, never overwritten (MLDATA-03). ``adjudicated_by`` records HITL-07
-    SME escalation and requires a named ``AdjudicationRule`` (not free text).
+    ``source_pool``) are optional on machine drafts. A human-confirmed fact
+    must carry all four (MLDATA-04). Pre-adjudication labels are kept, never
+    overwritten (MLDATA-03). ``adjudicated_by`` records HITL-07 SME
+    escalation and requires a named ``AdjudicationRule`` plus a non-empty
+    ``pre_adjudication`` trail so a disagreement is stored, not erased.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -524,13 +525,20 @@ class ReferenceFact(BaseModel):
         return self
 
     @model_validator(mode="after")
-    def _human_confirmation_requires_annotator(self) -> ReferenceFact:
-        if self.confirmed_by in HUMAN_CONFIRMATION_SOURCES and not (
-            self.annotator_id and self.annotator_id.strip()
-        ):
+    def _human_confirmation_requires_lineage(self) -> ReferenceFact:
+        if self.confirmed_by not in HUMAN_CONFIRMATION_SOURCES:
+            return self
+        required = ("annotator_id", "annotation_batch", "annotated_at", "source_pool")
+        missing = [
+            name
+            for name in required
+            if not (getattr(self, name) and str(getattr(self, name)).strip())
+        ]
+        if missing:
             raise ValueError(
-                "human-confirmed reference_fact requires annotator_id "
-                f"(confirmed_by={self.confirmed_by!r})"
+                "human-confirmed reference_fact requires "
+                + ", ".join(missing)
+                + f" (confirmed_by={self.confirmed_by!r}; MLDATA-04)"
             )
         return self
 
@@ -541,6 +549,16 @@ class ReferenceFact(BaseModel):
             raise ValueError(
                 "adjudicated_by requires adjudication_rule "
                 "(MLDATA-03 written disagreement rule)"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _adjudication_requires_pre_labels(self) -> ReferenceFact:
+        has_adjudicator = bool(self.adjudicated_by and self.adjudicated_by.strip())
+        if has_adjudicator and not self.pre_adjudication:
+            raise ValueError(
+                "adjudicated_by requires non-empty pre_adjudication "
+                "(HITL-07 / MLDATA-03 disagreement trail)"
             )
         return self
 

@@ -457,7 +457,7 @@ class AdjudicationRule(StrEnum):
     """
 
     DISAGREEMENT_ESCALATE_TO_SME = "disagreement-escalate-to-sme"
-    MAJORITY_VOTE = "majority_vote"
+    MAJORITY_VOTE = "majority-vote"
     UNANIMOUS = "unanimous"
 
 

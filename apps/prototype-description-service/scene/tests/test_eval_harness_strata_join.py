@@ -108,6 +108,7 @@ def test_index_retains_present_identities_from_frozen_manifest() -> None:
     assert expected == ("Al Pacino",)
     assert index.subjects_by_sha256[first["sha256"]] == expected
     assert index.subjects_by_media_id[first["media_id"]] == expected
+    assert index.sha256_by_media_id[first["media_id"]] == first["sha256"]
 
 
 def test_unknown_record_key_raises() -> None:
@@ -309,3 +310,178 @@ def test_join_record_subjects_list_is_legal(tmp_path: Path) -> None:
     )
     assert report.buckets["E_clean"].unique_subjects == 1
     assert report.buckets["E_clean"].n_images == 1
+
+
+def test_sha256_and_media_id_of_same_image_count_once() -> None:
+    raw = _raw_manifest()
+    pacino = next(entry for entry in raw["entries"] if entry["media_id"] == 6)
+    assert pacino["present_identities"] == ["Al Pacino"]
+    report = join_by_stratum(
+        [{"sha256": pacino["sha256"]}, {"media_id": 6}],
+        load_stratum_index(_manifest_path()),
+    )
+    row = {item["stratum"]: item for item in report.to_rows()}["E_clean"]
+    assert row["n_images"] == 1
+    assert row["unique_subjects"] == 1
+    assert row["incomplete"] is True
+
+
+def test_face_run_item_and_sha256_caption_of_same_image_count_once() -> None:
+    raw = _raw_manifest()
+    pacino = next(entry for entry in raw["entries"] if entry["media_id"] == 6)
+    report = join_by_stratum(
+        [_face_item(6), {"sha256": pacino["sha256"]}],
+        load_stratum_index(_manifest_path()),
+    )
+    row = {item["stratum"]: item for item in report.to_rows()}["E_clean"]
+    assert row["n_images"] == 1
+    assert row["unique_subjects"] == 1
+
+
+def test_three_envelopes_of_same_image_count_once() -> None:
+    raw = _raw_manifest()
+    pacino = next(entry for entry in raw["entries"] if entry["media_id"] == 6)
+    report = join_by_stratum(
+        [
+            {"sha256": pacino["sha256"]},
+            {"media_id": 6},
+            {"sha256": pacino["sha256"], "media_id": 6},
+        ],
+        load_stratum_index(_manifest_path()),
+    )
+    row = {item["stratum"]: item for item in report.to_rows()}["E_clean"]
+    assert row["n_images"] == 1
+    assert row["unique_subjects"] == 1
+
+
+def test_mixed_keys_of_two_images_still_count_twice() -> None:
+    raw = _raw_manifest()
+    pacino = next(entry for entry in raw["entries"] if entry["media_id"] == 6)
+    winehouse = next(entry for entry in raw["entries"] if entry["media_id"] == 8)
+    report = join_by_stratum(
+        [{"sha256": pacino["sha256"]}, {"media_id": winehouse["media_id"]}],
+        load_stratum_index(_manifest_path()),
+    )
+    row = {item["stratum"]: item for item in report.to_rows()}["E_clean"]
+    assert row["n_images"] == 2
+    assert row["unique_subjects"] == 2
+
+
+def test_mixed_keys_do_not_flip_incomplete(tmp_path: Path) -> None:
+    path = _write_manifest(
+        tmp_path,
+        [
+            _entry(1, "E_clean", ["Alice"], "a"),
+            _entry(2, "E_clean", ["Bob"], "b"),
+        ],
+        strata_counts={"E_clean": {"images": 2, "unique_subjects_faces_gt0": 2}},
+    )
+    report = join_by_stratum(
+        [{"sha256": "a" * 64}, {"media_id": 1}],
+        load_stratum_index(path),
+    )
+    row = {item["stratum"]: item for item in report.to_rows()}["E_clean"]
+    assert row["n_images"] == 1
+    assert row["unique_subjects"] == 1
+    assert row["manifest_images"] == 2
+    assert row["incomplete"] is True
+    assert report.coverage_gaps() == [
+        {"stratum": "E_clean", "joined_images": 1, "declared_images": 2}
+    ]
+
+
+def test_mixed_keys_covering_declared_cell_is_complete(tmp_path: Path) -> None:
+    path = _write_manifest(
+        tmp_path,
+        [_entry(1, "E_clean", ["Alice"], "a")],
+        strata_counts={"E_clean": {"images": 1, "unique_subjects_faces_gt0": 1}},
+    )
+    report = join_by_stratum(
+        [{"sha256": "a" * 64}, {"media_id": 1}, _face_item(1)],
+        load_stratum_index(path),
+    )
+    row = {item["stratum"]: item for item in report.to_rows()}["E_clean"]
+    assert row["n_images"] == 1
+    assert row["unique_subjects"] == 1
+    assert row["incomplete"] is False
+    assert report.coverage_gaps() == []
+
+
+def test_record_keys_disagree_on_image_identity(tmp_path: Path) -> None:
+    path = _write_manifest(
+        tmp_path,
+        [
+            _entry(1, "E_clean", ["Alice"], "a"),
+            _entry(2, "E_clean", ["Bob"], "b"),
+        ],
+        strata_counts={"E_clean": {"images": 2, "unique_subjects_faces_gt0": 2}},
+    )
+    with pytest.raises(StratumJoinError, match="disagree on image"):
+        join_by_stratum(
+            [{"sha256": "a" * 64, "media_id": 2}],
+            load_stratum_index(path),
+        )
+
+
+def test_digit_string_media_id_is_rejected_on_join() -> None:
+    index = load_stratum_index(_manifest_path())
+    with pytest.raises(StratumJoinError, match="must be an int"):
+        join_by_stratum([{"media_id": "6"}], index)
+    with pytest.raises(StratumJoinError, match="must be an int"):
+        join_by_stratum([{"media_id": "06"}], index)
+
+
+def test_digit_string_media_id_is_rejected_at_load(tmp_path: Path) -> None:
+    path = _write_manifest(
+        tmp_path,
+        [
+            {
+                "sha256": "a" * 64,
+                "media_id": "6",
+                "stratum": "E_clean",
+                "present_identities": ["Alice"],
+            }
+        ],
+        strata_counts={"E_clean": {"images": 1, "unique_subjects_faces_gt0": 1}},
+    )
+    with pytest.raises(StratumJoinError, match="must be an int"):
+        load_stratum_index(path)
+
+
+def test_load_rejects_media_id_mapped_to_two_sha256s(tmp_path: Path) -> None:
+    path = _write_manifest(
+        tmp_path,
+        [
+            _entry(1, "E_clean", ["Alice"], "a"),
+            _entry(1, "E_clean", ["Alice"], "b"),
+        ],
+        strata_counts={"E_clean": {"images": 2, "unique_subjects_faces_gt0": 1}},
+    )
+    with pytest.raises(StratumJoinError, match="maps to both"):
+        load_stratum_index(path)
+
+
+def test_bool_media_id_is_rejected_even_when_one_is_indexed(tmp_path: Path) -> None:
+    path = _write_manifest(
+        tmp_path,
+        [_entry(1, "E_clean", ["Alice"], "a")],
+        strata_counts={"E_clean": {"images": 1, "unique_subjects_faces_gt0": 1}},
+    )
+    index = load_stratum_index(path)
+    with pytest.raises(StratumJoinError, match="must be an int"):
+        join_by_stratum([{"media_id": True}], index)
+    with pytest.raises(StratumJoinError, match="must be an int"):
+        load_stratum_index(
+            _write_manifest(
+                tmp_path,
+                [
+                    {
+                        "sha256": "b" * 64,
+                        "media_id": True,
+                        "stratum": "E_clean",
+                        "present_identities": ["Alice"],
+                    }
+                ],
+                strata_counts={"E_clean": {"images": 1, "unique_subjects_faces_gt0": 1}},
+            )
+        )

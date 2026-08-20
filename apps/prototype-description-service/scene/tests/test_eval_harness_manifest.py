@@ -931,3 +931,37 @@ def test_cli_gate_commands_do_not_reach_load_legacy_manifest(tmp_path, monkeypat
         )
     assert "score_face_run_record refuses roster_only" in str(exc_info.value)
     assert hits == []
+
+
+def test_adjudication_rule_rejects_free_text():
+    """MLDATA-03: a written rule is a closed enum, not unconstrained prose."""
+    with pytest.raises(ValidationError, match="adjudication_rule"):
+        ReferenceFact(
+            text="wearing a red hat",
+            kind="attribute",
+            phrases=["red hat"],
+            adjudicated_by="sme-03",
+            adjudication_rule="coin-flip",
+        )
+
+
+def test_adjudicated_by_requires_written_rule():
+    """MLDATA-03: claiming SME adjudication without a named rule is incomplete."""
+    with pytest.raises(ValidationError, match="adjudication_rule"):
+        ReferenceFact(
+            text="wearing a red hat",
+            kind="attribute",
+            phrases=["red hat"],
+            adjudicated_by="sme-03",
+        )
+
+
+def test_named_adjudication_rule_is_accepted():
+    fact = ReferenceFact(
+        text="wearing a red hat",
+        kind="attribute",
+        phrases=["red hat"],
+        adjudicated_by="sme-03",
+        adjudication_rule="disagreement-escalate-to-sme",
+    )
+    assert fact.adjudication_rule.value == "disagreement-escalate-to-sme"

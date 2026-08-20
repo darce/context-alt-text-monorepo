@@ -11,6 +11,7 @@ import pytest
 from scripts.eval_harness.face_run_record import FaceRunItem
 from scripts.eval_harness.strata_join import (
     StratumJoinError,
+    _subjects_of,
     join_by_stratum,
     load_stratum_index,
 )
@@ -255,3 +256,44 @@ def test_partial_run_marks_rows_incomplete_and_reports_gaps() -> None:
     assert gaps["C_pose"]["declared_images"] == 34
     assert gaps["D_capture"]["declared_images"] == 87
     assert all(cell not in gaps for cell in _EMPTY_CELLS)
+
+
+def test_subjects_of_rejects_str_and_dict_identities() -> None:
+    with pytest.raises(StratumJoinError, match="list of strings"):
+        _subjects_of({"present_identities": "Alice"})
+    with pytest.raises(StratumJoinError, match="list of strings"):
+        _subjects_of({"present_identities": {"Alice": 1, "Bob": 2}})
+    with pytest.raises(StratumJoinError, match="list of strings"):
+        _subjects_of({"subjects": "Alice"})
+    with pytest.raises(StratumJoinError, match="list of strings"):
+        _subjects_of({"identities": {"Alice": 1}})
+
+
+def test_join_record_subjects_reject_str_and_dict(tmp_path: Path) -> None:
+    path = _write_manifest(
+        tmp_path,
+        [{"sha256": "a" * 64, "media_id": 1, "stratum": "E_clean"}],
+        strata_counts={"E_clean": {"images": 1, "unique_subjects_faces_gt0": 1}},
+    )
+    index = load_stratum_index(path)
+    with pytest.raises(StratumJoinError, match="list of strings"):
+        join_by_stratum([{"media_id": 1, "present_identities": "Alice"}], index)
+    with pytest.raises(StratumJoinError, match="list of strings"):
+        join_by_stratum(
+            [{"media_id": 1, "present_identities": {"Alice": 1, "Bob": 2}}],
+            index,
+        )
+
+
+def test_join_record_subjects_list_is_legal(tmp_path: Path) -> None:
+    path = _write_manifest(
+        tmp_path,
+        [{"sha256": "a" * 64, "media_id": 1, "stratum": "E_clean"}],
+        strata_counts={"E_clean": {"images": 1, "unique_subjects_faces_gt0": 1}},
+    )
+    report = join_by_stratum(
+        [{"media_id": 1, "present_identities": ["Alice"]}],
+        load_stratum_index(path),
+    )
+    assert report.buckets["E_clean"].unique_subjects == 1
+    assert report.buckets["E_clean"].n_images == 1

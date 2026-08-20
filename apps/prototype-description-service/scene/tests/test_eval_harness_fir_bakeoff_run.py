@@ -21,6 +21,8 @@ from scripts.eval_harness.fir_bakeoff_run import (
     RunPlan,
     _declared_galleries,
     _identities,
+    _missing_required_probe_searches,
+    _never_measured_probe_strata,
     _normalise_subject_id,
     _search_shortfall,
     both_gallery_probe_entries,
@@ -2056,19 +2058,32 @@ def _plan_without_d_capture(tmp_path: Path, *, seed: int = 7) -> RunPlan:
     return build_run_plan(selection_manifest_path=path, seed=seed)
 
 
-def test_overall_incomplete_true_when_declared_probe_stratum_never_measured(
+@pytest.mark.parametrize("exempt_name", PROBE_STRATA)
+def test_probe_completeness_guards_share_one_exemption_predicate(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, exempt_name: str
+) -> None:
+    """Every declared stratum has the same exemption in both completeness guards."""
+    plan = _plan(tmp_path)
+    monkeypatch.setattr(
+        "scripts.eval_harness.fir_bakeoff_run._is_exempt_probe_stratum",
+        lambda candidate_plan, name: candidate_plan is plan and name == exempt_name,
+    )
+
+    never_measured = set(_never_measured_probe_strata(plan, {}))
+    missing_searches = set(_missing_required_probe_searches(plan, {}))
+
+    assert never_measured == missing_searches == set(PROBE_STRATA) - {exempt_name}
+
+
+def test_absent_declared_probe_stratum_is_not_exempt_from_required_searches(
     tmp_path: Path,
 ) -> None:
-    """BR-68: a PROBE_STRATA member with zero join rows must mark overall incomplete.
+    """BR-68: an absent PROBE_STRATA member must stop scoring before publication.
 
-    ``overall_incomplete`` used to be ``any(points[name].incomplete for name
-    in PROBE_STRATA if name in points)`` — a stratum absent from ``points``
-    (because it produced no join rows at all) was silently skipped by
-    ``if name in points``, contributing neither True nor False, even though
-    ``_missing_required_probe_searches`` also exempts it (declared_images
-    defaults to 0 for a name absent from strata_counts). The two guards'
-    blind spots line up exactly, so a run missing an entire declared probe
-    stratum published "complete".
+    A stratum absent from ``strata_counts`` has no explicit empty declaration.
+    Treating the missing count as an implicit zero used to exempt D_capture
+    from the required-search guard while the never-measured guard required it.
+    The unified rule rejects that latent gap at the earlier guard.
 
     The converse control lives in the first half of this test: the same
     base plan with all four probe strata present and fully searched must
@@ -2088,16 +2103,14 @@ def test_overall_incomplete_true_when_declared_probe_stratum_never_measured(
     gap_plan = _plan_without_d_capture(tmp_path)
     searches, overall_foils = _complete_probe_searches(gap_plan)
     del searches["D_capture"]
-    report = score_run(
-        plan=gap_plan,
-        searches=searches,
-        tau=0.50,
-        overall_nonmated=overall_foils,
-    )
-    assert "D_capture" not in report.points
     assert "D_capture" not in gap_plan.index.declared_empty_cells
-    assert report.never_measured_probe_strata == ("D_capture",)
-    assert report.overall.incomplete is True
+    with pytest.raises(FirBakeoffRunError, match="D_capture"):
+        score_run(
+            plan=gap_plan,
+            searches=searches,
+            tau=0.50,
+            overall_nonmated=overall_foils,
+        )
 
 
 def test_padded_g1_roster_key_keeps_mated_partition(tmp_path: Path) -> None:
@@ -2329,4 +2342,3 @@ def test_internal_whitespace_subject_is_not_collapsed_into_a_mate(
     assert 12 in mated_ids
     assert 11 in foil_ids
     assert 11 not in mated_ids
-

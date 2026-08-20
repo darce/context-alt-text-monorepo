@@ -550,10 +550,22 @@ def _never_measured_probe_strata(
     declares empty (``declared_empty_cells``); that is a legitimate
     zero-workload cell, not an accidental gap.
     """
-    empty = set(plan.index.declared_empty_cells)
     return tuple(
-        name for name in PROBE_STRATA if name not in points and name not in empty
+        name
+        for name in PROBE_STRATA
+        if name not in points and not _is_exempt_probe_stratum(plan, name)
     )
+
+
+def _is_exempt_probe_stratum(plan: RunPlan, name: str) -> bool:
+    """Whether a declared probe stratum legitimately requires no measurement.
+
+    Only an explicit manifest ``declared_empty_cells`` entry is evidence of
+    exemption. In particular, a missing ``D_capture`` count is not empty: BR-68
+    showed that treating its implicit zero as exempt lets that unmeasured cell
+    bypass the required-search guard and reach publication as complete.
+    """
+    return name in plan.index.declared_empty_cells
 
 
 def _publish_point(
@@ -858,12 +870,9 @@ def _missing_required_probe_searches(
     plan: RunPlan,
     searches: Mapping[str, Mapping[str, Sequence[SearchResult]]],
 ) -> list[str]:
-    empty = set(plan.index.declared_empty_cells)
     missing: list[str] = []
     for name in PROBE_STRATA:
-        if name in empty:
-            continue
-        if plan.index.declared_images.get(name, 0) <= 0:
+        if _is_exempt_probe_stratum(plan, name):
             continue
         if name not in searches:
             missing.append(name)

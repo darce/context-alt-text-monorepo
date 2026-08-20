@@ -68,10 +68,10 @@ _REPORT_MD = _ANCHOR_DIR / f"{_STEM}-report.md"
 # VLM6-DELTA-09: regenerated for FIR-11 v3 (annotation_mode required, per-box
 # lineage — build_caption_anchor_manifest fix, VLM6-DELTA-04).
 _FROZEN_DIGESTS = {
-    _MAN.name: "14e5e2e1a017c45acc7c615b3069b31880f011db9c14098e85f9a789a8f4a7a7",
-    _RUN.name: "bca65e319c6e942d3cdaac333a9b8bbf0a1f58ef1687c6ec81bbd9d27002c3a4",
-    _REPORT_JSON.name: "1d5c35bf9ace9de3b74e4846699905d84be7e22c2a72c4e86f57084bcc4a5f40",
-    _REPORT_MD.name: "5131d552f1bc38e6ae3441d8346a35ca560a2412d802008f2e924aeff1ab339c",
+    _MAN.name: "a13875aeed9803ea416360098f0ed477baa1a5ce42fcbad67f481ac64a36060a",
+    _RUN.name: "bc5a2e44d7ac5ed42893ac37bd5807aed3c6a79f9c843d8802f06ad4d0d32bc3",
+    _REPORT_JSON.name: "33cd9c82ad69d46e4730f12a032f26773f0ece4544e69307accc6d7919af28d0",
+    _REPORT_MD.name: "c20999c412ea106a5b673b0181b0896021673d31cdb1a6a7648e8b113dbf26d1",
 }
 
 
@@ -269,7 +269,7 @@ def test_generator_regenerates_byte_identical_committed_anchor(tmp_path: Path) -
         )
     )
     assert manifest_sha == expected_sha
-    assert manifest_sha.startswith("51e9456b")  # VLM6-DELTA-09 v3 regen
+    assert manifest_sha.startswith("18d7fc6f")  # PRIV-1 pseudonymisation regen
     assert man_path.read_bytes() == _MAN.read_bytes()
     assert run_path.read_bytes() == _RUN.read_bytes()
     assert report_json.read_bytes() == _REPORT_JSON.read_bytes()

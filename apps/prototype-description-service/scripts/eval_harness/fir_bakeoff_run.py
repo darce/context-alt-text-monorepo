@@ -876,11 +876,25 @@ def _read_entries(path: Path) -> list[dict[str, Any]]:
 
 
 def _identities(entry: Mapping[str, Any]) -> tuple[str, ...]:
+    """Ingest-time identity normalisation (BR-75).
+
+    Applies the same alphabet as ``_normalise_subject_id`` (strip, reject
+    non-string / blank-after-strip) at manifest parse, so membership
+    (``mated_identities_for``) and the published unique-subject census
+    (``strata_join``) see one canonical key per subject instead of
+    diverging on unstripped whitespace or a silent ``str()`` coercion. A
+    blank or malformed item is rejected here — fail closed at the boundary
+    (sr-006) — rather than reaching ``mated_identities_for`` and crashing
+    at point of use, or silently dropping a genuine mate.
+    """
     value = entry.get("present_identities")
     if value is None:
         return ()
     if isinstance(value, (list, tuple)):
-        return tuple(str(item) for item in value if item)
+        return tuple(
+            _normalise_subject_id(item, gallery="present_identities")
+            for item in value
+        )
     raise FirBakeoffRunError(
         f"present_identities must be a list of strings, got {type(value).__name__}"
     )

@@ -1191,6 +1191,75 @@ def test_present_identities_list_and_absent_are_legal(tmp_path: Path) -> None:
     assert assigned == {"Alice", "Bob"}
 
 
+def test_present_identities_strips_whitespace_padding() -> None:
+    """BR-75: ingest normalises the same alphabet membership already used.
+
+    Before the fix, ``_identities``/``_entry_identities`` did a bare
+    ``str(item)`` with no strip, so 'Bob ' survived ingest unstripped and
+    only ``mated_identities_for`` ever normalised it.
+    """
+    assert _identities({"present_identities": ["Bob "]}) == ("Bob",)
+    assert _identities({"present_identities": [" Bob"]}) == ("Bob",)
+    assert _entry_identities(
+        {"present_identities": ["Bob "]}, where="entries[0]"
+    ) == ("Bob",)
+
+
+def test_present_identities_rejects_non_string_item() -> None:
+    """BR-75(b): a non-string item must fail at ingest, not coerce silently.
+
+    Before the fix, ``_identities({'present_identities': [123]})`` returned
+    ``('123',)`` via a bare ``str(item)`` and manifest ingest never reached
+    a type check.
+    """
+    with pytest.raises(FirBakeoffRunError, match="present_identities"):
+        _identities({"present_identities": [123]})
+    with pytest.raises(StratumJoinError, match="present_identities"):
+        _entry_identities({"present_identities": [123]}, where="entries[0]")
+
+
+def test_present_identities_rejects_blank_item_at_ingest() -> None:
+    """BR-75(c): a blank/whitespace-only item must fail closed at ingest.
+
+    Before the fix, ``_identities({'present_identities': ['Bob', ' ']})``
+    returned ``('Bob', ' ')`` and the crash only surfaced later inside
+    ``mated_identities_for`` — silently dropping every mate on that still,
+    including a genuine 'Bob' mate, rather than rejecting the manifest.
+    """
+    with pytest.raises(FirBakeoffRunError, match="present_identities"):
+        _identities({"present_identities": ["Bob", " "]})
+    with pytest.raises(StratumJoinError, match="present_identities"):
+        _entry_identities(
+            {"present_identities": ["Bob", " "]}, where="entries[0]"
+        )
+
+
+def test_census_normalises_padded_duplicate_subject(tmp_path: Path) -> None:
+    """BR-75(a): a stratum with 'Bob' and 'Bob ' is one subject, not two.
+
+    Before the fix, ``unique_subjects`` split on the unstripped name (5),
+    while the gallery builder merged the two spellings into one roster key
+    — a published census that disagreed with the enrollment it described.
+    """
+    entries = [
+        _entry(1, "E_clean", ["Alice"], "a"),
+        _entry(2, "E_clean", ["Alice"], "b"),
+        _entry(3, "E_clean", ["Bob"], "c"),
+        _entry(4, "E_clean", ["Bob "], "d"),
+        _entry(5, "E_clean", ["Dale", "Eve"], "i"),
+        _entry(10, "A_true_occluder", ["Alice"], "e"),
+        _entry(11, "B_eyewear", ["Bob"], "f"),
+        _entry(12, "C_pose", ["Alice"], "g"),
+        _entry(13, "D_capture", ["Carol"], "h"),
+    ]
+    path = _write_manifest(tmp_path, entries, strata_counts=_base_counts())
+    plan = build_run_plan(selection_manifest_path=path, seed=7)
+    report = score_run(plan=plan, searches=_probe_searches(), tau=0.50)
+    rows = {item["stratum"]: item for item in report.to_rows()}
+    assert rows["E_clean"]["unique_subjects"] == 4
+    assert set(plan.split.g1) | set(plan.split.g2) == {"Alice", "Bob", "Dale", "Eve"}
+
+
 def _copresent_plan(tmp_path: Path, *, seed: int = 7):
     entries = [
         _entry(1, "E_clean", ["Alice"], "a"),

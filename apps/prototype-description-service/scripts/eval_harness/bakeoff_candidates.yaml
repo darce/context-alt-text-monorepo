@@ -1,0 +1,364 @@
+# VLM-6 Slice 2 candidate registry.
+# 14 candidates + 2 incumbent anchors. Revision-pinned. Fail-fast validated.
+# VLM6-S2A-01: kimi-vl-a3b repinned to a real Q4_K_M GGUF; deepseek-vl2-small
+# (unservable on A10 -- no quantized build exists, bf16 > 24GB) replaced by
+# gemma-4-12b.
+# VLM6-S2A-02: qwen36-27b runs alongside qwen38-27b as a generation pair.
+# Qwen3.7 has no open weights, so 3.6 is the previous open generation. Both
+# rows carry the same quant, the same serving recipe, and the same workload
+# fields (prompt_template, reasoning_tuned, min_runtime_build,
+# min_runtime_build_is_lower_bound) so the quality / speed / token-usage
+# delta is attributable to the generation, not the recipe.
+schema: acx-bakeoff-candidates/v1
+task_ref: VLM-6
+hardware_target:
+  shape: VM.GPU.A10.1
+  vram_gb: 24
+  usable_vram_budget_gb: 20
+sealed:
+  candidates: 14
+  incumbent_anchors: 2
+  generation_pairs:
+    - ids: [qwen38-27b, qwen36-27b]
+      quant: UD-Q4_K_XL
+entries:
+  - id: minicpm-v-45
+    role: candidate
+    competing: true
+    model_id: MiniCPM-V-4.5
+    repo: openbmb/MiniCPM-V-4_5-gguf
+    revision: "cefe1580fe9402b06c4e1b8ed7343809377b8147"
+    quant: Q5_K_M
+    artifact: MiniCPM-V-4_5-Q5_K_M.gguf
+    artifact_gb: 6.0
+    license: Apache-2.0
+    prompt_template: v3
+    tiers: [gpu_async]
+    reasoning_tuned: false
+    recipe:
+      stack: llama_cpp
+      ctx_size: 8192
+      image_max_tokens: 1536
+      parallel: 1
+      gguf: MiniCPM-V-4_5-Q5_K_M.gguf
+      mmproj: mmproj-model-f16.gguf
+
+  - id: qwen3-vl-8b
+    role: candidate
+    competing: true
+    model_id: Qwen3-VL-8B-Instruct
+    repo: Qwen/Qwen3-VL-8B-Instruct
+    revision: "0c351dd01ed87e9c1b53cbc748cba10e6187ff3b"
+    quant: bf16
+    artifact: weights
+    artifact_gb: 17.5
+    license: Apache-2.0
+    prompt_template: v3
+    tiers: [gpu_async]
+    reasoning_tuned: false
+    recipe:
+      stack: vllm
+      ctx_size: 8192
+      image_max_tokens: 1536
+      parallel: 1
+
+  - id: qwen38-27b
+    role: candidate
+    competing: true
+    model_id: Qwen3.8-27B
+    repo: unsloth/Qwen3.8-27B-GGUF
+    revision: "1cff334a4a228324d4ee1f76d55d372588f0d556"
+    quant: UD-Q4_K_XL
+    artifact: Qwen3.8-27B-UD-Q4_K_XL.gguf
+    artifact_gb: 17.9
+    license: Apache-2.0
+    prompt_template: v3
+    tiers: [gpu_async]
+    reasoning_tuned: true
+    notes: "Current generation of the Qwen pair; Unsloth GGUF UD-Q4_K_XL 17.9GB + mmproj-F16."
+    recipe:
+      stack: llama_cpp
+      ctx_size: 8192
+      image_max_tokens: 1536
+      parallel: 1
+      extra_flags: ["--no-think"]
+      gguf: Qwen3.8-27B-UD-Q4_K_XL.gguf
+      mmproj: mmproj-F16.gguf
+      min_runtime_build: b6887
+      min_runtime_build_is_lower_bound: true
+
+  - id: qwen36-27b
+    role: candidate
+    competing: true
+    model_id: Qwen3.6-27B
+    repo: unsloth/Qwen3.6-27B-GGUF
+    revision: "82d411acf4a06cfb8d9b073a5211bf410bfc29bf"
+    quant: UD-Q4_K_XL
+    artifact: Qwen3.6-27B-UD-Q4_K_XL.gguf
+    artifact_gb: 17.6
+    license: Apache-2.0
+    prompt_template: v3
+    tiers: [gpu_async]
+    reasoning_tuned: true
+    notes: "Previous open generation of the Qwen pair (3.7 has no open weights). Recipe mirrors qwen38-27b."
+    recipe:
+      stack: llama_cpp
+      ctx_size: 8192
+      image_max_tokens: 1536
+      parallel: 1
+      extra_flags: ["--no-think"]
+      gguf: Qwen3.6-27B-UD-Q4_K_XL.gguf
+      mmproj: mmproj-F16.gguf
+      min_runtime_build: b6887
+      min_runtime_build_is_lower_bound: true
+
+  - id: internvl35-8b
+    role: candidate
+    competing: true
+    model_id: InternVL3.5-8B
+    repo: OpenGVLab/InternVL3_5-8B
+    revision: "9bb6a56ad9cc69db95e2d4eeb15a52bbcac4ef79"
+    quant: bf16
+    artifact: weights
+    artifact_gb: 17.0
+    license: Apache-2.0
+    prompt_template: v3
+    tiers: [gpu_async]
+    reasoning_tuned: false
+    recipe:
+      stack: vllm
+      ctx_size: 8192
+      image_max_tokens: 1536
+      parallel: 1
+
+  - id: mimo-vl-7b-rl
+    role: candidate
+    competing: true
+    model_id: MiMo-VL-7B-RL
+    repo: XiaomiMiMo/MiMo-VL-7B-RL
+    revision: "460c34be0c6cfe79b6b311647ae9112784f80b73"
+    quant: bf16
+    artifact: weights
+    artifact_gb: 16.0
+    license: MIT
+    prompt_template: v3
+    tiers: [gpu_async]
+    reasoning_tuned: true
+    recipe:
+      stack: vllm
+      ctx_size: 8192
+      image_max_tokens: 1536
+      parallel: 1
+      extra_flags: ["--no-think"]
+
+  - id: kimi-vl-a3b
+    role: candidate
+    competing: true
+    model_id: Kimi-VL-A3B-Instruct
+    repo: mradermacher/Kimi-VL-A3B-Instruct-GGUF
+    revision: "d645665be0a3028dca3ef3d08dddb51ab23ecf31"
+    quant: Q4_K_M
+    artifact: Kimi-VL-A3B-Instruct.Q4_K_M.gguf
+    artifact_gb: 11.5
+    license: MIT
+    prompt_template: v3
+    tiers: [gpu_async]
+    reasoning_tuned: true
+    notes: "VLM6-S2A-01: was pinned INT4 against the bf16 base repo with no quantization method. Repinned to a real Q4_K_M GGUF (10.54GB) + mmproj-f16 (0.91GB); bf16 exceeds 24GB."
+    recipe:
+      stack: llama_cpp
+      ctx_size: 8192
+      image_max_tokens: 1536
+      parallel: 1
+      extra_flags: ["--no-think"]
+      gguf: Kimi-VL-A3B-Instruct.Q4_K_M.gguf
+      mmproj: Kimi-VL-A3B-Instruct.mmproj-f16.gguf
+      mmproj_gb: 0.91
+
+  - id: gemma-4-12b
+    role: candidate
+    competing: true
+    model_id: gemma-4-12B-it
+    repo: google/gemma-4-12B-it-qat-q4_0-gguf
+    revision: "29d097773436b69ff9feafd636ab4cf873786537"
+    quant: q4_0-qat
+    artifact: gemma-4-12b-it-qat-q4_0.gguf
+    artifact_gb: 7.2
+    license: Apache-2.0
+    prompt_template: v3
+    tiers: [gpu_async]
+    reasoning_tuned: false
+    notes: "VLM6-S2A-01: replaces deepseek-vl2-small, which has no GGUF/AWQ/GPTQ anywhere and whose bf16 weights exceed 24GB, making it unservable on A10 at any quant. Gemma 4 12B is in the original bake-off matrix, is first-party QAT (6.98GB + 0.18GB mmproj), and is Apache-2.0."
+    recipe:
+      stack: llama_cpp
+      ctx_size: 8192
+      image_max_tokens: 1536
+      parallel: 1
+      gguf: gemma-4-12b-it-qat-q4_0.gguf
+      mmproj: mmproj-gemma-4-12b-it-qat-q4_0.gguf
+      mmproj_gb: 0.18
+
+  - id: glm-41v-9b
+    role: candidate
+    competing: true
+    model_id: GLM-4.1V-9B-Thinking
+    repo: THUDM/GLM-4.1V-9B-Thinking
+    revision: "3c1471e51dc811b589d4d12b1c1c7c1c941267c2"
+    quant: bf16
+    artifact: weights
+    artifact_gb: 19.0
+    license: MIT
+    prompt_template: v3
+    tiers: [gpu_async]
+    reasoning_tuned: true
+    notes: "Force non-thinking; KV is tight on 24GB."
+    recipe:
+      stack: vllm
+      ctx_size: 8192
+      image_max_tokens: 1536
+      parallel: 1
+      extra_flags: ["--no-think"]
+
+  - id: ovis25-9b
+    role: candidate
+    competing: true
+    model_id: Ovis2.5-9B
+    repo: AIDC-AI/Ovis2.5-9B
+    revision: "d73b2283ae2a930b7762f8d7b8b8a3f0f3b5c3bd"
+    quant: bf16
+    artifact: weights
+    artifact_gb: 19.0
+    license: Apache-2.0
+    prompt_template: v3
+    tiers: [gpu_async]
+    reasoning_tuned: false
+    recipe:
+      stack: hf_transformers
+      ctx_size: 8192
+      image_max_tokens: 1536
+      parallel: 1
+
+  - id: ovis2-8b
+    role: candidate
+    competing: true
+    model_id: Ovis2-8B
+    repo: AIDC-AI/Ovis2-8B
+    revision: "c0730f752cf605d44788a08151cfede0caab714d"
+    quant: bf16
+    artifact: weights
+    artifact_gb: 17.0
+    license: Apache-2.0
+    prompt_template: v3
+    tiers: [gpu_async]
+    reasoning_tuned: false
+    recipe:
+      stack: hf_transformers
+      ctx_size: 8192
+      image_max_tokens: 1536
+      parallel: 1
+
+  - id: minicpm-v-46
+    role: candidate
+    competing: true
+    model_id: MiniCPM-V-4.6
+    repo: openbmb/MiniCPM-V-4_6-gguf
+    revision: "78e02f066e9819a60573b78a4275df8a0c27f698"
+    quant: Q4_K_M
+    artifact: MiniCPM-V-4_6-Q4_K_M.gguf
+    artifact_gb: 4.0
+    license: Apache-2.0
+    prompt_template: v3
+    tiers: [gpu_async, cpu_inline]
+    reasoning_tuned: false
+    notes: "CPU-inline Florence-successor candidate; also one GPU run."
+    recipe:
+      stack: llama_cpp
+      ctx_size: 8192
+      image_max_tokens: 1536
+      parallel: 1
+      gguf: MiniCPM-V-4_6-Q4_K_M.gguf
+      mmproj: mmproj-model-f16.gguf
+
+  - id: phi4-mm
+    role: candidate
+    competing: false
+    model_id: Phi-4-multimodal-instruct
+    repo: microsoft/Phi-4-multimodal-instruct
+    revision: "93f923e1a7727d1c4f446756212d9d3e8fcc5d81"
+    quant: bf16
+    artifact: weights
+    artifact_gb: 11.0
+    license: MIT
+    prompt_template: v3
+    tiers: [gpu_async]
+    reasoning_tuned: false
+    notes: "Reference-only candidate (research-obsolete); measured, not competing."
+    recipe:
+      stack: vllm
+      ctx_size: 8192
+      image_max_tokens: 1536
+      parallel: 1
+
+  - id: florence-2-large-ft
+    role: candidate
+    competing: true
+    model_id: Florence-2-large-ft
+    repo: microsoft/Florence-2-large-ft
+    revision: "4a12a2b54b7016a48a22037fbd62da90cd566f2a"
+    quant: bf16
+    artifact: weights
+    artifact_gb: 2.0
+    license: MIT
+    prompt_template: v3
+    tiers: [gpu_async]
+    reasoning_tuned: false
+    notes: "Family quality ceiling; florence_large is a 503 stub today."
+    recipe:
+      stack: hf_transformers
+      ctx_size: 8192
+      image_max_tokens: 1536
+      parallel: 1
+
+  - id: florence-2-base-ft
+    role: incumbent
+    competing: false
+    model_id: Florence-2-base-ft
+    repo: microsoft/Florence-2-base-ft
+    revision: "f6c1a25888ffc1d945ee8a1a77ac833c7303d46e"
+    quant: bf16
+    artifact: weights
+    artifact_gb: 0.5
+    license: MIT
+    prompt_template: v3
+    tiers: [cpu_inline]
+    reasoning_tuned: false
+    notes: "CPU incumbent anchor. Revision matches scene/config/profiles.py."
+    recipe:
+      stack: hf_transformers
+      ctx_size: 8192
+      image_max_tokens: 1536
+      parallel: 1
+
+  - id: qwen3-vl-30b-a3b
+    role: incumbent
+    competing: false
+    model_id: Qwen3-VL-30B-A3B-Instruct
+    repo: unsloth/Qwen3-VL-30B-A3B-Instruct-GGUF
+    revision: "0af19e7479857aa7f3246466a4ad16c7e7299639"
+    quant: Q4_K_M
+    artifact: Qwen3-VL-30B-A3B-Instruct-Q4_K_M.gguf
+    artifact_gb: 18.6
+    license: Apache-2.0
+    prompt_template: v3
+    tiers: [gpu_async]
+    reasoning_tuned: true
+    notes: "GPU incumbent anchor (gpu_qwen30b)."
+    recipe:
+      stack: llama_cpp
+      ctx_size: 8192
+      image_max_tokens: 1536
+      parallel: 1
+      extra_flags: ["--no-think"]
+      gguf: Qwen3-VL-30B-A3B-Instruct-Q4_K_M.gguf
+      mmproj: mmproj-F16.gguf
+      min_runtime_build: b6887

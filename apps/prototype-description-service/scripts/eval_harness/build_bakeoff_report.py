@@ -18,6 +18,12 @@ Usage:
 
 For a large corpus (hundreds of images) omit --embed-images: the report stays
 light and text-only. --embed-images is intended for small comparison sets.
+
+Comparability gate: every run record is checked against the manifest it is being
+reported under, via the ``provenance.manifest_sha256`` the harness already stamps.
+A record from a different corpus exits ``3`` and writes nothing; pass
+``--allow-foreign-run LABEL`` to keep it as an explicitly badged, non-comparable
+reference column instead.
 """
 
 from __future__ import annotations
@@ -272,6 +278,88 @@ def build(
     )
 
 
+NON_COMPARABLE_BADGE = " ⚠ NOT COMPARABLE"
+EXIT_NOT_COMPARABLE = 3
+
+
+class ComparabilityError(RuntimeError):
+    """A run record was produced against a different corpus than the one being reported."""
+
+
+def _run_provenance(path: str) -> dict[str, Any]:
+    prov = json.loads(Path(path).read_text()).get("provenance")
+    return prov if isinstance(prov, dict) else {}
+
+
+def _manifest_identity(path: str) -> tuple[str | None, str]:
+    """Canonical ``manifest_sha256`` for ``path``, matching ``cli._manifest_sha``.
+
+    Returns ``(sha, mode)``. A v3 manifest is loaded through the real validator so
+    the digest is byte-identical to the one every run record stamps. Anything that
+    is structurally not a v3 manifest (ad-hoc fixtures) yields ``(None, ...)`` and
+    downgrades the check to cross-run agreement — the branch is decided by the
+    declared ``manifest_version``, never by swallowing a load failure.
+    """
+    raw = json.loads(Path(path).read_text())
+    if not isinstance(raw, dict) or raw.get("manifest_version") != 3:
+        return None, "cross-run only (manifest is not v3)"
+    from scripts.eval_harness.cli import _manifest_sha  # heavy import: v3 path only
+    from scripts.eval_harness.manifest import load_manifest
+
+    return _manifest_sha(load_manifest(path)), "verified against manifest"
+
+
+def _check_comparability(
+    manifest_path: str, provenances: dict[str, dict[str, Any]], consented: set[str]
+) -> tuple[dict[str, str], str]:
+    """Refuse to render run records drawn from a different split [EVAL-01, EXP-07].
+
+    A 646-image run record is a *superset* of a 10-image manifest, so every cell
+    populates and the column renders as an unmarked control while measuring a
+    different corpus. The identity that makes the two distinguishable —
+    ``provenance.manifest_sha256`` — is already stamped on every record, so the
+    mismatch is detectable and is treated as fatal rather than cosmetic.
+
+    Returns ``(foreign_reasons, mode)``; raises ``ComparabilityError`` for any
+    mismatch the operator has not explicitly consented to via
+    ``--allow-foreign-run``. Consented runs stay in the report but carry a
+    permanent badge so they can never be read as a like-for-like control.
+    """
+    expected, mode = _manifest_identity(manifest_path)
+    shas = {label: (prov.get("manifest_sha256") or "") for label, prov in provenances.items()}
+
+    reasons: dict[str, str] = {}
+    for label, sha in shas.items():
+        if not sha:
+            reasons[label] = "run record carries no provenance.manifest_sha256"
+        elif expected is not None and sha != expected:
+            reasons[label] = f"ran against manifest {sha[:12]}, report declares {expected[:12]}"
+    if expected is None:
+        # No manifest-side anchor: runs must at least agree with each other, else
+        # the columns are measuring different corpora regardless of the header.
+        distinct = {s for s in shas.values() if s}
+        if len(distinct) > 1:
+            majority = max(distinct, key=lambda s: sum(1 for v in shas.values() if v == s))
+            for label, sha in shas.items():
+                if sha and sha != majority:
+                    reasons[label] = f"ran against manifest {sha[:12]}, other runs used {majority[:12]}"
+        elif not distinct:
+            reasons.clear()  # nothing anywhere carries provenance: nothing to contradict
+
+    unconsented = {label: why for label, why in reasons.items() if label not in consented}
+    if unconsented:
+        lines = "\n".join(f"  - {label}: {why}" for label, why in sorted(unconsented.items()))
+        raise ComparabilityError(
+            f"run record(s) not comparable to --manifest {manifest_path}:\n{lines}\n"
+            "A run made on a different corpus renders as an unmarked control column. Either "
+            "re-run those models on this manifest, or pass --allow-foreign-run LABEL to keep "
+            "the column as an explicitly badged, non-comparable reference."
+        )
+    for label in sorted(consented - set(reasons)):
+        print(f"note: --allow-foreign-run {label!r} is stale; that run matches this manifest", file=sys.stderr)
+    return reasons, mode
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Build a self-contained bake-off HTML report.")
     ap.add_argument("--manifest", required=True)
@@ -289,6 +377,9 @@ def main(argv: list[str] | None = None) -> int:
                     help="total run cost in USD; report renders total + cost-per-image")
     ap.add_argument("--hourly-rate", type=float, default=None,
                     help="instance $/hr; renders deterministic per-image cost = rate x inference seconds")
+    ap.add_argument("--allow-foreign-run", action="append", default=[], metavar="LABEL",
+                    help="repeatable; consent to render LABEL even though it ran against a different "
+                         "manifest. The column is badged non-comparable instead of passing as a control.")
     args = ap.parse_args(argv)
     for _name, _val in (("--hourly-rate", args.hourly_rate), ("--cost-total", args.cost_total)):
         if _val is not None and _val < 0:
@@ -296,11 +387,22 @@ def main(argv: list[str] | None = None) -> int:
 
     manifest = _load_manifest(args.manifest)
     runs: dict[str, dict[int, dict]] = {}
+    provenances: dict[str, dict[str, Any]] = {}
     for spec in args.run:
         if "=" not in spec:
             ap.error(f"--run must be LABEL=PATH, got {spec!r}")
         label, path = spec.split("=", 1)
         runs[label] = _index_run(path)
+        provenances[label] = _run_provenance(path)
+
+    try:
+        foreign, identity_mode = _check_comparability(args.manifest, provenances, set(args.allow_foreign_run))
+    except ComparabilityError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return EXIT_NOT_COMPARABLE
+    if foreign:
+        runs = {(f"{label}{NON_COMPARABLE_BADGE} ({foreign[label]})" if label in foreign else label): cells
+                for label, cells in runs.items()}
 
     if args.media_ids:
         media_ids = [int(x) for x in args.media_ids.split(",") if x.strip()]
@@ -311,7 +413,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.embed_images and images_dir is None:
         ap.error("--embed-images requires --images-dir")
 
-    subtitle = f"{len(media_ids)} images · {len(runs)} run(s): {', '.join(runs)} · self-contained, offline"
+    subtitle = (f"{len(media_ids)} images · {len(runs)} run(s): {', '.join(runs)} · "
+                f"manifest identity: {identity_mode} · self-contained, offline")
     if args.cost_total is not None and media_ids:
         subtitle += f" · total ${args.cost_total:.2f} · ${args.cost_total / len(media_ids):.4f}/image"
     doc = build(manifest, runs, media_ids, images_dir, args.embed_images, args.thumb_px, args.title, subtitle, args.hourly_rate)

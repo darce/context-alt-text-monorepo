@@ -1,0 +1,241 @@
+"""Stratified probability-sample sizing and drawing for DESCQUAL-2 audits.
+
+n is computed from a target margin of error plus the finite-population
+correction (AUDIT-09), never as a percent of N. Independent draws per stratum
+carry inclusion probabilities (AUDIT-08 / AUDIT-10). Images cluster within
+subject, so sizing can inflate by the cluster design effect (AUDIT-11).
+"""
+
+from __future__ import annotations
+
+import math
+import random
+from collections.abc import Hashable, Mapping, Sequence
+from dataclasses import dataclass
+
+# Conservative Bernoulli variance (AUDIT-09): p=0.5 maximises p(1-p).
+_DEFAULT_P = 0.5
+# Two-sided 95% normal quantile.
+_DEFAULT_Z = 1.96
+
+
+class AuditSamplingError(ValueError):
+    """Invalid sizing, allocation, or draw inputs."""
+
+
+@dataclass(frozen=True)
+class SampledUnit:
+    unit_id: Hashable
+    stratum: str
+    inclusion_probability: float
+
+
+@dataclass(frozen=True)
+class Sample:
+    seed: int
+    units: tuple[SampledUnit, ...]
+
+    @property
+    def unit_ids(self) -> tuple[Hashable, ...]:
+        return tuple(unit.unit_id for unit in self.units)
+
+
+def sample_size_for_margin(
+    *,
+    margin: float,
+    population: int,
+    p: float = _DEFAULT_P,
+    z: float = _DEFAULT_Z,
+) -> int:
+    """SRS-of-proportion n from margin of error, with finite-population correction.
+
+    n0 = z² p (1-p) / e², then n = n0 / (1 + (n0 - 1) / N), rounded up.
+    """
+    if not 0 < margin:
+        raise AuditSamplingError(f"margin must be > 0, got {margin!r}")
+    if population < 1:
+        raise AuditSamplingError(f"population must be >= 1, got {population!r}")
+    if not 0 < p < 1:
+        raise AuditSamplingError(f"p must be in (0, 1), got {p!r}")
+    if z <= 0:
+        raise AuditSamplingError(f"z must be > 0, got {z!r}")
+    n0 = (z * z) * p * (1.0 - p) / (margin * margin)
+    n = n0 / (1.0 + (n0 - 1.0) / population)
+    return min(population, math.ceil(n))
+
+
+def design_effect(*, cluster_size: float, icc: float) -> float:
+    """Kish design effect: 1 + (M − 1) × ICC (AUDIT-11)."""
+    if cluster_size < 1:
+        raise AuditSamplingError(f"cluster_size must be >= 1, got {cluster_size!r}")
+    if not 0 <= icc <= 1:
+        raise AuditSamplingError(f"icc must be in [0, 1], got {icc!r}")
+    return 1.0 + (cluster_size - 1.0) * icc
+
+
+def inflate_for_clustering(*, n: int, deff: float) -> int:
+    """Nominal n so that n / deff recovers the independent-unit target."""
+    if n < 0:
+        raise AuditSamplingError(f"n must be >= 0, got {n!r}")
+    if deff < 1:
+        raise AuditSamplingError(f"deff must be >= 1, got {deff!r}")
+    return math.ceil(n * deff)
+
+
+def allocate(
+    *,
+    strata_sizes: Mapping[str, int],
+    n: int,
+    precision_floors: Mapping[str, float] | None = None,
+) -> dict[str, int]:
+    """Allocate n across strata; proportional default, disproportional for floors.
+
+    A precision floor is a per-stratum target margin: that stratum is sized from
+    ``sample_size_for_margin`` against its own N_h, and the remainder of n is
+    allocated proportionally to the other strata (AUDIT-10).
+    """
+    if n < 0:
+        raise AuditSamplingError(f"n must be >= 0, got {n!r}")
+    if not strata_sizes:
+        raise AuditSamplingError("strata_sizes must be non-empty")
+    for name, size in strata_sizes.items():
+        if size < 0:
+            raise AuditSamplingError(f"stratum {name!r} size must be >= 0, got {size!r}")
+
+    total_n = sum(strata_sizes.values())
+    if total_n == 0:
+        if n > 0:
+            raise AuditSamplingError("cannot allocate n>0 across empty strata")
+        return {name: 0 for name in strata_sizes}
+
+    target = min(n, total_n)
+    floors = dict(precision_floors or {})
+    unknown = set(floors) - set(strata_sizes)
+    if unknown:
+        raise AuditSamplingError(f"precision_floors name unknown strata: {sorted(unknown)}")
+
+    assigned = {name: 0 for name in strata_sizes}
+    reserved = 0
+    for name, margin in floors.items():
+        n_h = sample_size_for_margin(margin=margin, population=strata_sizes[name])
+        n_h = min(n_h, strata_sizes[name])
+        assigned[name] = n_h
+        reserved += n_h
+    if reserved > target:
+        raise AuditSamplingError(
+            f"precision floors require n>={reserved}, got n={target}"
+        )
+
+    leftover = target - reserved
+    remainder_keys = [name for name in strata_sizes if name not in floors]
+    leftover = _pour(assigned, leftover, {k: strata_sizes[k] for k in remainder_keys})
+    if leftover:
+        capacity = {k: strata_sizes[k] - assigned[k] for k in strata_sizes}
+        leftover = _pour(assigned, leftover, capacity)
+    if leftover:
+        raise AuditSamplingError(f"unable to place {leftover} leftover units")
+    return assigned
+
+
+def _pour(assigned: dict[str, int], leftover: int, weights: Mapping[str, int]) -> int:
+    """Place leftover units by largest-remainder; return any still unplaced."""
+    if leftover <= 0 or not weights:
+        return leftover
+    extra = _largest_remainder(weights=weights, n=leftover)
+    placed = 0
+    for name, count in extra.items():
+        assigned[name] = assigned.get(name, 0) + count
+        placed += count
+    return leftover - placed
+
+
+def _largest_remainder(*, weights: Mapping[str, int], n: int) -> dict[str, int]:
+    """Hamilton allocation of n, capped at each weight (stratum size / capacity)."""
+    positive = {name: weight for name, weight in weights.items() if weight > 0}
+    result = {name: 0 for name in weights}
+    if not positive or n <= 0:
+        return result
+    cap = min(n, sum(positive.values()))
+    total_w = sum(positive.values())
+    quotas = {name: cap * weight / total_w for name, weight in positive.items()}
+    for name, weight in positive.items():
+        result[name] = min(weight, math.floor(quotas[name]))
+    remaining = cap - sum(result[name] for name in positive)
+    order = sorted(positive, key=lambda name: (-(quotas[name] - math.floor(quotas[name])), name))
+    for name in order:
+        if remaining <= 0:
+            break
+        if result[name] < positive[name]:
+            result[name] += 1
+            remaining -= 1
+    return result
+
+
+def draw(
+    *,
+    strata_members: Mapping[str, Sequence[Hashable]],
+    allocation: Mapping[str, int],
+    seed: int,
+) -> Sample:
+    """Independent SRS without replacement per stratum; each unit carries π_h = n_h / N_h.
+
+    There is no convenience / first-n path: a design-based interval is only valid
+    when inclusion probabilities are known before the draw (AUDIT-08).
+    """
+    members = {name: list(units) for name, units in strata_members.items()}
+    _check_frame(members, allocation)
+
+    rng = random.Random(seed)
+    selected: list[SampledUnit] = []
+    for stratum in sorted(members):
+        n_h = allocation.get(stratum, 0)
+        if n_h <= 0:
+            continue
+        frame = _ordered_unique(members[stratum])
+        drawn = rng.sample(frame, n_h)
+        pi_h = n_h / len(frame)
+        selected.extend(
+            SampledUnit(unit_id=unit_id, stratum=stratum, inclusion_probability=pi_h)
+            for unit_id in drawn
+        )
+    return Sample(seed=seed, units=tuple(selected))
+
+
+def _check_frame(
+    members: Mapping[str, list[Hashable]],
+    allocation: Mapping[str, int],
+) -> None:
+    unknown = set(allocation) - set(members)
+    if unknown:
+        raise AuditSamplingError(f"allocation names unknown strata: {sorted(unknown)}")
+    seen: set[Hashable] = set()
+    for stratum, units in members.items():
+        n_h = allocation.get(stratum, 0)
+        if n_h < 0:
+            raise AuditSamplingError(f"allocation[{stratum!r}] must be >= 0, got {n_h!r}")
+        unique = _ordered_unique(units)
+        if len(unique) != len(units):
+            raise AuditSamplingError(f"stratum {stratum!r} has duplicate unit ids")
+        clash = seen.intersection(unique)
+        if clash:
+            raise AuditSamplingError(f"unit ids appear in multiple strata: {sorted(clash, key=repr)}")
+        seen.update(unique)
+        if n_h > len(unique):
+            raise AuditSamplingError(
+                f"allocation[{stratum!r}]={n_h} exceeds N_h={len(unique)}"
+            )
+
+
+def _ordered_unique(units: Sequence[Hashable]) -> list[Hashable]:
+    """Stable unique list; sort when items are mutually comparable so frame order cannot bias the draw."""
+    seen: set[Hashable] = set()
+    unique: list[Hashable] = []
+    for unit in units:
+        if unit in seen:
+            continue
+        seen.add(unit)
+        unique.append(unit)
+    try:
+        return sorted(unique)  # type: ignore[type-var]
+    except TypeError:
+        return unique

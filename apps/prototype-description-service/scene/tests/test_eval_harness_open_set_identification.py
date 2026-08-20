@@ -257,3 +257,41 @@ def test_iet_curve_preserves_threshold_order():
     curve = iet_curve(mated=[_hit("Alice", 0.40)], nonmated=(), thresholds=thresholds)
     assert [p.tau for p in curve] == [0.90, 0.10, 0.50]
     assert iet_curve(mated=(), nonmated=(), thresholds=()) == []
+
+
+def test_non_finite_tau_is_not_a_clean_measurement():
+    """EVAL-18: NaN/inf tau must not score as a measured IET point.
+
+    Direct scorer callers (and iet_curve) used to skip the bakeoff score_run
+    finite-tau gate. IEEE then makes every NaN comparison false, so tau=nan
+    reports fnir=0.0 / measured=True — a perfect system that was never scored.
+    """
+    mated = [_hit("Alice", 0.90)]
+    for tau in (float("nan"), float("inf"), float("-inf")):
+        with pytest.raises(ValueError, match="tau"):
+            fnir_fpi_at_threshold(mated=mated, nonmated=(), tau=tau)
+        with pytest.raises(ValueError, match="tau"):
+            iet_curve(mated=mated, nonmated=(), thresholds=(tau,))
+
+
+def test_non_finite_detected_score_is_not_a_hit():
+    """EVAL-16/18: a NaN top-1 score on a detected search is not a mate hit.
+
+    `top1_score < tau` is False for NaN, so a matching name with score=nan
+    used to report fnir=0.0. Inf would silently pass every threshold.
+    """
+    nan_mated = [
+        SearchResult(detected=True, top1_score=float("nan"), top1_name="A", true_name="A")
+    ]
+    inf_mated = [
+        SearchResult(detected=True, top1_score=float("inf"), top1_name="A", true_name="A")
+    ]
+    nan_foil = [
+        SearchResult(detected=True, top1_score=float("nan"), top1_name="A", true_name=None)
+    ]
+    with pytest.raises(ValueError, match="top1_score"):
+        fnir_fpi_at_threshold(mated=nan_mated, nonmated=(), tau=0.50)
+    with pytest.raises(ValueError, match="top1_score"):
+        fnir_fpi_at_threshold(mated=inf_mated, nonmated=(), tau=0.50)
+    with pytest.raises(ValueError, match="top1_score"):
+        fnir_fpi_at_threshold(mated=[_hit("Alice", 0.90)], nonmated=nan_foil, tau=0.50)

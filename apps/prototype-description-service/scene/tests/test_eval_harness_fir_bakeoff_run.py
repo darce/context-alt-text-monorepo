@@ -16,9 +16,16 @@ from scripts.eval_harness.fir_bakeoff_run import (
     PROBE_STRATA,
     FirBakeoffRunError,
     _identities,
+    both_gallery_probe_entries,
+    both_gallery_search_count,
     build_run_plan,
+    expected_mated_search_count,
+    mated_galleries_for,
+    mated_identities_for,
+    occluded_probes_for,
     score_run,
 )
+from scripts.eval_harness.gallery_split import GalleryName
 from scripts.eval_harness.open_set_identification import SearchResult
 from scripts.eval_harness.strata_join import StratumJoinError, _entry_identities, load_stratum_index
 
@@ -112,16 +119,90 @@ def _plan(tmp_path: Path, *, a_images: int = 1, seed: int = 7):
     return build_run_plan(selection_manifest_path=path, seed=seed)
 
 
-def _hit(name: str, score: float) -> SearchResult:
-    return SearchResult(detected=True, top1_score=score, top1_name=name, true_name=name)
+def _gallery_of(plan, subject: str) -> GalleryName:
+    if subject in plan.split.g1:
+        return GalleryName.G1
+    if subject in plan.split.g2:
+        return GalleryName.G2
+    raise AssertionError(f"{subject!r} is not enrolled")
 
 
-def _undetected_mated(name: str) -> SearchResult:
-    return SearchResult(detected=False, top1_score=None, top1_name=None, true_name=name)
+def _other_gallery(plan, subject: str) -> GalleryName:
+    own = _gallery_of(plan, subject)
+    return GalleryName.G2 if own is GalleryName.G1 else GalleryName.G1
 
 
-def _nonmated_hit(predicted: str, score: float) -> SearchResult:
-    return SearchResult(detected=True, top1_score=score, top1_name=predicted, true_name=None)
+def _hit(
+    name: str,
+    score: float,
+    *,
+    gallery: GalleryName | str,
+    media_id: int,
+) -> SearchResult:
+    return SearchResult(
+        detected=True,
+        top1_score=score,
+        top1_name=name,
+        true_name=name,
+        gallery=gallery,
+        media_id=media_id,
+    )
+
+
+def _undetected_mated(
+    name: str, *, gallery: GalleryName | str, media_id: int
+) -> SearchResult:
+    return SearchResult(
+        detected=False,
+        top1_score=None,
+        top1_name=None,
+        true_name=name,
+        gallery=gallery,
+        media_id=media_id,
+    )
+
+
+def _nonmated_hit(
+    predicted: str,
+    score: float,
+    *,
+    gallery: GalleryName | str,
+    media_id: int,
+) -> SearchResult:
+    return SearchResult(
+        detected=True,
+        top1_score=score,
+        top1_name=predicted,
+        true_name=None,
+        gallery=gallery,
+        media_id=media_id,
+    )
+
+
+def _alice_hit(plan, score: float = 0.90, *, media_id: int = 10) -> SearchResult:
+    return _hit("Alice", score, gallery=_gallery_of(plan, "Alice"), media_id=media_id)
+
+
+def _alice_miss(plan, *, media_id: int = 10) -> SearchResult:
+    return _undetected_mated(
+        "Alice", gallery=_gallery_of(plan, "Alice"), media_id=media_id
+    )
+
+
+def _bob_hit(plan, score: float = 0.90, *, media_id: int = 11) -> SearchResult:
+    return _hit("Bob", score, gallery=_gallery_of(plan, "Bob"), media_id=media_id)
+
+
+def _alice_foil(plan, predicted: str, score: float, *, media_id: int = 10) -> SearchResult:
+    return _nonmated_hit(
+        predicted, score, gallery=_other_gallery(plan, "Alice"), media_id=media_id
+    )
+
+
+def _bob_foil(plan, predicted: str, score: float, *, media_id: int = 11) -> SearchResult:
+    return _nonmated_hit(
+        predicted, score, gallery=_other_gallery(plan, "Bob"), media_id=media_id
+    )
 
 
 def _n_enrolled(plan) -> int:
@@ -178,15 +259,19 @@ def test_gallery_stratum_renders_enrolled_not_probed() -> None:
 def test_gallery_searches_are_not_pooled_into_overall_fnir(tmp_path: Path) -> None:
     """BR-16: an E_clean key must not dilute the occluded-probe headline."""
     plan = _plan(tmp_path)
-    foils = [_nonmated_hit("Bob", 0.80)]
+    foils = [_alice_foil(plan, "Bob", 0.80)]
     searches = _probe_searches(
         A_true_occluder={
-            "mated": [_undetected_mated("Alice")],
+            "mated": [_alice_miss(plan)],
             "nonmated": foils,
         },
     )
     searches[GALLERY_STRATUM] = {
-        "mated": [_hit("Alice", 0.90), _hit("Bob", 0.90), _hit("Dale", 0.90)],
+        "mated": [
+            _alice_hit(plan),
+            _bob_hit(plan),
+            _hit("Dale", 0.90, gallery=_gallery_of(plan, "Dale"), media_id=5),
+        ],
         "nonmated": [],
     }
     report = score_run(
@@ -249,8 +334,8 @@ def test_zero_mated_stratum_renders_unmeasured_fnir_and_keeps_fpi(
 ) -> None:
     plan = _plan(tmp_path)
     foils = [
-        _nonmated_hit("Alice", 0.90),
-        _nonmated_hit("Bob", 0.20),
+        _alice_foil(plan, "Alice", 0.90),
+        _alice_foil(plan, "Bob", 0.20),
     ]
     report = score_run(
         plan=plan,
@@ -357,12 +442,17 @@ def test_manifest_images_passed_through_not_recomputed(tmp_path: Path) -> None:
 
 
 def test_mated_entry_with_true_name_none_raises(tmp_path: Path) -> None:
-    """Upstream ``_is_fnir_miss`` already rejects this; composition must not swallow it."""
+    """BR-18: a mated filing whose true_name is missing is not enrolled in the gallery."""
     plan = _plan(tmp_path)
     misfiled = SearchResult(
-        detected=True, top1_score=0.90, top1_name="Alice", true_name=None
+        detected=True,
+        top1_score=0.90,
+        top1_name="Alice",
+        true_name=None,
+        gallery=_gallery_of(plan, "Alice"),
+        media_id=10,
     )
-    with pytest.raises(ValueError, match="mated SearchResult requires true_name"):
+    with pytest.raises(FirBakeoffRunError, match="not enrolled"):
         score_run(
             plan=plan,
             searches=_probe_searches(
@@ -379,7 +469,7 @@ def test_undetected_mated_probe_counts_as_fnir_miss(tmp_path: Path) -> None:
         plan=plan,
         searches=_probe_searches(
             A_true_occluder={
-                "mated": [_hit("Alice", 0.90), _undetected_mated("Bob")],
+                "mated": [_alice_hit(plan), _alice_miss(plan)],
                 "nonmated": [],
             },
         ),
@@ -400,24 +490,30 @@ def test_undetected_mated_probe_counts_as_fnir_miss(tmp_path: Path) -> None:
 def test_fpi_is_integer_count_not_rate_over_nonmated(tmp_path: Path) -> None:
     plan = _plan(tmp_path)
     enrolled = _n_enrolled(plan)
+    foil_gallery = _other_gallery(plan, "Bob")
     baseline_foils = [
-        _nonmated_hit("Alice", 0.85),
-        _nonmated_hit("Alice", 0.10),
+        _bob_foil(plan, "Alice", 0.85),
+        _bob_foil(plan, "Alice", 0.10),
     ]
     flooded_foils = [
-        _nonmated_hit("Alice", 0.85),
-        _nonmated_hit("Alice", 0.10),
-        _nonmated_hit("Alice", 0.05),
-        _nonmated_hit("Bob", 0.00),
+        _bob_foil(plan, "Alice", 0.85),
+        _bob_foil(plan, "Alice", 0.10),
+        _bob_foil(plan, "Alice", 0.05),
+        _bob_foil(plan, "Bob", 0.00),
         SearchResult(
-            detected=False, top1_score=None, top1_name=None, true_name=None
+            detected=False,
+            top1_score=None,
+            top1_name=None,
+            true_name=None,
+            gallery=foil_gallery,
+            media_id=11,
         ),
     ]
     baseline = score_run(
         plan=plan,
         searches=_probe_searches(
             B_eyewear={
-                "mated": [_hit("Bob", 0.90)],
+                "mated": [_bob_hit(plan)],
                 "nonmated": baseline_foils,
             },
         ),
@@ -429,7 +525,7 @@ def test_fpi_is_integer_count_not_rate_over_nonmated(tmp_path: Path) -> None:
         plan=plan,
         searches=_probe_searches(
             B_eyewear={
-                "mated": [_hit("Bob", 0.90)],
+                "mated": [_bob_hit(plan)],
                 "nonmated": flooded_foils,
             },
         ),
@@ -454,16 +550,16 @@ def test_fpi_is_integer_count_not_rate_over_nonmated(tmp_path: Path) -> None:
 
 def test_overall_point_pools_injected_searches(tmp_path: Path) -> None:
     plan = _plan(tmp_path)
-    foils = [_nonmated_hit("Bob", 0.80)]
+    foils = [_alice_foil(plan, "Bob", 0.80)]
     report = score_run(
         plan=plan,
         searches=_probe_searches(
             A_true_occluder={
-                "mated": [_hit("Alice", 0.90)],
+                "mated": [_alice_hit(plan)],
                 "nonmated": foils,
             },
             C_pose={
-                "mated": [_undetected_mated("Alice")],
+                "mated": [_alice_miss(plan, media_id=12)],
                 "nonmated": [],
             },
         ),
@@ -517,10 +613,12 @@ def test_explicit_empty_overall_nonmated_is_unmeasured_fpi(tmp_path: Path) -> No
     publish perfect open-set rejection over an undeclared non-mated set.
     """
     plan = _plan(tmp_path)
-    foils = [_nonmated_hit("Alice", 0.90)]
-    searches = {
-        name: {"mated": [_hit("Alice", 0.90)], "nonmated": foils} for name in PROBE_STRATA
-    }
+    foils = [_alice_foil(plan, "Alice", 0.90)]
+    searches = _probe_searches(
+        A_true_occluder={"mated": [_alice_hit(plan)], "nonmated": foils},
+        B_eyewear={"mated": [_bob_hit(plan)], "nonmated": []},
+        C_pose={"mated": [_alice_hit(plan, media_id=12)], "nonmated": []},
+    )
     report = score_run(
         plan=plan,
         searches=searches,
@@ -528,7 +626,7 @@ def test_explicit_empty_overall_nonmated_is_unmeasured_fpi(tmp_path: Path) -> No
         overall_nonmated=(),
     )
     assert report.points["A_true_occluder"].fpi == 1
-    assert report.overall.n_mated == 4
+    assert report.overall.n_mated == 3
     assert report.overall.measured is True
     assert report.overall.n_nonmated == 0
     assert report.overall.fpi is None
@@ -543,7 +641,7 @@ def test_omitted_foils_do_not_score_perfect_open_set_rejection(tmp_path: Path) -
         plan=plan,
         searches=_probe_searches(
             A_true_occluder={
-                "mated": [_hit("Alice", 0.90)],
+                "mated": [_alice_hit(plan)],
                 "nonmated": [],
             },
         ),
@@ -567,7 +665,7 @@ def test_closed_set_fpi_zero_requires_explicit_flag(tmp_path: Path) -> None:
     plan = _plan(tmp_path)
     searches = _probe_searches(
         A_true_occluder={
-            "mated": [_hit("Alice", 0.90)],
+            "mated": [_alice_hit(plan)],
             "nonmated": [],
         },
     )
@@ -588,18 +686,37 @@ def test_closed_set_fpi_zero_requires_explicit_flag(tmp_path: Path) -> None:
             searches=searches,
             tau=0.50,
             closed_set=True,
-            overall_nonmated=[_nonmated_hit("Bob", 0.80)],
+            overall_nonmated=[_alice_foil(plan, "Bob", 0.80)],
         )
+
+
+def _stratum_foils(plan) -> dict[str, list[SearchResult]]:
+    return {
+        "A_true_occluder": [
+            _alice_foil(plan, "Alice", 0.90),
+            _alice_foil(plan, "Bob", 0.20),
+        ],
+        "B_eyewear": [
+            _bob_foil(plan, "Alice", 0.90),
+            _bob_foil(plan, "Bob", 0.20),
+        ],
+        "C_pose": [
+            _alice_foil(plan, "Alice", 0.90, media_id=12),
+            _alice_foil(plan, "Bob", 0.20, media_id=12),
+        ],
+        "D_capture": [
+            _nonmated_hit("Alice", 0.90, gallery=GalleryName.G1, media_id=13),
+            _nonmated_hit("Bob", 0.20, gallery=GalleryName.G1, media_id=13),
+        ],
+    }
 
 
 def test_overall_nonmated_is_declared_once_not_pooled(tmp_path: Path) -> None:
     plan = _plan(tmp_path)
-    foils = [
-        _nonmated_hit("Alice", 0.90),
-        _nonmated_hit("Bob", 0.20),
-    ]
+    by_stratum = _stratum_foils(plan)
+    foils = by_stratum["A_true_occluder"]
     searches = {
-        name: {"mated": [], "nonmated": foils} for name in PROBE_STRATA
+        name: {"mated": [], "nonmated": by_stratum[name]} for name in PROBE_STRATA
     }
     report = score_run(
         plan=plan,
@@ -621,12 +738,9 @@ def test_omitting_overall_nonmated_with_stratum_nonmated_raises(
     tmp_path: Path,
 ) -> None:
     plan = _plan(tmp_path)
-    foils = [
-        _nonmated_hit("Alice", 0.90),
-        _nonmated_hit("Bob", 0.20),
-    ]
+    by_stratum = _stratum_foils(plan)
     searches = {
-        name: {"mated": [], "nonmated": foils} for name in PROBE_STRATA
+        name: {"mated": [], "nonmated": by_stratum[name]} for name in PROBE_STRATA
     }
     with pytest.raises(FirBakeoffRunError) as excinfo:
         score_run(plan=plan, searches=searches, tau=0.50)
@@ -642,11 +756,11 @@ def test_mated_searches_still_pool_across_strata(tmp_path: Path) -> None:
         plan=plan,
         searches=_probe_searches(
             A_true_occluder={
-                "mated": [_hit("Alice", 0.90)],
+                "mated": [_alice_hit(plan)],
                 "nonmated": [],
             },
             C_pose={
-                "mated": [_undetected_mated("Alice")],
+                "mated": [_alice_miss(plan, media_id=12)],
                 "nonmated": [],
             },
         ),
@@ -687,6 +801,8 @@ def test_empty_search_lists_on_populated_probe_cell_are_incomplete() -> None:
     """
     plan = build_run_plan(selection_manifest_path=_frozen_manifest(), seed=0)
     assert len(plan.probe_entries["A_true_occluder"]) == 32
+    expected_a = expected_mated_search_count(plan, stratum="A_true_occluder")
+    assert expected_a != 32
     report = score_run(
         plan=plan,
         searches=_probe_searches(),
@@ -695,13 +811,13 @@ def test_empty_search_lists_on_populated_probe_cell_are_incomplete() -> None:
     row = {item["stratum"]: item for item in report.to_rows()}["A_true_occluder"]
     assert row["n_images"] == 32
     assert row["n_mated"] == 0
-    assert row["search_shortfall"] == 32
+    assert row["search_shortfall"] == expected_a
     assert row["incomplete"] is True
     assert row["measured"] is False
     assert row["fnir"] == "not measured"
     for name in PROBE_STRATA:
         cell = {item["stratum"]: item for item in report.to_rows()}[name]
-        expected = len(plan.probe_entries[name])
+        expected = expected_mated_search_count(plan, stratum=name)
         assert cell["search_shortfall"] == expected
         assert cell["incomplete"] is True
         assert cell["n_mated"] == 0
@@ -709,7 +825,7 @@ def test_empty_search_lists_on_populated_probe_cell_are_incomplete() -> None:
 
 def test_explicit_empty_mated_list_is_unmeasured_not_missing(tmp_path: Path) -> None:
     plan = _plan(tmp_path)
-    foils = [_nonmated_hit("Alice", 0.90)]
+    foils = [_bob_foil(plan, "Alice", 0.90)]
     report = score_run(
         plan=plan,
         searches=_probe_searches(
@@ -750,12 +866,12 @@ def test_enrolled_gallery_mismatch_raises(tmp_path: Path) -> None:
 def test_enrolled_gallery_defaults_to_split_size(tmp_path: Path) -> None:
     plan = _plan(tmp_path)
     expected = _n_enrolled(plan)
-    foils = [_nonmated_hit("Bob", 0.80)]
+    foils = [_alice_foil(plan, "Bob", 0.80)]
     report = score_run(
         plan=plan,
         searches=_probe_searches(
             A_true_occluder={
-                "mated": [_hit("Alice", 0.90)],
+                "mated": [_alice_hit(plan)],
                 "nonmated": foils,
             },
         ),
@@ -895,3 +1011,196 @@ def test_present_identities_list_and_absent_are_legal(tmp_path: Path) -> None:
     plan = build_run_plan(selection_manifest_path=path, seed=0)
     assigned = set(plan.split.g1) | set(plan.split.g2)
     assert assigned == {"Alice", "Bob"}
+
+
+def _copresent_plan(tmp_path: Path, *, seed: int = 7):
+    entries = [
+        _entry(1, "E_clean", ["Alice"], "a"),
+        _entry(2, "E_clean", ["Alice"], "b"),
+        _entry(3, "E_clean", ["Bob"], "c"),
+        _entry(4, "E_clean", ["Bob"], "d"),
+        _entry(5, "E_clean", ["Dale", "Eve"], "i"),
+        _entry(10, "A_true_occluder", ["Alice", "Bob"], "e"),
+        _entry(11, "B_eyewear", ["Bob"], "f"),
+        _entry(12, "C_pose", ["Alice"], "g"),
+        _entry(13, "D_capture", ["Carol"], "h"),
+    ]
+    path = _write_manifest(tmp_path, entries, strata_counts=_base_counts())
+    return build_run_plan(selection_manifest_path=path, seed=seed)
+
+
+def test_build_run_plan_consumes_probes_for(tmp_path: Path) -> None:
+    plan = _plan(tmp_path)
+    assert set(plan.probe_sets) == {GalleryName.G1, GalleryName.G2}
+    for gallery, probe_set in plan.probe_sets.items():
+        assert probe_set.gallery is gallery
+        assert probe_set.n_nonmated > 0
+    mated_g1, foils_g1 = occluded_probes_for(plan, gallery=GalleryName.G1)
+    mated_g2, foils_g2 = occluded_probes_for(plan, gallery=GalleryName.G2)
+    assert mated_g1 or foils_g1
+    assert mated_g2 or foils_g2
+
+
+def test_search_against_undeclared_gallery_raises(tmp_path: Path) -> None:
+    plan = _plan(tmp_path)
+    bogus = SearchResult(
+        detected=True,
+        top1_score=0.90,
+        top1_name="Alice",
+        true_name="Alice",
+        gallery="g3",
+        media_id=10,
+    )
+    with pytest.raises(FirBakeoffRunError, match="declared gallery"):
+        score_run(
+            plan=plan,
+            searches=_probe_searches(
+                A_true_occluder={"mated": [bogus], "nonmated": []},
+            ),
+            tau=0.50,
+        )
+
+
+def test_mated_true_name_not_enrolled_in_declared_gallery_raises(
+    tmp_path: Path,
+) -> None:
+    plan = _plan(tmp_path)
+    wrong = SearchResult(
+        detected=True,
+        top1_score=0.90,
+        top1_name="Dale",
+        true_name="Dale",
+        gallery=_gallery_of(plan, "Alice"),
+        media_id=10,
+    )
+    with pytest.raises(FirBakeoffRunError, match="not enrolled"):
+        score_run(
+            plan=plan,
+            searches=_probe_searches(
+                A_true_occluder={"mated": [wrong], "nonmated": []},
+            ),
+            tau=0.50,
+        )
+
+
+def test_nonmated_search_that_drops_enrolled_identity_raises(tmp_path: Path) -> None:
+    plan = _plan(tmp_path)
+    dropped = _nonmated_hit(
+        "Alice",
+        0.90,
+        gallery=_gallery_of(plan, "Alice"),
+        media_id=10,
+    )
+    with pytest.raises(FirBakeoffRunError, match="filed as non-mated"):
+        score_run(
+            plan=plan,
+            searches=_probe_searches(
+                A_true_occluder={"mated": [], "nonmated": [dropped]},
+            ),
+            tau=0.50,
+            overall_nonmated=[dropped],
+        )
+
+
+def test_stranger_probe_filed_as_mated_raises(tmp_path: Path) -> None:
+    plan = _plan(tmp_path)
+    stranger = _hit("Carol", 0.90, gallery=GalleryName.G1, media_id=13)
+    with pytest.raises(FirBakeoffRunError, match="filed as mated"):
+        score_run(
+            plan=plan,
+            searches=_probe_searches(
+                D_capture={"mated": [stranger], "nonmated": []},
+            ),
+            tau=0.50,
+        )
+
+
+def test_copresent_probe_with_one_gallery_raises(tmp_path: Path) -> None:
+    plan = _copresent_plan(tmp_path)
+    both = both_gallery_probe_entries(plan)
+    assert any(entry.media_id == 10 for entry in both)
+    with pytest.raises(FirBakeoffRunError, match="both galleries"):
+        score_run(
+            plan=plan,
+            searches=_probe_searches(
+                A_true_occluder={"mated": [_alice_hit(plan)], "nonmated": []},
+            ),
+            tau=0.50,
+        )
+
+
+def test_copresent_probe_yields_two_searches(tmp_path: Path) -> None:
+    plan = _copresent_plan(tmp_path)
+    alice_g = _gallery_of(plan, "Alice")
+    bob_g = _gallery_of(plan, "Bob")
+    assert alice_g != bob_g
+    pair = [
+        _hit("Alice", 0.90, gallery=alice_g, media_id=10),
+        _hit("Bob", 0.90, gallery=bob_g, media_id=10),
+    ]
+    report = score_run(
+        plan=plan,
+        searches=_probe_searches(
+            A_true_occluder={"mated": pair, "nonmated": []},
+        ),
+        tau=0.50,
+    )
+    assert report.points["A_true_occluder"].n_mated == 2
+    assert report.points["A_true_occluder"].n_mated != 1
+
+
+def test_frozen_seed0_six_occluded_stills_are_enrolled_in_both_galleries() -> None:
+    """Seed-0 frozen frame: 6 co-present stills → 12 searches, not 6."""
+    plan = build_run_plan(selection_manifest_path=_frozen_manifest(), seed=0)
+    both = both_gallery_probe_entries(plan)
+    n_stills = len(both)
+    n_searches = both_gallery_search_count(plan)
+    assert n_stills == 6
+    assert n_searches == 12
+    assert n_searches != n_stills
+    assert n_searches == sum(
+        len(mated_galleries_for(entry, plan=plan)) for entry in both
+    )
+    by_stratum: dict[str, list[SearchResult]] = {name: [] for name in PROBE_STRATA}
+    for entry in both:
+        gallery = mated_galleries_for(entry, plan=plan)[0]
+        true_name = mated_identities_for(entry, split=plan.split, gallery=gallery)[0]
+        by_stratum[entry.stratum].append(
+            _hit(true_name, 0.90, gallery=gallery, media_id=entry.media_id)
+        )
+    searches = _probe_searches(
+        **{
+            name: {"mated": items, "nonmated": []}
+            for name, items in by_stratum.items()
+            if items
+        }
+    )
+    with pytest.raises(FirBakeoffRunError, match="both galleries"):
+        score_run(plan=plan, searches=searches, tau=0.50)
+
+
+def test_frozen_seed0_copresent_stills_yield_twelve_searches() -> None:
+    plan = build_run_plan(selection_manifest_path=_frozen_manifest(), seed=0)
+    both = both_gallery_probe_entries(plan)
+    assert len(both) == 6
+    by_stratum: dict[str, list[SearchResult]] = {name: [] for name in PROBE_STRATA}
+    for entry in both:
+        for gallery in mated_galleries_for(entry, plan=plan):
+            true_name = mated_identities_for(entry, split=plan.split, gallery=gallery)[0]
+            by_stratum[entry.stratum].append(
+                _hit(true_name, 0.90, gallery=gallery, media_id=entry.media_id)
+            )
+    injected = sum(len(items) for items in by_stratum.values())
+    assert injected == 12
+    searches = _probe_searches(
+        **{
+            name: {"mated": items, "nonmated": []}
+            for name, items in by_stratum.items()
+            if items
+        }
+    )
+    report = score_run(plan=plan, searches=searches, tau=0.50)
+    scored = sum(report.points[name].n_mated for name in PROBE_STRATA)
+    assert scored == 12
+    assert scored != 6
+

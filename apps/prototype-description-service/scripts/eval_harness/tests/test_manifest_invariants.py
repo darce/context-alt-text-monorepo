@@ -332,7 +332,7 @@ def test_cli_gate_commands_do_not_call_load_legacy_manifest(tmp_path: Path, monk
     # roster_only mode requires every must_right/easy_wrong name to be a
     # roster member (manifest.py::load_manifest); reuse the other fixture
     # identity rather than inventing an off-roster name.
-    manifest_doc["entries"][0]["easy_wrong"] = ["Bea Example"]
+    manifest_doc["entries"][0]["easy_wrong"] = ["Quiet Example"]
     man_path.write_text(json.dumps(manifest_doc), encoding="utf-8")
     # Real score-time manifest sha (VLM6-F-03 / EVAL-13 drift gate; metadata-only
     # load, mirrors cli.py::_manifest_sha).
@@ -366,8 +366,8 @@ def test_cli_gate_commands_do_not_call_load_legacy_manifest(tmp_path: Path, monk
                     {
                         "media_id": 102,
                         "path": "fixtures/quiet_example_102.jpg",
-                        "describe": {"alt_text_draft": "Bea Example.", "visual_facts": {"objects": []}},
-                        "identities": [{"name": "Bea Example", "unpositioned": True}],
+                        "describe": {"alt_text_draft": "Quiet Example.", "visual_facts": {"objects": []}},
+                        "identities": [{"name": "Quiet Example", "unpositioned": True}],
                         "face_count": 1,
                         "error": None,
                     },

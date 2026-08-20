@@ -2,11 +2,11 @@
   "assignment_rule": "hmac-sha256(seed, image_sha256)[:8]/2**64 < held_out_fraction",
   "disjointness": {
     "identities_spanning_both_halves": [
-      "Russet Fathom",
       "Auburn Current",
       "Linen Kestrel",
-      "Slate Willow",
-      "Muted Yarrow"
+      "Muted Yarrow",
+      "Russet Fathom",
+      "Slate Willow"
     ],
     "note": "identity labels are per-image, not per-cluster; a person in both halves means their images were split by content hash \u2014 acceptable for description eval, must be resolved (move to train) before any face-identification eval uses held_out",
     "partition_provenance": "per-image roster labels on the VLM-2A fixture corpus (golden.json v3); no cluster partition, disjointness computed on present_identities only",
@@ -28,14 +28,14 @@
   },
   "held_out": {
     "identities": [
-      "Hollow Pennant",
-      "Russet Fathom",
-      "Gilded Cypress",
-      "Muted Current",
       "Auburn Current",
+      "Gilded Cypress",
+      "Hollow Pennant",
       "Linen Kestrel",
-      "Slate Willow",
-      "Muted Yarrow"
+      "Muted Current",
+      "Muted Yarrow",
+      "Russet Fathom",
+      "Slate Willow"
     ],
     "media_ids": [
       1,
@@ -90,21 +90,21 @@
   ],
   "protection": "forward-from-draw-timestamp: any image, identity or curation decision first observed after draw_timestamp is protected by this split; entries listed in pre_split_exposure were already exposed",
   "schema_version": 1,
-  "seal_sha256": "2800617127e4e7150768d602eea3e528008a95d6cedcaa29915d641c24b80b71",
+  "seal_sha256": "8a5c19c558dbed95a2ae4c21cdc0a050b42b82d1659c2e32cc83f22fc2a653f5",
   "seed": "vlm6-s1-sealed-eval-split-20260818",
   "source_manifest": {
     "path": "scene/tests/seed/golden.json",
-    "sha256": "184e5a24652d24b18a4658da0e6941fd4ab30ce1bac0fe73ff0423d6d6fd08e8"
+    "sha256": "93fc86b2bf014d3783ff0999a47e88949ccb72e8cab9eec7cee9faa6891bcd0b"
   },
   "train": {
     "identities": [
-      "Russet Fathom",
-      "Tidal Harbor",
-      "Daniel Arce",
       "Auburn Current",
+      "Daniel Arce",
       "Linen Kestrel",
+      "Muted Yarrow",
+      "Russet Fathom",
       "Slate Willow",
-      "Muted Yarrow"
+      "Tidal Harbor"
     ],
     "media_ids": [
       3,

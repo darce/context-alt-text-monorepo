@@ -440,6 +440,35 @@ class ExpectedAttachment(BaseModel):
     fact_id: str | None = None
 
 
+class ConfirmationSource(StrEnum):
+    """Who confirmed a reference fact (sr-007). ``operator`` is human gold;
+    ``agent`` is a machine draft that is not yet a human label.
+    """
+
+    OPERATOR = "operator"
+    AGENT = "agent"
+
+
+# Non-agent confirmation is treated as human gold (MLDATA-04). An unattributed
+# "operator-verified" fact is the provenance hole this set exists to close.
+HUMAN_CONFIRMATION_SOURCES: frozenset[str] = frozenset({ConfirmationSource.OPERATOR})
+
+
+class PreAdjudicationLabel(BaseModel):
+    """A pre-adjudication annotator label (MLDATA-03).
+
+    When two annotators disagree and an SME adjudicates, both original labels
+    survive here. The adjudicated value lives on the parent ``ReferenceFact``.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    annotator_id: str
+    polarity: FactPolarity
+    text: str
+    noted_at: str
+
+
 class ReferenceFact(BaseModel):
     """A ground-truth fact about an image (VLM-6 S1).
 
@@ -447,6 +476,12 @@ class ReferenceFact(BaseModel):
     facts are fabrication traps (untrue of the image). ``phrases`` are the
     deterministic word-boundary match variants the hallucination scorer checks.
     ``confirmed_by`` records whether an operator or the agent draft confirmed it.
+
+    Lineage fields (``annotator_id``, ``annotation_batch``, ``annotated_at``,
+    ``source_pool``) are optional so v3 facts still load. A human-confirmed
+    fact must name its annotator (MLDATA-04). Pre-adjudication labels are
+    kept, never overwritten (MLDATA-03). ``adjudicated_by`` /
+    ``adjudication_rule`` record HITL-07 SME escalation.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -456,6 +491,13 @@ class ReferenceFact(BaseModel):
     polarity: FactPolarity = FactPolarity.TRUE
     phrases: list[str] = Field(default_factory=list)
     confirmed_by: str | None = None  # operator | agent
+    annotator_id: str | None = None
+    annotation_batch: str | None = None
+    annotated_at: str | None = None
+    source_pool: str | None = None
+    pre_adjudication: list[PreAdjudicationLabel] = Field(default_factory=list)
+    adjudicated_by: str | None = None
+    adjudication_rule: str | None = None
 
     @model_validator(mode="after")
     def _has_a_matchable_phrase(self) -> ReferenceFact:
@@ -464,6 +506,19 @@ class ReferenceFact(BaseModel):
         # would filter them to [""] and match nothing.
         if not any(p.strip() for p in self.phrases) and not self.text.strip():
             raise ValueError("reference_fact needs non-empty text or at least one non-blank phrase")
+        return self
+
+    @model_validator(mode="after")
+    def _human_confirmation_requires_annotator(self) -> ReferenceFact:
+        source = (self.confirmed_by or "").strip()
+        is_human = source in HUMAN_CONFIRMATION_SOURCES or (
+            bool(source) and source != ConfirmationSource.AGENT
+        )
+        if is_human and not (self.annotator_id and self.annotator_id.strip()):
+            raise ValueError(
+                "human-confirmed reference_fact requires annotator_id "
+                f"(confirmed_by={self.confirmed_by!r})"
+            )
         return self
 
     def match_targets(self) -> list[str]:

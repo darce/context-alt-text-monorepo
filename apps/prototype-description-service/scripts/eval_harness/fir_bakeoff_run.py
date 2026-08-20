@@ -285,6 +285,20 @@ def build_run_plan(*, selection_manifest_path: str | Path, seed: int) -> RunPlan
     )
 
 
+def _normalise_subject_id(value: object, *, gallery: str) -> str:
+    """Same alphabet as gallery_split._normalise_subject_id (BR-64 / EVAL-18)."""
+    if not isinstance(value, str):
+        raise FirBakeoffRunError(
+            f"{gallery} subject_id must be a non-empty string, got {value!r}"
+        )
+    key = value.strip()
+    if not key:
+        raise FirBakeoffRunError(
+            f"{gallery} subject_id must be a non-empty string, got {value!r}"
+        )
+    return key
+
+
 def mated_identities_for(
     entry: ProbeEntry, *, split: GallerySplit, gallery: GalleryName | str
 ) -> tuple[str, ...]:
@@ -296,7 +310,12 @@ def mated_identities_for(
             f"gallery {gallery!r} is not a declared gallery of the split"
         ) from exc
     roster = split.g1 if name is GalleryName.G1 else split.g2
-    return tuple(subject_id for subject_id in entry.present_identities if subject_id in roster)
+    matched: list[str] = []
+    for subject_id in entry.present_identities:
+        key = _normalise_subject_id(subject_id, gallery=name.value)
+        if key in roster:
+            matched.append(key)
+    return tuple(matched)
 
 
 def mated_galleries_for(entry: ProbeEntry, *, plan: RunPlan) -> tuple[GalleryName, ...]:

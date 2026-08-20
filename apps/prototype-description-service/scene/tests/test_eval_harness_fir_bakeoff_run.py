@@ -20,6 +20,7 @@ from scripts.eval_harness.fir_bakeoff_run import (
     RunPlan,
     _declared_galleries,
     _identities,
+    _normalise_subject_id,
     _search_shortfall,
     both_gallery_probe_entries,
     both_gallery_search_count,
@@ -31,7 +32,10 @@ from scripts.eval_harness.fir_bakeoff_run import (
     occluded_probes_for,
     score_run,
 )
-from scripts.eval_harness.gallery_split import GalleryName
+from scripts.eval_harness.gallery_split import (
+    GalleryName,
+    _normalise_subject_id as _gallery_split_normalise_subject_id,
+)
 from scripts.eval_harness.open_set_identification import SearchResult
 from scripts.eval_harness.strata_join import StratumJoinError, _entry_identities, load_stratum_index
 
@@ -131,6 +135,20 @@ def _plan_with_padded_e_clean(tmp_path: Path, subject: str, *, seed: int = 7) ->
         identities = list(item["present_identities"])
         if item["stratum"] == GALLERY_STRATUM:
             identities = [f"{name} " if name == subject else name for name in identities]
+        entries.append({**item, "present_identities": identities})
+    path = _write_manifest(tmp_path, entries, strata_counts=_base_counts())
+    return build_run_plan(selection_manifest_path=path, seed=seed)
+
+
+def _plan_with_padded_roster_and_probe(
+    tmp_path: Path, subject: str, *, seed: int = 7
+) -> RunPlan:
+    entries: list[dict[str, Any]] = []
+    for item in _base_entries():
+        identities = [
+            f"{name} " if name == subject else name
+            for name in item["present_identities"]
+        ]
         entries.append({**item, "present_identities": identities})
     path = _write_manifest(tmp_path, entries, strata_counts=_base_counts())
     return build_run_plan(selection_manifest_path=path, seed=seed)
@@ -1969,4 +1987,160 @@ def test_padded_g2_roster_key_keeps_mated_partition(tmp_path: Path) -> None:
     assert len(foils) == len(clean_foils)
     assert "Alice" in padded.split.g2
     assert "Alice " not in padded.split.g2
+
+
+_IDENTITY_KEY_SAMPLES: tuple[object, ...] = (
+    "Bob",
+    " Bob",
+    "Bob ",
+    " Bob ",
+    "\tBob",
+    "Bob\t",
+    "\tBob\t",
+    "Van Dyke",
+    " Van Dyke ",
+    "VanDyke",
+    "",
+    "   ",
+    "\t",
+    123,
+    None,
+    True,
+)
+
+
+def _normalise_outcome(fn: Any, raw: object) -> str | None:
+    try:
+        return fn(raw, gallery="probe")
+    except Exception:
+        return None
+
+
+def test_probe_identity_normaliser_matches_gallery_split() -> None:
+    """BR-64: bakeoff and gallery_split must strip the same identity alphabet."""
+    for raw in _IDENTITY_KEY_SAMPLES:
+        local = _normalise_outcome(_normalise_subject_id, raw)
+        gallery = _normalise_outcome(_gallery_split_normalise_subject_id, raw)
+        assert local == gallery
+        if local is not None:
+            assert gallery is not None
+            assert local.encode("utf-8") == gallery.encode("utf-8")
+    assert _normalise_subject_id("Van Dyke", gallery="probe") == "Van Dyke"
+    assert _normalise_subject_id("VanDyke", gallery="probe") == "VanDyke"
+    assert _normalise_subject_id("Van Dyke", gallery="probe") != _normalise_subject_id(
+        "VanDyke", gallery="probe"
+    )
+
+
+def test_both_padded_identity_stays_mated_and_fnir_measurable(tmp_path: Path) -> None:
+    """BR-64 / EVAL-18: same padding on roster and probe must not turn a mate into a foil."""
+    clean = _plan(tmp_path)
+    assert "Bob" in clean.split.g1
+    clean_mated, clean_foils = occluded_probes_for(clean, gallery=GalleryName.G1)
+    assert [unit.subject_id for unit in clean_mated] == ["Bob"]
+    assert [unit.entry.media_id for unit in clean_mated] == [11]
+    assert 11 not in {entry.media_id for entry in clean_foils}
+    assert expected_mated_search_count(clean, stratum="B_eyewear") == 1
+    assert expected_nonmated_search_count(clean, stratum="B_eyewear") == 1
+
+    padded = _plan_with_padded_roster_and_probe(tmp_path, "Bob")
+    assert "Bob" in padded.split.g1
+    assert "Bob " not in padded.split.g1
+    assert set(padded.split.g1) == set(clean.split.g1)
+    assert set(padded.split.g2) == set(clean.split.g2)
+
+    mated, foils = occluded_probes_for(padded, gallery=GalleryName.G1)
+    assert [unit.subject_id for unit in mated] == ["Bob"]
+    assert [unit.entry.media_id for unit in mated] == [11]
+    assert 11 not in {entry.media_id for entry in foils}
+    assert [entry.media_id for entry in foils] == [entry.media_id for entry in clean_foils]
+    assert expected_mated_search_count(padded, stratum="B_eyewear") == 1
+    assert expected_nonmated_search_count(padded, stratum="B_eyewear") == 1
+    assert expected_mated_search_count(padded, stratum="B_eyewear") != 0
+    assert expected_nonmated_search_count(padded, stratum="B_eyewear") != 2
+
+    report = score_run(
+        plan=padded,
+        searches=_searches_from_buckets(_subject_level_mated_searches(padded)),
+        tau=0.50,
+        closed_set=True,
+    )
+    point = report.points["B_eyewear"]
+    assert point.measured is True
+    assert point.n_mated == 1
+    assert point.fnir == pytest.approx(0.0)
+    assert point.format_fnir() == "0.000"
+    assert point.format_fnir() != "not measured"
+    assert report.overall.measured is True
+    assert report.overall.n_mated == 3
+    assert report.overall.format_fnir() != "not measured"
+
+
+def test_direct_padded_probe_entry_matches_stripped_roster(tmp_path: Path) -> None:
+    """BR-64: ProbeEntry construction that bypasses manifest parsing still mates."""
+    plan = _plan(tmp_path)
+    assert "Bob" in plan.split.g1
+    extra = ProbeEntry(
+        media_id=99,
+        sha256="9" * 64,
+        stratum="B_eyewear",
+        present_identities=("Bob ",),
+    )
+    buckets = {name: tuple(items) for name, items in plan.probe_entries.items()}
+    buckets["B_eyewear"] = (*buckets["B_eyewear"], extra)
+    custom = RunPlan(
+        split=plan.split,
+        probe_entries=buckets,
+        seed=plan.seed,
+        index=plan.index,
+        gallery_entries=plan.gallery_entries,
+        probe_sets=plan.probe_sets,
+    )
+    units = [
+        unit
+        for unit in occluded_probes_for(custom, gallery=GalleryName.G1)[0]
+        if unit.entry.media_id == 99
+    ]
+    foils = [
+        entry
+        for entry in occluded_probes_for(custom, gallery=GalleryName.G1)[1]
+        if entry.media_id == 99
+    ]
+    assert [unit.subject_id for unit in units] == ["Bob"]
+    assert foils == []
+    assert mated_identities_for(extra, split=plan.split, gallery=GalleryName.G1) == (
+        "Bob",
+    )
+
+
+def test_internal_whitespace_subject_is_not_collapsed_into_a_mate(
+    tmp_path: Path,
+) -> None:
+    """Strip must not treat 'Van Dyke' and 'VanDyke' as the same subject."""
+    entries = [
+        _entry(1, "E_clean", ["Van Dyke"], "a"),
+        _entry(2, "E_clean", ["Van Dyke"], "b"),
+        _entry(3, "E_clean", ["Bob"], "c"),
+        _entry(4, "E_clean", ["Bob"], "d"),
+        _entry(5, "E_clean", ["Dale", "Eve"], "i"),
+        _entry(10, "A_true_occluder", ["Van Dyke"], "e"),
+        _entry(11, "B_eyewear", ["VanDyke"], "f"),
+        _entry(12, "C_pose", ["Van Dyke"], "g"),
+        _entry(13, "D_capture", ["Carol"], "h"),
+    ]
+    path = _write_manifest(tmp_path, entries, strata_counts=_base_counts())
+    plan = build_run_plan(selection_manifest_path=path, seed=7)
+    enrolled = set(plan.split.g1) | set(plan.split.g2)
+    assert "Van Dyke" in enrolled
+    assert "VanDyke" not in enrolled
+    gallery = _gallery_of(plan, "Van Dyke")
+    mated, foils = occluded_probes_for(plan, gallery=gallery)
+    assert "Van Dyke" in [unit.subject_id for unit in mated]
+    assert "VanDyke" not in [unit.subject_id for unit in mated]
+    foil_ids = {entry.media_id for entry in foils}
+    mated_ids = {unit.entry.media_id for unit in mated}
+    assert 10 in mated_ids
+    assert 12 in mated_ids
+    assert 11 in foil_ids
+    assert 11 not in mated_ids
 

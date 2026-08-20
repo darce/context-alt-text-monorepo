@@ -357,9 +357,11 @@ def _subjects_of(record: object) -> tuple[str, ...]:
         value = _field(record, name)
         if value is None:
             continue
-        if isinstance(value, str):
-            return (value,) if value else ()
-        return tuple(str(item) for item in value if item)
+        if isinstance(value, (list, tuple)):
+            return tuple(str(item) for item in value if item)
+        raise StratumJoinError(
+            f"record {name} must be a list of strings, got {type(value).__name__}"
+        )
     for name in _SUBJECT_SCALAR_FIELDS:
         value = _field(record, name)
         if value:

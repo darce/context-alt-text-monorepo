@@ -449,6 +449,18 @@ class ConfirmationSource(StrEnum):
     AGENT = "agent"
 
 
+class AdjudicationRule(StrEnum):
+    """Written disagreement rules (MLDATA-03). Closed set; free text is not a rule.
+
+    Named in the DESCQUAL-2 scope as the code half of BR-25. Doc lane should
+    cite these tokens, not unconstrained prose.
+    """
+
+    DISAGREEMENT_ESCALATE_TO_SME = "disagreement-escalate-to-sme"
+    MAJORITY_VOTE = "majority_vote"
+    UNANIMOUS = "unanimous"
+
+
 # Allowlist, not complement-of-AGENT: any future ConfirmationSource member must
 # be named here to become human gold. Complement-of-AGENT would silently promote
 # a new non-human member (MLDATA-04).
@@ -483,8 +495,8 @@ class ReferenceFact(BaseModel):
     Lineage fields (``annotator_id``, ``annotation_batch``, ``annotated_at``,
     ``source_pool``) are optional so v3 facts still load. A human-confirmed
     fact must name its annotator (MLDATA-04). Pre-adjudication labels are
-    kept, never overwritten (MLDATA-03). ``adjudicated_by`` /
-    ``adjudication_rule`` record HITL-07 SME escalation.
+    kept, never overwritten (MLDATA-03). ``adjudicated_by`` records HITL-07
+    SME escalation and requires a named ``AdjudicationRule`` (not free text).
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -500,7 +512,7 @@ class ReferenceFact(BaseModel):
     source_pool: str | None = None
     pre_adjudication: list[PreAdjudicationLabel] = Field(default_factory=list)
     adjudicated_by: str | None = None
-    adjudication_rule: str | None = None
+    adjudication_rule: AdjudicationRule | None = None
 
     @model_validator(mode="after")
     def _has_a_matchable_phrase(self) -> ReferenceFact:
@@ -519,6 +531,16 @@ class ReferenceFact(BaseModel):
             raise ValueError(
                 "human-confirmed reference_fact requires annotator_id "
                 f"(confirmed_by={self.confirmed_by!r})"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _adjudication_requires_written_rule(self) -> ReferenceFact:
+        has_adjudicator = bool(self.adjudicated_by and self.adjudicated_by.strip())
+        if has_adjudicator and self.adjudication_rule is None:
+            raise ValueError(
+                "adjudicated_by requires adjudication_rule "
+                "(MLDATA-03 written disagreement rule)"
             )
         return self
 

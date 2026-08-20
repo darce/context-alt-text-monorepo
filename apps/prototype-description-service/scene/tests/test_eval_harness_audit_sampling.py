@@ -9,7 +9,9 @@ from pathlib import Path
 import pytest
 
 from scripts.eval_harness.audit_sampling import (
+    Allocation,
     AuditSamplingError,
+    ClusterSpec,
     DeffOrder,
     allocate,
     design_effect,
@@ -136,6 +138,12 @@ def test_precision_floor_raises_b_above_proportional():
     assert floored["B_eyewear"] > proportional["B_eyewear"]
     assert sum(floored.values()) == 84
     assert all(0 <= floored[name] <= size for name, size in FIR12_STRATA.items())
+    record = floored.floors["B_eyewear"]
+    assert record.n == 44
+    assert record.deff_order is DeffOrder.FPC_ONLY
+    assert record.deff == 1.0
+    assert record.cluster_size is None
+    assert record.icc is None
 
 
 def test_draw_is_deterministic_without_replacement_and_carries_pi():
@@ -155,7 +163,8 @@ def test_draw_is_deterministic_without_replacement_and_carries_pi():
         n_stratum = FIR12_STRATA[unit.stratum]
         assert 0 < unit.inclusion_probability <= 1
         assert unit.inclusion_probability == pytest.approx(n_h / n_stratum)
-    assert counts == allocation
+    assert counts == dict(allocation)
+    assert counts == allocation.counts
 
 
 def test_draw_does_not_take_the_first_n():
@@ -180,3 +189,57 @@ def test_draw_is_invariant_to_member_order():
 def test_sample_size_rejects_non_positive_margin():
     with pytest.raises(AuditSamplingError):
         sample_size_for_margin(margin=0.0, population=640)
+
+
+def test_clustered_b_eyewear_precision_floor_is_47():
+    n0 = (1.96 * 1.96) * 0.5 * 0.5 / (0.10 * 0.10)
+    cluster_size = 80 / 47
+    icc = 0.2
+    deff = 1.0 + (cluster_size - 1.0) * icc
+    n_deff = n0 * deff
+    n_raw = n_deff / (1.0 + (n_deff - 1.0) / 80)
+    assert math.ceil(n_raw) == 47
+    assert math.ceil(n0 / (1.0 + (n0 - 1.0) / 80)) == 44
+
+    spec = ClusterSpec(cluster_size=cluster_size, icc=icc)
+    expected = size_for_margin(
+        margin=0.10, population=80, cluster_size=cluster_size, icc=icc
+    )
+    assert expected.n == 47
+    assert expected.deff_order is DeffOrder.DEFF_THEN_FPC
+    assert expected.deff == pytest.approx(deff)
+    assert expected.n_deff == pytest.approx(n_deff)
+
+    unclustered = allocate(
+        strata_sizes=FIR12_STRATA, n=84, precision_floors={"B_eyewear": 0.10}
+    )
+    clustered = allocate(
+        strata_sizes=FIR12_STRATA,
+        n=84,
+        precision_floors={"B_eyewear": 0.10},
+        cluster_params={"B_eyewear": spec},
+    )
+    assert isinstance(clustered, Allocation)
+    assert unclustered["B_eyewear"] == 44
+    assert clustered["B_eyewear"] == 47
+    assert clustered["B_eyewear"] != unclustered["B_eyewear"]
+    assert sum(clustered.values()) == 84
+    record = clustered.floors["B_eyewear"]
+    assert record == expected
+    assert record.n == 47
+    assert record.deff_order is DeffOrder.DEFF_THEN_FPC
+    assert record.deff_order == "deff_then_fpc"
+    assert record.deff == pytest.approx(1.1404255319148937)
+    assert record.cluster_size == pytest.approx(cluster_size)
+    assert record.icc == 0.2
+    assert record.n / record.deff == pytest.approx(47 / deff)
+
+
+def test_allocate_rejects_unknown_cluster_params_stratum():
+    with pytest.raises(AuditSamplingError, match="cluster_params"):
+        allocate(
+            strata_sizes=FIR12_STRATA,
+            n=84,
+            precision_floors={"B_eyewear": 0.10},
+            cluster_params={"not_a_stratum": ClusterSpec(cluster_size=2.0, icc=0.2)},
+        )

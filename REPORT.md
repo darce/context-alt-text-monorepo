@@ -153,4 +153,45 @@ RED against the grain paragraph.
 
 ---
 
+## BR-23 (high) — regenerate cells from the shipped module
+
+**Canon:** AUDIT-09, AUDIT-10.
+
+**What changed.** Three published cells did not reproduce. Replaced with
+`allocate()` / `size_for_margin()` output. The 640/130 "arithmetic mean" contrast
+was already dropped in BR-22 (the partition cluster-vector mean is 640/241 ≈ 2.66,
+not 4.18). Did not touch the sibling-owned test literal.
+
+| cell | OLD (hand-typed) | NEW (module) |
+| --- | --- | --- |
+| proportional n=84 | A=4, **B=10, C=4**, D=11, E=53 (Hamilton floors, sum 82) | A=4, **B=11, C=5**, D=11, E=53 (sum 84) |
+| B ±12.5 pp | 35 (trunc of 35.007) | **36** (`math.ceil`) |
+| B ±15 pp | 28 (trunc of 28.062) | **29** (`math.ceil`) |
+| "arithmetic mean" | 640/130 ≈ 4.9 | dropped; not the mean of any cluster vector used for `a` |
+
+**Calls.**
+
+```
+>>> sizes = project_strata_image_counts(frame["strata_counts"])
+>>> dict(allocate(strata_sizes=sizes, n=84).counts)
+{'A_true_occluder': 4, 'B_eyewear': 11, 'C_pose': 5, 'D_capture': 11, 'E_clean': 53}
+>>> size_for_margin(margin=0.10,  population=80).n
+44
+>>> size_for_margin(margin=0.125, population=80).n
+36
+>>> size_for_margin(margin=0.15,  population=80).n
+29
+```
+
+Raw after fpc before ceil: ±12.5 pp → 35.006777; ±15 pp → 28.062384.
+Hamilton floors: B=10.5→10, C=4.4625→4, sum 82.
+
+**Mutant (TEST-15).** Publish B=10, C=4, 35, 28 again. RED against the calls
+above (allocate returns 11 and 5; ceil returns 36 and 29).
+
+**Could not close.** Nothing. Sibling lane owns the matching test literal.
+
+---
+
+
 

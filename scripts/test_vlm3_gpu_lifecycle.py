@@ -1,9 +1,14 @@
 import json
 from pathlib import Path
 
+import pytest
+
 from infra.oci.gpu_lifecycle.controller import (
+    GpuInstanceState,
+    GpuLifecycleAction,
     GpuInstance,
     GpuLifecycleController,
+    GpuServingStatus,
     JobLoadSnapshot,
 )
 from infra.oci.gpu_lifecycle.reaper import (
@@ -15,7 +20,11 @@ from infra.oci.gpu_lifecycle.reaper import (
 
 class RecordingActuator:
     def __init__(self) -> None:
+        self.started: list[str] = []
         self.stopped: list[str] = []
+
+    def start_instance(self, instance_id: str) -> None:
+        self.started.append(instance_id)
 
     def stop_instance(self, instance_id: str) -> None:
         self.stopped.append(instance_id)
@@ -41,6 +50,112 @@ def test_idle_reaper_stops_running_instance_when_queue_drained() -> None:
     actions = controller.reap_idle_instances([instance], queue_depth=0, in_flight=0)
 
     assert actions == [("STOP", "ocid1.instance.oc1..gpu")]
+
+
+@pytest.mark.parametrize(
+    ("state", "queue_depth", "in_flight", "idle_for_seconds", "expected"),
+    [
+        pytest.param(
+            GpuInstanceState.RUNNING,
+            0,
+            0,
+            60,
+            [(GpuLifecycleAction.STOP, "gpu")],
+            id="running-idle-stops",
+        ),
+        pytest.param(
+            GpuInstanceState.RUNNING,
+            1,
+            0,
+            60,
+            [],
+            id="running-with-queued-job-no-op",
+        ),
+        pytest.param(
+            GpuInstanceState.RUNNING,
+            0,
+            1,
+            60,
+            [],
+            id="running-with-in-flight-job-no-op",
+        ),
+        pytest.param(
+            GpuInstanceState.RUNNING,
+            0,
+            0,
+            59,
+            [],
+            id="running-below-idle-threshold-no-op",
+        ),
+        pytest.param(
+            GpuInstanceState.STOPPED,
+            1,
+            0,
+            600,
+            [(GpuLifecycleAction.START, "gpu")],
+            id="stopped-with-queued-job-starts",
+        ),
+        pytest.param(
+            GpuInstanceState.STOPPED,
+            0,
+            0,
+            600,
+            [],
+            id="stopped-without-job-no-op",
+        ),
+        pytest.param(
+            GpuInstanceState.STARTING,
+            1,
+            0,
+            600,
+            [],
+            id="already-starting-no-op",
+        ),
+    ],
+)
+def test_lifecycle_decision_truth_table(
+    state: GpuInstanceState,
+    queue_depth: int,
+    in_flight: int,
+    idle_for_seconds: int,
+    expected: list[tuple[GpuLifecycleAction, str]],
+) -> None:
+    controller = GpuLifecycleController(idle_seconds=60)
+    instance = GpuInstance(
+        instance_id="gpu", state=state, idle_for_seconds=idle_for_seconds
+    )
+
+    assert controller.decide_actions(
+        [instance],
+        load=JobLoadSnapshot(queue_depth=queue_depth, in_flight=in_flight),
+    ) == expected
+
+
+def test_starting_instance_reports_gpu_warming_status() -> None:
+    controller = GpuLifecycleController(idle_seconds=60)
+    instance = GpuInstance(
+        instance_id="gpu",
+        state=GpuInstanceState.STARTING,
+        idle_for_seconds=0,
+    )
+
+    assert controller.serving_status([instance]) is GpuServingStatus.GPU_WARMING
+
+
+def test_viewer_reading_for_four_minutes_is_not_reaped() -> None:
+    controller = GpuLifecycleController(idle_seconds=60)
+    instance = GpuInstance(
+        instance_id="gpu",
+        state=GpuInstanceState.RUNNING,
+        idle_for_seconds=4 * 60,
+    )
+
+    actions = controller.decide_actions(
+        [instance],
+        load=JobLoadSnapshot(queue_depth=0, in_flight=0, active_sessions=1),
+    )
+
+    assert actions == []
 
 
 def test_idle_reaper_does_not_stop_with_in_flight_work() -> None:

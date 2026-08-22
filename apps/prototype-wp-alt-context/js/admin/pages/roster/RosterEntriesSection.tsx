@@ -422,10 +422,12 @@ export const RosterEntriesSection = ({ query, routeNotice = null }: RosterEntrie
       {isAdding && (
         <form className="acx-roster-section__add-form" onSubmit={handleAdd}>
           <div className="acx-form-group">
+            <label htmlFor="acx-roster-add-name">{__('Full name', 'alt-context')}</label>
             <input
+              id="acx-roster-add-name"
               type="text"
               className="acx-input"
-              placeholder={__('Full Name', 'alt-context')}
+              placeholder={__('e.g., Jane Doe', 'alt-context')}
               value={newName}
               onChange={(e) => {
                 setNewName(e.target.value);

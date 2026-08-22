@@ -13,6 +13,7 @@ import pytest
 from scripts.eval_harness.manifest import ScoreInvariant
 from scripts.eval_harness.report import (
     ReportError,
+    build_reports,
     compare_scored_runs,
     score_run_record,
 )
@@ -207,3 +208,17 @@ def test_compare_emits_baseline_and_delta_when_stamps_agree() -> None:
     assert "delta" in row
     assert row["delta"] == pytest.approx(row["candidate"] - row["baseline"])
     assert "insertion_rate" in metrics
+
+def test_delta_markdown_refuse_banner_names_straddle_invariant() -> None:
+    """Markdown refuse must name the Δ invariant; a bare REFUSED is not unique."""
+    candidate = _run_record(roster_epoch="pre-priv1")
+    baseline = _run_record(roster_epoch="post-priv1")
+    _json_doc, md = build_reports(
+        candidate,
+        [_entry()],
+        score_manifest_sha256="s" * 64,
+        baseline_run_record=baseline,
+    )
+    assert "## Δ vs zero-rule baseline" in md
+    assert "- REFUSED (delta_refuses_straddled_stamps):" in md
+    assert "mean_gated_score: candidate=" not in md

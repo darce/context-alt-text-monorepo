@@ -2,12 +2,11 @@ import json
 from pathlib import Path
 
 import pytest
-
 from infra.oci.gpu_lifecycle import GpuServingStatus
 from infra.oci.gpu_lifecycle.controller import (
+    GpuInstance,
     GpuInstanceState,
     GpuLifecycleAction,
-    GpuInstance,
     GpuLifecycleController,
     JobLoadSnapshot,
 )
@@ -43,9 +42,7 @@ class MutableLoadSource:
 
 def test_idle_reaper_stops_running_instance_when_queue_drained() -> None:
     controller = GpuLifecycleController(idle_seconds=60)
-    instance = GpuInstance(
-        instance_id="ocid1.instance.oc1..gpu", state="RUNNING", idle_for_seconds=90
-    )
+    instance = GpuInstance(instance_id="ocid1.instance.oc1..gpu", state="RUNNING", idle_for_seconds=90)
 
     actions = controller.reap_idle_instances([instance], queue_depth=0, in_flight=0)
 
@@ -121,14 +118,15 @@ def test_lifecycle_decision_truth_table(
     expected: list[tuple[GpuLifecycleAction, str]],
 ) -> None:
     controller = GpuLifecycleController(idle_seconds=60)
-    instance = GpuInstance(
-        instance_id="gpu", state=state, idle_for_seconds=idle_for_seconds
-    )
+    instance = GpuInstance(instance_id="gpu", state=state, idle_for_seconds=idle_for_seconds)
 
-    assert controller.decide_actions(
-        [instance],
-        load=JobLoadSnapshot(queue_depth=queue_depth, in_flight=in_flight),
-    ) == expected
+    assert (
+        controller.decide_actions(
+            [instance],
+            load=JobLoadSnapshot(queue_depth=queue_depth, in_flight=in_flight),
+        )
+        == expected
+    )
 
 
 def test_starting_instance_reports_gpu_warming_status() -> None:
@@ -161,9 +159,7 @@ def test_viewer_reading_for_four_minutes_is_not_reaped() -> None:
 
 def test_idle_reaper_does_not_stop_with_in_flight_work() -> None:
     controller = GpuLifecycleController(idle_seconds=60)
-    instance = GpuInstance(
-        instance_id="ocid1.instance.oc1..gpu", state="RUNNING", idle_for_seconds=90
-    )
+    instance = GpuInstance(instance_id="ocid1.instance.oc1..gpu", state="RUNNING", idle_for_seconds=90)
 
     assert controller.reap_idle_instances([instance], queue_depth=0, in_flight=1) == []
 
@@ -182,9 +178,7 @@ def test_fence_cancels_stop_when_work_arrives_before_actuation() -> None:
 
 def test_run_reap_cycle_actuates_stop_when_still_idle() -> None:
     controller = GpuLifecycleController(idle_seconds=60)
-    instance = GpuInstance(
-        instance_id="ocid1.instance.oc1..gpu", state="RUNNING", idle_for_seconds=90
-    )
+    instance = GpuInstance(instance_id="ocid1.instance.oc1..gpu", state="RUNNING", idle_for_seconds=90)
     actuator = RecordingActuator()
 
     result = run_reap_cycle(
@@ -218,12 +212,8 @@ def test_run_reap_cycle_actuates_start_for_pending_job() -> None:
         fence_delay_seconds=0.0,
     )
 
-    assert result.decided == [
-        (GpuLifecycleAction.START, "ocid1.instance.oc1..gpu")
-    ]
-    assert result.actuated == [
-        (GpuLifecycleAction.START, "ocid1.instance.oc1..gpu")
-    ]
+    assert result.decided == [(GpuLifecycleAction.START, "ocid1.instance.oc1..gpu")]
+    assert result.actuated == [(GpuLifecycleAction.START, "ocid1.instance.oc1..gpu")]
     assert actuator.started == ["ocid1.instance.oc1..gpu"]
     assert result.errors == []
 
@@ -252,17 +242,12 @@ def test_run_reap_cycle_surfaces_start_failure() -> None:
     )
 
     assert result.actuated == []
-    assert result.errors == [
-        "START ocid1.instance.oc1..gpu: RuntimeError: "
-        "start failed ocid1.instance.oc1..gpu"
-    ]
+    assert result.errors == ["START ocid1.instance.oc1..gpu: RuntimeError: start failed ocid1.instance.oc1..gpu"]
 
 
 def test_run_reap_cycle_fences_stop_when_load_appears() -> None:
     controller = GpuLifecycleController(idle_seconds=60)
-    instance = GpuInstance(
-        instance_id="ocid1.instance.oc1..gpu", state="RUNNING", idle_for_seconds=90
-    )
+    instance = GpuInstance(instance_id="ocid1.instance.oc1..gpu", state="RUNNING", idle_for_seconds=90)
     load = MutableLoadSource(queue_depth=0, in_flight=0)
     actuator = RecordingActuator()
 
@@ -294,9 +279,7 @@ def test_run_reap_cycle_fences_stop_when_load_appears() -> None:
 
 def test_json_file_job_load_source_mirrors_store_shape(tmp_path: Path) -> None:
     path = tmp_path / "load.json"
-    path.write_text(
-        json.dumps({"queue_depth": 2, "in_flight": 1, "active_sessions": 3})
-    )
+    path.write_text(json.dumps({"queue_depth": 2, "in_flight": 1, "active_sessions": 3}))
     snap = JsonFileJobLoadSource(path=path).snapshot()
     assert snap == JobLoadSnapshot(queue_depth=2, in_flight=1, active_sessions=3)
 

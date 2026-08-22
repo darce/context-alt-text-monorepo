@@ -29,6 +29,7 @@ import io
 import json
 import sys
 from pathlib import Path
+from collections.abc import Mapping
 from typing import Any
 
 _THUMB_DEFAULT = 440
@@ -64,6 +65,32 @@ def _index_run(path: str) -> dict[int, dict[str, Any]]:
             "error": item.get("error"),
         }
     return out
+
+
+def render_delta_banner(delta: Mapping[str, Any] | None) -> str:
+    """HTML stand-in for a scored Δ. Refusal occupies the number's place."""
+    if not delta:
+        return ""
+    if delta.get("refused"):
+        reason = html.escape(str(delta.get("reason") or "refusing Δ across straddled stamps"))
+        invariant = html.escape(str(delta.get("invariant") or "delta_refuses_straddled_stamps"))
+        return (
+            f'<p class="err">Δ REFUSED ({invariant}): {reason}</p>'
+        )
+    power = delta.get("power") if isinstance(delta.get("power"), Mapping) else {}
+    headline = html.escape(str(power.get("headline") or ""))
+    metrics = delta.get("metrics") if isinstance(delta.get("metrics"), Mapping) else {}
+    rows = []
+    for key, row in metrics.items():
+        if not isinstance(row, Mapping):
+            continue
+        rows.append(
+            f"<li>{html.escape(str(key))}: candidate={html.escape(str(row.get('candidate')))} "
+            f"baseline={html.escape(str(row.get('baseline')))} "
+            f"Δ={html.escape(str(row.get('delta')))}</li>"
+        )
+    head = f'<p class="err"><strong>HEADLINE: {headline}</strong></p>' if headline else ""
+    return head + ("<ul>" + "".join(rows) + "</ul>" if rows else "")
 
 
 def _tokens_label(tokens: Any) -> str:
@@ -322,6 +349,11 @@ def build_parser() -> argparse.ArgumentParser:
                     help="total run cost in USD; report renders total + cost-per-image")
     ap.add_argument("--hourly-rate", type=float, default=None,
                     help="instance $/hr; renders deterministic per-image cost = rate x inference seconds")
+    ap.add_argument(
+        "--delta-json",
+        default=None,
+        help="optional scored baseline_delta JSON object; refused Δ is rendered in place of numbers",
+    )
     return ap
 
 
@@ -354,6 +386,11 @@ def main(argv: list[str] | None = None) -> int:
     if args.cost_total is not None and attempted_n:
         subtitle += f" · total ${args.cost_total:.2f} · ${args.cost_total / attempted_n:.4f}/image"
     doc = build(manifest, runs, media_ids, images_dir, args.embed_images, args.thumb_px, args.title, subtitle, args.hourly_rate)
+    if args.delta_json:
+        delta_payload = json.loads(Path(args.delta_json).read_text(encoding="utf-8"))
+        banner = render_delta_banner(delta_payload)
+        if banner:
+            doc = doc.replace("<main>", "<main>" + banner, 1)
     Path(args.out).write_text(doc)
     print(f"wrote {args.out} ({len(doc) / 1024:.0f}KB, {len(media_ids)} images, {len(runs)} run(s))")
     return 0

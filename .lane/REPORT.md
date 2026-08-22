@@ -224,7 +224,15 @@ The brief names TEST-15 and sr-001. No other EVAL/MLDATA/FAIR/AUDIT/PROV IDs are
 
 ## Exact files changed (`git diff --stat HEAD~1`)
 
-Recorded after this commit (production file + this report). Pre-commit production-only stat:
+From work commit `2be8f624` (`git diff --stat 2be8f624^..2be8f624`):
+
+```text
+ .lane/REPORT.md | 292 ++++++++++++++++++++------------------------------------
+ mk/evals.mk     |   6 +-
+ 2 files changed, 108 insertions(+), 190 deletions(-)
+```
+
+Production-only line change:
 
 ```text
  mk/evals.mk | 6 +++---

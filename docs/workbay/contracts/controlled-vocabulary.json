@@ -1,0 +1,738 @@
+{
+  "schema_version": 1,
+  "gate_mode": "baseline",
+  "target_audience": "Non-expert WordPress site administrators managing media, face grouping, and accessible descriptions.",
+  "terms": [
+    {
+      "banned": "cluster",
+      "forms": [
+        "cluster",
+        "clusters",
+        "clustered",
+        "clustering"
+      ],
+      "say": {
+        "noun": "face group",
+        "verb": "group faces"
+      },
+      "definition": "A face group is a set of faces the system has placed together because they appear to show the same person.",
+      "rationale": "The shipped Workbench and Roster organize this task around faces, groups, and people; these words name what an administrator sees and does without requiring machine-learning vocabulary."
+    },
+    {
+      "banned": "embedding",
+      "forms": [
+        "embedding",
+        "embeddings"
+      ],
+      "say": {
+        "when essential": "face signature",
+        "otherwise": "omit the implementation detail"
+      },
+      "definition": "A face signature is internal numeric recognition data used to compare faces.",
+      "rationale": "Face signature connects the data to its purpose; omitting it is clearer whenever the implementation detail does not help the administrator decide or act."
+    },
+    {
+      "banned": "tenant",
+      "forms": [
+        "tenant",
+        "tenants"
+      ],
+      "say": {
+        "site scope": "this site"
+      },
+      "definition": "This site means the current WordPress site and its data.",
+      "rationale": "Administrators recognize the site they are using, while tenant is an infrastructure boundary they should not need to decode."
+    },
+    {
+      "banned": "provenance",
+      "forms": [
+        "provenance"
+      ],
+      "say": {
+        "source label": "where this came from"
+      },
+      "definition": "Where this came from identifies the source of a result or piece of data.",
+      "rationale": "The replacement asks the ordinary trust question directly instead of naming the abstract record-keeping concept."
+    },
+    {
+      "banned": "outlier",
+      "forms": [
+        "outlier",
+        "outliers"
+      ],
+      "say": {
+        "unassigned face": "unmatched face"
+      },
+      "definition": "An unmatched face is a detected face that has not been placed in a face group.",
+      "rationale": "Unmatched face describes the visible item and its current state, while outlier assumes statistical knowledge and can sound judgmental."
+    }
+  ],
+  "known_violations": [
+    {
+      "path": "apps/prototype-wp-alt-context/js/admin/hooks/clusterAutoRetry.ts",
+      "message": "Clustering queued — starting in %ds",
+      "banned": "cluster",
+      "occurrences": 1
+    },
+    {
+      "path": "apps/prototype-wp-alt-context/js/admin/hooks/clusterAutoRetry.ts",
+      "message": "Clustering failed after rate-limit retries. Use Retry clustering to try again.",
+      "banned": "cluster",
+      "occurrences": 2
+    },
+    {
+      "path": "apps/prototype-wp-alt-context/js/admin/hooks/useJobStateMachineMutations.ts",
+      "message": "Clustering failed. Please try again.",
+      "banned": "cluster",
+      "occurrences": 1
+    },
+    {
+      "path": "apps/prototype-wp-alt-context/js/admin/pages/DashboardPage.tsx",
+      "message": "Clusters that have been matched to a person.",
+      "banned": "cluster",
+      "occurrences": 1
+    },
+    {
+      "path": "apps/prototype-wp-alt-context/js/admin/pages/DashboardPage.tsx",
+      "message": "New clusters waiting for your review and labeling.",
+      "banned": "cluster",
+      "occurrences": 1
+    },
+    {
+      "path": "apps/prototype-wp-alt-context/js/admin/pages/DescribeRunApplyView.tsx",
+      "message": "%d could not finish (alt may already be saved; provenance incomplete).",
+      "banned": "provenance",
+      "occurrences": 1
+    },
+    {
+      "path": "apps/prototype-wp-alt-context/js/admin/pages/DescriptionHistoryPage.tsx",
+      "message": "Review generated alt text, provenance, and human corrections in one workspace.",
+      "banned": "provenance",
+      "occurrences": 1
+    },
+    {
+      "path": "apps/prototype-wp-alt-context/js/admin/pages/RetentionPage.tsx",
+      "message": "Export clusters, members, detection metadata, and representative details as portable JSON.",
+      "banned": "cluster",
+      "occurrences": 1
+    },
+    {
+      "path": "apps/prototype-wp-alt-context/js/admin/pages/RetentionPage.tsx",
+      "message": "Raw embedding vectors are excluded from exports.",
+      "banned": "embedding",
+      "occurrences": 1
+    },
+    {
+      "path": "apps/prototype-wp-alt-context/js/admin/pages/RetentionPage.tsx",
+      "message": "Purge permanently deletes disposed state or all machine-derived tenant data from the backend.",
+      "banned": "tenant",
+      "occurrences": 1
+    },
+    {
+      "path": "apps/prototype-wp-alt-context/js/admin/pages/RetentionPage.tsx",
+      "message": "Restore tenant state from a previously exported JSON file. The import validates schema compatibility and records a lifecycle audit event.",
+      "banned": "tenant",
+      "occurrences": 1
+    },
+    {
+      "path": "apps/prototype-wp-alt-context/js/admin/pages/RetentionPage.tsx",
+      "message": "Raw embedding vectors are not included in exports and will not be restored.",
+      "banned": "embedding",
+      "occurrences": 1
+    },
+    {
+      "path": "apps/prototype-wp-alt-context/js/admin/pages/dashboard/DashboardSyncHealthSection.tsx",
+      "message": "Mirror is out of sync with the backend — %1$d stale clusters, %2$d failed sync events.",
+      "banned": "cluster",
+      "occurrences": 1
+    },
+    {
+      "path": "apps/prototype-wp-alt-context/js/admin/pages/dashboard/GuidanceCard.tsx",
+      "message": "%d person has no assigned clusters.",
+      "banned": "cluster",
+      "occurrences": 1
+    },
+    {
+      "path": "apps/prototype-wp-alt-context/js/admin/pages/dashboard/GuidanceCard.tsx",
+      "message": "%d persons have no assigned clusters.",
+      "banned": "cluster",
+      "occurrences": 1
+    },
+    {
+      "path": "apps/prototype-wp-alt-context/js/admin/pages/dashboard/OrientationCard.tsx",
+      "message": "Analyze your library to detect faces and extract mathematical identities (embeddings).",
+      "banned": "embedding",
+      "occurrences": 1
+    },
+    {
+      "path": "apps/prototype-wp-alt-context/js/admin/pages/dashboard/OrientationCard.tsx",
+      "message": "2. Cluster Faces",
+      "banned": "cluster",
+      "occurrences": 1
+    },
+    {
+      "path": "apps/prototype-wp-alt-context/js/admin/pages/dashboard/OrientationCard.tsx",
+      "message": "Automatically group similar faces into \"Clusters\" to review many identities at once.",
+      "banned": "cluster",
+      "occurrences": 1
+    },
+    {
+      "path": "apps/prototype-wp-alt-context/js/admin/pages/dashboard/OrientationCard.tsx",
+      "message": "Name your clusters to automatically populate alt text across your entire media library.",
+      "banned": "cluster",
+      "occurrences": 1
+    },
+    {
+      "path": "apps/prototype-wp-alt-context/js/admin/pages/retention/RetentionDialogs.tsx",
+      "message": "Export tenant data",
+      "banned": "tenant",
+      "occurrences": 1
+    },
+    {
+      "path": "apps/prototype-wp-alt-context/js/admin/pages/retention/RetentionDialogs.tsx",
+      "message": "This export includes clusters, members, detection metadata, and representative details. Raw embedding vectors are excluded.",
+      "banned": "cluster",
+      "occurrences": 1
+    },
+    {
+      "path": "apps/prototype-wp-alt-context/js/admin/pages/retention/RetentionDialogs.tsx",
+      "message": "This export includes clusters, members, detection metadata, and representative details. Raw embedding vectors are excluded.",
+      "banned": "embedding",
+      "occurrences": 1
+    },
+    {
+      "path": "apps/prototype-wp-alt-context/js/admin/pages/retention/RetentionDialogs.tsx",
+      "message": "Purge tenant data",
+      "banned": "tenant",
+      "occurrences": 1
+    },
+    {
+      "path": "apps/prototype-wp-alt-context/js/admin/pages/retention/RetentionDialogs.tsx",
+      "message": "Import tenant data",
+      "banned": "tenant",
+      "occurrences": 1
+    },
+    {
+      "path": "apps/prototype-wp-alt-context/js/admin/pages/retention/useRetentionPageState.ts",
+      "message": "Keep embeddings and clustering state until an operator explicitly changes policy.",
+      "banned": "cluster",
+      "occurrences": 1
+    },
+    {
+      "path": "apps/prototype-wp-alt-context/js/admin/pages/retention/useRetentionPageState.ts",
+      "message": "Keep embeddings and clustering state until an operator explicitly changes policy.",
+      "banned": "embedding",
+      "occurrences": 1
+    },
+    {
+      "path": "apps/prototype-wp-alt-context/js/admin/pages/retention/useRetentionPageState.ts",
+      "message": "Tenant export downloaded.",
+      "banned": "tenant",
+      "occurrences": 1
+    },
+    {
+      "path": "apps/prototype-wp-alt-context/js/admin/pages/retention/useRetentionPageState.ts",
+      "message": "Tenant purge completed.",
+      "banned": "tenant",
+      "occurrences": 1
+    },
+    {
+      "path": "apps/prototype-wp-alt-context/js/admin/pages/retention/useRetentionPageState.ts",
+      "message": "Unable to purge tenant data.",
+      "banned": "tenant",
+      "occurrences": 1
+    },
+    {
+      "path": "apps/prototype-wp-alt-context/js/admin/pages/settings/SettingsForm.tsx",
+      "message": "Tenant identity",
+      "banned": "tenant",
+      "occurrences": 1
+    },
+    {
+      "path": "apps/prototype-wp-alt-context/js/admin/pages/settings/SettingsForm.tsx",
+      "message": "Tenant ID",
+      "banned": "tenant",
+      "occurrences": 1
+    },
+    {
+      "path": "apps/prototype-wp-alt-context/js/admin/pages/settings/TestConnectionBannerView.tsx",
+      "message": "Persisted tenant",
+      "banned": "tenant",
+      "occurrences": 1
+    },
+    {
+      "path": "apps/prototype-wp-alt-context/js/admin/pages/settings/TestConnectionBannerView.tsx",
+      "message": "API key tenant",
+      "banned": "tenant",
+      "occurrences": 1
+    },
+    {
+      "path": "apps/prototype-wp-alt-context/js/admin/pages/settings/TestConnectionBannerView.tsx",
+      "message": "Adopting tenant identity…",
+      "banned": "tenant",
+      "occurrences": 1
+    },
+    {
+      "path": "apps/prototype-wp-alt-context/js/admin/pages/settings/TestConnectionBannerView.tsx",
+      "message": "Adopt API key tenant",
+      "banned": "tenant",
+      "occurrences": 1
+    },
+    {
+      "path": "apps/prototype-wp-alt-context/js/admin/pages/settings/settingsConstants.ts",
+      "message": "Not paired yet — check the connection to pair this tenant",
+      "banned": "tenant",
+      "occurrences": 1
+    },
+    {
+      "path": "apps/prototype-wp-alt-context/js/admin/pages/settings/testConnectionBanner.ts",
+      "message": "Connection successful, but tenant pairing failed.",
+      "banned": "tenant",
+      "occurrences": 1
+    },
+    {
+      "path": "apps/prototype-wp-alt-context/js/admin/pages/settings/testConnectionBanner.ts",
+      "message": "Tenant mismatch.",
+      "banned": "tenant",
+      "occurrences": 1
+    },
+    {
+      "path": "apps/prototype-wp-alt-context/js/admin/pages/settings/testConnectionBanner.ts",
+      "message": "The API key belongs to a different site. Adopt the key’s tenant to pair this site, or confirm the key was issued for this WordPress tenant.",
+      "banned": "tenant",
+      "occurrences": 2
+    },
+    {
+      "path": "apps/prototype-wp-alt-context/js/admin/pages/settings/testConnectionBanner.ts",
+      "message": "Tenant identity conflict.",
+      "banned": "tenant",
+      "occurrences": 1
+    },
+    {
+      "path": "apps/prototype-wp-alt-context/js/admin/pages/settings/testConnectionBanner.ts",
+      "message": "The API key is bound to a different tenant than this site. Confirm adoption before re-keying local data.",
+      "banned": "tenant",
+      "occurrences": 1
+    },
+    {
+      "path": "apps/prototype-wp-alt-context/js/admin/pages/workbench/AdvancedDrawer.tsx",
+      "message": "Job history, clustering, and recovery controls for when a scan needs follow-up.",
+      "banned": "cluster",
+      "occurrences": 1
+    },
+    {
+      "path": "apps/prototype-wp-alt-context/js/admin/pages/workbench/DeadLetterPanel.tsx",
+      "message": "Cluster label update",
+      "banned": "cluster",
+      "occurrences": 1
+    },
+    {
+      "path": "apps/prototype-wp-alt-context/js/admin/pages/workbench/DeadLetterPanel.tsx",
+      "message": "Cluster dismiss",
+      "banned": "cluster",
+      "occurrences": 1
+    },
+    {
+      "path": "apps/prototype-wp-alt-context/js/admin/pages/workbench/DeadLetterPanel.tsx",
+      "message": "Cluster undismiss",
+      "banned": "cluster",
+      "occurrences": 1
+    },
+    {
+      "path": "apps/prototype-wp-alt-context/js/admin/pages/workbench/DeadLetterPanel.tsx",
+      "message": "Cluster person bind",
+      "banned": "cluster",
+      "occurrences": 1
+    },
+    {
+      "path": "apps/prototype-wp-alt-context/js/admin/pages/workbench/DeadLetterPanel.tsx",
+      "message": "Cluster person unbind",
+      "banned": "cluster",
+      "occurrences": 1
+    },
+    {
+      "path": "apps/prototype-wp-alt-context/js/admin/pages/workbench/DeadLetterPanel.tsx",
+      "message": "Cluster merge",
+      "banned": "cluster",
+      "occurrences": 1
+    },
+    {
+      "path": "apps/prototype-wp-alt-context/js/admin/pages/workbench/DeadLetterPanel.tsx",
+      "message": "Cluster merge revert",
+      "banned": "cluster",
+      "occurrences": 1
+    },
+    {
+      "path": "apps/prototype-wp-alt-context/js/admin/pages/workbench/DeadLetterPanel.tsx",
+      "message": "Assign outlier to cluster",
+      "banned": "cluster",
+      "occurrences": 1
+    },
+    {
+      "path": "apps/prototype-wp-alt-context/js/admin/pages/workbench/DeadLetterPanel.tsx",
+      "message": "Assign outlier to cluster",
+      "banned": "outlier",
+      "occurrences": 1
+    },
+    {
+      "path": "apps/prototype-wp-alt-context/js/admin/pages/workbench/DeadLetterPanel.tsx",
+      "message": "Create cluster for identity",
+      "banned": "cluster",
+      "occurrences": 1
+    },
+    {
+      "path": "apps/prototype-wp-alt-context/js/admin/pages/workbench/JobPipelineContext.tsx",
+      "message": "Created %d clusters for %d identities.",
+      "banned": "cluster",
+      "occurrences": 1
+    },
+    {
+      "path": "apps/prototype-wp-alt-context/js/admin/pages/workbench/JobTimeline.tsx",
+      "message": "1 cluster created",
+      "banned": "cluster",
+      "occurrences": 1
+    },
+    {
+      "path": "apps/prototype-wp-alt-context/js/admin/pages/workbench/JobTimeline.tsx",
+      "message": "%d clusters created",
+      "banned": "cluster",
+      "occurrences": 1
+    },
+    {
+      "path": "apps/prototype-wp-alt-context/js/admin/pages/workbench/MediaAnalyzeCta.tsx",
+      "message": "Clustering identities…",
+      "banned": "cluster",
+      "occurrences": 1
+    },
+    {
+      "path": "apps/prototype-wp-alt-context/js/admin/pages/workbench/Panels.tsx",
+      "message": "Retry clustering",
+      "banned": "cluster",
+      "occurrences": 1
+    },
+    {
+      "path": "apps/prototype-wp-alt-context/js/admin/pages/workbench/Panels.tsx",
+      "message": "Clustering faces…",
+      "banned": "cluster",
+      "occurrences": 1
+    },
+    {
+      "path": "apps/prototype-wp-alt-context/js/admin/pages/workbench/Panels.tsx",
+      "message": "Cluster the latest job results",
+      "banned": "cluster",
+      "occurrences": 1
+    },
+    {
+      "path": "apps/prototype-wp-alt-context/js/admin/pages/workbench/Panels.tsx",
+      "message": "Clusters created: %d",
+      "banned": "cluster",
+      "occurrences": 1
+    },
+    {
+      "path": "apps/prototype-wp-alt-context/js/admin/pages/workbench/Panels.tsx",
+      "message": "Clustering progress",
+      "banned": "cluster",
+      "occurrences": 1
+    },
+    {
+      "path": "apps/prototype-wp-alt-context/js/admin/pages/workbench/WorkbenchTwoPaneLayout.tsx",
+      "message": "Recognition and cluster controls will appear here. Run recognition when media is ready.",
+      "banned": "cluster",
+      "occurrences": 1
+    },
+    {
+      "path": "apps/prototype-wp-alt-context/js/admin/pages/workbench/confirmTabCopy.ts",
+      "message": "What does clustering do?",
+      "banned": "cluster",
+      "occurrences": 1
+    },
+    {
+      "path": "apps/prototype-wp-alt-context/js/admin/pages/workbench/confirmTabCopy.ts",
+      "message": "Clustering groups similar faces found during a scan so you can name a whole group at once instead of labeling every photo.",
+      "banned": "cluster",
+      "occurrences": 1
+    },
+    {
+      "path": "apps/prototype-wp-alt-context/js/admin/pages/workbench/conflict-inbox/conflictInboxUtils.ts",
+      "message": "Curated cluster deleted remotely",
+      "banned": "cluster",
+      "occurrences": 1
+    },
+    {
+      "path": "apps/prototype-wp-alt-context/js/admin/pages/workbench/conflict-inbox/conflictInboxUtils.ts",
+      "message": "Member moved to another cluster remotely",
+      "banned": "cluster",
+      "occurrences": 1
+    },
+    {
+      "path": "apps/prototype-wp-alt-context/js/admin/pages/workbench/conflict-inbox/conflictInboxUtils.ts",
+      "message": "Restore local curation by re-sending every affected curated cluster and member to the backend? Local data is preserved.",
+      "banned": "cluster",
+      "occurrences": 1
+    },
+    {
+      "path": "apps/prototype-wp-alt-context/js/admin/pages/workbench/conflict-inbox/conflictInboxUtils.ts",
+      "message": "Accepting the machine version deletes the curated cluster and %d attached member rows still linked to it.",
+      "banned": "cluster",
+      "occurrences": 1
+    },
+    {
+      "path": "apps/prototype-wp-alt-context/js/admin/pages/workbench/conflict-inbox/conflictInboxUtils.ts",
+      "message": "Accepting the machine version deletes the curated cluster and all member rows still attached to it.",
+      "banned": "cluster",
+      "occurrences": 1
+    },
+    {
+      "path": "apps/prototype-wp-alt-context/js/admin/pages/workbench/conflict-inbox/conflictInboxUtils.ts",
+      "message": "Accepting the machine version removes the temporary restored cluster, reassigns the listed members back to the machine target cluster, and discards the local revert operation.",
+      "banned": "cluster",
+      "occurrences": 2
+    },
+    {
+      "path": "apps/prototype-wp-alt-context/js/admin/pages/workbench/conflict-inbox/conflictInboxUtils.ts",
+      "message": "Accepting the machine version resets all curated cluster fields to backend state, including label, person assignment, and dismissal state.",
+      "banned": "cluster",
+      "occurrences": 1
+    },
+    {
+      "path": "apps/prototype-wp-alt-context/js/admin/pages/workbench/conflict-inbox/conflictInboxUtils.ts",
+      "message": "Accepting the machine version moves this identity back to the backend-selected cluster, removes the locally created cluster, and discards the local topology operation.",
+      "banned": "cluster",
+      "occurrences": 2
+    },
+    {
+      "path": "apps/prototype-wp-alt-context/js/admin/pages/workbench/conflict-inbox/conflictInboxUtils.ts",
+      "message": "Accepting the machine version restores the member to the backend-selected cluster and discards the local topology operation.",
+      "banned": "cluster",
+      "occurrences": 1
+    },
+    {
+      "path": "apps/prototype-wp-alt-context/js/admin/pages/workbench/conflict-inbox/conflictInboxUtils.ts",
+      "message": "Accepting the machine version removes this cluster from the local projection.",
+      "banned": "cluster",
+      "occurrences": 1
+    },
+    {
+      "path": "apps/prototype-wp-alt-context/js/admin/pages/workbench/conflict-inbox/conflictInboxUtils.ts",
+      "message": "Accepting the machine version reassigns the member to the machine cluster and clears curation.",
+      "banned": "cluster",
+      "occurrences": 1
+    },
+    {
+      "path": "apps/prototype-wp-alt-context/js/admin/pages/workbench/conflict-inbox/conflictInboxUtils.ts",
+      "message": "Accepting the machine version removes the temporary restored cluster and moves the listed members back into the machine target cluster.",
+      "banned": "cluster",
+      "occurrences": 2
+    },
+    {
+      "path": "apps/prototype-wp-alt-context/js/admin/pages/workbench/conflict-inbox/conflictInboxUtils.ts",
+      "message": "Accepting the machine version resets the cluster to backend state and clears local curation guards.",
+      "banned": "cluster",
+      "occurrences": 1
+    },
+    {
+      "path": "apps/prototype-wp-alt-context/js/admin/pages/workbench/conflict-inbox/conflictInboxUtils.ts",
+      "message": "Accepting the machine version restores the member to the backend-selected cluster and removes the locally created cluster.",
+      "banned": "cluster",
+      "occurrences": 2
+    },
+    {
+      "path": "apps/prototype-wp-alt-context/js/admin/pages/workbench/conflict-inbox/conflictInboxUtils.ts",
+      "message": "Accepting the machine version restores the member to the backend-selected cluster and clears local curation on that assignment.",
+      "banned": "cluster",
+      "occurrences": 1
+    },
+    {
+      "path": "apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/AnchorSelectionModal.tsx",
+      "message": "Choose the face that should keep this cluster label. Other faces will move to a new cluster.",
+      "banned": "cluster",
+      "occurrences": 2
+    },
+    {
+      "path": "apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/DebugMetricsPanel.tsx",
+      "message": "Clustering",
+      "banned": "cluster",
+      "occurrences": 1
+    },
+    {
+      "path": "apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/useClusterActionMutations.ts",
+      "message": "Cannot pin representative: no cluster ID",
+      "banned": "cluster",
+      "occurrences": 1
+    },
+    {
+      "path": "apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/useClusterConfirmDialog.ts",
+      "message": "this cluster",
+      "banned": "cluster",
+      "occurrences": 1
+    },
+    {
+      "path": "apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/useClusterConfirmDialog.ts",
+      "message": "Merge this cluster into existing \"%s\"?",
+      "banned": "cluster",
+      "occurrences": 1
+    },
+    {
+      "path": "apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/useClusterLabelMutations.ts",
+      "message": "Cannot merge: no cluster ID",
+      "banned": "cluster",
+      "occurrences": 1
+    },
+    {
+      "path": "apps/prototype-wp-alt-context/js/admin/pages/workbench/phasePresentation.ts",
+      "message": "Clustering progress",
+      "banned": "cluster",
+      "occurrences": 1
+    },
+    {
+      "path": "apps/prototype-wp-alt-context/js/admin/pages/workbench/phasePresentation.ts",
+      "message": "Clustering %d/%d identities…",
+      "banned": "cluster",
+      "occurrences": 1
+    },
+    {
+      "path": "apps/prototype-wp-alt-context/js/admin/pages/workbench/phasePresentation.ts",
+      "message": "Clustering faces…",
+      "banned": "cluster",
+      "occurrences": 1
+    },
+    {
+      "path": "apps/prototype-wp-alt-context/js/admin/pages/workbench/syncVocabulary.ts",
+      "message": "Clustering…",
+      "banned": "cluster",
+      "occurrences": 1
+    },
+    {
+      "path": "apps/prototype-wp-alt-context/js/admin/pages/workbench/syncVocabulary.ts",
+      "message": "Service connected — no clusters yet",
+      "banned": "cluster",
+      "occurrences": 1
+    },
+    {
+      "path": "apps/prototype-wp-alt-context/js/admin/pages/workbench/syncVocabulary.ts",
+      "message": "Clustering complete",
+      "banned": "cluster",
+      "occurrences": 1
+    },
+    {
+      "path": "apps/prototype-wp-alt-context/js/admin/pages/workbench/syncVocabulary.ts",
+      "message": "Clustering failed",
+      "banned": "cluster",
+      "occurrences": 1
+    },
+    {
+      "path": "apps/prototype-wp-alt-context/js/admin/pages/workbench/syncVocabulary.ts",
+      "message": "Clustering",
+      "banned": "cluster",
+      "occurrences": 1
+    },
+    {
+      "path": "apps/prototype-wp-alt-context/src/api/class-api.php",
+      "message": "Could not resolve person UUID for cluster assignment.",
+      "banned": "cluster",
+      "occurrences": 1
+    },
+    {
+      "path": "apps/prototype-wp-alt-context/src/api/class-api.php",
+      "message": "Could not update cluster assignment.",
+      "banned": "cluster",
+      "occurrences": 1
+    },
+    {
+      "path": "apps/prototype-wp-alt-context/src/api/class-api.php",
+      "message": "Could not update cluster revision.",
+      "banned": "cluster",
+      "occurrences": 1
+    },
+    {
+      "path": "apps/prototype-wp-alt-context/src/api/class-api.php",
+      "message": "Tenant identity is unavailable.",
+      "banned": "tenant",
+      "occurrences": 3
+    },
+    {
+      "path": "apps/prototype-wp-alt-context/src/api/class-api.php",
+      "message": "Could not sync bound cluster labels.",
+      "banned": "cluster",
+      "occurrences": 1
+    },
+    {
+      "path": "apps/prototype-wp-alt-context/src/api/class-api.php",
+      "message": "Could not load clusters for person.",
+      "banned": "cluster",
+      "occurrences": 1
+    },
+    {
+      "path": "apps/prototype-wp-alt-context/src/api/class-api.php",
+      "message": "Could not dissociate person from clusters.",
+      "banned": "cluster",
+      "occurrences": 1
+    },
+    {
+      "path": "apps/prototype-wp-alt-context/src/api/class-api.php",
+      "message": "Could not queue cluster unbind replay operation.",
+      "banned": "cluster",
+      "occurrences": 1
+    },
+    {
+      "path": "apps/prototype-wp-alt-context/src/api/class-api.php",
+      "message": "Could not queue cluster label-clear replay operation.",
+      "banned": "cluster",
+      "occurrences": 1
+    },
+    {
+      "path": "apps/prototype-wp-alt-context/src/api/services/class-cluster-person-bind-service.php",
+      "message": "Could not resolve person UUID for cluster assignment.",
+      "banned": "cluster",
+      "occurrences": 2
+    },
+    {
+      "path": "apps/prototype-wp-alt-context/src/api/services/class-cluster-person-bind-service.php",
+      "message": "Could not update cluster assignment.",
+      "banned": "cluster",
+      "occurrences": 1
+    },
+    {
+      "path": "apps/prototype-wp-alt-context/src/api/services/class-cluster-person-bind-service.php",
+      "message": "Could not update cluster revision.",
+      "banned": "cluster",
+      "occurrences": 1
+    },
+    {
+      "path": "apps/prototype-wp-alt-context/src/api/services/class-person-resolution-service.php",
+      "message": "Tenant identity is unavailable.",
+      "banned": "tenant",
+      "occurrences": 1
+    },
+    {
+      "path": "apps/prototype-wp-alt-context/src/api/services/class-person-resolution-service.php",
+      "message": "Could not create person for cluster assignment.",
+      "banned": "cluster",
+      "occurrences": 2
+    },
+    {
+      "path": "apps/prototype-wp-alt-context/src/support/class-life-cycle-manager.php",
+      "message": "Alt Context cannot repair unlabeled clusters because tenant identity is unavailable. Configure the tenant, then run `wp acx bind-unbound-labels`.",
+      "banned": "cluster",
+      "occurrences": 1
+    },
+    {
+      "path": "apps/prototype-wp-alt-context/src/support/class-life-cycle-manager.php",
+      "message": "Alt Context cannot repair unlabeled clusters because tenant identity is unavailable. Configure the tenant, then run `wp acx bind-unbound-labels`.",
+      "banned": "tenant",
+      "occurrences": 2
+    },
+    {
+      "path": "apps/prototype-wp-alt-context/src/support/class-life-cycle-manager.php",
+      "message": "Alt Context is still repairing unlabeled clusters. If this persists, run `wp acx bind-unbound-labels`.",
+      "banned": "cluster",
+      "occurrences": 1
+    },
+    {
+      "path": "apps/prototype-wp-alt-context/src/support/class-life-cycle-manager.php",
+      "message": "Tenant identity is unavailable.",
+      "banned": "tenant",
+      "occurrences": 1
+    }
+  ]
+}

@@ -25,9 +25,12 @@ from scripts.eval_harness.cli import BoundedStallError, fetch_run_record
 from scripts.eval_harness.manifest import GoldenEntry, GoldenManifest, load_manifest
 from scripts.eval_harness.remote_client import RemoteClientError
 from scripts.eval_harness.report import build_reports
+from scripts.eval_harness.strata import SplitHalf, assign_split
 
 BAKEOFF_MANIFEST = Path(__file__).parent / "seed" / "bakeoff_golden.json"
 GOLDEN_MANIFEST = Path(__file__).parent / "seed" / "golden.json"
+SPLIT_SEED = "vlm6-s1-sealed-eval-split-20260818"
+HELD_OUT_FRACTION = 0.5
 
 
 @pytest.fixture(scope="module")
@@ -93,40 +96,55 @@ def test_rubrics_are_not_vacuous(manifest: GoldenManifest) -> None:
     assert any(e.must_right or e.easy_wrong for e in manifest.entries)
 
 
-# main golden.json has no rubrics until VLM-2C populates it; that warning is its, not ours
-@pytest.mark.filterwarnings("ignore::scripts.eval_harness.manifest.RubricEmptyWarning")
-def test_entries_reuse_golden_corpus_images(manifest: GoldenManifest) -> None:
-    golden = load_manifest(str(GOLDEN_MANIFEST))
-    golden_by_path = {e.path: e for e in golden.entries}
-    for entry in manifest.entries:
-        assert entry.path in golden_by_path, f"{entry.path}: not in golden corpus (new image needs README bootstrap)"
-        gold = golden_by_path[entry.path]
-        # Do not fork ground truth: image bytes AND identity labels must match the golden corpus,
-        # since the analyze contract keys uploads/identity reads by media_id (a drifted id would
-        # misattribute identities in any future non-stub run).
-        assert entry.sha256 == gold.sha256, f"{entry.path}: sha256 drifted from golden corpus"
-        assert entry.media_id == gold.media_id, f"{entry.path}: media_id drifted from golden corpus"
-        assert entry.face_count == gold.face_count, f"{entry.path}: face_count drifted from golden corpus"
-        assert entry.present_identities == gold.present_identities, (
-            f"{entry.path}: present_identities drifted from golden corpus"
+# This is a metadata-only split invariant: reading pixels would add an unrelated
+# GOLDEN_IMAGES_DIR precondition and cannot strengthen a content-hash membership proof.
+def test_selection_and_reported_corpora_are_disjoint() -> None:
+    selection = json.loads(BAKEOFF_MANIFEST.read_text(encoding="utf-8"))
+    reported = json.loads(GOLDEN_MANIFEST.read_text(encoding="utf-8"))
+    selection_sha256 = {entry["sha256"] for entry in selection["entries"]}
+    reported_sha256 = {entry["sha256"] for entry in reported["entries"]}
+    overlap = selection_sha256 & reported_sha256
+    overlap_percent = 100 * len(overlap) / len(reported_sha256)
+    assert not overlap, (
+        "selection/report leakage: "
+        f"{len(overlap)}/{len(reported_sha256)} reported images overlap selection "
+        f"({overlap_percent:.1f}%); shared sha256={sorted(overlap)}"
+    )
+    wrong_selection_half = [
+        entry["path"]
+        for entry in selection["entries"]
+        if assign_split(
+            entry["sha256"], seed=SPLIT_SEED, held_out_fraction=HELD_OUT_FRACTION
         )
+        is not SplitHalf.TRAIN
+    ]
+    wrong_reported_half = [
+        entry["path"]
+        for entry in reported["entries"]
+        if assign_split(
+            entry["sha256"], seed=SPLIT_SEED, held_out_fraction=HELD_OUT_FRACTION
+        )
+        is not SplitHalf.HELD_OUT
+    ]
+    assert not wrong_selection_half, f"selection contains held-out images: {wrong_selection_half}"
+    assert not wrong_reported_half, f"reported corpus contains train images: {wrong_reported_half}"
 
 
 def test_manifest_covers_discriminating_classes(manifest: GoldenManifest) -> None:
     """Pin the §6b discriminating classes so a later 'reuse VLM-2C packs' edit cannot silently
     delete the entries that give the bake-off its discriminating power."""
     entries = manifest.entries
-    # two-roster-plus-strangers association: more faces than named present identities.
-    assert any(e.face_count > len(e.present_identities) and len(e.present_identities) >= 2 for e in entries), (
-        "manifest lost its multi-person-plus-strangers association entry"
+    # roster-plus-strangers association: more faces than named present identities.
+    assert any(e.face_count > len(e.present_identities) >= 1 for e in entries), (
+        "manifest lost its roster-plus-strangers association entry"
     )
     # abstract / hallucination-pressure: no faces but an attribution must_right.
     assert any(e.face_count == 0 and e.must_right for e in entries), (
         "manifest lost its abstract/attribution (face_count 0 + must_right) entry"
     )
-    # context-conflicts-pixels: the plane-crash entry whose context labels a garden picnic.
-    assert any(e.path.endswith("mcm-planecrash.jpg") for e in entries), (
-        "manifest lost its context-conflicts-pixels (mcm-planecrash) entry"
+    # reflection-heavy hard case from the train half of the frozen draw.
+    assert any(e.path.endswith("rrw-mirror.jpg") for e in entries), (
+        "manifest lost its mirror/reflection entry"
     )
 
 

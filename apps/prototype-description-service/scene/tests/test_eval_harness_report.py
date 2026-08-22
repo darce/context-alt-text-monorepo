@@ -3036,10 +3036,11 @@ def test_score_run_record_positional_uses_centre_x_not_corner_x():  # VLM6-B-03
 
 
 def test_score_run_record_positional_vacuity_signal_on_real_golden():  # VLM6-B-10
-    """Real golden corpus (0/37 face_boxes) must emit positional vacuity fields.
+    """Real golden corpus (0/N face_boxes) must emit positional vacuity fields.
 
-    Frame (AUDIT-07): target=adoption readiness; sampling unit=scored image;
-    observation unit=image with face_boxes L→R; π=0 on face_boxes today.
+    Sampling unit=scored image; observation unit=image with face_boxes L→R;
+    π=0 on face_boxes today. N is derived from the scored manifest
+    (FIR-ORCH-BR-23); re-pinning it would hide the next corpus change.
     """
     from scripts.eval_harness.cli import _manifest_sha
     from scripts.eval_harness.manifest import load_manifest
@@ -3048,7 +3049,7 @@ def test_score_run_record_positional_vacuity_signal_on_real_golden():  # VLM6-B-
     golden = Path(__file__).resolve().parent / "seed" / "golden.json"
     manifest = load_manifest(str(golden), skip_hash_verification=True)
     entries = [e.model_dump() for e in manifest.entries]
-    assert len(entries) == 37
+    assert entries, "golden corpus loaded empty"
     assert all(not (e.get("face_boxes") or []) for e in entries)
     msha = _manifest_sha(manifest)
     items = []

@@ -49,7 +49,7 @@ from scripts.eval_harness.report import score_run_record
 
 _REPO_ROOT = Path(__file__).resolve().parents[4]  # monorepo root
 _SERVICE_ROOT = Path(__file__).resolve().parents[2]  # apps/prototype-description-service
-# Shared 37-entry seed (zero face_boxes) — unit tests of helpers; not the freeze corpus.
+# Shared seed golden (zero face_boxes) — unit tests of helpers; not the freeze corpus.
 _GOLDEN = _SERVICE_ROOT / "scene" / "tests" / "seed" / "golden.json"
 _ANCHOR_DIR = _REPO_ROOT / "docs" / "tasks" / "vlm" / "bakeoff-results"
 _STEM = _DEFAULT_STEM
@@ -424,7 +424,7 @@ def test_committed_anchor_discloses_corpus_coverage_gaps():  # VLM6-R2-03
 
     Freeze man is golden+traps (39 entries). face_boxes is 2/39 (media 39+40) —
     still below the slice threshold, not a certified sampling frame (EVAL-03).
-    Other registry fields stay 0/39. golden.json itself remains 0/37 face_boxes.
+    Other registry fields stay 0/39. golden.json itself remains 0/N face_boxes.
     """
     manifest = load_manifest(
         str(_MAN),
@@ -458,7 +458,7 @@ def test_committed_anchor_discloses_corpus_coverage_gaps():  # VLM6-R2-03
     )
     g_gaps = compute_corpus_coverage_gaps(golden.entries)
     assert g_gaps["face_boxes"]["populated"] == 0
-    assert g_gaps["face_boxes"]["total"] == 37
+    assert g_gaps["face_boxes"]["total"] == len(golden.entries)
 
 
 def test_coverage_gaps_keep_under_sampled_field_after_single_population():  # VLM6-C-01 / TEST-15
@@ -488,7 +488,7 @@ def test_coverage_gaps_keep_under_sampled_field_after_single_population():  # VL
     gaps = _coverage_gaps(entries)
     assert "face_boxes" in gaps
     assert gaps["face_boxes"]["populated"] == 1
-    assert gaps["face_boxes"]["total"] == 37
+    assert gaps["face_boxes"]["total"] == len(entries)
     assert gaps["face_boxes"]["below_threshold"] is True  # 1 < threshold
     assert gaps["face_boxes"]["pi_zero"] is False
     # Untouched registry fields still reported.
@@ -508,9 +508,24 @@ def test_coverage_gaps_meet_threshold_when_fully_populated():  # VLM6-C-01 discr
     box = FaceBox(x=0.4, y=0.4, w=0.2, h=0.2, source="iptc")
     entries = [e.model_copy(update={"face_boxes": [box]}) for e in manifest.entries]
     gaps = compute_corpus_coverage_gaps(entries)
-    assert gaps["face_boxes"]["populated"] == 37
+    assert gaps["face_boxes"]["populated"] == len(entries)
     assert gaps["face_boxes"]["below_threshold"] is False
     assert gaps["face_boxes"]["pi_zero"] is False
+
+
+def test_coverage_gaps_total_tracks_scratch_manifest_length_not_a_stale_constant():
+    """TEST-15 / FIR-ORCH-BR-23: total must follow the scored list, not a leftover 37."""
+    manifest = load_manifest(
+        str(_GOLDEN),
+        skip_hash_verification=True,
+        hash_skip_reason="test metadata-only; image bytes never opened",
+        metadata_only=True,
+    )
+    truncated = list(manifest.entries)[:3]
+    assert len(truncated) == 3
+    gaps = compute_corpus_coverage_gaps(truncated)
+    assert gaps["face_boxes"]["total"] == len(truncated)
+    assert gaps["face_boxes"]["total"] != 37
 
 
 def test_seeded_predictions_are_not_pure_gt_echo():  # VLM6-C-04 / VLM6-S4-01 / TEST-15

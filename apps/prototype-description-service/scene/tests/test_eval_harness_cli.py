@@ -2836,7 +2836,7 @@ _GOLDEN_SEED = Path(__file__).resolve().parent / "seed" / "golden.json"
 
 
 def _real_golden_good_record() -> tuple[Path, dict]:
-    """Full 37-entry run-record from scene/tests/seed/golden.json that scores clean.
+    """Full seed-golden run-record from scene/tests/seed/golden.json that scores clean.
 
     identities are dict rows (bare strings rejected by _validate_identities_element_types).
     Caption text lives in describe.alt_text_draft / named_draft / generic_draft.
@@ -2853,7 +2853,7 @@ def _real_golden_good_record() -> tuple[Path, dict]:
         metadata_only=True,
     )
     entries = [e.model_dump() for e in manifest.entries]
-    assert len(entries) == 37
+    assert entries, "golden corpus loaded empty"
     msha = _manifest_sha(manifest)
     items = []
     for entry in entries:
@@ -2991,7 +2991,7 @@ def test_score_schema_error_when_wrong_name_rate_missing(tmp_path, monkeypatch):
 
 
 def _real_golden_wrong_name_record() -> tuple[Path, dict, list[list[str]]]:
-    """37-entry golden run-record with a wrong identity on every image.
+    """Seed-golden run-record with a wrong identity on every image.
 
     Returns (manifest_path, record, ignore_pairs) where ignore_pairs covers every
     asserted wrong name so an ignore-list can silence the pre-fix floor gate.
@@ -3008,7 +3008,7 @@ def _real_golden_wrong_name_record() -> tuple[Path, dict, list[list[str]]]:
         metadata_only=True,
     )
     entries = [e.model_dump() for e in manifest.entries]
-    assert len(entries) == 37
+    assert entries, "golden corpus loaded empty"
     msha = _manifest_sha(manifest)
     roster = list(manifest.roster or [])
     items: list[dict] = []
@@ -3062,7 +3062,7 @@ def _real_golden_wrong_name_record() -> tuple[Path, dict, list[list[str]]]:
 def _boxed_golden_manifest(tmp_path, *, name: str = "golden-boxed.json") -> tuple[Path, str]:
     """Boxed roster_only variant of _GOLDEN_SEED (VLM6-DELTA-07).
 
-    The checked-in golden.json is intentionally unboxed (0/37 face_boxes,
+    The checked-in golden.json is intentionally unboxed (0/N face_boxes,
     README-documented) so identification is structurally refused
     (identification_refuses_unboxed_identity_claims) — under FIR-11 a refused
     identification block always stamps wrong_names=None, which makes
@@ -3119,7 +3119,7 @@ def test_score_ignore_list_cannot_defeat_wrong_name_floor(tmp_path, monkeypatch)
     from scripts.eval_harness.report import WRONG_NAME_RATE_FLOOR
 
     _golden, record, ignore_pairs = _real_golden_wrong_name_record()
-    assert len(ignore_pairs) == 37
+    assert len(ignore_pairs) == len(record["items"])
     boxed_manifest, boxed_sha = _boxed_golden_manifest(tmp_path)
     record = {**record, "provenance": {**record["provenance"], "manifest_sha256": boxed_sha}}
     record_path = tmp_path / "run-ignore-defeat.json"
@@ -3140,7 +3140,7 @@ def test_score_ignore_list_cannot_defeat_wrong_name_floor(tmp_path, monkeypatch)
     report = json.loads(record_path.with_name("run-ignore-defeat-report.json").read_text())
     ident = report["faces"]["identification"]
     assert ident["wrong_names"] == []
-    assert len(ident["ignored_wrong_names"]) == 37
+    assert len(ident["ignored_wrong_names"]) == len(record["items"])
     assert report["verdict"]["wrong_name_rate"] > WRONG_NAME_RATE_FLOOR
     assert report["verdict"]["verdict"] == ScoreVerdict.FAIL.value
     assert report["verdict"]["wrong_name_rate"] == pytest.approx(1.0)
@@ -3173,7 +3173,7 @@ def test_score_recognition_disabled_corpus_fails_wrong_name_floor_vacuity(tmp_pa
         metadata_only=True,
     )
     entries = [e.model_dump() for e in manifest.entries]
-    assert len(entries) == 37
+    assert entries, "golden corpus loaded empty"
     assert all(not e["policy"]["recognition_enabled"] for e in entries)
     msha = _manifest_sha(manifest)
     roster = list(manifest.roster or [])
@@ -3242,7 +3242,7 @@ def test_score_recognition_disabled_corpus_fails_wrong_name_floor_vacuity(tmp_pa
     report = json.loads(record_path.with_name("run-rec-off-report.json").read_text())
     ident = report["faces"]["identification"]
     assert ident["evaluated_images"] == 0
-    assert len(ident["excluded_images"]) == 37
+    assert len(ident["excluded_images"]) == len(entries)
     assert ident["wrong_names"] == []
     # F1d-1: vacuity must persist fail (pre-fix left verdict=pass while exit 1).
     assert report["verdict"]["verdict"] == ScoreVerdict.FAIL.value
@@ -3307,7 +3307,7 @@ def test_score_persisted_verdict_not_ready_on_real_golden(tmp_path, monkeypatch)
     assert "positional" in reasons_blob
     assert "placement" in reasons_blob
     assert report["verdict"]["rubric_gate"] == "enforce"
-    assert report["counts"]["scored"] == 37
+    assert report["counts"]["scored"] == len(record["items"])
     # B-10: machine-readable positional vacuity on the real corpus.
     pos = report["faces"]["identification"]["positional"]
     assert pos["compared_images"] == 0
@@ -3760,6 +3760,14 @@ def test_score_rounding_cannot_hide_one_wrong_name_scaled(tmp_path, monkeypatch)
     assert any("wrong_names=1" in r for r in report["verdict"]["reasons"])
 
 
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "FIR-ORCH-BR-23: live reported golden has 0 empty-must_right images "
+        "(the 3 carriers were media 27, 34, 35 on the 37-entry corpus and landed "
+        "in train). Do not re-pin 3→0; F1-8 is proved on a scratch copy below."
+    ),
+)
 def test_score_empty_rubric_keys_on_scored_set_not_manifest(tmp_path, monkeypatch):
     """F1-8: rubric defined count is over scored items, not the full manifest.
 
@@ -3803,6 +3811,51 @@ def test_score_empty_rubric_keys_on_scored_set_not_manifest(tmp_path, monkeypatc
     assert all("schema error" not in r for r in empty_reasons)
 
 
+def test_score_empty_rubric_keys_on_scored_set_scratch_manifest(tmp_path, monkeypatch):
+    """F1-8 / TEST-15: scored-set vacuity on a scratch copy that still has must_right on unscored rows."""
+    import copy
+
+    from scripts.eval_harness.cli import _manifest_sha
+    from scripts.eval_harness.manifest import load_manifest
+
+    golden, full_record = _real_golden_good_record()
+    raw = json.loads(Path(golden).read_text())
+    assert len(raw["entries"]) >= 5
+    scratch = copy.deepcopy(raw)
+    scored_ids = []
+    for entry in scratch["entries"][:3]:
+        entry["must_right"] = []
+        scored_ids.append(entry["media_id"])
+    assert any(e.get("must_right") for e in scratch["entries"][3:]), (
+        "scratch fixture must keep must_right on unscored rows so F1-8 is not tautological"
+    )
+    man_path = tmp_path / "golden-f18.json"
+    man_path.write_text(json.dumps(scratch))
+    manifest = load_manifest(
+        str(man_path),
+        skip_hash_verification=True,
+        hash_skip_reason="test metadata-only; image bytes never opened",
+        metadata_only=True,
+    )
+    record = copy.deepcopy(full_record)
+    record["provenance"] = {**record["provenance"], "manifest_sha256": _manifest_sha(manifest)}
+    record["items"] = [it for it in record["items"] if it["media_id"] in set(scored_ids)]
+    assert len(record["items"]) == 3
+    record_path = tmp_path / "run-scored-no-mr.json"
+    record_path.write_text(json.dumps(record))
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(SystemExit) as excinfo:
+        main(["score", "--manifest", str(man_path), "--run-record", str(record_path)])
+    assert excinfo.value.code != 0
+    report = json.loads(record_path.with_name("run-scored-no-mr-report.json").read_text())
+    assert report["caption"]["must_right_defined_images"] == 0
+    assert report["counts"]["scored"] == 3
+    assert report["verdict"]["verdict"] == ScoreVerdict.FAIL.value
+    reasons_blob = " | ".join(report["verdict"]["reasons"]).lower()
+    assert "empty-rubric" in reasons_blob
+    assert "must_right" in reasons_blob
+
+
 def test_score_f1d2_control_clean_real_golden_not_ready(tmp_path, monkeypatch):
     """F1d-2: clean real golden scores fully but is not_ready (π=0 categories).
 
@@ -3819,8 +3872,9 @@ def test_score_f1d2_control_clean_real_golden_not_ready(tmp_path, monkeypatch):
     report = json.loads(record_path.with_name("run-f1d2-control-report.json").read_text())
     assert report["verdict"]["verdict"] == ScoreVerdict.NOT_READY.value
     assert report["verdict"]["reasons"]  # non-empty vacuity reasons
-    assert report["caption"]["must_right_defined_images"] == 34
-    assert report["counts"]["scored"] == 37
+    expected_must_right = sum(1 for e in json.loads(Path(golden).read_text())["entries"] if e.get("must_right"))
+    assert report["caption"]["must_right_defined_images"] == expected_must_right
+    assert report["counts"]["scored"] == len(record["items"])
 
 
 # --- FIR-5 S5: face-bakeoff / score-face CLI surface ---

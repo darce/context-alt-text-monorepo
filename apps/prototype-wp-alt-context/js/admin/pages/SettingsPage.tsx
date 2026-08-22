@@ -15,6 +15,7 @@ import {
 import { resetConfigCache } from '../api/config';
 import { queryKeys } from '../api/queryKeys';
 import { resolveWpErrorMessage } from '../api/wpErrorMessage';
+import { toDashboard } from '../navigation/appLinks';
 import { SettingsForm } from './settings/SettingsForm';
 import { SettingsRoutingBanner } from './settings/SettingsRoutingBanner';
 import { TestConnectionBannerView } from './settings/TestConnectionBannerView';
@@ -50,9 +51,10 @@ export const SettingsPage = (): React.JSX.Element => {
       // a corrected backend that still paints success on the frontend has
       // fixed nothing an operator can see.
       if (data.result !== SettingsSaveResult.OK) {
-        const failedFields = Array.isArray(data.failed) && data.failed.length > 0
-          ? data.failed.join(', ')
-          : __('one or more fields', 'alt-context');
+        const failedFields =
+          Array.isArray(data.failed) && data.failed.length > 0
+            ? data.failed.join(', ')
+            : __('one or more fields', 'alt-context');
         dispatch({
           type: 'setSaveMessage',
           message: `${__('Could not save settings.', 'alt-context')} (${failedFields})`,
@@ -168,7 +170,29 @@ export const SettingsPage = (): React.JSX.Element => {
     return (
       <section className="acx-settings" aria-labelledby="acx-settings-title">
         <h2 id="acx-settings-title">{__('Recognition API Settings', 'alt-context')}</h2>
-        <p>{__('Failed to load settings.', 'alt-context')}</p>
+        <div className="acx-error-state" role="alert">
+          <p>
+            {__(
+              'Recognition API settings could not be loaded. Retry loading them or return to Dashboard.',
+              'alt-context',
+            )}
+          </p>
+          <div className="acx-dialog__actions">
+            <button
+              type="button"
+              className="acx-button acx-button--primary"
+              onClick={() => void settingsQuery.refetch()}
+              disabled={settingsQuery.isFetching}
+            >
+              {settingsQuery.isFetching
+                ? __('Retrying\u2026', 'alt-context')
+                : __('Retry loading settings', 'alt-context')}
+            </button>
+            <a className="acx-button acx-button--secondary" href={toDashboard()}>
+              {__('Return to Dashboard', 'alt-context')}
+            </a>
+          </div>
+        </div>
       </section>
     );
   }
@@ -199,9 +223,7 @@ export const SettingsPage = (): React.JSX.Element => {
         testResult={state.testResult}
         onUrlChange={(value) => dispatch({ type: 'setUrl', value })}
         onApiKeyChange={(value) => dispatch({ type: 'setApiKey', value })}
-        onDescriptionBudgetMaxAttemptsChange={(value) =>
-          dispatch({ type: 'setDescriptionBudgetMaxAttempts', value })
-        }
+        onDescriptionBudgetMaxAttemptsChange={(value) => dispatch({ type: 'setDescriptionBudgetMaxAttempts', value })}
         onSave={handleSave}
         onTest={handleTest}
         onFocusServiceUrl={() => {

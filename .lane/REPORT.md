@@ -331,10 +331,10 @@ The target is now one recipe: run each verifier in a subshell, record `status=1`
 `git diff --stat` of the commit contents (equals `git diff --stat HEAD~1` once this commit is HEAD):
 
 ```text
- .lane/REPORT.md                                    | 440 +++++++++++----------
+ .lane/REPORT.md                                    | 441 +++++++++++----------
  Makefile                                           |  14 +-
  .../eval_harness/tests/test_eval_anchor_check.py   | 168 +++++++-
- 3 files changed, 408 insertions(+), 214 deletions(-)
+ 3 files changed, 409 insertions(+), 214 deletions(-)
 ```
 
 ## HONEST STATUS: COMPLETE

@@ -453,9 +453,24 @@ def _load_seed_manifest() -> GoldenManifest:
         return load_manifest(_SEED_MANIFEST, skip_hash_verification=True)
 
 
+def _load_reported_and_selection_entries():
+    seed_dir = os.path.dirname(_SEED_MANIFEST)
+    entries = []
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RubricEmptyWarning)
+        for name in ("golden.json", "bakeoff_golden.json"):
+            manifest = load_manifest(os.path.join(seed_dir, name), skip_hash_verification=True)
+            entries.extend(manifest.entries)
+    return entries
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="FIR-ORCH-BR-31: muted-party.jpg (media_id 38) is not in reported golden or selection bakeoff",
+)
 def test_seed_corpus_has_designated_stranger_entry():  # VLM-2C S1
-    manifest = _load_seed_manifest()
-    deltas = [e for e in manifest.entries if e.policy.recognition_enabled and e.face_count > len(e.present_identities)]
+    entries = _load_reported_and_selection_entries()
+    deltas = [e for e in entries if e.policy.recognition_enabled and e.face_count > len(e.present_identities)]
     assert deltas, "seed corpus must keep >=1 recognition-enabled stranger-delta entry"
     designated = [e for e in deltas if e.media_id == _DESIGNATED_STRANGER_MEDIA_ID]
     assert designated, (
@@ -657,16 +672,43 @@ def test_seed_corpus_uses_fixture_provenance():
             assert entry.provenance.note in _TRUTHFUL_SEED_PROVENANCE_NOTES, entry.path
 
 
+# Live reported golden is the S1 held-out half (8b93c473). Do not overwrite GOLDEN_38.
+GOLDEN_REPORTED_HELD_OUT_MEDIA_IDS = frozenset(
+    {1, 2, 4, 5, 11, 13, 14, 15, 16, 18, 19, 20, 21, 24, 25, 28, 29, 33, 36, 37}
+)
+
+
 def test_golden38_subset_pin():
-    """The historical golden-38 media_ids are frozen (subset-pin, plan S1)."""
+    """Historical golden-38 ids must never be renumbered; live reported == S1 held-out."""
     path = os.path.join(os.path.dirname(__file__), "seed", "golden.json")
     manifest = load_manifest(path, skip_hash_verification=True)
     ids = {e.media_id for e in manifest.entries}
     legacy = {i for i in ids if i <= 38}
-    assert legacy == GOLDEN_38_MEDIA_IDS, (
+    assert legacy <= GOLDEN_38_MEDIA_IDS, (
         "golden-38 subset drifted; historical media_ids must never be renumbered — "
         "Golden-100 additions continue from media_id 39"
     )
+    assert legacy == GOLDEN_REPORTED_HELD_OUT_MEDIA_IDS, (
+        "reported golden membership drifted from S1-sealed-eval-split-20260818 held_out"
+    )
+
+
+def test_historical_golden38_full_set_is_superseded_by_split():
+    """(b) equality to the 37-id freeze is supposed to be red after 8b93c473."""
+    path = os.path.join(os.path.dirname(__file__), "seed", "golden.json")
+    manifest = load_manifest(path, skip_hash_verification=True)
+    legacy = {e.media_id for e in manifest.entries if e.media_id <= 38}
+    assert legacy != GOLDEN_38_MEDIA_IDS
+
+
+def test_golden_reported_subset_pin_goes_red_on_scratch_drop():
+    """TEST-15: dropping mcm-planecrash.jpg (33) from a copy moves the live pin."""
+    path = os.path.join(os.path.dirname(__file__), "seed", "golden.json")
+    manifest = load_manifest(path, skip_hash_verification=True)
+    dropped = {e.media_id for e in manifest.entries if e.media_id != 33}
+    assert 33 in GOLDEN_REPORTED_HELD_OUT_MEDIA_IDS
+    assert dropped != GOLDEN_REPORTED_HELD_OUT_MEDIA_IDS
+    assert 33 not in dropped
 
 
 # --- FIR-5 S1: SliceTag + cohort schema --------------------------------------

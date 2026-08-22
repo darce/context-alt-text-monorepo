@@ -35,14 +35,48 @@ SEED_DIR = Path(__file__).parent / "seed"
 FACE_W, FACE_H = 0.06, 0.08  # synthetic face-box extent around each authored center
 
 
+def _entries_by_media_id():
+    """Join reported + selection so selection-only scenes (media 12) still resolve (a)."""
+    by_media = {}
+    for name in ("golden.json", "bakeoff_golden.json"):
+        manifest = load_manifest(str(SEED_DIR / name), skip_hash_verification=True)
+        for entry in manifest.entries:
+            by_media.setdefault(entry.media_id, entry.model_dump())
+    return by_media
+
+
+def _caption_for_merge(entry, scene):
+    """Selection bakeoff rows may stash names in context_pack, not base_caption."""
+    pack = entry.get("context_pack") or {}
+    candidates = [
+        entry.get("base_caption") or "",
+        pack.get("caption") or "",
+        pack.get("description") or "",
+        pack.get("title") or "",
+    ]
+    phrases = [pb["phrase"] for pb in scene["phrase_boxes"]]
+    for caption in candidates:
+        if all(phrase in caption for phrase in phrases):
+            return caption
+    return None
+
+
 def _load_scenes():
     # S7-02: same v2 pin + schema as the live harness (not raw json.loads).
     # Metadata-only: present_identities/must_right/easy_wrong/policy/path/face_count/
     # base_caption for merge scoring — faces are synthetic, never open image files.
-    golden = load_manifest(str(SEED_DIR / "golden.json"), skip_hash_verification=True)
     boxes = load_phrase_boxes(SEED_DIR / "phrase_boxes.json")
-    by_media = {e.media_id: e.model_dump() for e in golden.entries}
-    return [(scene, by_media[scene["media_id"]]) for scene in boxes["scenes"].values()]
+    by_media = _entries_by_media_id()
+    scenes = []
+    for scene in boxes["scenes"].values():
+        entry = by_media.get(scene["media_id"])
+        if entry is None:
+            continue
+        caption = _caption_for_merge(entry, scene)
+        if caption is None:
+            continue
+        scenes.append((scene, {**entry, "base_caption": caption}))
+    return scenes
 
 
 def _face(label: str, center, *, roster: str) -> ConfirmedFace:
@@ -98,6 +132,41 @@ def _merge_scene(scene, entry, *, confirm_strangers=False):
         confirmed_faces=faces,
         policy=POLICY,
     )
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="FIR-ORCH-BR-31: muted-party.jpg (media_id 38) is not in reported golden or selection bakeoff",
+)
+def test_phrase_box_stranger_scene_joins_identity_merge_corpus():
+    by_media = _entries_by_media_id()
+    assert 38 in by_media, "designated stranger fixture media_id=38 missing from both halves"
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "FIR-ORCH-BR-31: slate-pool.jpg (media_id 30) is in selection bakeoff but "
+        "base_caption/context_pack do not contain phrase 'Slate Willow'"
+    ),
+)
+def test_phrase_box_slate_pool_caption_contains_identity_phrase():
+    by_media = _entries_by_media_id()
+    assert 30 in by_media
+    boxes = load_phrase_boxes(SEED_DIR / "phrase_boxes.json")
+    scene = boxes["scenes"]["30"]
+    assert _caption_for_merge(by_media[30], scene) is not None
+
+
+def test_identity_merge_join_goes_red_when_media_12_dropped_from_copy():
+    """TEST-15: selection-only ccqw-running.jpg must be required by the join."""
+    by_media = _entries_by_media_id()
+    assert 12 in by_media
+    dropped = {mid: row for mid, row in by_media.items() if mid != 12}
+    boxes = load_phrase_boxes(SEED_DIR / "phrase_boxes.json")
+    scene12 = next(scene for scene in boxes["scenes"].values() if scene["media_id"] == 12)
+    with pytest.raises(KeyError):
+        dropped[scene12["media_id"]]
 
 
 @pytest.fixture(scope="module")

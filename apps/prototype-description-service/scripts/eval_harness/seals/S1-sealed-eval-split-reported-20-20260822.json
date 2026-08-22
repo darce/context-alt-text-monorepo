@@ -1,0 +1,94 @@
+{
+  "assignment_rule": "hmac-sha256(seed, image_sha256)[:8]/2**64 < held_out_fraction",
+  "disjointness": {
+    "identities_spanning_both_halves": [],
+    "note": "identity labels are per-image, not per-cluster; a person in both halves means their images were split by content hash \u2014 acceptable for description eval, must be resolved (move to train) before any face-identification eval uses held_out",
+    "partition_provenance": "per-image roster labels on the VLM-2A fixture corpus (golden.json v3); no cluster partition, disjointness computed on present_identities only",
+    "provisional_reason": "empty_half",
+    "status": "provisional"
+  },
+  "draw_timestamp": "2026-08-18T00:00:00Z",
+  "exposure_inventory": {
+    "annotation_mode": "roster_only",
+    "empty_identity_media_ids": [],
+    "entries": 20,
+    "with_face_boxes": 0,
+    "with_must_right": 20,
+    "with_present_identities": 20
+  },
+  "held_out": {
+    "identities": [
+      "Auburn Current",
+      "Gilded Cypress",
+      "Hollow Pennant",
+      "Linen Kestrel",
+      "Muted Current",
+      "Muted Yarrow",
+      "Russet Fathom",
+      "Slate Willow"
+    ],
+    "media_ids": [
+      1,
+      2,
+      4,
+      5,
+      11,
+      13,
+      14,
+      15,
+      16,
+      18,
+      19,
+      20,
+      21,
+      24,
+      25,
+      28,
+      29,
+      33,
+      36,
+      37
+    ],
+    "sha256": [
+      "054a9b14823ef9d7ca0cb8bb4d44c4908b9c5bf7de7080306e65e03523caba5b",
+      "17778829d56efc06b51a0ede6db7c8db36e48db9348d726aabe665fb281d5d28",
+      "19413ef423beccfff22a0f962ec0262c33a73b3899438f4b8e660296f69d6147",
+      "241b1974868d7c4cf76f166066fb8c419dddd70e5793a9ebb7c1a7e7fb1cc6ff",
+      "2ec3f90fff1d32ea8c17d5099958329e3c896671f9c8390eccf457030bc7ffd6",
+      "33c54fbb5d4762dc1497725a748ec9ee4a850a2de49bad34348a9353c34a45dc",
+      "34271e1e49ba12f01a0494b6b560709d45c4941a95c88faef929092a0a33dd27",
+      "3a51b1ce34db0bc33c0aa89b224c284af087cdc2099e1b9e9053335450fc4fda",
+      "4163f17f853f80f7e7b38fd80ea53af1c3c93441d5865dbdb382ac5f5b782adf",
+      "4dd4c1ddb589fce8335891680a18367e4e8e9db449569de889826b692f0ca053",
+      "52e20b0e2a5079d25dc2af25c8c4eeff07408252a0b2adb288db91c955d389a8",
+      "58e508329d4b3d4cf0c5eb8973e68d363d8b1c4eb60faecf327e17adc65143e9",
+      "5e51ec4730c5e5c1ebb8f0122e26e69e19c38068125ab55801957d9499597e61",
+      "6e341aa64418923f9e2ea18eb20e733d094ccb53ac68d565fb4aa1dc4f6722f4",
+      "6e8002b984909c7545f8c7e87453721772b92376ef00532cb94f6327ea890c04",
+      "da81e95506167c33abdc77962ab68473d596f2a118110d9dcb5804aadc338e19",
+      "dbbf96ca265c69610b3974ba2a58920224af83130613ccd13e6a41fd7886e05e",
+      "df3e4b8407dc8d272ccc5e02e56647bec6d65c5fbbe0377f50da1241da601bb9",
+      "e7081767186f95d469cbd8792a0361d6580e14637688beab9914ec55eb158740",
+      "ed83b4f5861fe50cd6b0548a6e18d5633846f59bd68a4995a1745861c5b811da"
+    ]
+  },
+  "held_out_fraction": 0.5,
+  "pre_split_exposure": [
+    "reported golden.json (20 entries) is the held_out half of S1-sealed-eval-split-20260818; source SHA superseded by commit 8b93c473",
+    "selection bakeoff_golden.json is a 10-entry train subset, not the full 17-entry train half",
+    "ASSIGNMENT_RULE/seed/held_out_fraction unchanged; this seal documents the post-split reported corpus under the frozen rule"
+  ],
+  "protection": "forward-from-draw-timestamp: any image, identity or curation decision first observed after draw_timestamp is protected by this split; entries listed in pre_split_exposure were already exposed",
+  "schema_version": 1,
+  "seal_sha256": "c28225983f052946597041d1147bf3125a53acadc29396114c311a4bb0fd7c05",
+  "seed": "vlm6-s1-sealed-eval-split-20260818",
+  "source_manifest": {
+    "path": "scene/tests/seed/golden.json",
+    "sha256": "40270ff3d5b5ce26044cb378844a5a2477013f17cdcfbed745f99fcebd1c7347"
+  },
+  "train": {
+    "identities": [],
+    "media_ids": [],
+    "sha256": []
+  }
+}

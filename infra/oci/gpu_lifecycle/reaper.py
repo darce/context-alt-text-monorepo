@@ -1,4 +1,4 @@
-"""Runnable idle-reaper: decision → fence → OCI STOP actuation.
+"""Runnable GPU lifecycle loop: warm-on-queue and fenced idle reaping.
 
 Production entrypoint (load from the describe job store dump):
 
@@ -8,15 +8,17 @@ Production entrypoint (load from the describe job store dump):
     --load-json /run/acx/describe-load.json
 
 The describe service writes ``/run/acx/describe-load.json`` (or
-``ACX_DESCRIBE_LOAD_PATH``) on enqueue / terminal poll. A stale dump is treated
-as busy so a dead writer cannot cause a STOP of a working GPU (VLMFIX-S2-02).
+``ACX_DESCRIBE_LOAD_PATH``) on enqueue / terminal poll. Session heartbeat
+producers may include ``active_sessions``; a positive count prevents reaping
+while a viewer is reading results. A stale dump is treated as busy so a dead
+writer cannot cause a STOP of a working GPU (VLMFIX-S2-02).
 
 Static ``--queue-depth`` / ``--in-flight`` flags are for unit tests only; the
 fence delay re-samples the load source, so a constant static source is a no-op
 fence and must not be the operator default.
 
-Auth assumption (VLMFIX-S2-03): ``OciCliStopActuator`` uses the OCI CLI with the
-host's default API-key profile (``~/.oci/config``) unless ``--oci-auth`` /
+Auth assumption (VLMFIX-S2-03): ``OciCliInstanceActuator`` uses the OCI CLI with
+the host's default API-key profile (``~/.oci/config``) unless ``--oci-auth`` /
 ``OCI_CLI_AUTH`` selects another mode (e.g. ``instance_principal`` on
 acx-backend). No dynamic-group policy is provisioned here — operators must
 grant ``INSTANCE_POWER_ACTIONS`` for the GPU compartment.
@@ -41,14 +43,17 @@ from typing import Protocol
 
 from infra.oci.gpu_lifecycle.controller import (
     GpuInstance,
+    GpuInstanceState,
+    GpuLifecycleAction,
     GpuLifecycleController,
+    GpuLifecycleDecision,
     JobLoadSnapshot,
 )
 
 logger = logging.getLogger(__name__)
 
 # Fail-safe busy snapshot: never STOP when load data is untrustworthy.
-_BUSY_LOAD = JobLoadSnapshot(queue_depth=1, in_flight=1)
+_BUSY_LOAD = JobLoadSnapshot(queue_depth=1, in_flight=1, active_sessions=1)
 _DEFAULT_LOAD_MAX_AGE_SECONDS = 120.0
 _DEFAULT_OCI_TIMEOUT_SECONDS = 120
 _DEFAULT_FENCE_DELAY_SECONDS = 2.0
@@ -58,7 +63,9 @@ class JobLoadSource(Protocol):
     def snapshot(self) -> JobLoadSnapshot: ...
 
 
-class InstanceStopActuator(Protocol):
+class InstanceLifecycleActuator(Protocol):
+    def start_instance(self, instance_id: str) -> None: ...
+
     def stop_instance(self, instance_id: str) -> None: ...
 
 
@@ -71,17 +78,24 @@ class StaticJobLoadSource:
 
     queue_depth: int
     in_flight: int
+    active_sessions: int = 0
 
     def snapshot(self) -> JobLoadSnapshot:
-        return JobLoadSnapshot(queue_depth=self.queue_depth, in_flight=self.in_flight)
+        return JobLoadSnapshot(
+            queue_depth=self.queue_depth,
+            in_flight=self.in_flight,
+            active_sessions=self.active_sessions,
+        )
 
 
 @dataclass(frozen=True)
 class JsonFileJobLoadSource:
     """Load snapshot from a JSON file written by the describe service.
 
-    Expected shape (mirrors InMemoryDescribeJobStore.load_snapshot):
-      {"queue_depth": <int>, "in_flight": <int>, "written_at": <unix float optional>}
+    Expected shape (mirrors InMemoryDescribeJobStore.load_snapshot, extended
+    by the optional session-heartbeat producer):
+      {"queue_depth": <int>, "in_flight": <int>,
+       "active_sessions": <int optional>, "written_at": <unix float optional>}
 
     Stale files (mtime or written_at older than max_age_seconds) are treated as
     busy so the reaper never STOPs on silent writer failure (VLMFIX-S2-02).
@@ -110,9 +124,7 @@ class JsonFileJobLoadSource:
         try:
             payload = json.loads(self.path.read_text())
         except (OSError, json.JSONDecodeError) as exc:
-            logger.warning(
-                "load json unreadable; treating as busy: %s (%s)", self.path, exc
-            )
+            logger.warning("load json unreadable; treating as busy: %s (%s)", self.path, exc)
             return _BUSY_LOAD
         if not isinstance(payload, dict):
             logger.warning("load json not an object; treating as busy: %s", self.path)
@@ -130,17 +142,24 @@ class JsonFileJobLoadSource:
         try:
             queue_depth = int(payload["queue_depth"])
             in_flight = int(payload["in_flight"])
+            active_sessions = int(payload.get("active_sessions", 0))
+            if queue_depth < 0 or in_flight < 0 or active_sessions < 0:
+                raise ValueError("load counts must be non-negative")
         except (KeyError, TypeError, ValueError):
             logger.warning(
-                "load json missing queue_depth/in_flight; treating as busy: %s",
+                "load json has invalid activity counts; treating as busy: %s",
                 self.path,
             )
             return _BUSY_LOAD
-        return JobLoadSnapshot(queue_depth=queue_depth, in_flight=in_flight)
+        return JobLoadSnapshot(
+            queue_depth=queue_depth,
+            in_flight=in_flight,
+            active_sessions=active_sessions,
+        )
 
 
-class OciCliStopActuator:
-    """STOP via OCI CLI (`oci compute instance action --action STOP`).
+class OciCliInstanceActuator:
+    """START/STOP via the OCI CLI compute-instance action interface.
 
     Auth: default API key from ``~/.oci/config``. Pass ``auth`` (or set
     ``OCI_CLI_AUTH``) for ``instance_principal`` / ``resource_principal`` when
@@ -161,7 +180,8 @@ class OciCliStopActuator:
         self._auth = auth
         self._timeout_seconds = timeout_seconds
 
-    def stop_instance(self, instance_id: str) -> None:
+    def _instance_action(self, instance_id: str, action: GpuLifecycleAction) -> None:
+        target_state = GpuInstanceState.RUNNING if action is GpuLifecycleAction.START else GpuInstanceState.STOPPED
         cmd = [
             self._oci_bin,
             "compute",
@@ -170,19 +190,29 @@ class OciCliStopActuator:
             "--instance-id",
             instance_id,
             "--action",
-            "STOP",
+            action.value,
             "--wait-for-state",
-            "STOPPED",
+            target_state.value,
             "--max-wait-seconds",
             "600",
         ]
         if self._auth:
             cmd.extend(["--auth", self._auth])
         if self._dry_run:
-            logger.info("dry-run STOP %s: %s", instance_id, " ".join(cmd))
+            logger.info("dry-run %s %s: %s", action.value, instance_id, " ".join(cmd))
             return
-        logger.info("actuating STOP for %s", instance_id)
+        logger.info("actuating %s for %s", action.value, instance_id)
         subprocess.run(cmd, check=True, timeout=self._timeout_seconds)
+
+    def start_instance(self, instance_id: str) -> None:
+        self._instance_action(instance_id, GpuLifecycleAction.START)
+
+    def stop_instance(self, instance_id: str) -> None:
+        self._instance_action(instance_id, GpuLifecycleAction.STOP)
+
+
+# Compatibility for operators importing the previous STOP-only class name.
+OciCliStopActuator = OciCliInstanceActuator
 
 
 def fetch_instance_idle_seconds(
@@ -191,7 +221,7 @@ def fetch_instance_idle_seconds(
     oci_bin: str | None = None,
     auth: str | None = None,
     timeout_seconds: int = _DEFAULT_OCI_TIMEOUT_SECONDS,
-) -> tuple[str, int] | None:
+) -> tuple[GpuInstanceState, int] | None:
     """Best-effort lifecycle + time-since-last-state-change from OCI CLI.
 
     Returns ``(lifecycle_state, idle_for_seconds)`` or None on failure.
@@ -224,27 +254,24 @@ def fetch_instance_idle_seconds(
     data = payload.get("data") if isinstance(payload, dict) else None
     if not isinstance(data, dict):
         return None
-    state = str(data.get("lifecycle-state") or data.get("lifecycle_state") or "UNKNOWN")
+    raw_state = str(data.get("lifecycle-state") or data.get("lifecycle_state") or GpuInstanceState.UNKNOWN.value)
+    try:
+        state = GpuInstanceState(raw_state.upper())
+    except ValueError:
+        state = GpuInstanceState.UNKNOWN
     # Prefer time-updated / freeform last-start; fall back to time-created.
-    stamp = (
-        data.get("time-updated")
-        or data.get("time_updated")
-        or data.get("time-created")
-        or data.get("time_created")
-    )
+    stamp = data.get("time-updated") or data.get("time_updated") or data.get("time-created") or data.get("time_created")
     idle_for = 0
     if isinstance(stamp, str) and stamp:
         try:
-            from datetime import datetime, timezone
+            from datetime import UTC, datetime
 
             # OCI returns RFC3339 with Z.
             cleaned = stamp.replace("Z", "+00:00")
             started = datetime.fromisoformat(cleaned)
             if started.tzinfo is None:
-                started = started.replace(tzinfo=timezone.utc)
-            idle_for = max(
-                0, int((datetime.now(timezone.utc) - started).total_seconds())
-            )
+                started = started.replace(tzinfo=UTC)
+            idle_for = max(0, int((datetime.now(UTC) - started).total_seconds()))
         except ValueError:
             idle_for = 0
     return state, idle_for
@@ -252,8 +279,8 @@ def fetch_instance_idle_seconds(
 
 @dataclass(frozen=True)
 class ReapCycleResult:
-    decided: list[tuple[str, str]]
-    actuated: list[tuple[str, str]]
+    decided: list[GpuLifecycleDecision]
+    actuated: list[GpuLifecycleDecision]
     fenced_off: bool
     errors: list[str]
 
@@ -263,54 +290,75 @@ def run_reap_cycle(
     controller: GpuLifecycleController,
     instances: list[GpuInstance],
     load_source: JobLoadSource,
-    actuator: InstanceStopActuator,
+    actuator: InstanceLifecycleActuator,
     fence_delay_seconds: float = _DEFAULT_FENCE_DELAY_SECONDS,
 ) -> ReapCycleResult:
-    """Decision → fence delay → re-sample → STOP only if still idle.
+    """Actuate START immediately; fence and re-sample before any STOP.
 
-    Per-instance STOP failures are collected; the loop continues (rg-007).
+    Per-instance failures are returned to the caller and logged; a failed warm
+    action cannot be mistaken for success.
     """
     load = load_source.snapshot()
-    decided = controller.reap_idle_instances(
+    decided = controller.decide_actions(
         instances,
-        queue_depth=load.queue_depth,
-        in_flight=load.in_flight,
+        load=load,
     )
     if not decided:
         return ReapCycleResult(decided=[], actuated=[], fenced_off=False, errors=[])
+
+    actuated: list[GpuLifecycleDecision] = []
+    errors: list[str] = []
+    starts = [decision for decision in decided if decision[0] is GpuLifecycleAction.START]
+    for action, instance_id in starts:
+        try:
+            actuator.start_instance(instance_id)
+            actuated.append((action, instance_id))
+        except Exception as exc:  # noqa: BLE001 - surface per-instance failure
+            msg = f"{action.value} {instance_id}: {type(exc).__name__}: {exc}"
+            logger.error("%s failed: %s", action.value, msg)
+            errors.append(msg)
+
+    stops = [decision for decision in decided if decision[0] is GpuLifecycleAction.STOP]
+    if not stops:
+        return ReapCycleResult(
+            decided=decided,
+            actuated=actuated,
+            fenced_off=False,
+            errors=errors,
+        )
 
     if fence_delay_seconds > 0:
         time.sleep(fence_delay_seconds)
 
     pre_stop = load_source.snapshot()
-    fenced = controller.fence_stop_actions(decided, pre_stop_load=pre_stop)
+    fenced = controller.fence_stop_actions(stops, pre_stop_load=pre_stop)
     if not fenced:
         logger.info(
-            "fence cancelled STOP (queue_depth=%s in_flight=%s)",
+            "fence cancelled STOP (queue_depth=%s in_flight=%s active_sessions=%s)",
             pre_stop.queue_depth,
             pre_stop.in_flight,
+            pre_stop.active_sessions,
         )
-        return ReapCycleResult(decided=decided, actuated=[], fenced_off=True, errors=[])
+        return ReapCycleResult(
+            decided=decided,
+            actuated=actuated,
+            fenced_off=True,
+            errors=errors,
+        )
 
-    actuated: list[tuple[str, str]] = []
-    errors: list[str] = []
     for action, instance_id in fenced:
-        if action != "STOP":
-            continue
         try:
             actuator.stop_instance(instance_id)
             actuated.append((action, instance_id))
         except Exception as exc:  # noqa: BLE001 - isolate per-instance (VLMFIX-S2-03)
-            msg = f"{instance_id}: {type(exc).__name__}: {exc}"
-            logger.error("STOP failed: %s", msg)
+            msg = f"{action.value} {instance_id}: {type(exc).__name__}: {exc}"
+            logger.error("%s failed: %s", action.value, msg)
             errors.append(msg)
-    return ReapCycleResult(
-        decided=decided, actuated=actuated, fenced_off=False, errors=errors
-    )
+    return ReapCycleResult(decided=decided, actuated=actuated, fenced_off=False, errors=errors)
 
 
 def _build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="ACX GPU idle reaper (STOP actuator)")
+    parser = argparse.ArgumentParser(description="ACX GPU lifecycle controller (START warm path + idle STOP)")
     parser.add_argument(
         "--instance-id",
         action="append",
@@ -359,6 +407,12 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Static in-flight count (tests only; prefer --load-json in production)",
     )
     parser.add_argument(
+        "--active-sessions",
+        type=int,
+        default=0,
+        help="Static recent-session count (tests only; prefer --load-json in production)",
+    )
+    parser.add_argument(
         "--load-max-age-seconds",
         type=float,
         default=_DEFAULT_LOAD_MAX_AGE_SECONDS,
@@ -373,7 +427,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="Log STOP commands without calling the OCI CLI",
+        help="Log START/STOP commands without calling the OCI CLI",
     )
     parser.add_argument(
         "--oci-bin",
@@ -406,8 +460,7 @@ def main(argv: list[str] | None = None) -> int:
     else:
         if args.queue_depth is None or args.in_flight is None:
             print(
-                "error: provide --load-json (production) or both --queue-depth and "
-                "--in-flight (tests only)",
+                "error: provide --load-json (production) or both --queue-depth and --in-flight (tests only)",
                 file=sys.stderr,
             )
             return 2
@@ -419,6 +472,7 @@ def main(argv: list[str] | None = None) -> int:
         load_source = StaticJobLoadSource(
             queue_depth=args.queue_depth,
             in_flight=args.in_flight,
+            active_sessions=args.active_sessions,
         )
 
     instances: list[GpuInstance] = []
@@ -457,7 +511,7 @@ def main(argv: list[str] | None = None) -> int:
         )
 
     controller = GpuLifecycleController(idle_seconds=args.idle_seconds)
-    actuator = OciCliStopActuator(
+    actuator = OciCliInstanceActuator(
         oci_bin=args.oci_bin,
         dry_run=args.dry_run,
         auth=args.oci_auth,

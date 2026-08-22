@@ -133,7 +133,7 @@ include $(ROOT_MAKEFILE_DIR)/mk/logs.mk
 # Root targets
 # =============================================================================
 
-.PHONY: help check-all check-frontend check-mcp check-handoff check-orchestrator lint-all lint-handoff lint-orchestrator fix-lint-handoff fix-lint-orchestrator fix-lint-mcp format format-all format-handoff format-orchestrator mypy-handoff mypy-orchestrator test-all test-handoff test-orchestrator clean-all reset-local fix-php-style mcp mcp-start gemini-cli-setup dev dev-stop ace-metrics ace-metrics-json ace-reflect ace-curation-report ace-trends worktree-audit worktree-prune task-plan-audit check-codex-command-router check-skills check-harness-sync check-mcp-pins lint-hoisted-paths maint-start check-main-clean install-git-hooks localwp-mirror-integrity localwp-e2e-install localwp-e2e-auth localwp-e2e-smoke localwp-evidence localwp-a11y-smoke check-overrides-digest test-overrides-digest test-scripts mutation-guard-license-policy test-hooks test-deploy-contract test-vlm3 provision-customer provision-demo expire-demo
+.PHONY: help check-all check-controlled-vocabulary check-frontend check-mcp check-handoff check-orchestrator lint-all lint-handoff lint-orchestrator fix-lint-handoff fix-lint-orchestrator fix-lint-mcp format format-all format-handoff format-orchestrator mypy-handoff mypy-orchestrator test-all test-handoff test-orchestrator clean-all reset-local fix-php-style mcp mcp-start gemini-cli-setup dev dev-stop ace-metrics ace-metrics-json ace-reflect ace-curation-report ace-trends worktree-audit worktree-prune task-plan-audit check-codex-command-router check-skills check-harness-sync check-mcp-pins lint-hoisted-paths maint-start check-main-clean install-git-hooks localwp-mirror-integrity localwp-e2e-install localwp-e2e-auth localwp-e2e-smoke localwp-evidence localwp-a11y-smoke check-overrides-digest test-overrides-digest test-scripts mutation-guard-license-policy test-hooks test-deploy-contract test-vlm3 provision-customer provision-demo expire-demo
 
 # Default target
 help:
@@ -142,6 +142,7 @@ help:
 	@echo ""
 	@echo "Cross-Repo Operations:"
 	@echo "  make check-all        - Run all checks (lint + types + tests)"
+	@echo "  make check-controlled-vocabulary - Reject new banned terms in translatable UI strings"
 	@echo "  make mutation-guard-license-policy - Opt-in remote-VM licence-policy mutation guard (~5h --mutation all)"
 	@echo "  make format-all       - Fix lint + format across all apps and packages (run before check-all)"
 	@echo "  make check-frontend   - Run frontend checks (lint + types + arch + tests)"
@@ -284,6 +285,7 @@ check-all:
 			$(MAKE) lint-task-plans; \
 			$(MAKE) lint-dashboard-txt; \
 			$(MAKE) lint-scripts; \
+			$(MAKE) check-controlled-vocabulary; \
 			$(MAKE) check-overrides-digest; \
 			$(MAKE) check-skills; \
 			$(MAKE) check-harness-sync; \
@@ -427,6 +429,11 @@ lint-scripts:
 	@python3 scripts/hooks/lint-expected-revision.py
 	@python3 scripts/check_published_head_sha.py
 
+# Baseline mode reports existing jargon without blocking the repository and
+# fails on any new banned term in a WordPress translatable string.
+check-controlled-vocabulary:
+	@python3 scripts/check_controlled_vocabulary.py
+
 # MAINT-FB-B-05: validate every workbay-overrides/*/overrides.lock.json
 # component upstream_digest against the materialized upstream base copy
 # (whole-file sha256 of base_path, e.g. SKILL.base.md). The generated base
@@ -451,6 +458,7 @@ test-scripts:
 		scripts/test_vlm3_gpu_bakeoff_artifacts.py \
 		scripts/test_vlm3_decision_memo.py \
 		scripts/test_check_overrides_lock_digest.py scripts/test_consumer_setup_doc.py \
+		scripts/test_check_controlled_vocabulary.py \
 		scripts/test_remote_gate_guards.py \
 		scripts/train/occlusion/test_license_policy.py \
 		scripts/train/occlusion/test_license_policy_hardening.py \

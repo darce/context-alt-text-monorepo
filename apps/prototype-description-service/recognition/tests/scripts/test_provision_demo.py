@@ -65,6 +65,8 @@ async def test_cli_provision_and_expire_round_trip(db_session: AsyncSession, cap
     captured = capsys.readouterr()
     assert "demo_url=https://demo.altcontext.com/x/" in captured.out
     assert "api_key=" in captured.out
+    assert "wp_username=demo-" in captured.out
+    assert "wp_password=" in captured.out
 
     url_line = next(line for line in captured.out.splitlines() if line.startswith("demo_url="))
     slug = url_line.removeprefix("demo_url=https://demo.altcontext.com/x/")
@@ -74,6 +76,12 @@ async def test_cli_provision_and_expire_round_trip(db_session: AsyncSession, cap
     raw = raw_line.removeprefix("api_key=")
     assert raw
     assert raw not in captured.err  # metadata stderr must not echo raw key
+
+    wp_password = next(line for line in captured.out.splitlines() if line.startswith("wp_password=")).removeprefix(
+        "wp_password="
+    )
+    assert wp_password
+    assert wp_password not in captured.err
 
     instance = await db_session.get(DemoInstance, slug)
     assert instance is not None

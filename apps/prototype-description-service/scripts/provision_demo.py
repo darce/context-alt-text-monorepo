@@ -5,9 +5,8 @@ Usage:
     python -m scripts.provision_demo --env {prod,dev,local} expire --slug <slug>
 
 ``provision`` mints a tenant + API key via the shared minter, records the named
-seed bundle, inserts a ``demo_instances`` row, and prints the demo URL. The
-raw key is printed once on stdout (operator terminal only) and is never stored
-in the registry. ``expire`` marks the slug revoked.
+seed bundle, inserts a ``demo_instances`` row, and prints the bundled API-key
+and per-slug WordPress credentials once. ``expire`` revokes the same bundle.
 """
 
 from __future__ import annotations
@@ -23,7 +22,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from recognition.application.services.demo_provisioning_service import (
     KNOWN_SEED_BUNDLES,
     DemoInstanceNotFoundError,
+    SeedBundleStateError,
     UnknownSeedBundleError,
+    WordPressDemoAccountGateway,
     expire_demo,
     provision_demo,
 )
@@ -58,6 +59,11 @@ def _build_parser() -> argparse.ArgumentParser:
         choices=list(_ENV_CHOICES),
         help="target environment; validated against the DSN host",
     )
+    parser.add_argument(
+        "--wp-managed-by-wrapper",
+        action="store_true",
+        help=argparse.SUPPRESS,
+    )
     sub = parser.add_subparsers(dest="command", required=True)
 
     p_provision = sub.add_parser("provision", help="mint tenant+key, seed selection, insert demo_instances row")
@@ -74,11 +80,17 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-async def _cmd_provision(args, session: AsyncSession) -> int:
+async def _cmd_provision(
+    args,
+    session: AsyncSession,
+    *,
+    wordpress: WordPressDemoAccountGateway | None = None,
+) -> int:
     try:
-        result = await provision_demo(session, label=args.label, seed=args.seed)
+        result = await provision_demo(session, label=args.label, seed=args.seed, wordpress=wordpress)
         await session.commit()
-    except UnknownSeedBundleError as exc:
+    except (SeedBundleStateError, UnknownSeedBundleError) as exc:
+        await session.rollback()
         sys.stderr.write(f"error: {exc}\n")
         sys.stderr.flush()
         return 1
@@ -87,6 +99,8 @@ async def _cmd_provision(args, session: AsyncSession) -> int:
     # stdout: operator-facing URL + one-time raw key (never stored in registry).
     sys.stdout.write(f"demo_url={result.demo_url}\n")
     sys.stdout.write(f"api_key={result.raw_api_key}\n")
+    sys.stdout.write(f"wp_username={result.wordpress_username}\n")
+    sys.stdout.write(f"wp_password={result.wordpress_password}\n")
     sys.stdout.flush()
     # stderr: non-secret metadata for operators/scripts.
     sys.stderr.write(
@@ -98,11 +112,17 @@ async def _cmd_provision(args, session: AsyncSession) -> int:
     return 0
 
 
-async def _cmd_expire(args, session: AsyncSession) -> int:
+async def _cmd_expire(
+    args,
+    session: AsyncSession,
+    *,
+    wordpress: WordPressDemoAccountGateway | None = None,
+) -> int:
     try:
-        instance = await expire_demo(session, slug=args.slug)
+        instance = await expire_demo(session, slug=args.slug, wordpress=wordpress)
         await session.commit()
     except DemoInstanceNotFoundError as exc:
+        await session.rollback()
         sys.stderr.write(f"error: {exc}\n")
         sys.stderr.flush()
         return 1
@@ -112,7 +132,12 @@ async def _cmd_expire(args, session: AsyncSession) -> int:
     return 0
 
 
-async def run(argv: Sequence[str] | None = None, *, session: AsyncSession | None = None) -> int:
+async def run(
+    argv: Sequence[str] | None = None,
+    *,
+    session: AsyncSession | None = None,
+    wordpress: WordPressDemoAccountGateway | None = None,
+) -> int:
     parser = _build_parser()
     args = parser.parse_args(list(argv) if argv is not None else None)
 
@@ -127,6 +152,13 @@ async def run(argv: Sequence[str] | None = None, *, session: AsyncSession | None
 
     opened_session = False
     if session is None:
+        if wordpress is None and not args.wp_managed_by_wrapper:
+            sys.stderr.write(
+                "error: direct execution cannot complete the WordPress lifecycle; "
+                "use make demo-provision/demo-expire\n"
+            )
+            sys.stderr.flush()
+            return 2
         from db.session import async_session_factory
 
         session = async_session_factory()
@@ -134,9 +166,9 @@ async def run(argv: Sequence[str] | None = None, *, session: AsyncSession | None
 
     try:
         if args.command == "provision":
-            return await _cmd_provision(args, session)
+            return await _cmd_provision(args, session, wordpress=wordpress)
         if args.command == "expire":
-            return await _cmd_expire(args, session)
+            return await _cmd_expire(args, session, wordpress=wordpress)
         parser.error(f"unknown command: {args.command}")
     finally:
         if opened_session:

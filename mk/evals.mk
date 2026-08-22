@@ -78,7 +78,7 @@ eval-score:
 # Usage: make eval-face-calibrate REPORT=<face_bakeoff report.json> MANIFEST=<golden.json> [OUT=<path>]
 eval-face-calibrate:
 	@if [ -z "$(REPORT)" ] || [ -z "$(MANIFEST)" ]; then \
-		echo "error: REPORT and MANIFEST are both required" >&2; \
+		echo "error: REPORT is required (e.g. REPORT=report.json) and MANIFEST is required (e.g. MANIFEST=golden.json)" >&2; \
 		exit 2; \
 	fi
 	@cd $(EVAL_SERVICE) && uv run python -m scripts.eval_harness.calibrate_face_thresholds \
@@ -110,7 +110,7 @@ eval-report:
 # Usage: make eval-corpus-inventory IMAGES=<dir> OUT=<checkpoint.jsonl>
 eval-corpus-inventory:
 	@if [ -z "$(IMAGES)" ] || [ -z "$(OUT)" ]; then \
-		echo "error: IMAGES and OUT are both required" >&2; \
+		echo "error: IMAGES is required (e.g. IMAGES=corpus/) and OUT is required (e.g. OUT=inventory.json)" >&2; \
 		exit 2; \
 	fi
 	@cd $(EVAL_SERVICE) && uv run python -m scripts.eval_harness.corpus_inventory \
@@ -121,7 +121,7 @@ eval-corpus-inventory:
 # Usage: make eval-strata INVENTORY=celebs01=inv.jsonl OUT=shortlists.json
 eval-strata:
 	@if [ -z "$(INVENTORY)" ] || [ -z "$(OUT)" ]; then \
-		echo "error: INVENTORY (SOURCE=PATH) and OUT are both required" >&2; \
+		echo "error: INVENTORY is required (e.g. INVENTORY=celebs01=inv.jsonl) and OUT is required (e.g. OUT=shortlists.json)" >&2; \
 		exit 2; \
 	fi
 	@cd $(EVAL_SERVICE) && uv run python -m scripts.eval_harness.strata \

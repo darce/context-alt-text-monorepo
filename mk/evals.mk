@@ -23,9 +23,17 @@
 # below is asserted against the real argparse surface — rg-006).
 
 .PHONY: eval-list eval-score eval-face-calibrate eval-fusion \
-        eval-corpus-inventory eval-strata eval-report
+        eval-corpus-inventory eval-strata eval-report test-eval-surface
 
 EVAL_SERVICE := $(ROOT_MAKEFILE_DIR)/apps/prototype-description-service
+EVAL_TEST_PYTHON ?= python3
+
+# Keep the eval make-surface contract on the broad scripts gate while running
+# it from the service directory so local eval_harness imports win over .pth files.
+test-scripts: test-eval-surface
+test-eval-surface:
+	@cd $(EVAL_SERVICE) && PYTHONPATH=$$PWD $(EVAL_TEST_PYTHON) -m pytest \
+		../../scripts/test_make_eval_targets.py -q
 
 ## eval-list: enumerate the eval surface (start here when scoping a feature)
 eval-list:
@@ -40,7 +48,7 @@ eval-list:
 	@echo "    make bakeoff-face-score  FACE_RUN=<path>                 score a recorded face run"
 	@echo "    make eval-face-calibrate REPORT=<path> MANIFEST=<path>   threshold calibration (canon CAL-07)"
 	@echo "    make eval-fusion                                         staged vs ad-hoc fusion eval"
-	@echo "    make eval-report         MANIFEST=<path> OUT=<path>      browser-openable HTML bake-off report"
+	@echo "    make eval-report         RUN=<label=path> MANIFEST=<path> OUT=<path>  browser-openable HTML bake-off report"
 	@echo ""
 	@echo "  CORPUS SELECTION (offline, for building a new eval set)"
 	@echo "    make eval-corpus-inventory IMAGES=<dir> OUT=<jsonl>      deterministic no-ML stratification features"
@@ -84,14 +92,18 @@ eval-fusion:
 	@cd $(EVAL_SERVICE) && uv run python -m scripts.eval_harness.fusion_runner $(EVAL_ARGS)
 
 ## eval-report: self-contained HTML bake-off report (one card per image)
-# Usage: make eval-report MANIFEST=<path> OUT=<path>.html [EVAL_ARGS="--limit 20 --embed-images"]
+# Usage: make eval-report RUN=<label=path> MANIFEST=<path> OUT=<path>.html [EVAL_ARGS="--limit 20 --embed-images"]
 eval-report:
+	@if [ -z "$(RUN)" ]; then \
+		echo "error: RUN is required (e.g. RUN=baseline=scripts/eval_harness/out/run-20260820.json)" >&2; \
+		exit 2; \
+	fi
 	@if [ -z "$(MANIFEST)" ] || [ -z "$(OUT)" ]; then \
-		echo "error: MANIFEST and OUT are both required" >&2; \
+		echo "error: MANIFEST and OUT are required" >&2; \
 		exit 2; \
 	fi
 	@cd $(EVAL_SERVICE) && uv run python -m scripts.eval_harness.build_bakeoff_report \
-		--manifest "$(MANIFEST)" --out "$(OUT)" $(EVAL_ARGS)
+		--run "$(RUN)" --manifest "$(MANIFEST)" --out "$(OUT)" $(EVAL_ARGS)
 
 ## eval-corpus-inventory: walk an image dir into deterministic stratification features
 # No ML, no network. Resumable: pass EVAL_ARGS="--resume".

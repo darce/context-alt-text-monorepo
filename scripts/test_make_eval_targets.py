@@ -39,7 +39,7 @@ TARGET_ARGS: dict[str, list[str]] = {
     "eval-score": ["RUN_RECORD=run.json"],
     "eval-face-calibrate": ["REPORT=report.json", "MANIFEST=golden.json", "OUT=cal.json"],
     "eval-fusion": [],
-    "eval-report": ["MANIFEST=golden.json", "OUT=report.html"],
+    "eval-report": ["RUN=baseline=run.json", "MANIFEST=golden.json", "OUT=report.html"],
     "eval-corpus-inventory": ["IMAGES=/tmp/images", "OUT=inv.jsonl"],
     "eval-strata": ["INVENTORY=celebs01=inv.jsonl", "OUT=shortlists.json"],
 }
@@ -67,7 +67,8 @@ def _make_n(target: str, args: list[str]) -> str:
 
 def _recipe_line(target: str) -> str:
     """The single `uv run python -m ...` line the target would execute."""
-    for line in _make_n(target, TARGET_ARGS[target]).splitlines():
+    logical_output = _make_n(target, TARGET_ARGS[target]).replace("\\\n", " ")
+    for line in logical_output.splitlines():
         if "python -m scripts.eval_harness." in line:
             return line
     raise AssertionError(f"{target} emits no eval_harness invocation")
@@ -150,3 +151,37 @@ def test_eval_list_advertises_the_preexisting_root_targets() -> None:
     assert result.returncode == 0, result.stderr
     for target in ("eval-captions", "bakeoff-face", "bakeoff-face-score"):
         assert target in result.stdout, f"eval-list omits pre-existing target {target}"
+
+
+def test_test_scripts_collects_eval_target_contract() -> None:
+    result = subprocess.run(
+        ["make", "-n", "-C", str(REPO_ROOT), "test-scripts"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "scripts/test_make_eval_targets.py" in result.stdout, (
+        "test-scripts does not collect scripts/test_make_eval_targets.py"
+    )
+
+
+def test_eval_report_requires_and_forwards_run() -> None:
+    missing_run = subprocess.run(
+        [
+            "make",
+            "-C",
+            str(REPO_ROOT),
+            "eval-report",
+            "MANIFEST=golden.json",
+            "OUT=report.html",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert missing_run.returncode != 0, "eval-report ran without required RUN"
+    assert "RUN is required" in missing_run.stdout + missing_run.stderr
+
+    recipe = _recipe_line("eval-report")
+    assert '--run "baseline=run.json"' in recipe, "eval-report does not forward RUN as --run"

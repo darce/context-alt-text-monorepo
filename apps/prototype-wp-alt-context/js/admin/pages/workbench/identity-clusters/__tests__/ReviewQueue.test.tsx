@@ -95,6 +95,15 @@ const typePersonName = async (
   await user.type(input, `${name}{Enter}`);
 };
 
+const commitIndependentName = async (
+  user: ReturnType<typeof userEvent.setup>,
+  name = 'Independent judgment',
+): Promise<void> => {
+  const input = await screen.findByRole('textbox', { name: 'Independent name judgment' });
+  await user.type(input, name);
+  await user.click(screen.getByRole('button', { name: 'Commit judgment' }));
+};
+
 /** Whole-content of a hold live region — jest-dom string matchers are substring. */
 const wholeHoldText = (el: HTMLElement): string =>
   (el.textContent ?? '').replace(/\s+/g, ' ').trim();
@@ -2131,10 +2140,49 @@ describe('ReviewQueue', () => {
 
     renderQueue();
 
-    await screen.findByText(/Suggested name:/);
+    await screen.findByRole('textbox', { name: 'Independent name judgment' });
     expect(screen.getByText('1 of 2 on this page')).toBeInTheDocument();
     const card = screen.getByTestId('acx-review-card');
     expect(card).toHaveAccessibleName(/Name suggestion 1 of 2/);
+  });
+
+  it('HAI-15: withholds the suggested name and prefill until an independent judgment is committed', async () => {
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [],
+      limit: 10,
+      offset: 0,
+    });
+    vi.mocked(fetchPendingNameSuggestions).mockResolvedValue({
+      suggestions: [
+        {
+          id: 'name-blind-review',
+          cluster_id: 'cluster-blind-review',
+          suggested_name: 'Morgan Model',
+          confidence_score: 0.91,
+          source: 'test',
+          created_at: '2026-01-01T00:00:00Z',
+          expires_at: null,
+        },
+      ],
+      limit: 25,
+      offset: 0,
+    });
+
+    const user = userEvent.setup();
+    renderQueue();
+
+    const judgmentInput = await screen.findByRole('textbox', { name: 'Independent name judgment' });
+    expect(screen.queryByText('Morgan Model')).not.toBeInTheDocument();
+    expect(judgmentInput).not.toHaveValue('Morgan Model');
+
+    await user.type(judgmentInput, 'Morgan Human');
+    expect(screen.queryByText('Morgan Model')).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Commit judgment' }));
+
+    expect(await screen.findByText('Morgan Model')).toBeInTheDocument();
+    expect(screen.getByRole('combobox', { name: PERSON_COMMIT_COMBOBOX_ARIA })).toHaveValue(
+      'Morgan Model',
+    );
   });
 
   // UXW2-2-R1-15/28/29: label from the real XOR composition (queue unmounts
@@ -2454,10 +2502,11 @@ describe('ReviewQueue', () => {
     });
 
     const onLabel = vi.fn();
+    const user = userEvent.setup();
     renderQueue({ onLabel });
 
-    await screen.findByText(/Suggested name:/);
-    await userEvent.setup().click(screen.getByRole('button', { name: 'Merge or split this group' }));
+    await commitIndependentName(user);
+    await user.click(screen.getByRole('button', { name: 'Merge or split this group' }));
     expect(onLabel).toHaveBeenCalledWith('cluster-name-1');
   });
 
@@ -2483,9 +2532,12 @@ describe('ReviewQueue', () => {
       offset: 0,
     });
 
+    const user = userEvent.setup();
     renderQueue();
 
-    await screen.findByText(/Suggested name:/);
+    expect(await screen.findByTestId('acx-independent-judgment')).toBeInTheDocument();
+    expect(screen.queryByText(MODEL_OUTPUT_DISCLOSURE)).not.toBeInTheDocument();
+    await commitIndependentName(user);
     const commit = screen.getByTestId('acx-person-commit');
     expect(commit).toHaveAttribute('data-person-commit-primary', 'true');
     expect(screen.getByText(MODEL_OUTPUT_DISCLOSURE)).toBeInTheDocument();
@@ -2727,7 +2779,7 @@ describe('ReviewQueue', () => {
     expect(order.indexOf('accept:sugg-1')).toBeLessThan(order.indexOf('person-commit'));
   });
 
-  it('BR-27: focus on NAME card lands on person-commit combobox/confirm (not demoted Accept)', async () => {
+  it('BR-27: focus on NAME card lands on the independent judgment input (not a model action)', async () => {
     vi.mocked(fetchPendingSuggestions).mockResolvedValue({
       suggestions: [],
       limit: 10,
@@ -2761,11 +2813,8 @@ describe('ReviewQueue', () => {
 
     const focused = document.activeElement as HTMLElement | null;
     expect(focused).not.toBe(document.body);
-    expect(focused?.closest('[data-testid="acx-person-commit"]')).not.toBeNull();
-    // Demoted Accept suggestion must not steal primacy.
-    expect(focused?.classList.contains('acx-suggestion-card__accept')).toBe(false);
-    // R6-02: prefilled Save must not be the first stop — operator lands in the name field.
-    expect(focused).toBe(screen.getByRole('combobox', { name: PERSON_COMMIT_COMBOBOX_ARIA }));
+    expect(focused).toBe(screen.getByRole('textbox', { name: 'Independent name judgment' }));
+    expect(screen.queryByRole('button', { name: 'Accept suggestion' })).not.toBeInTheDocument();
   });
 
   it('BR-27: focus on CLUSTER with nothing selected lands on enabled person-commit control', async () => {
@@ -3741,6 +3790,7 @@ describe('ReviewQueue', () => {
       message: 'ok',
     }));
 
+    const user = userEvent.setup();
     const { container } = renderQueue();
     await waitFor(() => {
       expect(container.querySelector('.acx-review-queue__count')?.textContent).toBe(
@@ -3748,14 +3798,16 @@ describe('ReviewQueue', () => {
       );
     });
 
-    await clickAndCommitHold(await screen.findByRole('button', { name: 'Accept suggestion' }));
+    await commitIndependentName(user, 'First independent judgment');
+    await clickAndCommitHold(screen.getByRole('button', { name: 'Accept suggestion' }));
     await waitFor(() => {
       expect(container.querySelector('.acx-review-queue__count')?.textContent).toBe(
         '1 left to review on this page',
       );
     });
 
-    await clickAndCommitHold(await screen.findByRole('button', { name: 'Accept suggestion' }));
+    await commitIndependentName(user, 'Second independent judgment');
+    await clickAndCommitHold(screen.getByRole('button', { name: 'Accept suggestion' }));
     await waitFor(() => {
       expect(container.querySelector('.acx-review-queue__count')).toBeNull();
     });

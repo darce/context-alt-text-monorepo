@@ -1,4 +1,4 @@
-.PHONY: help gate-preflight test test-integration lint format check clean install setup typecheck serve stop mcp postgres-start dev-ready dev-setup dev-mint-key logs-tail logs-rotate logs-clean logs-archive worker-daemon db-reset reset admin-dev admin-test admin-open admin-token admin-status admin-down admin-oci-serve admin-oci admin-oci-mint provision-customer FORCE
+.PHONY: help gate-preflight test test-integration lint format check clean install setup typecheck serve stop mcp postgres-start dev-ready dev-setup dev-mint-key logs-tail logs-rotate logs-clean logs-archive worker-daemon db-reset reset admin-dev admin-test admin-open admin-token admin-status admin-down admin-oci-serve admin-oci admin-oci-mint demo-provision demo-expire demo-sweep provision-customer FORCE
 
 PYTEST_WORKERS ?= 4
 
@@ -35,6 +35,9 @@ help:
 	@echo "  make admin-down   - Stop the local service"
 	@echo "  make provision-customer EMAIL=<e> ENV=prod [PLAN=pro] [LABEL=\"Name\"] - Concierge mint real tenant+key (AP-7; ENV=prod required)"
 	@echo "  make admin-oci-mint TENANT=<uuid> [SITE_URL=<url>] - Mint a prod tenant key on the VM (no secret leaves the VM); prints the key once"
+	@echo "  make demo-provision LABEL=\"Name\" [SEED=default] - Mint a prod demo tenant + API key + per-slug WP login"
+	@echo "  make demo-expire SLUG=<slug> CONFIRM=<slug> - Revoke the bundled demo credentials"
+	@echo "  make demo-sweep - Disable expired WP users and revoke their demo/API-key rows"
 	@echo "  make lane-*     - Worktree lane commands (forwarded to root Makefile; run 'make help' from repo root for full list)"
 	@echo "  make worker-daemon* - Worker daemon controls (run/status/stop/resume/tail) forwarded to root Makefile"
 	@echo ""
@@ -210,9 +213,12 @@ admin-down:
 # scripts/deploy/*).
 OCI_HOST ?= acx-backend.tail1a44b8.ts.net
 OCI_USER ?= ubuntu
+# Single audited SSH hop for every self-service prod CLI target. Values that
+# cross it are allowlist-validated in the calling recipe before this is used.
+OCI_SSH = ssh $(OCI_USER)@$(OCI_HOST)
 
 admin-oci-serve:
-	@ssh $(OCI_USER)@$(OCI_HOST) '\
+	@$(OCI_SSH) '\
 		code=$$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 http://127.0.0.1:8000/admin/ 2>/dev/null); \
 		[ -n "$$code" ] || code=000; \
 		case "$$code" in \
@@ -256,8 +262,53 @@ admin-oci-mint:
 	printf '%s' "$$tenant" | grep -qiE '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$$' || { echo "✗ TENANT must be a UUID (got '$$tenant')" >&2; exit 2; }; \
 	printf '%s' "$$site" | grep -qE '^https?://[A-Za-z0-9:/._-]+$$' || { echo "✗ SITE_URL has invalid characters (allowed: A-Za-z0-9 : / . _ -)" >&2; exit 2; }; \
 	echo "→ minting a prod key for tenant $$tenant (site $$site) via $(OCI_HOST) ..."; \
-	ssh $(OCI_USER)@$(OCI_HOST) "set -e; cd /opt/acx-backend/prod; mk=\"docker compose -f docker-compose.env.yml exec -T api python -m scripts.manage_api_keys --env prod\"; \$$mk tenant create --tenant \"$$tenant\" --site-url \"$$site\"; \$$mk create --tenant \"$$tenant\""; \
+	$(OCI_SSH) "set -e; cd /opt/acx-backend/prod; mk=\"docker compose -f docker-compose.env.yml exec -T api python -m scripts.manage_api_keys --env prod\"; \$$mk tenant create --tenant \"$$tenant\" --site-url \"$$site\"; \$$mk create --tenant \"$$tenant\""; \
 	echo "→ copy the 'api_key=' value above into wp-admin → Alt Context Settings (shown once; unrecoverable)."
+
+# Demo credentials are one lifecycle unit: tenant + API key in prod Postgres,
+# and a per-slug WordPress login in the demo MariaDB. The remote script keeps
+# secrets on the VM until both sides succeed, then prints each credential once.
+# Inputs use deliberately narrow charsets before entering the SSH command.
+export LABEL
+export SEED
+export SLUG
+export CONFIRM
+
+demo-provision:
+	@set -e; \
+	label="$${LABEL:-}"; seed="$${SEED:-default}"; \
+	test -n "$$label" || { echo "usage: make demo-provision LABEL=\"Prospect name\" [SEED=default]" >&2; exit 2; }; \
+	printf '%s' "$$label" | grep -qE '^[A-Za-z0-9][A-Za-z0-9 ._@-]{0,79}$$' || { echo "✗ LABEL has invalid characters or length" >&2; exit 2; }; \
+	printf '%s' "$$seed" | grep -qE '^(default|acme)$$' || { echo "✗ SEED must be default or acme" >&2; exit 2; }; \
+	$(OCI_SSH) "set -e; label='$$label'; seed='$$seed'; \
+		cd /opt/acx-backend/demo; wp='docker compose -f docker-compose.demo.yml run --rm --no-deps wpcli wp'; \
+		prefix=\$$(\$$wp db prefix); printf '%s' \"\$$prefix\" | grep -qE '^[A-Za-z0-9_]+$$' || { echo 'invalid WP table prefix' >&2; exit 2; }; \
+		media=\$$(\$$wp post list --post_type=attachment --format=count); \
+		faces=\$$(\$$wp db query \"SELECT COUNT(*) FROM \$${prefix}acx_identity_members\" --skip-column-names); \
+		people=\$$(\$$wp db query \"SELECT COUNT(*) FROM \$${prefix}acx_persons\" --skip-column-names); \
+		printf '%s' \"\$$media\" | grep -qE '^[1-9][0-9]*$$' || { echo 'seed bundle has no media; refusing provision' >&2; exit 1; }; \
+		[ \"\$$faces\" = 0 ] && [ \"\$$people\" = 0 ] || { echo \"seed bundle is not pre-scan: faces_count=\$$faces people_count=\$$people\" >&2; exit 1; }; \
+		cd /opt/acx-backend/prod; cli='docker compose -f docker-compose.env.yml exec -T api python -m scripts.provision_demo --env prod --wp-managed-by-wrapper'; \
+		out=\$$(\$$cli provision --label \"\$$label\" --seed \"\$$seed\"); \
+		slug=\$$(printf '%s\n' \"\$$out\" | sed -n 's#^demo_url=https://demo.altcontext.com/x/##p'); \
+		user=\$$(printf '%s\n' \"\$$out\" | sed -n 's/^wp_username=//p'); pass=\$$(printf '%s\n' \"\$$out\" | sed -n 's/^wp_password=//p'); \
+		printf '%s' \"\$$slug\" | grep -qE '^[1-9A-HJ-NP-Za-km-z]{7}$$' && [ \"\$$user\" = \"demo-\$$slug\" ] && printf '%s' \"\$$pass\" | grep -qE '^[1-9A-HJ-NP-Za-km-z]{24}$$' || { \$$cli expire --slug \"\$$slug\" >/dev/null 2>&1 || true; echo 'invalid generated credential' >&2; exit 1; }; \
+		cd /opt/acx-backend/demo; if ! \$$wp user create \"\$$user\" \"\$${user}@invalid.altcontext.com\" --role=administrator --user_pass=\"\$$pass\" --porcelain >/dev/null; then cd /opt/acx-backend/prod; \$$cli expire --slug \"\$$slug\" >/dev/null 2>&1 || true; exit 1; fi; \
+		printf '%s\n' \"\$$out\""; \
+	echo "→ credentials shown once; install the API key for the matching tenant and hand only the demo-* WP login to the viewer."
+
+demo-expire:
+	@set -e; \
+	slug="$${SLUG:-}"; confirm="$${CONFIRM:-}"; \
+	printf '%s' "$$slug" | grep -qE '^[1-9A-HJ-NP-Za-km-z]{7}$$' || { echo "usage: make demo-expire SLUG=<7-char-base58> CONFIRM=<same-slug>" >&2; exit 2; }; \
+	[ "$$confirm" = "$$slug" ] || { echo "✗ irreversible expiry requires CONFIRM=$$slug" >&2; exit 2; }; \
+	$(OCI_SSH) "set -e; slug='$$slug'; user='demo-$$slug'; cd /opt/acx-backend/demo; wp='docker compose -f docker-compose.demo.yml run --rm --no-deps wpcli wp'; id=\$$(\$$wp user get \"\$$user\" --field=ID 2>/dev/null || true); if [ -n \"\$$id\" ]; then printf '%s' \"\$$id\" | grep -qE '^[0-9]+$$' || exit 2; \$$wp user delete \"\$$id\" --yes >/dev/null; fi; cd /opt/acx-backend/prod; docker compose -f docker-compose.env.yml exec -T api python -m scripts.provision_demo --env prod --wp-managed-by-wrapper expire --slug \"\$$slug\""; \
+	echo "→ expired $$slug (WP login removed; demo registry and API key revoked)."
+
+demo-sweep:
+	@set -e; \
+	$(OCI_SSH) "set -e; cd /opt/acx-backend/prod; sweep='docker compose -f docker-compose.env.yml exec -T api python -m scripts.sweep_expired_demos --env prod --wp-managed-by-wrapper'; slugs=\$$(\$$sweep --list-only); cd /opt/acx-backend/demo; wp='docker compose -f docker-compose.demo.yml run --rm --no-deps wpcli wp'; for slug in \$$slugs; do printf '%s' \"\$$slug\" | grep -qE '^[1-9A-HJ-NP-Za-km-z]{7}$$' || exit 2; user=\"demo-\$$slug\"; id=\$$(\$$wp user get \"\$$user\" --field=ID 2>/dev/null || true); if [ -n \"\$$id\" ]; then printf '%s' \"\$$id\" | grep -qE '^[0-9]+$$' || exit 2; \$$wp user delete \"\$$id\" --yes >/dev/null; fi; done; cd /opt/acx-backend/prod; \$$sweep"; \
+	echo "→ demo expiry sweep complete."
 
 # Reset local database (db-reset is an alias)
 reset db-reset:

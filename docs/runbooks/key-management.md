@@ -1,4 +1,4 @@
-# Runbook: API key & tenant management — the two tracks
+# Runbook: API key & tenant management — the three tracks
 
 > **Canonical entry point for all tenant/key work.** Every other doc that
 > mentions minting keys (`admin-tenant-keys.md`, the LocalWP development
@@ -28,6 +28,10 @@ key minted in, and which service is the client actually calling?*
 | How the plugin selects it | Default — `recognition_source` resolves to `service`; no config needed | **Dev hatch only**: `ACX_RECOGNITION_SOURCE=local` constant/filter (RECOG-1 removed the product toggle) |
 | Key install in the plugin | wp-admin **Settings page** (user way, stored as options) or `wp-config.local.php` constants (gate/reproducible way) | Local fixture key via the same two mechanisms |
 | Product surface? | Yes | **Never.** Dev convenience only; retirement deferred, kept as a fast iteration loop ([tech-debt entry](../tasks/tech-debt/local-vs-oci-description-service-drift-and-retirement.md)) |
+
+Per-prospect demo instances are Track 3 below. They are deliberately not
+scratch Track 1 keys: a demo is a TTL-bound credential bundle with a human
+WordPress login and one lifecycle command.
 
 RECOG-1 context: the hosted service is the canonical recognition target. The
 local backend was retired from the *product surface* (no Settings toggle) but
@@ -148,6 +152,75 @@ never be pasted into a plugin install that targets the hosted service.
 
 ---
 
+## Track 3 — Demo instances
+
+A demo instance bundles four values under one slug and TTL:
+
+- a fresh tenant UUID, which remains the service's isolation boundary;
+- a one-time API key scoped to that tenant and its compute quota;
+- a distinct `demo-<slug>` WordPress login with a generated password; and
+- a named seed bundle (`default` or `acme`) whose required initial state is
+  seeded media present, zero scanned faces, and `people_count == 0`.
+
+The default TTL is 30 days and the default compute quota is 200 units. A
+WordPress capability controls what the person can click; it never replaces the
+tenant/API-key boundary. The current plugin gates all six admin pages on
+`manage_options`, so the generated account must temporarily use the WordPress
+administrator role. Do not substitute the CI end-to-end account
+(`ACX_E2E_WP_ADMIN_*`) and do not hand that CI identity to a viewer. Moving the
+viewer to an `acx_demo_reviewer` role requires changing all menu and route gates
+to the intended `acx_operate` capability in the plugin first.
+
+### Provision
+
+Run from the description-service directory:
+
+```sh
+make demo-provision LABEL="Acme Gallery" SEED=default
+```
+
+`SEED` defaults to `default` when omitted.
+
+The target validates the label and bundle name before the SSH hop, connects to
+the prod VM, verifies the WordPress bundle is genuinely pre-scan, runs the
+canonical provisioning CLI inside the prod `api` container, and creates the
+per-slug account through `wp-cli` inside the demo container. Prod database and
+WordPress secrets stay on the VM. The demo URL, API key, WordPress username,
+and WordPress password are printed once after both sides succeed.
+
+Provisioning fails before handing out credentials if seeded media is absent,
+if scanned faces remain, or if `people_count` is non-zero. This is the same
+`SeedBundleContract` enforced by the service and intended for reset tooling;
+the state is a release contract, not a convention.
+
+### Expire, rotate, and sweep
+
+```sh
+make demo-expire SLUG=<slug> CONFIRM=<same-slug>
+make demo-sweep
+```
+
+`demo-expire` is the single revoke: it removes the `demo-<slug>` WordPress
+principal, marks the demo registry row revoked, and sets the underlying API
+key's `revoked_at`. The exact `CONFIRM` value is the deliberate-action gate;
+the SSH connection authenticates the critical mutation at the prod boundary.
+Removing only the demo registry row is not a revoke because service auth checks
+`api_keys.revoked_at`; revoking only the API key is also incomplete because
+WordPress authenticates the human independently.
+
+`demo-sweep` applies that same complete lifecycle to every expired instance.
+It disables all eligible WordPress users before the canonical sweep commits
+the registry and API-key revocations. A failure stops loudly for retry instead
+of declaring a still-usable login expired.
+
+Rotation is intentionally composition, not a second mechanism: expire the old
+slug with `demo-expire`, then mint a new bundle with `demo-provision`. This
+produces a new tenant, API key, slug-derived WordPress identity, and password;
+changing `WP_ADMIN_PASSWORD` after WordPress installation does nothing and is
+not a rotation path.
+
+---
+
 ## Failure signature quick reference
 
 | Symptom | Likely cause |
@@ -157,3 +230,5 @@ never be pasted into a plugin install that targets the hosted service.
 | Pasting a key in Settings has no effect | `ACX_RECOGNITION_API_KEY` (or `_URL`) constant is defined; constants override options. Clear the defines or manage via constants consistently. |
 | Local console mints fine but remote calls still 403 | Working as designed — local mints are Track 2 fixtures; the remote service has never heard of them. Mint on Track 1. |
 | `tenant create` 409 on prod for `…0001` | That UUID belongs to the demo site on prod. Generate a fresh UUID for your instance. |
+| Demo provisioning says the bundle is not pre-scan | The shared WordPress demo still has face/member/person projection state. Run the version-controlled reset path, verify faces and `people_count` are zero, then provision again; never override the guard. |
+| Demo API calls fail but the WP login still works | The lifecycle was only partially revoked. Re-run `make demo-expire SLUG=<slug> CONFIRM=<slug>`; do not treat the registry flag alone as expiry. |

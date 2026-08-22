@@ -6,8 +6,8 @@ import type { SyncHealthResponse } from '../../api/recognition';
 import { createMockQuery } from '../../test-utils/mockHooks';
 import { useSyncOffline } from '../useSyncOffline';
 
-const useSyncHealthMock = vi.fn((): UseQueryResult<SyncHealthResponse, Error> =>
-  createMockQuery<SyncHealthResponse>({}),
+const useSyncHealthMock = vi.fn(
+  (): UseQueryResult<SyncHealthResponse, Error> => createMockQuery<SyncHealthResponse>({}),
 );
 
 vi.mock('../useSyncHealth', () => ({
@@ -28,31 +28,16 @@ describe('useSyncOffline', () => {
     useSyncHealthMock.mockReset();
   });
 
-  it('returns false while sync health is loading (data undefined)', () => {
-    useSyncHealthMock.mockReturnValue(createMockQuery<SyncHealthResponse>({}));
+  it.each([
+    ['online', createMockQuery<SyncHealthResponse>({ data: baseHealth('closed') }), false],
+    ['offline', createMockQuery<SyncHealthResponse>({ data: baseHealth('open') }), true],
+    ['unknown', createMockQuery<SyncHealthResponse>({}), true],
+    ['unavailable', createMockQuery<SyncHealthResponse>({ isError: true, error: new Error('unavailable') }), true],
+  ] as const)('maps %s health to the expected remote-compute gate', (_status, query, expected) => {
+    useSyncHealthMock.mockReturnValue(query);
 
     const { result } = renderHook(() => useSyncOffline());
 
-    expect(result.current).toBe(false);
-  });
-
-  it('returns true when breaker state is open', () => {
-    useSyncHealthMock.mockReturnValue(
-      createMockQuery<SyncHealthResponse>({ data: baseHealth('open') }),
-    );
-
-    const { result } = renderHook(() => useSyncOffline());
-
-    expect(result.current).toBe(true);
-  });
-
-  it('returns false when breaker state is closed', () => {
-    useSyncHealthMock.mockReturnValue(
-      createMockQuery<SyncHealthResponse>({ data: baseHealth('closed') }),
-    );
-
-    const { result } = renderHook(() => useSyncOffline());
-
-    expect(result.current).toBe(false);
+    expect(result.current).toBe(expected);
   });
 });

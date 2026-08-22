@@ -566,6 +566,7 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
         currentItem?.kind === NEXT_ACTION_KIND.CLUSTER;
 
       const personCommitSelectors = [
+        '[data-testid="acx-independent-judgment"] input:not([disabled])',
         '.acx-person-commit [role="combobox"]:not([disabled])',
         '.acx-person-commit__confirm:not([disabled])',
         '.acx-person-commit button:not([disabled])',
@@ -1453,6 +1454,7 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
                 </div>
               ) : null}
             <CurrentCard
+              key={currentKey ?? undefined}
               item={currentItem}
               // BR-82: the card primary steps down to neutral while the bulk commit owns
               // the accent, so exactly one element carries the accent per viewport.
@@ -1868,6 +1870,9 @@ const CurrentCard = ({
   reviewQueueItems,
   onCloseMatchOffer,
 }: CurrentCardProps): React.JSX.Element | null => {
+  const [independentNameDraft, setIndependentNameDraft] = React.useState('');
+  const [committedIndependentName, setCommittedIndependentName] = React.useState<string | null>(null);
+
   // Arm focus before the POST so removal→key-change can place it; clear on
   // undo/failure (BR-13) so a later key change does not surprise-focus.
   const runScheduled = (schedule: () => Promise<ScheduleCommitResult>): void => {
@@ -2033,11 +2038,15 @@ const CurrentCard = ({
             onReject={() => {
               runScheduled(() => scheduleReject(suggestion.suggestionId));
             }}
-            onReview={(clusterId) => {
-              if (onReview && clusterId) {
-                onReview(clusterId);
-              }
-            }}
+            onReview={
+              onReview
+                ? (clusterId) => {
+                    if (clusterId) {
+                      onReview(clusterId);
+                    }
+                  }
+                : undefined
+            }
             onOpenOriginal={onOpenOriginal}
             isPending={isCardPending(suggestion.suggestionId, assignmentKinds)}
             disabledReason={cardActionsDisabledReason}
@@ -2105,6 +2114,8 @@ const CurrentCard = ({
         personCommit.phase === PERSON_COMMIT_PHASE.SUCCEEDED && personCommit.clusterId === item.clusterId;
       const namePending =
         isCardPending(suggestion.id, nameKinds) || namePersonCommitDone || personCommitPending;
+      const suggestionRevealed = committedIndependentName !== null;
+      const independentNameInputId = `acx-independent-name-${suggestion.id}`;
       return (
         <ReviewCardGroupShell
           kind="name"
@@ -2118,52 +2129,92 @@ const CurrentCard = ({
         >
           <SelectToggle
             selected={isSelected}
-            disabled={isSelectDisabled}
+            disabled={isSelectDisabled || !suggestionRevealed}
             onToggle={onToggleSelect}
           />
-          <div className="acx-suggestion-card__content">
-            <p className="acx-suggestion-card__question">
-              {__('Suggested name:', 'alt-context')} <strong>{suggestion.suggested_name}</strong>
-            </p>
-            {suggestion.confidence_score !== null && suggestion.confidence_score !== undefined ? (
-              <p className="acx-suggestion-card__match">
-                <span
-                  className={`acx-suggestion-confidence${isLow ? ' acx-suggestion-confidence--low' : ''}`}
+          {!suggestionRevealed ? (
+            <div className="acx-person-commit acx-person-commit--primary" data-testid="acx-independent-judgment">
+              <p>{__('Enter your independent name before revealing the suggestion.', 'alt-context')}</p>
+              <label className="acx-person-commit__visible-label" htmlFor={independentNameInputId}>
+                {__('Independent name judgment', 'alt-context')}
+              </label>
+              <div className="acx-person-commit__input-wrapper">
+                <input
+                  id={independentNameInputId}
+                  type="text"
+                  className="acx-person-commit__label-input"
+                  value={independentNameDraft}
+                  onChange={(event) => setIndependentNameDraft(event.target.value)}
+                  disabled={namePending}
+                  autoComplete="off"
+                />
+              </div>
+              <div className="acx-person-commit__edit-actions">
+                <button
+                  type="button"
+                  className={
+                    accentPrimary
+                      ? 'button button-primary acx-person-commit__confirm acx-accent-primary-action'
+                      : 'button button-primary acx-person-commit__confirm'
+                  }
+                  disabled={namePending || independentNameDraft.trim().length === 0}
+                  onClick={() => setCommittedIndependentName(independentNameDraft.trim())}
+                  {...(accentPrimary ? { [ACCENT_PRIMARY_ATTR]: true } : {})}
                 >
-                  {Math.round(suggestion.confidence_score * 100)}%
-                </span>
-              </p>
-            ) : null}
-          </div>
-          {personCommitFor(item.clusterId, NEXT_ACTION_KIND.NAME, {
-            suggestedCreateName: suggestion.suggested_name,
-          })}
-          <div className="acx-name-suggestion-card__actions acx-suggestion-card__actions">
-            <button
-              type="button"
-              className="button acx-suggestion-card__accept"
-              disabled={namePending}
-              title={namePending && cardActionsDisabledReason ? cardActionsDisabledReason : undefined}
-              onClick={() => {
-                runScheduled(() => scheduleAcceptName(suggestion.id));
-              }}
-            >
-              {__('Accept suggestion', 'alt-context')}
-            </button>
-            {afterAccept ? nameHold : null}
-            <button
-              type="button"
-              className="button acx-suggestion-card__reject"
-              disabled={namePending}
-              title={namePending && cardActionsDisabledReason ? cardActionsDisabledReason : undefined}
-              onClick={() => {
-                runScheduled(() => scheduleRejectName(suggestion.id));
-              }}
-            >
-              {__('Reject', 'alt-context')}
-            </button>
-            {!afterAccept ? nameHold : null}
-          </div>
+                  {__('Commit judgment', 'alt-context')}
+                </button>
+              </div>
+            </div>
+          ) : (
+            <>
+              <div className="acx-suggestion-card__content">
+                <p className="acx-suggestion-card__question">
+                  {__('Your independent judgment:', 'alt-context')} <strong>{committedIndependentName}</strong>
+                </p>
+                <p className="acx-suggestion-card__question">
+                  {__('Suggested name:', 'alt-context')} <strong>{suggestion.suggested_name}</strong>
+                </p>
+                {suggestion.confidence_score !== null && suggestion.confidence_score !== undefined ? (
+                  <p className="acx-suggestion-card__match">
+                    <span
+                      className={`acx-suggestion-confidence${isLow ? ' acx-suggestion-confidence--low' : ''}`}
+                    >
+                      {Math.round(suggestion.confidence_score * 100)}%
+                    </span>
+                  </p>
+                ) : null}
+              </div>
+              {personCommitFor(item.clusterId, NEXT_ACTION_KIND.NAME, {
+                suggestedCreateName: suggestion.suggested_name,
+              })}
+              <div className="acx-name-suggestion-card__actions acx-suggestion-card__actions">
+                <button
+                  type="button"
+                  className="button acx-suggestion-card__accept"
+                  disabled={namePending}
+                  title={namePending && cardActionsDisabledReason ? cardActionsDisabledReason : undefined}
+                  onClick={() => {
+                    runScheduled(() => scheduleAcceptName(suggestion.id));
+                  }}
+                >
+                  {__('Accept suggestion', 'alt-context')}
+                </button>
+                {afterAccept ? nameHold : null}
+                <button
+                  type="button"
+                  className="button acx-suggestion-card__reject"
+                  disabled={namePending}
+                  title={namePending && cardActionsDisabledReason ? cardActionsDisabledReason : undefined}
+                  onClick={() => {
+                    runScheduled(() => scheduleRejectName(suggestion.id));
+                  }}
+                >
+                  {__('Reject', 'alt-context')}
+                </button>
+                {!afterAccept ? nameHold : null}
+              </div>
+            </>
+          )}
         </ReviewCardGroupShell>
       );
     }

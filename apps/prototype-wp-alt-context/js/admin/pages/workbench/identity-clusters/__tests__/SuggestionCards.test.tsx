@@ -41,7 +41,7 @@ const baseSuggestion: ReviewSuggestion = {
   clusterId: 'cluster-1',
   label: 'Alex',
   similarity: 0.9,
-  identityCount: 3,
+  identityCount: 1,
 };
 
 describe('SuggestionCard BR-41 group accname', () => {
@@ -137,7 +137,7 @@ describe('SuggestionCard BR-41 group accname', () => {
   it('renders the face-count string and review title (UXW2-3-R1-11)', () => {
     render(
       <SuggestionCard
-        suggestion={baseSuggestion}
+        suggestion={{ ...baseSuggestion, identityCount: 3 }}
         onAccept={vi.fn()}
         onReject={vi.fn()}
         onReview={vi.fn()}
@@ -151,6 +151,33 @@ describe('SuggestionCard BR-41 group accname', () => {
       'title',
       'Review these faces',
     );
+  });
+
+  it('HAI-17: requires expansion of all stored references before approval', async () => {
+    const onAccept = vi.fn();
+    const onReview = vi.fn();
+    const user = userEvent.setup();
+    render(
+      <SuggestionCard
+        suggestion={{ ...baseSuggestion, identityCount: 3 }}
+        onAccept={onAccept}
+        onReject={vi.fn()}
+        onReview={onReview}
+        isPending={false}
+        lowConfidenceThreshold={0.5}
+      />,
+    );
+
+    const approve = screen.getByRole('button', { name: 'Yes' });
+    expect(approve).toBeDisabled();
+    expect(screen.getByText(/2 more faces must be reviewed/i)).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Review details' }));
+
+    expect(onReview).toHaveBeenCalledWith('cluster-1');
+    expect(approve).toBeEnabled();
+    await user.click(approve);
+    expect(onAccept).toHaveBeenCalledTimes(1);
   });
 });
 

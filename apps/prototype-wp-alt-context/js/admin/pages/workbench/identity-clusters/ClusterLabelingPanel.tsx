@@ -561,8 +561,6 @@ export const ClusterLabelingPanel = ({
     );
   }
 
-  const memberAlt = __('Face to label', 'alt-context');
-
   return (
     <div className="acx-cluster-labeling-panel">
       <div className="acx-cluster-labeling-panel__header">
@@ -584,32 +582,41 @@ export const ClusterLabelingPanel = ({
               </button>
             </div>
           ) : members.length > 0 ? (
-            members.map((member) => (
-              <div key={member.identity_id} className="acx-cluster-labeling-panel__face">
-                {member.thumb_url && isDedicatedFaceThumbUrl(member.thumb_url) ? (
-                  <Avatar src={member.thumb_url} size="lg" alt={memberAlt} />
-                ) : member.media_url && isCroppableBbox(member.bbox) ? (
-                  <FaceThumbnail
-                    mediaUrl={member.media_url}
-                    bbox={member.bbox}
-                    size="lg"
-                    alt={memberAlt}
-                  />
-                ) : member.thumb_url ? (
-                  <Avatar src={member.thumb_url} size="lg" alt={memberAlt} />
-                ) : (
-                  <div
-                    className="acx-cluster-labeling-panel__face-unavailable"
-                    role="img"
-                    aria-label={unavailableImageName(memberAlt)}
-                  >
-                    <span className="acx-cluster-labeling-panel__face-unavailable-label">
-                      {__('No image', 'alt-context')}
-                    </span>
-                  </div>
-                )}
-              </div>
-            ))
+            members.map((member, index) => {
+              const memberAlt = sprintf(
+                /* translators: 1: face position, 2: total faces, 3: source media item id */
+                __('Face %1$d of %2$d from media item %3$d', 'alt-context'),
+                index + 1,
+                members.length,
+                member.media_id,
+              );
+              return (
+                <div key={member.identity_id} className="acx-cluster-labeling-panel__face">
+                  {member.thumb_url && isDedicatedFaceThumbUrl(member.thumb_url) ? (
+                    <Avatar src={member.thumb_url} size="lg" alt={memberAlt} />
+                  ) : member.media_url && isCroppableBbox(member.bbox) ? (
+                    <FaceThumbnail
+                      mediaUrl={member.media_url}
+                      bbox={member.bbox}
+                      size="lg"
+                      alt={memberAlt}
+                    />
+                  ) : member.thumb_url ? (
+                    <Avatar src={member.thumb_url} size="lg" alt={memberAlt} />
+                  ) : (
+                    <div
+                      className="acx-cluster-labeling-panel__face-unavailable"
+                      role="img"
+                      aria-label={unavailableImageName(memberAlt)}
+                    >
+                      <span className="acx-cluster-labeling-panel__face-unavailable-label">
+                        {__('No image', 'alt-context')}
+                      </span>
+                    </div>
+                  )}
+                </div>
+              );
+            })
           ) : (
             <p>{__('No members found.', 'alt-context')}</p>
           )}

@@ -1,5 +1,5 @@
 import React from 'react';
-import { __ } from '@wordpress/i18n';
+import { __, _n, sprintf } from '@wordpress/i18n';
 
 import { Avatar } from '../../../../components/ui/avatar';
 import { FaceThumbnail } from '../../../../components/ui/FaceThumbnail';
@@ -129,6 +129,11 @@ export const SuggestionCard = ({
   queuePosition,
   queueTotal,
 }: SuggestionCardProps): React.JSX.Element => {
+  const [reviewedAllReferences, setReviewedAllReferences] = React.useState(false);
+  React.useEffect(() => {
+    setReviewedAllReferences(false);
+  }, [suggestion.suggestionId]);
+
   // BR-22: no empty-label / Unnamed / suggestedLabel-badge / !hasLabel branches — label is required.
   assertTruthyLabel(suggestion.label);
   const displayLabel = suggestion.label;
@@ -149,6 +154,9 @@ export const SuggestionCard = ({
   const representativeThumbUrl =
     suggestion.enrichment?.representativeThumbUrl ?? suggestion.enrichment?.representativeMediaUrl ?? null;
   const groupLabelId = `acx-assignment-pos-${suggestion.suggestionId}`;
+  const undisclosedReferenceCount = Math.max(0, (suggestion.identityCount ?? 0) - 1);
+  const requiresReferenceReview =
+    undisclosedReferenceCount > 0 && Boolean(onReview) && !reviewedAllReferences;
 
   return (
     <ReviewCardGroupShell
@@ -229,6 +237,19 @@ export const SuggestionCard = ({
             <span className="acx-suggestion-card__confidence-flag">{__('Low confidence', 'alt-context')}</span>
           )}
         </p>
+        {requiresReferenceReview ? (
+          <p className="acx-suggestion-card__count">
+            {sprintf(
+              _n(
+                '%d more face must be reviewed before approval.',
+                '%d more faces must be reviewed before approval.',
+                undisclosedReferenceCount,
+                'alt-context',
+              ),
+              undisclosedReferenceCount,
+            )}
+          </p>
+        ) : null}
       </div>
 
       <div className="acx-suggestion-card__actions">
@@ -240,8 +261,14 @@ export const SuggestionCard = ({
               : 'button button-primary acx-suggestion-card__accept'
           }
           onClick={onAccept}
-          disabled={isPending}
-          title={isPending && disabledReason ? disabledReason : undefined}
+          disabled={isPending || requiresReferenceReview}
+          title={
+            requiresReferenceReview
+              ? __('Review all stored faces before approving.', 'alt-context')
+              : isPending && disabledReason
+                ? disabledReason
+                : undefined
+          }
           {...(accentPrimary ? { [ACCENT_PRIMARY_ATTR]: true } : {})}
         >
           {__('Yes', 'alt-context')}
@@ -261,7 +288,10 @@ export const SuggestionCard = ({
           <button
             type="button"
             className="button button-link acx-suggestion-card__review"
-            onClick={() => onReview(suggestion.clusterId)}
+            onClick={() => {
+              onReview(suggestion.clusterId);
+              setReviewedAllReferences(true);
+            }}
             title={__('Review these faces', 'alt-context')}
           >
             {__('Review details', 'alt-context')}

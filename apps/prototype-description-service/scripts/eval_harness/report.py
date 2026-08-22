@@ -20,6 +20,7 @@ import re
 import unicodedata
 from collections import Counter
 from collections.abc import Mapping, Sequence
+from dataclasses import replace
 from enum import StrEnum
 from typing import Any
 
@@ -723,6 +724,17 @@ def _identity_name_match_patterns(name: str) -> list[re.Pattern[str]]:
     return patterns
 
 
+def _identity_quality_match_patterns(name: str) -> list[re.Pattern[str]]:
+    """Per-token fallback matchers for quality metrics, which must ignore roster spelling."""
+    folded = unicodedata.normalize("NFKC", name).strip()
+    if not folded:
+        return []
+    return [
+        re.compile(rf"(?<!\w){re.escape(token)}(?!\w)", re.IGNORECASE)
+        for token in {t for t in re.findall(r"[A-Za-z']+", folded) if t}
+    ]
+
+
 def _scrub_identity_names(text: str, names: Sequence[str]) -> str:
     """Scrub roster names from free text (RV4-05 / S2-03).
 
@@ -737,6 +749,58 @@ def _scrub_identity_names(text: str, names: Sequence[str]) -> str:
         for pat in _identity_name_match_patterns(str(name)):
             out = pat.sub("[redacted]", out)
     return out
+
+
+def _scrub_identity_quality_names(text: str, names: Sequence[str]) -> str:
+    """Scrub full roster names and their tokens from quality-only computations."""
+    if not text:
+        return text
+    out = text
+    changed = False
+    for name in sorted((n for n in names if n), key=len, reverse=True):
+        for pat in _identity_name_match_patterns(str(name)):
+            out, replacements = pat.subn("[redacted]", out)
+            changed = changed or replacements > 0
+        for pat in _identity_quality_match_patterns(str(name)):
+            out, replacements = pat.subn("[redacted]", out)
+            changed = changed or replacements > 0
+    return re.sub(r"\s+", " ", out).strip() if changed else text
+
+
+def _quality_objects_without_identity_names(
+    objects: Sequence[str] | None,
+    names: Sequence[str],
+) -> list[str] | None:
+    """Drop identity-bearing tags so tag coverage tracks scene content, not roster spelling."""
+    if not objects:
+        return None
+    scrubbed = [
+        str(obj)
+        for obj in objects
+        if _scrub_identity_quality_names(str(obj), names) == str(obj)
+    ]
+    return scrubbed or None
+
+
+def _caption_scores_without_identity_spelling(
+    caption: str,
+    *,
+    scores: CaptionScores,
+    names: Sequence[str],
+    score_kwargs: Mapping[str, Any],
+) -> CaptionScores:
+    """Preserve identity-sensitive gates but compute quality-only fields on scrubbed text/tags."""
+    quality_kwargs = dict(score_kwargs)
+    quality_kwargs["objects"] = _quality_objects_without_identity_names(
+        quality_kwargs.get("objects"), names
+    )
+    quality_scores = score_caption(_scrub_identity_quality_names(caption, names), **quality_kwargs)
+    return replace(
+        scores,
+        fkre=quality_scores.fkre,
+        repetition_ratio=quality_scores.repetition_ratio,
+        tag_coverage=quality_scores.tag_coverage,
+    )
 
 
 def _public_list_path(
@@ -1911,11 +1975,24 @@ def score_run_record(
         if short_error is None:
             caption_text = str(describe.get("alt_text_draft", ""))
             scores = score_caption(caption_text, **score_kwargs)
+            scores = _caption_scores_without_identity_spelling(
+                caption_text,
+                scores=scores,
+                names=roster,
+                score_kwargs=score_kwargs,
+            )
             caption_scores.append(scores)
             gated = _ablation_gate(scores) if eval_mode == "name_ablation" else scores.gated_score
 
         long_text = describe.get("alt_text_long")
         long_s = score_caption(str(long_text), **score_kwargs) if isinstance(long_text, str) and long_text else None
+        if long_s is not None:
+            long_s = _caption_scores_without_identity_spelling(
+                str(long_text),
+                scores=long_s,
+                names=roster,
+                score_kwargs=score_kwargs,
+            )
         if long_s is not None:
             long_scores.append(long_s)
 

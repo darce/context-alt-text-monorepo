@@ -14,6 +14,10 @@ import { PURGE_DIALOG_DESCRIPTION, PURGE_SCOPE_OPTIONS } from './retentionDialog
 import type { RetentionAction } from './useRetentionPageState';
 
 const RETENTION_CONFIRM_PHRASE = 'PURGE';
+const EXPORT_JOB_STATUS = {
+  COMPLETED: 'completed',
+  FAILED: 'failed',
+} as const;
 
 /* ------------------------------------------------------------------ */
 /*  Export Dialog                                                       */
@@ -61,13 +65,23 @@ export const ExportDialog = ({
               'alt-context',
             )}
           </DialogDescription>
-          {exportJobId && exportJobStatus !== null && exportJobStatus !== 'completed' && (
-            <p className="acx-retention__detail">
-              {exportJobStatus === 'failed'
-                ? __('Export failed. Please try again.', 'alt-context')
-                : __('Export in progress\u2026', 'alt-context')}
-            </p>
-          )}
+          {exportJobId && exportJobStatus !== null && exportJobStatus !== EXPORT_JOB_STATUS.COMPLETED ? (
+            <>
+              <p className="acx-retention__detail">
+                {exportJobStatus === EXPORT_JOB_STATUS.FAILED
+                  ? __('Export failed. Please try again.', 'alt-context')
+                  : __('Export in progress\u2026', 'alt-context')}
+              </p>
+              {exportJobStatus !== EXPORT_JOB_STATUS.FAILED ? (
+                <p className="acx-retention__detail">
+                  {__(
+                    'Closing this dialog does not stop the export. Reopen it to check the job status.',
+                    'alt-context',
+                  )}
+                </p>
+              ) : null}
+            </>
+          ) : null}
           <div className="acx-dialog__actions">
             <button
               type="button"
@@ -75,9 +89,9 @@ export const ExportDialog = ({
               onClick={() => dispatch({ type: 'CLOSE_EXPORT_DIALOG' })}
               disabled={isExportPending || isDownloadPending}
             >
-              {__('Cancel', 'alt-context')}
+              {__('Close', 'alt-context')}
             </button>
-            {exportJobId !== null && exportJobStatus === 'completed' ? (
+            {exportJobId !== null && exportJobStatus === EXPORT_JOB_STATUS.COMPLETED ? (
               <button
                 type="button"
                 className="acx-button acx-button--primary"

@@ -16,7 +16,9 @@ from recognition.application.services.demo_provisioning_service import (
     DEFAULT_RECOGNITION_QUOTA,
     DEFAULT_SLUG_LENGTH,
     DemoInstanceNotFoundError,
+    SeedBundleStateError,
     UnknownSeedBundleError,
+    WordPressSeedState,
     expire_demo,
     generate_slug,
     provision_demo,
@@ -25,6 +27,20 @@ from recognition.application.services.demo_provisioning_service import (
 from recognition.infrastructure.repositories import SqlAlchemyApiKeyRepository
 
 _BASE58_RE = re.compile(f"^[{re.escape(BASE58_ALPHABET)}]{{{DEFAULT_SLUG_LENGTH}}}$")
+
+
+class RecordingWordPressGateway:
+    def __init__(self, *, state: WordPressSeedState | None = None) -> None:
+        self.state = state or WordPressSeedState(faces_count=0, people_count=0)
+        self.provisioned: list[tuple[str, str, str]] = []
+        self.disabled: list[str] = []
+
+    async def provision_user(self, *, username: str, password: str, seed_bundle: str) -> WordPressSeedState:
+        self.provisioned.append((username, password, seed_bundle))
+        return self.state
+
+    async def disable_user(self, *, username: str) -> None:
+        self.disabled.append(username)
 
 
 def test_generate_slug_is_base58_and_random_length() -> None:
@@ -85,6 +101,34 @@ async def test_provision_demo_inserts_registry_row_with_hash_ref(db_session: Asy
 
 
 @pytest.mark.asyncio
+async def test_provisioned_wordpress_user_is_distinct_per_slug(db_session: AsyncSession) -> None:
+    wordpress = RecordingWordPressGateway()
+
+    first = await provision_demo(db_session, label="First", seed="default", wordpress=wordpress)
+    second = await provision_demo(db_session, label="Second", seed="default", wordpress=wordpress)
+
+    assert first.wordpress_username == f"demo-{first.instance.slug}"
+    assert second.wordpress_username == f"demo-{second.instance.slug}"
+    assert first.wordpress_username != second.wordpress_username
+    assert first.wordpress_password != second.wordpress_password
+    assert [call[0] for call in wordpress.provisioned] == [
+        first.wordpress_username,
+        second.wordpress_username,
+    ]
+
+
+@pytest.mark.asyncio
+async def test_provision_demo_fails_if_seed_bundle_is_not_pre_scan(db_session: AsyncSession) -> None:
+    wordpress = RecordingWordPressGateway(state=WordPressSeedState(faces_count=3, people_count=1))
+
+    with pytest.raises(SeedBundleStateError, match="faces_count=3.*people_count=1"):
+        await provision_demo(db_session, label="Stale", seed="default", wordpress=wordpress)
+
+    assert len(wordpress.provisioned) == 1
+    assert wordpress.disabled == [wordpress.provisioned[0][0]]
+
+
+@pytest.mark.asyncio
 async def test_provision_demo_rejects_unknown_seed(db_session: AsyncSession) -> None:
     with pytest.raises(UnknownSeedBundleError):
         await provision_demo(db_session, label="X", seed="missing-bundle")
@@ -92,10 +136,11 @@ async def test_provision_demo_rejects_unknown_seed(db_session: AsyncSession) -> 
 
 @pytest.mark.asyncio
 async def test_expire_demo_sets_revoked(db_session: AsyncSession) -> None:
-    result = await provision_demo(db_session, label="Expire Me", seed="default")
+    wordpress = RecordingWordPressGateway()
+    result = await provision_demo(db_session, label="Expire Me", seed="default", wordpress=wordpress)
     await db_session.commit()
 
-    expired = await expire_demo(db_session, slug=result.instance.slug)
+    expired = await expire_demo(db_session, slug=result.instance.slug, wordpress=wordpress)
     await db_session.commit()
 
     assert expired.revoked is True
@@ -113,6 +158,7 @@ async def test_expire_demo_sets_revoked(db_session: AsyncSession) -> None:
     assert key.revoked_at is not None
     # And the auth lookup now rejects it.
     assert await SqlAlchemyApiKeyRepository(db_session).get_by_hash(result.instance.api_key_ref) is None
+    assert wordpress.disabled == [result.wordpress_username]
 
 
 @pytest.mark.asyncio

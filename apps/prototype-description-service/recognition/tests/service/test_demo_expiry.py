@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models import ApiKey, DemoInstance
 from recognition.application.services.demo_provisioning_service import (
+    WordPressSeedState,
     expire_demo,
     provision_demo,
     sweep_expired_demos,
@@ -18,8 +19,20 @@ from recognition.application.services.demo_provisioning_service import (
 from recognition.infrastructure.repositories import SqlAlchemyApiKeyRepository
 
 
+class RecordingWordPressGateway:
+    def __init__(self) -> None:
+        self.disabled: list[str] = []
+
+    async def provision_user(self, *, username: str, password: str, seed_bundle: str) -> WordPressSeedState:
+        return WordPressSeedState(faces_count=0, people_count=0)
+
+    async def disable_user(self, *, username: str) -> None:
+        self.disabled.append(username)
+
+
 @pytest.mark.asyncio
 async def test_demo_expiry_sweep_revokes_row_and_api_key(db_session: AsyncSession) -> None:
+    wordpress = RecordingWordPressGateway()
     past = await provision_demo(db_session, label="Past", seed="default")
     future = await provision_demo(db_session, label="Future", seed="default")
     await db_session.commit()
@@ -29,7 +42,7 @@ async def test_demo_expiry_sweep_revokes_row_and_api_key(db_session: AsyncSessio
     past_row.expires_at = datetime.now(tz=UTC) - timedelta(days=1)
     await db_session.commit()
 
-    result = await sweep_expired_demos(db_session)
+    result = await sweep_expired_demos(db_session, wordpress=wordpress)
     await db_session.commit()
 
     assert result.expired == 1
@@ -49,6 +62,26 @@ async def test_demo_expiry_sweep_revokes_row_and_api_key(db_session: AsyncSessio
     still_active = await db_session.get(DemoInstance, future.instance.slug)
     assert still_active is not None
     assert still_active.revoked is False
+    assert wordpress.disabled == [past.wordpress_username]
+
+
+@pytest.mark.asyncio
+async def test_demo_expiry_sweep_disables_every_swept_wordpress_user(db_session: AsyncSession) -> None:
+    wordpress = RecordingWordPressGateway()
+    first = await provision_demo(db_session, label="First", seed="default")
+    second = await provision_demo(db_session, label="Second", seed="default")
+    await db_session.commit()
+
+    for provisioned in (first, second):
+        row = await db_session.get(DemoInstance, provisioned.instance.slug)
+        assert row is not None
+        row.expires_at = datetime.now(tz=UTC) - timedelta(hours=1)
+    await db_session.commit()
+
+    result = await sweep_expired_demos(db_session, wordpress=wordpress)
+
+    assert result.expired == 2
+    assert set(wordpress.disabled) == {first.wordpress_username, second.wordpress_username}
 
 
 @pytest.mark.asyncio

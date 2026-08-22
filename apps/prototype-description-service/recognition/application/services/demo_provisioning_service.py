@@ -12,6 +12,7 @@ import secrets
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from typing import Protocol
 
 from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
@@ -29,8 +30,28 @@ DEFAULT_TTL_DAYS = 30
 DEFAULT_RECOGNITION_QUOTA = 200
 DEMO_URL_TEMPLATE = "https://demo.altcontext.com/x/{slug}"
 
-# Named seed bundles only — real per-prospect image ingestion is out of scope.
-KNOWN_SEED_BUNDLES: frozenset[str] = frozenset({"default", "acme"})
+
+@dataclass(frozen=True)
+class WordPressSeedState:
+    """Observable WordPress state after a seed bundle is prepared."""
+
+    faces_count: int
+    people_count: int
+
+
+@dataclass(frozen=True)
+class SeedBundleContract:
+    """Named media bundle plus the state a viewer must receive."""
+
+    name: str
+    expected_state: WordPressSeedState
+
+
+PRE_SCAN_STATE = WordPressSeedState(faces_count=0, people_count=0)
+SEED_BUNDLES: dict[str, SeedBundleContract] = {
+    name: SeedBundleContract(name=name, expected_state=PRE_SCAN_STATE) for name in ("default", "acme")
+}
+KNOWN_SEED_BUNDLES: frozenset[str] = frozenset(SEED_BUNDLES)
 
 _MAX_SLUG_ATTEMPTS = 8
 
@@ -43,13 +64,29 @@ class DemoInstanceNotFoundError(LookupError):
     """Raised when expire targets an unknown slug."""
 
 
+class SeedBundleStateError(RuntimeError):
+    """Raised when seeded media is not in the bundle's required pre-scan state."""
+
+
+class WordPressDemoAccountGateway(Protocol):
+    """WP-CLI boundary used while the demo database transaction is open."""
+
+    async def provision_user(
+        self, *, username: str, password: str, seed_bundle: str
+    ) -> WordPressSeedState: ...
+
+    async def disable_user(self, *, username: str) -> None: ...
+
+
 @dataclass(frozen=True)
 class ProvisionResult:
-    """Outcome of a successful provision; raw_key is one-time only."""
+    """Outcome of a successful provision; both secrets are one-time only."""
 
     instance: DemoInstance
     raw_api_key: str
     demo_url: str
+    wordpress_username: str
+    wordpress_password: str
 
 
 def generate_slug(length: int = DEFAULT_SLUG_LENGTH) -> str:
@@ -73,6 +110,23 @@ def resolve_seed_bundle(seed: str) -> str:
     return name
 
 
+def wordpress_username_for(slug: str) -> str:
+    """Derive the per-instance human identity from its validated base58 slug."""
+    return f"demo-{slug}"
+
+
+def assert_seed_bundle_state(*, seed_bundle: str, actual: WordPressSeedState) -> None:
+    """Enforce the named bundle's pre-scan contract for provision and reset."""
+    contract = SEED_BUNDLES[resolve_seed_bundle(seed_bundle)]
+    if actual != contract.expected_state:
+        expected = contract.expected_state
+        raise SeedBundleStateError(
+            f"seed bundle {seed_bundle!r} is not pre-scan: "
+            f"faces_count={actual.faces_count}, people_count={actual.people_count}; "
+            f"expected faces_count={expected.faces_count}, people_count={expected.people_count}"
+        )
+
+
 async def provision_demo(
     session: AsyncSession,
     *,
@@ -81,12 +135,15 @@ async def provision_demo(
     recognition_quota: int = DEFAULT_RECOGNITION_QUOTA,
     ttl_days: int = DEFAULT_TTL_DAYS,
     branding: dict | None = None,
+    wordpress: WordPressDemoAccountGateway | None = None,
 ) -> ProvisionResult:
-    """Mint tenant+key, select seed bundle, insert demo_instances row.
+    """Mint tenant+key+per-slug WP login under one open transaction.
 
     Does not print or log the raw key. Caller owns the transaction and must
-    commit; this helper flushes inserts. Retries on the vanishingly rare slug
-    primary-key collision.
+    commit; this helper flushes inserts. When supplied, ``wordpress`` performs
+    the external WP-CLI side effect while the database transaction remains
+    open. A failed pre-scan assertion compensates by disabling the new login.
+    Retries on the vanishingly rare slug primary-key collision.
     """
     seed_bundle = resolve_seed_bundle(seed)
     if recognition_quota < 1:
@@ -97,6 +154,8 @@ async def provision_demo(
     last_error: Exception | None = None
     for _ in range(_MAX_SLUG_ATTEMPTS):
         slug = generate_slug()
+        wordpress_username = wordpress_username_for(slug)
+        wordpress_password = generate_slug(length=24)
         tenant_id = uuid.uuid4()
         tenant = Tenant(id=tenant_id, site_url=demo_url_for(slug))
         session.add(tenant)
@@ -136,19 +195,49 @@ async def provision_demo(
             last_error = exc
             continue
 
-        return ProvisionResult(instance=instance, raw_api_key=raw, demo_url=demo_url_for(slug))
+        if wordpress is not None:
+            state = await wordpress.provision_user(
+                username=wordpress_username,
+                password=wordpress_password,
+                seed_bundle=seed_bundle,
+            )
+            try:
+                assert_seed_bundle_state(seed_bundle=seed_bundle, actual=state)
+            except Exception:
+                # Never leave a usable login behind when bundle verification
+                # fails and the caller rolls back the database transaction.
+                await wordpress.disable_user(username=wordpress_username)
+                raise
+
+        return ProvisionResult(
+            instance=instance,
+            raw_api_key=raw,
+            demo_url=demo_url_for(slug),
+            wordpress_username=wordpress_username,
+            wordpress_password=wordpress_password,
+        )
 
     raise RuntimeError(f"failed to allocate unique demo slug after {_MAX_SLUG_ATTEMPTS} attempts") from last_error
 
 
-async def expire_demo(session: AsyncSession, *, slug: str) -> DemoInstance:
-    """Mark a demo instance revoked. Caller owns the commit."""
+async def expire_demo(
+    session: AsyncSession,
+    *,
+    slug: str,
+    wordpress: WordPressDemoAccountGateway | None = None,
+) -> DemoInstance:
+    """Disable the WP login and revoke its registry/key unit. Caller commits."""
     cleaned = (slug or "").strip()
     if not cleaned:
         raise DemoInstanceNotFoundError("slug is required")
     instance = await session.get(DemoInstance, cleaned)
     if instance is None:
         raise DemoInstanceNotFoundError(f"demo instance not found: {cleaned}")
+    # WordPress authenticates this principal independently of the service DB.
+    # Disable first: if the later DB commit fails, expiry is conservative and
+    # the human login cannot outlive the requested revoke.
+    if wordpress is not None:
+        await wordpress.disable_user(username=wordpress_username_for(instance.slug))
     instance.revoked = True
     # Revoke the underlying credential too. Flipping demo_instances.revoked alone
     # is inert: auth gates on api_keys.revoked_at, never the demo registry, so the
@@ -307,6 +396,7 @@ async def sweep_expired_demos(
     *,
     now: datetime | None = None,
     stall_limit: int = DEFAULT_SWEEP_STALL_LIMIT,
+    wordpress: WordPressDemoAccountGateway | None = None,
 ) -> SweepResult:
     """Revoke demos past ``expires_at`` via ``expire_demo`` (row + api key).
 
@@ -342,7 +432,10 @@ async def sweep_expired_demos(
 
     for slug in rows:
         try:
-            await expire_demo(session, slug=slug)
+            if wordpress is None:
+                await expire_demo(session, slug=slug)
+            else:
+                await expire_demo(session, slug=slug, wordpress=wordpress)
             await session.commit()
             expired_slugs.append(slug)
             consecutive_failures = 0
@@ -370,14 +463,21 @@ __all__ = [
     "DEFAULT_TTL_DAYS",
     "DEMO_URL_TEMPLATE",
     "KNOWN_SEED_BUNDLES",
+    "PRE_SCAN_STATE",
+    "SEED_BUNDLES",
     "DemoEndedError",
     "DemoInstanceNotFoundError",
     "DemoQuotaExceededError",
     "MAX_DEMO_QUOTA_UNITS",
     "DemoResolveContext",
     "ProvisionResult",
+    "SeedBundleContract",
+    "SeedBundleStateError",
     "SweepResult",
     "UnknownSeedBundleError",
+    "WordPressDemoAccountGateway",
+    "WordPressSeedState",
+    "assert_seed_bundle_state",
     "demo_url_for",
     "expire_demo",
     "generate_slug",
@@ -386,4 +486,5 @@ __all__ = [
     "resolve_seed_bundle",
     "sweep_expired_demos",
     "try_consume_demo_quota",
+    "wordpress_username_for",
 ]

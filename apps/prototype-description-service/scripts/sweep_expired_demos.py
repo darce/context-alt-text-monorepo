@@ -16,12 +16,16 @@ import argparse
 import asyncio
 import sys
 from collections.abc import Sequence
+from datetime import UTC, datetime
 from urllib.parse import urlparse
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from db.models import DemoInstance
 from recognition.application.services.demo_provisioning_service import (
     DEFAULT_SWEEP_STALL_LIMIT,
+    WordPressDemoAccountGateway,
     sweep_expired_demos,
 )
 
@@ -61,16 +65,31 @@ def _build_parser() -> argparse.ArgumentParser:
         default=DEFAULT_SWEEP_STALL_LIMIT,
         help="consecutive per-instance failures before non-zero exit (rg-007)",
     )
+    parser.add_argument(
+        "--wp-managed-by-wrapper",
+        action="store_true",
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
+        "--list-only",
+        action="store_true",
+        help="print currently eligible slugs without changing them (for the WP-CLI wrapper)",
+    )
     return parser
 
 
-async def run(argv: Sequence[str] | None = None, *, session: AsyncSession | None = None) -> int:
+async def run(
+    argv: Sequence[str] | None = None,
+    *,
+    session: AsyncSession | None = None,
+    wordpress: WordPressDemoAccountGateway | None = None,
+) -> int:
     parser = _build_parser()
     args = parser.parse_args(list(argv) if argv is not None else None)
 
     from db.settings import get_database_settings
 
-    dsn = get_database_settings().async_dsn
+    dsn = get_database_settings().postgres_dsn
     err = _validate_env_vs_dsn(args.env, dsn)
     if err is not None:
         sys.stderr.write(f"error: {err}\n")
@@ -79,6 +98,12 @@ async def run(argv: Sequence[str] | None = None, *, session: AsyncSession | None
 
     own_session = session is None
     if own_session:
+        if wordpress is None and not args.wp_managed_by_wrapper:
+            sys.stderr.write(
+                "error: direct execution cannot disable WordPress users; use make demo-sweep\n"
+            )
+            sys.stderr.flush()
+            return 2
         from db.session import async_session_factory
 
         session = async_session_factory()
@@ -86,7 +111,24 @@ async def run(argv: Sequence[str] | None = None, *, session: AsyncSession | None
     if session is None:  # explicit guard (sr-006): survives python -O
         raise RuntimeError("no database session available for sweep")
     try:
-        result = await sweep_expired_demos(session, stall_limit=args.stall_limit)
+        if args.list_only:
+            rows = (
+                (
+                    await session.execute(
+                        select(DemoInstance.slug).where(
+                            DemoInstance.revoked.is_(False),
+                            DemoInstance.expires_at < datetime.now(tz=UTC),
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            for slug in rows:
+                sys.stdout.write(f"{slug}\n")
+            sys.stdout.flush()
+            return 0
+        result = await sweep_expired_demos(session, stall_limit=args.stall_limit, wordpress=wordpress)
         await session.commit()
     except Exception as exc:  # noqa: BLE001
         if own_session:

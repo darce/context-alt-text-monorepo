@@ -216,6 +216,30 @@ describe('RetentionPage', () => {
     });
   });
 
+  it('closes a running export without claiming cancellation and preserves its visible status', async () => {
+    mockedUseExportJobStatus.mockReturnValue(
+      createMockQuery({
+        data: { job_id: 'job-1', status: 'pending', file_size: null, error_message: null },
+      }),
+    );
+
+    render(<RetentionPage />);
+    fireEvent.click(screen.getByRole('button', { name: 'Export data' }));
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Start export' }));
+      await Promise.resolve();
+    });
+
+    expect(screen.getByText('Export in progress\u2026')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Cancel' })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Export data' }));
+    expect(screen.getByText('Export in progress\u2026')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Start export' })).toBeDisabled();
+  });
+
   it('exports tenant data: download button appears when job completes', async () => {
     mockedUseExportJobStatus.mockReturnValue(
       createMockQuery({

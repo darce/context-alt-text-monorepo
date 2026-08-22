@@ -19,10 +19,7 @@ export const RETENTION_OPTIONS: { value: RetentionMode; label: string; descripti
   {
     value: 'dispose_after_ack',
     label: __('Dispose after confirmation', 'alt-context'),
-    description: __(
-      'Mark machine-derived working state for disposal once WordPress confirms results.',
-      'alt-context',
-    ),
+    description: __('Mark machine-derived working state for disposal once WordPress confirms results.', 'alt-context'),
   },
   {
     value: 'purge_on_demand',
@@ -83,7 +80,10 @@ export const retentionReducer = (state: RetentionDialogState, action: RetentionA
     case 'OPEN_EXPORT_DIALOG':
       return { ...state, isExportDialogOpen: true };
     case 'CLOSE_EXPORT_DIALOG':
-      return { ...state, isExportDialogOpen: false, exportJobId: null };
+      // The export API does not expose cancellation. Closing is presentation
+      // only, so retain the job id and keep polling for a truthful status when
+      // the operator reopens the dialog.
+      return { ...state, isExportDialogOpen: false };
     case 'SET_EXPORT_JOB_ID':
       return { ...state, exportJobId: action.jobId };
     case 'OPEN_PURGE_DIALOG':
@@ -181,6 +181,7 @@ export const useRetentionPageState = () => {
     try {
       const response = await downloadJobData.mutateAsync(state.exportJobId);
       downloadExportPayload(response);
+      dispatch({ type: 'SET_EXPORT_JOB_ID', jobId: null });
       dispatch({ type: 'CLOSE_EXPORT_DIALOG' });
       success(__('Tenant export downloaded.', 'alt-context'));
     } catch (error) {

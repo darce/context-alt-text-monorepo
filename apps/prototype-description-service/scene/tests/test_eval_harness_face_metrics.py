@@ -1463,21 +1463,7 @@ def test_positional_identification_dedupes_duplicate_predicted_names():
     assert result.position_total == 2
 
 
-def test_positional_vacuity_signal_on_real_golden_corpus():
-    """VLM6-B-10 / EVAL-23 / AUDIT-07: golden.json has face_boxes on 0/37 → π=0.
-
-    Positional identification must emit an explicit not_evaluable vacuity signal
-    the verdict layer can consume — never a silent accuracy=None pass.
-    """
-    import json
-    from pathlib import Path
-
-    golden_path = Path(__file__).parent / "seed" / "golden.json"
-    manifest = json.loads(golden_path.read_text())
-    entries = manifest["entries"]
-    assert len(entries) == 37
-    assert sum(1 for e in entries if e.get("face_boxes")) == 0
-
+def _positional_from_golden_entries(entries: list[dict]):
     items: list[ImageIdentities] = []
     for entry in entries:
         ordered = labeled_left_to_right(entry.get("face_boxes") or [])
@@ -1489,14 +1475,60 @@ def test_positional_vacuity_signal_on_real_golden_corpus():
                 labeled_order_known=ordered is not None,
             )
         )
-    result = positional_identification(items)
+    return positional_identification(items)
+
+
+def test_positional_vacuity_signal_on_real_golden_corpus():
+    """VLM6-B-10 / EVAL-23: golden.json has face_boxes on 0/N → π=0.
+
+    Positional identification must emit an explicit not_evaluable vacuity signal
+    the verdict layer can consume — never a silent accuracy=None pass.
+    Count is derived from the scored manifest (FIR-ORCH-BR-23); re-pinning N
+    would hide the next corpus change.
+    """
+    import json
+    from pathlib import Path
+
+    golden_path = Path(__file__).parent / "seed" / "golden.json"
+    manifest = json.loads(golden_path.read_text())
+    entries = manifest["entries"]
+    assert entries, "golden corpus loaded empty"
+    assert sum(1 for e in entries if e.get("face_boxes")) == 0
+
+    result = _positional_from_golden_entries(entries)
     assert result.compared_images == 0
     assert result.position_accuracy is None
     assert getattr(result, "evaluable", None) is False
     assert getattr(result, "status", None) == POSITIONAL_EVAL_NOT_EVALUABLE
     assert getattr(result, "vacuity_signal", None) == POSITIONAL_VACUITY_SIGNAL
     assert "π=0" in (getattr(result, "vacuity_signal", None) or "")
-    assert len(result.excluded_images) == 37
+    assert len(result.excluded_images) == len(entries)
+
+
+def test_positional_vacuity_derived_n_goes_red_when_a_face_box_appears():
+    """TEST-15 / FIR-ORCH-BR-23: derived 0/N vacuity fails if any entry gains face_boxes."""
+    import copy
+    import json
+    from pathlib import Path
+
+    golden_path = Path(__file__).parent / "seed" / "golden.json"
+    entries = copy.deepcopy(json.loads(golden_path.read_text())["entries"])
+    assert entries and sum(1 for e in entries if e.get("face_boxes")) == 0
+    entries[0]["face_boxes"] = [
+        {"x": 0.4, "y": 0.4, "w": 0.2, "h": 0.2, "source": "iptc", "name": "Scratch Person"}
+    ]
+    boxed = sum(1 for e in entries if e.get("face_boxes"))
+    assert boxed == 1
+    result = _positional_from_golden_entries(entries)
+    vacuous_full_corpus = (
+        boxed == 0
+        and result.compared_images == 0
+        and len(result.excluded_images) == len(entries)
+        and getattr(result, "evaluable", None) is False
+    )
+    assert not vacuous_full_corpus, (
+        "derived 0/N vacuity stayed green after a face_box was added to the scratch corpus"
+    )
 
 
 def test_sort_identity_rows_preserves_duplicates_reorders_by_centre():

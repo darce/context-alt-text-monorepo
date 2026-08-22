@@ -198,15 +198,16 @@ Satisfaction: the HMAC split is an exclusion rule that removed `ccqw-candid.jpg`
 
 ## 5. Exact list of files changed (`git diff --stat HEAD~1`)
 
-Filled after commit; expected:
+Work commit `b7115d35` (`git show --stat --format= b7115d35`):
 
 ```text
- .lane/REPORT.md                                               | (this file)
- .../scene/tests/test_eval_harness_bakeoff.py                  |
- .../scene/tests/test_eval_harness_cli.py                      |
- .../scene/tests/test_eval_harness_determinism_anchor.py       |
- .../scene/tests/test_eval_harness_face_metrics.py             |
- .../scene/tests/test_eval_harness_report.py                   |
+ .lane/REPORT.md                                    | 281 ++++++++++++---------
+ .../scene/tests/test_eval_harness_bakeoff.py       | 121 ++++++++-
+ .../scene/tests/test_eval_harness_cli.py           |  78 +++++-
+ .../tests/test_eval_harness_determinism_anchor.py  |  25 +-
+ .../scene/tests/test_eval_harness_face_metrics.py  |  62 +++--
+ .../scene/tests/test_eval_harness_report.py        |   9 +-
+ 6 files changed, 411 insertions(+), 165 deletions(-)
 ```
 
 `scene/tests/seed/golden.json` and `bakeoff_golden.json` were not modified. `ASSIGNMENT_RULE`, `assign_split()`, and frozen digests were not modified.

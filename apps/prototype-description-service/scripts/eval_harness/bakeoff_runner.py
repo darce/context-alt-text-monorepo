@@ -168,8 +168,9 @@ def _emit_ready_poll_lines(models_url: str) -> list[str]:
 
 
 def _emit_ready_run_lines(plan: CandidatePlan) -> list[str]:
-    """Lines for a ready candidate: bakeoff run (optional cold-load), VRAM sanity."""
+    """Lines for a ready candidate: bakeoff fetch, caption score, VRAM sanity."""
     run_base = shlex.join(plan.run_argv)
+    score_base = shlex.join(_score_argv(plan))
     return [
         "  # warm-up: bakeoff --warmup runs inside the run argv; this shell does not send extra requests",
         "  _cold_flag=()",
@@ -178,6 +179,9 @@ def _emit_ready_run_lines(plan: CandidatePlan) -> list[str]:
         "  fi",
         f'  if ! {run_base} "${{_cold_flag[@]}}"; then',
         f'    echo "candidate {plan.candidate_id} fetch FAILED" >&2',
+        "    _fail=$((_fail + 1))",
+        f"  elif ! {score_base}; then",
+        f'    echo "candidate {plan.candidate_id} score FAILED" >&2',
         "    _fail=$((_fail + 1))",
         "  fi",
         "  if command -v nvidia-smi >/dev/null 2>&1; then",
@@ -246,6 +250,9 @@ def emit_shell(
     lines.extend(_emit_report_lines(plans, incumbent_runs))
     lines.append('if [ "${_total}" -gt 0 ] && [ "${_fail}" -eq "${_total}" ]; then')
     lines.append('  echo "all ${_total} candidates failed" >&2')
+    lines.append("  exit 1")
+    lines.append('elif [ "${_fail}" -gt 0 ]; then')
+    lines.append('  echo "${_fail} of ${_total} candidate legs failed" >&2')
     lines.append("  exit 1")
     lines.append("fi")
     lines.append("")
@@ -475,6 +482,26 @@ def _artifact_path(models_dir: str, candidate_id: str, filename: str) -> str:
 
 def _run_out_path(out_dir: str, candidate_id: str) -> str:
     return f"{out_dir.rstrip('/')}/run-bakeoff-{candidate_id}.json"
+
+
+def _score_argv(plan: CandidatePlan) -> tuple[str, ...]:
+    manifest = _argv_flag(plan.run_argv, "--manifest")
+    return (
+        PYTHON_EXE,
+        "-m",
+        "scripts.eval_harness.cli",
+        "score",
+        "--manifest",
+        manifest,
+        "--run-record",
+        plan.out_path,
+        "--rubric-gate",
+        "enforce",
+        "--allow-refused",
+        "detection",
+        "--allow-refused",
+        "identification",
+    )
 
 
 def _parse_only(raw: str | None) -> list[str] | None:

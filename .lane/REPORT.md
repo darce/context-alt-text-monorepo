@@ -1,4 +1,6 @@
-# L1-gate report
+# L8-anchor report
+
+Repair of the confirmed false-green in `test_eval_anchor_check_fails_when_any_single_verifier_fails` (FIR-ORCH-BR-24).
 
 ## IMPORT PROVENANCE
 
@@ -9,297 +11,332 @@ $ cd /home/ubuntu/w/L1-gate/apps/prototype-description-service && PYTHONPATH=$PW
 /home/ubuntu/w/L1-gate/apps/prototype-description-service/scripts/eval_harness/strata.py
 ```
 
-The imported module is under `/home/ubuntu/w/L1-gate`, so the test evidence below comes from this worktree rather than the shared venv's `.pth` target.
+The imported module is under `/home/ubuntu/w/L1-gate`. Evidence below is from this worktree, not the shared venv `.pth` pin.
 
 ## RED, GREEN, AND REVERT-RED EVIDENCE
 
-### T1 — root `eval-anchor-check`
+Predicted first failure (TEST-06): current `eval-anchor-check` is three separate Make recipes, so an injected failure of `S2A-determinism-anchor-run` stops after `score`. The new assertion must report `got ['score']` rather than the three-command list.
 
-RED, after adding the target contract test and before adding the Make target:
+### B.1 RED — strengthened production test, before the Makefile fix
 
 ```text
-F.                                                                       [100%]
+F                                                                        [100%]
 =================================== FAILURES ===================================
-__________ test_eval_anchor_check_invokes_the_three_literal_verifiers __________
+_________ test_eval_anchor_check_fails_when_any_single_verifier_fails __________
 
-tmp_path = PosixPath('/tmp/pytest-of-ubuntu/pytest-1920/test_eval_anchor_check_invokes0')
+tmp_path = PosixPath('/tmp/pytest-of-ubuntu/pytest-1951/test_eval_anchor_check_fails_w0')
 
-    def test_eval_anchor_check_invokes_the_three_literal_verifiers(tmp_path: Path) -> None:
-        proc, calls = _run_eval_anchor_check(tmp_path)
+    def test_eval_anchor_check_fails_when_any_single_verifier_fails(tmp_path: Path) -> None:
+        for fail_token in _FAIL_TOKENS:
+            leg_path = tmp_path / fail_token
+            leg_path.mkdir()
+            proc, calls = _run_eval_anchor_check(leg_path, fail_token=fail_token)
+>           _assert_injected_failure_was_honored(proc, calls, fail_token)
+
+scripts/eval_harness/tests/test_eval_anchor_check.py:178: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+proc = CompletedProcess(args=['make', '-C', '/home/ubuntu/w/L1-gate', 'eval-anchor-check'], returncode=2, stdout="make: Enter.../home/ubuntu/w/L1-gate'\n", stderr='S2A-determinism-anchor-run\nmake: *** [Makefile:668: eval-anchor-check] Error 1\n')
+calls = [['run', '--extra', 'dev', 'python', '-m', 'scripts.eval_harness.cli', ...]]
+fail_token = 'S2A-determinism-anchor-run'
+
+    def _assert_injected_failure_was_honored(
+        proc: subprocess.CompletedProcess[str],
+        calls: list[list[str]],
+        fail_token: str,
+    ) -> None:
         combined = proc.stdout + proc.stderr
->       assert proc.returncode == 0, combined
-E       AssertionError: make: Entering directory '/home/ubuntu/w/L1-gate'
+>       assert _verifier_commands(calls) == list(_VERIFIER_COMMANDS), (
+            f"{fail_token}: expected all three verifiers invoked, got {_verifier_commands(calls)!r}:\n{combined}"
+        )
+E       AssertionError: S2A-determinism-anchor-run: expected all three verifiers invoked, got ['score']:
+E         make: Entering directory '/home/ubuntu/w/L1-gate'
+E         make: Leaving directory '/home/ubuntu/w/L1-gate'
+E         S2A-determinism-anchor-run
+E         make: *** [Makefile:668: eval-anchor-check] Error 1
+E         
+E       assert ['score'] == ['score', 'sc...w-eval-split']
+E         
+E         Right contains 2 more items, first extra item: 'score-face'
+E         Use -v to get more diff
+
+scripts/eval_harness/tests/test_eval_anchor_check.py:92: AssertionError
+=========================== short test summary info ============================
+FAILED scripts/eval_harness/tests/test_eval_anchor_check.py::test_eval_anchor_check_fails_when_any_single_verifier_fails
+1 failed in 2.46s
+```
+
+### Scratch-copy mutation RED (each run separately)
+
+These apply the same `_assert_injected_failure_was_honored` contract to a scratch Makefile. They are not the production target.
+
+**Mutation 1 — `eval-anchor-check` absent entirely** (the case that fooled the original: make exits 2 with zero verifiers):
+
+```text
+F                                                                        [100%]
+=================================== FAILURES ===================================
+__________ test_eval_anchor_check_fail_contract_rejects_absent_target __________
+
+tmp_path = PosixPath('/tmp/pytest-of-ubuntu/pytest-1954/test_eval_anchor_check_fail_co0')
+
+    def test_eval_anchor_check_fail_contract_rejects_absent_target(tmp_path: Path) -> None:
+        makefile = _write_scratch_makefile(tmp_path, mode="absent")
+        fail_token = _FAIL_TOKENS[0]
+        leg = tmp_path / "absent-leg"
+        leg.mkdir()
+        proc, calls = _run_eval_anchor_check(leg, fail_token=fail_token, makefile=makefile)
+>       _assert_injected_failure_was_honored(proc, calls, fail_token)
+
+scripts/eval_harness/tests/test_eval_anchor_check.py:262: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+proc = CompletedProcess(args=['make', '-C', '/home/ubuntu/w/L1-gate', '-f', '/tmp/pytest-of-ubuntu/pytest-1954/test_eval_anch...Leaving directory '/home/ubuntu/w/L1-gate'\n", stderr="make: *** No rule to make target 'eval-anchor-check'.  Stop.\n")
+calls = [], fail_token = 'S2A-determinism-anchor-run'
+
+    def _assert_injected_failure_was_honored(
+        proc: subprocess.CompletedProcess[str],
+        calls: list[list[str]],
+        fail_token: str,
+    ) -> None:
+        combined = proc.stdout + proc.stderr
+>       assert _verifier_commands(calls) == list(_VERIFIER_COMMANDS), (
+            f"{fail_token}: expected all three verifiers invoked, got {_verifier_commands(calls)!r}:\n{combined}"
+        )
+E       AssertionError: S2A-determinism-anchor-run: expected all three verifiers invoked, got []:
+E         make: Entering directory '/home/ubuntu/w/L1-gate'
 E         make: Leaving directory '/home/ubuntu/w/L1-gate'
 E         make: *** No rule to make target 'eval-anchor-check'.  Stop.
-E
-E       assert 2 == 0
-E        +  where 2 = CompletedProcess(args=['make', '-C', '/home/ubuntu/w/L1-gate', 'eval-anchor-check'], returncode=2, stdout="make: Enter...Leaving directory '/home/ubuntu/w/L1-gate'\n", stderr="make: *** No rule to make target 'eval-anchor-check'.  Stop.\n").returncode
+E         
+E       assert [] == ['score', 'sc...w-eval-split']
+E         
+E         Right contains 3 more items, first extra item: 'score'
+E         Use -v to get more diff
 
-scripts/eval_harness/tests/test_eval_anchor_check.py:59: AssertionError
+scripts/eval_harness/tests/test_eval_anchor_check.py:92: AssertionError
 =========================== short test summary info ============================
-FAILED scripts/eval_harness/tests/test_eval_anchor_check.py::test_eval_anchor_check_invokes_the_three_literal_verifiers
-1 failed, 1 passed in 0.93s
+FAILED scripts/eval_harness/tests/test_eval_anchor_check.py::test_eval_anchor_check_fail_contract_rejects_absent_target
+1 failed in 0.13s
 ```
 
-GREEN, after adding the three literal verifier recipes:
+**Mutation 2 — target exists but stops at the first verifier:**
 
 ```text
-..                                                                       [100%]
-2 passed in 1.19s
-```
-
-REVERT-RED, after temporarily removing only the new Make target:
-
-```text
-F.                                                                       [100%]
+F                                                                        [100%]
 =================================== FAILURES ===================================
-__________ test_eval_anchor_check_invokes_the_three_literal_verifiers __________
+__________ test_eval_anchor_check_fail_contract_rejects_stop_at_first __________
 
-tmp_path = PosixPath('/tmp/pytest-of-ubuntu/pytest-1924/test_eval_anchor_check_invokes0')
+tmp_path = PosixPath('/tmp/pytest-of-ubuntu/pytest-1952/test_eval_anchor_check_fail_co0')
 
-    def test_eval_anchor_check_invokes_the_three_literal_verifiers(tmp_path: Path) -> None:
-        proc, calls = _run_eval_anchor_check(tmp_path)
+    def test_eval_anchor_check_fail_contract_rejects_stop_at_first(tmp_path: Path) -> None:
+        makefile = _write_scratch_makefile(tmp_path, mode="stop_at_first")
+        fail_token = _FAIL_TOKENS[0]
+        leg = tmp_path / "stop-leg"
+        leg.mkdir()
+        proc, calls = _run_eval_anchor_check(leg, fail_token=fail_token, makefile=makefile)
+>       _assert_injected_failure_was_honored(proc, calls, fail_token)
+
+scripts/eval_harness/tests/test_eval_anchor_check.py:271: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+proc = CompletedProcess(args=['make', '-C', '/home/ubuntu/w/L1-gate', '-f', '/tmp/pytest-of-ubuntu/pytest-1952/test_eval_anch...* [/tmp/pytest-of-ubuntu/pytest-1952/test_eval_anchor_check_fail_co0/stop_at_first.mk:3: eval-anchor-check] Error 1\n')
+calls = [['run', '--extra', 'dev', 'python', '-m', 'scripts.eval_harness.cli', ...]]
+fail_token = 'S2A-determinism-anchor-run'
+
+    def _assert_injected_failure_was_honored(
+        proc: subprocess.CompletedProcess[str],
+        calls: list[list[str]],
+        fail_token: str,
+    ) -> None:
         combined = proc.stdout + proc.stderr
->       assert proc.returncode == 0, combined
-E       AssertionError: make: Entering directory '/home/ubuntu/w/L1-gate'
+>       assert _verifier_commands(calls) == list(_VERIFIER_COMMANDS), (
+            f"{fail_token}: expected all three verifiers invoked, got {_verifier_commands(calls)!r}:\n{combined}"
+        )
+E       AssertionError: S2A-determinism-anchor-run: expected all three verifiers invoked, got ['score']:
+E         make: Entering directory '/home/ubuntu/w/L1-gate'
 E         make: Leaving directory '/home/ubuntu/w/L1-gate'
-E         make: *** No rule to make target 'eval-anchor-check'.  Stop.
-E
-E       assert 2 == 0
-E        +  where 2 = CompletedProcess(args=['make', '-C', '/home/ubuntu/w/L1-gate', 'eval-anchor-check'], returncode=2, stdout="make: Enter...Leaving directory '/home/ubuntu/w/L1-gate'\n", stderr="make: *** No rule to make target 'eval-anchor-check'.  Stop.\n").returncode
+E         S2A-determinism-anchor-run
+E         make: *** [/tmp/pytest-of-ubuntu/pytest-1952/test_eval_anchor_check_fail_co0/stop_at_first.mk:3: eval-anchor-check] Error 1
+E         
+E       assert ['score'] == ['score', 'sc...w-eval-split']
+E         
+E         Right contains 2 more items, first extra item: 'score-face'
+E         Use -v to get more diff
 
-scripts/eval_harness/tests/test_eval_anchor_check.py:59: AssertionError
+scripts/eval_harness/tests/test_eval_anchor_check.py:92: AssertionError
 =========================== short test summary info ============================
-FAILED scripts/eval_harness/tests/test_eval_anchor_check.py::test_eval_anchor_check_invokes_the_three_literal_verifiers
-1 failed, 1 passed in 0.88s
+FAILED scripts/eval_harness/tests/test_eval_anchor_check.py::test_eval_anchor_check_fail_contract_rejects_stop_at_first
+1 failed in 0.25s
 ```
 
-The target was restored immediately afterward.
-
-### T2 — any failed bake-off leg exits nonzero
-
-RED, with one failed fetch leg out of two:
+**Mutation 3 — target runs all three but swallows a non-zero exit:**
 
 ```text
 F                                                                        [100%]
 =================================== FAILURES ===================================
-________ test_emit_shell_exits_nonzero_when_one_of_two_fetch_legs_fails ________
+_________ test_eval_anchor_check_fail_contract_rejects_swallowed_exit __________
 
-tmp_path = PosixPath('/tmp/pytest-of-ubuntu/pytest-1927/test_emit_shell_exits_nonzero_0')
+tmp_path = PosixPath('/tmp/pytest-of-ubuntu/pytest-1953/test_eval_anchor_check_fail_co0')
 
-    def test_emit_shell_exits_nonzero_when_one_of_two_fetch_legs_fails(tmp_path: Path) -> None:
-        proc, _calls = _run_shell(tmp_path, fail_token="run-bakeoff-bad.json")
+    def test_eval_anchor_check_fail_contract_rejects_swallowed_exit(tmp_path: Path) -> None:
+        makefile = _write_scratch_makefile(tmp_path, mode="swallow")
+        fail_token = _FAIL_TOKENS[0]
+        leg = tmp_path / "swallow-leg"
+        leg.mkdir()
+        proc, calls = _run_eval_anchor_check(leg, fail_token=fail_token, makefile=makefile)
+>       _assert_injected_failure_was_honored(proc, calls, fail_token)
+
+scripts/eval_harness/tests/test_eval_anchor_check.py:280: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+proc = CompletedProcess(args=['make', '-C', '/home/ubuntu/w/L1-gate', '-f', '/tmp/pytest-of-ubuntu/pytest-1953/test_eval_anch...y '/home/ubuntu/w/L1-gate'\nmake: Leaving directory '/home/ubuntu/w/L1-gate'\n", stderr='S2A-determinism-anchor-run\n')
+calls = [['run', '--extra', 'dev', 'python', '-m', 'scripts.eval_harness.cli', ...], ['run', '--extra', 'dev', 'python', '-m', 'scripts.eval_harness.cli', ...], ['run', '--extra', 'dev', 'python', '-m', 'scripts.eval_harness.cli', ...]]
+fail_token = 'S2A-determinism-anchor-run'
+
+    def _assert_injected_failure_was_honored(
+        proc: subprocess.CompletedProcess[str],
+        calls: list[list[str]],
+        fail_token: str,
+    ) -> None:
         combined = proc.stdout + proc.stderr
->       assert proc.returncode != 0, combined
-E       AssertionError: candidate bad fetch FAILED
-E
+        assert _verifier_commands(calls) == list(_VERIFIER_COMMANDS), (
+            f"{fail_token}: expected all three verifiers invoked, got {_verifier_commands(calls)!r}:\n{combined}"
+        )
+        assert fail_token in combined, (
+            f"{fail_token} was not surfaced in verifier output:\n{combined}"
+        )
+>       assert proc.returncode != 0, f"{fail_token} failure was ignored:\n{combined}"
+E       AssertionError: S2A-determinism-anchor-run failure was ignored:
+E         make: Entering directory '/home/ubuntu/w/L1-gate'
+E         make: Leaving directory '/home/ubuntu/w/L1-gate'
+E         S2A-determinism-anchor-run
+E         
 E       assert 0 != 0
-E        +  where 0 = CompletedProcess(args=['bash', '/tmp/pytest-of-ubuntu/pytest-1927/test_emit_shell_exits_nonzero_0/planned.sh'], returncode=0, stdout='', stderr='candidate bad fetch FAILED\n').returncode
+E        +  where 0 = CompletedProcess(args=['make', '-C', '/home/ubuntu/w/L1-gate', '-f', '/tmp/pytest-of-ubuntu/pytest-1953/test_eval_anch...y '/home/ubuntu/w/L1-gate'\nmake: Leaving directory '/home/ubuntu/w/L1-gate'\n", stderr='S2A-determinism-anchor-run\n').returncode
 
-scripts/eval_harness/tests/test_bakeoff_runner_exit_status.py:136: AssertionError
+scripts/eval_harness/tests/test_eval_anchor_check.py:98: AssertionError
 =========================== short test summary info ============================
-FAILED scripts/eval_harness/tests/test_bakeoff_runner_exit_status.py::test_emit_shell_exits_nonzero_when_one_of_two_fetch_legs_fails
-1 failed in 0.37s
+FAILED scripts/eval_harness/tests/test_eval_anchor_check.py::test_eval_anchor_check_fail_contract_rejects_swallowed_exit
+1 failed in 0.28s
 ```
 
-GREEN, after adding the partial-failure exit branch while preserving the existing all-failed branch and exit code 1:
+The three reds are distinct: absent → `got []` and no `fail_token`; stop-at-first → `got ['score']`; swallow → `assert 0 != 0` after all three ran and the token was printed. The original returncode-only assert cannot tell these apart from a real injected failure.
+
+Those three tests were then inverted into permanent TEST-15 guards that lock the mutation symptoms (`[]` / `['score']` / `returncode == 0`).
+
+### B.3 GREEN — after the continue-then-fail Makefile recipe
 
 ```text
-.                                                                        [100%]
-1 passed in 0.35s
+.....                                                                    [100%]
+5 passed in 10.20s
 ```
 
-REVERT-RED, after temporarily restoring the original all-failed-only behavior:
+### B.4 REVERT-RED — `git stash` of `Makefile` only, then restore
 
 ```text
 F                                                                        [100%]
 =================================== FAILURES ===================================
-________ test_emit_shell_exits_nonzero_when_one_of_two_fetch_legs_fails ________
+_________ test_eval_anchor_check_fails_when_any_single_verifier_fails __________
 
-tmp_path = PosixPath('/tmp/pytest-of-ubuntu/pytest-1929/test_emit_shell_exits_nonzero_0')
+tmp_path = PosixPath('/tmp/pytest-of-ubuntu/pytest-1956/test_eval_anchor_check_fails_w0')
 
-    def test_emit_shell_exits_nonzero_when_one_of_two_fetch_legs_fails(tmp_path: Path) -> None:
-        proc, _calls = _run_shell(tmp_path, fail_token="run-bakeoff-bad.json")
+    def test_eval_anchor_check_fails_when_any_single_verifier_fails(tmp_path: Path) -> None:
+        for fail_token in _FAIL_TOKENS:
+            leg_path = tmp_path / fail_token
+            leg_path.mkdir()
+            proc, calls = _run_eval_anchor_check(leg_path, fail_token=fail_token)
+>           _assert_injected_failure_was_honored(proc, calls, fail_token)
+
+scripts/eval_harness/tests/test_eval_anchor_check.py:178: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+proc = CompletedProcess(args=['make', '-C', '/home/ubuntu/w/L1-gate', 'eval-anchor-check'], returncode=2, stdout="make: Enter.../home/ubuntu/w/L1-gate'\n", stderr='S2A-determinism-anchor-run\nmake: *** [Makefile:668: eval-anchor-check] Error 1\n')
+calls = [['run', '--extra', 'dev', 'python', '-m', 'scripts.eval_harness.cli', ...]]
+fail_token = 'S2A-determinism-anchor-run'
+
+    def _assert_injected_failure_was_honored(
+        proc: subprocess.CompletedProcess[str],
+        calls: list[list[str]],
+        fail_token: str,
+    ) -> None:
         combined = proc.stdout + proc.stderr
->       assert proc.returncode != 0, combined
-E       AssertionError: candidate bad fetch FAILED
-E
-E       assert 0 != 0
-E        +  where 0 = CompletedProcess(args=['bash', '/tmp/pytest-of-ubuntu/pytest-1929/test_emit_shell_exits_nonzero_0/planned.sh'], returncode=0, stdout='', stderr='candidate bad fetch FAILED\n').returncode
+>       assert _verifier_commands(calls) == list(_VERIFIER_COMMANDS), (
+            f"{fail_token}: expected all three verifiers invoked, got {_verifier_commands(calls)!r}:\n{combined}"
+        )
+E       AssertionError: S2A-determinism-anchor-run: expected all three verifiers invoked, got ['score']:
+E         make: Entering directory '/home/ubuntu/w/L1-gate'
+E         make: Leaving directory '/home/ubuntu/w/L1-gate'
+E         S2A-determinism-anchor-run
+E         make: *** [Makefile:668: eval-anchor-check] Error 1
+E         
+E       assert ['score'] == ['score', 'sc...w-eval-split']
+E         
+E         Right contains 2 more items, first extra item: 'score-face'
+E         Use -v to get more diff
 
-scripts/eval_harness/tests/test_bakeoff_runner_exit_status.py:136: AssertionError
+scripts/eval_harness/tests/test_eval_anchor_check.py:92: AssertionError
 =========================== short test summary info ============================
-FAILED scripts/eval_harness/tests/test_bakeoff_runner_exit_status.py::test_emit_shell_exits_nonzero_when_one_of_two_fetch_legs_fails
-1 failed in 0.37s
+FAILED scripts/eval_harness/tests/test_eval_anchor_check.py::test_eval_anchor_check_fails_when_any_single_verifier_fails
+1 failed in 2.58s
 ```
 
-The partial-failure branch was restored immediately afterward.
-
-### T3 — caption scorer gate is load-bearing
-
-The face proposal policy is deliberate: `report.py` says `gate_proposal is never a release artifact`, sets `release_surface` to `proposal_only_not_release`, and records `FIR-6 human operator records gate/deferral; FIR-5 cannot self-promote`. The face proposal was therefore left unchanged. The generated bake-off shell now runs the real caption `score` command after every successful fetch with `--rubric-gate enforce`. Because the bake-off corpus is `roster_only`, the command explicitly consents to refused face detection and identification metrics; those unavailable face metrics therefore cannot mask the caption gate.
-
-RED, after strengthening the scorer-call test to require that caption-only policy and before adding its arguments:
+Makefile restored via `git stash pop`. Post-restore:
 
 ```text
-F                                                                        [100%]
-=================================== FAILURES ===================================
-_______ test_emit_shell_exits_nonzero_when_score_gate_fails_after_fetch ________
-
-tmp_path = PosixPath('/tmp/pytest-of-ubuntu/pytest-1944/test_emit_shell_exits_nonzero_0')
-
-    def test_emit_shell_exits_nonzero_when_score_gate_fails_after_fetch(tmp_path: Path) -> None:
-        bad_run = str((tmp_path / "out" / "run-bakeoff-bad.json").resolve())
-        proc, calls = _run_shell(tmp_path, fail_token=f"--run-record {bad_run}")
-        combined = proc.stdout + proc.stderr
-        score_calls = [call for call in calls if call[:3] == ["-m", "scripts.eval_harness.cli", "score"]]
->       assert any(
-            call[-6:] == [
-                "--rubric-gate",
-                "enforce",
-                "--allow-refused",
-                "detection",
-                "--allow-refused",
-                "identification",
-            ]
-            for call in score_calls
-        ), score_calls
-E       AssertionError: [['-m', 'scripts.eval_harness.cli', 'score', '--manifest', 'scripts/eval_harness/corpus646-interleave-manifest-2026071....cli', 'score', '--manifest', 'scripts/eval_harness/corpus646-interleave-manifest-20260716.json', '--run-record', ...]]
-E       assert False
-E        +  where False = any(<generator object test_emit_shell_exits_nonzero_when_score_gate_fails_after_fetch.<locals>.<genexpr> at 0xe084eff5fc60>)
-
-scripts/eval_harness/tests/test_bakeoff_runner_exit_status.py:145: AssertionError
-=========================== short test summary info ============================
-FAILED scripts/eval_harness/tests/test_bakeoff_runner_exit_status.py::test_emit_shell_exits_nonzero_when_score_gate_fails_after_fetch
-1 failed in 0.45s
+.....                                                                    [100%]
+5 passed in 10.46s
 ```
 
-GREEN, after wiring the explicit caption policy:
+## SIBLING REVIEW
 
-```text
-.                                                                        [100%]
-1 passed in 0.40s
-```
+`test_eval_anchor_check_invokes_the_three_literal_verifiers` does **not** have the same weakness.
 
-REVERT-RED, after temporarily removing only the caption-enforce/face-consent arguments while leaving the scorer invocation present:
+- It asserts `proc.returncode == 0`, so a missing target (make exit 2) fails it. That is why the original author's first run and TEST-15 revert-red were red on the sibling, not on the fail-path test.
+- It asserts exact equality on the captured `calls` list (all three literal argv vectors). An empty target or a first-only target cannot pass.
+- It does not inject a failure, so it cannot certify swallow-vs-propagate. That is the other test's job; the sibling is not false-green for the missing-target trick.
 
-```text
-F                                                                        [100%]
-=================================== FAILURES ===================================
-_______ test_emit_shell_exits_nonzero_when_score_gate_fails_after_fetch ________
-
-tmp_path = PosixPath('/tmp/pytest-of-ubuntu/pytest-1946/test_emit_shell_exits_nonzero_0')
-
-    def test_emit_shell_exits_nonzero_when_score_gate_fails_after_fetch(tmp_path: Path) -> None:
-        bad_run = str((tmp_path / "out" / "run-bakeoff-bad.json").resolve())
-        proc, calls = _run_shell(tmp_path, fail_token=f"--run-record {bad_run}")
-        combined = proc.stdout + proc.stderr
-        score_calls = [call for call in calls if call[:3] == ["-m", "scripts.eval_harness.cli", "score"]]
->       assert any(
-            call[-6:] == [
-                "--rubric-gate",
-                "enforce",
-                "--allow-refused",
-                "detection",
-                "--allow-refused",
-                "identification",
-            ]
-            for call in score_calls
-        ), score_calls
-E       AssertionError: [['-m', 'scripts.eval_harness.cli', 'score', '--manifest', 'scripts/eval_harness/corpus646-interleave-manifest-2026071....cli', 'score', '--manifest', 'scripts/eval_harness/corpus646-interleave-manifest-20260716.json', '--run-record', ...]]
-E       assert False
-E        +  where False = any(<generator object test_emit_shell_exits_nonzero_when_score_gate_fails_after_fetch.<locals>.<genexpr> at 0xe6c4d5890380>)
-
-scripts/eval_harness/tests/test_bakeoff_runner_exit_status.py:145: AssertionError
-=========================== short test summary info ============================
-FAILED scripts/eval_harness/tests/test_bakeoff_runner_exit_status.py::test_emit_shell_exits_nonzero_when_score_gate_fails_after_fetch
-1 failed in 0.42s
-```
-
-The caption policy arguments were restored immediately afterward.
-
-### Final regression checks and anchor finding
-
-Directly affected suite:
-
-```text
-............................................                             [100%]
-44 passed in 7.81s
-```
-
-Existing non-fusion scorer exit-code contract tests:
-
-```text
-............                                                             [100%]
-12 passed, 3 deselected, 22 warnings in 1.40s
-```
-
-The full `test_cli_exit_gates.py` diagnostic run reached 12 progress dots but its three fusion-runner cases did not finish after roughly five minutes; it was interrupted with exit 130 and is not claimed as green evidence. The 12 directly relevant non-fusion tests were then rerun to a final count as shown above.
-
-`make eval-anchor-check` was also invoked exactly as documented. In this isolated sandbox, `uv --extra dev` could not bootstrap the absent local environment because outbound DNS is disabled:
-
-```text
-Using CPython 3.12.7
-Creating virtual environment at: .venv
-error: Request failed after 3 retries in 4.7s
-  Caused by: Failed to fetch: `https://pypi.org/simple/psycopg/`
-  Caused by: error sending request for url (https://pypi.org/simple/psycopg/)
-  Caused by: client error (Connect)
-  Caused by: dns error
-  Caused by: failed to lookup address information: Temporary failure in name resolution
-make: *** [Makefile:668: eval-anchor-check] Error 2
-```
-
-The generated `.venv` was moved recoverably out of the worktree to `/tmp/l1-gate-generated-venv`. To separate bootstrap failure from anchor state, all three underlying commands were then run with the contract-provided Python and verified `PYTHONPATH`:
-
-- Caption determinism anchor: exit 1, `determinism check ANCHOR_MISMATCH [score]`. This is a stale-anchor finding; no frozen file or digest was changed.
-- Face determinism anchor: exit 0, `determinism check passed [score-face]` and `freeze-certification passed [score-face]`.
-- Sealed eval split: exit 0.
-
-Thus the new combined target is capable of going red and, once dependencies are present, will stop on the currently stale caption anchor before proceeding to the two green checks.
+Left unchanged except that it now goes through the shared runner (optional `-f` is unused on this test).
 
 ## CANON RULES
 
-### EVAL-23
+Verbatim table rows from `/home/ubuntu/lane-canon/ENGCANON.md`:
 
-Verbatim table row from `/home/ubuntu/lane-canon/EVALCANON.md`:
+### TEST-06
 
 ```text
-| EVAL-23<a name="eval-23"></a> | Production readiness is reported as one number; a count of tests implemented, an average across categories, or an offline accuracy figure | **Readiness is the weakest category, not the total**: score data, model, infrastructure, and monitoring coverage as four separate subtotals and report the minimum as the readiness number, because the four are not substitutable and a total lets strong monitoring hide zero data tests until the untested contract fails in production (worst-unit gating on cohorts is [[FAIR-01]](ml-systems.md#fair-01); per-slice floors are [[EVAL-04]](ml-systems.md#eval-04)) | What is the lowest of the four category subtotals, and what is missing from it? | J·r | [ml-test-score sec-VI.A](../SOURCES.md#src-ml-test-score) |
+| TEST-06<a name="test-06"></a> | New test about to be run for the first time | **Watch it fail once / predict the failure**: a test never observed failing (with the predicted message) may assert nothing; a tautological assertion (arithmetic on the code's own output, a `const` that cannot change, a proxy that can diverge from the real behavior) certifies zero | What exact failure message do you expect before you run it? | S·w | [modern-software-engineering ch-8](../SOURCES.md#src-modern-software-engineering) |
 ```
 
-Satisfaction: no aggregate success can hide a weak leg. The anchor target fails on any stale caption, face, or split anchor; the bake-off shell fails on any failed candidate leg; and each successfully fetched candidate must pass the enforced caption scorer gate.
+Satisfaction: the predicted message was `expected all three verifiers invoked, got ['score']`. The first run of the strengthened test produced that exact assertion (B.1). A returncode-only assert would have been green on that same Makefile.
 
 ### TEST-15
 
-No `TEST-15` Markdown-table rule is present in either named canon file (`EVALCANON.md` or `RULES.md`). `EVALCANON.md` contains only a cross-reference to `[[TEST-15]](engineering.md#test-15)` in EVAL-22, not the TEST-15 rule text. I have not invented or paraphrased a missing rule as canon.
+```text
+| TEST-15<a name="test-15"></a> | Reviewing a passing test that guards an invariant, single-source count, or state property | **Prove the green can go red**: a passing test that cannot fail certifies nothing; before trusting it, mutate the production path (break the invariant, inject a second/zero case, corrupt an input) and confirm the assertion catches it; for invariant/count tests, ship the mutation as a permanent discrimination guard (e.g. mis-wire → asserts 2, drop → asserts 0). Watch for assertions on the code's own output rather than observed behavior, and DOM/count checks that never query the real surface (see [[TEST-11]](engineering.md#test-11), [[DBG-01]](engineering.md#dbg-01)) | If production regressed here, would this exact assertion turn red; have I seen it? | S·r | [modern-software-engineering ch-8](../SOURCES.md#src-modern-software-engineering) + [pragmatic-programmer ch-9](../SOURCES.md#src-pragmatic-programmer) |
+```
 
-Satisfaction of the brief's stated TEST-15 requirement: each new behavior was observed RED before its production fix, GREEN after the fix, and RED again with the relevant production behavior temporarily removed; the production behavior was then restored.
+Satisfaction:
+- The production fail-path test now asserts observed `_calls` (three CLI names) and the injected `fail_token` in combined output, not make's generic nonzero.
+- Each named mutation was run in a scratch copy and produced a distinct red.
+- Those mutations shipped as permanent tests: absent → asserts `[]` and no token; stop-at-first → asserts `['score']`; swallow → asserts `returncode == 0` after all three ran.
+- Production fix was stashed (`Makefile` only); the fail-path test went red again; the fix was restored.
 
-### rg-006
+## MAKEFILE CHANGE (allowlist, justified)
 
-No `rg-006` Markdown-table rule or textual occurrence is present in either named canon file (`EVALCANON.md` or `RULES.md`). I have not invented its text.
+The default expectation was tests only. The strengthened contract requires all three verifiers to be **invoked** even when one is injected-fail. GNU make's per-recipe fail-fast cannot do that: an early `score` failure never reaches `score-face` or `draw-eval-split`. That is mutation 2, which must stay red.
 
-Satisfaction of the brief's stated command requirement: the root surface is the literal documented `make eval-anchor-check`; its test executes that exact command and asserts the exact three literal verifier argv lists. `make -n eval-anchor-check` parses without override warnings and prints those commands. The real invocation was attempted as written; its only pre-verifier blocker here was the sandbox's disabled dependency-download network, reported verbatim above.
+The target is now one recipe: run each verifier in a subshell, record `status=1` on any failure, `exit $$status`. uv argv is unchanged, so the sibling's literal call list still holds. No frozen anchor, digest, or verifier body was touched.
 
 ## EXACT FILES CHANGED
 
-The required `git diff --stat HEAD~1` output is unavailable because the sandbox prevents creation of the commit. The staging attempt failed verbatim:
+`git diff --stat` of the commit contents (equals `git diff --stat HEAD~1` once this commit is HEAD):
 
 ```text
-fatal: Unable to create '/home/ubuntu/l1/r7-int/.git/worktrees/L1-gate/index.lock': Read-only file system
+ .lane/REPORT.md                                    | 440 +++++++++++----------
+ Makefile                                           |  14 +-
+ .../eval_harness/tests/test_eval_anchor_check.py   | 168 +++++++-
+ 3 files changed, 408 insertions(+), 214 deletions(-)
 ```
 
-The intended commit contains exactly these files:
+## HONEST STATUS: COMPLETE
 
-- `.lane/REPORT.md`
-- `Makefile`
-- `apps/prototype-description-service/scripts/eval_harness/bakeoff_runner.py`
-- `apps/prototype-description-service/scripts/eval_harness/tests/test_bakeoff_runner_exit_status.py`
-- `apps/prototype-description-service/scripts/eval_harness/tests/test_eval_anchor_check.py`
-
-No determinism anchor JSON, frozen digest, `strata.py`, caption tag scoring, or readability scoring file was changed.
-
-## HONEST STATUS: PARTIAL
-
-All requested code and test work for T1, T2, and T3 is implemented in the worktree. The only required deliverable that remains is to stage the five files listed above, commit them on `lane/L1-gate`, and replace this blocker section with the resulting `git diff --stat HEAD~1`; that cannot be done until `/home/ubuntu/l1/r7-int/.git/worktrees/L1-gate` is writable. The caption determinism anchor is currently stale and must be investigated by its owning workflow; per the task invariant it was reported, not re-frozen. The sandbox-only `uv` bootstrap could not download dependencies because outbound DNS is disabled, but the underlying checks were executed with the provided environment and their actual states are reported above.
+Strengthened fail-path test requires (1) all three verifiers invoked via captured `_calls` and (2) the injected `fail_token` in combined output, plus nonzero exit. Three permanent scratch-makefile guards ship the named mutations. Makefile continue-then-fail is the minimum production change that can satisfy "all three invoked" when an early verifier fails. Sibling reviewed; no same-weakness fix needed.

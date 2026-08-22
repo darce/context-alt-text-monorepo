@@ -54,25 +54,43 @@ _GOLDEN = _SERVICE_ROOT / "scene" / "tests" / "seed" / "golden.json"
 _ANCHOR_DIR = _REPO_ROOT / "docs" / "tasks" / "vlm" / "bakeoff-results"
 _STEM = _DEFAULT_STEM
 _MAN_STEM = _DEFAULT_MANIFEST_STEM
-# Freeze corpus: golden + media 39 mixed-y trap (wG3) + media 40 centre-x-tie (G-02).
+# Historical freeze corpus (37-entry golden + traps). Do not overwrite these files.
 _MAN = _ANCHOR_DIR / f"{_MAN_STEM}.json"
 _RUN = _ANCHOR_DIR / f"{_STEM}.json"
 _REPORT_JSON = _ANCHOR_DIR / f"{_STEM}-report.json"
 _REPORT_MD = _ANCHOR_DIR / f"{_STEM}-report.md"
+# Live named re-seal: generator against post-split reported golden (20 + traps).
+_LIVE_ANCHOR_DIR = _SERVICE_ROOT / "scripts" / "eval_harness" / "seals" / "caption-freeze-reported-20"
+_LIVE_MAN = _LIVE_ANCHOR_DIR / f"{_MAN_STEM}.json"
+_LIVE_RUN = _LIVE_ANCHOR_DIR / f"{_STEM}.json"
+_LIVE_REPORT_JSON = _LIVE_ANCHOR_DIR / f"{_STEM}-report.json"
+_LIVE_REPORT_MD = _LIVE_ANCHOR_DIR / f"{_STEM}-report.md"
 
-# File digests of the committed freeze set — update when intentionally regenerating.
-# wG3: caption freeze corpus extended with media 39 G-01 mixed-y trap so
-# labeled_y_missing_images is freeze-observable (was structural 0 on golden).
-# G-02: media 40 centre-x-tie trap so positional_images is freeze-observable
-# (was structural 0). Digests rewritten with the G-02 regen.
-# VLM6-DELTA-09: regenerated for FIR-11 v3 (annotation_mode required, per-box
-# lineage — build_caption_anchor_manifest fix, VLM6-DELTA-04).
-_FROZEN_DIGESTS = {
+# Historical VLM6-DELTA-09 hashes of the 37-entry+traps freeze. Superseded in
+# place by PRIV-1 scrub (231a39d6) then by the 8b93c473 split of live golden.
+# Kept as a named constant so a reader can see the re-seal; never overwrite.
+_FROZEN_DIGESTS_PRE_SPLIT_37 = {
     _MAN.name: "14e5e2e1a017c45acc7c615b3069b31880f011db9c14098e85f9a789a8f4a7a7",
     _RUN.name: "bca65e319c6e942d3cdaac333a9b8bbf0a1f58ef1687c6ec81bbd9d27002c3a4",
     _REPORT_JSON.name: "1d5c35bf9ace9de3b74e4846699905d84be7e22c2a72c4e86f57084bcc4a5f40",
     _REPORT_MD.name: "5131d552f1bc38e6ae3441d8346a35ca560a2412d802008f2e924aeff1ab339c",
 }
+# Current bytes of the committed docs/ 39-entry freeze (still the 37+2 corpus).
+_FROZEN_DIGESTS_37_CORPUS_ON_DISK = {
+    _MAN.name: "70b14e7137736d4bb9ace15c732bf13173e13d04a8be5a58d1b47bc2f8f48b5e",
+    _RUN.name: "b556d3c23112996bbd434311fde31238901ec30c07469c31d8362e8c94750b37",
+    _REPORT_JSON.name: "77c3a03248b8d19b2806422a81a54bf36a7ac139de01d4a68d9c738e34dbeb89",
+    _REPORT_MD.name: "5131d552f1bc38e6ae3441d8346a35ca560a2412d802008f2e924aeff1ab339c",
+}
+# Live generator/scorer freeze of post-split reported golden (20 + traps 39/40).
+_FROZEN_DIGESTS_REPORTED_20 = {
+    _LIVE_MAN.name: "edaa8dfddc02b0e0fb93ebf4252a765f84ec56046625c7bfdf8a932ccef7d8dc",
+    _LIVE_RUN.name: "31bb23a79b21bf5ab7160bc1a82b313448e46375e1ce007a2f0af99c3905fd2f",
+    _LIVE_REPORT_JSON.name: "5e48b833b20dc7b5f395ccd5162dfec53ccd7920733106eedc0f3079a4d616fa",
+    _LIVE_REPORT_MD.name: "61d62a7f925c14ecd5a53d4fe4c8ad9c9fbf09962cb5e5a782bd3682b433f21a",
+}
+_LIVE_MANIFEST_SHA_PREFIX = "bc434f0b"
+_HISTORICAL_MANIFEST_SHA_PREFIX = "51e9456b"
 
 
 def _sha256(path: Path) -> str:
@@ -235,11 +253,30 @@ def _assert_scored_matches_oracle(scored: dict, oracle: dict[str, int | float]) 
     assert len(wrong_names) == int(oracle["wrong_name_count"])
 
 
-@pytest.mark.parametrize("name,expected", list(_FROZEN_DIGESTS.items()))
+@pytest.mark.parametrize("name,expected", list(_FROZEN_DIGESTS_37_CORPUS_ON_DISK.items()))
 def test_committed_anchor_digests_match_frozen(name: str, expected: str) -> None:
     """Pin machine-diffable digests so a silent rewrite of the freeze goes red (TEST-15 base)."""
     path = _ANCHOR_DIR / name
     assert path.is_file(), f"missing committed anchor artifact: {path}"
+    assert _sha256(path) == expected
+
+
+@pytest.mark.parametrize("name,expected", list(_FROZEN_DIGESTS_PRE_SPLIT_37.items()))
+def test_historical_pre_split_37_digests_are_superseded(name: str, expected: str) -> None:
+    """Old VLM6-DELTA-09 hashes must stay visible and must not match on-disk bytes."""
+    path = _ANCHOR_DIR / name
+    assert path.is_file(), f"missing committed anchor artifact: {path}"
+    live = _sha256(path)
+    if name == _REPORT_MD.name:
+        assert live == expected
+        return
+    assert live != expected, f"{name} still matches the superseded pre-split digest"
+
+
+@pytest.mark.parametrize("name,expected", list(_FROZEN_DIGESTS_REPORTED_20.items()))
+def test_reported_20_freeze_digests_match_named_seal(name: str, expected: str) -> None:
+    path = _LIVE_ANCHOR_DIR / name
+    assert path.is_file(), f"missing live reported-20 freeze: {path}"
     assert _sha256(path) == expected
 
 
@@ -259,35 +296,27 @@ def test_generator_regenerates_byte_identical_committed_anchor(tmp_path: Path) -
     )
     man_path = tmp_path / _MAN.name
     assert man_path.is_file(), "write_anchor must promote the caption-anchor manifest"
-    # Metadata-only: generation-time sha must match the committed freeze man, not bare golden.
+    # Live named freeze is the generator target after 8b93c473 (20-entry golden + traps).
     expected_sha = _manifest_sha(
         load_manifest(
-            str(_MAN),
+            str(_LIVE_MAN),
             skip_hash_verification=True,
             hash_skip_reason="test metadata-only; image bytes never opened",
             metadata_only=True,
         )
     )
     assert manifest_sha == expected_sha
-    assert manifest_sha.startswith("51e9456b")  # VLM6-DELTA-09 v3 regen
-    assert man_path.read_bytes() == _MAN.read_bytes()
-    assert run_path.read_bytes() == _RUN.read_bytes()
-    assert report_json.read_bytes() == _REPORT_JSON.read_bytes()
-    assert report_md.read_bytes() == _REPORT_MD.read_bytes()
+    assert manifest_sha.startswith(_LIVE_MANIFEST_SHA_PREFIX)
+    assert man_path.read_bytes() == _LIVE_MAN.read_bytes()
+    assert run_path.read_bytes() == _LIVE_RUN.read_bytes()
+    assert report_json.read_bytes() == _LIVE_REPORT_JSON.read_bytes()
+    assert report_md.read_bytes() == _LIVE_REPORT_MD.read_bytes()
 
 
 def test_committed_run_record_identity_rows_are_dicts_and_manifest_sha_computed() -> None:
-    """Greenfield shape: no bare-string identities; sha was generation-time computed."""
+    """Historical 37+2 freeze run still records the pre-split generation-time SHA."""
     record = json.loads(_RUN.read_text())
-    # Metadata-only: provenance sha check against freeze man; never opens image bytes.
-    assert record["provenance"]["manifest_sha256"] == _manifest_sha(
-        load_manifest(
-            str(_MAN),
-            skip_hash_verification=True,
-            hash_skip_reason="test metadata-only; image bytes never opened",
-            metadata_only=True,
-        )
-    )
+    assert record["provenance"]["manifest_sha256"].startswith(_HISTORICAL_MANIFEST_SHA_PREFIX)
     assert len(record["items"]) == 39  # golden 37 + G-01 media 39 + G-02 media 40
     assert any(int(i["media_id"]) == _TRAP_MEDIA_ID for i in record["items"])
     assert any(int(i["media_id"]) == _POS_TRAP_MEDIA_ID for i in record["items"])
@@ -301,6 +330,20 @@ def test_committed_run_record_identity_rows_are_dicts_and_manifest_sha_computed(
     assert record["provenance"]["face_metrics_evidential"] is False
 
 
+def test_reported_20_run_record_manifest_sha_matches_generated_man() -> None:
+    record = json.loads(_LIVE_RUN.read_text())
+    assert record["provenance"]["manifest_sha256"] == _manifest_sha(
+        load_manifest(
+            str(_LIVE_MAN),
+            skip_hash_verification=True,
+            hash_skip_reason="test metadata-only; image bytes never opened",
+            metadata_only=True,
+        )
+    )
+    assert record["provenance"]["manifest_sha256"].startswith(_LIVE_MANIFEST_SHA_PREFIX)
+    assert len(record["items"]) == 22  # reported 20 + G-01 media 39 + G-02 media 40
+
+
 def test_corrupt_expect_report_makes_determinism_gate_red(tmp_path: Path) -> None:
     """TEST-15 / DBG-11: corrupted --expect-report turns the shipped gate red.
 
@@ -308,19 +351,19 @@ def test_corrupt_expect_report_makes_determinism_gate_red(tmp_path: Path) -> Non
     freeze was undetectable. This control must fail if ANCHOR_MISMATCH is
     removed or weakened (sr-001).
     """
-    run_copy = tmp_path / _RUN.name
-    run_copy.write_bytes(_RUN.read_bytes())
-    payload = json.loads(_REPORT_JSON.read_text())
+    run_copy = tmp_path / _LIVE_RUN.name
+    run_copy.write_bytes(_LIVE_RUN.read_bytes())
+    payload = json.loads(_LIVE_REPORT_JSON.read_text())
     before = (payload.get("verdict") or {}).get("verdict", "pass_ungated")
     payload.setdefault("verdict", {})["verdict"] = "CORRUPTED_FOR_TEST_15"
     corrupt_expect = tmp_path / "expect-corrupt-report.json"
     corrupt_expect.write_text(json.dumps(payload, indent=2, sort_keys=True, ensure_ascii=False) + "\n")
-    assert _sha256(corrupt_expect) != _FROZEN_DIGESTS[_REPORT_JSON.name]
+    assert _sha256(corrupt_expect) != _FROZEN_DIGESTS_REPORTED_20[_LIVE_REPORT_JSON.name]
 
     with pytest.raises(SystemExit) as exc:
         _check_score_determinism_cross_process(
             run_copy,
-            str(_MAN),
+            str(_LIVE_MAN),
             rubric_gate="skip",
             expect_report=corrupt_expect,
         )
@@ -336,8 +379,8 @@ def test_corrupt_expect_report_makes_determinism_gate_red(tmp_path: Path) -> Non
     assert artifact.is_file()
     assert str(artifact.resolve()) in msg
     assert not list(tmp_path.glob("determinism-anchor-mismatch*.diff.txt"))
-    # Committed freeze still intact (TEST-15 restore semantics).
-    assert _sha256(_REPORT_JSON) == _FROZEN_DIGESTS[_REPORT_JSON.name]
+    # Live named freeze still intact (TEST-15 restore semantics).
+    assert _sha256(_LIVE_REPORT_JSON) == _FROZEN_DIGESTS_REPORTED_20[_LIVE_REPORT_JSON.name]
     assert before != "CORRUPTED_FOR_TEST_15"
 
 
@@ -357,15 +400,15 @@ def test_expect_report_matches_committed_freeze_green(
         empty = tmp_path / "empty"
         empty.mkdir()
         monkeypatch.setenv("GOLDEN_IMAGES_DIR", str(empty))
-    run_copy = tmp_path / _RUN.name
-    run_copy.write_bytes(_RUN.read_bytes())
+    run_copy = tmp_path / _LIVE_RUN.name
+    run_copy.write_bytes(_LIVE_RUN.read_bytes())
     # Copy freeze into tmp so we never risk writing beside committed artifacts.
-    expect_copy = tmp_path / _REPORT_JSON.name
-    expect_copy.write_bytes(_REPORT_JSON.read_bytes())
+    expect_copy = tmp_path / _LIVE_REPORT_JSON.name
+    expect_copy.write_bytes(_LIVE_REPORT_JSON.read_bytes())
 
     json_doc, _md = _check_score_determinism_cross_process(
         run_copy,
-        str(_MAN),
+        str(_LIVE_MAN),
         rubric_gate="skip",
         expect_report=expect_copy,
     )
@@ -373,9 +416,9 @@ def test_expect_report_matches_committed_freeze_green(
     assert "determinism check passed [score]" in out
     assert "matches --expect-report" in out
     assert "ANCHOR_MISMATCH" not in out
-    assert json_doc == _REPORT_JSON.read_text(encoding="utf-8")
-    assert _sha256(_REPORT_JSON) == _FROZEN_DIGESTS[_REPORT_JSON.name]
-    assert _sha256(_RUN) == _FROZEN_DIGESTS[_RUN.name]
+    assert json_doc == _LIVE_REPORT_JSON.read_text(encoding="utf-8")
+    assert _sha256(_LIVE_REPORT_JSON) == _FROZEN_DIGESTS_REPORTED_20[_LIVE_REPORT_JSON.name]
+    assert _sha256(_LIVE_RUN) == _FROZEN_DIGESTS_REPORTED_20[_LIVE_RUN.name]
 
 
 def test_corrupt_run_record_alt_text_makes_determinism_gate_red(tmp_path: Path) -> None:
@@ -387,20 +430,20 @@ def test_corrupt_run_record_alt_text_makes_determinism_gate_red(tmp_path: Path) 
     ``items[i].describe.alt_text_draft`` (no content gate watches it alone;
     wrong-name stays clean) so ANCHOR_MISMATCH is the sole detector.
     """
-    run_copy = tmp_path / _RUN.name
-    payload = json.loads(_RUN.read_text())
+    run_copy = tmp_path / _LIVE_RUN.name
+    payload = json.loads(_LIVE_RUN.read_text())
     item = payload["items"][0]
     describe = dict(item.get("describe") or {})
     describe["alt_text_draft"] = "CORRUPTED ALT TEXT DRAFT FOR F5-01 INPUT CONTROL"
     item["describe"] = describe
     run_copy.write_text(json.dumps(payload, indent=2, sort_keys=True, ensure_ascii=False) + "\n")
-    expect_copy = tmp_path / _REPORT_JSON.name
-    expect_copy.write_bytes(_REPORT_JSON.read_bytes())
+    expect_copy = tmp_path / _LIVE_REPORT_JSON.name
+    expect_copy.write_bytes(_LIVE_REPORT_JSON.read_bytes())
 
     with pytest.raises(SystemExit) as exc:
         _check_score_determinism_cross_process(
             run_copy,
-            str(_MAN),
+            str(_LIVE_MAN),
             rubric_gate="skip",
             expect_report=expect_copy,
         )
@@ -414,9 +457,9 @@ def test_corrupt_run_record_alt_text_makes_determinism_gate_red(tmp_path: Path) 
     assert artifact.is_file()
     assert str(artifact.resolve()) in msg
     assert not list(tmp_path.glob("determinism-anchor-mismatch*.diff.txt"))
-    # Committed freeze and original run-record untouched.
-    assert _sha256(_REPORT_JSON) == _FROZEN_DIGESTS[_REPORT_JSON.name]
-    assert _sha256(_RUN) == _FROZEN_DIGESTS[_RUN.name]
+    # Live named freeze and original run-record untouched.
+    assert _sha256(_LIVE_REPORT_JSON) == _FROZEN_DIGESTS_REPORTED_20[_LIVE_REPORT_JSON.name]
+    assert _sha256(_LIVE_RUN) == _FROZEN_DIGESTS_REPORTED_20[_LIVE_RUN.name]
 
 
 def test_committed_anchor_discloses_corpus_coverage_gaps():  # VLM6-R2-03
@@ -1005,16 +1048,24 @@ def test_cli_score_s2a_freeze_ignores_empty_golden_images_dir(
     out.mkdir()
     monkeypatch.setattr(cli_mod, "OUT_DIR", out)
     monkeypatch.chdir(tmp_path)
+    # Copy the live freeze into tmp so score cannot overwrite the named seal
+    # (reports are written beside the run-record stem).
+    man_copy = tmp_path / _LIVE_MAN.name
+    run_copy = tmp_path / _LIVE_RUN.name
+    expect_copy = tmp_path / _LIVE_REPORT_JSON.name
+    man_copy.write_bytes(_LIVE_MAN.read_bytes())
+    run_copy.write_bytes(_LIVE_RUN.read_bytes())
+    expect_copy.write_bytes(_LIVE_REPORT_JSON.read_bytes())
     rc = main(
         [
             "score",
             "--manifest",
-            str(_MAN),
+            str(man_copy),
             "--run-record",
-            str(_RUN),
+            str(run_copy),
             "--check-determinism",
             "--expect-report",
-            str(_REPORT_JSON),
+            str(expect_copy),
             "--rubric-gate",
             "skip",
             "--freeze-certification",

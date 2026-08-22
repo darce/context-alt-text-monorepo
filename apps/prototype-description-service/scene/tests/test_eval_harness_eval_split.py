@@ -24,10 +24,19 @@ from scripts.eval_harness.strata import (
 )
 
 _SEED_MANIFEST = Path(__file__).resolve().parent / "seed" / "golden.json"
+_BAKEOFF_MANIFEST = Path(__file__).resolve().parent / "seed" / "bakeoff_golden.json"
 _SEALED_SPLIT = (
     Path(__file__).resolve().parents[4] / "docs/tasks/vlm/bakeoff-results/S1-sealed-eval-split-20260818.json"
 )
+# Live re-seal of the post-split 20-entry reported golden (same seed/fraction/rule).
+# Historical 37-entry artifact stays at _SEALED_SPLIT; do not overwrite it (rule b).
+_LIVE_SEALED_SPLIT = (
+    Path(__file__).resolve().parents[2]
+    / "scripts/eval_harness/seals/S1-sealed-eval-split-reported-20-20260822.json"
+)
 _DRAW_SEED = "vlm6-s1-sealed-eval-split-20260818"
+_HISTORICAL_SOURCE_SHA = "93fc86b2bf014d3783ff0999a47e88949ccb72e8cab9eec7cee9faa6891bcd0b"
+_SUPERSEDED_BY_COMMIT = "8b93c473fd8199299ab8e04367c401e580f26e46"
 _DRAW_TIMESTAMP = "2026-08-18T00:00:00Z"
 _PARTITION_PROVENANCE = (
     "per-image roster labels on the VLM-2A fixture corpus (golden.json v3); "
@@ -42,6 +51,17 @@ _EXPOSURE_NOTES = [
     ),
     "curation tenant 4ddf8f36 (LocalWP :10018) live with clustered uploads pre-draw",
     "determinism-anchor runs S0/S2A (bakeoff-results/) scored the 37 pre-split",
+]
+_LIVE_EXPOSURE_NOTES = [
+    (
+        "reported golden.json (20 entries) is the held_out half of "
+        "S1-sealed-eval-split-20260818; source SHA superseded by commit 8b93c473"
+    ),
+    "selection bakeoff_golden.json is a 10-entry train subset, not the full 17-entry train half",
+    (
+        "ASSIGNMENT_RULE/seed/held_out_fraction unchanged; this seal documents "
+        "the post-split reported corpus under the frozen rule"
+    ),
 ]
 _HASH_SKIP_REASON = "split seal pins sha256 metadata; image bytes never opened"
 # Seal: hard-coded held_out.media_ids from the committed draw.
@@ -78,6 +98,22 @@ def _load_golden():
         skip_hash_verification=True,
         hash_skip_reason=_HASH_SKIP_REASON,
     )
+
+
+def _load_union_reported_and_selection():
+    """Join reported golden + selection bakeoff (the live remainder of the 37)."""
+    reported = _load_golden()
+    selection = load_manifest(
+        str(_BAKEOFF_MANIFEST),
+        metadata_only=True,
+        skip_hash_verification=True,
+        hash_skip_reason=_HASH_SKIP_REASON,
+    )
+    by_id = {entry.media_id: entry for entry in reported.entries}
+    for entry in selection.entries:
+        by_id.setdefault(entry.media_id, entry)
+    roster = list(dict.fromkeys([*reported.roster, *selection.roster]))
+    return reported.model_copy(update={"entries": list(by_id.values()), "roster": roster})
 
 
 def _draw_golden(**overrides):
@@ -137,9 +173,16 @@ def _committed_expected(**overrides):
     return kwargs
 
 
+def _live_committed_expected(**overrides):
+    kwargs = _committed_expected(expected_pre_split_exposure=list(_LIVE_EXPOSURE_NOTES))
+    kwargs.update(overrides)
+    return kwargs
+
+
 def test_pin_committed_sealed_eval_split():
+    """Historical 37-entry seal is unchanged (b). Live golden must NOT verify it."""
     artifact = json.loads(_SEALED_SPLIT.read_text())
-    assert verify_eval_split(artifact, _load_golden(), **_committed_expected()) == []
+    assert artifact["source_manifest"]["sha256"] == _HISTORICAL_SOURCE_SHA
     assert artifact["held_out"]["media_ids"] == _SEALED_HELD_OUT_MEDIA_IDS
     assert artifact["seed"] == _DRAW_SEED
     assert artifact["draw_timestamp"] == _DRAW_TIMESTAMP
@@ -152,6 +195,33 @@ def test_pin_committed_sealed_eval_split():
         "with_must_right": 34,
         "with_present_identities": 34,
     }
+    violations = verify_eval_split(artifact, _load_golden(), **_committed_expected())
+    assert violations, (
+        f"historical 37-entry seal must not verify against post-split golden; "
+        f"superseded by {_SUPERSEDED_BY_COMMIT}"
+    )
+    assert any("source_manifest.sha256 mismatch" in message for message in violations), violations
+
+
+def test_pin_live_reported_sealed_eval_split():
+    artifact = json.loads(_LIVE_SEALED_SPLIT.read_text())
+    assert verify_eval_split(artifact, _load_golden(), **_live_committed_expected()) == []
+    assert artifact["held_out"]["media_ids"] == _SEALED_HELD_OUT_MEDIA_IDS
+    assert artifact["train"]["media_ids"] == []
+    assert artifact["exposure_inventory"]["entries"] == len(_load_golden().entries)
+    assert artifact["disjointness"]["provisional_reason"] == "empty_half"
+    assert artifact["source_manifest"]["sha256"] == hashlib.sha256(_SEED_MANIFEST.read_bytes()).hexdigest()
+
+
+def test_live_reported_seal_goes_red_on_scratch_drop_of_held_out_id():
+    """TEST-15: dropping one held-out id from a copy of the live seal must violate."""
+    artifact = copy.deepcopy(json.loads(_LIVE_SEALED_SPLIT.read_text()))
+    assert artifact["held_out"]["media_ids"]
+    artifact["held_out"]["media_ids"] = artifact["held_out"]["media_ids"][1:]
+    artifact["seal_sha256"] = compute_split_seal_sha256(artifact)
+    violations = verify_eval_split(artifact, _load_golden(), **_live_committed_expected())
+    assert violations
+    assert any("membership" in message or "held_out" in message for message in violations), violations
 
 
 def test_verify_eval_split_catches_moved_id_bad_rule_and_stale_span():
@@ -285,7 +355,7 @@ def _alice_bob_expected(**overrides):
 
 
 def test_cli_check_exits_0_on_committed_artifact():
-    assert main(_check_cli_args(_SEALED_SPLIT)) is None
+    assert main(_check_cli_args(_LIVE_SEALED_SPLIT, exposure_notes=list(_LIVE_EXPOSURE_NOTES))) is None
 
 
 def test_cli_draw_without_force_exits_3_on_existing_out(tmp_path):
@@ -468,10 +538,11 @@ def test_cli_check_is_metadata_only_without_image_bytes(tmp_path, monkeypatch):
     empty = tmp_path / "no-bytes"
     empty.mkdir()
     monkeypatch.setenv("GOLDEN_IMAGES_DIR", str(empty))
-    assert main(_check_cli_args(_SEALED_SPLIT)) is None
+    assert main(_check_cli_args(_LIVE_SEALED_SPLIT, exposure_notes=list(_LIVE_EXPOSURE_NOTES))) is None
 
 
-def _draw_cli_args(out: Path) -> list[str]:
+def _draw_cli_args(out: Path, *, exposure_notes: list[str] | None = None) -> list[str]:
+    notes = list(_EXPOSURE_NOTES if exposure_notes is None else exposure_notes)
     args = [
         "draw-eval-split",
         "--manifest",
@@ -488,16 +559,16 @@ def _draw_cli_args(out: Path) -> list[str]:
         _PARTITION_PROVENANCE,
         "--force",
     ]
-    for note in _EXPOSURE_NOTES:
+    for note in notes:
         args.extend(["--exposure-note", note])
     return args
 
 
 def test_cli_check_committed_and_redraw_is_byte_identical(tmp_path):
-    assert main(_check_cli_args(_SEALED_SPLIT)) is None
+    assert main(_check_cli_args(_LIVE_SEALED_SPLIT, exposure_notes=list(_LIVE_EXPOSURE_NOTES))) is None
     redrawn = tmp_path / "split.json"
-    assert main(_draw_cli_args(redrawn)) is None
-    assert redrawn.read_bytes() == _SEALED_SPLIT.read_bytes()
+    assert main(_draw_cli_args(redrawn, exposure_notes=list(_LIVE_EXPOSURE_NOTES))) is None
+    assert redrawn.read_bytes() == _LIVE_SEALED_SPLIT.read_bytes()
 
 
 def _mutate_draw_timestamp_future(artifact):
@@ -603,7 +674,7 @@ def test_verify_seal_digest_mismatch():
 
 def test_verify_status_verified_flip_is_violation():
     artifact = _draw_golden()
-    assert artifact["disjointness"]["identities_spanning_both_halves"]
+    assert artifact["disjointness"]["status"] == SplitDisjointnessStatus.PROVISIONAL.value
     artifact["disjointness"]["status"] = SplitDisjointnessStatus.VERIFIED.value
     violations = verify_eval_split(artifact, _load_golden())
     assert any("verified" in message and "status" in message for message in violations), violations
@@ -632,9 +703,11 @@ def test_cli_bare_check_without_required_flags_exits_2():
 
 
 def test_committed_artifact_verifies_clean():
-    artifact = json.loads(_SEALED_SPLIT.read_text())
-    assert verify_eval_split(artifact, _load_golden(), **_committed_expected()) == []
+    artifact = json.loads(_LIVE_SEALED_SPLIT.read_text())
+    assert verify_eval_split(artifact, _load_golden(), **_live_committed_expected()) == []
     assert artifact["disjointness"]["note"] == SPLIT_DISJOINTNESS_NOTE
+    historical = json.loads(_SEALED_SPLIT.read_text())
+    assert historical["disjointness"]["note"] == SPLIT_DISJOINTNESS_NOTE
 
 
 def _reseal(artifact: dict) -> dict:
@@ -981,12 +1054,26 @@ def _unlabelled_alice_bob() -> GoldenManifest:
 
 
 def _golden_with_blanked_held_out_spanning_labels() -> GoldenManifest:
-    """Blank present_identities on held-out images of the 5 spanning people (L-01)."""
-    manifest = _load_golden()
-    baseline = _draw_golden()
+    """Blank present_identities on held-out images of spanning people (L-01).
+
+    Reported golden alone is the 20260818 held-out half, so a re-draw of it
+    has an empty train and no spanning identities. The invariant still lives
+    on the union of reported + selection (a).
+    """
+    manifest = _load_union_reported_and_selection()
+    baseline = draw_eval_split(
+        manifest,
+        seed=_DRAW_SEED,
+        held_out_fraction=0.5,
+        draw_timestamp=_DRAW_TIMESTAMP,
+        source_manifest_path="scene/tests/seed/golden.json+bakeoff_golden.json",
+        source_manifest_sha256="a" * 64,
+        pre_split_exposure=["fixture exposure"],
+        partition_provenance=_PARTITION_PROVENANCE,
+    )
     spanning = set(baseline["disjointness"]["identities_spanning_both_halves"])
     held_ids = set(baseline["held_out"]["media_ids"])
-    assert spanning, "golden fixture must span identities (L-01 repro)"
+    assert spanning, "union of reported+selection must span identities (L-01 repro)"
     entries = []
     for entry in manifest.entries:
         if entry.media_id in held_ids and spanning.intersection(entry.present_identities):
@@ -1314,11 +1401,11 @@ def test_cli_check_resealed_source_path_exits_1(tmp_path, capsys, mutator):
 def test_verify_resealed_wrong_provisional_reason_member_is_named():
     # VLM6-RV6-Q1-02 (a): correct provisional status + wrong enum member.
     # MUT[delete_reason_mismatch_check]: deleting the compare leaves this [].
+    # Post-split reported golden re-draws as empty_half (all 20 SHAs held-out).
     artifact = _draw_golden()
     assert artifact["disjointness"]["status"] == SplitDisjointnessStatus.PROVISIONAL.value
-    expected_member = SplitProvisionalReason.IDENTITIES_SPAN_BOTH_HALVES
-    wrong = SplitProvisionalReason.EMPTY_HALF
-    assert artifact["disjointness"]["provisional_reason"] == expected_member.value
+    expected_member = SplitProvisionalReason(artifact["disjointness"]["provisional_reason"])
+    wrong = next(member for member in SplitProvisionalReason if member is not expected_member)
     artifact["disjointness"]["provisional_reason"] = wrong.value
     _reseal(artifact)
     violations = verify_eval_split(artifact, _load_golden(), **_fixture_expected())
@@ -1342,13 +1429,12 @@ def test_verify_resealed_provisional_with_none_reason_is_named():
     # VLM6-RV6-Q1-02 (c): provisional status + None reason.
     artifact = _draw_golden()
     assert artifact["disjointness"]["status"] == SplitDisjointnessStatus.PROVISIONAL.value
+    expected_reason = artifact["disjointness"]["provisional_reason"]
     artifact["disjointness"]["provisional_reason"] = None
     _reseal(artifact)
     violations = verify_eval_split(artifact, _load_golden(), **_fixture_expected())
     assert any("provisional_reason mismatch" in message for message in violations), violations
-    assert any(SplitProvisionalReason.IDENTITIES_SPAN_BOTH_HALVES.value in message for message in violations), (
-        violations
-    )
+    assert any(expected_reason in message for message in violations), violations
 
 
 _MALFORMED_SHA256 = (

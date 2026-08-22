@@ -72,7 +72,7 @@ from .cli import (
 from .face_metrics import named_box_name
 from .manifest import GoldenManifest, ManifestError, _resolve_image, load_manifest
 from .remote_client import RemoteClientError, RemoteSceneClient
-from .report import EVAL_MODES
+from .report import EVAL_MODES, RosterEpoch
 from .schema import SCHEMA, DocKind
 
 _CAPTION_MAX_TOKENS = 512
@@ -438,6 +438,8 @@ def _stamp_pipeline_provenance(
     ``instance_shape`` is operator-supplied and stamped verbatim; absent means
     absent — the harness never infers a host (rg-015)."""
     provenance["prompt_variant"] = prompt_variant
+    # This tree is post-PRIV-1; pre-priv1 is only legal on historical records.
+    provenance["roster_epoch"] = RosterEpoch.POST_PRIV1.value
     if two_pass:
         provenance["two_pass"] = True
     if dual_length:

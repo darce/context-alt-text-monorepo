@@ -136,10 +136,17 @@ describe('SettingsPage', () => {
     expect(screen.getByText('Loading settings…')).toBeInTheDocument();
   });
 
-  it('shows error state when settings fail to load', () => {
-    mockUseQuery.mockReturnValue(createMockQuery({ isError: true, error: new Error('fail') }));
+  it('offers retry and a labelled Dashboard escape when Recognition API settings fail to load', () => {
+    const refetch = vi.fn();
+    mockUseQuery.mockReturnValue(createMockQuery({ isError: true, error: new Error('fail'), refetch }));
     render(<SettingsPage />);
-    expect(screen.getByText('Failed to load settings.')).toBeInTheDocument();
+
+    expect(screen.getByRole('alert')).toHaveTextContent(
+      'Recognition API settings could not be loaded. Retry loading them or return to Dashboard.',
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Retry loading settings' }));
+    expect(refetch).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole('link', { name: 'Return to Dashboard' })).toHaveAttribute('href', '#/dashboard');
   });
 
   it('renders the settings form with loaded data', () => {
@@ -264,9 +271,7 @@ describe('SettingsPage', () => {
     mockUseQuery.mockReturnValue(createMockQuery({ data: { ...defaultSettings, tenant_paired: true } }));
     render(<SettingsPage />);
 
-    expect(screen.getByTestId('acx-tenant-pairing-status')).toHaveTextContent(
-      'Paired with the recognition service',
-    );
+    expect(screen.getByTestId('acx-tenant-pairing-status')).toHaveTextContent('Paired with the recognition service');
   });
 
   it('refetches sync health after a successful save so the offline banner clears', async () => {
@@ -277,9 +282,7 @@ describe('SettingsPage', () => {
     // onSuccess is async at runtime but typed void; wrap so we await the real work.
     // R23-BR-14: pass an ok envelope so the success path runs (not partial/error).
     await act(async () => {
-      await Promise.resolve(
-        capturedSaveOptions!.onSuccess!({ saved: ['url'], result: 'ok' }),
-      );
+      await Promise.resolve(capturedSaveOptions!.onSuccess!({ saved: ['url'], result: 'ok' }));
     });
 
     expect(mockInvalidateQueries).toHaveBeenCalledWith({ queryKey: ['sync', 'health'] });
@@ -290,9 +293,7 @@ describe('SettingsPage', () => {
     render(<SettingsPage />);
 
     await act(async () => {
-      await Promise.resolve(
-        capturedSaveOptions!.onSuccess!({ saved: ['url', 'api_key'], result: 'ok' }),
-      );
+      await Promise.resolve(capturedSaveOptions!.onSuccess!({ saved: ['url', 'api_key'], result: 'ok' }));
     });
 
     const banner = screen.getByTestId('acx-settings-save-message');
@@ -582,9 +583,7 @@ describe('SettingsPage', () => {
     render(<SettingsPage />);
 
     expect(screen.queryByRole('button', { name: 'Configure service URL' })).not.toBeInTheDocument();
-    expect(
-      screen.queryByText(/No service URL configured yet/),
-    ).not.toBeInTheDocument();
+    expect(screen.queryByText(/No service URL configured yet/)).not.toBeInTheDocument();
     expect(screen.getByTestId('acx-url-rejection')).toHaveTextContent('http://10.0.0.5:8000');
     expect(screen.getByTestId('acx-url-rejection')).toHaveTextContent(
       'HTTP is only allowed for loopback development hosts',

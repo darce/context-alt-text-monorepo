@@ -479,6 +479,93 @@ def test_json_and_markdown_detection_agree() -> None:
     _assert_scored_detection_markdown(md, tp=_DEFAULT_TP, fp=_DEFAULT_FP, fn=_DEFAULT_FN)
 
 
+def test_caption_quality_metrics_ignore_identity_spelling() -> None:
+    def _score_identity_variant(present_identity: str, caption: str, objects: list[str]) -> tuple[tuple, tuple, tuple]:
+        record = {
+            "schema": "acx-eval/v1",
+            "kind": "run_record",
+            "provenance": {
+                "manifest_sha256": "m" * 64,
+                "base_url": "x",
+                "head_sha": "0" * 40,
+                "started_at": "t",
+            },
+            "items": [
+                {
+                    "media_id": 1,
+                    "path": "mock_images/cake.jpg",
+                    "describe": {
+                        "alt_text_draft": caption,
+                        "visual_facts": {"objects": objects},
+                        "adapter": "seeded",
+                        "model_id": "seeded-fixtures",
+                        "model_version": "1",
+                        "cached": False,
+                    },
+                    "identities": [{"name": present_identity, "unpositioned": True}],
+                    "face_count": 1,
+                    "error": None,
+                }
+            ],
+        }
+        entry = _stamp_entry(
+            {
+                "path": "mock_images/cake.jpg",
+                "media_id": 1,
+                "face_count": 1,
+                "present_identities": [present_identity],
+                "must_right": [],
+                "easy_wrong": [],
+                "policy": {"recognition_enabled": True},
+                "face_boxes": [_named_box(present_identity)],
+            },
+            "exhaustive",
+        )
+        scored = score_run_record(record, [entry])
+        per_image = scored["per_image"][0]
+        return (
+            (
+                per_image["fkre"],
+                per_image["repetition_ratio"],
+                per_image["tag_coverage"],
+            ),
+            (
+                scored["quality"]["mean_fkre"],
+                scored["quality"]["mean_repetition_ratio"],
+                scored["quality"]["mean_tag_coverage"],
+            ),
+            (
+                per_image["inserted_identities"],
+                per_image["missing_identities"],
+                per_image["gated_score"],
+            ),
+        )
+
+    real_style = _score_identity_variant(
+        "Alexandria Cunningham",
+        "Alexandria Cunningham smiles while Alexandria Cunningham holds a cake.",
+        ["Alexandria", "Cunningham", "birthday cake"],
+    )
+    pseudonym = _score_identity_variant(
+        "Nimbus",
+        "Nimbus smiles while Nimbus holds a cake.",
+        ["Nimbus", "birthday cake"],
+    )
+
+    expected_quality = (42.62, 0.1429, 0.0)
+    assert pseudonym[0] == real_style[0] == expected_quality
+    assert pseudonym[1] == real_style[1] == expected_quality
+    assert real_style[2] == (["Alexandria Cunningham"], [], 1.0)
+    assert pseudonym[2] == (["Nimbus"], [], 1.0)
+
+    mismatched_roster = _score_identity_variant(
+        "Nimbus",
+        "Alexandria Cunningham smiles while Alexandria Cunningham holds a cake.",
+        ["Alexandria", "Cunningham", "birthday cake"],
+    )
+    assert mismatched_roster[2] == ([], ["Nimbus"], 0.0)
+
+
 def test_unstamped_entries_refuse_missing_mode() -> None:
     """Subject is the missing-stamp refusal — leave unstamped on purpose."""
     json_doc, md = build_reports(_run_record(), _manifest_entries(mode=None))

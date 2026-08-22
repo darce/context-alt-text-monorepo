@@ -1,5 +1,7 @@
 # Caption + Face Eval Report
 
+> **SUPERSEDED (L6-baseline / EVAL-01 / P1-5(a)).** Caption-quality figures below were scored on a pre-L3 corpus (37-image reported set with selection contamination, a 10-image selection set, a 39-image stub, and/or the 646-image interleave) and/or a pre-PRIV-1 roster spelling. They are not Δ-comparable to the current 20-image held-out split (`golden.json` after `8b93c473`). Kept for provenance. Do not cite as current evidence.
+
 - schema: `acx-eval/v1` kind: `report`
 - adapter(s): `bakeoff` model(s): `Qwen3-VL-30B-A3B-Instruct` version(s): `Q4_K_M`
 - head_sha: `c6dfc1fcb2fd252c8947d6409b5fb0d69b35c7a1`

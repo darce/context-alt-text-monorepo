@@ -20,6 +20,7 @@ import re
 import unicodedata
 from collections import Counter
 from collections.abc import Mapping, Sequence
+from dataclasses import replace
 from enum import StrEnum
 from typing import Any
 
@@ -320,6 +321,29 @@ class ReportError(Exception):
         self.invariant = invariant
 
 
+class RosterEpoch(StrEnum):
+    """Roster-spelling epoch. PRIV-1 respelt names; a Δ across epochs is not a Δ."""
+
+    PRE_PRIV1 = "pre-priv1"
+    POST_PRIV1 = "post-priv1"
+
+
+DELTA_REFUSES_STRADDLED_STAMPS = "delta_refuses_straddled_stamps"
+
+# Caption aggregates surfaced in an EVAL-01 Δ. Counts stay counts; rates stay rates.
+_CAPTION_DELTA_KEYS = (
+    "insertion_rate",
+    "name_precision",
+    "wrong_name_image_rate",
+    "must_right_failed_images",
+    "must_right_defined_images",
+    "easy_wrong_defined_images",
+    "policy_violations",
+    "wrong_name_images",
+    "mean_gated_score",
+)
+
+
 # PUBLIC provenance is fail-closed: only these keys may leave the render boundary
 # (VLM6-R3-01 / VLM6-R4-07). Deny-lists leak on schema growth; an allow-list drops
 # unknown keys (tenant_id, images_dir, weave_bench_source, base_url, cache_dir,
@@ -333,6 +357,7 @@ _PUBLIC_PROVENANCE_ALLOW_FIELDS: frozenset[str] = frozenset(
         "manifest_sha256",
         "score_manifest_sha256",
         "manifest_matches_fetch",
+        "roster_epoch",
         "started_at",
         "eval_mode",
         "model_versions",
@@ -723,6 +748,17 @@ def _identity_name_match_patterns(name: str) -> list[re.Pattern[str]]:
     return patterns
 
 
+def _identity_quality_match_patterns(name: str) -> list[re.Pattern[str]]:
+    """Per-token fallback matchers for quality metrics, which must ignore roster spelling."""
+    folded = unicodedata.normalize("NFKC", name).strip()
+    if not folded:
+        return []
+    return [
+        re.compile(rf"(?<!\w){re.escape(token)}(?!\w)", re.IGNORECASE)
+        for token in {t for t in re.findall(r"[A-Za-z']+", folded) if t}
+    ]
+
+
 def _scrub_identity_names(text: str, names: Sequence[str]) -> str:
     """Scrub roster names from free text (RV4-05 / S2-03).
 
@@ -737,6 +773,58 @@ def _scrub_identity_names(text: str, names: Sequence[str]) -> str:
         for pat in _identity_name_match_patterns(str(name)):
             out = pat.sub("[redacted]", out)
     return out
+
+
+def _scrub_identity_quality_names(text: str, names: Sequence[str]) -> str:
+    """Scrub full roster names and their tokens from quality-only computations."""
+    if not text:
+        return text
+    out = text
+    changed = False
+    for name in sorted((n for n in names if n), key=len, reverse=True):
+        for pat in _identity_name_match_patterns(str(name)):
+            out, replacements = pat.subn("[redacted]", out)
+            changed = changed or replacements > 0
+        for pat in _identity_quality_match_patterns(str(name)):
+            out, replacements = pat.subn("[redacted]", out)
+            changed = changed or replacements > 0
+    return re.sub(r"\s+", " ", out).strip() if changed else text
+
+
+def _quality_objects_without_identity_names(
+    objects: Sequence[str] | None,
+    names: Sequence[str],
+) -> list[str] | None:
+    """Drop identity-bearing tags so tag coverage tracks scene content, not roster spelling."""
+    if not objects:
+        return None
+    scrubbed = [
+        str(obj)
+        for obj in objects
+        if _scrub_identity_quality_names(str(obj), names) == str(obj)
+    ]
+    return scrubbed or None
+
+
+def _caption_scores_without_identity_spelling(
+    caption: str,
+    *,
+    scores: CaptionScores,
+    names: Sequence[str],
+    score_kwargs: Mapping[str, Any],
+) -> CaptionScores:
+    """Preserve identity-sensitive gates but compute quality-only fields on scrubbed text/tags."""
+    quality_kwargs = dict(score_kwargs)
+    quality_kwargs["objects"] = _quality_objects_without_identity_names(
+        quality_kwargs.get("objects"), names
+    )
+    quality_scores = score_caption(_scrub_identity_quality_names(caption, names), **quality_kwargs)
+    return replace(
+        scores,
+        fkre=quality_scores.fkre,
+        repetition_ratio=quality_scores.repetition_ratio,
+        tag_coverage=quality_scores.tag_coverage,
+    )
 
 
 def _public_list_path(
@@ -1911,11 +1999,24 @@ def score_run_record(
         if short_error is None:
             caption_text = str(describe.get("alt_text_draft", ""))
             scores = score_caption(caption_text, **score_kwargs)
+            scores = _caption_scores_without_identity_spelling(
+                caption_text,
+                scores=scores,
+                names=roster,
+                score_kwargs=score_kwargs,
+            )
             caption_scores.append(scores)
             gated = _ablation_gate(scores) if eval_mode == "name_ablation" else scores.gated_score
 
         long_text = describe.get("alt_text_long")
         long_s = score_caption(str(long_text), **score_kwargs) if isinstance(long_text, str) and long_text else None
+        if long_s is not None:
+            long_s = _caption_scores_without_identity_spelling(
+                str(long_text),
+                scores=long_s,
+                names=roster,
+                score_kwargs=score_kwargs,
+            )
         if long_s is not None:
             long_scores.append(long_s)
 
@@ -3005,6 +3106,9 @@ def _markdown(scored: dict[str, Any]) -> str:
                 f"- {name}: precision={_fmt(pr['precision'])} recall={_fmt(pr['recall'])} "
                 f"(tp={pr['tp']} fp={pr['fp']} fn={pr['fn']})"
             )
+    lines += _baseline_delta_lines(
+        scored.get("baseline_delta") if isinstance(scored.get("baseline_delta"), Mapping) else None
+    )
     lines += ["", "## Per-item failures", ""]
     if scored["failures"]:
         lines += [f"- `{f['path']}` (media_id={f['media_id']}): {f['error']}" for f in scored["failures"]]
@@ -3012,6 +3116,177 @@ def _markdown(scored: dict[str, Any]) -> str:
         lines.append("- none")
     lines.append("")
     return "\n".join(lines)
+
+
+def _stamp_value(raw: object) -> str:
+    """Render a stamp for refusal messages, including a named missing value."""
+    if raw is None:
+        return "missing"
+    text = str(raw).strip()
+    return text if text else "missing"
+
+
+def _paired_gated_delta(candidate: Mapping[str, Any], baseline: Mapping[str, Any]) -> dict[str, Any]:
+    """Paired mean Δ on per-image gated_score, with a 95% interval.
+
+    n=20 held-out is underpowered. If the interval includes 0, the headline is
+    that we cannot tell the candidate from the zero-rule — not a quiet omit.
+    """
+    cand_by_id = {
+        int(row["media_id"]): row.get("gated_score")
+        for row in candidate.get("per_image") or []
+        if isinstance(row, Mapping) and row.get("media_id") is not None
+    }
+    base_by_id = {
+        int(row["media_id"]): row.get("gated_score")
+        for row in baseline.get("per_image") or []
+        if isinstance(row, Mapping) and row.get("media_id") is not None
+    }
+    diffs: list[float] = []
+    for media_id in sorted(set(cand_by_id) & set(base_by_id)):
+        cand_val, base_val = cand_by_id[media_id], base_by_id[media_id]
+        if cand_val is None or base_val is None:
+            continue
+        diffs.append(float(cand_val) - float(base_val))
+    n = len(diffs)
+    if n == 0:
+        return {
+            "n_paired": 0,
+            "mean_delta": None,
+            "ci95": None,
+            "undistinguished": True,
+            "headline": "we cannot tell yet: no paired gated_score rows",
+        }
+    mean = sum(diffs) / n
+    if n < 2:
+        return {
+            "n_paired": n,
+            "mean_delta": round(mean, 4),
+            "ci95": None,
+            "undistinguished": True,
+            "headline": f"we cannot tell yet at n={n}",
+        }
+    variance = sum((delta - mean) ** 2 for delta in diffs) / (n - 1)
+    se = math.sqrt(variance / n)
+    half = 1.96 * se
+    lo, hi = mean - half, mean + half
+    undistinguished = lo <= 0 <= hi
+    if undistinguished:
+        headline = (
+            f"we cannot tell yet at n={n}: 95% CI for Δ mean_gated_score "
+            f"[{lo:.4f}, {hi:.4f}] includes 0"
+        )
+    else:
+        headline = (
+            f"Δ mean_gated_score={mean:.4f} 95% CI [{lo:.4f}, {hi:.4f}] excludes 0 "
+            f"(n={n}; still not a global claim on this imbalanced held-out set)"
+        )
+    return {
+        "n_paired": n,
+        "mean_delta": round(mean, 4),
+        "ci95": [round(lo, 4), round(hi, 4)],
+        "undistinguished": undistinguished,
+        "headline": headline,
+    }
+
+
+def compare_scored_runs(
+    candidate: Mapping[str, Any],
+    baseline: Mapping[str, Any],
+) -> dict[str, Any]:
+    """EVAL-01 Δ between two already-scored reports, or an explicit refusal.
+
+    Refuses when the runs disagree on score-time corpus identity
+    (``score_manifest_sha256``) or roster-spelling epoch (``roster_epoch``).
+    Missing stamps are named and refused — never treated as matching. A
+    refused comparison never includes a computed ``metrics`` block.
+    """
+    cand_prov = candidate.get("provenance") if isinstance(candidate.get("provenance"), Mapping) else {}
+    base_prov = baseline.get("provenance") if isinstance(baseline.get("provenance"), Mapping) else {}
+    cand_sha = cand_prov.get("score_manifest_sha256")
+    base_sha = base_prov.get("score_manifest_sha256")
+    cand_epoch = cand_prov.get("roster_epoch")
+    base_epoch = base_prov.get("roster_epoch")
+    mismatches: list[str] = []
+    if _stamp_value(cand_sha) != _stamp_value(base_sha) or cand_sha is None or base_sha is None:
+        mismatches.append(
+            f"score_manifest_sha256 candidate={_stamp_value(cand_sha)!r} "
+            f"baseline={_stamp_value(base_sha)!r}"
+        )
+    if _stamp_value(cand_epoch) != _stamp_value(base_epoch) or cand_epoch is None or base_epoch is None:
+        mismatches.append(
+            f"roster_epoch candidate={_stamp_value(cand_epoch)!r} "
+            f"baseline={_stamp_value(base_epoch)!r}"
+        )
+    if mismatches:
+        reason = "refusing Δ across straddled stamps: " + "; ".join(mismatches)
+        return {
+            "refused": True,
+            "invariant": DELTA_REFUSES_STRADDLED_STAMPS,
+            "reason": reason,
+            "metrics": None,
+            "power": None,
+        }
+    cand_caption = candidate.get("caption") if isinstance(candidate.get("caption"), Mapping) else {}
+    base_caption = baseline.get("caption") if isinstance(baseline.get("caption"), Mapping) else {}
+    metrics: dict[str, Any] = {}
+    for key in _CAPTION_DELTA_KEYS:
+        cand_val = cand_caption.get(key)
+        base_val = base_caption.get(key)
+        delta: float | None
+        if cand_val is None or base_val is None:
+            delta = None
+        else:
+            delta = float(cand_val) - float(base_val)
+        metrics[key] = {
+            "baseline": base_val,
+            "candidate": cand_val,
+            "delta": None if delta is None else round(delta, 4),
+        }
+    power = _paired_gated_delta(candidate, baseline)
+    return {
+        "refused": False,
+        "invariant": None,
+        "reason": None,
+        "metrics": metrics,
+        "power": power,
+    }
+
+
+def _baseline_delta_lines(delta: Mapping[str, Any] | None) -> list[str]:
+    """Markdown for the EVAL-01 Δ block. Refusal occupies the number's place.
+
+    Absent comparison: emit nothing so existing reports stay byte-stable.
+    """
+    if not delta:
+        return []
+    lines = ["", "## Δ vs zero-rule baseline", ""]
+    if delta.get("refused"):
+        invariant = delta.get("invariant") or DELTA_REFUSES_STRADDLED_STAMPS
+        reason = delta.get("reason") or "refusing Δ across straddled stamps"
+        return lines + [f"- REFUSED ({invariant}): {reason}", ""]
+    power = delta.get("power") if isinstance(delta.get("power"), Mapping) else {}
+    headline = power.get("headline")
+    if headline:
+        lines.append(f"- **HEADLINE: {headline}**")
+    n_paired = power.get("n_paired")
+    if n_paired is not None:
+        lines.append(
+            f"- paired gated_score n={n_paired} "
+            "(held-out corpus is imbalanced; not a global/adoption claim)"
+        )
+    metrics = delta.get("metrics") if isinstance(delta.get("metrics"), Mapping) else {}
+    for key in _CAPTION_DELTA_KEYS:
+        row = metrics.get(key)
+        if not isinstance(row, Mapping):
+            continue
+        lines.append(
+            f"- {key}: candidate={_fmt(row.get('candidate'))} "
+            f"baseline={_fmt(row.get('baseline'))} "
+            f"Δ={_fmt(row.get('delta'))}"
+        )
+    lines.append("")
+    return lines
 
 
 def build_reports(
@@ -3024,6 +3299,7 @@ def build_reports(
     annotation_mode: AnnotationMode | str | None = None,
     audience: Audience = Audience.LOCAL,
     rubric_gate: str = "enforce",
+    baseline_run_record: dict[str, Any] | None = None,
 ) -> tuple[str, str]:
     """Return (json_report, markdown_report) — deterministic for identical inputs.
 
@@ -3055,6 +3331,22 @@ def build_reports(
         rubric_gate=rubric_gate,
         annotation_mode=annotation_mode,
     )
+    if baseline_run_record is not None:
+        _validate_record_kind(baseline_run_record)
+        baseline_scored = score_run_record(
+            baseline_run_record,
+            manifest_entries,
+            ignore_list=ignore_list,
+            score_manifest_sha256=score_manifest_sha256,
+            manifest_roster=manifest_roster,
+            rubric_gate=rubric_gate,
+            annotation_mode=annotation_mode,
+        )
+        scored["baseline_delta"] = compare_scored_runs(scored, baseline_scored)
+        scored["baseline"] = {
+            "caption": baseline_scored.get("caption"),
+            "counts": baseline_scored.get("counts"),
+        }
     if audience is Audience.PUBLIC:
         scored = _redact_caption_report_for_public(
             scored,

@@ -162,7 +162,12 @@ def test_provenance_stamp_records_variant_and_enabled_pipeline_flags() -> None:
     _stamp_pipeline_provenance(
         provenance, prompt_variant="v2", two_pass=True, dual_length=False, face_gate=True, eval_mode="standard"
     )
-    assert provenance == {"prompt_variant": "v2", "two_pass": True, "face_gate": True}
+    assert provenance == {
+        "prompt_variant": "v2",
+        "two_pass": True,
+        "face_gate": True,
+        "roster_epoch": "post-priv1",
+    }
 
     provenance = {}
     _stamp_pipeline_provenance(
@@ -173,7 +178,12 @@ def test_provenance_stamp_records_variant_and_enabled_pipeline_flags() -> None:
         face_gate=False,
         eval_mode="context_distractor",
     )
-    assert provenance == {"prompt_variant": "v1", "dual_length": True, "eval_mode": "context_distractor"}
+    assert provenance == {
+        "prompt_variant": "v1",
+        "dual_length": True,
+        "eval_mode": "context_distractor",
+        "roster_epoch": "post-priv1",
+    }
 
 
 # --- Deliverable 2: two-pass describe-then-ground -----------------------------
@@ -1019,7 +1029,7 @@ def test_v3_provenance_stamp_matches_v1_v2_mechanism() -> None:
     _stamp_pipeline_provenance(
         provenance, prompt_variant="v3", two_pass=True, dual_length=False, face_gate=False, eval_mode="standard"
     )
-    assert provenance == {"prompt_variant": "v3", "two_pass": True}
+    assert provenance == {"prompt_variant": "v3", "two_pass": True, "roster_epoch": "post-priv1"}
 
 
 # --- v3 score side: title quality axis (additive, closed-roster name scan) -----

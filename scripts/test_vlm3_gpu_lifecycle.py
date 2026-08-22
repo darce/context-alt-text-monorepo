@@ -3,12 +3,12 @@ from pathlib import Path
 
 import pytest
 
+from infra.oci.gpu_lifecycle import GpuServingStatus
 from infra.oci.gpu_lifecycle.controller import (
     GpuInstanceState,
     GpuLifecycleAction,
     GpuInstance,
     GpuLifecycleController,
-    GpuServingStatus,
     JobLoadSnapshot,
 )
 from infra.oci.gpu_lifecycle.reaper import (
@@ -140,6 +140,7 @@ def test_starting_instance_reports_gpu_warming_status() -> None:
     )
 
     assert controller.serving_status([instance]) is GpuServingStatus.GPU_WARMING
+    assert GpuServingStatus.GPU_WARMING.value == "gpu_warming"
 
 
 def test_viewer_reading_for_four_minutes_is_not_reaped() -> None:
@@ -200,6 +201,63 @@ def test_run_reap_cycle_actuates_stop_when_still_idle() -> None:
     assert result.fenced_off is False
 
 
+def test_run_reap_cycle_actuates_start_for_pending_job() -> None:
+    controller = GpuLifecycleController(idle_seconds=60)
+    instance = GpuInstance(
+        instance_id="ocid1.instance.oc1..gpu",
+        state=GpuInstanceState.STOPPED,
+        idle_for_seconds=0,
+    )
+    actuator = RecordingActuator()
+
+    result = run_reap_cycle(
+        controller=controller,
+        instances=[instance],
+        load_source=StaticJobLoadSource(queue_depth=1, in_flight=0),
+        actuator=actuator,
+        fence_delay_seconds=0.0,
+    )
+
+    assert result.decided == [
+        (GpuLifecycleAction.START, "ocid1.instance.oc1..gpu")
+    ]
+    assert result.actuated == [
+        (GpuLifecycleAction.START, "ocid1.instance.oc1..gpu")
+    ]
+    assert actuator.started == ["ocid1.instance.oc1..gpu"]
+    assert result.errors == []
+
+
+def test_run_reap_cycle_surfaces_start_failure() -> None:
+    class BoomActuator:
+        def start_instance(self, instance_id: str) -> None:
+            raise RuntimeError(f"start failed {instance_id}")
+
+        def stop_instance(self, instance_id: str) -> None:
+            raise AssertionError("STOP is not expected")
+
+    controller = GpuLifecycleController(idle_seconds=60)
+    instance = GpuInstance(
+        instance_id="ocid1.instance.oc1..gpu",
+        state=GpuInstanceState.STOPPED,
+        idle_for_seconds=0,
+    )
+
+    result = run_reap_cycle(
+        controller=controller,
+        instances=[instance],
+        load_source=StaticJobLoadSource(queue_depth=1, in_flight=0),
+        actuator=BoomActuator(),
+        fence_delay_seconds=0.0,
+    )
+
+    assert result.actuated == []
+    assert result.errors == [
+        "START ocid1.instance.oc1..gpu: RuntimeError: "
+        "start failed ocid1.instance.oc1..gpu"
+    ]
+
+
 def test_run_reap_cycle_fences_stop_when_load_appears() -> None:
     controller = GpuLifecycleController(idle_seconds=60)
     instance = GpuInstance(
@@ -236,9 +294,11 @@ def test_run_reap_cycle_fences_stop_when_load_appears() -> None:
 
 def test_json_file_job_load_source_mirrors_store_shape(tmp_path: Path) -> None:
     path = tmp_path / "load.json"
-    path.write_text(json.dumps({"queue_depth": 2, "in_flight": 1}))
+    path.write_text(
+        json.dumps({"queue_depth": 2, "in_flight": 1, "active_sessions": 3})
+    )
     snap = JsonFileJobLoadSource(path=path).snapshot()
-    assert snap == JobLoadSnapshot(queue_depth=2, in_flight=1)
+    assert snap == JobLoadSnapshot(queue_depth=2, in_flight=1, active_sessions=3)
 
 
 def test_json_file_stale_is_busy(tmp_path: Path, monkeypatch) -> None:

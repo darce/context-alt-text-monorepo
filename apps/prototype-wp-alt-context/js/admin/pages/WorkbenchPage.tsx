@@ -194,10 +194,10 @@ const WorkbenchPageContent = (): React.JSX.Element => {
   });
 
   return (
-    // aria-labelledby points at the shell <h1 id="acx-page-title"> rendered by
-    // AbstractSpaPage::render() (PHP), not by this component — Workbench keeps
-    // the shell heading visible, so it is the page's correct accessible name.
-    <section className="acx-workbench" aria-labelledby="acx-page-title">
+    <section className="acx-workbench" aria-labelledby="acx-workbench-title">
+      <h1 id="acx-workbench-title" className="acx-dashboard__title">
+        {__('Alt Context Review Queue', 'alt-context')}
+      </h1>
       <div className="acx-workbench__panels">
         <SyncStatusIndicator
           activeSection={activeSection}

@@ -294,9 +294,9 @@ export const DashboardPage = (): React.JSX.Element => {
     <section className="acx-dashboard__shell" aria-labelledby="acx-dashboard-title">
       <header className="acx-dashboard__hero">
         <p className="acx-dashboard__eyebrow">{__('Alt Context', 'alt-context')}</p>
-        <p id="acx-dashboard-title" className="acx-dashboard__title">
+        <h1 id="acx-dashboard-title" className="acx-dashboard__title">
           {__('Alt Context Overview', 'alt-context')}
-        </p>
+        </h1>
         <p className="acx-dashboard__subtitle">
           {__('It finds the people in your media library and writes alt text that names them.', 'alt-context')}
         </p>

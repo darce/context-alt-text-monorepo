@@ -90,6 +90,27 @@ describe('DashboardSyncHealthSection', () => {
 
     expect(screen.getByTestId('acx-dashboard-mirror-warning-icon')).toBeInTheDocument();
     expect(screen.getByText(/Mirror is out of sync with the backend/i)).toBeInTheDocument();
+    expect(screen.getByText('Mirror is out of sync with the backend — 3 stale face groups, 2 failed sync events.')).toBeInTheDocument();
+  });
+
+  it('points the dashboard action card at Review Queue, not the retired Workbench name', () => {
+    render(
+      <DashboardSyncHealthSection
+        {...baseProps}
+        effectiveSyncHealth="healthy"
+        syncHealthEnvelope={{
+          breaker: { state: 'closed', base_url: 'http://localhost:8000', opened_at: null },
+          outbox: { pending: 0, failed: 0 },
+          conflicts: { open: 0 },
+          replays: { failed: null, source: 'unavailable_local' },
+          last_pull: { at: '2026-06-11T12:00:00Z', ok: true },
+          warnings: [],
+        }}
+      />,
+    );
+
+    expect(screen.getByRole('link', { name: /Open Review Queue/ })).toHaveAttribute('href', '#/workbench?tab=scan');
+    expect(screen.queryByRole('heading', { name: 'Open Workbench' })).not.toBeInTheDocument();
   });
 
   it('keeps Reset mirror enabled and firing while the breaker is open (recovery affordance)', () => {

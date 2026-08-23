@@ -127,6 +127,28 @@ describe('DashboardPage', () => {
     );
   });
 
+  it('renders a landing summary describing what the product does, not operator chores', () => {
+    mockedUseIdentityStats.mockReturnValue(
+      createMockQuery<DashboardStats>({
+        data: {
+          people_count: 10,
+          assigned_clusters_count: 7,
+          pending_clusters_count: 3,
+          media_with_faces_count: 22,
+          unassigned_persons_count: 0,
+        },
+        refetch: vi.fn(),
+      }),
+    );
+
+    render(<DashboardPage />);
+
+    expect(
+      screen.getByText('It finds the people in your media library and writes alt text that names them.'),
+    ).toBeInTheDocument();
+    expect(screen.queryByText('Monitor your library coverage and manage identity recognition jobs.')).not.toBeInTheDocument();
+  });
+
   it('renders identity stats and pending-review guidance', () => {
     mockedUseIdentityStats.mockReturnValue(
       createMockQuery<DashboardStats>({

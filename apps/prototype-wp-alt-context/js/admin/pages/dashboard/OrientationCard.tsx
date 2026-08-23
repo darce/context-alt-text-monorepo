@@ -8,10 +8,8 @@ interface OrientationCardProps {
   peopleCount: number;
 }
 
-export const OrientationCard = ({ peopleCount }: OrientationCardProps): React.JSX.Element | null => {
-  if (peopleCount !== 0) {
-    return null;
-  }
+export const OrientationCard = ({ peopleCount }: OrientationCardProps): React.JSX.Element => {
+  const ctaLabel = peopleCount === 0 ? __('Start your first scan', 'alt-context') : __('Open Review Queue', 'alt-context');
 
   return (
     <section className="acx-orientation-card" aria-labelledby="acx-orientation-title">
@@ -25,13 +23,8 @@ export const OrientationCard = ({ peopleCount }: OrientationCardProps): React.JS
             <Scan size={24} />
           </div>
           <div className="acx-orientation-card__step-content">
-            <h3>{__('1. Scan Media', 'alt-context')}</h3>
-            <p>
-              {__(
-                'Analyze your library to detect faces and extract mathematical identities (embeddings).',
-                'alt-context',
-              )}
-            </p>
+            <h3>{__('1. Scan', 'alt-context')}</h3>
+            <p>{__('Scan your media library to find faces.', 'alt-context')}</p>
           </div>
         </div>
 
@@ -44,13 +37,8 @@ export const OrientationCard = ({ peopleCount }: OrientationCardProps): React.JS
             <Users size={24} />
           </div>
           <div className="acx-orientation-card__step-content">
-            <h3>{__('2. Cluster Faces', 'alt-context')}</h3>
-            <p>
-              {__(
-                'Automatically group similar faces into "Clusters" to review many identities at once.',
-                'alt-context',
-              )}
-            </p>
+            <h3>{__('2. Confirm', 'alt-context')}</h3>
+            <p>{__('Confirm which faces belong together in face groups.', 'alt-context')}</p>
           </div>
         </div>
 
@@ -63,10 +51,10 @@ export const OrientationCard = ({ peopleCount }: OrientationCardProps): React.JS
             <CheckCircle size={24} />
           </div>
           <div className="acx-orientation-card__step-content">
-            <h3>{__('3. Assign Labels', 'alt-context')}</h3>
+            <h3>{__('3. Review', 'alt-context')}</h3>
             <p>
               {__(
-                'Name your clusters to automatically populate alt text across your entire media library.',
+                'Review face groups, name the people in them, and add their names to alt text across your media library.',
                 'alt-context',
               )}
             </p>
@@ -76,7 +64,7 @@ export const OrientationCard = ({ peopleCount }: OrientationCardProps): React.JS
 
       <div className="acx-orientation-card__footer">
         <a href={toWorkbench({ tab: 'scan' })} className="acx-button acx-button--primary">
-          {__('Start your first scan', 'alt-context')}
+          {ctaLabel}
         </a>
       </div>
     </section>

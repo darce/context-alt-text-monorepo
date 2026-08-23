@@ -173,7 +173,7 @@ describe('DescriptionHistoryPage', () => {
     renderPage();
 
     expect(await screen.findByText('Bridge')).toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: 'Description Review History' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Description Runs' })).toBeInTheDocument();
     expect(screen.getByText('A bridge over water.')).toBeInTheDocument();
     expect(screen.getAllByText('Bridge at dusk')).toHaveLength(2);
     expect(screen.getByText('microsoft/Florence-2-base-ft')).toBeInTheDocument();

@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { ClusterIdentity, ClusterSummary } from '../../../api/recognition';
 import { ClusterDrawerPanel } from '../ClusterDrawerPanel';
+import { REASSIGN_UNAVAILABLE_REASON } from '../rosterRoute';
 
 vi.mock('@wordpress/i18n', () => ({
   __: (text: string) => text,
@@ -163,13 +164,13 @@ describe('ClusterDrawerPanel rescan state matrix (RES-15, A11Y-24)', () => {
     render(
       <ClusterDrawerPanel
         {...baseProps}
-        reassignUnavailableReason="Face moves happen in the Workbench review queue."
+        reassignUnavailableReason={REASSIGN_UNAVAILABLE_REASON}
       />,
     );
 
     expect(screen.queryByRole('button', { name: /Move to/i })).not.toBeInTheDocument();
     expect(screen.queryByText(/No other face groups available/i)).not.toBeInTheDocument();
-    expect(screen.getByText('Face moves happen in the Workbench review queue.')).toBeInTheDocument();
+    expect(screen.getByText(REASSIGN_UNAVAILABLE_REASON)).toBeInTheDocument();
   });
 
   it('does not make faces draggable or accept drops when reassign is boarded up', () => {
@@ -178,7 +179,7 @@ describe('ClusterDrawerPanel rescan state matrix (RES-15, A11Y-24)', () => {
     render(
       <ClusterDrawerPanel
         {...baseProps}
-        reassignUnavailableReason="Face moves happen in the Workbench review queue."
+        reassignUnavailableReason={REASSIGN_UNAVAILABLE_REASON}
         isDragging
         onDiscardDrop={onDiscardDrop}
         onFaceDragStart={onFaceDragStart}
@@ -198,13 +199,15 @@ describe('ClusterDrawerPanel rescan state matrix (RES-15, A11Y-24)', () => {
 const DRAWER_FOCUSABLE_SELECTOR =
   'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
-const HONEST_MOVE_COPY = /Face moves happen in the Workbench review queue/i;
+// BR-24: sourced from rosterRoute so this regex cannot drift from the
+// production copy RosterPage actually passes.
+const HONEST_MOVE_COPY = new RegExp(REASSIGN_UNAVAILABLE_REASON.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
 
 const renderBoardedUpDrawer = () =>
   render(
     <ClusterDrawerPanel
       {...baseProps}
-      reassignUnavailableReason="Face moves happen in the Workbench review queue."
+      reassignUnavailableReason={REASSIGN_UNAVAILABLE_REASON}
     />,
   );
 

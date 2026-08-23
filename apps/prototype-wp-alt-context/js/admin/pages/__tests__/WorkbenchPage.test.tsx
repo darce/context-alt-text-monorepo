@@ -1,6 +1,7 @@
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { ConfirmPanel, RecentJobsPanel, mediaEditUrl } from '../workbench/Panels';
+import { WorkbenchStepMap, WORKBENCH_STEP_IDS, deriveActiveWorkbenchStep } from '../WorkbenchPage';
 
 vi.mock('@wordpress/i18n', () => ({
   __: (text: string) => text,
@@ -133,5 +134,96 @@ describe('Workbench follow-up coverage', () => {
     expect(screen.getByText('Processed 10/10 identities')).toBeInTheDocument();
     expect(screen.getByText('Clusters created: 3')).toBeInTheDocument();
     expect(screen.getByText('Created 3 clusters for 18 identities.')).toBeInTheDocument();
+  });
+});
+
+describe('deriveActiveWorkbenchStep', () => {
+  it('defaults to scan when the advanced drawer is closed and no cluster is under review', () => {
+    expect(deriveActiveWorkbenchStep({ isAdvancedOpen: false, isReviewingCluster: false })).toBe(
+      WORKBENCH_STEP_IDS.scan,
+    );
+  });
+
+  it('reports confirm when the advanced (clustering) drawer is open', () => {
+    expect(deriveActiveWorkbenchStep({ isAdvancedOpen: true, isReviewingCluster: false })).toBe(
+      WORKBENCH_STEP_IDS.confirm,
+    );
+  });
+
+  it('reports review when a cluster is open for review, regardless of the drawer', () => {
+    expect(deriveActiveWorkbenchStep({ isAdvancedOpen: false, isReviewingCluster: true })).toBe(
+      WORKBENCH_STEP_IDS.review,
+    );
+    expect(deriveActiveWorkbenchStep({ isAdvancedOpen: true, isReviewingCluster: true })).toBe(
+      WORKBENCH_STEP_IDS.review,
+    );
+  });
+});
+
+describe('WorkbenchStepMap', () => {
+  it('renders all three step names, in order, numbered 1-3', () => {
+    render(<WorkbenchStepMap activeStep="scan" onSelectScan={vi.fn()} onSelectConfirm={vi.fn()} />);
+
+    const steps = screen.getAllByRole('listitem');
+    expect(steps).toHaveLength(3);
+    expect(steps[0]).toHaveTextContent('1');
+    expect(steps[0]).toHaveTextContent('Scan');
+    expect(steps[1]).toHaveTextContent('2');
+    expect(steps[1]).toHaveTextContent('Confirm');
+    expect(steps[2]).toHaveTextContent('3');
+    expect(steps[2]).toHaveTextContent('Review');
+  });
+
+  it('exposes an accessible name on the step list', () => {
+    render(<WorkbenchStepMap activeStep="scan" onSelectScan={vi.fn()} onSelectConfirm={vi.fn()} />);
+
+    expect(screen.getByRole('navigation', { name: 'Progress' })).toBeInTheDocument();
+  });
+
+  it('marks the current step with aria-current="step" and no others', () => {
+    render(<WorkbenchStepMap activeStep="confirm" onSelectScan={vi.fn()} onSelectConfirm={vi.fn()} />);
+
+    expect(screen.getByTestId('acx-workbench-step-confirm')).toHaveAttribute('aria-current', 'step');
+    expect(screen.getByTestId('acx-workbench-step-scan')).not.toHaveAttribute('aria-current');
+    expect(screen.getByTestId('acx-workbench-step-review')).not.toHaveAttribute('aria-current');
+  });
+
+  it('moves aria-current="step" to the new step when the active step changes (not hardcoded to step 1)', () => {
+    const { rerender } = render(
+      <WorkbenchStepMap activeStep="scan" onSelectScan={vi.fn()} onSelectConfirm={vi.fn()} />,
+    );
+    expect(screen.getByTestId('acx-workbench-step-scan')).toHaveAttribute('aria-current', 'step');
+
+    rerender(<WorkbenchStepMap activeStep="review" onSelectScan={vi.fn()} onSelectConfirm={vi.fn()} />);
+
+    expect(screen.getByTestId('acx-workbench-step-review')).toHaveAttribute('aria-current', 'step');
+    expect(screen.getByTestId('acx-workbench-step-scan')).not.toHaveAttribute('aria-current');
+    expect(screen.getByTestId('acx-workbench-step-confirm')).not.toHaveAttribute('aria-current');
+  });
+
+  it('communicates current/complete state with text as well as styling, not colour alone', () => {
+    render(<WorkbenchStepMap activeStep="review" onSelectScan={vi.fn()} onSelectConfirm={vi.fn()} />);
+
+    // scan + confirm are both before the active "review" step -> completed chip
+    expect(screen.getByTestId('acx-workbench-step-scan')).toHaveTextContent('Completed');
+    expect(screen.getByTestId('acx-workbench-step-confirm')).toHaveTextContent('Completed');
+    expect(screen.getByTestId('acx-workbench-step-review')).toHaveTextContent('Current');
+  });
+
+  it('keeps scan and confirm reachable as click targets, and does not gate review behind a selection', async () => {
+    const onSelectScan = vi.fn();
+    const onSelectConfirm = vi.fn();
+    const user = userEvent.setup();
+    render(<WorkbenchStepMap activeStep="review" onSelectScan={onSelectScan} onSelectConfirm={onSelectConfirm} />);
+
+    await user.click(screen.getByRole('button', { name: /Scan/ }));
+    expect(onSelectScan).toHaveBeenCalledTimes(1);
+
+    await user.click(screen.getByRole('button', { name: /Confirm/ }));
+    expect(onSelectConfirm).toHaveBeenCalledTimes(1);
+
+    // Review has no generic entry point in the current UI (it always needs a
+    // clusterId from the queue) -- it must not render as a disabled/fake button.
+    expect(screen.queryByRole('button', { name: /Review/ })).not.toBeInTheDocument();
   });
 });

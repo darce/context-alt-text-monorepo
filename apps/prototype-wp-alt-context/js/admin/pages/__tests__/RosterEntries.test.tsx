@@ -784,7 +784,7 @@ describe('RosterEntriesSection', () => {
 
     renderSection(query, '/?tab=entries&queue=singleton-proposals');
 
-    expect(screen.getByRole('link', { name: 'Review singleton proposals in Workbench' })).toHaveAttribute(
+    expect(screen.getByRole('link', { name: 'Review singleton proposals in the Review Queue' })).toHaveAttribute(
       'href',
       '#/workbench?tab=scan',
     );
@@ -795,7 +795,7 @@ describe('RosterEntriesSection', () => {
 
     renderSection(query, '/?tab=entries&queue=needs-confirmation-after-merge');
 
-    expect(screen.getByRole('link', { name: 'Review merge confirmations in Workbench' })).toHaveAttribute(
+    expect(screen.getByRole('link', { name: 'Review merge confirmations in the Review Queue' })).toHaveAttribute(
       'href',
       '#/workbench?tab=scan',
     );

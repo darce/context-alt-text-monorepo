@@ -17,7 +17,7 @@ class WorkbenchPage extends AbstractSpaPage {
 	}
 
 	protected function getPageTitle(): string {
-		return __( 'Alt Context Workbench', 'alt-context' );
+		return __( 'Alt Context Review Queue', 'alt-context' );
 	}
 
 	protected function getLoadingMessage(): string {

@@ -17,7 +17,7 @@ class RosterPage extends AbstractSpaPage {
 	}
 
 	protected function getPageTitle(): string {
-		return __( 'Alt Context Roster', 'alt-context' );
+		return __( 'Alt Context People', 'alt-context' );
 	}
 
 	protected function getLoadingMessage(): string {

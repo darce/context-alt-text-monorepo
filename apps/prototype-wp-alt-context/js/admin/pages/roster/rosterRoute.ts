@@ -193,6 +193,12 @@ export const PERSON_ROUTE_UNMATCHED_NOTICE = __(
 );
 
 /**
+ * Shared home for the boarded-up-reassign copy so RosterPage and its
+ * ClusterDrawerPanel consumer/tests cannot drift onto separate strings (BR-24).
+ */
+export const REASSIGN_UNAVAILABLE_REASON = __('Face moves happen in the Review Queue.', 'alt-context');
+
+/**
  * Workbench review-queue deep link for unnamed face groups.
  *
  * Lands on `rq=all.all.0` so the CTA count (top-unlabeled envelope total)

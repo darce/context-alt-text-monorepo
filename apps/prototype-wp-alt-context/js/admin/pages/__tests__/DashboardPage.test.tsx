@@ -436,7 +436,7 @@ describe('DashboardPage', () => {
 
     expect(screen.getByText(RETENTION_CARD_HEADING)).toBeInTheDocument();
     expect(screen.getByText('Dispose after ack')).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: /Open Retention Controls/ })).toHaveAttribute(
+    expect(screen.getByRole('link', { name: /Open Data Retention/ })).toHaveAttribute(
       'href',
       RETENTION_CARD_LINK_HREF,
     );
@@ -588,7 +588,7 @@ describe('DashboardPage', () => {
 
     expect(screen.queryByText(RETENTION_CARD_HEADING)).not.toBeInTheDocument();
     expect(screen.queryByText(RETENTION_CARD_ERROR_BODY)).not.toBeInTheDocument();
-    expect(screen.queryByRole('link', { name: /Open Retention Controls/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: /Open Data Retention/ })).not.toBeInTheDocument();
   });
 
   it('shows remediation copy and retention link when retention status fails to load', () => {
@@ -616,7 +616,7 @@ describe('DashboardPage', () => {
 
     expect(screen.getByText(RETENTION_CARD_HEADING)).toBeInTheDocument();
     expect(screen.getByText(RETENTION_CARD_ERROR_BODY)).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: /Open Retention Controls/ })).toHaveAttribute(
+    expect(screen.getByRole('link', { name: /Open Data Retention/ })).toHaveAttribute(
       'href',
       RETENTION_CARD_LINK_HREF,
     );

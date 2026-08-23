@@ -9,7 +9,7 @@ interface OrientationCardProps {
 }
 
 export const OrientationCard = ({ peopleCount }: OrientationCardProps): React.JSX.Element => {
-  const ctaLabel = peopleCount === 0 ? __('Start your first scan', 'alt-context') : __('Open Workbench', 'alt-context');
+  const ctaLabel = peopleCount === 0 ? __('Start your first scan', 'alt-context') : __('Open Review Queue', 'alt-context');
 
   return (
     <section className="acx-orientation-card" aria-labelledby="acx-orientation-title">

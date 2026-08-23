@@ -20,7 +20,7 @@ export const GuidanceCard = ({ stats }: GuidanceCardProps): React.JSX.Element =>
           )}
         </p>
         <a href={toWorkbench({ advanced: true })} className="acx-link-button">
-          {__('Go to Workbench', 'alt-context')}
+          {__('Go to Review Queue', 'alt-context')}
         </a>
       </>
     );
@@ -39,8 +39,8 @@ export const GuidanceCard = ({ stats }: GuidanceCardProps): React.JSX.Element =>
           {sprintf(
             /* translators: %d: number of unassigned persons */
             _n(
-              '%d person has no assigned clusters.',
-              '%d persons have no assigned clusters.',
+              '%d person has no assigned face groups.',
+              '%d persons have no assigned face groups.',
               stats.unassigned_persons_count,
               'alt-context',
             ),

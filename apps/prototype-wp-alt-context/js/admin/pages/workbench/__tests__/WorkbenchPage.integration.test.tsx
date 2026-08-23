@@ -654,7 +654,7 @@ describe('WorkbenchPage (integration-lite)', () => {
 
     renderWithClient(client);
 
-    expect(await screen.findByRole('region', { name: 'Alt Context Review Queue' })).toBeInTheDocument();
+    expect(await screen.findByRole('region', { name: 'Review Queue' })).toBeInTheDocument();
   });
 
   it('paints new findings after projection-ready without reload or remount (E15-23 / E15-24 gate)', async () => {

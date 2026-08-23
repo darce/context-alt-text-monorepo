@@ -119,6 +119,13 @@ describe('SYNC_VOCABULARY', () => {
   });
 
   it('contains no wave-2 destination Don’t-say terms outside the BR-36 exemption (BR-34)', () => {
+    // BR-39: assert the filter actually matched before looping over it — an
+    // empty destinationRows (reworded Say phrase, broken markdown parse)
+    // would otherwise let this test pass while checking nothing. PHP sibling
+    // tests/Unit/LoadingMessageVocabularyTest.php already guards this with
+    // assertNotEmpty.
+    expect(allGlossaryRows.length).toBeGreaterThan(0);
+    expect(destinationRows).toHaveLength(WAVE_2_DESTINATION_NAMES.size);
     for (const [key, value] of Object.entries(SYNC_VOCABULARY)) {
       if (WAVE_2_EXEMPT_KEYS.has(key as keyof typeof SYNC_VOCABULARY)) {
         continue;

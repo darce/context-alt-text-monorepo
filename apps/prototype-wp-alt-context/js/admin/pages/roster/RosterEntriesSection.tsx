@@ -68,12 +68,12 @@ const getQueueReviewRoute = (queueFilter: QueueFilterId | null): QueueReviewRout
     case 'singleton-proposals':
       return {
         href: WORKBENCH_SCAN_ROUTE,
-        label: __('Review singleton proposals in Workbench', 'alt-context'),
+        label: __('Review singleton proposals in the Review Queue', 'alt-context'),
       };
     case 'needs-confirmation-after-merge':
       return {
         href: WORKBENCH_SCAN_ROUTE,
-        label: __('Review merge confirmations in Workbench', 'alt-context'),
+        label: __('Review merge confirmations in the Review Queue', 'alt-context'),
       };
     default:
       return null;
@@ -497,7 +497,7 @@ export const RosterEntriesSection = ({ query, routeNotice = null }: RosterEntrie
                 </button>
               )}
               <a href={WORKBENCH_SCAN_ROUTE} className="acx-link-button">
-                {__('Run a scan in Workbench', 'alt-context')}
+                {__('Run a scan in the Review Queue', 'alt-context')}
               </a>
             </div>
           </div>

@@ -196,7 +196,7 @@ const WorkbenchPageContent = (): React.JSX.Element => {
   return (
     <section className="acx-workbench" aria-labelledby="acx-workbench-title">
       <h1 id="acx-workbench-title" className="acx-dashboard__title">
-        {__('Alt Context Review Queue', 'alt-context')}
+        {__('Review Queue', 'alt-context')}
       </h1>
       <div className="acx-workbench__panels">
         <SyncStatusIndicator

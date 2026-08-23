@@ -69,7 +69,7 @@ export const DashboardSyncHealthSection = ({
             <p>
               {sprintf(
                 __(
-                  'Mirror is out of sync with the backend — %1$d stale clusters, %2$d failed sync events.',
+                  'Mirror is out of sync with the backend — %1$d stale face groups, %2$d failed sync events.',
                   'alt-context',
                 ),
                 localClusterCount,
@@ -121,7 +121,7 @@ export const DashboardSyncHealthSection = ({
         ) : null}
         <div className="acx-dashboard__actions">
           <a href={toWorkbench({ tab: 'scan' })} className="acx-dashboard__action-card">
-            <h3>{__('Open Workbench', 'alt-context')}</h3>
+            <h3>{__('Open Review Queue', 'alt-context')}</h3>
             <p>{SYNC_VOCABULARY.openWorkbenchDetail}</p>
           </a>
           {conflictCount > 0 ? (

@@ -27,6 +27,7 @@ import {
   PROJECTION_STALE_NOTICE,
   PROJECTION_FAILED_NOTICE,
   PERSON_ROUTE_UNMATCHED_NOTICE,
+  REASSIGN_UNAVAILABLE_REASON,
 } from './roster/rosterRoute';
 
 export const RosterPage = (): React.JSX.Element => {
@@ -119,7 +120,7 @@ export const RosterPage = (): React.JSX.Element => {
   const reassignUnavailableReason =
     selectedClusterId === null
       ? null
-      : __('Face moves happen in the Review Queue.', 'alt-context');
+      : REASSIGN_UNAVAILABLE_REASON;
 
   const handleDropFace = (targetClusterId: string | null): void => {
     const payload = dragDrop.dragPayload;

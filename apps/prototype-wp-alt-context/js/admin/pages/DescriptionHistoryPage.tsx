@@ -287,9 +287,9 @@ const DescriptionHistoryList = (): React.JSX.Element => {
   if (historyQuery.isLoading) {
     return (
       <section className="acx-history" aria-labelledby="acx-history-title">
-        <p id="acx-history-title" className="acx-dashboard__title">
+        <h1 id="acx-history-title" className="acx-dashboard__title">
           {__('Description Runs', 'alt-context')}
-        </p>
+        </h1>
         <p>{__('Loading description history...', 'alt-context')}</p>
       </section>
     );
@@ -300,9 +300,9 @@ const DescriptionHistoryList = (): React.JSX.Element => {
       <section className="acx-history" aria-labelledby="acx-history-title">
         <header className="acx-history__hero">
           <p className="acx-dashboard__eyebrow">{__('Review', 'alt-context')}</p>
-          <p id="acx-history-title" className="acx-dashboard__title">
+          <h1 id="acx-history-title" className="acx-dashboard__title">
             {__('Description Runs', 'alt-context')}
-          </p>
+          </h1>
         </header>
         <section className="acx-dashboard__panel acx-history__panel">
           <h2>{__('Could not load description history.', 'alt-context')}</h2>
@@ -322,9 +322,9 @@ const DescriptionHistoryList = (): React.JSX.Element => {
     <section className="acx-history" aria-labelledby="acx-history-title">
       <header className="acx-history__hero">
         <p className="acx-dashboard__eyebrow">{__('Review', 'alt-context')}</p>
-        <p id="acx-history-title" className="acx-dashboard__title">
+        <h1 id="acx-history-title" className="acx-dashboard__title">
           {__('Description Runs', 'alt-context')}
-        </p>
+        </h1>
         <p className="acx-dashboard__subtitle">
           {__('Review generated alt text, provenance, and human corrections in one workspace.', 'alt-context')}
         </p>

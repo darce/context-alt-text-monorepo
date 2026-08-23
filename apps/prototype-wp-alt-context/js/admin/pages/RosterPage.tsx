@@ -195,9 +195,9 @@ export const RosterPage = (): React.JSX.Element => {
     <section className="acx-roster" aria-labelledby="acx-roster-title">
       <header className="acx-roster__hero">
         <p className="acx-roster__eyebrow">{__('Alt Context', 'alt-context')}</p>
-        <p id="acx-roster-title" className="acx-roster__title">
+        <h1 id="acx-roster-title" className="acx-roster__title">
           {__('People', 'alt-context')}
-        </p>
+        </h1>
         <p className="acx-roster__subtitle">
           {__(
             'People are the faces you have named. Unnamed face groups are reviewed in the Review Queue.',

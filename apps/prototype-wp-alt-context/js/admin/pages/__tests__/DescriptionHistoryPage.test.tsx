@@ -173,7 +173,10 @@ describe('DescriptionHistoryPage', () => {
     renderPage();
 
     expect(await screen.findByText('Bridge')).toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: 'Description Runs' })).toBeInTheDocument();
+    // The visible hero title is now a <p> (WordPress shell owns the page's only
+    // <h1>, ORCH-UX-UI-BR-23); assert via the section's accessible name so the
+    // test still fails if the preserved id/aria-labelledby link is broken.
+    expect(screen.getByRole('region', { name: 'Description Runs' })).toBeInTheDocument();
     expect(screen.getByText('A bridge over water.')).toBeInTheDocument();
     expect(screen.getAllByText('Bridge at dusk')).toHaveLength(2);
     expect(screen.getByText('microsoft/Florence-2-base-ft')).toBeInTheDocument();

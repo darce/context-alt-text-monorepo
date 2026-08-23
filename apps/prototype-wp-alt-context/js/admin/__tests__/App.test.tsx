@@ -173,7 +173,10 @@ describe('App route boot', () => {
     render(<App />);
 
     expect(window.location.hash).toBe('#/retention');
-    expect(screen.getByRole('heading', { name: 'Data Retention' })).toBeInTheDocument();
+    // The visible hero title is now a <p> (WordPress shell owns the page's only
+    // <h1>, ORCH-UX-UI-BR-23); assert via the section's accessible name so the
+    // test still fails if the preserved id/aria-labelledby link is broken.
+    expect(screen.getByRole('region', { name: 'Data Retention' })).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('radio', { name: /Purge on demand/ }));
     fireEvent.click(screen.getByRole('button', { name: 'Save policy' }));

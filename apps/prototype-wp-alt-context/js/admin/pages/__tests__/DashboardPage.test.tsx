@@ -165,7 +165,10 @@ describe('DashboardPage', () => {
 
     render(<DashboardPage />);
 
-    expect(screen.getByRole('heading', { level: 1, name: 'Alt Context Overview' })).toBeInTheDocument();
+    // The visible hero title is now a <p> (WordPress shell owns the page's only
+    // <h1>, ORCH-UX-UI-BR-23); assert via the section's accessible name so the
+    // test still fails if the preserved id/aria-labelledby link is broken.
+    expect(screen.getByRole('region', { name: 'Alt Context Overview' })).toBeInTheDocument();
     expect(screen.queryByText('Alt Context Dashboard')).not.toBeInTheDocument();
   });
 

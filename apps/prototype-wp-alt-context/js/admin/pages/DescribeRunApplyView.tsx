@@ -196,7 +196,7 @@ export const DescribeRunApplyView = ({ runId }: DescribeRunApplyViewProps): Reac
   const header = (
     <header className="acx-history__hero">
       <p className="acx-dashboard__eyebrow">{__('Bulk describe', 'alt-context')}</p>
-      <h1 className="acx-dashboard__title">{__('Apply generated descriptions', 'alt-context')}</h1>
+      <p className="acx-dashboard__title">{__('Apply generated descriptions', 'alt-context')}</p>
       <a className="acx-run-apply__back" href={toDescriptionHistory()}>
         {__('Back to full history', 'alt-context')}
       </a>

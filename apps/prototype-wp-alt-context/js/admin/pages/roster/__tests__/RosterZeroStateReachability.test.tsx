@@ -167,7 +167,7 @@ describe('Roster zero-state reachability (rg-003)', () => {
     // rg-003 + NAV-05: the rail is retired; the workbench review queue stays
     // reachable from the true zero state via the CTA card.
     expect(screen.getByTestId('roster-review-cta')).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: /Review in Workbench/i })).toHaveAttribute(
+    expect(screen.getByRole('link', { name: /Open Review Queue/i })).toHaveAttribute(
       'href',
       '#/workbench?tab=scan&rq=all.all.0',
     );

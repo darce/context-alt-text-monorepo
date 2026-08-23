@@ -7,8 +7,8 @@ import { __ } from '@wordpress/i18n';
 
 import { toRetention } from '../../navigation/appLinks';
 
-/** Card heading — replaces jargon "Retention posture". */
-export const RETENTION_CARD_HEADING = __('Your data & retention', 'alt-context');
+/** Card heading — replaces jargon "Retention posture"; names the destination page (glossary rule 2). */
+export const RETENTION_CARD_HEADING = __('Data Retention', 'alt-context');
 
 /**
  * Endpoint configured but fetch failed (`useRetentionStatus().isError`).
@@ -22,8 +22,8 @@ export const RETENTION_CARD_ERROR_BODY = __(
 /** Designed action for the error state — existing retention route. */
 export const RETENTION_CARD_LINK_HREF = toRetention();
 
-/** Action-card heading shared by retention error and success panels. */
-export const RETENTION_CARD_ACTION_HEADING = __('Open Retention Controls', 'alt-context');
+/** Action-card heading shared by retention error and success panels — names the destination as the sidebar names it (glossary rule 2). */
+export const RETENTION_CARD_ACTION_HEADING = __('Open Data Retention', 'alt-context');
 
 /** Action-card body shared by retention error and success panels. */
 export const RETENTION_CARD_ACTION_BODY = __(

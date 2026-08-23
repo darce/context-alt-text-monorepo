@@ -22,7 +22,7 @@ class RosterPage extends AbstractSpaPage {
 
 	protected function getLoadingMessage(): string {
 		return __(
-			'Loading the Alt Context People. Please wait while the application initializes.',
+			'Loading Alt Context People. Please wait while the application initializes.',
 			'alt-context'
 		);
 	}

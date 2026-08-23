@@ -22,7 +22,7 @@ class WorkbenchPage extends AbstractSpaPage {
 
 	protected function getLoadingMessage(): string {
 		return __(
-			'Loading the Review Queue experience. Hang tight while we prepare your media workspace.',
+			'Loading Alt Context Review Queue. Hang tight while we prepare your media workspace.',
 			'alt-context'
 		);
 	}

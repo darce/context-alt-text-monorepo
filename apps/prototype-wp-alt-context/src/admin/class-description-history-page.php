@@ -22,7 +22,7 @@ class DescriptionHistoryPage extends AbstractSpaPage {
 
 	protected function getLoadingMessage(): string {
 		return __(
-			'Loading description review history. Please wait while the application initializes.',
+			'Loading Alt Context Description Runs. Please wait while the application initializes.',
 			'alt-context'
 		);
 	}

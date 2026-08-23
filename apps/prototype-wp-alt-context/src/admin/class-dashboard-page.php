@@ -22,7 +22,7 @@ class DashboardPage extends AbstractSpaPage {
 
 	protected function getLoadingMessage(): string {
 		return __(
-			'Loading the Alt Context dashboard. Please wait while the application initializes.',
+			'Loading the Alt Context Overview. Please wait while the application initializes.',
 			'alt-context'
 		);
 	}

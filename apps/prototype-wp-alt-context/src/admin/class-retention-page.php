@@ -22,7 +22,7 @@ class RetentionPage extends AbstractSpaPage {
 
 	protected function getLoadingMessage(): string {
 		return __(
-			'Loading Alt Context retention. Please wait while the application initializes.',
+			'Loading Alt Context Data Retention. Please wait while the application initializes.',
 			'alt-context'
 		);
 	}

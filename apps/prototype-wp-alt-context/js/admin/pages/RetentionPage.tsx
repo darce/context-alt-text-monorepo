@@ -29,7 +29,7 @@ export const RetentionPage = (): React.JSX.Element => {
   if (retentionQuery.isLoading) {
     return (
       <section className="acx-retention" aria-labelledby="acx-retention-title">
-        <h1 id="acx-retention-title">{__('Data Retention', 'alt-context')}</h1>
+        <p id="acx-retention-title" className="acx-dashboard__title">{__('Data Retention', 'alt-context')}</p>
         <p>{__('Loading retention status\u2026', 'alt-context')}</p>
       </section>
     );
@@ -40,9 +40,9 @@ export const RetentionPage = (): React.JSX.Element => {
       <section className="acx-retention" aria-labelledby="acx-retention-title">
         <header className="acx-retention__hero">
           <p className="acx-dashboard__eyebrow">{__('Governance', 'alt-context')}</p>
-          <h1 id="acx-retention-title" className="acx-dashboard__title">
+          <p id="acx-retention-title" className="acx-dashboard__title">
             {__('Data Retention', 'alt-context')}
-          </h1>
+          </p>
           <p className="acx-dashboard__subtitle">
             {__('Review your data and retention, export machine-derived data, and audit lifecycle actions.', 'alt-context')}
           </p>
@@ -66,9 +66,9 @@ export const RetentionPage = (): React.JSX.Element => {
     <section className="acx-retention" aria-labelledby="acx-retention-title">
       <header className="acx-retention__hero">
         <p className="acx-dashboard__eyebrow">{__('Governance', 'alt-context')}</p>
-        <h1 id="acx-retention-title" className="acx-dashboard__title">
+        <p id="acx-retention-title" className="acx-dashboard__title">
           {__('Data Retention', 'alt-context')}
-        </h1>
+        </p>
         <p className="acx-dashboard__subtitle">
           {__('Review your data and retention, export machine-derived data, and audit lifecycle actions.', 'alt-context')}
         </p>

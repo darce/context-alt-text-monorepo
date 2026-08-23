@@ -43,6 +43,20 @@ abstract class AbstractSpaPage {
 	abstract protected function getLoadingMessage(): string;
 
 	/**
+	 * Whether the React view for this page renders its own visible hero title.
+	 *
+	 * WHY: pages whose React view renders its own hero title would otherwise
+	 * show the title twice and ship two <h1>s. Those pages hide the shell
+	 * heading from sight but keep it in the DOM for the a11y tree and for
+	 * WordPress admin-notice anchoring.
+	 *
+	 * @return bool
+	 */
+	protected function rendersOwnTitle(): bool {
+		return false;
+	}
+
+	/**
 	 * Render the SPA page shell.
 	 *
 	 * Outputs the WordPress admin page wrapper with a React mount point
@@ -53,7 +67,7 @@ abstract class AbstractSpaPage {
 	public function render(): void {
 		?>
 		<div class="wrap alt-context-admin">
-			<h1><?php echo esc_html( $this->getPageTitle() ); ?></h1>
+			<h1 id="acx-page-title"<?php echo $this->rendersOwnTitle() ? ' class="screen-reader-text"' : ''; ?>><?php echo esc_html( $this->getPageTitle() ); ?></h1>
 			<div id="<?php echo esc_attr( $this->getRootId() ); ?>" class="<?php echo esc_attr( $this->getRootClass() ); ?>">
 				<p class="description">
 					<?php echo esc_html( $this->getLoadingMessage() ); ?>

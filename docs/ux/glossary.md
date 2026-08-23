@@ -29,5 +29,10 @@ sentence must use the preferred term.
    "face group" beats "cluster"; never surface "embedding" to an operator.
 4. **Out of scope for this wave:** internal job-pipeline phase strings
    (`syncVocabulary.ts`, `phasePresentation.ts`, `DeadLetterPanel.tsx`,
-   progress/status text). Those are a separate, larger change — leave them
-   alone so this wave stays reviewable.
+   progress/status text) — a separate, larger change, left alone so this wave
+   stays reviewable. This exemption is scoped to **non-navigational** strings
+   only: progress labels, badges, and status prose. It does not cover a string
+   that is itself the visible label of a link or button that navigates
+   somewhere — those are cross-references and Rule 2 governs them regardless
+   of which file they live in [BR-33]. A file appearing in this list is not a
+   blanket pass for every string in that file.

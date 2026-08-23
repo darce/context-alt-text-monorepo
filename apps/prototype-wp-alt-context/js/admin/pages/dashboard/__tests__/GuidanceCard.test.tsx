@@ -26,7 +26,7 @@ describe('GuidanceCard', () => {
     );
 
     expect(screen.getByText('5 faces are waiting for names.')).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'Go to Workbench' })).toHaveAttribute('href', '#/workbench?advanced=open');
+    expect(screen.getByRole('link', { name: 'Go to Review Queue' })).toHaveAttribute('href', '#/workbench?advanced=open');
   });
 
   it('renders first-use guidance when there are no people', () => {
@@ -59,7 +59,7 @@ describe('GuidanceCard', () => {
       />,
     );
 
-    expect(screen.getByText('2 persons have no assigned clusters.')).toBeInTheDocument();
+    expect(screen.getByText('2 persons have no assigned face groups.')).toBeInTheDocument();
     expect(screen.queryByText('Start by scanning your media library for faces.')).not.toBeInTheDocument();
   });
 
@@ -76,7 +76,7 @@ describe('GuidanceCard', () => {
       />,
     );
 
-    expect(screen.getByText('2 persons have no assigned clusters.')).toBeInTheDocument();
+    expect(screen.getByText('2 persons have no assigned face groups.')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Review 2 unassigned persons' })).toHaveAttribute(
       'href',
       '#/roster?personFilter=unassigned',
@@ -97,7 +97,7 @@ describe('GuidanceCard', () => {
       />,
     );
 
-    expect(screen.getByText('1 person has no assigned clusters.')).toBeInTheDocument();
+    expect(screen.getByText('1 person has no assigned face groups.')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Review 1 unassigned person' })).toHaveAttribute(
       'href',
       '#/roster?personFilter=unassigned',

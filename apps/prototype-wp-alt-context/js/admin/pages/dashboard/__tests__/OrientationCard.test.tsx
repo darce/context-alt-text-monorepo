@@ -18,7 +18,7 @@ describe('OrientationCard', () => {
     render(<OrientationCard peopleCount={1} />);
 
     expect(screen.getByRole('heading', { name: 'Getting Started with Identity Recognition' })).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'Open Workbench' })).toHaveAttribute('href', '#/workbench?tab=scan');
+    expect(screen.getByRole('link', { name: 'Open Review Queue' })).toHaveAttribute('href', '#/workbench?tab=scan');
   });
 
   it('uses the shipped Scan, Confirm, and Review stages without implementation vocabulary', () => {

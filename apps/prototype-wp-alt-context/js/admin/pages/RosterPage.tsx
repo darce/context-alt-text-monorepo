@@ -27,6 +27,7 @@ import {
   PROJECTION_STALE_NOTICE,
   PROJECTION_FAILED_NOTICE,
   PERSON_ROUTE_UNMATCHED_NOTICE,
+  REASSIGN_UNAVAILABLE_REASON,
 } from './roster/rosterRoute';
 
 export const RosterPage = (): React.JSX.Element => {
@@ -119,7 +120,7 @@ export const RosterPage = (): React.JSX.Element => {
   const reassignUnavailableReason =
     selectedClusterId === null
       ? null
-      : __('Face moves happen in the Workbench review queue.', 'alt-context');
+      : REASSIGN_UNAVAILABLE_REASON;
 
   const handleDropFace = (targetClusterId: string | null): void => {
     const payload = dragDrop.dragPayload;
@@ -195,11 +196,11 @@ export const RosterPage = (): React.JSX.Element => {
       <header className="acx-roster__hero">
         <p className="acx-roster__eyebrow">{__('Alt Context', 'alt-context')}</p>
         <h1 id="acx-roster-title" className="acx-roster__title">
-          {__('Roster Management', 'alt-context')}
+          {__('People', 'alt-context')}
         </h1>
         <p className="acx-roster__subtitle">
           {__(
-            'People are the faces you have named. Unnamed face groups are reviewed in the Workbench.',
+            'People are the faces you have named. Unnamed face groups are reviewed in the Review Queue.',
             'alt-context',
           )}
         </p>
@@ -236,10 +237,10 @@ export const RosterPage = (): React.JSX.Element => {
                   )}
           </p>
           {topUnlabeledTotal === null ? (
-            <p>{__('Unnamed faces are reviewed in the Workbench.', 'alt-context')}</p>
+            <p>{__('Unnamed faces are reviewed in the Review Queue.', 'alt-context')}</p>
           ) : null}
           <a className="acx-button acx-button--secondary" href={workbenchReviewQueueUrl()}>
-            {__('Review in Workbench', 'alt-context')}
+            {__('Open Review Queue', 'alt-context')}
           </a>
         </section>
       </div>

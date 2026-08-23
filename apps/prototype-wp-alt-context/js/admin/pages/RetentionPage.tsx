@@ -29,7 +29,7 @@ export const RetentionPage = (): React.JSX.Element => {
   if (retentionQuery.isLoading) {
     return (
       <section className="acx-retention" aria-labelledby="acx-retention-title">
-        <h1 id="acx-retention-title">{__('Retention & Audit Controls', 'alt-context')}</h1>
+        <h1 id="acx-retention-title">{__('Data Retention', 'alt-context')}</h1>
         <p>{__('Loading retention status\u2026', 'alt-context')}</p>
       </section>
     );
@@ -41,7 +41,7 @@ export const RetentionPage = (): React.JSX.Element => {
         <header className="acx-retention__hero">
           <p className="acx-dashboard__eyebrow">{__('Governance', 'alt-context')}</p>
           <h1 id="acx-retention-title" className="acx-dashboard__title">
-            {__('Retention & Audit Controls', 'alt-context')}
+            {__('Data Retention', 'alt-context')}
           </h1>
           <p className="acx-dashboard__subtitle">
             {__('Review your data and retention, export machine-derived data, and audit lifecycle actions.', 'alt-context')}
@@ -67,7 +67,7 @@ export const RetentionPage = (): React.JSX.Element => {
       <header className="acx-retention__hero">
         <p className="acx-dashboard__eyebrow">{__('Governance', 'alt-context')}</p>
         <h1 id="acx-retention-title" className="acx-dashboard__title">
-          {__('Retention & Audit Controls', 'alt-context')}
+          {__('Data Retention', 'alt-context')}
         </h1>
         <p className="acx-dashboard__subtitle">
           {__('Review your data and retention, export machine-derived data, and audit lifecycle actions.', 'alt-context')}
@@ -140,7 +140,7 @@ export const RetentionPage = (): React.JSX.Element => {
           <h2>{__('Export controls', 'alt-context')}</h2>
           <p>
             {__(
-              'Export clusters, members, detection metadata, and representative details as portable JSON.',
+              'Export face groups, members, detection metadata, and representative details as portable JSON.',
               'alt-context',
             )}
           </p>

@@ -288,7 +288,7 @@ const DescriptionHistoryList = (): React.JSX.Element => {
     return (
       <section className="acx-history" aria-labelledby="acx-history-title">
         <h1 id="acx-history-title" className="acx-dashboard__title">
-          {__('Description Review History', 'alt-context')}
+          {__('Description Runs', 'alt-context')}
         </h1>
         <p>{__('Loading description history...', 'alt-context')}</p>
       </section>
@@ -301,7 +301,7 @@ const DescriptionHistoryList = (): React.JSX.Element => {
         <header className="acx-history__hero">
           <p className="acx-dashboard__eyebrow">{__('Review', 'alt-context')}</p>
           <h1 id="acx-history-title" className="acx-dashboard__title">
-            {__('Description Review History', 'alt-context')}
+            {__('Description Runs', 'alt-context')}
           </h1>
         </header>
         <section className="acx-dashboard__panel acx-history__panel">
@@ -323,7 +323,7 @@ const DescriptionHistoryList = (): React.JSX.Element => {
       <header className="acx-history__hero">
         <p className="acx-dashboard__eyebrow">{__('Review', 'alt-context')}</p>
         <h1 id="acx-history-title" className="acx-dashboard__title">
-          {__('Description Review History', 'alt-context')}
+          {__('Description Runs', 'alt-context')}
         </h1>
         <p className="acx-dashboard__subtitle">
           {__('Review generated alt text, provenance, and human corrections in one workspace.', 'alt-context')}

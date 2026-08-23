@@ -191,7 +191,7 @@ describe('DashboardPage', () => {
     expect(screen.getByText('22')).toBeInTheDocument();
     expect(screen.getByText('Media with faces')).toBeInTheDocument();
     expect(screen.getByText('3 faces are waiting for names.')).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'Go to Workbench' })).toHaveAttribute('href', '#/workbench?advanced=open');
+    expect(screen.getByRole('link', { name: 'Go to Review Queue' })).toHaveAttribute('href', '#/workbench?advanced=open');
   });
 
   it('shows first-use guidance when roster is empty and nothing pending', () => {
@@ -385,7 +385,7 @@ describe('DashboardPage', () => {
 
     render(<DashboardPage />);
 
-    expect(screen.getByText('3 persons have no assigned clusters.')).toBeInTheDocument();
+    expect(screen.getByText('3 persons have no assigned face groups.')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Review 3 unassigned persons' })).toHaveAttribute(
       'href',
       '#/roster?personFilter=unassigned',
@@ -1004,7 +1004,7 @@ describe('DashboardPage', () => {
     render(<DashboardPage />);
 
     expect(
-      screen.getByText('Mirror is out of sync with the backend — 7 stale clusters, 2 failed sync events.'),
+      screen.getByText('Mirror is out of sync with the backend — 7 stale face groups, 2 failed sync events.'),
     ).toBeInTheDocument();
   });
 

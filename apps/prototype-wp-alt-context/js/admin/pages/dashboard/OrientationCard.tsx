@@ -8,8 +8,10 @@ interface OrientationCardProps {
   peopleCount: number;
 }
 
-export const OrientationCard = ({ peopleCount }: OrientationCardProps): React.JSX.Element => {
-  const ctaLabel = peopleCount === 0 ? __('Start your first scan', 'alt-context') : __('Open Review Queue', 'alt-context');
+export const OrientationCard = ({ peopleCount }: OrientationCardProps): React.JSX.Element | null => {
+  if (peopleCount !== 0) {
+    return null;
+  }
 
   return (
     <section className="acx-orientation-card" aria-labelledby="acx-orientation-title">
@@ -64,7 +66,7 @@ export const OrientationCard = ({ peopleCount }: OrientationCardProps): React.JS
 
       <div className="acx-orientation-card__footer">
         <a href={toWorkbench({ tab: 'scan' })} className="acx-button acx-button--primary">
-          {ctaLabel}
+          {__('Start your first scan', 'alt-context')}
         </a>
       </div>
     </section>

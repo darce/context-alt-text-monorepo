@@ -173,7 +173,7 @@ describe('App route boot', () => {
     render(<App />);
 
     expect(window.location.hash).toBe('#/retention');
-    expect(screen.getByRole('heading', { name: 'Retention & Audit Controls' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Data Retention' })).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('radio', { name: /Purge on demand/ }));
     fireEvent.click(screen.getByRole('button', { name: 'Save policy' }));

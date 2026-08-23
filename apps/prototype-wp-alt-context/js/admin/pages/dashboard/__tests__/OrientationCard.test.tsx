@@ -14,11 +14,11 @@ describe('OrientationCard', () => {
     expect(screen.getByRole('link', { name: 'Start your first scan' })).toHaveAttribute('href', '#/workbench?tab=scan');
   });
 
-  it('remains available when the site already has people', () => {
-    render(<OrientationCard peopleCount={1} />);
+  it('renders nothing once the site already has people', () => {
+    const { container } = render(<OrientationCard peopleCount={1} />);
 
-    expect(screen.getByRole('heading', { name: 'Getting Started with Identity Recognition' })).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'Open Review Queue' })).toHaveAttribute('href', '#/workbench?tab=scan');
+    expect(container).toBeEmptyDOMElement();
+    expect(screen.queryByRole('heading', { name: 'Getting Started with Identity Recognition' })).not.toBeInTheDocument();
   });
 
   it('uses the shipped Scan, Confirm, and Review stages without implementation vocabulary', () => {

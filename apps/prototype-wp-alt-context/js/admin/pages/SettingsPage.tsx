@@ -159,7 +159,7 @@ export const SettingsPage = (): React.JSX.Element => {
     return (
       <section className="acx-settings" aria-labelledby="acx-settings-page-title">
         <h1 id="acx-settings-page-title" className="acx-dashboard__title">
-          {__('Alt Context Settings', 'alt-context')}
+          {__('Settings', 'alt-context')}
         </h1>
         <h2 id="acx-settings-title">{__('Recognition API Settings', 'alt-context')}</h2>
         <p>{__('Loading settings…', 'alt-context')}</p>
@@ -171,7 +171,7 @@ export const SettingsPage = (): React.JSX.Element => {
     return (
       <section className="acx-settings" aria-labelledby="acx-settings-page-title">
         <h1 id="acx-settings-page-title" className="acx-dashboard__title">
-          {__('Alt Context Settings', 'alt-context')}
+          {__('Settings', 'alt-context')}
         </h1>
         <h2 id="acx-settings-title">{__('Recognition API Settings', 'alt-context')}</h2>
         <p>{__('Failed to load settings.', 'alt-context')}</p>
@@ -186,7 +186,7 @@ export const SettingsPage = (): React.JSX.Element => {
   return (
     <section className="acx-settings" aria-labelledby="acx-settings-page-title">
       <h1 id="acx-settings-page-title" className="acx-dashboard__title">
-        {__('Alt Context Settings', 'alt-context')}
+        {__('Settings', 'alt-context')}
       </h1>
       <h2 id="acx-settings-title">{__('Recognition API Settings', 'alt-context')}</h2>
       <p className="description">

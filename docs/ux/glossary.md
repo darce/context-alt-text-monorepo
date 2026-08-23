@@ -22,7 +22,7 @@ sentence must use the preferred term.
 ## Rules
 
 1. A menu label and the `<h1>` of the page it opens must be the **same words**
-   [NAV-05]. "Review Queue" in the sidebar may not open "Alt Context Workbench".
+   [NAV-13][NAME-04]. "Review Queue" in the sidebar may not open "Alt Context Workbench".
 2. Cross-references name the destination as the sidebar names it: "Open Review
    Queue", not "Open Workbench".
 3. Prefer plain language over pipeline jargon in anything an operator reads.

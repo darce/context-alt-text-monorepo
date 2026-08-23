@@ -173,9 +173,10 @@ describe('App route boot', () => {
     render(<App />);
 
     expect(window.location.hash).toBe('#/retention');
-    // The visible hero title is now a <p> (WordPress shell owns the page's only
-    // <h1>, ORCH-UX-UI-BR-23); assert via the section's accessible name so the
-    // test still fails if the preserved id/aria-labelledby link is broken.
+    // RetentionPage renders its own <h1> (ORCH-UX-UI BR-37/BR-38); the PHP
+    // shell heading is now always screen-reader-only and never the source of
+    // this section's accessible name. Assert via the section's accessible
+    // name so the test still fails if the id/aria-labelledby link is broken.
     expect(screen.getByRole('region', { name: 'Data Retention' })).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('radio', { name: /Purge on demand/ }));

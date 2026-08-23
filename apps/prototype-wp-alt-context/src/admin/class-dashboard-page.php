@@ -17,7 +17,7 @@ class DashboardPage extends AbstractSpaPage {
 	}
 
 	protected function getPageTitle(): string {
-		return __( 'Alt Context Dashboard', 'alt-context' );
+		return __( 'Alt Context Overview', 'alt-context' );
 	}
 
 	protected function getLoadingMessage(): string {

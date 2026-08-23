@@ -14,11 +14,20 @@ describe('OrientationCard', () => {
     expect(screen.getByRole('link', { name: 'Start your first scan' })).toHaveAttribute('href', '#/workbench?tab=scan');
   });
 
-  it('renders nothing when peopleCount is greater than 0', () => {
-    const { container } = render(<OrientationCard peopleCount={1} />);
+  it('remains available when the site already has people', () => {
+    render(<OrientationCard peopleCount={1} />);
 
-    expect(container).toBeEmptyDOMElement();
-    expect(screen.queryByRole('heading', { name: 'Getting Started with Identity Recognition' })).not.toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Getting Started with Identity Recognition' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Open Review Queue' })).toHaveAttribute('href', '#/workbench?tab=scan');
+  });
+
+  it('uses the shipped Scan, Confirm, and Review stages without implementation vocabulary', () => {
+    const { container } = render(<OrientationCard peopleCount={0} />);
+
+    expect(screen.getByRole('heading', { name: '1. Scan' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: '2. Confirm' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: '3. Review' })).toBeInTheDocument();
+    expect(container).not.toHaveTextContent(/cluster|embedding|mathematical identit/i);
   });
 
   it('does not use localStorage dismissal state', () => {

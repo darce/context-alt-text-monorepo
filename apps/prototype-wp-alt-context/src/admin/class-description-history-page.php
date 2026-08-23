@@ -26,8 +26,4 @@ class DescriptionHistoryPage extends AbstractSpaPage {
 			'alt-context'
 		);
 	}
-
-	protected function rendersOwnTitle(): bool {
-		return true;
-	}
 }

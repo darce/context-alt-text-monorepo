@@ -17,7 +17,7 @@ class DescriptionHistoryPage extends AbstractSpaPage {
 	}
 
 	protected function getPageTitle(): string {
-		return __( 'Description Review History', 'alt-context' );
+		return __( 'Alt Context Description Runs', 'alt-context' );
 	}
 
 	protected function getLoadingMessage(): string {

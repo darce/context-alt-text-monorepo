@@ -5,18 +5,21 @@ declare(strict_types=1);
 namespace AltContext\Tests\Unit;
 
 use AltContext\Admin\DashboardPage;
+use AltContext\Admin\DescriptionHistoryPage;
 use AltContext\Admin\Menu;
+use AltContext\Admin\RetentionPage;
 use AltContext\Admin\RosterPage;
 use AltContext\Admin\SettingsPage;
 use AltContext\Admin\WorkbenchPage;
 use AltContext\Tests\TestCase;
+use ReflectionClass;
 
 /**
  * @covers \AltContext\Admin\Menu
  */
 class MenuTest extends TestCase
 {
-    public function testRegistersMutuallyExclusiveAdminMenuItemsInTaskOrder(): void
+    public function testRegistersExpectedAdminMenuLabels(): void
     {
         $menu = new Menu(
             new DashboardPage(),
@@ -46,6 +49,58 @@ class MenuTest extends TestCase
             ],
             $menuItems
         );
+    }
+
+    public function testEveryMenuItemPageTitleMatchesItsPageClassTitle(): void
+    {
+        $dashboardPage = new DashboardPage();
+        $workbenchPage = new WorkbenchPage();
+        $rosterPage = new RosterPage();
+        $settingsPage = new SettingsPage();
+        $descriptionHistoryPage = new DescriptionHistoryPage();
+        $retentionPage = new RetentionPage();
+
+        $menu = new Menu(
+            $dashboardPage,
+            $workbenchPage,
+            $rosterPage,
+            $settingsPage,
+            $descriptionHistoryPage,
+            $retentionPage
+        );
+
+        $menu->register_menu();
+
+        $pagesBySlug = [
+            'alt-context-dashboard' => $dashboardPage,
+            'alt-context-workbench' => $workbenchPage,
+            'alt-context-roster' => $rosterPage,
+            'alt-context-description-history' => $descriptionHistoryPage,
+            'alt-context-retention' => $retentionPage,
+            'alt-context-settings' => $settingsPage,
+        ];
+
+        $this->assertNotEmpty($GLOBALS['__ac_submenu_pages']);
+
+        foreach ($GLOBALS['__ac_submenu_pages'] as $registered) {
+            $slug = $registered['menu_slug'] ?? null;
+            $this->assertArrayHasKey($slug, $pagesBySlug, "Unexpected submenu slug: {$slug}");
+
+            $page = $pagesBySlug[$slug];
+            $method = (new ReflectionClass($page))->getMethod('getPageTitle');
+            $method->setAccessible(true);
+            $actualPageTitle = $method->invoke($page);
+
+            $this->assertSame(
+                $registered['page_title'] ?? null,
+                $actualPageTitle,
+                sprintf(
+                    "Menu page-title for '%s' does not match %s::getPageTitle().",
+                    $slug,
+                    get_class($page)
+                )
+            );
+        }
     }
 
     public function testRegistersDescriptionHistorySubmenu(): void

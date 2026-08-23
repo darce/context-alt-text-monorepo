@@ -149,7 +149,7 @@ describe('DashboardPage', () => {
     expect(screen.queryByText('Monitor your library coverage and manage identity recognition jobs.')).not.toBeInTheDocument();
   });
 
-  it('renders the page heading as "Alt Context Overview", matching the renamed admin menu and PHP page title', () => {
+  it('renders the page heading as "Overview", matching the renamed admin menu label', () => {
     mockedUseIdentityStats.mockReturnValue(
       createMockQuery<DashboardStats>({
         data: {
@@ -168,7 +168,7 @@ describe('DashboardPage', () => {
     // The visible hero title is now a <p> (WordPress shell owns the page's only
     // <h1>, ORCH-UX-UI-BR-23); assert via the section's accessible name so the
     // test still fails if the preserved id/aria-labelledby link is broken.
-    expect(screen.getByRole('region', { name: 'Alt Context Overview' })).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: 'Overview' })).toBeInTheDocument();
     expect(screen.queryByText('Alt Context Dashboard')).not.toBeInTheDocument();
   });
 

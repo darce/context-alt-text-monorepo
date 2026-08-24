@@ -7,8 +7,9 @@
  * second. The monotonic `seq` guarantees a fresh state object every announce.
  * Repeated copy first clears the persistent live-region content, then a follow-up
  * render inserts the message so it creates a DOM mutation without remounting the
- * region. New copy publishes immediately, preserving the hook's synchronous
- * single-announcement contract.
+ * region. A repeat is identical published copy *or* identical in-flight pending
+ * copy (announce arriving during the clear phase). New copy publishes immediately,
+ * preserving the hook's synchronous single-announcement contract.
  */
 
 import { useCallback, useEffect, useState } from 'react';
@@ -35,7 +36,7 @@ export const useAriaAnnounce = (): UseAriaAnnounceResult => {
   });
   const announce = useCallback((message: string) => {
     setState((prev) =>
-      prev.message === message
+      prev.message === message || prev.pendingMessage === message
         ? { message: null, pendingMessage: message, seq: prev.seq + 1 }
         : { message, pendingMessage: null, seq: prev.seq + 1 },
     );

@@ -73,7 +73,7 @@ const PanelProviders = ({ children }: { children: React.ReactNode }) => (
 
 /** Always-mounted owner (mirrors ScanTabContent): opens the review via the panel
  * reducer, runs the retirement lifecycle through the PRODUCTION owner wiring
- * (`useOpenReviewTargetLifecycle`), owns the persistent seq-keyed `role=status`
+ * (`useOpenReviewTargetLifecycle`), owns the persistent always-mounted `role=status`
  * live region (survives rebind remount / retirement unmount), and mounts the
  * panel on the returned `reviewClusterId` (null once retired). Retirement close
  * routes to the provided spies. BR-65: all panel tests now go through the real
@@ -111,7 +111,7 @@ const OwnedPanel = ({
 
   return (
     <>
-      <p key={seq} role="status" aria-live="polite">
+      <p role="status" aria-live="polite" data-announce-seq={seq}>
         {message}
       </p>
       {reviewClusterId !== null ? (
@@ -189,7 +189,7 @@ const OwnedReviewHarness = ({
 
   return (
     <>
-      <p key={seq} role="status" aria-live="polite">
+      <p role="status" aria-live="polite" data-announce-seq={seq}>
         {message}
       </p>
       {/* BR-66: observable mirror of the panel reducer's current review id. */}
@@ -208,9 +208,9 @@ const OwnedReviewHarness = ({
 };
 
 /** BR-68: drives sequential retirements through the production owner path. Two
- * consecutive identical close announcements must each force a fresh live-region
- * render (seq bump) so a screen reader re-reads the repeated copy instead of an
- * Object.is state bail-out swallowing the second. */
+ * consecutive identical close announcements must each mutate the stable live
+ * region (seq bump + clear-then-set) so a screen reader re-reads the repeated
+ * copy instead of an Object.is state bail-out swallowing the second. */
 const SequentialRetireHarness = ({ ids }: { ids: readonly string[] }) => {
   const { clusterPanel, dispatchClusterPanel } = useClusterPanel();
   const { message, seq, announce } = useAriaAnnounce();
@@ -223,7 +223,7 @@ const SequentialRetireHarness = ({ ids }: { ids: readonly string[] }) => {
 
   return (
     <>
-      <p key={seq} role="status" aria-live="polite" data-announce-seq={seq}>
+      <p role="status" aria-live="polite" data-announce-seq={seq}>
         {message}
       </p>
       {ids.map((id) => (
@@ -852,16 +852,17 @@ describe('ClusterReviewPanel', () => {
     await waitFor(() => {
       expect(screen.getByRole('status')).toHaveTextContent(LIVE_TARGET_CLOSE_ANNOUNCE);
     });
-    const firstSeq = screen.getByRole('status').getAttribute('data-announce-seq');
+    const live = screen.getByRole('status');
+    const firstSeq = live.getAttribute('data-announce-seq');
     expect(firstSeq).not.toBeNull();
 
     await user.click(screen.getByRole('button', { name: 'open cluster-b' }));
-    // Identical copy, fresh render: the live region re-keyed (seq advanced), so
-    // the repeated announcement is not swallowed by an Object.is bail-out.
+    // Identical copy on the same node: seq advances; remount is not the mechanism.
     await waitFor(() => {
       expect(screen.getByRole('status').getAttribute('data-announce-seq')).not.toBe(firstSeq);
     });
-    expect(screen.getByRole('status')).toHaveTextContent(LIVE_TARGET_CLOSE_ANNOUNCE);
+    expect(screen.getByRole('status')).toBe(live);
+    expect(live).toHaveTextContent(LIVE_TARGET_CLOSE_ANNOUNCE);
   });
 
   /**
@@ -911,7 +912,7 @@ describe('ClusterReviewPanel', () => {
 
       return (
         <>
-          <p key={seq} role="status" aria-live="polite">
+          <p role="status" aria-live="polite" data-announce-seq={seq}>
             {message}
           </p>
           <button

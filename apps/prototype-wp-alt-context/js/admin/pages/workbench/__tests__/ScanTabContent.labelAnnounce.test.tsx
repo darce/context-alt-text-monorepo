@@ -99,9 +99,13 @@ describe('ScanTabContent — R1-29 label announce + focus', () => {
     const user = userEvent.setup();
     const { container } = render(<ScanTabContent />);
 
+    const live = container.querySelector('.acx-review-lifecycle-announce');
+    expect(live).not.toBeNull();
+
     await user.click(screen.getByRole('button', { name: 'Save name' }));
 
-    const live = container.querySelector('.acx-review-lifecycle-announce');
+    // DUX-W2R1-RV-01: no seq key — announce mutates the already-mounted region.
+    expect(container.querySelector('.acx-review-lifecycle-announce')).toBe(live);
     expect(live?.textContent).toBe(REVIEW_QUEUE_LABEL_SAVED_ANNOUNCE);
     expect(container.querySelector('.acx-findings-detail-anchor')).toBe(document.activeElement);
   });

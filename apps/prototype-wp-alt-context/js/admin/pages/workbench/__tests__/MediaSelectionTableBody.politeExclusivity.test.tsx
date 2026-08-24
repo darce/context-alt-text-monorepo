@@ -94,6 +94,7 @@ const renderMediaRow = () =>
     <table>
       <tbody>
         <MediaSelectionTableBody
+          onClearSearch={vi.fn()}
           items={[mediaItem]}
           isLoading={false}
           detailIsLoading={false}

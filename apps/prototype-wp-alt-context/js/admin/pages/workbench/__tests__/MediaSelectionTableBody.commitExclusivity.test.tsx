@@ -122,6 +122,7 @@ const LiveWorkbenchRow = ({ initialItem }: { initialItem: WorkbenchMediaItem }):
     <table>
       <tbody>
         <MediaSelectionTableBody
+          onClearSearch={vi.fn()}
           items={items}
           isLoading={false}
           detailIsLoading={false}

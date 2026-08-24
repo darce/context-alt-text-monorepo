@@ -139,6 +139,7 @@ export const MediaSelection = ({ reviewActive = false }: MediaSelectionProps): R
                 identityQuery.data,
               )}
               onRetryIdentities={() => void identityQuery.refetch()}
+              onClearSearch={() => onSearchChange('')}
             />
           </tbody>
         </table>

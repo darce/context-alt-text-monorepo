@@ -56,6 +56,7 @@ import {
 import { gatedClusterCopy, repairGatedCount } from './representativeVocabulary';
 import { SuggestionCard, type FaceOriginalTarget, type ReviewSuggestion } from './SuggestionCards';
 import { ReviewCardGroupShell } from './reviewCardGroupAccname';
+import { isStoredFaceApprovalBlocked } from './storedFaceReviewGate';
 import { TopClusterCard } from './TopClusterCard';
 import {
   BULK_COMMIT_PHASE,
@@ -304,6 +305,19 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
     // The hook clears then restores repeated copy in one persistent live node.
     const { message: liveMessage, seq: liveSeq, announce: setLiveMessage } = useAriaAnnounce();
     const [selectionOpen, setSelectionOpen] = React.useState(false);
+    const [reviewedStoredFaceSuggestionIds, setReviewedStoredFaceSuggestionIds] = React.useState<Set<string>>(
+      () => new Set(),
+    );
+    const markStoredFaceReviewPresented = React.useCallback((suggestionId: string): void => {
+      setReviewedStoredFaceSuggestionIds((current) => {
+        if (current.has(suggestionId)) {
+          return current;
+        }
+        const next = new Set(current);
+        next.add(suggestionId);
+        return next;
+      });
+    }, []);
     /** User confirmed bulk while truncation-gated (UI-06 total-N confirm). */
     const [truncationConfirmed, setTruncationConfirmed] = React.useState(false);
     // REV4-02: RQ v5 isLoading stays false while an already-errored query
@@ -334,6 +348,11 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
       return map;
     }, [findings.queue]);
 
+    const assignmentById = React.useMemo(
+      () => flattenAssignmentSuggestions(data.reviewItems),
+      [data.reviewItems],
+    );
+
     /**
      * M2: bulk preview/commit resolves only selection ∩ active filters.
      * Ids selected while unfiltered stay selected, but commit/preview ignore
@@ -363,6 +382,13 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
           if (!commitKind) {
             continue;
           }
+          const assignment = assignmentById.get(id);
+          if (
+            assignment &&
+            isStoredFaceApprovalBlocked(assignment, reviewedStoredFaceSuggestionIds)
+          ) {
+            continue;
+          }
           items.push({
             suggestionId: id,
             commitKind,
@@ -371,7 +397,14 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
         }
         return items;
       },
-      [queueBySuggestionId, findings.queue, filter, activeBand],
+      [
+        queueBySuggestionId,
+        findings.queue,
+        filter,
+        activeBand,
+        assignmentById,
+        reviewedStoredFaceSuggestionIds,
+      ],
     );
 
     const bulk = useBulkReviewCommit({
@@ -526,10 +559,6 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
       onClose: undefined,
     });
 
-    const assignmentById = React.useMemo(
-      () => flattenAssignmentSuggestions(data.reviewItems),
-      [data.reviewItems],
-    );
     const mergeById = React.useMemo(() => {
       const map = new Map<string, PendingMergeSuggestion>();
       for (const suggestion of data.mergeSuggestions) {
@@ -961,6 +990,15 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
       (data.personCommit.clusterId === null ||
         data.personCommit.clusterId === currentClusterId);
 
+    const storedFaceSelectionBlocksCommit = filteredSelectedIds.some((suggestionId) => {
+      const suggestion = assignmentById.get(suggestionId);
+      return suggestion
+        ? isStoredFaceApprovalBlocked(suggestion, reviewedStoredFaceSuggestionIds)
+        : false;
+    });
+    const storedFaceSelectionReasonId = 'acx-review-queue-stored-face-review-reason';
+    const truncationReasonId = 'acx-review-queue-truncation-reason';
+
     // BR-75: a single accent-primary card action is on screen iff CurrentCard's real
     // branch renders its marked primary. This is the SAME condition that mounts the
     // marker, so the footer demotion it drives cannot disagree with the card marker.
@@ -982,7 +1020,10 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
     // truncation-ambiguous the bulk commit is never the accent (COL-03 / UI-06 §7.7),
     // so the card keeps it. Guarded so exactly one element carries the accent.
     const bulkCommitOwnsAccent =
-      selectionOpen && filteredSelectedIds.length > 0 && !truncationBlocksCommit;
+      selectionOpen &&
+      filteredSelectedIds.length > 0 &&
+      !truncationBlocksCommit &&
+      !storedFaceSelectionBlocksCommit;
     const closeMatchOfferOwnsAccent = closeMatchOffer !== null;
 
     // The queue owns the viewport's single accent primary when either the card marker
@@ -1191,8 +1232,20 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
               ))}
             </ul>
 
+            {storedFaceSelectionBlocksCommit ? (
+              <p
+                id={storedFaceSelectionReasonId}
+                className="acx-review-queue__stored-face-review-reason"
+              >
+                {__(
+                  'Review the stored faces for every selected suggestion before accepting.',
+                  'alt-context',
+                )}
+              </p>
+            ) : null}
+
             {truncationReason ? (
-              <p className="acx-review-queue__truncation-reason" role="status">
+              <p id={truncationReasonId} className="acx-review-queue__truncation-reason">
                 {truncationReason}
               </p>
             ) : null}
@@ -1238,10 +1291,27 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
                 filteredSelectedIds.length === 0 ||
                 bulk.isBulkActive ||
                 bulk.bulkInitiatePending ||
+                storedFaceSelectionBlocksCommit ||
                 truncationBlocksCommit ||
                 truncation.isLoading
               }
-              title={truncationBlocksCommit ? (truncationReason ?? undefined) : undefined}
+              aria-disabled={
+                filteredSelectedIds.length === 0 ||
+                bulk.isBulkActive ||
+                bulk.bulkInitiatePending ||
+                storedFaceSelectionBlocksCommit ||
+                truncationBlocksCommit ||
+                truncation.isLoading
+                  ? true
+                  : undefined
+              }
+              aria-describedby={
+                storedFaceSelectionBlocksCommit
+                  ? storedFaceSelectionReasonId
+                  : truncationBlocksCommit
+                    ? truncationReasonId
+                    : undefined
+              }
               {...(bulkCommitOwnsAccent ? { [ACCENT_PRIMARY_ATTR]: true } : {})}
               onClick={() => {
                 void bulk.initiateBulk();
@@ -1497,6 +1567,8 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
               personCommitPending={data.personCommitPending}
               isBulkActive={bulk.isBulkActive || bulk.bulkInitiatePending}
               onReview={onReview}
+              reviewedStoredFaceSuggestionIds={reviewedStoredFaceSuggestionIds}
+              onStoredFaceReviewPresented={markStoredFaceReviewPresented}
               onLabel={onLabel}
               onOpenOriginal={(target) => {
                 setLightboxNaming(false);
@@ -1703,6 +1775,8 @@ interface CurrentCardProps {
   /** BR-48: disable person-commit while bulk hold/sequence is active. */
   isBulkActive: boolean;
   onReview?: (clusterId: string) => void;
+  reviewedStoredFaceSuggestionIds: ReadonlySet<string>;
+  onStoredFaceReviewPresented: (suggestionId: string) => void;
   onLabel?: (clusterId: string) => void;
   onOpenOriginal: (target: FaceOriginalTarget) => void;
   markAdvanceFocus: () => void;
@@ -1850,6 +1924,8 @@ const CurrentCard = ({
   personCommitPending,
   isBulkActive,
   onReview,
+  reviewedStoredFaceSuggestionIds,
+  onStoredFaceReviewPresented,
   onLabel,
   onOpenOriginal,
   markAdvanceFocus,
@@ -2017,6 +2093,10 @@ const CurrentCard = ({
           />
           <SuggestionCard
             suggestion={suggestion}
+            isStoredFaceReviewComplete={reviewedStoredFaceSuggestionIds.has(
+              suggestion.suggestionId,
+            )}
+            onStoredFaceReviewPresented={onStoredFaceReviewPresented}
             accentPrimary={accentPrimary}
             // BR-41: pass ordinal only when both are defined (position chrome available).
             queuePosition={queuePosition}

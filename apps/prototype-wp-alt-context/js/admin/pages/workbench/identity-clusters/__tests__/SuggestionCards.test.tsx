@@ -123,11 +123,13 @@ describe('SuggestionCard BR-41 group accname', () => {
         suggestion={baseSuggestion}
         onAccept={onAccept}
         onReject={vi.fn()}
+        onReview={vi.fn()}
         isPending={false}
         lowConfidenceThreshold={0.5}
       />,
     );
 
+    await user.click(screen.getByRole('button', { name: 'Review details' }));
     await user.click(screen.getByRole('button', { name: 'Yes' }));
     expect(onAccept).toHaveBeenCalledTimes(1);
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
@@ -181,7 +183,7 @@ describe('SuggestionCard lightbox target (UXW2-6)', () => {
     expect(onOpenOriginal).toHaveBeenCalledWith({
       mediaUrl: 'https://example.com/candidate.jpg',
       bbox: { x: 5, y: 6, width: 40, height: 50 },
-      label: 'Candidate face',
+      label: 'Candidate face, position 1 of 1',
       mediaId: 42,
       identityId: 'identity-1',
     });
@@ -212,10 +214,129 @@ describe('SuggestionCard lightbox target (UXW2-6)', () => {
     expect(onOpenOriginal).toHaveBeenCalledWith({
       mediaUrl: 'https://example.com/candidate.jpg',
       bbox: { x: 5, y: 6, width: 40, height: 50 },
-      label: 'Candidate face',
+      label: 'Candidate face, position 1 of 1',
       identityId: 'identity-1',
     });
     expect(onOpenOriginal.mock.calls[0][0]).not.toHaveProperty('mediaId');
+  });
+});
+
+describe('SuggestionCard UXC-02 stored-reference disclosure', () => {
+  it('DUX-L8-RV-01: keeps approval blocked until the stored-face disclosure is rendered', async () => {
+    const onAccept = vi.fn();
+    const onReview = vi.fn();
+    const user = userEvent.setup();
+
+    render(
+      <SuggestionCard
+        suggestion={{
+          ...baseSuggestion,
+          identityCount: 3,
+          enrichment: {
+            representativeThumbUrl: 'https://example.com/alex-stored.jpg',
+          },
+        }}
+        onAccept={onAccept}
+        onReject={vi.fn()}
+        onReview={onReview}
+        isPending={false}
+        lowConfidenceThreshold={0.5}
+      />,
+    );
+
+    expect(screen.getByText('2 more faces not shown')).toBeInTheDocument();
+    const approve = screen.getByRole('button', { name: 'Yes' });
+    expect(approve).toBeDisabled();
+    expect(screen.queryByRole('list', { name: 'Stored faces for Alex' })).toBeNull();
+
+    await user.click(screen.getByRole('button', { name: 'Review details' }));
+
+    expect(onReview).toHaveBeenCalledWith('cluster-1');
+    expect(screen.getByRole('list', { name: 'Stored faces for Alex' })).toBeInTheDocument();
+    expect(approve).toBeEnabled();
+    await user.click(approve);
+    expect(onAccept).toHaveBeenCalledTimes(1);
+  });
+
+  it('DUX-L8-RV-01/02: fails closed without onReview and discloses text for unavailable images', async () => {
+    const user = userEvent.setup();
+    render(
+      <SuggestionCard
+        suggestion={{ ...baseSuggestion, identityCount: 3 }}
+        onAccept={vi.fn()}
+        onReject={vi.fn()}
+        isPending={false}
+        lowConfidenceThreshold={0.5}
+      />,
+    );
+
+    const approve = screen.getByRole('button', { name: 'Yes' });
+    expect(approve).toBeDisabled();
+    expect(screen.getByText('2 more faces not shown')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Review details' })).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Review details' }));
+
+    const faceList = screen.getByRole('list', { name: 'Stored faces for Alex' });
+    expect(faceList).toHaveTextContent('Stored face 1 of 3 — Image unavailable');
+    expect(faceList).toHaveTextContent('Stored face 2 of 3 — Image unavailable');
+    expect(faceList).toHaveTextContent('Stored face 3 of 3 — Image unavailable');
+    expect(approve).toBeEnabled();
+  });
+
+  it('DUX-L8-RV-03/04: exposes a visible associated block reason and keeps static count out of live regions', () => {
+    render(
+      <SuggestionCard
+        suggestion={{
+          ...baseSuggestion,
+          identityCount: 3,
+          enrichment: { representativeThumbUrl: 'https://example.com/alex-stored.jpg' },
+        }}
+        onAccept={vi.fn()}
+        onReject={vi.fn()}
+        isPending={false}
+        lowConfidenceThreshold={0.5}
+      />,
+    );
+
+    const approve = screen.getByRole('button', { name: 'Yes' });
+    const reason = screen.getByText('Review all stored faces before approving.');
+    expect(reason).toBeVisible();
+    expect(approve).toHaveAttribute('aria-disabled', 'true');
+    expect(approve).toHaveAttribute('aria-describedby', reason.id);
+    expect(screen.getByText('2 more faces not shown')).not.toHaveAttribute('role', 'status');
+  });
+
+  it('gives candidate and stored-reference images source-and-position alt text', () => {
+    render(
+      <SuggestionCard
+        suggestion={{
+          ...baseSuggestion,
+          label: 'Alex',
+          identityCount: 3,
+          enrichment: {
+            identityMediaUrl: 'https://example.com/candidate.jpg',
+            identityBbox: { x: 5, y: 6, width: 40, height: 50 },
+            representativeMediaUrl: 'https://example.com/alex-stored.jpg',
+            representativeBbox: { x: 10, y: 12, width: 30, height: 35 },
+          },
+        }}
+        onAccept={vi.fn()}
+        onReject={vi.fn()}
+        onReview={vi.fn()}
+        isPending={false}
+        lowConfidenceThreshold={0.5}
+      />,
+    );
+
+    expect(screen.getByAltText('Candidate face, position 1 of 1')).toHaveAttribute(
+      'src',
+      'https://example.com/candidate.jpg',
+    );
+    expect(screen.getByAltText('Alex stored face, position 1 of 3')).toHaveAttribute(
+      'src',
+      'https://example.com/alex-stored.jpg',
+    );
   });
 });
 
@@ -238,7 +359,7 @@ describe('SuggestionCard L4R-01 Avatar alt + L4R-02 assertTruthyLabel', () => {
       />,
     );
 
-    const repImg = screen.getByAltText('Jordan Lee');
+    const repImg = screen.getByAltText('Jordan Lee stored face, position 1 of 3');
     expect(repImg).toHaveAttribute('src', 'https://example.com/rep-thumb.jpg');
     expect(screen.queryByAltText('Cluster representative')).toBeNull();
   });

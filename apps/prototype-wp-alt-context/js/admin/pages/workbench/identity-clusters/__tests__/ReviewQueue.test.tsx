@@ -99,11 +99,23 @@ const typePersonName = async (
 const wholeHoldText = (el: HTMLElement): string =>
   (el.textContent ?? '').replace(/\s+/g, ' ').trim();
 
+/** Satisfy HAI-17 in legacy interaction tests whose fixture has a multi-face target. */
+const reviewCurrentStoredFaces = async (): Promise<void> => {
+  const review = screen.queryByRole('button', { name: 'Review details' });
+  const approve = screen.queryByRole('button', { name: 'Yes' });
+  if (review && approve?.hasAttribute('disabled')) {
+    await userEvent.click(review);
+  }
+};
+
 /**
  * Click an accept/reject control under fake setTimeout so the Slice-2 hold can
  * expire deterministically without 5s wall-clock waits (promises stay real).
  */
 const clickAndCommitHold = async (button: HTMLElement): Promise<void> => {
+  if (button.getAttribute('aria-describedby')?.startsWith('acx-suggestion-review-reason-')) {
+    await reviewCurrentStoredFaces();
+  }
   vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
   try {
     act(() => {
@@ -646,6 +658,7 @@ describe('ReviewQueue', () => {
     renderQueue();
 
     const yes = await screen.findByRole('button', { name: 'Yes' });
+    await reviewCurrentStoredFaces();
     yes.focus();
     expect(yes).toHaveFocus();
 
@@ -1172,6 +1185,7 @@ describe('ReviewQueue', () => {
 
     renderQueue();
     await screen.findByRole('button', { name: 'Yes' });
+    await reviewCurrentStoredFaces();
 
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     try {
@@ -1236,6 +1250,7 @@ describe('ReviewQueue', () => {
 
     renderQueue();
     await screen.findByRole('button', { name: 'Yes' });
+    await reviewCurrentStoredFaces();
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     try {
       act(() => {
@@ -1301,6 +1316,7 @@ describe('ReviewQueue', () => {
 
     renderQueue();
     const yes = await screen.findByRole('button', { name: 'Yes' });
+    await reviewCurrentStoredFaces();
 
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     act(() => {
@@ -1329,6 +1345,7 @@ describe('ReviewQueue', () => {
       expect(screen.getByTestId('acx-review-card')).toHaveTextContent(/Is this\s*Jordan/);
     });
 
+    await reviewCurrentStoredFaces();
     await clickAndCommitHold(screen.getByRole('button', { name: 'Yes' }));
 
     await waitFor(() => {
@@ -1358,6 +1375,7 @@ describe('ReviewQueue', () => {
     renderQueue({ queueRef });
 
     await screen.findByRole('button', { name: 'Yes' });
+    await reviewCurrentStoredFaces();
     act(() => {
       queueRef.current?.focusCurrentCard();
     });
@@ -1920,7 +1938,7 @@ describe('ReviewQueue', () => {
       expect(document.querySelector('.acx-review-queue__live')).toHaveTextContent('Review item 1 of 1');
     });
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: 'Yes' })).toHaveFocus();
+      expect(screen.getByTestId('acx-review-select')).toHaveFocus();
     });
   });
 
@@ -2837,6 +2855,7 @@ describe('ReviewQueue', () => {
     renderQueue();
 
     const yes = await screen.findByRole('button', { name: 'Yes' });
+    await reviewCurrentStoredFaces();
     // Open hold without expiring it.
     await user.click(yes);
     expect(screen.getByText(HOLD_STATUS_COPY)).toBeInTheDocument();
@@ -3001,6 +3020,7 @@ describe('ReviewQueue', () => {
     renderQueue();
 
     const yes = await screen.findByRole('button', { name: 'Yes' });
+    await reviewCurrentStoredFaces();
     // Hold accept open, then person-commit flushes it.
     await user.click(yes);
     expect(screen.getByText(HOLD_STATUS_COPY)).toBeInTheDocument();
@@ -3858,7 +3878,7 @@ describe('ReviewQueue', () => {
       limit: 25,
       offset: 0,
     });
-    vi.mocked(acceptNameSuggestion).mockImplementation(async (suggestionId) => ({
+    vi.mocked(acceptNameSuggestion).mockImplementation((suggestionId) => Promise.resolve({
       suggestion_id: suggestionId,
       resolution: 'accepted',
       identity_id: `identity-${suggestionId}`,
@@ -4366,6 +4386,7 @@ describe('ReviewQueue', () => {
       renderQueue();
 
       await screen.findByRole('button', { name: 'Yes' });
+      await reviewCurrentStoredFaces();
       expect(screen.getByTestId('acx-review-selection-tray')).toHaveTextContent('0 selected');
       expect(screen.getAllByTestId('acx-review-card')).toHaveLength(1);
 
@@ -4376,6 +4397,7 @@ describe('ReviewQueue', () => {
       await waitFor(() => {
         expect(screen.getByTestId('acx-review-select')).toBeInTheDocument();
       });
+      await reviewCurrentStoredFaces();
       await user.click(screen.getByTestId('acx-review-select'));
       expect(screen.getByTestId('acx-review-selection-tray')).toHaveTextContent('2 selected');
 
@@ -4423,6 +4445,7 @@ describe('ReviewQueue', () => {
       renderQueue();
 
       const yes = await screen.findByRole('button', { name: 'Yes' });
+      await reviewCurrentStoredFaces();
       const no = screen.getByRole('button', { name: 'No' });
       expect(yes).not.toBeDisabled();
       expect(no).not.toBeDisabled();
@@ -4430,18 +4453,43 @@ describe('ReviewQueue', () => {
       await user.click(screen.getByTestId('acx-review-select'));
       expect(yes).toBeDisabled();
       expect(no).toBeDisabled();
-      expect(yes).toHaveAttribute(
-        'title',
+      const selectedReason = screen.getByText(
         'Deselect this item to accept or reject it individually.',
       );
-      expect(no).toHaveAttribute(
-        'title',
-        'Deselect this item to accept or reject it individually.',
-      );
+      expect(yes).toHaveAttribute('aria-describedby', selectedReason.id);
+      expect(no).toHaveAttribute('aria-describedby', selectedReason.id);
 
       await user.click(screen.getByTestId('acx-review-select'));
       expect(yes).not.toBeDisabled();
       expect(no).not.toBeDisabled();
+    });
+
+    it('DUX-L8-RV-02: blocks selection acceptance until every gated suggestion was disclosed', async () => {
+      seedMariaGroup();
+      vi.mocked(fetchClusterMembers).mockResolvedValue({
+        members: [],
+        limit: 25,
+        total: 2,
+        truncated: false,
+      });
+      const user = userEvent.setup();
+      renderQueue();
+
+      await screen.findByRole('button', { name: 'Yes' });
+      await user.click(screen.getByTestId('acx-review-select'));
+      await user.click(screen.getByRole('button', { name: 'Review selection' }));
+
+      const commit = screen.getByTestId('acx-bulk-commit');
+      const reason = screen.getByText(
+        'Review the stored faces for every selected suggestion before accepting.',
+      );
+      expect(commit).toBeDisabled();
+      expect(commit).toHaveAttribute('aria-disabled', 'true');
+      expect(commit).toHaveAttribute('aria-describedby', reason.id);
+
+      await reviewCurrentStoredFaces();
+      await waitFor(() => expect(commit).not.toBeDisabled());
+      expect(acceptSuggestion).not.toHaveBeenCalled();
     });
 
     it('BR-54: tray count changes announced via polite live region on select/deselect', async () => {
@@ -4480,6 +4528,7 @@ describe('ReviewQueue', () => {
       const user = userEvent.setup();
       renderQueue();
       await screen.findByRole('button', { name: 'Yes' });
+      await reviewCurrentStoredFaces();
       await user.click(screen.getByTestId('acx-review-select'));
       await user.click(screen.getByRole('button', { name: 'Review selection' }));
       await waitFor(() => {
@@ -4527,6 +4576,7 @@ describe('ReviewQueue', () => {
       const user = userEvent.setup();
       renderQueue();
       await screen.findByRole('button', { name: 'Yes' });
+      await reviewCurrentStoredFaces();
       await user.click(screen.getByTestId('acx-review-select'));
       await user.click(screen.getByRole('button', { name: 'Review selection' }));
 
@@ -4612,7 +4662,7 @@ describe('ReviewQueue', () => {
             suggested_cluster_id: 'c-weak',
             representative_similarity: 0.4,
             cluster_label: 'Alex',
-            cluster_identity_count: 2,
+            cluster_identity_count: 1,
           },
         ],
         limit: 10,
@@ -4692,7 +4742,7 @@ describe('ReviewQueue', () => {
             suggested_cluster_id: 'c1',
             representative_similarity: 0.5,
             cluster_label: 'Maria',
-            cluster_identity_count: 2,
+            cluster_identity_count: 1,
           },
           {
             id: 's-weak',
@@ -4700,7 +4750,7 @@ describe('ReviewQueue', () => {
             suggested_cluster_id: 'c2',
             representative_similarity: 0.4,
             cluster_label: 'Alex',
-            cluster_identity_count: 2,
+            cluster_identity_count: 1,
           },
         ],
         limit: 10,
@@ -4834,7 +4884,7 @@ describe('ReviewQueue', () => {
             suggested_cluster_id: 'c-ok',
             representative_similarity: 0.5,
             cluster_label: 'Maria',
-            cluster_identity_count: 2,
+            cluster_identity_count: 1,
           },
           {
             id: 's-weak',
@@ -4842,7 +4892,7 @@ describe('ReviewQueue', () => {
             suggested_cluster_id: 'c-trunc',
             representative_similarity: 0.4,
             cluster_label: 'Alex',
-            cluster_identity_count: 12,
+            cluster_identity_count: 1,
           },
         ],
         limit: 10,
@@ -5082,6 +5132,7 @@ describe('ReviewQueue', () => {
 
     renderQueue();
     const yes = await screen.findByRole('button', { name: 'Yes' });
+    await reviewCurrentStoredFaces();
 
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     try {
@@ -5124,7 +5175,7 @@ describe('ReviewQueue', () => {
     }
   });
 
-  const loadLightboxImage = (alt = 'Candidate face'): void => {
+  const loadLightboxImage = (alt = 'Candidate face, position 1 of 1'): void => {
     const frame = document.querySelector('.acx-review-card-lightbox__frame');
     expect(frame).toBeInstanceOf(HTMLElement);
     Object.defineProperty(frame, 'clientWidth', { configurable: true, value: 400 });
@@ -5231,7 +5282,7 @@ describe('ReviewQueue', () => {
     });
 
     const seedSameClusterAssignments = (
-      rows: Array<{ id: string; similarity: number; clusterId?: string; label?: string }>,
+      rows: { id: string; similarity: number; clusterId?: string; label?: string }[],
     ): void => {
       vi.mocked(fetchPendingSuggestions).mockResolvedValue({
         suggestions: rows.map((row) => ({
@@ -5252,6 +5303,8 @@ describe('ReviewQueue', () => {
       seedSameClusterAssignments([{ id: 'sugg-1', similarity: 0.9, clusterId: 'cluster-solo' }]);
       const user = userEvent.setup();
       renderQueue();
+      await screen.findByRole('button', { name: 'Yes' });
+      await reviewCurrentStoredFaces();
       await user.click(await screen.findByRole('button', { name: 'Yes' }));
       expect(screen.queryByRole('dialog', { name: 'Accept close matches?' })).not.toBeInTheDocument();
       expect(screen.queryByText(/0 close match/)).not.toBeInTheDocument();
@@ -5276,6 +5329,8 @@ describe('ReviewQueue', () => {
 
       const user = userEvent.setup();
       renderQueue();
+      await screen.findByRole('button', { name: 'Yes' });
+      await reviewCurrentStoredFaces();
       await user.click(await screen.findByRole('button', { name: 'Yes' }));
 
       const offer = await screen.findByRole('dialog', { name: 'Accept close matches?' });
@@ -5339,6 +5394,8 @@ describe('ReviewQueue', () => {
 
       const user = userEvent.setup();
       renderQueue();
+      await screen.findByRole('button', { name: 'Yes' });
+      await reviewCurrentStoredFaces();
       await user.click(await screen.findByRole('button', { name: 'Yes' }));
       await screen.findByRole('dialog', { name: 'Accept close matches?' });
 
@@ -5377,6 +5434,8 @@ describe('ReviewQueue', () => {
 
       const user = userEvent.setup();
       renderQueue();
+      await screen.findByRole('button', { name: 'Yes' });
+      await reviewCurrentStoredFaces();
       await user.click(await screen.findByRole('button', { name: 'Yes' }));
       const offer = await screen.findByRole('dialog', { name: 'Accept close matches?' });
       expect(offer).toHaveTextContent('Also accept 1 close match?');
@@ -5393,6 +5452,8 @@ describe('ReviewQueue', () => {
 
       const user = userEvent.setup();
       renderQueue();
+      await screen.findByRole('button', { name: 'Yes' });
+      await reviewCurrentStoredFaces();
       await user.click(await screen.findByRole('button', { name: 'Yes' }));
       const offer = await screen.findByRole('dialog', { name: 'Accept close matches?' });
       expect(offer).toHaveTextContent('Also accept 25 close matches?');
@@ -5422,6 +5483,8 @@ describe('ReviewQueue', () => {
 
       const user = userEvent.setup();
       renderQueue();
+      await screen.findByRole('button', { name: 'Yes' });
+      await reviewCurrentStoredFaces();
       await user.click(await screen.findByRole('button', { name: 'Yes' }));
       await screen.findByRole('dialog', { name: 'Accept close matches?' });
 

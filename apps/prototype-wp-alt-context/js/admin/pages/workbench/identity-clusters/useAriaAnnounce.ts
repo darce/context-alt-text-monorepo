@@ -5,20 +5,17 @@
  * consecutive announcements with the same text (e.g. two sequential retirement
  * closes) never re-render the live region — a screen reader stays silent on the
  * second. The monotonic `seq` guarantees a fresh state object every announce.
- * Each announcement first clears the persistent live-region content, then a
- * follow-up render inserts the message so repeated copy creates a DOM mutation
- * without remounting the region.
+ *
+ * Callers that keep a stable live-region node (no `key={seq}`) still get a DOM
+ * text mutation on every announce because this always writes a new state object.
+ * Callers that remount on `seq` get a fresh region for free.
  */
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useState } from 'react';
 
 interface AriaAnnounceState {
   message: string | null;
   seq: number;
-}
-
-interface InternalAriaAnnounceState extends AriaAnnounceState {
-  pendingMessage: string | null;
 }
 
 export interface UseAriaAnnounceResult extends AriaAnnounceState {
@@ -27,26 +24,9 @@ export interface UseAriaAnnounceResult extends AriaAnnounceState {
 }
 
 export const useAriaAnnounce = (): UseAriaAnnounceResult => {
-  const [state, setState] = useState<InternalAriaAnnounceState>({
-    message: null,
-    pendingMessage: null,
-    seq: 0,
-  });
+  const [state, setState] = useState<AriaAnnounceState>({ message: null, seq: 0 });
   const announce = useCallback((message: string) => {
-    setState((prev) => ({ message: null, pendingMessage: message, seq: prev.seq + 1 }));
+    setState((prev) => ({ message, seq: prev.seq + 1 }));
   }, []);
-
-  useEffect(() => {
-    if (state.pendingMessage === null) {
-      return;
-    }
-    setState((current) => {
-      if (current.seq !== state.seq || current.pendingMessage === null) {
-        return current;
-      }
-      return { ...current, message: current.pendingMessage, pendingMessage: null };
-    });
-  }, [state.pendingMessage, state.seq]);
-
   return { message: state.message, seq: state.seq, announce };
 };

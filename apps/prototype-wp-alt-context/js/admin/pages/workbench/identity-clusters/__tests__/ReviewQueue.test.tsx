@@ -4483,14 +4483,147 @@ describe('ReviewQueue', () => {
       const reason = screen.getByText(
         'Review the stored faces for every selected suggestion before accepting.',
       );
-      expect(commit).toBeDisabled();
+      // BR-74 / DUX-W2R2-RV-02: stored-face gate keeps the control focusable
+      // (aria-disabled + describedby), never HTML-disabled.
+      expect(commit).not.toBeDisabled();
       expect(commit).toHaveAttribute('aria-disabled', 'true');
       expect(commit).toHaveAttribute('aria-describedby', reason.id);
+      commit.focus();
+      expect(commit).toHaveFocus();
       expect(commit).toHaveTextContent('Accept 1 for Maria');
+      await user.click(commit);
+      expect(acceptSuggestion).not.toHaveBeenCalled();
 
       await reviewCurrentStoredFaces();
-      await waitFor(() => expect(commit).not.toBeDisabled());
+      await waitFor(() => {
+        expect(commit).not.toBeDisabled();
+        expect(commit).not.toHaveAttribute('aria-disabled', 'true');
+      });
       expect(acceptSuggestion).not.toHaveBeenCalled();
+    });
+
+    it('DUX-W2R2-RV-01: Retry after partial fail does not commit a later-selected gated card', async () => {
+      vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+        suggestions: [
+          {
+            id: 'sugg-u1',
+            identity_id: 'identity-u1',
+            suggested_cluster_id: 'cluster-u1',
+            representative_similarity: 0.95,
+            avg_member_similarity: 0.9,
+            cluster_label: 'Maria',
+            cluster_identity_count: 1,
+          },
+          {
+            id: 'sugg-u2',
+            identity_id: 'identity-u2',
+            suggested_cluster_id: 'cluster-u2',
+            representative_similarity: 0.9,
+            avg_member_similarity: 0.85,
+            cluster_label: 'Maria',
+            cluster_identity_count: 1,
+          },
+          {
+            id: 'sugg-g',
+            identity_id: 'identity-g',
+            suggested_cluster_id: 'cluster-g',
+            representative_similarity: 0.85,
+            avg_member_similarity: 0.8,
+            cluster_label: 'Maria',
+            cluster_identity_count: 5,
+          },
+        ],
+        limit: 10,
+        offset: 0,
+      });
+      vi.mocked(fetchClusterMembers).mockResolvedValue({
+        members: [],
+        limit: 25,
+        total: 2,
+        truncated: false,
+      });
+      vi.mocked(acceptSuggestion).mockImplementation((id: string) => {
+        if (id === 'sugg-u2') {
+          return Promise.reject(new Error('nope'));
+        }
+        return Promise.resolve({
+          suggestion_id: id,
+          resolution: 'accepted' as const,
+          identity_id: `identity-${id}`,
+          cluster_id: `cluster-${id}`,
+          message: 'ok',
+        });
+      });
+
+      const user = userEvent.setup();
+      renderQueue();
+
+      await screen.findByRole('button', { name: 'Yes' });
+      await user.click(screen.getByTestId('acx-review-select'));
+      await user.click(screen.getByRole('button', { name: 'Next review item' }));
+      await waitFor(() => {
+        expect(screen.getByTestId('acx-review-select')).toBeInTheDocument();
+      });
+      await user.click(screen.getByTestId('acx-review-select'));
+      await user.click(screen.getByRole('button', { name: 'Review selection' }));
+      await waitFor(() => {
+        expect(screen.getByTestId('acx-bulk-commit')).not.toBeDisabled();
+        expect(screen.getByTestId('acx-bulk-commit')).not.toHaveAttribute('aria-disabled', 'true');
+      });
+
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      try {
+        await act(async () => {
+          screen.getByTestId('acx-bulk-commit').click();
+          await Promise.resolve();
+        });
+        await act(async () => {
+          vi.advanceTimersByTime(UNDO_HOLD_MS);
+          await Promise.resolve();
+          await Promise.resolve();
+          await Promise.resolve();
+        });
+      } finally {
+        vi.useRealTimers();
+      }
+
+      const failure = await screen.findByTestId('acx-bulk-partial-failure');
+      vi.mocked(acceptSuggestion).mockClear();
+
+      await user.click(screen.getByRole('button', { name: 'Next review item' }));
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: 'Review details' })).toBeInTheDocument();
+      });
+      await user.click(screen.getByTestId('acx-review-select'));
+
+      const reason = screen.getByText(
+        'Review the stored faces for every selected suggestion before accepting.',
+      );
+      expect(reason).toBeInTheDocument();
+
+      const retry = within(failure).getByRole('button', { name: 'Retry' });
+      expect(retry).toHaveAttribute('aria-describedby', reason.id);
+
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      try {
+        await act(async () => {
+          retry.click();
+          await Promise.resolve();
+        });
+        await act(async () => {
+          vi.advanceTimersByTime(UNDO_HOLD_MS);
+          await Promise.resolve();
+          await Promise.resolve();
+          await Promise.resolve();
+        });
+      } finally {
+        vi.useRealTimers();
+      }
+
+      expect(acceptSuggestion).not.toHaveBeenCalled();
+      expect(
+        screen.getByText('Review the stored faces for every selected suggestion before accepting.'),
+      ).toBeInTheDocument();
     });
 
     it('BR-54: tray count changes announced via polite live region on select/deselect', async () => {

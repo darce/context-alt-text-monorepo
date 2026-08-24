@@ -136,6 +136,11 @@ export interface UseBulkReviewCommitOptions {
   isBulkActiveRef: React.MutableRefObject<boolean>;
   /** Host assigns awaitBulkIdleOrFlush for single-commit busy path. */
   awaitBulkIdleOrFlushRef: React.MutableRefObject<(() => Promise<void>) | null>;
+  /**
+   * HAI-17 / DUX-W2R2-RV-01: when any resolved id is blocked, initiate and
+   * retry abort all-or-nothing (same rule as the tray Accept).
+   */
+  isApprovalBlocked?: (suggestionId: string) => boolean;
 }
 
 export interface UseBulkReviewCommitResult {
@@ -207,6 +212,7 @@ export const useBulkReviewCommit = ({
   onBulkSequenceSettled,
   isBulkActiveRef,
   awaitBulkIdleOrFlushRef,
+  isApprovalBlocked,
 }: UseBulkReviewCommitOptions): UseBulkReviewCommitResult => {
   const [bulk, setBulk] = React.useState<BulkCommitState>({
     phase: BULK_COMMIT_PHASE.IDLE,
@@ -246,6 +252,8 @@ export const useBulkReviewCommit = ({
   resolveItemsRef.current = resolveItems;
   const flushHeldSingleRef = React.useRef(flushHeldSingle);
   flushHeldSingleRef.current = flushHeldSingle;
+  const isApprovalBlockedRef = React.useRef(isApprovalBlocked);
+  isApprovalBlockedRef.current = isApprovalBlocked;
 
   const setBulkSafe = React.useCallback(
     (next: BulkCommitState) => {
@@ -580,6 +588,11 @@ export const useBulkReviewCommit = ({
     }
   }, []);
 
+  const itemsAreApprovalBlocked = React.useCallback((items: readonly BulkCommitItem[]): boolean => {
+    const blocked = isApprovalBlockedRef.current;
+    return Boolean(blocked && items.some((item) => blocked(item.suggestionId)));
+  }, []);
+
   const initiateBulk = React.useCallback(async (): Promise<void> => {
     // BR-56: sync re-entry latch (personCommitInFlightRef pattern).
     if (bulkInitiateInFlightRef.current) {
@@ -589,6 +602,11 @@ export const useBulkReviewCommit = ({
       return;
     }
     if (selectedIdsRef.current.size === 0) {
+      return;
+    }
+
+    const previewItems = resolveItemsRef.current([...selectedIdsRef.current]);
+    if (itemsAreApprovalBlocked(previewItems)) {
       return;
     }
 
@@ -631,6 +649,9 @@ export const useBulkReviewCommit = ({
         if (items.length === 0) {
           return;
         }
+        if (itemsAreApprovalBlocked(items)) {
+          return;
+        }
 
         // Open hold synchronously — do not await the hold lifetime.
         openBulkHold(items);
@@ -641,7 +662,7 @@ export const useBulkReviewCommit = ({
     })();
     initiatePromiseRef.current = run;
     await run;
-  }, [clearBulkInitiateLatch, dropFromSelection, openBulkHold]);
+  }, [clearBulkInitiateLatch, dropFromSelection, itemsAreApprovalBlocked, openBulkHold]);
 
   const initiateBulkFromItems = React.useCallback(
     async (items: readonly BulkCommitItem[]): Promise<void> => {
@@ -780,8 +801,12 @@ export const useBulkReviewCommit = ({
     if (selectedIdsRef.current.size === 0) {
       return;
     }
+    const retryItems = resolveItemsRef.current([...selectedIdsRef.current]);
+    if (itemsAreApprovalBlocked(retryItems)) {
+      return;
+    }
     await initiateBulk();
-  }, [initiateBulk]);
+  }, [initiateBulk, itemsAreApprovalBlocked]);
 
   const clearPartialFailure = React.useCallback((): void => {
     if (bulk.phase === BULK_COMMIT_PHASE.PARTIAL_FAILED) {

@@ -461,7 +461,7 @@ describe('§7 single-accent-primary DOM invariant (Slice 8 / BR-72)', () => {
   });
 
   it('bulk-tray open (stored-face gated): the card keeps the single accent and selection count', async () => {
-    // Until HAI-17 review completes, the disabled bulk commit stays neutral and the
+    // Until HAI-17 review completes, the gated bulk commit stays neutral and the
     // current card remains the queue's sole accent owner. The gate must not erase the
     // selected item from the bulk label.
     oneAssignment();
@@ -474,10 +474,52 @@ describe('§7 single-accent-primary DOM invariant (Slice 8 / BR-72)', () => {
 
     const bulkCommit = await screen.findByTestId('acx-bulk-commit');
     expect(bulkCommit).toHaveTextContent('Accept 1 for Alex');
-    expect(bulkCommit).toBeDisabled();
+    // BR-74 / DUX-W2R2-RV-02: gated bulk stays focusable; HTML-disabled would
+    // drop it from tab order so the describedby reason is unreachable.
+    expect(bulkCommit).not.toBeDisabled();
+    expect(bulkCommit).toHaveAttribute('aria-disabled', 'true');
+    const reasonId = bulkCommit.getAttribute('aria-describedby');
+    expect(reasonId).toBeTruthy();
+    expect(document.getElementById(reasonId ?? '')).toHaveTextContent(
+      'Review the stored faces for every selected suggestion before accepting.',
+    );
+    bulkCommit.focus();
+    expect(bulkCommit).toHaveFocus();
     await waitFor(() => expect(markerCount(container)).toBe(1));
     expect(container.querySelector(ACCENT_PRIMARY_SELECTOR)).toBe(accept);
     expect(bulkCommit).not.toHaveAttribute(ACCENT_PRIMARY_ATTR);
+  });
+
+  it('DUX-W2R2-RV-03: gate lift while tray open keeps one accent; bulk stays in tab order', async () => {
+    // Pinned focus policy: do NOT move focus to the new accent owner when the
+    // stored-face gate lifts. The bulk commit must remain reachable in forward
+    // tab order (not HTML-disabled) so the operator can Tab to it; we do not
+    // steal focus from Review details / Yes.
+    oneAssignment();
+    const user = userEvent.setup();
+    const { container } = renderViewport();
+
+    const accept = await screen.findByRole('button', { name: 'Yes' });
+    await user.click(screen.getByTestId('acx-review-select'));
+    await user.click(screen.getByRole('button', { name: 'Review selection' }));
+
+    const bulkCommit = await screen.findByTestId('acx-bulk-commit');
+    await waitFor(() => expect(markerCount(container)).toBe(1));
+    expect(container.querySelector(ACCENT_PRIMARY_SELECTOR)).toBe(accept);
+    expect(bulkCommit).not.toBeDisabled();
+    expect(bulkCommit).toHaveAttribute('aria-disabled', 'true');
+
+    await user.click(screen.getByRole('button', { name: 'Review details' }));
+    await screen.findByRole('list', { name: 'Stored faces for Alex' });
+
+    await waitFor(() => expect(markerCount(container)).toBe(1));
+    expect(container.querySelector(ACCENT_PRIMARY_SELECTOR)).toBe(bulkCommit);
+    expect(bulkCommit).toHaveAttribute(ACCENT_PRIMARY_ATTR);
+    expect(bulkCommit).not.toBeDisabled();
+    expect(bulkCommit).not.toHaveAttribute('aria-disabled', 'true');
+    expect(bulkCommit).not.toHaveFocus();
+    bulkCommit.focus();
+    expect(bulkCommit).toHaveFocus();
   });
 
   it('panel open (queue unmounted, panels carry no marker): the footer keeps the single accent primary (BR-83)', async () => {

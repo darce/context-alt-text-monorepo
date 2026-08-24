@@ -5,6 +5,14 @@
   line-height: var(--acx-leading-tight);
 }
 
+.acx-roster-field-label {
+  display: block;
+  margin-bottom: var(--acx-space-4);
+  color: var(--acx-color-text-secondary);
+  font-size: var(--acx-text-sm);
+  font-weight: var(--acx-font-weight-semibold);
+}
+
 .acx-roster-section {
   &__header {
     display: flex;

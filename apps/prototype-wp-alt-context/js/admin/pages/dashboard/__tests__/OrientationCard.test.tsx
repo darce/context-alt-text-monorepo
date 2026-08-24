@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 
 import { OrientationCard } from '../OrientationCard';
 
@@ -7,22 +7,24 @@ vi.mock('@wordpress/i18n', () => ({
 }));
 
 describe('OrientationCard', () => {
-  it('renders getting-started content when peopleCount is 0', () => {
-    render(<OrientationCard peopleCount={0} />);
+  beforeEach(() => {
+    window.localStorage.clear();
+    window.userSettings = { uid: '7' };
+  });
+
+  afterEach(() => {
+    delete window.userSettings;
+  });
+
+  it('renders getting-started content independently of a detected-people count', () => {
+    render(<OrientationCard />);
 
     expect(screen.getByRole('heading', { name: 'Getting Started with Identity Recognition' })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Start your first scan' })).toHaveAttribute('href', '#/workbench?tab=scan');
   });
 
-  it('renders nothing once the site already has people', () => {
-    const { container } = render(<OrientationCard peopleCount={1} />);
-
-    expect(container).toBeEmptyDOMElement();
-    expect(screen.queryByRole('heading', { name: 'Getting Started with Identity Recognition' })).not.toBeInTheDocument();
-  });
-
   it('uses the shipped Scan, Confirm, and Review stages without implementation vocabulary', () => {
-    const { container } = render(<OrientationCard peopleCount={0} />);
+    const { container } = render(<OrientationCard />);
 
     expect(screen.getByRole('heading', { name: '1. Scan' })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: '2. Confirm' })).toBeInTheDocument();
@@ -30,17 +32,18 @@ describe('OrientationCard', () => {
     expect(container).not.toHaveTextContent(/cluster|embedding|mathematical identit/i);
   });
 
-  it('does not use localStorage dismissal state', () => {
-    const getItem = vi.spyOn(Storage.prototype, 'getItem');
-    const setItem = vi.spyOn(Storage.prototype, 'setItem');
+  it('persists explicit dismissal for only the current user', () => {
+    const { unmount } = render(<OrientationCard />);
 
-    render(<OrientationCard peopleCount={0} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Dismiss getting started' }));
+    expect(
+      screen.queryByRole('heading', { name: 'Getting Started with Identity Recognition' }),
+    ).not.toBeInTheDocument();
+    expect(window.localStorage.getItem('acx-orientation-dismissed:7')).toBe('true');
+    unmount();
 
-    expect(getItem).not.toHaveBeenCalled();
-    expect(setItem).not.toHaveBeenCalled();
-    expect(screen.queryByRole('button', { name: /Dismiss orientation|Got it/i })).not.toBeInTheDocument();
-
-    getItem.mockRestore();
-    setItem.mockRestore();
+    window.userSettings = { uid: '8' };
+    render(<OrientationCard />);
+    expect(screen.getByRole('heading', { name: 'Getting Started with Identity Recognition' })).toBeInTheDocument();
   });
 });

@@ -5,6 +5,15 @@ export type DashboardSectionId =
   | 'recentActivity'
   | 'retentionPosture';
 
+export const DASHBOARD_FLOW_STATE = {
+  UNSCANNED: 'unscanned',
+  SCANNING: 'scanning',
+  CLUSTERS_PENDING: 'clusters_pending',
+  FIRST_NAMED: 'first_named',
+} as const;
+
+export type DashboardFlowState = (typeof DASHBOARD_FLOW_STATE)[keyof typeof DASHBOARD_FLOW_STATE];
+
 export interface DashboardPriorityInputs {
   isSyncStatusLoading: boolean;
   isSyncStatusError: boolean;
@@ -22,11 +31,12 @@ export interface DashboardPriorityInputs {
   hasIdentityStats: boolean;
   pendingClustersCount: number;
   unassignedPersonsCount: number;
+  flowState: DashboardFlowState;
 }
 
 export interface DashboardPriorityModel {
   gridSectionOrder: DashboardSectionId[];
-  orientationPosition: 'after_grid';
+  orientationPosition: 'before_grid' | 'hidden';
 }
 
 const DEFAULT_SECTION_ORDER: DashboardSectionId[] = [
@@ -62,7 +72,7 @@ const hasSyncAttention = (inputs: DashboardPriorityInputs): boolean => {
 
 const hasActiveReviewWork = (inputs: DashboardPriorityInputs): boolean => {
   if (inputs.isIdentityLoading || inputs.isIdentityError || !inputs.hasIdentityStats) {
-    return true;
+    return false;
   }
 
   return inputs.pendingClustersCount > 0 || inputs.unassignedPersonsCount > 0;
@@ -78,6 +88,6 @@ export const buildDashboardPriorityModel = (inputs: DashboardPriorityInputs): Da
 
   return {
     gridSectionOrder,
-    orientationPosition: 'after_grid',
+    orientationPosition: inputs.flowState === DASHBOARD_FLOW_STATE.FIRST_NAMED ? 'hidden' : 'before_grid',
   };
 };

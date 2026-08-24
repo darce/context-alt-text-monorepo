@@ -436,7 +436,12 @@ describe('§7 single-accent-primary DOM invariant (Slice 8 / BR-72)', () => {
   it('bulk-tray open (committable selection): the bulk commit is the single accent primary (BR-82)', async () => {
     // A card is on screen; selecting its item and opening the tray surfaces the bulk
     // commit. It — not the card — owns the accent; the card primary steps down to neutral.
-    oneAssignment();
+    // Single-face identity so HAI-17 stored-face review does not block the commit path.
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [{ ...assignmentSuggestion, cluster_identity_count: 1 }],
+      limit: 10,
+      offset: 0,
+    });
     const user = userEvent.setup();
     const { container } = renderViewport();
 

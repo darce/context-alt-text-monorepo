@@ -10,6 +10,7 @@ import { IdentityClusterList } from './identity-clusters';
 import { MediaAltInlineEditor } from './MediaAltInlineEditor';
 import { MediaAltSuggest } from './MediaAltSuggest';
 import { mediaEditUrl } from './Panels';
+import { mediaLibraryUrl } from '../../utils/adminUrls';
 import { EmptyState, EmptyStateVariant } from '../../components/ui/EmptyState';
 
 /** Who may hold the row's polite region or commit lock. */
@@ -149,7 +150,7 @@ export const MediaSelectionTableBody = ({
             variant={EmptyStateVariant.EMPTY}
             heading={__('No media in the library yet.', 'alt-context')}
             body={__('Upload images in the WordPress media library, then return here to scan.', 'alt-context')}
-            action={{ label: __('Open the media library', 'alt-context'), href: '/wp-admin/upload.php' }}
+            action={{ label: __('Open the media library', 'alt-context'), href: mediaLibraryUrl() }}
             headingLevel={3}
             announceState={false}
           />

@@ -1,6 +1,7 @@
 export interface AdminUrlsConfig {
   mediaEditBase?: string;
   roster?: string;
+  mediaLibrary?: string;
 }
 
 export interface ApiConfig {
@@ -86,6 +87,7 @@ export const normalizeConfig = (raw: ApiConfig): NormalizedConfig => {
   const adminUrls = {
     mediaEditBase: normalizeOptionalString(raw.adminUrls?.mediaEditBase),
     roster: normalizeOptionalString(raw.adminUrls?.roster),
+    mediaLibrary: normalizeOptionalString(raw.adminUrls?.mediaLibrary),
   };
 
   return {

@@ -407,6 +407,7 @@ class Admin {
 					'adminUrls' => array(
 					'mediaEditBase' => admin_url( 'post.php' ),
 					'roster' => admin_url( 'admin.php?page=alt-context-roster' ),
+					'mediaLibrary' => admin_url( 'upload.php' ),
 				),
 				'endpoints' => array(
 					'workbenchMedia'                 => rest_url( 'acx/v1/workbench/media' ),

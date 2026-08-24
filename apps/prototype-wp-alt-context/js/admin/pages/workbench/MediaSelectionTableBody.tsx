@@ -105,7 +105,15 @@ export const MediaSelectionTableBody = ({
               variant={EmptyStateVariant.EMPTY}
               heading={__('No media matches your search.', 'alt-context')}
               body={__('Clear the search to return to the media library.', 'alt-context')}
-              action={{ label: __('Clear search', 'alt-context'), onClick: onClearSearch }}
+              action={{
+                label: __('Clear search', 'alt-context'),
+                onClick: () => {
+                  onClearSearch();
+                  queueMicrotask(() => {
+                    document.getElementById('acx-media-search')?.focus();
+                  });
+                },
+              }}
               headingLevel={3}
               announceState={false}
             />

@@ -174,7 +174,21 @@ export const SettingsPage = (): React.JSX.Element => {
           {__('Settings', 'alt-context')}
         </h1>
         <h2 id="acx-settings-title">{__('Recognition API Settings', 'alt-context')}</h2>
-        <p>{__('Failed to load settings.', 'alt-context')}</p>
+        <div role="alert">
+          <p>{__('Failed to load settings.', 'alt-context')}</p>
+        </div>
+        <div className="acx-dashboard__actions">
+          <button
+            type="button"
+            className="acx-button acx-button--secondary"
+            onClick={() => void settingsQuery.refetch()}
+          >
+            {__('Retry', 'alt-context')}
+          </button>
+          <a className="acx-button acx-button--secondary" href="#/dashboard">
+            {__('Back to Dashboard', 'alt-context')}
+          </a>
+        </div>
       </section>
     );
   }

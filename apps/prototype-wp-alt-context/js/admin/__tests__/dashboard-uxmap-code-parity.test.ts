@@ -85,10 +85,28 @@ const sketchControls = (sketch: string): string[] =>
 const i18nLiterals = (source: string): string[] =>
   [...source.matchAll(/__\(\s*'((?:\\'|[^'])*)'/g)].map((match) => match[1].replace(/\\'/g, "'"));
 
+/**
+ * Extracts the i18n literal from INSIDE the first <h1>...</h1> element only.
+ * Bounded to the element so a literal that appears later in the source (e.g.
+ * a subtitle, or another __() call after the heading) can never be mistaken
+ * for the heading's own text.
+ */
+/**
+ * Extracts the i18n literal from INSIDE the first <h1>...</h1> element only.
+ * Bounded to the element so a literal that appears later in the source (e.g.
+ * a subtitle, or another __() call after the heading) can never be mistaken
+ * for the heading's own text.
+ */
 const h1Literal = (source: string): string => {
-  const match = source.match(/<h1\b[^>]*>[\s\S]*?__\(\s*'([^']+)'/);
-  expect(match, 'expected an i18n <h1> literal').toBeTruthy();
-  return match?.[1] ?? '';
+  const openTag = source.match(/<h1\b[^>]*>/);
+  expect(openTag, 'expected an <h1> element').toBeTruthy();
+  const contentStart = (openTag?.index ?? 0) + (openTag?.[0].length ?? 0);
+  const closeIndex = source.indexOf('</h1>', contentStart);
+  expect(closeIndex, 'expected a matching </h1> close tag').toBeGreaterThan(-1);
+  const h1Content = source.slice(contentStart, closeIndex);
+  const literalMatch = h1Content.match(/__\(\s*'([^']+)'/);
+  expect(literalMatch, 'expected an i18n literal inside the <h1> element').toBeTruthy();
+  return literalMatch?.[1] ?? '';
 };
 
 describe('dashboard ux-map code parity (DUX-W2D14)', () => {
@@ -149,6 +167,31 @@ describe('dashboard ux-map code parity (DUX-W2D14)', () => {
     expect(defaultSketch).toMatch(/\[Open Data Retention\]/);
     expect(defaultSketch).not.toMatch(/Retention Posture/);
     expect(defaultSketch).not.toMatch(/\[Retention settings\]/);
+  });
+
+  it('RV-10: h1Literal is bound to the <h1> element, not the first literal after it', () => {
+    // Hoisting the heading text to a variable removes the only i18n literal
+    // inside <h1>...</h1>. An unbounded regex would happily walk past the
+    // close tag and capture the later 'Other' literal instead — this must
+    // not happen.
+    const hoistedHeadingWithLaterLiteral = [
+      "const title = 'Some Title';",
+      'return (',
+      '  <h1>{title}</h1>',
+      "  <p>{__('Other', 'alt-context')}</p>",
+      ');',
+    ].join('\n');
+
+    expect(() => h1Literal(hoistedHeadingWithLaterLiteral)).toThrow();
+
+    // Positive case: a literal after </h1> must never leak into the match
+    // when the <h1> element does contain its own literal.
+    const properHeadingWithLaterLiteral = [
+      "<h1 id=\"x\">{__('Right One', 'alt-context')}</h1>",
+      "<p>{__('Other', 'alt-context')}</p>",
+    ].join('\n');
+
+    expect(h1Literal(properHeadingWithLaterLiteral)).toBe('Right One');
   });
 
   it('RV-02: screen states only name exclusive shell branches the code can take', () => {

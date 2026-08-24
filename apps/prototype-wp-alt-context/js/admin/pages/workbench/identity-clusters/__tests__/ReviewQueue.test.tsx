@@ -1886,6 +1886,101 @@ describe('ReviewQueue', () => {
     }
   });
 
+  it('DUX-W2R1-RV-04: repeat announcement mutates the persistent node text (AT-observable), not just data-announce-seq', async () => {
+    // BR-68's clear-then-set arm exists so a screen reader on this NON-keyed,
+    // NO-remount `role="status"` node actually hears a second identical
+    // announcement. `data-announce-seq` is the hook's own bookkeeping — a
+    // mutant that publishes the repeat immediately (`setState((prev) =>
+    // ({ message, seq: prev.seq + 1 }))`, skipping the null clear phase) also
+    // bumps seq and lands on the same final text, so asserting seq or final
+    // text alone certifies nothing (TEST-15). Because the text value is
+    // unchanged (Object.is-equal), that mutant never touches the Text node at
+    // all: no DOM mutation occurs, so a screen reader stays silent. Assert on
+    // the actual DOM mutation sequence via MutationObserver instead.
+    const original = useAriaAnnounceMod.useAriaAnnounce;
+    let latestAnnounce: ((message: string) => void) | null = null;
+    const spy = vi.spyOn(useAriaAnnounceMod, 'useAriaAnnounce').mockImplementation(() => {
+      const result = original();
+      latestAnnounce = result.announce;
+      return result;
+    });
+
+    try {
+      vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+        suggestions: [
+          {
+            id: 'sugg-1',
+            identity_id: 'identity-1',
+            suggested_cluster_id: 'cluster-1',
+            representative_similarity: 0.9,
+            avg_member_similarity: 0.85,
+            cluster_label: 'Alex',
+            cluster_identity_count: 1,
+          },
+        ],
+        limit: 10,
+        offset: 0,
+      });
+
+      renderQueue();
+      await screen.findByRole('button', { name: 'Yes' });
+      await waitFor(() => {
+        expect(latestAnnounce).not.toBeNull();
+      });
+
+      const persistentLive = document.querySelector('.acx-review-queue__live') as HTMLElement;
+      expect(persistentLive).toBeInTheDocument();
+
+      const repeatCopy = LIVE_TARGET_CLOSE_ANNOUNCE;
+
+      // First announce: establishes the baseline text on the persistent node.
+      act(() => {
+        latestAnnounce?.(repeatCopy);
+      });
+      await waitFor(() => {
+        expect(persistentLive).toHaveTextContent(repeatCopy);
+      });
+
+      // Observe ONLY the second, identical announce — the arm under test.
+      const textSequence: Array<string | null> = [];
+      const recordMutations = (records: MutationRecord[]): void => {
+        records.forEach((record) => {
+          if (record.type !== 'childList') {
+            return;
+          }
+          if (record.addedNodes.length > 0) {
+            textSequence.push(record.addedNodes[record.addedNodes.length - 1].textContent);
+          } else if (record.removedNodes.length > 0) {
+            textSequence.push(null);
+          }
+        });
+      };
+      const observer = new MutationObserver(recordMutations);
+      observer.observe(persistentLive, { childList: true });
+
+      act(() => {
+        latestAnnounce?.(repeatCopy);
+      });
+      await waitFor(() => {
+        expect(persistentLive).toHaveTextContent(repeatCopy);
+      });
+      // Drain any records not yet delivered to the async callback.
+      recordMutations(observer.takeRecords());
+      observer.disconnect();
+
+      // AT-observable proof: the node's text content was actually removed
+      // (a `null`/empty frame) and THEN restored to the repeat copy. A
+      // screen reader on this persistent node only re-announces because this
+      // real DOM mutation occurred — an unchanged Text node is silent no
+      // matter what `data-announce-seq` says.
+      const emptyIndex = textSequence.indexOf(null);
+      expect(emptyIndex).toBeGreaterThan(-1);
+      expect(textSequence.slice(emptyIndex + 1)).toContain(repeatCopy);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
   it('shows filtered-empty escape hatch when filters hide pending work (S1-01 / COG-03)', async () => {
     // Assignments only in the unfiltered queue; merge KIND filter → empty view.
     vi.mocked(fetchPendingSuggestions).mockResolvedValue({

@@ -96,6 +96,7 @@ export const MediaSelectionTableBody = ({
             body={__('Clear the search to return to the media library.', 'alt-context')}
             action={{ label: __('Clear search', 'alt-context'), onClick: onClearSearch }}
             headingLevel={3}
+            announceState={false}
           />
         </td>
       </tr>

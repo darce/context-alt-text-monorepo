@@ -40,6 +40,7 @@ export const MediaSelection = ({ reviewActive = false }: MediaSelectionProps): R
   const {
     searchQuery,
     handleSearchChange: onSearchChange,
+    clearSearch,
     statusFilter,
     handleStatusChange: onStatusFilterChange,
     currentPage,
@@ -139,7 +140,7 @@ export const MediaSelection = ({ reviewActive = false }: MediaSelectionProps): R
                 identityQuery.data,
               )}
               onRetryIdentities={() => void identityQuery.refetch()}
-              onClearSearch={() => onSearchChange('')}
+              onClearSearch={clearSearch}
             />
           </tbody>
         </table>

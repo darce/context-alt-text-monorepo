@@ -48,7 +48,7 @@ Purpose: Landing screen with hero, conditional orientation surface, and a priori
 | `z-identity-recognition` | Identity Recognition section (people, assigned, pending review, media with faces, guidance) | content | default, loading, error, first_time |
 | `z-library-coverage` | Library Coverage section (total media, missing alt text, coverage, fix CTA) | content | default, loading |
 | `z-recent-activity` | Recent Activity section (recognition jobs, provenance, status, duration, results link) | queue | default, empty, degraded, error |
-| `z-retention-posture` | Data Retention section (mode, last export, last purge, Open Data Retention link) | status | default, loading, empty, error |
+| `z-retention-posture` | Data Retention section (mode, last export, last purge, Open Data Retention link) | status | default, error |
 
 Screen states: `default`, `loading`, `error`, `first_time`, `degraded`.
 
@@ -326,6 +326,7 @@ flowchart TD
 
 - Should an unavailable retention policy remain absent, or should the dashboard expose a stable empty-state panel?
 - Should Recent Activity expose an explicit loading row while durable history is being fetched?
+- `z-retention-posture` renders nothing while retention status is loading and nothing when `available:false` — should either of those become a distinguishable zone state instead of an absence?
 
 ## Parity index
 

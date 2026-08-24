@@ -107,8 +107,6 @@
           "role": "status",
           "states": [
             "default",
-            "loading",
-            "empty",
             "error"
           ]
         }
@@ -398,7 +396,8 @@
   ],
   "open_questions": [
     "Should an unavailable retention policy remain absent, or should the dashboard expose a stable empty-state panel?",
-    "Should Recent Activity expose an explicit loading row while durable history is being fetched?"
+    "Should Recent Activity expose an explicit loading row while durable history is being fetched?",
+    "z-retention-posture renders nothing while retention status is loading and nothing when available:false — should either of those become a distinguishable zone state instead of an absence?"
   ],
   "not_doing": [
     "Changing DashboardPage, the priority model, OrientationCard, or any product behavior",

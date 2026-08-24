@@ -91,12 +91,6 @@ const i18nLiterals = (source: string): string[] =>
  * a subtitle, or another __() call after the heading) can never be mistaken
  * for the heading's own text.
  */
-/**
- * Extracts the i18n literal from INSIDE the first <h1>...</h1> element only.
- * Bounded to the element so a literal that appears later in the source (e.g.
- * a subtitle, or another __() call after the heading) can never be mistaken
- * for the heading's own text.
- */
 const h1Literal = (source: string): string => {
   const openTag = source.match(/<h1\b[^>]*>/);
   expect(openTag, 'expected an <h1> element').toBeTruthy();
@@ -215,6 +209,10 @@ describe('dashboard ux-map code parity (DUX-W2D14)', () => {
         .orientationPosition,
       'a non-first_named flow state must keep the orientation surface before the grid',
     ).toBe(DASHBOARD_ORIENTATION_POSITION.BEFORE_GRID);
+    expect(
+      dashboardSrc,
+      'DashboardPage must still derive flowState from assigned_clusters_count',
+    ).toMatch(/flowState[\s\S]{0,40}identityStats\?\.assigned_clusters_count[\s\S]{0,40}FIRST_NAMED/);
 
     const defaultAssigned = Number(defaultSketch.match(/Assigned\s+(\d+)/)?.[1] ?? '0');
     const firstAssigned = Number(firstTimeSketch.match(/Assigned\s+(\d+)/)?.[1] ?? '0');

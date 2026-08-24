@@ -76,6 +76,38 @@ describe('DashboardRecentActivitySection', () => {
     expect(screen.getByRole('link', { name: 'Run a scan' })).toHaveAttribute('href', '#/workbench?tab=scan');
   });
 
+  // DUX-W2D6C-RV-06 / A11Y-21 / TEST-15: announceState={false} with no host
+  // status channel leaves empty/unavailable transitions silent.
+  it('DUX-W2D6C-RV-06: empty recent activity announces via exactly one live region', () => {
+    render(
+      <DashboardRecentActivitySection
+        historySource="durable"
+        recentActivity={[]}
+        jobStatuses={{}}
+        jobDetails={{}}
+      />,
+    );
+
+    const liveRegions = screen.getAllByRole('status');
+    expect(liveRegions).toHaveLength(1);
+    expect(screen.getByTestId('acx-empty-state-live-region')).toBe(liveRegions[0]);
+  });
+
+  it('DUX-W2D6C-RV-06: unavailable recent activity announces via exactly one live region', () => {
+    render(
+      <DashboardRecentActivitySection
+        historySource="unavailable"
+        recentActivity={[]}
+        jobStatuses={{}}
+        jobDetails={{}}
+      />,
+    );
+
+    const liveRegions = screen.getAllByRole('status');
+    expect(liveRegions).toHaveLength(1);
+    expect(screen.getByTestId('acx-empty-state-live-region')).toBe(liveRegions[0]);
+  });
+
   it('does not render raw job or run identifiers in visible text', () => {
     const jobId = '550e8400-e29b-41d4-a716-446655440000';
     const runId = '660e8400-e29b-41d4-a716-446655440000';

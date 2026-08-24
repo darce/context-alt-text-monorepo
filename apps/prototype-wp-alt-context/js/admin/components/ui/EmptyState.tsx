@@ -51,6 +51,8 @@ export interface EmptyStateProps {
   action: EmptyStateAction;
   /** Optional transition announcement for an empty state whose host previously announced completion. */
   announcement?: string;
+  /** Disable the internal live region when the host already owns the page's status channel. */
+  announceState?: boolean;
   /** Keeps the host surface's heading outline valid [A11Y-24]. */
   headingLevel?: 2 | 3 | 4;
   className?: string;
@@ -77,6 +79,7 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
   body,
   action,
   announcement: announcementText = '',
+  announceState = true,
   headingLevel = 3,
   className,
 }) => {
@@ -98,9 +101,11 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
 
   return (
     <section className={classNames} data-testid="acx-empty-state" data-variant={variant} aria-labelledby={headingId}>
-      <div className="screen-reader-text" role="status" aria-live="polite" data-testid="acx-empty-state-live-region">
-        {announcement}
-      </div>
+      {announceState ? (
+        <div className="screen-reader-text" role="status" aria-live="polite" data-testid="acx-empty-state-live-region">
+          {announcement}
+        </div>
+      ) : null}
       <span
         className="acx-empty-state__icon"
         data-testid="acx-empty-state-icon"

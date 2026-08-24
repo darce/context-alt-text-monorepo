@@ -308,6 +308,32 @@ describe('RetentionPage', () => {
     });
   });
 
+  it('uses a separate persistent assertive region when an export fails', async () => {
+    const { rerender } = render(<RetentionPage />);
+    const statusRegion = screen.getByRole('status');
+    const errorRegion = screen.getByRole('alert');
+    expect(errorRegion).toBeEmptyDOMElement();
+    expect(errorRegion).toHaveAttribute('aria-live', 'assertive');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Export data' }));
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Start export' }));
+      await Promise.resolve();
+    });
+
+    mockedUseExportJobStatus.mockReturnValue(
+      createMockQuery({
+        data: { job_id: 'job-1', status: 'failed', file_size: null, error_message: 'Export failed' },
+      }),
+    );
+    rerender(<RetentionPage />);
+
+    expect(screen.getByRole('status')).toBe(statusRegion);
+    expect(statusRegion).toBeEmptyDOMElement();
+    expect(screen.getByRole('alert')).toBe(errorRegion);
+    expect(errorRegion).toHaveTextContent('Export failed. Please try again. Job ID: job-1');
+  });
+
   it('requires typed confirmation before purge', async () => {
     render(<RetentionPage />);
 

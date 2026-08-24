@@ -300,8 +300,8 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
     } | null>(null);
     const closeMatchAnnounceRef = React.useRef<{ count: number; omitted: number } | null>(null);
     const closeMatchBulkPhaseRef = React.useRef<string>(BULK_COMMIT_PHASE.IDLE);
-    // [REF-19] single AT-announce module; [A11Y-06] status second channel — BR-68/HARM-02
-    // seq-keyed sink so repeat-identical strings still re-fire (plain useState Object.is bail-out).
+    // [REF-19] single AT-announce module; [A11Y-06] status second channel — BR-68/HARM-02.
+    // The hook clears then restores repeated copy in one persistent live node.
     const { message: liveMessage, seq: liveSeq, announce: setLiveMessage } = useAriaAnnounce();
     const [selectionOpen, setSelectionOpen] = React.useState(false);
     /** User confirmed bulk while truncation-gated (UI-06 total-N confirm). */
@@ -905,6 +905,29 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
     const isInitialFailureBranch =
       data.hasInitialFailure && !data.isError && !isErrorBranch;
     const isLoadingBranch = data.isLoading || findings.isLoading;
+    const liveRegion = (
+      <div
+        className="acx-review-queue__live"
+        role="status"
+        aria-live="polite"
+        data-announce-seq={liveSeq}
+      >
+        {isErrorBranch ? (
+          <p id="acx-review-queue-error" className="acx-review-queue__status">
+            {retrying ? null : (
+              <>
+                <AlertTriangle aria-hidden="true" className="acx-review-queue__status-icon" size={16} />
+                {retryFailed
+                  ? QUERY_RETRY_COPY.RETRY_FAILED_SUGGESTIONS
+                  : QUERY_RETRY_COPY.LOAD_FAILED_SUGGESTIONS}
+              </>
+            )}
+          </p>
+        ) : (
+          liveMessage
+        )}
+      </div>
+    );
 
     // The current queue item resolves to a real card (its suggestion/cluster is in
     // the by-id map) — guards the rare projection race where an item is queued but
@@ -988,18 +1011,7 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
     if (isErrorBranch) {
       return (
         <div className="acx-review-queue acx-review-queue--error">
-          <div role="status" aria-live="polite">
-            <p id="acx-review-queue-error" className="acx-review-queue__status">
-              {retrying ? null : (
-                <>
-                  <AlertTriangle aria-hidden="true" className="acx-review-queue__status-icon" size={16} />
-                  {retryFailed
-                    ? QUERY_RETRY_COPY.RETRY_FAILED_SUGGESTIONS
-                    : QUERY_RETRY_COPY.LOAD_FAILED_SUGGESTIONS}
-                </>
-              )}
-            </p>
-          </div>
+          {liveRegion}
           <QueryRetryButton
             describedBy="acx-review-queue-error"
             retrying={retrying}
@@ -1014,12 +1026,13 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
     }
 
     if (isInitialFailureBranch) {
-      return null;
+      return <div className="acx-review-queue">{liveRegion}</div>;
     }
 
     if (isLoadingBranch) {
       return (
-        <div className="acx-review-queue acx-review-queue--loading" role="status" aria-live="polite">
+        <div className="acx-review-queue acx-review-queue--loading">
+          {liveRegion}
           <p>{__('Loading review queue…', 'alt-context')}</p>
         </div>
       );
@@ -1027,6 +1040,7 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
 
     return (
       <div className="acx-review-queue" data-live-target-status={headLiveStatus}>
+        {liveRegion}
         {headLiveStatus === 'auth_expired' ? (
           <UserFacingErrorNotice
             className="acx-review-queue__auth-expired"
@@ -1285,16 +1299,6 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
             </button>
           </div>
         ) : null}
-
-        <div
-          key={liveSeq}
-          className="acx-review-queue__live"
-          role="status"
-          aria-live="polite"
-          data-announce-seq={liveSeq}
-        >
-          {liveMessage}
-        </div>
 
         {showQueuePersonCommitFallback && data.personCommit.phase === PERSON_COMMIT_PHASE.FAILED ? (
           <div
@@ -1957,20 +1961,24 @@ const CurrentCard = ({
         committedPersonUuid={personCommit.personUuid}
         onCurateGroup={onLabel}
         onCommit={(request) => {
-          // BR-27: person-commit success may remove the NAME card — arm advance focus.
+          // BR-27: the successful mutation removes NAME before its promise resolves,
+          // so arm focus before starting it and disarm only when no removal occurred.
+          markAdvanceFocus();
           void schedulePersonCommit(request).then((result) => {
-            if (result.outcome === 'committed') {
-              markAdvanceFocus();
-            } else if (result.outcome === 'not_attempted_prior_failed') {
+            if (result.outcome !== 'committed') {
+              clearAdvanceFocus();
+            }
+            if (result.outcome === 'not_attempted_prior_failed') {
               // C-05: refused because an accept/reject failure is unresolved.
               announce(__('Retry the item that failed to save before assigning a person.', 'alt-context'));
             }
           });
         }}
         onRetry={() => {
+          markAdvanceFocus();
           void retryPersonCommit()?.then((result) => {
-            if (result?.outcome === 'committed') {
-              markAdvanceFocus();
+            if (result?.outcome !== 'committed') {
+              clearAdvanceFocus();
             }
           });
         }}
@@ -2134,18 +2142,25 @@ const CurrentCard = ({
               aria-expanded={isNameSuggestionRevealed}
               aria-controls={suggestionDisclosureId}
               onClick={() => {
-                if (isNameSuggestionRevealed) {
-                  return;
-                }
                 setRevealedNameSuggestionIds((current) => {
                   const next = new Set(current);
-                  next.add(suggestion.id);
+                  if (next.has(suggestion.id)) {
+                    next.delete(suggestion.id);
+                  } else {
+                    next.add(suggestion.id);
+                  }
                   return next;
                 });
-                announce(__('Suggestion revealed.', 'alt-context'));
+                announce(
+                  isNameSuggestionRevealed
+                    ? __('Suggestion hidden.', 'alt-context')
+                    : __('Suggestion revealed.', 'alt-context'),
+                );
               }}
             >
-              {__('Show suggestion', 'alt-context')}
+              {isNameSuggestionRevealed
+                ? __('Hide suggestion', 'alt-context')
+                : __('Show suggestion', 'alt-context')}
             </button>
             {isNameSuggestionRevealed ? (
               <div id={suggestionDisclosureId}>
@@ -2163,7 +2178,7 @@ const CurrentCard = ({
                   </p>
                 ) : null}
                 <p className="acx-person-commit__disclosure">
-                  {__(MODEL_OUTPUT_DISCLOSURE, 'alt-context')}
+                  {MODEL_OUTPUT_DISCLOSURE}
                 </p>
               </div>
             ) : null}

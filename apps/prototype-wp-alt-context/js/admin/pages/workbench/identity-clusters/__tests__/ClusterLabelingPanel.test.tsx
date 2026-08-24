@@ -429,6 +429,42 @@ describe('ClusterLabelingPanel', () => {
     expect(container.querySelector('.acx-face-thumbnail')).toBeNull();
   });
 
+  // UXB-01 / A11Y-02: face evidence needs distinct comparison labels in visual order.
+  it('labels faces from the same media by their left-to-right bbox position', async () => {
+    vi.mocked(fetchClusterMembers).mockResolvedValue(
+      makeClusterMembersResponse([
+        {
+          identity_id: 'identity-right',
+          media_id: 101,
+          similarity: 0.97,
+          confidence: 0.99,
+          thumb_url: 'http://example.test/uploads/group.jpg',
+          media_url: 'http://example.test/media/group.jpg',
+          bbox: { x: 80, y: 2, width: 20, height: 20 },
+        },
+        {
+          identity_id: 'identity-left',
+          media_id: 101,
+          similarity: 0.96,
+          confidence: 0.98,
+          thumb_url: 'http://example.test/uploads/group.jpg',
+          media_url: 'http://example.test/media/group.jpg',
+          bbox: { x: 10, y: 2, width: 20, height: 20 },
+        },
+      ]),
+    );
+
+    renderPanel();
+
+    const [rightHandFace, leftHandFace] = await screen.findAllByRole('img', { name: /Face \d in media 101/ });
+
+    expect(rightHandFace).toHaveAccessibleName('Face 2 in media 101');
+    expect(rightHandFace).toHaveStyle({ transform: 'translate(-256px, -6.4px) scale(3.2)' });
+    expect(leftHandFace).toHaveAccessibleName('Face 1 in media 101');
+    expect(leftHandFace).toHaveStyle({ transform: 'translate(-32px, -6.4px) scale(3.2)' });
+    expect(screen.queryByRole('img', { name: 'Face to label' })).not.toBeInTheDocument();
+  });
+
   it('pages through show-all when the members envelope is truncated', async () => {
     const fetchMock = vi.mocked(fetchClusterMembers);
     fetchMock.mockImplementation((_clusterId, params = {}): Promise<ClusterMembersResponse> => {
@@ -510,7 +546,7 @@ describe('ClusterLabelingPanel', () => {
 
     expect(container.querySelector('.acx-face-thumbnail')).not.toBeNull();
     expect(container.querySelector('.acx-avatar')).toBeNull();
-    expect(screen.getByRole('img', { name: 'Face to label' })).toHaveAttribute(
+    expect(screen.getByRole('img', { name: 'Face 1 in media 102' })).toHaveAttribute(
       'src',
       'http://example.test/media/source-102.jpg',
     );
@@ -540,7 +576,7 @@ describe('ClusterLabelingPanel', () => {
 
     expect(container.querySelector('.acx-face-thumbnail')).toBeNull();
     expect(screen.getByText('No image')).toBeInTheDocument();
-    const unavailable = screen.getByRole('img', { name: 'Face to label — image unavailable' });
+    const unavailable = screen.getByRole('img', { name: 'Face 1 in media 200 — image unavailable' });
     expect(unavailable).toBeInTheDocument();
     expect(unavailable).toHaveClass('acx-cluster-labeling-panel__face-unavailable');
   });
@@ -568,7 +604,7 @@ describe('ClusterLabelingPanel', () => {
 
     expect(container.querySelector('.acx-face-thumbnail')).not.toBeNull();
     expect(screen.queryByText('No image')).not.toBeInTheDocument();
-    expect(screen.getByRole('img', { name: 'Face to label' })).toHaveAttribute(
+    expect(screen.getByRole('img', { name: 'Face 1 in media 201' })).toHaveAttribute(
       'src',
       'http://example.test/media/label-positive.jpg',
     );

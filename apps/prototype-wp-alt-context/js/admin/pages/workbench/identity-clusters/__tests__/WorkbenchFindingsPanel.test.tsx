@@ -218,6 +218,7 @@ describe('WorkbenchFindingsPanel', () => {
     ).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Review next/ })).toBeDisabled();
     expect(screen.queryByRole('button', { name: 'View all findings' })).not.toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Run a scan' })).toHaveAttribute('href', '#acx-workbench-scan-heading');
   });
 
   // REV2-01 / TEST-15: an assignment-only outage keeps hasAnyData true, so the
@@ -237,6 +238,7 @@ describe('WorkbenchFindingsPanel', () => {
     expect(
       screen.getByText('Face assignments unavailable — this is not an empty backlog.'),
     ).toBeInTheDocument();
+    expect(screen.getByTestId('acx-empty-state')).toHaveAttribute('data-variant', 'unavailable');
 
     // The outage must be recoverable, and the control must sit outside the
     // live region that announces it (REV2-03 treatment).

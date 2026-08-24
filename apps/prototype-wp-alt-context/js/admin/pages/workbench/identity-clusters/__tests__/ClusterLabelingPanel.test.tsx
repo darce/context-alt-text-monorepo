@@ -169,6 +169,20 @@ describe('ClusterLabelingPanel', () => {
     );
   });
 
+  it('offers a way back when the face group has no members', async () => {
+    const onClose = vi.fn();
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <ClusterLabelingPanel clusterId="empty-group" onClose={onClose} onLabel={vi.fn()} />
+      </QueryClientProvider>,
+    );
+
+    const action = await screen.findByRole('button', { name: 'Back to review suggestions' });
+    await userEvent.click(action);
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
   // UXW2-3: the panel uses the inline NameFaceControl — type straight into the field.
   const typePanelName = async (name: string) => {
     const user = userEvent.setup();

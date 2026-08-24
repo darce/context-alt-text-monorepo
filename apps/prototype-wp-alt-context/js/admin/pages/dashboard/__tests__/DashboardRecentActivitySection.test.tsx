@@ -63,6 +63,19 @@ describe('buildActivitySummary', () => {
 });
 
 describe('DashboardRecentActivitySection', () => {
+  it('offers a scan action when recent activity is empty', () => {
+    render(
+      <DashboardRecentActivitySection
+        historySource="durable"
+        recentActivity={[]}
+        jobStatuses={{}}
+        jobDetails={{}}
+      />,
+    );
+
+    expect(screen.getByRole('link', { name: 'Run a scan' })).toHaveAttribute('href', '#/workbench?tab=scan');
+  });
+
   it('does not render raw job or run identifiers in visible text', () => {
     const jobId = '550e8400-e29b-41d4-a716-446655440000';
     const runId = '660e8400-e29b-41d4-a716-446655440000';

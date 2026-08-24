@@ -1,5 +1,5 @@
-import { render, screen } from '@testing-library/react';
-import { describe, expect, it } from 'vitest';
+import { render, screen, within } from '@testing-library/react';
+import { describe, expect, it, vi } from 'vitest';
 
 import type { SyncHealthResponse } from '../../../api/recognition/types/sync';
 import { SCAN_CONFLICTS_HREF, SCAN_DEAD_LETTER_HREF } from '../../../navigation/appLinks';
@@ -59,6 +59,31 @@ describe('getDegradedDebtLinks', () => {
 });
 
 describe('DegradedModeBannerView', () => {
+  it('keeps live-region nodes stable and empty until initial health loading settles', () => {
+    const onRetry = vi.fn();
+
+    const { rerender } = render(
+      <DegradedModeBannerView health={undefined} isLoading onRetry={onRetry} />,
+    );
+
+    const politeRegion = screen.getByRole('status');
+    const assertiveRegion = screen.getByRole('alert');
+    expect(politeRegion).toBeEmptyDOMElement();
+    expect(assertiveRegion).toBeEmptyDOMElement();
+    expect(screen.queryByTestId('acx-degraded-mode-banner')).not.toBeInTheDocument();
+
+    rerender(
+      <DegradedModeBannerView health={undefined} isLoading={false} onRetry={onRetry} />,
+    );
+
+    expect(screen.getByRole('status')).toBe(politeRegion);
+    expect(screen.getByRole('alert')).toBe(assertiveRegion);
+    expect(within(assertiveRegion).getByText('Backend health unknown')).toBeInTheDocument();
+    expect(screen.getByTestId('acx-degraded-mode-banner')).toHaveTextContent('Backend health unknown');
+    screen.getByRole('button', { name: 'Retry health check' }).click();
+    expect(onRetry).toHaveBeenCalledOnce();
+  });
+
   it('renders offline copy with icon when breaker is open', () => {
     render(
       <DegradedModeBannerView
@@ -81,7 +106,7 @@ describe('DegradedModeBannerView', () => {
   it('does not render "Working offline" when only last pull failed and the breaker is closed', () => {
     // Regression guard: a latched last_pull.ok=false on a reachable backend must
     // not surface the assertive offline banner (false-positive fix).
-    const { container } = render(
+    render(
       <DegradedModeBannerView
         health={{
           ...closedHealth,
@@ -90,7 +115,9 @@ describe('DegradedModeBannerView', () => {
       />,
     );
 
-    expect(container).toBeEmptyDOMElement();
+    expect(screen.getByRole('status')).toBeEmptyDOMElement();
+    expect(screen.getByRole('alert')).toBeEmptyDOMElement();
+    expect(screen.queryByTestId('acx-degraded-mode-banner')).not.toBeInTheDocument();
     expect(screen.queryByText('Working offline')).not.toBeInTheDocument();
   });
 
@@ -156,15 +183,32 @@ describe('DegradedModeBannerView', () => {
     // A11Y-23 / rg-004: advisory mode is a polite status region, not an assertive alert.
     const banner = screen.getByRole('status');
     expect(banner).toHaveAttribute('aria-live', 'polite');
-    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(screen.getByRole('alert')).toBeEmptyDOMElement();
     expect(screen.getByText('Sync attention needed')).toBeInTheDocument();
     expect(screen.queryByText('Working offline')).not.toBeInTheDocument();
     expect(screen.getByText(/warning threshold/i)).toBeInTheDocument();
   });
 
-  it('renders nothing when sync health is healthy', () => {
-    const { container } = render(<DegradedModeBannerView health={closedHealth} />);
+  it('clears the same live-region nodes when sync health becomes healthy', () => {
+    const { rerender } = render(
+      <DegradedModeBannerView
+        health={{
+          ...closedHealth,
+          breaker: { ...closedHealth.breaker, state: 'open' },
+        }}
+      />,
+    );
 
-    expect(container).toBeEmptyDOMElement();
+    const politeRegion = screen.getByRole('status');
+    const assertiveRegion = screen.getByRole('alert');
+    expect(assertiveRegion).not.toBeEmptyDOMElement();
+
+    rerender(<DegradedModeBannerView health={closedHealth} />);
+
+    expect(screen.getByRole('status')).toBe(politeRegion);
+    expect(screen.getByRole('alert')).toBe(assertiveRegion);
+    expect(politeRegion).toBeEmptyDOMElement();
+    expect(assertiveRegion).toBeEmptyDOMElement();
+    expect(screen.queryByTestId('acx-degraded-mode-banner')).not.toBeInTheDocument();
   });
 });

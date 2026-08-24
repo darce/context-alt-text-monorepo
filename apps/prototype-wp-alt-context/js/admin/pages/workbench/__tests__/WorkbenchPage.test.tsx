@@ -135,6 +135,12 @@ vi.mock('../../../hooks/useSyncTrigger', () => ({
   useSyncTrigger: vi.fn(),
 }));
 
+// These workbench unit cases exercise the online scan pipeline. Unknown-health
+// gating is covered by useSyncOffline and the integration-lite degraded case.
+vi.mock('../../../hooks/useSyncOffline', () => ({
+  useSyncOffline: () => false,
+}));
+
 vi.mock('../identity-clusters/useWorkbenchFindings', async () => {
   const actual = await vi.importActual<typeof import('../identity-clusters/useWorkbenchFindings')>(
     '../identity-clusters/useWorkbenchFindings',

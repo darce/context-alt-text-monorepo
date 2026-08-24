@@ -93,6 +93,11 @@ describe('DescribePanel', () => {
     expect(button).toBeDisabled();
     expect(button).toHaveAttribute('title', 'Unavailable while the recognition service is offline');
     expect(button).toHaveAttribute('aria-disabled', 'true');
+    const reasonId = button.getAttribute('aria-describedby');
+    expect(reasonId).toBeTruthy();
+    expect(document.getElementById(reasonId ?? '')).toHaveTextContent(
+      'Unavailable while the recognition service is offline',
+    );
   });
 
   it('gates form submit / Enter while offline (not button-only)', () => {

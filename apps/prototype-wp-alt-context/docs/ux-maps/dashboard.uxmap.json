@@ -305,6 +305,16 @@
       "screen_id": "dashboard-shell"
     },
     {
+      "id": "act-retry-identity-stats-unavailable",
+      "verb": "Retry identity stats",
+      "target": "dashboard-shell",
+      "hierarchy": "secondary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "dashboard-shell"
+    },
+    {
       "id": "act-go-to-review-queue",
       "verb": "Go to Review Queue",
       "target": "#/workbench?advanced=open",

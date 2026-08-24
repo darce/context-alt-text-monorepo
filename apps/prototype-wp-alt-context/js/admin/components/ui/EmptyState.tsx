@@ -38,8 +38,8 @@ export const EMPTY_STATE_VARIANTS = Object.values(EmptyStateVariant);
  * of `onClick` (in-place recovery / front door) or `href` (another screen).
  */
 export type EmptyStateAction =
-  | { label: string; onClick: () => void; busy?: boolean; href?: never }
-  | { label: string; href: string; onClick?: never };
+  | { label: string; onClick: () => void; busy?: boolean; describedBy?: string; href?: never }
+  | { label: string; href: string; onClick?: never; describedBy?: string };
 
 export interface EmptyStateProps {
   variant: EmptyStateVariantValue;
@@ -56,6 +56,13 @@ export interface EmptyStateProps {
   /** Keeps the host surface's heading outline valid [A11Y-24]. */
   headingLevel?: 2 | 3 | 4;
   className?: string;
+  /** Host-scoped class for the glyph wrapper (icon surface, not the block). */
+  iconClassName?: string;
+  /**
+   * Stable id for the heading when a host action needs aria-describedby
+   * association with the empty-state explanation.
+   */
+  headingId?: string;
   /**
    * In-page landing after the front door fires (e.g. move focus). Does not
    * replace `action.href` / `action.onClick` — those remain the exclusive way
@@ -88,9 +95,12 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
   announceState = true,
   headingLevel = 3,
   className,
+  iconClassName,
+  headingId: headingIdProp,
   onActivate,
 }) => {
-  const headingId = React.useId();
+  const generatedHeadingId = React.useId();
+  const headingId = headingIdProp ?? generatedHeadingId;
   const Heading = HEADING_TAGS[headingLevel];
   const { Glyph, name: iconName } = VARIANT_ICONS[variant];
   const isUnavailable = variant === EmptyStateVariant.UNAVAILABLE;
@@ -105,6 +115,7 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
   }, [announcementText, isUnavailable, statusLabel]);
 
   const classNames = ['acx-empty-state', `acx-empty-state--${variant}`, className].filter(Boolean).join(' ');
+  const iconClassNames = ['acx-empty-state__icon', iconClassName].filter(Boolean).join(' ');
 
   return (
     <section className={classNames} data-testid="acx-empty-state" data-variant={variant} aria-labelledby={headingId}>
@@ -114,7 +125,7 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
         </div>
       ) : null}
       <span
-        className="acx-empty-state__icon"
+        className={iconClassNames}
         data-testid="acx-empty-state-icon"
         data-icon={iconName}
         aria-hidden="true"
@@ -135,6 +146,7 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
               className="acx-empty-state__action-control"
               href={action.href}
               onClick={() => onActivate?.()}
+              aria-describedby={action.describedBy}
             >
               {action.label}
             </a>
@@ -147,6 +159,7 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
                 onActivate?.();
               }}
               aria-busy={action.busy ? 'true' : undefined}
+              aria-describedby={action.describedBy}
             >
               {action.label}
             </button>

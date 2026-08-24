@@ -156,7 +156,6 @@ export const DashboardRecentActivitySection = ({
         body={__('Previous scans could not be loaded. You can still start a new scan.', 'alt-context')}
         action={{ label: __('Run a scan', 'alt-context'), href: toWorkbench({ tab: 'scan' }) }}
         headingLevel={3}
-        announceState={false}
       />
     ) : recentActivity.length === 0 ? (
       <EmptyState
@@ -165,7 +164,6 @@ export const DashboardRecentActivitySection = ({
         body={__('Run a scan to find faces in your media library.', 'alt-context')}
         action={{ label: __('Run a scan', 'alt-context'), href: toWorkbench({ tab: 'scan' }) }}
         headingLevel={3}
-        announceState={false}
       />
     ) : (
       <ul className="acx-dashboard__activity-list">

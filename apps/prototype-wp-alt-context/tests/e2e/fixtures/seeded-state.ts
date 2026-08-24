@@ -38,7 +38,9 @@ export const skipUnlessPopulatedWorkbench = async (page: Page): Promise<void> =>
   );
 };
 
-type AcxE2eSeed = { unlabeledClusterId?: string };
+interface AcxE2eSeed {
+  unlabeledClusterId?: string;
+}
 
 /** Producer: write `window.acxE2eSeed.unlabeledClusterId` for later reads. */
 export const plantUnlabeledClusterId = async (page: Page, clusterId: string): Promise<void> => {

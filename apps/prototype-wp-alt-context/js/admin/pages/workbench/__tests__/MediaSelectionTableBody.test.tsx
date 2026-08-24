@@ -75,6 +75,8 @@ describe('MediaSelectionTableBody — decorative alt + link name [A11Y-02][A11Y-
     const onClearSearch = vi.fn();
     renderBody([], onClearSearch);
 
+    expect(screen.getByTestId('acx-empty-state')).toHaveAttribute('data-variant', 'empty');
+    expect(screen.queryByTestId('acx-empty-state-live-region')).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: 'Clear search' }));
     expect(onClearSearch).toHaveBeenCalledTimes(1);
   });

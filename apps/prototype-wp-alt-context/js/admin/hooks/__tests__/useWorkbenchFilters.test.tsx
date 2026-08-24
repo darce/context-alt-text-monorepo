@@ -71,6 +71,23 @@ describe('useWorkbenchFilters', () => {
     expect(result.current.currentPage).toBe(1);
   });
 
+  it('clearSearch drops the search param and resets page to 1', () => {
+    const { result } = renderHook(() => useWorkbenchFilters(), {
+      wrapper: wrapperForUrl('/?s=bridge&p=4'),
+    });
+
+    expect(result.current.searchQuery).toBe('bridge');
+    expect(result.current.currentPage).toBe(4);
+
+    act(() => {
+      result.current.clearSearch();
+    });
+
+    expect(result.current.searchQuery).toBe('');
+    expect(result.current.normalizedSearch).toBe('');
+    expect(result.current.currentPage).toBe(1);
+  });
+
   it('updates status filter and resets page to 1', () => {
     const { result } = renderHook(() => useWorkbenchFilters(), { wrapper });
 

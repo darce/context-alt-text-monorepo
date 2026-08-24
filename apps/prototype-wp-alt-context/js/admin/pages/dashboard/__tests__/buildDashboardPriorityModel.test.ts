@@ -1,4 +1,4 @@
-import { buildDashboardPriorityModel } from '../buildDashboardPriorityModel';
+import { DASHBOARD_FLOW_STATE, buildDashboardPriorityModel } from '../buildDashboardPriorityModel';
 
 const buildInputs = (overrides: Partial<Parameters<typeof buildDashboardPriorityModel>[0]> = {}) => ({
   isSyncStatusLoading: false,
@@ -17,6 +17,7 @@ const buildInputs = (overrides: Partial<Parameters<typeof buildDashboardPriority
   hasIdentityStats: true,
   pendingClustersCount: 0,
   unassignedPersonsCount: 0,
+  flowState: DASHBOARD_FLOW_STATE.FIRST_NAMED,
   ...overrides,
 });
 
@@ -32,7 +33,7 @@ describe('buildDashboardPriorityModel', () => {
 
     expect(model.gridSectionOrder[0]).toBe('syncHealth');
     expect(model.gridSectionOrder[1]).toBe('identityRecognition');
-    expect(model.orientationPosition).toBe('after_grid');
+    expect(model.orientationPosition).toBe('hidden');
   });
 
   it('prioritizes review work when sync health is healthy', () => {
@@ -94,13 +95,29 @@ describe('buildDashboardPriorityModel', () => {
     expect(model.gridSectionOrder[0]).toBe('syncHealth');
   });
 
-  it('never includes batchOperations and always places orientation after the grid', () => {
-    const model = buildDashboardPriorityModel(buildInputs({ pendingClustersCount: 2 }));
+  it.each([DASHBOARD_FLOW_STATE.UNSCANNED, DASHBOARD_FLOW_STATE.SCANNING, DASHBOARD_FLOW_STATE.CLUSTERS_PENDING])(
+    'places orientation above telemetry while the flow is %s',
+    (flowState) => {
+      const model = buildDashboardPriorityModel(buildInputs({ flowState }));
 
-    expect(model.gridSectionOrder).not.toContain('batchOperations');
-    expect(model.orientationPosition).toBe('after_grid');
-    // Runtime + type contract: only after_grid is valid.
-    const position: 'after_grid' = model.orientationPosition;
-    expect(position).toBe('after_grid');
+      expect(model.gridSectionOrder).not.toContain('batchOperations');
+      expect(model.orientationPosition).toBe('before_grid');
+    },
+  );
+
+  it('retires orientation after the first person is named', () => {
+    const model = buildDashboardPriorityModel(buildInputs({ flowState: DASHBOARD_FLOW_STATE.FIRST_NAMED }));
+
+    expect(model.orientationPosition).toBe('hidden');
   });
+
+  it.each([{ isIdentityLoading: true }, { isIdentityError: true }, { hasIdentityStats: false }])(
+    'does not promote identity recognition for a non-actionable stats state: %o',
+    (identityState) => {
+      const model = buildDashboardPriorityModel(buildInputs(identityState));
+
+      expect(model.gridSectionOrder[0]).toBe('syncHealth');
+      expect(model.gridSectionOrder[1]).toBe('identityRecognition');
+    },
+  );
 });

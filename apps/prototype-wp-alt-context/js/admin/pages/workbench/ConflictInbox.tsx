@@ -14,6 +14,7 @@ import {
   getResolutionButtonLabel,
 } from './conflict-inbox/conflictInboxUtils';
 import { useConflictInboxState } from './conflict-inbox/useConflictInboxState';
+import { EmptyState, EmptyStateVariant } from '../../components/ui/EmptyState';
 
 const PAGE_SIZE = 20;
 const CONFLICT_STATUS = {
@@ -352,7 +353,13 @@ export const ConflictInbox = (): React.JSX.Element => {
         <p id={SYNC_PENDING_REASON_ID}>{__('Sync in progress. Please wait.', 'alt-context')}</p>
       ) : null}
       {items.length === 0 ? (
-        <p>{__('No open conflicts.', 'alt-context')}</p>
+        <EmptyState
+          variant={EmptyStateVariant.EMPTY}
+          heading={__('No open conflicts.', 'alt-context')}
+          body={__('Refresh to check whether any sync conflicts need your review.', 'alt-context')}
+          action={{ label: __('Refresh conflicts', 'alt-context'), onClick: () => void conflictsQuery.refetch() }}
+          headingLevel={4}
+        />
       ) : (
         <>
           <ul className="acx-dashboard__activity-list">

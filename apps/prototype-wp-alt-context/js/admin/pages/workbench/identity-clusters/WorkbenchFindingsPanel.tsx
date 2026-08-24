@@ -9,7 +9,7 @@
 
 import React from 'react';
 import { __, _n, sprintf } from '@wordpress/i18n';
-import { AlertTriangle, Circle, ImageOff } from 'lucide-react';
+import { AlertTriangle, ImageOff } from 'lucide-react';
 
 import { DurableFaceThumb } from '../../../../components/ui/DurableFaceThumb';
 import {
@@ -22,6 +22,8 @@ import {
 import { QUERY_RETRY_COPY, QueryRetryButton, settledRefetchFailed } from './queryRetry';
 import { gatedClusterCopy, repairGatedCount, REPRESENTATIVE_VOCABULARY } from './representativeVocabulary';
 import { useSuggestionReviewQueries } from './useSuggestionReviewQueries';
+import { EmptyState, EmptyStateVariant } from '../../../components/ui/EmptyState';
+import { toSettings } from '../../../navigation/appLinks';
 
 /** Panel-level fallback chain (design B.2). First match wins. */
 export const FINDINGS_PANEL_STATE = {
@@ -338,15 +340,13 @@ export const WorkbenchFindingsPanel = ({
         data-findings-state={FINDINGS_PANEL_STATE.UNAVAILABLE}
       >
         <FindingsRegionHeading ref={headingRef} visuallyHidden />
-        <div role="status" aria-live="polite">
-          <p className="acx-findings-panel__status">
-            <Circle aria-hidden="true" className="acx-findings-panel__status-icon" size={16} />
-            {__('Recognition findings are unavailable right now.', 'alt-context')}
-          </p>
-          <p className="acx-findings-panel__hint">
-            {__('Check the Service API URL in Recognition API Settings.', 'alt-context')}
-          </p>
-        </div>
+        <EmptyState
+          variant={EmptyStateVariant.UNAVAILABLE}
+          heading={__('Recognition findings are unavailable right now.', 'alt-context')}
+          body={__('Check the Service API URL in Recognition API Settings.', 'alt-context')}
+          action={{ label: __('Open settings', 'alt-context'), href: toSettings() }}
+          headingLevel={4}
+        />
       </div>
     );
   }
@@ -484,31 +484,32 @@ export const WorkbenchFindingsPanel = ({
           is clear while the primary review queue is down. Same treatment as the
           top-unlabeled degraded chip: name the outage, offer the retry. */}
       {!hasFindings && !repairPending && isAssignmentError && (
-        <>
-          <p
-            id="acx-findings-panel-assignment-outage"
-            className="acx-findings-panel__status"
-            role="status"
-            aria-live="polite"
-          >
-            <AlertTriangle aria-hidden="true" className="acx-findings-panel__status-icon" size={16} />
-            {__('Face assignments unavailable — this is not an empty backlog.', 'alt-context')}
-          </p>
-          <div className="acx-findings-panel__repair">
-            <FindingsRetryButton
-              describedBy="acx-findings-panel-assignment-outage"
-              retrying={retrying}
-              onClick={() => handleRetryFindings({ restoreFocusOnSuccess: true })}
-              className="acx-button acx-button--secondary acx-button--small"
-            />
-          </div>
-        </>
+        <EmptyState
+          variant={EmptyStateVariant.UNAVAILABLE}
+          heading={__('Face assignments unavailable — this is not an empty backlog.', 'alt-context')}
+          body={
+            retrying
+              ? __('Retrying recognition findings…', 'alt-context')
+              : __('Reload recognition findings before deciding whether the review queue is clear.', 'alt-context')
+          }
+          action={{
+            label: retrying ? __('Retrying…', 'alt-context') : __('Retry', 'alt-context'),
+            onClick: () => handleRetryFindings({ restoreFocusOnSuccess: true }),
+            busy: retrying,
+          }}
+          headingLevel={4}
+        />
       )}
 
       {!hasFindings && !repairPending && !isAssignmentError && (
-        <p className="acx-findings-panel__empty" role="status" aria-live="polite">
-          {__('No findings yet. Run a scan and new findings will appear here automatically.', 'alt-context')}
-        </p>
+        <EmptyState
+          variant={EmptyStateVariant.EMPTY}
+          heading={__('No findings yet', 'alt-context')}
+          body={__('Run a scan and new findings will appear here automatically.', 'alt-context')}
+          announcement={__('No findings yet. Run a scan and new findings will appear here automatically.', 'alt-context')}
+          action={{ label: __('Run a scan', 'alt-context'), href: '#acx-workbench-scan-heading' }}
+          headingLevel={4}
+        />
       )}
 
       <div className="acx-findings-panel__actions">

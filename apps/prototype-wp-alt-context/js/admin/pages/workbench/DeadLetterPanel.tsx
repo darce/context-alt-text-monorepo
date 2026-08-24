@@ -9,6 +9,7 @@ import { useOutboxOperations } from '../../hooks/useOutboxOperations';
 import { useRetryOperation } from '../../hooks/useRetryOperation';
 import { useSyncStatus } from '../../hooks/useSyncStatus';
 import { SYNC_VOCABULARY } from './syncVocabulary';
+import { EmptyState, EmptyStateVariant } from '../../components/ui/EmptyState';
 
 const PAGE_SIZE = 20;
 const TIMELINE_PAGE_SIZE = 10;
@@ -519,7 +520,16 @@ export const DeadLetterPanel = (): React.JSX.Element => {
         ) : null}
       </div>
       {items.length === 0 ? (
-        <p>{__('No failed changes.', 'alt-context')}</p>
+        <EmptyState
+          variant={EmptyStateVariant.EMPTY}
+          heading={__('No failed changes.', 'alt-context')}
+          body={__('Refresh to check whether any changes need recovery.', 'alt-context')}
+          action={{
+            label: __('Refresh failed changes', 'alt-context'),
+            onClick: () => void operationsQuery.refetch(),
+          }}
+          headingLevel={4}
+        />
       ) : (
         <>
           <ul className="acx-dashboard__activity-list">

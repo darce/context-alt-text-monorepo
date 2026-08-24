@@ -4,6 +4,7 @@ import { __, sprintf } from '@wordpress/i18n';
 import type { JobStatusResponse } from '../../api/recognition/types/scan';
 import type { RecognitionActivityItem, RecognitionHistorySource } from '../../hooks/recognitionJobHistoryUtils';
 import { toWorkbench } from '../../navigation/appLinks';
+import { EmptyState, EmptyStateVariant } from '../../components/ui/EmptyState';
 
 interface DashboardRecentActivitySectionProps {
   historySource: RecognitionHistorySource;
@@ -149,9 +150,21 @@ export const DashboardRecentActivitySection = ({
       <p>{__('Showing jobs remembered in this browser only.', 'alt-context')}</p>
     ) : null}
     {historySource === 'unavailable' && recentActivity.length === 0 ? (
-      <p>{__('Durable recent activity is unavailable right now.', 'alt-context')}</p>
+      <EmptyState
+        variant={EmptyStateVariant.UNAVAILABLE}
+        heading={__('Recent activity is unavailable', 'alt-context')}
+        body={__('Previous scans could not be loaded. You can still start a new scan.', 'alt-context')}
+        action={{ label: __('Run a scan', 'alt-context'), href: toWorkbench({ tab: 'scan' }) }}
+        headingLevel={3}
+      />
     ) : recentActivity.length === 0 ? (
-      <p>{__('No recent recognition jobs found.', 'alt-context')}</p>
+      <EmptyState
+        variant={EmptyStateVariant.EMPTY}
+        heading={__('No recent scans yet', 'alt-context')}
+        body={__('Run a scan to find faces in your media library.', 'alt-context')}
+        action={{ label: __('Run a scan', 'alt-context'), href: toWorkbench({ tab: 'scan' }) }}
+        headingLevel={3}
+      />
     ) : (
       <ul className="acx-dashboard__activity-list">
         {recentActivity.map((item) => {

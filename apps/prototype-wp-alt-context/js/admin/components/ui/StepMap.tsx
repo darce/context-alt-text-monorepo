@@ -23,22 +23,26 @@ export interface StepMapProps {
 
 export const StepMap = ({ activeStep, steps }: StepMapProps): React.JSX.Element => {
   const activeIndex = steps.findIndex((step) => step.id === activeStep);
-  const active = steps[activeIndex];
-  const position = activeIndex + 1;
-  const positionText = sprintf(
-    /* translators: 1: current step number, 2: total steps, 3: current step name. */
-    __('Step %1$d of %2$d: %3$s', 'alt-context'),
-    position,
-    steps.length,
-    active.label,
-  );
+  const active = activeIndex >= 0 ? steps[activeIndex] : undefined;
+  const positionText =
+    active === undefined
+      ? null
+      : sprintf(
+          /* translators: 1: current step number, 2: total steps, 3: current step name. */
+          __('Step %1$d of %2$d: %3$s', 'alt-context'),
+          activeIndex + 1,
+          steps.length,
+          active.label,
+        );
 
   return (
     <nav className="acx-workbench-steps" aria-label={__('Progress', 'alt-context')}>
-      <div className="acx-workbench-steps__position" role="status" aria-live="polite">
-        {positionText}
-      </div>
-      <ol className="acx-workbench-steps__list" aria-label={__('Progress', 'alt-context')}>
+      {positionText !== null ? (
+        <div className="acx-workbench-steps__position" role="status" aria-live="polite">
+          {positionText}
+        </div>
+      ) : null}
+      <ol className="acx-workbench-steps__list">
         {steps.map((step, index) => {
           const isCurrent = step.id === activeStep;
           const isComplete = index < activeIndex;

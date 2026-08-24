@@ -89,7 +89,7 @@ Screen states: `default`, `loading`, `error`, `first_time`, `degraded`.
 
 #### First-time — fresh tenant
 
-The hero and orientation surface render while independently loaded sections settle on zero counts or no-history copy. The first-use flow state is `unscanned`; orientation is before the grid. Assigned is 0, so Getting Started can show. GuidanceCard with people_count 0 shows Go to Scan tab. Dismiss is always on the orientation card.
+The hero and orientation surface render while independently loaded sections settle on zero counts or no-history copy. The first-use flow state is `unscanned`; orientation is before the grid. Assigned is 0, so Getting Started can show. GuidanceCard with people_count 0 shows Go to Scan tab. Dismiss is always on the orientation card. Sync Health has already loaded successfully here, so Open Review Queue is present the same as in the default composition.
 
 ```
 +------------------------------------------------------------+
@@ -104,6 +104,7 @@ The hero and orientation surface render while independently loaded sections sett
 +------------------------------------------------------------+
 | Sync Health                                               |
 |   Everything is saved and up to date.                     |
+|   [Open Review Queue]                                     |
 +------------------------------------------------------------+
 | Identity Recognition                                     |
 |   People 0 | Assigned 0 | Pending Review 0                |
@@ -124,7 +125,7 @@ The hero and orientation surface render while independently loaded sections sett
 
 #### Loading
 
-There is no page-wide loading replacement. The hero and orientation can remain visible while each data-backed section reports its own loading branch. Identity still loading means `assigned_clusters_count` is not yet first_named, so orientation may show.
+There is no page-wide loading replacement. The hero and orientation can remain visible while each data-backed section reports its own loading branch. Identity still loading means `assigned_clusters_count` is not yet first_named, so orientation may show. The Library Coverage progress bar and Fix missing descriptions CTA render outside the loading branch, so they are present even while coverage stats are still loading.
 
 ```
 +------------------------------------------------------------+
@@ -139,6 +140,7 @@ There is no page-wide loading replacement. The hero and orientation can remain v
 +------------------------------------------------------------+
 | Library Coverage                                         |
 |   Loading coverage insights…                             |
+|   (progress bar and [Fix missing descriptions] render regardless of loading) |
 +------------------------------------------------------------+
 | Recent Activity                                          |
 |   History area remains in its hook-provided state         |
@@ -180,7 +182,7 @@ Identity Recognition actually has two distinct, independently-triggered retry co
 
 #### Degraded
 
-Degraded is an intact first_named dashboard with an attention-bearing sync state or partial history. Orientation is hidden because Assigned > 0. Sync Health can show warnings, mirror divergence, conflicts, failed sync events, topology work, or an offline backend summary; Recent Activity can identify browser-local fallback. When pending review is 0 and unassigned persons remain, GuidanceCard shows Review unassigned persons.
+Degraded is an intact first_named dashboard with an attention-bearing sync state or partial history. Orientation is hidden because Assigned > 0. Sync Health can show warnings, mirror divergence, conflicts, failed sync events, topology work, or an offline backend summary; Recent Activity can identify browser-local fallback. When pending review is 0 and unassigned persons remain, GuidanceCard shows Review unassigned persons. Open Review Queue and Fix missing descriptions are not gated by sync or coverage state, so both remain present here too.
 
 ```
 +------------------------------------------------------------+
@@ -188,6 +190,7 @@ Degraded is an intact first_named dashboard with an attention-bearing sync state
 +------------------------------------------------------------+
 | Sync Health                          (attention / offline) |
 |   Mirror is out of sync; pending / conflicts / failures   |
+|   [Open Review Queue]                                     |
 |   [Reset mirror] [Open Conflict Inbox] [Open Failed Sync Queue] |
 +------------------------------------------------------------+
 | Identity Recognition                                     |
@@ -196,6 +199,7 @@ Degraded is an intact first_named dashboard with an attention-bearing sync state
 +------------------------------------------------------------+
 | Library Coverage                                         |
 |   Coverage counters remain available                       |
+|   [Fix missing descriptions]                              |
 +------------------------------------------------------------+
 | Recent Activity                                          |
 |   Showing jobs remembered in this browser only.           |

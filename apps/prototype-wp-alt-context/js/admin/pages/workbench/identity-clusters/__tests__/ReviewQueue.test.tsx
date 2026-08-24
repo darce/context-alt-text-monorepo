@@ -5565,7 +5565,7 @@ describe('ReviewQueue', () => {
         similarity: number;
         clusterId?: string;
         label?: string;
-        /** Defaults to rows.length (multi-face) so HAI-17 applies unless overridden. */
+        /** Defaults to 1 so close-match sequencer tests are not HAI-17 gated. */
         identityCount?: number;
       }[],
     ): void => {
@@ -5577,7 +5577,7 @@ describe('ReviewQueue', () => {
           representative_similarity: row.similarity,
           avg_member_similarity: row.similarity,
           cluster_label: row.label ?? 'Alex',
-          cluster_identity_count: row.identityCount ?? rows.length,
+          cluster_identity_count: row.identityCount ?? 1,
         })),
         limit: 40,
         offset: 0,

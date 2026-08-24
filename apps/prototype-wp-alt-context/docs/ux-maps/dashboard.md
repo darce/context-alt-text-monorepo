@@ -152,6 +152,8 @@ There is no page-wide loading replacement. The hero and orientation can remain v
 
 Errors are section-local. Sync Health shows `Sync health is unavailable right now.` when its status request fails or returns no status; Identity Recognition shows a retryable error; Recent Activity shows the unavailable copy when `historySource === 'unavailable'` and the list is empty; Data Retention shows retention remediation; the hero and other sections remain present.
 
+Identity Recognition actually has two distinct, independently-triggered retry controls, both drawn below: the identity-stats request itself failing (`isIdentityError`, `[Retry]`), and the request succeeding but returning no stats (`!identityStats`, `[Retry identity stats]`). These are separate branches in the component, not two labels for the same affordance.
+
 ```
 +------------------------------------------------------------+
 | Overview                                                  |
@@ -162,6 +164,7 @@ Errors are section-local. Sync Health shows `Sync health is unavailable right no
 +------------------------------------------------------------+
 | Identity Recognition                                     |
 |   Unable to load identity stats.             [Retry]       |
+|   (or) Identity stats are unavailable. [Retry identity stats] |
 +------------------------------------------------------------+
 | Library Coverage                                         |
 |   Coverage counters and [Fix missing descriptions]        |
@@ -283,6 +286,7 @@ url_params: `personFilter`, `person`
 | `act-reset-mirror` | destructive | Reset mirror | dashboard sync health |
 | `act-view-results` | secondary | View Results | `#/workbench?advanced=open` |
 | `act-retry-identity-stats` | secondary | Retry | dashboard-shell |
+| `act-retry-identity-stats-unavailable` | secondary | Retry identity stats | dashboard-shell |
 | `act-go-to-review-queue` | primary | Go to Review Queue | `#/workbench?advanced=open` |
 | `act-review-unassigned` | secondary | Review unassigned persons | `#/roster?personFilter=unassigned` |
 | `act-go-to-scan-tab` | secondary | Go to Scan tab | `#/workbench?tab=scan` |
@@ -332,7 +336,7 @@ flowchart TD
 
 Zone ids: z-dashboard-hero z-orientation z-sync-health z-identity-recognition z-library-coverage z-recent-activity z-retention-posture z-wb-entry z-retention-entry z-roster-entry
 
-Action ids: act-start-first-scan act-dismiss-orientation act-open-review-queue act-fix-missing-descriptions act-open-retention act-open-conflicts act-open-failed-sync act-reset-mirror act-view-results act-retry-identity-stats act-go-to-review-queue act-review-unassigned act-go-to-scan-tab
+Action ids: act-start-first-scan act-dismiss-orientation act-open-review-queue act-fix-missing-descriptions act-open-retention act-open-conflicts act-open-failed-sync act-reset-mirror act-view-results act-retry-identity-stats act-retry-identity-stats-unavailable act-go-to-review-queue act-review-unassigned act-go-to-scan-tab
 
 Zone labels (verbatim):
 

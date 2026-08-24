@@ -13,13 +13,17 @@
  * owns the schema (DRIFT-03: an SSOT that cannot be loaded has stopped being a source
  * of truth). The cast is now a validated parse.
  */
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { describe, expect, it } from 'vitest';
 
 const uxMapsDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../docs/ux-maps');
+const enumSnapshotPath = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  'fixtures/uxmap-enums.snapshot.json',
+);
 
 const OWNED_MAPS = ['roster-people', 'workbench-2pane', 'workbench-operator-loop'] as const;
 
@@ -250,7 +254,7 @@ const validateModel = (value: unknown, spec: ModelSpec, loc: string, issues: Iss
   }
 
   for (const key of Object.keys(value)) {
-    if (!(key in spec.fields)) {
+    if (!Object.hasOwn(spec.fields, key)) {
       issues.push({ loc: at(loc, key), type: 'extra_forbidden', input: value[key] });
     }
   }
@@ -303,6 +307,11 @@ const validateUxMap = (doc: unknown): Issue[] => {
 const formatIssues = (issues: Issue[]): string[] =>
   issues.map((issue) => `${issue.loc} | ${issue.type} | ${preview(issue.input)}`);
 
+interface UxMapEnumSnapshot {
+  mapStates: string[];
+  zoneRoles: string[];
+}
+
 /* ------------------------------------------------------------------ *
  * Typed view of the parts the parity assertions read.
  * ------------------------------------------------------------------ */
@@ -340,6 +349,24 @@ const loadOwnedMap = (mapRef: (typeof OWNED_MAPS)[number]): { json: UxMapDoc; md
 };
 
 describe('ux-map SSOT schema conformance (owned maps)', () => {
+  it('flags prototype-inherited field names as forbidden extras', () => {
+    const issues: Issue[] = [];
+    validateModel({ constructor: 'mutant' }, { name: 'Mutant', fields: {} }, '', issues);
+
+    expect(formatIssues(issues)).toEqual(['constructor | extra_forbidden | mutant']);
+  });
+
+  it('keeps the checked-in Python enum snapshot available', () => {
+    expect(existsSync(enumSnapshotPath)).toBe(true);
+  });
+
+  it('keeps the TypeScript enum mirrors equal to the Python enum snapshot', () => {
+    const snapshot = JSON.parse(readFileSync(enumSnapshotPath, 'utf8')) as UxMapEnumSnapshot;
+
+    expect(new Set(MAP_STATES)).toEqual(new Set(snapshot.mapStates));
+    expect(new Set(ZONE_ROLES)).toEqual(new Set(snapshot.zoneRoles));
+  });
+
   for (const mapRef of OWNED_MAPS) {
     it(`${mapRef}.uxmap.json validates against the canonical UxMap schema`, () => {
       const issues = validateUxMap(readMapJson(mapRef));

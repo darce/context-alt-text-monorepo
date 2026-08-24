@@ -49,6 +49,7 @@ interface DeadLetterPanelState {
   timelineStatus: TimelineStatusFilter;
   pendingDiscardId: number | null;
   bulkRetryArmed: boolean;
+  actionStatus: string;
   notice: string | null;
   mutationError: string | null;
 }
@@ -59,6 +60,7 @@ type DeadLetterPanelAction =
   | { type: 'setTimelineStatus'; status: TimelineStatusFilter }
   | { type: 'setPendingDiscardId'; id: number | null }
   | { type: 'setBulkRetryArmed'; armed: boolean }
+  | { type: 'setActionStatus'; status: string }
   | { type: 'setNotice'; notice: string | null }
   | { type: 'setMutationError'; error: string | null };
 
@@ -68,6 +70,7 @@ const INITIAL_STATE: DeadLetterPanelState = {
   timelineStatus: 'all',
   pendingDiscardId: null,
   bulkRetryArmed: false,
+  actionStatus: '',
   notice: null,
   mutationError: null,
 };
@@ -84,6 +87,8 @@ const deadLetterPanelReducer = (state: DeadLetterPanelState, action: DeadLetterP
       return { ...state, pendingDiscardId: action.id };
     case 'setBulkRetryArmed':
       return state.bulkRetryArmed === action.armed ? state : { ...state, bulkRetryArmed: action.armed };
+    case 'setActionStatus':
+      return { ...state, actionStatus: action.status };
     case 'setNotice':
       return { ...state, notice: action.notice };
     case 'setMutationError':
@@ -97,6 +102,14 @@ const formatOperationType = (operationType: string): string =>
   OPERATION_LABELS[operationType] ?? operationType.replaceAll('_', ' ');
 
 const formatStatusLabel = (status: string): string => status.replaceAll('_', ' ');
+
+const formatOperationIdentity = (operation: OutboxOperation): string =>
+  sprintf(
+    __('%1$s for %2$s (operation %3$d)', 'alt-context'),
+    formatOperationType(operation.operation_type),
+    operation.entity_key,
+    operation.id,
+  );
 
 const formatTimestamp = (value: string | null | undefined): string => {
   if (!value) {
@@ -145,7 +158,17 @@ const formatPayloadSummary = (payload: Record<string, unknown> | undefined): str
 
 export const DeadLetterPanel = (): React.JSX.Element => {
   const [state, dispatch] = React.useReducer(deadLetterPanelReducer, INITIAL_STATE);
-  const { offset, timelineOffset, timelineStatus, pendingDiscardId, bulkRetryArmed, notice, mutationError } = state;
+  const [loadingAnnouncement, setLoadingAnnouncement] = React.useState('');
+  const {
+    offset,
+    timelineOffset,
+    timelineStatus,
+    pendingDiscardId,
+    bulkRetryArmed,
+    actionStatus,
+    notice,
+    mutationError,
+  } = state;
 
   const operationsQuery = useDeadLetterOperations({ limit: PAGE_SIZE, offset });
   const timelineQuery = useOutboxOperations({
@@ -160,6 +183,21 @@ export const DeadLetterPanel = (): React.JSX.Element => {
   const mutationPending = retryMutation.isPending || discardMutation.isPending || bulkRetryMutation.isPending;
 
   const failedTotal = operationsQuery.data?.total;
+
+  React.useEffect(() => {
+    if (!operationsQuery.isLoading) {
+      setLoadingAnnouncement('');
+      return undefined;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      setLoadingAnnouncement(__('Loading failed changes…', 'alt-context'));
+    }, 0);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, [operationsQuery.isLoading]);
 
   // E15-35 Slice 2 review fix: the armed confirmation is time-boxed and scoped to the
   // backlog it was armed against — it auto-disarms after a short window and whenever the
@@ -182,38 +220,68 @@ export const DeadLetterPanel = (): React.JSX.Element => {
     dispatch({ type: 'setBulkRetryArmed', armed: false });
   }, [failedTotal]);
 
-  const handleRetry = async (id: number): Promise<void> => {
+  const handleRetry = async (operation: OutboxOperation): Promise<void> => {
+    const operationIdentity = formatOperationIdentity(operation);
+    dispatch({ type: 'setNotice', notice: null });
+    dispatch({ type: 'setMutationError', error: null });
+    dispatch({
+      type: 'setActionStatus',
+      status: sprintf(__('Retrying %s.', 'alt-context'), operationIdentity),
+    });
     try {
-      await retryMutation.mutateAsync(id);
+      await retryMutation.mutateAsync(operation.id);
       dispatch({ type: 'setPendingDiscardId', id: null });
       dispatch({ type: 'setMutationError', error: null });
-      dispatch({ type: 'setNotice', notice: __('Change queued to retry.', 'alt-context') });
+      dispatch({ type: 'setActionStatus', status: '' });
+      dispatch({
+        type: 'setNotice',
+        notice: sprintf(__('%s queued to retry.', 'alt-context'), operationIdentity),
+      });
     } catch {
       dispatch({ type: 'setNotice', notice: null });
+      dispatch({ type: 'setActionStatus', status: '' });
       dispatch({
         type: 'setMutationError',
-        error: __('Unable to retry this operation. Please try again.', 'alt-context'),
+        error: sprintf(__('Unable to retry %s. Please try again.', 'alt-context'), operationIdentity),
       });
     }
   };
 
-  const handleDiscard = async (id: number): Promise<void> => {
-    if (pendingDiscardId !== id) {
+  const handleDiscard = async (operation: OutboxOperation): Promise<void> => {
+    const operationIdentity = formatOperationIdentity(operation);
+    if (pendingDiscardId !== operation.id) {
       dispatch({ type: 'setMutationError', error: null });
-      dispatch({ type: 'setPendingDiscardId', id });
+      dispatch({ type: 'setNotice', notice: null });
+      dispatch({ type: 'setPendingDiscardId', id: operation.id });
+      dispatch({
+        type: 'setActionStatus',
+        status: sprintf(
+          __('Discard armed for %s. Activate Confirm discard to continue.', 'alt-context'),
+          operationIdentity,
+        ),
+      });
       return;
     }
 
+    dispatch({
+      type: 'setActionStatus',
+      status: sprintf(__('Discarding %s.', 'alt-context'), operationIdentity),
+    });
     try {
-      await discardMutation.mutateAsync(id);
+      await discardMutation.mutateAsync(operation.id);
       dispatch({ type: 'setPendingDiscardId', id: null });
       dispatch({ type: 'setMutationError', error: null });
-      dispatch({ type: 'setNotice', notice: __('Failed change discarded.', 'alt-context') });
+      dispatch({ type: 'setActionStatus', status: '' });
+      dispatch({
+        type: 'setNotice',
+        notice: sprintf(__('%s discarded.', 'alt-context'), operationIdentity),
+      });
     } catch {
       dispatch({ type: 'setNotice', notice: null });
+      dispatch({ type: 'setActionStatus', status: '' });
       dispatch({
         type: 'setMutationError',
-        error: __('Unable to discard this operation. Please try again.', 'alt-context'),
+        error: sprintf(__('Unable to discard %s. Please try again.', 'alt-context'), operationIdentity),
       });
     }
   };
@@ -221,6 +289,7 @@ export const DeadLetterPanel = (): React.JSX.Element => {
   const handleBulkRetry = async (): Promise<void> => {
     if (!bulkRetryArmed) {
       dispatch({ type: 'setMutationError', error: null });
+      dispatch({ type: 'setActionStatus', status: '' });
       dispatch({ type: 'setBulkRetryArmed', armed: true });
       return;
     }
@@ -255,17 +324,18 @@ export const DeadLetterPanel = (): React.JSX.Element => {
   };
 
   const liveStatus = operationsQuery.isLoading
-    ? __('Loading failed changes…', 'alt-context')
+    ? loadingAnnouncement
     : bulkRetryMutation.isPending
       ? __('Retrying all failed changes…', 'alt-context')
-      : retryMutation.isPending || discardMutation.isPending
-        ? __('Failed-change action in progress. Please wait.', 'alt-context')
-        : bulkRetryArmed && failedTotal !== undefined
-          ? sprintf(
-              __('Retry all is armed. Activate Confirm retry all failed to queue %d failed changes.', 'alt-context'),
-              failedTotal,
-            )
-          : notice ?? '';
+      : actionStatus ||
+        (retryMutation.isPending || discardMutation.isPending
+          ? __('Failed-change action in progress. Please wait.', 'alt-context')
+          : bulkRetryArmed && failedTotal !== undefined
+            ? sprintf(
+                __('Retry all is armed. Activate Confirm retry all failed to queue %d failed changes.', 'alt-context'),
+                failedTotal,
+              )
+            : (notice ?? ''));
 
   const statusRegion = (
     <div
@@ -284,6 +354,7 @@ export const DeadLetterPanel = (): React.JSX.Element => {
     return (
       <section aria-label={__('Failed changes panel', 'alt-context')} aria-busy="true">
         {statusRegion}
+        <p>{__('Loading failed changes…', 'alt-context')}</p>
       </section>
     );
   }
@@ -314,10 +385,7 @@ export const DeadLetterPanel = (): React.JSX.Element => {
       topologyStatus.conflict > 0);
 
   return (
-    <section
-      aria-label={__('Failed changes panel', 'alt-context')}
-      aria-busy={mutationPending ? 'true' : undefined}
-    >
+    <section aria-label={__('Failed changes panel', 'alt-context')} aria-busy={mutationPending ? 'true' : undefined}>
       {statusRegion}
       <h3>{__('Failed changes', 'alt-context')}</h3>
       <p>{sprintf(__('Showing %1$d-%2$d of %3$d failed changes.', 'alt-context'), rangeStart, rangeEnd, total)}</p>
@@ -478,7 +546,7 @@ export const DeadLetterPanel = (): React.JSX.Element => {
                       type="button"
                       className="button button-secondary"
                       onClick={() => {
-                        void handleRetry(operation.id);
+                        void handleRetry(operation);
                       }}
                       disabled={retryMutation.isPending || discardMutation.isPending}
                       aria-disabled={retryMutation.isPending || discardMutation.isPending ? true : undefined}
@@ -492,7 +560,7 @@ export const DeadLetterPanel = (): React.JSX.Element => {
                       type="button"
                       className="button button-secondary"
                       onClick={() => {
-                        void handleDiscard(operation.id);
+                        void handleDiscard(operation);
                       }}
                       disabled={retryMutation.isPending || discardMutation.isPending}
                       aria-disabled={retryMutation.isPending || discardMutation.isPending ? true : undefined}

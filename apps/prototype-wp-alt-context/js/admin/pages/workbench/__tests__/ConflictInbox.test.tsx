@@ -99,7 +99,10 @@ describe('ConflictInbox', () => {
       createMockMutation<
         ResolveConflictResponse,
         Error,
-        { id: number; request: { resolution_status: 'accepted' | 'dismissed' | 'accept_backend' | 'merge' | 'restore_local' } }
+        {
+          id: number;
+          request: { resolution_status: 'accepted' | 'dismissed' | 'accept_backend' | 'merge' | 'restore_local' };
+        }
       >({
         mutateAsync: vi.fn().mockResolvedValue({ conflict: null }),
       }),
@@ -498,7 +501,10 @@ describe('ConflictInbox', () => {
       createMockMutation<
         ResolveConflictResponse,
         Error,
-        { id: number; request: { resolution_status: 'accepted' | 'dismissed' | 'accept_backend' | 'merge' | 'restore_local' } }
+        {
+          id: number;
+          request: { resolution_status: 'accepted' | 'dismissed' | 'accept_backend' | 'merge' | 'restore_local' };
+        }
       >({
         mutateAsync,
       }),
@@ -676,7 +682,10 @@ describe('ConflictInbox', () => {
       createMockMutation<
         ResolveConflictResponse,
         Error,
-        { id: number; request: { resolution_status: 'accepted' | 'dismissed' | 'accept_backend' | 'merge' | 'restore_local' } }
+        {
+          id: number;
+          request: { resolution_status: 'accepted' | 'dismissed' | 'accept_backend' | 'merge' | 'restore_local' };
+        }
       >({
         mutateAsync,
       }),
@@ -699,9 +708,9 @@ describe('ConflictInbox', () => {
       });
     });
 
-    expect(
-      screen.getByRole('status'),
-    ).toHaveTextContent('Conflict resolved. Trigger sync now to converge local state with the backend.');
+    expect(screen.getByTestId('acx-conflict-inbox-status')).toHaveTextContent(
+      'Conflict resolved. Trigger sync now to converge local state with the backend.',
+    );
     fireEvent.click(screen.getByRole('button', { name: 'Sync now' }));
     expect(triggerSync).toHaveBeenCalledTimes(1);
   });
@@ -715,7 +724,10 @@ describe('ConflictInbox', () => {
       createMockMutation<
         ResolveConflictResponse,
         Error,
-        { id: number; request: { resolution_status: 'accepted' | 'dismissed' | 'accept_backend' | 'merge' | 'restore_local' } }
+        {
+          id: number;
+          request: { resolution_status: 'accepted' | 'dismissed' | 'accept_backend' | 'merge' | 'restore_local' };
+        }
       >({ mutateAsync }),
     );
 
@@ -738,7 +750,10 @@ describe('ConflictInbox', () => {
       createMockMutation<
         ResolveConflictResponse,
         Error,
-        { id: number; request: { resolution_status: 'accepted' | 'dismissed' | 'accept_backend' | 'merge' | 'restore_local' } }
+        {
+          id: number;
+          request: { resolution_status: 'accepted' | 'dismissed' | 'accept_backend' | 'merge' | 'restore_local' };
+        }
       >({ isPending: true, mutateAsync: vi.fn() }),
     );
 
@@ -757,9 +772,7 @@ describe('ConflictInbox', () => {
   });
 
   it('describes the disabled sync control and announces sync progress', () => {
-    mockedUseSyncTrigger.mockReturnValue(
-      createMockMutation<SyncTriggerResponse>({ isPending: true, mutate: vi.fn() }),
-    );
+    mockedUseSyncTrigger.mockReturnValue(createMockMutation<SyncTriggerResponse>({ isPending: true, mutate: vi.fn() }));
 
     renderInbox();
 
@@ -783,7 +796,11 @@ describe('ConflictInbox', () => {
       machine_payload: {
         backend_version: 41,
         counts: { curated_cluster_deleted: 25, curated_member_deleted: 2, member_cluster_reassignment: 1 },
-        entities: { curated_cluster_deleted: ['cluster-a'], curated_member_deleted: [], member_cluster_reassignment: [] },
+        entities: {
+          curated_cluster_deleted: ['cluster-a'],
+          curated_member_deleted: [],
+          member_cluster_reassignment: [],
+        },
         entity_set_truncated: false,
       },
       local_payload: { curated_clusters: 25, curated_members: 3 },
@@ -805,7 +822,10 @@ describe('ConflictInbox', () => {
       createMockMutation<
         ResolveConflictResponse,
         Error,
-        { id: number; request: { resolution_status: 'accepted' | 'dismissed' | 'accept_backend' | 'merge' | 'restore_local' } }
+        {
+          id: number;
+          request: { resolution_status: 'accepted' | 'dismissed' | 'accept_backend' | 'merge' | 'restore_local' };
+        }
       >({
         mutateAsync,
       }),

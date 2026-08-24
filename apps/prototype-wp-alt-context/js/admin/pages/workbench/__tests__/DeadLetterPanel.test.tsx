@@ -2,7 +2,12 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { BulkRetryResponse, OutboxListResponse, OutboxMutationResponse, OutboxOperation } from '../../../api/recognition';
+import type {
+  BulkRetryResponse,
+  OutboxListResponse,
+  OutboxMutationResponse,
+  OutboxOperation,
+} from '../../../api/recognition';
 import { createMockMutation, createMockQuery } from '../../../test-utils/mockHooks';
 import { useBulkRetryOperations } from '../../../hooks/useBulkRetryOperations';
 import { useDeadLetterOperations } from '../../../hooks/useDeadLetterOperations';
@@ -469,13 +474,12 @@ describe('DeadLetterPanel', () => {
   it('announces retry pending and success with the selected row identity', async () => {
     let resolveRetry!: (value: OutboxMutationResponse) => void;
     const mutateAsync = vi.fn(
-      () => new Promise<OutboxMutationResponse>((resolve) => {
-        resolveRetry = resolve;
-      }),
+      () =>
+        new Promise<OutboxMutationResponse>((resolve) => {
+          resolveRetry = resolve;
+        }),
     );
-    mockedUseRetryOperation.mockReturnValue(
-      createMockMutation<OutboxMutationResponse, Error, number>({ mutateAsync }),
-    );
+    mockedUseRetryOperation.mockReturnValue(createMockMutation<OutboxMutationResponse, Error, number>({ mutateAsync }));
     mockedUseDeadLetterOperations.mockReturnValue(
       createMockQuery<OutboxListResponse>({
         data: {
@@ -492,11 +496,12 @@ describe('DeadLetterPanel', () => {
     expect(selectedRow).not.toBeNull();
     fireEvent.click(within(selectedRow!).getByRole('button', { name: 'Retry' }));
 
-    expect(screen.getByRole('status')).toHaveTextContent(
-      'Retrying Cluster label update for cluster-2 (operation 12).',
-    );
+    expect(screen.getByRole('status')).toHaveTextContent('Retrying Cluster label update for cluster-2 (operation 12).');
 
-    resolveRetry({ operation: null });
+    await act(async () => {
+      resolveRetry({ operation: null });
+      await Promise.resolve();
+    });
     await waitFor(() => {
       expect(screen.getByRole('status')).toHaveTextContent(
         'Cluster label update for cluster-2 (operation 12) queued to retry.',
@@ -507,9 +512,10 @@ describe('DeadLetterPanel', () => {
   it('announces discard confirmation, pending, and success with the selected row identity', async () => {
     let resolveDiscard!: (value: OutboxMutationResponse) => void;
     const mutateAsync = vi.fn(
-      () => new Promise<OutboxMutationResponse>((resolve) => {
-        resolveDiscard = resolve;
-      }),
+      () =>
+        new Promise<OutboxMutationResponse>((resolve) => {
+          resolveDiscard = resolve;
+        }),
     );
     mockedUseDiscardOperation.mockReturnValue(
       createMockMutation<OutboxMutationResponse, Error, number>({ mutateAsync }),
@@ -538,7 +544,10 @@ describe('DeadLetterPanel', () => {
       'Discarding Cluster label update for cluster-2 (operation 12).',
     );
 
-    resolveDiscard({ operation: null });
+    await act(async () => {
+      resolveDiscard({ operation: null });
+      await Promise.resolve();
+    });
     await waitFor(() => {
       expect(screen.getByRole('status')).toHaveTextContent(
         'Cluster label update for cluster-2 (operation 12) discarded.',

@@ -68,7 +68,10 @@ const ACTION_HIERARCHIES = ['primary', 'secondary', 'tertiary', 'destructive'] a
  * Strict model specs (pydantic `extra="forbid"` semantics).
  * ------------------------------------------------------------------ */
 
-type ModelSpec = { name: string; fields: Record<string, FieldSpec> };
+interface ModelSpec {
+  name: string;
+  fields: Record<string, FieldSpec>;
+}
 
 type FieldSpec =
   | { kind: 'str'; required?: boolean; nullable?: boolean }
@@ -170,7 +173,11 @@ const UX_MAP_MODEL: ModelSpec = {
  * Validator
  * ------------------------------------------------------------------ */
 
-type Issue = { loc: string; type: string; input: unknown };
+interface Issue {
+  loc: string;
+  type: string;
+  input: unknown;
+}
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -300,9 +307,18 @@ const formatIssues = (issues: Issue[]): string[] =>
  * Typed view of the parts the parity assertions read.
  * ------------------------------------------------------------------ */
 
-type UxMapZone = { id: string; label: string };
-type UxMapScreen = { id: string; title: string; zones?: UxMapZone[] };
-type UxMapDoc = { screens: UxMapScreen[] };
+interface UxMapZone {
+  id: string;
+  label: string;
+}
+interface UxMapScreen {
+  id: string;
+  title: string;
+  zones?: UxMapZone[];
+}
+interface UxMapDoc {
+  screens: UxMapScreen[];
+}
 
 const readMapJson = (mapRef: string): unknown =>
   JSON.parse(readFileSync(path.join(uxMapsDir, `${mapRef}.uxmap.json`), 'utf8')) as unknown;

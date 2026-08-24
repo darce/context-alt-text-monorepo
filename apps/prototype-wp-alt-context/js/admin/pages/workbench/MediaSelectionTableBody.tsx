@@ -3,6 +3,7 @@ import { __, sprintf } from '@wordpress/i18n';
 
 import type { WorkbenchMediaItem } from '../../hooks/useWorkbenchMedia';
 import type { DataSource } from '../../api/recognition/types';
+import type { WorkbenchMediaStatus } from '../../api/workbenchMediaApi';
 import { Checkbox } from '../../../components/ui/checkbox';
 import { decodeHtmlEntities } from '../../utils/decodeHtmlEntities';
 import { IdentityClusterList } from './identity-clusters';
@@ -63,7 +64,10 @@ interface MediaSelectionTableBodyProps {
   selection: Record<string, boolean>;
   identitiesDataSource?: DataSource;
   onRetryIdentities?: () => void;
+  searchQuery?: string;
+  statusFilter?: WorkbenchMediaStatus;
   onClearSearch: () => void;
+  onClearStatusFilter?: () => void;
 }
 
 export const MediaSelectionTableBody = ({
@@ -74,7 +78,10 @@ export const MediaSelectionTableBody = ({
   selection,
   identitiesDataSource,
   onRetryIdentities,
+  searchQuery = '',
+  statusFilter = 'all',
   onClearSearch,
+  onClearStatusFilter,
 }: MediaSelectionTableBodyProps): React.JSX.Element => {
   if (isLoading && items.length === 0) {
     return (
@@ -87,14 +94,54 @@ export const MediaSelectionTableBody = ({
   }
 
   if (items.length === 0) {
+    const hasActiveSearch = searchQuery.trim().length > 0;
+    const hasStatusFilter = statusFilter !== 'all';
+
+    if (hasActiveSearch) {
+      return (
+        <tr>
+          <td colSpan={4}>
+            <EmptyState
+              variant={EmptyStateVariant.EMPTY}
+              heading={__('No media matches your search.', 'alt-context')}
+              body={__('Clear the search to return to the media library.', 'alt-context')}
+              action={{ label: __('Clear search', 'alt-context'), onClick: onClearSearch }}
+              headingLevel={3}
+              announceState={false}
+            />
+          </td>
+        </tr>
+      );
+    }
+
+    if (hasStatusFilter) {
+      return (
+        <tr>
+          <td colSpan={4}>
+            <EmptyState
+              variant={EmptyStateVariant.EMPTY}
+              heading={__('No media items match the current filters.', 'alt-context')}
+              body={__('Show all media to return to the media library.', 'alt-context')}
+              action={{
+                label: __('Show all media', 'alt-context'),
+                onClick: () => onClearStatusFilter?.(),
+              }}
+              headingLevel={3}
+              announceState={false}
+            />
+          </td>
+        </tr>
+      );
+    }
+
     return (
       <tr>
         <td colSpan={4}>
           <EmptyState
             variant={EmptyStateVariant.EMPTY}
-            heading={__('No media matches your search.', 'alt-context')}
-            body={__('Clear the search to return to the media library.', 'alt-context')}
-            action={{ label: __('Clear search', 'alt-context'), onClick: onClearSearch }}
+            heading={__('No media in the library yet.', 'alt-context')}
+            body={__('Upload images in the WordPress media library, then return here to scan.', 'alt-context')}
+            action={{ label: __('Open the media library', 'alt-context'), href: '/wp-admin/upload.php' }}
             headingLevel={3}
             announceState={false}
           />

@@ -48,7 +48,15 @@ const makeItem = (overrides: Partial<WorkbenchMediaItem> = {}): WorkbenchMediaIt
   ...overrides,
 });
 
-const renderBody = (items: WorkbenchMediaItem[], onClearSearch = vi.fn()) => {
+const renderBody = (
+  items: WorkbenchMediaItem[],
+  onClearSearch = vi.fn(),
+  extras: {
+    searchQuery?: string;
+    statusFilter?: 'all' | 'missing';
+    onClearStatusFilter?: () => void;
+  } = {},
+) => {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
@@ -63,6 +71,7 @@ const renderBody = (items: WorkbenchMediaItem[], onClearSearch = vi.fn()) => {
             onToggleRow={() => undefined}
             selection={{}}
             onClearSearch={onClearSearch}
+            {...extras}
           />
         </tbody>
       </table>
@@ -71,14 +80,58 @@ const renderBody = (items: WorkbenchMediaItem[], onClearSearch = vi.fn()) => {
 };
 
 describe('MediaSelectionTableBody — decorative alt + link name [A11Y-02][A11Y-04]', () => {
-  it('offers a clear-search action when no media matches', async () => {
-    const onClearSearch = vi.fn();
-    renderBody([], onClearSearch);
+  it('does not offer search recovery when the library is empty without a search [DUX-W2D6C-RV-02]', () => {
+    renderBody([]);
 
+    expect(screen.queryByText('No media matches your search.')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Clear search' })).not.toBeInTheDocument();
     expect(screen.getByTestId('acx-empty-state')).toHaveAttribute('data-variant', 'empty');
     expect(screen.queryByTestId('acx-empty-state-live-region')).not.toBeInTheDocument();
+  });
+
+  it('does not offer a dead Clear search when only a status filter is active [DUX-W2D6C-RV-02]', () => {
+    renderBody([], vi.fn(), { searchQuery: '', statusFilter: 'missing' });
+
+    expect(screen.queryByText('No media matches your search.')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Clear search' })).not.toBeInTheDocument();
+    expect(screen.getByText('No media items match the current filters.')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Show all media' })).toBeInTheDocument();
+  });
+
+  it('restores media rows when Clear search runs against an active search [DUX-W2D6C-RV-02]', async () => {
+    const library = [makeItem({ title: 'Harbour at dusk' })];
+    const Harness = () => {
+      const [searchQuery, setSearchQuery] = React.useState('nomatch');
+      const items = searchQuery.trim() === '' ? library : [];
+      const client = new QueryClient({
+        defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+      });
+      return (
+        <QueryClientProvider client={client}>
+          <table>
+            <tbody>
+              <MediaSelectionTableBody
+                items={items}
+                isLoading={false}
+                detailIsLoading={false}
+                onToggleRow={() => undefined}
+                selection={{}}
+                onClearSearch={() => setSearchQuery('')}
+                searchQuery={searchQuery}
+              />
+            </tbody>
+          </table>
+        </QueryClientProvider>
+      );
+    };
+
+    render(<Harness />);
+
+    expect(screen.getByText('No media matches your search.')).toBeInTheDocument();
+    expect(screen.queryByText('Harbour at dusk')).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: 'Clear search' }));
-    expect(onClearSearch).toHaveBeenCalledTimes(1);
+    expect(screen.getByText('Harbour at dusk')).toBeInTheDocument();
+    expect(screen.queryByText('No media matches your search.')).not.toBeInTheDocument();
   });
 
   it('renders empty alt for isDecorative rows so screen readers skip the image', () => {

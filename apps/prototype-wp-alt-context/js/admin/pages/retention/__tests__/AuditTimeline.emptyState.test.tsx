@@ -33,4 +33,45 @@ describe('audit timeline empty states', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Refresh audit log' }));
     expect(refetch).toHaveBeenCalledTimes(1);
   });
+
+  // DUX-W2D6C-RV-06 / A11Y-21 / TEST-15: announceState={false} with no host
+  // status channel leaves empty/unavailable transitions silent.
+  it('DUX-W2D6C-RV-06: recent audit empty announces via exactly one live region', () => {
+    render(<RecentAuditEvents events={[]} onRefresh={vi.fn()} />);
+
+    const liveRegions = screen.getAllByRole('status');
+    expect(liveRegions).toHaveLength(1);
+    expect(screen.getByTestId('acx-empty-state-live-region')).toBe(liveRegions[0]);
+  });
+
+  it('DUX-W2D6C-RV-06: full audit unavailable announces via exactly one live region', () => {
+    const auditQuery = createMockQuery<
+      { items: never[]; total: number },
+      Error
+    >({
+      data: undefined,
+      isLoading: false,
+      isError: true,
+      refetch: vi.fn(),
+    });
+    render(<FullAuditLog auditQuery={auditQuery} auditPage={0} dispatch={vi.fn()} />);
+
+    const liveRegions = screen.getAllByRole('status');
+    expect(liveRegions).toHaveLength(1);
+    expect(screen.getByTestId('acx-empty-state-live-region')).toBe(liveRegions[0]);
+  });
+
+  it('DUX-W2D6C-RV-06: full audit empty announces via exactly one live region', () => {
+    const auditQuery = createMockQuery({
+      data: { items: [], total: 0 },
+      isLoading: false,
+      isError: false,
+      refetch: vi.fn(),
+    });
+    render(<FullAuditLog auditQuery={auditQuery} auditPage={0} dispatch={vi.fn()} />);
+
+    const liveRegions = screen.getAllByRole('status');
+    expect(liveRegions).toHaveLength(1);
+    expect(screen.getByTestId('acx-empty-state-live-region')).toBe(liveRegions[0]);
+  });
 });

@@ -5416,7 +5416,14 @@ describe('ReviewQueue', () => {
     });
 
     const seedSameClusterAssignments = (
-      rows: { id: string; similarity: number; clusterId?: string; label?: string }[],
+      rows: {
+        id: string;
+        similarity: number;
+        clusterId?: string;
+        label?: string;
+        /** Defaults to rows.length (multi-face) so HAI-17 applies unless overridden. */
+        identityCount?: number;
+      }[],
     ): void => {
       vi.mocked(fetchPendingSuggestions).mockResolvedValue({
         suggestions: rows.map((row) => ({
@@ -5426,7 +5433,7 @@ describe('ReviewQueue', () => {
           representative_similarity: row.similarity,
           avg_member_similarity: row.similarity,
           cluster_label: row.label ?? 'Alex',
-          cluster_identity_count: rows.length,
+          cluster_identity_count: row.identityCount ?? rows.length,
         })),
         limit: 40,
         offset: 0,
@@ -5446,10 +5453,11 @@ describe('ReviewQueue', () => {
     });
 
     it('offers the close-match count before any write and confirms through the bulk sequencer', async () => {
+      // identityCount: 1 — HAI-17 does not gate; exercises the close-match sequencer path.
       seedSameClusterAssignments([
-        { id: 'sugg-1', similarity: 0.9 },
-        { id: 'sugg-2', similarity: 0.8 },
-        { id: 'sugg-3', similarity: 0.7 },
+        { id: 'sugg-1', similarity: 0.9, identityCount: 1 },
+        { id: 'sugg-2', similarity: 0.8, identityCount: 1 },
+        { id: 'sugg-3', similarity: 0.7, identityCount: 1 },
       ]);
       vi.mocked(acceptSuggestion).mockImplementation((id: string) =>
         Promise.resolve({
@@ -5464,7 +5472,6 @@ describe('ReviewQueue', () => {
       const user = userEvent.setup();
       renderQueue();
       await screen.findByRole('button', { name: 'Yes' });
-      await reviewCurrentStoredFaces();
       await user.click(await screen.findByRole('button', { name: 'Yes' }));
 
       const offer = await screen.findByRole('dialog', { name: 'Accept close matches?' });
@@ -5509,6 +5516,53 @@ describe('ReviewQueue', () => {
           'Accepted 2 close matches.',
         );
       });
+    });
+
+    it('DUX-W2R2-RV-04: Close Match Confirm does not commit unreviewed stored-face siblings', async () => {
+      seedSameClusterAssignments([
+        { id: 'sugg-1', similarity: 0.9, identityCount: 5 },
+        { id: 'sugg-2', similarity: 0.8, identityCount: 5 },
+        { id: 'sugg-3', similarity: 0.7, identityCount: 5 },
+      ]);
+      vi.mocked(acceptSuggestion).mockImplementation((id: string) =>
+        Promise.resolve({
+          suggestion_id: id,
+          resolution: 'accepted' as const,
+          identity_id: `identity-${id}`,
+          cluster_id: 'cluster-1',
+          message: 'ok',
+        }),
+      );
+
+      const user = userEvent.setup();
+      renderQueue();
+      await screen.findByRole('button', { name: 'Yes' });
+      // Only the current card is reviewed — siblings remain HAI-17 gated.
+      await reviewCurrentStoredFaces();
+      await user.click(await screen.findByRole('button', { name: 'Yes' }));
+
+      const offer = await screen.findByRole('dialog', { name: 'Accept close matches?' });
+      expect(offer).toHaveTextContent('Also accept 2 close matches?');
+
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      try {
+        await act(async () => {
+          screen.getByRole('button', { name: 'Accept close matches' }).click();
+          await Promise.resolve();
+        });
+        await act(async () => {
+          vi.advanceTimersByTime(UNDO_HOLD_MS);
+          await Promise.resolve();
+          await Promise.resolve();
+          await Promise.resolve();
+        });
+      } finally {
+        vi.useRealTimers();
+      }
+
+      expect(acceptSuggestion).not.toHaveBeenCalled();
+      expect(bulkAcceptSuggestions).not.toHaveBeenCalled();
+      expect(screen.queryByTestId('acx-bulk-hold')).not.toBeInTheDocument();
     });
 
     it('Just this one accepts only the current suggestion', async () => {

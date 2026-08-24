@@ -102,6 +102,8 @@ describe('useBulkReviewCommit (PR-30 state machine)', () => {
   const resolveItems = (ids: readonly string[]): BulkCommitItem[] =>
     ids.map((id) => items[id]).filter(Boolean);
 
+  const allowAllApprovals = (): boolean => false;
+
   const renderBulk = (heldSingleSuggestionId: string | null = null) =>
     renderHook(() =>
       useBulkReviewCommit({
@@ -114,6 +116,7 @@ describe('useBulkReviewCommit (PR-30 state machine)', () => {
         setBulkActionActive,
         isBulkActiveRef,
         awaitBulkIdleOrFlushRef,
+        isApprovalBlocked: allowAllApprovals,
       }),
     );
 
@@ -359,6 +362,7 @@ describe('useBulkReviewCommit (PR-30 state machine)', () => {
         setBulkActionActive,
         isBulkActiveRef,
         awaitBulkIdleOrFlushRef,
+        isApprovalBlocked: () => false,
       }),
     );
 
@@ -421,6 +425,7 @@ describe('useBulkReviewCommit (PR-30 state machine)', () => {
         setBulkActionActive,
         isBulkActiveRef,
         awaitBulkIdleOrFlushRef,
+        isApprovalBlocked: () => false,
       }),
     );
 
@@ -493,6 +498,7 @@ describe('useBulkReviewCommit (PR-30 state machine)', () => {
         setBulkActionActive,
         isBulkActiveRef,
         awaitBulkIdleOrFlushRef,
+        isApprovalBlocked: () => false,
       }),
     );
 
@@ -615,6 +621,7 @@ describe('useBulkReviewCommit (PR-30 state machine)', () => {
         setBulkActionActive,
         isBulkActiveRef,
         awaitBulkIdleOrFlushRef,
+        isApprovalBlocked: () => false,
       }),
     );
 
@@ -658,6 +665,7 @@ describe('useBulkReviewCommit (PR-30 state machine)', () => {
         setBulkActionActive,
         isBulkActiveRef,
         awaitBulkIdleOrFlushRef,
+        isApprovalBlocked: () => false,
       }),
     );
 
@@ -781,6 +789,7 @@ describe('useBulkReviewCommit (PR-30 state machine)', () => {
         setBulkActionActive,
         isBulkActiveRef,
         awaitBulkIdleOrFlushRef,
+        isApprovalBlocked: () => false,
       }),
     );
 
@@ -798,6 +807,151 @@ describe('useBulkReviewCommit (PR-30 state machine)', () => {
     });
     expect(result.current.bulk.phase).toBe('idle');
     expect(commitCalls).toEqual([]);
+  });
+
+  it('DUX-W2R2-RV-04: initiateBulkFromItems all-or-nothing refuses when any item is approval-blocked', async () => {
+    const { result } = renderHook(() =>
+      useBulkReviewCommit({
+        selectedIds: new Set(),
+        onSelectedIdsChange,
+        resolveItems,
+        flushHeldSingle,
+        commitOne,
+        heldSingleSuggestionId: null,
+        setBulkActionActive,
+        isBulkActiveRef,
+        awaitBulkIdleOrFlushRef,
+        isApprovalBlocked: (suggestionId) => suggestionId === 'b',
+      }),
+    );
+
+    await act(async () => {
+      await result.current.initiateBulkFromItems([items.a, items.b]);
+    });
+    await expireBulkHold();
+
+    expect(commitCalls).toEqual([]);
+    expect(result.current.bulk.phase).toBe('idle');
+  });
+
+  it('DUX-W2R2-RV-04: unmount drain POSTs nothing when the hold set became approval-blocked', async () => {
+    let blockedIds = new Set<string>();
+    const { result, unmount, rerender } = renderHook(() =>
+      useBulkReviewCommit({
+        selectedIds,
+        onSelectedIdsChange,
+        resolveItems,
+        flushHeldSingle,
+        commitOne,
+        heldSingleSuggestionId: null,
+        setBulkActionActive,
+        isBulkActiveRef,
+        awaitBulkIdleOrFlushRef,
+        isApprovalBlocked: (suggestionId) => blockedIds.has(suggestionId),
+      }),
+    );
+
+    await act(async () => {
+      await result.current.initiateBulk();
+    });
+    expect(result.current.bulk.phase).toBe('holding');
+
+    blockedIds = new Set(['a', 'b', 'c']);
+    rerender();
+
+    unmount();
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(commitCalls).toEqual([]);
+  });
+
+  it('DUX-W2R2-RV-04: unknown suggestion id fails closed on initiateBulk', async () => {
+    const knownIds = new Set(['a', 'b', 'c']);
+    selectedIds = new Set(['a', 'ghost']);
+    const { result } = renderHook(() =>
+      useBulkReviewCommit({
+        selectedIds,
+        onSelectedIdsChange,
+        resolveItems: (ids) =>
+          ids.map((id) =>
+            id === 'ghost'
+              ? { suggestionId: 'ghost', commitKind: 'accept' as const, label: 'Ghost' }
+              : items[id],
+          ).filter(Boolean),
+        flushHeldSingle,
+        commitOne,
+        heldSingleSuggestionId: null,
+        setBulkActionActive,
+        isBulkActiveRef,
+        awaitBulkIdleOrFlushRef,
+        // Host fail-closed pattern: unresolvable / unknown ids are blocked.
+        isApprovalBlocked: (suggestionId) => !knownIds.has(suggestionId),
+      }),
+    );
+
+    await act(async () => {
+      await result.current.initiateBulk();
+    });
+    await expireBulkHold();
+
+    expect(commitCalls).toEqual([]);
+    expect(result.current.bulk.phase).toBe('idle');
+  });
+
+  it('DUX-W2R2-RV-04: omitted isApprovalBlocked fails closed (no silent opt-out)', async () => {
+    const { result } = renderHook(() =>
+      useBulkReviewCommit({
+        selectedIds,
+        onSelectedIdsChange,
+        resolveItems,
+        flushHeldSingle,
+        commitOne,
+        heldSingleSuggestionId: null,
+        setBulkActionActive,
+        isBulkActiveRef,
+        awaitBulkIdleOrFlushRef,
+        // Simulate a host that forgot the required gate (cast past the type).
+        isApprovalBlocked: undefined as unknown as (suggestionId: string) => boolean,
+      }),
+    );
+
+    await act(async () => {
+      await result.current.initiateBulk();
+    });
+    await expireBulkHold();
+
+    expect(commitCalls).toEqual([]);
+    expect(result.current.bulk.phase).toBe('idle');
+  });
+
+  it('DUX-W2R2-RV-04: retryBulk refuses when any resolved id is approval-blocked', async () => {
+    const blockedIds = new Set<string>(['c']);
+    selectedIds = new Set(['a', 'c']);
+    const { result } = renderHook(() =>
+      useBulkReviewCommit({
+        selectedIds,
+        onSelectedIdsChange,
+        resolveItems,
+        flushHeldSingle,
+        commitOne,
+        heldSingleSuggestionId: null,
+        setBulkActionActive,
+        isBulkActiveRef,
+        awaitBulkIdleOrFlushRef,
+        isApprovalBlocked: (suggestionId) => blockedIds.has(suggestionId),
+      }),
+    );
+
+    await act(async () => {
+      await result.current.retryBulk();
+    });
+    await expireBulkHold();
+
+    expect(commitCalls).toEqual([]);
+    expect(result.current.bulk.phase).toBe('idle');
   });
 });
 
@@ -901,6 +1055,7 @@ describe('matrix M1 single / review-each / bulk (BR-51)', () => {
         setBulkActionActive: () => undefined,
         isBulkActiveRef,
         awaitBulkIdleOrFlushRef,
+        isApprovalBlocked: () => false,
       }),
     );
 
@@ -987,6 +1142,7 @@ describe('BR-49 chainRef circular wait + BR-48 person-commit bulk ordering', () 
         },
         isBulkActiveRef,
         awaitBulkIdleOrFlushRef,
+        isApprovalBlocked: () => false,
       }),
     );
 
@@ -1083,6 +1239,7 @@ describe('BR-49 chainRef circular wait + BR-48 person-commit bulk ordering', () 
         },
         isBulkActiveRef,
         awaitBulkIdleOrFlushRef,
+        isApprovalBlocked: () => false,
       }),
     );
 
@@ -1171,6 +1328,7 @@ describe('BR-49 chainRef circular wait + BR-48 person-commit bulk ordering', () 
         },
         isBulkActiveRef,
         awaitBulkIdleOrFlushRef,
+        isApprovalBlocked: () => false,
       }),
     );
 

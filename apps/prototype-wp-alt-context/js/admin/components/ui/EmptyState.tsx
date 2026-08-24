@@ -38,7 +38,7 @@ export const EMPTY_STATE_VARIANTS = Object.values(EmptyStateVariant);
  * of `onClick` (in-place recovery / front door) or `href` (another screen).
  */
 export type EmptyStateAction =
-  | { label: string; onClick: () => void; href?: never }
+  | { label: string; onClick: () => void; busy?: boolean; href?: never }
   | { label: string; href: string; onClick?: never };
 
 export interface EmptyStateProps {
@@ -49,6 +49,8 @@ export interface EmptyStateProps {
   body: string;
   /** Required: the front door out of the dead end [NAV-08]. */
   action: EmptyStateAction;
+  /** Optional transition announcement for an empty state whose host previously announced completion. */
+  announcement?: string;
   /** Keeps the host surface's heading outline valid [A11Y-24]. */
   headingLevel?: 2 | 3 | 4;
   className?: string;
@@ -74,6 +76,7 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
   heading,
   body,
   action,
+  announcement: announcementText = '',
   headingLevel = 3,
   className,
 }) => {
@@ -88,8 +91,8 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
   const statusLabel = isUnavailable ? __('Could not load', 'alt-context') : __('Nothing here yet', 'alt-context');
 
   React.useEffect(() => {
-    setAnnouncement(isUnavailable ? statusLabel : '');
-  }, [isUnavailable, statusLabel]);
+    setAnnouncement(isUnavailable ? statusLabel : announcementText);
+  }, [announcementText, isUnavailable, statusLabel]);
 
   const classNames = ['acx-empty-state', `acx-empty-state--${variant}`, className].filter(Boolean).join(' ');
 
@@ -120,7 +123,12 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
               {action.label}
             </a>
           ) : (
-            <button type="button" className="acx-empty-state__action-control" onClick={action.onClick}>
+            <button
+              type="button"
+              className="acx-empty-state__action-control"
+              onClick={action.onClick}
+              aria-busy={action.busy ? 'true' : undefined}
+            >
               {action.label}
             </button>
           )}

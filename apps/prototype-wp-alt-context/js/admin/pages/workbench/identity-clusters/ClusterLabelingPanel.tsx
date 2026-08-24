@@ -23,6 +23,7 @@ import { Avatar } from '../../../../components/ui/avatar';
 import type { ComboboxOption } from '../../../../components/ui/combobox';
 import { isCroppableBbox } from '../../../../components/ui/faceGeometry';
 import { unavailableImageName } from '../../../../components/ui/faceThumbDisplay';
+import { EmptyState, EmptyStateVariant } from '../../../components/ui/EmptyState';
 import { isDedicatedFaceThumbUrl } from '../../../../components/ui/isDedicatedFaceThumbUrl';
 import { useRosterEntries } from '../../../hooks/useRosterHooks';
 import {
@@ -651,7 +652,13 @@ export const ClusterLabelingPanel = ({
               );
             })
           ) : (
-            <p>{__('No members found.', 'alt-context')}</p>
+            <EmptyState
+              variant={EmptyStateVariant.EMPTY}
+              heading={__('No faces available to name', 'alt-context')}
+              body={__('Return to the review suggestions and choose another face group.', 'alt-context')}
+              action={{ label: __('Back to review suggestions', 'alt-context'), onClick: onClose }}
+              headingLevel={3}
+            />
           )}
         </div>
         <p className="acx-cluster-members-show-all__announce" role="status" aria-live="polite">

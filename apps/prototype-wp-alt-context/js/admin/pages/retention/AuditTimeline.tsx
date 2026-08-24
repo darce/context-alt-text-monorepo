@@ -4,6 +4,7 @@ import type { UseQueryResult } from '@tanstack/react-query';
 
 import type { AuditEvent } from '../../api/recognition';
 import { AUDIT_PAGE_SIZE, type RetentionAction } from './useRetentionPageState';
+import { EmptyState, EmptyStateVariant } from '../../components/ui/EmptyState';
 
 interface AuditLogResponse {
   items: AuditEvent[];
@@ -33,16 +34,23 @@ export { formatTimestamp };
 
 interface RecentAuditEventsProps {
   events: AuditEvent[];
+  onRefresh: () => void;
 }
 
-export const RecentAuditEvents = ({ events }: RecentAuditEventsProps): React.JSX.Element => (
+export const RecentAuditEvents = ({ events, onRefresh }: RecentAuditEventsProps): React.JSX.Element => (
   <section className="acx-dashboard__panel acx-retention__panel acx-retention__panel--wide">
     <div className="acx-retention__panel-header">
       <h2 id="retention-audit-history">{__('Recent audit events', 'alt-context')}</h2>
       <span className="acx-retention__detail">{__('Showing the five most recent audit events.', 'alt-context')}</span>
     </div>
     {events.length === 0 ? (
-      <p>{__('No audit events recorded yet.', 'alt-context')}</p>
+      <EmptyState
+        variant={EmptyStateVariant.EMPTY}
+        heading={__('No audit events recorded yet.', 'alt-context')}
+        body={__('Refresh after a data-retention action to see its audit event.', 'alt-context')}
+        action={{ label: __('Refresh audit events', 'alt-context'), onClick: onRefresh }}
+        headingLevel={3}
+      />
     ) : (
       <ol className="acx-retention__timeline">
         {events.map((event) => (
@@ -86,8 +94,24 @@ export const FullAuditLog = ({ auditQuery, auditPage, dispatch }: FullAuditLogPr
       )}
     </div>
     {auditQuery.isLoading && <p>{__('Loading audit log\u2026', 'alt-context')}</p>}
-    {auditQuery.isError && <p>{__('Unable to load audit log.', 'alt-context')}</p>}
-    {auditQuery.data?.items.length === 0 && <p>{__('No audit events recorded yet.', 'alt-context')}</p>}
+    {auditQuery.isError && (
+      <EmptyState
+        variant={EmptyStateVariant.UNAVAILABLE}
+        heading={__('Audit log unavailable', 'alt-context')}
+        body={__('The audit log could not be loaded. Try again.', 'alt-context')}
+        action={{ label: __('Retry audit log', 'alt-context'), onClick: () => void auditQuery.refetch() }}
+        headingLevel={3}
+      />
+    )}
+    {auditQuery.data?.items.length === 0 && (
+      <EmptyState
+        variant={EmptyStateVariant.EMPTY}
+        heading={__('No audit events recorded yet.', 'alt-context')}
+        body={__('Refresh after a data-retention action to see its audit event.', 'alt-context')}
+        action={{ label: __('Refresh audit log', 'alt-context'), onClick: () => void auditQuery.refetch() }}
+        headingLevel={3}
+      />
+    )}
     {auditQuery.data && auditQuery.data.items.length > 0 && (
       <ol className="acx-retention__timeline">
         {auditQuery.data.items.map((event) => (

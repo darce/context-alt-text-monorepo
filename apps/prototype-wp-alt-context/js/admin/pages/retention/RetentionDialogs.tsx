@@ -15,6 +15,11 @@ import type { RetentionAction } from './useRetentionPageState';
 
 const RETENTION_CONFIRM_PHRASE = 'PURGE';
 
+const EXPORT_JOB_STATUS = {
+  completed: 'completed',
+  failed: 'failed',
+} as const;
+
 /* ------------------------------------------------------------------ */
 /*  Export Dialog                                                       */
 /* ------------------------------------------------------------------ */
@@ -40,13 +45,17 @@ export const ExportDialog = ({
   onStartExport,
   onDownloadExport,
 }: ExportDialogProps): React.JSX.Element => {
+  const closeDialog = React.useCallback(() => {
+    dispatch({ type: 'CLOSE_EXPORT_DIALOG' });
+  }, [dispatch]);
+
   const handleOpenChange = React.useCallback(
     (nextOpen: boolean) => {
       if (!nextOpen) {
-        dispatch({ type: 'CLOSE_EXPORT_DIALOG' });
+        closeDialog();
       }
     },
-    [dispatch],
+    [closeDialog],
   );
 
   return (
@@ -61,23 +70,16 @@ export const ExportDialog = ({
               'alt-context',
             )}
           </DialogDescription>
-          {exportJobId && exportJobStatus !== null && exportJobStatus !== 'completed' && (
-            <p className="acx-retention__detail">
-              {exportJobStatus === 'failed'
-                ? __('Export failed. Please try again.', 'alt-context')
-                : __('Export in progress\u2026', 'alt-context')}
-            </p>
-          )}
           <div className="acx-dialog__actions">
             <button
               type="button"
               className="acx-button acx-button--secondary"
-              onClick={() => dispatch({ type: 'CLOSE_EXPORT_DIALOG' })}
+              onClick={closeDialog}
               disabled={isExportPending || isDownloadPending}
             >
-              {__('Cancel', 'alt-context')}
+              {__('Close', 'alt-context')}
             </button>
-            {exportJobId !== null && exportJobStatus === 'completed' ? (
+            {exportJobId !== null && exportJobStatus === EXPORT_JOB_STATUS.completed ? (
               <button
                 type="button"
                 className="acx-button acx-button--primary"

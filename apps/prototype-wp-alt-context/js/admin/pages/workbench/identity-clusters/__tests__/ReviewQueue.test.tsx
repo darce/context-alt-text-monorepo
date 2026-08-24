@@ -4486,6 +4486,7 @@ describe('ReviewQueue', () => {
       expect(commit).toBeDisabled();
       expect(commit).toHaveAttribute('aria-disabled', 'true');
       expect(commit).toHaveAttribute('aria-describedby', reason.id);
+      expect(commit).toHaveTextContent('Accept 1 for Maria');
 
       await reviewCurrentStoredFaces();
       await waitFor(() => expect(commit).not.toBeDisabled());

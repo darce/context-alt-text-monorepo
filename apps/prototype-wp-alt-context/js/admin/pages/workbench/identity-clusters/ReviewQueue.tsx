@@ -382,13 +382,6 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
           if (!commitKind) {
             continue;
           }
-          const assignment = assignmentById.get(id);
-          if (
-            assignment &&
-            isStoredFaceApprovalBlocked(assignment, reviewedStoredFaceSuggestionIds)
-          ) {
-            continue;
-          }
           items.push({
             suggestionId: id,
             commitKind,
@@ -402,8 +395,6 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
         findings.queue,
         filter,
         activeBand,
-        assignmentById,
-        reviewedStoredFaceSuggestionIds,
       ],
     );
 
@@ -1314,6 +1305,9 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
               }
               {...(bulkCommitOwnsAccent ? { [ACCENT_PRIMARY_ATTR]: true } : {})}
               onClick={() => {
+                if (storedFaceSelectionBlocksCommit) {
+                  return;
+                }
                 void bulk.initiateBulk();
               }}
             >

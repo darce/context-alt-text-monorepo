@@ -441,6 +441,10 @@ describe('§7 single-accent-primary DOM invariant (Slice 8 / BR-72)', () => {
     const { container } = renderViewport();
 
     await screen.findByRole('button', { name: 'Yes' });
+    // HAI-17: this multi-face assignment is committable only after its stored-face
+    // disclosure has rendered. Satisfy the real precondition before opening the tray.
+    await user.click(screen.getByRole('button', { name: 'Review details' }));
+    await screen.findByRole('list', { name: 'Stored faces for Alex' });
     await user.click(screen.getByTestId('acx-review-select'));
     await user.click(screen.getByRole('button', { name: 'Review selection' }));
 
@@ -454,6 +458,26 @@ describe('§7 single-accent-primary DOM invariant (Slice 8 / BR-72)', () => {
     expect(screen.getByRole('button', { name: 'Analyze selected media' })).not.toHaveAttribute(
       ACCENT_PRIMARY_ATTR,
     );
+  });
+
+  it('bulk-tray open (stored-face gated): the card keeps the single accent and selection count', async () => {
+    // Until HAI-17 review completes, the disabled bulk commit stays neutral and the
+    // current card remains the queue's sole accent owner. The gate must not erase the
+    // selected item from the bulk label.
+    oneAssignment();
+    const user = userEvent.setup();
+    const { container } = renderViewport();
+
+    const accept = await screen.findByRole('button', { name: 'Yes' });
+    await user.click(screen.getByTestId('acx-review-select'));
+    await user.click(screen.getByRole('button', { name: 'Review selection' }));
+
+    const bulkCommit = await screen.findByTestId('acx-bulk-commit');
+    expect(bulkCommit).toHaveTextContent('Accept 1 for Alex');
+    expect(bulkCommit).toBeDisabled();
+    await waitFor(() => expect(markerCount(container)).toBe(1));
+    expect(container.querySelector(ACCENT_PRIMARY_SELECTOR)).toBe(accept);
+    expect(bulkCommit).not.toHaveAttribute(ACCENT_PRIMARY_ATTR);
   });
 
   it('panel open (queue unmounted, panels carry no marker): the footer keeps the single accent primary (BR-83)', async () => {

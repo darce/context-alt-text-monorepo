@@ -40,13 +40,13 @@ export interface FaceOverlayLayerProps {
  * Auto-shape `cluster-*` labels never become curated chips even when the
  * backend omits/misflags `is_auto_label`.
  */
-export function isCuratedFace(identity: FaceOverlayIdentity): boolean {
+export const isCuratedFace = (identity: FaceOverlayIdentity): boolean => {
   return (
     identity.is_auto_label === false && isHumanLabeledTarget(identity.cluster_label)
   );
-}
+};
 
-function compareBboxReadingOrder(a: FaceOverlayIdentity, b: FaceOverlayIdentity): number {
+const compareBboxReadingOrder = (a: FaceOverlayIdentity, b: FaceOverlayIdentity): number => {
   const ay = a.bbox?.y ?? 0;
   const by = b.bbox?.y ?? 0;
   if (ay !== by) {
@@ -55,7 +55,7 @@ function compareBboxReadingOrder(a: FaceOverlayIdentity, b: FaceOverlayIdentity)
   const ax = a.bbox?.x ?? 0;
   const bx = b.bbox?.x ?? 0;
   return ax - bx;
-}
+};
 
 /** Allowlist for HTML id fragments: letters, digits, underscore, hyphen. */
 const DOM_ID_SAFE = /^[A-Za-z0-9_-]+$/;
@@ -64,7 +64,7 @@ const DOM_ID_SAFE = /^[A-Za-z0-9_-]+$/;
  * Map arbitrary identity_id into a selector-safe, unique DOM id fragment.
  * Safe ids pass through; hostile chars hash to a stable `h…` token.
  */
-export function sanitizeDomIdToken(raw: string): string {
+export const sanitizeDomIdToken = (raw: string): string => {
   if (typeof raw === 'string' && raw.length > 0 && DOM_ID_SAFE.test(raw)) {
     return raw;
   }
@@ -76,13 +76,13 @@ export function sanitizeDomIdToken(raw: string): string {
     hash = Math.imul(hash, 0x01000193);
   }
   return `h${(hash >>> 0).toString(36)}`;
-}
+};
 
-export function faceOverlayDomId(faceId: string): string {
+export const faceOverlayDomId = (faceId: string): string => {
   return `acx-face-overlay-${sanitizeDomIdToken(faceId)}`;
-}
+};
 
-function reviewAccessibleName(identity: FaceOverlayIdentity): string {
+const reviewAccessibleName = (identity: FaceOverlayIdentity): string => {
   if (isHumanLabeledTarget(identity.cluster_label) && identity.cluster_label) {
     return sprintf(
       /* translators: %s: person name on the face currently under review */
@@ -91,9 +91,9 @@ function reviewAccessibleName(identity: FaceOverlayIdentity): string {
     );
   }
   return __('Face under review', 'alt-context');
-}
+};
 
-function outlineStyle(bbox: BoundingBox, naturalSize: NaturalSize): React.CSSProperties {
+const outlineStyle = (bbox: BoundingBox, naturalSize: NaturalSize): React.CSSProperties => {
   const rect = overlayRectFor(bbox, naturalSize);
   return {
     left: `${rect.left}%`,
@@ -101,16 +101,16 @@ function outlineStyle(bbox: BoundingBox, naturalSize: NaturalSize): React.CSSPro
     width: `${rect.width}%`,
     height: `${rect.height}%`,
   };
-}
+};
 
-function controlStyle(bbox: BoundingBox, naturalSize: NaturalSize): React.CSSProperties {
+const controlStyle = (bbox: BoundingBox, naturalSize: NaturalSize): React.CSSProperties => {
   const rect = overlayRectFor(bbox, naturalSize);
   // Center a ≥24×24 hit target on the bbox (A11Y-14).
   return {
     left: `${rect.left + rect.width / 2}%`,
     top: `${rect.top + rect.height / 2}%`,
   };
-}
+};
 
 type FaceWithBbox = FaceOverlayIdentity & { bbox: BoundingBox };
 

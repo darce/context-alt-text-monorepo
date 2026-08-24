@@ -51,7 +51,7 @@ export const REPRESENTATIVE_IMAGE_UNAVAILABLE = __(
   'alt-context',
 );
 
-export function unavailableImageName(alt?: string | null): string {
+export const unavailableImageName = (alt?: string | null): string => {
   if (typeof alt === 'string' && alt.trim() !== '') {
     return sprintf(
       /* translators: %s: image description */
@@ -60,7 +60,7 @@ export function unavailableImageName(alt?: string | null): string {
     );
   }
   return REPRESENTATIVE_IMAGE_UNAVAILABLE;
-}
+};
 
 export interface FaceThumbSource {
   thumbUrl?: string | null;

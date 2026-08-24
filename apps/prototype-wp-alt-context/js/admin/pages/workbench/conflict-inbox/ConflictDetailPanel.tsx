@@ -18,6 +18,7 @@ const DETAIL_STATUS = {
   alertRole: 'alert',
   live: 'polite',
   role: 'status',
+  testId: 'acx-conflict-detail-status',
 } as const;
 
 interface ConflictDetailPanelProps {
@@ -34,26 +35,42 @@ export const ConflictDetailPanel = ({
   onRequestResolve,
   isResolving,
   disabledReasonId,
-}: ConflictDetailPanelProps): React.JSX.Element | null => {
+}: ConflictDetailPanelProps): React.JSX.Element => {
   const detailQuery = useConflictDetail(conflictId);
+  const detailStatus =
+    conflictId !== null && detailQuery.isLoading ? __('Loading conflict detail…', 'alt-context') : '';
+  const statusRegion = (
+    <div
+      className="screen-reader-text"
+      role={DETAIL_STATUS.role}
+      aria-live={DETAIL_STATUS.live}
+      data-testid={DETAIL_STATUS.testId}
+    >
+      {detailStatus}
+    </div>
+  );
 
   if (conflictId === null) {
-    return null;
+    return <div>{statusRegion}</div>;
   }
 
   if (detailQuery.isLoading) {
     return (
-      <div role={DETAIL_STATUS.role} aria-live={DETAIL_STATUS.live} aria-busy="true">
-        {__('Loading conflict detail…', 'alt-context')}
+      <div aria-busy="true">
+        {statusRegion}
+        <p>{__('Loading conflict detail…', 'alt-context')}</p>
       </div>
     );
   }
 
   if (detailQuery.isError || !detailQuery.data) {
     return (
-      <div className="acx-error-state" role={DETAIL_STATUS.alertRole}>
-        <span aria-hidden="true">⚠</span>
-        <p>{__('Unable to load conflict detail.', 'alt-context')}</p>
+      <div>
+        {statusRegion}
+        <div className="acx-error-state" role={DETAIL_STATUS.alertRole}>
+          <span aria-hidden="true">⚠</span>
+          <p>{__('Unable to load conflict detail.', 'alt-context')}</p>
+        </div>
       </div>
     );
   }
@@ -65,6 +82,7 @@ export const ConflictDetailPanel = ({
 
   return (
     <div className="acx-workbench__panel">
+      {statusRegion}
       <h3>{__('Conflict Detail', 'alt-context')}</h3>
       <p>{getConflictTypeLabel(conflict)}</p>
       <p>

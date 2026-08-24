@@ -7,7 +7,12 @@ import { useConflicts } from '../../hooks/useConflicts';
 import { useResolveConflict } from '../../hooks/useResolveConflict';
 import { useSyncTrigger } from '../../hooks/useSyncTrigger';
 import { ConflictDetailPanel } from './conflict-inbox/ConflictDetailPanel';
-import { formatEntityLabel, formatTimestamp, getConflictTypeLabel } from './conflict-inbox/conflictInboxUtils';
+import {
+  formatEntityLabel,
+  formatTimestamp,
+  getConflictTypeLabel,
+  getResolutionButtonLabel,
+} from './conflict-inbox/conflictInboxUtils';
 import { useConflictInboxState } from './conflict-inbox/useConflictInboxState';
 
 const PAGE_SIZE = 20;
@@ -26,6 +31,7 @@ const NOTICE_VARIANTS = {
 
 export const ConflictInbox = (): React.JSX.Element => {
   const [state, dispatch] = useConflictInboxState();
+  const [loadingAnnouncement, setLoadingAnnouncement] = React.useState('');
   const {
     offset,
     selectedConflictIds,
@@ -40,15 +46,69 @@ export const ConflictInbox = (): React.JSX.Element => {
   const resolveMutation = useResolveConflict();
   const syncTrigger = useSyncTrigger(false);
   const inboxBusy = conflictsQuery.isLoading || resolveMutation.isPending || syncTrigger.isPending;
+
+  React.useEffect(() => {
+    if (!conflictsQuery.isLoading) {
+      setLoadingAnnouncement('');
+      return undefined;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      setLoadingAnnouncement(__('Loading conflicts…', 'alt-context'));
+    }, 0);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, [conflictsQuery.isLoading]);
+
+  const armedConflict = pendingResolution
+    ? conflictsQuery.data?.items.find((conflict) => conflict.id === pendingResolution.conflictId)
+    : undefined;
+  const singleArmedStatus =
+    pendingResolution && armedConflict
+      ? sprintf(
+          __('%1$s armed for conflict %2$s. Activate Confirm to continue.', 'alt-context'),
+          getResolutionButtonLabel(pendingResolution.choice),
+          armedConflict.entity_key,
+        )
+      : '';
+  const batchArmedStatus = pendingBatchResolution
+    ? pendingBatchResolution === 'accepted' || pendingBatchResolution === 'accept_backend'
+      ? sprintf(
+          __(
+            'Accept backend resolution armed for %d selected conflicts. Activate Confirm accept backend selected to continue.',
+            'alt-context',
+          ),
+          selectedConflictIds.length,
+        )
+      : pendingBatchResolution === 'dismissed'
+        ? sprintf(
+            __(
+              'Keep local resolution armed for %d selected conflicts. Activate Confirm keep local for selected to continue.',
+              'alt-context',
+            ),
+            selectedConflictIds.length,
+          )
+        : sprintf(
+            __(
+              'Merge resolution armed for %d selected conflicts. Activate Confirm merge selected to continue.',
+              'alt-context',
+            ),
+            selectedConflictIds.length,
+          )
+    : '';
   const liveStatus = conflictsQuery.isLoading
-    ? __('Loading conflicts…', 'alt-context')
+    ? loadingAnnouncement
     : resolveMutation.isPending
       ? __('Resolving conflict…', 'alt-context')
       : syncTrigger.isPending
         ? __('Syncing resolved conflicts…', 'alt-context')
-        : showSyncNow
-          ? __('Conflict resolved. Trigger sync now to converge local state with the backend.', 'alt-context')
-          : '';
+        : singleArmedStatus ||
+          batchArmedStatus ||
+          (showSyncNow
+            ? __('Conflict resolved. Trigger sync now to converge local state with the backend.', 'alt-context')
+            : '');
   const statusRegion = (
     <div
       className="screen-reader-text"
@@ -103,6 +163,7 @@ export const ConflictInbox = (): React.JSX.Element => {
     return (
       <section aria-label={__('Conflict inbox', 'alt-context')} aria-busy="true">
         {statusRegion}
+        <p>{__('Loading conflicts…', 'alt-context')}</p>
       </section>
     );
   }

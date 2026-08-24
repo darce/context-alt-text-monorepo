@@ -119,6 +119,15 @@ describe('ConflictInbox', () => {
     expect(screen.getByText('Loading conflicts…')).toBeInTheDocument();
   });
 
+  it('announces inbox loading and marks the region busy', () => {
+    mockedUseConflicts.mockReturnValue(createMockQuery<ConflictListResponse>({ status: 'pending' }));
+
+    renderInbox();
+
+    expect(screen.getByRole('region', { name: 'Conflict inbox' })).toHaveAttribute('aria-busy', 'true');
+    expect(screen.getByRole('status')).toHaveTextContent('Loading conflicts…');
+  });
+
   it('renders error state', () => {
     mockedUseConflicts.mockReturnValue(
       createMockQuery<ConflictListResponse>({
@@ -131,6 +140,31 @@ describe('ConflictInbox', () => {
     renderInbox();
 
     expect(screen.getByText('Unable to load conflicts.')).toBeInTheDocument();
+  });
+
+  it('announces inbox load failure assertively with a non-colour warning icon', () => {
+    mockedUseConflicts.mockReturnValue(
+      createMockQuery<ConflictListResponse>({
+        status: 'error',
+        isError: true,
+        error: new Error('Boom'),
+      }),
+    );
+
+    renderInbox();
+
+    const alert = screen.getByRole('alert');
+    expect(alert).toHaveTextContent('Unable to load conflicts.');
+    expect(alert.querySelector('[aria-hidden="true"]')).not.toBeNull();
+  });
+
+  it('always renders an initially empty polite resolution status region', () => {
+    renderInbox();
+
+    const status = screen.getByTestId('acx-conflict-inbox-status');
+    expect(status).toHaveAttribute('role', 'status');
+    expect(status).toHaveAttribute('aria-live', 'polite');
+    expect(status).toBeEmptyDOMElement();
   });
 
   it('renders empty state', () => {
@@ -473,9 +507,9 @@ describe('ConflictInbox', () => {
       });
     });
 
-    expect(
-      screen.getByText('Conflict resolved. Trigger sync now to converge local state with the backend.'),
-    ).toBeInTheDocument();
+    expect(screen.getByTestId('acx-conflict-inbox-status')).toHaveTextContent(
+      'Conflict resolved. Trigger sync now to converge local state with the backend.',
+    );
   });
 
   it('limits batch actions to the shared allowed resolutions across the current selection', () => {
@@ -555,7 +589,16 @@ describe('ConflictInbox', () => {
     renderInbox();
     fireEvent.click(screen.getByRole('button', { name: 'Review conflict' }));
 
-    expect(screen.getByText('Unable to load conflict detail.')).toBeInTheDocument();
+    const alert = screen.getByRole('alert');
+    expect(alert).toHaveTextContent('Unable to load conflict detail.');
+    expect(alert.querySelector('[aria-hidden="true"]')).not.toBeNull();
+  });
+
+  it('announces conflict detail loading politely', () => {
+    renderInbox();
+    fireEvent.click(screen.getByRole('button', { name: 'Review conflict' }));
+
+    expect(screen.getAllByRole('status').some((status) => status.textContent === 'Loading conflict detail…')).toBe(true);
   });
 
   it('shows sync now affordance after successful resolution', async () => {
@@ -597,10 +640,77 @@ describe('ConflictInbox', () => {
     });
 
     expect(
-      screen.getByText('Conflict resolved. Trigger sync now to converge local state with the backend.'),
-    ).toBeInTheDocument();
+      screen.getByRole('status'),
+    ).toHaveTextContent('Conflict resolved. Trigger sync now to converge local state with the backend.');
     fireEvent.click(screen.getByRole('button', { name: 'Sync now' }));
     expect(triggerSync).toHaveBeenCalledTimes(1);
+  });
+
+  it('announces resolution failures assertively with a non-colour warning icon', async () => {
+    const mutateAsync = vi.fn().mockRejectedValue(new Error('boom'));
+    mockedUseConflictDetail.mockReturnValue(
+      createMockQuery<ConflictDetailResponse>({ data: { conflict: buildConflict() } }),
+    );
+    mockedUseResolveConflict.mockReturnValue(
+      createMockMutation<
+        ResolveConflictResponse,
+        Error,
+        { id: number; request: { resolution_status: 'accepted' | 'dismissed' | 'accept_backend' | 'merge' | 'restore_local' } }
+      >({ mutateAsync }),
+    );
+
+    renderInbox();
+    fireEvent.click(screen.getByRole('button', { name: 'Review conflict' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Accept backend version' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+
+    await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('Unable to resolve this conflict. Please try again.');
+    expect(alert.querySelector('[aria-hidden="true"]')).not.toBeNull();
+  });
+
+  it('marks resolution pending and gives disabled resolution controls a visible reason', () => {
+    mockedUseConflictDetail.mockReturnValue(
+      createMockQuery<ConflictDetailResponse>({ data: { conflict: buildConflict() } }),
+    );
+    mockedUseResolveConflict.mockReturnValue(
+      createMockMutation<
+        ResolveConflictResponse,
+        Error,
+        { id: number; request: { resolution_status: 'accepted' | 'dismissed' | 'accept_backend' | 'merge' | 'restore_local' } }
+      >({ isPending: true, mutateAsync: vi.fn() }),
+    );
+
+    renderInbox();
+    fireEvent.click(screen.getByRole('button', { name: 'Review conflict' }));
+
+    const button = screen.getByRole('button', { name: 'Accept backend version' });
+    expect(button).toBeDisabled();
+    expect(button).toHaveAttribute('aria-disabled', 'true');
+    const reasonId = button.getAttribute('aria-describedby');
+    expect(reasonId).toBeTruthy();
+    expect(document.getElementById(reasonId!)).toHaveTextContent('Conflict resolution in progress. Please wait.');
+    expect(document.getElementById(reasonId!)).not.toHaveClass('screen-reader-text');
+    expect(screen.getByRole('region', { name: 'Conflict inbox' })).toHaveAttribute('aria-busy', 'true');
+    expect(screen.getByTestId('acx-conflict-inbox-status')).toHaveTextContent('Resolving conflict…');
+  });
+
+  it('describes the disabled sync control and announces sync progress', () => {
+    mockedUseSyncTrigger.mockReturnValue(
+      createMockMutation<SyncTriggerResponse>({ isPending: true, mutate: vi.fn() }),
+    );
+
+    renderInbox();
+
+    const button = screen.getByRole('button', { name: 'Sync now' });
+    expect(button).toBeDisabled();
+    expect(button).toHaveAttribute('aria-disabled', 'true');
+    const reasonId = button.getAttribute('aria-describedby');
+    expect(reasonId).toBeTruthy();
+    expect(document.getElementById(reasonId!)).toHaveTextContent('Sync in progress. Please wait.');
+    expect(screen.getByRole('region', { name: 'Conflict inbox' })).toHaveAttribute('aria-busy', 'true');
+    expect(screen.getByTestId('acx-conflict-inbox-status')).toHaveTextContent('Syncing resolved conflicts…');
   });
 
   it('renders the backend-regression aggregate with both resolution actions', async () => {

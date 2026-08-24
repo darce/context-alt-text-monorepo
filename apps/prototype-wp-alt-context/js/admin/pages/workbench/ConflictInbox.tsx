@@ -11,6 +11,18 @@ import { formatEntityLabel, formatTimestamp, getConflictTypeLabel } from './conf
 import { useConflictInboxState } from './conflict-inbox/useConflictInboxState';
 
 const PAGE_SIZE = 20;
+const CONFLICT_STATUS = {
+  alertRole: 'alert',
+  live: 'polite',
+  role: 'status',
+  testId: 'acx-conflict-inbox-status',
+} as const;
+const CONFLICT_PENDING_REASON_ID = 'acx-conflict-resolution-pending-reason';
+const SYNC_PENDING_REASON_ID = 'acx-conflict-sync-pending-reason';
+const NOTICE_VARIANTS = {
+  info: 'acx-notice acx-notice--info',
+  warning: 'acx-notice acx-notice--warning',
+} as const;
 
 export const ConflictInbox = (): React.JSX.Element => {
   const [state, dispatch] = useConflictInboxState();
@@ -27,6 +39,26 @@ export const ConflictInbox = (): React.JSX.Element => {
   const conflictsQuery = useConflicts({ resolution_status: 'open', limit: PAGE_SIZE, offset });
   const resolveMutation = useResolveConflict();
   const syncTrigger = useSyncTrigger(false);
+  const inboxBusy = conflictsQuery.isLoading || resolveMutation.isPending || syncTrigger.isPending;
+  const liveStatus = conflictsQuery.isLoading
+    ? __('Loading conflicts…', 'alt-context')
+    : resolveMutation.isPending
+      ? __('Resolving conflict…', 'alt-context')
+      : syncTrigger.isPending
+        ? __('Syncing resolved conflicts…', 'alt-context')
+        : showSyncNow
+          ? __('Conflict resolved. Trigger sync now to converge local state with the backend.', 'alt-context')
+          : '';
+  const statusRegion = (
+    <div
+      className="screen-reader-text"
+      role={CONFLICT_STATUS.role}
+      aria-live={CONFLICT_STATUS.live}
+      data-testid={CONFLICT_STATUS.testId}
+    >
+      {liveStatus}
+    </div>
+  );
 
   const handleRequestResolve = async (choice: ConflictResolutionChoice): Promise<void> => {
     if (expandedConflictId === null) {
@@ -68,13 +100,19 @@ export const ConflictInbox = (): React.JSX.Element => {
   };
 
   if (conflictsQuery.isLoading) {
-    return <section aria-label="Conflict inbox">{__('Loading conflicts…', 'alt-context')}</section>;
+    return (
+      <section aria-label={__('Conflict inbox', 'alt-context')} aria-busy="true">
+        {statusRegion}
+      </section>
+    );
   }
 
   if (conflictsQuery.isError || !conflictsQuery.data) {
     return (
-      <section aria-label="Conflict inbox">
-        <div className="acx-error-state">
+      <section aria-label={__('Conflict inbox', 'alt-context')}>
+        {statusRegion}
+        <div className="acx-error-state" role={CONFLICT_STATUS.alertRole}>
+          <span aria-hidden="true">⚠</span>
           <p>{__('Unable to load conflicts.', 'alt-context')}</p>
         </div>
       </section>
@@ -157,7 +195,8 @@ export const ConflictInbox = (): React.JSX.Element => {
   };
 
   return (
-    <section aria-label="Conflict inbox">
+    <section aria-label={__('Conflict inbox', 'alt-context')} aria-busy={inboxBusy ? 'true' : undefined}>
+      {statusRegion}
       <h3>{__('Open conflicts', 'alt-context')}</h3>
       <p>{sprintf(__('Showing %1$d-%2$d of %3$d open conflicts.', 'alt-context'), rangeStart, rangeEnd, total)}</p>
       {canSelectAll ? (
@@ -181,6 +220,8 @@ export const ConflictInbox = (): React.JSX.Element => {
                 void handleBatchResolve(batchAcceptBackendChoice);
               }}
               disabled={resolveMutation.isPending}
+              aria-disabled={resolveMutation.isPending ? true : undefined}
+              aria-describedby={resolveMutation.isPending ? CONFLICT_PENDING_REASON_ID : undefined}
             >
               {pendingBatchResolution === batchAcceptBackendChoice
                 ? __('Confirm accept backend selected', 'alt-context')
@@ -195,6 +236,8 @@ export const ConflictInbox = (): React.JSX.Element => {
                 void handleBatchResolve('dismissed');
               }}
               disabled={resolveMutation.isPending}
+              aria-disabled={resolveMutation.isPending ? true : undefined}
+              aria-describedby={resolveMutation.isPending ? CONFLICT_PENDING_REASON_ID : undefined}
             >
               {pendingBatchResolution === 'dismissed'
                 ? __('Confirm keep local for selected', 'alt-context')
@@ -209,6 +252,8 @@ export const ConflictInbox = (): React.JSX.Element => {
                 void handleBatchResolve('merge');
               }}
               disabled={resolveMutation.isPending}
+              aria-disabled={resolveMutation.isPending ? true : undefined}
+              aria-describedby={resolveMutation.isPending ? CONFLICT_PENDING_REASON_ID : undefined}
             >
               {pendingBatchResolution === 'merge'
                 ? __('Confirm merge selected', 'alt-context')
@@ -217,23 +262,33 @@ export const ConflictInbox = (): React.JSX.Element => {
           ) : null}
         </div>
       ) : null}
-      {showSyncNow ? (
-        <div className="acx-notice acx-notice--info">
+      {showSyncNow || syncTrigger.isPending ? (
+        <div className={NOTICE_VARIANTS.info}>
+          <span aria-hidden="true">ℹ</span>
           <p>{__('Conflict resolved. Trigger sync now to converge local state with the backend.', 'alt-context')}</p>
           <button
             type="button"
             className="button button-primary"
             onClick={() => syncTrigger.mutate()}
             disabled={syncTrigger.isPending}
+            aria-disabled={syncTrigger.isPending ? true : undefined}
+            aria-describedby={syncTrigger.isPending ? SYNC_PENDING_REASON_ID : undefined}
           >
             {__('Sync now', 'alt-context')}
           </button>
         </div>
       ) : null}
       {resolutionError ? (
-        <div className="acx-notice acx-notice--warning">
+        <div className={NOTICE_VARIANTS.warning} role={CONFLICT_STATUS.alertRole}>
+          <span aria-hidden="true">⚠</span>
           <p>{resolutionError}</p>
         </div>
+      ) : null}
+      {resolveMutation.isPending ? (
+        <p id={CONFLICT_PENDING_REASON_ID}>{__('Conflict resolution in progress. Please wait.', 'alt-context')}</p>
+      ) : null}
+      {syncTrigger.isPending ? (
+        <p id={SYNC_PENDING_REASON_ID}>{__('Sync in progress. Please wait.', 'alt-context')}</p>
       ) : null}
       {items.length === 0 ? (
         <p>{__('No open conflicts.', 'alt-context')}</p>
@@ -298,6 +353,7 @@ export const ConflictInbox = (): React.JSX.Element => {
           void handleRequestResolve(choice);
         }}
         isResolving={resolveMutation.isPending}
+        disabledReasonId={resolveMutation.isPending ? CONFLICT_PENDING_REASON_ID : undefined}
       />
     </section>
   );

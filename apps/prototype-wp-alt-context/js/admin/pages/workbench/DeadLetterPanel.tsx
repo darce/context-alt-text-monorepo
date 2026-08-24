@@ -13,6 +13,17 @@ import { SYNC_VOCABULARY } from './syncVocabulary';
 const PAGE_SIZE = 20;
 const TIMELINE_PAGE_SIZE = 10;
 const BULK_RETRY_ARM_TIMEOUT_MS = 8000;
+const DEAD_LETTER_STATUS = {
+  alertRole: 'alert',
+  live: 'polite',
+  role: 'status',
+  testId: 'acx-dead-letter-status',
+} as const;
+const DEAD_LETTER_PENDING_REASON_ID = 'acx-dead-letter-pending-reason';
+const NOTICE_VARIANTS = {
+  info: 'acx-notice acx-notice--info',
+  warning: 'acx-notice acx-notice--warning',
+} as const;
 const TIMELINE_STATUSES = ['all', 'pending', 'acknowledged', 'conflict', 'failed', 'discarded'] as const;
 type TimelineStatusFilter = (typeof TIMELINE_STATUSES)[number];
 
@@ -146,6 +157,7 @@ export const DeadLetterPanel = (): React.JSX.Element => {
   const discardMutation = useDiscardOperation();
   const bulkRetryMutation = useBulkRetryOperations();
   const syncStatusQuery = useSyncStatus();
+  const mutationPending = retryMutation.isPending || discardMutation.isPending || bulkRetryMutation.isPending;
 
   const failedTotal = operationsQuery.data?.total;
 
@@ -242,14 +254,46 @@ export const DeadLetterPanel = (): React.JSX.Element => {
     dispatch({ type: 'setTimelineOffset', offset: 0 });
   };
 
+  const liveStatus = operationsQuery.isLoading
+    ? __('Loading failed changes…', 'alt-context')
+    : bulkRetryMutation.isPending
+      ? __('Retrying all failed changes…', 'alt-context')
+      : retryMutation.isPending || discardMutation.isPending
+        ? __('Failed-change action in progress. Please wait.', 'alt-context')
+        : bulkRetryArmed && failedTotal !== undefined
+          ? sprintf(
+              __('Retry all is armed. Activate Confirm retry all failed to queue %d failed changes.', 'alt-context'),
+              failedTotal,
+            )
+          : notice ?? '';
+
+  const statusRegion = (
+    <div
+      className={notice ? NOTICE_VARIANTS.info : 'screen-reader-text'}
+      role={DEAD_LETTER_STATUS.role}
+      aria-live={DEAD_LETTER_STATUS.live}
+      data-testid={DEAD_LETTER_STATUS.testId}
+    >
+      {notice ? <span aria-hidden="true">ℹ</span> : null}
+      {notice ? ' ' : null}
+      {liveStatus}
+    </div>
+  );
+
   if (operationsQuery.isLoading) {
-    return <section aria-label="Failed changes panel">{__('Loading failed changes…', 'alt-context')}</section>;
+    return (
+      <section aria-label={__('Failed changes panel', 'alt-context')} aria-busy="true">
+        {statusRegion}
+      </section>
+    );
   }
 
   if (operationsQuery.isError || !operationsQuery.data) {
     return (
-      <section aria-label="Failed changes panel">
-        <div className="acx-error-state">
+      <section aria-label={__('Failed changes panel', 'alt-context')}>
+        {statusRegion}
+        <div className="acx-error-state" role={DEAD_LETTER_STATUS.alertRole}>
+          <span aria-hidden="true">⚠</span>
           <p>{__('Unable to load failed changes.', 'alt-context')}</p>
         </div>
       </section>
@@ -270,7 +314,11 @@ export const DeadLetterPanel = (): React.JSX.Element => {
       topologyStatus.conflict > 0);
 
   return (
-    <section aria-label="Failed changes panel">
+    <section
+      aria-label={__('Failed changes panel', 'alt-context')}
+      aria-busy={mutationPending ? 'true' : undefined}
+    >
+      {statusRegion}
       <h3>{__('Failed changes', 'alt-context')}</h3>
       <p>{sprintf(__('Showing %1$d-%2$d of %3$d failed changes.', 'alt-context'), rangeStart, rangeEnd, total)}</p>
       <div className="acx-dashboard__actions">
@@ -283,6 +331,8 @@ export const DeadLetterPanel = (): React.JSX.Element => {
             void handleBulkRetry();
           }}
           disabled={total === 0 || bulkRetryMutation.isPending || retryMutation.isPending || discardMutation.isPending}
+          aria-disabled={mutationPending || total === 0 ? true : undefined}
+          aria-describedby={mutationPending ? DEAD_LETTER_PENDING_REASON_ID : undefined}
         >
           {bulkRetryMutation.isPending
             ? __('Retrying all failed…', 'alt-context')
@@ -291,18 +341,15 @@ export const DeadLetterPanel = (): React.JSX.Element => {
               : sprintf(__('Retry all failed (%d)', 'alt-context'), total)}
         </button>
       </div>
-      {notice ? (
-        <div className="acx-notice acx-notice--info">
-          <p>{notice}</p>
-        </div>
-      ) : null}
       {mutationError ? (
-        <div className="acx-notice acx-notice--warning">
+        <div className={NOTICE_VARIANTS.warning} role={DEAD_LETTER_STATUS.alertRole}>
+          <span aria-hidden="true">⚠</span>
           <p>{mutationError}</p>
         </div>
       ) : null}
       {hasTopologyStatus ? (
-        <div className="acx-notice acx-notice--info">
+        <div className={NOTICE_VARIANTS.info}>
+          <span aria-hidden="true">ℹ</span>
           <p>
             {sprintf(
               SYNC_VOCABULARY.pendingWorkSummary,
@@ -313,6 +360,9 @@ export const DeadLetterPanel = (): React.JSX.Element => {
             )}
           </p>
         </div>
+      ) : null}
+      {mutationPending ? (
+        <p id={DEAD_LETTER_PENDING_REASON_ID}>{__('Failed-change action in progress. Please wait.', 'alt-context')}</p>
       ) : null}
       <div className="acx-workbench__panel">
         <h4>{__('Pending changes timeline', 'alt-context')}</h4>
@@ -431,6 +481,10 @@ export const DeadLetterPanel = (): React.JSX.Element => {
                         void handleRetry(operation.id);
                       }}
                       disabled={retryMutation.isPending || discardMutation.isPending}
+                      aria-disabled={retryMutation.isPending || discardMutation.isPending ? true : undefined}
+                      aria-describedby={
+                        retryMutation.isPending || discardMutation.isPending ? DEAD_LETTER_PENDING_REASON_ID : undefined
+                      }
                     >
                       {__('Retry', 'alt-context')}
                     </button>
@@ -441,6 +495,10 @@ export const DeadLetterPanel = (): React.JSX.Element => {
                         void handleDiscard(operation.id);
                       }}
                       disabled={retryMutation.isPending || discardMutation.isPending}
+                      aria-disabled={retryMutation.isPending || discardMutation.isPending ? true : undefined}
+                      aria-describedby={
+                        retryMutation.isPending || discardMutation.isPending ? DEAD_LETTER_PENDING_REASON_ID : undefined
+                      }
                     >
                       {discardPending ? __('Confirm discard', 'alt-context') : __('Discard', 'alt-context')}
                     </button>

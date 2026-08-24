@@ -9,6 +9,7 @@ import { IdentityClusterList } from './identity-clusters';
 import { MediaAltInlineEditor } from './MediaAltInlineEditor';
 import { MediaAltSuggest } from './MediaAltSuggest';
 import { mediaEditUrl } from './Panels';
+import { EmptyState, EmptyStateVariant } from '../../components/ui/EmptyState';
 
 /** Who may hold the row's polite region or commit lock. */
 export type RowPoliteOwner = 'editor' | 'suggest';
@@ -62,6 +63,7 @@ interface MediaSelectionTableBodyProps {
   selection: Record<string, boolean>;
   identitiesDataSource?: DataSource;
   onRetryIdentities?: () => void;
+  onClearSearch: () => void;
 }
 
 export const MediaSelectionTableBody = ({
@@ -72,6 +74,7 @@ export const MediaSelectionTableBody = ({
   selection,
   identitiesDataSource,
   onRetryIdentities,
+  onClearSearch,
 }: MediaSelectionTableBodyProps): React.JSX.Element => {
   if (isLoading && items.length === 0) {
     return (
@@ -86,7 +89,15 @@ export const MediaSelectionTableBody = ({
   if (items.length === 0) {
     return (
       <tr>
-        <td colSpan={4}>{__('No media matches your search.', 'alt-context')}</td>
+        <td colSpan={4}>
+          <EmptyState
+            variant={EmptyStateVariant.EMPTY}
+            heading={__('No media matches your search.', 'alt-context')}
+            body={__('Clear the search to return to the media library.', 'alt-context')}
+            action={{ label: __('Clear search', 'alt-context'), onClick: onClearSearch }}
+            headingLevel={3}
+          />
+        </td>
       </tr>
     );
   }

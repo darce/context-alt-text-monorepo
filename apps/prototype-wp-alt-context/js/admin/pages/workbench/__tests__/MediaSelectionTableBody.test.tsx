@@ -5,6 +5,7 @@
  */
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -47,7 +48,7 @@ const makeItem = (overrides: Partial<WorkbenchMediaItem> = {}): WorkbenchMediaIt
   ...overrides,
 });
 
-const renderBody = (items: WorkbenchMediaItem[]) => {
+const renderBody = (items: WorkbenchMediaItem[], onClearSearch = vi.fn()) => {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
@@ -61,6 +62,7 @@ const renderBody = (items: WorkbenchMediaItem[]) => {
             detailIsLoading={false}
             onToggleRow={() => undefined}
             selection={{}}
+            onClearSearch={onClearSearch}
           />
         </tbody>
       </table>
@@ -69,6 +71,14 @@ const renderBody = (items: WorkbenchMediaItem[]) => {
 };
 
 describe('MediaSelectionTableBody — decorative alt + link name [A11Y-02][A11Y-04]', () => {
+  it('offers a clear-search action when no media matches', async () => {
+    const onClearSearch = vi.fn();
+    renderBody([], onClearSearch);
+
+    await userEvent.click(screen.getByRole('button', { name: 'Clear search' }));
+    expect(onClearSearch).toHaveBeenCalledTimes(1);
+  });
+
   it('renders empty alt for isDecorative rows so screen readers skip the image', () => {
     const { container } = renderBody([
       makeItem({ isDecorative: true, altText: null, status: 'complete' }),

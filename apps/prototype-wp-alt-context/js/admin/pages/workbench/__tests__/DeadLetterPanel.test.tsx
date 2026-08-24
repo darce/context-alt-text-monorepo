@@ -156,6 +156,16 @@ describe('DeadLetterPanel', () => {
     expect(screen.getByText('Loading failed changes…')).toBeInTheDocument();
   });
 
+  it('announces loading and marks the failed-changes region busy', () => {
+    mockedUseDeadLetterOperations.mockReturnValue(createMockQuery<OutboxListResponse>({ status: 'pending' }));
+
+    renderPanel();
+
+    const region = screen.getByRole('region', { name: 'Failed changes panel' });
+    expect(region).toHaveAttribute('aria-busy', 'true');
+    expect(screen.getByRole('status')).toHaveTextContent('Loading failed changes…');
+  });
+
   it('renders error state', () => {
     mockedUseDeadLetterOperations.mockReturnValue(
       createMockQuery<OutboxListResponse>({
@@ -168,6 +178,31 @@ describe('DeadLetterPanel', () => {
     renderPanel();
 
     expect(screen.getByText('Unable to load failed changes.')).toBeInTheDocument();
+  });
+
+  it('announces load failures assertively with a non-colour warning icon', () => {
+    mockedUseDeadLetterOperations.mockReturnValue(
+      createMockQuery<OutboxListResponse>({
+        status: 'error',
+        isError: true,
+        error: new Error('Boom'),
+      }),
+    );
+
+    renderPanel();
+
+    const alert = screen.getByRole('alert');
+    expect(alert).toHaveTextContent('Unable to load failed changes.');
+    expect(alert.querySelector('[aria-hidden="true"]')).not.toBeNull();
+  });
+
+  it('always renders an initially empty polite mutation status region', () => {
+    renderPanel();
+
+    const status = screen.getByTestId('acx-dead-letter-status');
+    expect(status).toHaveAttribute('role', 'status');
+    expect(status).toHaveAttribute('aria-live', 'polite');
+    expect(status).toBeEmptyDOMElement();
   });
 
   it('renders empty state', () => {
@@ -319,7 +354,7 @@ describe('DeadLetterPanel', () => {
       expect(mutateAsync).toHaveBeenCalledWith(11);
     });
 
-    expect(screen.getByText('Change queued to retry.')).toBeInTheDocument();
+    expect(screen.getByRole('status')).toHaveTextContent('Change queued to retry.');
   });
 
   it('shows mutation error feedback when retry fails', async () => {
@@ -337,7 +372,9 @@ describe('DeadLetterPanel', () => {
       expect(mutateAsync).toHaveBeenCalledWith(11);
     });
 
-    expect(screen.getByText('Unable to retry this operation. Please try again.')).toBeInTheDocument();
+    const alert = screen.getByRole('alert');
+    expect(alert).toHaveTextContent('Unable to retry this operation. Please try again.');
+    expect(alert.querySelector('[aria-hidden="true"]')).not.toBeNull();
   });
 
   it('requires confirmation before discard and shows success notice', async () => {
@@ -360,7 +397,7 @@ describe('DeadLetterPanel', () => {
       expect(mutateAsync).toHaveBeenCalledWith(11);
     });
 
-    expect(screen.getByText('Failed change discarded.')).toBeInTheDocument();
+    expect(screen.getByRole('status')).toHaveTextContent('Failed change discarded.');
   });
 
   it('shows mutation error feedback when discard fails', async () => {
@@ -379,7 +416,7 @@ describe('DeadLetterPanel', () => {
       expect(mutateAsync).toHaveBeenCalledWith(11);
     });
 
-    expect(screen.getByText('Unable to discard this operation. Please try again.')).toBeInTheDocument();
+    expect(screen.getByRole('alert')).toHaveTextContent('Unable to discard this operation. Please try again.');
   });
 
   it('shows the bulk retry control with the failed count', () => {
@@ -420,6 +457,9 @@ describe('DeadLetterPanel', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Retry all failed (5)' }));
 
     expect(screen.getByRole('button', { name: 'Confirm retry all failed (5)' })).toBeInTheDocument();
+    expect(screen.getByRole('status')).toHaveTextContent(
+      'Retry all is armed. Activate Confirm retry all failed to queue 5 failed changes.',
+    );
     expect(mutateAsync).not.toHaveBeenCalled();
 
     fireEvent.click(screen.getByRole('button', { name: 'Confirm retry all failed (5)' }));
@@ -533,7 +573,15 @@ describe('DeadLetterPanel', () => {
 
     renderPanel();
 
-    expect(screen.getByRole('button', { name: 'Retrying all failed…' })).toBeDisabled();
+    const button = screen.getByRole('button', { name: 'Retrying all failed…' });
+    expect(button).toBeDisabled();
+    expect(button).toHaveAttribute('aria-disabled', 'true');
+    const reasonId = button.getAttribute('aria-describedby');
+    expect(reasonId).toBeTruthy();
+    expect(document.getElementById(reasonId!)).toHaveTextContent('Failed-change action in progress. Please wait.');
+    expect(document.getElementById(reasonId!)).not.toHaveClass('screen-reader-text');
+    expect(screen.getByRole('region', { name: 'Failed changes panel' })).toHaveAttribute('aria-busy', 'true');
+    expect(screen.getByRole('status')).toHaveTextContent('Retrying all failed changes…');
   });
 
   it('shows mutation error feedback when bulk retry fails', async () => {
@@ -552,6 +600,25 @@ describe('DeadLetterPanel', () => {
       expect(mutateAsync).toHaveBeenCalledTimes(1);
     });
 
-    expect(screen.getByText('Unable to retry all failed changes. Please try again.')).toBeInTheDocument();
+    expect(screen.getByRole('alert')).toHaveTextContent('Unable to retry all failed changes. Please try again.');
+  });
+
+  it('describes row actions disabled by another pending queue mutation', () => {
+    mockedUseRetryOperation.mockReturnValue(
+      createMockMutation<OutboxMutationResponse, Error, number>({ isPending: true, mutateAsync: vi.fn() }),
+    );
+
+    renderPanel();
+
+    for (const button of [
+      screen.getByRole('button', { name: 'Retry' }),
+      screen.getByRole('button', { name: 'Discard' }),
+    ]) {
+      expect(button).toBeDisabled();
+      expect(button).toHaveAttribute('aria-disabled', 'true');
+      const reasonId = button.getAttribute('aria-describedby');
+      expect(reasonId).toBeTruthy();
+      expect(document.getElementById(reasonId!)).toHaveTextContent('Failed-change action in progress. Please wait.');
+    }
   });
 });

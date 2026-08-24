@@ -1,3 +1,6 @@
+import { act } from 'react';
+import { flushSync } from 'react-dom';
+import { createRoot } from 'react-dom/client';
 import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
@@ -31,6 +34,19 @@ describe('EmptyState (shared dead-end primitive)', () => {
 
     expect(screen.getByRole('heading', { name: 'No findings yet' })).toBeInTheDocument();
     expect(screen.getByText('Run a scan and new findings appear here automatically.')).toBeInTheDocument();
+  });
+
+  it('uses h3 as the default heading level [A11Y-24]', () => {
+    render(
+      <EmptyState
+        variant={EmptyStateVariant.EMPTY}
+        heading="No findings yet"
+        body="Run a scan and new findings appear here automatically."
+        action={FRONT_DOOR}
+      />,
+    );
+
+    expect(screen.getByRole('heading', { level: 3, name: 'No findings yet' })).toBeInTheDocument();
   });
 
   it('honours the caller heading level so the surface keeps a valid outline [A11Y-24]', () => {
@@ -117,8 +133,19 @@ describe('EmptyState (shared dead-end primitive)', () => {
       <EmptyState variant={EmptyStateVariant.EMPTY} heading="Dead end" body="No way out." action={{ label: 'Go' }} />
     );
 
+    const ambiguousAction = (
+      <EmptyState
+        variant={EmptyStateVariant.EMPTY}
+        heading="Dead end"
+        body="No way out."
+        // @ts-expect-error - an action cannot navigate and run an in-place callback at the same time.
+        action={{ label: 'Go', href: '/wp-admin/', onClick: vi.fn() }}
+      />
+    );
+
     expect(missingAction).toBeTruthy();
     expect(inertAction).toBeTruthy();
+    expect(ambiguousAction).toBeTruthy();
   });
 
   // --- (c) ZERO is not BROKEN ---------------------------------------------
@@ -143,22 +170,48 @@ describe('EmptyState (shared dead-end primitive)', () => {
     expect(region).not.toHaveAttribute('role', 'status');
   });
 
-  it('marks variant "unavailable" as a load failure that must be announced [A11Y-24]', () => {
-    render(
-      <EmptyState
-        variant={EmptyStateVariant.UNAVAILABLE}
-        heading="Face assignments unavailable — this is not an empty backlog."
-        body="We could not load the review queue."
-        action={{ label: 'Try again', onClick: vi.fn() }}
-      />,
-    );
+  it('mounts an empty persistent live region, then announces the unavailable state [A11Y-24]', async () => {
+    const container = document.createElement('div');
+    document.body.append(container);
+    const root = createRoot(container);
 
-    const region = screen.getByTestId('acx-empty-state');
+    flushSync(() => {
+      root.render(
+        <EmptyState
+          variant={EmptyStateVariant.UNAVAILABLE}
+          heading="Face assignments unavailable — this is not an empty backlog."
+          body="We could not load the review queue."
+          action={{ label: 'Try again', onClick: vi.fn() }}
+        />,
+      );
+    });
+
+    const region = container.querySelector('[data-testid="acx-empty-state"]');
+    const liveRegion = container.querySelector('[role="status"]');
+    const initialLiveText = liveRegion?.textContent;
+
+    await act(() => Promise.resolve());
+
+    const announcedLiveText = liveRegion?.textContent;
+
+    act(() => root.unmount());
+    container.remove();
 
     expect(region).toHaveAttribute('data-variant', 'unavailable');
-    expect(region.className).toContain('acx-empty-state--unavailable');
-    expect(region).toHaveAttribute('role', 'status');
-    expect(region).toHaveAttribute('aria-live', 'polite');
+    expect(region).toHaveClass('acx-empty-state--unavailable');
+    expect(region).not.toHaveAttribute('role');
+    expect(liveRegion).toHaveAttribute('aria-live', 'polite');
+    expect(initialLiveText).toBe('');
+    expect(announcedLiveText).toBe('Could not load');
+  });
+
+  it.each([
+    [EmptyStateVariant.EMPTY, 'inbox'],
+    [EmptyStateVariant.UNAVAILABLE, 'alert-triangle'],
+  ] as const)('renders the expected icon for variant "%s"', (variant, iconName) => {
+    render(<EmptyState variant={variant} heading="State heading" body="State body." action={FRONT_DOOR} />);
+
+    expect(screen.getByTestId('acx-empty-state-icon')).toHaveAttribute('data-icon', iconName);
   });
 
   it('gives the two variants different rendered treatment, not just different copy', () => {

@@ -13,12 +13,15 @@ export interface UserFacingErrorNoticeProps {
   /** Generic fallback when error is not AuthExpiredError and has no message. */
   fallback: string;
   className?: string;
+  /** A persistent parent live region can own announcement semantics. */
+  announce?: boolean;
 }
 
 export const UserFacingErrorNotice: React.FC<UserFacingErrorNoticeProps> = ({
   error,
   fallback,
   className,
+  announce = true,
 }) => {
   const authExpired = isAuthExpiredError(error);
   // Callers pass already-translated fallbacks; the session-expired constant is
@@ -30,7 +33,7 @@ export const UserFacingErrorNotice: React.FC<UserFacingErrorNoticeProps> = ({
   return (
     <div
       className={className}
-      role="alert"
+      role={announce ? 'alert' : undefined}
       data-testid="acx-user-facing-error"
       data-error-kind={authExpired ? 'auth-expired' : 'generic'}
     >

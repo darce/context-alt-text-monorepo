@@ -134,6 +134,41 @@ describe('MediaSelectionTableBody — decorative alt + link name [A11Y-02][A11Y-
     expect(screen.queryByText('No media matches your search.')).not.toBeInTheDocument();
   });
 
+  it('moves focus to the media search input after Clear search [DUX-W2D6C-RV-03]', async () => {
+    const library = [makeItem({ title: 'Harbour at dusk' })];
+    const Harness = () => {
+      const [searchQuery, setSearchQuery] = React.useState('nomatch');
+      const items = searchQuery.trim() === '' ? library : [];
+      const client = new QueryClient({
+        defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+      });
+      return (
+        <QueryClientProvider client={client}>
+          <input id="acx-media-search" defaultValue={searchQuery} />
+          <table>
+            <tbody>
+              <MediaSelectionTableBody
+                items={items}
+                isLoading={false}
+                detailIsLoading={false}
+                onToggleRow={() => undefined}
+                selection={{}}
+                onClearSearch={() => setSearchQuery('')}
+                searchQuery={searchQuery}
+              />
+            </tbody>
+          </table>
+        </QueryClientProvider>
+      );
+    };
+
+    render(<Harness />);
+
+    await userEvent.click(screen.getByRole('button', { name: 'Clear search' }));
+    expect(screen.getByText('Harbour at dusk')).toBeInTheDocument();
+    expect(document.getElementById('acx-media-search')).toHaveFocus();
+  });
+
   it('renders empty alt for isDecorative rows so screen readers skip the image', () => {
     const { container } = renderBody([
       makeItem({ isDecorative: true, altText: null, status: 'complete' }),

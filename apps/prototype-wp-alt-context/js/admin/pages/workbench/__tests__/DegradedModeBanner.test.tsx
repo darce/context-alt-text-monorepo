@@ -1,5 +1,5 @@
 import { render, screen } from '@testing-library/react';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import type { SyncHealthResponse } from '../../../api/recognition/types/sync';
 import { SCAN_CONFLICTS_HREF, SCAN_DEAD_LETTER_HREF } from '../../../navigation/appLinks';
@@ -59,6 +59,16 @@ describe('getDegradedDebtLinks', () => {
 });
 
 describe('DegradedModeBannerView', () => {
+  it('names unavailable health as degraded and offers a retry action', () => {
+    const onRetry = vi.fn();
+
+    render(<DegradedModeBannerView health={undefined} onRetry={onRetry} />);
+
+    expect(screen.getByRole('alert')).toHaveTextContent('Recognition health unavailable');
+    screen.getByRole('button', { name: 'Retry health check' }).click();
+    expect(onRetry).toHaveBeenCalledOnce();
+  });
+
   it('renders offline copy with icon when breaker is open', () => {
     render(
       <DegradedModeBannerView

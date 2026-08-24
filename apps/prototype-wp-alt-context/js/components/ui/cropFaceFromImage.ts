@@ -43,8 +43,11 @@ export const cropFaceFromImage = (options: CropFaceFromImageOptions): string | n
       return null;
     }
 
+    // 0 is an unloaded/unusable dimension and must fall through; ?? would keep 0.
+    /* eslint-disable @typescript-eslint/prefer-nullish-coalescing -- 0-width/height must fall through */
     const naturalWidth = image.naturalWidth || image.width || 0;
     const naturalHeight = image.naturalHeight || image.height || 0;
+    /* eslint-enable @typescript-eslint/prefer-nullish-coalescing */
     if (!Number.isFinite(naturalWidth) || !Number.isFinite(naturalHeight) || naturalWidth <= 0 || naturalHeight <= 0) {
       return null;
     }

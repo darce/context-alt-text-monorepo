@@ -5,9 +5,10 @@
  * consecutive announcements with the same text (e.g. two sequential retirement
  * closes) never re-render the live region — a screen reader stays silent on the
  * second. The monotonic `seq` guarantees a fresh state object every announce.
- * Each announcement first clears the persistent live-region content, then a
- * follow-up render inserts the message so repeated copy creates a DOM mutation
- * without remounting the region.
+ * Repeated copy first clears the persistent live-region content, then a follow-up
+ * render inserts the message so it creates a DOM mutation without remounting the
+ * region. New copy publishes immediately, preserving the hook's synchronous
+ * single-announcement contract.
  */
 
 import { useCallback, useEffect, useState } from 'react';
@@ -33,7 +34,11 @@ export const useAriaAnnounce = (): UseAriaAnnounceResult => {
     seq: 0,
   });
   const announce = useCallback((message: string) => {
-    setState((prev) => ({ message: null, pendingMessage: message, seq: prev.seq + 1 }));
+    setState((prev) =>
+      prev.message === message
+        ? { message: null, pendingMessage: message, seq: prev.seq + 1 }
+        : { message, pendingMessage: null, seq: prev.seq + 1 },
+    );
   }, []);
 
   useEffect(() => {

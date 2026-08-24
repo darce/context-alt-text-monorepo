@@ -613,6 +613,10 @@ describe('DescribeRunApplyView', () => {
 
     expect(await screen.findByText('No drafts from this run can be applied.')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Apply all/ })).not.toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Back to Description Runs' })).toHaveAttribute(
+      'href',
+      '#/description-history',
+    );
   });
 
   it('shows an error state with retry when items fail to load', async () => {

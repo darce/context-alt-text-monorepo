@@ -5,17 +5,22 @@
  * consecutive announcements with the same text (e.g. two sequential retirement
  * closes) never re-render the live region — a screen reader stays silent on the
  * second. The monotonic `seq` guarantees a fresh state object every announce.
- *
- * Callers that keep a stable live-region node (no `key={seq}`) still get a DOM
- * text mutation on every announce because this always writes a new state object.
- * Callers that remount on `seq` get a fresh region for free.
+ * Repeated copy first clears the persistent live-region content, then a follow-up
+ * render inserts the message so it creates a DOM mutation without remounting the
+ * region. A repeat is identical published copy *or* identical in-flight pending
+ * copy (announce arriving during the clear phase). New copy publishes immediately,
+ * preserving the hook's synchronous single-announcement contract.
  */
 
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 
 interface AriaAnnounceState {
   message: string | null;
   seq: number;
+}
+
+interface InternalAriaAnnounceState extends AriaAnnounceState {
+  pendingMessage: string | null;
 }
 
 export interface UseAriaAnnounceResult extends AriaAnnounceState {
@@ -24,9 +29,30 @@ export interface UseAriaAnnounceResult extends AriaAnnounceState {
 }
 
 export const useAriaAnnounce = (): UseAriaAnnounceResult => {
-  const [state, setState] = useState<AriaAnnounceState>({ message: null, seq: 0 });
+  const [state, setState] = useState<InternalAriaAnnounceState>({
+    message: null,
+    pendingMessage: null,
+    seq: 0,
+  });
   const announce = useCallback((message: string) => {
-    setState((prev) => ({ message, seq: prev.seq + 1 }));
+    setState((prev) =>
+      prev.message === message || prev.pendingMessage === message
+        ? { message: null, pendingMessage: message, seq: prev.seq + 1 }
+        : { message, pendingMessage: null, seq: prev.seq + 1 },
+    );
   }, []);
+
+  useEffect(() => {
+    if (state.pendingMessage === null) {
+      return;
+    }
+    setState((current) => {
+      if (current.seq !== state.seq || current.pendingMessage === null) {
+        return current;
+      }
+      return { ...current, message: current.pendingMessage, pendingMessage: null };
+    });
+  }, [state.pendingMessage, state.seq]);
+
   return { message: state.message, seq: state.seq, announce };
 };

@@ -19,11 +19,12 @@ interface CapturedMutationOptions {
   onError?: (err: unknown) => void;
 }
 
-const { mockUseQuery, mockUseMutation, mockInvalidateQueries, mockFetchQuery } = vi.hoisted(() => ({
+const { mockUseQuery, mockUseMutation, mockInvalidateQueries, mockFetchQuery, mockToDashboard } = vi.hoisted(() => ({
   mockUseQuery: vi.fn<() => QueryHookResult>(),
   mockUseMutation: vi.fn<(options?: CapturedMutationOptions) => MutationHookResult>(),
   mockInvalidateQueries: vi.fn(),
   mockFetchQuery: vi.fn(),
+  mockToDashboard: vi.fn(() => '#/owned-dashboard-route'),
 }));
 
 vi.mock('@wordpress/i18n', () => ({
@@ -56,6 +57,10 @@ vi.mock('../../api/config', () => ({
     endpoints: { settings: '/acx/v1/settings', settingsTest: '/acx/v1/settings/test' },
   }),
   resetConfigCache: mockResetConfigCache,
+}));
+
+vi.mock('../../navigation/appLinks', () => ({
+  toDashboard: mockToDashboard,
 }));
 
 // Recovery affordances must stay enabled while offline (plan §3, RES-15). Forcing the shared
@@ -136,7 +141,23 @@ describe('SettingsPage', () => {
     expect(screen.getByText('Loading settings…')).toBeInTheDocument();
   });
 
-  it('announces load errors and offers retry and Dashboard exits [UXA-09, NAV-07]', () => {
+  it('populates the same initially empty error region when loading fails [DUX-L4-RV-01]', () => {
+    mockUseQuery.mockReturnValue(createMockQuery({ status: 'pending' }));
+    const { rerender } = render(<SettingsPage />);
+
+    const errorRegion = screen.getByRole('alert');
+    expect(errorRegion).toBeEmptyDOMElement();
+
+    mockUseQuery.mockReturnValue(
+      createMockQuery({ isError: true, error: new Error('fail') }),
+    );
+    rerender(<SettingsPage />);
+
+    expect(screen.getByRole('alert')).toBe(errorRegion);
+    expect(errorRegion).toHaveTextContent('Failed to load settings.');
+  });
+
+  it('shows the cold-load error screen with retry and the owned Dashboard route [DUX-L4-RV-02, DUX-L4-RV-03]', () => {
     const refetch = vi.fn();
     mockUseQuery.mockReturnValue(
       createMockQuery({ isError: true, error: new Error('fail'), refetch }),
@@ -150,8 +171,32 @@ describe('SettingsPage', () => {
 
     expect(screen.getByRole('link', { name: 'Back to Dashboard' })).toHaveAttribute(
       'href',
-      '#/dashboard',
+      '#/owned-dashboard-route',
     );
+    expect(mockToDashboard).toHaveBeenCalled();
+    expect(screen.queryByLabelText('Service API URL')).not.toBeInTheDocument();
+  });
+
+  it('keeps an edited form mounted and shows an inline notice after a refetch error [DUX-L4-RV-02]', () => {
+    mockUseQuery.mockReturnValue(createMockQuery({ data: defaultSettings }));
+    const { rerender } = render(<SettingsPage />);
+
+    fireEvent.change(screen.getByLabelText('Service API URL'), {
+      target: { value: 'https://draft.example.com' },
+    });
+
+    mockUseQuery.mockReturnValue(
+      createMockQuery({
+        data: defaultSettings,
+        isError: true,
+        error: new Error('refetch failed'),
+      }),
+    );
+    rerender(<SettingsPage />);
+
+    expect(screen.getByLabelText('Service API URL')).toHaveValue('https://draft.example.com');
+    expect(screen.getByRole('alert')).toHaveTextContent('Failed to refresh settings.');
+    expect(screen.queryByRole('link', { name: 'Back to Dashboard' })).not.toBeInTheDocument();
   });
 
   it('renders the settings form with loaded data', () => {

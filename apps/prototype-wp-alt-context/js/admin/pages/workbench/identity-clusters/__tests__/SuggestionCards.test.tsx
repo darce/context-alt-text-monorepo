@@ -123,11 +123,13 @@ describe('SuggestionCard BR-41 group accname', () => {
         suggestion={baseSuggestion}
         onAccept={onAccept}
         onReject={vi.fn()}
+        onReview={vi.fn()}
         isPending={false}
         lowConfidenceThreshold={0.5}
       />,
     );
 
+    await user.click(screen.getByRole('button', { name: 'Review details' }));
     await user.click(screen.getByRole('button', { name: 'Yes' }));
     expect(onAccept).toHaveBeenCalledTimes(1);
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
@@ -181,7 +183,7 @@ describe('SuggestionCard lightbox target (UXW2-6)', () => {
     expect(onOpenOriginal).toHaveBeenCalledWith({
       mediaUrl: 'https://example.com/candidate.jpg',
       bbox: { x: 5, y: 6, width: 40, height: 50 },
-      label: 'Candidate face',
+      label: 'Candidate face, position 1 of 1',
       mediaId: 42,
       identityId: 'identity-1',
     });
@@ -212,7 +214,7 @@ describe('SuggestionCard lightbox target (UXW2-6)', () => {
     expect(onOpenOriginal).toHaveBeenCalledWith({
       mediaUrl: 'https://example.com/candidate.jpg',
       bbox: { x: 5, y: 6, width: 40, height: 50 },
-      label: 'Candidate face',
+      label: 'Candidate face, position 1 of 1',
       identityId: 'identity-1',
     });
     expect(onOpenOriginal.mock.calls[0][0]).not.toHaveProperty('mediaId');
@@ -306,7 +308,7 @@ describe('SuggestionCard L4R-01 Avatar alt + L4R-02 assertTruthyLabel', () => {
       />,
     );
 
-    const repImg = screen.getByAltText('Jordan Lee');
+    const repImg = screen.getByAltText('Jordan Lee stored face, position 1 of 3');
     expect(repImg).toHaveAttribute('src', 'https://example.com/rep-thumb.jpg');
     expect(screen.queryByAltText('Cluster representative')).toBeNull();
   });

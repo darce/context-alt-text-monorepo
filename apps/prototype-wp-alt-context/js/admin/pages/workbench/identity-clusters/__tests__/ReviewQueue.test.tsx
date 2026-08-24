@@ -4999,7 +4999,7 @@ describe('ReviewQueue', () => {
     }
   });
 
-  const loadLightboxImage = (alt = 'Candidate face'): void => {
+  const loadLightboxImage = (alt = 'Candidate face, position 1 of 1'): void => {
     const frame = document.querySelector('.acx-review-card-lightbox__frame');
     expect(frame).toBeInstanceOf(HTMLElement);
     Object.defineProperty(frame, 'clientWidth', { configurable: true, value: 400 });

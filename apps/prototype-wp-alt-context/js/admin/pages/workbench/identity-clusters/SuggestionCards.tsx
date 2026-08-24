@@ -1,5 +1,5 @@
 import React from 'react';
-import { __ } from '@wordpress/i18n';
+import { __, sprintf } from '@wordpress/i18n';
 
 import { Avatar } from '../../../../components/ui/avatar';
 import { FaceThumbnail } from '../../../../components/ui/FaceThumbnail';
@@ -52,11 +52,13 @@ interface SuggestionCardProps {
 }
 
 /** buildSuggestionReviewItems only emits human-labeled targets (truthy trimmed label). */
-function assertTruthyLabel(label: string | null | undefined): asserts label is string {
+const assertTruthyLabel: (
+  label: string | null | undefined,
+) => asserts label is string = (label) => {
   if (typeof label !== 'string' || label.trim().length === 0) {
     throw new Error('SuggestionCard requires a truthy suggestion.label');
   }
-}
+};
 
 const FaceCropControl = ({
   mediaUrl,
@@ -148,6 +150,26 @@ export const SuggestionCard = ({
   const identityThumbUrl = suggestion.enrichment?.identityThumbUrl ?? suggestion.enrichment?.identityMediaUrl ?? null;
   const representativeThumbUrl =
     suggestion.enrichment?.representativeThumbUrl ?? suggestion.enrichment?.representativeMediaUrl ?? null;
+  const hasStoredReference = representativeFace !== null || representativeThumbUrl !== null;
+  const storedFaceCount =
+    typeof suggestion.identityCount === 'number' &&
+    Number.isInteger(suggestion.identityCount) &&
+    suggestion.identityCount > 0
+      ? suggestion.identityCount
+      : hasStoredReference
+        ? 1
+        : 0;
+  const hiddenStoredFaceCount = hasStoredReference ? Math.max(storedFaceCount - 1, 0) : 0;
+  const [reviewedSuggestionId, setReviewedSuggestionId] = React.useState<string | null>(null);
+  const requiresStoredFaceReview =
+    hiddenStoredFaceCount > 0 && reviewedSuggestionId !== suggestion.suggestionId;
+  const candidateAlt = __('Candidate face, position 1 of 1', 'alt-context');
+  const storedReferenceAlt = sprintf(
+    /* translators: 1: person's display name, 2: total stored faces */
+    __('%1$s stored face, position 1 of %2$d', 'alt-context'),
+    displayLabel,
+    storedFaceCount,
+  );
   const groupLabelId = `acx-assignment-pos-${suggestion.suggestionId}`;
 
   return (
@@ -166,7 +188,7 @@ export const SuggestionCard = ({
             <FaceCropControl
               mediaUrl={identityFace.mediaUrl}
               bbox={identityFace.bbox}
-              alt={__('Candidate face', 'alt-context')}
+              alt={candidateAlt}
               onOpen={onOpenOriginal}
               mediaId={suggestion.enrichment?.identityMediaId ?? undefined}
               identityId={suggestion.identityId}
@@ -175,7 +197,7 @@ export const SuggestionCard = ({
             <Avatar
               src={identityThumbUrl}
               size="lg"
-              alt={__('Candidate face', 'alt-context')}
+              alt={candidateAlt}
               className="acx-suggestion-card__thumb"
             />
           ) : (
@@ -193,14 +215,14 @@ export const SuggestionCard = ({
             <FaceCropControl
               mediaUrl={representativeFace.mediaUrl}
               bbox={representativeFace.bbox}
-              alt={displayLabel}
+              alt={storedReferenceAlt}
               onOpen={onOpenOriginal}
             />
           ) : representativeThumbUrl ? (
             <Avatar
               src={representativeThumbUrl}
               size="lg"
-              alt={displayLabel}
+              alt={storedReferenceAlt}
               className="acx-suggestion-card__thumb"
             />
           ) : (
@@ -229,6 +251,15 @@ export const SuggestionCard = ({
             <span className="acx-suggestion-card__confidence-flag">{__('Low confidence', 'alt-context')}</span>
           )}
         </p>
+        {hiddenStoredFaceCount > 0 ? (
+          <p className="acx-suggestion-card__count" role="status">
+            {sprintf(
+              /* translators: %d: number of stored identity faces not visible on this card */
+              __('%d more faces not shown', 'alt-context'),
+              hiddenStoredFaceCount,
+            )}
+          </p>
+        ) : null}
       </div>
 
       <div className="acx-suggestion-card__actions">
@@ -240,8 +271,14 @@ export const SuggestionCard = ({
               : 'button button-primary acx-suggestion-card__accept'
           }
           onClick={onAccept}
-          disabled={isPending}
-          title={isPending && disabledReason ? disabledReason : undefined}
+          disabled={isPending || requiresStoredFaceReview}
+          title={
+            requiresStoredFaceReview
+              ? __('Review all faces before approving.', 'alt-context')
+              : isPending && disabledReason
+                ? disabledReason
+                : undefined
+          }
           {...(accentPrimary ? { [ACCENT_PRIMARY_ATTR]: true } : {})}
         >
           {__('Yes', 'alt-context')}
@@ -261,7 +298,10 @@ export const SuggestionCard = ({
           <button
             type="button"
             className="button button-link acx-suggestion-card__review"
-            onClick={() => onReview(suggestion.clusterId)}
+            onClick={() => {
+              setReviewedSuggestionId(suggestion.suggestionId);
+              onReview(suggestion.clusterId);
+            }}
             title={__('Review these faces', 'alt-context')}
           >
             {__('Review details', 'alt-context')}

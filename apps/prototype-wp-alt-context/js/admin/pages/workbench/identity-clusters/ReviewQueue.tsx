@@ -30,7 +30,7 @@ import { EmptyStateWarning } from './EmptyStateWarning';
 import { QUERY_RETRY_COPY, QueryRetryButton, settledRefetchFailed } from './queryRetry';
 import { MergeSuggestionCard } from './MergeSuggestionCard';
 import { PersonCommitControl } from './PersonCommitControl';
-import { viewInRosterHref } from './personCommitCopy';
+import { MODEL_OUTPUT_DISCLOSURE, viewInRosterHref } from './personCommitCopy';
 import { shouldShowPersonCommit, isPersonCommitPrimaryKind } from './personCommitVisibility';
 import {
   CloseMatchAcceptOffer,
@@ -1868,6 +1868,9 @@ const CurrentCard = ({
   reviewQueueItems,
   onCloseMatchOffer,
 }: CurrentCardProps): React.JSX.Element | null => {
+  const [revealedNameSuggestionIds, setRevealedNameSuggestionIds] = React.useState<Set<string>>(
+    () => new Set(),
+  );
   // Arm focus before the POST so removal→key-change can place it; clear on
   // undo/failure (BR-13) so a later key change does not surprise-focus.
   const runScheduled = (schedule: () => Promise<ScheduleCommitResult>): void => {
@@ -2105,6 +2108,8 @@ const CurrentCard = ({
         personCommit.phase === PERSON_COMMIT_PHASE.SUCCEEDED && personCommit.clusterId === item.clusterId;
       const namePending =
         isCardPending(suggestion.id, nameKinds) || namePersonCommitDone || personCommitPending;
+      const isNameSuggestionRevealed = revealedNameSuggestionIds.has(suggestion.id);
+      const suggestionDisclosureId = `acx-name-suggestion-${suggestion.id}`;
       return (
         <ReviewCardGroupShell
           kind="name"
@@ -2115,6 +2120,7 @@ const CurrentCard = ({
           className="acx-suggestion-card acx-name-suggestion-card"
           data-testid="acx-review-card"
           data-review-kind="name"
+          data-suggestion-consulted={isNameSuggestionRevealed || undefined}
         >
           <SelectToggle
             selected={isSelected}
@@ -2122,22 +2128,47 @@ const CurrentCard = ({
             onToggle={onToggleSelect}
           />
           <div className="acx-suggestion-card__content">
-            <p className="acx-suggestion-card__question">
-              {__('Suggested name:', 'alt-context')} <strong>{suggestion.suggested_name}</strong>
-            </p>
-            {suggestion.confidence_score !== null && suggestion.confidence_score !== undefined ? (
-              <p className="acx-suggestion-card__match">
-                <span
-                  className={`acx-suggestion-confidence${isLow ? ' acx-suggestion-confidence--low' : ''}`}
-                >
-                  {Math.round(suggestion.confidence_score * 100)}%
-                </span>
-              </p>
+            <button
+              type="button"
+              className="button button-link"
+              aria-expanded={isNameSuggestionRevealed}
+              aria-controls={suggestionDisclosureId}
+              onClick={() => {
+                if (isNameSuggestionRevealed) {
+                  return;
+                }
+                setRevealedNameSuggestionIds((current) => {
+                  const next = new Set(current);
+                  next.add(suggestion.id);
+                  return next;
+                });
+                announce(__('Suggestion revealed.', 'alt-context'));
+              }}
+            >
+              {__('Show suggestion', 'alt-context')}
+            </button>
+            {isNameSuggestionRevealed ? (
+              <div id={suggestionDisclosureId}>
+                <p className="acx-suggestion-card__question">
+                  {__('Suggested name:', 'alt-context')}{' '}
+                  <strong>{suggestion.suggested_name}</strong>
+                </p>
+                {suggestion.confidence_score !== null && suggestion.confidence_score !== undefined ? (
+                  <p className="acx-suggestion-card__match">
+                    <span
+                      className={`acx-suggestion-confidence${isLow ? ' acx-suggestion-confidence--low' : ''}`}
+                    >
+                      {Math.round(suggestion.confidence_score * 100)}%
+                    </span>
+                  </p>
+                ) : null}
+                <p className="acx-person-commit__disclosure">
+                  {__(MODEL_OUTPUT_DISCLOSURE, 'alt-context')}
+                </p>
+              </div>
             ) : null}
           </div>
-          {personCommitFor(item.clusterId, NEXT_ACTION_KIND.NAME, {
-            suggestedCreateName: suggestion.suggested_name,
-          })}
+          {personCommitFor(item.clusterId, NEXT_ACTION_KIND.NAME)}
           <div className="acx-name-suggestion-card__actions acx-suggestion-card__actions">
             <button
               type="button"

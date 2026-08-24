@@ -2131,7 +2131,7 @@ describe('ReviewQueue', () => {
 
     renderQueue();
 
-    await screen.findByText(/Suggested name:/);
+    await screen.findByRole('button', { name: 'Show suggestion' });
     expect(screen.getByText('1 of 2 on this page')).toBeInTheDocument();
     const card = screen.getByTestId('acx-review-card');
     expect(card).toHaveAccessibleName(/Name suggestion 1 of 2/);
@@ -2456,7 +2456,7 @@ describe('ReviewQueue', () => {
     const onLabel = vi.fn();
     renderQueue({ onLabel });
 
-    await screen.findByText(/Suggested name:/);
+    await screen.findByRole('button', { name: 'Show suggestion' });
     await userEvent.setup().click(screen.getByRole('button', { name: 'Merge or split this group' }));
     expect(onLabel).toHaveBeenCalledWith('cluster-name-1');
   });
@@ -2485,10 +2485,58 @@ describe('ReviewQueue', () => {
 
     renderQueue();
 
-    await screen.findByText(/Suggested name:/);
+    await userEvent.setup().click(await screen.findByRole('button', { name: 'Show suggestion' }));
     const commit = screen.getByTestId('acx-person-commit');
     expect(commit).toHaveAttribute('data-person-commit-primary', 'true');
     expect(screen.getByText(MODEL_OUTPUT_DISCLOSURE)).toBeInTheDocument();
+  });
+
+  it('UXC-01: keeps the model name hidden and the reviewer input independent until keyboard disclosure', async () => {
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [],
+      limit: 10,
+      offset: 0,
+    });
+    vi.mocked(fetchPendingNameSuggestions).mockResolvedValue({
+      suggestions: [
+        {
+          id: 'name-1',
+          cluster_id: 'cluster-name-1',
+          suggested_name: 'Morgan',
+          confidence_score: 0.91,
+          source: 'test',
+          created_at: '2026-01-01T00:00:00Z',
+          expires_at: null,
+        },
+      ],
+      limit: 25,
+      offset: 0,
+    });
+
+    const user = userEvent.setup();
+    const { container } = renderQueue();
+    const commit = await screen.findByTestId('acx-person-commit');
+    const input = within(commit).getByRole('combobox', { name: PERSON_COMMIT_COMBOBOX_ARIA });
+
+    expect(input).toHaveValue('');
+    expect(screen.queryByText(/Suggested name:/)).not.toBeInTheDocument();
+    expect(screen.queryByText('Morgan')).not.toBeInTheDocument();
+
+    const showSuggestion = screen.getByRole('button', { name: 'Show suggestion' });
+    showSuggestion.focus();
+    await user.keyboard('{Enter}');
+
+    expect(screen.getByText(/Suggested name:/)).toHaveTextContent('Suggested name: Morgan');
+    expect(screen.getByText(MODEL_OUTPUT_DISCLOSURE)).toBeInTheDocument();
+    expect(input).toHaveValue('');
+    expect(showSuggestion).toHaveAttribute('aria-expanded', 'true');
+    expect(showSuggestion).toHaveFocus();
+    expect(screen.getByTestId('acx-review-card')).toHaveAttribute('data-suggestion-consulted', 'true');
+    await waitFor(() => {
+      expect(container.querySelector('.acx-review-queue__live')).toHaveTextContent(
+        'Suggestion revealed.',
+      );
+    });
   });
 
   it('shows person-commit as primary on CLUSTER cards', async () => {

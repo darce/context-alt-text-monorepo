@@ -9,6 +9,7 @@ import { __ } from '@wordpress/i18n';
  */
 import { useMediaStats } from '../hooks/useMediaStats';
 import { useRecognitionJobHistory } from '../hooks/useRecognitionJobHistory';
+import { isScanActiveStatus } from '../hooks/jobStateMachineUtils';
 import { useIdentityStats } from '../hooks/useIdentityStats';
 import { useResetMirror } from '../hooks/useSyncTrigger';
 import { useSyncHealth } from '../hooks/useSyncHealth';
@@ -21,6 +22,7 @@ import { DashboardSyncHealthSection } from './dashboard/DashboardSyncHealthSecti
 import { OrientationCard } from './dashboard/OrientationCard';
 import {
   DASHBOARD_FLOW_STATE,
+  DASHBOARD_ORIENTATION_POSITION,
   buildDashboardPriorityModel,
   type DashboardFlowState,
   type DashboardSectionId,
@@ -51,18 +53,6 @@ const formatDiagnosticDate = (value: string | null | undefined): string | null =
   return Number.isNaN(date.getTime()) ? null : date.toLocaleDateString();
 };
 
-const ACTIVE_RECOGNITION_STATUS = {
-  QUEUED: 'queued',
-  PROCESSING: 'processing',
-  RUNNING: 'running',
-  DETECTING: 'detecting',
-  CLUSTERING: 'clustering',
-  RETRYING: 'retrying',
-  AWAITING_PROJECTION: 'awaiting_projection',
-} as const;
-
-const ACTIVE_RECOGNITION_STATUSES = new Set<string>(Object.values(ACTIVE_RECOGNITION_STATUS));
-
 export const DashboardPage = (): React.JSX.Element => {
   const { stats, isLoading: isStatsLoading } = useMediaStats();
   const { jobStatuses, jobDetails, recentActivity = [], historySource = 'unavailable' } = useRecognitionJobHistory();
@@ -91,9 +81,7 @@ export const DashboardPage = (): React.JSX.Element => {
   const topologyConflicts = normalizeCount(syncStatus?.topology_commands?.conflict);
   const lastConflictDate = formatDiagnosticDate(syncStatus?.last_curation_conflict_at);
   const lastFailureDate = formatDiagnosticDate(syncStatus?.last_curation_failed_at);
-  const isRecognitionScanning = Object.values(jobStatuses).some((status) =>
-    ACTIVE_RECOGNITION_STATUSES.has(status.toLowerCase()),
-  );
+  const isRecognitionScanning = Object.values(jobStatuses).some((status) => isScanActiveStatus(status.toLowerCase()));
   const flowState: DashboardFlowState = identityStats?.assigned_clusters_count
     ? DASHBOARD_FLOW_STATE.FIRST_NAMED
     : identityStats &&
@@ -323,7 +311,7 @@ export const DashboardPage = (): React.JSX.Element => {
     <section className="acx-dashboard__shell" aria-labelledby="acx-dashboard-title">
       <header className="acx-dashboard__hero">
         <p className="acx-dashboard__eyebrow">{__('Alt Context', 'alt-context')}</p>
-        <h1 id="acx-dashboard-title" className="acx-dashboard__title">
+        <h1 id="acx-dashboard-title" className="acx-dashboard__title" tabIndex={-1}>
           {__('Overview', 'alt-context')}
         </h1>
         <p className="acx-dashboard__subtitle">
@@ -331,7 +319,7 @@ export const DashboardPage = (): React.JSX.Element => {
         </p>
       </header>
 
-      {priorityModel.orientationPosition === 'before_grid' ? <OrientationCard /> : null}
+      {priorityModel.orientationPosition === DASHBOARD_ORIENTATION_POSITION.BEFORE_GRID ? <OrientationCard /> : null}
 
       <div className="acx-dashboard__grid">
         {priorityModel.gridSectionOrder.map((sectionId) => (

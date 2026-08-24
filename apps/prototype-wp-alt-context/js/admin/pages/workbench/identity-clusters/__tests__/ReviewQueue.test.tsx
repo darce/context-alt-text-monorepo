@@ -1805,7 +1805,7 @@ describe('ReviewQueue', () => {
     });
   });
 
-  it('re-announces identical live copy via seq-keyed region (HARM-02 / BR-68)', async () => {
+  it('DUX-L7-RV-03: re-announces identical copy through one persistent live node', async () => {
     // Capture announce so we can fire the SAME string twice consecutively —
     // plain useState would Object.is-bail; useAriaAnnounce must bump seq.
     const original = useAriaAnnounceMod.useAriaAnnounce;
@@ -1839,13 +1839,19 @@ describe('ReviewQueue', () => {
         expect(latestAnnounce).not.toBeNull();
       });
 
+      const persistentLive = document.querySelector('.acx-review-queue__live');
+      expect(persistentLive).toBeInTheDocument();
+      expect(persistentLive).toBeEmptyDOMElement();
+
       const repeatCopy = LIVE_TARGET_CLOSE_ANNOUNCE;
       act(() => {
         latestAnnounce?.(repeatCopy);
       });
-      const live1 = document.querySelector('.acx-review-queue__live');
-      expect(live1).toHaveTextContent(repeatCopy);
-      const seq1 = live1?.getAttribute('data-announce-seq');
+      await waitFor(() => {
+        expect(persistentLive).toHaveTextContent(repeatCopy);
+      });
+      expect(document.querySelector('.acx-review-queue__live')).toBe(persistentLive);
+      const seq1 = persistentLive?.getAttribute('data-announce-seq');
       expect(seq1).toBeTruthy();
 
       act(() => {
@@ -1854,6 +1860,7 @@ describe('ReviewQueue', () => {
       await waitFor(() => {
         const live2 = document.querySelector('.acx-review-queue__live');
         expect(live2).toHaveTextContent(repeatCopy);
+        expect(live2).toBe(persistentLive);
         expect(live2?.getAttribute('data-announce-seq')).not.toBe(seq1);
       });
     } finally {
@@ -2491,7 +2498,17 @@ describe('ReviewQueue', () => {
     expect(screen.getByText(MODEL_OUTPUT_DISCLOSURE)).toBeInTheDocument();
   });
 
-  it('UXC-01: keeps the model name hidden and the reviewer input independent until keyboard disclosure', async () => {
+  it('DUX-L7-RV-02: exposes the model-output disclosure as an inline gettext literal', () => {
+    const source = readFileSync(
+      path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../personCommitCopy.ts'),
+      'utf8',
+    );
+    expect(source).toMatch(
+      /__\(\s*'Suggested by face matching based on similarity — confirm before treating it as fact\.'\s*,\s*'alt-context'\s*\)/,
+    );
+  });
+
+  it('DUX-L7-RV-01 DUX-L7-RV-04: Tab-reachable disclosure toggles closed on second keyboard activation', async () => {
     vi.mocked(fetchPendingSuggestions).mockResolvedValue({
       suggestions: [],
       limit: 10,
@@ -2523,7 +2540,10 @@ describe('ReviewQueue', () => {
     expect(screen.queryByText('Morgan')).not.toBeInTheDocument();
 
     const showSuggestion = screen.getByRole('button', { name: 'Show suggestion' });
-    showSuggestion.focus();
+    for (let tabs = 0; tabs < 20 && document.activeElement !== showSuggestion; tabs += 1) {
+      await user.tab();
+    }
+    expect(showSuggestion).toHaveFocus();
     await user.keyboard('{Enter}');
 
     expect(screen.getByText(/Suggested name:/)).toHaveTextContent('Suggested name: Morgan');
@@ -2536,6 +2556,63 @@ describe('ReviewQueue', () => {
       expect(container.querySelector('.acx-review-queue__live')).toHaveTextContent(
         'Suggestion revealed.',
       );
+    });
+
+    await user.keyboard('{Enter}');
+    expect(screen.queryByText(/Suggested name:/)).not.toBeInTheDocument();
+    expect(screen.queryByText('Morgan')).not.toBeInTheDocument();
+    expect(showSuggestion).toHaveAttribute('aria-expanded', 'false');
+    expect(showSuggestion).toHaveAccessibleName('Show suggestion');
+    expect(showSuggestion).toHaveFocus();
+  });
+
+  it('DUX-L7-RV-04: NAME person-commit drain moves focus to the empty-state anchor', async () => {
+    vi.mocked(fetchPendingSuggestions).mockResolvedValue({ suggestions: [], limit: 10, offset: 0 });
+    vi.mocked(fetchPendingNameSuggestions).mockResolvedValue({
+      suggestions: [
+        {
+          id: 'name-only',
+          cluster_id: 'cluster-name-only',
+          suggested_name: 'Morgan',
+          confidence_score: 0.91,
+          source: 'test',
+          created_at: '2026-01-01T00:00:00Z',
+          expires_at: null,
+        },
+      ],
+      limit: 25,
+      offset: 0,
+    });
+    vi.mocked(commitClusterToRosterEntry).mockResolvedValue(
+      rosterCommitFixture({ cluster_id: 'cluster-name-only', person_name: 'Alex' }),
+    );
+
+    const anchorRef = React.createRef<HTMLDivElement>();
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, retryDelay: 0 } },
+    });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <MergeSurvivorProvider>
+          <div ref={anchorRef} className="acx-findings-detail-anchor" tabIndex={-1}>
+            <ReviewQueueHarness emptyStateAnchorRef={anchorRef} />
+          </div>
+        </MergeSurvivorProvider>
+      </QueryClientProvider>,
+    );
+
+    const user = userEvent.setup();
+    await typePersonName(user, 'Alex');
+    await waitFor(() => {
+      expect(commitClusterToRosterEntry).toHaveBeenCalledWith({
+        clusterId: 'cluster-name-only',
+        rosterEntryId: 7,
+        newEntryName: undefined,
+      });
+    });
+    await waitFor(() => {
+      expect(screen.getAllByText('All caught up — no items need review').length).toBeGreaterThan(0);
+      expect(document.activeElement).toBe(anchorRef.current);
     });
   });
 

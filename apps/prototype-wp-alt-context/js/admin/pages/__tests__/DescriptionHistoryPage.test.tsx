@@ -3,7 +3,10 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { DescriptionHistoryPage } from '../DescriptionHistoryPage';
+import {
+  DescriptionHistoryPage,
+  HISTORY_STATUS_FILTER_VALUE,
+} from '../DescriptionHistoryPage';
 import {
   correctDescriptionHistoryItem,
   fetchDescribeRunItems,
@@ -203,7 +206,13 @@ describe('DescriptionHistoryPage', () => {
     const liveStatus = screen.getByTestId('acx-description-history-status');
     expect(liveStatus).toHaveAttribute('role', 'status');
     expect(liveStatus).toHaveAttribute('aria-live', 'polite');
-    expect(liveStatus).toHaveTextContent('Loading description history...');
+    expect(liveStatus).toBeEmptyDOMElement();
+    expect(screen.getByText('Loading description history...', { selector: 'p' })).toBeVisible();
+
+    await waitFor(() => {
+      expect(screen.getByTestId('acx-description-history-status')).toBe(liveStatus);
+      expect(liveStatus).toHaveTextContent('Loading description history...');
+    });
 
     resolveHistory({ total: 1, items: [historyItem] });
 
@@ -459,28 +468,86 @@ describe('DescriptionHistoryPage', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Clear filters' }));
 
     expect(screen.getByLabelText('Search descriptions')).toHaveValue('');
-    expect(screen.getByLabelText('Run status filter')).toHaveValue('all');
+    expect(HISTORY_STATUS_FILTER_VALUE).toEqual({ ALL: 'all' });
+    expect(screen.getByLabelText('Run status filter')).toHaveValue(HISTORY_STATUS_FILTER_VALUE.ALL);
     expect(screen.getByText('Bridge')).toBeInTheDocument();
     expect(screen.getByText('Portrait')).toBeInTheDocument();
   });
 
-  it('retains the last good list and shows the refetch error in the shared notice [D-19][HAI-15][RLSE-04]', async () => {
+  it('retains the last good list and distinguishes a failed refresh [DUX-L9-RV-02][D-19][HAI-15][RLSE-04]', async () => {
     const queryClient = buildClient();
     fetchHistoryMock
       .mockResolvedValueOnce({ total: 1, items: [historyItem] })
-      .mockRejectedValueOnce(new Error('History refresh failed.'));
+      .mockRejectedValueOnce(new Error('GET /description-history returned database host details'));
 
     renderPage(['/description-history'], queryClient);
 
     expect(await screen.findByText('Bridge')).toBeInTheDocument();
+    const errorRegion = screen.getByTestId('acx-description-history-error');
+    expect(errorRegion).toHaveAttribute('role', 'alert');
+    expect(errorRegion).toBeEmptyDOMElement();
     await act(async () => {
       await queryClient.invalidateQueries({ queryKey: ['description-history'] });
     });
 
     expect(screen.getByText('Bridge')).toBeInTheDocument();
     const notice = await screen.findByTestId('acx-user-facing-error');
+    expect(screen.getByTestId('acx-description-history-error')).toBe(errorRegion);
     expect(notice).toHaveAttribute('data-error-kind', 'generic');
-    expect(notice).toHaveTextContent('History refresh failed.');
+    expect(notice).toHaveTextContent('Could not load description history.');
+    expect(screen.queryByText(/database host details/i)).not.toBeInTheDocument();
+    expect(screen.getByTestId('acx-description-history-status')).toHaveTextContent(
+      'Refresh failed; previously loaded history remains shown.',
+    );
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeVisible();
+  });
+
+  it('distinguishes a no-data history failure and keeps the persistent regions [DUX-L9-RV-01][DUX-L9-RV-02][DUX-L9-RV-03]', async () => {
+    fetchHistoryMock.mockRejectedValueOnce(
+      new Error('GET /description-history exposed internal endpoint detail'),
+    );
+
+    renderPage();
+
+    const statusRegion = screen.getByTestId('acx-description-history-status');
+    const errorRegion = screen.getByTestId('acx-description-history-error');
+    expect(statusRegion).toBeEmptyDOMElement();
+    expect(errorRegion).toHaveAttribute('role', 'alert');
+    expect(errorRegion).toBeEmptyDOMElement();
+    expect(screen.getByText('Loading description history...', { selector: 'p' })).toBeVisible();
+
+    const notice = await screen.findByTestId('acx-user-facing-error');
+    expect(screen.getByTestId('acx-description-history-error')).toBe(errorRegion);
+    expect(notice).toHaveTextContent('Could not load description history.');
+    expect(screen.queryByText(/internal endpoint detail/i)).not.toBeInTheDocument();
+    expect(screen.getByTestId('acx-description-history-status')).toBe(statusRegion);
+    expect(statusRegion).toHaveTextContent('History could not be loaded.');
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeVisible();
+  });
+
+  it('recovers a no-data history failure through Retry [DUX-L9-RV-02]', async () => {
+    fetchHistoryMock
+      .mockRejectedValueOnce(new Error('Initial history request failed.'))
+      .mockResolvedValueOnce({ total: 1, items: [historyItem] });
+
+    renderPage();
+
+    const statusRegion = screen.getByTestId('acx-description-history-status');
+    const errorRegion = screen.getByTestId('acx-description-history-error');
+    const retry = await screen.findByRole('button', { name: 'Retry' });
+    expect(statusRegion).toHaveTextContent('History could not be loaded.');
+
+    fireEvent.click(retry);
+
+    expect(await screen.findByText('Bridge')).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByTestId('acx-description-history-status')).toBe(statusRegion);
+      expect(statusRegion).toHaveTextContent('Description history ready.');
+      expect(screen.getByTestId('acx-description-history-error')).toBe(errorRegion);
+      expect(errorRegion).toBeEmptyDOMElement();
+    });
+    expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument();
+    expect(fetchHistoryMock).toHaveBeenCalledTimes(2);
   });
 
   it('switches to the run-apply surface when a ?run= deep link is present', async () => {

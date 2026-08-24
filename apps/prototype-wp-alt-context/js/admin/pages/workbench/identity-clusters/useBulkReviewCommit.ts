@@ -137,10 +137,12 @@ export interface UseBulkReviewCommitOptions {
   /** Host assigns awaitBulkIdleOrFlush for single-commit busy path. */
   awaitBulkIdleOrFlushRef: React.MutableRefObject<(() => Promise<void>) | null>;
   /**
-   * HAI-17 / DUX-W2R2-RV-01: when any resolved id is blocked, initiate and
-   * retry abort all-or-nothing (same rule as the tray Accept).
+   * HAI-17 / DUX-W2R2-RV-04: REQUIRED. When any resolved id is blocked,
+   * every write path aborts all-or-nothing (same rule as the tray Accept).
+   * Hosts must fail closed on unknown/unresolvable ids. Omitting the
+   * predicate is a type error; a missing runtime value also blocks writes.
    */
-  isApprovalBlocked?: (suggestionId: string) => boolean;
+  isApprovalBlocked: (suggestionId: string) => boolean;
 }
 
 export interface UseBulkReviewCommitResult {
@@ -590,7 +592,11 @@ export const useBulkReviewCommit = ({
 
   const itemsAreApprovalBlocked = React.useCallback((items: readonly BulkCommitItem[]): boolean => {
     const blocked = isApprovalBlockedRef.current;
-    return Boolean(blocked && items.some((item) => blocked(item.suggestionId)));
+    // Fail closed: a missing host predicate must not silently permit writes.
+    if (typeof blocked !== 'function') {
+      return items.length > 0;
+    }
+    return items.some((item) => blocked(item.suggestionId));
   }, []);
 
   const initiateBulk = React.useCallback(async (): Promise<void> => {
@@ -678,6 +684,9 @@ export const useBulkReviewCommit = ({
       if (items.length === 0) {
         return;
       }
+      if (itemsAreApprovalBlocked(items)) {
+        return;
+      }
 
       bulkInitiateInFlightRef.current = true;
       isBulkActiveRef.current = true;
@@ -708,6 +717,9 @@ export const useBulkReviewCommit = ({
           if (nextItems.length === 0) {
             return;
           }
+          if (itemsAreApprovalBlocked(nextItems)) {
+            return;
+          }
 
           openBulkHold(nextItems, true);
         } finally {
@@ -718,7 +730,7 @@ export const useBulkReviewCommit = ({
       initiatePromiseRef.current = run;
       await run;
     },
-    [clearBulkInitiateLatch, dropFromSelection, openBulkHold],
+    [clearBulkInitiateLatch, dropFromSelection, itemsAreApprovalBlocked, openBulkHold],
   );
 
   const undoBulk = React.useCallback((): void => {
@@ -850,14 +862,24 @@ export const useBulkReviewCommit = ({
               (i) => i.suggestionId,
             ),
           );
-      const first = stillSelected.find((i) => allowedNow.has(i.suggestionId));
-      if (first) {
-        setBulkActionActiveRef.current(true);
-        void commitOneRef.current(first.commitKind, first.suggestionId).finally(() => {
-          setBulkActionActiveRef.current(false);
-          onBulkSequenceSettledRef.current?.();
-        });
+      const drainItems = stillSelected.filter((i) => allowedNow.has(i.suggestionId));
+      if (drainItems.length === 0) {
+        return;
       }
+      // DUX-W2R2-RV-04: re-check HAI-17 at drain — any blocked id aborts the whole set.
+      const blocked = isApprovalBlockedRef.current;
+      if (
+        typeof blocked !== 'function' ||
+        drainItems.some((item) => blocked(item.suggestionId))
+      ) {
+        return;
+      }
+      const first = drainItems[0];
+      setBulkActionActiveRef.current(true);
+      void commitOneRef.current(first.commitKind, first.suggestionId).finally(() => {
+        setBulkActionActiveRef.current(false);
+        onBulkSequenceSettledRef.current?.();
+      });
     };
   }, [clearHeldTimer]);
 

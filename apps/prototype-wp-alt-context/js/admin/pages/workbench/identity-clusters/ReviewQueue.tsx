@@ -414,9 +414,10 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
       awaitBulkIdleOrFlushRef: data.awaitBulkIdleOrFlushRef,
       isApprovalBlocked: (suggestionId) => {
         const suggestion = assignmentById.get(suggestionId);
+        // DUX-W2R2-RV-04: unknown/unresolvable ids fail closed (block), never open.
         return suggestion
           ? isStoredFaceApprovalBlocked(suggestion, reviewedStoredFaceSuggestionIds)
-          : false;
+          : true;
       },
     });
 
@@ -989,9 +990,10 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
 
     const storedFaceSelectionBlocksCommit = filteredSelectedIds.some((suggestionId) => {
       const suggestion = assignmentById.get(suggestionId);
+      // DUX-W2R2-RV-04: unknown/unresolvable ids fail closed (block), never open.
       return suggestion
         ? isStoredFaceApprovalBlocked(suggestion, reviewedStoredFaceSuggestionIds)
-        : false;
+        : true;
     });
     const storedFaceSelectionReasonId = 'acx-review-queue-stored-face-review-reason';
     const truncationReasonId = 'acx-review-queue-truncation-reason';

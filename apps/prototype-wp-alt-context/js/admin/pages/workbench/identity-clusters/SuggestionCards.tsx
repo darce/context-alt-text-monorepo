@@ -8,6 +8,7 @@ import type { BoundingBox } from '../../../api/recognition/types/identity';
 import { ReviewCardGroupShell } from './reviewCardGroupAccname';
 import { REPRESENTATIVE_VOCABULARY } from './representativeVocabulary';
 import type { ReviewSuggestion, SuggestionReviewItem } from './suggestionReviewItems';
+import { requiresStoredFaceReview } from './storedFaceReviewGate';
 import { ACCENT_PRIMARY_ATTR } from '../mediaFooterCtaState';
 
 export type { ReviewSuggestion, SuggestionReviewItem };
@@ -26,6 +27,10 @@ interface SuggestionCardProps {
   onAccept: () => void;
   onReject: () => void;
   onReview?: (clusterId?: string) => void;
+  /** Parent-owned evidence that this suggestion's stored-face list was rendered. */
+  isStoredFaceReviewComplete?: boolean;
+  /** Called only after the inline stored-face list has mounted. */
+  onStoredFaceReviewPresented?: (suggestionId: string) => void;
   /** Opens click-to-original lightbox for a face crop (E21-5 ②). */
   onOpenOriginal?: (target: FaceOriginalTarget) => void;
   isPending: boolean;
@@ -121,6 +126,8 @@ export const SuggestionCard = ({
   onAccept,
   onReject,
   onReview,
+  isStoredFaceReviewComplete,
+  onStoredFaceReviewPresented,
   onOpenOriginal,
   isPending,
   disabledReason = null,
@@ -150,19 +157,20 @@ export const SuggestionCard = ({
   const identityThumbUrl = suggestion.enrichment?.identityThumbUrl ?? suggestion.enrichment?.identityMediaUrl ?? null;
   const representativeThumbUrl =
     suggestion.enrichment?.representativeThumbUrl ?? suggestion.enrichment?.representativeMediaUrl ?? null;
-  const hasStoredReference = representativeFace !== null || representativeThumbUrl !== null;
   const storedFaceCount =
     typeof suggestion.identityCount === 'number' &&
     Number.isInteger(suggestion.identityCount) &&
     suggestion.identityCount > 0
       ? suggestion.identityCount
-      : hasStoredReference
+      : representativeFace !== null || representativeThumbUrl !== null
         ? 1
         : 0;
-  const hiddenStoredFaceCount = hasStoredReference ? Math.max(storedFaceCount - 1, 0) : 0;
-  const [reviewedSuggestionId, setReviewedSuggestionId] = React.useState<string | null>(null);
-  const requiresStoredFaceReview =
-    hiddenStoredFaceCount > 0 && reviewedSuggestionId !== suggestion.suggestionId;
+  const hiddenStoredFaceCount = Math.max(storedFaceCount - 1, 0);
+  const [storedFaceDisclosureOpen, setStoredFaceDisclosureOpen] = React.useState(false);
+  const [locallyPresentedSuggestionId, setLocallyPresentedSuggestionId] = React.useState<string | null>(null);
+  const reviewIsComplete =
+    isStoredFaceReviewComplete ?? locallyPresentedSuggestionId === suggestion.suggestionId;
+  const approvalRequiresReview = requiresStoredFaceReview(suggestion) && !reviewIsComplete;
   const candidateAlt = __('Candidate face, position 1 of 1', 'alt-context');
   const storedReferenceAlt = sprintf(
     /* translators: 1: person's display name, 2: total stored faces */
@@ -171,6 +179,23 @@ export const SuggestionCard = ({
     storedFaceCount,
   );
   const groupLabelId = `acx-assignment-pos-${suggestion.suggestionId}`;
+  const approvalReasonId = `acx-suggestion-review-reason-${suggestion.suggestionId}`;
+  const pendingReasonId = `acx-suggestion-pending-reason-${suggestion.suggestionId}`;
+  const storedFaceListLabel = sprintf(
+    /* translators: %s: person's display name */
+    __('Stored faces for %s', 'alt-context'),
+    displayLabel,
+  );
+  const markStoredFacesPresented = React.useCallback(
+    (node: HTMLUListElement | null): void => {
+      if (!node) {
+        return;
+      }
+      setLocallyPresentedSuggestionId(suggestion.suggestionId);
+      onStoredFaceReviewPresented?.(suggestion.suggestionId);
+    },
+    [onStoredFaceReviewPresented, suggestion.suggestionId],
+  );
 
   return (
     <ReviewCardGroupShell
@@ -252,7 +277,7 @@ export const SuggestionCard = ({
           )}
         </p>
         {hiddenStoredFaceCount > 0 ? (
-          <p className="acx-suggestion-card__count" role="status">
+          <p className="acx-suggestion-card__count">
             {sprintf(
               /* translators: %d: number of stored identity faces not visible on this card */
               __('%d more faces not shown', 'alt-context'),
@@ -260,9 +285,63 @@ export const SuggestionCard = ({
             )}
           </p>
         ) : null}
+        {storedFaceDisclosureOpen && requiresStoredFaceReview(suggestion) ? (
+          <ul
+            ref={markStoredFacesPresented}
+            className="acx-suggestion-card__stored-face-list"
+            aria-label={storedFaceListLabel}
+          >
+            {Array.from({ length: storedFaceCount }, (_, index) => {
+              const position = index + 1;
+              const hasImage = position === 1 && representativeThumbUrl !== null;
+              return (
+                <li key={position} className="acx-suggestion-card__stored-face-list-item">
+                  {hasImage ? (
+                    <Avatar
+                      src={representativeThumbUrl}
+                      size="sm"
+                      alt={sprintf(
+                        /* translators: 1: person's display name, 2: face position, 3: total stored faces */
+                        __('%1$s stored face, position %2$d of %3$d', 'alt-context'),
+                        displayLabel,
+                        position,
+                        storedFaceCount,
+                      )}
+                    />
+                  ) : null}
+                  <span>
+                    {hasImage
+                      ? sprintf(
+                          /* translators: 1: face position, 2: total stored faces */
+                          __('Stored face %1$d of %2$d', 'alt-context'),
+                          position,
+                          storedFaceCount,
+                        )
+                      : sprintf(
+                          /* translators: 1: face position, 2: total stored faces */
+                          __('Stored face %1$d of %2$d — Image unavailable', 'alt-context'),
+                          position,
+                          storedFaceCount,
+                        )}
+                  </span>
+                </li>
+              );
+            })}
+          </ul>
+        ) : null}
       </div>
 
       <div className="acx-suggestion-card__actions">
+        {approvalRequiresReview ? (
+          <p id={approvalReasonId} className="acx-suggestion-card__disabled-reason">
+            {__('Review all stored faces before approving.', 'alt-context')}
+          </p>
+        ) : null}
+        {isPending && disabledReason ? (
+          <p id={pendingReasonId} className="acx-suggestion-card__disabled-reason">
+            {disabledReason}
+          </p>
+        ) : null}
         <button
           type="button"
           className={
@@ -270,13 +349,18 @@ export const SuggestionCard = ({
               ? 'button button-primary acx-suggestion-card__accept acx-accent-primary-action'
               : 'button button-primary acx-suggestion-card__accept'
           }
-          onClick={onAccept}
-          disabled={isPending || requiresStoredFaceReview}
-          title={
-            requiresStoredFaceReview
-              ? __('Review all faces before approving.', 'alt-context')
+          onClick={() => {
+            if (!approvalRequiresReview) {
+              onAccept();
+            }
+          }}
+          disabled={isPending || approvalRequiresReview}
+          aria-disabled={isPending || approvalRequiresReview ? true : undefined}
+          aria-describedby={
+            approvalRequiresReview
+              ? approvalReasonId
               : isPending && disabledReason
-                ? disabledReason
+                ? pendingReasonId
                 : undefined
           }
           {...(accentPrimary ? { [ACCENT_PRIMARY_ATTR]: true } : {})}
@@ -289,18 +373,19 @@ export const SuggestionCard = ({
           className="button acx-suggestion-card__reject"
           onClick={onReject}
           disabled={isPending}
-          title={isPending && disabledReason ? disabledReason : undefined}
+          aria-disabled={isPending ? true : undefined}
+          aria-describedby={isPending && disabledReason ? pendingReasonId : undefined}
         >
           {__('No', 'alt-context')}
         </button>
         {actionAccessoryAfter === 'reject' ? actionAccessory : null}
-        {onReview ? (
+        {onReview || requiresStoredFaceReview(suggestion) ? (
           <button
             type="button"
             className="button button-link acx-suggestion-card__review"
             onClick={() => {
-              setReviewedSuggestionId(suggestion.suggestionId);
-              onReview(suggestion.clusterId);
+              setStoredFaceDisclosureOpen(true);
+              onReview?.(suggestion.clusterId);
             }}
             title={__('Review these faces', 'alt-context')}
           >

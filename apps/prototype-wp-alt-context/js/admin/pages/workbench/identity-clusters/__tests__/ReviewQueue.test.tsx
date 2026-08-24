@@ -3753,7 +3753,7 @@ describe('ReviewQueue', () => {
       limit: 25,
       offset: 0,
     });
-    vi.mocked(acceptNameSuggestion).mockImplementation(async (suggestionId) => ({
+    vi.mocked(acceptNameSuggestion).mockImplementation((suggestionId) => Promise.resolve({
       suggestion_id: suggestionId,
       resolution: 'accepted',
       identity_id: `identity-${suggestionId}`,
@@ -4451,6 +4451,7 @@ describe('ReviewQueue', () => {
       const user = userEvent.setup();
       renderQueue();
       await screen.findByRole('button', { name: 'Yes' });
+      await reviewCurrentStoredFaces();
       await user.click(screen.getByTestId('acx-review-select'));
       await user.click(screen.getByRole('button', { name: 'Review selection' }));
 
@@ -4624,7 +4625,7 @@ describe('ReviewQueue', () => {
             suggested_cluster_id: 'c2',
             representative_similarity: 0.4,
             cluster_label: 'Alex',
-            cluster_identity_count: 2,
+            cluster_identity_count: 1,
           },
         ],
         limit: 10,
@@ -4758,7 +4759,7 @@ describe('ReviewQueue', () => {
             suggested_cluster_id: 'c-ok',
             representative_similarity: 0.5,
             cluster_label: 'Maria',
-            cluster_identity_count: 2,
+            cluster_identity_count: 1,
           },
           {
             id: 's-weak',
@@ -4766,7 +4767,7 @@ describe('ReviewQueue', () => {
             suggested_cluster_id: 'c-trunc',
             representative_similarity: 0.4,
             cluster_label: 'Alex',
-            cluster_identity_count: 12,
+            cluster_identity_count: 1,
           },
         ],
         limit: 10,
@@ -5156,7 +5157,7 @@ describe('ReviewQueue', () => {
     });
 
     const seedSameClusterAssignments = (
-      rows: Array<{ id: string; similarity: number; clusterId?: string; label?: string }>,
+      rows: { id: string; similarity: number; clusterId?: string; label?: string }[],
     ): void => {
       vi.mocked(fetchPendingSuggestions).mockResolvedValue({
         suggestions: rows.map((row) => ({

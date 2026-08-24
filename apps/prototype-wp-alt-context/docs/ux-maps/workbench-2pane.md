@@ -50,6 +50,18 @@ by other lanes and are not yet covered by this list.
 
 ### Workbench (2-pane) (`workbench-2pane-shell`)
 
+Purpose: Two-pane operator surface: left control (face-group/recognize/name/curate), right media library (alt-text + long-description). Overlays host conflicts and dead-letter.
+
+url_params: `pane`, `cluster`, `media`, `panel`, `status`, `endpoint`, `s`, `p`, `perPage`
+
+| zone id | label | role | states |
+| --- | --- | --- | --- |
+| `z-topbar` | Workbench header + recognition endpoint (read-only status; server-resolved) + sync/projection status strip | status | default, loading, error, degraded |
+| `z-left-host` | Left pane host (control surface) | content | default, loading, empty, error |
+| `z-splitter` | Pane divider / collapse-left control | other | default |
+| `z-right-host` | Right pane host (media library) | content | default, loading, empty, error |
+| `z-overlay-host` | Overlay host (conflicts \| dead-letter) | other | default, empty |
+
 ```
 +------------------------------------------------------------+
 | Workbench (2-pane)  [screen]  #/workbench                  |
@@ -73,6 +85,18 @@ by other lanes and are not yet covered by this list.
 
 ### Control surface (left pane) (`workbench-control`)
 
+Purpose: Recognize, name, and curate: recognition endpoint + health, UMAP face-group scatter, face-group list, run/refresh controls, and the name/curate forced-choice form.
+
+url_params: `pane`, `cluster`, `endpoint`
+
+| zone id | label | role | states |
+| --- | --- | --- | --- |
+| `z-endpoint` | Recognition endpoint + health (read-only: InsightFace :10010 interim; FIR when stable; target is server-resolved via ACX_RECOGNITION_URL, no UI toggle per RECOG-1) | status | default, loading, error, degraded |
+| `z-recognition-controls` | Face-group/recognition controls (run, refresh, threshold) | job | default, loading, error |
+| `z-cluster-umap` | UMAP face-group scatter (2D projection of faces; select to drive right pane) | ai_review | default, loading, empty, error, first_time |
+| `z-cluster-list` | Face-group list / selection (size, confidence, unnamed-first) + NameFaceControl (loading = in-flight name write; the suggestions disclosure being open or closed is part of default) | queue | default, loading, empty, error |
+| `z-name-curate` | Name this person (NameFaceControl; confirm / correct / merge / split; forced-choice; loading = pending roster write; error = roster write failed; edge_input = ambiguous candidate set or duplicate-name guard; default = overlay closed or suggestions open) | forced_choice | default, loading, empty, error, edge_input |
+
 ```
 +------------------------------------------------------------+
 | Control surface (left pane)  [screen]  #/workbench?pane=c… |
@@ -85,8 +109,7 @@ by other lanes and are not yet covered by this list.
 |   - Face-group list / selection + NameFaceControl (queue)  |
 |   - Name this person (NameFaceControl) (forced_choice)     |
 |     z-name-curate states=[default,loading,empty,error,     |
-|     pending,suggestions-open,roster-error,ambiguous,       |
-|     overlay-closed,duplicate-guard]                        |
+|     edge_input]                                            |
 +------------------------------------------------------------+
 | ACTIONS                                                    |
 |   [PRIMARY] Run / refresh recognition + grouping -> job-p… |
@@ -101,6 +124,18 @@ by other lanes and are not yet covered by this list.
 ```
 
 ### Media library (right pane) (`workbench-library`)
+
+Purpose: Media library table with alt-text caption and long-description columns; inline editing, AI-suggested captions/descriptions (editable before accept), and bulk describe/scan.
+
+url_params: `pane`, `media`, `cluster`, `status`, `s`, `p`, `perPage`
+
+| zone id | label | role | states |
+| --- | --- | --- | --- |
+| `z-lib-filters` | Library filters (status, has-alt, has-description, face group, search) | form | default, edge_input |
+| `z-lib-table` | Media library table (thumb \| title \| status \| alt-text \| long description \| people) | queue | default, loading, empty, error |
+| `z-lib-inline-edit` | Inline person naming (NameFaceControl) + alt-text / long-description editor (loading = pending save; the suggestions disclosure being open or closed is part of default) | form | default, loading, empty, error |
+| `z-lib-ai-suggest` | AI name / caption suggestions (evidence-linked; editable before accept; loading = suggestion request in flight; the suggestions disclosure being open or closed is part of default) | ai_review | default, empty, loading, error |
+| `z-lib-actions` | Bulk describe / scan CTAs + job progress | job | default, loading, error |
 
 ```
 +------------------------------------------------------------+
@@ -126,6 +161,16 @@ by other lanes and are not yet covered by this list.
 
 ### Conflict Inbox (`workbench-conflicts`)
 
+Purpose: Review people conflicts; commit human judgment with evidence
+
+url_params: `panel`
+
+| zone id | label | role | states |
+| --- | --- | --- | --- |
+| `z-conflict-list` | Conflict list | queue | default, loading, empty |
+| `z-conflict-detail` | Conflict detail / candidates | forced_choice | default, loading, empty |
+| `z-conflict-actions` | Resolve / defer actions | form | default |
+
 ```
 +------------------------------------------------------------+
 | Conflict Inbox  [overlay]  #/workbench?panel=conflicts     |
@@ -144,6 +189,15 @@ by other lanes and are not yet covered by this list.
 ```
 
 ### Failed Sync Queue (Dead Letter) (`workbench-dead-letter`)
+
+Purpose: Inspect failed sync ops; retry or discard
+
+url_params: `panel`
+
+| zone id | label | role | states |
+| --- | --- | --- | --- |
+| `z-dl-list` | Dead-letter items | queue | default, loading, empty |
+| `z-dl-actions` | Retry / discard | form | default |
 
 ```
 +------------------------------------------------------------+
@@ -164,6 +218,14 @@ by other lanes and are not yet covered by this list.
 
 ### Roster (person workspace) (`exit-roster`)
 
+Purpose: Manage identified persons after naming/curating in Workbench
+
+url_params: `personFilter`, `person`
+
+| zone id | label | role | states |
+| --- | --- | --- | --- |
+| `z-roster-entry` | Roster entry | nav | default |
+
 ```
 +------------------------------------------------------------+
 | Roster (person workspace)  [exit]  #/roster                |
@@ -177,6 +239,12 @@ by other lanes and are not yet covered by this list.
 ```
 
 ### Settings / service health (`exit-settings`)
+
+Purpose: Configure recognition target and connection health
+
+| zone id | label | role | states |
+| --- | --- | --- | --- |
+| `z-settings-form` | Settings form + test connection | form | default, error |
 
 ```
 +------------------------------------------------------------+
@@ -270,7 +338,7 @@ Zone ids: z-topbar z-left-host z-splitter z-right-host z-overlay-host z-endpoint
 
 Action ids: act-run-recognition act-select-cluster act-name-cluster act-curate-cluster act-view-endpoint-settings act-edit-alt act-edit-desc act-accept-ai-caption act-bulk-describe act-open-conflicts act-open-dead-letter act-resolve-conflict act-retry-dead-letter act-discard-dead-letter act-goto-roster
 
-States (all zones): default loading empty error pending suggestions-open roster-error ambiguous overlay-closed duplicate-guard first_time degraded offline edge_input
+States (all zones): default loading empty error offline first_time edge_input degraded
 
 ## Not doing
 

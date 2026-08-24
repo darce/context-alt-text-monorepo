@@ -168,20 +168,18 @@
         },
         {
           "id": "z-cluster-list",
-          "label": "Face-group list / selection (size, confidence, unnamed-first) + NameFaceControl",
+          "label": "Face-group list / selection (size, confidence, unnamed-first) + NameFaceControl (loading = in-flight name write; the suggestions disclosure being open or closed is part of default)",
           "role": "queue",
           "states": [
             "default",
             "loading",
             "empty",
-            "error",
-            "pending",
-            "suggestions-open"
+            "error"
           ]
         },
         {
           "id": "z-name-curate",
-          "label": "Name this person (NameFaceControl; confirm / correct / merge / split; forced-choice)",
+          "label": "Name this person (NameFaceControl; confirm / correct / merge / split; forced-choice; loading = pending roster write; error = roster write failed; edge_input = ambiguous candidate set or duplicate-name guard; default = overlay closed or suggestions open)",
           "role": "forced_choice",
           "evidence_linked": true,
           "max_candidates": 5,
@@ -190,12 +188,7 @@
             "loading",
             "empty",
             "error",
-            "pending",
-            "suggestions-open",
-            "roster-error",
-            "ambiguous",
-            "overlay-closed",
-            "duplicate-guard"
+            "edge_input"
           ]
         }
       ]
@@ -250,29 +243,25 @@
         },
         {
           "id": "z-lib-inline-edit",
-          "label": "Inline person naming (NameFaceControl) + alt-text / long-description editor",
+          "label": "Inline person naming (NameFaceControl) + alt-text / long-description editor (loading = pending save; the suggestions disclosure being open or closed is part of default)",
           "role": "form",
           "states": [
             "default",
             "loading",
             "empty",
-            "error",
-            "pending",
-            "suggestions-open"
+            "error"
           ]
         },
         {
           "id": "z-lib-ai-suggest",
-          "label": "AI name / caption suggestions (evidence-linked; editable before accept)",
+          "label": "AI name / caption suggestions (evidence-linked; editable before accept; loading = suggestion request in flight; the suggestions disclosure being open or closed is part of default)",
           "role": "ai_review",
           "evidence_linked": true,
           "states": [
             "default",
             "empty",
             "loading",
-            "error",
-            "pending",
-            "suggestions-open"
+            "error"
           ]
         },
         {

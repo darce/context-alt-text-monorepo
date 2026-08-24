@@ -5,6 +5,11 @@ import { describe, expect, it, vi } from 'vitest';
 import type { BoundingBox } from '../../../admin/api/recognition/types/identity';
 import { DurableFaceThumb } from '../DurableFaceThumb';
 
+type AvatarLoadingStatus = 'idle' | 'loading' | 'loaded' | 'error';
+type MockAvatarImageProps = Record<string, unknown> & {
+  onLoadingStatusChange?: (status: AvatarLoadingStatus) => void;
+};
+
 vi.mock('@wordpress/i18n', () => ({
   __: (text: string) => text,
   sprintf: (template: string, ...args: (string | number)[]) => {
@@ -24,23 +29,19 @@ vi.mock('@radix-ui/react-avatar', async () => {
       );
     }),
     Image: ReactMod.forwardRef(function MockImage(
-      { onLoadingStatusChange, ...props }: Record<string, unknown>,
+      { onLoadingStatusChange, ...props }: MockAvatarImageProps,
       ref: unknown,
     ) {
       return ReactMod.createElement('img', {
         ...(props as React.ImgHTMLAttributes<HTMLImageElement>),
         ref,
         onLoad: (event: React.SyntheticEvent<HTMLImageElement>) => {
-          if (typeof onLoadingStatusChange === 'function') {
-            onLoadingStatusChange('loaded');
-          }
+          onLoadingStatusChange?.('loaded');
           const onLoad = props.onLoad as React.ReactEventHandler<HTMLImageElement> | undefined;
           onLoad?.(event);
         },
         onError: (event: React.SyntheticEvent<HTMLImageElement>) => {
-          if (typeof onLoadingStatusChange === 'function') {
-            onLoadingStatusChange('error');
-          }
+          onLoadingStatusChange?.('error');
           const onError = props.onError as React.ReactEventHandler<HTMLImageElement> | undefined;
           onError?.(event);
         },

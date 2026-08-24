@@ -12,7 +12,7 @@ import {
 const naturalSize = { width: 1000, height: 800 };
 
 /** API order intentionally ≠ visual (bbox.y, bbox.x) reading order. */
-function outOfOrderFixture(): FaceOverlayIdentity[] {
+const outOfOrderFixture = (): FaceOverlayIdentity[] => {
   return [
     // Uncurated, should sort second among uncurated (y=200, x=300)
     {
@@ -43,9 +43,9 @@ function outOfOrderFixture(): FaceOverlayIdentity[] {
       is_auto_label: false,
     },
   ];
-}
+};
 
-function getUncuratedOutline(faceId: string): HTMLElement {
+const getUncuratedOutline = (faceId: string): HTMLElement => {
   const outlines = document.querySelectorAll<HTMLElement>(
     '.acx-face-overlay__outline--uncurated',
   );
@@ -54,7 +54,7 @@ function getUncuratedOutline(faceId: string): HTMLElement {
     throw new Error(`No uncurated outline for ${faceId}`);
   }
   return match;
-}
+};
 
 describe('FaceOverlayLayer', () => {
   describe('accessible names and native buttons [A11Y-04][A11Y-12]', () => {
@@ -491,11 +491,11 @@ describe('FaceOverlayLayer', () => {
   });
 
   describe('naturalSize and bbox guards [UXP5-BRV-01]', () => {
-    function collectPositionStyles(root: HTMLElement): string[] {
+    const collectPositionStyles = (root: HTMLElement): string[] => {
       return Array.from(root.querySelectorAll<HTMLElement>('[style]')).map(
         (el) => el.getAttribute('style') ?? '',
       );
-    }
+    };
 
     it('skips face controls when naturalSize has zero dimensions (no NaN styles)', () => {
       const { container } = render(
@@ -515,7 +515,7 @@ describe('FaceOverlayLayer', () => {
       const layer = screen.getByTestId('acx-face-overlay-layer');
       expect(layer).toHaveAttribute('data-empty-natural-size', 'true');
       expect(screen.queryByRole('button')).not.toBeInTheDocument();
-      for (const style of collectPositionStyles(container as HTMLElement)) {
+      for (const style of collectPositionStyles(container)) {
         expect(style).not.toMatch(/NaN/i);
       }
     });
@@ -540,7 +540,7 @@ describe('FaceOverlayLayer', () => {
         'true',
       );
       expect(screen.queryByRole('button')).not.toBeInTheDocument();
-      for (const style of collectPositionStyles(container as HTMLElement)) {
+      for (const style of collectPositionStyles(container)) {
         expect(style).not.toMatch(/NaN/i);
       }
     });
@@ -573,7 +573,7 @@ describe('FaceOverlayLayer', () => {
 
       expect(screen.getByRole('button', { name: 'Good' })).toBeInTheDocument();
       expect(screen.queryAllByRole('button')).toHaveLength(1);
-      for (const style of collectPositionStyles(container as HTMLElement)) {
+      for (const style of collectPositionStyles(container)) {
         expect(style).not.toMatch(/NaN/i);
         expect(style).not.toMatch(/Infinity/i);
       }
@@ -582,8 +582,8 @@ describe('FaceOverlayLayer', () => {
 
   describe('DOM id sanitization [UXP5-BRV-02]', () => {
     it('sanitizes hostile identity_id into unique selector-safe DOM ids with intact highlight wiring', () => {
-      const hostileA = `face "evil" {x}`;
-      const hostileB = `face 'other' [y]`;
+      const hostileA = 'face "evil" {x}';
+      const hostileB = 'face \'other\' [y]';
       const onHighlightChange = vi.fn();
 
       render(

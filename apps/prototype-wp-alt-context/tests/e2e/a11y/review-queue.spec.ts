@@ -119,7 +119,7 @@ test.describe('review queue a11y (E21-5)', () => {
 
     const position = page.locator(`${REVIEW_QUEUE_SELECTOR} .acx-review-queue__position`);
     const positionText = (await position.textContent()) ?? '0 of 0';
-    const match = positionText.match(/(\d+)\s+of\s+(\d+)/i);
+    const match = /(\d+)\s+of\s+(\d+)/i.exec(positionText);
     const total = match ? Number.parseInt(match[2], 10) : 0;
     test.skip(total < 2, 'Need ≥2 pending suggestions for advance-focus corroboration.');
 

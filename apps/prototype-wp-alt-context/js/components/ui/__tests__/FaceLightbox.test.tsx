@@ -330,7 +330,7 @@ describe('FaceLightbox', () => {
     expect(onReviewFaceActivate).not.toHaveBeenCalled();
   });
 
-  it('renders reviewNaming inside the open dialog', async () => {
+  it('renders reviewNaming inside the open dialog', () => {
     renderLightbox(
       <FaceLightbox
         open
@@ -345,7 +345,7 @@ describe('FaceLightbox', () => {
     expect(screen.getByRole('dialog')).toContainElement(screen.getByText('Lightbox naming surface'));
   });
 
-  it('announces loading while identities are in flight and still shows the photo', async () => {
+  it('announces loading while identities are in flight and still shows the photo', () => {
 
     renderLightbox(
       <FaceLightbox

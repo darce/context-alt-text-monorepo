@@ -11,6 +11,13 @@ import { fileURLToPath } from 'node:url';
 
 import { describe, expect, it } from 'vitest';
 
+import {
+  DASHBOARD_FLOW_STATE,
+  DASHBOARD_ORIENTATION_POSITION,
+  buildDashboardPriorityModel,
+  type DashboardPriorityInputs,
+} from '../pages/dashboard/buildDashboardPriorityModel';
+
 const here = path.dirname(fileURLToPath(import.meta.url));
 const mapsDir = path.resolve(here, '../../../docs/ux-maps');
 const adminDir = path.resolve(here, '..');
@@ -98,7 +105,26 @@ describe('dashboard ux-map code parity (DUX-W2D14)', () => {
   const recentSrc = readUtf8('pages/dashboard/DashboardRecentActivitySection.tsx');
   const guidanceSrc = readUtf8('pages/dashboard/GuidanceCard.tsx');
   const syncSrc = readUtf8('pages/dashboard/DashboardSyncHealthSection.tsx');
-  const prioritySrc = readUtf8('pages/dashboard/buildDashboardPriorityModel.ts');
+
+  const basePriorityInputs: DashboardPriorityInputs = {
+    isSyncStatusLoading: false,
+    isSyncStatusError: false,
+    effectiveSyncHealth: 'healthy',
+    hasSyncHealthWarnings: false,
+    pendingReplayCount: 0,
+    conflictCount: 0,
+    failedReplayCount: 0,
+    topologyPending: 0,
+    topologyFailed: 0,
+    topologyConflicts: 0,
+    showMirrorDivergenceBanner: false,
+    isIdentityLoading: false,
+    isIdentityError: false,
+    hasIdentityStats: true,
+    pendingClustersCount: 0,
+    unassignedPersonsCount: 0,
+    flowState: DASHBOARD_FLOW_STATE.FIRST_NAMED,
+  };
 
   const defaultSketch = extractSketch(md, '#### Default — populated');
   const firstTimeSketch = extractSketch(md, '#### First-time — fresh tenant');
@@ -136,8 +162,16 @@ describe('dashboard ux-map code parity (DUX-W2D14)', () => {
   });
 
   it('RV-03: default and first_time sketches are compositions the priority model can produce', () => {
-    expect(prioritySrc).toMatch(/FIRST_NAMED[\s\S]*HIDDEN/);
-    expect(dashboardSrc).toMatch(/assigned_clusters_count[\s\S]*FIRST_NAMED/);
+    expect(
+      buildDashboardPriorityModel({ ...basePriorityInputs, flowState: DASHBOARD_FLOW_STATE.FIRST_NAMED })
+        .orientationPosition,
+      'first_named must hide the orientation surface',
+    ).toBe(DASHBOARD_ORIENTATION_POSITION.HIDDEN);
+    expect(
+      buildDashboardPriorityModel({ ...basePriorityInputs, flowState: DASHBOARD_FLOW_STATE.UNSCANNED })
+        .orientationPosition,
+      'a non-first_named flow state must keep the orientation surface before the grid',
+    ).toBe(DASHBOARD_ORIENTATION_POSITION.BEFORE_GRID);
 
     const defaultAssigned = Number(defaultSketch.match(/Assigned\s+(\d+)/)?.[1] ?? '0');
     const firstAssigned = Number(firstTimeSketch.match(/Assigned\s+(\d+)/)?.[1] ?? '0');

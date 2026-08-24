@@ -9,6 +9,7 @@ import { __ } from '@wordpress/i18n';
  */
 import { useMediaStats } from '../hooks/useMediaStats';
 import { useRecognitionJobHistory } from '../hooks/useRecognitionJobHistory';
+import { isScanActiveStatus } from '../hooks/jobStateMachineUtils';
 import { useIdentityStats } from '../hooks/useIdentityStats';
 import { useResetMirror } from '../hooks/useSyncTrigger';
 import { useSyncHealth } from '../hooks/useSyncHealth';
@@ -19,7 +20,13 @@ import { GuidanceCard } from './dashboard/GuidanceCard';
 import { DashboardRecentActivitySection } from './dashboard/DashboardRecentActivitySection';
 import { DashboardSyncHealthSection } from './dashboard/DashboardSyncHealthSection';
 import { OrientationCard } from './dashboard/OrientationCard';
-import { buildDashboardPriorityModel, type DashboardSectionId } from './dashboard/buildDashboardPriorityModel';
+import {
+  DASHBOARD_FLOW_STATE,
+  DASHBOARD_ORIENTATION_POSITION,
+  buildDashboardPriorityModel,
+  type DashboardFlowState,
+  type DashboardSectionId,
+} from './dashboard/buildDashboardPriorityModel';
 import {
   RETENTION_CARD_ACTION_BODY,
   RETENTION_CARD_ACTION_HEADING,
@@ -48,19 +55,13 @@ const formatDiagnosticDate = (value: string | null | undefined): string | null =
 
 export const DashboardPage = (): React.JSX.Element => {
   const { stats, isLoading: isStatsLoading } = useMediaStats();
-  const {
-    jobStatuses,
-    jobDetails,
-    recentActivity = [],
-    historySource = 'unavailable',
-  } = useRecognitionJobHistory();
+  const { jobStatuses, jobDetails, recentActivity = [], historySource = 'unavailable' } = useRecognitionJobHistory();
   const { data: syncStatus, isLoading: isSyncStatusLoading, isError: isSyncStatusError } = useSyncStatus();
   const { data: syncHealthEnvelope } = useSyncHealth();
   const effectiveSyncHealth = resolveEffectiveSyncHealth(syncStatus?.sync_health ?? 'stale', syncHealthEnvelope);
   const syncHealthWarningsActive = syncHealthEnvelope ? hasSyncHealthWarnings(syncHealthEnvelope) : false;
   const resetMirror = useResetMirror();
-  const { data: retentionStatus, isError: isRetentionError, isLoading: isRetentionLoading } =
-    useRetentionStatus();
+  const { data: retentionStatus, isError: isRetentionError, isLoading: isRetentionLoading } = useRetentionStatus();
   const {
     data: identityStats,
     isLoading: isIdentityLoading,
@@ -80,11 +81,21 @@ export const DashboardPage = (): React.JSX.Element => {
   const topologyConflicts = normalizeCount(syncStatus?.topology_commands?.conflict);
   const lastConflictDate = formatDiagnosticDate(syncStatus?.last_curation_conflict_at);
   const lastFailureDate = formatDiagnosticDate(syncStatus?.last_curation_failed_at);
+  const isRecognitionScanning = Object.values(jobStatuses).some((status) => isScanActiveStatus(status.toLowerCase()));
+  const flowState: DashboardFlowState = identityStats?.assigned_clusters_count
+    ? DASHBOARD_FLOW_STATE.FIRST_NAMED
+    : identityStats &&
+        (identityStats.pending_clusters_count > 0 ||
+          identityStats.people_count > 0 ||
+          identityStats.media_with_faces_count > 0)
+      ? DASHBOARD_FLOW_STATE.CLUSTERS_PENDING
+      : isRecognitionScanning
+        ? DASHBOARD_FLOW_STATE.SCANNING
+        : DASHBOARD_FLOW_STATE.UNSCANNED;
   // State matrix (UXP-4 S3 / A11Y-24): loading or available:false → no panel;
   // isError → remediation + #/retention; available + policy → summary.
   const retentionPolicy = retentionStatus?.available ? retentionStatus.policy : null;
-  const showRetentionPanel =
-    !isRetentionLoading && (isRetentionError || Boolean(retentionPolicy));
+  const showRetentionPanel = !isRetentionLoading && (isRetentionError || Boolean(retentionPolicy));
   const retentionModeLabel =
     retentionPolicy?.retention_mode === 'dispose_after_ack'
       ? __('Dispose after ack', 'alt-context')
@@ -109,6 +120,7 @@ export const DashboardPage = (): React.JSX.Element => {
     hasIdentityStats: Boolean(identityStats),
     pendingClustersCount: normalizeCount(identityStats?.pending_clusters_count),
     unassignedPersonsCount: normalizeCount(identityStats?.unassigned_persons_count),
+    flowState,
   });
 
   const gridSections: Record<DashboardSectionId, React.JSX.Element> = {
@@ -146,7 +158,12 @@ export const DashboardPage = (): React.JSX.Element => {
             </button>
           </div>
         ) : !identityStats ? (
-          <p>{__('Unable to load identity stats.', 'alt-context')}</p>
+          <div className="acx-error-state">
+            <p>{__('Identity stats are unavailable.', 'alt-context')}</p>
+            <button type="button" className="acx-button acx-button--secondary" onClick={() => void refetchIdentity()}>
+              {__('Retry identity stats', 'alt-context')}
+            </button>
+          </div>
         ) : (
           <>
             <div className="acx-dashboard__stats-grid">
@@ -294,7 +311,7 @@ export const DashboardPage = (): React.JSX.Element => {
     <section className="acx-dashboard__shell" aria-labelledby="acx-dashboard-title">
       <header className="acx-dashboard__hero">
         <p className="acx-dashboard__eyebrow">{__('Alt Context', 'alt-context')}</p>
-        <h1 id="acx-dashboard-title" className="acx-dashboard__title">
+        <h1 id="acx-dashboard-title" className="acx-dashboard__title" tabIndex={-1}>
           {__('Overview', 'alt-context')}
         </h1>
         <p className="acx-dashboard__subtitle">
@@ -302,15 +319,13 @@ export const DashboardPage = (): React.JSX.Element => {
         </p>
       </header>
 
+      {priorityModel.orientationPosition === DASHBOARD_ORIENTATION_POSITION.BEFORE_GRID ? <OrientationCard /> : null}
+
       <div className="acx-dashboard__grid">
         {priorityModel.gridSectionOrder.map((sectionId) => (
           <React.Fragment key={sectionId}>{gridSections[sectionId]}</React.Fragment>
         ))}
       </div>
-
-      {priorityModel.orientationPosition === 'after_grid' && identityStats ? (
-        <OrientationCard peopleCount={identityStats.people_count} />
-      ) : null}
     </section>
   );
 };

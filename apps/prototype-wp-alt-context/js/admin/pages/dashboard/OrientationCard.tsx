@@ -4,12 +4,57 @@ import { Scan, Users, CheckCircle, ArrowRight } from 'lucide-react';
 
 import { toWorkbench } from '../../navigation/appLinks';
 
-interface OrientationCardProps {
-  peopleCount: number;
+const ORIENTATION_DISMISSAL = {
+  STORAGE_PREFIX: 'acx-orientation-dismissed:',
+  DISMISSED: 'true',
+} as const;
+
+const getDismissalStorageKey = (): string | null => {
+  const userId = window.userSettings?.uid;
+  return typeof userId === 'string' || typeof userId === 'number'
+    ? `${ORIENTATION_DISMISSAL.STORAGE_PREFIX}${userId}`
+    : null;
+};
+
+const readStoredDismissal = (storageKey: string): string | null => {
+  try {
+    return window.localStorage.getItem(storageKey);
+  } catch {
+    return null;
+  }
+};
+
+const storeDismissal = (storageKey: string): void => {
+  try {
+    window.localStorage.setItem(storageKey, ORIENTATION_DISMISSAL.DISMISSED);
+  } catch {
+    // Storage is optional: dismissal still applies for the current render.
+  }
+};
+
+declare global {
+  interface Window {
+    userSettings?: {
+      uid?: string | number;
+    };
+  }
 }
 
-export const OrientationCard = ({ peopleCount }: OrientationCardProps): React.JSX.Element | null => {
-  if (peopleCount !== 0) {
+export const OrientationCard = (): React.JSX.Element | null => {
+  const storageKey = getDismissalStorageKey();
+  const [isDismissed, setIsDismissed] = React.useState(
+    () => storageKey !== null && readStoredDismissal(storageKey) === ORIENTATION_DISMISSAL.DISMISSED,
+  );
+
+  const dismiss = () => {
+    if (storageKey !== null) {
+      storeDismissal(storageKey);
+    }
+    document.getElementById('acx-dashboard-title')?.focus();
+    setIsDismissed(true);
+  };
+
+  if (isDismissed) {
     return null;
   }
 
@@ -17,6 +62,9 @@ export const OrientationCard = ({ peopleCount }: OrientationCardProps): React.JS
     <section className="acx-orientation-card" aria-labelledby="acx-orientation-title">
       <div className="acx-orientation-card__header">
         <h2 id="acx-orientation-title">{__('Getting Started with Identity Recognition', 'alt-context')}</h2>
+        <button type="button" className="acx-orientation-card__dismiss" onClick={dismiss}>
+          {__('Dismiss getting started', 'alt-context')}
+        </button>
       </div>
 
       <div className="acx-orientation-card__steps">

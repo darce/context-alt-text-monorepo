@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { BulkRetryResponse, OutboxListResponse, OutboxMutationResponse, OutboxOperation } from '../../../api/recognition';
@@ -148,22 +148,37 @@ describe('DeadLetterPanel', () => {
     );
   });
 
-  it('renders loading state', () => {
+  it('keeps visible loading copy alongside the screen-reader status', () => {
     mockedUseDeadLetterOperations.mockReturnValue(createMockQuery<OutboxListResponse>({ status: 'pending' }));
 
     renderPanel();
 
-    expect(screen.getByText('Loading failed changes…')).toBeInTheDocument();
+    const visibleLoading = screen
+      .getAllByText('Loading failed changes…')
+      .find((node) => !node.classList.contains('screen-reader-text'));
+    expect(visibleLoading).toBeVisible();
   });
 
-  it('announces loading and marks the failed-changes region busy', () => {
-    mockedUseDeadLetterOperations.mockReturnValue(createMockQuery<OutboxListResponse>({ status: 'pending' }));
+  it('mounts the empty failed-changes status before announcing loading on the same node', () => {
+    vi.useFakeTimers();
+    try {
+      mockedUseDeadLetterOperations.mockReturnValue(createMockQuery<OutboxListResponse>({ status: 'pending' }));
 
-    renderPanel();
+      renderPanel();
 
-    const region = screen.getByRole('region', { name: 'Failed changes panel' });
-    expect(region).toHaveAttribute('aria-busy', 'true');
-    expect(screen.getByRole('status')).toHaveTextContent('Loading failed changes…');
+      const status = screen.getByTestId('acx-dead-letter-status');
+      expect(status).toBeEmptyDOMElement();
+      expect(screen.getByRole('region', { name: 'Failed changes panel' })).toHaveAttribute('aria-busy', 'true');
+
+      act(() => {
+        vi.runOnlyPendingTimers();
+      });
+
+      expect(screen.getByTestId('acx-dead-letter-status')).toBe(status);
+      expect(status).toHaveTextContent('Loading failed changes…');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('renders error state', () => {
@@ -354,7 +369,9 @@ describe('DeadLetterPanel', () => {
       expect(mutateAsync).toHaveBeenCalledWith(11);
     });
 
-    expect(screen.getByRole('status')).toHaveTextContent('Change queued to retry.');
+    expect(screen.getByRole('status')).toHaveTextContent(
+      'Cluster label update for cluster-1 (operation 11) queued to retry.',
+    );
   });
 
   it('shows mutation error feedback when retry fails', async () => {
@@ -364,16 +381,30 @@ describe('DeadLetterPanel', () => {
         mutateAsync,
       }),
     );
+    mockedUseDeadLetterOperations.mockReturnValue(
+      createMockQuery<OutboxListResponse>({
+        data: {
+          items: [buildOperation(), buildOperation({ id: 12, entity_key: 'cluster-2' })],
+          total: 2,
+          limit: 20,
+          offset: 0,
+        },
+      }),
+    );
 
     renderPanel();
-    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    const selectedRow = screen.getByText('Entity: cluster-2 (cluster)').closest('li');
+    expect(selectedRow).not.toBeNull();
+    fireEvent.click(within(selectedRow!).getByRole('button', { name: 'Retry' }));
 
     await waitFor(() => {
-      expect(mutateAsync).toHaveBeenCalledWith(11);
+      expect(mutateAsync).toHaveBeenCalledWith(12);
     });
 
     const alert = screen.getByRole('alert');
-    expect(alert).toHaveTextContent('Unable to retry this operation. Please try again.');
+    expect(alert).toHaveTextContent(
+      'Unable to retry Cluster label update for cluster-2 (operation 12). Please try again.',
+    );
     expect(alert.querySelector('[aria-hidden="true"]')).not.toBeNull();
   });
 
@@ -397,7 +428,9 @@ describe('DeadLetterPanel', () => {
       expect(mutateAsync).toHaveBeenCalledWith(11);
     });
 
-    expect(screen.getByRole('status')).toHaveTextContent('Failed change discarded.');
+    expect(screen.getByRole('status')).toHaveTextContent(
+      'Cluster label update for cluster-1 (operation 11) discarded.',
+    );
   });
 
   it('shows mutation error feedback when discard fails', async () => {
@@ -407,16 +440,110 @@ describe('DeadLetterPanel', () => {
         mutateAsync,
       }),
     );
+    mockedUseDeadLetterOperations.mockReturnValue(
+      createMockQuery<OutboxListResponse>({
+        data: {
+          items: [buildOperation(), buildOperation({ id: 12, entity_key: 'cluster-2' })],
+          total: 2,
+          limit: 20,
+          offset: 0,
+        },
+      }),
+    );
 
     renderPanel();
-    fireEvent.click(screen.getByRole('button', { name: 'Discard' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Confirm discard' }));
+    const selectedRow = screen.getByText('Entity: cluster-2 (cluster)').closest('li');
+    expect(selectedRow).not.toBeNull();
+    fireEvent.click(within(selectedRow!).getByRole('button', { name: 'Discard' }));
+    fireEvent.click(within(selectedRow!).getByRole('button', { name: 'Confirm discard' }));
 
     await waitFor(() => {
-      expect(mutateAsync).toHaveBeenCalledWith(11);
+      expect(mutateAsync).toHaveBeenCalledWith(12);
     });
 
-    expect(screen.getByRole('alert')).toHaveTextContent('Unable to discard this operation. Please try again.');
+    expect(screen.getByRole('alert')).toHaveTextContent(
+      'Unable to discard Cluster label update for cluster-2 (operation 12). Please try again.',
+    );
+  });
+
+  it('announces retry pending and success with the selected row identity', async () => {
+    let resolveRetry!: (value: OutboxMutationResponse) => void;
+    const mutateAsync = vi.fn(
+      () => new Promise<OutboxMutationResponse>((resolve) => {
+        resolveRetry = resolve;
+      }),
+    );
+    mockedUseRetryOperation.mockReturnValue(
+      createMockMutation<OutboxMutationResponse, Error, number>({ mutateAsync }),
+    );
+    mockedUseDeadLetterOperations.mockReturnValue(
+      createMockQuery<OutboxListResponse>({
+        data: {
+          items: [buildOperation(), buildOperation({ id: 12, entity_key: 'cluster-2' })],
+          total: 2,
+          limit: 20,
+          offset: 0,
+        },
+      }),
+    );
+
+    renderPanel();
+    const selectedRow = screen.getByText('Entity: cluster-2 (cluster)').closest('li');
+    expect(selectedRow).not.toBeNull();
+    fireEvent.click(within(selectedRow!).getByRole('button', { name: 'Retry' }));
+
+    expect(screen.getByRole('status')).toHaveTextContent(
+      'Retrying Cluster label update for cluster-2 (operation 12).',
+    );
+
+    resolveRetry({ operation: null });
+    await waitFor(() => {
+      expect(screen.getByRole('status')).toHaveTextContent(
+        'Cluster label update for cluster-2 (operation 12) queued to retry.',
+      );
+    });
+  });
+
+  it('announces discard confirmation, pending, and success with the selected row identity', async () => {
+    let resolveDiscard!: (value: OutboxMutationResponse) => void;
+    const mutateAsync = vi.fn(
+      () => new Promise<OutboxMutationResponse>((resolve) => {
+        resolveDiscard = resolve;
+      }),
+    );
+    mockedUseDiscardOperation.mockReturnValue(
+      createMockMutation<OutboxMutationResponse, Error, number>({ mutateAsync }),
+    );
+    mockedUseDeadLetterOperations.mockReturnValue(
+      createMockQuery<OutboxListResponse>({
+        data: {
+          items: [buildOperation(), buildOperation({ id: 12, entity_key: 'cluster-2' })],
+          total: 2,
+          limit: 20,
+          offset: 0,
+        },
+      }),
+    );
+
+    renderPanel();
+    const selectedRow = screen.getByText('Entity: cluster-2 (cluster)').closest('li');
+    expect(selectedRow).not.toBeNull();
+    fireEvent.click(within(selectedRow!).getByRole('button', { name: 'Discard' }));
+    expect(screen.getByRole('status')).toHaveTextContent(
+      'Discard armed for Cluster label update for cluster-2 (operation 12). Activate Confirm discard to continue.',
+    );
+
+    fireEvent.click(within(selectedRow!).getByRole('button', { name: 'Confirm discard' }));
+    expect(screen.getByRole('status')).toHaveTextContent(
+      'Discarding Cluster label update for cluster-2 (operation 12).',
+    );
+
+    resolveDiscard({ operation: null });
+    await waitFor(() => {
+      expect(screen.getByRole('status')).toHaveTextContent(
+        'Cluster label update for cluster-2 (operation 12) discarded.',
+      );
+    });
   });
 
   it('shows the bulk retry control with the failed count', () => {

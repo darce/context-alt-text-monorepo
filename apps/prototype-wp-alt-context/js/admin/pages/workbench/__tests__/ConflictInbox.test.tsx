@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type {
@@ -111,21 +111,37 @@ describe('ConflictInbox', () => {
     );
   });
 
-  it('renders loading state', () => {
+  it('keeps visible loading copy alongside the screen-reader status', () => {
     mockedUseConflicts.mockReturnValue(createMockQuery<ConflictListResponse>({ status: 'pending' }));
 
     renderInbox();
 
-    expect(screen.getByText('Loading conflicts…')).toBeInTheDocument();
+    const visibleLoading = screen
+      .getAllByText('Loading conflicts…')
+      .find((node) => !node.classList.contains('screen-reader-text'));
+    expect(visibleLoading).toBeVisible();
   });
 
-  it('announces inbox loading and marks the region busy', () => {
-    mockedUseConflicts.mockReturnValue(createMockQuery<ConflictListResponse>({ status: 'pending' }));
+  it('mounts the empty inbox status before announcing loading on the same node', () => {
+    vi.useFakeTimers();
+    try {
+      mockedUseConflicts.mockReturnValue(createMockQuery<ConflictListResponse>({ status: 'pending' }));
 
-    renderInbox();
+      renderInbox();
 
-    expect(screen.getByRole('region', { name: 'Conflict inbox' })).toHaveAttribute('aria-busy', 'true');
-    expect(screen.getByRole('status')).toHaveTextContent('Loading conflicts…');
+      const status = screen.getByTestId('acx-conflict-inbox-status');
+      expect(status).toBeEmptyDOMElement();
+      expect(screen.getByRole('region', { name: 'Conflict inbox' })).toHaveAttribute('aria-busy', 'true');
+
+      act(() => {
+        vi.runOnlyPendingTimers();
+      });
+
+      expect(screen.getByTestId('acx-conflict-inbox-status')).toBe(status);
+      expect(status).toHaveTextContent('Loading conflicts…');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('renders error state', () => {
@@ -594,11 +610,55 @@ describe('ConflictInbox', () => {
     expect(alert.querySelector('[aria-hidden="true"]')).not.toBeNull();
   });
 
-  it('announces conflict detail loading politely', () => {
+  it('keeps one initially empty detail status node and fills it after selection', () => {
     renderInbox();
+
+    const status = screen.getByTestId('acx-conflict-detail-status');
+    expect(status).toHaveAttribute('role', 'status');
+    expect(status).toHaveAttribute('aria-live', 'polite');
+    expect(status).toBeEmptyDOMElement();
+
     fireEvent.click(screen.getByRole('button', { name: 'Review conflict' }));
 
-    expect(screen.getAllByRole('status').some((status) => status.textContent === 'Loading conflict detail…')).toBe(true);
+    expect(screen.getByTestId('acx-conflict-detail-status')).toBe(status);
+    expect(status).toHaveTextContent('Loading conflict detail…');
+  });
+
+  it('announces single-conflict confirmation arming with conflict scope', () => {
+    mockedUseConflictDetail.mockReturnValue(
+      createMockQuery<ConflictDetailResponse>({ data: { conflict: buildConflict() } }),
+    );
+
+    renderInbox();
+    fireEvent.click(screen.getByRole('button', { name: 'Review conflict' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Accept backend version' }));
+
+    expect(screen.getByTestId('acx-conflict-inbox-status')).toHaveTextContent(
+      'Accept backend version armed for conflict cluster-1. Activate Confirm to continue.',
+    );
+  });
+
+  it('announces batch confirmation arming with the selected scope', () => {
+    mockedUseConflicts.mockReturnValue(
+      createMockQuery<ConflictListResponse>({
+        data: {
+          items: [buildConflict(), buildConflict({ id: 10, entity_key: 'cluster-2' })],
+          total: 2,
+          limit: 20,
+          offset: 0,
+        },
+      }),
+    );
+
+    renderInbox();
+    for (const checkbox of screen.getAllByRole('checkbox', { name: 'Select conflict' })) {
+      fireEvent.click(checkbox);
+    }
+    fireEvent.click(screen.getByRole('button', { name: 'Accept backend for selected' }));
+
+    expect(screen.getByTestId('acx-conflict-inbox-status')).toHaveTextContent(
+      'Accept backend resolution armed for 2 selected conflicts. Activate Confirm accept backend selected to continue.',
+    );
   });
 
   it('shows sync now affordance after successful resolution', async () => {

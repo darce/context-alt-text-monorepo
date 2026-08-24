@@ -222,7 +222,7 @@ describe('SuggestionCard lightbox target (UXW2-6)', () => {
 });
 
 describe('SuggestionCard UXC-02 stored-reference disclosure', () => {
-  it('discloses hidden stored faces and requires Review details before approval', async () => {
+  it('DUX-L8-RV-01: keeps approval blocked until the stored-face disclosure is rendered', async () => {
     const onAccept = vi.fn();
     const onReview = vi.fn();
     const user = userEvent.setup();
@@ -247,13 +247,64 @@ describe('SuggestionCard UXC-02 stored-reference disclosure', () => {
     expect(screen.getByText('2 more faces not shown')).toBeInTheDocument();
     const approve = screen.getByRole('button', { name: 'Yes' });
     expect(approve).toBeDisabled();
+    expect(screen.queryByRole('list', { name: 'Stored faces for Alex' })).toBeNull();
 
     await user.click(screen.getByRole('button', { name: 'Review details' }));
 
     expect(onReview).toHaveBeenCalledWith('cluster-1');
+    expect(screen.getByRole('list', { name: 'Stored faces for Alex' })).toBeInTheDocument();
     expect(approve).toBeEnabled();
     await user.click(approve);
     expect(onAccept).toHaveBeenCalledTimes(1);
+  });
+
+  it('DUX-L8-RV-01/02: fails closed without onReview and discloses text for unavailable images', async () => {
+    const user = userEvent.setup();
+    render(
+      <SuggestionCard
+        suggestion={{ ...baseSuggestion, identityCount: 3 }}
+        onAccept={vi.fn()}
+        onReject={vi.fn()}
+        isPending={false}
+        lowConfidenceThreshold={0.5}
+      />,
+    );
+
+    const approve = screen.getByRole('button', { name: 'Yes' });
+    expect(approve).toBeDisabled();
+    expect(screen.getByText('2 more faces not shown')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Review details' })).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Review details' }));
+
+    const faceList = screen.getByRole('list', { name: 'Stored faces for Alex' });
+    expect(faceList).toHaveTextContent('Stored face 1 of 3 — Image unavailable');
+    expect(faceList).toHaveTextContent('Stored face 2 of 3 — Image unavailable');
+    expect(faceList).toHaveTextContent('Stored face 3 of 3 — Image unavailable');
+    expect(approve).toBeEnabled();
+  });
+
+  it('DUX-L8-RV-03/04: exposes a visible associated block reason and keeps static count out of live regions', () => {
+    render(
+      <SuggestionCard
+        suggestion={{
+          ...baseSuggestion,
+          identityCount: 3,
+          enrichment: { representativeThumbUrl: 'https://example.com/alex-stored.jpg' },
+        }}
+        onAccept={vi.fn()}
+        onReject={vi.fn()}
+        isPending={false}
+        lowConfidenceThreshold={0.5}
+      />,
+    );
+
+    const approve = screen.getByRole('button', { name: 'Yes' });
+    const reason = screen.getByText('Review all stored faces before approving.');
+    expect(reason).toBeVisible();
+    expect(approve).toHaveAttribute('aria-disabled', 'true');
+    expect(approve).toHaveAttribute('aria-describedby', reason.id);
+    expect(screen.getByText('2 more faces not shown')).not.toHaveAttribute('role', 'status');
   });
 
   it('gives candidate and stored-reference images source-and-position alt text', () => {

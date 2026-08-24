@@ -22,6 +22,9 @@ class SettingsPage extends AbstractSpaPage {
 	}
 
 	protected function getLoadingMessage(): string {
-		return __( 'Loading settings...', 'alt-context' );
+		return __(
+			'Loading Alt Context Settings. Please wait while the application initializes.',
+			'alt-context'
+		);
 	}
 }

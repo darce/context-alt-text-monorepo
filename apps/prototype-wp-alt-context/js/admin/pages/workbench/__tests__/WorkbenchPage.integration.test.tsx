@@ -617,6 +617,46 @@ describe('WorkbenchPage (integration-lite)', () => {
     ).toEqual(baseMediaResponse);
   });
 
+  it('renders its own accessible page heading, matching class-workbench-page.php getPageTitle() (BR-37/BR-38)', async () => {
+    // Before this fix, Workbench's accessible name reached into the PHP shell
+    // (aria-labelledby="acx-page-title") and was unverifiable from a
+    // component-level test: the shell heading only exists on a real
+    // server-rendered request. This mounts the REAL, un-mocked WorkbenchPage
+    // (not a `vi.mock`-stubbed div, cf. App.test.tsx) and proves the section's
+    // accessible name now resolves entirely from its own rendered <h1>.
+    vi.mocked(recognitionApi.fetchMediaIdentities).mockResolvedValue({
+      identities_by_media: { '11': [] },
+    });
+    vi.mocked(recognitionApi.fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [],
+      limit: 10,
+      offset: 0,
+    });
+
+    const client = new QueryClient({
+      defaultOptions: {
+        queries: {
+          retry: false,
+          staleTime: Infinity,
+          refetchOnMount: false,
+          refetchOnWindowFocus: false,
+          refetchOnReconnect: false,
+        },
+      },
+    });
+    client.setQueryData(
+      queryKeys.media.workbenchPage({ page: 1, perPage: 10, search: '', status: 'all' }),
+      baseMediaResponse,
+    );
+    client.setQueryData(queryKeys.media.identitiesByIds([11]), {
+      identities_by_media: { '11': [] },
+    });
+
+    renderWithClient(client);
+
+    expect(await screen.findByRole('region', { name: 'Review Queue' })).toBeInTheDocument();
+  });
+
   it('paints new findings after projection-ready without reload or remount (E15-23 / E15-24 gate)', async () => {
     vi.mocked(recognitionApi.fetchMediaIdentities).mockResolvedValue({
       identities_by_media: { '11': [] },

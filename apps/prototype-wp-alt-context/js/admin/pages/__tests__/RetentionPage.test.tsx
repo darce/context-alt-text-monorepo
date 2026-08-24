@@ -184,7 +184,7 @@ describe('RetentionPage', () => {
   it('renders policy state and audit history', () => {
     render(<RetentionPage />);
 
-    expect(screen.getByText('Retention & Audit Controls')).toBeInTheDocument();
+    expect(screen.getByText('Data Retention')).toBeInTheDocument();
     expect(screen.getByRole('radio', { name: /Dispose after confirmation/ })).toBeChecked();
     expect(screen.getByText('Showing the five most recent audit events.')).toBeInTheDocument();
     expect(screen.getByText('policy_updated')).toBeInTheDocument();

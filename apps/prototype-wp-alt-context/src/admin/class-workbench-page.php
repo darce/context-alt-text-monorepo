@@ -17,12 +17,12 @@ class WorkbenchPage extends AbstractSpaPage {
 	}
 
 	protected function getPageTitle(): string {
-		return __( 'Alt Context Workbench', 'alt-context' );
+		return __( 'Alt Context Review Queue', 'alt-context' );
 	}
 
 	protected function getLoadingMessage(): string {
 		return __(
-			'Loading the workbench experience. Hang tight while we prepare your media workspace.',
+			'Loading Alt Context Review Queue. Hang tight while we prepare your media workspace.',
 			'alt-context'
 		);
 	}

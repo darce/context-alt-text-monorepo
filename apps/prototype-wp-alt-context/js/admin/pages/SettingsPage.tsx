@@ -157,7 +157,10 @@ export const SettingsPage = (): React.JSX.Element => {
 
   if (settingsQuery.isLoading) {
     return (
-      <section className="acx-settings" aria-labelledby="acx-settings-title">
+      <section className="acx-settings" aria-labelledby="acx-settings-page-title">
+        <h1 id="acx-settings-page-title" className="acx-dashboard__title">
+          {__('Settings', 'alt-context')}
+        </h1>
         <h2 id="acx-settings-title">{__('Recognition API Settings', 'alt-context')}</h2>
         <p>{__('Loading settings…', 'alt-context')}</p>
       </section>
@@ -166,7 +169,10 @@ export const SettingsPage = (): React.JSX.Element => {
 
   if (settingsQuery.isError) {
     return (
-      <section className="acx-settings" aria-labelledby="acx-settings-title">
+      <section className="acx-settings" aria-labelledby="acx-settings-page-title">
+        <h1 id="acx-settings-page-title" className="acx-dashboard__title">
+          {__('Settings', 'alt-context')}
+        </h1>
         <h2 id="acx-settings-title">{__('Recognition API Settings', 'alt-context')}</h2>
         <p>{__('Failed to load settings.', 'alt-context')}</p>
       </section>
@@ -178,7 +184,10 @@ export const SettingsPage = (): React.JSX.Element => {
   const keyReadOnly = isReadOnly(data.key_source);
   const hasUnsavedRoutingChanges = state.url !== data.url;
   return (
-    <section className="acx-settings" aria-labelledby="acx-settings-title">
+    <section className="acx-settings" aria-labelledby="acx-settings-page-title">
+      <h1 id="acx-settings-page-title" className="acx-dashboard__title">
+        {__('Settings', 'alt-context')}
+      </h1>
       <h2 id="acx-settings-title">{__('Recognition API Settings', 'alt-context')}</h2>
       <p className="description">
         {__('Configure the connection to the Alt Context recognition service.', 'alt-context')}

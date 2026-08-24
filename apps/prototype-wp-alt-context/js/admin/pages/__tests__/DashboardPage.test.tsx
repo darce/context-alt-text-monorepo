@@ -127,6 +127,51 @@ describe('DashboardPage', () => {
     );
   });
 
+  it('renders a landing summary describing what the product does, not operator chores', () => {
+    mockedUseIdentityStats.mockReturnValue(
+      createMockQuery<DashboardStats>({
+        data: {
+          people_count: 10,
+          assigned_clusters_count: 7,
+          pending_clusters_count: 3,
+          media_with_faces_count: 22,
+          unassigned_persons_count: 0,
+        },
+        refetch: vi.fn(),
+      }),
+    );
+
+    render(<DashboardPage />);
+
+    expect(
+      screen.getByText('It finds the people in your media library and writes alt text that names them.'),
+    ).toBeInTheDocument();
+    expect(screen.queryByText('Monitor your library coverage and manage identity recognition jobs.')).not.toBeInTheDocument();
+  });
+
+  it('renders the page heading as "Overview", matching the renamed admin menu label', () => {
+    mockedUseIdentityStats.mockReturnValue(
+      createMockQuery<DashboardStats>({
+        data: {
+          people_count: 10,
+          assigned_clusters_count: 7,
+          pending_clusters_count: 3,
+          media_with_faces_count: 22,
+          unassigned_persons_count: 0,
+        },
+        refetch: vi.fn(),
+      }),
+    );
+
+    render(<DashboardPage />);
+
+    // The visible hero title is now a <p> (WordPress shell owns the page's only
+    // <h1>, ORCH-UX-UI-BR-23); assert via the section's accessible name so the
+    // test still fails if the preserved id/aria-labelledby link is broken.
+    expect(screen.getByRole('region', { name: 'Overview' })).toBeInTheDocument();
+    expect(screen.queryByText('Alt Context Dashboard')).not.toBeInTheDocument();
+  });
+
   it('renders identity stats and pending-review guidance', () => {
     mockedUseIdentityStats.mockReturnValue(
       createMockQuery<DashboardStats>({
@@ -149,7 +194,7 @@ describe('DashboardPage', () => {
     expect(screen.getByText('22')).toBeInTheDocument();
     expect(screen.getByText('Media with faces')).toBeInTheDocument();
     expect(screen.getByText('3 faces are waiting for names.')).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'Go to Workbench' })).toHaveAttribute('href', '#/workbench?advanced=open');
+    expect(screen.getByRole('link', { name: 'Go to Review Queue' })).toHaveAttribute('href', '#/workbench?advanced=open');
   });
 
   it('shows first-use guidance when roster is empty and nothing pending', () => {
@@ -343,7 +388,7 @@ describe('DashboardPage', () => {
 
     render(<DashboardPage />);
 
-    expect(screen.getByText('3 persons have no assigned clusters.')).toBeInTheDocument();
+    expect(screen.getByText('3 persons have no assigned face groups.')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Review 3 unassigned persons' })).toHaveAttribute(
       'href',
       '#/roster?personFilter=unassigned',
@@ -391,7 +436,7 @@ describe('DashboardPage', () => {
 
     expect(screen.getByText(RETENTION_CARD_HEADING)).toBeInTheDocument();
     expect(screen.getByText('Dispose after ack')).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: /Open Retention Controls/ })).toHaveAttribute(
+    expect(screen.getByRole('link', { name: /Open Data Retention/ })).toHaveAttribute(
       'href',
       RETENTION_CARD_LINK_HREF,
     );
@@ -543,7 +588,7 @@ describe('DashboardPage', () => {
 
     expect(screen.queryByText(RETENTION_CARD_HEADING)).not.toBeInTheDocument();
     expect(screen.queryByText(RETENTION_CARD_ERROR_BODY)).not.toBeInTheDocument();
-    expect(screen.queryByRole('link', { name: /Open Retention Controls/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: /Open Data Retention/ })).not.toBeInTheDocument();
   });
 
   it('shows remediation copy and retention link when retention status fails to load', () => {
@@ -571,7 +616,7 @@ describe('DashboardPage', () => {
 
     expect(screen.getByText(RETENTION_CARD_HEADING)).toBeInTheDocument();
     expect(screen.getByText(RETENTION_CARD_ERROR_BODY)).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: /Open Retention Controls/ })).toHaveAttribute(
+    expect(screen.getByRole('link', { name: /Open Data Retention/ })).toHaveAttribute(
       'href',
       RETENTION_CARD_LINK_HREF,
     );
@@ -962,7 +1007,7 @@ describe('DashboardPage', () => {
     render(<DashboardPage />);
 
     expect(
-      screen.getByText('Mirror is out of sync with the backend — 7 stale clusters, 2 failed sync events.'),
+      screen.getByText('Mirror is out of sync with the backend — 7 stale face groups, 2 failed sync events.'),
     ).toBeInTheDocument();
   });
 

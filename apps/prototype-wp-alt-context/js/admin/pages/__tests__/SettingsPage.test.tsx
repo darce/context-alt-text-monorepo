@@ -136,10 +136,22 @@ describe('SettingsPage', () => {
     expect(screen.getByText('Loading settings…')).toBeInTheDocument();
   });
 
-  it('shows error state when settings fail to load', () => {
-    mockUseQuery.mockReturnValue(createMockQuery({ isError: true, error: new Error('fail') }));
+  it('announces load errors and offers retry and Dashboard exits [UXA-09, NAV-07]', () => {
+    const refetch = vi.fn();
+    mockUseQuery.mockReturnValue(
+      createMockQuery({ isError: true, error: new Error('fail'), refetch }),
+    );
     render(<SettingsPage />);
-    expect(screen.getByText('Failed to load settings.')).toBeInTheDocument();
+
+    expect(screen.getByRole('alert')).toHaveTextContent('Failed to load settings.');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    expect(refetch).toHaveBeenCalledTimes(1);
+
+    expect(screen.getByRole('link', { name: 'Back to Dashboard' })).toHaveAttribute(
+      'href',
+      '#/dashboard',
+    );
   });
 
   it('renders the settings form with loaded data', () => {

@@ -14,6 +14,14 @@ export const DASHBOARD_FLOW_STATE = {
 
 export type DashboardFlowState = (typeof DASHBOARD_FLOW_STATE)[keyof typeof DASHBOARD_FLOW_STATE];
 
+export const DASHBOARD_ORIENTATION_POSITION = {
+  BEFORE_GRID: 'before_grid',
+  HIDDEN: 'hidden',
+} as const;
+
+export type DashboardOrientationPosition =
+  (typeof DASHBOARD_ORIENTATION_POSITION)[keyof typeof DASHBOARD_ORIENTATION_POSITION];
+
 export interface DashboardPriorityInputs {
   isSyncStatusLoading: boolean;
   isSyncStatusError: boolean;
@@ -36,7 +44,7 @@ export interface DashboardPriorityInputs {
 
 export interface DashboardPriorityModel {
   gridSectionOrder: DashboardSectionId[];
-  orientationPosition: 'before_grid' | 'hidden';
+  orientationPosition: DashboardOrientationPosition;
 }
 
 const DEFAULT_SECTION_ORDER: DashboardSectionId[] = [
@@ -88,6 +96,9 @@ export const buildDashboardPriorityModel = (inputs: DashboardPriorityInputs): Da
 
   return {
     gridSectionOrder,
-    orientationPosition: inputs.flowState === DASHBOARD_FLOW_STATE.FIRST_NAMED ? 'hidden' : 'before_grid',
+    orientationPosition:
+      inputs.flowState === DASHBOARD_FLOW_STATE.FIRST_NAMED
+        ? DASHBOARD_ORIENTATION_POSITION.HIDDEN
+        : DASHBOARD_ORIENTATION_POSITION.BEFORE_GRID,
   };
 };

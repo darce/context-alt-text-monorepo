@@ -16,6 +16,22 @@ const getDismissalStorageKey = (): string | null => {
     : null;
 };
 
+const readStoredDismissal = (storageKey: string): string | null => {
+  try {
+    return window.localStorage.getItem(storageKey);
+  } catch {
+    return null;
+  }
+};
+
+const storeDismissal = (storageKey: string): void => {
+  try {
+    window.localStorage.setItem(storageKey, ORIENTATION_DISMISSAL.DISMISSED);
+  } catch {
+    // Storage is optional: dismissal still applies for the current render.
+  }
+};
+
 declare global {
   interface Window {
     userSettings?: {
@@ -27,13 +43,14 @@ declare global {
 export const OrientationCard = (): React.JSX.Element | null => {
   const storageKey = getDismissalStorageKey();
   const [isDismissed, setIsDismissed] = React.useState(
-    () => storageKey !== null && window.localStorage.getItem(storageKey) === ORIENTATION_DISMISSAL.DISMISSED,
+    () => storageKey !== null && readStoredDismissal(storageKey) === ORIENTATION_DISMISSAL.DISMISSED,
   );
 
   const dismiss = () => {
     if (storageKey !== null) {
-      window.localStorage.setItem(storageKey, ORIENTATION_DISMISSAL.DISMISSED);
+      storeDismissal(storageKey);
     }
+    document.getElementById('acx-dashboard-title')?.focus();
     setIsDismissed(true);
   };
 

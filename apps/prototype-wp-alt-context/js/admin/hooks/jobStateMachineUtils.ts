@@ -20,6 +20,9 @@ export const isScanSuccessStatus = (status: string | undefined): boolean =>
 export const isScanTerminalStatus = (status: string | undefined): boolean =>
   isScanSuccessStatus(status) || status === 'failed';
 
+export const isScanActiveStatus = (status: string | undefined): boolean =>
+  status !== undefined && status.length > 0 && !isScanTerminalStatus(status);
+
 export const getLatestJobByType = (jobs: PersistedJob[], type: PersistedJob['type']): PersistedJob | null => {
   const typedJobs = jobs.filter((job) => job.type === type);
   return typedJobs[typedJobs.length - 1] ?? null;

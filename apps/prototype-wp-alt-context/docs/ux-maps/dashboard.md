@@ -5,7 +5,7 @@
 
 ## Goals
 
-- Give the operator one landing surface for sync health, identity-recognition progress, library coverage, recent jobs, and retention posture
+- Give the operator one landing surface for sync health, identity-recognition progress, library coverage, recent jobs, and data retention
 - Keep the first-use orientation before the dashboard grid until the first person is named
 - Make dashboard section order and per-section loading, empty, error, first-use, and degraded behavior reviewable as a text-first SSOT
 
@@ -13,62 +13,65 @@
 
 - `job-start-recognition` — Start identity recognition and move from scan to review
 - `job-triage-dashboard` — Triage dashboard health and choose the next operator action
-- `job-maintain-library` — Improve library coverage and review retention posture
+- `job-maintain-library` — Improve library coverage and review data retention
 
 ## State and placement rules
 
 The screen-level state is the aggregate landing-surface state. Each zone also owns a state matrix; a section can be loading or in error while the hero and other sections remain rendered.
 
-- Base grid order: `Sync Health` → `Identity Recognition` → `Library Coverage` → `Recent Activity` → `Retention Posture`.
+- Base grid order: `Sync Health` → `Identity Recognition` → `Library Coverage` → `Recent Activity` → `Data Retention`.
 - When sync has no attention and actionable review work exists (`pendingClustersCount > 0` or `unassignedPersonsCount > 0`), `Identity Recognition` is promoted ahead of `Sync Health`.
 - The orientation surface is outside the grid and sits immediately after the hero, before whichever grid order applies.
 - Orientation is rendered before the grid for `unscanned`, `scanning`, and `clusters_pending` flow states. It is hidden once `flowState` is `first_named`; dismissal also hides the card for that browser/user.
-- The hero is always present. Dashboard data hooks load independently, so loading/error branches belong to their sections rather than replacing the shell.
+- `assigned_clusters_count > 0` sets `flowState` to `first_named`, so a populated Assigned count cannot appear with Getting Started. First-time and default sketches are therefore separate compositions.
+- The hero is always present and has no distinct first_time branch. Dashboard data hooks load independently, so loading/error branches belong to their sections rather than replacing the shell.
+- There is no exclusive page-level `empty` or `offline` shell. Offline copy is a Sync Health summary tag inside the intact (often degraded) grid.
 
 ## Screens
 
 | id | kind | route | title | wp_page |
 | --- | --- | --- | --- | --- |
-| `dashboard-shell` | screen | `#/dashboard` | Dashboard | `alt-context-dashboard` |
+| `dashboard-shell` | screen | `#/dashboard` | Overview | `alt-context-dashboard` |
+| `exit-workbench` | exit | `#/workbench` | Workbench | `alt-context-workbench` |
+| `exit-retention` | exit | `#/retention` | Data Retention | `alt-context-retention` |
+| `exit-roster` | exit | `#/roster` | Roster (person workspace) | `alt-context-roster` |
 
-### Dashboard (`dashboard-shell`)
+### Overview (`dashboard-shell`)
 
-Purpose: Landing screen with hero, conditional orientation surface, and a priority-ordered grid of Sync Health, Identity Recognition, Library Coverage, Recent Activity, and Retention Posture sections.
+Purpose: Landing screen with hero, conditional orientation surface, and a priority-ordered grid of Sync Health, Identity Recognition, Library Coverage, Recent Activity, and Data Retention sections.
 
 | zone id | label | role | states |
 | --- | --- | --- | --- |
-| `z-dashboard-hero` | Dashboard hero (Alt Context / Overview / contextual subtitle) | content | default, first_time |
+| `z-dashboard-hero` | Dashboard hero (Alt Context / Overview / contextual subtitle) | content | default |
 | `z-orientation` | Orientation surface (Getting Started with Identity Recognition; before grid unless first_named) | content | default, first_time |
 | `z-sync-health` | Sync Health section (summary, pending changes, conflicts, failed sync events, topology work) | status | default, loading, error, offline, degraded |
 | `z-identity-recognition` | Identity Recognition section (people, assigned, pending review, media with faces, guidance) | content | default, loading, error, first_time |
-| `z-library-coverage` | Library Coverage section (total media, missing alt text, coverage, fix CTA) | content | default, loading, first_time |
-| `z-recent-activity` | Recent Activity section (recognition jobs, provenance, status, duration, results link) | queue | default, empty, degraded |
-| `z-retention-posture` | Retention Posture section (mode, last export, last purge, retention settings link) | status | default, loading, empty, error |
+| `z-library-coverage` | Library Coverage section (total media, missing alt text, coverage, fix CTA) | content | default, loading |
+| `z-recent-activity` | Recent Activity section (recognition jobs, provenance, status, duration, results link) | queue | default, empty, degraded, error |
+| `z-retention-posture` | Data Retention section (mode, last export, last purge, Open Data Retention link) | status | default, loading, empty, error |
 
-Screen states: `default`, `loading`, `empty`, `error`, `offline`, `first_time`, `degraded`.
+Screen states: `default`, `loading`, `error`, `first_time`, `degraded`.
 
 #### Default — populated
 
-The sketch shows the base order and the orientation placement. If the first person has already been named, remove the orientation row; if actionable review work exists without sync attention, move Identity Recognition above Sync Health.
+`flowState` is `first_named` (Assigned > 0), so orientation is hidden. The sketch shows the base order. If actionable review work exists without sync attention, move Identity Recognition above Sync Health. GuidanceCard with pending review shows Go to Review Queue.
 
 ```
 +------------------------------------------------------------+
 | Alt Context                                               |
-| Dashboard                                                 |
+| Overview                                                  |
 | It finds the people in your media library and writes      |
 | alt text that names them.                                 |
 +------------------------------------------------------------+
-| Getting Started with Identity Recognition          [x]    |
-|   1. Scan  ->  2. Confirm  ->  3. Review                  |
-|   [Start your first scan]                                 |
-+------------------------------------------------------------+
 | Sync Health                                               |
-|   Healthy / pending changes 0 / conflicts 0 / failed 0    |
+|   Everything is saved and up to date.                     |
+|   Pending changes 0 / Conflicts 0 / Failed operations 0   |
 |   [Open Review Queue]                                     |
 +------------------------------------------------------------+
 | Identity Recognition                                     |
 |   People 24 | Assigned 20 | Pending Review 4              |
 |   Media with faces 120                                    |
+|   [Go to Review Queue]                                    |
 +------------------------------------------------------------+
 | Library Coverage                                         |
 |   Total Media 300 | Missing Alt Text 40 | Coverage 87%    |
@@ -78,33 +81,34 @@ The sketch shows the base order and the orientation placement. If the first pers
 |   Scan finished · 120 images · 2 minutes ago              |
 |   Durable batch run                         [View Results] |
 +------------------------------------------------------------+
-| Retention Posture                                        |
+| Data Retention                                           |
 |   Current Mode / Last Export / Last Purge                 |
-|   [Retention settings]                                    |
+|   [Open Data Retention]                                   |
 +------------------------------------------------------------+
 ```
 
 #### First-time — fresh tenant
 
-The hero and orientation surface render while the independently loaded sections settle on zero counts or no-history copy. The first-use flow state is `unscanned`; orientation is before the grid.
+The hero and orientation surface render while independently loaded sections settle on zero counts or no-history copy. The first-use flow state is `unscanned`; orientation is before the grid. Assigned is 0, so Getting Started can show. GuidanceCard with people_count 0 shows Go to Scan tab. Dismiss is always on the orientation card.
 
 ```
 +------------------------------------------------------------+
 | Alt Context                                               |
-| Dashboard                                                 |
+| Overview                                                  |
 | It finds the people in your media library and writes      |
 | alt text that names them.                                 |
 +------------------------------------------------------------+
 | Getting Started with Identity Recognition                 |
 |   1. Scan  ->  2. Confirm  ->  3. Review                  |
-|   [Start your first scan]                                 |
+|   [Start your first scan] [Dismiss getting started]       |
 +------------------------------------------------------------+
 | Sync Health                                               |
-|   Connected / no pending changes                          |
+|   Everything is saved and up to date.                     |
 +------------------------------------------------------------+
 | Identity Recognition                                     |
 |   People 0 | Assigned 0 | Pending Review 0                |
 |   Media with faces 0                                     |
+|   [Go to Scan tab]                                        |
 +------------------------------------------------------------+
 | Library Coverage                                         |
 |   Total Media 0 | Missing Alt Text 0 | Coverage 0%        |
@@ -113,18 +117,18 @@ The hero and orientation surface render while the independently loaded sections 
 | Recent Activity                                          |
 |   No recent recognition jobs found.                       |
 +------------------------------------------------------------+
-| Retention Posture                                        |
+| Data Retention                                           |
 |   (absent while policy is unavailable)                    |
 +------------------------------------------------------------+
 ```
 
 #### Loading
 
-There is no page-wide loading replacement. The hero and orientation can remain visible while each data-backed section reports its own loading branch.
+There is no page-wide loading replacement. The hero and orientation can remain visible while each data-backed section reports its own loading branch. Identity still loading means `assigned_clusters_count` is not yet first_named, so orientation may show.
 
 ```
 +------------------------------------------------------------+
-| Dashboard                                                 |
+| Overview                                                  |
 | Getting Started with Identity Recognition                 |
 +------------------------------------------------------------+
 | Sync Health                                               |
@@ -139,18 +143,18 @@ There is no page-wide loading replacement. The hero and orientation can remain v
 | Recent Activity                                          |
 |   History area remains in its hook-provided state         |
 +------------------------------------------------------------+
-| Retention Posture                                        |
+| Data Retention                                           |
 |   absent while retention status is loading                |
 +------------------------------------------------------------+
 ```
 
 #### Error
 
-Errors are section-local. Sync Health shows `Sync health is unavailable right now.` when its status request fails or returns no status; Identity Recognition shows a retryable error; Retention Posture shows retention remediation; the hero and other sections remain present.
+Errors are section-local. Sync Health shows `Sync health is unavailable right now.` when its status request fails or returns no status; Identity Recognition shows a retryable error; Recent Activity shows the unavailable copy when `historySource === 'unavailable'` and the list is empty; Data Retention shows retention remediation; the hero and other sections remain present.
 
 ```
 +------------------------------------------------------------+
-| Dashboard                                                 |
+| Overview                                                  |
 | Getting Started with Identity Recognition                 |
 +------------------------------------------------------------+
 | Sync Health                                               |
@@ -165,26 +169,27 @@ Errors are section-local. Sync Health shows `Sync health is unavailable right no
 | Recent Activity                                          |
 |   Durable recent activity is unavailable right now.       |
 +------------------------------------------------------------+
-| Retention Posture                                        |
-|   Retention status unavailable; open retention settings   |
+| Data Retention                                           |
+|   Retention status could not load. Check the connection   |
+|   on the Settings page.                      [Open Data Retention] |
 +------------------------------------------------------------+
 ```
 
 #### Degraded
 
-Degraded is an intact dashboard with an attention-bearing sync state or partial history. Sync Health can show warnings, mirror divergence, conflicts, failed sync events, topology work, or an offline backend; Recent Activity can identify browser-local fallback. The other sections remain usable when their own requests succeed.
+Degraded is an intact first_named dashboard with an attention-bearing sync state or partial history. Orientation is hidden because Assigned > 0. Sync Health can show warnings, mirror divergence, conflicts, failed sync events, topology work, or an offline backend summary; Recent Activity can identify browser-local fallback. When pending review is 0 and unassigned persons remain, GuidanceCard shows Review unassigned persons.
 
 ```
 +------------------------------------------------------------+
-| Dashboard                                                 |
-| Getting Started with Identity Recognition                 |
+| Overview                                                  |
 +------------------------------------------------------------+
-| Sync Health                         [attention / offline]  |
+| Sync Health                          (attention / offline) |
 |   Mirror is out of sync; pending / conflicts / failures   |
-|   [Reset mirror] [Open Conflict Inbox]                    |
+|   [Reset mirror] [Open Conflict Inbox] [Open Failed Sync Queue] |
 +------------------------------------------------------------+
 | Identity Recognition                                     |
-|   Counts and review guidance remain available              |
+|   People 24 | Assigned 20 | Pending Review 0              |
+|   [Review unassigned persons]                             |
 +------------------------------------------------------------+
 | Library Coverage                                         |
 |   Coverage counters remain available                       |
@@ -192,8 +197,75 @@ Degraded is an intact dashboard with an attention-bearing sync state or partial 
 | Recent Activity                                          |
 |   Showing jobs remembered in this browser only.           |
 +------------------------------------------------------------+
-| Retention Posture                                        |
+| Data Retention                                           |
 |   Policy summary or remediation remains local to panel    |
++------------------------------------------------------------+
+```
+
+### Workbench (`exit-workbench`)
+
+Purpose: Scan, review queue, conflict inbox, and failed-sync overlays after a dashboard CTA
+
+url_params: `tab`, `panel`, `advanced`, `status`
+
+| zone id | label | role | states |
+| --- | --- | --- | --- |
+| `z-wb-entry` | Workbench entry | nav | default |
+
+```
++------------------------------------------------------------+
+| Workbench  [exit]  #/workbench                             |
+| Scan, review queue, conflict inbox, and failed-sync        |
+| overlays after a dashboard CTA                             |
++------------------------------------------------------------+
+| ZONES                                                      |
+|   - Workbench entry (nav)                                  |
++------------------------------------------------------------+
+| states: default | loading | error                          |
++------------------------------------------------------------+
+```
+
+### Data Retention (`exit-retention`)
+
+Purpose: Review policy, run exports, and inspect recent audit events
+
+| zone id | label | role | states |
+| --- | --- | --- | --- |
+| `z-retention-entry` | Data Retention entry | nav | default |
+
+```
++------------------------------------------------------------+
+| Data Retention  [exit]  #/retention                        |
+| Review policy, run exports, and inspect recent audit       |
+| events                                                     |
++------------------------------------------------------------+
+| ZONES                                                      |
+|   - Data Retention entry (nav)                             |
++------------------------------------------------------------+
+| states: default | loading | error                          |
++------------------------------------------------------------+
+```
+
+### Roster (person workspace) (`exit-roster`)
+
+Purpose: Review unassigned persons after dashboard identity guidance
+
+url_params: `personFilter`, `person`
+
+| zone id | label | role | states |
+| --- | --- | --- | --- |
+| `z-roster-entry` | Roster entry | nav | default |
+
+```
++------------------------------------------------------------+
+| Roster (person workspace)  [exit]  #/roster                |
+| Review unassigned persons after dashboard identity         |
+| guidance                                                   |
++------------------------------------------------------------+
+| ZONES                                                      |
+|   - Roster entry (nav)                                     |
++------------------------------------------------------------+
+| states: default | loading | empty | error                  |
 +------------------------------------------------------------+
 ```
 
@@ -201,13 +273,19 @@ Degraded is an intact dashboard with an attention-bearing sync state or partial 
 
 | id | hierarchy | verb | target |
 | --- | --- | --- | --- |
-| `act-start-first-scan` | primary | Start first scan | `#/workbench?tab=scan` |
-| `act-open-review-queue` | primary | Open review queue | `#/workbench?tab=scan` |
+| `act-start-first-scan` | primary | Start your first scan | `#/workbench?tab=scan` |
+| `act-dismiss-orientation` | tertiary | Dismiss getting started | dashboard-shell |
+| `act-open-review-queue` | primary | Open Review Queue | `#/workbench?tab=scan` |
 | `act-fix-missing-descriptions` | primary | Fix missing descriptions | `#/workbench?status=missing` |
-| `act-open-retention` | secondary | Open retention settings | `#/retention` |
+| `act-open-retention` | secondary | Open Data Retention | `#/retention` |
 | `act-open-conflicts` | secondary | Open Conflict Inbox | `#/workbench?tab=scan&panel=conflicts` |
 | `act-open-failed-sync` | secondary | Open Failed Sync Queue | `#/workbench?tab=scan&panel=dead-letter` |
 | `act-reset-mirror` | destructive | Reset mirror | dashboard sync health |
+| `act-view-results` | secondary | View Results | `#/workbench?advanced=open` |
+| `act-retry-identity-stats` | secondary | Retry | dashboard-shell |
+| `act-go-to-review-queue` | primary | Go to Review Queue | `#/workbench?advanced=open` |
+| `act-review-unassigned` | secondary | Review unassigned persons | `#/roster?personFilter=unassigned` |
+| `act-go-to-scan-tab` | secondary | Go to Scan tab | `#/workbench?tab=scan` |
 
 ## Flows
 
@@ -215,29 +293,33 @@ Degraded is an intact dashboard with an attention-bearing sync state or partial 
 
 ```mermaid
 flowchart TD
-  n_dashboard_first["Dashboard (first_time)"]
+  n_dashboard_first["Overview (first_time)"]
+  n_exit_workbench["Workbench (exit)"]
   n_dashboard_first -->|orientation before grid| n_dashboard_first
-  n_dashboard_first -->|Start your first scan| n_dashboard_first
-  n_dashboard_first -->|scan/job appears in Recent Activity| n_dashboard_first
+  n_dashboard_first -->|Start your first scan| n_exit_workbench
+  n_exit_workbench -->|scan/job appears in Recent Activity| n_dashboard_first
 ```
 
 ### Read health and identity counts → open review queue or resolve sync debt (`flow-dashboard-review`)
 
 ```mermaid
 flowchart TD
-  n_dashboard_review["Dashboard (default)"]
+  n_dashboard_review["Overview (default)"]
+  n_exit_workbench_review["Workbench (exit)"]
   n_dashboard_review -->|Identity Recognition promoted when review work exists and sync has no attention| n_dashboard_review
-  n_dashboard_review -->|Open Review Queue / Conflict Inbox / Failed Sync Queue| n_dashboard_review
+  n_dashboard_review -->|Open Review Queue / Conflict Inbox / Failed Sync Queue| n_exit_workbench_review
 ```
 
-### Check coverage → fix missing descriptions → inspect retention posture (`flow-dashboard-maintenance`)
+### Check coverage → fix missing descriptions → inspect data retention (`flow-dashboard-maintenance`)
 
 ```mermaid
 flowchart TD
-  n_dashboard_maintenance["Dashboard (default)"]
+  n_dashboard_maintenance["Overview (default)"]
+  n_exit_workbench_fix["Workbench (exit)"]
+  n_exit_retention["Data Retention (exit)"]
   n_dashboard_maintenance -->|Library Coverage| n_dashboard_maintenance
-  n_dashboard_maintenance -->|Fix missing descriptions| n_dashboard_maintenance
-  n_dashboard_maintenance -->|Retention Posture| n_dashboard_maintenance
+  n_dashboard_maintenance -->|Fix missing descriptions| n_exit_workbench_fix
+  n_exit_workbench_fix -->|Open Data Retention| n_exit_retention
 ```
 
 ## Open questions
@@ -247,9 +329,9 @@ flowchart TD
 
 ## Parity index
 
-Zone ids: z-dashboard-hero z-orientation z-sync-health z-identity-recognition z-library-coverage z-recent-activity z-retention-posture
+Zone ids: z-dashboard-hero z-orientation z-sync-health z-identity-recognition z-library-coverage z-recent-activity z-retention-posture z-wb-entry z-retention-entry z-roster-entry
 
-Action ids: act-start-first-scan act-open-review-queue act-fix-missing-descriptions act-open-retention act-open-conflicts act-open-failed-sync act-reset-mirror
+Action ids: act-start-first-scan act-dismiss-orientation act-open-review-queue act-fix-missing-descriptions act-open-retention act-open-conflicts act-open-failed-sync act-reset-mirror act-view-results act-retry-identity-stats act-go-to-review-queue act-review-unassigned act-go-to-scan-tab
 
 Zone labels (verbatim):
 
@@ -259,9 +341,12 @@ Zone labels (verbatim):
 - Identity Recognition section (people, assigned, pending review, media with faces, guidance)
 - Library Coverage section (total media, missing alt text, coverage, fix CTA)
 - Recent Activity section (recognition jobs, provenance, status, duration, results link)
-- Retention Posture section (mode, last export, last purge, retention settings link)
+- Data Retention section (mode, last export, last purge, Open Data Retention link)
+- Workbench entry
+- Data Retention entry
+- Roster entry
 
-Screen states: default loading empty error offline first_time degraded
+Screen states: default loading error first_time degraded
 
 ## Not doing
 

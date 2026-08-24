@@ -197,6 +197,7 @@ describe('ConflictInbox', () => {
 
     expect(screen.getByText('No open conflicts.')).toBeInTheDocument();
     expect(screen.getByText('Showing 0-0 of 0 open conflicts.')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Refresh conflicts' })).toBeEnabled();
   });
 
   it('renders conflicts with entity metadata and pagination summary', () => {

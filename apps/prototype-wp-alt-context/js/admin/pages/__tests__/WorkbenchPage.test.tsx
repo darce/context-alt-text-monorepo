@@ -56,6 +56,21 @@ describe('ConfirmPanel', () => {
 });
 
 describe('RecentJobsPanel', () => {
+  it('offers a scan action when there are no previous jobs', () => {
+    render(
+      <RecentJobsPanel
+        jobs={[]}
+        statuses={{}}
+        activeJobId={null}
+        onSelect={vi.fn()}
+        onClear={vi.fn()}
+        historySource="durable"
+      />,
+    );
+
+    expect(screen.getByRole('link', { name: 'Run a scan' })).toHaveAttribute('href', '#/workbench?tab=scan');
+  });
+
   it('lists recent jobs and handles selection', async () => {
     const onSelect = vi.fn();
     const onClear = vi.fn();

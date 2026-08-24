@@ -11,6 +11,7 @@ import { Combobox } from '../../../components/ui/combobox';
 import { Check, X } from 'lucide-react';
 import { useFocusTrap } from './hooks/useFocusTrap';
 import { isHumanLabeledTarget } from '../workbench/identity-clusters/suggestionProjection';
+import { EmptyState, EmptyStateVariant } from '../../components/ui/EmptyState';
 import {
   CLUSTER_DRAWER_STATES,
   getClusterDrawerState,
@@ -388,7 +389,13 @@ export const ClusterDrawerPanel = ({
           ) : detailError && !cluster ? (
             <p className="acx-cluster-drawer__status acx-cluster-drawer__status--error">{detailError}</p>
           ) : !hasIdentities ? (
-            <p>{__('No faces found in this face group.', 'alt-context')}</p>
+            <EmptyState
+              variant={EmptyStateVariant.EMPTY}
+              heading={__('No faces found in this face group.', 'alt-context')}
+              body={__('Return to People and choose another face group.', 'alt-context')}
+              action={{ label: __('Back to People', 'alt-context'), onClick: onClose }}
+              headingLevel={4}
+            />
           ) : (
             <>
               {hideReassign && reassignUnavailableReason ? (

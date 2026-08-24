@@ -239,7 +239,7 @@ export const RetentionPage = (): React.JSX.Element => {
           </button>
         </section>
 
-        <RecentAuditEvents events={auditEvents} />
+        <RecentAuditEvents events={auditEvents} onRefresh={() => void auditQuery.refetch()} />
         <FullAuditLog auditQuery={auditQuery} auditPage={state.auditPage} dispatch={dispatch} />
       </div>
 

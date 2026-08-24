@@ -3,6 +3,7 @@ import { __, _n, sprintf } from '@wordpress/i18n';
 
 import type { DashboardStats } from '../../api/dashboardApi';
 import { toRoster, toWorkbench } from '../../navigation/appLinks';
+import { EmptyState, EmptyStateVariant } from '../../components/ui/EmptyState';
 
 interface GuidanceCardProps {
   stats: DashboardStats;
@@ -70,5 +71,13 @@ export const GuidanceCard = ({ stats }: GuidanceCardProps): React.JSX.Element =>
     );
   }
 
-  return <p>{__('All caught up. New faces will appear here for review.', 'alt-context')}</p>;
+  return (
+    <EmptyState
+      variant={EmptyStateVariant.EMPTY}
+      heading={__('All caught up. New faces will appear here for review.', 'alt-context')}
+      body={__('Open the Review Queue to check for new face groups.', 'alt-context')}
+      action={{ label: __('Open Review Queue', 'alt-context'), href: toWorkbench({ tab: 'scan' }) }}
+      headingLevel={3}
+    />
+  );
 };

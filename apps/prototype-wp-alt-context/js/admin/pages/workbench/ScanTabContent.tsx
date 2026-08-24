@@ -50,8 +50,8 @@ export const ScanTabContent = (): React.JSX.Element => {
   const findingsDetailRef = React.useRef<HTMLDivElement>(null);
   const reviewQueueRef = React.useRef<ReviewQueueHandle>(null);
   // Open-target lifecycle announce (§11 / A11Y-21). Owned here so it survives
-  // the review panel's rebind remount and retirement unmount. BR-68: seq-keyed so
-  // two consecutive identical closes both re-announce.
+  // the review panel's rebind remount and retirement unmount. Always-mounted
+  // (no seq key): useAriaAnnounce mutates textContent for identical repeats.
   const {
     message: reviewLifecycleMessage,
     seq: reviewLifecycleSeq,
@@ -199,10 +199,10 @@ export const ScanTabContent = (): React.JSX.Element => {
       <section className="acx-workbench-control-queue" aria-labelledby="acx-workbench-queue-heading">
         <ErrorBoundary>
           <p
-            key={reviewLifecycleSeq}
             className="acx-review-lifecycle-announce"
             role="status"
             aria-live="polite"
+            data-announce-seq={reviewLifecycleSeq}
           >
             {reviewLifecycleMessage}
           </p>

@@ -154,7 +154,7 @@ export const DashboardPage = (): React.JSX.Element => {
                 <span className="acx-dashboard__stat-value">{identityStats.people_count}</span>
                 <span
                   className="acx-dashboard__stat-label"
-                  title={__('Total unique persons created in your roster.', 'alt-context')}
+                  title={__('Total unique people identified in your media library.', 'alt-context')}
                 >
                   {__('People', 'alt-context')}
                 </span>
@@ -163,7 +163,7 @@ export const DashboardPage = (): React.JSX.Element => {
                 <span className="acx-dashboard__stat-value">{identityStats.assigned_clusters_count}</span>
                 <span
                   className="acx-dashboard__stat-label"
-                  title={__('Clusters that have been matched to a person.', 'alt-context')}
+                  title={__('Face groups that have been matched to a person.', 'alt-context')}
                 >
                   {__('Assigned', 'alt-context')}
                 </span>
@@ -172,7 +172,7 @@ export const DashboardPage = (): React.JSX.Element => {
                 <span className="acx-dashboard__stat-value">{identityStats.pending_clusters_count}</span>
                 <span
                   className="acx-dashboard__stat-label"
-                  title={__('New clusters waiting for your review and labeling.', 'alt-context')}
+                  title={__('New face groups waiting for your review and labeling.', 'alt-context')}
                 >
                   {__('Pending Review', 'alt-context')}
                 </span>
@@ -295,10 +295,10 @@ export const DashboardPage = (): React.JSX.Element => {
       <header className="acx-dashboard__hero">
         <p className="acx-dashboard__eyebrow">{__('Alt Context', 'alt-context')}</p>
         <h1 id="acx-dashboard-title" className="acx-dashboard__title">
-          {__('Alt Context Dashboard', 'alt-context')}
+          {__('Overview', 'alt-context')}
         </h1>
         <p className="acx-dashboard__subtitle">
-          {__('Monitor your library coverage and manage identity recognition jobs.', 'alt-context')}
+          {__('It finds the people in your media library and writes alt text that names them.', 'alt-context')}
         </p>
       </header>
 

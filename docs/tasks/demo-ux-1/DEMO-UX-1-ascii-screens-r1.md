@@ -20,7 +20,7 @@ Canon: heuristics-canon v0.21.6 `a5f47c6` — `lexicons/accessibility.md`,
 | NAV-12 *match transferred conventions* | hiring managers bring a mental model | **Strongly favours this choice.** wp-admin is the convention for "a WordPress plugin". A bespoke public page is the novel chrome NAV-12 warns about. |
 | HAI-09 *trustworthy ≠ trusted* | a demo is a trust claim | **Favours this choice.** A live workbench operating on real media is component evidence. A static Before/After page is the adjective-without-mechanism failure. |
 | NAV-08 *clear entry points* | first-run "now what?" | **Creates obligation #1.** A hiring manager lands in wp-admin — a dense 6-item chrome they did not choose. §2 finding D-1. |
-| NAV-07 *escape hatch* | limited-nav screens | **Creates obligation #2.** The viewer can wander into Retention/Settings and has no signposted way back to the demo path. |
+| NAV-07 *escape hatch* | limited-nav screens | **Creates obligation #2.** The viewer can wander into Data Retention/Settings and has no signposted way back to the demo path. |
 | COG-03 *design to the goal filter* | viewer's goal ≠ operator's goal | The viewer's goal is "does this person build working software", not "clear my media queue". Copy written for an operator is off-goal for them. |
 
 **Conclusion:** workbench-only is the right call and canon backs it. It shifts the
@@ -33,7 +33,7 @@ public page for this audience.
 ## 1. The demo path (what we are actually asking a stranger to do)
 
 ```
-  wp-admin login  →  Alt Context ▸ Dashboard  →  Workbench (Scan)
+  wp-admin login  →  Alt Context ▸ Overview  →  Review Queue (Scan)
         →  faces appear  →  name a person  →  alt text lands on media
 ```
 
@@ -44,7 +44,7 @@ current-and-remaining. **Today there is no step map anywhere in this flow.**
 
 ## 2. Screen renders
 
-### S1 — Landing: `wp-admin` → Alt Context ▸ Dashboard Overview
+### S1 — Landing: `wp-admin` → Alt Context ▸ Overview
 
 Rendered from `DashboardPage.tsx` (headings L138/L199/L241/L296-301),
 `OrientationCard.tsx`, `GuidanceCard.tsx`.
@@ -52,24 +52,24 @@ Rendered from `DashboardPage.tsx` (headings L138/L199/L241/L296-301),
 ```
 ┌────────────────────┬─────────────────────────────────────────────────────────┐
 │ ⌂ Dashboard        │  Alt Context                                            │
-│ ✎ Posts            │  Alt Context Dashboard                            <h1>  │
+│ ✎ Posts            │  Alt Context Overview                             <h1>  │
 │ ▣ Media            │  Monitor your library coverage and manage identity      │
 │ ▤ Pages            │  recognition jobs.                                      │
 │ ✉ Comments         │                                                         │
 │ ◈ Alt Context   ◄──┤  ┌── Identity Recognition ───────────────────── <h2> ─┐ │
-│    Dashboard Ovw.  │  │  ┌────────┐┌────────┐┌───────────┐┌──────────────┐ │ │
-│    Workbench       │  │  │ People ││Assigned││  Pending  ││  Media with  │ │ │
-│    Roster          │  │  │        ││        ││  Review   ││    faces     │ │ │
-│    Review History  │  │  │   12   ││   9    ││     3     ││      41      │ │ │
-│    Retention       │  │  └────────┘└────────┘└───────────┘└──────────────┘ │ │
+│    Overview        │  │  ┌────────┐┌────────┐┌───────────┐┌──────────────┐ │ │
+│    Review Queue    │  │  │ People ││Assigned││  Pending  ││  Media with  │ │ │
+│    People          │  │  │        ││        ││  Review   ││    faces     │ │ │
+│    Description Runs│  │  │   12   ││   9    ││     3     ││      41      │ │ │
+│    Data Retention  │  │  └────────┘└────────┘└───────────┘└──────────────┘ │ │
 │    Settings        │  │  3 faces are waiting for names.                    │ │
-│ ⚙ Appearance       │  │  → Go to Workbench                                 │ │
+│ ⚙ Appearance       │  │  → Go to Review Queue                              │ │
 │ ⚙ Plugins          │  └────────────────────────────────────────────────────┘ │
 │ ⚙ Users            │  ┌── Library Coverage ───────────────────────── <h2> ─┐ │
 │ ⚙ Tools            │  │  Total Media 41 · Missing Alt Text 18 · Coverage 56%│ │
 │ ⚙ Settings         │  │  [████████████░░░░░░░░░]  → Fix missing descriptions │ │
 │                    │  └────────────────────────────────────────────────────┘ │
-│                    │  ┌── Retention ──────────────────────────────── <h2> ─┐ │
+│                    │  ┌── Data Retention ─────────────────────────── <h2> ─┐ │
 │                    │  │  Current Mode: Retain all · Last Export: Never ...  │ │
 │                    │  └────────────────────────────────────────────────────┘ │
 └────────────────────┴─────────────────────────────────────────────────────────┘
@@ -87,9 +87,9 @@ The card is written for an empty install; the demo is never an empty install.
 Severity **HIGH**. This is the single biggest "now what?" risk in the demo.
 
 **D-2 · NAV-05 — six ACX menu items, MECE fails.**
-`class-menu.php:46-96`: Dashboard Overview · Workbench · Roster · Review History ·
-Retention · Settings. "Name a person" has two homes (Workbench *and* Roster).
-"See what happened" has two homes (Review History *and* Retention audit timeline).
+`class-menu.php:46-96`: Overview · Review Queue · People · Description Runs ·
+Data Retention · Settings. "Name a person" has two homes (Review Queue *and* People).
+"See what happened" has two homes (Description Runs *and* Data Retention audit timeline).
 A first-time viewer cannot name the one place to go. Severity **MEDIUM**.
 
 **D-3 · COG-03 — the page's own summary line is off-goal.**
@@ -132,13 +132,13 @@ NAV-14 asks: would a target user file this where we did? A hiring manager parses
 
 ---
 
-### S3 — Workbench, 2-pane
+### S3 — Review Queue, 2-pane
 
 From `WorkbenchTwoPaneLayout.tsx:148-192,354-355`.
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────┐
-│  Workbench                                                               │
+│  Review Queue                                                            │
 │  [ Scan ] [ Confirm ] [ Review ]              ⟨sync ●⟩  [Advanced ▾]      │
 ├───────────────────────────────┬──────────────────────────────────────────┤
 │  Control                 <h2> │  Library                            <h2> │

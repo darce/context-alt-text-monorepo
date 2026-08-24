@@ -45,8 +45,8 @@ class Menu {
 
 		add_submenu_page(
 			'alt-context-dashboard',
-			__( 'Dashboard Overview', 'alt-context' ),
-			__( 'Dashboard Overview', 'alt-context' ),
+			__( 'Alt Context Overview', 'alt-context' ),
+			__( 'Overview', 'alt-context' ),
 			'manage_options',
 			'alt-context-dashboard',
 			array( $this, 'render_dashboard_page' )
@@ -54,8 +54,8 @@ class Menu {
 
 		add_submenu_page(
 			'alt-context-dashboard',
-			__( 'Alt Context Workbench', 'alt-context' ),
-			__( 'Workbench', 'alt-context' ),
+			__( 'Alt Context Review Queue', 'alt-context' ),
+			__( 'Review Queue', 'alt-context' ),
 			'manage_options',
 			'alt-context-workbench',
 			array( $this, 'render_workbench_page' )
@@ -63,8 +63,8 @@ class Menu {
 
 		add_submenu_page(
 			'alt-context-dashboard',
-			__( 'Alt Context Roster', 'alt-context' ),
-			__( 'Roster', 'alt-context' ),
+			__( 'Alt Context People', 'alt-context' ),
+			__( 'People', 'alt-context' ),
 			'manage_options',
 			'alt-context-roster',
 			array( $this, 'render_roster_page' )
@@ -72,8 +72,8 @@ class Menu {
 
 		add_submenu_page(
 			'alt-context-dashboard',
-			__( 'Description Review History', 'alt-context' ),
-			__( 'Review History', 'alt-context' ),
+			__( 'Alt Context Description Runs', 'alt-context' ),
+			__( 'Description Runs', 'alt-context' ),
 			'manage_options',
 			'alt-context-description-history',
 			array( $this, 'render_description_history_page' )
@@ -81,8 +81,8 @@ class Menu {
 
 		add_submenu_page(
 			'alt-context-dashboard',
-			__( 'Alt Context Retention', 'alt-context' ),
-			__( 'Retention', 'alt-context' ),
+			__( 'Alt Context Data Retention', 'alt-context' ),
+			__( 'Data Retention', 'alt-context' ),
 			'manage_options',
 			'alt-context-retention',
 			array( $this, 'render_retention_page' )

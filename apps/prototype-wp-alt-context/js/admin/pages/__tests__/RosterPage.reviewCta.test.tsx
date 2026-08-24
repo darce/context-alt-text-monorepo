@@ -136,7 +136,7 @@ describe('RosterPage workbench review CTA (UXW2-4 rail retirement)', () => {
 
     const cta = screen.getByTestId('roster-review-cta');
     expect(cta).toBeInTheDocument();
-    const link = screen.getByRole('link', { name: /Review in Workbench/i });
+    const link = screen.getByRole('link', { name: /Open Review Queue/i });
     expect(link).toHaveAttribute('href', '#/workbench?tab=scan&rq=all.all.0');
 
     // Rail retired: no section, no bulk rail controls, no per-cluster rail rows.
@@ -198,7 +198,7 @@ describe('RosterPage workbench review CTA (UXW2-4 rail retirement)', () => {
     renderRosterPage('/');
 
     const cta = screen.getByTestId('roster-review-cta');
-    expect(cta).toHaveTextContent('Unnamed faces are reviewed in the Workbench.');
+    expect(cta).toHaveTextContent('Unnamed faces are reviewed in the Review Queue.');
     expect(cta).not.toHaveTextContent(/face groups waiting/);
     expect(cta).not.toHaveTextContent('Unnamed faces waiting');
   });

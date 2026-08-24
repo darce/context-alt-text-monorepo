@@ -162,6 +162,7 @@ describe('Roster zero-state reachability (rg-003)', () => {
     const zeroState = screen.getByTestId('roster-zero-state');
     expect(zeroState).toBeInTheDocument();
     expect(zeroState).toHaveTextContent(/No people yet/i);
+    expect(within(zeroState).getByTestId('acx-empty-state')).toHaveAttribute('data-variant', 'empty');
     expect(zeroState.querySelector('.acx-roster-section__empty-icon')).toBeTruthy();
     expect(screen.getByRole('link', { name: /run a scan/i })).toBeInTheDocument();
     // rg-003 + NAV-05: the rail is retired; the workbench review queue stays

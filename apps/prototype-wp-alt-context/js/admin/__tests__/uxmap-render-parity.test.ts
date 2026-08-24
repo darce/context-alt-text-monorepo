@@ -356,6 +356,34 @@ describe('ux-map SSOT schema conformance (owned maps)', () => {
     expect(formatIssues(issues)).toEqual(['constructor | extra_forbidden | mutant']);
   });
 
+  it('keeps every owned map json and sibling md on disk (fail-closed)', () => {
+    expect(OWNED_MAPS.length, 'OWNED_MAPS emptied — ownership list would vacuously pass').toBeGreaterThan(0);
+    expect(OWNED_MAPS).toContain('dashboard');
+    for (const mapRef of OWNED_MAPS) {
+      expect(
+        existsSync(path.join(uxMapsDir, `${mapRef}.uxmap.json`)),
+        `${mapRef}.uxmap.json is missing — OWNED_MAPS cannot silently skip an absent SSOT`,
+      ).toBe(true);
+      expect(
+        existsSync(path.join(uxMapsDir, `${mapRef}.md`)),
+        `${mapRef}.md is missing — render parity cannot silently skip an absent sibling`,
+      ).toBe(true);
+    }
+  });
+
+  it('throws when an owned-style map json cannot be read (absent-file discrimination)', () => {
+    expect(() => readMapJson('__absent-owned-map__')).toThrow(/ENOENT|no such file/i);
+  });
+
+  it('rejects malformed payloads that are not a UxMap object', () => {
+    expect(formatIssues(validateUxMap(null)).length, 'null must fail schema').toBeGreaterThan(0);
+    expect(formatIssues(validateUxMap([])).length, 'array must fail schema').toBeGreaterThan(0);
+    expect(formatIssues(validateUxMap({ map_ref: 1 })).length, 'wrong field types must fail schema').toBeGreaterThan(
+      0,
+    );
+    expect(() => JSON.parse('{'), 'garbage json must not parse').toThrow();
+  });
+
   it('keeps the checked-in Python enum snapshot available', () => {
     expect(existsSync(enumSnapshotPath)).toBe(true);
   });

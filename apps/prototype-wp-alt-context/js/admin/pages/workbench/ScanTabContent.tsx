@@ -24,6 +24,15 @@ import { useClusterPanel } from './ClusterPanelContext';
 import { useWorkbenchMediaContext } from './WorkbenchMediaContext';
 import { useReviewSurface } from './ReviewSurfaceContext';
 import { EmptyState, EmptyStateVariant } from '../../components/ui/EmptyState';
+import { toWorkbench } from '../../navigation/appLinks';
+
+export const WORKBENCH_SCAN_HEADING_ID = 'acx-workbench-scan-heading';
+
+export const focusWorkbenchScanHeading = (): void => {
+  queueMicrotask(() => {
+    document.getElementById(WORKBENCH_SCAN_HEADING_ID)?.focus();
+  });
+};
 
 const ScanScrollRestoration = () => {
   useScrollRestoration('workbench-scan');
@@ -35,7 +44,8 @@ export const NoMediaPanel = () => (
     variant={EmptyStateVariant.EMPTY}
     heading={__('Your analysis queue is empty', 'alt-context')}
     body={__('Select or filter media, then run a scan to find faces.', 'alt-context')}
-    action={{ label: __('Go to Scan', 'alt-context'), href: '#acx-workbench-scan-heading' }}
+    action={{ label: __('Go to Scan', 'alt-context'), href: toWorkbench({ tab: 'scan' }) }}
+    onActivate={focusWorkbenchScanHeading}
     headingLevel={3}
     className="acx-apply-panel acx-apply-panel--empty"
   />
@@ -271,7 +281,7 @@ export const ScanTabContent = (): React.JSX.Element => {
 
       {/* (d) Scan CTA + full timeline demoted to bottom; reachable from zero state (rg-003) */}
       <section className="acx-workbench-control-scan" aria-labelledby="acx-workbench-scan-heading">
-        <h3 id="acx-workbench-scan-heading" className="acx-workbench-control-scan__title">
+        <h3 id={WORKBENCH_SCAN_HEADING_ID} tabIndex={-1} className="acx-workbench-control-scan__title">
           {__('Scan', 'alt-context')}
         </h3>
         {/* L3R-02: while strip owns progress/cancel/timeline, demoted panel keeps unique detail only. */}

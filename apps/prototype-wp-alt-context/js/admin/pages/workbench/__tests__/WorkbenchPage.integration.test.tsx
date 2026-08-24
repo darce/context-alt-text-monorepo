@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
+import { onlineManager, QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -197,6 +197,8 @@ describe('WorkbenchPage (integration-lite)', () => {
       queryClient = null;
     }
     cleanup();
+    onlineManager.setOnline(true);
+    vi.useRealTimers();
     if (originalFetch) {
       globalThis.fetch = originalFetch;
     } else {
@@ -775,9 +777,9 @@ describe('WorkbenchPage (integration-lite)', () => {
     ).not.toBeInTheDocument();
   });
 
-  it('re-enables gated analyze CTA reactively when sync-health breaker heals (no remount)', async () => {
-    // Auto-heal reactivity (E21-13 risk): breaker open → disabled+reason → 15s-poll
-    // envelope flip to closed → CTA re-enabled without remounting WorkbenchPage.
+  it('refetches sync health after reconnect and re-enables the gated analyze CTA', async () => {
+    vi.useFakeTimers();
+
     vi.mocked(recognitionApi.fetchMediaIdentities).mockResolvedValue({
       identities_by_media: { '11': [] },
     });
@@ -786,7 +788,7 @@ describe('WorkbenchPage (integration-lite)', () => {
       limit: 10,
       offset: 0,
     });
-    vi.mocked(recognitionApi.fetchSyncHealth).mockResolvedValue(syncHealthEnvelope('open'));
+    vi.mocked(recognitionApi.fetchSyncHealth).mockResolvedValue(syncHealthEnvelope('closed'));
 
     const client = new QueryClient({
       defaultOptions: {
@@ -795,7 +797,6 @@ describe('WorkbenchPage (integration-lite)', () => {
           staleTime: Infinity,
           refetchOnMount: false,
           refetchOnWindowFocus: false,
-          refetchOnReconnect: false,
         },
       },
     });
@@ -808,9 +809,13 @@ describe('WorkbenchPage (integration-lite)', () => {
     });
     client.setQueryData(queryKeys.sync.health(), syncHealthEnvelope('open'));
 
+    onlineManager.setOnline(false);
     renderWithClient(client);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
 
-    const user = userEvent.setup();
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
 
     // Banner lives in App.tsx (unit-tested with aria-live); this page-level test
     // proves the gated analyze CTA reacts to the sync-health envelope flip.
@@ -828,14 +833,22 @@ describe('WorkbenchPage (integration-lite)', () => {
       expect(scanButton).toHaveAttribute('aria-describedby');
     });
 
-    // Simulate the 15s health poll delivering a healed envelope (same QueryClient /
-    // mounted tree — no remount, no navigation).
-    client.setQueryData(queryKeys.sync.health(), syncHealthEnvelope('closed'));
-
-    await waitFor(() => {
-      expect(scanButton).toBeEnabled();
-      expect(scanButton).not.toHaveAttribute('title');
-      expect(scanButton).not.toHaveAttribute('aria-disabled');
+    // Reconnect must trigger a real health request without waiting for the next
+    // interval. No cache mutation or remount is allowed to heal it.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1_000);
     });
+    expect(recognitionApi.fetchSyncHealth).not.toHaveBeenCalled();
+
+    await act(async () => {
+      onlineManager.setOnline(true);
+      await vi.advanceTimersByTimeAsync(0);
+    });
+
+    expect(recognitionApi.fetchSyncHealth).toHaveBeenCalled();
+
+    expect(scanButton).toBeEnabled();
+    expect(scanButton).not.toHaveAttribute('title');
+    expect(scanButton).not.toHaveAttribute('aria-disabled');
   });
 });

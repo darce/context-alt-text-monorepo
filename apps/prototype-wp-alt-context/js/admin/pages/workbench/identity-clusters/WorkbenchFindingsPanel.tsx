@@ -487,6 +487,7 @@ export const WorkbenchFindingsPanel = ({
         <EmptyState
           variant={EmptyStateVariant.UNAVAILABLE}
           heading={__('Face assignments unavailable — this is not an empty backlog.', 'alt-context')}
+          headingId="acx-findings-panel-assignment-outage"
           body={
             retrying
               ? __('Retrying recognition findings…', 'alt-context')
@@ -496,6 +497,7 @@ export const WorkbenchFindingsPanel = ({
             label: retrying ? __('Retrying…', 'alt-context') : __('Retry', 'alt-context'),
             onClick: () => handleRetryFindings({ restoreFocusOnSuccess: true }),
             busy: retrying,
+            describedBy: 'acx-findings-panel-assignment-outage',
           }}
           headingLevel={4}
         />

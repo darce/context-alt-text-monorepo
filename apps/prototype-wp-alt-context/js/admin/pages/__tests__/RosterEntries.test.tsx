@@ -736,7 +736,7 @@ describe('RosterEntriesSection', () => {
     renderSection(query);
 
     await userEvent.click(screen.getByRole('button', { name: /Add Person/ }));
-    await userEvent.type(screen.getByPlaceholderText('Full Name'), 'Carol');
+    await userEvent.type(screen.getByRole('textbox', { name: 'Full name' }), 'Carol');
     await userEvent.click(screen.getByRole('button', { name: 'Create' }));
 
     expect(createMutation.mutate).toHaveBeenCalledTimes(1);

@@ -26,6 +26,7 @@ interface UxScreen {
   kind: string;
   title: string;
   route: string;
+  code_ref: string;
   zones?: UxZone[];
   states?: string[];
 }

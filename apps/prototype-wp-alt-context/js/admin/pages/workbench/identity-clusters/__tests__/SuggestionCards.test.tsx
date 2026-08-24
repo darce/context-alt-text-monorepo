@@ -219,6 +219,74 @@ describe('SuggestionCard lightbox target (UXW2-6)', () => {
   });
 });
 
+describe('SuggestionCard UXC-02 stored-reference disclosure', () => {
+  it('discloses hidden stored faces and requires Review details before approval', async () => {
+    const onAccept = vi.fn();
+    const onReview = vi.fn();
+    const user = userEvent.setup();
+
+    render(
+      <SuggestionCard
+        suggestion={{
+          ...baseSuggestion,
+          identityCount: 3,
+          enrichment: {
+            representativeThumbUrl: 'https://example.com/alex-stored.jpg',
+          },
+        }}
+        onAccept={onAccept}
+        onReject={vi.fn()}
+        onReview={onReview}
+        isPending={false}
+        lowConfidenceThreshold={0.5}
+      />,
+    );
+
+    expect(screen.getByText('2 more faces not shown')).toBeInTheDocument();
+    const approve = screen.getByRole('button', { name: 'Yes' });
+    expect(approve).toBeDisabled();
+
+    await user.click(screen.getByRole('button', { name: 'Review details' }));
+
+    expect(onReview).toHaveBeenCalledWith('cluster-1');
+    expect(approve).toBeEnabled();
+    await user.click(approve);
+    expect(onAccept).toHaveBeenCalledTimes(1);
+  });
+
+  it('gives candidate and stored-reference images source-and-position alt text', () => {
+    render(
+      <SuggestionCard
+        suggestion={{
+          ...baseSuggestion,
+          label: 'Alex',
+          identityCount: 3,
+          enrichment: {
+            identityMediaUrl: 'https://example.com/candidate.jpg',
+            identityBbox: { x: 5, y: 6, width: 40, height: 50 },
+            representativeMediaUrl: 'https://example.com/alex-stored.jpg',
+            representativeBbox: { x: 10, y: 12, width: 30, height: 35 },
+          },
+        }}
+        onAccept={vi.fn()}
+        onReject={vi.fn()}
+        onReview={vi.fn()}
+        isPending={false}
+        lowConfidenceThreshold={0.5}
+      />,
+    );
+
+    expect(screen.getByAltText('Candidate face, position 1 of 1')).toHaveAttribute(
+      'src',
+      'https://example.com/candidate.jpg',
+    );
+    expect(screen.getByAltText('Alex stored face, position 1 of 3')).toHaveAttribute(
+      'src',
+      'https://example.com/alex-stored.jpg',
+    );
+  });
+});
+
 describe('SuggestionCard L4R-01 Avatar alt + L4R-02 assertTruthyLabel', () => {
   it('L4R-01: Avatar representative branch img alt equals person displayLabel', () => {
     // Predicted first failure: alt is generic "Cluster representative" (pre-displayLabel change).

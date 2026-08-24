@@ -81,22 +81,23 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
   const Heading = HEADING_TAGS[headingLevel];
   const { Glyph, name: iconName } = VARIANT_ICONS[variant];
   const isUnavailable = variant === EmptyStateVariant.UNAVAILABLE;
+  const [announcement, setAnnouncement] = React.useState('');
 
   // The glyph is aria-hidden, so the state needs a text equivalent [A11Y-24].
   // Literals (not a lookup table) so wp i18n string extraction sees them [RLSE-04].
   const statusLabel = isUnavailable ? __('Could not load', 'alt-context') : __('Nothing here yet', 'alt-context');
 
+  React.useEffect(() => {
+    setAnnouncement(isUnavailable ? statusLabel : '');
+  }, [isUnavailable, statusLabel]);
+
   const classNames = ['acx-empty-state', `acx-empty-state--${variant}`, className].filter(Boolean).join(' ');
 
   return (
-    <section
-      className={classNames}
-      data-testid="acx-empty-state"
-      data-variant={variant}
-      aria-labelledby={headingId}
-      // A failed load has to be announced; a plain zero state is not news.
-      {...(isUnavailable ? { role: 'status', 'aria-live': 'polite' as const } : {})}
-    >
+    <section className={classNames} data-testid="acx-empty-state" data-variant={variant} aria-labelledby={headingId}>
+      <div className="screen-reader-text" role="status" aria-live="polite" data-testid="acx-empty-state-live-region">
+        {announcement}
+      </div>
       <span
         className="acx-empty-state__icon"
         data-testid="acx-empty-state-icon"

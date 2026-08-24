@@ -12,6 +12,7 @@ import {
   DialogRoot,
   DialogTitle,
 } from '../../../../components/ui/dialog';
+import { EmptyState, EmptyStateVariant } from '../../../components/ui/EmptyState';
 
 interface AnchorSelectionModalProps {
   isOpen: boolean;
@@ -64,7 +65,14 @@ export const AnchorSelectionModal = ({
             </DialogDescription>
 
             {members.length === 0 ? (
-              <p className="acx-anchor-modal__empty">{__('No faces available to select.', 'alt-context')}</p>
+              <EmptyState
+                variant={EmptyStateVariant.EMPTY}
+                heading={__('No faces available to select.', 'alt-context')}
+                body={__('Return to review suggestions and choose another face group.', 'alt-context')}
+                action={{ label: __('Back to review suggestions', 'alt-context'), onClick: onClose }}
+                headingLevel={3}
+                className="acx-anchor-modal__empty"
+              />
             ) : (
               <div className="acx-anchor-modal__grid">
                 {members.map((member) => {
@@ -99,13 +107,15 @@ export const AnchorSelectionModal = ({
               </div>
             )}
 
-            <div className="acx-anchor-modal__actions">
-              <DialogClose asChild>
-                <button type="button" className="button">
-                  {__('Cancel', 'alt-context')}
-                </button>
-              </DialogClose>
-            </div>
+            {members.length > 0 ? (
+              <div className="acx-anchor-modal__actions">
+                <DialogClose asChild>
+                  <button type="button" className="button">
+                    {__('Cancel', 'alt-context')}
+                  </button>
+                </DialogClose>
+              </div>
+            ) : null}
           </div>
         </DialogContent>
       </DialogPortal>

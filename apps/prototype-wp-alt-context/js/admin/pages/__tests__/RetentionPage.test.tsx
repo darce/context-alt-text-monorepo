@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 import { RetentionPage } from '../RetentionPage';
@@ -265,12 +265,14 @@ describe('RetentionPage', () => {
 
     render(<RetentionPage />);
 
-    const statusRegion = screen.getByRole('status');
+    const exportPanel = screen.getByRole('heading', { name: 'Export controls' }).closest('section');
+    expect(exportPanel).toBeTruthy();
+    const statusRegion = within(exportPanel as HTMLElement).getByRole('status');
     expect(statusRegion).toBeEmptyDOMElement();
     expect(statusRegion).toHaveAttribute('aria-live', 'polite');
 
     fireEvent.click(screen.getByRole('button', { name: 'Export data' }));
-    expect(screen.getByRole('status')).toBe(statusRegion);
+    expect(within(exportPanel as HTMLElement).getByRole('status')).toBe(statusRegion);
 
     await act(async () => {
       fireEvent.click(screen.getByRole('button', { name: 'Start export' }));
@@ -284,7 +286,7 @@ describe('RetentionPage', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Close' }));
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     expect(mockedUseExportJobStatus).toHaveBeenLastCalledWith('job-1');
-    expect(screen.getByRole('status')).toBe(statusRegion);
+    expect(within(exportPanel as HTMLElement).getByRole('status')).toBe(statusRegion);
     expect(statusRegion).toHaveTextContent('Export in progress…');
     expect(statusRegion).toHaveTextContent('Job ID: job-1');
   });
@@ -310,8 +312,10 @@ describe('RetentionPage', () => {
 
   it('uses a separate persistent assertive region when an export fails', async () => {
     const { rerender } = render(<RetentionPage />);
-    const statusRegion = screen.getByRole('status');
-    const errorRegion = screen.getByRole('alert');
+    const exportPanel = screen.getByRole('heading', { name: 'Export controls' }).closest('section');
+    expect(exportPanel).toBeTruthy();
+    const statusRegion = within(exportPanel as HTMLElement).getByRole('status');
+    const errorRegion = within(exportPanel as HTMLElement).getByRole('alert');
     expect(errorRegion).toBeEmptyDOMElement();
     expect(errorRegion).toHaveAttribute('aria-live', 'assertive');
 
@@ -328,9 +332,9 @@ describe('RetentionPage', () => {
     );
     rerender(<RetentionPage />);
 
-    expect(screen.getByRole('status')).toBe(statusRegion);
+    expect(within(exportPanel as HTMLElement).getByRole('status')).toBe(statusRegion);
     expect(statusRegion).toBeEmptyDOMElement();
-    expect(screen.getByRole('alert')).toBe(errorRegion);
+    expect(within(exportPanel as HTMLElement).getByRole('alert')).toBe(errorRegion);
     expect(errorRegion).toHaveTextContent('Export failed. Please try again. Job ID: job-1');
   });
 

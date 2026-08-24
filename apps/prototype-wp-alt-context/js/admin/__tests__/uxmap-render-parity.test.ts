@@ -1,5 +1,5 @@
 /**
- * UX-map SSOT guard for the maps this lane owns. Two layers:
+ * UX-map SSOT guard for every map under docs/ux-maps/. Two layers:
  *
  *  1. **Schema conformance** — every owned `*.uxmap.json` must validate against the
  *     canonical `UxMap` model (`workbay_canvas_mcp/ux_map/models.py`), mirrored here
@@ -21,7 +21,7 @@ import { describe, expect, it } from 'vitest';
 
 const uxMapsDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../docs/ux-maps');
 
-const OWNED_MAPS = ['roster-people', 'workbench-operator-loop'] as const;
+const OWNED_MAPS = ['roster-people', 'workbench-2pane', 'workbench-operator-loop'] as const;
 
 /** Operator-facing labels renamed or deleted from the JSON; must not remain in the md. */
 const RETIRED_LABELS = [

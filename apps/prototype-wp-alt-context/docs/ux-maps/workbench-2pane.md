@@ -338,6 +338,31 @@ Zone ids: z-topbar z-left-host z-splitter z-right-host z-overlay-host z-endpoint
 
 Action ids: act-run-recognition act-select-cluster act-name-cluster act-curate-cluster act-view-endpoint-settings act-edit-alt act-edit-desc act-accept-ai-caption act-bulk-describe act-open-conflicts act-open-dead-letter act-resolve-conflict act-retry-dead-letter act-discard-dead-letter act-goto-roster
 
+Zone labels (verbatim; the tables above escape `|` for markdown, this list does not):
+
+- Workbench header + recognition endpoint (read-only status; server-resolved) + sync/projection status strip
+- Left pane host (control surface)
+- Pane divider / collapse-left control
+- Right pane host (media library)
+- Overlay host (conflicts | dead-letter)
+- Recognition endpoint + health (read-only: InsightFace :10010 interim; FIR when stable; target is server-resolved via ACX_RECOGNITION_URL, no UI toggle per RECOG-1)
+- Face-group/recognition controls (run, refresh, threshold)
+- UMAP face-group scatter (2D projection of faces; select to drive right pane)
+- Face-group list / selection (size, confidence, unnamed-first) + NameFaceControl (loading = in-flight name write; the suggestions disclosure being open or closed is part of default)
+- Name this person (NameFaceControl; confirm / correct / merge / split; forced-choice; loading = pending roster write; error = roster write failed; edge_input = ambiguous candidate set or duplicate-name guard; default = overlay closed or suggestions open)
+- Library filters (status, has-alt, has-description, face group, search)
+- Media library table (thumb | title | status | alt-text | long description | people)
+- Inline person naming (NameFaceControl) + alt-text / long-description editor (loading = pending save; the suggestions disclosure being open or closed is part of default)
+- AI name / caption suggestions (evidence-linked; editable before accept; loading = suggestion request in flight; the suggestions disclosure being open or closed is part of default)
+- Bulk describe / scan CTAs + job progress
+- Conflict list
+- Conflict detail / candidates
+- Resolve / defer actions
+- Dead-letter items
+- Retry / discard
+- Roster entry
+- Settings form + test connection
+
 States (all zones): default loading empty error offline first_time edge_input degraded
 
 ## Not doing

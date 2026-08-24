@@ -19,17 +19,30 @@ import { readWpRestContext } from '../fixtures/wp-rest';
 const MEDIA_ID = Number(process.env.ACX_E2E_DEMO_MEDIA_ID ?? '200');
 const EXPECTED_NAME = process.env.ACX_E2E_DEMO_IDENTITY ?? 'Slate Willow';
 
+interface InjectedName {
+  name: string;
+  cluster_id: string;
+  roster_id: string | null;
+  detection_confidence: number;
+}
+
+interface NamingProvenance {
+  injected_names: InjectedName[];
+  naming_allowed: boolean;
+  reason: string | null;
+  mode: string | null;
+}
+
 interface DescribeResponse {
   cached: boolean;
   alt_text_draft: string;
   generic_draft: string | null;
   named_draft: string | null;
-  naming_provenance: {
-    injected_names: { name: string; cluster_id: string; roster_id: string | null; detection_confidence: number }[];
-    naming_allowed: boolean;
-    reason: string | null;
-    mode: string | null;
-  } | null;
+  naming_provenance: NamingProvenance | null;
+}
+
+interface MediaResponse {
+  alt_text?: string;
 }
 
 const describeViaProxy = async (
@@ -37,8 +50,8 @@ const describeViaProxy = async (
   url: string,
   nonce: string,
 ): Promise<DescribeResponse> =>
-  page.evaluate(
-    async ({ url, restNonce }) => {
+  page.evaluate<DescribeResponse, { url: string; restNonce: string }>(
+    async ({ url, restNonce }): Promise<DescribeResponse> => {
       const response = await fetch(url, {
         method: 'POST',
         headers: { 'X-WP-Nonce': restNonce, 'Content-Type': 'application/json' },
@@ -47,7 +60,7 @@ const describeViaProxy = async (
       if (!response.ok) {
         throw new Error(`describe proxy failed: ${response.status} ${await response.text()}`);
       }
-      return response.json();
+      return (await response.json()) as DescribeResponse;
     },
     { url, restNonce: nonce },
   );
@@ -83,10 +96,10 @@ test('E19-4a named-preview context diff on LocalWP', async ({ page, baseURL }, t
   expect(second.naming_provenance?.injected_names).toEqual(first.naming_provenance?.injected_names);
 
   // 4. Draft-only guarantee: the stored alt text was not touched by preview.
-  const altAfter = await page.evaluate(
-    async ({ mediaUrl, restNonce }) => {
+  const altAfter = await page.evaluate<string, { mediaUrl: string; restNonce: string }>(
+    async ({ mediaUrl, restNonce }): Promise<string> => {
       const response = await fetch(mediaUrl, { headers: { 'X-WP-Nonce': restNonce } });
-      const media = await response.json();
+      const media = (await response.json()) as MediaResponse;
       return media.alt_text ?? '';
     },
     { mediaUrl: `${root}/wp/v2/media/${MEDIA_ID}`, restNonce: nonce },

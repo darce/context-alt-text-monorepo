@@ -5,6 +5,7 @@ import { __, sprintf } from '@wordpress/i18n';
 import { RotateCcw } from 'lucide-react';
 
 import {
+  DESCRIBE_RUN_STATUS,
   DESCRIPTION_CORRECTION_CODE,
   fetchDescriptionHistory,
   RECOVERY_KIND,
@@ -15,16 +16,34 @@ import {
   type DescriptionHistoryItem,
   type DescriptionHistoryProvenance,
   type DescriptionHistoryResponse,
+  type DescribeRunStatus,
   type ProvenanceRecoveredFrom,
 } from '../api/describeApi';
+import { UserFacingErrorNotice } from '../components/ui/UserFacingErrorNotice';
 import { useCorrectMediaAlt } from '../hooks/useCorrectMediaAlt';
-import { APP_LINK_PARAMS, parseRunParam } from '../navigation/appLinks';
+import { APP_LINK_PARAMS, parseRunParam, toWorkbench } from '../navigation/appLinks';
 import { decodeHtmlEntities } from '../utils/decodeHtmlEntities';
 import { DescribeRunApplyView } from './DescribeRunApplyView';
 
 const HISTORY_QUERY_KEY = ['description-history'] as const;
 
 const CORRECTION_ERROR_FALLBACK = __('Could not save the alt text. Please try again.', 'alt-context');
+const HISTORY_ERROR_FALLBACK = __('Could not load description history.', 'alt-context');
+
+/** Plain-language labels for the canonical describe-run statuses [sr-007]. */
+const HISTORY_STATUS_LABEL = {
+  [DESCRIBE_RUN_STATUS.PENDING]: __('Pending', 'alt-context'),
+  [DESCRIBE_RUN_STATUS.RUNNING]: __('Describing', 'alt-context'),
+  [DESCRIBE_RUN_STATUS.COMPLETED]: __('Completed', 'alt-context'),
+  [DESCRIBE_RUN_STATUS.COMPLETED_WITH_ERRORS]: __('Completed with errors', 'alt-context'),
+  [DESCRIBE_RUN_STATUS.FAILED]: __('Failed', 'alt-context'),
+  [DESCRIBE_RUN_STATUS.CANCELLED]: __('Cancelled', 'alt-context'),
+} as const satisfies Record<DescribeRunStatus, string>;
+
+const getStatusOptionLabel = (status: string): string =>
+  status in HISTORY_STATUS_LABEL
+    ? HISTORY_STATUS_LABEL[status as DescribeRunStatus]
+    : status;
 
 /** Surface owner labels for recovery origin — centralised [sr-007]. */
 const RECOVERY_SURFACE_LABEL = {
@@ -193,6 +212,32 @@ const DescriptionHistoryList = (): React.JSX.Element => {
     });
   }, [items, searchQuery, statusFilter]);
 
+  const retainedData = historyQuery.data;
+  const showLoading = historyQuery.isLoading && retainedData === undefined;
+  const showInitialError = historyQuery.isError && retainedData === undefined;
+  const showMain = retainedData !== undefined;
+  const historyStatus = showLoading
+    ? __('Loading description history...', 'alt-context')
+    : showMain
+      ? __('Description history ready.', 'alt-context')
+      : '';
+  const historyErrorFallback =
+    historyQuery.error instanceof Error && historyQuery.error.constructor === Error
+      ? historyQuery.error.message
+      : HISTORY_ERROR_FALLBACK;
+
+  const header = (
+    <header className="acx-history__hero">
+      <p className="acx-dashboard__eyebrow">{__('Review', 'alt-context')}</p>
+      <h1 id="acx-history-title" className="acx-dashboard__title">
+        {__('Description Runs', 'alt-context')}
+      </h1>
+      <p className="acx-dashboard__subtitle">
+        {__('Review generated alt text, provenance, and human corrections in one workspace.', 'alt-context')}
+      </p>
+    </header>
+  );
+
   const saveCorrection = (item: DescriptionHistoryItem): void => {
     const mediaId = item.media_id;
     // Presence guard, not a refcount: a second concurrent write to one media id
@@ -284,57 +329,49 @@ const DescriptionHistoryList = (): React.JSX.Element => {
     );
   };
 
-  if (historyQuery.isLoading) {
-    return (
-      <section className="acx-history" aria-labelledby="acx-history-title">
-        <h1 id="acx-history-title" className="acx-dashboard__title">
-          {__('Description Runs', 'alt-context')}
-        </h1>
-        <p>{__('Loading description history...', 'alt-context')}</p>
-      </section>
-    );
-  }
-
-  if (historyQuery.isError) {
-    return (
-      <section className="acx-history" aria-labelledby="acx-history-title">
-        <header className="acx-history__hero">
-          <p className="acx-dashboard__eyebrow">{__('Review', 'alt-context')}</p>
-          <h1 id="acx-history-title" className="acx-dashboard__title">
-            {__('Description Runs', 'alt-context')}
-          </h1>
-        </header>
-        <section className="acx-dashboard__panel acx-history__panel">
-          <h2>{__('Could not load description history.', 'alt-context')}</h2>
-          <button
-            type="button"
-            className="acx-button acx-button--secondary"
-            onClick={() => void historyQuery.refetch()}
-          >
-            {__('Retry', 'alt-context')}
-          </button>
-        </section>
-      </section>
-    );
-  }
-
   return (
-    <section className="acx-history" aria-labelledby="acx-history-title">
-      <header className="acx-history__hero">
-        <p className="acx-dashboard__eyebrow">{__('Review', 'alt-context')}</p>
-        <h1 id="acx-history-title" className="acx-dashboard__title">
-          {__('Description Runs', 'alt-context')}
-        </h1>
-        <p className="acx-dashboard__subtitle">
-          {__('Review generated alt text, provenance, and human corrections in one workspace.', 'alt-context')}
-        </p>
-      </header>
+    <section
+      className="acx-history"
+      aria-labelledby="acx-history-title"
+      aria-busy={showLoading || undefined}
+    >
+      {header}
 
-      {items.length === 0 ? (
+      <div
+        role="status"
+        aria-live="polite"
+        data-testid="acx-description-history-status"
+      >
+        {historyStatus}
+      </div>
+
+      {historyQuery.isError ? (
+        <UserFacingErrorNotice
+          error={historyQuery.error}
+          fallback={historyErrorFallback}
+          className="acx-dashboard__panel acx-history__panel"
+        />
+      ) : null}
+
+      {showInitialError ? (
+        <button
+          type="button"
+          className="acx-button acx-button--secondary"
+          onClick={() => void historyQuery.refetch()}
+        >
+          {__('Retry', 'alt-context')}
+        </button>
+      ) : null}
+
+      {showMain && items.length === 0 ? (
         <section className="acx-dashboard__panel acx-history__panel">
           <h2>{__('No generated descriptions yet.', 'alt-context')}</h2>
+          <p>{__('Select images in Review Queue, then describe them to create drafts.', 'alt-context')}</p>
+          <a className="acx-button acx-button--secondary" href={toWorkbench({ tab: 'scan' })}>
+            {__('Open Review Queue', 'alt-context')}
+          </a>
         </section>
-      ) : (
+      ) : showMain ? (
         <>
           <section className="acx-dashboard__panel acx-history__filters" aria-label={__('History filters', 'alt-context')}>
             <label>
@@ -351,7 +388,7 @@ const DescriptionHistoryList = (): React.JSX.Element => {
                 <option value="all">{__('All statuses', 'alt-context')}</option>
                 {statusOptions.map((status) => (
                   <option key={status} value={status}>
-                    {status}
+                    {getStatusOptionLabel(status)}
                   </option>
                 ))}
               </select>
@@ -360,6 +397,16 @@ const DescriptionHistoryList = (): React.JSX.Element => {
           {filteredItems.length === 0 ? (
             <section className="acx-dashboard__panel acx-history__panel">
               <h2>{__('No history items match the current filters.', 'alt-context')}</h2>
+              <button
+                type="button"
+                className="acx-button acx-button--secondary"
+                onClick={() => {
+                  setSearchQuery('');
+                  setStatusFilter('all');
+                }}
+              >
+                {__('Clear filters', 'alt-context')}
+              </button>
             </section>
           ) : null}
           <div className="acx-history__list">
@@ -459,7 +506,7 @@ const DescriptionHistoryList = (): React.JSX.Element => {
             })}
           </div>
         </>
-      )}
+      ) : null}
     </section>
   );
 };

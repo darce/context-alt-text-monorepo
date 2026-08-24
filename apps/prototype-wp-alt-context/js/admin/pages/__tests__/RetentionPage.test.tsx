@@ -255,6 +255,37 @@ describe('RetentionPage', () => {
     });
   });
 
+  it('keeps an unsupported export job observable after the dialog closes', async () => {
+    mockedUseExportJobStatus.mockReturnValue(
+      createMockQuery({
+        data: { job_id: 'job-1', status: 'processing', file_size: null, error_message: null },
+      }),
+    );
+
+    render(<RetentionPage />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Export data' }));
+    const statusRegion = screen.getByRole('status');
+    expect(statusRegion).toHaveAttribute('aria-live', 'polite');
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Start export' }));
+      await Promise.resolve();
+    });
+
+    expect(statusRegion).toHaveTextContent('Export in progress…');
+    expect(statusRegion).toHaveTextContent('Job ID: job-1');
+    expect(screen.queryByRole('button', { name: 'Cancel' })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(mockedUseExportJobStatus).toHaveBeenLastCalledWith('job-1');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Export data' }));
+    expect(screen.getByRole('status')).toHaveTextContent('Job ID: job-1');
+    expect(screen.getByRole('button', { name: 'Start export' })).toBeDisabled();
+  });
+
   it('requires typed confirmation before purge', async () => {
     render(<RetentionPage />);
 

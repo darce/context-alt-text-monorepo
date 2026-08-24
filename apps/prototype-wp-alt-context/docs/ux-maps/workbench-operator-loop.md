@@ -66,48 +66,53 @@ url_params: `tab`, `panel`, `advanced`, `status`, `media`, `rq`, `queue`, `face`
 
 ### Scan media queue (`workbench-scan`)
 
-Purpose: Filter and select library media; run scan faces / describe pipeline
+Purpose: Filter and select library media; run scan faces / describe pipeline (default also covers the reviewing state: a face group loaded in the review panel)
 
 url_params: `tab`, `status`, `media`, `s`, `p`, `perPage`, `rq`, `panel`, `cluster`
 
 | zone id | label | role | states |
 | --- | --- | --- | --- |
-| `z-review-queue` | Review queue header / count with kind+band filter chips, card-at-a-time (rq= URL is the single owner of chip state) | queue | default, loading, empty, filtered_empty, drained, error |
+| `z-review-queue` | Review queue header / count with kind+band filter chips, card-at-a-time (rq= URL is the single owner of chip state; empty covers both a filter-empty queue and a fully drained one) | queue | default, loading, empty, error |
 | `z-review-panel` | Face-group review panel (panel=review&cluster=) | ai_review | default, loading, error, empty |
 | `z-filters` | Status / search filters | form | default, edge_input |
 | `z-media-queue` | Media selection table | queue | default, loading, empty, error |
 | `z-job-cta` | Scan / analyze CTAs + job progress | job | default, loading, error |
-| `z-identity-preview` | Identity / findings preview (AI-assisted) | ai_review | default, empty, loading |
+| `z-identity-preview` | Identity / findings preview (AI-assisted; offline = recognition service unreachable; degraded = repair / reduced-capability mode; empty = zero evidence rows) | ai_review | default, empty, loading, error, degraded, offline |
+| `z-review-suggestions-header` | Review Suggestions queue header / count (default also covers the filter-narrowed count; degraded = repair / reduced-capability mode) | status | default, loading, empty, error, degraded |
+| `z-review-suggestions-group-card` | Top-of-queue group card + Name this person (NameFaceControl; default also covers an AI-suggested label and the open suggestions disclosure; loading = save in flight; degraded = read-only card; edge_input = missing or uncroppable face image) | ai_review | default, loading, degraded, edge_input |
 
 ```
 +------------------------------------------------------------+
 | Scan media queue  [screen]  #/workbench?tab=scan           |
 | Filter and select library media; run scan faces / describe |
-| pipeline                                                   |
+| pipeline (default also covers the reviewing state: a face  |
+| group loaded in the review panel)                          |
 +------------------------------------------------------------+
 | ZONES                                                      |
-|   - Review queue header / count with kind+band filter ch… |
-|   - Face-group review panel (panel=review&cluster=) (ai_… |
-|   - Status / search filters (form) states=[default,edge_i… |
-|   - Media selection table (queue) states=[default,loading… |
-|   - Scan / analyze CTAs + job progress (job) states=[defa… |
-|   - Identity / findings preview (AI-assisted) (ai_review)  |
-|     states=[default,empty,loading,error,degraded,          |
-|             unavailable,repair,zero_evidence]              |
-|     code_ref=WorkbenchFindingsPanel.tsx                    |
-|   - Review Suggestions queue header / count (status)       |
-|     states=[default,loading,empty,error,filtered,repair]   |
-|     code_ref=ReviewQueue.tsx                               |
-|   - Top-of-queue group card + Name this person (NameFaceControl) (ai_review) |
-|     states=[default,suggested_label,busy,read_only,        |
-|             missing_image,pending,suggestions-open,suggested] |
-|     code_ref=TopClusterCard.tsx                            |
+|   - Review queue header / count with kind+band filter ch…  |
+|     (queue) states=[default,loading,empty,error]           |
+|   - Face-group review panel (panel=review&cluster=)        |
+|     (ai_review) states=[default,loading,error,empty]       |
+|   - Status / search filters (form)                         |
+|     states=[default,edge_input]                            |
+|   - Media selection table (queue)                          |
+|     states=[default,loading,empty,error]                   |
+|   - Scan / analyze CTAs + job progress (job)               |
+|     states=[default,loading,error]                         |
+|   - Identity / findings preview (AI-assisted; offline = r… |
+|     (ai_review)                                            |
+|     states=[default,empty,loading,error,degraded,offline]  |
+|   - Review Suggestions queue header / count (default also… |
+|     (status) states=[default,loading,empty,error,degraded] |
+|   - Top-of-queue group card + Name this person (NameFace…  |
+|     (ai_review)                                            |
+|     states=[default,loading,degraded,edge_input]           |
 +------------------------------------------------------------+
 | ACTIONS                                                    |
 |   [PRIMARY] Scan selected media -> job-pipeline (costly,p… |
 |   [secondary] Go to Roster -> exit-roster                  |
 +------------------------------------------------------------+
-| states: default | loading | empty | error | first_time | edge_input | reviewing |
+| states: default | loading | empty | error | first_time | edge_input |
 +------------------------------------------------------------+
 ```
 

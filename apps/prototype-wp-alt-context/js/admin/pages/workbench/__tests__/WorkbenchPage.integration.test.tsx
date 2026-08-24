@@ -142,6 +142,7 @@ describe('WorkbenchPage (integration-lite)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     scanStatusRef.data = null;
+    vi.mocked(recognitionApi.fetchSyncHealth).mockResolvedValue(syncHealthEnvelope('closed'));
     vi.mocked(recognitionApi.fetchPendingMergeSuggestions).mockResolvedValue({
       suggestions: [],
       limit: 10,
@@ -181,6 +182,7 @@ describe('WorkbenchPage (integration-lite)', () => {
         recognitionFailedOutbox: '/wp-json/acx/v1/recognition/outbox/failed',
         recognitionSyncStatus: '/wp-json/acx/v1/recognition/sync-status',
         recognitionSyncTrigger: '/wp-json/acx/v1/recognition/sync/trigger',
+        recognitionSyncHealth: '/wp-json/acx/v1/recognition/sync/health',
       },
       tenant_id: 'test-tenant',
     };

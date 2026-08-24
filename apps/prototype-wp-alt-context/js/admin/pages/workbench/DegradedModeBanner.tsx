@@ -1,4 +1,5 @@
 import React from 'react';
+import { __ } from '@wordpress/i18n';
 
 import type { SyncHealthResponse } from '../../api/recognition/types/sync';
 import { useSyncHealth } from '../../hooks/useSyncHealth';
@@ -14,10 +15,46 @@ import { SYNC_VOCABULARY } from './syncPresentation';
 
 interface DegradedModeBannerViewProps {
   health: SyncHealthResponse | undefined;
+  onRetry?: () => void;
 }
 
-export const DegradedModeBannerView = ({ health }: DegradedModeBannerViewProps): React.JSX.Element | null => {
-  if (!health || !shouldShowDegradedBanner(health)) {
+export const DegradedModeBannerView = ({
+  health,
+  onRetry,
+}: DegradedModeBannerViewProps): React.JSX.Element | null => {
+  if (!health) {
+    return (
+      <div
+        className="acx-empty-state-warning acx-degraded-mode-banner"
+        role="alert"
+        aria-live="assertive"
+        data-testid="acx-degraded-mode-banner"
+      >
+        <span
+          className="acx-empty-state-warning__icon"
+          aria-hidden="true"
+          data-testid="acx-degraded-mode-banner-icon"
+        >
+          !
+        </span>
+        <div className="acx-empty-state-warning__content">
+          <p className="acx-empty-state-warning__title">
+            {__('Recognition health unavailable', 'alt-context')}
+          </p>
+          <p className="acx-empty-state-warning__message">
+            {__('Remote analysis and description are paused until service health can be confirmed.', 'alt-context')}
+          </p>
+          {onRetry ? (
+            <button type="button" className="button" onClick={onRetry}>
+              {__('Retry health check', 'alt-context')}
+            </button>
+          ) : null}
+        </div>
+      </div>
+    );
+  }
+
+  if (!shouldShowDegradedBanner(health)) {
     return null;
   }
 
@@ -62,7 +99,7 @@ export const DegradedModeBannerView = ({ health }: DegradedModeBannerViewProps):
 };
 
 export const DegradedModeBanner = (): React.JSX.Element | null => {
-  const { data } = useSyncHealth();
+  const { data, refetch } = useSyncHealth();
 
-  return <DegradedModeBannerView health={data} />;
+  return <DegradedModeBannerView health={data} onRetry={() => void refetch()} />;
 };

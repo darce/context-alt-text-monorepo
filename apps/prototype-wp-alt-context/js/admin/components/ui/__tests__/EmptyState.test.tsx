@@ -248,6 +248,21 @@ describe('EmptyState (shared dead-end primitive)', () => {
     expect(screen.getByTestId('acx-empty-state-status-label')).toHaveClass('screen-reader-text');
   });
 
+  it('omits the internal live region when the host already owns the status channel', () => {
+    render(
+      <EmptyState
+        variant={EmptyStateVariant.EMPTY}
+        heading="No media matches your search."
+        body="Clear the search to return to the media library."
+        action={{ label: 'Clear search', onClick: vi.fn() }}
+        announceState={false}
+      />,
+    );
+
+    expect(screen.getByTestId('acx-empty-state')).toBeInTheDocument();
+    expect(screen.queryByTestId('acx-empty-state-live-region')).not.toBeInTheDocument();
+  });
+
   it('labels the region by its heading so assistive tech names it [A11Y-24]', () => {
     render(
       <EmptyState

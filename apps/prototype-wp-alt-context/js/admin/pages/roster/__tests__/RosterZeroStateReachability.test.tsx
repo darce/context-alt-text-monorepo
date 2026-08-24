@@ -262,10 +262,17 @@ describe('Roster zero-state reachability (rg-003)', () => {
     );
 
     const zeroState = screen.getByTestId('roster-zero-state');
-    expect(zeroState).toHaveAttribute('role', 'status');
     expect(zeroState).toHaveTextContent(/No people yet/i);
     expect(zeroState).toHaveTextContent(/Add someone manually or run a scan/i);
     expect(screen.getAllByRole('button', { name: /Add Person/ }).length).toBeGreaterThanOrEqual(1);
     expect(screen.getByRole('link', { name: /run a scan/i })).toHaveAttribute('href', '#/workbench?tab=scan');
+
+    const liveRegions = within(zeroState).getAllByRole('status');
+    expect(liveRegions).toHaveLength(1);
+    expect(zeroState).not.toHaveAttribute('role', 'status');
+    const emptyAdd = within(zeroState).getByRole('button', { name: 'Add Person' });
+    expect(emptyAdd.closest('[role="status"]')).toBeNull();
+    expect(zeroState.querySelector('.acx-empty-state.acx-roster-section__empty-icon')).toBeNull();
+    expect(zeroState.querySelector('.acx-empty-state__icon.acx-roster-section__empty-icon')).toBeTruthy();
   });
 });

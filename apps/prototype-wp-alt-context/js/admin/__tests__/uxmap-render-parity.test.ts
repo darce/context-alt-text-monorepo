@@ -25,7 +25,7 @@ const enumSnapshotPath = path.resolve(
   'fixtures/uxmap-enums.snapshot.json',
 );
 
-const OWNED_MAPS = ['roster-people', 'workbench-2pane', 'workbench-operator-loop'] as const;
+const OWNED_MAPS = ['roster-people', 'workbench-2pane', 'workbench-operator-loop', 'dashboard'] as const;
 
 /** Operator-facing labels renamed or deleted from the JSON; must not remain in the md. */
 const RETIRED_LABELS = [

@@ -1224,6 +1224,18 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
           </div>
         </div>
 
+        {storedFaceSelectionBlocksCommit ? (
+          <p
+            id={storedFaceSelectionReasonId}
+            className="acx-review-queue__stored-face-review-reason"
+          >
+            {__(
+              'Review the stored faces for every selected suggestion before accepting.',
+              'alt-context',
+            )}
+          </p>
+        ) : null}
+
         {selectionOpen && selectedIds.size > 0 ? (
           <div
             className="acx-review-queue__selection-panel"
@@ -1236,18 +1248,6 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
                 </li>
               ))}
             </ul>
-
-            {storedFaceSelectionBlocksCommit ? (
-              <p
-                id={storedFaceSelectionReasonId}
-                className="acx-review-queue__stored-face-review-reason"
-              >
-                {__(
-                  'Review the stored faces for every selected suggestion before accepting.',
-                  'alt-context',
-                )}
-              </p>
-            ) : null}
 
             {truncationReason ? (
               <p id={truncationReasonId} className="acx-review-queue__truncation-reason">
@@ -1362,6 +1362,9 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
                 storedFaceSelectionBlocksCommit ? storedFaceSelectionReasonId : undefined
               }
               onClick={() => {
+                if (storedFaceSelectionBlocksCommit) {
+                  return;
+                }
                 void bulk.retryBulk();
               }}
             >

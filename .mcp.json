@@ -33,9 +33,11 @@
     },
     "codebase-graph-mcp": {
       "type": "stdio",
-      "command": "python3",
+      "command": "sh",
       "args": [
-        "scripts/hooks/mcp_launch.py",
+        "-c",
+        "root=\"$(git rev-parse --show-toplevel 2>/dev/null || echo .)\"; exec python3 \"$root/scripts/hooks/mcp_launch.py\" \"$@\"",
+        "sh",
         "codebase-graph-mcp"
       ]
     }

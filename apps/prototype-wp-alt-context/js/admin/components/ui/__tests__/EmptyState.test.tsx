@@ -17,7 +17,7 @@ vi.mock('@wordpress/i18n', () => ({
  * [A11Y-24] both states are reachable and announced, not colour-only.
  */
 describe('EmptyState (shared dead-end primitive)', () => {
-  const FRONT_DOOR = { label: 'Run a scan', onClick: () => {} } as const;
+  const FRONT_DOOR = { label: 'Run a scan', onClick: vi.fn() };
 
   it('renders the heading and the body', () => {
     render(
@@ -58,7 +58,7 @@ describe('EmptyState (shared dead-end primitive)', () => {
         variant={variant}
         heading="Face assignments unavailable"
         body="We could not load the review queue."
-        action={{ label: 'Try again', onClick: () => {} }}
+        action={{ label: 'Try again', onClick: vi.fn() }}
       />,
     );
 
@@ -149,7 +149,7 @@ describe('EmptyState (shared dead-end primitive)', () => {
         variant={EmptyStateVariant.UNAVAILABLE}
         heading="Face assignments unavailable — this is not an empty backlog."
         body="We could not load the review queue."
-        action={{ label: 'Try again', onClick: () => {} }}
+        action={{ label: 'Try again', onClick: vi.fn() }}
       />,
     );
 
@@ -163,24 +163,14 @@ describe('EmptyState (shared dead-end primitive)', () => {
 
   it('gives the two variants different rendered treatment, not just different copy', () => {
     const { unmount } = render(
-      <EmptyState
-        variant={EmptyStateVariant.EMPTY}
-        heading="Same words"
-        body="Same body."
-        action={FRONT_DOOR}
-      />,
+      <EmptyState variant={EmptyStateVariant.EMPTY} heading="Same words" body="Same body." action={FRONT_DOOR} />,
     );
     const emptyClass = screen.getByTestId('acx-empty-state').className;
     const emptyIconKind = screen.getByTestId('acx-empty-state-icon').getAttribute('data-icon');
     unmount();
 
     render(
-      <EmptyState
-        variant={EmptyStateVariant.UNAVAILABLE}
-        heading="Same words"
-        body="Same body."
-        action={FRONT_DOOR}
-      />,
+      <EmptyState variant={EmptyStateVariant.UNAVAILABLE} heading="Same words" body="Same body." action={FRONT_DOOR} />,
     );
     const unavailableClass = screen.getByTestId('acx-empty-state').className;
     const unavailableIconKind = screen.getByTestId('acx-empty-state-icon').getAttribute('data-icon');
@@ -196,7 +186,7 @@ describe('EmptyState (shared dead-end primitive)', () => {
         variant={EmptyStateVariant.UNAVAILABLE}
         heading="Face assignments unavailable"
         body="We could not load the review queue."
-        action={{ label: 'Try again', onClick: () => {} }}
+        action={{ label: 'Try again', onClick: vi.fn() }}
       />,
     );
 

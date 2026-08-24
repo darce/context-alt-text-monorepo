@@ -50,7 +50,6 @@ export const RecentAuditEvents = ({ events, onRefresh }: RecentAuditEventsProps)
         body={__('Refresh after a data-retention action to see its audit event.', 'alt-context')}
         action={{ label: __('Refresh audit events', 'alt-context'), onClick: onRefresh }}
         headingLevel={3}
-        announceState={false}
       />
     ) : (
       <ol className="acx-retention__timeline">
@@ -102,7 +101,6 @@ export const FullAuditLog = ({ auditQuery, auditPage, dispatch }: FullAuditLogPr
         body={__('The audit log could not be loaded. Try again.', 'alt-context')}
         action={{ label: __('Retry audit log', 'alt-context'), onClick: () => void auditQuery.refetch() }}
         headingLevel={3}
-        announceState={false}
       />
     )}
     {auditQuery.data?.items.length === 0 && (
@@ -112,7 +110,6 @@ export const FullAuditLog = ({ auditQuery, auditPage, dispatch }: FullAuditLogPr
         body={__('Refresh after a data-retention action to see its audit event.', 'alt-context')}
         action={{ label: __('Refresh audit log', 'alt-context'), onClick: () => void auditQuery.refetch() }}
         headingLevel={3}
-        announceState={false}
       />
     )}
     {auditQuery.data && auditQuery.data.items.length > 0 && (

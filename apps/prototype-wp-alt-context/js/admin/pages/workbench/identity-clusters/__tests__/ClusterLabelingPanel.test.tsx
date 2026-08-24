@@ -429,6 +429,38 @@ describe('ClusterLabelingPanel', () => {
     expect(container.querySelector('.acx-face-thumbnail')).toBeNull();
   });
 
+  // UXB-01 / A11Y-02: face evidence needs distinct comparison labels in visual order.
+  it('labels faces from the same media by their left-to-right bbox position', async () => {
+    vi.mocked(fetchClusterMembers).mockResolvedValue(
+      makeClusterMembersResponse([
+        {
+          identity_id: 'identity-right',
+          media_id: 101,
+          similarity: 0.97,
+          confidence: 0.99,
+          thumb_url: 'http://example.test/uploads/group.jpg',
+          media_url: 'http://example.test/media/group.jpg',
+          bbox: { x: 80, y: 2, width: 20, height: 20 },
+        },
+        {
+          identity_id: 'identity-left',
+          media_id: 101,
+          similarity: 0.96,
+          confidence: 0.98,
+          thumb_url: 'http://example.test/uploads/group.jpg',
+          media_url: 'http://example.test/media/group.jpg',
+          bbox: { x: 10, y: 2, width: 20, height: 20 },
+        },
+      ]),
+    );
+
+    renderPanel();
+
+    expect(await screen.findByRole('img', { name: 'Face 1 in media 101' })).toBeInTheDocument();
+    expect(screen.getByRole('img', { name: 'Face 2 in media 101' })).toBeInTheDocument();
+    expect(screen.queryByRole('img', { name: 'Face to label' })).not.toBeInTheDocument();
+  });
+
   it('pages through show-all when the members envelope is truncated', async () => {
     const fetchMock = vi.mocked(fetchClusterMembers);
     fetchMock.mockImplementation((_clusterId, params = {}): Promise<ClusterMembersResponse> => {

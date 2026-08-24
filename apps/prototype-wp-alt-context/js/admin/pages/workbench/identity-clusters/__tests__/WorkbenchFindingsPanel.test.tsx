@@ -1,6 +1,7 @@
 import React from 'react';
 import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { HashRouter, Navigate, Route, Routes } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { DATA_SOURCE } from '../../../../api/recognition/types';
@@ -134,6 +135,7 @@ const makeViewModel = (overrides: Partial<WorkbenchFindingsViewModel> = {}): Wor
 describe('WorkbenchFindingsPanel', () => {
   afterEach(() => {
     cleanup();
+    window.history.replaceState(null, '', '/');
     vi.clearAllMocks();
     refetchAssignment.mockImplementation(() => Promise.resolve({ isError: false }));
     refetchMerge.mockImplementation(() => Promise.resolve({ isError: false }));
@@ -208,17 +210,41 @@ describe('WorkbenchFindingsPanel', () => {
     expect(onTargetFindings).toHaveBeenCalledTimes(1);
   });
 
-  it('disables the primary action and explains population in the empty state', () => {
+  it('disables the primary action and explains population in the empty state', async () => {
     vi.mocked(useWorkbenchFindings).mockReturnValue(makeViewModel());
 
-    render(<WorkbenchFindingsPanel onTargetFindings={vi.fn()} />);
+    window.history.replaceState(null, '', '#/workbench?tab=scan');
+    render(
+      <HashRouter>
+        <Routes>
+          <Route
+            path="/workbench"
+            element={
+              <div>
+                <WorkbenchFindingsPanel onTargetFindings={vi.fn()} />
+                <h3 id="acx-workbench-scan-heading" tabIndex={-1}>
+                  Scan
+                </h3>
+              </div>
+            }
+          />
+          <Route path="/dashboard" element={<div data-testid="dashboard">Dashboard</div>} />
+          <Route path="*" element={<Navigate to="/dashboard" replace />} />
+        </Routes>
+      </HashRouter>,
+    );
 
     expect(
       screen.getByText('No findings yet. Run a scan and new findings will appear here automatically.'),
     ).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Review next/ })).toBeDisabled();
     expect(screen.queryByRole('button', { name: 'View all findings' })).not.toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'Run a scan' })).toHaveAttribute('href', '#acx-workbench-scan-heading');
+
+    await userEvent.click(screen.getByRole('link', { name: 'Run a scan' }));
+
+    expect(window.location.hash).toMatch(/^#\/workbench(?:\?|$)/);
+    expect(screen.queryByTestId('dashboard')).not.toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Scan' })).toHaveFocus();
   });
 
   // REV2-01 / TEST-15: an assignment-only outage keeps hasAnyData true, so the

@@ -387,6 +387,15 @@ export const useBulkReviewCommit = ({
     [onSelectedIdsChange, selectedIds],
   );
 
+  const itemsAreApprovalBlocked = React.useCallback((items: readonly BulkCommitItem[]): boolean => {
+    const blocked = isApprovalBlockedRef.current;
+    // Fail closed: a missing host predicate must not silently permit writes.
+    if (typeof blocked !== 'function') {
+      return items.length > 0;
+    }
+    return items.some((item) => blocked(item.suggestionId));
+  }, []);
+
   /**
    * Sequential per-id POSTs. `limitToFirstOnly` = unmount-while-holding policy.
    * Drops committed ids from selection as each POST succeeds (PA-27).
@@ -529,13 +538,21 @@ export const useBulkReviewCommit = ({
           );
       const filtered = stillSelected.filter((i) => allowedNow.has(i.suggestionId));
       const items = options.limitToFirstOnly ? filtered.slice(0, 1) : filtered;
+      // DUX-W2R2-RV-06: re-check HAI-17 on the final fire-time set, immediately
+      // before the commit — BR-50/BR-62 above only re-cut against live selection
+      // and filters, neither of which considers stored-face approval. A live
+      // refetch can flip an item to blocked while the hold is open (timer path)
+      // or during a forced flush; the pinned branch skips the recut entirely, so
+      // this is the only remaining gate on that path. All-or-nothing: any
+      // blocked id voids the whole set (same rule as every other write path).
+      const toCommit = itemsAreApprovalBlocked(items) ? [] : items;
       held.resolve();
-      const run = runSequence(items, options);
+      const run = runSequence(toCommit, options);
       sequencePromiseRef.current = run;
       await run;
       sequencePromiseRef.current = null;
     },
-    [clearHeldTimer, runSequence],
+    [clearHeldTimer, itemsAreApprovalBlocked, runSequence],
   );
 
   const armBulkTimer = React.useCallback(() => {
@@ -588,15 +605,6 @@ export const useBulkReviewCommit = ({
     if (mountedRef.current) {
       setBulkInitiatePending(false);
     }
-  }, []);
-
-  const itemsAreApprovalBlocked = React.useCallback((items: readonly BulkCommitItem[]): boolean => {
-    const blocked = isApprovalBlockedRef.current;
-    // Fail closed: a missing host predicate must not silently permit writes.
-    if (typeof blocked !== 'function') {
-      return items.length > 0;
-    }
-    return items.some((item) => blocked(item.suggestionId));
   }, []);
 
   const initiateBulk = React.useCallback(async (): Promise<void> => {

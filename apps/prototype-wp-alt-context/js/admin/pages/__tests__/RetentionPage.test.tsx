@@ -2,6 +2,7 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event';
 
 import { RetentionPage } from '../RetentionPage';
+import { retentionReducer, type RetentionDialogState } from '../retention/useRetentionPageState';
 import {
   useApplyRetentionPreset,
   useAuditEvents,
@@ -253,6 +254,84 @@ describe('RetentionPage', () => {
       counts: { clusters: 0 },
       data: { clusters: [] },
     });
+  });
+
+  it('keeps an unsupported export job observable after the dialog closes', async () => {
+    mockedUseExportJobStatus.mockReturnValue(
+      createMockQuery({
+        data: { job_id: 'job-1', status: 'processing', file_size: null, error_message: null },
+      }),
+    );
+
+    render(<RetentionPage />);
+
+    const statusRegion = screen.getByRole('status');
+    expect(statusRegion).toBeEmptyDOMElement();
+    expect(statusRegion).toHaveAttribute('aria-live', 'polite');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Export data' }));
+    expect(screen.getByRole('status')).toBe(statusRegion);
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Start export' }));
+      await Promise.resolve();
+    });
+
+    expect(statusRegion).toHaveTextContent('Export in progress…');
+    expect(statusRegion).toHaveTextContent('Job ID: job-1');
+    expect(screen.queryByRole('button', { name: 'Cancel' })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(mockedUseExportJobStatus).toHaveBeenLastCalledWith('job-1');
+    expect(screen.getByRole('status')).toBe(statusRegion);
+    expect(statusRegion).toHaveTextContent('Export in progress…');
+    expect(statusRegion).toHaveTextContent('Job ID: job-1');
+  });
+
+  it('preserves the retained export job when the export dialog closes', () => {
+    const state: RetentionDialogState = {
+      draftMode: null,
+      isExportDialogOpen: true,
+      exportJobId: 'job-1',
+      isPurgeDialogOpen: false,
+      purgeScope: 'disposed',
+      purgeConfirmation: '',
+      isImportDialogOpen: false,
+      importFile: null,
+      auditPage: 0,
+    };
+
+    expect(retentionReducer(state, { type: 'CLOSE_EXPORT_DIALOG' })).toEqual({
+      ...state,
+      isExportDialogOpen: false,
+    });
+  });
+
+  it('uses a separate persistent assertive region when an export fails', async () => {
+    const { rerender } = render(<RetentionPage />);
+    const statusRegion = screen.getByRole('status');
+    const errorRegion = screen.getByRole('alert');
+    expect(errorRegion).toBeEmptyDOMElement();
+    expect(errorRegion).toHaveAttribute('aria-live', 'assertive');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Export data' }));
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Start export' }));
+      await Promise.resolve();
+    });
+
+    mockedUseExportJobStatus.mockReturnValue(
+      createMockQuery({
+        data: { job_id: 'job-1', status: 'failed', file_size: null, error_message: 'Export failed' },
+      }),
+    );
+    rerender(<RetentionPage />);
+
+    expect(screen.getByRole('status')).toBe(statusRegion);
+    expect(statusRegion).toBeEmptyDOMElement();
+    expect(screen.getByRole('alert')).toBe(errorRegion);
+    expect(errorRegion).toHaveTextContent('Export failed. Please try again. Job ID: job-1');
   });
 
   it('requires typed confirmation before purge', async () => {

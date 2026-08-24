@@ -277,6 +277,24 @@ describe('WorkbenchFindingsPanel', () => {
     });
   });
 
+  // DUX-W2D6C-RV-05 / TEST-15: EmptyState conversion dropped
+  // aria-describedby="acx-findings-panel-assignment-outage" from Retry.
+  it('DUX-W2D6C-RV-05: assignment-outage Retry is described by the outage explanation', () => {
+    vi.mocked(useWorkbenchFindings).mockReturnValue(
+      makeViewModel({ isAssignmentError: true, isError: false, hasFindings: false }),
+    );
+
+    render(<WorkbenchFindingsPanel onTargetFindings={vi.fn()} />);
+
+    const retry = screen.getByRole('button', { name: 'Retry' });
+    expect(retry).toHaveAttribute('aria-describedby', 'acx-findings-panel-assignment-outage');
+    const explanation = document.getElementById('acx-findings-panel-assignment-outage');
+    expect(explanation).toBeTruthy();
+    expect(explanation).toHaveTextContent(
+      'Face assignments unavailable — this is not an empty backlog.',
+    );
+  });
+
   it('REV2-01: a genuine empty backlog still announces the all-clear', () => {
     // Pins the other side of the branch: without this, hiding the empty copy
     // unconditionally would satisfy the outage test above.

@@ -15,6 +15,7 @@ import {
 import { resetConfigCache } from '../api/config';
 import { queryKeys } from '../api/queryKeys';
 import { resolveWpErrorMessage } from '../api/wpErrorMessage';
+import { toDashboard } from '../navigation/appLinks';
 import { SettingsForm } from './settings/SettingsForm';
 import { SettingsRoutingBanner } from './settings/SettingsRoutingBanner';
 import { TestConnectionBannerView } from './settings/TestConnectionBannerView';
@@ -155,6 +156,22 @@ export const SettingsPage = (): React.JSX.Element => {
     testMutation.mutate({ confirm_tenant_pairing: true });
   };
 
+  const settingsErrorMessage = settingsQuery.isLoadingError
+    ? __('Failed to load settings.', 'alt-context')
+    : settingsQuery.isRefetchError
+      ? __('Failed to refresh settings.', 'alt-context')
+      : '';
+  const errorLiveRegion = (
+    <div
+      className={settingsErrorMessage ? 'notice inline notice-error' : undefined}
+      role="alert"
+      aria-live="assertive"
+      data-testid="acx-settings-query-error"
+    >
+      {settingsErrorMessage ? <p>{settingsErrorMessage}</p> : null}
+    </div>
+  );
+
   if (settingsQuery.isLoading) {
     return (
       <section className="acx-settings" aria-labelledby="acx-settings-page-title">
@@ -162,19 +179,32 @@ export const SettingsPage = (): React.JSX.Element => {
           {__('Settings', 'alt-context')}
         </h1>
         <h2 id="acx-settings-title">{__('Recognition API Settings', 'alt-context')}</h2>
+        {errorLiveRegion}
         <p>{__('Loading settings…', 'alt-context')}</p>
       </section>
     );
   }
 
-  if (settingsQuery.isError) {
+  if (settingsQuery.isLoadingError) {
     return (
       <section className="acx-settings" aria-labelledby="acx-settings-page-title">
         <h1 id="acx-settings-page-title" className="acx-dashboard__title">
           {__('Settings', 'alt-context')}
         </h1>
         <h2 id="acx-settings-title">{__('Recognition API Settings', 'alt-context')}</h2>
-        <p>{__('Failed to load settings.', 'alt-context')}</p>
+        {errorLiveRegion}
+        <div className="acx-dashboard__actions">
+          <button
+            type="button"
+            className="acx-button acx-button--secondary"
+            onClick={() => void settingsQuery.refetch()}
+          >
+            {__('Retry', 'alt-context')}
+          </button>
+          <a className="acx-button acx-button--secondary" href={toDashboard()}>
+            {__('Back to Dashboard', 'alt-context')}
+          </a>
+        </div>
       </section>
     );
   }
@@ -189,6 +219,7 @@ export const SettingsPage = (): React.JSX.Element => {
         {__('Settings', 'alt-context')}
       </h1>
       <h2 id="acx-settings-title">{__('Recognition API Settings', 'alt-context')}</h2>
+      {errorLiveRegion}
       <p className="description">
         {__('Configure the connection to the Alt Context recognition service.', 'alt-context')}
       </p>

@@ -23,22 +23,22 @@ import { useJobPipeline } from './JobPipelineContext';
 import { useClusterPanel } from './ClusterPanelContext';
 import { useWorkbenchMediaContext } from './WorkbenchMediaContext';
 import { useReviewSurface } from './ReviewSurfaceContext';
+import { EmptyState, EmptyStateVariant } from '../../components/ui/EmptyState';
 
 const ScanScrollRestoration = () => {
   useScrollRestoration('workbench-scan');
   return null;
 };
 
-const NoMediaPanel = () => (
-  <div className="acx-apply-panel acx-apply-panel--empty">
-    <h3>{__('Your analysis queue is empty', 'alt-context')}</h3>
-    <p>
-      {__(
-        'Search for specific media items below or adjust your filters to find images that need analysis. Once you select items, they will appear here ready to be scanned.',
-        'alt-context',
-      )}
-    </p>
-  </div>
+export const NoMediaPanel = () => (
+  <EmptyState
+    variant={EmptyStateVariant.EMPTY}
+    heading={__('Your analysis queue is empty', 'alt-context')}
+    body={__('Select or filter media, then run a scan to find faces.', 'alt-context')}
+    action={{ label: __('Go to Scan', 'alt-context'), href: '#acx-workbench-scan-heading' }}
+    headingLevel={3}
+    className="acx-apply-panel acx-apply-panel--empty"
+  />
 );
 
 export const ScanTabContent = (): React.JSX.Element => {

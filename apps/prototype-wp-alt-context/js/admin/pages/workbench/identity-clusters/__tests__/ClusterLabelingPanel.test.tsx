@@ -542,7 +542,7 @@ describe('ClusterLabelingPanel', () => {
 
     expect(container.querySelector('.acx-face-thumbnail')).not.toBeNull();
     expect(container.querySelector('.acx-avatar')).toBeNull();
-    expect(screen.getByRole('img', { name: 'Face to label' })).toHaveAttribute(
+    expect(screen.getByRole('img', { name: 'Face 1 in media 102' })).toHaveAttribute(
       'src',
       'http://example.test/media/source-102.jpg',
     );
@@ -572,7 +572,7 @@ describe('ClusterLabelingPanel', () => {
 
     expect(container.querySelector('.acx-face-thumbnail')).toBeNull();
     expect(screen.getByText('No image')).toBeInTheDocument();
-    const unavailable = screen.getByRole('img', { name: 'Face to label — image unavailable' });
+    const unavailable = screen.getByRole('img', { name: 'Face 1 in media 200 — image unavailable' });
     expect(unavailable).toBeInTheDocument();
     expect(unavailable).toHaveClass('acx-cluster-labeling-panel__face-unavailable');
   });
@@ -600,7 +600,7 @@ describe('ClusterLabelingPanel', () => {
 
     expect(container.querySelector('.acx-face-thumbnail')).not.toBeNull();
     expect(screen.queryByText('No image')).not.toBeInTheDocument();
-    expect(screen.getByRole('img', { name: 'Face to label' })).toHaveAttribute(
+    expect(screen.getByRole('img', { name: 'Face 1 in media 201' })).toHaveAttribute(
       'src',
       'http://example.test/media/label-positive.jpg',
     );

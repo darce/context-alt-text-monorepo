@@ -178,6 +178,45 @@ export const ClusterLabelingPanel = ({
     showAll,
     refetch,
   } = useShowAllClusterMembers(clusterId);
+  const memberPositions = useMemo(() => {
+    const positions: number[] = [];
+    const memberIndexesByMedia = new Map<number, number[]>();
+
+    members.forEach((member, memberIndex) => {
+      const mediaMemberIndexes = memberIndexesByMedia.get(member.media_id) ?? [];
+      mediaMemberIndexes.push(memberIndex);
+      memberIndexesByMedia.set(member.media_id, mediaMemberIndexes);
+    });
+
+    memberIndexesByMedia.forEach((memberIndexes) => {
+      memberIndexes
+        .sort((leftIndex, rightIndex) => {
+          const leftX = members[leftIndex]?.bbox?.x;
+          const rightX = members[rightIndex]?.bbox?.x;
+          const leftHasPosition = Number.isFinite(leftX);
+          const rightHasPosition = Number.isFinite(rightX);
+
+          if (
+            leftHasPosition &&
+            rightHasPosition &&
+            typeof leftX === 'number' &&
+            typeof rightX === 'number' &&
+            leftX !== rightX
+          ) {
+            return leftX - rightX;
+          }
+          if (leftHasPosition !== rightHasPosition) {
+            return leftHasPosition ? -1 : 1;
+          }
+          return leftIndex - rightIndex;
+        })
+        .forEach((memberIndex, positionIndex) => {
+          positions[memberIndex] = positionIndex + 1;
+        });
+    });
+
+    return positions;
+  }, [members]);
 
   // AT affordance: when expansion completes the show-all button unmounts, so
   // announce completion and move focus to the member grid before it drops.
@@ -561,8 +600,6 @@ export const ClusterLabelingPanel = ({
     );
   }
 
-  const memberAlt = __('Face to label', 'alt-context');
-
   return (
     <div className="acx-cluster-labeling-panel">
       <div className="acx-cluster-labeling-panel__header">
@@ -584,32 +621,35 @@ export const ClusterLabelingPanel = ({
               </button>
             </div>
           ) : members.length > 0 ? (
-            members.map((member) => (
-              <div key={member.identity_id} className="acx-cluster-labeling-panel__face">
-                {member.thumb_url && isDedicatedFaceThumbUrl(member.thumb_url) ? (
-                  <Avatar src={member.thumb_url} size="lg" alt={memberAlt} />
-                ) : member.media_url && isCroppableBbox(member.bbox) ? (
-                  <FaceThumbnail
-                    mediaUrl={member.media_url}
-                    bbox={member.bbox}
-                    size="lg"
-                    alt={memberAlt}
-                  />
-                ) : member.thumb_url ? (
-                  <Avatar src={member.thumb_url} size="lg" alt={memberAlt} />
-                ) : (
-                  <div
-                    className="acx-cluster-labeling-panel__face-unavailable"
-                    role="img"
-                    aria-label={unavailableImageName(memberAlt)}
-                  >
-                    <span className="acx-cluster-labeling-panel__face-unavailable-label">
-                      {__('No image', 'alt-context')}
-                    </span>
-                  </div>
-                )}
-              </div>
-            ))
+            members.map((member, memberIndex) => {
+              const memberAlt = sprintf(
+                __('Face %1$d in media %2$d', 'alt-context'),
+                memberPositions[memberIndex] ?? memberIndex + 1,
+                member.media_id,
+              );
+
+              return (
+                <div key={member.identity_id} className="acx-cluster-labeling-panel__face">
+                  {member.thumb_url && isDedicatedFaceThumbUrl(member.thumb_url) ? (
+                    <Avatar src={member.thumb_url} size="lg" alt={memberAlt} />
+                  ) : member.media_url && isCroppableBbox(member.bbox) ? (
+                    <FaceThumbnail mediaUrl={member.media_url} bbox={member.bbox} size="lg" alt={memberAlt} />
+                  ) : member.thumb_url ? (
+                    <Avatar src={member.thumb_url} size="lg" alt={memberAlt} />
+                  ) : (
+                    <div
+                      className="acx-cluster-labeling-panel__face-unavailable"
+                      role="img"
+                      aria-label={unavailableImageName(memberAlt)}
+                    >
+                      <span className="acx-cluster-labeling-panel__face-unavailable-label">
+                        {__('No image', 'alt-context')}
+                      </span>
+                    </div>
+                  )}
+                </div>
+              );
+            })
           ) : (
             <p>{__('No members found.', 'alt-context')}</p>
           )}

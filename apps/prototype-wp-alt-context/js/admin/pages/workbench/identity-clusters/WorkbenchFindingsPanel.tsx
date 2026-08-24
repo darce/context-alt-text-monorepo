@@ -23,7 +23,7 @@ import { QUERY_RETRY_COPY, QueryRetryButton, settledRefetchFailed } from './quer
 import { gatedClusterCopy, repairGatedCount, REPRESENTATIVE_VOCABULARY } from './representativeVocabulary';
 import { useSuggestionReviewQueries } from './useSuggestionReviewQueries';
 import { EmptyState, EmptyStateVariant } from '../../../components/ui/EmptyState';
-import { toSettings } from '../../../navigation/appLinks';
+import { toSettings, toWorkbench } from '../../../navigation/appLinks';
 
 /** Panel-level fallback chain (design B.2). First match wins. */
 export const FINDINGS_PANEL_STATE = {
@@ -507,7 +507,12 @@ export const WorkbenchFindingsPanel = ({
           heading={__('No findings yet', 'alt-context')}
           body={__('Run a scan and new findings will appear here automatically.', 'alt-context')}
           announcement={__('No findings yet. Run a scan and new findings will appear here automatically.', 'alt-context')}
-          action={{ label: __('Run a scan', 'alt-context'), href: '#acx-workbench-scan-heading' }}
+          action={{ label: __('Run a scan', 'alt-context'), href: toWorkbench({ tab: 'scan' }) }}
+          onActivate={() => {
+            queueMicrotask(() => {
+              document.getElementById('acx-workbench-scan-heading')?.focus();
+            });
+          }}
           headingLevel={4}
         />
       )}

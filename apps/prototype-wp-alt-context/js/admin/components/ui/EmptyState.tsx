@@ -56,6 +56,12 @@ export interface EmptyStateProps {
   /** Keeps the host surface's heading outline valid [A11Y-24]. */
   headingLevel?: 2 | 3 | 4;
   className?: string;
+  /**
+   * In-page landing after the front door fires (e.g. move focus). Does not
+   * replace `action.href` / `action.onClick` — those remain the exclusive way
+   * out [NAV-08].
+   */
+  onActivate?: () => void;
 }
 
 const HEADING_TAGS = {
@@ -82,6 +88,7 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
   announceState = true,
   headingLevel = 3,
   className,
+  onActivate,
 }) => {
   const headingId = React.useId();
   const Heading = HEADING_TAGS[headingLevel];
@@ -124,14 +131,21 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
         <p className="acx-empty-state__body">{body}</p>
         <div className="acx-empty-state__action">
           {action.href !== undefined ? (
-            <a className="acx-empty-state__action-control" href={action.href}>
+            <a
+              className="acx-empty-state__action-control"
+              href={action.href}
+              onClick={() => onActivate?.()}
+            >
               {action.label}
             </a>
           ) : (
             <button
               type="button"
               className="acx-empty-state__action-control"
-              onClick={action.onClick}
+              onClick={() => {
+                action.onClick();
+                onActivate?.();
+              }}
               aria-busy={action.busy ? 'true' : undefined}
             >
               {action.label}

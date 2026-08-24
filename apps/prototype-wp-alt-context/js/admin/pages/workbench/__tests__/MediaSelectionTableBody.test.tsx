@@ -7,8 +7,9 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import React from 'react';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { registerConfig, resetConfigCache } from '../../../api/config';
 import type { WorkbenchMediaItem } from '../../../hooks/useWorkbenchMedia';
 import { MediaSelectionTableBody } from '../MediaSelectionTableBody';
 
@@ -80,6 +81,10 @@ const renderBody = (
 };
 
 describe('MediaSelectionTableBody — decorative alt + link name [A11Y-02][A11Y-04]', () => {
+  afterEach(() => {
+    resetConfigCache();
+  });
+
   it('does not offer search recovery when the library is empty without a search [DUX-W2D6C-RV-02]', () => {
     renderBody([]);
 
@@ -87,6 +92,27 @@ describe('MediaSelectionTableBody — decorative alt + link name [A11Y-02][A11Y-
     expect(screen.queryByRole('button', { name: 'Clear search' })).not.toBeInTheDocument();
     expect(screen.getByTestId('acx-empty-state')).toHaveAttribute('data-variant', 'empty');
     expect(screen.queryByTestId('acx-empty-state-live-region')).not.toBeInTheDocument();
+  });
+
+  it('resolves the true-zero "Open the media library" href from configured admin URLs, not a hardcoded /wp-admin/ path [DUX-W2D6C-RV-07]', () => {
+    registerConfig({
+      nonce: 'n',
+      ajaxUrl: '/wp-admin/admin-ajax.php',
+      endpoints: {},
+      adminUrls: {
+        mediaLibrary: '/site/wp-admin/upload.php',
+      },
+    });
+
+    renderBody([]);
+
+    const link = screen.getByRole('link', { name: 'Open the media library' });
+    const href = link.getAttribute('href') ?? '';
+
+    // The configured (subdirectory-install) target must win over any literal.
+    expect(href).toContain('/site/wp-admin/upload.php');
+    // A hardcoded href would ignore the configured value entirely.
+    expect(href).not.toBe('/wp-admin/upload.php');
   });
 
   it('does not offer a dead Clear search when only a status filter is active [DUX-W2D6C-RV-02]', () => {

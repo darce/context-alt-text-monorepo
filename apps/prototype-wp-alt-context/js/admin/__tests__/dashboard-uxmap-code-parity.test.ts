@@ -140,9 +140,10 @@ describe('dashboard ux-map code parity (DUX-W2D14)', () => {
 
   const defaultSketch = extractSketch(md, '#### Default — populated');
   const firstTimeSketch = extractSketch(md, '#### First-time — fresh tenant');
+  const loadingSketch = extractSketch(md, '#### Loading');
   const errorSketch = extractSketch(md, '#### Error');
   const degradedSketch = extractSketch(md, '#### Degraded');
-  const allSketches = [defaultSketch, firstTimeSketch, extractSketch(md, '#### Loading'), errorSketch, degradedSketch];
+  const allSketches = [defaultSketch, firstTimeSketch, loadingSketch, errorSketch, degradedSketch];
 
   it('RV-01: screen/zone/action names come from the rendered component strings', () => {
     const overview = h1Literal(dashboardSrc);
@@ -285,6 +286,37 @@ describe('dashboard ux-map code parity (DUX-W2D14)', () => {
       verbsMissingFromSketches,
       `actions never drawn in a sketch: ${verbsMissingFromSketches.join(', ')}`,
     ).toEqual([]);
+
+    // RV-13: allSketches.join('\n') hides a control missing from one sketch as long as
+    // it is present in another. Controls that are genuinely unconditional in the
+    // component (rendered outside any loading/error branch) must appear in every
+    // sketch where that branch is reachable, checked per sketch, not on the joined text.
+    const namedSketches: Record<string, string> = {
+      default: defaultSketch,
+      first_time: firstTimeSketch,
+      loading: loadingSketch,
+      error: errorSketch,
+      degraded: degradedSketch,
+    };
+
+    const unconditionalControls: Record<string, string[]> = {
+      // DashboardSyncHealthSection.tsx:122-126 renders 'Open Review Queue' inside the
+      // success branch (not isLoading, not isError/!syncStatus). Reachable in every
+      // sketch depicting a loaded sync status: default, first_time, degraded.
+      'Open Review Queue': ['default', 'first_time', 'degraded'],
+      // DashboardPage.tsx:235-245 renders the coverage progress bar and 'Fix missing
+      // descriptions' CTA outside the isStatsLoading ternary, so they render in every
+      // sketch regardless of loading state.
+      'Fix missing descriptions': ['default', 'first_time', 'loading', 'error', 'degraded'],
+    };
+
+    for (const [control, expectedIn] of Object.entries(unconditionalControls)) {
+      const missingFrom = expectedIn.filter((name) => !sketchControls(namedSketches[name]).includes(control));
+      expect(
+        missingFrom,
+        `${control} is unconditional but missing from sketch(es): ${missingFrom.join(', ')}`,
+      ).toEqual([]);
+    }
   });
 
   it('RV-06: off-surface destinations are kind:exit screens and flows land on them', () => {

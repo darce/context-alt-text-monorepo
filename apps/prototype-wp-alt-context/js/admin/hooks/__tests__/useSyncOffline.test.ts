@@ -32,8 +32,20 @@ describe('useSyncOffline', () => {
     useSyncHealthMock.mockReset();
   });
 
-  it('treats unavailable sync health as not online (data undefined)', () => {
-    useSyncHealthMock.mockReturnValue(createMockQuery<SyncHealthResponse>({}));
+  it('does not gate controls while the initial health request is loading', () => {
+    useSyncHealthMock.mockReturnValue(
+      createMockQuery<SyncHealthResponse>({ isLoading: true }),
+    );
+
+    const { result } = renderHook(() => useSyncOffline());
+
+    expect(result.current).toBe(false);
+  });
+
+  it('gates controls when health settles as unknown (data undefined)', () => {
+    useSyncHealthMock.mockReturnValue(
+      createMockQuery<SyncHealthResponse>({ status: 'error', isLoading: false }),
+    );
 
     const { result } = renderHook(() => useSyncOffline());
 

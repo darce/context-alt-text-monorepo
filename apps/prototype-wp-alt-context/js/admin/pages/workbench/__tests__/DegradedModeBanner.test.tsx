@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { SyncHealthResponse } from '../../../api/recognition/types/sync';
@@ -59,12 +59,27 @@ describe('getDegradedDebtLinks', () => {
 });
 
 describe('DegradedModeBannerView', () => {
-  it('names unavailable health as degraded and offers a retry action', () => {
+  it('keeps live-region nodes stable and empty until initial health loading settles', () => {
     const onRetry = vi.fn();
 
-    render(<DegradedModeBannerView health={undefined} onRetry={onRetry} />);
+    const { rerender } = render(
+      <DegradedModeBannerView health={undefined} isLoading onRetry={onRetry} />,
+    );
 
-    expect(screen.getByRole('alert')).toHaveTextContent('Recognition health unavailable');
+    const politeRegion = screen.getByRole('status');
+    const assertiveRegion = screen.getByRole('alert');
+    expect(politeRegion).toBeEmptyDOMElement();
+    expect(assertiveRegion).toBeEmptyDOMElement();
+    expect(screen.queryByTestId('acx-degraded-mode-banner')).not.toBeInTheDocument();
+
+    rerender(
+      <DegradedModeBannerView health={undefined} isLoading={false} onRetry={onRetry} />,
+    );
+
+    expect(screen.getByRole('status')).toBe(politeRegion);
+    expect(screen.getByRole('alert')).toBe(assertiveRegion);
+    expect(within(assertiveRegion).getByText('Backend health unknown')).toBeInTheDocument();
+    expect(screen.getByTestId('acx-degraded-mode-banner')).toHaveTextContent('Backend health unknown');
     screen.getByRole('button', { name: 'Retry health check' }).click();
     expect(onRetry).toHaveBeenCalledOnce();
   });
@@ -172,9 +187,26 @@ describe('DegradedModeBannerView', () => {
     expect(screen.getByText(/warning threshold/i)).toBeInTheDocument();
   });
 
-  it('renders nothing when sync health is healthy', () => {
-    const { container } = render(<DegradedModeBannerView health={closedHealth} />);
+  it('clears the same live-region nodes when sync health becomes healthy', () => {
+    const { rerender } = render(
+      <DegradedModeBannerView
+        health={{
+          ...closedHealth,
+          breaker: { ...closedHealth.breaker, state: 'open' },
+        }}
+      />,
+    );
 
-    expect(container).toBeEmptyDOMElement();
+    const politeRegion = screen.getByRole('status');
+    const assertiveRegion = screen.getByRole('alert');
+    expect(assertiveRegion).not.toBeEmptyDOMElement();
+
+    rerender(<DegradedModeBannerView health={closedHealth} />);
+
+    expect(screen.getByRole('status')).toBe(politeRegion);
+    expect(screen.getByRole('alert')).toBe(assertiveRegion);
+    expect(politeRegion).toBeEmptyDOMElement();
+    expect(assertiveRegion).toBeEmptyDOMElement();
+    expect(screen.queryByTestId('acx-degraded-mode-banner')).not.toBeInTheDocument();
   });
 });

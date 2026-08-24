@@ -7,11 +7,13 @@
  * "Just label — don't add to roster" tertiary path is retired (INT-06).
  */
 
+import { __ } from '@wordpress/i18n';
+
 import { toRoster, toRosterPerson } from '../../../navigation/appLinks';
 
 /** HAI-05 model-output disclosure — plain copy, never dresses a guess as fact. */
 export const MODEL_OUTPUT_DISCLOSURE =
-  'Suggested by face matching based on similarity — confirm before treating it as fact.';
+  __('Suggested by face matching based on similarity — confirm before treating it as fact.', 'alt-context');
 
 /** Success confirm affordance — person deep-link when a uuid is known. */
 export const VIEW_IN_ROSTER_COPY = 'View in roster →';

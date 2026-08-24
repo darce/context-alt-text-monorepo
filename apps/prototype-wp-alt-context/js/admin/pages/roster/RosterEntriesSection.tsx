@@ -481,19 +481,14 @@ export const RosterEntriesSection = ({ query, routeNotice = null }: RosterEntrie
       {!query.isLoading &&
         !query.isError &&
         (isTrueZeroState ? (
-          <div
-            className="acx-roster-section__empty"
-            data-testid="roster-zero-state"
-            role="status"
-            aria-live="polite"
-          >
+          <div className="acx-roster-section__empty" data-testid="roster-zero-state">
             <EmptyState
               variant={EmptyStateVariant.EMPTY}
               heading={__('No people yet', 'alt-context')}
               body={__('Add someone manually or run a scan to discover faces from your media library.', 'alt-context')}
               action={{ label: __('Add Person', 'alt-context'), onClick: () => setIsAdding(true) }}
               headingLevel={3}
-              className="acx-roster-section__empty-icon"
+              iconClassName="acx-roster-section__empty-icon"
             />
             <div className="acx-roster-section__empty-actions">
               <a href={WORKBENCH_SCAN_ROUTE} className="acx-link-button">

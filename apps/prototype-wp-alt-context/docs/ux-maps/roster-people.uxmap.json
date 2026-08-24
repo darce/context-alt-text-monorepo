@@ -63,7 +63,6 @@
           "id": "z-review-cta",
           "label": "Unnamed faces CTA → Workbench review queue",
           "role": "content",
-          "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/RosterPage.tsx:215-244",
           "states": [
             "default",
             "loading",

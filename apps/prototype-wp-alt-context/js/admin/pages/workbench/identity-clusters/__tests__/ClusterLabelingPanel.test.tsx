@@ -456,8 +456,11 @@ describe('ClusterLabelingPanel', () => {
 
     renderPanel();
 
-    expect(await screen.findByRole('img', { name: 'Face 1 in media 101' })).toBeInTheDocument();
-    expect(screen.getByRole('img', { name: 'Face 2 in media 101' })).toBeInTheDocument();
+    const rightHandFace = await screen.findByRole('img', { name: 'Face 2 in media 101' });
+    const leftHandFace = screen.getByRole('img', { name: 'Face 1 in media 101' });
+
+    expect(rightHandFace).toHaveStyle({ transform: 'translate(-256px, -6.4px) scale(3.2)' });
+    expect(leftHandFace).toHaveStyle({ transform: 'translate(-32px, -6.4px) scale(3.2)' });
     expect(screen.queryByRole('img', { name: 'Face to label' })).not.toBeInTheDocument();
   });
 

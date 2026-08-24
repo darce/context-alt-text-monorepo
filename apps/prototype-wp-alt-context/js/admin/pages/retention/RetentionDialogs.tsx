@@ -47,10 +47,7 @@ export const ExportDialog = ({
 }: ExportDialogProps): React.JSX.Element => {
   const closeDialog = React.useCallback(() => {
     dispatch({ type: 'CLOSE_EXPORT_DIALOG' });
-    if (exportJobId !== null) {
-      dispatch({ type: 'SET_EXPORT_JOB_ID', jobId: exportJobId });
-    }
-  }, [dispatch, exportJobId]);
+  }, [dispatch]);
 
   const handleOpenChange = React.useCallback(
     (nextOpen: boolean) => {
@@ -60,15 +57,6 @@ export const ExportDialog = ({
     },
     [closeDialog],
   );
-
-  const exportStatusText =
-    exportJobId === null
-      ? ''
-      : exportJobStatus === EXPORT_JOB_STATUS.failed
-        ? sprintf(__('Export failed. Please try again. Job ID: %s', 'alt-context'), exportJobId)
-        : exportJobStatus === EXPORT_JOB_STATUS.completed
-          ? sprintf(__('Export completed. Job ID: %s', 'alt-context'), exportJobId)
-          : sprintf(__('Export in progress… Job ID: %s', 'alt-context'), exportJobId);
 
   return (
     <DialogRoot open={open} onOpenChange={handleOpenChange}>
@@ -82,13 +70,6 @@ export const ExportDialog = ({
               'alt-context',
             )}
           </DialogDescription>
-          <div
-            className={exportStatusText ? 'acx-retention__detail' : undefined}
-            role="status"
-            aria-live="polite"
-          >
-            {exportStatusText}
-          </div>
           <div className="acx-dialog__actions">
             <button
               type="button"

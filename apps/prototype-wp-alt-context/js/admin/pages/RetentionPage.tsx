@@ -8,6 +8,11 @@ import { useRetentionPageState, RETENTION_OPTIONS } from './retention/useRetenti
 import { ExportDialog, PurgeDialog, ImportDialog } from './retention/RetentionDialogs';
 import { RecentAuditEvents, FullAuditLog, formatTimestamp } from './retention/AuditTimeline';
 
+const EXPORT_JOB_STATUS = {
+  completed: 'completed',
+  failed: 'failed',
+} as const;
+
 export const RetentionPage = (): React.JSX.Element => {
   const {
     state,
@@ -25,6 +30,18 @@ export const RetentionPage = (): React.JSX.Element => {
     pending,
     actions,
   } = useRetentionPageState();
+
+  const exportFailed = state.exportJobId !== null && exportJobStatus === EXPORT_JOB_STATUS.failed;
+  const exportStatusText =
+    state.exportJobId === null || exportFailed
+      ? ''
+      : exportJobStatus === EXPORT_JOB_STATUS.completed
+        ? sprintf(__('Export completed. Job ID: %s', 'alt-context'), state.exportJobId)
+        : sprintf(__('Export in progress… Job ID: %s', 'alt-context'), state.exportJobId);
+  const exportErrorText =
+    state.exportJobId !== null && exportJobStatus === EXPORT_JOB_STATUS.failed
+      ? sprintf(__('Export failed. Please try again. Job ID: %s', 'alt-context'), state.exportJobId)
+      : '';
 
   if (retentionQuery.isLoading) {
     return (
@@ -148,6 +165,20 @@ export const RetentionPage = (): React.JSX.Element => {
             {sprintf(__('Last export: %s', 'alt-context'), formatTimestamp(policy.last_export_at))}
           </p>
           <p className="acx-retention__note">{__('Raw embedding vectors are excluded from exports.', 'alt-context')}</p>
+          <div
+            className={exportStatusText ? 'acx-retention__detail' : undefined}
+            role="status"
+            aria-live="polite"
+          >
+            {exportStatusText}
+          </div>
+          <div
+            className={exportErrorText ? 'acx-retention__detail' : undefined}
+            role="alert"
+            aria-live="assertive"
+          >
+            {exportErrorText}
+          </div>
           <button
             type="button"
             className="acx-button acx-button--secondary"

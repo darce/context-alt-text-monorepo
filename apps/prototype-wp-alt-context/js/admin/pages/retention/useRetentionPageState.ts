@@ -83,7 +83,7 @@ export const retentionReducer = (state: RetentionDialogState, action: RetentionA
     case 'OPEN_EXPORT_DIALOG':
       return { ...state, isExportDialogOpen: true };
     case 'CLOSE_EXPORT_DIALOG':
-      return { ...state, isExportDialogOpen: false, exportJobId: null };
+      return { ...state, isExportDialogOpen: false };
     case 'SET_EXPORT_JOB_ID':
       return { ...state, exportJobId: action.jobId };
     case 'OPEN_PURGE_DIALOG':

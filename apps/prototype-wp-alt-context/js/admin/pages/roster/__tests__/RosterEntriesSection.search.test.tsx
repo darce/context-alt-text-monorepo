@@ -549,7 +549,7 @@ describe('RosterEntriesSection create reserved-label gate (BR-60)', () => {
     renderSection(readyQuery());
 
     await user.click(screen.getByRole('button', { name: /Add Person/i }));
-    await user.type(screen.getByPlaceholderText('Full Name'), 'cluster-7');
+    await user.type(screen.getByRole('textbox', { name: 'Full name' }), 'cluster-7');
     await user.click(screen.getByRole('button', { name: /^Create$/i }));
 
     expect(createMutation.mutate).not.toHaveBeenCalled();
@@ -561,7 +561,7 @@ describe('RosterEntriesSection create reserved-label gate (BR-60)', () => {
     renderSection(readyQuery());
 
     await user.click(screen.getByRole('button', { name: /Add Person/i }));
-    await user.type(screen.getByPlaceholderText('Full Name'), 'Pat Rivera');
+    await user.type(screen.getByRole('textbox', { name: 'Full name' }), 'Pat Rivera');
     await user.click(screen.getByRole('button', { name: /^Create$/i }));
 
     expect(createMutation.mutate).toHaveBeenCalledTimes(1);

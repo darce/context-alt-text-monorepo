@@ -180,7 +180,7 @@ describe('DescriptionHistoryPage', () => {
     expect(screen.getByText('A bridge over water.')).toBeInTheDocument();
     expect(screen.getAllByText('Bridge at dusk')).toHaveLength(2);
     expect(screen.getByText('microsoft/Florence-2-base-ft')).toBeInTheDocument();
-    expect(screen.getAllByText('completed')).toHaveLength(2);
+    expect(screen.getByText('completed', { selector: 'dd' })).toBeInTheDocument();
     // No recovery line when recovered_from is absent / none.
     expect(screen.queryByTestId('acx-history-recovery')).not.toBeInTheDocument();
   });

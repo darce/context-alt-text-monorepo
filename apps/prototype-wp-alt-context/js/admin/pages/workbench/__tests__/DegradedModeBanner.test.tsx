@@ -106,7 +106,7 @@ describe('DegradedModeBannerView', () => {
   it('does not render "Working offline" when only last pull failed and the breaker is closed', () => {
     // Regression guard: a latched last_pull.ok=false on a reachable backend must
     // not surface the assertive offline banner (false-positive fix).
-    const { container } = render(
+    render(
       <DegradedModeBannerView
         health={{
           ...closedHealth,
@@ -115,7 +115,9 @@ describe('DegradedModeBannerView', () => {
       />,
     );
 
-    expect(container).toBeEmptyDOMElement();
+    expect(screen.getByRole('status')).toBeEmptyDOMElement();
+    expect(screen.getByRole('alert')).toBeEmptyDOMElement();
+    expect(screen.queryByTestId('acx-degraded-mode-banner')).not.toBeInTheDocument();
     expect(screen.queryByText('Working offline')).not.toBeInTheDocument();
   });
 
@@ -181,7 +183,7 @@ describe('DegradedModeBannerView', () => {
     // A11Y-23 / rg-004: advisory mode is a polite status region, not an assertive alert.
     const banner = screen.getByRole('status');
     expect(banner).toHaveAttribute('aria-live', 'polite');
-    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(screen.getByRole('alert')).toBeEmptyDOMElement();
     expect(screen.getByText('Sync attention needed')).toBeInTheDocument();
     expect(screen.queryByText('Working offline')).not.toBeInTheDocument();
     expect(screen.getByText(/warning threshold/i)).toBeInTheDocument();

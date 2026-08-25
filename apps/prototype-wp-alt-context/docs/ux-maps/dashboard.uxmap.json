@@ -278,7 +278,7 @@
       "target": "dashboard sync health",
       "hierarchy": "destructive",
       "costly": true,
-      "irreversible": false,
+      "irreversible": true,
       "preview_required": true,
       "screen_id": "dashboard-shell"
     },

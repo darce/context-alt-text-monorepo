@@ -418,17 +418,17 @@ describe('dashboard ux-map code parity (DUX-W2D14)', () => {
     }
 
     // The three unconditional members are cited by the markers they actually render.
-    expect(lineAt(96)).toContain('acx-dashboard-sync-summary');
-    expect(lineAt(99)).toContain('acx-dashboard__stats-grid');
-    expect(lineAt(129)).toContain('acx-dashboard__actions');
+    expect(lineAt(152)).toContain('acx-dashboard-sync-summary');
+    expect(lineAt(155)).toContain('acx-dashboard__stats-grid');
+    expect(lineAt(185)).toContain('acx-dashboard__actions');
 
     // (d) A recency line and its CTA are gated separately — this is the claim the map
     // previously got wrong. The CTA gate must NOT require a date.
-    expect(lineAt(123).replace(/\s+/g, '')).toContain('conflictCount>0&&lastConflictDate');
-    expect(lineAt(134).replace(/\s+/g, '')).toContain('conflictCount>0?');
-    expect(lineAt(134)).not.toContain('lastConflictDate');
-    expect(lineAt(140).replace(/\s+/g, '')).toContain('failedReplayCount>0?');
-    expect(lineAt(140)).not.toContain('lastFailureDate');
+    expect(lineAt(179).replace(/\s+/g, '')).toContain('conflictCount>0&&lastConflictDate');
+    expect(lineAt(190).replace(/\s+/g, '')).toContain('conflictCount>0?');
+    expect(lineAt(190)).not.toContain('lastConflictDate');
+    expect(lineAt(196).replace(/\s+/g, '')).toContain('failedReplayCount>0?');
+    expect(lineAt(196)).not.toContain('lastFailureDate');
 
     // (e) The SyncHealth cases the prose enumerates are exactly the selector's cases.
     const selectorCases = [...syncSummarySrc.matchAll(/case '([a-z]+)':/g)].map((m) => m[1]);

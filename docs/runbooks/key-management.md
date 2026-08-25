@@ -176,6 +176,50 @@ separate identity (AUTH-03).
 
 ---
 
+## Demo credential issuance (AUTH-03)
+
+Three identities. Compromising one must not yield the others
+(least-privilege-blast-radius). High-impact rotation still takes two keys
+(secret-store write, then apply — dual-control-two-keys).
+
+| Identity | Where it lives | Who uses it | Privilege |
+| --- | --- | --- | --- |
+| Demo wp-admin / viewer | `WP_ADMIN_*` in `/opt/acx-backend/demo/secrets/.env` | Human operator | WordPress administrator |
+| Demo CI WP user | `WP_CI_*` in the same secrets file; GitHub Environment secrets `ACX_E2E_WP_CI_USER` / `ACX_E2E_WP_CI_PASS` | `deploy-demo.yml` smoke only | Custom role `acx_ci` (subscriber clone + `manage_options`) |
+| Prospect / CI API key | description-service identity DB | Plugin → hosted service | Viewer quota 200; CI quota 20 |
+
+Never commit these values (WEB-16). Never put them in a prompt template or
+RAG store (SEC-06).
+
+### WordPress CI account
+
+`bootstrap-wp.sh` creates/converges `WP_CI_USER` on every run. It must differ
+from `WP_ADMIN_USER`. GitHub Actions maps `ACX_E2E_WP_CI_*` onto Playwright's
+`ACX_E2E_WP_ADMIN_*` env names (harness unchanged) and **refuses**
+`acx-demo-admin` / `admin`. Rotate `WP_CI_PASSWORD` the same two-key way as
+admin (patch secrets/.env, then bootstrap/deploy). Do not copy the admin
+password into `ACX_E2E_WP_CI_PASS`.
+
+### API keys
+
+Prospect viewer (existing DS-3 path):
+
+```sh
+make provision-demo LABEL="Acme Gallery" SEED=default
+```
+
+CI-scoped key (reduced recognition quota; label must differ from the demo
+wp-admin username):
+
+```sh
+make issue-demo-ci-account LABEL="ACX CI" ADMIN_USER=acx-demo-admin
+```
+
+Both print `api_key=` once on stdout and never store the raw key. `ENV`
+selects the DB (`local` default; `prod` for hosted).
+
+---
+
 ## Failure signature quick reference
 
 | Symptom | Likely cause |

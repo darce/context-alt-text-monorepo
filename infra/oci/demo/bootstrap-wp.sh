@@ -44,9 +44,12 @@ env_get() {
 WP_ADMIN_USER="$(env_get WP_ADMIN_USER)"
 WP_ADMIN_PASSWORD="$(env_get WP_ADMIN_PASSWORD)"
 WP_ADMIN_EMAIL="$(env_get WP_ADMIN_EMAIL)"
+WP_CI_USER="$(env_get WP_CI_USER)"
+WP_CI_PASSWORD="$(env_get WP_CI_PASSWORD)"
+WP_CI_EMAIL="$(env_get WP_CI_EMAIL)"
 WORDPRESS_CONFIG_EXTRA="$(env_get WORDPRESS_CONFIG_EXTRA)"
 
-for var in WP_ADMIN_USER WP_ADMIN_PASSWORD WP_ADMIN_EMAIL WORDPRESS_CONFIG_EXTRA; do
+for var in WP_ADMIN_USER WP_ADMIN_PASSWORD WP_ADMIN_EMAIL WP_CI_USER WP_CI_PASSWORD WP_CI_EMAIL WORDPRESS_CONFIG_EXTRA; do
   if [[ -z "${!var:-}" ]]; then
     echo "ERROR: ${var} must be set in secrets/.env before bootstrap" >&2
     exit 2
@@ -82,6 +85,55 @@ converge_wp_user_password() {
     return 2
   fi
   echo "==> WP credential rotated for user=${user}"
+  return 0
+}
+
+# AUTH-03: dedicated CI identity, not administrator and not the demo admin login.
+# manage_options is the plugin admin cap the deploy-smoke needs; subscriber
+# clone keeps delete_users / install_plugins / update_core off this principal.
+WP_CI_ROLE_NAME="acx_ci"
+
+ensure_wp_ci_role() {
+  if wpcli wp role exists "$WP_CI_ROLE_NAME" >/dev/null 2>&1; then
+    return 0
+  fi
+  if ! wpcli wp role create "$WP_CI_ROLE_NAME" "ACX CI" --clone=subscriber; then
+    echo "ERROR: failed to create least-privilege CI role ${WP_CI_ROLE_NAME}" >&2
+    return 2
+  fi
+  if ! wpcli wp cap add "$WP_CI_ROLE_NAME" manage_options; then
+    echo "ERROR: failed to grant manage_options to ${WP_CI_ROLE_NAME}" >&2
+    return 2
+  fi
+}
+
+converge_wp_ci_account() {
+  local ci_user="$1"
+  local ci_password="$2"
+  local ci_email="$3"
+  local admin_user="$4"
+  if [[ -z "$ci_user" || -z "$ci_password" || -z "$ci_email" ]]; then
+    echo "ERROR: WP_CI_USER, WP_CI_PASSWORD, and WP_CI_EMAIL must be set (CI account is distinct from WP admin)" >&2
+    return 2
+  fi
+  if [[ "$ci_user" == "$admin_user" ]]; then
+    echo "ERROR: WP_CI_USER must differ from WP_ADMIN_USER (CI must not share the demo admin login)" >&2
+    return 2
+  fi
+  ensure_wp_ci_role || return 2
+  if wpcli wp user get "$ci_user" --field=ID >/dev/null 2>&1; then
+    converge_wp_user_password "$ci_user" "$ci_password" || return 2
+    if ! wpcli wp user set-role "$ci_user" "$WP_CI_ROLE_NAME"; then
+      echo "ERROR: failed to pin CI user '${ci_user}' to role ${WP_CI_ROLE_NAME}" >&2
+      return 2
+    fi
+    return 0
+  fi
+  if ! wpcli wp user create "$ci_user" "$ci_email" --user_pass="$ci_password" --role="$WP_CI_ROLE_NAME"; then
+    echo "ERROR: failed to create CI WordPress user '${ci_user}'" >&2
+    return 2
+  fi
+  echo "==> CI WordPress user created user=${ci_user} role=${WP_CI_ROLE_NAME}"
   return 0
 }
 # AUTH_CREDENTIAL_FUNCS_END
@@ -136,6 +188,9 @@ fi
 # install. Unchanged password is a no-op; a changed password must land or
 # this script exits non-zero (a credential you cannot rotate you cannot revoke).
 if ! converge_wp_user_password "$WP_ADMIN_USER" "$WP_ADMIN_PASSWORD"; then
+  exit 2
+fi
+if ! converge_wp_ci_account "$WP_CI_USER" "$WP_CI_PASSWORD" "$WP_CI_EMAIL" "$WP_ADMIN_USER"; then
   exit 2
 fi
 

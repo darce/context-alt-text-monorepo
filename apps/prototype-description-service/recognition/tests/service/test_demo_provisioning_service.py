@@ -4,22 +4,36 @@ from __future__ import annotations
 
 import hashlib
 import re
+import uuid
 from datetime import UTC, datetime, timedelta
 
 import pytest
 from sqlalchemy import select
+from sqlalchemy.exc import OperationalError, ProgrammingError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from db.models import ApiKey, DemoInstance, Tenant
+from db.models import ApiKey, DemoInstance, IdentityCluster, Tenant
+from recognition.tests.db_seed import ensure_media_identity
 from recognition.application.services.demo_provisioning_service import (
     BASE58_ALPHABET,
     DEFAULT_RECOGNITION_QUOTA,
     DEFAULT_SLUG_LENGTH,
     DemoInstanceNotFoundError,
+    DemoSessionExpiredError,
+    DemoSessionInvalidError,
+    DemoSessionRequiredError,
+    PreScanState,
+    PreScanStateError,
     UnknownSeedBundleError,
+    assert_pre_scan_state,
     expire_demo,
     generate_slug,
+    load_seed_bundle,
+    mint_demo_session,
+    observe_pre_scan_state,
     provision_demo,
+    reset_demo_sessions_for_tests,
+    resolve_demo_session,
     resolve_seed_bundle,
 )
 from recognition.infrastructure.repositories import SqlAlchemyApiKeyRepository
@@ -54,6 +68,9 @@ async def test_provision_demo_inserts_registry_row_with_hash_ref(db_session: Asy
     assert result.demo_url == f"https://demo.altcontext.com/x/{instance.slug}"
     assert instance.label == "Test Gallery"
     assert instance.seed_bundle == "default"
+    assert result.pre_scan.seeded_media_present is True
+    assert result.pre_scan.scanned_faces == 0
+    assert result.pre_scan.people_count == 0
     assert instance.recognition_quota == DEFAULT_RECOGNITION_QUOTA
     assert instance.recognition_used == 0
     assert instance.revoked is False
@@ -137,3 +154,195 @@ async def test_provision_never_persists_raw_key_in_registry(db_session: AsyncSes
         ]
     )
     assert result.raw_api_key not in blob
+
+
+def test_mint_demo_session_round_trip() -> None:
+    reset_demo_sessions_for_tests()
+    minted = mint_demo_session("slugABC")
+    bound = resolve_demo_session(minted.token, slug="slugABC")
+    assert bound.slug == "slugABC"
+    assert bound.expires_at > datetime.now(tz=UTC)
+
+
+def test_resolve_demo_session_requires_token() -> None:
+    reset_demo_sessions_for_tests()
+    with pytest.raises(DemoSessionRequiredError):
+        resolve_demo_session(None, slug="slugABC")
+    with pytest.raises(DemoSessionRequiredError):
+        resolve_demo_session("", slug="slugABC")
+
+
+def test_resolve_demo_session_rejects_invalid_and_mismatched() -> None:
+    reset_demo_sessions_for_tests()
+    minted = mint_demo_session("slugABC")
+    with pytest.raises(DemoSessionInvalidError):
+        resolve_demo_session("totally-bogus", slug="slugABC")
+    with pytest.raises(DemoSessionInvalidError):
+        resolve_demo_session(minted.token, slug="other99")
+
+
+def test_resolve_demo_session_rejects_expired() -> None:
+    reset_demo_sessions_for_tests()
+    now = datetime.now(tz=UTC)
+    minted = mint_demo_session("slugABC", ttl_seconds=60, now=now)
+    with pytest.raises(DemoSessionExpiredError):
+        resolve_demo_session(minted.token, slug="slugABC", now=now + timedelta(seconds=61))
+
+
+def test_pre_scan_invariant_rejects_empty_media() -> None:
+    with pytest.raises(PreScanStateError, match="seeded media"):
+        assert_pre_scan_state(PreScanState(seeded_media_ids=(), scanned_faces=0, people_count=0))
+
+
+def test_pre_scan_invariant_rejects_scanned_faces() -> None:
+    with pytest.raises(PreScanStateError, match="scanned_faces"):
+        assert_pre_scan_state(
+            PreScanState(seeded_media_ids=("seed-library-1",), scanned_faces=2, people_count=0)
+        )
+
+
+def test_pre_scan_invariant_rejects_nonzero_people_count() -> None:
+    with pytest.raises(PreScanStateError, match="people_count"):
+        assert_pre_scan_state(
+            PreScanState(seeded_media_ids=("seed-library-1",), scanned_faces=0, people_count=1)
+        )
+
+
+@pytest.mark.asyncio
+async def test_provision_demo_fails_loudly_on_catalog_pre_scan_violation(
+    db_session: AsyncSession, monkeypatch
+) -> None:
+    from recognition.application.services import demo_provisioning_service as svc
+
+    monkeypatch.setitem(
+        svc.SEED_BUNDLES,
+        "default",
+        svc.SeedBundleContract(
+            name="default",
+            pre_scan=PreScanState(seeded_media_ids=(), scanned_faces=0, people_count=0),
+        ),
+    )
+    with pytest.raises(PreScanStateError, match="seeded media"):
+        await provision_demo(db_session, label="Broken Catalog", seed="default")
+
+
+def _stmt_relation_name(stmt) -> str:  # noqa: ANN001
+    compiled = str(stmt.compile(compile_kwargs={"literal_binds": False})).lower()
+    if "identity_clusters" in compiled:
+        return "identity_clusters"
+    if "media_identities" in compiled:
+        return "media_identities"
+    return "unknown"
+
+
+@pytest.mark.asyncio
+async def test_observe_pre_scan_state_missing_tables_count_as_zero() -> None:
+    class _MissingTableSession:
+        def __init__(self) -> None:
+            self.scalar_calls = 0
+
+        async def scalar(self, stmt):  # noqa: ANN001
+            self.scalar_calls += 1
+            table = _stmt_relation_name(stmt)
+            raise OperationalError("SELECT 1", {}, Exception(f"no such table: {table}"))
+
+    bundle = load_seed_bundle("default")
+    fake = _MissingTableSession()
+    observed = await observe_pre_scan_state(
+        fake,  # type: ignore[arg-type]
+        tenant_id=uuid.uuid4(),
+        bundle=bundle,
+    )
+    assert fake.scalar_calls >= 2
+    assert observed.scanned_faces == 0
+    assert observed.people_count == 0
+    assert observed.seeded_media_present is True
+
+
+@pytest.mark.asyncio
+async def test_observe_pre_scan_state_raises_when_tenant_has_identities(
+    db_session: AsyncSession,
+) -> None:
+    tenant_id = uuid.uuid4()
+    db_session.add(Tenant(id=tenant_id, site_url="https://example.test/x/observe"))
+    await db_session.flush()
+    await ensure_media_identity(db_session, tenant_id, uuid.uuid4())
+    db_session.add(
+        IdentityCluster(
+            tenant_id=tenant_id,
+            identity_type="face",
+            label="Ada",
+            identity_count=1,
+        )
+    )
+    await db_session.flush()
+    bundle = load_seed_bundle("default")
+    with pytest.raises(PreScanStateError):
+        await observe_pre_scan_state(db_session, tenant_id=tenant_id, bundle=bundle)
+
+
+@pytest.mark.asyncio
+async def test_provision_demo_raises_when_observe_finds_identities(
+    db_session: AsyncSession, monkeypatch
+) -> None:
+    from recognition.application.services import demo_provisioning_service as svc
+
+    original = svc.observe_pre_scan_state
+
+    async def _inject_then_observe(session, *, tenant_id, bundle):  # noqa: ANN001
+        await ensure_media_identity(session, tenant_id, uuid.uuid4())
+        session.add(
+            IdentityCluster(
+                tenant_id=tenant_id,
+                identity_type="face",
+                label="Ada",
+                identity_count=1,
+            )
+        )
+        await session.flush()
+        return await original(session, tenant_id=tenant_id, bundle=bundle)
+
+    monkeypatch.setattr(svc, "observe_pre_scan_state", _inject_then_observe)
+    with pytest.raises(PreScanStateError):
+        await provision_demo(db_session, label="Dirty Tenant", seed="default")
+
+
+@pytest.mark.asyncio
+async def test_observe_pre_scan_state_missing_column_fails_closed() -> None:
+    class _MissingColumnSession:
+        async def scalar(self, _stmt):  # noqa: ANN001
+            raise ProgrammingError(
+                "SELECT 1",
+                {},
+                Exception('column "embedding" of relation "media_identities" does not exist'),
+            )
+
+    bundle = load_seed_bundle("default")
+    with pytest.raises(ProgrammingError, match="column"):
+        await observe_pre_scan_state(
+            _MissingColumnSession(),  # type: ignore[arg-type]
+            tenant_id=uuid.uuid4(),
+            bundle=bundle,
+        )
+
+
+@pytest.mark.asyncio
+async def test_observe_pre_scan_state_partial_missing_relation_fails_closed() -> None:
+    class _PartialSchemaSession:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def scalar(self, stmt):  # noqa: ANN001
+            self.calls += 1
+            table = _stmt_relation_name(stmt)
+            if table == "media_identities":
+                raise OperationalError("SELECT 1", {}, Exception("no such table: media_identities"))
+            return 0
+
+    bundle = load_seed_bundle("default")
+    with pytest.raises(PreScanStateError, match="schema"):
+        await observe_pre_scan_state(
+            _PartialSchemaSession(),  # type: ignore[arg-type]
+            tenant_id=uuid.uuid4(),
+            bundle=bundle,
+        )

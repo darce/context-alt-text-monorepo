@@ -41,6 +41,17 @@ assert_eq() {
     fi
 }
 
+# Dual-channel pin: printed verdict AND $?. FAIL must return 1; PASS/WARN 0.
+# `|| actual_rc=$?` keeps set -e from aborting the suite on a FAIL return.
+assert_verdict_rc() {
+    local label="$1" expected_verdict="$2" expected_rc="$3"
+    shift 3
+    local actual_verdict actual_rc=0
+    actual_verdict=$("$@") || actual_rc=$?
+    assert_eq "${label} verdict" "$expected_verdict" "$actual_verdict"
+    assert_eq "${label} rc" "$expected_rc" "$actual_rc"
+}
+
 # Caption → denied_count using the same per-caption matcher as
 # load_alt_counts_from_media_body. Keeps the existing fixture-caption
 # assertions load-bearing against the matcher after the first
@@ -171,6 +182,24 @@ assert_eq "usable alt 14 letters (below 15)" FAIL "$(classify_alt_text_usable 'a
 assert_eq "usable alt 15 letters" PASS "$(classify_alt_text_usable 'abcdefghijklmno')"
 assert_eq "usable alt 15 digits no alphabetic" FAIL "$(classify_alt_text_usable '123456789012345')"
 assert_eq "usable alt real caption" PASS "$(classify_alt_text_usable 'A woman in a red coat speaks at a podium.')"
+
+# R2-13: printed verdict AND $? for at least one PASS and one FAIL per classifier.
+# WARN is not a failure (rc 0), matching UNKNOWN policy.
+assert_verdict_rc "R2-13 api PASS" PASS 0 classify_api_probe 200 200
+assert_verdict_rc "R2-13 api FAIL" FAIL 1 classify_api_probe 000 200
+assert_verdict_rc "R2-13 api WARN" WARN 0 classify_api_probe 502 502
+assert_verdict_rc "R2-13 demo PASS" PASS 0 classify_demo_probe 200 'https://demo.altcontext.com/'
+assert_verdict_rc "R2-13 demo FAIL" FAIL 1 classify_demo_probe 500 'https://demo.altcontext.com/'
+assert_verdict_rc "R2-13 coverage PASS" PASS 0 classify_alt_coverage 100 100 95
+assert_verdict_rc "R2-13 coverage FAIL" FAIL 1 classify_alt_coverage 100 0 95
+assert_verdict_rc "R2-13 population PASS" PASS 0 classify_alt_population 100 100
+assert_verdict_rc "R2-13 population FAIL" FAIL 1 classify_alt_population 250 100
+assert_verdict_rc "R2-13 usable PASS" PASS 0 classify_alt_text_usable 'abcdefghijklmno'
+assert_verdict_rc "R2-13 usable FAIL" FAIL 1 classify_alt_text_usable ''
+assert_verdict_rc "R2-13 identity PASS" PASS 0 classify_alt_identity "$TRUSTED_ONE" 1
+assert_verdict_rc "R2-13 identity FAIL" FAIL 1 classify_alt_identity seeded 1
+assert_verdict_rc "R2-13 provenance PASS" PASS 0 classify_alt_provenance 0 "$TRUSTED_ONE" 1
+assert_verdict_rc "R2-13 provenance FAIL" FAIL 1 classify_alt_provenance 1 "$TRUSTED_ONE" 1
 
 # TEST-15 mutation proof (2026-08-25): adding a 9th _FIXTURE_POOL caption
 # not present in smoke-gate.sh makes this suite exit 1 with:
@@ -372,9 +401,9 @@ smoke_fail=1" "$prov_default"
             body_total=100
             with_alt=0
             min="${DEMO_ALT_MIN_COVERAGE_PCT:-95}"
-            pop=$(classify_alt_population "$header_total" "$body_total")
+            pop=$(classify_alt_population "$header_total" "$body_total") || true
             emit_alt_gate "$pop" "demo alt population (header=${header_total} body=${body_total})" 1
-            verdict=$(classify_alt_coverage "$body_total" "$with_alt" "$min")
+            verdict=$(classify_alt_coverage "$body_total" "$with_alt" "$min") || true
             pct=$((with_alt * 100 / body_total))
             cov_msg="demo alt coverage (${with_alt}/${body_total} = ${pct}%, need ${min}%)"
             emit_alt_gate "$verdict" "$cov_msg" 1
@@ -410,14 +439,14 @@ smoke_fail=1" "$empty_override"
             fi
             smoke_fail=0
             min="${DEMO_ALT_MIN_COVERAGE_PCT:-95}"
-            pop=$(classify_alt_population "$header_total" "$body_total")
+            pop=$(classify_alt_population "$header_total" "$body_total") || true
             if [ "$pop" = "FAIL" ]; then
                 pop_msg="demo alt coverage (measured ${body_total:-empty} of ${header_total:-empty} reported by x-wp-total; probe covers only one page, cannot certify coverage)"
             else
                 pop_msg="demo alt population (header=${header_total} body=${body_total})"
             fi
             emit_alt_gate "$pop" "$pop_msg" 1
-            verdict=$(classify_alt_coverage "$body_total" "$with_alt" "$min")
+            verdict=$(classify_alt_coverage "$body_total" "$with_alt" "$min") || true
             pct="?"
             case "$body_total" in *[!0-9]*|'') ;; *)
                 case "$with_alt" in *[!0-9]*|'') ;; *)
@@ -455,9 +484,9 @@ smoke_fail=1" "$empty_override"
                 if [ -z "$(normalize_fixture_sample "$sample")" ]; then
                     _norm=0
                 fi
-                prov=$(classify_alt_provenance "$_denied" "$adapters" "$with_alt" "$_norm")
+                prov=$(classify_alt_provenance "$_denied" "$adapters" "$with_alt" "$_norm") || true
                 if [ "$prov" = "FAIL" ]; then
-                    identity=$(classify_alt_identity "$adapters" "$with_alt")
+                    identity=$(classify_alt_identity "$adapters" "$with_alt") || true
                     if [ "$identity" = "FAIL" ]; then
                         prov_msg="demo alt provenance (untrusted or absent adapter identity behind ${with_alt} published alt texts)"
                     else

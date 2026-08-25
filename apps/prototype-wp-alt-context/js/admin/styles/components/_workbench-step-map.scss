@@ -1,11 +1,18 @@
 /**
  * Scan/Confirm/Review step map (NAV-09). Current-vs-remaining is signalled by
  * more than colour: the current step also gets bold text plus a "Current"
- * chip, and completed steps get a checkmark chip (sr-004).
+ * label, and completed steps get a checkmark marker (sr-004).
  */
 
 .acx-workbench-steps {
   margin-block-end: var(--acx-space-16);
+}
+
+.acx-workbench-steps__position {
+  margin-block-end: var(--acx-space-8);
+  color: var(--acx-color-text-secondary);
+  font-size: var(--acx-text-sm);
+  font-weight: var(--acx-font-weight-semibold);
 }
 
 .acx-workbench-steps__list {
@@ -78,6 +85,10 @@ button.acx-workbench-steps__control:hover {
 
 .acx-workbench-steps__status--complete {
   color: var(--acx-color-success-text);
+}
+
+.acx-workbench-steps__status--remaining {
+  color: var(--acx-color-text-muted);
 }
 
 .acx-workbench-steps__item--current .acx-workbench-steps__marker {

@@ -1,6 +1,7 @@
 import React from 'react';
 import { __, sprintf } from '@wordpress/i18n';
 
+import { StepMap, STEP_MAP_VALUES, type StepMapValue } from '../components/ui/StepMap';
 import { SyncStatusIndicator } from './workbench/SyncStatusIndicator';
 import { ScanTabContent } from './workbench/ScanTabContent';
 import { MediaSelection } from './workbench/MediaSelection';
@@ -24,24 +25,8 @@ import { APP_LINK_VALUES } from '../navigation/appLinks';
  * a single owner: `isAdvancedOpen` (WorkbenchNavContext) and `clusterPanel.mode`
  * (ClusterPanelContext). No new nav state is introduced.
  */
-export const WORKBENCH_STEP_IDS = {
-  scan: 'scan',
-  confirm: 'confirm',
-  review: 'review',
-} as const;
-export type WorkbenchStepId = (typeof WORKBENCH_STEP_IDS)[keyof typeof WORKBENCH_STEP_IDS];
-
-interface WorkbenchStepDescriptor {
-  id: WorkbenchStepId;
-  number: number;
-  label: string;
-}
-
-const WORKBENCH_STEPS: readonly WorkbenchStepDescriptor[] = [
-  { id: WORKBENCH_STEP_IDS.scan, number: 1, label: __('Scan', 'alt-context') },
-  { id: WORKBENCH_STEP_IDS.confirm, number: 2, label: __('Confirm', 'alt-context') },
-  { id: WORKBENCH_STEP_IDS.review, number: 3, label: __('Review', 'alt-context') },
-];
+export const WORKBENCH_STEP_IDS = STEP_MAP_VALUES;
+export type WorkbenchStepId = StepMapValue;
 
 /**
  * Single derivation point for "which step am I on" (NAV-09). Priority:
@@ -80,68 +65,16 @@ export const WorkbenchStepMap = ({
   activeStep,
   onSelectScan,
   onSelectConfirm,
-}: WorkbenchStepMapProps): React.JSX.Element => {
-  const activeIndex = WORKBENCH_STEPS.findIndex((step) => step.id === activeStep);
-
-  return (
-    <nav className="acx-workbench-steps" aria-label={__('Progress', 'alt-context')}>
-      <ol className="acx-workbench-steps__list">
-        {WORKBENCH_STEPS.map((step, index) => {
-          const isCurrent = step.id === activeStep;
-          const isComplete = index < activeIndex;
-          const itemClassName = [
-            'acx-workbench-steps__item',
-            isCurrent ? 'acx-workbench-steps__item--current' : '',
-            isComplete ? 'acx-workbench-steps__item--complete' : '',
-          ]
-            .filter(Boolean)
-            .join(' ');
-
-          const inner = (
-            <>
-              <span className="acx-workbench-steps__marker" aria-hidden="true">
-                {step.number}
-              </span>
-              <span className="acx-workbench-steps__label">{step.label}</span>
-              {isCurrent ? (
-                <span className="acx-workbench-steps__status acx-workbench-steps__status--current">
-                  {__('Current', 'alt-context')}
-                </span>
-              ) : null}
-              {isComplete ? (
-                <span className="acx-workbench-steps__status acx-workbench-steps__status--complete">
-                  <span aria-hidden="true">{'✓'}</span>
-                  <span className="screen-reader-text">{__('Completed', 'alt-context')}</span>
-                </span>
-              ) : null}
-            </>
-          );
-
-          return (
-            <li
-              key={step.id}
-              className={itemClassName}
-              aria-current={isCurrent ? 'step' : undefined}
-              data-testid={`acx-workbench-step-${step.id}`}
-            >
-              {step.id === WORKBENCH_STEP_IDS.review ? (
-                <span className="acx-workbench-steps__control">{inner}</span>
-              ) : (
-                <button
-                  type="button"
-                  className="acx-workbench-steps__control"
-                  onClick={step.id === WORKBENCH_STEP_IDS.scan ? onSelectScan : onSelectConfirm}
-                >
-                  {inner}
-                </button>
-              )}
-            </li>
-          );
-        })}
-      </ol>
-    </nav>
-  );
-};
+}: WorkbenchStepMapProps): React.JSX.Element => (
+  <StepMap
+    activeStep={activeStep}
+    steps={[
+      { id: WORKBENCH_STEP_IDS.scan, label: __('Scan', 'alt-context'), onSelect: onSelectScan },
+      { id: WORKBENCH_STEP_IDS.confirm, label: __('Confirm', 'alt-context'), onSelect: onSelectConfirm },
+      { id: WORKBENCH_STEP_IDS.review, label: __('Review', 'alt-context') },
+    ]}
+  />
+);
 
 export const WorkbenchPage = (): React.JSX.Element => (
   <WorkbenchProvider>

@@ -38,7 +38,7 @@
       "job_entry": true,
       "deep_link": true,
       "url_params": [
-        "pane",
+        "panes",
         "cluster",
         "media",
         "panel",
@@ -115,15 +115,15 @@
       "kind": "screen",
       "title": "Control surface (left pane)",
       "purpose": "Recognize, name, and curate: recognition endpoint + health, face-group status region, face-group list, run/refresh controls, and the name/curate forced-choice form.",
-      "route": "#/workbench?pane=control",
+      "route": "#/workbench",
       "job_entry": true,
       "deep_link": true,
       "url_params": [
-        "pane",
+        "panes",
         "cluster",
         "endpoint"
       ],
-      "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/workbench/ControlPane.tsx",
+      "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/WorkbenchPage.tsx",
       "primary_action_id": "act-run-recognition",
       "states": [
         "default",
@@ -191,7 +191,6 @@
           "states": [
             "default",
             "loading",
-            "empty",
             "error",
             "edge_input"
           ]
@@ -203,11 +202,11 @@
       "kind": "screen",
       "title": "Media library (right pane)",
       "purpose": "Media library table with alt-text caption and long-description columns; inline editing, AI-suggested captions/descriptions (editable before accept), and bulk describe/scan.",
-      "route": "#/workbench?pane=library",
+      "route": "#/workbench",
       "job_entry": true,
       "deep_link": true,
       "url_params": [
-        "pane",
+        "panes",
         "media",
         "cluster",
         "status",
@@ -215,7 +214,7 @@
         "p",
         "perPage"
       ],
-      "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/workbench/LibraryPane.tsx",
+      "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/workbench/MediaSelection.tsx",
       "primary_action_id": "act-edit-alt",
       "states": [
         "default",
@@ -233,10 +232,7 @@
           "states": [
             "default",
             "loading",
-            "empty",
-            "error",
-            "first_time",
-            "edge_input"
+            "error"
           ]
         },
         {
@@ -259,9 +255,7 @@
           "states": [
             "default",
             "loading",
-            "empty",
             "error",
-            "first_time",
             "edge_input"
           ]
         },
@@ -274,9 +268,7 @@
             "default",
             "loading",
             "empty",
-            "error",
-            "first_time",
-            "edge_input"
+            "error"
           ]
         },
         {

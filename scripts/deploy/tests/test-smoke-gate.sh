@@ -207,12 +207,24 @@ else
     cov_line=$(grep 'emit_alt_gate "$verdict" "$cov_msg"' "$sync_demo" | sed 's/^[[:space:]]*//')
     prov_line=$(grep 'emit_alt_gate "$prov"' "$sync_demo" | sed 's/^[[:space:]]*//')
     assert_eq "R1-01 population emit_alt_gate overridable=1" 'emit_alt_gate "$pop" "$pop_msg" 1' "$pop_line"
-    assert_eq "R1-01 coverage emit_alt_gate overridable=1" 'emit_alt_gate "$verdict" "$cov_msg" 1' "$cov_line"
+    assert_eq "R1-01B coverage emit_alt_gate uses cov_overridable" 'emit_alt_gate "$verdict" "$cov_msg" "$cov_overridable"' "$cov_line"
     assert_eq "R1-01 provenance emit_alt_gate overridable=0" 'emit_alt_gate "$prov" "$prov_msg" 0' "$prov_line"
-    if grep -q 'The override covers empty alt, never canned captions.' "$sync_demo"; then
-        echo "ok   R1-01 header states override covers empty alt, never canned captions"
+    if grep -q 'PARTIALLY described demo can ship' "$sync_demo"; then
+        echo "ok   R1-01B header states hatch is for a PARTIALLY described demo"
     else
-        echo "FAIL R1-01 header missing 'The override covers empty alt, never canned captions.'"
+        echo "FAIL R1-01B header missing 'PARTIALLY described demo can ship'"
+        failures=$((failures + 1))
+    fi
+    if grep -q 'echo "SKIP demo alt provenance' "$sync_demo"; then
+        echo "FAIL R1-01B empty provenance still a SKIP echo (must FAIL closed)"
+        failures=$((failures + 1))
+    else
+        echo "ok   R1-01B empty provenance is not a SKIP echo"
+    fi
+    if grep -q 'cov_overridable=1' "$sync_demo"; then
+        echo "ok   R1-01B coverage override is conditional (cov_overridable)"
+    else
+        echo "FAIL R1-01B coverage override is conditional (cov_overridable)"
         failures=$((failures + 1))
     fi
     if grep -q 'classify_alt_text_usable' "$sync_demo"; then
@@ -233,9 +245,9 @@ else
             emit_alt_gate "$2" "$3" "$4"
             echo "smoke_fail=${smoke_fail}"
         }
-        cov_override=$(run_emit 0 FAIL "demo alt coverage (0/100 = 0%, need 95%)" 1)
-        assert_eq "R1-01 coverage FAIL overridable under DEMO_ALT_GATE_ENFORCE=0" \
-            "WARN demo alt coverage (0/100 = 0%, need 95%) (enforcement disabled via DEMO_ALT_GATE_ENFORCE=0)
+        cov_override=$(run_emit 0 FAIL "demo alt coverage (60/100 = 60%, need 95%)" 1)
+        assert_eq "R1-01 partial coverage FAIL overridable under DEMO_ALT_GATE_ENFORCE=0" \
+            "WARN demo alt coverage (60/100 = 60%, need 95%) (enforcement disabled via DEMO_ALT_GATE_ENFORCE=0)
 smoke_fail=0" "$cov_override"
         prov_locked=$(run_emit 0 FAIL "demo alt provenance (seeded fixture caption detected in 100 published alt texts)" 0)
         assert_eq "R1-01 provenance FAIL non-overridable under DEMO_ALT_GATE_ENFORCE=0" \
@@ -286,6 +298,111 @@ smoke_fail=1" "$prov_default"
             "PASS demo alt population (header=100 body=100)
 FAIL demo alt coverage (0/100 = 0%, need 0%)
 smoke_fail=1" "$empty_override"
+
+        # R1-01B: emit/override composition. Duplicated from the remote
+        # heredoc in sync-demo.sh on purpose — not extracted by regex.
+        # Drift risk: if sync-demo.sh composition changes and this harness
+        # does not, these pins stay green. The source pins above (SKIP echo
+        # gone, cov_overridable present, coverage emit uses $cov_overridable)
+        # are the only lock on the production file itself.
+        run_alt_pipeline() {
+            local header_total="$1" body_total="$2" with_alt="$3" sample="${4:-}"
+            smoke_fail=0
+            min="${DEMO_ALT_MIN_COVERAGE_PCT:-95}"
+            pop=$(classify_alt_population "$header_total" "$body_total")
+            if [ "$pop" = "FAIL" ]; then
+                pop_msg="demo alt coverage (measured ${body_total:-empty} of ${header_total:-empty} reported by x-wp-total; probe covers only one page, cannot certify coverage)"
+            else
+                pop_msg="demo alt population (header=${header_total} body=${body_total})"
+            fi
+            emit_alt_gate "$pop" "$pop_msg" 1
+            verdict=$(classify_alt_coverage "$body_total" "$with_alt" "$min")
+            pct="?"
+            case "$body_total" in *[!0-9]*|'') ;; *)
+                case "$with_alt" in *[!0-9]*|'') ;; *)
+                    if [ "$body_total" -gt 0 ]; then
+                        pct=$((with_alt * 100 / body_total))
+                    fi
+                    ;;
+                esac
+                ;;
+            esac
+            if [ "$pct" != "?" ]; then
+                cov_msg="demo alt coverage (${with_alt}/${body_total} = ${pct}%, need ${min}%)"
+            else
+                cov_msg="demo alt coverage (total=${body_total:-empty} with_alt=${with_alt:-empty}, need ${min}%)"
+            fi
+            cov_overridable=1
+            case "$with_alt" in
+                *[!0-9]*|'') cov_overridable=0 ;;
+                0) cov_overridable=0 ;;
+            esac
+            emit_alt_gate "$verdict" "$cov_msg" "$cov_overridable"
+            run_prov=0
+            case "$with_alt" in *[!0-9]*|'') ;; *)
+                if [ "$with_alt" -gt 0 ]; then
+                    run_prov=1
+                fi
+                ;;
+            esac
+            if [ "$run_prov" = "1" ]; then
+                prov=$(classify_alt_provenance "$sample")
+                if [ "$prov" = "FAIL" ]; then
+                    prov_msg="demo alt provenance (seeded fixture caption detected in ${with_alt} published alt texts)"
+                else
+                    prov_msg="demo alt provenance (no seeded fixture captions in ${with_alt} published alt texts)"
+                fi
+                emit_alt_gate "$prov" "$prov_msg" 0
+            else
+                emit_alt_gate FAIL "demo alt provenance (no alt text published; nothing to certify)" 0
+            fi
+            echo "smoke_fail=${smoke_fail}"
+        }
+        pipeline_line() {
+            printf '%s\n' "$1" | grep -E "$2" | head -1
+        }
+        pipeline_fail() {
+            printf '%s\n' "$1" | sed -n 's/^smoke_fail=//p'
+        }
+
+        REAL_CAPTION='A woman in a red coat speaks at a podium in front of a blue backdrop.'
+        FIXTURE_CAPTION='A close-up of a small object on a neutral background.'
+
+        DEMO_ALT_GATE_ENFORCE=0
+        export DEMO_ALT_GATE_ENFORCE
+        empty_e0=$(run_alt_pipeline 100 100 0 "")
+        assert_eq "R1-01B live empty library ENFORCE=0 exits non-zero" \
+            "1" "$(pipeline_fail "$empty_e0")"
+        assert_eq "R1-01B live empty library ENFORCE=0 coverage is FAIL (not waived)" \
+            "FAIL demo alt coverage (0/100 = 0%, need 95%)" \
+            "$(pipeline_line "$empty_e0" 'demo alt coverage')"
+        assert_eq "R1-01B live empty library ENFORCE=0 provenance is FAIL closed" \
+            "FAIL demo alt provenance (no alt text published; nothing to certify)" \
+            "$(pipeline_line "$empty_e0" 'demo alt provenance')"
+
+        DEMO_ALT_GATE_ENFORCE=1
+        export DEMO_ALT_GATE_ENFORCE
+        empty_e1=$(run_alt_pipeline 100 100 0 "")
+        assert_eq "R1-01B live empty library ENFORCE=1 exits non-zero" \
+            "1" "$(pipeline_fail "$empty_e1")"
+
+        DEMO_ALT_GATE_ENFORCE=1
+        export DEMO_ALT_GATE_ENFORCE
+        full_real=$(run_alt_pipeline 100 100 100 "$REAL_CAPTION")
+        assert_eq "R1-01B full real captions exit zero" \
+            "0" "$(pipeline_fail "$full_real")"
+
+        DEMO_ALT_GATE_ENFORCE=0
+        export DEMO_ALT_GATE_ENFORCE
+        partial_e0=$(run_alt_pipeline 100 100 60 "$REAL_CAPTION")
+        assert_eq "R1-01B partial coverage 60/100 ENFORCE=0 still ships" \
+            "0" "$(pipeline_fail "$partial_e0")"
+
+        DEMO_ALT_GATE_ENFORCE=0
+        export DEMO_ALT_GATE_ENFORCE
+        fixture_e0=$(run_alt_pipeline 100 100 100 "$FIXTURE_CAPTION")
+        assert_eq "R1-01B fixture captions ENFORCE=0 still blocked (provenance locked)" \
+            "1" "$(pipeline_fail "$fixture_e0")"
     fi
 fi
 

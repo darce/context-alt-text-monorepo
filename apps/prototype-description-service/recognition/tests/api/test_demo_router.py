@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models import DemoInstance
 from recognition.application.services.demo_provisioning_service import (
+    PreScanStateError,
     provision_demo,
     reset_demo_sessions_for_tests,
 )
@@ -264,6 +265,21 @@ async def test_demo_provision_flood_returns_429(db_session: AsyncSession, monkey
     assert "Retry-After" in resp.headers
     assert resp.headers["X-RateLimit-Limit"] == "2"
     assert resp.headers["X-RateLimit-Remaining"] == "0"
+
+
+@pytest.mark.asyncio
+async def test_demo_provision_pre_scan_violation_returns_409(
+    db_session: AsyncSession, monkeypatch
+) -> None:
+    async def _boom(*_args, **_kwargs):  # noqa: ANN002, ANN003
+        raise PreScanStateError("scanned_faces must be 0, got 1")
+
+    client = _build_client(db_session, monkeypatch)
+    monkeypatch.setattr(demo_routes, "provision_demo", _boom)
+    resp = client.post("/x/provision", json={"label": "Broken Schema", "seed": "default"})
+    assert resp.status_code == 409
+    assert "scanned_faces" in resp.json()["detail"]
+    _assert_no_tenant_data(resp)
 
 
 def test_demo_router_mounted_on_create_app() -> None:

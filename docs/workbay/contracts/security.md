@@ -266,7 +266,7 @@ Session is taken from `X-Demo-Session` or the `acx_demo_session` cookie (header 
 }
 ```
 
-Each named seed bundle (`default`, `acme`) encodes that contract. `provision_demo` refuses to complete unless the catalog contract holds **and** the new tenant observes zero `media_identities` faces and zero labeled `identity_clusters`. Violation raises `PreScanStateError` (loud fail; not a silent reset script).
+Each named seed bundle (`default`, `acme`) encodes that contract. `provision_demo` refuses to complete unless the catalog contract holds **and** the new tenant observes zero `media_identities` faces and zero labeled `identity_clusters`. Violation raises `PreScanStateError` (loud fail; not a silent reset script). Observe fail-closes on a broken identity schema: a missing *column* (or any error that is not a confirmed missing *relation*) is re-raised; a missing-relation fallback to zero counts is allowed only when **both** `media_identities` and `identity_clusters` are confirmed absent by relation name. `POST /x/provision` maps `PreScanStateError` to `409` `{"detail": "<message>"}` with no tenant fields.
 
 `401`/`404`/`410` bodies must not contain `tenant_id`, `seed_bundle`, `branding_json`, or `quota_remaining`. Raw API keys and `api_key_ref` never appear on this surface.
 

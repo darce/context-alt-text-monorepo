@@ -160,6 +160,20 @@ assert_eq "probe 200 nested-only key empty" "" "$(extract_probed_description_ada
 assert_eq "probe 200 substring in non-json empty" "" "$(extract_probed_description_adapter 200 'not json but "description_adapter": "florence_small" appears')"
 assert_eq "probe 200 genuine health-like payload" florence_small "$(extract_probed_description_adapter 200 '{"status":"ok","embedding_runtime":{"available":false},"description_adapter":"florence_small"}')"
 
+# --- R2-07: claimed WP adapter vs independently probed producer ---
+# classify_claimed_adapter_matches_probe <probed> <claimed_blob>
+assert_eq "claimed exact single match" PASS "$(classify_claimed_adapter_matches_probe florence_small florence_small)"
+assert_eq "claimed exact repeated match" PASS "$(classify_claimed_adapter_matches_probe florence_small 'florence_small florence_small')"
+assert_eq "claimed one mismatch among matches" FAIL "$(classify_claimed_adapter_matches_probe florence_small 'florence_small seeded florence_small')"
+assert_eq "claimed seeded vs probed florence_small" FAIL "$(classify_claimed_adapter_matches_probe florence_small seeded)"
+assert_eq "claimed florence_small vs probed seeded" FAIL "$(classify_claimed_adapter_matches_probe seeded florence_small)"
+assert_eq "empty probe UNKNOWN" UNKNOWN "$(classify_claimed_adapter_matches_probe '' florence_small)"
+assert_eq "empty claim UNKNOWN" UNKNOWN "$(classify_claimed_adapter_matches_probe florence_small '')"
+assert_eq "both empty UNKNOWN" UNKNOWN "$(classify_claimed_adapter_matches_probe '' '')"
+assert_eq "claimed token with embedded space" FAIL "$(classify_claimed_adapter_matches_probe florence_small 'florence small')"
+assert_eq "claimed bare glob star" FAIL "$(classify_claimed_adapter_matches_probe florence_small '*')"
+assert_eq "claimed Florence_Small vs probed florence_small (case)" FAIL "$(classify_claimed_adapter_matches_probe florence_small Florence_Small)"
+
 # php_define_value reads WORDPRESS_CONFIG_EXTRA; no new secret name.
 _extra="define('ACX_RECOGNITION_URL','https://api.altcontext.com'); define('ACX_RECOGNITION_API_KEY','secret-key'); define('ACX_RECOGNITION_TENANT_ID','00000000-0000-4000-8000-000000000001');"
 assert_eq "php define URL" "https://api.altcontext.com" "$(php_define_value ACX_RECOGNITION_URL "$_extra")"

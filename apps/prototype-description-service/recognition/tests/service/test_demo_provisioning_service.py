@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import hashlib
 import re
+import uuid
 from datetime import UTC, datetime, timedelta
 
 import pytest
 from sqlalchemy import select
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models import ApiKey, DemoInstance, Tenant
@@ -25,7 +27,9 @@ from recognition.application.services.demo_provisioning_service import (
     assert_pre_scan_state,
     expire_demo,
     generate_slug,
+    load_seed_bundle,
     mint_demo_session,
+    observe_pre_scan_state,
     provision_demo,
     reset_demo_sessions_for_tests,
     resolve_demo_session,
@@ -219,3 +223,20 @@ async def test_provision_demo_fails_loudly_on_catalog_pre_scan_violation(
     )
     with pytest.raises(PreScanStateError, match="seeded media"):
         await provision_demo(db_session, label="Broken Catalog", seed="default")
+
+
+@pytest.mark.asyncio
+async def test_observe_pre_scan_state_missing_tables_count_as_zero() -> None:
+    class _MissingTableSession:
+        async def scalar(self, _stmt):  # noqa: ANN001
+            raise OperationalError("SELECT 1", {}, Exception("no such table: media_identities"))
+
+    bundle = load_seed_bundle("default")
+    observed = await observe_pre_scan_state(
+        _MissingTableSession(),  # type: ignore[arg-type]
+        tenant_id=uuid.uuid4(),
+        bundle=bundle,
+    )
+    assert observed.scanned_faces == 0
+    assert observed.people_count == 0
+    assert observed.seeded_media_present is True

@@ -55,8 +55,11 @@ from infra.oci.gpu_lifecycle.probe import (
 
 logger = logging.getLogger(__name__)
 
-# Fail-safe busy snapshot: never STOP when load data is untrustworthy.
-_BUSY_LOAD = JobLoadSnapshot(queue_depth=1, in_flight=1, batch_in_progress=True)
+# Fail-closed STOP sentinel when load data is untrustworthy. START must not
+# treat this as real work (untrustworthy=True → refuse START).
+_BUSY_LOAD = JobLoadSnapshot(
+    queue_depth=1, in_flight=1, batch_in_progress=True, untrustworthy=True
+)
 _DEFAULT_LOAD_MAX_AGE_SECONDS = 120.0
 _DEFAULT_OCI_TIMEOUT_SECONDS = 120
 _DEFAULT_MAX_WAIT_SECONDS = 600
@@ -398,6 +401,16 @@ def run_reap_cycle(
     Per-instance STOP failures are collected; the loop continues (rg-007).
     """
     load = load_source.snapshot()
+    if load.untrustworthy:
+        logger.error(
+            "load snapshot untrustworthy; refusing STOP (fail closed)"
+        )
+        return ReapCycleResult(
+            decided=[],
+            actuated=[],
+            fenced_off=True,
+            errors=["load snapshot untrustworthy; refusing STOP"],
+        )
     decided = controller.reap_idle_instances(
         instances,
         queue_depth=load.queue_depth,
@@ -462,6 +475,15 @@ def run_start_cycle(
     When a readiness probe is supplied, wait is bounded; timeout/stall is loud.
     """
     load = load_source.snapshot()
+    if load.untrustworthy:
+        logger.error(
+            "load snapshot untrustworthy; refusing START to avoid unfenced GPU burn"
+        )
+        return StartCycleResult(
+            decided=[],
+            actuated=[],
+            errors=["load snapshot untrustworthy; refusing START"],
+        )
     decided = controller.start_needed_instances(
         instances,
         queue_depth=load.queue_depth,

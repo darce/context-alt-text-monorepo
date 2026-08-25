@@ -61,6 +61,11 @@ Bulk / multi-job runs that never increment `in_flight`/`queue_depth` for the
 whole batch are **unprotected until the producer writes `batch_in_progress`**.
 `--load-json` help and `JsonFileJobLoadSource` document this loudly.
 
+Unreadable / stale / missing load JSON is an **untrustworthy** sentinel
+(`untrustworthy=true`, busy counts). STOP path: fail closed (no STOP). START
+path: treat as no-work, refuse START, log an error. Corrupt JSON must never
+actuate START or STOP.
+
 ## Fence
 
 The fence covers only what the snapshot proves:

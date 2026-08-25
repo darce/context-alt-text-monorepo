@@ -2,15 +2,19 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from infra.oci.gpu_lifecycle.controller import (
     GpuInstance,
     GpuLifecycleController,
     JobLoadSnapshot,
 )
 from infra.oci.gpu_lifecycle.reaper import (
+    JsonFileJobLoadSource,
     OciCliStartActuator,
     OciCliStopActuator,
     StaticJobLoadSource,
+    run_reap_cycle,
     run_start_cycle,
 )
 
@@ -141,6 +145,49 @@ def test_start_failure_emits_fallback_with_empty_actuated() -> None:
     assert result.fallbacks[0].reason == "start_failed"
     assert result.fallbacks[0].profile == "florence_small"
     assert result.fallbacks[0].instance_id == "ocid1.gpu"
+
+
+class RecordingStopActuator:
+    def __init__(self) -> None:
+        self.stopped: list[str] = []
+
+    def stop_instance(self, instance_id: str) -> None:
+        self.stopped.append(instance_id)
+
+
+def test_corrupt_load_json_yields_zero_start_and_zero_stop(tmp_path: Path) -> None:
+    path = tmp_path / "load.json"
+    path.write_text("{not-json")
+    source = JsonFileJobLoadSource(path=path)
+    controller = GpuLifecycleController(idle_seconds=60)
+    stopped = GpuInstance(
+        instance_id="ocid1.gpu", state="STOPPED", idle_for_seconds=0
+    )
+    running = GpuInstance(
+        instance_id="ocid1.gpu", state="RUNNING", idle_for_seconds=90
+    )
+    start_actuator = RecordingStartActuator()
+    start_result = run_start_cycle(
+        controller=controller,
+        instances=[stopped],
+        load_source=source,
+        actuator=start_actuator,
+    )
+    assert start_result.decided == []
+    assert start_result.actuated == []
+    assert start_actuator.started == []
+    assert start_result.errors
+
+    stop_actuator = RecordingStopActuator()
+    stop_result = run_reap_cycle(
+        controller=controller,
+        instances=[running],
+        load_source=source,
+        actuator=stop_actuator,
+        fence_delay_seconds=0.0,
+    )
+    assert stop_result.actuated == []
+    assert stop_actuator.stopped == []
 
 
 def test_run_start_cycle_is_quiet_when_no_work() -> None:

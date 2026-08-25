@@ -10,10 +10,15 @@ from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models import DemoInstance
-from recognition.application.services.demo_provisioning_service import provision_demo
+from recognition.application.services.demo_provisioning_service import (
+    provision_demo,
+    reset_demo_sessions_for_tests,
+)
 from recognition.interface_adapters.http import deps as dependencies
 from recognition.interface_adapters.http.deps import ip_rate_limit
 from recognition.interface_adapters.http.routers.demo import router as demo_router
+
+_TENANT_DATA_KEYS = ("tenant_id", "seed_bundle", "branding_json", "quota_remaining")
 
 
 def _reset_ip_limiter() -> None:
@@ -23,6 +28,7 @@ def _reset_ip_limiter() -> None:
 def _build_client(session: AsyncSession, monkeypatch, *, rpm: str = "100") -> TestClient:
     monkeypatch.setenv("RECOGNITION_DEMO_RESOLVE_RPM", rpm)
     _reset_ip_limiter()
+    reset_demo_sessions_for_tests()
 
     app = FastAPI()
     app.include_router(demo_router)
@@ -35,8 +41,48 @@ def _build_client(session: AsyncSession, monkeypatch, *, rpm: str = "100") -> Te
     return TestClient(app)
 
 
+def _assert_no_tenant_data(resp) -> None:  # noqa: ANN001
+    body = resp.json()
+    for key in _TENANT_DATA_KEYS:
+        assert key not in body
+        assert key not in resp.text
+    detail = body.get("detail")
+    if isinstance(detail, dict):
+        for key in _TENANT_DATA_KEYS:
+            assert key not in detail
+
+
+def _mint_session(client: TestClient, slug: str) -> str:
+    resp = client.post(f"/x/{slug}/session")
+    assert resp.status_code == 201, resp.text
+    token = resp.json()["session_token"]
+    assert token
+    set_cookie = resp.headers.get("set-cookie", "")
+    assert "acx_demo_session=" in set_cookie
+    assert "HttpOnly" in set_cookie
+    assert "Secure" in set_cookie
+    return token
+
+
 @pytest.mark.asyncio
-async def test_demo_router_valid_slug_resolves_without_key_material(db_session: AsyncSession, monkeypatch) -> None:
+async def test_demo_router_anonymous_get_returns_401_without_tenant_data(
+    db_session: AsyncSession, monkeypatch
+) -> None:
+    result = await provision_demo(db_session, label="Anon", seed="default", branding={"logo": "hidden"})
+    await db_session.commit()
+
+    client = _build_client(db_session, monkeypatch)
+    resp = client.get(f"/x/{result.instance.slug}")
+    assert resp.status_code == 401
+    _assert_no_tenant_data(resp)
+    assert str(result.instance.tenant_id) not in resp.text
+    assert result.raw_api_key not in resp.text
+
+
+@pytest.mark.asyncio
+async def test_demo_router_session_happy_path_resolves_without_key_material(
+    db_session: AsyncSession, monkeypatch
+) -> None:
     result = await provision_demo(
         db_session,
         label="Resolve Me",
@@ -46,7 +92,8 @@ async def test_demo_router_valid_slug_resolves_without_key_material(db_session: 
     await db_session.commit()
 
     client = _build_client(db_session, monkeypatch)
-    resp = client.get(f"/x/{result.instance.slug}")
+    token = _mint_session(client, result.instance.slug)
+    resp = client.get(f"/x/{result.instance.slug}", headers={"X-Demo-Session": token})
     assert resp.status_code == 200
     body = resp.json()
     assert body["tenant_id"] == str(result.instance.tenant_id)
@@ -60,6 +107,43 @@ async def test_demo_router_valid_slug_resolves_without_key_material(db_session: 
     assert result.instance.api_key_ref not in blob
     assert "api_key" not in body
     assert "api_key_ref" not in body
+
+
+@pytest.mark.asyncio
+async def test_demo_router_expired_session_returns_401_without_tenant_data(
+    db_session: AsyncSession, monkeypatch
+) -> None:
+    result = await provision_demo(db_session, label="SessExp", seed="default")
+    await db_session.commit()
+
+    from recognition.application.services import demo_provisioning_service as svc
+
+    client = _build_client(db_session, monkeypatch)
+    minted = svc.mint_demo_session(
+        result.instance.slug,
+        ttl_seconds=60,
+        now=datetime.now(tz=UTC) - timedelta(seconds=120),
+    )
+    resp = client.get(
+        f"/x/{result.instance.slug}",
+        headers={"X-Demo-Session": minted.token},
+    )
+    assert resp.status_code == 401
+    _assert_no_tenant_data(resp)
+    assert str(result.instance.tenant_id) not in resp.text
+
+
+@pytest.mark.asyncio
+async def test_demo_router_invalid_session_returns_401_without_tenant_data(
+    db_session: AsyncSession, monkeypatch
+) -> None:
+    result = await provision_demo(db_session, label="BadSess", seed="default")
+    await db_session.commit()
+
+    client = _build_client(db_session, monkeypatch)
+    resp = client.get(f"/x/{result.instance.slug}", headers={"X-Demo-Session": "not-a-real-token"})
+    assert resp.status_code == 401
+    _assert_no_tenant_data(resp)
 
 
 @pytest.mark.asyncio
@@ -138,3 +222,4 @@ def test_demo_router_mounted_on_create_app() -> None:
     app = create_app()
     paths = {getattr(route, "path", None) for route in app.routes}
     assert "/x/{slug}" in paths
+    assert "/x/{slug}/session" in paths

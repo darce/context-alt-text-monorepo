@@ -8,10 +8,12 @@ is returned to the caller once and is never written to the registry.
 
 from __future__ import annotations
 
+import hashlib
 import secrets
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from enum import StrEnum
 
 from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
@@ -28,6 +30,9 @@ DEFAULT_SLUG_LENGTH = 7
 DEFAULT_TTL_DAYS = 30
 DEFAULT_RECOGNITION_QUOTA = 200
 DEMO_URL_TEMPLATE = "https://demo.altcontext.com/x/{slug}"
+DEFAULT_SESSION_TTL_SECONDS = 15 * 60
+DEMO_SESSION_COOKIE = "acx_demo_session"
+DEMO_SESSION_HEADER = "X-Demo-Session"
 
 # Named seed bundles only — real per-prospect image ingestion is out of scope.
 KNOWN_SEED_BUNDLES: frozenset[str] = frozenset({"default", "acme"})
@@ -182,6 +187,107 @@ class DemoQuotaExceededError(RuntimeError):
     def __init__(self, message: str = "demo_quota_exceeded", *, remaining: int = 0) -> None:
         super().__init__(message)
         self.remaining = remaining
+
+
+class DemoSessionFailure(StrEnum):
+    """Canonical demo-session failure codes (HTTP 401 detail)."""
+
+    REQUIRED = "session_required"
+    INVALID = "session_invalid"
+    EXPIRED = "session_expired"
+
+
+class DemoSessionError(Exception):
+    """Base class for demo session failures. Always HTTP 401, never tenant data."""
+
+    code: DemoSessionFailure
+
+    def __init__(self, code: DemoSessionFailure) -> None:
+        super().__init__(code.value)
+        self.code = code
+
+
+class DemoSessionRequiredError(DemoSessionError):
+    def __init__(self) -> None:
+        super().__init__(DemoSessionFailure.REQUIRED)
+
+
+class DemoSessionInvalidError(DemoSessionError):
+    def __init__(self) -> None:
+        super().__init__(DemoSessionFailure.INVALID)
+
+
+class DemoSessionExpiredError(DemoSessionError):
+    def __init__(self) -> None:
+        super().__init__(DemoSessionFailure.EXPIRED)
+
+
+@dataclass(frozen=True)
+class DemoSession:
+    """Short-lived capability minted by exchanging a demo slug."""
+
+    token: str
+    slug: str
+    expires_at: datetime
+
+
+# token_hash -> (slug, expires_at). In-process; single-worker like the IP limiter.
+_sessions: dict[str, tuple[str, datetime]] = {}
+
+
+def _token_hash(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def reset_demo_sessions_for_tests() -> None:
+    """Testing seam: drop in-memory demo sessions between tests."""
+    _sessions.clear()
+
+
+def mint_demo_session(
+    slug: str,
+    *,
+    ttl_seconds: int = DEFAULT_SESSION_TTL_SECONDS,
+    now: datetime | None = None,
+) -> DemoSession:
+    """Mint a high-entropy session bound to ``slug``. Raw token returned once."""
+    cleaned = (slug or "").strip()
+    if not cleaned:
+        raise ValueError("slug is required")
+    if ttl_seconds < 1:
+        raise ValueError("ttl_seconds must be >= 1")
+    issued = _as_utc(now) if now is not None else datetime.now(tz=UTC)
+    expires_at = issued + timedelta(seconds=ttl_seconds)
+    token = secrets.token_urlsafe(32)
+    _sessions[_token_hash(token)] = (cleaned, expires_at)
+    return DemoSession(token=token, slug=cleaned, expires_at=expires_at)
+
+
+def resolve_demo_session(
+    token: str | None,
+    *,
+    slug: str,
+    now: datetime | None = None,
+) -> DemoSession:
+    """Bind ``token`` to ``slug`` or raise a 401-class session error.
+
+    Does not load tenant data — callers must still ``resolve_demo`` after this
+    succeeds. Expired/invalid tokens never return a session record.
+    """
+    cleaned_token = (token or "").strip()
+    if not cleaned_token:
+        raise DemoSessionRequiredError()
+    record = _sessions.get(_token_hash(cleaned_token))
+    if record is None:
+        raise DemoSessionInvalidError()
+    bound_slug, expires_at = record
+    cutoff = _as_utc(now) if now is not None else datetime.now(tz=UTC)
+    if _as_utc(expires_at) < cutoff:
+        _sessions.pop(_token_hash(cleaned_token), None)
+        raise DemoSessionExpiredError()
+    if bound_slug != (slug or "").strip():
+        raise DemoSessionInvalidError()
+    return DemoSession(token=cleaned_token, slug=bound_slug, expires_at=_as_utc(expires_at))
 
 
 DEFAULT_SWEEP_STALL_LIMIT = 5
@@ -365,14 +471,23 @@ async def sweep_expired_demos(
 __all__ = [
     "BASE58_ALPHABET",
     "DEFAULT_RECOGNITION_QUOTA",
+    "DEFAULT_SESSION_TTL_SECONDS",
     "DEFAULT_SLUG_LENGTH",
     "DEFAULT_SWEEP_STALL_LIMIT",
     "DEFAULT_TTL_DAYS",
+    "DEMO_SESSION_COOKIE",
+    "DEMO_SESSION_HEADER",
     "DEMO_URL_TEMPLATE",
     "KNOWN_SEED_BUNDLES",
     "DemoEndedError",
     "DemoInstanceNotFoundError",
     "DemoQuotaExceededError",
+    "DemoSession",
+    "DemoSessionError",
+    "DemoSessionExpiredError",
+    "DemoSessionFailure",
+    "DemoSessionInvalidError",
+    "DemoSessionRequiredError",
     "MAX_DEMO_QUOTA_UNITS",
     "DemoResolveContext",
     "ProvisionResult",
@@ -381,8 +496,11 @@ __all__ = [
     "demo_url_for",
     "expire_demo",
     "generate_slug",
+    "mint_demo_session",
     "provision_demo",
+    "reset_demo_sessions_for_tests",
     "resolve_demo",
+    "resolve_demo_session",
     "resolve_seed_bundle",
     "sweep_expired_demos",
     "try_consume_demo_quota",

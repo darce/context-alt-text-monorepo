@@ -382,4 +382,16 @@ describe('PersonCommitControl roster query states (UXW2-3-R1-02)', () => {
       '#/roster?person=person-uuid-42',
     );
   });
+
+  it('W3-C-04 name-commit is secondary even when isPrimary', () => {
+    renderControl({ isPrimary: true });
+    const primaries = screen
+      .getAllByRole('button')
+      .filter(
+        (button) =>
+          button.classList.contains('button-primary') || button.classList.contains('acx-button--primary'),
+      );
+    expect(primaries).toHaveLength(0);
+    expect(screen.getByRole('button', { name: 'Save name' })).toHaveClass('button-secondary');
+  });
 });

@@ -361,7 +361,7 @@
       "id": "act-close-lightbox",
       "verb": "Close lightbox",
       "target": "roster-person-workspace",
-      "hierarchy": "secondary",
+      "hierarchy": "primary",
       "costly": false,
       "irreversible": false,
       "preview_required": false,

@@ -49,7 +49,7 @@
         "perPage"
       ],
       "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/WorkbenchPage.tsx",
-      "primary_action_id": "act-run-recognition",
+      "primary_action_id": "act-scan-media-queue",
       "states": [
         "default",
         "loading",
@@ -453,6 +453,16 @@
     }
   ],
   "actions": [
+    {
+      "id": "act-scan-media-queue",
+      "verb": "Scan media queue",
+      "target": "job-pipeline",
+      "hierarchy": "primary",
+      "costly": true,
+      "irreversible": false,
+      "preview_required": true,
+      "screen_id": "workbench-2pane-shell"
+    },
     {
       "id": "act-run-recognition",
       "verb": "Run / refresh recognition + grouping",

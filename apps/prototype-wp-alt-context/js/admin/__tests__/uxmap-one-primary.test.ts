@@ -18,6 +18,7 @@ interface UxAction {
 
 interface UxScreen {
   id: string;
+  kind?: string;
   primary_action_id?: string | null;
 }
 
@@ -27,21 +28,24 @@ interface UxMap {
 }
 
 describe('D-22 one primary action per ux-map screen', () => {
-  it.each(OWNED_MAPS)('%s screens have at most one primary action', (mapRef) => {
+  it.each(OWNED_MAPS)('%s screens have exactly one primary action matching primary_action_id', (mapRef) => {
     const json = JSON.parse(readFileSync(path.join(mapsDir, `${mapRef}.uxmap.json`), 'utf8')) as UxMap;
     expect(json.screens.length).toBeGreaterThan(0);
 
     for (const screen of json.screens) {
+      if (screen.kind === 'exit') {
+        continue;
+      }
       const primaries = json.actions.filter(
         (action) => action.screen_id === screen.id && action.hierarchy === 'primary',
       );
-      expect(primaries, `${mapRef} ${screen.id} primaries: ${primaries.map((action) => action.id).join(',')}`).toHaveLength(
-        primaries.length > 1 ? 1 : primaries.length,
+      expect(
+        primaries,
+        `${mapRef} ${screen.id} primaries: ${primaries.map((action) => action.id).join(',')}`,
+      ).toHaveLength(1);
+      expect(screen.primary_action_id, `${mapRef} ${screen.id} missing primary_action_id`).toBe(
+        primaries[0]?.id,
       );
-      expect(primaries.length).toBeLessThanOrEqual(1);
-      if (primaries.length === 1 && screen.primary_action_id) {
-        expect(primaries[0]?.id).toBe(screen.primary_action_id);
-      }
     }
   });
 });

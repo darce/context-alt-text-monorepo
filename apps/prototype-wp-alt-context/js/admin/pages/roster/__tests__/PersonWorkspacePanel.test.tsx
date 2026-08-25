@@ -468,9 +468,13 @@ describe('PersonWorkspacePanel evidence images', () => {
 describe('D-23 PersonWorkspacePanel failure states', () => {
   it('renders linked-faces error when projection failed', () => {
     renderPanel(
-      <PersonWorkspacePanel entry={baseEntry({ projection_status: 'failed' })} onOpenQueue={vi.fn()} />,
+      <PersonWorkspacePanel
+        entry={baseEntry({ projection_status: 'failed', cluster_count: 4 })}
+        onOpenQueue={vi.fn()}
+      />,
     );
     expect(screen.getByRole('alert')).toHaveTextContent('Unable to load linked faces.');
+    expect(screen.queryByText('4 face groups assigned')).not.toBeInTheDocument();
   });
 
   it('renders linked-faces degraded when projection is stale', () => {
@@ -478,5 +482,13 @@ describe('D-23 PersonWorkspacePanel failure states', () => {
       <PersonWorkspacePanel entry={baseEntry({ projection_status: 'stale' })} onOpenQueue={vi.fn()} />,
     );
     expect(screen.getByText('Linked faces may be out of date.')).toBeInTheDocument();
+  });
+
+  it('labels refreshing distinctly from stale', () => {
+    renderPanel(
+      <PersonWorkspacePanel entry={baseEntry({ projection_status: 'refreshing' })} onOpenQueue={vi.fn()} />,
+    );
+    expect(screen.getByText('Refreshing linked faces…')).toBeInTheDocument();
+    expect(screen.queryByText('Linked faces may be out of date.')).not.toBeInTheDocument();
   });
 });

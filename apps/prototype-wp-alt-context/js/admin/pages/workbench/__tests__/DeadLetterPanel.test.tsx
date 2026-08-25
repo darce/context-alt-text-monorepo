@@ -234,7 +234,7 @@ describe('DeadLetterPanel', () => {
 
     renderPanel();
 
-    expect(screen.getByText('No failed changes.')).toBeInTheDocument();
+    expect(screen.getByText('No failed changes to retry.')).toBeInTheDocument();
     expect(screen.getByText('Showing 0-0 of 0 failed changes.')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Refresh failed changes' })).toBeEnabled();
   });

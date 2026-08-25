@@ -45,6 +45,12 @@ from infra.oci.gpu_lifecycle.controller import (
     JobLoadSnapshot,
     LifecycleAction,
 )
+from infra.oci.gpu_lifecycle.probe import (
+    HttpReadinessProbe,
+    InstanceReadinessProbe,
+    ReadinessWaitResult,
+    WarmReadinessWait,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +59,11 @@ _BUSY_LOAD = JobLoadSnapshot(queue_depth=1, in_flight=1)
 _DEFAULT_LOAD_MAX_AGE_SECONDS = 120.0
 _DEFAULT_OCI_TIMEOUT_SECONDS = 120
 _DEFAULT_FENCE_DELAY_SECONDS = 2.0
+# A10 ~$2/GPU-hr; 100-image library ≈ 5 min boot+load + ~4s/img ≈ 12 min ≈ $0.40.
+# Boot amortization dominates: bound the wait so a hung START cannot bill the hour.
+_DEFAULT_READY_MAX_CYCLES = 30
+_DEFAULT_READY_STALL_CYCLES = 3
+_DEFAULT_READY_SLEEP_SECONDS = 10.0
 
 
 class JobLoadSource(Protocol):
@@ -329,6 +340,7 @@ class StartCycleResult:
     decided: list[tuple[str, str]]
     actuated: list[tuple[str, str]]
     errors: list[str]
+    wait_result: ReadinessWaitResult | None = None
 
 
 def run_reap_cycle(
@@ -388,10 +400,13 @@ def run_start_cycle(
     instances: list[GpuInstance],
     load_source: JobLoadSource,
     actuator: InstanceStartActuator,
+    probe: InstanceReadinessProbe | None = None,
+    readiness_wait: WarmReadinessWait | None = None,
 ) -> StartCycleResult:
     """Emit START for STOPPED instances when the job store has work.
 
     Per-instance START failures are collected; the loop continues (rg-007).
+    When a readiness probe is supplied, wait is bounded; timeout/stall is loud.
     """
     load = load_source.snapshot()
     decided = controller.start_needed_instances(
@@ -414,7 +429,19 @@ def run_start_cycle(
             msg = f"{instance_id}: {type(exc).__name__}: {exc}"
             logger.error("START failed: %s", msg)
             errors.append(msg)
-    return StartCycleResult(decided=decided, actuated=actuated, errors=errors)
+
+    wait_result: ReadinessWaitResult | None = None
+    if probe is not None and readiness_wait is not None and actuated:
+        started_ids = [instance_id for _, instance_id in actuated]
+        wait_result = readiness_wait.wait(started_ids, probe)
+        if wait_result.errors:
+            errors.extend(wait_result.errors)
+    return StartCycleResult(
+        decided=decided,
+        actuated=actuated,
+        errors=errors,
+        wait_result=wait_result,
+    )
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -505,6 +532,29 @@ def _build_parser() -> argparse.ArgumentParser:
         default=_DEFAULT_OCI_TIMEOUT_SECONDS,
         help="Subprocess timeout for OCI CLI calls (default 120)",
     )
+    parser.add_argument(
+        "--ready-url",
+        default=None,
+        help="HTTP health URL polled after START (omit to skip readiness wait)",
+    )
+    parser.add_argument(
+        "--ready-max-cycles",
+        type=int,
+        default=_DEFAULT_READY_MAX_CYCLES,
+        help="Bounded readiness poll cycles (default 30; 30*10s ≈ 5 min boot budget)",
+    )
+    parser.add_argument(
+        "--ready-stall-cycles",
+        type=int,
+        default=_DEFAULT_READY_STALL_CYCLES,
+        help="Per-instance no-progress cycles before stall fail (default 3)",
+    )
+    parser.add_argument(
+        "--ready-sleep-seconds",
+        type=float,
+        default=_DEFAULT_READY_SLEEP_SECONDS,
+        help="Sleep between readiness polls (default 10s)",
+    )
     return parser
 
 
@@ -578,17 +628,29 @@ def main(argv: list[str] | None = None) -> int:
             auth=args.oci_auth,
             timeout_seconds=args.oci_timeout_seconds,
         )
+        readiness_wait = None
+        probe = None
+        if args.ready_url:
+            probe = HttpReadinessProbe(url=args.ready_url)
+            readiness_wait = WarmReadinessWait(
+                max_cycles=args.ready_max_cycles,
+                stall_cycles=args.ready_stall_cycles,
+                sleep_seconds=args.ready_sleep_seconds,
+            )
         start_result = run_start_cycle(
             controller=controller,
             instances=instances,
             load_source=load_source,
             actuator=start_actuator,
+            probe=probe,
+            readiness_wait=readiness_wait,
         )
         logger.info(
-            "start cycle decided=%s actuated=%s errors=%s",
+            "start cycle decided=%s actuated=%s errors=%s wait=%s",
             start_result.decided,
             start_result.actuated,
             start_result.errors,
+            None if start_result.wait_result is None else start_result.wait_result.exit_code,
         )
         return 1 if start_result.errors else 0
 

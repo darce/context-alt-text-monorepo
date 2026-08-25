@@ -32,10 +32,9 @@
 #                   DEMO_ALT_MIN_COVERAGE_PCT default 95; operators may raise
 #                   this bar) including 0/N empty alt and 0/0 no media -> FAIL.
 #                   Empty, non-numeric, or impossible (with_alt > total) counts
-#                   fail closed. min_pct below the fixed floor of 50 also FAILs
-#                   — the floor is a safety constant, not an environment knob,
-#                   so DEMO_ALT_MIN_COVERAGE_PCT=0 cannot certify an empty-alt
-#                   library. Coverage numerator counts only usable alt (see
+#                   fail closed. The default IS the floor: DEMO_ALT_MIN_COVERAGE_PCT
+#                   may only raise the bar above 95, and any value below 95
+#                   fails closed. Coverage numerator counts only usable alt (see
 #                   classify_alt_text_usable), not any non-empty JSON string.
 #                   Coverage numerator/denominator come from the same page;
 #                   header_total vs body_total disagreement FAILs rather than
@@ -78,13 +77,12 @@ classify_demo_probe() {
 
 # classify_alt_coverage <total> <with_alt> <min_pct> -> PASS|FAIL
 # Integer-only: (with_alt * 100 / total) >= min_pct. Fail closed on anything
-# that is not a measurable non-empty media set. Fail closed when min_pct is
-# below the fixed floor of 50 (not operator-overridable) so a 0% threshold
-# cannot certify 0/N empty alt. DEMO_ALT_MIN_COVERAGE_PCT may raise the bar;
-# nothing may lower this floor.
+# that is not a measurable non-empty media set. The default IS the floor:
+# DEMO_ALT_MIN_COVERAGE_PCT may only raise the bar above 95, and any value
+# below 95 fails closed.
 classify_alt_coverage() {
     local total="$1" with_alt="$2" min_pct="$3"
-    local floor=50
+    local floor=95
     case "$total" in *[!0-9]*|'') echo FAIL; return ;; esac
     case "$with_alt" in *[!0-9]*|'') echo FAIL; return ;; esac
     case "$min_pct" in *[!0-9]*|'') echo FAIL; return ;; esac

@@ -187,8 +187,8 @@ $SSH "sudo cp /tmp/acx-demo.service /etc/systemd/system/acx-demo.service && sudo
 # answers 200 and is a broken demo, not a healthy one).
 # After the front-page probe, a credential-free WP media check asserts demo
 # alt-text coverage (>= DEMO_ALT_MIN_COVERAGE_PCT, default 95; operators may
-# raise this bar. min_pct below the fixed floor of 50 FAILs closed; the floor
-# is a safety constant, not an environment knob) and that published
+# raise this bar. The default IS the floor: any value below 95 FAILs closed)
+# and that published
 # captions are not the description-service `seeded` fixture pool. Coverage
 # counts only usable alt (classify_alt_text_usable), not placeholder strings.
 # DEMO_ALT_GATE_ENFORCE defaults to 1 (a FAIL blocks the deploy). Set it to 0

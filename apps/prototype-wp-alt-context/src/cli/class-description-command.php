@@ -316,7 +316,16 @@ class DescriptionCommand extends \WP_CLI_Command {
 		$existing_alt     = is_string( $existing_alt_raw ) ? $existing_alt_raw : '';
 		// Build the identity envelope before the gate so CLI and REST share one
 		// classify decision (F-01). Source=cli is still stamped on write.
-		$provenance_for_gate = $this->build_provenance( $media_id, $data, $alt_text_draft );
+		$adapter_error = null;
+		try {
+			$provenance_for_gate = $this->build_provenance( $media_id, $data, $alt_text_draft );
+		} catch ( \InvalidArgumentException $e ) {
+			// Skip/empty paths never stamp provenance; fail only if this item
+			// would write an identity-less envelope. generate() still processes
+			// the rest of the batch [rg-007].
+			$adapter_error       = $e->getMessage();
+			$provenance_for_gate = array();
+		}
 		$existing_provenance = get_post_meta( $media_id, self::PROVENANCE_META_KEY, true );
 		$gate                = $this->describe_service->classify_existing_alt_write_gate(
 			$existing_alt,
@@ -379,6 +388,15 @@ class DescriptionCommand extends \WP_CLI_Command {
 				'media_id'       => $media_id,
 				'status'         => AltTextWriteStatus::SKIPPED_EMPTY_ALT_TEXT,
 				'alt_text_draft' => '',
+			);
+		}
+
+		if ( null !== $adapter_error ) {
+			return array(
+				'media_id'       => $media_id,
+				'status'         => AltTextWriteStatus::FAILED,
+				'alt_text_draft' => $alt_text_draft,
+				'error'          => $adapter_error,
 			);
 		}
 
@@ -521,13 +539,27 @@ class DescriptionCommand extends \WP_CLI_Command {
 			'source'                 => 'cli',
 			'media_id'               => $media_id,
 			'generated_at'           => gmdate( 'c' ),
-			'adapter'                => (string) ( $data['adapter'] ?? '' ),
+			'adapter'                => $this->require_usable_adapter( $data['adapter'] ?? null ),
 			'model_id'               => (string) ( $data['model_id'] ?? '' ),
 			'model_version'          => (string) ( $data['model_version'] ?? '' ),
 			'prompt_or_task_version' => (string) ( $data['prompt_or_task_version'] ?? '' ),
 			// Exact string written to alt — history's Generated-alt column source.
 			'alt_text_draft'         => $alt_text_draft,
 		);
+	}
+
+	/**
+	 * Refuse missing, non-string, empty, or whitespace-only adapter identity
+	 * rather than coerce to '' [rg-015]. Happy-path value is unchanged (no trim).
+	 *
+	 * @param mixed $adapter
+	 */
+	private function require_usable_adapter( mixed $adapter ): string {
+		if ( ! is_string( $adapter ) || '' === trim( $adapter ) ) {
+			throw new \InvalidArgumentException( "field 'adapter' must be a non-empty string" );
+		}
+
+		return $adapter;
 	}
 
 	/**

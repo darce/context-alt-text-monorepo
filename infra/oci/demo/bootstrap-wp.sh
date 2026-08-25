@@ -162,25 +162,87 @@ count_media_with_alt() {
 }
 
 echo "==> Describe-apply gate (fail-closed; seeded captions are worse than empty alt)"
-ADAPTER_PROFILE="$(env_get ACX_DESCRIPTION_ADAPTER)"
+
+# Probe the RUNNING description service for description_adapter (DEMOLIVE-8
+# contract on GET /health/detailed). Auth and base URL come from the same
+# WORDPRESS_CONFIG_EXTRA defines this script already loads — never from
+# ACX_DESCRIPTION_ADAPTER in secrets/.env (that name is not wired into the
+# producer). Probe failure / non-2xx / missing field -> empty -> BLOCK.
+probe_live_description_adapter() {
+  local base_url api_key tenant_id body_file code body
+  base_url="$(php_define_value ACX_RECOGNITION_URL "$WORDPRESS_CONFIG_EXTRA")"
+  api_key="$(php_define_value ACX_RECOGNITION_API_KEY "$WORDPRESS_CONFIG_EXTRA")"
+  tenant_id="$(php_define_value ACX_RECOGNITION_TENANT_ID "$WORDPRESS_CONFIG_EXTRA")"
+  if [[ -z "$base_url" || -z "$api_key" ]]; then
+    echo ""
+    return 0
+  fi
+  body_file=$(mktemp)
+  code=$(curl -sS -o "$body_file" -w '%{http_code}' --max-time 10 \
+    -H "X-Api-Key: ${api_key}" \
+    -H "X-Tenant-ID: ${tenant_id}" \
+    "${base_url%/}/health/detailed" 2>/dev/null) || code="000"
+  body=$(cat "$body_file" 2>/dev/null || true)
+  rm -f "$body_file"
+  extract_probed_description_adapter "$code" "$body"
+}
+
+sample_published_alt_text() {
+  local out
+  if ! out=$(wpcli wp eval 'foreach (get_posts(array("post_type"=>"attachment","post_status"=>"inherit","numberposts"=>100,"fields"=>"ids")) as $id) { $alt = get_post_meta($id, "_wp_attachment_image_alt", true); if (is_string($alt) && $alt !== "") { echo $alt, "\n"; } }' 2>/dev/null); then
+    return 1
+  fi
+  printf '%s' "$out"
+}
+
+ADAPTER_PROFILE="$(probe_live_description_adapter)"
 TOTAL_MEDIA="$(count_total_media)"
 MEDIA_WITH_ALT="$(count_media_with_alt)"
-DESCRIBE_VERDICT="$(classify_describe_gate "$ADAPTER_PROFILE" "$TOTAL_MEDIA" "$MEDIA_WITH_ALT")"
+
+PROVENANCE="UNKNOWN"
+case "$MEDIA_WITH_ALT" in
+  ''|*[!0-9]*) PROVENANCE="UNKNOWN" ;;
+  0) PROVENANCE="PASS" ;;
+  *)
+    if sample=$(sample_published_alt_text); then
+      PROVENANCE="$(classify_describe_provenance "$sample")"
+    else
+      PROVENANCE="UNKNOWN"
+    fi
+    ;;
+esac
+
+DESCRIBE_VERDICT="$(classify_describe_gate "$ADAPTER_PROFILE" "$TOTAL_MEDIA" "$MEDIA_WITH_ALT" "$PROVENANCE")"
 
 case "$DESCRIBE_VERDICT" in
   RUN)
-    echo "==> Describe pass: wp alt-context describe generate --write --limit=100 (adapter=${ADAPTER_PROFILE} coverage=${MEDIA_WITH_ALT}/${TOTAL_MEDIA})"
+    echo "==> Describe pass: wp alt-context describe generate --write --limit=100 (adapter=${ADAPTER_PROFILE} coverage=${MEDIA_WITH_ALT}/${TOTAL_MEDIA} provenance=${PROVENANCE})"
     wpcli wp alt-context describe generate --write --limit=100
     ;;
+  RUN_FORCE)
+    echo "==> Describe pass (force overwrite): wp alt-context describe generate --write --force --limit=100 (adapter=${ADAPTER_PROFILE} coverage=${MEDIA_WITH_ALT}/${TOTAL_MEDIA} provenance=${PROVENANCE})"
+    wpcli wp alt-context describe generate --write --force --limit=100
+    ;;
   SKIP)
-    echo "==> Describe pass skipped (adapter=${ADAPTER_PROFILE} coverage=${MEDIA_WITH_ALT}/${TOTAL_MEDIA})"
+    echo "==> Describe pass skipped (adapter=${ADAPTER_PROFILE} coverage=${MEDIA_WITH_ALT}/${TOTAL_MEDIA} provenance=${PROVENANCE})"
     ;;
   *)
     if is_trusted_describe_profile "$ADAPTER_PROFILE"; then
-      echo "==> BLOCKED: cannot measure demo media coverage (total='${TOTAL_MEDIA}' with_alt='${MEDIA_WITH_ALT}') — 'wp post list --format=count' failed or returned non-numeric output. Adapter '${ADAPTER_PROFILE}' is trusted; this is an environment fault, not a config fault. Describe pass skipped." >&2
+      coverage_unmeasurable=0
+      case "$TOTAL_MEDIA" in *[!0-9]*|'') coverage_unmeasurable=1 ;; esac
+      case "$MEDIA_WITH_ALT" in *[!0-9]*|'') coverage_unmeasurable=1 ;; esac
+      if [[ "$coverage_unmeasurable" -eq 0 && "$MEDIA_WITH_ALT" -gt "$TOTAL_MEDIA" ]]; then
+        coverage_unmeasurable=1
+      fi
+      if [[ "$coverage_unmeasurable" -eq 1 ]]; then
+        echo "==> BLOCKED: cannot measure demo media coverage (total='${TOTAL_MEDIA}' with_alt='${MEDIA_WITH_ALT}') — 'wp post list --format=count' failed or returned non-numeric output. Adapter '${ADAPTER_PROFILE}' is trusted; this is an environment fault, not a config fault. Describe pass skipped." >&2
+      else
+        echo "==> BLOCKED: cannot verify description provenance (got '${PROVENANCE}') for adapter '${ADAPTER_PROFILE}' (coverage=${MEDIA_WITH_ALT}/${TOTAL_MEDIA}). Fail closed; this is an environment fault, not a config fault. Describe pass skipped." >&2
+      fi
     else
-      echo "==> BLOCKED: refusing to publish descriptions — ACX_DESCRIPTION_ADAPTER='${ADAPTER_PROFILE}' produces canned fixture captions, which is worse for accessibility than empty alt text. Set ACX_DESCRIPTION_ADAPTER to one of: florence_small, gpu_qwen30b, gpu_qwen30b_ensemble. (coverage=${MEDIA_WITH_ALT}/${TOTAL_MEDIA})" >&2
+      echo "==> BLOCKED: refusing to publish descriptions — live description service adapter='${ADAPTER_PROFILE}' produces canned fixture captions, which is worse for accessibility than empty alt text. Change the description SERVICE profile (the running producer's ACX_DESCRIPTION_ADAPTER), not the demo host secrets/.env. Trusted service profiles: florence_small, gpu_qwen30b, gpu_qwen30b_ensemble. (coverage=${MEDIA_WITH_ALT}/${TOTAL_MEDIA})" >&2
     fi
+    exit 1
     ;;
 esac
 

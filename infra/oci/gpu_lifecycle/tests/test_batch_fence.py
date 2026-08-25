@@ -13,6 +13,7 @@ from infra.oci.gpu_lifecycle.controller import (
 from infra.oci.gpu_lifecycle.reaper import (
     JsonFileJobLoadSource,
     StaticJobLoadSource,
+    _BUSY_LOAD,
     _build_parser,
     run_reap_cycle,
 )
@@ -97,9 +98,14 @@ def test_json_batch_in_progress_is_has_work(tmp_path: Path) -> None:
 def test_malformed_batch_flag_is_busy_fail_closed(tmp_path: Path) -> None:
     path = tmp_path / "load.json"
     path.write_text(
-        json.dumps({"queue_depth": 0, "in_flight": 0, "batch_in_progress": "yes"})
+        json.dumps({"queue_depth": 0, "in_flight": 0, "batch_in_progress": 0})
     )
     snap = JsonFileJobLoadSource(path=path).snapshot()
+    assert snap == _BUSY_LOAD
+    assert snap.queue_depth == 1
+    assert snap.in_flight == 1
+    assert snap.batch_in_progress is True
+    assert snap.untrustworthy is True
     assert snap.has_work is True
 
 
@@ -154,6 +160,37 @@ def test_absent_batch_key_still_fences_on_in_flight(tmp_path: Path) -> None:
     )
     assert result.decided == []
     assert result.actuated == []
+    assert actuator.stopped == []
+
+
+def test_run_reap_cycle_second_snapshot_raise_is_fenced() -> None:
+    class RaiseOnSecond:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def snapshot(self) -> JobLoadSnapshot:
+            self.calls += 1
+            if self.calls >= 2:
+                raise RuntimeError("resample boom")
+            return JobLoadSnapshot(queue_depth=0, in_flight=0)
+
+    controller = GpuLifecycleController(idle_seconds=60)
+    instance = GpuInstance(
+        instance_id="ocid1.instance.oc1..gpu",
+        state="RUNNING",
+        idle_for_seconds=90,
+    )
+    actuator = RecordingActuator()
+    result = run_reap_cycle(
+        controller=controller,
+        instances=[instance],
+        load_source=RaiseOnSecond(),
+        actuator=actuator,
+        fence_delay_seconds=0.0,
+    )
+    assert result.decided == [("STOP", "ocid1.instance.oc1..gpu")]
+    assert result.actuated == []
+    assert result.fenced_off is True
     assert actuator.stopped == []
 
 

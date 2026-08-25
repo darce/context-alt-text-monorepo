@@ -9,13 +9,14 @@ is returned to the caller once and is never written to the registry.
 from __future__ import annotations
 
 import hashlib
+import re
 import secrets
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 
-from sqlalchemy import func, select, update
+from sqlalchemy import Select, func, select, update
 from sqlalchemy.exc import IntegrityError, OperationalError, ProgrammingError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -150,9 +151,40 @@ def assert_pre_scan_state(state: PreScanState) -> PreScanState:
     return state
 
 
-def _is_missing_relation(exc: BaseException) -> bool:
+_MISSING_TABLE_SQLITE = re.compile(r"no such table:\s+([a-z_][a-z0-9_]*)")
+_MISSING_TABLE_POSTGRES = re.compile(r'relation ["\']([a-z_][a-z0-9_]*)["\'] does not exist')
+_IDENTITY_RELATIONS = frozenset({"media_identities", "identity_clusters"})
+
+
+def _missing_relation_name(exc: BaseException) -> str | None:
+    """Return the missing table name, or None for missing columns / other errors."""
     msg = str(exc).lower()
-    return "no such table" in msg or "does not exist" in msg
+    if "no such column" in msg:
+        return None
+    if "column " in msg and "does not exist" in msg:
+        return None
+    sqlite_match = _MISSING_TABLE_SQLITE.search(msg)
+    if sqlite_match:
+        return sqlite_match.group(1)
+    pg_match = _MISSING_TABLE_POSTGRES.search(msg)
+    if pg_match:
+        return pg_match.group(1)
+    return None
+
+
+async def _count_or_missing(
+    session: AsyncSession,
+    stmt: Select[tuple[int]],
+    *,
+    relation: str,
+) -> int | None:
+    """Return the scalar count, or None when ``relation`` itself is missing."""
+    try:
+        return int(await session.scalar(stmt) or 0)
+    except (OperationalError, ProgrammingError) as exc:
+        if _missing_relation_name(exc) == relation:
+            return None
+        raise
 
 
 async def observe_pre_scan_state(
@@ -163,36 +195,41 @@ async def observe_pre_scan_state(
 ) -> PreScanState:
     """Read tenant face/people counts and pair them with the bundle's media list.
 
-    Test fixtures that only create ``demo_instances`` have no identity tables;
-    a missing relation is the same as a fresh tenant (zero faces, zero people).
+    Zero counts are allowed only when both identity relations exist and are
+    empty, or when *both* relations are confirmed missing (fresh fixture). A
+    missing column or a half-present schema fails closed.
     """
-    try:
-        scanned_faces = int(
-            await session.scalar(
-                select(func.count()).select_from(MediaIdentity).where(MediaIdentity.tenant_id == tenant_id)
-            )
-            or 0
+    faces_stmt = select(func.count()).select_from(MediaIdentity).where(MediaIdentity.tenant_id == tenant_id)
+    people_stmt = (
+        select(func.count())
+        .select_from(IdentityCluster)
+        .where(
+            IdentityCluster.tenant_id == tenant_id,
+            IdentityCluster.label.is_not(None),
         )
-        people_count = int(
-            await session.scalar(
-                select(func.count())
-                .select_from(IdentityCluster)
-                .where(
-                    IdentityCluster.tenant_id == tenant_id,
-                    IdentityCluster.label.is_not(None),
-                )
-            )
-            or 0
+    )
+    scanned_faces = await _count_or_missing(session, faces_stmt, relation="media_identities")
+    people_count = await _count_or_missing(session, people_stmt, relation="identity_clusters")
+    missing = {
+        name
+        for name, value in (
+            ("media_identities", scanned_faces),
+            ("identity_clusters", people_count),
         )
-    except (OperationalError, ProgrammingError) as exc:
-        if not _is_missing_relation(exc):
-            raise
+        if value is None
+    }
+    if missing:
+        if missing != _IDENTITY_RELATIONS:
+            raise PreScanStateError(
+                "identity schema is incomplete: both media_identities and "
+                "identity_clusters must exist, or both must be absent"
+            )
         scanned_faces = 0
         people_count = 0
     return PreScanState(
         seeded_media_ids=bundle.pre_scan.seeded_media_ids,
-        scanned_faces=scanned_faces,
-        people_count=people_count,
+        scanned_faces=int(scanned_faces or 0),
+        people_count=int(people_count or 0),
     )
 
 

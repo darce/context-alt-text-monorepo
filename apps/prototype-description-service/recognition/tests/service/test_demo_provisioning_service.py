@@ -9,7 +9,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 from sqlalchemy import select
-from sqlalchemy.exc import OperationalError
+from sqlalchemy.exc import OperationalError, ProgrammingError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models import ApiKey, DemoInstance, Tenant
@@ -225,18 +225,75 @@ async def test_provision_demo_fails_loudly_on_catalog_pre_scan_violation(
         await provision_demo(db_session, label="Broken Catalog", seed="default")
 
 
+def _stmt_relation_name(stmt) -> str:  # noqa: ANN001
+    compiled = str(stmt.compile(compile_kwargs={"literal_binds": False})).lower()
+    if "identity_clusters" in compiled:
+        return "identity_clusters"
+    if "media_identities" in compiled:
+        return "media_identities"
+    return "unknown"
+
+
 @pytest.mark.asyncio
 async def test_observe_pre_scan_state_missing_tables_count_as_zero() -> None:
     class _MissingTableSession:
-        async def scalar(self, _stmt):  # noqa: ANN001
-            raise OperationalError("SELECT 1", {}, Exception("no such table: media_identities"))
+        def __init__(self) -> None:
+            self.scalar_calls = 0
+
+        async def scalar(self, stmt):  # noqa: ANN001
+            self.scalar_calls += 1
+            table = _stmt_relation_name(stmt)
+            raise OperationalError("SELECT 1", {}, Exception(f"no such table: {table}"))
 
     bundle = load_seed_bundle("default")
+    fake = _MissingTableSession()
     observed = await observe_pre_scan_state(
-        _MissingTableSession(),  # type: ignore[arg-type]
+        fake,  # type: ignore[arg-type]
         tenant_id=uuid.uuid4(),
         bundle=bundle,
     )
+    assert fake.scalar_calls >= 2
     assert observed.scanned_faces == 0
     assert observed.people_count == 0
     assert observed.seeded_media_present is True
+
+
+@pytest.mark.asyncio
+async def test_observe_pre_scan_state_missing_column_fails_closed() -> None:
+    class _MissingColumnSession:
+        async def scalar(self, _stmt):  # noqa: ANN001
+            raise ProgrammingError(
+                "SELECT 1",
+                {},
+                Exception('column "embedding" of relation "media_identities" does not exist'),
+            )
+
+    bundle = load_seed_bundle("default")
+    with pytest.raises(ProgrammingError, match="column"):
+        await observe_pre_scan_state(
+            _MissingColumnSession(),  # type: ignore[arg-type]
+            tenant_id=uuid.uuid4(),
+            bundle=bundle,
+        )
+
+
+@pytest.mark.asyncio
+async def test_observe_pre_scan_state_partial_missing_relation_fails_closed() -> None:
+    class _PartialSchemaSession:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def scalar(self, stmt):  # noqa: ANN001
+            self.calls += 1
+            table = _stmt_relation_name(stmt)
+            if table == "media_identities":
+                raise OperationalError("SELECT 1", {}, Exception("no such table: media_identities"))
+            return 0
+
+    bundle = load_seed_bundle("default")
+    with pytest.raises(PreScanStateError, match="schema"):
+        await observe_pre_scan_state(
+            _PartialSchemaSession(),  # type: ignore[arg-type]
+            tenant_id=uuid.uuid4(),
+            bundle=bundle,
+        )

@@ -155,6 +155,7 @@ The hero and orientation surface render while independently loaded sections sett
 | Recent Activity                                          |
 |   No recent scans yet                                     |
 |   Run a scan to find faces in your media library.         |
+|   [Run a scan]                                            |
 +------------------------------------------------------------+
 | Data Retention                                           |
 |   (absent while policy is unavailable)                    |
@@ -213,6 +214,7 @@ Identity Recognition actually has two distinct, independently-triggered retry co
 |   Recent activity is unavailable                          |
 |   Previous scans could not be loaded. You can still       |
 |   start a new scan.                                       |
+|   [Run a scan]                                            |
 +------------------------------------------------------------+
 | Data Retention                                           |
 |   Retention status could not load. Check the connection   |
@@ -247,6 +249,7 @@ Degraded is an intact first_named dashboard with an attention-bearing sync state
 |   Showing jobs remembered in this browser only.           |
 |   No recent scans yet                                     |
 |   Run a scan to find faces in your media library.         |
+|   [Run a scan]                                            |
 +------------------------------------------------------------+
 | Data Retention                                           |
 |   Policy summary or remediation remains local to panel    |
@@ -258,28 +261,38 @@ Degraded is an intact first_named dashboard with an attention-bearing sync state
 `DashboardSyncHealthSection.tsx` has exactly three exclusive branches:
 
     :56  isLoading              -> "Loading sync health…"
-    :58  isError || !syncStatus -> EmptyState "Sync health is unavailable right now."
+    :58  isError || !syncStatus -> EmptyState: heading + body + [Open settings]
     :66  else                   -> the composition drawn below
 
-Inside the else branch, five members render independently. None of them replaces the
-default; each one *adds* to it. `degraded` and `offline` name "some subset of these is
-on", which is a modifier axis, not a branch of the chain above.
+Inside the else branch the members render independently. Two are unconditional; the
+rest only *add* to them. `degraded` and `offline` name "some subset of the conditional
+ones is on", which is a modifier axis, not a branch of the chain above.
 
-    A  :68  showMirrorDivergenceBanner        mirror banner + [Reset mirror]
-    B  :96  summary <p>                       always present; text varies
-    C  :113 topologyPending|Failed|Conflicts   pending-work summary line
-    D  :123 conflictCount && lastConflictDate  last-conflict line + [Open Conflict Inbox]
-    E  :126 failedReplayCount && lastFailure   last-failure line + [Open Failed Sync Queue]
+    B  :96  (unconditional)                    summary <p>; text varies
+    S  :99  (unconditional)                    stats grid, 3 value/label pairs
+    A  :68  showMirrorDivergenceBanner         mirror banner + [Reset mirror]
+    C  :113 topologyPending|Failed|Conflicts>0 pending-work summary line
+    D1 :123 conflictCount>0 && lastConflictDate    last-conflict line
+    E1 :126 failedReplayCount>0 && lastFailureDate last-failure line
+    R  :129 (unconditional)                    [Open Review Queue]
+    D2 :134 conflictCount>0                    [Open Conflict Inbox]
+    E2 :140 failedReplayCount>0                [Open Failed Sync Queue]
 
-A, C, D and E are four independent booleans, so 16 compositions. B varies orthogonally
-across at least seven summary strings in `syncVocabulary.ts` (healthy, queued, stale,
-conflicts, failures, resyncRequired, plus the offline headline), putting the default
-branch on the order of 10² renderable forms. A single `degraded` peer state collapses
-all of them into one name *and* implies it excludes `default`, which is false. That is
-why the states list is now `default, loading, error` and the modifier axis is recorded
-as an open question instead.
+A recency line and its CTA are gated *separately*: `[Open Conflict Inbox]` needs only
+`conflictCount > 0`, while `Last conflict:` additionally needs a parsable date. So
+conflict and failure each have three reachable shapes — absent, CTA only, CTA plus
+recency line — and together with A and C that is 2 × 2 × 3 × 3 = 36 compositions of
+this one branch. B varies orthogonally: `getDashboardSyncHealthSummary`
+(`degradedModeBannerLogic.ts:36-50`) returns one of six `SyncHealth` cases (healthy,
+queued, conflicts, failures, offline, stale), the last being the default fallthrough, plus a
+healthy-with-warnings overlay at :32-33 returning the degraded warning message or
+`attentionSummary`. A single `degraded` peer state collapses all of that into one name
+*and* implies it excludes `default`, which is false. That is why the states list is
+`default, loading, error` and the modifier axis is recorded as an open question.
 
-Maximal composition (A+C+D+E all true), real DOM order, real copy:
+Maximal composition (A, C, and both counts with dates), real DOM order, real copy.
+Recency values are whatever `date.toLocaleDateString()` returns
+(`DashboardPage.tsx:47-53`) — a locale calendar date, never relative time:
 
 ```
 +------------------------------------------------------------+
@@ -287,39 +300,65 @@ Maximal composition (A+C+D+E all true), real DOM order, real copy:
 |  /!\ Mirror is out of sync with the backend — 12 stale     |
 |      face groups, 3 failed sync events.   [Reset mirror]   |
 |  Some sync operations failed and need operator attention.  |
-|    Pending changes 7 | Conflicts 2 | Failed operations 3   |
+|      7            2             3                          |
+|  Pending changes  Conflicts  Failed operations             |
 |  7 waiting, 3 failed, 2 need review                        |
-|  Last conflict: 12 minutes ago                             |
-|  Last failure: 4 minutes ago                               |
+|  Last conflict: 3/7/2026                                   |
+|  Last failure: 3/7/2026                                    |
 |  [Open Review Queue] [Open Conflict Inbox]                 |
 |  [Open Failed Sync Queue]                                  |
 +------------------------------------------------------------+
 ```
 
-Minimal composition (all four false) — same branch, same state name:
+Counts without dates — same branch, same state name, both CTAs present and both
+recency lines gone (exercised by `DashboardPage.test.tsx` “shows dashboard sync links
+for conflicts and dead-letter work”):
+
+```
++------------------------------------------------------------+
+| Sync Health                                                |
+|  Some sync operations failed and need operator attention.  |
+|      0            2             1                          |
+|  Pending changes  Conflicts  Failed operations             |
+|  [Open Review Queue] [Open Conflict Inbox]                 |
+|  [Open Failed Sync Queue]                                  |
++------------------------------------------------------------+
+```
+
+Minimal composition (A, C and both counts false):
 
 ```
 +------------------------------------------------------------+
 | Sync Health                                                |
 |  Everything is saved and up to date.                       |
-|    Pending changes 0 | Conflicts 0 | Failed operations 0   |
+|      0            0             0                          |
+|  Pending changes  Conflicts  Failed operations             |
 |  [Open Review Queue]                                       |
 +------------------------------------------------------------+
 ```
 
 Interactivity notes:
 
-- `[Open Review Queue]` is the only unconditional action. `[Open Conflict Inbox]` and
-  `[Open Failed Sync Queue]` appear and disappear with D and E, so the action row
-  reflows under the operator between polls — a control that moves because of a
-  background refetch is a moving target for pointer and switch users [A11Y-24].
-- The mirror banner is `role="status"` and mounts only after `syncStatus` resolves, so
-  it is a real announcement rather than first-paint decoration. It is the only live
-  region in the default branch; the error branch's EmptyState owns its own and the two
-  branches are exclusive, so nothing nests.
+- `[Open Review Queue]` is unconditional *inside the default branch only*. Loading
+  offers no control at all and error always mounts `[Open settings]` instead, so no
+  single action spans the zone's three states [A11Y-24].
+- `[Open Conflict Inbox]` and `[Open Failed Sync Queue]` appear and disappear with the
+  two counts, so the action row reflows under the operator between polls. A control
+  that moves because of a background refetch breaks the meaningful focus order the
+  keyboard walk depends on, for pointer and switch users alike [A11Y-11].
+- The mirror banner is `role="status"` (no explicit `aria-live`) and mounts only after
+  `syncStatus` resolves, so it is a real announcement rather than first-paint
+  decoration. It is the only live region in the default branch. The error branch's
+  EmptyState mounts its own `role="status"` / `aria-live="polite"` region nested inside
+  the panel `<section>`; the branches are exclusive so the two never coexist, but the
+  error announcement sits two landmarks deep and loading announces nothing at all
+  [A11Y-24].
 - `[Reset mirror]` swaps its own label to "Resetting…" while pending and is the only
   destructive control in the zone. It exists only when A is true, so the operator
-  cannot reach it from the healthy composition.
+  cannot reach it from the healthy composition. It calls `onResetMirror` directly on
+  click with no confirm or preview step, which contradicts
+  `act-reset-mirror.preview_required` in `dashboard.uxmap.json`.
+
 
 ### Workbench (`exit-workbench`)
 

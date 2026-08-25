@@ -52,7 +52,8 @@ php_define_value() {
 # extract_probed_description_adapter <http_code> <body>
 # Returns the top-level JSON string field description_adapter when HTTP is 2xx
 # and the body is parseable. Empty on probe failure, non-2xx, missing field,
-# or unparseable body. NEVER invents a fallback profile.
+# unparseable body, nested-only key, non-string value, or missing python3.
+# NEVER invents a fallback profile. python3 is required; fail closed if absent.
 extract_probed_description_adapter() {
     local code="$1"
     local body="$2"
@@ -61,8 +62,24 @@ extract_probed_description_adapter() {
         2[0-9][0-9]) ;;
         *) echo ""; return ;;
     esac
-    body=$(printf '%s' "$body" | tr '\n' ' ')
-    value=$(printf '%s' "$body" | sed -n 's/.*"description_adapter"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | sed -n '1p')
+    if ! command -v python3 >/dev/null 2>&1; then
+        echo ""
+        return
+    fi
+    value=$(printf '%s' "$body" | python3 -c '
+import json
+import sys
+
+try:
+    data = json.load(sys.stdin)
+except Exception:
+    raise SystemExit(0)
+if not isinstance(data, dict):
+    raise SystemExit(0)
+value = data.get("description_adapter")
+if isinstance(value, str):
+    sys.stdout.write(value)
+' 2>/dev/null) || value=""
     printf '%s' "$value"
 }
 

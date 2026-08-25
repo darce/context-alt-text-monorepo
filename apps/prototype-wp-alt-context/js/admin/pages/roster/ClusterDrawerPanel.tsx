@@ -555,7 +555,24 @@ export const ClusterDrawerPanel = ({
         ) : null}
 
         {cluster ? (
-        <div className="acx-cluster-drawer__assignment">
+        <div className="acx-cluster-drawer__assignment" data-testid="acx-zone-z-cluster-actions">
+          {rosterEntries.length === 0 ? (
+            <EmptyState
+              variant={EmptyStateVariant.EMPTY}
+              heading={__('No named people to assign yet.', 'alt-context')}
+              body={__('Name a person in the Review Queue, or add a person on the People page.', 'alt-context')}
+              action={{
+                label: __('Open Review Queue', 'alt-context'),
+                href: '#/workbench?tab=scan',
+              }}
+              headingLevel={3}
+            />
+          ) : null}
+          {reassignErrorMessage ? (
+            <p role="alert">{reassignErrorMessage}</p>
+          ) : null}
+          {rosterEntries.length > 0 ? (
+          <>
           <label className="acx-cluster-drawer__section-label" htmlFor="acx-roster-entry-select">
             {__('Assign to person', 'alt-context')}
           </label>
@@ -617,6 +634,8 @@ export const ClusterDrawerPanel = ({
               </a>
             ) : null}
           </div>
+          </>
+          ) : null}
         </div>
         ) : null}
       </aside>

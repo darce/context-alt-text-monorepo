@@ -390,7 +390,8 @@ export const DeadLetterPanel = (): React.JSX.Element => {
       {statusRegion}
       <h3>{__('Failed changes', 'alt-context')}</h3>
       <p>{sprintf(__('Showing %1$d-%2$d of %3$d failed changes.', 'alt-context'), rangeStart, rangeEnd, total)}</p>
-      <div className="acx-dashboard__actions">
+      <div className="acx-dashboard__actions" data-testid="acx-zone-z-dl-actions">
+        {total === 0 ? <p>{__('No failed changes to retry.', 'alt-context')}</p> : null}
         {/* E15-35 Slice 2: bulk recovery is inherently N-dependent — at zero the control
             stays visible (count included) but disabled, per rg-003's intent. */}
         <button

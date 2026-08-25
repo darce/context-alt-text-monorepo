@@ -244,7 +244,7 @@ interface MediaSelectionToolbarProps {
 /** Coalesce rapid settled-status changes (search keystroke storms) [B-01]. */
 const TOOLBAR_STATUS_ANNOUNCE_DEBOUNCE_MS = 1000;
 
-const MediaSelectionToolbar = ({
+export const MediaSelectionToolbar = ({
   searchQuery,
   onSearchChange,
   statusFilter,
@@ -334,6 +334,14 @@ const MediaSelectionToolbar = ({
             {announcedStatus}
           </span>
         </span>
+        {isStatusPending ? (
+          <p data-testid="acx-zone-z-filters-loading">{__('Loading filters…', 'alt-context')}</p>
+        ) : null}
+        {isError ? (
+          <p role="alert" data-testid="acx-zone-z-filters-error">
+            {__('Unable to load filters.', 'alt-context')}
+          </p>
+        ) : null}
         {isError && onRetry && (
           <button type="button" className="acx-media-selection__retry" onClick={onRetry}>
             {__('Retry', 'alt-context')}

@@ -464,3 +464,19 @@ describe('PersonWorkspacePanel evidence images', () => {
     expect(within(screen.getByRole('region', { name: 'Face group 1' })).getByText('Media 101')).toBeInTheDocument();
   });
 });
+
+describe('D-23 PersonWorkspacePanel failure states', () => {
+  it('renders linked-faces error when projection failed', () => {
+    renderPanel(
+      <PersonWorkspacePanel entry={baseEntry({ projection_status: 'failed' })} onOpenQueue={vi.fn()} />,
+    );
+    expect(screen.getByRole('alert')).toHaveTextContent('Unable to load linked faces.');
+  });
+
+  it('renders linked-faces degraded when projection is stale', () => {
+    renderPanel(
+      <PersonWorkspacePanel entry={baseEntry({ projection_status: 'stale' })} onOpenQueue={vi.fn()} />,
+    );
+    expect(screen.getByText('Linked faces may be out of date.')).toBeInTheDocument();
+  });
+});

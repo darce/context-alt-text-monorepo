@@ -95,7 +95,13 @@ export const IdentityClusterList = ({
       );
     }
 
-    return <p className="acx-identity-clusters__empty">{__('No identities detected yet.', 'alt-context')}</p>;
+    return (
+      <EmptyStateWarning
+        title={__('No identities detected yet.', 'alt-context')}
+        message={__('Scan media to find faces in this item.', 'alt-context')}
+        onRetry={onRetry}
+      />
+    );
   }
 
   return (

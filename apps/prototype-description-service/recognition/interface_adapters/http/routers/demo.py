@@ -50,19 +50,23 @@ def _reset_provision_limiter_for_tests() -> None:
     _provision_state.clear()
 
 
+_DEFAULT_PROVISION_RPM = 3
+
+
 def _provision_rpm() -> int:
-    raw = os.getenv("RECOGNITION_DEMO_PROVISION_RPM", "3")
+    raw = os.getenv("RECOGNITION_DEMO_PROVISION_RPM", str(_DEFAULT_PROVISION_RPM))
     try:
-        return max(0, int(raw))
+        parsed = int(raw)
     except ValueError:
-        return 3
+        return _DEFAULT_PROVISION_RPM
+    if parsed <= 0:
+        return _DEFAULT_PROVISION_RPM
+    return parsed
 
 
 async def enforce_provision_rate_limit(request: Request) -> None:
     """Per-source (client IP) cap on POST /x/provision (WEB-17 / SEC-08)."""
     limit = _provision_rpm()
-    if limit <= 0:
-        return
     key = _client_ip(request)
     now = time.monotonic()
     async with _provision_lock:

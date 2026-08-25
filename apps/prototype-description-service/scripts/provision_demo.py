@@ -16,11 +16,13 @@ import argparse
 import asyncio
 import sys
 from collections.abc import Sequence
+from enum import StrEnum
 from urllib.parse import urlparse
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from recognition.application.services.demo_provisioning_service import (
+    DEFAULT_RECOGNITION_QUOTA,
     KNOWN_SEED_BUNDLES,
     DemoInstanceNotFoundError,
     UnknownSeedBundleError,
@@ -29,6 +31,20 @@ from recognition.application.services.demo_provisioning_service import (
 )
 
 _ENV_CHOICES = ("prod", "dev", "local")
+
+
+class AccountKind(StrEnum):
+    """Demo credential kind. CI is a distinct least-privilege identity."""
+
+    VIEWER = "viewer"
+    CI = "ci"
+
+
+CI_RECOGNITION_QUOTA = 20
+
+
+class CiAccountCollisionError(ValueError):
+    """CI identity must not equal the demo wp-admin username."""
 
 
 def _dsn_host(dsn: str) -> str:
@@ -67,6 +83,17 @@ def _build_parser() -> argparse.ArgumentParser:
         default="default",
         help=f"named seed bundle ({', '.join(sorted(KNOWN_SEED_BUNDLES))})",
     )
+    p_provision.add_argument(
+        "--account",
+        choices=[kind.value for kind in AccountKind],
+        default=AccountKind.VIEWER.value,
+        help="viewer = prospect demo key; ci = least-privilege CI key (must not equal --admin-user)",
+    )
+    p_provision.add_argument(
+        "--admin-user",
+        default="",
+        help="demo wp-admin username; required for --account ci to refuse identity collision",
+    )
 
     p_expire = sub.add_parser("expire", help="mark a demo instance revoked")
     p_expire.add_argument("--slug", required=True, help="demo slug to expire")
@@ -74,11 +101,36 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def resolve_account_issuance(*, account: str, label: str, admin_user: str) -> tuple[AccountKind, int]:
+    """Return (kind, quota). CI must not collide with the demo wp-admin username."""
+    kind = AccountKind(account)
+    if kind is AccountKind.VIEWER:
+        return kind, DEFAULT_RECOGNITION_QUOTA
+    admin = (admin_user or "").strip()
+    if not admin:
+        raise CiAccountCollisionError(
+            "CI issuance requires --admin-user so the CI identity cannot collide with demo wp-admin"
+        )
+    if (label or "").strip() == admin:
+        raise CiAccountCollisionError("CI account label must differ from the demo wp-admin username")
+    return kind, CI_RECOGNITION_QUOTA
+
+
 async def _cmd_provision(args, session: AsyncSession) -> int:
     try:
-        result = await provision_demo(session, label=args.label, seed=args.seed)
+        kind, quota = resolve_account_issuance(
+            account=args.account,
+            label=args.label,
+            admin_user=args.admin_user,
+        )
+        result = await provision_demo(
+            session,
+            label=args.label,
+            seed=args.seed,
+            recognition_quota=quota,
+        )
         await session.commit()
-    except UnknownSeedBundleError as exc:
+    except (UnknownSeedBundleError, CiAccountCollisionError) as exc:
         sys.stderr.write(f"error: {exc}\n")
         sys.stderr.flush()
         return 1
@@ -90,7 +142,7 @@ async def _cmd_provision(args, session: AsyncSession) -> int:
     sys.stdout.flush()
     # stderr: non-secret metadata for operators/scripts.
     sys.stderr.write(
-        f"slug={instance.slug}\ttenant_id={instance.tenant_id}\t"
+        f"account={kind.value}\tslug={instance.slug}\ttenant_id={instance.tenant_id}\t"
         f"seed_bundle={instance.seed_bundle}\texpires_at={instance.expires_at.isoformat()}\t"
         f"recognition_quota={instance.recognition_quota}\n"
     )

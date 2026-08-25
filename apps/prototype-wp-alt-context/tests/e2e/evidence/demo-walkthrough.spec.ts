@@ -163,6 +163,12 @@ test('captures E15-28 public demo walkthrough proof', async ({ page, baseURL }, 
       .catch(() => undefined);
 
     const selectCount = Math.min(await mediaCheckboxes.count(), MAX_SCAN_MEDIA);
+    if (selectCount === 0) {
+      expect(
+        selectCount,
+        'scan path cannot silently degrade: workbench had 0 selectable media',
+      ).toBeGreaterThan(0);
+    }
     for (let index = 0; index < selectCount; index += 1) {
       await mediaCheckboxes.nth(index).click();
     }

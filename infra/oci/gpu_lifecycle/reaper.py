@@ -134,6 +134,12 @@ class JsonFileJobLoadSource:
     Expected shape (mirrors InMemoryDescribeJobStore.load_snapshot):
       {"queue_depth": <int>, "in_flight": <int>, "written_at": <unix float optional>}
 
+    Optional ``batch_in_progress`` (bool) is honoured only when the producer
+    writes it. Absent key → False: the fence covers only queue_depth/in_flight
+    that the snapshot proves. Bulk/multi-job runs are unprotected until the
+    producer writes ``batch_in_progress``. Present but not a bool → busy
+    (fail closed).
+
     Stale files (mtime or written_at older than max_age_seconds) are treated as
     busy so the reaper never STOPs on silent writer failure (VLMFIX-S2-02).
     """
@@ -195,7 +201,18 @@ class JsonFileJobLoadSource:
                 self.path,
             )
             return _BUSY_LOAD
-        batch_in_progress = bool(payload.get("batch_in_progress", False))
+        # Consumer-only flag. Producer today writes {queue_depth,in_flight,written_at}
+        # without this key. Absent → False: do not claim batch protection; bulk
+        # runs are unprotected until the producer writes batch_in_progress.
+        if "batch_in_progress" not in payload:
+            logger.warning(
+                "load json missing batch_in_progress; bulk runs are unprotected "
+                "until the producer writes this key: %s",
+                self.path,
+            )
+            batch_in_progress = False
+        else:
+            batch_in_progress = bool(payload["batch_in_progress"])
         return JobLoadSnapshot(
             queue_depth=queue_depth,
             in_flight=in_flight,
@@ -528,7 +545,12 @@ def _build_parser() -> argparse.ArgumentParser:
     load.add_argument(
         "--load-json",
         type=Path,
-        help="Path to {queue_depth,in_flight} JSON from the describe job store",
+        help=(
+            "Path to {queue_depth,in_flight[,batch_in_progress]} JSON from the "
+            "describe job store. Absent batch_in_progress is False: the fence "
+            "covers only what the snapshot proves. Bulk runs are unprotected "
+            "until the producer writes batch_in_progress"
+        ),
     )
     load.add_argument(
         "--queue-depth",

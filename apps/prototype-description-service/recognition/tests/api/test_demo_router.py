@@ -47,7 +47,7 @@ def _build_client(
 
     app.dependency_overrides[dependencies.get_session] = _session_dep
     app.dependency_overrides[dependencies.get_optional_session] = _session_dep
-    return TestClient(app)
+    return TestClient(app, base_url="https://testserver")
 
 
 def _assert_no_tenant_data(resp) -> None:  # noqa: ANN001
@@ -61,15 +61,21 @@ def _assert_no_tenant_data(resp) -> None:  # noqa: ANN001
             assert key not in detail
 
 
+def _cookie_header(resp) -> str:  # noqa: ANN001
+    return resp.headers.get("set-cookie", "")
+
+
 def _mint_session(client: TestClient, slug: str) -> str:
     resp = client.post(f"/x/{slug}/session")
     assert resp.status_code == 201, resp.text
     token = resp.json()["session_token"]
     assert token
-    set_cookie = resp.headers.get("set-cookie", "")
+    set_cookie = _cookie_header(resp)
     assert "acx_demo_session=" in set_cookie
     assert "HttpOnly" in set_cookie
     assert "Secure" in set_cookie
+    assert "SameSite=lax" in set_cookie or "SameSite=Lax" in set_cookie
+    assert "Path=/x" in set_cookie
     return token
 
 
@@ -121,6 +127,27 @@ async def test_demo_router_session_happy_path_resolves_without_key_material(
     assert result.instance.api_key_ref not in blob
     assert "api_key" not in body
     assert "api_key_ref" not in body
+
+
+@pytest.mark.asyncio
+async def test_demo_router_cookie_only_get_resolves_without_session_header(
+    db_session: AsyncSession, monkeypatch
+) -> None:
+    result = await provision_demo(db_session, label="CookieOnly", seed="default")
+    await db_session.commit()
+
+    client = _build_client(db_session, monkeypatch)
+    mint = client.post(f"/x/{result.instance.slug}/session")
+    assert mint.status_code == 201, mint.text
+    set_cookie = _cookie_header(mint)
+    assert "SameSite=lax" in set_cookie or "SameSite=Lax" in set_cookie
+    assert "Path=/x" in set_cookie
+    assert "X-Demo-Session" not in mint.request.headers
+
+    resp = client.get(f"/x/{result.instance.slug}")
+    assert "x-demo-session" not in {k.lower() for k in resp.request.headers.keys()}
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["tenant_id"] == str(result.instance.tenant_id)
 
 
 @pytest.mark.asyncio

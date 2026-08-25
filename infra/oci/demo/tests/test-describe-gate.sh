@@ -52,6 +52,50 @@ assert_eq "florence_small non-numeric alt" BLOCK "$(classify_describe_gate flore
 assert_eq "florence_small alt > total" BLOCK "$(classify_describe_gate florence_small 100 200)"
 assert_eq "florence_small 0 1 (alt > total)" BLOCK "$(classify_describe_gate florence_small 0 1)"
 
+# --- is_trusted_describe_profile: exit 0 trusted, 1 otherwise ---
+assert_exit() {
+    local label="$1" expected="$2"
+    shift 2
+    local actual=0
+    "$@" || actual=$?
+    assert_eq "$label" "$expected" "$actual"
+}
+
+assert_exit "is_trusted florence_small" 0 is_trusted_describe_profile florence_small
+assert_exit "is_trusted gpu_qwen30b" 0 is_trusted_describe_profile gpu_qwen30b
+assert_exit "is_trusted gpu_qwen30b_ensemble" 0 is_trusted_describe_profile gpu_qwen30b_ensemble
+assert_exit "is_trusted seeded" 1 is_trusted_describe_profile seeded
+assert_exit "is_trusted empty" 1 is_trusted_describe_profile ''
+assert_exit "is_trusted SEEDED (case hole)" 1 is_trusted_describe_profile SEEDED
+assert_exit "is_trusted florence (not prefix)" 1 is_trusted_describe_profile florence
+assert_exit "is_trusted small (not suffix)" 1 is_trusted_describe_profile small
+
+# Predicate and classifier must not drift: trusted -> RUN at 100/0, else BLOCK.
+assert_predicate_matches_classifier() {
+    local profile="$1"
+    local expected
+    if is_trusted_describe_profile "$profile"; then
+        expected=RUN
+    else
+        expected=BLOCK
+    fi
+    assert_eq "predicate/classifier agree '${profile}' 100 0" \
+        "$expected" "$(classify_describe_gate "$profile" 100 0)"
+}
+
+for p in $ACX_TRUSTED_DESCRIBE_PROFILES; do
+    assert_predicate_matches_classifier "$p"
+done
+assert_predicate_matches_classifier seeded
+assert_predicate_matches_classifier ''
+assert_predicate_matches_classifier SEEDED
+assert_predicate_matches_classifier florence
+assert_predicate_matches_classifier small
+assert_predicate_matches_classifier unknown_profile
+assert_predicate_matches_classifier hosted_gpt4o
+assert_predicate_matches_classifier gpu_phi4
+assert_predicate_matches_classifier florence_large
+
 echo
 if [ "$failures" -gt 0 ]; then
     echo "${failures} assertion(s) failed"

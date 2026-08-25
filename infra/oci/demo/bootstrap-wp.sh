@@ -176,7 +176,11 @@ case "$DESCRIBE_VERDICT" in
     echo "==> Describe pass skipped (adapter=${ADAPTER_PROFILE} coverage=${MEDIA_WITH_ALT}/${TOTAL_MEDIA})"
     ;;
   *)
-    echo "==> BLOCKED: refusing to publish descriptions — ACX_DESCRIPTION_ADAPTER='${ADAPTER_PROFILE}' produces canned fixture captions, which is worse for accessibility than empty alt text. Set ACX_DESCRIPTION_ADAPTER to one of: florence_small, gpu_qwen30b, gpu_qwen30b_ensemble. (coverage=${MEDIA_WITH_ALT}/${TOTAL_MEDIA})" >&2
+    if is_trusted_describe_profile "$ADAPTER_PROFILE"; then
+      echo "==> BLOCKED: cannot measure demo media coverage (total='${TOTAL_MEDIA}' with_alt='${MEDIA_WITH_ALT}') — 'wp post list --format=count' failed or returned non-numeric output. Adapter '${ADAPTER_PROFILE}' is trusted; this is an environment fault, not a config fault. Describe pass skipped." >&2
+    else
+      echo "==> BLOCKED: refusing to publish descriptions — ACX_DESCRIPTION_ADAPTER='${ADAPTER_PROFILE}' produces canned fixture captions, which is worse for accessibility than empty alt text. Set ACX_DESCRIPTION_ADAPTER to one of: florence_small, gpu_qwen30b, gpu_qwen30b_ensemble. (coverage=${MEDIA_WITH_ALT}/${TOTAL_MEDIA})" >&2
+    fi
     ;;
 esac
 

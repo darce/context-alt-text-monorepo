@@ -14,6 +14,26 @@
 #
 # classify_describe_gate <adapter_profile> <total_media> <media_with_alt>
 #   -> RUN | SKIP | BLOCK
+#
+# Shared allowlist: one space-delimited string, exact-word predicate.
+# Callers (bootstrap-wp.sh) read the same source so BLOCK messages can
+# distinguish "untrusted adapter" from "trusted adapter, unmeasurable corpus".
+
+ACX_TRUSTED_DESCRIBE_PROFILES="florence_small gpu_qwen30b gpu_qwen30b_ensemble"
+
+# is_trusted_describe_profile <profile>
+#   exit 0 if <profile> is an exact allowlist member, else 1 (not echo).
+# WHY word-split + [ = ], not case *"$p"*: "florence" and "small" are
+# substrings of florence_small and must not count as trusted.
+is_trusted_describe_profile() {
+    local profile="$1"
+    local candidate
+    [ -n "$profile" ] || return 1
+    for candidate in $ACX_TRUSTED_DESCRIBE_PROFILES; do
+        [ "$candidate" = "$profile" ] && return 0
+    done
+    return 1
+}
 
 # classify_describe_gate <adapter_profile> <total_media> <media_with_alt>
 classify_describe_gate() {
@@ -21,10 +41,10 @@ classify_describe_gate() {
     local total="${2:-}"
     local with_alt="${3:-}"
 
-    case "$profile" in
-        florence_small|gpu_qwen30b|gpu_qwen30b_ensemble) ;;
-        *) echo BLOCK; return ;;
-    esac
+    if ! is_trusted_describe_profile "$profile"; then
+        echo BLOCK
+        return
+    fi
 
     case "$total" in
         *[!0-9]*|'') echo BLOCK; return ;;

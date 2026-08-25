@@ -117,6 +117,7 @@ describe('dashboard ux-map code parity (DUX-W2D14)', () => {
   const recentSrc = readUtf8('pages/dashboard/DashboardRecentActivitySection.tsx');
   const guidanceSrc = readUtf8('pages/dashboard/GuidanceCard.tsx');
   const syncSrc = readUtf8('pages/dashboard/DashboardSyncHealthSection.tsx');
+  const syncSummarySrc = readUtf8('pages/workbench/degradedModeBannerLogic.ts');
 
   const basePriorityInputs: DashboardPriorityInputs = {
     isSyncStatusLoading: false,
@@ -144,6 +145,18 @@ describe('dashboard ux-map code parity (DUX-W2D14)', () => {
   const errorSketch = extractSketch(md, '#### Error');
   const degradedSketch = extractSketch(md, '#### Degraded');
   const allSketches = [defaultSketch, firstTimeSketch, loadingSketch, errorSketch, degradedSketch];
+
+  /**
+   * The Sync Health section is prose + fences that describe the default branch's
+   * modifier axis. It is deliberately NOT part of allSketches: it documents a
+   * composition, not a named zone state. RV-16 is what makes its claims falsifiable.
+   */
+  const syncHealthSection = (() => {
+    const start = md.indexOf('#### Sync Health');
+    expect(start, 'dashboard.md missing the Sync Health composition section').toBeGreaterThan(-1);
+    const next = md.indexOf('\n### ', start);
+    return md.slice(start, next === -1 ? undefined : next);
+  })();
 
   it('RV-01: screen/zone/action names come from the rendered component strings', () => {
     const overview = h1Literal(dashboardSrc);
@@ -348,6 +361,86 @@ describe('dashboard ux-map code parity (DUX-W2D14)', () => {
     const maintenance = json.flows.find((flow) => flow.id === 'flow-dashboard-maintenance');
     expect(maintenance?.steps.map((step) => step.screen_id)).toEqual(
       expect.arrayContaining(['exit-workbench', 'exit-retention']),
+    );
+  });
+
+  it('RV-16: Sync Health composition prose is falsifiable against the component', () => {
+    const syncLines = syncSrc.split('\n');
+    const lineAt = (oneBased: number): string => syncLines[oneBased - 1] ?? '';
+
+    // (a) Recency copy is a locale calendar date, never relative time. The component
+    // formats with toLocaleDateString(); any "N minutes ago" in the map is invented.
+    expect(dashboardSrc).toMatch(/toLocaleDateString\(\)/);
+    expect(
+      syncHealthSection,
+      'Sync Health prose must not invent relative recency; the component renders toLocaleDateString()',
+    ).not.toMatch(/\b\d+\s+(?:seconds?|minutes?|hours?|days?)\s+ago\b/);
+
+    // (b) Every control drawn in the section is a real i18n literal of the component,
+    // and every action label the component ships is accounted for in the section.
+    const componentLabels = i18nLiterals(syncSrc);
+    // Only the ASCII fences count as "drawn" — prose carries canon citations like
+    // [A11Y-24] that are references, not controls.
+    const syncFences = [...syncHealthSection.matchAll(/```\n([\s\S]*?)```/g)].map((m) => m[1]);
+    expect(syncFences.length, 'Sync Health section must draw at least one composition').toBeGreaterThan(0);
+    const drawn = new Set(syncFences.flatMap((fence) => sketchControls(fence)));
+    expect(drawn.size, 'Sync Health section must draw its controls').toBeGreaterThan(0);
+    for (const control of drawn) {
+      expect(componentLabels, `sketch control "${control}" is not an i18n literal of the component`).toContain(
+        control,
+      );
+    }
+    const shippedActions = componentLabels.filter(
+      (label) => label === 'Reset mirror' || label.startsWith('Open '),
+    );
+    expect(shippedActions.length, 'expected the component to ship named actions').toBeGreaterThan(0);
+    for (const action of shippedActions) {
+      expect(
+        syncHealthSection,
+        `component ships "${action}" but the Sync Health section never names it`,
+      ).toContain(action);
+    }
+
+    // (c) Every ":NNN predicate" cite in the member table resolves at that exact line.
+    const cites = [...syncHealthSection.matchAll(/^ {4}\S+\s+:(\d+)\s+(\S+)/gm)];
+    expect(cites.length, 'member table must carry line cites').toBeGreaterThanOrEqual(6);
+    for (const [, rawLine, predicate] of cites) {
+      const lineNo = Number(rawLine);
+      expect(lineAt(lineNo), `cited line ${lineNo} is past the end of the component`).not.toBe('');
+      if (predicate.startsWith('(')) {
+        continue;
+      }
+      const identifier = /[A-Za-z_][A-Za-z0-9_]*/.exec(predicate)?.[0] ?? '';
+      expect(
+        lineAt(lineNo).replace(/\s+/g, ''),
+        `map cites :${lineNo} for "${predicate}" but that line does not mention ${identifier}`,
+      ).toContain(identifier);
+    }
+
+    // The three unconditional members are cited by the markers they actually render.
+    expect(lineAt(96)).toContain('acx-dashboard-sync-summary');
+    expect(lineAt(99)).toContain('acx-dashboard__stats-grid');
+    expect(lineAt(129)).toContain('acx-dashboard__actions');
+
+    // (d) A recency line and its CTA are gated separately — this is the claim the map
+    // previously got wrong. The CTA gate must NOT require a date.
+    expect(lineAt(123).replace(/\s+/g, '')).toContain('conflictCount>0&&lastConflictDate');
+    expect(lineAt(134).replace(/\s+/g, '')).toContain('conflictCount>0?');
+    expect(lineAt(134)).not.toContain('lastConflictDate');
+    expect(lineAt(140).replace(/\s+/g, '')).toContain('failedReplayCount>0?');
+    expect(lineAt(140)).not.toContain('lastFailureDate');
+
+    // (e) The SyncHealth cases the prose enumerates are exactly the selector's cases.
+    const selectorCases = [...syncSummarySrc.matchAll(/case '([a-z]+)':/g)].map((m) => m[1]);
+    expect(selectorCases.length, 'expected getDashboardSyncHealthSummary to switch on SyncHealth').toBeGreaterThan(0);
+    const claimed = /six `SyncHealth` cases \(([^)]*)\)/.exec(syncHealthSection);
+    expect(claimed, 'Sync Health prose must enumerate the summary cases it claims').toBeTruthy();
+    const claimedNames = (claimed?.[1] ?? '')
+      .split(',')
+      .map((part) => /[a-z]+/.exec(part.trim())?.[0] ?? '')
+      .filter(Boolean);
+    expect([...claimedNames].sort(), 'enumerated cases must match the selector exactly').toEqual(
+      [...new Set(selectorCases)].sort(),
     );
   });
 

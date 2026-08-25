@@ -293,6 +293,16 @@
       "screen_id": "dashboard-shell"
     },
     {
+      "id": "act-run-a-scan",
+      "verb": "Run a scan",
+      "target": "#/workbench?tab=scan",
+      "hierarchy": "primary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "dashboard-shell"
+    },
+    {
       "id": "act-retry-identity-stats",
       "verb": "Retry",
       "target": "dashboard-shell",

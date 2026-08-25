@@ -255,6 +255,19 @@ async def test_demo_provision_endpoint_returns_slug_without_key_material(
 
 
 @pytest.mark.asyncio
+async def test_demo_provision_zero_rpm_falls_back_to_default_and_429s(
+    db_session: AsyncSession, monkeypatch
+) -> None:
+    client = _build_client(db_session, monkeypatch, provision_rpm="0")
+    for _ in range(3):
+        assert client.post("/x/provision", json={"label": "ZeroRpm"}).status_code == 201
+    resp = client.post("/x/provision", json={"label": "ZeroRpm"})
+    assert resp.status_code == 429
+    assert resp.json()["detail"] == "rate limit exceeded"
+    assert resp.headers["X-RateLimit-Limit"] == "3"
+
+
+@pytest.mark.asyncio
 async def test_demo_provision_flood_returns_429(db_session: AsyncSession, monkeypatch) -> None:
     client = _build_client(db_session, monkeypatch, provision_rpm="2")
     for _ in range(2):

@@ -276,7 +276,7 @@ Per-IP sliding-window rate limit (`RECOGNITION_DEMO_RESOLVE_RPM`, default 30) ap
 
 Self-serve provisioning sits in front of GPU-backed recognition and is unpriced. Request `{label, seed?}` → `201` `{slug, demo_url, seed_bundle, expires_at, pre_scan}`. Raw API keys are never returned. Unknown `seed` → `400`.
 
-A second, tighter per-source (client IP, same spoof-resistant `_client_ip` as resolve) sliding window applies **in addition** to the `/x/*` limiter: `RECOGNITION_DEMO_PROVISION_RPM` (default 3). Breach → `429` `{"detail": "rate limit exceeded"}` with `Retry-After` and `X-RateLimit-*`.
+A second, tighter per-source (client IP, same spoof-resistant `_client_ip` as resolve) sliding window applies **in addition** to the `/x/*` limiter: `RECOGNITION_DEMO_PROVISION_RPM` (default 3). Values `<= 0` or non-integer fall back to the default 3 (fail-closed; the cap cannot be disabled by env). Breach → `429` `{"detail": "rate limit exceeded"}` with `Retry-After` and `X-RateLimit-*`.
 
 **Fail-closed startup guard**: in production (`RECOGNITION_RUNTIME_MODE=production`)
 `create_app()` refuses to start when a required secret is missing, empty, or set

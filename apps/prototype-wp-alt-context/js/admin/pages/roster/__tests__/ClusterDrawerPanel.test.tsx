@@ -3,7 +3,8 @@ import { fireEvent, render, screen, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { ClusterIdentity, ClusterSummary } from '../../../api/recognition';
-import { ClusterDrawerPanel } from '../ClusterDrawerPanel';
+import type { RosterEntry } from '../../../api/rosterApi';
+import { ClusterDrawerPanel, ROSTER_ASSIGN_STATUS } from '../ClusterDrawerPanel';
 
 vi.mock('@wordpress/i18n', () => ({
   __: (text: string) => text,
@@ -99,6 +100,21 @@ const collectVisibleAndAccessibleText = (root: HTMLElement): string => {
   return chunks.join('\n');
 };
 
+const rosterEntry = (overrides: Partial<RosterEntry> = {}): RosterEntry => ({
+  id: 1,
+  person_uuid: UUID_B,
+  name: 'Pat',
+  tags: [],
+  cluster_count: 1,
+  clusters: [],
+  queue_memberships: [],
+  updated_at: '2026-05-07T12:00:00Z',
+  source_version: 1,
+  projection_status: 'current',
+  projection_refreshed_at: '2026-05-07T12:00:00Z',
+  ...overrides,
+});
+
 describe('D-23 ClusterDrawerPanel assignment failure states', () => {
   it('renders empty assign actions when there are no named people', () => {
     render(<ClusterDrawerPanel {...baseProps} cluster={unlabeledCluster} rosterEntries={[]} />);
@@ -106,12 +122,42 @@ describe('D-23 ClusterDrawerPanel assignment failure states', () => {
     expect(screen.getByRole('link', { name: 'Open Review Queue' })).toHaveAttribute('href', '#/workbench?tab=scan');
   });
 
+  it('renders assign loading from roster query status', () => {
+    render(
+      <ClusterDrawerPanel
+        {...baseProps}
+        cluster={unlabeledCluster}
+        rosterEntries={[]}
+        rosterStatus={ROSTER_ASSIGN_STATUS.loading}
+      />,
+    );
+    expect(screen.getByText('Loading people to assign…')).toBeInTheDocument();
+    expect(screen.queryByText('No named people to assign yet.')).not.toBeInTheDocument();
+  });
+
+  it('renders assign error from roster query status', () => {
+    const onRetryRoster = vi.fn();
+    render(
+      <ClusterDrawerPanel
+        {...baseProps}
+        cluster={unlabeledCluster}
+        rosterEntries={[]}
+        rosterStatus={ROSTER_ASSIGN_STATUS.error}
+        onRetryRoster={onRetryRoster}
+      />,
+    );
+    expect(screen.getByRole('alert')).toHaveTextContent('Unable to load people to assign.');
+    expect(screen.queryByText('No named people to assign yet.')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    expect(onRetryRoster).toHaveBeenCalledTimes(1);
+  });
+
   it('renders assign error', () => {
     render(
       <ClusterDrawerPanel
         {...baseProps}
         cluster={unlabeledCluster}
-        rosterEntries={[{ id: 1, name: 'Pat', person_uuid: UUID_B } as never]}
+        rosterEntries={[rosterEntry()]}
         reassignErrorMessage="Could not assign this face group."
       />,
     );

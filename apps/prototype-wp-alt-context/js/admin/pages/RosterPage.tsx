@@ -9,7 +9,7 @@ import { useClusterMediaMap } from './roster/hooks/useClusterMediaMap';
 import { useClusterDragDrop } from './roster/hooks/useClusterDragDrop';
 import { useClusterActions } from './roster/hooks/useClusterActions';
 import { useTopUnlabeledTotal } from './roster/hooks/useTopUnlabeledTotal';
-import { ClusterDrawerPanel } from './roster/ClusterDrawerPanel';
+import { ClusterDrawerPanel, ROSTER_ASSIGN_STATUS } from './roster/ClusterDrawerPanel';
 import { RosterEntriesSection } from './roster/RosterEntriesSection';
 import { PersonWorkspacePanel } from './roster/PersonWorkspacePanel';
 import {
@@ -267,6 +267,16 @@ export const RosterPage = (): React.JSX.Element => {
         onOpenPersonWorkspace={handleOpenPersonWorkspace}
         isCommitting={actions.commitMutation.isPending}
         rosterEntries={rosterEntries}
+        rosterStatus={
+          entriesQuery.isError
+            ? ROSTER_ASSIGN_STATUS.error
+            : entriesQuery.isPending
+              ? ROSTER_ASSIGN_STATUS.loading
+              : ROSTER_ASSIGN_STATUS.ready
+        }
+        onRetryRoster={() => {
+          void entriesQuery.refetch();
+        }}
         onFaceDragStart={dragDrop.handleFaceDragStart}
         onFaceDragEnd={dragDrop.handleFaceDragEnd}
         onDropTargetChange={dragDrop.handleDropTargetChange}

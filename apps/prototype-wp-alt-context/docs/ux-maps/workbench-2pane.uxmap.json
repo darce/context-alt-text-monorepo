@@ -3,6 +3,8 @@
   "product": "prototype-wp-alt-context",
   "source_fixture": "apps/prototype-wp-alt-context/docs/ux-maps/workbench-2pane.uxmap.json",
   "goals": [
+    "Six ACX submenus are MECE and frequency-ordered (NAV-05/NAV-06): Overview orients; Review Queue is the one home to name a person from a photo (highest-frequency demo task); People manages named people only; Description Runs is the one home to see what the describer did; Data Retention is keep/delete/export policy (not description history); Settings configures the service (rare, last). WordPress parent slug stays Overview.",
+    "One primary action per screen (NAV-01), reachable from zero state (rg-003); other CTAs are secondary.",
     "Operator runs the full recognize -> name -> curate loop and edits alt-text/descriptions without leaving one surface (control-left, library-right)",
     "Read face-group structure at a glance via a UMAP scatter and act on the selection in the same viewport",
     "Decompose the 2-pane redesign from screens/zones/states/flows instead of inventing IA mid-plan"
@@ -163,7 +165,8 @@
             "loading",
             "empty",
             "error",
-            "first_time"
+            "first_time",
+            "degraded"
           ]
         },
         {
@@ -174,7 +177,9 @@
             "default",
             "loading",
             "empty",
-            "error"
+            "error",
+            "first_time",
+            "degraded"
           ]
         },
         {
@@ -227,6 +232,10 @@
           "role": "form",
           "states": [
             "default",
+            "loading",
+            "empty",
+            "error",
+            "first_time",
             "edge_input"
           ]
         },
@@ -238,7 +247,9 @@
             "default",
             "loading",
             "empty",
-            "error"
+            "error",
+            "first_time",
+            "edge_input"
           ]
         },
         {
@@ -249,7 +260,9 @@
             "default",
             "loading",
             "empty",
-            "error"
+            "error",
+            "first_time",
+            "edge_input"
           ]
         },
         {
@@ -259,9 +272,11 @@
           "evidence_linked": true,
           "states": [
             "default",
-            "empty",
             "loading",
-            "error"
+            "empty",
+            "error",
+            "first_time",
+            "edge_input"
           ]
         },
         {
@@ -303,7 +318,8 @@
           "states": [
             "default",
             "loading",
-            "empty"
+            "empty",
+            "error"
           ]
         },
         {
@@ -315,7 +331,8 @@
           "states": [
             "default",
             "loading",
-            "empty"
+            "empty",
+            "error"
           ]
         },
         {
@@ -323,7 +340,10 @@
           "label": "Resolve / defer actions",
           "role": "form",
           "states": [
-            "default"
+            "default",
+            "loading",
+            "empty",
+            "error"
           ]
         }
       ]
@@ -355,7 +375,8 @@
           "states": [
             "default",
             "loading",
-            "empty"
+            "empty",
+            "error"
           ]
         },
         {
@@ -363,7 +384,10 @@
           "label": "Retry / discard",
           "role": "form",
           "states": [
-            "default"
+            "default",
+            "loading",
+            "empty",
+            "error"
           ]
         }
       ]
@@ -412,7 +436,6 @@
       "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/SettingsPage.tsx",
       "states": [
         "default",
-        "loading",
         "error"
       ],
       "zones": [
@@ -422,6 +445,7 @@
           "role": "form",
           "states": [
             "default",
+            "loading",
             "error"
           ]
         }
@@ -443,7 +467,7 @@
       "id": "act-select-cluster",
       "verb": "Select face group (UMAP or list)",
       "target": "workbench-library",
-      "hierarchy": "primary",
+      "hierarchy": "secondary",
       "costly": false,
       "irreversible": false,
       "preview_required": false,
@@ -453,7 +477,7 @@
       "id": "act-name-cluster",
       "verb": "Save name (NameFaceControl)",
       "target": "identity-store",
-      "hierarchy": "primary",
+      "hierarchy": "secondary",
       "costly": true,
       "irreversible": false,
       "preview_required": true,
@@ -493,7 +517,7 @@
       "id": "act-edit-desc",
       "verb": "Edit long description inline",
       "target": "media-store",
-      "hierarchy": "primary",
+      "hierarchy": "secondary",
       "costly": false,
       "irreversible": false,
       "preview_required": false,
@@ -513,7 +537,7 @@
       "id": "act-bulk-describe",
       "verb": "Bulk describe selected media",
       "target": "job-pipeline",
-      "hierarchy": "primary",
+      "hierarchy": "secondary",
       "costly": true,
       "irreversible": false,
       "preview_required": true,
@@ -692,7 +716,7 @@
   "open_questions": [
     "OPEN: long-description has no data field yet (media items have only alt text). Ship the alt-text column first, long-description behind a new field? [FORM]",
     "OPEN: no 2D projection data exists (only bbox + 3D head pose). Ship the left pane as a face-group list first; scatter map is a fast-follow once a projection endpoint exists? [VIZ-01,VIZ-15]",
-    "RESOLVED: operator vocab is group / person / face \u2014 never cluster / identities / embeddings. Enforced by the banned-vocabulary sweep.",
+    "RESOLVED: operator vocab is group / person / face — never cluster / identities / embeddings. Enforced by the banned-vocabulary sweep.",
     "OPEN: Selecting a face group in the map/list: filter the right library pane, open the naming form, or both (coordinated views)? [VIZ-15]",
     "RESOLVED: one naming surface (NameFaceControl) with a single-gesture Save name; overlay candidates and confirm share that control.",
     "OPEN: Endpoint switch (InsightFace vs FIR/SFace) changes the recognition model server-side; do existing face groups invalidate and need a fresh grouping on switch? [HAI-02]",

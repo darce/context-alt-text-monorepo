@@ -5,9 +5,24 @@
 
 ## Goals
 
+- Six ACX submenus are MECE and frequency-ordered (NAV-05/NAV-06): Overview orients; Review Queue is the one home to name a person from a photo (highest-frequency demo task); People manages named people only; Description Runs is the one home to see what the describer did; Data Retention is keep/delete/export policy (not description history); Settings configures the service (rare, last). WordPress parent slug stays Overview.
+- One primary action per screen (NAV-01), reachable from zero state (rg-003); other CTAs are secondary.
 - Give the operator one landing surface for sync health, identity-recognition progress, library coverage, recent jobs, and data retention
 - Keep the first-use orientation before the dashboard grid until the first person is named
 - Make dashboard section order and per-section loading, empty, error, first-use, and degraded behavior reviewable as a text-first SSOT
+
+## Information architecture (D-2)
+
+One user goal per ACX submenu. Frequency-ordered after the required WordPress parent duplicate.
+
+| Order | menu_title | slug | User goal (exactly one home) |
+| --- | --- | --- | --- |
+| 1 | Overview | `alt-context-dashboard` | Orient: health and the next action. Not a work queue, not naming, not history. WP parent click. |
+| 2 | Review Queue | `alt-context-workbench` | Name a person from unnamed face groups; write alt text. Highest-frequency demo task. |
+| 3 | People | `alt-context-roster` | Manage named people. Unnamed faces are not filed here. |
+| 4 | Description Runs | `alt-context-description-history` | See what the describer did. |
+| 5 | Data Retention | `alt-context-retention` | Keep / delete / export policy. Not description-run history. |
+| 6 | Settings | `alt-context-settings` | Configure the recognition service. Rare; last. |
 
 ## Jobs
 
@@ -224,7 +239,7 @@ Identity Recognition actually has two distinct, independently-triggered retry co
 
 #### Degraded
 
-Degraded is an intact first_named dashboard with an attention-bearing sync state or partial history. Orientation is hidden because Assigned > 0. Sync Health can show warnings, mirror divergence, conflicts, failed sync events, topology work, or an offline backend summary; Recent Activity can identify browser-local fallback. When pending review is 0 and unassigned persons remain, GuidanceCard shows Review unassigned persons. Open Review Queue and Fix missing descriptions are not gated by sync or coverage state, so both remain present here too.
+Degraded is an intact first_named dashboard with an attention-bearing sync state or partial history. Orientation is hidden because Assigned > 0. Sync Health can show warnings, mirror divergence, conflicts, failed sync events, topology work, or an offline backend summary; Recent Activity can identify browser-local fallback. When pending review is 0 and unassigned persons remain, GuidanceCard shows Review unassigned persons and deep-links to Review Queue (the one naming home). Open Review Queue and Fix missing descriptions are secondary CTAs, not gated by sync or coverage state, so both remain present here too. The screen primary is first-time `Start your first scan`.
 
 `historySource === 'browser_local_fallback'` is a single value, not a flag that composes with an `empty`/`default` toggle: the banner renders from its own `if`, then falls through to whichever content branch `recentActivity.length` selects. So the browser-local-fallback banner can render together with either an empty list or a populated one — degraded and empty are not mutually exclusive. The sketch below draws that pairing: the banner with zero recent jobs.
 
@@ -388,7 +403,7 @@ url_params: `tab`, `panel`, `advanced`, `status`
 
 ### Data Retention (`exit-retention`)
 
-Purpose: Review policy, run exports, and inspect recent audit events
+Purpose: Set keep/delete policy and export or purge this site's derived data. Not the home for description-run history (NAV-05).
 
 | zone id | label | role | states |
 | --- | --- | --- | --- |
@@ -397,8 +412,8 @@ Purpose: Review policy, run exports, and inspect recent audit events
 ```
 +------------------------------------------------------------+
 | Data Retention  [exit]  #/retention                        |
-| Review policy, run exports, and inspect recent audit       |
-| events                                                     |
+| Set keep/delete policy and export or purge this site's     |
+| derived data. Not the home for description-run history.    |
 +------------------------------------------------------------+
 | ZONES                                                      |
 |   - Data Retention entry (nav)                             |
@@ -409,7 +424,7 @@ Purpose: Review policy, run exports, and inspect recent audit events
 
 ### Roster (person workspace) (`exit-roster`)
 
-Purpose: Review unassigned persons after dashboard identity guidance
+Purpose: Manage named people after dashboard identity guidance. Unnamed faces are named in Review Queue, not here (NAV-05).
 
 url_params: `personFilter`, `person`
 
@@ -420,8 +435,8 @@ url_params: `personFilter`, `person`
 ```
 +------------------------------------------------------------+
 | Roster (person workspace)  [exit]  #/roster                |
-| Review unassigned persons after dashboard identity         |
-| guidance                                                   |
+| Manage named people after dashboard identity guidance.     |
+| Unnamed faces are named in Review Queue, not here (NAV-05).|
 +------------------------------------------------------------+
 | ZONES                                                      |
 |   - Roster entry (nav)                                     |
@@ -436,8 +451,8 @@ url_params: `personFilter`, `person`
 | --- | --- | --- | --- |
 | `act-start-first-scan` | primary | Start your first scan | `#/workbench?tab=scan` |
 | `act-dismiss-orientation` | tertiary | Dismiss getting started | dashboard-shell |
-| `act-open-review-queue` | primary | Open Review Queue | `#/workbench?tab=scan` |
-| `act-fix-missing-descriptions` | primary | Fix missing descriptions | `#/workbench?status=missing` |
+| `act-open-review-queue` | secondary | Open Review Queue | `#/workbench?tab=scan` |
+| `act-fix-missing-descriptions` | secondary | Fix missing descriptions | `#/workbench?status=missing` |
 | `act-open-retention` | secondary | Open Data Retention | `#/retention` |
 | `act-open-conflicts` | secondary | Open Conflict Inbox | `#/workbench?tab=scan&panel=conflicts` |
 | `act-open-failed-sync` | secondary | Open Failed Sync Queue | `#/workbench?tab=scan&panel=dead-letter` |
@@ -445,8 +460,8 @@ url_params: `personFilter`, `person`
 | `act-view-results` | secondary | View Results | `#/workbench?advanced=open` |
 | `act-retry-identity-stats` | secondary | Retry | dashboard-shell |
 | `act-retry-identity-stats-unavailable` | secondary | Retry identity stats | dashboard-shell |
-| `act-go-to-review-queue` | primary | Go to Review Queue | `#/workbench?advanced=open` |
-| `act-review-unassigned` | secondary | Review unassigned persons | `#/roster?personFilter=unassigned` |
+| `act-go-to-review-queue` | secondary | Go to Review Queue | `#/workbench?advanced=open` |
+| `act-review-unassigned` | secondary | Review unassigned persons | `#/workbench?tab=scan` |
 | `act-go-to-scan-tab` | secondary | Go to Scan tab | `#/workbench?tab=scan` |
 
 ## Flows

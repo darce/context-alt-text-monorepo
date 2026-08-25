@@ -63,6 +63,15 @@ assert_eq "alt coverage with_alt > total (impossible)" FAIL "$(classify_alt_cove
 assert_eq "alt coverage 2/3 >= 60 (integer math keeps a true pass)" PASS "$(classify_alt_coverage 3 2 60)"
 assert_eq "alt coverage 1/3 < 60" FAIL "$(classify_alt_coverage 3 1 60)"
 
+# --- classify_alt_population <header_total> <body_total> ---
+assert_eq "alt population 100 == 100" PASS "$(classify_alt_population 100 100)"
+assert_eq "alt population 250 vs 100 (paged subset)" FAIL "$(classify_alt_population 250 100)"
+assert_eq "alt population 100 vs 250 (body exceeds header)" FAIL "$(classify_alt_population 100 250)"
+assert_eq "alt population empty header" FAIL "$(classify_alt_population '' 100)"
+assert_eq "alt population empty body" FAIL "$(classify_alt_population 100 '')"
+assert_eq "alt population non-numeric header" FAIL "$(classify_alt_population abc 100)"
+assert_eq "alt population 0 == 0 (nothing measured)" FAIL "$(classify_alt_population 0 0)"
+
 # --- classify_alt_provenance <sample_text> ---
 assert_eq "alt provenance empty sample (cannot prove)" FAIL "$(classify_alt_provenance '')"
 assert_eq "alt provenance live seeded draft on demo media id 5" FAIL "$(classify_alt_provenance 'antonio_banderas_10. A close-up of a small object on a neutral background.')"
@@ -76,6 +85,10 @@ assert_eq "alt provenance fixture: two people seated" FAIL "$(classify_alt_prove
 assert_eq "alt provenance fixture: building exterior" FAIL "$(classify_alt_provenance 'A building exterior seen from the street.')"
 assert_eq "alt provenance fixture: pet animal" FAIL "$(classify_alt_provenance 'A pet animal resting on a soft surface.')"
 
+# TEST-15 mutation proof (2026-08-25): adding a 9th _FIXTURE_POOL caption
+# not present in smoke-gate.sh makes this suite exit 1 with:
+# FAIL drift: pool caption classified FAIL (A drift sentinel caption that is not in the shell gate.): expected FAIL, got PASS
+# Reverted; suite green. The guard is falsifiable, not merely passing.
 # Drift guard: every caption in the Python _FIXTURE_POOL must FAIL provenance.
 # If a fixture is added to seeded_adapter.py and not hardcoded in smoke-gate.sh,
 # this goes red. Missing source file is a FAIL, not a skip.

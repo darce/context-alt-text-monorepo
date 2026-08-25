@@ -266,27 +266,35 @@ media_body=$(mktemp)
 curl -sS -D "$media_headers" -o "$media_body" --max-time 30 \
   "https://demo.altcontext.com/wp-json/wp/v2/media?per_page=100&_fields=id,alt_text" || true
 set +o pipefail
-total=$(grep -i '^x-wp-total:' "$media_headers" | tr -d '\r ' | sed 's/.*://;q')
+header_total=$(grep -i '^x-wp-total:' "$media_headers" | tr -d '\r ' | sed 's/.*://;q')
+body_total=$(grep -o '"alt_text": *"[^"]*"' "$media_body" | wc -l | tr -d ' ')
 with_alt=$(grep -o '"alt_text": *"[^"]*"' "$media_body" | grep -v '"alt_text": *""' | wc -l | tr -d ' ')
 sample=$(grep -o '"alt_text": *"[^"]*"' "$media_body" | grep -v '"alt_text": *""' | sed 's/"alt_text": *"//;s/"$//' | tr '\n' ' ')
 set -o pipefail
 rm -f "$media_headers" "$media_body"
 min="${DEMO_ALT_MIN_COVERAGE_PCT:-95}"
-verdict=$(classify_alt_coverage "$total" "$with_alt" "$min")
+pop=$(classify_alt_population "$header_total" "$body_total")
+if [ "$pop" = "FAIL" ]; then
+  pop_msg="demo alt coverage (measured ${body_total:-empty} of ${header_total:-empty} reported by x-wp-total; probe covers only one page, cannot certify coverage)"
+else
+  pop_msg="demo alt population (header=${header_total} body=${body_total})"
+fi
+emit_alt_gate "$pop" "$pop_msg"
+verdict=$(classify_alt_coverage "$body_total" "$with_alt" "$min")
 pct="?"
-case "$total" in *[!0-9]*|'') ;; *)
+case "$body_total" in *[!0-9]*|'') ;; *)
   case "$with_alt" in *[!0-9]*|'') ;; *)
-    if [ "$total" -gt 0 ]; then
-      pct=$((with_alt * 100 / total))
+    if [ "$body_total" -gt 0 ]; then
+      pct=$((with_alt * 100 / body_total))
     fi
     ;;
   esac
   ;;
 esac
 if [ "$pct" != "?" ]; then
-  cov_msg="demo alt coverage (${with_alt}/${total} = ${pct}%, need ${min}%)"
+  cov_msg="demo alt coverage (${with_alt}/${body_total} = ${pct}%, need ${min}%)"
 else
-  cov_msg="demo alt coverage (total=${total:-empty} with_alt=${with_alt:-empty}, need ${min}%)"
+  cov_msg="demo alt coverage (total=${body_total:-empty} with_alt=${with_alt:-empty}, need ${min}%)"
 fi
 emit_alt_gate "$verdict" "$cov_msg"
 run_prov=0

@@ -34,6 +34,16 @@ from recognition.interface_adapters.http.deps.session import get_session
 router = APIRouter(tags=["demo"], dependencies=[Depends(enforce_ip_rate_limit)])
 
 
+class DemoPreScanResponse(BaseModel):
+    """Pre-scan contract encoded in the seed bundle (AUTH-04)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    seeded_media_present: bool
+    scanned_faces: int
+    people_count: int
+
+
 class DemoResolveResponse(BaseModel):
     """Public-safe demo context. Every field from the demo_instances row."""
 
@@ -44,6 +54,7 @@ class DemoResolveResponse(BaseModel):
     branding_json: dict | None
     expires_at: datetime
     quota_remaining: int
+    pre_scan: DemoPreScanResponse
 
 
 class DemoSessionResponse(BaseModel):
@@ -146,7 +157,12 @@ async def resolve_demo_slug(
         branding_json=ctx.branding_json,
         expires_at=ctx.expires_at,
         quota_remaining=ctx.quota_remaining,
+        pre_scan=DemoPreScanResponse(
+            seeded_media_present=ctx.pre_scan.seeded_media_present,
+            scanned_faces=ctx.pre_scan.scanned_faces,
+            people_count=ctx.pre_scan.people_count,
+        ),
     )
 
 
-__all__ = ["DemoResolveResponse", "DemoSessionResponse", "router"]
+__all__ = ["DemoPreScanResponse", "DemoResolveResponse", "DemoSessionResponse", "router"]

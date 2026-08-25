@@ -256,6 +256,18 @@ Session is taken from `X-Demo-Session` or the `acx_demo_session` cookie (header 
 5. Expired token → `401` `{"detail": "session_expired"}`.
 6. Valid session bound to this slug → `200` `DemoResolveResponse`.
 
+`DemoResolveResponse.pre_scan` is the seed-bundle pre-scan contract (AUTH-04), not a live scan snapshot:
+
+```json
+{
+  "seeded_media_present": true,
+  "scanned_faces": 0,
+  "people_count": 0
+}
+```
+
+Each named seed bundle (`default`, `acme`) encodes that contract. `provision_demo` refuses to complete unless the catalog contract holds **and** the new tenant observes zero `media_identities` faces and zero labeled `identity_clusters`. Violation raises `PreScanStateViolation` (loud fail; not a silent reset script).
+
 `401`/`404`/`410` bodies must not contain `tenant_id`, `seed_bundle`, `branding_json`, or `quota_remaining`. Raw API keys and `api_key_ref` never appear on this surface.
 
 Per-IP sliding-window rate limit (`RECOGNITION_DEMO_RESOLVE_RPM`, default 30) applies to every `/x/*` route via `enforce_ip_rate_limit`. Breach is `429` `{"detail": "rate limit exceeded"}` with `Retry-After` and `X-RateLimit-*`.

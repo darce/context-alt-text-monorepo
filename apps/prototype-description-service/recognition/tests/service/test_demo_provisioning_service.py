@@ -19,7 +19,10 @@ from recognition.application.services.demo_provisioning_service import (
     DemoSessionExpiredError,
     DemoSessionInvalidError,
     DemoSessionRequiredError,
+    PreScanState,
+    PreScanStateViolation,
     UnknownSeedBundleError,
+    assert_pre_scan_state,
     expire_demo,
     generate_slug,
     mint_demo_session,
@@ -60,6 +63,9 @@ async def test_provision_demo_inserts_registry_row_with_hash_ref(db_session: Asy
     assert result.demo_url == f"https://demo.altcontext.com/x/{instance.slug}"
     assert instance.label == "Test Gallery"
     assert instance.seed_bundle == "default"
+    assert result.pre_scan.seeded_media_present is True
+    assert result.pre_scan.scanned_faces == 0
+    assert result.pre_scan.people_count == 0
     assert instance.recognition_quota == DEFAULT_RECOGNITION_QUOTA
     assert instance.recognition_used == 0
     assert instance.revoked is False
@@ -176,3 +182,40 @@ def test_resolve_demo_session_rejects_expired() -> None:
     minted = mint_demo_session("slugABC", ttl_seconds=60, now=now)
     with pytest.raises(DemoSessionExpiredError):
         resolve_demo_session(minted.token, slug="slugABC", now=now + timedelta(seconds=61))
+
+
+def test_pre_scan_invariant_rejects_empty_media() -> None:
+    with pytest.raises(PreScanStateViolation, match="seeded media"):
+        assert_pre_scan_state(PreScanState(seeded_media_ids=(), scanned_faces=0, people_count=0))
+
+
+def test_pre_scan_invariant_rejects_scanned_faces() -> None:
+    with pytest.raises(PreScanStateViolation, match="scanned_faces"):
+        assert_pre_scan_state(
+            PreScanState(seeded_media_ids=("seed-library-1",), scanned_faces=2, people_count=0)
+        )
+
+
+def test_pre_scan_invariant_rejects_nonzero_people_count() -> None:
+    with pytest.raises(PreScanStateViolation, match="people_count"):
+        assert_pre_scan_state(
+            PreScanState(seeded_media_ids=("seed-library-1",), scanned_faces=0, people_count=1)
+        )
+
+
+@pytest.mark.asyncio
+async def test_provision_demo_fails_loudly_on_catalog_pre_scan_violation(
+    db_session: AsyncSession, monkeypatch
+) -> None:
+    from recognition.application.services import demo_provisioning_service as svc
+
+    monkeypatch.setitem(
+        svc.SEED_BUNDLES,
+        "default",
+        svc.SeedBundleContract(
+            name="default",
+            pre_scan=PreScanState(seeded_media_ids=(), scanned_faces=0, people_count=0),
+        ),
+    )
+    with pytest.raises(PreScanStateViolation, match="seeded media"):
+        await provision_demo(db_session, label="Broken Catalog", seed="default")

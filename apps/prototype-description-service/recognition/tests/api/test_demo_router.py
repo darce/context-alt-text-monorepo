@@ -101,6 +101,11 @@ async def test_demo_router_session_happy_path_resolves_without_key_material(
     assert body["branding_json"] == {"logo": "acme"}
     assert body["quota_remaining"] == result.instance.recognition_quota
     assert "expires_at" in body
+    assert body["pre_scan"] == {
+        "seeded_media_present": True,
+        "scanned_faces": 0,
+        "people_count": 0,
+    }
 
     blob = resp.text
     assert result.raw_api_key not in blob

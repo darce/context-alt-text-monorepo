@@ -15,11 +15,11 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from db.models import DemoInstance, Tenant
+from db.models import DemoInstance, IdentityCluster, MediaIdentity, Tenant
 from recognition.application.services.api_key_admin_service import mint_api_key
 from recognition.config.security import RateLimitTier
 from recognition.infrastructure.repositories.api_key_repository import SqlAlchemyApiKeyRepository
@@ -34,8 +34,59 @@ DEFAULT_SESSION_TTL_SECONDS = 15 * 60
 DEMO_SESSION_COOKIE = "acx_demo_session"
 DEMO_SESSION_HEADER = "X-Demo-Session"
 
+@dataclass(frozen=True)
+class PreScanState:
+    """Pre-scan contract encoded in a seed bundle (AUTH-04).
+
+    A provisioned tenant must start with seeded media present, zero scanned
+    faces, and people_count == 0. The bundle is the source of truth — not an
+    out-of-band reset script.
+    """
+
+    seeded_media_ids: tuple[str, ...]
+    scanned_faces: int
+    people_count: int
+
+    @property
+    def seeded_media_present(self) -> bool:
+        return len(self.seeded_media_ids) > 0
+
+    def as_public_dict(self) -> dict[str, bool | int]:
+        return {
+            "seeded_media_present": self.seeded_media_present,
+            "scanned_faces": self.scanned_faces,
+            "people_count": self.people_count,
+        }
+
+
+@dataclass(frozen=True)
+class SeedBundleContract:
+    """Named seed bundle plus the pre-scan state it is required to produce."""
+
+    name: str
+    pre_scan: PreScanState
+
+
+SEED_BUNDLES: dict[str, SeedBundleContract] = {
+    "default": SeedBundleContract(
+        name="default",
+        pre_scan=PreScanState(
+            seeded_media_ids=("seed-library-1", "seed-library-2", "seed-library-3"),
+            scanned_faces=0,
+            people_count=0,
+        ),
+    ),
+    "acme": SeedBundleContract(
+        name="acme",
+        pre_scan=PreScanState(
+            seeded_media_ids=("acme-gallery-1", "acme-gallery-2"),
+            scanned_faces=0,
+            people_count=0,
+        ),
+    ),
+}
 # Named seed bundles only — real per-prospect image ingestion is out of scope.
-KNOWN_SEED_BUNDLES: frozenset[str] = frozenset({"default", "acme"})
+KNOWN_SEED_BUNDLES: frozenset[str] = frozenset(SEED_BUNDLES)
 
 _MAX_SLUG_ATTEMPTS = 8
 
@@ -48,6 +99,10 @@ class DemoInstanceNotFoundError(LookupError):
     """Raised when expire targets an unknown slug."""
 
 
+class PreScanStateViolation(RuntimeError):
+    """Seed-bundle pre-scan contract violated; provision must not proceed."""
+
+
 @dataclass(frozen=True)
 class ProvisionResult:
     """Outcome of a successful provision; raw_key is one-time only."""
@@ -55,6 +110,7 @@ class ProvisionResult:
     instance: DemoInstance
     raw_api_key: str
     demo_url: str
+    pre_scan: PreScanState
 
 
 def generate_slug(length: int = DEFAULT_SLUG_LENGTH) -> str:
@@ -72,10 +128,57 @@ def resolve_seed_bundle(seed: str) -> str:
     name = (seed or "").strip()
     if not name:
         raise UnknownSeedBundleError("seed bundle name is required")
-    if name not in KNOWN_SEED_BUNDLES:
-        known = ", ".join(sorted(KNOWN_SEED_BUNDLES))
+    if name not in SEED_BUNDLES:
+        known = ", ".join(sorted(SEED_BUNDLES))
         raise UnknownSeedBundleError(f"unknown seed bundle {name!r}; known: {known}")
     return name
+
+
+def load_seed_bundle(seed: str) -> SeedBundleContract:
+    name = resolve_seed_bundle(seed)
+    return SEED_BUNDLES[name]
+
+
+def assert_pre_scan_state(state: PreScanState) -> PreScanState:
+    """Fail loudly when a seed bundle or tenant is not in the pre-scan contract."""
+    if not state.seeded_media_present:
+        raise PreScanStateViolation("seeded media must be present in the seed bundle")
+    if state.scanned_faces != 0:
+        raise PreScanStateViolation(f"scanned_faces must be 0, got {state.scanned_faces}")
+    if state.people_count != 0:
+        raise PreScanStateViolation(f"people_count must be 0, got {state.people_count}")
+    return state
+
+
+async def observe_pre_scan_state(
+    session: AsyncSession,
+    *,
+    tenant_id: uuid.UUID,
+    bundle: SeedBundleContract,
+) -> PreScanState:
+    """Read tenant face/people counts and pair them with the bundle's media list."""
+    scanned_faces = int(
+        await session.scalar(
+            select(func.count()).select_from(MediaIdentity).where(MediaIdentity.tenant_id == tenant_id)
+        )
+        or 0
+    )
+    people_count = int(
+        await session.scalar(
+            select(func.count())
+            .select_from(IdentityCluster)
+            .where(
+                IdentityCluster.tenant_id == tenant_id,
+                IdentityCluster.label.is_not(None),
+            )
+        )
+        or 0
+    )
+    return PreScanState(
+        seeded_media_ids=bundle.pre_scan.seeded_media_ids,
+        scanned_faces=scanned_faces,
+        people_count=people_count,
+    )
 
 
 async def provision_demo(
@@ -93,7 +196,9 @@ async def provision_demo(
     commit; this helper flushes inserts. Retries on the vanishingly rare slug
     primary-key collision.
     """
-    seed_bundle = resolve_seed_bundle(seed)
+    bundle = load_seed_bundle(seed)
+    assert_pre_scan_state(bundle.pre_scan)
+    seed_bundle = bundle.name
     if recognition_quota < 1:
         raise ValueError("recognition_quota must be >= 1")
     if ttl_days < 1:
@@ -141,7 +246,14 @@ async def provision_demo(
             last_error = exc
             continue
 
-        return ProvisionResult(instance=instance, raw_api_key=raw, demo_url=demo_url_for(slug))
+        observed = await observe_pre_scan_state(session, tenant_id=tenant_id, bundle=bundle)
+        assert_pre_scan_state(observed)
+        return ProvisionResult(
+            instance=instance,
+            raw_api_key=raw,
+            demo_url=demo_url_for(slug),
+            pre_scan=observed,
+        )
 
     raise RuntimeError(f"failed to allocate unique demo slug after {_MAX_SLUG_ATTEMPTS} attempts") from last_error
 
@@ -175,6 +287,7 @@ class DemoResolveContext:
     branding_json: dict | None
     expires_at: datetime
     quota_remaining: int
+    pre_scan: PreScanState
 
 
 class DemoEndedError(LookupError):
@@ -319,12 +432,14 @@ async def resolve_demo(session: AsyncSession, *, slug: str) -> DemoResolveContex
         raise DemoEndedError("demo_ended")
 
     remaining = max(0, int(instance.recognition_quota) - int(instance.recognition_used))
+    bundle = load_seed_bundle(instance.seed_bundle)
     return DemoResolveContext(
         tenant_id=str(instance.tenant_id),
         seed_bundle=instance.seed_bundle,
         branding_json=instance.branding_json,
         expires_at=expires_at,
         quota_remaining=remaining,
+        pre_scan=bundle.pre_scan,
     )
 
 
@@ -479,6 +594,7 @@ __all__ = [
     "DEMO_SESSION_HEADER",
     "DEMO_URL_TEMPLATE",
     "KNOWN_SEED_BUNDLES",
+    "SEED_BUNDLES",
     "DemoEndedError",
     "DemoInstanceNotFoundError",
     "DemoQuotaExceededError",
@@ -490,13 +606,19 @@ __all__ = [
     "DemoSessionRequiredError",
     "MAX_DEMO_QUOTA_UNITS",
     "DemoResolveContext",
+    "PreScanState",
+    "PreScanStateViolation",
     "ProvisionResult",
+    "SeedBundleContract",
     "SweepResult",
     "UnknownSeedBundleError",
+    "assert_pre_scan_state",
     "demo_url_for",
     "expire_demo",
     "generate_slug",
+    "load_seed_bundle",
     "mint_demo_session",
+    "observe_pre_scan_state",
     "provision_demo",
     "reset_demo_sessions_for_tests",
     "resolve_demo",

@@ -182,14 +182,17 @@ describe('RetentionPage', () => {
     expect(document.querySelector('.acx-retention__note--danger')).toBeTruthy();
   });
 
-  it('renders policy state and audit history', () => {
+  it('renders policy state and links to description-run history instead of a second audit home', () => {
     render(<RetentionPage />);
 
     expect(screen.getByText('Data Retention')).toBeInTheDocument();
     expect(screen.getByRole('radio', { name: /Dispose after confirmation/ })).toBeChecked();
-    expect(screen.getByText('Showing the five most recent audit events.')).toBeInTheDocument();
-    expect(screen.getByText('policy_updated')).toBeInTheDocument();
-    expect(screen.getByText('retention_mode: dispose_after_ack · previous: retain_all')).toBeInTheDocument();
+    expect(screen.queryByText('Showing the five most recent audit events.')).not.toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Full audit log' })).not.toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'See description run history' })).toHaveAttribute(
+      'href',
+      '#/description-history',
+    );
   });
 
   it('updates the retention policy', async () => {
@@ -406,53 +409,10 @@ describe('RetentionPage', () => {
     expect(toastSuccess).toHaveBeenCalledWith('Import completed.');
   });
 
-  it('full audit log shows events returned by useAuditEvents', () => {
-    mockedUseAuditEvents.mockReturnValue(
-      createMockQuery({
-        data: {
-          items: [
-            {
-              id: 'evt-audit-1',
-              event_type: 'import_completed',
-              actor: 'api_key:test',
-              scope: 'tenant',
-              payload: { schema_version: 2 },
-              result_status: 'success',
-              created_at: '2026-03-23T10:00:00Z',
-            },
-          ],
-          total: 1,
-          limit: 20,
-          offset: 0,
-        },
-      }),
-    );
-
+  it('does not mount a full audit log on Data Retention', () => {
     render(<RetentionPage />);
-
-    const auditLogSection = screen.getByRole('heading', { name: 'Full audit log' }).closest('section');
-    expect(auditLogSection).toBeInTheDocument();
-    expect(auditLogSection).toHaveTextContent('import_completed');
-    expect(auditLogSection).toHaveTextContent('Actor: api_key:test · Result: success');
-  });
-
-  it('audit log shows Next button and advances page when total exceeds page size', () => {
-    mockedUseAuditEvents.mockReturnValue(
-      createMockQuery({
-        data: { items: [], total: 25, limit: 20, offset: 0 },
-      }),
-    );
-
-    render(<RetentionPage />);
-
-    const nextButton = screen.getByRole('button', { name: 'Next' });
-    expect(nextButton).not.toBeDisabled();
-
-    act(() => {
-      fireEvent.click(nextButton);
-    });
-
-    expect(mockedUseAuditEvents).toHaveBeenLastCalledWith({ limit: 20, offset: 20 });
+    expect(screen.queryByRole('heading', { name: 'Full audit log' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Next' })).not.toBeInTheDocument();
   });
 
   it('applies GDPR preset when Apply GDPR preset button is clicked', async () => {

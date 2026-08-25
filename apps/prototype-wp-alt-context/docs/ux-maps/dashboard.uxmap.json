@@ -1,0 +1,419 @@
+{
+  "map_ref": "dashboard",
+  "product": "prototype-wp-alt-context",
+  "source_fixture": "apps/prototype-wp-alt-context/js/admin/pages/DashboardPage.tsx",
+  "goals": [
+    "Give the operator one landing surface for sync health, identity-recognition progress, library coverage, recent jobs, and data retention",
+    "Keep the first-use orientation before the dashboard grid until the first person is named",
+    "Make dashboard section order and per-section loading, empty, error, first-use, and degraded behavior reviewable as a text-first SSOT"
+  ],
+  "jobs": [
+    {
+      "id": "job-start-recognition",
+      "label": "Start identity recognition and move from scan to review"
+    },
+    {
+      "id": "job-triage-dashboard",
+      "label": "Triage dashboard health and choose the next operator action"
+    },
+    {
+      "id": "job-maintain-library",
+      "label": "Improve library coverage and review data retention"
+    }
+  ],
+  "screens": [
+    {
+      "id": "dashboard-shell",
+      "kind": "screen",
+      "title": "Overview",
+      "purpose": "Landing screen with hero, conditional orientation surface, and a priority-ordered grid of Sync Health, Identity Recognition, Library Coverage, Recent Activity, and Data Retention sections.",
+      "route": "#/dashboard",
+      "wp_page": "alt-context-dashboard",
+      "job_entry": true,
+      "deep_link": true,
+      "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/DashboardPage.tsx",
+      "primary_action_id": "act-start-first-scan",
+      "states": [
+        "default",
+        "loading",
+        "error",
+        "first_time",
+        "degraded"
+      ],
+      "zones": [
+        {
+          "id": "z-dashboard-hero",
+          "label": "Dashboard hero (Alt Context / Overview / contextual subtitle)",
+          "role": "content",
+          "states": [
+            "default"
+          ]
+        },
+        {
+          "id": "z-orientation",
+          "label": "Orientation surface (Getting Started with Identity Recognition; before grid unless first_named)",
+          "role": "content",
+          "states": [
+            "default",
+            "first_time"
+          ]
+        },
+        {
+          "id": "z-sync-health",
+          "label": "Sync Health section (summary, pending changes, conflicts, failed sync events, topology work)",
+          "role": "status",
+          "states": [
+            "default",
+            "loading",
+            "error",
+            "offline",
+            "degraded"
+          ]
+        },
+        {
+          "id": "z-identity-recognition",
+          "label": "Identity Recognition section (people, assigned, pending review, media with faces, guidance)",
+          "role": "content",
+          "states": [
+            "default",
+            "loading",
+            "error",
+            "first_time",
+            "caught_up"
+          ]
+        },
+        {
+          "id": "z-library-coverage",
+          "label": "Library Coverage section (total media, missing alt text, coverage, fix CTA)",
+          "role": "content",
+          "states": [
+            "default",
+            "loading"
+          ]
+        },
+        {
+          "id": "z-recent-activity",
+          "label": "Recent Activity section (recognition jobs, provenance, status, duration, results link)",
+          "role": "queue",
+          "states": [
+            "default",
+            "empty",
+            "degraded",
+            "error"
+          ],
+          "notes": "'degraded' (the browser_local_fallback banner) is an independent overlay, not exclusive with 'default'/'empty': historySource selects the banner and the content branch separately, so degraded can render together with either default or empty. 'error' is mutually exclusive with 'degraded' — both derive from the same single-valued historySource ('unavailable' vs 'browser_local_fallback')."
+        },
+        {
+          "id": "z-retention-posture",
+          "label": "Data Retention section (mode, last export, last purge, Open Data Retention link)",
+          "role": "status",
+          "states": [
+            "default",
+            "error"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "exit-workbench",
+      "kind": "exit",
+      "title": "Workbench",
+      "purpose": "Scan, review queue, conflict inbox, and failed-sync overlays after a dashboard CTA",
+      "route": "#/workbench",
+      "wp_page": "alt-context-workbench",
+      "job_entry": false,
+      "deep_link": true,
+      "url_params": [
+        "tab",
+        "panel",
+        "advanced",
+        "status"
+      ],
+      "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/WorkbenchPage.tsx",
+      "states": [
+        "default",
+        "loading",
+        "error"
+      ],
+      "zones": [
+        {
+          "id": "z-wb-entry",
+          "label": "Workbench entry",
+          "role": "nav",
+          "states": [
+            "default"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "exit-retention",
+      "kind": "exit",
+      "title": "Data Retention",
+      "purpose": "Review policy, run exports, and inspect recent audit events",
+      "route": "#/retention",
+      "wp_page": "alt-context-retention",
+      "job_entry": false,
+      "deep_link": true,
+      "url_params": [],
+      "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/RetentionPage.tsx",
+      "states": [
+        "default",
+        "loading",
+        "error"
+      ],
+      "zones": [
+        {
+          "id": "z-retention-entry",
+          "label": "Data Retention entry",
+          "role": "nav",
+          "states": [
+            "default"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "exit-roster",
+      "kind": "exit",
+      "title": "Roster (person workspace)",
+      "purpose": "Review unassigned persons after dashboard identity guidance",
+      "route": "#/roster",
+      "wp_page": "alt-context-roster",
+      "job_entry": false,
+      "deep_link": true,
+      "url_params": [
+        "personFilter",
+        "person"
+      ],
+      "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/RosterPage.tsx",
+      "states": [
+        "default",
+        "loading",
+        "empty",
+        "error"
+      ],
+      "zones": [
+        {
+          "id": "z-roster-entry",
+          "label": "Roster entry",
+          "role": "nav",
+          "states": [
+            "default"
+          ]
+        }
+      ]
+    }
+  ],
+  "actions": [
+    {
+      "id": "act-start-first-scan",
+      "verb": "Start your first scan",
+      "target": "#/workbench?tab=scan",
+      "hierarchy": "primary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "dashboard-shell"
+    },
+    {
+      "id": "act-dismiss-orientation",
+      "verb": "Dismiss getting started",
+      "target": "dashboard-shell",
+      "hierarchy": "tertiary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "dashboard-shell"
+    },
+    {
+      "id": "act-open-review-queue",
+      "verb": "Open Review Queue",
+      "target": "#/workbench?tab=scan",
+      "hierarchy": "primary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "dashboard-shell"
+    },
+    {
+      "id": "act-fix-missing-descriptions",
+      "verb": "Fix missing descriptions",
+      "target": "#/workbench?status=missing",
+      "hierarchy": "primary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "dashboard-shell"
+    },
+    {
+      "id": "act-open-retention",
+      "verb": "Open Data Retention",
+      "target": "#/retention",
+      "hierarchy": "secondary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "dashboard-shell"
+    },
+    {
+      "id": "act-open-conflicts",
+      "verb": "Open Conflict Inbox",
+      "target": "#/workbench?tab=scan&panel=conflicts",
+      "hierarchy": "secondary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "dashboard-shell"
+    },
+    {
+      "id": "act-open-failed-sync",
+      "verb": "Open Failed Sync Queue",
+      "target": "#/workbench?tab=scan&panel=dead-letter",
+      "hierarchy": "secondary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "dashboard-shell"
+    },
+    {
+      "id": "act-reset-mirror",
+      "verb": "Reset mirror",
+      "target": "dashboard sync health",
+      "hierarchy": "destructive",
+      "costly": true,
+      "irreversible": false,
+      "preview_required": true,
+      "screen_id": "dashboard-shell"
+    },
+    {
+      "id": "act-view-results",
+      "verb": "View Results",
+      "target": "#/workbench?advanced=open",
+      "hierarchy": "secondary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "dashboard-shell"
+    },
+    {
+      "id": "act-retry-identity-stats",
+      "verb": "Retry",
+      "target": "dashboard-shell",
+      "hierarchy": "secondary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "dashboard-shell"
+    },
+    {
+      "id": "act-retry-identity-stats-unavailable",
+      "verb": "Retry identity stats",
+      "target": "dashboard-shell",
+      "hierarchy": "secondary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "dashboard-shell"
+    },
+    {
+      "id": "act-go-to-review-queue",
+      "verb": "Go to Review Queue",
+      "target": "#/workbench?advanced=open",
+      "hierarchy": "primary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "dashboard-shell"
+    },
+    {
+      "id": "act-review-unassigned",
+      "verb": "Review unassigned persons",
+      "target": "#/roster?personFilter=unassigned",
+      "hierarchy": "secondary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "dashboard-shell"
+    },
+    {
+      "id": "act-go-to-scan-tab",
+      "verb": "Go to Scan tab",
+      "target": "#/workbench?tab=scan",
+      "hierarchy": "secondary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "dashboard-shell"
+    }
+  ],
+  "flows": [
+    {
+      "id": "flow-first-recognition",
+      "job": "job-start-recognition",
+      "label": "First-time orientation → start first scan → review queue",
+      "steps": [
+        {
+          "screen_id": "dashboard-shell",
+          "branch_label": "fresh tenant; orientation before grid"
+        },
+        {
+          "screen_id": "exit-workbench",
+          "branch_label": "Start your first scan"
+        },
+        {
+          "screen_id": "dashboard-shell",
+          "branch_label": "scan/job appears in Recent Activity"
+        }
+      ]
+    },
+    {
+      "id": "flow-dashboard-review",
+      "job": "job-triage-dashboard",
+      "label": "Read health and identity counts → open review queue or resolve sync debt",
+      "steps": [
+        {
+          "screen_id": "dashboard-shell",
+          "branch_label": "populated dashboard"
+        },
+        {
+          "screen_id": "dashboard-shell",
+          "branch_label": "Identity Recognition promoted when review work exists and sync has no attention"
+        },
+        {
+          "screen_id": "exit-workbench",
+          "branch_label": "Open Review Queue / Conflict Inbox / Failed Sync Queue"
+        }
+      ]
+    },
+    {
+      "id": "flow-dashboard-maintenance",
+      "job": "job-maintain-library",
+      "label": "Check coverage → fix missing descriptions → inspect data retention",
+      "steps": [
+        {
+          "screen_id": "dashboard-shell",
+          "branch_label": "Library Coverage"
+        },
+        {
+          "screen_id": "exit-workbench",
+          "branch_label": "Fix missing descriptions"
+        },
+        {
+          "screen_id": "exit-retention",
+          "branch_label": "Open Data Retention"
+        }
+      ]
+    }
+  ],
+  "open_questions": [
+    "Should an unavailable retention policy remain absent, or should the dashboard expose a stable empty-state panel?",
+    "Should Recent Activity expose an explicit loading row while durable history is being fetched?",
+    "z-retention-posture renders nothing while retention status is loading and nothing when available:false — should either of those become a distinguishable zone state instead of an absence?"
+  ],
+  "not_doing": [
+    "Changing DashboardPage, the priority model, OrientationCard, or any product behavior",
+    "Defining pixel, token, responsive, or visual styling details",
+    "Replacing the independent per-section data loading branches with a page-level suspense boundary"
+  ]
+}

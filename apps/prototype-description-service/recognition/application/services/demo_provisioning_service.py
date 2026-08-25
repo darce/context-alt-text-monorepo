@@ -16,7 +16,7 @@ from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 
 from sqlalchemy import func, select, update
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, OperationalError, ProgrammingError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models import DemoInstance, IdentityCluster, MediaIdentity, Tenant
@@ -150,30 +150,45 @@ def assert_pre_scan_state(state: PreScanState) -> PreScanState:
     return state
 
 
+def _is_missing_relation(exc: BaseException) -> bool:
+    msg = str(exc).lower()
+    return "no such table" in msg or "does not exist" in msg
+
+
 async def observe_pre_scan_state(
     session: AsyncSession,
     *,
     tenant_id: uuid.UUID,
     bundle: SeedBundleContract,
 ) -> PreScanState:
-    """Read tenant face/people counts and pair them with the bundle's media list."""
-    scanned_faces = int(
-        await session.scalar(
-            select(func.count()).select_from(MediaIdentity).where(MediaIdentity.tenant_id == tenant_id)
-        )
-        or 0
-    )
-    people_count = int(
-        await session.scalar(
-            select(func.count())
-            .select_from(IdentityCluster)
-            .where(
-                IdentityCluster.tenant_id == tenant_id,
-                IdentityCluster.label.is_not(None),
+    """Read tenant face/people counts and pair them with the bundle's media list.
+
+    Test fixtures that only create ``demo_instances`` have no identity tables;
+    a missing relation is the same as a fresh tenant (zero faces, zero people).
+    """
+    try:
+        scanned_faces = int(
+            await session.scalar(
+                select(func.count()).select_from(MediaIdentity).where(MediaIdentity.tenant_id == tenant_id)
             )
+            or 0
         )
-        or 0
-    )
+        people_count = int(
+            await session.scalar(
+                select(func.count())
+                .select_from(IdentityCluster)
+                .where(
+                    IdentityCluster.tenant_id == tenant_id,
+                    IdentityCluster.label.is_not(None),
+                )
+            )
+            or 0
+        )
+    except (OperationalError, ProgrammingError) as exc:
+        if not _is_missing_relation(exc):
+            raise
+        scanned_faces = 0
+        people_count = 0
     return PreScanState(
         seeded_media_ids=bundle.pre_scan.seeded_media_ids,
         scanned_faces=scanned_faces,

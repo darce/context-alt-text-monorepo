@@ -162,7 +162,7 @@ def _http_from_lookup(exc: Exception) -> HTTPException:
             status_code=status.HTTP_404_NOT_FOUND,
             detail="not found",
         )
-    if isinstance(exc, DemoEndedError):
+    if isinstance(exc, (DemoEndedError, UnknownSeedBundleError)):
         return HTTPException(
             status_code=status.HTTP_410_GONE,
             detail={
@@ -225,7 +225,7 @@ async def mint_demo_slug_session(
     """Validate ``slug`` then mint a session. Does not return tenant data."""
     try:
         await resolve_demo(session, slug=slug)
-    except (DemoInstanceNotFoundError, DemoEndedError) as exc:
+    except (DemoInstanceNotFoundError, DemoEndedError, UnknownSeedBundleError) as exc:
         raise _http_from_lookup(exc) from exc
 
     minted = mint_demo_session(slug)
@@ -254,7 +254,7 @@ async def resolve_demo_slug(
     """Resolve ``slug`` to demo context. Requires a session from POST /session."""
     try:
         ctx = await resolve_demo(session, slug=slug)
-    except (DemoInstanceNotFoundError, DemoEndedError) as exc:
+    except (DemoInstanceNotFoundError, DemoEndedError, UnknownSeedBundleError) as exc:
         raise _http_from_lookup(exc) from exc
 
     try:

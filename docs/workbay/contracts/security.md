@@ -243,7 +243,8 @@ Public demo URLs are `https://demo.altcontext.com/x/{slug}`. Slug entropy is **n
 
 1. Unknown slug → `404` `{"detail": "not found"}` (uniform; no existence oracle among unknowns).
 2. Expired or revoked instance → `410` `{"detail": {"code": "demo_ended", "message": "this demo has ended"}}`.
-3. Live slug → `201` with `{session_token, expires_at}` and `Set-Cookie: acx_demo_session=<token>; HttpOnly; Secure; SameSite=Lax; Path=/x`. TTL is `DEFAULT_SESSION_TTL_SECONDS` (15 minutes). Token is high-entropy (`secrets.token_urlsafe(32)`); the store keeps only `sha256(token)`. The body never includes tenant data or API key material.
+3. Instance whose `seed_bundle` is unknown to the catalog → `410` `demo_ended` (no tenant data; same body as ended). `UnknownSeedBundleError` is never a 500.
+4. Live slug → `201` with `{session_token, expires_at}` and `Set-Cookie: acx_demo_session=<token>; HttpOnly; Secure; SameSite=Lax; Path=/x`. TTL is `DEFAULT_SESSION_TTL_SECONDS` (15 minutes). Token is high-entropy (`secrets.token_urlsafe(32)`); the store keeps only `sha256(token)`. The body never includes tenant data or API key material.
 
 ### Authenticated resolve — `GET /x/{slug}`
 
@@ -251,10 +252,11 @@ Session is taken from `X-Demo-Session` or the `acx_demo_session` cookie (header 
 
 1. Unknown slug → `404` (no tenant data).
 2. Expired/revoked instance → `410` `demo_ended` (no tenant data).
-3. Missing session → `401` `{"detail": "session_required"}`.
-4. Unknown or slug-mismatched token → `401` `{"detail": "session_invalid"}`.
-5. Expired token → `401` `{"detail": "session_expired"}`.
-6. Valid session bound to this slug → `200` `DemoResolveResponse`.
+3. Instance whose `seed_bundle` is unknown to the catalog → `410` `demo_ended` (no tenant data).
+4. Missing session → `401` `{"detail": "session_required"}`.
+5. Unknown or slug-mismatched token → `401` `{"detail": "session_invalid"}`.
+6. Expired token → `401` `{"detail": "session_expired"}`.
+7. Valid session bound to this slug → `200` `DemoResolveResponse`.
 
 `DemoResolveResponse.pre_scan` is the seed-bundle pre-scan contract (AUTH-04), not a live scan snapshot:
 

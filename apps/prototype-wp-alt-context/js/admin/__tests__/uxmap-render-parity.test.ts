@@ -319,10 +319,13 @@ interface UxMapEnumSnapshot {
 interface UxMapZone {
   id: string;
   label: string;
+  states?: string[];
 }
 interface UxMapScreen {
   id: string;
   title: string;
+  code_ref?: string | null;
+  url_params?: string[];
   zones?: UxMapZone[];
 }
 interface UxMapDoc {
@@ -354,6 +357,24 @@ describe('ux-map SSOT schema conformance (owned maps)', () => {
     validateModel({ constructor: 'mutant' }, { name: 'Mutant', fields: {} }, '', issues);
 
     expect(formatIssues(issues)).toEqual(['constructor | extra_forbidden | mutant']);
+  });
+
+  it('resolves every owned map screen code_ref to a real file', () => {
+    const repoRoot = path.resolve(uxMapsDir, '../../../..');
+    const missing: string[] = [];
+    for (const mapRef of OWNED_MAPS) {
+      const { json } = loadOwnedMap(mapRef);
+      for (const screen of json.screens) {
+        if (!screen.code_ref) {
+          continue;
+        }
+        const abs = path.join(repoRoot, screen.code_ref);
+        if (!existsSync(abs)) {
+          missing.push(`${mapRef} ${screen.id} -> ${screen.code_ref}`);
+        }
+      }
+    }
+    expect(missing, missing.join('; ')).toEqual([]);
   });
 
   it('keeps every owned map json and sibling md on disk (fail-closed)', () => {
@@ -440,5 +461,44 @@ describe('ux-map render parity (owned maps)', () => {
         ).toBe(false);
       }
     }
+  });
+
+  it('md url_params lines match json per screen, and retired pane query is gone', () => {
+    for (const mapRef of OWNED_MAPS) {
+      const { json, md, mdName } = loadOwnedMap(mapRef);
+      const usesPanes = json.screens.some((screen) => (screen.url_params ?? []).includes('panes'));
+
+      for (const screen of json.screens) {
+        const params = screen.url_params ?? [];
+        if (params.length === 0) {
+          continue;
+        }
+        const expected = `url_params: ${params.map((param) => `\`${param}\``).join(', ')}`;
+        expect(md.includes(expected), `${mapRef} ${screen.id} missing "${expected}" from ${mdName}`).toBe(
+          true,
+        );
+      }
+
+      if (usesPanes) {
+        expect(md, `${mdName} still documents retired url param pane`).not.toMatch(/url_params:.*`pane`/);
+        expect(md, `${mdName} ASCII still uses ?pane=`).not.toMatch(/#\/workbench\?pane=/);
+      }
+    }
+  });
+
+  it('workbench-control z-name-curate ASCII states match json (no retired empty)', () => {
+    const { json, md, mdName } = loadOwnedMap('workbench-2pane');
+    const zone = json.screens
+      .find((screen) => screen.id === 'workbench-control')
+      ?.zones?.find((item) => item.id === 'z-name-curate');
+    expect(zone?.states, `${mdName} z-name-curate missing json states`).toEqual([
+      'default',
+      'loading',
+      'error',
+      'edge_input',
+    ]);
+    const ascii = md.match(/z-name-curate states=\[[^\]]+\]/s);
+    expect(ascii, `${mdName} missing z-name-curate ASCII states`).not.toBeNull();
+    expect(ascii?.[0]).toBe('z-name-curate states=[default,loading,error,edge_input]');
   });
 });

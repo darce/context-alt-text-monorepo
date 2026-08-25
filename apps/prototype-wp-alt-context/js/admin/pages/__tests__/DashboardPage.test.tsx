@@ -567,6 +567,35 @@ describe('DashboardPage', () => {
     );
   });
 
+  it('D-22: populated Overview styles competing CTAs as secondary (one primary per screen)', () => {
+    mockedUseIdentityStats.mockReturnValue(
+      createMockQuery<DashboardStats>({
+        data: {
+          people_count: 4,
+          assigned_clusters_count: 4,
+          pending_clusters_count: 0,
+          media_with_faces_count: 10,
+          unassigned_persons_count: 0,
+        },
+        refetch: vi.fn(),
+      }),
+    );
+
+    render(<DashboardPage />);
+
+    const fix = screen.getByRole('link', { name: 'Fix missing descriptions' });
+    expect(fix).toHaveClass('acx-button--secondary');
+    expect(fix).not.toHaveClass('acx-button--primary');
+
+    const syncSection = screen.getByRole('heading', { name: 'Sync Health' }).closest('section');
+    expect(syncSection).not.toBeNull();
+    const openQueue = within(syncSection as HTMLElement).getByRole('link', { name: /Open Review Queue/ });
+    expect(openQueue).toHaveClass('acx-dashboard__action-card--secondary');
+    expect(openQueue).not.toHaveClass('acx-dashboard__action-card--primary');
+
+    expect(screen.queryByRole('link', { name: 'Start your first scan' })).not.toBeInTheDocument();
+  });
+
   it('does not render the DescribePanel hero on the dashboard', () => {
     mockedUseIdentityStats.mockReturnValue(
       createMockQuery<DashboardStats>({

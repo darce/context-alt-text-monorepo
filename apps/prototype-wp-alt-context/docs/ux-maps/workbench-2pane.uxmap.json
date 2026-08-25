@@ -3,8 +3,10 @@
   "product": "prototype-wp-alt-context",
   "source_fixture": "apps/prototype-wp-alt-context/docs/ux-maps/workbench-2pane.uxmap.json",
   "goals": [
+    "Six ACX submenus are MECE and frequency-ordered (NAV-05/NAV-06): Overview orients; Review Queue is the one home to name a person from a photo (highest-frequency demo task); People manages named people only; Description Runs is the one home to see what the describer did; Data Retention is keep/delete/export policy (not description history); Settings configures the service (rare, last). WordPress parent slug stays Overview.",
+    "One primary action per screen (NAV-01), reachable from zero state (rg-003); other CTAs are secondary.",
     "Operator runs the full recognize -> name -> curate loop and edits alt-text/descriptions without leaving one surface (control-left, library-right)",
-    "Read face-group structure at a glance via a UMAP scatter and act on the selection in the same viewport",
+    "Read face-group status at a glance in the control pane and act on the selection in the same viewport",
     "Decompose the 2-pane redesign from screens/zones/states/flows instead of inventing IA mid-plan"
   ],
   "jobs": [
@@ -36,7 +38,7 @@
       "job_entry": true,
       "deep_link": true,
       "url_params": [
-        "pane",
+        "panes",
         "cluster",
         "media",
         "panel",
@@ -47,7 +49,7 @@
         "perPage"
       ],
       "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/WorkbenchPage.tsx",
-      "primary_action_id": "act-run-recognition",
+      "primary_action_id": "act-scan-media-queue",
       "states": [
         "default",
         "loading",
@@ -112,16 +114,16 @@
       "id": "workbench-control",
       "kind": "screen",
       "title": "Control surface (left pane)",
-      "purpose": "Recognize, name, and curate: recognition endpoint + health, UMAP face-group scatter, face-group list, run/refresh controls, and the name/curate forced-choice form.",
-      "route": "#/workbench?pane=control",
+      "purpose": "Recognize, name, and curate: recognition endpoint + health, face-group status region, face-group list, run/refresh controls, and the name/curate forced-choice form.",
+      "route": "#/workbench",
       "job_entry": true,
       "deep_link": true,
       "url_params": [
-        "pane",
+        "panes",
         "cluster",
         "endpoint"
       ],
-      "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/workbench/ControlPane.tsx",
+      "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/WorkbenchPage.tsx",
       "primary_action_id": "act-run-recognition",
       "states": [
         "default",
@@ -155,15 +157,16 @@
         },
         {
           "id": "z-cluster-umap",
-          "label": "UMAP face-group scatter (2D projection of faces; select to drive right pane)",
-          "role": "ai_review",
+          "label": "Face-group status (scan/sync health; not a 2D scatter)",
+          "role": "status",
           "evidence_linked": true,
           "states": [
             "default",
             "loading",
             "empty",
             "error",
-            "first_time"
+            "first_time",
+            "degraded"
           ]
         },
         {
@@ -174,7 +177,9 @@
             "default",
             "loading",
             "empty",
-            "error"
+            "error",
+            "first_time",
+            "degraded"
           ]
         },
         {
@@ -186,7 +191,6 @@
           "states": [
             "default",
             "loading",
-            "empty",
             "error",
             "edge_input"
           ]
@@ -198,11 +202,11 @@
       "kind": "screen",
       "title": "Media library (right pane)",
       "purpose": "Media library table with alt-text caption and long-description columns; inline editing, AI-suggested captions/descriptions (editable before accept), and bulk describe/scan.",
-      "route": "#/workbench?pane=library",
+      "route": "#/workbench",
       "job_entry": true,
       "deep_link": true,
       "url_params": [
-        "pane",
+        "panes",
         "media",
         "cluster",
         "status",
@@ -210,7 +214,7 @@
         "p",
         "perPage"
       ],
-      "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/workbench/LibraryPane.tsx",
+      "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/workbench/MediaSelection.tsx",
       "primary_action_id": "act-edit-alt",
       "states": [
         "default",
@@ -227,7 +231,8 @@
           "role": "form",
           "states": [
             "default",
-            "edge_input"
+            "loading",
+            "error"
           ]
         },
         {
@@ -238,7 +243,9 @@
             "default",
             "loading",
             "empty",
-            "error"
+            "error",
+            "first_time",
+            "edge_input"
           ]
         },
         {
@@ -248,8 +255,8 @@
           "states": [
             "default",
             "loading",
-            "empty",
-            "error"
+            "error",
+            "edge_input"
           ]
         },
         {
@@ -259,8 +266,8 @@
           "evidence_linked": true,
           "states": [
             "default",
-            "empty",
             "loading",
+            "empty",
             "error"
           ]
         },
@@ -303,7 +310,8 @@
           "states": [
             "default",
             "loading",
-            "empty"
+            "empty",
+            "error"
           ]
         },
         {
@@ -315,7 +323,8 @@
           "states": [
             "default",
             "loading",
-            "empty"
+            "empty",
+            "error"
           ]
         },
         {
@@ -323,7 +332,10 @@
           "label": "Resolve / defer actions",
           "role": "form",
           "states": [
-            "default"
+            "default",
+            "loading",
+            "empty",
+            "error"
           ]
         }
       ]
@@ -355,7 +367,8 @@
           "states": [
             "default",
             "loading",
-            "empty"
+            "empty",
+            "error"
           ]
         },
         {
@@ -363,7 +376,10 @@
           "label": "Retry / discard",
           "role": "form",
           "states": [
-            "default"
+            "default",
+            "loading",
+            "empty",
+            "error"
           ]
         }
       ]
@@ -412,7 +428,6 @@
       "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/SettingsPage.tsx",
       "states": [
         "default",
-        "loading",
         "error"
       ],
       "zones": [
@@ -422,6 +437,7 @@
           "role": "form",
           "states": [
             "default",
+            "loading",
             "error"
           ]
         }
@@ -429,6 +445,16 @@
     }
   ],
   "actions": [
+    {
+      "id": "act-scan-media-queue",
+      "verb": "Scan media queue",
+      "target": "job-pipeline",
+      "hierarchy": "primary",
+      "costly": true,
+      "irreversible": false,
+      "preview_required": true,
+      "screen_id": "workbench-2pane-shell"
+    },
     {
       "id": "act-run-recognition",
       "verb": "Run / refresh recognition + grouping",
@@ -441,9 +467,9 @@
     },
     {
       "id": "act-select-cluster",
-      "verb": "Select face group (UMAP or list)",
+      "verb": "Select face group (list)",
       "target": "workbench-library",
-      "hierarchy": "primary",
+      "hierarchy": "secondary",
       "costly": false,
       "irreversible": false,
       "preview_required": false,
@@ -453,7 +479,7 @@
       "id": "act-name-cluster",
       "verb": "Save name (NameFaceControl)",
       "target": "identity-store",
-      "hierarchy": "primary",
+      "hierarchy": "secondary",
       "costly": true,
       "irreversible": false,
       "preview_required": true,
@@ -493,7 +519,7 @@
       "id": "act-edit-desc",
       "verb": "Edit long description inline",
       "target": "media-store",
-      "hierarchy": "primary",
+      "hierarchy": "secondary",
       "costly": false,
       "irreversible": false,
       "preview_required": false,
@@ -513,7 +539,7 @@
       "id": "act-bulk-describe",
       "verb": "Bulk describe selected media",
       "target": "job-pipeline",
-      "hierarchy": "primary",
+      "hierarchy": "secondary",
       "costly": true,
       "irreversible": false,
       "preview_required": true,
@@ -692,7 +718,7 @@
   "open_questions": [
     "OPEN: long-description has no data field yet (media items have only alt text). Ship the alt-text column first, long-description behind a new field? [FORM]",
     "OPEN: no 2D projection data exists (only bbox + 3D head pose). Ship the left pane as a face-group list first; scatter map is a fast-follow once a projection endpoint exists? [VIZ-01,VIZ-15]",
-    "RESOLVED: operator vocab is group / person / face \u2014 never cluster / identities / embeddings. Enforced by the banned-vocabulary sweep.",
+    "RESOLVED: operator vocab is group / person / face — never cluster / identities / embeddings. Enforced by the banned-vocabulary sweep.",
     "OPEN: Selecting a face group in the map/list: filter the right library pane, open the naming form, or both (coordinated views)? [VIZ-15]",
     "RESOLVED: one naming surface (NameFaceControl) with a single-gesture Save name; overlay candidates and confirm share that control.",
     "OPEN: Endpoint switch (InsightFace vs FIR/SFace) changes the recognition model server-side; do existing face groups invalidate and need a fresh grouping on switch? [HAI-02]",

@@ -41,8 +41,9 @@ export interface PersonCommitControlProps {
   /**
    * §7 single accent primary: when this control is the card's primary (NAME/CLUSTER),
    * the commit button carries the `data-acx-accent-primary` marker + accent chrome
-   * (COL-03). The success surface has no commit button; it is a transient post-commit
-   * state as the card advances, so no marker is emitted there.
+   * (COL-03). Chrome stays `button-secondary` so the composed workbench-control
+   * screen keeps one WP primary. The success surface has no commit button; it is
+   * a transient post-commit state as the card advances, so no marker is emitted there.
    */
   accentPrimary?: boolean;
   /** Opens the labeling panel so the operator can merge / split / correct the group. */
@@ -208,11 +209,9 @@ export const PersonCommitControl = ({
           accentPrimary={isPrimary && accentPrimary}
           suggestionsHeader={__('People', 'alt-context')}
           commitButtonClassName={
-            isPrimary
-              ? accentPrimary
-                ? 'button button-primary acx-person-commit__confirm acx-accent-primary-action'
-                : 'button button-primary acx-person-commit__confirm'
-              : 'button acx-person-commit__confirm'
+            accentPrimary
+              ? 'button button-secondary acx-person-commit__confirm acx-accent-primary-action'
+              : 'button button-secondary acx-person-commit__confirm'
           }
           className="acx-person-commit__controls"
           classPrefix="acx-person-commit"

@@ -43,11 +43,11 @@
 │  │ InsightFace :10010   ● healthy │     │▐│  ┌───────────────────────────────────────────────┐│
 │  └─────────────────────────────────┘     │ │  │□ thumb title        status  alt-text   desc   ││
 │ [ ⟳ Run recognition ]  thr ▐▐▐▐░ 0.62   │ │  │□ [▦] conf.jpg     ✓ done  "Ada at…"  "A wo…"││
-│  ┌─ Cluster map ───────────────────┐     │ │  │☑ [▦] group.jpg    ⧗ queue ✎ empty   ✎ empty  ││
-│  │   ·· ●②    ·  ●①●    ·     │     │▐│  │□ [▦] keynote.png  ⚠ fail  "Two…"    ✎ empty ││
-│  │  ·   ●●   ·    ●●    ·· ●④│     │▐│  └───────────────────────────────────────────────┘│
-│  │     ●③●        ··  ·         │     │ │ ▼ group.jpg — inline edit                         │
-│  └─────────────────────────────────┘     │ │ alt [ Two people seated at a panel… ] 63/125      │
+│  ┌─ Face-group status ─────────────┐     │ │  │☑ [▦] group.jpg    ⧗ queue ✎ empty   ✎ empty  ││
+│  │ Ready · 18 groups (status only) │     │▐│  │□ [▦] keynote.png  ⚠ fail  "Two…"    ✎ empty ││
+│  │ not a 2D scatter plot           │     │▐│  └───────────────────────────────────────────────┘│
+│  └─────────────────────────────────┘     │ │ ▼ group.jpg — inline edit                         │
+│                                          │ │ alt [ Two people seated at a panel… ] 63/125      │
 │ Clusters      sort:[ unnamed first ▼ ]   │ │ AI: "Two panelists at a table" [use][edit]        │
 │ ▸①  42  0.91  «unnamed»        [select]│ │ long[ …expandable textarea… ]                     │
 │ ▸②  31  0.88  Ada Lovelace             │▐│ ───────────────────────────────────────────────   │
@@ -58,10 +58,8 @@
                           (z-splitter: drag to resize · ◀ collapse left)
 ```
 
-The left pane's cluster map is the **DEP-2 / Slice-4** scatter; **day one ships the cluster
-_list_** beneath it (§2). Cluster identity is carried by **number + shape** (①◆ ②▲ ③● ④■), never
-colour alone, and selection is a marker/weight change, not a hue swap — see §2 for the redundant
-non-colour encoding `[VIZ-07]/[A11Y-06]`.
+The left pane's face-group zone is a **status region**, not a 2D scatter. Face-group list
+selection still uses **number + shape** (①◆ ②▲ ③● ④■), never colour alone `[VIZ-07]/[A11Y-06]`.
 
 ---
 
@@ -76,13 +74,9 @@ non-colour encoding `[VIZ-07]/[A11Y-06]`.
 │ last run 3m ago · 214 faces · 18 clusters · 41 unnamed   │
 │ ▸ Run recognition is COSTLY — preview: 214 faces, ~$0.02│  [preview_required]
 ├──────────────────────────────────────────────────────────┤
-│ Cluster map · faces — DEP-2 · Slice 4   [ lasso | pan ]  │  (z-cluster-umap · ai_review, evidence)
-│                                                          │
-│       · · ·        ·· ◆◆◆                             │  legend (redundant, non-colour):
-│      ·  ·  ▲②     ·   ◆①◆   ← hover ①: 42, 0.91    │   shape+hue per cluster ①◆ ②▲ ③● ④■
-│     ·       ◆◆     ·   ◆◆                            │   ⚠ low-confidence ring (not colour)
-│         ●③●            ·· ·                           │   selected = halo/size-up (additive)
-│      ·  ·  ⚠     ·  ■④  ·                             │  select region → writes ?cluster= (day-one: linked-highlight; filter=DEP-3)
+│ Face-group status                       [ Retry ]        │  (z-cluster-umap · status)
+│ Ready · last scan 3m ago · 18 groups                     │
+│ Empty: "No face groups yet."  Error: load failed+Retry   │
 ├──────────────────────────────────────────────────────────┤
 │ Clusters (day-one list)       sort:[ unnamed first ▼ ]   │  (z-cluster-list · queue)
 │ id = number + glyph (non-colour) · sel = ▶ + bold       │  [VIZ-07]/[A11Y-06]

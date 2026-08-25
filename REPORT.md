@@ -2,7 +2,7 @@
 
 ## Result
 
-MECE six-item ACX IA (glossary names kept). Review Queue is the only naming home. One primary per screen. Twenty form/queue/forced_choice/ai_review zones declare loading/empty/error; components render those failure branches.
+MECE six-item ACX IA (glossary names kept). Review Queue is the naming home for unnamed faces. People is named-people only. Description Runs is describer history. Data Retention is policy/export/purge (audit timeline removed). One primary action per interactive ux-map screen. D-23 zone failure states are not complete: six unique zone ids still declare a strict subset versus render (listed in Fix round).
 
 Final HEAD: recorded by the integrator after transplant.
 
@@ -12,6 +12,17 @@ Final HEAD: recorded by the integrator after transplant.
 - `fix(admin): D-2 MECE submenu homes`
 - `fix(admin): D-22 one primary per screen`
 - `fix(admin): D-23 zone failure states`
+- `fix(admin-ia): W3-C-01 scatter-status-region`
+- `fix(admin-ia): W3-C-03 unassigned-persons-home`
+- `fix(admin-ia): W3-C-02 dual-home-audit`
+- `fix(admin-ia): W3-C-04 one-primary-chrome`
+- `fix(admin-ia): W3-C-05 assign-actions-status`
+- `fix(admin-ia): W3-C-09 failure-header`
+- `fix(admin-ia): W3-C-07 media-filter-copy`
+- `fix(admin-ia): W3-C-06 literal-copy-pins`
+- `fix(admin-ia): W3-C-10 empty-state-a11y`
+- `fix(admin-ia): W3-C-08 uxmap-integrity`
+- `fix(admin-ia): W3-C-11 fixture-hygiene`
 
 ## Taxonomy (D-2)
 
@@ -26,7 +37,7 @@ One home per goal; frequency after the required WP parent (`docs/ux-maps/dashboa
 | 5 | Data Retention | keep/delete/export policy |
 | 6 | Settings | configure service (rare, last) |
 
-`SUBMENU_IA` pins unique goals (`apps/prototype-wp-alt-context/src/admin/class-menu.php:15`). Unassigned-person guidance targets Review Queue (`GuidanceCard.tsx:52`).
+`SUBMENU_IA` pins unique goals (`apps/prototype-wp-alt-context/src/admin/class-menu.php:15`). Unassigned-person guidance targets People `personFilter=unassigned` (`GuidanceCard.tsx:52`). Review Queue cannot show zero-face-group persons.
 
 ## TDD RED (verbatim)
 
@@ -47,36 +58,96 @@ D-23 scatter error (after literalizing the assert): `Expected element to have te
 ## Code (sed-verified after last code commit)
 
 - `class-menu.php:15` — `SUBMENU_IA`
-- `GuidanceCard.tsx:52` — `href={toWorkbench({ tab: 'scan' })}`
+- `GuidanceCard.tsx:52` — `href={toRoster({ personFilter: 'unassigned' })}`
 - `DashboardPage.tsx:242` — Fix missing descriptions `--secondary`
-- `DashboardSyncHealthSection.tsx:186` — Open Review Queue `--secondary`
-- `WorkbenchPage.tsx:207` — `<FaceGroupScatter`
-- `PersonWorkspacePanel.tsx:237` — `Unable to load linked faces.`
-- `ClusterDrawerPanel.tsx:562` — `No named people to assign yet.`
-- `MediaSelection.tsx:338` — `Loading filters…`
-- `FaceGroupScatter.tsx:23` — scatter error copy
+- `WorkbenchPage.tsx:207` — `<FaceGroupScatter` wired from `status`/`scanRun`
+- `FaceGroupScatter.tsx:23` — `Unable to load face-group status.`
+- `FaceGroupScatter.tsx:73` — aria-label `Face-group status`
+- `PersonWorkspacePanel.tsx:219` — count suppressed when `projection_status === 'failed'`
+- `PersonWorkspacePanel.tsx:241` — `Refreshing linked faces…`
+- `ClusterDrawerPanel.tsx:570` — `Loading people to assign…`
+- `MediaSelection.tsx:338` — `Loading media…`
+- `MediaSelection.tsx:342` — `Unable to load media.`
 - `MediaSelection.tsx:291` — status `<Select.Root>` still value-only (INT-02)
+- `PersonCommitControl.tsx:212` — name-commit `button-secondary`
+- `MediaAltSuggest.tsx:826` — Accept `button-secondary`
+- `RetentionPage.tsx:250` — `See description run history`
+- `IdentityClusterList.tsx:103` — genuine empty `EmptyState` heading
 
 ## Verification
 
 - `composer test:unit -- --filter MenuTest` — OK (5 tests, 51 assertions)
-- vitest: GuidanceCard/DashboardPage D-2+D-22, uxmap parity, uxmap-one-primary, FaceGroupScatter, MediaSelectionToolbar failure, PersonWorkspacePanel, ClusterDrawerPanel, ConflictInbox, DeadLetterPanel, SettingsPage, IdentityClusterList, WorkbenchPage — passed
-- `npm run typecheck` — clean
+- `npx vitest run js/admin` — 227 files, 2649 tests passed
+- Targeted RED/GREEN/mutant runs per W3-C item (see Fix round)
+
+## Fix round
+
+Adversarial FAIL on HEAD: several D-2/D-22/D-23 items were claimed closed but not. TDD order. Prior report claimed a Retention copy change with no diff; that sentence is deleted. Unassigned guidance no longer points at Review Queue. UMAP scatter claim replaced with status-region copy.
+
+### TDD RED (verbatim)
+
+W3-C-01: `Unable to find an accessible element with the role "region" and name "Face-group status"` (zone still `aria-label="Face group scatter"`).
+
+W3-C-02: `expected document not to contain element, found <span class="acx-retention__detail"> Showing the five most recent audit events. </span>`
+
+W3-C-03: `Expected the element to have attribute: href="#/roster?personFilter=unassigned"` / `Received: href="#/workbench?tab=scan"`
+
+W3-C-04: `workbench-2pane workbench-2pane-shell primaries: : expected [] to have a length of 1 but got +0`
+
+W3-C-05: empty-assign test already existed; loading/error tests went RED until `rosterStatus` branched (`Unable to find ... Loading people to assign…` after mutant).
+
+W3-C-07: `Expected element to have text content: Unable to load media.` / `Received: Unable to load filters.` (mutant; initial toolbar tests injected booleans).
+
+W3-C-08: `workbench-2pane workbench-control -> .../ControlPane.tsx: expected [ Array(1) ] to deeply equal []`
+
+W3-C-09: `expected document not to contain element, found <p class="acx-roster__person-workspace-meta"> 4 face groups assigned </p>` (mutant; count on failure).
+
+W3-C-06: `Unable to find an element with the text: Could not load every face in this group.` after copy mutant.
+
+W3-C-10: `Unable to find an element with the text: Scan media to find faces in this item.` after body mutant.
+
+### TEST-15 mutants (production mutated, suite RED, restored)
+
+- W3-C-01: `{false && (<FaceGroupScatter .../>)}`. RED: `Unable to find an element by: [data-testid="acx-zone-z-cluster-umap"]`. Restore clean.
+- W3-C-03: href back to `toWorkbench({ tab: 'scan' })`. RED: expected roster unassigned href. Restore clean.
+- W3-C-02: extra `Full audit log` heading. RED: queryBy heading found. Restore clean.
+- W3-C-04: Accept class `button-primary`. RED: `Expected the element to have class: button-secondary`. Restore clean.
+- W3-C-05: loading copy `Loading people…`. RED: missing `Loading people to assign…`. Restore clean.
+- W3-C-09: always print cluster_count. RED: `4 face groups assigned` present on failed. Restore clean.
+- W3-C-07: error copy `Unable to load filters.`. RED: expected media wording. Restore clean.
+- W3-C-06: expandError copy dropped "every". RED: missing literal. Restore clean.
+- W3-C-10: empty body `Scan this item to find faces.`. RED: missing literal. Restore clean.
+- W3-C-08: `code_ref` → ControlPane.tsx. RED: missing file. Restore clean.
+
+### Closed this round
+
+- W3-C-01: scatter state from `projectionSyncState` / `clusters_created` / online / `isSynced`; zone is status, not UMAP plot.
+- W3-C-02: Retention audit timeline unmounted; link to Description Runs. Dropped `job-assign-faces` / `act-filter-unassigned` from roster-people map.
+- W3-C-03: unassigned persons → `#/roster?personFilter=unassigned`.
+- W3-C-04: exactly one primary per interactive screen; shell `act-scan-media-queue`; name-commit and Accept demoted; DOM counts.
+- W3-C-05: assign-actions loading/error before empty; combobox still mounts when roster is empty so create works.
+- W3-C-06: literal copy pins (scatter, expandError, dead-letter empty, conflict loading testid, identity empty body).
+- W3-C-07: filter zone copy is media-query wording; tested via MediaSelection mocked `mediaQuery`.
+- W3-C-08: live `code_ref`s, `?panes=`, dropped unrendered zone states, preview no longer draws a 2D cluster map.
+- W3-C-09: suppress count on projection failure; distinct refreshing label.
+- W3-C-10: genuine zero-detections uses `EmptyState` (not warning); scatter loading `role="status"` `aria-live="polite"`.
+- W3-C-11: ClusterDrawerPanel assign tests use a full `RosterEntry` factory (no `as never`).
 
 ## Undone
 
 - WP parent slug stays `alt-context-dashboard` (`class-admin.php` out of ownership); Review Queue cannot become the top-level click.
-- Workbench-control NameFaceControl / person-commit still uses `button-primary`; map demotes name to secondary — visual leftover vs `act-run-recognition`.
-- Several D-23 first_time/edge_input/degraded states alias empty+CTA or parent modifiers; UMAP scatter is a status region, not a 2D plot.
-- Retention audit timeline still exists on Data Retention (policy home); only nav/copy framing changed.
-- No browser walk; no full `npx vitest run` of the whole `js/admin` tree after D-23.
-- Cluster drawer empty-state test uses a partial roster row (`as never`).
+- Six unique D-23 zone ids still declare a strict subset versus render: `z-lightbox-media`, `z-lightbox-controls`, `z-settings-form`, `z-recent-activity`, `z-advanced`, `z-review-suggestions-group-card`. Closing them was optional; accounting is required.
+- `AuditTimeline` component remains on disk; RetentionPage no longer mounts it.
+- No browser walk.
+- ClusterLabelingPanel still maps `rosterError ? [] : persons` (out of this round's assign-actions tests).
+- Review-card accent still uses `acx-accent-primary-action` on name-commit; chrome class is secondary.
 
 ## Canon cited
 
-- **NAV-05** — six submenus mutually exclusive; naming and description-history each have one home.
-- **NAV-06** — Review Queue sits above Settings as the high-frequency work item; Settings last.
-- **NAV-01** — brief maps “one primary per screen”; chrome now has a single primary + secondary remainder (depth still one submenu).
+- **NAV-05** — unassigned persons live on People (`personFilter=unassigned`); describer history lives on Description Runs; Retention no longer duplicates an audit home.
+- **NAV-06** — Review Queue remains the high-frequency unnamed-face work item; Settings last.
+- **NAV-01** — each interactive ux-map screen has exactly one primary action; `primary_action_id` matches that action.
 - **INT-02** — library/scan status filters remain `<select>` value changes; verbs stay on buttons.
-- **designed-unknown** — form/queue/forced_choice/ai_review zones declare and render loading/empty/error instead of a silent subset of the parent screen.
-- **TEST-15** — each item had a production mutant that turned the guarding test red; scatter assert was switched from self-referential copy to a literal so the mutant could kill.
+- **designed-unknown** — scatter/assign/filters now branch loading/empty/error instead of a silent subset; six leftover D-23 zones still declare a strict subset (listed in Undone).
+- **TEST-15** — each W3-C item had a production mutant that turned the guarding test red; copy asserts are literals.
+- **A11Y-21** — scatter loading uses `role="status"` / `aria-live="polite"` so AT hears the transition.

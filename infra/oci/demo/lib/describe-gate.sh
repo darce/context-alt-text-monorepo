@@ -83,6 +83,59 @@ if isinstance(value, str):
     printf '%s' "$value"
 }
 
+# classify_claimed_adapter_matches_probe <probed_adapter> <claimed_adapters_blob>
+#   -> PASS | FAIL | UNKNOWN
+# Cross-check the WP media payload's claimed adapter names against the
+# independently probed description-service /health/detailed adapter.
+# claimed_adapters_blob is the whitespace-separated list of adapter names
+# the WP media payload claims (same shape classify_alt_identity consumes).
+#
+# Semantics (do not weaken):
+# 1. probed_adapter empty (probe unavailable / no python3 / non-JSON) ->
+#    UNKNOWN. Callers decide policy; do not guess. UNKNOWN is NOT a pass.
+# 2. claimed blob empty (nothing claimed yet; coverage gate owns that) ->
+#    UNKNOWN.
+# 3. any claimed token that is not byte-identical to probed_adapter -> FAIL.
+#    Live failure mode: production serves `seeded` while postmeta claims
+#    `florence_small`.
+# 4. every claimed token equals probed_adapter -> PASS.
+# 5. a claimed token containing whitespace, a glob metacharacter (* ? [)
+#    or that is otherwise unsplittable -> FAIL, not UNKNOWN.
+# Word-split runs under set -f so a claimed `*` cannot glob against cwd.
+# Identity check is byte-identical, not case-folded.
+classify_claimed_adapter_matches_probe() {
+    local probed_adapter="${1:-}"
+    local claimed_adapters_blob="${2:-}"
+    local out
+
+    if [ -z "$probed_adapter" ]; then
+        echo UNKNOWN
+        return
+    fi
+    if [ -z "$(printf '%s' "$claimed_adapters_blob" | tr -d '[:space:]')" ]; then
+        echo UNKNOWN
+        return
+    fi
+
+    out=$(
+        set -f
+        for adapter in $claimed_adapters_blob; do
+            case "$adapter" in
+                *[[:space:]]*|*'*'*|*'?'*|*'['*)
+                    echo FAIL
+                    exit 0
+                    ;;
+            esac
+            if [ "$adapter" != "$probed_adapter" ]; then
+                echo FAIL
+                exit 0
+            fi
+        done
+        echo PASS
+    )
+    echo "$out"
+}
+
 # classify_describe_provenance <sample_text> -> PASS|FAIL|UNKNOWN
 # UNKNOWN when nothing was measured. FAIL when any canned seeded fixture
 # caption appears in the sample. PASS otherwise.

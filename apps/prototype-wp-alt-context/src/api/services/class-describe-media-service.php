@@ -263,6 +263,12 @@ class DescribeMediaService {
 			return $this->invalid_envelope_error( $media_id, "field 'alt_text_draft' must be a string" );
 		}
 
+		// Empty adapter stamps an identity-less envelope (projects as null
+		// identity; smoke gate FAILs closed). Refuse, do not coerce [rg-015].
+		if ( ! is_string( $data['adapter'] ) || '' === trim( $data['adapter'] ) ) {
+			return $this->invalid_envelope_error( $media_id, "field 'adapter' must be a non-empty string" );
+		}
+
 		return $response;
 	}
 

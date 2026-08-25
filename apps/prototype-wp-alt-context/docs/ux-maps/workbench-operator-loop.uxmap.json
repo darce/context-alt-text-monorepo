@@ -172,10 +172,7 @@
           "states": [
             "default",
             "loading",
-            "empty",
-            "error",
-            "first_time",
-            "edge_input"
+            "error"
           ]
         },
         {

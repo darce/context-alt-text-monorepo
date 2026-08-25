@@ -323,6 +323,7 @@ interface UxMapZone {
 interface UxMapScreen {
   id: string;
   title: string;
+  code_ref?: string | null;
   zones?: UxMapZone[];
 }
 interface UxMapDoc {
@@ -354,6 +355,24 @@ describe('ux-map SSOT schema conformance (owned maps)', () => {
     validateModel({ constructor: 'mutant' }, { name: 'Mutant', fields: {} }, '', issues);
 
     expect(formatIssues(issues)).toEqual(['constructor | extra_forbidden | mutant']);
+  });
+
+  it('resolves every owned map screen code_ref to a real file', () => {
+    const repoRoot = path.resolve(uxMapsDir, '../../../..');
+    const missing: string[] = [];
+    for (const mapRef of OWNED_MAPS) {
+      const { json } = loadOwnedMap(mapRef);
+      for (const screen of json.screens) {
+        if (!screen.code_ref) {
+          continue;
+        }
+        const abs = path.join(repoRoot, screen.code_ref);
+        if (!existsSync(abs)) {
+          missing.push(`${mapRef} ${screen.id} -> ${screen.code_ref}`);
+        }
+      }
+    }
+    expect(missing, missing.join('; ')).toEqual([]);
   });
 
   it('keeps every owned map json and sibling md on disk (fail-closed)', () => {

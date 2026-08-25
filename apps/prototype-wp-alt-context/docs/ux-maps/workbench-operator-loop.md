@@ -76,7 +76,7 @@ url_params: `tab`, `status`, `media`, `s`, `p`, `perPage`, `rq`, `panel`, `clust
 | --- | --- | --- | --- |
 | `z-review-queue` | Review queue header / count with kind+band filter chips, card-at-a-time (rq= URL is the single owner of chip state; empty covers both a filter-empty queue and a fully drained one) | queue | default, loading, empty, error, first_time, edge_input |
 | `z-review-panel` | Face-group review panel (panel=review&cluster=) | ai_review | default, loading, empty, error, first_time, edge_input |
-| `z-filters` | Status / search filters | form | default, loading, empty, error, first_time, edge_input |
+| `z-filters` | Status / search filters | form | default, loading, error |
 | `z-media-queue` | Media selection table | queue | default, loading, empty, error, first_time, edge_input |
 | `z-job-cta` | Scan / analyze CTAs + job progress | job | default, loading, error |
 | `z-identity-preview` | Identity / findings preview (AI-assisted; offline = recognition service unreachable; degraded = repair / reduced-capability mode; empty = zero evidence rows) | ai_review | default, empty, loading, error, degraded, offline |

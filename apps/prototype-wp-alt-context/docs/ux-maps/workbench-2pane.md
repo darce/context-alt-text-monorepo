@@ -43,8 +43,8 @@ by other lanes and are not yet covered by this list.
 | id                      | kind    | route                           | title                           |
 | ----------------------- | ------- | ------------------------------- | ------------------------------- |
 | `workbench-2pane-shell` | screen  | `#/workbench`                   | Workbench (2-pane)              |
-| `workbench-control`     | screen  | `#/workbench?pane=control`      | Control surface (left pane)     |
-| `workbench-library`     | screen  | `#/workbench?pane=library`      | Media library (right pane)      |
+| `workbench-control`     | screen  | `#/workbench`                   | Control surface (left pane)     |
+| `workbench-library`     | screen  | `#/workbench`                   | Media library (right pane)      |
 | `workbench-conflicts`   | overlay | `#/workbench?panel=conflicts`   | Conflict Inbox                  |
 | `workbench-dead-letter` | overlay | `#/workbench?panel=dead-letter` | Failed Sync Queue (Dead Letter) |
 | `exit-roster`           | exit    | `#/roster`                      | Roster (person workspace)       |
@@ -89,7 +89,7 @@ url_params: `pane`, `cluster`, `media`, `panel`, `status`, `endpoint`, `s`, `p`,
 
 Purpose: Recognize, name, and curate: recognition endpoint + health, face-group status region, face-group list, run/refresh controls, and the name/curate forced-choice form.
 
-url_params: `pane`, `cluster`, `endpoint`
+url_params: `panes`, `cluster`, `endpoint`
 
 | zone id | label | role | states |
 | --- | --- | --- | --- |
@@ -97,7 +97,7 @@ url_params: `pane`, `cluster`, `endpoint`
 | `z-recognition-controls` | Face-group/recognition controls (run, refresh, threshold) | job | default, loading, error |
 | `z-cluster-umap` | Face-group status (scan/sync health; not a 2D scatter) | status | default, loading, empty, error, first_time, degraded |
 | `z-cluster-list` | Face-group list / selection (size, confidence, unnamed-first) + NameFaceControl (loading = in-flight name write; the suggestions disclosure being open or closed is part of default) | queue | default, loading, empty, error, first_time, degraded |
-| `z-name-curate` | Name this person (NameFaceControl; confirm / correct / merge / split; forced-choice; loading = pending roster write; error = roster write failed; edge_input = ambiguous candidate set or duplicate-name guard; default = overlay closed or suggestions open) | forced_choice | default, loading, empty, error, edge_input |
+| `z-name-curate` | Name this person (NameFaceControl; confirm / correct / merge / split; forced-choice; loading = pending roster write; error = roster write failed; edge_input = ambiguous candidate set or duplicate-name guard; default = overlay closed or suggestions open) | forced_choice | default, loading, error, edge_input |
 
 ```
 +------------------------------------------------------------+
@@ -133,10 +133,10 @@ url_params: `pane`, `media`, `cluster`, `status`, `s`, `p`, `perPage`
 
 | zone id | label | role | states |
 | --- | --- | --- | --- |
-| `z-lib-filters` | Library filters (status, has-alt, has-description, face group, search) | form | default, loading, empty, error, first_time, edge_input |
+| `z-lib-filters` | Library filters (status, has-alt, has-description, face group, search) | form | default, loading, error |
 | `z-lib-table` | Media library table (thumb \| title \| status \| alt-text \| long description \| people) | queue | default, loading, empty, error, first_time, edge_input |
-| `z-lib-inline-edit` | Inline person naming (NameFaceControl) + alt-text / long-description editor (loading = pending save; the suggestions disclosure being open or closed is part of default) | form | default, loading, empty, error, first_time, edge_input |
-| `z-lib-ai-suggest` | AI name / caption suggestions (evidence-linked; editable before accept; loading = suggestion request in flight; the suggestions disclosure being open or closed is part of default) | ai_review | default, loading, empty, error, first_time, edge_input |
+| `z-lib-inline-edit` | Inline person naming (NameFaceControl) + alt-text / long-description editor (loading = pending save; the suggestions disclosure being open or closed is part of default) | form | default, loading, error, edge_input |
+| `z-lib-ai-suggest` | AI name / caption suggestions (evidence-linked; editable before accept; loading = suggestion request in flight; the suggestions disclosure being open or closed is part of default) | ai_review | default, loading, empty, error |
 | `z-lib-actions` | Bulk describe / scan CTAs + job progress | job | default, loading, error |
 
 ```

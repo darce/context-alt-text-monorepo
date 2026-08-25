@@ -14,6 +14,8 @@ script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 bootstrap_file="${script_dir}/../bootstrap-wp.sh"
 workflow_file="${script_dir}/../../../../.github/workflows/deploy-demo.yml"
 makefile_d="${script_dir}/../../../../Makefile.d/demo-auth.mk"
+walkthrough_file="${script_dir}/../../../../apps/prototype-wp-alt-context/tests/e2e/evidence/demo-walkthrough.spec.ts"
+api_file="${script_dir}/../../../../apps/prototype-wp-alt-context/src/api/class-api.php"
 
 failures=0
 
@@ -68,6 +70,14 @@ assert_file_grep "CI role clones subscriber not administrator" \
     "$bootstrap_file" 'role create "\$WP_CI_ROLE_NAME" "ACX CI" --clone=subscriber'
 assert_file_grep "CI role gains manage_options for plugin smoke" \
     "$bootstrap_file" 'cap add "\$WP_CI_ROLE_NAME" manage_options'
+assert_file_grep "CI role gains upload_files for workbench media REST" \
+    "$bootstrap_file" 'cap add "\$WP_CI_ROLE_NAME" upload_files'
+assert_file_grep "workbench media REST requires upload_files" \
+    "$api_file" "current_user_can\\( 'upload_files' \\)"
+assert_file_grep "walkthrough fails closed when selectCount is 0" \
+    "$walkthrough_file" 'selectCount === 0'
+assert_file_grep "walkthrough empty-media path is an assertion not a skip" \
+    "$walkthrough_file" 'toBeGreaterThan'
 
 # --- deploy-demo.yml: CI secrets, not demo admin login ---
 assert_file_grep "workflow smoke maps ACX_E2E_WP_CI_USER" \
@@ -111,6 +121,8 @@ CREATE_CALLS=0
 UPDATE_CALLS=0
 SETROLE_CALLS=0
 ROLE_CREATE_CALLS=0
+CAP_ADD_CALLS=0
+CAPS_ADDED=""
 LAST_CREATE_ROLE=""
 LAST_CREATE_USER=""
 
@@ -131,6 +143,11 @@ wpcli() {
             return 0
             ;;
         "cap add")
+            CAP_ADD_CALLS=$((CAP_ADD_CALLS + 1))
+            local cap
+            for cap in "${@:4}"; do
+                CAPS_ADDED="${CAPS_ADDED} ${cap}"
+            done
             return 0
             ;;
         "user get")
@@ -200,6 +217,8 @@ assert_eq "empty CI user exits 2" "2" "$rc"
 # First apply creates least-privilege user
 CREATE_CALLS=0
 ROLE_CREATE_CALLS=0
+CAP_ADD_CALLS=0
+CAPS_ADDED=""
 ROLE_EXISTS=0
 USERS=""
 CURRENT_PASS_CI=""
@@ -210,6 +229,12 @@ assert_eq "first CI converge creates the role" "1" "$ROLE_CREATE_CALLS"
 assert_eq "first CI converge creates the user" "1" "$CREATE_CALLS"
 assert_eq "CI user created under acx_ci role" "acx_ci" "$LAST_CREATE_ROLE"
 assert_eq "CI username is acx-demo-ci" "acx-demo-ci" "$LAST_CREATE_USER"
+assert_eq "first CI converge cap-adds twice (manage_options + upload_files)" "2" "$CAP_ADD_CALLS"
+case " ${CAPS_ADDED} " in
+    *" upload_files "*) upload_files_granted=1 ;;
+    *) upload_files_granted=0 ;;
+esac
+assert_eq "first CI converge grants upload_files" "1" "$upload_files_granted"
 
 # Unchanged CI secret is a no-op (user exists)
 UPDATE_CALLS=0

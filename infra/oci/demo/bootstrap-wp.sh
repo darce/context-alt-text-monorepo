@@ -105,6 +105,13 @@ ensure_wp_ci_role() {
     echo "ERROR: failed to grant manage_options to ${WP_CI_ROLE_NAME}" >&2
     return 2
   fi
+  # workbench GET /workbench/media permission_callback is upload_files
+  # (class-api.php can_view_media_queue); without it CI smoke 403s and the
+  # walkthrough silently degrades to screenshots-only.
+  if ! wpcli wp cap add "$WP_CI_ROLE_NAME" upload_files; then
+    echo "ERROR: failed to grant upload_files to ${WP_CI_ROLE_NAME}" >&2
+    return 2
+  fi
 }
 
 converge_wp_ci_account() {

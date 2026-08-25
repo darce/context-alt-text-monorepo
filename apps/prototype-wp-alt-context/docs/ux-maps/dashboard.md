@@ -44,7 +44,7 @@ Purpose: Landing screen with hero, conditional orientation surface, and a priori
 | --- | --- | --- | --- |
 | `z-dashboard-hero` | Dashboard hero (Alt Context / Overview / contextual subtitle) | content | default |
 | `z-orientation` | Orientation surface (Getting Started with Identity Recognition; before grid unless first_named) | content | default, first_time |
-| `z-sync-health` | Sync Health section (summary, pending changes, conflicts, failed sync events, topology work) | status | default, loading, error, offline, degraded |
+| `z-sync-health` | Sync Health section (summary, pending changes, conflicts, failed sync events, topology work) | status | default, loading, error |
 | `z-identity-recognition` | Identity Recognition section (people, assigned, pending review, media with faces, guidance) | content | default, loading, error, first_time |
 | `z-library-coverage` | Library Coverage section (total media, missing alt text, coverage, fix CTA) | content | default, loading |
 | `z-recent-activity` | Recent Activity section (recognition jobs, provenance, status, duration, results link) | queue | default, empty, degraded, error |
@@ -89,7 +89,7 @@ Screen states: `default`, `loading`, `error`, `first_time`, `degraded`.
 
 #### Caught up — everything reviewed
 
-A reachable fourth GuidanceCard branch: `pending_clusters_count === 0`, `unassigned_persons_count === 0`, and `people_count > 0`. All review work is done but people already exist, so GuidanceCard shows a caught-up message with no CTA (distinct from the fresh-tenant `people_count === 0` branch, which shows Go to Scan tab). Everything else matches the Default composition. Not listed in `states`: `caught_up` is not a member of the canonical `MapState` enum (`workbay_canvas_mcp/ux_map/models.py`), so the branch is documented here rather than named in the map until that enum is widened upstream.
+A reachable fourth GuidanceCard branch: `pending_clusters_count === 0`, `unassigned_persons_count === 0`, and `people_count > 0`. All review work is done but people already exist, so GuidanceCard shows a caught-up message with an Open Review Queue CTA (distinct from the fresh-tenant `people_count === 0` branch, which shows Go to Scan tab). Everything else matches the Default composition. Not listed in `states`: `caught_up` is not a member of the canonical `MapState` enum (`workbay_canvas_mcp/ux_map/models.py`), so the branch is documented here rather than named in the map until that enum is widened upstream.
 
 ```
 +------------------------------------------------------------+
@@ -107,6 +107,8 @@ A reachable fourth GuidanceCard branch: `pending_clusters_count === 0`, `unassig
 |   People 24 | Assigned 24 | Pending Review 0              |
 |   Media with faces 120                                    |
 |   All caught up. New faces will appear here for review.   |
+|   Open the Review Queue to check for new face groups.     |
+|   [Open Review Queue]                                     |
 +------------------------------------------------------------+
 | Library Coverage                                         |
 |   Total Media 300 | Missing Alt Text 40 | Coverage 87%    |
@@ -151,7 +153,8 @@ The hero and orientation surface render while independently loaded sections sett
 |   [Fix missing descriptions]                              |
 +------------------------------------------------------------+
 | Recent Activity                                          |
-|   No recent recognition jobs found.                       |
+|   No recent scans yet                                     |
+|   Run a scan to find faces in your media library.         |
 +------------------------------------------------------------+
 | Data Retention                                           |
 |   (absent while policy is unavailable)                    |
@@ -207,7 +210,8 @@ Identity Recognition actually has two distinct, independently-triggered retry co
 |   Coverage counters and [Fix missing descriptions]        |
 +------------------------------------------------------------+
 | Recent Activity                                          |
-|   Durable recent activity is unavailable right now.       |
+|   Recent activity is unavailable                          |
+|   Previous scans could not be loaded. You can still start a new scan. |
 +------------------------------------------------------------+
 | Data Retention                                           |
 |   Retention status could not load. Check the connection   |
@@ -240,7 +244,8 @@ Degraded is an intact first_named dashboard with an attention-bearing sync state
 +------------------------------------------------------------+
 | Recent Activity                                          |
 |   Showing jobs remembered in this browser only.           |
-|   No recent recognition jobs found.                       |
+|   No recent scans yet                                     |
+|   Run a scan to find faces in your media library.         |
 +------------------------------------------------------------+
 | Data Retention                                           |
 |   Policy summary or remediation remains local to panel    |

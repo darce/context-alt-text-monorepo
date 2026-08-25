@@ -65,9 +65,7 @@
           "states": [
             "default",
             "loading",
-            "error",
-            "offline",
-            "degraded"
+            "error"
           ]
         },
         {
@@ -409,7 +407,8 @@
     "Should Recent Activity expose an explicit loading row while durable history is being fetched?",
     "z-retention-posture renders nothing while retention status is loading and nothing when available:false — should either of those become a distinguishable zone state instead of an absence?",
     "GuidanceCard has a caught-up branch (pending 0, unassigned 0, people > 0) with no canonical MapState to name it; adding `caught_up` would need an upstream ux_map/models.py change first. Left undrawn in states, sketched in the md.",
-    "z-recent-activity 'degraded' (the browser_local_fallback banner) is an independent overlay, not exclusive with 'default'/'empty' - historySource selects the banner and the content branch separately. 'error' is mutually exclusive with 'degraded' (same single-valued historySource). The flat states list cannot express this."
+    "z-recent-activity 'degraded' (the browser_local_fallback banner) is an independent overlay, not exclusive with 'default'/'empty' - historySource selects the banner and the content branch separately. 'error' is mutually exclusive with 'degraded' (same single-valued historySource). The flat states list cannot express this.",
+    "`degraded` and `offline` are non-exclusive modifiers composing inside the default Sync Health branch, not peer states, and the closed MapState enum cannot express a modifier axis."
   ],
   "not_doing": [
     "Changing DashboardPage, the priority model, OrientationCard, or any product behavior",

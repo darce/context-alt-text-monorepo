@@ -335,11 +335,11 @@ export const MediaSelectionToolbar = ({
           </span>
         </span>
         {isStatusPending ? (
-          <p data-testid="acx-zone-z-filters-loading">{__('Loading filters…', 'alt-context')}</p>
+          <p data-testid="acx-zone-z-filters-loading">{__('Loading media…', 'alt-context')}</p>
         ) : null}
         {isError ? (
           <p role="alert" data-testid="acx-zone-z-filters-error">
-            {__('Unable to load filters.', 'alt-context')}
+            {__('Unable to load media.', 'alt-context')}
           </p>
         ) : null}
         {isError && onRetry && (

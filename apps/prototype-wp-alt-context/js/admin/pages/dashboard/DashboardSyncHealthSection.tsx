@@ -183,18 +183,18 @@ export const DashboardSyncHealthSection = ({
             <p>{sprintf(SYNC_VOCABULARY.lastFailure, lastFailureDate)}</p>
           ) : null}
           <div className="acx-dashboard__actions">
-            <a href={toWorkbench({ tab: 'scan' })} className="acx-dashboard__action-card">
+            <a href={toWorkbench({ tab: 'scan' })} className="acx-dashboard__action-card acx-dashboard__action-card--secondary">
               <h3>{__('Open Review Queue', 'alt-context')}</h3>
               <p>{SYNC_VOCABULARY.openWorkbenchDetail}</p>
             </a>
             {conflictCount > 0 ? (
-              <a href={SCAN_CONFLICTS_HREF} className="acx-dashboard__action-card">
+              <a href={SCAN_CONFLICTS_HREF} className="acx-dashboard__action-card acx-dashboard__action-card--secondary">
                 <h3>{__('Open Conflict Inbox', 'alt-context')}</h3>
                 <p>{__('Review and resolve recorded sync conflicts.', 'alt-context')}</p>
               </a>
             ) : null}
             {failedReplayCount > 0 ? (
-              <a href={SCAN_DEAD_LETTER_HREF} className="acx-dashboard__action-card">
+              <a href={SCAN_DEAD_LETTER_HREF} className="acx-dashboard__action-card acx-dashboard__action-card--secondary">
                 <h3>{__('Open Failed Sync Queue', 'alt-context')}</h3>
                 <p>{SYNC_VOCABULARY.openFailedOpsDetail}</p>
               </a>

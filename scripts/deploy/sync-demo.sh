@@ -187,10 +187,14 @@ $SSH "sudo cp /tmp/acx-demo.service /etc/systemd/system/acx-demo.service && sudo
 # counts only usable alt (classify_alt_text_usable), not placeholder strings.
 # DEMO_ALT_GATE_ENFORCE defaults to 1 (a FAIL blocks the deploy). Set it to 0
 # to keep the measurement line but print WARN instead of setting smoke_fail
-# for overridable sub-gates (population and coverage) so a known-empty demo
-# can still ship while the seed/describe pass is repaired. Provenance is not
-# overridable: a canned-caption FAIL always sets smoke_fail, regardless of
-# DEMO_ALT_GATE_ENFORCE. The override covers empty alt, never canned captions.
+# for overridable sub-gates (population, and coverage only when with_alt>0)
+# so a PARTIALLY described demo can ship while the corpus is being filled.
+# The hatch was never meant to cover "we described nothing" (with_alt=0) or
+# "we cannot count" (non-numeric with_alt); those two cases fail closed even
+# when DEMO_ALT_GATE_ENFORCE=0. Population stays overridable: a header/body
+# mismatch is a probe limitation, not a content lie. Provenance is never
+# overridable: a canned-caption FAIL always sets smoke_fail, and an empty
+# sample (nothing to certify) is FAIL closed, not SKIP.
 echo "==> Smoke four vhosts (api.* via /health, demo via / + media alt-text)"
 {
   cat "$FIXTURE_DENYLIST_LIB"
@@ -318,7 +322,12 @@ if [ "$pct" != "?" ]; then
 else
   cov_msg="demo alt coverage (total=${body_total:-empty} with_alt=${with_alt:-empty}, need ${min}%)"
 fi
-emit_alt_gate "$verdict" "$cov_msg" 1
+cov_overridable=1
+case "$with_alt" in
+  *[!0-9]*|'') cov_overridable=0 ;;
+  0) cov_overridable=0 ;;
+esac
+emit_alt_gate "$verdict" "$cov_msg" "$cov_overridable"
 run_prov=0
 case "$with_alt" in *[!0-9]*|'') ;; *)
   if [ "$with_alt" -gt 0 ]; then
@@ -335,7 +344,7 @@ if [ "$run_prov" = "1" ]; then
   fi
   emit_alt_gate "$prov" "$prov_msg" 0
 else
-  echo "SKIP demo alt provenance (no alt text published)"
+  emit_alt_gate FAIL "demo alt provenance (no alt text published; nothing to certify)" 0
 fi
 exit "$smoke_fail"
 EOF

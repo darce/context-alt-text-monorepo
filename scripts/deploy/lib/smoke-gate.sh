@@ -17,11 +17,16 @@
 #   demo media      alt coverage below min_pct (inclusive boundary; default 95),
 #                   including 0/N empty alt and 0/0 no media -> FAIL. Empty,
 #                   non-numeric, or impossible (with_alt > total) counts fail
-#                   closed. Coverage numerator/denominator come from the same
+#                   closed. min_pct below DEMO_ALT_MIN_COVERAGE_FLOOR (default
+#                   50) also FAILs — DEMO_ALT_MIN_COVERAGE_PCT=0 cannot certify
+#                   an empty-alt library. Coverage numerator counts only usable
+#                   alt (see classify_alt_text_usable), not any non-empty JSON
+#                   string. Coverage numerator/denominator come from the same
 #                   page; header_total vs body_total disagreement FAILs rather
 #                   than measuring a paged subset. Published alt matching any
-#                   seeded fixture caption -> FAIL (the canned pool is not
-#                   accessibility content).
+#                   seeded fixture caption (after lowercase / whitespace
+#                   collapse / trailing .!? strip) -> FAIL (the canned pool is
+#                   not accessibility content).
 
 # classify_api_probe <post_code> <pre_code> -> PASS|WARN|FAIL
 classify_api_probe() {
@@ -52,12 +57,20 @@ classify_demo_probe() {
 
 # classify_alt_coverage <total> <with_alt> <min_pct> -> PASS|FAIL
 # Integer-only: (with_alt * 100 / total) >= min_pct. Fail closed on anything
-# that is not a measurable non-empty media set.
+# that is not a measurable non-empty media set. Fail closed when min_pct is
+# below DEMO_ALT_MIN_COVERAGE_FLOOR (default 50) so a 0% threshold cannot
+# certify 0/N empty alt.
 classify_alt_coverage() {
     local total="$1" with_alt="$2" min_pct="$3"
+    local floor="${DEMO_ALT_MIN_COVERAGE_FLOOR:-50}"
     case "$total" in *[!0-9]*|'') echo FAIL; return ;; esac
     case "$with_alt" in *[!0-9]*|'') echo FAIL; return ;; esac
     case "$min_pct" in *[!0-9]*|'') echo FAIL; return ;; esac
+    case "$floor" in *[!0-9]*|'') echo FAIL; return ;; esac
+    if [ "$min_pct" -lt "$floor" ]; then
+        echo FAIL
+        return
+    fi
     if [ "$total" -eq 0 ]; then
         echo FAIL
         return
@@ -92,40 +105,80 @@ classify_alt_population() {
     fi
 }
 
+# classify_alt_text_usable <text> -> PASS|FAIL
+# FAIL on empty-after-trim, fewer than 15 characters, or no alphabetic
+# character. Placeholder alt (".", a single space, digit-only padding) is not
+# coverage.
+classify_alt_text_usable() {
+    local text="$1"
+    text=$(printf '%s' "$text" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+    if [ -z "$text" ]; then
+        echo FAIL
+        return
+    fi
+    if [ "${#text}" -lt 15 ]; then
+        echo FAIL
+        return
+    fi
+    case "$text" in
+        *[A-Za-z]*) echo PASS ;;
+        *) echo FAIL ;;
+    esac
+}
+
 # classify_alt_provenance <sample_text> -> PASS|FAIL
 # FAIL when the sample is empty (nothing measured) or contains any canned
-# `seeded` adapter fixture caption. Captions are hardcoded because this file
-# is shipped standalone to the VM and cannot import Python; test-smoke-gate.sh
-# extracts _FIXTURE_POOL at test time to catch drift.
+# `seeded` adapter fixture caption. The sample is normalized before matching
+# (lowercase, whitespace runs collapsed, trailing .!? stripped) and denylist
+# arms are lowercased without trailing punctuation so dropping a period or
+# lowercasing the first letter cannot evade the gate. This is not a complete
+# denylist; adapter-identity meta is the durable fix and is deferred.
+# Captions are hardcoded because this file is shipped standalone to the VM
+# and cannot import Python; test-smoke-gate.sh extracts _FIXTURE_POOL at
+# test time to catch drift.
 classify_alt_provenance() {
-    local sample="$1"
+    local sample="$1" last
+    if [ -z "$sample" ]; then
+        echo FAIL
+        return
+    fi
+    sample=$(printf '%s' "$sample" | tr '[:upper:]' '[:lower:]' | tr -s '[:space:]' ' ')
+    sample=$(printf '%s' "$sample" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+    while [ -n "$sample" ]; do
+        last="${sample#"${sample%?}"}"
+        case "$last" in
+            [.!?]) sample="${sample%?}" ;;
+            *) break ;;
+        esac
+    done
+    sample=$(printf '%s' "$sample" | sed 's/[[:space:]]*$//')
     if [ -z "$sample" ]; then
         echo FAIL
         return
     fi
     case "$sample" in
-        *"A person standing outdoors near greenery."*) echo FAIL; return ;;
+        *"a person standing outdoors near greenery"*) echo FAIL; return ;;
     esac
     case "$sample" in
-        *"A plate of food on a wooden table."*) echo FAIL; return ;;
+        *"a plate of food on a wooden table"*) echo FAIL; return ;;
     esac
     case "$sample" in
-        *"A scenic landscape with mountains under a clear sky."*) echo FAIL; return ;;
+        *"a scenic landscape with mountains under a clear sky"*) echo FAIL; return ;;
     esac
     case "$sample" in
-        *"A close-up of a small object on a neutral background."*) echo FAIL; return ;;
+        *"a close-up of a small object on a neutral background"*) echo FAIL; return ;;
     esac
     case "$sample" in
-        *"A printed document with several lines of text."*) echo FAIL; return ;;
+        *"a printed document with several lines of text"*) echo FAIL; return ;;
     esac
     case "$sample" in
-        *"Two people seated indoors in conversation."*) echo FAIL; return ;;
+        *"two people seated indoors in conversation"*) echo FAIL; return ;;
     esac
     case "$sample" in
-        *"A building exterior seen from the street."*) echo FAIL; return ;;
+        *"a building exterior seen from the street"*) echo FAIL; return ;;
     esac
     case "$sample" in
-        *"A pet animal resting on a soft surface."*) echo FAIL; return ;;
+        *"a pet animal resting on a soft surface"*) echo FAIL; return ;;
     esac
     echo PASS
 }

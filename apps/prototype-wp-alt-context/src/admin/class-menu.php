@@ -5,6 +5,22 @@ namespace AltContext\Admin;
 
 class Menu {
 
+	/**
+	 * MECE admin IA (NAV-05): one slug per user goal, frequency-ordered (NAV-06).
+	 * Review Queue is the unique naming home; Description Runs is the unique
+	 * description-history home; Data Retention is policy, not history.
+	 *
+	 * @var list<array{slug: string, menu_title: string, goal: string}>
+	 */
+	public const SUBMENU_IA = array(
+		array( 'slug' => 'alt-context-dashboard', 'menu_title' => 'Overview', 'goal' => 'orient' ),
+		array( 'slug' => 'alt-context-workbench', 'menu_title' => 'Review Queue', 'goal' => 'name_person' ),
+		array( 'slug' => 'alt-context-roster', 'menu_title' => 'People', 'goal' => 'manage_named_people' ),
+		array( 'slug' => 'alt-context-description-history', 'menu_title' => 'Description Runs', 'goal' => 'see_description_history' ),
+		array( 'slug' => 'alt-context-retention', 'menu_title' => 'Data Retention', 'goal' => 'control_data_lifecycle' ),
+		array( 'slug' => 'alt-context-settings', 'menu_title' => 'Settings', 'goal' => 'configure_service' ),
+	);
+
 	private DashboardPage $dashboardPage;
 	private WorkbenchPage $workbenchPage;
 	private RosterPage $rosterPage;

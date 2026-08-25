@@ -130,6 +130,55 @@ class MenuTest extends TestCase
         $this->assertSame('render_description_history_page', $historyPage['callback'][1] ?? null);
     }
 
+    public function testSubmenusAreMeceFrequencyOrderedAndCapabilityStable(): void
+    {
+        $this->assertTrue(defined(Menu::class . '::SUBMENU_IA'));
+
+        $goals = array_column(Menu::SUBMENU_IA, 'goal');
+        $this->assertCount(6, Menu::SUBMENU_IA);
+        $this->assertSame($goals, array_unique($goals), 'Each submenu must own exactly one user goal (NAV-05).');
+
+        $byGoal = [];
+        foreach (Menu::SUBMENU_IA as $entry) {
+            $byGoal[$entry['goal']] = $entry['slug'];
+        }
+
+        $this->assertSame('alt-context-dashboard', $byGoal['orient']);
+        $this->assertSame('alt-context-workbench', $byGoal['name_person']);
+        $this->assertSame('alt-context-roster', $byGoal['manage_named_people']);
+        $this->assertSame('alt-context-description-history', $byGoal['see_description_history']);
+        $this->assertSame('alt-context-retention', $byGoal['control_data_lifecycle']);
+        $this->assertSame('alt-context-settings', $byGoal['configure_service']);
+
+        $menu = new Menu(
+            new DashboardPage(),
+            new WorkbenchPage(),
+            new RosterPage(),
+            new SettingsPage()
+        );
+        $menu->register_menu();
+
+        $slugs = array_column($GLOBALS['__ac_submenu_pages'], 'menu_slug');
+        $this->assertSame(array_column(Menu::SUBMENU_IA, 'slug'), $slugs);
+
+        $iaBySlug = [];
+        foreach (Menu::SUBMENU_IA as $entry) {
+            $iaBySlug[$entry['slug']] = $entry;
+        }
+
+        foreach ($GLOBALS['__ac_submenu_pages'] as $page) {
+            $slug = $page['menu_slug'];
+            $this->assertSame('manage_options', $page['capability'], "Capability changed for {$slug}");
+            $this->assertSame($iaBySlug[$slug]['menu_title'], $page['menu_title']);
+        }
+
+        $workbenchIndex = array_search('alt-context-workbench', $slugs, true);
+        $settingsIndex = array_search('alt-context-settings', $slugs, true);
+        $this->assertNotFalse($workbenchIndex);
+        $this->assertNotFalse($settingsIndex);
+        $this->assertLessThan($settingsIndex, $workbenchIndex, 'High-frequency Review Queue must sit above rare Settings (NAV-06).');
+    }
+
     public function testRegistersRetentionSubmenu(): void
     {
         $menu = new Menu(

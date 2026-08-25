@@ -45,7 +45,7 @@ Purpose: Landing screen with hero, conditional orientation surface, and a priori
 | `z-dashboard-hero` | Dashboard hero (Alt Context / Overview / contextual subtitle) | content | default |
 | `z-orientation` | Orientation surface (Getting Started with Identity Recognition; before grid unless first_named) | content | default, first_time |
 | `z-sync-health` | Sync Health section (summary, pending changes, conflicts, failed sync events, topology work) | status | default, loading, error, offline, degraded |
-| `z-identity-recognition` | Identity Recognition section (people, assigned, pending review, media with faces, guidance) | content | default, loading, error, first_time, caught_up |
+| `z-identity-recognition` | Identity Recognition section (people, assigned, pending review, media with faces, guidance) | content | default, loading, error, first_time |
 | `z-library-coverage` | Library Coverage section (total media, missing alt text, coverage, fix CTA) | content | default, loading |
 | `z-recent-activity` | Recent Activity section (recognition jobs, provenance, status, duration, results link) | queue | default, empty, degraded, error |
 | `z-retention-posture` | Data Retention section (mode, last export, last purge, Open Data Retention link) | status | default, error |
@@ -89,7 +89,7 @@ Screen states: `default`, `loading`, `error`, `first_time`, `degraded`.
 
 #### Caught up — everything reviewed
 
-A reachable fourth GuidanceCard branch: `pending_clusters_count === 0`, `unassigned_persons_count === 0`, and `people_count > 0`. All review work is done but people already exist, so GuidanceCard shows a caught-up message with no CTA (distinct from the fresh-tenant `people_count === 0` branch, which shows Go to Scan tab). Everything else matches the Default composition.
+A reachable fourth GuidanceCard branch: `pending_clusters_count === 0`, `unassigned_persons_count === 0`, and `people_count > 0`. All review work is done but people already exist, so GuidanceCard shows a caught-up message with no CTA (distinct from the fresh-tenant `people_count === 0` branch, which shows Go to Scan tab). Everything else matches the Default composition. Not listed in `states`: `caught_up` is not a member of the canonical `MapState` enum (`workbay_canvas_mcp/ux_map/models.py`), so the branch is documented here rather than named in the map until that enum is widened upstream.
 
 ```
 +------------------------------------------------------------+
@@ -373,6 +373,8 @@ flowchart TD
 - Should an unavailable retention policy remain absent, or should the dashboard expose a stable empty-state panel?
 - Should Recent Activity expose an explicit loading row while durable history is being fetched?
 - `z-retention-posture` renders nothing while retention status is loading and nothing when `available:false` — should either of those become a distinguishable zone state instead of an absence?
+- GuidanceCard has a reachable caught-up branch (pending 0, unassigned 0, people > 0) with no canonical `MapState` to name it — widen `MapState` upstream, or accept that the branch stays sketch-only?
+- `z-recent-activity` `degraded` (the `browser_local_fallback` banner) is an independent overlay, not exclusive with `default`/`empty`: `historySource` selects the banner and the content branch separately, so `degraded` renders together with either. `error` *is* mutually exclusive with `degraded` (both derive from the same single-valued `historySource`). The flat `states` list cannot express either relation — should the schema gain state composition?
 
 ## Parity index
 

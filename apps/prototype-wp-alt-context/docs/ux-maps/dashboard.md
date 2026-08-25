@@ -260,23 +260,23 @@ Degraded is an intact first_named dashboard with an attention-bearing sync state
 
 `DashboardSyncHealthSection.tsx` has exactly three exclusive branches:
 
-    :56  isLoading              -> "Loading sync health…"
-    :58  isError || !syncStatus -> EmptyState: heading + body + [Open settings]
-    :66  else                   -> the composition drawn below
+    :61  isLoading              -> "Loading sync health…"
+    :63  isError || !syncStatus -> EmptyState: heading + body + [Open settings]
+    :71  else                   -> the composition drawn below
 
 Inside the else branch the members render independently. Two are unconditional; the
 rest only *add* to them. `degraded` and `offline` name "some subset of the conditional
 ones is on", which is a modifier axis, not a branch of the chain above.
 
-    B  :96  (unconditional)                    summary <p>; text varies
-    S  :99  (unconditional)                    stats grid, 3 value/label pairs
-    A  :68  showMirrorDivergenceBanner         mirror banner + [Reset mirror]
-    C  :113 topologyPending|Failed|Conflicts>0 pending-work summary line
-    D1 :123 conflictCount>0 && lastConflictDate    last-conflict line
-    E1 :126 failedReplayCount>0 && lastFailureDate last-failure line
-    R  :129 (unconditional)                    [Open Review Queue]
-    D2 :134 conflictCount>0                    [Open Conflict Inbox]
-    E2 :140 failedReplayCount>0                [Open Failed Sync Queue]
+    B  :152 (unconditional)                    summary <p>; text varies
+    S  :155 (unconditional)                    stats grid, 3 value/label pairs
+    A  :73  showMirrorDivergenceBanner         mirror banner + [Reset mirror]
+    C  :169 topologyPending|Failed|Conflicts>0 pending-work summary line
+    D1 :179 conflictCount>0 && lastConflictDate    last-conflict line
+    E1 :182 failedReplayCount>0 && lastFailureDate last-failure line
+    R  :185 (unconditional)                    [Open Review Queue]
+    D2 :190 conflictCount>0                    [Open Conflict Inbox]
+    E2 :196 failedReplayCount>0                [Open Failed Sync Queue]
 
 A recency line and its CTA are gated *separately*: `[Open Conflict Inbox]` needs only
 `conflictCount > 0`, while `Last conflict:` additionally needs a parsable date. So

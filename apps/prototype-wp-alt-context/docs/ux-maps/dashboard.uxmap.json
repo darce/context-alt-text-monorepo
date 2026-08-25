@@ -78,7 +78,8 @@
             "default",
             "loading",
             "error",
-            "first_time"
+            "first_time",
+            "caught_up"
           ]
         },
         {

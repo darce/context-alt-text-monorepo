@@ -45,7 +45,7 @@ Purpose: Landing screen with hero, conditional orientation surface, and a priori
 | `z-dashboard-hero` | Dashboard hero (Alt Context / Overview / contextual subtitle) | content | default |
 | `z-orientation` | Orientation surface (Getting Started with Identity Recognition; before grid unless first_named) | content | default, first_time |
 | `z-sync-health` | Sync Health section (summary, pending changes, conflicts, failed sync events, topology work) | status | default, loading, error, offline, degraded |
-| `z-identity-recognition` | Identity Recognition section (people, assigned, pending review, media with faces, guidance) | content | default, loading, error, first_time |
+| `z-identity-recognition` | Identity Recognition section (people, assigned, pending review, media with faces, guidance) | content | default, loading, error, first_time, caught_up |
 | `z-library-coverage` | Library Coverage section (total media, missing alt text, coverage, fix CTA) | content | default, loading |
 | `z-recent-activity` | Recent Activity section (recognition jobs, provenance, status, duration, results link) | queue | default, empty, degraded, error |
 | `z-retention-posture` | Data Retention section (mode, last export, last purge, Open Data Retention link) | status | default, error |
@@ -72,6 +72,41 @@ Screen states: `default`, `loading`, `error`, `first_time`, `degraded`.
 |   People 24 | Assigned 20 | Pending Review 4              |
 |   Media with faces 120                                    |
 |   [Go to Review Queue]                                    |
++------------------------------------------------------------+
+| Library Coverage                                         |
+|   Total Media 300 | Missing Alt Text 40 | Coverage 87%    |
+|   [Fix missing descriptions]                              |
++------------------------------------------------------------+
+| Recent Activity                                          |
+|   Scan finished · 120 images · 2 minutes ago              |
+|   Durable batch run                         [View Results] |
++------------------------------------------------------------+
+| Data Retention                                           |
+|   Current Mode / Last Export / Last Purge                 |
+|   [Open Data Retention]                                   |
++------------------------------------------------------------+
+```
+
+#### Caught up — everything reviewed
+
+A reachable fourth GuidanceCard branch: `pending_clusters_count === 0`, `unassigned_persons_count === 0`, and `people_count > 0`. All review work is done but people already exist, so GuidanceCard shows a caught-up message with no CTA (distinct from the fresh-tenant `people_count === 0` branch, which shows Go to Scan tab). Everything else matches the Default composition.
+
+```
++------------------------------------------------------------+
+| Alt Context                                               |
+| Overview                                                  |
+| It finds the people in your media library and writes      |
+| alt text that names them.                                 |
++------------------------------------------------------------+
+| Sync Health                                               |
+|   Everything is saved and up to date.                     |
+|   Pending changes 0 / Conflicts 0 / Failed operations 0   |
+|   [Open Review Queue]                                     |
++------------------------------------------------------------+
+| Identity Recognition                                     |
+|   People 24 | Assigned 24 | Pending Review 0              |
+|   Media with faces 120                                    |
+|   All caught up. New faces will appear here for review.   |
 +------------------------------------------------------------+
 | Library Coverage                                         |
 |   Total Media 300 | Missing Alt Text 40 | Coverage 87%    |

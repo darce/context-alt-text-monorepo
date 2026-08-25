@@ -185,7 +185,7 @@ Three identities. Compromising one must not yield the others
 | Identity | Where it lives | Who uses it | Privilege |
 | --- | --- | --- | --- |
 | Demo wp-admin / viewer | `WP_ADMIN_*` in `/opt/acx-backend/demo/secrets/.env` | Human operator | WordPress administrator |
-| Demo CI WP user | `WP_CI_*` in the same secrets file; GitHub Environment secrets `ACX_E2E_WP_CI_USER` / `ACX_E2E_WP_CI_PASS` | `deploy-demo.yml` smoke only | Custom role `acx_ci` (subscriber clone + `manage_options`) |
+| Demo CI WP user | `WP_CI_*` in the same secrets file; GitHub Environment secrets `ACX_E2E_WP_CI_USER` / `ACX_E2E_WP_CI_PASS` | `deploy-demo.yml` smoke only | Custom role `acx_ci` (subscriber clone + `manage_options` + `upload_files`) |
 | Prospect / CI API key | description-service identity DB | Plugin → hosted service | Viewer quota 200; CI quota 20 |
 
 Never commit these values (WEB-16). Never put them in a prompt template or

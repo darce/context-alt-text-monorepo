@@ -2,7 +2,7 @@
 
 Final HEAD: recorded by the integrator after transplant.
 
-Verification: `cd infra/oci/gpu_lifecycle && python3 -m pytest tests/ -q` → `39 passed`. Pin suite `PYTHONPATH=. python3 -m pytest scripts/test_vlm3_gpu_lifecycle.py -q` → `8 passed`.
+Verification: `cd infra/oci/gpu_lifecycle && python3 -m pytest tests/ -q` → `41 passed`. Pin suite `PYTHONPATH=. python3 -m pytest scripts/test_vlm3_gpu_lifecycle.py -q` → `8 passed`.
 
 ## GPU-01a Start actuator
 
@@ -128,6 +128,32 @@ RED: characterization pins of already-fixed production were green on first run. 
 
 GREEN: 6 named pins + tautology removed. Package `39 passed`.
 
+## Micro fix round
+
+### W3-D-08 refuse-shared-probe-before-start
+
+Commit: `fix(gpu-lifecycle): W3-D-08 refuse-shared-probe-before-start`
+
+RED (verbatim): `AssertionError: assert [(<LifecycleA...>, 'ocid1.b')] == []`
+
+GREEN: `test_shared_http_probe_refuses_multi_id_wait` — `wait_result is None`, `actuated == []`, `actuator.started == []`.
+
+TEST-15 mutant: drop the early return so actuation proceeds. RED (verbatim): `AssertionError: assert ReadinessWaitResult(ready=(), stalled=(), timed_out=('ocid1.a', 'ocid1.b'), errors=('ocid1.a: readiness timeout after 1 cycles', 'ocid1.b: readiness timeout after 1 cycles')) is None`. Restored; production diff clean.
+
+Evidence: `infra/oci/gpu_lifecycle/reaper.py:516` `start_ids` before actuation; `infra/oci/gpu_lifecycle/reaper.py:535` `return StartCycleResult(..., actuated=[], ...)`.
+
+### W3-D-09 absent-batch-key-warn-once
+
+Commit: `fix(gpu-lifecycle): W3-D-09 absent-batch-key-warn-once`
+
+RED (verbatim): `assert 2 == 1`
+
+GREEN: two `snapshot()` calls emit one WARNING for absent `batch_in_progress`; malformed-value still warns every snapshot.
+
+TEST-15 mutant: always `logger.warning` (no once-guard). RED (verbatim): `assert 2 == 1`. Restored; production diff clean.
+
+Evidence: `infra/oci/gpu_lifecycle/reaper.py:73` `_ABSENT_BATCH_KEY_WARNED`; `infra/oci/gpu_lifecycle/reaper.py:215` DEBUG after first warn; `infra/oci/gpu_lifecycle/reaper.py:222` flag set.
+
 ## Undone
 
 - FALLBACK is logged only; no describe-service consumer is wired.
@@ -135,14 +161,17 @@ GREEN: 6 named pins + tautology removed. Package `39 passed`.
 - cloud-init still invokes `--mode reap` only; start/probe flags are CLI, not deployed.
 - STARTING wait requires a probe; without `--ready-url` an in-flight boot is not waited or fallen back.
 - Pin suite `scripts/test_vlm3_gpu_lifecycle.py` was not moved (outside ownership).
+- Shared-URL single-id wait still allowed (probe cannot mask a sibling). Contract doc not updated this round (ownership was `infra/oci/gpu_lifecycle/**` only).
+- Absent-key warn-once is process-global, not per path: a second load file in the same process is DEBUG.
 
 ## Canon cited
 
-- `reversible-commitments`: START is cheap to retry; unfenced A10 burn and STOP-during-batch are the irreversible sides, so START/STOP fail closed on untrustworthy load.
-- `COST-04`: busy-on-error START would bill GPU hours without accepted captions; untrustworthy load must not count as work.
+- `reversible-commitments`: START is cheap to retry; unfenced A10 burn and STOP-during-batch are the irreversible sides, so START/STOP fail closed on untrustworthy load. Shared-URL multi-id START is refused before actuation so billing does not start without a watch.
+- `COST-04`: busy-on-error START would bill GPU hours without accepted captions; untrustworthy load must not count as work. Starting instances the probe cannot distinguish is cost-per-attempt, not cost-per-accepted.
 - `COST-05`: readiness budget is the 5 min A10 boot peak (`30×10s`), not a 30s stall on `NOT_READY`.
 - `COST-10`: boot/start failure emits `florence_small` (`readiness_timeout`/`readiness_stall`/`start_failed`) so the demo still has a cheaper path.
-- `fail-loudly-succeed-quietly`: STOPPING/UNKNOWN, untrustworthy load, shared-endpoint multi-id, and probe timeout/stall log errors; idle no-work stays quiet.
+- `fail-loudly-succeed-quietly`: STOPPING/UNKNOWN, untrustworthy load, shared-endpoint multi-id, and probe timeout/stall log errors; idle no-work stays quiet. Absent `batch_in_progress` is the live dump's success shape — one WARNING, then DEBUG.
+- `OBS-04`: WARNING every poll on an expected omitted key trains operators to ignore real malformed-value alarms; keep those WARNING every time.
 - `feedback-bounded-waiting`: START subprocess timeout covers `--max-wait-seconds` so the waiter is not killed mid-boot; stall is ERROR-only.
 - `designed-unknown`: `UNKNOWN` (and `STOPPING`) is a designed fail-closed state, not a silent skip.
 - `TEST-15`: each finding had a production mutant that turned its pin red, then restore.

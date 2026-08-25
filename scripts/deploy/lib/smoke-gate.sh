@@ -17,8 +17,11 @@
 #   demo media      alt coverage below min_pct (inclusive boundary; default 95),
 #                   including 0/N empty alt and 0/0 no media -> FAIL. Empty,
 #                   non-numeric, or impossible (with_alt > total) counts fail
-#                   closed. Published alt matching any seeded fixture caption
-#                   -> FAIL (the canned pool is not accessibility content).
+#                   closed. Coverage numerator/denominator come from the same
+#                   page; header_total vs body_total disagreement FAILs rather
+#                   than measuring a paged subset. Published alt matching any
+#                   seeded fixture caption -> FAIL (the canned pool is not
+#                   accessibility content).
 
 # classify_api_probe <post_code> <pre_code> -> PASS|WARN|FAIL
 classify_api_probe() {
@@ -64,6 +67,25 @@ classify_alt_coverage() {
         return
     fi
     if [ $((with_alt * 100 / total)) -ge "$min_pct" ]; then
+        echo PASS
+    else
+        echo FAIL
+    fi
+}
+
+# classify_alt_population <header_total> <body_total> -> PASS|FAIL
+# PASS only when both are the same positive integer (the probed page is the
+# whole reported set). FAIL on empty, non-numeric, zero, or mismatch so a
+# per_page=100 probe cannot silently certify a larger corpus.
+classify_alt_population() {
+    local header_total="$1" body_total="$2"
+    case "$header_total" in *[!0-9]*|'') echo FAIL; return ;; esac
+    case "$body_total" in *[!0-9]*|'') echo FAIL; return ;; esac
+    if [ "$header_total" -eq 0 ] || [ "$body_total" -eq 0 ]; then
+        echo FAIL
+        return
+    fi
+    if [ "$header_total" -eq "$body_total" ]; then
         echo PASS
     else
         echo FAIL

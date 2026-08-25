@@ -39,9 +39,47 @@ def test_probe_timeout_fails_loudly() -> None:
     assert any("timeout" in err for err in result.errors)
 
 
-def test_stall_detection_exit_code_is_nonzero() -> None:
+class AlwaysError:
+    def probe(self, instance_id: str) -> ProbeSample:
+        return ProbeSample(
+            instance_id=instance_id, status=ProbeStatus.ERROR, detail="boom"
+        )
+
+
+def test_not_ready_does_not_count_as_stall() -> None:
+    """W3-D-01: NOT_READY is pending boot, not no-progress. Stall is ERROR-only."""
     waiter = WarmReadinessWait(max_cycles=5, stall_cycles=2, sleep_seconds=0.0)
     result = waiter.wait(["ocid1.gpu"], NeverReady())
+
+    assert result.stalled == ()
+    assert result.timed_out == ("ocid1.gpu",)
+    assert result.exit_code == 1
+    assert any("timeout" in err for err in result.errors)
+    assert not any("stalled" in err for err in result.errors)
+
+
+def test_error_status_still_stalls() -> None:
+    waiter = WarmReadinessWait(max_cycles=5, stall_cycles=2, sleep_seconds=0.0)
+    result = waiter.wait(["ocid1.gpu"], AlwaysError())
+
+    assert result.stalled == ("ocid1.gpu",)
+    assert result.timed_out == ()
+    assert result.exit_code == 1
+    assert any("stalled" in err for err in result.errors)
+
+
+def test_default_ready_budget_covers_five_minute_boot() -> None:
+    from infra.oci.gpu_lifecycle.reaper import (
+        _DEFAULT_READY_MAX_CYCLES,
+        _DEFAULT_READY_SLEEP_SECONDS,
+    )
+
+    assert _DEFAULT_READY_MAX_CYCLES * _DEFAULT_READY_SLEEP_SECONDS >= 300
+
+
+def test_stall_detection_exit_code_is_nonzero() -> None:
+    waiter = WarmReadinessWait(max_cycles=5, stall_cycles=2, sleep_seconds=0.0)
+    result = waiter.wait(["ocid1.gpu"], AlwaysError())
 
     assert result.stalled == ("ocid1.gpu",)
     assert result.timed_out == ()
@@ -58,6 +96,10 @@ def test_one_instance_stall_does_not_halt_others() -> None:
             self.calls[instance_id] += 1
             if instance_id == "ocid1.ok" and self.calls[instance_id] >= 2:
                 return ProbeSample(instance_id=instance_id, status=ProbeStatus.READY)
+            if instance_id == "ocid1.stall":
+                return ProbeSample(
+                    instance_id=instance_id, status=ProbeStatus.ERROR, detail="hung"
+                )
             return ProbeSample(
                 instance_id=instance_id, status=ProbeStatus.NOT_READY, detail="cold"
             )

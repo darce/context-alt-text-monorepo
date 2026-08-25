@@ -33,9 +33,12 @@ After START, `--ready-url` polls an HTTP health endpoint with a bounded wait
 (`--ready-max-cycles`, `--ready-stall-cycles`, `--ready-sleep-seconds`).
 
 - Timeout and stall fail loudly (non-zero process exit, errors on the result).
+- Stall counts probe ERROR / exception only. `NOT_READY` is pending boot and
+  stays in the wait until `--ready-max-cycles` timeout; it does not increment
+  the stall counter. Defaults `30 × 10s ≈ 5 min` cover a normal A10 boot;
+  `--ready-stall-cycles` (default 3) trips only on consecutive probe errors.
 - Per-instance no-progress cycles are tracked independently: one hung instance
   does not halt others in the same wait (rg-007).
-- Default budget is 30 cycles × 10s ≈ 5 min (A10 boot+load amortization).
 - Omitting `--ready-url` skips the wait.
 
 ## Load snapshot JSON

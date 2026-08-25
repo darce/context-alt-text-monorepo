@@ -590,7 +590,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--ready-stall-cycles",
         type=int,
         default=_DEFAULT_READY_STALL_CYCLES,
-        help="Per-instance no-progress cycles before stall fail (default 3)",
+        help="Consecutive ERROR/exception cycles before stall fail (default 3; NOT_READY does not count)",
     )
     parser.add_argument(
         "--ready-sleep-seconds",

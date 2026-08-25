@@ -46,8 +46,9 @@ class ReadinessWaitResult:
 class WarmReadinessWait:
     """Poll each instance until ready, stalled, or the cycle budget expires.
 
-    Per-instance no-progress cycles are tracked independently so one hung
-    instance cannot halt the rest of the batch (rg-007).
+    Per-instance no-progress cycles count probe ERROR / exception only.
+    NOT_READY stays pending until max_cycles (normal boot is not a stall).
+    One hung instance cannot halt the rest of the batch (rg-007).
     """
 
     def __init__(
@@ -95,8 +96,14 @@ class WarmReadinessWait:
                     ready.append(instance_id)
                     no_progress[instance_id] = 0
                     continue
+                if sample.status == ProbeStatus.NOT_READY:
+                    # Pending boot is progress toward READY; do not stall a
+                    # normal A10 bring-up (W3-D-01). Timeout uses max_cycles.
+                    no_progress[instance_id] = 0
+                    still_pending.append(instance_id)
+                    continue
                 no_progress[instance_id] += 1
-                if sample.status == ProbeStatus.ERROR and sample.detail:
+                if sample.detail:
                     errors.append(f"{instance_id}: {sample.detail}")
                 if no_progress[instance_id] >= self.stall_cycles:
                     stalled.append(instance_id)

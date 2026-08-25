@@ -3,6 +3,13 @@
 # (scripts/deploy/lib/smoke-gate.sh). Pins PASS/WARN/FAIL semantics so a gate
 # regression is caught without a live deploy. Run: bash scripts/deploy/tests/test-smoke-gate.sh
 
+# R2-11: refuse non-bash before `set -o pipefail`. dash/sh reject pipefail
+# with exit 2 and print no assertions, which a caller can misread as green.
+if [ -z "${BASH_VERSION:-}" ]; then
+    echo "FAIL $0 must run under bash, not sh/dash. Example: bash $0" >&2
+    exit 2
+fi
+
 set -euo pipefail
 
 script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -182,6 +189,34 @@ assert_eq "usable alt 14 letters (below 15)" FAIL "$(classify_alt_text_usable 'a
 assert_eq "usable alt 15 letters" PASS "$(classify_alt_text_usable 'abcdefghijklmno')"
 assert_eq "usable alt 15 digits no alphabetic" FAIL "$(classify_alt_text_usable '123456789012345')"
 assert_eq "usable alt real caption" PASS "$(classify_alt_text_usable 'A woman in a red coat speaks at a podium.')"
+# R2-09: 'abcde' + five U+00E9 = 10 characters, 15 UTF-8 bytes. ${#text}
+# PASSes this under C/POSIX (bytes) and FAILs under UTF-8 (chars). Characters
+# is the documented unit; both locales must FAIL, and the verdicts must match.
+# UTF-8 bytes, not $'\u00e9', so macOS bash 3.2 can construct the sample.
+r209_sample="abcde$(printf '\xc3\xa9\xc3\xa9\xc3\xa9\xc3\xa9\xc3\xa9')"
+r209_c=$(LC_ALL=C classify_alt_text_usable "$r209_sample") || true
+r209_utf=$(LC_ALL=C.UTF-8 classify_alt_text_usable "$r209_sample") || true
+assert_eq "R2-09 10-char/15-byte under LC_ALL=C" FAIL "$r209_c"
+assert_eq "R2-09 10-char/15-byte under LC_ALL=C.UTF-8" FAIL "$r209_utf"
+assert_eq "R2-09 locale-independent verdict" "$r209_c" "$r209_utf"
+# R2-11: this suite (and the describe suite) must refuse non-bash before
+# `set -o pipefail`. Pin the guard so deleting it goes red under bash too,
+# not only as an early sh abort with no assertion output.
+r211_self=$(awk '
+    /BASH_VERSION/ && !seen_pf { g=1 }
+    /set -euo pipefail/ { seen_pf=1 }
+    END { if (g) print "guard-before-pipefail"; else print "missing-guard" }
+' "$0")
+assert_eq "R2-11 smoke suite guards BASH_VERSION before pipefail" \
+    "guard-before-pipefail" "$r211_self"
+describe_test="${script_dir}/../../../infra/oci/demo/tests/test-describe-gate.sh"
+r211_describe=$(awk '
+    /BASH_VERSION/ && !seen_pf { g=1 }
+    /set -euo pipefail/ { seen_pf=1 }
+    END { if (g) print "guard-before-pipefail"; else print "missing-guard" }
+' "$describe_test")
+assert_eq "R2-11 describe suite guards BASH_VERSION before pipefail" \
+    "guard-before-pipefail" "$r211_describe"
 
 # R2-13: printed verdict AND $? for at least one PASS and one FAIL per classifier.
 # WARN is not a failure (rc 0), matching UNKNOWN policy.

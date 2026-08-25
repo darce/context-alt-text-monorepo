@@ -6,6 +6,13 @@
 set -euo pipefail
 
 script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+fixture_denylist_file="${script_dir}/../lib/fixture-denylist.sh"
+if [ ! -f "$fixture_denylist_file" ]; then
+    echo "FAIL fixture-denylist.sh missing: ${fixture_denylist_file}"
+    exit 1
+fi
+# shellcheck source=../lib/fixture-denylist.sh
+source "$fixture_denylist_file"
 # shellcheck source=../lib/smoke-gate.sh
 source "${script_dir}/../lib/smoke-gate.sh"
 
@@ -127,8 +134,11 @@ assert_eq "usable alt real caption" PASS "$(classify_alt_text_usable 'A woman in
 # FAIL drift: pool caption classified FAIL (A drift sentinel caption that is not in the shell gate.): expected FAIL, got PASS
 # Reverted; suite green. The guard is falsifiable, not merely passing.
 # Drift guard: every caption in the Python _FIXTURE_POOL must FAIL provenance.
-# If a fixture is added to seeded_adapter.py and not hardcoded in smoke-gate.sh,
+# If a fixture is added to seeded_adapter.py and not the shared denylist,
 # this goes red. Missing source file is a FAIL, not a skip.
+# XLANE-03: smoke-gate.sh must not grow a third inline denylist copy.
+assert_eq "smoke-gate.sh has no inline fixture-caption case arms" \
+    "0" "$(grep -c 'a close-up of a small object' "${script_dir}/../lib/smoke-gate.sh" || true)"
 adapter_file=$(cd "${script_dir}/../../.." && pwd)/apps/prototype-description-service/scene/application/seeded_adapter.py
 if [ ! -f "$adapter_file" ]; then
     echo "FAIL fixture-pool source missing: ${adapter_file}"

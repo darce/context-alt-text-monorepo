@@ -43,9 +43,11 @@
 #                   seeded fixture caption (after lowercase / whitespace
 #                   collapse / trailing .!? strip) -> FAIL (the canned pool is
 #                   not accessibility content). Adapter identity must also
-#                   certify: every probed acx_alt_provenance.adapter is in
-#                   ACX_TRUSTED_DESCRIBE_PROFILES and trusted count >= usable
-#                   alt count. Empty identity with usable alt FAILs closed.
+#                   certify: each usable alt's own acx_alt_provenance.adapter
+#                   is in ACX_TRUSTED_DESCRIBE_PROFILES and trusted count
+#                   equals usable alt count. Tokens with whitespace or glob
+#                   metacharacters (*, ?, [) are untrusted. Empty identity
+#                   with usable alt FAILs closed.
 
 # classify_api_probe <post_code> <pre_code> -> PASS|WARN|FAIL
 classify_api_probe() {
@@ -145,19 +147,103 @@ classify_alt_text_usable() {
     esac
 }
 
+# parse_wp_media_alt_rows <json_file>
+# One line per attachment: adapter<TAB>alt_text. Adapter is that attachment's
+# own acx_alt_provenance.adapter (empty if missing/null/non-string). Tabs and
+# newlines inside fields flatten to spaces so each attachment stays one line.
+# Prints nothing and returns 1 when the body is not a JSON array/object.
+parse_wp_media_alt_rows() {
+    local json_file="$1"
+    python3 - "$json_file" <<'PY'
+import json
+import sys
+
+path = sys.argv[1]
+try:
+    with open(path, "r", encoding="utf-8") as fh:
+        data = json.load(fh)
+except Exception:
+    sys.exit(1)
+if isinstance(data, dict):
+    data = [data]
+if not isinstance(data, list):
+    sys.exit(1)
+
+def flatten(value):
+    return value.replace("\t", " ").replace("\n", " ").replace("\r", " ")
+
+for item in data:
+    alt = ""
+    adapter = ""
+    if isinstance(item, dict):
+        raw_alt = item.get("alt_text")
+        if isinstance(raw_alt, str):
+            alt = raw_alt
+        prov = item.get("acx_alt_provenance")
+        if isinstance(prov, dict):
+            raw_adapter = prov.get("adapter")
+            if isinstance(raw_adapter, str):
+                adapter = raw_adapter
+    sys.stdout.write(flatten(adapter) + "\t" + flatten(alt) + "\n")
+PY
+}
+
+# load_alt_counts_from_media_body <json_file>
+# Sets caller-visible body_total, with_alt, adapters, sample from one per-item
+# parse. Each usable alt contributes exactly one adapter token (its own).
+# Whitespace, glob metacharacters (*, ?, [), or a missing adapter on a usable
+# row become the sentinel __invalid__ so they cannot pad or glob the blob.
+# body_total is the attachment count (JSON array length) so well-formed WP
+# REST _fields=alt_text payloads match the historical grep -o '"alt_text"' count.
+load_alt_counts_from_media_body() {
+    local json_file="$1"
+    local parsed line adapter alt
+    body_total=0
+    with_alt=0
+    sample=""
+    adapters=""
+    parsed=$(parse_wp_media_alt_rows "$json_file" 2>/dev/null) || parsed=""
+    while IFS= read -r line || [ -n "$line" ]; do
+        [ -n "$line" ] || continue
+        body_total=$((body_total + 1))
+        adapter="${line%%$'\t'*}"
+        if [ "$adapter" = "$line" ]; then
+            alt=""
+        else
+            alt="${line#*$'\t'}"
+        fi
+        if [ "$(classify_alt_text_usable "$alt")" = "PASS" ]; then
+            with_alt=$((with_alt + 1))
+            sample="${sample}${alt} "
+            case "$adapter" in
+                *[[:space:]]*|*'*'*|*'?'*|*'['*|'')
+                    adapters="${adapters}__invalid__ "
+                    ;;
+                *)
+                    adapters="${adapters}${adapter} "
+                    ;;
+            esac
+        fi
+    done <<LOADMEDIA
+${parsed}
+LOADMEDIA
+}
+
 # classify_alt_identity <adapters_blob> <usable_count> -> PASS|FAIL
 # Gate A only (adapter identity). classify_alt_provenance ANDs this with Gate B.
 # Every adapter in adapters_blob must be an exact ACX_TRUSTED_DESCRIBE_PROFILES
 # member (is_trusted_describe_profile; do not re-implement the match). Trusted
-# adapter count must be >= usable_count. Empty adapters_blob with
+# adapter count must equal usable_count. Empty adapters_blob with
 # usable_count > 0 FAILs closed — a demo whose plugin predates
 # acx_alt_provenance must not certify [SECD-08]. Non-numeric/empty
 # usable_count FAILs. Count-check applies only when adapters are present so
-# the empty-blob arm is load-bearing (TEST-15 M1).
+# the empty-blob arm is load-bearing (TEST-15 M1). Tokens containing
+# whitespace or glob metacharacters (*, ?, [) are untrusted. The word-split
+# runs under set -f so a token of * cannot expand against cwd.
 classify_alt_identity() {
     local adapters_blob="${1:-}"
     local usable_count="${2:-}"
-    local adapter trusted_count=0
+    local trusted_out
     case "$usable_count" in
         *[!0-9]*|'') echo FAIL; return ;;
     esac
@@ -169,14 +255,29 @@ classify_alt_identity() {
         echo PASS
         return
     fi
-    for adapter in $adapters_blob; do
-        if ! is_trusted_describe_profile "$adapter"; then
-            echo FAIL
-            return
-        fi
-        trusted_count=$((trusted_count + 1))
-    done
-    if [ "$trusted_count" -lt "$usable_count" ]; then
+    trusted_out=$(
+        set -f
+        c=0
+        for adapter in $adapters_blob; do
+            case "$adapter" in
+                *[[:space:]]*|*'*'*|*'?'*|*'['*)
+                    echo FAIL
+                    exit 0
+                    ;;
+            esac
+            if ! is_trusted_describe_profile "$adapter"; then
+                echo FAIL
+                exit 0
+            fi
+            c=$((c + 1))
+        done
+        echo "$c"
+    )
+    if [ "$trusted_out" = "FAIL" ]; then
+        echo FAIL
+        return
+    fi
+    if [ "$trusted_out" -ne "$usable_count" ]; then
         echo FAIL
         return
     fi

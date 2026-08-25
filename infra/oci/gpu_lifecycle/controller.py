@@ -3,6 +3,21 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from enum import StrEnum
+
+
+class LifecycleAction(StrEnum):
+    START = "START"
+    STOP = "STOP"
+    FALLBACK = "FALLBACK"
+
+
+class GpuInstanceState(StrEnum):
+    RUNNING = "RUNNING"
+    STOPPED = "STOPPED"
+    STARTING = "STARTING"
+    STOPPING = "STOPPING"
+    UNKNOWN = "UNKNOWN"
 
 
 @dataclass(frozen=True)
@@ -25,10 +40,26 @@ class JobLoadSnapshot:
 
 
 class GpuLifecycleController:
-    """Decides when the out-of-band OCI controller should stop burst GPUs."""
+    """Decides when the out-of-band OCI controller should start or stop burst GPUs."""
 
     def __init__(self, *, idle_seconds: int) -> None:
         self.idle_seconds = idle_seconds
+
+    def start_needed_instances(
+        self,
+        instances: list[GpuInstance],
+        *,
+        queue_depth: int,
+        in_flight: int,
+    ) -> list[tuple[str, str]]:
+        """Emit START for STOPPED burst instances when work is waiting."""
+        if queue_depth <= 0 and in_flight <= 0:
+            return []
+        return [
+            (LifecycleAction.START, instance.instance_id)
+            for instance in instances
+            if instance.state == GpuInstanceState.STOPPED
+        ]
 
     def reap_idle_instances(
         self,
@@ -40,9 +71,9 @@ class GpuLifecycleController:
         if queue_depth > 0 or in_flight > 0:
             return []
         return [
-            ("STOP", instance.instance_id)
+            (LifecycleAction.STOP, instance.instance_id)
             for instance in instances
-            if instance.state == "RUNNING"
+            if instance.state == GpuInstanceState.RUNNING
             and instance.idle_for_seconds >= self.idle_seconds
         ]
 

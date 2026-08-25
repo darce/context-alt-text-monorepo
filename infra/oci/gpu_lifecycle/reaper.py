@@ -43,6 +43,7 @@ from infra.oci.gpu_lifecycle.controller import (
     GpuInstance,
     GpuLifecycleController,
     JobLoadSnapshot,
+    LifecycleAction,
 )
 
 logger = logging.getLogger(__name__)
@@ -60,6 +61,39 @@ class JobLoadSource(Protocol):
 
 class InstanceStopActuator(Protocol):
     def stop_instance(self, instance_id: str) -> None: ...
+
+
+class InstanceStartActuator(Protocol):
+    def start_instance(self, instance_id: str) -> None: ...
+
+
+def build_instance_action_cmd(
+    *,
+    oci_bin: str,
+    instance_id: str,
+    action: str,
+    wait_state: str,
+    auth: str | None = None,
+    max_wait_seconds: int = 600,
+) -> list[str]:
+    """OCI CLI power-action argv. START/STOP twins share this builder."""
+    cmd = [
+        oci_bin,
+        "compute",
+        "instance",
+        "action",
+        "--instance-id",
+        instance_id,
+        "--action",
+        action,
+        "--wait-for-state",
+        wait_state,
+        "--max-wait-seconds",
+        str(max_wait_seconds),
+    ]
+    if auth:
+        cmd.extend(["--auth", auth])
+    return cmd
 
 
 @dataclass(frozen=True)
@@ -161,27 +195,59 @@ class OciCliStopActuator:
         self._auth = auth
         self._timeout_seconds = timeout_seconds
 
+    def build_cmd(self, instance_id: str) -> list[str]:
+        return build_instance_action_cmd(
+            oci_bin=self._oci_bin,
+            instance_id=instance_id,
+            action=LifecycleAction.STOP,
+            wait_state="STOPPED",
+            auth=self._auth,
+        )
+
     def stop_instance(self, instance_id: str) -> None:
-        cmd = [
-            self._oci_bin,
-            "compute",
-            "instance",
-            "action",
-            "--instance-id",
-            instance_id,
-            "--action",
-            "STOP",
-            "--wait-for-state",
-            "STOPPED",
-            "--max-wait-seconds",
-            "600",
-        ]
-        if self._auth:
-            cmd.extend(["--auth", self._auth])
+        cmd = self.build_cmd(instance_id)
         if self._dry_run:
             logger.info("dry-run STOP %s: %s", instance_id, " ".join(cmd))
             return
         logger.info("actuating STOP for %s", instance_id)
+        subprocess.run(cmd, check=True, timeout=self._timeout_seconds)
+
+
+class OciCliStartActuator:
+    """START via OCI CLI (`oci compute instance action --action START`).
+
+    Symmetric twin of ``OciCliStopActuator``: same auth, timeout, dry-run, and
+    wait-for-state flags; only ``--action`` / ``--wait-for-state`` differ.
+    """
+
+    def __init__(
+        self,
+        *,
+        oci_bin: str | None = None,
+        dry_run: bool = False,
+        auth: str | None = None,
+        timeout_seconds: int = _DEFAULT_OCI_TIMEOUT_SECONDS,
+    ) -> None:
+        self._oci_bin = oci_bin or shutil.which("oci") or "oci"
+        self._dry_run = dry_run
+        self._auth = auth
+        self._timeout_seconds = timeout_seconds
+
+    def build_cmd(self, instance_id: str) -> list[str]:
+        return build_instance_action_cmd(
+            oci_bin=self._oci_bin,
+            instance_id=instance_id,
+            action=LifecycleAction.START,
+            wait_state="RUNNING",
+            auth=self._auth,
+        )
+
+    def start_instance(self, instance_id: str) -> None:
+        cmd = self.build_cmd(instance_id)
+        if self._dry_run:
+            logger.info("dry-run START %s: %s", instance_id, " ".join(cmd))
+            return
+        logger.info("actuating START for %s", instance_id)
         subprocess.run(cmd, check=True, timeout=self._timeout_seconds)
 
 
@@ -258,6 +324,13 @@ class ReapCycleResult:
     errors: list[str]
 
 
+@dataclass(frozen=True)
+class StartCycleResult:
+    decided: list[tuple[str, str]]
+    actuated: list[tuple[str, str]]
+    errors: list[str]
+
+
 def run_reap_cycle(
     *,
     controller: GpuLifecycleController,
@@ -309,6 +382,41 @@ def run_reap_cycle(
     )
 
 
+def run_start_cycle(
+    *,
+    controller: GpuLifecycleController,
+    instances: list[GpuInstance],
+    load_source: JobLoadSource,
+    actuator: InstanceStartActuator,
+) -> StartCycleResult:
+    """Emit START for STOPPED instances when the job store has work.
+
+    Per-instance START failures are collected; the loop continues (rg-007).
+    """
+    load = load_source.snapshot()
+    decided = controller.start_needed_instances(
+        instances,
+        queue_depth=load.queue_depth,
+        in_flight=load.in_flight,
+    )
+    if not decided:
+        return StartCycleResult(decided=[], actuated=[], errors=[])
+
+    actuated: list[tuple[str, str]] = []
+    errors: list[str] = []
+    for action, instance_id in decided:
+        if action != LifecycleAction.START:
+            continue
+        try:
+            actuator.start_instance(instance_id)
+            actuated.append((action, instance_id))
+        except Exception as exc:  # noqa: BLE001 - isolate per-instance (rg-007)
+            msg = f"{instance_id}: {type(exc).__name__}: {exc}"
+            logger.error("START failed: %s", msg)
+            errors.append(msg)
+    return StartCycleResult(decided=decided, actuated=actuated, errors=errors)
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="ACX GPU idle reaper (STOP actuator)")
     parser.add_argument(
@@ -317,6 +425,12 @@ def _build_parser() -> argparse.ArgumentParser:
         dest="instance_ids",
         required=True,
         help="OCI instance OCID to consider (repeatable)",
+    )
+    parser.add_argument(
+        "--mode",
+        choices=("reap", "start"),
+        default="reap",
+        help="reap=STOP idle GPUs (default); start=START stopped GPUs when work waits",
     )
     parser.add_argument(
         "--idle-seconds",
@@ -457,6 +571,27 @@ def main(argv: list[str] | None = None) -> int:
         )
 
     controller = GpuLifecycleController(idle_seconds=args.idle_seconds)
+    if args.mode == "start":
+        start_actuator = OciCliStartActuator(
+            oci_bin=args.oci_bin,
+            dry_run=args.dry_run,
+            auth=args.oci_auth,
+            timeout_seconds=args.oci_timeout_seconds,
+        )
+        start_result = run_start_cycle(
+            controller=controller,
+            instances=instances,
+            load_source=load_source,
+            actuator=start_actuator,
+        )
+        logger.info(
+            "start cycle decided=%s actuated=%s errors=%s",
+            start_result.decided,
+            start_result.actuated,
+            start_result.errors,
+        )
+        return 1 if start_result.errors else 0
+
     actuator = OciCliStopActuator(
         oci_bin=args.oci_bin,
         dry_run=args.dry_run,

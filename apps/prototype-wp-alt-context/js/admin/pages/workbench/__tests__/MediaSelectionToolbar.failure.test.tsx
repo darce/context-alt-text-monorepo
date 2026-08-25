@@ -22,7 +22,7 @@ describe('D-23 MediaSelectionToolbar filter zone', () => {
         isError={false}
       />,
     );
-    expect(screen.getByTestId('acx-zone-z-filters-loading')).toHaveTextContent('Loading filters…');
+    expect(screen.getByTestId('acx-zone-z-filters-loading')).toHaveTextContent('Loading media…');
   });
 
   it('renders error', () => {
@@ -38,6 +38,6 @@ describe('D-23 MediaSelectionToolbar filter zone', () => {
         onRetry={noop}
       />,
     );
-    expect(screen.getByTestId('acx-zone-z-filters-error')).toHaveTextContent('Unable to load filters.');
+    expect(screen.getByTestId('acx-zone-z-filters-error')).toHaveTextContent('Unable to load media.');
   });
 });

@@ -11,13 +11,20 @@ import sys
 from types import ModuleType
 
 import pytest
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from db.models import DemoInstance
+from db.models import ApiKey, DemoInstance
 from recognition.application.services.demo_provisioning_service import BASE58_ALPHABET, DEFAULT_SLUG_LENGTH
 from recognition.infrastructure.repositories import SqlAlchemyApiKeyRepository
 
 _BASE58_RE = re.compile(f"^[{re.escape(BASE58_ALPHABET)}]{{{DEFAULT_SLUG_LENGTH}}}$")
+
+
+async def _persisted_demo_and_key_counts(session: AsyncSession) -> tuple[int, int]:
+    demos = (await session.execute(select(func.count()).select_from(DemoInstance))).scalar_one()
+    keys = (await session.execute(select(func.count()).select_from(ApiKey))).scalar_one()
+    return int(demos or 0), int(keys or 0)
 
 
 def _import_cli() -> ModuleType:
@@ -135,6 +142,9 @@ async def test_cli_provision_ci_requires_admin_user(db_session: AsyncSession, ca
     captured = capsys.readouterr()
     assert "error:" in captured.err
     assert "admin-user" in captured.err
+    demos, keys = await _persisted_demo_and_key_counts(db_session)
+    assert demos == 0
+    assert keys == 0
 
 
 @pytest.mark.asyncio
@@ -158,6 +168,9 @@ async def test_cli_provision_ci_rejects_admin_collision(db_session: AsyncSession
     captured = capsys.readouterr()
     assert "error:" in captured.err
     assert "differ" in captured.err
+    demos, keys = await _persisted_demo_and_key_counts(db_session)
+    assert demos == 0
+    assert keys == 0
 
 
 @pytest.mark.asyncio

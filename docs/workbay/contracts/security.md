@@ -235,6 +235,51 @@ decision #1882.)
 
 **Deployment constraint**: the in-memory counter is correct only under a single worker process. Multi-worker deployment requires a shared counter store (Redis/DB) and is out of scope for E15-1.
 
+## Public demo instance HTTP surface
+
+Public demo URLs are `https://demo.altcontext.com/x/{slug}`. Slug entropy is **not** authorization. Tenant data (`tenant_id`, `seed_bundle`, `branding_json`, `expires_at`, `quota_remaining`) is returned only after a short-lived session is minted.
+
+### Session exchange — `POST /x/{slug}/session`
+
+1. Unknown slug → `404` `{"detail": "not found"}` (uniform; no existence oracle among unknowns).
+2. Expired or revoked instance → `410` `{"detail": {"code": "demo_ended", "message": "this demo has ended"}}`.
+3. Instance whose `seed_bundle` is unknown to the catalog → `410` `demo_ended` (no tenant data; same body as ended). `UnknownSeedBundleError` is never a 500.
+4. Live slug → `201` with `{session_token, expires_at}` and `Set-Cookie: acx_demo_session=<token>; HttpOnly; Secure; SameSite=Lax; Path=/x`. TTL is `DEFAULT_SESSION_TTL_SECONDS` (15 minutes). Token is high-entropy (`secrets.token_urlsafe(32)`); the store keeps only `sha256(token)`. The body never includes tenant data or API key material.
+
+### Authenticated resolve — `GET /x/{slug}`
+
+Session is taken from `X-Demo-Session` or the `acx_demo_session` cookie (header wins). Lookup order:
+
+1. Unknown slug → `404` (no tenant data).
+2. Expired/revoked instance → `410` `demo_ended` (no tenant data).
+3. Instance whose `seed_bundle` is unknown to the catalog → `410` `demo_ended` (no tenant data).
+4. Missing session → `401` `{"detail": "session_required"}`.
+5. Unknown or slug-mismatched token → `401` `{"detail": "session_invalid"}`.
+6. Expired token → `401` `{"detail": "session_expired"}`.
+7. Valid session bound to this slug → `200` `DemoResolveResponse`.
+
+`DemoResolveResponse.pre_scan` is the seed-bundle pre-scan contract (AUTH-04), not a live scan snapshot:
+
+```json
+{
+  "seeded_media_present": true,
+  "scanned_faces": 0,
+  "people_count": 0
+}
+```
+
+Each named seed bundle (`default`, `acme`) encodes that contract. `provision_demo` refuses to complete unless the catalog contract holds **and** the new tenant observes zero `media_identities` faces and zero labeled `identity_clusters`. Violation raises `PreScanStateError` (loud fail; not a silent reset script). Observe fail-closes on a broken identity schema: a missing *column* (or any error that is not a confirmed missing *relation*) is re-raised; a missing-relation fallback to zero counts is allowed only when **both** `media_identities` and `identity_clusters` are confirmed absent by relation name. `POST /x/provision` maps `PreScanStateError` to `409` `{"detail": "<message>"}` with no tenant fields.
+
+`401`/`404`/`410` bodies must not contain `tenant_id`, `seed_bundle`, `branding_json`, or `quota_remaining`. Raw API keys and `api_key_ref` never appear on this surface.
+
+Per-IP sliding-window rate limit (`RECOGNITION_DEMO_RESOLVE_RPM`, default 30) applies to every `/x/*` route via `enforce_ip_rate_limit`. Breach is `429` `{"detail": "rate limit exceeded"}` with `Retry-After` and `X-RateLimit-*`.
+
+### Provision — `POST /x/provision` (WEB-17)
+
+Self-serve provisioning sits in front of GPU-backed recognition and is unpriced. Request `{label, seed?}` → `201` `{slug, demo_url, seed_bundle, expires_at, pre_scan}`. Raw API keys are never returned. Unknown `seed` → `400`.
+
+A second, tighter per-source (client IP, same spoof-resistant `_client_ip` as resolve) sliding window applies **in addition** to the `/x/*` limiter: `RECOGNITION_DEMO_PROVISION_RPM` (default 3). Values `<= 0` or non-integer fall back to the default 3 (fail-closed; the cap cannot be disabled by env). Breach → `429` `{"detail": "rate limit exceeded"}` with `Retry-After` and `X-RateLimit-*`.
+
 **Fail-closed startup guard**: in production (`RECOGNITION_RUNTIME_MODE=production`)
 `create_app()` refuses to start when a required secret is missing, empty, or set
 to the development default (`validate_required_secrets`), and — under

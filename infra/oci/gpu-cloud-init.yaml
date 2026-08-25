@@ -23,9 +23,10 @@ write_files:
     permissions: "0644"
     content: |
       # Populate at bake time with `sha256sum qwen3-vl-30b-a3b-instruct-q4.gguf`.
-      # Placeholder forces operators to pin the quant; runtime-check verifies.
-      # REPLACE_WITH_SHA256_OF_qwen3-vl-30b-a3b-instruct-q4.gguf  qwen3-vl-30b-a3b-instruct-q4.gguf
-      # REPLACE_WITH_SHA256_OF_qwen3-vl-30b-a3b-instruct-mmproj.gguf  qwen3-vl-30b-a3b-instruct-mmproj.gguf
+      # Digests are pinned; bake must match or runtime-check fails closed.
+      # pinned from unsloth/Qwen3-VL-30B-A3B-Instruct-GGUF@0af19e7479857aa7f3246466a4ad16c7e7299639 (hub Qwen3-VL-30B-A3B-Instruct-Q4_K_M.gguf, mmproj-F16.gguf; lfs.oid sha256)
+      7ea0a652b4bda1c1911a93a79a7cd98b92011dfea078e87328285294b2b4ab44  qwen3-vl-30b-a3b-instruct-q4.gguf
+      9f248089357599a08a23af40cb5ce0030de14a2e119b7ef57f66cb339bd20819  qwen3-vl-30b-a3b-instruct-mmproj.gguf
 
   - path: /usr/local/bin/acx-gpu-runtime-check.sh
     permissions: "0755"

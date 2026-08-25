@@ -1,4 +1,5 @@
 import json
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -79,6 +80,65 @@ def test_gpu_endpoint_outputs_for_acx_gpu_endpoint_url() -> None:
     assert 'output "gpu_endpoint_url"' in outputs_tf
     assert "oci_core_instance.acx_gpu_burst.private_ip" in outputs_tf
     assert "http://${oci_core_instance.acx_gpu_burst.private_ip}:8000" in outputs_tf
+
+
+EXPECTED_Q4_DIGEST = "7ea0a652b4bda1c1911a93a79a7cd98b92011dfea078e87328285294b2b4ab44"
+EXPECTED_MMPROJ_DIGEST = "9f248089357599a08a23af40cb5ce0030de14a2e119b7ef57f66cb339bd20819"
+HUB_PIN = (
+    "unsloth/Qwen3-VL-30B-A3B-Instruct-GGUF@0af19e7479857aa7f3246466a4ad16c7e7299639"
+)
+LOCAL_Q4 = "qwen3-vl-30b-a3b-instruct-q4.gguf"
+LOCAL_MMPROJ = "qwen3-vl-30b-a3b-instruct-mmproj.gguf"
+
+
+def test_gpu_cloud_init_pins_gguf_digests_from_hub_revision() -> None:
+    parsed = yaml.safe_load((OCI_ROOT / "gpu-cloud-init.yaml").read_text())
+    entry = next(
+        item
+        for item in parsed["write_files"]
+        if item["path"] == "/opt/acx-gpu/models/SHA256SUMS"
+    )
+    content = entry["content"]
+    digest_lines = [
+        line
+        for line in content.splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    ]
+    assert len(digest_lines) == 2
+
+    digest_re = re.compile(r"^([0-9a-f]{64})  (.+)$")
+    parsed_digests: dict[str, str] = {}
+    for line in digest_lines:
+        match = digest_re.fullmatch(line)
+        assert match, f"expected sha256sum line, got {line!r}"
+        parsed_digests[match.group(2)] = match.group(1)
+
+    assert parsed_digests == {
+        LOCAL_Q4: EXPECTED_Q4_DIGEST,
+        LOCAL_MMPROJ: EXPECTED_MMPROJ_DIGEST,
+    }
+    assert HUB_PIN in content
+
+    profiles = (
+        REPO_ROOT
+        / "apps"
+        / "prototype-description-service"
+        / "scene"
+        / "config"
+        / "profiles.py"
+    ).read_text()
+    hub_repo, model_revision = HUB_PIN.split("@", 1)
+    pairs = re.findall(
+        r'hub_repo="([^"]+)",\s*\n\s*model_revision="([^"]+)"',
+        profiles,
+    )
+    qwen_pairs = [rev for repo, rev in pairs if repo == hub_repo]
+    assert len(qwen_pairs) == 2, (
+        f"expected 2 profiles pinning {hub_repo}, got {len(qwen_pairs)}"
+    )
+    assert all(rev == model_revision for rev in qwen_pairs), (
+        f"every {hub_repo} profile must pin revision {model_revision}, got {qwen_pairs}"
+    )
 
 
 def test_gpu_cloud_init_bakes_qwen_measurement_candidate() -> None:

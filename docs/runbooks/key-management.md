@@ -195,8 +195,10 @@ RAG store (SEC-06).
 
 `bootstrap-wp.sh` creates/converges `WP_CI_USER` on every run. It must differ
 from `WP_ADMIN_USER`. GitHub Actions maps `ACX_E2E_WP_CI_*` onto Playwright's
-`ACX_E2E_WP_ADMIN_*` env names (harness unchanged) and **refuses**
-`acx-demo-admin` / `admin`. Rotate `WP_CI_PASSWORD` the same two-key way as
+`ACX_E2E_WP_ADMIN_*` env names (harness unchanged). `ACX_E2E_WP_CI_USER` **must
+equal** the VM `WP_CI_USER` — the denylist (`acx-demo-admin` / `admin`,
+case-insensitive) is a safety net, not the identity contract. Empty
+`ACX_E2E_WP_CI_PASS` is refused. Rotate `WP_CI_PASSWORD` the same two-key way as
 admin (patch secrets/.env, then bootstrap/deploy). Do not copy the admin
 password into `ACX_E2E_WP_CI_PASS`.
 

@@ -109,3 +109,66 @@ grep_rc 0
 ```
 
 Two matches → `sha256sum -c` branch arms. Pattern present in yaml-embedded `/usr/local/bin/acx-gpu-runtime-check.sh`.
+
+## VERIFY2
+
+Independent check of W3-F-01 pair-wise pin on HEAD `64723cd846da2be000799b2f10badfccc7cdb8db`. Guard: `scripts/test_vlm3_oci_gpu_infra.py::test_gpu_cloud_init_pins_gguf_digests_from_hub_revision`.
+
+**Overall: PASS** — baseline GREEN; V2a/V2b/V2c RED as required; post-revert suite GREEN.
+
+### baseline — PASS
+
+```
+python3 -m pytest scripts/test_vlm3_oci_gpu_infra.py -q
+......s.                                                                 [100%]
+7 passed, 1 skipped in 0.05s
+```
+
+### mutant V2a (ENSEMBLE `model_revision` → 40×`f`) — PASS (RED)
+
+Changed only `GPU_QWEN30B_ENSEMBLE.model_revision` to `ffffffffffffffffffffffffffffffffffffffff`. Then `git checkout -- apps/prototype-description-service/scene/config/profiles.py`.
+
+```
+python3 -m pytest scripts/test_vlm3_oci_gpu_infra.py::test_gpu_cloud_init_pins_gguf_digests_from_hub_revision -q
+FAILED scripts/test_vlm3_oci_gpu_infra.py::test_gpu_cloud_init_pins_gguf_digests_from_hub_revision - AssertionError: every unsloth/Qwen3-VL-30B-A3B-Instruct-GGUF profile must pin revision 0af19e7479857aa7f3246466a4ad16c7e7299639, got ['0af19e7479857aa7f3246466a4ad16c7e7299639', 'ffffffffffffffffffffffffffffffffffffffff']
+assert False
+1 failed in 0.06s
+```
+
+### mutant V2b (ENSEMBLE `hub_repo` → `unsloth/OTHER-REPO-GGUF`) — PASS (RED)
+
+Left ENSEMBLE `model_revision` pinned. Then `git checkout -- apps/prototype-description-service/scene/config/profiles.py`.
+
+```
+python3 -m pytest scripts/test_vlm3_oci_gpu_infra.py::test_gpu_cloud_init_pins_gguf_digests_from_hub_revision -q
+FAILED scripts/test_vlm3_oci_gpu_infra.py::test_gpu_cloud_init_pins_gguf_digests_from_hub_revision - AssertionError: expected 2 profiles pinning unsloth/Qwen3-VL-30B-A3B-Instruct-GGUF, got 1
+assert 1 == 2
+ +  where 1 = len(['0af19e7479857aa7f3246466a4ad16c7e7299639'])
+1 failed in 0.05s
+```
+
+Pair count dropped to 1.
+
+### mutant V2c (swap `hub_repo`/`model_revision` lines on `GPU_QWEN30B`) — PASS (RED)
+
+`model_revision` placed before `hub_repo` on `GPU_QWEN30B` only. Fail-closed on field reorder; did not silently pass. Then `git checkout -- apps/prototype-description-service/scene/config/profiles.py`.
+
+```
+python3 -m pytest scripts/test_vlm3_oci_gpu_infra.py::test_gpu_cloud_init_pins_gguf_digests_from_hub_revision -q
+FAILED scripts/test_vlm3_oci_gpu_infra.py::test_gpu_cloud_init_pins_gguf_digests_from_hub_revision - AssertionError: expected 2 profiles pinning unsloth/Qwen3-VL-30B-A3B-Instruct-GGUF, got 1
+assert 1 == 2
+ +  where 1 = len(['0af19e7479857aa7f3246466a4ad16c7e7299639'])
+1 failed in 0.05s
+```
+
+### final — PASS
+
+Post-revert:
+
+```
+python3 -m pytest scripts/test_vlm3_oci_gpu_infra.py -q
+......s.                                                                 [100%]
+7 passed, 1 skipped in 0.05s
+```
+
+`git status`: clean except `?? .lane/`.

@@ -823,7 +823,7 @@ export const MediaAltSuggest = ({
               <button
                 type="button"
                 ref={acceptButtonRef}
-                className="button button-primary acx-media-selection__media-alt-suggest-accept"
+                className="button button-secondary acx-media-selection__media-alt-suggest-accept"
                 onClick={accept}
                 disabled={commitControlDisabled || !canAcceptDraft}
                 aria-describedby={showCommitError ? errorId : undefined}

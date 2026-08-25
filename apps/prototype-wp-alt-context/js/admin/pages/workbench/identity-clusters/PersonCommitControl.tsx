@@ -208,11 +208,9 @@ export const PersonCommitControl = ({
           accentPrimary={isPrimary && accentPrimary}
           suggestionsHeader={__('People', 'alt-context')}
           commitButtonClassName={
-            isPrimary
-              ? accentPrimary
-                ? 'button button-primary acx-person-commit__confirm acx-accent-primary-action'
-                : 'button button-primary acx-person-commit__confirm'
-              : 'button acx-person-commit__confirm'
+            accentPrimary
+              ? 'button button-secondary acx-person-commit__confirm acx-accent-primary-action'
+              : 'button button-secondary acx-person-commit__confirm'
           }
           className="acx-person-commit__controls"
           classPrefix="acx-person-commit"

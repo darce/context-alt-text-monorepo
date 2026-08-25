@@ -251,6 +251,39 @@ assert_corpus_row "genuine caption" \
 assert_corpus_row "empty sample (documented difference)" \
     "" FAIL UNKNOWN
 
+# TEST-15 (DEMOLIVE-9-R2-01): substring evasions must still classify FAIL.
+# UTF-8 bytes, not $'\u....', so macOS bash 3.2 can construct the samples.
+nbsp=$'\xc2\xa0'
+emsp=$'\xe2\x80\x83'
+assert_corpus_row "person comma evasion" \
+    "a person, standing outdoors near greenery" FAIL FAIL
+assert_corpus_row "person nbsp evasion" \
+    "a person${nbsp}standing outdoors near greenery" FAIL FAIL
+assert_corpus_row "person em-space evasion" \
+    "a person${emsp}standing outdoors near greenery" FAIL FAIL
+assert_corpus_row "person uppercase trailing-bang evasion" \
+    "A PERSON STANDING OUTDOORS NEAR GREENERY!!" FAIL FAIL
+assert_corpus_row "plate comma evasion" \
+    "a plate of food, on a wooden table" FAIL FAIL
+assert_corpus_row "plate nbsp evasion" \
+    "a plate of food${nbsp}on a wooden table" FAIL FAIL
+assert_corpus_row "plate em-space evasion" \
+    "a plate of food${emsp}on a wooden table" FAIL FAIL
+assert_corpus_row "plate uppercase trailing-bang evasion" \
+    "A PLATE OF FOOD ON A WOODEN TABLE!!" FAIL FAIL
+assert_corpus_row "close-up comma evasion" \
+    "a close-up of a small object, on a neutral background" FAIL FAIL
+assert_corpus_row "close-up nbsp evasion" \
+    "a close-up of a small object${nbsp}on a neutral background" FAIL FAIL
+assert_corpus_row "close-up em-space evasion" \
+    "a close-up of a small object${emsp}on a neutral background" FAIL FAIL
+assert_corpus_row "close-up uppercase trailing-bang evasion" \
+    "A CLOSE-UP OF A SMALL OBJECT ON A NEUTRAL BACKGROUND!!" FAIL FAIL
+# Negative: shares wooden/table (arm 2) and person (arm 1) but not every
+# content token of any arm, so the looser matcher must not swallow it.
+assert_corpus_row "partial-overlap real caption stays PASS" \
+    "A person seated at a wooden table beside a window." PASS PASS
+
 # Shared denylist file must exist and agree with describe-gate on the corpus.
 if [ ! -f "$fixture_denylist_file" ]; then
     echo "FAIL shared fixture-denylist.sh missing: ${fixture_denylist_file}"
@@ -290,7 +323,7 @@ else
         ' "$file"
     }
     describe_gate_file="${script_dir}/../lib/describe-gate.sh"
-    for fn in normalize_fixture_sample fixture_sample_is_denied; do
+    for fn in normalize_fixture_sample _fixture_tokens_all_present fixture_sample_is_denied; do
         if [ "$(extract_fn "$describe_gate_file" "$fn")" = "$(extract_fn "$fixture_denylist_file" "$fn")" ]; then
             echo "ok   ${fn} bodies identical across copies"
         else

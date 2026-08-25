@@ -19,6 +19,13 @@ tuples are `(action, instance_id)` with `action` ∈ `{START, STOP}`.
 work (`queue_depth > 0` or `in_flight > 0`). `--mode reap` remains the idle
 STOP path.
 
+Instance states:
+
+- `STOPPED` + work → START.
+- `STARTING` + work → in-flight boot: never re-START; probe/wait and emit
+  FALLBACK on bound breach.
+- `STOPPING` / `UNKNOWN` + work → fail closed (no START), loud error log.
+
 ## Actuators
 
 `OciCliStartActuator` / `OciCliStopActuator` are twins: same `oci compute

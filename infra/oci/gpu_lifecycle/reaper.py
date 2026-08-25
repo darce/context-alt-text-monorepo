@@ -490,11 +490,24 @@ def run_start_cycle(
         in_flight=load.in_flight,
         batch_in_progress=load.batch_in_progress,
     )
-    if not decided:
+    waiting_ids = (
+        controller.instances_waiting_on_boot(instances) if load.has_work else []
+    )
+    blocked = (
+        controller.instances_blocking_start(instances) if load.has_work else []
+    )
+    errors: list[str] = []
+    for instance in blocked:
+        msg = (
+            f"{instance.instance_id}: fail-closed START refused; "
+            f"state={instance.state} while work waits"
+        )
+        logger.error(msg)
+        errors.append(msg)
+    if not decided and not waiting_ids and not errors:
         return StartCycleResult(decided=[], actuated=[], errors=[])
 
     actuated: list[tuple[str, str]] = []
-    errors: list[str] = []
     start_failed: list[str] = []
     for action, instance_id in decided:
         if action != LifecycleAction.START:
@@ -514,9 +527,11 @@ def run_start_cycle(
         if start_failed
         else ()
     )
-    if probe is not None and readiness_wait is not None and actuated:
-        started_ids = [instance_id for _, instance_id in actuated]
-        wait_result = readiness_wait.wait(started_ids, probe)
+    wait_ids = [instance_id for _, instance_id in actuated] + [
+        instance_id for instance_id in waiting_ids if instance_id not in {i for _, i in actuated}
+    ]
+    if probe is not None and readiness_wait is not None and wait_ids:
+        wait_result = readiness_wait.wait(wait_ids, probe)
         if wait_result.errors:
             errors.extend(wait_result.errors)
         if wait_result.failed:

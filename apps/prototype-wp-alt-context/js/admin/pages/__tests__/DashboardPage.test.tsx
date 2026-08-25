@@ -396,7 +396,7 @@ describe('DashboardPage', () => {
     expect(screen.getByText('3 persons have no assigned face groups.')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Review 3 unassigned persons' })).toHaveAttribute(
       'href',
-      '#/roster?personFilter=unassigned',
+      '#/workbench?tab=scan',
     );
     expect(screen.getByText('3', { selector: '.acx-dashboard__guidance-count' })).toBeInTheDocument();
   });

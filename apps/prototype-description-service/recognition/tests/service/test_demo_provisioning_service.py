@@ -16,10 +16,16 @@ from recognition.application.services.demo_provisioning_service import (
     DEFAULT_RECOGNITION_QUOTA,
     DEFAULT_SLUG_LENGTH,
     DemoInstanceNotFoundError,
+    DemoSessionExpiredError,
+    DemoSessionInvalidError,
+    DemoSessionRequiredError,
     UnknownSeedBundleError,
     expire_demo,
     generate_slug,
+    mint_demo_session,
     provision_demo,
+    reset_demo_sessions_for_tests,
+    resolve_demo_session,
     resolve_seed_bundle,
 )
 from recognition.infrastructure.repositories import SqlAlchemyApiKeyRepository
@@ -137,3 +143,36 @@ async def test_provision_never_persists_raw_key_in_registry(db_session: AsyncSes
         ]
     )
     assert result.raw_api_key not in blob
+
+
+def test_mint_demo_session_round_trip() -> None:
+    reset_demo_sessions_for_tests()
+    minted = mint_demo_session("slugABC")
+    bound = resolve_demo_session(minted.token, slug="slugABC")
+    assert bound.slug == "slugABC"
+    assert bound.expires_at > datetime.now(tz=UTC)
+
+
+def test_resolve_demo_session_requires_token() -> None:
+    reset_demo_sessions_for_tests()
+    with pytest.raises(DemoSessionRequiredError):
+        resolve_demo_session(None, slug="slugABC")
+    with pytest.raises(DemoSessionRequiredError):
+        resolve_demo_session("", slug="slugABC")
+
+
+def test_resolve_demo_session_rejects_invalid_and_mismatched() -> None:
+    reset_demo_sessions_for_tests()
+    minted = mint_demo_session("slugABC")
+    with pytest.raises(DemoSessionInvalidError):
+        resolve_demo_session("totally-bogus", slug="slugABC")
+    with pytest.raises(DemoSessionInvalidError):
+        resolve_demo_session(minted.token, slug="other99")
+
+
+def test_resolve_demo_session_rejects_expired() -> None:
+    reset_demo_sessions_for_tests()
+    now = datetime.now(tz=UTC)
+    minted = mint_demo_session("slugABC", ttl_seconds=60, now=now)
+    with pytest.raises(DemoSessionExpiredError):
+        resolve_demo_session(minted.token, slug="slugABC", now=now + timedelta(seconds=61))

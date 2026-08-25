@@ -235,6 +235,31 @@ decision #1882.)
 
 **Deployment constraint**: the in-memory counter is correct only under a single worker process. Multi-worker deployment requires a shared counter store (Redis/DB) and is out of scope for E15-1.
 
+## Public demo instance HTTP surface
+
+Public demo URLs are `https://demo.altcontext.com/x/{slug}`. Slug entropy is **not** authorization. Tenant data (`tenant_id`, `seed_bundle`, `branding_json`, `expires_at`, `quota_remaining`) is returned only after a short-lived session is minted.
+
+### Session exchange — `POST /x/{slug}/session`
+
+1. Unknown slug → `404` `{"detail": "not found"}` (uniform; no existence oracle among unknowns).
+2. Expired or revoked instance → `410` `{"detail": {"code": "demo_ended", "message": "this demo has ended"}}`.
+3. Live slug → `201` with `{session_token, expires_at}` and `Set-Cookie: acx_demo_session=<token>; HttpOnly; Secure; SameSite=Lax; Path=/x`. TTL is `DEFAULT_SESSION_TTL_SECONDS` (15 minutes). Token is high-entropy (`secrets.token_urlsafe(32)`); the store keeps only `sha256(token)`. The body never includes tenant data or API key material.
+
+### Authenticated resolve — `GET /x/{slug}`
+
+Session is taken from `X-Demo-Session` or the `acx_demo_session` cookie (header wins). Lookup order:
+
+1. Unknown slug → `404` (no tenant data).
+2. Expired/revoked instance → `410` `demo_ended` (no tenant data).
+3. Missing session → `401` `{"detail": "session_required"}`.
+4. Unknown or slug-mismatched token → `401` `{"detail": "session_invalid"}`.
+5. Expired token → `401` `{"detail": "session_expired"}`.
+6. Valid session bound to this slug → `200` `DemoResolveResponse`.
+
+`401`/`404`/`410` bodies must not contain `tenant_id`, `seed_bundle`, `branding_json`, or `quota_remaining`. Raw API keys and `api_key_ref` never appear on this surface.
+
+Per-IP sliding-window rate limit (`RECOGNITION_DEMO_RESOLVE_RPM`, default 30) applies to every `/x/*` route via `enforce_ip_rate_limit`. Breach is `429` `{"detail": "rate limit exceeded"}` with `Retry-After` and `X-RateLimit-*`.
+
 **Fail-closed startup guard**: in production (`RECOGNITION_RUNTIME_MODE=production`)
 `create_app()` refuses to start when a required secret is missing, empty, or set
 to the development default (`validate_required_secrets`), and — under

@@ -55,7 +55,7 @@ from infra.oci.gpu_lifecycle.probe import (
 logger = logging.getLogger(__name__)
 
 # Fail-safe busy snapshot: never STOP when load data is untrustworthy.
-_BUSY_LOAD = JobLoadSnapshot(queue_depth=1, in_flight=1)
+_BUSY_LOAD = JobLoadSnapshot(queue_depth=1, in_flight=1, batch_in_progress=True)
 _DEFAULT_LOAD_MAX_AGE_SECONDS = 120.0
 _DEFAULT_OCI_TIMEOUT_SECONDS = 120
 _DEFAULT_FENCE_DELAY_SECONDS = 2.0
@@ -116,9 +116,14 @@ class StaticJobLoadSource:
 
     queue_depth: int
     in_flight: int
+    batch_in_progress: bool = False
 
     def snapshot(self) -> JobLoadSnapshot:
-        return JobLoadSnapshot(queue_depth=self.queue_depth, in_flight=self.in_flight)
+        return JobLoadSnapshot(
+            queue_depth=self.queue_depth,
+            in_flight=self.in_flight,
+            batch_in_progress=self.batch_in_progress,
+        )
 
 
 @dataclass(frozen=True)
@@ -181,7 +186,20 @@ class JsonFileJobLoadSource:
                 self.path,
             )
             return _BUSY_LOAD
-        return JobLoadSnapshot(queue_depth=queue_depth, in_flight=in_flight)
+        if "batch_in_progress" in payload and not isinstance(
+            payload["batch_in_progress"], bool
+        ):
+            logger.warning(
+                "load json batch_in_progress not bool; treating as busy: %s",
+                self.path,
+            )
+            return _BUSY_LOAD
+        batch_in_progress = bool(payload.get("batch_in_progress", False))
+        return JobLoadSnapshot(
+            queue_depth=queue_depth,
+            in_flight=in_flight,
+            batch_in_progress=batch_in_progress,
+        )
 
 
 class OciCliStopActuator:
@@ -360,20 +378,31 @@ def run_reap_cycle(
         instances,
         queue_depth=load.queue_depth,
         in_flight=load.in_flight,
+        batch_in_progress=load.batch_in_progress,
     )
     if not decided:
         return ReapCycleResult(decided=[], actuated=[], fenced_off=False, errors=[])
 
-    if fence_delay_seconds > 0:
-        time.sleep(fence_delay_seconds)
+    fence_expired = False
+    pre_stop: JobLoadSnapshot | None = None
+    try:
+        if fence_delay_seconds > 0:
+            time.sleep(fence_delay_seconds)
+        pre_stop = load_source.snapshot()
+    except Exception as exc:  # noqa: BLE001 - fence expiry fails closed
+        logger.error("fence resample failed; cancelling STOP: %s", exc)
+        fence_expired = True
 
-    pre_stop = load_source.snapshot()
-    fenced = controller.fence_stop_actions(decided, pre_stop_load=pre_stop)
+    fenced = controller.fence_stop_actions(
+        decided, pre_stop_load=pre_stop, fence_expired=fence_expired
+    )
     if not fenced:
         logger.info(
-            "fence cancelled STOP (queue_depth=%s in_flight=%s)",
-            pre_stop.queue_depth,
-            pre_stop.in_flight,
+            "fence cancelled STOP (queue_depth=%s in_flight=%s batch=%s expired=%s)",
+            None if pre_stop is None else pre_stop.queue_depth,
+            None if pre_stop is None else pre_stop.in_flight,
+            None if pre_stop is None else pre_stop.batch_in_progress,
+            fence_expired,
         )
         return ReapCycleResult(decided=decided, actuated=[], fenced_off=True, errors=[])
 
@@ -413,6 +442,7 @@ def run_start_cycle(
         instances,
         queue_depth=load.queue_depth,
         in_flight=load.in_flight,
+        batch_in_progress=load.batch_in_progress,
     )
     if not decided:
         return StartCycleResult(decided=[], actuated=[], errors=[])

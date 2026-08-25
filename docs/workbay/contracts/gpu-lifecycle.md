@@ -36,3 +36,22 @@ After START, `--ready-url` polls an HTTP health endpoint with a bounded wait
   does not halt others in the same wait (rg-007).
 - Default budget is 30 cycles × 10s ≈ 5 min (A10 boot+load amortization).
 - Omitting `--ready-url` skips the wait.
+
+## Load snapshot JSON
+
+Existing keys: `queue_depth`, `in_flight`, `written_at`.
+
+Additive optional: `batch_in_progress` (bool). Absent → false. Present but
+not a bool → treat the snapshot as busy (fail closed). A STOP must never fire
+while `has_work` is true (`queue_depth > 0` or `in_flight > 0` or
+`batch_in_progress`).
+
+## Fence
+
+`fence_stop_actions` drops every STOP when:
+
+- the re-sample has work (including an in-flight batch), or
+- `fence_expired=true` (re-sample failed / window elapsed without a
+  trustworthy idle confirmation).
+
+Fence expiry falls back closed: no STOP.

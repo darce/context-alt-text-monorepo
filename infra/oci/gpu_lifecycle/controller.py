@@ -75,13 +75,36 @@ class GpuLifecycleController:
         in_flight: int,
         batch_in_progress: bool = False,
     ) -> list[tuple[str, str]]:
-        """Emit START for STOPPED burst instances when work is waiting."""
+        """Emit START for STOPPED burst instances when work is waiting.
+
+        STARTING is an in-flight boot: never re-START (caller must probe/wait).
+        STOPPING and UNKNOWN are fail-closed: never START.
+        """
         if queue_depth <= 0 and in_flight <= 0 and not batch_in_progress:
             return []
         return [
             (LifecycleAction.START, instance.instance_id)
             for instance in instances
             if instance.state == GpuInstanceState.STOPPED
+        ]
+
+    def instances_waiting_on_boot(self, instances: list[GpuInstance]) -> list[str]:
+        """STARTING instances already booting; wait/probe, never re-START."""
+        return [
+            instance.instance_id
+            for instance in instances
+            if instance.state == GpuInstanceState.STARTING
+        ]
+
+    def instances_blocking_start(
+        self, instances: list[GpuInstance]
+    ) -> list[GpuInstance]:
+        """STOPPING/UNKNOWN while work waits: fail closed, do not START."""
+        return [
+            instance
+            for instance in instances
+            if instance.state
+            in (GpuInstanceState.STOPPING, GpuInstanceState.UNKNOWN)
         ]
 
     def reap_idle_instances(

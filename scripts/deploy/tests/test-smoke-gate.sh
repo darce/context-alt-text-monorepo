@@ -80,17 +80,18 @@ assert_eq "alt coverage 0/0 (no media = broken seed)" FAIL "$(classify_alt_cover
 assert_eq "alt coverage empty inputs (unmeasurable)" FAIL "$(classify_alt_coverage '' '' 95)"
 assert_eq "alt coverage non-numeric total" FAIL "$(classify_alt_coverage abc 10 95)"
 assert_eq "alt coverage with_alt > total (impossible)" FAIL "$(classify_alt_coverage 100 200 95)"
-assert_eq "alt coverage 2/3 >= 60 (integer math keeps a true pass)" PASS "$(classify_alt_coverage 3 2 60)"
-assert_eq "alt coverage 1/3 < 60" FAIL "$(classify_alt_coverage 3 1 60)"
-# R1-02B: the floor is a fixed safety constant (50), not a policy knob.
-# classify_alt_coverage 100 0 0 used to evaluate 0>=0 and print PASS.
-assert_eq "alt coverage min_pct 0 below fixed floor (certify-a-lie)" FAIL "$(classify_alt_coverage 100 0 0)"
-assert_eq "alt coverage 100 0 49 below fixed floor" FAIL "$(classify_alt_coverage 100 0 49)"
-assert_eq "alt coverage 100 100 50 at the floor, full coverage" PASS "$(classify_alt_coverage 100 100 50)"
+assert_eq "alt coverage 2/3 min_pct 60 below default floor 95" FAIL "$(classify_alt_coverage 3 2 60)"
+assert_eq "alt coverage 1/3 min_pct 60 below default floor 95" FAIL "$(classify_alt_coverage 3 1 60)"
+# R2-06: the default IS the floor. DEMO_ALT_MIN_COVERAGE_PCT may only raise
+# the bar above 95; any value below 95 fails closed. classify_alt_coverage
+# 100 0 0 used to evaluate 0>=0 and print PASS.
+assert_eq "alt coverage min_pct 0 below default floor 95 (certify-a-lie)" FAIL "$(classify_alt_coverage 100 0 0)"
+assert_eq "alt coverage 100 0 49 below default floor 95" FAIL "$(classify_alt_coverage 100 0 49)"
+assert_eq "alt coverage 100 100 50 below default floor 95, full coverage" FAIL "$(classify_alt_coverage 100 100 50)"
 assert_eq "alt coverage 100 95 95 shipped default still works" PASS "$(classify_alt_coverage 100 95 95)"
-assert_eq "alt coverage 100/100 but min_pct 49 below floor 50" FAIL "$(classify_alt_coverage 100 100 49)"
-assert_eq "alt coverage 50/100 >= 50 equals fixed floor" PASS "$(classify_alt_coverage 100 50 50)"
-assert_eq "alt coverage 49/100 < floor 50" FAIL "$(classify_alt_coverage 100 49 50)"
+assert_eq "alt coverage 100/100 but min_pct 49 below floor 95" FAIL "$(classify_alt_coverage 100 100 49)"
+assert_eq "alt coverage 50/100 min_pct 50 below default floor 95" FAIL "$(classify_alt_coverage 100 50 50)"
+assert_eq "alt coverage 49/100 min_pct 50 below default floor 95" FAIL "$(classify_alt_coverage 100 49 50)"
 # The knob is gone: exporting DEMO_ALT_MIN_COVERAGE_FLOOR=0 must not certify 0/100.
 _saved_floor="${DEMO_ALT_MIN_COVERAGE_FLOOR-}"
 DEMO_ALT_MIN_COVERAGE_FLOOR=0
@@ -274,6 +275,17 @@ else
         "0" "$(grep -c 'ADAPTERJSON' "$sync_demo" || true)"
     assert_eq "TEST-15 parser reads provenance adapter key" \
         "1" "$(grep -c 'prov.get("adapter")' "${script_dir}/../lib/smoke-gate.sh")"
+    # R2-04: the remote heredoc concatenates three libraries in a
+    # load-bearing order (later definition wins). Pin file order by
+    # reading sync-demo.sh itself — do not source or execute it.
+    cat_order=$(
+        grep -n 'cat "\$' "$sync_demo" \
+            | sed 's/.*cat "\$//;s/"$//' \
+            | paste -sd' ' -
+    )
+    assert_eq "R2-04 remote heredoc cat order" \
+        "DESCRIBE_GATE_SRC FIXTURE_DENYLIST_LIB SMOKE_GATE_LIB" \
+        "$cat_order"
     extract_fn_stripped() {
         local file="$1" name="$2"
         awk -v n="$name" '
@@ -536,7 +548,7 @@ PY
         load_alt_counts_from_media_body "$media_json"
         assert_eq "TEST-15 empty-alt mix body_total 20" "20" "$body_total"
         assert_eq "TEST-15 empty-alt mix with_alt 10" "10" "$with_alt"
-        assert_eq "TEST-15 empty-alt mix coverage at min_pct=50" PASS "$(classify_alt_coverage "$body_total" "$with_alt" 50)"
+        assert_eq "TEST-15 empty-alt mix coverage at min_pct=50" FAIL "$(classify_alt_coverage "$body_total" "$with_alt" 50)"
         assert_eq "TEST-15 empty-alt mix identity FAIL" FAIL "$(classify_alt_identity "$adapters" "$with_alt")"
 
         DEMO_ALT_GATE_ENFORCE=1

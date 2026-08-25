@@ -219,6 +219,8 @@ Identity Recognition actually has two distinct, independently-triggered retry co
 
 Degraded is an intact first_named dashboard with an attention-bearing sync state or partial history. Orientation is hidden because Assigned > 0. Sync Health can show warnings, mirror divergence, conflicts, failed sync events, topology work, or an offline backend summary; Recent Activity can identify browser-local fallback. When pending review is 0 and unassigned persons remain, GuidanceCard shows Review unassigned persons. Open Review Queue and Fix missing descriptions are not gated by sync or coverage state, so both remain present here too.
 
+`historySource === 'browser_local_fallback'` is a single value, not a flag that composes with an `empty`/`default` toggle: the banner renders from its own `if`, then falls through to whichever content branch `recentActivity.length` selects. So the browser-local-fallback banner can render together with either an empty list or a populated one — degraded and empty are not mutually exclusive. The sketch below draws that pairing: the banner with zero recent jobs.
+
 ```
 +------------------------------------------------------------+
 | Overview                                                  |
@@ -238,6 +240,7 @@ Degraded is an intact first_named dashboard with an attention-bearing sync state
 +------------------------------------------------------------+
 | Recent Activity                                          |
 |   Showing jobs remembered in this browser only.           |
+|   No recent recognition jobs found.                       |
 +------------------------------------------------------------+
 | Data Retention                                           |
 |   Policy summary or remediation remains local to panel    |

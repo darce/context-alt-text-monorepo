@@ -100,7 +100,8 @@
             "empty",
             "degraded",
             "error"
-          ]
+          ],
+          "notes": "'degraded' (the browser_local_fallback banner) is an independent overlay, not exclusive with 'default'/'empty': historySource selects the banner and the content branch separately, so degraded can render together with either default or empty. 'error' is mutually exclusive with 'degraded' — both derive from the same single-valued historySource ('unavailable' vs 'browser_local_fallback')."
         },
         {
           "id": "z-retention-posture",

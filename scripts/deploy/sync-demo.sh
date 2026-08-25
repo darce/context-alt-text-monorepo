@@ -243,7 +243,7 @@ for host in api.altcontext.com staging.api.altcontext.com dev.api.altcontext.com
   out=$(probe_with_retry "https://${host}/health")
   code=${out%% *}
   pre=$(pre_code_for "$host")
-  verdict=$(classify_api_probe "$code" "$pre")
+  verdict=$(classify_api_probe "$code" "$pre") || true
   # A regression FAIL (reachable but unhealthy after a healthy baseline) gets one
   # confirming re-sample: the just-recreated edge can serve a single transient
   # 5xx while proxy routes settle, and a one-sample hard-fail trains operators
@@ -252,7 +252,7 @@ for host in api.altcontext.com staging.api.altcontext.com dev.api.altcontext.com
     sleep 10
     out=$(probe_with_retry "https://${host}/health")
     code=${out%% *}
-    verdict=$(classify_api_probe "$code" "$pre")
+    verdict=$(classify_api_probe "$code" "$pre") || true
   fi
   case "$verdict" in
     PASS) echo "PASS ${host}/health (200)" ;;
@@ -269,7 +269,7 @@ done
 out=$(probe_with_retry "https://demo.altcontext.com/")
 code=${out%% *}
 final_url=${out#* }
-verdict=$(classify_demo_probe "$code" "$final_url")
+verdict=$(classify_demo_probe "$code" "$final_url") || true
 if [[ "$verdict" == "PASS" ]]; then
   echo "PASS demo.altcontext.com/ (final ${code} at ${final_url})"
 else
@@ -299,14 +299,14 @@ load_alt_counts_from_media_body "$media_body"
 set -o pipefail
 rm -f "$media_headers" "$media_body"
 min="${DEMO_ALT_MIN_COVERAGE_PCT:-95}"
-pop=$(classify_alt_population "$header_total" "$body_total")
+pop=$(classify_alt_population "$header_total" "$body_total") || true
 if [ "$pop" = "FAIL" ]; then
   pop_msg="demo alt coverage (measured ${body_total:-empty} of ${header_total:-empty} reported by x-wp-total; probe covers only one page, cannot certify coverage)"
 else
   pop_msg="demo alt population (header=${header_total} body=${body_total})"
 fi
 emit_alt_gate "$pop" "$pop_msg" 1
-verdict=$(classify_alt_coverage "$body_total" "$with_alt" "$min")
+verdict=$(classify_alt_coverage "$body_total" "$with_alt" "$min") || true
 pct="?"
 case "$body_total" in *[!0-9]*|'') ;; *)
   case "$with_alt" in *[!0-9]*|'') ;; *)
@@ -336,11 +336,11 @@ case "$with_alt" in *[!0-9]*|'') ;; *)
   ;;
 esac
 if [ "$run_prov" = "1" ]; then
-  prov=$(classify_alt_provenance "$denied_count" "$adapters" "$with_alt" "$usable_normalized_count")
+  prov=$(classify_alt_provenance "$denied_count" "$adapters" "$with_alt" "$usable_normalized_count") || true
   if [ "$prov" = "FAIL" ]; then
     # Identity is primary [INT-10]: operator must tell untrusted/absent
     # adapter from a seeded fixture caption without reading the source.
-    identity=$(classify_alt_identity "$adapters" "$with_alt")
+    identity=$(classify_alt_identity "$adapters" "$with_alt") || true
     if [ "$identity" = "FAIL" ]; then
       prov_msg="demo alt provenance (untrusted or absent adapter identity behind ${with_alt} published alt texts)"
     else

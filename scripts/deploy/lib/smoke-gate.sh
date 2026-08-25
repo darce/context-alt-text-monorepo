@@ -49,29 +49,35 @@
 #                   with usable alt FAILs closed.
 
 # classify_api_probe <post_code> <pre_code> -> PASS|WARN|FAIL
+# FAIL returns 1; PASS and WARN return 0. Stdout is still the verdict word.
 classify_api_probe() {
     local post="$1" pre="${2:-}"
     if [ "$post" = "000" ]; then
         echo FAIL
+        return 1
     elif [ "$post" = "200" ]; then
         echo PASS
+        return 0
     elif [ "$pre" = "200" ]; then
         echo FAIL
+        return 1
     else
         echo WARN
+        return 0
     fi
 }
 
 # classify_demo_probe <final_code> <final_url> -> PASS|FAIL
+# FAIL returns 1; PASS returns 0. Stdout is still the verdict word.
 classify_demo_probe() {
     local code="$1" url="$2"
     case "$code" in
         2*) ;;
-        *) echo FAIL; return ;;
+        *) echo FAIL; return 1 ;;
     esac
     case "$url" in
-        *wp-admin/install.php*|*wp-admin/setup-config.php*) echo FAIL ;;
-        *) echo PASS ;;
+        *wp-admin/install.php*|*wp-admin/setup-config.php*) echo FAIL; return 1 ;;
+        *) echo PASS; return 0 ;;
     esac
 }
 
@@ -83,25 +89,27 @@ classify_demo_probe() {
 classify_alt_coverage() {
     local total="$1" with_alt="$2" min_pct="$3"
     local floor=95
-    case "$total" in *[!0-9]*|'') echo FAIL; return ;; esac
-    case "$with_alt" in *[!0-9]*|'') echo FAIL; return ;; esac
-    case "$min_pct" in *[!0-9]*|'') echo FAIL; return ;; esac
+    case "$total" in *[!0-9]*|'') echo FAIL; return 1 ;; esac
+    case "$with_alt" in *[!0-9]*|'') echo FAIL; return 1 ;; esac
+    case "$min_pct" in *[!0-9]*|'') echo FAIL; return 1 ;; esac
     if [ "$min_pct" -lt "$floor" ]; then
         echo FAIL
-        return
+        return 1
     fi
     if [ "$total" -eq 0 ]; then
         echo FAIL
-        return
+        return 1
     fi
     if [ "$with_alt" -gt "$total" ]; then
         echo FAIL
-        return
+        return 1
     fi
     if [ $((with_alt * 100 / total)) -ge "$min_pct" ]; then
         echo PASS
+        return 0
     else
         echo FAIL
+        return 1
     fi
 }
 
@@ -111,16 +119,18 @@ classify_alt_coverage() {
 # per_page=100 probe cannot silently certify a larger corpus.
 classify_alt_population() {
     local header_total="$1" body_total="$2"
-    case "$header_total" in *[!0-9]*|'') echo FAIL; return ;; esac
-    case "$body_total" in *[!0-9]*|'') echo FAIL; return ;; esac
+    case "$header_total" in *[!0-9]*|'') echo FAIL; return 1 ;; esac
+    case "$body_total" in *[!0-9]*|'') echo FAIL; return 1 ;; esac
     if [ "$header_total" -eq 0 ] || [ "$body_total" -eq 0 ]; then
         echo FAIL
-        return
+        return 1
     fi
     if [ "$header_total" -eq "$body_total" ]; then
         echo PASS
+        return 0
     else
         echo FAIL
+        return 1
     fi
 }
 
@@ -133,15 +143,15 @@ classify_alt_text_usable() {
     text=$(printf '%s' "$text" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
     if [ -z "$text" ]; then
         echo FAIL
-        return
+        return 1
     fi
     if [ "${#text}" -lt 15 ]; then
         echo FAIL
-        return
+        return 1
     fi
     case "$text" in
-        *[A-Za-z]*) echo PASS ;;
-        *) echo FAIL ;;
+        *[A-Za-z]*) echo PASS; return 0 ;;
+        *) echo FAIL; return 1 ;;
     esac
 }
 
@@ -254,16 +264,18 @@ classify_alt_identity() {
     local usable_count="${2:-}"
     local trusted_out
     case "$usable_count" in
-        *[!0-9]*|'') echo FAIL; return ;;
+        *[!0-9]*|'') echo FAIL; return 1 ;;
     esac
     if [ -z "$(printf '%s' "$adapters_blob" | tr -d '[:space:]')" ]; then
         if [ "$usable_count" -gt 0 ]; then
             echo FAIL
-            return
+            return 1
         fi
         echo PASS
-        return
+        return 0
     fi
+    # Inner FAIL is a stdout protocol for this assignment; exit 0 so set -e
+    # does not abort before the outer function can return 1.
     trusted_out=$(
         set -f
         c=0
@@ -284,13 +296,14 @@ classify_alt_identity() {
     )
     if [ "$trusted_out" = "FAIL" ]; then
         echo FAIL
-        return
+        return 1
     fi
     if [ "$trusted_out" -ne "$usable_count" ]; then
         echo FAIL
-        return
+        return 1
     fi
     echo PASS
+    return 0
 }
 
 # classify_alt_provenance <denied_count> <adapters_blob> <usable_count> [usable_normalized_count] -> PASS|FAIL
@@ -317,21 +330,22 @@ classify_alt_provenance() {
 
     if [ "$(classify_alt_identity "$adapters_blob" "$usable_count")" != "PASS" ]; then
         echo FAIL
-        return
+        return 1
     fi
     case "$denied_count" in
-        *[!0-9]*|'') echo FAIL; return ;;
+        *[!0-9]*|'') echo FAIL; return 1 ;;
     esac
     case "$usable_normalized_count" in
-        *[!0-9]*|'') echo FAIL; return ;;
+        *[!0-9]*|'') echo FAIL; return 1 ;;
     esac
     if [ "$usable_normalized_count" -eq 0 ]; then
         echo FAIL
-        return
+        return 1
     fi
     if [ "$denied_count" -gt 0 ]; then
         echo FAIL
-        return
+        return 1
     fi
     echo PASS
+    return 0
 }

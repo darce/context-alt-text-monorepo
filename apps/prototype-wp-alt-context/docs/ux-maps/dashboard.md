@@ -260,23 +260,23 @@ Degraded is an intact first_named dashboard with an attention-bearing sync state
 
 `DashboardSyncHealthSection.tsx` has exactly three exclusive branches:
 
-    :56  isLoading              -> "Loading sync health…"
-    :58  isError || !syncStatus -> EmptyState: heading + body + [Open settings]
-    :66  else                   -> the composition drawn below
+    :61  isLoading              -> "Loading sync health…"
+    :63  isError || !syncStatus -> EmptyState: heading + body + [Open settings]
+    :71  else                   -> the composition drawn below
 
 Inside the else branch the members render independently. Two are unconditional; the
 rest only *add* to them. `degraded` and `offline` name "some subset of the conditional
 ones is on", which is a modifier axis, not a branch of the chain above.
 
-    B  :96  (unconditional)                    summary <p>; text varies
-    S  :99  (unconditional)                    stats grid, 3 value/label pairs
-    A  :68  showMirrorDivergenceBanner         mirror banner + [Reset mirror]
-    C  :113 topologyPending|Failed|Conflicts>0 pending-work summary line
-    D1 :123 conflictCount>0 && lastConflictDate    last-conflict line
-    E1 :126 failedReplayCount>0 && lastFailureDate last-failure line
-    R  :129 (unconditional)                    [Open Review Queue]
-    D2 :134 conflictCount>0                    [Open Conflict Inbox]
-    E2 :140 failedReplayCount>0                [Open Failed Sync Queue]
+    B  :152 (unconditional)                    summary <p>; text varies
+    S  :155 (unconditional)                    stats grid, 3 value/label pairs
+    A  :73  showMirrorDivergenceBanner         mirror banner + [Reset mirror]
+    C  :169 topologyPending|Failed|Conflicts>0 pending-work summary line
+    D1 :179 conflictCount>0 && lastConflictDate    last-conflict line
+    E1 :182 failedReplayCount>0 && lastFailureDate last-failure line
+    R  :185 (unconditional)                    [Open Review Queue]
+    D2 :190 conflictCount>0                    [Open Conflict Inbox]
+    E2 :196 failedReplayCount>0                [Open Failed Sync Queue]
 
 A recency line and its CTA are gated *separately*: `[Open Conflict Inbox]` needs only
 `conflictCount > 0`, while `Last conflict:` additionally needs a parsable date. So
@@ -355,9 +355,12 @@ Interactivity notes:
   [A11Y-24].
 - `[Reset mirror]` swaps its own label to "Resetting…" while pending and is the only
   destructive control in the zone. It exists only when A is true, so the operator
-  cannot reach it from the healthy composition. It calls `onResetMirror` directly on
-  click with no confirm or preview step, which contradicts
-  `act-reset-mirror.preview_required` in `dashboard.uxmap.json`.
+  cannot reach it from the healthy composition. Click opens a confirm dialog titled
+  "Reset the local mirror?" that always explains the re-download and names
+  `pendingReplayCount` (discard copy plus "Discard %d and reset" when count > 0;
+  "Nothing will be lost." plus confirm label "Reset mirror" when count is 0). Confirm
+  is the only path that calls `onResetMirror`, matching
+  `act-reset-mirror.preview_required` and `irreversible: true`.
 
 
 ### Workbench (`exit-workbench`)

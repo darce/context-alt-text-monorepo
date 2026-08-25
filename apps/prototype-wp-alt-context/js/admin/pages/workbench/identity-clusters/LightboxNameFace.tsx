@@ -128,7 +128,7 @@ export const LightboxNameFace = ({
           inputId={`acx-lightbox-name-${clusterId}`}
           autoFocus
           suggestionsHeader={__('People', 'alt-context')}
-          commitButtonClassName="button button-primary acx-person-commit__confirm"
+          commitButtonClassName="button button-secondary acx-person-commit__confirm"
           className="acx-person-commit__controls"
           classPrefix="acx-person-commit"
         />

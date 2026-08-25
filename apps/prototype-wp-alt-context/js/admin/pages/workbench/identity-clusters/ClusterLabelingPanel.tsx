@@ -583,7 +583,7 @@ export const ClusterLabelingPanel = ({
           <div className="acx-cluster-labeling-panel__input-group">
             <button
               type="button"
-              className="button button-primary"
+              className="button button-secondary"
               onClick={() => {
                 onLabel(lastMerge.target_label ?? labelInput);
               }}

@@ -210,6 +210,45 @@ async def test_demo_router_unknown_seed_bundle_returns_410_without_tenant_data(
 
 
 @pytest.mark.asyncio
+async def test_demo_session_unknown_slug_returns_404_without_tenant_data(
+    db_session: AsyncSession, monkeypatch
+) -> None:
+    client = _build_client(db_session, monkeypatch)
+    resp = client.post("/x/notreal1/session")
+    assert resp.status_code == 404
+    assert resp.json()["detail"] == "not found"
+    _assert_no_tenant_data(resp)
+
+
+@pytest.mark.asyncio
+async def test_demo_session_expired_and_revoked_return_410_without_tenant_data(
+    db_session: AsyncSession, monkeypatch
+) -> None:
+    expired = await provision_demo(db_session, label="SessExpired", seed="default")
+    expired_row = await db_session.get(DemoInstance, expired.instance.slug)
+    assert expired_row is not None
+    expired_row.expires_at = datetime.now(tz=UTC) - timedelta(hours=1)
+
+    revoked = await provision_demo(db_session, label="SessRevoked", seed="default")
+    revoked_row = await db_session.get(DemoInstance, revoked.instance.slug)
+    assert revoked_row is not None
+    revoked_row.revoked = True
+    await db_session.commit()
+
+    client = _build_client(db_session, monkeypatch)
+    expired_resp = client.post(f"/x/{expired.instance.slug}/session")
+    assert expired_resp.status_code == 410
+    _assert_no_tenant_data(expired_resp)
+    assert expired_resp.json()["detail"]["code"] == "demo_ended"
+    assert str(expired.instance.tenant_id) not in expired_resp.text
+
+    revoked_resp = client.post(f"/x/{revoked.instance.slug}/session")
+    assert revoked_resp.status_code == 410
+    _assert_no_tenant_data(revoked_resp)
+    assert str(revoked.instance.tenant_id) not in revoked_resp.text
+
+
+@pytest.mark.asyncio
 async def test_demo_router_unknown_slug_returns_uniform_404(db_session: AsyncSession, monkeypatch) -> None:
     client = _build_client(db_session, monkeypatch)
     resp = client.get("/x/notreal1")

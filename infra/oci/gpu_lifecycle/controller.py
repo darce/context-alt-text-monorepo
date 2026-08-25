@@ -42,11 +42,17 @@ class GpuInstance:
 
 @dataclass(frozen=True)
 class JobLoadSnapshot:
-    """Mirrors describe-job-store load used by the idle reaper."""
+    """Mirrors describe-job-store load used by the idle reaper.
+
+    ``untrustworthy=True`` means the snapshot is a sentinel, not observed
+    load. STOP treats it as busy (fail closed). START treats it as no-work
+    and must refuse actuation (W3-D-04).
+    """
 
     queue_depth: int
     in_flight: int
     batch_in_progress: bool = False
+    untrustworthy: bool = False
 
     @property
     def has_work(self) -> bool:

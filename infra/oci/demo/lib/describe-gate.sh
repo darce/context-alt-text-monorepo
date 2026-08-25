@@ -88,42 +88,58 @@ if isinstance(value, str):
 # caption appears in the sample. PASS otherwise.
 #
 # Matching semantics MUST stay identical to classify_alt_provenance after
-# DEMOLIVE-6's normalizer (XLANE-01): lowercase, collapse whitespace runs,
-# strip trailing .!?, then match lowercase punctuation-free denylist arms.
-# The matcher lives in scripts/deploy/lib/fixture-denylist.sh; this file is
-# SCP'd standalone to the VM so the same functions are inlined here. A
-# corpus test binds the two copies. Do not revert to case-sensitive
-# period-terminated exact match — that lets canned captions SKIP describe
-# while smoke FAILs, with no heal path (INT-10 / R1-04 relocated).
+# DEMOLIVE-9's alphanumeric-skeleton + content-token AND matcher (R2-01):
+# lowercase, map non-alnum bytes to space, collapse spaces, then require
+# every content token of a denylist arm. The matcher lives in
+# scripts/deploy/lib/fixture-denylist.sh; this file is SCP'd standalone
+# to the VM so the same functions are inlined here. A corpus test binds
+# the two copies. Do not revert to substring match — punctuation or
+# Unicode whitespace inside a fixture caption would SKIP describe while
+# smoke FAILs, with no heal path (INT-10 / R1-04 relocated).
 
-# normalize_fixture_sample / fixture_sample_is_denied
+# normalize_fixture_sample / _fixture_tokens_all_present /
+# fixture_sample_is_denied
 # Keep byte-equivalent to scripts/deploy/lib/fixture-denylist.sh (test-bound).
 normalize_fixture_sample() {
     local sample="$1"
-    sample=$(printf '%s' "$sample" | tr '[:upper:]' '[:lower:]' | tr -s '[:space:]' ' ')
-    while :
-    do
-        case "$sample" in
-            *[.!?]) sample=${sample%?} ;;
-            *) break ;;
-        esac
-    done
+    sample=$(printf '%s' "$sample" | tr '[:upper:]' '[:lower:]' | LC_ALL=C tr -c 'a-z0-9' ' ' | tr -s ' ')
+    sample=${sample# }
+    sample=${sample% }
     printf '%s' "$sample"
 }
 
+# _fixture_tokens_all_present <needles> <haystack>
+#   return 0 if every whitespace-split needle token is a whole word in haystack.
+_fixture_tokens_all_present() {
+    local needles="$1" haystack=" $2 "
+    local tok
+    for tok in $needles
+    do
+        case "$haystack" in
+            *" $tok "*) ;;
+            *) return 1 ;;
+        esac
+    done
+    return 0
+}
+
+# fixture_sample_is_denied <text>
+#   return 0 if the normalized sample contains every content token of a
+#   seeded fixture caption. return 1 otherwise (including empty /
+#   whitespace-only after normalize).
 fixture_sample_is_denied() {
     local sample
     sample=$(normalize_fixture_sample "$1")
-    case "$sample" in
-        *"a person standing outdoors near greenery"*) return 0 ;;
-        *"a plate of food on a wooden table"*) return 0 ;;
-        *"a scenic landscape with mountains under a clear sky"*) return 0 ;;
-        *"a close-up of a small object on a neutral background"*) return 0 ;;
-        *"a printed document with several lines of text"*) return 0 ;;
-        *"two people seated indoors in conversation"*) return 0 ;;
-        *"a building exterior seen from the street"*) return 0 ;;
-        *"a pet animal resting on a soft surface"*) return 0 ;;
-    esac
+    # Homoglyphs inside a content word (e.g. Cyrillic "е" in "pеrson") still
+    # evade Gate B; Gate A (trusted adapter identity) is the compensating control.
+    if _fixture_tokens_all_present "person standing outdoors greenery" "$sample"; then return 0; fi
+    if _fixture_tokens_all_present "plate food wooden table" "$sample"; then return 0; fi
+    if _fixture_tokens_all_present "scenic landscape mountains clear sky" "$sample"; then return 0; fi
+    if _fixture_tokens_all_present "close up small object neutral background" "$sample"; then return 0; fi
+    if _fixture_tokens_all_present "printed document several lines text" "$sample"; then return 0; fi
+    if _fixture_tokens_all_present "two people seated indoors conversation" "$sample"; then return 0; fi
+    if _fixture_tokens_all_present "building exterior seen street" "$sample"; then return 0; fi
+    if _fixture_tokens_all_present "pet animal resting soft surface" "$sample"; then return 0; fi
     return 1
 }
 

@@ -265,6 +265,9 @@ class DescribeMediaService {
 
 		// Empty adapter stamps an identity-less envelope (projects as null
 		// identity; smoke gate FAILs closed). Refuse, do not coerce [rg-015].
+		// Missing keys never reach here (REQUIRED_RESPONSE_FIELDS). Present
+		// values keep their JSON-decoded type: null/int/array stay non-string;
+		// '' and whitespace-only stay strings and fail the trim check.
 		if ( ! is_string( $data['adapter'] ) || '' === trim( $data['adapter'] ) ) {
 			return $this->invalid_envelope_error( $media_id, "field 'adapter' must be a non-empty string" );
 		}

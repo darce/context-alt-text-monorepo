@@ -355,9 +355,12 @@ Interactivity notes:
   [A11Y-24].
 - `[Reset mirror]` swaps its own label to "Resetting…" while pending and is the only
   destructive control in the zone. It exists only when A is true, so the operator
-  cannot reach it from the healthy composition. It calls `onResetMirror` directly on
-  click with no confirm or preview step, which contradicts
-  `act-reset-mirror.preview_required` in `dashboard.uxmap.json`.
+  cannot reach it from the healthy composition. Click opens a confirm dialog titled
+  "Reset the local mirror?" that always explains the re-download and names
+  `pendingReplayCount` (discard copy plus "Discard %d and reset" when count > 0;
+  "Nothing will be lost." plus confirm label "Reset mirror" when count is 0). Confirm
+  is the only path that calls `onResetMirror`, matching
+  `act-reset-mirror.preview_required` and `irreversible: true`.
 
 
 ### Workbench (`exit-workbench`)

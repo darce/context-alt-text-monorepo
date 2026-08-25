@@ -128,8 +128,17 @@ def test_gpu_cloud_init_pins_gguf_digests_from_hub_revision() -> None:
         / "profiles.py"
     ).read_text()
     hub_repo, model_revision = HUB_PIN.split("@", 1)
-    assert f'hub_repo="{hub_repo}"' in profiles
-    assert f'model_revision="{model_revision}"' in profiles
+    pairs = re.findall(
+        r'hub_repo="([^"]+)",\s*\n\s*model_revision="([^"]+)"',
+        profiles,
+    )
+    qwen_pairs = [rev for repo, rev in pairs if repo == hub_repo]
+    assert len(qwen_pairs) == 2, (
+        f"expected 2 profiles pinning {hub_repo}, got {len(qwen_pairs)}"
+    )
+    assert all(rev == model_revision for rev in qwen_pairs), (
+        f"every {hub_repo} profile must pin revision {model_revision}, got {qwen_pairs}"
+    )
 
 
 def test_gpu_cloud_init_bakes_qwen_measurement_candidate() -> None:

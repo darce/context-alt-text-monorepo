@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 
 from infra.oci.gpu_lifecycle.controller import (
@@ -10,6 +11,7 @@ from infra.oci.gpu_lifecycle.controller import (
     GpuLifecycleController,
     JobLoadSnapshot,
 )
+from infra.oci.gpu_lifecycle import reaper as reaper_mod
 from infra.oci.gpu_lifecycle.reaper import (
     JsonFileJobLoadSource,
     StaticJobLoadSource,
@@ -199,3 +201,42 @@ def test_load_json_help_and_source_warn_bulk_unprotected() -> None:
     assert "batch_in_progress" in help_text
     assert "unprotected" in help_text.lower()
     assert "unprotected" in JsonFileJobLoadSource.__doc__.lower()
+
+
+def test_absent_batch_key_warns_once_across_two_snapshots(
+    tmp_path: Path, caplog: logging.LogCaptureFixture
+) -> None:
+    reaper_mod._ABSENT_BATCH_KEY_WARNED = False
+    path = tmp_path / "load.json"
+    path.write_text(json.dumps({"queue_depth": 0, "in_flight": 0}))
+    source = JsonFileJobLoadSource(path=path)
+    with caplog.at_level(logging.WARNING, logger="infra.oci.gpu_lifecycle.reaper"):
+        source.snapshot()
+        source.snapshot()
+    missing = [
+        rec
+        for rec in caplog.records
+        if rec.levelno == logging.WARNING
+        and "missing batch_in_progress" in rec.getMessage()
+    ]
+    assert len(missing) == 1
+
+
+def test_malformed_batch_flag_still_warns_every_snapshot(
+    tmp_path: Path, caplog: logging.LogCaptureFixture
+) -> None:
+    path = tmp_path / "load.json"
+    path.write_text(
+        json.dumps({"queue_depth": 0, "in_flight": 0, "batch_in_progress": 0})
+    )
+    source = JsonFileJobLoadSource(path=path)
+    with caplog.at_level(logging.WARNING, logger="infra.oci.gpu_lifecycle.reaper"):
+        source.snapshot()
+        source.snapshot()
+    malformed = [
+        rec
+        for rec in caplog.records
+        if rec.levelno == logging.WARNING
+        and "batch_in_progress not bool" in rec.getMessage()
+    ]
+    assert len(malformed) == 2

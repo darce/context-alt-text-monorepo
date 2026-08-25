@@ -4,7 +4,7 @@ import type { RosterEntry } from '../../api/rosterApi';
 import type { RosterEntryInstance } from '../../api/generated/roster-entry';
 import { useUpdatePerson, useDeletePerson } from '../../hooks/useRosterHooks';
 import { AlertCircle, Check, CheckCircle2, Pencil, Trash2, UserRound, X } from 'lucide-react';
-import { ConfirmDialog } from './ConfirmDialog';
+import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
 import { IdentityThumbnail } from './IdentityThumbnail';
 import { derivePersonState, PERSON_STATES, type PersonState } from './personState';
 import { isHumanLabeledTarget } from '../workbench/identity-clusters/suggestionProjection';

@@ -1,7 +1,7 @@
 import React from 'react';
 
 import type { ConfirmDialogCopy } from './useClusterConfirmDialog';
-import { ConfirmDialog } from '../../roster/ConfirmDialog';
+import { ConfirmDialog } from '../../../components/ui/ConfirmDialog';
 
 interface ClusterConfirmDialogProps {
   dialog: { open: boolean } | null;

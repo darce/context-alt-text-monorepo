@@ -69,6 +69,8 @@ _DEFAULT_FENCE_DELAY_SECONDS = 2.0
 _DEFAULT_READY_MAX_CYCLES = 30
 _DEFAULT_READY_STALL_CYCLES = 3
 _DEFAULT_READY_SLEEP_SECONDS = 10.0
+# Live describe dumps omit batch_in_progress; warn once per process, not per poll.
+_ABSENT_BATCH_KEY_WARNED = False
 
 
 class JobLoadSource(Protocol):
@@ -209,11 +211,15 @@ class JsonFileJobLoadSource:
         # without this key. Absent → False: do not claim batch protection; bulk
         # runs are unprotected until the producer writes batch_in_progress.
         if "batch_in_progress" not in payload:
-            logger.warning(
+            global _ABSENT_BATCH_KEY_WARNED
+            level = logging.DEBUG if _ABSENT_BATCH_KEY_WARNED else logging.WARNING
+            logger.log(
+                level,
                 "load json missing batch_in_progress; bulk runs are unprotected "
                 "until the producer writes this key: %s",
                 self.path,
             )
+            _ABSENT_BATCH_KEY_WARNED = True
             batch_in_progress = False
         else:
             batch_in_progress = bool(payload["batch_in_progress"])

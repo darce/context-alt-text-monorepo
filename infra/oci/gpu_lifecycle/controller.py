@@ -33,10 +33,13 @@ class JobLoadSnapshot:
 
     queue_depth: int
     in_flight: int
+    batch_in_progress: bool = False
 
     @property
     def has_work(self) -> bool:
-        return self.queue_depth > 0 or self.in_flight > 0
+        return (
+            self.queue_depth > 0 or self.in_flight > 0 or self.batch_in_progress
+        )
 
 
 class GpuLifecycleController:
@@ -51,9 +54,10 @@ class GpuLifecycleController:
         *,
         queue_depth: int,
         in_flight: int,
+        batch_in_progress: bool = False,
     ) -> list[tuple[str, str]]:
         """Emit START for STOPPED burst instances when work is waiting."""
-        if queue_depth <= 0 and in_flight <= 0:
+        if queue_depth <= 0 and in_flight <= 0 and not batch_in_progress:
             return []
         return [
             (LifecycleAction.START, instance.instance_id)
@@ -67,8 +71,9 @@ class GpuLifecycleController:
         *,
         queue_depth: int,
         in_flight: int,
+        batch_in_progress: bool = False,
     ) -> list[tuple[str, str]]:
-        if queue_depth > 0 or in_flight > 0:
+        if queue_depth > 0 or in_flight > 0 or batch_in_progress:
             return []
         return [
             (LifecycleAction.STOP, instance.instance_id)
@@ -81,14 +86,15 @@ class GpuLifecycleController:
         self,
         actions: list[tuple[str, str]],
         *,
-        pre_stop_load: JobLoadSnapshot,
+        pre_stop_load: JobLoadSnapshot | None = None,
+        fence_expired: bool = False,
     ) -> list[tuple[str, str]]:
-        """Drop STOP decisions if work arrived between decision and actuation.
+        """Drop STOP decisions if a batch is running or the fence cannot confirm idle.
 
         Callers must re-sample the job store immediately before actuating and
-        pass that sample here. Any non-empty queue or in-flight set cancels
-        all STOPs in the batch (fail-closed on mid-request reaping).
+        pass that sample here. Queue, in-flight, or batch_in_progress cancels
+        all STOPs. Fence expiry (no trustworthy re-sample) falls back closed.
         """
-        if pre_stop_load.has_work:
+        if fence_expired or pre_stop_load is None or pre_stop_load.has_work:
             return []
-        return [action for action in actions if action[0] == "STOP"]
+        return [action for action in actions if action[0] == LifecycleAction.STOP]

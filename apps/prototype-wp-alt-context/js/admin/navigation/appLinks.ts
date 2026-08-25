@@ -146,6 +146,8 @@ export const toWorkbench = (options: ToWorkbenchOptions = {}): string => {
 
 export const toRetention = (): string => href(ROUTE.retention);
 
+export const toSettings = (): string => href(ROUTE.settings);
+
 export const toRoster = (options: ToRosterOptions = {}): string => {
   const params = new URLSearchParams();
   if (options.personFilter !== undefined) {

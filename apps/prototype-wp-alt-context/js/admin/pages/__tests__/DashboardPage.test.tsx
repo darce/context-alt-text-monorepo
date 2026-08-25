@@ -1071,7 +1071,8 @@ describe('DashboardPage', () => {
 
     render(<DashboardPage />);
 
-    const banner = screen.getByRole('status');
+    const banner = screen.getByText(/Mirror is out of sync with the backend/).closest('[role="status"]');
+    expect(banner).toBeTruthy();
     expect(banner).toHaveClass('acx-dashboard__mirror-warning');
 
     const resetButton = screen.getByRole('button', { name: 'Reset mirror' });

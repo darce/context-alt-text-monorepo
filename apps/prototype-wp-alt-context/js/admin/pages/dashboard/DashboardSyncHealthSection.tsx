@@ -5,7 +5,8 @@ import { AlertTriangle } from 'lucide-react';
 import type { SyncHealth, SyncHealthResponse } from '../../api/recognition/types/sync';
 import { getDashboardSyncHealthSummary } from '../workbench/degradedModeBannerLogic';
 import { SYNC_VOCABULARY } from '../workbench/syncPresentation';
-import { SCAN_CONFLICTS_HREF, SCAN_DEAD_LETTER_HREF, toWorkbench } from '../../navigation/appLinks';
+import { SCAN_CONFLICTS_HREF, SCAN_DEAD_LETTER_HREF, toSettings, toWorkbench } from '../../navigation/appLinks';
+import { EmptyState, EmptyStateVariant } from '../../components/ui/EmptyState';
 
 interface SyncStatusData {
   last_snapshot_version?: number | null;
@@ -55,7 +56,13 @@ export const DashboardSyncHealthSection = ({
     {isLoading ? (
       <p>{__('Loading sync health…', 'alt-context')}</p>
     ) : isError || !syncStatus ? (
-      <p>{__('Sync health is unavailable right now.', 'alt-context')}</p>
+      <EmptyState
+        variant={EmptyStateVariant.UNAVAILABLE}
+        heading={__('Sync health is unavailable right now.', 'alt-context')}
+        body={__('Check the recognition service connection in settings.', 'alt-context')}
+        action={{ label: __('Open settings', 'alt-context'), href: toSettings() }}
+        headingLevel={3}
+      />
     ) : (
       <>
         {showMirrorDivergenceBanner ? (

@@ -19,6 +19,7 @@ export interface WorkbenchMediaFilters {
   currentPage: number;
   perPage: number;
   handleSearchChange: (event: React.ChangeEvent<HTMLInputElement>) => void;
+  clearSearch: () => void;
   handleStatusChange: (status: WorkbenchMediaStatus) => void;
   setCurrentPage: (page: number) => void;
   setPerPage: (perPage: number) => void;
@@ -55,6 +56,7 @@ export const WorkbenchMediaProvider: React.FC<{ children: React.ReactNode }> = (
     setPerPage,
     setCurrentPage,
     handleSearchChange,
+    clearSearch,
     normalizedSearch,
     statusFilter,
     handleStatusChange,
@@ -210,6 +212,7 @@ export const WorkbenchMediaProvider: React.FC<{ children: React.ReactNode }> = (
       currentPage: clampedPage,
       perPage,
       handleSearchChange,
+      clearSearch,
       handleStatusChange,
       setCurrentPage,
       setPerPage,
@@ -220,6 +223,7 @@ export const WorkbenchMediaProvider: React.FC<{ children: React.ReactNode }> = (
       clampedPage,
       perPage,
       handleSearchChange,
+      clearSearch,
       handleStatusChange,
       setCurrentPage,
       setPerPage,

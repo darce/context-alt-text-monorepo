@@ -37,6 +37,7 @@ import {
 
 import { invalidateSuggestionProjection } from './suggestionProjection';
 import { useShowAllClusterMembers } from './useShowAllClusterMembers';
+import { EmptyState, EmptyStateVariant } from '../../../components/ui/EmptyState';
 
 interface ClusterReviewPanelProps {
   clusterId: string;
@@ -201,7 +202,13 @@ export const ClusterReviewPanel = ({
             ) : null}
           </>
         ) : (
-          <p>{__('No faces in this group.', 'alt-context')}</p>
+          <EmptyState
+            variant={EmptyStateVariant.EMPTY}
+            heading={__('No faces in this group.', 'alt-context')}
+            body={__('Return to the review suggestions and choose another face group.', 'alt-context')}
+            action={{ label: __('Back to review suggestions', 'alt-context'), onClick: onClose }}
+            headingLevel={3}
+          />
         )}
       </div>
 

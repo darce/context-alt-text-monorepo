@@ -22,6 +22,20 @@ const baseProps = {
 };
 
 describe('DashboardSyncHealthSection', () => {
+  it('offers settings when sync health is unavailable', () => {
+    render(
+      <DashboardSyncHealthSection
+        {...baseProps}
+        isError
+        syncStatus={null}
+        effectiveSyncHealth="offline"
+        syncHealthEnvelope={null}
+      />,
+    );
+
+    expect(screen.getByRole('link', { name: 'Open settings' })).toHaveAttribute('href', '#/settings');
+  });
+
   it('shows offline copy when effective health is offline despite legacy healthy status', () => {
     render(
       <DashboardSyncHealthSection

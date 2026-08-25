@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 
 import { DashboardPage } from '../DashboardPage';
 import type { DashboardStats } from '../../api/dashboardApi';
@@ -1077,7 +1077,10 @@ describe('DashboardPage', () => {
 
     const resetButton = screen.getByRole('button', { name: 'Reset mirror' });
     fireEvent.click(resetButton);
-
+    expect(mutate).not.toHaveBeenCalled();
+    fireEvent.click(
+      within(screen.getByRole('dialog')).getByRole('button', { name: 'Reset mirror' }),
+    );
     expect(mutate).toHaveBeenCalledTimes(1);
   });
 

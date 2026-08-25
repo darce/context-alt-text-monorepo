@@ -41,6 +41,29 @@ assert_eq() {
     fi
 }
 
+# Dual-channel pin: printed verdict AND $?. FAIL must return 1; PASS/WARN 0.
+# `|| actual_rc=$?` keeps set -e from aborting the suite on a FAIL return.
+assert_verdict_rc() {
+    local label="$1" expected_verdict="$2" expected_rc="$3"
+    shift 3
+    local actual_verdict actual_rc=0
+    actual_verdict=$("$@") || actual_rc=$?
+    assert_eq "${label} verdict" "$expected_verdict" "$actual_verdict"
+    assert_eq "${label} rc" "$expected_rc" "$actual_rc"
+}
+
+# Caption → denied_count using the same per-caption matcher as
+# load_alt_counts_from_media_body. Keeps the existing fixture-caption
+# assertions load-bearing against the matcher after the first
+# classify_alt_provenance argument changed from sample text to denied_count.
+caption_denied_count() {
+    if fixture_sample_is_denied "$1"; then
+        printf '%s' 1
+    else
+        printf '%s' 0
+    fi
+}
+
 # --- classify_api_probe <post_code> <pre_code> ---
 # Unreachable after retries = edge/TLS broken by the promote -> FAIL, regardless of baseline.
 assert_eq "api 000, pre 200"     FAIL "$(classify_api_probe 000 200)"
@@ -114,39 +137,40 @@ assert_eq "alt population empty body" FAIL "$(classify_alt_population 100 '')"
 assert_eq "alt population non-numeric header" FAIL "$(classify_alt_population abc 100)"
 assert_eq "alt population 0 == 0 (nothing measured)" FAIL "$(classify_alt_population 0 0)"
 
-# --- classify_alt_provenance <sample_text> <adapters_blob> <usable_count> ---
+# --- classify_alt_provenance <denied_count> <adapters_blob> <usable_count> [usable_normalized_count] ---
 # Gate B pins pass a trusted adapter so FAIL cannot hide behind Gate A (TEST-15 M2).
-assert_eq "alt provenance empty sample (cannot prove)" FAIL "$(classify_alt_provenance '' "$TRUSTED_ONE" 1)"
-assert_eq "alt provenance live seeded draft on demo media id 5" FAIL "$(classify_alt_provenance 'antonio_banderas_10. A close-up of a small object on a neutral background.' "$TRUSTED_ONE" 1)"
-assert_eq "alt provenance real caption (not a fixture)" PASS "$(classify_alt_provenance "$REAL_CAPTION" "$TRUSTED_ONE" 1)"
-assert_eq "alt provenance fixture: person outdoors" FAIL "$(classify_alt_provenance 'A person standing outdoors near greenery.' "$TRUSTED_ONE" 1)"
-assert_eq "alt provenance fixture: plate of food" FAIL "$(classify_alt_provenance 'A plate of food on a wooden table.' "$TRUSTED_ONE" 1)"
-assert_eq "alt provenance fixture: scenic landscape" FAIL "$(classify_alt_provenance 'A scenic landscape with mountains under a clear sky.' "$TRUSTED_ONE" 1)"
-assert_eq "alt provenance fixture: close-up object" FAIL "$(classify_alt_provenance "$FIXTURE_CAPTION" "$TRUSTED_ONE" 1)"
-assert_eq "alt provenance fixture: printed document" FAIL "$(classify_alt_provenance 'A printed document with several lines of text.' "$TRUSTED_ONE" 1)"
-assert_eq "alt provenance fixture: two people seated" FAIL "$(classify_alt_provenance 'Two people seated indoors in conversation.' "$TRUSTED_ONE" 1)"
-assert_eq "alt provenance fixture: building exterior" FAIL "$(classify_alt_provenance 'A building exterior seen from the street.' "$TRUSTED_ONE" 1)"
-assert_eq "alt provenance fixture: pet animal" FAIL "$(classify_alt_provenance 'A pet animal resting on a soft surface.' "$TRUSTED_ONE" 1)"
+# First arg is denied_count (per-caption fixture signal), not a concatenated blob.
+assert_eq "alt provenance empty sample (cannot prove)" FAIL "$(classify_alt_provenance 0 "$TRUSTED_ONE" 1 0)"
+assert_eq "alt provenance live seeded draft on demo media id 5" FAIL "$(classify_alt_provenance "$(caption_denied_count 'antonio_banderas_10. A close-up of a small object on a neutral background.')" "$TRUSTED_ONE" 1)"
+assert_eq "alt provenance real caption (not a fixture)" PASS "$(classify_alt_provenance "$(caption_denied_count "$REAL_CAPTION")" "$TRUSTED_ONE" 1)"
+assert_eq "alt provenance fixture: person outdoors" FAIL "$(classify_alt_provenance "$(caption_denied_count 'A person standing outdoors near greenery.')" "$TRUSTED_ONE" 1)"
+assert_eq "alt provenance fixture: plate of food" FAIL "$(classify_alt_provenance "$(caption_denied_count 'A plate of food on a wooden table.')" "$TRUSTED_ONE" 1)"
+assert_eq "alt provenance fixture: scenic landscape" FAIL "$(classify_alt_provenance "$(caption_denied_count 'A scenic landscape with mountains under a clear sky.')" "$TRUSTED_ONE" 1)"
+assert_eq "alt provenance fixture: close-up object" FAIL "$(classify_alt_provenance "$(caption_denied_count "$FIXTURE_CAPTION")" "$TRUSTED_ONE" 1)"
+assert_eq "alt provenance fixture: printed document" FAIL "$(classify_alt_provenance "$(caption_denied_count 'A printed document with several lines of text.')" "$TRUSTED_ONE" 1)"
+assert_eq "alt provenance fixture: two people seated" FAIL "$(classify_alt_provenance "$(caption_denied_count 'Two people seated indoors in conversation.')" "$TRUSTED_ONE" 1)"
+assert_eq "alt provenance fixture: building exterior" FAIL "$(classify_alt_provenance "$(caption_denied_count 'A building exterior seen from the street.')" "$TRUSTED_ONE" 1)"
+assert_eq "alt provenance fixture: pet animal" FAIL "$(classify_alt_provenance "$(caption_denied_count 'A pet animal resting on a soft surface.')" "$TRUSTED_ONE" 1)"
 # R1-03b: trivial denylist evasions must still FAIL.
-assert_eq "alt provenance lowercase first letter still fixture" FAIL "$(classify_alt_provenance 'a person standing outdoors near greenery.' "$TRUSTED_ONE" 1)"
-assert_eq "alt provenance dropped trailing period still fixture" FAIL "$(classify_alt_provenance 'A person standing outdoors near greenery' "$TRUSTED_ONE" 1)"
-assert_eq "alt provenance extra internal whitespace still fixture" FAIL "$(classify_alt_provenance 'A person  standing   outdoors near greenery.' "$TRUSTED_ONE" 1)"
-assert_eq "alt provenance trailing bang still fixture" FAIL "$(classify_alt_provenance 'A person standing outdoors near greenery!' "$TRUSTED_ONE" 1)"
+assert_eq "alt provenance lowercase first letter still fixture" FAIL "$(classify_alt_provenance "$(caption_denied_count 'a person standing outdoors near greenery.')" "$TRUSTED_ONE" 1)"
+assert_eq "alt provenance dropped trailing period still fixture" FAIL "$(classify_alt_provenance "$(caption_denied_count 'A person standing outdoors near greenery')" "$TRUSTED_ONE" 1)"
+assert_eq "alt provenance extra internal whitespace still fixture" FAIL "$(classify_alt_provenance "$(caption_denied_count 'A person  standing   outdoors near greenery.')" "$TRUSTED_ONE" 1)"
+assert_eq "alt provenance trailing bang still fixture" FAIL "$(classify_alt_provenance "$(caption_denied_count 'A person standing outdoors near greenery!')" "$TRUSTED_ONE" 1)"
 # R1-03B part 2: Gate A adapter identity, ANDed with Gate B.
-assert_eq "alt provenance trusted adapter x1 usable 1" PASS "$(classify_alt_provenance "$REAL_CAPTION" "$TRUSTED_ONE" 1)"
-assert_eq "alt provenance trusted adapters x3 usable 3" PASS "$(classify_alt_provenance "$REAL_CAPTION" "florence_small gpu_qwen30b gpu_qwen30b_ensemble" 3)"
-assert_eq "alt provenance untrusted adapter seeded" FAIL "$(classify_alt_provenance "$REAL_CAPTION" "seeded" 1)"
-assert_eq "alt provenance mixed trusted + untrusted" FAIL "$(classify_alt_provenance "$REAL_CAPTION" "florence_small seeded" 2)"
-assert_eq "alt provenance empty adapters blob usable 1 (fail closed)" FAIL "$(classify_alt_provenance "$REAL_CAPTION" "" 1)"
-assert_eq "alt provenance whitespace adapters blob usable 1 (fail closed)" FAIL "$(classify_alt_provenance "$REAL_CAPTION" "   " 1)"
-assert_eq "alt provenance trusted fewer than usable_count" FAIL "$(classify_alt_provenance "$REAL_CAPTION" "$TRUSTED_ONE" 2)"
+assert_eq "alt provenance trusted adapter x1 usable 1" PASS "$(classify_alt_provenance 0 "$TRUSTED_ONE" 1)"
+assert_eq "alt provenance trusted adapters x3 usable 3" PASS "$(classify_alt_provenance 0 "florence_small gpu_qwen30b gpu_qwen30b_ensemble" 3)"
+assert_eq "alt provenance untrusted adapter seeded" FAIL "$(classify_alt_provenance 0 "seeded" 1)"
+assert_eq "alt provenance mixed trusted + untrusted" FAIL "$(classify_alt_provenance 0 "florence_small seeded" 2)"
+assert_eq "alt provenance empty adapters blob usable 1 (fail closed)" FAIL "$(classify_alt_provenance 0 "" 1)"
+assert_eq "alt provenance whitespace adapters blob usable 1 (fail closed)" FAIL "$(classify_alt_provenance 0 "   " 1)"
+assert_eq "alt provenance trusted fewer than usable_count" FAIL "$(classify_alt_provenance 0 "$TRUSTED_ONE" 2)"
 assert_eq "alt identity extra trusted tokens fail equality (not >=)" FAIL "$(classify_alt_identity 'florence_small florence_small' 1)"
 assert_eq "alt identity glob star token is untrusted" FAIL "$(classify_alt_identity '*' 1)"
 assert_eq "alt identity glob question token is untrusted" FAIL "$(classify_alt_identity '?' 1)"
 assert_eq "alt identity glob bracket token is untrusted" FAIL "$(classify_alt_identity '[a-z]' 1)"
-assert_eq "alt provenance trusted adapter AND denylisted caption" FAIL "$(classify_alt_provenance "$FIXTURE_CAPTION" "$TRUSTED_ONE" 1)"
-assert_eq "alt provenance non-numeric usable_count" FAIL "$(classify_alt_provenance "$REAL_CAPTION" "$TRUSTED_ONE" abc)"
-assert_eq "alt provenance empty usable_count" FAIL "$(classify_alt_provenance "$REAL_CAPTION" "$TRUSTED_ONE" "")"
+assert_eq "alt provenance trusted adapter AND denylisted caption" FAIL "$(classify_alt_provenance 1 "$TRUSTED_ONE" 1)"
+assert_eq "alt provenance non-numeric usable_count" FAIL "$(classify_alt_provenance 0 "$TRUSTED_ONE" abc)"
+assert_eq "alt provenance empty usable_count" FAIL "$(classify_alt_provenance 0 "$TRUSTED_ONE" "")"
 
 # --- classify_alt_text_usable <text> ---
 # R1-03a: placeholder / non-content alt is not coverage.
@@ -158,6 +182,24 @@ assert_eq "usable alt 14 letters (below 15)" FAIL "$(classify_alt_text_usable 'a
 assert_eq "usable alt 15 letters" PASS "$(classify_alt_text_usable 'abcdefghijklmno')"
 assert_eq "usable alt 15 digits no alphabetic" FAIL "$(classify_alt_text_usable '123456789012345')"
 assert_eq "usable alt real caption" PASS "$(classify_alt_text_usable 'A woman in a red coat speaks at a podium.')"
+
+# R2-13: printed verdict AND $? for at least one PASS and one FAIL per classifier.
+# WARN is not a failure (rc 0), matching UNKNOWN policy.
+assert_verdict_rc "R2-13 api PASS" PASS 0 classify_api_probe 200 200
+assert_verdict_rc "R2-13 api FAIL" FAIL 1 classify_api_probe 000 200
+assert_verdict_rc "R2-13 api WARN" WARN 0 classify_api_probe 502 502
+assert_verdict_rc "R2-13 demo PASS" PASS 0 classify_demo_probe 200 'https://demo.altcontext.com/'
+assert_verdict_rc "R2-13 demo FAIL" FAIL 1 classify_demo_probe 500 'https://demo.altcontext.com/'
+assert_verdict_rc "R2-13 coverage PASS" PASS 0 classify_alt_coverage 100 100 95
+assert_verdict_rc "R2-13 coverage FAIL" FAIL 1 classify_alt_coverage 100 0 95
+assert_verdict_rc "R2-13 population PASS" PASS 0 classify_alt_population 100 100
+assert_verdict_rc "R2-13 population FAIL" FAIL 1 classify_alt_population 250 100
+assert_verdict_rc "R2-13 usable PASS" PASS 0 classify_alt_text_usable 'abcdefghijklmno'
+assert_verdict_rc "R2-13 usable FAIL" FAIL 1 classify_alt_text_usable ''
+assert_verdict_rc "R2-13 identity PASS" PASS 0 classify_alt_identity "$TRUSTED_ONE" 1
+assert_verdict_rc "R2-13 identity FAIL" FAIL 1 classify_alt_identity seeded 1
+assert_verdict_rc "R2-13 provenance PASS" PASS 0 classify_alt_provenance 0 "$TRUSTED_ONE" 1
+assert_verdict_rc "R2-13 provenance FAIL" FAIL 1 classify_alt_provenance 1 "$TRUSTED_ONE" 1
 
 # TEST-15 mutation proof (2026-08-25): adding a 9th _FIXTURE_POOL caption
 # not present in smoke-gate.sh makes this suite exit 1 with:
@@ -178,7 +220,7 @@ else
     while IFS= read -r caption; do
         [ -n "$caption" ] || continue
         extracted=$((extracted + 1))
-        assert_eq "drift: pool caption classified FAIL (${caption})" FAIL "$(classify_alt_provenance "$caption" "$TRUSTED_ONE" 1)"
+        assert_eq "drift: pool caption classified FAIL (${caption})" FAIL "$(classify_alt_provenance "$(caption_denied_count "$caption")" "$TRUSTED_ONE" 1)"
     done <<DRIFT
 $(grep '"caption":' "$adapter_file" | sed 's/.*"caption": "\([^"]*\)".*/\1/')
 DRIFT
@@ -359,9 +401,9 @@ smoke_fail=1" "$prov_default"
             body_total=100
             with_alt=0
             min="${DEMO_ALT_MIN_COVERAGE_PCT:-95}"
-            pop=$(classify_alt_population "$header_total" "$body_total")
+            pop=$(classify_alt_population "$header_total" "$body_total") || true
             emit_alt_gate "$pop" "demo alt population (header=${header_total} body=${body_total})" 1
-            verdict=$(classify_alt_coverage "$body_total" "$with_alt" "$min")
+            verdict=$(classify_alt_coverage "$body_total" "$with_alt" "$min") || true
             pct=$((with_alt * 100 / body_total))
             cov_msg="demo alt coverage (${with_alt}/${body_total} = ${pct}%, need ${min}%)"
             emit_alt_gate "$verdict" "$cov_msg" 1
@@ -397,14 +439,14 @@ smoke_fail=1" "$empty_override"
             fi
             smoke_fail=0
             min="${DEMO_ALT_MIN_COVERAGE_PCT:-95}"
-            pop=$(classify_alt_population "$header_total" "$body_total")
+            pop=$(classify_alt_population "$header_total" "$body_total") || true
             if [ "$pop" = "FAIL" ]; then
                 pop_msg="demo alt coverage (measured ${body_total:-empty} of ${header_total:-empty} reported by x-wp-total; probe covers only one page, cannot certify coverage)"
             else
                 pop_msg="demo alt population (header=${header_total} body=${body_total})"
             fi
             emit_alt_gate "$pop" "$pop_msg" 1
-            verdict=$(classify_alt_coverage "$body_total" "$with_alt" "$min")
+            verdict=$(classify_alt_coverage "$body_total" "$with_alt" "$min") || true
             pct="?"
             case "$body_total" in *[!0-9]*|'') ;; *)
                 case "$with_alt" in *[!0-9]*|'') ;; *)
@@ -434,9 +476,17 @@ smoke_fail=1" "$empty_override"
                 ;;
             esac
             if [ "$run_prov" = "1" ]; then
-                prov=$(classify_alt_provenance "$sample" "$adapters" "$with_alt")
+                _denied=0
+                if [ -n "$sample" ] && fixture_sample_is_denied "$sample"; then
+                    _denied=1
+                fi
+                _norm="$with_alt"
+                if [ -z "$(normalize_fixture_sample "$sample")" ]; then
+                    _norm=0
+                fi
+                prov=$(classify_alt_provenance "$_denied" "$adapters" "$with_alt" "$_norm") || true
                 if [ "$prov" = "FAIL" ]; then
-                    identity=$(classify_alt_identity "$adapters" "$with_alt")
+                    identity=$(classify_alt_identity "$adapters" "$with_alt") || true
                     if [ "$identity" = "FAIL" ]; then
                         prov_msg="demo alt provenance (untrusted or absent adapter identity behind ${with_alt} published alt texts)"
                     else
@@ -532,6 +582,64 @@ JSON
         load_alt_counts_from_media_body "$media_json"
         assert_eq "TEST-15 glob adapter sanitized" "__invalid__ " "$adapters"
         assert_eq "TEST-15 glob adapter identity FAIL" FAIL "$(classify_alt_identity "$adapters" "$with_alt")"
+
+        # R3V-01: token-AND over a concatenated blob false-denies a genuine
+        # library whose captions collectively contain every content token of
+        # the "person standing outdoors greenery" arm, but where no single
+        # caption is a fixture caption.
+        python3 - "$media_json" <<'PY'
+import json
+import sys
+
+captions = [
+    "A person walks through the city at dusk near shops.",
+    "A cyclist standing beside a painted mural downtown.",
+    "Families picnic outdoors on a sandy beach at noon.",
+    "Dense greenery fills the greenhouse behind glass.",
+    "A ceramic bowl sits beside a window in morning light.",
+    "The chef arranges herbs on a marble counter.",
+    "Children chase a kite across an open field.",
+    "A round oak desk holds books and a reading lamp.",
+    "Two musicians perform on a small stage at night.",
+    "A red brick facade faces the river at sunset.",
+]
+items = []
+for i, caption in enumerate(captions, start=1):
+    items.append({
+        "id": i,
+        "alt_text": caption,
+        "acx_alt_provenance": {"adapter": "florence_small", "model_id": "x"},
+    })
+json.dump(items, open(sys.argv[1], "w"))
+PY
+        load_alt_counts_from_media_body "$media_json"
+        blob_denied_rc=0
+        fixture_sample_is_denied "$sample" || blob_denied_rc=$?
+        assert_eq "R3V-01 genuine library body_total 10" "10" "$body_total"
+        assert_eq "R3V-01 genuine library with_alt 10" "10" "$with_alt"
+        assert_eq "R3V-01 genuine library denied_count 0" "0" "$denied_count"
+        assert_eq "R3V-01 genuine library usable_normalized_count 10" "10" "$usable_normalized_count"
+        assert_eq "R3V-01 concatenated blob trips person standing outdoors greenery arm" "0" "$blob_denied_rc"
+        assert_eq "R3V-01 genuine library provenance PASS" PASS "$(classify_alt_provenance "$denied_count" "$adapters" "$with_alt" "$usable_normalized_count")"
+
+        python3 - "$media_json" <<'PY'
+import json
+import sys
+
+path = sys.argv[1]
+items = json.load(open(path))
+items.append({
+    "id": 11,
+    "alt_text": "A close-up of a small object on a neutral background.",
+    "acx_alt_provenance": {"adapter": "florence_small", "model_id": "x"},
+})
+json.dump(items, open(path, "w"))
+PY
+        load_alt_counts_from_media_body "$media_json"
+        assert_eq "R3V-01 genuine library plus one fixture body_total 11" "11" "$body_total"
+        assert_eq "R3V-01 genuine library plus one fixture with_alt 11" "11" "$with_alt"
+        assert_eq "R3V-01 genuine library plus one fixture denied_count 1" "1" "$denied_count"
+        assert_eq "R3V-01 genuine library plus one fixture provenance FAIL" FAIL "$(classify_alt_provenance "$denied_count" "$adapters" "$with_alt" "$usable_normalized_count")"
 
         python3 - "$media_json" <<'PY'
 import json

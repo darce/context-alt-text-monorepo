@@ -40,18 +40,37 @@ from pathlib import Path
 from typing import Protocol
 
 from infra.oci.gpu_lifecycle.controller import (
+    FallbackDecision,
     GpuInstance,
     GpuLifecycleController,
     JobLoadSnapshot,
+    LifecycleAction,
+)
+from infra.oci.gpu_lifecycle.probe import (
+    HttpReadinessProbe,
+    InstanceReadinessProbe,
+    ReadinessWaitResult,
+    WarmReadinessWait,
 )
 
 logger = logging.getLogger(__name__)
 
-# Fail-safe busy snapshot: never STOP when load data is untrustworthy.
-_BUSY_LOAD = JobLoadSnapshot(queue_depth=1, in_flight=1)
+# Fail-closed STOP sentinel when load data is untrustworthy. START must not
+# treat this as real work (untrustworthy=True → refuse START).
+_BUSY_LOAD = JobLoadSnapshot(
+    queue_depth=1, in_flight=1, batch_in_progress=True, untrustworthy=True
+)
 _DEFAULT_LOAD_MAX_AGE_SECONDS = 120.0
 _DEFAULT_OCI_TIMEOUT_SECONDS = 120
+_DEFAULT_MAX_WAIT_SECONDS = 600
 _DEFAULT_FENCE_DELAY_SECONDS = 2.0
+# A10 ~$2/GPU-hr; 100-image library ≈ 5 min boot+load + ~4s/img ≈ 12 min ≈ $0.40.
+# Boot amortization dominates: bound the wait so a hung START cannot bill the hour.
+_DEFAULT_READY_MAX_CYCLES = 30
+_DEFAULT_READY_STALL_CYCLES = 3
+_DEFAULT_READY_SLEEP_SECONDS = 10.0
+# Live describe dumps omit batch_in_progress; warn once per process, not per poll.
+_ABSENT_BATCH_KEY_WARNED = False
 
 
 class JobLoadSource(Protocol):
@@ -60,6 +79,39 @@ class JobLoadSource(Protocol):
 
 class InstanceStopActuator(Protocol):
     def stop_instance(self, instance_id: str) -> None: ...
+
+
+class InstanceStartActuator(Protocol):
+    def start_instance(self, instance_id: str) -> None: ...
+
+
+def build_instance_action_cmd(
+    *,
+    oci_bin: str,
+    instance_id: str,
+    action: str,
+    wait_state: str,
+    auth: str | None = None,
+    max_wait_seconds: int = _DEFAULT_MAX_WAIT_SECONDS,
+) -> list[str]:
+    """OCI CLI power-action argv. START/STOP twins share this builder."""
+    cmd = [
+        oci_bin,
+        "compute",
+        "instance",
+        "action",
+        "--instance-id",
+        instance_id,
+        "--action",
+        action,
+        "--wait-for-state",
+        wait_state,
+        "--max-wait-seconds",
+        str(max_wait_seconds),
+    ]
+    if auth:
+        cmd.extend(["--auth", auth])
+    return cmd
 
 
 @dataclass(frozen=True)
@@ -71,9 +123,14 @@ class StaticJobLoadSource:
 
     queue_depth: int
     in_flight: int
+    batch_in_progress: bool = False
 
     def snapshot(self) -> JobLoadSnapshot:
-        return JobLoadSnapshot(queue_depth=self.queue_depth, in_flight=self.in_flight)
+        return JobLoadSnapshot(
+            queue_depth=self.queue_depth,
+            in_flight=self.in_flight,
+            batch_in_progress=self.batch_in_progress,
+        )
 
 
 @dataclass(frozen=True)
@@ -82,6 +139,12 @@ class JsonFileJobLoadSource:
 
     Expected shape (mirrors InMemoryDescribeJobStore.load_snapshot):
       {"queue_depth": <int>, "in_flight": <int>, "written_at": <unix float optional>}
+
+    Optional ``batch_in_progress`` (bool) is honoured only when the producer
+    writes it. Absent key → False: the fence covers only queue_depth/in_flight
+    that the snapshot proves. Bulk/multi-job runs are unprotected until the
+    producer writes ``batch_in_progress``. Present but not a bool → busy
+    (fail closed).
 
     Stale files (mtime or written_at older than max_age_seconds) are treated as
     busy so the reaper never STOPs on silent writer failure (VLMFIX-S2-02).
@@ -136,7 +199,35 @@ class JsonFileJobLoadSource:
                 self.path,
             )
             return _BUSY_LOAD
-        return JobLoadSnapshot(queue_depth=queue_depth, in_flight=in_flight)
+        if "batch_in_progress" in payload and not isinstance(
+            payload["batch_in_progress"], bool
+        ):
+            logger.warning(
+                "load json batch_in_progress not bool; treating as busy: %s",
+                self.path,
+            )
+            return _BUSY_LOAD
+        # Consumer-only flag. Producer today writes {queue_depth,in_flight,written_at}
+        # without this key. Absent → False: do not claim batch protection; bulk
+        # runs are unprotected until the producer writes batch_in_progress.
+        if "batch_in_progress" not in payload:
+            global _ABSENT_BATCH_KEY_WARNED
+            level = logging.DEBUG if _ABSENT_BATCH_KEY_WARNED else logging.WARNING
+            logger.log(
+                level,
+                "load json missing batch_in_progress; bulk runs are unprotected "
+                "until the producer writes this key: %s",
+                self.path,
+            )
+            _ABSENT_BATCH_KEY_WARNED = True
+            batch_in_progress = False
+        else:
+            batch_in_progress = bool(payload["batch_in_progress"])
+        return JobLoadSnapshot(
+            queue_depth=queue_depth,
+            in_flight=in_flight,
+            batch_in_progress=batch_in_progress,
+        )
 
 
 class OciCliStopActuator:
@@ -161,27 +252,63 @@ class OciCliStopActuator:
         self._auth = auth
         self._timeout_seconds = timeout_seconds
 
+    def build_cmd(self, instance_id: str) -> list[str]:
+        return build_instance_action_cmd(
+            oci_bin=self._oci_bin,
+            instance_id=instance_id,
+            action=LifecycleAction.STOP,
+            wait_state="STOPPED",
+            auth=self._auth,
+        )
+
     def stop_instance(self, instance_id: str) -> None:
-        cmd = [
-            self._oci_bin,
-            "compute",
-            "instance",
-            "action",
-            "--instance-id",
-            instance_id,
-            "--action",
-            "STOP",
-            "--wait-for-state",
-            "STOPPED",
-            "--max-wait-seconds",
-            "600",
-        ]
-        if self._auth:
-            cmd.extend(["--auth", self._auth])
+        cmd = self.build_cmd(instance_id)
         if self._dry_run:
             logger.info("dry-run STOP %s: %s", instance_id, " ".join(cmd))
             return
         logger.info("actuating STOP for %s", instance_id)
+        subprocess.run(cmd, check=True, timeout=self._timeout_seconds)
+
+
+class OciCliStartActuator:
+    """START via OCI CLI (`oci compute instance action --action START`).
+
+    Symmetric twin of ``OciCliStopActuator`` except START must not kill the
+    waiter before ``--max-wait-seconds``: subprocess timeout is
+    ``max(timeout_seconds, max_wait_seconds)`` (W3-D-03).
+    """
+
+    def __init__(
+        self,
+        *,
+        oci_bin: str | None = None,
+        dry_run: bool = False,
+        auth: str | None = None,
+        timeout_seconds: int = _DEFAULT_OCI_TIMEOUT_SECONDS,
+        max_wait_seconds: int = _DEFAULT_MAX_WAIT_SECONDS,
+    ) -> None:
+        self._oci_bin = oci_bin or shutil.which("oci") or "oci"
+        self._dry_run = dry_run
+        self._auth = auth
+        self._max_wait_seconds = max_wait_seconds
+        self._timeout_seconds = max(timeout_seconds, max_wait_seconds)
+
+    def build_cmd(self, instance_id: str) -> list[str]:
+        return build_instance_action_cmd(
+            oci_bin=self._oci_bin,
+            instance_id=instance_id,
+            action=LifecycleAction.START,
+            wait_state="RUNNING",
+            auth=self._auth,
+            max_wait_seconds=self._max_wait_seconds,
+        )
+
+    def start_instance(self, instance_id: str) -> None:
+        cmd = self.build_cmd(instance_id)
+        if self._dry_run:
+            logger.info("dry-run START %s: %s", instance_id, " ".join(cmd))
+            return
+        logger.info("actuating START for %s", instance_id)
         subprocess.run(cmd, check=True, timeout=self._timeout_seconds)
 
 
@@ -258,6 +385,15 @@ class ReapCycleResult:
     errors: list[str]
 
 
+@dataclass(frozen=True)
+class StartCycleResult:
+    decided: list[tuple[str, str]]
+    actuated: list[tuple[str, str]]
+    errors: list[str]
+    wait_result: ReadinessWaitResult | None = None
+    fallbacks: tuple[FallbackDecision, ...] = ()
+
+
 def run_reap_cycle(
     *,
     controller: GpuLifecycleController,
@@ -271,24 +407,45 @@ def run_reap_cycle(
     Per-instance STOP failures are collected; the loop continues (rg-007).
     """
     load = load_source.snapshot()
+    if load.untrustworthy:
+        logger.error(
+            "load snapshot untrustworthy; refusing STOP (fail closed)"
+        )
+        return ReapCycleResult(
+            decided=[],
+            actuated=[],
+            fenced_off=True,
+            errors=["load snapshot untrustworthy; refusing STOP"],
+        )
     decided = controller.reap_idle_instances(
         instances,
         queue_depth=load.queue_depth,
         in_flight=load.in_flight,
+        batch_in_progress=load.batch_in_progress,
     )
     if not decided:
         return ReapCycleResult(decided=[], actuated=[], fenced_off=False, errors=[])
 
-    if fence_delay_seconds > 0:
-        time.sleep(fence_delay_seconds)
+    fence_expired = False
+    pre_stop: JobLoadSnapshot | None = None
+    try:
+        if fence_delay_seconds > 0:
+            time.sleep(fence_delay_seconds)
+        pre_stop = load_source.snapshot()
+    except Exception as exc:  # noqa: BLE001 - fence expiry fails closed
+        logger.error("fence resample failed; cancelling STOP: %s", exc)
+        fence_expired = True
 
-    pre_stop = load_source.snapshot()
-    fenced = controller.fence_stop_actions(decided, pre_stop_load=pre_stop)
+    fenced = controller.fence_stop_actions(
+        decided, pre_stop_load=pre_stop, fence_expired=fence_expired
+    )
     if not fenced:
         logger.info(
-            "fence cancelled STOP (queue_depth=%s in_flight=%s)",
-            pre_stop.queue_depth,
-            pre_stop.in_flight,
+            "fence cancelled STOP (queue_depth=%s in_flight=%s batch=%s expired=%s)",
+            None if pre_stop is None else pre_stop.queue_depth,
+            None if pre_stop is None else pre_stop.in_flight,
+            None if pre_stop is None else pre_stop.batch_in_progress,
+            fence_expired,
         )
         return ReapCycleResult(decided=decided, actuated=[], fenced_off=True, errors=[])
 
@@ -309,6 +466,121 @@ def run_reap_cycle(
     )
 
 
+def run_start_cycle(
+    *,
+    controller: GpuLifecycleController,
+    instances: list[GpuInstance],
+    load_source: JobLoadSource,
+    actuator: InstanceStartActuator,
+    probe: InstanceReadinessProbe | None = None,
+    readiness_wait: WarmReadinessWait | None = None,
+) -> StartCycleResult:
+    """Emit START for STOPPED instances when the job store has work.
+
+    Per-instance START failures are collected; the loop continues (rg-007).
+    When a readiness probe is supplied, wait is bounded; timeout/stall is loud.
+    """
+    load = load_source.snapshot()
+    if load.untrustworthy:
+        logger.error(
+            "load snapshot untrustworthy; refusing START to avoid unfenced GPU burn"
+        )
+        return StartCycleResult(
+            decided=[],
+            actuated=[],
+            errors=["load snapshot untrustworthy; refusing START"],
+        )
+    decided = controller.start_needed_instances(
+        instances,
+        queue_depth=load.queue_depth,
+        in_flight=load.in_flight,
+        batch_in_progress=load.batch_in_progress,
+    )
+    waiting_ids = (
+        controller.instances_waiting_on_boot(instances) if load.has_work else []
+    )
+    blocked = (
+        controller.instances_blocking_start(instances) if load.has_work else []
+    )
+    errors: list[str] = []
+    for instance in blocked:
+        msg = (
+            f"{instance.instance_id}: fail-closed START refused; "
+            f"state={instance.state} while work waits"
+        )
+        logger.error(msg)
+        errors.append(msg)
+    if not decided and not waiting_ids and not errors:
+        return StartCycleResult(decided=[], actuated=[], errors=[])
+
+    start_ids = [
+        instance_id
+        for action, instance_id in decided
+        if action == LifecycleAction.START
+    ]
+    wait_ids = start_ids + [
+        instance_id for instance_id in waiting_ids if instance_id not in set(start_ids)
+    ]
+    if (
+        isinstance(probe, HttpReadinessProbe)
+        and not probe.is_per_instance
+        and len(wait_ids) > 1
+    ):
+        msg = (
+            "HttpReadinessProbe URL is a single shared endpoint; refusing "
+            "multi-id wait (template {instance_id} required)"
+        )
+        logger.error(msg)
+        errors.append(msg)
+        return StartCycleResult(
+            decided=decided, actuated=[], errors=errors, wait_result=None
+        )
+
+    actuated: list[tuple[str, str]] = []
+    start_failed: list[str] = []
+    for action, instance_id in decided:
+        if action != LifecycleAction.START:
+            continue
+        try:
+            actuator.start_instance(instance_id)
+            actuated.append((action, instance_id))
+        except Exception as exc:  # noqa: BLE001 - isolate per-instance (rg-007)
+            msg = f"{instance_id}: {type(exc).__name__}: {exc}"
+            logger.error("START failed: %s", msg)
+            errors.append(msg)
+            start_failed.append(instance_id)
+
+    wait_result: ReadinessWaitResult | None = None
+    fallbacks: list[FallbackDecision] = list(
+        controller.fallback_on_boot_failure(start_failed, reason="start_failed")
+        if start_failed
+        else ()
+    )
+    wait_ids = [instance_id for _, instance_id in actuated] + [
+        instance_id for instance_id in waiting_ids if instance_id not in {i for _, i in actuated}
+    ]
+    if probe is not None and readiness_wait is not None and wait_ids:
+        wait_result = readiness_wait.wait(wait_ids, probe)
+        if wait_result.errors:
+            errors.extend(wait_result.errors)
+        if wait_result.failed:
+            fallbacks.extend(
+                controller.fallback_on_boot_failure(
+                    list(wait_result.timed_out), reason="readiness_timeout"
+                )
+                + controller.fallback_on_boot_failure(
+                    list(wait_result.stalled), reason="readiness_stall"
+                )
+            )
+    return StartCycleResult(
+        decided=decided,
+        actuated=actuated,
+        errors=errors,
+        wait_result=wait_result,
+        fallbacks=tuple(fallbacks),
+    )
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="ACX GPU idle reaper (STOP actuator)")
     parser.add_argument(
@@ -317,6 +589,12 @@ def _build_parser() -> argparse.ArgumentParser:
         dest="instance_ids",
         required=True,
         help="OCI instance OCID to consider (repeatable)",
+    )
+    parser.add_argument(
+        "--mode",
+        choices=("reap", "start"),
+        default="reap",
+        help="reap=STOP idle GPUs (default); start=START stopped GPUs when work waits",
     )
     parser.add_argument(
         "--idle-seconds",
@@ -344,7 +622,12 @@ def _build_parser() -> argparse.ArgumentParser:
     load.add_argument(
         "--load-json",
         type=Path,
-        help="Path to {queue_depth,in_flight} JSON from the describe job store",
+        help=(
+            "Path to {queue_depth,in_flight[,batch_in_progress]} JSON from the "
+            "describe job store. Absent batch_in_progress is False: the fence "
+            "covers only what the snapshot proves. Bulk runs are unprotected "
+            "until the producer writes batch_in_progress"
+        ),
     )
     load.add_argument(
         "--queue-depth",
@@ -389,7 +672,40 @@ def _build_parser() -> argparse.ArgumentParser:
         "--oci-timeout-seconds",
         type=int,
         default=_DEFAULT_OCI_TIMEOUT_SECONDS,
-        help="Subprocess timeout for OCI CLI calls (default 120)",
+        help="Subprocess timeout for OCI CLI calls (default 120; START uses max of this and --max-wait-seconds)",
+    )
+    parser.add_argument(
+        "--max-wait-seconds",
+        type=int,
+        default=_DEFAULT_MAX_WAIT_SECONDS,
+        help="OCI --max-wait-seconds for instance action (default 600); START subprocess timeout is at least this",
+    )
+    parser.add_argument(
+        "--ready-url",
+        default=None,
+        help=(
+            "HTTP health URL polled after START (omit to skip readiness wait). "
+            "Include {instance_id} for per-instance URLs; a shared endpoint "
+            "refuses multi-id waits"
+        ),
+    )
+    parser.add_argument(
+        "--ready-max-cycles",
+        type=int,
+        default=_DEFAULT_READY_MAX_CYCLES,
+        help="Bounded readiness poll cycles (default 30; 30*10s ≈ 5 min boot budget)",
+    )
+    parser.add_argument(
+        "--ready-stall-cycles",
+        type=int,
+        default=_DEFAULT_READY_STALL_CYCLES,
+        help="Consecutive ERROR/exception cycles before stall fail (default 3; NOT_READY does not count)",
+    )
+    parser.add_argument(
+        "--ready-sleep-seconds",
+        type=float,
+        default=_DEFAULT_READY_SLEEP_SECONDS,
+        help="Sleep between readiness polls (default 10s)",
     )
     return parser
 
@@ -457,6 +773,41 @@ def main(argv: list[str] | None = None) -> int:
         )
 
     controller = GpuLifecycleController(idle_seconds=args.idle_seconds)
+    if args.mode == "start":
+        start_actuator = OciCliStartActuator(
+            oci_bin=args.oci_bin,
+            dry_run=args.dry_run,
+            auth=args.oci_auth,
+            timeout_seconds=args.oci_timeout_seconds,
+            max_wait_seconds=args.max_wait_seconds,
+        )
+        readiness_wait = None
+        probe = None
+        if args.ready_url:
+            probe = HttpReadinessProbe(url=args.ready_url)
+            readiness_wait = WarmReadinessWait(
+                max_cycles=args.ready_max_cycles,
+                stall_cycles=args.ready_stall_cycles,
+                sleep_seconds=args.ready_sleep_seconds,
+            )
+        start_result = run_start_cycle(
+            controller=controller,
+            instances=instances,
+            load_source=load_source,
+            actuator=start_actuator,
+            probe=probe,
+            readiness_wait=readiness_wait,
+        )
+        logger.info(
+            "start cycle decided=%s actuated=%s errors=%s wait=%s fallbacks=%s",
+            start_result.decided,
+            start_result.actuated,
+            start_result.errors,
+            None if start_result.wait_result is None else start_result.wait_result.exit_code,
+            start_result.fallbacks,
+        )
+        return 1 if start_result.errors else 0
+
     actuator = OciCliStopActuator(
         oci_bin=args.oci_bin,
         dry_run=args.dry_run,

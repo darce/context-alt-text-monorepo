@@ -133,16 +133,36 @@ class WarmReadinessWait:
 
 
 class HttpReadinessProbe:
-    """GET a health URL; non-2xx / transport failure is NOT_READY, not a hang."""
+    """GET a health URL; non-2xx / transport failure is NOT_READY, not a hang.
+
+    ``url`` may include ``{instance_id}`` for per-instance endpoints. A URL
+    without that placeholder is a single shared endpoint and must not be used
+    for multi-id waits (caller refuses).
+    """
 
     def __init__(self, *, url: str, timeout_seconds: float = 2.0) -> None:
         self._url = url
         self._timeout_seconds = timeout_seconds
 
+    @property
+    def is_per_instance(self) -> bool:
+        return "{instance_id}" in self._url
+
+    def _url_for(self, instance_id: str) -> str:
+        return self._url.replace("{instance_id}", instance_id)
+
     def probe(self, instance_id: str) -> ProbeSample:
+        url = self._url_for(instance_id)
         try:
-            with urllib.request.urlopen(self._url, timeout=self._timeout_seconds) as resp:
-                status = int(getattr(resp, "status", 200))
+            with urllib.request.urlopen(url, timeout=self._timeout_seconds) as resp:
+                raw_status = getattr(resp, "status", None)
+                if raw_status is None:
+                    return ProbeSample(
+                        instance_id=instance_id,
+                        status=ProbeStatus.NOT_READY,
+                        detail="missing http status",
+                    )
+                status = int(raw_status)
                 if 200 <= status < 300:
                     return ProbeSample(instance_id=instance_id, status=ProbeStatus.READY)
                 return ProbeSample(

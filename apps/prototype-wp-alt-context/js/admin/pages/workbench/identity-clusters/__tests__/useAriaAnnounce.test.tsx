@@ -10,7 +10,7 @@ const LiveHarness = ({
   messages,
 }: {
   announceRef: { current: ((message: string) => void) | null };
-  messages: Array<string | null>;
+  messages: (string | null)[];
 }) => {
   const { message, seq, announce } = useAriaAnnounce();
   announceRef.current = announce;
@@ -39,7 +39,7 @@ const removedThenRestored = (records: MutationRecord[], copy: string): boolean =
 describe('useAriaAnnounce', () => {
   it('DUX-W2R1-RV-03: identical repeat mutates a stable node empty-then-restore', async () => {
     const announceRef: { current: ((message: string) => void) | null } = { current: null };
-    const messages: Array<string | null> = [];
+    const messages: (string | null)[] = [];
     render(<LiveHarness announceRef={announceRef} messages={messages} />);
     const node = screen.getByTestId('aria-live');
 
@@ -75,7 +75,7 @@ describe('useAriaAnnounce', () => {
 
   it('DUX-W2R1-RV-02: announce during clear phase stays in clear-then-set', async () => {
     const announceRef: { current: ((message: string) => void) | null } = { current: null };
-    const messages: Array<string | null> = [];
+    const messages: (string | null)[] = [];
     render(<LiveHarness announceRef={announceRef} messages={messages} />);
     const node = screen.getByTestId('aria-live');
 

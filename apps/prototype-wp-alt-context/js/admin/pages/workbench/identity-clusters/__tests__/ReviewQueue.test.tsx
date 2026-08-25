@@ -1928,7 +1928,7 @@ describe('ReviewQueue', () => {
         expect(latestAnnounce).not.toBeNull();
       });
 
-      const persistentLive = document.querySelector('.acx-review-queue__live') as HTMLElement;
+      const persistentLive = document.querySelector<HTMLElement>('.acx-review-queue__live')!;
       expect(persistentLive).toBeInTheDocument();
 
       const repeatCopy = LIVE_TARGET_CLOSE_ANNOUNCE;
@@ -1942,7 +1942,7 @@ describe('ReviewQueue', () => {
       });
 
       // Observe ONLY the second, identical announce — the arm under test.
-      const textSequence: Array<string | null> = [];
+      const textSequence: (string | null)[] = [];
       const recordMutations = (records: MutationRecord[]): void => {
         records.forEach((record) => {
           if (record.type !== 'childList') {

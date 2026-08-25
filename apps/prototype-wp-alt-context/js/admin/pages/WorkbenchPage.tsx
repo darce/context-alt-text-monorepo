@@ -18,7 +18,7 @@ import { useReviewSurface } from './workbench/ReviewSurfaceContext';
 import { deriveReviewSurfaceActive } from './workbench/mediaFooterCtaState';
 import { usePanesParam } from '../hooks/usePanesParam';
 import { APP_LINK_VALUES } from '../navigation/appLinks';
-import { FACE_GROUP_SCATTER_STATE, FaceGroupScatter } from './workbench/FaceGroupScatter';
+import { deriveFaceGroupScatterState, FaceGroupScatter } from './workbench/FaceGroupScatter';
 
 /**
  * The three-step Scan/Confirm/Review loop (NAV-09). Not a URL-owned tab id —
@@ -205,13 +205,16 @@ const WorkbenchPageContent = (): React.JSX.Element => {
                 )}
               </p>
               <FaceGroupScatter
-                state={
-                  !status.isOnline
-                    ? FACE_GROUP_SCATTER_STATE.degraded
-                    : scanRun.isSynced
-                      ? FACE_GROUP_SCATTER_STATE.loading
-                      : FACE_GROUP_SCATTER_STATE.first_time
-                }
+                state={deriveFaceGroupScatterState({
+                  isOnline: status.isOnline,
+                  projectionSyncState: status.projectionSyncState,
+                  isSynced: Boolean(scanRun.isSynced),
+                  currentPhase: status.currentPhase,
+                  clustersCreated:
+                    scanRun.progress?.clusters_created ??
+                    status.clusterProgress?.clusters_created ??
+                    status.scanProgress?.clusters_created,
+                })}
                 onRetry={retryProjectionSync}
               />
               <ScanTabContent />

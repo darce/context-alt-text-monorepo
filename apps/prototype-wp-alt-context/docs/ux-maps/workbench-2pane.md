@@ -8,7 +8,7 @@
 - Six ACX submenus are MECE and frequency-ordered (NAV-05/NAV-06): Overview orients; Review Queue is the one home to name a person from a photo (highest-frequency demo task); People manages named people only; Description Runs is the one home to see what the describer did; Data Retention is keep/delete/export policy (not description history); Settings configures the service (rare, last). WordPress parent slug stays Overview.
 - One primary action per screen (NAV-01), reachable from zero state (rg-003); other CTAs are secondary.
 - Operator runs the full recognize -> name -> curate loop and edits alt-text/descriptions without leaving one surface (control-left, library-right)
-- Read face-group structure at a glance via a UMAP scatter and act on the selection in the same viewport
+- Read face-group status at a glance in the control pane and act on the selection in the same viewport
 - Decompose the 2-pane redesign from screens/zones/states/flows instead of inventing IA mid-plan
 
 ## Vocabulary
@@ -87,7 +87,7 @@ url_params: `pane`, `cluster`, `media`, `panel`, `status`, `endpoint`, `s`, `p`,
 
 ### Control surface (left pane) (`workbench-control`)
 
-Purpose: Recognize, name, and curate: recognition endpoint + health, UMAP face-group scatter, face-group list, run/refresh controls, and the name/curate forced-choice form.
+Purpose: Recognize, name, and curate: recognition endpoint + health, face-group status region, face-group list, run/refresh controls, and the name/curate forced-choice form.
 
 url_params: `pane`, `cluster`, `endpoint`
 
@@ -95,7 +95,7 @@ url_params: `pane`, `cluster`, `endpoint`
 | --- | --- | --- | --- |
 | `z-endpoint` | Recognition endpoint + health (read-only: InsightFace :10010 interim; FIR when stable; target is server-resolved via ACX_RECOGNITION_URL, no UI toggle per RECOG-1) | status | default, loading, error, degraded |
 | `z-recognition-controls` | Face-group/recognition controls (run, refresh, threshold) | job | default, loading, error |
-| `z-cluster-umap` | UMAP face-group scatter (2D projection of faces; select to drive right pane) | ai_review | default, loading, empty, error, first_time, degraded |
+| `z-cluster-umap` | Face-group status (scan/sync health; not a 2D scatter) | status | default, loading, empty, error, first_time, degraded |
 | `z-cluster-list` | Face-group list / selection (size, confidence, unnamed-first) + NameFaceControl (loading = in-flight name write; the suggestions disclosure being open or closed is part of default) | queue | default, loading, empty, error, first_time, degraded |
 | `z-name-curate` | Name this person (NameFaceControl; confirm / correct / merge / split; forced-choice; loading = pending roster write; error = roster write failed; edge_input = ambiguous candidate set or duplicate-name guard; default = overlay closed or suggestions open) | forced_choice | default, loading, empty, error, edge_input |
 
@@ -107,7 +107,7 @@ url_params: `pane`, `cluster`, `endpoint`
 | ZONES                                                      |
 |   - Recognition endpoint + health (read-only: InsightFace… |
 |   - Face-group/recognition controls (run, refresh, thresh… |
-|   - UMAP face-group scatter (2D projection of faces)       |
+|   - Face-group status (scan/sync health; not a 2D scatter) |
 |   - Face-group list / selection + NameFaceControl (queue)  |
 |   - Name this person (NameFaceControl) (forced_choice)     |
 |     z-name-curate states=[default,loading,empty,error,     |
@@ -116,7 +116,7 @@ url_params: `pane`, `cluster`, `endpoint`
 | ACTIONS                                                    |
 |   [PRIMARY] Run / refresh recognition + grouping -> job-p… |
 |   [secondary] Save name (NameFaceControl) -> identity-store  |
-|   [secondary] Select face group (UMAP or list) -> library    |
+|   [secondary] Select face group (list) -> library            |
 |   [secondary] Go to Roster -> exit-roster                  |
 |   [secondary] View / change recognition endpoint (Setting… |
 |   [DESTRUCTIVE] Merge / split / correct group -> identity… |
@@ -349,7 +349,7 @@ Zone labels (verbatim; the tables above escape `|` for markdown, this list does 
 - Overlay host (conflicts | dead-letter)
 - Recognition endpoint + health (read-only: InsightFace :10010 interim; FIR when stable; target is server-resolved via ACX_RECOGNITION_URL, no UI toggle per RECOG-1)
 - Face-group/recognition controls (run, refresh, threshold)
-- UMAP face-group scatter (2D projection of faces; select to drive right pane)
+- Face-group status (scan/sync health; not a 2D scatter)
 - Face-group list / selection (size, confidence, unnamed-first) + NameFaceControl (loading = in-flight name write; the suggestions disclosure being open or closed is part of default)
 - Name this person (NameFaceControl; confirm / correct / merge / split; forced-choice; loading = pending roster write; error = roster write failed; edge_input = ambiguous candidate set or duplicate-name guard; default = overlay closed or suggestions open)
 - Library filters (status, has-alt, has-description, face group, search)

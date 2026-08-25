@@ -6,15 +6,28 @@
 set -euo pipefail
 
 script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+describe_gate_file="${script_dir}/../../../infra/oci/demo/lib/describe-gate.sh"
 fixture_denylist_file="${script_dir}/../lib/fixture-denylist.sh"
+if [ ! -f "$describe_gate_file" ]; then
+    echo "FAIL describe-gate.sh missing: ${describe_gate_file}"
+    exit 1
+fi
 if [ ! -f "$fixture_denylist_file" ]; then
     echo "FAIL fixture-denylist.sh missing: ${fixture_denylist_file}"
     exit 1
 fi
+# Same order as the remote heredoc: describe-gate (trusted profiles), then
+# canonical denylist (helper copies win), then smoke-gate classifiers.
+# shellcheck source=../../../infra/oci/demo/lib/describe-gate.sh
+source "$describe_gate_file"
 # shellcheck source=../lib/fixture-denylist.sh
 source "$fixture_denylist_file"
 # shellcheck source=../lib/smoke-gate.sh
 source "${script_dir}/../lib/smoke-gate.sh"
+
+REAL_CAPTION='A woman in a red coat speaks at a podium in front of a blue backdrop.'
+FIXTURE_CAPTION='A close-up of a small object on a neutral background.'
+TRUSTED_ONE='florence_small'
 
 failures=0
 
@@ -100,23 +113,35 @@ assert_eq "alt population empty body" FAIL "$(classify_alt_population 100 '')"
 assert_eq "alt population non-numeric header" FAIL "$(classify_alt_population abc 100)"
 assert_eq "alt population 0 == 0 (nothing measured)" FAIL "$(classify_alt_population 0 0)"
 
-# --- classify_alt_provenance <sample_text> ---
-assert_eq "alt provenance empty sample (cannot prove)" FAIL "$(classify_alt_provenance '')"
-assert_eq "alt provenance live seeded draft on demo media id 5" FAIL "$(classify_alt_provenance 'antonio_banderas_10. A close-up of a small object on a neutral background.')"
-assert_eq "alt provenance real caption (not a fixture)" PASS "$(classify_alt_provenance 'A woman in a red coat speaks at a podium in front of a blue backdrop.')"
-assert_eq "alt provenance fixture: person outdoors" FAIL "$(classify_alt_provenance 'A person standing outdoors near greenery.')"
-assert_eq "alt provenance fixture: plate of food" FAIL "$(classify_alt_provenance 'A plate of food on a wooden table.')"
-assert_eq "alt provenance fixture: scenic landscape" FAIL "$(classify_alt_provenance 'A scenic landscape with mountains under a clear sky.')"
-assert_eq "alt provenance fixture: close-up object" FAIL "$(classify_alt_provenance 'A close-up of a small object on a neutral background.')"
-assert_eq "alt provenance fixture: printed document" FAIL "$(classify_alt_provenance 'A printed document with several lines of text.')"
-assert_eq "alt provenance fixture: two people seated" FAIL "$(classify_alt_provenance 'Two people seated indoors in conversation.')"
-assert_eq "alt provenance fixture: building exterior" FAIL "$(classify_alt_provenance 'A building exterior seen from the street.')"
-assert_eq "alt provenance fixture: pet animal" FAIL "$(classify_alt_provenance 'A pet animal resting on a soft surface.')"
+# --- classify_alt_provenance <sample_text> <adapters_blob> <usable_count> ---
+# Gate B pins pass a trusted adapter so FAIL cannot hide behind Gate A (TEST-15 M2).
+assert_eq "alt provenance empty sample (cannot prove)" FAIL "$(classify_alt_provenance '' "$TRUSTED_ONE" 1)"
+assert_eq "alt provenance live seeded draft on demo media id 5" FAIL "$(classify_alt_provenance 'antonio_banderas_10. A close-up of a small object on a neutral background.' "$TRUSTED_ONE" 1)"
+assert_eq "alt provenance real caption (not a fixture)" PASS "$(classify_alt_provenance "$REAL_CAPTION" "$TRUSTED_ONE" 1)"
+assert_eq "alt provenance fixture: person outdoors" FAIL "$(classify_alt_provenance 'A person standing outdoors near greenery.' "$TRUSTED_ONE" 1)"
+assert_eq "alt provenance fixture: plate of food" FAIL "$(classify_alt_provenance 'A plate of food on a wooden table.' "$TRUSTED_ONE" 1)"
+assert_eq "alt provenance fixture: scenic landscape" FAIL "$(classify_alt_provenance 'A scenic landscape with mountains under a clear sky.' "$TRUSTED_ONE" 1)"
+assert_eq "alt provenance fixture: close-up object" FAIL "$(classify_alt_provenance "$FIXTURE_CAPTION" "$TRUSTED_ONE" 1)"
+assert_eq "alt provenance fixture: printed document" FAIL "$(classify_alt_provenance 'A printed document with several lines of text.' "$TRUSTED_ONE" 1)"
+assert_eq "alt provenance fixture: two people seated" FAIL "$(classify_alt_provenance 'Two people seated indoors in conversation.' "$TRUSTED_ONE" 1)"
+assert_eq "alt provenance fixture: building exterior" FAIL "$(classify_alt_provenance 'A building exterior seen from the street.' "$TRUSTED_ONE" 1)"
+assert_eq "alt provenance fixture: pet animal" FAIL "$(classify_alt_provenance 'A pet animal resting on a soft surface.' "$TRUSTED_ONE" 1)"
 # R1-03b: trivial denylist evasions must still FAIL.
-assert_eq "alt provenance lowercase first letter still fixture" FAIL "$(classify_alt_provenance 'a person standing outdoors near greenery.')"
-assert_eq "alt provenance dropped trailing period still fixture" FAIL "$(classify_alt_provenance 'A person standing outdoors near greenery')"
-assert_eq "alt provenance extra internal whitespace still fixture" FAIL "$(classify_alt_provenance 'A person  standing   outdoors near greenery.')"
-assert_eq "alt provenance trailing bang still fixture" FAIL "$(classify_alt_provenance 'A person standing outdoors near greenery!')"
+assert_eq "alt provenance lowercase first letter still fixture" FAIL "$(classify_alt_provenance 'a person standing outdoors near greenery.' "$TRUSTED_ONE" 1)"
+assert_eq "alt provenance dropped trailing period still fixture" FAIL "$(classify_alt_provenance 'A person standing outdoors near greenery' "$TRUSTED_ONE" 1)"
+assert_eq "alt provenance extra internal whitespace still fixture" FAIL "$(classify_alt_provenance 'A person  standing   outdoors near greenery.' "$TRUSTED_ONE" 1)"
+assert_eq "alt provenance trailing bang still fixture" FAIL "$(classify_alt_provenance 'A person standing outdoors near greenery!' "$TRUSTED_ONE" 1)"
+# R1-03B part 2: Gate A adapter identity, ANDed with Gate B.
+assert_eq "alt provenance trusted adapter x1 usable 1" PASS "$(classify_alt_provenance "$REAL_CAPTION" "$TRUSTED_ONE" 1)"
+assert_eq "alt provenance trusted adapters x3 usable 3" PASS "$(classify_alt_provenance "$REAL_CAPTION" "florence_small gpu_qwen30b gpu_qwen30b_ensemble" 3)"
+assert_eq "alt provenance untrusted adapter seeded" FAIL "$(classify_alt_provenance "$REAL_CAPTION" "seeded" 1)"
+assert_eq "alt provenance mixed trusted + untrusted" FAIL "$(classify_alt_provenance "$REAL_CAPTION" "florence_small seeded" 2)"
+assert_eq "alt provenance empty adapters blob usable 1 (fail closed)" FAIL "$(classify_alt_provenance "$REAL_CAPTION" "" 1)"
+assert_eq "alt provenance whitespace adapters blob usable 1 (fail closed)" FAIL "$(classify_alt_provenance "$REAL_CAPTION" "   " 1)"
+assert_eq "alt provenance trusted fewer than usable_count" FAIL "$(classify_alt_provenance "$REAL_CAPTION" "$TRUSTED_ONE" 2)"
+assert_eq "alt provenance trusted adapter AND denylisted caption" FAIL "$(classify_alt_provenance "$FIXTURE_CAPTION" "$TRUSTED_ONE" 1)"
+assert_eq "alt provenance non-numeric usable_count" FAIL "$(classify_alt_provenance "$REAL_CAPTION" "$TRUSTED_ONE" abc)"
+assert_eq "alt provenance empty usable_count" FAIL "$(classify_alt_provenance "$REAL_CAPTION" "$TRUSTED_ONE" "")"
 
 # --- classify_alt_text_usable <text> ---
 # R1-03a: placeholder / non-content alt is not coverage.
@@ -148,7 +173,7 @@ else
     while IFS= read -r caption; do
         [ -n "$caption" ] || continue
         extracted=$((extracted + 1))
-        assert_eq "drift: pool caption classified FAIL (${caption})" FAIL "$(classify_alt_provenance "$caption")"
+        assert_eq "drift: pool caption classified FAIL (${caption})" FAIL "$(classify_alt_provenance "$caption" "$TRUSTED_ONE" 1)"
     done <<DRIFT
 $(grep '"caption":' "$adapter_file" | sed 's/.*"caption": "\([^"]*\)".*/\1/')
 DRIFT
@@ -233,6 +258,33 @@ else
         echo "FAIL R1-03 classify_alt_text_usable not wired into sync-demo.sh"
         failures=$((failures + 1))
     fi
+    if grep -qE '_fields=[^[:space:]]*acx_alt_provenance' "$sync_demo"; then
+        echo "ok   R1-03B _fields requests acx_alt_provenance"
+    else
+        echo "FAIL R1-03B _fields= in sync-demo.sh missing acx_alt_provenance"
+        failures=$((failures + 1))
+    fi
+    extract_fn_stripped() {
+        local file="$1" name="$2"
+        awk -v n="$name" '
+            $0 ~ "^" n "\\(\\) \\{" {grab=1}
+            grab {print}
+            grab && $0 == "}" {exit}
+        ' "$file" | sed '/^[[:space:]]*#/d;/^[[:space:]]*$/d'
+    }
+    for fn in normalize_fixture_sample fixture_sample_is_denied; do
+        describe_body=$(extract_fn_stripped "$describe_gate_file" "$fn")
+        denylist_body=$(extract_fn_stripped "$fixture_denylist_file" "$fn")
+        if [ -z "$describe_body" ] || [ -z "$denylist_body" ]; then
+            echo "FAIL drift: ${fn} body empty in one copy"
+            failures=$((failures + 1))
+        elif [ "$describe_body" = "$denylist_body" ]; then
+            echo "ok   drift: ${fn} bodies agree (comments/blanks stripped)"
+        else
+            echo "FAIL drift: ${fn} bodies diverged between describe-gate.sh and fixture-denylist.sh"
+            failures=$((failures + 1))
+        fi
+    done
     emit_src=$(awk '/^emit_alt_gate\(\) \{/,/^}/' "$sync_demo")
     if [ -z "$emit_src" ]; then
         echo "FAIL emit_alt_gate not found in ${sync_demo}"
@@ -307,6 +359,20 @@ smoke_fail=1" "$empty_override"
         # are the only lock on the production file itself.
         run_alt_pipeline() {
             local header_total="$1" body_total="$2" with_alt="$3" sample="${4:-}"
+            local adapters i
+            if [ "$#" -ge 5 ]; then
+                adapters="$5"
+            else
+                adapters=""
+                case "$with_alt" in *[!0-9]*|'') ;; *)
+                    i=0
+                    while [ "$i" -lt "$with_alt" ]; do
+                        adapters="${adapters}florence_small "
+                        i=$((i + 1))
+                    done
+                    ;;
+                esac
+            fi
             smoke_fail=0
             min="${DEMO_ALT_MIN_COVERAGE_PCT:-95}"
             pop=$(classify_alt_population "$header_total" "$body_total")
@@ -346,11 +412,16 @@ smoke_fail=1" "$empty_override"
                 ;;
             esac
             if [ "$run_prov" = "1" ]; then
-                prov=$(classify_alt_provenance "$sample")
+                prov=$(classify_alt_provenance "$sample" "$adapters" "$with_alt")
                 if [ "$prov" = "FAIL" ]; then
-                    prov_msg="demo alt provenance (seeded fixture caption detected in ${with_alt} published alt texts)"
+                    identity=$(classify_alt_identity "$adapters" "$with_alt")
+                    if [ "$identity" = "FAIL" ]; then
+                        prov_msg="demo alt provenance (untrusted or absent adapter identity behind ${with_alt} published alt texts)"
+                    else
+                        prov_msg="demo alt provenance (seeded fixture caption detected in ${with_alt} published alt texts)"
+                    fi
                 else
-                    prov_msg="demo alt provenance (no seeded fixture captions in ${with_alt} published alt texts)"
+                    prov_msg="demo alt provenance (trusted adapter identity, no seeded fixture captions in ${with_alt} published alt texts)"
                 fi
                 emit_alt_gate "$prov" "$prov_msg" 0
             else

@@ -179,7 +179,7 @@ source "$smoke_gate_file"
 # XLANE-02: this pin sits outside assert_corpus_row so restoring the old
 # deferral hatch cannot print ok and exit 0 on a case-sensitive smoke-gate.
 assert_eq "XLANE-02 live-smoke lowercased close-up is FAIL" \
-    FAIL "$(classify_alt_provenance 'a close-up of a small object on a neutral background')"
+    FAIL "$(classify_alt_provenance 'a close-up of a small object on a neutral background' florence_small 1)"
 hatch_pat="lacks DEMOLIVE-6"
 hatch_pat="${hatch_pat} normalizer"
 assert_eq "XLANE-02 live-smoke bind has no deferral hatch" \
@@ -202,7 +202,7 @@ expected_smoke_from_shared() {
         fi
         return
     fi
-    classify_alt_provenance "$sample"
+    classify_alt_provenance "$sample" florence_small 1
 }
 
 assert_corpus_row() {
@@ -218,7 +218,8 @@ assert_corpus_row() {
     smoke_sem=$(expected_smoke_from_shared "$sample")
     assert_eq "corpus smoke-sem ${label}" "$smoke_exp" "$smoke_sem"
 
-    smoke_live=$(classify_alt_provenance "$sample")
+    # Trusted identity so live-smoke pins Gate B, not fail-closed Gate A.
+    smoke_live=$(classify_alt_provenance "$sample" florence_small 1)
     assert_eq "corpus live-smoke ${label}" "$smoke_exp" "$smoke_live"
 }
 

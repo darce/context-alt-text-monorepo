@@ -5,9 +5,18 @@
 # the same functions run under macOS bash 3.2 and the VM's bash.
 #
 # Fixture-caption denylist arms live in scripts/deploy/lib/fixture-denylist.sh.
-# sync-demo.sh concatenates that file ahead of this one in the remote heredoc.
-# Tests source fixture-denylist.sh first so classify_alt_provenance can call
-# normalize_fixture_sample / fixture_sample_is_denied.
+# Trusted adapter identities live in infra/oci/demo/lib/describe-gate.sh
+# (ACX_TRUSTED_DESCRIBE_PROFILES / is_trusted_describe_profile — the only
+# definition site). sync-demo.sh concatenates in this order into the remote
+# heredoc so later definitions win:
+#   1. describe-gate.sh — trusted profiles + is_trusted_describe_profile.
+#      Also carries a VM-self-contained copy of the denylist helpers.
+#   2. fixture-denylist.sh — canonical denylist helpers overwrite the
+#      describe-gate copies. Canonical wins because this is the source of
+#      truth for Gate B; describe-gate's copies exist so bootstrap-wp.sh
+#      can SCP a single file. Do not delete either copy.
+#   3. this file — classifiers that AND both gates.
+# Tests source in the same order.
 #
 # Gate semantics ("the deploy owns the edge and the demo stack, not backend
 # health"):
@@ -33,7 +42,10 @@
 #                   measuring a paged subset. Published alt matching any
 #                   seeded fixture caption (after lowercase / whitespace
 #                   collapse / trailing .!? strip) -> FAIL (the canned pool is
-#                   not accessibility content).
+#                   not accessibility content). Adapter identity must also
+#                   certify: every probed acx_alt_provenance.adapter is in
+#                   ACX_TRUSTED_DESCRIBE_PROFILES and trusted count >= usable
+#                   alt count. Empty identity with usable alt FAILs closed.
 
 # classify_api_probe <post_code> <pre_code> -> PASS|WARN|FAIL
 classify_api_probe() {
@@ -133,17 +145,64 @@ classify_alt_text_usable() {
     esac
 }
 
-# classify_alt_provenance <sample_text> -> PASS|FAIL
-# FAIL when the sample is empty after normalize (nothing measured) or matches
-# any canned `seeded` adapter fixture caption. Denylist arms live in
-# fixture-denylist.sh; sync-demo.sh concatenates that file ahead of this one
-# so the helpers exist on the VM. Empty-after-normalize FAILs closed — the
-# one intentional difference from describe-gate, which returns UNKNOWN.
-# This is not a complete denylist; adapter-identity meta is the durable fix
-# and is deferred. test-smoke-gate.sh extracts _FIXTURE_POOL at test time
-# to catch drift against the shared matcher.
+# classify_alt_identity <adapters_blob> <usable_count> -> PASS|FAIL
+# Gate A only (adapter identity). classify_alt_provenance ANDs this with Gate B.
+# Every adapter in adapters_blob must be an exact ACX_TRUSTED_DESCRIBE_PROFILES
+# member (is_trusted_describe_profile; do not re-implement the match). Trusted
+# adapter count must be >= usable_count. Empty adapters_blob with
+# usable_count > 0 FAILs closed — a demo whose plugin predates
+# acx_alt_provenance must not certify [SECD-08]. Non-numeric/empty
+# usable_count FAILs. Count-check applies only when adapters are present so
+# the empty-blob arm is load-bearing (TEST-15 M1).
+classify_alt_identity() {
+    local adapters_blob="${1:-}"
+    local usable_count="${2:-}"
+    local adapter trusted_count=0
+    case "$usable_count" in
+        *[!0-9]*|'') echo FAIL; return ;;
+    esac
+    if [ -z "$(printf '%s' "$adapters_blob" | tr -d '[:space:]')" ]; then
+        if [ "$usable_count" -gt 0 ]; then
+            echo FAIL
+            return
+        fi
+        echo PASS
+        return
+    fi
+    for adapter in $adapters_blob; do
+        if ! is_trusted_describe_profile "$adapter"; then
+            echo FAIL
+            return
+        fi
+        trusted_count=$((trusted_count + 1))
+    done
+    if [ "$trusted_count" -lt "$usable_count" ]; then
+        echo FAIL
+        return
+    fi
+    echo PASS
+}
+
+# classify_alt_provenance <sample_text> <adapters_blob> <usable_count> -> PASS|FAIL
+# PASS only when BOTH independent gates pass (AND, not fused):
+#   Gate A — adapter identity (primary). See classify_alt_identity.
+#   Gate B — literal denylist (retained). Empty-after-normalize FAIL;
+#            fixture_sample_is_denied FAIL. Catches a trusted adapter that is
+#            nonetheless emitting canned captions; identity alone cannot see
+#            that. Do not delete Gate B.
+# Empty-after-normalize FAILs closed — the one intentional difference from
+# describe-gate, which returns UNKNOWN. sample_text stays positional-first so
+# the denylist arm is unchanged. test-smoke-gate.sh extracts _FIXTURE_POOL
+# at test time to catch drift against the shared matcher.
 classify_alt_provenance() {
     local sample="$1"
+    local adapters_blob="${2:-}"
+    local usable_count="${3:-}"
+
+    if [ "$(classify_alt_identity "$adapters_blob" "$usable_count")" != "PASS" ]; then
+        echo FAIL
+        return
+    fi
     if [ -z "$(normalize_fixture_sample "$sample")" ]; then
         echo FAIL
         return

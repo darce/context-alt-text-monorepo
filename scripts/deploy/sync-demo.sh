@@ -39,8 +39,14 @@ fi
 
 # Resolved early and preflighted with the other sources: discovering it missing
 # at the final smoke step would leave the Caddy promote applied but unsmoked.
-# fixture-denylist.sh is concatenated ahead of smoke-gate.sh in the remote
-# heredoc so classify_alt_provenance can call the shared matcher on the VM.
+# Remote smoke heredoc concatenation order (later definition wins):
+#   1. describe-gate.sh — ACX_TRUSTED_DESCRIBE_PROFILES + is_trusted_describe_profile
+#      (only definition site). Also carries a VM-self-contained copy of
+#      normalize_fixture_sample / fixture_sample_is_denied.
+#   2. fixture-denylist.sh — canonical denylist helpers overwrite the
+#      describe-gate copies. Canonical wins: this is Gate B's source of truth;
+#      describe-gate's copies exist so bootstrap-wp.sh can SCP a single file.
+#   3. smoke-gate.sh — classifiers that AND identity with the denylist.
 SMOKE_GATE_LIB="$(dirname "${BASH_SOURCE[0]}")/lib/smoke-gate.sh"
 FIXTURE_DENYLIST_LIB="$(dirname "${BASH_SOURCE[0]}")/lib/fixture-denylist.sh"
 
@@ -193,10 +199,14 @@ $SSH "sudo cp /tmp/acx-demo.service /etc/systemd/system/acx-demo.service && sudo
 # "we cannot count" (non-numeric with_alt); those two cases fail closed even
 # when DEMO_ALT_GATE_ENFORCE=0. Population stays overridable: a header/body
 # mismatch is a probe limitation, not a content lie. Provenance is never
-# overridable: a canned-caption FAIL always sets smoke_fail, and an empty
-# sample (nothing to certify) is FAIL closed, not SKIP.
+# overridable: untrusted/absent adapter identity and canned-caption FAILs
+# always set smoke_fail, and an empty sample (nothing to certify) is FAIL
+# closed, not SKIP.
 echo "==> Smoke four vhosts (api.* via /health, demo via / + media alt-text)"
 {
+  # describe-gate first (trusted profiles), then canonical denylist so its
+  # helper copies win the collision, then smoke-gate classifiers.
+  cat "$DESCRIBE_GATE_SRC"
   cat "$FIXTURE_DENYLIST_LIB"
   cat "$SMOKE_GATE_LIB"
   printf 'PRE_CODES="%s"\n' "$PRE_CODES"
@@ -280,7 +290,7 @@ emit_alt_gate() {
 media_headers=$(mktemp)
 media_body=$(mktemp)
 curl -sS -D "$media_headers" -o "$media_body" --max-time 30 \
-  "https://demo.altcontext.com/wp-json/wp/v2/media?per_page=100&_fields=id,alt_text" || true
+  "https://demo.altcontext.com/wp-json/wp/v2/media?per_page=100&_fields=id,alt_text,acx_alt_provenance" || true
 set +o pipefail
 header_total=$(grep -i '^x-wp-total:' "$media_headers" | tr -d '\r ' | sed 's/.*://;q')
 body_total=$(grep -o '"alt_text": *"[^"]*"' "$media_body" | wc -l | tr -d ' ')
@@ -296,6 +306,15 @@ while IFS= read -r alt_json; do
 done <<ALTJSON
 $(grep -o '"alt_text": *"[^"]*"' "$media_body" || true)
 ALTJSON
+adapters=""
+while IFS= read -r adapter_json; do
+  [ -n "$adapter_json" ] || continue
+  adapter=$(printf '%s' "$adapter_json" | sed 's/^"adapter": *"//;s/"$//')
+  [ -n "$adapter" ] || continue
+  adapters="${adapters}${adapter} "
+done <<ADAPTERJSON
+$(grep -o '"adapter": *"[^"]*"' "$media_body" || true)
+ADAPTERJSON
 set -o pipefail
 rm -f "$media_headers" "$media_body"
 min="${DEMO_ALT_MIN_COVERAGE_PCT:-95}"
@@ -336,11 +355,18 @@ case "$with_alt" in *[!0-9]*|'') ;; *)
   ;;
 esac
 if [ "$run_prov" = "1" ]; then
-  prov=$(classify_alt_provenance "$sample")
+  prov=$(classify_alt_provenance "$sample" "$adapters" "$with_alt")
   if [ "$prov" = "FAIL" ]; then
-    prov_msg="demo alt provenance (seeded fixture caption detected in ${with_alt} published alt texts)"
+    # Identity is primary [INT-10]: operator must tell untrusted/absent
+    # adapter from a seeded fixture caption without reading the source.
+    identity=$(classify_alt_identity "$adapters" "$with_alt")
+    if [ "$identity" = "FAIL" ]; then
+      prov_msg="demo alt provenance (untrusted or absent adapter identity behind ${with_alt} published alt texts)"
+    else
+      prov_msg="demo alt provenance (seeded fixture caption detected in ${with_alt} published alt texts)"
+    fi
   else
-    prov_msg="demo alt provenance (no seeded fixture captions in ${with_alt} published alt texts)"
+    prov_msg="demo alt provenance (trusted adapter identity, no seeded fixture captions in ${with_alt} published alt texts)"
   fi
   emit_alt_gate "$prov" "$prov_msg" 0
 else

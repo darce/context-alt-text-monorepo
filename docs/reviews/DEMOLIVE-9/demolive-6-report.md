@@ -151,3 +151,60 @@ FAIL fixture-pool extraction count 7 != pool length 8
 - Revert: restore `"caption"`
 - Re-green: `all assertions passed`, exit 0
 - Adapter file is unmodified in the final tree
+
+## Round 2 — R1-02B
+
+The floor is a safety constant, not a policy knob. Round 1 left
+`DEMO_ALT_MIN_COVERAGE_FLOOR` operator-settable, so
+`DEMO_ALT_MIN_COVERAGE_FLOOR=0 DEMO_ALT_MIN_COVERAGE_PCT=0` certified 0/100
+empty alt with exit 0. Closed.
+
+### Files / lines
+- `scripts/deploy/lib/smoke-gate.sh`
+  - L17–23 header: `DEMO_ALT_MIN_COVERAGE_PCT` remains raiseable; floor of 50 is fixed, not an environment knob
+  - L60–65 function comment: same
+  - L68 `local floor=50` (no env read)
+  - L72 `min_pct < floor` FAIL
+- `scripts/deploy/sync-demo.sh`
+  - L179–182 header: operators may raise `DEMO_ALT_MIN_COVERAGE_PCT`; the floor is not overridable
+  - injection `printf 'DEMO_ALT_MIN_COVERAGE_FLOOR=...'` deleted (was L195); only PCT and ENFORCE still cross into the heredoc
+- `scripts/deploy/tests/test-smoke-gate.sh` L65–85, L239–278
+
+### New assertions
+- `classify_alt_coverage 100 0 0` → FAIL
+- `classify_alt_coverage 100 0 49` → FAIL (below the fixed floor)
+- `classify_alt_coverage 100 100 50` → PASS (at the floor, full coverage)
+- `classify_alt_coverage 100 95 95` → PASS (shipped default)
+- `DEMO_ALT_MIN_COVERAGE_FLOOR=0` exported, `classify_alt_coverage 100 0 0` still FAIL
+- `sync-demo.sh` does not `printf` the floor into the remote heredoc
+- `classify_alt_coverage` does not read `DEMO_ALT_MIN_COVERAGE_FLOOR`
+- counting block: `DEMO_ALT_MIN_COVERAGE_FLOOR=0 DEMO_ALT_MIN_COVERAGE_PCT=0` against 0/100 empty-alt → `smoke_fail=1`
+
+Custom-floor=80 pin from round 1 removed (it documented the floor as a knob).
+
+### TEST-15
+- Mutation: restore `local floor="${DEMO_ALT_MIN_COVERAGE_FLOOR:-50}"` in `classify_alt_coverage`
+- Command: `bash scripts/deploy/tests/test-smoke-gate.sh`
+- Exit: 1
+- Verbatim FAIL:
+
+```
+FAIL alt coverage FLOOR=0 env cannot override fixed floor (100 0 0 still FAIL): expected FAIL, got PASS
+```
+
+Also red (same mutation):
+
+```
+FAIL R1-02B classify_alt_coverage still reads DEMO_ALT_MIN_COVERAGE_FLOOR from the environment
+FAIL R1-02B counting block FLOOR=0 PCT=0 empty-alt 0/100 leaves smoke_fail=1: expected PASS demo alt population (header=100 body=100)
+FAIL demo alt coverage (0/100 = 0%, need 0%)
+smoke_fail=1, got PASS demo alt population (header=100 body=100)
+PASS demo alt coverage (0/100 = 0%, need 0%)
+smoke_fail=0
+```
+
+Suite: `3 assertion(s) failed`
+
+- Revert: restore `local floor=50`
+- Re-green: `all assertions passed`, exit 0
+- No mutation left in the tree

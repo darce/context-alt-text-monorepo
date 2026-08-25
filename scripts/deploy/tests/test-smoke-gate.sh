@@ -62,17 +62,23 @@ assert_eq "alt coverage non-numeric total" FAIL "$(classify_alt_coverage abc 10 
 assert_eq "alt coverage with_alt > total (impossible)" FAIL "$(classify_alt_coverage 100 200 95)"
 assert_eq "alt coverage 2/3 >= 60 (integer math keeps a true pass)" PASS "$(classify_alt_coverage 3 2 60)"
 assert_eq "alt coverage 1/3 < 60" FAIL "$(classify_alt_coverage 3 1 60)"
-# R1-02: min_pct below DEMO_ALT_MIN_COVERAGE_FLOOR (default 50) fails closed.
+# R1-02B: the floor is a fixed safety constant (50), not a policy knob.
 # classify_alt_coverage 100 0 0 used to evaluate 0>=0 and print PASS.
-assert_eq "alt coverage min_pct 0 below default floor (certify-a-lie)" FAIL "$(classify_alt_coverage 100 0 0)"
+assert_eq "alt coverage min_pct 0 below fixed floor (certify-a-lie)" FAIL "$(classify_alt_coverage 100 0 0)"
+assert_eq "alt coverage 100 0 49 below fixed floor" FAIL "$(classify_alt_coverage 100 0 49)"
+assert_eq "alt coverage 100 100 50 at the floor, full coverage" PASS "$(classify_alt_coverage 100 100 50)"
+assert_eq "alt coverage 100 95 95 shipped default still works" PASS "$(classify_alt_coverage 100 95 95)"
 assert_eq "alt coverage 100/100 but min_pct 49 below floor 50" FAIL "$(classify_alt_coverage 100 100 49)"
-assert_eq "alt coverage 50/100 >= 50 equals default floor" PASS "$(classify_alt_coverage 100 50 50)"
+assert_eq "alt coverage 50/100 >= 50 equals fixed floor" PASS "$(classify_alt_coverage 100 50 50)"
 assert_eq "alt coverage 49/100 < floor 50" FAIL "$(classify_alt_coverage 100 49 50)"
+# The knob is gone: exporting DEMO_ALT_MIN_COVERAGE_FLOOR=0 must not certify 0/100.
 _saved_floor="${DEMO_ALT_MIN_COVERAGE_FLOOR-}"
-DEMO_ALT_MIN_COVERAGE_FLOOR=80
-assert_eq "alt coverage custom floor 80 rejects min_pct 70" FAIL "$(classify_alt_coverage 100 70 70)"
+DEMO_ALT_MIN_COVERAGE_FLOOR=0
+export DEMO_ALT_MIN_COVERAGE_FLOOR
+assert_eq "alt coverage FLOOR=0 env cannot override fixed floor (100 0 0 still FAIL)" FAIL "$(classify_alt_coverage 100 0 0)"
 if [ -n "${_saved_floor}" ]; then
     DEMO_ALT_MIN_COVERAGE_FLOOR="${_saved_floor}"
+    export DEMO_ALT_MIN_COVERAGE_FLOOR
 else
     unset DEMO_ALT_MIN_COVERAGE_FLOOR
 fi
@@ -229,6 +235,47 @@ smoke_fail=1" "$prov_locked"
         assert_eq "R1-01 missing overridable defaults fail-closed" \
             "FAIL demo alt provenance (canned)
 smoke_fail=1" "$prov_default"
+
+        # R1-02B: DEMO_ALT_MIN_COVERAGE_FLOOR must not be injected into the
+        # remote heredoc — the floor is a constant inside smoke-gate.sh.
+        if grep -q "printf 'DEMO_ALT_MIN_COVERAGE_FLOOR=" "$sync_demo"; then
+            echo "FAIL R1-02B sync-demo.sh still injects DEMO_ALT_MIN_COVERAGE_FLOOR into the remote heredoc"
+            failures=$((failures + 1))
+        else
+            echo "ok   R1-02B sync-demo.sh does not inject DEMO_ALT_MIN_COVERAGE_FLOOR"
+        fi
+        if grep -q 'floor="${DEMO_ALT_MIN_COVERAGE_FLOOR' "${script_dir}/../lib/smoke-gate.sh"; then
+            echo "FAIL R1-02B classify_alt_coverage still reads DEMO_ALT_MIN_COVERAGE_FLOOR from the environment"
+            failures=$((failures + 1))
+        else
+            echo "ok   R1-02B classify_alt_coverage does not read DEMO_ALT_MIN_COVERAGE_FLOOR"
+        fi
+
+        # End-to-end through the sync-demo.sh counting block: FLOOR=0 PCT=0
+        # against a 0/100 empty-alt payload must still leave smoke_fail=1.
+        run_empty_alt_floor_override() {
+            DEMO_ALT_MIN_COVERAGE_FLOOR=0
+            DEMO_ALT_MIN_COVERAGE_PCT=0
+            DEMO_ALT_GATE_ENFORCE=1
+            export DEMO_ALT_MIN_COVERAGE_FLOOR DEMO_ALT_MIN_COVERAGE_PCT DEMO_ALT_GATE_ENFORCE
+            smoke_fail=0
+            header_total=100
+            body_total=100
+            with_alt=0
+            min="${DEMO_ALT_MIN_COVERAGE_PCT:-95}"
+            pop=$(classify_alt_population "$header_total" "$body_total")
+            emit_alt_gate "$pop" "demo alt population (header=${header_total} body=${body_total})" 1
+            verdict=$(classify_alt_coverage "$body_total" "$with_alt" "$min")
+            pct=$((with_alt * 100 / body_total))
+            cov_msg="demo alt coverage (${with_alt}/${body_total} = ${pct}%, need ${min}%)"
+            emit_alt_gate "$verdict" "$cov_msg" 1
+            echo "smoke_fail=${smoke_fail}"
+        }
+        empty_override=$(run_empty_alt_floor_override)
+        assert_eq "R1-02B counting block FLOOR=0 PCT=0 empty-alt 0/100 leaves smoke_fail=1" \
+            "PASS demo alt population (header=100 body=100)
+FAIL demo alt coverage (0/100 = 0%, need 0%)
+smoke_fail=1" "$empty_override"
     fi
 fi
 

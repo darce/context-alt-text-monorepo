@@ -336,7 +336,7 @@ case "$with_alt" in *[!0-9]*|'') ;; *)
   ;;
 esac
 if [ "$run_prov" = "1" ]; then
-  prov=$(classify_alt_provenance "$sample" "$adapters" "$with_alt")
+  prov=$(classify_alt_provenance "$denied_count" "$adapters" "$with_alt" "$usable_normalized_count")
   if [ "$prov" = "FAIL" ]; then
     # Identity is primary [INT-10]: operator must tell untrusted/absent
     # adapter from a seeded fixture caption without reading the source.

@@ -187,8 +187,11 @@ PY
 }
 
 # load_alt_counts_from_media_body <json_file>
-# Sets caller-visible body_total, with_alt, adapters, sample from one per-item
-# parse. Each usable alt contributes exactly one adapter token (its own).
+# Sets caller-visible body_total, with_alt, adapters, sample, denied_count,
+# usable_normalized_count from one per-item parse. Each usable alt contributes
+# exactly one adapter token (its own). Fixture denial is evaluated per caption
+# (fixture_sample_is_denied "$alt"), never on the concatenated sample blob —
+# token-AND over a corpus-wide union false-denies genuine libraries.
 # Whitespace, glob metacharacters (*, ?, [), or a missing adapter on a usable
 # row become the sentinel __invalid__ so they cannot pad or glob the blob.
 # body_total is the attachment count (JSON array length) so well-formed WP
@@ -200,6 +203,8 @@ load_alt_counts_from_media_body() {
     with_alt=0
     sample=""
     adapters=""
+    denied_count=0
+    usable_normalized_count=0
     parsed=$(parse_wp_media_alt_rows "$json_file" 2>/dev/null) || parsed=""
     while IFS= read -r line || [ -n "$line" ]; do
         [ -n "$line" ] || continue
@@ -213,6 +218,12 @@ load_alt_counts_from_media_body() {
         if [ "$(classify_alt_text_usable "$alt")" = "PASS" ]; then
             with_alt=$((with_alt + 1))
             sample="${sample}${alt} "
+            if [ -n "$(normalize_fixture_sample "$alt")" ]; then
+                usable_normalized_count=$((usable_normalized_count + 1))
+            fi
+            if fixture_sample_is_denied "$alt"; then
+                denied_count=$((denied_count + 1))
+            fi
             case "$adapter" in
                 *[[:space:]]*|*'*'*|*'?'*|*'['*|'')
                     adapters="${adapters}__invalid__ "
@@ -282,31 +293,43 @@ classify_alt_identity() {
     echo PASS
 }
 
-# classify_alt_provenance <sample_text> <adapters_blob> <usable_count> -> PASS|FAIL
+# classify_alt_provenance <denied_count> <adapters_blob> <usable_count> [usable_normalized_count] -> PASS|FAIL
 # PASS only when BOTH independent gates pass (AND, not fused):
 #   Gate A — adapter identity (primary). See classify_alt_identity.
-#   Gate B — literal denylist (retained). Empty-after-normalize FAIL;
-#            fixture_sample_is_denied FAIL. Catches a trusted adapter that is
-#            nonetheless emitting canned captions; identity alone cannot see
-#            that. Do not delete Gate B.
+#   Gate B — per-caption denylist (retained). denied_count > 0 FAIL;
+#            usable_normalized_count == 0 FAIL closed. Catches a trusted
+#            adapter that is nonetheless emitting canned captions; identity
+#            alone cannot see that. Do not delete Gate B.
+# First arg is the fixture signal from load_alt_counts_from_media_body
+# (count of usable alts that matched a denylist arm individually), NOT a
+# concatenated alt blob. Token-AND over a corpus-wide union false-denies
+# genuine libraries. ANY denied caption is a FAIL.
 # Empty-after-normalize FAILs closed — the one intentional difference from
-# describe-gate, which returns UNKNOWN. sample_text stays positional-first so
-# the denylist arm is unchanged. test-smoke-gate.sh extracts _FIXTURE_POOL
-# at test time to catch drift against the shared matcher.
+# describe-gate, which returns UNKNOWN. usable_normalized_count defaults to
+# usable_count when omitted; pass 0 when every usable alt is empty after
+# normalize. test-smoke-gate.sh extracts _FIXTURE_POOL at test time to catch
+# drift against the shared matcher.
 classify_alt_provenance() {
-    local sample="$1"
+    local denied_count="${1:-}"
     local adapters_blob="${2:-}"
     local usable_count="${3:-}"
+    local usable_normalized_count="${4:-$usable_count}"
 
     if [ "$(classify_alt_identity "$adapters_blob" "$usable_count")" != "PASS" ]; then
         echo FAIL
         return
     fi
-    if [ -z "$(normalize_fixture_sample "$sample")" ]; then
+    case "$denied_count" in
+        *[!0-9]*|'') echo FAIL; return ;;
+    esac
+    case "$usable_normalized_count" in
+        *[!0-9]*|'') echo FAIL; return ;;
+    esac
+    if [ "$usable_normalized_count" -eq 0 ]; then
         echo FAIL
         return
     fi
-    if fixture_sample_is_denied "$sample"; then
+    if [ "$denied_count" -gt 0 ]; then
         echo FAIL
         return
     fi

@@ -43,6 +43,8 @@ interface Props {
   onOpenPersonWorkspace: (personUuid: string) => void;
   isCommitting: boolean;
   rosterEntries: RosterEntry[];
+  rosterStatus?: (typeof ROSTER_ASSIGN_STATUS)[keyof typeof ROSTER_ASSIGN_STATUS];
+  onRetryRoster?: () => void;
   isDetailLoading: boolean;
   detailError?: string | null;
 
@@ -68,6 +70,12 @@ interface Props {
   reassignErrorMessage?: string | null;
 }
 
+export const ROSTER_ASSIGN_STATUS = {
+  loading: 'loading',
+  error: 'error',
+  ready: 'ready',
+} as const;
+
 const EMPTY_TARGETS: ClusterReassignTarget[] = [];
 const NO_TARGETS_REASON = __('No other face groups available to move this face into.', 'alt-context');
 const NO_TARGETS_REASON_ID = 'acx-cluster-drawer-no-move-targets-reason';
@@ -92,6 +100,8 @@ export const ClusterDrawerPanel = ({
   onOpenPersonWorkspace,
   isCommitting,
   rosterEntries,
+  rosterStatus = ROSTER_ASSIGN_STATUS.ready,
+  onRetryRoster,
   isDetailLoading,
   detailError,
 
@@ -556,7 +566,20 @@ export const ClusterDrawerPanel = ({
 
         {cluster ? (
         <div className="acx-cluster-drawer__assignment" data-testid="acx-zone-z-cluster-actions">
-          {rosterEntries.length === 0 ? (
+          {rosterStatus === ROSTER_ASSIGN_STATUS.loading ? (
+            <p>{__('Loading people to assign…', 'alt-context')}</p>
+          ) : null}
+          {rosterStatus === ROSTER_ASSIGN_STATUS.error ? (
+            <div role="alert">
+              <p>{__('Unable to load people to assign.', 'alt-context')}</p>
+              {onRetryRoster ? (
+                <button type="button" className="acx-button acx-button--secondary" onClick={onRetryRoster}>
+                  {__('Retry', 'alt-context')}
+                </button>
+              ) : null}
+            </div>
+          ) : null}
+          {rosterStatus === ROSTER_ASSIGN_STATUS.ready && rosterEntries.length === 0 ? (
             <EmptyState
               variant={EmptyStateVariant.EMPTY}
               heading={__('No named people to assign yet.', 'alt-context')}
@@ -571,7 +594,7 @@ export const ClusterDrawerPanel = ({
           {reassignErrorMessage ? (
             <p role="alert">{reassignErrorMessage}</p>
           ) : null}
-          {rosterEntries.length > 0 ? (
+          {rosterStatus === ROSTER_ASSIGN_STATUS.ready && rosterEntries.length > 0 ? (
           <>
           <label className="acx-cluster-drawer__section-label" htmlFor="acx-roster-entry-select">
             {__('Assign to person', 'alt-context')}

@@ -73,6 +73,7 @@ class ImageDescription(Base):
             "tenant_id",
             "image_hash",
             "adapter",
+            "model_id",
             "model_version",
             "prompt_or_task_version",
             "context_hash",

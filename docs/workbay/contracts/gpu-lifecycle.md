@@ -45,20 +45,28 @@ After START, `--ready-url` polls an HTTP health endpoint with a bounded wait
 
 Existing keys: `queue_depth`, `in_flight`, `written_at`.
 
-Additive optional: `batch_in_progress` (bool). Absent → false. Present but
-not a bool → treat the snapshot as busy (fail closed). A STOP must never fire
-while `has_work` is true (`queue_depth > 0` or `in_flight > 0` or
+Additive optional: `batch_in_progress` (bool). **The current describe-service
+producer does not write this key.** Absent → false. The consumer must not
+claim batch protection when the key is missing. Present but not a bool →
+treat the snapshot as busy (fail closed). A STOP must never fire while
+`has_work` is true (`queue_depth > 0` or `in_flight > 0` or
 `batch_in_progress`).
+
+Bulk / multi-job runs that never increment `in_flight`/`queue_depth` for the
+whole batch are **unprotected until the producer writes `batch_in_progress`**.
+`--load-json` help and `JsonFileJobLoadSource` document this loudly.
 
 ## Fence
 
-`fence_stop_actions` drops every STOP when:
+The fence covers only what the snapshot proves:
 
-- the re-sample has work (including an in-flight batch), or
+- the re-sample has work (`queue_depth`, `in_flight`, or explicit
+  `batch_in_progress: true`), or
 - `fence_expired=true` (re-sample failed / window elapsed without a
   trustworthy idle confirmation).
 
-Fence expiry falls back closed: no STOP.
+An absent `batch_in_progress` key is not a batch fence. Fence expiry falls
+back closed: no STOP.
 
 ## CPU fallback
 

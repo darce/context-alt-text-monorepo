@@ -102,11 +102,13 @@ class GpuLifecycleController:
         pre_stop_load: JobLoadSnapshot | None = None,
         fence_expired: bool = False,
     ) -> list[tuple[str, str]]:
-        """Drop STOP decisions if a batch is running or the fence cannot confirm idle.
+        """Drop STOP decisions if proven work is running or the fence is unusable.
 
         Callers must re-sample the job store immediately before actuating and
-        pass that sample here. Queue, in-flight, or batch_in_progress cancels
-        all STOPs. Fence expiry (no trustworthy re-sample) falls back closed.
+        pass that sample here. Queue, in-flight, or an explicit True
+        batch_in_progress cancels all STOPs. An absent batch_in_progress key
+        is not protection. Fence expiry (no trustworthy re-sample) falls back
+        closed.
         """
         if fence_expired or pre_stop_load is None or pre_stop_load.has_work:
             return []

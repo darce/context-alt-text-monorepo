@@ -524,6 +524,19 @@ if (!function_exists('register_rest_route')) {
     }
 }
 
+if (!function_exists('register_rest_field')) {
+    function register_rest_field($object_type, $attribute, $args = []): bool
+    {
+        $GLOBALS['__ac_rest_fields'][] = [
+            'object_type' => $object_type,
+            'attribute' => $attribute,
+            'args' => $args,
+        ];
+
+        return true;
+    }
+}
+
 if (!function_exists('rest_ensure_response')) {
     function rest_ensure_response($value)
     {

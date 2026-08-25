@@ -79,7 +79,7 @@ describe('GuidanceCard', () => {
     expect(screen.getByText('2 persons have no assigned face groups.')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Review 2 unassigned persons' })).toHaveAttribute(
       'href',
-      '#/workbench?tab=scan',
+      '#/roster?personFilter=unassigned',
     );
     expect(screen.getByText('2', { selector: '.acx-dashboard__guidance-count' })).toBeInTheDocument();
   });
@@ -100,7 +100,7 @@ describe('GuidanceCard', () => {
     expect(screen.getByText('1 person has no assigned face groups.')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Review 1 unassigned person' })).toHaveAttribute(
       'href',
-      '#/workbench?tab=scan',
+      '#/roster?personFilter=unassigned',
     );
   });
 

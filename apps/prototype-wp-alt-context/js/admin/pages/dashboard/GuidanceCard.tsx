@@ -2,7 +2,7 @@ import React from 'react';
 import { __, _n, sprintf } from '@wordpress/i18n';
 
 import type { DashboardStats } from '../../api/dashboardApi';
-import { toWorkbench } from '../../navigation/appLinks';
+import { toRoster, toWorkbench } from '../../navigation/appLinks';
 import { EmptyState, EmptyStateVariant } from '../../components/ui/EmptyState';
 
 interface GuidanceCardProps {
@@ -49,7 +49,7 @@ export const GuidanceCard = ({ stats }: GuidanceCardProps): React.JSX.Element =>
           )}
         </p>
         <a
-          href={toWorkbench({ tab: 'scan' })}
+          href={toRoster({ personFilter: 'unassigned' })}
           className="acx-link-button acx-dashboard__guidance-link"
           aria-label={reviewLabel}
         >

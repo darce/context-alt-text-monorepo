@@ -50,7 +50,8 @@
       ]
     },
     "model_id": {
-      "type": "string"
+      "type": "string",
+      "description": "Adapter model identity. GPU profiles use <hub-repo>@<40-hex hub revision> (walkable Hugging Face pin of the served artifact). A pin bump is a new idempotence/cache-key identity. llama.cpp still receives the unadorned served id."
     },
     "model_version": {
       "type": "string"

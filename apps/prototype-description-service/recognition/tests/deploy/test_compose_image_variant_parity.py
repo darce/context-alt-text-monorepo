@@ -15,8 +15,10 @@ import subprocess
 import tempfile
 import textwrap
 from pathlib import Path
+from typing import Mapping
 
 import pytest
+import yaml
 
 # recognition/tests/deploy/<this> → parents[3] = service root;
 # parents[5] = monorepo root.
@@ -25,8 +27,10 @@ REPO_ROOT = Path(__file__).resolve().parents[5]
 DEPLOY_SCRIPT = REPO_ROOT / "scripts" / "deploy" / "recognition-service.sh"
 COMPOSE_ENV = SERVICE_ROOT / "docker-compose.env.yml"
 COMPOSE_PROD = SERVICE_ROOT / "docker-compose.prod.yml"
+COMPOSE_VLM = SERVICE_ROOT / "docker-compose.vlm.yml"
 
 _DEFAULT_REPO = "iad.ocir.io/idu2kqqe2jxy/acx-backend"
+_VLM_REPO = "iad.ocir.io/idu2kqqe2jxy/acx-backend-vlm"
 # image: ${ACX_IMAGE_REPO:-iad.ocir.io/idu2kqqe2jxy/acx-backend}:TAG
 _IMAGE_LINE_RE = re.compile(
     r"^\s*image:\s*(?P<value>.+?)\s*$",
@@ -52,6 +56,96 @@ def _service_image_lines(compose_text: str) -> list[str]:
             continue
         values.append(value)
     return values
+
+
+def compose_image_default_repos(compose_text: str) -> set[str]:
+    """ACX_IMAGE_REPO default values on app image lines (rg-015: parsed, not guessed)."""
+    found: set[str] = set()
+    for value in _service_image_lines(compose_text):
+        match = re.search(r"\$\{ACX_IMAGE_REPO:-([^}]+)\}", value)
+        if match:
+            found.add(match.group(1))
+    return found
+
+
+def compose_defaults_to_vlm_image_repo(compose_text: str) -> bool:
+    """True when every app image line defaults ACX_IMAGE_REPO to the VLM repo."""
+    repos = compose_image_default_repos(compose_text)
+    return bool(repos) and repos == {_VLM_REPO}
+
+
+_VLM_OVERLAY_SERVICES = ("api", "worker", "fix-blob-ownership")
+_COMPOSE_INTERPOLATION_RE = re.compile(r"\$\{([^}:]+)(?::-([^}]*))?\}")
+
+
+def _compose_app_service_images(compose_text: str) -> dict[str, str]:
+    """Map service name -> raw image value, skipping postgres/caddy infra."""
+    data = yaml.safe_load(compose_text) or {}
+    services = data.get("services") or {}
+    if not isinstance(services, dict):
+        return {}
+    images: dict[str, str] = {}
+    for name, spec in services.items():
+        if not isinstance(spec, dict):
+            continue
+        image = spec.get("image")
+        if not isinstance(image, str):
+            continue
+        if "pgvector" in image or "caddy:" in image:
+            continue
+        images[str(name)] = image
+    return images
+
+
+def _strip_image_tag(image: str) -> str:
+    """Repo token of an image line (interpolation default or hardcoded registry/repo)."""
+    value = image.strip()
+    match = re.match(r"^\$\{ACX_IMAGE_REPO:-([^}]+)\}(?::.*)?$", value)
+    if match:
+        return match.group(1)
+    last_slash = value.rfind("/")
+    colon = value.find(":", last_slash)
+    return value[:colon] if colon != -1 else value
+
+
+def compose_vlm_overlay_pins_named_services(compose_text: str) -> bool:
+    """True when named api/worker/fix-blob-ownership hard-pin the VLM repo.
+
+    Sticky ``ACX_IMAGE_REPO`` (env.yml / remote .env) must not be interpolated:
+    compose substitutes after merge, so a slim default would silently win.
+    A dropped named service or a slim/hardcoded-wrong line fails closed.
+    """
+    images = _compose_app_service_images(compose_text)
+    for name in _VLM_OVERLAY_SERVICES:
+        if name not in images:
+            return False
+        value = images[name]
+        if "ACX_IMAGE_REPO" in value:
+            return False
+        if _strip_image_tag(value) != _VLM_REPO:
+            return False
+    return True
+
+
+def _interpolate_compose_value(value: str, env: Mapping[str, str]) -> str:
+    def repl(match: re.Match[str]) -> str:
+        name, default = match.group(1), match.group(2)
+        if name in env:
+            return env[name]
+        return default if default is not None else ""
+
+    return _COMPOSE_INTERPOLATION_RE.sub(repl, value)
+
+
+def merged_app_service_images(*compose_texts: str, env: Mapping[str, str]) -> dict[str, str]:
+    """Compose-style merge of app ``image:`` lines, then ${VAR:-default} interpolation.
+
+    Later files win per service name (overlay replaces env.yml image keys).
+    """
+    merged: dict[str, str] = {}
+    for text in compose_texts:
+        merged.update(_compose_app_service_images(text))
+    return {name: _interpolate_compose_value(image, env) for name, image in merged.items()}
 
 
 def compose_api_worker_images_use_image_repo(compose_text: str) -> bool:
@@ -182,6 +276,50 @@ def test_compose_prod_uses_acx_image_repo_substitution() -> None:
         assert value.endswith(":latest") or ":latest" in value
 
 
+def test_compose_env_default_repo_stays_recognition_slim() -> None:
+    """Default compose stays torch-free; VLM is the overlay, not the default."""
+    assert compose_image_default_repos(COMPOSE_ENV.read_text()) == {_DEFAULT_REPO}
+    assert compose_image_default_repos(COMPOSE_PROD.read_text()) == {_DEFAULT_REPO}
+    assert not compose_defaults_to_vlm_image_repo(COMPOSE_ENV.read_text())
+
+
+def test_compose_vlm_overlay_defaults_to_vlm_repo() -> None:
+    """PROV-01b / W3-E-01: overlay hard-pins acx-backend-vlm on named services."""
+    assert COMPOSE_VLM.is_file(), "docker-compose.vlm.yml overlay missing"
+    text = COMPOSE_VLM.read_text(encoding="utf-8")
+    assert compose_vlm_overlay_pins_named_services(text), (
+        "docker-compose.vlm.yml must hard-pin api/worker/fix-blob-ownership "
+        f"to {_VLM_REPO} without interpolating ACX_IMAGE_REPO"
+    )
+    assert _VLM_REPO in text
+    active_env = [
+        line
+        for line in text.splitlines()
+        if line.strip() and not line.lstrip().startswith("#") and "ACX_DESCRIPTION_ADAPTER" in line
+    ]
+    assert not active_env, (
+        "VLM overlay must not flip ACX_DESCRIPTION_ADAPTER; default stays seeded; "
+        f"got {active_env}"
+    )
+
+
+def test_compose_vlm_overlay_wins_over_sticky_slim_image_repo() -> None:
+    """W3-E-01: env.yml + overlay with ACX_IMAGE_REPO=slim still resolves *-vlm."""
+    env = {"ACX_IMAGE_REPO": _DEFAULT_REPO, "ACX_IMAGE_TAG": "latest"}
+    images = merged_app_service_images(
+        COMPOSE_ENV.read_text(encoding="utf-8"),
+        COMPOSE_VLM.read_text(encoding="utf-8"),
+        env=env,
+    )
+    for name in _VLM_OVERLAY_SERVICES:
+        assert name in images, f"merged overlay dropped named service {name}"
+        resolved = images[name]
+        assert _strip_image_tag(resolved) == _VLM_REPO, (
+            f"{name} resolved {resolved!r} under sticky ACX_IMAGE_REPO={_DEFAULT_REPO}; "
+            "overlay must hard-pin acx-backend-vlm"
+        )
+
+
 def test_data_cache_bind_mounts_are_readonly_in_both_compose_files() -> None:
     for path in (COMPOSE_ENV, COMPOSE_PROD):
         text = path.read_text(encoding="utf-8")
@@ -256,6 +394,66 @@ def test_smoke_timeout_failure_names_unvalidated_vlm_budget() -> None:
 
 
 # ---- parsers / TEST-15 synthetic mutations -------------------------------
+
+
+def test_mutation_vlm_overlay_without_vlm_repo_fails_guard() -> None:
+    """TEST-15: slim default, dropped worker, or sticky ACX_IMAGE_REPO interpolation fail."""
+    good = textwrap.dedent(
+        f"""\
+        services:
+          api:
+            image: {_VLM_REPO}:${{ACX_IMAGE_TAG:-latest}}
+          worker:
+            image: {_VLM_REPO}:${{ACX_IMAGE_TAG:-latest}}
+          fix-blob-ownership:
+            image: {_VLM_REPO}:${{ACX_IMAGE_TAG:-latest}}
+        """
+    )
+    slim = textwrap.dedent(
+        f"""\
+        services:
+          api:
+            image: {_DEFAULT_REPO}:${{ACX_IMAGE_TAG:-latest}}
+          worker:
+            image: {_DEFAULT_REPO}:${{ACX_IMAGE_TAG:-latest}}
+          fix-blob-ownership:
+            image: {_DEFAULT_REPO}:${{ACX_IMAGE_TAG:-latest}}
+        """
+    )
+    api_only = textwrap.dedent(
+        f"""\
+        services:
+          api:
+            image: {_VLM_REPO}:${{ACX_IMAGE_TAG:-latest}}
+        """
+    )
+    interpolating = textwrap.dedent(
+        f"""\
+        services:
+          api:
+            image: ${{ACX_IMAGE_REPO:-{_VLM_REPO}}}:${{ACX_IMAGE_TAG:-latest}}
+          worker:
+            image: ${{ACX_IMAGE_REPO:-{_VLM_REPO}}}:${{ACX_IMAGE_TAG:-latest}}
+          fix-blob-ownership:
+            image: ${{ACX_IMAGE_REPO:-{_VLM_REPO}}}:${{ACX_IMAGE_TAG:-latest}}
+        """
+    )
+    one_slim = textwrap.dedent(
+        f"""\
+        services:
+          api:
+            image: {_VLM_REPO}:${{ACX_IMAGE_TAG:-latest}}
+          worker:
+            image: {_DEFAULT_REPO}:${{ACX_IMAGE_TAG:-latest}}
+          fix-blob-ownership:
+            image: {_VLM_REPO}:${{ACX_IMAGE_TAG:-latest}}
+        """
+    )
+    assert compose_vlm_overlay_pins_named_services(good)
+    assert not compose_vlm_overlay_pins_named_services(slim)
+    assert not compose_vlm_overlay_pins_named_services(api_only)
+    assert not compose_vlm_overlay_pins_named_services(interpolating)
+    assert not compose_vlm_overlay_pins_named_services(one_slim)
 
 
 def test_mutation_bare_image_fails_compose_guard() -> None:

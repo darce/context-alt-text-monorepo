@@ -117,6 +117,29 @@ def test_runtime_stages_are_distinguishable_at_runtime() -> None:
     assert _env_map(stages[VLM_STAGE]).get("ACX_IMAGE_VARIANT") == "vlm"
 
 
+def test_runtime_vlm_is_opt_in_offline_and_not_the_default_target() -> None:
+    """PROV-01b: runtime-vlm carries torch extras but never becomes the bare build."""
+    stages = _dockerfile_stages()
+    vlm = stages[VLM_STAGE]
+
+    def _env_map(body: str) -> dict[str, str]:
+        out: dict[str, str] = {}
+        for ln in body.splitlines():
+            m = re.match(r"^\s*ENV\s+([A-Za-z_][\w]*)=(.+?)\s*$", ln)
+            if m:
+                out[m.group(1)] = m.group(2).strip().strip("'\"")
+        return out
+
+    env = _env_map(vlm)
+    assert default_build_target(DOCKERFILE) == DEFAULT_STAGE
+    assert default_build_target(DOCKERFILE) != VLM_STAGE
+    assert env.get("ACX_IMAGE_VARIANT") == "vlm"
+    assert env.get("HF_HUB_OFFLINE") == "1"
+    assert env.get("TRANSFORMERS_OFFLINE") == "1"
+    assert stage_resolves_vlm_extra(DOCKERFILE, VLM_STAGE)
+    assert not stage_resolves_vlm_extra(DOCKERFILE, DEFAULT_STAGE)
+
+
 # ---- negative: prove each guard bites (TEST-15) --------------------------
 
 _SYNTHETIC = """\

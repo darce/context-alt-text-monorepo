@@ -2,7 +2,7 @@
 
 Isolated from HTTP/DB/model layers so they are unit-testable on their own and
 reused by both the describe route and the VisualFactsService. The cache key is
-``(tenant_id, image_hash, adapter, model_version, prompt_or_task_version,
+``(tenant_id, image_hash, adapter, model_id, model_version, prompt_or_task_version,
 context_hash)``; these helpers compute the two content-derived dimensions.
 """
 

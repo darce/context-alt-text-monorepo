@@ -56,6 +56,14 @@ PREVIEW_FIELDS = {
 }
 
 
+def test_schema_model_id_documents_gpu_hub_pin_format():
+    """W3-E-03: GPU wire model_id is <hub-repo>@<40-hex hub revision>."""
+    description = _schema()["properties"]["model_id"].get("description") or ""
+    assert "<hub-repo>@" in description
+    assert "40-hex" in description
+    assert "idempotence" in description.lower() or "cache" in description.lower()
+
+
 def test_schema_required_matches_model_fields():
     schema = _schema()
     assert set(schema["required"]) == set(VisualFactsResponse.model_fields) - PREVIEW_FIELDS

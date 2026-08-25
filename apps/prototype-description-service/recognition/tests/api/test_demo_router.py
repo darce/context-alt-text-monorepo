@@ -161,6 +161,28 @@ async def test_demo_router_invalid_session_returns_401_without_tenant_data(
 
 
 @pytest.mark.asyncio
+async def test_demo_router_unknown_seed_bundle_returns_410_without_tenant_data(
+    db_session: AsyncSession, monkeypatch
+) -> None:
+    result = await provision_demo(db_session, label="RetiredBundle", seed="default")
+    instance = await db_session.get(DemoInstance, result.instance.slug)
+    assert instance is not None
+    instance.seed_bundle = "retired-bundle"
+    await db_session.commit()
+
+    client = _build_client(db_session, monkeypatch)
+    get_resp = client.get(f"/x/{result.instance.slug}")
+    assert get_resp.status_code == 410
+    _assert_no_tenant_data(get_resp)
+    assert str(result.instance.tenant_id) not in get_resp.text
+
+    session_resp = client.post(f"/x/{result.instance.slug}/session")
+    assert session_resp.status_code == 410
+    _assert_no_tenant_data(session_resp)
+    assert str(result.instance.tenant_id) not in session_resp.text
+
+
+@pytest.mark.asyncio
 async def test_demo_router_unknown_slug_returns_uniform_404(db_session: AsyncSession, monkeypatch) -> None:
     client = _build_client(db_session, monkeypatch)
     resp = client.get("/x/notreal1")

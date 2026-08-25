@@ -99,6 +99,26 @@ const collectVisibleAndAccessibleText = (root: HTMLElement): string => {
   return chunks.join('\n');
 };
 
+describe('D-23 ClusterDrawerPanel assignment failure states', () => {
+  it('renders empty assign actions when there are no named people', () => {
+    render(<ClusterDrawerPanel {...baseProps} cluster={unlabeledCluster} rosterEntries={[]} />);
+    expect(screen.getByText('No named people to assign yet.')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Open Review Queue' })).toHaveAttribute('href', '#/workbench?tab=scan');
+  });
+
+  it('renders assign error', () => {
+    render(
+      <ClusterDrawerPanel
+        {...baseProps}
+        cluster={unlabeledCluster}
+        rosterEntries={[{ id: 1, name: 'Pat', person_uuid: UUID_B } as never]}
+        reassignErrorMessage="Could not assign this face group."
+      />,
+    );
+    expect(screen.getByRole('alert')).toHaveTextContent('Could not assign this face group.');
+  });
+});
+
 describe('ClusterDrawerPanel humane cluster labels (E21-16)', () => {
   it('shows Unnamed face group for unlabeled drawer title with no uuid hex fragment', () => {
     const { container } = render(

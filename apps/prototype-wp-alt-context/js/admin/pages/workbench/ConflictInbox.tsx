@@ -259,6 +259,9 @@ export const ConflictInbox = (): React.JSX.Element => {
   return (
     <section aria-label={__('Conflict inbox', 'alt-context')} aria-busy={inboxBusy ? 'true' : undefined}>
       {statusRegion}
+      {resolveMutation.isPending ? (
+        <p data-testid="acx-zone-z-conflict-actions-loading">{__('Resolving conflict…', 'alt-context')}</p>
+      ) : null}
       <h3>{__('Open conflicts', 'alt-context')}</h3>
       <p>{sprintf(__('Showing %1$d-%2$d of %3$d open conflicts.', 'alt-context'), rangeStart, rangeEnd, total)}</p>
       {canSelectAll ? (

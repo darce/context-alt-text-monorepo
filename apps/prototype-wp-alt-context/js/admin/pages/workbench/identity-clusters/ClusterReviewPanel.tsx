@@ -131,6 +131,11 @@ export const ClusterReviewPanel = ({
       </div>
 
       <div className="acx-cluster-review-panel__content">
+        {expandError ? (
+          <p role="alert" data-testid="acx-zone-z-review-panel-edge-input">
+            {__('Could not load every face in this group.', 'alt-context')}
+          </p>
+        ) : null}
         {isLoading ? (
           <p>{__('Loading faces…', 'alt-context')}</p>
         ) : isError ? (

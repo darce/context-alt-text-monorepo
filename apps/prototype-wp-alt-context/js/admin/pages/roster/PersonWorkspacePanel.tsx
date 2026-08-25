@@ -231,21 +231,27 @@ export const PersonWorkspacePanel = ({ entry, onOpenQueue }: PersonWorkspacePane
       </header>
 
       <div className="acx-roster__person-workspace-summary">
-        <section aria-labelledby="acx-person-workspace-clusters">
+        <section aria-labelledby="acx-person-workspace-clusters" data-testid="acx-zone-z-person-identities">
           <h4 id="acx-person-workspace-clusters">{__('Face group detail', 'alt-context')}</h4>
-          <p>
-            {entry.cluster_count === 0
-              ? __('No face groups are assigned to this person yet.', 'alt-context')
-              : sprintf(
-                  _n(
-                    '%d face group is currently assigned to this person.',
-                    '%d face groups are currently assigned to this person.',
+          {entry.projection_status === 'failed' ? (
+            <p role="alert">{__('Unable to load linked faces.', 'alt-context')}</p>
+          ) : entry.projection_status === 'stale' || entry.projection_status === 'refreshing' ? (
+            <p role="status">{__('Linked faces may be out of date.', 'alt-context')}</p>
+          ) : (
+            <p>
+              {entry.cluster_count === 0
+                ? __('No face groups are assigned to this person yet.', 'alt-context')
+                : sprintf(
+                    _n(
+                      '%d face group is currently assigned to this person.',
+                      '%d face groups are currently assigned to this person.',
+                      entry.cluster_count,
+                      'alt-context',
+                    ),
                     entry.cluster_count,
-                    'alt-context',
-                  ),
-                  entry.cluster_count,
-                )}
-          </p>
+                  )}
+            </p>
+          )}
         </section>
 
         <section aria-labelledby="acx-person-workspace-evidence">
@@ -267,20 +273,22 @@ export const PersonWorkspacePanel = ({ entry, onOpenQueue }: PersonWorkspacePane
         <div className="acx-roster__person-workspace-scrubber">
           <PersonFacePreview face={selectedFace} onOpenLightbox={setLightbox} />
           <PersonFaceMetadataPanel face={selectedFace} />
-          <div className="acx-roster__person-workspace-actions">
-            <button
-              type="button"
-              className="acx-button acx-button--primary"
-              disabled={!canPin || isPinning}
-              onClick={() => {
-                if (!selectedFace) {
-                  return;
-                }
-                pin(selectedFace.clusterId, selectedFace.identityId, true);
-              }}
-            >
-              {__('Set as representative', 'alt-context')}
-            </button>
+          <div className="acx-roster__person-workspace-actions" data-testid="acx-zone-z-person-actions">
+            {isPinning ? <p>{__('Saving representative…', 'alt-context')}</p> : null}
+            {!selectedFace ? (
+              <p>{__('Select a face to choose a representative.', 'alt-context')}</p>
+            ) : (
+              <button
+                type="button"
+                className="acx-button acx-button--primary"
+                disabled={!canPin || isPinning}
+                onClick={() => {
+                  pin(selectedFace.clusterId, selectedFace.identityId, true);
+                }}
+              >
+                {__('Set as representative', 'alt-context')}
+              </button>
+            )}
             {pinError ? (
               <UserFacingErrorNotice error={pinError} fallback={PIN_REPRESENTATIVE_ERROR_COPY} />
             ) : null}

@@ -95,6 +95,7 @@ def get_gpu_description_adapter() -> DescriptionAdapter:
             endpoint_url=settings.gpu_endpoint_url,
             model_id=spec.model_id or "unavailable",
             model_revision=spec.model_revision,
+            hub_repo=spec.hub_repo,
             model_version=spec.model_version,
             prompt_or_task_version=settings.gpu_prompt_or_task_version,
             connect_timeout_s=settings.gpu_connect_timeout_seconds,

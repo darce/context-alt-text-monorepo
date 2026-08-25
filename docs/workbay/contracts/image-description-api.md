@@ -42,6 +42,10 @@ unavoidable so future adapters never change the wire:
 `context_used`, `provider_disclosure`, `cached`, `duration_ms`,
 `retention_class`, `tier`, `result_generation`.
 
+- `model_id`: adapter identity on the wire. GPU profiles use
+  `<hub-repo>@<40-hex hub revision>` (walkable Hugging Face pin of the served
+  GGUF; llama.cpp still receives the unadorned served id). A pin bump is a new
+  `model_id` and therefore a new idempotence/cache identity.
 - **Cache key**: `(tenant_id, image_hash, adapter, model_version,
   prompt_or_task_version, context_hash)`. A repeated identical call returns
   `cached=true`.

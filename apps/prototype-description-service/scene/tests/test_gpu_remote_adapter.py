@@ -98,15 +98,17 @@ def test_gpu_remote_adapter_provenance_names_loaded_revision_not_payload_model()
         )
 
     pin = "0af19e7479857aa7f3246466a4ad16c7e7299639"
+    hub_repo = "unsloth/Qwen3-VL-30B-A3B-Instruct-GGUF"
     adapter = GpuRemoteDescriptionAdapter(
         endpoint_url="http://gpu.test:8000",
         model_id="Qwen3-VL-30B-A3B-Instruct",
         model_version="Q4_K_M",
         model_revision=pin,
+        hub_repo=hub_repo,
         transport=httpx.MockTransport(handler),
     )
     adapter.describe(image_bytes=b"x", context=None)
-    assert adapter.model_id == f"Qwen3-VL-30B-A3B-Instruct@{pin}"
+    assert adapter.model_id == f"{hub_repo}@{pin}"
     assert captured[0]["model"] == "Qwen3-VL-30B-A3B-Instruct"
 
 

@@ -92,6 +92,7 @@ def test_gpu_qwen30b_profile_is_available_endpoint_profile():
     assert spec.available is True
     assert spec.adapter_kind is DescriptionAdapterKind.GPU
     assert spec.model_id == "Qwen3-VL-30B-A3B-Instruct"
+    assert spec.hub_repo == "unsloth/Qwen3-VL-30B-A3B-Instruct-GGUF"
     assert spec.model_version == "Q4_K_M"
     assert spec.model_revision == "0af19e7479857aa7f3246466a4ad16c7e7299639"
 
@@ -102,6 +103,7 @@ def test_gpu_qwen30b_ensemble_spec_mirrors_gpu_qwen30b():
     assert spec.available is True
     assert spec.adapter_kind is DescriptionAdapterKind.GPU
     assert spec.model_id == base.model_id
+    assert spec.hub_repo == base.hub_repo
     assert spec.model_version == base.model_version
     assert spec.model_revision == base.model_revision
 
@@ -206,7 +208,8 @@ def test_resolve_gpu_qwen30b_yields_gpu_adapter(monkeypatch):
     assert isinstance(adapter, DescriptionAdapter)
     assert adapter.kind is DescriptionAdapterKind.GPU
     assert spec.model_revision is not None
-    assert adapter.model_id == f"{spec.model_id}@{spec.model_revision}"
+    assert spec.hub_repo is not None
+    assert adapter.model_id == f"{spec.hub_repo}@{spec.model_revision}"
 
 
 def test_resolve_gpu_qwen30b_provenance_names_pinned_revision(monkeypatch):
@@ -220,8 +223,9 @@ def test_resolve_gpu_qwen30b_provenance_names_pinned_revision(monkeypatch):
     adapter = get_description_adapter()
     assert isinstance(adapter, GpuRemoteDescriptionAdapter)
     assert spec.model_revision is not None
+    assert spec.hub_repo is not None
     assert adapter.model_id.endswith(f"@{spec.model_revision}")
-    assert adapter.model_id.startswith("Qwen3-VL-30B-A3B-Instruct@")
+    assert adapter.model_id.startswith(f"{spec.hub_repo}@")
     assert adapter.model_id != spec.model_id
 
 
@@ -237,7 +241,8 @@ def test_resolve_gpu_qwen30b_ensemble_sync_route_gets_raw_gpu_adapter(monkeypatc
     assert isinstance(adapter, GpuRemoteDescriptionAdapter)
     assert adapter.kind is DescriptionAdapterKind.GPU
     assert spec.model_revision is not None
-    assert adapter.model_id == f"{spec.model_id}@{spec.model_revision}"
+    assert spec.hub_repo is not None
+    assert adapter.model_id == f"{spec.hub_repo}@{spec.model_revision}"
 
 
 def test_resolve_gpu_qwen30b_ensemble_async_final_gets_wrapped_adapter(monkeypatch):
@@ -255,7 +260,8 @@ def test_resolve_gpu_qwen30b_ensemble_async_final_gets_wrapped_adapter(monkeypat
     assert isinstance(adapter._wrapped, GpuRemoteDescriptionAdapter)
     assert adapter.kind is DescriptionAdapterKind.GPU
     assert spec.model_revision is not None
-    assert adapter.model_id == f"{spec.model_id}@{spec.model_revision}"
+    assert spec.hub_repo is not None
+    assert adapter.model_id == f"{spec.hub_repo}@{spec.model_revision}"
     assert adapter.model_version == "Q4_K_M"
     assert adapter.prompt_or_task_version == "3"
 

@@ -216,9 +216,11 @@ export const PersonWorkspacePanel = ({ entry, onOpenQueue }: PersonWorkspacePane
     >
       <header className="acx-roster__person-workspace-header">
         <h3>{entry.name}</h3>
-        <p className="acx-roster__person-workspace-meta">
-          {sprintf(__('%d face groups assigned', 'alt-context'), entry.cluster_count)}
-        </p>
+        {entry.projection_status !== 'failed' ? (
+          <p className="acx-roster__person-workspace-meta">
+            {sprintf(__('%d face groups assigned', 'alt-context'), entry.cluster_count)}
+          </p>
+        ) : null}
         <p className="acx-roster__person-workspace-meta">
           {sprintf(__('Data status: %s', 'alt-context'), entry.projection_status)}
         </p>
@@ -235,7 +237,9 @@ export const PersonWorkspacePanel = ({ entry, onOpenQueue }: PersonWorkspacePane
           <h4 id="acx-person-workspace-clusters">{__('Face group detail', 'alt-context')}</h4>
           {entry.projection_status === 'failed' ? (
             <p role="alert">{__('Unable to load linked faces.', 'alt-context')}</p>
-          ) : entry.projection_status === 'stale' || entry.projection_status === 'refreshing' ? (
+          ) : entry.projection_status === 'refreshing' ? (
+            <p role="status">{__('Refreshing linked faces…', 'alt-context')}</p>
+          ) : entry.projection_status === 'stale' ? (
             <p role="status">{__('Linked faces may be out of date.', 'alt-context')}</p>
           ) : (
             <p>

@@ -20,7 +20,7 @@ from recognition.application.services.demo_provisioning_service import (
     DemoSessionInvalidError,
     DemoSessionRequiredError,
     PreScanState,
-    PreScanStateViolation,
+    PreScanStateError,
     UnknownSeedBundleError,
     assert_pre_scan_state,
     expire_demo,
@@ -185,19 +185,19 @@ def test_resolve_demo_session_rejects_expired() -> None:
 
 
 def test_pre_scan_invariant_rejects_empty_media() -> None:
-    with pytest.raises(PreScanStateViolation, match="seeded media"):
+    with pytest.raises(PreScanStateError, match="seeded media"):
         assert_pre_scan_state(PreScanState(seeded_media_ids=(), scanned_faces=0, people_count=0))
 
 
 def test_pre_scan_invariant_rejects_scanned_faces() -> None:
-    with pytest.raises(PreScanStateViolation, match="scanned_faces"):
+    with pytest.raises(PreScanStateError, match="scanned_faces"):
         assert_pre_scan_state(
             PreScanState(seeded_media_ids=("seed-library-1",), scanned_faces=2, people_count=0)
         )
 
 
 def test_pre_scan_invariant_rejects_nonzero_people_count() -> None:
-    with pytest.raises(PreScanStateViolation, match="people_count"):
+    with pytest.raises(PreScanStateError, match="people_count"):
         assert_pre_scan_state(
             PreScanState(seeded_media_ids=("seed-library-1",), scanned_faces=0, people_count=1)
         )
@@ -217,5 +217,5 @@ async def test_provision_demo_fails_loudly_on_catalog_pre_scan_violation(
             pre_scan=PreScanState(seeded_media_ids=(), scanned_faces=0, people_count=0),
         ),
     )
-    with pytest.raises(PreScanStateViolation, match="seeded media"):
+    with pytest.raises(PreScanStateError, match="seeded media"):
         await provision_demo(db_session, label="Broken Catalog", seed="default")

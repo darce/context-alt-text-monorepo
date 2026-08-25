@@ -9,11 +9,13 @@ vi.mock('@wordpress/i18n', () => ({
 }));
 
 describe('BulkDescribeReviewLink', () => {
-  it('links to the run-scoped apply view when the run has completed', () => {
+  it('D-22: links to the run-scoped apply view as a secondary CTA', () => {
     render(<BulkDescribeReviewLink runId="run-abc" isTerminal appliedCount={3} />);
 
     const link = screen.getByRole('link', { name: /Review & apply/ });
     expect(link).toHaveAttribute('href', '#/description-history?run=run-abc');
+    expect(link).toHaveClass('button-secondary');
+    expect(link).not.toHaveClass('button-primary');
   });
 
   it('url-encodes the run id', () => {

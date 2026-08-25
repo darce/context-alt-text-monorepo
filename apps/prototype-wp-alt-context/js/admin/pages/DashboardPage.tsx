@@ -239,7 +239,7 @@ export const DashboardPage = (): React.JSX.Element => {
           aria-label={__('Alt text coverage', 'alt-context')}
         />
         <div className="acx-dashboard__actions">
-          <a href={toWorkbench({ status: 'missing' })} className="acx-button acx-button--primary">
+          <a href={toWorkbench({ status: 'missing' })} className="acx-button acx-button--secondary">
             {__('Fix missing descriptions', 'alt-context')}
           </a>
         </div>
@@ -260,7 +260,7 @@ export const DashboardPage = (): React.JSX.Element => {
           <>
             <p>{RETENTION_CARD_ERROR_BODY}</p>
             <div className="acx-dashboard__actions">
-              <a href={RETENTION_CARD_LINK_HREF} className="acx-dashboard__action-card">
+              <a href={RETENTION_CARD_LINK_HREF} className="acx-dashboard__action-card acx-dashboard__action-card--secondary">
                 <h3>{RETENTION_CARD_ACTION_HEADING}</h3>
                 <p>{RETENTION_CARD_ACTION_BODY}</p>
               </a>
@@ -293,7 +293,7 @@ export const DashboardPage = (): React.JSX.Element => {
               </div>
             </div>
             <div className="acx-dashboard__actions">
-              <a href={RETENTION_CARD_LINK_HREF} className="acx-dashboard__action-card">
+              <a href={RETENTION_CARD_LINK_HREF} className="acx-dashboard__action-card acx-dashboard__action-card--secondary">
                 <h3>{RETENTION_CARD_ACTION_HEADING}</h3>
                 <p>{RETENTION_CARD_ACTION_BODY}</p>
               </a>

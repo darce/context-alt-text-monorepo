@@ -26,7 +26,7 @@ export const BulkDescribeReviewLink = ({
 
   return (
     <a
-      className="acx-media-selection__bulk-describe-review button button-primary"
+      className="acx-media-selection__bulk-describe-review button button-secondary"
       href={toDescriptionHistoryRun(runId)}
     >
       {__('Review & apply drafts', 'alt-context')}

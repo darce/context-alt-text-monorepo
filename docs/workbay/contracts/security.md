@@ -73,6 +73,19 @@ export RECOGNITION_AUTH_ENABLED=true
 make dev-mint-key   # prints a usable tenant API key
 ```
 
+## Demo WordPress identities (AUTH-03)
+
+The public demo keeps three separate credentials. CI must not log in as the
+demo wp-admin / viewer account.
+
+| Name | Kind | Store | Notes |
+| --- | --- | --- | --- |
+| `WP_ADMIN_USER` / `WP_ADMIN_PASSWORD` / `WP_ADMIN_EMAIL` | human admin | VM `secrets/.env` (mode 600) | Converged every `bootstrap-wp.sh` run (AUTH-01) |
+| `WP_CI_USER` / `WP_CI_PASSWORD` / `WP_CI_EMAIL` | CI WP user | same `secrets/.env` | Role `acx_ci`; must differ from `WP_ADMIN_USER` |
+| `ACX_E2E_WP_CI_USER` / `ACX_E2E_WP_CI_PASS` | GitHub Environment secrets | `demo` environment | Mapped onto Playwright `ACX_E2E_WP_ADMIN_*` env; workflow refuses `acx-demo-admin`/`admin` |
+
+Issue a CI-scoped demo **API** key with `make issue-demo-ci-account LABEL="ACX CI" ADMIN_USER=acx-demo-admin` (wraps `python -m scripts.provision_demo --account ci`). Viewer keys stay `make provision-demo LABEL=...`.
+
 ## Tenant Isolation
 
 Each API key is scoped to a specific tenant. The service enforces tenant isolation at multiple levels:

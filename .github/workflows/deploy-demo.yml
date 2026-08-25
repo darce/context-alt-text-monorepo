@@ -211,6 +211,24 @@ jobs:
           # guaranteed on ubuntu-latest across image updates.
           bash scripts/playwright-cli.sh install --with-deps chromium
 
+      # AUTH-03: CI smoke uses a dedicated least-privilege WP user, never the
+      # demo viewer/admin login. Playwright still reads ACX_E2E_WP_ADMIN_* env
+      # names (auth.setup.ts); the *values* come from ACX_E2E_WP_CI_* secrets.
+      - name: Refuse demo-admin identity for CI smoke
+        env:
+          CI_USER: ${{ secrets.ACX_E2E_WP_CI_USER }}
+        run: |
+          if [ -z "$CI_USER" ]; then
+            echo "::error::ACX_E2E_WP_CI_USER must be set (dedicated CI WP user, not the demo admin)."
+            exit 1
+          fi
+          case "$CI_USER" in
+            acx-demo-admin|admin)
+              echo "::error::ACX_E2E_WP_CI_USER is the demo admin/viewer login. Use the dedicated CI account."
+              exit 1
+              ;;
+          esac
+
       # File-scoped on purpose: bare `--project=evidence` sweeps all six evidence
       # specs (including recognition-exercising scan-runtime), which would gate
       # the deploy on recognition health. No separate e2e:auth step: the
@@ -225,8 +243,8 @@ jobs:
         working-directory: apps/prototype-wp-alt-context
         env:
           WP_BASE_URL: ${{ env.WP_BASE_URL }}
-          ACX_E2E_WP_ADMIN_USER: ${{ secrets.ACX_E2E_WP_ADMIN_USER }}
-          ACX_E2E_WP_ADMIN_PASS: ${{ secrets.ACX_E2E_WP_ADMIN_PASS }}
+          ACX_E2E_WP_ADMIN_USER: ${{ secrets.ACX_E2E_WP_CI_USER }}
+          ACX_E2E_WP_ADMIN_PASS: ${{ secrets.ACX_E2E_WP_CI_PASS }}
           ACX_E2E_RECOGNITION_URL: ${{ vars.ACX_E2E_RECOGNITION_URL || 'https://api.altcontext.com' }}
           ACX_E2E_REQUIRE_CONSTANT_PROVENANCE: "1"
           ACX_E2E_REQUIRE_SERVICE_TARGET: "1"

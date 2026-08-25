@@ -40,6 +40,7 @@ from pathlib import Path
 from typing import Protocol
 
 from infra.oci.gpu_lifecycle.controller import (
+    FallbackDecision,
     GpuInstance,
     GpuLifecycleController,
     JobLoadSnapshot,
@@ -359,6 +360,7 @@ class StartCycleResult:
     actuated: list[tuple[str, str]]
     errors: list[str]
     wait_result: ReadinessWaitResult | None = None
+    fallbacks: tuple[FallbackDecision, ...] = ()
 
 
 def run_reap_cycle(
@@ -461,16 +463,27 @@ def run_start_cycle(
             errors.append(msg)
 
     wait_result: ReadinessWaitResult | None = None
+    fallbacks: tuple[FallbackDecision, ...] = ()
     if probe is not None and readiness_wait is not None and actuated:
         started_ids = [instance_id for _, instance_id in actuated]
         wait_result = readiness_wait.wait(started_ids, probe)
         if wait_result.errors:
             errors.extend(wait_result.errors)
+        if wait_result.failed:
+            fallbacks = tuple(
+                controller.fallback_on_boot_failure(
+                    list(wait_result.timed_out), reason="readiness_timeout"
+                )
+                + controller.fallback_on_boot_failure(
+                    list(wait_result.stalled), reason="readiness_stall"
+                )
+            )
     return StartCycleResult(
         decided=decided,
         actuated=actuated,
         errors=errors,
         wait_result=wait_result,
+        fallbacks=fallbacks,
     )
 
 
@@ -676,11 +689,12 @@ def main(argv: list[str] | None = None) -> int:
             readiness_wait=readiness_wait,
         )
         logger.info(
-            "start cycle decided=%s actuated=%s errors=%s wait=%s",
+            "start cycle decided=%s actuated=%s errors=%s wait=%s fallbacks=%s",
             start_result.decided,
             start_result.actuated,
             start_result.errors,
             None if start_result.wait_result is None else start_result.wait_result.exit_code,
+            start_result.fallbacks,
         )
         return 1 if start_result.errors else 0
 

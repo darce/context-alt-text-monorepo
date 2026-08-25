@@ -20,6 +20,19 @@ class GpuInstanceState(StrEnum):
     UNKNOWN = "UNKNOWN"
 
 
+CPU_FALLBACK_PROFILE = "florence_small"
+
+
+@dataclass(frozen=True)
+class FallbackDecision:
+    """CPU-tier fallback. Emitted only; the consumer is not wired here."""
+
+    instance_id: str
+    reason: str
+    action: str = LifecycleAction.FALLBACK
+    profile: str = CPU_FALLBACK_PROFILE
+
+
 @dataclass(frozen=True)
 class GpuInstance:
     instance_id: str
@@ -98,3 +111,15 @@ class GpuLifecycleController:
         if fence_expired or pre_stop_load is None or pre_stop_load.has_work:
             return []
         return [action for action in actions if action[0] == LifecycleAction.STOP]
+
+    def fallback_on_boot_failure(
+        self,
+        failed_instance_ids: list[str],
+        *,
+        reason: str,
+    ) -> list[FallbackDecision]:
+        """Emit florence_small fallback when the burst instance will not come up."""
+        return [
+            FallbackDecision(instance_id=instance_id, reason=reason)
+            for instance_id in failed_instance_ids
+        ]

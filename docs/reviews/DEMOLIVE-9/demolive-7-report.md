@@ -69,3 +69,38 @@ FAIL florence_small 10 10 garbage provenance -> BLOCK: expected BLOCK, got SKIP
 ## Residual (out of lane)
 
 `generate --limit` still selects only `missing_alt` candidates. `--force` overwrites when a media id is already selected, but a 100/100 canned corpus may still no-op until the CLI enumerates existing-alt ids. Not changed here (PHP CLI is not this lane).
+
+## Round 2 — XLANE-01
+
+**Route.** (b), plus a canonical extra file for DEMOLIVE-6 to concatenate later.
+
+Both ship paths are single-file and this lane cannot edit them: `sync-demo.sh` SCPs only `infra/oci/demo/lib/describe-gate.sh`, and smoke-gate is `cat "$SMOKE_GATE_LIB"` into the remote bash. An extra sourced file would break the VM unless `scripts/deploy/sync-demo.sh` or `smoke-gate.sh` changed (forbidden). So describe-gate stays self-contained. `scripts/deploy/lib/fixture-denylist.sh` is the canonical normalizer + denylist; describe-gate inlines the same two functions. A corpus + function-body test FAILs if the copies drift. `classify_alt_provenance` was not rewritten.
+
+**Diff.** `classify_describe_provenance` now lowercases, collapses whitespace with `tr -s '[:space:]' ' '`, strips trailing `.!?` in a loop, then matches lowercase punctuation-free arms via `fixture_sample_is_denied`. Empty sample still UNKNOWN. `classify_describe_gate` / bootstrap wiring unchanged.
+
+**Corpus (specified smoke / describe).** Live `classify_alt_provenance` in *this* worktree is still the pre-DEMOLIVE-6 exact-match copy, so evasion rows are bound against the shared matcher (`smoke-sem`) rather than by rewriting their file. After trial-merge, if live smoke FAILs a lowercased fixture, the same rows assert live-smoke too.
+
+| sample | smoke-sem | describe | live smoke (this worktree) |
+| --- | --- | --- | --- |
+| `A close-up of a small object on a neutral background.` | FAIL | FAIL | FAIL |
+| `A close-up of a small object on a neutral background` | FAIL | FAIL | PASS (pre-normalization copy) |
+| `a close-up of a small object on a neutral background.` | FAIL | FAIL | PASS (pre-normalization copy) |
+| ` A Close-Up Of A Small Object On A Neutral Background ` | FAIL | FAIL | PASS (pre-normalization copy) |
+| `A close-up of a small object on a  neutral background!` | FAIL | FAIL | PASS (pre-normalization copy) |
+| `A close-up of a small object on a neutral background!` | FAIL | FAIL | PASS (pre-normalization copy) |
+| `A woman in a red coat crossing Charing Cross Road.` | PASS | PASS | PASS |
+| `""` | FAIL | UNKNOWN | FAIL (documented difference) |
+
+Empty sample is asserted as FAIL / UNKNOWN on purpose: smoke fails closed, describe reports UNKNOWN because nothing was measured.
+
+**TEST-15.** Reverted `classify_describe_provenance` to the case-sensitive exact-match arms. Command: `bash infra/oci/demo/tests/test-describe-gate.sh`. Exit code: 1.
+
+Verbatim FAIL line:
+
+```
+FAIL corpus describe no period: expected FAIL, got PASS
+```
+
+Also red (same mutation): `lowercased`, `case + padding`, `double space + bang`, `bang only` (5 assertions failed). Restored the normalizer; suite green (`all assertions passed`, exit 0). No mutation remains.
+
+**Command.** `bash infra/oci/demo/tests/test-describe-gate.sh` — PASS, exit 0. `bash scripts/deploy/tests/test-smoke-gate.sh` — PASS, exit 0 (read-only; smoke-gate logic not edited).

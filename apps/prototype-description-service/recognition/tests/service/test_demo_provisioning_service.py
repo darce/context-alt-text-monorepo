@@ -12,7 +12,8 @@ from sqlalchemy import select
 from sqlalchemy.exc import OperationalError, ProgrammingError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from db.models import ApiKey, DemoInstance, Tenant
+from db.models import ApiKey, DemoInstance, IdentityCluster, Tenant
+from recognition.tests.db_seed import ensure_media_identity
 from recognition.application.services.demo_provisioning_service import (
     BASE58_ALPHABET,
     DEFAULT_RECOGNITION_QUOTA,
@@ -256,6 +257,54 @@ async def test_observe_pre_scan_state_missing_tables_count_as_zero() -> None:
     assert observed.scanned_faces == 0
     assert observed.people_count == 0
     assert observed.seeded_media_present is True
+
+
+@pytest.mark.asyncio
+async def test_observe_pre_scan_state_raises_when_tenant_has_identities(
+    db_session: AsyncSession,
+) -> None:
+    tenant_id = uuid.uuid4()
+    db_session.add(Tenant(id=tenant_id, site_url="https://example.test/x/observe"))
+    await db_session.flush()
+    await ensure_media_identity(db_session, tenant_id, uuid.uuid4())
+    db_session.add(
+        IdentityCluster(
+            tenant_id=tenant_id,
+            identity_type="face",
+            label="Ada",
+            identity_count=1,
+        )
+    )
+    await db_session.flush()
+    bundle = load_seed_bundle("default")
+    with pytest.raises(PreScanStateError):
+        await observe_pre_scan_state(db_session, tenant_id=tenant_id, bundle=bundle)
+
+
+@pytest.mark.asyncio
+async def test_provision_demo_raises_when_observe_finds_identities(
+    db_session: AsyncSession, monkeypatch
+) -> None:
+    from recognition.application.services import demo_provisioning_service as svc
+
+    original = svc.observe_pre_scan_state
+
+    async def _inject_then_observe(session, *, tenant_id, bundle):  # noqa: ANN001
+        await ensure_media_identity(session, tenant_id, uuid.uuid4())
+        session.add(
+            IdentityCluster(
+                tenant_id=tenant_id,
+                identity_type="face",
+                label="Ada",
+                identity_count=1,
+            )
+        )
+        await session.flush()
+        return await original(session, tenant_id=tenant_id, bundle=bundle)
+
+    monkeypatch.setattr(svc, "observe_pre_scan_state", _inject_then_observe)
+    with pytest.raises(PreScanStateError):
+        await provision_demo(db_session, label="Dirty Tenant", seed="default")
 
 
 @pytest.mark.asyncio

@@ -203,8 +203,17 @@ source "$smoke_gate_file"
 
 # XLANE-02: this pin sits outside assert_corpus_row so restoring the old
 # deferral hatch cannot print ok and exit 0 on a case-sensitive smoke-gate.
+# R3V-01 moved the denylist decision out of classify_alt_provenance and into
+# the per-caption loop, so the pin asserts the matcher verdict first: without
+# it, passing sample text where denied_count now belongs would still print
+# FAIL (non-numeric -> FAIL) and the pin would pass for the wrong reason.
+xlane02_sample='a close-up of a small object on a neutral background'
+xlane02_denied=0
+if fixture_sample_is_denied "$xlane02_sample"; then xlane02_denied=1; fi
+assert_eq "XLANE-02 shared matcher denies lowercased close-up" \
+    "1" "$xlane02_denied"
 assert_eq "XLANE-02 live-smoke lowercased close-up is FAIL" \
-    FAIL "$(classify_alt_provenance 'a close-up of a small object on a neutral background' florence_small 1)"
+    FAIL "$(classify_alt_provenance "$xlane02_denied" florence_small 1 1)"
 hatch_pat="lacks DEMOLIVE-6"
 hatch_pat="${hatch_pat} normalizer"
 assert_eq "XLANE-02 live-smoke bind has no deferral hatch" \
@@ -227,7 +236,11 @@ expected_smoke_from_shared() {
         fi
         return
     fi
-    classify_alt_provenance "$sample" florence_small 1
+    # Unreachable: fixture-denylist.sh is sourced above and its absence exits 1.
+    # Substituting another classifier here would silently change the semantics
+    # this column exists to pin, so emit a value that can never assert equal.
+    echo "shared matcher fixture_sample_is_denied is not defined" >&2
+    echo SHARED-MATCHER-MISSING
 }
 
 assert_corpus_row() {
@@ -235,7 +248,7 @@ assert_corpus_row() {
     local sample="$2"
     local smoke_exp="$3"
     local describe_exp="$4"
-    local describe_got smoke_sem smoke_live
+    local describe_got smoke_sem smoke_live row_denied row_normalized
 
     describe_got=$(classify_describe_provenance "$sample")
     assert_eq "corpus describe ${label}" "$describe_exp" "$describe_got"
@@ -243,9 +256,18 @@ assert_corpus_row() {
     smoke_sem=$(expected_smoke_from_shared "$sample")
     assert_eq "corpus smoke-sem ${label}" "$smoke_exp" "$smoke_sem"
 
-    # Trusted identity so live-smoke pins Gate B, not fail-closed Gate A.
-    smoke_live=$(classify_alt_provenance "$sample" florence_small 1)
-    assert_eq "corpus live-smoke ${label}" "$smoke_exp" "$smoke_live"
+    # Trusted identity so this pins Gate B, not fail-closed Gate A. Since
+    # R3V-01 the denylist runs per caption in load_alt_counts_from_media_body
+    # and classify_alt_provenance consumes the counts, so this column pins the
+    # aggregator contract (honours denied_count, fails closed on zero
+    # measurable captions) rather than re-deriving the string verdict.
+    row_denied=0
+    if fixture_sample_is_denied "$sample"; then row_denied=1; fi
+    row_normalized=0
+    if [ -n "$(normalize_fixture_sample "$sample")" ]; then row_normalized=1; fi
+    # FAIL paths return 1 (R2-13); this suite runs under set -e.
+    smoke_live=$(classify_alt_provenance "$row_denied" florence_small 1 "$row_normalized") || true
+    assert_eq "corpus live-smoke aggregate ${label}" "$smoke_exp" "$smoke_live"
 }
 
 assert_corpus_row "punctuated fixture" \

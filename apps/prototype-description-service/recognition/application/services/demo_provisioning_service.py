@@ -199,6 +199,9 @@ async def observe_pre_scan_state(
     empty, or when *both* relations are confirmed missing (fresh fixture). A
     missing column or a half-present schema fails closed.
     """
+    media_stmt = select(func.count(func.distinct(MediaIdentity.media_id))).where(
+        MediaIdentity.tenant_id == tenant_id
+    )
     faces_stmt = select(func.count()).select_from(MediaIdentity).where(MediaIdentity.tenant_id == tenant_id)
     people_stmt = (
         select(func.count())
@@ -208,12 +211,13 @@ async def observe_pre_scan_state(
             IdentityCluster.label.is_not(None),
         )
     )
+    tenant_media = await _count_or_missing(session, media_stmt, relation="media_identities")
     scanned_faces = await _count_or_missing(session, faces_stmt, relation="media_identities")
     people_count = await _count_or_missing(session, people_stmt, relation="identity_clusters")
     missing = {
         name
         for name, value in (
-            ("media_identities", scanned_faces),
+            ("media_identities", scanned_faces if scanned_faces is not None else tenant_media),
             ("identity_clusters", people_count),
         )
         if value is None
@@ -224,12 +228,22 @@ async def observe_pre_scan_state(
                 "identity schema is incomplete: both media_identities and "
                 "identity_clusters must exist, or both must be absent"
             )
+        tenant_media = 0
         scanned_faces = 0
         people_count = 0
-    return PreScanState(
-        seeded_media_ids=bundle.pre_scan.seeded_media_ids,
-        scanned_faces=int(scanned_faces or 0),
-        people_count=int(people_count or 0),
+    faces = int(scanned_faces or 0)
+    people = int(people_count or 0)
+    media_present = int(tenant_media or 0)
+    if media_present != 0 or faces != 0 or people != 0:
+        raise PreScanStateError(
+            f"tenant is not pre-scan: media_ids={media_present}, scanned_faces={faces}, people_count={people}"
+        )
+    return assert_pre_scan_state(
+        PreScanState(
+            seeded_media_ids=bundle.pre_scan.seeded_media_ids,
+            scanned_faces=faces,
+            people_count=people,
+        )
     )
 
 

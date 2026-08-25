@@ -131,6 +131,8 @@ class GpuRemoteDescriptionAdapter:
         model_id: str,
         model_version: str,
         prompt_or_task_version: str = "3",
+        model_revision: str | None = None,
+        hub_repo: str | None = None,
         connect_timeout_s: float = _DEFAULT_CONNECT_TIMEOUT_S,
         read_timeout_s: float = _DEFAULT_READ_TIMEOUT_S,
         api_key: str | None = None,
@@ -138,7 +140,16 @@ class GpuRemoteDescriptionAdapter:
         transport: httpx.BaseTransport | None = None,
     ) -> None:
         self.endpoint_url = endpoint_url.rstrip("/")
-        self.model_id = model_id
+        # llama.cpp served id stays unadorned; wire provenance is hub-repo@pin
+        # so the citation is walkable (rg-015: do not stamp a SHA we were not given).
+        self._endpoint_model_id = model_id
+        self.model_revision = model_revision
+        self.hub_repo = hub_repo
+        if model_revision:
+            identity = hub_repo or model_id
+            self.model_id = f"{identity}@{model_revision}"
+        else:
+            self.model_id = model_id
         self.model_version = model_version
         self.prompt_or_task_version = prompt_or_task_version
         self._connect_timeout_s = connect_timeout_s
@@ -175,7 +186,7 @@ class GpuRemoteDescriptionAdapter:
     ) -> tuple[AdapterResult, tuple[GpuRemoteTokenTrace, ...]]:
         user_text, context_sources, context_applied = _user_text(context)
         payload: dict[str, Any] = {
-            "model": self.model_id,
+            "model": self._endpoint_model_id,
             "temperature": 0,
             "max_tokens": 512,
             "messages": [

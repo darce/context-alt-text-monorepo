@@ -74,7 +74,7 @@ const loadDashboardMap = (): { json: UxMap; md: string } => ({
 const extractSketch = (markdown: string, heading: string): string => {
   const headingIndex = markdown.indexOf(heading);
   expect(headingIndex, `dashboard.md missing heading "${heading}"`).toBeGreaterThan(-1);
-  const fence = markdown.slice(headingIndex).match(/```\n([\s\S]*?)```/);
+  const fence = /```\n([\s\S]*?)```/.exec(markdown.slice(headingIndex));
   expect(fence, `dashboard.md missing ASCII fence after "${heading}"`).toBeTruthy();
   return fence?.[1] ?? '';
 };
@@ -92,13 +92,13 @@ const i18nLiterals = (source: string): string[] =>
  * for the heading's own text.
  */
 const h1Literal = (source: string): string => {
-  const openTag = source.match(/<h1\b[^>]*>/);
+  const openTag = /<h1\b[^>]*>/.exec(source);
   expect(openTag, 'expected an <h1> element').toBeTruthy();
   const contentStart = (openTag?.index ?? 0) + (openTag?.[0].length ?? 0);
   const closeIndex = source.indexOf('</h1>', contentStart);
   expect(closeIndex, 'expected a matching </h1> close tag').toBeGreaterThan(-1);
   const h1Content = source.slice(contentStart, closeIndex);
-  const literalMatch = h1Content.match(/__\(\s*'([^']+)'/);
+  const literalMatch = /__\(\s*'([^']+)'/.exec(h1Content);
   expect(literalMatch, 'expected an i18n literal inside the <h1> element').toBeTruthy();
   return literalMatch?.[1] ?? '';
 };
@@ -215,8 +215,8 @@ describe('dashboard ux-map code parity (DUX-W2D14)', () => {
       'DashboardPage must still derive flowState from assigned_clusters_count',
     ).toMatch(/flowState[\s\S]{0,40}identityStats\?\.assigned_clusters_count[\s\S]{0,40}FIRST_NAMED/);
 
-    const defaultAssigned = Number(defaultSketch.match(/Assigned\s+(\d+)/)?.[1] ?? '0');
-    const firstAssigned = Number(firstTimeSketch.match(/Assigned\s+(\d+)/)?.[1] ?? '0');
+    const defaultAssigned = Number(/Assigned\s+(\d+)/.exec(defaultSketch)?.[1] ?? '0');
+    const firstAssigned = Number(/Assigned\s+(\d+)/.exec(firstTimeSketch)?.[1] ?? '0');
 
     expect(defaultSketch).not.toMatch(/Getting Started with Identity Recognition/);
     expect(defaultAssigned, 'default sketch must show a named-person (first_named) composition').toBeGreaterThan(0);

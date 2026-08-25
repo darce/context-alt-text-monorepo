@@ -381,7 +381,9 @@ describe('ux-map SSOT schema conformance (owned maps)', () => {
     expect(formatIssues(validateUxMap({ map_ref: 1 })).length, 'wrong field types must fail schema').toBeGreaterThan(
       0,
     );
-    expect(() => JSON.parse('{'), 'garbage json must not parse').toThrow();
+    expect(() => {
+      JSON.parse('{');
+    }, 'garbage json must not parse').toThrow();
   });
 
   it('keeps the checked-in Python enum snapshot available', () => {

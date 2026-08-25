@@ -51,6 +51,7 @@ from recognition.interface_adapters.http.middleware.metrics import (
 from recognition.interface_adapters.http.middleware.upload_size import UploadSizeLimitMiddleware
 from recognition.observability.curation_refresh_metrics import get_default_curation_refresh_metrics
 from roster.interface_adapters.http.curation_router import router as roster_curation_router
+from scene.config.settings import DescriptionSettings
 from scene.interface_adapters.http.router import router as scene_router
 from shared.health import HealthStatus
 from shared.image_variant import (
@@ -352,6 +353,8 @@ def register_health_probes(app: FastAPI, *, model_cache_dir: Path | None = None)
     image_variant = _resolve_image_variant()
     # Hoist full settings parse once; close over cache/model paths (S3CR-06).
     settings = RecognitionSettings()
+    description_settings = DescriptionSettings()
+    description_adapter = description_settings.profile.value
     insightface_cache_dir = model_cache_dir or settings.insightface.model_cache_dir
     insightface_model_name = settings.insightface.model_name
     face_pipeline_models_dir = settings.face_pipeline.resolved_models_dir
@@ -434,6 +437,11 @@ def register_health_probes(app: FastAPI, *, model_cache_dir: Path | None = None)
         Contract expansion (S3CR-07): ``model_cache.profile`` is additive so
         operators can see the active face_pipeline profile without a second
         settings parse (reuses registration-time paths + cheap env profile).
+
+        ``description_adapter`` is the active caption producer
+        (``DescriptionSettings.profile``), not the face_pipeline profile.
+        Resolved once at registration from the settings object; not re-read
+        from the environment per request.
         """
         # Returns pool stats + breaker state + model-cache inventory for
         # operators; never hit by load-balancer probes. Shares aggregator +
@@ -481,6 +489,7 @@ def register_health_probes(app: FastAPI, *, model_cache_dir: Path | None = None)
                 "profile": profile,
             },
             "embedding_runtime": embedding_runtime,
+            "description_adapter": description_adapter,
         }
 
 

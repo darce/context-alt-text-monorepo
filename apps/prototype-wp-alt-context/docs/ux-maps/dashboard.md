@@ -211,7 +211,8 @@ Identity Recognition actually has two distinct, independently-triggered retry co
 +------------------------------------------------------------+
 | Recent Activity                                          |
 |   Recent activity is unavailable                          |
-|   Previous scans could not be loaded. You can still start a new scan. |
+|   Previous scans could not be loaded. You can still       |
+|   start a new scan.                                       |
 +------------------------------------------------------------+
 | Data Retention                                           |
 |   Retention status could not load. Check the connection   |
@@ -251,6 +252,74 @@ Degraded is an intact first_named dashboard with an attention-bearing sync state
 |   Policy summary or remediation remains local to panel    |
 +------------------------------------------------------------+
 ```
+
+#### Sync Health — why `degraded` and `offline` are not zone states
+
+`DashboardSyncHealthSection.tsx` has exactly three exclusive branches:
+
+    :56  isLoading              -> "Loading sync health…"
+    :58  isError || !syncStatus -> EmptyState "Sync health is unavailable right now."
+    :66  else                   -> the composition drawn below
+
+Inside the else branch, five members render independently. None of them replaces the
+default; each one *adds* to it. `degraded` and `offline` name "some subset of these is
+on", which is a modifier axis, not a branch of the chain above.
+
+    A  :68  showMirrorDivergenceBanner        mirror banner + [Reset mirror]
+    B  :96  summary <p>                       always present; text varies
+    C  :113 topologyPending|Failed|Conflicts   pending-work summary line
+    D  :123 conflictCount && lastConflictDate  last-conflict line + [Open Conflict Inbox]
+    E  :126 failedReplayCount && lastFailure   last-failure line + [Open Failed Sync Queue]
+
+A, C, D and E are four independent booleans, so 16 compositions. B varies orthogonally
+across at least seven summary strings in `syncVocabulary.ts` (healthy, queued, stale,
+conflicts, failures, resyncRequired, plus the offline headline), putting the default
+branch on the order of 10² renderable forms. A single `degraded` peer state collapses
+all of them into one name *and* implies it excludes `default`, which is false. That is
+why the states list is now `default, loading, error` and the modifier axis is recorded
+as an open question instead.
+
+Maximal composition (A+C+D+E all true), real DOM order, real copy:
+
+```
++------------------------------------------------------------+
+| Sync Health                                                |
+|  /!\ Mirror is out of sync with the backend — 12 stale     |
+|      face groups, 3 failed sync events.   [Reset mirror]   |
+|  Some sync operations failed and need operator attention.  |
+|    Pending changes 7 | Conflicts 2 | Failed operations 3   |
+|  7 waiting, 3 failed, 2 need review                        |
+|  Last conflict: 12 minutes ago                             |
+|  Last failure: 4 minutes ago                               |
+|  [Open Review Queue] [Open Conflict Inbox]                 |
+|  [Open Failed Sync Queue]                                  |
++------------------------------------------------------------+
+```
+
+Minimal composition (all four false) — same branch, same state name:
+
+```
++------------------------------------------------------------+
+| Sync Health                                                |
+|  Everything is saved and up to date.                       |
+|    Pending changes 0 | Conflicts 0 | Failed operations 0   |
+|  [Open Review Queue]                                       |
++------------------------------------------------------------+
+```
+
+Interactivity notes:
+
+- `[Open Review Queue]` is the only unconditional action. `[Open Conflict Inbox]` and
+  `[Open Failed Sync Queue]` appear and disappear with D and E, so the action row
+  reflows under the operator between polls — a control that moves because of a
+  background refetch is a moving target for pointer and switch users [A11Y-24].
+- The mirror banner is `role="status"` and mounts only after `syncStatus` resolves, so
+  it is a real announcement rather than first-paint decoration. It is the only live
+  region in the default branch; the error branch's EmptyState owns its own and the two
+  branches are exclusive, so nothing nests.
+- `[Reset mirror]` swaps its own label to "Resetting…" while pending and is the only
+  destructive control in the zone. It exists only when A is true, so the operator
+  cannot reach it from the healthy composition.
 
 ### Workbench (`exit-workbench`)
 

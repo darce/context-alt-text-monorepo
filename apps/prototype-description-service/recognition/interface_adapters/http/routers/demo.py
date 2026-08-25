@@ -11,6 +11,10 @@ limited (DS-5). Never returns raw API key or ``api_key_ref`` (hash).
 
 from __future__ import annotations
 
+import asyncio
+import os
+import time
+from collections import deque
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
@@ -24,14 +28,60 @@ from recognition.application.services.demo_provisioning_service import (
     DemoEndedError,
     DemoInstanceNotFoundError,
     DemoSessionError,
+    UnknownSeedBundleError,
     mint_demo_session,
+    provision_demo,
     resolve_demo,
     resolve_demo_session,
 )
-from recognition.interface_adapters.http.deps.ip_rate_limit import enforce_ip_rate_limit
+from recognition.interface_adapters.http.deps.ip_rate_limit import _client_ip, enforce_ip_rate_limit
 from recognition.interface_adapters.http.deps.session import get_session
 
 router = APIRouter(tags=["demo"], dependencies=[Depends(enforce_ip_rate_limit)])
+
+_PROVISION_WINDOW_SECONDS = 60
+_provision_state: dict[str, deque[float]] = {}
+_provision_lock = asyncio.Lock()
+
+
+def _reset_provision_limiter_for_tests() -> None:
+    """Testing seam: clear the per-source provision counter between tests."""
+    _provision_state.clear()
+
+
+def _provision_rpm() -> int:
+    raw = os.getenv("RECOGNITION_DEMO_PROVISION_RPM", "3")
+    try:
+        return max(0, int(raw))
+    except ValueError:
+        return 3
+
+
+async def enforce_provision_rate_limit(request: Request) -> None:
+    """Per-source (client IP) cap on POST /x/provision (WEB-17 / SEC-08)."""
+    limit = _provision_rpm()
+    if limit <= 0:
+        return
+    key = _client_ip(request)
+    now = time.monotonic()
+    async with _provision_lock:
+        window = _provision_state.setdefault(key, deque())
+        cutoff = now - _PROVISION_WINDOW_SECONDS
+        while window and window[0] <= cutoff:
+            window.popleft()
+        if len(window) >= limit:
+            oldest = window[0]
+            retry_after = max(0, int(oldest + _PROVISION_WINDOW_SECONDS - now) + 1)
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="rate limit exceeded",
+                headers={
+                    "Retry-After": str(retry_after),
+                    "X-RateLimit-Limit": str(limit),
+                    "X-RateLimit-Remaining": "0",
+                },
+            )
+        window.append(now)
 
 
 class DemoPreScanResponse(BaseModel):
@@ -66,6 +116,27 @@ class DemoSessionResponse(BaseModel):
     expires_at: datetime
 
 
+class DemoProvisionRequest(BaseModel):
+    """Public demo provision body. No key material."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    label: str
+    seed: str = "default"
+
+
+class DemoProvisionResponse(BaseModel):
+    """Public-safe provision result. Raw API key is never returned."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    slug: str
+    demo_url: str
+    seed_bundle: str
+    expires_at: datetime
+    pre_scan: DemoPreScanResponse
+
+
 def _session_token_from_request(request: Request) -> str | None:
     header = request.headers.get(DEMO_SESSION_HEADER)
     if header and header.strip():
@@ -95,6 +166,39 @@ def _http_from_lookup(exc: Exception) -> HTTPException:
             },
         )
     raise exc
+
+
+@router.post(
+    "/x/provision",
+    response_model=DemoProvisionResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Provision a demo instance (WEB-17 rate-limited)",
+    dependencies=[Depends(enforce_provision_rate_limit)],
+)
+async def provision_demo_instance(
+    body: DemoProvisionRequest,
+    session: AsyncSession = Depends(get_session),
+) -> DemoProvisionResponse:
+    """Mint a demo tenant. Per-source 429 when the provision budget is spent."""
+    try:
+        result = await provision_demo(session, label=body.label, seed=body.seed)
+    except UnknownSeedBundleError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+    instance = result.instance
+    return DemoProvisionResponse(
+        slug=instance.slug,
+        demo_url=result.demo_url,
+        seed_bundle=instance.seed_bundle,
+        expires_at=instance.expires_at,
+        pre_scan=DemoPreScanResponse(
+            seeded_media_present=result.pre_scan.seeded_media_present,
+            scanned_faces=result.pre_scan.scanned_faces,
+            people_count=result.pre_scan.people_count,
+        ),
+    )
 
 
 @router.post(
@@ -165,4 +269,12 @@ async def resolve_demo_slug(
     )
 
 
-__all__ = ["DemoPreScanResponse", "DemoResolveResponse", "DemoSessionResponse", "router"]
+__all__ = [
+    "DemoPreScanResponse",
+    "DemoProvisionRequest",
+    "DemoProvisionResponse",
+    "DemoResolveResponse",
+    "DemoSessionResponse",
+    "enforce_provision_rate_limit",
+    "router",
+]

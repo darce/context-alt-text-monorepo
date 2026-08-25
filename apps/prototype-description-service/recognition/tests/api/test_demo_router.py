@@ -16,7 +16,10 @@ from recognition.application.services.demo_provisioning_service import (
 )
 from recognition.interface_adapters.http import deps as dependencies
 from recognition.interface_adapters.http.deps import ip_rate_limit
-from recognition.interface_adapters.http.routers.demo import router as demo_router
+from recognition.interface_adapters.http.routers.demo import (
+    _reset_provision_limiter_for_tests,
+    router as demo_router,
+)
 
 _TENANT_DATA_KEYS = ("tenant_id", "seed_bundle", "branding_json", "quota_remaining")
 
@@ -25,9 +28,17 @@ def _reset_ip_limiter() -> None:
     ip_rate_limit._reset_state_for_tests()
 
 
-def _build_client(session: AsyncSession, monkeypatch, *, rpm: str = "100") -> TestClient:
+def _build_client(
+    session: AsyncSession,
+    monkeypatch,
+    *,
+    rpm: str = "100",
+    provision_rpm: str = "100",
+) -> TestClient:
     monkeypatch.setenv("RECOGNITION_DEMO_RESOLVE_RPM", rpm)
+    monkeypatch.setenv("RECOGNITION_DEMO_PROVISION_RPM", provision_rpm)
     _reset_ip_limiter()
+    _reset_provision_limiter_for_tests()
     reset_demo_sessions_for_tests()
 
     app = FastAPI()
@@ -221,6 +232,43 @@ async def test_demo_router_xff_spoof_cannot_evade_ip_limit(db_session: AsyncSess
     assert resp.status_code == 429
 
 
+@pytest.mark.asyncio
+async def test_demo_provision_endpoint_returns_slug_without_key_material(
+    db_session: AsyncSession, monkeypatch
+) -> None:
+    client = _build_client(db_session, monkeypatch)
+    resp = client.post("/x/provision", json={"label": "Prospect Gallery", "seed": "default"})
+    assert resp.status_code == 201, resp.text
+    body = resp.json()
+    assert body["seed_bundle"] == "default"
+    assert body["demo_url"].startswith("https://demo.altcontext.com/x/")
+    assert body["slug"]
+    assert body["pre_scan"] == {
+        "seeded_media_present": True,
+        "scanned_faces": 0,
+        "people_count": 0,
+    }
+    assert "api_key" not in body
+    assert "api_key_ref" not in body
+    assert "session_token" not in body
+    row = await db_session.get(DemoInstance, body["slug"])
+    assert row is not None
+    assert row.label == "Prospect Gallery"
+
+
+@pytest.mark.asyncio
+async def test_demo_provision_flood_returns_429(db_session: AsyncSession, monkeypatch) -> None:
+    client = _build_client(db_session, monkeypatch, provision_rpm="2")
+    for _ in range(2):
+        assert client.post("/x/provision", json={"label": "Flood"}).status_code == 201
+    resp = client.post("/x/provision", json={"label": "Flood"})
+    assert resp.status_code == 429
+    assert resp.json()["detail"] == "rate limit exceeded"
+    assert "Retry-After" in resp.headers
+    assert resp.headers["X-RateLimit-Limit"] == "2"
+    assert resp.headers["X-RateLimit-Remaining"] == "0"
+
+
 def test_demo_router_mounted_on_create_app() -> None:
     from api.main import create_app
 
@@ -228,3 +276,4 @@ def test_demo_router_mounted_on_create_app() -> None:
     paths = {getattr(route, "path", None) for route in app.routes}
     assert "/x/{slug}" in paths
     assert "/x/{slug}/session" in paths
+    assert "/x/provision" in paths

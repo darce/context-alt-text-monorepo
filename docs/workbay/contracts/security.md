@@ -272,6 +272,12 @@ Each named seed bundle (`default`, `acme`) encodes that contract. `provision_dem
 
 Per-IP sliding-window rate limit (`RECOGNITION_DEMO_RESOLVE_RPM`, default 30) applies to every `/x/*` route via `enforce_ip_rate_limit`. Breach is `429` `{"detail": "rate limit exceeded"}` with `Retry-After` and `X-RateLimit-*`.
 
+### Provision — `POST /x/provision` (WEB-17)
+
+Self-serve provisioning sits in front of GPU-backed recognition and is unpriced. Request `{label, seed?}` → `201` `{slug, demo_url, seed_bundle, expires_at, pre_scan}`. Raw API keys are never returned. Unknown `seed` → `400`.
+
+A second, tighter per-source (client IP, same spoof-resistant `_client_ip` as resolve) sliding window applies **in addition** to the `/x/*` limiter: `RECOGNITION_DEMO_PROVISION_RPM` (default 3). Breach → `429` `{"detail": "rate limit exceeded"}` with `Retry-After` and `X-RateLimit-*`.
+
 **Fail-closed startup guard**: in production (`RECOGNITION_RUNTIME_MODE=production`)
 `create_app()` refuses to start when a required secret is missing, empty, or set
 to the development default (`validate_required_secrets`), and — under

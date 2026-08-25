@@ -284,7 +284,8 @@ describe('IdentityClusterList', () => {
 
   it('renders placeholder when no identities exist', async () => {
     await renderWithClient(<IdentityClusterList identities={[]} />);
-    expect(screen.getByText(/No identities detected yet/i)).toBeInTheDocument();
+    expect(screen.getByText('No identities detected yet.')).toBeInTheDocument();
+    expect(screen.getByText('Scan media to find faces in this item.')).toBeInTheDocument();
     expect(MockEventSource.instances).toBe(0);
   });
 

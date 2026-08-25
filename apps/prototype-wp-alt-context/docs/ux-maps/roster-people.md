@@ -4,11 +4,12 @@
 **Source fixture:** `packages/mcp-workbay-canvas/tests/fixtures/ux_maps/roster-people.uxmap.json`
 
 ## Goals
-- Operator assigns unassigned faces and manages person workspace without losing roster place
+- Six ACX submenus are MECE and frequency-ordered (NAV-05/NAV-06): Overview orients; Review Queue is the one home to name a person from a photo (highest-frequency demo task); People manages named people only; Description Runs is the one home to see what the describer did; Data Retention is keep/delete/export policy (not description history); Settings configures the service (rare, last). WordPress parent slug stays Overview.
+- One primary action per screen (NAV-01), reachable from zero state (rg-003); other CTAs are secondary.
+- Operator manages named people and person workspace without losing roster place
 - Decompose Roster UI tasks from screens/zones/states/flows (people-first surface; clusters tab retired)
 
 ## Jobs
-- `job-assign-faces` — Assign unassigned faces to people
 - `job-manage-person` — Open person workspace / manage entry
 - `job-cluster-review` — Review face-group deep-link (shim)
 
@@ -62,8 +63,8 @@ url_params: `person`, `personFilter`, `queue`, `face`, `cluster`
 |   - Face-group drawer host (cluster= shim) (other)         |
 +------------------------------------------------------------+
 | ACTIONS                                                    |
-|   [PRIMARY] Filter unassigned -> personFilter=unassigned   |
-|   [PRIMARY] Open person workspace -> roster-person-worksp… |
+|   [PRIMARY] Add Person -> roster-shell                     |
+|   [secondary] Open person workspace -> roster-person-worksp… |
 |   [secondary] Go to Workbench -> exit-workbench            |
 |   [secondary] Open face-group drawer -> roster-cluster-dr… |
 +------------------------------------------------------------+
@@ -80,9 +81,9 @@ url_params: `person`, `queue`, `face`
 | zone id | label | role | states |
 | --- | --- | --- | --- |
 | `z-person-header` | Person header | content | default, loading |
-| `z-person-identities` | Linked faces | ai_review | default, empty, loading |
+| `z-person-identities` | Linked faces | ai_review | default, loading, empty, error, degraded |
 | `z-person-evidence` | Cluster evidence thumbnails (cropped face crop; raw media fallback for uncroppable bbox; labelled visible no-image state) | ai_review | default, loading, empty, error, degraded |
-| `z-person-actions` | Save / assign / open queue | form | default, error |
+| `z-person-actions` | Save / assign / open queue | form | default, loading, empty, error, degraded |
 
 ```
 +------------------------------------------------------------+
@@ -115,7 +116,7 @@ url_params: `cluster`
 | zone id | label | role | states |
 | --- | --- | --- | --- |
 | `z-cluster-samples` | Sample faces | forced_choice | default, loading, empty, error |
-| `z-cluster-actions` | Assign / dismiss drawer | form | default |
+| `z-cluster-actions` | Assign / dismiss drawer | form | default, loading, empty, error |
 
 ```
 +------------------------------------------------------------+
@@ -142,7 +143,7 @@ Purpose: Full-size face/media evidence dialog opened from workspace evidence thu
 | zone id | label | role | states |
 | --- | --- | --- | --- |
 | `z-lightbox-media` | Enlarged evidence media with accessible ordinal name | ai_review | default, error |
-| `z-lightbox-controls` | Close affordance | form | default |
+| `z-lightbox-controls` | Close affordance | form | default, error |
 
 ```
 +------------------------------------------------------------+
@@ -183,19 +184,6 @@ url_params: `tab`, `panel`, `media`
 ```
 
 ## Flows
-### Filter unassigned → open person → save assignment (`flow-assign-unassigned`)
-
-```mermaid
-flowchart TD
-  %% flow: Filter unassigned → open person → save assignment job=job-assign-faces
-  n_roster_shell["Roster (People) (screen)"]
-  n_roster_person_workspace["Person workspace (screen)"]
-  n_roster_shell -->|enter roster| n_roster_shell
-  n_roster_shell -->|personFilter=unassigned| n_roster_shell
-  n_roster_shell -->|open person| n_roster_person_workspace
-  n_roster_person_workspace -->|save / return| n_roster_shell
-```
-
 ### Open face-group drawer → assign → person workspace (`flow-cluster-to-person`)
 
 ```mermaid

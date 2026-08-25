@@ -5,6 +5,8 @@
 
 ## Goals
 
+- Six ACX submenus are MECE and frequency-ordered (NAV-05/NAV-06): Overview orients; Review Queue is the one home to name a person from a photo (highest-frequency demo task); People manages named people only; Description Runs is the one home to see what the describer did; Data Retention is keep/delete/export policy (not description history); Settings configures the service (rare, last). WordPress parent slug stays Overview.
+- One primary action per screen (NAV-01), reachable from zero state (rg-003); other CTAs are secondary.
 - Operator clears media queue via Scan and resolves identity conflicts without losing place
 - Decompose Workbench UI tasks from screens/zones/states/flows instead of inventing IA mid-plan
 
@@ -72,10 +74,10 @@ url_params: `tab`, `status`, `media`, `s`, `p`, `perPage`, `rq`, `panel`, `clust
 
 | zone id | label | role | states |
 | --- | --- | --- | --- |
-| `z-review-queue` | Review queue header / count with kind+band filter chips, card-at-a-time (rq= URL is the single owner of chip state; empty covers both a filter-empty queue and a fully drained one) | queue | default, loading, empty, error |
-| `z-review-panel` | Face-group review panel (panel=review&cluster=) | ai_review | default, loading, error, empty |
-| `z-filters` | Status / search filters | form | default, edge_input |
-| `z-media-queue` | Media selection table | queue | default, loading, empty, error |
+| `z-review-queue` | Review queue header / count with kind+band filter chips, card-at-a-time (rq= URL is the single owner of chip state; empty covers both a filter-empty queue and a fully drained one) | queue | default, loading, empty, error, first_time, edge_input |
+| `z-review-panel` | Face-group review panel (panel=review&cluster=) | ai_review | default, loading, empty, error, first_time, edge_input |
+| `z-filters` | Status / search filters | form | default, loading, error |
+| `z-media-queue` | Media selection table | queue | default, loading, empty, error, first_time, edge_input |
 | `z-job-cta` | Scan / analyze CTAs + job progress | job | default, loading, error |
 | `z-identity-preview` | Identity / findings preview (AI-assisted; offline = recognition service unreachable; degraded = repair / reduced-capability mode; empty = zero evidence rows) | ai_review | default, empty, loading, error, degraded, offline |
 | `z-review-suggestions-header` | Review Suggestions queue header / count (default also covers the filter-narrowed count; degraded = repair / reduced-capability mode) | status | default, loading, empty, error, degraded |
@@ -90,13 +92,13 @@ url_params: `tab`, `status`, `media`, `s`, `p`, `perPage`, `rq`, `panel`, `clust
 +------------------------------------------------------------+
 | ZONES                                                      |
 |   - Review queue header / count with kind+band filter ch…  |
-|     (queue) states=[default,loading,empty,error]           |
+|     (queue) states=[default,loading,empty,error,first_time,edge_input] |
 |   - Face-group review panel (panel=review&cluster=)        |
-|     (ai_review) states=[default,loading,error,empty]       |
+|     (ai_review) states=[default,loading,empty,error,first_time,edge_input] |
 |   - Status / search filters (form)                         |
-|     states=[default,edge_input]                            |
+|     states=[default,loading,empty,error,first_time,edge_input] |
 |   - Media selection table (queue)                          |
-|     states=[default,loading,empty,error]                   |
+|     states=[default,loading,empty,error,first_time,edge_input] |
 |   - Scan / analyze CTAs + job progress (job)               |
 |     states=[default,loading,error]                         |
 |   - Identity / findings preview (AI-assisted; offline = r… |
@@ -156,9 +158,9 @@ url_params: `panel`
 
 | zone id | label | role | states |
 | --- | --- | --- | --- |
-| `z-conflict-list` | Conflict list | queue | default, loading, empty |
-| `z-conflict-detail` | Conflict detail / candidates | forced_choice | default, loading, empty |
-| `z-conflict-actions` | Resolve / defer actions | form | default |
+| `z-conflict-list` | Conflict list | queue | default, loading, empty, error |
+| `z-conflict-detail` | Conflict detail / candidates | forced_choice | default, loading, empty, error |
+| `z-conflict-actions` | Resolve / defer actions | form | default, loading, empty, error |
 
 ```
 +------------------------------------------------------------+
@@ -185,8 +187,8 @@ url_params: `panel`
 
 | zone id | label | role | states |
 | --- | --- | --- | --- |
-| `z-dl-list` | Dead-letter items | queue | default, loading, empty |
-| `z-dl-actions` | Retry / discard | form | default |
+| `z-dl-list` | Dead-letter items | queue | default, loading, empty, error |
+| `z-dl-actions` | Retry / discard | form | default, loading, empty, error |
 
 ```
 +------------------------------------------------------------+
@@ -207,7 +209,7 @@ url_params: `panel`
 
 ### Roster (person workspace) (`exit-roster`)
 
-Purpose: Assign unassigned faces / manage identities after scan or conflict
+Purpose: Manage named people after dashboard identity guidance. Unnamed faces are named in Review Queue, not here (NAV-05).
 
 url_params: `personFilter`, `person`
 
@@ -218,7 +220,8 @@ url_params: `personFilter`, `person`
 ```
 +------------------------------------------------------------+
 | Roster (person workspace)  [exit]  #/roster                |
-| Assign unassigned faces / manage identities after scan or… |
+| Manage named people after dashboard identity guidance.     |
+| Unnamed faces are named in Review Queue, not here (NAV-05).|
 +------------------------------------------------------------+
 | ZONES                                                      |
 |   - Entries / clusters workspace (content)                 |
@@ -233,7 +236,7 @@ Purpose: Configure recognition target and connection health
 
 | zone id | label | role | states |
 | --- | --- | --- | --- |
-| `z-settings-form` | Settings form + test connection | form | default, error |
+| `z-settings-form` | Settings form + test connection | form | default, loading, error |
 
 ```
 +------------------------------------------------------------+
@@ -243,7 +246,7 @@ Purpose: Configure recognition target and connection health
 | ZONES                                                      |
 |   - Settings form + test connection (form)                 |
 +------------------------------------------------------------+
-| states: default | loading | error                          |
+| states: default | error                                    |
 +------------------------------------------------------------+
 ```
 

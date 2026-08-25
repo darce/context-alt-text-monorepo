@@ -10,6 +10,8 @@ import { __ } from '@wordpress/i18n';
 
 import { DATA_SOURCE, type DataSource } from '../../../api/recognition/types';
 import { type DetectedIdentity } from '../../../api/recognition';
+import { EmptyState, EmptyStateVariant } from '../../../components/ui/EmptyState';
+import { toWorkbench } from '../../../navigation/appLinks';
 import { EmptyStateWarning } from './EmptyStateWarning';
 import { groupIdentitiesByClusters } from './utils';
 import { IdentityClusterItem } from './IdentityClusterItem';
@@ -95,7 +97,16 @@ export const IdentityClusterList = ({
       );
     }
 
-    return <p className="acx-identity-clusters__empty">{__('No identities detected yet.', 'alt-context')}</p>;
+    return (
+      <EmptyState
+        variant={EmptyStateVariant.EMPTY}
+        heading={__('No identities detected yet.', 'alt-context')}
+        body={__('Scan media to find faces in this item.', 'alt-context')}
+        action={{ label: __('Go to Scan', 'alt-context'), href: toWorkbench({ tab: 'scan' }) }}
+        headingLevel={3}
+        announceState={false}
+      />
+    );
   }
 
   return (

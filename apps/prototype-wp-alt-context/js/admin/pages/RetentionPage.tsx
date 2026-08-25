@@ -6,7 +6,8 @@ import { RadioGroup, RadioGroupItem } from '../../components/ui/radio-group';
 import type { RetentionMode } from '../api/recognition';
 import { useRetentionPageState, RETENTION_OPTIONS } from './retention/useRetentionPageState';
 import { ExportDialog, PurgeDialog, ImportDialog } from './retention/RetentionDialogs';
-import { RecentAuditEvents, FullAuditLog, formatTimestamp } from './retention/AuditTimeline';
+import { formatTimestamp } from './retention/AuditTimeline';
+import { toDescriptionHistory } from '../navigation/appLinks';
 
 const EXPORT_JOB_STATUS = {
   completed: 'completed',
@@ -19,13 +20,11 @@ export const RetentionPage = (): React.JSX.Element => {
     dispatch,
     importFileRef,
     retentionQuery,
-    auditQuery,
     exportJobStatus,
     status,
     policy,
     selectedMode,
     isPolicyDirty,
-    auditEvents,
     modeDescription,
     pending,
     actions,
@@ -239,8 +238,18 @@ export const RetentionPage = (): React.JSX.Element => {
           </button>
         </section>
 
-        <RecentAuditEvents events={auditEvents} onRefresh={() => void auditQuery.refetch()} />
-        <FullAuditLog auditQuery={auditQuery} auditPage={state.auditPage} dispatch={dispatch} />
+        <section className="acx-dashboard__panel acx-retention__panel">
+          <h2>{__('Description history', 'alt-context')}</h2>
+          <p>
+            {__(
+              'Description Runs is the home for describer history. Data Retention keeps policy, export, and purge only.',
+              'alt-context',
+            )}
+          </p>
+          <a className="acx-button acx-button--secondary" href={toDescriptionHistory()}>
+            {__('See description run history', 'alt-context')}
+          </a>
+        </section>
       </div>
 
       <ExportDialog

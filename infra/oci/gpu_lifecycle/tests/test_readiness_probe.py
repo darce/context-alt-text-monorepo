@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from infra.oci.gpu_lifecycle.controller import GpuInstance, GpuLifecycleController
 from infra.oci.gpu_lifecycle.probe import (
+    HttpReadinessProbe,
     ProbeSample,
     ProbeStatus,
     WarmReadinessWait,
@@ -143,3 +144,76 @@ def test_run_start_cycle_probe_timeout_appends_errors() -> None:
     assert result.wait_result is not None
     assert result.wait_result.exit_code == 1
     assert any("timeout" in err for err in result.errors)
+
+
+def test_http_probe_templates_instance_id_into_url() -> None:
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+    from threading import Thread
+
+    seen: list[str] = []
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            seen.append(self.path)
+            self.send_response(200)
+            self.end_headers()
+
+        def log_message(self, format: str, *args: object) -> None:
+            return
+
+    server = HTTPServer(("127.0.0.1", 0), Handler)
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        port = server.server_address[1]
+        probe = HttpReadinessProbe(
+            url=f"http://127.0.0.1:{port}/ready/{{instance_id}}"
+        )
+        a = probe.probe("ocid1.a")
+        b = probe.probe("ocid1.b")
+        assert a.status == ProbeStatus.READY
+        assert b.status == ProbeStatus.READY
+        assert "/ready/ocid1.a" in seen
+        assert "/ready/ocid1.b" in seen
+    finally:
+        server.shutdown()
+
+
+def test_http_probe_missing_status_is_not_ready(monkeypatch) -> None:
+    import urllib.request
+
+    class NoStatus:
+        def __enter__(self) -> "NoStatus":
+            return self
+
+        def __exit__(self, *args: object) -> bool:
+            return False
+
+    monkeypatch.setattr(
+        urllib.request, "urlopen", lambda *args, **kwargs: NoStatus()
+    )
+    sample = HttpReadinessProbe(url="http://example.invalid/health").probe(
+        "ocid1.gpu"
+    )
+    assert sample.status == ProbeStatus.NOT_READY
+    assert sample.instance_id == "ocid1.gpu"
+
+
+def test_shared_http_probe_refuses_multi_id_wait() -> None:
+    controller = GpuLifecycleController(idle_seconds=60)
+    instances = [
+        GpuInstance(instance_id="ocid1.a", state="STOPPED", idle_for_seconds=0),
+        GpuInstance(instance_id="ocid1.b", state="STOPPED", idle_for_seconds=0),
+    ]
+    result = run_start_cycle(
+        controller=controller,
+        instances=instances,
+        load_source=StaticJobLoadSource(queue_depth=1, in_flight=0),
+        actuator=RecordingStartActuator(),
+        probe=HttpReadinessProbe(url="http://127.0.0.1:9/health"),
+        readiness_wait=WarmReadinessWait(
+            max_cycles=1, stall_cycles=1, sleep_seconds=0.0
+        ),
+    )
+    assert result.wait_result is None
+    assert any("multi-id" in err for err in result.errors)

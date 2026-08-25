@@ -43,6 +43,10 @@ Auth: `~/.oci/config` or `--oci-auth` / `OCI_CLI_AUTH`.
 
 After START, `--ready-url` polls an HTTP health endpoint with a bounded wait
 (`--ready-max-cycles`, `--ready-stall-cycles`, `--ready-sleep-seconds`).
+Include `{instance_id}` in the URL for per-instance endpoints. A URL without
+that placeholder is a single shared endpoint: multi-id waits are refused so a
+healthy sibling cannot mask a dead instance. Missing HTTP status is
+`NOT_READY` (never invented as 200).
 
 - Timeout and stall fail loudly (non-zero process exit, errors on the result).
 - Stall counts probe ERROR / exception only. `NOT_READY` is pending boot and

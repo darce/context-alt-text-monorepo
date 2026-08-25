@@ -9,6 +9,7 @@ since: GPU-01
 
 Out-of-band OCI burst-GPU start/stop. Not the describe HTTP API. Decision
 tuples are `(action, instance_id)` with `action` ∈ `{START, STOP}`.
+`FALLBACK` is a separate decision object, not an OCI power action.
 
 ## CLI
 
@@ -55,3 +56,11 @@ while `has_work` is true (`queue_depth > 0` or `in_flight > 0` or
   trustworthy idle confirmation).
 
 Fence expiry falls back closed: no STOP.
+
+## CPU fallback
+
+When a started instance does not become ready within the bounded wait, the
+controller emits `{action: FALLBACK, profile: florence_small, instance_id,
+reason}` with `reason` ∈ `{readiness_timeout, readiness_stall}`. The decision
+is logged only; no consumer is wired. Profile name is the given CPU floor
+(`florence_small`), not imported from `scene.config.profiles`.

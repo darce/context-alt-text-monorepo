@@ -68,6 +68,12 @@ class DescriptionCommand extends \WP_CLI_Command {
 	 * [--format=<format>]
 	 * : Output format: `table` or `json`. Defaults to `table`.
 	 *
+	 * [--write]
+	 * : Persist generated descriptions. Without this flag, generate is a DRY RUN and persists nothing. Defaults to off.
+	 *
+	 * [--force]
+	 * : With --write, overwrite existing non-empty alt text. Passed to the existing-alt write gate (proceeds when set); a successful overwrite of non-empty alt is reported as `forced_overwrite`. Defaults to off.
+	 *
 	 * @param string[] $args
 	 * @param array<string,mixed> $assoc_args
 	 */

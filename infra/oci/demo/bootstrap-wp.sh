@@ -94,13 +94,14 @@ converge_wp_user_password() {
 WP_CI_ROLE_NAME="acx_ci"
 
 ensure_wp_ci_role() {
-  if wpcli wp role exists "$WP_CI_ROLE_NAME" >/dev/null 2>&1; then
-    return 0
+  if ! wpcli wp role exists "$WP_CI_ROLE_NAME" >/dev/null 2>&1; then
+    if ! wpcli wp role create "$WP_CI_ROLE_NAME" "ACX CI" --clone=subscriber; then
+      echo "ERROR: failed to create least-privilege CI role ${WP_CI_ROLE_NAME}" >&2
+      return 2
+    fi
   fi
-  if ! wpcli wp role create "$WP_CI_ROLE_NAME" "ACX CI" --clone=subscriber; then
-    echo "ERROR: failed to create least-privilege CI role ${WP_CI_ROLE_NAME}" >&2
-    return 2
-  fi
+  # Idempotent re-grant: a failed first cap-add must not leave a sticky
+  # under-privileged role on later bootstraps (wp cap add is additive).
   if ! wpcli wp cap add "$WP_CI_ROLE_NAME" manage_options; then
     echo "ERROR: failed to grant manage_options to ${WP_CI_ROLE_NAME}" >&2
     return 2

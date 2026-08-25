@@ -137,6 +137,7 @@ UPDATE_CALLS=0
 SETROLE_CALLS=0
 ROLE_CREATE_CALLS=0
 CAP_ADD_CALLS=0
+CAP_ADD_FAIL=0
 CAPS_ADDED=""
 LAST_CREATE_ROLE=""
 LAST_CREATE_USER=""
@@ -163,6 +164,7 @@ wpcli() {
             for cap in "${@:4}"; do
                 CAPS_ADDED="${CAPS_ADDED} ${cap}"
             done
+            if [ "$CAP_ADD_FAIL" = "1" ]; then return 1; fi
             return 0
             ;;
         "user get")
@@ -250,6 +252,30 @@ case " ${CAPS_ADDED} " in
     *) upload_files_granted=0 ;;
 esac
 assert_eq "first CI converge grants upload_files" "1" "$upload_files_granted"
+
+# Role already exists: still re-grant caps (failed first cap-add must not stick)
+CAP_ADD_CALLS=0
+CAPS_ADDED=""
+ROLE_EXISTS=1
+rc=0
+ensure_wp_ci_role >/dev/null || rc=$?
+assert_eq "existing-role retry exits 0" "0" "$rc"
+assert_eq "existing-role retry cap-adds twice" "2" "$CAP_ADD_CALLS"
+case " ${CAPS_ADDED} " in
+    *" manage_options "*) retry_manage=1 ;;
+    *) retry_manage=0 ;;
+esac
+case " ${CAPS_ADDED} " in
+    *" upload_files "*) retry_upload=1 ;;
+    *) retry_upload=0 ;;
+esac
+assert_eq "existing-role retry re-grants manage_options" "1" "$retry_manage"
+assert_eq "existing-role retry re-grants upload_files" "1" "$retry_upload"
+CAP_ADD_FAIL=1
+rc=0
+ensure_wp_ci_role >/dev/null 2>/dev/null || rc=$?
+assert_eq "cap-add failure on existing role exits 2" "2" "$rc"
+CAP_ADD_FAIL=0
 
 # Unchanged CI secret is a no-op (user exists)
 UPDATE_CALLS=0

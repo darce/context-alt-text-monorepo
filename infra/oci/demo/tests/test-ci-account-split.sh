@@ -117,6 +117,21 @@ assert_file_grep "Makefile.d passes --account ci" \
     "$makefile_d" '--account ci'
 assert_file_grep "Makefile.d passes --admin-user" \
     "$makefile_d" '--admin-user'
+repo_root=$(cd "${script_dir}/../../../.." && pwd)
+makefile_dry=$(make -C "$repo_root" -n issue-demo-ci-account LABEL=x ADMIN_USER=y)
+makefile_dry_code=$(printf '%s\n' "$makefile_dry" | sed 's/[[:space:]]*#.*//')
+if printf '%s\n' "$makefile_dry_code" | grep -q -- '--account ci'; then
+    echo "ok   make -n issue-demo-ci-account expands --account ci (non-comment)"
+else
+    echo "FAIL make -n issue-demo-ci-account expands --account ci (non-comment): not in expanded recipe"
+    failures=$((failures + 1))
+fi
+if printf '%s\n' "$makefile_dry_code" | grep -q -- '--admin-user'; then
+    echo "ok   make -n issue-demo-ci-account expands --admin-user (non-comment)"
+else
+    echo "FAIL make -n issue-demo-ci-account expands --admin-user (non-comment): not in expanded recipe"
+    failures=$((failures + 1))
+fi
 
 # --- behavioral: extracted CI converge ---
 funcs=$(sed -n '/^# AUTH_CREDENTIAL_FUNCS_BEGIN$/,/^# AUTH_CREDENTIAL_FUNCS_END$/p' "$bootstrap_file")

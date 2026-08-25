@@ -103,7 +103,10 @@ PROFILE_SPECS: dict[DescriptionProfile, ProfileSpec] = {
         adapter_kind=DescriptionAdapterKind.GPU,
         available=True,
         model_id="Qwen3-VL-30B-A3B-Instruct",
-        model_revision=None,
+        # Served artifact is the Q4_K_M GGUF, not the unquantized transformers
+        # snapshot. Pin the hub revision of unsloth/Qwen3-VL-30B-A3B-Instruct-GGUF
+        # (SEC-10). Resolved live via huggingface_hub.HfApi().model_info.
+        model_revision="0af19e7479857aa7f3246466a4ad16c7e7299639",
         model_version="Q4_K_M",
     ),
     # VLM-4 Slice 2b: same endpoint/model as GPU_QWEN30B. Only the ASYNC
@@ -114,7 +117,7 @@ PROFILE_SPECS: dict[DescriptionProfile, ProfileSpec] = {
         adapter_kind=DescriptionAdapterKind.GPU,
         available=True,
         model_id="Qwen3-VL-30B-A3B-Instruct",
-        model_revision=None,
+        model_revision="0af19e7479857aa7f3246466a4ad16c7e7299639",
         model_version="Q4_K_M",
     ),
     DescriptionProfile.HOSTED_GPT4O: ProfileSpec(

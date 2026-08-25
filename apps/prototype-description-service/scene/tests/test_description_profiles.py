@@ -93,6 +93,7 @@ def test_gpu_qwen30b_profile_is_available_endpoint_profile():
     assert spec.adapter_kind is DescriptionAdapterKind.GPU
     assert spec.model_id == "Qwen3-VL-30B-A3B-Instruct"
     assert spec.model_version == "Q4_K_M"
+    assert spec.model_revision == "0af19e7479857aa7f3246466a4ad16c7e7299639"
 
 
 def test_gpu_qwen30b_ensemble_spec_mirrors_gpu_qwen30b():
@@ -102,6 +103,29 @@ def test_gpu_qwen30b_ensemble_spec_mirrors_gpu_qwen30b():
     assert spec.adapter_kind is DescriptionAdapterKind.GPU
     assert spec.model_id == base.model_id
     assert spec.model_version == base.model_version
+    assert spec.model_revision == base.model_revision
+
+
+def test_available_gpu_profiles_pin_a_non_none_hub_revision():
+    """PROV-01a / SEC-10: an available GPU profile without a 40-char hub pin is unauditable."""
+    gpu_available = [
+        spec
+        for spec in PROFILE_SPECS.values()
+        if spec.available and spec.adapter_kind is DescriptionAdapterKind.GPU
+    ]
+    assert gpu_available, "expected at least one available GPU profile"
+    for spec in gpu_available:
+        revision = spec.model_revision
+        assert revision is not None, (
+            f"{spec.profile.value} is available=True GPU but model_revision is None "
+            "(unpinned hub pull; SEC-10)"
+        )
+        assert len(revision) == 40, (
+            f"{spec.profile.value} model_revision must be a 40-char hub SHA, got {revision!r}"
+        )
+        assert all(ch in "0123456789abcdef" for ch in revision), (
+            f"{spec.profile.value} model_revision is not lowercase hex: {revision!r}"
+        )
 
 
 # ------------------------------------------------------------- settings wiring

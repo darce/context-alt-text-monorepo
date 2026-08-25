@@ -194,7 +194,8 @@ RAG store (SEC-06).
 ### WordPress CI account
 
 `bootstrap-wp.sh` creates/converges `WP_CI_USER` on every run. It must differ
-from `WP_ADMIN_USER`. GitHub Actions maps `ACX_E2E_WP_CI_*` onto Playwright's
+from `WP_ADMIN_USER` (case-insensitive) and `WP_CI_EMAIL` must differ from
+`WP_ADMIN_EMAIL` (case-insensitive). Existing CI users also converge email. GitHub Actions maps `ACX_E2E_WP_CI_*` onto Playwright's
 `ACX_E2E_WP_ADMIN_*` env names (harness unchanged). `ACX_E2E_WP_CI_USER` **must
 equal** the VM `WP_CI_USER` — the denylist (`acx-demo-admin` / `admin`,
 case-insensitive) is a safety net, not the identity contract. Empty

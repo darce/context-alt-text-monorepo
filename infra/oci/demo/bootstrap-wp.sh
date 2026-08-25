@@ -120,12 +120,21 @@ converge_wp_ci_account() {
   local ci_password="$2"
   local ci_email="$3"
   local admin_user="$4"
+  local admin_email="$5"
   if [[ -z "$ci_user" || -z "$ci_password" || -z "$ci_email" ]]; then
     echo "ERROR: WP_CI_USER, WP_CI_PASSWORD, and WP_CI_EMAIL must be set (CI account is distinct from WP admin)" >&2
     return 2
   fi
-  if [[ "$ci_user" == "$admin_user" ]]; then
+  if [[ -z "$admin_email" ]]; then
+    echo "ERROR: WP_ADMIN_EMAIL must be set so CI email cannot collide with demo admin email" >&2
+    return 2
+  fi
+  if [[ "${ci_user,,}" == "${admin_user,,}" ]]; then
     echo "ERROR: WP_CI_USER must differ from WP_ADMIN_USER (CI must not share the demo admin login)" >&2
+    return 2
+  fi
+  if [[ "${ci_email,,}" == "${admin_email,,}" ]]; then
+    echo "ERROR: WP_CI_EMAIL must differ from WP_ADMIN_EMAIL (CI must not share the demo admin mailbox)" >&2
     return 2
   fi
   ensure_wp_ci_role || return 2
@@ -135,10 +144,22 @@ converge_wp_ci_account() {
       echo "ERROR: failed to pin CI user '${ci_user}' to role ${WP_CI_ROLE_NAME}" >&2
       return 2
     fi
+    local current_email
+    current_email=$(wpcli wp user get "$ci_user" --field=user_email 2>/dev/null | tr -d '\r')
+    if [[ "${current_email,,}" != "${ci_email,,}" ]]; then
+      if ! wpcli wp user update "$ci_user" --user_email="$ci_email"; then
+        echo "ERROR: failed to converge CI email for user '${ci_user}'" >&2
+        return 2
+      fi
+    fi
     return 0
   fi
   if ! wpcli wp user create "$ci_user" "$ci_email" --user_pass="$ci_password" --role="$WP_CI_ROLE_NAME"; then
     echo "ERROR: failed to create CI WordPress user '${ci_user}'" >&2
+    return 2
+  fi
+  if ! converge_wp_user_password "$ci_user" "$ci_password"; then
+    echo "ERROR: CI WordPress credential for user '${ci_user}' did not converge after create" >&2
     return 2
   fi
   echo "==> CI WordPress user created user=${ci_user} role=${WP_CI_ROLE_NAME}"
@@ -198,7 +219,7 @@ fi
 if ! converge_wp_user_password "$WP_ADMIN_USER" "$WP_ADMIN_PASSWORD"; then
   exit 2
 fi
-if ! converge_wp_ci_account "$WP_CI_USER" "$WP_CI_PASSWORD" "$WP_CI_EMAIL" "$WP_ADMIN_USER"; then
+if ! converge_wp_ci_account "$WP_CI_USER" "$WP_CI_PASSWORD" "$WP_CI_EMAIL" "$WP_ADMIN_USER" "$WP_ADMIN_EMAIL"; then
   exit 2
 fi
 

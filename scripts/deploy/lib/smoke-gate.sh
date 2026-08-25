@@ -134,18 +134,43 @@ classify_alt_population() {
     fi
 }
 
+# _utf8_character_count <text>
+# UTF-8 character count, independent of ambient locale and of bash vs dash.
+# WHY characters, not bytes: classify_alt_text_usable documents a 15-character
+# minimum. ${#text} counts characters under a UTF-8 locale and bytes under
+# C/POSIX (and always bytes in dash), so 'abcde' + five U+00E9 is 10 characters
+# / 15 bytes and silently PASSes on the demo host when LANG is C. Byte length
+# widens the usable-coverage numerator for exactly the NBSP-padded denylist
+# evasions Gate B already fights. Count UTF-8 scalar values by counting
+# non-continuation bytes (not 10xxxxxx) under LC_ALL=C so neither the remote
+# heredoc's unpinned LANG nor the calling shell can change the verdict.
+_utf8_character_count() {
+    printf '%s' "$1" | LC_ALL=C awk '
+        BEGIN { n = 0 }
+        {
+            for (i = 1; i <= length($0); i++) {
+                c = substr($0, i, 1)
+                if (c < "\200" || c >= "\300") n++
+            }
+        }
+        END { print n + 0 }
+    '
+}
+
 # classify_alt_text_usable <text> -> PASS|FAIL
 # FAIL on empty-after-trim, fewer than 15 characters, or no alphabetic
 # character. Placeholder alt (".", a single space, digit-only padding) is not
-# coverage.
+# coverage. Length is UTF-8 characters via _utf8_character_count, not ${#text}.
 classify_alt_text_usable() {
     local text="$1"
+    local n
     text=$(printf '%s' "$text" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
     if [ -z "$text" ]; then
         echo FAIL
         return 1
     fi
-    if [ "${#text}" -lt 15 ]; then
+    n=$(_utf8_character_count "$text")
+    if [ "$n" -lt 15 ]; then
         echo FAIL
         return 1
     fi

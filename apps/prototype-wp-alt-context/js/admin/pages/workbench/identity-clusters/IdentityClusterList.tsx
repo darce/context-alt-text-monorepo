@@ -104,6 +104,7 @@ export const IdentityClusterList = ({
         body={__('Scan media to find faces in this item.', 'alt-context')}
         action={{ label: __('Go to Scan', 'alt-context'), href: toWorkbench({ tab: 'scan' }) }}
         headingLevel={3}
+        announceState={false}
       />
     );
   }

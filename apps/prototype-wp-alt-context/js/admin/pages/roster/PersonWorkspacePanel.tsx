@@ -281,18 +281,20 @@ export const PersonWorkspacePanel = ({ entry, onOpenQueue }: PersonWorkspacePane
             {isPinning ? <p>{__('Saving representative…', 'alt-context')}</p> : null}
             {!selectedFace ? (
               <p>{__('Select a face to choose a representative.', 'alt-context')}</p>
-            ) : (
-              <button
-                type="button"
-                className="acx-button acx-button--primary"
-                disabled={!canPin || isPinning}
-                onClick={() => {
-                  pin(selectedFace.clusterId, selectedFace.identityId, true);
-                }}
-              >
-                {__('Set as representative', 'alt-context')}
-              </button>
-            )}
+            ) : null}
+            <button
+              type="button"
+              className="acx-button acx-button--primary"
+              disabled={!selectedFace || !canPin || isPinning}
+              onClick={() => {
+                if (!selectedFace) {
+                  return;
+                }
+                pin(selectedFace.clusterId, selectedFace.identityId, true);
+              }}
+            >
+              {__('Set as representative', 'alt-context')}
+            </button>
             {pinError ? (
               <UserFacingErrorNotice error={pinError} fallback={PIN_REPRESENTATIVE_ERROR_COPY} />
             ) : null}

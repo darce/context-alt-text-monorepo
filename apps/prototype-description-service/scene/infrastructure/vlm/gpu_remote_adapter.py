@@ -132,6 +132,7 @@ class GpuRemoteDescriptionAdapter:
         model_version: str,
         prompt_or_task_version: str = "3",
         model_revision: str | None = None,
+        hub_repo: str | None = None,
         connect_timeout_s: float = _DEFAULT_CONNECT_TIMEOUT_S,
         read_timeout_s: float = _DEFAULT_READ_TIMEOUT_S,
         api_key: str | None = None,
@@ -139,11 +140,16 @@ class GpuRemoteDescriptionAdapter:
         transport: httpx.BaseTransport | None = None,
     ) -> None:
         self.endpoint_url = endpoint_url.rstrip("/")
-        # llama.cpp served id stays unadorned; wire provenance names the hub pin
-        # actually configured (rg-015: do not stamp a SHA the adapter was not given).
+        # llama.cpp served id stays unadorned; wire provenance is hub-repo@pin
+        # so the citation is walkable (rg-015: do not stamp a SHA we were not given).
         self._endpoint_model_id = model_id
         self.model_revision = model_revision
-        self.model_id = f"{model_id}@{model_revision}" if model_revision else model_id
+        self.hub_repo = hub_repo
+        if model_revision:
+            identity = hub_repo or model_id
+            self.model_id = f"{identity}@{model_revision}"
+        else:
+            self.model_id = model_id
         self.model_version = model_version
         self.prompt_or_task_version = prompt_or_task_version
         self._connect_timeout_s = connect_timeout_s

@@ -4,6 +4,11 @@
 # VM inline by sync-demo.sh — keep it dependency-free (no curl, no arrays) so
 # the same functions run under macOS bash 3.2 and the VM's bash.
 #
+# Fixture-caption denylist arms live in scripts/deploy/lib/fixture-denylist.sh.
+# sync-demo.sh concatenates that file ahead of this one in the remote heredoc.
+# Tests source fixture-denylist.sh first so classify_alt_provenance can call
+# normalize_fixture_sample / fixture_sample_is_denied.
+#
 # Gate semantics ("the deploy owns the edge and the demo stack, not backend
 # health"):
 #   api.* /health   000 after retries            -> FAIL (edge/TLS broken)
@@ -129,58 +134,23 @@ classify_alt_text_usable() {
 }
 
 # classify_alt_provenance <sample_text> -> PASS|FAIL
-# FAIL when the sample is empty (nothing measured) or contains any canned
-# `seeded` adapter fixture caption. The sample is normalized before matching
-# (lowercase, whitespace runs collapsed, trailing .!? stripped) and denylist
-# arms are lowercased without trailing punctuation so dropping a period or
-# lowercasing the first letter cannot evade the gate. This is not a complete
-# denylist; adapter-identity meta is the durable fix and is deferred.
-# Captions are hardcoded because this file is shipped standalone to the VM
-# and cannot import Python; test-smoke-gate.sh extracts _FIXTURE_POOL at
-# test time to catch drift.
+# FAIL when the sample is empty after normalize (nothing measured) or matches
+# any canned `seeded` adapter fixture caption. Denylist arms live in
+# fixture-denylist.sh; sync-demo.sh concatenates that file ahead of this one
+# so the helpers exist on the VM. Empty-after-normalize FAILs closed — the
+# one intentional difference from describe-gate, which returns UNKNOWN.
+# This is not a complete denylist; adapter-identity meta is the durable fix
+# and is deferred. test-smoke-gate.sh extracts _FIXTURE_POOL at test time
+# to catch drift against the shared matcher.
 classify_alt_provenance() {
-    local sample="$1" last
-    if [ -z "$sample" ]; then
+    local sample="$1"
+    if [ -z "$(normalize_fixture_sample "$sample")" ]; then
         echo FAIL
         return
     fi
-    sample=$(printf '%s' "$sample" | tr '[:upper:]' '[:lower:]' | tr -s '[:space:]' ' ')
-    sample=$(printf '%s' "$sample" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
-    while [ -n "$sample" ]; do
-        last="${sample#"${sample%?}"}"
-        case "$last" in
-            [.!?]) sample="${sample%?}" ;;
-            *) break ;;
-        esac
-    done
-    sample=$(printf '%s' "$sample" | sed 's/[[:space:]]*$//')
-    if [ -z "$sample" ]; then
+    if fixture_sample_is_denied "$sample"; then
         echo FAIL
         return
     fi
-    case "$sample" in
-        *"a person standing outdoors near greenery"*) echo FAIL; return ;;
-    esac
-    case "$sample" in
-        *"a plate of food on a wooden table"*) echo FAIL; return ;;
-    esac
-    case "$sample" in
-        *"a scenic landscape with mountains under a clear sky"*) echo FAIL; return ;;
-    esac
-    case "$sample" in
-        *"a close-up of a small object on a neutral background"*) echo FAIL; return ;;
-    esac
-    case "$sample" in
-        *"a printed document with several lines of text"*) echo FAIL; return ;;
-    esac
-    case "$sample" in
-        *"two people seated indoors in conversation"*) echo FAIL; return ;;
-    esac
-    case "$sample" in
-        *"a building exterior seen from the street"*) echo FAIL; return ;;
-    esac
-    case "$sample" in
-        *"a pet animal resting on a soft surface"*) echo FAIL; return ;;
-    esac
     echo PASS
 }

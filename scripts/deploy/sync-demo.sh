@@ -39,9 +39,12 @@ fi
 
 # Resolved early and preflighted with the other sources: discovering it missing
 # at the final smoke step would leave the Caddy promote applied but unsmoked.
+# fixture-denylist.sh is concatenated ahead of smoke-gate.sh in the remote
+# heredoc so classify_alt_provenance can call the shared matcher on the VM.
 SMOKE_GATE_LIB="$(dirname "${BASH_SOURCE[0]}")/lib/smoke-gate.sh"
+FIXTURE_DENYLIST_LIB="$(dirname "${BASH_SOURCE[0]}")/lib/fixture-denylist.sh"
 
-for src in "$DEMO_COMPOSE_SRC" "$CADDYFILE_SRC" "$CADDY_COMPOSE_SRC" "$SYSTEMD_SRC" "$ENV_EXAMPLE_SRC" "$BOOTSTRAP_SRC" "$DESCRIBE_GATE_SRC" "$SEED_IMPORT_SRC" "$SMOKE_GATE_LIB"; do
+for src in "$DEMO_COMPOSE_SRC" "$CADDYFILE_SRC" "$CADDY_COMPOSE_SRC" "$SYSTEMD_SRC" "$ENV_EXAMPLE_SRC" "$BOOTSTRAP_SRC" "$DESCRIBE_GATE_SRC" "$SEED_IMPORT_SRC" "$SMOKE_GATE_LIB" "$FIXTURE_DENYLIST_LIB"; do
   if [[ ! -f "$src" ]]; then
     echo "ERROR: source file not found: $src" >&2
     exit 2
@@ -190,6 +193,7 @@ $SSH "sudo cp /tmp/acx-demo.service /etc/systemd/system/acx-demo.service && sudo
 # DEMO_ALT_GATE_ENFORCE. The override covers empty alt, never canned captions.
 echo "==> Smoke four vhosts (api.* via /health, demo via / + media alt-text)"
 {
+  cat "$FIXTURE_DENYLIST_LIB"
   cat "$SMOKE_GATE_LIB"
   printf 'PRE_CODES="%s"\n' "$PRE_CODES"
   printf 'DEMO_ALT_MIN_COVERAGE_PCT="%s"\n' "${DEMO_ALT_MIN_COVERAGE_PCT:-95}"

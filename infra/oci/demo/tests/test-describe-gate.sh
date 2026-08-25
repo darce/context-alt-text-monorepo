@@ -167,15 +167,23 @@ assert_eq "alt provenance fixture FAIL" FAIL "$(classify_describe_provenance 'A 
 # because nothing was measured.
 smoke_gate_file="${script_dir}/../../../../scripts/deploy/lib/smoke-gate.sh"
 fixture_denylist_file="${script_dir}/../../../../scripts/deploy/lib/fixture-denylist.sh"
+if [ ! -f "$fixture_denylist_file" ]; then
+    echo "FAIL fixture-denylist.sh missing: ${fixture_denylist_file}"
+    exit 1
+fi
+# shellcheck source=../../../../scripts/deploy/lib/fixture-denylist.sh
+source "$fixture_denylist_file"
 # shellcheck source=../../../../scripts/deploy/lib/smoke-gate.sh
 source "$smoke_gate_file"
 
-smoke_gate_normalizes() {
-    # Behavioral probe: DEMOLIVE-6's matcher FAILs a lowercased fixture.
-    # This worktree's smoke-gate is still exact-match, so the live-smoke
-    # bind waits until trial-merge rather than rewriting their file.
-    [ "$(classify_alt_provenance 'a close-up of a small object on a neutral background')" = FAIL ]
-}
+# XLANE-02: this pin sits outside assert_corpus_row so restoring the old
+# deferral hatch cannot print ok and exit 0 on a case-sensitive smoke-gate.
+assert_eq "XLANE-02 live-smoke lowercased close-up is FAIL" \
+    FAIL "$(classify_alt_provenance 'a close-up of a small object on a neutral background')"
+hatch_pat="lacks DEMOLIVE-6"
+hatch_pat="${hatch_pat} normalizer"
+assert_eq "XLANE-02 live-smoke bind has no deferral hatch" \
+    "0" "$(grep -c "${hatch_pat}" "$0" || true)"
 
 # Specified smoke semantics (empty -> FAIL) using the shared matcher when
 # present, else the live smoke-gate function. describe-gate must match the
@@ -211,11 +219,7 @@ assert_corpus_row() {
     assert_eq "corpus smoke-sem ${label}" "$smoke_exp" "$smoke_sem"
 
     smoke_live=$(classify_alt_provenance "$sample")
-    if smoke_gate_normalizes || [ "$smoke_live" = "$smoke_exp" ]; then
-        assert_eq "corpus live-smoke ${label}" "$smoke_exp" "$smoke_live"
-    else
-        echo "ok   corpus live-smoke ${label} deferred (this worktree smoke-gate lacks DEMOLIVE-6 normalizer; live=${smoke_live} specified=${smoke_exp})"
-    fi
+    assert_eq "corpus live-smoke ${label}" "$smoke_exp" "$smoke_live"
 }
 
 assert_corpus_row "punctuated fixture" \

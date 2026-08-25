@@ -4578,13 +4578,291 @@ describe('ReviewQueue', () => {
       const reason = screen.getByText(
         'Review the stored faces for every selected suggestion before accepting.',
       );
-      expect(commit).toBeDisabled();
+      // BR-74 / DUX-W2R2-RV-02: stored-face gate keeps the control focusable
+      // (aria-disabled + describedby), never HTML-disabled.
+      expect(commit).not.toBeDisabled();
       expect(commit).toHaveAttribute('aria-disabled', 'true');
       expect(commit).toHaveAttribute('aria-describedby', reason.id);
+      commit.focus();
+      expect(commit).toHaveFocus();
+      expect(commit).toHaveTextContent('Accept 1 for Maria');
+      await user.click(commit);
+      expect(acceptSuggestion).not.toHaveBeenCalled();
 
       await reviewCurrentStoredFaces();
-      await waitFor(() => expect(commit).not.toBeDisabled());
+      await waitFor(() => {
+        expect(commit).not.toBeDisabled();
+        expect(commit).not.toHaveAttribute('aria-disabled', 'true');
+      });
       expect(acceptSuggestion).not.toHaveBeenCalled();
+    });
+
+    it('DUX-W2R2-RV-01: Retry after partial fail does not commit a later-selected gated card', async () => {
+      vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+        suggestions: [
+          {
+            id: 'sugg-u1',
+            identity_id: 'identity-u1',
+            suggested_cluster_id: 'cluster-u1',
+            representative_similarity: 0.95,
+            avg_member_similarity: 0.9,
+            cluster_label: 'Maria',
+            cluster_identity_count: 1,
+          },
+          {
+            id: 'sugg-u2',
+            identity_id: 'identity-u2',
+            suggested_cluster_id: 'cluster-u2',
+            representative_similarity: 0.9,
+            avg_member_similarity: 0.85,
+            cluster_label: 'Maria',
+            cluster_identity_count: 1,
+          },
+          {
+            id: 'sugg-g',
+            identity_id: 'identity-g',
+            suggested_cluster_id: 'cluster-g',
+            representative_similarity: 0.85,
+            avg_member_similarity: 0.8,
+            cluster_label: 'Maria',
+            cluster_identity_count: 5,
+          },
+        ],
+        limit: 10,
+        offset: 0,
+      });
+      vi.mocked(fetchClusterMembers).mockResolvedValue({
+        members: [],
+        limit: 25,
+        total: 2,
+        truncated: false,
+      });
+      vi.mocked(acceptSuggestion).mockImplementation((id: string) => {
+        if (id === 'sugg-u2') {
+          return Promise.reject(new Error('nope'));
+        }
+        return Promise.resolve({
+          suggestion_id: id,
+          resolution: 'accepted' as const,
+          identity_id: `identity-${id}`,
+          cluster_id: `cluster-${id}`,
+          message: 'ok',
+        });
+      });
+
+      const user = userEvent.setup();
+      renderQueue();
+
+      await screen.findByRole('button', { name: 'Yes' });
+      await user.click(screen.getByTestId('acx-review-select'));
+      await user.click(screen.getByRole('button', { name: 'Next review item' }));
+      await waitFor(() => {
+        expect(screen.getByTestId('acx-review-select')).toBeInTheDocument();
+      });
+      await user.click(screen.getByTestId('acx-review-select'));
+      await user.click(screen.getByRole('button', { name: 'Review selection' }));
+      await waitFor(() => {
+        expect(screen.getByTestId('acx-bulk-commit')).not.toBeDisabled();
+        expect(screen.getByTestId('acx-bulk-commit')).not.toHaveAttribute('aria-disabled', 'true');
+      });
+
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      try {
+        await act(async () => {
+          screen.getByTestId('acx-bulk-commit').click();
+          await Promise.resolve();
+        });
+        await act(async () => {
+          vi.advanceTimersByTime(UNDO_HOLD_MS);
+          await Promise.resolve();
+          await Promise.resolve();
+          await Promise.resolve();
+        });
+      } finally {
+        vi.useRealTimers();
+      }
+
+      const failure = await screen.findByTestId('acx-bulk-partial-failure');
+      vi.mocked(acceptSuggestion).mockClear();
+
+      await user.click(screen.getByRole('button', { name: 'Next review item' }));
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: 'Review details' })).toBeInTheDocument();
+      });
+      await user.click(screen.getByTestId('acx-review-select'));
+
+      const reason = screen.getByText(
+        'Review the stored faces for every selected suggestion before accepting.',
+      );
+      expect(reason).toBeInTheDocument();
+
+      const retry = within(failure).getByRole('button', { name: 'Retry' });
+      expect(retry).toHaveAttribute('aria-describedby', reason.id);
+
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      try {
+        await act(async () => {
+          retry.click();
+          await Promise.resolve();
+        });
+        await act(async () => {
+          vi.advanceTimersByTime(UNDO_HOLD_MS);
+          await Promise.resolve();
+          await Promise.resolve();
+          await Promise.resolve();
+        });
+      } finally {
+        vi.useRealTimers();
+      }
+
+      expect(acceptSuggestion).not.toHaveBeenCalled();
+      expect(
+        screen.getByText('Review the stored faces for every selected suggestion before accepting.'),
+      ).toBeInTheDocument();
+    });
+
+    it('DUX-W2R2-RV-05: Retry onClick is a no-op while stored-face gated and reason stays resolvable when tray collapses', async () => {
+      vi.mocked(fetchPendingSuggestions).mockResolvedValue({
+        suggestions: [
+          {
+            id: 'sugg-u1',
+            identity_id: 'identity-u1',
+            suggested_cluster_id: 'cluster-u1',
+            representative_similarity: 0.95,
+            avg_member_similarity: 0.9,
+            cluster_label: 'Maria',
+            cluster_identity_count: 1,
+          },
+          {
+            id: 'sugg-u2',
+            identity_id: 'identity-u2',
+            suggested_cluster_id: 'cluster-u2',
+            representative_similarity: 0.9,
+            avg_member_similarity: 0.85,
+            cluster_label: 'Maria',
+            cluster_identity_count: 1,
+          },
+          {
+            id: 'sugg-g',
+            identity_id: 'identity-g',
+            suggested_cluster_id: 'cluster-g',
+            representative_similarity: 0.85,
+            avg_member_similarity: 0.8,
+            cluster_label: 'Maria',
+            cluster_identity_count: 5,
+          },
+        ],
+        limit: 10,
+        offset: 0,
+      });
+      vi.mocked(fetchClusterMembers).mockResolvedValue({
+        members: [],
+        limit: 25,
+        total: 2,
+        truncated: false,
+      });
+      vi.mocked(acceptSuggestion).mockImplementation((id: string) => {
+        if (id === 'sugg-u2') {
+          return Promise.reject(new Error('nope'));
+        }
+        return Promise.resolve({
+          suggestion_id: id,
+          resolution: 'accepted' as const,
+          identity_id: `identity-${id}`,
+          cluster_id: `cluster-${id}`,
+          message: 'ok',
+        });
+      });
+
+      const user = userEvent.setup();
+      renderQueue();
+
+      await screen.findByRole('button', { name: 'Yes' });
+      await user.click(screen.getByTestId('acx-review-select'));
+      await user.click(screen.getByRole('button', { name: 'Next review item' }));
+      await waitFor(() => {
+        expect(screen.getByTestId('acx-review-select')).toBeInTheDocument();
+      });
+      await user.click(screen.getByTestId('acx-review-select'));
+      await user.click(screen.getByRole('button', { name: 'Review selection' }));
+      await waitFor(() => {
+        expect(screen.getByTestId('acx-bulk-commit')).not.toBeDisabled();
+        expect(screen.getByTestId('acx-bulk-commit')).not.toHaveAttribute('aria-disabled', 'true');
+      });
+
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      try {
+        await act(async () => {
+          screen.getByTestId('acx-bulk-commit').click();
+          await Promise.resolve();
+        });
+        await act(async () => {
+          vi.advanceTimersByTime(UNDO_HOLD_MS);
+          await Promise.resolve();
+          await Promise.resolve();
+          await Promise.resolve();
+        });
+      } finally {
+        vi.useRealTimers();
+      }
+
+      const failure = await screen.findByTestId('acx-bulk-partial-failure');
+      vi.mocked(acceptSuggestion).mockClear();
+
+      await user.click(screen.getByRole('button', { name: 'Next review item' }));
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: 'Review details' })).toBeInTheDocument();
+      });
+      await user.click(screen.getByTestId('acx-review-select'));
+
+      // Ensure the tray is expanded so we can assert Retry ↔ reason wiring, then collapse.
+      if (!screen.queryByTestId('acx-review-selection-panel')) {
+        await user.click(screen.getByRole('button', { name: 'Review selection' }));
+        await waitFor(() => {
+          expect(screen.getByTestId('acx-review-selection-panel')).toBeInTheDocument();
+        });
+      }
+
+      const reasonExpanded = screen.getByText(
+        'Review the stored faces for every selected suggestion before accepting.',
+      );
+      const retry = within(failure).getByRole('button', { name: 'Retry' });
+      expect(retry).toHaveAttribute('aria-disabled', 'true');
+      expect(retry).toHaveAttribute('aria-describedby', reasonExpanded.id);
+      expect(document.getElementById(reasonExpanded.id)).toBe(reasonExpanded);
+
+      // Collapse the tray — describedby target must remain mounted (BR-74).
+      await user.click(screen.getByRole('button', { name: 'Review selection' }));
+      await waitFor(() => {
+        expect(screen.queryByTestId('acx-review-selection-panel')).not.toBeInTheDocument();
+      });
+
+      const reasonId = retry.getAttribute('aria-describedby');
+      expect(reasonId).toBeTruthy();
+      const reasonCollapsed = document.getElementById(reasonId!);
+      expect(reasonCollapsed).not.toBeNull();
+      expect(reasonCollapsed).toHaveTextContent(
+        'Review the stored faces for every selected suggestion before accepting.',
+      );
+
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      try {
+        await act(async () => {
+          retry.click();
+          await Promise.resolve();
+        });
+        await act(async () => {
+          vi.advanceTimersByTime(UNDO_HOLD_MS);
+          await Promise.resolve();
+          await Promise.resolve();
+          await Promise.resolve();
+        });
+      } finally {
+        vi.useRealTimers();
+      }
+
+      expect(acceptSuggestion).not.toHaveBeenCalled();
+      expect(screen.queryByTestId('acx-bulk-hold')).not.toBeInTheDocument();
     });
 
     it('BR-54: tray count changes announced via polite live region on select/deselect', async () => {
@@ -5377,7 +5655,14 @@ describe('ReviewQueue', () => {
     });
 
     const seedSameClusterAssignments = (
-      rows: { id: string; similarity: number; clusterId?: string; label?: string }[],
+      rows: {
+        id: string;
+        similarity: number;
+        clusterId?: string;
+        label?: string;
+        /** Defaults to 1 so close-match sequencer tests are not HAI-17 gated. */
+        identityCount?: number;
+      }[],
     ): void => {
       vi.mocked(fetchPendingSuggestions).mockResolvedValue({
         suggestions: rows.map((row) => ({
@@ -5387,7 +5672,7 @@ describe('ReviewQueue', () => {
           representative_similarity: row.similarity,
           avg_member_similarity: row.similarity,
           cluster_label: row.label ?? 'Alex',
-          cluster_identity_count: rows.length,
+          cluster_identity_count: row.identityCount ?? 1,
         })),
         limit: 40,
         offset: 0,
@@ -5407,10 +5692,11 @@ describe('ReviewQueue', () => {
     });
 
     it('offers the close-match count before any write and confirms through the bulk sequencer', async () => {
+      // identityCount: 1 — HAI-17 does not gate; exercises the close-match sequencer path.
       seedSameClusterAssignments([
-        { id: 'sugg-1', similarity: 0.9 },
-        { id: 'sugg-2', similarity: 0.8 },
-        { id: 'sugg-3', similarity: 0.7 },
+        { id: 'sugg-1', similarity: 0.9, identityCount: 1 },
+        { id: 'sugg-2', similarity: 0.8, identityCount: 1 },
+        { id: 'sugg-3', similarity: 0.7, identityCount: 1 },
       ]);
       vi.mocked(acceptSuggestion).mockImplementation((id: string) =>
         Promise.resolve({
@@ -5425,7 +5711,6 @@ describe('ReviewQueue', () => {
       const user = userEvent.setup();
       renderQueue();
       await screen.findByRole('button', { name: 'Yes' });
-      await reviewCurrentStoredFaces();
       await user.click(await screen.findByRole('button', { name: 'Yes' }));
 
       const offer = await screen.findByRole('dialog', { name: 'Accept close matches?' });
@@ -5470,6 +5755,53 @@ describe('ReviewQueue', () => {
           'Accepted 2 close matches.',
         );
       });
+    });
+
+    it('DUX-W2R2-RV-04: Close Match Confirm does not commit unreviewed stored-face siblings', async () => {
+      seedSameClusterAssignments([
+        { id: 'sugg-1', similarity: 0.9, identityCount: 5 },
+        { id: 'sugg-2', similarity: 0.8, identityCount: 5 },
+        { id: 'sugg-3', similarity: 0.7, identityCount: 5 },
+      ]);
+      vi.mocked(acceptSuggestion).mockImplementation((id: string) =>
+        Promise.resolve({
+          suggestion_id: id,
+          resolution: 'accepted' as const,
+          identity_id: `identity-${id}`,
+          cluster_id: 'cluster-1',
+          message: 'ok',
+        }),
+      );
+
+      const user = userEvent.setup();
+      renderQueue();
+      await screen.findByRole('button', { name: 'Yes' });
+      // Only the current card is reviewed — siblings remain HAI-17 gated.
+      await reviewCurrentStoredFaces();
+      await user.click(await screen.findByRole('button', { name: 'Yes' }));
+
+      const offer = await screen.findByRole('dialog', { name: 'Accept close matches?' });
+      expect(offer).toHaveTextContent('Also accept 2 close matches?');
+
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      try {
+        await act(async () => {
+          screen.getByRole('button', { name: 'Accept close matches' }).click();
+          await Promise.resolve();
+        });
+        await act(async () => {
+          vi.advanceTimersByTime(UNDO_HOLD_MS);
+          await Promise.resolve();
+          await Promise.resolve();
+          await Promise.resolve();
+        });
+      } finally {
+        vi.useRealTimers();
+      }
+
+      expect(acceptSuggestion).not.toHaveBeenCalled();
+      expect(bulkAcceptSuggestions).not.toHaveBeenCalled();
+      expect(screen.queryByTestId('acx-bulk-hold')).not.toBeInTheDocument();
     });
 
     it('Just this one accepts only the current suggestion', async () => {

@@ -382,13 +382,6 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
           if (!commitKind) {
             continue;
           }
-          const assignment = assignmentById.get(id);
-          if (
-            assignment &&
-            isStoredFaceApprovalBlocked(assignment, reviewedStoredFaceSuggestionIds)
-          ) {
-            continue;
-          }
           items.push({
             suggestionId: id,
             commitKind,
@@ -402,8 +395,6 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
         findings.queue,
         filter,
         activeBand,
-        assignmentById,
-        reviewedStoredFaceSuggestionIds,
       ],
     );
 
@@ -421,6 +412,13 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
       },
       isBulkActiveRef: data.isBulkActiveRef,
       awaitBulkIdleOrFlushRef: data.awaitBulkIdleOrFlushRef,
+      isApprovalBlocked: (suggestionId) => {
+        const suggestion = assignmentById.get(suggestionId);
+        // DUX-W2R2-RV-04: unknown/unresolvable ids fail closed (block), never open.
+        return suggestion
+          ? isStoredFaceApprovalBlocked(suggestion, reviewedStoredFaceSuggestionIds)
+          : true;
+      },
     });
 
     React.useEffect(() => {
@@ -992,12 +990,19 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
 
     const storedFaceSelectionBlocksCommit = filteredSelectedIds.some((suggestionId) => {
       const suggestion = assignmentById.get(suggestionId);
+      // DUX-W2R2-RV-04: unknown/unresolvable ids fail closed (block), never open.
       return suggestion
         ? isStoredFaceApprovalBlocked(suggestion, reviewedStoredFaceSuggestionIds)
-        : false;
+        : true;
     });
     const storedFaceSelectionReasonId = 'acx-review-queue-stored-face-review-reason';
     const truncationReasonId = 'acx-review-queue-truncation-reason';
+    const bulkCommitNativeDisabled =
+      filteredSelectedIds.length === 0 ||
+      bulk.isBulkActive ||
+      bulk.bulkInitiatePending ||
+      truncationBlocksCommit ||
+      truncation.isLoading;
 
     // BR-75: a single accent-primary card action is on screen iff CurrentCard's real
     // branch renders its marked primary. This is the SAME condition that mounts the
@@ -1219,6 +1224,18 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
           </div>
         </div>
 
+        {storedFaceSelectionBlocksCommit ? (
+          <p
+            id={storedFaceSelectionReasonId}
+            className="acx-review-queue__stored-face-review-reason"
+          >
+            {__(
+              'Review the stored faces for every selected suggestion before accepting.',
+              'alt-context',
+            )}
+          </p>
+        ) : null}
+
         {selectionOpen && selectedIds.size > 0 ? (
           <div
             className="acx-review-queue__selection-panel"
@@ -1231,18 +1248,6 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
                 </li>
               ))}
             </ul>
-
-            {storedFaceSelectionBlocksCommit ? (
-              <p
-                id={storedFaceSelectionReasonId}
-                className="acx-review-queue__stored-face-review-reason"
-              >
-                {__(
-                  'Review the stored faces for every selected suggestion before accepting.',
-                  'alt-context',
-                )}
-              </p>
-            ) : null}
 
             {truncationReason ? (
               <p id={truncationReasonId} className="acx-review-queue__truncation-reason">
@@ -1287,23 +1292,11 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
                   : 'button acx-review-queue__bulk-commit'
               }
               data-testid="acx-bulk-commit"
-              disabled={
-                filteredSelectedIds.length === 0 ||
-                bulk.isBulkActive ||
-                bulk.bulkInitiatePending ||
-                storedFaceSelectionBlocksCommit ||
-                truncationBlocksCommit ||
-                truncation.isLoading
-              }
+              // BR-74: stored-face gate uses aria-disabled + onClick, never HTML
+              // disabled — that would drop the describedby reason from tab order.
+              disabled={bulkCommitNativeDisabled}
               aria-disabled={
-                filteredSelectedIds.length === 0 ||
-                bulk.isBulkActive ||
-                bulk.bulkInitiatePending ||
-                storedFaceSelectionBlocksCommit ||
-                truncationBlocksCommit ||
-                truncation.isLoading
-                  ? true
-                  : undefined
+                bulkCommitNativeDisabled || storedFaceSelectionBlocksCommit ? true : undefined
               }
               aria-describedby={
                 storedFaceSelectionBlocksCommit
@@ -1314,6 +1307,9 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
               }
               {...(bulkCommitOwnsAccent ? { [ACCENT_PRIMARY_ATTR]: true } : {})}
               onClick={() => {
+                if (storedFaceSelectionBlocksCommit) {
+                  return;
+                }
                 void bulk.initiateBulk();
               }}
             >
@@ -1361,7 +1357,14 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
             <button
               type="button"
               className="button acx-review-queue__retry"
+              aria-disabled={storedFaceSelectionBlocksCommit ? true : undefined}
+              aria-describedby={
+                storedFaceSelectionBlocksCommit ? storedFaceSelectionReasonId : undefined
+              }
               onClick={() => {
+                if (storedFaceSelectionBlocksCommit) {
+                  return;
+                }
                 void bulk.retryBulk();
               }}
             >

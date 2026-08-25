@@ -69,36 +69,57 @@ extract_probed_description_adapter() {
 # classify_describe_provenance <sample_text> -> PASS|FAIL|UNKNOWN
 # UNKNOWN when nothing was measured. FAIL when any canned seeded fixture
 # caption appears in the sample. PASS otherwise.
+#
+# Matching semantics MUST stay identical to classify_alt_provenance after
+# DEMOLIVE-6's normalizer (XLANE-01): lowercase, collapse whitespace runs,
+# strip trailing .!?, then match lowercase punctuation-free denylist arms.
+# The matcher lives in scripts/deploy/lib/fixture-denylist.sh; this file is
+# SCP'd standalone to the VM so the same functions are inlined here. A
+# corpus test binds the two copies. Do not revert to case-sensitive
+# period-terminated exact match — that lets canned captions SKIP describe
+# while smoke FAILs, with no heal path (INT-10 / R1-04 relocated).
+
+# normalize_fixture_sample / fixture_sample_is_denied
+# Keep byte-equivalent to scripts/deploy/lib/fixture-denylist.sh (test-bound).
+normalize_fixture_sample() {
+    local sample="$1"
+    sample=$(printf '%s' "$sample" | tr '[:upper:]' '[:lower:]' | tr -s '[:space:]' ' ')
+    while :
+    do
+        case "$sample" in
+            *[.!?]) sample=${sample%?} ;;
+            *) break ;;
+        esac
+    done
+    printf '%s' "$sample"
+}
+
+fixture_sample_is_denied() {
+    local sample
+    sample=$(normalize_fixture_sample "$1")
+    case "$sample" in
+        *"a person standing outdoors near greenery"*) return 0 ;;
+        *"a plate of food on a wooden table"*) return 0 ;;
+        *"a scenic landscape with mountains under a clear sky"*) return 0 ;;
+        *"a close-up of a small object on a neutral background"*) return 0 ;;
+        *"a printed document with several lines of text"*) return 0 ;;
+        *"two people seated indoors in conversation"*) return 0 ;;
+        *"a building exterior seen from the street"*) return 0 ;;
+        *"a pet animal resting on a soft surface"*) return 0 ;;
+    esac
+    return 1
+}
+
 classify_describe_provenance() {
     local sample="$1"
     if [ -z "$sample" ]; then
         echo UNKNOWN
         return
     fi
-    case "$sample" in
-        *"A person standing outdoors near greenery."*) echo FAIL; return ;;
-    esac
-    case "$sample" in
-        *"A plate of food on a wooden table."*) echo FAIL; return ;;
-    esac
-    case "$sample" in
-        *"A scenic landscape with mountains under a clear sky."*) echo FAIL; return ;;
-    esac
-    case "$sample" in
-        *"A close-up of a small object on a neutral background."*) echo FAIL; return ;;
-    esac
-    case "$sample" in
-        *"A printed document with several lines of text."*) echo FAIL; return ;;
-    esac
-    case "$sample" in
-        *"Two people seated indoors in conversation."*) echo FAIL; return ;;
-    esac
-    case "$sample" in
-        *"A building exterior seen from the street."*) echo FAIL; return ;;
-    esac
-    case "$sample" in
-        *"A pet animal resting on a soft surface."*) echo FAIL; return ;;
-    esac
+    if fixture_sample_is_denied "$sample"; then
+        echo FAIL
+        return
+    fi
     echo PASS
 }
 

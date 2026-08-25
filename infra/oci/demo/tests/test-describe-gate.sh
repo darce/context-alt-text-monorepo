@@ -161,6 +161,129 @@ assert_eq "alt provenance empty sample UNKNOWN" UNKNOWN "$(classify_describe_pro
 assert_eq "alt provenance real caption PASS" PASS "$(classify_describe_provenance 'A woman in a red coat speaks at a podium in front of a blue backdrop.')"
 assert_eq "alt provenance fixture FAIL" FAIL "$(classify_describe_provenance 'A close-up of a small object on a neutral background.')"
 
+# --- XLANE-01: shared evasion corpus (describe-gate + smoke-gate) ---
+# Both classifiers must agree on every non-empty row. Empty sample is the
+# one intentional difference: smoke fails closed, describe reports UNKNOWN
+# because nothing was measured.
+smoke_gate_file="${script_dir}/../../../../scripts/deploy/lib/smoke-gate.sh"
+fixture_denylist_file="${script_dir}/../../../../scripts/deploy/lib/fixture-denylist.sh"
+# shellcheck source=../../../../scripts/deploy/lib/smoke-gate.sh
+source "$smoke_gate_file"
+
+smoke_gate_normalizes() {
+    # Behavioral probe: DEMOLIVE-6's matcher FAILs a lowercased fixture.
+    # This worktree's smoke-gate is still exact-match, so the live-smoke
+    # bind waits until trial-merge rather than rewriting their file.
+    [ "$(classify_alt_provenance 'a close-up of a small object on a neutral background')" = FAIL ]
+}
+
+# Specified smoke semantics (empty -> FAIL) using the shared matcher when
+# present, else the live smoke-gate function. describe-gate must match the
+# specified column regardless.
+expected_smoke_from_shared() {
+    local sample="$1"
+    if [ -z "$sample" ]; then
+        echo FAIL
+        return
+    fi
+    if type fixture_sample_is_denied >/dev/null 2>&1; then
+        if fixture_sample_is_denied "$sample"; then
+            echo FAIL
+        else
+            echo PASS
+        fi
+        return
+    fi
+    classify_alt_provenance "$sample"
+}
+
+assert_corpus_row() {
+    local label="$1"
+    local sample="$2"
+    local smoke_exp="$3"
+    local describe_exp="$4"
+    local describe_got smoke_sem smoke_live
+
+    describe_got=$(classify_describe_provenance "$sample")
+    assert_eq "corpus describe ${label}" "$describe_exp" "$describe_got"
+
+    smoke_sem=$(expected_smoke_from_shared "$sample")
+    assert_eq "corpus smoke-sem ${label}" "$smoke_exp" "$smoke_sem"
+
+    smoke_live=$(classify_alt_provenance "$sample")
+    if smoke_gate_normalizes || [ "$smoke_live" = "$smoke_exp" ]; then
+        assert_eq "corpus live-smoke ${label}" "$smoke_exp" "$smoke_live"
+    else
+        echo "ok   corpus live-smoke ${label} deferred (this worktree smoke-gate lacks DEMOLIVE-6 normalizer; live=${smoke_live} specified=${smoke_exp})"
+    fi
+}
+
+assert_corpus_row "punctuated fixture" \
+    "A close-up of a small object on a neutral background." FAIL FAIL
+assert_corpus_row "no period" \
+    "A close-up of a small object on a neutral background" FAIL FAIL
+assert_corpus_row "lowercased" \
+    "a close-up of a small object on a neutral background." FAIL FAIL
+assert_corpus_row "case + padding" \
+    " A Close-Up Of A Small Object On A Neutral Background " FAIL FAIL
+assert_corpus_row "double space + bang" \
+    "A close-up of a small object on a  neutral background!" FAIL FAIL
+assert_corpus_row "bang only" \
+    "A close-up of a small object on a neutral background!" FAIL FAIL
+assert_corpus_row "genuine caption" \
+    "A woman in a red coat crossing Charing Cross Road." PASS PASS
+assert_corpus_row "empty sample (documented difference)" \
+    "" FAIL UNKNOWN
+
+# Shared denylist file must exist and agree with describe-gate on the corpus.
+if [ ! -f "$fixture_denylist_file" ]; then
+    echo "FAIL shared fixture-denylist.sh missing: ${fixture_denylist_file}"
+    failures=$((failures + 1))
+else
+    assert_shared_denied() {
+        local label="$1" sample="$2" expect_rc="$3"
+        local describe_rc=0 shared_rc
+        if type fixture_sample_is_denied >/dev/null 2>&1; then
+            fixture_sample_is_denied "$sample" || describe_rc=$?
+            assert_eq "describe denied ${label}" "$expect_rc" "$describe_rc"
+        else
+            echo "FAIL describe denied ${label}: fixture_sample_is_denied missing"
+            failures=$((failures + 1))
+        fi
+        shared_rc=$(bash -c '
+            # shellcheck disable=SC1090
+            source "$1"
+            if fixture_sample_is_denied "$2"; then echo 0; else echo 1; fi
+        ' _ "$fixture_denylist_file" "$sample")
+        assert_eq "shared denied ${label}" "$expect_rc" "$shared_rc"
+    }
+    assert_shared_denied "punctuated" "A close-up of a small object on a neutral background." 0
+    assert_shared_denied "no period" "A close-up of a small object on a neutral background" 0
+    assert_shared_denied "lowercased" "a close-up of a small object on a neutral background." 0
+    assert_shared_denied "padding" " A Close-Up Of A Small Object On A Neutral Background " 0
+    assert_shared_denied "bang" "A close-up of a small object on a  neutral background!" 0
+    assert_shared_denied "genuine" "A woman in a red coat crossing Charing Cross Road." 1
+    assert_shared_denied "empty" "" 1
+
+    extract_fn() {
+        local file="$1" name="$2"
+        awk -v n="$name" '
+            $0 ~ "^" n "\\(\\) \\{" {grab=1}
+            grab {print}
+            grab && $0 == "}" {exit}
+        ' "$file"
+    }
+    describe_gate_file="${script_dir}/../lib/describe-gate.sh"
+    for fn in normalize_fixture_sample fixture_sample_is_denied; do
+        if [ "$(extract_fn "$describe_gate_file" "$fn")" = "$(extract_fn "$fixture_denylist_file" "$fn")" ]; then
+            echo "ok   ${fn} bodies identical across copies"
+        else
+            echo "FAIL ${fn} bodies drifted between describe-gate.sh and fixture-denylist.sh"
+            failures=$((failures + 1))
+        fi
+    done
+fi
+
 # --- bootstrap-wp.sh wiring (R1-05 / R1-04 / RLSE-08) ---
 assert_file_grep "bootstrap probes /health/detailed" "$bootstrap_file" '/health/detailed'
 assert_file_grep "bootstrap reads description_adapter field" "$bootstrap_file" 'description_adapter'

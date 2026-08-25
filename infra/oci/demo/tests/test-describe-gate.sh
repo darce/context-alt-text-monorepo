@@ -148,6 +148,17 @@ assert_eq "probe 200 null field empty" "" "$(extract_probed_description_adapter 
 assert_eq "probe 200 object field empty" "" "$(extract_probed_description_adapter 200 '{"description_adapter":{"name":"florence_small"}}')"
 assert_eq "probe 200 unparseable body empty" "" "$(extract_probed_description_adapter 200 'not-json')"
 assert_eq "probe 200 empty body empty" "" "$(extract_probed_description_adapter 200 '')"
+assert_eq "probe 301 without -L empty" "" "$(extract_probed_description_adapter 301 '{"description_adapter":"florence_small"}')"
+assert_eq "probe 000 timeout with body empty" "" "$(extract_probed_description_adapter 000 '{"description_adapter":"florence_small"}')"
+assert_eq "probe 200 boolean field empty" "" "$(extract_probed_description_adapter 200 '{"description_adapter":true}')"
+assert_eq "probe 200 array of objects empty" "" "$(extract_probed_description_adapter 200 '[{"description_adapter":"florence_small"}]')"
+assert_eq "probe 200 HTML page empty" "" "$(extract_probed_description_adapter 200 '<html>"description_adapter": "florence_small"</html>')"
+assert_eq "probe 200 HTML page classify BLOCK" BLOCK "$(classify_describe_gate "$(extract_probed_description_adapter 200 '<html>"description_adapter": "florence_small"</html>')" 100 0)"
+assert_eq "probe 200 nested key keeps top-level seeded" seeded "$(extract_probed_description_adapter 200 '{"description_adapter":"seeded","meta":{"description_adapter":"florence_small"}}')"
+assert_eq "probe 200 nested key classify BLOCK" BLOCK "$(classify_describe_gate "$(extract_probed_description_adapter 200 '{"description_adapter":"seeded","meta":{"description_adapter":"florence_small"}}')" 100 0)"
+assert_eq "probe 200 nested-only key empty" "" "$(extract_probed_description_adapter 200 '{"meta":{"description_adapter":"florence_small"}}')"
+assert_eq "probe 200 substring in non-json empty" "" "$(extract_probed_description_adapter 200 'not json but "description_adapter": "florence_small" appears')"
+assert_eq "probe 200 genuine health-like payload" florence_small "$(extract_probed_description_adapter 200 '{"status":"ok","embedding_runtime":{"available":false},"description_adapter":"florence_small"}')"
 
 # php_define_value reads WORDPRESS_CONFIG_EXTRA; no new secret name.
 _extra="define('ACX_RECOGNITION_URL','https://api.altcontext.com'); define('ACX_RECOGNITION_API_KEY','secret-key'); define('ACX_RECOGNITION_TENANT_ID','00000000-0000-4000-8000-000000000001');"
@@ -290,6 +301,9 @@ else
 fi
 
 # --- bootstrap-wp.sh wiring (R1-05 / R1-04 / RLSE-08) ---
+health_file="${script_dir}/../../../../apps/prototype-description-service/api/main.py"
+assert_file_grep "service /health/detailed payload includes description_adapter" \
+    "$health_file" '"description_adapter": description_adapter'
 assert_file_grep "bootstrap probes /health/detailed" "$bootstrap_file" '/health/detailed'
 assert_file_grep "bootstrap reads description_adapter field" "$bootstrap_file" 'description_adapter'
 assert_file_not_grep "bootstrap does not env_get ACX_DESCRIPTION_ADAPTER" "$bootstrap_file" 'env_get ACX_DESCRIPTION_ADAPTER'

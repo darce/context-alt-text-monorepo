@@ -2,7 +2,7 @@ import React from 'react';
 import { render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
-import { AVATAR_STATES, Avatar, resolveAvatarRenderState } from '../avatar';
+import { AVATAR_STATES, Avatar, resolveAvatarRenderState, type ImageLoadingStatus } from '../avatar';
 
 vi.mock('@wordpress/i18n', () => ({
   __: (text: string) => text,
@@ -12,6 +12,11 @@ vi.mock('@wordpress/i18n', () => ({
 // Drive that from the src query so each state can be asserted independently.
 vi.mock('@radix-ui/react-avatar', async () => {
   const ReactMod = await import('react');
+  type MockAvatarImageProps = Record<string, unknown> & {
+    onLoadingStatusChange?: (status: ImageLoadingStatus) => void;
+    src?: unknown;
+    alt?: unknown;
+  };
   return {
     Root: ReactMod.forwardRef(function MockRoot(
       { children, ...props }: Record<string, unknown>,
@@ -24,7 +29,7 @@ vi.mock('@radix-ui/react-avatar', async () => {
       );
     }),
     Image: ReactMod.forwardRef(function MockImage(
-      { onLoadingStatusChange, src, alt, ...props }: Record<string, unknown>,
+      { onLoadingStatusChange, src, alt, ...props }: MockAvatarImageProps,
       ref: unknown,
     ) {
       ReactMod.useEffect(() => {
@@ -70,7 +75,7 @@ describe('Avatar four-state contract', () => {
       <Avatar src="https://example.com/thumb.jpg?status=loading" alt="Pending face" />,
     );
 
-    const root = container.querySelector('[data-avatar-state]') as HTMLElement;
+    const root = container.querySelector('[data-avatar-state]')!;
     expect(root).toHaveAttribute('data-avatar-state', AVATAR_STATES.loading);
     expect(root).toHaveAttribute('data-avatar-state', 'loading');
 
@@ -84,7 +89,7 @@ describe('Avatar four-state contract', () => {
       <Avatar src="https://example.com/thumb.jpg?status=loaded" alt="Alex (suggested)" />,
     );
 
-    const root = container.querySelector('[data-avatar-state]') as HTMLElement;
+    const root = container.querySelector('[data-avatar-state]')!;
     expect(root).toHaveAttribute('data-avatar-state', AVATAR_STATES.real);
     expect(root).toHaveAttribute('data-avatar-state', 'real');
 
@@ -96,7 +101,7 @@ describe('Avatar four-state contract', () => {
   it('data-missing: omitted src sets data-avatar-state=data-missing with role=img and accessible name', () => {
     const { container } = render(<Avatar />);
 
-    const root = container.querySelector('[data-avatar-state]') as HTMLElement;
+    const root = container.querySelector('[data-avatar-state]')!;
     expect(root).toHaveAttribute('data-avatar-state', AVATAR_STATES.missing);
     expect(root).toHaveAttribute('data-avatar-state', 'data-missing');
 
@@ -134,7 +139,7 @@ describe('Avatar four-state contract', () => {
   it('data-missing: empty src is the explicit no-src branch, not error', () => {
     const { container } = render(<Avatar src="" alt="unused" />);
 
-    const root = container.querySelector('[data-avatar-state]') as HTMLElement;
+    const root = container.querySelector('[data-avatar-state]')!;
     expect(root).toHaveAttribute('data-avatar-state', 'data-missing');
     expect(root).not.toHaveAttribute('data-avatar-state', 'error');
     expect(screen.getByRole('img', { name: 'No image' })).toBeInTheDocument();
@@ -146,7 +151,7 @@ describe('Avatar four-state contract', () => {
       <Avatar src="https://example.com/thumb.jpg?status=error" alt="Broken face" />,
     );
 
-    const root = container.querySelector('[data-avatar-state]') as HTMLElement;
+    const root = container.querySelector('[data-avatar-state]')!;
     expect(root).toHaveAttribute('data-avatar-state', AVATAR_STATES.error);
     expect(root).toHaveAttribute('data-avatar-state', 'error');
 
@@ -201,7 +206,7 @@ describe('Avatar four-state contract', () => {
     );
 
     rerender(<Avatar src="https://example.com/b.jpg?status=hold" alt="Grace" />);
-    const root = container.querySelector('[data-avatar-state]') as HTMLElement;
+    const root = container.querySelector('[data-avatar-state]')!;
     expect(root).toHaveAttribute('data-avatar-state', AVATAR_STATES.loading);
     expect(root).not.toHaveAttribute('data-avatar-state', AVATAR_STATES.real);
     expect(root).not.toHaveAttribute('data-avatar-state', AVATAR_STATES.error);
@@ -217,7 +222,7 @@ describe('Avatar four-state contract', () => {
     );
 
     rerender(<Avatar src="https://example.com/b.jpg?status=hold" alt="Grace" />);
-    const root = container.querySelector('[data-avatar-state]') as HTMLElement;
+    const root = container.querySelector('[data-avatar-state]')!;
     expect(root).toHaveAttribute('data-avatar-state', AVATAR_STATES.loading);
     expect(root).not.toHaveAttribute('data-avatar-state', AVATAR_STATES.error);
     expect(root).not.toHaveAttribute('data-avatar-state', AVATAR_STATES.real);
@@ -227,7 +232,7 @@ describe('Avatar four-state contract', () => {
     const { container } = render(
       <Avatar src="https://example.com/thumb.jpg?status=loading" alt="Owned" state={AVATAR_STATES.real} />,
     );
-    const root = container.querySelector('[data-avatar-state]') as HTMLElement;
+    const root = container.querySelector('[data-avatar-state]')!;
     expect(root).toHaveAttribute('data-avatar-state', AVATAR_STATES.real);
     expect(container.querySelector('.acx-avatar__skeleton')).toBeNull();
   });

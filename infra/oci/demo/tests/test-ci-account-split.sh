@@ -64,6 +64,21 @@ assert_file_grep "bootstrap reads WP_CI_EMAIL" "$bootstrap_file" 'env_get WP_CI_
 assert_file_grep "bootstrap requires WP_CI_USER" "$bootstrap_file" 'WP_CI_USER'
 assert_file_grep "bootstrap calls converge_wp_ci_account" \
     "$bootstrap_file" 'converge_wp_ci_account "\$WP_CI_USER" "\$WP_CI_PASSWORD" "\$WP_CI_EMAIL" "\$WP_ADMIN_USER"'
+after_install_calls=$(awk '
+    /if ! wpcli wp core is-installed/ { in_gate=1 }
+    in_gate && /^fi$/ { in_gate=0; after_fi=1; next }
+    {
+        if (in_gate) next
+        line=$0
+        sub(/^[ \t]+/, "", line)
+        if (line ~ /^#/) next
+        if (after_fi && line ~ /converge_wp_user_password[ \t]+"\$WP_ADMIN_USER"/) admin++
+        if (after_fi && line ~ /converge_wp_ci_account[ \t]+"\$WP_CI_USER"/) ci++
+    }
+    END { print admin+0, ci+0 }
+' "$bootstrap_file")
+assert_eq "admin+CI converge calls sit on non-comment lines after install fi" \
+    "1 1" "$after_install_calls"
 assert_file_grep "CI role is acx_ci not administrator" \
     "$bootstrap_file" 'WP_CI_ROLE_NAME="acx_ci"'
 assert_file_grep "CI role clones subscriber not administrator" \

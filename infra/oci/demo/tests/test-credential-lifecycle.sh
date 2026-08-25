@@ -55,19 +55,24 @@ assert_file_grep "bootstrap calls converge_wp_user_password on admin" \
 assert_file_grep "rotation failure is loud (ERROR)" \
     "$bootstrap_file" 'ERROR: failed to rotate WordPress credential'
 
-# The first-install gate must not be the only consumer of WP_ADMIN_PASSWORD.
-# Count user-update / check-password sites; they must sit outside the
-# `if ! wpcli wp core is-installed` block (AUTH-01: second run must rotate).
-outside_install_gate=$(awk '
+# Call sites (not function bodies) must sit on non-comment lines AFTER the
+# first-install `fi`. Counting `wp user update` in the helper body stays
+# green if the calls move inside the gate or are commented out (W3-A-02).
+after_install_calls=$(awk '
     /if ! wpcli wp core is-installed/ { in_gate=1 }
-    in_gate && /^fi$/ { in_gate=0; next }
-    in_gate { next }
-    /wpcli wp user check-password/ { checks++ }
-    /wpcli wp user update/ { updates++ }
-    END { print checks+0, updates+0 }
+    in_gate && /^fi$/ { in_gate=0; after_fi=1; next }
+    {
+        if (in_gate) next
+        line=$0
+        sub(/^[ \t]+/, "", line)
+        if (line ~ /^#/) next
+        if (after_fi && line ~ /converge_wp_user_password[ \t]+"\$WP_ADMIN_USER"/) admin++
+        if (after_fi && line ~ /converge_wp_ci_account[ \t]+"\$WP_CI_USER"/) ci++
+    }
+    END { print admin+0, ci+0 }
 ' "$bootstrap_file")
-assert_eq "check-password + user-update live outside first-install gate" \
-    "1 1" "$outside_install_gate"
+assert_eq "admin+CI converge calls sit on non-comment lines after install fi" \
+    "1 1" "$after_install_calls"
 
 # --- extract credential functions and exercise a mocked wpcli ---
 funcs=$(sed -n '/^# AUTH_CREDENTIAL_FUNCS_BEGIN$/,/^# AUTH_CREDENTIAL_FUNCS_END$/p' "$bootstrap_file")

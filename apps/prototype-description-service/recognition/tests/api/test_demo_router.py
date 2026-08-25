@@ -89,6 +89,7 @@ async def test_demo_router_anonymous_get_returns_401_without_tenant_data(
     client = _build_client(db_session, monkeypatch)
     resp = client.get(f"/x/{result.instance.slug}")
     assert resp.status_code == 401
+    assert resp.json()["detail"] == "session_required"
     _assert_no_tenant_data(resp)
     assert str(result.instance.tenant_id) not in resp.text
     assert result.raw_api_key not in resp.text
@@ -170,6 +171,7 @@ async def test_demo_router_expired_session_returns_401_without_tenant_data(
         headers={"X-Demo-Session": minted.token},
     )
     assert resp.status_code == 401
+    assert resp.json()["detail"] == "session_expired"
     _assert_no_tenant_data(resp)
     assert str(result.instance.tenant_id) not in resp.text
 
@@ -184,6 +186,7 @@ async def test_demo_router_invalid_session_returns_401_without_tenant_data(
     client = _build_client(db_session, monkeypatch)
     resp = client.get(f"/x/{result.instance.slug}", headers={"X-Demo-Session": "not-a-real-token"})
     assert resp.status_code == 401
+    assert resp.json()["detail"] == "session_invalid"
     _assert_no_tenant_data(resp)
 
 

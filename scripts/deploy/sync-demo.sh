@@ -174,10 +174,18 @@ $SSH "sudo cp /tmp/acx-demo.service /etc/systemd/system/acx-demo.service && sudo
 # (deploy-caused regression), else WARNs; the demo probe follows redirects and
 # requires a final 2xx that is not the WP installer (a wiped DB 302->install.php
 # answers 200 and is a broken demo, not a healthy one).
-echo "==> Smoke four vhosts (api.* via /health, demo via /)"
+# After the front-page probe, a credential-free WP media check asserts demo
+# alt-text coverage (>= DEMO_ALT_MIN_COVERAGE_PCT, default 95) and that
+# published captions are not the description-service `seeded` fixture pool.
+# DEMO_ALT_GATE_ENFORCE defaults to 1 (a FAIL blocks the deploy). Set it to 0
+# to keep the measurement line but print WARN instead of setting smoke_fail,
+# so a known-empty demo can still ship while the seed/describe pass is repaired.
+echo "==> Smoke four vhosts (api.* via /health, demo via / + media alt-text)"
 {
   cat "$SMOKE_GATE_LIB"
   printf 'PRE_CODES="%s"\n' "$PRE_CODES"
+  printf 'DEMO_ALT_MIN_COVERAGE_PCT="%s"\n' "${DEMO_ALT_MIN_COVERAGE_PCT:-95}"
+  printf 'DEMO_ALT_GATE_ENFORCE="%s"\n' "${DEMO_ALT_GATE_ENFORCE:-1}"
   cat <<'EOF'
 set -euo pipefail
 smoke_fail=0
@@ -241,6 +249,63 @@ if [[ "$verdict" == "PASS" ]]; then
 else
   echo "FAIL demo.altcontext.com/ (final ${code} at ${final_url})"
   smoke_fail=1
+fi
+emit_alt_gate() {
+  local gate_verdict="$1" msg="$2"
+  if [ "$gate_verdict" = "FAIL" ] && [ "${DEMO_ALT_GATE_ENFORCE:-1}" = "0" ]; then
+    echo "WARN ${msg} (enforcement disabled via DEMO_ALT_GATE_ENFORCE=0)"
+    return
+  fi
+  echo "${gate_verdict} ${msg}"
+  if [ "$gate_verdict" = "FAIL" ]; then
+    smoke_fail=1
+  fi
+}
+media_headers=$(mktemp)
+media_body=$(mktemp)
+curl -sS -D "$media_headers" -o "$media_body" --max-time 30 \
+  "https://demo.altcontext.com/wp-json/wp/v2/media?per_page=100&_fields=id,alt_text" || true
+set +o pipefail
+total=$(grep -i '^x-wp-total:' "$media_headers" | tr -d '\r ' | sed 's/.*://;q')
+with_alt=$(grep -o '"alt_text": *"[^"]*"' "$media_body" | grep -v '"alt_text": *""' | wc -l | tr -d ' ')
+sample=$(grep -o '"alt_text": *"[^"]*"' "$media_body" | grep -v '"alt_text": *""' | sed 's/"alt_text": *"//;s/"$//' | tr '\n' ' ')
+set -o pipefail
+rm -f "$media_headers" "$media_body"
+min="${DEMO_ALT_MIN_COVERAGE_PCT:-95}"
+verdict=$(classify_alt_coverage "$total" "$with_alt" "$min")
+pct="?"
+case "$total" in *[!0-9]*|'') ;; *)
+  case "$with_alt" in *[!0-9]*|'') ;; *)
+    if [ "$total" -gt 0 ]; then
+      pct=$((with_alt * 100 / total))
+    fi
+    ;;
+  esac
+  ;;
+esac
+if [ "$pct" != "?" ]; then
+  cov_msg="demo alt coverage (${with_alt}/${total} = ${pct}%, need ${min}%)"
+else
+  cov_msg="demo alt coverage (total=${total:-empty} with_alt=${with_alt:-empty}, need ${min}%)"
+fi
+emit_alt_gate "$verdict" "$cov_msg"
+run_prov=0
+case "$with_alt" in *[!0-9]*|'') ;; *)
+  if [ "$with_alt" -gt 0 ]; then
+    run_prov=1
+  fi
+  ;;
+esac
+if [ "$run_prov" = "1" ]; then
+  prov=$(classify_alt_provenance "$sample")
+  if [ "$prov" = "FAIL" ]; then
+    prov_msg="demo alt provenance (seeded fixture caption detected in ${with_alt} published alt texts)"
+  else
+    prov_msg="demo alt provenance (no seeded fixture captions in ${with_alt} published alt texts)"
+  fi
+  emit_alt_gate "$prov" "$prov_msg"
+else
+  echo "SKIP demo alt provenance (no alt text published)"
 fi
 exit "$smoke_fail"
 EOF

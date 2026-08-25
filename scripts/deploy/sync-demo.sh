@@ -177,16 +177,22 @@ $SSH "sudo cp /tmp/acx-demo.service /etc/systemd/system/acx-demo.service && sudo
 # requires a final 2xx that is not the WP installer (a wiped DB 302->install.php
 # answers 200 and is a broken demo, not a healthy one).
 # After the front-page probe, a credential-free WP media check asserts demo
-# alt-text coverage (>= DEMO_ALT_MIN_COVERAGE_PCT, default 95) and that
-# published captions are not the description-service `seeded` fixture pool.
+# alt-text coverage (>= DEMO_ALT_MIN_COVERAGE_PCT, default 95; min_pct below
+# DEMO_ALT_MIN_COVERAGE_FLOOR default 50 FAILs closed) and that published
+# captions are not the description-service `seeded` fixture pool. Coverage
+# counts only usable alt (classify_alt_text_usable), not placeholder strings.
 # DEMO_ALT_GATE_ENFORCE defaults to 1 (a FAIL blocks the deploy). Set it to 0
-# to keep the measurement line but print WARN instead of setting smoke_fail,
-# so a known-empty demo can still ship while the seed/describe pass is repaired.
+# to keep the measurement line but print WARN instead of setting smoke_fail
+# for overridable sub-gates (population and coverage) so a known-empty demo
+# can still ship while the seed/describe pass is repaired. Provenance is not
+# overridable: a canned-caption FAIL always sets smoke_fail, regardless of
+# DEMO_ALT_GATE_ENFORCE. The override covers empty alt, never canned captions.
 echo "==> Smoke four vhosts (api.* via /health, demo via / + media alt-text)"
 {
   cat "$SMOKE_GATE_LIB"
   printf 'PRE_CODES="%s"\n' "$PRE_CODES"
   printf 'DEMO_ALT_MIN_COVERAGE_PCT="%s"\n' "${DEMO_ALT_MIN_COVERAGE_PCT:-95}"
+  printf 'DEMO_ALT_MIN_COVERAGE_FLOOR="%s"\n' "${DEMO_ALT_MIN_COVERAGE_FLOOR:-50}"
   printf 'DEMO_ALT_GATE_ENFORCE="%s"\n' "${DEMO_ALT_GATE_ENFORCE:-1}"
   cat <<'EOF'
 set -euo pipefail
@@ -253,8 +259,8 @@ else
   smoke_fail=1
 fi
 emit_alt_gate() {
-  local gate_verdict="$1" msg="$2"
-  if [ "$gate_verdict" = "FAIL" ] && [ "${DEMO_ALT_GATE_ENFORCE:-1}" = "0" ]; then
+  local gate_verdict="$1" msg="$2" overridable="${3:-0}"
+  if [ "$gate_verdict" = "FAIL" ] && [ "$overridable" = "1" ] && [ "${DEMO_ALT_GATE_ENFORCE:-1}" = "0" ]; then
     echo "WARN ${msg} (enforcement disabled via DEMO_ALT_GATE_ENFORCE=0)"
     return
   fi
@@ -270,8 +276,18 @@ curl -sS -D "$media_headers" -o "$media_body" --max-time 30 \
 set +o pipefail
 header_total=$(grep -i '^x-wp-total:' "$media_headers" | tr -d '\r ' | sed 's/.*://;q')
 body_total=$(grep -o '"alt_text": *"[^"]*"' "$media_body" | wc -l | tr -d ' ')
-with_alt=$(grep -o '"alt_text": *"[^"]*"' "$media_body" | grep -v '"alt_text": *""' | wc -l | tr -d ' ')
-sample=$(grep -o '"alt_text": *"[^"]*"' "$media_body" | grep -v '"alt_text": *""' | sed 's/"alt_text": *"//;s/"$//' | tr '\n' ' ')
+with_alt=0
+sample=""
+while IFS= read -r alt_json; do
+  [ -n "$alt_json" ] || continue
+  alt=$(printf '%s' "$alt_json" | sed 's/^"alt_text": *"//;s/"$//')
+  if [ "$(classify_alt_text_usable "$alt")" = "PASS" ]; then
+    with_alt=$((with_alt + 1))
+    sample="${sample}${alt} "
+  fi
+done <<ALTJSON
+$(grep -o '"alt_text": *"[^"]*"' "$media_body" || true)
+ALTJSON
 set -o pipefail
 rm -f "$media_headers" "$media_body"
 min="${DEMO_ALT_MIN_COVERAGE_PCT:-95}"
@@ -281,7 +297,7 @@ if [ "$pop" = "FAIL" ]; then
 else
   pop_msg="demo alt population (header=${header_total} body=${body_total})"
 fi
-emit_alt_gate "$pop" "$pop_msg"
+emit_alt_gate "$pop" "$pop_msg" 1
 verdict=$(classify_alt_coverage "$body_total" "$with_alt" "$min")
 pct="?"
 case "$body_total" in *[!0-9]*|'') ;; *)
@@ -298,7 +314,7 @@ if [ "$pct" != "?" ]; then
 else
   cov_msg="demo alt coverage (total=${body_total:-empty} with_alt=${with_alt:-empty}, need ${min}%)"
 fi
-emit_alt_gate "$verdict" "$cov_msg"
+emit_alt_gate "$verdict" "$cov_msg" 1
 run_prov=0
 case "$with_alt" in *[!0-9]*|'') ;; *)
   if [ "$with_alt" -gt 0 ]; then
@@ -313,7 +329,7 @@ if [ "$run_prov" = "1" ]; then
   else
     prov_msg="demo alt provenance (no seeded fixture captions in ${with_alt} published alt texts)"
   fi
-  emit_alt_gate "$prov" "$prov_msg"
+  emit_alt_gate "$prov" "$prov_msg" 0
 else
   echo "SKIP demo alt provenance (no alt text published)"
 fi

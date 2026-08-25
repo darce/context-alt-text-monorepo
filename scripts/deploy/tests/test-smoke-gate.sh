@@ -62,6 +62,21 @@ assert_eq "alt coverage non-numeric total" FAIL "$(classify_alt_coverage abc 10 
 assert_eq "alt coverage with_alt > total (impossible)" FAIL "$(classify_alt_coverage 100 200 95)"
 assert_eq "alt coverage 2/3 >= 60 (integer math keeps a true pass)" PASS "$(classify_alt_coverage 3 2 60)"
 assert_eq "alt coverage 1/3 < 60" FAIL "$(classify_alt_coverage 3 1 60)"
+# R1-02: min_pct below DEMO_ALT_MIN_COVERAGE_FLOOR (default 50) fails closed.
+# classify_alt_coverage 100 0 0 used to evaluate 0>=0 and print PASS.
+assert_eq "alt coverage min_pct 0 below default floor (certify-a-lie)" FAIL "$(classify_alt_coverage 100 0 0)"
+assert_eq "alt coverage 100/100 but min_pct 49 below floor 50" FAIL "$(classify_alt_coverage 100 100 49)"
+assert_eq "alt coverage 50/100 >= 50 equals default floor" PASS "$(classify_alt_coverage 100 50 50)"
+assert_eq "alt coverage 49/100 < floor 50" FAIL "$(classify_alt_coverage 100 49 50)"
+_saved_floor="${DEMO_ALT_MIN_COVERAGE_FLOOR-}"
+DEMO_ALT_MIN_COVERAGE_FLOOR=80
+assert_eq "alt coverage custom floor 80 rejects min_pct 70" FAIL "$(classify_alt_coverage 100 70 70)"
+if [ -n "${_saved_floor}" ]; then
+    DEMO_ALT_MIN_COVERAGE_FLOOR="${_saved_floor}"
+else
+    unset DEMO_ALT_MIN_COVERAGE_FLOOR
+fi
+unset _saved_floor
 
 # --- classify_alt_population <header_total> <body_total> ---
 assert_eq "alt population 100 == 100" PASS "$(classify_alt_population 100 100)"
@@ -84,6 +99,22 @@ assert_eq "alt provenance fixture: printed document" FAIL "$(classify_alt_proven
 assert_eq "alt provenance fixture: two people seated" FAIL "$(classify_alt_provenance 'Two people seated indoors in conversation.')"
 assert_eq "alt provenance fixture: building exterior" FAIL "$(classify_alt_provenance 'A building exterior seen from the street.')"
 assert_eq "alt provenance fixture: pet animal" FAIL "$(classify_alt_provenance 'A pet animal resting on a soft surface.')"
+# R1-03b: trivial denylist evasions must still FAIL.
+assert_eq "alt provenance lowercase first letter still fixture" FAIL "$(classify_alt_provenance 'a person standing outdoors near greenery.')"
+assert_eq "alt provenance dropped trailing period still fixture" FAIL "$(classify_alt_provenance 'A person standing outdoors near greenery')"
+assert_eq "alt provenance extra internal whitespace still fixture" FAIL "$(classify_alt_provenance 'A person  standing   outdoors near greenery.')"
+assert_eq "alt provenance trailing bang still fixture" FAIL "$(classify_alt_provenance 'A person standing outdoors near greenery!')"
+
+# --- classify_alt_text_usable <text> ---
+# R1-03a: placeholder / non-content alt is not coverage.
+assert_eq "usable alt empty" FAIL "$(classify_alt_text_usable '')"
+assert_eq "usable alt whitespace only" FAIL "$(classify_alt_text_usable '   ')"
+assert_eq "usable alt period placeholder" FAIL "$(classify_alt_text_usable '.')"
+assert_eq "usable alt single space" FAIL "$(classify_alt_text_usable ' ')"
+assert_eq "usable alt 14 letters (below 15)" FAIL "$(classify_alt_text_usable 'abcdefghijklmn')"
+assert_eq "usable alt 15 letters" PASS "$(classify_alt_text_usable 'abcdefghijklmno')"
+assert_eq "usable alt 15 digits no alphabetic" FAIL "$(classify_alt_text_usable '123456789012345')"
+assert_eq "usable alt real caption" PASS "$(classify_alt_text_usable 'A woman in a red coat speaks at a podium.')"
 
 # TEST-15 mutation proof (2026-08-25): adding a 9th _FIXTURE_POOL caption
 # not present in smoke-gate.sh makes this suite exit 1 with:
@@ -108,6 +139,96 @@ DRIFT
     if [ "$extracted" -eq 0 ]; then
         echo "FAIL fixture-pool extraction produced zero captions from ${adapter_file}"
         failures=$((failures + 1))
+    fi
+    # R3-01: extracted count must equal the true _FIXTURE_POOL length (ast).
+    # grep '"caption":' misses 'caption' keys; -gt 0 would still pass a partial miss.
+    true_pool_len=""
+    if ! true_pool_len=$(python3 - "$adapter_file" <<'PY'
+import ast
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+mod = ast.parse(path.read_text())
+for node in mod.body:
+    name = None
+    value = None
+    if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+        name, value = node.target.id, node.value
+    elif isinstance(node, ast.Assign):
+        for target in node.targets:
+            if isinstance(target, ast.Name) and target.id == "_FIXTURE_POOL":
+                name, value = target.id, node.value
+                break
+    if name == "_FIXTURE_POOL":
+        if not isinstance(value, (ast.Tuple, ast.List)):
+            sys.stderr.write("FAIL _FIXTURE_POOL is not a tuple/list\n")
+            sys.exit(2)
+        print(len(value.elts))
+        sys.exit(0)
+sys.stderr.write("FAIL _FIXTURE_POOL not found\n")
+sys.exit(2)
+PY
+    ); then
+        echo "FAIL fixture-pool ast parse failed for ${adapter_file}"
+        failures=$((failures + 1))
+    elif [ "$extracted" -ne "$true_pool_len" ]; then
+        echo "FAIL fixture-pool extraction count ${extracted} != pool length ${true_pool_len}"
+        failures=$((failures + 1))
+    else
+        echo "ok   drift: extracted ${extracted} == pool length ${true_pool_len}"
+    fi
+fi
+
+# --- emit_alt_gate <verdict> <msg> <overridable> (extracted from sync-demo.sh) ---
+# R1-01: provenance FAIL is non-overridable; population/coverage stay overridable.
+sync_demo="${script_dir}/../sync-demo.sh"
+if [ ! -f "$sync_demo" ]; then
+    echo "FAIL sync-demo.sh missing: ${sync_demo}"
+    failures=$((failures + 1))
+else
+    pop_line=$(grep 'emit_alt_gate "$pop"' "$sync_demo" | sed 's/^[[:space:]]*//')
+    cov_line=$(grep 'emit_alt_gate "$verdict" "$cov_msg"' "$sync_demo" | sed 's/^[[:space:]]*//')
+    prov_line=$(grep 'emit_alt_gate "$prov"' "$sync_demo" | sed 's/^[[:space:]]*//')
+    assert_eq "R1-01 population emit_alt_gate overridable=1" 'emit_alt_gate "$pop" "$pop_msg" 1' "$pop_line"
+    assert_eq "R1-01 coverage emit_alt_gate overridable=1" 'emit_alt_gate "$verdict" "$cov_msg" 1' "$cov_line"
+    assert_eq "R1-01 provenance emit_alt_gate overridable=0" 'emit_alt_gate "$prov" "$prov_msg" 0' "$prov_line"
+    if grep -q 'The override covers empty alt, never canned captions.' "$sync_demo"; then
+        echo "ok   R1-01 header states override covers empty alt, never canned captions"
+    else
+        echo "FAIL R1-01 header missing 'The override covers empty alt, never canned captions.'"
+        failures=$((failures + 1))
+    fi
+    if grep -q 'classify_alt_text_usable' "$sync_demo"; then
+        echo "ok   R1-03 classify_alt_text_usable wired into sync-demo.sh"
+    else
+        echo "FAIL R1-03 classify_alt_text_usable not wired into sync-demo.sh"
+        failures=$((failures + 1))
+    fi
+    emit_src=$(awk '/^emit_alt_gate\(\) \{/,/^}/' "$sync_demo")
+    if [ -z "$emit_src" ]; then
+        echo "FAIL emit_alt_gate not found in ${sync_demo}"
+        failures=$((failures + 1))
+    else
+        eval "$emit_src"
+        run_emit() {
+            DEMO_ALT_GATE_ENFORCE="$1"
+            smoke_fail=0
+            emit_alt_gate "$2" "$3" "$4"
+            echo "smoke_fail=${smoke_fail}"
+        }
+        cov_override=$(run_emit 0 FAIL "demo alt coverage (0/100 = 0%, need 95%)" 1)
+        assert_eq "R1-01 coverage FAIL overridable under DEMO_ALT_GATE_ENFORCE=0" \
+            "WARN demo alt coverage (0/100 = 0%, need 95%) (enforcement disabled via DEMO_ALT_GATE_ENFORCE=0)
+smoke_fail=0" "$cov_override"
+        prov_locked=$(run_emit 0 FAIL "demo alt provenance (seeded fixture caption detected in 100 published alt texts)" 0)
+        assert_eq "R1-01 provenance FAIL non-overridable under DEMO_ALT_GATE_ENFORCE=0" \
+            "FAIL demo alt provenance (seeded fixture caption detected in 100 published alt texts)
+smoke_fail=1" "$prov_locked"
+        prov_default=$(run_emit 0 FAIL "demo alt provenance (canned)" "")
+        assert_eq "R1-01 missing overridable defaults fail-closed" \
+            "FAIL demo alt provenance (canned)
+smoke_fail=1" "$prov_default"
     fi
 fi
 

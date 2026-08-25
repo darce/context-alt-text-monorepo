@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from enum import StrEnum
 
+import pytest
 from fastapi.testclient import TestClient
 
 
@@ -46,7 +47,15 @@ def test_root_health_is_liveness_only() -> None:
     assert body["status"] == HealthStatus.OK.value
     assert "timestamp" in body
     # Liveness must not include dependency projections: no DB, breaker, or cache.
-    forbidden_keys = {"database", "breaker_state", "pool_stats", "checks", "model_cache"}
+    # description_adapter is deployment config and stays on /health/detailed.
+    forbidden_keys = {
+        "database",
+        "breaker_state",
+        "pool_stats",
+        "checks",
+        "model_cache",
+        "description_adapter",
+    }
     assert not (forbidden_keys & body.keys()), (
         f"/health leaked dependency fields {forbidden_keys & body.keys()}; liveness must stay minimal (PR-01)."
     )
@@ -302,6 +311,42 @@ def test_health_detailed_returns_diagnostic_payload(tmp_path) -> None:
     assert embedding_runtime["reason"] == "capability read failed"
 
 
+@pytest.mark.parametrize("profile", ["seeded", "florence_small"])
+def test_health_detailed_reports_description_adapter(profile: str, tmp_path, monkeypatch) -> None:
+    """Auth-gated diagnostic must expose the active description profile.
+
+    model_cache.profile is the face_pipeline profile. The demo describe gate
+    needs the caption producer — DescriptionSettings.profile — as a top-level
+    string. Parametrize two real profiles so a hardcoded field fails.
+    """
+    from recognition.interface_adapters.http.deps.auth import AuthContext, require_auth
+    from scene.config.settings import DescriptionSettings
+
+    monkeypatch.setenv("ACX_DESCRIPTION_ADAPTER", profile)
+
+    bundle = tmp_path / "buffalo_l"
+    bundle.mkdir()
+    (bundle / "det_10g.onnx").write_bytes(b"stub")
+
+    app = _build_ready_app(model_cache_dir=tmp_path)
+
+    async def _auth_ok() -> AuthContext:
+        return AuthContext(token=None, tenant_claim=None, enabled=False)
+
+    app.dependency_overrides[require_auth] = _auth_ok
+    client = TestClient(app)
+
+    resp = client.get("/health/detailed")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["description_adapter"] == profile
+    assert body["description_adapter"] == DescriptionSettings().profile.value
+
+    live = client.get("/health")
+    assert live.status_code == 200, live.text
+    assert "description_adapter" not in live.json()
+
+
 def test_health_detailed_status_tracks_breaker_failure(tmp_path) -> None:
     """Regression guard for 7ed215db: /health/detailed status must aggregate
     DB + breaker + model-cache, not model-cache alone.
@@ -395,7 +440,14 @@ def test_root_health_includes_commit_sha(monkeypatch) -> None:
     body = resp.json()
     assert body["commit_sha"] == "af9d6504deadbeefcafebabe1234567890abcdef"
     # Dep-projection keys still forbidden (PR-01 liveness contract).
-    forbidden_keys = {"database", "breaker_state", "pool_stats", "checks", "model_cache"}
+    forbidden_keys = {
+        "database",
+        "breaker_state",
+        "pool_stats",
+        "checks",
+        "model_cache",
+        "description_adapter",
+    }
     assert not (forbidden_keys & body.keys())
 
 

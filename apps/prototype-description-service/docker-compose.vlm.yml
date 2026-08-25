@@ -1,0 +1,17 @@
+# Opt-in runtime-vlm image overlay. Layer on docker-compose.env.yml:
+#   docker compose -f docker-compose.env.yml -f docker-compose.vlm.yml up -d
+#
+# Default repo is acx-backend-vlm (torch/transformers). The slim recognition
+# default in docker-compose.env.yml is unchanged until this file is layered.
+# Does not set ACX_DESCRIPTION_ADAPTER — seeded remains the default profile.
+#
+# Usage with prod.yml (tag defaults to latest):
+#   docker compose -f docker-compose.prod.yml -f docker-compose.vlm.yml up -d
+
+services:
+  api:
+    image: ${ACX_IMAGE_REPO:-iad.ocir.io/idu2kqqe2jxy/acx-backend-vlm}:${ACX_IMAGE_TAG:-latest}
+  worker:
+    image: ${ACX_IMAGE_REPO:-iad.ocir.io/idu2kqqe2jxy/acx-backend-vlm}:${ACX_IMAGE_TAG:-latest}
+  fix-blob-ownership:
+    image: ${ACX_IMAGE_REPO:-iad.ocir.io/idu2kqqe2jxy/acx-backend-vlm}:${ACX_IMAGE_TAG:-latest}

@@ -25,8 +25,10 @@ REPO_ROOT = Path(__file__).resolve().parents[5]
 DEPLOY_SCRIPT = REPO_ROOT / "scripts" / "deploy" / "recognition-service.sh"
 COMPOSE_ENV = SERVICE_ROOT / "docker-compose.env.yml"
 COMPOSE_PROD = SERVICE_ROOT / "docker-compose.prod.yml"
+COMPOSE_VLM = SERVICE_ROOT / "docker-compose.vlm.yml"
 
 _DEFAULT_REPO = "iad.ocir.io/idu2kqqe2jxy/acx-backend"
+_VLM_REPO = "iad.ocir.io/idu2kqqe2jxy/acx-backend-vlm"
 # image: ${ACX_IMAGE_REPO:-iad.ocir.io/idu2kqqe2jxy/acx-backend}:TAG
 _IMAGE_LINE_RE = re.compile(
     r"^\s*image:\s*(?P<value>.+?)\s*$",
@@ -52,6 +54,22 @@ def _service_image_lines(compose_text: str) -> list[str]:
             continue
         values.append(value)
     return values
+
+
+def compose_image_default_repos(compose_text: str) -> set[str]:
+    """ACX_IMAGE_REPO default values on app image lines (rg-015: parsed, not guessed)."""
+    found: set[str] = set()
+    for value in _service_image_lines(compose_text):
+        match = re.search(r"\$\{ACX_IMAGE_REPO:-([^}]+)\}", value)
+        if match:
+            found.add(match.group(1))
+    return found
+
+
+def compose_defaults_to_vlm_image_repo(compose_text: str) -> bool:
+    """True when every app image line defaults ACX_IMAGE_REPO to the VLM repo."""
+    repos = compose_image_default_repos(compose_text)
+    return bool(repos) and repos == {_VLM_REPO}
 
 
 def compose_api_worker_images_use_image_repo(compose_text: str) -> bool:
@@ -182,6 +200,33 @@ def test_compose_prod_uses_acx_image_repo_substitution() -> None:
         assert value.endswith(":latest") or ":latest" in value
 
 
+def test_compose_env_default_repo_stays_recognition_slim() -> None:
+    """Default compose stays torch-free; VLM is the overlay, not the default."""
+    assert compose_image_default_repos(COMPOSE_ENV.read_text()) == {_DEFAULT_REPO}
+    assert compose_image_default_repos(COMPOSE_PROD.read_text()) == {_DEFAULT_REPO}
+    assert not compose_defaults_to_vlm_image_repo(COMPOSE_ENV.read_text())
+
+
+def test_compose_vlm_overlay_defaults_to_vlm_repo() -> None:
+    """PROV-01b: opt-in overlay selects acx-backend-vlm without flipping the slim default."""
+    assert COMPOSE_VLM.is_file(), "docker-compose.vlm.yml overlay missing"
+    text = COMPOSE_VLM.read_text(encoding="utf-8")
+    assert compose_defaults_to_vlm_image_repo(text), (
+        "docker-compose.vlm.yml api/worker must default "
+        "${ACX_IMAGE_REPO:-iad.ocir.io/idu2kqqe2jxy/acx-backend-vlm}"
+    )
+    assert _VLM_REPO in text
+    active_env = [
+        line
+        for line in text.splitlines()
+        if line.strip() and not line.lstrip().startswith("#") and "ACX_DESCRIPTION_ADAPTER" in line
+    ]
+    assert not active_env, (
+        "VLM overlay must not flip ACX_DESCRIPTION_ADAPTER; default stays seeded; "
+        f"got {active_env}"
+    )
+
+
 def test_data_cache_bind_mounts_are_readonly_in_both_compose_files() -> None:
     for path in (COMPOSE_ENV, COMPOSE_PROD):
         text = path.read_text(encoding="utf-8")
@@ -256,6 +301,30 @@ def test_smoke_timeout_failure_names_unvalidated_vlm_budget() -> None:
 
 
 # ---- parsers / TEST-15 synthetic mutations -------------------------------
+
+
+def test_mutation_vlm_overlay_without_vlm_repo_fails_guard() -> None:
+    """TEST-15: overlay that still defaults to the slim recognition repo goes red."""
+    good = textwrap.dedent(
+        f"""\
+        services:
+          api:
+            image: ${{ACX_IMAGE_REPO:-{_VLM_REPO}}}:${{ACX_IMAGE_TAG}}
+          worker:
+            image: ${{ACX_IMAGE_REPO:-{_VLM_REPO}}}:${{ACX_IMAGE_TAG}}
+        """
+    )
+    bad = textwrap.dedent(
+        f"""\
+        services:
+          api:
+            image: ${{ACX_IMAGE_REPO:-{_DEFAULT_REPO}}}:${{ACX_IMAGE_TAG}}
+          worker:
+            image: ${{ACX_IMAGE_REPO:-{_DEFAULT_REPO}}}:${{ACX_IMAGE_TAG}}
+        """
+    )
+    assert compose_defaults_to_vlm_image_repo(good)
+    assert not compose_defaults_to_vlm_image_repo(bad)
 
 
 def test_mutation_bare_image_fails_compose_guard() -> None:

@@ -200,11 +200,29 @@ def test_resolve_gpu_qwen30b_yields_gpu_adapter(monkeypatch):
     from scene.infrastructure.vlm.gpu_remote_adapter import GpuRemoteDescriptionAdapter
     from scene.interface_adapters.http.deps import get_description_adapter
 
+    spec = get_profile_spec(DescriptionProfile.GPU_QWEN30B)
     adapter = get_description_adapter()
     assert isinstance(adapter, GpuRemoteDescriptionAdapter)
     assert isinstance(adapter, DescriptionAdapter)
     assert adapter.kind is DescriptionAdapterKind.GPU
-    assert adapter.model_id == "Qwen3-VL-30B-A3B-Instruct"
+    assert spec.model_revision is not None
+    assert adapter.model_id == f"{spec.model_id}@{spec.model_revision}"
+
+
+def test_resolve_gpu_qwen30b_provenance_names_pinned_revision(monkeypatch):
+    """PROV-01b / rg-015: wire model_id names the hub pin the adapter was built with."""
+    monkeypatch.setenv("ACX_DESCRIPTION_ADAPTER", "gpu_qwen30b")
+    monkeypatch.setenv("ACX_GPU_ENDPOINT_URL", "http://10.0.1.42:8000")
+    from scene.infrastructure.vlm.gpu_remote_adapter import GpuRemoteDescriptionAdapter
+    from scene.interface_adapters.http.deps import get_description_adapter
+
+    spec = get_profile_spec(DescriptionProfile.GPU_QWEN30B)
+    adapter = get_description_adapter()
+    assert isinstance(adapter, GpuRemoteDescriptionAdapter)
+    assert spec.model_revision is not None
+    assert adapter.model_id.endswith(f"@{spec.model_revision}")
+    assert adapter.model_id.startswith("Qwen3-VL-30B-A3B-Instruct@")
+    assert adapter.model_id != spec.model_id
 
 
 def test_resolve_gpu_qwen30b_ensemble_sync_route_gets_raw_gpu_adapter(monkeypatch):
@@ -214,10 +232,12 @@ def test_resolve_gpu_qwen30b_ensemble_sync_route_gets_raw_gpu_adapter(monkeypatc
     from scene.infrastructure.vlm.gpu_remote_adapter import GpuRemoteDescriptionAdapter
     from scene.interface_adapters.http.deps import get_description_adapter
 
+    spec = get_profile_spec(DescriptionProfile.GPU_QWEN30B_ENSEMBLE)
     adapter = get_description_adapter()
     assert isinstance(adapter, GpuRemoteDescriptionAdapter)
     assert adapter.kind is DescriptionAdapterKind.GPU
-    assert adapter.model_id == "Qwen3-VL-30B-A3B-Instruct"
+    assert spec.model_revision is not None
+    assert adapter.model_id == f"{spec.model_id}@{spec.model_revision}"
 
 
 def test_resolve_gpu_qwen30b_ensemble_async_final_gets_wrapped_adapter(monkeypatch):
@@ -231,9 +251,11 @@ def test_resolve_gpu_qwen30b_ensemble_async_final_gets_wrapped_adapter(monkeypat
     adapter = get_async_gpu_description_adapter()
     assert isinstance(adapter, EnsembleDescriptionAdapter)
     assert isinstance(adapter, DescriptionAdapter)
+    spec = get_profile_spec(DescriptionProfile.GPU_QWEN30B_ENSEMBLE)
     assert isinstance(adapter._wrapped, GpuRemoteDescriptionAdapter)
     assert adapter.kind is DescriptionAdapterKind.GPU
-    assert adapter.model_id == "Qwen3-VL-30B-A3B-Instruct"
+    assert spec.model_revision is not None
+    assert adapter.model_id == f"{spec.model_id}@{spec.model_revision}"
     assert adapter.model_version == "Q4_K_M"
     assert adapter.prompt_or_task_version == "3"
 

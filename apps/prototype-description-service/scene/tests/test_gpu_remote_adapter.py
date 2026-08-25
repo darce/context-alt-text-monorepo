@@ -86,6 +86,30 @@ def test_gpu_remote_adapter_posts_bakeoff_aligned_prompt_and_returns_adapter_res
     assert "data:image/png;base64" in json.dumps(user_content)
 
 
+def test_gpu_remote_adapter_provenance_names_loaded_revision_not_payload_model() -> None:
+    """PROV-01b / rg-015: wire identity names the pin; llama.cpp still gets the served id."""
+    captured: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(json.loads(request.content))
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": "ok"}}]},
+        )
+
+    pin = "0af19e7479857aa7f3246466a4ad16c7e7299639"
+    adapter = GpuRemoteDescriptionAdapter(
+        endpoint_url="http://gpu.test:8000",
+        model_id="Qwen3-VL-30B-A3B-Instruct",
+        model_version="Q4_K_M",
+        model_revision=pin,
+        transport=httpx.MockTransport(handler),
+    )
+    adapter.describe(image_bytes=b"x", context=None)
+    assert adapter.model_id == f"Qwen3-VL-30B-A3B-Instruct@{pin}"
+    assert captured[0]["model"] == "Qwen3-VL-30B-A3B-Instruct"
+
+
 def test_gpu_remote_adapter_omits_context_sources_when_context_empty() -> None:
     adapter = GpuRemoteDescriptionAdapter(
         endpoint_url="http://gpu.test:8000",

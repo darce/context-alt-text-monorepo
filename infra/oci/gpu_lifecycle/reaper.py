@@ -507,6 +507,29 @@ def run_start_cycle(
     if not decided and not waiting_ids and not errors:
         return StartCycleResult(decided=[], actuated=[], errors=[])
 
+    start_ids = [
+        instance_id
+        for action, instance_id in decided
+        if action == LifecycleAction.START
+    ]
+    wait_ids = start_ids + [
+        instance_id for instance_id in waiting_ids if instance_id not in set(start_ids)
+    ]
+    if (
+        isinstance(probe, HttpReadinessProbe)
+        and not probe.is_per_instance
+        and len(wait_ids) > 1
+    ):
+        msg = (
+            "HttpReadinessProbe URL is a single shared endpoint; refusing "
+            "multi-id wait (template {instance_id} required)"
+        )
+        logger.error(msg)
+        errors.append(msg)
+        return StartCycleResult(
+            decided=decided, actuated=[], errors=errors, wait_result=None
+        )
+
     actuated: list[tuple[str, str]] = []
     start_failed: list[str] = []
     for action, instance_id in decided:
@@ -530,18 +553,7 @@ def run_start_cycle(
     wait_ids = [instance_id for _, instance_id in actuated] + [
         instance_id for instance_id in waiting_ids if instance_id not in {i for _, i in actuated}
     ]
-    if (
-        isinstance(probe, HttpReadinessProbe)
-        and not probe.is_per_instance
-        and len(wait_ids) > 1
-    ):
-        msg = (
-            "HttpReadinessProbe URL is a single shared endpoint; refusing "
-            "multi-id wait (template {instance_id} required)"
-        )
-        logger.error(msg)
-        errors.append(msg)
-    elif probe is not None and readiness_wait is not None and wait_ids:
+    if probe is not None and readiness_wait is not None and wait_ids:
         wait_result = readiness_wait.wait(wait_ids, probe)
         if wait_result.errors:
             errors.extend(wait_result.errors)

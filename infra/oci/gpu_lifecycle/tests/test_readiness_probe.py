@@ -256,15 +256,18 @@ def test_shared_http_probe_refuses_multi_id_wait() -> None:
         GpuInstance(instance_id="ocid1.a", state="STOPPED", idle_for_seconds=0),
         GpuInstance(instance_id="ocid1.b", state="STOPPED", idle_for_seconds=0),
     ]
+    actuator = RecordingStartActuator()
     result = run_start_cycle(
         controller=controller,
         instances=instances,
         load_source=StaticJobLoadSource(queue_depth=1, in_flight=0),
-        actuator=RecordingStartActuator(),
+        actuator=actuator,
         probe=HttpReadinessProbe(url="http://127.0.0.1:9/health"),
         readiness_wait=WarmReadinessWait(
             max_cycles=1, stall_cycles=1, sleep_seconds=0.0
         ),
     )
     assert result.wait_result is None
+    assert result.actuated == []
+    assert actuator.started == []
     assert any("multi-id" in err for err in result.errors)

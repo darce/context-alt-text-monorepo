@@ -5,6 +5,8 @@
 
 ## Goals
 
+- Six ACX submenus are MECE and frequency-ordered (NAV-05/NAV-06): Overview orients; Review Queue is the one home to name a person from a photo (highest-frequency demo task); People manages named people only; Description Runs is the one home to see what the describer did; Data Retention is keep/delete/export policy (not description history); Settings configures the service (rare, last). WordPress parent slug stays Overview.
+- One primary action per screen (NAV-01), reachable from zero state (rg-003); other CTAs are secondary.
 - Operator runs the full recognize -> name -> curate loop and edits alt-text/descriptions without leaving one surface (control-left, library-right)
 - Read face-group structure at a glance via a UMAP scatter and act on the selection in the same viewport
 - Decompose the 2-pane redesign from screens/zones/states/flows instead of inventing IA mid-plan
@@ -93,8 +95,8 @@ url_params: `pane`, `cluster`, `endpoint`
 | --- | --- | --- | --- |
 | `z-endpoint` | Recognition endpoint + health (read-only: InsightFace :10010 interim; FIR when stable; target is server-resolved via ACX_RECOGNITION_URL, no UI toggle per RECOG-1) | status | default, loading, error, degraded |
 | `z-recognition-controls` | Face-group/recognition controls (run, refresh, threshold) | job | default, loading, error |
-| `z-cluster-umap` | UMAP face-group scatter (2D projection of faces; select to drive right pane) | ai_review | default, loading, empty, error, first_time |
-| `z-cluster-list` | Face-group list / selection (size, confidence, unnamed-first) + NameFaceControl (loading = in-flight name write; the suggestions disclosure being open or closed is part of default) | queue | default, loading, empty, error |
+| `z-cluster-umap` | UMAP face-group scatter (2D projection of faces; select to drive right pane) | ai_review | default, loading, empty, error, first_time, degraded |
+| `z-cluster-list` | Face-group list / selection (size, confidence, unnamed-first) + NameFaceControl (loading = in-flight name write; the suggestions disclosure being open or closed is part of default) | queue | default, loading, empty, error, first_time, degraded |
 | `z-name-curate` | Name this person (NameFaceControl; confirm / correct / merge / split; forced-choice; loading = pending roster write; error = roster write failed; edge_input = ambiguous candidate set or duplicate-name guard; default = overlay closed or suggestions open) | forced_choice | default, loading, empty, error, edge_input |
 
 ```
@@ -113,8 +115,8 @@ url_params: `pane`, `cluster`, `endpoint`
 +------------------------------------------------------------+
 | ACTIONS                                                    |
 |   [PRIMARY] Run / refresh recognition + grouping -> job-p… |
-|   [PRIMARY] Save name (NameFaceControl) -> identity-store  |
-|   [PRIMARY] Select face group (UMAP or list) -> library    |
+|   [secondary] Save name (NameFaceControl) -> identity-store  |
+|   [secondary] Select face group (UMAP or list) -> library    |
 |   [secondary] Go to Roster -> exit-roster                  |
 |   [secondary] View / change recognition endpoint (Setting… |
 |   [DESTRUCTIVE] Merge / split / correct group -> identity… |
@@ -131,10 +133,10 @@ url_params: `pane`, `media`, `cluster`, `status`, `s`, `p`, `perPage`
 
 | zone id | label | role | states |
 | --- | --- | --- | --- |
-| `z-lib-filters` | Library filters (status, has-alt, has-description, face group, search) | form | default, edge_input |
-| `z-lib-table` | Media library table (thumb \| title \| status \| alt-text \| long description \| people) | queue | default, loading, empty, error |
-| `z-lib-inline-edit` | Inline person naming (NameFaceControl) + alt-text / long-description editor (loading = pending save; the suggestions disclosure being open or closed is part of default) | form | default, loading, empty, error |
-| `z-lib-ai-suggest` | AI name / caption suggestions (evidence-linked; editable before accept; loading = suggestion request in flight; the suggestions disclosure being open or closed is part of default) | ai_review | default, empty, loading, error |
+| `z-lib-filters` | Library filters (status, has-alt, has-description, face group, search) | form | default, loading, empty, error, first_time, edge_input |
+| `z-lib-table` | Media library table (thumb \| title \| status \| alt-text \| long description \| people) | queue | default, loading, empty, error, first_time, edge_input |
+| `z-lib-inline-edit` | Inline person naming (NameFaceControl) + alt-text / long-description editor (loading = pending save; the suggestions disclosure being open or closed is part of default) | form | default, loading, empty, error, first_time, edge_input |
+| `z-lib-ai-suggest` | AI name / caption suggestions (evidence-linked; editable before accept; loading = suggestion request in flight; the suggestions disclosure being open or closed is part of default) | ai_review | default, loading, empty, error, first_time, edge_input |
 | `z-lib-actions` | Bulk describe / scan CTAs + job progress | job | default, loading, error |
 
 ```
@@ -151,8 +153,8 @@ url_params: `pane`, `media`, `cluster`, `status`, `s`, `p`, `perPage`
 +------------------------------------------------------------+
 | ACTIONS                                                    |
 |   [PRIMARY] Edit alt-text inline -> media-store            |
-|   [PRIMARY] Bulk describe selected media -> job-pipeline … |
-|   [PRIMARY] Edit long description inline -> media-store    |
+|   [secondary] Bulk describe selected media -> job-pipeline … |
+|   [secondary] Edit long description inline -> media-store    |
 |   [secondary] Accept AI caption/description (editable) ->… |
 +------------------------------------------------------------+
 | states: default | loading | empty | error | first_time | … |
@@ -167,9 +169,9 @@ url_params: `panel`
 
 | zone id | label | role | states |
 | --- | --- | --- | --- |
-| `z-conflict-list` | Conflict list | queue | default, loading, empty |
-| `z-conflict-detail` | Conflict detail / candidates | forced_choice | default, loading, empty |
-| `z-conflict-actions` | Resolve / defer actions | form | default |
+| `z-conflict-list` | Conflict list | queue | default, loading, empty, error |
+| `z-conflict-detail` | Conflict detail / candidates | forced_choice | default, loading, empty, error |
+| `z-conflict-actions` | Resolve / defer actions | form | default, loading, empty, error |
 
 ```
 +------------------------------------------------------------+
@@ -177,9 +179,9 @@ url_params: `panel`
 | Review people conflicts; commit human judgment with evide… |
 +------------------------------------------------------------+
 | ZONES                                                      |
-|   - Conflict list (queue) states=[default,loading,empty]   |
+|   - Conflict list (queue) states=[default,loading,empty,error] |
 |   - Conflict detail / candidates (forced_choice) states=[… |
-|   - Resolve / defer actions (form) states=[default]        |
+|   - Resolve / defer actions (form) states=[default,loading,empty,error] |
 +------------------------------------------------------------+
 | ACTIONS                                                    |
 |   [PRIMARY] Resolve conflict -> identity-store (costly,pr… |
@@ -196,8 +198,8 @@ url_params: `panel`
 
 | zone id | label | role | states |
 | --- | --- | --- | --- |
-| `z-dl-list` | Dead-letter items | queue | default, loading, empty |
-| `z-dl-actions` | Retry / discard | form | default |
+| `z-dl-list` | Dead-letter items | queue | default, loading, empty, error |
+| `z-dl-actions` | Retry / discard | form | default, loading, empty, error |
 
 ```
 +------------------------------------------------------------+
@@ -206,7 +208,7 @@ url_params: `panel`
 +------------------------------------------------------------+
 | ZONES                                                      |
 |   - Dead-letter items (queue) states=[default,loading,emp… |
-|   - Retry / discard (form) states=[default]                |
+|   - Retry / discard (form) states=[default,loading,empty,error] |
 +------------------------------------------------------------+
 | ACTIONS                                                    |
 |   [PRIMARY] Retry failed op -> sync (costly,preview)       |
@@ -244,7 +246,7 @@ Purpose: Configure recognition target and connection health
 
 | zone id | label | role | states |
 | --- | --- | --- | --- |
-| `z-settings-form` | Settings form + test connection | form | default, error |
+| `z-settings-form` | Settings form + test connection | form | default, loading, error |
 
 ```
 +------------------------------------------------------------+
@@ -254,7 +256,7 @@ Purpose: Configure recognition target and connection health
 | ZONES                                                      |
 |   - Settings form + test connection (form) states=[defaul… |
 +------------------------------------------------------------+
-| states: default | loading | error                          |
+| states: default | error                                    |
 +------------------------------------------------------------+
 ```
 

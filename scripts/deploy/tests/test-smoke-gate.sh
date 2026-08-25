@@ -139,6 +139,10 @@ assert_eq "alt provenance mixed trusted + untrusted" FAIL "$(classify_alt_proven
 assert_eq "alt provenance empty adapters blob usable 1 (fail closed)" FAIL "$(classify_alt_provenance "$REAL_CAPTION" "" 1)"
 assert_eq "alt provenance whitespace adapters blob usable 1 (fail closed)" FAIL "$(classify_alt_provenance "$REAL_CAPTION" "   " 1)"
 assert_eq "alt provenance trusted fewer than usable_count" FAIL "$(classify_alt_provenance "$REAL_CAPTION" "$TRUSTED_ONE" 2)"
+assert_eq "alt identity extra trusted tokens fail equality (not >=)" FAIL "$(classify_alt_identity 'florence_small florence_small' 1)"
+assert_eq "alt identity glob star token is untrusted" FAIL "$(classify_alt_identity '*' 1)"
+assert_eq "alt identity glob question token is untrusted" FAIL "$(classify_alt_identity '?' 1)"
+assert_eq "alt identity glob bracket token is untrusted" FAIL "$(classify_alt_identity '[a-z]' 1)"
 assert_eq "alt provenance trusted adapter AND denylisted caption" FAIL "$(classify_alt_provenance "$FIXTURE_CAPTION" "$TRUSTED_ONE" 1)"
 assert_eq "alt provenance non-numeric usable_count" FAIL "$(classify_alt_provenance "$REAL_CAPTION" "$TRUSTED_ONE" abc)"
 assert_eq "alt provenance empty usable_count" FAIL "$(classify_alt_provenance "$REAL_CAPTION" "$TRUSTED_ONE" "")"
@@ -264,6 +268,12 @@ else
         echo "FAIL R1-03B _fields= in sync-demo.sh missing acx_alt_provenance"
         failures=$((failures + 1))
     fi
+    assert_eq "TEST-15 sync-demo.sh calls load_alt_counts_from_media_body" \
+        "1" "$(grep -c 'load_alt_counts_from_media_body' "$sync_demo")"
+    assert_eq "TEST-15 sync-demo.sh has no independent adapter grep" \
+        "0" "$(grep -c 'ADAPTERJSON' "$sync_demo" || true)"
+    assert_eq "TEST-15 parser reads provenance adapter key" \
+        "1" "$(grep -c 'prov.get("adapter")' "${script_dir}/../lib/smoke-gate.sh")"
     extract_fn_stripped() {
         local file="$1" name="$2"
         awk -v n="$name" '
@@ -474,6 +484,72 @@ smoke_fail=1" "$empty_override"
         fixture_e0=$(run_alt_pipeline 100 100 100 "$FIXTURE_CAPTION")
         assert_eq "R1-01B fixture captions ENFORCE=0 still blocked (provenance locked)" \
             "1" "$(pipeline_fail "$fixture_e0")"
+
+        # TEST-15: the real counting block must parse provenance per attachment.
+        # Pinning _fields= only proved the deploy ASKS for the field.
+        media_json=$(mktemp)
+        SECOND_CAPTION='A man sits at a wooden table writing in a notebook.'
+
+        cat > "$media_json" <<JSON
+[
+  {"id":1,"alt_text":"${REAL_CAPTION}","acx_alt_provenance":{"adapter":"florence_small","model_id":"x"}},
+  {"id":2,"alt_text":"${SECOND_CAPTION}","acx_alt_provenance":{"adapter":"gpu_qwen30b","model_id":"y"}},
+  {"id":3,"alt_text":"","acx_alt_provenance":null}
+]
+JSON
+        load_alt_counts_from_media_body "$media_json"
+        assert_eq "TEST-15 realistic body_total follows attachment count" "3" "$body_total"
+        assert_eq "TEST-15 realistic with_alt counts only usable alts" "2" "$with_alt"
+        assert_eq "TEST-15 realistic adapters are per-usable-item join" "florence_small gpu_qwen30b " "$adapters"
+        assert_eq "TEST-15 realistic identity PASS" PASS "$(classify_alt_identity "$adapters" "$with_alt")"
+
+        cat > "$media_json" <<JSON
+[
+  {"id":1,"alt_text":"${REAL_CAPTION}","acx_alt_provenance":{"adapter":"florence_small florence_small","model_id":"x"}},
+  {"id":2,"alt_text":"${SECOND_CAPTION}","acx_alt_provenance":null}
+]
+JSON
+        load_alt_counts_from_media_body "$media_json"
+        assert_eq "TEST-15 padded blob with_alt 2" "2" "$with_alt"
+        assert_eq "TEST-15 padded blob adapters are sentinels not word-split" "__invalid__ __invalid__ " "$adapters"
+        assert_eq "TEST-15 padded blob identity FAIL" FAIL "$(classify_alt_identity "$adapters" "$with_alt")"
+
+        cat > "$media_json" <<JSON
+[{"id":1,"alt_text":"${REAL_CAPTION}","acx_alt_provenance":{"adapter":"*"}}]
+JSON
+        load_alt_counts_from_media_body "$media_json"
+        assert_eq "TEST-15 glob adapter sanitized" "__invalid__ " "$adapters"
+        assert_eq "TEST-15 glob adapter identity FAIL" FAIL "$(classify_alt_identity "$adapters" "$with_alt")"
+
+        python3 - "$media_json" <<'PY'
+import json
+import sys
+
+usable = "A woman in a red coat speaks at a podium."
+items = []
+for i in range(10):
+    items.append({"id": i + 1, "alt_text": usable, "acx_alt_provenance": None})
+for i in range(10):
+    items.append({"id": i + 11, "alt_text": "", "acx_alt_provenance": {"adapter": "florence_small"}})
+json.dump(items, open(sys.argv[1], "w"))
+PY
+        load_alt_counts_from_media_body "$media_json"
+        assert_eq "TEST-15 empty-alt mix body_total 20" "20" "$body_total"
+        assert_eq "TEST-15 empty-alt mix with_alt 10" "10" "$with_alt"
+        assert_eq "TEST-15 empty-alt mix coverage at min_pct=50" PASS "$(classify_alt_coverage "$body_total" "$with_alt" 50)"
+        assert_eq "TEST-15 empty-alt mix identity FAIL" FAIL "$(classify_alt_identity "$adapters" "$with_alt")"
+
+        DEMO_ALT_GATE_ENFORCE=1
+        DEMO_ALT_MIN_COVERAGE_PCT=50
+        export DEMO_ALT_GATE_ENFORCE DEMO_ALT_MIN_COVERAGE_PCT
+        mix_out=$(run_alt_pipeline "$body_total" "$body_total" "$with_alt" "$sample" "$adapters")
+        assert_eq "TEST-15 empty-alt mix min_pct=50 smoke_fail=1" \
+            "1" "$(pipeline_fail "$mix_out")"
+        assert_eq "TEST-15 empty-alt mix provenance FAIL line" \
+            "FAIL demo alt provenance (untrusted or absent adapter identity behind 10 published alt texts)" \
+            "$(pipeline_line "$mix_out" 'demo alt provenance')"
+        unset DEMO_ALT_MIN_COVERAGE_PCT
+        rm -f "$media_json"
     fi
 fi
 

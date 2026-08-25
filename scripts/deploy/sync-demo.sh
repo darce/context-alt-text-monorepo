@@ -293,28 +293,9 @@ curl -sS -D "$media_headers" -o "$media_body" --max-time 30 \
   "https://demo.altcontext.com/wp-json/wp/v2/media?per_page=100&_fields=id,alt_text,acx_alt_provenance" || true
 set +o pipefail
 header_total=$(grep -i '^x-wp-total:' "$media_headers" | tr -d '\r ' | sed 's/.*://;q')
-body_total=$(grep -o '"alt_text": *"[^"]*"' "$media_body" | wc -l | tr -d ' ')
-with_alt=0
-sample=""
-while IFS= read -r alt_json; do
-  [ -n "$alt_json" ] || continue
-  alt=$(printf '%s' "$alt_json" | sed 's/^"alt_text": *"//;s/"$//')
-  if [ "$(classify_alt_text_usable "$alt")" = "PASS" ]; then
-    with_alt=$((with_alt + 1))
-    sample="${sample}${alt} "
-  fi
-done <<ALTJSON
-$(grep -o '"alt_text": *"[^"]*"' "$media_body" || true)
-ALTJSON
-adapters=""
-while IFS= read -r adapter_json; do
-  [ -n "$adapter_json" ] || continue
-  adapter=$(printf '%s' "$adapter_json" | sed 's/^"adapter": *"//;s/"$//')
-  [ -n "$adapter" ] || continue
-  adapters="${adapters}${adapter} "
-done <<ADAPTERJSON
-$(grep -o '"adapter": *"[^"]*"' "$media_body" || true)
-ADAPTERJSON
+# One JSON parse binds each attachment's alt to its own acx_alt_provenance
+# adapter. Independent grep -o scrapes cannot join those fields.
+load_alt_counts_from_media_body "$media_body"
 set -o pipefail
 rm -f "$media_headers" "$media_body"
 min="${DEMO_ALT_MIN_COVERAGE_PCT:-95}"

@@ -177,8 +177,9 @@ $SSH "sudo cp /tmp/acx-demo.service /etc/systemd/system/acx-demo.service && sudo
 # requires a final 2xx that is not the WP installer (a wiped DB 302->install.php
 # answers 200 and is a broken demo, not a healthy one).
 # After the front-page probe, a credential-free WP media check asserts demo
-# alt-text coverage (>= DEMO_ALT_MIN_COVERAGE_PCT, default 95; min_pct below
-# DEMO_ALT_MIN_COVERAGE_FLOOR default 50 FAILs closed) and that published
+# alt-text coverage (>= DEMO_ALT_MIN_COVERAGE_PCT, default 95; operators may
+# raise this bar. min_pct below the fixed floor of 50 FAILs closed; the floor
+# is a safety constant, not an environment knob) and that published
 # captions are not the description-service `seeded` fixture pool. Coverage
 # counts only usable alt (classify_alt_text_usable), not placeholder strings.
 # DEMO_ALT_GATE_ENFORCE defaults to 1 (a FAIL blocks the deploy). Set it to 0
@@ -192,7 +193,6 @@ echo "==> Smoke four vhosts (api.* via /health, demo via / + media alt-text)"
   cat "$SMOKE_GATE_LIB"
   printf 'PRE_CODES="%s"\n' "$PRE_CODES"
   printf 'DEMO_ALT_MIN_COVERAGE_PCT="%s"\n' "${DEMO_ALT_MIN_COVERAGE_PCT:-95}"
-  printf 'DEMO_ALT_MIN_COVERAGE_FLOOR="%s"\n' "${DEMO_ALT_MIN_COVERAGE_FLOOR:-50}"
   printf 'DEMO_ALT_GATE_ENFORCE="%s"\n' "${DEMO_ALT_GATE_ENFORCE:-1}"
   cat <<'EOF'
 set -euo pipefail

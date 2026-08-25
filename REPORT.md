@@ -45,3 +45,53 @@ Used: `python3 -m pytest scripts/test_vlm3_oci_gpu_infra.py -q`
 ```
 
 Skipped: `test_terraform_configuration_validates` (terraform init/providers unavailable).
+
+## W3-F-01 micro-fix
+
+Pair-wise `hub_repo`/`model_revision` check in `test_gpu_cloud_init_pins_gguf_digests_from_hub_revision`. Substring asserts missed a lone GPU_QWEN30B drift because GPU_QWEN30B_ENSEMBLE still held the pin.
+
+Command: `python3 -m pytest scripts/test_vlm3_oci_gpu_infra.py::test_gpu_cloud_init_pins_gguf_digests_from_hub_revision -q`
+
+### Pre-fix lone mutant (bug)
+
+GPU_QWEN30B `model_revision` → 40×`a`. Old substring asserts stayed GREEN:
+
+```
+.                                                                        [100%]
+1 passed in 0.04s
+```
+
+Reverted.
+
+### Post-fix lone mutant
+
+Same GPU_QWEN30B 40×`a` mutant. Pair-wise check RED:
+
+```
+E       AssertionError: every unsloth/Qwen3-VL-30B-A3B-Instruct-GGUF profile must pin revision 0af19e7479857aa7f3246466a4ad16c7e7299639, got ['aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', '0af19e7479857aa7f3246466a4ad16c7e7299639']
+FAILED scripts/test_vlm3_oci_gpu_infra.py::test_gpu_cloud_init_pins_gguf_digests_from_hub_revision - AssertionError: every unsloth/Qwen3-VL-30B-A3B-Instruct-GGUF profile must pin revision 0af19e7479857aa7f3246466a4ad16c7e7299639, got ['aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', '0af19e7479857aa7f3246466a4ad16c7e7299639']
+1 failed in 0.08s
+```
+
+Reverted. Same command: `1 passed in 0.04s`.
+
+### Both-occurrence drift
+
+Both GPU_QWEN30B and GPU_QWEN30B_ENSEMBLE `model_revision` → 40×`a`. RED:
+
+```
+E       AssertionError: every unsloth/Qwen3-VL-30B-A3B-Instruct-GGUF profile must pin revision 0af19e7479857aa7f3246466a4ad16c7e7299639, got ['aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa']
+FAILED scripts/test_vlm3_oci_gpu_infra.py::test_gpu_cloud_init_pins_gguf_digests_from_hub_revision - AssertionError: every unsloth/Qwen3-VL-30B-A3B-Instruct-GGUF profile must pin revision 0af19e7479857aa7f3246466a4ad16c7e7299639, got ['aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa']
+1 failed in 0.05s
+```
+
+Reverted.
+
+### Full check
+
+`python3 -m pytest scripts/test_vlm3_oci_gpu_infra.py -q`
+
+```
+......s.                                                                 [100%]
+7 passed, 1 skipped in 0.05s
+```

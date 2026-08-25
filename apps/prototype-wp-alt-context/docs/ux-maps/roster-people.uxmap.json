@@ -5,14 +5,10 @@
   "goals": [
     "Six ACX submenus are MECE and frequency-ordered (NAV-05/NAV-06): Overview orients; Review Queue is the one home to name a person from a photo (highest-frequency demo task); People manages named people only; Description Runs is the one home to see what the describer did; Data Retention is keep/delete/export policy (not description history); Settings configures the service (rare, last). WordPress parent slug stays Overview.",
     "One primary action per screen (NAV-01), reachable from zero state (rg-003); other CTAs are secondary.",
-    "Operator assigns unassigned faces and manages person workspace without losing roster place",
+    "Operator manages named people and person workspace without losing roster place",
     "Decompose Roster UI tasks from screens/zones/states/flows (people-first surface; clusters tab retired)"
   ],
   "jobs": [
-    {
-      "id": "job-assign-faces",
-      "label": "Assign unassigned faces to people"
-    },
     {
       "id": "job-manage-person",
       "label": "Open person workspace / manage entry"
@@ -302,16 +298,6 @@
       "screen_id": "roster-shell"
     },
     {
-      "id": "act-filter-unassigned",
-      "verb": "Filter unassigned",
-      "target": "personFilter=unassigned",
-      "hierarchy": "secondary",
-      "costly": false,
-      "irreversible": false,
-      "preview_required": false,
-      "screen_id": "roster-shell"
-    },
-    {
       "id": "act-open-person",
       "verb": "Open person workspace",
       "target": "roster-person-workspace",
@@ -383,29 +369,6 @@
     }
   ],
   "flows": [
-    {
-      "id": "flow-assign-unassigned",
-      "job": "job-assign-faces",
-      "label": "Filter unassigned → open person → save assignment",
-      "steps": [
-        {
-          "screen_id": "roster-shell",
-          "branch_label": "enter roster"
-        },
-        {
-          "screen_id": "roster-shell",
-          "branch_label": "personFilter=unassigned"
-        },
-        {
-          "screen_id": "roster-person-workspace",
-          "branch_label": "open person"
-        },
-        {
-          "screen_id": "roster-shell",
-          "branch_label": "save / return"
-        }
-      ]
-    },
     {
       "id": "flow-cluster-to-person",
       "job": "job-cluster-review",

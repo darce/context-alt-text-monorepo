@@ -303,12 +303,26 @@ class _FakeRepo:
         self._rows: dict = {}
 
     async def get_by_cache_key(
-        self, *, tenant_id, image_hash, adapter, model_version, prompt_or_task_version, context_hash
+        self,
+        *,
+        tenant_id,
+        image_hash,
+        adapter,
+        model_id,
+        model_version,
+        prompt_or_task_version,
+        context_hash,
     ):
-        return self._rows.get((str(tenant_id), image_hash, adapter, context_hash))
+        return self._rows.get((str(tenant_id), image_hash, adapter, model_id, context_hash))
 
     async def insert_or_get_existing(self, record):
-        key = (str(record.tenant_id), record.image_hash, record.adapter, record.context_hash)
+        key = (
+            str(record.tenant_id),
+            record.image_hash,
+            record.adapter,
+            record.model_id,
+            record.context_hash,
+        )
         if key in self._rows:
             return self._rows[key], False
         self._rows[key] = record

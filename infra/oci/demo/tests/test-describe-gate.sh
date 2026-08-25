@@ -4,6 +4,13 @@
 # regression (especially allowing the canned `seeded` adapter) is caught
 # without a live WordPress. Run: bash infra/oci/demo/tests/test-describe-gate.sh
 
+# R2-11: refuse non-bash before `set -o pipefail`. dash/sh reject pipefail
+# with exit 2 and print no assertions, which a caller can misread as green.
+if [ -z "${BASH_VERSION:-}" ]; then
+    echo "FAIL $0 must run under bash, not sh/dash. Example: bash $0" >&2
+    exit 2
+fi
+
 set -euo pipefail
 
 script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -44,6 +51,16 @@ assert_file_not_grep() {
         echo "ok   ${label}"
     fi
 }
+
+# R2-11: this suite must refuse non-bash before `set -o pipefail`. Pin the
+# guard so deleting it goes red under bash, not only as an early sh abort.
+r211_self=$(awk '
+    /BASH_VERSION/ && !seen_pf { g=1 }
+    /set -euo pipefail/ { seen_pf=1 }
+    END { if (g) print "guard-before-pipefail"; else print "missing-guard" }
+' "$0")
+assert_eq "R2-11 describe suite guards BASH_VERSION before pipefail" \
+    "guard-before-pipefail" "$r211_self"
 
 # --- classify_describe_gate <adapter_profile> <total_media> <media_with_alt> ---
 # Adapter allowlist is the first gate. Anything other than the three trusted

@@ -53,6 +53,39 @@ for var in WP_ADMIN_USER WP_ADMIN_PASSWORD WP_ADMIN_EMAIL WORDPRESS_CONFIG_EXTRA
   fi
 done
 
+# AUTH_CREDENTIAL_FUNCS_BEGIN
+# Idempotent WP user password converge. First install still uses `wp core
+# install`; every later run must rotate when secrets/.env changed (AUTH-01).
+# A credential that cannot be rotated cannot be revoked. Fail loud on update
+# or post-update verify failure — never skip. wpcli is the seam (defined
+# below; looked up at call time).
+wp_user_password_matches() {
+  local user="$1"
+  local password="$2"
+  wpcli wp user check-password "$user" "$password" >/dev/null 2>&1
+}
+
+converge_wp_user_password() {
+  local user="$1"
+  local password="$2"
+  if wp_user_password_matches "$user" "$password"; then
+    echo "==> WP credential unchanged for user=${user} — no-op"
+    return 0
+  fi
+  echo "==> WP secret changed for user=${user} — rotating via wp user update"
+  if ! wpcli wp user update "$user" --user_pass="$password"; then
+    echo "ERROR: failed to rotate WordPress credential for user '${user}'" >&2
+    return 2
+  fi
+  if ! wp_user_password_matches "$user" "$password"; then
+    echo "ERROR: WordPress credential for user '${user}' did not converge after update" >&2
+    return 2
+  fi
+  echo "==> WP credential rotated for user=${user}"
+  return 0
+}
+# AUTH_CREDENTIAL_FUNCS_END
+
 compose() {
   docker compose -f "$COMPOSE_FILE" "$@"
 }
@@ -98,6 +131,12 @@ if ! wpcli wp core is-installed >/dev/null 2>&1; then
     --admin_password="$WP_ADMIN_PASSWORD" \
     --admin_email="$WP_ADMIN_EMAIL" \
     --skip-email
+fi
+# AUTH-01: secrets/.env is the source of truth on every run, not only first
+# install. Unchanged password is a no-op; a changed password must land or
+# this script exits non-zero (a credential you cannot rotate you cannot revoke).
+if ! converge_wp_user_password "$WP_ADMIN_USER" "$WP_ADMIN_PASSWORD"; then
+  exit 2
 fi
 
 # Pretty permalinks are required for path-form REST (/wp-json/...): on the

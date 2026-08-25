@@ -25,6 +25,11 @@ STOP path.
 instance action` argv except `--action START|STOP` and `--wait-for-state
 RUNNING|STOPPED`.
 
+START subprocess timeout is `max(--oci-timeout-seconds, --max-wait-seconds)`
+so the waiter cannot be killed mid-boot (default max-wait 600s). A START
+exception emits `FALLBACK` with `reason=start_failed` even when `actuated`
+is empty.
+
 Auth: `~/.oci/config` or `--oci-auth` / `OCI_CLI_AUTH`.
 
 ## Readiness probe
@@ -72,6 +77,6 @@ back closed: no STOP.
 
 When a started instance does not become ready within the bounded wait, the
 controller emits `{action: FALLBACK, profile: florence_small, instance_id,
-reason}` with `reason` ∈ `{readiness_timeout, readiness_stall}`. The decision
+reason}` with `reason` ∈ `{readiness_timeout, readiness_stall, start_failed}`. The decision
 is logged only; no consumer is wired. Profile name is the given CPU floor
 (`florence_small`), not imported from `scene.config.profiles`.

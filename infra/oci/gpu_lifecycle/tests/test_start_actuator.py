@@ -111,6 +111,38 @@ def test_run_start_cycle_actuates_start_and_isolates_per_instance_errors() -> No
     assert "ocid1.a" in result.errors[0]
 
 
+def test_start_actuator_subprocess_timeout_covers_max_wait() -> None:
+    actuator = OciCliStartActuator(timeout_seconds=120, max_wait_seconds=600)
+    assert actuator._timeout_seconds >= 600
+    cmd = actuator.build_cmd("ocid1.i")
+    max_wait = int(cmd[cmd.index("--max-wait-seconds") + 1])
+    assert actuator._timeout_seconds >= max_wait
+    assert max_wait == 600
+
+
+def test_start_failure_emits_fallback_with_empty_actuated() -> None:
+    class Boom:
+        def start_instance(self, instance_id: str) -> None:
+            raise RuntimeError("oci down")
+
+    controller = GpuLifecycleController(idle_seconds=60)
+    instance = GpuInstance(
+        instance_id="ocid1.gpu", state="STOPPED", idle_for_seconds=0
+    )
+    result = run_start_cycle(
+        controller=controller,
+        instances=[instance],
+        load_source=StaticJobLoadSource(queue_depth=1, in_flight=0),
+        actuator=Boom(),
+    )
+    assert result.actuated == []
+    assert result.decided == [("START", "ocid1.gpu")]
+    assert len(result.fallbacks) == 1
+    assert result.fallbacks[0].reason == "start_failed"
+    assert result.fallbacks[0].profile == "florence_small"
+    assert result.fallbacks[0].instance_id == "ocid1.gpu"
+
+
 def test_run_start_cycle_is_quiet_when_no_work() -> None:
     controller = GpuLifecycleController(idle_seconds=60)
     instance = GpuInstance(

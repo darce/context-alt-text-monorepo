@@ -59,6 +59,7 @@ logger = logging.getLogger(__name__)
 _BUSY_LOAD = JobLoadSnapshot(queue_depth=1, in_flight=1, batch_in_progress=True)
 _DEFAULT_LOAD_MAX_AGE_SECONDS = 120.0
 _DEFAULT_OCI_TIMEOUT_SECONDS = 120
+_DEFAULT_MAX_WAIT_SECONDS = 600
 _DEFAULT_FENCE_DELAY_SECONDS = 2.0
 # A10 ~$2/GPU-hr; 100-image library ≈ 5 min boot+load + ~4s/img ≈ 12 min ≈ $0.40.
 # Boot amortization dominates: bound the wait so a hung START cannot bill the hour.
@@ -86,7 +87,7 @@ def build_instance_action_cmd(
     action: str,
     wait_state: str,
     auth: str | None = None,
-    max_wait_seconds: int = 600,
+    max_wait_seconds: int = _DEFAULT_MAX_WAIT_SECONDS,
 ) -> list[str]:
     """OCI CLI power-action argv. START/STOP twins share this builder."""
     cmd = [
@@ -263,8 +264,9 @@ class OciCliStopActuator:
 class OciCliStartActuator:
     """START via OCI CLI (`oci compute instance action --action START`).
 
-    Symmetric twin of ``OciCliStopActuator``: same auth, timeout, dry-run, and
-    wait-for-state flags; only ``--action`` / ``--wait-for-state`` differ.
+    Symmetric twin of ``OciCliStopActuator`` except START must not kill the
+    waiter before ``--max-wait-seconds``: subprocess timeout is
+    ``max(timeout_seconds, max_wait_seconds)`` (W3-D-03).
     """
 
     def __init__(
@@ -274,11 +276,13 @@ class OciCliStartActuator:
         dry_run: bool = False,
         auth: str | None = None,
         timeout_seconds: int = _DEFAULT_OCI_TIMEOUT_SECONDS,
+        max_wait_seconds: int = _DEFAULT_MAX_WAIT_SECONDS,
     ) -> None:
         self._oci_bin = oci_bin or shutil.which("oci") or "oci"
         self._dry_run = dry_run
         self._auth = auth
-        self._timeout_seconds = timeout_seconds
+        self._max_wait_seconds = max_wait_seconds
+        self._timeout_seconds = max(timeout_seconds, max_wait_seconds)
 
     def build_cmd(self, instance_id: str) -> list[str]:
         return build_instance_action_cmd(
@@ -287,6 +291,7 @@ class OciCliStartActuator:
             action=LifecycleAction.START,
             wait_state="RUNNING",
             auth=self._auth,
+            max_wait_seconds=self._max_wait_seconds,
         )
 
     def start_instance(self, instance_id: str) -> None:
@@ -468,6 +473,7 @@ def run_start_cycle(
 
     actuated: list[tuple[str, str]] = []
     errors: list[str] = []
+    start_failed: list[str] = []
     for action, instance_id in decided:
         if action != LifecycleAction.START:
             continue
@@ -478,16 +484,21 @@ def run_start_cycle(
             msg = f"{instance_id}: {type(exc).__name__}: {exc}"
             logger.error("START failed: %s", msg)
             errors.append(msg)
+            start_failed.append(instance_id)
 
     wait_result: ReadinessWaitResult | None = None
-    fallbacks: tuple[FallbackDecision, ...] = ()
+    fallbacks: list[FallbackDecision] = list(
+        controller.fallback_on_boot_failure(start_failed, reason="start_failed")
+        if start_failed
+        else ()
+    )
     if probe is not None and readiness_wait is not None and actuated:
         started_ids = [instance_id for _, instance_id in actuated]
         wait_result = readiness_wait.wait(started_ids, probe)
         if wait_result.errors:
             errors.extend(wait_result.errors)
         if wait_result.failed:
-            fallbacks = tuple(
+            fallbacks.extend(
                 controller.fallback_on_boot_failure(
                     list(wait_result.timed_out), reason="readiness_timeout"
                 )
@@ -500,7 +511,7 @@ def run_start_cycle(
         actuated=actuated,
         errors=errors,
         wait_result=wait_result,
-        fallbacks=fallbacks,
+        fallbacks=tuple(fallbacks),
     )
 
 
@@ -595,7 +606,13 @@ def _build_parser() -> argparse.ArgumentParser:
         "--oci-timeout-seconds",
         type=int,
         default=_DEFAULT_OCI_TIMEOUT_SECONDS,
-        help="Subprocess timeout for OCI CLI calls (default 120)",
+        help="Subprocess timeout for OCI CLI calls (default 120; START uses max of this and --max-wait-seconds)",
+    )
+    parser.add_argument(
+        "--max-wait-seconds",
+        type=int,
+        default=_DEFAULT_MAX_WAIT_SECONDS,
+        help="OCI --max-wait-seconds for instance action (default 600); START subprocess timeout is at least this",
     )
     parser.add_argument(
         "--ready-url",
@@ -692,6 +709,7 @@ def main(argv: list[str] | None = None) -> int:
             dry_run=args.dry_run,
             auth=args.oci_auth,
             timeout_seconds=args.oci_timeout_seconds,
+            max_wait_seconds=args.max_wait_seconds,
         )
         readiness_wait = None
         probe = None

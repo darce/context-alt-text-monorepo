@@ -148,6 +148,34 @@ never be pasted into a plugin install that targets the hosted service.
 
 ---
 
+## Demo WordPress admin rotation (AUTH-01)
+
+The demo wp-admin password in `/opt/acx-backend/demo/secrets/.env`
+(`WP_ADMIN_PASSWORD`, chmod 600) is the source of truth on **every**
+`bootstrap-wp.sh` run, not only the first `wp core install`. Changing the
+secret and re-running bootstrap (or dispatching `deploy-demo`) is how you
+revoke the previous password. A silent no-op after a secret change is a
+failed rotation.
+
+Two independent keys (store write ≠ apply):
+
+1. **Key 1 — secret store.** On an authorized operator machine, generate a
+   new password. Never commit it (WEB-16). Patch `WP_ADMIN_PASSWORD` in
+   `secrets/.env` on the VM (mode 600). Do not paste the value into chat,
+   tickets, or a prompt template (SEC-06).
+2. **Key 2 — apply.** Re-run `bootstrap-wp.sh` on the VM, or dispatch the
+   demo deploy workflow so bootstrap runs. Bootstrap calls
+   `wp user check-password`; matching secret is a no-op. On mismatch it
+   runs `wp user update --user_pass=...` and re-checks. Update or verify
+   failure exits 2 with `ERROR: failed to rotate WordPress credential`
+   (or the did-not-converge variant). Do not treat a green deploy as
+   rotation proof unless that apply step ran.
+
+Do **not** reuse the rotated admin password as the CI smoke login. CI is a
+separate identity (AUTH-03).
+
+---
+
 ## Failure signature quick reference
 
 | Symptom | Likely cause |
@@ -157,3 +185,5 @@ never be pasted into a plugin install that targets the hosted service.
 | Pasting a key in Settings has no effect | `ACX_RECOGNITION_API_KEY` (or `_URL`) constant is defined; constants override options. Clear the defines or manage via constants consistently. |
 | Local console mints fine but remote calls still 403 | Working as designed — local mints are Track 2 fixtures; the remote service has never heard of them. Mint on Track 1. |
 | `tenant create` 409 on prod for `…0001` | That UUID belongs to the demo site on prod. Generate a fresh UUID for your instance. |
+| Bootstrap `ERROR: failed to rotate WordPress credential` | `wp user update` failed after `WP_ADMIN_PASSWORD` changed. Check wp-cli/DB reachability; do not revert the secret to "make bootstrap green" — that re-issues the revoked password. |
+| Changed `WP_ADMIN_PASSWORD` but old login still works | Apply step (key 2) did not run, or bootstrap is an old copy without AUTH-01 converge. Re-run current `bootstrap-wp.sh`. |

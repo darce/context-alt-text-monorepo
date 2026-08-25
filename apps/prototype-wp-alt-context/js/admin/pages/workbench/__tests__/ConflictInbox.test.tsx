@@ -770,6 +770,9 @@ describe('ConflictInbox', () => {
     expect(document.getElementById(reasonId!)).not.toHaveClass('screen-reader-text');
     expect(screen.getByRole('region', { name: 'Conflict inbox' })).toHaveAttribute('aria-busy', 'true');
     expect(screen.getByTestId('acx-conflict-inbox-status')).toHaveTextContent('Resolving conflict…');
+    expect(screen.getByTestId('acx-zone-z-conflict-actions-loading')).toHaveTextContent(
+      'Resolving conflict…',
+    );
   });
 
   it('describes the disabled sync control and announces sync progress', () => {

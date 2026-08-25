@@ -221,6 +221,7 @@ describe('WorkbenchPage', () => {
     setCurrentPage,
     setPerPage,
     handleSearchChange: vi.fn(),
+    clearSearch: vi.fn(),
     handleStatusChange: vi.fn(),
     queueState: { kind: 'all' as const, band: 'all' as const, index: 0 },
     dispatchQueue: vi.fn(),

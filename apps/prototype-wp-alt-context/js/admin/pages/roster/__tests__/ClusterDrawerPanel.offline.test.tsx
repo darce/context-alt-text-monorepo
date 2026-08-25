@@ -60,6 +60,7 @@ describe('ClusterDrawerPanel rescan state matrix (RES-15, A11Y-24)', () => {
 
     expect(screen.getByText('No faces found in this face group.')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Rescan with sensitive settings' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Back to People' })).toBeEnabled();
   });
 
   it('shows loading copy and disables rescan while detail is loading / rescanning', () => {

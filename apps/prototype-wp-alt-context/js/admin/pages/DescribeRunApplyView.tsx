@@ -4,6 +4,7 @@ import { __, sprintf } from '@wordpress/i18n';
 import { useDescribeRunApply } from '../hooks/useDescribeRunApply';
 import type { ApplyDescribeRunResponse, DescribeRunItem } from '../api/describeApi';
 import { toDescriptionHistory } from '../navigation/appLinks';
+import { EmptyState, EmptyStateVariant } from '../components/ui/EmptyState';
 
 interface DescribeRunApplyViewProps {
   runId: string;
@@ -344,8 +345,16 @@ export const DescribeRunApplyView = ({ runId }: DescribeRunApplyViewProps): Reac
 
           {!hasApplicable ? (
             <section className="acx-dashboard__panel acx-history__panel">
-              <h2>{__('No drafts from this run can be applied.', 'alt-context')}</h2>
-              <p>{__('Every described item either failed or produced no draft text.', 'alt-context')}</p>
+              <EmptyState
+                variant={EmptyStateVariant.EMPTY}
+                heading={__('No drafts from this run can be applied.', 'alt-context')}
+                body={__('Every described item either failed or produced no draft text.', 'alt-context')}
+                action={{
+                  label: __('Back to Description Runs', 'alt-context'),
+                  href: toDescriptionHistory(),
+                }}
+                headingLevel={2}
+              />
             </section>
           ) : (
             <>

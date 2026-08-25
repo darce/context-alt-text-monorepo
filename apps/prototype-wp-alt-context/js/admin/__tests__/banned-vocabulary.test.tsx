@@ -393,6 +393,7 @@ vi.mock('../pages/workbench/WorkbenchMediaContext', () => {
       // MEDIA_PAGE_SIZE_OPTIONS is [10, 50, 100]; 20 was never a selectable value.
       perPage: 10,
       handleSearchChange: vi.fn(),
+      clearSearch: vi.fn(),
       handleStatusChange: vi.fn(),
       setCurrentPage: vi.fn(),
       setPerPage: vi.fn(),

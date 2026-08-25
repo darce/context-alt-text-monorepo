@@ -269,6 +269,13 @@ describe('ClusterReviewPanel', () => {
     ).toBeInTheDocument();
   });
 
+  it('offers a way back when the face group has no faces', async () => {
+    vi.mocked(fetchClusterMembers).mockResolvedValue(makeClusterMembersResponse());
+    renderPanel();
+
+    expect(await screen.findByRole('button', { name: 'Back to review suggestions' })).toBeEnabled();
+  });
+
   it('renders members from the cluster-members envelope', async () => {
     const fetchClusterMembersMock = vi.mocked(fetchClusterMembers);
 

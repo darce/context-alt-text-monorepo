@@ -118,5 +118,9 @@ describe('GuidanceCard', () => {
     );
 
     expect(screen.getByText('All caught up. New faces will appear here for review.')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Open Review Queue' })).toHaveAttribute(
+      'href',
+      '#/workbench?tab=scan',
+    );
   });
 });

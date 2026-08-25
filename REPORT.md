@@ -208,3 +208,46 @@ W3-C-13 ASCII: `expected 'z-name-curate states=[default,loading,error,edge_input
 - **NAV-01** — composed workbench-control chrome has one WP `.button-primary`; residual naming CTAs are secondary.
 - **COL-03** — review-card name-commit dropped `acx-accent-primary-action` so secondary chrome is not a second accent.
 - **TEST-15** — C-12 re-promote lightbox primary → count 2; C-13 `pane` mutant → url_params lint RED; both restored.
+
+## Micro fix round 3
+
+Closed W3-C-14 (accent chrome on sole-primary name-commit). C-12 dropped `acx-accent-primary-action` unconditionally; sole-primary NAME/CLUSTER now keeps secondary WP chrome plus accent class.
+
+Final HEAD: recorded by the integrator after transplant.
+
+### Commits (subject lines only)
+
+- `fix(admin-ia): W3-C-14 accent-when-sole-primary`
+
+### TDD RED (verbatim)
+
+W3-C-14 (a): `Expected the element to have class: acx-accent-primary-action` / `Received: button button-secondary acx-person-commit__confirm`
+
+### TEST-15 mutants (production mutated, suite RED, restored)
+
+- W3-C-14: `commitButtonClassName` always includes `acx-accent-primary-action`. Pin (b) RED: `Expected the element not to have class: acx-accent-primary-action` / `Received: button button-secondary acx-person-commit__confirm acx-accent-primary-action`. Restore clean.
+
+### Code (sed-verified after last code commit)
+
+- `PersonCommitControl.tsx:211` — `acx-accent-primary-action` only when `accentPrimary`
+
+### Closed this round
+
+- W3-C-14: sole-primary name-commit is `button-secondary` + `acx-accent-primary-action`; `accentPrimary=false` is plain secondary. Composed one-primary count stays 1.
+
+### Verification
+
+- `npx vitest run js/admin` — 228 files, 2654 tests passed
+
+### Undone
+
+- LightboxNameFace does not take `accentPrimary` (not a sole-primary NAME/CLUSTER path).
+- Other workbench-control widgets still use `button-primary` (suggestion Yes remains the composed primary).
+- Six unique D-23 zone ids still declare a strict subset versus render (listed in prior Undone).
+- No browser walk.
+
+### Canon cited
+
+- **NAV-01** — the one primary is visually recognizable via accent chrome; WP `.button-primary` count stays 1.
+- **COL-03** — accent class only when `accentPrimary=true`.
+- **TEST-15** — always-on accent mutant RED on pin (b); restored.

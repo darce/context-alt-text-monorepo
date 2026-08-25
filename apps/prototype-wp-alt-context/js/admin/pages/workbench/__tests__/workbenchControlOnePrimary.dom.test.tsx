@@ -242,6 +242,36 @@ describe('W3-C-12 composed workbench-control one primary', () => {
       .filter((button) => !lightboxRoot.contains(button));
     expect(reviewSaves).toHaveLength(1);
     expect(reviewSaves[0]).toHaveClass('button-secondary');
-    expect(reviewSaves[0]).not.toHaveClass('acx-accent-primary-action');
+    expect(reviewSaves[0]).toHaveClass('acx-accent-primary-action');
+    expect(reviewSaves[0]).not.toHaveClass('button-primary');
+  });
+
+  it('W3-C-14 accentPrimary=false review-card name-commit has no accent and no button-primary', async () => {
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    });
+    queryClient.setQueryData(queryKeys.roster.entries(), []);
+
+    const { container } = render(
+      <QueryClientProvider client={queryClient}>
+        <div data-testid="workbench-control">
+          <PersonCommitControl
+            clusterId="cluster-1"
+            isPrimary
+            accentPrimary={false}
+            phase="idle"
+            errorMessage={null}
+            onCommit={vi.fn()}
+            onRetry={vi.fn()}
+          />
+        </div>
+      </QueryClientProvider>,
+    );
+
+    const save = await screen.findByRole('button', { name: 'Save name' });
+    expect(save).toHaveClass('button-secondary');
+    expect(save).not.toHaveClass('acx-accent-primary-action');
+    expect(save).not.toHaveClass('button-primary');
+    expect(primaryButtons(container)).toHaveLength(0);
   });
 });

@@ -383,18 +383,19 @@ describe('PersonCommitControl roster query states (UXW2-3-R1-02)', () => {
     );
   });
 
-  it('W3-C-04 name-commit is secondary even when isPrimary', () => {
+  it('W3-C-14 accentPrimary=true renders accent chrome on secondary name-commit', () => {
     renderControl({ isPrimary: true, accentPrimary: true });
-    const primaries = screen
-      .getAllByRole('button')
-      .filter(
-        (button) =>
-          button.classList.contains('button-primary') || button.classList.contains('acx-button--primary'),
-      );
-    expect(primaries).toHaveLength(0);
-    expect(screen.getByRole('button', { name: 'Save name' })).toHaveClass('button-secondary');
-    expect(screen.getByRole('button', { name: 'Save name' })).not.toHaveClass(
-      'acx-accent-primary-action',
-    );
+    const save = screen.getByRole('button', { name: 'Save name' });
+    expect(save).toHaveClass('button-secondary');
+    expect(save).toHaveClass('acx-accent-primary-action');
+    expect(save).not.toHaveClass('button-primary');
+  });
+
+  it('W3-C-14 accentPrimary=false renders no accent and no button-primary', () => {
+    renderControl({ isPrimary: true, accentPrimary: false });
+    const save = screen.getByRole('button', { name: 'Save name' });
+    expect(save).toHaveClass('button-secondary');
+    expect(save).not.toHaveClass('acx-accent-primary-action');
+    expect(save).not.toHaveClass('button-primary');
   });
 });

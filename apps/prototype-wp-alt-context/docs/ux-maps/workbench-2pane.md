@@ -54,7 +54,7 @@ by other lanes and are not yet covered by this list.
 
 Purpose: Two-pane operator surface: left control (face-group/recognize/name/curate), right media library (alt-text + long-description). Overlays host conflicts and dead-letter.
 
-url_params: `pane`, `cluster`, `media`, `panel`, `status`, `endpoint`, `s`, `p`, `perPage`
+url_params: `panes`, `cluster`, `media`, `panel`, `status`, `endpoint`, `s`, `p`, `perPage`
 
 | zone id | label | role | states |
 | --- | --- | --- | --- |
@@ -101,7 +101,7 @@ url_params: `panes`, `cluster`, `endpoint`
 
 ```
 +------------------------------------------------------------+
-| Control surface (left pane)  [screen]  #/workbench?pane=c… |
+| Control surface (left pane)  [screen]  #/workbench?panes=c… |
 | Recognize, name, and curate: recognition endpoint + healt… |
 +------------------------------------------------------------+
 | ZONES                                                      |
@@ -110,8 +110,7 @@ url_params: `panes`, `cluster`, `endpoint`
 |   - Face-group status (scan/sync health; not a 2D scatter) |
 |   - Face-group list / selection + NameFaceControl (queue)  |
 |   - Name this person (NameFaceControl) (forced_choice)     |
-|     z-name-curate states=[default,loading,empty,error,     |
-|     edge_input]                                            |
+|     z-name-curate states=[default,loading,error,edge_input] |
 +------------------------------------------------------------+
 | ACTIONS                                                    |
 |   [PRIMARY] Run / refresh recognition + grouping -> job-p… |
@@ -129,7 +128,7 @@ url_params: `panes`, `cluster`, `endpoint`
 
 Purpose: Media library table with alt-text caption and long-description columns; inline editing, AI-suggested captions/descriptions (editable before accept), and bulk describe/scan.
 
-url_params: `pane`, `media`, `cluster`, `status`, `s`, `p`, `perPage`
+url_params: `panes`, `media`, `cluster`, `status`, `s`, `p`, `perPage`
 
 | zone id | label | role | states |
 | --- | --- | --- | --- |
@@ -141,7 +140,7 @@ url_params: `pane`, `media`, `cluster`, `status`, `s`, `p`, `perPage`
 
 ```
 +------------------------------------------------------------+
-| Media library (right pane)  [screen]  #/workbench?pane=li… |
+| Media library (right pane)  [screen]  #/workbench?panes=li… |
 | Media library table with alt-text caption and long-descri… |
 +------------------------------------------------------------+
 | ZONES                                                      |

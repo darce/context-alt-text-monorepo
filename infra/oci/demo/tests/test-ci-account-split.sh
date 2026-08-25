@@ -105,6 +105,12 @@ assert_file_not_grep "workflow smoke does not inject demo-admin secret pass" \
     "$workflow_file" 'ACX_E2E_WP_ADMIN_PASS: \$\{\{ secrets\.ACX_E2E_WP_ADMIN_PASS \}\}'
 assert_file_grep "workflow refuses empty CI user" \
     "$workflow_file" 'ACX_E2E_WP_CI_USER must be set'
+assert_file_grep "workflow refuses empty CI pass" \
+    "$workflow_file" 'ACX_E2E_WP_CI_PASS must be set'
+assert_file_grep "workflow CI denylist is case-insensitive" \
+    "$workflow_file" "tr '\\[:upper:\\]' '\\[:lower:\\]'"
+assert_file_grep "workflow documents CI_USER must equal VM WP_CI_USER" \
+    "$workflow_file" 'VM WP_CI_USER'
 assert_file_grep "workflow refuses acx-demo-admin as CI user" \
     "$workflow_file" 'acx-demo-admin\|admin'
 

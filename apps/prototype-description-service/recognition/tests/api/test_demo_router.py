@@ -16,10 +16,7 @@ from recognition.application.services.demo_provisioning_service import (
 )
 from recognition.interface_adapters.http import deps as dependencies
 from recognition.interface_adapters.http.deps import ip_rate_limit
-from recognition.interface_adapters.http.routers.demo import (
-    _reset_provision_limiter_for_tests,
-    router as demo_router,
-)
+from recognition.interface_adapters.http.routers import demo as demo_routes
 
 _TENANT_DATA_KEYS = ("tenant_id", "seed_bundle", "branding_json", "quota_remaining")
 
@@ -38,11 +35,11 @@ def _build_client(
     monkeypatch.setenv("RECOGNITION_DEMO_RESOLVE_RPM", rpm)
     monkeypatch.setenv("RECOGNITION_DEMO_PROVISION_RPM", provision_rpm)
     _reset_ip_limiter()
-    _reset_provision_limiter_for_tests()
+    demo_routes._reset_provision_limiter_for_tests()
     reset_demo_sessions_for_tests()
 
     app = FastAPI()
-    app.include_router(demo_router)
+    app.include_router(demo_routes.router)
 
     async def _session_dep():
         yield session

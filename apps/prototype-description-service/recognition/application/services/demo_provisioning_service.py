@@ -99,7 +99,7 @@ class DemoInstanceNotFoundError(LookupError):
     """Raised when expire targets an unknown slug."""
 
 
-class PreScanStateViolation(RuntimeError):
+class PreScanStateError(RuntimeError):
     """Seed-bundle pre-scan contract violated; provision must not proceed."""
 
 
@@ -142,11 +142,11 @@ def load_seed_bundle(seed: str) -> SeedBundleContract:
 def assert_pre_scan_state(state: PreScanState) -> PreScanState:
     """Fail loudly when a seed bundle or tenant is not in the pre-scan contract."""
     if not state.seeded_media_present:
-        raise PreScanStateViolation("seeded media must be present in the seed bundle")
+        raise PreScanStateError("seeded media must be present in the seed bundle")
     if state.scanned_faces != 0:
-        raise PreScanStateViolation(f"scanned_faces must be 0, got {state.scanned_faces}")
+        raise PreScanStateError(f"scanned_faces must be 0, got {state.scanned_faces}")
     if state.people_count != 0:
-        raise PreScanStateViolation(f"people_count must be 0, got {state.people_count}")
+        raise PreScanStateError(f"people_count must be 0, got {state.people_count}")
     return state
 
 
@@ -607,7 +607,7 @@ __all__ = [
     "MAX_DEMO_QUOTA_UNITS",
     "DemoResolveContext",
     "PreScanState",
-    "PreScanStateViolation",
+    "PreScanStateError",
     "ProvisionResult",
     "SeedBundleContract",
     "SweepResult",

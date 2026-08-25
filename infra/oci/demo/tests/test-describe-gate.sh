@@ -10,6 +10,9 @@ script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck source=../lib/describe-gate.sh
 source "${script_dir}/../lib/describe-gate.sh"
 
+bootstrap_file="${script_dir}/../bootstrap-wp.sh"
+cli_file="${script_dir}/../../../../apps/prototype-wp-alt-context/src/cli/class-description-command.php"
+
 failures=0
 
 assert_eq() {
@@ -19,6 +22,26 @@ assert_eq() {
     else
         echo "FAIL ${label}: expected ${expected}, got ${actual}"
         failures=$((failures + 1))
+    fi
+}
+
+assert_file_grep() {
+    local label="$1" file="$2" pattern="$3"
+    if grep -qE "$pattern" "$file"; then
+        echo "ok   ${label}"
+    else
+        echo "FAIL ${label}: expected ${file} to match /${pattern}/"
+        failures=$((failures + 1))
+    fi
+}
+
+assert_file_not_grep() {
+    local label="$1" file="$2" pattern="$3"
+    if grep -qE "$pattern" "$file"; then
+        echo "FAIL ${label}: expected ${file} NOT to match /${pattern}/"
+        failures=$((failures + 1))
+    else
+        echo "ok   ${label}"
     fi
 }
 
@@ -42,9 +65,10 @@ assert_eq "gpu_qwen30b 100 40 (partial)"        RUN "$(classify_describe_gate gp
 assert_eq "florence_small 100 99 (one missing)" RUN "$(classify_describe_gate florence_small 100 99)"
 
 # Idempotent full coverage / no media -> SKIP.
-assert_eq "gpu_qwen30b_ensemble 100 100 (full)" SKIP "$(classify_describe_gate gpu_qwen30b_ensemble 100 100)"
+# Full coverage SKIPs only when provenance is an explicit PASS (R1-04).
+assert_eq "gpu_qwen30b_ensemble 100 100 (full)" SKIP "$(classify_describe_gate gpu_qwen30b_ensemble 100 100 PASS)"
 assert_eq "florence_small 0 0 (no media)"       SKIP "$(classify_describe_gate florence_small 0 0)"
-assert_eq "florence_small 10 10 (full)"         SKIP "$(classify_describe_gate florence_small 10 10)"
+assert_eq "florence_small 10 10 (full)"         SKIP "$(classify_describe_gate florence_small 10 10 PASS)"
 
 # Broken probe -> BLOCK (never guess).
 assert_eq "florence_small empty total" BLOCK "$(classify_describe_gate florence_small '' 0)"
@@ -95,6 +119,61 @@ assert_predicate_matches_classifier unknown_profile
 assert_predicate_matches_classifier hosted_gpt4o
 assert_predicate_matches_classifier gpu_phi4
 assert_predicate_matches_classifier florence_large
+
+# --- R1-04: 4th arg provenance (PASS|FAIL|UNKNOWN) ---
+# Full coverage + canned alts must not SKIP (that freezes the lie).
+assert_eq "florence_small 10 10 FAIL -> RUN_FORCE" RUN_FORCE "$(classify_describe_gate florence_small 10 10 FAIL)"
+assert_eq "gpu_qwen30b_ensemble 100 100 FAIL -> RUN_FORCE" RUN_FORCE "$(classify_describe_gate gpu_qwen30b_ensemble 100 100 FAIL)"
+assert_eq "florence_small 10 10 UNKNOWN -> BLOCK" BLOCK "$(classify_describe_gate florence_small 10 10 UNKNOWN)"
+assert_eq "florence_small 10 10 omitted provenance -> BLOCK" BLOCK "$(classify_describe_gate florence_small 10 10)"
+assert_eq "florence_small 10 10 garbage provenance -> BLOCK" BLOCK "$(classify_describe_gate florence_small 10 10 MAYBE)"
+# Partial coverage stays RUN even when published alts are canned (fill missing first).
+assert_eq "florence_small 100 40 FAIL still RUN" RUN "$(classify_describe_gate florence_small 100 40 FAIL)"
+assert_eq "florence_small 100 40 UNKNOWN still RUN" RUN "$(classify_describe_gate florence_small 100 40 UNKNOWN)"
+# No media still SKIP regardless of provenance.
+assert_eq "florence_small 0 0 FAIL still SKIP" SKIP "$(classify_describe_gate florence_small 0 0 FAIL)"
+
+# --- R1-05: probe the live producer JSON, never a disconnected env var ---
+assert_eq "probe 200 quoted adapter" florence_small "$(extract_probed_description_adapter 200 '{"status":"ok","description_adapter":"florence_small"}')"
+assert_eq "probe 200 seeded adapter" seeded "$(extract_probed_description_adapter 200 '{"description_adapter":"seeded","status":"ok"}')"
+assert_eq "probe 200 spaced json" gpu_qwen30b "$(extract_probed_description_adapter 200 '{
+  "status": "ok",
+  "description_adapter": "gpu_qwen30b"
+}')"
+assert_eq "probe 500 with field still empty (fail closed)" "" "$(extract_probed_description_adapter 500 '{"description_adapter":"florence_small"}')"
+assert_eq "probe 401 with field still empty" "" "$(extract_probed_description_adapter 401 '{"description_adapter":"florence_small"}')"
+assert_eq "probe 000 curl-fail empty" "" "$(extract_probed_description_adapter 000 '')"
+assert_eq "probe 200 missing field empty" "" "$(extract_probed_description_adapter 200 '{"status":"ok"}')"
+assert_eq "probe 200 null field empty" "" "$(extract_probed_description_adapter 200 '{"description_adapter":null}')"
+assert_eq "probe 200 object field empty" "" "$(extract_probed_description_adapter 200 '{"description_adapter":{"name":"florence_small"}}')"
+assert_eq "probe 200 unparseable body empty" "" "$(extract_probed_description_adapter 200 'not-json')"
+assert_eq "probe 200 empty body empty" "" "$(extract_probed_description_adapter 200 '')"
+
+# php_define_value reads WORDPRESS_CONFIG_EXTRA; no new secret name.
+_extra="define('ACX_RECOGNITION_URL','https://api.altcontext.com'); define('ACX_RECOGNITION_API_KEY','secret-key'); define('ACX_RECOGNITION_TENANT_ID','00000000-0000-4000-8000-000000000001');"
+assert_eq "php define URL" "https://api.altcontext.com" "$(php_define_value ACX_RECOGNITION_URL "$_extra")"
+assert_eq "php define API key" "secret-key" "$(php_define_value ACX_RECOGNITION_API_KEY "$_extra")"
+assert_eq "php define tenant" "00000000-0000-4000-8000-000000000001" "$(php_define_value ACX_RECOGNITION_TENANT_ID "$_extra")"
+assert_eq "php define missing is empty (no ACX_DESCRIPTION_ADAPTER fallback)" "" "$(php_define_value ACX_DESCRIPTION_ADAPTER "$_extra")"
+
+# Fixture-caption provenance classifier (same canned pool as smoke-gate).
+assert_eq "alt provenance empty sample UNKNOWN" UNKNOWN "$(classify_describe_provenance '')"
+assert_eq "alt provenance real caption PASS" PASS "$(classify_describe_provenance 'A woman in a red coat speaks at a podium in front of a blue backdrop.')"
+assert_eq "alt provenance fixture FAIL" FAIL "$(classify_describe_provenance 'A close-up of a small object on a neutral background.')"
+
+# --- bootstrap-wp.sh wiring (R1-05 / R1-04 / RLSE-08) ---
+assert_file_grep "bootstrap probes /health/detailed" "$bootstrap_file" '/health/detailed'
+assert_file_grep "bootstrap reads description_adapter field" "$bootstrap_file" 'description_adapter'
+assert_file_not_grep "bootstrap does not env_get ACX_DESCRIPTION_ADAPTER" "$bootstrap_file" 'env_get ACX_DESCRIPTION_ADAPTER'
+assert_file_grep "bootstrap reuses ACX_RECOGNITION_URL" "$bootstrap_file" 'ACX_RECOGNITION_URL'
+assert_file_grep "bootstrap reuses ACX_RECOGNITION_API_KEY" "$bootstrap_file" 'ACX_RECOGNITION_API_KEY'
+assert_file_not_grep "BLOCK message does not tell operator to set demo env adapter" "$bootstrap_file" 'Set ACX_DESCRIPTION_ADAPTER to one of'
+assert_file_grep "BLOCK message names the live service producer" "$bootstrap_file" 'description SERVICE'
+assert_file_grep "config-fault BLOCK exits 1" "$bootstrap_file" 'exit 1'
+assert_file_grep "environment-fault message kept distinct" "$bootstrap_file" 'environment fault, not a config fault'
+assert_file_grep "bootstrap handles RUN_FORCE" "$bootstrap_file" 'RUN_FORCE'
+assert_file_grep "RUN_FORCE invokes --write --force --limit=100" "$bootstrap_file" 'describe generate --write --force --limit=100'
+assert_file_grep "CLI --force flag exists before wiring" "$cli_file" '\[--force\]'
 
 echo
 if [ "$failures" -gt 0 ]; then

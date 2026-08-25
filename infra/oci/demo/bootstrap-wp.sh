@@ -133,5 +133,56 @@ echo "==> Cycle plugin activation so activation-hook dbDelta applies schema chan
 compose run --rm --no-deps wpcli wp plugin deactivate alt-context || true
 compose run --rm --no-deps wpcli wp plugin activate alt-context
 
+# Fail-closed describe-apply: canned `seeded` captions are worse than empty alt.
+# shellcheck source=lib/describe-gate.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/describe-gate.sh"
+
+# wp-cli --format=count -> digits, or "" on failure/non-numeric so the
+# classifier BLOCKs instead of guessing.
+wpcli_count_or_empty() {
+  local out
+  if ! out=$(wpcli "$@" 2>/dev/null); then
+    echo ""
+    return 0
+  fi
+  out=$(printf '%s' "$out" | tr -d '[:space:]')
+  case "$out" in
+    *[!0-9]*|'') echo "" ;;
+    *) echo "$out" ;;
+  esac
+}
+
+count_total_media() {
+  wpcli_count_or_empty wp post list --post_type=attachment --post_status=inherit --format=count
+}
+
+count_media_with_alt() {
+  wpcli_count_or_empty wp post list --post_type=attachment --post_status=inherit \
+    --meta_key=_wp_attachment_image_alt --meta_compare='!=' --meta_value='' --format=count
+}
+
+echo "==> Describe-apply gate (fail-closed; seeded captions are worse than empty alt)"
+ADAPTER_PROFILE="$(env_get ACX_DESCRIPTION_ADAPTER)"
+TOTAL_MEDIA="$(count_total_media)"
+MEDIA_WITH_ALT="$(count_media_with_alt)"
+DESCRIBE_VERDICT="$(classify_describe_gate "$ADAPTER_PROFILE" "$TOTAL_MEDIA" "$MEDIA_WITH_ALT")"
+
+case "$DESCRIBE_VERDICT" in
+  RUN)
+    echo "==> Describe pass: wp alt-context describe generate --write --limit=100 (adapter=${ADAPTER_PROFILE} coverage=${MEDIA_WITH_ALT}/${TOTAL_MEDIA})"
+    wpcli wp alt-context describe generate --write --limit=100
+    ;;
+  SKIP)
+    echo "==> Describe pass skipped (adapter=${ADAPTER_PROFILE} coverage=${MEDIA_WITH_ALT}/${TOTAL_MEDIA})"
+    ;;
+  *)
+    if is_trusted_describe_profile "$ADAPTER_PROFILE"; then
+      echo "==> BLOCKED: cannot measure demo media coverage (total='${TOTAL_MEDIA}' with_alt='${MEDIA_WITH_ALT}') — 'wp post list --format=count' failed or returned non-numeric output. Adapter '${ADAPTER_PROFILE}' is trusted; this is an environment fault, not a config fault. Describe pass skipped." >&2
+    else
+      echo "==> BLOCKED: refusing to publish descriptions — ACX_DESCRIPTION_ADAPTER='${ADAPTER_PROFILE}' produces canned fixture captions, which is worse for accessibility than empty alt text. Set ACX_DESCRIPTION_ADAPTER to one of: florence_small, gpu_qwen30b, gpu_qwen30b_ensemble. (coverage=${MEDIA_WITH_ALT}/${TOTAL_MEDIA})" >&2
+    fi
+    ;;
+esac
+
 echo "==> Bootstrap complete — verify ACX constants inside the container:"
 echo "    docker compose -f ${COMPOSE_FILE} exec wordpress php -r \"require '/var/www/html/wp-config.php'; var_export(defined('ACX_RECOGNITION_URL') ? ACX_RECOGNITION_URL : null);\""

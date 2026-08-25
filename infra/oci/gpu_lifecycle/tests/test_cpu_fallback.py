@@ -74,6 +74,33 @@ def test_run_start_cycle_emits_fallback_on_probe_timeout() -> None:
     assert result.fallbacks[0].reason == "readiness_timeout"
 
 
+class AlwaysError:
+    def probe(self, instance_id: str) -> ProbeSample:
+        return ProbeSample(
+            instance_id=instance_id, status=ProbeStatus.ERROR, detail="hung"
+        )
+
+
+def test_run_start_cycle_stall_emits_readiness_stall_fallback() -> None:
+    controller = GpuLifecycleController(idle_seconds=60)
+    instance = GpuInstance(
+        instance_id="ocid1.gpu", state="STOPPED", idle_for_seconds=0
+    )
+    result = run_start_cycle(
+        controller=controller,
+        instances=[instance],
+        load_source=StaticJobLoadSource(queue_depth=1, in_flight=0),
+        actuator=RecordingStartActuator(),
+        probe=AlwaysError(),
+        readiness_wait=WarmReadinessWait(
+            max_cycles=5, stall_cycles=2, sleep_seconds=0.0
+        ),
+    )
+    assert result.fallbacks
+    assert result.fallbacks[0].reason == "readiness_stall"
+    assert result.fallbacks[0].profile == "florence_small"
+
+
 def test_no_fallback_when_instance_becomes_ready() -> None:
     controller = GpuLifecycleController(idle_seconds=60)
     instance = GpuInstance(

@@ -199,6 +199,57 @@ def test_http_probe_missing_status_is_not_ready(monkeypatch) -> None:
     assert sample.instance_id == "ocid1.gpu"
 
 
+def test_http_readiness_probe_local_server_2xx_non_2xx_urlerror() -> None:
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+    from threading import Thread
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            if self.path.endswith("/ok"):
+                self.send_response(200)
+            else:
+                self.send_response(503)
+            self.end_headers()
+
+        def log_message(self, format: str, *args: object) -> None:
+            return
+
+    server = HTTPServer(("127.0.0.1", 0), Handler)
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        port = server.server_address[1]
+        ready = HttpReadinessProbe(url=f"http://127.0.0.1:{port}/ok").probe(
+            "ocid1.gpu"
+        )
+        not_ready = HttpReadinessProbe(url=f"http://127.0.0.1:{port}/down").probe(
+            "ocid1.gpu"
+        )
+        refused = HttpReadinessProbe(url="http://127.0.0.1:1/missing").probe(
+            "ocid1.gpu"
+        )
+        assert ready.status == ProbeStatus.READY
+        assert not_ready.status == ProbeStatus.NOT_READY
+        assert refused.status == ProbeStatus.NOT_READY
+    finally:
+        server.shutdown()
+
+
+def test_raising_probe_does_not_halt_healthy_sibling() -> None:
+    class Mixed:
+        def probe(self, instance_id: str) -> ProbeSample:
+            if instance_id == "ocid1.boom":
+                raise RuntimeError("probe exploded")
+            return ProbeSample(instance_id=instance_id, status=ProbeStatus.READY)
+
+    result = WarmReadinessWait(max_cycles=3, stall_cycles=5, sleep_seconds=0.0).wait(
+        ["ocid1.boom", "ocid1.ok"], Mixed()
+    )
+    assert result.ready == ("ocid1.ok",)
+    assert "ocid1.ok" not in result.stalled
+    assert "ocid1.ok" not in result.timed_out
+
+
 def test_shared_http_probe_refuses_multi_id_wait() -> None:
     controller = GpuLifecycleController(idle_seconds=60)
     instances = [

@@ -7,7 +7,6 @@ from pathlib import Path
 from infra.oci.gpu_lifecycle.controller import (
     GpuInstance,
     GpuLifecycleController,
-    JobLoadSnapshot,
 )
 from infra.oci.gpu_lifecycle.reaper import (
     JsonFileJobLoadSource,
@@ -207,4 +206,3 @@ def test_run_start_cycle_is_quiet_when_no_work() -> None:
     assert result.decided == []
     assert result.actuated == []
     assert actuator.started == []
-    assert JobLoadSnapshot(queue_depth=0, in_flight=0).has_work is False

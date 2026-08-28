@@ -288,6 +288,151 @@ REAP_LANE_ROOTS="scratchpad" run_reap --yes "$lane_default"
 assert_contains "g2 override replaces" "not under allowlisted lane root"
 assert_exists "g2 override replaces kept" "$lane_default"
 
+# --- archive-then-reap -------------------------------------------------------
+# VMDISK-1. Ancestry cannot answer "is this merged?" for a wave that landed by
+# squash or rebase: the lane's commits are never ancestors of main, so the guard
+# skips forever and the reclaimer frees nothing. The VM sat at 94% with ~85
+# lanes, git objects totalling 239M and the rest being duplicated working-tree
+# checkouts (~500M each).
+#
+# --archive-to sidesteps the question. Push every local ref into a keep-repo
+# first and the commits survive whether or not they ever reached main, so
+# deleting the *checkout* cannot lose work. The guard then only has to protect
+# what has no commit behind it: an uncommitted tree, and a stash.
+
+ARCHIVE="$WORKDIR/archive.git"
+git init --bare --quiet "$ARCHIVE"
+
+archive_has() {  # $1 label, $2 ref, $3 expected sha
+  local got
+  got="$(git -C "$ARCHIVE" rev-parse --verify --quiet "$2" || true)"
+  if [[ "$got" == "$3" ]]; then pass "$1 archived $2"
+  else fail "$1: $2 is '$got', expected '$3'"; fi
+}
+
+# Unmerged work is reaped once it is archived -- and every branch lands.
+lane_ar="$HOME/w/lane-archive"
+clone_lane "$lane_ar"
+echo "unmerged" >"$lane_ar/UNMERGED"
+git -C "$lane_ar" add UNMERGED
+git -C "$lane_ar" commit -q -m "work that never reached main"
+git -C "$lane_ar" branch second-branch
+ar_sha="$(git -C "$lane_ar" rev-parse HEAD)"
+run_reap --yes --archive-to "$ARCHIVE" "$lane_ar"
+assert_rc0 "archive reap"
+assert_gone "archive reap" "$lane_ar"
+archive_has "archive reap" "refs/lanes/w/lane-archive/main" "$ar_sha"
+archive_has "archive reap" "refs/lanes/w/lane-archive/second-branch" "$ar_sha"
+
+# Without --archive-to the old guard still holds: unmerged work is never
+# deleted just because a flag was forgotten.
+lane_nar="$HOME/w/lane-noarchive"
+clone_lane "$lane_nar"
+echo "unmerged" >"$lane_nar/UNMERGED"
+git -C "$lane_nar" add UNMERGED
+git -C "$lane_nar" commit -q -m "work that never reached main"
+run_reap --yes "$lane_nar"
+assert_contains "no-archive still guards" "unmerged local work"
+assert_exists "no-archive still guards" "$lane_nar"
+
+# A failed push must not delete anything. Release It! 5.5: verify the resource
+# you will actually use -- an archive that did not accept the refs is not one.
+lane_bad="$HOME/w/lane-badarchive"
+clone_lane "$lane_bad"
+echo "unmerged" >"$lane_bad/UNMERGED"
+git -C "$lane_bad" add UNMERGED
+git -C "$lane_bad" commit -q -m "work that never reached main"
+run_reap --yes --archive-to "$WORKDIR/does-not-exist.git" "$lane_bad"
+assert_contains "unwritable archive" "could not archive"
+assert_exists "unwritable archive keeps the lane" "$lane_bad"
+
+# An uncommitted tree has no commit to archive, so archiving must not weaken it.
+lane_ad="$HOME/w/lane-archive-dirty"
+clone_lane "$lane_ad"
+echo "scratch" >"$lane_ad/NOTES.md"
+run_reap --yes --archive-to "$ARCHIVE" "$lane_ad"
+assert_contains "archive + dirty" "dirty working tree"
+assert_exists "archive + dirty keeps the lane" "$lane_ad"
+
+# Same for a stash: `git push` moves branches, not stash entries.
+lane_as="$HOME/w/lane-archive-stash"
+clone_lane "$lane_as"
+echo "stashed" >"$lane_as/README"
+git -C "$lane_as" stash push -q -m "wip"
+run_reap --yes --archive-to "$ARCHIVE" "$lane_as"
+assert_contains "archive + stash" "stash has real work"
+assert_exists "archive + stash keeps the lane" "$lane_as"
+
+# Same basename under two roots must not overwrite one another: ~/w/dux-l1 and
+# ~/lanes/dux-l1 both exist on the VM, and a basename namespace would archive
+# one over the other and then delete both.
+sha_w=""
+sha_lanes=""
+for root in w lanes; do
+  lane_c="$HOME/$root/samename"
+  clone_lane "$lane_c"
+  echo "$root" >"$lane_c/WHICH"
+  git -C "$lane_c" add WHICH
+  git -C "$lane_c" commit -q -m "$root"
+  case "$root" in
+    w) sha_w="$(git -C "$lane_c" rev-parse HEAD)" ;;
+    lanes) sha_lanes="$(git -C "$lane_c" rev-parse HEAD)" ;;
+  esac
+  run_reap --yes --archive-to "$ARCHIVE" "$lane_c"
+  assert_gone "collision $root" "$lane_c"
+done
+archive_has "collision" "refs/lanes/w/samename/main" "$sha_w"
+archive_has "collision" "refs/lanes/lanes/samename/main" "$sha_lanes"
+
+# Re-archiving a path whose history diverged must refuse rather than force: the
+# refs already there are the only copy of that lane's work.
+lane_re="$HOME/w/lane-rearchive"
+clone_lane "$lane_re"
+echo one >"$lane_re/A"; git -C "$lane_re" add A; git -C "$lane_re" commit -q -m one
+run_reap --yes --archive-to "$ARCHIVE" "$lane_re"
+assert_gone "rearchive first pass" "$lane_re"
+clone_lane "$lane_re"
+echo two >"$lane_re/B"; git -C "$lane_re" add B; git -C "$lane_re" commit -q -m two
+run_reap --yes --archive-to "$ARCHIVE" "$lane_re"
+assert_contains "rearchive diverged" "could not archive"
+assert_exists "rearchive diverged keeps the lane" "$lane_re"
+
+# A push can report success and still leave the archive empty (a quarantine, a
+# hook, a repo that accepts and drops). The lane is deleted on the strength of
+# that archive, so the refs must be read back out -- Release It! 5.5: verify the
+# resource you will actually use, not the call that was supposed to provide it.
+LIAR="$WORKDIR/liar.git"
+git init --bare --quiet "$LIAR"
+cat >"$LIAR/hooks/post-receive" <<'HOOK'
+#!/bin/sh
+# Accept the push, then drop what it delivered.
+for ref in $(git for-each-ref --format='%(refname)' refs/lanes); do
+  git update-ref -d "$ref"
+done
+HOOK
+chmod +x "$LIAR/hooks/post-receive"
+
+lane_liar="$HOME/w/lane-liar"
+clone_lane "$lane_liar"
+echo liar >"$lane_liar/L"; git -C "$lane_liar" add L; git -C "$lane_liar" commit -q -m liar
+run_reap --yes --archive-to "$LIAR" "$lane_liar"
+assert_contains "archive that drops refs" "could not archive"
+assert_exists "archive that drops refs keeps the lane" "$lane_liar"
+
+# A detached HEAD is archived too -- commits reachable only from HEAD are the
+# easiest work to lose and the hardest to notice missing.
+lane_dh="$HOME/w/lane-detached"
+clone_lane "$lane_dh"
+echo "detached" >"$lane_dh/DETACHED"
+git -C "$lane_dh" add DETACHED
+git -C "$lane_dh" commit -q -m "detached work"
+dh_sha="$(git -C "$lane_dh" rev-parse HEAD)"
+git -C "$lane_dh" checkout -q --detach "$dh_sha"
+git -C "$lane_dh" branch -q -D main 2>/dev/null || true
+run_reap --yes --archive-to "$ARCHIVE" "$lane_dh"
+assert_gone "detached HEAD reaped" "$lane_dh"
+archive_has "detached HEAD" "refs/lanes/w/lane-detached/HEAD" "$dh_sha"
+
 # --all is repeatable: one cron line has to sweep every lane root. With a
 # last-one-wins flag the entry would silently reap only the final root.
 lane_m1="$HOME/w/lane-multi"

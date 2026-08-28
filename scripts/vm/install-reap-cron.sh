@@ -23,7 +23,16 @@ all_args=''
 for r in $roots; do
   all_args="${all_args}--all ${r} "
 done
-entry="17 6 * * 1 \$HOME/bin/reap-lane.sh --yes ${all_args}>> \$HOME/reap-lane.log 2>&1"
+# The keep-repo. Ancestry alone skips every lane of a squash- or rebase-merged
+# wave, so a guarded-only sweep frees nothing; archiving the commits first makes
+# deleting the checkout lossless. Never re-init: for a reaped lane these refs
+# may be the only copy of its history.
+archive="$HOME/lane-archive.git"
+if ! git -C "$archive" rev-parse --is-bare-repository >/dev/null 2>&1; then
+  git init --bare --quiet "$archive"
+fi
+
+entry="17 6 * * 1 \$HOME/bin/reap-lane.sh --yes --archive-to \$HOME/lane-archive.git ${all_args}>> \$HOME/reap-lane.log 2>&1"
 
 # Replace any previous acx-reap-lane block rather than treating its presence as
 # "already installed". The VM was carrying an entry that swept one root of five;

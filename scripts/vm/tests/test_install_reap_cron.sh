@@ -77,6 +77,31 @@ for root in w3 uxw2 l1 w lanes; do
   assert_cron_contains "fresh" "--all \$HOME/$root "
 done
 
+# The weekly sweep must archive, not just guard. Ancestry alone skips every lane
+# of a squash-merged wave, which is how the VM reached 94% with the cron
+# reporting success every week.
+# shellcheck disable=SC2016  # literal $HOME: cron expands it, not us.
+assert_cron_contains "fresh" '--archive-to $HOME/lane-archive.git'
+
+if git -C "$HOME/lane-archive.git" rev-parse --is-bare-repository >/dev/null 2>&1; then
+  pass "fresh creates the keep-repo"
+else
+  fail "fresh: $HOME/lane-archive.git is not a bare repo"
+fi
+
+# The keep-repo may be the only copy of a reaped lane's history: re-running the
+# installer must never re-init over it.
+git -C "$HOME/lane-archive.git" update-ref refs/lanes/canary/main \
+  "$(git -C "$HOME/lane-archive.git" commit-tree -m canary \
+      "$(git -C "$HOME/lane-archive.git" hash-object -w -t tree /dev/null)")"
+canary="$(git -C "$HOME/lane-archive.git" rev-parse refs/lanes/canary/main)"
+run_install
+if [[ "$(git -C "$HOME/lane-archive.git" rev-parse refs/lanes/canary/main 2>/dev/null)" == "$canary" ]]; then
+  pass "reinstall preserves archived refs"
+else
+  fail "reinstall destroyed the keep-repo contents"
+fi
+
 # --- idempotence: a second run must not duplicate the entry -------------------
 run_install
 assert_rc0 "rerun"

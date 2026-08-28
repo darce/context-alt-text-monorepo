@@ -8,7 +8,7 @@ set -euo pipefail
 export GIT_TERMINAL_PROMPT=0
 
 usage() {
-  echo "Usage: reap-lane.sh [--yes] [--log FILE] PATH..." >&2
+  echo "Usage: reap-lane.sh [--yes] [--log FILE] [--archive-to REPO.git] PATH..." >&2
   echo "       reap-lane.sh [--yes] [--log FILE] --all ROOT [--all ROOT ...]" >&2
   exit 2
 }
@@ -18,11 +18,17 @@ usage() {
 yes=0
 log="${HOME}/reap-lane.log"
 all_roots=()
+archive_to=""
 paths=()
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --yes) yes=1; shift ;;
+    --archive-to)
+      [[ $# -ge 2 ]] || usage
+      archive_to="$2"
+      shift 2
+      ;;
     --log)
       [[ $# -ge 2 ]] || usage
       log="$2"
@@ -156,6 +162,49 @@ stash_has_real_work() {
   return 1
 }
 
+# Push every commit a lane holds into the keep-repo, then prove it landed.
+# $1 = lane realpath, $2 = ref namespace (the lane's path under $HOME).
+#
+# This is what makes reaping safe on a wave that merged by squash or rebase: the
+# lane's commits are never ancestors of main, so ancestry can only ever say
+# "unmerged" and the reclaimer frees nothing. Once the commits are in the
+# archive, deleting the working tree cannot lose work regardless of whether it
+# ever reached main -- and the checkout is where the space actually is (on the
+# VM: 239M of shared git objects against ~500M of checkout per lane).
+#
+# Not --force: these refs may be the only copy of that lane's history, so a
+# diverged re-archive must be refused rather than overwritten.
+archive_lane() {
+  local dir="$1" ns="$2" head_sha want got ref sha
+  if ! git -C "$dir" rev-parse --verify --quiet HEAD >/dev/null; then
+    return 1
+  fi
+  if [[ -n "$(git -C "$dir" for-each-ref --format='%(objectname)' refs/heads)" ]]; then
+    git -C "$dir" push --quiet --no-verify -- "$archive_to" \
+      "refs/heads/*:refs/lanes/${ns}/*" >/dev/null 2>&1 || return 1
+  fi
+  head_sha="$(git -C "$dir" rev-parse HEAD)"
+  # Named explicitly: commits reachable only from a detached HEAD are the
+  # easiest work to lose and the hardest to notice missing.
+  git -C "$dir" push --quiet --no-verify -- "$archive_to" \
+    "${head_sha}:refs/lanes/${ns}/HEAD" >/dev/null 2>&1 || return 1
+
+  # Read the refs back out of the archive. A push that reported success but
+  # landed nothing would otherwise be indistinguishable from one that worked,
+  # and the next step is rm -rf.
+  want="$(
+    git -C "$dir" for-each-ref --format="refs/lanes/${ns}/%(refname:strip=2) %(objectname)" refs/heads
+    printf 'refs/lanes/%s/HEAD %s\n' "$ns" "$head_sha"
+  )"
+  got="$(git ls-remote -- "$archive_to" "refs/lanes/${ns}/*" 2>/dev/null |
+    awk '{ print $2, $1 }')" || return 1
+  while IFS=' ' read -r ref sha; do
+    [[ -z "$ref" ]] && continue
+    printf '%s\n' "$got" | grep -qxF "$ref $sha" || return 1
+  done <<<"$want"
+  return 0
+}
+
 # Return 0 = skip or reaped (normal); 1 = internal error.
 process_one() {
   local path="$1"
@@ -183,7 +232,23 @@ process_one() {
     return 0
   fi
 
-  if [[ -n "${REAP_UPSTREAM:-}" ]]; then
+  if [[ -n "$archive_to" ]]; then
+    # Ordered cheapest-and-strictest first: neither an uncommitted tree nor a
+    # stash has a commit behind it, so archiving cannot make them safe.
+    if has_blocking_dirty "$real"; then
+      skip "$path" "dirty working tree"
+      return 0
+    fi
+    if stash_has_real_work "$real"; then
+      skip "$path" "stash has real work"
+      return 0
+    fi
+    if ! archive_lane "$real" "${real#"${home_real}"/}"; then
+      skip "$path" "could not archive to ${archive_to}"
+      return 0
+    fi
+    upstream_label="archived:${archive_to}"
+  elif [[ -n "${REAP_UPSTREAM:-}" ]]; then
     if [[ "$REAP_UPSTREAM" != *#* ]]; then
       skip "$path" "REAP_UPSTREAM must be <url>#<ref>"
       return 0
@@ -207,21 +272,23 @@ process_one() {
     upstream_label="origin/main"
   fi
 
-  upstream="$(git -C "$real" rev-parse --verify FETCH_HEAD)"
+  if [[ -z "$archive_to" ]]; then
+    upstream="$(git -C "$real" rev-parse --verify FETCH_HEAD)"
 
-  if has_unmerged_work "$real" "$upstream"; then
-    skip "$path" "unmerged local work"
-    return 0
-  fi
+    if has_unmerged_work "$real" "$upstream"; then
+      skip "$path" "unmerged local work"
+      return 0
+    fi
 
-  if has_blocking_dirty "$real"; then
-    skip "$path" "dirty working tree"
-    return 0
-  fi
+    if has_blocking_dirty "$real"; then
+      skip "$path" "dirty working tree"
+      return 0
+    fi
 
-  if stash_has_real_work "$real"; then
-    skip "$path" "stash has real work"
-    return 0
+    if stash_has_real_work "$real"; then
+      skip "$path" "stash has real work"
+      return 0
+    fi
   fi
 
   size="$(du -sh "$real" | awk '{print $1}')"

@@ -459,6 +459,7 @@ test-scripts:
 		scripts/test_acx_backend_image_contract.py \
 		-q --tb=short --durations=25
 	@bash scripts/deploy/tests/test-smoke-gate.sh
+	@bash scripts/deploy/tests/test-ocir-auth.sh
 
 # Permanent [TEST-15] discrimination guard for the licence/provenance gate.
 # OPT-IN / REMOTE-VM ONLY. Not a prerequisite of test-scripts or check-all:
@@ -508,9 +509,18 @@ test-hooks:
 
 # E15-31B: deploy-contract guard — prod deploys/systemd restarts must install
 # and retain the /admin compose overlay. Covered by test-scripts in check-all.
+# OCIRV-1: land a freshly minted OCI auth token in acx-vault and prove both
+# hosts authenticate from it. The only remaining human step in the OCIR
+# credential lifecycle -- Oracle has no API that returns a token's secret.
+# The token is read from stdin, never from argv or a file.
+.PHONY: ocir-token-rotate
+ocir-token-rotate:
+	@bash scripts/deploy/ocir-token-rotate.sh $(OCIR_ROTATE_ARGS)
+
 test-deploy-contract:
 	@python3 -m pytest scripts/test_e15_31_admin_deploy_contract.py scripts/test_e15_33_deploy_convergence.py scripts/test_e15_33_boot_smoke.py -q --tb=short
 	@bash scripts/deploy/tests/test-smoke-gate.sh
+	@bash scripts/deploy/tests/test-ocir-auth.sh
 
 # VLM-3 / VLMRP: OCI GPU infra posture, idle-reaper lifecycle, decision memo,
 # bake-off artifact guards, and OWLv2 deferral. Covered by test-scripts in check-all.

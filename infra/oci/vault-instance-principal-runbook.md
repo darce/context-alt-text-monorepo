@@ -84,6 +84,50 @@ grep -q '^POSTGRES_PASSWORD=' .env \
 
 This is the accepted two-fetch-mechanism trade-off ([ARCH-06]; ADR-013).
 
+## 4b. OCIR docker credential (OCIRV-1)
+
+The registry credential used by `scripts/deploy/recognition-service.sh` is two
+Vault secrets, fetched by the same mechanism as §4:
+
+| Secret            | Contents                          | Secret? |
+| ----------------- | --------------------------------- | ------- |
+| `OCIR_USERNAME`   | `<namespace>/<oci-user-email>`    | no      |
+| `OCIR_AUTH_TOKEN` | OCI auth token (docker password)  | yes     |
+
+`scripts/deploy/lib/ocir-auth.sh` emits a fetch-and-login snippet that pipes the
+token straight into `docker login --password-stdin`. The token is never written
+to disk, never placed in argv (where `ps` would expose it), and no host keeps a
+cached `~/.docker/config.json` entry. On the VM the fetch runs under
+`--auth instance_principal`; on a laptop, under the operator's API key.
+
+`oci-cli` must be present on the VM for the remote path:
+
+```bash
+python3 -m venv ~/.oci-venv && ~/.oci-venv/bin/pip install oci-cli
+```
+
+Failures are classified rather than collapsed into "auth missing", because the
+three causes have different fixes and OCI returns the same
+`NotAuthorizedOrNotFound` code for a missing secret and a missing grant. The
+snippet emits a sentinel once it has read *any* secret from the vault, which
+disambiguates the two: see `ocir_classify_login_failure`.
+
+**Why this exists.** The credential used to be a `docker login` a human ran by
+hand on each host from a token pasted out of the Console. Nothing recorded which
+host held which token, and a revoked credential was indistinguishable from a
+misconfigured one — one incident burned a session on a 20-pair
+username/endpoint matrix before concluding the token itself was dead.
+Release It! §5.4 (Steady State) rejects exactly this shape: if the system needs
+regular crank-turning, admins stay logged in and fiddling follows.
+
+**Residual manual step.** Oracle has no API that returns an auth token's secret
+(`CreateAuthToken` returns it once; the Python SDK's `MyAuthToken` model omits
+the field), so minting is irreducibly human. Everything after the mint is not:
+
+```bash
+make ocir-token-rotate          # prompts, does not echo, stores, verifies both hosts
+```
+
 ## 5. Rotation (single-place operation)
 
 1. Update the secret's value in OCI Vault (new secret version).
@@ -91,5 +135,8 @@ This is the accepted two-fetch-mechanism trade-off ([ARCH-06]; ADR-013).
    (`systemctl restart acx-<env>`) — they re-fetch the current version at boot.
 3. Postgres container password: also re-run the `ExecStartPre` fetch (restart
    picks it up) and, if the DB role password changed, `ALTER ROLE` accordingly.
+4. `OCIR_AUTH_TOKEN`: `make ocir-token-rotate`. No host is touched — the next
+   deploy's preflight fetches the new version. Revoke the old token in the
+   Console afterwards (the 2-token-per-user quota is easy to exhaust).
 
 No OCID map change is needed on rotation (the OCID is stable across versions).

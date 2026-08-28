@@ -433,6 +433,78 @@ run_reap --yes --archive-to "$ARCHIVE" "$lane_dh"
 assert_gone "detached HEAD reaped" "$lane_dh"
 archive_has "detached HEAD" "refs/lanes/w/lane-detached/HEAD" "$dh_sha"
 
+# --- linked worktrees --------------------------------------------------------
+# The VM's two biggest roots are not clones at all: all 35 lanes in ~/w and all
+# 19 in ~/lanes are linked git worktrees of three parent repos. Their branch
+# refs live in the parent, so removing the checkout loses nothing -- and a push
+# to a keep-repo cannot even be attempted (the shared object store is served by
+# an alternate that no longer holds every parent commit).
+#
+# Two things still have to be got right, and both destroy work if missed:
+#   - a detached HEAD is anchored only by the worktree's own HEAD, which
+#     `git worktree prune` deletes; it must become a real ref in the parent.
+#   - the parent repo itself sits inside a lane root (~/l1/r7-int is parent to
+#     28 lanes). Reaping it takes the object store every one of them shares.
+
+PARENT="$HOME/l1/parentrepo"
+clone_lane "$PARENT"
+
+wt_branch="$HOME/w/wt-branch"
+git -C "$PARENT" worktree add -q -b lane/wt-branch "$wt_branch" >/dev/null 2>&1
+echo work >"$wt_branch/W"
+git -C "$wt_branch" add W
+git -C "$wt_branch" commit -q -m "worktree work"
+wt_sha="$(git -C "$wt_branch" rev-parse HEAD)"
+
+run_reap --yes --archive-to "$ARCHIVE" "$wt_branch"
+assert_rc0 "worktree on a branch"
+assert_gone "worktree on a branch" "$wt_branch"
+# The branch is a ref in the parent; it must still be there afterwards.
+if [[ "$(git -C "$PARENT" rev-parse --verify --quiet lane/wt-branch)" == "$wt_sha" ]]; then
+  pass "worktree branch survives in the parent"
+else
+  fail "worktree branch lost from the parent"
+fi
+# Stale worktree metadata left behind makes the parent's `worktree list` lie.
+if git -C "$PARENT" worktree list | grep -qF "$wt_branch"; then
+  fail "parent still lists the reaped worktree"
+else
+  pass "parent worktree metadata pruned"
+fi
+
+# A detached HEAD has no branch in the parent: prune would orphan the commit.
+wt_det="$HOME/w/wt-detached"
+git -C "$PARENT" worktree add -q --detach "$wt_det" >/dev/null 2>&1
+echo detached >"$wt_det/D"
+git -C "$wt_det" add D
+git -C "$wt_det" commit -q -m "detached worktree work"
+det_sha="$(git -C "$wt_det" rev-parse HEAD)"
+run_reap --yes --archive-to "$ARCHIVE" "$wt_det"
+assert_gone "detached worktree" "$wt_det"
+if [[ "$(git -C "$PARENT" rev-parse --verify --quiet refs/lanes/w/wt-detached/HEAD)" == "$det_sha" ]]; then
+  pass "detached worktree HEAD anchored in the parent"
+else
+  fail "detached worktree HEAD not anchored: commit is now unreachable"
+fi
+
+# Uncommitted work in a worktree is still uncommitted work.
+wt_dirty="$HOME/w/wt-dirty"
+git -C "$PARENT" worktree add -q --detach "$wt_dirty" >/dev/null 2>&1
+echo scratch >"$wt_dirty/NOTES.md"
+run_reap --yes --archive-to "$ARCHIVE" "$wt_dirty"
+assert_contains "dirty worktree" "dirty working tree"
+assert_exists "dirty worktree kept" "$wt_dirty"
+
+# The parent must never be reaped: it holds the refs and the object store that
+# every worktree above depends on.
+run_reap --yes --archive-to "$ARCHIVE" "$PARENT"
+assert_contains "parent of live worktrees" "has linked worktrees"
+assert_exists "parent of live worktrees kept" "$PARENT"
+
+# ... including when the sweep reaches it via --all.
+run_reap --yes --archive-to "$ARCHIVE" --all "$HOME/l1"
+assert_exists "parent survives an --all sweep" "$PARENT"
+
 # --all is repeatable: one cron line has to sweep every lane root. With a
 # last-one-wins flag the entry would silently reap only the final root.
 lane_m1="$HOME/w/lane-multi"

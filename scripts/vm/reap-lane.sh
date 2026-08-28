@@ -205,10 +205,46 @@ archive_lane() {
   return 0
 }
 
+# Echo the main worktree of a linked worktree; fail if $1 is not one.
+# A linked worktree's .git is a file pointing into <parent>/.git/worktrees/<n>.
+lane_parent_repo() {
+  local dir="$1" common
+  [[ -f "$dir/.git" ]] || return 1
+  common="$(git -C "$dir" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" || return 1
+  dirname "$common"
+}
+
+# True when $1 is a main worktree with linked worktrees hanging off it.
+# On the VM three such repos sit inside lane roots -- ~/l1/r7-int alone is
+# parent to 28 lanes -- and reaping one takes the refs and the shared object
+# store every one of its worktrees depends on.
+has_linked_worktrees() {
+  local dir="$1" n
+  n="$(git -C "$dir" worktree list --porcelain 2>/dev/null | grep -c '^worktree ' || true)"
+  [[ "${n:-0}" -gt 1 ]]
+}
+
+# Anchor a linked worktree's HEAD as a real ref in its parent.
+# A worktree shares the parent's ref store, so its branches already survive
+# removal -- but a detached HEAD is held only by the worktree's own HEAD file,
+# which `git worktree prune` deletes. Without this the commit becomes
+# unreachable and the next gc drops it.
+anchor_worktree_head() {
+  local dir="$1" ns="$2" parent="$3" head_sha
+  head_sha="$(git -C "$dir" rev-parse --verify --quiet HEAD)" || return 1
+  git -C "$dir" update-ref "refs/lanes/${ns}/HEAD" "$head_sha" || return 1
+  # Read back from the parent, not from the worktree: git keeps some namespaces
+  # (refs/bisect, refs/worktree, refs/rewritten) per-worktree, and a ref that
+  # only ever existed in the worktree's own ref store dies with `worktree
+  # prune` -- taking the commit with it. refs/lanes is not one of those today,
+  # which is exactly why this is worth asserting rather than assuming.
+  [[ "$(git -C "$parent" rev-parse --verify --quiet "refs/lanes/${ns}/HEAD")" == "$head_sha" ]]
+}
+
 # Return 0 = skip or reaped (normal); 1 = internal error.
 process_one() {
   local path="$1"
-  local real size head_sha upstream upstream_label url ref log_dir
+  local real size head_sha upstream upstream_label url ref log_dir ns parent
 
   if [[ ! -d "$path" || ! -e "$path/.git" ]]; then
     skip "$path" "not a git directory"
@@ -233,6 +269,12 @@ process_one() {
   fi
 
   if [[ -n "$archive_to" ]]; then
+    ns="${real#"${home_real}"/}"
+    parent="$(lane_parent_repo "$real" || true)"
+    if [[ -z "$parent" ]] && has_linked_worktrees "$real"; then
+      skip "$path" "repo has linked worktrees"
+      return 0
+    fi
     # Ordered cheapest-and-strictest first: neither an uncommitted tree nor a
     # stash has a commit behind it, so archiving cannot make them safe.
     if has_blocking_dirty "$real"; then
@@ -243,11 +285,18 @@ process_one() {
       skip "$path" "stash has real work"
       return 0
     fi
-    if ! archive_lane "$real" "${real#"${home_real}"/}"; then
+    if [[ -n "$parent" ]]; then
+      if ! anchor_worktree_head "$real" "$ns" "$parent"; then
+        skip "$path" "could not anchor HEAD in ${parent}"
+        return 0
+      fi
+      upstream_label="worktree-of:${parent}"
+    elif ! archive_lane "$real" "$ns"; then
       skip "$path" "could not archive to ${archive_to}"
       return 0
+    else
+      upstream_label="archived:${archive_to}"
     fi
-    upstream_label="archived:${archive_to}"
   elif [[ -n "${REAP_UPSTREAM:-}" ]]; then
     if [[ "$REAP_UPSTREAM" != *#* ]]; then
       skip "$path" "REAP_UPSTREAM must be <url>#<ref>"
@@ -300,6 +349,11 @@ process_one() {
   fi
 
   rm -rf -- "$real"
+  # Stale worktree metadata makes the parent's `worktree list` lie, and leaves
+  # the per-worktree HEAD holding a commit we have already anchored properly.
+  if [[ -n "${parent:-}" ]]; then
+    git -C "$parent" worktree prune >/dev/null 2>&1 || true
+  fi
   log_dir="$(dirname "$log")"
   mkdir -p "$log_dir"
   printf '%s %s %s %s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$real" "$size" "$head_sha" "$upstream_label" >>"$log"

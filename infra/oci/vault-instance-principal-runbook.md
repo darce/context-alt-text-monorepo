@@ -126,7 +126,18 @@ the field), so minting is irreducibly human. Everything after the mint is not:
 
 ```bash
 make ocir-token-rotate          # prompts, does not echo, stores, verifies both hosts
+pbpaste | make ocir-token-rotate OCIR_ROTATE_ARGS=--stdin    # from a password manager
 ```
+
+Creating a secret is **asynchronous**: the OCID exists immediately, but
+`get-secret-bundle-by-name` returns `NotAuthorizedOrNotFound` (404) until the
+first version reaches ACTIVE. The rotate script therefore blocks on the
+*consumer's* read path — the same call the deploy preflight makes — and only
+reports success once the stored value reads back byte-identical. Expect a few
+seconds under `waiting for OCIR_AUTH_TOKEN to become readable`. Without that
+wait the laptop verify races the create and reports `secret_missing`, telling
+the operator to store a token they just stored (observed live 2026-08-28).
+Override the 120s ceiling with `--readable-timeout`.
 
 ## 5. Rotation (single-place operation)
 

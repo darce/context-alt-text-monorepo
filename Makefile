@@ -457,6 +457,8 @@ test-scripts:
 		scripts/train/occlusion/test_equivalence_claims.py \
 		scripts/train/occlusion/test_mutation_guard_env.py \
 		scripts/test_acx_backend_image_contract.py \
+		scripts/test_ocirv1_vault_readiness.py \
+		scripts/test_shell_parses_under_system_bash.py \
 		-q --tb=short --durations=25
 	@bash scripts/deploy/tests/test-smoke-gate.sh
 	@bash scripts/deploy/tests/test-ocir-auth.sh
@@ -518,7 +520,7 @@ ocir-token-rotate:
 	@bash scripts/deploy/ocir-token-rotate.sh $(OCIR_ROTATE_ARGS)
 
 test-deploy-contract:
-	@python3 -m pytest scripts/test_e15_31_admin_deploy_contract.py scripts/test_e15_33_deploy_convergence.py scripts/test_e15_33_boot_smoke.py -q --tb=short
+	@python3 -m pytest scripts/test_e15_31_admin_deploy_contract.py scripts/test_e15_33_deploy_convergence.py scripts/test_e15_33_boot_smoke.py scripts/test_ocirv1_vault_readiness.py -q --tb=short
 	@bash scripts/deploy/tests/test-smoke-gate.sh
 	@bash scripts/deploy/tests/test-ocir-auth.sh
 

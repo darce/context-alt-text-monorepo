@@ -14,14 +14,17 @@ if [[ ! -f "$SCRIPT" ]]; then
   exit 1
 fi
 
-WORKDIR="$(mktemp -d "${TMPDIR:-/tmp}/reap-lane-test.XXXXXX")"
+# `pwd -P` resolves symlinks: on macOS TMPDIR is /var/folders/... and /var is a
+# symlink to /private/var. reap-lane.sh reports the realpath, so without this the
+# suite fails on a laptop for a reason that has nothing to do with the reaper.
+WORKDIR="$(cd "$(mktemp -d "${TMPDIR:-/tmp}/reap-lane-test.XXXXXX")" && pwd -P)"
 trap 'rm -rf "$WORKDIR"' EXIT
 export HOME="$WORKDIR"
 export GIT_CONFIG_GLOBAL=/dev/null
 export GIT_CONFIG_SYSTEM=/dev/null
 export GIT_TERMINAL_PROMPT=0
 export GIT_ALLOW_PROTOCOL=file
-mkdir -p "$HOME/w3" "$HOME/uxw2" "$HOME/l1"
+mkdir -p "$HOME/w3" "$HOME/uxw2" "$HOME/l1" "$HOME/w" "$HOME/lanes"
 
 ORIGIN="$WORKDIR/origin.git"
 
@@ -232,6 +235,69 @@ clone_lane "$lane_l1"
 run_reap "$lane_l1"
 assert_rc0 "g2 l1"
 assert_contains "g2 l1" "WOULD REAP"
+
+# Guard 2 positive: `w` and `lanes` are lane roots too.
+# VMDISK-1: these carried 18G and 9.2G on the VM while the weekly cron swept
+# only w3 (1.6G). [RES-07] a reclaimer whose scope does not match what grows is
+# not a reclaimer; the disk still reached 96%.
+lane_w="$HOME/w/lane-w"
+clone_lane "$lane_w"
+run_reap "$lane_w"
+assert_rc0 "g2 w"
+assert_contains "g2 w" "WOULD REAP"
+
+lane_lanes="$HOME/lanes/lane-lanes"
+clone_lane "$lane_lanes"
+run_reap "$lane_lanes"
+assert_rc0 "g2 lanes"
+assert_contains "g2 lanes" "WOULD REAP"
+
+# The roots are an allowlist, not a prefix match: a sibling whose name merely
+# starts with an allowlisted root must still be refused. Without an exact
+# segment match, `w` would admit ~/work, ~/website, ~/wp-content ...
+lane_wlike="$HOME/wordpress-data/lane-x"
+clone_lane "$lane_wlike"
+run_reap --yes "$lane_wlike"
+assert_rc0 "g2 prefix-not-root"
+assert_contains "g2 prefix-not-root" "not under allowlisted lane root"
+assert_exists "g2 prefix-not-root kept" "$lane_wlike"
+
+# A root that is itself a clone must be refused: reaping $HOME/w would take
+# every sibling lane with it. Asserted on the *reason*, and against a real git
+# clone -- a bare "SKIP" on a non-git directory passes for the wrong reason and
+# lets the depth guard be deleted unnoticed.
+sole_root="$HOME/soleroot"
+clone_lane "$sole_root"
+REAP_LANE_ROOTS="soleroot" run_reap --yes "$sole_root"
+assert_contains "g2 root itself" "not under allowlisted lane root"
+assert_exists "g2 root itself kept" "$sole_root"
+
+# The roots must be overridable so a new lane root does not require a code
+# change to reclaim (and so the cron can name exactly what it sweeps).
+lane_custom="$HOME/scratchpad/lane-c"
+clone_lane "$lane_custom"
+REAP_LANE_ROOTS="scratchpad" run_reap "$lane_custom"
+assert_rc0 "g2 override"
+assert_contains "g2 override" "WOULD REAP"
+
+# An override must REPLACE the defaults, not extend them: an operator who
+# narrows the roots for a one-off sweep must not silently still reap w3.
+lane_default="$HOME/w3/lane-still-default"
+clone_lane "$lane_default"
+REAP_LANE_ROOTS="scratchpad" run_reap --yes "$lane_default"
+assert_contains "g2 override replaces" "not under allowlisted lane root"
+assert_exists "g2 override replaces kept" "$lane_default"
+
+# --all is repeatable: one cron line has to sweep every lane root. With a
+# last-one-wins flag the entry would silently reap only the final root.
+lane_m1="$HOME/w/lane-multi"
+lane_m2="$HOME/lanes/lane-multi"
+clone_lane "$lane_m1"
+clone_lane "$lane_m2"
+run_reap --all "$HOME/w" --all "$HOME/lanes"
+assert_rc0 "multi --all"
+assert_contains "multi --all first root" "WOULD REAP $lane_m1"
+assert_contains "multi --all second root" "WOULD REAP $lane_m2"
 
 # --all ROOT scans ROOT/* (merged clean sibling is reaped; unmerged sibling kept).
 lane_all_ok="$HOME/w3/lane-all-ok"

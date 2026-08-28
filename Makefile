@@ -459,6 +459,11 @@ test-scripts:
 		scripts/test_acx_backend_image_contract.py \
 		-q --tb=short --durations=25
 	@bash scripts/deploy/tests/test-smoke-gate.sh
+# VMDISK-1: the lane reaper is the VM's only disk reclaimer, and neither it nor
+# its cron installer was reachable from any make target -- so its guards were
+# never exercised while the disk climbed to 96%.
+	@bash scripts/vm/tests/test_reap_lane.sh
+	@bash scripts/vm/tests/test_install_reap_cron.sh
 
 # Permanent [TEST-15] discrimination guard for the licence/provenance gate.
 # OPT-IN / REMOTE-VM ONLY. Not a prerequisite of test-scripts or check-all:

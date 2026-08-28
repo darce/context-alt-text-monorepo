@@ -2,14 +2,14 @@
 # Guarded lane-clone reaper. Default is dry-run; --yes actually rm -rf.
 # Usage:
 #   reap-lane.sh [--yes] [--log FILE] PATH...
-#   reap-lane.sh [--yes] [--log FILE] --all ROOT
+#   reap-lane.sh [--yes] [--log FILE] --all ROOT [--all ROOT ...]
 set -euo pipefail
 
 export GIT_TERMINAL_PROMPT=0
 
 usage() {
   echo "Usage: reap-lane.sh [--yes] [--log FILE] PATH..." >&2
-  echo "       reap-lane.sh [--yes] [--log FILE] --all ROOT" >&2
+  echo "       reap-lane.sh [--yes] [--log FILE] --all ROOT [--all ROOT ...]" >&2
   exit 2
 }
 
@@ -17,7 +17,7 @@ usage() {
 
 yes=0
 log="${HOME}/reap-lane.log"
-all_root=""
+all_roots=()
 paths=()
 
 while [[ $# -gt 0 ]]; do
@@ -29,8 +29,10 @@ while [[ $# -gt 0 ]]; do
       shift 2
       ;;
     --all)
+      # Repeatable: one cron line has to sweep every lane root, and a
+      # last-one-wins flag would silently reap only the final one.
       [[ $# -ge 2 ]] || usage
-      all_root="$2"
+      all_roots+=("$2")
       shift 2
       ;;
     -h|--help) usage ;;
@@ -43,7 +45,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-if [[ -n "$all_root" ]]; then
+for all_root in ${all_roots[@]+"${all_roots[@]}"}; do
   if [[ ! -d "$all_root" ]]; then
     echo "reap-lane: --all root is not a directory: $all_root" >&2
     exit 1
@@ -55,13 +57,22 @@ if [[ -n "$all_root" ]]; then
     fi
   done
   shopt -u nullglob
-fi
+done
 
-if [[ -z "$all_root" && ${#paths[@]} -eq 0 ]]; then
+if [[ ${#all_roots[@]} -eq 0 && ${#paths[@]} -eq 0 ]]; then
   usage
 fi
 
 home_real="$(realpath "$HOME")"
+
+# Every directory under $HOME that accumulates lane clones. [RES-07] a reclaimer
+# whose scope does not match what grows is not a reclaimer: this list read
+# `w3 uxw2 l1` (1.6G on the VM) while ~/w held 18G and ~/lanes 9.2G, and the
+# disk reached 96% with the weekly cron reporting success throughout.
+# Space-separated and overridable so a new lane root is a cron edit, not a code
+# change. An override REPLACES the defaults -- narrowing the roots for a one-off
+# sweep must not silently still reap the standing ones.
+REAP_LANE_ROOTS="${REAP_LANE_ROOTS:-w3 uxw2 l1 w lanes}"
 
 is_ignorable_path() {
   local p="${1#./}"
@@ -75,6 +86,21 @@ is_ignorable_path() {
 
 skip() {
   printf 'SKIP %s: %s\n' "$1" "$2"
+}
+
+# $1 = a realpath already known to be under $home_real.
+# True when it is a lane *inside* one of the allowlisted roots. Matching is on
+# whole path segments, not a substring: `*/w/*` would also admit ~/work and
+# ~/wp-content, and the roots exist to bound what `rm -rf` can reach.
+# The root itself is refused -- reaping ~/w would take every lane with it.
+is_under_lane_root() {
+  local rel="${1#"${home_real}"/}" first root
+  [[ "$rel" == */* ]] || return 1
+  first="${rel%%/*}"
+  for root in $REAP_LANE_ROOTS; do
+    [[ "$first" == "$root" ]] && return 0
+  done
+  return 1
 }
 
 has_unmerged_work() {
@@ -152,13 +178,10 @@ process_one() {
       return 0
       ;;
   esac
-  case "$real" in
-    */w3/*|*/uxw2/*|*/l1/*) ;;
-    *)
-      skip "$path" "not under allowlisted lane root"
-      return 0
-      ;;
-  esac
+  if ! is_under_lane_root "$real"; then
+    skip "$path" "not under allowlisted lane root"
+    return 0
+  fi
 
   if [[ -n "${REAP_UPSTREAM:-}" ]]; then
     if [[ "$REAP_UPSTREAM" != *#* ]]; then

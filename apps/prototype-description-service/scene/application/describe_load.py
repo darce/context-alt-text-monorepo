@@ -8,8 +8,10 @@ session — never a tenant-scoped request/worker session [DIAG-02], [SEC-01].
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
+import math
 import os
 import time
 from pathlib import Path
@@ -28,6 +30,8 @@ _TRUTHY_PG_SETTINGS = {"true", "on", "1", "yes"}
 
 LOAD_PATH_ENV = "ACX_DESCRIBE_LOAD_PATH"
 DEFAULT_LOAD_PATH = "/run/acx/describe-load.json"
+LOAD_REFRESH_SECONDS_ENV = "ACX_DESCRIBE_LOAD_REFRESH_SECONDS"
+DEFAULT_LOAD_REFRESH_SECONDS = 45.0
 
 # A bulk run occupying the GPU. Enumerated as the non-terminal set rather than
 # "not in (COMPLETED, ...)" so a newly added status defaults to *not* holding
@@ -42,6 +46,26 @@ def resolve_load_path() -> str:
     so the reaper can never read a stale file from a drifted literal [rg-008].
     """
     return os.environ.get(LOAD_PATH_ENV, DEFAULT_LOAD_PATH)
+
+
+def resolve_load_refresh_seconds() -> float:
+    """Return a safe refresh cadence below the reaper's 120s stale guard."""
+    raw = os.environ.get(LOAD_REFRESH_SECONDS_ENV)
+    if raw is None:
+        return DEFAULT_LOAD_REFRESH_SECONDS
+    try:
+        seconds = float(raw)
+    except ValueError:
+        seconds = 0.0
+    if not math.isfinite(seconds) or seconds <= 0 or seconds >= 120:
+        _logger.warning(
+            "invalid %s=%r; using default %.0fs",
+            LOAD_REFRESH_SECONDS_ENV,
+            raw,
+            DEFAULT_LOAD_REFRESH_SECONDS,
+        )
+        return DEFAULT_LOAD_REFRESH_SECONDS
+    return seconds
 
 
 async def _require_rls_bypass(session: AsyncSession) -> None:
@@ -145,6 +169,17 @@ async def dump_load_snapshot(session_factory, path: str | Path | None = None) ->
         write_load_snapshot(snap, target)
     except Exception:  # noqa: BLE001 - reaper snapshot is best-effort
         _logger.debug("describe load snapshot write failed path=%s", target, exc_info=True)
+
+
+async def refresh_load_snapshot_loop(session_factory, *, refresh_seconds: float | None = None) -> None:
+    """Keep the reaper snapshot fresh for as long as the API is running."""
+    interval = refresh_seconds if refresh_seconds is not None else resolve_load_refresh_seconds()
+    while True:
+        await asyncio.sleep(interval)
+        try:
+            await dump_load_snapshot(session_factory)
+        except Exception:  # noqa: BLE001 - one failed refresh must not stop later refreshes
+            _logger.warning("periodic describe load snapshot refresh failed", exc_info=True)
 
 
 async def run_startup_load_snapshot(session_factory, path: str | Path | None = None) -> None:

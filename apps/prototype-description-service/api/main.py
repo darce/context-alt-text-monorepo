@@ -2,7 +2,7 @@ import asyncio
 import logging
 import os
 import subprocess
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -205,7 +205,26 @@ async def _lifespan(app: FastAPI):
         await run_startup_load_snapshot(async_session_factory)
     except Exception:  # noqa: BLE001 - startup load snapshot is best-effort
         logging.getLogger("db.startup").warning("describe load snapshot write failed at startup", exc_info=True)
-    yield
+
+    # GPUW-1: enqueue/terminal writes leave the dump stale while work is quiet.
+    # Refresh well inside the reaper's 120s stale guard so an empty snapshot can
+    # remain authoritative long enough for stop-on-drain to fire.
+    refresh_task: asyncio.Task[None] | None = None
+    try:
+        from db.session import async_session_factory
+        from scene.application.describe_load import refresh_load_snapshot_loop
+
+        refresh_task = asyncio.create_task(refresh_load_snapshot_loop(async_session_factory))
+    except Exception:  # noqa: BLE001 - the API must still boot if task setup fails
+        logging.getLogger("db.startup").warning("describe load snapshot refresher failed to start", exc_info=True)
+
+    try:
+        yield
+    finally:
+        if refresh_task is not None:
+            refresh_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await refresh_task
 
 
 def create_app() -> FastAPI:

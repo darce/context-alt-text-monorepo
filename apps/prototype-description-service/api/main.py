@@ -69,8 +69,12 @@ logger = logging.getLogger(__name__)
 _LOAD_SNAPSHOT_REFRESH_REARM_SECONDS = 1.0
 
 
+_LOAD_SNAPSHOT_REFRESH_REARM_MAX_SECONDS = 60.0
+
+
 async def _supervise_load_snapshot_refresher(session_factory) -> None:
     """Re-arm an unexpectedly stopped refresher while the API remains live."""
+    rearm_seconds = _LOAD_SNAPSHOT_REFRESH_REARM_SECONDS
     while True:
         try:
             from scene.application.describe_load import refresh_load_snapshot_loop
@@ -83,8 +87,10 @@ async def _supervise_load_snapshot_refresher(session_factory) -> None:
         else:
             logger.error("describe load snapshot refresher stopped unexpectedly; re-arming")
         # Avoid a tight restart loop if an import or implementation regression
-        # makes the refresher fail immediately.
-        await asyncio.sleep(_LOAD_SNAPSHOT_REFRESH_REARM_SECONDS)
+        # makes the refresher fail immediately, and back off so a permanent
+        # failure does not emit one traceback per second forever.
+        await asyncio.sleep(rearm_seconds)
+        rearm_seconds = min(rearm_seconds * 2, _LOAD_SNAPSHOT_REFRESH_REARM_MAX_SECONDS)
 
 
 def _get_git_info() -> tuple[str, str]:

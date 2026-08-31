@@ -311,13 +311,41 @@ class DescribeRunRepository:
         error_message: str | None = None,
         now: datetime | None = None,
     ) -> bool:
-        """Force a run terminal-FAILED on an unexpected fatal worker error."""
+        """Force a run terminal-FAILED on an unexpected fatal worker error.
+
+        A run that is already terminal is left untouched: a cancel that landed
+        while the worker was failing must keep CANCELLED (HARM-01). Remaining
+        non-terminal items are driven terminal-FAILED so their stored image
+        bytes are reclaimed rather than stranded QUEUED under a FAILED run.
+        """
         run = await self.get_run(tenant_id=tenant_id, run_id=run_id)
         if run is None:
             return False
-        run.status = DescribeRunStatus.FAILED
-        run.phase = DescribeRunPhase.FAILED
-        run.completed_at = now or datetime.now(tz=UTC)
+        if DescribeRunStatus(run.status) in TERMINAL_RUN_STATUSES:
+            return False
+        now = now or datetime.now(tz=UTC)
+        for item in await self.list_run_items(tenant_id=tenant_id, run_id=run_id):
+            if DescribeItemStatus(item.status) in TERMINAL_ITEM_STATUSES:
+                continue
+            try:
+                await self.mark_item(
+                    tenant_id=tenant_id,
+                    run_id=run_id,
+                    media_id=item.media_id,
+                    status=DescribeItemStatus.FAILED,
+                    error_message=error_message or "run failed before this item was processed",
+                    now=now,
+                )
+            except Exception:  # noqa: BLE001 - byte reclamation is best-effort;
+                # the terminal run write below must still land.
+                continue
+        # mark_item recomputes run totals and may already have derived a
+        # terminal status (including CANCELLED when cancel_requested is set);
+        # only force FAILED when no terminal status won in the meantime.
+        if DescribeRunStatus(run.status) not in TERMINAL_RUN_STATUSES:
+            run.status = DescribeRunStatus.FAILED
+            run.phase = DescribeRunPhase.FAILED
+            run.completed_at = now
         if error_message:
             run.error_message = error_message
         await self._session.flush()

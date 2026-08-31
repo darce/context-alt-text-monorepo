@@ -14,6 +14,7 @@ from db.tenant_context import require_tenant_record, set_tenant_context
 from recognition.infrastructure.repositories.audit_repository import AuditRepository
 from recognition.interface_adapters.http.deps import get_optional_session, require_write_access
 from recognition.interface_adapters.http.deps.demo_quota import maybe_consume_demo_quota
+from scene.application.describe_load import dump_load_snapshot
 from scene.application.describe_run_repository import DescribeRunRepository
 from scene.application.describe_run_worker import DescribeItemOutcome, run_describe_job
 from scene.application.description_repository import ImageDescriptionRepository
@@ -255,6 +256,10 @@ async def create_describe_run(
     await session.commit()
 
     session_factory = worker_session_factory(session)
+    # GPUW-1: publish the load dump *before* the job is queued, so the burst-GPU
+    # start cycle sees batch_in_progress on its next tick rather than a tick
+    # after the first item already needed the GPU.
+    await dump_load_snapshot(session_factory)
     background_tasks.add_task(
         run_describe_job,
         tenant_id=tenant_id,

@@ -10,7 +10,9 @@ import asyncio
 import json
 import os
 import tempfile
+import threading
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import cast
 
@@ -23,8 +25,11 @@ from db.models.base_imports import Base
 from db.models.scene import DescribeRun, DescribeRunItem
 from scene.application.describe_load import (
     batch_in_progress,
+    dump_load_snapshot,
     load_snapshot,
+    refresh_load_snapshot_loop,
     resolve_load_path,
+    resolve_load_refresh_seconds,
     run_startup_load_snapshot,
     write_load_snapshot,
 )
@@ -136,6 +141,44 @@ def test_write_load_snapshot_creates_parent_dirs():
         assert not any(p.suffix == ".tmp" or p.name.endswith(".json.tmp") for p in target.parent.iterdir())
         # Clean env leftover if any
         assert "describe-load.json.tmp" not in os.listdir(target.parent)
+
+
+def test_write_load_snapshot_serializes_concurrent_unique_temp_files(tmp_path: Path, monkeypatch):
+    target = tmp_path / "describe-load.json"
+    real_replace = os.replace
+    first_replace_started = threading.Event()
+    second_writer_started = threading.Event()
+    release_first_replace = threading.Event()
+    temp_paths: list[Path] = []
+
+    def observed_replace(src, dst):
+        temp_paths.append(Path(src))
+        if len(temp_paths) == 1:
+            first_replace_started.set()
+            assert release_first_replace.wait(timeout=1)
+        real_replace(src, dst)
+
+    def second_write():
+        second_writer_started.set()
+        write_load_snapshot({"writer": 2}, target)
+
+    monkeypatch.setattr(load_mod.os, "replace", observed_replace)
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        first = executor.submit(write_load_snapshot, {"writer": 1}, target)
+        assert first_replace_started.wait(timeout=1)
+        second = executor.submit(second_write)
+        assert second_writer_started.wait(timeout=1)
+        # The first writer still holds the replace lock, so the second cannot
+        # enter the critical section or reuse/clobber its temporary file.
+        assert len(temp_paths) == 1
+        release_first_replace.set()
+        first.result(timeout=1)
+        second.result(timeout=1)
+
+    assert len(temp_paths) == 2
+    assert temp_paths[0] != temp_paths[1]
+    assert not list(tmp_path.glob("*.tmp"))
+    assert json.loads(target.read_text()) == {"writer": 2}
 
 
 def test_run_startup_load_snapshot_writes_file_with_counts(tmp_path: Path):
@@ -296,7 +339,7 @@ def test_batch_in_progress_false_when_no_bulk_run_exists():
 
 
 def test_batch_in_progress_false_once_the_bulk_run_reaches_a_terminal_status():
-    """"Stop after batch complete": a finished run must release the GPU."""
+    """ "Stop after batch complete": a finished run must release the GPU."""
 
     async def body():
         engine, sf = await _sessionmaker()
@@ -331,5 +374,166 @@ def test_batch_in_progress_is_cross_tenant():
         async with sf() as s:
             assert await batch_in_progress(s) is True
         await engine.dispose()
+
+    asyncio.run(body())
+
+
+def test_describe_load_refresh_seconds_defaults_and_stays_inside_stale_guard(monkeypatch):
+    env_name = "ACX_DESCRIBE_LOAD_REFRESH_SECONDS"
+    monkeypatch.delenv(env_name, raising=False)
+    assert resolve_load_refresh_seconds() == 45.0
+
+    monkeypatch.setenv(env_name, "15.5")
+    assert resolve_load_refresh_seconds() == 15.5
+
+    monkeypatch.setenv(env_name, "59.9")
+    assert resolve_load_refresh_seconds() == 59.9
+
+    for invalid in ("invalid", "0", "-1", "60", "90", "119", "120", "nan", "inf"):
+        monkeypatch.setenv(env_name, invalid)
+        assert resolve_load_refresh_seconds() == 45.0
+
+
+def test_dump_load_snapshot_can_make_failures_visible_to_supervisor():
+    class BrokenSessionFactory:
+        def __call__(self):
+            raise RuntimeError("database unavailable")
+
+    async def body():
+        factory = BrokenSessionFactory()
+        # Describe request/worker call sites remain failure-isolated.
+        await dump_load_snapshot(factory)
+        # The refresher's strict mode must be able to see and report the same
+        # failure; otherwise its cycle-level warning is dead code.
+        with pytest.raises(RuntimeError, match="database unavailable"):
+            await dump_load_snapshot(factory, raise_on_error=True)
+
+    asyncio.run(body())
+
+
+def test_describe_load_refresher_keeps_running_after_one_failed_dump(monkeypatch):
+    async def body():
+        calls: list[object] = []
+        second_call_started = asyncio.Event()
+        hold_second_call = asyncio.Event()
+        session_factory = object()
+
+        async def fake_dump(factory, *, raise_on_error=False):
+            assert factory is session_factory
+            assert raise_on_error is True
+            calls.append(factory)
+            if len(calls) == 1:
+                raise RuntimeError("transient snapshot failure")
+            second_call_started.set()
+            await hold_second_call.wait()
+
+        monkeypatch.setattr(load_mod, "dump_load_snapshot", fake_dump)
+        task = asyncio.create_task(refresh_load_snapshot_loop(session_factory, refresh_seconds=0))
+        await asyncio.wait_for(second_call_started.wait(), timeout=1)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+        # A failure in one cycle did not terminate the refresher, and shutdown
+        # cancellation was propagated rather than swallowed by the failure guard.
+        assert calls == [session_factory, session_factory]
+
+    asyncio.run(body())
+
+
+def test_describe_load_refresher_times_out_one_cycle_and_retries(monkeypatch):
+    async def body():
+        calls = 0
+        second_call_started = asyncio.Event()
+
+        async def stuck_dump(_factory, *, raise_on_error=False):
+            nonlocal calls
+            assert raise_on_error is True
+            calls += 1
+            if calls == 2:
+                second_call_started.set()
+            await asyncio.Event().wait()
+
+        monkeypatch.setattr(load_mod, "dump_load_snapshot", stuck_dump)
+        task = asyncio.create_task(refresh_load_snapshot_loop(object(), refresh_seconds=0, timeout_seconds=0.01))
+        await asyncio.wait_for(second_call_started.wait(), timeout=1)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+        assert calls == 2
+
+    asyncio.run(body())
+
+
+def test_refresh_loop_binds_resolver_when_interval_not_passed(monkeypatch):
+    """S2A-04: with refresh_seconds omitted, the loop's cadence must come from
+    resolve_load_refresh_seconds(); a hardcoded interval would leave this red."""
+
+    async def body():
+        resolver_calls = 0
+        dump_calls = 0
+        second_dump = asyncio.Event()
+
+        def fake_resolver():
+            nonlocal resolver_calls
+            resolver_calls += 1
+            return 0.01
+
+        async def fake_dump(_factory, *, raise_on_error=False):
+            nonlocal dump_calls
+            assert raise_on_error is True
+            dump_calls += 1
+            if dump_calls == 2:
+                second_dump.set()
+
+        monkeypatch.setattr(load_mod, "resolve_load_refresh_seconds", fake_resolver)
+        monkeypatch.setattr(load_mod, "dump_load_snapshot", fake_dump)
+        task = asyncio.create_task(refresh_load_snapshot_loop(object()))
+        await asyncio.wait_for(second_dump.wait(), timeout=1)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+        assert resolver_calls == 1
+        assert dump_calls >= 2
+
+    asyncio.run(body())
+
+
+def test_lifespan_supervisor_rearms_refresher_and_propagates_cancel(monkeypatch):
+    """S2B-05: the lifespan-owned supervisor must restart the refresher after a
+    crash and after an unexpected clean return, and must let shutdown
+    cancellation terminate it."""
+    # api.main enforces production config at import; scene/tests has no
+    # runtime-mode conftest, so scope the test mode to this import.
+    monkeypatch.setenv("RECOGNITION_RUNTIME_MODE", "test")
+    import api.main as main_mod
+
+    async def body():
+        starts = 0
+        third_start = asyncio.Event()
+        session_factory = object()
+
+        async def fake_refresher(factory):
+            nonlocal starts
+            assert factory is session_factory
+            starts += 1
+            if starts == 1:
+                raise RuntimeError("refresher crash")
+            if starts == 2:
+                return  # unexpected clean stop
+            third_start.set()
+            await asyncio.Event().wait()
+
+        monkeypatch.setattr(main_mod, "_LOAD_SNAPSHOT_REFRESH_REARM_SECONDS", 0.01)
+        monkeypatch.setattr(load_mod, "refresh_load_snapshot_loop", fake_refresher)
+        task = asyncio.create_task(main_mod._supervise_load_snapshot_refresher(session_factory))
+        await asyncio.wait_for(third_start.wait(), timeout=1)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+        assert starts == 3
 
     asyncio.run(body())

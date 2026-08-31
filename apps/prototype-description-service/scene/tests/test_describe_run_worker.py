@@ -556,22 +556,113 @@ def test_gpu_health_poll_times_out_when_endpoint_stays_unready(monkeypatch):
         )
 
 
-def test_gpu_warmup_gate_is_profile_scoped_and_uses_configured_timeout(monkeypatch):
+def test_gpu_health_poll_bounds_a_hung_request_to_warmup_deadline(monkeypatch):
     import scene.application.describe_run_worker as wmod
+
+    cancelled = False
+
+    class FakeAsyncClient:
+        def __init__(self, *, timeout):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_):
+            return None
+
+        async def get(self, url, *, headers):
+            nonlocal cancelled
+            try:
+                await asyncio.sleep(60)
+            except asyncio.CancelledError:
+                cancelled = True
+                raise
+
+    monkeypatch.setattr(wmod.httpx, "AsyncClient", FakeAsyncClient)
+
+    with pytest.raises(TimeoutError, match="did not become ready"):
+        asyncio.run(
+            wmod._wait_for_gpu_ready(
+                endpoint_url="http://gpu.internal:8000",
+                api_key=None,
+                timeout_seconds=0.01,
+            )
+        )
+    assert cancelled
+
+
+def test_gpu_health_poll_stops_when_run_is_cancelled(monkeypatch):
+    import scene.application.describe_run_worker as wmod
+
+    class FakeAsyncClient:
+        def __init__(self, *, timeout):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_):
+            return None
+
+        async def get(self, url, *, headers):
+            raise AssertionError("cancel must be checked before the health request")
+
+    async def cancelled():
+        return True
+
+    monkeypatch.setattr(wmod.httpx, "AsyncClient", FakeAsyncClient)
+    with pytest.raises(wmod._RunCancelledError):
+        asyncio.run(
+            wmod._wait_for_gpu_ready(
+                endpoint_url="http://gpu.internal:8000",
+                api_key=None,
+                timeout_seconds=10,
+                cancel_requested=cancelled,
+            )
+        )
+
+
+def test_gpu_warmup_gate_is_adapter_scoped_and_uses_configured_timeout(monkeypatch):
+    import scene.application.describe_run_worker as wmod
+    from scene.config.settings import DescriptionSettings
+    from scene.domain.description import DescriptionAdapterKind
 
     monkeypatch.setenv("ACX_GPU_ENDPOINT_URL", "http://localhost:8000/")
     monkeypatch.setenv("ACX_GPU_WARMUP_TIMEOUT_SECONDS", "17.5")
     monkeypatch.setenv("ACX_DESCRIPTION_ADAPTER", "seeded")
-    assert wmod._gpu_warmup_target() is None
+    settings = DescriptionSettings()
+    assert wmod.gpu_run_policy(adapter_kind=DescriptionAdapterKind.SEEDED, settings=settings) is None
 
     monkeypatch.setenv("ACX_DESCRIPTION_ADAPTER", "gpu_qwen30b")
-    endpoint, _api_key, timeout = wmod._gpu_warmup_target() or (None, None, None)
-    assert endpoint == "http://localhost:8000"
-    assert timeout == 17.5
+    policy = wmod.gpu_run_policy(adapter_kind=DescriptionAdapterKind.GPU, settings=DescriptionSettings())
+    assert policy is not None
+    assert policy.endpoint_url == "http://localhost:8000"
+    assert policy.warmup_timeout_seconds == 17.5
+
+
+def test_transient_classifier_uses_wrapped_http_status_and_rejects_permanent_faults():
+    import scene.application.describe_run_worker as wmod
+
+    request = httpx.Request("POST", "http://gpu.internal/v1/chat/completions")
+
+    def wrapped_status(status_code: int) -> RuntimeError:
+        response = httpx.Response(status_code, request=request)
+        status_error = httpx.HTTPStatusError("endpoint response", request=request, response=response)
+        wrapper = RuntimeError("GPU endpoint call failed")
+        wrapper.__cause__ = status_error
+        return wrapper
+
+    assert wmod._is_transient_describe_error(wrapped_status(503))
+    assert wmod._is_transient_describe_error(httpx.ConnectError("cold boot", request=request))
+    assert not wmod._is_transient_describe_error(wrapped_status(400))
+    assert not wmod._is_transient_describe_error(ValueError("invalid image"))
 
 
 def test_gpu_worker_waits_for_readiness_then_retries_transient_item(monkeypatch):
     import scene.application.describe_run_worker as wmod
+    from scene.config.settings import DescriptionSettings
+    from scene.domain.description import DescriptionAdapterKind
 
     monkeypatch.setenv("ACX_DESCRIPTION_ADAPTER", "gpu_qwen30b")
     monkeypatch.setenv("ACX_GPU_ENDPOINT_URL", "http://localhost:8000")
@@ -613,6 +704,10 @@ def test_gpu_worker_waits_for_readiness_then_retries_transient_item(monkeypatch)
             session_factory=sf,
             describe_one=describe_one,
             timeout_seconds=0.5,
+            gpu_policy=wmod.gpu_run_policy(
+                adapter_kind=DescriptionAdapterKind.GPU,
+                settings=DescriptionSettings(),
+            ),
         )
 
         async with sf() as s:
@@ -630,6 +725,58 @@ def test_gpu_worker_waits_for_readiness_then_retries_transient_item(monkeypatch)
 
     asyncio.run(body())
     assert events == ["ready", "describe-1", "describe-2", "describe-3"]
+
+
+def test_gpu_worker_opens_run_local_breaker_after_exhausted_retries(monkeypatch):
+    import scene.application.describe_run_worker as wmod
+    from scene.config.settings import DescriptionSettings
+    from scene.domain.description import DescriptionAdapterKind
+
+    monkeypatch.setenv("ACX_GPU_ENDPOINT_URL", "http://localhost:8000")
+    monkeypatch.setattr(wmod, "_GPU_ITEM_RETRY_BASE_DELAY_SECONDS", 0)
+
+    async def ready(**kwargs):
+        return None
+
+    monkeypatch.setattr(wmod, "_wait_for_gpu_ready", ready)
+
+    async def body():
+        path, url = await _make_db_async()
+        engine = create_async_engine(url)
+        sf = async_sessionmaker(engine, expire_on_commit=False)
+        async with sf() as s:
+            run_id = await DescribeRunRepository(s).create_run(tenant_id=TENANT_ID, media_ids=[1, 2, 3])
+            await s.commit()
+
+        calls: list[int] = []
+
+        async def describe_one(media_id, image_bytes, content_type):
+            calls.append(media_id)
+            raise httpx.ConnectError("GPU disappeared")
+
+        await run_describe_job(
+            tenant_id=TENANT_ID,
+            run_id=run_id,
+            session_factory=sf,
+            describe_one=describe_one,
+            timeout_seconds=0.5,
+            gpu_policy=wmod.gpu_run_policy(
+                adapter_kind=DescriptionAdapterKind.GPU,
+                settings=DescriptionSettings(),
+            ),
+        )
+
+        async with sf() as s:
+            items = await DescribeRunRepository(s).list_run_items(tenant_id=TENANT_ID, run_id=run_id)
+
+        assert calls == [1] * wmod._GPU_ITEM_MAX_ATTEMPTS
+        assert [item.status for item in items] == [DescribeItemStatus.FAILED] * 3
+        assert "circuit open" in (items[1].last_error or "")
+        assert "circuit open" in (items[2].last_error or "")
+        await engine.dispose()
+        os.unlink(path)
+
+    asyncio.run(body())
 
 
 def test_gpu_item_retry_is_bounded_and_permanent_errors_are_not_retried(monkeypatch):

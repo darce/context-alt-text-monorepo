@@ -24,7 +24,9 @@ from db.models.scene import DescribeRun, DescribeRunItem
 from scene.application.describe_load import (
     batch_in_progress,
     load_snapshot,
+    refresh_load_snapshot_loop,
     resolve_load_path,
+    resolve_load_refresh_seconds,
     run_startup_load_snapshot,
     write_load_snapshot,
 )
@@ -331,5 +333,47 @@ def test_batch_in_progress_is_cross_tenant():
         async with sf() as s:
             assert await batch_in_progress(s) is True
         await engine.dispose()
+
+    asyncio.run(body())
+
+
+def test_describe_load_refresh_seconds_defaults_and_stays_inside_stale_guard(monkeypatch):
+    env_name = "ACX_DESCRIBE_LOAD_REFRESH_SECONDS"
+    monkeypatch.delenv(env_name, raising=False)
+    assert resolve_load_refresh_seconds() == 45.0
+
+    monkeypatch.setenv(env_name, "15.5")
+    assert resolve_load_refresh_seconds() == 15.5
+
+    for invalid in ("invalid", "0", "-1", "120", "nan", "inf"):
+        monkeypatch.setenv(env_name, invalid)
+        assert resolve_load_refresh_seconds() == 45.0
+
+
+def test_describe_load_refresher_keeps_running_after_one_failed_dump(monkeypatch):
+    async def body():
+        calls: list[object] = []
+        second_call_started = asyncio.Event()
+        hold_second_call = asyncio.Event()
+        session_factory = object()
+
+        async def fake_dump(factory):
+            assert factory is session_factory
+            calls.append(factory)
+            if len(calls) == 1:
+                raise RuntimeError("transient snapshot failure")
+            second_call_started.set()
+            await hold_second_call.wait()
+
+        monkeypatch.setattr(load_mod, "dump_load_snapshot", fake_dump)
+        task = asyncio.create_task(refresh_load_snapshot_loop(session_factory, refresh_seconds=0))
+        await asyncio.wait_for(second_call_started.wait(), timeout=1)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+        # A failure in one cycle did not terminate the refresher, and shutdown
+        # cancellation was propagated rather than swallowed by the failure guard.
+        assert calls == [session_factory, session_factory]
 
     asyncio.run(body())

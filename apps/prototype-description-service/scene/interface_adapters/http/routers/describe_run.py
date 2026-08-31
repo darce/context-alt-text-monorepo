@@ -279,6 +279,7 @@ async def create_describe_run(
             adapter=adapter,
             settings=settings,
         ),
+        timeout_seconds=_generation_timeout_seconds(settings, adapter),
         gpu_policy=run_gpu_policy,
     )
 

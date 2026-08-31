@@ -30,6 +30,13 @@ from scene.interface_adapters.http.router import router as scene_router
 TENANT_ID = uuid.UUID("00000000-0000-0000-0000-0000000000cc")
 
 
+@pytest.fixture(autouse=True)
+def _isolate_description_env(monkeypatch):
+    """Seeded-path tests must not inherit a deployment shell's GPU env (S1A-09)."""
+    for var in ("ACX_DESCRIPTION_ADAPTER", "ACX_GPU_ENDPOINT_URL", "ACX_GPU_WARMUP_TIMEOUT_SECONDS"):
+        monkeypatch.delenv(var, raising=False)
+
+
 class _Auth:
     tenant_claim = str(TENANT_ID)
     user_id = 42
@@ -822,3 +829,148 @@ def test_gpu_item_retry_is_bounded_and_permanent_errors_are_not_retried(monkeypa
         assert permanent_calls == 1
 
     asyncio.run(body())
+
+
+def test_transient_classifier_rejects_local_wait_for_timeout_and_accepts_chained():
+    import scene.application.describe_run_worker as wmod
+
+    assert not wmod._is_transient_describe_error(TimeoutError("local wait_for budget expired"))
+    request = httpx.Request("POST", "http://gpu.internal/v1/chat/completions")
+    chained = TimeoutError("adapter timeout")
+    chained.__cause__ = httpx.ReadTimeout("read timed out", request=request)
+    assert wmod._is_transient_describe_error(chained)
+
+
+def test_seeded_worker_performs_exactly_one_attempt_on_transient_error():
+    """S1A-05: retry eligibility belongs to the GPU policy; a seeded run must
+    not multiply a transient fault into extra attempts."""
+
+    async def body():
+        path, url = await _make_db_async()
+        engine = create_async_engine(url)
+        sf = async_sessionmaker(engine, expire_on_commit=False)
+        async with sf() as s:
+            run_id = await DescribeRunRepository(s).create_run(
+                tenant_id=TENANT_ID, media_ids=[1], images={1: (b"x", "image/png")}
+            )
+            await s.commit()
+
+        calls = 0
+        request = httpx.Request("POST", "http://gpu.internal/v1/chat/completions")
+
+        async def describe_one(media_id, image_bytes, content_type):
+            nonlocal calls
+            calls += 1
+            raise httpx.ConnectError("transient endpoint fault", request=request)
+
+        await run_describe_job(
+            tenant_id=TENANT_ID, run_id=run_id, session_factory=sf, describe_one=describe_one, timeout_seconds=1.0
+        )
+        assert calls == 1
+
+        async with sf() as s:
+            repo = DescribeRunRepository(s)
+            items = await repo.list_run_items(tenant_id=TENANT_ID, run_id=run_id)
+        assert [DescribeItemStatus(i.status) for i in items] == [DescribeItemStatus.FAILED]
+        await engine.dispose()
+        os.unlink(path)
+
+    asyncio.run(body())
+
+
+def test_warmup_timeout_marks_run_failed_and_reclaims_item_bytes(monkeypatch):
+    """S1A-06 + S1A-04: warmup expiry is a routine terminal path; it must leave
+    the run FAILED with a persisted message and no stranded QUEUED bytes."""
+    import scene.application.describe_run_worker as wmod
+
+    async def never_ready(**kwargs):
+        raise TimeoutError("GPU endpoint did not become ready within 0.01s (no health response)")
+
+    monkeypatch.setattr(wmod, "_wait_for_gpu_ready", never_ready)
+
+    async def body():
+        path, url = await _make_db_async()
+        engine = create_async_engine(url)
+        sf = async_sessionmaker(engine, expire_on_commit=False)
+        async with sf() as s:
+            run_id = await DescribeRunRepository(s).create_run(
+                tenant_id=TENANT_ID, media_ids=[1, 2], images={1: (b"a", "image/png"), 2: (b"b", "image/png")}
+            )
+            await s.commit()
+
+        async def describe_one(media_id, image_bytes, content_type):
+            raise AssertionError("describe must not run when warmup never succeeds")
+
+        policy = wmod.GpuRunPolicy(
+            endpoint_url="http://gpu.internal:8000", api_key=None, warmup_timeout_seconds=0.01
+        )
+        await run_describe_job(
+            tenant_id=TENANT_ID,
+            run_id=run_id,
+            session_factory=sf,
+            describe_one=describe_one,
+            timeout_seconds=1.0,
+            gpu_policy=policy,
+        )
+
+        async with sf() as s:
+            repo = DescribeRunRepository(s)
+            run = await repo.get_run(tenant_id=TENANT_ID, run_id=run_id)
+            items = await repo.list_run_items(tenant_id=TENANT_ID, run_id=run_id)
+        assert run is not None
+        assert run.status == DescribeRunStatus.FAILED
+        assert run.error_message and "ready" in run.error_message
+        for item in items:
+            assert DescribeItemStatus(item.status) == DescribeItemStatus.FAILED
+            assert item.image_bytes is None
+        await engine.dispose()
+        os.unlink(path)
+
+    asyncio.run(body())
+
+
+def test_mark_run_failed_preserves_terminal_cancelled():
+    """HARM-01: a cancel that already made the run terminal must not be
+    overwritten by a late fatal-path FAILED write."""
+
+    async def body():
+        path, url = await _make_db_async()
+        engine = create_async_engine(url)
+        sf = async_sessionmaker(engine, expire_on_commit=False)
+        async with sf() as s:
+            repo = DescribeRunRepository(s)
+            run_id = await repo.create_run(tenant_id=TENANT_ID, media_ids=[1], images={1: (b"x", "image/png")})
+            run = await repo.get_run(tenant_id=TENANT_ID, run_id=run_id)
+            assert run is not None
+            run.status = DescribeRunStatus.CANCELLED
+            await s.commit()
+
+        async with sf() as s:
+            changed = await DescribeRunRepository(s).mark_run_failed(
+                tenant_id=TENANT_ID, run_id=run_id, error_message="late fatal error"
+            )
+            await s.commit()
+        assert changed is False
+
+        async with sf() as s:
+            run = await DescribeRunRepository(s).get_run(tenant_id=TENANT_ID, run_id=run_id)
+        assert run is not None
+        assert run.status == DescribeRunStatus.CANCELLED
+        await engine.dispose()
+        os.unlink(path)
+
+    asyncio.run(body())
+
+
+def test_gpu_warmup_timeout_setting_fails_fast_on_invalid_values(monkeypatch):
+    """S1A-07/S1B-05: a typo'd or non-finite warmup timeout fails at settings
+    load, not as a per-run FAILED inside the worker."""
+    from scene.config.settings import DescriptionSettings
+
+    for bad in ("inf", "nan", "abc", "0", "-5", "999999"):
+        monkeypatch.setenv("ACX_GPU_WARMUP_TIMEOUT_SECONDS", bad)
+        with pytest.raises(ValueError):
+            DescriptionSettings()
+
+    monkeypatch.setenv("ACX_GPU_WARMUP_TIMEOUT_SECONDS", "17.5")
+    assert DescriptionSettings().gpu_warmup_timeout_seconds == 17.5

@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import inspect
 import logging
-import os
 import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
@@ -17,13 +16,13 @@ from db.tenant_context import set_tenant_context
 from scene.application.describe_load import dump_load_snapshot
 from scene.application.describe_run_repository import DescribeRunRepository
 from scene.application.settings.vlm import VlmSettings
-from scene.config.settings import DescriptionSettings
+from scene.config.settings import DEFAULT_GPU_WARMUP_TIMEOUT_SECONDS, DescriptionSettings
 from scene.domain.describe_run import DescribeItemStatus
 from scene.domain.description import DescriptionAdapterKind
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_GPU_WARMUP_TIMEOUT_SECONDS = 480.0
+_DEFAULT_GPU_WARMUP_TIMEOUT_SECONDS = DEFAULT_GPU_WARMUP_TIMEOUT_SECONDS
 _GPU_HEALTH_POLL_INTERVAL_SECONDS = 2.0
 _GPU_HEALTH_REQUEST_TIMEOUT_SECONDS = 5.0
 _GPU_ITEM_MAX_ATTEMPTS = 3
@@ -87,11 +86,10 @@ def gpu_run_policy(*, adapter_kind: DescriptionAdapterKind, settings: Descriptio
 
     if adapter_kind is not DescriptionAdapterKind.GPU or not settings.gpu_endpoint_url:
         return None
-    timeout_seconds = float(os.environ.get("ACX_GPU_WARMUP_TIMEOUT_SECONDS", str(_DEFAULT_GPU_WARMUP_TIMEOUT_SECONDS)))
     return GpuRunPolicy(
         endpoint_url=settings.gpu_endpoint_url.rstrip("/"),
         api_key=settings.gpu_endpoint_api_key,
-        warmup_timeout_seconds=max(0.0, timeout_seconds),
+        warmup_timeout_seconds=settings.gpu_warmup_timeout_seconds,
     )
 
 
@@ -143,18 +141,25 @@ async def _wait_for_gpu_ready(
 
 
 def _is_transient_describe_error(exc: BaseException) -> bool:
-    """Classify endpoint faults, including those wrapped by the GPU adapter."""
+    """Classify endpoint faults, including those wrapped by the GPU adapter.
+
+    A bare ``TimeoutError`` with no httpx fault anywhere in its cause chain is
+    the worker's OWN ``asyncio.wait_for`` budget expiring, not an endpoint
+    fault. The underlying to_thread request keeps running when the wait is
+    cancelled, so retrying stacks a new concurrent generation on a busy
+    endpoint; local expiries are therefore deliberately non-transient.
+    Endpoint-originated faults surface as httpx exceptions or carry one as
+    their cause and stay retryable.
+    """
 
     seen: set[int] = set()
     current: BaseException | None = exc
     while current is not None and id(current) not in seen:
         seen.add(id(current))
-        if isinstance(current, (TimeoutError, ConnectionError, httpx.TimeoutException, httpx.NetworkError)):
+        if isinstance(current, (httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError)):
             return True
         if isinstance(current, httpx.HTTPStatusError):
             return current.response.status_code in _RETRYABLE_HTTP_STATUS_CODES
-        if isinstance(current, httpx.RemoteProtocolError):
-            return True
         current = current.__cause__ or current.__context__
     return False
 

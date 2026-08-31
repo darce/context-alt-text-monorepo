@@ -162,9 +162,16 @@ def test_run_startup_load_snapshot_writes_file_with_counts(tmp_path: Path):
 
         assert target.is_file()
         loaded = json.loads(target.read_text())
-        assert set(loaded) == {"queue_depth", "in_flight", "written_at"}
+        assert set(loaded) == {
+            "queue_depth",
+            "in_flight",
+            "batch_in_progress",
+            "written_at",
+        }
         assert loaded["queue_depth"] == 1
         assert loaded["in_flight"] == 1
+        # Only single runs above, so the batch flag must read False (GPUW-1).
+        assert loaded["batch_in_progress"] is False
         assert isinstance(loaded["written_at"], (int, float))
         assert loaded["written_at"] > 0
         await engine.dispose()
@@ -185,9 +192,15 @@ def test_run_startup_load_snapshot_resolves_env_path_when_path_none(tmp_path: Pa
 
         assert target.is_file()
         loaded = json.loads(target.read_text())
-        assert set(loaded) == {"queue_depth", "in_flight", "written_at"}
+        assert set(loaded) == {
+            "queue_depth",
+            "in_flight",
+            "batch_in_progress",
+            "written_at",
+        }
         assert loaded["queue_depth"] == 0
         assert loaded["in_flight"] == 0
+        assert loaded["batch_in_progress"] is False
         await engine.dispose()
 
     asyncio.run(body())

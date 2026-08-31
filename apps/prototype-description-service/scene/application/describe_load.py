@@ -249,7 +249,10 @@ async def refresh_load_snapshot_loop(
             # cycle overruns the cadence entirely, retry without a tight-looping
             # backlog of missed ticks.
             if next_refresh_at < loop.time():
-                next_refresh_at = loop.time()
+                # Skip missed ticks but keep the configured gap; clamping to
+                # bare loop.time() would turn a persistently slow dump into a
+                # zero-gap DB polling loop.
+                next_refresh_at = loop.time() + interval
 
 
 async def run_startup_load_snapshot(session_factory, path: str | Path | None = None) -> None:

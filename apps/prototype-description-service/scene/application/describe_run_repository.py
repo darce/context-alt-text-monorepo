@@ -336,20 +336,27 @@ class DescribeRunRepository:
                     error_message=error_message or "run failed before this item was processed",
                     now=now,
                 )
-            except Exception:  # noqa: BLE001 - byte reclamation is best-effort;
-                # the terminal run write below must still land.
+            except Exception:  # noqa: BLE001 - byte reclamation is best-effort,
+                # but a failed flush poisons the session (pending rollback) and
+                # would abort the terminal run write below. Roll back and keep
+                # going; the run-status write is the part that must land.
+                await self._session.rollback()
                 continue
-        # mark_item recomputes run totals and may already have derived a
-        # terminal status (including CANCELLED when cancel_requested is set);
-        # only force FAILED when no terminal status won in the meantime.
-        # The per-item recompute above may have derived a terminal status (e.g.
-        # COMPLETED_WITH_ERRORS once every item is terminal). A fatal-path write
-        # preserves only CANCELLED; anything else becomes FAILED.
-        if DescribeRunStatus(run.status) is not DescribeRunStatus.CANCELLED:
-            run.status = DescribeRunStatus.FAILED
-            run.phase = DescribeRunPhase.FAILED
-            if run.completed_at is None:
-                run.completed_at = now
+        # The rollback above expires ORM state; re-fetch so the status check and
+        # terminal write below never touch expired attributes in async context.
+        run = await self.get_run(tenant_id=tenant_id, run_id=run_id)
+        if run is None:
+            return False
+        # The per-item recompute may already have derived a terminal status. A
+        # fatal-path write preserves only CANCELLED (cancel wins, untouched);
+        # anything else -- including a derived COMPLETED_WITH_ERRORS -- becomes
+        # FAILED, because this path only runs when the worker died fatally.
+        if DescribeRunStatus(run.status) is DescribeRunStatus.CANCELLED:
+            return False
+        run.status = DescribeRunStatus.FAILED
+        run.phase = DescribeRunPhase.FAILED
+        if run.completed_at is None:
+            run.completed_at = now
         if error_message:
             run.error_message = error_message
         await self._session.flush()

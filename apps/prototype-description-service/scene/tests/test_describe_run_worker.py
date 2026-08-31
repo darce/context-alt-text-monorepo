@@ -974,3 +974,77 @@ def test_gpu_warmup_timeout_setting_fails_fast_on_invalid_values(monkeypatch):
 
     monkeypatch.setenv("ACX_GPU_WARMUP_TIMEOUT_SECONDS", "17.5")
     assert DescriptionSettings().gpu_warmup_timeout_seconds == 17.5
+
+
+def test_mark_run_failed_forces_failed_over_derived_completed_with_errors():
+    """Fatal path must not let the item recompute relabel a dead run as a
+    completed-with-errors run."""
+
+    async def body():
+        path, url = await _make_db_async()
+        engine = create_async_engine(url)
+        sf = async_sessionmaker(engine, expire_on_commit=False)
+        async with sf() as s:
+            repo = DescribeRunRepository(s)
+            run_id = await repo.create_run(
+                tenant_id=TENANT_ID, media_ids=[1, 2], images={1: (b"a", "image/png"), 2: (b"b", "image/png")}
+            )
+            await repo.mark_item(
+                tenant_id=TENANT_ID, run_id=run_id, media_id=1, status=DescribeItemStatus.COMPLETED
+            )
+            await s.commit()
+
+        async with sf() as s:
+            changed = await DescribeRunRepository(s).mark_run_failed(
+                tenant_id=TENANT_ID, run_id=run_id, error_message="worker died"
+            )
+            await s.commit()
+        assert changed is True
+
+        async with sf() as s:
+            repo = DescribeRunRepository(s)
+            run = await repo.get_run(tenant_id=TENANT_ID, run_id=run_id)
+            items = await repo.list_run_items(tenant_id=TENANT_ID, run_id=run_id)
+        assert run is not None
+        assert run.status == DescribeRunStatus.FAILED
+        assert run.error_message == "worker died"
+        by_media = {i.media_id: DescribeItemStatus(i.status) for i in items}
+        assert by_media == {1: DescribeItemStatus.COMPLETED, 2: DescribeItemStatus.FAILED}
+        await engine.dispose()
+        os.unlink(path)
+
+    asyncio.run(body())
+
+
+def test_mark_run_failed_preserves_cancel_derived_mid_loop():
+    """cancel_requested set before the fatal write: the item recompute derives
+    CANCELLED and the fatal path must leave it (and error_message) untouched."""
+
+    async def body():
+        path, url = await _make_db_async()
+        engine = create_async_engine(url)
+        sf = async_sessionmaker(engine, expire_on_commit=False)
+        async with sf() as s:
+            repo = DescribeRunRepository(s)
+            run_id = await repo.create_run(tenant_id=TENANT_ID, media_ids=[1], images={1: (b"x", "image/png")})
+            run = await repo.get_run(tenant_id=TENANT_ID, run_id=run_id)
+            assert run is not None
+            run.cancel_requested = True
+            await s.commit()
+
+        async with sf() as s:
+            changed = await DescribeRunRepository(s).mark_run_failed(
+                tenant_id=TENANT_ID, run_id=run_id, error_message="late fatal"
+            )
+            await s.commit()
+
+        async with sf() as s:
+            run = await DescribeRunRepository(s).get_run(tenant_id=TENANT_ID, run_id=run_id)
+        assert run is not None
+        assert run.status == DescribeRunStatus.CANCELLED
+        assert changed is False
+        assert run.error_message != "late fatal"
+        await engine.dispose()
+        os.unlink(path)
+
+    asyncio.run(body())

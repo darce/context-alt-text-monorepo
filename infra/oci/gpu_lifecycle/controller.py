@@ -124,6 +124,40 @@ class GpuLifecycleController:
             and instance.idle_for_seconds >= self.idle_seconds
         ]
 
+    def lease_expired_instances(
+        self,
+        instances: list[GpuInstance],
+        *,
+        max_lease_seconds: int,
+    ) -> list[tuple[str, str]]:
+        """STOP RUNNING instances older than the max lease, whatever the load says.
+
+        Cost backstop (GPUW-1). Every other path in this module fails closed
+        *toward busy*: a missing, stale or unparseable load dump is treated as
+        work in progress and cancels the STOP. That is right for jobs and wrong
+        for money -- a writer that dies leaves an A10 running at roughly $2/hr
+        with nothing left in the system that will ever stop it. [RES-07]
+
+        These STOPs deliberately bypass ``fence_stop_actions``: a fence that
+        consults the same load source that may be broken cannot bound the
+        exposure. A batch longer than the lease is killed, which is the intended
+        trade -- raise the lease rather than disable it.
+
+        ``max_lease_seconds <= 0`` disables the cap.
+
+        Note the field name: ``idle_for_seconds`` is populated from the time of
+        the instance's last lifecycle transition, so for a RUNNING instance it
+        is the age of the current run, not a measure of inactivity.
+        """
+        if max_lease_seconds <= 0:
+            return []
+        return [
+            (LifecycleAction.STOP, instance.instance_id)
+            for instance in instances
+            if instance.state == GpuInstanceState.RUNNING
+            and instance.idle_for_seconds >= max_lease_seconds
+        ]
+
     def fence_stop_actions(
         self,
         actions: list[tuple[str, str]],

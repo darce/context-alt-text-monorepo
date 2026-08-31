@@ -9,6 +9,7 @@ session — never a tenant-scoped request/worker session [DIAG-02], [SEC-01].
 from __future__ import annotations
 
 import json
+import logging
 import os
 import time
 from pathlib import Path
@@ -19,12 +20,19 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models.scene import DescribeRun, DescribeRunItem
 from recognition.shared.db.dialect import is_sqlite
-from scene.domain.describe_run import DescribeItemStatus, RunKind
+from scene.domain.describe_run import DescribeItemStatus, DescribeRunStatus, RunKind
+
+_logger = logging.getLogger(__name__)
 
 _TRUTHY_PG_SETTINGS = {"true", "on", "1", "yes"}
 
 LOAD_PATH_ENV = "ACX_DESCRIBE_LOAD_PATH"
 DEFAULT_LOAD_PATH = "/run/acx/describe-load.json"
+
+# A bulk run occupying the GPU. Enumerated as the non-terminal set rather than
+# "not in (COMPLETED, ...)" so a newly added status defaults to *not* holding
+# the GPU open, instead of silently pinning an A10 forever [sr-007].
+_ACTIVE_BULK_RUN_STATUSES = (DescribeRunStatus.PENDING, DescribeRunStatus.RUNNING)
 
 
 def resolve_load_path() -> str:
@@ -50,12 +58,39 @@ async def _require_rls_bypass(session: AsyncSession) -> None:
         )
 
 
-async def load_snapshot(session: AsyncSession) -> dict[str, int | float]:
-    """Count non-terminal ``run_kind=single`` items for the GPU idle reaper.
+async def batch_in_progress(session: AsyncSession) -> bool:
+    """True while any tenant holds a non-terminal ``run_kind=bulk`` run (GPUW-1).
 
-    ``queue_depth`` = items with status ``queued``; ``in_flight`` = status
-    ``running`` (includes provisional, which stays ``running`` until final).
-    Bulk-run items are excluded. Callers must use a bypass session [DIAG-02].
+    This is the "Describe selected" case. ``queue_depth``/``in_flight`` below
+    deliberately count only single runs, so without this flag a bulk run is
+    completely invisible to the lifecycle controller: ``run_start_cycle`` sees
+    no work and never starts the burst GPU, and ``run_reap_cycle`` sees an idle
+    GPU and STOPs it mid-batch. ``reaper.JsonFileJobLoadSource`` already reads
+    ``batch_in_progress`` and warns that bulk runs are unprotected until a
+    producer writes it -- this is that producer.
+
+    Counted on the run, not its items: a run that has claimed the GPU but whose
+    items are momentarily between states must still read as busy.
+    """
+    result = await session.execute(
+        select(func.count())
+        .select_from(DescribeRun)
+        .where(
+            DescribeRun.run_kind == RunKind.BULK,
+            DescribeRun.status.in_(_ACTIVE_BULK_RUN_STATUSES),
+        )
+    )
+    return int(result.scalar() or 0) > 0
+
+
+async def load_snapshot(session: AsyncSession) -> dict[str, int | float | bool]:
+    """Count non-terminal work for the GPU lifecycle controller.
+
+    ``queue_depth`` = single-run items with status ``queued``; ``in_flight`` =
+    status ``running`` (includes provisional, which stays ``running`` until
+    final). Bulk-run *items* stay excluded from both counts -- the wire meaning
+    of those two keys is unchanged -- and bulk work is reported separately as
+    ``batch_in_progress`` (GPUW-1). Callers must use a bypass session [DIAG-02].
     """
     await _require_rls_bypass(session)
     result = await session.execute(
@@ -71,6 +106,7 @@ async def load_snapshot(session: AsyncSession) -> dict[str, int | float]:
     return {
         "queue_depth": counts.get(DescribeItemStatus.QUEUED, 0),
         "in_flight": counts.get(DescribeItemStatus.RUNNING, 0),
+        "batch_in_progress": await batch_in_progress(session),
         "written_at": time.time(),
     }
 
@@ -82,6 +118,33 @@ def write_load_snapshot(snapshot: dict[str, Any], path: str | Path) -> None:
     tmp = target.with_suffix(target.suffix + ".tmp")
     tmp.write_text(json.dumps(snapshot, separators=(",", ":")))
     os.replace(tmp, target)
+
+
+async def dump_load_snapshot(session_factory, path: str | Path | None = None) -> None:
+    """Best-effort load write on a dedicated RLS-bypassed session (GPUW-1).
+
+    Shared by the single-image router, the bulk-run router and the bulk worker
+    so there is exactly one writer implementation; a second copy would drift and
+    the reaper would silently read a stale file [rg-008].
+
+    Never raises: a failed snapshot must not fail the describe request that
+    triggered it. The consumer fails closed on a stale file, so the cost of a
+    missed write is a GPU that stays up until the max-lease cap, not a batch
+    that dies.
+    """
+    from db.tenant_context import enable_rls_bypass
+
+    if session_factory is None:
+        return
+    target = path or resolve_load_path()
+    try:
+        async with session_factory() as session:
+            await enable_rls_bypass(session)
+            snap = await load_snapshot(session)
+            await session.commit()
+        write_load_snapshot(snap, target)
+    except Exception:  # noqa: BLE001 - reaper snapshot is best-effort
+        _logger.debug("describe load snapshot write failed path=%s", target, exc_info=True)
 
 
 async def run_startup_load_snapshot(session_factory, path: str | Path | None = None) -> None:

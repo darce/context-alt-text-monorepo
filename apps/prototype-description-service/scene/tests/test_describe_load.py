@@ -22,6 +22,7 @@ import scene.application.describe_load as load_mod
 from db.models.base_imports import Base
 from db.models.scene import DescribeRun, DescribeRunItem
 from scene.application.describe_load import (
+    batch_in_progress,
     load_snapshot,
     resolve_load_path,
     run_startup_load_snapshot,
@@ -31,7 +32,7 @@ from scene.application.describe_run_repository import (
     DescribeRunRepository,
     run_startup_retention_purge,
 )
-from scene.domain.describe_run import DescribeItemStatus
+from scene.domain.describe_run import DescribeItemStatus, DescribeRunStatus
 
 
 async def _sessionmaker():
@@ -90,9 +91,17 @@ def test_load_snapshot_counts_single_runs_only_across_tenants():
 
         async with sf() as s:
             snap = await load_snapshot(s)
-            assert set(snap) == {"queue_depth", "in_flight", "written_at"}
+            assert set(snap) == {
+                "queue_depth",
+                "in_flight",
+                "batch_in_progress",
+                "written_at",
+            }
             assert snap["queue_depth"] == 2
             assert snap["in_flight"] == 1
+            # The bulk run above is still non-terminal: excluded from the item
+            # counts, but it must surface on its own key (GPUW-1).
+            assert snap["batch_in_progress"] is True
             assert isinstance(snap["written_at"], float)
             assert snap["written_at"] > 0
 
@@ -220,6 +229,94 @@ def test_run_startup_retention_purge_deletes_expired_terminal_singles():
             assert await repo.get_run(tenant_id=tenant, run_id=expired_id) is None
             assert await repo.get_run(tenant_id=tenant, run_id=keep_id) is not None
 
+        await engine.dispose()
+
+    asyncio.run(body())
+
+
+# --- GPUW-1: bulk runs must be visible to the GPU lifecycle controller --------
+#
+# "Describe selected" creates a run_kind=bulk run. queue_depth/in_flight count
+# single runs only, so before this key existed a batch was invisible to both
+# cycles: run_start_cycle never started the burst GPU, and run_reap_cycle STOPped
+# a running one mid-batch. These pin the flag that closes that hole.
+
+
+def test_batch_in_progress_true_while_a_bulk_run_is_pending():
+    async def body():
+        engine, sf = await _sessionmaker()
+        async with sf() as s:
+            repo = DescribeRunRepository(s)
+            await repo.create_run(tenant_id=uuid.uuid4(), media_ids=[1, 2, 3])
+            await s.commit()
+        async with sf() as s:
+            assert await batch_in_progress(s) is True
+            snap = await load_snapshot(s)
+            # The whole point: the batch is invisible to the item counts, so the
+            # flag is the only thing keeping the GPU alive for it.
+            assert snap["queue_depth"] == 0
+            assert snap["in_flight"] == 0
+            assert snap["batch_in_progress"] is True
+        await engine.dispose()
+
+    asyncio.run(body())
+
+
+def test_batch_in_progress_false_when_no_bulk_run_exists():
+    """TEST-15: the flag must be able to read False, or it pins an A10 forever."""
+
+    async def body():
+        engine, sf = await _sessionmaker()
+        async with sf() as s:
+            repo = DescribeRunRepository(s)
+            # A queued *single* run is real work, but it is not a batch.
+            await repo.create_single_run(tenant_id=uuid.uuid4(), media_id=1, image_bytes=b"a")
+            await s.commit()
+        async with sf() as s:
+            assert await batch_in_progress(s) is False
+            snap = await load_snapshot(s)
+            assert snap["queue_depth"] == 1
+            assert snap["batch_in_progress"] is False
+        await engine.dispose()
+
+    asyncio.run(body())
+
+
+def test_batch_in_progress_false_once_the_bulk_run_reaches_a_terminal_status():
+    """"Stop after batch complete": a finished run must release the GPU."""
+
+    async def body():
+        engine, sf = await _sessionmaker()
+        tenant = uuid.uuid4()
+        async with sf() as s:
+            repo = DescribeRunRepository(s)
+            run_id = await repo.create_run(tenant_id=tenant, media_ids=[1])
+            await s.commit()
+        async with sf() as s:
+            assert await batch_in_progress(s) is True
+        async with sf() as s:
+            run = await s.get(DescribeRun, run_id)
+            run.status = DescribeRunStatus.COMPLETED
+            await s.commit()
+        async with sf() as s:
+            assert await batch_in_progress(s) is False
+        await engine.dispose()
+
+    asyncio.run(body())
+
+
+def test_batch_in_progress_is_cross_tenant():
+    """The GPU is a single shared resource: any tenant's batch holds it open."""
+
+    async def body():
+        engine, sf = await _sessionmaker()
+        async with sf() as s:
+            repo = DescribeRunRepository(s)
+            await repo.create_run(tenant_id=uuid.uuid4(), media_ids=[1])
+            await repo.create_run(tenant_id=uuid.uuid4(), media_ids=[2])
+            await s.commit()
+        async with sf() as s:
+            assert await batch_in_progress(s) is True
         await engine.dispose()
 
     asyncio.run(body())

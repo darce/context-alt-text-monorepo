@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from db.tenant_context import set_tenant_context
+from scene.application.describe_load import dump_load_snapshot
 from scene.application.describe_run_repository import DescribeRunRepository
 from scene.application.settings.vlm import VlmSettings
 from scene.domain.describe_run import DescribeItemStatus
@@ -144,3 +145,9 @@ async def run_describe_job(
                 await session.commit()
         except Exception:  # noqa: BLE001 - best-effort terminal write
             logger.exception("failed to mark run FAILED run_id=%s", run_id)
+    finally:
+        # GPUW-1: refresh the burst-GPU load dump on completion, failure AND
+        # cancellation. A release that only fires on the happy path is a
+        # reclaimer that eventually does not fire [RES-07] -- and here the cost
+        # of not firing is an A10 held open at ~$2/hr.
+        await dump_load_snapshot(session_factory)

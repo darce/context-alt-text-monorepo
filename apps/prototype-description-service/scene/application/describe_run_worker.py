@@ -17,7 +17,6 @@ from db.tenant_context import set_tenant_context
 from scene.application.describe_load import dump_load_snapshot
 from scene.application.describe_run_repository import DescribeRunRepository
 from scene.application.settings.vlm import VlmSettings
-from scene.config.profiles import get_profile_spec
 from scene.config.settings import DescriptionSettings
 from scene.domain.describe_run import DescribeItemStatus
 from scene.domain.description import DescriptionAdapterKind
@@ -41,6 +40,23 @@ class DescribeItemOutcome:
     provenance: dict = field(default_factory=dict)
 
 
+@dataclass(frozen=True)
+class GpuRunPolicy:
+    """GPU-only execution settings resolved with the actual run adapter."""
+
+    endpoint_url: str
+    api_key: str | None
+    warmup_timeout_seconds: float
+
+
+class _RunCancelledError(RuntimeError):
+    """Internal control-flow signal; cancellation is not a run failure."""
+
+
+class _GpuCircuitOpenError(RuntimeError):
+    """The run-local GPU breaker is open after an exhausted transient fault."""
+
+
 # The describe boundary: given the item's media_id + loaded image bytes, return
 # the outcome to persist (or None). Kept as an injectable callable so tests can
 # supply a fast deterministic fake while production supplies the real
@@ -60,41 +76,61 @@ async def _call_describe_one(
     return result
 
 
-def _gpu_warmup_target() -> tuple[str, str | None, float] | None:
-    """Return the selected GPU endpoint's health target, if this is a GPU run.
+def gpu_run_policy(*, adapter_kind: DescriptionAdapterKind, settings: DescriptionSettings) -> GpuRunPolicy | None:
+    """Build a policy only when the adapter captured for this run is GPU-backed.
 
-    An endpoint may be present in a shared deployment environment while the
-    active description profile is seeded or CPU-backed. Profile-gating here is
-    deliberate: those paths must never acquire a dependency on burst-GPU
-    availability.
+    The worker accepts this policy explicitly instead of re-reading the process
+    profile. That keeps injected/seeded workers isolated from a concurrently
+    changed GPU environment and makes retry eligibility a property of the
+    adapter actually captured by the route.
     """
 
-    settings = DescriptionSettings()
-    profile = get_profile_spec(settings.profile)
-    if profile.adapter_kind is not DescriptionAdapterKind.GPU or not settings.gpu_endpoint_url:
+    if adapter_kind is not DescriptionAdapterKind.GPU or not settings.gpu_endpoint_url:
         return None
     timeout_seconds = float(os.environ.get("ACX_GPU_WARMUP_TIMEOUT_SECONDS", str(_DEFAULT_GPU_WARMUP_TIMEOUT_SECONDS)))
-    return settings.gpu_endpoint_url.rstrip("/"), settings.gpu_endpoint_api_key, max(0.0, timeout_seconds)
+    return GpuRunPolicy(
+        endpoint_url=settings.gpu_endpoint_url.rstrip("/"),
+        api_key=settings.gpu_endpoint_api_key,
+        warmup_timeout_seconds=max(0.0, timeout_seconds),
+    )
 
 
-async def _wait_for_gpu_ready(*, endpoint_url: str, api_key: str | None, timeout_seconds: float) -> None:
+async def _wait_for_gpu_ready(
+    *,
+    endpoint_url: str,
+    api_key: str | None,
+    timeout_seconds: float,
+    cancel_requested: Callable[[], Awaitable[bool]] | None = None,
+) -> None:
     """Poll the burst endpoint until it reports healthy or warmup expires."""
 
     health_url = f"{endpoint_url}/health"
     headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
     loop = asyncio.get_running_loop()
-    deadline = loop.time() + timeout_seconds
+    deadline = loop.time() + max(0.0, timeout_seconds)
     last_error = "no health response"
     timeout = httpx.Timeout(_GPU_HEALTH_REQUEST_TIMEOUT_SECONDS)
 
     async with httpx.AsyncClient(timeout=timeout) as client:
         while True:
+            if cancel_requested is not None and await cancel_requested():
+                raise _RunCancelledError("describe run cancelled while waiting for GPU readiness")
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                raise TimeoutError(f"GPU endpoint did not become ready within {timeout_seconds:g}s ({last_error})")
             try:
-                response = await client.get(health_url, headers=headers)
+                # The httpx timeout bounds transport phases individually. The
+                # outer wait_for also caps the whole request to the remaining
+                # warmup budget, so one hung health request cannot overrun the
+                # run-level deadline.
+                response = await asyncio.wait_for(
+                    client.get(health_url, headers=headers),
+                    timeout=min(_GPU_HEALTH_REQUEST_TIMEOUT_SECONDS, remaining),
+                )
                 if 200 <= response.status_code < 300:
                     return
                 last_error = f"HTTP {response.status_code}"
-            except httpx.HTTPError as exc:
+            except (TimeoutError, httpx.HTTPError) as exc:
                 # Connection refusal and 503 are normal while cloud-init/model
                 # loading is still in progress. Keep the log quiet until the
                 # bounded warmup window is actually exhausted.
@@ -113,10 +149,12 @@ def _is_transient_describe_error(exc: BaseException) -> bool:
     current: BaseException | None = exc
     while current is not None and id(current) not in seen:
         seen.add(id(current))
-        if isinstance(current, (TimeoutError, httpx.TransportError)):
+        if isinstance(current, (TimeoutError, ConnectionError, httpx.TimeoutException, httpx.NetworkError)):
             return True
         if isinstance(current, httpx.HTTPStatusError):
             return current.response.status_code in _RETRYABLE_HTTP_STATUS_CODES
+        if isinstance(current, httpx.RemoteProtocolError):
+            return True
         current = current.__cause__ or current.__context__
     return False
 
@@ -129,9 +167,12 @@ async def _describe_with_transient_retry(
     content_type: str | None,
     timeout_seconds: float,
     retry_transient: bool,
+    cancel_requested: Callable[[], Awaitable[bool]] | None = None,
 ) -> DescribeItemOutcome | None:
     max_attempts = _GPU_ITEM_MAX_ATTEMPTS if retry_transient else 1
     for attempt in range(1, max_attempts + 1):
+        if cancel_requested is not None and await cancel_requested():
+            raise _RunCancelledError("describe run cancelled before item retry")
         try:
             return await asyncio.wait_for(
                 _call_describe_one(describe_one, media_id, image_bytes, content_type), timeout_seconds
@@ -147,7 +188,8 @@ async def _describe_with_transient_retry(
                 max_attempts,
                 delay,
             )
-            await asyncio.sleep(delay)
+            if delay:
+                await asyncio.sleep(delay)
     raise RuntimeError("unreachable")  # pragma: no cover
 
 
@@ -158,6 +200,7 @@ async def run_describe_job(
     session_factory: async_sessionmaker[AsyncSession],
     describe_one: DescribeOne,
     timeout_seconds: float | None = None,
+    gpu_policy: GpuRunPolicy | None = None,
 ) -> None:
     """Process a describe run item-by-item.
 
@@ -168,14 +211,23 @@ async def run_describe_job(
     """
 
     timeout = timeout_seconds if timeout_seconds is not None else VlmSettings().inference_timeout_seconds
+
+    async def cancel_requested() -> bool:
+        # A fresh, short-lived session is intentional. The tracking session has
+        # expire_on_commit=False and may otherwise keep an identity-mapped run
+        # with cancel_requested=False after DELETE commits in another session.
+        async with session_factory() as cancel_session:
+            await set_tenant_context(cancel_session, tenant_id)
+            run = await DescribeRunRepository(cancel_session).get_run(tenant_id=tenant_id, run_id=run_id)
+            return run is None or bool(run.cancel_requested)
+
     try:
-        gpu_target = _gpu_warmup_target()
-        if gpu_target is not None:
-            endpoint_url, api_key, warmup_timeout = gpu_target
+        if gpu_policy is not None:
             await _wait_for_gpu_ready(
-                endpoint_url=endpoint_url,
-                api_key=api_key,
-                timeout_seconds=warmup_timeout,
+                endpoint_url=gpu_policy.endpoint_url,
+                api_key=gpu_policy.api_key,
+                timeout_seconds=gpu_policy.warmup_timeout_seconds,
+                cancel_requested=cancel_requested,
             )
         async with session_factory() as session:
             # RLS: every session touching the tenant-scoped run/item tables must
@@ -183,11 +235,9 @@ async def run_describe_job(
             await set_tenant_context(session, tenant_id)
             repo = DescribeRunRepository(session)
             items = await repo.list_run_items(tenant_id=tenant_id, run_id=run_id)
+            gpu_breaker_error: str | None = None
             for item in items:
-                run = await repo.get_run(tenant_id=tenant_id, run_id=run_id)
-                if run is None:
-                    return
-                if run.cancel_requested:
+                if await cancel_requested():
                     await repo.mark_item(
                         tenant_id=tenant_id,
                         run_id=run_id,
@@ -206,13 +256,23 @@ async def run_describe_job(
                     status=DescribeItemStatus.RUNNING,
                 )
                 try:
+                    if gpu_breaker_error is not None:
+                        raise _GpuCircuitOpenError(gpu_breaker_error)
                     outcome = await _describe_with_transient_retry(
                         describe_one=describe_one,
                         media_id=item.media_id,
                         image_bytes=image_bytes,
                         content_type=content_type,
                         timeout_seconds=timeout,
-                        retry_transient=gpu_target is not None,
+                        retry_transient=gpu_policy is not None,
+                        cancel_requested=cancel_requested,
+                    )
+                except _RunCancelledError:
+                    await repo.mark_item(
+                        tenant_id=tenant_id,
+                        run_id=run_id,
+                        media_id=item.media_id,
+                        status=DescribeItemStatus.SKIPPED,
                     )
                 except Exception as exc:  # noqa: BLE001 - per-item failure must not abort the run
                     logger.warning(
@@ -233,6 +293,10 @@ async def run_describe_job(
                         status=DescribeItemStatus.FAILED,
                         error_message=str(exc),
                     )
+                    if gpu_policy is not None and _is_transient_describe_error(exc):
+                        gpu_breaker_error = (
+                            f"GPU circuit open after transient retries were exhausted: {type(exc).__name__}: {exc}"
+                        )
                 else:
                     outcome = outcome or DescribeItemOutcome()
                     await repo.record_item_result(
@@ -250,6 +314,21 @@ async def run_describe_job(
                         status=DescribeItemStatus.COMPLETED,
                     )
                 await session.commit()
+    except _RunCancelledError:
+        # Cancellation can land while the worker is still in its GPU warmup
+        # gate, before the main tracking session exists. Drive every queued item
+        # terminal so the run honestly projects CANCELLED and bytes are reclaimed.
+        async with session_factory() as session:
+            await set_tenant_context(session, tenant_id)
+            repo = DescribeRunRepository(session)
+            for item in await repo.list_run_items(tenant_id=tenant_id, run_id=run_id):
+                await repo.mark_item(
+                    tenant_id=tenant_id,
+                    run_id=run_id,
+                    media_id=item.media_id,
+                    status=DescribeItemStatus.SKIPPED,
+                )
+            await session.commit()
     except Exception as fatal:  # noqa: BLE001 - fatal loop error must surface as a FAILED run
         logger.exception("describe run fatal error run_id=%s", run_id)
         try:

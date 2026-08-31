@@ -342,10 +342,14 @@ class DescribeRunRepository:
         # mark_item recomputes run totals and may already have derived a
         # terminal status (including CANCELLED when cancel_requested is set);
         # only force FAILED when no terminal status won in the meantime.
-        if DescribeRunStatus(run.status) not in TERMINAL_RUN_STATUSES:
+        # The per-item recompute above may have derived a terminal status (e.g.
+        # COMPLETED_WITH_ERRORS once every item is terminal). A fatal-path write
+        # preserves only CANCELLED; anything else becomes FAILED.
+        if DescribeRunStatus(run.status) is not DescribeRunStatus.CANCELLED:
             run.status = DescribeRunStatus.FAILED
             run.phase = DescribeRunPhase.FAILED
-            run.completed_at = now
+            if run.completed_at is None:
+                run.completed_at = now
         if error_message:
             run.error_message = error_message
         await self._session.flush()

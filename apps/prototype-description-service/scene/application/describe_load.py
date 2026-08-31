@@ -8,9 +8,13 @@ session — never a tenant-scoped request/worker session [DIAG-02], [SEC-01].
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
+import math
 import os
+import tempfile
+import threading
 import time
 from pathlib import Path
 from typing import Any
@@ -28,6 +32,22 @@ _TRUTHY_PG_SETTINGS = {"true", "on", "1", "yes"}
 
 LOAD_PATH_ENV = "ACX_DESCRIBE_LOAD_PATH"
 DEFAULT_LOAD_PATH = "/run/acx/describe-load.json"
+LOAD_REFRESH_SECONDS_ENV = "ACX_DESCRIBE_LOAD_REFRESH_SECONDS"
+DEFAULT_LOAD_REFRESH_SECONDS = 45.0
+LOAD_SNAPSHOT_STALE_SECONDS = 120.0
+LOAD_REFRESH_TIMEOUT_SECONDS = 30.0
+# Preserve two refresh opportunities inside one stale window. The timeout is
+# also kept as headroom in case its configured value grows in a later change.
+MAX_LOAD_REFRESH_SECONDS = min(
+    LOAD_SNAPSHOT_STALE_SECONDS / 2,
+    LOAD_SNAPSHOT_STALE_SECONDS - LOAD_REFRESH_TIMEOUT_SECONDS,
+)
+
+# ``write_load_snapshot`` is also used by request paths, so serialize the tiny
+# write+replace section rather than relying on callers to coordinate. Unique
+# temp names make concurrent/multi-process writers safe; this in-process lock
+# additionally keeps their replacements ordered and prevents needless overlap.
+_LOAD_SNAPSHOT_WRITE_LOCK = threading.Lock()
 
 # A bulk run occupying the GPU. Enumerated as the non-terminal set rather than
 # "not in (COMPLETED, ...)" so a newly added status defaults to *not* holding
@@ -42,6 +62,28 @@ def resolve_load_path() -> str:
     so the reaper can never read a stale file from a drifted literal [rg-008].
     """
     return os.environ.get(LOAD_PATH_ENV, DEFAULT_LOAD_PATH)
+
+
+def resolve_load_refresh_seconds() -> float:
+    """Return a safe refresh cadence below the reaper's 120s stale guard."""
+    raw = os.environ.get(LOAD_REFRESH_SECONDS_ENV)
+    if raw is None:
+        return DEFAULT_LOAD_REFRESH_SECONDS
+    try:
+        seconds = float(raw)
+    except ValueError:
+        seconds = 0.0
+    # Leave room for a second refresh attempt inside the stale-file window. A
+    # value merely below 120s is not sufficient once failures/latency occur.
+    if not math.isfinite(seconds) or seconds <= 0 or seconds >= MAX_LOAD_REFRESH_SECONDS:
+        _logger.warning(
+            "invalid %s=%r; using default %.0fs",
+            LOAD_REFRESH_SECONDS_ENV,
+            raw,
+            DEFAULT_LOAD_REFRESH_SECONDS,
+        )
+        return DEFAULT_LOAD_REFRESH_SECONDS
+    return seconds
 
 
 async def _require_rls_bypass(session: AsyncSession) -> None:
@@ -115,26 +157,55 @@ def write_load_snapshot(snapshot: dict[str, Any], path: str | Path) -> None:
     """Atomically dump a load snapshot for the GPU idle reaper (VLMFIX-S2-01)."""
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
-    tmp = target.with_suffix(target.suffix + ".tmp")
-    tmp.write_text(json.dumps(snapshot, separators=(",", ":")))
-    os.replace(tmp, target)
+    payload = json.dumps(snapshot, separators=(",", ":"))
+
+    with _LOAD_SNAPSHOT_WRITE_LOCK:
+        fd = -1
+        tmp: Path | None = None
+        try:
+            fd, tmp_name = tempfile.mkstemp(
+                dir=target.parent,
+                prefix=f".{target.name}.",
+                suffix=".tmp",
+                text=True,
+            )
+            tmp = Path(tmp_name)
+            with os.fdopen(fd, "w") as tmp_file:
+                fd = -1  # owned and closed by ``tmp_file`` from here
+                tmp_file.write(payload)
+                os.fchmod(tmp_file.fileno(), 0o644)
+            os.replace(tmp, target)
+            tmp = None  # the temp path no longer exists after replace
+        finally:
+            if fd >= 0:
+                os.close(fd)
+            if tmp is not None:
+                tmp.unlink(missing_ok=True)
 
 
-async def dump_load_snapshot(session_factory, path: str | Path | None = None) -> None:
+async def dump_load_snapshot(
+    session_factory,
+    path: str | Path | None = None,
+    *,
+    raise_on_error: bool = False,
+) -> None:
     """Best-effort load write on a dedicated RLS-bypassed session (GPUW-1).
 
     Shared by the single-image router, the bulk-run router and the bulk worker
     so there is exactly one writer implementation; a second copy would drift and
     the reaper would silently read a stale file [rg-008].
 
-    Never raises: a failed snapshot must not fail the describe request that
-    triggered it. The consumer fails closed on a stale file, so the cost of a
-    missed write is a GPU that stays up until the max-lease cap, not a batch
-    that dies.
+    Request/worker callers retain best-effort behavior by default: a failed
+    snapshot must not fail the describe operation that triggered it. The
+    periodic refresher opts into ``raise_on_error`` so its cycle-level warning
+    and timeout supervision can observe failures instead of silently treating
+    them as successful refreshes.
     """
     from db.tenant_context import enable_rls_bypass
 
     if session_factory is None:
+        if raise_on_error:
+            raise RuntimeError("describe load snapshot session factory is unavailable")
         return
     target = path or resolve_load_path()
     try:
@@ -144,7 +215,44 @@ async def dump_load_snapshot(session_factory, path: str | Path | None = None) ->
             await session.commit()
         write_load_snapshot(snap, target)
     except Exception:  # noqa: BLE001 - reaper snapshot is best-effort
+        if raise_on_error:
+            raise
         _logger.debug("describe load snapshot write failed path=%s", target, exc_info=True)
+
+
+async def refresh_load_snapshot_loop(
+    session_factory,
+    *,
+    refresh_seconds: float | None = None,
+    timeout_seconds: float = LOAD_REFRESH_TIMEOUT_SECONDS,
+) -> None:
+    """Keep the reaper snapshot fresh for as long as the API is running."""
+    interval = refresh_seconds if refresh_seconds is not None else resolve_load_refresh_seconds()
+    loop = asyncio.get_running_loop()
+    next_refresh_at = loop.time() + interval
+    while True:
+        await asyncio.sleep(max(0.0, next_refresh_at - loop.time()))
+        next_refresh_at += interval
+        try:
+            async with asyncio.timeout(timeout_seconds):
+                await dump_load_snapshot(session_factory, raise_on_error=True)
+        except TimeoutError:
+            _logger.warning(
+                "periodic describe load snapshot refresh timed out after %.1fs",
+                timeout_seconds,
+            )
+        except Exception:  # noqa: BLE001 - one failed refresh must not stop later refreshes
+            _logger.warning("periodic describe load snapshot refresh failed", exc_info=True)
+        finally:
+            # Keep cycles on their configured start-to-start cadence so a slow
+            # or timed-out DB call does not add another full interval. If one
+            # cycle overruns the cadence entirely, retry without a tight-looping
+            # backlog of missed ticks.
+            if next_refresh_at < loop.time():
+                # Skip missed ticks but keep the configured gap; clamping to
+                # bare loop.time() would turn a persistently slow dump into a
+                # zero-gap DB polling loop.
+                next_refresh_at = loop.time() + interval
 
 
 async def run_startup_load_snapshot(session_factory, path: str | Path | None = None) -> None:
@@ -153,11 +261,4 @@ async def run_startup_load_snapshot(session_factory, path: str | Path | None = N
     Opens a dedicated short-lived RLS-bypassed session (never tenant-scoped).
     Best-effort from the lifespan caller; raises on failure for that try/except.
     """
-    from db.tenant_context import enable_rls_bypass
-
-    target = path or resolve_load_path()
-    async with session_factory() as session:
-        await enable_rls_bypass(session)
-        snap = await load_snapshot(session)
-        await session.commit()
-    write_load_snapshot(snap, target)
+    await dump_load_snapshot(session_factory, path, raise_on_error=True)

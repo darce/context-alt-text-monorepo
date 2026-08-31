@@ -67,6 +67,17 @@ configure_logging("INFO")
 logger = logging.getLogger(__name__)
 
 
+def _log_load_snapshot_refresher_exit(task: asyncio.Task[None]) -> None:
+    """Retrieve and report an unexpected refresher exit while the API is live."""
+    if task.cancelled():
+        return
+    exc = task.exception()
+    if exc is None:
+        logger.error("describe load snapshot refresher stopped unexpectedly")
+    else:
+        logger.error("describe load snapshot refresher crashed", exc_info=exc)
+
+
 def _get_git_info() -> tuple[str, str]:
     """Get the current git commit hash and branch, or 'unknown' if not available."""
     try:
@@ -128,19 +139,14 @@ def _resolve_image_variant() -> str:
         if _IMAGE_VARIANT_ARTIFACT.is_file():
             baked = _IMAGE_VARIANT_ARTIFACT.read_text(encoding="utf-8").strip()
     except OSError as exc:
-        raise RuntimeError(
-            f"cannot read baked image variant at {_IMAGE_VARIANT_ARTIFACT}: {exc}"
-        ) from exc
+        raise RuntimeError(f"cannot read baked image variant at {_IMAGE_VARIANT_ARTIFACT}: {exc}") from exc
     if baked:
         valid = {member.value for member in ImageVariant}
         if baked not in valid:
-            raise RuntimeError(
-                f"invalid baked image variant {baked!r} at {_IMAGE_VARIANT_ARTIFACT}"
-            )
+            raise RuntimeError(f"invalid baked image variant {baked!r} at {_IMAGE_VARIANT_ARTIFACT}")
         if env_claim and env_claim != baked:
             raise RuntimeError(
-                f"ACX_IMAGE_VARIANT={env_claim!r} disagrees with baked "
-                f"{baked!r} at {_IMAGE_VARIANT_ARTIFACT}"
+                f"ACX_IMAGE_VARIANT={env_claim!r} disagrees with baked {baked!r} at {_IMAGE_VARIANT_ARTIFACT}"
             )
         return baked
     return env_claim or ImageVariant.RECOGNITION.value
@@ -215,6 +221,7 @@ async def _lifespan(app: FastAPI):
         from scene.application.describe_load import refresh_load_snapshot_loop
 
         refresh_task = asyncio.create_task(refresh_load_snapshot_loop(async_session_factory))
+        refresh_task.add_done_callback(_log_load_snapshot_refresher_exit)
     except Exception:  # noqa: BLE001 - the API must still boot if task setup fails
         logging.getLogger("db.startup").warning("describe load snapshot refresher failed to start", exc_info=True)
 
@@ -223,7 +230,10 @@ async def _lifespan(app: FastAPI):
     finally:
         if refresh_task is not None:
             refresh_task.cancel()
-            with suppress(asyncio.CancelledError):
+            # A crash is already reported immediately by the done callback and
+            # must not turn an otherwise-clean application shutdown into a
+            # second, unrelated lifespan failure.
+            with suppress(asyncio.CancelledError, Exception):
                 await refresh_task
 
 

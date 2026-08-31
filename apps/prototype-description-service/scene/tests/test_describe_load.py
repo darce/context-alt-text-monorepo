@@ -464,3 +464,76 @@ def test_describe_load_refresher_times_out_one_cycle_and_retries(monkeypatch):
         assert calls == 2
 
     asyncio.run(body())
+
+
+def test_refresh_loop_binds_resolver_when_interval_not_passed(monkeypatch):
+    """S2A-04: with refresh_seconds omitted, the loop's cadence must come from
+    resolve_load_refresh_seconds(); a hardcoded interval would leave this red."""
+
+    async def body():
+        resolver_calls = 0
+        dump_calls = 0
+        second_dump = asyncio.Event()
+
+        def fake_resolver():
+            nonlocal resolver_calls
+            resolver_calls += 1
+            return 0.01
+
+        async def fake_dump(_factory, *, raise_on_error=False):
+            nonlocal dump_calls
+            assert raise_on_error is True
+            dump_calls += 1
+            if dump_calls == 2:
+                second_dump.set()
+
+        monkeypatch.setattr(load_mod, "resolve_load_refresh_seconds", fake_resolver)
+        monkeypatch.setattr(load_mod, "dump_load_snapshot", fake_dump)
+        task = asyncio.create_task(refresh_load_snapshot_loop(object()))
+        await asyncio.wait_for(second_dump.wait(), timeout=1)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+        assert resolver_calls == 1
+        assert dump_calls >= 2
+
+    asyncio.run(body())
+
+
+def test_lifespan_supervisor_rearms_refresher_and_propagates_cancel(monkeypatch):
+    """S2B-05: the lifespan-owned supervisor must restart the refresher after a
+    crash and after an unexpected clean return, and must let shutdown
+    cancellation terminate it."""
+    # api.main enforces production config at import; scene/tests has no
+    # runtime-mode conftest, so scope the test mode to this import.
+    monkeypatch.setenv("RECOGNITION_RUNTIME_MODE", "test")
+    import api.main as main_mod
+
+    async def body():
+        starts = 0
+        third_start = asyncio.Event()
+        session_factory = object()
+
+        async def fake_refresher(factory):
+            nonlocal starts
+            assert factory is session_factory
+            starts += 1
+            if starts == 1:
+                raise RuntimeError("refresher crash")
+            if starts == 2:
+                return  # unexpected clean stop
+            third_start.set()
+            await asyncio.Event().wait()
+
+        monkeypatch.setattr(main_mod, "_LOAD_SNAPSHOT_REFRESH_REARM_SECONDS", 0.01)
+        monkeypatch.setattr(load_mod, "refresh_load_snapshot_loop", fake_refresher)
+        task = asyncio.create_task(main_mod._supervise_load_snapshot_refresher(session_factory))
+        await asyncio.wait_for(third_start.wait(), timeout=1)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+        assert starts == 3
+
+    asyncio.run(body())

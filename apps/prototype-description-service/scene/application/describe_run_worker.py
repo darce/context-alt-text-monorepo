@@ -156,11 +156,19 @@ def _is_transient_describe_error(exc: BaseException) -> bool:
     current: BaseException | None = exc
     while current is not None and id(current) not in seen:
         seen.add(id(current))
-        if isinstance(current, (httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError)):
+        if isinstance(current, (httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError, httpx.ProxyError)):
             return True
         if isinstance(current, httpx.HTTPStatusError):
             return current.response.status_code in _RETRYABLE_HTTP_STATUS_CODES
-        current = current.__cause__ or current.__context__
+        if current.__cause__ is not None:
+            current = current.__cause__
+        elif current.__suppress_context__:
+            # `raise ... from None` deliberately severed the chain; walking into
+            # the suppressed context would resurrect a transient signal the
+            # raiser explicitly discarded.
+            break
+        else:
+            current = current.__context__
     return False
 
 
@@ -323,17 +331,32 @@ async def run_describe_job(
         # Cancellation can land while the worker is still in its GPU warmup
         # gate, before the main tracking session exists. Drive every queued item
         # terminal so the run honestly projects CANCELLED and bytes are reclaimed.
-        async with session_factory() as session:
-            await set_tenant_context(session, tenant_id)
-            repo = DescribeRunRepository(session)
-            for item in await repo.list_run_items(tenant_id=tenant_id, run_id=run_id):
-                await repo.mark_item(
-                    tenant_id=tenant_id,
-                    run_id=run_id,
-                    media_id=item.media_id,
-                    status=DescribeItemStatus.SKIPPED,
-                )
-            await session.commit()
+        try:
+            async with session_factory() as session:
+                await set_tenant_context(session, tenant_id)
+                repo = DescribeRunRepository(session)
+                for item in await repo.list_run_items(tenant_id=tenant_id, run_id=run_id):
+                    await repo.mark_item(
+                        tenant_id=tenant_id,
+                        run_id=run_id,
+                        media_id=item.media_id,
+                        status=DescribeItemStatus.SKIPPED,
+                    )
+                await session.commit()
+        except Exception:  # noqa: BLE001 - an exception raised here would escape
+            # run_describe_job entirely (the sibling fatal handler cannot catch
+            # it), stranding the run non-terminal. Fall back to the terminal
+            # writer, which preserves a derived CANCELLED.
+            logger.exception("failed to finalize cancelled run run_id=%s", run_id)
+            try:
+                async with session_factory() as session:
+                    await set_tenant_context(session, tenant_id)
+                    await DescribeRunRepository(session).mark_run_failed(
+                        tenant_id=tenant_id, run_id=run_id, error_message="cancel finalization failed"
+                    )
+                    await session.commit()
+            except Exception:  # noqa: BLE001 - best-effort terminal write
+                logger.exception("failed to mark cancelled run terminal run_id=%s", run_id)
     except Exception as fatal:  # noqa: BLE001 - fatal loop error must surface as a FAILED run
         logger.exception("describe run fatal error run_id=%s", run_id)
         try:

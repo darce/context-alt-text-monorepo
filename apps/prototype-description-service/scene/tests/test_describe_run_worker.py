@@ -10,6 +10,8 @@ import uuid
 from contextlib import contextmanager, suppress
 from typing import cast
 
+import httpx
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy import Table
@@ -26,6 +28,13 @@ from scene.domain.describe_run import DescribeItemStatus, DescribeRunStatus
 from scene.interface_adapters.http.router import router as scene_router
 
 TENANT_ID = uuid.UUID("00000000-0000-0000-0000-0000000000cc")
+
+
+@pytest.fixture(autouse=True)
+def _isolate_description_env(monkeypatch):
+    """Seeded-path tests must not inherit a deployment shell's GPU env (S1A-09)."""
+    for var in ("ACX_DESCRIPTION_ADAPTER", "ACX_GPU_ENDPOINT_URL", "ACX_GPU_WARMUP_TIMEOUT_SECONDS"):
+        monkeypatch.delenv(var, raising=False)
 
 
 class _Auth:
@@ -482,6 +491,559 @@ def test_worker_fatal_error_marks_run_failed(monkeypatch):
         assert run is not None
         assert run.status == DescribeRunStatus.FAILED
         assert run.error_message
+        await engine.dispose()
+        os.unlink(path)
+
+    asyncio.run(body())
+
+
+def test_gpu_health_poll_waits_through_boot_responses(monkeypatch):
+    import scene.application.describe_run_worker as wmod
+
+    statuses = iter((503, 503, 200))
+    calls: list[tuple[str, dict[str, str]]] = []
+
+    class FakeAsyncClient:
+        def __init__(self, *, timeout):
+            assert timeout.connect == wmod._GPU_HEALTH_REQUEST_TIMEOUT_SECONDS
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_):
+            return None
+
+        async def get(self, url, *, headers):
+            calls.append((url, headers))
+            return httpx.Response(next(statuses))
+
+    monkeypatch.setattr(wmod.httpx, "AsyncClient", FakeAsyncClient)
+    monkeypatch.setattr(wmod, "_GPU_HEALTH_POLL_INTERVAL_SECONDS", 0)
+
+    asyncio.run(
+        wmod._wait_for_gpu_ready(
+            endpoint_url="http://gpu.internal:8000",
+            api_key="test-key",
+            timeout_seconds=10,
+        )
+    )
+
+    assert calls == [
+        ("http://gpu.internal:8000/health", {"Authorization": "Bearer test-key"}),
+        ("http://gpu.internal:8000/health", {"Authorization": "Bearer test-key"}),
+        ("http://gpu.internal:8000/health", {"Authorization": "Bearer test-key"}),
+    ]
+
+
+def test_gpu_health_poll_times_out_when_endpoint_stays_unready(monkeypatch):
+    import scene.application.describe_run_worker as wmod
+
+    class FakeAsyncClient:
+        def __init__(self, *, timeout):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_):
+            return None
+
+        async def get(self, url, *, headers):
+            return httpx.Response(503)
+
+    monkeypatch.setattr(wmod.httpx, "AsyncClient", FakeAsyncClient)
+
+    with pytest.raises(TimeoutError, match="did not become ready within 0s"):
+        asyncio.run(
+            wmod._wait_for_gpu_ready(
+                endpoint_url="http://gpu.internal:8000",
+                api_key=None,
+                timeout_seconds=0,
+            )
+        )
+
+
+def test_gpu_health_poll_bounds_a_hung_request_to_warmup_deadline(monkeypatch):
+    import scene.application.describe_run_worker as wmod
+
+    cancelled = False
+
+    class FakeAsyncClient:
+        def __init__(self, *, timeout):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_):
+            return None
+
+        async def get(self, url, *, headers):
+            nonlocal cancelled
+            try:
+                await asyncio.sleep(60)
+            except asyncio.CancelledError:
+                cancelled = True
+                raise
+
+    monkeypatch.setattr(wmod.httpx, "AsyncClient", FakeAsyncClient)
+
+    with pytest.raises(TimeoutError, match="did not become ready"):
+        asyncio.run(
+            wmod._wait_for_gpu_ready(
+                endpoint_url="http://gpu.internal:8000",
+                api_key=None,
+                timeout_seconds=0.01,
+            )
+        )
+    assert cancelled
+
+
+def test_gpu_health_poll_stops_when_run_is_cancelled(monkeypatch):
+    import scene.application.describe_run_worker as wmod
+
+    class FakeAsyncClient:
+        def __init__(self, *, timeout):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_):
+            return None
+
+        async def get(self, url, *, headers):
+            raise AssertionError("cancel must be checked before the health request")
+
+    async def cancelled():
+        return True
+
+    monkeypatch.setattr(wmod.httpx, "AsyncClient", FakeAsyncClient)
+    with pytest.raises(wmod._RunCancelledError):
+        asyncio.run(
+            wmod._wait_for_gpu_ready(
+                endpoint_url="http://gpu.internal:8000",
+                api_key=None,
+                timeout_seconds=10,
+                cancel_requested=cancelled,
+            )
+        )
+
+
+def test_gpu_warmup_gate_is_adapter_scoped_and_uses_configured_timeout(monkeypatch):
+    import scene.application.describe_run_worker as wmod
+    from scene.config.settings import DescriptionSettings
+    from scene.domain.description import DescriptionAdapterKind
+
+    monkeypatch.setenv("ACX_GPU_ENDPOINT_URL", "http://localhost:8000/")
+    monkeypatch.setenv("ACX_GPU_WARMUP_TIMEOUT_SECONDS", "17.5")
+    monkeypatch.setenv("ACX_DESCRIPTION_ADAPTER", "seeded")
+    settings = DescriptionSettings()
+    assert wmod.gpu_run_policy(adapter_kind=DescriptionAdapterKind.SEEDED, settings=settings) is None
+
+    monkeypatch.setenv("ACX_DESCRIPTION_ADAPTER", "gpu_qwen30b")
+    policy = wmod.gpu_run_policy(adapter_kind=DescriptionAdapterKind.GPU, settings=DescriptionSettings())
+    assert policy is not None
+    assert policy.endpoint_url == "http://localhost:8000"
+    assert policy.warmup_timeout_seconds == 17.5
+
+
+def test_transient_classifier_uses_wrapped_http_status_and_rejects_permanent_faults():
+    import scene.application.describe_run_worker as wmod
+
+    request = httpx.Request("POST", "http://gpu.internal/v1/chat/completions")
+
+    def wrapped_status(status_code: int) -> RuntimeError:
+        response = httpx.Response(status_code, request=request)
+        status_error = httpx.HTTPStatusError("endpoint response", request=request, response=response)
+        wrapper = RuntimeError("GPU endpoint call failed")
+        wrapper.__cause__ = status_error
+        return wrapper
+
+    assert wmod._is_transient_describe_error(wrapped_status(503))
+    assert wmod._is_transient_describe_error(httpx.ConnectError("cold boot", request=request))
+    assert not wmod._is_transient_describe_error(wrapped_status(400))
+    assert not wmod._is_transient_describe_error(ValueError("invalid image"))
+
+
+def test_gpu_worker_waits_for_readiness_then_retries_transient_item(monkeypatch):
+    import scene.application.describe_run_worker as wmod
+    from scene.config.settings import DescriptionSettings
+    from scene.domain.description import DescriptionAdapterKind
+
+    monkeypatch.setenv("ACX_DESCRIPTION_ADAPTER", "gpu_qwen30b")
+    monkeypatch.setenv("ACX_GPU_ENDPOINT_URL", "http://localhost:8000")
+    events: list[str] = []
+
+    async def ready(**kwargs):
+        assert kwargs["endpoint_url"] == "http://localhost:8000"
+        assert kwargs["timeout_seconds"] == wmod._DEFAULT_GPU_WARMUP_TIMEOUT_SECONDS
+        events.append("ready")
+
+    monkeypatch.setattr(wmod, "_wait_for_gpu_ready", ready)
+    monkeypatch.setattr(wmod, "_GPU_ITEM_RETRY_BASE_DELAY_SECONDS", 0)
+
+    async def body():
+        path, url = await _make_db_async()
+        engine = create_async_engine(url)
+        sf = async_sessionmaker(engine, expire_on_commit=False)
+        async with sf() as s:
+            run_id = await DescribeRunRepository(s).create_run(
+                tenant_id=TENANT_ID,
+                media_ids=[1],
+                images={1: (b"rawbytes", "image/png")},
+            )
+            await s.commit()
+
+        calls = 0
+
+        async def describe_one(media_id, image_bytes, content_type):
+            nonlocal calls
+            calls += 1
+            events.append(f"describe-{calls}")
+            if calls < 3:
+                raise httpx.ConnectError("GPU still accepting connections")
+            return DescribeItemOutcome(alt_text_draft="recovered")
+
+        await run_describe_job(
+            tenant_id=TENANT_ID,
+            run_id=run_id,
+            session_factory=sf,
+            describe_one=describe_one,
+            timeout_seconds=0.5,
+            gpu_policy=wmod.gpu_run_policy(
+                adapter_kind=DescriptionAdapterKind.GPU,
+                settings=DescriptionSettings(),
+            ),
+        )
+
+        async with sf() as s:
+            repo = DescribeRunRepository(s)
+            run = await repo.get_run(tenant_id=TENANT_ID, run_id=run_id)
+            items = await repo.list_run_items(tenant_id=TENANT_ID, run_id=run_id)
+
+        assert run is not None
+        assert run.status == DescribeRunStatus.COMPLETED
+        assert items[0].status == DescribeItemStatus.COMPLETED
+        assert items[0].alt_text_draft == "recovered"
+        assert calls == wmod._GPU_ITEM_MAX_ATTEMPTS
+        await engine.dispose()
+        os.unlink(path)
+
+    asyncio.run(body())
+    assert events == ["ready", "describe-1", "describe-2", "describe-3"]
+
+
+def test_gpu_worker_opens_run_local_breaker_after_exhausted_retries(monkeypatch):
+    import scene.application.describe_run_worker as wmod
+    from scene.config.settings import DescriptionSettings
+    from scene.domain.description import DescriptionAdapterKind
+
+    monkeypatch.setenv("ACX_GPU_ENDPOINT_URL", "http://localhost:8000")
+    monkeypatch.setattr(wmod, "_GPU_ITEM_RETRY_BASE_DELAY_SECONDS", 0)
+
+    async def ready(**kwargs):
+        return None
+
+    monkeypatch.setattr(wmod, "_wait_for_gpu_ready", ready)
+
+    async def body():
+        path, url = await _make_db_async()
+        engine = create_async_engine(url)
+        sf = async_sessionmaker(engine, expire_on_commit=False)
+        async with sf() as s:
+            run_id = await DescribeRunRepository(s).create_run(tenant_id=TENANT_ID, media_ids=[1, 2, 3])
+            await s.commit()
+
+        calls: list[int] = []
+
+        async def describe_one(media_id, image_bytes, content_type):
+            calls.append(media_id)
+            raise httpx.ConnectError("GPU disappeared")
+
+        await run_describe_job(
+            tenant_id=TENANT_ID,
+            run_id=run_id,
+            session_factory=sf,
+            describe_one=describe_one,
+            timeout_seconds=0.5,
+            gpu_policy=wmod.gpu_run_policy(
+                adapter_kind=DescriptionAdapterKind.GPU,
+                settings=DescriptionSettings(),
+            ),
+        )
+
+        async with sf() as s:
+            items = await DescribeRunRepository(s).list_run_items(tenant_id=TENANT_ID, run_id=run_id)
+
+        assert calls == [1] * wmod._GPU_ITEM_MAX_ATTEMPTS
+        assert [item.status for item in items] == [DescribeItemStatus.FAILED] * 3
+        assert "circuit open" in (items[1].last_error or "")
+        assert "circuit open" in (items[2].last_error or "")
+        await engine.dispose()
+        os.unlink(path)
+
+    asyncio.run(body())
+
+
+def test_gpu_item_retry_is_bounded_and_permanent_errors_are_not_retried(monkeypatch):
+    import scene.application.describe_run_worker as wmod
+
+    monkeypatch.setattr(wmod, "_GPU_ITEM_RETRY_BASE_DELAY_SECONDS", 0)
+
+    async def body():
+        transient_calls = 0
+
+        async def transient(*_):
+            nonlocal transient_calls
+            transient_calls += 1
+            raise httpx.ReadTimeout("temporary")
+
+        with pytest.raises(httpx.ReadTimeout):
+            await wmod._describe_with_transient_retry(
+                describe_one=transient,
+                media_id=1,
+                image_bytes=b"x",
+                content_type="image/png",
+                timeout_seconds=1,
+                retry_transient=True,
+            )
+        assert transient_calls == wmod._GPU_ITEM_MAX_ATTEMPTS
+
+        permanent_calls = 0
+
+        async def permanent(*_):
+            nonlocal permanent_calls
+            permanent_calls += 1
+            raise ValueError("invalid image")
+
+        with pytest.raises(ValueError, match="invalid image"):
+            await wmod._describe_with_transient_retry(
+                describe_one=permanent,
+                media_id=2,
+                image_bytes=b"x",
+                content_type="image/png",
+                timeout_seconds=1,
+                retry_transient=True,
+            )
+        assert permanent_calls == 1
+
+    asyncio.run(body())
+
+
+def test_transient_classifier_rejects_local_wait_for_timeout_and_accepts_chained():
+    import scene.application.describe_run_worker as wmod
+
+    assert not wmod._is_transient_describe_error(TimeoutError("local wait_for budget expired"))
+    request = httpx.Request("POST", "http://gpu.internal/v1/chat/completions")
+    chained = TimeoutError("adapter timeout")
+    chained.__cause__ = httpx.ReadTimeout("read timed out", request=request)
+    assert wmod._is_transient_describe_error(chained)
+
+
+def test_seeded_worker_performs_exactly_one_attempt_on_transient_error():
+    """S1A-05: retry eligibility belongs to the GPU policy; a seeded run must
+    not multiply a transient fault into extra attempts."""
+
+    async def body():
+        path, url = await _make_db_async()
+        engine = create_async_engine(url)
+        sf = async_sessionmaker(engine, expire_on_commit=False)
+        async with sf() as s:
+            run_id = await DescribeRunRepository(s).create_run(
+                tenant_id=TENANT_ID, media_ids=[1], images={1: (b"x", "image/png")}
+            )
+            await s.commit()
+
+        calls = 0
+        request = httpx.Request("POST", "http://gpu.internal/v1/chat/completions")
+
+        async def describe_one(media_id, image_bytes, content_type):
+            nonlocal calls
+            calls += 1
+            raise httpx.ConnectError("transient endpoint fault", request=request)
+
+        await run_describe_job(
+            tenant_id=TENANT_ID, run_id=run_id, session_factory=sf, describe_one=describe_one, timeout_seconds=1.0
+        )
+        assert calls == 1
+
+        async with sf() as s:
+            repo = DescribeRunRepository(s)
+            items = await repo.list_run_items(tenant_id=TENANT_ID, run_id=run_id)
+        assert [DescribeItemStatus(i.status) for i in items] == [DescribeItemStatus.FAILED]
+        await engine.dispose()
+        os.unlink(path)
+
+    asyncio.run(body())
+
+
+def test_warmup_timeout_marks_run_failed_and_reclaims_item_bytes(monkeypatch):
+    """S1A-06 + S1A-04: warmup expiry is a routine terminal path; it must leave
+    the run FAILED with a persisted message and no stranded QUEUED bytes."""
+    import scene.application.describe_run_worker as wmod
+
+    async def never_ready(**kwargs):
+        raise TimeoutError("GPU endpoint did not become ready within 0.01s (no health response)")
+
+    monkeypatch.setattr(wmod, "_wait_for_gpu_ready", never_ready)
+
+    async def body():
+        path, url = await _make_db_async()
+        engine = create_async_engine(url)
+        sf = async_sessionmaker(engine, expire_on_commit=False)
+        async with sf() as s:
+            run_id = await DescribeRunRepository(s).create_run(
+                tenant_id=TENANT_ID, media_ids=[1, 2], images={1: (b"a", "image/png"), 2: (b"b", "image/png")}
+            )
+            await s.commit()
+
+        async def describe_one(media_id, image_bytes, content_type):
+            raise AssertionError("describe must not run when warmup never succeeds")
+
+        policy = wmod.GpuRunPolicy(
+            endpoint_url="http://gpu.internal:8000", api_key=None, warmup_timeout_seconds=0.01
+        )
+        await run_describe_job(
+            tenant_id=TENANT_ID,
+            run_id=run_id,
+            session_factory=sf,
+            describe_one=describe_one,
+            timeout_seconds=1.0,
+            gpu_policy=policy,
+        )
+
+        async with sf() as s:
+            repo = DescribeRunRepository(s)
+            run = await repo.get_run(tenant_id=TENANT_ID, run_id=run_id)
+            items = await repo.list_run_items(tenant_id=TENANT_ID, run_id=run_id)
+        assert run is not None
+        assert run.status == DescribeRunStatus.FAILED
+        assert run.error_message and "ready" in run.error_message
+        for item in items:
+            assert DescribeItemStatus(item.status) == DescribeItemStatus.FAILED
+            assert item.image_bytes is None
+        await engine.dispose()
+        os.unlink(path)
+
+    asyncio.run(body())
+
+
+def test_mark_run_failed_preserves_terminal_cancelled():
+    """HARM-01: a cancel that already made the run terminal must not be
+    overwritten by a late fatal-path FAILED write."""
+
+    async def body():
+        path, url = await _make_db_async()
+        engine = create_async_engine(url)
+        sf = async_sessionmaker(engine, expire_on_commit=False)
+        async with sf() as s:
+            repo = DescribeRunRepository(s)
+            run_id = await repo.create_run(tenant_id=TENANT_ID, media_ids=[1], images={1: (b"x", "image/png")})
+            run = await repo.get_run(tenant_id=TENANT_ID, run_id=run_id)
+            assert run is not None
+            run.status = DescribeRunStatus.CANCELLED
+            await s.commit()
+
+        async with sf() as s:
+            changed = await DescribeRunRepository(s).mark_run_failed(
+                tenant_id=TENANT_ID, run_id=run_id, error_message="late fatal error"
+            )
+            await s.commit()
+        assert changed is False
+
+        async with sf() as s:
+            run = await DescribeRunRepository(s).get_run(tenant_id=TENANT_ID, run_id=run_id)
+        assert run is not None
+        assert run.status == DescribeRunStatus.CANCELLED
+        await engine.dispose()
+        os.unlink(path)
+
+    asyncio.run(body())
+
+
+def test_gpu_warmup_timeout_setting_fails_fast_on_invalid_values(monkeypatch):
+    """S1A-07/S1B-05: a typo'd or non-finite warmup timeout fails at settings
+    load, not as a per-run FAILED inside the worker."""
+    from scene.config.settings import DescriptionSettings
+
+    for bad in ("inf", "nan", "abc", "0", "-5", "999999"):
+        monkeypatch.setenv("ACX_GPU_WARMUP_TIMEOUT_SECONDS", bad)
+        with pytest.raises(ValueError):
+            DescriptionSettings()
+
+    monkeypatch.setenv("ACX_GPU_WARMUP_TIMEOUT_SECONDS", "17.5")
+    assert DescriptionSettings().gpu_warmup_timeout_seconds == 17.5
+
+
+def test_mark_run_failed_forces_failed_over_derived_completed_with_errors():
+    """Fatal path must not let the item recompute relabel a dead run as a
+    completed-with-errors run."""
+
+    async def body():
+        path, url = await _make_db_async()
+        engine = create_async_engine(url)
+        sf = async_sessionmaker(engine, expire_on_commit=False)
+        async with sf() as s:
+            repo = DescribeRunRepository(s)
+            run_id = await repo.create_run(
+                tenant_id=TENANT_ID, media_ids=[1, 2], images={1: (b"a", "image/png"), 2: (b"b", "image/png")}
+            )
+            await repo.mark_item(
+                tenant_id=TENANT_ID, run_id=run_id, media_id=1, status=DescribeItemStatus.COMPLETED
+            )
+            await s.commit()
+
+        async with sf() as s:
+            changed = await DescribeRunRepository(s).mark_run_failed(
+                tenant_id=TENANT_ID, run_id=run_id, error_message="worker died"
+            )
+            await s.commit()
+        assert changed is True
+
+        async with sf() as s:
+            repo = DescribeRunRepository(s)
+            run = await repo.get_run(tenant_id=TENANT_ID, run_id=run_id)
+            items = await repo.list_run_items(tenant_id=TENANT_ID, run_id=run_id)
+        assert run is not None
+        assert run.status == DescribeRunStatus.FAILED
+        assert run.error_message == "worker died"
+        by_media = {i.media_id: DescribeItemStatus(i.status) for i in items}
+        assert by_media == {1: DescribeItemStatus.COMPLETED, 2: DescribeItemStatus.FAILED}
+        await engine.dispose()
+        os.unlink(path)
+
+    asyncio.run(body())
+
+
+def test_mark_run_failed_preserves_cancel_derived_mid_loop():
+    """cancel_requested set before the fatal write: the item recompute derives
+    CANCELLED and the fatal path must leave it (and error_message) untouched."""
+
+    async def body():
+        path, url = await _make_db_async()
+        engine = create_async_engine(url)
+        sf = async_sessionmaker(engine, expire_on_commit=False)
+        async with sf() as s:
+            repo = DescribeRunRepository(s)
+            run_id = await repo.create_run(tenant_id=TENANT_ID, media_ids=[1], images={1: (b"x", "image/png")})
+            run = await repo.get_run(tenant_id=TENANT_ID, run_id=run_id)
+            assert run is not None
+            run.cancel_requested = True
+            await s.commit()
+
+        async with sf() as s:
+            changed = await DescribeRunRepository(s).mark_run_failed(
+                tenant_id=TENANT_ID, run_id=run_id, error_message="late fatal"
+            )
+            await s.commit()
+
+        async with sf() as s:
+            run = await DescribeRunRepository(s).get_run(tenant_id=TENANT_ID, run_id=run_id)
+        assert run is not None
+        assert run.status == DescribeRunStatus.CANCELLED
+        assert changed is False
+        assert run.error_message != "late fatal"
         await engine.dispose()
         os.unlink(path)
 

@@ -1,9 +1,12 @@
 import { ChangeEvent, useEffect, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import * as Select from '@radix-ui/react-select';
 import { AlertTriangle, Check, CheckCircle2, ChevronDown, Clock, Loader2, XCircle } from 'lucide-react';
 import { __, _n, sprintf } from '@wordpress/i18n';
 import type { WorkbenchMediaItem } from '../../hooks/useWorkbenchMedia';
 import type { WorkbenchMediaStatus } from '../../api/workbenchMediaApi';
+import { fetchSettings, type SettingsResponse } from '../../api/settingsApi';
+import { toSettings } from '../../navigation/appLinks';
 import { MediaSelectionTableBody } from './MediaSelectionTableBody';
 import { MediaAnalyzeCta } from './MediaAnalyzeCta';
 import { BulkDescribeReviewLink } from './BulkDescribeReviewLink';
@@ -61,6 +64,13 @@ export const MediaSelection = ({ reviewActive = false }: MediaSelectionProps): R
   const identityQuery = mediaQuery.identitiesQuery;
   const detailQuery = mediaQuery.detailQuery;
   const bulkDescribe = useBulkDescribe();
+  // L1 settings query: share SettingsPage's ['settings'] key so a save updates this footer.
+  const settingsQuery = useQuery<SettingsResponse>({
+    queryKey: ['settings'],
+    queryFn: fetchSettings,
+    retry: false,
+  });
+  const recognitionEnabled = settingsQuery.data?.recognition_enabled;
   const selectedMediaIds = Object.entries(selection)
     .filter(([, selected]) => selected)
     .map(([id]) => Number(id))
@@ -169,6 +179,7 @@ export const MediaSelection = ({ reviewActive = false }: MediaSelectionProps): R
             remoteActionTitle={remoteGate.title}
             remoteActionAriaDisabled={remoteGate['aria-disabled']}
             accentPrimary={footerCta.accentOwner === FOOTER_ACCENT_OWNER.DESCRIBE}
+            recognitionEnabled={recognitionEnabled}
             onSubmit={() => {
               if (offline) {
                 return;
@@ -354,6 +365,13 @@ export const MediaSelectionToolbar = ({
 
 /** aria-describedby target for the §7 offline reason on the describe submit CTA. */
 const DESCRIBE_OFFLINE_REASON_ID = 'acx-describe-offline-reason';
+/** aria-describedby target for the HAI-05 recognition disclosure under the primary. */
+const DESCRIBE_RECOGNITION_DISCLOSURE_ID = 'acx-describe-recognition-disclosure';
+
+const joinDescribedBy = (...ids: (string | undefined)[]): string | undefined => {
+  const joined = ids.filter((id): id is string => Boolean(id)).join(' ');
+  return joined === '' ? undefined : joined;
+};
 
 interface BulkDescribeCtaProps {
   selectedCount: number;
@@ -372,6 +390,11 @@ interface BulkDescribeCtaProps {
   remoteActionAriaDisabled?: true;
   /** §7 accent ownership: mark the describe surface as the single accent primary. */
   accentPrimary?: boolean;
+  /**
+   * GET /acx/v1/settings `recognition_enabled`. `undefined` while loading/unknown
+   * draws the OFF wording without a Settings link (RLSE-04).
+   */
+  recognitionEnabled?: boolean;
   onSubmit: () => void;
   onCancel: () => void;
   onDismiss: () => void;
@@ -391,6 +414,7 @@ export const BulkDescribeCta = ({
   remoteActionTitle,
   remoteActionAriaDisabled,
   accentPrimary = false,
+  recognitionEnabled,
   onSubmit,
   onCancel,
   onDismiss,
@@ -401,6 +425,11 @@ export const BulkDescribeCta = ({
   // new run can start from the terminal state (FE-01, rg-003).
   const canDismiss = isPanelVisible && (progress.isTerminal || progress.isError);
   const offlineGated = Boolean(remoteActionAriaDisabled);
+  const recognitionKnownOn = recognitionEnabled === true;
+  const describeDescribedBy = joinDescribedBy(
+    DESCRIBE_RECOGNITION_DISCLOSURE_ID,
+    offlineGated ? DESCRIBE_OFFLINE_REASON_ID : undefined,
+  );
 
   return (
     <div className="acx-media-selection__bulk-describe">
@@ -415,7 +444,7 @@ export const BulkDescribeCta = ({
           // onClick guard; zero-selection/submitting/running still disable when online.
           disabled={!offlineGated && (selectedCount === 0 || isSubmitting || isRunning)}
           aria-disabled={remoteActionAriaDisabled}
-          aria-describedby={offlineGated ? DESCRIBE_OFFLINE_REASON_ID : undefined}
+          aria-describedby={describeDescribedBy}
           title={remoteActionTitle}
           onClick={() => {
             // BR-76: presentational offline guard mirrors MediaAnalyzeCta — activation is
@@ -454,6 +483,19 @@ export const BulkDescribeCta = ({
           appliedCount={progress.run ? progress.run.completed : 0}
         />
       </div>
+      <p id={DESCRIBE_RECOGNITION_DISCLOSURE_ID} className="acx-media-selection__bulk-describe-disclosure">
+        {recognitionKnownOn ? (
+          <>
+            {sprintf(
+              __('Identifies people first (AI) · ~%d credits · Turn off in', 'alt-context'),
+              selectedCount,
+            )}{' '}
+            <a href={toSettings()}>{__('Settings', 'alt-context')}</a>
+          </>
+        ) : (
+          sprintf(__('People are not identified (recognition off) · ~%d credits', 'alt-context'), selectedCount)
+        )}
+      </p>
       {isPanelVisible ? <BulkDescribeProgress progress={progress} onRetry={onRetryPolling} /> : null}
       {errorMessage ? (
         // [A11Y-21][A11Y-24][sr-004]: error is text + role=alert, never colour alone.

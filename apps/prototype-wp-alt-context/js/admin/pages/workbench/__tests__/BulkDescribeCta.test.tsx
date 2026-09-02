@@ -99,11 +99,15 @@ describe('BulkDescribeCta state matrix (A11Y-24)', () => {
     expect(button).not.toBeDisabled();
     expect(button).toHaveAttribute('aria-disabled', 'true');
     expect(button).toHaveAttribute('title', 'Unavailable while the recognition service is offline');
-    const reasonId = button.getAttribute('aria-describedby');
-    expect(reasonId).toBeTruthy();
-    expect(document.getElementById(reasonId ?? '')).toHaveTextContent(
-      'Unavailable while the recognition service is offline',
-    );
+    const reasonIds = (button.getAttribute('aria-describedby') ?? '').split(/\s+/).filter(Boolean);
+    expect(reasonIds.length).toBeGreaterThan(0);
+    expect(
+      reasonIds.some(
+        (id) =>
+          document.getElementById(id)?.textContent ===
+          'Unavailable while the recognition service is offline',
+      ),
+    ).toBe(true);
     // The onSubmit prop itself guards offline in the container (if (offline) return).
   });
 
@@ -138,11 +142,15 @@ describe('BulkDescribeCta state matrix (A11Y-24)', () => {
     // Airplane-mode reload at zero selection: focusable (not HTML disabled), reason reachable.
     expect(button).not.toBeDisabled();
     expect(button).toHaveAttribute('aria-disabled', 'true');
-    const reasonId = button.getAttribute('aria-describedby');
-    expect(reasonId).toBeTruthy();
-    expect(document.getElementById(reasonId ?? '')).toHaveTextContent(
-      'Unavailable while the recognition service is offline',
-    );
+    const reasonIds = (button.getAttribute('aria-describedby') ?? '').split(/\s+/).filter(Boolean);
+    expect(reasonIds.length).toBeGreaterThan(0);
+    expect(
+      reasonIds.some(
+        (id) =>
+          document.getElementById(id)?.textContent ===
+          'Unavailable while the recognition service is offline',
+      ),
+    ).toBe(true);
   });
 
   it('does not fire onSubmit when clicked while offline-gated (§7 / BR-76)', async () => {

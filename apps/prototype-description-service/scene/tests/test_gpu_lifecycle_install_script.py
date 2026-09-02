@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import yaml
+
 _INSTALLER_REL = Path("scripts/deploy/gpu-lifecycle-install.sh")
 _CLOUD_INIT_REL = Path("infra/oci/cloud-init.yaml")
 
@@ -32,6 +34,55 @@ def _non_comment_command_lines(text: str) -> list[str]:
             continue
         commands.append(stripped)
     return commands
+
+
+def _flatten_runcmd(runcmd: object) -> list[str]:
+    """Flatten cloud-init runcmd into command tokens, splitting compound `&&`."""
+    if not isinstance(runcmd, list):
+        return []
+    tokens: list[str] = []
+    for item in runcmd:
+        parts: list[str]
+        if isinstance(item, str):
+            parts = item.split("&&")
+        elif isinstance(item, list):
+            parts = [" ".join(str(x) for x in item)]
+        else:
+            continue
+        for part in parts:
+            token = " ".join(part.split())
+            if token:
+                tokens.append(token)
+    return tokens
+
+
+def _argv(token: str) -> list[str]:
+    return token.split()
+
+
+def _is_chown_of_run_acx(token: str) -> bool:
+    argv = _argv(token)
+    if not argv or argv[0] != "chown":
+        return False
+    return any(arg.rstrip("/") == "/run/acx" for arg in argv[1:])
+
+
+def _chown_owner(token: str) -> str | None:
+    argv = _argv(token)
+    if not argv or argv[0] != "chown":
+        return None
+    rest = [arg for arg in argv[1:] if not arg.startswith("-")]
+    return rest[0] if rest else None
+
+
+def _removes_or_recreates_run_acx(token: str) -> bool:
+    argv = _argv(token)
+    if not argv or argv[0] not in {"rm", "rmdir", "mkdir"}:
+        return False
+    return any(
+        arg == "/run/acx" or arg.startswith("/run/acx/") or arg.rstrip("/") == "/run/acx"
+        for arg in argv[1:]
+    )
 
 
 _ROOT = _repo_root()
@@ -64,15 +115,79 @@ def test_gpu_lifecycle_install_owns_run_acx_as_container_uid() -> None:
 
 def test_cloud_init_owns_run_acx_as_container_uid() -> None:
     """HARM-F2: cloud-init must match installer ownership of /run/acx."""
-    text = CLOUD_INIT.read_text(encoding="utf-8")
-    commands = _non_comment_command_lines(text)
+    parsed = yaml.safe_load(CLOUD_INIT.read_text(encoding="utf-8"))
+    assert isinstance(parsed, dict), "cloud-init.yaml must parse to a mapping"
 
-    assert any("d /run/acx 0775 10001 10001 -" in line for line in commands), (
-        "cloud-init must contain tmpfiles.d line 'd /run/acx 0775 10001 10001 -'"
+    write_files = parsed.get("write_files")
+    assert isinstance(write_files, list), "cloud-init.yaml must define write_files"
+    tmpfiles_entries = [
+        item
+        for item in write_files
+        if isinstance(item, dict) and item.get("path") == "/etc/tmpfiles.d/acx-gpu.conf"
+    ]
+    assert len(tmpfiles_entries) == 1, (
+        "exactly one write_files entry must have path '/etc/tmpfiles.d/acx-gpu.conf'; "
+        f"found {len(tmpfiles_entries)}"
     )
-    assert any("chown 10001:10001 /run/acx" in line for line in commands), (
-        "cloud-init must include 'chown 10001:10001 /run/acx'"
+    tmpfiles_content = tmpfiles_entries[0].get("content")
+    assert isinstance(tmpfiles_content, str), (
+        "write_files entry /etc/tmpfiles.d/acx-gpu.conf must have string content"
     )
-    assert any("chmod 0775 /run/acx" in line for line in commands), (
-        "cloud-init must include 'chmod 0775 /run/acx'"
+    tmpfiles_lines = [line.strip() for line in tmpfiles_content.splitlines() if line.strip()]
+    assert "d /run/acx 0775 10001 10001 -" in tmpfiles_lines, (
+        "tmpfiles.d content must contain the full line 'd /run/acx 0775 10001 10001 -'"
+    )
+
+    tokens = _flatten_runcmd(parsed.get("runcmd"))
+    mkdir_cmd = "mkdir -p /run/acx /etc/acx"
+    chown_cmd = "chown 10001:10001 /run/acx"
+    chmod_cmd = "chmod 0775 /run/acx"
+    assert mkdir_cmd in tokens, (
+        "runcmd must include the full command token 'mkdir -p /run/acx /etc/acx'"
+    )
+    mkdir_idx = tokens.index(mkdir_cmd)
+    assert chown_cmd in tokens, (
+        "runcmd must include the full command token 'chown 10001:10001 /run/acx'"
+    )
+    assert chmod_cmd in tokens, (
+        "runcmd must include the full command token 'chmod 0775 /run/acx'"
+    )
+    chown_idx = tokens.index(chown_cmd)
+    chmod_idx = tokens.index(chmod_cmd)
+    assert chown_idx > mkdir_idx, (
+        f"{chown_cmd!r} must appear after {mkdir_cmd!r} "
+        f"(indices {chown_idx} <= {mkdir_idx})"
+    )
+    assert chmod_idx > mkdir_idx, (
+        f"{chmod_cmd!r} must appear after {mkdir_cmd!r} "
+        f"(indices {chmod_idx} <= {mkdir_idx})"
+    )
+
+    root_owned = [tok for tok in tokens if "chown root:10001" in tok]
+    assert root_owned == [], (
+        "runcmd must not contain 'chown root:10001'; "
+        f"found {root_owned!r}"
+    )
+    run_acx_chowns = [
+        (idx, tok) for idx, tok in enumerate(tokens) if _is_chown_of_run_acx(tok)
+    ]
+    assert run_acx_chowns, "runcmd must include a chown touching /run/acx"
+    for idx, tok in run_acx_chowns:
+        owner = _chown_owner(tok)
+        assert owner == "10001:10001", (
+            "chown on /run/acx must use owner 10001:10001, not "
+            f"{owner!r} in {tok!r} (index {idx})"
+        )
+    last_chown_idx, last_chown = run_acx_chowns[-1]
+    assert last_chown == chown_cmd, (
+        "the last chown touching /run/acx must be "
+        f"{chown_cmd!r}; got {last_chown!r} at index {last_chown_idx}"
+    )
+
+    later_destroy = [
+        tok for tok in tokens[chown_idx + 1 :] if _removes_or_recreates_run_acx(tok)
+    ]
+    assert later_destroy == [], (
+        "runcmd must not remove or recreate /run/acx after "
+        f"{chown_cmd!r}; found {later_destroy!r}"
     )

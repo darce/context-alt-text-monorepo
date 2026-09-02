@@ -37,7 +37,6 @@ import {
 } from '../identity-clusters/personCommitCopy';
 import { ReviewQueue } from '../identity-clusters';
 import { REVIEW_QUEUE_DRAIN_MESSAGE } from '../identity-clusters/reviewQueueDriver';
-import { MediaAnalyzeCta } from '../MediaAnalyzeCta';
 import { BulkDescribeCta } from '../MediaSelection';
 import { ACCENT_PRIMARY_ATTR, FOOTER_ACCENT_OWNER, selectMediaFooterCtaState } from '../mediaFooterCtaState';
 
@@ -51,8 +50,8 @@ const ACCENT_PRIMARY_SELECTOR = `[${ACCENT_PRIMARY_ATTR}]`;
  * The invariant: exactly ONE element carrying `data-acx-accent-primary` (and the
  * accent chrome) is present in the rendered review viewport. This test MOUNTS the real
  * reconciled viewport — the real ReviewQueue (which places the card/bulk marker and
- * reports whether the queue owns the accent) + the real footer CTAs (MediaAnalyzeCta /
- * BulkDescribeCta) — wired by the real `selectMediaFooterCtaState` reconciliation, then
+ * reports whether the queue owns the accent) + the real footer Describe CTA
+ * (BulkDescribeCta) — wired by the real `selectMediaFooterCtaState` reconciliation, then
  * counts `[data-acx-accent-primary]` in the DOM. It is NOT arithmetic over the
  * selector's own output: a second accent, or a dropped one, is caught (see the "guard"
  * describe below, which deliberately mis-wires the harness). The cases below cover the
@@ -94,20 +93,8 @@ vi.mock('../../../api/rosterApi', () => ({
   listRosterEntries: vi.fn().mockResolvedValue([]),
 }));
 
-// Footer CTA leaf hooks (MediaAnalyzeCta). ReviewQueue's tree does NOT use these,
-// so mocking them cannot perturb the queue (ReviewQueue.test mounts the real queue
-// with only QueryClient + MergeSurvivor providers).
-vi.mock('../JobPipelineContext', () => ({
-  useJobPipeline: () => ({ scanRun: { isScanning: false, progress: null }, scan: vi.fn() }),
-}));
-vi.mock('../WorkbenchMediaContext', () => ({
-  useWorkbenchMediaContext: () => ({ selection: { selectedMedia: [] } }),
-}));
 vi.mock('../../../hooks/useSyncOffline', () => ({
   useSyncOffline: () => false,
-}));
-vi.mock('../Panels', () => ({
-  isClusteringActive: () => false,
 }));
 
 vi.mock('../BulkDescribeReviewLink', () => ({
@@ -210,7 +197,6 @@ const ReconciledViewport = ({
           onCardPrimaryPresenceChange={setCardPrimaryPresent}
         />
       )}
-      <MediaAnalyzeCta accentPrimary={footerCta.accentOwner === FOOTER_ACCENT_OWNER.ANALYZE} />
       {/*
         S6-01: couple the describe CTA's isRunning to the SAME describeRunning signal that
         drives footer accent ownership — the production-reachable config. A describe run in
@@ -298,9 +284,6 @@ describe('§7 single-accent-primary DOM invariant (Slice 8 / BR-72)', () => {
     expect(markerCount(container)).toBe(1);
     const marked = container.querySelector(ACCENT_PRIMARY_SELECTOR);
     expect(marked).toBe(screen.getByRole('button', { name: 'Describe 2 selected' }));
-    expect(screen.getByRole('button', { name: 'Analyze selected media' })).not.toHaveAttribute(
-      ACCENT_PRIMARY_ATTR,
-    );
   });
 
   it('describe-in-flight: the disabled describe submit is the single accent primary', async () => {
@@ -328,10 +311,7 @@ describe('§7 single-accent-primary DOM invariant (Slice 8 / BR-72)', () => {
     const marked = container.querySelector(ACCENT_PRIMARY_SELECTOR);
     expect(marked).toBe(accept);
     expect(accept.className).toContain('acx-accent-primary-action');
-    // Footer CTAs carry no marker while the card owns the accent.
-    expect(screen.getByRole('button', { name: 'Analyze selected media' })).not.toHaveAttribute(
-      ACCENT_PRIMARY_ATTR,
-    );
+    // Footer CTA carries no marker while the card owns the accent.
     expect(screen.getByRole('button', { name: 'Describe 2 selected' })).not.toHaveAttribute(
       ACCENT_PRIMARY_ATTR,
     );
@@ -339,7 +319,7 @@ describe('§7 single-accent-primary DOM invariant (Slice 8 / BR-72)', () => {
 
   it('chip-empty (findings exist, filter yields no card): footer Describe is the single accent primary', async () => {
     // Assignment data present, but the MERGE filter yields an empty card view → no
-    // card primary on screen → footer keeps its Analyze primary (BR-75).
+    // card primary on screen → footer keeps its Describe primary (BR-75).
     oneAssignment();
     const { container } = renderViewport({ initialKind: 'merge' });
 
@@ -427,7 +407,7 @@ describe('§7 single-accent-primary DOM invariant (Slice 8 / BR-72)', () => {
 
     // Commit succeeds → the card renders a markerless success surface. CLUSTER lingers in
     // topClustersById until the async refetch, so the footer must re-own the accent — one
-    // marker, on the footer Analyze (BR-81: no card marker ⇒ presence false ⇒ footer owns).
+    // marker, on the footer Describe (BR-81: no card marker ⇒ presence false ⇒ footer owns).
     await user.click(confirm);
     await screen.findByRole('link', { name: VIEW_IN_ROSTER_COPY });
 
@@ -459,7 +439,7 @@ describe('§7 single-accent-primary DOM invariant (Slice 8 / BR-72)', () => {
     expect(bulkCommit).toHaveAttribute(ACCENT_PRIMARY_ATTR);
     expect(bulkCommit.className).toContain('acx-accent-primary-action');
     // Footer stays demoted — the queue still owns the accent, now via the bulk commit.
-    expect(screen.getByRole('button', { name: 'Analyze selected media' })).not.toHaveAttribute(
+    expect(screen.getByRole('button', { name: 'Describe 2 selected' })).not.toHaveAttribute(
       ACCENT_PRIMARY_ATTR,
     );
   });
@@ -528,7 +508,7 @@ describe('§7 single-accent-primary DOM invariant (Slice 8 / BR-72)', () => {
 
   it('panel open (queue unmounted, panels carry no marker): the footer keeps the single accent primary (BR-83)', async () => {
     // A label/review panel replaces the queue. With the queue unmounted no card/bulk
-    // marker is on screen, so the footer's state-selected Analyze is the single primary.
+    // marker is on screen, so the footer's state-selected Describe is the single primary.
     emptyQueues();
     const { container } = renderViewport({ panelOpen: true });
 
@@ -581,7 +561,7 @@ describe('§7 single-accent-primary DOM invariant — discrimination guard (BR-7
 
   it('mis-wired footer that ignores card presence → TWO accents (a second accent is detectable)', async () => {
     oneAssignment();
-    // forceReviewActive=false while a card renders → footer stays Analyze-primary AND
+    // forceReviewActive=false while a card renders → footer stays Describe-primary AND
     // the card is marked → the DOM count is 2, which `=== 1` would reject.
     const { container } = renderViewport({ forceReviewActive: false });
 

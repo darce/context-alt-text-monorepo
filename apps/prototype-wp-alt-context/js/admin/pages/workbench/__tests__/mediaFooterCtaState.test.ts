@@ -10,25 +10,24 @@ import { deriveReviewSurfaceActive, selectMediaFooterCtaState } from '../mediaFo
  * `--acx-color-accent-soft` selection/focus tints are exempt from that count.
  */
 describe('selectMediaFooterCtaState (§7)', () => {
-  it('select state: Describe is the single accent primary, Analyze secondary', () => {
+  it('select state: Describe is the single accent primary', () => {
     const state = selectMediaFooterCtaState({ reviewActive: false, describeRunning: false });
-    expect(state).toEqual({ accentOwner: 'describe', analyzeVariant: 'secondary', describeVariant: 'primary' });
+    expect(state).toEqual({ accentOwner: 'describe', describeVariant: 'primary' });
   });
 
-  it('describe run in flight → its progress owns the surface; Analyze steps down', () => {
+  it('describe run in flight → its progress owns the surface', () => {
     const state = selectMediaFooterCtaState({ reviewActive: false, describeRunning: true });
-    expect(state).toEqual({ accentOwner: 'describe', analyzeVariant: 'secondary', describeVariant: 'secondary' });
+    expect(state).toEqual({ accentOwner: 'describe', describeVariant: 'secondary' });
   });
 
-  it('review active → the card primary owns the accent; both footer CTAs secondary', () => {
+  it('review active → the card primary owns the accent; footer CTA secondary', () => {
     const state = selectMediaFooterCtaState({ reviewActive: true, describeRunning: false });
-    expect(state).toEqual({ accentOwner: 'card', analyzeVariant: 'secondary', describeVariant: 'secondary' });
+    expect(state).toEqual({ accentOwner: 'card', describeVariant: 'secondary' });
   });
 
   it('review active outranks a describe run for accent ownership (no doubled accent)', () => {
     const state = selectMediaFooterCtaState({ reviewActive: true, describeRunning: true });
     expect(state.accentOwner).toBe('card');
-    expect(state.analyzeVariant).toBe('secondary');
     expect(state.describeVariant).toBe('secondary');
   });
 });

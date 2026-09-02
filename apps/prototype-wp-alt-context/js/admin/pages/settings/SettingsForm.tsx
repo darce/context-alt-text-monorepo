@@ -19,7 +19,6 @@ import {
   TenantPairing,
 } from './settingsConstants';
 import { healthStatusForService } from './healthStatus';
-import { RetentionSection } from '../RetentionPage';
 
 const URL_REJECTION_REASON_LABELS: Record<UrlRejectionReasonValue, string> = {
   [UrlRejectionReason.REJECTED_SCHEME]: __(
@@ -372,11 +371,6 @@ export const SettingsForm = ({
           )}
         </p>
       </div>
-
-      <section id="acx-settings-section-retention" className="acx-settings__retention">
-        <h3 className="acx-settings__section-title">{__('Data & retention', 'alt-context')}</h3>
-        <RetentionSection />
-      </section>
 
       <p className="submit">
         <button

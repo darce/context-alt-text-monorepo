@@ -185,7 +185,7 @@ describe('RetentionSection', () => {
   it('renders policy state and links to description-run history instead of a second audit home', () => {
     render(<RetentionSection />);
 
-    expect(screen.getByText('Data Retention')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Data & retention', level: 3 })).toBeInTheDocument();
     expect(screen.getByRole('radio', { name: /Dispose after confirmation/ })).toBeChecked();
     expect(screen.queryByText('Showing the five most recent audit events.')).not.toBeInTheDocument();
     expect(screen.queryByRole('heading', { name: 'Full audit log' })).not.toBeInTheDocument();

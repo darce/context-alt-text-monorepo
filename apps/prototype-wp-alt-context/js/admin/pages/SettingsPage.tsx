@@ -16,6 +16,7 @@ import { resetConfigCache } from '../api/config';
 import { queryKeys } from '../api/queryKeys';
 import { resolveWpErrorMessage } from '../api/wpErrorMessage';
 import { toDashboard } from '../navigation/appLinks';
+import { RetentionSection } from './RetentionPage';
 import { SettingsForm } from './settings/SettingsForm';
 import { SettingsRoutingBanner } from './settings/SettingsRoutingBanner';
 import { TestConnectionBannerView } from './settings/TestConnectionBannerView';
@@ -299,6 +300,10 @@ export const SettingsPage = (): React.JSX.Element => {
           confirmPending={testMutation.isPending}
         />
       ) : null}
+
+      <section id={SETTINGS_SECTION_RETENTION_ID} className="acx-settings__retention">
+        <RetentionSection />
+      </section>
     </section>
   );
 };

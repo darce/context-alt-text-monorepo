@@ -355,6 +355,62 @@ describe('SettingsPage', () => {
     expect(document.getElementById('acx-settings-section-retention')).not.toBeNull();
   });
 
+  it('renders exactly one h1 whose text is Settings in the composed Settings tree', () => {
+    mockUseQuery.mockReturnValue(createMockQuery({ data: defaultSettings }));
+    render(<SettingsPage />);
+
+    const pageHeadings = screen.getAllByRole('heading', { level: 1 });
+    expect(pageHeadings).toHaveLength(1);
+    expect(pageHeadings[0]).toHaveTextContent('Settings');
+  });
+
+  it('does not submit settings when Enter is pressed on a retention radio', () => {
+    mockUseQuery.mockReturnValue(createMockQuery({ data: defaultSettings }));
+    render(<SettingsPage />);
+
+    const radio = screen.getByRole('radio', { name: /Purge on demand/ });
+    const saveSettings = screen.getByRole('button', { name: 'Save Settings' });
+    const settingsForm = saveSettings.closest('form');
+    expect(settingsForm).not.toBeNull();
+    expect(settingsForm?.contains(radio)).toBe(false);
+
+    fireEvent.keyDown(radio, { key: 'Enter', code: 'Enter' });
+    const radioForm = radio.closest('form');
+    if (radioForm) {
+      fireEvent.submit(radioForm);
+    }
+
+    expect(saveMutate).not.toHaveBeenCalled();
+    expect(screen.queryByText('No changes to save.')).not.toBeInTheDocument();
+  });
+
+  it('never includes retention_mode in the settings save payload', () => {
+    mockUseQuery.mockReturnValue(createMockQuery({ data: defaultSettings }));
+    render(<SettingsPage />);
+
+    fireEvent.click(screen.getByRole('radio', { name: /Purge on demand/ }));
+    fireEvent.change(screen.getByLabelText('Service API URL'), {
+      target: { value: 'https://new-api.example.com' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Save Settings' }));
+
+    expect(saveMutate).toHaveBeenCalledTimes(1);
+    const body = saveMutate.mock.calls[0]?.[0] as Record<string, unknown>;
+    expect(body).toEqual({ url: 'https://new-api.example.com' });
+    expect(body).not.toHaveProperty('retention_mode');
+  });
+
+  it('keeps Save policy outside the settings form as the retention-scope primary', () => {
+    mockUseQuery.mockReturnValue(createMockQuery({ data: defaultSettings }));
+    render(<SettingsPage />);
+
+    const settingsForm = screen.getByRole('button', { name: 'Save Settings' }).closest('form');
+    const savePolicy = screen.getByRole('button', { name: 'Save policy' });
+    expect(settingsForm?.contains(savePolicy)).toBe(false);
+    expect(settingsForm?.querySelectorAll('.acx-button--primary')).toHaveLength(0);
+    expect(savePolicy).toHaveClass('acx-button--primary');
+  });
+
   it('scrolls the Data & retention section into view when section=retention is in the hash', () => {
     const originalHash = window.location.hash;
     window.location.hash = '#/settings?section=retention';

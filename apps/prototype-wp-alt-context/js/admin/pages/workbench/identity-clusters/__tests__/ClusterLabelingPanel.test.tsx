@@ -21,6 +21,7 @@ import { DATA_SOURCE } from '../../../../api/recognition/types';
 import type { TopUnlabeledClustersResponse } from '../../../../api/recognition/types/cluster';
 import { useRosterEntries } from '../../../../hooks/useRosterHooks';
 import { createMockQuery } from '../../../../test-utils/mockHooks';
+import { classifyError } from '../../../../utils/appError';
 
 vi.mock('@wordpress/i18n', () => ({
   __: (text: string) => text,
@@ -639,6 +640,48 @@ describe('ClusterLabelingPanel', () => {
 
   it('shows timeout error inline with alert role', async () => {
     vi.mocked(updateClusterLabel).mockRejectedValueOnce(new Error('save request timed out'));
+
+    renderPanel();
+
+    await typePanelName('Pewter Hollow');
+    await userEvent.click(screen.getByRole('button', { name: 'Save name' }));
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('Save is taking too long. Please try again.');
+  });
+
+  it('maps DOMException AbortError from save to the timeout copy', async () => {
+    vi.mocked(updateClusterLabel).mockRejectedValueOnce(
+      new DOMException('The operation was aborted.', 'AbortError'),
+    );
+
+    renderPanel();
+
+    await typePanelName('Pewter Hollow');
+    await userEvent.click(screen.getByRole('button', { name: 'Save name' }));
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('Save is taking too long. Please try again.');
+  });
+
+  it('maps pre-classified abort AppError from save to the timeout copy [CARD-24]', async () => {
+    vi.mocked(updateClusterLabel).mockRejectedValueOnce(
+      classifyError(new DOMException('The operation was aborted.', 'AbortError')),
+    );
+
+    renderPanel();
+
+    await typePanelName('Pewter Hollow');
+    await userEvent.click(screen.getByRole('button', { name: 'Save name' }));
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('Save is taking too long. Please try again.');
+  });
+
+  it('maps non-DOMException TimeoutError abort from save to the timeout copy [CARD-24]', async () => {
+    const timeoutErr = new Error('signal cancelled');
+    timeoutErr.name = 'TimeoutError';
+    vi.mocked(updateClusterLabel).mockRejectedValueOnce(timeoutErr);
 
     renderPanel();
 

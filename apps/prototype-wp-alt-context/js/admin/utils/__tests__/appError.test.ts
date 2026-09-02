@@ -214,6 +214,11 @@ describe('isHttpStatus / isCooldown / toUserMessage', () => {
     );
     expect(toUserMessage(httpError(404), fallback)).toBe(fallback);
     expect(toUserMessage(new TypeError('Failed to fetch'), fallback)).toBe(fallback);
+    const nonceRefresh = new NonceRefreshFailedError({
+      message: 'REST nonce refresh network error: Failed to fetch.',
+    });
+    expect(toUserMessage(nonceRefresh, fallback)).toBe('Network error — check your connection');
+    expect(toUserMessage(nonceRefresh, fallback)).not.toBe(SPA_SESSION_EXPIRED_COPY.sessionExpired);
     expect(toUserMessage(new Error('Request to /secret failed (500): body'), fallback)).toBe(fallback);
     expect(toUserMessage('raw string', fallback)).toBe(fallback);
     expect(toUserMessage(null, fallback)).toBe(fallback);

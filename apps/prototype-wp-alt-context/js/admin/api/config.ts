@@ -72,6 +72,15 @@ export class NonceRefreshFailedError extends Error {
   }
 }
 
+/** WP rest-nonce logged-out / cookie-fail sentinels — not a transport blip. */
+export const isNonceRefreshAuthRejection = (error: NonceRefreshFailedError): boolean => {
+  if (error.causeStatus === 401 || error.causeStatus === 403) {
+    return true;
+  }
+  const body = error.bodyPreview.trim();
+  return body === '0' || body === '-1';
+};
+
 const normalizeOptionalString = (value: unknown): string | undefined =>
   typeof value === 'string' && value.trim() !== '' ? value : undefined;
 

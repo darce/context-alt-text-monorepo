@@ -1,4 +1,4 @@
-import { getNonce, refreshRestNonce } from '../api/config';
+import { getNonce, isNonceRefreshAuthRejection, NonceRefreshFailedError, refreshRestNonce } from '../api/config';
 
 /** Backstop deadline when a caller does not pass `timeoutMs` (RES-02). */
 export const DEFAULT_FETCH_TIMEOUT_MS = 300_000;
@@ -106,7 +106,10 @@ export const parseRetryAfter = (value: string | null): number | undefined => {
   }
   const t = Date.parse(trimmed);
   if (!Number.isNaN(t)) {
-    return Math.max(0, Math.ceil((t - Date.now()) / 1000));
+    const seconds = Math.ceil((t - Date.now()) / 1000);
+    // Past or present HTTP-date is header-absent, not 0 — otherwise a 503
+    // becomes an immediate retry loop and a 429 skips exponential backoff.
+    return seconds > 0 ? seconds : undefined;
   }
   return undefined;
 };
@@ -167,6 +170,16 @@ const throwIfAborted = (signal: AbortSignal | undefined): void => {
 
 const abortReason = (reason: unknown): DOMException =>
   reason instanceof DOMException ? reason : new DOMException('The operation was aborted.', 'AbortError');
+
+const ABORT_LIKE_NAMES = new Set(['AbortError', 'TimeoutError']);
+
+const isAbortLikeError = (error: unknown): boolean => {
+  if (typeof error !== 'object' || error === null) {
+    return false;
+  }
+  const name = (error as { name?: unknown }).name;
+  return typeof name === 'string' && ABORT_LIKE_NAMES.has(name);
+};
 
 const resolveTimeoutMs = (timeoutMs: number | undefined): number => {
   if (timeoutMs === undefined || !Number.isFinite(timeoutMs) || timeoutMs <= 0) {
@@ -302,10 +315,19 @@ export const fetchApi = async <T>(endpoint: string, options: HTTPOptions = {}): 
 
       try {
         await refreshRestNonce();
-      } catch {
+      } catch (error) {
         // An abort that landed while the refresh was failing is an abort, not
         // session expiry — never surface recovery UI for an unmounted caller.
         throwIfAborted(signal);
+        if (isAbortLikeError(error)) {
+          throw error;
+        }
+        // Transport / timeout refresh failures are nonce_refresh (retryable
+        // network copy), not session expiry. Only WP logged-out sentinels
+        // become AuthExpiredError.
+        if (error instanceof NonceRefreshFailedError && !isNonceRefreshAuthRejection(error)) {
+          throw error;
+        }
         throw new AuthExpiredError({ endpoint, status: 403 });
       }
 

@@ -13,6 +13,15 @@ export type JobMachineStatus = (typeof JOB_MACHINE_STATE)[keyof typeof JOB_MACHI
 
 export const JOB_MACHINE_STALL_THRESHOLD_MS = 30_000;
 
+/** Max reconnect/offline-wait cycles before stalled/offline fail (RES-06). */
+export const JOB_MACHINE_RECONNECT_CEILING = 3;
+
+/**
+ * Single-tick deltas above this are clock discontinuities (sleep, NTP, tab freeze),
+ * not quiet time. Must exceed the stall threshold so a genuine 31s gap still stalls.
+ */
+export const JOB_MACHINE_MAX_TICK_DELTA_MS = 120_000;
+
 export interface JobMachineState {
   readonly status: JobMachineStatus;
   readonly jobId: string | null;
@@ -22,6 +31,7 @@ export interface JobMachineState {
   readonly failedCount: number;
   readonly error: { readonly message: string } | null;
   readonly resumeStatus: Exclude<JobMachineStatus, typeof JOB_MACHINE_STATE.offline> | null;
+  readonly reconnectAttempts: number;
 }
 
 export const JOB_EVENT = {
@@ -45,8 +55,8 @@ export type JobEvent =
   | { type: typeof JOB_EVENT.PROGRESS; done: number; total: number; at: number }
   | { type: typeof JOB_EVENT.STALL_TICK; now: number }
   | { type: typeof JOB_EVENT.RECONNECTED; at: number }
-  | { type: typeof JOB_EVENT.OFFLINE }
-  | { type: typeof JOB_EVENT.ONLINE }
+  | { type: typeof JOB_EVENT.OFFLINE; at: number }
+  | { type: typeof JOB_EVENT.ONLINE; at: number }
   | { type: typeof JOB_EVENT.COMPLETE; at: number }
   | { type: typeof JOB_EVENT.COMPLETE_WITH_ERRORS; failedCount: number; at: number }
   | { type: typeof JOB_EVENT.FAIL; error: { message: string } }
@@ -62,6 +72,7 @@ export const initialJobState: JobMachineState = {
   failedCount: 0,
   error: null,
   resumeStatus: null,
+  reconnectAttempts: 0,
 };
 
 const TERMINAL_STATUSES: ReadonlySet<JobMachineStatus> = new Set([
@@ -85,6 +96,7 @@ const startJob = (_state: JobMachineState, event: Extract<JobEvent, { type: 'STA
   failedCount: 0,
   error: null,
   resumeStatus: null,
+  reconnectAttempts: 0,
 });
 
 const openStream = (state: JobMachineState, event: Extract<JobEvent, { type: 'STREAM_OPEN' }>): JobMachineState => ({
@@ -99,16 +111,52 @@ const applyProgress = (state: JobMachineState, event: Extract<JobEvent, { type: 
   done: event.done,
   total: event.total,
   lastEventAt: event.at,
+  reconnectAttempts: 0,
 });
 
-const stallIfQuiet = (state: JobMachineState, event: Extract<JobEvent, { type: 'STALL_TICK' }>): JobMachineState => {
-  if (state.lastEventAt !== null && event.now - state.lastEventAt >= JOB_MACHINE_STALL_THRESHOLD_MS) {
-    return { ...state, status: JOB_MACHINE_STATE.stalled };
+const failReconnectCeiling = (state: JobMachineState, attempts: number, at: number): JobMachineState => ({
+  ...state,
+  status: JOB_MACHINE_STATE.failed,
+  lastEventAt: at,
+  reconnectAttempts: attempts,
+  resumeStatus: null,
+  error: {
+    message: `Reconnect ceiling exceeded (${JOB_MACHINE_RECONNECT_CEILING} attempts)`,
+  },
+});
+
+const onQuietTick = (
+  state: JobMachineState,
+  event: Extract<JobEvent, { type: 'STALL_TICK' }>,
+  quietStatus: JobMachineStatus,
+): JobMachineState => {
+  if (state.lastEventAt === null) {
+    return state;
   }
-  return state;
+  const delta = event.now - state.lastEventAt;
+  if (delta < 0 || delta > JOB_MACHINE_MAX_TICK_DELTA_MS) {
+    return { ...state, lastEventAt: event.now };
+  }
+  if (delta < JOB_MACHINE_STALL_THRESHOLD_MS) {
+    return state;
+  }
+  const attempts = state.reconnectAttempts + 1;
+  if (attempts > JOB_MACHINE_RECONNECT_CEILING) {
+    return failReconnectCeiling(state, attempts, event.now);
+  }
+  return {
+    ...state,
+    status: quietStatus,
+    lastEventAt: event.now,
+    reconnectAttempts: attempts,
+  };
 };
 
-const stay = (state: JobMachineState): JobMachineState => state;
+const stallIfQuiet = (state: JobMachineState, event: Extract<JobEvent, { type: 'STALL_TICK' }>): JobMachineState =>
+  onQuietTick(state, event, JOB_MACHINE_STATE.stalled);
+
+const boundOfflineWait = (state: JobMachineState, event: Extract<JobEvent, { type: 'STALL_TICK' }>): JobMachineState =>
+  onQuietTick(state, event, JOB_MACHINE_STATE.offline);
 
 const reconnect = (state: JobMachineState, event: Extract<JobEvent, { type: 'RECONNECTED' }>): JobMachineState => ({
   ...state,
@@ -116,7 +164,7 @@ const reconnect = (state: JobMachineState, event: Extract<JobEvent, { type: 'REC
   lastEventAt: event.at,
 });
 
-const goOffline = (state: JobMachineState): JobMachineState => {
+const goOffline = (state: JobMachineState, event: Extract<JobEvent, { type: 'OFFLINE' }>): JobMachineState => {
   if (state.status === JOB_MACHINE_STATE.offline) {
     return state;
   }
@@ -124,10 +172,11 @@ const goOffline = (state: JobMachineState): JobMachineState => {
     ...state,
     status: JOB_MACHINE_STATE.offline,
     resumeStatus: state.status,
+    lastEventAt: event.at,
   };
 };
 
-const goOnline = (state: JobMachineState): JobMachineState => {
+const goOnline = (state: JobMachineState, event: Extract<JobEvent, { type: 'ONLINE' }>): JobMachineState => {
   if (state.status !== JOB_MACHINE_STATE.offline || state.resumeStatus === null) {
     return state;
   }
@@ -135,6 +184,8 @@ const goOnline = (state: JobMachineState): JobMachineState => {
     ...state,
     status: state.resumeStatus,
     resumeStatus: null,
+    lastEventAt: event.at,
+    reconnectAttempts: 0,
   };
 };
 
@@ -185,6 +236,7 @@ const TRANSITIONS: TransitionTable = {
   [JOB_MACHINE_STATE.pending]: {
     [JOB_EVENT.STREAM_OPEN]: openStream,
     [JOB_EVENT.PROGRESS]: applyProgress,
+    [JOB_EVENT.STALL_TICK]: stallIfQuiet,
     [JOB_EVENT.OFFLINE]: goOffline,
     [JOB_EVENT.COMPLETE]: complete,
     [JOB_EVENT.COMPLETE_WITH_ERRORS]: completeWithErrors,
@@ -205,7 +257,7 @@ const TRANSITIONS: TransitionTable = {
   [JOB_MACHINE_STATE.stalled]: {
     [JOB_EVENT.STREAM_OPEN]: openStream,
     [JOB_EVENT.PROGRESS]: applyProgress,
-    [JOB_EVENT.STALL_TICK]: stay,
+    [JOB_EVENT.STALL_TICK]: stallIfQuiet,
     [JOB_EVENT.RECONNECTED]: reconnect,
     [JOB_EVENT.OFFLINE]: goOffline,
     [JOB_EVENT.COMPLETE]: complete,
@@ -215,6 +267,7 @@ const TRANSITIONS: TransitionTable = {
     [JOB_EVENT.RESET]: resetIdle,
   },
   [JOB_MACHINE_STATE.offline]: {
+    [JOB_EVENT.STALL_TICK]: boundOfflineWait,
     [JOB_EVENT.ONLINE]: goOnline,
     [JOB_EVENT.FAIL]: fail,
     [JOB_EVENT.CANCEL]: resetIdle,

@@ -29,10 +29,10 @@ Reducer table (state × event → state) — every cell is explicit; `never` gua
 | state \ event | START | STREAM_OPEN | PROGRESS | STALL_TICK | RECONNECTED | OFFLINE | ONLINE | COMPLETE | COMPLETE_WITH_ERRORS | FAIL | CANCEL | RESET |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | idle | pending | — | — | — | — | offline | — | — | — | — | — | idle |
-| pending | — | running | running | — | — | offline | — | completed | completed_with_errors | failed | idle | idle |
-| running | — | — | running | stalled | — | offline | — | completed | completed_with_errors | failed | idle | idle |
-| stalled | — | running | running | stalled | running | offline | — | completed | completed_with_errors | failed | idle | idle |
-| offline | — | — | — | — | — | — | (prev) | — | — | failed | idle | idle |
+| pending | — | running | running | stalled (if quiet >= 30s) else pending | — | offline | — | completed | completed_with_errors | failed | idle | idle |
+| running | — | — | running | stalled (if quiet >= 30s) else running | — | offline | — | completed | completed_with_errors | failed | idle | idle |
+| stalled | — | running | running | stalled (if attempts <= 3) else failed | running | offline | — | completed | completed_with_errors | failed | idle | idle |
+| offline | — | — | — | offline (if attempts <= 3) else failed | — | — | (prev) | — | — | failed | idle | idle |
 | completed / completed_with_errors / failed | pending | — | — | — | — | — | — | — | — | — | — | idle |
 
 ## Overlay: request-error-banner (one row per `AppError._tag`)

@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { formatBulkDescribeErrorMessage, useBulkDescribe } from '../useBulkDescribe';
 import * as describeApi from '../../api/describeApi';
 import type { DescribeRunResponse } from '../../api/describeApi';
+import { queryKeys } from '../../api/queryKeys';
 
 vi.mock('../../api/describeApi', async (importOriginal) => {
   const actual = await importOriginal<typeof describeApi>();
@@ -42,6 +43,21 @@ const wrapper = ({ children }: React.PropsWithChildren): React.JSX.Element => {
   });
   return <QueryClientProvider client={client}>{children}</QueryClientProvider>;
 };
+
+const createWrapper = (): { wrapper: typeof wrapper; queryClient: QueryClient } => {
+  const queryClient = new QueryClient({
+    defaultOptions: { mutations: { retry: false }, queries: { retry: false } },
+  });
+  const scopedWrapper = ({ children }: React.PropsWithChildren): React.JSX.Element => (
+    <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+  );
+  return { wrapper: scopedWrapper, queryClient };
+};
+
+const workbenchInvalidateCount = (spy: ReturnType<typeof vi.spyOn>): number =>
+  spy.mock.calls.filter(
+    (call) => JSON.stringify(call[0]) === JSON.stringify({ queryKey: queryKeys.media.workbench() }),
+  ).length;
 
 describe('useBulkDescribe', () => {
   beforeEach(() => {
@@ -138,6 +154,77 @@ describe('useBulkDescribe', () => {
     expect(result.current.errorMessage).toContain('already running upstream');
     // Never the raw HTTPError envelope.
     expect(result.current.errorMessage).not.toContain('Request to /acx/v1/describe/runs failed');
+  });
+
+  it('does not invalidate workbench rows while the run is still describing', async () => {
+    submitBulkDescribeRunMock.mockResolvedValue(
+      runResponse({ run_id: 'run-live', status: 'pending', phase: 'queued' }),
+    );
+    fetchBulkDescribeRunMock.mockResolvedValue(
+      runResponse({
+        run_id: 'run-live',
+        status: 'running',
+        phase: 'describing',
+        completed: 1,
+        total: 4,
+        eta_seconds: 42,
+      }),
+    );
+
+    const { wrapper: scopedWrapper, queryClient } = createWrapper();
+    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+    const { result } = renderHook(() => useBulkDescribe(), { wrapper: scopedWrapper });
+    result.current.submit.mutate([1, 2, 3, 4]);
+
+    await waitFor(() => expect(result.current.progress.run?.phase).toBe('describing'));
+    expect(result.current.progress.isTerminal).toBe(false);
+    expect(workbenchInvalidateCount(invalidateSpy)).toBe(0);
+    queryClient.clear();
+  });
+
+  it('invalidates workbench rows exactly once when the run reaches a terminal phase', async () => {
+    submitBulkDescribeRunMock.mockResolvedValue(
+      runResponse({ run_id: 'run-term', status: 'pending', phase: 'queued' }),
+    );
+    fetchBulkDescribeRunMock.mockResolvedValue(
+      runResponse({
+        run_id: 'run-term',
+        status: 'running',
+        phase: 'describing',
+        completed: 1,
+        total: 4,
+      }),
+    );
+
+    const { wrapper: scopedWrapper, queryClient } = createWrapper();
+    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+    const { result, rerender } = renderHook(() => useBulkDescribe(), { wrapper: scopedWrapper });
+    result.current.submit.mutate([1, 2, 3, 4]);
+
+    await waitFor(() => expect(result.current.progress.run?.phase).toBe('describing'));
+    expect(workbenchInvalidateCount(invalidateSpy)).toBe(0);
+
+    fetchBulkDescribeRunMock.mockResolvedValue(
+      runResponse({
+        run_id: 'run-term',
+        status: 'completed',
+        phase: 'complete',
+        completed: 4,
+        total: 4,
+        eta_seconds: 0,
+      }),
+    );
+    result.current.progress.retry();
+    await waitFor(() => expect(result.current.progress.run?.phase).toBe('complete'));
+    expect(result.current.progress.isTerminal).toBe(true);
+    expect(workbenchInvalidateCount(invalidateSpy)).toBe(1);
+
+    // Subsequent polls / renders at the same terminal phase must not refetch again.
+    result.current.progress.retry();
+    rerender();
+    await waitFor(() => expect(result.current.progress.run?.phase).toBe('complete'));
+    expect(workbenchInvalidateCount(invalidateSpy)).toBe(1);
+    queryClient.clear();
   });
 });
 

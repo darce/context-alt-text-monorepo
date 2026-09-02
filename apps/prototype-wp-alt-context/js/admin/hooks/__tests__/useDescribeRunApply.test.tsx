@@ -115,6 +115,7 @@ describe('useDescribeRunApply', () => {
 
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: describeRunItemsQueryKey('run-abc') });
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: mediaStatsMissingQueryKey });
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.media.workbench() });
     // Not the total probe (media count unchanged) and not media.all (BR-77).
     expect(
       invalidateSpy.mock.calls.some(
@@ -155,6 +156,7 @@ describe('useDescribeRunApply', () => {
     expect(result.current.apply.data?.failed).toEqual([70]);
 
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: mediaStatsMissingQueryKey });
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.media.workbench() });
   });
 
   it('is a no-op apply when no run id is set', async () => {

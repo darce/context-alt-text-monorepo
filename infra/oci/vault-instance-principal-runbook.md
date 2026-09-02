@@ -50,6 +50,27 @@ VM identity may only *read* secret contents, not manage them):
 Allow dynamic-group acx-backend-dg to read secret-family in compartment acx-secrets where request.permission = 'SECRET_BUNDLE_READ'
 ```
 
+> **Drift — the deployed policy is broader than the line above.** Verified
+> 2026-09-02: no `acx-secrets` compartment exists, every secret lives in the
+> **root** compartment, and the live policy `acx-backend-secret-read` reads
+> `... to read secret-family **in tenancy** where request.permission =
+> 'SECRET_BUNDLE_READ'`. So the VM identity can read *every* secret in the
+> tenancy, not a scoped subset — the documented control was never implemented.
+> This is what let a tenancy-admin API key sit in a VM-readable vault for seven
+> weeks (OCIRV-1 blocker 175; key revoked and secrets scheduled for deletion
+> 2026-09-02).
+>
+> Closing the drift means making the documented line true, not editing it down:
+> create `acx-secrets`, move the six secrets the VM actually consumes into it
+> with `oci vault secret change-compartment`, then re-scope
+> `acx-backend-secret-read` to that compartment. OCIDs are stable across a
+> compartment move, so `RECOGNITION_VAULT_SECRET_MAP` needs no change. The six:
+> `PGPASSWORD`, `POSTGRES_DSN`, `POSTGRES_SYNC_DSN`, `RECOGNITION_ADMIN_TOKEN`
+> (runtime map) plus `OCIR_USERNAME`, `OCIR_AUTH_TOKEN` (image pull). A
+> compartment boundary is preferable to enumerating secret OCIDs in the policy
+> because a secret added to root later is then *not* readable by default
+> ([SEC-04] fail-safe defaults).
+
 Precedent: instance-principal signing is already used by
 `infra/oci/gpu_lifecycle/reaper.py` — reuse that signer construction pattern.
 

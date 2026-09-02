@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 
 import {
   JOB_EVENT,
+  JOB_MACHINE_MAX_TICK_DELTA_MS,
+  JOB_MACHINE_RECONNECT_CEILING,
   JOB_MACHINE_STALL_THRESHOLD_MS,
   JOB_MACHINE_STATE,
   initialJobState,
@@ -49,8 +51,8 @@ const SAMPLE_EVENTS: { readonly [E in JobEvent['type']]: Extract<JobEvent, { typ
   PROGRESS: { type: JOB_EVENT.PROGRESS, done: 4, total: 12, at: AT },
   STALL_TICK: { type: JOB_EVENT.STALL_TICK, now: AT + JOB_MACHINE_STALL_THRESHOLD_MS },
   RECONNECTED: { type: JOB_EVENT.RECONNECTED, at: AT },
-  OFFLINE: { type: JOB_EVENT.OFFLINE },
-  ONLINE: { type: JOB_EVENT.ONLINE },
+  OFFLINE: { type: JOB_EVENT.OFFLINE, at: AT },
+  ONLINE: { type: JOB_EVENT.ONLINE, at: AT },
   COMPLETE: { type: JOB_EVENT.COMPLETE, at: AT },
   COMPLETE_WITH_ERRORS: { type: JOB_EVENT.COMPLETE_WITH_ERRORS, failedCount: 3, at: AT },
   FAIL: { type: JOB_EVENT.FAIL, error: { message: 'boom' } },
@@ -78,7 +80,7 @@ const EXPECTED_STATUS: Record<JobMachineStatus, Record<JobEvent['type'], JobMach
     START: null,
     STREAM_OPEN: JOB_MACHINE_STATE.running,
     PROGRESS: JOB_MACHINE_STATE.running,
-    STALL_TICK: null,
+    STALL_TICK: JOB_MACHINE_STATE.stalled,
     RECONNECTED: null,
     OFFLINE: JOB_MACHINE_STATE.offline,
     ONLINE: null,
@@ -120,7 +122,7 @@ const EXPECTED_STATUS: Record<JobMachineStatus, Record<JobEvent['type'], JobMach
     START: null,
     STREAM_OPEN: null,
     PROGRESS: null,
-    STALL_TICK: null,
+    STALL_TICK: JOB_MACHINE_STATE.offline,
     RECONNECTED: null,
     OFFLINE: null,
     // Fixture resumeStatus is `running`.
@@ -184,6 +186,7 @@ const fixtureFor = (status: JobMachineStatus): JobMachineState => ({
   failedCount: status === JOB_MACHINE_STATE.completedWithErrors ? 2 : 0,
   error: status === JOB_MACHINE_STATE.failed ? { message: 'prior' } : null,
   resumeStatus: status === JOB_MACHINE_STATE.offline ? JOB_MACHINE_STATE.running : null,
+  reconnectAttempts: 0,
 });
 
 const tableCells = ALL_STATUSES.flatMap((status) =>
@@ -239,11 +242,11 @@ describe('jobReducer stall, progress, offline, terminal', () => {
     'OFFLINE from %s stores resumeStatus and ONLINE restores it',
     (status) => {
       const state = fixtureFor(status);
-      const offline = jobReducer(state, { type: JOB_EVENT.OFFLINE });
+      const offline = jobReducer(state, { type: JOB_EVENT.OFFLINE, at: AT });
       expect(offline.status).toBe(JOB_MACHINE_STATE.offline);
       expect(offline.resumeStatus).toBe(status);
 
-      const restored = jobReducer(offline, { type: JOB_EVENT.ONLINE });
+      const restored = jobReducer(offline, { type: JOB_EVENT.ONLINE, at: AT });
       expect(restored.status).toBe(status);
       expect(restored.resumeStatus).toBeNull();
     },
@@ -253,7 +256,7 @@ describe('jobReducer stall, progress, offline, terminal', () => {
     'ONLINE in non-offline status %s is identity',
     (status) => {
       const state = fixtureFor(status);
-      expect(jobReducer(state, { type: JOB_EVENT.ONLINE })).toBe(state);
+      expect(jobReducer(state, { type: JOB_EVENT.ONLINE, at: AT })).toBe(state);
     },
   );
 
@@ -322,6 +325,231 @@ describe('initialJobState', () => {
       failedCount: 0,
       error: null,
       resumeStatus: null,
+      reconnectAttempts: 0,
+    });
+  });
+});
+
+const offlineEvent = (at: number): JobEvent => ({ type: JOB_EVENT.OFFLINE, at });
+const onlineEvent = (at: number): JobEvent => ({ type: JOB_EVENT.ONLINE, at });
+
+describe('FEBT-1 W1 fix lane (L6A-01, M-01..M-06)', () => {
+  describe('L6A-01 offline/online timestamps', () => {
+    it('does not stall one millisecond after a 5-minute offline window, then stalls 30s later', () => {
+      const t = AT;
+      const running = fixtureFor(JOB_MACHINE_STATE.running);
+      const offline = jobReducer(running, offlineEvent(t));
+      const online = jobReducer(offline, onlineEvent(t + 300_000));
+
+      const immediate = jobReducer(online, { type: JOB_EVENT.STALL_TICK, now: t + 300_001 });
+      expect(immediate.status).toBe(JOB_MACHINE_STATE.running);
+
+      const later = jobReducer(immediate, { type: JOB_EVENT.STALL_TICK, now: t + 330_002 });
+      expect(later.status).toBe(JOB_MACHINE_STATE.stalled);
+    });
+  });
+
+  describe('M-01 handler writes', () => {
+    it('START writes lastEventAt and clears resumeStatus', () => {
+      const state = fixtureFor(JOB_MACHINE_STATE.idle);
+      const next = jobReducer(state, { type: JOB_EVENT.START, jobId: 'job-9', at: 4_000 });
+      expect(next.lastEventAt).toBe(4_000);
+      expect(next.resumeStatus).toBeNull();
+    });
+
+    it('STREAM_OPEN writes lastEventAt', () => {
+      const state = fixtureFor(JOB_MACHINE_STATE.pending);
+      const next = jobReducer(state, { type: JOB_EVENT.STREAM_OPEN, at: 8_000 });
+      expect(next.lastEventAt).toBe(8_000);
+    });
+
+    it('PROGRESS writes lastEventAt', () => {
+      const state = fixtureFor(JOB_MACHINE_STATE.running);
+      const next = jobReducer(state, { type: JOB_EVENT.PROGRESS, done: 7, total: 20, at: 9_000 });
+      expect(next.lastEventAt).toBe(9_000);
+    });
+
+    it('RECONNECTED writes lastEventAt', () => {
+      const state = fixtureFor(JOB_MACHINE_STATE.stalled);
+      const next = jobReducer(state, { type: JOB_EVENT.RECONNECTED, at: 11_000 });
+      expect(next.lastEventAt).toBe(11_000);
+    });
+
+    it('COMPLETE writes lastEventAt and clears resumeStatus', () => {
+      const state = { ...fixtureFor(JOB_MACHINE_STATE.running), resumeStatus: JOB_MACHINE_STATE.running };
+      const next = jobReducer(state, { type: JOB_EVENT.COMPLETE, at: 12_000 });
+      expect(next.lastEventAt).toBe(12_000);
+      expect(next.resumeStatus).toBeNull();
+    });
+
+    it('COMPLETE_WITH_ERRORS writes lastEventAt and clears resumeStatus', () => {
+      const state = { ...fixtureFor(JOB_MACHINE_STATE.running), resumeStatus: JOB_MACHINE_STATE.running };
+      const next = jobReducer(state, { type: JOB_EVENT.COMPLETE_WITH_ERRORS, failedCount: 2, at: 13_000 });
+      expect(next.lastEventAt).toBe(13_000);
+      expect(next.resumeStatus).toBeNull();
+    });
+
+    it('FAIL clears resumeStatus', () => {
+      const state = { ...fixtureFor(JOB_MACHINE_STATE.running), resumeStatus: JOB_MACHINE_STATE.running };
+      const next = jobReducer(state, { type: JOB_EVENT.FAIL, error: { message: 'nope' } });
+      expect(next.resumeStatus).toBeNull();
+    });
+
+    it('OFFLINE writes lastEventAt from event.at and stores resumeStatus', () => {
+      const state = fixtureFor(JOB_MACHINE_STATE.running);
+      const next = jobReducer(state, offlineEvent(5_000));
+      expect(next.lastEventAt).toBe(5_000);
+      expect(next.resumeStatus).toBe(JOB_MACHINE_STATE.running);
+    });
+
+    it('ONLINE writes lastEventAt from event.at and clears resumeStatus', () => {
+      const offline = jobReducer(fixtureFor(JOB_MACHINE_STATE.running), offlineEvent(5_000));
+      const next = jobReducer(offline, onlineEvent(8_000));
+      expect(next.lastEventAt).toBe(8_000);
+      expect(next.resumeStatus).toBeNull();
+    });
+
+    it('RESET writes lastEventAt null and resumeStatus null', () => {
+      const next = jobReducer(fixtureFor(JOB_MACHINE_STATE.running), { type: JOB_EVENT.RESET });
+      expect(next.lastEventAt).toBeNull();
+      expect(next.resumeStatus).toBeNull();
+    });
+
+    it('offline → online → stall writes lastEventAt and resumeStatus at each step', () => {
+      const t = AT;
+      const running = fixtureFor(JOB_MACHINE_STATE.running);
+
+      const offline = jobReducer(running, offlineEvent(t));
+      expect(offline.status).toBe(JOB_MACHINE_STATE.offline);
+      expect(offline.resumeStatus).toBe(JOB_MACHINE_STATE.running);
+      expect(offline.lastEventAt).toBe(t);
+
+      const online = jobReducer(offline, onlineEvent(t + 300_000));
+      expect(online.status).toBe(JOB_MACHINE_STATE.running);
+      expect(online.resumeStatus).toBeNull();
+      expect(online.lastEventAt).toBe(t + 300_000);
+
+      const notYet = jobReducer(online, { type: JOB_EVENT.STALL_TICK, now: t + 300_001 });
+      expect(notYet.status).toBe(JOB_MACHINE_STATE.running);
+      expect(notYet.lastEventAt).toBe(t + 300_000);
+      expect(notYet.resumeStatus).toBeNull();
+
+      const stalled = jobReducer(notYet, { type: JOB_EVENT.STALL_TICK, now: t + 330_002 });
+      expect(stalled.status).toBe(JOB_MACHINE_STATE.stalled);
+      expect(stalled.lastEventAt).toBe(t + 330_002);
+      expect(stalled.resumeStatus).toBeNull();
+    });
+  });
+
+  describe('M-02 stall threshold pin', () => {
+    it('pins JOB_MACHINE_STALL_THRESHOLD_MS to 30_000', () => {
+      expect(JOB_MACHINE_STALL_THRESHOLD_MS).toBe(30_000);
+    });
+
+    it('pins JOB_MACHINE_RECONNECT_CEILING to 3 and MAX_TICK_DELTA_MS to 120_000', () => {
+      expect(JOB_MACHINE_RECONNECT_CEILING).toBe(3);
+      expect(JOB_MACHINE_MAX_TICK_DELTA_MS).toBe(120_000);
+    });
+
+    it('stalls after a literal 30_000 ms quiet interval and not after 29_999', () => {
+      const state = fixtureFor(JOB_MACHINE_STATE.running);
+      const below = jobReducer(state, { type: JOB_EVENT.STALL_TICK, now: AT + 29_999 });
+      expect(below.status).toBe(JOB_MACHINE_STATE.running);
+
+      const atThreshold = jobReducer(state, { type: JOB_EVENT.STALL_TICK, now: AT + 30_000 });
+      expect(atThreshold.status).toBe(JOB_MACHINE_STATE.stalled);
+    });
+  });
+
+  describe('M-03 reconnect ceiling', () => {
+    it('stays stalled below the ceiling and fails when the ceiling is crossed', () => {
+      let state = jobReducer(fixtureFor(JOB_MACHINE_STATE.running), {
+        type: JOB_EVENT.STALL_TICK,
+        now: AT + 30_000,
+      });
+      expect(state.status).toBe(JOB_MACHINE_STATE.stalled);
+
+      state = jobReducer(state, { type: JOB_EVENT.STALL_TICK, now: AT + 60_000 });
+      expect(state.status).toBe(JOB_MACHINE_STATE.stalled);
+
+      state = jobReducer(state, { type: JOB_EVENT.STALL_TICK, now: AT + 90_000 });
+      expect(state.status).toBe(JOB_MACHINE_STATE.stalled);
+
+      state = jobReducer(state, { type: JOB_EVENT.STALL_TICK, now: AT + 120_000 });
+      expect(state.status).toBe(JOB_MACHINE_STATE.failed);
+      expect(state.error).not.toBeNull();
+      expect(state.error?.message.toLowerCase()).toContain('reconnect');
+    });
+
+    it('ONLINE resets the reconnect counter so the next stall does not fail immediately', () => {
+      let state = jobReducer(fixtureFor(JOB_MACHINE_STATE.running), {
+        type: JOB_EVENT.STALL_TICK,
+        now: AT + 30_000,
+      });
+      state = jobReducer(state, { type: JOB_EVENT.STALL_TICK, now: AT + 60_000 });
+      state = jobReducer(state, { type: JOB_EVENT.STALL_TICK, now: AT + 90_000 });
+      expect(state.status).toBe(JOB_MACHINE_STATE.stalled);
+
+      const offline = jobReducer(state, offlineEvent(AT + 91_000));
+      const online = jobReducer(offline, onlineEvent(AT + 92_000));
+      const stalledAgain = jobReducer(online, { type: JOB_EVENT.STALL_TICK, now: AT + 122_000 });
+      expect(stalledAgain.status).toBe(JOB_MACHINE_STATE.stalled);
+      expect(stalledAgain.error).toBeNull();
+    });
+  });
+
+  describe('M-04 pending stall and bounded offline wait', () => {
+    it('STALL_TICK from pending stalls after 30s quiet', () => {
+      const pending = fixtureFor(JOB_MACHINE_STATE.pending);
+      const next = jobReducer(pending, { type: JOB_EVENT.STALL_TICK, now: AT + 30_000 });
+      expect(next.status).toBe(JOB_MACHINE_STATE.stalled);
+    });
+
+    it('an offline pending job fails after the reconnect ceiling of quiet ticks', () => {
+      const pending = fixtureFor(JOB_MACHINE_STATE.pending);
+      let state = jobReducer(pending, offlineEvent(AT));
+      expect(state.status).toBe(JOB_MACHINE_STATE.offline);
+
+      state = jobReducer(state, { type: JOB_EVENT.STALL_TICK, now: AT + 30_000 });
+      expect(state.status).toBe(JOB_MACHINE_STATE.offline);
+
+      state = jobReducer(state, { type: JOB_EVENT.STALL_TICK, now: AT + 60_000 });
+      expect(state.status).toBe(JOB_MACHINE_STATE.offline);
+
+      state = jobReducer(state, { type: JOB_EVENT.STALL_TICK, now: AT + 90_000 });
+      expect(state.status).toBe(JOB_MACHINE_STATE.offline);
+
+      state = jobReducer(state, { type: JOB_EVENT.STALL_TICK, now: AT + 120_000 });
+      expect(state.status).toBe(JOB_MACHINE_STATE.failed);
+      expect(state.error).not.toBeNull();
+    });
+  });
+
+  describe('M-05 clock discontinuity', () => {
+    it('does not stall on a 6-hour jump in one tick', () => {
+      const state = fixtureFor(JOB_MACHINE_STATE.running);
+      const sixHours = AT + 6 * 60 * 60 * 1000;
+      const jumped = jobReducer(state, { type: JOB_EVENT.STALL_TICK, now: sixHours });
+      expect(jumped.status).toBe(JOB_MACHINE_STATE.running);
+
+      const after = jobReducer(jumped, { type: JOB_EVENT.STALL_TICK, now: sixHours + 31_000 });
+      expect(after.status).toBe(JOB_MACHINE_STATE.stalled);
+    });
+
+    it('two consecutive 31s-quiet ticks still stall', () => {
+      const state = fixtureFor(JOB_MACHINE_STATE.running);
+      const first = jobReducer(state, { type: JOB_EVENT.STALL_TICK, now: AT + 31_000 });
+      expect(first.status).toBe(JOB_MACHINE_STATE.stalled);
+
+      const second = jobReducer(first, { type: JOB_EVENT.STALL_TICK, now: AT + 62_000 });
+      expect(second.status).toBe(JOB_MACHINE_STATE.stalled);
+    });
+  });
+
+  describe('M-06 RESET pin', () => {
+    it('RESET from idle is deep-equal to initialJobState', () => {
+      const next = jobReducer(fixtureFor(JOB_MACHINE_STATE.idle), { type: JOB_EVENT.RESET });
+      expect(next).toEqual(initialJobState);
     });
   });
 });

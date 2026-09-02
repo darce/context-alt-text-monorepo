@@ -43,15 +43,14 @@ for (const match of menuPhpSource.matchAll(ADD_SUBMENU_PAGE_CALL)) {
 // argument order changed), menuEntries silently empties and every assertion
 // below would vacuously pass. Pin the count so a parse regression is red.
 expect(menuEntries.length).toBeGreaterThan(0);
-expect(menuEntries).toHaveLength(6);
+expect(menuEntries).toHaveLength(5);
 
-/** Explicit slug -> routed React page file map. Adding a 7th submenu without extending this map fails red below, not silently. */
+/** Explicit slug -> routed React page file map. Adding a 6th submenu without extending this map fails red below, not silently. */
 const SLUG_TO_PAGE_FILE: Record<string, string> = {
   'alt-context-dashboard': '../DashboardPage.tsx',
   'alt-context-workbench': '../WorkbenchPage.tsx',
   'alt-context-roster': '../RosterPage.tsx',
   'alt-context-description-history': '../DescriptionHistoryPage.tsx',
-  'alt-context-retention': '../RetentionPage.tsx',
   'alt-context-settings': '../SettingsPage.tsx',
 };
 
@@ -74,7 +73,7 @@ describe('every routed page heading matches its admin menu label (glossary Rule 
     const pageSource = readFileSync(pageFilePath, 'utf8');
 
     const headingTexts = [...pageSource.matchAll(H1_BLOCK)].map((match) => {
-      const labelMatch = match[1].match(H1_LABEL_TEXT);
+      const labelMatch = H1_LABEL_TEXT.exec(match[1]);
       return labelMatch ? labelMatch[1] : match[1].trim();
     });
 

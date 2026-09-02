@@ -147,6 +147,7 @@ export const IdentityClusterList = ({
                 twin
                   ? {
                       suggestionId: twin.suggestionId,
+                      survivorClusterId: twin.survivorClusterId,
                       survivorLabel: twin.survivorLabel,
                       onAccept: () => {
                         void scheduleAcceptMerge(twin.suggestionId);

@@ -114,4 +114,37 @@ describe('mapPendingMergeSuggestion', () => {
     expect(mapped.cluster_a_representative_attachment_url).not.toBeUndefined();
     expect(mapped.cluster_b_representative_attachment_url).not.toBeUndefined();
   });
+
+  it('keeps survivor_cluster_id and survivor_label from the payload (S4R2-F1)', () => {
+    const mapped = mapPendingMergeSuggestion(
+      mergePayload({
+        survivor_cluster_id: 'cluster-a',
+        survivor_label: 'Ada Lovelace',
+      }),
+    );
+
+    expect(mapped.survivor_cluster_id).toBe('cluster-a');
+    expect(mapped.survivor_label).toBe('Ada Lovelace');
+  });
+
+  it('normalizes omitted survivor fields to null instead of dropping them', () => {
+    const mapped = mapPendingMergeSuggestion(mergePayload());
+
+    expect('survivor_cluster_id' in mapped).toBe(true);
+    expect('survivor_label' in mapped).toBe(true);
+    expect(mapped.survivor_cluster_id).toBeNull();
+    expect(mapped.survivor_label).toBeNull();
+  });
+
+  it('rejects a non-string survivor_cluster_id as null (boundary string ids)', () => {
+    const mapped = mapPendingMergeSuggestion(mergePayload({ survivor_cluster_id: 17 }));
+
+    expect(mapped.survivor_cluster_id).toBeNull();
+  });
+
+  it('rejects a non-string survivor_label as null (nullable label)', () => {
+    const mapped = mapPendingMergeSuggestion(mergePayload({ survivor_label: 0 }));
+
+    expect(mapped.survivor_label).toBeNull();
+  });
 });

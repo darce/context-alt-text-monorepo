@@ -1,7 +1,7 @@
 ---
 title: GPU lifecycle controller
 boundary_owner: infrastructure
-status: draft
+status: draft (GPUUX-1 adds gpu-state snapshot)
 since: GPU-01
 ---
 
@@ -96,3 +96,47 @@ controller emits `{action: FALLBACK, profile: florence_small, instance_id,
 reason}` with `reason` ∈ `{readiness_timeout, readiness_stall, start_failed}`. The decision
 is logged only; no consumer is wired. Profile name is the given CPU floor
 (`florence_small`), not imported from `scene.config.profiles`.
+
+## GPU state snapshot (GPUUX-1)
+
+Single writer, single file, one vocabulary (DATA-14, sr-007). The lifecycle
+controller writes `/run/acx/gpu-state.json` atomically (tmp + rename, same
+pattern as the load snapshot) at the end of **every** `reap` and `start`
+cycle, including cycles that take no action. The describe API only reads it;
+no API process ever writes it.
+
+```json
+{"state": "warming", "instance_id": "<ocid>", "written_at": 1788390000.0,
+ "reason": null, "since": 1788389900.0}
+```
+
+`state` ∈ `unknown | stopped | starting | warming | ready | degraded`:
+
+| state | meaning | source of truth |
+| --- | --- | --- |
+| `stopped` | OCI `STOPPED`, no START in flight | OCI probe |
+| `starting` | START actuated, OCI not yet `RUNNING` | actuator + OCI probe |
+| `warming` | OCI `RUNNING`, readiness probe not yet 200 | readiness probe |
+| `ready` | readiness probe 200 | readiness probe |
+| `degraded` | FALLBACK emitted (`readiness_timeout`, `readiness_stall`, `start_failed`) or probe failing after `ready` | controller decision |
+| `unknown` | snapshot missing, unreadable, or stale | reader fail-closed |
+
+Rules:
+
+- The controller never writes `unknown`; only the reader derives it. Corrupt
+  or partial JSON on the writer side means the previous file stays in place
+  (rename is atomic).
+- `reason` is set only for `degraded` (the FALLBACK reason). `since` is the
+  epoch seconds of the last state change; both optional.
+- Reader freshness: `written_at` older than `ACX_GPU_STATE_STALE_SECONDS`
+  (default 180 s, ≥ 2 × the slowest timer interval) → `unknown` (OBS-08: log
+  once per transition, never per poll). Path via `ACX_GPU_STATE_PATH`
+  (default `/run/acx/gpu-state.json`) resolved through one helper (rg-008).
+- `unknown` is honest, not an error: the API keeps serving CPU-tier results
+  and the UI shows no GPU chip. `ready` is the only state that may promote a
+  run's expected tier to `final_gpu` in the UI.
+- `DescribeRunResponse.gpu_state` carries this value verbatim on every poll
+  (`packages/shared-contracts/schemas/scene-describe-run.schema.json`). PHP
+  and the SPA pass it through; neither derives GPU state locally (rg-015).
+- File ownership: `/run/acx` is `10001:10001 0775` (WBUX-6); the snapshot is
+  written `0644` so the api container (uid 10001) can read it.

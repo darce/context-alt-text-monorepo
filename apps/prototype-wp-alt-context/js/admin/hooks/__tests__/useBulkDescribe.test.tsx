@@ -322,6 +322,68 @@ describe('useBulkDescribe', () => {
     queryClient.clear();
   });
 
+  it('invalidates workbench list pages once when status is terminal even if phase is stale [HARM-F4]', async () => {
+    submitBulkDescribeRunMock.mockResolvedValue(
+      runResponse({ run_id: 'run-stale-phase', status: 'pending', phase: 'queued' }),
+    );
+    fetchBulkDescribeRunMock.mockResolvedValue(
+      runResponse({
+        run_id: 'run-stale-phase',
+        status: 'completed',
+        phase: 'describing',
+        completed: 4,
+        total: 4,
+        eta_seconds: 0,
+      }),
+    );
+
+    const { wrapper: scopedWrapper, queryClient } = createWrapper();
+    const { result, rerender } = renderHook(() => useBulkDescribe(), { wrapper: scopedWrapper });
+    result.current.submit.mutate([1, 2, 3, 4]);
+
+    await waitFor(() => expect(result.current.progress.isTerminal).toBe(true));
+    expect(result.current.progress.status).toBe('completed');
+    expect(result.current.progress.run?.phase).toBe('describing');
+    expectListPagesInvalidated(queryClient, true);
+    expect(queryClient.getQueryState(mediaStatsTotalQueryKey)?.isInvalidated).toBe(false);
+    expect(queryClient.getQueryState(mediaStatsMissingQueryKey)?.isInvalidated).toBe(false);
+
+    resetCachedQueries(queryClient);
+    expectListPagesInvalidated(queryClient, false);
+    result.current.progress.retry();
+    rerender();
+    await waitFor(() => expect(result.current.progress.isTerminal).toBe(true));
+    expectListPagesInvalidated(queryClient, false);
+    queryClient.clear();
+  });
+
+  it('does not invalidate workbench list pages when status is non-terminal [HARM-F4]', async () => {
+    submitBulkDescribeRunMock.mockResolvedValue(
+      runResponse({ run_id: 'run-live-status', status: 'pending', phase: 'queued' }),
+    );
+    fetchBulkDescribeRunMock.mockResolvedValue(
+      runResponse({
+        run_id: 'run-live-status',
+        status: 'running',
+        phase: 'complete',
+        completed: 1,
+        total: 4,
+        eta_seconds: 42,
+      }),
+    );
+
+    const { wrapper: scopedWrapper, queryClient } = createWrapper();
+    const { result } = renderHook(() => useBulkDescribe(), { wrapper: scopedWrapper });
+    result.current.submit.mutate([1, 2, 3, 4]);
+
+    await waitFor(() => expect(result.current.progress.status).toBe('running'));
+    expect(result.current.progress.isTerminal).toBe(false);
+    expect(result.current.progress.run?.phase).toBe('complete');
+    expectListPagesInvalidated(queryClient, false);
+    expect(queryClient.getQueryState(mediaStatsTotalQueryKey)?.isInvalidated).toBe(false);
+    queryClient.clear();
+  });
+
   it('does not invalidate again when the same runId changes complete → failed [S6-F2]', async () => {
     submitBulkDescribeRunMock.mockResolvedValue(
       runResponse({ run_id: 'run-same', status: 'pending', phase: 'queued' }),

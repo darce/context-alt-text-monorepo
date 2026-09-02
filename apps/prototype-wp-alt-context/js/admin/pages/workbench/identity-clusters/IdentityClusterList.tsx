@@ -13,9 +13,11 @@ import { type DetectedIdentity } from '../../../api/recognition';
 import { EmptyState, EmptyStateVariant } from '../../../components/ui/EmptyState';
 import { toWorkbench } from '../../../navigation/appLinks';
 import { EmptyStateWarning } from './EmptyStateWarning';
+import { pendingMergeTwinForCluster } from './pendingMergeTwin';
 import { groupIdentitiesByClusters } from './utils';
 import { IdentityClusterItem } from './IdentityClusterItem';
 import { useInlineSuggestionBatch } from './useInlineSuggestionBatch';
+import { useSuggestionReviewData } from './useSuggestionReviewData';
 
 interface IdentityClusterListProps {
   /** Detected identities to display */
@@ -43,6 +45,8 @@ export const IdentityClusterList = ({
   const clusters = React.useMemo(() => groupIdentitiesByClusters(identities), [identities]);
   const isLabelOnly = dataSource === DATA_SOURCE.BACKEND_PROXY;
   const canMutate = !isLabelOnly;
+  const { mergeSuggestions, scheduleAcceptMerge, scheduleRejectMerge, isCardPending } =
+    useSuggestionReviewData();
 
   // Same predicate as IdentityClusterItem's render gate:
   // `!cluster.label && anchorIdentityId && canMutate`, with anchorIdentityId
@@ -119,15 +123,39 @@ export const IdentityClusterList = ({
           )}
         </p>
       )}
-      {clusters.map((cluster) => (
-        <IdentityClusterItem
-          key={cluster.key}
-          cluster={cluster}
-          canLabel
-          canMutate={canMutate}
-          inlineSuggestionMatch={getMatch(cluster.members[0]?.identity_id)}
-        />
-      ))}
+      {clusters.map((cluster) => {
+        const twin = pendingMergeTwinForCluster(cluster.clusterId, mergeSuggestions);
+        const twinPending = twin
+          ? isCardPending(twin.suggestionId, ['acceptMerge', 'rejectMerge'])
+          : false;
+        return (
+          <IdentityClusterItem
+            key={cluster.key}
+            cluster={cluster}
+            canLabel
+            canMutate={canMutate}
+            inlineSuggestionMatch={getMatch(cluster.members[0]?.identity_id)}
+            mergeTwin={
+              twin
+                ? {
+                    suggestionId: twin.suggestionId,
+                    survivorLabel: twin.survivorLabel,
+                    onAccept: () => {
+                      void scheduleAcceptMerge(twin.suggestionId);
+                    },
+                    onReject: () => {
+                      void scheduleRejectMerge(twin.suggestionId);
+                    },
+                    isPending: twinPending,
+                    disabledReason: twinPending
+                      ? __('Saving merge suggestion…', 'alt-context')
+                      : null,
+                  }
+                : undefined
+            }
+          />
+        );
+      })}
     </div>
   );
 };

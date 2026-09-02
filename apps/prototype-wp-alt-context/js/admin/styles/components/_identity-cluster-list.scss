@@ -378,6 +378,27 @@
   }
 }
 
+.acx-identity-clusters {
+  &__twin-chip {
+    display: inline-flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--acx-space-8);
+    margin-inline-start: var(--acx-space-8);
+    padding: var(--acx-space-4) var(--acx-space-8);
+    border: 1px solid var(--acx-color-border);
+    border-radius: var(--acx-radius-md);
+    background-color: var(--acx-color-surface);
+    color: var(--acx-color-text);
+    font-size: var(--acx-text-sm);
+
+    button:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+  }
+}
+
 // Inline suggestion prompt ("Is this X?" confirmation)
 .acx-inline-suggestion {
   display: flex;

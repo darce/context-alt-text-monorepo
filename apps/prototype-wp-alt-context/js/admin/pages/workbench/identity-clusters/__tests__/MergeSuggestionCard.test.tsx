@@ -1,4 +1,4 @@
-import { render, screen, within } from '@testing-library/react';
+import { cleanup, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -46,6 +46,51 @@ describe('MergeSuggestionCard', () => {
     expect(screen.getByText('87% match')).toBeInTheDocument();
     expect(screen.getByText('Alex (3)')).toBeInTheDocument();
     expect(screen.getByText('Jordan (4)')).toBeInTheDocument();
+  });
+
+  it('names the labeled side as the survivor when exactly one side is labeled', () => {
+    render(
+      <MergeSuggestionCard
+        suggestion={baseSuggestion}
+        onAccept={vi.fn()}
+        onReject={vi.fn()}
+        isPending={false}
+      />,
+    );
+    expect(screen.getByRole('button', { name: 'Yes' })).toBeInTheDocument();
+
+    cleanup();
+    render(
+      <MergeSuggestionCard
+        suggestion={{
+          ...baseSuggestion,
+          cluster_a_label: 'Ada Lovelace',
+          cluster_b_label: null,
+        }}
+        onAccept={vi.fn()}
+        onReject={vi.fn()}
+        isPending={false}
+      />,
+    );
+    expect(screen.getByRole('button', { name: 'Merge into Ada Lovelace' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Yes' })).not.toBeInTheDocument();
+  });
+
+  it('does not guess positionally when only cluster_b is labeled', () => {
+    render(
+      <MergeSuggestionCard
+        suggestion={{
+          ...baseSuggestion,
+          cluster_a_label: null,
+          cluster_b_label: 'Grace Hopper',
+        }}
+        onAccept={vi.fn()}
+        onReject={vi.fn()}
+        isPending={false}
+      />,
+    );
+    expect(screen.getByRole('button', { name: 'Merge into Grace Hopper' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Merge into Unnamed face group' })).not.toBeInTheDocument();
   });
 
   it('disables actions while pending and calls handlers when active', async () => {

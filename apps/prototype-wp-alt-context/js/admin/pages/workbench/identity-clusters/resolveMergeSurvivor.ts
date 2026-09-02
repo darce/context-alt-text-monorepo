@@ -10,7 +10,6 @@
  */
 
 import type { PendingMergeSuggestion } from '../../../api/recognition/types';
-import { AUTO_LABEL_PREFIX } from './suggestionProjection';
 
 export interface MergeSurvivorResolution {
   survivorId: string;
@@ -18,16 +17,21 @@ export interface MergeSurvivorResolution {
 }
 
 /**
- * Meaningful label = non-empty ∧ not auto `cluster-*`. BR-69: mirror backend
- * `_is_meaningful_label` byte-for-byte — it does NOT trim, so a whitespace-padded
- * label ranks as meaningful on the server. The trimming `isHumanLabeledTarget`
- * would disagree on padded labels and mis-rank the survivor guess.
+ * Meaningful label = non-empty after trim ∧ not a reserved machine shape.
+ * DATA-14 / HARM-F5: mirror backend `is_reserved_label_shape` — trim, lowercase,
+ * and treat both `cluster-` and `cluster_` prefixes as reserved. Do not use a
+ * second inline prefix check at call sites (twin chip included).
  */
 export const isMeaningfulMergeLabel = (label: string | null | undefined): boolean => {
-  if (!label) {
+  if (label == null) {
     return false;
   }
-  return !label.startsWith(AUTO_LABEL_PREFIX);
+  const trimmed = label.trim();
+  if (!trimmed) {
+    return false;
+  }
+  const normalized = trimmed.toLowerCase();
+  return !normalized.startsWith('cluster-') && !normalized.startsWith('cluster_');
 };
 
 type RankTuple = readonly [number, number, string];

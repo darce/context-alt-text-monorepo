@@ -5,6 +5,7 @@ import { FaceThumbnail } from '../../../../components/ui/FaceThumbnail';
 import type { PendingMergeSuggestion } from '../../../api/recognition';
 import type { FaceOriginalTarget } from './SuggestionCards';
 import { ACCENT_PRIMARY_ATTR } from '../mediaFooterCtaState';
+import { isMeaningfulMergeLabel } from './resolveMergeSurvivor';
 import { isHumanLabeledTarget } from './suggestionProjection';
 import { REPRESENTATIVE_VOCABULARY } from './representativeVocabulary';
 import { isValidQueueOrdinal, isValidQueueOrdinalPair } from './reviewQueueDriver';
@@ -99,6 +100,17 @@ export const MergeSuggestionCard = ({
   const humanLabelB = isHumanLabeledTarget(suggestion.cluster_b_label)
     ? suggestion.cluster_b_label
     : null;
+  const labeledA = isMeaningfulMergeLabel(suggestion.cluster_a_label);
+  const labeledB = isMeaningfulMergeLabel(suggestion.cluster_b_label);
+  const labeledSurvivor =
+    labeledA && !labeledB
+      ? suggestion.cluster_a_label?.trim() ?? null
+      : labeledB && !labeledA
+        ? suggestion.cluster_b_label?.trim() ?? null
+        : null;
+  const acceptCopy = labeledSurvivor
+    ? sprintf(__('Merge into %s', 'alt-context'), labeledSurvivor)
+    : __('Yes', 'alt-context');
   const clusterALabel = humanLabelA ?? __('Unnamed face group', 'alt-context');
   const clusterBLabel = humanLabelB ?? __('Unnamed face group', 'alt-context');
   // BR-30: per-side alt differentiators for auto labels; human names stay unchanged.
@@ -267,7 +279,7 @@ export const MergeSuggestionCard = ({
           aria-describedby={`${questionId} ${contextId}`}
           {...(accentPrimary ? { [ACCENT_PRIMARY_ATTR]: true } : {})}
         >
-          {__('Yes', 'alt-context')}
+          {acceptCopy}
         </button>
         {actionAccessoryAfter === 'accept' ? actionAccessory : null}
         <button

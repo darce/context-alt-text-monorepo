@@ -67,11 +67,11 @@ Passing all four is necessary, not sufficient: adoption remains an operator deci
 
 ## Slices
 
-- [ ] Slice 0 — plan + UX map (`docs/tasks/febt/…`, `apps/prototype-wp-alt-context/docs/ux-maps/febt-1-job-error-states.uxmap.json`), planning decision 6810 recorded.
-- [ ] Slice 1 (W1) — L1 AppError foundation green on lane branch; RED test first (`utils/__tests__/appError.test.ts`).
-- [ ] Slice 2 (W1) — L2 logger foundation green (`utils/__tests__/logger.test.ts`).
-- [ ] Slice 3 (W1) — L6a pure job machine green (`hooks/__tests__/jobMachine.test.ts`), exhaustiveness proven by a `never` check in the table.
-- [ ] Gate W1 — `/wb-review-slice`, findings in MCP, combined tree built, merge L1/L2/L6a into `feature/febt-1`.
+- [x] Slice 0 — plan + UX map (`docs/tasks/febt/…`, `apps/prototype-wp-alt-context/docs/ux-maps/febt-1-job-error-states.uxmap.json`), planning decision 6810 recorded.
+- [x] Slice 1 (W1) — L1 AppError foundation green on lane branch; RED test first (`utils/__tests__/appError.test.ts`).
+- [x] Slice 2 (W1) — L2 logger foundation green (`utils/__tests__/logger.test.ts`).
+- [x] Slice 3 (W1) — L6a pure job machine green (`hooks/__tests__/jobMachine.test.ts`), exhaustiveness proven by a `never` check in the table.
+- [x] Gate W1 — `/wb-review-slice`, findings in MCP, combined tree built, merge L1/L2/L6a into `feature/febt-1`.
 - [ ] Slices 4–7 (W2) — L3, L4, L5, L6b; zero `instanceof <ErrorClass>` outside `utils/appError.ts` and zero `console.*` outside `utils/logger.ts` in `js/admin/` (grep gate in each lane's `TEST_CMD`).
 - [ ] Gate W2.
 - [ ] Slice 8 (W3) — L6c wire consumers onto the machine; delete the migrated `useState` cells (contract phase).

@@ -70,7 +70,7 @@ def test_gpu_policy_run_reports_warming_while_health_poll_pending_then_describin
 
         phases_during_describe: list[str] = []
 
-        async def describe_one(media_id, image_bytes, content_type):
+        async def describe_one(media_id, image_bytes, content_type, *, naming_inputs=None):
             async with sf() as s:
                 run = await DescribeRunRepository(s).get_run(tenant_id=TENANT_ID, run_id=run_id)
             assert run is not None
@@ -129,7 +129,7 @@ def test_seeded_run_without_gpu_policy_never_reports_warming(monkeypatch):
 
         seen: list[str] = []
 
-        async def describe_one(media_id, image_bytes, content_type):
+        async def describe_one(media_id, image_bytes, content_type, *, naming_inputs=None):
             async with sf() as s:
                 run = await DescribeRunRepository(s).get_run(tenant_id=TENANT_ID, run_id=run_id)
             assert run is not None
@@ -185,7 +185,9 @@ def test_cancel_during_warming_still_marks_run_cancelled(monkeypatch):
                 tenant_id=TENANT_ID,
                 run_id=run_id,
                 session_factory=sf,
-                describe_one=lambda *_: (_ for _ in ()).throw(AssertionError("describe must not run")),
+                describe_one=lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                    AssertionError("describe must not run")
+                ),
                 timeout_seconds=1.0,
                 gpu_policy=policy,
             )

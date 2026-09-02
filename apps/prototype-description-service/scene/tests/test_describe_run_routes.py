@@ -166,7 +166,7 @@ def test_stage2_skips_load_fusion_naming_inputs_when_recognition_disabled(monkey
         loads.append(1)
         return ["Ada"], object()
 
-    monkeypatch.setattr(describe_run_mod, "load_fusion_naming_inputs", fake_load)
+    monkeypatch.setattr(describe_run_mod, "load_fusion_naming_inputs", fake_load, raising=False)
     monkeypatch.setattr(describe_run_mod, "VisualFactsService", _fusion_aware_fake_service(captured))
 
     with _client() as (_http, sf):
@@ -187,17 +187,18 @@ def test_stage2_skips_load_fusion_naming_inputs_when_recognition_disabled(monkey
 
 
 def test_stage2_loads_fusion_naming_inputs_once_and_injects_names_when_recognition_enabled(monkeypatch):
-    """Positive twin: identity-on Stage-2 loads once and the fake injects names."""
+    """Positive twin: identity-on Stage-2 reuses the preloaded snapshot and injects names."""
     from types import SimpleNamespace
 
     loads: list[int] = []
     captured: dict = {}
+    policy = object()
 
     async def fake_load(**kwargs):
         loads.append(1)
-        return ["Ada"], object()
+        return ["Ada"], policy
 
-    monkeypatch.setattr(describe_run_mod, "load_fusion_naming_inputs", fake_load)
+    monkeypatch.setattr(describe_run_mod, "load_fusion_naming_inputs", fake_load, raising=False)
     monkeypatch.setattr(describe_run_mod, "VisualFactsService", _fusion_aware_fake_service(captured))
 
     with _client() as (_http, sf):
@@ -207,13 +208,42 @@ def test_stage2_loads_fusion_naming_inputs_once_and_injects_names_when_recogniti
             adapter=SimpleNamespace(kind="seeded"),
             recognition_enabled=True,
         )
-        outcome = asyncio.run(describe_one(1, b"bytes", "image/png"))
-    assert loads == [1]
+        outcome = asyncio.run(describe_one(1, b"bytes", "image/png", naming_inputs=(["Ada"], policy)))
+    assert loads == []
     kwargs = captured["kwargs"]
     assert kwargs.get("confirmed_faces") == ["Ada"]
-    assert kwargs.get("naming_policy") is not None
+    assert kwargs.get("naming_policy") is policy
     assert captured["injected_names"] == ["Ada"]
     assert "Ada" in outcome.alt_text_draft
+
+
+def test_stage2_fails_closed_when_recognition_enabled_and_naming_inputs_missing(monkeypatch):
+    """DATA-19: recognition-on Stage-2 must not reload; missing snapshot fails closed."""
+    from types import SimpleNamespace
+
+    from scene.application.describe_run_worker import MissingNamingSnapshotError
+
+    loads: list[int] = []
+    captured: dict = {}
+
+    async def fake_load(**kwargs):
+        loads.append(1)
+        return ["Ada"], object()
+
+    monkeypatch.setattr(describe_run_mod, "load_fusion_naming_inputs", fake_load, raising=False)
+    monkeypatch.setattr(describe_run_mod, "VisualFactsService", _fusion_aware_fake_service(captured))
+
+    with _client() as (_http, sf):
+        describe_one = describe_run_mod._build_describe_one(
+            session_factory=sf,
+            tenant_id=TENANT_ID,
+            adapter=SimpleNamespace(kind="seeded"),
+            recognition_enabled=True,
+        )
+        with pytest.raises(MissingNamingSnapshotError, match="naming_inputs"):
+            asyncio.run(describe_one(1, b"bytes", "image/png"))
+    assert loads == []
+    assert "kwargs" not in captured
 
 
 def test_status_route_returns_run_snapshot(monkeypatch):

@@ -1,7 +1,7 @@
 import { ChangeEvent, useEffect, useState } from 'react';
 import * as Select from '@radix-ui/react-select';
 import { AlertTriangle, Check, CheckCircle2, ChevronDown, Clock, Loader2, XCircle } from 'lucide-react';
-import { __, sprintf } from '@wordpress/i18n';
+import { __, _n, sprintf } from '@wordpress/i18n';
 import type { WorkbenchMediaItem } from '../../hooks/useWorkbenchMedia';
 import type { WorkbenchMediaStatus } from '../../api/workbenchMediaApi';
 import { MediaSelectionTableBody } from './MediaSelectionTableBody';
@@ -427,7 +427,11 @@ export const BulkDescribeCta = ({
           }}
           {...(accentPrimary ? { [ACCENT_PRIMARY_ATTR]: true } : {})}
         >
-          {isSubmitting ? SYNC_VOCABULARY.describeStarting : __('Describe selected', 'alt-context')}
+          {isSubmitting
+            ? SYNC_VOCABULARY.describeStarting
+            : selectedCount > 0
+              ? sprintf(_n('Describe %d selected', 'Describe %d selected', selectedCount, 'alt-context'), selectedCount)
+              : __('Describe selected', 'alt-context')}
         </button>
         {offlineGated && remoteActionTitle ? (
           <span id={DESCRIBE_OFFLINE_REASON_ID} className="screen-reader-text">

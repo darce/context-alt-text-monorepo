@@ -9,6 +9,7 @@ import { BulkDescribeCta } from '../MediaSelection';
 
 vi.mock('@wordpress/i18n', () => ({
   __: (text: string) => text,
+  _n: (single: string, plural: string, count: number) => (count === 1 ? single : plural),
   sprintf: (fmt: string, ...args: (string | number)[]) => {
     let i = 0;
     return fmt.replace(/%[sd]/g, () => String(args[i++]));
@@ -93,7 +94,7 @@ describe('BulkDescribeCta state matrix (A11Y-24)', () => {
       />,
     );
 
-    const button = screen.getByRole('button', { name: 'Describe selected' });
+    const button = screen.getByRole('button', { name: 'Describe 2 selected' });
     // §7 offline row: still focusable (not HTML disabled), reason reachable.
     expect(button).not.toBeDisabled();
     expect(button).toHaveAttribute('aria-disabled', 'true');
@@ -112,13 +113,13 @@ describe('BulkDescribeCta state matrix (A11Y-24)', () => {
     expect(marked).toHaveLength(1);
     // BR-73: the marker sits on the actually-accent-styled submit button — never the
     // wrapper div — and the accent chrome class rides with it.
-    const button = screen.getByRole('button', { name: 'Describe selected' });
+    const button = screen.getByRole('button', { name: 'Describe 2 selected' });
     expect(marked[0]).toBe(button);
     expect(button.className).toContain('acx-accent-primary-action');
 
     rerender(<BulkDescribeCta {...baseProps} accentPrimary={false} />);
     expect(container.querySelectorAll('[data-acx-accent-primary]')).toHaveLength(0);
-    expect(screen.getByRole('button', { name: 'Describe selected' }).className).not.toContain(
+    expect(screen.getByRole('button', { name: 'Describe 2 selected' }).className).not.toContain(
       'acx-accent-primary-action',
     );
   });
@@ -155,7 +156,7 @@ describe('BulkDescribeCta state matrix (A11Y-24)', () => {
       />,
     );
 
-    await userEvent.click(screen.getByRole('button', { name: 'Describe selected' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Describe 2 selected' }));
     expect(onSubmit).not.toHaveBeenCalled();
   });
 
@@ -163,7 +164,7 @@ describe('BulkDescribeCta state matrix (A11Y-24)', () => {
     const onSubmit = vi.fn();
     render(<BulkDescribeCta {...baseProps} onSubmit={onSubmit} />);
 
-    const button = screen.getByRole('button', { name: 'Describe selected' });
+    const button = screen.getByRole('button', { name: 'Describe 2 selected' });
     expect(button).not.toBeDisabled();
     await userEvent.click(button);
     expect(onSubmit).toHaveBeenCalledOnce();

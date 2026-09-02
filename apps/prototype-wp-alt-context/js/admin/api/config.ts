@@ -53,8 +53,10 @@ const NONCE_BODY_PATTERN = /^[a-f0-9]{8,20}$/i;
 export const NONCE_REFRESH_TIMEOUT_MS = 10_000;
 
 export class NonceRefreshFailedError extends Error {
+  readonly _tag = 'nonce_refresh' as const;
   readonly causeStatus: number | undefined;
   readonly bodyPreview: string;
+  readonly cause: unknown;
 
   constructor({
     message,
@@ -69,8 +71,18 @@ export class NonceRefreshFailedError extends Error {
     this.name = 'NonceRefreshFailedError';
     this.causeStatus = causeStatus;
     this.bodyPreview = bodyPreview ?? '';
+    this.cause = undefined;
   }
 }
+
+/** WP rest-nonce logged-out / cookie-fail sentinels — not a transport blip. */
+export const isNonceRefreshAuthRejection = (error: NonceRefreshFailedError): boolean => {
+  if (error.causeStatus === 401 || error.causeStatus === 403) {
+    return true;
+  }
+  const body = error.bodyPreview.trim();
+  return body === '0' || body === '-1';
+};
 
 const normalizeOptionalString = (value: unknown): string | undefined =>
   typeof value === 'string' && value.trim() !== '' ? value : undefined;

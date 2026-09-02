@@ -48,14 +48,16 @@ describe('getDescribeRunRefetchInterval (UXP-2-BR-07 pure policy)', () => {
 
   // TEST-15: each branch fails if the corresponding condition is inverted.
   it('keeps polling through abort-like (timeout) transient errors', () => {
-    expect(
-      getDescribeRunRefetchInterval({
-        status: 'error',
-        error: timeoutError,
-        data: running,
-        frozenPollStreak: 0,
-      }),
-    ).toBe(DESCRIBE_RUN_POLL_INTERVAL_MS);
+    const interval = getDescribeRunRefetchInterval({
+      status: 'error',
+      error: timeoutError,
+      data: running,
+      frozenPollStreak: 0,
+    });
+    // Regression guard [FEBT1-W2A-05]: a gated refetchInterval that returns
+    // false never recovers — timeout must not freeze the poller permanently.
+    expect(interval).not.toBe(false);
+    expect(interval).toBe(DESCRIBE_RUN_POLL_INTERVAL_MS);
   });
 
   it('keeps polling through abort-like (AbortError) transient errors', () => {

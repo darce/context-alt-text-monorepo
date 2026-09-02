@@ -35,6 +35,13 @@ describe('formatUserFacingError / getClusterMutationErrorMessage', () => {
     expect(getClusterMutationErrorMessage(new Error('plain failure'), 'Sam')).toBe('plain failure');
   });
 
+  it('maps timeout to retry copy and leaves abort on the caller fallback [FEBT1-W2A-05]', () => {
+    expect(formatUserFacingError({ name: 'TimeoutError', message: 'timed out' }, 'generic')).toBe(
+      'The server took too long to respond — try again',
+    );
+    expect(formatUserFacingError({ name: 'AbortError', message: 'aborted' }, 'generic')).toBe('generic');
+  });
+
   it('pre-classified auth_expired AppError uses session-expired copy (M16 / F5)', () => {
     const classified = {
       _tag: 'auth_expired' as const,

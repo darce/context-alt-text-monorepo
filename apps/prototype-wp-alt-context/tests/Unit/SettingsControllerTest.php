@@ -687,19 +687,47 @@ class SettingsControllerTest extends TestCase
         $this->assertTrue($get->get_data()['recognition_enabled']);
     }
 
-    public function testSaveSettingsRejectsNonBoolRecognitionEnabled(): void
+    /**
+     * r2-S1-F1 [TEST-15] [TEST-06] [FORM-08]: non-boolean recognition_enabled
+     * must 400 with invalid_recognition_enabled and leave the option row
+     * absent. Pin reds under the mutant that loosens is_bool to also accept
+     * 0/1 and (bool)-casts into set() — assertFalse(get_option()) cannot
+     * distinguish "did not persist" from "never had a row".
+     *
+     * @dataProvider nonBoolRecognitionEnabledProvider
+     */
+    public function testSaveSettingsRejectsNonBoolRecognitionEnabled(mixed $value): void
     {
         $this->setUserCapability('manage_options', true);
+        $this->assertNull(get_option('acx_recognition_enabled', null));
 
         $request = new WP_REST_Request('POST', '/acx/v1/settings');
-        $request->set_body_params(['recognition_enabled' => 'true']);
+        $request->set_body_params(['recognition_enabled' => $value]);
 
         $response = $this->controller->save_settings($request);
 
         $this->assertInstanceOf(\WP_Error::class, $response);
         $this->assertSame('invalid_recognition_enabled', $response->get_error_code());
         $this->assertSame(400, $response->get_error_data()['status'] ?? null);
-        $this->assertFalse(get_option('acx_recognition_enabled'));
+        $this->assertNull(
+            get_option('acx_recognition_enabled', null),
+            'rejected write must leave the option row absent, not a stored falsey'
+        );
+    }
+
+    /**
+     * @return array<string, array{0: mixed}>
+     */
+    public static function nonBoolRecognitionEnabledProvider(): array
+    {
+        return [
+            'string_true' => ['true'],
+            'string_false' => ['false'],
+            'int_zero' => [0],
+            'int_one' => [1],
+            'string_one' => ['1'],
+            'null' => [null],
+        ];
     }
 
     /**
@@ -744,6 +772,10 @@ class SettingsControllerTest extends TestCase
             $this->assertNotSame('alt_plus_description', $stored);
         } elseif ('recognition_enabled' === $savedField) {
             $this->assertNotSame('0', $stored);
+            $this->assertNull(
+                $stored,
+                'write failure must leave acx_recognition_enabled absent (distinguishable from stored falsey / DEFAULT-on)'
+            );
         }
     }
 
@@ -775,6 +807,14 @@ class SettingsControllerTest extends TestCase
             ],
             'recognition_enabled' => [
                 ['recognition_enabled' => false],
+                'acx_recognition_enabled',
+                'recognition_enabled',
+            ],
+            // r2-S1-F2 [TEST-15]: DEFAULT is ON, so POST true + add_option
+            // failure must not report ok just because enabled() already
+            // matches the intended value on a missing row.
+            'recognition_enabled_post_true' => [
+                ['recognition_enabled' => true],
                 'acx_recognition_enabled',
                 'recognition_enabled',
             ],

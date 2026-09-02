@@ -14,8 +14,11 @@ from uuid import UUID, uuid4
 
 import numpy as np
 import pytest
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from recognition.application.clustering.centroid_utils import compute_centroid
+from db.models import IdentityCluster as IdentityClusterModel
+from db.models import Tenant
+from recognition.application.clustering.centroid_utils import compute_centroid, compute_similarity
 from recognition.application.settings import ClusteringSettings
 from recognition.application.suggestions.merge_suggestions import generate_cluster_merge_suggestions
 from recognition.domain.cluster import IdentityCluster
@@ -26,13 +29,18 @@ from recognition.domain.suggestion_details import MergeSuggestionDetails
 from recognition.infrastructure.repositories.merge_suggestion_repository import (
     SqlAlchemyMergeSuggestionRepository,
 )
+from recognition.infrastructure.services.suggestion_extension_service import SuggestionExtensionService
 from recognition.interface_adapters.http.routers.suggestions import _to_merge_response
 from recognition.shared.ids import generate_id
 
 # Cosine ~0.75 — inside [suggestion_floor=0.65, similarity_threshold=0.8).
 _IN_BAND_A = np.array([1.0, 0.0, 0.0], dtype=np.float32)
 _IN_BAND_B = np.array([0.75, 0.6614, 0.0], dtype=np.float32)
-# Orthogonal to both in-band vectors (xy-plane) — similarity 0, below the floor.
+# Cosine(_IN_BAND_A, ·) ~0.62 — in-band-shaped but just under suggestion_floor=0.65.
+_JUST_BELOW_FLOOR = np.array([0.62, 0.784601, 0.0], dtype=np.float32)
+# Cosine(_IN_BAND_A, ·) ~0.67 — just above suggestion_floor, still below similarity_threshold.
+_JUST_ABOVE_FLOOR = np.array([0.67, 0.742361, 0.0], dtype=np.float32)
+# Orthogonal to xy-plane vectors — similarity 0. Used to isolate an unrelated labeled cluster.
 _BELOW_FLOOR = np.array([0.0, 0.0, 1.0], dtype=np.float32)
 
 
@@ -71,10 +79,10 @@ class MergeSuggestionRepoStub(MergeSuggestionRepository):
         return 0
 
 
-def _settings() -> ClusteringSettings:
+def _settings(*, suggestion_floor: float = 0.65) -> ClusteringSettings:
     return ClusteringSettings(
         similarity_threshold=0.8,
-        suggestion_floor=0.65,
+        suggestion_floor=suggestion_floor,
         suggestion_ceiling=0.8,
     )
 
@@ -112,15 +120,61 @@ def _cluster(
     )
 
 
-async def _generate(clusters: list[IdentityCluster], tenant_id: str) -> MergeSuggestionRepoStub:
+async def _generate(
+    clusters: list[IdentityCluster],
+    tenant_id: str,
+    *,
+    settings: ClusteringSettings | None = None,
+) -> MergeSuggestionRepoStub:
     repo = MergeSuggestionRepoStub()
     await generate_cluster_merge_suggestions(
         tenant_id=tenant_id,
         clusters=clusters,
         repository=repo,
-        settings=_settings(),
+        settings=settings or _settings(),
     )
     return repo
+
+
+async def _seed_labeled_unlabeled_pending(
+    db_session: AsyncSession,
+    tenant: Tenant,
+) -> tuple[str, str]:
+    """Persist a pending pair whose labeled UUID sorts AFTER the unlabeled one."""
+    unlabeled_uuid, labeled_uuid = sorted((uuid4(), uuid4()), key=lambda value: value.int)
+    assert unlabeled_uuid.int < labeled_uuid.int
+    unlabeled = IdentityClusterModel(
+        id=unlabeled_uuid,
+        tenant_id=tenant.id,
+        label=None,
+        identity_count=1,
+        user_confirmed=False,
+    )
+    labeled = IdentityClusterModel(
+        id=labeled_uuid,
+        tenant_id=tenant.id,
+        label="Ada Lovelace",
+        identity_count=1,
+        user_confirmed=True,
+    )
+    db_session.add(unlabeled)
+    await db_session.flush()
+    db_session.add(labeled)
+    await db_session.flush()
+    unlabeled_id = str(unlabeled_uuid)
+    labeled_id = str(labeled_uuid)
+    merge_repo = SqlAlchemyMergeSuggestionRepository(db_session)
+    await merge_repo.upsert_pending(
+        str(tenant.id),
+        MergeSuggestionCreateData(
+            cluster_a_id=labeled_id,
+            cluster_b_id=unlabeled_id,
+            similarity=0.72,
+            survivor_cluster_id=labeled_id,
+        ),
+    )
+    await db_session.commit()
+    return unlabeled_id, labeled_id
 
 
 @pytest.mark.asyncio
@@ -152,13 +206,41 @@ async def test_labeled_labeled_in_band_never_suggested() -> None:
 
 @pytest.mark.asyncio
 async def test_labeled_unlabeled_below_floor_not_suggested() -> None:
+    """Near-floor pair (cosine ~0.62) stays unsuggested at suggestion_floor=0.65."""
     tenant_id = str(generate_id())
     unlabeled = _cluster(tenant_id=tenant_id, label=None, user_confirmed=False, embedding=_IN_BAND_A)
-    labeled = _cluster(tenant_id=tenant_id, label="Ada Lovelace", user_confirmed=True, embedding=_BELOW_FLOOR)
+    labeled = _cluster(tenant_id=tenant_id, label="Ada Lovelace", user_confirmed=True, embedding=_JUST_BELOW_FLOOR)
+
+    similarity = compute_similarity(unlabeled.centroid, labeled.centroid)
+    settings = _settings()
+    assert 0.60 <= similarity < settings.suggestion_floor
 
     repo = await _generate([unlabeled, labeled], tenant_id)
 
     assert repo.calls == []
+
+
+@pytest.mark.asyncio
+async def test_labeled_unlabeled_just_above_floor_is_suggested() -> None:
+    """Sibling of the below-floor case: cosine ~0.67 is suggested, labeled is survivor."""
+    tenant_id = str(generate_id())
+    unlabeled = _cluster(tenant_id=tenant_id, label=None, user_confirmed=False, embedding=_IN_BAND_A)
+    labeled = _cluster(tenant_id=tenant_id, label="Ada Lovelace", user_confirmed=True, embedding=_JUST_ABOVE_FLOOR)
+
+    similarity = compute_similarity(unlabeled.centroid, labeled.centroid)
+    settings = _settings()
+    assert settings.suggestion_floor <= similarity < 0.70
+    assert similarity < settings.similarity_threshold
+
+    repo = await _generate([unlabeled, labeled], tenant_id)
+
+    assert len(repo.calls) == 1
+    call = repo.calls[0]
+    assert call.cluster_a_id == labeled.id
+    assert call.cluster_b_id == unlabeled.id
+    assert call.survivor_cluster_id == labeled.id
+    assert settings.suggestion_floor <= call.similarity < settings.similarity_threshold
+    assert call.similarity < 0.70
 
 
 @pytest.mark.asyncio
@@ -316,3 +398,45 @@ def test_list_merge_response_carries_survivor_cluster_id_and_label() -> None:
     assert response.survivor_label == "Ada Lovelace"
     assert "survivor_cluster_id" in dumped
     assert "survivor_label" in dumped
+
+
+@pytest.mark.asyncio
+async def test_list_pending_with_details_projects_survivor_when_labeled_id_sorts_after(
+    db_session: AsyncSession,
+    tenant: Tenant,
+) -> None:
+    """r2-S3-F1: real _to_details/list_pending_with_details round-trip (TEST-17)."""
+    unlabeled_id, labeled_id = await _seed_labeled_unlabeled_pending(db_session, tenant)
+    repo = SqlAlchemyMergeSuggestionRepository(db_session)
+
+    details_list = await repo.list_pending_with_details(str(tenant.id), limit=10, offset=0)
+
+    assert len(details_list) == 1
+    details = details_list[0]
+    assert details.cluster_a_id == unlabeled_id
+    assert details.cluster_b_id == labeled_id
+    assert details.survivor_cluster_id == labeled_id
+    assert details.cluster_a_label is None
+    assert details.cluster_b_label == "Ada Lovelace"
+
+    response = _to_merge_response(details)
+    assert response.survivor_cluster_id == labeled_id
+    assert response.survivor_label == "Ada Lovelace"
+
+
+@pytest.mark.asyncio
+async def test_list_pending_merge_candidates_projects_survivor_when_labeled_id_sorts_after(
+    db_session: AsyncSession,
+    tenant: Tenant,
+) -> None:
+    """r2-S3-F1: real list_pending_merge_candidates round-trip (TEST-17)."""
+    unlabeled_id, labeled_id = await _seed_labeled_unlabeled_pending(db_session, tenant)
+    service = SuggestionExtensionService(db_session)
+
+    candidates = await service.list_pending_merge_candidates(str(tenant.id), min_confidence=0.65)
+
+    assert len(candidates) == 1
+    candidate = candidates[0]
+    assert candidate.cluster_a_id == unlabeled_id
+    assert candidate.cluster_b_id == labeled_id
+    assert candidate.survivor_cluster_id == labeled_id

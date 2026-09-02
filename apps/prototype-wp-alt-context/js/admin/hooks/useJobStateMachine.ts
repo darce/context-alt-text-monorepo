@@ -3,6 +3,7 @@ import { useQueryClient } from '@tanstack/react-query';
 
 import { queryKeys } from '../api/queryKeys';
 import type { ClusterResponse } from '../api/recognition';
+import { isHttpStatus } from '../utils/appError';
 import { useSyncTrigger } from './useSyncTrigger';
 import { derivePipelinePhase, deriveLatestJobId, getLatestJobByType, type PipelinePhase } from './jobStateMachineUtils';
 import { useJobStateMachineDerivedState } from './useJobStateMachineDerivedState';
@@ -24,8 +25,6 @@ export interface JobStateMachineOptions {
   jobId?: string | null; // For history polling
   onJobNotFound?: (jobId: string) => void;
 }
-
-const isNotFoundError = (error: unknown): boolean => error instanceof Error && error.message.includes('(404)');
 
 export const useJobStateMachine = ({
   onScanStart,
@@ -92,7 +91,7 @@ export const useJobStateMachine = ({
     if (!jobId) {
       return;
     }
-    if (isNotFoundError(scanStatusQuery.error)) {
+    if (isHttpStatus(scanStatusQuery.error, 404)) {
       onJobNotFound?.(jobId);
     }
   }, [jobId, onJobNotFound, scanStatusQuery.error]);
@@ -104,7 +103,7 @@ export const useJobStateMachine = ({
 
     multiScanStatus.forEach((statusQuery, index) => {
       const staleJobId = activeJobIds[index];
-      if (staleJobId && isNotFoundError(statusQuery.error)) {
+      if (staleJobId && isHttpStatus(statusQuery.error, 404)) {
         removeJob(staleJobId);
       }
     });

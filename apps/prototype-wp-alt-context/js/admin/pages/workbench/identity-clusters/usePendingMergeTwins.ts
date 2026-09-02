@@ -17,18 +17,13 @@ import {
 /** Shared react-query key with the review-queue merge page so the cache is reused. */
 export const PENDING_MERGE_TWIN_LIMIT = 50;
 
-export type PendingMergeTwinPage = PendingMergeSuggestionsResponse & {
-  /** Present only when the envelope still forwards an authoritative total. */
-  total?: number;
-};
+export type PendingMergeTwinPage = PendingMergeSuggestionsResponse;
 
 export const isPendingMergePageTruncated = (
-  page: Pick<PendingMergeTwinPage, 'suggestions' | 'total'>,
+  page: Pick<PendingMergeTwinPage, 'suggestions'>,
 ): boolean => {
   const loaded = page.suggestions.length;
-  if (typeof page.total === 'number') {
-    return page.total > loaded;
-  }
+  // WHY (rg-015): mapper envelope has no `total`; a full page is the only truncation signal.
   return loaded >= PENDING_MERGE_TWIN_LIMIT;
 };
 

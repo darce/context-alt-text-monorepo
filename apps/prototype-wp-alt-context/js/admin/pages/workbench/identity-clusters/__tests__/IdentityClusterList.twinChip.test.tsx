@@ -7,8 +7,9 @@ import { resetConfigCache } from '../../../../api/config';
 import * as recognitionApi from '../../../../api/recognition';
 import { DATA_SOURCE, type DataSource } from '../../../../api/recognition/types';
 import type { DetectedIdentity, PendingMergeSuggestion } from '../../../../api/recognition/types';
+import { mapPendingMergeSuggestions } from '../../../../api/recognition/identitySuggestionMappers';
 import { IdentityClusterList } from '../IdentityClusterList';
-import { isPendingMergePageTruncated } from '../usePendingMergeTwins';
+import { isPendingMergePageTruncated, PENDING_MERGE_TWIN_LIMIT } from '../usePendingMergeTwins';
 
 const { scheduleAcceptMerge, scheduleRejectMerge } = vi.hoisted(() => ({
   scheduleAcceptMerge: vi.fn(),
@@ -112,6 +113,22 @@ const pendingMerge = (overrides: Partial<PendingMergeSuggestion> = {}): PendingM
   ...overrides,
 });
 
+const mappedMergePage = (count: number) =>
+  mapPendingMergeSuggestions({
+    suggestions: Array.from({ length: count }, (_, i) => ({
+      id: `merge-${i}`,
+      cluster_a_id: LABELED_ID,
+      cluster_b_id: i === 0 ? UNLABELED_ID : `cluster-other-${i}`,
+      similarity: 0.91,
+      status: 'pending',
+      cluster_a_label: 'Ada Lovelace',
+      cluster_b_label: null,
+    })),
+    limit: PENDING_MERGE_TWIN_LIMIT,
+    offset: 0,
+    data_source: DATA_SOURCE.BACKEND_PROXY,
+  });
+
 const renderList = (identities: DetectedIdentity[], dataSource?: DataSource) => {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
@@ -177,7 +194,7 @@ describe('IdentityClusterList twin chip (WBUX-6/C3 S4-F1/F4/F6)', () => {
       expect(screen.getByRole('group', { name: /same person as ada lovelace/i })).toBeInTheDocument();
     });
 
-    await user.click(screen.getByRole('button', { name: 'Merge into Ada' }));
+    await user.click(screen.getByRole('button', { name: 'Merge into Ada Lovelace' }));
     await user.click(screen.getByRole('button', { name: 'Not the same' }));
 
     expect(scheduleAcceptMerge).toHaveBeenCalledTimes(1);
@@ -201,13 +218,8 @@ describe('IdentityClusterList twin chip (WBUX-6/C3 S4-F1/F4/F6)', () => {
     expect(recognitionApi.fetchTopUnlabeledClusters).not.toHaveBeenCalled();
   });
 
-  it('renders the review-queue link for unlabeled clusters without a twin when truncated', async () => {
-    vi.mocked(recognitionApi.fetchPendingMergeSuggestions).mockResolvedValue({
-      suggestions: [pendingMerge()],
-      limit: 50,
-      offset: 0,
-      total: 2,
-    } as Awaited<ReturnType<typeof recognitionApi.fetchPendingMergeSuggestions>> & { total: number });
+  it('renders the review-queue link when the mapped page is a full twin limit (S4R2-F2)', async () => {
+    vi.mocked(recognitionApi.fetchPendingMergeSuggestions).mockResolvedValue(mappedMergePage(50));
 
     renderList([
       identity(),
@@ -221,6 +233,63 @@ describe('IdentityClusterList twin chip (WBUX-6/C3 S4-F1/F4/F6)', () => {
       expect(screen.getByRole('group', { name: /same person as ada lovelace/i })).toBeInTheDocument();
     });
     expect(screen.getByRole('link', { name: 'Review pending merges' })).toBeInTheDocument();
+  });
+
+  it('does not render the review-queue link for a 49-row mapped page (S4R2-F2)', async () => {
+    vi.mocked(recognitionApi.fetchPendingMergeSuggestions).mockResolvedValue(mappedMergePage(49));
+
+    renderList([
+      identity(),
+      identity({
+        identity_id: 'id-other',
+        cluster_id: OTHER_UNLABELED_ID,
+      }),
+    ]);
+
+    await waitFor(() => {
+      expect(screen.getByRole('group', { name: /same person as ada lovelace/i })).toBeInTheDocument();
+    });
+    expect(screen.queryByRole('link', { name: 'Review pending merges' })).not.toBeInTheDocument();
+  });
+
+  it('renders the chip on B when both labels are human-shaped and survivor_cluster_id is A (S4R2-F1)', async () => {
+    vi.mocked(recognitionApi.fetchPendingMergeSuggestions).mockResolvedValue(
+      mapPendingMergeSuggestions({
+        suggestions: [
+          {
+            id: 'merge-1',
+            cluster_a_id: LABELED_ID,
+            cluster_b_id: UNLABELED_ID,
+            similarity: 0.91,
+            status: 'pending',
+            cluster_a_label: 'Ada Lovelace',
+            cluster_b_label: 'Ada',
+            survivor_cluster_id: LABELED_ID,
+            survivor_label: 'Ada Lovelace',
+          },
+        ],
+        limit: 50,
+        offset: 0,
+        data_source: DATA_SOURCE.BACKEND_PROXY,
+      }),
+    );
+
+    renderList([
+      identity({ cluster_label: 'Ada' }),
+      identity({
+        identity_id: 'id-labeled',
+        cluster_id: LABELED_ID,
+        cluster_label: 'Ada Lovelace',
+        is_auto_label: false,
+      }),
+    ]);
+
+    await waitFor(() => {
+      expect(screen.getByRole('group', { name: /same person as ada lovelace/i })).toBeInTheDocument();
+    });
+    expect(screen.getByRole('button', { name: 'Merge into Ada Lovelace' })).toHaveTextContent(
+      'Merge into Ada Lovelace',
+    );
   });
 
   it('does not render a silent-twin fallback link when the loaded page is complete', async () => {
@@ -252,12 +321,12 @@ describe('IdentityClusterList twin chip (WBUX-6/C3 S4-F1/F4/F6)', () => {
     });
 
     expect(screen.queryByTestId('acx-identity-clusters__twin-chip')).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Merge into Ada' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Merge into Ada Lovelace' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Not the same' })).not.toBeInTheDocument();
   });
 });
 
-describe('isPendingMergePageTruncated (S4-F4)', () => {
+describe('isPendingMergePageTruncated (S4R2-F2)', () => {
   it('is false for a 2-suggestion page under the twin limit', () => {
     expect(
       isPendingMergePageTruncated({
@@ -266,11 +335,18 @@ describe('isPendingMergePageTruncated (S4-F4)', () => {
     ).toBe(false);
   });
 
-  it('is true when envelope total exceeds loaded items', () => {
+  it('is false for 49 loaded suggestions (mutant loaded > 50 stays green without this)', () => {
     expect(
       isPendingMergePageTruncated({
-        suggestions: [pendingMerge()],
-        total: 2,
+        suggestions: Array.from({ length: 49 }, (_, i) => pendingMerge({ id: `merge-${i}` })),
+      }),
+    ).toBe(false);
+  });
+
+  it('is true at the twin page limit of 50', () => {
+    expect(
+      isPendingMergePageTruncated({
+        suggestions: Array.from({ length: 50 }, (_, i) => pendingMerge({ id: `merge-${i}` })),
       }),
     ).toBe(true);
   });

@@ -76,6 +76,44 @@ describe('MergeSuggestionCard', () => {
     expect(screen.queryByRole('button', { name: 'Yes' })).not.toBeInTheDocument();
   });
 
+  it('uses stamped survivor_label when both cluster labels are human-shaped (S4R2-F1)', () => {
+    render(
+      <MergeSuggestionCard
+        suggestion={{
+          ...baseSuggestion,
+          cluster_a_label: 'Ada Lovelace',
+          cluster_b_label: 'Ada',
+          survivor_cluster_id: 'cluster-a',
+          survivor_label: 'Ada Lovelace',
+        }}
+        onAccept={vi.fn()}
+        onReject={vi.fn()}
+        isPending={false}
+      />,
+    );
+    expect(screen.getByRole('button', { name: 'Merge into Ada Lovelace' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Yes' })).not.toBeInTheDocument();
+  });
+
+  it('uses stamped survivor_cluster_id = B when both labels are human-shaped (S4-F7)', () => {
+    render(
+      <MergeSuggestionCard
+        suggestion={{
+          ...baseSuggestion,
+          cluster_a_label: 'Ada',
+          cluster_b_label: 'Grace Hopper',
+          survivor_cluster_id: 'cluster-b',
+          survivor_label: 'Grace Hopper',
+        }}
+        onAccept={vi.fn()}
+        onReject={vi.fn()}
+        isPending={false}
+      />,
+    );
+    expect(screen.getByRole('button', { name: 'Merge into Grace Hopper' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Merge into Ada' })).not.toBeInTheDocument();
+  });
+
   it('does not guess positionally when only cluster_b is labeled', () => {
     render(
       <MergeSuggestionCard

@@ -121,6 +121,13 @@ export interface PendingMergeSuggestion {
    */
   source_cluster_id?: string | null;
   target_cluster_id?: string | null;
+  /**
+   * Authoritative labeled-for-merge side from `_to_merge_response`
+   * (`user_confirmed ∧ label ∧ ¬reserved`). Optional on older backends.
+   */
+  survivor_cluster_id?: string | null;
+  /** Display label for the stamped survivor; null when omitted. */
+  survivor_label?: string | null;
 }
 
 export interface PendingMergeSuggestionsResponse {

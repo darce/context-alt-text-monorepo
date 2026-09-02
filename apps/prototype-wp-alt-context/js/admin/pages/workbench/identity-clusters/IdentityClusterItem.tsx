@@ -41,6 +41,7 @@ const MATCH_DEBOUNCE_MS = 300;
 
 export interface IdentityClusterMergeTwin {
   suggestionId: string;
+  survivorClusterId: string;
   survivorLabel: string;
   onAccept: () => void;
   onReject: () => void;
@@ -327,9 +328,8 @@ export const IdentityClusterItem = ({
   const showTwinChip =
     canMutate &&
     mergeTwin != null &&
-    !isMeaningfulMergeLabel(cluster.label) &&
+    cluster.clusterId !== mergeTwin.survivorClusterId &&
     isMeaningfulMergeLabel(mergeTwin.survivorLabel);
-  const twinFirstName = mergeTwin?.survivorLabel.trim().split(/\s+/)[0] ?? '';
   const twinPendingTitle =
     mergeTwin?.isPending && mergeTwin.disabledReason ? mergeTwin.disabledReason : undefined;
   const twinPendingDescId = mergeTwin ? `acx-twin-pending-${mergeTwin.suggestionId}` : undefined;
@@ -400,7 +400,7 @@ export const IdentityClusterItem = ({
                   disabled={mergeTwin.isPending}
                   title={twinPendingTitle}
                 >
-                  {sprintf(__('Merge into %s', 'alt-context'), twinFirstName)}
+                  {sprintf(__('Merge into %s', 'alt-context'), mergeTwin.survivorLabel)}
                 </button>
                 <button
                   type="button"

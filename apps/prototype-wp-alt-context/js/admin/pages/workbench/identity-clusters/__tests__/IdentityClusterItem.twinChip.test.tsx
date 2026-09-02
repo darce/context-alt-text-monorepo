@@ -90,6 +90,7 @@ const labeledCluster = (): ClusterGroup => ({
 
 const mergeTwin = (overrides: Partial<{
   suggestionId: string;
+  survivorClusterId: string;
   survivorLabel: string;
   onAccept: () => void;
   onReject: () => void;
@@ -97,6 +98,7 @@ const mergeTwin = (overrides: Partial<{
   disabledReason: string | null;
 }> = {}) => ({
   suggestionId: 'merge-1',
+  survivorClusterId: LABELED_ID,
   survivorLabel: 'Ada Lovelace',
   onAccept: vi.fn(),
   onReject: vi.fn(),
@@ -153,15 +155,34 @@ describe('IdentityClusterItem twin chip (WBUX-6/C3)', () => {
     expect(icon).not.toBeNull();
     expect(icon).toHaveTextContent('⇢');
     expect(chip).toHaveTextContent('Same person as Ada Lovelace?');
-    expect(screen.getByRole('button', { name: 'Merge into Ada' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Merge into Ada Lovelace' })).toHaveTextContent(
+      'Merge into Ada Lovelace',
+    );
     expect(screen.getByRole('button', { name: 'Not the same' })).toBeInTheDocument();
+  });
+
+  it('renders the chip when the unlabeled-for-merge row still has a human-shaped label (S4R2-F1)', () => {
+    renderItem(unlabeledCluster({ label: 'Ada' }), mergeTwin());
+
+    expect(screen.getByRole('group', { name: /same person as ada lovelace/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Merge into Ada Lovelace' })).toHaveTextContent(
+      'Merge into Ada Lovelace',
+    );
+  });
+
+  it('uses the full multi-word survivor label on the accept button (S4R2-F4)', () => {
+    renderItem(unlabeledCluster(), mergeTwin({ survivorLabel: 'Mary Jane Watson' }));
+
+    const accept = screen.getByRole('button', { name: 'Merge into Mary Jane Watson' });
+    expect(accept).toHaveTextContent('Merge into Mary Jane Watson');
+    expect(accept.textContent).toBe('Merge into Mary Jane Watson');
   });
 
   it('does not render the chip on a labeled cluster even when mergeTwin is passed', () => {
     renderItem(labeledCluster(), mergeTwin());
 
     expect(screen.queryByTestId('acx-identity-clusters__twin-chip')).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Merge into Ada' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Merge into Ada Lovelace' })).not.toBeInTheDocument();
   });
 
   it('does not render the chip when mergeTwin is omitted', () => {
@@ -176,7 +197,7 @@ describe('IdentityClusterItem twin chip (WBUX-6/C3)', () => {
     const user = userEvent.setup();
     renderItem(unlabeledCluster(), mergeTwin({ onAccept, onReject }));
 
-    await user.click(screen.getByRole('button', { name: 'Merge into Ada' }));
+    await user.click(screen.getByRole('button', { name: 'Merge into Ada Lovelace' }));
     await user.click(screen.getByRole('button', { name: 'Not the same' }));
 
     expect(onAccept).toHaveBeenCalledTimes(1);
@@ -189,7 +210,7 @@ describe('IdentityClusterItem twin chip (WBUX-6/C3)', () => {
       mergeTwin({ isPending: true, disabledReason: 'Saving merge suggestion…' }),
     );
 
-    const accept = screen.getByRole('button', { name: 'Merge into Ada' });
+    const accept = screen.getByRole('button', { name: 'Merge into Ada Lovelace' });
     const reject = screen.getByRole('button', { name: 'Not the same' });
     expect(accept).toBeDisabled();
     expect(reject).toBeDisabled();
@@ -248,6 +269,24 @@ describe('pendingMergeTwinForCluster (WBUX-6/C3 labeled-side map)', () => {
   it('maps an unlabeled cluster_b onto a pending suggestion whose cluster_a is labeled', () => {
     expect(pendingMergeTwinForCluster(UNLABELED_ID, [pendingSuggestion()])).toEqual({
       suggestionId: 'merge-1',
+      survivorClusterId: LABELED_ID,
+      survivorLabel: 'Ada Lovelace',
+    });
+  });
+
+  it('picks survivor_cluster_id when both labels are human-shaped (S4R2-F1)', () => {
+    expect(
+      pendingMergeTwinForCluster(UNLABELED_ID, [
+        pendingSuggestion({
+          cluster_a_label: 'Ada Lovelace',
+          cluster_b_label: 'Ada',
+          survivor_cluster_id: LABELED_ID,
+          survivor_label: 'Ada Lovelace',
+        }),
+      ]),
+    ).toEqual({
+      suggestionId: 'merge-1',
+      survivorClusterId: LABELED_ID,
       survivorLabel: 'Ada Lovelace',
     });
   });
@@ -303,6 +342,29 @@ describe('pendingMergeTwinForCluster (WBUX-6/C3 labeled-side map)', () => {
       ),
     ).toEqual({
       suggestionId: 'merge-1',
+      survivorClusterId: LABELED_ID,
+      survivorLabel: 'Ada Lovelace',
+    });
+  });
+
+  it('maps unlabeled cluster_a when survivor_cluster_id is cluster_b (S4-F7)', () => {
+    expect(
+      pendingMergeTwinForCluster(
+        UNLABELED_ID,
+        [
+          pendingSuggestion({
+            cluster_a_id: UNLABELED_ID,
+            cluster_b_id: LABELED_ID,
+            cluster_a_label: 'Ada',
+            cluster_b_label: 'Ada Lovelace',
+            survivor_cluster_id: LABELED_ID,
+            survivor_label: 'Ada Lovelace',
+          }),
+        ],
+      ),
+    ).toEqual({
+      suggestionId: 'merge-1',
+      survivorClusterId: LABELED_ID,
       survivorLabel: 'Ada Lovelace',
     });
   });
@@ -330,6 +392,7 @@ describe('pendingMergeTwinForCluster (WBUX-6/C3 labeled-side map)', () => {
       ]),
     ).toEqual({
       suggestionId: 'merge-first',
+      survivorClusterId: LABELED_ID,
       survivorLabel: 'Ada Lovelace',
     });
   });

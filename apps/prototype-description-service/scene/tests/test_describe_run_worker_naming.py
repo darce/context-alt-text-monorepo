@@ -437,6 +437,88 @@ def test_item_envelope_times_out_naming_lookup_and_persists_generic_draft(monkey
     assert "PERF-10 traded for DATA-19 (WBUX-6 S9-F1)" in wmod.item_envelope_seconds.__doc__
 
 
+def _run_item_with_lookup_and_preview(*, monkeypatch, lookup_sleep: float, preview_sleep: float):
+    """NAMING_BUDGET=1.0, describe timeout=0.1, lookup then Stage-3 preview."""
+    import scene.application.describe_run_worker as wmod
+
+    async def fake_load(**kwargs):
+        await asyncio.sleep(lookup_sleep)
+        return [], object()
+
+    async def describe_one(media_id, image_bytes, content_type, *, naming_inputs=None):
+        return DescribeItemOutcome(alt_text_draft=GENERIC_DRAFT, caption="cap 1")
+
+    async def fake_naming_preview(**kwargs):
+        if preview_sleep:
+            await asyncio.sleep(preview_sleep)
+        return FUSED_DRAFT, object()
+
+    monkeypatch.setattr(wmod, "NAMING_BUDGET_SECONDS", 1.0, raising=True)
+    monkeypatch.setattr(wmod, "load_fusion_naming_inputs", fake_load, raising=True)
+    monkeypatch.setattr(wmod, "naming_preview", fake_naming_preview, raising=True)
+
+    describe_timeout = 0.1
+    envelope = wmod.item_envelope_seconds(describe_timeout)
+
+    async def body():
+        path, engine, sf = await _make_db(naming_agreement_enabled=True)
+        run_id = await _seed_run(sf)
+        started = time.monotonic()
+        await run_describe_job(
+            tenant_id=TENANT_ID,
+            run_id=run_id,
+            session_factory=sf,
+            describe_one=describe_one,
+            timeout_seconds=describe_timeout,
+        )
+        elapsed = time.monotonic() - started
+        async with sf() as s:
+            items = await DescribeRunRepository(s).list_run_items(tenant_id=TENANT_ID, run_id=run_id)
+        await engine.dispose()
+        os.unlink(path)
+        return items, elapsed, envelope
+
+    return asyncio.run(body())
+
+
+def test_hung_naming_preview_is_bounded_by_remaining_item_envelope(monkeypatch):
+    """S9R2-F1: hung Stage-3 preview cannot spend a second full naming budget.
+
+    NAMING_BUDGET=1.0, describe timeout=0.1 (envelope=1.1), lookup sleeps 0.5s,
+    preview sleeps 5s. Remaining after lookup is ~0.6s, so the item must finish
+    in < 1.1 + 0.5s and persist the generic draft (lookup-timeout path; sr-007).
+    Mutant M1 (preview wait_for uses full NAMING_BUDGET_SECONDS) goes red here.
+    """
+    items, elapsed, envelope = _run_item_with_lookup_and_preview(
+        monkeypatch=monkeypatch, lookup_sleep=0.5, preview_sleep=5.0
+    )
+    assert envelope == pytest.approx(1.1)
+    # Spec ceiling is envelope+0.5=1.6; pin below 1.45 so M1 (full NAMING_BUDGET
+    # preview after 0.5s lookup, ~1.5s+) cannot hide in slack.
+    assert elapsed < 1.1 + 0.5
+    assert elapsed < 1.45
+    assert items[0].status == DescribeItemStatus.COMPLETED
+    assert items[0].alt_text_draft == GENERIC_DRAFT
+    assert items[0].caption == "cap 1"
+
+
+def test_fast_naming_preview_applies_names_inside_remaining_item_envelope(monkeypatch):
+    """S9R2-F1: a fast preview still fuses names when remaining envelope is enough.
+
+    Same budgets as the hung-preview case; lookup sleeps 0.5s, preview is immediate.
+    Mutant M2 (sleep NAMING_BUDGET-0.01 at the start of _apply_naming_preview)
+    exceeds the remaining ~0.6s and goes red here (generic draft, names missing).
+    """
+    items, elapsed, envelope = _run_item_with_lookup_and_preview(
+        monkeypatch=monkeypatch, lookup_sleep=0.5, preview_sleep=0.0
+    )
+    assert envelope == pytest.approx(1.1)
+    assert elapsed < 1.6
+    assert items[0].status == DescribeItemStatus.COMPLETED
+    assert items[0].alt_text_draft == FUSED_DRAFT
+    assert items[0].caption == "cap 1"
+
+
 def test_naming_lookup_timeout_persists_generic_draft_without_reload(monkeypatch):
     import scene.application.describe_run_worker as wmod
 

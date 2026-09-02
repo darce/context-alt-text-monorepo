@@ -1,11 +1,11 @@
 import { __, sprintf } from '@wordpress/i18n';
 
+import { classifyError } from '../../../utils/appError';
 import { formatUserFacingError, isAuthExpiredError } from '../../../utils/userFacingError';
 
 export const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-export const isAbortError = (err: unknown): boolean =>
-  Boolean(err && typeof err === 'object' && 'name' in err && (err as { name: string }).name === 'AbortError');
+export const isAbortError = (err: unknown): boolean => classifyError(err)._tag === 'abort';
 
 export const isProjectionNotReadyError = (message: string): boolean => {
   const normalized = message.toLowerCase();
@@ -26,12 +26,15 @@ export const getInvalidTargetClusterMessage = (label: string): string =>
   sprintf(__('That group is already named %s - nothing to merge.', 'alt-context'), label);
 
 export const getClusterMutationErrorMessage = (error: unknown, label: string): string => {
+  if (isAbortError(error)) {
+    return __('Save is taking too long. Please try again.', 'alt-context');
+  }
   if (isAuthExpiredError(error)) {
     return formatUserFacingError(error, __('An unexpected error occurred. Please try again.', 'alt-context'));
   }
   if (error instanceof Error) {
     const normalized = error.message.toLowerCase();
-    if (error.name === 'AbortError' || normalized.includes('timed out') || normalized.includes('timeout')) {
+    if (normalized.includes('timed out') || normalized.includes('timeout')) {
       return __('Save is taking too long. Please try again.', 'alt-context');
     }
     if (isProjectionNotReadyError(error.message)) {

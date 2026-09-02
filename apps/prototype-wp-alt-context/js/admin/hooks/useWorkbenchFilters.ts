@@ -18,7 +18,7 @@ import {
   type WorkbenchQueueState,
 } from './workbenchQueueUrl';
 
-const MEDIA_PAGE_SIZE_OPTIONS = [10, 50, 100] as const;
+export const MEDIA_PAGE_SIZE_OPTIONS = [10, 50, 100] as const;
 const DEFAULT_MEDIA_PAGE_SIZE = MEDIA_PAGE_SIZE_OPTIONS[0];
 const WORKBENCH_MEDIA_STATUS_SET: ReadonlySet<string> = new Set(WORKBENCH_MEDIA_STATUSES);
 

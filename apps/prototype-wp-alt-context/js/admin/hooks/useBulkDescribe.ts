@@ -1,14 +1,34 @@
-import { useMutation } from '@tanstack/react-query';
+import { useEffect, useRef } from 'react';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { __, sprintf } from '@wordpress/i18n';
 
 import {
   cancelBulkDescribeRun,
+  type DescribeRunPhase,
   type DescribeRunResponse,
   resolveDescribeErrorDataField,
   submitBulkDescribeRun,
 } from '../api/describeApi';
+import { invalidateWorkbenchListPages } from '../api/queryKeys';
 import { resolveWpErrorMessage } from '../api/wpErrorMessage';
 import { useDescribeRunProgress, type DescribeRunProgress } from './useDescribeRunProgress';
+
+const DESCRIBE_RUN_PHASE = {
+  QUEUED: 'queued',
+  DESCRIBING: 'describing',
+  COMPLETE: 'complete',
+  FAILED: 'failed',
+  CANCELLED: 'cancelled',
+} as const satisfies Record<string, DescribeRunPhase>;
+
+const TERMINAL_DESCRIBE_RUN_PHASES: ReadonlySet<DescribeRunPhase> = new Set([
+  DESCRIBE_RUN_PHASE.COMPLETE,
+  DESCRIBE_RUN_PHASE.FAILED,
+  DESCRIBE_RUN_PHASE.CANCELLED,
+]);
+
+const isTerminalDescribeRunPhase = (phase: DescribeRunPhase | undefined): boolean =>
+  phase !== undefined && TERMINAL_DESCRIBE_RUN_PHASES.has(phase);
 
 export interface UseBulkDescribeResult {
   submit: ReturnType<typeof useMutation<DescribeRunResponse, Error, number[]>>;
@@ -60,6 +80,7 @@ export const formatBulkDescribeErrorMessage = (
 };
 
 export const useBulkDescribe = (): UseBulkDescribeResult => {
+  const queryClient = useQueryClient();
   const submit = useMutation<DescribeRunResponse, Error, number[]>({
     mutationFn: (mediaIds) => submitBulkDescribeRun(mediaIds),
   });
@@ -71,6 +92,18 @@ export const useBulkDescribe = (): UseBulkDescribeResult => {
   // that happens to carry data.run_id (BR-143 / [RLSE-04]).
   const runId = submit.data?.run_id ?? cancel.data?.run_id ?? null;
   const progress = useDescribeRunProgress(runId);
+  const invalidatedWorkbenchRunIdRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (runId === null || !isTerminalDescribeRunPhase(progress.run?.phase)) {
+      return;
+    }
+    if (invalidatedWorkbenchRunIdRef.current === runId) {
+      return;
+    }
+    invalidatedWorkbenchRunIdRef.current = runId;
+    invalidateWorkbenchListPages(queryClient);
+  }, [runId, progress.run?.phase, queryClient]);
 
   const errorMessage = submit.error
     ? formatBulkDescribeErrorMessage(submit.error, SUBMIT_ERROR_FALLBACK)

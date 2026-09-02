@@ -1,3 +1,11 @@
+import { createLogger, type Logger } from '../utils/logger';
+
+let log: Logger | undefined;
+const configLog = (): Logger => {
+  log ??= createLogger('api.config');
+  return log;
+};
+
 export interface AdminUrlsConfig {
   mediaEditBase?: string;
   roster?: string;
@@ -74,7 +82,9 @@ const normalizeOptionalString = (value: unknown): string | undefined =>
  */
 const softNonEmptyString = (value: unknown, field: string): string => {
   if (typeof value !== 'string' || value.trim() === '') {
-    console.warn(`AltContextAdmin configuration field "${field}" is missing or empty; dependent features degrade.`);
+    configLog().warn(
+      `AltContextAdmin configuration field "${field}" is missing or empty; dependent features degrade.`,
+    );
     return '';
   }
   return value;

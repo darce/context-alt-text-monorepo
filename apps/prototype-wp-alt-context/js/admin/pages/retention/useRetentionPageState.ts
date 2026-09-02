@@ -136,11 +136,7 @@ export const useRetentionPageState = () => {
   const { success, error: showError } = useToast();
   const [state, dispatch] = useReducer(retentionReducer, initialState);
   const importFileRef = useRef<HTMLInputElement>(null);
-  const { retentionQuery, exportJobStatusQuery, auditQuery } = useRetentionPageQueries(
-    state.exportJobId,
-    state.auditPage,
-    AUDIT_PAGE_SIZE,
-  );
+  const { retentionQuery, exportJobStatusQuery } = useRetentionPageQueries(state.exportJobId);
   const { updatePolicy, exportMutation, purgeMutation, importMutation, applyPreset, downloadJobData } =
     useRetentionPageMutations();
 
@@ -235,7 +231,6 @@ export const useRetentionPageState = () => {
     dispatch,
     importFileRef,
     retentionQuery,
-    auditQuery,
     exportJobStatus,
     status,
     policy,

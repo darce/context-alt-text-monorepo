@@ -1,6 +1,7 @@
 import React, { useEffect } from 'react';
 import { __ } from '@wordpress/i18n';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useLocation } from 'react-router-dom';
 
 import {
   fetchSettings,
@@ -25,9 +26,13 @@ import { TONE_CLASS } from './settings/testConnectionBanner';
 import { useSettingsPageState } from './settings/useSettingsPageState';
 
 const SETTINGS_SECTION_RETENTION_ID = 'acx-settings-section-retention';
+const SETTINGS_SECTION_RETENTION_HEADING_ID = 'acx-retention-title';
 
-const sectionFromLocation = (): string | null => {
-  const hash = window.location.hash;
+const sectionFromLocation = (search: string, hash: string): string | null => {
+  const fromSearch = new URLSearchParams(search).get('section');
+  if (fromSearch) {
+    return fromSearch;
+  }
   const hashQuery = hash.includes('?') ? hash.slice(hash.indexOf('?') + 1) : '';
   const fromHash = new URLSearchParams(hashQuery).get('section');
   if (fromHash) {
@@ -38,6 +43,7 @@ const sectionFromLocation = (): string | null => {
 
 export const SettingsPage = (): React.JSX.Element => {
   const queryClient = useQueryClient();
+  const location = useLocation();
 
   const settingsQuery = useQuery<SettingsResponse>({
     queryKey: ['settings'],
@@ -48,11 +54,12 @@ export const SettingsPage = (): React.JSX.Element => {
     if (settingsQuery.isLoading || settingsQuery.isLoadingError) {
       return;
     }
-    if (sectionFromLocation() !== 'retention') {
+    if (sectionFromLocation(location.search, location.hash) !== 'retention') {
       return;
     }
     document.getElementById(SETTINGS_SECTION_RETENTION_ID)?.scrollIntoView();
-  }, [settingsQuery.isLoading, settingsQuery.isLoadingError]);
+    document.getElementById(SETTINGS_SECTION_RETENTION_HEADING_ID)?.focus();
+  }, [location.search, location.hash, settingsQuery.isLoading, settingsQuery.isLoadingError]);
 
   const { state, dispatch } = useSettingsPageState(settingsQuery.data);
 

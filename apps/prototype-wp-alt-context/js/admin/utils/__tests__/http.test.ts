@@ -222,16 +222,15 @@ describe('fetchApi auth expiry seam (UXP-NET-2 slice 2)', () => {
   });
 
   it('nonce-403 → refresh → retry succeeds: 2 REST + 1 ajax; retry carries NEW header [RES-01][API-08]', async () => {
-    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
-      const url = String(input);
-      if (isAjaxCall(url)) {
-        return new Response(FRESH_NONCE, { status: 200 });
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation((input, init) => {
+      if (isAjaxCall(input)) {
+        return Promise.resolve(new Response(FRESH_NONCE, { status: 200 }));
       }
       const headers = (init?.headers ?? {}) as Record<string, string>;
       if (headers['X-WP-Nonce'] === FRESH_NONCE) {
-        return new Response(JSON.stringify({ ok: true }), { status: 200 });
+        return Promise.resolve(new Response(JSON.stringify({ ok: true }), { status: 200 }));
       }
-      return new Response(nonce403Body, { status: 403 });
+      return Promise.resolve(new Response(nonce403Body, { status: 403 }));
     });
 
     const result = await fetchApi<{ ok: boolean }>(REST_URL, { restNonce: STALE_NONCE });
@@ -288,11 +287,11 @@ describe('fetchApi auth expiry seam (UXP-NET-2 slice 2)', () => {
   });
 
   it('second nonce-403 → AuthExpiredError, exactly 2 REST fetches', async () => {
-    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation((input) => {
       if (isAjaxCall(input)) {
-        return new Response(FRESH_NONCE, { status: 200 });
+        return Promise.resolve(new Response(FRESH_NONCE, { status: 200 }));
       }
-      return new Response(nonce403Body, { status: 403 });
+      return Promise.resolve(new Response(nonce403Body, { status: 403 }));
     });
 
     await expect(fetchApi(REST_URL)).rejects.toBeInstanceOf(AuthExpiredError);
@@ -301,11 +300,11 @@ describe('fetchApi auth expiry seam (UXP-NET-2 slice 2)', () => {
   });
 
   it('refresh rejection → AuthExpiredError', async () => {
-    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation((input) => {
       if (isAjaxCall(input)) {
-        return new Response('0', { status: 400 });
+        return Promise.resolve(new Response('0', { status: 400 }));
       }
-      return new Response(nonce403Body, { status: 403 });
+      return Promise.resolve(new Response(nonce403Body, { status: 403 }));
     });
 
     await expect(fetchApi(REST_URL)).rejects.toBeInstanceOf(AuthExpiredError);
@@ -409,13 +408,13 @@ describe('fetchApi review-fix discrimination pins (UXPNET2-BR-04/05)', () => {
   it('first attempt uses options.restNonce over a fresher cached nonce (BR-05) [TEST-15]', async () => {
     resetConfigCache();
     seedConfig(FRESH_NONCE); // cached getNonce() is FRESH…
-    const restHeaders: Array<Record<string, string>> = [];
-    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+    const restHeaders: Record<string, string>[] = [];
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation((url, init) => {
       if (isAjaxCall(url)) {
-        return new Response(FRESH_NONCE, { status: 200 });
+        return Promise.resolve(new Response(FRESH_NONCE, { status: 200 }));
       }
       restHeaders.push((init?.headers ?? {}) as Record<string, string>);
-      return new Response(JSON.stringify({ ok: true }), { status: 200 });
+      return Promise.resolve(new Response(JSON.stringify({ ok: true }), { status: 200 }));
     });
 
     // …but the caller explicitly passes STALE — the first wire header must be STALE.
@@ -427,10 +426,10 @@ describe('fetchApi review-fix discrimination pins (UXPNET2-BR-04/05)', () => {
   it('omitted restNonce resolves the live cached nonce at send time (BR-05) [TEST-15]', async () => {
     resetConfigCache();
     seedConfig(FRESH_NONCE);
-    const restHeaders: Array<Record<string, string>> = [];
-    vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+    const restHeaders: Record<string, string>[] = [];
+    vi.spyOn(globalThis, 'fetch').mockImplementation((url, init) => {
       restHeaders.push((init?.headers ?? {}) as Record<string, string>);
-      return new Response(JSON.stringify({ ok: true }), { status: 200 });
+      return Promise.resolve(new Response(JSON.stringify({ ok: true }), { status: 200 }));
     });
 
     await fetchApi<{ ok: boolean }>(REST_URL);
@@ -439,16 +438,23 @@ describe('fetchApi review-fix discrimination pins (UXPNET2-BR-04/05)', () => {
 
   it('abort landing during a FAILING refresh surfaces AbortError, never session expiry (BR-04) [TEST-15]', async () => {
     const controller = new AbortController();
-    vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation((url) => {
       if (isAjaxCall(url)) {
         controller.abort();
-        return new Response('0', { status: 400 }); // refresh fails while abort lands
+        return Promise.resolve(new Response('0', { status: 400 })); // refresh fails while abort lands
       }
-      return new Response(nonce403Body, { status: 403 });
+      return Promise.resolve(new Response(nonce403Body, { status: 403 }));
     });
 
     await expect(
       fetchApi<{ ok: boolean }>(REST_URL, { restNonce: STALE_NONCE, signal: controller.signal }),
     ).rejects.toSatisfy((err: unknown) => err instanceof DOMException && err.name === 'AbortError');
+  });
+});
+
+describe('AuthExpiredError', () => {
+  it('preserves exact 401 and 403 constructor status (M4 / F2)', () => {
+    expect(new AuthExpiredError({ endpoint: REST_URL, status: 401 }).status).toBe(401);
+    expect(new AuthExpiredError({ endpoint: REST_URL, status: 403 }).status).toBe(403);
   });
 });

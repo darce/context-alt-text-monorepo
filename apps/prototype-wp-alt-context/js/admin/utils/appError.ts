@@ -1,26 +1,57 @@
 import { NonceRefreshFailedError } from '../api/config';
 import { AuthExpiredError, HTTPError, ResponseParseError } from './http';
-import { SPA_SESSION_EXPIRED_COPY } from './userFacingError';
+import { SPA_SESSION_EXPIRED_COPY } from './sessionExpiredCopy';
+
+export const APP_ERROR_TAGS = [
+  'http',
+  'parse',
+  'auth_expired',
+  'nonce_refresh',
+  'abort',
+  'transport',
+  'unknown',
+] as const;
+
+export type AppErrorTag = (typeof APP_ERROR_TAGS)[number];
+
+const APP_ERROR_TAG_INDEX: Record<AppErrorTag, true> = {
+  http: true,
+  parse: true,
+  auth_expired: true,
+  nonce_refresh: true,
+  abort: true,
+  transport: true,
+  unknown: true,
+};
+
+const assertNever = (value: never): never => {
+  throw new Error(`Unexpected AppError tag: ${String(value)}`);
+};
+
+interface AppErrorBase<T extends AppErrorTag> {
+  readonly _tag: T;
+  readonly message: string;
+  readonly cause: unknown;
+}
 
 export type AppError =
-  | { _tag: 'http'; status: number; endpoint: string; retryAfterMs?: number; message: string; cause: unknown }
-  | { _tag: 'parse'; endpoint: string; message: string; cause: unknown }
-  | { _tag: 'auth_expired'; endpoint: string; status: 401 | 403; message: string; cause: unknown }
-  | { _tag: 'nonce_refresh'; message: string; cause: unknown }
-  | { _tag: 'abort'; message: string; cause: unknown }
-  | { _tag: 'transport'; message: string; cause: unknown }
-  | { _tag: 'unknown'; message: string; cause: unknown };
-
-export type AppErrorTag = AppError['_tag'];
+  | (AppErrorBase<'http'> & {
+      readonly status: number;
+      readonly endpoint: string;
+      readonly retryAfterMs?: number;
+    })
+  | (AppErrorBase<'parse'> & { readonly endpoint: string })
+  | (AppErrorBase<'auth_expired'> & {
+      readonly endpoint: string;
+      readonly status: 401 | 403;
+    })
+  | AppErrorBase<'nonce_refresh'>
+  | AppErrorBase<'abort'>
+  | AppErrorBase<'transport'>
+  | AppErrorBase<'unknown'>;
 
 const isAppErrorTag = (tag: unknown): tag is AppErrorTag =>
-  tag === 'http' ||
-  tag === 'parse' ||
-  tag === 'auth_expired' ||
-  tag === 'nonce_refresh' ||
-  tag === 'abort' ||
-  tag === 'transport' ||
-  tag === 'unknown';
+  typeof tag === 'string' && Object.hasOwn(APP_ERROR_TAG_INDEX, tag);
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null;
@@ -48,27 +79,21 @@ export const isAppError = (value: unknown): value is AppError => {
     case 'transport':
     case 'unknown':
       return true;
+    default:
+      return assertNever(value._tag);
   }
 };
 
 const ABORT_LIKE_NAMES = new Set(['AbortError', 'TimeoutError']);
-const TRANSPORT_MESSAGE_MARKERS = ['Failed to fetch', 'Load failed', 'NetworkError'] as const;
 
-const objectName = (value: object): string | undefined => {
-  const name = (value as { name?: unknown }).name;
-  return typeof name === 'string' ? name : undefined;
-};
-
-const isAbortLikeValue = (error: unknown): error is Error | DOMException => {
-  if (error instanceof DOMException || error instanceof Error) {
-    const name = objectName(error);
-    return name !== undefined && ABORT_LIKE_NAMES.has(name);
+/** Duck-type: DOMException, Error, or any object whose name is AbortError|TimeoutError. */
+export const isAbortLikeName = (value: unknown): boolean => {
+  if (typeof value !== 'object' || value === null) {
+    return false;
   }
-  return false;
+  const name = (value as { name?: unknown }).name;
+  return typeof name === 'string' && ABORT_LIKE_NAMES.has(name);
 };
-
-const isTransportTypeError = (error: TypeError): boolean =>
-  TRANSPORT_MESSAGE_MARKERS.some((marker) => error.message.includes(marker));
 
 const unknownMessage = (value: unknown): string => {
   if (value instanceof Error) {
@@ -83,7 +108,12 @@ const unknownMessage = (value: unknown): string => {
   return 'Unknown error';
 };
 
-const authExpiredStatus = (status: number): 401 | 403 => (status === 403 ? 403 : 401);
+const abortMessage = (error: unknown): string => {
+  if (isRecord(error) && typeof error.message === 'string') {
+    return error.message;
+  }
+  return unknownMessage(error);
+};
 
 const classifyHttpError = (error: HTTPError): AppError => {
   if (error.retryAfterSeconds === undefined) {
@@ -114,7 +144,7 @@ export const classifyError = (error: unknown): AppError => {
       return {
         _tag: 'auth_expired',
         endpoint: error.endpoint,
-        status: authExpiredStatus(error.status),
+        status: error.status,
         message: error.message,
         cause: error,
       };
@@ -137,14 +167,14 @@ export const classifyError = (error: unknown): AppError => {
         cause: error,
       };
     }
-    if (isAbortLikeValue(error)) {
+    if (isAbortLikeName(error)) {
       return {
         _tag: 'abort',
-        message: error.message,
+        message: abortMessage(error),
         cause: error,
       };
     }
-    if (error instanceof TypeError && isTransportTypeError(error)) {
+    if (error instanceof TypeError) {
       return {
         _tag: 'transport',
         message: error.message,

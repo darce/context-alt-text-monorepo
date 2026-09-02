@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
+import { classifyError } from '../appError';
 import { AuthExpiredError, HTTPError, ResponseParseError } from '../http';
-import { getRetryDelay, RETRY_MAX_ATTEMPTS, shouldRetryRequest } from '../retryPolicy';
+import { getRetryDelay, isAbortLike, isCooldownSignal, RETRY_MAX_ATTEMPTS, shouldRetryRequest } from '../retryPolicy';
 
 const httpError = (status: number, retryAfterSeconds?: number): HTTPError =>
   new HTTPError({
@@ -54,6 +55,13 @@ describe('shouldRetryRequest', () => {
     // (Chrome "Failed to fetch", Firefox "NetworkError when attempting to fetch resource").
     expect(shouldRetryRequest(0, new TypeError('Failed to fetch'))).toBe(true);
     expect(shouldRetryRequest(0, new TypeError('NetworkError when attempting to fetch resource'))).toBe(true);
+  });
+
+  it('retries every TypeError (F5 parity: previously instanceof TypeError)', () => {
+    expect(classifyError(new TypeError('Failed to fetch'))._tag).toBe('transport');
+    expect(classifyError(new TypeError('x is not a function'))._tag).toBe('transport');
+    expect(shouldRetryRequest(0, new TypeError('x is not a function'))).toBe(true);
+    expect(shouldRetryRequest(0, new TypeError('boom: Failed to fetch'))).toBe(true);
   });
 
   it('does not retry a deterministic non-transport error (a response was received)', () => {
@@ -128,5 +136,32 @@ describe('getRetryDelay', () => {
 
   it('caps the exponential backoff branch at the same ceiling', () => {
     expect(getRetryDelay(20, new TypeError('Failed to fetch'))).toBe(30_000);
+  });
+});
+
+describe('classifier clauses after F3/F5 [TEST-15]', () => {
+  it('plain-object abort is not retried (M14)', () => {
+    expect(isAbortLike({ name: 'AbortError', message: 'aborted' })).toBe(true);
+    expect(shouldRetryRequest(0, { name: 'AbortError', message: 'aborted' })).toBe(false);
+    expect(shouldRetryRequest(0, { name: 'TimeoutError', message: 'timed out' })).toBe(false);
+  });
+
+  it('pre-classified transport AppError is retried (M15)', () => {
+    const classified = classifyError(new TypeError('Failed to fetch'));
+    expect(classified._tag).toBe('transport');
+    expect(shouldRetryRequest(0, classified)).toBe(true);
+  });
+
+  it('isCooldownSignal: 429/503-with-Retry-After only, including pre-classified (M17)', () => {
+    expect(isCooldownSignal(httpError(429))).toBe(true);
+    expect(isCooldownSignal(httpError(503, 0))).toBe(true);
+    expect(isCooldownSignal(httpError(503))).toBe(false);
+    expect(isCooldownSignal(httpError(500))).toBe(false);
+    const classified = classifyError(httpError(429, 5));
+    expect(classified._tag).toBe('http');
+    if (classified._tag === 'http') {
+      expect(classified.retryAfterMs).toBe(5_000);
+    }
+    expect(isCooldownSignal(classified)).toBe(true);
   });
 });

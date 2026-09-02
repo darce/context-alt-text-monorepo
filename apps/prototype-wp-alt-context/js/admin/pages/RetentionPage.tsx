@@ -42,44 +42,22 @@ export const RetentionSection = (): React.JSX.Element => {
       ? sprintf(__('Export failed. Please try again. Job ID: %s', 'alt-context'), state.exportJobId)
       : '';
 
-  if (retentionQuery.isLoading) {
-    return (
-      <section className="acx-retention" aria-labelledby="acx-retention-title">
-        <h3 id="acx-retention-title" className="acx-settings__section-title" tabIndex={-1}>
-          {__('Data & retention', 'alt-context')}
-        </h3>
-        <p>{__('Loading retention status\u2026', 'alt-context')}</p>
-      </section>
-    );
-  }
-
-  if (retentionQuery.isError || !status || !status.available || !policy) {
-    return (
-      <section className="acx-retention" aria-labelledby="acx-retention-title">
-        <h3 id="acx-retention-title" className="acx-settings__section-title" tabIndex={-1}>
-          {__('Data & retention', 'alt-context')}
-        </h3>
-        <section className="acx-dashboard__panel acx-retention__panel">
-          <h4>{__('Backend unavailable', 'alt-context')}</h4>
-          <p>{__('Backend unavailable \u2014 retention status cannot be loaded.', 'alt-context')}</p>
-          <button
-            type="button"
-            className="acx-button acx-button--secondary"
-            onClick={() => void retentionQuery.refetch()}
-          >
-            {__('Retry', 'alt-context')}
-          </button>
-        </section>
-      </section>
-    );
-  }
-
-  return (
-    <section className="acx-retention" aria-labelledby="acx-retention-title">
-      <h3 id="acx-retention-title" className="acx-settings__section-title" tabIndex={-1}>
-        {__('Data & retention', 'alt-context')}
-      </h3>
-
+  const body = retentionQuery.isLoading ? (
+    <p>{__('Loading retention status\u2026', 'alt-context')}</p>
+  ) : retentionQuery.isError || !status || !status.available || !policy ? (
+    <section className="acx-dashboard__panel acx-retention__panel">
+      <h4>{__('Backend unavailable', 'alt-context')}</h4>
+      <p>{__('Backend unavailable \u2014 retention status cannot be loaded.', 'alt-context')}</p>
+      <button
+        type="button"
+        className="acx-button acx-button--secondary"
+        onClick={() => void retentionQuery.refetch()}
+      >
+        {__('Retry', 'alt-context')}
+      </button>
+    </section>
+  ) : (
+    <>
       <div className="acx-retention__grid">
         <section className="acx-dashboard__panel acx-retention__panel">
           <h4>{__('Retention mode', 'alt-context')}</h4>
@@ -268,6 +246,15 @@ export const RetentionSection = (): React.JSX.Element => {
         isImportPending={pending.import}
         onConfirmImport={() => void actions.confirmImport()}
       />
+    </>
+  );
+
+  return (
+    <section className="acx-retention" aria-labelledby="acx-retention-title">
+      <h3 id="acx-retention-title" className="acx-settings__section-title" tabIndex={-1}>
+        {__('Data & retention', 'alt-context')}
+      </h3>
+      {body}
     </section>
   );
 };

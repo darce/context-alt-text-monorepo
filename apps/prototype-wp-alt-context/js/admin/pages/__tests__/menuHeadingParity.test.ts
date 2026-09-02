@@ -97,6 +97,15 @@ describe('every routed page heading matches its admin menu label (glossary Rule 
     const composed = headingTextsIn(settingsPage + settingsForm + retentionPage);
     expect(composed.length).toBeGreaterThan(0);
     expect(new Set(composed)).toEqual(new Set(['Settings']));
+
+    const retentionTitleTexts = [
+      ...retentionPage.matchAll(/<h3\b[^>]*\bid=["']acx-retention-title["'][^>]*>([\s\S]*?)<\/h3>/g),
+    ].map((match) => {
+      const labelMatch = H1_LABEL_TEXT.exec(match[1]);
+      return labelMatch ? labelMatch[1] : match[1].trim();
+    });
+    expect(retentionTitleTexts).toHaveLength(1);
+    expect(retentionTitleTexts[0]).toBe('Data & retention');
   });
 
   it('SettingsForm does not wrap RetentionSection (S3-F2)', () => {

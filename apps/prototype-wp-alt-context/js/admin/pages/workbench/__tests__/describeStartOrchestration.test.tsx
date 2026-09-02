@@ -5,7 +5,7 @@
  * state and rejects with an Error whose message is already user-safe (resolveScanErrorMessage).
  */
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -37,7 +37,7 @@ const { scan, describeMutate, settingsState } = vi.hoisted(() => {
       reject: (reason?: unknown) => rejectScan(reason),
     }),
     describeMutate: vi.fn(),
-    settingsState: { recognitionEnabled: true as boolean },
+    settingsState: { recognitionEnabled: true },
   };
 });
 
@@ -59,7 +59,7 @@ const baseItem = (id: number): WorkbenchMediaItem => ({
 const items = [baseItem(11), baseItem(12)];
 
 vi.mock('../../../api/settingsApi', () => ({
-  fetchSettings: vi.fn(async () => ({ recognition_enabled: settingsState.recognitionEnabled })),
+  fetchSettings: vi.fn(() => Promise.resolve({ recognition_enabled: settingsState.recognitionEnabled })),
 }));
 
 vi.mock('../WorkbenchMediaContext', () => ({
@@ -227,7 +227,10 @@ describe('describe-start orchestration (WBUX-6 L2b)', () => {
     await clickDescribe();
     expect(describeMutate).not.toHaveBeenCalled();
 
-    scan.reject(new Error('analyze exploded'));
+    await act(async () => {
+      scan.reject(new Error('analyze exploded'));
+      await Promise.resolve();
+    });
 
     expect(await screen.findByRole('alert')).toHaveTextContent('analyze exploded');
     expect(describeMutate).not.toHaveBeenCalled();
@@ -238,7 +241,10 @@ describe('describe-start orchestration (WBUX-6 L2b)', () => {
     await screen.findByText(/Identifies people first \(AI\)/);
 
     await clickDescribe();
-    scan.reject(new Error('People identification is turned off in Settings.'));
+    await act(async () => {
+      scan.reject(new Error('People identification is turned off in Settings.'));
+      await Promise.resolve();
+    });
 
     expect(await screen.findByRole('alert')).toHaveTextContent(
       'People identification is turned off in Settings.',

@@ -1,5 +1,7 @@
 import { useState, useEffect } from 'react';
 
+import { createLogger } from '../utils/logger';
+
 /**
  * Job type discriminator for scan vs clustering jobs.
  */
@@ -33,6 +35,7 @@ export interface JobPersistence {
   removeJob: (id: string) => void;
 }
 
+const log = createLogger('jobPersistence');
 const STORAGE_KEY = 'acx_active_jobs';
 const ACTIVE_MAX_AGE_MS = 24 * 60 * 60 * 1000; // 24 hours
 const TERMINAL_MAX_AGE_MS = 60 * 60 * 1000; // 1 hour
@@ -81,8 +84,8 @@ export const useJobPersistence = (): JobPersistence => {
       }
 
       return freshJobs;
-    } catch (e) {
-      console.error('Failed to parse persisted jobs', e);
+    } catch (error) {
+      log.error('Failed to parse persisted jobs', { error });
       return [];
     }
   });

@@ -128,6 +128,24 @@ describe('recognitionCooldown', () => {
       expect(cooldownRemainingMs()).toBe(5_000);
     });
 
+    it('HTTPError 429 Retry-After matches classifyError.retryAfterMs [W2-L5]', () => {
+      const error = httpError(429, 8);
+      const classified = classifyError(error);
+      expect(classified._tag).toBe('http');
+      if (classified._tag !== 'http') {
+        return;
+      }
+      openCooldownFromError(error);
+      expect(cooldownRemainingMs()).toBe(classified.retryAfterMs);
+    });
+
+    it('does not branch on instanceof HTTPError — classifier owns the class check [W2-L5][TEST-15]', async () => {
+      const fs = await import('node:fs/promises');
+      const path = await import('node:path');
+      const src = await fs.readFile(path.join(process.cwd(), 'js/admin/utils/recognitionCooldown.ts'), 'utf8');
+      expect(src).not.toMatch(/instanceof\s+HTTPError/);
+    });
+
     it('never arms from abort-like errors — a local timeout must not freeze all six pollers', () => {
       // The slice-1 HIGH was exactly this class: 'TimeoutError' (AbortSignal.timeout)
       // treated differently from 'AbortError'. A client-side timeout is not a server

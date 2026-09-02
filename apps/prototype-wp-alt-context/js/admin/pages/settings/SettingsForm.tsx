@@ -62,7 +62,7 @@ const urlRejectionStatusText = (data: SettingsResponse): string => {
   );
 };
 
-interface SettingsFormProps {
+interface SettingsFormValues {
   data: SettingsResponse;
   url: string;
   apiKey: string;
@@ -70,10 +70,16 @@ interface SettingsFormProps {
   recognitionEnabled: boolean;
   urlReadOnly: boolean;
   keyReadOnly: boolean;
+}
+
+interface SettingsFormStatus {
   savePending: boolean;
   testPending: boolean;
   hasUnsavedRoutingChanges: boolean;
   testResult: TestConnectionResponse | null;
+}
+
+interface SettingsFormActions {
   onUrlChange: (value: string) => void;
   onApiKeyChange: (value: string) => void;
   onDescriptionBudgetMaxAttemptsChange: (value: string) => void;
@@ -83,26 +89,36 @@ interface SettingsFormProps {
   onFocusServiceUrl?: () => void;
 }
 
+interface SettingsFormProps {
+  values: SettingsFormValues;
+  status: SettingsFormStatus;
+  actions: SettingsFormActions;
+}
+
 export const SettingsForm = ({
-  data,
-  url,
-  apiKey,
-  descriptionBudgetMaxAttempts,
-  recognitionEnabled,
-  urlReadOnly,
-  keyReadOnly,
-  savePending,
-  testPending,
-  hasUnsavedRoutingChanges,
-  testResult,
-  onUrlChange,
-  onApiKeyChange,
-  onDescriptionBudgetMaxAttemptsChange,
-  onRecognitionEnabledChange,
-  onSave,
-  onTest,
-  onFocusServiceUrl,
+  values,
+  status,
+  actions,
 }: SettingsFormProps): React.JSX.Element => {
+  const {
+    data,
+    url,
+    apiKey,
+    descriptionBudgetMaxAttempts,
+    recognitionEnabled,
+    urlReadOnly,
+    keyReadOnly,
+  } = values;
+  const { savePending, testPending, hasUnsavedRoutingChanges, testResult } = status;
+  const {
+    onUrlChange,
+    onApiKeyChange,
+    onDescriptionBudgetMaxAttemptsChange,
+    onRecognitionEnabledChange,
+    onSave,
+    onTest,
+    onFocusServiceUrl,
+  } = actions;
   // R19-BR-04: one derived state drives empty CTA + source chip; do not re-check
   // url emptiness (resolver blanks url on rejection for security).
   const cardState = deriveServiceUrlCardState(data);
@@ -344,10 +360,11 @@ export const SettingsForm = ({
             type="checkbox"
             checked={recognitionEnabled}
             onChange={(e) => onRecognitionEnabledChange(e.target.checked)}
+            aria-describedby="acx-settings-recognition-enabled-help"
           />
           {__('Identify people in photos', 'alt-context')}
         </label>
-        <p className="description">
+        <p id="acx-settings-recognition-enabled-help" className="description">
           {__(
             'Uses facial recognition to name people in descriptions. When off, Describe writes alt text without identities. Applies to every run.',
             'alt-context',

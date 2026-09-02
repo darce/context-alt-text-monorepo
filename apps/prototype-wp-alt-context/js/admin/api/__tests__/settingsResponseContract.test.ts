@@ -1,7 +1,24 @@
-import { describe, expect, expectTypeOf, it } from 'vitest';
+import { beforeEach, describe, expect, expectTypeOf, it, vi } from 'vitest';
 
-import type { SettingsResponse } from '../settingsApi';
-import { UrlRejectionReason } from '../settingsApi';
+import * as httpModule from '../../utils/http';
+import { fetchSettings, UrlRejectionReason, type SettingsResponse } from '../settingsApi';
+
+const mockConfig = {
+  nonce: 'test-nonce',
+  ajaxUrl: '/wp-admin/admin-ajax.php',
+  endpoints: {
+    settings: 'https://example.test/acx/v1/settings',
+  } as Record<string, string>,
+};
+
+vi.mock('../config', () => ({
+  getEndpoint: vi.fn((key: string) => mockConfig.endpoints[key] ?? `https://example.test/${key}`),
+  getConfig: vi.fn(() => mockConfig),
+}));
+
+vi.mock('../../utils/http', () => ({
+  fetchRequiredApi: vi.fn(),
+}));
 
 const SETTINGS_RESPONSE_KEYS = [
   'url',
@@ -83,5 +100,61 @@ describe('settings response contract', () => {
     expect(SETTINGS_RESPONSE_KEYS).toContain('url_rejection_source');
     expect(SETTINGS_RESPONSE_KEYS).toContain('url_rejection_value');
     expect(rejected.url_rejection_reason).toBe('non_loopback_http');
+  });
+});
+
+describe('fetchSettings recognition_enabled parse', () => {
+  const fetchApiMock = vi.mocked(httpModule.fetchRequiredApi);
+
+  const validBody: SettingsResponse = {
+    url: 'https://api.example.com',
+    url_source: 'option',
+    url_rejection_reason: null,
+    url_rejection_source: null,
+    url_rejection_value: null,
+    effective_target_url: 'https://api.example.com',
+    effective_target_mode: 'service',
+    recognition_source: 'service',
+    recognition_source_source: 'option',
+    api_key_set: true,
+    api_key_last4: '****abcd',
+    key_source: 'option',
+    tenant_id: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+    tenant_id_source: 'option',
+    tenant_paired: true,
+    alt_style: 'alt_only',
+    recognition_enabled: true,
+    description_budget: {
+      max_attempts: 3,
+      usage: { attempts: 0, successes: 0, failures: 0, cost_total: 0 },
+      recent_errors: [],
+    },
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('rejects a GET body that omits recognition_enabled', async () => {
+    const body: Record<string, unknown> = { ...validBody };
+    delete body.recognition_enabled;
+    fetchApiMock.mockResolvedValue(body);
+
+    await expect(fetchSettings()).rejects.toThrow(/recognition_enabled must be a boolean/);
+  });
+
+  it('rejects a GET body whose recognition_enabled is the string "true"', async () => {
+    fetchApiMock.mockResolvedValue({
+      ...validBody,
+      recognition_enabled: 'true',
+    });
+
+    await expect(fetchSettings()).rejects.toThrow(/recognition_enabled must be a boolean/);
+  });
+
+  it('returns the payload when recognition_enabled is a boolean', async () => {
+    fetchApiMock.mockResolvedValue({ ...validBody, recognition_enabled: false });
+
+    await expect(fetchSettings()).resolves.toMatchObject({ recognition_enabled: false });
   });
 });

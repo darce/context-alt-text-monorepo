@@ -1,3 +1,7 @@
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
 import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { renderHook, waitFor } from '@testing-library/react';
@@ -109,6 +113,18 @@ describe('useBulkDescribe', () => {
     vi.clearAllMocks();
     // Default: a terminal poll response so no test leaves the interval polling.
     fetchBulkDescribeRunMock.mockResolvedValue(runResponse({ status: 'completed' }));
+  });
+
+  it('does not duplicate the describe-run phase table or terminal set (WBUX-6 F7 / sr-007)', () => {
+    // The terminal predicate lives in describeApi (isDescribeRunTerminal) and reaches
+    // this hook as progress.isTerminal via useDescribeRunProgress (S7 / harm-terminal-predicate).
+    const source = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../useBulkDescribe.ts'), 'utf8');
+    // S5R2-F1: a renamed local table (`const PHASE = { QUEUED: 'queued', ... }`)
+    // stayed GREEN under the old DESCRIBE_RUN_PHASE identifier check. Strip
+    // import blocks, then forbid any phase string literal in the rest.
+    const rest = source.replace(/import(?:[\s\S]*?)from\s+['"][^'"]+['"];?/g, '');
+    expect(rest).not.toMatch(/['"](queued|warming|describing|complete|failed|cancelled)['"]/);
+    expect(rest).not.toMatch(/TERMINAL_DESCRIBE_RUN_PHASES|new Set<?[^(]*\(\s*\[\s*DESCRIBE_RUN_PHASE/);
   });
 
   it('submits media ids and captures the run id', async () => {

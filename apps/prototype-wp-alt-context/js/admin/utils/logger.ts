@@ -1,5 +1,7 @@
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
 
+export const LOG_LEVEL_ORDER = { debug: 0, info: 1, warn: 2, error: 3 } as const;
+
 export interface LogFields {
   jobId?: string;
   requestId?: string;
@@ -31,9 +33,34 @@ const CONSOLE_METHODS: Record<LogLevel, 'debug' | 'info' | 'warn' | 'error'> = {
   error: 'error',
 };
 
+const defaultMinLevel = (): LogLevel => (import.meta.env.PROD ? 'info' : 'debug');
+
+let minLevel: LogLevel = defaultMinLevel();
+
+export const setLogLevel = (level: LogLevel | null): void => {
+  minLevel = level ?? defaultMinLevel();
+};
+
+interface FlattenedError {
+  name: string;
+  message: string;
+  cause?: unknown;
+}
+
+const flattenError = (value: Error, includeCause: boolean): FlattenedError => {
+  const flattened: FlattenedError = {
+    name: value.name,
+    message: value.message,
+  };
+  if (includeCause && value.cause !== undefined) {
+    flattened.cause = value.cause instanceof Error ? flattenError(value.cause, false) : value.cause;
+  }
+  return flattened;
+};
+
 const flattenFieldValue = (value: unknown): unknown => {
   if (value instanceof Error) {
-    return { name: value.name, message: value.message };
+    return flattenError(value, true);
   }
   return value;
 };
@@ -49,7 +76,7 @@ const flattenFields = (fields: LogFields): LogFields => {
 const isNonEmptyFields = (fields: LogFields): boolean => Object.keys(fields).length > 0;
 
 export const consoleSink: LogSink = (record) => {
-  const prefix = `[${record.scope}] ${record.message}`;
+  const prefix = `[alt-context/${record.scope}] ${record.message}`;
   const fields = flattenFields(record.fields);
   if (isNonEmptyFields(fields)) {
     console[CONSOLE_METHODS[record.level]](prefix, fields);
@@ -76,6 +103,9 @@ export const createLogger = (scope: string, fields: LogFields = {}): Logger => {
   const parentFields = flattenFields(fields);
 
   const emit = (level: LogLevel, message: string, callFields?: LogFields): void => {
+    if (LOG_LEVEL_ORDER[level] < LOG_LEVEL_ORDER[minLevel]) {
+      return;
+    }
     const record: LogRecord = {
       ts: Date.now(),
       level,

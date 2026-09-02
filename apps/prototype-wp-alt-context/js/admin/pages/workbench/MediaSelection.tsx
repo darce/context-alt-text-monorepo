@@ -10,6 +10,7 @@ import { toSettings } from '../../navigation/appLinks';
 import { MediaSelectionTableBody } from './MediaSelectionTableBody';
 import { MediaAnalyzeCta } from './MediaAnalyzeCta';
 import { BulkDescribeReviewLink } from './BulkDescribeReviewLink';
+import { useJobPipeline } from './JobPipelineContext';
 
 import { Checkbox } from '../../../components/ui/checkbox';
 import { useBulkDescribe } from '../../hooks/useBulkDescribe';
@@ -64,6 +65,12 @@ export const MediaSelection = ({ reviewActive = false }: MediaSelectionProps): R
   const identityQuery = mediaQuery.identitiesQuery;
   const detailQuery = mediaQuery.detailQuery;
   const bulkDescribe = useBulkDescribe();
+  const pipeline = useJobPipeline();
+  const [identify, setIdentify] = useState<{ pending: boolean; error: string | null }>({ pending: false, error: null });
+  const startDescribe = (ids: number[]) => {
+    setDismissedRunId(null);
+    bulkDescribe.submit.mutate(ids);
+  };
   // L1 settings query: share SettingsPage's ['settings'] key so a save updates this footer.
   const settingsQuery = useQuery<SettingsResponse>({
     queryKey: ['settings'],
@@ -175,17 +182,33 @@ export const MediaSelection = ({ reviewActive = false }: MediaSelectionProps): R
             runId={activeDescribeRunId}
             progress={describeProgress}
             isPanelVisible={isDescribePanelVisible}
-            errorMessage={bulkDescribe.errorMessage}
+            errorMessage={identify.error ?? bulkDescribe.errorMessage}
             remoteActionTitle={remoteGate.title}
             remoteActionAriaDisabled={remoteGate['aria-disabled']}
             accentPrimary={footerCta.accentOwner === FOOTER_ACCENT_OWNER.DESCRIBE}
             recognitionEnabled={recognitionEnabled}
+            isIdentifying={identify.pending}
             onSubmit={() => {
-              if (offline) {
+              if (offline || identify.pending) return;
+              const ids = selectedMediaIds;
+              if (recognitionEnabled !== true) {
+                startDescribe(ids);
                 return;
               }
-              setDismissedRunId(null);
-              bulkDescribe.submit.mutate(selectedMediaIds);
+              setIdentify({ pending: true, error: null });
+              void pipeline.scanAndWait(ids).then(
+                () => {
+                  setIdentify({ pending: false, error: null });
+                  startDescribe(ids);
+                },
+                (error: unknown) => {
+                  const message =
+                    error instanceof Error && error.message
+                      ? error.message
+                      : __('People identification failed. Nothing was described.', 'alt-context');
+                  setIdentify({ pending: false, error: message });
+                },
+              );
             }}
             onCancel={() => {
               if (activeDescribeRunId) {
@@ -395,6 +418,7 @@ interface BulkDescribeCtaProps {
    * draws the OFF wording without a Settings link (RLSE-04).
    */
   recognitionEnabled?: boolean;
+  isIdentifying: boolean;
   onSubmit: () => void;
   onCancel: () => void;
   onDismiss: () => void;
@@ -415,6 +439,7 @@ export const BulkDescribeCta = ({
   remoteActionAriaDisabled,
   accentPrimary = false,
   recognitionEnabled,
+  isIdentifying = false,
   onSubmit,
   onCancel,
   onDismiss,
@@ -442,8 +467,8 @@ export const BulkDescribeCta = ({
           // BR-74: offline never HTML-disables — the aria-describedby reason must stay
           // reachable on a focusable control. Offline is gated by aria-disabled + the
           // onClick guard; zero-selection/submitting/running still disable when online.
-          disabled={!offlineGated && (selectedCount === 0 || isSubmitting || isRunning)}
-          aria-disabled={remoteActionAriaDisabled}
+          disabled={(!offlineGated && (selectedCount === 0 || isSubmitting || isRunning)) || isIdentifying}
+          aria-disabled={isIdentifying ? 'true' : remoteActionAriaDisabled}
           aria-describedby={describeDescribedBy}
           title={remoteActionTitle}
           onClick={() => {
@@ -456,11 +481,13 @@ export const BulkDescribeCta = ({
           }}
           {...(accentPrimary ? { [ACCENT_PRIMARY_ATTR]: true } : {})}
         >
-          {isSubmitting
-            ? SYNC_VOCABULARY.describeStarting
-            : selectedCount > 0
-              ? sprintf(_n('Describe %d selected', 'Describe %d selected', selectedCount, 'alt-context'), selectedCount)
-              : __('Describe selected', 'alt-context')}
+          {isIdentifying
+            ? __('Identifying people…', 'alt-context')
+            : isSubmitting
+              ? SYNC_VOCABULARY.describeStarting
+              : selectedCount > 0
+                ? sprintf(_n('Describe %d selected', 'Describe %d selected', selectedCount, 'alt-context'), selectedCount)
+                : __('Describe selected', 'alt-context')}
         </button>
         {offlineGated && remoteActionTitle ? (
           <span id={DESCRIBE_OFFLINE_REASON_ID} className="screen-reader-text">

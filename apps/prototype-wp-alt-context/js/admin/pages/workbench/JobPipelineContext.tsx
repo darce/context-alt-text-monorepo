@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useMemo, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { __, sprintf } from '@wordpress/i18n';
 import { useRecognitionJobHistory } from '../../hooks/useRecognitionJobHistory';
 import { useJobStateMachine } from '../../hooks/useJobStateMachine';
@@ -53,6 +53,7 @@ export interface JobPipelineContextValue {
   status: PipelineStatusModel;
   history: JobHistoryModel;
   scan: (mediaIds: number[]) => void;
+  scanAndWait: (mediaIds: number[]) => Promise<void>;
   cancelScan: (jobIds: string[]) => void;
   cluster: () => void;
   retryClustering: () => void;
@@ -135,6 +136,51 @@ export const JobPipelineProvider: React.FC<{ children: React.ReactNode }> = ({ c
     },
   });
 
+  const scanWaiterRef = useRef<{ resolve: () => void; reject: (error: Error) => void; started: boolean } | null>(
+    null,
+  );
+  const scanAndWait = useCallback(
+    (mediaIds: number[]) =>
+      new Promise<void>((resolve, reject) => {
+        scanWaiterRef.current?.reject(
+          new Error(__('People identification was superseded by a newer run.', 'alt-context')),
+        );
+        scanWaiterRef.current = { resolve, reject, started: false };
+        setScanError(null);
+        scan(mediaIds);
+      }),
+    [scan],
+  );
+  const cancelScanAndReject = useCallback(
+    (jobIds: string[]) => {
+      const waiter = scanWaiterRef.current;
+      scanWaiterRef.current = null;
+      waiter?.reject(new Error(__('People identification was cancelled.', 'alt-context')));
+      cancelScan(jobIds);
+    },
+    [cancelScan],
+  );
+  useEffect(() => {
+    const waiter = scanWaiterRef.current;
+    if (!waiter) return;
+    if (scanError) {
+      scanWaiterRef.current = null;
+      waiter.reject(new Error(scanError));
+      return;
+    }
+    if (isScanRunning) {
+      waiter.started = true;
+      return;
+    }
+    if (!waiter.started) return;
+    scanWaiterRef.current = null;
+    if (batchRunStatus?.terminal_state && batchRunStatus.completed_total === 0 && batchRunStatus.failed_total > 0) {
+      waiter.reject(new Error(__('People identification failed. Nothing was described.', 'alt-context')));
+      return;
+    }
+    waiter.resolve();
+  }, [isScanRunning, scanError, batchRunStatus]);
+
   const handleSelectJobFromHistory = React.useCallback(
     (id: string): void => {
       selectJob(id);
@@ -184,7 +230,8 @@ export const JobPipelineProvider: React.FC<{ children: React.ReactNode }> = ({ c
         historySource,
       },
       scan,
-      cancelScan,
+      scanAndWait,
+      cancelScan: cancelScanAndReject,
       cluster,
       retryClustering,
       retryProjectionSync,
@@ -217,7 +264,8 @@ export const JobPipelineProvider: React.FC<{ children: React.ReactNode }> = ({ c
       jobStatuses,
       historySource,
       scan,
-      cancelScan,
+      scanAndWait,
+      cancelScanAndReject,
       cluster,
       retryProjectionSync,
       retryScanStream,

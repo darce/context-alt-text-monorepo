@@ -21,6 +21,13 @@ WORKDIR="$(cd "$(mktemp -d "${TMPDIR:-/tmp}/reap-cron-test.XXXXXX")" && pwd -P)"
 trap 'rm -rf "$WORKDIR"' EXIT
 export HOME="$WORKDIR"
 
+# HOME is redirected above, so ~/.gitconfig is out of scope and `git commit-tree`
+# (the canary below) falls back to auto-detecting user@hostname. On a host whose
+# hostname has no domain that yields `gate@host.(none)` and git aborts. Pin the
+# identity so the canary is hermetic rather than host-dependent.
+export GIT_AUTHOR_NAME="reap-cron-test" GIT_AUTHOR_EMAIL="reap-cron-test@invalid"
+export GIT_COMMITTER_NAME="reap-cron-test" GIT_COMMITTER_EMAIL="reap-cron-test@invalid"
+
 # Fake crontab: `-l` prints the file, `-` replaces it from stdin.
 mkdir -p "$WORKDIR/fakebin"
 export CRONTAB_FILE="$WORKDIR/crontab.txt"

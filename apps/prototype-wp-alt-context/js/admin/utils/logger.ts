@@ -1,3 +1,7 @@
+import { NonceRefreshFailedError } from '../api/config';
+import { isAppError, type AppError } from './appError';
+import { HTTPError, ResponseParseError } from './http';
+
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
 
 export const LOG_LEVEL_ORDER = { debug: 0, info: 1, warn: 2, error: 3 } as const;
@@ -26,6 +30,14 @@ export interface Logger {
   child(fields: LogFields): Logger;
 }
 
+export interface JobLogStateSummary {
+  readonly status: string;
+  readonly jobId?: string | null;
+  readonly done?: number;
+  readonly total?: number;
+  readonly failedCount?: number;
+}
+
 const CONSOLE_METHODS: Record<LogLevel, 'debug' | 'info' | 'warn' | 'error'> = {
   debug: 'debug',
   info: 'info',
@@ -44,21 +56,115 @@ export const setLogLevel = (level: LogLevel | null): void => {
 interface FlattenedError {
   name: string;
   message: string;
+  status?: number;
+  endpoint?: string;
   cause?: unknown;
 }
 
-const flattenError = (value: Error, includeCause: boolean): FlattenedError => {
-  const flattened: FlattenedError = {
-    name: value.name,
-    message: value.message,
+const redactEndpoint = (endpoint: string): string => {
+  try {
+    const url = endpoint.includes('://') ? new URL(endpoint) : new URL(endpoint, 'http://localhost');
+    return url.pathname;
+  } catch {
+    return '<redacted>';
+  }
+};
+
+const isBoundaryError = (
+  value: Error,
+): value is HTTPError | ResponseParseError | NonceRefreshFailedError =>
+  value instanceof HTTPError || value instanceof ResponseParseError || value instanceof NonceRefreshFailedError;
+
+const safeAppErrorMessage = (error: AppError): string => {
+  switch (error._tag) {
+    case 'http':
+      return `HTTP ${error.status}`;
+    case 'parse':
+      return 'JSON parse error';
+    case 'nonce_refresh':
+      return 'Nonce refresh failed';
+    case 'auth_expired':
+    case 'abort':
+    case 'transport':
+    case 'unknown':
+      return error.message;
+    default: {
+      const exhaustive: never = error;
+      return exhaustive;
+    }
+  }
+};
+
+const projectAppError = (error: AppError): Record<string, unknown> => {
+  const projected: Record<string, unknown> = {
+    tag: error._tag,
+    message: safeAppErrorMessage(error),
   };
+  if ('status' in error) {
+    projected.status = error.status;
+  }
+  if ('endpoint' in error) {
+    projected.endpoint = redactEndpoint(error.endpoint);
+  }
+  return projected;
+};
+
+const projectBoundaryError = (value: HTTPError | ResponseParseError | NonceRefreshFailedError): FlattenedError => {
+  if (value instanceof HTTPError) {
+    return {
+      name: value.name,
+      message: `HTTP ${value.status}`,
+      status: value.status,
+      endpoint: redactEndpoint(value.endpoint),
+    };
+  }
+  if (value instanceof ResponseParseError) {
+    return {
+      name: value.name,
+      message: 'JSON parse error',
+      status: value.status,
+      endpoint: redactEndpoint(value.endpoint),
+    };
+  }
+  return {
+    name: value.name,
+    message: 'Nonce refresh failed',
+  };
+};
+
+const flattenCause = (cause: unknown): unknown => {
+  if (isAppError(cause)) {
+    return projectAppError(cause);
+  }
+  if (cause instanceof Error) {
+    return flattenError(cause, false);
+  }
+  if (cause === null || typeof cause !== 'object') {
+    return cause;
+  }
+  if (Object.getPrototypeOf(cause) === Object.prototype || Object.getPrototypeOf(cause) === null) {
+    return cause;
+  }
+  return { name: 'opaque' };
+};
+
+const flattenError = (value: Error, includeCause: boolean): FlattenedError => {
+  const flattened: FlattenedError = isBoundaryError(value)
+    ? projectBoundaryError(value)
+    : {
+        name: value.name,
+        message: value.message,
+      };
   if (includeCause && value.cause !== undefined) {
-    flattened.cause = value.cause instanceof Error ? flattenError(value.cause, false) : value.cause;
+    flattened.cause = flattenCause(value.cause);
   }
   return flattened;
 };
 
 const flattenFieldValue = (value: unknown): unknown => {
+  if (isAppError(value)) {
+    return projectAppError(value);
+  }
   if (value instanceof Error) {
     return flattenError(value, true);
   }
@@ -74,6 +180,13 @@ const flattenFields = (fields: LogFields): LogFields => {
 };
 
 const isNonEmptyFields = (fields: LogFields): boolean => Object.keys(fields).length > 0;
+
+const bindCorrelationId = (fields: LogFields): LogFields => {
+  if (typeof fields.requestId === 'string' && fields.requestId !== '') {
+    return fields;
+  }
+  return { ...fields, requestId: newRequestId() };
+};
 
 export const consoleSink: LogSink = (record) => {
   const prefix = `[alt-context/${record.scope}] ${record.message}`;
@@ -100,7 +213,7 @@ export const newRequestId = (): string => {
 };
 
 export const createLogger = (scope: string, fields: LogFields = {}): Logger => {
-  const parentFields = flattenFields(fields);
+  const parentFields = bindCorrelationId(flattenFields(fields));
 
   const emit = (level: LogLevel, message: string, callFields?: LogFields): void => {
     if (LOG_LEVEL_ORDER[level] < LOG_LEVEL_ORDER[minLevel]) {
@@ -127,4 +240,31 @@ export const createLogger = (scope: string, fields: LogFields = {}): Logger => {
     error: (message, callFields) => emit('error', message, callFields),
     child: (childFields) => createLogger(scope, { ...parentFields, ...childFields }),
   };
+};
+
+export const createJobLogger = (scope: string, jobId: string): Logger => createLogger(scope, { jobId });
+
+export const logJobEvent = (
+  log: Logger,
+  event: string | { readonly type: string },
+  state: JobLogStateSummary,
+): void => {
+  const eventName = typeof event === 'string' ? event : event.type;
+  const fields: LogFields = {
+    event: eventName,
+    status: state.status,
+  };
+  if (state.jobId) {
+    fields.jobId = state.jobId;
+  }
+  if (state.done !== undefined) {
+    fields.done = state.done;
+  }
+  if (state.total !== undefined) {
+    fields.total = state.total;
+  }
+  if (state.failedCount !== undefined) {
+    fields.failedCount = state.failedCount;
+  }
+  log.info(eventName, fields);
 };

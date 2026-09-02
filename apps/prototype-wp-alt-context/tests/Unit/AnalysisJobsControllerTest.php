@@ -437,9 +437,15 @@ class AnalysisJobsControllerTest extends TestCase
         $this->assertSame('no_media_items', $result->get_error_code());
     }
 
-    public function testAnalyzeMediaReturns409WhenRecognitionDisabled(): void
+    /**
+     * Gate must use RecognitionPolicy::enabled() (normalized), never raw
+     * get_option() === false. Unknown stored forms fail closed.
+     *
+     * @dataProvider recognitionDisabledStoredValueProvider
+     */
+    public function testAnalyzeMediaReturns409WhenRecognitionDisabled(mixed $stored): void
     {
-        $this->setOption('acx_recognition_enabled', false);
+        $this->setOption('acx_recognition_enabled', $stored);
         $GLOBALS['__ac_attachment_urls'][101] = 'http://example.test/media/101.jpg';
 
         add_filter('acx_recognition_transport', static fn (string $current): string => 'url');
@@ -467,6 +473,22 @@ class AnalysisJobsControllerTest extends TestCase
             $result->get_error_message()
         );
         $this->assertSame([], $this->getHttpCalls());
+    }
+
+    /**
+     * @return array<string, array{0: mixed}>
+     */
+    public static function recognitionDisabledStoredValueProvider(): array
+    {
+        return [
+            'php_false' => [false],
+            'string_zero' => ['0'],
+            'empty_string' => [''],
+            'string_false' => ['false'],
+            'int_zero' => [0],
+            'no' => ['no'],
+            'yes' => ['yes'],
+        ];
     }
 
     public function testGetJobStatusDoesNotDispatchXmpRefresh(): void

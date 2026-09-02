@@ -652,6 +652,7 @@ class SettingsControllerTest extends TestCase
     public function testSaveSettingsWritesRecognitionEnabled(): void
     {
         $this->setUserCapability('manage_options', true);
+        $this->assertNull(get_option('acx_recognition_enabled', null));
 
         $request = new WP_REST_Request('POST', '/acx/v1/settings');
         $request->set_body_params(['recognition_enabled' => false]);
@@ -659,8 +660,31 @@ class SettingsControllerTest extends TestCase
         $response = $this->controller->save_settings($request);
 
         $this->assertInstanceOf(\WP_REST_Response::class, $response);
+        $this->assertSame(SettingsController::SAVE_RESULT_OK, $response->get_data()['result']);
         $this->assertContains('recognition_enabled', $response->get_data()['saved']);
-        $this->assertFalse(get_option('acx_recognition_enabled'));
+        $this->assertSame('0', get_option('acx_recognition_enabled'));
+
+        $get = $this->controller->get_settings(new WP_REST_Request('GET', '/acx/v1/settings'));
+        $this->assertFalse($get->get_data()['recognition_enabled']);
+    }
+
+    public function testGetSettingsReportsRecognitionEnabledTrueAfterPostTrue(): void
+    {
+        $this->setUserCapability('manage_options', true);
+        $this->setOption('acx_recognition_enabled', '0');
+
+        $request = new WP_REST_Request('POST', '/acx/v1/settings');
+        $request->set_body_params(['recognition_enabled' => true]);
+
+        $response = $this->controller->save_settings($request);
+
+        $this->assertInstanceOf(\WP_REST_Response::class, $response);
+        $this->assertSame(SettingsController::SAVE_RESULT_OK, $response->get_data()['result']);
+        $this->assertContains('recognition_enabled', $response->get_data()['saved']);
+        $this->assertSame('1', get_option('acx_recognition_enabled'));
+
+        $get = $this->controller->get_settings(new WP_REST_Request('GET', '/acx/v1/settings'));
+        $this->assertTrue($get->get_data()['recognition_enabled']);
     }
 
     public function testSaveSettingsRejectsNonBoolRecognitionEnabled(): void
@@ -718,6 +742,8 @@ class SettingsControllerTest extends TestCase
             $this->assertNotSame('secret-key-value', $stored);
         } elseif ('alt_style' === $savedField) {
             $this->assertNotSame('alt_plus_description', $stored);
+        } elseif ('recognition_enabled' === $savedField) {
+            $this->assertNotSame('0', $stored);
         }
     }
 
@@ -746,6 +772,11 @@ class SettingsControllerTest extends TestCase
                 ['description_budget' => ['max_attempts' => 50]],
                 'acx_description_budget_max_attempts',
                 'description_budget',
+            ],
+            'recognition_enabled' => [
+                ['recognition_enabled' => false],
+                'acx_recognition_enabled',
+                'recognition_enabled',
             ],
         ];
     }
@@ -789,6 +820,7 @@ class SettingsControllerTest extends TestCase
             'api_key' => 'stable-key-1234',
             'alt_style' => 'alt_only',
             'description_budget' => ['max_attempts' => 10],
+            'recognition_enabled' => false,
         ];
 
         $request = new WP_REST_Request('POST', '/acx/v1/settings');
@@ -801,6 +833,7 @@ class SettingsControllerTest extends TestCase
         $this->assertContains('api_key', $first->get_data()['saved']);
         $this->assertContains('alt_style', $first->get_data()['saved']);
         $this->assertContains('description_budget', $first->get_data()['saved']);
+        $this->assertContains('recognition_enabled', $first->get_data()['saved']);
         $this->assertArrayNotHasKey('failed', $first->get_data());
 
         // Second save of identical values: update_option no-ops (returns false).
@@ -816,11 +849,53 @@ class SettingsControllerTest extends TestCase
         $this->assertContains('api_key', $data['saved']);
         $this->assertContains('alt_style', $data['saved']);
         $this->assertContains('description_budget', $data['saved']);
+        $this->assertContains('recognition_enabled', $data['saved']);
         $this->assertArrayNotHasKey('failed', $data);
         $this->assertSame('https://stable.example.com', get_option('acx_recognition_url'));
         $this->assertSame('stable-key-1234', get_option('acx_recognition_api_key'));
         $this->assertSame('alt_only', get_option('acx_alt_style'));
         $this->assertSame(10, get_option('acx_description_budget_max_attempts'));
+        $this->assertSame('0', get_option('acx_recognition_enabled'));
+    }
+
+    /**
+     * R23-BR-14: stored '0' and '' already mean disabled; re-saving false is a
+     * no-op that must still report ok (read-back via normalize, not bytes).
+     *
+     * @dataProvider recognitionEnabledNoOpStoredProvider
+     */
+    public function testSaveSettingsReportsOkOnNoOpResaveOfStoredZeroAndEmptyRecognitionEnabled(
+        string $stored
+    ): void {
+        $this->setUserCapability('manage_options', true);
+        $this->setOption('acx_recognition_enabled', $stored);
+
+        $request = new WP_REST_Request('POST', '/acx/v1/settings');
+        $request->set_body_params(['recognition_enabled' => false]);
+
+        $response = $this->controller->save_settings($request);
+        $data = $response->get_data();
+
+        $this->assertSame(
+            SettingsController::SAVE_RESULT_OK,
+            $data['result'],
+            'stored ' . var_export($stored, true) . ' must match intended false'
+        );
+        $this->assertContains('recognition_enabled', $data['saved']);
+        $this->assertArrayNotHasKey('failed', $data);
+        $get = $this->controller->get_settings(new WP_REST_Request('GET', '/acx/v1/settings'));
+        $this->assertFalse($get->get_data()['recognition_enabled']);
+    }
+
+    /**
+     * @return array<string, array{0: string}>
+     */
+    public static function recognitionEnabledNoOpStoredProvider(): array
+    {
+        return [
+            'stored_zero' => ['0'],
+            'stored_empty' => [''],
+        ];
     }
 
     /**

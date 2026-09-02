@@ -142,6 +142,29 @@ describe('useJobStateMachineMutations logging [O-02][O-06]', () => {
     expect(onScanComplete).toHaveBeenCalledWith(['job-1', 'job-2']);
   });
 
+  it('logs full jobIds, jobCount, and batchRunId on scan.submit [FEBT1-W2B-02]', () => {
+    const records = captureRecords();
+    renderMutations();
+
+    scanOptions?.onSuccess?.(
+      scanResponse(['job-1', 'job-2', 'job-3'], 4),
+      [1, 2, 3],
+      undefined,
+      mockMutationContext,
+    );
+
+    const jobEvents = records.filter((record) => record.fields.event === 'scan.submit');
+    expect(jobEvents).toHaveLength(1);
+    expect(jobEvents[0].fields).toEqual(
+      expect.objectContaining({
+        event: 'scan.submit',
+        jobIds: ['job-1', 'job-2', 'job-3'],
+        jobCount: 3,
+        batchRunId: 'run-1',
+      }),
+    );
+  });
+
   it('mints a distinct requestId per scan submit unit [FEBT1-W2B-01]', () => {
     const records = captureRecords();
     renderMutations();

@@ -18,7 +18,7 @@ import {
 } from '../../../api/recognition';
 import { useRosterEntries } from '../../../hooks/useRosterHooks';
 import { classifyError } from '../../../utils/appError';
-import { createLogger } from '../../../utils/logger';
+import { createLogger, redactEndpoint } from '../../../utils/logger';
 import { buildNamingOptions, type NamingOption } from './buildNamingOptions';
 import { isAbortError } from './clusterMutationUtils';
 import {
@@ -210,10 +210,10 @@ export const useClusterSuggestionsLoader = ({
           return null;
         }
         const classified = classifyError(err);
-        log.warn('Failed to find cluster by label', {
+        log.withRequest().warn('Failed to find cluster by label', {
           tag: classified._tag,
           ...('status' in classified ? { status: classified.status } : {}),
-          ...('endpoint' in classified ? { endpoint: classified.endpoint } : {}),
+          ...('endpoint' in classified ? { endpoint: redactEndpoint(classified.endpoint) } : {}),
         });
       }
 

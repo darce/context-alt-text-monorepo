@@ -26,6 +26,8 @@ export interface Logger {
   warn(message: string, fields?: LogFields): void;
   error(message: string, fields?: LogFields): void;
   child(fields: LogFields): Logger;
+  /** Mint a requestId for one unit of work; module-scope loggers omit it (rg-015). */
+  withRequest(): Logger;
 }
 
 export interface JobLogStateSummary {
@@ -59,7 +61,7 @@ interface FlattenedError {
   cause?: unknown;
 }
 
-const redactEndpoint = (endpoint: string): string => {
+export const redactEndpoint = (endpoint: string): string => {
   try {
     const url = endpoint.includes('://') ? new URL(endpoint) : new URL(endpoint, 'http://localhost');
     return url.pathname;
@@ -179,11 +181,13 @@ const flattenFields = (fields: LogFields): LogFields => {
 
 const isNonEmptyFields = (fields: LogFields): boolean => Object.keys(fields).length > 0;
 
-const bindCorrelationId = (fields: LogFields): LogFields => {
-  if (typeof fields.requestId === 'string' && fields.requestId !== '') {
+const omitEmptyRequestId = (fields: LogFields): LogFields => {
+  if (fields.requestId !== '') {
     return fields;
   }
-  return { ...fields, requestId: newRequestId() };
+  const rest: LogFields = { ...fields };
+  delete rest.requestId;
+  return rest;
 };
 
 export const consoleSink: LogSink = (record) => {
@@ -211,7 +215,7 @@ export const newRequestId = (): string => {
 };
 
 export const createLogger = (scope: string, fields: LogFields = {}): Logger => {
-  const parentFields = bindCorrelationId(flattenFields(fields));
+  const parentFields = omitEmptyRequestId(flattenFields(fields));
 
   const emit = (level: LogLevel, message: string, callFields?: LogFields): void => {
     if (LOG_LEVEL_ORDER[level] < LOG_LEVEL_ORDER[minLevel]) {
@@ -222,7 +226,7 @@ export const createLogger = (scope: string, fields: LogFields = {}): Logger => {
       level,
       scope,
       message,
-      fields: flattenFields({ ...parentFields, ...callFields }),
+      fields: omitEmptyRequestId(flattenFields({ ...parentFields, ...callFields })),
     };
     try {
       activeSink(record);
@@ -237,6 +241,7 @@ export const createLogger = (scope: string, fields: LogFields = {}): Logger => {
     warn: (message, callFields) => emit('warn', message, callFields),
     error: (message, callFields) => emit('error', message, callFields),
     child: (childFields) => createLogger(scope, { ...parentFields, ...childFields }),
+    withRequest: () => createLogger(scope, { ...parentFields, requestId: newRequestId() }),
   };
 };
 

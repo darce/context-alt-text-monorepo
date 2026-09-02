@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace AltContext\Api;
 
 require_once __DIR__ . '/class-alt-style.php';
+require_once __DIR__ . '/../settings/class-recognition-policy.php';
 require_once __DIR__ . '/class-probe-outcome.php';
 require_once __DIR__ . '/class-recognition-endpoint-resolver.php';
 require_once __DIR__ . '/class-tenant-identity.php';
@@ -15,6 +16,7 @@ require_once __DIR__ . '/../support/class-recognition-transport.php';
 
 use AltContext\Api\Services\DescriptionBudgetService;
 use AltContext\Api\Services\TenantLocalRekeyService;
+use AltContext\Settings\RecognitionPolicy;
 use AltContext\Support\LoopbackHost;
 use AltContext\Support\RecognitionTransport;
 
@@ -22,12 +24,14 @@ use WP_Error;
 use WP_REST_Request;
 use WP_REST_Response;
 use function apply_filters;
+use function array_key_exists;
 use function current_user_can;
 use function defined;
 use function get_option;
 use function in_array;
 use function intval;
 use function is_array;
+use function is_bool;
 use function is_int;
 use function is_numeric;
 use function is_string;
@@ -134,6 +138,7 @@ class SettingsController {
 				'tenant_id_source'          => $tenant_resolution['source'],
 				'tenant_paired'             => TenantIdentity::is_paired(),
 				'alt_style'                 => AltStyle::current(),
+				'recognition_enabled'       => RecognitionPolicy::enabled(),
 				'description_budget'        => $this->get_description_budget_payload(),
 			),
 			200
@@ -198,6 +203,23 @@ class SettingsController {
 				$saved[] = 'alt_style';
 			} else {
 				$failed[] = 'alt_style';
+			}
+		}
+
+		if ( array_key_exists( 'recognition_enabled', $body ) ) {
+			if ( ! is_bool( $body['recognition_enabled'] ) ) {
+				return new WP_Error(
+					'invalid_recognition_enabled',
+					'recognition_enabled must be a boolean.',
+					array( 'status' => 400 )
+				);
+			}
+			$recognition_enabled = $body['recognition_enabled'];
+			update_option( RecognitionPolicy::OPTION, $recognition_enabled );
+			if ( $this->option_matches_intended( RecognitionPolicy::OPTION, $recognition_enabled ) ) {
+				$saved[] = 'recognition_enabled';
+			} else {
+				$failed[] = 'recognition_enabled';
 			}
 		}
 
@@ -283,6 +305,15 @@ class SettingsController {
 		$stored = get_option( $option, null );
 		if ( is_int( $intended ) ) {
 			return is_numeric( $stored ) && (int) $stored === $intended;
+		}
+		if ( is_bool( $intended ) ) {
+			// Missing option is not a successful bool write, even when DEFAULT
+			// would make enabled() true. Coerce stored WP '1'/'0'/'' forms.
+			if ( null === $stored ) {
+				return false;
+			}
+
+			return RecognitionPolicy::normalize( $stored ) === $intended;
 		}
 
 		return $stored === $intended;

@@ -23,7 +23,7 @@ from scene.application.naming_preview_service import (
 )
 from scene.application.settings.vlm import VlmSettings
 from scene.config.settings import DEFAULT_GPU_WARMUP_TIMEOUT_SECONDS, DescriptionSettings
-from scene.domain.describe_run import DescribeItemStatus
+from scene.domain.describe_run import DescribeItemStatus, DescribeRunPhase, DescribeRunStatus
 from scene.domain.description import DescriptionAdapterKind
 
 logger = logging.getLogger(__name__)
@@ -147,6 +147,25 @@ async def _wait_for_gpu_ready(
             if remaining <= 0:
                 raise TimeoutError(f"GPU endpoint did not become ready within {timeout_seconds:g}s ({last_error})")
             await asyncio.sleep(min(_GPU_HEALTH_POLL_INTERVAL_SECONDS, remaining))
+
+
+async def _persist_run_phase(
+    *,
+    session_factory: async_sessionmaker[AsyncSession],
+    tenant_id: uuid.UUID,
+    run_id: uuid.UUID,
+    phase: DescribeRunPhase,
+) -> None:
+    """Short-lived session so status polls can see warming/describing mid-gate."""
+    async with session_factory() as session:
+        await set_tenant_context(session, tenant_id)
+        run = await DescribeRunRepository(session).get_run(tenant_id=tenant_id, run_id=run_id)
+        if run is None:
+            return
+        run.phase = phase
+        if phase is DescribeRunPhase.WARMING:
+            run.status = DescribeRunStatus.RUNNING
+        await session.commit()
 
 
 def _is_transient_describe_error(exc: BaseException) -> bool:
@@ -330,11 +349,23 @@ async def run_describe_job(
 
     try:
         if gpu_policy is not None:
+            await _persist_run_phase(
+                session_factory=session_factory,
+                tenant_id=tenant_id,
+                run_id=run_id,
+                phase=DescribeRunPhase.WARMING,
+            )
             await _wait_for_gpu_ready(
                 endpoint_url=gpu_policy.endpoint_url,
                 api_key=gpu_policy.api_key,
                 timeout_seconds=gpu_policy.warmup_timeout_seconds,
                 cancel_requested=cancel_requested,
+            )
+            await _persist_run_phase(
+                session_factory=session_factory,
+                tenant_id=tenant_id,
+                run_id=run_id,
+                phase=DescribeRunPhase.DESCRIBING,
             )
         async with session_factory() as session:
             # RLS: every session touching the tenant-scoped run/item tables must

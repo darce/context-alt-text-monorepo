@@ -32,7 +32,7 @@
     },
     "phase": {
       "type": "string",
-      "enum": ["queued", "describing", "complete", "failed", "cancelled"]
+      "enum": ["queued", "warming", "describing", "complete", "failed", "cancelled"]
     },
     "completed": {
       "type": "integer",

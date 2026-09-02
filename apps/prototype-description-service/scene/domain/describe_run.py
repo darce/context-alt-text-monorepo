@@ -23,6 +23,7 @@ class DescribeRunStatus(StrEnum):
 
 class DescribeRunPhase(StrEnum):
     QUEUED = "queued"
+    WARMING = "warming"
     DESCRIBING = "describing"
     COMPLETE = "complete"
     FAILED = "failed"

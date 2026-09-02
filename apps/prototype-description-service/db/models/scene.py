@@ -118,7 +118,7 @@ class DescribeRun(Base):
             name="valid_describe_run_status",
         ),
         CheckConstraint(
-            "phase IN ('queued', 'describing', 'complete', 'failed', 'cancelled')",
+            "phase IN ('queued', 'warming', 'describing', 'complete', 'failed', 'cancelled')",
             name="valid_describe_run_phase",
         ),
         CheckConstraint("run_kind IN ('bulk', 'single')", name="valid_describe_run_kind"),

@@ -288,7 +288,7 @@ describe('§7 single-accent-primary DOM invariant (Slice 8 / BR-72)', () => {
     vi.clearAllMocks();
   });
 
-  it('select (no findings): the footer Analyze button is the single accent primary', async () => {
+  it('select (no findings): the footer Describe button is the single accent primary', async () => {
     emptyQueues();
     const { container } = renderViewport();
 
@@ -296,7 +296,10 @@ describe('§7 single-accent-primary DOM invariant (Slice 8 / BR-72)', () => {
 
     expect(markerCount(container)).toBe(1);
     const marked = container.querySelector(ACCENT_PRIMARY_SELECTOR);
-    expect(marked).toBe(screen.getByRole('button', { name: 'Analyze selected media' }));
+    expect(marked).toBe(screen.getByRole('button', { name: 'Describe 2 selected' }));
+    expect(screen.getByRole('button', { name: 'Analyze selected media' })).not.toHaveAttribute(
+      ACCENT_PRIMARY_ATTR,
+    );
   });
 
   it('describe-in-flight: the disabled describe submit is the single accent primary', async () => {
@@ -307,7 +310,7 @@ describe('§7 single-accent-primary DOM invariant (Slice 8 / BR-72)', () => {
 
     expect(markerCount(container)).toBe(1);
     const marked = container.querySelector(ACCENT_PRIMARY_SELECTOR);
-    const describeSubmit = screen.getByRole('button', { name: 'Describe selected' });
+    const describeSubmit = screen.getByRole('button', { name: 'Describe 2 selected' });
     expect(marked).toBe(describeSubmit);
     // Real describe-run state: the submit is disabled (isRunning) yet still owns the accent.
     expect(describeSubmit).toBeDisabled();
@@ -328,12 +331,12 @@ describe('§7 single-accent-primary DOM invariant (Slice 8 / BR-72)', () => {
     expect(screen.getByRole('button', { name: 'Analyze selected media' })).not.toHaveAttribute(
       ACCENT_PRIMARY_ATTR,
     );
-    expect(screen.getByRole('button', { name: 'Describe selected' })).not.toHaveAttribute(
+    expect(screen.getByRole('button', { name: 'Describe 2 selected' })).not.toHaveAttribute(
       ACCENT_PRIMARY_ATTR,
     );
   });
 
-  it('chip-empty (findings exist, filter yields no card): footer Analyze is the single accent primary', async () => {
+  it('chip-empty (findings exist, filter yields no card): footer Describe is the single accent primary', async () => {
     // Assignment data present, but the MERGE filter yields an empty card view → no
     // card primary on screen → footer keeps its Analyze primary (BR-75).
     oneAssignment();
@@ -343,11 +346,11 @@ describe('§7 single-accent-primary DOM invariant (Slice 8 / BR-72)', () => {
 
     expect(markerCount(container)).toBe(1);
     expect(container.querySelector(ACCENT_PRIMARY_SELECTOR)).toBe(
-      screen.getByRole('button', { name: 'Analyze selected media' }),
+      screen.getByRole('button', { name: 'Describe 2 selected' }),
     );
   });
 
-  it('loading: footer Analyze is the single accent primary while the queue is still loading', async () => {
+  it('loading: footer Describe is the single accent primary while the queue is still loading', async () => {
     // All source queries stay pending → the queue renders its loading branch, no card.
     vi.mocked(fetchPendingSuggestions).mockImplementation(pending);
     vi.mocked(fetchPendingMergeSuggestions).mockImplementation(pending);
@@ -359,11 +362,11 @@ describe('§7 single-accent-primary DOM invariant (Slice 8 / BR-72)', () => {
 
     expect(markerCount(container)).toBe(1);
     expect(container.querySelector(ACCENT_PRIMARY_SELECTOR)).toBe(
-      screen.getByRole('button', { name: 'Analyze selected media' }),
+      screen.getByRole('button', { name: 'Describe 2 selected' }),
     );
   });
 
-  it('retired-head (open cluster 404s): suppressed card → footer Analyze is the single accent primary', async () => {
+  it('retired-head (open cluster 404s): suppressed card → footer Describe is the single accent primary', async () => {
     oneAssignment();
     // The head card's cluster existence probe 404s → criterion-4 retirement suppress.
     vi.mocked(fetchClusterMembers).mockRejectedValue(
@@ -383,7 +386,7 @@ describe('§7 single-accent-primary DOM invariant (Slice 8 / BR-72)', () => {
 
     await waitFor(() => expect(markerCount(container)).toBe(1));
     expect(container.querySelector(ACCENT_PRIMARY_SELECTOR)).toBe(
-      screen.getByRole('button', { name: 'Analyze selected media' }),
+      screen.getByRole('button', { name: 'Describe 2 selected' }),
     );
   });
 
@@ -429,7 +432,7 @@ describe('§7 single-accent-primary DOM invariant (Slice 8 / BR-72)', () => {
 
     await waitFor(() => expect(markerCount(container)).toBe(1));
     expect(container.querySelector(ACCENT_PRIMARY_SELECTOR)).toBe(
-      screen.getByRole('button', { name: 'Analyze selected media' }),
+      screen.getByRole('button', { name: 'Describe 2 selected' }),
     );
   });
 
@@ -532,7 +535,7 @@ describe('§7 single-accent-primary DOM invariant (Slice 8 / BR-72)', () => {
 
     expect(markerCount(container)).toBe(1);
     expect(container.querySelector(ACCENT_PRIMARY_SELECTOR)).toBe(
-      screen.getByRole('button', { name: 'Analyze selected media' }),
+      screen.getByRole('button', { name: 'Describe 2 selected' }),
     );
   });
 });

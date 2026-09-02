@@ -10,9 +10,9 @@ import { deriveReviewSurfaceActive, selectMediaFooterCtaState } from '../mediaFo
  * `--acx-color-accent-soft` selection/focus tints are exempt from that count.
  */
 describe('selectMediaFooterCtaState (§7)', () => {
-  it('select state → Analyze is the single accent primary, Describe secondary', () => {
+  it('select state: Describe is the single accent primary, Analyze secondary', () => {
     const state = selectMediaFooterCtaState({ reviewActive: false, describeRunning: false });
-    expect(state).toEqual({ accentOwner: 'analyze', analyzeVariant: 'primary', describeVariant: 'secondary' });
+    expect(state).toEqual({ accentOwner: 'describe', analyzeVariant: 'secondary', describeVariant: 'primary' });
   });
 
   it('describe run in flight → its progress owns the surface; Analyze steps down', () => {

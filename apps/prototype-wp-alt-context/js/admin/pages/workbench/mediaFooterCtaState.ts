@@ -51,7 +51,7 @@ export interface MediaFooterCtaInputs {
  *    accent primary).
  *  - describe run in flight → its progress owns the footer surface; Analyze steps
  *    down to secondary.
- *  - select (default) → Analyze is the single accent primary, Describe secondary.
+ *  - select (default) → Describe is the single accent primary, Analyze secondary (WBUX-6 L2a).
  *
  * Ordering matters: an active review surface outranks a describe run for accent
  * ownership so the queue's on-screen primary is never doubled by the footer.
@@ -83,9 +83,9 @@ export const selectMediaFooterCtaState = ({
     };
   }
   return {
-    accentOwner: FOOTER_ACCENT_OWNER.ANALYZE,
-    analyzeVariant: FOOTER_CTA_VARIANT.PRIMARY,
-    describeVariant: FOOTER_CTA_VARIANT.SECONDARY,
+    accentOwner: FOOTER_ACCENT_OWNER.DESCRIBE,
+    analyzeVariant: FOOTER_CTA_VARIANT.SECONDARY,
+    describeVariant: FOOTER_CTA_VARIANT.PRIMARY,
   };
 };
 

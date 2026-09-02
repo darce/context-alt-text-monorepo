@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import logging
+import os
 import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field, replace
@@ -33,6 +34,7 @@ _GPU_HEALTH_REQUEST_TIMEOUT_SECONDS = 5.0
 _GPU_ITEM_MAX_ATTEMPTS = 3
 _GPU_ITEM_RETRY_BASE_DELAY_SECONDS = 1.0
 _RETRYABLE_HTTP_STATUS_CODES = frozenset({408, 425, 429, 500, 502, 503, 504})
+NAMING_BUDGET_SECONDS = float(os.environ.get("ACX_NAMING_BUDGET_SECONDS", "10.0"))
 
 
 @dataclass(frozen=True)
@@ -42,6 +44,7 @@ class DescribeItemOutcome:
     alt_text_draft: str | None = None
     caption: str | None = None
     provenance: dict = field(default_factory=dict)
+    phrase_boxes: tuple = ()
 
 
 @dataclass(frozen=True)
@@ -228,16 +231,30 @@ async def _naming_lookup_for_item(
     try:
         async with session_factory() as naming_session:
             await set_tenant_context(naming_session, tenant_id)
-            return await load_fusion_naming_inputs(
-                session=naming_session,
-                tenant=tenant,
-                tenant_uuid=tenant_id,
-                media_id=media_id,
-                image_bytes=image_bytes,
+            return await asyncio.wait_for(
+                load_fusion_naming_inputs(
+                    session=naming_session,
+                    tenant=tenant,
+                    tenant_uuid=tenant_id,
+                    media_id=media_id,
+                    image_bytes=image_bytes,
+                ),
+                timeout=NAMING_BUDGET_SECONDS,
             )
     except Exception:  # noqa: BLE001 - naming lookup must not fail the item
         logger.exception("naming lookup failed media_id=%s; describing without names", media_id)
         return None
+
+
+def _naming_provenance_payload(provenance) -> dict:
+    dump = getattr(provenance, "model_dump", None)
+    if callable(dump):
+        payload = dump()
+        if isinstance(payload, dict):
+            return payload
+    if isinstance(provenance, dict):
+        return provenance
+    return {}
 
 
 async def _apply_naming_preview(
@@ -252,23 +269,31 @@ async def _apply_naming_preview(
     naming_inputs: tuple[list, object] | None,
 ) -> DescribeItemOutcome:
     """Fuse names into alt_text_draft (the same generic_draft field the router uses)."""
-    if not enabled or tenant is None or not image_bytes:
+    if not enabled or tenant is None or not image_bytes or naming_inputs is None:
+        return outcome
+    faces, policy = naming_inputs
+    if policy is None:
         return outcome
     try:
-        faces, policy = naming_inputs if naming_inputs is not None else (None, None)
-        preview_faces = faces_for_naming_preview(faces or [], (), ())
-        named, _provenance = await naming_preview(
-            session=session,
-            tenant=tenant,
-            tenant_uuid=tenant_id,
-            media_id=media_id,
-            image_bytes=image_bytes,
-            generic_draft=outcome.alt_text_draft or "",
-            phrase_boxes=(),
-            confirmed_faces=preview_faces if faces is not None else None,
-            naming_policy=policy,
+        phrase_boxes = outcome.phrase_boxes or ()
+        preview_faces = faces_for_naming_preview(faces or [], (), phrase_boxes)
+        named, provenance = await asyncio.wait_for(
+            naming_preview(
+                session=session,
+                tenant=tenant,
+                tenant_uuid=tenant_id,
+                media_id=media_id,
+                image_bytes=image_bytes,
+                generic_draft=outcome.alt_text_draft or "",
+                phrase_boxes=phrase_boxes,
+                confirmed_faces=preview_faces if faces is not None else None,
+                naming_policy=policy,
+            ),
+            timeout=NAMING_BUDGET_SECONDS,
         )
-        return replace(outcome, alt_text_draft=named)
+        merged = dict(outcome.provenance or {})
+        merged["naming"] = _naming_provenance_payload(provenance)
+        return replace(outcome, alt_text_draft=named, provenance=merged)
     except Exception:  # noqa: BLE001 - a naming fault must not fail the described item
         logger.exception("naming preview failed media_id=%s; continuing without names", media_id)
         return outcome

@@ -143,6 +143,7 @@ def _build_describe_one(
             alt_text_draft=response.alt_text_draft,
             caption=response.visual_facts.caption,
             provenance=provenance,
+            phrase_boxes=tuple(service.last_phrase_boxes or ()),
         )
 
     return describe_one

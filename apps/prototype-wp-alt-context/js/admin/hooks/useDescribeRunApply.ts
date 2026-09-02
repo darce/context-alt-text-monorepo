@@ -7,6 +7,7 @@ import {
   type ApplyDescribeRunResponse,
   type DescribeRunItem,
 } from '../api/describeApi';
+import { invalidateWorkbenchListPages } from '../api/queryKeys';
 import { invalidateMediaStats } from './useMediaStats';
 
 export interface DescribeRunApplyBuckets {
@@ -78,8 +79,16 @@ export const useDescribeRunApply = (runId: string | null): UseDescribeRunApplyRe
       }
       return applyDescribeRunDrafts(runId, overwriteMediaIds);
     },
-    onSuccess: () => {
+    onSuccess: (data) => {
       void queryClient.invalidateQueries({ queryKey: describeRunItemsQueryKey(runId) });
+      // A 200 with empty applied+partial landed nothing — skip list/stats
+      // refetch so we do not remount in-progress drafts [S6-F4][Latency ch-7].
+      if (data.applied.length === 0 && data.partial.length === 0) {
+        return;
+      }
+      // List pages only: prefix-invalidating workbench() also hits the
+      // perPage:1 stats probes and remounts rows [BR-77][S6-F1].
+      invalidateWorkbenchListPages(queryClient);
       // Bulk apply is the write most likely to move dashboard coverage. Ask the
       // server for a fresh missing-alt total — do not derive counts from response
       // buckets [rg-015]. onSuccess fires for full *and* partial applies: if any

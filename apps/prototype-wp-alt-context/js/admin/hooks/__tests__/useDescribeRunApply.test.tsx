@@ -3,11 +3,13 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { renderHook, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { describeRunItemsQueryKey, useDescribeRunApply } from '../useDescribeRunApply';
+import { useDescribeRunApply } from '../useDescribeRunApply';
 import { mediaStatsMissingQueryKey, mediaStatsTotalQueryKey } from '../useMediaStats';
+import { MEDIA_PAGE_SIZE_OPTIONS } from '../useWorkbenchFilters';
 import * as describeApi from '../../api/describeApi';
-import type { DescribeRunItemsResponse } from '../../api/describeApi';
+import type { ApplyDescribeRunResponse, DescribeRunItemsResponse } from '../../api/describeApi';
 import { queryKeys } from '../../api/queryKeys';
+import type { WorkbenchMediaResponse } from '../../api/workbenchMediaApi';
 
 vi.mock('../../api/describeApi', () => ({
   fetchDescribeRunItems: vi.fn(),
@@ -26,6 +28,54 @@ const itemsResponse: DescribeRunItemsResponse = {
     { media_id: 73, status: 'completed', alt_text_draft: '   ', caption: null, provenance: null, existing_alt: true },
   ],
 };
+
+const defaultPerPage = MEDIA_PAGE_SIZE_OPTIONS[0];
+const largePerPage = MEDIA_PAGE_SIZE_OPTIONS[MEDIA_PAGE_SIZE_OPTIONS.length - 1];
+
+const workbenchListPageKeys = [
+  ...MEDIA_PAGE_SIZE_OPTIONS.map((perPage) =>
+    queryKeys.media.workbenchPage({ page: 1, perPage, status: 'missing' }),
+  ),
+  queryKeys.media.workbenchPage({
+    page: 1,
+    perPage: defaultPerPage,
+    status: 'missing',
+    search: 'ada',
+  }),
+  queryKeys.media.workbenchPage({
+    page: 1,
+    perPage: largePerPage,
+    status: 'missing',
+    search: '',
+  }),
+];
+
+const emptyPage: WorkbenchMediaResponse = { items: [], total: 0, totalPages: 0 };
+
+const seedWorkbenchCache = (client: QueryClient): void => {
+  for (const key of workbenchListPageKeys) {
+    client.setQueryData(key, emptyPage);
+  }
+  client.setQueryData(mediaStatsTotalQueryKey, { items: [], total: 10, totalPages: 10 });
+  client.setQueryData(mediaStatsMissingQueryKey, { items: [], total: 3, totalPages: 3 });
+};
+
+const expectListPagesInvalidated = (client: QueryClient, invalidated: boolean): void => {
+  for (const key of workbenchListPageKeys) {
+    expect(client.getQueryState(key)?.isInvalidated).toBe(invalidated);
+  }
+};
+
+const applyResponse = (overrides: Partial<ApplyDescribeRunResponse> = {}): ApplyDescribeRunResponse => ({
+  run_id: 'run-abc',
+  applied: [71, 70],
+  partial: [],
+  skipped_existing: [],
+  skipped_no_draft: [72],
+  skipped_invalid: [],
+  failed: [],
+  ...overrides,
+});
 
 const buildClient = (): QueryClient =>
   new QueryClient({
@@ -69,15 +119,7 @@ describe('useDescribeRunApply', () => {
 
   it('applies drafts with the operator overwrite list and exposes the result', async () => {
     fetchItemsMock.mockResolvedValue(itemsResponse);
-    applyMock.mockResolvedValue({
-      run_id: 'run-abc',
-      applied: [71, 70],
-      partial: [],
-      skipped_existing: [],
-      skipped_no_draft: [72],
-      skipped_invalid: [],
-      failed: [],
-    });
+    applyMock.mockResolvedValue(applyResponse());
 
     const { result } = renderHook(() => useDescribeRunApply('run-abc'), {
       wrapper: createWrapper(buildClient()),
@@ -91,59 +133,43 @@ describe('useDescribeRunApply', () => {
     expect(result.current.apply.data?.applied).toEqual([71, 70]);
   });
 
-  it('invalidates run items and the missing-alt stats probe after a successful apply [BR-125]', async () => {
+  it('invalidates list pages and missing stats, not the total probe, after a successful apply [BR-125][S6-F1]', async () => {
     fetchItemsMock.mockResolvedValue(itemsResponse);
-    applyMock.mockResolvedValue({
-      run_id: 'run-abc',
-      applied: [71, 70],
-      partial: [],
-      skipped_existing: [],
-      skipped_no_draft: [72],
-      skipped_invalid: [],
-      failed: [],
-    });
+    applyMock.mockResolvedValue(applyResponse());
 
     const client = buildClient();
-    const invalidateSpy = vi.spyOn(client, 'invalidateQueries');
+    seedWorkbenchCache(client);
     const { result } = renderHook(() => useDescribeRunApply('run-abc'), {
       wrapper: createWrapper(client),
     });
     await waitFor(() => expect(result.current.itemsQuery.isSuccess).toBe(true));
 
+    expectListPagesInvalidated(client, false);
+    expect(client.getQueryState(mediaStatsTotalQueryKey)?.isInvalidated).not.toBe(true);
+    expect(client.getQueryState(mediaStatsMissingQueryKey)?.isInvalidated).not.toBe(true);
+
+    const itemsFetchesBefore = fetchItemsMock.mock.calls.length;
     result.current.apply.mutate([70]);
     await waitFor(() => expect(result.current.apply.isSuccess).toBe(true));
+    await waitFor(() => expect(fetchItemsMock.mock.calls.length).toBeGreaterThan(itemsFetchesBefore));
 
-    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: describeRunItemsQueryKey('run-abc') });
-    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: mediaStatsMissingQueryKey });
-    // Not the total probe (media count unchanged) and not media.all (BR-77).
-    expect(
-      invalidateSpy.mock.calls.some(
-        (call) => JSON.stringify(call[0]) === JSON.stringify({ queryKey: mediaStatsTotalQueryKey }),
-      ),
-    ).toBe(false);
-    expect(
-      invalidateSpy.mock.calls.some(
-        (call) => JSON.stringify(call[0]) === JSON.stringify({ queryKey: queryKeys.media.all }),
-      ),
-    ).toBe(false);
+    expectListPagesInvalidated(client, true);
+    expect(client.getQueryState(mediaStatsMissingQueryKey)?.isInvalidated).toBe(true);
+    // Prefix workbench() invalidation would also mark the perPage:1 total probe.
+    expect(client.getQueryState(mediaStatsTotalQueryKey)?.isInvalidated).toBe(false);
   });
 
-  it('refreshes stats after a partial apply — some alts landed so counters are stale [BR-125]', async () => {
-    // HTTP success with mixed buckets: applied + failed. onSuccess still runs;
-    // some writes landed so dashboard coverage must ask the server again.
+  it('refreshes list pages and missing stats after a partial apply — some alts landed [BR-125]', async () => {
     fetchItemsMock.mockResolvedValue(itemsResponse);
-    applyMock.mockResolvedValue({
-      run_id: 'run-abc',
-      applied: [71],
-      partial: [],
-      skipped_existing: [],
-      skipped_no_draft: [72],
-      skipped_invalid: [],
-      failed: [70],
-    });
+    applyMock.mockResolvedValue(
+      applyResponse({
+        applied: [71],
+        failed: [70],
+      }),
+    );
 
     const client = buildClient();
-    const invalidateSpy = vi.spyOn(client, 'invalidateQueries');
+    seedWorkbenchCache(client);
     const { result } = renderHook(() => useDescribeRunApply('run-abc'), {
       wrapper: createWrapper(client),
     });
@@ -154,7 +180,65 @@ describe('useDescribeRunApply', () => {
     expect(result.current.apply.data?.applied).toEqual([71]);
     expect(result.current.apply.data?.failed).toEqual([70]);
 
-    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: mediaStatsMissingQueryKey });
+    expectListPagesInvalidated(client, true);
+    expect(client.getQueryState(mediaStatsMissingQueryKey)?.isInvalidated).toBe(true);
+    expect(client.getQueryState(mediaStatsTotalQueryKey)?.isInvalidated).toBe(false);
+  });
+
+  it('still invalidates list pages when only partial writes landed [S6-F4]', async () => {
+    fetchItemsMock.mockResolvedValue(itemsResponse);
+    applyMock.mockResolvedValue(
+      applyResponse({
+        applied: [],
+        partial: [71],
+        skipped_no_draft: [72],
+      }),
+    );
+
+    const client = buildClient();
+    seedWorkbenchCache(client);
+    const { result } = renderHook(() => useDescribeRunApply('run-abc'), {
+      wrapper: createWrapper(client),
+    });
+    await waitFor(() => expect(result.current.itemsQuery.isSuccess).toBe(true));
+
+    result.current.apply.mutate([]);
+    await waitFor(() => expect(result.current.apply.isSuccess).toBe(true));
+
+    expectListPagesInvalidated(client, true);
+    expect(client.getQueryState(mediaStatsMissingQueryKey)?.isInvalidated).toBe(true);
+    expect(client.getQueryState(mediaStatsTotalQueryKey)?.isInvalidated).toBe(false);
+  });
+
+  it('skips workbench and stats invalidation when a 200 apply landed nothing [S6-F4]', async () => {
+    fetchItemsMock.mockResolvedValue(itemsResponse);
+    applyMock.mockResolvedValue(
+      applyResponse({
+        applied: [],
+        partial: [],
+        skipped_existing: [70],
+        skipped_no_draft: [72],
+        skipped_invalid: [],
+        failed: [],
+      }),
+    );
+
+    const client = buildClient();
+    seedWorkbenchCache(client);
+    const { result } = renderHook(() => useDescribeRunApply('run-abc'), {
+      wrapper: createWrapper(client),
+    });
+    await waitFor(() => expect(result.current.itemsQuery.isSuccess).toBe(true));
+
+    const itemsFetchesBefore = fetchItemsMock.mock.calls.length;
+    result.current.apply.mutate([]);
+    await waitFor(() => expect(result.current.apply.isSuccess).toBe(true));
+    await waitFor(() => expect(fetchItemsMock.mock.calls.length).toBeGreaterThan(itemsFetchesBefore));
+
+    // History buckets still refresh; library rows and dashboard counters do not.
+    expectListPagesInvalidated(client, false);
+    expect(client.getQueryState(mediaStatsMissingQueryKey)?.isInvalidated).toBe(false);
+    expect(client.getQueryState(mediaStatsTotalQueryKey)?.isInvalidated).toBe(false);
   });
 
   it('is a no-op apply when no run id is set', async () => {

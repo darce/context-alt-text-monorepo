@@ -81,6 +81,7 @@ const safeAppErrorMessage = (error: AppError): string => {
       return 'Nonce refresh failed';
     case 'auth_expired':
     case 'abort':
+    case 'timeout':
     case 'transport':
     case 'unknown':
       return error.message;

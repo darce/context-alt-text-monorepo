@@ -5,7 +5,7 @@ import { AuthExpiredError, HTTPError, ResponseParseError } from '../http';
 import { clampRetryAfterMs, RETRY_AFTER_MAX_MS } from '../retryAfter';
 import {
   getRetryDelay,
-  isAbortLike,
+  isAbortOrTimeout,
   isCooldownSignal,
   MAX_RETRY_DELAY_MS,
   RETRY_MAX_ATTEMPTS,
@@ -88,17 +88,15 @@ describe('shouldRetryRequest', () => {
     expect(shouldRetryRequest(0, err)).toBe(false);
   });
 
-  it('does not retry an aborted OR timed-out request', () => {
-    const abort = Object.assign(new Error('The operation was aborted.'), { name: 'AbortError' });
-    expect(shouldRetryRequest(0, abort)).toBe(false);
-    // createRecognitionTimeoutSignal uses AbortSignal.timeout(), which aborts with a
-    // 'TimeoutError' DOMException — NOT 'AbortError'. This is the real recognition timeout
-    // path; retrying it here would reopen the storm the poller interval already covers.
-    const timeout = Object.assign(new Error('The operation timed out.'), { name: 'TimeoutError' });
-    expect(shouldRetryRequest(0, timeout)).toBe(false);
-    // DOMException-shaped (not an Error subclass in the browser).
+  it('retries a timeout once and never retries a user abort [FEBT1-W2A-05]', () => {
+    const abortErr = Object.assign(new Error('The operation was aborted.'), { name: 'AbortError' });
+    const timeoutErr = Object.assign(new Error('The operation timed out.'), { name: 'TimeoutError' });
+    expect(shouldRetryRequest(0, timeoutErr)).toBe(true);
+    expect(shouldRetryRequest(1, timeoutErr)).toBe(false);
+    expect(shouldRetryRequest(0, abortErr)).toBe(false);
     expect(shouldRetryRequest(0, { name: 'AbortError', message: 'aborted' })).toBe(false);
-    expect(shouldRetryRequest(0, { name: 'TimeoutError', message: 'timed out' })).toBe(false);
+    expect(shouldRetryRequest(0, { name: 'TimeoutError', message: 'timed out' })).toBe(true);
+    expect(shouldRetryRequest(1, { name: 'TimeoutError', message: 'timed out' })).toBe(false);
   });
 
   it('is bounded: stops once RETRY_MAX_ATTEMPTS is reached even for a retryable class', () => {
@@ -184,10 +182,12 @@ describe('getRetryDelay', () => {
 });
 
 describe('classifier clauses after F3/F5 [TEST-15]', () => {
-  it('plain-object abort is not retried (M14)', () => {
-    expect(isAbortLike({ name: 'AbortError', message: 'aborted' })).toBe(true);
+  it('plain-object abort is not retried; timeout is retried once (M14 / FEBT1-W2A-05)', () => {
+    expect(isAbortOrTimeout({ name: 'AbortError', message: 'aborted' })).toBe(true);
+    expect(isAbortOrTimeout({ name: 'TimeoutError', message: 'timed out' })).toBe(true);
     expect(shouldRetryRequest(0, { name: 'AbortError', message: 'aborted' })).toBe(false);
-    expect(shouldRetryRequest(0, { name: 'TimeoutError', message: 'timed out' })).toBe(false);
+    expect(shouldRetryRequest(0, { name: 'TimeoutError', message: 'timed out' })).toBe(true);
+    expect(shouldRetryRequest(1, { name: 'TimeoutError', message: 'timed out' })).toBe(false);
   });
 
   it('pre-classified transport AppError is retried (M15)', () => {
@@ -214,9 +214,17 @@ describe('classifier clauses after F3/F5 [TEST-15]', () => {
     expect(serverError).toBeInstanceOf(HTTPError);
     expect(isCooldownSignal(serverError)).toBe(false);
 
-    const classified = classifyError(httpError(429, 5));
+    const classified = {
+      _tag: 'http' as const,
+      status: 429,
+      endpoint: 'http://example.test/e',
+      retryAfterMs: 5_000,
+      message: 'slow',
+      cause: null,
+    };
     expect(classified).not.toBeInstanceOf(HTTPError);
     expect(isCooldownSignal(classified)).toBe(true);
+    expect(isCooldownSignal(httpError(429, 5))).toBe(true);
 
     const timeout = new DOMException('The operation timed out.', 'TimeoutError');
     expect(isCooldownSignal(timeout)).toBe(false);

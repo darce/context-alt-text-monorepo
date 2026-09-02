@@ -53,8 +53,10 @@ const NONCE_BODY_PATTERN = /^[a-f0-9]{8,20}$/i;
 export const NONCE_REFRESH_TIMEOUT_MS = 10_000;
 
 export class NonceRefreshFailedError extends Error {
+  readonly _tag = 'nonce_refresh' as const;
   readonly causeStatus: number | undefined;
   readonly bodyPreview: string;
+  readonly cause: unknown;
 
   constructor({
     message,
@@ -69,6 +71,7 @@ export class NonceRefreshFailedError extends Error {
     this.name = 'NonceRefreshFailedError';
     this.causeStatus = causeStatus;
     this.bodyPreview = bodyPreview ?? '';
+    this.cause = undefined;
   }
 }
 

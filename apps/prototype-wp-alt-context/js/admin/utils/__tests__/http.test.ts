@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { NonceRefreshFailedError, registerConfig, resetConfigCache, getNonce } from '../../api/config';
 import * as configApi from '../../api/config';
-import { classifyError, toUserMessage } from '../appError';
+import { classifyError, isAppError, toUserMessage } from '../appError';
 import {
   AuthExpiredError,
   DEFAULT_FETCH_TIMEOUT_MS,
@@ -526,7 +526,9 @@ describe('fetchApi review-fix discrimination pins (UXPNET2-BR-04/05)', () => {
 
     await expect(
       fetchApi<{ ok: boolean }>(REST_URL, { restNonce: STALE_NONCE, signal: controller.signal }),
-    ).rejects.toSatisfy((err: unknown) => err instanceof DOMException && err.name === 'AbortError');
+    ).rejects.toSatisfy(
+      (err: unknown) => err instanceof Error && isAppError(err) && err.name === 'AbortError' && err._tag === 'abort',
+    );
   });
 });
 
@@ -627,7 +629,7 @@ describe('fetchApi default timeout [E-04]', () => {
     resetConfigCache();
   });
 
-  it('rejects a hung fetch within the default deadline as a classified abort', async () => {
+  it('rejects a hung fetch within the default deadline as a classified timeout', async () => {
     hungFetch();
 
     let rejected: unknown;
@@ -648,9 +650,10 @@ describe('fetchApi default timeout [E-04]', () => {
 
     await vi.advanceTimersByTimeAsync(1);
 
-    expect(rejected).toBeInstanceOf(DOMException);
-    expect((rejected as DOMException).name).toBe('TimeoutError');
-    expect(classifyError(rejected)._tag).toBe('abort');
+    expect(rejected).toBeInstanceOf(Error);
+    expect(isAppError(rejected)).toBe(true);
+    expect((rejected as Error).name).toBe('TimeoutError');
+    expect(isAppError(rejected) && rejected._tag).toBe('timeout');
   });
 
   it('lets an explicit timeoutMs override the default', async () => {
@@ -671,7 +674,7 @@ describe('fetchApi default timeout [E-04]', () => {
 
     await vi.advanceTimersByTimeAsync(1);
 
-    expect(classifyError(rejected)._tag).toBe('abort');
+    expect(classifyError(rejected)._tag).toBe('timeout');
     expect((rejected as DOMException).name).toBe('TimeoutError');
   });
 
@@ -692,5 +695,117 @@ describe('fetchApi default timeout [E-04]', () => {
 
     const result = await fetchApi<{ ok: boolean }>(REST_URL);
     expect(result).toEqual({ ok: true });
+  });
+});
+
+describe('fetchApi throw boundary emits tagged Errors [FEBT1-W2A-01]', () => {
+  beforeEach(() => {
+    resetConfigCache();
+    seedConfig();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+    resetConfigCache();
+  });
+
+  const expectThrownAppError = async (
+    run: () => Promise<unknown>,
+    tag: 'http' | 'parse' | 'auth_expired' | 'transport' | 'timeout' | 'abort',
+  ): Promise<Error> => {
+    try {
+      await run();
+      throw new Error('expected fetchApi to throw');
+    } catch (error) {
+      expect(error).toBeInstanceOf(Error);
+      expect(isAppError(error)).toBe(true);
+      if (!isAppError(error)) {
+        throw new Error('expected thrown value to already be an AppError');
+      }
+      expect(error._tag).toBe(tag);
+      expect(error.stack).toEqual(expect.any(String));
+      expect(error.stack?.length).toBeGreaterThan(0);
+      return error;
+    }
+  };
+
+  it.each([
+    {
+      name: '4xx → http',
+      tag: 'http' as const,
+      setup: (): (() => Promise<unknown>) => {
+        vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('missing', { status: 404 }));
+        return () => fetchApi(REST_URL);
+      },
+    },
+    {
+      name: 'non-JSON body → parse',
+      tag: 'parse' as const,
+      setup: (): (() => Promise<unknown>) => {
+        vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('{', { status: 200 }));
+        return () => fetchApi(REST_URL);
+      },
+    },
+    {
+      name: 'WP logged-out sentinel → auth_expired',
+      tag: 'auth_expired' as const,
+      setup: (): (() => Promise<unknown>) => {
+        vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+          new Response(JSON.stringify({ code: 'rest_not_logged_in', message: 'logged out' }), {
+            status: 401,
+          }),
+        );
+        return () => fetchApi(REST_URL);
+      },
+    },
+    {
+      name: 'transport failure → transport',
+      tag: 'transport' as const,
+      setup: (): (() => Promise<unknown>) => {
+        vi.spyOn(globalThis, 'fetch').mockRejectedValue(new TypeError('Failed to fetch'));
+        return () => fetchApi(REST_URL);
+      },
+    },
+    {
+      name: 'hung fetch → timeout',
+      tag: 'timeout' as const,
+      setup: (): (() => Promise<unknown>) => {
+        vi.useFakeTimers();
+        hungFetch();
+        return async () => {
+          let rejected: unknown;
+          void fetchApi(REST_URL).then(
+            () => {
+              throw new Error('expected hung fetch to reject');
+            },
+            (error: unknown) => {
+              rejected = error;
+            },
+          );
+          await vi.advanceTimersByTimeAsync(300_000);
+          if (rejected !== undefined) {
+            throw rejected;
+          }
+          throw new Error('hung fetch did not reject');
+        };
+      },
+    },
+    {
+      name: 'user cancel → abort',
+      tag: 'abort' as const,
+      setup: (): (() => Promise<unknown>) => {
+        hungFetch();
+        const controller = new AbortController();
+        return () => {
+          const pending = fetchApi(REST_URL, { signal: controller.signal, timeoutMs: 60_000 });
+          controller.abort();
+          return pending;
+        };
+      },
+    },
+  ])('$name is instanceof Error, isAppError, and keeps a stack', async ({ tag, setup }) => {
+    const run = setup();
+    await expectThrownAppError(run, tag);
   });
 });

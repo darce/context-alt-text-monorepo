@@ -8,6 +8,7 @@ export const APP_ERROR_TAGS = [
   'auth_expired',
   'nonce_refresh',
   'abort',
+  'timeout',
   'transport',
   'unknown',
 ] as const;
@@ -20,6 +21,7 @@ const APP_ERROR_TAG_INDEX: Record<AppErrorTag, true> = {
   auth_expired: true,
   nonce_refresh: true,
   abort: true,
+  timeout: true,
   transport: true,
   unknown: true,
 };
@@ -47,6 +49,7 @@ export type AppError =
     })
   | AppErrorBase<'nonce_refresh'>
   | AppErrorBase<'abort'>
+  | AppErrorBase<'timeout'>
   | AppErrorBase<'transport'>
   | AppErrorBase<'unknown'>;
 
@@ -76,6 +79,7 @@ export const isAppError = (value: unknown): value is AppError => {
       return (value.status === 401 || value.status === 403) && typeof value.endpoint === 'string';
     case 'nonce_refresh':
     case 'abort':
+    case 'timeout':
     case 'transport':
     case 'unknown':
       return true;
@@ -84,15 +88,22 @@ export const isAppError = (value: unknown): value is AppError => {
   }
 };
 
-const ABORT_LIKE_NAMES = new Set(['AbortError', 'TimeoutError']);
+const ABORT_ERROR_NAME = 'AbortError';
+const TIMEOUT_ERROR_NAME = 'TimeoutError';
+const ABORT_OR_TIMEOUT_NAMES = new Set([ABORT_ERROR_NAME, TIMEOUT_ERROR_NAME]);
 
-/** Duck-type: DOMException, Error, or any object whose name is AbortError|TimeoutError. */
-export const isAbortLikeName = (value: unknown): boolean => {
+const duckTypeName = (value: unknown): string | undefined => {
   if (typeof value !== 'object' || value === null) {
-    return false;
+    return undefined;
   }
   const name = (value as { name?: unknown }).name;
-  return typeof name === 'string' && ABORT_LIKE_NAMES.has(name);
+  return typeof name === 'string' ? name : undefined;
+};
+
+/** Duck-type: DOMException, Error, or any object whose name is AbortError or TimeoutError. */
+export const isAbortOrTimeoutName = (value: unknown): boolean => {
+  const name = duckTypeName(value);
+  return name !== undefined && ABORT_OR_TIMEOUT_NAMES.has(name);
 };
 
 const unknownMessage = (value: unknown): string => {
@@ -167,7 +178,15 @@ export const classifyError = (error: unknown): AppError => {
         cause: error,
       };
     }
-    if (isAbortLikeName(error)) {
+    const name = duckTypeName(error);
+    if (name === TIMEOUT_ERROR_NAME) {
+      return {
+        _tag: 'timeout',
+        message: abortMessage(error),
+        cause: error,
+      };
+    }
+    if (name === ABORT_ERROR_NAME) {
       return {
         _tag: 'abort',
         message: abortMessage(error),
@@ -217,6 +236,7 @@ export const isCooldown = (error: unknown): boolean => {
 
 /** Overlay transport copy. nonce_refresh reuses this; do not invent a new string. */
 const NETWORK_ERROR_COPY = 'Network error — check your connection';
+const TIMEOUT_ERROR_COPY = 'The server took too long to respond — try again';
 
 export const toUserMessage = (error: unknown, fallback: string): string => {
   const classified = classifyError(error);
@@ -225,6 +245,9 @@ export const toUserMessage = (error: unknown, fallback: string): string => {
   }
   if (classified._tag === 'nonce_refresh') {
     return NETWORK_ERROR_COPY;
+  }
+  if (classified._tag === 'timeout') {
+    return TIMEOUT_ERROR_COPY;
   }
   return fallback;
 };

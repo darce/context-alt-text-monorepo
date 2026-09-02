@@ -1,11 +1,66 @@
 import { __, sprintf } from '@wordpress/i18n';
 
-import { classifyError } from '../../../utils/appError';
-import { formatUserFacingError, isAuthExpiredError } from '../../../utils/userFacingError';
+import { classifyError, toUserMessage } from '../../../utils/appError';
+
+export const CLUSTER_MUTATION_ERROR_COPY = {
+  timeout: __('The server took too long to respond — try again', 'alt-context'),
+  transport: __('Network error — check your connection', 'alt-context'),
+  parse: __('Unexpected response from server', 'alt-context'),
+  unknown: __('An unexpected error occurred. Please try again.', 'alt-context'),
+  staleConflict: __('Label already exists. Use the dropdown to merge.', 'alt-context'),
+  bindFailed: __('The group was created but the person was not bound.', 'alt-context'),
+} as const;
+
+export type ClusterMutationErrorKind =
+  | 'stale_conflict'
+  | 'timeout'
+  | 'transport'
+  | 'auth_expired'
+  | 'parse'
+  | 'http'
+  | 'projection_not_ready'
+  | 'invalid_target'
+  | 'bind_failed'
+  | 'unknown';
+
+export type ClusterMutationRecovery = 'reload' | 'retry' | 'none';
+
+export interface ClusterMutationUserError {
+  readonly kind: ClusterMutationErrorKind;
+  readonly message: string;
+  readonly recovery: ClusterMutationRecovery;
+}
 
 export const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 export const isAbortError = (err: unknown): boolean => classifyError(err)._tag === 'abort';
+
+const readStringField = (value: unknown, key: string): string | null => {
+  if (typeof value !== 'object' || value === null || !Object.hasOwn(value, key)) {
+    return null;
+  }
+  const field = (value as Record<string, unknown>)[key];
+  return typeof field === 'string' ? field : null;
+};
+
+const readBodyPreview = (error: unknown): string => {
+  const classified = classifyError(error);
+  return readStringField(classified.cause, 'bodyPreview') ?? readStringField(error, 'bodyPreview') ?? '';
+};
+
+const readWpErrorCode = (preview: string): string | null => {
+  if (preview === '') {
+    return null;
+  }
+  try {
+    const parsed: unknown = JSON.parse(preview);
+    return readStringField(parsed, 'code');
+  } catch {
+    return null;
+  }
+};
+
+export const getClusterErrorCode = (error: unknown): string | null => readWpErrorCode(readBodyPreview(error));
 
 export const isProjectionNotReadyError = (message: string): boolean => {
   const normalized = message.toLowerCase();
@@ -25,32 +80,80 @@ export const isInvalidTargetClusterError = (message: string): boolean => {
 export const getInvalidTargetClusterMessage = (label: string): string =>
   sprintf(__('That group is already named %s - nothing to merge.', 'alt-context'), label);
 
-export const getClusterMutationErrorMessage = (error: unknown, label: string): string => {
-  if (isAbortError(error)) {
-    return __('Save is taking too long. Please try again.', 'alt-context');
-  }
-  if (isAuthExpiredError(error)) {
-    return formatUserFacingError(error, __('An unexpected error occurred. Please try again.', 'alt-context'));
-  }
-  if (error instanceof Error) {
-    const normalized = error.message.toLowerCase();
-    if (normalized.includes('timed out') || normalized.includes('timeout')) {
-      return __('Save is taking too long. Please try again.', 'alt-context');
-    }
-    if (isProjectionNotReadyError(error.message)) {
-      return getProjectionNotReadyMessage();
-    }
-    if (isInvalidTargetClusterError(error.message)) {
-      return getInvalidTargetClusterMessage(label);
-    }
-    if (error.message.includes('409') || normalized.includes('conflict')) {
-      return __('Label already exists. Use the dropdown to merge.', 'alt-context');
-    }
-    if (error.message.includes('NetworkError') || error.message.includes('Failed to fetch')) {
-      return __('Network error. Please check your connection and try again.', 'alt-context');
-    }
-    return error.message;
+export const getClusterMutationUserError = (error: unknown, label = 'that label'): ClusterMutationUserError => {
+  const classified = classifyError(error);
+  const code = getClusterErrorCode(error);
+
+  if (classified._tag === 'auth_expired') {
+    return {
+      kind: 'auth_expired',
+      message: toUserMessage(error, CLUSTER_MUTATION_ERROR_COPY.unknown),
+      recovery: 'reload',
+    };
   }
 
-  return __('An unexpected error occurred. Please try again.', 'alt-context');
+  if (classified._tag === 'abort') {
+    return {
+      kind: 'timeout',
+      message: toUserMessage(error, CLUSTER_MUTATION_ERROR_COPY.timeout),
+      recovery: 'retry',
+    };
+  }
+
+  if (classified._tag === 'transport' || classified._tag === 'nonce_refresh') {
+    return {
+      kind: 'transport',
+      message: toUserMessage(error, CLUSTER_MUTATION_ERROR_COPY.transport),
+      recovery: 'retry',
+    };
+  }
+
+  if (classified._tag === 'parse') {
+    return {
+      kind: 'parse',
+      message: toUserMessage(error, CLUSTER_MUTATION_ERROR_COPY.parse),
+      recovery: 'retry',
+    };
+  }
+
+  if (code === 'projection_not_ready') {
+    return {
+      kind: 'projection_not_ready',
+      message: getProjectionNotReadyMessage(),
+      recovery: 'retry',
+    };
+  }
+
+  if (code === 'invalid_target_cluster_id') {
+    return {
+      kind: 'invalid_target',
+      message: getInvalidTargetClusterMessage(label),
+      recovery: 'none',
+    };
+  }
+
+  if (code === 'acx_cluster_created_bind_failed') {
+    return {
+      kind: 'bind_failed',
+      message: CLUSTER_MUTATION_ERROR_COPY.bindFailed,
+      recovery: 'retry',
+    };
+  }
+
+  if (classified._tag === 'http' && classified.status === 409) {
+    return {
+      kind: 'stale_conflict',
+      message: CLUSTER_MUTATION_ERROR_COPY.staleConflict,
+      recovery: 'reload',
+    };
+  }
+
+  return {
+    kind: classified._tag === 'http' ? 'http' : 'unknown',
+    message: toUserMessage(error, CLUSTER_MUTATION_ERROR_COPY.unknown),
+    recovery: 'retry',
+  };
 };
+
+export const getClusterMutationErrorMessage = (error: unknown, label: string): string =>
+  getClusterMutationUserError(error, label).message;

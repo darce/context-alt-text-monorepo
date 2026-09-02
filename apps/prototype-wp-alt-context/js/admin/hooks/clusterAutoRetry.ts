@@ -6,7 +6,7 @@
 
 import { __, sprintf } from '@wordpress/i18n';
 
-import { classifyError, isCooldown } from '../utils/appError';
+import { classifyError, isCooldown, toUserMessage } from '../utils/appError';
 import { DEFAULT_COOLDOWN_SECONDS } from '../utils/recognitionCooldown';
 import { clampRetryAfterMs } from '../utils/retryAfter';
 
@@ -18,9 +18,7 @@ export const isRetryableClusterError = (error: unknown): boolean => isCooldown(e
 export const resolveClusterRetryDelaySeconds = (error: unknown): number => {
   const classified = classifyError(error);
   const retryAfterSeconds =
-    classified._tag === 'http' && classified.retryAfterMs !== undefined
-      ? classified.retryAfterMs / 1000
-      : undefined;
+    classified._tag === 'http' && classified.retryAfterMs !== undefined ? classified.retryAfterMs / 1000 : undefined;
   return clampRetryAfterMs(retryAfterSeconds, DEFAULT_COOLDOWN_SECONDS * 1000) / 1000;
 };
 
@@ -131,8 +129,7 @@ export const createClusterAutoRetry = (listener: ClusterAutoRetryListener) => {
         return false;
       }
 
-      const message = error instanceof Error ? error.message : listener.fallbackErrorMessage;
-      listener.onTerminalError(message);
+      listener.onTerminalError(toUserMessage(error, listener.fallbackErrorMessage));
       return false;
     },
 

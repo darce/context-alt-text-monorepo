@@ -12,12 +12,7 @@ import {
   updateClusterLabel,
   type MergeClusterResponse,
 } from '../../../api/recognition';
-import {
-  getClusterMutationErrorMessage,
-  getProjectionNotReadyMessage,
-  isAbortError,
-  isProjectionNotReadyError,
-} from './clusterMutationUtils';
+import { getClusterMutationErrorMessage, isAbortError } from './clusterMutationUtils';
 import { useOptionalMergeSurvivors } from './MergeSurvivorContext';
 import {
   dropClusterFromReviewCaches,
@@ -85,14 +80,7 @@ export const useClusterLabelMutations = ({
         return;
       }
       invalidateQueries();
-      const message = err instanceof Error ? err.message : String(err);
-      if (isProjectionNotReadyError(message)) {
-        onError?.(getProjectionNotReadyMessage());
-      } else if (message.includes('409')) {
-        onError?.(__('Label already exists. Use the dropdown to merge.', 'alt-context'));
-      } else {
-        onError?.(message);
-      }
+      onError?.(getClusterMutationErrorMessage(err, currentLabel ?? derivedLabel ?? 'that label'));
     },
   });
 
@@ -164,19 +152,15 @@ export const useClusterLabelMutations = ({
       invalidateQueries();
       onRevertSuccess?.();
     },
-    onError: (err: Error) => {
-      onError?.(err.message);
+    onError: (err: unknown) => {
+      onError?.(getClusterMutationErrorMessage(err, currentLabel ?? derivedLabel ?? 'that label'));
     },
   });
 
   return {
     rename: (label: string, signal?: AbortSignal) => renameMutation.mutate({ label, signal }),
-    merge: (
-      targetClusterId: string,
-      targetLabel?: string,
-      signal?: AbortSignal,
-      suggestionId?: string,
-    ) => mergeMutation.mutate({ targetClusterId, targetLabel, signal, suggestionId }),
+    merge: (targetClusterId: string, targetLabel?: string, signal?: AbortSignal, suggestionId?: string) =>
+      mergeMutation.mutate({ targetClusterId, targetLabel, signal, suggestionId }),
     revertMerge: revertMergeMutation.mutate,
     isRenaming: renameMutation.isPending,
     isMerging: mergeMutation.isPending,

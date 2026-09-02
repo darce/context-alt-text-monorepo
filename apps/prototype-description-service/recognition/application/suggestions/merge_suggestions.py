@@ -13,7 +13,7 @@ import numpy as np
 from recognition.application.clustering.centroid_utils import compute_similarity
 from recognition.application.settings import ClusteringSettings
 from recognition.application.settings.clustering import HACSettings
-from recognition.domain.cluster import IdentityCluster
+from recognition.domain.cluster import IdentityCluster, is_reserved_label_shape
 from recognition.domain.repositories import (
     ClusterRepository,
     ConstrainedHACProtocol,
@@ -154,10 +154,9 @@ class MergeSuggestionService:
                     continue
                 if similarity >= self._settings.similarity_threshold:
                     continue
-                survivor_id, other_id = _merge_pair_cluster_ids(cluster_a, cluster_b)
-                payload = MergeSuggestionCreateData(
-                    cluster_a_id=survivor_id,
-                    cluster_b_id=other_id,
+                payload = _merge_suggestion_payload(
+                    cluster_a,
+                    cluster_b,
                     similarity=similarity,
                     source="singleton_hac",
                     refreshed_at=now,
@@ -219,18 +218,17 @@ async def generate_cluster_merge_suggestions(
     now = datetime.now(tz=UTC)
     for idx, (cluster_a, centroid_a) in enumerate(candidates):
         for cluster_b, centroid_b in candidates[idx + 1 :]:
+            if not _is_merge_pair_eligible(cluster_a, cluster_b):
+                continue
             similarity = compute_similarity(centroid_a, centroid_b)
             if similarity < settings.suggestion_floor:
                 continue
             if similarity >= settings.similarity_threshold:
                 continue
-            if not _is_merge_pair_eligible(cluster_a, cluster_b):
-                continue
 
-            survivor_id, other_id = _merge_pair_cluster_ids(cluster_a, cluster_b)
-            payload = MergeSuggestionCreateData(
-                cluster_a_id=survivor_id,
-                cluster_b_id=other_id,
+            payload = _merge_suggestion_payload(
+                cluster_a,
+                cluster_b,
                 similarity=similarity,
                 source="cluster_merge",
                 refreshed_at=now,
@@ -252,7 +250,8 @@ def _is_eligible_for_merge_suggestion(cluster: IdentityCluster, tenant_id: str) 
 
     Tenant mismatch is excluded. Labeled vs unlabeled is decided at pair
     level: a pair is suggestible when similarity is in band and at most one
-    side is user-confirmed with a non-auto (non-``cluster-``) label.
+    side is user-confirmed with a non-reserved (non-``cluster-``/``cluster_``)
+    label.
     """
     return not (cluster.tenant_id and cluster.tenant_id.lower() != tenant_id.lower())
 
@@ -260,7 +259,7 @@ def _is_eligible_for_merge_suggestion(cluster: IdentityCluster, tenant_id: str) 
 def _is_labeled_for_merge_suggestion(cluster: IdentityCluster) -> bool:
     """Return True when the cluster is user-confirmed with a real (non-auto) label."""
     label = cluster.label
-    return bool(cluster.user_confirmed and label and not str(label).startswith("cluster-"))
+    return bool(cluster.user_confirmed and label and not is_reserved_label_shape(label))
 
 
 def _is_merge_pair_eligible(cluster_a: IdentityCluster, cluster_b: IdentityCluster) -> bool:
@@ -277,6 +276,26 @@ def _merge_pair_cluster_ids(cluster_a: IdentityCluster, cluster_b: IdentityClust
     if _is_labeled_for_merge_suggestion(cluster_b) and not _is_labeled_for_merge_suggestion(cluster_a):
         return cluster_b_id, cluster_a_id
     return cluster_a_id, cluster_b_id
+
+
+def _merge_suggestion_payload(
+    cluster_a: IdentityCluster,
+    cluster_b: IdentityCluster,
+    *,
+    similarity: float,
+    source: str,
+    refreshed_at: datetime,
+) -> MergeSuggestionCreateData:
+    survivor_id, other_id = _merge_pair_cluster_ids(cluster_a, cluster_b)
+    exactly_one_labeled = _is_labeled_for_merge_suggestion(cluster_a) != _is_labeled_for_merge_suggestion(cluster_b)
+    return MergeSuggestionCreateData(
+        cluster_a_id=survivor_id,
+        cluster_b_id=other_id,
+        similarity=similarity,
+        source=source,
+        refreshed_at=refreshed_at,
+        survivor_cluster_id=survivor_id if exactly_one_labeled else None,
+    )
 
 
 def _extract_cluster_centroid(cluster: IdentityCluster) -> np.ndarray | None:

@@ -65,3 +65,4 @@ class MergeSuggestionDetails:
     cluster_b_representative_media_id: int | None = None
     cluster_b_representative_media_url: str | None = None
     cluster_b_representative_bbox: FaceBox | None = None
+    survivor_cluster_id: str | None = None

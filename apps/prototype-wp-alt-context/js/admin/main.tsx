@@ -3,7 +3,10 @@
 import React from 'react';
 import { createRoot } from 'react-dom/client';
 import { App } from './App';
+import { createLogger } from './utils/logger';
 import './styles/main.scss';
+
+const bootstrapLog = createLogger('bootstrap');
 
 type HookFunction = (...args: unknown[]) => void;
 
@@ -61,7 +64,9 @@ if (rootElement) {
     }
   }
   if (missingGlobals.length > 0) {
-    console.warn(`[alt-context] Missing WordPress globals: ${missingGlobals.join(', ')}`);
+    bootstrapLog.warn(`[alt-context] Missing WordPress globals: ${missingGlobals.join(', ')}`, {
+      missingGlobals,
+    });
   }
 
   const root = createRoot(rootElement);

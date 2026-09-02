@@ -1,7 +1,7 @@
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { useJobProgressStream } from '../useJobProgressStream';
+import { JOB_STATUS, useJobProgressStream } from '../useJobProgressStream';
 import { useJobCoordination } from '../useJobCoordination';
 import { resetConfigCache, setNonce } from '../../api/config';
 
@@ -229,6 +229,24 @@ describe('useJobProgressStream', () => {
     await waitFor(() => {
       expect(result.current.stalledForSeconds).toBeNull();
       expect(result.current.lastEventAt).not.toBeNull();
+    });
+  });
+
+  it('120s of silence renders as stalled, not failed (FEBT1-W2D-01/W2D-02)', async () => {
+    vi.useFakeTimers();
+
+    const { result } = renderHook(() => useJobProgressStream('job-quiet-120s'));
+
+    await waitFor(() => expect(MockEventSource.instances).toHaveLength(1));
+
+    act(() => {
+      vi.advanceTimersByTime(120_000);
+    });
+
+    await waitFor(() => {
+      expect(result.current.status).toBe(JOB_STATUS.STALLED);
+      expect(result.current.status).not.toBe(JOB_STATUS.FAILED);
+      expect(result.current.stalledForSeconds).toBe(120);
     });
   });
 });

@@ -77,6 +77,8 @@ export const MediaSelection = ({ reviewActive = false }: MediaSelectionProps): R
     retry: false,
   });
   const recognitionEnabled = settingsQuery.data?.recognition_enabled;
+  const recognitionPolicyKnown = typeof recognitionEnabled === 'boolean';
+  const isSettingsPending = !recognitionPolicyKnown;
   const selectedMediaIds = Object.entries(selection)
     .filter(([, selected]) => selected)
     .map(([id]) => Number(id))
@@ -187,8 +189,10 @@ export const MediaSelection = ({ reviewActive = false }: MediaSelectionProps): R
             accentPrimary={footerCta.accentOwner === FOOTER_ACCENT_OWNER.DESCRIBE}
             recognitionEnabled={recognitionEnabled}
             isIdentifying={identify.pending}
+            isSettingsPending={isSettingsPending}
             onSubmit={() => {
               if (offline || identify.pending) return;
+              if (!recognitionPolicyKnown || selectedMediaIds.length === 0) return;
               const ids = selectedMediaIds;
               if (recognitionEnabled !== true) {
                 startDescribe(ids);
@@ -210,6 +214,10 @@ export const MediaSelection = ({ reviewActive = false }: MediaSelectionProps): R
               );
             }}
             onCancel={() => {
+              if (identify.pending) {
+                pipeline.cancelScan(pipeline.history.activeJobIds);
+                return;
+              }
               if (activeDescribeRunId) {
                 bulkDescribe.cancel.mutate(activeDescribeRunId);
               }
@@ -413,10 +421,12 @@ interface BulkDescribeCtaProps {
   accentPrimary?: boolean;
   /**
    * GET /acx/v1/settings `recognition_enabled`. `undefined` while loading/unknown
-   * draws the OFF wording without a Settings link (RLSE-04).
+   * holds the primary and does not claim recognition is off (HAI-05 / FORM-04).
    */
   recognitionEnabled?: boolean;
   isIdentifying: boolean;
+  /** True while GET /settings has not produced a boolean policy. */
+  isSettingsPending?: boolean;
   onSubmit: () => void;
   onCancel: () => void;
   onDismiss: () => void;
@@ -438,17 +448,21 @@ export const BulkDescribeCta = ({
   accentPrimary = false,
   recognitionEnabled,
   isIdentifying = false,
+  isSettingsPending = false,
   onSubmit,
   onCancel,
   onDismiss,
   onRetryPolling,
 }: BulkDescribeCtaProps) => {
-  const canCancel = isRunning && runId !== null && !progress.isTerminal && !progress.isError;
+  const canCancelDescribe = isRunning && runId !== null && !progress.isTerminal && !progress.isError;
+  const canCancel = isIdentifying || canCancelDescribe;
   // Cannot cancel an errored/finished run — offer to clear the panel instead so a
   // new run can start from the terminal state (FE-01, rg-003).
   const canDismiss = isPanelVisible && (progress.isTerminal || progress.isError);
   const offlineGated = Boolean(remoteActionAriaDisabled);
   const recognitionKnownOn = recognitionEnabled === true;
+  const recognitionKnownOff = recognitionEnabled === false;
+  const holdSubmit = isIdentifying || isSettingsPending || selectedCount === 0;
   const describeDescribedBy = joinDescribedBy(
     DESCRIBE_RECOGNITION_DISCLOSURE_ID,
     offlineGated ? DESCRIBE_OFFLINE_REASON_ID : undefined,
@@ -462,17 +476,15 @@ export const BulkDescribeCta = ({
           // BR-73: the accent marker + accent chrome live on the submit button (the
           // actually-accent-styled primary), never on the neutral wrapper div.
           className={accentPrimary ? 'button acx-accent-primary-action' : 'button'}
-          // BR-74: offline never HTML-disables — the aria-describedby reason must stay
-          // reachable on a focusable control. Offline is gated by aria-disabled + the
-          // onClick guard; zero-selection/submitting/running still disable when online.
-          disabled={(!offlineGated && (selectedCount === 0 || isSubmitting || isRunning)) || isIdentifying}
-          aria-disabled={isIdentifying ? 'true' : remoteActionAriaDisabled}
+          // BR-74 / rg-003: offline, identifying, settings-pending, and zero-selection
+          // never HTML-disable — aria-disabled keeps the primary in tab order.
+          disabled={!offlineGated && (isSubmitting || isRunning)}
+          aria-disabled={holdSubmit || offlineGated ? 'true' : undefined}
           aria-describedby={describeDescribedBy}
           title={remoteActionTitle}
           onClick={() => {
-            // BR-76: presentational offline guard — activation is a no-op while
-            // offline-gated (the container onSubmit also fail-fasts offline).
-            if (offlineGated) {
+            // BR-76: presentational guard — activation is a no-op while held.
+            if (offlineGated || holdSubmit) {
               return;
             }
             onSubmit();
@@ -481,12 +493,17 @@ export const BulkDescribeCta = ({
         >
           {isIdentifying
             ? __('Identifying people…', 'alt-context')
-            : isSubmitting
-              ? SYNC_VOCABULARY.describeStarting
-              : selectedCount > 0
-                ? sprintf(_n('Describe %d selected', 'Describe %d selected', selectedCount, 'alt-context'), selectedCount)
-                : __('Describe selected', 'alt-context')}
+            : isSettingsPending
+              ? __('Loading settings…', 'alt-context')
+              : isSubmitting
+                ? SYNC_VOCABULARY.describeStarting
+                : selectedCount > 0
+                  ? sprintf(_n('Describe %d selected', 'Describe %d selected', selectedCount, 'alt-context'), selectedCount)
+                  : __('Describe selected', 'alt-context')}
         </button>
+        <span role="status" aria-live="polite" className="screen-reader-text">
+          {isIdentifying ? __('Identifying people…', 'alt-context') : ''}
+        </span>
         {offlineGated && remoteActionTitle ? (
           <span id={DESCRIBE_OFFLINE_REASON_ID} className="screen-reader-text">
             {remoteActionTitle}
@@ -517,8 +534,10 @@ export const BulkDescribeCta = ({
             )}{' '}
             <a href={toSettings()}>{__('Settings', 'alt-context')}</a>
           </>
-        ) : (
+        ) : recognitionKnownOff ? (
           sprintf(__('People are not identified (recognition off) · ~%d credits', 'alt-context'), selectedCount)
+        ) : (
+          __('Checking recognition settings…', 'alt-context')
         )}
       </p>
       {isPanelVisible ? <BulkDescribeProgress progress={progress} onRetry={onRetryPolling} /> : null}

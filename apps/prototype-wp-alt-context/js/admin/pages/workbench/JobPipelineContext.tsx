@@ -65,6 +65,20 @@ export interface JobPipelineContextValue {
 
 const JobPipelineContext = createContext<JobPipelineContextValue | null>(null);
 
+/** Bound for scanAndWait (RES-03 / RES-13). Matches the stream stall window. */
+export const SCAN_AND_WAIT_TIMEOUT_MS = 30_000;
+
+type ScanWaiter = {
+  resolve: () => void;
+  reject: (error: Error) => void;
+  started: boolean;
+};
+
+const scanWaitFailedMessage = (): string => __('People identification failed. Nothing was described.', 'alt-context');
+const scanWaitCancelledMessage = (): string => __('People identification was cancelled.', 'alt-context');
+const scanWaitSupersededMessage = (): string =>
+  __('People identification was superseded by a newer run.', 'alt-context');
+
 export const JobPipelineProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { setAdvancedOpen } = useWorkbenchNav();
   const [clusterMessage, setClusterMessage] = useState<string | null>(null);
@@ -136,16 +150,28 @@ export const JobPipelineProvider: React.FC<{ children: React.ReactNode }> = ({ c
     },
   });
 
-  const scanWaiterRef = useRef<{ resolve: () => void; reject: (error: Error) => void; started: boolean } | null>(
-    null,
-  );
+  const scanWaiterRef = useRef<ScanWaiter | null>(null);
   const scanAndWait = useCallback(
     (mediaIds: number[]) =>
       new Promise<void>((resolve, reject) => {
-        scanWaiterRef.current?.reject(
-          new Error(__('People identification was superseded by a newer run.', 'alt-context')),
-        );
-        scanWaiterRef.current = { resolve, reject, started: false };
+        scanWaiterRef.current?.reject(new Error(scanWaitSupersededMessage()));
+        let timeoutId = 0;
+        const wrappedResolve = (): void => {
+          window.clearTimeout(timeoutId);
+          resolve();
+        };
+        const wrappedReject = (error: Error): void => {
+          window.clearTimeout(timeoutId);
+          reject(error);
+        };
+        timeoutId = window.setTimeout(() => {
+          if (scanWaiterRef.current?.reject !== wrappedReject) {
+            return;
+          }
+          scanWaiterRef.current = null;
+          wrappedReject(new Error(scanWaitFailedMessage()));
+        }, SCAN_AND_WAIT_TIMEOUT_MS);
+        scanWaiterRef.current = { resolve: wrappedResolve, reject: wrappedReject, started: false };
         setScanError(null);
         scan(mediaIds);
       }),
@@ -155,7 +181,7 @@ export const JobPipelineProvider: React.FC<{ children: React.ReactNode }> = ({ c
     (jobIds: string[]) => {
       const waiter = scanWaiterRef.current;
       scanWaiterRef.current = null;
-      waiter?.reject(new Error(__('People identification was cancelled.', 'alt-context')));
+      waiter?.reject(new Error(scanWaitCancelledMessage()));
       cancelScan(jobIds);
     },
     [cancelScan],
@@ -175,11 +201,22 @@ export const JobPipelineProvider: React.FC<{ children: React.ReactNode }> = ({ c
     if (!waiter.started) return;
     scanWaiterRef.current = null;
     if (batchRunStatus?.terminal_state && batchRunStatus.completed_total === 0 && batchRunStatus.failed_total > 0) {
-      waiter.reject(new Error(__('People identification failed. Nothing was described.', 'alt-context')));
+      waiter.reject(new Error(scanWaitFailedMessage()));
       return;
     }
     waiter.resolve();
   }, [isScanRunning, scanError, batchRunStatus]);
+  useEffect(
+    () => () => {
+      const waiter = scanWaiterRef.current;
+      if (!waiter) {
+        return;
+      }
+      scanWaiterRef.current = null;
+      waiter.reject(new Error(scanWaitCancelledMessage()));
+    },
+    [],
+  );
 
   const handleSelectJobFromHistory = React.useCallback(
     (id: string): void => {

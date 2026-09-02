@@ -38,6 +38,7 @@ const baseProps = {
   isPanelVisible: false,
   errorMessage: null as string | null,
   isIdentifying: false,
+  isSettingsPending: false,
   onSubmit: vi.fn(),
   onCancel: vi.fn(),
   onDismiss: vi.fn(),
@@ -88,12 +89,11 @@ describe('BulkDescribeCta recognition disclosure (HAI-04 / HAI-05 / RLSE-04)', (
     );
   });
 
-  it('renders OFF wording without a Settings link while recognition is unknown', () => {
+  it('does not claim recognition is off while the policy is unknown', () => {
     render(<BulkDescribeCta {...baseProps} selectedCount={2} />);
 
-    expect(
-      screen.getByText('People are not identified (recognition off) · ~2 credits'),
-    ).toBeInTheDocument();
+    expect(screen.queryByText(/recognition off/)).not.toBeInTheDocument();
+    expect(screen.getByText('Checking recognition settings…')).toBeInTheDocument();
     expect(screen.queryByRole('link', { name: 'Settings' })).not.toBeInTheDocument();
   });
 });

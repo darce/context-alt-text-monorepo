@@ -41,6 +41,7 @@ const baseProps = {
   isPanelVisible: false,
   errorMessage: null as string | null,
   isIdentifying: false,
+  isSettingsPending: false,
   onSubmit: vi.fn(),
   onCancel: vi.fn(),
   onDismiss: vi.fn(),
@@ -53,10 +54,42 @@ describe('BulkDescribeCta state matrix (A11Y-24)', () => {
   });
 
   // empty / loading / error fill gaps left by the offline column (Slice 2).
-  it('disables submit in empty selection state (zero selection)', () => {
-    render(<BulkDescribeCta {...baseProps} selectedCount={0} />);
+  it('keeps submit focusable with aria-disabled in empty selection state (zero selection)', async () => {
+    const onSubmit = vi.fn();
+    render(<BulkDescribeCta {...baseProps} selectedCount={0} onSubmit={onSubmit} />);
 
-    expect(screen.getByRole('button', { name: 'Describe selected' })).toBeDisabled();
+    const button = screen.getByRole('button', { name: 'Describe selected' });
+    expect(button).not.toBeDisabled();
+    expect(button).toHaveAttribute('aria-disabled', 'true');
+    await userEvent.click(button);
+    expect(onSubmit).not.toHaveBeenCalled();
+  });
+
+  it('keeps identifying primary focusable with aria-disabled, live status, and Cancel', async () => {
+    const onCancel = vi.fn();
+    render(<BulkDescribeCta {...baseProps} isIdentifying onCancel={onCancel} />);
+
+    const button = screen.getByRole('button', { name: 'Identifying people…' });
+    expect(button).not.toBeDisabled();
+    expect(button).toHaveAttribute('aria-disabled', 'true');
+    expect(button.getAttribute('aria-describedby')).toBeTruthy();
+    expect(screen.getAllByRole('status').some((node) => node.textContent === 'Identifying people…')).toBe(true);
+
+    const cancel = screen.getByRole('button', { name: 'Cancel describe run' });
+    expect(cancel).not.toBeDisabled();
+    await userEvent.click(cancel);
+    expect(onCancel).toHaveBeenCalledOnce();
+  });
+
+  it('holds submit with a loading label while settings are pending (still focusable)', async () => {
+    const onSubmit = vi.fn();
+    render(<BulkDescribeCta {...baseProps} isSettingsPending onSubmit={onSubmit} />);
+
+    const button = screen.getByRole('button', { name: 'Loading settings…' });
+    expect(button).not.toBeDisabled();
+    expect(button).toHaveAttribute('aria-disabled', 'true');
+    await userEvent.click(button);
+    expect(onSubmit).not.toHaveBeenCalled();
   });
 
   it('shows loading label and disables submit while submitting', () => {

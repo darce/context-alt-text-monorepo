@@ -567,14 +567,14 @@ describe('WorkbenchPage', () => {
     );
   });
 
-  it('renders one media-region footer with pagination and describe CTA', () => {
+  it('renders one media-region footer with pagination and describe CTA', async () => {
     const { container } = renderWorkbench();
 
     const mediaRegion = container.querySelector('.acx-media-selection');
     expect(mediaRegion).not.toBeNull();
     expect(screen.getAllByRole('navigation', { name: 'Media pagination' })).toHaveLength(1);
     expect(screen.getAllByLabelText('Images per page')).toHaveLength(1);
-    expect(mediaRegion).toContainElement(screen.getByRole('button', { name: 'Describe 1 selected' }));
+    expect(mediaRegion).toContainElement(await screen.findByRole('button', { name: 'Describe 1 selected' }));
   });
 
   it('keeps the media table rendered while findings are active', () => {
@@ -698,7 +698,7 @@ describe('WorkbenchPage', () => {
     expect(within(control).getByRole('heading', { name: 'Scan Media Queue' })).toBeInTheDocument();
   });
 
-  it('keeps the Describe footer CTA while backend-driven clustering is active', () => {
+  it('keeps the Describe footer CTA while backend-driven clustering is active', async () => {
     mockUseCombinedScanStatus.mockReturnValue({
       scanStatusQuery: createMockQuery({
         data: {
@@ -717,7 +717,7 @@ describe('WorkbenchPage', () => {
 
     renderWorkbench();
 
-    expect(screen.getByRole('button', { name: 'Describe 1 selected' })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: 'Describe 1 selected' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Clustering identities…' })).not.toBeInTheDocument();
   });
 

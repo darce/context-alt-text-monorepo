@@ -481,7 +481,11 @@ async def accept_merge_suggestion(
     if not cluster_a or not cluster_b:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Cluster not found")
 
-    source_cluster_id, target_cluster_id, target_label = _select_merge_target(cluster_a, cluster_b)
+    source_cluster_id, target_cluster_id, target_label = _select_merge_target(
+        cluster_a,
+        cluster_b,
+        survivor_cluster_id=getattr(suggestion, "survivor_cluster_id", None),
+    )
     merged = await cluster_service.merge_cluster(
         source_cluster_id,
         request.tenant_id,
@@ -506,6 +510,8 @@ async def accept_merge_suggestion(
         suggestion,
         source_cluster_id=source_cluster_id,
         target_cluster_id=target_cluster_id,
+        survivor_cluster_id=target_cluster_id,
+        survivor_label=target_label,
     )
 
 
@@ -732,7 +738,11 @@ async def _bulk_accept_merges(
             skipped += 1
             continue
         try:
-            source_cluster_id, target_cluster_id, target_label = _select_merge_target(cluster_a, cluster_b)
+            source_cluster_id, target_cluster_id, target_label = _select_merge_target(
+                cluster_a,
+                cluster_b,
+                survivor_cluster_id=getattr(candidate, "survivor_cluster_id", None),
+            )
         except HTTPException:
             skipped += 1
             continue
@@ -752,19 +762,37 @@ async def _bulk_accept_merges(
     return BulkAcceptResult(accepted_count=accepted, skipped_count=skipped)
 
 
-def _select_merge_target(cluster_a: IdentityCluster, cluster_b: IdentityCluster) -> tuple[str, str, str | None]:
-    """Pick a target cluster to preserve labels and counts."""
+def _select_merge_target(
+    cluster_a: IdentityCluster,
+    cluster_b: IdentityCluster,
+    survivor_cluster_id: str | None = None,
+) -> tuple[str, str, str | None]:
+    """Pick a target cluster to preserve labels and counts.
 
-    def rank(cluster: IdentityCluster) -> tuple[int, int, int, str]:
-        return (
-            1 if cluster.user_confirmed else 0,
-            1 if _is_meaningful_label(cluster.label) else 0,
-            int(cluster.identity_count or 0),
-            cluster.id or "",
-        )
+    Durable ``survivor_cluster_id`` from the suggestion row wins when it matches
+    one of the pair. Ranking is only the fallback for legacy rows with a null
+    survivor.
+    """
+    target: IdentityCluster | None = None
+    source: IdentityCluster | None = None
+    if survivor_cluster_id:
+        if cluster_a.id == survivor_cluster_id:
+            target, source = cluster_a, cluster_b
+        elif cluster_b.id == survivor_cluster_id:
+            target, source = cluster_b, cluster_a
 
-    target = cluster_a if rank(cluster_a) >= rank(cluster_b) else cluster_b
-    source = cluster_b if target is cluster_a else cluster_a
+    if target is None or source is None:
+
+        def rank(cluster: IdentityCluster) -> tuple[int, int, int, str]:
+            return (
+                1 if cluster.user_confirmed else 0,
+                1 if _is_meaningful_label(cluster.label) else 0,
+                int(cluster.identity_count or 0),
+                cluster.id or "",
+            )
+
+        target = cluster_a if rank(cluster_a) >= rank(cluster_b) else cluster_b
+        source = cluster_b if target is cluster_a else cluster_a
     if not target.id or not source.id:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cluster identifiers missing")
     # Placeholder cluster-* labels must not enter merge's reserved-label guard;
@@ -793,7 +821,11 @@ async def _resolve_accepted_merge_ids(
         return suggestion.cluster_a_id, suggestion.cluster_b_id
     if cluster_a and cluster_b:
         try:
-            source_id, target_id, _ = _select_merge_target(cluster_a, cluster_b)
+            source_id, target_id, _ = _select_merge_target(
+                cluster_a,
+                cluster_b,
+                survivor_cluster_id=getattr(suggestion, "survivor_cluster_id", None),
+            )
         except HTTPException:
             return None, None
         return source_id, target_id
@@ -805,6 +837,8 @@ def _to_merge_response(
     *,
     source_cluster_id: str | None = None,
     target_cluster_id: str | None = None,
+    survivor_cluster_id: str | None = None,
+    survivor_label: str | None = None,
 ) -> MergeSuggestionResponse:
     """Convert merge suggestion to API response model.
 
@@ -815,6 +849,15 @@ def _to_merge_response(
     status_value = suggestion.status if isinstance(suggestion.status, str) else suggestion.status.value
     cluster_a_bbox = getattr(suggestion, "cluster_a_representative_bbox", None)
     cluster_b_bbox = getattr(suggestion, "cluster_b_representative_bbox", None)
+    resolved_survivor_id = (
+        survivor_cluster_id if survivor_cluster_id is not None else getattr(suggestion, "survivor_cluster_id", None)
+    )
+    resolved_survivor_label = survivor_label
+    if resolved_survivor_label is None and resolved_survivor_id:
+        if resolved_survivor_id == suggestion.cluster_a_id:
+            resolved_survivor_label = getattr(suggestion, "cluster_a_label", None)
+        elif resolved_survivor_id == suggestion.cluster_b_id:
+            resolved_survivor_label = getattr(suggestion, "cluster_b_label", None)
 
     return MergeSuggestionResponse(
         id=suggestion.id,
@@ -851,4 +894,6 @@ def _to_merge_response(
         source_job_id=getattr(suggestion, "source_job_id", None),
         source_cluster_id=source_cluster_id,
         target_cluster_id=target_cluster_id,
+        survivor_cluster_id=resolved_survivor_id,
+        survivor_label=resolved_survivor_label,
     )

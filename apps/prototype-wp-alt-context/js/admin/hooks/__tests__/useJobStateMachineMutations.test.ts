@@ -48,6 +48,8 @@ const scanResponse = (jobIds: string[], total = 10): BatchAnalyzeResponse => ({
   })),
 });
 
+const mockMutationContext = {} as never;
+
 const captureRecords = (): LogRecord[] => {
   const records: LogRecord[] = [];
   setLogSink((record) => {
@@ -98,14 +100,14 @@ describe('useJobStateMachineMutations logging [O-02][O-06]', () => {
     setLogLevel('debug');
     useScanIdentitiesMock.mockImplementation((options) => {
       scanOptions = options;
-      return { mutate: vi.fn(), isPending: false } as ReturnType<typeof useScanIdentities>;
+      return { mutate: vi.fn(), isPending: false } as unknown as ReturnType<typeof useScanIdentities>;
     });
-    useClusterIdentitiesMock.mockReturnValue({ mutate: vi.fn(), isPending: false } as ReturnType<
+    useClusterIdentitiesMock.mockReturnValue({ mutate: vi.fn(), isPending: false } as unknown as ReturnType<
       typeof useClusterIdentities
     >);
     useCancelScanJobsMock.mockImplementation((options) => {
       cancelOptions = options;
-      return { mutate: vi.fn(), isPending: false } as ReturnType<typeof useCancelScanJobs>;
+      return { mutate: vi.fn(), isPending: false } as unknown as ReturnType<typeof useCancelScanJobs>;
     });
   });
 
@@ -119,7 +121,7 @@ describe('useJobStateMachineMutations logging [O-02][O-06]', () => {
     const records = captureRecords();
     const { addJob, onScanComplete } = renderMutations();
 
-    scanOptions?.onSuccess?.(scanResponse(['job-1', 'job-2'], 4), [1, 2], undefined);
+    scanOptions?.onSuccess?.(scanResponse(['job-1', 'job-2'], 4), [1, 2], undefined, mockMutationContext);
 
     const jobEvents = records.filter((record) => record.fields.event === 'scan.submit');
     expect(jobEvents).toHaveLength(1);
@@ -144,7 +146,7 @@ describe('useJobStateMachineMutations logging [O-02][O-06]', () => {
     const error = leakingScanError();
     const { onScanError } = renderMutations();
 
-    scanOptions?.onError?.(error, [1], undefined);
+    scanOptions?.onError?.(error, [1], undefined, mockMutationContext);
 
     const jobEvents = records.filter((record) => record.fields.event === 'scan.submit');
     expect(jobEvents).toHaveLength(1);
@@ -177,7 +179,7 @@ describe('useJobStateMachineMutations logging [O-02][O-06]', () => {
     const records = captureRecords();
     const { onCancelComplete } = renderMutations(['job-9']);
 
-    cancelOptions?.onSuccess?.([], ['job-9'], undefined);
+    cancelOptions?.onSuccess?.([], ['job-9'], undefined, mockMutationContext);
 
     const jobEvents = records.filter((record) => record.fields.event === 'scan.cancel');
     expect(jobEvents).toHaveLength(1);
@@ -196,7 +198,7 @@ describe('useJobStateMachineMutations logging [O-02][O-06]', () => {
     const error = leakingScanError();
     renderMutations(['job-9']);
 
-    cancelOptions?.onError?.(error, ['job-9'], undefined);
+    cancelOptions?.onError?.(error, ['job-9'], undefined, mockMutationContext);
 
     const jobEvents = records.filter((record) => record.fields.event === 'scan.cancel');
     expect(jobEvents).toHaveLength(1);

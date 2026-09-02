@@ -30,7 +30,7 @@ Make the Workbench footer a **single describe-first job entry**: one CTA ("Descr
 - Menu: `class-menu.php:15-22` `SUBMENU_IA`; `App.tsx:52-59` `/retention` route; parity tests `MenuTest.php`, `App.test.tsx`, `menuHeadingParity.test.ts`.
 - Apply hook `useDescribeRunApply.ts:39-92` invalidates `describeRunItemsQueryKey(runId)` + media stats only; workbench key is `queryKeys.media.workbench()` (`queryKeys.ts:20`).
 - Naming fusion: single-image path `scene/interface_adapters/http/routers/describe.py:293 _naming_preview` (gated by `tenant.naming_agreement_enabled`); bulk path `scene/application/describe_run_worker.py` does not call it.
-- Installer `scripts/deploy/gpu-lifecycle-install.sh:163-171` creates `/run/acx` as `root:10001 0775`; container writes as uid 10001 gid 999 → `describe load snapshot write failed at startup` (dev api log), `acx-gpu-start` refuses START, reaper refuses STOP. Fix: owner `10001:10001` in both `chown` and `tmpfiles.d` line.
+- Installer `scripts/deploy/gpu-lifecycle-install.sh:163-171` creates `/run/acx` as `10001:10001 0775` so the api container (uid 10001, gid 999) can write `describe-load.json`.
 
 ## Screens (ASCII, iteration targets for `workbench-2pane.uxmap.json` zone `z-lib-actions`)
 

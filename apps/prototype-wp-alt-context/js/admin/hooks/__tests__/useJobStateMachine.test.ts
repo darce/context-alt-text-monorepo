@@ -6,6 +6,24 @@ import { useJobProgressStream } from '../useJobProgressStream';
 import { useCombinedScanStatus } from '../useRecognitionHooks';
 import { useSyncTrigger } from '../useSyncTrigger';
 import { useQueryClient } from '@tanstack/react-query';
+import { HTTPError } from '../../utils/http';
+
+const notFoundHttpError = (jobId: string): HTTPError =>
+  new HTTPError({
+    status: 404,
+    retryAfterSeconds: undefined,
+    endpoint: `/recognition/jobs/${jobId}`,
+    bodyPreview: 'not-found-body',
+    message: 'Not found',
+  });
+
+const notFoundAppError = (jobId: string) => ({
+  _tag: 'http' as const,
+  status: 404,
+  endpoint: `/recognition/jobs/${jobId}`,
+  message: 'Not found',
+  cause: null,
+});
 
 const createDeferred = <T>() => {
   let resolve!: (value: T) => void;
@@ -127,7 +145,7 @@ describe('useJobStateMachine', () => {
     });
     (useCombinedScanStatus as Mock).mockReturnValue({
       scanStatusQuery: { data: null, error: null },
-      multiScanStatus: [{ data: null, error: new Error('Request failed (404): Not found') }],
+      multiScanStatus: [{ data: null, error: notFoundHttpError('missing-job') }],
       batchRunStatusQuery: { data: null },
     });
 
@@ -450,7 +468,7 @@ describe('useJobStateMachine', () => {
     (useCombinedScanStatus as Mock).mockReturnValue({
       scanStatusQuery: {
         data: null,
-        error: new Error('Request failed (404)'),
+        error: notFoundAppError('stale-job'),
       },
       multiScanStatus: [],
       batchRunStatusQuery: { data: null },

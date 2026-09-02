@@ -118,7 +118,11 @@ describe('useBulkDescribe', () => {
   it('imports DESCRIBE_RUN_PHASE from describeApi instead of duplicating it (WBUX-6 F7 / sr-007)', () => {
     const source = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../useBulkDescribe.ts'), 'utf8');
     expect(source).toMatch(/import\s*\{[\s\S]*DESCRIBE_RUN_PHASE[\s\S]*\}\s*from\s*['"]\.\.\/api\/describeApi['"]/);
-    expect(source).not.toMatch(/^\s*(?:const|let|var)\s+DESCRIBE_RUN_PHASE\s*=/m);
+    // S5R2-F1: a renamed local table (`const PHASE = { QUEUED: 'queued', ... }`)
+    // stayed GREEN under the old DESCRIBE_RUN_PHASE identifier check. Strip
+    // import blocks, then forbid any phase string literal in the rest.
+    const rest = source.replace(/import(?:[\s\S]*?)from\s+['"][^'"]+['"];?/g, '');
+    expect(rest).not.toMatch(/['"](queued|warming|describing|complete|failed|cancelled)['"]/);
   });
 
   it('submits media ids and captures the run id', async () => {

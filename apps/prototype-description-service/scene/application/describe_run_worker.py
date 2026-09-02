@@ -6,6 +6,7 @@ import asyncio
 import inspect
 import logging
 import os
+import time
 import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field, replace
@@ -35,6 +36,8 @@ _GPU_HEALTH_REQUEST_TIMEOUT_SECONDS = 5.0
 _GPU_ITEM_MAX_ATTEMPTS = 3
 _GPU_ITEM_RETRY_BASE_DELAY_SECONDS = 1.0
 _RETRYABLE_HTTP_STATUS_CODES = frozenset({408, 425, 429, 500, 502, 503, 504})
+# Inner lookup/preview cap. The enforced per-item bound is item_envelope_seconds
+# (this budget + describe timeout); Stage-3 preview uses the remaining envelope.
 NAMING_BUDGET_SECONDS = float(os.environ.get("ACX_NAMING_BUDGET_SECONDS", "10.0"))
 
 
@@ -53,11 +56,15 @@ class MissingNamingSnapshotError(RuntimeError):
 
 
 def item_envelope_seconds(describe_timeout_seconds: float) -> float:
-    """Wall-clock bound for one bulk item: naming lookup then describe.
+    """Wall-clock bound for one bulk item: naming lookup, describe, and Stage-3 preview.
 
     PERF-10 traded for DATA-19 (WBUX-6 S9-F1): serial single load instead of
     gathering lookup with describe, so the envelope is the sum of
     ``NAMING_BUDGET_SECONDS`` and the describe timeout, not the max.
+
+    Stage-3 naming preview runs inside this envelope: its wait_for budget is
+    ``min(NAMING_BUDGET_SECONDS, remaining)`` so a hung preview cannot add a
+    second full naming budget (S9R2-F1 / RES-03).
     """
     return NAMING_BUDGET_SECONDS + describe_timeout_seconds
 
@@ -328,13 +335,23 @@ async def _apply_naming_preview(
     image_bytes: bytes | None,
     outcome: DescribeItemOutcome,
     naming_inputs: FusionNamingInputs | None,
+    item_started: float,
+    item_envelope: float,
 ) -> DescribeItemOutcome:
-    """Fuse names into alt_text_draft (the same generic_draft field the router uses)."""
+    """Fuse names into alt_text_draft (the same generic_draft field the router uses).
+
+    Preview wait_for is ``min(NAMING_BUDGET_SECONDS, remaining_envelope)``. Remaining
+    <= 0 skips preview and keeps the generic draft (same path as a lookup timeout).
+    """
     if not enabled or tenant is None or not image_bytes or naming_inputs is None:
         return outcome
     faces, policy = naming_inputs
     if policy is None:
         return outcome
+    remaining = item_envelope - (time.monotonic() - item_started)
+    if remaining <= 0:
+        return outcome
+    preview_timeout = min(NAMING_BUDGET_SECONDS, remaining)
     try:
         phrase_boxes = outcome.phrase_boxes or ()
         preview_faces = faces_for_naming_preview(faces or [], outcome.attachments or (), phrase_boxes)
@@ -350,7 +367,7 @@ async def _apply_naming_preview(
                 confirmed_faces=preview_faces if faces is not None else None,
                 naming_policy=policy,
             ),
-            timeout=NAMING_BUDGET_SECONDS,
+            timeout=preview_timeout,
         )
         merged = dict(outcome.provenance or {})
         merged["naming"] = _naming_provenance_payload(provenance)
@@ -375,9 +392,11 @@ async def run_describe_job(
     ``describe_one``, persist the draft / caption / provenance, clear the stored
     bytes, and mark it COMPLETED. PERF-10 traded for DATA-19 (WBUX-6 S9-F1):
     the per-item envelope is ``item_envelope_seconds`` (naming budget + describe
-    timeout, the sum not the max). Per-item failures are isolated (item ->
-    FAILED, run continues); an unexpected fatal error around the whole loop
-    forces the run terminal-FAILED. (S2-01, S2-02, HARM-01)
+    timeout, the sum not the max). Stage-3 preview runs inside that envelope
+    (S9R2-F1): its wait_for is the remaining budget, not a second naming cap.
+    Per-item failures are isolated (item -> FAILED, run continues); an unexpected
+    fatal error around the whole loop forces the run terminal-FAILED.
+    (S2-01, S2-02, HARM-01)
     """
 
     timeout = timeout_seconds if timeout_seconds is not None else VlmSettings().inference_timeout_seconds
@@ -453,6 +472,8 @@ async def run_describe_job(
                     # label/merge between two sessions cannot diverge the draft.
                     # PERF-10 traded for DATA-19 (WBUX-6 S9-F1): serial envelope
                     # is item_envelope_seconds(timeout), not max(naming, describe).
+                    # S9R2-F1: Stage-3 preview is charged against remaining envelope.
+                    item_started = time.monotonic()
                     naming_inputs = await _naming_lookup_for_item(
                         enabled=naming_enabled,
                         session_factory=session_factory,
@@ -486,6 +507,8 @@ async def run_describe_job(
                         image_bytes=image_bytes,
                         outcome=outcome or DescribeItemOutcome(),
                         naming_inputs=naming_inputs,
+                        item_started=item_started,
+                        item_envelope=item_envelope,
                     )
                 except _RunCancelledError:
                     await repo.mark_item(

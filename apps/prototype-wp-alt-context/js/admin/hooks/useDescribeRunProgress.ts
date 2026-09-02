@@ -7,7 +7,7 @@ import {
   type DescribeRunResponse,
   type DescribeRunStatus,
 } from '../api/describeApi';
-import { JOB_PROGRESS_STALL_THRESHOLD_MS } from './useJobProgressStream';
+import { getJobProgressStallThresholdMs } from './useJobProgressStream';
 import { gateRefetchInterval } from '../utils/recognitionCooldown';
 import { isAbortLike } from '../utils/retryPolicy';
 
@@ -194,7 +194,9 @@ export const useDescribeRunProgress = (runId: string | null): DescribeRunProgres
         return;
       }
       const elapsedMs = Date.now() - baseline;
-      setStalledForSeconds(elapsedMs >= JOB_PROGRESS_STALL_THRESHOLD_MS ? Math.floor(elapsedMs / 1000) : null);
+      setStalledForSeconds(
+        elapsedMs >= getJobProgressStallThresholdMs() ? Math.floor(elapsedMs / 1000) : null,
+      );
     };
 
     updateStallState();

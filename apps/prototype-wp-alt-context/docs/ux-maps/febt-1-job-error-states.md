@@ -37,14 +37,18 @@ Reducer table (state × event → state) — every cell is explicit; `never` gua
 
 ## Overlay: request-error-banner (one row per `AppError._tag`)
 
+`cooldown` and `not_found` are not tags: they are `isCooldown(http)` (429/503 + Retry-After) and `isHttpStatus(http, 404)`. Abort has copy but no recovery action (frozen poll, not a banner).
+
 ```
 +----------------------------------------------------------------------+
+| http         : HTTP error (404 auto-dismiss; 429/503 Wait ▾) [Retry] |
+| parse        : "Unexpected response from server"    [Retry]          |
 | auth_expired : "Your session expired — reload the page and sign in   |
 |                 again."                              [Reload page]   |
-| cooldown     : "Server busy — retrying in 12 s"     [Wait ▾]         |
+| nonce_refresh: "Your session expired — reload the page and sign in   |
+|                 again."                              [Reload page]   |
+| abort        : (silent / frozen poll — no banner)                    |
 | transport    : "Network error — check your connection"  [Retry]      |
-| parse        : "Unexpected response from server"    [Retry]          |
-| not_found    : "That item no longer exists"         (auto-dismiss)   |
 | unknown      : "<caller fallback copy>"             [Retry]          |
 +----------------------------------------------------------------------+
 ```
@@ -54,7 +58,7 @@ Reducer table (state × event → state) — every cell is explicit; `never` gua
 - job-happy-path: idle → pending → running → completed
 - job-stall-reconnect: running → stalled → running (SSE reopen) | failed (after bounded reconnects, RES-06)
 - auth-expired-recovery: banner(auth_expired) → exit reload-page
-- cooldown-429: banner(cooldown, Retry-After countdown) → running
+- cooldown-429: banner(http + isCooldown, Retry-After countdown) → running
 
 ## Critique against canon (advisory)
 

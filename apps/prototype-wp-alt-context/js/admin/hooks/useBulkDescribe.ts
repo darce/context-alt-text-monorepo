@@ -4,7 +4,6 @@ import { __, sprintf } from '@wordpress/i18n';
 
 import {
   cancelBulkDescribeRun,
-  type DescribeRunPhase,
   type DescribeRunResponse,
   resolveDescribeErrorDataField,
   submitBulkDescribeRun,
@@ -12,23 +11,6 @@ import {
 import { invalidateWorkbenchListPages } from '../api/queryKeys';
 import { resolveWpErrorMessage } from '../api/wpErrorMessage';
 import { useDescribeRunProgress, type DescribeRunProgress } from './useDescribeRunProgress';
-
-const DESCRIBE_RUN_PHASE = {
-  QUEUED: 'queued',
-  DESCRIBING: 'describing',
-  COMPLETE: 'complete',
-  FAILED: 'failed',
-  CANCELLED: 'cancelled',
-} as const satisfies Record<string, DescribeRunPhase>;
-
-const TERMINAL_DESCRIBE_RUN_PHASES: ReadonlySet<DescribeRunPhase> = new Set([
-  DESCRIBE_RUN_PHASE.COMPLETE,
-  DESCRIBE_RUN_PHASE.FAILED,
-  DESCRIBE_RUN_PHASE.CANCELLED,
-]);
-
-const isTerminalDescribeRunPhase = (phase: DescribeRunPhase | undefined): boolean =>
-  phase !== undefined && TERMINAL_DESCRIBE_RUN_PHASES.has(phase);
 
 export interface UseBulkDescribeResult {
   submit: ReturnType<typeof useMutation<DescribeRunResponse, Error, number[]>>;
@@ -95,7 +77,7 @@ export const useBulkDescribe = (): UseBulkDescribeResult => {
   const invalidatedWorkbenchRunIdRef = useRef<string | null>(null);
 
   useEffect(() => {
-    if (runId === null || !isTerminalDescribeRunPhase(progress.run?.phase)) {
+    if (runId === null || !progress.isTerminal) {
       return;
     }
     if (invalidatedWorkbenchRunIdRef.current === runId) {
@@ -103,7 +85,7 @@ export const useBulkDescribe = (): UseBulkDescribeResult => {
     }
     invalidatedWorkbenchRunIdRef.current = runId;
     invalidateWorkbenchListPages(queryClient);
-  }, [runId, progress.run?.phase, queryClient]);
+  }, [runId, progress.isTerminal, queryClient]);
 
   const errorMessage = submit.error
     ? formatBulkDescribeErrorMessage(submit.error, SUBMIT_ERROR_FALLBACK)

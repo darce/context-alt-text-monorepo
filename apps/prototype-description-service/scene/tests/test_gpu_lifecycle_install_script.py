@@ -60,16 +60,20 @@ def _argv(token: str) -> list[str]:
     return token.split()
 
 
+def _is_chown_command(argv0: str) -> bool:
+    return Path(argv0).name == "chown"
+
+
 def _is_chown_of_run_acx(token: str) -> bool:
     argv = _argv(token)
-    if not argv or argv[0] != "chown":
+    if not argv or not _is_chown_command(argv[0]):
         return False
     return any(arg.rstrip("/") == "/run/acx" for arg in argv[1:])
 
 
 def _chown_owner(token: str) -> str | None:
     argv = _argv(token)
-    if not argv or argv[0] != "chown":
+    if not argv or not _is_chown_command(argv[0]):
         return None
     rest = [arg for arg in argv[1:] if not arg.startswith("-")]
     return rest[0] if rest else None
@@ -133,10 +137,37 @@ def test_cloud_init_owns_run_acx_as_container_uid() -> None:
     assert isinstance(tmpfiles_content, str), (
         "write_files entry /etc/tmpfiles.d/acx-gpu.conf must have string content"
     )
+    expected_tmpfiles_line = "d /run/acx 0775 10001 10001 -"
     tmpfiles_lines = [line.strip() for line in tmpfiles_content.splitlines() if line.strip()]
-    assert "d /run/acx 0775 10001 10001 -" in tmpfiles_lines, (
+    assert expected_tmpfiles_line in tmpfiles_lines, (
         "tmpfiles.d content must contain the full line 'd /run/acx 0775 10001 10001 -'"
     )
+    tmpfiles_dropins = [
+        item
+        for item in write_files
+        if isinstance(item, dict)
+        and isinstance(item.get("path"), str)
+        and str(item["path"]).startswith("/etc/tmpfiles.d/")
+    ]
+    assert tmpfiles_dropins, (
+        "cloud-init.yaml must write at least one /etc/tmpfiles.d/ drop-in"
+    )
+    for item in tmpfiles_dropins:
+        dropin_path = item.get("path")
+        dropin_content = item.get("content")
+        assert isinstance(dropin_content, str), (
+            f"write_files entry {dropin_path!r} must have string content"
+        )
+        for raw_line in dropin_content.splitlines():
+            stripped = raw_line.strip()
+            if not stripped:
+                continue
+            line_tokens = stripped.split()
+            if len(line_tokens) >= 2 and line_tokens[1] == "/run/acx":
+                assert stripped == expected_tmpfiles_line, (
+                    "every /etc/tmpfiles.d/ line whose second token is /run/acx "
+                    f"must be {expected_tmpfiles_line!r}; got {stripped!r} in {dropin_path!r}"
+                )
 
     tokens = _flatten_runcmd(parsed.get("runcmd"))
     mkdir_cmd = "mkdir -p /run/acx /etc/acx"

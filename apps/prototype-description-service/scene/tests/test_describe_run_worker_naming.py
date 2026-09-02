@@ -234,25 +234,33 @@ def test_naming_failure_still_describes_item(monkeypatch):
 
 
 def test_naming_lookup_completes_before_describe_uses_shared_snapshot(monkeypatch):
-    """HARM-F3: one snapshot is taken before describe so fusion cannot drift."""
+    """HARM-F3: Stage-2 and Stage-3 observe the same loaded snapshot object."""
     import scene.application.describe_run_worker as wmod
 
     events: list[str] = []
+    face_a = object()
+    face_b = object()
+    snapshot_faces = [face_a, face_b]
+    snapshot_policy = object()
+    describe_snapshot: dict = {}
+    preview_snapshot: dict = {}
 
     async def fake_load(**kwargs):
         events.append("load-start")
         await asyncio.sleep(0.05)
         events.append("load-end")
-        return [], object()
+        return snapshot_faces, snapshot_policy
 
     async def describe_one(media_id, image_bytes, content_type, naming_inputs=None):
         events.append("describe-start")
-        assert naming_inputs is not None
+        describe_snapshot["naming_inputs"] = naming_inputs
         await asyncio.sleep(0.05)
         events.append("describe-end")
         return DescribeItemOutcome(alt_text_draft=GENERIC_DRAFT, caption=GENERIC_DRAFT)
 
     async def fake_naming_preview(**kwargs):
+        preview_snapshot["confirmed_faces"] = kwargs.get("confirmed_faces")
+        preview_snapshot["naming_policy"] = kwargs.get("naming_policy")
         return FUSED_DRAFT, object()
 
     monkeypatch.setattr(wmod, "load_fusion_naming_inputs", fake_load, raising=True)
@@ -273,15 +281,36 @@ def test_naming_lookup_completes_before_describe_uses_shared_snapshot(monkeypatc
     items = asyncio.run(body())
     assert "load-start" in events and "describe-start" in events
     assert events.index("load-end") < events.index("describe-start")
+    describe_inputs = describe_snapshot.get("naming_inputs")
+    assert describe_inputs is not None
+    describe_faces, describe_policy = describe_inputs
+    assert describe_policy is snapshot_policy
+    assert preview_snapshot.get("naming_policy") is snapshot_policy
+    assert describe_policy is preview_snapshot.get("naming_policy")
+    preview_faces = list(preview_snapshot.get("confirmed_faces") or [])
+    assert len(preview_faces) == len(snapshot_faces) == len(describe_faces)
+    assert all(a is b for a, b in zip(describe_faces, snapshot_faces, strict=True))
+    assert all(a is b for a, b in zip(preview_faces, snapshot_faces, strict=True))
     assert items[0].status == DescribeItemStatus.COMPLETED
     assert items[0].alt_text_draft == FUSED_DRAFT
     assert items[0].caption == GENERIC_DRAFT
 
 
-def test_unstubbed_naming_binds_seeded_faces_left_to_right():
-    png = _png_bytes()
+def test_unstubbed_naming_binds_seeded_faces_left_to_right(monkeypatch):
+    import scene.application.identity_merge as identity_merge
+    import scene.application.naming_preview_service as nps
 
-    async def describe_one(media_id, image_bytes, content_type):
+    png = _png_bytes()
+    real_load_confirmed_faces = identity_merge.load_confirmed_faces
+    face_loads: list[int] = []
+
+    async def spy_load_confirmed_faces(*args, **kwargs):
+        face_loads.append(1)
+        return await real_load_confirmed_faces(*args, **kwargs)
+
+    monkeypatch.setattr(nps, "load_confirmed_faces", spy_load_confirmed_faces)
+
+    async def describe_one(media_id, image_bytes, content_type, naming_inputs=None):
         assert image_bytes == png
         return DescribeItemOutcome(alt_text_draft=GENERIC_DRAFT, caption=GENERIC_DRAFT)
 
@@ -303,7 +332,12 @@ def test_unstubbed_naming_binds_seeded_faces_left_to_right():
         return items[0]
 
     enabled = asyncio.run(run_once(naming_agreement_enabled=True))
+    enabled_face_loads = len(face_loads)
+    face_loads.clear()
     disabled = asyncio.run(run_once(naming_agreement_enabled=False))
+    disabled_face_loads = len(face_loads)
+    assert enabled_face_loads == 1, f"expected one load_confirmed_faces per bulk item, got {enabled_face_loads}"
+    assert disabled_face_loads == 0
     assert enabled.status == DescribeItemStatus.COMPLETED
     assert enabled.caption == GENERIC_DRAFT
     assert enabled.alt_text_draft == LTR_FUSED_DRAFT
@@ -557,8 +591,8 @@ def _fake_visual_facts_service(captured_faces: list):
 def test_bulk_item_loads_fusion_naming_inputs_once_and_shares_confirmed_faces(monkeypatch):
     """HARM-F3: Stage-2 fusion and Stage-3 preview share one naming snapshot.
 
-    Today's path loads twice (router _build_describe_one + worker lookup). A
-    label/merge between those calls can make the draft contradict provenance.
+    load_fusion_naming_inputs is called once per bulk item; a second load
+    (router fallback or preview reload) would make this assertion go red.
     """
     from types import SimpleNamespace
 

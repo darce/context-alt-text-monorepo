@@ -9,6 +9,7 @@ import uuid
 from io import BytesIO
 from typing import cast
 
+import pytest
 from PIL import Image
 from sqlalchemy import Table
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
@@ -125,7 +126,7 @@ async def _seed_confirmed_face(session, *, label: str, media_id: int, bbox: tupl
     return cluster.id
 
 
-async def _describe_one(media_id, image_bytes, content_type):
+async def _describe_one(media_id, image_bytes, content_type, *, naming_inputs=None):
     assert image_bytes == b"rawbytes"
     return DescribeItemOutcome(alt_text_draft=GENERIC_DRAFT, caption=f"cap {media_id}")
 
@@ -251,7 +252,7 @@ def test_naming_lookup_completes_before_describe_uses_shared_snapshot(monkeypatc
         events.append("load-end")
         return snapshot_faces, snapshot_policy
 
-    async def describe_one(media_id, image_bytes, content_type, naming_inputs=None):
+    async def describe_one(media_id, image_bytes, content_type, *, naming_inputs=None):
         events.append("describe-start")
         describe_snapshot["naming_inputs"] = naming_inputs
         await asyncio.sleep(0.05)
@@ -310,7 +311,7 @@ def test_unstubbed_naming_binds_seeded_faces_left_to_right(monkeypatch):
 
     monkeypatch.setattr(nps, "load_confirmed_faces", spy_load_confirmed_faces)
 
-    async def describe_one(media_id, image_bytes, content_type, naming_inputs=None):
+    async def describe_one(media_id, image_bytes, content_type, *, naming_inputs=None):
         assert image_bytes == png
         return DescribeItemOutcome(alt_text_draft=GENERIC_DRAFT, caption=GENERIC_DRAFT)
 
@@ -356,7 +357,7 @@ def test_naming_preview_receives_item_phrase_boxes(monkeypatch):
 
     captured: list[dict] = []
 
-    async def describe_one(media_id, image_bytes, content_type):
+    async def describe_one(media_id, image_bytes, content_type, *, naming_inputs=None):
         return DescribeItemOutcome(alt_text_draft=GENERIC_DRAFT, caption=GENERIC_DRAFT, phrase_boxes=GROUNDED_BOXES)
 
     async def fake_naming_preview(**kwargs):
@@ -383,6 +384,57 @@ def test_naming_preview_receives_item_phrase_boxes(monkeypatch):
     assert captured[0]["phrase_boxes"] == GROUNDED_BOXES
     assert items[0].alt_text_draft == FUSED_DRAFT
     assert items[0].caption == GENERIC_DRAFT
+
+
+def test_item_envelope_times_out_naming_lookup_and_persists_generic_draft(monkeypatch):
+    """PERF-10 traded for DATA-19 (WBUX-6 S9-F1): serial envelope is the sum.
+
+    A 0.05s naming budget whose lookup sleeps 5s must still finish inside
+    NAMING_BUDGET_SECONDS + describe timeout + 0.5s slack, and persist the
+    generic draft (naming-timeout path). Removing wait_for around the bulk
+    naming lookup makes this assertion go red.
+    """
+    import scene.application.describe_run_worker as wmod
+
+    async def fake_load(**kwargs):
+        await asyncio.sleep(5)
+        return [], object()
+
+    async def describe_one(media_id, image_bytes, content_type, *, naming_inputs=None):
+        return DescribeItemOutcome(alt_text_draft=GENERIC_DRAFT, caption="cap 1")
+
+    monkeypatch.setattr(wmod, "NAMING_BUDGET_SECONDS", 0.05, raising=True)
+    monkeypatch.setattr(wmod, "load_fusion_naming_inputs", fake_load, raising=True)
+
+    describe_timeout = 1.0
+
+    async def body():
+        path, engine, sf = await _make_db(naming_agreement_enabled=True)
+        run_id = await _seed_run(sf)
+        started = time.monotonic()
+        await run_describe_job(
+            tenant_id=TENANT_ID,
+            run_id=run_id,
+            session_factory=sf,
+            describe_one=describe_one,
+            timeout_seconds=describe_timeout,
+        )
+        elapsed = time.monotonic() - started
+        async with sf() as s:
+            items = await DescribeRunRepository(s).list_run_items(tenant_id=TENANT_ID, run_id=run_id)
+        await engine.dispose()
+        os.unlink(path)
+        return items, elapsed
+
+    items, elapsed = asyncio.run(body())
+    envelope = wmod.item_envelope_seconds(describe_timeout)
+    assert envelope == pytest.approx(0.05 + describe_timeout)
+    assert elapsed < envelope + 0.5
+    assert items[0].status == DescribeItemStatus.COMPLETED
+    assert items[0].alt_text_draft == GENERIC_DRAFT
+    assert items[0].caption == "cap 1"
+    assert wmod.item_envelope_seconds.__doc__ is not None
+    assert "PERF-10 traded for DATA-19 (WBUX-6 S9-F1)" in wmod.item_envelope_seconds.__doc__
 
 
 def test_naming_lookup_timeout_persists_generic_draft_without_reload(monkeypatch):
@@ -424,7 +476,7 @@ def test_stage2_dropped_identity_is_not_named_on_bulk_path():
     png = _png_bytes()
     dropped: dict[str, object] = {}
 
-    async def describe_one(media_id, image_bytes, content_type):
+    async def describe_one(media_id, image_bytes, content_type, *, naming_inputs=None):
         assert image_bytes == png
         return DescribeItemOutcome(
             alt_text_draft=GENERIC_DRAFT,
@@ -470,7 +522,7 @@ def test_stage2_dropped_identity_is_not_named_on_bulk_path():
 def test_unstubbed_naming_replaces_grounded_span_with_ada():
     png = _png_bytes()
 
-    async def describe_one(media_id, image_bytes, content_type):
+    async def describe_one(media_id, image_bytes, content_type, *, naming_inputs=None):
         assert image_bytes == png
         return DescribeItemOutcome(
             alt_text_draft=GENERIC_DRAFT,
@@ -524,7 +576,7 @@ def test_recognition_disabled_skips_fusion_despite_naming_agreement(monkeypatch)
     monkeypatch.setattr(wmod, "load_fusion_naming_inputs", spy_load, raising=True)
     png = _png_bytes()
 
-    async def describe_one(media_id, image_bytes, content_type):
+    async def describe_one(media_id, image_bytes, content_type, *, naming_inputs=None):
         assert image_bytes == png
         return DescribeItemOutcome(alt_text_draft=GENERIC_DRAFT, caption=GENERIC_DRAFT)
 
@@ -614,7 +666,7 @@ def test_bulk_item_loads_fusion_naming_inputs_once_and_shares_confirmed_faces(mo
         return FUSED_DRAFT, object()
 
     monkeypatch.setattr(wmod, "load_fusion_naming_inputs", mutating_load, raising=True)
-    monkeypatch.setattr(rmod, "load_fusion_naming_inputs", mutating_load, raising=True)
+    monkeypatch.setattr(rmod, "load_fusion_naming_inputs", mutating_load, raising=False)
     monkeypatch.setattr(rmod, "VisualFactsService", _fake_visual_facts_service(fusion_faces))
     monkeypatch.setattr(wmod, "naming_preview", fake_naming_preview, raising=True)
 
@@ -660,7 +712,7 @@ def test_disabled_naming_does_not_load_fusion_inputs_on_bulk_path(monkeypatch):
         return ["Ada"], object()
 
     monkeypatch.setattr(wmod, "load_fusion_naming_inputs", spy_load, raising=True)
-    monkeypatch.setattr(rmod, "load_fusion_naming_inputs", spy_load, raising=True)
+    monkeypatch.setattr(rmod, "load_fusion_naming_inputs", spy_load, raising=False)
     monkeypatch.setattr(rmod, "VisualFactsService", _fake_visual_facts_service(fusion_faces))
 
     async def body():
@@ -700,7 +752,7 @@ def test_omitted_recognition_enabled_defaults_true_and_still_fuses():
     """HARM-F1: omitting recognition_enabled keeps today's naming-on behaviour."""
     png = _png_bytes()
 
-    async def describe_one(media_id, image_bytes, content_type):
+    async def describe_one(media_id, image_bytes, content_type, *, naming_inputs=None):
         return DescribeItemOutcome(alt_text_draft=GENERIC_DRAFT, caption=GENERIC_DRAFT)
 
     async def body():

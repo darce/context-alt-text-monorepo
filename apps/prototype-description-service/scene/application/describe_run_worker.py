@@ -9,6 +9,7 @@ import os
 import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field, replace
+from typing import NamedTuple, Protocol, runtime_checkable
 
 import httpx
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -35,6 +36,30 @@ _GPU_ITEM_MAX_ATTEMPTS = 3
 _GPU_ITEM_RETRY_BASE_DELAY_SECONDS = 1.0
 _RETRYABLE_HTTP_STATUS_CODES = frozenset({408, 425, 429, 500, 502, 503, 504})
 NAMING_BUDGET_SECONDS = float(os.environ.get("ACX_NAMING_BUDGET_SECONDS", "10.0"))
+
+
+class FusionNamingInputs(NamedTuple):
+    """Confirmed faces + naming policy loaded once per bulk item (DATA-19)."""
+
+    confirmed_faces: list
+    naming_policy: object | None = None
+
+
+EMPTY_NAMING_INPUTS = FusionNamingInputs(confirmed_faces=[], naming_policy=None)
+
+
+class MissingNamingSnapshotError(RuntimeError):
+    """Recognition-enabled describe_one was called without a preloaded snapshot."""
+
+
+def item_envelope_seconds(describe_timeout_seconds: float) -> float:
+    """Wall-clock bound for one bulk item: naming lookup then describe.
+
+    PERF-10 traded for DATA-19 (WBUX-6 S9-F1): serial single load instead of
+    gathering lookup with describe, so the envelope is the sum of
+    ``NAMING_BUDGET_SECONDS`` and the describe timeout, not the max.
+    """
+    return NAMING_BUDGET_SECONDS + describe_timeout_seconds
 
 
 @dataclass(frozen=True)
@@ -68,24 +93,18 @@ class _GpuCircuitOpenError(RuntimeError):
 # The describe boundary: given the item's media_id + loaded image bytes, return
 # the outcome to persist (or None). Kept as an injectable callable so tests can
 # supply a fast deterministic fake while production supplies the real
-# VisualFactsService-backed adapter.
-DescribeOne = Callable[
-    [int, bytes | None, str | None],
-    Awaitable[DescribeItemOutcome | None] | DescribeItemOutcome | None,
-]
-
-
-def _describe_one_kwargs(
-    describe_one: DescribeOne, naming_inputs: tuple[list, object] | None
-) -> dict[str, tuple[list, object] | None]:
-    """Pass a preloaded snapshot only when the describe callable accepts it."""
-    try:
-        parameters = inspect.signature(describe_one).parameters
-    except (TypeError, ValueError):
-        return {}
-    if "naming_inputs" in parameters or any(p.kind is inspect.Parameter.VAR_KEYWORD for p in parameters.values()):
-        return {"naming_inputs": naming_inputs}
-    return {}
+# VisualFactsService-backed adapter. naming_inputs is keyword-only so a wrapper
+# cannot silently drop the DATA-19 snapshot.
+@runtime_checkable
+class DescribeOne(Protocol):
+    def __call__(
+        self,
+        media_id: int,
+        image_bytes: bytes | None,
+        content_type: str | None,
+        *,
+        naming_inputs: FusionNamingInputs | None = None,
+    ) -> Awaitable[DescribeItemOutcome | None] | DescribeItemOutcome | None: ...
 
 
 async def _call_describe_one(
@@ -93,11 +112,9 @@ async def _call_describe_one(
     media_id: int,
     image_bytes: bytes | None,
     content_type: str | None,
-    naming_inputs: tuple[list, object] | None = None,
+    naming_inputs: FusionNamingInputs | None = None,
 ) -> DescribeItemOutcome | None:
-    result = describe_one(
-        media_id, image_bytes, content_type, **_describe_one_kwargs(describe_one, naming_inputs)
-    )
+    result = describe_one(media_id, image_bytes, content_type, naming_inputs=naming_inputs)
     if inspect.isawaitable(result):
         result = await result
     return result
@@ -230,7 +247,7 @@ async def _describe_with_transient_retry(
     timeout_seconds: float,
     retry_transient: bool,
     cancel_requested: Callable[[], Awaitable[bool]] | None = None,
-    naming_inputs: tuple[list, object] | None = None,
+    naming_inputs: FusionNamingInputs | None = None,
 ) -> DescribeItemOutcome | None:
     max_attempts = _GPU_ITEM_MAX_ATTEMPTS if retry_transient else 1
     for attempt in range(1, max_attempts + 1):
@@ -267,14 +284,14 @@ async def _naming_lookup_for_item(
     tenant_id: uuid.UUID,
     media_id: int,
     image_bytes: bytes | None,
-) -> tuple[list, object] | None:
+) -> FusionNamingInputs | None:
     """Load faces/policy independently of describe I/O; never raises to the run."""
     if not enabled or tenant is None or not image_bytes:
         return None
     try:
         async with session_factory() as naming_session:
             await set_tenant_context(naming_session, tenant_id)
-            return await asyncio.wait_for(
+            loaded = await asyncio.wait_for(
                 load_fusion_naming_inputs(
                     session=naming_session,
                     tenant=tenant,
@@ -284,6 +301,7 @@ async def _naming_lookup_for_item(
                 ),
                 timeout=NAMING_BUDGET_SECONDS,
             )
+            return FusionNamingInputs(*loaded)
     except Exception:  # noqa: BLE001 - naming lookup must not fail the item
         logger.exception("naming lookup failed media_id=%s; describing without names", media_id)
         return None
@@ -309,7 +327,7 @@ async def _apply_naming_preview(
     media_id: int,
     image_bytes: bytes | None,
     outcome: DescribeItemOutcome,
-    naming_inputs: tuple[list, object] | None,
+    naming_inputs: FusionNamingInputs | None,
 ) -> DescribeItemOutcome:
     """Fuse names into alt_text_draft (the same generic_draft field the router uses)."""
     if not enabled or tenant is None or not image_bytes or naming_inputs is None:
@@ -353,13 +371,21 @@ async def run_describe_job(
 ) -> None:
     """Process a describe run item-by-item.
 
-    Per item: load its image bytes, run ``describe_one``, persist the draft /
-    caption / provenance, clear the stored bytes, and mark it COMPLETED. Per-item
-    failures are isolated (item -> FAILED, run continues); an unexpected fatal
-    error around the whole loop forces the run terminal-FAILED. (S2-01, S2-02, HARM-01)
+    Per item: load its image bytes, load one naming snapshot (DATA-19), run
+    ``describe_one``, persist the draft / caption / provenance, clear the stored
+    bytes, and mark it COMPLETED. PERF-10 traded for DATA-19 (WBUX-6 S9-F1):
+    the per-item envelope is ``item_envelope_seconds`` (naming budget + describe
+    timeout, the sum not the max). Per-item failures are isolated (item ->
+    FAILED, run continues); an unexpected fatal error around the whole loop
+    forces the run terminal-FAILED. (S2-01, S2-02, HARM-01)
     """
 
     timeout = timeout_seconds if timeout_seconds is not None else VlmSettings().inference_timeout_seconds
+    item_envelope = item_envelope_seconds(timeout)
+    logger.debug(
+        "describe run per-item envelope seconds=%s (PERF-10 traded for DATA-19 WBUX-6 S9-F1)",
+        item_envelope,
+    )
 
     async def cancel_requested() -> bool:
         # A fresh, short-lived session is intentional. The tracking session has
@@ -425,6 +451,8 @@ async def run_describe_job(
                     # HARM-F3 / DATA-19: one naming snapshot per item. Load first,
                     # then share with Stage-2 fusion and Stage-3 preview so a
                     # label/merge between two sessions cannot diverge the draft.
+                    # PERF-10 traded for DATA-19 (WBUX-6 S9-F1): serial envelope
+                    # is item_envelope_seconds(timeout), not max(naming, describe).
                     naming_inputs = await _naming_lookup_for_item(
                         enabled=naming_enabled,
                         session_factory=session_factory,
@@ -434,9 +462,9 @@ async def run_describe_job(
                         image_bytes=image_bytes,
                     )
                     if naming_inputs is not None:
-                        describe_naming_inputs: tuple[list, object] | None = naming_inputs
-                    elif naming_enabled:
-                        describe_naming_inputs = ([], None)
+                        describe_naming_inputs: FusionNamingInputs | None = naming_inputs
+                    elif run is not None and run.recognition_enabled:
+                        describe_naming_inputs = EMPTY_NAMING_INPUTS
                     else:
                         describe_naming_inputs = None
                     outcome = await _describe_with_transient_retry(

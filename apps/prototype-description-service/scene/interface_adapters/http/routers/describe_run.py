@@ -141,6 +141,8 @@ def _build_describe_one(
                 tenant = await get_tenant_record(svc_session, tenant_id)
                 if naming_inputs is not None:
                     confirmed_faces, naming_policy = naming_inputs
+                    # DATA-19: face elements + naming_policy are the shared snapshot;
+                    # copy the list so Stage-2 mutation cannot alias Stage-3's sequence.
                     confirmed_faces = list(confirmed_faces or [])
                 elif recognition_enabled:
                     confirmed_faces, naming_policy = await asyncio.wait_for(
@@ -220,9 +222,9 @@ def _parse_recognition_enabled(raw: object) -> bool:
             status.HTTP_422_UNPROCESSABLE_CONTENT, "form field 'recognition_enabled' must be a boolean"
         )
     value = raw.strip().lower()
-    if value in {"true", "1", "yes", "on"}:
+    if value == "true":
         return True
-    if value in {"false", "0", "no", "off"}:
+    if value == "false":
         return False
     raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "form field 'recognition_enabled' must be a boolean")
 

@@ -230,8 +230,8 @@ const assertActiveTransitionPayload = (
       expect(next.reconnectAttempts).toBe(0);
       return;
     case JOB_EVENT.STALL_TICK:
-      expect(next.lastEventAt).toBe(event.now);
-      expect(next.reconnectAttempts).toBe(state.reconnectAttempts + 1);
+      expect(next.lastEventAt).toBe(state.lastEventAt);
+      expect(next.reconnectAttempts).toBe(state.reconnectAttempts);
       expect(next.done).toBe(state.done);
       expect(next.total).toBe(state.total);
       expect(next.jobId).toBe(state.jobId);
@@ -352,7 +352,7 @@ describe('jobReducer stall, progress, offline, terminal', () => {
       now: rewound + JOB_MACHINE_STALL_THRESHOLD_MS,
     });
     expect(stalled.status).toBe(JOB_MACHINE_STATE.stalled);
-    expect(stalled.reconnectAttempts).toBe(3);
+    expect(stalled.reconnectAttempts).toBe(2);
   });
 
   it('STALL_TICK delta of MAX_TICK_DELTA_MS + 1 clamps lastEventAt without stalling (FEBT1-W2C-12)', () => {
@@ -392,7 +392,7 @@ describe('jobReducer stall, progress, offline, terminal', () => {
       now: 9_000 + JOB_MACHINE_STALL_THRESHOLD_MS,
     });
     expect(stalled.status).toBe(JOB_MACHINE_STATE.stalled);
-    expect(stalled.reconnectAttempts).toBe(1);
+    expect(stalled.reconnectAttempts).toBe(0);
   });
 
   it('PROGRESS refreshes lastEventAt to the event at timestamp (FEBT1-W2C-10)', () => {
@@ -603,7 +603,7 @@ describe('FEBT-1 W1 fix lane (L6A-01, M-01..M-06)', () => {
 
       const stalled = jobReducer(notYet, { type: JOB_EVENT.STALL_TICK, now: t + 330_002 });
       expect(stalled.status).toBe(JOB_MACHINE_STATE.stalled);
-      expect(stalled.lastEventAt).toBe(t + 330_002);
+      expect(stalled.lastEventAt).toBe(t + 300_000);
       expect(stalled.resumeStatus).toBeNull();
     });
   });
@@ -629,12 +629,14 @@ describe('FEBT-1 W1 fix lane (L6A-01, M-01..M-06)', () => {
   });
 
   describe('M-03 reconnect ceiling', () => {
-    it('stays stalled below the ceiling and fails when the ceiling is crossed', () => {
+    it('stays stalled across quiet ticks; STREAM_OPEN from stalled fails after the reconnect ceiling', () => {
+      expect(JOB_MACHINE_RECONNECT_CEILING).toBe(3);
       let state = jobReducer(fixtureFor(JOB_MACHINE_STATE.running), {
         type: JOB_EVENT.STALL_TICK,
         now: AT + 30_000,
       });
       expect(state.status).toBe(JOB_MACHINE_STATE.stalled);
+      expect(state.reconnectAttempts).toBe(0);
 
       state = jobReducer(state, { type: JOB_EVENT.STALL_TICK, now: AT + 60_000 });
       expect(state.status).toBe(JOB_MACHINE_STATE.stalled);
@@ -643,6 +645,24 @@ describe('FEBT-1 W1 fix lane (L6A-01, M-01..M-06)', () => {
       expect(state.status).toBe(JOB_MACHINE_STATE.stalled);
 
       state = jobReducer(state, { type: JOB_EVENT.STALL_TICK, now: AT + 120_000 });
+      expect(state.status).toBe(JOB_MACHINE_STATE.stalled);
+      expect(state.error).toBeNull();
+      expect(state.reconnectAttempts).toBe(0);
+
+      for (let n = 1; n <= 3; n += 1) {
+        const openedAt = AT + 120_000 + n;
+        state = jobReducer(state, { type: JOB_EVENT.STREAM_OPEN, at: openedAt });
+        expect(state.status).toBe(JOB_MACHINE_STATE.running);
+        expect(state.reconnectAttempts).toBe(n);
+        state = jobReducer(state, {
+          type: JOB_EVENT.STALL_TICK,
+          now: openedAt + 30_000,
+        });
+        expect(state.status).toBe(JOB_MACHINE_STATE.stalled);
+        expect(state.reconnectAttempts).toBe(n);
+      }
+
+      state = jobReducer(state, { type: JOB_EVENT.STREAM_OPEN, at: AT + 200_000 });
       expect(state.status).toBe(JOB_MACHINE_STATE.failed);
       expect(state.error).not.toBeNull();
       expect(state.error?.message.toLowerCase()).toContain('reconnect');
@@ -653,15 +673,20 @@ describe('FEBT-1 W1 fix lane (L6A-01, M-01..M-06)', () => {
         type: JOB_EVENT.STALL_TICK,
         now: AT + 30_000,
       });
-      state = jobReducer(state, { type: JOB_EVENT.STALL_TICK, now: AT + 60_000 });
-      state = jobReducer(state, { type: JOB_EVENT.STALL_TICK, now: AT + 90_000 });
+      state = jobReducer(state, { type: JOB_EVENT.STREAM_OPEN, at: AT + 31_000 });
+      state = jobReducer(state, { type: JOB_EVENT.STALL_TICK, now: AT + 61_000 });
+      state = jobReducer(state, { type: JOB_EVENT.STREAM_OPEN, at: AT + 62_000 });
+      state = jobReducer(state, { type: JOB_EVENT.STALL_TICK, now: AT + 92_000 });
       expect(state.status).toBe(JOB_MACHINE_STATE.stalled);
+      expect(state.reconnectAttempts).toBe(2);
 
-      const offline = jobReducer(state, offlineEvent(AT + 91_000));
-      const online = jobReducer(offline, onlineEvent(AT + 92_000));
-      const stalledAgain = jobReducer(online, { type: JOB_EVENT.STALL_TICK, now: AT + 122_000 });
+      const offline = jobReducer(state, offlineEvent(AT + 93_000));
+      const online = jobReducer(offline, onlineEvent(AT + 94_000));
+      expect(online.reconnectAttempts).toBe(0);
+      const stalledAgain = jobReducer(online, { type: JOB_EVENT.STALL_TICK, now: AT + 124_000 });
       expect(stalledAgain.status).toBe(JOB_MACHINE_STATE.stalled);
       expect(stalledAgain.error).toBeNull();
+      expect(stalledAgain.reconnectAttempts).toBe(0);
     });
   });
 
@@ -672,7 +697,7 @@ describe('FEBT-1 W1 fix lane (L6A-01, M-01..M-06)', () => {
       expect(next.status).toBe(JOB_MACHINE_STATE.stalled);
     });
 
-    it('an offline pending job fails after the reconnect ceiling of quiet ticks', () => {
+    it('an offline pending job stays offline across the reconnect ceiling of quiet ticks', () => {
       const pending = fixtureFor(JOB_MACHINE_STATE.pending);
       let state = jobReducer(pending, offlineEvent(AT));
       expect(state.status).toBe(JOB_MACHINE_STATE.offline);
@@ -687,8 +712,9 @@ describe('FEBT-1 W1 fix lane (L6A-01, M-01..M-06)', () => {
       expect(state.status).toBe(JOB_MACHINE_STATE.offline);
 
       state = jobReducer(state, { type: JOB_EVENT.STALL_TICK, now: AT + 120_000 });
-      expect(state.status).toBe(JOB_MACHINE_STATE.failed);
-      expect(state.error).not.toBeNull();
+      expect(state.status).toBe(JOB_MACHINE_STATE.offline);
+      expect(state.error).toBeNull();
+      expect(state.reconnectAttempts).toBe(0);
     });
   });
 
@@ -718,5 +744,28 @@ describe('FEBT-1 W1 fix lane (L6A-01, M-01..M-06)', () => {
       const next = jobReducer(fixtureFor(JOB_MACHINE_STATE.idle), { type: JOB_EVENT.RESET });
       expect(next).toEqual(initialJobState);
     });
+  });
+});
+
+describe('FEBT1-W2D-02 quiet ticks are not reconnects', () => {
+  it('five STALL_TICK events 30s apart stay stalled with reconnectAttempts 0', () => {
+    expect(JOB_MACHINE_RECONNECT_CEILING).toBe(3);
+    expect(JOB_MACHINE_STALL_THRESHOLD_MS).toBe(30_000);
+
+    let state = fixtureFor(JOB_MACHINE_STATE.running);
+    expect(state.reconnectAttempts).toBe(0);
+
+    for (let i = 1; i <= 5; i += 1) {
+      state = jobReducer(state, {
+        type: JOB_EVENT.STALL_TICK,
+        now: AT + i * 30_000,
+      });
+    }
+
+    expect(state.status).toBe(JOB_MACHINE_STATE.stalled);
+    expect(state.status).not.toBe(JOB_MACHINE_STATE.failed);
+    expect(state.reconnectAttempts).toBe(0);
+    expect(state.error).toBeNull();
+    expect(isTerminalJobState(state)).toBe(false);
   });
 });

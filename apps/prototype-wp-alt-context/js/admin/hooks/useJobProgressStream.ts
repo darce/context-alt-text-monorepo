@@ -5,9 +5,12 @@ import { getEndpoint, getNonce } from '../api/config';
 import { createLogger, logJobEvent } from '../utils/logger';
 import {
   JOB_EVENT,
+  JOB_MACHINE_STATE,
   JOB_MACHINE_STALL_THRESHOLD_MS,
   initialJobState,
+  isTerminalJobState,
   jobReducer,
+  type JobMachineStatus,
 } from './jobMachine';
 import { useJobCoordination } from './useJobCoordination';
 import { broadcastJobProgress, parseDoneEvent, parseProgressEvent } from './useJobProgressStreamHelpers';
@@ -15,17 +18,21 @@ import { broadcastJobProgress, parseDoneEvent, parseProgressEvent } from './useJ
 const log = createLogger('hooks.jobProgressStream');
 
 export const JOB_STATUS = {
-  PENDING: 'pending',
-  RUNNING: 'running',
-  COMPLETED: 'completed',
-  // Terminal partial-success the WP SSE producer forwards verbatim from the description-service
-  // (some items succeeded, some failed). Must be recognized as terminal on the SSE channel too.
-  COMPLETED_WITH_ERRORS: 'completed_with_errors',
-  FAILED: 'failed',
+  IDLE: JOB_MACHINE_STATE.idle,
+  PENDING: JOB_MACHINE_STATE.pending,
+  RUNNING: JOB_MACHINE_STATE.running,
+  STALLED: JOB_MACHINE_STATE.stalled,
+  OFFLINE: JOB_MACHINE_STATE.offline,
+  COMPLETED: JOB_MACHINE_STATE.completed,
+  COMPLETED_WITH_ERRORS: JOB_MACHINE_STATE.completedWithErrors,
+  FAILED: JOB_MACHINE_STATE.failed,
   CLUSTERING: 'clustering',
 } as const;
 
 export type JobStatus = (typeof JOB_STATUS)[keyof typeof JOB_STATUS];
+
+/** Map reducer status to the hook view union in one place (sr-007). */
+export const toJobStatus = (status: JobMachineStatus): JobStatus => status;
 
 export const getJobProgressStallThresholdMs = (): number => JOB_MACHINE_STALL_THRESHOLD_MS;
 
@@ -48,28 +55,36 @@ const streamEventFields = (event: Event): { type: string; readyState?: number } 
   return fields;
 };
 
+const deriveStalledForSeconds = (
+  status: JobMachineStatus,
+  lastEventAt: number | null,
+  now: number,
+): number | null =>
+  status === JOB_MACHINE_STATE.stalled && lastEventAt !== null
+    ? Math.floor((now - lastEventAt) / 1000)
+    : null;
+
 /**
  * Hook to connect to the backend SSE endpoint for real-time job progress updates.
  */
 export const useJobProgressStream = (jobId: string | null): JobProgressStream => {
-  const [progress, setProgress] = useState<JobProgress | null>(null);
-  const [status, setStatus] = useState<JobStatus>(JOB_STATUS.PENDING);
-  const [isOnline, setIsOnline] = useState(navigator.onLine);
-  const [etaSeconds, setEtaSeconds] = useState<number | null>(null);
-  const [lastEventAt, setLastEventAt] = useState<number | null>(null);
-  const [stalledForSeconds, setStalledForSeconds] = useState<number | null>(null);
   const [connectionNonce, setConnectionNonce] = useState(0);
-  const [, dispatch] = useReducer(jobReducer, initialJobState);
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  const [machine, dispatch] = useReducer(jobReducer, initialJobState);
   const startTimeRef = useRef<number | null>(null);
   const streamOpenedAtRef = useRef<number | null>(null);
   const progressRef = useRef<JobProgress | null>(null);
+  const etaSecondsRef = useRef<number | null>(null);
   const eventSourceRef = useRef<EventSource | null>(null);
 
   const { isPrimary, channel } = useJobCoordination(jobId);
 
+  const status = toJobStatus(machine.status);
+  const isOnline = machine.status !== JOB_MACHINE_STATE.offline;
+  const lastEventAt = machine.lastEventAt;
+  const stalledForSeconds = deriveStalledForSeconds(machine.status, machine.lastEventAt, nowMs);
+
   const retry = useCallback(() => {
-    setLastEventAt(null);
-    setStalledForSeconds(null);
     streamOpenedAtRef.current = Date.now();
     eventSourceRef.current?.close();
     eventSourceRef.current = null;
@@ -78,11 +93,9 @@ export const useJobProgressStream = (jobId: string | null): JobProgressStream =>
 
   useEffect(() => {
     const goOnline = () => {
-      setIsOnline(true);
       dispatch({ type: JOB_EVENT.ONLINE, at: Date.now() });
     };
     const goOffline = () => {
-      setIsOnline(false);
       dispatch({ type: JOB_EVENT.OFFLINE, at: Date.now() });
     };
 
@@ -95,14 +108,10 @@ export const useJobProgressStream = (jobId: string | null): JobProgressStream =>
   }, []);
 
   useEffect(() => {
-    setProgress(null);
-    setStatus(JOB_STATUS.PENDING);
-    setEtaSeconds(null);
-    setLastEventAt(null);
-    setStalledForSeconds(null);
     startTimeRef.current = null;
     streamOpenedAtRef.current = null;
     progressRef.current = null;
+    etaSecondsRef.current = null;
     if (jobId) {
       dispatch({ type: JOB_EVENT.START, jobId, at: Date.now() });
       if (!navigator.onLine) {
@@ -114,38 +123,20 @@ export const useJobProgressStream = (jobId: string | null): JobProgressStream =>
   }, [jobId]);
 
   useEffect(() => {
-    if (!jobId || !isOnline || !isPrimary) {
-      setStalledForSeconds(null);
+    if (!jobId || !isOnline || !isPrimary || isTerminalJobState(machine)) {
       return;
     }
 
-    if (
-      status === JOB_STATUS.COMPLETED ||
-      status === JOB_STATUS.COMPLETED_WITH_ERRORS ||
-      status === JOB_STATUS.FAILED
-    ) {
-      setStalledForSeconds(null);
-      return;
-    }
-
-    const stallThresholdMs = getJobProgressStallThresholdMs();
-    const updateStallState = () => {
+    const tick = () => {
       const now = Date.now();
       dispatch({ type: JOB_EVENT.STALL_TICK, now });
-      const baseline = lastEventAt ?? streamOpenedAtRef.current;
-      if (!baseline) {
-        setStalledForSeconds(null);
-        return;
-      }
-
-      const elapsedMs = now - baseline;
-      setStalledForSeconds(elapsedMs >= stallThresholdMs ? Math.floor(elapsedMs / 1000) : null);
+      setNowMs(now);
     };
 
-    updateStallState();
-    const intervalId = window.setInterval(updateStallState, 1000);
+    tick();
+    const intervalId = window.setInterval(tick, 1000);
     return () => window.clearInterval(intervalId);
-  }, [connectionNonce, isOnline, isPrimary, jobId, lastEventAt, status]);
+  }, [connectionNonce, isOnline, isPrimary, jobId, machine.status]);
 
   useEffect(() => {
     if (!channel || isPrimary) {
@@ -160,9 +151,8 @@ export const useJobProgressStream = (jobId: string | null): JobProgressStream =>
       if (payload.type !== 'JOB_PROGRESS') {
         return;
       }
-      setProgress(payload.payload.progress);
-      setStatus(payload.payload.status);
-      setEtaSeconds(payload.payload.etaSeconds);
+      progressRef.current = payload.payload.progress;
+      etaSecondsRef.current = payload.payload.etaSeconds;
       const at = Date.now();
       const done = payload.payload.progress?.completed ?? 0;
       const total = payload.payload.progress?.total ?? 0;
@@ -172,10 +162,6 @@ export const useJobProgressStream = (jobId: string | null): JobProgressStream =>
     channel.addEventListener('message', handleMessage);
     return () => channel.removeEventListener('message', handleMessage);
   }, [channel, isPrimary]);
-
-  useEffect(() => {
-    progressRef.current = progress;
-  }, [progress]);
 
   useEffect(() => {
     if (!jobId || !isOnline || !isPrimary) {
@@ -240,11 +226,7 @@ export const useJobProgressStream = (jobId: string | null): JobProgressStream =>
       const receivedAt = Date.now();
 
       progressRef.current = parsed.progress;
-      setProgress(parsed.progress);
-      setStatus(parsed.status);
-      setEtaSeconds(parsed.etaSeconds);
-      setLastEventAt(receivedAt);
-      setStalledForSeconds(null);
+      etaSecondsRef.current = parsed.etaSeconds;
       dispatch({
         type: JOB_EVENT.PROGRESS,
         done: parsed.progress.completed,
@@ -266,12 +248,8 @@ export const useJobProgressStream = (jobId: string | null): JobProgressStream =>
       }
 
       const receivedAt = Date.now();
-      setLastEventAt(receivedAt);
-
-      setStatus(parsed.status);
-      setProgress(parsed.progress);
-      setEtaSeconds(null);
-      setStalledForSeconds(null);
+      progressRef.current = parsed.progress;
+      etaSecondsRef.current = null;
       emitTerminal(parsed.status, parsed.progress, receivedAt);
       broadcastJobProgress(channel, {
         progress: parsed.progress,
@@ -290,7 +268,6 @@ export const useJobProgressStream = (jobId: string | null): JobProgressStream =>
         try {
           const errorData = JSON.parse(event.data as string) as { message?: string };
           if (errorData.message?.includes('not found')) {
-            setStatus(JOB_STATUS.FAILED);
             emitTerminal(JOB_STATUS.FAILED, progressRef.current, Date.now());
             close();
             return;
@@ -313,5 +290,14 @@ export const useJobProgressStream = (jobId: string | null): JobProgressStream =>
     return () => close();
   }, [channel, connectionNonce, isOnline, isPrimary, jobId]);
 
-  return { progress, status, isOnline, etaSeconds, isPrimary, lastEventAt, stalledForSeconds, retry };
+  return {
+    progress: progressRef.current,
+    status,
+    isOnline,
+    etaSeconds: etaSecondsRef.current,
+    isPrimary,
+    lastEventAt,
+    stalledForSeconds,
+    retry,
+  };
 };

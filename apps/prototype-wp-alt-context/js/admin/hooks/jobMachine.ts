@@ -13,7 +13,10 @@ export type JobMachineStatus = (typeof JOB_MACHINE_STATE)[keyof typeof JOB_MACHI
 
 export const JOB_MACHINE_STALL_THRESHOLD_MS = 30_000;
 
-/** Max reconnect/offline-wait cycles before stalled/offline fail (RES-06). */
+/**
+ * Max real reconnects before fail (RES-06). Incremented only at STREAM_OPEN
+ * from stalled and at RECONNECTED — never on STALL_TICK (RES-13, GRPH-27/28).
+ */
 export const JOB_MACHINE_RECONNECT_CEILING = 3;
 
 /**
@@ -99,11 +102,16 @@ const startJob = (_state: JobMachineState, event: Extract<JobEvent, { type: 'STA
   reconnectAttempts: 0,
 });
 
-const openStream = (state: JobMachineState, event: Extract<JobEvent, { type: 'STREAM_OPEN' }>): JobMachineState => ({
-  ...state,
-  status: JOB_MACHINE_STATE.running,
-  lastEventAt: event.at,
-});
+const openStream = (state: JobMachineState, event: Extract<JobEvent, { type: 'STREAM_OPEN' }>): JobMachineState => {
+  if (state.status === JOB_MACHINE_STATE.stalled) {
+    return applyReconnect(state, event.at);
+  }
+  return {
+    ...state,
+    status: JOB_MACHINE_STATE.running,
+    lastEventAt: event.at,
+  };
+};
 
 const applyProgress = (state: JobMachineState, event: Extract<JobEvent, { type: 'PROGRESS' }>): JobMachineState => ({
   ...state,
@@ -125,6 +133,19 @@ const failReconnectCeiling = (state: JobMachineState, attempts: number, at: numb
   },
 });
 
+const applyReconnect = (state: JobMachineState, at: number): JobMachineState => {
+  const attempts = state.reconnectAttempts + 1;
+  if (attempts > JOB_MACHINE_RECONNECT_CEILING) {
+    return failReconnectCeiling(state, attempts, at);
+  }
+  return {
+    ...state,
+    status: JOB_MACHINE_STATE.running,
+    lastEventAt: at,
+    reconnectAttempts: attempts,
+  };
+};
+
 const onQuietTick = (
   state: JobMachineState,
   event: Extract<JobEvent, { type: 'STALL_TICK' }>,
@@ -140,15 +161,14 @@ const onQuietTick = (
   if (delta < JOB_MACHINE_STALL_THRESHOLD_MS) {
     return state;
   }
-  const attempts = state.reconnectAttempts + 1;
-  if (attempts > JOB_MACHINE_RECONNECT_CEILING) {
-    return failReconnectCeiling(state, attempts, event.now);
+  // Quiet time is not a reconnect (RES-13). Stall duration is derived from
+  // lastEventAt by the hook; do not rewrite it or increment reconnectAttempts.
+  if (state.status === quietStatus) {
+    return state;
   }
   return {
     ...state,
     status: quietStatus,
-    lastEventAt: event.now,
-    reconnectAttempts: attempts,
   };
 };
 
@@ -158,11 +178,8 @@ const stallIfQuiet = (state: JobMachineState, event: Extract<JobEvent, { type: '
 const boundOfflineWait = (state: JobMachineState, event: Extract<JobEvent, { type: 'STALL_TICK' }>): JobMachineState =>
   onQuietTick(state, event, JOB_MACHINE_STATE.offline);
 
-const reconnect = (state: JobMachineState, event: Extract<JobEvent, { type: 'RECONNECTED' }>): JobMachineState => ({
-  ...state,
-  status: JOB_MACHINE_STATE.running,
-  lastEventAt: event.at,
-});
+const reconnect = (state: JobMachineState, event: Extract<JobEvent, { type: 'RECONNECTED' }>): JobMachineState =>
+  applyReconnect(state, event.at);
 
 const goOffline = (state: JobMachineState, event: Extract<JobEvent, { type: 'OFFLINE' }>): JobMachineState => {
   if (state.status === JOB_MACHINE_STATE.offline) {

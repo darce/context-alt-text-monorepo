@@ -95,10 +95,6 @@ export const IdentityClusterItem = ({
   const representative = cluster.members[0];
   const anchorIdentityId = representative?.identity_id;
 
-  // Inline "Is this X?" prompt renders only for unlabeled, mutable clusters.
-  // The match is fetched once at the list level (batched) and supplied by prop.
-  const showInlinePrompt = Boolean(!cluster.label && anchorIdentityId && canMutate);
-
   const [isAnchorModalOpen, setIsAnchorModalOpen] = React.useState(false);
   const [isWrongPersonDialogOpen, setIsWrongPersonDialogOpen] = React.useState(false);
   const [matchedCluster, setMatchedCluster] = React.useState<{ id: string; label: string } | null>(null);
@@ -329,12 +325,19 @@ export const IdentityClusterItem = ({
   );
 
   const showTwinChip =
+    canMutate &&
     mergeTwin != null &&
     !isMeaningfulMergeLabel(cluster.label) &&
     isMeaningfulMergeLabel(mergeTwin.survivorLabel);
   const twinFirstName = mergeTwin?.survivorLabel.trim().split(/\s+/)[0] ?? '';
   const twinPendingTitle =
     mergeTwin?.isPending && mergeTwin.disabledReason ? mergeTwin.disabledReason : undefined;
+  const twinPendingDescId = mergeTwin ? `acx-twin-pending-${mergeTwin.suggestionId}` : undefined;
+  // Inline "Is this X?" prompt renders only for unlabeled, mutable clusters
+  // that are not already showing a merge twin (INT-03: one confirm cluster).
+  const showInlinePrompt = Boolean(
+    !showTwinChip && !cluster.label && anchorIdentityId && canMutate,
+  );
 
   const saveLabel = React.useMemo(() => {
     if (saveStatus === 'queued') {
@@ -375,9 +378,20 @@ export const IdentityClusterItem = ({
               <div
                 className="acx-identity-clusters__twin-chip"
                 data-testid="acx-identity-clusters__twin-chip"
+                role="group"
+                aria-label={sprintf(__('Same person as %s?', 'alt-context'), mergeTwin.survivorLabel)}
+                aria-describedby={twinPendingTitle ? twinPendingDescId : undefined}
               >
+                {twinPendingTitle ? (
+                  <span id={twinPendingDescId} className="screen-reader-text">
+                    {twinPendingTitle}
+                  </span>
+                ) : null}
+                <span className="acx-identity-clusters__twin-chip-icon" aria-hidden="true">
+                  ⇢
+                </span>
                 <span>
-                  {sprintf(__('⇢ Same person as %s?', 'alt-context'), mergeTwin.survivorLabel)}
+                  {sprintf(__('Same person as %s?', 'alt-context'), mergeTwin.survivorLabel)}
                 </span>
                 <button
                   type="button"

@@ -143,7 +143,7 @@ describe('MergeSuggestionCard', () => {
     expect(screen.getByText('Unnamed face group (5)')).toBeInTheDocument();
   });
 
-  // Discriminates isHumanLabeledTarget (trims) from isMeaningfulMergeLabel (no trim).
+  // DATA-14: isMeaningfulMergeLabel trims and treats cluster-/cluster_ as reserved.
   it('gates whitespace-padded cluster-* the same as bare auto-labels', () => {
     const { container } = render(
       <MergeSuggestionCard
@@ -166,6 +166,27 @@ describe('MergeSuggestionCard', () => {
     expect(alts).toHaveLength(2);
     expect(alts.every((alt) => alt.includes('Detected face'))).toBe(true);
     expect(screen.getByText('Unnamed face group (3)')).toBeInTheDocument();
+  });
+
+  it('treats Cluster-Dad as unnamed on both display and accept copy (DATA-14)', () => {
+    const { container } = render(
+      <MergeSuggestionCard
+        suggestion={withFaces({
+          cluster_a_label: 'Cluster-Dad',
+          cluster_b_label: null,
+          cluster_a_identity_count: 2,
+          cluster_b_identity_count: 1,
+        })}
+        onAccept={vi.fn()}
+        onReject={vi.fn()}
+        isPending={false}
+      />,
+    );
+
+    expect(container.textContent).not.toContain('Cluster-Dad');
+    expect(screen.getByText('Unnamed face group (2)')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Yes' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Merge into Cluster-Dad/ })).not.toBeInTheDocument();
   });
 
   it('keeps human labels as visible text and crop alt with identity count', () => {

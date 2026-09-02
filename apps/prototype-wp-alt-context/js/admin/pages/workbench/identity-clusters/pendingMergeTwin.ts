@@ -21,7 +21,7 @@ export const pendingMergeTwinForCluster = (
   }
 
   for (const suggestion of suggestions) {
-    if (suggestion.status && suggestion.status !== 'pending') {
+    if (suggestion.status !== 'pending') {
       continue;
     }
     const aLabeled = isMeaningfulMergeLabel(suggestion.cluster_a_label);

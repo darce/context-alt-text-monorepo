@@ -397,6 +397,18 @@
       cursor: not-allowed;
     }
   }
+
+  &__twin-chip-icon {
+    color: var(--acx-color-text);
+  }
+
+  &__truncated-review {
+    display: inline-block;
+    margin-block-start: var(--acx-space-4);
+    margin-inline-start: var(--acx-space-8);
+    font-size: var(--acx-text-sm);
+    color: var(--acx-color-text);
+  }
 }
 
 // Inline suggestion prompt ("Is this X?" confirmation)

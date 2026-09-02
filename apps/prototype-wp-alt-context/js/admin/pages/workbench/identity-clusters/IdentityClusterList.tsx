@@ -11,13 +11,14 @@ import { __ } from '@wordpress/i18n';
 import { DATA_SOURCE, type DataSource } from '../../../api/recognition/types';
 import { type DetectedIdentity } from '../../../api/recognition';
 import { EmptyState, EmptyStateVariant } from '../../../components/ui/EmptyState';
-import { toWorkbench } from '../../../navigation/appLinks';
+import { APP_LINK_VALUES, toWorkbench } from '../../../navigation/appLinks';
 import { EmptyStateWarning } from './EmptyStateWarning';
 import { pendingMergeTwinForCluster } from './pendingMergeTwin';
+import { isMeaningfulMergeLabel } from './resolveMergeSurvivor';
 import { groupIdentitiesByClusters } from './utils';
 import { IdentityClusterItem } from './IdentityClusterItem';
 import { useInlineSuggestionBatch } from './useInlineSuggestionBatch';
-import { useSuggestionReviewData } from './useSuggestionReviewData';
+import { usePendingMergeTwins } from './usePendingMergeTwins';
 
 interface IdentityClusterListProps {
   /** Detected identities to display */
@@ -45,8 +46,8 @@ export const IdentityClusterList = ({
   const clusters = React.useMemo(() => groupIdentitiesByClusters(identities), [identities]);
   const isLabelOnly = dataSource === DATA_SOURCE.BACKEND_PROXY;
   const canMutate = !isLabelOnly;
-  const { mergeSuggestions, scheduleAcceptMerge, scheduleRejectMerge, isCardPending } =
-    useSuggestionReviewData();
+  const { mergeSuggestions, truncated, scheduleAcceptMerge, scheduleRejectMerge, isCardPending } =
+    usePendingMergeTwins();
 
   // Same predicate as IdentityClusterItem's render gate:
   // `!cluster.label && anchorIdentityId && canMutate`, with anchorIdentityId
@@ -124,36 +125,52 @@ export const IdentityClusterList = ({
         </p>
       )}
       {clusters.map((cluster) => {
-        const twin = pendingMergeTwinForCluster(cluster.clusterId, mergeSuggestions);
+        const twin = canMutate
+          ? pendingMergeTwinForCluster(cluster.clusterId, mergeSuggestions)
+          : null;
         const twinPending = twin
           ? isCardPending(twin.suggestionId, ['acceptMerge', 'rejectMerge'])
           : false;
+        const showTruncatedReviewLink =
+          truncated &&
+          canMutate &&
+          twin == null &&
+          !isMeaningfulMergeLabel(cluster.label);
         return (
-          <IdentityClusterItem
-            key={cluster.key}
-            cluster={cluster}
-            canLabel
-            canMutate={canMutate}
-            inlineSuggestionMatch={getMatch(cluster.members[0]?.identity_id)}
-            mergeTwin={
-              twin
-                ? {
-                    suggestionId: twin.suggestionId,
-                    survivorLabel: twin.survivorLabel,
-                    onAccept: () => {
-                      void scheduleAcceptMerge(twin.suggestionId);
-                    },
-                    onReject: () => {
-                      void scheduleRejectMerge(twin.suggestionId);
-                    },
-                    isPending: twinPending,
-                    disabledReason: twinPending
-                      ? __('Saving merge suggestion…', 'alt-context')
-                      : null,
-                  }
-                : undefined
-            }
-          />
+          <React.Fragment key={cluster.key}>
+            <IdentityClusterItem
+              cluster={cluster}
+              canLabel
+              canMutate={canMutate}
+              inlineSuggestionMatch={getMatch(cluster.members[0]?.identity_id)}
+              mergeTwin={
+                twin
+                  ? {
+                      suggestionId: twin.suggestionId,
+                      survivorLabel: twin.survivorLabel,
+                      onAccept: () => {
+                        void scheduleAcceptMerge(twin.suggestionId);
+                      },
+                      onReject: () => {
+                        void scheduleRejectMerge(twin.suggestionId);
+                      },
+                      isPending: twinPending,
+                      disabledReason: twinPending
+                        ? __('Saving merge suggestion…', 'alt-context')
+                        : null,
+                    }
+                  : undefined
+              }
+            />
+            {showTruncatedReviewLink ? (
+              <a
+                className="acx-identity-clusters__truncated-review"
+                href={toWorkbench({ tab: 'scan', panel: APP_LINK_VALUES.panelReview })}
+              >
+                {__('Review pending merges', 'alt-context')}
+              </a>
+            ) : null}
+          </React.Fragment>
         );
       })}
     </div>

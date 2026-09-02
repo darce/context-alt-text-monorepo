@@ -45,6 +45,7 @@ class DescribeItemOutcome:
     caption: str | None = None
     provenance: dict = field(default_factory=dict)
     phrase_boxes: tuple = ()
+    attachments: tuple = ()
 
 
 @dataclass(frozen=True)
@@ -276,7 +277,7 @@ async def _apply_naming_preview(
         return outcome
     try:
         phrase_boxes = outcome.phrase_boxes or ()
-        preview_faces = faces_for_naming_preview(faces or [], (), phrase_boxes)
+        preview_faces = faces_for_naming_preview(faces or [], outcome.attachments or (), phrase_boxes)
         named, provenance = await asyncio.wait_for(
             naming_preview(
                 session=session,

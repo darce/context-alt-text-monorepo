@@ -19,6 +19,12 @@ from db.models.scene import DescribeRun, DescribeRunItem
 from db.models.tenant import Tenant
 from scene.application.describe_run_repository import DescribeRunRepository
 from scene.application.describe_run_worker import DescribeItemOutcome, run_describe_job
+from scene.application.fusion.reconcile import (
+    Attachment,
+    AttachmentAltitude,
+    AttachmentDecision,
+    FactSource,
+)
 from scene.application.identity_merge import NormalizedBox, PhraseBox
 from scene.domain.describe_run import DescribeItemStatus, DescribeRunStatus
 
@@ -116,6 +122,7 @@ async def _seed_confirmed_face(session, *, label: str, media_id: int, bbox: tupl
             similarity=0.9,
         )
     )
+    return cluster.id
 
 
 async def _describe_one(media_id, image_bytes, content_type):
@@ -376,3 +383,88 @@ def test_naming_lookup_timeout_persists_generic_draft_without_reload(monkeypatch
     assert items[0].alt_text_draft == GENERIC_DRAFT
     assert items[0].caption == "cap 1"
     assert calls == ["load"]
+
+
+def test_stage2_dropped_identity_is_not_named_on_bulk_path():
+    png = _png_bytes()
+    dropped: dict[str, object] = {}
+
+    async def describe_one(media_id, image_bytes, content_type):
+        assert image_bytes == png
+        return DescribeItemOutcome(
+            alt_text_draft=GENERIC_DRAFT,
+            caption=GENERIC_DRAFT,
+            attachments=(
+                Attachment(
+                    fact_id=f"identity:cluster:{dropped['bob_cluster_id']}",
+                    fact_source=FactSource.IDENTITY,
+                    fact_label="Bob",
+                    decision=AttachmentDecision.DROPPED,
+                    altitude=AttachmentAltitude.NONE,
+                    review_reason="face_not_detected",
+                ),
+            ),
+        )
+
+    async def body():
+        path, engine, sf = await _make_db(naming_agreement_enabled=True, with_identities=True)
+        async with sf() as s:
+            dropped["bob_cluster_id"] = await _seed_confirmed_face(
+                s, label="Bob", media_id=1, bbox=(60, 10, 20, 20), roster_id=uuid.uuid4()
+            )
+            await _seed_confirmed_face(s, label="Ada", media_id=1, bbox=(10, 10, 20, 20), roster_id=uuid.uuid4())
+            await s.commit()
+        run_id = await _seed_run(sf, image_bytes=png)
+        await run_describe_job(
+            tenant_id=TENANT_ID, run_id=run_id, session_factory=sf, describe_one=describe_one, timeout_seconds=1.0
+        )
+        async with sf() as s:
+            items = await DescribeRunRepository(s).list_run_items(tenant_id=TENANT_ID, run_id=run_id)
+        await engine.dispose()
+        os.unlink(path)
+        return items[0]
+
+    item = asyncio.run(body())
+    assert item.status == DescribeItemStatus.COMPLETED
+    assert item.caption == GENERIC_DRAFT
+    assert item.alt_text_draft == FUSED_DRAFT
+    assert "Bob" not in (item.alt_text_draft or "")
+    assert [n["name"] for n in (item.provenance or {}).get("naming", {}).get("injected_names", [])] == ["Ada"]
+
+
+def test_unstubbed_naming_replaces_grounded_span_with_ada():
+    png = _png_bytes()
+
+    async def describe_one(media_id, image_bytes, content_type):
+        assert image_bytes == png
+        return DescribeItemOutcome(
+            alt_text_draft=GENERIC_DRAFT,
+            caption=GENERIC_DRAFT,
+            phrase_boxes=GROUNDED_BOXES,
+        )
+
+    async def body():
+        path, engine, sf = await _make_db(naming_agreement_enabled=True, with_identities=True)
+        async with sf() as s:
+            await _seed_confirmed_face(s, label="Bob", media_id=1, bbox=(60, 10, 20, 20), roster_id=uuid.uuid4())
+            await _seed_confirmed_face(s, label="Ada", media_id=1, bbox=(10, 10, 20, 20), roster_id=uuid.uuid4())
+            await s.commit()
+        run_id = await _seed_run(sf, image_bytes=png)
+        await run_describe_job(
+            tenant_id=TENANT_ID, run_id=run_id, session_factory=sf, describe_one=describe_one, timeout_seconds=1.0
+        )
+        async with sf() as s:
+            items = await DescribeRunRepository(s).list_run_items(tenant_id=TENANT_ID, run_id=run_id)
+        await engine.dispose()
+        os.unlink(path)
+        return items[0]
+
+    item = asyncio.run(body())
+    assert item.status == DescribeItemStatus.COMPLETED
+    assert item.caption == GENERIC_DRAFT
+    assert item.alt_text_draft == "Ada stands by the window."
+    assert item.alt_text_draft.startswith("Ada")
+    assert "Pictured from left" not in (item.alt_text_draft or "")
+    assert "Bob" not in (item.alt_text_draft or "")
+    assert (item.provenance or {}).get("naming", {}).get("mode") == "grounded"
+    assert [n["name"] for n in (item.provenance or {}).get("naming", {}).get("injected_names", [])] == ["Ada"]

@@ -59,6 +59,19 @@ describe('fetchApi', () => {
     expect(result).toBeUndefined();
   });
 
+  it('returns undefined for 205 responses even when a JSON body is present', async () => {
+    // TEST-15 / FEBT1-W2C-14: Fetch forbids a body on 205, so the constructor
+    // uses null. Mock text() to a JSON payload — empty text would still return
+    // undefined after dropping the 205 clause (same as the empty-200 path).
+    const response = new Response(null, { status: 205 });
+    vi.spyOn(response, 'text').mockResolvedValue(JSON.stringify({ ignored: true }));
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(response);
+
+    const result = await fetchApi<{ ignored: boolean }>('http://example.test/endpoint', { method: 'POST' });
+
+    expect(result).toBeUndefined();
+  });
+
   it('returns undefined for successful empty response bodies', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('', { status: 200 }));
 

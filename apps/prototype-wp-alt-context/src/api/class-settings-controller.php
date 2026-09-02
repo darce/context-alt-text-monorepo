@@ -215,7 +215,7 @@ class SettingsController {
 				);
 			}
 			$recognition_enabled = $body['recognition_enabled'];
-			update_option( RecognitionPolicy::OPTION, $recognition_enabled );
+			RecognitionPolicy::set( $recognition_enabled );
 			if ( $this->option_matches_intended( RecognitionPolicy::OPTION, $recognition_enabled ) ) {
 				$saved[] = 'recognition_enabled';
 			} else {

@@ -233,7 +233,8 @@ def test_naming_failure_still_describes_item(monkeypatch):
     assert [item.caption for item in items] == ["cap 1", "cap 2"]
 
 
-def test_naming_lookup_runs_concurrently_with_describe(monkeypatch):
+def test_naming_lookup_completes_before_describe_uses_shared_snapshot(monkeypatch):
+    """HARM-F3: one snapshot is taken before describe so fusion cannot drift."""
     import scene.application.describe_run_worker as wmod
 
     events: list[str] = []
@@ -244,8 +245,9 @@ def test_naming_lookup_runs_concurrently_with_describe(monkeypatch):
         events.append("load-end")
         return [], object()
 
-    async def describe_one(media_id, image_bytes, content_type):
+    async def describe_one(media_id, image_bytes, content_type, naming_inputs=None):
         events.append("describe-start")
+        assert naming_inputs is not None
         await asyncio.sleep(0.05)
         events.append("describe-end")
         return DescribeItemOutcome(alt_text_draft=GENERIC_DRAFT, caption=GENERIC_DRAFT)
@@ -270,8 +272,7 @@ def test_naming_lookup_runs_concurrently_with_describe(monkeypatch):
 
     items = asyncio.run(body())
     assert "load-start" in events and "describe-start" in events
-    assert events.index("describe-start") < events.index("load-end")
-    assert events.index("load-start") < events.index("describe-end")
+    assert events.index("load-end") < events.index("describe-start")
     assert items[0].status == DescribeItemStatus.COMPLETED
     assert items[0].alt_text_draft == FUSED_DRAFT
     assert items[0].caption == GENERIC_DRAFT
@@ -521,6 +522,144 @@ def test_recognition_disabled_skips_fusion_despite_naming_agreement(monkeypatch)
     assert item.status == DescribeItemStatus.COMPLETED
     assert item.alt_text_draft == GENERIC_DRAFT
     assert (item.provenance or {}).get("naming", {}).get("injected_names", []) == []
+
+
+def _fake_visual_facts_service(captured_faces: list):
+    class _FakeFacts:
+        caption = GENERIC_DRAFT
+
+    class _FakeResponse:
+        adapter = "seeded"
+        model_id = "m"
+        model_version = "v"
+        prompt_or_task_version = "p"
+        image_hash = "h"
+        context_hash = "c"
+        cached = False
+        duration_ms = 1
+        alt_text_draft = GENERIC_DRAFT
+        visual_facts = _FakeFacts()
+
+    class _FakeService:
+        last_phrase_boxes = ()
+        last_attachments = ()
+
+        def __init__(self, **kwargs):
+            pass
+
+        async def describe(self, **kwargs):
+            captured_faces.append(list(kwargs.get("confirmed_faces") or []))
+            return _FakeResponse()
+
+    return _FakeService
+
+
+def test_bulk_item_loads_fusion_naming_inputs_once_and_shares_confirmed_faces(monkeypatch):
+    """HARM-F3: Stage-2 fusion and Stage-3 preview share one naming snapshot.
+
+    Today's path loads twice (router _build_describe_one + worker lookup). A
+    label/merge between those calls can make the draft contradict provenance.
+    """
+    from types import SimpleNamespace
+
+    import scene.application.describe_run_worker as wmod
+    import scene.interface_adapters.http.routers.describe_run as rmod
+
+    loads: list[tuple[str, ...]] = []
+    fusion_faces: list[list[str]] = []
+    preview_faces: list[list[str]] = []
+    policy = object()
+
+    async def mutating_load(**kwargs):
+        snapshot = ("Ada",) if not loads else ("Bob",)
+        loads.append(snapshot)
+        return list(snapshot), policy
+
+    async def fake_naming_preview(**kwargs):
+        preview_faces.append(list(kwargs.get("confirmed_faces") or []))
+        return FUSED_DRAFT, object()
+
+    monkeypatch.setattr(wmod, "load_fusion_naming_inputs", mutating_load, raising=True)
+    monkeypatch.setattr(rmod, "load_fusion_naming_inputs", mutating_load, raising=True)
+    monkeypatch.setattr(rmod, "VisualFactsService", _fake_visual_facts_service(fusion_faces))
+    monkeypatch.setattr(wmod, "naming_preview", fake_naming_preview, raising=True)
+
+    async def body():
+        path, engine, sf = await _make_db(naming_agreement_enabled=True)
+        run_id = await _seed_run(sf)
+        describe_one = rmod._build_describe_one(
+            session_factory=sf,
+            tenant_id=TENANT_ID,
+            adapter=SimpleNamespace(kind="seeded"),
+            recognition_enabled=True,
+        )
+        await run_describe_job(
+            tenant_id=TENANT_ID, run_id=run_id, session_factory=sf, describe_one=describe_one, timeout_seconds=1.0
+        )
+        async with sf() as s:
+            items = await DescribeRunRepository(s).list_run_items(tenant_id=TENANT_ID, run_id=run_id)
+        await engine.dispose()
+        os.unlink(path)
+        return items[0]
+
+    item = asyncio.run(body())
+    assert len(loads) == 1, f"expected one fusion naming load per bulk item, got {loads!r}"
+    assert fusion_faces == [["Ada"]]
+    assert preview_faces == [["Ada"]]
+    assert fusion_faces == preview_faces
+    assert item.status == DescribeItemStatus.COMPLETED
+    assert item.alt_text_draft == FUSED_DRAFT
+
+
+def test_disabled_naming_does_not_load_fusion_inputs_on_bulk_path(monkeypatch):
+    """HARM-F3: recognition-off bulk items must not load fusion naming inputs."""
+    from types import SimpleNamespace
+
+    import scene.application.describe_run_worker as wmod
+    import scene.interface_adapters.http.routers.describe_run as rmod
+
+    loads: list[str] = []
+    fusion_faces: list[list[str]] = []
+
+    async def spy_load(**kwargs):
+        loads.append("load")
+        return ["Ada"], object()
+
+    monkeypatch.setattr(wmod, "load_fusion_naming_inputs", spy_load, raising=True)
+    monkeypatch.setattr(rmod, "load_fusion_naming_inputs", spy_load, raising=True)
+    monkeypatch.setattr(rmod, "VisualFactsService", _fake_visual_facts_service(fusion_faces))
+
+    async def body():
+        path, engine, sf = await _make_db(naming_agreement_enabled=True)
+        async with sf() as s:
+            repo = DescribeRunRepository(s)
+            run_id = await repo.create_run(
+                tenant_id=TENANT_ID,
+                media_ids=[1],
+                images={1: (b"rawbytes", "image/png")},
+                recognition_enabled=False,
+            )
+            await s.commit()
+        describe_one = rmod._build_describe_one(
+            session_factory=sf,
+            tenant_id=TENANT_ID,
+            adapter=SimpleNamespace(kind="seeded"),
+            recognition_enabled=False,
+        )
+        await run_describe_job(
+            tenant_id=TENANT_ID, run_id=run_id, session_factory=sf, describe_one=describe_one, timeout_seconds=1.0
+        )
+        async with sf() as s:
+            items = await DescribeRunRepository(s).list_run_items(tenant_id=TENANT_ID, run_id=run_id)
+        await engine.dispose()
+        os.unlink(path)
+        return items[0]
+
+    item = asyncio.run(body())
+    assert loads == []
+    assert fusion_faces == [[]]
+    assert item.status == DescribeItemStatus.COMPLETED
+    assert item.alt_text_draft == GENERIC_DRAFT
 
 
 def test_omitted_recognition_enabled_defaults_true_and_still_fuses():

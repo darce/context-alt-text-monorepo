@@ -501,9 +501,9 @@
       "verb": "Merge twin into labeled survivor (IdentityClusterItem.tsx)",
       "target": "identity-store",
       "hierarchy": "destructive",
-      "costly": true,
+      "costly": false,
       "irreversible": false,
-      "preview_required": true,
+      "preview_required": false,
       "screen_id": "workbench-control"
     },
     {

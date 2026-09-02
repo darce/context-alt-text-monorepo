@@ -15,6 +15,7 @@ import { APP_LINK_VALUES, toWorkbench } from '../../../navigation/appLinks';
 import { EmptyStateWarning } from './EmptyStateWarning';
 import { pendingMergeTwinForCluster } from './pendingMergeTwin';
 import { isMeaningfulMergeLabel } from './resolveMergeSurvivor';
+import { TWIN_CHIP_PENDING_STATUS } from './twinChipCopy';
 import { groupIdentitiesByClusters } from './utils';
 import { IdentityClusterItem } from './IdentityClusterItem';
 import { useInlineSuggestionBatch } from './useInlineSuggestionBatch';
@@ -149,6 +150,8 @@ export const IdentityClusterList = ({
                       suggestionId: twin.suggestionId,
                       survivorClusterId: twin.survivorClusterId,
                       survivorLabel: twin.survivorLabel,
+                      survivorMediaUrl: twin.survivorMediaUrl,
+                      survivorBbox: twin.survivorBbox,
                       onAccept: () => {
                         void scheduleAcceptMerge(twin.suggestionId);
                       },
@@ -156,9 +159,7 @@ export const IdentityClusterList = ({
                         void scheduleRejectMerge(twin.suggestionId);
                       },
                       isPending: twinPending,
-                      disabledReason: twinPending
-                        ? __('Saving merge suggestion…', 'alt-context')
-                        : null,
+                      disabledReason: twinPending ? TWIN_CHIP_PENDING_STATUS : null,
                     }
                   : undefined
               }

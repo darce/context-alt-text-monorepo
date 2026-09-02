@@ -205,6 +205,29 @@ describe('IdentityClusterList twin chip (WBUX-6/C3 S4-F1/F4/F6)', () => {
     expect(recognitionApi.rejectMergeSuggestion).not.toHaveBeenCalled();
   });
 
+  it('shares one pending-merge fetch across three list mounts (S4-F4)', async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const tree = (identities: DetectedIdentity[]) => (
+      <QueryClientProvider client={client}>
+        <IdentityClusterList identities={identities} />
+      </QueryClientProvider>
+    );
+
+    render(tree([identity()]));
+    await waitFor(() => {
+      expect(screen.getByRole('group', { name: /same person as ada lovelace/i })).toBeInTheDocument();
+    });
+    expect(recognitionApi.fetchPendingMergeSuggestions).toHaveBeenCalledTimes(1);
+
+    render(tree([identity({ identity_id: 'id-b', cluster_id: 'cluster-b-list' })]));
+    render(tree([identity({ identity_id: 'id-c', cluster_id: 'cluster-c-list' })]));
+
+    await waitFor(() => {
+      expect(recognitionApi.fetchPendingMergeSuggestions).toHaveBeenCalledWith(50, 0);
+    });
+    expect(recognitionApi.fetchPendingMergeSuggestions).toHaveBeenCalledTimes(1);
+  });
+
   it('subscribes only to pending merges at the twin page limit', async () => {
     renderList([identity()]);
 

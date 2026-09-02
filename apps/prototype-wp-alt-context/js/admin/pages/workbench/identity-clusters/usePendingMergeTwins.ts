@@ -53,6 +53,7 @@ export const usePendingMergeTwins = () => {
     },
     select: selectMerge,
     refetchInterval: false,
+    refetchOnMount: false,
     retry: false,
   });
 

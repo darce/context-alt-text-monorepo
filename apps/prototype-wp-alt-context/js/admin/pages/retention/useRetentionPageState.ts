@@ -3,6 +3,7 @@ import { __ } from '@wordpress/i18n';
 
 import type { RetentionExportResponse, RetentionMode, StartExportJobResponse } from '../../api/recognition';
 import { useToast } from '../../context/ToastContext';
+import { toUserMessage } from '../../utils/appError';
 import { useRetentionPageMutations } from './useRetentionPageMutations';
 import { useRetentionPageQueries } from './useRetentionPageQueries';
 
@@ -161,7 +162,7 @@ export const useRetentionPageState = () => {
       dispatch({ type: 'SET_DRAFT_MODE', mode: null });
       success(__('Retention policy updated.', 'alt-context'));
     } catch (error) {
-      showError(error instanceof Error ? error.message : __('Unable to update retention policy.', 'alt-context'));
+      showError(toUserMessage(error, __('Unable to update retention policy.', 'alt-context')));
     }
   };
 
@@ -170,7 +171,7 @@ export const useRetentionPageState = () => {
       const result: StartExportJobResponse = await exportMutation.mutateAsync();
       dispatch({ type: 'SET_EXPORT_JOB_ID', jobId: result.job_id });
     } catch (error) {
-      showError(error instanceof Error ? error.message : __('Unable to start export.', 'alt-context'));
+      showError(toUserMessage(error, __('Unable to start export.', 'alt-context')));
     }
   };
 
@@ -184,7 +185,7 @@ export const useRetentionPageState = () => {
       dispatch({ type: 'CLOSE_EXPORT_DIALOG' });
       success(__('Tenant export downloaded.', 'alt-context'));
     } catch (error) {
-      showError(error instanceof Error ? error.message : __('Unable to download export data.', 'alt-context'));
+      showError(toUserMessage(error, __('Unable to download export data.', 'alt-context')));
     }
   };
 
@@ -194,7 +195,7 @@ export const useRetentionPageState = () => {
       dispatch({ type: 'CLOSE_PURGE_DIALOG' });
       success(__('Tenant purge completed.', 'alt-context'));
     } catch (error) {
-      showError(error instanceof Error ? error.message : __('Unable to purge tenant data.', 'alt-context'));
+      showError(toUserMessage(error, __('Unable to purge tenant data.', 'alt-context')));
     }
   };
 
@@ -216,7 +217,7 @@ export const useRetentionPageState = () => {
       }
       success(__('Import completed.', 'alt-context'));
     } catch (error) {
-      showError(error instanceof Error ? error.message : __('Unable to import data.', 'alt-context'));
+      showError(toUserMessage(error, __('Unable to import data.', 'alt-context')));
     }
   };
 
@@ -226,7 +227,7 @@ export const useRetentionPageState = () => {
       dispatch({ type: 'SET_DRAFT_MODE', mode: null });
       success(__('GDPR preset applied.', 'alt-context'));
     } catch (error) {
-      showError(error instanceof Error ? error.message : __('Unable to apply preset.', 'alt-context'));
+      showError(toUserMessage(error, __('Unable to apply preset.', 'alt-context')));
     }
   };
 

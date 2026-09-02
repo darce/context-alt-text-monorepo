@@ -639,6 +639,45 @@ class SettingsControllerTest extends TestCase
         $this->assertFalse(get_option('acx_alt_style'));
     }
 
+    public function testGetSettingsReturnsRecognitionEnabledDefault(): void
+    {
+        $this->setUserCapability('manage_options', true);
+
+        $request = new WP_REST_Request('GET', '/acx/v1/settings');
+        $response = $this->controller->get_settings($request);
+
+        $this->assertTrue($response->get_data()['recognition_enabled']);
+    }
+
+    public function testSaveSettingsWritesRecognitionEnabled(): void
+    {
+        $this->setUserCapability('manage_options', true);
+
+        $request = new WP_REST_Request('POST', '/acx/v1/settings');
+        $request->set_body_params(['recognition_enabled' => false]);
+
+        $response = $this->controller->save_settings($request);
+
+        $this->assertInstanceOf(\WP_REST_Response::class, $response);
+        $this->assertContains('recognition_enabled', $response->get_data()['saved']);
+        $this->assertFalse(get_option('acx_recognition_enabled'));
+    }
+
+    public function testSaveSettingsRejectsNonBoolRecognitionEnabled(): void
+    {
+        $this->setUserCapability('manage_options', true);
+
+        $request = new WP_REST_Request('POST', '/acx/v1/settings');
+        $request->set_body_params(['recognition_enabled' => 'true']);
+
+        $response = $this->controller->save_settings($request);
+
+        $this->assertInstanceOf(\WP_Error::class, $response);
+        $this->assertSame('invalid_recognition_enabled', $response->get_error_code());
+        $this->assertSame(400, $response->get_error_data()['status'] ?? null);
+        $this->assertFalse(get_option('acx_recognition_enabled'));
+    }
+
     /**
      * R23-BR-14 [TEST-15]: storage failure must not report result=ok.
      *

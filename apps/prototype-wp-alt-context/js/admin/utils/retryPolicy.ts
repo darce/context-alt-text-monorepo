@@ -1,5 +1,5 @@
 import { classifyError, isCooldown } from './appError';
-import type { HTTPError } from './http';
+import { clampRetryAfterMs } from './retryAfter';
 
 export const RETRY_MAX_ATTEMPTS = 3;
 export const MAX_RETRY_DELAY_MS = 30_000;
@@ -8,11 +8,12 @@ export const MAX_RETRY_DELAY_MS = 30_000;
 export const isAbortLike = (error: unknown): boolean => classifyError(error)._tag === 'abort';
 
 /**
- * The server's explicit "ask again later": 429, or 503 carrying Retry-After.
- * Single classification shared by the retry predicate and the recognition
- * cooldown (REF-19: one policy, no per-consumer re-derivation).
+ * True when this error should open the shared recognition cooldown:
+ * 429, or 503 carrying Retry-After. Not an `HTTPError` type guard —
+ * classified AppError values and raw HTTPError instances both qualify
+ * (W1-L1-09). Shared with the retry predicate (REF-19).
  */
-export const isCooldownSignal = (error: unknown): error is HTTPError => isCooldown(error);
+export const isCooldownSignal = (error: unknown): boolean => isCooldown(error);
 
 /**
  * Shared QueryClient retry predicate.
@@ -41,13 +42,21 @@ export const shouldRetryRequest = (failureCount: number, error: unknown): boolea
 };
 
 /**
- * Shared retry delay: honor Retry-After when present, else bounded exponential backoff.
- * Both branches clamped at MAX_RETRY_DELAY_MS to avoid hour freezes and setTimeout overflow.
+ * Shared retry delay: honor Retry-After when present (clamped, no jitter),
+ * else bounded exponential backoff with full jitter (RES-06).
+ * Retry-After is also min-capped at MAX_RETRY_DELAY_MS so QueryClient waits
+ * stay short even when the shared operational ceiling is higher.
  */
-export const getRetryDelay = (attemptIndex: number, error: unknown): number => {
+export const getRetryDelay = (
+  attemptIndex: number,
+  error: unknown,
+  rng: () => number = Math.random,
+): number => {
+  const exponential = Math.min(1000 * 2 ** attemptIndex, MAX_RETRY_DELAY_MS);
   const classified = classifyError(error);
   if (classified._tag === 'http' && classified.retryAfterMs !== undefined) {
-    return Math.min(classified.retryAfterMs, MAX_RETRY_DELAY_MS);
+    const seconds = classified.retryAfterMs / 1000;
+    return Math.min(clampRetryAfterMs(seconds, exponential), MAX_RETRY_DELAY_MS);
   }
-  return Math.min(1000 * 2 ** attemptIndex, MAX_RETRY_DELAY_MS);
+  return exponential * rng();
 };

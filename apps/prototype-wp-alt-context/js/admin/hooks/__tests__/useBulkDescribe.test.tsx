@@ -465,6 +465,102 @@ describe('useBulkDescribe', () => {
       queryClient.clear();
     },
   );
+
+  it('invalidates workbench list pages once across a same-runId terminal → live → terminal flip [S7-F1]', async () => {
+    submitBulkDescribeRunMock.mockResolvedValue(
+      runResponse({ run_id: 'run-flip', status: 'pending', phase: 'queued' }),
+    );
+    fetchBulkDescribeRunMock.mockResolvedValue(
+      runResponse({
+        run_id: 'run-flip',
+        status: 'completed',
+        phase: 'complete',
+        completed: 4,
+        total: 4,
+        eta_seconds: 0,
+      }),
+    );
+
+    const { wrapper: scopedWrapper, queryClient } = createWrapper();
+    const { result, rerender } = renderHook(() => useBulkDescribe(), { wrapper: scopedWrapper });
+    result.current.submit.mutate([1, 2, 3, 4]);
+
+    await waitFor(() => expect(result.current.progress.isTerminal).toBe(true));
+    expect(result.current.progress.status).toBe('completed');
+    expectListPagesInvalidated(queryClient, true);
+
+    // Flip isTerminal true → false so the effect re-runs, then back to true.
+    // The once-per-run ref — not the dep array — must suppress the second write.
+    resetCachedQueries(queryClient);
+    expectListPagesInvalidated(queryClient, false);
+    fetchBulkDescribeRunMock.mockResolvedValue(
+      runResponse({
+        run_id: 'run-flip',
+        status: 'running',
+        phase: 'describing',
+        completed: 2,
+        total: 4,
+        eta_seconds: 20,
+      }),
+    );
+    result.current.progress.retry();
+    rerender();
+    await waitFor(() => expect(result.current.progress.isTerminal).toBe(false));
+    expect(result.current.progress.status).toBe('running');
+    expectListPagesInvalidated(queryClient, false);
+
+    fetchBulkDescribeRunMock.mockResolvedValue(
+      runResponse({
+        run_id: 'run-flip',
+        status: 'completed',
+        phase: 'complete',
+        completed: 4,
+        total: 4,
+        eta_seconds: 0,
+      }),
+    );
+    result.current.progress.retry();
+    rerender();
+    await waitFor(() => expect(result.current.progress.isTerminal).toBe(true));
+    expect(result.current.progress.status).toBe('completed');
+    expectListPagesInvalidated(queryClient, false);
+    queryClient.clear();
+  });
+
+  it.each([
+    { status: 'failed' as const, phase: 'failed' as const },
+    { status: 'cancelled' as const, phase: 'cancelled' as const },
+  ])(
+    'invalidates workbench list pages once when terminal status is $status [S7-F1]',
+    async ({ status, phase }) => {
+      submitBulkDescribeRunMock.mockResolvedValue(
+        runResponse({ run_id: `run-s7-${status}`, status: 'pending', phase: 'queued' }),
+      );
+      fetchBulkDescribeRunMock.mockResolvedValue(
+        runResponse({
+          run_id: `run-s7-${status}`,
+          status,
+          phase,
+          completed: status === 'failed' ? 0 : 2,
+          failed: status === 'failed' ? 2 : 0,
+          skipped: status === 'cancelled' ? 2 : 0,
+          total: 2,
+          eta_seconds: 0,
+          cancel_requested: status === 'cancelled',
+        }),
+      );
+
+      const { wrapper: scopedWrapper, queryClient } = createWrapper();
+      const { result } = renderHook(() => useBulkDescribe(), { wrapper: scopedWrapper });
+      result.current.submit.mutate([1, 2]);
+
+      await waitFor(() => expect(result.current.progress.isTerminal).toBe(true));
+      expect(result.current.progress.status).toBe(status);
+      expectListPagesInvalidated(queryClient, true);
+      expect(queryClient.getQueryState(mediaStatsTotalQueryKey)?.isInvalidated).toBe(false);
+      queryClient.clear();
+    },
+  );
 });
 
 describe('formatBulkDescribeErrorMessage', () => {

@@ -1,13 +1,31 @@
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { JOB_EVENT, type JobEvent } from '../jobMachine';
 import { JOB_STATUS, useJobProgressStream } from '../useJobProgressStream';
 import { useJobCoordination } from '../useJobCoordination';
 import { resetConfigCache, setNonce } from '../../api/config';
 
+const jobReducerSpy = vi.hoisted(() => vi.fn());
+const logJobEventSpy = vi.hoisted(() => vi.fn());
+
 vi.mock('../useJobCoordination', () => ({
   useJobCoordination: vi.fn(),
 }));
+
+vi.mock('../jobMachine', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../jobMachine')>();
+  jobReducerSpy.mockImplementation(actual.jobReducer);
+  return { ...actual, jobReducer: jobReducerSpy };
+});
+
+vi.mock('../../utils/logger', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../utils/logger')>();
+  logJobEventSpy.mockImplementation(actual.logJobEvent);
+  return { ...actual, logJobEvent: logJobEventSpy };
+});
+
+const dispatchedEvents = (): JobEvent[] => jobReducerSpy.mock.calls.map(([, event]) => event as JobEvent);
 
 class MockEventSource {
   static instances: MockEventSource[] = [];
@@ -46,6 +64,8 @@ describe('useJobProgressStream', () => {
 
   beforeEach(() => {
     MockEventSource.instances = [];
+    jobReducerSpy.mockClear();
+    logJobEventSpy.mockClear();
     vi.useRealTimers();
     window.AltContextAdmin = {
       nonce: 'test-nonce',
@@ -248,5 +268,68 @@ describe('useJobProgressStream', () => {
       expect(result.current.status).not.toBe(JOB_STATUS.FAILED);
       expect(result.current.stalledForSeconds).toBe(120);
     });
+  });
+
+  it('omits failedCount on completed_with_errors when the wire carries none (FEBT1-W2D-05)', async () => {
+    const { result } = renderHook(() => useJobProgressStream('job-cwe'));
+
+    await waitFor(() => expect(MockEventSource.instances).toHaveLength(1));
+    const source = MockEventSource.instances[0];
+
+    act(() => {
+      source.emit('done', { status: 'completed_with_errors', completed: 4, total: 5 });
+    });
+
+    await waitFor(() => {
+      expect(result.current.status).toBe(JOB_STATUS.COMPLETED_WITH_ERRORS);
+    });
+
+    const evt = dispatchedEvents().find((event) => event.type === JOB_EVENT.COMPLETE_WITH_ERRORS);
+    expect(evt).toBeDefined();
+    expect('failedCount' in (evt ?? {})).toBe(false);
+  });
+
+  it('FAIL uses the parsed server error message, not the literal stream failed (FEBT1-W2C-02)', async () => {
+    const { result } = renderHook(() => useJobProgressStream('job-proj-unavail'));
+
+    await waitFor(() => expect(MockEventSource.instances).toHaveLength(1));
+    const source = MockEventSource.instances[0];
+
+    act(() => {
+      source.emit('error', { message: 'projection backend unavailable' });
+    });
+
+    await waitFor(() => {
+      expect(result.current.status).toBe(JOB_STATUS.FAILED);
+    });
+
+    const evt = dispatchedEvents().find((event) => event.type === JOB_EVENT.FAIL);
+    expect(evt).toBeDefined();
+    if (evt?.type !== JOB_EVENT.FAIL) {
+      throw new Error('expected FAIL event');
+    }
+    expect(evt.error.message).toBe('projection backend unavailable');
+    expect(evt.error.message).not.toContain('stream failed');
+  });
+
+  it('FAILED terminal log record omits failedCount rather than deriving it (FEBT1-W2D-05)', async () => {
+    renderHook(() => useJobProgressStream('job-fail-log'));
+
+    await waitFor(() => expect(MockEventSource.instances).toHaveLength(1));
+    const source = MockEventSource.instances[0];
+
+    act(() => {
+      source.emit('error', { message: 'projection backend unavailable' });
+    });
+
+    await waitFor(() => {
+      expect(logJobEventSpy.mock.calls.some((call) => call[1] === 'stream.done')).toBe(true);
+    });
+
+    const doneLog = logJobEventSpy.mock.calls.find((call) => call[1] === 'stream.done');
+    expect(doneLog).toBeDefined();
+    const fields = doneLog?.[2] as Record<string, unknown> | undefined;
+    expect(fields).toBeDefined();
+    expect('failedCount' in (fields ?? {})).toBe(false);
   });
 });

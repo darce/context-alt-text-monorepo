@@ -15,7 +15,7 @@ export const JOB_MACHINE_STALL_THRESHOLD_MS = 30_000;
 
 /**
  * Max real reconnects before fail (RES-06). Incremented only at STREAM_OPEN
- * from stalled and at RECONNECTED — never on STALL_TICK (RES-13, GRPH-27/28).
+ * from stalled — never on STALL_TICK (RES-13, GRPH-27/28).
  */
 export const JOB_MACHINE_RECONNECT_CEILING = 3;
 
@@ -42,7 +42,6 @@ export const JOB_EVENT = {
   STREAM_OPEN: 'STREAM_OPEN',
   PROGRESS: 'PROGRESS',
   STALL_TICK: 'STALL_TICK',
-  RECONNECTED: 'RECONNECTED',
   OFFLINE: 'OFFLINE',
   ONLINE: 'ONLINE',
   COMPLETE: 'COMPLETE',
@@ -57,11 +56,10 @@ export type JobEvent =
   | { type: typeof JOB_EVENT.STREAM_OPEN; at: number }
   | { type: typeof JOB_EVENT.PROGRESS; done: number; total: number; at: number }
   | { type: typeof JOB_EVENT.STALL_TICK; now: number }
-  | { type: typeof JOB_EVENT.RECONNECTED; at: number }
   | { type: typeof JOB_EVENT.OFFLINE; at: number }
   | { type: typeof JOB_EVENT.ONLINE; at: number }
   | { type: typeof JOB_EVENT.COMPLETE; at: number }
-  | { type: typeof JOB_EVENT.COMPLETE_WITH_ERRORS; failedCount: number; at: number }
+  | { type: typeof JOB_EVENT.COMPLETE_WITH_ERRORS; failedCount?: number; at: number }
   | { type: typeof JOB_EVENT.FAIL; error: { message: string } }
   | { type: typeof JOB_EVENT.CANCEL }
   | { type: typeof JOB_EVENT.RESET };
@@ -178,9 +176,6 @@ const stallIfQuiet = (state: JobMachineState, event: Extract<JobEvent, { type: '
 const boundOfflineWait = (state: JobMachineState, event: Extract<JobEvent, { type: 'STALL_TICK' }>): JobMachineState =>
   onQuietTick(state, event, JOB_MACHINE_STATE.offline);
 
-const reconnect = (state: JobMachineState, event: Extract<JobEvent, { type: 'RECONNECTED' }>): JobMachineState =>
-  applyReconnect(state, event.at);
-
 const goOffline = (state: JobMachineState, event: Extract<JobEvent, { type: 'OFFLINE' }>): JobMachineState => {
   if (state.status === JOB_MACHINE_STATE.offline) {
     return state;
@@ -219,7 +214,7 @@ const completeWithErrors = (
 ): JobMachineState => ({
   ...state,
   status: JOB_MACHINE_STATE.completedWithErrors,
-  failedCount: event.failedCount,
+  ...(event.failedCount !== undefined ? { failedCount: event.failedCount } : {}),
   lastEventAt: event.at,
   resumeStatus: null,
 });
@@ -275,7 +270,6 @@ const TRANSITIONS: TransitionTable = {
     [JOB_EVENT.STREAM_OPEN]: openStream,
     [JOB_EVENT.PROGRESS]: applyProgress,
     [JOB_EVENT.STALL_TICK]: stallIfQuiet,
-    [JOB_EVENT.RECONNECTED]: reconnect,
     [JOB_EVENT.OFFLINE]: goOffline,
     [JOB_EVENT.COMPLETE]: complete,
     [JOB_EVENT.COMPLETE_WITH_ERRORS]: completeWithErrors,
@@ -331,7 +325,6 @@ export const jobReducer = (state: JobMachineState, event: JobEvent): JobMachineS
     case JOB_EVENT.STREAM_OPEN:
     case JOB_EVENT.PROGRESS:
     case JOB_EVENT.STALL_TICK:
-    case JOB_EVENT.RECONNECTED:
     case JOB_EVENT.OFFLINE:
     case JOB_EVENT.ONLINE:
     case JOB_EVENT.COMPLETE:

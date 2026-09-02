@@ -96,6 +96,7 @@ const defaultSettings: SettingsResponse = {
   tenant_id_source: 'option',
   tenant_paired: false,
   alt_style: 'alt_only',
+  recognition_enabled: true,
   description_budget: {
     max_attempts: -1,
     usage: {
@@ -219,6 +220,42 @@ describe('SettingsPage', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Save Settings' }));
 
     expect(saveMutate).toHaveBeenCalledWith({ url: 'https://new-api.example.com' });
+  });
+
+  it('renders the people recognition checkbox checked when GET recognition_enabled is true', () => {
+    mockUseQuery.mockReturnValue(createMockQuery({ data: defaultSettings }));
+    render(<SettingsPage />);
+
+    expect(screen.getByRole('heading', { name: 'People & recognition' })).toBeInTheDocument();
+    expect(screen.getByLabelText('Identify people in photos')).toBeChecked();
+    expect(
+      screen.getByText(
+        'Uses facial recognition to name people in descriptions. When off, Describe writes alt text without identities. Applies to every run.',
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it('posts recognition_enabled false when the checkbox is unchecked then saved', () => {
+    mockUseQuery.mockReturnValue(createMockQuery({ data: defaultSettings }));
+    render(<SettingsPage />);
+
+    fireEvent.click(screen.getByLabelText('Identify people in photos'));
+    fireEvent.click(screen.getByRole('button', { name: 'Save Settings' }));
+
+    expect(saveMutate).toHaveBeenCalledWith({ recognition_enabled: false });
+  });
+
+  it('does not post recognition_enabled when the checkbox is untouched', () => {
+    mockUseQuery.mockReturnValue(createMockQuery({ data: defaultSettings }));
+    render(<SettingsPage />);
+
+    fireEvent.change(screen.getByLabelText('Service API URL'), {
+      target: { value: 'https://new-api.example.com' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Save Settings' }));
+
+    expect(saveMutate).toHaveBeenCalledWith({ url: 'https://new-api.example.com' });
+    expect(saveMutate.mock.calls[0]?.[0]).not.toHaveProperty('recognition_enabled');
   });
 
   it('renders description budget usage and saves the attempt limit', () => {

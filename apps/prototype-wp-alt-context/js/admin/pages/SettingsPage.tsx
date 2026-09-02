@@ -134,6 +134,9 @@ export const SettingsPage = (): React.JSX.Element => {
     ) {
       payload.description_budget = { max_attempts: descriptionBudgetMaxAttempts };
     }
+    if (state.recognitionEnabled !== data.recognition_enabled) {
+      payload.recognition_enabled = state.recognitionEnabled;
+    }
 
     if (Object.keys(payload).length === 0) {
       dispatch({
@@ -231,6 +234,7 @@ export const SettingsPage = (): React.JSX.Element => {
         url={state.url}
         apiKey={state.apiKey}
         descriptionBudgetMaxAttempts={state.descriptionBudgetMaxAttempts}
+        recognitionEnabled={state.recognitionEnabled}
         urlReadOnly={urlReadOnly}
         keyReadOnly={keyReadOnly}
         savePending={saveMutation.isPending}
@@ -242,6 +246,7 @@ export const SettingsPage = (): React.JSX.Element => {
         onDescriptionBudgetMaxAttemptsChange={(value) =>
           dispatch({ type: 'setDescriptionBudgetMaxAttempts', value })
         }
+        onRecognitionEnabledChange={(value) => dispatch({ type: 'setRecognitionEnabled', value })}
         onSave={handleSave}
         onTest={handleTest}
         onFocusServiceUrl={() => {

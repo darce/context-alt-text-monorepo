@@ -1644,18 +1644,56 @@ if (!function_exists('update_option')) {
             return false;
         }
 
-        // Core returns false when the value is unchanged (failure and no-op share
-        // the same return — production recovery branches must re-read).
+        // Core compares against get_option($option) whose default is false
+        // (Trac r56788). A missing option therefore cannot be created by
+        // update_option(..., false): false === false → no-op, no row inserted.
+        // Failure and no-op share the same return — recovery must re-read.
+        $old = get_option($key);
+        if ($old === $value) {
+            return false;
+        }
+        // Mirror core's maybe_serialize equality for array/object shapes that
+        // are value-equal but not the same zval (e.g. re-built arrays).
+        if (serialize($old) === serialize($value)) {
+            return false;
+        }
+
+        if (!isset($GLOBALS['__ac_options']) || !is_array($GLOBALS['__ac_options'])) {
+            $GLOBALS['__ac_options'] = [];
+        }
+        $GLOBALS['__ac_options'][$key] = $value;
+        return true;
+    }
+}
+
+if (!function_exists('add_option')) {
+    /**
+     * Insert a missing option. Honors the same opt-in failure map as
+     * update_option so RecognitionPolicy::set() can be the single writer.
+     *
+     * @param string           $key
+     * @param mixed            $value
+     * @param string           $deprecated
+     * @param string|bool|null $autoload
+     */
+    function add_option($key, $value = '', $deprecated = '', $autoload = null)
+    {
+        if (!isset($GLOBALS['__ac_update_option_calls']) || !is_array($GLOBALS['__ac_update_option_calls'])) {
+            $GLOBALS['__ac_update_option_calls'] = [];
+        }
+        $GLOBALS['__ac_update_option_calls'][$key] = ($GLOBALS['__ac_update_option_calls'][$key] ?? 0) + 1;
+
+        if (!isset($GLOBALS['__ac_option_autoload']) || !is_array($GLOBALS['__ac_option_autoload'])) {
+            $GLOBALS['__ac_option_autoload'] = [];
+        }
+        $GLOBALS['__ac_option_autoload'][$key] = null === $autoload ? true : $autoload;
+
+        if (!empty($GLOBALS['__ac_update_option_fail'][$key])) {
+            return false;
+        }
+
         if (isset($GLOBALS['__ac_options']) && array_key_exists($key, $GLOBALS['__ac_options'])) {
-            $old = $GLOBALS['__ac_options'][$key];
-            if ($old === $value) {
-                return false;
-            }
-            // Mirror core's maybe_serialize equality for array/object shapes that
-            // are value-equal but not the same zval (e.g. re-built arrays).
-            if (serialize($old) === serialize($value)) {
-                return false;
-            }
+            return false;
         }
 
         if (!isset($GLOBALS['__ac_options']) || !is_array($GLOBALS['__ac_options'])) {

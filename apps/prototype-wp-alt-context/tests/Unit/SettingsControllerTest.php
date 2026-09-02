@@ -639,6 +639,97 @@ class SettingsControllerTest extends TestCase
         $this->assertFalse(get_option('acx_alt_style'));
     }
 
+    public function testGetSettingsReturnsRecognitionEnabledDefault(): void
+    {
+        $this->setUserCapability('manage_options', true);
+
+        $request = new WP_REST_Request('GET', '/acx/v1/settings');
+        $response = $this->controller->get_settings($request);
+
+        $this->assertTrue($response->get_data()['recognition_enabled']);
+    }
+
+    public function testSaveSettingsWritesRecognitionEnabled(): void
+    {
+        $this->setUserCapability('manage_options', true);
+        $this->assertNull(get_option('acx_recognition_enabled', null));
+
+        $request = new WP_REST_Request('POST', '/acx/v1/settings');
+        $request->set_body_params(['recognition_enabled' => false]);
+
+        $response = $this->controller->save_settings($request);
+
+        $this->assertInstanceOf(\WP_REST_Response::class, $response);
+        $this->assertSame(SettingsController::SAVE_RESULT_OK, $response->get_data()['result']);
+        $this->assertContains('recognition_enabled', $response->get_data()['saved']);
+        $this->assertSame('0', get_option('acx_recognition_enabled'));
+
+        $get = $this->controller->get_settings(new WP_REST_Request('GET', '/acx/v1/settings'));
+        $this->assertFalse($get->get_data()['recognition_enabled']);
+    }
+
+    public function testGetSettingsReportsRecognitionEnabledTrueAfterPostTrue(): void
+    {
+        $this->setUserCapability('manage_options', true);
+        $this->setOption('acx_recognition_enabled', '0');
+
+        $request = new WP_REST_Request('POST', '/acx/v1/settings');
+        $request->set_body_params(['recognition_enabled' => true]);
+
+        $response = $this->controller->save_settings($request);
+
+        $this->assertInstanceOf(\WP_REST_Response::class, $response);
+        $this->assertSame(SettingsController::SAVE_RESULT_OK, $response->get_data()['result']);
+        $this->assertContains('recognition_enabled', $response->get_data()['saved']);
+        $this->assertSame('1', get_option('acx_recognition_enabled'));
+
+        $get = $this->controller->get_settings(new WP_REST_Request('GET', '/acx/v1/settings'));
+        $this->assertTrue($get->get_data()['recognition_enabled']);
+    }
+
+    /**
+     * r2-S1-F1 [TEST-15] [TEST-06] [FORM-08]: non-boolean recognition_enabled
+     * must 400 with invalid_recognition_enabled and leave the option row
+     * absent. Pin reds under the mutant that loosens is_bool to also accept
+     * 0/1 and (bool)-casts into set() — assertFalse(get_option()) cannot
+     * distinguish "did not persist" from "never had a row".
+     *
+     * @dataProvider nonBoolRecognitionEnabledProvider
+     */
+    public function testSaveSettingsRejectsNonBoolRecognitionEnabled(mixed $value): void
+    {
+        $this->setUserCapability('manage_options', true);
+        $this->assertNull(get_option('acx_recognition_enabled', null));
+
+        $request = new WP_REST_Request('POST', '/acx/v1/settings');
+        $request->set_body_params(['recognition_enabled' => $value]);
+
+        $response = $this->controller->save_settings($request);
+
+        $this->assertInstanceOf(\WP_Error::class, $response);
+        $this->assertSame('invalid_recognition_enabled', $response->get_error_code());
+        $this->assertSame(400, $response->get_error_data()['status'] ?? null);
+        $this->assertNull(
+            get_option('acx_recognition_enabled', null),
+            'rejected write must leave the option row absent, not a stored falsey'
+        );
+    }
+
+    /**
+     * @return array<string, array{0: mixed}>
+     */
+    public static function nonBoolRecognitionEnabledProvider(): array
+    {
+        return [
+            'string_true' => ['true'],
+            'string_false' => ['false'],
+            'int_zero' => [0],
+            'int_one' => [1],
+            'string_one' => ['1'],
+            'null' => [null],
+        ];
+    }
+
     /**
      * R23-BR-14 [TEST-15]: storage failure must not report result=ok.
      *
@@ -679,6 +770,12 @@ class SettingsControllerTest extends TestCase
             $this->assertNotSame('secret-key-value', $stored);
         } elseif ('alt_style' === $savedField) {
             $this->assertNotSame('alt_plus_description', $stored);
+        } elseif ('recognition_enabled' === $savedField) {
+            $this->assertNotSame('0', $stored);
+            $this->assertNull(
+                $stored,
+                'write failure must leave acx_recognition_enabled absent (distinguishable from stored falsey / DEFAULT-on)'
+            );
         }
     }
 
@@ -707,6 +804,19 @@ class SettingsControllerTest extends TestCase
                 ['description_budget' => ['max_attempts' => 50]],
                 'acx_description_budget_max_attempts',
                 'description_budget',
+            ],
+            'recognition_enabled' => [
+                ['recognition_enabled' => false],
+                'acx_recognition_enabled',
+                'recognition_enabled',
+            ],
+            // r2-S1-F2 [TEST-15]: DEFAULT is ON, so POST true + add_option
+            // failure must not report ok just because enabled() already
+            // matches the intended value on a missing row.
+            'recognition_enabled_post_true' => [
+                ['recognition_enabled' => true],
+                'acx_recognition_enabled',
+                'recognition_enabled',
             ],
         ];
     }
@@ -750,6 +860,7 @@ class SettingsControllerTest extends TestCase
             'api_key' => 'stable-key-1234',
             'alt_style' => 'alt_only',
             'description_budget' => ['max_attempts' => 10],
+            'recognition_enabled' => false,
         ];
 
         $request = new WP_REST_Request('POST', '/acx/v1/settings');
@@ -762,6 +873,7 @@ class SettingsControllerTest extends TestCase
         $this->assertContains('api_key', $first->get_data()['saved']);
         $this->assertContains('alt_style', $first->get_data()['saved']);
         $this->assertContains('description_budget', $first->get_data()['saved']);
+        $this->assertContains('recognition_enabled', $first->get_data()['saved']);
         $this->assertArrayNotHasKey('failed', $first->get_data());
 
         // Second save of identical values: update_option no-ops (returns false).
@@ -777,11 +889,53 @@ class SettingsControllerTest extends TestCase
         $this->assertContains('api_key', $data['saved']);
         $this->assertContains('alt_style', $data['saved']);
         $this->assertContains('description_budget', $data['saved']);
+        $this->assertContains('recognition_enabled', $data['saved']);
         $this->assertArrayNotHasKey('failed', $data);
         $this->assertSame('https://stable.example.com', get_option('acx_recognition_url'));
         $this->assertSame('stable-key-1234', get_option('acx_recognition_api_key'));
         $this->assertSame('alt_only', get_option('acx_alt_style'));
         $this->assertSame(10, get_option('acx_description_budget_max_attempts'));
+        $this->assertSame('0', get_option('acx_recognition_enabled'));
+    }
+
+    /**
+     * R23-BR-14: stored '0' and '' already mean disabled; re-saving false is a
+     * no-op that must still report ok (read-back via normalize, not bytes).
+     *
+     * @dataProvider recognitionEnabledNoOpStoredProvider
+     */
+    public function testSaveSettingsReportsOkOnNoOpResaveOfStoredZeroAndEmptyRecognitionEnabled(
+        string $stored
+    ): void {
+        $this->setUserCapability('manage_options', true);
+        $this->setOption('acx_recognition_enabled', $stored);
+
+        $request = new WP_REST_Request('POST', '/acx/v1/settings');
+        $request->set_body_params(['recognition_enabled' => false]);
+
+        $response = $this->controller->save_settings($request);
+        $data = $response->get_data();
+
+        $this->assertSame(
+            SettingsController::SAVE_RESULT_OK,
+            $data['result'],
+            'stored ' . var_export($stored, true) . ' must match intended false'
+        );
+        $this->assertContains('recognition_enabled', $data['saved']);
+        $this->assertArrayNotHasKey('failed', $data);
+        $get = $this->controller->get_settings(new WP_REST_Request('GET', '/acx/v1/settings'));
+        $this->assertFalse($get->get_data()['recognition_enabled']);
+    }
+
+    /**
+     * @return array<string, array{0: string}>
+     */
+    public static function recognitionEnabledNoOpStoredProvider(): array
+    {
+        return [
+            'stored_zero' => ['0'],
+            'stored_empty' => [''],
+        ];
     }
 
     /**

@@ -23,7 +23,7 @@ import { __ } from '@wordpress/i18n';
 
 import { fetchClusterMembers } from '../../../api/recognition';
 import { queryKeys } from '../../../api/queryKeys';
-import { AuthExpiredError, HTTPError } from '../../../utils/http';
+import { classifyError, isHttpStatus } from '../../../utils/appError';
 
 export type LiveReviewTargetStatus = 'live' | 'rebound' | 'retired' | 'auth_expired';
 
@@ -47,7 +47,8 @@ export const LIVE_TARGET_CLOSE_ANNOUNCE = 'This review target is no longer avail
 /** A11Y-21 copy — branch (B) rebind path. */
 export const LIVE_TARGET_REBIND_ANNOUNCE = 'This group was merged — switched to the surviving group.';
 
-const isClusterNotFound = (err: unknown): boolean => err instanceof HTTPError && err.status === 404;
+const isClusterNotFound = (err: unknown): boolean => isHttpStatus(err, 404);
+const isAuthExpired = (err: unknown): boolean => classifyError(err)._tag === 'auth_expired';
 
 export const useLiveReviewTarget = (
   openClusterId: string | null,
@@ -88,7 +89,7 @@ export const useLiveReviewTarget = (
       if (isClusterNotFound(error)) {
         return false;
       }
-      if (error instanceof AuthExpiredError) {
+      if (isAuthExpired(error)) {
         return false;
       }
       return failureCount < 1;
@@ -96,8 +97,7 @@ export const useLiveReviewTarget = (
   });
 
   const retired = openClusterId != null && existenceQuery.isError && isClusterNotFound(existenceQuery.error);
-  const authExpired =
-    openClusterId != null && existenceQuery.isError && existenceQuery.error instanceof AuthExpiredError;
+  const authExpired = openClusterId != null && existenceQuery.isError && isAuthExpired(existenceQuery.error);
 
   // S5-02: resolve survivor lazily at read time — do not memoize against
   // [retired, openClusterId] alone. recordMergeSurvivor mutates a ref-backed

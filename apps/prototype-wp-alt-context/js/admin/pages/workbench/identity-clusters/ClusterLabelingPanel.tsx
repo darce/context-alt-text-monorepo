@@ -38,7 +38,7 @@ import {
 import { NameFaceControl, normalizeNameFaceLabel, type NameFaceResolution } from './NameFaceControl';
 import { getReservedLabelMessage, isReservedLabel } from './reservedLabel';
 import { formatUserFacingError, isAuthExpiredError } from '../../../utils/userFacingError';
-import { getProjectionNotReadyMessage, isProjectionNotReadyError } from './clusterMutationUtils';
+import { getProjectionNotReadyMessage, isAbortError, isProjectionNotReadyError } from './clusterMutationUtils';
 import { MergeUndoBanner } from './MergeUndoBanner';
 import {
   dropClusterFromReviewCaches,
@@ -70,12 +70,11 @@ const getErrorMessage = (error: unknown): string => {
   if (isAuthExpiredError(error)) {
     return formatUserFacingError(error, __('An unexpected error occurred. Please try again.', 'alt-context'));
   }
+  if (isAbortError(error)) {
+    return __('Save is taking too long. Please try again.', 'alt-context');
+  }
   if (error instanceof Error) {
-    if (
-      error.name === 'AbortError' ||
-      error.message.toLowerCase().includes('timed out') ||
-      error.message.toLowerCase().includes('timeout')
-    ) {
+    if (error.message.toLowerCase().includes('timed out') || error.message.toLowerCase().includes('timeout')) {
       return __('Save is taking too long. Please try again.', 'alt-context');
     }
     if (isProjectionNotReadyError(error.message)) {
@@ -102,7 +101,7 @@ const withTimeout = async <T,>(
   try {
     return await request(controller.signal);
   } catch (error) {
-    if (error instanceof DOMException && error.name === 'AbortError') {
+    if (isAbortError(error)) {
       throw new Error(timeoutMessage);
     }
     throw error;

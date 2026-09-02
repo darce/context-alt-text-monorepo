@@ -9,6 +9,7 @@ import type { ComboboxOption } from '../../../../components/ui/combobox';
 import type { ClusterGroup } from './types';
 import type { SaveDialogAction } from './useClusterConfirmDialog';
 import type { SaveStatus } from './useClusterSaveStatus';
+import { isAbortError } from './clusterMutationUtils';
 import { getReservedLabelMessage, isReservedLabel } from './reservedLabel';
 import { useClusterMatchAction, type ClusterLabelMatch } from './useClusterMatchAction';
 import { filterEditableClusterMatch } from './utils';
@@ -194,7 +195,7 @@ export const useClusterSaveAction = ({
           resetSaveStatus();
         }
       } catch (err) {
-        if (err && typeof err === 'object' && 'name' in err && (err as { name: string }).name === 'AbortError') {
+        if (isAbortError(err)) {
           resetSaveStatus();
           return;
         }
@@ -319,7 +320,7 @@ export const useClusterSaveAction = ({
           }
         }
       } catch (err) {
-        if (err && typeof err === 'object' && 'name' in err && (err as { name: string }).name === 'AbortError') {
+        if (isAbortError(err)) {
           resetSaveStatus();
           return;
         }

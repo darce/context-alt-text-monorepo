@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { fetchClusterMembers } from '../../../../api/recognition';
 import type { ClusterMembersResponse } from '../../../../api/recognition';
+import { classifyError } from '../../../../utils/appError';
 import { AuthExpiredError, HTTPError } from '../../../../utils/http';
 import {
   LIVE_TARGET_CLOSE_ANNOUNCE,
@@ -266,6 +267,69 @@ describe('useLiveReviewTarget', () => {
     expect(result.current.resolvedClusterId).toBe('cluster-auth');
     expect(onClose).not.toHaveBeenCalled();
     // Inline retry predicate returns false for AuthExpiredError → single probe.
+    expect(fetchClusterMembers).toHaveBeenCalledTimes(1);
+  });
+
+  it('pre-classified AppError http 404 retires without retry [FEBT-1-W1-E-02]', async () => {
+    const classified = classifyError(notFound('cluster-x'));
+    vi.mocked(fetchClusterMembers).mockRejectedValue(classified);
+    const onClose = vi.fn();
+    const onAnnounce = vi.fn();
+
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: true } },
+    });
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+    );
+
+    const { result } = renderHook(
+      () =>
+        useLiveReviewTarget('cluster-x', {
+          resolveSurvivor: () => null,
+          onAnnounce,
+          onClose,
+        }),
+      { wrapper },
+    );
+
+    await waitFor(() => {
+      expect(result.current.status).toBe('retired');
+    });
+    expect(result.current.resolvedClusterId).toBeNull();
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(onAnnounce).toHaveBeenCalledWith(LIVE_TARGET_CLOSE_ANNOUNCE);
+    expect(fetchClusterMembers).toHaveBeenCalledTimes(1);
+  });
+
+  it('pre-classified AppError auth_expired is never retried and never absorbed into live [FEBT-1-W1-E-02]', async () => {
+    const classified = classifyError(
+      new AuthExpiredError({
+        endpoint: '/members',
+        status: 403,
+      }),
+    );
+    vi.mocked(fetchClusterMembers).mockRejectedValue(classified);
+    const onClose = vi.fn();
+
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: true } },
+    });
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+    );
+
+    const { result } = renderHook(() => useLiveReviewTarget('cluster-auth', { onClose }), {
+      wrapper,
+    });
+
+    await waitFor(() => {
+      expect(result.current.status).toBe('auth_expired');
+    });
+    expect(result.current.status).not.toBe('live');
+    expect(result.current.error).toBe(classified);
+    expect(result.current.resolvedClusterId).toBe('cluster-auth');
+    expect(onClose).not.toHaveBeenCalled();
     expect(fetchClusterMembers).toHaveBeenCalledTimes(1);
   });
 

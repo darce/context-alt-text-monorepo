@@ -32,16 +32,42 @@ const serverError = (): HTTPError => clusterError(500, 'Request to /cluster fail
 
 const clientError = (): HTTPError => clusterError(400, 'Request to /cluster failed (400): bad');
 
+const serviceUnavailable = (retryAfterSeconds?: number): HTTPError =>
+  clusterError(503, 'Request to /cluster failed (503): unavailable', retryAfterSeconds);
+
 describe('clusterAutoRetry pure helpers', () => {
   it('exports a hard ceiling of exactly 3 total attempts (RES-06)', () => {
     expect(CLUSTER_RETRY_MAX_ATTEMPTS).toBe(3);
   });
 
-  it('treats only 429 as retryable (API-08)', () => {
+  it('treats 429 and 503-with-Retry-After as retryable via isCooldown (E-07)', () => {
     expect(isRetryableClusterError(rateLimited(2))).toBe(true);
+    expect(isRetryableClusterError(serviceUnavailable(5))).toBe(true);
+    expect(isRetryableClusterError(serviceUnavailable())).toBe(false);
     expect(isRetryableClusterError(serverError())).toBe(false);
     expect(isRetryableClusterError(clientError())).toBe(false);
     expect(isRetryableClusterError(new Error('plain'))).toBe(false);
+  });
+
+  it('retries a pre-classified AppError 429 without instanceof HTTPError (E-02)', () => {
+    const classified = {
+      _tag: 'http' as const,
+      status: 429,
+      endpoint: '/cluster',
+      retryAfterMs: 4000,
+      message: 'rate limited',
+      cause: null,
+    };
+    expect(isRetryableClusterError(classified)).toBe(true);
+    expect(resolveClusterRetryDelaySeconds(classified)).toBe(4);
+    expect(canAutoRetryCluster(1, classified)).toBe(true);
+  });
+
+  it('503 with Retry-After uses classifyError retryAfterMs (E-07)', () => {
+    expect(isRetryableClusterError(serviceUnavailable(5))).toBe(true);
+    expect(resolveClusterRetryDelaySeconds(serviceUnavailable(5))).toBe(5);
+    expect(canAutoRetryCluster(1, serviceUnavailable(5))).toBe(true);
+    expect(canAutoRetryCluster(3, serviceUnavailable(5))).toBe(false);
   });
 
   it('AuthExpiredError falls through terminal (never auto-retried) [TEST-15]', () => {
@@ -203,6 +229,21 @@ describe('createClusterAutoRetry', () => {
     expect(onExhausted).not.toHaveBeenCalled();
     expect(onTerminalError).not.toHaveBeenCalled();
     expect(controller.getAttemptCount()).toBe(0);
+  });
+
+  it('503 with Retry-After auto-retries with the server delay (E-07)', () => {
+    const { mutate, onQueued, onExhausted, onTerminalError, controller } = buildHarness();
+
+    controller.start();
+    expect(mutate).toHaveBeenCalledTimes(1);
+
+    expect(controller.noteError(serviceUnavailable(2))).toBe(true);
+    expect(onQueued).toHaveBeenLastCalledWith(2);
+    expect(onTerminalError).not.toHaveBeenCalled();
+    expect(onExhausted).not.toHaveBeenCalled();
+
+    vi.advanceTimersByTime(2000);
+    expect(mutate).toHaveBeenCalledTimes(2);
   });
 
   it('(e) non-429 error → immediate error path, zero retries', () => {

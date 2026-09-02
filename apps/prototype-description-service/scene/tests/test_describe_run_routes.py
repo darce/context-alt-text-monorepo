@@ -9,15 +9,17 @@ coverage without the removed SSE stream assertions.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import uuid
 from contextlib import contextmanager
 
 import scene.interface_adapters.http.routers.describe_run as describe_run_mod
+from scene.application.describe_run_repository import DescribeRunRepository
 from scene.domain.describe_run import DescribeRunStatus
 from scene.tests.demo_quota_harness import demo_quota_client
 from scene.tests.demo_quota_harness import recognition_used as _used
-from scene.tests.test_describe_run_worker import _client, _submit
+from scene.tests.test_describe_run_worker import TENANT_ID, _client, _submit
 
 
 def _no_worker(monkeypatch):
@@ -31,6 +33,95 @@ def _create_run(client) -> str:
     response = _submit(client, [70])
     assert response.status_code == 202, response.text
     return response.json()["run_id"]
+
+
+def test_submit_omitted_recognition_enabled_defaults_true(monkeypatch):
+    _no_worker(monkeypatch)
+    with _client() as (client, sf):
+        response = _submit(client, [70])
+        assert response.status_code == 202, response.text
+        body = response.json()
+        assert body["recognition_enabled"] is True
+
+        async def _assert_row():
+            async with sf() as s:
+                run = await DescribeRunRepository(s).get_run(
+                    tenant_id=uuid.UUID(body["tenant_id"]), run_id=uuid.UUID(body["run_id"])
+                )
+            assert run is not None
+            assert run.recognition_enabled is True
+
+        asyncio.run(_assert_row())
+
+
+def test_submit_persists_recognition_enabled_false(monkeypatch):
+    _no_worker(monkeypatch)
+    with _client() as (client, sf):
+        files = [("image_70", ("70.png", b"\x89PNG\r\n\x1a\n", "image/png"))]
+        data = {"tenant_id": str(TENANT_ID), "media_ids": json.dumps([70]), "recognition_enabled": "false"}
+        response = client.post("/scene/describe/run", data=data, files=files)
+        assert response.status_code == 202, response.text
+        body = response.json()
+        assert body["recognition_enabled"] is False
+
+        async def _assert_row():
+            async with sf() as s:
+                run = await DescribeRunRepository(s).get_run(tenant_id=TENANT_ID, run_id=uuid.UUID(body["run_id"]))
+            assert run is not None
+            assert run.recognition_enabled is False
+
+        asyncio.run(_assert_row())
+
+
+def test_stage2_skips_load_fusion_naming_inputs_when_recognition_disabled(monkeypatch):
+    from types import SimpleNamespace
+
+    loads: list[int] = []
+
+    async def fake_load(**kwargs):
+        loads.append(1)
+        return [], object()
+
+    class _FakeFacts:
+        caption = "cap"
+
+    class _FakeResponse:
+        adapter = "seeded"
+        model_id = "m"
+        model_version = "v"
+        prompt_or_task_version = "p"
+        image_hash = "h"
+        context_hash = "c"
+        cached = False
+        duration_ms = 1
+        alt_text_draft = "draft"
+        visual_facts = _FakeFacts()
+
+    class _FakeService:
+        last_phrase_boxes = ()
+        last_attachments = ()
+
+        def __init__(self, **kwargs):
+            pass
+
+        async def describe(self, **kwargs):
+            assert kwargs.get("confirmed_faces") == []
+            assert kwargs.get("naming_policy") is None
+            return _FakeResponse()
+
+    monkeypatch.setattr(describe_run_mod, "load_fusion_naming_inputs", fake_load)
+    monkeypatch.setattr(describe_run_mod, "VisualFactsService", _FakeService)
+
+    with _client() as (_http, sf):
+        describe_one = describe_run_mod._build_describe_one(
+            session_factory=sf,
+            tenant_id=TENANT_ID,
+            adapter=SimpleNamespace(kind="seeded"),
+            recognition_enabled=False,
+        )
+        outcome = asyncio.run(describe_one(1, b"bytes", "image/png"))
+    assert loads == []
+    assert outcome.alt_text_draft == "draft"
 
 
 def test_status_route_returns_run_snapshot(monkeypatch):

@@ -6,10 +6,16 @@ type = "stdio"
 command = "sh"
 args = ["-c", "root=\"$(git rev-parse --show-toplevel 2>/dev/null || echo .)\"; exec python3 \"$root/scripts/hooks/mcp_launch.py\" \"$@\"", "sh", "workbay-handoff-mcp"]
 
+[mcp_servers.workbay-handoff-mcp.env]
+WORKBAY_TOOL_ROSTER_POLICY = "all"
+
 [mcp_servers.workbay-orchestrator-mcp]
 type = "stdio"
 command = "sh"
 args = ["-c", "root=\"$(git rev-parse --show-toplevel 2>/dev/null || echo .)\"; exec python3 \"$root/scripts/hooks/mcp_launch.py\" \"$@\"", "sh", "workbay-orchestrator-mcp"]
+
+[mcp_servers.workbay-orchestrator-mcp.env]
+WORKBAY_TOOL_ROSTER_POLICY = "all"
 
 [mcp_servers.codebase-graph-mcp]
 type = "stdio"

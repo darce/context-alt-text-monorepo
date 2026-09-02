@@ -3,8 +3,8 @@
   "product": "prototype-wp-alt-context",
   "source_fixture": "apps/prototype-wp-alt-context/docs/ux-maps/workbench-2pane.uxmap.json",
   "goals": [
-    "Six ACX submenus are MECE and frequency-ordered (NAV-05/NAV-06): Overview orients; Review Queue is the one home to name a person from a photo (highest-frequency demo task); People manages named people only; Description Runs is the one home to see what the describer did; Data Retention is keep/delete/export policy (not description history); Settings configures the service (rare, last). WordPress parent slug stays Overview.",
-    "One primary action per screen (NAV-01), reachable from zero state (rg-003); other CTAs are secondary.",
+    "Five ACX submenus are MECE and frequency-ordered (NAV-05/NAV-06): Overview orients; Review Queue is the one home to name a person from a photo (highest-frequency demo task); People manages named people only; Description Runs is the one home to see what the describer did; Settings configures the service (rare, last) and hosts Data & retention as a section (#/settings?section=retention; the standalone Data Retention submenu is retired, E1). WordPress parent slug stays Overview.",
+    "One primary action per screen (NAV-01), reachable from zero state (rg-003); other CTAs are secondary. In the library footer the single primary is Describe — recognition is a global Settings toggle disclosed under the button, never a second competing CTA (INT-05, COG-03).",
     "Operator runs the full recognize -> name -> curate loop and edits alt-text/descriptions without leaving one surface (control-left, library-right)",
     "Read face-group status at a glance in the control pane and act on the selection in the same viewport",
     "Decompose the 2-pane redesign from screens/zones/states/flows instead of inventing IA mid-plan"
@@ -171,7 +171,7 @@
         },
         {
           "id": "z-cluster-list",
-          "label": "Face-group list / selection (size, confidence, unnamed-first) + NameFaceControl (loading = in-flight name write; the suggestions disclosure being open or closed is part of default). twin_pending copy: Same person as <survivor label>? — Merge into <survivor label> / Not the same (chip on the unlabeled twin; decision persists on the labeled survivor; COG-03 one decision per pair; DATA-14 single authority = resolveMergeSurvivor.ts). Actions merge_twin / keep_separate code_ref: apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/IdentityClusterItem.tsx",
+          "label": "Face-group list / selection (size, confidence, unnamed-first) + NameFaceControl (loading = in-flight name write; the suggestions disclosure being open or closed is part of default). Twin-pending (an edge_input of default) copy: Same person as <survivor label>? — Merge into <survivor label> / Not the same (chip on the unlabeled twin; decision persists on the labeled survivor; COG-03 one decision per pair; DATA-14 single authority = resolveMergeSurvivor.ts). Actions merge_twin / keep_separate code_ref: apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/IdentityClusterItem.tsx",
           "role": "queue",
           "states": [
             "default",
@@ -180,7 +180,7 @@
             "error",
             "first_time",
             "degraded",
-            "twin_pending"
+            "edge_input"
           ]
         },
         {
@@ -274,16 +274,13 @@
         },
         {
           "id": "z-lib-actions",
-          "label": "Bulk describe / scan CTAs + job progress. Done copy: ✔ N drafts ready to review[ · M failed]; Review drafts links to #/description-history?run=<id>.",
+          "label": "Footer job zone (MediaSelection.tsx footer): ONE job CTA — 'Describe N selected' (primary accent in select state; zero-state label 'Describe selected', rg-003) with a recognition disclosure directly under it (aria-describedby): ON = names people it knows while describing; OFF = descriptions only, change in Settings; unknown = settings not loaded. 'Analyze selected' is removed (L2c) — recognition is not a separate operator step (INT-05 one job entry; COG-03 one decision: the global toggle). Run progress phases queued -> warming -> describing -> complete | failed | cancelled come from describeApi DESCRIBE_RUN_PHASE (single authority, sr-007) and render as loading (queued/warming/describing) or default (terminal). Done copy: ✔ N drafts ready to review[ · M failed]; Review drafts links to #/description-history?run=<id>.",
           "role": "job",
           "states": [
             "default",
             "loading",
             "error",
-            "queued",
-            "warming",
-            "describing",
-            "complete"
+            "degraded"
           ]
         }
       ]
@@ -424,15 +421,18 @@
       "id": "exit-settings",
       "kind": "exit",
       "title": "Settings / service health",
-      "purpose": "Configure recognition target and connection health",
+      "purpose": "Configure the service: recognition endpoint + connection health, the global recognition ON/OFF toggle, and Data & retention (consolidated from the retired alt-context-retention submenu, E1)",
       "route": "#/settings",
       "wp_page": "alt-context-settings",
       "job_entry": false,
       "deep_link": true,
-      "url_params": [],
+      "url_params": [
+        "section"
+      ],
       "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/SettingsPage.tsx",
       "states": [
         "default",
+        "loading",
         "error"
       ],
       "zones": [
@@ -445,6 +445,27 @@
             "loading",
             "error"
           ]
+        },
+        {
+          "id": "z-settings-recognition",
+          "label": "Recognition toggle (acx_recognition_enabled; default ON; global, not per-image — OFF makes Describe produce descriptions only and the Workbench footer disclosure says so; analyze endpoint answers 409 recognition_disabled)",
+          "role": "form",
+          "states": [
+            "default",
+            "loading",
+            "error"
+          ]
+        },
+        {
+          "id": "z-settings-retention",
+          "label": "Data & retention section (RetentionPage.tsx RetentionSection; one stable h3#acx-retention-title across loading/error/loaded so the ?section=retention deep-link focus survives pending -> loaded; retention mode, export, import, audit events)",
+          "role": "form",
+          "states": [
+            "default",
+            "loading",
+            "error",
+            "degraded"
+          ]
         }
       ]
     }
@@ -452,7 +473,7 @@
   "actions": [
     {
       "id": "act-scan-media-queue",
-      "verb": "Scan media queue",
+      "verb": "Scan media queue (topbar; folded into the footer Describe primary — the WorkbenchPage scan entry targets the same job)",
       "target": "job-pipeline",
       "hierarchy": "primary",
       "costly": true,
@@ -522,7 +543,7 @@
     },
     {
       "id": "act-view-endpoint-settings",
-      "verb": "View / change recognition endpoint (Settings; server-resolved)",
+      "verb": "View / change recognition endpoint + recognition ON/OFF toggle (Settings; server-resolved endpoint)",
       "target": "exit-settings",
       "hierarchy": "secondary",
       "costly": false,
@@ -562,9 +583,9 @@
     },
     {
       "id": "act-bulk-describe",
-      "verb": "Bulk describe selected media",
+      "verb": "Describe N selected (footer primary; runs recognition first when the Settings toggle is ON, then description; disclosure states ON/OFF/unknown)",
       "target": "job-pipeline",
-      "hierarchy": "secondary",
+      "hierarchy": "primary",
       "costly": true,
       "irreversible": false,
       "preview_required": true,
@@ -749,6 +770,7 @@
     "OPEN: Endpoint switch (InsightFace vs FIR/SFace) changes the recognition model server-side; do existing face groups invalidate and need a fresh grouping on switch? [HAI-02]",
     "OPEN: Left/right min-width + left-collapse on narrow (<1100px) viewports; control collapses to a drawer, library stays reachable? [NAV-08,A11Y-08]",
     "OPEN: Alt-text vs long-description: two fixed columns or one expandable row-detail? [PERC-01,UI-04]",
+    "RESOLVED (WBUX-6): 'Describe selected' vs 'Analyze selected' unified into one Describe CTA; recognition on/off is a GLOBAL Settings toggle (default ON), not a per-image choice — one decision per operator, per-image override deferred until a real demand appears (COG-03, INT-05).",
     "OPEN: Bulk-describe cost preview granularity: per-image cost surfaced before start? [INT-07]"
   ],
   "not_doing": [
@@ -757,6 +779,8 @@
     "Pixel/token values (design tokens referenced --acx-*, not specified here)",
     "Attachment-edit SPA (separate map_ref)",
     "Big-bang removal of the current tabbed shell (migration path, not in this map)",
-    "REST sequence diagrams (see docs/workbench-data-flow.mmd)"
+    "REST sequence diagrams (see docs/workbench-data-flow.mmd)",
+    "Per-image recognition opt-out on the library row (global Settings toggle only; revisit if operators ask)",
+    "Standalone Data Retention admin submenu (retired into Settings ?section=retention)"
   ]
 }

@@ -8,7 +8,6 @@ import type { WorkbenchMediaStatus } from '../../api/workbenchMediaApi';
 import { fetchSettings, type SettingsResponse } from '../../api/settingsApi';
 import { toSettings } from '../../navigation/appLinks';
 import { MediaSelectionTableBody } from './MediaSelectionTableBody';
-import { MediaAnalyzeCta } from './MediaAnalyzeCta';
 import { BulkDescribeReviewLink } from './BulkDescribeReviewLink';
 import { useJobPipeline } from './JobPipelineContext';
 
@@ -30,7 +29,7 @@ import { deriveIdentitiesPresentationSource } from './deriveIdentitiesPresentati
 interface MediaSelectionProps {
   /**
    * §7: a review card / label / review panel primary is on screen. When true the
-   * card owns the single viewport accent primary, so both footer CTAs step down.
+   * card owns the single viewport accent primary, so the footer Describe CTA steps down.
    */
   reviewActive?: boolean;
 }
@@ -218,7 +217,6 @@ export const MediaSelection = ({ reviewActive = false }: MediaSelectionProps): R
             onDismiss={() => setDismissedRunId(activeDescribeRunId)}
             onRetryPolling={() => describeProgress.retry()}
           />
-          <MediaAnalyzeCta accentPrimary={footerCta.accentOwner === FOOTER_ACCENT_OWNER.ANALYZE} />
         </div>
       </div>
       {detailAuthExpired ? (
@@ -472,8 +470,8 @@ export const BulkDescribeCta = ({
           aria-describedby={describeDescribedBy}
           title={remoteActionTitle}
           onClick={() => {
-            // BR-76: presentational offline guard mirrors MediaAnalyzeCta — activation is
-            // a no-op while offline-gated (the container onSubmit also fail-fasts offline).
+            // BR-76: presentational offline guard — activation is a no-op while
+            // offline-gated (the container onSubmit also fail-fasts offline).
             if (offlineGated) {
               return;
             }

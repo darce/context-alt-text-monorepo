@@ -5,7 +5,7 @@
 
 ## Goals
 
-- Six ACX submenus are MECE and frequency-ordered (NAV-05/NAV-06): Overview orients; Review Queue is the one home to name a person from a photo (highest-frequency demo task); People manages named people only; Description Runs is the one home to see what the describer did; Data Retention is keep/delete/export policy (not description history); Settings configures the service (rare, last). WordPress parent slug stays Overview.
+- Five ACX submenus are MECE and frequency-ordered (NAV-05/NAV-06): Overview orients; Review Queue is the one home to name a person from a photo (highest-frequency demo task); People manages named people only; Description Runs is the one home to see what the describer did; Settings configures the service (rare, last) and owns Data Retention keep/delete/export policy (NAV-14: no orphan retention menu; COG-03 one save-policy action). WordPress parent slug stays Overview.
 - One primary action per screen (NAV-01), reachable from zero state (rg-003); other CTAs are secondary.
 - Operator runs the full recognize -> name -> curate loop and edits alt-text/descriptions without leaving one surface (control-left, library-right)
 - Read face-group status at a glance in the control pane and act on the selection in the same viewport
@@ -241,21 +241,26 @@ url_params: `personFilter`, `person`
 
 ### Settings / service health (`exit-settings`)
 
-Purpose: Configure recognition target and connection health
+Purpose: Configure recognition target, connection health, and data retention (NAV-05: one place per concern; retention is the last Settings section, not a top-level destination).
+
+url_params: `section`
 
 | zone id | label | role | states |
 | --- | --- | --- | --- |
 | `z-settings-form` | Settings form + test connection | form | default, loading, error |
+| `data_retention` | Data & retention (keep/delete/export policy; last Settings section; loading = saving) | form | default, loading, error |
 
 ```
 +------------------------------------------------------------+
 | Settings / service health  [exit]  #/settings              |
-| Configure recognition target and connection health         |
+| Configure recognition target, connection health, and data  |
+| retention (last section; save_retention = Save policy)     |
 +------------------------------------------------------------+
 | ZONES                                                      |
 |   - Settings form + test connection (form) states=[defaul… |
+|   - Data & retention (keep/delete/export policy; last Set… |
 +------------------------------------------------------------+
-| states: default | error                                    |
+| states: default | loading | error                          |
 +------------------------------------------------------------+
 ```
 
@@ -363,6 +368,7 @@ Zone labels (verbatim; the tables above escape `|` for markdown, this list does 
 - Retry / discard
 - Roster entry
 - Settings form + test connection
+- Data & retention (keep/delete/export policy; last Settings section; loading = saving)
 
 States (all zones): default loading empty error offline first_time edge_input degraded
 

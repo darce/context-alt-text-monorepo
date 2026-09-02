@@ -3,7 +3,7 @@
   "product": "prototype-wp-alt-context",
   "source_fixture": "apps/prototype-wp-alt-context/docs/ux-maps/workbench-2pane.uxmap.json",
   "goals": [
-    "Six ACX submenus are MECE and frequency-ordered (NAV-05/NAV-06): Overview orients; Review Queue is the one home to name a person from a photo (highest-frequency demo task); People manages named people only; Description Runs is the one home to see what the describer did; Data Retention is keep/delete/export policy (not description history); Settings configures the service (rare, last). WordPress parent slug stays Overview.",
+    "Five ACX submenus are MECE and frequency-ordered (NAV-05/NAV-06): Overview orients; Review Queue is the one home to name a person from a photo (highest-frequency demo task); People manages named people only; Description Runs is the one home to see what the describer did; Settings configures the service (rare, last) and owns Data Retention keep/delete/export policy (NAV-14: no orphan retention menu; COG-03 one save-policy action). WordPress parent slug stays Overview.",
     "One primary action per screen (NAV-01), reachable from zero state (rg-003); other CTAs are secondary.",
     "Operator runs the full recognize -> name -> curate loop and edits alt-text/descriptions without leaving one surface (control-left, library-right)",
     "Read face-group status at a glance in the control pane and act on the selection in the same viewport",
@@ -419,21 +419,34 @@
       "id": "exit-settings",
       "kind": "exit",
       "title": "Settings / service health",
-      "purpose": "Configure recognition target and connection health",
+      "purpose": "Configure recognition target, connection health, and data retention (NAV-05: one place per concern; retention is the last Settings section, not a top-level destination).",
       "route": "#/settings",
       "wp_page": "alt-context-settings",
       "job_entry": false,
       "deep_link": true,
-      "url_params": [],
-      "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/SettingsPage.tsx",
+      "url_params": [
+        "section"
+      ],
+      "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/settings/SettingsForm.tsx",
       "states": [
         "default",
+        "loading",
         "error"
       ],
       "zones": [
         {
           "id": "z-settings-form",
           "label": "Settings form + test connection",
+          "role": "form",
+          "states": [
+            "default",
+            "loading",
+            "error"
+          ]
+        },
+        {
+          "id": "data_retention",
+          "label": "Data & retention (keep/delete/export policy; last Settings section; loading = saving)",
           "role": "form",
           "states": [
             "default",
@@ -604,6 +617,16 @@
       "irreversible": false,
       "preview_required": false,
       "screen_id": "workbench-control"
+    },
+    {
+      "id": "save_retention",
+      "verb": "Save policy",
+      "target": "data_retention",
+      "hierarchy": "secondary",
+      "costly": true,
+      "irreversible": false,
+      "preview_required": true,
+      "screen_id": "exit-settings"
     }
   ],
   "flows": [

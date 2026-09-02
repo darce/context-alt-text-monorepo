@@ -81,7 +81,7 @@ ready_flag=""
 if [ "$DRY_RUN" -eq 1 ]; then
     echo "--- dry run: would sync infra/oci/gpu_lifecycle -> ${HOST}:/opt/acx-gpu/infra/oci/"
     echo "--- dry run: would install acx-gpu-start.{service,timer} + acx-gpu-reap.{service,timer}"
-    echo "--- dry run: would create /run/acx (0775 root:10001) + /etc/tmpfiles.d/acx-gpu.conf"
+    echo "--- dry run: would create /run/acx (0775 10001:10001) + /etc/tmpfiles.d/acx-gpu.conf"
     exit 0
 fi
 
@@ -163,12 +163,13 @@ UNIT
 # The load dump is written by the api container (uid 10001) and read by these
 # units as ubuntu, so the directory must exist before either side starts.
 sudo mkdir -p /run/acx
-sudo chown root:10001 /run/acx
+# WHY: container gid is 999, not 10001; owner must be 10001:10001 so uid 10001 can write.
+sudo chown 10001:10001 /run/acx
 sudo chmod 0775 /run/acx
 # /run is tmpfs: recreate the directory on every boot, or the bind mount comes
 # back root-owned and the container-side writer fails silently.
 sudo tee /etc/tmpfiles.d/acx-gpu.conf >/dev/null <<'TMPF'
-d /run/acx 0775 root 10001 -
+d /run/acx 0775 10001 10001 -
 TMPF
 
 sudo systemctl daemon-reload

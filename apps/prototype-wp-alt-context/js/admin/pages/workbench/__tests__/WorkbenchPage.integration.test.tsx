@@ -813,6 +813,7 @@ describe('WorkbenchPage (integration-lite)', () => {
       identities_by_media: { '11': [] },
     });
     client.setQueryData(queryKeys.sync.health(), syncHealthEnvelope('open'));
+    client.setQueryData(['settings'], { recognition_enabled: true });
 
     onlineManager.setOnline(false);
     renderWithClient(client);

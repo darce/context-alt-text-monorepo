@@ -22,7 +22,7 @@ vi.mock('@wordpress/i18n', () => ({
   },
 }));
 
-const { scan, describeMutate, settingsState } = vi.hoisted(() => {
+const { scan, describeMutate, settingsState, cancelScan } = vi.hoisted(() => {
   let resolveScan: (value?: unknown) => void = () => undefined;
   let rejectScan: (reason?: unknown) => void = () => undefined;
   const scanFn = vi.fn(() => {
@@ -38,6 +38,7 @@ const { scan, describeMutate, settingsState } = vi.hoisted(() => {
     }),
     describeMutate: vi.fn(),
     settingsState: { recognitionEnabled: true },
+    cancelScan: vi.fn(),
   };
 });
 
@@ -157,7 +158,13 @@ vi.mock('../BulkDescribeReviewLink', () => ({
 }));
 
 vi.mock('../JobPipelineContext', () => ({
-  useJobPipeline: () => ({ scanRun: { isScanning: false, progress: null }, scan: vi.fn(), scanAndWait: scan }),
+  useJobPipeline: () => ({
+    scanRun: { isScanning: false, progress: null, jobId: null },
+    scan: vi.fn(),
+    scanAndWait: scan,
+    cancelScan,
+    history: { activeJobIds: [] as string[] },
+  }),
 }));
 
 vi.mock('../Panels', () => ({
@@ -182,6 +189,7 @@ describe('describe-start orchestration (WBUX-6 L2b)', () => {
   beforeEach(() => {
     scan.mockClear();
     describeMutate.mockClear();
+    cancelScan.mockReset();
     settingsState.recognitionEnabled = true;
     vi.mocked(fetchSettings).mockImplementation(() =>
       Promise.resolve({
@@ -249,6 +257,56 @@ describe('describe-start orchestration (WBUX-6 L2b)', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent(
       'People identification is turned off in Settings.',
     );
+    expect(describeMutate).not.toHaveBeenCalled();
+  });
+
+  it('does not start describe before settings resolve; ON then scans first', async () => {
+    let resolveSettings!: (value: Awaited<ReturnType<typeof fetchSettings>>) => void;
+    vi.mocked(fetchSettings).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveSettings = resolve;
+        }),
+    );
+
+    renderSelection();
+
+    const button = await screen.findByRole('button', { name: 'Loading settings…' });
+    expect(screen.queryByText(/recognition off/)).not.toBeInTheDocument();
+    await userEvent.click(button);
+    expect(scan).not.toHaveBeenCalled();
+    expect(describeMutate).not.toHaveBeenCalled();
+
+    await act(async () => {
+      resolveSettings({
+        recognition_enabled: true,
+      } as Awaited<ReturnType<typeof fetchSettings>>);
+    });
+
+    await screen.findByText(/Identifies people first \(AI\)/);
+    await clickDescribe();
+    expect(scan).toHaveBeenCalledWith([11, 12]);
+    expect(describeMutate).not.toHaveBeenCalled();
+  });
+
+  it('identifying primary stays focusable and Cancel rejects the waiter', async () => {
+    cancelScan.mockImplementation(() => {
+      scan.reject(new Error('People identification was cancelled.'));
+    });
+
+    renderSelection();
+    await screen.findByText(/Identifies people first \(AI\)/);
+    await clickDescribe();
+
+    const identifying = screen.getByRole('button', { name: 'Identifying people…' });
+    expect(identifying).not.toBeDisabled();
+    expect(identifying).toHaveAttribute('aria-disabled', 'true');
+    expect(identifying.getAttribute('aria-describedby')).toBeTruthy();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Cancel describe run' }));
+
+    expect(cancelScan).toHaveBeenCalled();
+    expect(await screen.findByRole('alert')).toHaveTextContent('People identification was cancelled.');
     expect(describeMutate).not.toHaveBeenCalled();
   });
 });

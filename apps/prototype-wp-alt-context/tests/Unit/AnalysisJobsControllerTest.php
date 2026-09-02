@@ -437,6 +437,60 @@ class AnalysisJobsControllerTest extends TestCase
         $this->assertSame('no_media_items', $result->get_error_code());
     }
 
+    /**
+     * Gate must use RecognitionPolicy::enabled() (normalized), never raw
+     * get_option() === false. Unknown stored forms fail closed.
+     *
+     * @dataProvider recognitionDisabledStoredValueProvider
+     */
+    public function testAnalyzeMediaReturns409WhenRecognitionDisabled(mixed $stored): void
+    {
+        $this->setOption('acx_recognition_enabled', $stored);
+        $GLOBALS['__ac_attachment_urls'][101] = 'http://example.test/media/101.jpg';
+
+        add_filter('acx_recognition_transport', static fn (string $current): string => 'url');
+
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => json_encode([
+                'id' => '11111111-1111-1111-1111-111111111111',
+                'status' => 'pending',
+                'type' => 'analyze',
+                'progress' => ['completed' => 0, 'total' => 1],
+            ]),
+        ]);
+
+        $request = new WP_REST_Request('POST', '/acx/v1/recognition/analyze');
+        $request->set_param('media_ids', [101]);
+
+        $result = $this->controller->analyze_media($request);
+
+        $this->assertTrue(is_wp_error($result));
+        $this->assertSame('recognition_disabled', $result->get_error_code());
+        $this->assertSame(409, $result->get_error_data()['status'] ?? null);
+        $this->assertSame(
+            'People identification is turned off in Settings.',
+            $result->get_error_message()
+        );
+        $this->assertSame([], $this->getHttpCalls());
+    }
+
+    /**
+     * @return array<string, array{0: mixed}>
+     */
+    public static function recognitionDisabledStoredValueProvider(): array
+    {
+        return [
+            'php_false' => [false],
+            'string_zero' => ['0'],
+            'empty_string' => [''],
+            'string_false' => ['false'],
+            'int_zero' => [0],
+            'no' => ['no'],
+            'yes' => ['yes'],
+        ];
+    }
+
     public function testGetJobStatusDoesNotDispatchXmpRefresh(): void
     {
         $jobId = '11111111-1111-1111-1111-111111111111';

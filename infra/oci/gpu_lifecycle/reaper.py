@@ -35,7 +35,7 @@ import shutil
 import subprocess
 import sys
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol
 
@@ -383,6 +383,10 @@ class ReapCycleResult:
     actuated: list[tuple[str, str]]
     fenced_off: bool
     errors: list[str]
+    # STOPs forced by the max-lease cost cap, which bypasses the load fence
+    # (GPUW-1). Reported separately so an operator can tell "the queue drained"
+    # from "the backstop fired because the load signal was broken".
+    lease_expired: list[tuple[str, str]] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -401,11 +405,38 @@ def run_reap_cycle(
     load_source: JobLoadSource,
     actuator: InstanceStopActuator,
     fence_delay_seconds: float = _DEFAULT_FENCE_DELAY_SECONDS,
+    max_lease_seconds: int = 0,
 ) -> ReapCycleResult:
     """Decision → fence delay → re-sample → STOP only if still idle.
 
     Per-instance STOP failures are collected; the loop continues (rg-007).
+
+    The max-lease cost cap runs first and is not fenced: it exists precisely for
+    the case where the load signal cannot be trusted (GPUW-1).
     """
+    lease_expired: list[tuple[str, str]] = []
+    lease_errors: list[str] = []
+    forced = controller.lease_expired_instances(
+        instances, max_lease_seconds=max_lease_seconds
+    )
+    for action, instance_id in forced:
+        logger.warning(
+            "max lease %ss exceeded; forcing STOP regardless of reported load: %s",
+            max_lease_seconds,
+            instance_id,
+        )
+        try:
+            actuator.stop_instance(instance_id)
+            lease_expired.append((action, instance_id))
+        except Exception as exc:  # noqa: BLE001 - isolate per-instance (rg-007)
+            msg = f"{instance_id}: {type(exc).__name__}: {exc}"
+            logger.error("lease-expiry STOP failed: %s", msg)
+            lease_errors.append(msg)
+    # Anything already stopped by the cap must not be considered again below.
+    forced_ids = {instance_id for _, instance_id in lease_expired}
+    if forced_ids:
+        instances = [i for i in instances if i.instance_id not in forced_ids]
+
     load = load_source.snapshot()
     if load.untrustworthy:
         logger.error(
@@ -415,7 +446,8 @@ def run_reap_cycle(
             decided=[],
             actuated=[],
             fenced_off=True,
-            errors=["load snapshot untrustworthy; refusing STOP"],
+            errors=[*lease_errors, "load snapshot untrustworthy; refusing STOP"],
+            lease_expired=lease_expired,
         )
     decided = controller.reap_idle_instances(
         instances,
@@ -424,7 +456,13 @@ def run_reap_cycle(
         batch_in_progress=load.batch_in_progress,
     )
     if not decided:
-        return ReapCycleResult(decided=[], actuated=[], fenced_off=False, errors=[])
+        return ReapCycleResult(
+            decided=[],
+            actuated=[],
+            fenced_off=False,
+            errors=lease_errors,
+            lease_expired=lease_expired,
+        )
 
     fence_expired = False
     pre_stop: JobLoadSnapshot | None = None
@@ -447,7 +485,13 @@ def run_reap_cycle(
             None if pre_stop is None else pre_stop.batch_in_progress,
             fence_expired,
         )
-        return ReapCycleResult(decided=decided, actuated=[], fenced_off=True, errors=[])
+        return ReapCycleResult(
+            decided=decided,
+            actuated=[],
+            fenced_off=True,
+            errors=lease_errors,
+            lease_expired=lease_expired,
+        )
 
     actuated: list[tuple[str, str]] = []
     errors: list[str] = []
@@ -462,7 +506,11 @@ def run_reap_cycle(
             logger.error("STOP failed: %s", msg)
             errors.append(msg)
     return ReapCycleResult(
-        decided=decided, actuated=actuated, fenced_off=False, errors=errors
+        decided=decided,
+        actuated=actuated,
+        fenced_off=False,
+        errors=[*lease_errors, *errors],
+        lease_expired=lease_expired,
     )
 
 
@@ -595,6 +643,17 @@ def _build_parser() -> argparse.ArgumentParser:
         choices=("reap", "start"),
         default="reap",
         help="reap=STOP idle GPUs (default); start=START stopped GPUs when work waits",
+    )
+    parser.add_argument(
+        "--max-lease-seconds",
+        type=int,
+        default=3600,
+        help=(
+            "Cost backstop: force STOP of a RUNNING instance this old regardless "
+            "of reported load, bypassing the fence. Every other path fails closed "
+            "toward busy, so a dead load writer otherwise runs an A10 forever. "
+            "0 disables (not recommended). Default 3600 (1h)."
+        ),
     )
     parser.add_argument(
         "--idle-seconds",
@@ -820,12 +879,14 @@ def main(argv: list[str] | None = None) -> int:
         load_source=load_source,
         actuator=actuator,
         fence_delay_seconds=args.fence_delay_seconds,
+        max_lease_seconds=args.max_lease_seconds,
     )
     logger.info(
-        "reap cycle decided=%s actuated=%s fenced_off=%s errors=%s",
+        "reap cycle decided=%s actuated=%s fenced_off=%s lease_expired=%s errors=%s",
         result.decided,
         result.actuated,
         result.fenced_off,
+        result.lease_expired,
         result.errors,
     )
     return 1 if result.errors else 0

@@ -10,6 +10,7 @@ import {
   logJobEvent,
   LOG_LEVEL_ORDER,
   newRequestId,
+  redactEndpoint,
   setLogLevel,
   setLogSink,
   type LogRecord,
@@ -201,10 +202,8 @@ describe('createLogger', () => {
 
     setLogSink(null);
     createLogger('x').warn('visible');
-    expect(warn).toHaveBeenCalledWith(
-      '[alt-context/x] visible',
-      expect.objectContaining({ requestId: expect.any(String) }),
-    );
+    expect(warn).toHaveBeenCalledWith('[alt-context/x] visible');
+    expect(warn.mock.calls[0]).toHaveLength(1);
   });
 });
 
@@ -229,70 +228,64 @@ const captureRecords = (): LogRecord[] => {
   return records;
 };
 
-describe('correlation id binding [O-01]', () => {
+describe('requestId binding [FEBT1-W2B-01][OBS-03][rg-015]', () => {
   afterEach(() => {
     setLogSink(null);
     setLogLevel(null);
   });
 
-  it('createLogger without fields still emits requestId on every level [O-01][OBS-03]', () => {
-    const records = captureRecords();
-    const log = createLogger('bootstrap');
-    log.debug('d');
-    log.info('i');
-    log.warn('w');
-    log.error('e');
-
-    expect(records).toHaveLength(4);
-    const requestId = records[0].fields.requestId;
-    expect(requestId).toEqual(expect.any(String));
-    expect(String(requestId).length).toBeGreaterThan(0);
-    for (const record of records) {
-      expect(record.fields.requestId).toBe(requestId);
-    }
-  });
-
-  it('two loggers receive distinct request ids [O-01][OBS-03]', () => {
+  it('module-scope createLogger records omit requestId rather than minting one', () => {
     const records = captureRecords();
     createLogger('a').info('one');
     createLogger('b').info('two');
 
     expect(records).toHaveLength(2);
-    expect(records[0].fields.requestId).toEqual(expect.any(String));
-    expect(records[1].fields.requestId).toEqual(expect.any(String));
-    expect(records[0].fields.requestId).not.toBe(records[1].fields.requestId);
+    expect(records[0].fields).not.toHaveProperty('requestId');
+    expect(records[1].fields).not.toHaveProperty('requestId');
   });
 
-  it('child logger inherits the parent requestId [O-01][OBS-03]', () => {
+  it('withRequest units mint distinct ids and records inside one unit match', () => {
     const records = captureRecords();
-    const parent = createLogger('jobPersistence');
-    const child = parent.child({ extra: 1 });
-    parent.info('parent');
-    child.info('child');
+    const log = createLogger('x');
+    const unitA = log.withRequest();
+    const unitB = log.withRequest();
+    unitA.info('a1');
+    unitA.warn('a2');
+    unitB.info('b1');
+
+    expect(records).toHaveLength(3);
+    const requestIdA = records[0].fields.requestId;
+    expect(typeof requestIdA).toBe('string');
+    expect(String(requestIdA).length).toBeGreaterThan(0);
+    expect(records[1].fields.requestId).toBe(requestIdA);
+    expect(records[2].fields.requestId).not.toBe(requestIdA);
+    expect(typeof records[2].fields.requestId).toBe('string');
+  });
+
+  it('child of a withRequest unit inherits that requestId', () => {
+    const records = captureRecords();
+    const unit = createLogger('jobPersistence').withRequest();
+    unit.info('parent');
+    unit.child({ extra: 1 }).info('child');
 
     expect(records).toHaveLength(2);
-    const requestId = records[0].fields.requestId;
-    expect(requestId).toEqual(expect.any(String));
-    expect(String(requestId).length).toBeGreaterThan(0);
-    expect(records[1].fields.requestId).toBe(requestId);
+    expect(records[0].fields.requestId).toBe(records[1].fields.requestId);
     expect(records[1].fields.extra).toBe(1);
+    expect(typeof records[0].fields.requestId).toBe('string');
   });
 
-  it('createJobLogger records jobId and requestId on every line [O-01][OBS-03]', () => {
+  it('createJobLogger records jobId and omits requestId until withRequest', () => {
     const records = captureRecords();
     const log = createJobLogger('jobPersistence', 'job-123');
     log.info('start');
-    log.warn('stall');
-    log.error('fail');
+    log.withRequest().warn('stall');
 
-    expect(records).toHaveLength(3);
-    const requestId = records[0].fields.requestId;
-    expect(requestId).toEqual(expect.any(String));
-    expect(String(requestId).length).toBeGreaterThan(0);
-    for (const record of records) {
-      expect(record.fields.jobId).toBe('job-123');
-      expect(record.fields.requestId).toBe(requestId);
-    }
+    expect(records).toHaveLength(2);
+    expect(records[0].fields.jobId).toBe('job-123');
+    expect(records[0].fields).not.toHaveProperty('requestId');
+    expect(records[1].fields.jobId).toBe('job-123');
+    expect(typeof records[1].fields.requestId).toBe('string');
+    expect(String(records[1].fields.requestId).length).toBeGreaterThan(0);
   });
 });
 
@@ -302,9 +295,9 @@ describe('logJobEvent [O-02]', () => {
     setLogLevel(null);
   });
 
-  it('emits exactly one wide record with event, state, job id, and request id [O-02][OBS-02]', () => {
+  it('emits exactly one wide record with event, state, and job id [O-02][OBS-02]', () => {
     const records = captureRecords();
-    const log = createJobLogger('job', 'job-123');
+    const log = createJobLogger('job', 'job-123').withRequest();
     logJobEvent(
       log,
       { type: 'PROGRESS' },
@@ -318,7 +311,7 @@ describe('logJobEvent [O-02]', () => {
     expect(records[0].fields.done).toBe(3);
     expect(records[0].fields.total).toBe(10);
     expect(records[0].fields.failedCount).toBe(0);
-    expect(records[0].fields.requestId).toEqual(expect.any(String));
+    expect(typeof records[0].fields.requestId).toBe('string');
     expect(String(records[0].fields.requestId).length).toBeGreaterThan(0);
   });
 });
@@ -498,5 +491,16 @@ describe('flattenError cause recursion [O-07]', () => {
         cause: expect.not.objectContaining({ cause: expect.anything() }),
       }),
     );
+  });
+});
+
+describe('redactEndpoint [FEBT1-W2B-06][REF-19]', () => {
+  it('returns pathname only and strips query including cluster labels', () => {
+    expect(redactEndpoint('/acx/v1/recognition/clusters?search=Alice')).toBe(
+      '/acx/v1/recognition/clusters',
+    );
+    expect(redactEndpoint('https://example.test/jobs?token=secret-token')).toBe('/jobs');
+    expect(redactEndpoint('/acx/v1/recognition/clusters?search=Alice')).not.toContain('?');
+    expect(redactEndpoint('/acx/v1/recognition/clusters?search=Alice')).not.toContain('Alice');
   });
 });

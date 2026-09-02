@@ -4,7 +4,7 @@ import { __ } from '@wordpress/i18n';
 import type { ClusterResponse } from '../api/recognition';
 import { resolveScanErrorMessage } from '../api/recognition/scanApiError';
 import { classifyError } from '../utils/appError';
-import { createLogger, logJobEvent, type LogFields } from '../utils/logger';
+import { createLogger, logJobEvent, redactEndpoint, type LogFields } from '../utils/logger';
 import { createClusterAutoRetry } from './clusterAutoRetry';
 import type { JobType } from './useJobPersistence';
 import { useScanIdentities, useClusterIdentities, useCancelScanJobs } from './useRecognitionHooks';
@@ -18,11 +18,7 @@ const classifiedLogFields = (error: unknown): LogFields => {
     fields.status = classified.status;
   }
   if ('endpoint' in classified) {
-    try {
-      fields.endpoint = new URL(classified.endpoint, 'http://localhost').pathname;
-    } catch {
-      fields.endpoint = classified.endpoint;
-    }
+    fields.endpoint = redactEndpoint(classified.endpoint);
   }
   return fields;
 };
@@ -97,7 +93,8 @@ export const useJobStateMachineMutations = ({
       invalidateIdentities();
       onScanComplete?.(jobIds);
       const jobId = jobIds[0];
-      const jobLog = jobId ? log.child({ jobId }) : log;
+      const workLog = log.withRequest();
+      const jobLog = jobId ? workLog.child({ jobId }) : workLog;
       logJobEvent(jobLog, 'scan.submit', {
         status: jobIds.length > 0 ? 'pending' : 'completed',
         jobId,
@@ -107,8 +104,9 @@ export const useJobStateMachineMutations = ({
       });
     },
     onError: (error) => {
-      log.error('Scan submission failed', classifiedLogFields(error));
-      logJobEvent(log, 'scan.submit', {
+      const workLog = log.withRequest();
+      workLog.error('Scan submission failed', classifiedLogFields(error));
+      logJobEvent(workLog, 'scan.submit', {
         status: 'failed',
         failedCount: 1,
       });
@@ -184,7 +182,8 @@ export const useJobStateMachineMutations = ({
     },
     onSuccess: () => {
       const jobId = activeJobIds[0];
-      const jobLog = jobId ? log.child({ jobId }) : log;
+      const workLog = log.withRequest();
+      const jobLog = jobId ? workLog.child({ jobId }) : workLog;
       logJobEvent(jobLog, 'scan.cancel', {
         status: 'cancelled',
         jobId,
@@ -196,7 +195,8 @@ export const useJobStateMachineMutations = ({
     },
     onError: (error) => {
       const jobId = activeJobIds[0];
-      const jobLog = jobId ? log.child({ jobId }) : log;
+      const workLog = log.withRequest();
+      const jobLog = jobId ? workLog.child({ jobId }) : workLog;
       jobLog.error('Cancel failed', classifiedLogFields(error));
       logJobEvent(jobLog, 'scan.cancel', {
         status: 'failed',

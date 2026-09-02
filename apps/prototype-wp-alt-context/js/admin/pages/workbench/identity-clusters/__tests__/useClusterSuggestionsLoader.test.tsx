@@ -187,7 +187,7 @@ describe('useClusterSuggestionsLoader', () => {
     queryClient.clear();
   });
 
-  it('findClusterByLabel logs classified {tag,status,endpoint} without bodyPreview [FEBT-1-W1-O-06]', async () => {
+  it('findClusterByLabel logs classified {tag,status,endpoint} without bodyPreview or cluster-label query [FEBT-1-W1-O-06][FEBT1-W2B-06]', async () => {
     emptyIdentityBatch();
     const { result, queryClient } = renderLoader();
     await waitFor(() => expect(result.current.findClusterByLabel).toEqual(expect.any(Function)));
@@ -215,9 +215,46 @@ describe('useClusterSuggestionsLoader', () => {
     expect(warns[0]?.message).toBe('Failed to find cluster by label');
     expect(warns[0]?.fields.tag).toBe('http');
     expect(warns[0]?.fields.status).toBe(500);
-    expect(String(warns[0]?.fields.endpoint)).toContain('/acx/v1/recognition/clusters');
+    expect(warns[0]?.fields.endpoint).toBe('/acx/v1/recognition/clusters');
+    expect(String(warns[0]?.fields.endpoint)).not.toContain('?');
+    expect(String(warns[0]?.fields.endpoint)).not.toContain('Alice');
+    expect(JSON.stringify(warns[0])).not.toContain('Alice');
     expect(JSON.stringify(warns[0])).not.toContain('secret-body-preview-should-not-leak');
     expect(warns[0]?.fields).not.toHaveProperty('bodyPreview');
+
+    consoleWarn.mockRestore();
+    queryClient.clear();
+  });
+
+  it('mints a distinct requestId per findClusterByLabel run [FEBT1-W2B-01]', async () => {
+    emptyIdentityBatch();
+    const { result, queryClient } = renderLoader();
+    await waitFor(() => expect(result.current.findClusterByLabel).toEqual(expect.any(Function)));
+
+    vi.mocked(recognitionApi.listRecognitionClusters).mockRejectedValue(
+      new HTTPError({
+        status: 500,
+        retryAfterSeconds: undefined,
+        endpoint: '/acx/v1/recognition/clusters?search=Alice',
+        bodyPreview: 'secret-body-preview-should-not-leak',
+        message: 'server exploded secret-body-preview-should-not-leak',
+      }),
+    );
+    const records: LogRecord[] = [];
+    setLogSink((record) => {
+      records.push(record);
+    });
+    const consoleWarn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+    await expect(result.current.findClusterByLabel('Alice')).resolves.toBeNull();
+    await expect(result.current.findClusterByLabel('Alice')).resolves.toBeNull();
+
+    const warns = records.filter((record) => record.level === 'warn');
+    expect(warns).toHaveLength(2);
+    expect(typeof warns[0]?.fields.requestId).toBe('string');
+    expect(typeof warns[1]?.fields.requestId).toBe('string');
+    expect(warns[0]?.fields.requestId).not.toBe(warns[1]?.fields.requestId);
+    expect(JSON.stringify(warns)).not.toContain('Alice');
 
     consoleWarn.mockRestore();
     queryClient.clear();

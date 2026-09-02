@@ -1,3 +1,7 @@
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
 import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { renderHook, waitFor } from '@testing-library/react';
@@ -109,6 +113,12 @@ describe('useBulkDescribe', () => {
     vi.clearAllMocks();
     // Default: a terminal poll response so no test leaves the interval polling.
     fetchBulkDescribeRunMock.mockResolvedValue(runResponse({ status: 'completed' }));
+  });
+
+  it('imports DESCRIBE_RUN_PHASE from describeApi instead of duplicating it (WBUX-6 F7 / sr-007)', () => {
+    const source = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../useBulkDescribe.ts'), 'utf8');
+    expect(source).toMatch(/import\s*\{[\s\S]*DESCRIBE_RUN_PHASE[\s\S]*\}\s*from\s*['"]\.\.\/api\/describeApi['"]/);
+    expect(source).not.toMatch(/^\s*(?:const|let|var)\s+DESCRIBE_RUN_PHASE\s*=/m);
   });
 
   it('submits media ids and captures the run id', async () => {

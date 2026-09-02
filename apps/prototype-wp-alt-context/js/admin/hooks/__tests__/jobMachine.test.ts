@@ -199,16 +199,123 @@ const tableCells = ALL_STATUSES.flatMap((status) =>
 
 const dashCells = tableCells.filter((cell) => cell.expected === null);
 
+/** Payload pins for active (non-dash, non-idle) table cells. Idle cells use initialJobState. */
+const assertActiveTransitionPayload = (
+  state: JobMachineState,
+  event: JobEvent,
+  next: JobMachineState,
+): void => {
+  switch (event.type) {
+    case JOB_EVENT.START:
+      expect(next.jobId).toBe(event.jobId);
+      expect(next.done).toBe(0);
+      expect(next.total).toBe(0);
+      expect(next.lastEventAt).toBe(event.at);
+      expect(next.reconnectAttempts).toBe(0);
+      expect(next.failedCount).toBe(0);
+      expect(next.error).toBeNull();
+      expect(next.resumeStatus).toBeNull();
+      return;
+    case JOB_EVENT.STREAM_OPEN:
+      expect(next.lastEventAt).toBe(event.at);
+      expect(next.done).toBe(state.done);
+      expect(next.total).toBe(state.total);
+      expect(next.jobId).toBe(state.jobId);
+      return;
+    case JOB_EVENT.PROGRESS:
+      expect(next.done).toBe(event.done);
+      expect(next.total).toBe(event.total);
+      expect(next.lastEventAt).toBe(event.at);
+      expect(next.jobId).toBe(state.jobId);
+      expect(next.reconnectAttempts).toBe(0);
+      return;
+    case JOB_EVENT.STALL_TICK:
+      expect(next.lastEventAt).toBe(event.now);
+      expect(next.reconnectAttempts).toBe(state.reconnectAttempts + 1);
+      expect(next.done).toBe(state.done);
+      expect(next.total).toBe(state.total);
+      expect(next.jobId).toBe(state.jobId);
+      return;
+    case JOB_EVENT.RECONNECTED:
+      expect(next.lastEventAt).toBe(event.at);
+      expect(next.done).toBe(state.done);
+      expect(next.total).toBe(state.total);
+      expect(next.jobId).toBe(state.jobId);
+      return;
+    case JOB_EVENT.OFFLINE:
+      expect(next.lastEventAt).toBe(event.at);
+      expect(next.resumeStatus).toBe(state.status);
+      expect(next.done).toBe(state.done);
+      expect(next.total).toBe(state.total);
+      expect(next.jobId).toBe(state.jobId);
+      return;
+    case JOB_EVENT.ONLINE:
+      expect(next.lastEventAt).toBe(event.at);
+      expect(next.resumeStatus).toBeNull();
+      expect(next.reconnectAttempts).toBe(0);
+      expect(next.status).toBe(state.resumeStatus);
+      expect(next.done).toBe(state.done);
+      expect(next.total).toBe(state.total);
+      return;
+    case JOB_EVENT.COMPLETE:
+      expect(next.lastEventAt).toBe(event.at);
+      expect(next.resumeStatus).toBeNull();
+      expect(next.done).toBe(state.done);
+      expect(next.total).toBe(state.total);
+      expect(next.jobId).toBe(state.jobId);
+      return;
+    case JOB_EVENT.COMPLETE_WITH_ERRORS:
+      expect(next.failedCount).toBe(event.failedCount);
+      expect(next.lastEventAt).toBe(event.at);
+      expect(next.resumeStatus).toBeNull();
+      expect(next.done).toBe(state.done);
+      expect(next.total).toBe(state.total);
+      return;
+    case JOB_EVENT.FAIL:
+      expect(next.error).toEqual(event.error);
+      expect(next.resumeStatus).toBeNull();
+      expect(next.done).toBe(state.done);
+      expect(next.total).toBe(state.total);
+      return;
+    case JOB_EVENT.CANCEL:
+    case JOB_EVENT.RESET:
+      expect(next).toEqual(initialJobState);
+      return;
+    default: {
+      const _exhaustive: never = event;
+      throw new Error(`unhandled table event: ${JSON.stringify(_exhaustive)}`);
+    }
+  }
+};
+
 describe('jobReducer table (FEBT-1 L6a)', () => {
   it.each(tableCells)('$status + $eventType => $expected', ({ status, eventType, expected }) => {
     const state = fixtureFor(status);
-    const next = jobReducer(state, SAMPLE_EVENTS[eventType]);
+    const event = SAMPLE_EVENTS[eventType];
+    const next = jobReducer(state, event);
+    if (expected === JOB_MACHINE_STATE.idle) {
+      expect(next).toEqual(initialJobState);
+      return;
+    }
     expect(next.status).toBe(expected ?? status);
+    if (expected !== null) {
+      assertActiveTransitionPayload(state, event, next);
+    }
   });
 
   it.each(dashCells)('dash cell $status + $eventType returns the same state object', ({ status, eventType }) => {
     const state = fixtureFor(status);
     expect(jobReducer(state, SAMPLE_EVENTS[eventType])).toBe(state);
+  });
+
+  it('CANCEL from running with non-zero payload equals initialJobState (FEBT1-W2C-11)', () => {
+    const state: JobMachineState = {
+      ...fixtureFor(JOB_MACHINE_STATE.running),
+      done: 7,
+      total: 20,
+      reconnectAttempts: 2,
+    };
+    expect(jobReducer(state, { type: JOB_EVENT.CANCEL })).toEqual(initialJobState);
   });
 });
 
@@ -236,6 +343,33 @@ describe('jobReducer stall, progress, offline, terminal', () => {
     expect(next.done).toBe(7);
     expect(next.total).toBe(20);
     expect(next.lastEventAt).toBe(9_000);
+  });
+
+  it('PROGRESS from reconnectAttempts: 2 resets the counter to 0 (FEBT1-W2C-10)', () => {
+    const state: JobMachineState = {
+      ...fixtureFor(JOB_MACHINE_STATE.running),
+      reconnectAttempts: 2,
+    };
+    const next = jobReducer(state, { type: JOB_EVENT.PROGRESS, done: 7, total: 20, at: 9_000 });
+    expect(next.reconnectAttempts).toBe(0);
+    expect(next.status).toBe(JOB_MACHINE_STATE.running);
+
+    const stalled = jobReducer(next, {
+      type: JOB_EVENT.STALL_TICK,
+      now: 9_000 + JOB_MACHINE_STALL_THRESHOLD_MS,
+    });
+    expect(stalled.status).toBe(JOB_MACHINE_STATE.stalled);
+    expect(stalled.reconnectAttempts).toBe(1);
+  });
+
+  it('PROGRESS refreshes lastEventAt to the event at timestamp (FEBT1-W2C-10)', () => {
+    const state: JobMachineState = {
+      ...fixtureFor(JOB_MACHINE_STATE.running),
+      lastEventAt: AT,
+    };
+    const at = 77_000;
+    const next = jobReducer(state, { type: JOB_EVENT.PROGRESS, done: 1, total: 2, at });
+    expect(next.lastEventAt).toBe(at);
   });
 
   it.each([JOB_MACHINE_STATE.pending, JOB_MACHINE_STATE.running, JOB_MACHINE_STATE.stalled] as const)(

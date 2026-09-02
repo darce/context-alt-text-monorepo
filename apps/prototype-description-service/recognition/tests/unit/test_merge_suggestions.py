@@ -97,6 +97,8 @@ def _singleton_cluster(
     *,
     tenant_id: str,
     embedding: np.ndarray,
+    label: str | None = None,
+    user_confirmed: bool = False,
 ) -> IdentityCluster:
     cluster_id = str(generate_id())
     identity_id = str(generate_id())
@@ -111,12 +113,12 @@ def _singleton_cluster(
     return IdentityCluster(
         id=cluster_id,
         tenant_id=tenant_id,
-        label=None,
-        is_labeled=False,
+        label=label,
+        is_labeled=bool(label),
         identity_count=1,
         representative_identity_id=identity_id,
         created_at=datetime.now(tz=UTC),
-        user_confirmed=False,
+        user_confirmed=user_confirmed,
         representatives=[rep],
         centroid=normalize_face_embedding(embedding),
     )
@@ -212,6 +214,124 @@ async def test_generate_singleton_merge_suggestions_groups_singletons() -> None:
     assert len(repo.calls) == 1
     call = repo.calls[0]
     assert {call.cluster_a_id, call.cluster_b_id} == {cluster_a.id, cluster_b.id}
+    assert call.survivor_cluster_id is None
+
+
+class ConstrainedHACGroupStub:
+    async def refine_clusters(self, *, tenant_id, embeddings):  # noqa: ANN001
+        group_id = generate_id()
+        return dict.fromkeys(embeddings.keys(), group_id)
+
+
+@pytest.mark.asyncio
+async def test_generate_singleton_two_labeled_does_not_upsert() -> None:
+    """S3-F3: two labeled singletons in one HAC group never become a merge suggestion."""
+    tenant_id = str(generate_id())
+    settings = ClusteringSettings(
+        similarity_threshold=0.8,
+        suggestion_floor=0.65,
+        suggestion_ceiling=0.8,
+    )
+    hac_settings = HACSettings(max_scope_size=10)
+    vec_a = np.array([1.0, 0.0, 0.0], dtype=np.float32)
+    vec_b = np.array([0.75, 0.6614, 0.0], dtype=np.float32)
+    labeled_a = _singleton_cluster(tenant_id=tenant_id, embedding=vec_a, label="Ada", user_confirmed=True)
+    labeled_b = _singleton_cluster(tenant_id=tenant_id, embedding=vec_b, label="Bea", user_confirmed=True)
+
+    repo = MergeSuggestionRepoStub()
+    service = MergeSuggestionService(
+        repo,
+        cluster_repository=ClusterRepoStub([labeled_a, labeled_b]),
+        settings=settings,
+    )
+
+    created = await service.generate_singleton_merge_suggestions(
+        tenant_id,
+        constrained_hac=ConstrainedHACGroupStub(),
+        hac_settings=hac_settings,
+    )
+
+    assert created == 0
+    assert repo.calls == []
+
+
+@pytest.mark.asyncio
+async def test_generate_singleton_labeled_unlabeled_upserts_labeled_survivor() -> None:
+    """S3-F3: labeled singleton + unlabeled singleton upsert with labeled survivor."""
+    tenant_id = str(generate_id())
+    settings = ClusteringSettings(
+        similarity_threshold=0.8,
+        suggestion_floor=0.65,
+        suggestion_ceiling=0.8,
+    )
+    hac_settings = HACSettings(max_scope_size=10)
+    vec_a = np.array([1.0, 0.0, 0.0], dtype=np.float32)
+    vec_b = np.array([0.75, 0.6614, 0.0], dtype=np.float32)
+    unlabeled = _singleton_cluster(tenant_id=tenant_id, embedding=vec_a)
+    labeled = _singleton_cluster(tenant_id=tenant_id, embedding=vec_b, label="Ada", user_confirmed=True)
+
+    repo = MergeSuggestionRepoStub()
+    service = MergeSuggestionService(
+        repo,
+        cluster_repository=ClusterRepoStub([unlabeled, labeled]),
+        settings=settings,
+    )
+
+    created = await service.generate_singleton_merge_suggestions(
+        tenant_id,
+        constrained_hac=ConstrainedHACGroupStub(),
+        hac_settings=hac_settings,
+    )
+
+    assert created == 1
+    assert len(repo.calls) == 1
+    call = repo.calls[0]
+    assert call.cluster_a_id == labeled.id
+    assert call.cluster_b_id == unlabeled.id
+    assert call.survivor_cluster_id == labeled.id
+
+
+@pytest.mark.asyncio
+async def test_generate_singleton_labeled_labeled_skips_similarity(monkeypatch: pytest.MonkeyPatch) -> None:
+    """S3-F4: singleton labeled+labeled pairs skip compute_similarity."""
+    tenant_id = str(generate_id())
+    settings = ClusteringSettings(
+        similarity_threshold=0.8,
+        suggestion_floor=0.65,
+        suggestion_ceiling=0.8,
+    )
+    hac_settings = HACSettings(max_scope_size=10)
+    vec_a = np.array([1.0, 0.0, 0.0], dtype=np.float32)
+    vec_b = np.array([0.75, 0.6614, 0.0], dtype=np.float32)
+    labeled_a = _singleton_cluster(tenant_id=tenant_id, embedding=vec_a, label="Ada", user_confirmed=True)
+    labeled_b = _singleton_cluster(tenant_id=tenant_id, embedding=vec_b, label="Bea", user_confirmed=True)
+    similarity_calls: list[tuple[object, object]] = []
+
+    def _spy_similarity(left: object, right: object) -> float:
+        similarity_calls.append((left, right))
+        return 0.75
+
+    monkeypatch.setattr(
+        "recognition.application.suggestions.merge_suggestions.compute_similarity",
+        _spy_similarity,
+    )
+
+    repo = MergeSuggestionRepoStub()
+    service = MergeSuggestionService(
+        repo,
+        cluster_repository=ClusterRepoStub([labeled_a, labeled_b]),
+        settings=settings,
+    )
+
+    created = await service.generate_singleton_merge_suggestions(
+        tenant_id,
+        constrained_hac=ConstrainedHACGroupStub(),
+        hac_settings=hac_settings,
+    )
+
+    assert created == 0
+    assert repo.calls == []
+    assert similarity_calls == []
 
 
 @pytest.mark.asyncio

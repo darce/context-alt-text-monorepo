@@ -141,6 +141,79 @@ def test_select_merge_target_user_confirmed_flips_survivor_over_larger_count() -
     assert target_label == "Bob"
 
 
+def test_select_merge_target_uses_durable_survivor_over_ranking() -> None:
+    """S3-F1 mutant (b): ranking loser still survives when survivor_cluster_id is set."""
+    ranking_winner = _cluster(
+        cluster_id="aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+        user_confirmed=True,
+        label="Alice",
+        identity_count=50,
+    )
+    durable_survivor = _cluster(
+        cluster_id="ffffffff-ffff-ffff-ffff-ffffffffffff",
+        user_confirmed=False,
+        label=None,
+        identity_count=1,
+    )
+
+    source_id, target_id, target_label = _select_merge_target(
+        ranking_winner,
+        durable_survivor,
+        survivor_cluster_id=durable_survivor.id,
+    )
+
+    assert target_id == durable_survivor.id
+    assert source_id == ranking_winner.id
+    assert target_label is None
+
+
+def test_select_merge_target_labeled_sorts_after_unlabeled_merges_into_labeled() -> None:
+    """S3-F1: accept merges INTO the labeled cluster even when its UUID sorts last."""
+    unlabeled = _cluster(
+        cluster_id="00000000-0000-0000-0000-000000000001",
+        user_confirmed=False,
+        label=None,
+        identity_count=50,
+    )
+    labeled = _cluster(
+        cluster_id="ffffffff-ffff-ffff-ffff-ffffffffffff",
+        user_confirmed=True,
+        label="Ada Lovelace",
+        identity_count=1,
+    )
+
+    source_id, target_id, target_label = _select_merge_target(
+        unlabeled,
+        labeled,
+        survivor_cluster_id=labeled.id,
+    )
+
+    assert target_id == labeled.id
+    assert source_id == unlabeled.id
+    assert target_label == "Ada Lovelace"
+
+
+def test_select_merge_target_null_survivor_falls_back_to_ranking() -> None:
+    ranking_winner = _cluster(
+        cluster_id="aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+        user_confirmed=True,
+        label="Alice",
+        identity_count=50,
+    )
+    ranking_loser = _cluster(
+        cluster_id="ffffffff-ffff-ffff-ffff-ffffffffffff",
+        user_confirmed=False,
+        label=None,
+        identity_count=1,
+    )
+
+    source_id, target_id, target_label = _select_merge_target(ranking_winner, ranking_loser)
+
+    assert target_id == ranking_winner.id
+    assert source_id == ranking_loser.id
+    assert target_label == "Alice"
+
+
 def test_select_merge_target_user_confirmed_flip_when_confirmed_is_cluster_a() -> None:
     """Same ranking with sides swapped — confirmed still survives as sole flip."""
     confirmed_a = _cluster(

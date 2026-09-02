@@ -94,6 +94,7 @@ class MergeSuggestion:
     resolved_at: datetime | None = None
     refreshed_at: datetime | None = None
     source: str | None = None
+    survivor_cluster_id: str | None = None
 
 
 @dataclass

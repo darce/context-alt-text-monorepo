@@ -142,6 +142,9 @@ class ClusterMergeSuggestion(Base):
     cluster_b_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("identity_clusters.id", ondelete="CASCADE"), nullable=False
     )
+    survivor_cluster_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("identity_clusters.id", ondelete="SET NULL"), nullable=True
+    )
 
     similarity: Mapped[float] = mapped_column(Float, nullable=False)
     confidence_score: Mapped[float | None] = mapped_column(Float)
@@ -173,6 +176,11 @@ class ClusterMergeSuggestion(Base):
             name="cluster_merge_valid_resolution",
         ),
         CheckConstraint("cluster_a_id < cluster_b_id", name="cluster_merge_canonical_order"),
+        CheckConstraint(
+            "survivor_cluster_id IS NULL OR survivor_cluster_id = cluster_a_id"
+            " OR survivor_cluster_id = cluster_b_id",
+            name="cluster_merge_survivor_in_pair",
+        ),
         UniqueConstraint("cluster_a_id", "cluster_b_id", name="unique_cluster_merge_suggestion"),
         Index("idx_cluster_merge_suggestions_tenant", "tenant_id"),
         Index("idx_cluster_merge_suggestions_cluster_a", "cluster_a_id"),

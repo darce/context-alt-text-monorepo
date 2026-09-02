@@ -470,6 +470,61 @@ describe('SettingsPage', () => {
     scrollSpy.mockRestore();
   });
 
+  it('keeps deep-link focus on the retention heading when retention status resolves from pending to loaded', () => {
+    mockUseQuery.mockReturnValue(createMockQuery({ data: defaultSettings }));
+    const loadedRetention: ReturnType<typeof useRetentionStatus> = createMockQuery({
+      data: {
+        available: true,
+        policy: {
+          retention_mode: 'dispose_after_ack' as const,
+          last_export_at: '2026-03-10T10:00:00Z',
+          last_purge_at: null,
+          retention_updated_at: '2026-03-09T12:00:00Z',
+        },
+        recent_audit_events: [],
+      },
+    });
+    vi.mocked(useRetentionStatus).mockReturnValue(
+      createMockQuery({ status: 'pending' }),
+    );
+
+    const TickContext = React.createContext(0);
+    const SettingsWithTick = (): React.JSX.Element => {
+      React.useContext(TickContext);
+      return <SettingsPage />;
+    };
+    const router = createMemoryRouter(
+      [{ path: '/settings', element: <SettingsWithTick /> }],
+      { initialEntries: ['/settings?section=retention'] },
+    );
+    const { rerender } = render(
+      <TickContext.Provider value={0}>
+        <RouterProvider router={router} />
+      </TickContext.Provider>,
+    );
+
+    expect(screen.getByText('Loading retention status…')).toBeInTheDocument();
+    const headingWhilePending = document.getElementById('acx-retention-title');
+    expect(headingWhilePending).not.toBeNull();
+    expect(document.activeElement).toBe(headingWhilePending);
+
+    vi.mocked(useRetentionStatus).mockReturnValue(loadedRetention);
+    rerender(
+      <TickContext.Provider value={1}>
+        <RouterProvider router={router} />
+      </TickContext.Provider>,
+    );
+
+    expect(screen.queryByText('Loading retention status…')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Save policy' })).toBeInTheDocument();
+    const headingAfterLoad = document.getElementById('acx-retention-title');
+    expect(headingAfterLoad).not.toBeNull();
+    expect(headingAfterLoad).toHaveTextContent('Data & retention');
+    expect(headingAfterLoad).toBe(headingWhilePending);
+    expect(document.activeElement).toBe(headingWhilePending);
+    expect(document.activeElement).toBe(headingAfterLoad);
+  });
+
   it('does not request audit events when Settings mounts', () => {
     mockUseQuery.mockReturnValue(createMockQuery({ data: defaultSettings }));
     render(<SettingsPageWithRouter />);

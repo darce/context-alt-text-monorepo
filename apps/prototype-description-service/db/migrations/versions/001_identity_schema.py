@@ -1493,6 +1493,7 @@ def ensure_tables(op) -> None:
         sa.Column("failed_items", sa.Integer(), nullable=False, server_default=sa.text("0")),
         sa.Column("skipped_items", sa.Integer(), nullable=False, server_default=sa.text("0")),
         sa.Column("cancel_requested", sa.Boolean(), nullable=False, server_default=sa.text("false")),
+        sa.Column("recognition_enabled", sa.Boolean(), nullable=False, server_default=sa.text("true")),
         sa.Column("error_message", sa.Text(), nullable=True),
         sa.Column("created_at", sa.TIMESTAMP(timezone=True), server_default=sa.func.now(), nullable=False),
         sa.Column("started_at", sa.TIMESTAMP(timezone=True), nullable=True),
@@ -1503,7 +1504,7 @@ def ensure_tables(op) -> None:
             name="valid_describe_run_status",
         ),
         sa.CheckConstraint(
-            "phase IN ('queued', 'describing', 'complete', 'failed', 'cancelled')",
+            "phase IN ('queued', 'warming', 'describing', 'complete', 'failed', 'cancelled')",
             name="valid_describe_run_phase",
         ),
         sa.CheckConstraint("run_kind IN ('bulk', 'single')", name="valid_describe_run_kind"),

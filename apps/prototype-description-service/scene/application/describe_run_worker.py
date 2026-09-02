@@ -6,9 +6,11 @@ import asyncio
 import inspect
 import logging
 import os
+import time
 import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field, replace
+from typing import NamedTuple, Protocol, runtime_checkable
 
 import httpx
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -23,7 +25,7 @@ from scene.application.naming_preview_service import (
 )
 from scene.application.settings.vlm import VlmSettings
 from scene.config.settings import DEFAULT_GPU_WARMUP_TIMEOUT_SECONDS, DescriptionSettings
-from scene.domain.describe_run import DescribeItemStatus
+from scene.domain.describe_run import DescribeItemStatus, DescribeRunPhase, DescribeRunStatus
 from scene.domain.description import DescriptionAdapterKind
 
 logger = logging.getLogger(__name__)
@@ -34,7 +36,37 @@ _GPU_HEALTH_REQUEST_TIMEOUT_SECONDS = 5.0
 _GPU_ITEM_MAX_ATTEMPTS = 3
 _GPU_ITEM_RETRY_BASE_DELAY_SECONDS = 1.0
 _RETRYABLE_HTTP_STATUS_CODES = frozenset({408, 425, 429, 500, 502, 503, 504})
+# Inner lookup/preview cap. The enforced per-item bound is item_envelope_seconds
+# (this budget + describe timeout); Stage-3 preview uses the remaining envelope.
 NAMING_BUDGET_SECONDS = float(os.environ.get("ACX_NAMING_BUDGET_SECONDS", "10.0"))
+
+
+class FusionNamingInputs(NamedTuple):
+    """Confirmed faces + naming policy loaded once per bulk item (DATA-19)."""
+
+    confirmed_faces: list
+    naming_policy: object | None = None
+
+
+EMPTY_NAMING_INPUTS = FusionNamingInputs(confirmed_faces=[], naming_policy=None)
+
+
+class MissingNamingSnapshotError(RuntimeError):
+    """Recognition-enabled describe_one was called without a preloaded snapshot."""
+
+
+def item_envelope_seconds(describe_timeout_seconds: float) -> float:
+    """Wall-clock bound for one bulk item: naming lookup, describe, and Stage-3 preview.
+
+    PERF-10 traded for DATA-19 (WBUX-6 S9-F1): serial single load instead of
+    gathering lookup with describe, so the envelope is the sum of
+    ``NAMING_BUDGET_SECONDS`` and the describe timeout, not the max.
+
+    Stage-3 naming preview runs inside this envelope: its wait_for budget is
+    ``min(NAMING_BUDGET_SECONDS, remaining)`` so a hung preview cannot add a
+    second full naming budget (S9R2-F1 / RES-03).
+    """
+    return NAMING_BUDGET_SECONDS + describe_timeout_seconds
 
 
 @dataclass(frozen=True)
@@ -68,17 +100,28 @@ class _GpuCircuitOpenError(RuntimeError):
 # The describe boundary: given the item's media_id + loaded image bytes, return
 # the outcome to persist (or None). Kept as an injectable callable so tests can
 # supply a fast deterministic fake while production supplies the real
-# VisualFactsService-backed adapter.
-DescribeOne = Callable[
-    [int, bytes | None, str | None],
-    Awaitable[DescribeItemOutcome | None] | DescribeItemOutcome | None,
-]
+# VisualFactsService-backed adapter. naming_inputs is keyword-only so a wrapper
+# cannot silently drop the DATA-19 snapshot.
+@runtime_checkable
+class DescribeOne(Protocol):
+    def __call__(
+        self,
+        media_id: int,
+        image_bytes: bytes | None,
+        content_type: str | None,
+        *,
+        naming_inputs: FusionNamingInputs | None = None,
+    ) -> Awaitable[DescribeItemOutcome | None] | DescribeItemOutcome | None: ...
 
 
 async def _call_describe_one(
-    describe_one: DescribeOne, media_id: int, image_bytes: bytes | None, content_type: str | None
+    describe_one: DescribeOne,
+    media_id: int,
+    image_bytes: bytes | None,
+    content_type: str | None,
+    naming_inputs: FusionNamingInputs | None = None,
 ) -> DescribeItemOutcome | None:
-    result = describe_one(media_id, image_bytes, content_type)
+    result = describe_one(media_id, image_bytes, content_type, naming_inputs=naming_inputs)
     if inspect.isawaitable(result):
         result = await result
     return result
@@ -149,6 +192,25 @@ async def _wait_for_gpu_ready(
             await asyncio.sleep(min(_GPU_HEALTH_POLL_INTERVAL_SECONDS, remaining))
 
 
+async def _persist_run_phase(
+    *,
+    session_factory: async_sessionmaker[AsyncSession],
+    tenant_id: uuid.UUID,
+    run_id: uuid.UUID,
+    phase: DescribeRunPhase,
+) -> None:
+    """Short-lived session so status polls can see warming/describing mid-gate."""
+    async with session_factory() as session:
+        await set_tenant_context(session, tenant_id)
+        run = await DescribeRunRepository(session).get_run(tenant_id=tenant_id, run_id=run_id)
+        if run is None:
+            return
+        run.phase = phase
+        if phase is DescribeRunPhase.WARMING:
+            run.status = DescribeRunStatus.RUNNING
+        await session.commit()
+
+
 def _is_transient_describe_error(exc: BaseException) -> bool:
     """Classify endpoint faults, including those wrapped by the GPU adapter.
 
@@ -192,6 +254,7 @@ async def _describe_with_transient_retry(
     timeout_seconds: float,
     retry_transient: bool,
     cancel_requested: Callable[[], Awaitable[bool]] | None = None,
+    naming_inputs: FusionNamingInputs | None = None,
 ) -> DescribeItemOutcome | None:
     max_attempts = _GPU_ITEM_MAX_ATTEMPTS if retry_transient else 1
     for attempt in range(1, max_attempts + 1):
@@ -199,7 +262,10 @@ async def _describe_with_transient_retry(
             raise _RunCancelledError("describe run cancelled before item retry")
         try:
             return await asyncio.wait_for(
-                _call_describe_one(describe_one, media_id, image_bytes, content_type), timeout_seconds
+                _call_describe_one(
+                    describe_one, media_id, image_bytes, content_type, naming_inputs=naming_inputs
+                ),
+                timeout_seconds,
             )
         except Exception as exc:  # noqa: BLE001 - classify before retrying
             if attempt >= max_attempts or not _is_transient_describe_error(exc):
@@ -225,14 +291,14 @@ async def _naming_lookup_for_item(
     tenant_id: uuid.UUID,
     media_id: int,
     image_bytes: bytes | None,
-) -> tuple[list, object] | None:
+) -> FusionNamingInputs | None:
     """Load faces/policy independently of describe I/O; never raises to the run."""
     if not enabled or tenant is None or not image_bytes:
         return None
     try:
         async with session_factory() as naming_session:
             await set_tenant_context(naming_session, tenant_id)
-            return await asyncio.wait_for(
+            loaded = await asyncio.wait_for(
                 load_fusion_naming_inputs(
                     session=naming_session,
                     tenant=tenant,
@@ -242,6 +308,7 @@ async def _naming_lookup_for_item(
                 ),
                 timeout=NAMING_BUDGET_SECONDS,
             )
+            return FusionNamingInputs(*loaded)
     except Exception:  # noqa: BLE001 - naming lookup must not fail the item
         logger.exception("naming lookup failed media_id=%s; describing without names", media_id)
         return None
@@ -267,14 +334,24 @@ async def _apply_naming_preview(
     media_id: int,
     image_bytes: bytes | None,
     outcome: DescribeItemOutcome,
-    naming_inputs: tuple[list, object] | None,
+    naming_inputs: FusionNamingInputs | None,
+    item_started: float,
+    item_envelope: float,
 ) -> DescribeItemOutcome:
-    """Fuse names into alt_text_draft (the same generic_draft field the router uses)."""
+    """Fuse names into alt_text_draft (the same generic_draft field the router uses).
+
+    Preview wait_for is ``min(NAMING_BUDGET_SECONDS, remaining_envelope)``. Remaining
+    <= 0 skips preview and keeps the generic draft (same path as a lookup timeout).
+    """
     if not enabled or tenant is None or not image_bytes or naming_inputs is None:
         return outcome
     faces, policy = naming_inputs
     if policy is None:
         return outcome
+    remaining = item_envelope - (time.monotonic() - item_started)
+    if remaining <= 0:
+        return outcome
+    preview_timeout = min(NAMING_BUDGET_SECONDS, remaining)
     try:
         phrase_boxes = outcome.phrase_boxes or ()
         preview_faces = faces_for_naming_preview(faces or [], outcome.attachments or (), phrase_boxes)
@@ -290,7 +367,7 @@ async def _apply_naming_preview(
                 confirmed_faces=preview_faces if faces is not None else None,
                 naming_policy=policy,
             ),
-            timeout=NAMING_BUDGET_SECONDS,
+            timeout=preview_timeout,
         )
         merged = dict(outcome.provenance or {})
         merged["naming"] = _naming_provenance_payload(provenance)
@@ -311,13 +388,23 @@ async def run_describe_job(
 ) -> None:
     """Process a describe run item-by-item.
 
-    Per item: load its image bytes, run ``describe_one``, persist the draft /
-    caption / provenance, clear the stored bytes, and mark it COMPLETED. Per-item
-    failures are isolated (item -> FAILED, run continues); an unexpected fatal
-    error around the whole loop forces the run terminal-FAILED. (S2-01, S2-02, HARM-01)
+    Per item: load its image bytes, load one naming snapshot (DATA-19), run
+    ``describe_one``, persist the draft / caption / provenance, clear the stored
+    bytes, and mark it COMPLETED. PERF-10 traded for DATA-19 (WBUX-6 S9-F1):
+    the per-item envelope is ``item_envelope_seconds`` (naming budget + describe
+    timeout, the sum not the max). Stage-3 preview runs inside that envelope
+    (S9R2-F1): its wait_for is the remaining budget, not a second naming cap.
+    Per-item failures are isolated (item -> FAILED, run continues); an unexpected
+    fatal error around the whole loop forces the run terminal-FAILED.
+    (S2-01, S2-02, HARM-01)
     """
 
     timeout = timeout_seconds if timeout_seconds is not None else VlmSettings().inference_timeout_seconds
+    item_envelope = item_envelope_seconds(timeout)
+    logger.debug(
+        "describe run per-item envelope seconds=%s (PERF-10 traded for DATA-19 WBUX-6 S9-F1)",
+        item_envelope,
+    )
 
     async def cancel_requested() -> bool:
         # A fresh, short-lived session is intentional. The tracking session has
@@ -330,11 +417,23 @@ async def run_describe_job(
 
     try:
         if gpu_policy is not None:
+            await _persist_run_phase(
+                session_factory=session_factory,
+                tenant_id=tenant_id,
+                run_id=run_id,
+                phase=DescribeRunPhase.WARMING,
+            )
             await _wait_for_gpu_ready(
                 endpoint_url=gpu_policy.endpoint_url,
                 api_key=gpu_policy.api_key,
                 timeout_seconds=gpu_policy.warmup_timeout_seconds,
                 cancel_requested=cancel_requested,
+            )
+            await _persist_run_phase(
+                session_factory=session_factory,
+                tenant_id=tenant_id,
+                run_id=run_id,
+                phase=DescribeRunPhase.DESCRIBING,
             )
         async with session_factory() as session:
             # RLS: every session touching the tenant-scoped run/item tables must
@@ -342,7 +441,8 @@ async def run_describe_job(
             await set_tenant_context(session, tenant_id)
             repo = DescribeRunRepository(session)
             tenant = await get_tenant_record(session, tenant_id)
-            naming_enabled = bool(tenant is not None and tenant.naming_agreement_enabled)
+            run = await repo.get_run(tenant_id=tenant_id, run_id=run_id)
+            naming_enabled = bool(tenant and tenant.naming_agreement_enabled and run and run.recognition_enabled)
             items = await repo.list_run_items(tenant_id=tenant_id, run_id=run_id)
             gpu_breaker_error: str | None = None
             for item in items:
@@ -367,24 +467,36 @@ async def run_describe_job(
                 try:
                     if gpu_breaker_error is not None:
                         raise _GpuCircuitOpenError(gpu_breaker_error)
-                    naming_inputs, outcome = await asyncio.gather(
-                        _naming_lookup_for_item(
-                            enabled=naming_enabled,
-                            session_factory=session_factory,
-                            tenant=tenant,
-                            tenant_id=tenant_id,
-                            media_id=item.media_id,
-                            image_bytes=image_bytes,
-                        ),
-                        _describe_with_transient_retry(
-                            describe_one=describe_one,
-                            media_id=item.media_id,
-                            image_bytes=image_bytes,
-                            content_type=content_type,
-                            timeout_seconds=timeout,
-                            retry_transient=gpu_policy is not None,
-                            cancel_requested=cancel_requested,
-                        ),
+                    # HARM-F3 / DATA-19: one naming snapshot per item. Load first,
+                    # then share with Stage-2 fusion and Stage-3 preview so a
+                    # label/merge between two sessions cannot diverge the draft.
+                    # PERF-10 traded for DATA-19 (WBUX-6 S9-F1): serial envelope
+                    # is item_envelope_seconds(timeout), not max(naming, describe).
+                    # S9R2-F1: Stage-3 preview is charged against remaining envelope.
+                    item_started = time.monotonic()
+                    naming_inputs = await _naming_lookup_for_item(
+                        enabled=naming_enabled,
+                        session_factory=session_factory,
+                        tenant=tenant,
+                        tenant_id=tenant_id,
+                        media_id=item.media_id,
+                        image_bytes=image_bytes,
+                    )
+                    if naming_inputs is not None:
+                        describe_naming_inputs: FusionNamingInputs | None = naming_inputs
+                    elif run is not None and run.recognition_enabled:
+                        describe_naming_inputs = EMPTY_NAMING_INPUTS
+                    else:
+                        describe_naming_inputs = None
+                    outcome = await _describe_with_transient_retry(
+                        describe_one=describe_one,
+                        media_id=item.media_id,
+                        image_bytes=image_bytes,
+                        content_type=content_type,
+                        timeout_seconds=timeout,
+                        retry_transient=gpu_policy is not None,
+                        cancel_requested=cancel_requested,
+                        naming_inputs=describe_naming_inputs,
                     )
                     outcome = await _apply_naming_preview(
                         enabled=naming_enabled,
@@ -395,6 +507,8 @@ async def run_describe_job(
                         image_bytes=image_bytes,
                         outcome=outcome or DescribeItemOutcome(),
                         naming_inputs=naming_inputs,
+                        item_started=item_started,
+                        item_envelope=item_envelope,
                     )
                 except _RunCancelledError:
                     await repo.mark_item(

@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { IdentityClusterItem } from '../IdentityClusterItem';
 import { pendingMergeTwinForCluster } from '../pendingMergeTwin';
+import type { ProjectedSuggestion } from '../suggestionProjection';
 import type { ClusterGroup } from '../types';
 import type { PendingMergeSuggestion } from '../../../../api/recognition/types';
 
@@ -119,11 +120,21 @@ const pendingSuggestion = (
   ...overrides,
 });
 
-const renderItem = (cluster: ClusterGroup, twin?: ReturnType<typeof mergeTwin>) => {
+const renderItem = (
+  cluster: ClusterGroup,
+  twin?: ReturnType<typeof mergeTwin>,
+  extra: Partial<{ canMutate: boolean; inlineSuggestionMatch: ProjectedSuggestion }> = {},
+) => {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={client}>
-      <IdentityClusterItem cluster={cluster} canLabel canMutate mergeTwin={twin} />
+      <IdentityClusterItem
+        cluster={cluster}
+        canLabel
+        canMutate={extra.canMutate ?? true}
+        inlineSuggestionMatch={extra.inlineSuggestionMatch}
+        mergeTwin={twin}
+      />
     </QueryClientProvider>,
   );
 };
@@ -136,8 +147,12 @@ describe('IdentityClusterItem twin chip (WBUX-6/C3)', () => {
   it('renders the same-person chip on an unlabeled cluster with a labeled survivor', () => {
     renderItem(unlabeledCluster(), mergeTwin());
 
-    const chip = screen.getByTestId('acx-identity-clusters__twin-chip');
-    expect(chip).toHaveTextContent('⇢ Same person as Ada Lovelace?');
+    const chip = screen.getByRole('group', { name: /same person as ada lovelace/i });
+    expect(chip).toHaveAttribute('data-testid', 'acx-identity-clusters__twin-chip');
+    const icon = chip.querySelector('[aria-hidden="true"]');
+    expect(icon).not.toBeNull();
+    expect(icon).toHaveTextContent('⇢');
+    expect(chip).toHaveTextContent('Same person as Ada Lovelace?');
     expect(screen.getByRole('button', { name: 'Merge into Ada' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Not the same' })).toBeInTheDocument();
   });
@@ -180,6 +195,43 @@ describe('IdentityClusterItem twin chip (WBUX-6/C3)', () => {
     expect(reject).toBeDisabled();
     expect(accept).toHaveAttribute('title', 'Saving merge suggestion…');
     expect(reject).toHaveAttribute('title', 'Saving merge suggestion…');
+
+    const group = screen.getByRole('group', { name: /same person/i });
+    const describedBy = group.getAttribute('aria-describedby');
+    expect(describedBy).toBeTruthy();
+    expect(document.getElementById(describedBy ?? '')).toHaveTextContent('Saving merge suggestion…');
+  });
+
+  it.each(['Cluster-9f2', 'cluster_9f2'])(
+    'renders the chip when the cluster label is a reserved auto label (%j)',
+    (label) => {
+      renderItem(unlabeledCluster({ label }), mergeTwin());
+
+      expect(screen.getByRole('group', { name: /same person as ada lovelace/i })).toBeInTheDocument();
+    },
+  );
+
+  it('does not render the chip when canMutate is false even with a pending twin', () => {
+    renderItem(unlabeledCluster(), mergeTwin(), { canMutate: false });
+
+    expect(screen.queryByTestId('acx-identity-clusters__twin-chip')).not.toBeInTheDocument();
+    expect(screen.queryByRole('group', { name: /same person/i })).not.toBeInTheDocument();
+  });
+
+  it('suppresses the inline suggestion prompt while the twin chip is shown', () => {
+    renderItem(unlabeledCluster(), mergeTwin(), {
+      inlineSuggestionMatch: {
+        identityId: 'id-1',
+        clusterId: 'cluster-grace',
+        label: 'Grace Hopper',
+        similarity: 0.94,
+        suggestionId: 'assign-1',
+      },
+    });
+
+    expect(screen.getByRole('group', { name: /same person as ada lovelace/i })).toBeInTheDocument();
+    expect(screen.queryByText(/Is this/)).not.toBeInTheDocument();
+    expect(screen.queryByText('Grace Hopper')).not.toBeInTheDocument();
   });
 
   it.each(['Cluster-9f2', ' cluster-9f2', 'cluster_9f2'])(
@@ -234,5 +286,51 @@ describe('pendingMergeTwinForCluster (WBUX-6/C3 labeled-side map)', () => {
 
   it('returns null for the labeled cluster_a side', () => {
     expect(pendingMergeTwinForCluster(LABELED_ID, [pendingSuggestion()])).toBeNull();
+  });
+
+  it('maps an unlabeled cluster_a onto a pending suggestion whose cluster_b is labeled', () => {
+    expect(
+      pendingMergeTwinForCluster(
+        UNLABELED_ID,
+        [
+          pendingSuggestion({
+            cluster_a_id: UNLABELED_ID,
+            cluster_b_id: LABELED_ID,
+            cluster_a_label: null,
+            cluster_b_label: 'Ada Lovelace',
+          }),
+        ],
+      ),
+    ).toEqual({
+      suggestionId: 'merge-1',
+      survivorLabel: 'Ada Lovelace',
+    });
+  });
+
+  it('skips non-pending statuses', () => {
+    expect(
+      pendingMergeTwinForCluster(UNLABELED_ID, [pendingSuggestion({ status: 'accepted' })]),
+    ).toBeNull();
+  });
+
+  it('fails closed when status is missing', () => {
+    expect(
+      pendingMergeTwinForCluster(
+        UNLABELED_ID,
+        [pendingSuggestion({ status: undefined as unknown as string })],
+      ),
+    ).toBeNull();
+  });
+
+  it('returns the first matching pending suggestion when two apply', () => {
+    expect(
+      pendingMergeTwinForCluster(UNLABELED_ID, [
+        pendingSuggestion({ id: 'merge-first' }),
+        pendingSuggestion({ id: 'merge-second' }),
+      ]),
+    ).toEqual({
+      suggestionId: 'merge-first',
+      survivorLabel: 'Ada Lovelace',
+    });
   });
 });

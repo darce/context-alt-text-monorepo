@@ -6,7 +6,6 @@ import type { PendingMergeSuggestion } from '../../../api/recognition';
 import type { FaceOriginalTarget } from './SuggestionCards';
 import { ACCENT_PRIMARY_ATTR } from '../mediaFooterCtaState';
 import { isMeaningfulMergeLabel } from './resolveMergeSurvivor';
-import { isHumanLabeledTarget } from './suggestionProjection';
 import { REPRESENTATIVE_VOCABULARY } from './representativeVocabulary';
 import { isValidQueueOrdinal, isValidQueueOrdinalPair } from './reviewQueueDriver';
 
@@ -90,18 +89,15 @@ export const MergeSuggestionCard = ({
   queueTotal,
 }: MergeSuggestionCardProps): React.JSX.Element => {
   const matchPercent = Math.round(suggestion.similarity * 100);
-  // WHY (A11Y-02 / HAI-01): cluster_*_label is the raw cluster.label column — no
-  // confirmation gate — so auto `cluster-*` must not name a face on screen or in alt.
-  // Use trimming isHumanLabeledTarget (not isMeaningfulMergeLabel) so whitespace-padded
-  // auto-labels are gated the same as bare ones.
-  const humanLabelA = isHumanLabeledTarget(suggestion.cluster_a_label)
-    ? suggestion.cluster_a_label
-    : null;
-  const humanLabelB = isHumanLabeledTarget(suggestion.cluster_b_label)
-    ? suggestion.cluster_b_label
-    : null;
+  // WHY (A11Y-02 / HAI-01 / DATA-14): cluster_*_label is the raw cluster.label
+  // column — no confirmation gate — so reserved machine shapes (`cluster-` /
+  // `cluster_`, any case) must not name a face on screen or in alt. One
+  // predicate (isMeaningfulMergeLabel) drives display, twin eligibility, and
+  // survivor copy so `Cluster-Dad` cannot disagree across those surfaces.
   const labeledA = isMeaningfulMergeLabel(suggestion.cluster_a_label);
   const labeledB = isMeaningfulMergeLabel(suggestion.cluster_b_label);
+  const humanLabelA = labeledA ? suggestion.cluster_a_label?.trim() ?? null : null;
+  const humanLabelB = labeledB ? suggestion.cluster_b_label?.trim() ?? null : null;
   const labeledSurvivor =
     labeledA && !labeledB
       ? suggestion.cluster_a_label?.trim() ?? null

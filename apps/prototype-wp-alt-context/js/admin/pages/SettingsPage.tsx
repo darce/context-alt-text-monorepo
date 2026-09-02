@@ -230,27 +230,32 @@ export const SettingsPage = (): React.JSX.Element => {
       <SettingsRoutingBanner />
 
       <SettingsForm
-        data={data}
-        url={state.url}
-        apiKey={state.apiKey}
-        descriptionBudgetMaxAttempts={state.descriptionBudgetMaxAttempts}
-        recognitionEnabled={state.recognitionEnabled}
-        urlReadOnly={urlReadOnly}
-        keyReadOnly={keyReadOnly}
-        savePending={saveMutation.isPending}
-        testPending={testMutation.isPending}
-        hasUnsavedRoutingChanges={hasUnsavedRoutingChanges}
-        testResult={state.testResult}
-        onUrlChange={(value) => dispatch({ type: 'setUrl', value })}
-        onApiKeyChange={(value) => dispatch({ type: 'setApiKey', value })}
-        onDescriptionBudgetMaxAttemptsChange={(value) =>
-          dispatch({ type: 'setDescriptionBudgetMaxAttempts', value })
-        }
-        onRecognitionEnabledChange={(value) => dispatch({ type: 'setRecognitionEnabled', value })}
-        onSave={handleSave}
-        onTest={handleTest}
-        onFocusServiceUrl={() => {
-          document.getElementById('acx-settings-url')?.focus();
+        values={{
+          data,
+          url: state.url,
+          apiKey: state.apiKey,
+          descriptionBudgetMaxAttempts: state.descriptionBudgetMaxAttempts,
+          recognitionEnabled: state.recognitionEnabled,
+          urlReadOnly,
+          keyReadOnly,
+        }}
+        status={{
+          savePending: saveMutation.isPending,
+          testPending: testMutation.isPending,
+          hasUnsavedRoutingChanges,
+          testResult: state.testResult,
+        }}
+        actions={{
+          onUrlChange: (value) => dispatch({ type: 'setUrl', value }),
+          onApiKeyChange: (value) => dispatch({ type: 'setApiKey', value }),
+          onDescriptionBudgetMaxAttemptsChange: (value) =>
+            dispatch({ type: 'setDescriptionBudgetMaxAttempts', value }),
+          onRecognitionEnabledChange: (value) => dispatch({ type: 'setRecognitionEnabled', value }),
+          onSave: handleSave,
+          onTest: handleTest,
+          onFocusServiceUrl: () => {
+            document.getElementById('acx-settings-url')?.focus();
+          },
         }}
       />
 

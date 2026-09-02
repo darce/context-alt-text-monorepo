@@ -235,6 +235,24 @@ describe('SettingsPage', () => {
     ).toBeInTheDocument();
   });
 
+  it('renders the people recognition checkbox unchecked when GET recognition_enabled is false', () => {
+    mockUseQuery.mockReturnValue(
+      createMockQuery({ data: { ...defaultSettings, recognition_enabled: false } }),
+    );
+    render(<SettingsPage />);
+
+    expect(screen.getByLabelText('Identify people in photos')).not.toBeChecked();
+  });
+
+  it('associates the people recognition hint with the checkbox (A11Y-57)', () => {
+    mockUseQuery.mockReturnValue(createMockQuery({ data: defaultSettings }));
+    render(<SettingsPage />);
+
+    expect(screen.getByLabelText('Identify people in photos')).toHaveAccessibleDescription(
+      /facial recognition/,
+    );
+  });
+
   it('posts recognition_enabled false when the checkbox is unchecked then saved', () => {
     mockUseQuery.mockReturnValue(createMockQuery({ data: defaultSettings }));
     render(<SettingsPage />);
@@ -243,6 +261,18 @@ describe('SettingsPage', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Save Settings' }));
 
     expect(saveMutate).toHaveBeenCalledWith({ recognition_enabled: false });
+  });
+
+  it('posts recognition_enabled true when GET is false and the checkbox is checked then saved', () => {
+    mockUseQuery.mockReturnValue(
+      createMockQuery({ data: { ...defaultSettings, recognition_enabled: false } }),
+    );
+    render(<SettingsPage />);
+
+    fireEvent.click(screen.getByLabelText('Identify people in photos'));
+    fireEvent.click(screen.getByRole('button', { name: 'Save Settings' }));
+
+    expect(saveMutate).toHaveBeenCalledWith({ recognition_enabled: true });
   });
 
   it('does not post recognition_enabled when the checkbox is untouched', () => {

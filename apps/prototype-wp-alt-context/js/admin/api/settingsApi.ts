@@ -159,12 +159,23 @@ export interface TestConnectionResponse {
   rekey_updated_rows?: number;
 }
 
+const hasRecognitionEnabledBoolean = (payload: unknown): payload is SettingsResponse =>
+  payload !== null &&
+  typeof payload === 'object' &&
+  typeof (payload as { recognition_enabled?: unknown }).recognition_enabled === 'boolean';
+
 export const fetchSettings = async (): Promise<SettingsResponse> => {
   const endpoint = getEndpoint('settings');
-  return fetchRequiredApi<SettingsResponse>(endpoint, {
+  const payload = await fetchRequiredApi<unknown>(endpoint, {
     method: 'GET',
     restNonce: getConfig().nonce,
   });
+
+  if (!hasRecognitionEnabledBoolean(payload)) {
+    throw new Error('Settings response was malformed: recognition_enabled must be a boolean.');
+  }
+
+  return payload;
 };
 
 export const saveSettings = async (payload: SaveSettingsPayload): Promise<SaveSettingsResponse> => {

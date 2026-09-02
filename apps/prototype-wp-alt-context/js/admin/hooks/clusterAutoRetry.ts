@@ -8,6 +8,7 @@ import { __, sprintf } from '@wordpress/i18n';
 
 import { HTTPError } from '../utils/http';
 import { DEFAULT_COOLDOWN_SECONDS } from '../utils/recognitionCooldown';
+import { clampRetryAfterMs } from '../utils/retryAfter';
 
 /** Total attempts including the first (first + 2 auto-retries). */
 export const CLUSTER_RETRY_MAX_ATTEMPTS = 3;
@@ -16,7 +17,7 @@ export const isRetryableClusterError = (error: unknown): error is HTTPError =>
   error instanceof HTTPError && error.status === 429;
 
 export const resolveClusterRetryDelaySeconds = (error: HTTPError): number =>
-  error.retryAfterSeconds ?? DEFAULT_COOLDOWN_SECONDS;
+  clampRetryAfterMs(error.retryAfterSeconds, DEFAULT_COOLDOWN_SECONDS * 1000) / 1000;
 
 /** True when another auto-retry is still allowed after this failed attempt. */
 export const canAutoRetryCluster = (attemptCount: number, error: unknown): boolean =>

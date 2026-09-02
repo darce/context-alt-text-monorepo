@@ -1,8 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { registerConfig, resetConfigCache, getNonce } from '../../api/config';
+import { classifyError } from '../appError';
 import {
   AuthExpiredError,
+  DEFAULT_FETCH_TIMEOUT_MS,
   fetchApi,
   fetchRequiredApi,
   HTTPError,
@@ -456,5 +458,110 @@ describe('AuthExpiredError', () => {
   it('preserves exact 401 and 403 constructor status (M4 / F2)', () => {
     expect(new AuthExpiredError({ endpoint: REST_URL, status: 401 }).status).toBe(401);
     expect(new AuthExpiredError({ endpoint: REST_URL, status: 403 }).status).toBe(403);
+  });
+});
+
+const hungFetch = (): void => {
+  vi.spyOn(globalThis, 'fetch').mockImplementation((_input, init) => {
+    return new Promise((_resolve, reject) => {
+      const signal = init?.signal;
+      if (!signal) {
+        return;
+      }
+      if (signal.aborted) {
+        reject(signal.reason ?? new DOMException('The operation was aborted.', 'AbortError'));
+        return;
+      }
+      signal.addEventListener(
+        'abort',
+        () => {
+          const reason: unknown = signal.reason;
+          if (reason instanceof DOMException) {
+            reject(reason);
+            return;
+          }
+          reject(new DOMException('The operation was aborted.', 'AbortError'));
+        },
+        { once: true },
+      );
+    });
+  });
+};
+
+describe('fetchApi default timeout [E-04]', () => {
+  beforeEach(() => {
+    resetConfigCache();
+    seedConfig();
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+    resetConfigCache();
+  });
+
+  it('rejects a hung fetch within the default deadline as a classified abort', async () => {
+    hungFetch();
+
+    let rejected: unknown;
+    void fetchApi(REST_URL).then(
+      () => {
+        throw new Error('expected hung fetch to reject');
+      },
+      (error: unknown) => {
+        rejected = error;
+      },
+    );
+
+    await vi.advanceTimersByTimeAsync(DEFAULT_FETCH_TIMEOUT_MS - 1);
+    expect(rejected).toBeUndefined();
+
+    await vi.advanceTimersByTimeAsync(1);
+
+    expect(rejected).toBeInstanceOf(DOMException);
+    expect((rejected as DOMException).name).toBe('TimeoutError');
+    expect(classifyError(rejected)._tag).toBe('abort');
+  });
+
+  it('lets an explicit timeoutMs override the default', async () => {
+    hungFetch();
+
+    let rejected: unknown;
+    void fetchApi(REST_URL, { timeoutMs: 50 }).then(
+      () => {
+        throw new Error('expected timeoutMs override to reject');
+      },
+      (error: unknown) => {
+        rejected = error;
+      },
+    );
+
+    await vi.advanceTimersByTimeAsync(49);
+    expect(rejected).toBeUndefined();
+
+    await vi.advanceTimersByTimeAsync(1);
+
+    expect(classifyError(rejected)._tag).toBe('abort');
+    expect((rejected as DOMException).name).toBe('TimeoutError');
+  });
+
+  it('still aborts when a caller-supplied signal aborts early', async () => {
+    hungFetch();
+    const controller = new AbortController();
+
+    const pending = fetchApi(REST_URL, { signal: controller.signal, timeoutMs: 60_000 });
+    controller.abort();
+
+    await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+  });
+
+  it('does not abort a fast successful response', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify({ ok: true }), { status: 200 }),
+    );
+
+    const result = await fetchApi<{ ok: boolean }>(REST_URL);
+    expect(result).toEqual({ ok: true });
   });
 });

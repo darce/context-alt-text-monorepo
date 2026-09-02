@@ -1,6 +1,4 @@
-import { NonceRefreshFailedError } from '../api/config';
-import { isAppError, type AppError } from './appError';
-import { HTTPError, ResponseParseError } from './http';
+import { classifyError, isAppError, type AppError } from './appError';
 
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
 
@@ -70,10 +68,8 @@ const redactEndpoint = (endpoint: string): string => {
   }
 };
 
-const isBoundaryError = (
-  value: Error,
-): value is HTTPError | ResponseParseError | NonceRefreshFailedError =>
-  value instanceof HTTPError || value instanceof ResponseParseError || value instanceof NonceRefreshFailedError;
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null;
 
 const safeAppErrorMessage = (error: AppError): string => {
   switch (error._tag) {
@@ -109,27 +105,30 @@ const projectAppError = (error: AppError): Record<string, unknown> => {
   return projected;
 };
 
-const projectBoundaryError = (value: HTTPError | ResponseParseError | NonceRefreshFailedError): FlattenedError => {
-  if (value instanceof HTTPError) {
-    return {
-      name: value.name,
-      message: `HTTP ${value.status}`,
-      status: value.status,
-      endpoint: redactEndpoint(value.endpoint),
-    };
+const projectBoundaryError = (value: Error): FlattenedError | null => {
+  const classified = classifyError(value);
+  if (classified._tag !== 'http' && classified._tag !== 'parse' && classified._tag !== 'nonce_refresh') {
+    return null;
   }
-  if (value instanceof ResponseParseError) {
-    return {
-      name: value.name,
-      message: 'JSON parse error',
-      status: value.status,
-      endpoint: redactEndpoint(value.endpoint),
-    };
-  }
-  return {
+  const projected = projectAppError(classified);
+  const flattened: FlattenedError = {
     name: value.name,
-    message: 'Nonce refresh failed',
+    message: typeof projected.message === 'string' ? projected.message : safeAppErrorMessage(classified),
   };
+  if (typeof projected.status === 'number') {
+    flattened.status = projected.status;
+  }
+  if (typeof projected.endpoint === 'string') {
+    flattened.endpoint = projected.endpoint;
+  }
+  // parse AppError has no status; keep ResponseParseError.status via classified.cause.
+  if (classified._tag === 'parse' && flattened.status === undefined && isRecord(classified.cause)) {
+    const status = classified.cause.status;
+    if (typeof status === 'number') {
+      flattened.status = status;
+    }
+  }
+  return flattened;
 };
 
 const flattenCause = (cause: unknown): unknown => {
@@ -149,12 +148,10 @@ const flattenCause = (cause: unknown): unknown => {
 };
 
 const flattenError = (value: Error, includeCause: boolean): FlattenedError => {
-  const flattened: FlattenedError = isBoundaryError(value)
-    ? projectBoundaryError(value)
-    : {
-        name: value.name,
-        message: value.message,
-      };
+  const flattened: FlattenedError = projectBoundaryError(value) ?? {
+    name: value.name,
+    message: value.message,
+  };
   if (includeCause && value.cause !== undefined) {
     flattened.cause = flattenCause(value.cause);
   }

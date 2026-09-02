@@ -1,3 +1,5 @@
+import type { QueryClient } from '@tanstack/react-query';
+
 import type { WorkbenchMediaStatus } from './workbenchMediaApi';
 
 import type { ClusterListParams } from './recognition/types';
@@ -86,3 +88,29 @@ export const queryKeys = {
     stats: () => [...queryKeys.dashboard.all, 'stats'] as const,
   },
 } as const;
+
+/**
+ * Dashboard coverage probes reuse the workbench prefix with perPage:1
+ * (`MEDIA_STATS_PROBE` in useMediaStats). Prefix-invalidating
+ * `queryKeys.media.workbench()` therefore remounts list rows *and* refetches
+ * the total-media probe, whose count never changes on alt apply
+ * [BR-77][RLSE-04][S6-F1].
+ */
+export const isWorkbenchListPageQuery = (query: { queryKey: readonly unknown[] }): boolean => {
+  const [root, kind, params] = query.queryKey;
+  if (root !== 'media' || kind !== 'workbench') {
+    return false;
+  }
+  if (typeof params !== 'object' || params === null) {
+    return false;
+  }
+  const perPage = (params as { perPage?: unknown }).perPage;
+  return typeof perPage === 'number' && perPage !== 1;
+};
+
+/** Invalidate rendered workbench list pages only — never the perPage:1 stats probes. */
+export const invalidateWorkbenchListPages = (queryClient: QueryClient): void => {
+  void queryClient.invalidateQueries({
+    predicate: isWorkbenchListPageQuery,
+  });
+};

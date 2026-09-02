@@ -1503,7 +1503,7 @@ def ensure_tables(op) -> None:
             name="valid_describe_run_status",
         ),
         sa.CheckConstraint(
-            "phase IN ('queued', 'describing', 'complete', 'failed', 'cancelled')",
+            "phase IN ('queued', 'warming', 'describing', 'complete', 'failed', 'cancelled')",
             name="valid_describe_run_phase",
         ),
         sa.CheckConstraint("run_kind IN ('bulk', 'single')", name="valid_describe_run_kind"),

@@ -212,6 +212,57 @@ describe('parseRetryAfter', () => {
   });
 });
 
+describe('fetchApi HTTP-date Retry-After [FEBT1-W2C-08]', () => {
+  beforeEach(() => {
+    resetConfigCache();
+    seedConfig();
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-09-02T12:00:00.000Z'));
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+    resetConfigCache();
+  });
+
+  it('parses a future HTTP-date Retry-After into retryAfterSeconds on a 503', async () => {
+    const retryAfter = new Date(Date.now() + 30_000).toUTCString();
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response('overloaded', { status: 503, headers: { 'Retry-After': retryAfter } }),
+    );
+
+    try {
+      await fetchApi(REST_URL);
+      throw new Error('Expected a 503 to throw.');
+    } catch (error) {
+      expect(error).toBeInstanceOf(HTTPError);
+      expect((error as HTTPError).status).toBe(503);
+      expect((error as HTTPError).retryAfterSeconds).toBe(30);
+    }
+  });
+
+  it.fails(
+    'past HTTP-date Retry-After yields undefined, not 0 (FEBT1-W2A-03 — flips when F2 lands)',
+    async () => {
+      vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+        new Response('overloaded', {
+          status: 503,
+          headers: { 'Retry-After': 'Thu, 01 Jan 1970 00:00:00 GMT' },
+        }),
+      );
+
+      try {
+        await fetchApi(REST_URL);
+        throw new Error('Expected a 503 to throw.');
+      } catch (error) {
+        expect(error).toBeInstanceOf(HTTPError);
+        expect((error as HTTPError).retryAfterSeconds).toBeUndefined();
+      }
+    },
+  );
+});
+
 describe('fetchApi auth expiry seam (UXP-NET-2 slice 2)', () => {
   beforeEach(() => {
     resetConfigCache();
@@ -514,7 +565,10 @@ describe('fetchApi default timeout [E-04]', () => {
       },
     );
 
-    await vi.advanceTimersByTimeAsync(DEFAULT_FETCH_TIMEOUT_MS - 1);
+    // TEST-15 / FEBT1-W2C-09: pin the RES-02 backstop with a literal so a
+    // DEFAULT_FETCH_TIMEOUT_MS self-comparison cannot absorb a 300_000→60_000 mutant.
+    expect(DEFAULT_FETCH_TIMEOUT_MS).toBe(300_000);
+    await vi.advanceTimersByTimeAsync(300_000 - 1);
     expect(rejected).toBeUndefined();
 
     await vi.advanceTimersByTimeAsync(1);

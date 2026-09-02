@@ -9,9 +9,10 @@ import { BulkDescribeCta } from '../MediaSelection';
 
 vi.mock('@wordpress/i18n', () => ({
   __: (text: string) => text,
+  _n: (single: string, plural: string, count: number) => (count === 1 ? single : plural),
   sprintf: (fmt: string, ...args: (string | number)[]) => {
     let i = 0;
-    return fmt.replace(/%[sd]/g, () => String(args[i++]));
+    return fmt.replace(/%\d+\$[sd]/g, () => String(args[i++])).replace(/%[sd]/g, () => String(args[i++]));
   },
 }));
 
@@ -255,5 +256,71 @@ describe('BulkDescribeCta state matrix (A11Y-24)', () => {
     expect(cancel).not.toBeDisabled();
     await userEvent.click(cancel);
     expect(onCancel).toHaveBeenCalledOnce();
+  });
+
+  it('Review drafts on COMPLETE is a run-history link even if onReviewDrafts is a no-op (WBUX-6 F1)', () => {
+    const completeRun = {
+      tenant_id: 'tenant',
+      run_id: 'run-42',
+      status: 'completed',
+      phase: 'complete',
+      completed: 12,
+      failed: 0,
+      skipped: 0,
+      total: 12,
+      cancel_requested: false,
+      eta_seconds: null,
+      gpu_state: null,
+    } as DescribeRunResponse;
+    const progress = {
+      ...idleProgress,
+      run: completeRun,
+      status: 'completed',
+      isTerminal: true,
+      isPolling: false,
+      progressFraction: 1,
+    } as DescribeRunProgress;
+
+    render(
+      <BulkDescribeCta
+        {...baseProps}
+        runId="run-42"
+        progress={progress}
+        isPanelVisible
+        onReviewDrafts={() => {
+          /* mutant: a no-op must not be the apply effector */
+        }}
+      />,
+    );
+
+    const reviewDrafts = screen.getByRole('link', { name: 'Review drafts' });
+    expect(reviewDrafts).toHaveAttribute('href', '#/description-history?run=run-42');
+  });
+
+  it('shows exactly one Cancel describe run during warming (WBUX-6 F2)', () => {
+    const warmingRun = {
+      tenant_id: 'tenant',
+      run_id: 'run-1',
+      status: 'running',
+      phase: 'warming',
+      completed: 0,
+      failed: 0,
+      skipped: 0,
+      total: 12,
+      cancel_requested: false,
+      eta_seconds: null,
+      gpu_state: null,
+    } as DescribeRunResponse;
+    const progress = {
+      ...idleProgress,
+      run: warmingRun,
+      status: 'running',
+      isTerminal: false,
+      isPolling: true,
+    } as DescribeRunProgress;
+
+    render(<BulkDescribeCta {...baseProps} isRunning runId="run-1" progress={progress} isPanelVisible />);
+
+    expect(screen.getAllByRole('button', { name: 'Cancel describe run' })).toHaveLength(1);
   });
 });

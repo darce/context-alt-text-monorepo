@@ -1,6 +1,7 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { __ } from '@wordpress/i18n';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useLocation } from 'react-router-dom';
 
 import {
   fetchSettings,
@@ -16,6 +17,7 @@ import { resetConfigCache } from '../api/config';
 import { queryKeys } from '../api/queryKeys';
 import { resolveWpErrorMessage } from '../api/wpErrorMessage';
 import { toDashboard } from '../navigation/appLinks';
+import { RetentionSection } from './RetentionPage';
 import { SettingsForm } from './settings/SettingsForm';
 import { SettingsRoutingBanner } from './settings/SettingsRoutingBanner';
 import { TestConnectionBannerView } from './settings/TestConnectionBannerView';
@@ -23,13 +25,41 @@ import { isReadOnly } from './settings/settingsConstants';
 import { TONE_CLASS } from './settings/testConnectionBanner';
 import { useSettingsPageState } from './settings/useSettingsPageState';
 
+const SETTINGS_SECTION_RETENTION_ID = 'acx-settings-section-retention';
+const SETTINGS_SECTION_RETENTION_HEADING_ID = 'acx-retention-title';
+
+const sectionFromLocation = (search: string, hash: string): string | null => {
+  const fromSearch = new URLSearchParams(search).get('section');
+  if (fromSearch) {
+    return fromSearch;
+  }
+  const hashQuery = hash.includes('?') ? hash.slice(hash.indexOf('?') + 1) : '';
+  const fromHash = new URLSearchParams(hashQuery).get('section');
+  if (fromHash) {
+    return fromHash;
+  }
+  return new URLSearchParams(window.location.search).get('section');
+};
+
 export const SettingsPage = (): React.JSX.Element => {
   const queryClient = useQueryClient();
+  const location = useLocation();
 
   const settingsQuery = useQuery<SettingsResponse>({
     queryKey: ['settings'],
     queryFn: fetchSettings,
   });
+
+  useEffect(() => {
+    if (settingsQuery.isLoading || settingsQuery.isLoadingError) {
+      return;
+    }
+    if (sectionFromLocation(location.search, location.hash) !== 'retention') {
+      return;
+    }
+    document.getElementById(SETTINGS_SECTION_RETENTION_ID)?.scrollIntoView();
+    document.getElementById(SETTINGS_SECTION_RETENTION_HEADING_ID)?.focus();
+  }, [location.search, location.hash, settingsQuery.isLoading, settingsQuery.isLoadingError]);
 
   const { state, dispatch } = useSettingsPageState(settingsQuery.data);
 
@@ -277,6 +307,10 @@ export const SettingsPage = (): React.JSX.Element => {
           confirmPending={testMutation.isPending}
         />
       ) : null}
+
+      <section id={SETTINGS_SECTION_RETENTION_ID} className="acx-settings__retention">
+        <RetentionSection />
+      </section>
     </section>
   );
 };

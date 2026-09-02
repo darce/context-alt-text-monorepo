@@ -1,5 +1,6 @@
 import React from 'react';
 import { act, render, screen, fireEvent } from '@testing-library/react';
+import { MemoryRouter, RouterProvider, createMemoryRouter } from 'react-router-dom';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 import { SettingsPage } from '../SettingsPage';
@@ -9,6 +10,17 @@ import {
   type TestConnectionOutcomeValue,
   type TestConnectionResponse,
 } from '../../api/settingsApi';
+import {
+  useApplyRetentionPreset,
+  useAuditEvents,
+  useDownloadExportJobData,
+  useExportJobStatus,
+  useExportTenantData,
+  useImportTenantData,
+  usePurgeTenantData,
+  useRetentionStatus,
+  useUpdateRetentionPolicy,
+} from '../../hooks/useRetentionStatus';
 import { createMockMutation, createMockQuery } from '../../test-utils/mockHooks';
 
 type QueryHookResult = ReturnType<typeof createMockQuery<SettingsResponse>>;
@@ -61,6 +73,7 @@ vi.mock('../../api/config', () => ({
 
 vi.mock('../../navigation/appLinks', () => ({
   toDashboard: mockToDashboard,
+  toDescriptionHistory: () => '#/description-history',
 }));
 
 // Recovery affordances must stay enabled while offline (plan §3, RES-15). Forcing the shared
@@ -68,6 +81,31 @@ vi.mock('../../navigation/appLinks', () => ({
 vi.mock('../../hooks/useSyncOffline', () => ({
   useSyncOffline: () => true,
 }));
+
+vi.mock('../../hooks/useRetentionStatus', () => ({
+  useRetentionStatus: vi.fn(),
+  useUpdateRetentionPolicy: vi.fn(),
+  useExportTenantData: vi.fn(),
+  useExportJobStatus: vi.fn(),
+  useDownloadExportJobData: vi.fn(),
+  usePurgeTenantData: vi.fn(),
+  useImportTenantData: vi.fn(),
+  useAuditEvents: vi.fn(),
+  useApplyRetentionPreset: vi.fn(),
+}));
+
+vi.mock('../../context/ToastContext', () => ({
+  useToast: () => ({
+    success: vi.fn(),
+    error: vi.fn(),
+  }),
+}));
+
+const SettingsPageWithRouter = ({ route = '/settings' }: { route?: string }): React.JSX.Element => (
+  <MemoryRouter initialEntries={[route]}>
+    <SettingsPage />
+  </MemoryRouter>
+);
 
 vi.mock('@tanstack/react-query', async () => {
   const actual = await vi.importActual<typeof import('@tanstack/react-query')>('@tanstack/react-query');
@@ -133,18 +171,43 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockFetchQuery.mockResolvedValue(defaultSettings);
   installMutationMock();
+
+  vi.mocked(useRetentionStatus).mockReturnValue(
+    createMockQuery({
+      data: {
+        available: true,
+        policy: {
+          retention_mode: 'dispose_after_ack',
+          last_export_at: '2026-03-10T10:00:00Z',
+          last_purge_at: null,
+          retention_updated_at: '2026-03-09T12:00:00Z',
+        },
+        recent_audit_events: [],
+      },
+    }),
+  );
+  vi.mocked(useUpdateRetentionPolicy).mockReturnValue(createMockMutation());
+  vi.mocked(useExportTenantData).mockReturnValue(createMockMutation());
+  vi.mocked(useExportJobStatus).mockReturnValue(createMockQuery());
+  vi.mocked(useDownloadExportJobData).mockReturnValue(createMockMutation());
+  vi.mocked(usePurgeTenantData).mockReturnValue(createMockMutation());
+  vi.mocked(useImportTenantData).mockReturnValue(createMockMutation());
+  vi.mocked(useAuditEvents).mockReturnValue(
+    createMockQuery({ data: { items: [], total: 0, limit: 20, offset: 0 } }),
+  );
+  vi.mocked(useApplyRetentionPreset).mockReturnValue(createMockMutation());
 });
 
 describe('SettingsPage', () => {
   it('shows loading state initially', () => {
     mockUseQuery.mockReturnValue(createMockQuery({ status: 'pending' }));
-    render(<SettingsPage />);
+    render(<SettingsPageWithRouter />);
     expect(screen.getByText('Loading settings…')).toBeInTheDocument();
   });
 
   it('populates the same initially empty error region when loading fails [DUX-L4-RV-01]', () => {
     mockUseQuery.mockReturnValue(createMockQuery({ status: 'pending' }));
-    const { rerender } = render(<SettingsPage />);
+    const { rerender } = render(<SettingsPageWithRouter />);
 
     const errorRegion = screen.getByRole('alert');
     expect(errorRegion).toBeEmptyDOMElement();
@@ -152,7 +215,7 @@ describe('SettingsPage', () => {
     mockUseQuery.mockReturnValue(
       createMockQuery({ isError: true, error: new Error('fail') }),
     );
-    rerender(<SettingsPage />);
+    rerender(<SettingsPageWithRouter />);
 
     expect(screen.getByRole('alert')).toBe(errorRegion);
     expect(errorRegion).toHaveTextContent('Failed to load settings.');
@@ -163,7 +226,7 @@ describe('SettingsPage', () => {
     mockUseQuery.mockReturnValue(
       createMockQuery({ isError: true, error: new Error('fail'), refetch }),
     );
-    render(<SettingsPage />);
+    render(<SettingsPageWithRouter />);
 
     expect(screen.getByRole('alert')).toHaveTextContent('Failed to load settings.');
 
@@ -180,7 +243,7 @@ describe('SettingsPage', () => {
 
   it('keeps an edited form mounted and shows an inline notice after a refetch error [DUX-L4-RV-02]', () => {
     mockUseQuery.mockReturnValue(createMockQuery({ data: defaultSettings }));
-    const { rerender } = render(<SettingsPage />);
+    const { rerender } = render(<SettingsPageWithRouter />);
 
     fireEvent.change(screen.getByLabelText('Service API URL'), {
       target: { value: 'https://draft.example.com' },
@@ -193,16 +256,16 @@ describe('SettingsPage', () => {
         error: new Error('refetch failed'),
       }),
     );
-    rerender(<SettingsPage />);
+    rerender(<SettingsPageWithRouter />);
 
     expect(screen.getByLabelText('Service API URL')).toHaveValue('https://draft.example.com');
-    expect(screen.getByRole('alert')).toHaveTextContent('Failed to refresh settings.');
+    expect(screen.getByTestId('acx-settings-query-error')).toHaveTextContent('Failed to refresh settings.');
     expect(screen.queryByRole('link', { name: 'Back to Dashboard' })).not.toBeInTheDocument();
   });
 
   it('renders the settings form with loaded data', () => {
     mockUseQuery.mockReturnValue(createMockQuery({ data: defaultSettings }));
-    render(<SettingsPage />);
+    render(<SettingsPageWithRouter />);
 
     expect(screen.getByLabelText('Service API URL')).toHaveValue('https://api.example.com');
     expect(screen.getByTestId('acx-effective-routing')).toHaveTextContent('https://api.example.com');
@@ -212,7 +275,7 @@ describe('SettingsPage', () => {
 
   it('saves settings when the form is submitted with changes', () => {
     mockUseQuery.mockReturnValue(createMockQuery({ data: defaultSettings }));
-    render(<SettingsPage />);
+    render(<SettingsPageWithRouter />);
 
     fireEvent.change(screen.getByLabelText('Service API URL'), {
       target: { value: 'https://new-api.example.com' },
@@ -224,7 +287,7 @@ describe('SettingsPage', () => {
 
   it('renders the people recognition checkbox checked when GET recognition_enabled is true', () => {
     mockUseQuery.mockReturnValue(createMockQuery({ data: defaultSettings }));
-    render(<SettingsPage />);
+    render(<SettingsPageWithRouter />);
 
     expect(screen.getByRole('heading', { name: 'People & recognition' })).toBeInTheDocument();
     expect(screen.getByLabelText('Identify people in photos')).toBeChecked();
@@ -239,14 +302,14 @@ describe('SettingsPage', () => {
     mockUseQuery.mockReturnValue(
       createMockQuery({ data: { ...defaultSettings, recognition_enabled: false } }),
     );
-    render(<SettingsPage />);
+    render(<SettingsPageWithRouter />);
 
     expect(screen.getByLabelText('Identify people in photos')).not.toBeChecked();
   });
 
   it('associates the people recognition hint with the checkbox (A11Y-57)', () => {
     mockUseQuery.mockReturnValue(createMockQuery({ data: defaultSettings }));
-    render(<SettingsPage />);
+    render(<SettingsPageWithRouter />);
 
     expect(screen.getByLabelText('Identify people in photos')).toHaveAccessibleDescription(
       /facial recognition/,
@@ -255,7 +318,7 @@ describe('SettingsPage', () => {
 
   it('posts recognition_enabled false when the checkbox is unchecked then saved', () => {
     mockUseQuery.mockReturnValue(createMockQuery({ data: defaultSettings }));
-    render(<SettingsPage />);
+    render(<SettingsPageWithRouter />);
 
     fireEvent.click(screen.getByLabelText('Identify people in photos'));
     fireEvent.click(screen.getByRole('button', { name: 'Save Settings' }));
@@ -267,7 +330,7 @@ describe('SettingsPage', () => {
     mockUseQuery.mockReturnValue(
       createMockQuery({ data: { ...defaultSettings, recognition_enabled: false } }),
     );
-    render(<SettingsPage />);
+    render(<SettingsPageWithRouter />);
 
     fireEvent.click(screen.getByLabelText('Identify people in photos'));
     fireEvent.click(screen.getByRole('button', { name: 'Save Settings' }));
@@ -277,7 +340,7 @@ describe('SettingsPage', () => {
 
   it('does not post recognition_enabled when the checkbox is untouched', () => {
     mockUseQuery.mockReturnValue(createMockQuery({ data: defaultSettings }));
-    render(<SettingsPage />);
+    render(<SettingsPageWithRouter />);
 
     fireEvent.change(screen.getByLabelText('Service API URL'), {
       target: { value: 'https://new-api.example.com' },
@@ -286,6 +349,187 @@ describe('SettingsPage', () => {
 
     expect(saveMutate).toHaveBeenCalledWith({ url: 'https://new-api.example.com' });
     expect(saveMutate.mock.calls[0]?.[0]).not.toHaveProperty('recognition_enabled');
+  });
+
+  it('renders the Data & retention section and its purge control after People & recognition', () => {
+    mockUseQuery.mockReturnValue(createMockQuery({ data: defaultSettings }));
+    render(<SettingsPageWithRouter />);
+
+    const peopleHeading = screen.getByRole('heading', { name: 'People & recognition' });
+    const retentionHeading = screen.getByRole('heading', { name: 'Data & retention' });
+    expect(peopleHeading.compareDocumentPosition(retentionHeading) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Purge data' })).toBeInTheDocument();
+    expect(document.getElementById('acx-settings-section-retention')).not.toBeNull();
+  });
+
+  it('renders exactly one h1 whose text is Settings in the composed Settings tree', () => {
+    mockUseQuery.mockReturnValue(createMockQuery({ data: defaultSettings }));
+    render(<SettingsPageWithRouter />);
+
+    const pageHeadings = screen.getAllByRole('heading', { level: 1 });
+    expect(pageHeadings).toHaveLength(1);
+    expect(pageHeadings[0]).toHaveTextContent('Settings');
+  });
+
+  it('does not submit settings when Enter is pressed on a retention radio', () => {
+    mockUseQuery.mockReturnValue(createMockQuery({ data: defaultSettings }));
+    render(<SettingsPageWithRouter />);
+
+    const radio = screen.getByRole('radio', { name: /Purge on demand/ });
+    const saveSettings = screen.getByRole('button', { name: 'Save Settings' });
+    const settingsForm = saveSettings.closest('form');
+    expect(settingsForm).not.toBeNull();
+    expect(settingsForm?.contains(radio)).toBe(false);
+
+    fireEvent.keyDown(radio, { key: 'Enter', code: 'Enter' });
+    const radioForm = radio.closest('form');
+    if (radioForm) {
+      fireEvent.submit(radioForm);
+    }
+
+    expect(saveMutate).not.toHaveBeenCalled();
+    expect(screen.queryByText('No changes to save.')).not.toBeInTheDocument();
+  });
+
+  it('never includes retention_mode in the settings save payload', () => {
+    mockUseQuery.mockReturnValue(createMockQuery({ data: defaultSettings }));
+    render(<SettingsPageWithRouter />);
+
+    fireEvent.click(screen.getByRole('radio', { name: /Purge on demand/ }));
+    fireEvent.change(screen.getByLabelText('Service API URL'), {
+      target: { value: 'https://new-api.example.com' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Save Settings' }));
+
+    expect(saveMutate).toHaveBeenCalledTimes(1);
+    const body = saveMutate.mock.calls[0]?.[0] as Record<string, unknown>;
+    expect(body).toEqual({ url: 'https://new-api.example.com' });
+    expect(body).not.toHaveProperty('retention_mode');
+  });
+
+  it('keeps Save policy outside the settings form as the retention-scope primary', () => {
+    mockUseQuery.mockReturnValue(createMockQuery({ data: defaultSettings }));
+    render(<SettingsPageWithRouter />);
+
+    const settingsForm = screen.getByRole('button', { name: 'Save Settings' }).closest('form');
+    const savePolicy = screen.getByRole('button', { name: 'Save policy' });
+    expect(settingsForm?.contains(savePolicy)).toBe(false);
+    expect(settingsForm?.querySelectorAll('.acx-button--primary')).toHaveLength(0);
+    expect(savePolicy).toHaveClass('acx-button--primary');
+  });
+
+  it('scrolls the retention section into view and focuses its heading when section=retention is in the location', () => {
+    const scrolled: Element[] = [];
+    const scrollSpy = vi.spyOn(Element.prototype, 'scrollIntoView').mockImplementation(function scrollIntoView(this: Element) {
+      scrolled.push(this);
+    });
+
+    mockUseQuery.mockReturnValue(createMockQuery({ data: defaultSettings }));
+    const router = createMemoryRouter(
+      [{ path: '/settings', element: <SettingsPage /> }],
+      { initialEntries: ['/settings?section=retention'] },
+    );
+    render(<RouterProvider router={router} />);
+
+    const section = document.getElementById('acx-settings-section-retention');
+    expect(section).not.toBeNull();
+    expect(scrolled).toContain(section);
+
+    const heading = document.getElementById('acx-retention-title');
+    expect(heading).not.toBeNull();
+    expect(document.activeElement).toBe(heading);
+
+    scrollSpy.mockRestore();
+  });
+
+  it('scrolls and focuses the retention heading again when location changes to section=retention after mount', async () => {
+    const scrolled: Element[] = [];
+    const scrollSpy = vi.spyOn(Element.prototype, 'scrollIntoView').mockImplementation(function scrollIntoView(this: Element) {
+      scrolled.push(this);
+    });
+
+    mockUseQuery.mockReturnValue(createMockQuery({ data: defaultSettings }));
+    const router = createMemoryRouter(
+      [{ path: '/settings', element: <SettingsPage /> }],
+      { initialEntries: ['/settings'] },
+    );
+    render(<RouterProvider router={router} />);
+
+    const section = document.getElementById('acx-settings-section-retention');
+    expect(section).not.toBeNull();
+    expect(scrolled).not.toContain(section);
+    expect(document.activeElement).not.toBe(document.getElementById('acx-retention-title'));
+
+    await act(async () => {
+      await router.navigate('/settings?section=retention');
+    });
+
+    expect(scrolled).toContain(section);
+    expect(document.activeElement).toBe(document.getElementById('acx-retention-title'));
+
+    scrollSpy.mockRestore();
+  });
+
+  it('keeps deep-link focus on the retention heading when retention status resolves from pending to loaded', () => {
+    mockUseQuery.mockReturnValue(createMockQuery({ data: defaultSettings }));
+    const loadedRetention: ReturnType<typeof useRetentionStatus> = createMockQuery({
+      data: {
+        available: true,
+        policy: {
+          retention_mode: 'dispose_after_ack' as const,
+          last_export_at: '2026-03-10T10:00:00Z',
+          last_purge_at: null,
+          retention_updated_at: '2026-03-09T12:00:00Z',
+        },
+        recent_audit_events: [],
+      },
+    });
+    vi.mocked(useRetentionStatus).mockReturnValue(
+      createMockQuery({ status: 'pending' }),
+    );
+
+    const TickContext = React.createContext(0);
+    const SettingsWithTick = (): React.JSX.Element => {
+      React.useContext(TickContext);
+      return <SettingsPage />;
+    };
+    const router = createMemoryRouter(
+      [{ path: '/settings', element: <SettingsWithTick /> }],
+      { initialEntries: ['/settings?section=retention'] },
+    );
+    const { rerender } = render(
+      <TickContext.Provider value={0}>
+        <RouterProvider router={router} />
+      </TickContext.Provider>,
+    );
+
+    expect(screen.getByText('Loading retention status…')).toBeInTheDocument();
+    const headingWhilePending = document.getElementById('acx-retention-title');
+    expect(headingWhilePending).not.toBeNull();
+    expect(document.activeElement).toBe(headingWhilePending);
+
+    vi.mocked(useRetentionStatus).mockReturnValue(loadedRetention);
+    rerender(
+      <TickContext.Provider value={1}>
+        <RouterProvider router={router} />
+      </TickContext.Provider>,
+    );
+
+    expect(screen.queryByText('Loading retention status…')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Save policy' })).toBeInTheDocument();
+    const headingAfterLoad = document.getElementById('acx-retention-title');
+    expect(headingAfterLoad).not.toBeNull();
+    expect(headingAfterLoad).toHaveTextContent('Data & retention');
+    expect(headingAfterLoad).toBe(headingWhilePending);
+    expect(document.activeElement).toBe(headingWhilePending);
+    expect(document.activeElement).toBe(headingAfterLoad);
+  });
+
+  it('does not request audit events when Settings mounts', () => {
+    mockUseQuery.mockReturnValue(createMockQuery({ data: defaultSettings }));
+    render(<SettingsPageWithRouter />);
+
+    expect(useAuditEvents).not.toHaveBeenCalled();
   });
 
   it('renders description budget usage and saves the attempt limit', () => {
@@ -314,7 +558,7 @@ describe('SettingsPage', () => {
         },
       }),
     );
-    render(<SettingsPage />);
+    render(<SettingsPageWithRouter />);
 
     expect(screen.getByText('Description budget')).toBeInTheDocument();
     expect(screen.getByLabelText('Maximum description attempts')).toHaveValue(25);
@@ -333,7 +577,7 @@ describe('SettingsPage', () => {
 
   it('shows "no changes" when submitting without modifications', () => {
     mockUseQuery.mockReturnValue(createMockQuery({ data: defaultSettings }));
-    render(<SettingsPage />);
+    render(<SettingsPageWithRouter />);
 
     fireEvent.click(screen.getByRole('button', { name: 'Save Settings' }));
 
@@ -343,7 +587,7 @@ describe('SettingsPage', () => {
 
   it('tests connection and invokes the test mutation for the service target', () => {
     mockUseQuery.mockReturnValue(createMockQuery({ data: defaultSettings }));
-    render(<SettingsPage />);
+    render(<SettingsPageWithRouter />);
 
     fireEvent.click(screen.getByRole('button', { name: 'Check health' }));
 
@@ -354,7 +598,7 @@ describe('SettingsPage', () => {
     // useSyncOffline is module-mocked to true for this whole file — the probe must stay usable
     // so the operator can heal the breaker (plan §3 trap-the-operator guard).
     mockUseQuery.mockReturnValue(createMockQuery({ data: defaultSettings }));
-    render(<SettingsPage />);
+    render(<SettingsPageWithRouter />);
 
     const probeButton = screen.getByRole('button', { name: 'Check health' });
     expect(probeButton).toBeEnabled();
@@ -364,7 +608,7 @@ describe('SettingsPage', () => {
 
   it('updates the service health chip after a successful probe', () => {
     mockUseQuery.mockReturnValue(createMockQuery({ data: defaultSettings }));
-    render(<SettingsPage />);
+    render(<SettingsPageWithRouter />);
 
     act(() => {
       capturedTestOptions?.onSuccess?.({
@@ -378,7 +622,7 @@ describe('SettingsPage', () => {
 
   it('renders the tenant id and unpaired status when the tenant is not paired', () => {
     mockUseQuery.mockReturnValue(createMockQuery({ data: defaultSettings }));
-    render(<SettingsPage />);
+    render(<SettingsPageWithRouter />);
 
     expect(screen.getByTestId('acx-tenant-id')).toHaveTextContent('aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee');
     expect(screen.getByTestId('acx-tenant-pairing-status')).toHaveTextContent('Not paired yet');
@@ -386,7 +630,7 @@ describe('SettingsPage', () => {
 
   it('renders the paired status when the tenant is paired', () => {
     mockUseQuery.mockReturnValue(createMockQuery({ data: { ...defaultSettings, tenant_paired: true } }));
-    render(<SettingsPage />);
+    render(<SettingsPageWithRouter />);
 
     expect(screen.getByTestId('acx-tenant-pairing-status')).toHaveTextContent(
       'Paired with the recognition service',
@@ -395,7 +639,7 @@ describe('SettingsPage', () => {
 
   it('refetches sync health after a successful save so the offline banner clears', async () => {
     mockUseQuery.mockReturnValue(createMockQuery({ data: defaultSettings }));
-    render(<SettingsPage />);
+    render(<SettingsPageWithRouter />);
 
     expect(capturedSaveOptions?.onSuccess).toBeDefined();
     // onSuccess is async at runtime but typed void; wrap so we await the real work.
@@ -411,7 +655,7 @@ describe('SettingsPage', () => {
 
   it('shows Settings saved only when result is ok (R23-BR-14)', async () => {
     mockUseQuery.mockReturnValue(createMockQuery({ data: defaultSettings }));
-    render(<SettingsPage />);
+    render(<SettingsPageWithRouter />);
 
     await act(async () => {
       await Promise.resolve(
@@ -426,7 +670,7 @@ describe('SettingsPage', () => {
 
   it('does not show Settings saved on partial storage failure (R23-BR-14)', async () => {
     mockUseQuery.mockReturnValue(createMockQuery({ data: defaultSettings }));
-    render(<SettingsPage />);
+    render(<SettingsPageWithRouter />);
 
     await act(async () => {
       await Promise.resolve(
@@ -448,7 +692,7 @@ describe('SettingsPage', () => {
 
   it('does not show Settings saved on total storage failure (R23-BR-14)', async () => {
     mockUseQuery.mockReturnValue(createMockQuery({ data: defaultSettings }));
-    render(<SettingsPage />);
+    render(<SettingsPageWithRouter />);
 
     await act(async () => {
       await Promise.resolve(
@@ -473,7 +717,7 @@ describe('SettingsPage', () => {
     const loopbackRuleMessage =
       'The recognition API URL must be HTTPS (HTTP is allowed only for loopback development hosts).';
     mockUseQuery.mockReturnValue(createMockQuery({ data: defaultSettings }));
-    render(<SettingsPage />);
+    render(<SettingsPageWithRouter />);
 
     expect(capturedSaveOptions?.onError).toBeDefined();
     act(() => {
@@ -493,7 +737,7 @@ describe('SettingsPage', () => {
 
   it('falls back to the generic save failure when the rejection is unstructured', () => {
     mockUseQuery.mockReturnValue(createMockQuery({ data: defaultSettings }));
-    render(<SettingsPage />);
+    render(<SettingsPageWithRouter />);
 
     expect(capturedSaveOptions?.onError).toBeDefined();
     act(() => {
@@ -508,7 +752,7 @@ describe('SettingsPage', () => {
 
   it('refetches sync health after a successful probe so the offline banner clears', () => {
     mockUseQuery.mockReturnValue(createMockQuery({ data: defaultSettings }));
-    render(<SettingsPage />);
+    render(<SettingsPageWithRouter />);
 
     act(() => {
       capturedTestOptions?.onSuccess?.({ outcome: 'connected', probe_mode: 'service_auth' });
@@ -520,7 +764,7 @@ describe('SettingsPage', () => {
   it('does not refetch sync health when a probe fails', () => {
     // A failed probe must not clear the offline banner: sync.health stays as-is.
     mockUseQuery.mockReturnValue(createMockQuery({ data: defaultSettings }));
-    render(<SettingsPage />);
+    render(<SettingsPageWithRouter />);
 
     act(() => {
       capturedTestOptions?.onError?.(new Error('boom'));
@@ -540,7 +784,7 @@ describe('SettingsPage', () => {
         },
       }),
     );
-    render(<SettingsPage />);
+    render(<SettingsPageWithRouter />);
 
     expect(screen.getByLabelText('Service API URL')).toHaveAttribute('readOnly');
     expect(screen.getByLabelText('API Key')).toHaveAttribute('readOnly');
@@ -558,7 +802,7 @@ describe('SettingsPage', () => {
         },
       }),
     );
-    render(<SettingsPage />);
+    render(<SettingsPageWithRouter />);
 
     expect(screen.getByRole('button', { name: 'Save Settings' })).toBeEnabled();
   });
@@ -577,7 +821,7 @@ describe('SettingsPage', () => {
         },
       }),
     );
-    render(<SettingsPage />);
+    render(<SettingsPageWithRouter />);
 
     expect(screen.getByRole('button', { name: 'Configure service URL' })).toBeInTheDocument();
     const urlInput = screen.getByLabelText('Service API URL');
@@ -605,7 +849,7 @@ describe('SettingsPage', () => {
         },
       }),
     );
-    render(<SettingsPage />);
+    render(<SettingsPageWithRouter />);
 
     const routing = screen.getByTestId('acx-effective-routing');
     const rejection = screen.getByTestId('acx-url-rejection');
@@ -634,7 +878,7 @@ describe('SettingsPage', () => {
         },
       }),
     );
-    render(<SettingsPage />);
+    render(<SettingsPageWithRouter />);
 
     const rejectionSentence =
       'Rejected http://10.0.0.5:8000 (Saved in database): HTTP is only allowed for loopback development hosts (localhost, 127.0.0.1, ::1)';
@@ -654,7 +898,7 @@ describe('SettingsPage', () => {
   // unconfigured are already pinned above).
   it('mounts the effective-target live region when configured (A11Y-21)', () => {
     mockUseQuery.mockReturnValue(createMockQuery({ data: defaultSettings }));
-    render(<SettingsPage />);
+    render(<SettingsPageWithRouter />);
 
     const routing = screen.getByTestId('acx-effective-routing');
     expect(routing).toHaveAttribute('role', 'status');
@@ -678,7 +922,7 @@ describe('SettingsPage', () => {
         },
       }),
     );
-    render(<SettingsPage />);
+    render(<SettingsPageWithRouter />);
 
     expect(screen.getByTestId('acx-url-rejection')).toHaveTextContent(
       'Rejected http://host.docker.internal:8000 (Set via wp-config.php constant): HTTP is only allowed for loopback development hosts (localhost, 127.0.0.1, ::1)',
@@ -703,7 +947,7 @@ describe('SettingsPage', () => {
         },
       }),
     );
-    render(<SettingsPage />);
+    render(<SettingsPageWithRouter />);
 
     expect(screen.queryByRole('button', { name: 'Configure service URL' })).not.toBeInTheDocument();
     expect(
@@ -741,7 +985,7 @@ describe('SettingsPage', () => {
         },
       }),
     );
-    render(<SettingsPage />);
+    render(<SettingsPageWithRouter />);
 
     const routing = screen.getByTestId('acx-effective-routing');
     expect(routing).toHaveTextContent('http://localhost:8000');
@@ -773,7 +1017,7 @@ describe('SettingsPage', () => {
         },
       }),
     );
-    render(<SettingsPage />);
+    render(<SettingsPageWithRouter />);
 
     expect(screen.getByRole('button', { name: 'Configure service URL' })).toBeInTheDocument();
     expect(screen.getByText(/No service URL configured yet/)).toBeInTheDocument();
@@ -788,7 +1032,7 @@ describe('SettingsPage', () => {
 
   it('disables Check health when routing edits are unsaved', () => {
     mockUseQuery.mockReturnValue(createMockQuery({ data: defaultSettings }));
-    render(<SettingsPage />);
+    render(<SettingsPageWithRouter />);
 
     fireEvent.change(screen.getByLabelText('Service API URL'), {
       target: { value: 'https://new-api.example.com' },
@@ -808,7 +1052,7 @@ describe('SettingsPage', () => {
 
     const renderWithLoadedSettings = (): void => {
       mockUseQuery.mockReturnValue(createMockQuery({ data: defaultSettings }));
-      render(<SettingsPage />);
+      render(<SettingsPageWithRouter />);
     };
 
     const bannerFor = (outcome: TestConnectionOutcomeValue): HTMLElement => {

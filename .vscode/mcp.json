@@ -13,7 +13,8 @@
         "WORKBAY_HANDOFF_EMBEDDING_MODEL": "/Users/daniel/.local/share/workbay-handoff/embeddings/gte-base-en-v1.5/onnx/model_int8.onnx",
         "WORKBAY_HANDOFF_EMBEDDING_TOKENIZER": "/Users/daniel/.local/share/workbay-handoff/embeddings/gte-base-en-v1.5/tokenizer.json",
         "WORKBAY_HANDOFF_EMBEDDING_MODEL_SHA256": "e7f6af7a9457d4fdd3af220c68e9a37325aad7c2d306bbc855fe0d019c326509",
-        "WORKBAY_HANDOFF_EMBEDDING_TOKENIZER_SHA256": "cb374d6bc042c22455946f4e09a89d29882a199fdaf8fb25be00dc8b8857a448"
+        "WORKBAY_HANDOFF_EMBEDDING_TOKENIZER_SHA256": "cb374d6bc042c22455946f4e09a89d29882a199fdaf8fb25be00dc8b8857a448",
+        "WORKBAY_TOOL_ROSTER_POLICY": "all"
       }
     },
     "workbay-orchestrator-mcp": {
@@ -24,7 +25,10 @@
         "root=\"$(git rev-parse --show-toplevel 2>/dev/null || echo .)\"; exec python3 \"$root/scripts/hooks/mcp_launch.py\" \"$@\"",
         "sh",
         "workbay-orchestrator-mcp"
-      ]
+      ],
+      "env": {
+        "WORKBAY_TOOL_ROSTER_POLICY": "all"
+      }
     },
     "codebase-graph-mcp": {
       "type": "stdio",

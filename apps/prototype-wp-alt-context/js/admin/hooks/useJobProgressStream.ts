@@ -191,15 +191,22 @@ export const useJobProgressStream = (jobId: string | null): JobProgressStream =>
       eventSource = null;
     };
 
-    const emitTerminal = (nextStatus: JobStatus, nextProgress: JobProgress | null, at: number): void => {
+    const emitTerminal = (
+      nextStatus: JobStatus,
+      nextProgress: JobProgress | null,
+      at: number,
+      errorMessage?: string,
+    ): void => {
       if (nextStatus === JOB_STATUS.COMPLETED_WITH_ERRORS) {
         dispatch({
           type: JOB_EVENT.COMPLETE_WITH_ERRORS,
-          failedCount: 0,
           at,
         });
       } else if (nextStatus === JOB_STATUS.FAILED) {
-        dispatch({ type: JOB_EVENT.FAIL, error: { message: 'stream failed' } });
+        dispatch({
+          type: JOB_EVENT.FAIL,
+          error: { message: errorMessage ?? 'job stream error' },
+        });
       } else {
         dispatch({ type: JOB_EVENT.COMPLETE, at });
       }
@@ -208,7 +215,6 @@ export const useJobProgressStream = (jobId: string | null): JobProgressStream =>
         jobId,
         done: nextProgress?.completed,
         total: nextProgress?.total,
-        failedCount: nextStatus === JOB_STATUS.FAILED ? 1 : undefined,
       });
     };
 
@@ -267,12 +273,11 @@ export const useJobProgressStream = (jobId: string | null): JobProgressStream =>
       if (event instanceof MessageEvent && event.data) {
         try {
           const errorData = JSON.parse(event.data as string) as { message?: string };
-          if (errorData.message?.includes('not found')) {
-            emitTerminal(JOB_STATUS.FAILED, progressRef.current, Date.now());
-            close();
-            return;
-          }
-          jobLog.error('sse.server_error', { detail: errorData.message });
+          const message = typeof errorData.message === 'string' ? errorData.message : undefined;
+          jobLog.error('sse.server_error', { detail: message });
+          emitTerminal(JOB_STATUS.FAILED, progressRef.current, Date.now(), message);
+          close();
+          return;
         } catch {
           // Non-JSON payload; handled below.
         }

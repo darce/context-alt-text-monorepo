@@ -32,7 +32,6 @@ const _events: Record<JobEvent['type'], true> = {
   [JOB_EVENT.STREAM_OPEN]: true,
   [JOB_EVENT.PROGRESS]: true,
   [JOB_EVENT.STALL_TICK]: true,
-  [JOB_EVENT.RECONNECTED]: true,
   [JOB_EVENT.OFFLINE]: true,
   [JOB_EVENT.ONLINE]: true,
   [JOB_EVENT.COMPLETE]: true,
@@ -50,7 +49,6 @@ const SAMPLE_EVENTS: { readonly [E in JobEvent['type']]: Extract<JobEvent, { typ
   STREAM_OPEN: { type: JOB_EVENT.STREAM_OPEN, at: AT },
   PROGRESS: { type: JOB_EVENT.PROGRESS, done: 4, total: 12, at: AT },
   STALL_TICK: { type: JOB_EVENT.STALL_TICK, now: AT + JOB_MACHINE_STALL_THRESHOLD_MS },
-  RECONNECTED: { type: JOB_EVENT.RECONNECTED, at: AT },
   OFFLINE: { type: JOB_EVENT.OFFLINE, at: AT },
   ONLINE: { type: JOB_EVENT.ONLINE, at: AT },
   COMPLETE: { type: JOB_EVENT.COMPLETE, at: AT },
@@ -67,7 +65,6 @@ const EXPECTED_STATUS: Record<JobMachineStatus, Record<JobEvent['type'], JobMach
     STREAM_OPEN: null,
     PROGRESS: null,
     STALL_TICK: null,
-    RECONNECTED: null,
     OFFLINE: JOB_MACHINE_STATE.offline,
     ONLINE: null,
     COMPLETE: null,
@@ -81,7 +78,6 @@ const EXPECTED_STATUS: Record<JobMachineStatus, Record<JobEvent['type'], JobMach
     STREAM_OPEN: JOB_MACHINE_STATE.running,
     PROGRESS: JOB_MACHINE_STATE.running,
     STALL_TICK: JOB_MACHINE_STATE.stalled,
-    RECONNECTED: null,
     OFFLINE: JOB_MACHINE_STATE.offline,
     ONLINE: null,
     COMPLETE: JOB_MACHINE_STATE.completed,
@@ -95,7 +91,6 @@ const EXPECTED_STATUS: Record<JobMachineStatus, Record<JobEvent['type'], JobMach
     STREAM_OPEN: null,
     PROGRESS: JOB_MACHINE_STATE.running,
     STALL_TICK: JOB_MACHINE_STATE.stalled,
-    RECONNECTED: null,
     OFFLINE: JOB_MACHINE_STATE.offline,
     ONLINE: null,
     COMPLETE: JOB_MACHINE_STATE.completed,
@@ -109,7 +104,6 @@ const EXPECTED_STATUS: Record<JobMachineStatus, Record<JobEvent['type'], JobMach
     STREAM_OPEN: JOB_MACHINE_STATE.running,
     PROGRESS: JOB_MACHINE_STATE.running,
     STALL_TICK: JOB_MACHINE_STATE.stalled,
-    RECONNECTED: JOB_MACHINE_STATE.running,
     OFFLINE: JOB_MACHINE_STATE.offline,
     ONLINE: null,
     COMPLETE: JOB_MACHINE_STATE.completed,
@@ -123,7 +117,6 @@ const EXPECTED_STATUS: Record<JobMachineStatus, Record<JobEvent['type'], JobMach
     STREAM_OPEN: null,
     PROGRESS: null,
     STALL_TICK: JOB_MACHINE_STATE.offline,
-    RECONNECTED: null,
     OFFLINE: null,
     // Fixture resumeStatus is `running`.
     ONLINE: JOB_MACHINE_STATE.running,
@@ -138,7 +131,6 @@ const EXPECTED_STATUS: Record<JobMachineStatus, Record<JobEvent['type'], JobMach
     STREAM_OPEN: null,
     PROGRESS: null,
     STALL_TICK: null,
-    RECONNECTED: null,
     OFFLINE: null,
     ONLINE: null,
     COMPLETE: null,
@@ -152,7 +144,6 @@ const EXPECTED_STATUS: Record<JobMachineStatus, Record<JobEvent['type'], JobMach
     STREAM_OPEN: null,
     PROGRESS: null,
     STALL_TICK: null,
-    RECONNECTED: null,
     OFFLINE: null,
     ONLINE: null,
     COMPLETE: null,
@@ -166,7 +157,6 @@ const EXPECTED_STATUS: Record<JobMachineStatus, Record<JobEvent['type'], JobMach
     STREAM_OPEN: null,
     PROGRESS: null,
     STALL_TICK: null,
-    RECONNECTED: null,
     OFFLINE: null,
     ONLINE: null,
     COMPLETE: null,
@@ -232,12 +222,6 @@ const assertActiveTransitionPayload = (
     case JOB_EVENT.STALL_TICK:
       expect(next.lastEventAt).toBe(state.lastEventAt);
       expect(next.reconnectAttempts).toBe(state.reconnectAttempts);
-      expect(next.done).toBe(state.done);
-      expect(next.total).toBe(state.total);
-      expect(next.jobId).toBe(state.jobId);
-      return;
-    case JOB_EVENT.RECONNECTED:
-      expect(next.lastEventAt).toBe(event.at);
       expect(next.done).toBe(state.done);
       expect(next.total).toBe(state.total);
       expect(next.jobId).toBe(state.jobId);
@@ -536,12 +520,6 @@ describe('FEBT-1 W1 fix lane (L6A-01, M-01..M-06)', () => {
       expect(next.lastEventAt).toBe(9_000);
     });
 
-    it('RECONNECTED writes lastEventAt', () => {
-      const state = fixtureFor(JOB_MACHINE_STATE.stalled);
-      const next = jobReducer(state, { type: JOB_EVENT.RECONNECTED, at: 11_000 });
-      expect(next.lastEventAt).toBe(11_000);
-    });
-
     it('COMPLETE writes lastEventAt and clears resumeStatus', () => {
       const state = { ...fixtureFor(JOB_MACHINE_STATE.running), resumeStatus: JOB_MACHINE_STATE.running };
       const next = jobReducer(state, { type: JOB_EVENT.COMPLETE, at: 12_000 });
@@ -744,6 +722,22 @@ describe('FEBT-1 W1 fix lane (L6A-01, M-01..M-06)', () => {
       const next = jobReducer(fixtureFor(JOB_MACHINE_STATE.idle), { type: JOB_EVENT.RESET });
       expect(next).toEqual(initialJobState);
     });
+  });
+});
+
+describe('FEBT1-W2D-03 STREAM_OPEN from stalled is the surviving reconnect path', () => {
+  it('reconnect after a stall increments reconnectAttempts exactly once via STREAM_OPEN', () => {
+    const stalled = jobReducer(fixtureFor(JOB_MACHINE_STATE.running), {
+      type: JOB_EVENT.STALL_TICK,
+      now: AT + JOB_MACHINE_STALL_THRESHOLD_MS,
+    });
+    expect(stalled.status).toBe(JOB_MACHINE_STATE.stalled);
+    expect(stalled.reconnectAttempts).toBe(0);
+
+    const reopened = jobReducer(stalled, { type: JOB_EVENT.STREAM_OPEN, at: AT + 31_000 });
+    expect(reopened.status).toBe(JOB_MACHINE_STATE.running);
+    expect(reopened.reconnectAttempts).toBe(1);
+    expect(reopened.lastEventAt).toBe(AT + 31_000);
   });
 });
 

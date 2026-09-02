@@ -95,6 +95,27 @@ describe('MergeSuggestionCard', () => {
     expect(screen.queryByRole('button', { name: 'Yes' })).not.toBeInTheDocument();
   });
 
+  it('uses the full stamped survivor_label on accept copy (S4R2-F4)', () => {
+    render(
+      <MergeSuggestionCard
+        suggestion={{
+          ...baseSuggestion,
+          cluster_a_label: 'MJ',
+          cluster_b_label: 'MJ Twin',
+          survivor_cluster_id: 'cluster-a',
+          survivor_label: 'Mary Jane Watson',
+        }}
+        onAccept={vi.fn()}
+        onReject={vi.fn()}
+        isPending={false}
+      />,
+    );
+    const accept = screen.getByRole('button', { name: 'Merge into Mary Jane Watson' });
+    expect(accept).toHaveTextContent('Merge into Mary Jane Watson');
+    expect(screen.queryByRole('button', { name: 'Merge into MJ' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Yes' })).not.toBeInTheDocument();
+  });
+
   it('uses stamped survivor_cluster_id = B when both labels are human-shaped (S4-F7)', () => {
     render(
       <MergeSuggestionCard

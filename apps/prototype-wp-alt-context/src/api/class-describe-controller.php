@@ -374,9 +374,9 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 		// file we cannot read fails the whole run fast (400 naming the id) instead
 		// of silently dropping it.
 		$multipart_body = array(
-			'tenant_id'             => $this->get_tenant_id(),
-			'media_ids'             => wp_json_encode( array_values( $media_ids ) ),
-			'recognition_enabled'   => RecognitionPolicy::enabled() ? 'true' : 'false',
+			'tenant_id'           => $this->get_tenant_id(),
+			'media_ids'           => wp_json_encode( array_values( $media_ids ) ),
+			'recognition_enabled' => RecognitionPolicy::enabled() ? 'true' : 'false',
 		);
 
 		// PHP-01: bound aggregate raw bytes BEFORE loading them. Stat each file

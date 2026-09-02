@@ -73,6 +73,16 @@ def test_submit_persists_recognition_enabled_false(monkeypatch):
         asyncio.run(_assert_row())
 
 
+def test_submit_rejects_non_bool_recognition_enabled(monkeypatch):
+    """HARM-F1: lax truthy strings like 'yes'/'on' must not leak; 'maybe' is 422."""
+    _no_worker(monkeypatch)
+    with _client() as (client, _):
+        files = [("image_70", ("70.png", b"\x89PNG\r\n\x1a\n", "image/png"))]
+        data = {"tenant_id": str(TENANT_ID), "media_ids": json.dumps([70]), "recognition_enabled": "maybe"}
+        response = client.post("/scene/describe/run", data=data, files=files)
+        assert response.status_code == 422, response.text
+
+
 def test_stage2_skips_load_fusion_naming_inputs_when_recognition_disabled(monkeypatch):
     from types import SimpleNamespace
 

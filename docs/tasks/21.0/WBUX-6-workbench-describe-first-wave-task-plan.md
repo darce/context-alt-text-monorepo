@@ -172,10 +172,10 @@ After each wave: `/wb-review-slice` with one local Claude lens + remote grok-4.6
 
 ## Checklist
 
-- [ ] Wave 1 lanes dispatched (`dispatch_wave` under `WBUX-6`) and committed on their `lane/wbux-6-*` branches
-- [ ] Wave 1 reviewed (`review_runs` recorded) and trial-merged into `feature/wbux-6`
-- [ ] Wave 2 lanes dispatched after L1/C2/D1 land
+- [x] Wave 1 lanes dispatched (`dispatch_wave` under `WBUX-6`) and committed on their `feature/wbux-6-*` branches
+- [x] Wave 1 reviewed (`review_runs` recorded) and trial-merged into `feature/wbux-6`
+- [x] Wave 2 lanes dispatched after L1/C2/D1 land (decision `claude_wave2_dispatch_wbux6_20260902`)
 - [ ] `workbench-2pane.uxmap.json` updated for the unified footer, critique zero high (`ux-map critique`)
-- [ ] Decision recorded for recognition default ON (operator-reviewable)
+- [x] Decision recorded for recognition default ON (operator-reviewable): `claude_recognition_default_on_wbux6`
 - [ ] Prod redeploy to 08379faf+ and `/run/acx` chown applied on the VM (operator-held, `scripts/deploy/gpu-lifecycle-install.sh` re-run)
 - [ ] `handoff_close_check(enforce=True)` pass, merge to `main`, `make task-finish TASK=WBUX-6`

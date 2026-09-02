@@ -127,6 +127,24 @@ describe('mapPendingMergeSuggestion', () => {
     expect(mapped.survivor_label).toBe('Ada Lovelace');
   });
 
+  it('keeps a multi-word survivor_label intact (S4R2-F4)', () => {
+    const mapped = mapPendingMergeSuggestion(
+      mergePayload({
+        survivor_cluster_id: 'cluster-a',
+        survivor_label: 'Mary Jane Watson',
+      }),
+    );
+
+    expect(mapped.survivor_cluster_id).toBe('cluster-a');
+    expect(mapped.survivor_label).toBe('Mary Jane Watson');
+  });
+
+  it('rejects an empty survivor_cluster_id as null (boundary string ids)', () => {
+    const mapped = mapPendingMergeSuggestion(mergePayload({ survivor_cluster_id: '' }));
+
+    expect(mapped.survivor_cluster_id).toBeNull();
+  });
+
   it('normalizes omitted survivor fields to null instead of dropping them', () => {
     const mapped = mapPendingMergeSuggestion(mergePayload());
 

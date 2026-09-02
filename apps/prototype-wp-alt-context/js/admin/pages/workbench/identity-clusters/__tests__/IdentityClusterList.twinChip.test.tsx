@@ -292,6 +292,78 @@ describe('IdentityClusterList twin chip (WBUX-6/C3 S4-F1/F4/F6)', () => {
     );
   });
 
+  it('renders the chip on unlabeled cluster_a when survivor_cluster_id is B (S4-F7)', async () => {
+    vi.mocked(recognitionApi.fetchPendingMergeSuggestions).mockResolvedValue(
+      mapPendingMergeSuggestions({
+        suggestions: [
+          {
+            id: 'merge-1',
+            cluster_a_id: UNLABELED_ID,
+            cluster_b_id: LABELED_ID,
+            similarity: 0.91,
+            status: 'pending',
+            cluster_a_label: 'Ada',
+            cluster_b_label: 'Ada Lovelace',
+            survivor_cluster_id: LABELED_ID,
+            survivor_label: 'Ada Lovelace',
+          },
+        ],
+        limit: 50,
+        offset: 0,
+        data_source: DATA_SOURCE.BACKEND_PROXY,
+      }),
+    );
+
+    renderList([
+      identity({ cluster_label: 'Ada' }),
+      identity({
+        identity_id: 'id-labeled',
+        cluster_id: LABELED_ID,
+        cluster_label: 'Ada Lovelace',
+        is_auto_label: false,
+      }),
+    ]);
+
+    await waitFor(() => {
+      expect(screen.getByRole('group', { name: /same person as ada lovelace/i })).toBeInTheDocument();
+    });
+    expect(screen.getByRole('button', { name: 'Merge into Ada Lovelace' })).toHaveTextContent(
+      'Merge into Ada Lovelace',
+    );
+  });
+
+  it('uses the full mapped survivor_label on the chip accept button (S4R2-F4)', async () => {
+    vi.mocked(recognitionApi.fetchPendingMergeSuggestions).mockResolvedValue(
+      mapPendingMergeSuggestions({
+        suggestions: [
+          {
+            id: 'merge-1',
+            cluster_a_id: LABELED_ID,
+            cluster_b_id: UNLABELED_ID,
+            similarity: 0.91,
+            status: 'pending',
+            cluster_a_label: 'MJ',
+            cluster_b_label: 'MJ Twin',
+            survivor_cluster_id: LABELED_ID,
+            survivor_label: 'Mary Jane Watson',
+          },
+        ],
+        limit: 50,
+        offset: 0,
+        data_source: DATA_SOURCE.BACKEND_PROXY,
+      }),
+    );
+
+    renderList([identity({ cluster_label: 'MJ Twin' })]);
+
+    await waitFor(() => {
+      expect(screen.getByRole('group', { name: /same person as mary jane watson/i })).toBeInTheDocument();
+    });
+    const accept = screen.getByRole('button', { name: 'Merge into Mary Jane Watson' });
+    expect(accept).toHaveTextContent('Merge into Mary Jane Watson');
+    expect(accept.textContent).toBe('Merge into Mary Jane Watson');
+  });
+
   it('does not render a silent-twin fallback link when the loaded page is complete', async () => {
     vi.mocked(recognitionApi.fetchPendingMergeSuggestions).mockResolvedValue({
       suggestions: [pendingMerge(), pendingMerge({ id: 'merge-2', cluster_b_id: 'cluster-other-labeled' })],

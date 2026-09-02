@@ -291,6 +291,40 @@ describe('pendingMergeTwinForCluster (WBUX-6/C3 labeled-side map)', () => {
     });
   });
 
+  it('uses stamped survivor_label even when it differs from the side cluster label (S4R2-F1/F4)', () => {
+    expect(
+      pendingMergeTwinForCluster(UNLABELED_ID, [
+        pendingSuggestion({
+          cluster_a_label: 'Ada',
+          cluster_b_label: 'Ada Twin',
+          survivor_cluster_id: LABELED_ID,
+          survivor_label: 'Mary Jane Watson',
+        }),
+      ]),
+    ).toEqual({
+      suggestionId: 'merge-1',
+      survivorClusterId: LABELED_ID,
+      survivorLabel: 'Mary Jane Watson',
+    });
+  });
+
+  it('falls back to the labeled-side predicate only when survivor fields are omitted (S4R2-F1)', () => {
+    expect(
+      pendingMergeTwinForCluster(UNLABELED_ID, [
+        pendingSuggestion({
+          cluster_a_label: 'Ada Lovelace',
+          cluster_b_label: null,
+          survivor_cluster_id: null,
+          survivor_label: null,
+        }),
+      ]),
+    ).toEqual({
+      suggestionId: 'merge-1',
+      survivorClusterId: LABELED_ID,
+      survivorLabel: 'Ada Lovelace',
+    });
+  });
+
   it('returns null for labeled↔labeled pairs', () => {
     expect(
       pendingMergeTwinForCluster(

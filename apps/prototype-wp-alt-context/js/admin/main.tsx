@@ -64,7 +64,7 @@ if (rootElement) {
     }
   }
   if (missingGlobals.length > 0) {
-    bootstrapLog.warn(`[alt-context] Missing WordPress globals: ${missingGlobals.join(', ')}`, {
+    bootstrapLog.warn(`Missing WordPress globals: ${missingGlobals.join(', ')}`, {
       missingGlobals,
     });
   }

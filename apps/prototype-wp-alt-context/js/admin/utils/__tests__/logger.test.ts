@@ -3,7 +3,9 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   consoleSink,
   createLogger,
+  LOG_LEVEL_ORDER,
   newRequestId,
+  setLogLevel,
   setLogSink,
   type LogRecord,
 } from '../logger';
@@ -11,10 +13,14 @@ import {
 describe('createLogger', () => {
   afterEach(() => {
     setLogSink(null);
+    setLogLevel(null);
+    vi.useRealTimers();
     vi.restoreAllMocks();
   });
 
   it('capture sink receives records with ts/level/scope/message/fields [OBS-02]', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(1_700_000_000_000));
     const records: LogRecord[] = [];
     setLogSink((record) => {
       records.push(record);
@@ -25,7 +31,7 @@ describe('createLogger', () => {
 
     expect(records).toHaveLength(1);
     const rec = records[0];
-    expect(rec.ts).toEqual(expect.any(Number));
+    expect(rec.ts).toBe(1_700_000_000_000);
     expect(rec.level).toBe('warn');
     expect(rec.scope).toBe('bootstrap');
     expect(rec.message).toBe('Missing WordPress globals');
@@ -63,17 +69,17 @@ describe('createLogger', () => {
     consoleSink({ ...empty, level: 'warn' });
     consoleSink({ ...empty, level: 'error' });
 
-    expect(debug).toHaveBeenCalledWith('[s] m');
+    expect(debug).toHaveBeenCalledWith('[alt-context/s] m');
     expect(debug.mock.calls[0]).toHaveLength(1);
-    expect(info).toHaveBeenCalledWith('[s] m');
+    expect(info).toHaveBeenCalledWith('[alt-context/s] m');
     expect(info.mock.calls[0]).toHaveLength(1);
-    expect(warn).toHaveBeenCalledWith('[s] m');
+    expect(warn).toHaveBeenCalledWith('[alt-context/s] m');
     expect(warn.mock.calls[0]).toHaveLength(1);
-    expect(error).toHaveBeenCalledWith('[s] m');
+    expect(error).toHaveBeenCalledWith('[alt-context/s] m');
     expect(error.mock.calls[0]).toHaveLength(1);
 
     consoleSink({ ts: 1, level: 'info', scope: 's', message: 'm', fields: { jobId: 'j1' } });
-    expect(info).toHaveBeenCalledWith('[s] m', { jobId: 'j1' });
+    expect(info).toHaveBeenCalledWith('[alt-context/s] m', { jobId: 'j1' });
   });
 
   it('Error field values are flattened to { name, message }', () => {
@@ -88,6 +94,64 @@ describe('createLogger', () => {
 
     expect(records[0].fields.error).toEqual({ name: 'SyntaxError', message: 'parse failed' });
     expect(JSON.stringify(records[0].fields.error)).not.toContain('stack');
+  });
+
+  it('flattens Error cause one level without stack', () => {
+    const records: LogRecord[] = [];
+    setLogSink((record) => {
+      records.push(record);
+    });
+
+    const outer = new Error('outer', { cause: new TypeError('inner') });
+    createLogger('x').error('failed', { error: outer });
+
+    expect(records[0].fields.error).toEqual({
+      name: 'Error',
+      message: 'outer',
+      cause: { name: 'TypeError', message: 'inner' },
+    });
+    expect(JSON.stringify(records[0].fields.error)).not.toContain('stack');
+
+    const withPrimitive = new Error('outer2', { cause: 42 });
+    createLogger('x').error('failed2', { error: withPrimitive });
+    expect(records[1].fields.error).toEqual({
+      name: 'Error',
+      message: 'outer2',
+      cause: 42,
+    });
+  });
+
+  it('drops records below minLevel before they reach the sink', () => {
+    const records: LogRecord[] = [];
+    setLogSink((record) => {
+      records.push(record);
+    });
+    setLogLevel('warn');
+
+    const log = createLogger('x');
+    log.debug('d');
+    log.info('i');
+    log.warn('w');
+    log.error('e');
+
+    expect(LOG_LEVEL_ORDER.debug).toBeLessThan(LOG_LEVEL_ORDER.warn);
+    expect(records.map((record) => record.level)).toEqual(['warn', 'error']);
+    expect(records.map((record) => record.message)).toEqual(['w', 'e']);
+  });
+
+  it('setLogLevel(null) restores the environment default minLevel', () => {
+    const records: LogRecord[] = [];
+    setLogSink((record) => {
+      records.push(record);
+    });
+    setLogLevel('error');
+    createLogger('x').debug('hidden');
+    expect(records).toHaveLength(0);
+
+    setLogLevel(null);
+    createLogger('x').debug('visible');
+    expect(records).toHaveLength(1);
+    expect(records[0].message).toBe('visible');
   });
 
   it('sink throwing does not propagate', () => {
@@ -132,6 +196,6 @@ describe('createLogger', () => {
 
     setLogSink(null);
     createLogger('x').warn('visible');
-    expect(warn).toHaveBeenCalledWith('[x] visible');
+    expect(warn).toHaveBeenCalledWith('[alt-context/x] visible');
   });
 });

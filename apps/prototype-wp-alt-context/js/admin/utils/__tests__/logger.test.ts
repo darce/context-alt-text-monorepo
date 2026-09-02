@@ -1,8 +1,13 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { NonceRefreshFailedError } from '../../api/config';
+import { classifyError, isAppError } from '../appError';
+import { HTTPError, ResponseParseError } from '../http';
 import {
   consoleSink,
+  createJobLogger,
   createLogger,
+  logJobEvent,
   LOG_LEVEL_ORDER,
   newRequestId,
   setLogLevel,
@@ -196,6 +201,251 @@ describe('createLogger', () => {
 
     setLogSink(null);
     createLogger('x').warn('visible');
-    expect(warn).toHaveBeenCalledWith('[alt-context/x] visible');
+    expect(warn).toHaveBeenCalledWith(
+      '[alt-context/x] visible',
+      expect.objectContaining({ requestId: expect.any(String) }),
+    );
+  });
+});
+
+const BODY_SECRET = 'SECRET_BODY_LEAK_XYZ_42';
+const ENDPOINT_SECRET = 'SECRET_QUERY_TOKEN_XYZ_42';
+const PREVIEW_SECRET = 'SECRET_BODY_PREVIEW_XYZ_42';
+
+const leakingHttpError = (): HTTPError =>
+  new HTTPError({
+    status: 500,
+    retryAfterSeconds: undefined,
+    endpoint: `http://example.test/jobs?token=${ENDPOINT_SECRET}`,
+    bodyPreview: PREVIEW_SECRET,
+    message: `Request to http://example.test/jobs failed (500): ${BODY_SECRET}`,
+  });
+
+const captureRecords = (): LogRecord[] => {
+  const records: LogRecord[] = [];
+  setLogSink((record) => {
+    records.push(record);
+  });
+  return records;
+};
+
+describe('correlation id binding [O-01]', () => {
+  afterEach(() => {
+    setLogSink(null);
+    setLogLevel(null);
+  });
+
+  it('createLogger without fields still emits requestId on every level [O-01][OBS-03]', () => {
+    const records = captureRecords();
+    const log = createLogger('bootstrap');
+    log.debug('d');
+    log.info('i');
+    log.warn('w');
+    log.error('e');
+
+    expect(records).toHaveLength(4);
+    const requestId = records[0].fields.requestId;
+    expect(requestId).toEqual(expect.any(String));
+    expect(String(requestId).length).toBeGreaterThan(0);
+    for (const record of records) {
+      expect(record.fields.requestId).toBe(requestId);
+    }
+  });
+
+  it('two loggers receive distinct request ids [O-01][OBS-03]', () => {
+    const records = captureRecords();
+    createLogger('a').info('one');
+    createLogger('b').info('two');
+
+    expect(records).toHaveLength(2);
+    expect(records[0].fields.requestId).toEqual(expect.any(String));
+    expect(records[1].fields.requestId).toEqual(expect.any(String));
+    expect(records[0].fields.requestId).not.toBe(records[1].fields.requestId);
+  });
+
+  it('child logger inherits the parent requestId [O-01][OBS-03]', () => {
+    const records = captureRecords();
+    const parent = createLogger('jobPersistence');
+    const child = parent.child({ extra: 1 });
+    parent.info('parent');
+    child.info('child');
+
+    expect(records).toHaveLength(2);
+    const requestId = records[0].fields.requestId;
+    expect(requestId).toEqual(expect.any(String));
+    expect(String(requestId).length).toBeGreaterThan(0);
+    expect(records[1].fields.requestId).toBe(requestId);
+    expect(records[1].fields.extra).toBe(1);
+  });
+
+  it('createJobLogger records jobId and requestId on every line [O-01][OBS-03]', () => {
+    const records = captureRecords();
+    const log = createJobLogger('jobPersistence', 'job-123');
+    log.info('start');
+    log.warn('stall');
+    log.error('fail');
+
+    expect(records).toHaveLength(3);
+    const requestId = records[0].fields.requestId;
+    expect(requestId).toEqual(expect.any(String));
+    expect(String(requestId).length).toBeGreaterThan(0);
+    for (const record of records) {
+      expect(record.fields.jobId).toBe('job-123');
+      expect(record.fields.requestId).toBe(requestId);
+    }
+  });
+});
+
+describe('logJobEvent [O-02]', () => {
+  afterEach(() => {
+    setLogSink(null);
+    setLogLevel(null);
+  });
+
+  it('emits exactly one wide record with event, state, job id, and request id [O-02][OBS-02]', () => {
+    const records = captureRecords();
+    const log = createJobLogger('job', 'job-123');
+    logJobEvent(
+      log,
+      { type: 'PROGRESS' },
+      { status: 'running', jobId: 'job-123', done: 3, total: 10, failedCount: 0 },
+    );
+
+    expect(records).toHaveLength(1);
+    expect(records[0].fields.event).toBe('PROGRESS');
+    expect(records[0].fields.status).toBe('running');
+    expect(records[0].fields.jobId).toBe('job-123');
+    expect(records[0].fields.done).toBe(3);
+    expect(records[0].fields.total).toBe(10);
+    expect(records[0].fields.failedCount).toBe(0);
+    expect(records[0].fields.requestId).toEqual(expect.any(String));
+    expect(String(records[0].fields.requestId).length).toBeGreaterThan(0);
+  });
+});
+
+describe('boundary error redaction [O-03][O-05]', () => {
+  afterEach(() => {
+    setLogSink(null);
+    setLogLevel(null);
+  });
+
+  it('HTTPError message secrets are absent from the serialized record [O-03][REF-19]', () => {
+    const records = captureRecords();
+    const error = leakingHttpError();
+    createLogger('http').error('request failed', { error });
+
+    expect(records).toHaveLength(1);
+    const serialized = JSON.stringify(records[0]);
+    expect(serialized).not.toContain(BODY_SECRET);
+    expect(serialized).not.toContain(ENDPOINT_SECRET);
+    expect(serialized).not.toContain(PREVIEW_SECRET);
+    expect(serialized).not.toContain(error.message);
+    expect(serialized).not.toContain(error.bodyPreview);
+    const projected = records[0].fields.error as { name?: string; message?: string; endpoint?: string };
+    expect(projected).toEqual(
+      expect.objectContaining({
+        name: 'HTTPError',
+        message: 'HTTP 500',
+        status: 500,
+      }),
+    );
+    expect(projected).not.toHaveProperty('bodyPreview');
+    if (typeof projected.endpoint === 'string') {
+      expect(projected.endpoint).not.toContain(ENDPOINT_SECRET);
+      expect(projected.endpoint).not.toContain('?');
+    }
+    expect(Object.getPrototypeOf(projected)).toBe(Object.prototype);
+  });
+
+  it('ResponseParseError and NonceRefreshFailedError omit bodyPreview and raw message [O-03][REF-19]', () => {
+    const records = captureRecords();
+    const parseError = new ResponseParseError({
+      status: 200,
+      endpoint: `http://example.test/media?token=${ENDPOINT_SECRET}`,
+      bodyPreview: PREVIEW_SECRET,
+      message: `Request to http://example.test/media returned malformed JSON (200): ${BODY_SECRET}. Response preview: ${PREVIEW_SECRET}`,
+    });
+    const nonceError = new NonceRefreshFailedError({
+      message: `nonce refresh failed: ${BODY_SECRET}`,
+      causeStatus: 403,
+      bodyPreview: PREVIEW_SECRET,
+    });
+    const log = createLogger('http');
+    log.error('parse', { error: parseError });
+    log.error('nonce', { error: nonceError });
+
+    expect(records).toHaveLength(2);
+    const serialized = JSON.stringify(records);
+    expect(serialized).not.toContain(BODY_SECRET);
+    expect(serialized).not.toContain(ENDPOINT_SECRET);
+    expect(serialized).not.toContain(PREVIEW_SECRET);
+    expect(records[0].fields.error).not.toHaveProperty('bodyPreview');
+    expect(records[1].fields.error).not.toHaveProperty('bodyPreview');
+    expect(Object.getPrototypeOf(records[0].fields.error)).toBe(Object.prototype);
+    expect(Object.getPrototypeOf(records[1].fields.error)).toBe(Object.prototype);
+  });
+
+  it('HTTPError as Error.cause is a plain projection, never the class instance [O-03][REF-19]', () => {
+    const records = captureRecords();
+    const nested = new Error('wrapper', { cause: leakingHttpError() });
+    createLogger('http').error('wrapped', { error: nested });
+
+    const flattened = records[0].fields.error as { cause?: unknown };
+    expect(flattened.cause).not.toBeInstanceOf(Error);
+    expect(flattened.cause).not.toBeInstanceOf(HTTPError);
+    expect(Object.getPrototypeOf(flattened.cause)).toBe(Object.prototype);
+    expect(JSON.stringify(records[0])).not.toContain(BODY_SECRET);
+  });
+
+  it('plain Error message still round-trips [O-03]', () => {
+    const records = captureRecords();
+    createLogger('x').error('failed', { error: new Error('parse failed') });
+    expect(records[0].fields.error).toEqual({ name: 'Error', message: 'parse failed' });
+  });
+
+  it('AppError field values flatten to a tagged safe projection [O-05][REF-19]', () => {
+    const records = captureRecords();
+    const classified = classifyError(leakingHttpError());
+    expect(isAppError(classified)).toBe(true);
+    createLogger('http').error('classified', { error: classified });
+
+    expect(records[0].fields.error).toEqual({
+      tag: 'http',
+      message: 'HTTP 500',
+      status: 500,
+      endpoint: '/jobs',
+    });
+    const serialized = JSON.stringify(records[0]);
+    expect(serialized).not.toContain(BODY_SECRET);
+    expect(serialized).not.toContain(ENDPOINT_SECRET);
+    expect(serialized).not.toContain(PREVIEW_SECRET);
+    expect(serialized).not.toContain('_tag');
+  });
+});
+
+describe('flattenError cause recursion [O-07]', () => {
+  afterEach(() => {
+    setLogSink(null);
+    setLogLevel(null);
+  });
+
+  it('follows cause only one level in a two-level chain [O-07][TEST-15]', () => {
+    const records = captureRecords();
+    const leaf = new Error('leaf-secret');
+    const mid = new Error('mid', { cause: leaf });
+    const outer = new Error('outer', { cause: mid });
+    createLogger('x').error('failed', { error: outer });
+
+    expect(records[0].fields.error).toEqual({
+      name: 'Error',
+      message: 'outer',
+      cause: { name: 'Error', message: 'mid' },
+    });
+    expect(JSON.stringify(records[0].fields.error)).not.toContain('leaf-secret');
+    expect(records[0].fields.error).toEqual(
+      expect.objectContaining({
+        cause: expect.not.objectContaining({ cause: expect.anything() }),
+      }),
+    );
   });
 });

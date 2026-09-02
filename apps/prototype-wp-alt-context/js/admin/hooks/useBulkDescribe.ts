@@ -4,6 +4,7 @@ import { __, sprintf } from '@wordpress/i18n';
 
 import {
   cancelBulkDescribeRun,
+  DESCRIBE_RUN_PHASE,
   type DescribeRunPhase,
   type DescribeRunResponse,
   resolveDescribeErrorDataField,
@@ -12,14 +13,6 @@ import {
 import { invalidateWorkbenchListPages } from '../api/queryKeys';
 import { resolveWpErrorMessage } from '../api/wpErrorMessage';
 import { useDescribeRunProgress, type DescribeRunProgress } from './useDescribeRunProgress';
-
-const DESCRIBE_RUN_PHASE = {
-  QUEUED: 'queued',
-  DESCRIBING: 'describing',
-  COMPLETE: 'complete',
-  FAILED: 'failed',
-  CANCELLED: 'cancelled',
-} as const satisfies Record<string, DescribeRunPhase>;
 
 const TERMINAL_DESCRIBE_RUN_PHASES: ReadonlySet<DescribeRunPhase> = new Set([
   DESCRIBE_RUN_PHASE.COMPLETE,

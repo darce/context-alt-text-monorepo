@@ -9,6 +9,7 @@ import { BulkDescribeProgress } from '../MediaSelection';
 
 vi.mock('@wordpress/i18n', () => ({
   __: (text: string) => text,
+  _n: (single: string, plural: string, count: number) => (count === 1 ? single : plural),
   sprintf: (fmt: string, ...args: (string | number)[]) => {
     let i = 0;
     return fmt.replace(/%\d+\$[sd]/g, () => String(args[i++])).replace(/%[sd]/g, () => String(args[i++]));
@@ -100,8 +101,71 @@ describe('BulkDescribeProgress phase copy (WBUX-6 D2)', () => {
     expect(screen.getByRole('progressbar')).toBeInTheDocument();
   });
 
-  it('renders named done-state counts, Review drafts, and Dismiss that clears the panel', async () => {
-    const onReviewDrafts = vi.fn();
+  it('counts processed items (completed+failed+skipped), not just completed (WBUX-6 F6)', () => {
+    render(
+      <BulkDescribeProgress
+        progress={progressOf({
+          run: runResponse({ phase: 'describing', completed: 5, failed: 1, skipped: 1, total: 12 }),
+          progressFraction: 7 / 12,
+        })}
+        onRetry={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText('Describing… 7/12')).toBeInTheDocument();
+  });
+
+  it('renders honest done-state copy without a failed segment when none failed (WBUX-6 F3)', () => {
+    render(
+      <BulkDescribeProgress
+        progress={progressOf({
+          run: runResponse({
+            status: 'completed',
+            phase: 'complete',
+            completed: 12,
+            failed: 0,
+            total: 12,
+          }),
+          status: 'completed',
+          isTerminal: true,
+          isPolling: false,
+          progressFraction: 1,
+        })}
+        onRetry={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText('✔ 12 drafts ready to review')).toBeInTheDocument();
+    expect(screen.queryByText(/failed/)).toBeNull();
+    expect(screen.queryByText(/need review/)).toBeNull();
+  });
+
+  it('appends the failed count on done only when run.failed > 0 (WBUX-6 F3)', () => {
+    render(
+      <BulkDescribeProgress
+        progress={progressOf({
+          run: runResponse({
+            status: 'completed',
+            phase: 'complete',
+            completed: 12,
+            failed: 2,
+            total: 14,
+          }),
+          status: 'completed',
+          isTerminal: true,
+          isPolling: false,
+          progressFraction: 1,
+        })}
+        onRetry={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText('✔ 12 drafts ready to review · 2 failed')).toBeInTheDocument();
+    expect(screen.queryByText(/need review/)).toBeNull();
+  });
+
+  it('renders named done-state counts, Review drafts as a history link, and Dismiss that clears the panel', async () => {
     const Harness = () => {
       const [visible, setVisible] = useState(true);
       if (!visible) {
@@ -124,19 +188,21 @@ describe('BulkDescribeProgress phase copy (WBUX-6 D2)', () => {
           })}
           onRetry={vi.fn()}
           onDismiss={() => setVisible(false)}
-          onReviewDrafts={onReviewDrafts}
+          onReviewDrafts={() => {
+            /* mutant: navigation must not depend on this no-op */
+          }}
         />
       );
     };
 
     render(<Harness />);
 
-    expect(screen.getByText('✔ 12 described · 2 need review')).toBeInTheDocument();
-    await userEvent.click(screen.getByRole('button', { name: 'Review drafts' }));
-    expect(onReviewDrafts).toHaveBeenCalledOnce();
+    expect(screen.getByText('✔ 12 drafts ready to review · 2 failed')).toBeInTheDocument();
+    const reviewDrafts = screen.getByRole('link', { name: 'Review drafts' });
+    expect(reviewDrafts).toHaveAttribute('href', '#/description-history?run=run-1');
     await userEvent.click(screen.getByRole('button', { name: 'Dismiss' }));
     expect(screen.getByText('cleared')).toBeInTheDocument();
-    expect(screen.queryByText('✔ 12 described · 2 need review')).toBeNull();
+    expect(screen.queryByText('✔ 12 drafts ready to review · 2 failed')).toBeNull();
   });
 
   it('keeps today\'s failed copy', () => {

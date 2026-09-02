@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 
 
 class MergeSuggestionService:
-    """Generate merge suggestions for similar unlabeled clusters."""
+    """Generate merge suggestions for similar cluster pairs."""
 
     def __init__(
         self,
@@ -113,7 +113,7 @@ class MergeSuggestionService:
             )
 
         embeddings: dict[uuid.UUID, np.ndarray] = {}
-        identity_to_cluster: dict[uuid.UUID, str] = {}
+        identity_to_cluster: dict[uuid.UUID, IdentityCluster] = {}
         for cluster, identity_id, embedding in singleton_candidates:
             try:
                 identity_uuid = uuid.UUID(identity_id)
@@ -122,7 +122,7 @@ class MergeSuggestionService:
                 continue
             embeddings[identity_uuid] = normalize_face_embedding(np.array(embedding, dtype=np.float32))
             if cluster.id is not None:
-                identity_to_cluster[identity_uuid] = cluster.id
+                identity_to_cluster[identity_uuid] = cluster
 
         if len(embeddings) < 2:
             return 0
@@ -143,18 +143,21 @@ class MergeSuggestionService:
             if len(group) < 2:
                 continue
             for identity_a, identity_b in combinations(group, 2):
-                cluster_a_id = identity_to_cluster.get(identity_a)
-                cluster_b_id = identity_to_cluster.get(identity_b)
-                if not cluster_a_id or not cluster_b_id:
+                cluster_a = identity_to_cluster.get(identity_a)
+                cluster_b = identity_to_cluster.get(identity_b)
+                if cluster_a is None or cluster_b is None or cluster_a.id is None or cluster_b.id is None:
+                    continue
+                if not _is_merge_pair_eligible(cluster_a, cluster_b):
                     continue
                 similarity = compute_similarity(embeddings[identity_a], embeddings[identity_b])
                 if similarity < self._settings.suggestion_floor:
                     continue
                 if similarity >= self._settings.similarity_threshold:
                     continue
+                survivor_id, other_id = _merge_pair_cluster_ids(cluster_a, cluster_b)
                 payload = MergeSuggestionCreateData(
-                    cluster_a_id=cluster_a_id,
-                    cluster_b_id=cluster_b_id,
+                    cluster_a_id=survivor_id,
+                    cluster_b_id=other_id,
                     similarity=similarity,
                     source="singleton_hac",
                     refreshed_at=now,
@@ -196,7 +199,7 @@ async def generate_cluster_merge_suggestions(
     if not clusters:
         return 0
 
-    candidates: list[tuple[str, np.ndarray]] = []
+    candidates: list[tuple[IdentityCluster, np.ndarray]] = []
     for cluster in clusters:
         cluster_id = cluster.id
         if not cluster_id:
@@ -206,7 +209,7 @@ async def generate_cluster_merge_suggestions(
         centroid = _extract_cluster_centroid(cluster)
         if centroid is None:
             continue
-        candidates.append((cluster_id, centroid))
+        candidates.append((cluster, centroid))
 
     if len(candidates) < 2:
         logger.debug("[merge_suggestions] No eligible cluster pairs for tenant_id=%s", tenant_id)
@@ -214,17 +217,20 @@ async def generate_cluster_merge_suggestions(
 
     created = 0
     now = datetime.now(tz=UTC)
-    for idx, (cluster_a_id, centroid_a) in enumerate(candidates):
-        for cluster_b_id, centroid_b in candidates[idx + 1 :]:
+    for idx, (cluster_a, centroid_a) in enumerate(candidates):
+        for cluster_b, centroid_b in candidates[idx + 1 :]:
             similarity = compute_similarity(centroid_a, centroid_b)
             if similarity < settings.suggestion_floor:
                 continue
             if similarity >= settings.similarity_threshold:
                 continue
+            if not _is_merge_pair_eligible(cluster_a, cluster_b):
+                continue
 
+            survivor_id, other_id = _merge_pair_cluster_ids(cluster_a, cluster_b)
             payload = MergeSuggestionCreateData(
-                cluster_a_id=cluster_a_id,
-                cluster_b_id=cluster_b_id,
+                cluster_a_id=survivor_id,
+                cluster_b_id=other_id,
                 similarity=similarity,
                 source="cluster_merge",
                 refreshed_at=now,
@@ -242,26 +248,35 @@ async def generate_cluster_merge_suggestions(
 
 
 def _is_eligible_for_merge_suggestion(cluster: IdentityCluster, tenant_id: str) -> bool:
-    """Check if cluster should be considered for merge suggestions.
+    """Return whether a cluster may participate in merge-suggestion pairing.
 
-    A cluster is eligible if:
-    - It belongs to the specified tenant
-    - It is NOT a user-confirmed cluster with a meaningful (non-auto) label
-
-    This means we generate merge suggestions for:
-    - Unlabeled clusters (label=None)
-    - Auto-labeled clusters (label starts with 'cluster-')
-    - Non-confirmed clusters (user_confirmed=False)
-
-    We skip user-confirmed clusters with real labels because those represent
-    the user's ground truth and shouldn't be suggested for merging.
+    Tenant mismatch is excluded. Labeled vs unlabeled is decided at pair
+    level: a pair is suggestible when similarity is in band and at most one
+    side is user-confirmed with a non-auto (non-``cluster-``) label.
     """
-    if cluster.tenant_id and cluster.tenant_id.lower() != tenant_id.lower():
-        return False
+    return not (cluster.tenant_id and cluster.tenant_id.lower() != tenant_id.lower())
+
+
+def _is_labeled_for_merge_suggestion(cluster: IdentityCluster) -> bool:
+    """Return True when the cluster is user-confirmed with a real (non-auto) label."""
     label = cluster.label
-    # Skip if: user_confirmed AND has label AND label is meaningful (not auto-generated)
-    is_confirmed_with_real_label = cluster.user_confirmed and label and not str(label).startswith("cluster-")
-    return not is_confirmed_with_real_label
+    return bool(cluster.user_confirmed and label and not str(label).startswith("cluster-"))
+
+
+def _is_merge_pair_eligible(cluster_a: IdentityCluster, cluster_b: IdentityCluster) -> bool:
+    """A pair is suggestible unless both sides are labeled."""
+    return not (_is_labeled_for_merge_suggestion(cluster_a) and _is_labeled_for_merge_suggestion(cluster_b))
+
+
+def _merge_pair_cluster_ids(cluster_a: IdentityCluster, cluster_b: IdentityCluster) -> tuple[str, str]:
+    """Return (survivor_id, other_id). Labeled side is the survivor when exactly one is labeled."""
+    cluster_a_id = cluster_a.id
+    cluster_b_id = cluster_b.id
+    if cluster_a_id is None or cluster_b_id is None:
+        raise ValueError("merge pair requires cluster ids")
+    if _is_labeled_for_merge_suggestion(cluster_b) and not _is_labeled_for_merge_suggestion(cluster_a):
+        return cluster_b_id, cluster_a_id
+    return cluster_a_id, cluster_b_id
 
 
 def _extract_cluster_centroid(cluster: IdentityCluster) -> np.ndarray | None:

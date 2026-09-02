@@ -99,6 +99,13 @@ describe('shouldRetryRequest', () => {
     expect(shouldRetryRequest(1, { name: 'TimeoutError', message: 'timed out' })).toBe(false);
   });
 
+  it('exports a hard ceiling of exactly 3 retry attempts (RES-06)', () => {
+    // TEST-15 / FEBT1-W2C-13: a bound expressed only as RETRY_MAX_ATTEMPTS
+    // stays green if the constant changes. Pin the literal (clusterAutoRetry
+    // pattern) and keep the behavioural edges below.
+    expect(RETRY_MAX_ATTEMPTS).toBe(3);
+  });
+
   it('is bounded: stops once RETRY_MAX_ATTEMPTS is reached even for a retryable class', () => {
     expect(shouldRetryRequest(RETRY_MAX_ATTEMPTS - 1, httpError(429))).toBe(true);
     expect(shouldRetryRequest(RETRY_MAX_ATTEMPTS, httpError(429))).toBe(false);
@@ -128,6 +135,12 @@ describe('getRetryDelay', () => {
     expect(getRetryDelay(0, new TypeError('Failed to fetch'))).toBe(1_000);
     expect(getRetryDelay(1, new TypeError('Failed to fetch'))).toBe(2_000);
     expect(getRetryDelay(2, new TypeError('Failed to fetch'))).toBe(4_000);
+  });
+
+  it('exports a 30s retry delay ceiling', () => {
+    // Same self-referential smell as RETRY_MAX_ATTEMPTS: some delay tests
+    // compare against MAX_RETRY_DELAY_MS itself. Pin the literal too.
+    expect(MAX_RETRY_DELAY_MS).toBe(30_000);
   });
 
   it('caps exponential backoff at 30s', () => {

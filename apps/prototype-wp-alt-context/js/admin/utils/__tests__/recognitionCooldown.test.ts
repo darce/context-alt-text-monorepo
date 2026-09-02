@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { classifyError } from '../appError';
 import { HTTPError } from '../http';
+import { RETRY_AFTER_MAX_MS } from '../retryAfter';
 import {
   _resetCooldownForTests,
   cooldownRemainingMs,
@@ -95,6 +97,35 @@ describe('recognitionCooldown', () => {
       openCooldownFromError(new TypeError('network down'));
       openCooldownFromError(undefined);
       expect(isCoolingDown()).toBe(false);
+    });
+
+    it('clamps Retry-After: 3600 to the shared ceiling at the cooldown call site [E-01]', () => {
+      openCooldownFromError(httpError(429, 3600));
+      expect(cooldownRemainingMs()).toBe(RETRY_AFTER_MAX_MS);
+    });
+
+    it('clamps overflow-scale Retry-After below the 32-bit setTimeout bound [E-01]', () => {
+      openCooldownFromError(httpError(429, 2_678_400));
+      expect(cooldownRemainingMs()).toBe(RETRY_AFTER_MAX_MS);
+      expect(cooldownRemainingMs()).toBeLessThan(2 ** 31 - 1);
+    });
+
+    it('falls back to DEFAULT_COOLDOWN_SECONDS for negative/NaN/Infinity Retry-After [E-01]', () => {
+      openCooldownFromError(httpError(429, Number.NaN));
+      expect(cooldownRemainingMs()).toBe(DEFAULT_COOLDOWN_SECONDS * 1000);
+      _resetCooldownForTests();
+
+      openCooldownFromError(httpError(429, Number.POSITIVE_INFINITY));
+      expect(cooldownRemainingMs()).toBe(DEFAULT_COOLDOWN_SECONDS * 1000);
+      _resetCooldownForTests();
+
+      openCooldownFromError(httpError(429, -12));
+      expect(cooldownRemainingMs()).toBe(DEFAULT_COOLDOWN_SECONDS * 1000);
+    });
+
+    it('honors retryAfterMs on a pre-classified AppError [W1-L1-09]', () => {
+      openCooldownFromError(classifyError(httpError(429, 5)));
+      expect(cooldownRemainingMs()).toBe(5_000);
     });
 
     it('never arms from abort-like errors — a local timeout must not freeze all six pollers', () => {

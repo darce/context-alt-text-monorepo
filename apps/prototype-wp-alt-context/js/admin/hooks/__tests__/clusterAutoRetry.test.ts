@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { AuthExpiredError, HTTPError } from '../../utils/http';
 import { DEFAULT_COOLDOWN_SECONDS } from '../../utils/recognitionCooldown';
+import { RETRY_AFTER_MAX_MS } from '../../utils/retryAfter';
 import { buildStatusText } from '../jobStateMachineProgress';
 import {
   CLUSTER_RETRY_MAX_ATTEMPTS,
@@ -53,6 +54,24 @@ describe('clusterAutoRetry pure helpers', () => {
   it('honors Retry-After and falls back to DEFAULT_COOLDOWN_SECONDS', () => {
     expect(resolveClusterRetryDelaySeconds(rateLimited(2))).toBe(2);
     expect(resolveClusterRetryDelaySeconds(rateLimitedNoRetryAfter())).toBe(DEFAULT_COOLDOWN_SECONDS);
+  });
+
+  it('clamps Retry-After: 3600 to the shared ceiling [E-01]', () => {
+    expect(resolveClusterRetryDelaySeconds(rateLimited(3600))).toBe(RETRY_AFTER_MAX_MS / 1000);
+  });
+
+  it('clamps overflow-scale Retry-After below the 32-bit setTimeout bound [E-01]', () => {
+    const seconds = resolveClusterRetryDelaySeconds(rateLimited(2_678_400));
+    expect(seconds).toBe(RETRY_AFTER_MAX_MS / 1000);
+    expect(seconds * 1000).toBeLessThan(2 ** 31 - 1);
+  });
+
+  it('falls back to DEFAULT_COOLDOWN_SECONDS for negative/NaN/Infinity Retry-After [E-01]', () => {
+    expect(resolveClusterRetryDelaySeconds(rateLimited(Number.NaN))).toBe(DEFAULT_COOLDOWN_SECONDS);
+    expect(resolveClusterRetryDelaySeconds(rateLimited(Number.POSITIVE_INFINITY))).toBe(
+      DEFAULT_COOLDOWN_SECONDS,
+    );
+    expect(resolveClusterRetryDelaySeconds(rateLimited(-3))).toBe(DEFAULT_COOLDOWN_SECONDS);
   });
 
   it('allows auto-retry only while attempts remain under the ceiling', () => {

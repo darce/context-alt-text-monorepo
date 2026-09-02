@@ -1,8 +1,16 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { classifyError } from '../appError';
 import { AuthExpiredError, HTTPError, ResponseParseError } from '../http';
-import { getRetryDelay, isAbortLike, isCooldownSignal, RETRY_MAX_ATTEMPTS, shouldRetryRequest } from '../retryPolicy';
+import { clampRetryAfterMs, RETRY_AFTER_MAX_MS } from '../retryAfter';
+import {
+  getRetryDelay,
+  isAbortLike,
+  isCooldownSignal,
+  MAX_RETRY_DELAY_MS,
+  RETRY_MAX_ATTEMPTS,
+  shouldRetryRequest,
+} from '../retryPolicy';
 
 const httpError = (status: number, retryAfterSeconds?: number): HTTPError =>
   new HTTPError({
@@ -101,6 +109,14 @@ describe('shouldRetryRequest', () => {
 });
 
 describe('getRetryDelay', () => {
+  beforeEach(() => {
+    vi.spyOn(Math, 'random').mockReturnValue(1);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   it('honors Retry-After (delta-seconds) for 429/503', () => {
     expect(getRetryDelay(0, httpError(429, 5))).toBe(5_000);
     expect(getRetryDelay(2, httpError(503, 10))).toBe(10_000);
@@ -137,6 +153,34 @@ describe('getRetryDelay', () => {
   it('caps the exponential backoff branch at the same ceiling', () => {
     expect(getRetryDelay(20, new TypeError('Failed to fetch'))).toBe(30_000);
   });
+
+  it('clamps Retry-After: 3600 through the shared ceiling at the retry-delay call site [E-01]', () => {
+    expect(clampRetryAfterMs(3600, 1_000)).toBe(RETRY_AFTER_MAX_MS);
+    expect(getRetryDelay(0, httpError(429, 3600))).toBe(MAX_RETRY_DELAY_MS);
+    expect(getRetryDelay(0, httpError(429, 3600))).toBeLessThan(2 ** 31 - 1);
+  });
+
+  it('falls back off the Retry-After branch for negative/NaN/Infinity [E-01]', () => {
+    expect(getRetryDelay(0, httpError(429, Number.NaN))).toBe(1_000);
+    expect(getRetryDelay(0, httpError(429, Number.POSITIVE_INFINITY))).toBe(1_000);
+    expect(getRetryDelay(0, httpError(429, -5))).toBe(1_000);
+  });
+
+  it('applies full jitter: rng 0 → 0, rng ~1 → full computed exponential [E-06]', () => {
+    const transport = new TypeError('Failed to fetch');
+    expect(getRetryDelay(0, transport, () => 0)).toBe(0);
+    expect(getRetryDelay(1, transport, () => 0)).toBe(0);
+    expect(getRetryDelay(0, transport, () => 1)).toBe(1_000);
+    expect(getRetryDelay(1, transport, () => 1)).toBe(2_000);
+    expect(getRetryDelay(2, transport, () => 1)).toBe(4_000);
+  });
+
+  it('keeps the Retry-After branch byte-identical regardless of rng [E-06]', () => {
+    const error = httpError(429, 5);
+    expect(getRetryDelay(0, error, () => 0)).toBe(5_000);
+    expect(getRetryDelay(0, error, () => 1)).toBe(5_000);
+    expect(getRetryDelay(7, error, () => 0.25)).toBe(5_000);
+  });
 });
 
 describe('classifier clauses after F3/F5 [TEST-15]', () => {
@@ -163,5 +207,18 @@ describe('classifier clauses after F3/F5 [TEST-15]', () => {
       expect(classified.retryAfterMs).toBe(5_000);
     }
     expect(isCooldownSignal(classified)).toBe(true);
+  });
+
+  it('isCooldownSignal means "should open a cooldown", not instanceof HTTPError [W1-L1-09]', () => {
+    const serverError = httpError(500, 9);
+    expect(serverError).toBeInstanceOf(HTTPError);
+    expect(isCooldownSignal(serverError)).toBe(false);
+
+    const classified = classifyError(httpError(429, 5));
+    expect(classified).not.toBeInstanceOf(HTTPError);
+    expect(isCooldownSignal(classified)).toBe(true);
+
+    const timeout = new DOMException('The operation timed out.', 'TimeoutError');
+    expect(isCooldownSignal(timeout)).toBe(false);
   });
 });

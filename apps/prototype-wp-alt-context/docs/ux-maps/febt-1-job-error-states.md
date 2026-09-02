@@ -45,13 +45,33 @@ Reducer table (state × event → state) — every cell is explicit; `never` gua
 | parse        : "Unexpected response from server"    [Retry]          |
 | auth_expired : "Your session expired — reload the page and sign in   |
 |                 again."                              [Reload page]   |
-| nonce_refresh: "Your session expired — reload the page and sign in   |
-|                 again."                              [Reload page]   |
+| nonce_refresh: "Network error — check your connection"  [Retry]      |
+|                (W2A-02: refresh timeout/transport is NOT expiry;     |
+|                 reuses transport copy, no new string)                 |
 | abort        : (silent / frozen poll — no banner)                    |
+| timeout      : "The server took too long to respond — try again"     |
+|                                                     [Retry]          |
+|                (W2A-05: split from abort; the only new string)       |
 | transport    : "Network error — check your connection"  [Retry]      |
 | unknown      : "<caller fallback copy>"             [Retry]          |
 +----------------------------------------------------------------------+
 ```
+
+## Reconciliation — FEBT1F-L-02 (banner variants vs overlay states)
+
+Codemap trace: `useJobStateMachine` ← `JobPipelineProvider` ← `WorkbenchProvider` ← `WorkbenchPage`. The view never
+branches on a `stalled`/`offline` **state**: `useJobStateMachineDerivedState` renders `statusText` from `status`
+(pending|running|completed|completed_with_errors|failed) and overlays two orthogonal **modifiers**,
+`stalledForSeconds` (no-event timer) and `isOnline` (`navigator.onLine`). Same modifier-axis shape the dashboard map
+already flagged (`dashboard.uxmap.json` note on `degraded`/`offline`).
+
+Resolution (binding for F3 / W2D-01 adoption, GRPH-27/28, DATA-14):
+
+- Reducer keeps `stalled` and `offline` as peer states — their recoveries differ (tick timer vs `online` event).
+- The hook **derives** the existing view contract from reducer state: `stalledForSeconds = status==='stalled' ? (now-lastEventAt)/1000 : null`,
+  `isOnline = status!=='offline'`. No view/copy changes in F3 (`not_doing` stands).
+- Reconnect counter is internal (`reconnectAttempts`, W2D-02) and never rendered; the banner shows elapsed stall seconds only.
+- `timeout` overlay row added above; `abort` stays silent. `nonce_refresh` reuses transport copy.
 
 ## Flows
 
@@ -66,4 +86,4 @@ Reducer table (state × event → state) — every cell is explicit; `never` gua
 - Primary action reachable from idle (zero state) — rg-003.
 - Cancel is irreversible → keep secondary hierarchy, no preview — CARD-07.
 - Stall vs offline are distinct states because they have distinct recoveries (timer vs `online` event) — GRPH-27/28.
-- Open: confirm the banner's owning component before L6c (see `open_questions`).
+- Banner owner resolved: `useJobStateMachineDerivedState.statusText` via `JobPipelineProvider` (see Reconciliation).

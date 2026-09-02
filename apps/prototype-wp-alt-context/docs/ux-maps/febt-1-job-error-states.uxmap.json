@@ -35,10 +35,10 @@
       "purpose": "One banner per AppError tag with a tag-specific recovery action; raw messages never reach the DOM.",
       "code_ref": "apps/prototype-wp-alt-context/js/admin/utils/userFacingError.ts",
       "primary_action_id": "retry-request",
-      "states": ["http", "parse", "auth_expired", "nonce_refresh", "abort", "transport", "unknown"],
+      "states": ["http", "parse", "auth_expired", "nonce_refresh", "abort", "transport", "timeout", "unknown"],
       "zones": [
-        { "id": "error-copy", "label": "User-facing copy", "role": "content", "states": ["http", "parse", "auth_expired", "nonce_refresh", "abort", "transport", "unknown"] },
-        { "id": "error-action", "label": "Recovery action", "role": "action", "states": ["http", "parse", "auth_expired", "nonce_refresh", "transport", "unknown"] }
+        { "id": "error-copy", "label": "User-facing copy", "role": "content", "states": ["http", "parse", "auth_expired", "nonce_refresh", "abort", "transport", "timeout", "unknown"] },
+        { "id": "error-action", "label": "Recovery action", "role": "action", "states": ["http", "parse", "auth_expired", "nonce_refresh", "transport", "timeout", "unknown"] }
       ]
     },
     {
@@ -62,9 +62,10 @@
     { "id": "auth-expired-recovery", "job": "recover-from-failure", "label": "401/403 → auth_expired banner → reload", "steps": [ { "screen_id": "request-error-banner", "branch_label": "auth_expired" }, { "screen_id": "reload-page" } ] },
     { "id": "cooldown-429", "job": "recover-from-failure", "label": "http 429/503 + Retry-After (isCooldown) → wait banner → auto retry", "steps": [ { "screen_id": "request-error-banner", "branch_label": "http" }, { "screen_id": "workbench-pipeline", "branch_label": "running" } ] }
   ],
-  "open_questions": [
-    "Does the pipeline banner today render 'offline' separately from 'stalled' (navigator.onLine vs no-event timer)? Reducer must keep both if so.",
-    "Which component owns the request-error banner in the workbench (code_ref currently points at the copy source)."
+  "open_questions": [],
+  "resolved_questions": [
+    "stalled/offline: view renders them as modifiers (stalledForSeconds, isOnline) on statusText; reducer keeps peer states and the hook derives the modifiers (FEBT1F-L-02, F3/W2D-01).",
+    "Pipeline banner owner: useJobStateMachineDerivedState.statusText via JobPipelineProvider <- WorkbenchProvider <- WorkbenchPage (codemap trace)."
   ],
   "not_doing": ["new screens", "copy changes", "confirm tab", "toast redesign"]
 }

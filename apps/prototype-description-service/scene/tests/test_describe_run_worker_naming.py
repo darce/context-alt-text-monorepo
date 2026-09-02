@@ -468,3 +468,86 @@ def test_unstubbed_naming_replaces_grounded_span_with_ada():
     assert "Bob" not in (item.alt_text_draft or "")
     assert (item.provenance or {}).get("naming", {}).get("mode") == "grounded"
     assert [n["name"] for n in (item.provenance or {}).get("naming", {}).get("injected_names", [])] == ["Ada"]
+
+
+def test_recognition_disabled_skips_fusion_despite_naming_agreement(monkeypatch):
+    """HARM-F1: acx_recognition_enabled=off must reach the bulk effector.
+
+    A tenant with naming_agreement_enabled=True still must not load fusion
+    naming inputs or write naming.injected_names when the run's
+    recognition_enabled flag is false.
+    """
+    import scene.application.describe_run_worker as wmod
+
+    loads: list[dict] = []
+    original = wmod.load_fusion_naming_inputs
+
+    async def spy_load(**kwargs):
+        loads.append(kwargs)
+        return await original(**kwargs)
+
+    monkeypatch.setattr(wmod, "load_fusion_naming_inputs", spy_load, raising=True)
+    png = _png_bytes()
+
+    async def describe_one(media_id, image_bytes, content_type):
+        assert image_bytes == png
+        return DescribeItemOutcome(alt_text_draft=GENERIC_DRAFT, caption=GENERIC_DRAFT)
+
+    async def body():
+        path, engine, sf = await _make_db(naming_agreement_enabled=True, with_identities=True)
+        async with sf() as s:
+            await _seed_confirmed_face(s, label="Ada", media_id=1, bbox=(10, 10, 20, 20), roster_id=uuid.uuid4())
+            await s.commit()
+        async with sf() as s:
+            repo = DescribeRunRepository(s)
+            run_id = await repo.create_run(
+                tenant_id=TENANT_ID,
+                media_ids=[1],
+                images={1: (png, "image/png")},
+                recognition_enabled=False,
+            )
+            await s.commit()
+        await run_describe_job(
+            tenant_id=TENANT_ID, run_id=run_id, session_factory=sf, describe_one=describe_one, timeout_seconds=1.0
+        )
+        async with sf() as s:
+            items = await DescribeRunRepository(s).list_run_items(tenant_id=TENANT_ID, run_id=run_id)
+        await engine.dispose()
+        os.unlink(path)
+        return items[0]
+
+    item = asyncio.run(body())
+    assert loads == []
+    assert item.status == DescribeItemStatus.COMPLETED
+    assert item.alt_text_draft == GENERIC_DRAFT
+    assert (item.provenance or {}).get("naming", {}).get("injected_names", []) == []
+
+
+def test_omitted_recognition_enabled_defaults_true_and_still_fuses():
+    """HARM-F1: omitting recognition_enabled keeps today's naming-on behaviour."""
+    png = _png_bytes()
+
+    async def describe_one(media_id, image_bytes, content_type):
+        return DescribeItemOutcome(alt_text_draft=GENERIC_DRAFT, caption=GENERIC_DRAFT)
+
+    async def body():
+        path, engine, sf = await _make_db(naming_agreement_enabled=True, with_identities=True)
+        async with sf() as s:
+            await _seed_confirmed_face(s, label="Ada", media_id=1, bbox=(10, 10, 20, 20), roster_id=uuid.uuid4())
+            await s.commit()
+        run_id = await _seed_run(sf, image_bytes=png)
+        await run_describe_job(
+            tenant_id=TENANT_ID, run_id=run_id, session_factory=sf, describe_one=describe_one, timeout_seconds=1.0
+        )
+        async with sf() as s:
+            run = await DescribeRunRepository(s).get_run(tenant_id=TENANT_ID, run_id=run_id)
+            items = await DescribeRunRepository(s).list_run_items(tenant_id=TENANT_ID, run_id=run_id)
+        await engine.dispose()
+        os.unlink(path)
+        return run, items[0]
+
+    run, item = asyncio.run(body())
+    assert run is not None
+    assert run.recognition_enabled is True
+    assert item.alt_text_draft == FUSED_DRAFT
+    assert [n["name"] for n in (item.provenance or {}).get("naming", {}).get("injected_names", [])] == ["Ada"]

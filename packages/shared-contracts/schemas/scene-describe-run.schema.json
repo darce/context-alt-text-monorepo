@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://context-alt-text.dev/schemas/scene-describe-run.schema.json",
   "title": "Scene Describe Run",
-  "description": "Async scene describe-run status payload. Submitted via POST /scene/describe/run as multipart/form-data: form fields 'tenant_id' (uuid) and 'media_ids' (JSON int array), plus one file part 'image_<media_id>' (raw bytes) per media id.",
+  "description": "Async scene describe-run status payload. Submitted via POST /scene/describe/run as multipart/form-data: form fields 'tenant_id' (uuid), 'media_ids' (JSON int array), and optional 'recognition_enabled' (boolean, default true). Plus one file part 'image_<media_id>' (raw bytes) per media id. When recognition_enabled is false, the run writes alt text without identity fusion.",
   "type": "object",
   "required": [
     "tenant_id",
@@ -15,7 +15,8 @@
     "total",
     "cancel_requested",
     "eta_seconds",
-    "gpu_state"
+    "gpu_state",
+    "recognition_enabled"
   ],
   "properties": {
     "tenant_id": {
@@ -61,6 +62,10 @@
     "gpu_state": {
       "type": "null",
       "description": "Reserved for future self-hosted GPU execution state."
+    },
+    "recognition_enabled": {
+      "type": "boolean",
+      "description": "Snapshot of WP acx_recognition_enabled at submit. When false, Describe writes alt text without identities. Defaults to true when omitted on submit."
     }
   },
   "additionalProperties": false

@@ -64,6 +64,7 @@ def _run_response(run) -> DescribeRunResponse:
         cancel_requested=run.cancel_requested,
         eta_seconds=compute_eta_seconds(run),
         gpu_state=None,
+        recognition_enabled=bool(run.recognition_enabled),
     )
 
 
@@ -107,7 +108,12 @@ async def _prepare_repo(*, session, auth, tenant_id: uuid.UUID) -> DescribeRunRe
 
 
 def _build_describe_one(
-    *, session_factory: async_sessionmaker[AsyncSession], tenant_id: uuid.UUID, adapter=None, settings=None
+    *,
+    session_factory: async_sessionmaker[AsyncSession],
+    tenant_id: uuid.UUID,
+    adapter=None,
+    settings=None,
+    recognition_enabled: bool = True,
 ):
     """Real per-item describe adapter: load bytes -> VisualFactsService -> outcome.
 
@@ -128,16 +134,17 @@ def _build_describe_one(
             naming_policy = None
             try:
                 tenant = await get_tenant_record(svc_session, tenant_id)
-                confirmed_faces, naming_policy = await asyncio.wait_for(
-                    load_fusion_naming_inputs(
-                        session=svc_session,
-                        tenant=tenant,
-                        tenant_uuid=tenant_id,
-                        media_id=media_id,
-                        image_bytes=image_bytes,
-                    ),
-                    timeout=NAMING_BUDGET_SECONDS,
-                )
+                if recognition_enabled:
+                    confirmed_faces, naming_policy = await asyncio.wait_for(
+                        load_fusion_naming_inputs(
+                            session=svc_session,
+                            tenant=tenant,
+                            tenant_uuid=tenant_id,
+                            media_id=media_id,
+                            image_bytes=image_bytes,
+                        ),
+                        timeout=NAMING_BUDGET_SECONDS,
+                    )
             except Exception:  # noqa: BLE001 - Stage-2 degrades without faces; naming has its own guard
                 _logger.exception("failed loading faces/policy for bulk describe media_id=%s", media_id)
                 confirmed_faces, naming_policy = [], None
@@ -192,6 +199,24 @@ def _parse_media_ids(raw: object) -> list[int]:
     if any(m <= 0 for m in parsed):
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "media_ids must be positive integers")
     return parsed
+
+
+def _parse_recognition_enabled(raw: object) -> bool:
+    """Multipart boolean; omitted → True so today's naming-on path stays the default."""
+    if raw is None:
+        return True
+    if isinstance(raw, bool):
+        return raw
+    if not isinstance(raw, str):
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT, "form field 'recognition_enabled' must be a boolean"
+        )
+    value = raw.strip().lower()
+    if value in {"true", "1", "yes", "on"}:
+        return True
+    if value in {"false", "0", "no", "off"}:
+        return False
+    raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "form field 'recognition_enabled' must be a boolean")
 
 
 async def _read_image_parts(form, settings: DescriptionSettings) -> Mapping[int, tuple[bytes, str | None]]:
@@ -256,6 +281,7 @@ async def create_describe_run(
         raise HTTPException(status.HTTP_403_FORBIDDEN, "tenant mismatch between auth and request envelope")
 
     media_ids = _parse_media_ids(form.get("media_ids"))
+    recognition_enabled = _parse_recognition_enabled(form.get("recognition_enabled"))
     settings = DescriptionSettings()
     images = await _read_image_parts(form, settings)
     missing = [m for m in media_ids if m not in images]
@@ -288,6 +314,7 @@ async def create_describe_run(
             media_ids=media_ids,
             created_by_user_id=getattr(auth, "user_id", None),
             images=images,
+            recognition_enabled=recognition_enabled,
         )
     except ValueError as exc:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)) from exc
@@ -308,6 +335,7 @@ async def create_describe_run(
             tenant_id=tenant_id,
             adapter=adapter,
             settings=settings,
+            recognition_enabled=recognition_enabled,
         ),
         timeout_seconds=_generation_timeout_seconds(settings, adapter),
         gpu_policy=run_gpu_policy,

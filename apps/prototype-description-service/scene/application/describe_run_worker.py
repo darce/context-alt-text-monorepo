@@ -373,7 +373,8 @@ async def run_describe_job(
             await set_tenant_context(session, tenant_id)
             repo = DescribeRunRepository(session)
             tenant = await get_tenant_record(session, tenant_id)
-            naming_enabled = bool(tenant is not None and tenant.naming_agreement_enabled)
+            run = await repo.get_run(tenant_id=tenant_id, run_id=run_id)
+            naming_enabled = bool(tenant and tenant.naming_agreement_enabled and run and run.recognition_enabled)
             items = await repo.list_run_items(tenant_id=tenant_id, run_id=run_id)
             gpu_breaker_error: str | None = None
             for item in items:

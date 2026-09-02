@@ -20,6 +20,7 @@ const SETTINGS_RESPONSE_KEYS = [
   'tenant_id_source',
   'tenant_paired',
   'alt_style',
+  'recognition_enabled',
   'description_budget',
 ] as const;
 
@@ -41,6 +42,7 @@ describe('settings response contract', () => {
     tenant_id_source: 'option',
     tenant_paired: true,
     alt_style: 'alt_only',
+    recognition_enabled: true,
     description_budget: {
       max_attempts: 3,
       usage: { attempts: 0, successes: 0, failures: 0, cost_total: 0 },

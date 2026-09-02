@@ -67,6 +67,7 @@ interface SettingsFormProps {
   url: string;
   apiKey: string;
   descriptionBudgetMaxAttempts: string;
+  recognitionEnabled: boolean;
   urlReadOnly: boolean;
   keyReadOnly: boolean;
   savePending: boolean;
@@ -76,6 +77,7 @@ interface SettingsFormProps {
   onUrlChange: (value: string) => void;
   onApiKeyChange: (value: string) => void;
   onDescriptionBudgetMaxAttemptsChange: (value: string) => void;
+  onRecognitionEnabledChange: (value: boolean) => void;
   onSave: (e: React.FormEvent) => void;
   onTest: () => void;
   onFocusServiceUrl?: () => void;
@@ -86,6 +88,7 @@ export const SettingsForm = ({
   url,
   apiKey,
   descriptionBudgetMaxAttempts,
+  recognitionEnabled,
   urlReadOnly,
   keyReadOnly,
   savePending,
@@ -95,6 +98,7 @@ export const SettingsForm = ({
   onUrlChange,
   onApiKeyChange,
   onDescriptionBudgetMaxAttemptsChange,
+  onRecognitionEnabledChange,
   onSave,
   onTest,
   onFocusServiceUrl,
@@ -328,6 +332,28 @@ export const SettingsForm = ({
           </tbody>
         </table>
       ) : null}
+
+      <h3 className="acx-settings__section-title">{__('People & recognition', 'alt-context')}</h3>
+      <div className="acx-settings__recognition">
+        <label
+          htmlFor="acx-settings-recognition-enabled"
+          className="acx-settings__recognition-option"
+        >
+          <input
+            id="acx-settings-recognition-enabled"
+            type="checkbox"
+            checked={recognitionEnabled}
+            onChange={(e) => onRecognitionEnabledChange(e.target.checked)}
+          />
+          {__('Identify people in photos', 'alt-context')}
+        </label>
+        <p className="description">
+          {__(
+            'Uses facial recognition to name people in descriptions. When off, Describe writes alt text without identities. Applies to every run.',
+            'alt-context',
+          )}
+        </p>
+      </div>
 
       <p className="submit">
         <button

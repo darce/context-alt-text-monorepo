@@ -65,6 +65,12 @@ for (const entry of menuEntries) {
 const H1_BLOCK = /<h1\b[^>]*>([\s\S]*?)<\/h1>/g;
 const H1_LABEL_TEXT = /__\(\s*'([^']+)'/;
 
+const headingTextsIn = (source: string): string[] =>
+  [...source.matchAll(H1_BLOCK)].map((match) => {
+    const labelMatch = H1_LABEL_TEXT.exec(match[1]);
+    return labelMatch ? labelMatch[1] : match[1].trim();
+  });
+
 describe('every routed page heading matches its admin menu label (glossary Rule 1 / BR-41)', () => {
   it.each(menuEntries)('$slug renders an <h1> matching menu label "$menuTitle"', ({ menuTitle, slug }) => {
     const pageFilePath = path.resolve(here, SLUG_TO_PAGE_FILE[slug]);
@@ -72,14 +78,43 @@ describe('every routed page heading matches its admin menu label (glossary Rule 
     // fail-closed behaviour, not caught.
     const pageSource = readFileSync(pageFilePath, 'utf8');
 
-    const headingTexts = [...pageSource.matchAll(H1_BLOCK)].map((match) => {
-      const labelMatch = H1_LABEL_TEXT.exec(match[1]);
-      return labelMatch ? labelMatch[1] : match[1].trim();
-    });
+    const headingTexts = headingTextsIn(pageSource);
 
     expect(headingTexts.length).toBeGreaterThan(0);
     for (const headingText of headingTexts) {
       expect(headingText).toBe(menuTitle);
     }
+  });
+
+  it('composed Settings tree (page + form + retention section) has only Settings h1s (S3-F1)', () => {
+    const settingsPage = readFileSync(path.resolve(here, '../SettingsPage.tsx'), 'utf8');
+    const settingsForm = readFileSync(path.resolve(here, '../settings/SettingsForm.tsx'), 'utf8');
+    const retentionPage = readFileSync(path.resolve(here, '../RetentionPage.tsx'), 'utf8');
+
+    expect(headingTextsIn(retentionPage)).toEqual([]);
+    expect(headingTextsIn(settingsForm)).toEqual([]);
+
+    const composed = headingTextsIn(settingsPage + settingsForm + retentionPage);
+    expect(composed.length).toBeGreaterThan(0);
+    expect(new Set(composed)).toEqual(new Set(['Settings']));
+  });
+
+  it('SettingsForm does not wrap RetentionSection (S3-F2)', () => {
+    const settingsForm = readFileSync(path.resolve(here, '../settings/SettingsForm.tsx'), 'utf8');
+    const settingsPage = readFileSync(path.resolve(here, '../SettingsPage.tsx'), 'utf8');
+
+    expect(settingsForm).not.toMatch(/RetentionSection/);
+    const formMount = settingsPage.indexOf('<SettingsForm');
+    const retentionMount = settingsPage.indexOf('<RetentionSection');
+    expect(formMount).toBeGreaterThan(-1);
+    expect(retentionMount).toBeGreaterThan(formMount);
+  });
+
+  it('e2e admin routes omit retired Retention slug (S3-F6 / NAV-05)', () => {
+    const routesPath = path.resolve(here, '../../../../tests/e2e/fixtures/acx-routes.ts');
+    const routesSource = readFileSync(routesPath, 'utf8');
+
+    expect(routesSource).not.toMatch(/label:\s*'Retention'/);
+    expect(routesSource).toMatch(/acxRedirectOnlyAdminSlugs[\s\S]*'alt-context-retention'/);
   });
 });

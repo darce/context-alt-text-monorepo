@@ -427,7 +427,7 @@
       "url_params": [
         "section"
       ],
-      "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/settings/SettingsForm.tsx",
+      "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/SettingsPage.tsx",
       "states": [
         "default",
         "loading",
@@ -622,7 +622,7 @@
       "id": "save_retention",
       "verb": "Save policy",
       "target": "data_retention",
-      "hierarchy": "secondary",
+      "hierarchy": "primary",
       "costly": true,
       "irreversible": false,
       "preview_required": true,

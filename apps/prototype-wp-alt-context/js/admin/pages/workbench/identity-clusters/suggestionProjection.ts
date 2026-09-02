@@ -27,8 +27,9 @@ export const AUTO_LABEL_PREFIX = 'cluster-' as const;
  * - HEX: PHP-parity long hex (`{8,}`) any case — trait-detects-system-defined-labels.
  * - MACHINE: lowercase-only `cluster[-_][a-z0-9_-]+` — short/non-hex auto ids.
  * Any uppercase letter in a short suffix fails MACHINE and (if <8 hex) HEX, so
- * names like `Cluster-Dad` / `Cluster-ace` stay human. Display-honesty only —
- * survivor ranking uses a separate predicate.
+ * names like `Cluster-Dad` / `Cluster-ace` stay human for review-queue
+ * eligibility. Merge display, twin-chip eligibility, and survivor copy use
+ * `isMeaningfulMergeLabel` instead (DATA-14) — prefix-reserved after trim+lower.
  */
 const AUTO_LABEL_HEX_RE = /^cluster[-_][0-9a-f-]{8,}$/i;
 const AUTO_LABEL_MACHINE_RE = /^cluster[-_][a-z0-9_-]+$/;

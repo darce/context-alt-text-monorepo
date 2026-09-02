@@ -171,7 +171,7 @@
         },
         {
           "id": "z-cluster-list",
-          "label": "Face-group list / selection (size, confidence, unnamed-first) + NameFaceControl (loading = in-flight name write; the suggestions disclosure being open or closed is part of default)",
+          "label": "Face-group list / selection (size, confidence, unnamed-first) + NameFaceControl (loading = in-flight name write; the suggestions disclosure being open or closed is part of default). twin_pending copy: Same person as <survivor label>? — Merge into <survivor label> / Not the same (chip on the unlabeled twin; decision persists on the labeled survivor; COG-03 one decision per pair; DATA-14 single authority = resolveMergeSurvivor.ts). Actions merge_twin / keep_separate code_ref: apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/IdentityClusterItem.tsx",
           "role": "queue",
           "states": [
             "default",
@@ -179,7 +179,8 @@
             "empty",
             "error",
             "first_time",
-            "degraded"
+            "degraded",
+            "twin_pending"
           ]
         },
         {
@@ -493,6 +494,26 @@
       "costly": true,
       "irreversible": false,
       "preview_required": true,
+      "screen_id": "workbench-control"
+    },
+    {
+      "id": "merge_twin",
+      "verb": "Merge twin into labeled survivor (IdentityClusterItem.tsx)",
+      "target": "identity-store",
+      "hierarchy": "destructive",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "workbench-control"
+    },
+    {
+      "id": "keep_separate",
+      "verb": "Keep twin separate (IdentityClusterItem.tsx)",
+      "target": "identity-store",
+      "hierarchy": "secondary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
       "screen_id": "workbench-control"
     },
     {

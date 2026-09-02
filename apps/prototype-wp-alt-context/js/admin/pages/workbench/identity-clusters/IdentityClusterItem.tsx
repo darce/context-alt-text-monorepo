@@ -7,11 +7,18 @@ import { useQueryClient } from '@tanstack/react-query';
 import { __, sprintf } from '@wordpress/i18n';
 
 import { queryKeys } from '../../../api/queryKeys';
-import type { MergeClusterResponse } from '../../../api/recognition';
+import type { BoundingBox, MergeClusterResponse } from '../../../api/recognition';
 import { commitClusterToRosterEntry } from '../../../api/rosterApi';
+import { FaceThumbnail } from '../../../../components/ui/FaceThumbnail';
 import { getClusterMutationErrorMessage } from './clusterMutationUtils';
 import { invalidateSuggestionProjection, type ProjectedSuggestion } from './suggestionProjection';
 import type { ClusterGroup } from './types';
+import { isMeaningfulMergeLabel } from './resolveMergeSurvivor';
+import {
+  TWIN_CHIP_ACCEPT_TEMPLATE,
+  TWIN_CHIP_PROMPT_TEMPLATE,
+  TWIN_CHIP_REJECT_LABEL,
+} from './twinChipCopy';
 import { filterEditableClusterMatch, formatClusterLabel, getEditableClusterId } from './utils';
 import { useClusterEditState } from './useClusterEditState';
 import { useClusterMutations } from './useClusterMutations';
@@ -38,12 +45,26 @@ import {
 
 const MATCH_DEBOUNCE_MS = 300;
 
+export interface IdentityClusterMergeTwin {
+  suggestionId: string;
+  survivorClusterId: string;
+  survivorLabel: string;
+  survivorMediaUrl?: string | null;
+  survivorBbox?: BoundingBox | null;
+  onAccept: () => void;
+  onReject: () => void;
+  isPending: boolean;
+  disabledReason?: string | null;
+}
+
 interface IdentityClusterItemProps {
   cluster: ClusterGroup;
   canLabel?: boolean;
   canMutate?: boolean;
   /** Top server-ranked inline suggestion for this cluster's anchor identity. */
   inlineSuggestionMatch?: ProjectedSuggestion;
+  /** Pending labeled-survivor twin chip (HAI-11 propose, never auto-apply). */
+  mergeTwin?: IdentityClusterMergeTwin;
 }
 
 /**
@@ -60,6 +81,7 @@ export const IdentityClusterItem = ({
   canLabel = true,
   canMutate = true,
   inlineSuggestionMatch,
+  mergeTwin,
 }: IdentityClusterItemProps): React.JSX.Element => {
   // Compute derived values
   const derivedLabel = React.useMemo(
@@ -81,10 +103,6 @@ export const IdentityClusterItem = ({
 
   const representative = cluster.members[0];
   const anchorIdentityId = representative?.identity_id;
-
-  // Inline "Is this X?" prompt renders only for unlabeled, mutable clusters.
-  // The match is fetched once at the list level (batched) and supplied by prop.
-  const showInlinePrompt = Boolean(!cluster.label && anchorIdentityId && canMutate);
 
   const [isAnchorModalOpen, setIsAnchorModalOpen] = React.useState(false);
   const [isWrongPersonDialogOpen, setIsWrongPersonDialogOpen] = React.useState(false);
@@ -166,7 +184,8 @@ export const IdentityClusterItem = ({
   });
 
   const bindToRosterEntry = React.useCallback(
-    (rosterEntryId: number, label: string, _signal?: AbortSignal) => {
+    (rosterEntryId: number, label: string, signal?: AbortSignal) => {
+      void signal;
       if (!editableClusterId) {
         handleMutationError(__('Cannot bind this person: missing group.', 'alt-context'));
         return;
@@ -314,6 +333,20 @@ export const IdentityClusterItem = ({
     [cluster, mutations],
   );
 
+  const showTwinChip =
+    canMutate &&
+    mergeTwin != null &&
+    cluster.clusterId !== mergeTwin.survivorClusterId &&
+    isMeaningfulMergeLabel(mergeTwin.survivorLabel);
+  const twinPendingTitle =
+    mergeTwin?.isPending && mergeTwin.disabledReason ? mergeTwin.disabledReason : undefined;
+  const twinPendingDescId = mergeTwin ? `acx-twin-pending-${mergeTwin.suggestionId}` : undefined;
+  // Inline "Is this X?" prompt renders only for unlabeled, mutable clusters
+  // that are not already showing a merge twin (INT-03: one confirm cluster).
+  const showInlinePrompt = Boolean(
+    !showTwinChip && !cluster.label && anchorIdentityId && canMutate,
+  );
+
   const saveLabel = React.useMemo(() => {
     if (saveStatus === 'queued') {
       return __('Saving…', 'alt-context');
@@ -349,6 +382,57 @@ export const IdentityClusterItem = ({
             ) : (
               <span className="acx-identity-cluster__label">{labelText}</span>
             )}
+            {showTwinChip && mergeTwin ? (
+              <div
+                className="acx-identity-clusters__twin-chip"
+                data-testid="acx-identity-clusters__twin-chip"
+                role="group"
+                aria-label={sprintf(TWIN_CHIP_PROMPT_TEMPLATE, mergeTwin.survivorLabel)}
+                aria-describedby={twinPendingTitle ? twinPendingDescId : undefined}
+              >
+                {twinPendingTitle ? (
+                  <span id={twinPendingDescId} className="screen-reader-text" role="status">
+                    {twinPendingTitle}
+                  </span>
+                ) : null}
+                {mergeTwin.survivorMediaUrl && mergeTwin.survivorBbox ? (
+                  <FaceThumbnail
+                    mediaUrl={mergeTwin.survivorMediaUrl}
+                    bbox={mergeTwin.survivorBbox}
+                    size="sm"
+                    alt={mergeTwin.survivorLabel}
+                    className="acx-identity-clusters__twin-chip-thumb"
+                  />
+                ) : (
+                  // WHY (HAI-01): mapped merge payload omitted the survivor crop — do not invent one.
+                  null
+                )}
+                <span className="acx-identity-clusters__twin-chip-icon" aria-hidden="true">
+                  ⇢
+                </span>
+                <span>
+                  {sprintf(TWIN_CHIP_PROMPT_TEMPLATE, mergeTwin.survivorLabel)}
+                </span>
+                <button
+                  type="button"
+                  className="button button-primary button-small"
+                  onClick={mergeTwin.onAccept}
+                  disabled={mergeTwin.isPending}
+                  title={twinPendingTitle}
+                >
+                  {sprintf(TWIN_CHIP_ACCEPT_TEMPLATE, mergeTwin.survivorLabel)}
+                </button>
+                <button
+                  type="button"
+                  className="button button-small"
+                  onClick={mergeTwin.onReject}
+                  disabled={mergeTwin.isPending}
+                  title={twinPendingTitle}
+                >
+                  {TWIN_CHIP_REJECT_LABEL}
+                </button>
+              </div>
+            ) : null}
             {!cluster.clusteringPending && (
               <ClusterActions
                 canEdit={canEdit}

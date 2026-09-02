@@ -59,6 +59,10 @@ export interface PendingMergeSuggestionApiResponse {
   source_cluster_id?: string | null;
   /** Authoritative post-accept survivor id (optional on list/older backends). */
   target_cluster_id?: string | null;
+  /** Authoritative labeled-for-merge cluster id (optional on older backends). */
+  survivor_cluster_id?: string | null;
+  /** Display label for the stamped survivor; null when omitted. */
+  survivor_label?: string | null;
 }
 
 const requireEnvelopeNumber = (value: unknown, fieldName: string, responseName: string): number => {
@@ -243,5 +247,7 @@ export const mapPendingMergeSuggestion = (raw: unknown): PendingMergeSuggestion 
     cluster_b_representative_bbox: bboxOrNull(suggestion.cluster_b_representative_bbox),
     source_cluster_id: optionalClusterId(suggestion.source_cluster_id),
     target_cluster_id: optionalClusterId(suggestion.target_cluster_id),
+    survivor_cluster_id: optionalClusterId(suggestion.survivor_cluster_id),
+    survivor_label: typeof suggestion.survivor_label === 'string' ? suggestion.survivor_label : null,
   };
 };

@@ -5,16 +5,22 @@ from __future__ import annotations
 import asyncio
 import inspect
 import logging
+import os
 import uuid
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 import httpx
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from db.tenant_context import set_tenant_context
+from db.tenant_context import get_tenant_record, set_tenant_context
 from scene.application.describe_load import dump_load_snapshot
 from scene.application.describe_run_repository import DescribeRunRepository
+from scene.application.naming_preview_service import (
+    faces_for_naming_preview,
+    load_fusion_naming_inputs,
+    naming_preview,
+)
 from scene.application.settings.vlm import VlmSettings
 from scene.config.settings import DEFAULT_GPU_WARMUP_TIMEOUT_SECONDS, DescriptionSettings
 from scene.domain.describe_run import DescribeItemStatus
@@ -28,6 +34,7 @@ _GPU_HEALTH_REQUEST_TIMEOUT_SECONDS = 5.0
 _GPU_ITEM_MAX_ATTEMPTS = 3
 _GPU_ITEM_RETRY_BASE_DELAY_SECONDS = 1.0
 _RETRYABLE_HTTP_STATUS_CODES = frozenset({408, 425, 429, 500, 502, 503, 504})
+NAMING_BUDGET_SECONDS = float(os.environ.get("ACX_NAMING_BUDGET_SECONDS", "10.0"))
 
 
 @dataclass(frozen=True)
@@ -37,6 +44,8 @@ class DescribeItemOutcome:
     alt_text_draft: str | None = None
     caption: str | None = None
     provenance: dict = field(default_factory=dict)
+    phrase_boxes: tuple = ()
+    attachments: tuple = ()
 
 
 @dataclass(frozen=True)
@@ -156,7 +165,9 @@ def _is_transient_describe_error(exc: BaseException) -> bool:
     current: BaseException | None = exc
     while current is not None and id(current) not in seen:
         seen.add(id(current))
-        if isinstance(current, (httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError, httpx.ProxyError)):
+        if isinstance(
+            current, (httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError, httpx.ProxyError)
+        ):
             return True
         if isinstance(current, httpx.HTTPStatusError):
             return current.response.status_code in _RETRYABLE_HTTP_STATUS_CODES
@@ -206,6 +217,89 @@ async def _describe_with_transient_retry(
     raise RuntimeError("unreachable")  # pragma: no cover
 
 
+async def _naming_lookup_for_item(
+    *,
+    enabled: bool,
+    session_factory: async_sessionmaker[AsyncSession],
+    tenant,
+    tenant_id: uuid.UUID,
+    media_id: int,
+    image_bytes: bytes | None,
+) -> tuple[list, object] | None:
+    """Load faces/policy independently of describe I/O; never raises to the run."""
+    if not enabled or tenant is None or not image_bytes:
+        return None
+    try:
+        async with session_factory() as naming_session:
+            await set_tenant_context(naming_session, tenant_id)
+            return await asyncio.wait_for(
+                load_fusion_naming_inputs(
+                    session=naming_session,
+                    tenant=tenant,
+                    tenant_uuid=tenant_id,
+                    media_id=media_id,
+                    image_bytes=image_bytes,
+                ),
+                timeout=NAMING_BUDGET_SECONDS,
+            )
+    except Exception:  # noqa: BLE001 - naming lookup must not fail the item
+        logger.exception("naming lookup failed media_id=%s; describing without names", media_id)
+        return None
+
+
+def _naming_provenance_payload(provenance) -> dict:
+    dump = getattr(provenance, "model_dump", None)
+    if callable(dump):
+        payload = dump()
+        if isinstance(payload, dict):
+            return payload
+    if isinstance(provenance, dict):
+        return provenance
+    return {}
+
+
+async def _apply_naming_preview(
+    *,
+    enabled: bool,
+    session: AsyncSession,
+    tenant,
+    tenant_id: uuid.UUID,
+    media_id: int,
+    image_bytes: bytes | None,
+    outcome: DescribeItemOutcome,
+    naming_inputs: tuple[list, object] | None,
+) -> DescribeItemOutcome:
+    """Fuse names into alt_text_draft (the same generic_draft field the router uses)."""
+    if not enabled or tenant is None or not image_bytes or naming_inputs is None:
+        return outcome
+    faces, policy = naming_inputs
+    if policy is None:
+        return outcome
+    try:
+        phrase_boxes = outcome.phrase_boxes or ()
+        preview_faces = faces_for_naming_preview(faces or [], outcome.attachments or (), phrase_boxes)
+        named, provenance = await asyncio.wait_for(
+            naming_preview(
+                session=session,
+                tenant=tenant,
+                tenant_uuid=tenant_id,
+                media_id=media_id,
+                image_bytes=image_bytes,
+                generic_draft=outcome.alt_text_draft or "",
+                phrase_boxes=phrase_boxes,
+                confirmed_faces=preview_faces if faces is not None else None,
+                naming_policy=policy,
+            ),
+            timeout=NAMING_BUDGET_SECONDS,
+        )
+        merged = dict(outcome.provenance or {})
+        merged["naming"] = _naming_provenance_payload(provenance)
+        return replace(outcome, alt_text_draft=named, provenance=merged)
+    except Exception:  # noqa: BLE001 - a naming fault must not fail the described item
+        logger.exception("naming preview failed media_id=%s; continuing without names", media_id)
+        return outcome
+
+
 async def run_describe_job(
     *,
     tenant_id: uuid.UUID,
@@ -247,6 +341,8 @@ async def run_describe_job(
             # set app.current_tenant, else FORCE RLS on Postgres returns zero rows.
             await set_tenant_context(session, tenant_id)
             repo = DescribeRunRepository(session)
+            tenant = await get_tenant_record(session, tenant_id)
+            naming_enabled = bool(tenant is not None and tenant.naming_agreement_enabled)
             items = await repo.list_run_items(tenant_id=tenant_id, run_id=run_id)
             gpu_breaker_error: str | None = None
             for item in items:
@@ -271,14 +367,34 @@ async def run_describe_job(
                 try:
                     if gpu_breaker_error is not None:
                         raise _GpuCircuitOpenError(gpu_breaker_error)
-                    outcome = await _describe_with_transient_retry(
-                        describe_one=describe_one,
+                    naming_inputs, outcome = await asyncio.gather(
+                        _naming_lookup_for_item(
+                            enabled=naming_enabled,
+                            session_factory=session_factory,
+                            tenant=tenant,
+                            tenant_id=tenant_id,
+                            media_id=item.media_id,
+                            image_bytes=image_bytes,
+                        ),
+                        _describe_with_transient_retry(
+                            describe_one=describe_one,
+                            media_id=item.media_id,
+                            image_bytes=image_bytes,
+                            content_type=content_type,
+                            timeout_seconds=timeout,
+                            retry_transient=gpu_policy is not None,
+                            cancel_requested=cancel_requested,
+                        ),
+                    )
+                    outcome = await _apply_naming_preview(
+                        enabled=naming_enabled,
+                        session=session,
+                        tenant=tenant,
+                        tenant_id=tenant_id,
                         media_id=item.media_id,
                         image_bytes=image_bytes,
-                        content_type=content_type,
-                        timeout_seconds=timeout,
-                        retry_transient=gpu_policy is not None,
-                        cancel_requested=cancel_requested,
+                        outcome=outcome or DescribeItemOutcome(),
+                        naming_inputs=naming_inputs,
                     )
                 except _RunCancelledError:
                     await repo.mark_item(

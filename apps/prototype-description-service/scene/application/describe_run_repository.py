@@ -311,13 +311,52 @@ class DescribeRunRepository:
         error_message: str | None = None,
         now: datetime | None = None,
     ) -> bool:
-        """Force a run terminal-FAILED on an unexpected fatal worker error."""
+        """Force a run terminal-FAILED on an unexpected fatal worker error.
+
+        A run that is already terminal is left untouched: a cancel that landed
+        while the worker was failing must keep CANCELLED (HARM-01). Remaining
+        non-terminal items are driven terminal-FAILED so their stored image
+        bytes are reclaimed rather than stranded QUEUED under a FAILED run.
+        """
         run = await self.get_run(tenant_id=tenant_id, run_id=run_id)
         if run is None:
             return False
+        if DescribeRunStatus(run.status) in TERMINAL_RUN_STATUSES:
+            return False
+        now = now or datetime.now(tz=UTC)
+        for item in await self.list_run_items(tenant_id=tenant_id, run_id=run_id):
+            if DescribeItemStatus(item.status) in TERMINAL_ITEM_STATUSES:
+                continue
+            try:
+                await self.mark_item(
+                    tenant_id=tenant_id,
+                    run_id=run_id,
+                    media_id=item.media_id,
+                    status=DescribeItemStatus.FAILED,
+                    error_message=error_message or "run failed before this item was processed",
+                    now=now,
+                )
+            except Exception:  # noqa: BLE001 - byte reclamation is best-effort,
+                # but a failed flush poisons the session (pending rollback) and
+                # would abort the terminal run write below. Roll back and keep
+                # going; the run-status write is the part that must land.
+                await self._session.rollback()
+                continue
+        # The rollback above expires ORM state; re-fetch so the status check and
+        # terminal write below never touch expired attributes in async context.
+        run = await self.get_run(tenant_id=tenant_id, run_id=run_id)
+        if run is None:
+            return False
+        # The per-item recompute may already have derived a terminal status. A
+        # fatal-path write preserves only CANCELLED (cancel wins, untouched);
+        # anything else -- including a derived COMPLETED_WITH_ERRORS -- becomes
+        # FAILED, because this path only runs when the worker died fatally.
+        if DescribeRunStatus(run.status) is DescribeRunStatus.CANCELLED:
+            return False
         run.status = DescribeRunStatus.FAILED
         run.phase = DescribeRunPhase.FAILED
-        run.completed_at = now or datetime.now(tz=UTC)
+        if run.completed_at is None:
+            run.completed_at = now
         if error_message:
             run.error_message = error_message
         await self._session.flush()

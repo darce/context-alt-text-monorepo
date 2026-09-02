@@ -2,7 +2,7 @@ import asyncio
 import logging
 import os
 import subprocess
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -66,6 +66,32 @@ configure_logging("INFO")
 
 logger = logging.getLogger(__name__)
 
+_LOAD_SNAPSHOT_REFRESH_REARM_SECONDS = 1.0
+
+
+_LOAD_SNAPSHOT_REFRESH_REARM_MAX_SECONDS = 60.0
+
+
+async def _supervise_load_snapshot_refresher(session_factory) -> None:
+    """Re-arm an unexpectedly stopped refresher while the API remains live."""
+    rearm_seconds = _LOAD_SNAPSHOT_REFRESH_REARM_SECONDS
+    while True:
+        try:
+            from scene.application.describe_load import refresh_load_snapshot_loop
+
+            await refresh_load_snapshot_loop(session_factory)
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 - keep freshness armed after a crash
+            logger.error("describe load snapshot refresher crashed; re-arming", exc_info=True)
+        else:
+            logger.error("describe load snapshot refresher stopped unexpectedly; re-arming")
+        # Avoid a tight restart loop if an import or implementation regression
+        # makes the refresher fail immediately, and back off so a permanent
+        # failure does not emit one traceback per second forever.
+        await asyncio.sleep(rearm_seconds)
+        rearm_seconds = min(rearm_seconds * 2, _LOAD_SNAPSHOT_REFRESH_REARM_MAX_SECONDS)
+
 
 def _get_git_info() -> tuple[str, str]:
     """Get the current git commit hash and branch, or 'unknown' if not available."""
@@ -128,19 +154,14 @@ def _resolve_image_variant() -> str:
         if _IMAGE_VARIANT_ARTIFACT.is_file():
             baked = _IMAGE_VARIANT_ARTIFACT.read_text(encoding="utf-8").strip()
     except OSError as exc:
-        raise RuntimeError(
-            f"cannot read baked image variant at {_IMAGE_VARIANT_ARTIFACT}: {exc}"
-        ) from exc
+        raise RuntimeError(f"cannot read baked image variant at {_IMAGE_VARIANT_ARTIFACT}: {exc}") from exc
     if baked:
         valid = {member.value for member in ImageVariant}
         if baked not in valid:
-            raise RuntimeError(
-                f"invalid baked image variant {baked!r} at {_IMAGE_VARIANT_ARTIFACT}"
-            )
+            raise RuntimeError(f"invalid baked image variant {baked!r} at {_IMAGE_VARIANT_ARTIFACT}")
         if env_claim and env_claim != baked:
             raise RuntimeError(
-                f"ACX_IMAGE_VARIANT={env_claim!r} disagrees with baked "
-                f"{baked!r} at {_IMAGE_VARIANT_ARTIFACT}"
+                f"ACX_IMAGE_VARIANT={env_claim!r} disagrees with baked {baked!r} at {_IMAGE_VARIANT_ARTIFACT}"
             )
         return baked
     return env_claim or ImageVariant.RECOGNITION.value
@@ -205,7 +226,28 @@ async def _lifespan(app: FastAPI):
         await run_startup_load_snapshot(async_session_factory)
     except Exception:  # noqa: BLE001 - startup load snapshot is best-effort
         logging.getLogger("db.startup").warning("describe load snapshot write failed at startup", exc_info=True)
-    yield
+
+    # GPUW-1: enqueue/terminal writes leave the dump stale while work is quiet.
+    # Refresh well inside the reaper's 120s stale guard so an empty snapshot can
+    # remain authoritative long enough for stop-on-drain to fire.
+    refresh_task: asyncio.Task[None] | None = None
+    try:
+        from db.session import async_session_factory
+
+        refresh_task = asyncio.create_task(_supervise_load_snapshot_refresher(async_session_factory))
+    except Exception:  # noqa: BLE001 - the API must still boot if task setup fails
+        logging.getLogger("db.startup").warning("describe load snapshot refresher failed to start", exc_info=True)
+
+    try:
+        yield
+    finally:
+        if refresh_task is not None:
+            refresh_task.cancel()
+            # Refresher failures are handled inside the supervisor and must not
+            # turn an otherwise-clean application shutdown into a lifespan
+            # failure.
+            with suppress(asyncio.CancelledError, Exception):
+                await refresh_task
 
 
 def create_app() -> FastAPI:

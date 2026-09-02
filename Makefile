@@ -447,6 +447,7 @@ test-scripts:
 		scripts/test_e15_31_admin_deploy_contract.py scripts/test_e15_33_deploy_convergence.py scripts/test_e15_33_boot_smoke.py \
 		scripts/test_vlm3_oci_gpu_infra.py \
 		scripts/test_vlm3_gpu_lifecycle.py \
+		infra/oci/gpu_lifecycle/tests \
 		scripts/test_vlm3_owlv2_deferral.py \
 		scripts/test_vlm3_gpu_bakeoff_artifacts.py \
 		scripts/test_vlm3_decision_memo.py \
@@ -523,6 +524,7 @@ test-vlm3:
 	@python3 -m pytest \
 		scripts/test_vlm3_oci_gpu_infra.py \
 		scripts/test_vlm3_gpu_lifecycle.py \
+		infra/oci/gpu_lifecycle/tests \
 		scripts/test_vlm3_owlv2_deferral.py \
 		scripts/test_vlm3_gpu_bakeoff_artifacts.py \
 		scripts/test_vlm3_decision_memo.py \

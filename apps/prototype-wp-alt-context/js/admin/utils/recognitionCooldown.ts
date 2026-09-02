@@ -12,7 +12,6 @@
  */
 
 import { classifyError } from './appError';
-import { HTTPError } from './http';
 import { clampRetryAfterMs } from './retryAfter';
 import { isCooldownSignal } from './retryPolicy';
 
@@ -48,15 +47,11 @@ export const openCooldown = (seconds: number): void => {
 };
 
 const cooldownSecondsFromError = (error: unknown): number => {
-  let seconds: number | undefined;
-  if (error instanceof HTTPError) {
-    seconds = error.retryAfterSeconds;
-  } else {
-    const classified = classifyError(error);
-    if (classified._tag === 'http' && classified.retryAfterMs !== undefined) {
-      seconds = classified.retryAfterMs / 1000;
-    }
-  }
+  const classified = classifyError(error);
+  const seconds =
+    classified._tag === 'http' && classified.retryAfterMs !== undefined
+      ? classified.retryAfterMs / 1000
+      : undefined;
   return clampRetryAfterMs(seconds, DEFAULT_COOLDOWN_SECONDS * 1000) / 1000;
 };
 

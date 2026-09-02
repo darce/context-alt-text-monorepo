@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { useDescribeRunApply } from '../useDescribeRunApply';
 import { mediaStatsMissingQueryKey, mediaStatsTotalQueryKey } from '../useMediaStats';
+import { MEDIA_PAGE_SIZE_OPTIONS } from '../useWorkbenchFilters';
 import * as describeApi from '../../api/describeApi';
 import type { ApplyDescribeRunResponse, DescribeRunItemsResponse } from '../../api/describeApi';
 import { queryKeys } from '../../api/queryKeys';
@@ -28,18 +29,41 @@ const itemsResponse: DescribeRunItemsResponse = {
   ],
 };
 
-const workbenchListPageKey = queryKeys.media.workbenchPage({
-  page: 1,
-  perPage: 20,
-  status: 'missing',
-});
+const defaultPerPage = MEDIA_PAGE_SIZE_OPTIONS[0];
+const largePerPage = MEDIA_PAGE_SIZE_OPTIONS[MEDIA_PAGE_SIZE_OPTIONS.length - 1];
+
+const workbenchListPageKeys = [
+  ...MEDIA_PAGE_SIZE_OPTIONS.map((perPage) =>
+    queryKeys.media.workbenchPage({ page: 1, perPage, status: 'missing' }),
+  ),
+  queryKeys.media.workbenchPage({
+    page: 1,
+    perPage: defaultPerPage,
+    status: 'missing',
+    search: 'ada',
+  }),
+  queryKeys.media.workbenchPage({
+    page: 1,
+    perPage: largePerPage,
+    status: 'missing',
+    search: '',
+  }),
+];
 
 const emptyPage: WorkbenchMediaResponse = { items: [], total: 0, totalPages: 0 };
 
 const seedWorkbenchCache = (client: QueryClient): void => {
-  client.setQueryData(workbenchListPageKey, emptyPage);
+  for (const key of workbenchListPageKeys) {
+    client.setQueryData(key, emptyPage);
+  }
   client.setQueryData(mediaStatsTotalQueryKey, { items: [], total: 10, totalPages: 10 });
   client.setQueryData(mediaStatsMissingQueryKey, { items: [], total: 3, totalPages: 3 });
+};
+
+const expectListPagesInvalidated = (client: QueryClient, invalidated: boolean): void => {
+  for (const key of workbenchListPageKeys) {
+    expect(client.getQueryState(key)?.isInvalidated).toBe(invalidated);
+  }
 };
 
 const applyResponse = (overrides: Partial<ApplyDescribeRunResponse> = {}): ApplyDescribeRunResponse => ({
@@ -120,7 +144,7 @@ describe('useDescribeRunApply', () => {
     });
     await waitFor(() => expect(result.current.itemsQuery.isSuccess).toBe(true));
 
-    expect(client.getQueryState(workbenchListPageKey)?.isInvalidated).not.toBe(true);
+    expectListPagesInvalidated(client, false);
     expect(client.getQueryState(mediaStatsTotalQueryKey)?.isInvalidated).not.toBe(true);
     expect(client.getQueryState(mediaStatsMissingQueryKey)?.isInvalidated).not.toBe(true);
 
@@ -129,7 +153,7 @@ describe('useDescribeRunApply', () => {
     await waitFor(() => expect(result.current.apply.isSuccess).toBe(true));
     await waitFor(() => expect(fetchItemsMock.mock.calls.length).toBeGreaterThan(itemsFetchesBefore));
 
-    expect(client.getQueryState(workbenchListPageKey)?.isInvalidated).toBe(true);
+    expectListPagesInvalidated(client, true);
     expect(client.getQueryState(mediaStatsMissingQueryKey)?.isInvalidated).toBe(true);
     // Prefix workbench() invalidation would also mark the perPage:1 total probe.
     expect(client.getQueryState(mediaStatsTotalQueryKey)?.isInvalidated).toBe(false);
@@ -156,7 +180,7 @@ describe('useDescribeRunApply', () => {
     expect(result.current.apply.data?.applied).toEqual([71]);
     expect(result.current.apply.data?.failed).toEqual([70]);
 
-    expect(client.getQueryState(workbenchListPageKey)?.isInvalidated).toBe(true);
+    expectListPagesInvalidated(client, true);
     expect(client.getQueryState(mediaStatsMissingQueryKey)?.isInvalidated).toBe(true);
     expect(client.getQueryState(mediaStatsTotalQueryKey)?.isInvalidated).toBe(false);
   });
@@ -181,7 +205,7 @@ describe('useDescribeRunApply', () => {
     result.current.apply.mutate([]);
     await waitFor(() => expect(result.current.apply.isSuccess).toBe(true));
 
-    expect(client.getQueryState(workbenchListPageKey)?.isInvalidated).toBe(true);
+    expectListPagesInvalidated(client, true);
     expect(client.getQueryState(mediaStatsMissingQueryKey)?.isInvalidated).toBe(true);
     expect(client.getQueryState(mediaStatsTotalQueryKey)?.isInvalidated).toBe(false);
   });
@@ -212,7 +236,7 @@ describe('useDescribeRunApply', () => {
     await waitFor(() => expect(fetchItemsMock.mock.calls.length).toBeGreaterThan(itemsFetchesBefore));
 
     // History buckets still refresh; library rows and dashboard counters do not.
-    expect(client.getQueryState(workbenchListPageKey)?.isInvalidated).toBe(false);
+    expectListPagesInvalidated(client, false);
     expect(client.getQueryState(mediaStatsMissingQueryKey)?.isInvalidated).toBe(false);
     expect(client.getQueryState(mediaStatsTotalQueryKey)?.isInvalidated).toBe(false);
   });

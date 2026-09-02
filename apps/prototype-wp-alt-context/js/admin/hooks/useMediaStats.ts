@@ -1,22 +1,14 @@
 import { type QueryClient, useQuery } from '@tanstack/react-query';
 import { fetchWorkbenchMedia } from '../api/workbenchMediaApi';
-import { queryKeys } from '../api/queryKeys';
+import { MEDIA_STATS_PROBE, queryKeys } from '../api/queryKeys';
+
+export { MEDIA_STATS_PROBE };
 
 export interface MediaStats {
   total: number;
   missing: number;
   coverage: number;
 }
-
-/**
- * Shared probe shape for dashboard coverage counters. Single definition so
- * invalidation from useCorrectMediaAlt (and any future writer) cannot drift
- * from the keys useMediaStats actually observes.
- */
-export const MEDIA_STATS_PROBE = {
-  page: 1,
-  perPage: 1,
-} as const;
 
 /** Total-media count probe — alt correction does not change this total. */
 export const mediaStatsTotalQueryKey = queryKeys.media.workbenchPage({

@@ -90,8 +90,17 @@ export const queryKeys = {
 } as const;
 
 /**
- * Dashboard coverage probes reuse the workbench prefix with perPage:1
- * (`MEDIA_STATS_PROBE` in useMediaStats). Prefix-invalidating
+ * Shared probe shape for dashboard coverage counters. Single definition so
+ * the list-page predicate and useMediaStats keys cannot drift [DATA-14][RES-08].
+ */
+export const MEDIA_STATS_PROBE = {
+  page: 1,
+  perPage: 1,
+} as const;
+
+/**
+ * Dashboard coverage probes reuse the workbench prefix with
+ * `MEDIA_STATS_PROBE.perPage`. Prefix-invalidating
  * `queryKeys.media.workbench()` therefore remounts list rows *and* refetches
  * the total-media probe, whose count never changes on alt apply
  * [BR-77][RLSE-04][S6-F1].
@@ -105,10 +114,10 @@ export const isWorkbenchListPageQuery = (query: { queryKey: readonly unknown[] }
     return false;
   }
   const perPage = (params as { perPage?: unknown }).perPage;
-  return typeof perPage === 'number' && perPage !== 1;
+  return typeof perPage === 'number' && perPage !== MEDIA_STATS_PROBE.perPage;
 };
 
-/** Invalidate rendered workbench list pages only — never the perPage:1 stats probes. */
+/** Invalidate rendered workbench list pages only — never the stats probes. */
 export const invalidateWorkbenchListPages = (queryClient: QueryClient): void => {
   void queryClient.invalidateQueries({
     predicate: isWorkbenchListPageQuery,

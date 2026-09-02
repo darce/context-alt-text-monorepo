@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { formatBulkDescribeErrorMessage, useBulkDescribe } from '../useBulkDescribe';
 import { mediaStatsMissingQueryKey, mediaStatsTotalQueryKey } from '../useMediaStats';
+import { MEDIA_PAGE_SIZE_OPTIONS } from '../useWorkbenchFilters';
 import * as describeApi from '../../api/describeApi';
 import type { DescribeRunResponse } from '../../api/describeApi';
 import { queryKeys } from '../../api/queryKeys';
@@ -39,25 +40,50 @@ const runResponse = (overrides: Partial<DescribeRunResponse> = {}): DescribeRunR
   ...overrides,
 });
 
-const workbenchListPageKey = queryKeys.media.workbenchPage({
-  page: 1,
-  perPage: 20,
-  status: 'all',
-});
+const defaultPerPage = MEDIA_PAGE_SIZE_OPTIONS[0];
+const largePerPage = MEDIA_PAGE_SIZE_OPTIONS[MEDIA_PAGE_SIZE_OPTIONS.length - 1];
+
+const workbenchListPageKeys = [
+  ...MEDIA_PAGE_SIZE_OPTIONS.map((perPage) =>
+    queryKeys.media.workbenchPage({ page: 1, perPage, status: 'all' }),
+  ),
+  queryKeys.media.workbenchPage({
+    page: 1,
+    perPage: defaultPerPage,
+    status: 'all',
+    search: 'ada',
+  }),
+  queryKeys.media.workbenchPage({
+    page: 1,
+    perPage: largePerPage,
+    status: 'all',
+    search: '',
+  }),
+];
 
 const emptyPage: WorkbenchMediaResponse = { items: [], total: 0, totalPages: 0 };
 
 const seedWorkbenchCache = (client: QueryClient): void => {
-  client.setQueryData(workbenchListPageKey, emptyPage);
+  for (const key of workbenchListPageKeys) {
+    client.setQueryData(key, emptyPage);
+  }
   client.setQueryData(mediaStatsTotalQueryKey, { items: [], total: 10, totalPages: 10 });
   client.setQueryData(mediaStatsMissingQueryKey, { items: [], total: 3, totalPages: 3 });
 };
 
 const resetCachedQueries = (client: QueryClient): void => {
-  client.removeQueries({ queryKey: workbenchListPageKey });
+  for (const key of workbenchListPageKeys) {
+    client.removeQueries({ queryKey: key });
+  }
   client.removeQueries({ queryKey: mediaStatsTotalQueryKey });
   client.removeQueries({ queryKey: mediaStatsMissingQueryKey });
   seedWorkbenchCache(client);
+};
+
+const expectListPagesInvalidated = (client: QueryClient, invalidated: boolean): void => {
+  for (const key of workbenchListPageKeys) {
+    expect(client.getQueryState(key)?.isInvalidated).toBe(invalidated);
+  }
 };
 
 const wrapper = ({ children }: React.PropsWithChildren): React.JSX.Element => {
@@ -196,7 +222,7 @@ describe('useBulkDescribe', () => {
 
     await waitFor(() => expect(result.current.progress.run?.phase).toBe('describing'));
     expect(result.current.progress.isTerminal).toBe(false);
-    expect(queryClient.getQueryState(workbenchListPageKey)?.isInvalidated).toBe(false);
+    expectListPagesInvalidated(queryClient, false);
     expect(queryClient.getQueryState(mediaStatsTotalQueryKey)?.isInvalidated).toBe(false);
     queryClient.clear();
   });
@@ -220,7 +246,7 @@ describe('useBulkDescribe', () => {
     result.current.submit.mutate([1, 2, 3, 4]);
 
     await waitFor(() => expect(result.current.progress.run?.phase).toBe('describing'));
-    expect(queryClient.getQueryState(workbenchListPageKey)?.isInvalidated).toBe(false);
+    expectListPagesInvalidated(queryClient, false);
 
     fetchBulkDescribeRunMock.mockResolvedValue(
       runResponse({
@@ -235,17 +261,17 @@ describe('useBulkDescribe', () => {
     result.current.progress.retry();
     await waitFor(() => expect(result.current.progress.run?.phase).toBe('complete'));
     expect(result.current.progress.isTerminal).toBe(true);
-    expect(queryClient.getQueryState(workbenchListPageKey)?.isInvalidated).toBe(true);
+    expectListPagesInvalidated(queryClient, true);
     expect(queryClient.getQueryState(mediaStatsTotalQueryKey)?.isInvalidated).toBe(false);
     expect(queryClient.getQueryState(mediaStatsMissingQueryKey)?.isInvalidated).toBe(false);
 
     // Subsequent polls / renders at the same terminal phase must not refetch again.
     resetCachedQueries(queryClient);
-    expect(queryClient.getQueryState(workbenchListPageKey)?.isInvalidated).not.toBe(true);
+    expectListPagesInvalidated(queryClient, false);
     result.current.progress.retry();
     rerender();
     await waitFor(() => expect(result.current.progress.run?.phase).toBe('complete'));
-    expect(queryClient.getQueryState(workbenchListPageKey)?.isInvalidated).toBe(false);
+    expectListPagesInvalidated(queryClient, false);
     queryClient.clear();
   });
 
@@ -269,11 +295,11 @@ describe('useBulkDescribe', () => {
     result.current.submit.mutate([1, 2]);
     await waitFor(() => expect(result.current.runId).toBe('run-a'));
     await waitFor(() => expect(result.current.progress.run?.phase).toBe('complete'));
-    expect(queryClient.getQueryState(workbenchListPageKey)?.isInvalidated).toBe(true);
+    expectListPagesInvalidated(queryClient, true);
     expect(queryClient.getQueryState(mediaStatsTotalQueryKey)?.isInvalidated).toBe(false);
 
     resetCachedQueries(queryClient);
-    expect(queryClient.getQueryState(workbenchListPageKey)?.isInvalidated).not.toBe(true);
+    expectListPagesInvalidated(queryClient, false);
 
     submitBulkDescribeRunMock.mockResolvedValueOnce(
       runResponse({ run_id: 'run-b', status: 'pending', phase: 'queued' }),
@@ -291,7 +317,7 @@ describe('useBulkDescribe', () => {
     result.current.submit.mutate([3, 4]);
     await waitFor(() => expect(result.current.runId).toBe('run-b'));
     await waitFor(() => expect(result.current.progress.run?.phase).toBe('complete'));
-    expect(queryClient.getQueryState(workbenchListPageKey)?.isInvalidated).toBe(true);
+    expectListPagesInvalidated(queryClient, true);
     expect(queryClient.getQueryState(mediaStatsTotalQueryKey)?.isInvalidated).toBe(false);
     queryClient.clear();
   });
@@ -316,7 +342,7 @@ describe('useBulkDescribe', () => {
     result.current.submit.mutate([1, 2]);
 
     await waitFor(() => expect(result.current.progress.run?.phase).toBe('complete'));
-    expect(queryClient.getQueryState(workbenchListPageKey)?.isInvalidated).toBe(true);
+    expectListPagesInvalidated(queryClient, true);
 
     resetCachedQueries(queryClient);
     fetchBulkDescribeRunMock.mockResolvedValue(
@@ -332,7 +358,7 @@ describe('useBulkDescribe', () => {
     );
     result.current.progress.retry();
     await waitFor(() => expect(result.current.progress.run?.phase).toBe('failed'));
-    expect(queryClient.getQueryState(workbenchListPageKey)?.isInvalidated).toBe(false);
+    expectListPagesInvalidated(queryClient, false);
     expect(queryClient.getQueryState(mediaStatsTotalQueryKey)?.isInvalidated).toBe(false);
     queryClient.clear();
   });
@@ -367,13 +393,13 @@ describe('useBulkDescribe', () => {
 
       await waitFor(() => expect(result.current.progress.run?.phase).toBe(phase));
       expect(result.current.progress.isTerminal).toBe(true);
-      expect(queryClient.getQueryState(workbenchListPageKey)?.isInvalidated).toBe(true);
+      expectListPagesInvalidated(queryClient, true);
       expect(queryClient.getQueryState(mediaStatsTotalQueryKey)?.isInvalidated).toBe(false);
 
       resetCachedQueries(queryClient);
       result.current.progress.retry();
       await waitFor(() => expect(result.current.progress.run?.phase).toBe(phase));
-      expect(queryClient.getQueryState(workbenchListPageKey)?.isInvalidated).toBe(false);
+      expectListPagesInvalidated(queryClient, false);
       queryClient.clear();
     },
   );

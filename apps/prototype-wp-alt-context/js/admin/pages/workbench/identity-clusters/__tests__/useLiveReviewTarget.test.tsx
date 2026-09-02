@@ -213,30 +213,64 @@ describe('useLiveReviewTarget', () => {
     expect(openId).toBeNull();
   });
 
-  it('non-404 errors keep status live (fail-safe)', async () => {
-    vi.mocked(fetchClusterMembers).mockRejectedValue(
-      new HTTPError({
-        status: 503,
-        retryAfterSeconds: 1,
-        endpoint: '/members',
-        bodyPreview: '',
-        message: 'unavailable',
-      }),
-    );
+  it('probe TimeoutError is not live and surfaces a non-null error [FEBT1-W2A-06]', async () => {
+    const timeout = new DOMException('The operation timed out.', 'TimeoutError');
+    vi.mocked(fetchClusterMembers).mockRejectedValue(timeout);
     const onClose = vi.fn();
 
-    const { result } = renderHook(() => useLiveReviewTarget('cluster-blip', { onClose }), {
-      wrapper: createWrapper(),
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: true } },
+    });
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+    );
+
+    const { result } = renderHook(() => useLiveReviewTarget('cluster-timeout', { onClose }), {
+      wrapper,
     });
 
     await waitFor(() => {
-      expect(fetchClusterMembers).toHaveBeenCalled();
+      expect(result.current.status).not.toBe('live');
+      expect(result.current.error).not.toBeNull();
     });
-    // Allow the error effect to run.
-    await waitFor(() => {
-      expect(result.current.status).toBe('live');
-    });
+    expect(result.current.status).toBe('unknown');
+    expect(result.current.error).toBe(timeout);
+    expect(result.current.resolvedClusterId).toBe('cluster-timeout');
     expect(onClose).not.toHaveBeenCalled();
+    expect(fetchClusterMembers).toHaveBeenCalledTimes(1);
+  });
+
+  it('probe HTTP 500 is not live and surfaces a non-null error [FEBT1-W2A-06]', async () => {
+    const serverError = new HTTPError({
+      status: 500,
+      retryAfterSeconds: undefined,
+      endpoint: '/acx/v1/recognition/clusters/cluster-500/members',
+      bodyPreview: 'internal boom',
+      message: 'Request to /acx/v1/recognition/clusters/cluster-500/members failed (500): internal boom',
+    });
+    vi.mocked(fetchClusterMembers).mockRejectedValue(serverError);
+    const onClose = vi.fn();
+
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: true } },
+    });
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+    );
+
+    const { result } = renderHook(() => useLiveReviewTarget('cluster-500', { onClose }), {
+      wrapper,
+    });
+
+    await waitFor(() => {
+      expect(result.current.status).not.toBe('live');
+      expect(result.current.error).not.toBeNull();
+    });
+    expect(result.current.status).toBe('unknown');
+    expect(result.current.error).toBe(serverError);
+    expect(result.current.resolvedClusterId).toBe('cluster-500');
+    expect(onClose).not.toHaveBeenCalled();
+    expect(fetchClusterMembers).toHaveBeenCalledTimes(1);
   });
 
   it('AuthExpiredError is never retried and never absorbed into live [TEST-15]', async () => {

@@ -1087,7 +1087,7 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
     return (
       <div className="acx-review-queue" data-live-target-status={headLiveStatus}>
         {liveRegion}
-        {headLiveStatus === 'auth_expired' ? (
+        {headLiveStatus === 'auth_expired' || headLiveStatus === 'unknown' ? (
           <UserFacingErrorNotice
             className="acx-review-queue__auth-expired"
             error={headLiveError}

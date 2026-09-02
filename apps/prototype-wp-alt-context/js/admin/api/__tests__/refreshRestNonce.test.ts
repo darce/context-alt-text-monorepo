@@ -154,7 +154,10 @@ describe('refreshRestNonce (UXP-NET-2 slice 1)', () => {
     });
     expect(config.nonce).toBe('abc');
     expect(config.ajaxUrl).toBe('');
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining('ajaxUrl'));
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining('ajaxUrl'),
+      expect.objectContaining({ requestId: expect.any(String) }),
+    );
     expect(getNonce()).toBe('abc');
 
     const fetchMock = vi.spyOn(globalThis, 'fetch');

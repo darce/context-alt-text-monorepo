@@ -329,6 +329,57 @@ describe('boundary error redaction [O-03][O-05]', () => {
     setLogLevel(null);
   });
 
+  it('characterises exact LogRecord.fields.error for HTTPError, ResponseParseError, and NonceRefreshFailedError [W2-L5][TEST-15]', () => {
+    const records = captureRecords();
+    const httpError = new HTTPError({
+      status: 500,
+      retryAfterSeconds: undefined,
+      endpoint: `http://example.test/jobs?token=${ENDPOINT_SECRET}`,
+      bodyPreview: PREVIEW_SECRET,
+      message: `Request to http://example.test/jobs failed (500): ${BODY_SECRET}`,
+    });
+    const parseError = new ResponseParseError({
+      status: 200,
+      endpoint: `http://example.test/media?token=${ENDPOINT_SECRET}`,
+      bodyPreview: PREVIEW_SECRET,
+      message: `Request to http://example.test/media returned malformed JSON (200): ${BODY_SECRET}. Response preview: ${PREVIEW_SECRET}`,
+    });
+    const nonceError = new NonceRefreshFailedError({
+      message: `nonce refresh failed: ${BODY_SECRET}`,
+      causeStatus: 403,
+      bodyPreview: PREVIEW_SECRET,
+    });
+    const log = createLogger('http', { requestId: 'req-char' });
+    log.error('http', { error: httpError });
+    log.error('parse', { error: parseError });
+    log.error('nonce', { error: nonceError });
+
+    expect(records).toHaveLength(3);
+    expect(records[0].fields.error).toEqual({
+      name: 'HTTPError',
+      message: 'HTTP 500',
+      status: 500,
+      endpoint: '/jobs',
+    });
+    expect(records[1].fields.error).toEqual({
+      name: 'ResponseParseError',
+      message: 'JSON parse error',
+      status: 200,
+      endpoint: '/media',
+    });
+    expect(records[2].fields.error).toEqual({
+      name: 'NonceRefreshFailedError',
+      message: 'Nonce refresh failed',
+    });
+  });
+
+  it('does not project boundary errors via instanceof HTTPError|ResponseParseError|NonceRefreshFailedError [W2-L5]', async () => {
+    const fs = await import('node:fs/promises');
+    const path = await import('node:path');
+    const src = await fs.readFile(path.join(process.cwd(), 'js/admin/utils/logger.ts'), 'utf8');
+    expect(src).not.toMatch(/instanceof\s+(HTTPError|ResponseParseError|AuthExpiredError|NonceRefreshFailedError)/);
+  });
+
   it('HTTPError message secrets are absent from the serialized record [O-03][REF-19]', () => {
     const records = captureRecords();
     const error = leakingHttpError();

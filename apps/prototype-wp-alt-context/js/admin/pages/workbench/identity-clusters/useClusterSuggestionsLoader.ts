@@ -17,7 +17,10 @@ import {
   type IdentityBatchSuggestionsResponse,
 } from '../../../api/recognition';
 import { useRosterEntries } from '../../../hooks/useRosterHooks';
+import { classifyError } from '../../../utils/appError';
+import { createLogger } from '../../../utils/logger';
 import { buildNamingOptions, type NamingOption } from './buildNamingOptions';
+import { isAbortError } from './clusterMutationUtils';
 import {
   IDENTITY_BATCH_STALE_MS,
   PROJECTION_TOP_K,
@@ -66,6 +69,7 @@ export interface ClusterSuggestionsLoaderResult {
   isAtRestMode: boolean;
 }
 
+const log = createLogger('identityClusters.suggestionsLoader');
 const DEFAULT_DEBOUNCE_MS = 300;
 const EMPTY_COLLISIONS: ReadonlyMap<string, readonly NamingOption[]> = new Map();
 /** Typed label search is disabled until the debounced input reaches this length. */
@@ -202,13 +206,15 @@ export const useClusterSuggestionsLoader = ({
           };
         }
       } catch (err) {
-        if (err instanceof DOMException && err.name === 'AbortError') {
+        if (isAbortError(err)) {
           return null;
         }
-        if (err instanceof Error && err.name === 'AbortError') {
-          return null;
-        }
-        console.warn('Failed to find cluster by label:', err);
+        const classified = classifyError(err);
+        log.warn('Failed to find cluster by label', {
+          tag: classified._tag,
+          ...('status' in classified ? { status: classified.status } : {}),
+          ...('endpoint' in classified ? { endpoint: classified.endpoint } : {}),
+        });
       }
 
       return null;

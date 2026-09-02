@@ -6,6 +6,7 @@
 import * as React from 'react';
 import { __ } from '@wordpress/i18n';
 
+import { SPA_SESSION_EXPIRED_COPY } from '../../utils/sessionExpiredCopy';
 import { formatUserFacingError, isAuthExpiredError } from '../../utils/userFacingError';
 
 export interface UserFacingErrorNoticeProps {
@@ -24,10 +25,10 @@ export const UserFacingErrorNotice: React.FC<UserFacingErrorNoticeProps> = ({
   announce = true,
 }) => {
   const authExpired = isAuthExpiredError(error);
-  // Callers pass already-translated fallbacks; the session-expired constant is
-  // translated here so the literal is extractable for the text domain.
+  // Single owner: SPA_SESSION_EXPIRED_COPY (REF-19 / E-03). __() wraps the
+  // constant so runtime translation still applies without a second literal.
   const message = authExpired
-    ? __('Your session expired — reload the page and sign in again.', 'alt-context')
+    ? __(SPA_SESSION_EXPIRED_COPY.sessionExpired, 'alt-context')
     : formatUserFacingError(error, fallback);
 
   return (
@@ -40,8 +41,7 @@ export const UserFacingErrorNotice: React.FC<UserFacingErrorNoticeProps> = ({
       <span>{message}</span>
       {authExpired ? (
         <button type="button" onClick={() => window.location.reload()}>
-          {/* Literal (not a variable) so wp i18n string extraction sees it ([RLSE-04]). */}
-          {__('Reload page', 'alt-context')}
+          {__(SPA_SESSION_EXPIRED_COPY.reloadPage, 'alt-context')}
         </button>
       ) : null}
     </div>

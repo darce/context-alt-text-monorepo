@@ -4,15 +4,10 @@
  */
 
 import { classifyError, toUserMessage } from './appError';
-import { AuthExpiredError } from './http';
 
-export const SPA_SESSION_EXPIRED_COPY = {
-  sessionExpired: 'Your session expired — reload the page and sign in again.',
-  reloadPage: 'Reload page',
-} as const;
+export { SPA_SESSION_EXPIRED_COPY } from './sessionExpiredCopy';
 
-export const isAuthExpiredError = (error: unknown): error is AuthExpiredError =>
-  classifyError(error)._tag === 'auth_expired' && error instanceof AuthExpiredError;
+export const isAuthExpiredError = (error: unknown): boolean => classifyError(error)._tag === 'auth_expired';
 
 /**
  * Map a thrown request error to user-visible text.

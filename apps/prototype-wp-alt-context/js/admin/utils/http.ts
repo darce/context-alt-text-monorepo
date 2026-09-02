@@ -65,9 +65,9 @@ export class ResponseParseError extends Error {
  */
 export class AuthExpiredError extends Error {
   readonly endpoint: string;
-  readonly status: number;
+  readonly status: 401 | 403;
 
-  constructor({ endpoint, status, message }: { endpoint: string; status: number; message?: string }) {
+  constructor({ endpoint, status, message }: { endpoint: string; status: 401 | 403; message?: string }) {
     super(message ?? `Authentication expired for ${endpoint} (${status}).`);
     this.name = 'AuthExpiredError';
     this.endpoint = endpoint;
@@ -138,13 +138,11 @@ const buildHeaders = (options: HTTPOptions, restNonce: string | undefined): Reco
 const parseErrorCode = (errorText: string): string | undefined => {
   try {
     const parsed: unknown = JSON.parse(errorText);
-    if (
-      parsed &&
-      typeof parsed === 'object' &&
-      'code' in parsed &&
-      typeof (parsed as { code: unknown }).code === 'string'
-    ) {
-      return (parsed as { code: string }).code;
+    if (parsed && typeof parsed === 'object' && 'code' in parsed) {
+      const code = parsed.code;
+      if (typeof code === 'string') {
+        return code;
+      }
     }
   } catch {
     // non-JSON body (WAF/proxy) → no code
@@ -154,7 +152,7 @@ const parseErrorCode = (errorText: string): string | undefined => {
 
 const throwIfAborted = (signal: AbortSignal | undefined): void => {
   if (signal?.aborted) {
-    const reason = signal.reason;
+    const reason: unknown = signal.reason;
     if (reason instanceof DOMException) {
       throw reason;
     }

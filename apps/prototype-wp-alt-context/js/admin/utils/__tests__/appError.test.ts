@@ -4,7 +4,9 @@ import { NonceRefreshFailedError } from '../../api/config';
 import { AuthExpiredError, HTTPError, ResponseParseError } from '../http';
 import { SPA_SESSION_EXPIRED_COPY } from '../userFacingError';
 import {
+  APP_ERROR_TAGS,
   classifyError,
+  isAbortLikeName,
   isAppError,
   isCooldown,
   isHttpStatus,
@@ -170,6 +172,18 @@ describe('classifyError', () => {
       message: 'Unknown error',
       cause: obj,
     });
+    const sym = Symbol('x');
+    expect(classifyError(sym)).toEqual({
+      _tag: 'unknown',
+      message: 'Unknown error',
+      cause: sym,
+    });
+    const fn = (): void => undefined;
+    expect(classifyError(fn)).toEqual({
+      _tag: 'unknown',
+      message: 'Unknown error',
+      cause: fn,
+    });
   });
 });
 
@@ -203,5 +217,169 @@ describe('isHttpStatus / isCooldown / toUserMessage', () => {
     expect(toUserMessage(new Error('Request to /secret failed (500): body'), fallback)).toBe(fallback);
     expect(toUserMessage('raw string', fallback)).toBe(fallback);
     expect(toUserMessage(null, fallback)).toBe(fallback);
+  });
+});
+
+describe('AppError tags / mutant-killing pins [TEST-15]', () => {
+  it('APP_ERROR_TAGS is the closed tag set [F1]', () => {
+    expect(APP_ERROR_TAGS).toEqual([
+      'http',
+      'parse',
+      'auth_expired',
+      'nonce_refresh',
+      'abort',
+      'transport',
+      'unknown',
+    ]);
+  });
+
+  it('isAppError requires own cause (M1)', () => {
+    expect(isAppError({ _tag: 'unknown', message: 'x' })).toBe(false);
+    expect(isAppError({ _tag: 'unknown', message: 'x', cause: undefined })).toBe(true);
+  });
+
+  it('auth_expired status 500 is not an AppError (M2)', () => {
+    expect(
+      isAppError({
+        _tag: 'auth_expired',
+        status: 500,
+        endpoint: ENDPOINT,
+        message: 'expired',
+        cause: null,
+      }),
+    ).toBe(false);
+    expect(
+      isAppError({
+        _tag: 'auth_expired',
+        status: 401,
+        endpoint: ENDPOINT,
+        message: 'expired',
+        cause: null,
+      }),
+    ).toBe(true);
+  });
+
+  it('http retryAfterMs must be a number when present (M3)', () => {
+    expect(
+      isAppError({
+        _tag: 'http',
+        status: 429,
+        endpoint: ENDPOINT,
+        message: 'slow',
+        cause: null,
+        retryAfterMs: 'soon',
+      }),
+    ).toBe(false);
+    expect(
+      isAppError({
+        _tag: 'http',
+        status: 429,
+        endpoint: ENDPOINT,
+        message: 'slow',
+        cause: null,
+        retryAfterMs: 1000,
+      }),
+    ).toBe(true);
+  });
+
+  it('AuthExpiredError 401 and 403 round-trip exact status (M4)', () => {
+    const expired401 = new AuthExpiredError({ endpoint: ENDPOINT, status: 401 });
+    const expired403 = new AuthExpiredError({ endpoint: ENDPOINT, status: 403 });
+    expect(expired401.status).toBe(401);
+    expect(expired403.status).toBe(403);
+    const classified401 = classifyError(expired401);
+    const classified403 = classifyError(expired403);
+    expect(classified401._tag).toBe('auth_expired');
+    expect(classified403._tag).toBe('auth_expired');
+    if (classified401._tag === 'auth_expired') {
+      expect(classified401.status).toBe(401);
+    }
+    if (classified403._tag === 'auth_expired') {
+      expect(classified403.status).toBe(403);
+    }
+  });
+
+  it('DOMException/Error named TimeoutError classify as abort (M5)', () => {
+    const timedOut = new DOMException('The operation timed out.', 'TimeoutError');
+    expect(isAbortLikeName(timedOut)).toBe(true);
+    expect(classifyError(timedOut)._tag).toBe('abort');
+    const named = Object.assign(new Error('timed out'), { name: 'TimeoutError' });
+    expect(classifyError(named)._tag).toBe('abort');
+  });
+
+  it('Error-instance AbortError classifies as abort (M6)', () => {
+    const aborted = Object.assign(new Error('x'), { name: 'AbortError' });
+    expect(isAbortLikeName(aborted)).toBe(true);
+    expect(classifyError(aborted)._tag).toBe('abort');
+    expect(classifyError(aborted).message).toBe('x');
+  });
+
+  it("TypeError message containing 'Failed to fetch' is transport (M7)", () => {
+    const error = new TypeError('boom: Failed to fetch');
+    expect(classifyError(error)._tag).toBe('transport');
+    expect(classifyError(error).message).toBe('boom: Failed to fetch');
+  });
+
+  it('any TypeError classifies as transport (M8 / F5 parity)', () => {
+    const error = new TypeError('x is not a function');
+    expect(classifyError(error)._tag).toBe('transport');
+    expect(classifyError(error).message).toBe('x is not a function');
+    expect(classifyError(new TypeError('Failed to fetch'))._tag).toBe('transport');
+    expect(classifyError(new TypeError('Load failed'))._tag).toBe('transport');
+    expect(classifyError(new TypeError('NetworkError when attempting to fetch resource'))._tag).toBe(
+      'transport',
+    );
+  });
+
+  it("empty string classifies as unknown with 'Unknown error' (M9)", () => {
+    expect(classifyError('')).toEqual({
+      _tag: 'unknown',
+      message: 'Unknown error',
+      cause: '',
+    });
+  });
+
+  it('number/boolean/bigint stringify into unknown message (M10)', () => {
+    expect(classifyError(42).message).toBe('42');
+    expect(classifyError(42)._tag).toBe('unknown');
+    expect(classifyError(true).message).toBe('true');
+    expect(classifyError(1n).message).toBe('1');
+  });
+
+  it('throwing message getter is unknown and does not throw (M11)', () => {
+    const poison: { message: string } = {} as { message: string };
+    Object.defineProperty(poison, 'message', {
+      get(): string {
+        throw new Error('accessor boom');
+      },
+    });
+    expect(() => classifyError(poison)).not.toThrow();
+    const classified = classifyError(poison);
+    expect(classified._tag).toBe('unknown');
+    expect(classified.message).toBe('Unknown error');
+    expect(classified.cause).toBe(poison);
+  });
+
+  it('isHttpStatus uses strict equality both directions (M12)', () => {
+    expect(isHttpStatus(httpError(500), 404)).toBe(false);
+    expect(isHttpStatus(httpError(404), 500)).toBe(false);
+    expect(isHttpStatus(httpError(404), 404)).toBe(true);
+  });
+
+  it('classifyError is reference-idempotent for AppError inputs (M13)', () => {
+    const once = classifyError(httpError(404));
+    expect(classifyError(once)).toBe(once);
+    expect(isAppError(null)).toBe(false);
+    expect(isAppError({})).toBe(false);
+    expect(isAppError({ _tag: 'nope' })).toBe(false);
+    expect(isAppError({ _tag: 'http' })).toBe(false);
+    expect(isAppError({ _tag: 'http', message: 'x', cause: null })).toBe(false);
+  });
+
+  it('plain-object AbortError classifies as abort (F3)', () => {
+    const abortLike = { name: 'AbortError', message: 'aborted' };
+    expect(isAbortLikeName(abortLike)).toBe(true);
+    expect(classifyError(abortLike)._tag).toBe('abort');
+    expect(classifyError({ name: 'TimeoutError', message: 'timed out' })._tag).toBe('abort');
   });
 });

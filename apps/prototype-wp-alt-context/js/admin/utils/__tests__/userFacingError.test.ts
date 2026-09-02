@@ -34,4 +34,16 @@ describe('formatUserFacingError / getClusterMutationErrorMessage', () => {
     );
     expect(getClusterMutationErrorMessage(new Error('plain failure'), 'Sam')).toBe('plain failure');
   });
+
+  it('pre-classified auth_expired AppError uses session-expired copy (M16 / F5)', () => {
+    const classified = {
+      _tag: 'auth_expired' as const,
+      endpoint: '/x',
+      status: 401 as const,
+      message: 'expired',
+      cause: null,
+    };
+    expect(isAuthExpiredError(classified)).toBe(true);
+    expect(formatUserFacingError(classified, 'generic')).toBe(SPA_SESSION_EXPIRED_COPY.sessionExpired);
+  });
 });

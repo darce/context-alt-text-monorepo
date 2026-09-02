@@ -1,24 +1,18 @@
 import { classifyError, isCooldown } from './appError';
-import { HTTPError } from './http';
+import type { HTTPError } from './http';
 
 export const RETRY_MAX_ATTEMPTS = 3;
 export const MAX_RETRY_DELAY_MS = 30_000;
 
 /** AbortError and TimeoutError (from AbortSignal.timeout) — both are abort-like, never retry. */
-const ABORT_LIKE_NAMES = new Set(['AbortError', 'TimeoutError']);
-
-/** Duck-type: DOMException is NOT an Error subclass in the browser. */
-export const isAbortLike = (error: unknown): boolean =>
-  classifyError(error)._tag === 'abort' ||
-  (typeof error === 'object' && error !== null && ABORT_LIKE_NAMES.has((error as { name?: unknown }).name as string));
+export const isAbortLike = (error: unknown): boolean => classifyError(error)._tag === 'abort';
 
 /**
  * The server's explicit "ask again later": 429, or 503 carrying Retry-After.
  * Single classification shared by the retry predicate and the recognition
  * cooldown (REF-19: one policy, no per-consumer re-derivation).
  */
-export const isCooldownSignal = (error: unknown): error is HTTPError =>
-  error instanceof HTTPError && isCooldown(error);
+export const isCooldownSignal = (error: unknown): error is HTTPError => isCooldown(error);
 
 /**
  * Shared QueryClient retry predicate.
@@ -43,8 +37,7 @@ export const shouldRetryRequest = (failureCount: number, error: unknown): boolea
   if (isAbortLike(error)) {
     return false;
   }
-  // Genuine network transport failure only (Fetch spec rejects with TypeError).
-  return classified._tag === 'transport' || error instanceof TypeError;
+  return classified._tag === 'transport';
 };
 
 /**

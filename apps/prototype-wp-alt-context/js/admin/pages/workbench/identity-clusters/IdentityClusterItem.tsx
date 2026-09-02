@@ -12,6 +12,7 @@ import { commitClusterToRosterEntry } from '../../../api/rosterApi';
 import { getClusterMutationErrorMessage } from './clusterMutationUtils';
 import { invalidateSuggestionProjection, type ProjectedSuggestion } from './suggestionProjection';
 import type { ClusterGroup } from './types';
+import { isMeaningfulMergeLabel } from './resolveMergeSurvivor';
 import { filterEditableClusterMatch, formatClusterLabel, getEditableClusterId } from './utils';
 import { useClusterEditState } from './useClusterEditState';
 import { useClusterMutations } from './useClusterMutations';
@@ -38,12 +39,23 @@ import {
 
 const MATCH_DEBOUNCE_MS = 300;
 
+export interface IdentityClusterMergeTwin {
+  suggestionId: string;
+  survivorLabel: string;
+  onAccept: () => void;
+  onReject: () => void;
+  isPending: boolean;
+  disabledReason?: string | null;
+}
+
 interface IdentityClusterItemProps {
   cluster: ClusterGroup;
   canLabel?: boolean;
   canMutate?: boolean;
   /** Top server-ranked inline suggestion for this cluster's anchor identity. */
   inlineSuggestionMatch?: ProjectedSuggestion;
+  /** Pending labeled-survivor twin chip (HAI-11 propose, never auto-apply). */
+  mergeTwin?: IdentityClusterMergeTwin;
 }
 
 /**
@@ -60,6 +72,7 @@ export const IdentityClusterItem = ({
   canLabel = true,
   canMutate = true,
   inlineSuggestionMatch,
+  mergeTwin,
 }: IdentityClusterItemProps): React.JSX.Element => {
   // Compute derived values
   const derivedLabel = React.useMemo(
@@ -166,7 +179,8 @@ export const IdentityClusterItem = ({
   });
 
   const bindToRosterEntry = React.useCallback(
-    (rosterEntryId: number, label: string, _signal?: AbortSignal) => {
+    (rosterEntryId: number, label: string, signal?: AbortSignal) => {
+      void signal;
       if (!editableClusterId) {
         handleMutationError(__('Cannot bind this person: missing group.', 'alt-context'));
         return;
@@ -314,6 +328,14 @@ export const IdentityClusterItem = ({
     [cluster, mutations],
   );
 
+  const showTwinChip =
+    mergeTwin != null &&
+    !isMeaningfulMergeLabel(cluster.label) &&
+    isMeaningfulMergeLabel(mergeTwin.survivorLabel);
+  const twinFirstName = mergeTwin?.survivorLabel.trim().split(/\s+/)[0] ?? '';
+  const twinPendingTitle =
+    mergeTwin?.isPending && mergeTwin.disabledReason ? mergeTwin.disabledReason : undefined;
+
   const saveLabel = React.useMemo(() => {
     if (saveStatus === 'queued') {
       return __('Saving…', 'alt-context');
@@ -349,6 +371,34 @@ export const IdentityClusterItem = ({
             ) : (
               <span className="acx-identity-cluster__label">{labelText}</span>
             )}
+            {showTwinChip && mergeTwin ? (
+              <div
+                className="acx-identity-clusters__twin-chip"
+                data-testid="acx-identity-clusters__twin-chip"
+              >
+                <span>
+                  {sprintf(__('⇢ Same person as %s?', 'alt-context'), mergeTwin.survivorLabel)}
+                </span>
+                <button
+                  type="button"
+                  className="button button-primary button-small"
+                  onClick={mergeTwin.onAccept}
+                  disabled={mergeTwin.isPending}
+                  title={twinPendingTitle}
+                >
+                  {sprintf(__('Merge into %s', 'alt-context'), twinFirstName)}
+                </button>
+                <button
+                  type="button"
+                  className="button button-small"
+                  onClick={mergeTwin.onReject}
+                  disabled={mergeTwin.isPending}
+                  title={twinPendingTitle}
+                >
+                  {__('Not the same', 'alt-context')}
+                </button>
+              </div>
+            ) : null}
             {!cluster.clusteringPending && (
               <ClusterActions
                 canEdit={canEdit}

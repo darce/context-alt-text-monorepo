@@ -35,10 +35,10 @@
       "purpose": "One banner per AppError tag with a tag-specific recovery action; raw messages never reach the DOM.",
       "code_ref": "apps/prototype-wp-alt-context/js/admin/utils/userFacingError.ts",
       "primary_action_id": "retry-request",
-      "states": ["auth_expired", "cooldown", "transport", "parse", "not_found", "unknown"],
+      "states": ["http", "parse", "auth_expired", "nonce_refresh", "abort", "transport", "unknown"],
       "zones": [
-        { "id": "error-copy", "label": "User-facing copy", "role": "content", "states": ["auth_expired", "cooldown", "transport", "parse", "not_found", "unknown"] },
-        { "id": "error-action", "label": "Recovery action", "role": "action", "states": ["auth_expired", "cooldown", "transport", "unknown"] }
+        { "id": "error-copy", "label": "User-facing copy", "role": "content", "states": ["http", "parse", "auth_expired", "nonce_refresh", "abort", "transport", "unknown"] },
+        { "id": "error-action", "label": "Recovery action", "role": "action", "states": ["http", "parse", "auth_expired", "nonce_refresh", "transport", "unknown"] }
       ]
     },
     {
@@ -60,7 +60,7 @@
     { "id": "job-happy-path", "job": "run-job", "label": "idle → pending → running → completed", "steps": [ { "screen_id": "workbench-pipeline", "branch_label": "idle" }, { "screen_id": "workbench-pipeline", "branch_label": "pending" }, { "screen_id": "workbench-pipeline", "branch_label": "running" }, { "screen_id": "workbench-pipeline", "branch_label": "completed" } ] },
     { "id": "job-stall-reconnect", "job": "run-job", "label": "running → stalled (30 s no event) → running (SSE reconnect) or failed", "steps": [ { "screen_id": "workbench-pipeline", "branch_label": "running" }, { "screen_id": "workbench-pipeline", "branch_label": "stalled" }, { "screen_id": "workbench-pipeline", "branch_label": "running | failed" } ] },
     { "id": "auth-expired-recovery", "job": "recover-from-failure", "label": "401/403 → auth_expired banner → reload", "steps": [ { "screen_id": "request-error-banner", "branch_label": "auth_expired" }, { "screen_id": "reload-page" } ] },
-    { "id": "cooldown-429", "job": "recover-from-failure", "label": "429/503 + Retry-After → cooldown banner → auto retry", "steps": [ { "screen_id": "request-error-banner", "branch_label": "cooldown" }, { "screen_id": "workbench-pipeline", "branch_label": "running" } ] }
+    { "id": "cooldown-429", "job": "recover-from-failure", "label": "http 429/503 + Retry-After (isCooldown) → wait banner → auto retry", "steps": [ { "screen_id": "request-error-banner", "branch_label": "http" }, { "screen_id": "workbench-pipeline", "branch_label": "running" } ] }
   ],
   "open_questions": [
     "Does the pipeline banner today render 'offline' separately from 'stalled' (navigator.onLine vs no-event timer)? Reducer must keep both if so.",

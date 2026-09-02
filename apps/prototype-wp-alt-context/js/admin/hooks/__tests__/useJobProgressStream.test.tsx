@@ -1,7 +1,7 @@
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { JOB_PROGRESS_STALL_THRESHOLD_MS, useJobProgressStream } from '../useJobProgressStream';
+import { useJobProgressStream } from '../useJobProgressStream';
 import { useJobCoordination } from '../useJobCoordination';
 import { resetConfigCache, setNonce } from '../../api/config';
 
@@ -172,7 +172,7 @@ describe('useJobProgressStream', () => {
     const firstSource = MockEventSource.instances[0];
 
     act(() => {
-      vi.advanceTimersByTime(JOB_PROGRESS_STALL_THRESHOLD_MS + 1000);
+      vi.advanceTimersByTime(31_000);
     });
 
     await waitFor(() => {
@@ -215,7 +215,7 @@ describe('useJobProgressStream', () => {
     const source = MockEventSource.instances[0];
 
     act(() => {
-      vi.advanceTimersByTime(JOB_PROGRESS_STALL_THRESHOLD_MS + 1000);
+      vi.advanceTimersByTime(31_000);
     });
 
     await waitFor(() => {

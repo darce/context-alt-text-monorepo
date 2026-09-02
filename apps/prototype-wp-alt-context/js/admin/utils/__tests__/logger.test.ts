@@ -298,11 +298,7 @@ describe('logJobEvent [O-02]', () => {
   it('emits exactly one wide record with event, state, and job id [O-02][OBS-02]', () => {
     const records = captureRecords();
     const log = createJobLogger('job', 'job-123').withRequest();
-    logJobEvent(
-      log,
-      { type: 'PROGRESS' },
-      { status: 'running', jobId: 'job-123', done: 3, total: 10, failedCount: 0 },
-    );
+    logJobEvent(log, { type: 'PROGRESS' }, { status: 'running', jobId: 'job-123', done: 3, total: 10, failedCount: 0 });
 
     expect(records).toHaveLength(1);
     expect(records[0].fields.event).toBe('PROGRESS');
@@ -480,25 +476,24 @@ describe('flattenError cause recursion [O-07]', () => {
     const outer = new Error('outer', { cause: mid });
     createLogger('x').error('failed', { error: outer });
 
-    expect(records[0].fields.error).toEqual({
+    const errorFields = records[0].fields.error as {
+      name?: string;
+      message?: string;
+      cause?: Record<string, unknown>;
+    };
+    expect(errorFields).toEqual({
       name: 'Error',
       message: 'outer',
       cause: { name: 'Error', message: 'mid' },
     });
-    expect(JSON.stringify(records[0].fields.error)).not.toContain('leaf-secret');
-    expect(records[0].fields.error).toEqual(
-      expect.objectContaining({
-        cause: expect.not.objectContaining({ cause: expect.anything() }),
-      }),
-    );
+    expect(JSON.stringify(errorFields)).not.toContain('leaf-secret');
+    expect(errorFields.cause).not.toHaveProperty('cause');
   });
 });
 
 describe('redactEndpoint [FEBT1-W2B-06][REF-19]', () => {
   it('returns pathname only and strips query including cluster labels', () => {
-    expect(redactEndpoint('/acx/v1/recognition/clusters?search=Alice')).toBe(
-      '/acx/v1/recognition/clusters',
-    );
+    expect(redactEndpoint('/acx/v1/recognition/clusters?search=Alice')).toBe('/acx/v1/recognition/clusters');
     expect(redactEndpoint('https://example.test/jobs?token=secret-token')).toBe('/jobs');
     expect(redactEndpoint('/acx/v1/recognition/clusters?search=Alice')).not.toContain('?');
     expect(redactEndpoint('/acx/v1/recognition/clusters?search=Alice')).not.toContain('Alice');

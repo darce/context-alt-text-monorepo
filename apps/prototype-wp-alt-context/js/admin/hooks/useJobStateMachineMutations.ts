@@ -94,7 +94,12 @@ export const useJobStateMachineMutations = ({
       onScanComplete?.(jobIds);
       const jobId = jobIds[0];
       const workLog = log.withRequest();
-      const jobLog = jobId ? workLog.child({ jobId }) : workLog;
+      const jobLog = workLog.child({
+        ...(jobId ? { jobId } : {}),
+        jobIds,
+        jobCount: jobIds.length,
+        batchRunId: data.batchRunId,
+      });
       logJobEvent(jobLog, 'scan.submit', {
         status: jobIds.length > 0 ? 'pending' : 'completed',
         jobId,

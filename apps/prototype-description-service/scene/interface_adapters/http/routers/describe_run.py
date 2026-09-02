@@ -125,7 +125,12 @@ def _build_describe_one(
     settings = settings or DescriptionSettings()
     timeout = _generation_timeout_seconds(settings, adapter)
 
-    async def describe_one(media_id: int, image_bytes: bytes | None, content_type: str | None) -> DescribeItemOutcome:
+    async def describe_one(
+        media_id: int,
+        image_bytes: bytes | None,
+        content_type: str | None,
+        naming_inputs: tuple[list, object] | None = None,
+    ) -> DescribeItemOutcome:
         if not image_bytes:
             raise ValueError(f"no image bytes stored for media_id={media_id}")
         async with session_factory() as svc_session:
@@ -134,7 +139,10 @@ def _build_describe_one(
             naming_policy = None
             try:
                 tenant = await get_tenant_record(svc_session, tenant_id)
-                if recognition_enabled:
+                if naming_inputs is not None:
+                    confirmed_faces, naming_policy = naming_inputs
+                    confirmed_faces = list(confirmed_faces or [])
+                elif recognition_enabled:
                     confirmed_faces, naming_policy = await asyncio.wait_for(
                         load_fusion_naming_inputs(
                             session=svc_session,

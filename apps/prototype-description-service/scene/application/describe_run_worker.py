@@ -75,10 +75,29 @@ DescribeOne = Callable[
 ]
 
 
+def _describe_one_kwargs(
+    describe_one: DescribeOne, naming_inputs: tuple[list, object] | None
+) -> dict[str, tuple[list, object] | None]:
+    """Pass a preloaded snapshot only when the describe callable accepts it."""
+    try:
+        parameters = inspect.signature(describe_one).parameters
+    except (TypeError, ValueError):
+        return {}
+    if "naming_inputs" in parameters or any(p.kind is inspect.Parameter.VAR_KEYWORD for p in parameters.values()):
+        return {"naming_inputs": naming_inputs}
+    return {}
+
+
 async def _call_describe_one(
-    describe_one: DescribeOne, media_id: int, image_bytes: bytes | None, content_type: str | None
+    describe_one: DescribeOne,
+    media_id: int,
+    image_bytes: bytes | None,
+    content_type: str | None,
+    naming_inputs: tuple[list, object] | None = None,
 ) -> DescribeItemOutcome | None:
-    result = describe_one(media_id, image_bytes, content_type)
+    result = describe_one(
+        media_id, image_bytes, content_type, **_describe_one_kwargs(describe_one, naming_inputs)
+    )
     if inspect.isawaitable(result):
         result = await result
     return result
@@ -211,6 +230,7 @@ async def _describe_with_transient_retry(
     timeout_seconds: float,
     retry_transient: bool,
     cancel_requested: Callable[[], Awaitable[bool]] | None = None,
+    naming_inputs: tuple[list, object] | None = None,
 ) -> DescribeItemOutcome | None:
     max_attempts = _GPU_ITEM_MAX_ATTEMPTS if retry_transient else 1
     for attempt in range(1, max_attempts + 1):
@@ -218,7 +238,10 @@ async def _describe_with_transient_retry(
             raise _RunCancelledError("describe run cancelled before item retry")
         try:
             return await asyncio.wait_for(
-                _call_describe_one(describe_one, media_id, image_bytes, content_type), timeout_seconds
+                _call_describe_one(
+                    describe_one, media_id, image_bytes, content_type, naming_inputs=naming_inputs
+                ),
+                timeout_seconds,
             )
         except Exception as exc:  # noqa: BLE001 - classify before retrying
             if attempt >= max_attempts or not _is_transient_describe_error(exc):
@@ -399,24 +422,32 @@ async def run_describe_job(
                 try:
                     if gpu_breaker_error is not None:
                         raise _GpuCircuitOpenError(gpu_breaker_error)
-                    naming_inputs, outcome = await asyncio.gather(
-                        _naming_lookup_for_item(
-                            enabled=naming_enabled,
-                            session_factory=session_factory,
-                            tenant=tenant,
-                            tenant_id=tenant_id,
-                            media_id=item.media_id,
-                            image_bytes=image_bytes,
-                        ),
-                        _describe_with_transient_retry(
-                            describe_one=describe_one,
-                            media_id=item.media_id,
-                            image_bytes=image_bytes,
-                            content_type=content_type,
-                            timeout_seconds=timeout,
-                            retry_transient=gpu_policy is not None,
-                            cancel_requested=cancel_requested,
-                        ),
+                    # HARM-F3 / DATA-19: one naming snapshot per item. Load first,
+                    # then share with Stage-2 fusion and Stage-3 preview so a
+                    # label/merge between two sessions cannot diverge the draft.
+                    naming_inputs = await _naming_lookup_for_item(
+                        enabled=naming_enabled,
+                        session_factory=session_factory,
+                        tenant=tenant,
+                        tenant_id=tenant_id,
+                        media_id=item.media_id,
+                        image_bytes=image_bytes,
+                    )
+                    if naming_inputs is not None:
+                        describe_naming_inputs: tuple[list, object] | None = naming_inputs
+                    elif naming_enabled:
+                        describe_naming_inputs = ([], None)
+                    else:
+                        describe_naming_inputs = None
+                    outcome = await _describe_with_transient_retry(
+                        describe_one=describe_one,
+                        media_id=item.media_id,
+                        image_bytes=image_bytes,
+                        content_type=content_type,
+                        timeout_seconds=timeout,
+                        retry_transient=gpu_policy is not None,
+                        cancel_requested=cancel_requested,
+                        naming_inputs=describe_naming_inputs,
                     )
                     outcome = await _apply_naming_preview(
                         enabled=naming_enabled,

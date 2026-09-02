@@ -402,6 +402,10 @@
     color: var(--acx-color-text);
   }
 
+  &__twin-chip-thumb {
+    flex: 0 0 auto;
+  }
+
   &__truncated-review {
     display: inline-block;
     margin-block-start: var(--acx-space-4);

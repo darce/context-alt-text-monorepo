@@ -88,10 +88,14 @@ const labeledCluster = (): ClusterGroup => ({
   ],
 });
 
+const SURVIVOR_BBOX = { x: 10, y: 20, width: 80, height: 90 };
+
 const mergeTwin = (overrides: Partial<{
   suggestionId: string;
   survivorClusterId: string;
   survivorLabel: string;
+  survivorMediaUrl: string;
+  survivorBbox: { x: number; y: number; width: number; height: number };
   onAccept: () => void;
   onReject: () => void;
   isPending: boolean;
@@ -151,10 +155,12 @@ describe('IdentityClusterItem twin chip (WBUX-6/C3)', () => {
 
     const chip = screen.getByRole('group', { name: /same person as ada lovelace/i });
     expect(chip).toHaveAttribute('data-testid', 'acx-identity-clusters__twin-chip');
-    const icon = chip.querySelector('[aria-hidden="true"]');
+    const icon = chip.querySelector('.acx-identity-clusters__twin-chip-icon');
     expect(icon).not.toBeNull();
+    expect(icon).toHaveAttribute('aria-hidden', 'true');
     expect(icon).toHaveTextContent('⇢');
     expect(chip).toHaveTextContent('Same person as Ada Lovelace?');
+    expect(screen.queryByRole('status')).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Merge into Ada Lovelace' })).toHaveTextContent(
       'Merge into Ada Lovelace',
     );
@@ -220,10 +226,12 @@ describe('IdentityClusterItem twin chip (WBUX-6/C3)', () => {
     const group = screen.getByRole('group', { name: /same person/i });
     const describedBy = group.getAttribute('aria-describedby');
     expect(describedBy).toBeTruthy();
-    expect(document.getElementById(describedBy ?? '')).toHaveTextContent('Saving merge suggestion…');
+    const status = screen.getByRole('status');
+    expect(status).toHaveAttribute('id', describedBy);
+    expect(status).toHaveTextContent('Saving merge suggestion…');
   });
 
-  it.each(['Cluster-9f2', 'cluster_9f2'])(
+  it.each(['cluster-9f2', 'Cluster-9f2', 'cluster_9f2'])(
     'renders the chip when the cluster label is a reserved auto label (%j)',
     (label) => {
       renderItem(unlabeledCluster({ label }), mergeTwin());
@@ -231,6 +239,29 @@ describe('IdentityClusterItem twin chip (WBUX-6/C3)', () => {
       expect(screen.getByRole('group', { name: /same person as ada lovelace/i })).toBeInTheDocument();
     },
   );
+
+  it('renders the survivor FaceThumbnail when the mapped crop is present (S4R2-F5)', () => {
+    renderItem(
+      unlabeledCluster(),
+      mergeTwin({
+        survivorMediaUrl: 'http://example.test/ada.jpg',
+        survivorBbox: SURVIVOR_BBOX,
+      }),
+    );
+
+    const chip = screen.getByTestId('acx-identity-clusters__twin-chip');
+    const thumb = chip.querySelector('.acx-identity-clusters__twin-chip-thumb');
+    expect(thumb).not.toBeNull();
+    expect(screen.getByAltText('Ada Lovelace')).toHaveAttribute('src', 'http://example.test/ada.jpg');
+  });
+
+  it('does not invent a survivor thumb when the payload has no face (S4R2-F5)', () => {
+    renderItem(unlabeledCluster(), mergeTwin());
+
+    const chip = screen.getByTestId('acx-identity-clusters__twin-chip');
+    expect(chip.querySelector('.acx-identity-clusters__twin-chip-thumb')).toBeNull();
+    expect(screen.queryByAltText('Ada Lovelace')).not.toBeInTheDocument();
+  });
 
   it('does not render the chip when canMutate is false even with a pending twin', () => {
     renderItem(unlabeledCluster(), mergeTwin(), { canMutate: false });
@@ -271,6 +302,23 @@ describe('pendingMergeTwinForCluster (WBUX-6/C3 labeled-side map)', () => {
       suggestionId: 'merge-1',
       survivorClusterId: LABELED_ID,
       survivorLabel: 'Ada Lovelace',
+    });
+  });
+
+  it('copies the survivor representative crop when present (S4R2-F5)', () => {
+    expect(
+      pendingMergeTwinForCluster(UNLABELED_ID, [
+        pendingSuggestion({
+          cluster_a_representative_media_url: 'http://example.test/ada.jpg',
+          cluster_a_representative_bbox: SURVIVOR_BBOX,
+        }),
+      ]),
+    ).toEqual({
+      suggestionId: 'merge-1',
+      survivorClusterId: LABELED_ID,
+      survivorLabel: 'Ada Lovelace',
+      survivorMediaUrl: 'http://example.test/ada.jpg',
+      survivorBbox: SURVIVOR_BBOX,
     });
   });
 

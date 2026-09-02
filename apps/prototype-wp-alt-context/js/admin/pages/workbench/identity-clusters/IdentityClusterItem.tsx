@@ -7,12 +7,18 @@ import { useQueryClient } from '@tanstack/react-query';
 import { __, sprintf } from '@wordpress/i18n';
 
 import { queryKeys } from '../../../api/queryKeys';
-import type { MergeClusterResponse } from '../../../api/recognition';
+import type { BoundingBox, MergeClusterResponse } from '../../../api/recognition';
 import { commitClusterToRosterEntry } from '../../../api/rosterApi';
+import { FaceThumbnail } from '../../../../components/ui/FaceThumbnail';
 import { getClusterMutationErrorMessage } from './clusterMutationUtils';
 import { invalidateSuggestionProjection, type ProjectedSuggestion } from './suggestionProjection';
 import type { ClusterGroup } from './types';
 import { isMeaningfulMergeLabel } from './resolveMergeSurvivor';
+import {
+  TWIN_CHIP_ACCEPT_TEMPLATE,
+  TWIN_CHIP_PROMPT_TEMPLATE,
+  TWIN_CHIP_REJECT_LABEL,
+} from './twinChipCopy';
 import { filterEditableClusterMatch, formatClusterLabel, getEditableClusterId } from './utils';
 import { useClusterEditState } from './useClusterEditState';
 import { useClusterMutations } from './useClusterMutations';
@@ -43,6 +49,8 @@ export interface IdentityClusterMergeTwin {
   suggestionId: string;
   survivorClusterId: string;
   survivorLabel: string;
+  survivorMediaUrl?: string | null;
+  survivorBbox?: BoundingBox | null;
   onAccept: () => void;
   onReject: () => void;
   isPending: boolean;
@@ -379,19 +387,31 @@ export const IdentityClusterItem = ({
                 className="acx-identity-clusters__twin-chip"
                 data-testid="acx-identity-clusters__twin-chip"
                 role="group"
-                aria-label={sprintf(__('Same person as %s?', 'alt-context'), mergeTwin.survivorLabel)}
+                aria-label={sprintf(TWIN_CHIP_PROMPT_TEMPLATE, mergeTwin.survivorLabel)}
                 aria-describedby={twinPendingTitle ? twinPendingDescId : undefined}
               >
                 {twinPendingTitle ? (
-                  <span id={twinPendingDescId} className="screen-reader-text">
+                  <span id={twinPendingDescId} className="screen-reader-text" role="status">
                     {twinPendingTitle}
                   </span>
                 ) : null}
+                {mergeTwin.survivorMediaUrl && mergeTwin.survivorBbox ? (
+                  <FaceThumbnail
+                    mediaUrl={mergeTwin.survivorMediaUrl}
+                    bbox={mergeTwin.survivorBbox}
+                    size="sm"
+                    alt={mergeTwin.survivorLabel}
+                    className="acx-identity-clusters__twin-chip-thumb"
+                  />
+                ) : (
+                  // WHY (HAI-01): mapped merge payload omitted the survivor crop — do not invent one.
+                  null
+                )}
                 <span className="acx-identity-clusters__twin-chip-icon" aria-hidden="true">
                   ⇢
                 </span>
                 <span>
-                  {sprintf(__('Same person as %s?', 'alt-context'), mergeTwin.survivorLabel)}
+                  {sprintf(TWIN_CHIP_PROMPT_TEMPLATE, mergeTwin.survivorLabel)}
                 </span>
                 <button
                   type="button"
@@ -400,7 +420,7 @@ export const IdentityClusterItem = ({
                   disabled={mergeTwin.isPending}
                   title={twinPendingTitle}
                 >
-                  {sprintf(__('Merge into %s', 'alt-context'), mergeTwin.survivorLabel)}
+                  {sprintf(TWIN_CHIP_ACCEPT_TEMPLATE, mergeTwin.survivorLabel)}
                 </button>
                 <button
                   type="button"
@@ -409,7 +429,7 @@ export const IdentityClusterItem = ({
                   disabled={mergeTwin.isPending}
                   title={twinPendingTitle}
                 >
-                  {__('Not the same', 'alt-context')}
+                  {TWIN_CHIP_REJECT_LABEL}
                 </button>
               </div>
             ) : null}

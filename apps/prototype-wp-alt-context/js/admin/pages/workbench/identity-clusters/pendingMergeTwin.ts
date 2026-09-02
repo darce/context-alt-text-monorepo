@@ -1,16 +1,20 @@
-import type { PendingMergeSuggestion } from '../../../api/recognition/types';
+import type { BoundingBox, PendingMergeSuggestion } from '../../../api/recognition/types';
 import { isMeaningfulMergeLabel } from './resolveMergeSurvivor';
 
 export interface PendingMergeTwin {
   suggestionId: string;
   survivorClusterId: string;
   survivorLabel: string;
+  survivorMediaUrl?: string;
+  survivorBbox?: BoundingBox;
 }
 
 export interface MergeSurvivorPick {
   survivorClusterId: string;
   unlabeledId: string;
   survivorLabel: string;
+  survivorMediaUrl?: string;
+  survivorBbox?: BoundingBox;
 }
 
 const trimLabel = (value: string | null | undefined): string | null => {
@@ -19,6 +23,34 @@ const trimLabel = (value: string | null | undefined): string | null => {
     return null;
   }
   return trimmed;
+};
+
+const survivorFaceFromSuggestion = (
+  suggestion: PendingMergeSuggestion,
+  survivorClusterId: string,
+): { survivorMediaUrl: string; survivorBbox: BoundingBox } | null => {
+  const fromA = survivorClusterId === suggestion.cluster_a_id;
+  const mediaUrl = fromA
+    ? suggestion.cluster_a_representative_media_url
+    : suggestion.cluster_b_representative_media_url;
+  const bbox = fromA
+    ? suggestion.cluster_a_representative_bbox
+    : suggestion.cluster_b_representative_bbox;
+  if (typeof mediaUrl !== 'string' || mediaUrl.length === 0 || bbox == null) {
+    return null;
+  }
+  return { survivorMediaUrl: mediaUrl, survivorBbox: bbox };
+};
+
+const withSurvivorFace = (
+  pick: MergeSurvivorPick,
+  suggestion: PendingMergeSuggestion,
+): MergeSurvivorPick => {
+  const face = survivorFaceFromSuggestion(suggestion, pick.survivorClusterId);
+  if (!face) {
+    return pick;
+  }
+  return { ...pick, ...face };
 };
 
 const survivorPickFromStamp = (suggestion: PendingMergeSuggestion): MergeSurvivorPick | null => {
@@ -39,7 +71,7 @@ const survivorPickFromStamp = (suggestion: PendingMergeSuggestion): MergeSurvivo
   if (!survivorLabel || !isMeaningfulMergeLabel(survivorLabel)) {
     return null;
   }
-  return { survivorClusterId, unlabeledId, survivorLabel };
+  return withSurvivorFace({ survivorClusterId, unlabeledId, survivorLabel }, suggestion);
 };
 
 const survivorPickFromLabels = (suggestion: PendingMergeSuggestion): MergeSurvivorPick | null => {
@@ -52,11 +84,14 @@ const survivorPickFromLabels = (suggestion: PendingMergeSuggestion): MergeSurviv
   if (!survivorLabel) {
     return null;
   }
-  return {
-    survivorClusterId: aLabeled ? suggestion.cluster_a_id : suggestion.cluster_b_id,
-    unlabeledId: aLabeled ? suggestion.cluster_b_id : suggestion.cluster_a_id,
-    survivorLabel,
-  };
+  return withSurvivorFace(
+    {
+      survivorClusterId: aLabeled ? suggestion.cluster_a_id : suggestion.cluster_b_id,
+      unlabeledId: aLabeled ? suggestion.cluster_b_id : suggestion.cluster_a_id,
+      survivorLabel,
+    },
+    suggestion,
+  );
 };
 
 /**
@@ -93,6 +128,9 @@ export const pendingMergeTwinForCluster = (
       suggestionId: suggestion.id,
       survivorClusterId: pick.survivorClusterId,
       survivorLabel: pick.survivorLabel,
+      ...(pick.survivorMediaUrl && pick.survivorBbox
+        ? { survivorMediaUrl: pick.survivorMediaUrl, survivorBbox: pick.survivorBbox }
+        : {}),
     };
   }
 

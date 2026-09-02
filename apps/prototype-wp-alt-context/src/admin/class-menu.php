@@ -129,7 +129,16 @@ class Menu {
 		}
 
 		wp_safe_redirect( admin_url( 'admin.php?page=alt-context-settings#/settings?section=retention' ) );
-		if ( defined( 'ACX_VERSION' ) && ACX_VERSION === 'test' ) {
+		$this->terminate();
+	}
+
+	/**
+	 * Stop the request after a menu redirect. Overridable in tests (TEST-15).
+	 */
+	protected function terminate(): void {
+		$terminator = apply_filters( 'acx_menu_redirect_exit', null );
+		if ( is_callable( $terminator ) ) {
+			$terminator();
 			return;
 		}
 		exit;

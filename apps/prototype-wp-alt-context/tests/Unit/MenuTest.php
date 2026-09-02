@@ -183,12 +183,19 @@ class MenuTest extends TestCase
 
     public function testRegistersRetentionSubmenu(): void
     {
-        $menu = new Menu(
+        $menu = new class (
             new DashboardPage(),
             new WorkbenchPage(),
             new RosterPage(),
             new SettingsPage()
-        );
+        ) extends Menu {
+            public bool $terminated = false;
+
+            protected function terminate(): void
+            {
+                $this->terminated = true;
+            }
+        };
 
         $menu->register_menu();
 
@@ -209,6 +216,10 @@ class MenuTest extends TestCase
         $this->assertSame(
             '/wp-admin/admin.php?page=alt-context-settings#/settings?section=retention',
             $GLOBALS['__ac_safe_redirect']['location'] ?? null
+        );
+        $this->assertTrue(
+            $menu->terminated,
+            'Redirect must invoke the injectable terminator after wp_safe_redirect (TEST-15).'
         );
     }
 }

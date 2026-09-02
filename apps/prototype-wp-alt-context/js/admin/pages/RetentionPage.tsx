@@ -45,7 +45,7 @@ export const RetentionSection = (): React.JSX.Element => {
   if (retentionQuery.isLoading) {
     return (
       <section className="acx-retention" aria-labelledby="acx-retention-title">
-        <h3 id="acx-retention-title" className="acx-settings__section-title">
+        <h3 id="acx-retention-title" className="acx-settings__section-title" tabIndex={-1}>
           {__('Data & retention', 'alt-context')}
         </h3>
         <p>{__('Loading retention status\u2026', 'alt-context')}</p>
@@ -56,7 +56,7 @@ export const RetentionSection = (): React.JSX.Element => {
   if (retentionQuery.isError || !status || !status.available || !policy) {
     return (
       <section className="acx-retention" aria-labelledby="acx-retention-title">
-        <h3 id="acx-retention-title" className="acx-settings__section-title">
+        <h3 id="acx-retention-title" className="acx-settings__section-title" tabIndex={-1}>
           {__('Data & retention', 'alt-context')}
         </h3>
         <section className="acx-dashboard__panel acx-retention__panel">
@@ -76,7 +76,7 @@ export const RetentionSection = (): React.JSX.Element => {
 
   return (
     <section className="acx-retention" aria-labelledby="acx-retention-title">
-      <h3 id="acx-retention-title" className="acx-settings__section-title">
+      <h3 id="acx-retention-title" className="acx-settings__section-title" tabIndex={-1}>
         {__('Data & retention', 'alt-context')}
       </h3>
 

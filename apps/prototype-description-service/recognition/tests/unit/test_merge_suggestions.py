@@ -154,7 +154,8 @@ async def test_generate_cluster_merge_suggestions_filters_and_creates() -> None:
 
     vec_a = np.array([1.0, 0.0, 0.0], dtype=np.float32)
     vec_b = np.array([0.75, 0.6614, 0.0], dtype=np.float32)
-    vec_c = np.array([0.0, 1.0, 0.0], dtype=np.float32)
+    # Orthogonal to both in-band vectors so the labeled cluster stays below the floor.
+    vec_c = np.array([0.0, 0.0, 1.0], dtype=np.float32)
 
     unlabeled_a = _cluster(tenant_id=tenant_id, label=None, user_confirmed=False, reps=[vec_a])
     unlabeled_b = _cluster(tenant_id=tenant_id, label="cluster-xyz", user_confirmed=False, reps=[vec_b])

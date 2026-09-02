@@ -183,9 +183,11 @@ describe('describe-start orchestration (WBUX-6 L2b)', () => {
     scan.mockClear();
     describeMutate.mockClear();
     settingsState.recognitionEnabled = true;
-    vi.mocked(fetchSettings).mockImplementation(async () => ({
-      recognition_enabled: settingsState.recognitionEnabled,
-    }));
+    vi.mocked(fetchSettings).mockImplementation(() =>
+      Promise.resolve({
+        recognition_enabled: settingsState.recognitionEnabled,
+      } as Awaited<ReturnType<typeof fetchSettings>>),
+    );
   });
 
   it('ON: analyzes selected ids before describe, and does not describe until analyze resolves', async () => {

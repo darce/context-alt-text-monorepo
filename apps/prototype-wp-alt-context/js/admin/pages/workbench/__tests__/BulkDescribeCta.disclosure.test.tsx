@@ -37,6 +37,7 @@ const baseProps = {
   progress: idleProgress,
   isPanelVisible: false,
   errorMessage: null as string | null,
+  isIdentifying: false,
   onSubmit: vi.fn(),
   onCancel: vi.fn(),
   onDismiss: vi.fn(),

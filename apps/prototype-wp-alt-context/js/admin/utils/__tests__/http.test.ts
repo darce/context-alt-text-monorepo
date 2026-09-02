@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { registerConfig, resetConfigCache, getNonce } from '../../api/config';
-import { classifyError } from '../appError';
+import { NonceRefreshFailedError, registerConfig, resetConfigCache, getNonce } from '../../api/config';
+import * as configApi from '../../api/config';
+import { classifyError, toUserMessage } from '../appError';
 import {
   AuthExpiredError,
   DEFAULT_FETCH_TIMEOUT_MS,
@@ -11,6 +12,8 @@ import {
   parseRetryAfter,
   ResponseParseError,
 } from '../http';
+import { getRetryDelay, shouldRetryRequest } from '../retryPolicy';
+import { SPA_SESSION_EXPIRED_COPY } from '../sessionExpiredCopy';
 
 const REST_URL = 'http://example.test/wp-json/acx/v1/endpoint';
 const AJAX_URL = 'https://example.test/wp-admin/admin-ajax.php';
@@ -210,6 +213,10 @@ describe('parseRetryAfter', () => {
     expect(parseRetryAfter('-3')).toBeUndefined();
     expect(parseRetryAfter('5.5')).toBeUndefined();
   });
+
+  it('returns undefined for a past HTTP-date (never 0)', () => {
+    expect(parseRetryAfter('Thu, 01 Jan 1970 00:00:00 GMT')).toBeUndefined();
+  });
 });
 
 describe('fetchApi HTTP-date Retry-After [FEBT1-W2C-08]', () => {
@@ -242,25 +249,43 @@ describe('fetchApi HTTP-date Retry-After [FEBT1-W2C-08]', () => {
     }
   });
 
-  it.fails(
-    'past HTTP-date Retry-After yields undefined, not 0 (FEBT1-W2A-03 — flips when F2 lands)',
-    async () => {
-      vi.spyOn(globalThis, 'fetch').mockResolvedValue(
-        new Response('overloaded', {
-          status: 503,
-          headers: { 'Retry-After': 'Thu, 01 Jan 1970 00:00:00 GMT' },
-        }),
-      );
+  it('past HTTP-date Retry-After yields undefined, not 0 (FEBT1-W2A-03 — flips when F2 lands)', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response('overloaded', {
+        status: 503,
+        headers: { 'Retry-After': 'Thu, 01 Jan 1970 00:00:00 GMT' },
+      }),
+    );
 
-      try {
-        await fetchApi(REST_URL);
-        throw new Error('Expected a 503 to throw.');
-      } catch (error) {
-        expect(error).toBeInstanceOf(HTTPError);
-        expect((error as HTTPError).retryAfterSeconds).toBeUndefined();
-      }
-    },
-  );
+    try {
+      await fetchApi(REST_URL);
+      throw new Error('Expected a 503 to throw.');
+    } catch (error) {
+      expect(error).toBeInstanceOf(HTTPError);
+      expect((error as HTTPError).retryAfterSeconds).toBeUndefined();
+    }
+  });
+
+  it('429 with a past HTTP-date Retry-After falls back to exponential backoff, not 0', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response('slow down', {
+        status: 429,
+        headers: { 'Retry-After': 'Thu, 01 Jan 1970 00:00:00 GMT' },
+      }),
+    );
+
+    try {
+      await fetchApi(REST_URL);
+      throw new Error('Expected a 429 to throw.');
+    } catch (error) {
+      expect(error).toBeInstanceOf(HTTPError);
+      expect((error as HTTPError).status).toBe(429);
+      expect((error as HTTPError).retryAfterSeconds).toBeUndefined();
+      const delay = getRetryDelay(0, error, () => 1);
+      expect(delay).not.toBe(0);
+      expect(delay).toBe(1_000);
+    }
+  });
 });
 
 describe('fetchApi auth expiry seam (UXP-NET-2 slice 2)', () => {
@@ -509,6 +534,56 @@ describe('AuthExpiredError', () => {
   it('preserves exact 401 and 403 constructor status (M4 / F2)', () => {
     expect(new AuthExpiredError({ endpoint: REST_URL, status: 401 }).status).toBe(401);
     expect(new AuthExpiredError({ endpoint: REST_URL, status: 403 }).status).toBe(403);
+  });
+});
+
+describe('fetchApi nonce-refresh failure is not session expiry [FEBT1-W2A-02]', () => {
+  beforeEach(() => {
+    resetConfigCache();
+    seedConfig();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    resetConfigCache();
+  });
+
+  it('transport failure during nonce refresh is nonce_refresh, not auth_expired', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation((input) => {
+      if (isAjaxCall(input)) {
+        return Promise.reject(new TypeError('Failed to fetch'));
+      }
+      return Promise.resolve(new Response(nonce403Body, { status: 403 }));
+    });
+
+    try {
+      await fetchApi(REST_URL);
+      throw new Error('expected throw');
+    } catch (error) {
+      expect(error).toBeInstanceOf(NonceRefreshFailedError);
+      expect(error).not.toBeInstanceOf(AuthExpiredError);
+      expect(classifyError(error)._tag).toBe('nonce_refresh');
+      expect(classifyError(error)._tag).not.toBe('auth_expired');
+      expect(shouldRetryRequest(0, error)).toBe(true);
+      expect(toUserMessage(error, 'safe fallback')).toBe('Network error — check your connection');
+      expect(toUserMessage(error, 'safe fallback')).not.toBe(SPA_SESSION_EXPIRED_COPY.sessionExpired);
+    }
+  });
+
+  it('abort during nonce refresh is abort, not auth_expired', async () => {
+    const abort = new DOMException('The operation was aborted.', 'AbortError');
+    vi.spyOn(configApi, 'refreshRestNonce').mockRejectedValue(abort);
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(nonce403Body, { status: 403 }));
+
+    try {
+      await fetchApi(REST_URL);
+      throw new Error('expected throw');
+    } catch (error) {
+      expect(error).not.toBeInstanceOf(AuthExpiredError);
+      expect(classifyError(error)._tag).toBe('abort');
+      expect(classifyError(error)._tag).not.toBe('auth_expired');
+      expect(shouldRetryRequest(0, error)).toBe(false);
+    }
   });
 });
 

@@ -215,9 +215,16 @@ export const isCooldown = (error: unknown): boolean => {
   );
 };
 
+/** Overlay transport copy. nonce_refresh reuses this; do not invent a new string. */
+const NETWORK_ERROR_COPY = 'Network error — check your connection';
+
 export const toUserMessage = (error: unknown, fallback: string): string => {
-  if (classifyError(error)._tag === 'auth_expired') {
+  const classified = classifyError(error);
+  if (classified._tag === 'auth_expired') {
     return SPA_SESSION_EXPIRED_COPY.sessionExpired;
+  }
+  if (classified._tag === 'nonce_refresh') {
+    return NETWORK_ERROR_COPY;
   }
   return fallback;
 };

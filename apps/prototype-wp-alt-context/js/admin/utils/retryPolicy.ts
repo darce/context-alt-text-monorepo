@@ -38,7 +38,7 @@ export const shouldRetryRequest = (failureCount: number, error: unknown): boolea
   if (isAbortLike(error)) {
     return false;
   }
-  return classified._tag === 'transport';
+  return classified._tag === 'transport' || classified._tag === 'nonce_refresh';
 };
 
 /**

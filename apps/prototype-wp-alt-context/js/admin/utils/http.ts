@@ -1,10 +1,15 @@
 import { getNonce, refreshRestNonce } from '../api/config';
 
+/** Backstop deadline when a caller does not pass `timeoutMs` (RES-02). */
+export const DEFAULT_FETCH_TIMEOUT_MS = 300_000;
+
 export interface HTTPOptions {
   method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
   body?: unknown;
   restNonce?: string;
   signal?: AbortSignal;
+  /** Override `DEFAULT_FETCH_TIMEOUT_MS`. Composed with `signal` when both are set. */
+  timeoutMs?: number;
 }
 
 export class HTTPError extends Error {
@@ -160,6 +165,53 @@ const throwIfAborted = (signal: AbortSignal | undefined): void => {
   }
 };
 
+const abortReason = (reason: unknown): DOMException =>
+  reason instanceof DOMException ? reason : new DOMException('The operation was aborted.', 'AbortError');
+
+const resolveTimeoutMs = (timeoutMs: number | undefined): number => {
+  if (timeoutMs === undefined || !Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+    return DEFAULT_FETCH_TIMEOUT_MS;
+  }
+  return timeoutMs;
+};
+
+const createTimeoutSignal = (timeoutMs: number): { signal: AbortSignal; cancel: () => void } => {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => {
+    controller.abort(new DOMException('The operation timed out.', 'TimeoutError'));
+  }, timeoutMs);
+  return {
+    signal: controller.signal,
+    cancel: (): void => {
+      clearTimeout(timeoutId);
+    },
+  };
+};
+
+const composeAbortSignals = (signals: AbortSignal[]): AbortSignal => {
+  const anyFn = (AbortSignal as unknown as { any?: (values: AbortSignal[]) => AbortSignal }).any;
+  if (typeof anyFn === 'function') {
+    return anyFn(signals);
+  }
+  const controller = new AbortController();
+  for (const signal of signals) {
+    if (signal.aborted) {
+      controller.abort(abortReason(signal.reason));
+      return controller.signal;
+    }
+    signal.addEventListener(
+      'abort',
+      () => {
+        if (!controller.signal.aborted) {
+          controller.abort(abortReason(signal.reason));
+        }
+      },
+      { once: true },
+    );
+  }
+  return controller.signal;
+};
+
 const throwHttpError = (
   endpoint: string,
   status: number,
@@ -205,76 +257,84 @@ const parseSuccessBody = async <T>(response: Response, endpoint: string): Promis
 export const fetchApi = async <T>(endpoint: string, options: HTTPOptions = {}): Promise<T | undefined> => {
   const method = options.method ?? 'GET';
   const body = options.body ? JSON.stringify(options.body) : null;
+  const timeout = createTimeoutSignal(resolveTimeoutMs(options.timeoutMs));
+  const signal = options.signal ? composeAbortSignals([options.signal, timeout.signal]) : timeout.signal;
 
   const send = async (restNonce: string | undefined): Promise<Response> =>
     fetch(endpoint, {
       method,
       headers: buildHeaders(options, restNonce),
       body,
-      signal: options.signal,
+      signal,
     });
 
-  // First attempt: caller-supplied nonce or live cached nonce ([WP-02]/[SECD-03]).
-  const firstNonce = options.restNonce ?? getNonce();
-  const response = await send(firstNonce);
+  try {
+    throwIfAborted(signal);
 
-  if (response.ok) {
-    return parseSuccessBody<T>(response, endpoint);
-  }
+    // First attempt: caller-supplied nonce or live cached nonce ([WP-02]/[SECD-03]).
+    const firstNonce = options.restNonce ?? getNonce();
+    const response = await send(firstNonce);
 
-  const errorText = await response.text();
-  const retryAfterHeader = response.headers.get('Retry-After');
-
-  if (response.status === 401) {
-    const code = parseErrorCode(errorText);
-    if (code === 'rest_not_logged_in') {
-      throw new AuthExpiredError({ endpoint, status: 401 });
+    if (response.ok) {
+      return parseSuccessBody<T>(response, endpoint);
     }
-    throwHttpError(endpoint, response.status, errorText, retryAfterHeader);
-  }
 
-  if (response.status === 403) {
-    const code = parseErrorCode(errorText);
-    if (code !== 'rest_cookie_invalid_nonce') {
-      // Non-nonce 403 or non-JSON body → ordinary HTTPError, no refresh ([API-08]).
+    const errorText = await response.text();
+    const retryAfterHeader = response.headers.get('Retry-After');
+
+    if (response.status === 401) {
+      const code = parseErrorCode(errorText);
+      if (code === 'rest_not_logged_in') {
+        throw new AuthExpiredError({ endpoint, status: 401 });
+      }
       throwHttpError(endpoint, response.status, errorText, retryAfterHeader);
     }
 
-    // Nonce-403: auth phase rejected before route execution — one safe retry ([RES-01][API-02]).
-    throwIfAborted(options.signal);
+    if (response.status === 403) {
+      const code = parseErrorCode(errorText);
+      if (code !== 'rest_cookie_invalid_nonce') {
+        // Non-nonce 403 or non-JSON body → ordinary HTTPError, no refresh ([API-08]).
+        throwHttpError(endpoint, response.status, errorText, retryAfterHeader);
+      }
 
-    try {
-      await refreshRestNonce();
-    } catch {
-      // An abort that landed while the refresh was failing is an abort, not
-      // session expiry — never surface recovery UI for an unmounted caller.
-      throwIfAborted(options.signal);
-      throw new AuthExpiredError({ endpoint, status: 403 });
+      // Nonce-403: auth phase rejected before route execution — one safe retry ([RES-01][API-02]).
+      throwIfAborted(signal);
+
+      try {
+        await refreshRestNonce();
+      } catch {
+        // An abort that landed while the refresh was failing is an abort, not
+        // session expiry — never surface recovery UI for an unmounted caller.
+        throwIfAborted(signal);
+        throw new AuthExpiredError({ endpoint, status: 403 });
+      }
+
+      throwIfAborted(signal);
+
+      // Retry always uses the live refreshed nonce — never the stale option ([API-08]).
+      const retryResponse = await send(getNonce());
+
+      if (retryResponse.ok) {
+        return parseSuccessBody<T>(retryResponse, endpoint);
+      }
+
+      const retryText = await retryResponse.text();
+      const retryCode = parseErrorCode(retryText);
+      if (retryResponse.status === 403 && retryCode === 'rest_cookie_invalid_nonce') {
+        throw new AuthExpiredError({ endpoint, status: 403 });
+      }
+      if (retryResponse.status === 401 && retryCode === 'rest_not_logged_in') {
+        throw new AuthExpiredError({ endpoint, status: 401 });
+      }
+
+      throwHttpError(endpoint, retryResponse.status, retryText, retryResponse.headers.get('Retry-After'));
     }
 
-    throwIfAborted(options.signal);
-
-    // Retry always uses the live refreshed nonce — never the stale option ([API-08]).
-    const retryResponse = await send(getNonce());
-
-    if (retryResponse.ok) {
-      return parseSuccessBody<T>(retryResponse, endpoint);
-    }
-
-    const retryText = await retryResponse.text();
-    const retryCode = parseErrorCode(retryText);
-    if (retryResponse.status === 403 && retryCode === 'rest_cookie_invalid_nonce') {
-      throw new AuthExpiredError({ endpoint, status: 403 });
-    }
-    if (retryResponse.status === 401 && retryCode === 'rest_not_logged_in') {
-      throw new AuthExpiredError({ endpoint, status: 401 });
-    }
-
-    throwHttpError(endpoint, retryResponse.status, retryText, retryResponse.headers.get('Retry-After'));
+    // All other statuses: byte-identical to pre-UXP-NET-2 behaviour.
+    throwHttpError(endpoint, response.status, errorText, retryAfterHeader);
+  } finally {
+    timeout.cancel();
   }
-
-  // All other statuses: byte-identical to pre-UXP-NET-2 behaviour.
-  throwHttpError(endpoint, response.status, errorText, retryAfterHeader);
 };
 
 /**

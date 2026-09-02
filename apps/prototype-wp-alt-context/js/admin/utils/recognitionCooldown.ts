@@ -11,6 +11,9 @@
  * state only and are deliberately not gated.
  */
 
+import { classifyError } from './appError';
+import { HTTPError } from './http';
+import { clampRetryAfterMs } from './retryAfter';
 import { isCooldownSignal } from './retryPolicy';
 
 /** Window applied when the server sends 429 without a usable Retry-After. */
@@ -44,13 +47,26 @@ export const openCooldown = (seconds: number): void => {
   }
 };
 
+const cooldownSecondsFromError = (error: unknown): number => {
+  let seconds: number | undefined;
+  if (error instanceof HTTPError) {
+    seconds = error.retryAfterSeconds;
+  } else {
+    const classified = classifyError(error);
+    if (classified._tag === 'http' && classified.retryAfterMs !== undefined) {
+      seconds = classified.retryAfterMs / 1000;
+    }
+  }
+  return clampRetryAfterMs(seconds, DEFAULT_COOLDOWN_SECONDS * 1000) / 1000;
+};
+
 /**
  * Arm the cooldown from a request error when — and only when — it is the
  * server's explicit "ask again later" (429, or 503 with Retry-After).
  */
 export const openCooldownFromError = (error: unknown): void => {
   if (isCooldownSignal(error)) {
-    openCooldown(error.retryAfterSeconds ?? DEFAULT_COOLDOWN_SECONDS);
+    openCooldown(cooldownSecondsFromError(error));
   }
 };
 

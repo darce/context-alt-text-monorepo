@@ -335,6 +335,39 @@ describe('jobReducer stall, progress, offline, terminal', () => {
     );
   });
 
+  it('STALL_TICK with now before lastEventAt neither fails nor advances the counter (FEBT1-W2C-12)', () => {
+    const state: JobMachineState = {
+      ...fixtureFor(JOB_MACHINE_STATE.running),
+      reconnectAttempts: 2,
+    };
+    const rewound = AT - 1;
+    const next = jobReducer(state, { type: JOB_EVENT.STALL_TICK, now: rewound });
+    expect(next.status).toBe(JOB_MACHINE_STATE.running);
+    expect(next.reconnectAttempts).toBe(2);
+    expect(next.error).toBeNull();
+    expect(next.lastEventAt).toBe(rewound);
+
+    const stalled = jobReducer(next, {
+      type: JOB_EVENT.STALL_TICK,
+      now: rewound + JOB_MACHINE_STALL_THRESHOLD_MS,
+    });
+    expect(stalled.status).toBe(JOB_MACHINE_STATE.stalled);
+    expect(stalled.reconnectAttempts).toBe(3);
+  });
+
+  it('STALL_TICK delta of MAX_TICK_DELTA_MS + 1 clamps lastEventAt without stalling (FEBT1-W2C-12)', () => {
+    const state: JobMachineState = {
+      ...fixtureFor(JOB_MACHINE_STATE.running),
+      reconnectAttempts: 2,
+    };
+    const now = AT + JOB_MACHINE_MAX_TICK_DELTA_MS + 1;
+    const next = jobReducer(state, { type: JOB_EVENT.STALL_TICK, now });
+    expect(next.status).toBe(JOB_MACHINE_STATE.running);
+    expect(next.reconnectAttempts).toBe(2);
+    expect(next.error).toBeNull();
+    expect(next.lastEventAt).toBe(now);
+  });
+
   it('PROGRESS updates done/total/lastEventAt and keeps status running', () => {
     const state = fixtureFor(JOB_MACHINE_STATE.running);
     const next = jobReducer(state, { type: JOB_EVENT.PROGRESS, done: 7, total: 20, at: 9_000 });

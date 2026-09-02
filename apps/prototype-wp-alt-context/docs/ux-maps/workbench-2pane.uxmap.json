@@ -216,7 +216,7 @@
         "perPage"
       ],
       "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/workbench/MediaSelection.tsx",
-      "primary_action_id": "act-edit-alt",
+      "primary_action_id": "act-bulk-describe",
       "states": [
         "default",
         "loading",
@@ -274,7 +274,7 @@
         },
         {
           "id": "z-lib-actions",
-          "label": "Footer job zone (MediaSelection.tsx footer): ONE job CTA — 'Describe N selected' (primary accent in select state; zero-state label 'Describe selected', rg-003) with a recognition disclosure directly under it (aria-describedby): ON = names people it knows while describing; OFF = descriptions only, change in Settings; unknown = settings not loaded. 'Analyze selected' is removed (L2c) — recognition is not a separate operator step (INT-05 one job entry; COG-03 one decision: the global toggle). Run progress phases queued -> warming -> describing -> complete | failed | cancelled come from describeApi DESCRIBE_RUN_PHASE (single authority, sr-007) and render as loading (queued/warming/describing) or default (terminal). Done copy: ✔ N drafts ready to review[ · M failed]; Review drafts links to #/description-history?run=<id>.",
+          "label": "Footer job zone (MediaSelection.tsx footer): ONE job CTA — 'Describe N selected' (primary accent in select state; zero-state label 'Describe selected', rg-003) with a recognition disclosure directly under it (aria-describedby): ON = names people it knows while describing; OFF = descriptions only, change in Settings; unknown = settings not loaded. 'Analyze selected' is removed (L2c) — recognition is not a separate operator step (INT-05 one job entry; COG-03 one decision: the global toggle). While recognition runs first (toggle ON) the primary stays focusable with aria-disabled=\"true\" and the label 'Identifying people...' (never HTML-disabled, same invariant as offline — RLSE-04, A11Y-21) and Cancel aborts the identification. Run progress phases queued -> warming -> describing -> complete | failed | cancelled come from describeApi DESCRIBE_RUN_PHASE (single authority, sr-007) and render as loading (queued/warming/describing) or default (terminal). Done copy: ✔ N drafts ready to review[ · M failed]; Review drafts links to #/description-history?run=<id>.",
           "role": "job",
           "states": [
             "default",
@@ -473,7 +473,7 @@
   "actions": [
     {
       "id": "act-scan-media-queue",
-      "verb": "Scan media queue (topbar; folded into the footer Describe primary — the WorkbenchPage scan entry targets the same job)",
+      "verb": "Scan media queue (job-pipeline entry; the 2-pane shell has no separate scan control — the library footer Describe primary runs the scan first when the Settings recognition toggle is ON, then describes)",
       "target": "job-pipeline",
       "hierarchy": "primary",
       "costly": true,
@@ -555,7 +555,7 @@
       "id": "act-edit-alt",
       "verb": "Edit alt-text inline",
       "target": "media-store",
-      "hierarchy": "primary",
+      "hierarchy": "secondary",
       "costly": false,
       "irreversible": false,
       "preview_required": false,

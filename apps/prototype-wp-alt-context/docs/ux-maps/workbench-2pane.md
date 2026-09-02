@@ -42,7 +42,7 @@
 |   - Overlay host (conflicts | dead-letter) (other) states… |
 +------------------------------------------------------------+
 | ACTIONS                                                    |
-|   [PRIMARY] Scan media queue (topbar; folded into the foo… |
+|   [PRIMARY] Scan media queue (job-pipeline entry; the 2-p… |
 |   [secondary] Open Conflict Inbox -> workbench-conflicts   |
 |   [secondary] Open Failed Sync Queue -> workbench-dead-le… |
 +------------------------------------------------------------+
@@ -93,9 +93,9 @@
 |   - Footer job zone (MediaSelection.tsx footer): ONE job … |
 +------------------------------------------------------------+
 | ACTIONS                                                    |
-|   [PRIMARY] Edit alt-text inline -> media-store            |
 |   [PRIMARY] Describe N selected (footer primary; runs rec… |
 |   [secondary] Accept AI caption/description (editable) ->… |
+|   [secondary] Edit alt-text inline -> media-store          |
 |   [secondary] Edit long description inline -> media-store  |
 +------------------------------------------------------------+
 | states: default | loading | empty | error | first_time | … |

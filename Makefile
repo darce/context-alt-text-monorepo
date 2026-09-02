@@ -133,7 +133,7 @@ include $(ROOT_MAKEFILE_DIR)/mk/logs.mk
 # Root targets
 # =============================================================================
 
-.PHONY: help check-all check-frontend check-mcp check-handoff check-orchestrator lint-all lint-handoff lint-orchestrator fix-lint-handoff fix-lint-orchestrator fix-lint-mcp format format-all format-handoff format-orchestrator mypy-handoff mypy-orchestrator test-all test-handoff test-orchestrator clean-all reset-local fix-php-style mcp mcp-start gemini-cli-setup dev dev-stop ace-metrics ace-metrics-json ace-reflect ace-curation-report ace-trends worktree-audit worktree-prune task-plan-audit check-codex-command-router check-skills check-harness-sync check-mcp-pins lint-hoisted-paths maint-start check-main-clean install-git-hooks localwp-mirror-integrity localwp-e2e-install localwp-e2e-auth localwp-e2e-smoke localwp-evidence localwp-a11y-smoke check-overrides-digest test-overrides-digest test-scripts mutation-guard-license-policy test-hooks test-deploy-contract test-vlm3 provision-customer provision-demo expire-demo
+.PHONY: help check-all check-frontend check-mcp check-handoff check-orchestrator lint-all lint-handoff lint-orchestrator fix-lint-handoff fix-lint-orchestrator fix-lint-mcp format format-all format-handoff format-orchestrator mypy-handoff mypy-orchestrator test-all test-handoff test-orchestrator clean-all reset-local fix-php-style mcp mcp-start gemini-cli-setup dev dev-stop ace-metrics ace-metrics-json ace-reflect ace-curation-report ace-trends worktree-audit worktree-prune task-plan-audit check-codex-command-router check-skills check-harness-sync check-mcp-pins lint-hoisted-paths maint-start check-main-clean install-git-hooks localwp-mirror-integrity localwp-e2e-install localwp-e2e-auth localwp-e2e-smoke localwp-evidence localwp-a11y-smoke check-overrides-digest test-overrides-digest test-scripts test-vm-scripts mutation-guard-license-policy test-hooks test-deploy-contract test-vlm3 provision-customer provision-demo expire-demo
 
 # Default target
 help:
@@ -460,9 +460,16 @@ test-scripts:
 		scripts/test_acx_backend_image_contract.py \
 		-q --tb=short --durations=25
 	@bash scripts/deploy/tests/test-smoke-gate.sh
+	@$(MAKE) test-vm-scripts
+
 # VMDISK-1: the lane reaper is the VM's only disk reclaimer, and neither it nor
 # its cron installer was reachable from any make target -- so its guards were
 # never exercised while the disk climbed to 96%.
+# Kept pytest-free and separate from test-scripts because the remote gate host's
+# root .venv carries no pytest (only the description-service venv does), so a
+# guard reachable only via test-scripts is still unreachable from the gate --
+# the very failure mode above. This target is what check-remote runs.
+test-vm-scripts:
 	@bash scripts/vm/tests/test_reap_lane.sh
 	@bash scripts/vm/tests/test_install_reap_cron.sh
 

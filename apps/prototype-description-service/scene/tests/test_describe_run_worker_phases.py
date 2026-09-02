@@ -117,6 +117,15 @@ def test_seeded_run_without_gpu_policy_never_reports_warming(monkeypatch):
 
     monkeypatch.setattr(wmod, "_wait_for_gpu_ready", forbidden)
 
+    persisted: list[str] = []
+    original_persist = wmod._persist_run_phase
+
+    async def spy_persist(**kwargs):
+        persisted.append(str(kwargs["phase"]))
+        return await original_persist(**kwargs)
+
+    monkeypatch.setattr(wmod, "_persist_run_phase", spy_persist)
+
     async def body():
         path, url = await _make_db_async()
         engine = create_async_engine(url)
@@ -143,6 +152,8 @@ def test_seeded_run_without_gpu_policy_never_reports_warming(monkeypatch):
             describe_one=describe_one,
             timeout_seconds=1.0,
         )
+        assert DescribeRunPhase.WARMING not in persisted
+        assert "warming" not in persisted
         assert "warming" not in seen
         async with sf() as s:
             run = await DescribeRunRepository(s).get_run(tenant_id=TENANT_ID, run_id=run_id)
@@ -160,12 +171,28 @@ def test_cancel_during_warming_still_marks_run_cancelled(monkeypatch):
     entered = asyncio.Event()
     release = asyncio.Event()
 
-    async def gated_ready(**kwargs):
+    class _FakeHealthResponse:
+        status_code = 503
+
+    class _FakeAsyncClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+        async def get(self, *args, **kwargs):
+            return _FakeHealthResponse()
+
+    async def gated_sleep(_seconds):
         entered.set()
         await release.wait()
-        raise wmod._RunCancelledError("describe run cancelled while waiting for GPU readiness")
 
-    monkeypatch.setattr(wmod, "_wait_for_gpu_ready", gated_ready)
+    monkeypatch.setattr(wmod.httpx, "AsyncClient", _FakeAsyncClient)
+    monkeypatch.setattr(wmod.asyncio, "sleep", gated_sleep)
 
     async def body():
         path, url = await _make_db_async()

@@ -1,7 +1,7 @@
 import { ChangeEvent, useEffect, useState } from 'react';
 import * as Select from '@radix-ui/react-select';
 import { AlertTriangle, Check, CheckCircle2, ChevronDown, Clock, Loader2, XCircle } from 'lucide-react';
-import { __, sprintf } from '@wordpress/i18n';
+import { __, _n, sprintf } from '@wordpress/i18n';
 import type { WorkbenchMediaItem } from '../../hooks/useWorkbenchMedia';
 import type { WorkbenchMediaStatus } from '../../api/workbenchMediaApi';
 import { MediaSelectionTableBody } from './MediaSelectionTableBody';
@@ -15,6 +15,7 @@ import { useRecognitionCooldown } from '../../hooks/useRecognitionCooldown';
 import { useRemoteActionGate } from '../../hooks/useRemoteActionGate';
 import { useSyncOffline } from '../../hooks/useSyncOffline';
 import { DESCRIBE_RUN_PHASE, DESCRIBE_RUN_STATUS, type DescribeRunStatus } from '../../api/describeApi';
+import { toDescriptionHistoryRun } from '../../navigation/appLinks';
 import { isCooldownSignal } from '../../utils/retryPolicy';
 import { formatUserFacingError, isAuthExpiredError } from '../../utils/userFacingError';
 import { UserFacingErrorNotice } from '../../components/ui/UserFacingErrorNotice';
@@ -182,15 +183,6 @@ export const MediaSelection = ({ reviewActive = false }: MediaSelectionProps): R
               }
             }}
             onDismiss={() => setDismissedRunId(activeDescribeRunId)}
-            onReviewDrafts={() => {
-              const row = document.querySelector('.acx-media-selection__table tbody tr');
-              if (!(row instanceof HTMLElement)) {
-                return;
-              }
-              row
-                .querySelector<HTMLElement>('a[href], button:not([disabled]), input:not([disabled])')
-                ?.focus();
-            }}
             onRetryPolling={() => describeProgress.retry()}
           />
           <MediaAnalyzeCta accentPrimary={footerCta.accentOwner === FOOTER_ACCENT_OWNER.ANALYZE} />
@@ -407,7 +399,14 @@ export const BulkDescribeCta = ({
   onReviewDrafts,
   onRetryPolling,
 }: BulkDescribeCtaProps) => {
-  const canCancel = isRunning && runId !== null && !progress.isTerminal && !progress.isError;
+  const progressPhase = progress.run?.phase;
+  const progressOwnsCancel =
+    isPanelVisible &&
+    (progressPhase === DESCRIBE_RUN_PHASE.QUEUED ||
+      progressPhase === DESCRIBE_RUN_PHASE.WARMING ||
+      progressPhase === DESCRIBE_RUN_PHASE.DESCRIBING);
+  const canCancel =
+    isRunning && runId !== null && !progress.isTerminal && !progress.isError && !progressOwnsCancel;
   // Cannot cancel an errored/finished run — offer to clear the panel instead so a
   // new run can start from the terminal state (FE-01, rg-003). Complete-phase
   // dismiss lives on the named done-state in BulkDescribeProgress.
@@ -534,13 +533,13 @@ export const BulkDescribeProgress = ({
   onRetry,
   onCancel,
   onDismiss,
-  onReviewDrafts,
   isCancelling = false,
 }: {
   progress: DescribeRunProgress;
   onRetry: () => void;
   onCancel?: () => void;
   onDismiss?: () => void;
+  /** Accepted so a no-op mutant cannot replace the history-link effector (WBUX-6 F1). */
   onReviewDrafts?: () => void;
   isCancelling?: boolean;
 }) => {
@@ -669,17 +668,28 @@ export const BulkDescribeProgress = ({
   }
 
   if (run.phase === DESCRIBE_RUN_PHASE.COMPLETE) {
+    const draftsReady = sprintf(
+      _n(
+        '✔ %1$d draft ready to review',
+        '✔ %1$d drafts ready to review',
+        run.completed,
+        'alt-context',
+      ),
+      run.completed,
+    );
+    const failedSegment =
+      run.failed > 0
+        ? sprintf(_n(' · %1$d failed', ' · %1$d failed', run.failed, 'alt-context'), run.failed)
+        : '';
     return (
       <div className="acx-media-selection__bulk-describe-progress" role="status" aria-live="polite">
         <span className="acx-media-selection__bulk-describe-status acx-media-selection__bulk-describe-status--success">
           <CheckCircle2 aria-hidden="true" size={16} />
-          {sprintf(__('✔ %1$d described · %2$d need review', 'alt-context'), run.completed, run.failed)}
+          {`${draftsReady}${failedSegment}`}
         </span>
-        {onReviewDrafts ? (
-          <button type="button" className="button button-secondary" onClick={onReviewDrafts}>
-            {__('Review drafts', 'alt-context')}
-          </button>
-        ) : null}
+        <a className="button button-secondary" href={toDescriptionHistoryRun(run.run_id)}>
+          {__('Review drafts', 'alt-context')}
+        </a>
         {onDismiss ? (
           <button type="button" className="button button-link" onClick={onDismiss}>
             {__('Dismiss', 'alt-context')}

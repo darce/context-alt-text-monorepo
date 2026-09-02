@@ -274,12 +274,16 @@
         },
         {
           "id": "z-lib-actions",
-          "label": "Bulk describe / scan CTAs + job progress",
+          "label": "Bulk describe / scan CTAs + job progress. Done copy: ✔ N drafts ready to review[ · M failed]; Review drafts links to #/description-history?run=<id>.",
           "role": "job",
           "states": [
             "default",
             "loading",
-            "error"
+            "error",
+            "queued",
+            "warming",
+            "describing",
+            "complete"
           ]
         }
       ]

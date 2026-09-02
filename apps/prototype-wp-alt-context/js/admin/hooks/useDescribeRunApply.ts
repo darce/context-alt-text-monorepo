@@ -7,6 +7,7 @@ import {
   type ApplyDescribeRunResponse,
   type DescribeRunItem,
 } from '../api/describeApi';
+import { queryKeys } from '../api/queryKeys';
 import { invalidateMediaStats } from './useMediaStats';
 
 export interface DescribeRunApplyBuckets {
@@ -80,6 +81,9 @@ export const useDescribeRunApply = (runId: string | null): UseDescribeRunApplyRe
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: describeRunItemsQueryKey(runId) });
+      // Applied drafts land on workbench rows; the items query only refreshes
+      // the History run view, so the library list must refetch too (WBUX-6 G1).
+      void queryClient.invalidateQueries({ queryKey: queryKeys.media.workbench() });
       // Bulk apply is the write most likely to move dashboard coverage. Ask the
       // server for a fresh missing-alt total — do not derive counts from response
       // buckets [rg-015]. onSuccess fires for full *and* partial applies: if any

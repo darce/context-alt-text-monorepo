@@ -229,7 +229,18 @@ export type DescriptionCorrectionCode =
   (typeof DESCRIPTION_CORRECTION_CODE)[keyof typeof DESCRIPTION_CORRECTION_CODE];
 
 export type DescribeRunStatus = (typeof DESCRIBE_RUN_STATUS)[keyof typeof DESCRIBE_RUN_STATUS];
-export type DescribeRunPhase = 'queued' | 'describing' | 'complete' | 'failed' | 'cancelled';
+
+/** Canonical describe-run phase set, including GPU warmup as a RUNNING sub-phase. */
+export const DESCRIBE_RUN_PHASE = {
+  QUEUED: 'queued',
+  WARMING: 'warming',
+  DESCRIBING: 'describing',
+  COMPLETE: 'complete',
+  FAILED: 'failed',
+  CANCELLED: 'cancelled',
+} as const;
+
+export type DescribeRunPhase = (typeof DESCRIBE_RUN_PHASE)[keyof typeof DESCRIBE_RUN_PHASE];
 
 const TERMINAL_DESCRIBE_RUN_STATUSES: ReadonlySet<DescribeRunStatus> = new Set([
   DESCRIBE_RUN_STATUS.COMPLETED,

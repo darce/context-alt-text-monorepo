@@ -23,6 +23,7 @@ class DescribeRunStatus(StrEnum):
 
 class DescribeRunPhase(StrEnum):
     QUEUED = "queued"
+    WARMING = "warming"
     DESCRIBING = "describing"
     COMPLETE = "complete"
     FAILED = "failed"
@@ -84,6 +85,9 @@ class DescribeRunRequest:
     tenant_id: object
     media_ids: Sequence[int]
     max_items: int
+    # HARM-F1: snapshot of WP acx_recognition_enabled at submit. Default True
+    # preserves today's naming-on behaviour when the field is omitted.
+    recognition_enabled: bool = True
 
     def validate(self) -> None:
         total = len(self.media_ids)

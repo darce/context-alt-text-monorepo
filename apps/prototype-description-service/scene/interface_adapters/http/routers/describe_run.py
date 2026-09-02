@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
-import logging
 import uuid
 from collections.abc import Mapping
 
@@ -12,20 +10,20 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request,
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from starlette.datastructures import UploadFile
 
-from db.tenant_context import get_tenant_record, require_tenant_record, set_tenant_context
+from db.tenant_context import require_tenant_record, set_tenant_context
 from recognition.infrastructure.repositories.audit_repository import AuditRepository
 from recognition.interface_adapters.http.deps import get_optional_session, require_write_access
 from recognition.interface_adapters.http.deps.demo_quota import maybe_consume_demo_quota
 from scene.application.describe_load import dump_load_snapshot
 from scene.application.describe_run_repository import DescribeRunRepository
 from scene.application.describe_run_worker import (
-    NAMING_BUDGET_SECONDS,
     DescribeItemOutcome,
+    FusionNamingInputs,
+    MissingNamingSnapshotError,
     gpu_run_policy,
     run_describe_job,
 )
 from scene.application.description_repository import ImageDescriptionRepository
-from scene.application.naming_preview_service import load_fusion_naming_inputs
 from scene.application.visual_facts_service import VisualFactsService
 from scene.config.settings import DescriptionSettings
 from scene.domain.describe_run import (
@@ -46,7 +44,6 @@ from scene.interface_adapters.http.schemas.responses import (
 )
 
 router = APIRouter(tags=["describe-runs"])
-_logger = logging.getLogger(__name__)
 
 _IMAGE_KEY_PREFIX = "image_"
 
@@ -64,6 +61,7 @@ def _run_response(run) -> DescribeRunResponse:
         cancel_requested=run.cancel_requested,
         eta_seconds=compute_eta_seconds(run),
         gpu_state=None,
+        recognition_enabled=bool(run.recognition_enabled),
     )
 
 
@@ -107,7 +105,12 @@ async def _prepare_repo(*, session, auth, tenant_id: uuid.UUID) -> DescribeRunRe
 
 
 def _build_describe_one(
-    *, session_factory: async_sessionmaker[AsyncSession], tenant_id: uuid.UUID, adapter=None, settings=None
+    *,
+    session_factory: async_sessionmaker[AsyncSession],
+    tenant_id: uuid.UUID,
+    adapter=None,
+    settings=None,
+    recognition_enabled: bool = True,
 ):
     """Real per-item describe adapter: load bytes -> VisualFactsService -> outcome.
 
@@ -119,28 +122,28 @@ def _build_describe_one(
     settings = settings or DescriptionSettings()
     timeout = _generation_timeout_seconds(settings, adapter)
 
-    async def describe_one(media_id: int, image_bytes: bytes | None, content_type: str | None) -> DescribeItemOutcome:
+    async def describe_one(
+        media_id: int,
+        image_bytes: bytes | None,
+        content_type: str | None,
+        *,
+        naming_inputs: FusionNamingInputs | None = None,
+    ) -> DescribeItemOutcome:
         if not image_bytes:
             raise ValueError(f"no image bytes stored for media_id={media_id}")
+        if naming_inputs is None and recognition_enabled:
+            raise MissingNamingSnapshotError(
+                f"recognition-enabled bulk describe requires preloaded naming_inputs for media_id={media_id}"
+            )
         async with session_factory() as svc_session:
             await set_tenant_context(svc_session, tenant_id)
             confirmed_faces: list = []
             naming_policy = None
-            try:
-                tenant = await get_tenant_record(svc_session, tenant_id)
-                confirmed_faces, naming_policy = await asyncio.wait_for(
-                    load_fusion_naming_inputs(
-                        session=svc_session,
-                        tenant=tenant,
-                        tenant_uuid=tenant_id,
-                        media_id=media_id,
-                        image_bytes=image_bytes,
-                    ),
-                    timeout=NAMING_BUDGET_SECONDS,
-                )
-            except Exception:  # noqa: BLE001 - Stage-2 degrades without faces; naming has its own guard
-                _logger.exception("failed loading faces/policy for bulk describe media_id=%s", media_id)
-                confirmed_faces, naming_policy = [], None
+            if naming_inputs is not None:
+                confirmed_faces, naming_policy = naming_inputs
+                # DATA-19: face elements + naming_policy are the shared snapshot;
+                # copy the list so Stage-2 mutation cannot alias Stage-3's sequence.
+                confirmed_faces = list(confirmed_faces or [])
             service = VisualFactsService(
                 adapter=adapter,
                 repository=ImageDescriptionRepository(svc_session),
@@ -192,6 +195,24 @@ def _parse_media_ids(raw: object) -> list[int]:
     if any(m <= 0 for m in parsed):
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "media_ids must be positive integers")
     return parsed
+
+
+def _parse_recognition_enabled(raw: object) -> bool:
+    """Multipart boolean; omitted → True so today's naming-on path stays the default."""
+    if raw is None:
+        return True
+    if isinstance(raw, bool):
+        return raw
+    if not isinstance(raw, str):
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT, "form field 'recognition_enabled' must be a boolean"
+        )
+    value = raw.strip().lower()
+    if value == "true":
+        return True
+    if value == "false":
+        return False
+    raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "form field 'recognition_enabled' must be a boolean")
 
 
 async def _read_image_parts(form, settings: DescriptionSettings) -> Mapping[int, tuple[bytes, str | None]]:
@@ -256,6 +277,7 @@ async def create_describe_run(
         raise HTTPException(status.HTTP_403_FORBIDDEN, "tenant mismatch between auth and request envelope")
 
     media_ids = _parse_media_ids(form.get("media_ids"))
+    recognition_enabled = _parse_recognition_enabled(form.get("recognition_enabled"))
     settings = DescriptionSettings()
     images = await _read_image_parts(form, settings)
     missing = [m for m in media_ids if m not in images]
@@ -288,6 +310,7 @@ async def create_describe_run(
             media_ids=media_ids,
             created_by_user_id=getattr(auth, "user_id", None),
             images=images,
+            recognition_enabled=recognition_enabled,
         )
     except ValueError as exc:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)) from exc
@@ -308,6 +331,7 @@ async def create_describe_run(
             tenant_id=tenant_id,
             adapter=adapter,
             settings=settings,
+            recognition_enabled=recognition_enabled,
         ),
         timeout_seconds=_generation_timeout_seconds(settings, adapter),
         gpu_policy=run_gpu_policy,

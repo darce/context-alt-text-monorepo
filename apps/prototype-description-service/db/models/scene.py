@@ -100,6 +100,11 @@ class DescribeRun(Base):
     failed_items: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
     skipped_items: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
     cancel_requested: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
+    # HARM-F1: WP recognition off-switch snapshot. Default ON matches the WP
+    # RecognitionPolicy DEFAULT so omitted submits keep today's naming fusion.
+    recognition_enabled: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("true"), default=True
+    )
     error_message: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=func.now())
     started_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
@@ -118,7 +123,7 @@ class DescribeRun(Base):
             name="valid_describe_run_status",
         ),
         CheckConstraint(
-            "phase IN ('queued', 'describing', 'complete', 'failed', 'cancelled')",
+            "phase IN ('queued', 'warming', 'describing', 'complete', 'failed', 'cancelled')",
             name="valid_describe_run_phase",
         ),
         CheckConstraint("run_kind IN ('bulk', 'single')", name="valid_describe_run_kind"),

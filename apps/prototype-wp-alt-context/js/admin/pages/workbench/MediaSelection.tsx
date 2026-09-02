@@ -14,7 +14,7 @@ import type { DescribeRunProgress } from '../../hooks/useDescribeRunProgress';
 import { useRecognitionCooldown } from '../../hooks/useRecognitionCooldown';
 import { useRemoteActionGate } from '../../hooks/useRemoteActionGate';
 import { useSyncOffline } from '../../hooks/useSyncOffline';
-import { DESCRIBE_RUN_STATUS, type DescribeRunStatus } from '../../api/describeApi';
+import { DESCRIBE_RUN_PHASE, DESCRIBE_RUN_STATUS, type DescribeRunStatus } from '../../api/describeApi';
 import { isCooldownSignal } from '../../utils/retryPolicy';
 import { formatUserFacingError, isAuthExpiredError } from '../../utils/userFacingError';
 import { UserFacingErrorNotice } from '../../components/ui/UserFacingErrorNotice';
@@ -182,6 +182,15 @@ export const MediaSelection = ({ reviewActive = false }: MediaSelectionProps): R
               }
             }}
             onDismiss={() => setDismissedRunId(activeDescribeRunId)}
+            onReviewDrafts={() => {
+              const row = document.querySelector('.acx-media-selection__table tbody tr');
+              if (!(row instanceof HTMLElement)) {
+                return;
+              }
+              row
+                .querySelector<HTMLElement>('a[href], button:not([disabled]), input:not([disabled])')
+                ?.focus();
+            }}
             onRetryPolling={() => describeProgress.retry()}
           />
           <MediaAnalyzeCta accentPrimary={footerCta.accentOwner === FOOTER_ACCENT_OWNER.ANALYZE} />
@@ -375,6 +384,7 @@ interface BulkDescribeCtaProps {
   onSubmit: () => void;
   onCancel: () => void;
   onDismiss: () => void;
+  onReviewDrafts?: () => void;
   onRetryPolling: () => void;
 }
 
@@ -394,12 +404,17 @@ export const BulkDescribeCta = ({
   onSubmit,
   onCancel,
   onDismiss,
+  onReviewDrafts,
   onRetryPolling,
 }: BulkDescribeCtaProps) => {
   const canCancel = isRunning && runId !== null && !progress.isTerminal && !progress.isError;
   // Cannot cancel an errored/finished run — offer to clear the panel instead so a
-  // new run can start from the terminal state (FE-01, rg-003).
-  const canDismiss = isPanelVisible && (progress.isTerminal || progress.isError);
+  // new run can start from the terminal state (FE-01, rg-003). Complete-phase
+  // dismiss lives on the named done-state in BulkDescribeProgress.
+  const canDismiss =
+    isPanelVisible &&
+    (progress.isTerminal || progress.isError) &&
+    progress.run?.phase !== DESCRIBE_RUN_PHASE.COMPLETE;
   const offlineGated = Boolean(remoteActionAriaDisabled);
 
   return (
@@ -444,13 +459,24 @@ export const BulkDescribeCta = ({
             {__('Dismiss', 'alt-context')}
           </button>
         ) : null}
-        <BulkDescribeReviewLink
-          runId={runId}
-          isTerminal={progress.isTerminal}
-          appliedCount={progress.run ? progress.run.completed : 0}
-        />
+        {progress.run?.phase === DESCRIBE_RUN_PHASE.COMPLETE ? null : (
+          <BulkDescribeReviewLink
+            runId={runId}
+            isTerminal={progress.isTerminal}
+            appliedCount={progress.run ? progress.run.completed : 0}
+          />
+        )}
       </div>
-      {isPanelVisible ? <BulkDescribeProgress progress={progress} onRetry={onRetryPolling} /> : null}
+      {isPanelVisible ? (
+        <BulkDescribeProgress
+          progress={progress}
+          onRetry={onRetryPolling}
+          onCancel={onCancel}
+          onDismiss={onDismiss}
+          onReviewDrafts={onReviewDrafts}
+          isCancelling={isCancelling}
+        />
+      ) : null}
       {errorMessage ? (
         // [A11Y-21][A11Y-24][sr-004]: error is text + role=alert, never colour alone.
         <div className="acx-media-selection__bulk-describe-error" role="alert">
@@ -503,7 +529,21 @@ const formatEtaLabel = (etaSeconds: number | null): string => {
   return sprintf(__('~%1$dm %2$ds remaining', 'alt-context'), minutes, seconds);
 };
 
-export const BulkDescribeProgress = ({ progress, onRetry }: { progress: DescribeRunProgress; onRetry: () => void }) => {
+export const BulkDescribeProgress = ({
+  progress,
+  onRetry,
+  onCancel,
+  onDismiss,
+  onReviewDrafts,
+  isCancelling = false,
+}: {
+  progress: DescribeRunProgress;
+  onRetry: () => void;
+  onCancel?: () => void;
+  onDismiss?: () => void;
+  onReviewDrafts?: () => void;
+  isCancelling?: boolean;
+}) => {
   const { run, status, progressFraction, etaSeconds, stalledForSeconds, isTerminal, isError, isFrozen } = progress;
   const cooldown = useRecognitionCooldown();
 
@@ -567,11 +607,92 @@ export const BulkDescribeProgress = ({ progress, onRetry }: { progress: Describe
     );
   }
 
+  const cancelControl =
+    onCancel && !isTerminal ? (
+      <button type="button" className="button button-link" disabled={isCancelling} onClick={onCancel}>
+        {isCancelling ? __('Cancelling…', 'alt-context') : __('Cancel describe run', 'alt-context')}
+      </button>
+    ) : null;
+
+  if (run.phase === DESCRIBE_RUN_PHASE.QUEUED) {
+    return (
+      <div className="acx-media-selection__bulk-describe-progress" role="status" aria-live="polite">
+        <span className="acx-media-selection__bulk-describe-status acx-media-selection__bulk-describe-status--pending">
+          <Clock aria-hidden="true" size={16} />
+          {__('Queued…', 'alt-context')}
+        </span>
+        {cancelControl}
+        {waitingNotice}
+      </div>
+    );
+  }
+
+  if (run.phase === DESCRIBE_RUN_PHASE.WARMING) {
+    return (
+      <div className="acx-media-selection__bulk-describe-progress" role="status" aria-live="polite">
+        <span className="acx-media-selection__bulk-describe-status acx-media-selection__bulk-describe-status--running">
+          <Loader2 className="acx-media-selection__bulk-describe-spin" aria-hidden="true" size={16} />
+          {__('Warming GPU (about 2 min, first run only)…', 'alt-context')}
+        </span>
+        {cancelControl}
+        {waitingNotice}
+      </div>
+    );
+  }
+
+  const processed = run.completed + run.failed + run.skipped;
+
+  if (run.phase === DESCRIBE_RUN_PHASE.DESCRIBING) {
+    const describingLabel = sprintf(__('Describing… %1$d/%2$d', 'alt-context'), processed, run.total);
+    return (
+      <div className="acx-media-selection__bulk-describe-progress" role="status" aria-live="polite">
+        <span className="acx-media-selection__bulk-describe-status acx-media-selection__bulk-describe-status--running">
+          <Loader2 className="acx-media-selection__bulk-describe-spin" aria-hidden="true" size={16} />
+          {describingLabel}
+        </span>
+        <progress
+          className="acx-media-selection__bulk-describe-bar"
+          max={run.total > 0 ? run.total : 1}
+          value={processed}
+          aria-label={describingLabel}
+        />
+        {cancelControl}
+        {waitingNotice}
+        {stalledForSeconds !== null ? (
+          <span className="acx-media-selection__bulk-describe-stall">
+            <AlertTriangle aria-hidden="true" size={16} />
+            {sprintf(__('No progress for %ds — the run may be stalled.', 'alt-context'), stalledForSeconds)}
+          </span>
+        ) : null}
+      </div>
+    );
+  }
+
+  if (run.phase === DESCRIBE_RUN_PHASE.COMPLETE) {
+    return (
+      <div className="acx-media-selection__bulk-describe-progress" role="status" aria-live="polite">
+        <span className="acx-media-selection__bulk-describe-status acx-media-selection__bulk-describe-status--success">
+          <CheckCircle2 aria-hidden="true" size={16} />
+          {sprintf(__('✔ %1$d described · %2$d need review', 'alt-context'), run.completed, run.failed)}
+        </span>
+        {onReviewDrafts ? (
+          <button type="button" className="button button-secondary" onClick={onReviewDrafts}>
+            {__('Review drafts', 'alt-context')}
+          </button>
+        ) : null}
+        {onDismiss ? (
+          <button type="button" className="button button-link" onClick={onDismiss}>
+            {__('Dismiss', 'alt-context')}
+          </button>
+        ) : null}
+      </div>
+    );
+  }
+
   const meta = describeRunStatusMeta(status);
   const percent = progressFraction === null ? null : Math.round(progressFraction * 100);
   // Processed = every terminal item (completed + failed + skipped) so the bar
   // and count reflect true progress, not just successes.
-  const processed = run.completed + run.failed + run.skipped;
   const countsLabel = sprintf(__('%1$d of %2$d processed', 'alt-context'), processed, run.total);
 
   return (

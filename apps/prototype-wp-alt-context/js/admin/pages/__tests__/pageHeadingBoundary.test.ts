@@ -34,7 +34,7 @@ const NON_PAGE_COMPONENTS = new Set(['Navigate']);
 
 const routedComponentNames: string[] = [];
 for (const match of appSource.matchAll(ROUTE_ELEMENT_BLOCK)) {
-  const componentMatch = match[1].match(SELF_CLOSING_COMPONENT);
+  const componentMatch = SELF_CLOSING_COMPONENT.exec(match[1]);
   if (!componentMatch || NON_PAGE_COMPONENTS.has(componentMatch[1])) {
     continue;
   }
@@ -59,7 +59,7 @@ const ROUTED_PAGE_FILES = routedComponentNames.map(
 // assert both so a parse break turns this guard red instead of vacuously
 // green.
 expect(ROUTED_PAGE_FILES.length).toBeGreaterThan(0);
-expect(ROUTED_PAGE_FILES).toHaveLength(6);
+expect(ROUTED_PAGE_FILES).toHaveLength(5);
 
 const FORBIDDEN_REFERENCE = /acx-page-title/;
 

@@ -14,7 +14,7 @@ const EXPORT_JOB_STATUS = {
   failed: 'failed',
 } as const;
 
-export const RetentionPage = (): React.JSX.Element => {
+export const RetentionSection = (): React.JSX.Element => {
   const {
     state,
     dispatch,
@@ -281,3 +281,5 @@ export const RetentionPage = (): React.JSX.Element => {
     </section>
   );
 };
+
+export const RetentionPage = RetentionSection;

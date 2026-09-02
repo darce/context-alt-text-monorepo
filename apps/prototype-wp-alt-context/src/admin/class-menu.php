@@ -8,7 +8,8 @@ class Menu {
 	/**
 	 * MECE admin IA (NAV-05): one slug per user goal, frequency-ordered (NAV-06).
 	 * Review Queue is the unique naming home; Description Runs is the unique
-	 * description-history home; Data Retention is policy, not history.
+	 * description-history home. Data retention is a Settings concern, not a
+	 * top-level destination (NAV-14: the retired slug still redirects).
 	 *
 	 * @var list<array{slug: string, menu_title: string, goal: string}>
 	 */
@@ -17,7 +18,6 @@ class Menu {
 		array( 'slug' => 'alt-context-workbench', 'menu_title' => 'Review Queue', 'goal' => 'name_person' ),
 		array( 'slug' => 'alt-context-roster', 'menu_title' => 'People', 'goal' => 'manage_named_people' ),
 		array( 'slug' => 'alt-context-description-history', 'menu_title' => 'Description Runs', 'goal' => 'see_description_history' ),
-		array( 'slug' => 'alt-context-retention', 'menu_title' => 'Data Retention', 'goal' => 'control_data_lifecycle' ),
 		array( 'slug' => 'alt-context-settings', 'menu_title' => 'Settings', 'goal' => 'configure_service' ),
 	);
 
@@ -46,6 +46,7 @@ class Menu {
 
 	public function init(): void {
 		add_action( 'admin_menu', array( $this, 'register_menu' ) );
+		add_action( 'admin_init', array( $this, 'render_retention_page' ) );
 	}
 
 	public function register_menu(): void {
@@ -97,15 +98,6 @@ class Menu {
 
 		add_submenu_page(
 			'alt-context-dashboard',
-			__( 'Alt Context Data Retention', 'alt-context' ),
-			__( 'Data Retention', 'alt-context' ),
-			'manage_options',
-			'alt-context-retention',
-			array( $this, 'render_retention_page' )
-		);
-
-		add_submenu_page(
-			'alt-context-dashboard',
 			__( 'Alt Context Settings', 'alt-context' ),
 			__( 'Settings', 'alt-context' ),
 			'manage_options',
@@ -131,7 +123,16 @@ class Menu {
 	}
 
 	public function render_retention_page(): void {
-		$this->retentionPage->render();
+		$page = isset( $_GET['page'] ) ? sanitize_key( wp_unslash( (string) $_GET['page'] ) ) : '';
+		if ( $page !== 'alt-context-retention' ) {
+			return;
+		}
+
+		wp_safe_redirect( admin_url( 'admin.php?page=alt-context-settings#/settings?section=retention' ) );
+		if ( defined( 'ACX_VERSION' ) && ACX_VERSION === 'test' ) {
+			return;
+		}
+		exit;
 	}
 
 	public function render_settings_page(): void {

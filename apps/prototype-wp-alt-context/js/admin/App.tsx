@@ -2,7 +2,6 @@ import React, { useMemo } from 'react';
 import { QueryClientProvider } from '@tanstack/react-query';
 import { HashRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { DashboardPage } from './pages/DashboardPage';
-import { RetentionPage } from './pages/RetentionPage';
 import { WorkbenchPage } from './pages/WorkbenchPage';
 import { RosterPage } from './pages/RosterPage';
 import { SettingsPage } from './pages/SettingsPage';
@@ -51,11 +50,7 @@ export const App = (): React.JSX.Element => {
             />
             <Route
               path="/retention"
-              element={
-                <ErrorBoundary>
-                  <RetentionPage />
-                </ErrorBoundary>
-              }
+              element={<Navigate to="/settings?section=retention" replace />}
             />
             <Route
               path="/settings"

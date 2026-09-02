@@ -9,6 +9,17 @@ import {
   type TestConnectionOutcomeValue,
   type TestConnectionResponse,
 } from '../../api/settingsApi';
+import {
+  useApplyRetentionPreset,
+  useAuditEvents,
+  useDownloadExportJobData,
+  useExportJobStatus,
+  useExportTenantData,
+  useImportTenantData,
+  usePurgeTenantData,
+  useRetentionStatus,
+  useUpdateRetentionPolicy,
+} from '../../hooks/useRetentionStatus';
 import { createMockMutation, createMockQuery } from '../../test-utils/mockHooks';
 
 type QueryHookResult = ReturnType<typeof createMockQuery<SettingsResponse>>;
@@ -61,12 +72,32 @@ vi.mock('../../api/config', () => ({
 
 vi.mock('../../navigation/appLinks', () => ({
   toDashboard: mockToDashboard,
+  toDescriptionHistory: () => '#/description-history',
 }));
 
 // Recovery affordances must stay enabled while offline (plan §3, RES-15). Forcing the shared
 // offline signal to true guards against a future change gating test-connection on the breaker.
 vi.mock('../../hooks/useSyncOffline', () => ({
   useSyncOffline: () => true,
+}));
+
+vi.mock('../../hooks/useRetentionStatus', () => ({
+  useRetentionStatus: vi.fn(),
+  useUpdateRetentionPolicy: vi.fn(),
+  useExportTenantData: vi.fn(),
+  useExportJobStatus: vi.fn(),
+  useDownloadExportJobData: vi.fn(),
+  usePurgeTenantData: vi.fn(),
+  useImportTenantData: vi.fn(),
+  useAuditEvents: vi.fn(),
+  useApplyRetentionPreset: vi.fn(),
+}));
+
+vi.mock('../../context/ToastContext', () => ({
+  useToast: () => ({
+    success: vi.fn(),
+    error: vi.fn(),
+  }),
 }));
 
 vi.mock('@tanstack/react-query', async () => {
@@ -133,6 +164,31 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockFetchQuery.mockResolvedValue(defaultSettings);
   installMutationMock();
+
+  vi.mocked(useRetentionStatus).mockReturnValue(
+    createMockQuery({
+      data: {
+        available: true,
+        policy: {
+          retention_mode: 'dispose_after_ack',
+          last_export_at: '2026-03-10T10:00:00Z',
+          last_purge_at: null,
+          retention_updated_at: '2026-03-09T12:00:00Z',
+        },
+        recent_audit_events: [],
+      },
+    }),
+  );
+  vi.mocked(useUpdateRetentionPolicy).mockReturnValue(createMockMutation());
+  vi.mocked(useExportTenantData).mockReturnValue(createMockMutation());
+  vi.mocked(useExportJobStatus).mockReturnValue(createMockQuery());
+  vi.mocked(useDownloadExportJobData).mockReturnValue(createMockMutation());
+  vi.mocked(usePurgeTenantData).mockReturnValue(createMockMutation());
+  vi.mocked(useImportTenantData).mockReturnValue(createMockMutation());
+  vi.mocked(useAuditEvents).mockReturnValue(
+    createMockQuery({ data: { items: [], total: 0, limit: 20, offset: 0 } }),
+  );
+  vi.mocked(useApplyRetentionPreset).mockReturnValue(createMockMutation());
 });
 
 describe('SettingsPage', () => {
@@ -196,7 +252,7 @@ describe('SettingsPage', () => {
     rerender(<SettingsPage />);
 
     expect(screen.getByLabelText('Service API URL')).toHaveValue('https://draft.example.com');
-    expect(screen.getByRole('alert')).toHaveTextContent('Failed to refresh settings.');
+    expect(screen.getByTestId('acx-settings-query-error')).toHaveTextContent('Failed to refresh settings.');
     expect(screen.queryByRole('link', { name: 'Back to Dashboard' })).not.toBeInTheDocument();
   });
 
@@ -286,6 +342,31 @@ describe('SettingsPage', () => {
 
     expect(saveMutate).toHaveBeenCalledWith({ url: 'https://new-api.example.com' });
     expect(saveMutate.mock.calls[0]?.[0]).not.toHaveProperty('recognition_enabled');
+  });
+
+  it('renders the Data & retention section and its purge control after People & recognition', () => {
+    mockUseQuery.mockReturnValue(createMockQuery({ data: defaultSettings }));
+    render(<SettingsPage />);
+
+    const peopleHeading = screen.getByRole('heading', { name: 'People & recognition' });
+    const retentionHeading = screen.getByRole('heading', { name: 'Data & retention' });
+    expect(peopleHeading.compareDocumentPosition(retentionHeading) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Purge data' })).toBeInTheDocument();
+    expect(document.getElementById('acx-settings-section-retention')).not.toBeNull();
+  });
+
+  it('scrolls the Data & retention section into view when section=retention is in the hash', () => {
+    const originalHash = window.location.hash;
+    window.location.hash = '#/settings?section=retention';
+    const scrollSpy = vi.spyOn(Element.prototype, 'scrollIntoView').mockImplementation(() => undefined);
+
+    mockUseQuery.mockReturnValue(createMockQuery({ data: defaultSettings }));
+    render(<SettingsPage />);
+
+    expect(scrollSpy).toHaveBeenCalled();
+
+    scrollSpy.mockRestore();
+    window.location.hash = originalHash;
   });
 
   it('renders description budget usage and saves the attempt limit', () => {

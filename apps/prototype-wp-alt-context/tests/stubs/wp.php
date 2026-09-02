@@ -447,6 +447,22 @@ if (!function_exists('admin_url')) {
     }
 }
 
+if (!function_exists('wp_safe_redirect')) {
+    /**
+     * @return bool
+     */
+    function wp_safe_redirect($location, $status = 302, $x_redirect_by = 'WordPress')
+    {
+        $GLOBALS['__ac_safe_redirect'] = array(
+            'location' => (string) $location,
+            'status' => (int) $status,
+            'x_redirect_by' => (string) $x_redirect_by,
+        );
+
+        return true;
+    }
+}
+
 if (!function_exists('wp_nonce_url')) {
     function wp_nonce_url(string $url, string $action): string
     {

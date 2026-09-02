@@ -14,7 +14,7 @@ const EXPORT_JOB_STATUS = {
   failed: 'failed',
 } as const;
 
-export const RetentionPage = (): React.JSX.Element => {
+export const RetentionSection = (): React.JSX.Element => {
   const {
     state,
     dispatch,
@@ -42,57 +42,25 @@ export const RetentionPage = (): React.JSX.Element => {
       ? sprintf(__('Export failed. Please try again. Job ID: %s', 'alt-context'), state.exportJobId)
       : '';
 
-  if (retentionQuery.isLoading) {
-    return (
-      <section className="acx-retention" aria-labelledby="acx-retention-title">
-        <h1 id="acx-retention-title" className="acx-dashboard__title">{__('Data Retention', 'alt-context')}</h1>
-        <p>{__('Loading retention status\u2026', 'alt-context')}</p>
-      </section>
-    );
-  }
-
-  if (retentionQuery.isError || !status || !status.available || !policy) {
-    return (
-      <section className="acx-retention" aria-labelledby="acx-retention-title">
-        <header className="acx-retention__hero">
-          <p className="acx-dashboard__eyebrow">{__('Governance', 'alt-context')}</p>
-          <h1 id="acx-retention-title" className="acx-dashboard__title">
-            {__('Data Retention', 'alt-context')}
-          </h1>
-          <p className="acx-dashboard__subtitle">
-            {__('Review your data and retention, export machine-derived data, and audit lifecycle actions.', 'alt-context')}
-          </p>
-        </header>
-        <section className="acx-dashboard__panel acx-retention__panel">
-          <h2>{__('Backend unavailable', 'alt-context')}</h2>
-          <p>{__('Backend unavailable \u2014 retention status cannot be loaded.', 'alt-context')}</p>
-          <button
-            type="button"
-            className="acx-button acx-button--secondary"
-            onClick={() => void retentionQuery.refetch()}
-          >
-            {__('Retry', 'alt-context')}
-          </button>
-        </section>
-      </section>
-    );
-  }
-
-  return (
-    <section className="acx-retention" aria-labelledby="acx-retention-title">
-      <header className="acx-retention__hero">
-        <p className="acx-dashboard__eyebrow">{__('Governance', 'alt-context')}</p>
-        <h1 id="acx-retention-title" className="acx-dashboard__title">
-          {__('Data Retention', 'alt-context')}
-        </h1>
-        <p className="acx-dashboard__subtitle">
-          {__('Review your data and retention, export machine-derived data, and audit lifecycle actions.', 'alt-context')}
-        </p>
-      </header>
-
+  const body = retentionQuery.isLoading ? (
+    <p>{__('Loading retention status\u2026', 'alt-context')}</p>
+  ) : retentionQuery.isError || !status || !status.available || !policy ? (
+    <section className="acx-dashboard__panel acx-retention__panel">
+      <h4>{__('Backend unavailable', 'alt-context')}</h4>
+      <p>{__('Backend unavailable \u2014 retention status cannot be loaded.', 'alt-context')}</p>
+      <button
+        type="button"
+        className="acx-button acx-button--secondary"
+        onClick={() => void retentionQuery.refetch()}
+      >
+        {__('Retry', 'alt-context')}
+      </button>
+    </section>
+  ) : (
+    <>
       <div className="acx-retention__grid">
         <section className="acx-dashboard__panel acx-retention__panel">
-          <h2>{__('Retention mode', 'alt-context')}</h2>
+          <h4>{__('Retention mode', 'alt-context')}</h4>
           <RadioGroup
             className="acx-retention__options"
             aria-label={__('Retention mode', 'alt-context')}
@@ -124,7 +92,7 @@ export const RetentionPage = (): React.JSX.Element => {
         </section>
 
         <section className="acx-dashboard__panel acx-retention__panel">
-          <h2>{__('Compliance presets', 'alt-context')}</h2>
+          <h4>{__('Compliance presets', 'alt-context')}</h4>
           <p>
             {__(
               'Apply a preset to configure recommended retention settings for common compliance scenarios.',
@@ -153,7 +121,7 @@ export const RetentionPage = (): React.JSX.Element => {
         </section>
 
         <section className="acx-dashboard__panel acx-retention__panel">
-          <h2>{__('Export controls', 'alt-context')}</h2>
+          <h4>{__('Export controls', 'alt-context')}</h4>
           <p>
             {__(
               'Export face groups, members, detection metadata, and representative details as portable JSON.',
@@ -188,7 +156,7 @@ export const RetentionPage = (): React.JSX.Element => {
         </section>
 
         <section className="acx-dashboard__panel acx-retention__panel">
-          <h2>{__('Purge controls', 'alt-context')}</h2>
+          <h4>{__('Purge controls', 'alt-context')}</h4>
           <p>
             {__(
               'Purge permanently deletes disposed state or all machine-derived tenant data from the backend.',
@@ -219,7 +187,7 @@ export const RetentionPage = (): React.JSX.Element => {
         </section>
 
         <section className="acx-dashboard__panel acx-retention__panel">
-          <h2>{__('Import controls', 'alt-context')}</h2>
+          <h4>{__('Import controls', 'alt-context')}</h4>
           <p>
             {__(
               'Restore tenant state from a previously exported JSON file. The import validates schema compatibility and records a lifecycle audit event.',
@@ -239,7 +207,7 @@ export const RetentionPage = (): React.JSX.Element => {
         </section>
 
         <section className="acx-dashboard__panel acx-retention__panel">
-          <h2>{__('Description history', 'alt-context')}</h2>
+          <h4>{__('Description history', 'alt-context')}</h4>
           <p>
             {__(
               'Description Runs is the home for describer history. Data Retention keeps policy, export, and purge only.',
@@ -278,6 +246,17 @@ export const RetentionPage = (): React.JSX.Element => {
         isImportPending={pending.import}
         onConfirmImport={() => void actions.confirmImport()}
       />
+    </>
+  );
+
+  return (
+    <section className="acx-retention" aria-labelledby="acx-retention-title">
+      <h3 id="acx-retention-title" className="acx-settings__section-title" tabIndex={-1}>
+        {__('Data & retention', 'alt-context')}
+      </h3>
+      {body}
     </section>
   );
 };
+
+export const RetentionPage = RetentionSection;

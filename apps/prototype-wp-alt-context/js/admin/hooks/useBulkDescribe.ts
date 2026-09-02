@@ -9,7 +9,7 @@ import {
   resolveDescribeErrorDataField,
   submitBulkDescribeRun,
 } from '../api/describeApi';
-import { queryKeys } from '../api/queryKeys';
+import { invalidateWorkbenchListPages } from '../api/queryKeys';
 import { resolveWpErrorMessage } from '../api/wpErrorMessage';
 import { useDescribeRunProgress, type DescribeRunProgress } from './useDescribeRunProgress';
 
@@ -102,7 +102,7 @@ export const useBulkDescribe = (): UseBulkDescribeResult => {
       return;
     }
     invalidatedWorkbenchRunIdRef.current = runId;
-    void queryClient.invalidateQueries({ queryKey: queryKeys.media.workbench() });
+    invalidateWorkbenchListPages(queryClient);
   }, [runId, progress.run?.phase, queryClient]);
 
   const errorMessage = submit.error

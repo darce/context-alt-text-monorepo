@@ -1,12 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { AuthExpiredError } from '../http';
+import { AuthExpiredError, HTTPError } from '../http';
+import { formatUserFacingError, isAuthExpiredError, SPA_SESSION_EXPIRED_COPY } from '../userFacingError';
 import {
-  formatUserFacingError,
-  isAuthExpiredError,
-  SPA_SESSION_EXPIRED_COPY,
-} from '../userFacingError';
-import { getClusterMutationErrorMessage } from '../../pages/workbench/identity-clusters/clusterMutationUtils';
+  getClusterMutationErrorMessage,
+  getClusterMutationUserError,
+} from '../../pages/workbench/identity-clusters/clusterMutationUtils';
 
 vi.mock('@wordpress/i18n', () => ({
   __: (text: string) => text,
@@ -29,10 +28,42 @@ describe('formatUserFacingError / getClusterMutationErrorMessage', () => {
     expect(formatUserFacingError(leaky, 'generic')).toBe('generic');
     expect(formatUserFacingError(new Error('network down'), 'generic')).toBe('generic');
     expect(formatUserFacingError({}, 'fallback text')).toBe('fallback text');
-    expect(getClusterMutationErrorMessage(new Error('Failed to fetch'), 'Sam')).toBe(
-      'Network error. Please check your connection and try again.',
+  });
+
+  it('HTTPError from a cluster mutation never surfaces the endpoint URL or response body [FEBT1-W2A-04]', () => {
+    const error = new HTTPError({
+      status: 500,
+      retryAfterSeconds: undefined,
+      endpoint: '/acx/v1/recognition/clusters/c1',
+      bodyPreview: '{"code":"boom","message":"stack trace body"}',
+      message: 'Request to /acx/v1/recognition/clusters/c1 failed (500): {"code":"boom","message":"stack trace body"}',
+    });
+    const message = getClusterMutationErrorMessage(error, 'Sam');
+    expect(message).not.toContain('/acx/v1/recognition/clusters/c1');
+    expect(message).not.toContain('stack trace body');
+    expect(message).not.toBe(error.message);
+  });
+
+  it('409 yields the stale-conflict message and reload affordance [FEBT1-W2A-04]', () => {
+    const error = new HTTPError({
+      status: 409,
+      retryAfterSeconds: undefined,
+      endpoint: '/acx/v1/recognition/clusters/c1',
+      bodyPreview: '{"code":"cluster_version_conflict"}',
+      message: 'Request to /acx/v1/recognition/clusters/c1 failed (409): {"code":"cluster_version_conflict"}',
+    });
+    const mapped = getClusterMutationUserError(error, 'Sam');
+    expect(mapped.kind).toBe('stale_conflict');
+    expect(mapped.message).toBe('Label already exists. Use the dropdown to merge.');
+    expect(mapped.recovery).toBe('reload');
+    expect(mapped.message).not.toContain(error.endpoint);
+    expect(mapped.message).not.toContain(error.bodyPreview);
+  });
+
+  it('transport failure yields the ux-map transport copy [FEBT1-W2A-04]', () => {
+    expect(getClusterMutationErrorMessage(new TypeError('Failed to fetch'), 'Sam')).toBe(
+      'Network error — check your connection',
     );
-    expect(getClusterMutationErrorMessage(new Error('plain failure'), 'Sam')).toBe('plain failure');
   });
 
   it('maps timeout to retry copy and leaves abort on the caller fallback [FEBT1-W2A-05]', () => {

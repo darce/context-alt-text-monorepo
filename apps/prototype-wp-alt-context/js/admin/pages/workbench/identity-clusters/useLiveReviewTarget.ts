@@ -2,8 +2,8 @@
  * Live-derived open review target (E21-5 §11 / FBT-1 ⑤ / B1).
  *
  * Existence probe: members fetch with limit:1. A 404 is the retirement signal
- * (`cluster_not_found`). Transient/5xx/network errors are NOT retirement —
- * fail-safe keeps status `'live'`.
+ * (`cluster_not_found`). Timeout/5xx/transport failures are NOT retirement and
+ * are NOT `'live'` — they settle as `'unknown'` (OBS-06, RES-13, rg-015).
  *
  * On retirement:
  *   (B) recorded local-merge survivor → onRebind + announce (once)
@@ -24,13 +24,14 @@ import { __ } from '@wordpress/i18n';
 import { fetchClusterMembers } from '../../../api/recognition';
 import { queryKeys } from '../../../api/queryKeys';
 import { classifyError, isHttpStatus } from '../../../utils/appError';
+import { shouldRetryRequest } from '../../../utils/retryPolicy';
 
-export type LiveReviewTargetStatus = 'live' | 'rebound' | 'retired' | 'auth_expired';
+export type LiveReviewTargetStatus = 'live' | 'rebound' | 'retired' | 'auth_expired' | 'unknown';
 
 export interface LiveReviewTargetResult {
   status: LiveReviewTargetStatus;
   resolvedClusterId: string | null;
-  /** Existence-probe error when status is auth_expired; null otherwise. */
+  /** Existence-probe error when status is auth_expired or unknown; null otherwise. */
   error: unknown | null;
 }
 
@@ -84,20 +85,19 @@ export const useLiveReviewTarget = (
     // invalidation still refetches, so a real retirement 404 still lands.
     staleTime: 5_000,
     gcTime: 30_000,
-    // Never retry a definitive retirement 404 or auth expiry; other errors may retry once.
+    // Shared retry predicate: never retry 404/auth/abort/timeout/5xx; transport may retry.
     retry: (failureCount, error) => {
       if (isClusterNotFound(error)) {
         return false;
       }
-      if (isAuthExpired(error)) {
-        return false;
-      }
-      return failureCount < 1;
+      return shouldRetryRequest(failureCount, error);
     },
   });
 
   const retired = openClusterId != null && existenceQuery.isError && isClusterNotFound(existenceQuery.error);
   const authExpired = openClusterId != null && existenceQuery.isError && isAuthExpired(existenceQuery.error);
+  const probeUnknown =
+    openClusterId != null && existenceQuery.isError && !retired && !authExpired;
 
   // S5-02: resolve survivor lazily at read time — do not memoize against
   // [retired, openClusterId] alone. recordMergeSurvivor mutates a ref-backed
@@ -112,24 +112,28 @@ export const useLiveReviewTarget = (
     }
   }
 
-  // Auth expiry must not be absorbed into fail-safe 'live' (UXP-NET-2 / FORM-05).
-  // Keep resolvedClusterId so in-progress UI is not wiped ([INT-11]).
+  // Auth expiry and unverified probe failures must not be absorbed into 'live'
+  // (UXP-NET-2 / FORM-05 / FEBT1-W2A-06). Keep resolvedClusterId so in-progress
+  // UI is not wiped ([INT-11]).
   const status: LiveReviewTargetStatus = authExpired
     ? 'auth_expired'
-    : !retired
-      ? 'live'
-      : survivorId
+    : retired
+      ? survivorId
         ? 'rebound'
-        : 'retired';
+        : 'retired'
+      : probeUnknown
+        ? 'unknown'
+        : 'live';
 
   const resolvedClusterId: string | null =
-    status === 'live' || status === 'auth_expired'
+    status === 'live' || status === 'auth_expired' || status === 'unknown'
       ? openClusterId
       : status === 'rebound'
         ? survivorId
         : null;
 
-  const error: unknown | null = authExpired ? existenceQuery.error : null;
+  const error: unknown | null =
+    authExpired || status === 'unknown' ? existenceQuery.error : null;
 
   // Side effects: announce + rebind/close. Prefer rebind; allow late upgrade
   // when survivor lands after a prior close for the same open id.

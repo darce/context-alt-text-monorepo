@@ -1,23 +1,18 @@
-import { AuthExpiredError, HTTPError, ResponseParseError } from './http';
+import { classifyError, isCooldown } from './appError';
+import type { HTTPError } from './http';
 
 export const RETRY_MAX_ATTEMPTS = 3;
 export const MAX_RETRY_DELAY_MS = 30_000;
 
 /** AbortError and TimeoutError (from AbortSignal.timeout) — both are abort-like, never retry. */
-const ABORT_LIKE_NAMES = new Set(['AbortError', 'TimeoutError']);
-
-/** Duck-type: DOMException is NOT an Error subclass in the browser. */
-export const isAbortLike = (error: unknown): boolean =>
-  typeof error === 'object' && error !== null && ABORT_LIKE_NAMES.has((error as { name?: unknown }).name as string);
+export const isAbortLike = (error: unknown): boolean => classifyError(error)._tag === 'abort';
 
 /**
  * The server's explicit "ask again later": 429, or 503 carrying Retry-After.
  * Single classification shared by the retry predicate and the recognition
  * cooldown (REF-19: one policy, no per-consumer re-derivation).
  */
-export const isCooldownSignal = (error: unknown): error is HTTPError =>
-  error instanceof HTTPError &&
-  (error.status === 429 || (error.status === 503 && error.retryAfterSeconds !== undefined));
+export const isCooldownSignal = (error: unknown): error is HTTPError => isCooldown(error);
 
 /**
  * Shared QueryClient retry predicate.
@@ -28,21 +23,21 @@ export const shouldRetryRequest = (failureCount: number, error: unknown): boolea
   if (failureCount >= RETRY_MAX_ATTEMPTS) {
     return false;
   }
+  const classified = classifyError(error);
   // Regression pin: auth expiry is terminal for RQ retry (distinct from HTTPError 4xx).
-  if (error instanceof AuthExpiredError) {
+  if (classified._tag === 'auth_expired') {
     return false;
   }
-  if (error instanceof HTTPError) {
-    return isCooldownSignal(error);
+  if (classified._tag === 'http') {
+    return isCooldown(classified);
   }
-  if (error instanceof ResponseParseError) {
+  if (classified._tag === 'parse') {
     return false;
   }
   if (isAbortLike(error)) {
     return false;
   }
-  // Genuine network transport failure only (Fetch spec rejects with TypeError).
-  return error instanceof TypeError;
+  return classified._tag === 'transport';
 };
 
 /**
@@ -50,8 +45,9 @@ export const shouldRetryRequest = (failureCount: number, error: unknown): boolea
  * Both branches clamped at MAX_RETRY_DELAY_MS to avoid hour freezes and setTimeout overflow.
  */
 export const getRetryDelay = (attemptIndex: number, error: unknown): number => {
-  if (error instanceof HTTPError && error.retryAfterSeconds !== undefined) {
-    return Math.min(error.retryAfterSeconds * 1000, MAX_RETRY_DELAY_MS);
+  const classified = classifyError(error);
+  if (classified._tag === 'http' && classified.retryAfterMs !== undefined) {
+    return Math.min(classified.retryAfterMs, MAX_RETRY_DELAY_MS);
   }
   return Math.min(1000 * 2 ** attemptIndex, MAX_RETRY_DELAY_MS);
 };

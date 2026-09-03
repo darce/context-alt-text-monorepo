@@ -8,6 +8,7 @@ import math
 import os
 import tempfile
 import time
+from contextlib import suppress
 from enum import StrEnum
 from pathlib import Path
 
@@ -44,7 +45,10 @@ if set(_INSTANCE_STATE_MAP) != set(GpuInstanceState):
 
 def resolve_gpu_state_path() -> Path:
     """Resolve the shared producer/consumer path contract."""
-    return Path(os.environ.get(GPU_STATE_PATH_ENV, DEFAULT_GPU_STATE_PATH))
+    configured_path = os.environ.get(GPU_STATE_PATH_ENV)
+    if configured_path is None or not configured_path.strip():
+        return Path(DEFAULT_GPU_STATE_PATH)
+    return Path(configured_path)
 
 
 def state_for_instance(instance_state: str) -> GpuLifecycleState:
@@ -84,7 +88,6 @@ def state_for_instances(
         GpuLifecycleState.WARMING in mapped
         and previous_state
         in {
-            GpuLifecycleState.STARTING,
             GpuLifecycleState.WARMING,
             GpuLifecycleState.READY,
             GpuLifecycleState.DEGRADED,
@@ -107,6 +110,8 @@ def state_for_instances(
 def write_gpu_state_snapshot(
     state: GpuLifecycleState | str,
     *,
+    instance_id: str | None = None,
+    reason: str | None = None,
     now: float | None = None,
     path: str | Path | None = None,
 ) -> bool:
@@ -121,12 +126,41 @@ def write_gpu_state_snapshot(
         raise ValueError("written_at must be epoch seconds")
     if not math.isfinite(written_at):
         raise ValueError("written_at must be finite epoch seconds")
+    if instance_id is not None and (
+        not isinstance(instance_id, str) or not instance_id.strip()
+    ):
+        raise ValueError("instance_id must be a non-blank string or None")
+    if published_state is GpuLifecycleState.DEGRADED:
+        if not isinstance(reason, str) or not reason.strip():
+            raise ValueError("degraded GPU lifecycle snapshots require a reason")
+    elif reason is not None:
+        raise ValueError("reason is only valid for degraded GPU lifecycle snapshots")
 
     target = resolve_gpu_state_path() if path is None else Path(path)
     temporary: Path | None = None
     try:
         target.parent.mkdir(parents=True, exist_ok=True)
-        payload = {"state": published_state.value, "written_at": written_at}
+        since = written_at
+        try:
+            previous = json.loads(target.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            previous = None
+        if isinstance(previous, dict) and previous.get("state") == published_state.value:
+            previous_since = previous.get("since")
+            if (
+                not isinstance(previous_since, bool)
+                and isinstance(previous_since, (int, float))
+                and math.isfinite(previous_since)
+                and previous_since <= written_at
+            ):
+                since = previous_since
+        payload = {
+            "state": published_state.value,
+            "instance_id": instance_id,
+            "written_at": written_at,
+            "reason": reason,
+            "since": since,
+        }
         with tempfile.NamedTemporaryFile(
             mode="w",
             encoding="utf-8",
@@ -145,9 +179,7 @@ def write_gpu_state_snapshot(
     except OSError as exc:
         logger.warning("failed to write GPU state snapshot %s: %s", target, exc)
         if temporary is not None:
-            try:
+            with suppress(OSError):
                 temporary.unlink(missing_ok=True)
-            except OSError:
-                pass
         return False
     return True

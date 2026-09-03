@@ -57,6 +57,8 @@ quota approval**, which is a human console request Oracle grants asynchronously.
    The GPU resource carries the `project=acx`, `env=production`, `role=gpu-burst`,
    `scale_to_zero=true`, and `purpose=gpu-spike-bench` freeform tags. The spike bench
    requires that pinned purpose tag before it permits any lifecycle action.
+   Terraform ignores subsequent instance `state` drift so an apply does not undo
+   an idle-reaper STOP; the declared `RUNNING` state is only for initial cloud-init.
 6. **Run the Slice-1 spike bench.** Fill `docs/tasks/vlm/VLM-3-gpu-spike-*.json`
    (`cold_boot`, `stopped→warm_start` vs the 90 s target, `model_load`, `s/img`).
 7. **Flip the ProfileSpec.** Set the winner's `available=True` + endpoint in

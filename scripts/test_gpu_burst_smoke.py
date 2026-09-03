@@ -4,11 +4,16 @@ from __future__ import annotations
 
 import json
 import subprocess
+import uuid
 from pathlib import Path
 
 import gpu_burst_smoke as smoke
 import httpx
 import pytest
+
+from db.models.scene import DescribeRun, DescribeRunItem
+from scene.domain.description import DescriptionResultTier
+from scene.interface_adapters.http.routers.describe_run import _run_items_response
 
 FIXTURE_DENYLIST = (
     Path(__file__).resolve().parent / "deploy" / "lib" / "fixture-denylist.sh"
@@ -141,6 +146,56 @@ def test_items_boundary_preserves_a_well_formed_list() -> None:
     items = [_valid_boundary_item()]
 
     assert smoke._validate_items_payload(items) is items
+
+
+def test_service_router_items_satisfy_smoke_contract() -> None:
+    """Keep the dry validator tied to the service's real persisted-item shape."""
+
+    tenant_id = uuid.uuid4()
+    run_id = uuid.uuid4()
+    run = DescribeRun(
+        id=run_id,
+        tenant_id=tenant_id,
+        media_ids=[101],
+        total_items=1,
+    )
+    provenance = {
+        "adapter": "gpu_remote",
+        "model_id": f"{smoke.EXPECTED_PROFILE.hub_repo}@{smoke.EXPECTED_REVISION}",
+        "model_version": smoke.EXPECTED_MODEL_ID,
+        "prompt_or_task_version": "3",
+        "image_hash": "image-hash",
+        "context_hash": "context-hash",
+        "cached": False,
+        "duration_ms": 125,
+    }
+    item = DescribeRunItem(
+        run_id=run_id,
+        tenant_id=tenant_id,
+        media_id=101,
+        status="completed",
+        alt_text_draft="Red bicycle beside a brick library wall",
+        caption="A red bicycle leans beside a brick library wall.",
+        provenance=provenance,
+        tier=DescriptionResultTier.FINAL_GPU.value,
+        result_generation=2,
+    )
+
+    items = _run_items_response(run, [item]).model_dump(mode="json")["items"]
+
+    assert smoke._validate_items_payload(items) is items
+    assert items[0]["tier"] == "final_gpu"
+    assert items[0]["result_generation"] == 2
+    assert items[0]["provenance"] == provenance
+
+    for field_name, message in (
+        ("tier", r"contract_tier_missing"),
+        ("result_generation", r"result_generation.*non-negative int"),
+    ):
+        without_required_field = [{**items[0]}]
+        without_required_field[0].pop(field_name)
+        with pytest.raises(smoke.SmokeFailure, match=message):
+            smoke._validate_items_payload(without_required_field)
 
 
 def test_subprocess_oci_uses_supported_exact_argv(
@@ -377,6 +432,21 @@ def test_red_final_item_remains_provisional_cpu(tmp_path: Path) -> None:
 
     assert result.exit_code == 1
     assert not _check(result, "tier_final_gpu")
+
+
+def test_red_completed_provisional_observed_mid_run_is_degraded(
+    tmp_path: Path,
+) -> None:
+    result, _ = _run(
+        tmp_path,
+        scenario=smoke.DryScenario(
+            item_statuses=["queued", "completed", "running", "completed"]
+        ),
+    )
+
+    assert result.exit_code == 1
+    assert not _check(result, "no_degraded_items")
+    assert "101" in _detail(result, "no_degraded_items")
 
 
 def test_red_missing_one_of_two_requested_media_items(tmp_path: Path) -> None:

@@ -111,6 +111,32 @@ assert_summary() {
   fi
 }
 
+# Bash 3.2 has no timed `wait`. Background race fixtures write an exit marker
+# from an EXIT trap; poll that marker for at most ten seconds, then kill and
+# reap the child so a broken synchronization hook cannot stall the suite.
+wait_for_background_pid() {  # $1 pid, $2 exit marker, $3 label
+  local pid="$1" exit_marker="$2" label="$3" attempt=0 child_rc
+  while [[ ! -e "$exit_marker" && "$attempt" -lt 1000 ]]; do
+    sleep 0.01
+    attempt=$((attempt + 1))
+  done
+  if [[ ! -e "$exit_marker" ]]; then
+    kill "$pid" >/dev/null 2>&1 || true
+    wait "$pid" >/dev/null 2>&1 || true
+    fail "$label timed out waiting for background writer"
+    return 1
+  fi
+  set +e
+  wait "$pid"
+  child_rc=$?
+  set -e
+  if [[ "$child_rc" -ne 0 ]]; then
+    fail "$label background writer exited $child_rc"
+    return 1
+  fi
+  return 0
+}
+
 init_origin
 
 # A second reaper must fail closed before inspecting any lane. Hold the same
@@ -523,10 +549,88 @@ if command -v flock >/dev/null 2>&1; then
   run_reap --yes --archive-to "$ARCHIVE" "$lane_gs_legacy"
   assert_rc0 "grok-sandbox stale legacy marker backfill"
   assert_gone "grok-sandbox stale legacy marker backfill" "$lane_gs_legacy"
-  assert_gone "grok-sandbox stale legacy lane lock" "$HOME/grok-sandbox/.lane-lock-$legacy_key"
+  if [[ -e "$HOME/grok-sandbox/.lane-lock-$legacy_key" ]]; then
+    pass "grok-sandbox stale legacy lane lock inode retained"
+  else
+    fail "grok-sandbox stale legacy lane lock inode was unlinked"
+  fi
   assert_gone "grok-sandbox stale legacy lease" "$HOME/grok-sandbox/.lane-live-$legacy_key"
   assert_gone "grok-sandbox stale legacy venv" "$HOME/grok-sandbox/.venv-lane-$legacy_key"
   assert_gone "grok-sandbox stale legacy sync stamp" "$HOME/grok-sandbox/.venv-sync-stamp-$legacy_key"
+
+  # If a materializer replaces the path with a newly locked inode after the
+  # checkout disappears, sibling cleanup must not unlink that new lock.
+  lane_gs_recreated_lock="$HOME/grok-sandbox/feature-recreated-lock-abc12345"
+  clone_lane "$lane_gs_recreated_lock"
+  mark_sandbox "$lane_gs_recreated_lock"
+  touch -t 200001010000 "$lane_gs_recreated_lock/.workbay-lane-sandbox"
+  recreated_key="${lane_gs_recreated_lock##*/}"
+  recreated_lock="$HOME/grok-sandbox/.lane-lock-$recreated_key"
+  recreated_trigger="$WORKDIR/recreated-lock-trigger"
+  recreated_ready="$WORKDIR/recreated-lock-ready"
+  recreated_release="$WORKDIR/recreated-lock-release"
+  recreated_exited="$WORKDIR/recreated-lock-exited"
+  : >"$recreated_lock"
+  recreated_rm_bin="$WORKDIR/recreated-rm-bin"
+  mkdir "$recreated_rm_bin"
+  cat >"$recreated_rm_bin/rm" <<'RECREATED_RM'
+#!/usr/bin/env bash
+set -e
+for arg in "$@"; do
+  if [[ "$arg" == "$RECREATED_LANE" ]]; then
+    "$REAL_RM" "$@"
+    : >"$RECREATED_TRIGGER"
+    attempt=0
+    while [[ ! -e "$RECREATED_READY" && "$attempt" -lt 1000 ]]; do
+      sleep 0.01
+      attempt=$((attempt + 1))
+    done
+    if [[ ! -e "$RECREATED_READY" ]]; then
+      echo "FAIL: recreated lane lock materializer did not become ready" >&2
+      exit 124
+    fi
+    exit 0
+  fi
+done
+exec "$REAL_RM" "$@"
+RECREATED_RM
+  chmod +x "$recreated_rm_bin/rm"
+  (
+    trap ': >"$recreated_exited"' EXIT
+    attempt=0
+    while [[ ! -e "$recreated_trigger" && "$attempt" -lt 1000 ]]; do
+      sleep 0.01
+      attempt=$((attempt + 1))
+    done
+    if [[ ! -e "$recreated_trigger" ]]; then
+      exit 124
+    fi
+    "$(command -v rm)" -f "$recreated_lock"
+    exec 7>"$recreated_lock"
+    flock 7
+    : >"$recreated_ready"
+    attempt=0
+    while [[ ! -e "$recreated_release" && "$attempt" -lt 1000 ]]; do
+      sleep 0.01
+      attempt=$((attempt + 1))
+    done
+    [[ -e "$recreated_release" ]] || exit 124
+  ) &
+  recreated_materializer_pid=$!
+  RECREATED_LANE="$lane_gs_recreated_lock" \
+    RECREATED_TRIGGER="$recreated_trigger" RECREATED_READY="$recreated_ready" \
+    REAL_RM="$(command -v rm)" PATH="$recreated_rm_bin:$PATH" \
+    run_reap --yes --archive-to "$ARCHIVE" "$lane_gs_recreated_lock"
+  assert_rc0 "grok-sandbox recreated lane lock"
+  assert_gone "grok-sandbox recreated lane lock lane" "$lane_gs_recreated_lock"
+  if [[ -e "$recreated_lock" ]]; then
+    pass "grok-sandbox recreated lane lock inode retained"
+  else
+    fail "grok-sandbox recreated lane lock inode was unlinked"
+  fi
+  : >"$recreated_release"
+  wait_for_background_pid "$recreated_materializer_pid" "$recreated_exited" \
+    "grok-sandbox recreated lane lock" || true
 fi
 
 lane_gs_leased="$HOME/grok-sandbox/feature-leased-abc12345"
@@ -788,6 +892,7 @@ clone_lane "$lane_snapshot_race"
 snapshot_head="$(git -C "$lane_snapshot_race" rev-parse HEAD)"
 snapshot_trigger="$WORKDIR/snapshot-trigger"
 snapshot_done="$WORKDIR/snapshot-done"
+snapshot_writer_exited="$WORKDIR/snapshot-writer-exited"
 snapshot_du_bin="$WORKDIR/snapshot-du-bin"
 mkdir "$snapshot_du_bin"
 cat >"$snapshot_du_bin/du" <<'SNAPSHOT_DU'
@@ -795,13 +900,27 @@ cat >"$snapshot_du_bin/du" <<'SNAPSHOT_DU'
 set -e
 if [[ ! -e "$SNAPSHOT_TRIGGER" ]]; then
   : >"$SNAPSHOT_TRIGGER"
-  while [[ ! -e "$SNAPSHOT_DONE" ]]; do sleep 0.01; done
+  attempt=0
+  while [[ ! -e "$SNAPSHOT_DONE" && "$attempt" -lt 1000 ]]; do
+    sleep 0.01
+    attempt=$((attempt + 1))
+  done
+  if [[ ! -e "$SNAPSHOT_DONE" ]]; then
+    echo "FAIL: lane snapshot writer did not finish" >&2
+    exit 124
+  fi
 fi
 exec "$REAL_DU" "$@"
 SNAPSHOT_DU
 chmod +x "$snapshot_du_bin/du"
 (
-  while [[ ! -e "$snapshot_trigger" ]]; do sleep 0.01; done
+  trap ': >"$snapshot_writer_exited"' EXIT
+  attempt=0
+  while [[ ! -e "$snapshot_trigger" && "$attempt" -lt 1000 ]]; do
+    sleep 0.01
+    attempt=$((attempt + 1))
+  done
+  [[ -e "$snapshot_trigger" ]] || exit 124
   echo changed >"$lane_snapshot_race/AFTER_SNAPSHOT"
   git -C "$lane_snapshot_race" add AFTER_SNAPSHOT
   git -C "$lane_snapshot_race" commit -q -m "change after safety snapshot"
@@ -811,7 +930,8 @@ snapshot_writer_pid=$!
 SNAPSHOT_TRIGGER="$snapshot_trigger" SNAPSHOT_DONE="$snapshot_done" \
   REAL_DU="$(command -v du)" PATH="$snapshot_du_bin:$PATH" \
   run_reap --yes --archive-to "$ARCHIVE" "$lane_snapshot_race"
-wait "$snapshot_writer_pid"
+wait_for_background_pid "$snapshot_writer_pid" "$snapshot_writer_exited" \
+  "lane changed after snapshot" || true
 assert_rc0 "lane changed after snapshot"
 assert_contains "lane changed after snapshot" "lane changed after snapshot; skipped"
 assert_exists "lane changed after snapshot" "$lane_snapshot_race"
@@ -819,6 +939,65 @@ if [[ "$(git -C "$lane_snapshot_race" rev-parse HEAD)" != "$snapshot_head" ]]; t
   pass "lane changed after snapshot fixture committed"
 else
   fail "lane changed after snapshot fixture did not commit; out=$out"
+fi
+
+# A commit followed by reset restores HEAD, refs, and status, but changes the
+# reflog. Trigger it after reflog archival and prove the final snapshot detects
+# that newly orphaned commit rather than deleting its only copy.
+lane_reflog_race="$HOME/w/lane-reflog-snapshot-race"
+clone_lane "$lane_reflog_race"
+reflog_race_head="$(git -C "$lane_reflog_race" rev-parse HEAD)"
+reflog_race_trigger="$WORKDIR/reflog-race-trigger"
+reflog_race_done="$WORKDIR/reflog-race-done"
+reflog_race_writer_exited="$WORKDIR/reflog-race-writer-exited"
+reflog_race_du_bin="$WORKDIR/reflog-race-du-bin"
+mkdir "$reflog_race_du_bin"
+cat >"$reflog_race_du_bin/du" <<'REFLOG_RACE_DU'
+#!/usr/bin/env bash
+set -e
+if [[ ! -e "$REFLOG_RACE_TRIGGER" ]]; then
+  : >"$REFLOG_RACE_TRIGGER"
+  attempt=0
+  while [[ ! -e "$REFLOG_RACE_DONE" && "$attempt" -lt 1000 ]]; do
+    sleep 0.01
+    attempt=$((attempt + 1))
+  done
+  if [[ ! -e "$REFLOG_RACE_DONE" ]]; then
+    echo "FAIL: reflog snapshot writer did not finish" >&2
+    exit 124
+  fi
+fi
+exec "$REAL_DU" "$@"
+REFLOG_RACE_DU
+chmod +x "$reflog_race_du_bin/du"
+(
+  trap ': >"$reflog_race_writer_exited"' EXIT
+  attempt=0
+  while [[ ! -e "$reflog_race_trigger" && "$attempt" -lt 1000 ]]; do
+    sleep 0.01
+    attempt=$((attempt + 1))
+  done
+  [[ -e "$reflog_race_trigger" ]] || exit 124
+  echo reflog-race >"$lane_reflog_race/REFLOG_RACE"
+  git -C "$lane_reflog_race" add REFLOG_RACE
+  git -C "$lane_reflog_race" commit -q -m "commit then reset after reflog archive"
+  git -C "$lane_reflog_race" reset -q --hard "$reflog_race_head"
+  : >"$reflog_race_done"
+) &
+reflog_race_writer_pid=$!
+REFLOG_RACE_TRIGGER="$reflog_race_trigger" REFLOG_RACE_DONE="$reflog_race_done" \
+  REAL_DU="$(command -v du)" PATH="$reflog_race_du_bin:$PATH" \
+  run_reap --yes --archive-to "$ARCHIVE" "$lane_reflog_race"
+wait_for_background_pid "$reflog_race_writer_pid" "$reflog_race_writer_exited" \
+  "lane reflog changed after snapshot" || true
+assert_rc0 "lane reflog changed after snapshot"
+assert_contains "lane reflog changed after snapshot" "lane changed after snapshot; skipped"
+assert_exists "lane reflog changed after snapshot" "$lane_reflog_race"
+if [[ "$(git -C "$lane_reflog_race" rev-parse HEAD)" == "$reflog_race_head" ]] &&
+   [[ -n "$(git -C "$lane_reflog_race" reflog --all --format='%H' | grep -v "$reflog_race_head" || true)" ]]; then
+  pass "lane reflog changed after snapshot fixture committed and reset"
+else
+  fail "lane reflog changed after snapshot fixture did not commit and reset; out=$out"
 fi
 
 # A detached HEAD is archived too -- commits reachable only from HEAD are the

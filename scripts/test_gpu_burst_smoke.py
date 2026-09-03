@@ -33,6 +33,7 @@ def _run(
     *,
     scenario: smoke.DryScenario | None = None,
     oci: smoke.FakeOci | None = None,
+    app_password: str = "not-a-secret",
     extra: tuple[str, ...] = (),
 ) -> tuple[smoke.SmokeResult, smoke.FakeOci]:
     scenario = scenario or smoke.DryScenario()
@@ -44,7 +45,7 @@ def _run(
             _args(tmp_path, *extra),
             client=client,
             oci=fake_oci,
-            app_password="not-a-secret",
+            app_password=app_password,
             monotonic=clock.monotonic,
             sleep=clock.sleep,
             now=clock.now,
@@ -112,6 +113,21 @@ def test_dry_run_exercises_whole_flow_and_writes_cost_evidence(tmp_path: Path) -
     ]
     assert result.evidence["cost_estimate_usd"] > 0
     assert (tmp_path / "evidence.json").is_file()
+
+
+def test_application_password_is_absent_from_output_and_evidence(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    password = "unique-wp-application-password"
+
+    result, _ = _run(tmp_path, app_password=password)
+    captured = capsys.readouterr()
+
+    assert result.exit_code == 0
+    assert password not in captured.out
+    assert password not in captured.err
+    assert password not in (tmp_path / "evidence.json").read_text(encoding="utf-8")
 
 
 def test_red_tier_provisional_cpu(tmp_path: Path) -> None:
@@ -192,6 +208,17 @@ def test_red_second_start_transition_breaks_idempotence(tmp_path: Path) -> None:
 
     assert result.exit_code == 1
     assert not _check(result, "exactly_one_start_transition")
+
+
+def test_red_warm_start_deadline_still_issues_stop(tmp_path: Path) -> None:
+    oci = smoke.FakeOci(startup_states=["STARTING"])
+    result, used_oci = _run(tmp_path, oci=oci, extra=("--max-seconds", "3"))
+
+    assert result.exit_code == 1
+    assert not _check(result, "warm_start_running")
+    assert not _check(result, "deadline")
+    assert used_oci.stop_calls == 1
+    assert _check(result, "instance_stopped_finally")
 
 
 def test_red_instance_left_running_issues_compensating_stop(tmp_path: Path) -> None:

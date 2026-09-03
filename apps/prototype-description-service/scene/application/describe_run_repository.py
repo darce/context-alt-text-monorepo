@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import uuid
 from collections import Counter
 from collections.abc import Mapping, Sequence
@@ -30,6 +31,7 @@ from scene.domain.description import DescriptionResultTier
 
 _TRUTHY_PG_SETTINGS = {"true", "on", "1", "yes"}
 _RECLAIM_INTERRUPT_ERROR = "interrupted by service restart"
+logger = logging.getLogger(__name__)
 
 
 class DescribeRunRepository:
@@ -297,10 +299,20 @@ class DescribeRunRepository:
         item = await self._get_item(tenant_id=tenant_id, run_id=run_id, media_id=media_id)
         if item is None:
             return False
+        incoming_tier = DescriptionResultTier(tier) if tier is not None else None
+        persisted_tier = DescriptionResultTier(item.tier) if item.tier is not None else None
+        if persisted_tier is DescriptionResultTier.FINAL_GPU and incoming_tier is DescriptionResultTier.PROVISIONAL_CPU:
+            logger.debug(
+                "ignoring late provisional describe result for final item tenant_id=%s run_id=%s media_id=%s",
+                tenant_id,
+                run_id,
+                media_id,
+            )
+            return False
         item.alt_text_draft = alt_text_draft
         item.caption = caption
         item.provenance = provenance
-        item.tier = DescriptionResultTier(tier) if tier is not None else None
+        item.tier = incoming_tier
         if any(value is not None for value in (alt_text_draft, caption, provenance, tier)):
             item.result_generation = int(item.result_generation or 0) + 1
         item.image_bytes = None

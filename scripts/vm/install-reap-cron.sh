@@ -11,8 +11,12 @@ if [[ ! -f "$src" ]]; then
 fi
 
 mkdir -p "$HOME/bin"
-cp "$src" "$HOME/bin/reap-lane.sh"
-chmod +x "$HOME/bin/reap-lane.sh"
+install_tmp="$(mktemp "$HOME/bin/.reap-lane.sh.XXXXXX")"
+trap 'rm -f "$install_tmp"' EXIT
+cp "$src" "$install_tmp"
+chmod +x "$install_tmp"
+mv -f "$install_tmp" "$HOME/bin/reap-lane.sh"
+trap - EXIT
 
 marker='# acx-reap-lane'
 # Every root that accumulates lane clones. Kept in step with REAP_LANE_ROOTS in

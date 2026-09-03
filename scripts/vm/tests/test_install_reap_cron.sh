@@ -68,6 +68,9 @@ assert_cron_absent() {
   else pass "$1 crontab free of $2"; fi
 }
 count_marker() { grep -cF '# acx-reap-lane' "$CRONTAB_FILE" || true; }
+file_inode() {
+  stat -c %i "$1" 2>/dev/null || stat -f %i "$1"
+}
 
 # --- fresh install ------------------------------------------------------------
 : >"$CRONTAB_FILE"
@@ -132,11 +135,18 @@ assert_cron_contains "roll-forward" "/usr/bin/some-other-job"
 
 # --- the installed copy is the current one, not a stale one -------------------
 printf '# stale\n' >"$HOME/bin/reap-lane.sh"
+installed_inode_before="$(file_inode "$HOME/bin/reap-lane.sh")"
 run_install
 if cmp -s "$HOME/bin/reap-lane.sh" "${ROOT}/scripts/vm/reap-lane.sh"; then
   pass "reinstall refreshes the copied script"
 else
   fail "reinstall left a stale $HOME/bin/reap-lane.sh"
+fi
+installed_inode_after="$(file_inode "$HOME/bin/reap-lane.sh")"
+if [[ "$installed_inode_after" != "$installed_inode_before" ]]; then
+  pass "reinstall atomically replaces the installed inode"
+else
+  fail "reinstall overwrote the installed script in place"
 fi
 
 echo

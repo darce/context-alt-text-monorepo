@@ -93,6 +93,7 @@ if command -v flock >/dev/null 2>&1; then
   lock_kind="flock"
 else
   mkdir_lock_acquired=0
+  stale_lock_dir=""
   if mkdir "$lock_dir" 2>/dev/null; then
     mkdir_lock_acquired=1
   else
@@ -104,10 +105,18 @@ else
     case "$owner_pid" in
       ''|*[!0-9]*) ;;
       *)
-        if ! kill -0 "$owner_pid" 2>/dev/null; then
-          rm -f "$lock_owner" >/dev/null 2>&1 || true
-          rmdir "$lock_dir" >/dev/null 2>&1 || true
-          if mkdir "$lock_dir" 2>/dev/null; then
+        # kill -0 also fails with EPERM for a live process owned by another
+        # user. Only recover when both kill and ps say the PID is absent.
+        if ! kill -0 "$owner_pid" 2>/dev/null &&
+           command -v ps >/dev/null 2>&1 &&
+           ! ps -p "$owner_pid" >/dev/null 2>&1; then
+          stale_lock_dir="${lock_dir}.stale.$$"
+          # Renaming the directory is the ownership transfer: at most one
+          # contender can move this inode. Preserve its owner file because it
+          # was written by the prior holder, not by this process.
+          if [[ ! -e "$stale_lock_dir" ]] &&
+             mv "$lock_dir" "$stale_lock_dir" 2>/dev/null &&
+             mkdir "$lock_dir" 2>/dev/null; then
             mkdir_lock_acquired=1
           fi
         fi
@@ -166,6 +175,7 @@ reaped=0
 skipped=0
 bytes_freed=0
 grok_lane_lock_held=0
+grok_marker_backfill=0
 
 is_ignorable_path() {
   local p="${1#./}"
@@ -200,7 +210,8 @@ is_grok_sandbox() {
 # success only after the sandbox is old and unoccupied; deletion still takes
 # the per-lane lock immediately before archive/anchor and holds it through rm.
 grok_sandbox_is_stale() {
-  local real="$1" path="$2" root key marker lease ttl now mtime issued expiry marker_tmp lease_line
+  local real="$1" path="$2" root key marker lease ttl now mtime issued expiry lease_line
+  grok_marker_backfill=0
   root="$(dirname "$real")"
   key="${real##*/}"
   marker="$real/.workbay-lane-sandbox"
@@ -224,39 +235,21 @@ grok_sandbox_is_stale() {
       skip "$path" "sandbox marker missing"
       return 1
     fi
-    # Legacy sandboxes predate marker-gated cleanup. Backfill only stale ones,
-    # preserve their prior age, and locally exclude the marker just as the
-    # canonical materializer does.
-    marker_tmp="$root/.reap-marker-$key-$$"
-    if ! printf 'lane_key=%s\n' "$key" >"$marker_tmp" ||
-       ! touch -r "$real" "$marker_tmp"; then
-      rm -f "$marker_tmp" >/dev/null 2>&1 || true
-      skip "$path" "could not backfill sandbox marker"
+    # Remember legacy eligibility without mutating the checkout. The marker is
+    # committed only after every guard/archive succeeds and immediately before
+    # deletion, while the lane lock is held when one exists.
+    grok_marker_backfill=1
+  else
+    mtime="$(path_mtime "$marker" || true)"
+    now="$(date +%s)"
+    if [[ -z "$mtime" ]]; then
+      skip "$path" "could not read sandbox marker age"
       return 1
     fi
-    if ! grep -qxF '.workbay-lane-sandbox' "$real/.git/info/exclude" 2>/dev/null; then
-      if ! printf '%s\n' .workbay-lane-sandbox >>"$real/.git/info/exclude"; then
-        rm -f "$marker_tmp" >/dev/null 2>&1 || true
-        skip "$path" "could not backfill sandbox marker"
-        return 1
-      fi
-    fi
-    if ! mv "$marker_tmp" "$marker"; then
-      rm -f "$marker_tmp" >/dev/null 2>&1 || true
-      skip "$path" "could not backfill sandbox marker"
+    if [[ $((now - mtime)) -le "$ttl" ]]; then
+      skip "$path" "sandbox marker has not reached TTL"
       return 1
     fi
-  fi
-
-  mtime="$(path_mtime "$marker" || true)"
-  now="$(date +%s)"
-  if [[ -z "$mtime" ]]; then
-    skip "$path" "could not read sandbox marker age"
-    return 1
-  fi
-  if [[ $((now - mtime)) -le "$ttl" ]]; then
-    skip "$path" "sandbox marker has not reached TTL"
-    return 1
   fi
 
   if [[ -f "$lease" ]]; then
@@ -291,6 +284,31 @@ grok_sandbox_is_stale() {
   return 0
 }
 
+backfill_grok_sandbox_marker() {
+  local real="$1" root key marker marker_tmp
+  [[ "$grok_marker_backfill" -eq 1 ]] || return 0
+  root="$(dirname "$real")"
+  key="${real##*/}"
+  marker="$real/.workbay-lane-sandbox"
+  marker_tmp="$root/.reap-marker-$key-$$"
+  if ! printf 'lane_key=%s\n' "$key" >"$marker_tmp" ||
+     ! touch -r "$real" "$marker_tmp"; then
+    rm -f "$marker_tmp" >/dev/null 2>&1 || true
+    return 1
+  fi
+  if ! grep -qxF '.workbay-lane-sandbox' "$real/.git/info/exclude" 2>/dev/null &&
+     ! printf '%s\n' .workbay-lane-sandbox >>"$real/.git/info/exclude"; then
+    rm -f "$marker_tmp" >/dev/null 2>&1 || true
+    return 1
+  fi
+  if ! mv "$marker_tmp" "$marker"; then
+    rm -f "$marker_tmp" >/dev/null 2>&1 || true
+    return 1
+  fi
+  grok_marker_backfill=0
+  return 0
+}
+
 acquire_grok_lane_lock() {
   local real="$1" root key lane_lock
   is_grok_sandbox "$real" || return 0
@@ -300,13 +318,25 @@ acquire_grok_lane_lock() {
   if ! command -v flock >/dev/null 2>&1; then
     return 1
   fi
-  exec 8>>"$lane_lock"
+  # Absence means the materializer does not hold this lock. Opening it for
+  # append would create a sibling that outlives the sandbox being reaped.
+  [[ -e "$lane_lock" ]] || return 0
+  exec 8<"$lane_lock"
   if ! flock -n 8; then
     exec 8>&-
     return 1
   fi
   grok_lane_lock_held=1
   return 0
+}
+
+cleanup_grok_sandbox_siblings() {
+  local real="$1" root key
+  is_grok_sandbox "$real" || return 0
+  root="$(dirname "$real")"
+  key="${real##*/}"
+  rm -rf -- "$root/.lane-lock-$key" "$root/.lane-live-$key" \
+    "$root/.venv-lane-$key" "$root/.venv-sync-stamp-$key"
 }
 
 release_grok_lane_lock() {
@@ -460,6 +490,28 @@ has_linked_worktrees() {
   [[ "${n:-0}" -gt 1 ]]
 }
 
+lane_newest_mtime() {
+  local dir="$1" newest=0 candidate candidate_mtime git_item
+  for candidate in "$dir"; do
+    candidate_mtime="$(path_mtime "$candidate" || true)"
+    [[ -n "$candidate_mtime" ]] || return 1
+    [[ "$candidate_mtime" -gt "$newest" ]] && newest="$candidate_mtime"
+  done
+  for git_item in index HEAD; do
+    candidate="$(git -C "$dir" rev-parse --path-format=absolute --git-path "$git_item" 2>/dev/null)" || return 1
+    candidate_mtime="$(path_mtime "$candidate" || true)"
+    [[ -n "$candidate_mtime" ]] || return 1
+    [[ "$candidate_mtime" -gt "$newest" ]] && newest="$candidate_mtime"
+  done
+  printf '%s\n' "$newest"
+}
+
+archive_generation() {
+  local dir="$1"
+  git -C "$dir" rev-list --max-parents=0 HEAD 2>/dev/null |
+    LC_ALL=C sort | sed -n '1p'
+}
+
 # Anchor a linked worktree's HEAD as a real ref in its parent.
 # A worktree shares the parent's ref store, so its branches already survive
 # removal -- but a detached HEAD is held only by the worktree's own HEAD file,
@@ -481,6 +533,7 @@ anchor_worktree_head() {
 process_one() {
   local path="$1"
   local real size size_kib head_sha upstream upstream_label url ref log_dir ns parent
+  local now newest_mtime min_age generation cleanup_failed=0
 
   candidates=$((candidates + 1))
 
@@ -510,11 +563,34 @@ process_one() {
     if ! grok_sandbox_is_stale "$real" "$path"; then
       return 0
     fi
+  elif [[ -n "$archive_to" ]]; then
+    min_age="${REAP_MIN_AGE_SEC:-3600}"
+    case "$min_age" in
+      ''|*[!0-9]*)
+        skip "$path" "invalid minimum lane age"
+        return 0
+        ;;
+    esac
+    newest_mtime="$(lane_newest_mtime "$real" || true)"
+    now="$(date +%s)"
+    if [[ -z "$newest_mtime" ]]; then
+      skip "$path" "could not determine lane age"
+      return 0
+    fi
+    if [[ "$min_age" -gt 0 && $((now - newest_mtime)) -le "$min_age" ]]; then
+      skip "$path" "lane is too recent"
+      return 0
+    fi
   fi
   freshness_candidates=$((freshness_candidates + 1))
 
   if [[ -n "$archive_to" ]]; then
-    ns="${real#"${home_real}"/}"
+    generation="$(archive_generation "$real" || true)"
+    if [[ -z "$generation" ]]; then
+      skip "$path" "could not determine archive generation"
+      return 0
+    fi
+    ns="${real#"${home_real}"/}/${generation}"
     parent="$(lane_parent_repo "$real" || true)"
     if [[ -z "$parent" ]] && has_linked_worktrees "$real"; then
       skip "$path" "repo has linked worktrees"
@@ -605,9 +681,32 @@ process_one() {
     return 0
   fi
 
-  rm -rf -- "$real"
+  # Non-sandbox archive roots have no materializer lock. Re-check at the last
+  # possible moment so work created during archival is never removed.
+  if [[ -n "$archive_to" ]] && ! is_grok_sandbox "$real" &&
+     has_blocking_dirty "$real"; then
+    release_grok_lane_lock
+    skip "$path" "dirty working tree"
+    return 0
+  fi
+
+  if is_grok_sandbox "$real" && ! backfill_grok_sandbox_marker "$real"; then
+    release_grok_lane_lock
+    skip "$path" "could not backfill sandbox marker"
+    return 0
+  fi
+
+  if ! rm -rf -- "$real" || [[ -e "$real" ]]; then
+    release_grok_lane_lock
+    skip "$path" "rm failed"
+    return 1
+  fi
   reaped=$((reaped + 1))
   bytes_freed=$((bytes_freed + size_kib * 1024))
+  if ! cleanup_grok_sandbox_siblings "$real"; then
+    echo "reap-lane: could not remove sandbox siblings for $real" >&2
+    cleanup_failed=1
+  fi
   # Stale worktree metadata makes the parent's `worktree list` lie, and leaves
   # the per-worktree HEAD holding a commit we have already anchored properly.
   if [[ -n "${parent:-}" ]]; then
@@ -617,6 +716,7 @@ process_one() {
   mkdir -p "$log_dir"
   printf '%s %s %s %s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$real" "$size" "$head_sha" "$upstream_label" >>"$log"
   release_grok_lane_lock
+  [[ "$cleanup_failed" -eq 0 ]] || return 1
   return 0
 }
 
@@ -627,7 +727,13 @@ for path in ${paths[@]+"${paths[@]}"}; do
   fi
 done
 
-df_used_pct="$(df -P "$HOME" | awk 'NR == 2 { sub(/%$/, "", $5); print $5; exit }')"
+df_used_pct="$(df -P "$HOME" 2>/dev/null | awk 'NR == 2 { sub(/%$/, "", $5); print $5; exit }')" || df_used_pct=""
+case "$df_used_pct" in
+  ''|*[!0-9]*)
+    echo "reap-lane: could not determine filesystem usage; assuming 100%" >&2
+    df_used_pct=100
+    ;;
+esac
 printf 'REAP SUMMARY candidates=%s reaped=%s skipped=%s bytes_freed=%s df_used_pct=%s\n' \
   "$candidates" "$reaped" "$skipped" "$bytes_freed" "$df_used_pct"
 

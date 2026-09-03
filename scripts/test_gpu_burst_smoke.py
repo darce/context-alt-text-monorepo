@@ -135,6 +135,7 @@ def test_dry_run_exercises_whole_flow_and_writes_cost_evidence(tmp_path: Path) -
         }
     ]
     assert result.evidence["cost_estimate_usd"] > 0
+    assert result.evidence["cost_estimate_ongoing"] is False
     assert (tmp_path / "evidence.json").is_file()
 
 
@@ -347,6 +348,11 @@ def test_red_stop_reverification_fails_if_compensating_stop_is_ineffective(
 
     assert result.exit_code == 1
     assert not _check(result, "instance_stopped_finally")
+    assert result.evidence["measurements"]["running_seconds"] > 0
+    assert result.evidence["measurements"]["running_seconds_ongoing"] is True
+    assert result.evidence["running_seconds_ongoing"] is True
+    assert result.evidence["cost_estimate_usd"] > 0
+    assert result.evidence["cost_estimate_ongoing"] is True
 
 
 def test_red_compensating_stop_times_out_in_stopping(tmp_path: Path) -> None:

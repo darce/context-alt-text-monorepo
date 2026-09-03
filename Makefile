@@ -703,7 +703,7 @@ gpu-burst-smoke-live:
 	  exit 2; \
 	}
 	@$(GPU_SMOKE_PYTHON) scripts/gpu_burst_smoke.py --live --max-seconds 900 \
-	  --evidence-out "docs/tasks/vlm/GPUSMOKE-1-evidence-$$(date -u +%F).json" \
+	  --evidence-out "docs/tasks/vlm/GPUSMOKE-1-evidence-$$(date -u +%Y%m%dT%H%M%SZ).json" \
 	  --wp-base-url "$${ACX_GPU_SMOKE_WP_BASE_URL:-https://wordpress.invalid}" \
 	  --wp-user "$${ACX_GPU_SMOKE_WP_USER:-gpu-smoke-operator}" \
 	  --wp-app-password-env "$${ACX_GPU_SMOKE_PASSWORD_ENV:-ACX_WP_APP_PASSWORD}" \

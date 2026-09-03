@@ -14,6 +14,7 @@ import {
   resolveDescribeErrorDataField,
   resolveDescribeErrorMessage,
   type DescriptionCandidateRow,
+  type DescribeRunItemsResponse,
 } from '../describeApi';
 
 const mockConfig = {
@@ -165,6 +166,8 @@ describe('describeApi', () => {
           alt_text_draft: 'A described bridge.',
           caption: 'A bridge.',
           provenance: sampleResponse,
+          tier: 'final_gpu',
+          result_generation: 2,
           existing_alt: true,
         },
         {
@@ -173,10 +176,12 @@ describe('describeApi', () => {
           alt_text_draft: 'A described flower.',
           caption: 'A flower.',
           provenance: sampleResponse,
+          tier: 'final_gpu',
+          result_generation: 1,
           existing_alt: false,
         },
       ],
-    };
+    } satisfies DescribeRunItemsResponse;
     fetchApiMock.mockResolvedValue(itemsResponse);
 
     const result = await fetchDescribeRunItems('run-abc');

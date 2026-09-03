@@ -15,9 +15,7 @@ from db.models.scene import DescribeRun, DescribeRunItem
 from scene.domain.description import DescriptionResultTier
 from scene.interface_adapters.http.routers.describe_run import _run_items_response
 
-FIXTURE_DENYLIST = (
-    Path(__file__).resolve().parent / "deploy" / "lib" / "fixture-denylist.sh"
-)
+FIXTURE_DENYLIST = Path(__file__).resolve().parent / "deploy" / "lib" / "fixture-denylist.sh"
 
 
 def _args(tmp_path: Path, *extra: str):
@@ -47,9 +45,7 @@ def _run(
     scenario.service_api_key = service_api_key
     fake_oci = oci or smoke.FakeOci()
     clock = smoke.FastClock()
-    client = httpx.Client(
-        transport=smoke.make_mock_transport(scenario), follow_redirects=False
-    )
+    client = httpx.Client(transport=smoke.make_mock_transport(scenario), follow_redirects=False)
     try:
         result = smoke.run_smoke(
             _args(tmp_path, *extra),
@@ -73,9 +69,7 @@ def _check(result: smoke.SmokeResult, name: str) -> bool:
 
 
 def _detail(result: smoke.SmokeResult, name: str) -> str:
-    return next(
-        check["detail"] for check in result.evidence["checks"] if check["name"] == name
-    )
+    return next(check["detail"] for check in result.evidence["checks"] if check["name"] == name)
 
 
 def _valid_boundary_item(**overrides: object) -> dict[str, object]:
@@ -100,24 +94,12 @@ def _valid_boundary_item(**overrides: object) -> dict[str, object]:
         ({"not": "a list"}, r"items.*list.*dict"),
         ([_valid_boundary_item(), "malformed"], r"items\[1\].*object.*str"),
         (
-            [
-                {
-                    key: value
-                    for key, value in _valid_boundary_item().items()
-                    if key != "media_id"
-                }
-            ],
+            [{key: value for key, value in _valid_boundary_item().items() if key != "media_id"}],
             r"items\[0\]\.media_id",
         ),
         ([_valid_boundary_item(status=7)], r"items\[0\]\.status.*str"),
         (
-            [
-                {
-                    key: value
-                    for key, value in _valid_boundary_item().items()
-                    if key != "tier"
-                }
-            ],
+            [{key: value for key, value in _valid_boundary_item().items() if key != "tier"}],
             r"items\[0\].*contract_tier_missing",
         ),
         (
@@ -126,18 +108,12 @@ def _valid_boundary_item(**overrides: object) -> dict[str, object]:
         ),
         ([_valid_boundary_item(provenance=None)], r"items\[0\]\.provenance.*object"),
         (
-            [
-                _valid_boundary_item(
-                    provenance={"model_id": smoke.EXPECTED_PROFILE.hub_repo}
-                )
-            ],
+            [_valid_boundary_item(provenance={"model_id": smoke.EXPECTED_PROFILE.hub_repo})],
             r"items\[0\]\.provenance\.model_id.*@",
         ),
     ],
 )
-def test_items_boundary_rejects_malformed_payload(
-    payload: object, message: str
-) -> None:
+def test_items_boundary_rejects_malformed_payload(payload: object, message: str) -> None:
     with pytest.raises(smoke.SmokeFailure, match=message):
         smoke._validate_items_payload(payload)
 
@@ -291,9 +267,7 @@ def test_subprocess_oci_uses_supported_exact_argv(
     ]
 
 
-def test_default_dry_run_writes_evidence_outside_docs(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_default_dry_run_writes_evidence_outside_docs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(smoke, "REPO_ROOT", tmp_path)
 
     assert smoke.main([]) == 0
@@ -312,9 +286,7 @@ def test_default_dry_run_writes_evidence_outside_docs(
         ("person outdoors", False),
     ],
 )
-def test_fixture_denylist_python_matches_canonical_bash(
-    sample: str, expected: bool
-) -> None:
+def test_fixture_denylist_python_matches_canonical_bash(sample: str, expected: bool) -> None:
     shell = subprocess.run(
         [
             "bash",
@@ -385,9 +357,7 @@ def test_dry_run_exercises_whole_flow_and_writes_cost_evidence(tmp_path: Path) -
         }
     ]
     assert _check(result, "provisional_superseded_by_final")
-    assert {
-        sample["phase"] for sample in result.evidence["service_health_samples"]
-    } >= {
+    assert {sample["phase"] for sample in result.evidence["service_health_samples"]} >= {
         "preflight",
         "warm_up",
         "processing",
@@ -416,9 +386,7 @@ def test_application_password_is_absent_from_output_and_evidence(
     assert password not in (tmp_path / "evidence.json").read_text(encoding="utf-8")
     assert service_api_key not in captured.out
     assert service_api_key not in captured.err
-    assert service_api_key not in (tmp_path / "evidence.json").read_text(
-        encoding="utf-8"
-    )
+    assert service_api_key not in (tmp_path / "evidence.json").read_text(encoding="utf-8")
 
 
 def test_red_final_item_remains_provisional_cpu(tmp_path: Path) -> None:
@@ -439,9 +407,7 @@ def test_red_completed_provisional_observed_mid_run_is_degraded(
 ) -> None:
     result, _ = _run(
         tmp_path,
-        scenario=smoke.DryScenario(
-            item_statuses=["queued", "completed", "running", "completed"]
-        ),
+        scenario=smoke.DryScenario(item_statuses=["queued", "completed", "running", "completed"]),
     )
 
     assert result.exit_code == 1
@@ -476,9 +442,7 @@ def test_red_completed_with_errors_is_not_success(tmp_path: Path) -> None:
 
 
 def test_red_requested_item_final_status_is_not_completed(tmp_path: Path) -> None:
-    scenario = smoke.DryScenario(
-        item_statuses=["queued", "queued", "running", "failed"]
-    )
+    scenario = smoke.DryScenario(item_statuses=["queued", "queued", "running", "failed"])
     result, _ = _run(tmp_path, scenario=scenario)
 
     assert result.exit_code == 1
@@ -495,13 +459,18 @@ def test_red_item_terminal_before_instance_running(tmp_path: Path) -> None:
     assert "101" in _detail(result, "no_item_terminal_before_running")
 
 
-def test_red_final_without_provisional_supersession(tmp_path: Path) -> None:
-    scenario = smoke.DryScenario(item_tiers=[None, None, None, "final_gpu"])
+def test_bulk_worker_direct_final_does_not_require_provisional_supersession(
+    tmp_path: Path,
+) -> None:
+    scenario = smoke.DryScenario(
+        item_statuses=["queued", "running", "completed"],
+        item_tiers=[None, None, "final_gpu"],
+        result_generations=[0, 0, 1],
+    )
     result, _ = _run(tmp_path, scenario=scenario)
 
-    assert result.exit_code == 1
-    assert not _check(result, "provisional_superseded_by_final")
-    assert "101" in _detail(result, "provisional_superseded_by_final")
+    assert result.exit_code == 0
+    assert _check(result, "provisional_superseded_by_final")
 
 
 def test_red_nonincreasing_result_generation_is_not_supersession(
@@ -545,10 +514,7 @@ def test_service_health_preflight_sends_bearer_auth(tmp_path: Path) -> None:
     base_transport = smoke.make_mock_transport(scenario)
 
     def require_service_auth(request: httpx.Request) -> httpx.Response:
-        if (
-            request.url.path == "/health/detailed"
-            and request.headers.get("authorization") != "Bearer dry-service-key"
-        ):
+        if request.url.path == "/health/detailed" and request.headers.get("authorization") != "Bearer dry-service-key":
             return httpx.Response(401, json={"detail": "unauthorized"})
         return base_transport.handle_request(request)
 
@@ -594,10 +560,7 @@ def test_red_service_auth_refusal_is_distinct_and_does_not_stop(
 
     assert result.exit_code == 2
     assert not _check(result, "service_auth")
-    assert all(
-        check["name"] != "health_adapter_gpu_qwen30b"
-        for check in result.evidence["checks"]
-    )
+    assert all(check["name"] != "health_adapter_gpu_qwen30b" for check in result.evidence["checks"])
     assert fake_oci.stop_calls == 0
     assert _check(result, "finally_stop_skipped")
 
@@ -612,9 +575,7 @@ def test_red_initial_instance_not_stopped_preflight_refuses(tmp_path: Path) -> N
 
 def test_refusal_after_start_still_issues_compensating_stop(tmp_path: Path) -> None:
     class RefusingAfterStartOci(smoke.FakeOci):
-        def get_instance(
-            self, instance_id: str, *, timeout: float
-        ) -> dict[str, object]:
+        def get_instance(self, instance_id: str, *, timeout: float) -> dict[str, object]:
             if self.armed and not self.stopping:
                 raise smoke.PreflightRefusal("injected refusal after START")
             return super().get_instance(instance_id, timeout=timeout)
@@ -629,9 +590,7 @@ def test_refusal_after_start_still_issues_compensating_stop(tmp_path: Path) -> N
 
 def test_unowned_instance_is_not_stopped(tmp_path: Path) -> None:
     class UnownedOci(smoke.FakeOci):
-        def get_instance(
-            self, instance_id: str, *, timeout: float
-        ) -> dict[str, object]:
+        def get_instance(self, instance_id: str, *, timeout: float) -> dict[str, object]:
             instance = super().get_instance(instance_id, timeout=timeout)
             instance["display-name"] = "unrelated-instance"
             instance["freeform-tags"] = {"role": "unrelated"}
@@ -672,9 +631,7 @@ def test_red_fixture_alt_text_cannot_hide_behind_safe_caption(tmp_path: Path) ->
     assert result.exit_code == 1
     assert not _check(result, "caption_not_fixture")
     alt_verdict = next(
-        verdict
-        for verdict in result.evidence["denylist_verdicts"]
-        if verdict["field"] == "alt_text_draft"
+        verdict for verdict in result.evidence["denylist_verdicts"] if verdict["field"] == "alt_text_draft"
     )
     assert alt_verdict["denied"] is True
 
@@ -754,6 +711,21 @@ def test_red_deadline_still_issues_stop(tmp_path: Path) -> None:
     assert oci.stop_calls == 1
 
 
+def test_red_deadline_while_starting_issues_compensating_stop(
+    tmp_path: Path,
+) -> None:
+    class StartingOnlyOci(smoke.FakeOci):
+        begin_reaper = None
+
+    oci = StartingOnlyOci(startup_states=["STARTING"])
+    result, used_oci = _run(tmp_path, oci=oci, extra=("--max-seconds", "3"))
+
+    assert result.exit_code == 1
+    assert used_oci.stop_calls >= 1
+    assert _check(result, "finally_stop_issued")
+    assert _check(result, "instance_stopped_finally")
+
+
 def test_red_failed_stop_command_is_reported(tmp_path: Path) -> None:
     class StopFailingOci(smoke.FakeOci):
         def stop_instance(self, instance_id: str, *, timeout: float) -> None:
@@ -795,6 +767,34 @@ def test_red_compensating_stop_times_out_in_stopping(tmp_path: Path) -> None:
     assert "STOPPING" in _detail(result, "instance_stopped_finally")
 
 
+def test_evidence_writer_refuses_to_overwrite_without_force(tmp_path: Path) -> None:
+    target = tmp_path / "evidence.json"
+    target.write_text("existing evidence\n", encoding="utf-8")
+
+    with pytest.raises(smoke.PreflightRefusal, match=r"already exists.*--force"):
+        smoke._write_evidence(str(target), {"replacement": True})
+
+    assert target.read_text(encoding="utf-8") == "existing evidence\n"
+
+    smoke._write_evidence(str(target), {"replacement": True}, force=True)
+
+    assert json.loads(target.read_text(encoding="utf-8")) == {"replacement": True}
+
+
+def test_existing_evidence_path_refuses_before_dry_run(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    target = tmp_path / "evidence.json"
+    target.write_text("existing evidence\n", encoding="utf-8")
+
+    exit_code = smoke.main(["--evidence-out", str(target)])
+
+    assert exit_code == 2
+    assert "already exists" in capsys.readouterr().err
+    assert target.read_text(encoding="utf-8") == "existing evidence\n"
+
+    assert smoke.main(["--evidence-out", str(target), "--force"]) == 0
+    assert json.loads(target.read_text(encoding="utf-8"))["mode"] == "dry-run"
+
+
 def test_live_without_confirmation_refuses_before_client_or_oci(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -809,12 +809,7 @@ def test_live_without_confirmation_refuses_before_client_or_oci(
         calls.append(f"oci:{binary}")
         raise AssertionError("OCI client must not be constructed")
 
-    assert (
-        smoke.main(
-            ["--live"], client_factory=forbidden_client, oci_factory=forbidden_oci
-        )
-        == 2
-    )
+    assert smoke.main(["--live"], client_factory=forbidden_client, oci_factory=forbidden_oci) == 2
     assert calls == []
 
 
@@ -825,9 +820,7 @@ def test_live_rejects_placeholder_service_endpoint_before_network(
     monkeypatch.setenv("ACX_WP_APP_PASSWORD", "password")
     monkeypatch.setenv("ACX_DESCRIPTION_API_KEY", "api-key")
     monkeypatch.setattr(smoke.shutil, "which", lambda _: "/oci-placeholder")
-    args = smoke.build_parser().parse_args(
-        ["--live", "--instance-id", "instance-placeholder"]
-    )
+    args = smoke.build_parser().parse_args(["--live", "--instance-id", "instance-placeholder"])
 
     with pytest.raises(smoke.PreflightRefusal, match="service-base-url"):
         smoke._validate_args(args)

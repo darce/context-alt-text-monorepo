@@ -5,9 +5,15 @@
 - Kept the OCIR login suite's existing secret-hygiene text assertions and added execution of the emitted snippet under Bash with fake `oci`, `timeout`, and `docker` executables.
 - The behavioral harness asserts the exact Docker argv, byte-for-byte token stdin, absence of the token from Docker argv and every test artifact except the stdin capture, and a non-zero exit before Docker when the required username variable is unset.
 - Added `scripts/deploy/tests/test_ocir_auth_shell.py` so pytest executes the Bash suite and requires both exit zero and the `all assertions passed` sentinel.
-- Pinned the complete exponential-backoff sequence and its timeout budget.
+- Asserted the exponential-backoff contract: positive delays increase until
+  the 5-second cap, remain capped, are not constant, and stay within the
+  readable timeout. This still kills the constant-delay mutant without
+  coupling safe multiplier tuning to an exact sequence.
 - Reworked the fake OCI clients around one fake Vault store. Consumer reads now return the content actually submitted through `create_secret` or `update_secret`, after a configurable propagation delay.
 - Added the rotation path: an old version remains readable during propagation, `create_secret` is forbidden by assertion, the submitted update content is checked, and `main()` may return only after the new version is read.
+- Scrubbed all six `ACX_*` inputs before the shell suite sources the library,
+  making the default contract independent of the caller's environment. A
+  focused fresh-process fixture proves each supported override is honored.
 - Production files were modified only temporarily to execute mutants and were restored byte-for-byte; the final diff contains no production change.
 
 ## Per-finding RED evidence
@@ -103,7 +109,32 @@ Final lane verification:
 
 ```text
 ................                                                         [100%]
-16 passed in 0.17s
+16 passed in 0.16s
+```
+
+Review verification with hostile ambient deploy overrides:
+
+```bash
+env ACX_VAULT_OCID=bad-vault ACX_OCIR_TOKEN_SECRET=OTHER_TOKEN ACX_OCIR_USERNAME_SECRET=OTHER_USER ACX_REMOTE_OCI_BIN=bad-remote ACX_LOCAL_OCI_BIN=bad-local ACX_VAULT_FETCH_TIMEOUT=999 bash scripts/deploy/tests/test-ocir-auth.sh
+```
+
+```text
+ok   ocir_rejected hint routes to rotation
+ok   oci_cli_missing hint gives the install line
+ok   only the revoked-token hint sends a human to the Console
+
+all assertions passed
+```
+
+Review reproduction of the out-of-lane Bash-version finding:
+
+```bash
+"$resolved_python" -m pytest scripts/test_shell_parses_under_system_bash.py -q
+```
+
+```text
+FAILED scripts/test_shell_parses_under_system_bash.py::test_the_guard_would_catch_the_shape_that_broke
+1 failed, 56 passed in 0.35s
 ```
 
 Direct Bash verification:
@@ -214,12 +245,12 @@ After command:
 After: **KILLED**.
 
 ```text
-E       assert [1.0, 1.0, 1....1.0, 1.0, ...] == [1.0, 1.5, 2....5.0, 5.0, ...]
-E         At index 1 diff: 1.0 != 1.5
+E       AssertionError: retry delay must not remain constant
+E       assert 1 > 1
 FAILED scripts/test_ocirv1_vault_readiness.py::test_returns_once_the_written_value_reads_back
 FAILED scripts/test_ocirv1_vault_readiness.py::test_main_rotation_waits_for_the_new_submitted_version
 2 failed, 13 passed in 0.12s
-MUTANT_S16_AFTER_RC=1
+MUTANT_S16_REVIEW_RC=1
 ```
 
 ### S-17 — wrong content submitted
@@ -288,4 +319,22 @@ None.
 
 ## Findings outside ownership
 
-None. The requested behavior was testable through existing seams; no production defect or additional seam was needed, and no production file remains changed.
+- `scripts/test_shell_parses_under_system_bash.py`: the historical compatibility
+  fixture parses on the gate's Bash 5.2.21, producing `1 failed, 56 passed`.
+  Gating that assertion on Bash 3.2 or introducing a pinned 3.2 interpreter
+  requires changing a sibling-lane test, so this lane did not edit it.
+- `scripts/deploy/lib/ocir-auth.sh`: real `docker login` persists credentials in
+  Docker's configured credential store or config. The existing fake proves
+  stdin/argv behavior but cannot prove runtime cleanup. Isolating Docker config,
+  cleaning it reliably, adding runtime-parity coverage, and updating the
+  runbook require production/documentation changes outside frozen ownership.
+- `scripts/deploy/lib/ocir-auth.sh`: the no-`timeout(1)` branch still performs an
+  unbounded Vault call. A portable deadline is a production behavior change
+  owned by another OCIRV-1 lane.
+- `scripts/deploy/_vault_put_secret.py`: explicit `--key-id` still cannot
+  bootstrap an empty vault because sibling resolution happens first. Correcting
+  the resolution order is an out-of-lane production change.
+- `scripts/deploy/_vault_put_secret.py`: `--readable-timeout 0` still performs a
+  read despite help text saying it skips the wait, and negative values are not
+  rejected. Choosing and implementing the CLI semantics belongs to the
+  production owner.

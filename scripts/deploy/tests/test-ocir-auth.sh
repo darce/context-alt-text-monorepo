@@ -28,6 +28,15 @@ if [ ! -f "$lib_file" ]; then
     echo "FAIL ocir-auth.sh missing: ${lib_file}"
     exit 1
 fi
+# The contract suite must be deterministic even when invoked from an operator
+# shell that exports deploy overrides. Override behaviour is exercised
+# separately below with explicit fixture values.
+unset ACX_VAULT_OCID
+unset ACX_OCIR_TOKEN_SECRET
+unset ACX_OCIR_USERNAME_SECRET
+unset ACX_REMOTE_OCI_BIN
+unset ACX_LOCAL_OCI_BIN
+unset ACX_VAULT_FETCH_TIMEOUT
 # shellcheck source=../lib/ocir-auth.sh
 source "$lib_file"
 
@@ -89,6 +98,34 @@ local_fetch=$(ocir_vault_fetch_snippet oci api_key OCIR_AUTH_TOKEN)
 assert_contains "local fetch uses the operator API key" '--auth api_key' "$local_fetch"
 assert_absent "local fetch does not claim instance principal" \
     'instance_principal' "$local_fetch"
+
+# Supported overrides are checked in a fresh Bash process so the default-value
+# assertions below cannot accidentally depend on values inherited by the test.
+override_contract=$(
+    ACX_VAULT_OCID='ocid1.vault.oc1.iad.override' \
+    ACX_OCIR_TOKEN_SECRET='OVERRIDE_TOKEN' \
+    ACX_OCIR_USERNAME_SECRET='OVERRIDE_USERNAME' \
+    ACX_REMOTE_OCI_BIN='/opt/override/remote-oci' \
+    ACX_LOCAL_OCI_BIN='/opt/override/local-oci' \
+    ACX_VAULT_FETCH_TIMEOUT='47' \
+    bash -c '
+        source "$1"
+        printf "remote=%s\nlocal=%s\n" "$ACX_REMOTE_OCI_BIN" "$ACX_LOCAL_OCI_BIN"
+        ocir_login_snippet "$ACX_REMOTE_OCI_BIN" instance_principal override.ocir.io
+    ' _ "$lib_file"
+)
+assert_contains "vault OCID override is honored" \
+    '--vault-id ocid1.vault.oc1.iad.override' "$override_contract"
+assert_contains "username secret override is honored" \
+    '--secret-name OVERRIDE_USERNAME' "$override_contract"
+assert_contains "token secret override is honored" \
+    '--secret-name OVERRIDE_TOKEN' "$override_contract"
+assert_contains "remote OCI binary override is honored" \
+    'remote=/opt/override/remote-oci' "$override_contract"
+assert_contains "local OCI binary override is honored" \
+    'local=/opt/override/local-oci' "$override_contract"
+assert_contains "fetch timeout override is honored" \
+    'timeout 47 "$@"' "$override_contract"
 
 # --- login snippet: secrecy invariants ---------------------------------------
 

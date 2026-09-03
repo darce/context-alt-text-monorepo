@@ -42,6 +42,19 @@ def _digest(value: bytes) -> str:
     return hashlib.sha256(value).hexdigest()
 
 
+def _assert_bounded_increasing_backoff(delays, timeout):
+    """Assert the retry policy without freezing its safe tuning factor."""
+    assert delays
+    assert all(0 < delay <= 5.0 for delay in delays)
+    assert len(set(delays)) > 1, "retry delay must not remain constant"
+    for previous, current in zip(delays, delays[1:]):
+        if previous < 5.0:
+            assert current > previous
+        else:
+            assert current == 5.0
+    assert sum(delays) < timeout
+
+
 class Runaway(AssertionError):
     """wait_until_readable kept polling past any plausible deadline."""
 
@@ -103,11 +116,10 @@ def test_returns_once_the_written_value_reads_back():
         sleep=clock, monotonic=clock.monotonic,
     )
     assert calls["n"] == not_ready_reads + 1
-    # Backoff must actually back off, or a slow propagation becomes a hot loop
-    # against the control plane. Pin every delay: monotonicity alone lets a
-    # constant-delay mutant survive.
-    assert clock.slept == [1.0, 1.5, 2.25, 3.375, 5.0, 5.0, 5.0, 5.0]
-    assert sum(clock.slept) < 60
+    # A slow propagation must not become a constant-delay hot loop against the
+    # control plane. Assert the operational contract while leaving the safe
+    # growth factor free to be tuned.
+    _assert_bounded_increasing_backoff(clock.slept, timeout=60)
 
 
 def test_the_exact_live_failure_no_longer_escapes():
@@ -431,7 +443,7 @@ def test_main_rotation_waits_for_the_new_submitted_version(monkeypatch, capsys):
     assert _FakeVaultStore._decode(details) == new
     assert secrets_client.reads == 4
     assert store.read_history == [old, old, old, new]
-    assert clock.slept == [1.0, 1.5, 2.25]
+    _assert_bounded_increasing_backoff(clock.slept, timeout=120)
     assert "new version" in capsys.readouterr().out
 
 

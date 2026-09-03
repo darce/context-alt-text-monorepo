@@ -88,15 +88,9 @@ class GpuLifecycleController:
 
     def instances_waiting_on_boot(self, instances: list[GpuInstance]) -> list[str]:
         """STARTING instances already booting; wait/probe, never re-START."""
-        return [
-            instance.instance_id
-            for instance in instances
-            if instance.state == GpuInstanceState.STARTING
-        ]
+        return [instance.instance_id for instance in instances if instance.state == GpuInstanceState.STARTING]
 
-    def instances_blocking_start(
-        self, instances: list[GpuInstance]
-    ) -> list[GpuInstance]:
+    def instances_blocking_start(self, instances: list[GpuInstance]) -> list[GpuInstance]:
         """STOPPING/UNKNOWN while work waits: fail closed, do not START."""
         return [
             instance
@@ -117,8 +111,7 @@ class GpuLifecycleController:
         return [
             (LifecycleAction.STOP, instance.instance_id)
             for instance in instances
-            if instance.state == GpuInstanceState.RUNNING
-            and instance.idle_for_seconds >= self.idle_seconds
+            if instance.state == GpuInstanceState.RUNNING and instance.idle_for_seconds >= self.idle_seconds
         ]
 
     def lease_expired_instances(
@@ -152,8 +145,7 @@ class GpuLifecycleController:
         return [
             (LifecycleAction.STOP, instance.instance_id)
             for instance in instances
-            if instance.state == GpuInstanceState.RUNNING
-            and instance.idle_for_seconds >= max_lease_seconds
+            if instance.state == GpuInstanceState.RUNNING and instance.idle_for_seconds >= max_lease_seconds
         ]
 
     def fence_stop_actions(
@@ -182,7 +174,4 @@ class GpuLifecycleController:
         reason: str,
     ) -> list[FallbackDecision]:
         """Emit florence_small fallback when the burst instance will not come up."""
-        return [
-            FallbackDecision(instance_id=instance_id, reason=reason)
-            for instance_id in failed_instance_ids
-        ]
+        return [FallbackDecision(instance_id=instance_id, reason=reason) for instance_id in failed_instance_ids]

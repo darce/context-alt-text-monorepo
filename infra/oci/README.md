@@ -95,6 +95,41 @@ The description service dumps load to `/run/acx/describe-load.json` (override wi
 produced by `scene/application/describe_load.py` (DB-derived, VLM-5). Stale dumps are
 treated as busy so a dead writer cannot STOP a working GPU.
 
+#### GPU lifecycle snapshots
+
+The host lifecycle systemd units and the description API exchange two atomic JSON
+snapshots in `/run/acx`:
+
+| File | Single writer | Reader | Freshness contract |
+| --- | --- | --- | --- |
+| `describe-load.json` | Description API (container uid 10001) | Host start/reap units | Refreshed every `ACX_DESCRIBE_LOAD_REFRESH_SECONDS` (45s by default); the lifecycle reader rejects data older than 120s. |
+| `gpu-state.json` | Host start/reap units (`ubuntu`) | Description API | The API treats data older than `ACX_GPU_STATE_STALE_SECONDS` (180s by default) as `unknown`. |
+
+Both writers atomically replace mode-0644 files. The host directory is recreated
+on boot as `root:10001` mode 0775 so the API can publish load and uid 10001 can
+read lifecycle state. `.env.prod.example` is the deployment path seam: keep
+`ACX_GPU_SNAPSHOT_DIR`, `ACX_GPU_STATE_PATH`, and `ACX_DESCRIBE_LOAD_PATH` on the
+same `/run/acx` contract used by the installed units. `docker-compose.prod.yml`
+passes the state path to the API and exposes the host lifecycle snapshot through
+a read-only mount.
+
+Run the fail-closed check as root so it can test readability as container uid
+10001. Export the values from the deployed environment; do not source a secrets
+file into an interactive shell:
+
+```bash
+sudo env \
+  ACX_GPU_SNAPSHOT_DIR=/run/acx \
+  ACX_GPU_STATE_PATH=/run/acx/gpu-state.json \
+  ACX_GPU_STATE_STALE_SECONDS=180 \
+  ACX_DESCRIBE_LOAD_PATH=/run/acx/describe-load.json \
+  scripts/deploy/check-gpu-snapshots.sh
+```
+
+The command exits non-zero for a missing/unreadable/malformed/stale file, a
+non-read-only or drifted compose mount, or a configured path that differs from
+the paths installed into the systemd units. A missing snapshot never passes.
+
 ```bash
 # Production: real load file + OCI probe (not static --queue-depth 0 --in-flight 0)
 python -m infra.oci.gpu_lifecycle \

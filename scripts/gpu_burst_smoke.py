@@ -28,6 +28,7 @@ poll loop checks one overall deadline, and live execution always issues STOP in
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import os
 import re
@@ -95,11 +96,11 @@ REAPER_BUDGET_SECONDS = 120
 FENCE_BUDGET_SECONDS = 2
 
 
-class SmokeFailure(RuntimeError):
+class SmokeFailure(RuntimeError):  # noqa: N818 - public smoke contract name
     """The smoke completed far enough to produce failing evidence."""
 
 
-class PreflightRefusal(RuntimeError):
+class PreflightRefusal(RuntimeError):  # noqa: N818 - public smoke contract name
     """The operator or environment did not satisfy the live safety gate."""
 
 
@@ -348,11 +349,13 @@ def _dry_item_payload(
     tier: str | None,
     result_generation: int,
 ) -> dict[str, Any]:
-    """Build the canned item through the service schema, then add pending fields."""
+    """Build the canned item through the same schema as the service response."""
 
     values: dict[str, Any] = {
         "media_id": media_id,
         "status": status,
+        "tier": tier,
+        "result_generation": result_generation,
         "caption": scenario.caption if status == "completed" else None,
         "alt_text_draft": scenario.alt_text_draft if status == "completed" else None,
         "provenance": (
@@ -361,18 +364,7 @@ def _dry_item_payload(
             else None
         ),
     }
-    for field_name, value in (
-        ("tier", tier),
-        ("result_generation", result_generation),
-    ):
-        if field_name in DescribeRunItemResponse.model_fields:
-            values[field_name] = value
-    item = DescribeRunItemResponse(**values).model_dump(mode="json")
-    # Lane S2 owns these response-model fields; retaining them after model_dump
-    # keeps this lane's smoke contract strict before and after that merge.
-    item["tier"] = tier
-    item["result_generation"] = result_generation
-    return item
+    return DescribeRunItemResponse(**values).model_dump(mode="json")
 
 
 def make_mock_transport(scenario: DryScenario) -> httpx.MockTransport:
@@ -1303,10 +1295,8 @@ def run_smoke(
                     f"{exc}; last state {final_state}",
                 )
 
-            try:
+            with contextlib.suppress(SmokeFailure, OSError, ValueError):
                 poll_health("after_stop")
-            except (SmokeFailure, OSError, ValueError):
-                pass
 
             try:
                 listed = oci.list_instances(

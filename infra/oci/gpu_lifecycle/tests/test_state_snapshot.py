@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import fcntl
 import json
+import math
 import os
 import threading
 from pathlib import Path
@@ -45,6 +46,124 @@ class AlwaysReady:
 class NeverReady:
     def probe(self, instance_id: str) -> ProbeSample:
         return ProbeSample(instance_id=instance_id, status=ProbeStatus.NOT_READY)
+
+
+SNAPSHOT_NOW = 1_700_000_000.0
+
+
+def _write_previous_snapshot(
+    path: Path,
+    *,
+    state: str = "ready",
+    written_at: object = SNAPSHOT_NOW,
+    instance_id: object = "ocid1.gpu",
+    reason: object = None,
+) -> None:
+    path.write_text(
+        json.dumps(
+            {
+                "state": state,
+                "instance_id": instance_id,
+                "written_at": written_at,
+                "reason": reason,
+                "since": SNAPSHOT_NOW - 10.0,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def test_stale_ready_snapshot_is_not_preserved(tmp_path: Path) -> None:
+    path = tmp_path / "gpu-state.json"
+    _write_previous_snapshot(path, written_at=SNAPSHOT_NOW - 180.001)
+
+    assert read_previous_gpu_state(path, now=SNAPSHOT_NOW) is None
+
+
+def test_future_dated_ready_snapshot_is_not_preserved(tmp_path: Path) -> None:
+    path = tmp_path / "gpu-state.json"
+    _write_previous_snapshot(path, written_at=SNAPSHOT_NOW + 5.001)
+
+    assert read_previous_gpu_state(path, now=SNAPSHOT_NOW) is None
+
+
+def test_missing_written_at_is_not_preserved(tmp_path: Path) -> None:
+    path = tmp_path / "gpu-state.json"
+    _write_previous_snapshot(path)
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    del payload["written_at"]
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    assert read_previous_gpu_state(path, now=SNAPSHOT_NOW) is None
+
+
+@pytest.mark.parametrize("written_at", ["not-a-timestamp", True, math.inf])
+def test_malformed_written_at_is_not_preserved(
+    tmp_path: Path,
+    written_at: object,
+) -> None:
+    path = tmp_path / "gpu-state.json"
+    _write_previous_snapshot(path, written_at=written_at)
+
+    assert read_previous_gpu_state(path, now=SNAPSHOT_NOW) is None
+
+
+def test_fresh_ready_snapshot_is_preserved_for_running_instance(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "gpu-state.json"
+    _write_previous_snapshot(path, written_at=SNAPSHOT_NOW - 180.0)
+
+    previous_state = read_previous_gpu_state(path, now=SNAPSHOT_NOW)
+
+    assert previous_state is GpuLifecycleState.READY
+    assert state_for_instances(
+        ["RUNNING"], previous_state=previous_state
+    ) is GpuLifecycleState.READY
+
+
+def test_written_snapshot_round_trips_to_previous_state_within_freshness_bound(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "gpu-state.json"
+    assert write_gpu_state_snapshot(
+        GpuLifecycleState.READY,
+        instance_id="ocid1.gpu",
+        now=SNAPSHOT_NOW,
+        path=path,
+    )
+
+    assert (
+        read_previous_gpu_state(path, now=SNAPSHOT_NOW + 180.0)
+        is GpuLifecycleState.READY
+    )
+
+
+@pytest.mark.parametrize(
+    ("state", "instance_id", "reason"),
+    [
+        ("ready", "", None),
+        ("ready", 42, None),
+        ("ready", "ocid1.gpu", "unexpected"),
+        ("degraded", "ocid1.gpu", None),
+        ("degraded", "ocid1.gpu", ""),
+    ],
+)
+def test_previous_snapshot_rejects_invalid_contract_metadata(
+    tmp_path: Path,
+    state: str,
+    instance_id: object,
+    reason: object,
+) -> None:
+    path = tmp_path / "gpu-state.json"
+    _write_previous_snapshot(
+        path,
+        state=state,
+        instance_id=instance_id,
+        reason=reason,
+    )
+
+    assert read_previous_gpu_state(path, now=SNAPSHOT_NOW) is None
 
 
 @pytest.mark.parametrize("configured_path", ["", " ", "\t"])
@@ -344,7 +463,12 @@ def test_reap_cycle_refreshes_ready_without_demoting_it(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     path = tmp_path / "gpu-state.json"
-    path.write_text('{"state":"ready","written_at":1.0}\n')
+    assert write_gpu_state_snapshot(
+        GpuLifecycleState.READY,
+        instance_id="ocid1.gpu",
+        path=path,
+    )
+    previous_written_at = json.loads(path.read_text())["written_at"]
     monkeypatch.setenv("ACX_GPU_STATE_PATH", str(path))
 
     run_reap_cycle(
@@ -357,7 +481,7 @@ def test_reap_cycle_refreshes_ready_without_demoting_it(
 
     payload = json.loads(path.read_text())
     assert payload["state"] == "ready"
-    assert payload["written_at"] > 1.0
+    assert payload["written_at"] >= previous_written_at
 
 
 def test_lock_failure_aborts_snapshot_publish(

@@ -8,18 +8,38 @@ from pathlib import Path
 
 import pytest
 from infra.oci.gpu_lifecycle.state_snapshot import (
+    DEFAULT_PREVIOUS_GPU_STATE_MAX_AGE_SECONDS,
+    DEFAULT_PREVIOUS_GPU_STATE_MAX_FUTURE_SKEW_SECONDS,
     GpuLifecycleState,
     write_gpu_state_snapshot,
 )
 
 from scene.application import gpu_state
-from scene.application.gpu_state import GpuState, read_gpu_state
+from scene.application.gpu_state import (
+    DEFAULT_GPU_STATE_STALE_SECONDS,
+    GPU_STATE_FUTURE_SKEW_SECONDS,
+    GpuState,
+    read_gpu_state,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
 INSTALL_SCRIPT = REPO_ROOT / "scripts" / "deploy" / "gpu-lifecycle-install.sh"
 DEPLOYED_COMPOSE = (
     REPO_ROOT / "apps" / "prototype-description-service" / "docker-compose.env.yml"
 )
+
+
+def test_previous_snapshot_freshness_defaults_match_real_reader() -> None:
+    assert (
+        DEFAULT_PREVIOUS_GPU_STATE_MAX_AGE_SECONDS
+        == DEFAULT_GPU_STATE_STALE_SECONDS
+        == 180.0
+    )
+    assert (
+        DEFAULT_PREVIOUS_GPU_STATE_MAX_FUTURE_SKEW_SECONDS
+        == GPU_STATE_FUTURE_SKEW_SECONDS
+        == 5.0
+    )
 
 
 @pytest.mark.parametrize("state", list(GpuLifecycleState))

@@ -143,6 +143,7 @@ def _build_describe_one(
             alt_text_draft=response.alt_text_draft,
             caption=response.visual_facts.caption,
             provenance=provenance,
+            tier=response.tier,
         )
 
     return describe_one

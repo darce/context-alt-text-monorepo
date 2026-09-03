@@ -9,6 +9,7 @@ import os
 import tempfile
 import time
 from contextlib import suppress
+from datetime import datetime
 from enum import StrEnum
 from pathlib import Path
 
@@ -18,6 +19,8 @@ logger = logging.getLogger(__name__)
 
 GPU_STATE_PATH_ENV = "ACX_GPU_STATE_PATH"
 DEFAULT_GPU_STATE_PATH = "/run/acx/gpu-state.json"
+DEFAULT_PREVIOUS_GPU_STATE_MAX_AGE_SECONDS = 180.0
+DEFAULT_PREVIOUS_GPU_STATE_MAX_FUTURE_SKEW_SECONDS = 5.0
 
 
 class GpuLifecycleState(StrEnum):
@@ -62,17 +65,82 @@ def state_for_instance(instance_state: str) -> GpuLifecycleState:
 
 def read_previous_gpu_state(
     path: str | Path | None = None,
+    *,
+    now: datetime | float | None = None,
+    max_age_seconds: float = DEFAULT_PREVIOUS_GPU_STATE_MAX_AGE_SECONDS,
+    max_future_skew_seconds: float = (
+        DEFAULT_PREVIOUS_GPU_STATE_MAX_FUTURE_SKEW_SECONDS
+    ),
 ) -> GpuLifecycleState | None:
-    """Read a prior producer state for cycles that have no readiness evidence."""
+    """Read a fresh, contract-valid state for cycles without readiness evidence."""
     target = resolve_gpu_state_path() if path is None else Path(path)
     try:
         payload = json.loads(target.read_text(encoding="utf-8"))
-        state = payload["state"]
-        if not isinstance(state, str):
-            return None
-        return GpuLifecycleState(state)
-    except (KeyError, OSError, TypeError, ValueError, json.JSONDecodeError):
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
         return None
+    if not isinstance(payload, dict):
+        return None
+
+    state_value = payload.get("state")
+    if not isinstance(state_value, str):
+        return None
+    try:
+        state = GpuLifecycleState(state_value)
+    except ValueError:
+        return None
+
+    instance_id = payload.get("instance_id")
+    if instance_id is not None and (
+        not isinstance(instance_id, str) or not instance_id.strip()
+    ):
+        return None
+    reason = payload.get("reason")
+    if state is GpuLifecycleState.DEGRADED:
+        if not isinstance(reason, str) or not reason.strip():
+            return None
+    elif reason is not None:
+        return None
+
+    written_at = payload.get("written_at")
+    if isinstance(written_at, bool) or not isinstance(written_at, (int, float)):
+        return None
+    if not math.isfinite(written_at):
+        return None
+    if (
+        isinstance(max_age_seconds, bool)
+        or not isinstance(max_age_seconds, (int, float))
+        or not math.isfinite(max_age_seconds)
+        or max_age_seconds < 0
+    ):
+        raise ValueError("max_age_seconds must be finite and non-negative")
+    if (
+        isinstance(max_future_skew_seconds, bool)
+        or not isinstance(max_future_skew_seconds, (int, float))
+        or not math.isfinite(max_future_skew_seconds)
+        or max_future_skew_seconds < 0
+    ):
+        raise ValueError(
+            "max_future_skew_seconds must be finite and non-negative"
+        )
+
+    if now is None:
+        current_time = time.time()
+    elif isinstance(now, datetime):
+        if now.tzinfo is None or now.utcoffset() is None:
+            raise ValueError("now must be timezone-aware")
+        current_time = now.timestamp()
+    elif isinstance(now, bool) or not isinstance(now, (int, float)):
+        raise ValueError("now must be a datetime or finite epoch seconds")
+    else:
+        current_time = float(now)
+    if not math.isfinite(current_time):
+        raise ValueError("now must be finite")
+
+    if written_at - current_time > max_future_skew_seconds:
+        return None
+    if current_time - written_at > max_age_seconds:
+        return None
+    return state
 
 
 def state_for_instances(

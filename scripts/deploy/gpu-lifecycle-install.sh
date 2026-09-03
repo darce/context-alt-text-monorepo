@@ -81,7 +81,7 @@ ready_flag=""
 if [ "$DRY_RUN" -eq 1 ]; then
     echo "--- dry run: would sync infra/oci/gpu_lifecycle -> ${HOST}:/opt/acx-gpu/infra/oci/"
     echo "--- dry run: would install acx-gpu-start.{service,timer} + acx-gpu-reap.{service,timer}"
-    echo "--- dry run: would create /run/acx (0775 root:10001) and gpu-state.json.lock (0660 root:10001)"
+    echo "--- dry run: would create host-owned /run/acx (0755 ubuntu:ubuntu) and API-writable /run/acx-write (0775 root:10001)"
     exit 0
 fi
 
@@ -119,7 +119,7 @@ RuntimeDirectoryPreserve=yes
 Environment=OCI_CLI_AUTH=instance_principal
 EnvironmentFile=/etc/acx/gpu-lifecycle.env
 WorkingDirectory=/opt/acx-gpu
-ExecStart=/usr/bin/python3 -m infra.oci.gpu_lifecycle --mode start --instance-id \\\${GPU_INSTANCE_ID} --load-json /run/acx/describe-load.json --gpu-state-json /run/acx/gpu-state.json --running-since-path /run/acx-gpu/running-since.json --probe-oci --oci-bin /home/ubuntu/.oci-venv/bin/oci ${ready_flag}
+ExecStart=/usr/bin/python3 -m infra.oci.gpu_lifecycle --mode start --instance-id \\\${GPU_INSTANCE_ID} --load-json /run/acx-write/describe-load.json --gpu-state-json /run/acx/gpu-state.json --running-since-path /run/acx-gpu/running-since.json --probe-oci --oci-bin /home/ubuntu/.oci-venv/bin/oci ${ready_flag}
 UNIT
 
 sudo tee /etc/systemd/system/acx-gpu-start.timer >/dev/null <<UNIT
@@ -150,7 +150,7 @@ RuntimeDirectoryPreserve=yes
 Environment=OCI_CLI_AUTH=instance_principal
 EnvironmentFile=/etc/acx/gpu-lifecycle.env
 WorkingDirectory=/opt/acx-gpu
-ExecStart=/usr/bin/python3 -m infra.oci.gpu_lifecycle --mode reap --instance-id \\\${GPU_INSTANCE_ID} --load-json /run/acx/describe-load.json --gpu-state-json /run/acx/gpu-state.json --running-since-path /run/acx-gpu/running-since.json --idle-seconds \\\${IDLE_SECONDS} --max-lease-seconds \\\${MAX_LEASE_SECONDS} --fence-delay-seconds 2 --probe-oci --oci-bin /home/ubuntu/.oci-venv/bin/oci
+ExecStart=/usr/bin/python3 -m infra.oci.gpu_lifecycle --mode reap --instance-id \\\${GPU_INSTANCE_ID} --load-json /run/acx-write/describe-load.json --gpu-state-json /run/acx/gpu-state.json --running-since-path /run/acx-gpu/running-since.json --idle-seconds \\\${IDLE_SECONDS} --max-lease-seconds \\\${MAX_LEASE_SECONDS} --fence-delay-seconds 2 --probe-oci --oci-bin /home/ubuntu/.oci-venv/bin/oci
 UNIT
 
 sudo tee /etc/systemd/system/acx-gpu-reap.timer >/dev/null <<UNIT
@@ -166,21 +166,26 @@ AccuracySec=10s
 WantedBy=timers.target
 UNIT
 
-# The api container (uid/gid 10001) writes the load dump and the lifecycle
-# units write gpu-state.json. SupplementaryGroups=10001 gives the ubuntu units
-# group write while keeping the shared directory unavailable to other users.
-sudo mkdir -p /run/acx
-sudo chown root:10001 /run/acx
-sudo chmod 0775 /run/acx
+# The host lifecycle units exclusively own the state directory. The API gets
+# only a read-only bind mount of it, while uid/gid 10001 can publish load dumps
+# atomically in the separate load directory. SupplementaryGroups=10001 lets the
+# ubuntu units read the API-owned load dump without granting the API host-side
+# write access to lifecycle state.
+sudo mkdir -p /run/acx /run/acx-write
+sudo chown ubuntu:ubuntu /run/acx
+sudo chmod 0755 /run/acx
+sudo chown root:10001 /run/acx-write
+sudo chmod 0775 /run/acx-write
 sudo touch /run/acx/gpu-state.json.lock
-sudo chown root:10001 /run/acx/gpu-state.json.lock
-sudo chmod 0660 /run/acx/gpu-state.json.lock
+sudo chown ubuntu:ubuntu /run/acx/gpu-state.json.lock
+sudo chmod 0600 /run/acx/gpu-state.json.lock
 # /run is tmpfs: recreate the directory on every boot, or the bind mount comes
 # back root-owned and the container-side writer fails silently. Pre-create the
-# shared lock too, so neither lifecycle uid's umask decides its ownership/mode.
+# state lock too, so no process umask decides its ownership or mode.
 sudo tee /etc/tmpfiles.d/acx-gpu.conf >/dev/null <<'TMPF'
-d /run/acx 0775 root 10001 -
-f /run/acx/gpu-state.json.lock 0660 root 10001 -
+d /run/acx 0755 ubuntu ubuntu -
+d /run/acx-write 0775 root 10001 -
+f /run/acx/gpu-state.json.lock 0600 ubuntu ubuntu -
 TMPF
 
 sudo systemctl daemon-reload

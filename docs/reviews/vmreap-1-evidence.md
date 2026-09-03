@@ -179,6 +179,23 @@ archive case combines authority parsing and percent decoding in the containment
 boundary. The crontab fixture returns an unrelated listing error and verifies
 the existing table byte-for-byte.
 
+## Red-first evidence for wave 4f
+
+Before the production changes, the portable no-flock and contention cases
+completed with three failures:
+
+```text
+FAIL: grok-sandbox no-flock destructive expected exit 2 got 0
+FAIL: grok-sandbox no-flock destructive missing 'reap-lane: flock is required for destructive sandbox sweeps'
+FAIL: grok-sandbox lane lock unexpectedly contains 'cannot be verified'
+```
+
+The no-flock fixture supplies every command needed for a full dry-run except
+`flock`, proving that observational sandbox sweeps still work while destructive
+ones fail once at startup. Separate POSIX flock shims make the fresh-marker,
+live-lease, and contention reasons deterministic regardless of whether the host
+provides flock.
+
 ## Host remediation (pending operator)
 
 No post-fix host evidence exists yet. In particular, the earlier wrong-user
@@ -206,7 +223,7 @@ follow-up `df -h /` must record the host-space result.
 Observed in the Linux 6.17.0 aarch64 sandbox (not macOS):
 
 ```text
-bash scripts/vm/tests/test_reap_lane.sh          219 PASS assertions
+bash scripts/vm/tests/test_reap_lane.sh          224 PASS assertions
 bash scripts/vm/tests/test_install_reap_cron.sh   27 PASS assertions
 python3 -m pytest scripts/vm/tests/test_vm_script_suites.py -q
 2 passed

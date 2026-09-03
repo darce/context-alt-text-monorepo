@@ -83,6 +83,15 @@ assert_contains() {
   fi
 }
 
+assert_not_contains() {
+  local label="$1" needle="$2"
+  if [[ "$out" != *"$needle"* ]]; then
+    pass "$label omits ${needle}"
+  else
+    fail "$label unexpectedly contains '${needle}'; out=$out"
+  fi
+}
+
 assert_exists() {
   local label="$1" path="$2"
   if [[ -d "$path" ]]; then
@@ -194,7 +203,7 @@ wait "$lock_holder_pid"
 # available, so command -v flock must fail inside reap-lane.sh.
 mkdir_lock_bin="$WORKDIR/mkdir-lock-bin"
 mkdir -p "$mkdir_lock_bin"
-for command_name in bash mkdir mv ps rm rmdir; do
+for command_name in bash mkdir mv ps realpath rm rmdir; do
   ln -s "$(command -v "$command_name")" "$mkdir_lock_bin/$command_name"
 done
 mkdir "${lock_path}.d"
@@ -416,11 +425,37 @@ lane_gs="$HOME/grok-sandbox/feature-vmreap-1-abc1234"
 clone_lane "$lane_gs"
 mark_sandbox "$lane_gs"
 touch -t 200001010000 "$lane_gs/.workbay-lane-sandbox"
-if command -v flock >/dev/null 2>&1; then
-  run_reap "$lane_gs"
-  assert_rc0 "g2 grok-sandbox"
-  assert_contains "g2 grok-sandbox" "WOULD REAP"
-fi
+
+# A destructive sandbox sweep cannot share the materializer lock contract on a
+# host without flock. Refuse the whole run before inspecting a lane, while
+# leaving the observational dry-run available. Build a complete PATH without
+# flock so these cases exercise the macOS behavior on Linux too.
+noflock_bin="$WORKDIR/noflock-bin"
+mkdir "$noflock_bin"
+for command_name in awk bash basename date df dirname du git grep mkdir mv ps \
+  realpath rm rmdir sed sort stat touch; do
+  ln -s "$(command -v "$command_name")" "$noflock_bin/$command_name"
+done
+PATH="$noflock_bin" run_reap --yes --all "$HOME/grok-sandbox"
+if [[ "$rc" -eq 2 ]]; then pass "grok-sandbox no-flock destructive exit 2"
+else fail "grok-sandbox no-flock destructive expected exit 2 got $rc; out=$out"; fi
+assert_contains "grok-sandbox no-flock destructive" \
+  "reap-lane: flock is required for destructive sandbox sweeps"
+assert_exists "grok-sandbox no-flock destructive" "$lane_gs"
+PATH="$noflock_bin" run_reap --all "$HOME/grok-sandbox"
+assert_rc0 "grok-sandbox no-flock dry-run"
+assert_contains "grok-sandbox no-flock dry-run" "WOULD REAP $lane_gs"
+assert_exists "grok-sandbox no-flock dry-run" "$lane_gs"
+
+# Eligibility-reason cases need a deterministic lane-lock result on both Linux
+# and macOS. This minimal shim also handles the whole-sweep lock and unlock.
+flock_success_bin="$WORKDIR/flock-success-bin"
+mkdir "$flock_success_bin"
+cat >"$flock_success_bin/flock" <<'FLOCK_SUCCESS'
+#!/bin/sh
+exit 0
+FLOCK_SUCCESS
+chmod +x "$flock_success_bin/flock"
 
 # ...and widening the roots must not come from loosening the matcher: the
 # segment-exact guard still refuses a sibling that merely shares the prefix.
@@ -540,7 +575,8 @@ assert_exists "non-local file URL authority" "$lane_nested_localhost"
 lane_gs_fresh="$HOME/grok-sandbox/feature-fresh-abc12345"
 clone_lane "$lane_gs_fresh"
 mark_sandbox "$lane_gs_fresh"
-run_reap --yes --archive-to "$ARCHIVE" "$lane_gs_fresh"
+PATH="$flock_success_bin:$PATH" \
+  run_reap --yes --archive-to "$ARCHIVE" "$lane_gs_fresh"
 assert_rc0 "grok-sandbox fresh marker"
 assert_contains "grok-sandbox fresh marker" "sandbox marker has not reached TTL"
 assert_exists "grok-sandbox fresh marker" "$lane_gs_fresh"
@@ -788,35 +824,34 @@ touch -t 200001010000 "$lane_gs_leased/.workbay-lane-sandbox"
 now_epoch="$(date +%s)"
 printf 'pid=%s\nissued=%s\nexpiry=%s\n' "$$" "$now_epoch" "$((now_epoch + 3600))" \
   >"$HOME/grok-sandbox/.lane-live-${lane_gs_leased##*/}"
-run_reap --yes --archive-to "$ARCHIVE" "$lane_gs_leased"
+PATH="$flock_success_bin:$PATH" \
+  run_reap --yes --archive-to "$ARCHIVE" "$lane_gs_leased"
 assert_rc0 "grok-sandbox live lease"
 assert_contains "grok-sandbox live lease" "sandbox lease is live"
 assert_exists "grok-sandbox live lease" "$lane_gs_leased"
 archive_lacks_namespace "grok-sandbox live lease" "grok-sandbox/${lane_gs_leased##*/}"
 
-if command -v flock >/dev/null 2>&1; then
-  lane_gs_locked="$HOME/grok-sandbox/feature-locked-abc12345"
-  clone_lane "$lane_gs_locked"
-  mark_sandbox "$lane_gs_locked"
-  touch -t 200001010000 "$lane_gs_locked/.workbay-lane-sandbox"
-  lane_gs_lock="$HOME/grok-sandbox/.lane-lock-${lane_gs_locked##*/}"
-  rm -f "$lock_ready" "$lock_release"
-  (
-    exec 7>>"$lane_gs_lock"
-    flock 7
-    : >"$lock_ready"
-    while [[ ! -e "$lock_release" ]]; do sleep 0.05; done
-  ) &
-  lock_holder_pid=$!
-  for _ in {1..100}; do [[ -e "$lock_ready" ]] && break; sleep 0.05; done
-  run_reap --yes --archive-to "$ARCHIVE" "$lane_gs_locked"
-  assert_rc0 "grok-sandbox lane lock"
-  assert_contains "grok-sandbox lane lock" "sandbox lane lock is held"
-  assert_exists "grok-sandbox lane lock" "$lane_gs_locked"
-  archive_lacks_namespace "grok-sandbox lane lock" "grok-sandbox/${lane_gs_locked##*/}"
-  : >"$lock_release"
-  wait "$lock_holder_pid"
+lane_gs_locked="$HOME/grok-sandbox/feature-locked-abc12345"
+clone_lane "$lane_gs_locked"
+mark_sandbox "$lane_gs_locked"
+touch -t 200001010000 "$lane_gs_locked/.workbay-lane-sandbox"
+flock_contention_bin="$WORKDIR/flock-contention-bin"
+mkdir "$flock_contention_bin"
+cat >"$flock_contention_bin/flock" <<'FLOCK_CONTENTION'
+#!/bin/sh
+if [ "${1:-}" = "-n" ] && [ "${2:-}" = "8" ]; then
+  exit 1
 fi
+exit 0
+FLOCK_CONTENTION
+chmod +x "$flock_contention_bin/flock"
+PATH="$flock_contention_bin:$PATH" \
+  run_reap --yes --archive-to "$ARCHIVE" "$lane_gs_locked"
+assert_rc0 "grok-sandbox lane lock"
+assert_contains "grok-sandbox lane lock" "sandbox lane lock is held"
+assert_not_contains "grok-sandbox lane lock" "cannot be verified"
+assert_exists "grok-sandbox lane lock" "$lane_gs_locked"
+archive_lacks_namespace "grok-sandbox lane lock" "grok-sandbox/${lane_gs_locked##*/}"
 
 # A dry run is observational only: it must neither delete the checkout nor
 # create archive refs (including an anchor ref for a linked worktree).

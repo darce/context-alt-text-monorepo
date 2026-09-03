@@ -8,7 +8,7 @@ fi
 set -euo pipefail
 
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
-compose_file=${ACX_GPU_COMPOSE_FILE:-${repo_root}/apps/prototype-description-service/docker-compose.prod.yml}
+compose_file=${ACX_GPU_COMPOSE_FILE:-${repo_root}/apps/prototype-description-service/docker-compose.env.yml}
 install_script=${ACX_GPU_INSTALL_SCRIPT:-${repo_root}/scripts/deploy/gpu-lifecycle-install.sh}
 state_stale_seconds=${ACX_GPU_STATE_STALE_SECONDS:-180}
 load_stale_seconds=${ACX_DESCRIBE_LOAD_STALE_SECONDS:-120}
@@ -71,12 +71,10 @@ api_block=$(awk '
 ' "$compose_file")
 [ -n "$api_block" ] || die "compose file has no api service: $compose_file"
 
-# Accept either a rendered compose file or the checked-in template. The latter
-# deliberately gets its host directory and reader path from .env, the deployment
-# seam shared with the container, instead of embedding another host-path default.
+# Require the concrete mount that deployment will use. A literal, unexpanded
+# Compose variable is not evidence that the lifecycle path is mounted read-only.
 rendered_mount="${snapshot_dir}:${snapshot_dir}:ro"
-if ! grep -Fq -- "$rendered_mount" <<<"$api_block" &&
-    ! grep -Fq -- '${ACX_GPU_SNAPSHOT_DIR}:/run/acx:ro' <<<"$api_block"; then
+if ! grep -Fq -- "$rendered_mount" <<<"$api_block"; then
     die "compose api service has no agreeing read-only snapshot mount ($rendered_mount)"
 fi
 if ! grep -Fq -- "ACX_GPU_STATE_PATH=${state_path}" <<<"$api_block" &&

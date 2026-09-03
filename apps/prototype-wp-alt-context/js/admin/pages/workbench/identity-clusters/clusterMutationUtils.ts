@@ -1,6 +1,7 @@
 import { __, sprintf } from '@wordpress/i18n';
 
 import { classifyError, toUserMessage } from '../../../utils/appError';
+import { isAbortOrTimeout } from '../../../utils/retryPolicy';
 
 export const CLUSTER_MUTATION_ERROR_COPY = {
   timeout: __('The server took too long to respond — try again', 'alt-context'),
@@ -33,7 +34,7 @@ export interface ClusterMutationUserError {
 
 export const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-export const isAbortError = (err: unknown): boolean => classifyError(err)._tag === 'abort';
+export const isAbortError = (err: unknown): boolean => isAbortOrTimeout(err);
 
 const readStringField = (value: unknown, key: string): string | null => {
   if (typeof value !== 'object' || value === null || !Object.hasOwn(value, key)) {
@@ -83,6 +84,7 @@ export const getInvalidTargetClusterMessage = (label: string): string =>
 export const getClusterMutationUserError = (error: unknown, label = 'that label'): ClusterMutationUserError => {
   const classified = classifyError(error);
   const code = getClusterErrorCode(error);
+  const rawMessage = error instanceof Error ? error.message : '';
 
   if (classified._tag === 'auth_expired') {
     return {
@@ -116,7 +118,7 @@ export const getClusterMutationUserError = (error: unknown, label = 'that label'
     };
   }
 
-  if (code === 'projection_not_ready') {
+  if (code === 'projection_not_ready' || (code === null && isProjectionNotReadyError(rawMessage))) {
     return {
       kind: 'projection_not_ready',
       message: getProjectionNotReadyMessage(),
@@ -124,7 +126,7 @@ export const getClusterMutationUserError = (error: unknown, label = 'that label'
     };
   }
 
-  if (code === 'invalid_target_cluster_id') {
+  if (code === 'invalid_target_cluster_id' || (code === null && isInvalidTargetClusterError(rawMessage))) {
     return {
       kind: 'invalid_target',
       message: getInvalidTargetClusterMessage(label),

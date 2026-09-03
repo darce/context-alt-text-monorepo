@@ -43,11 +43,16 @@ services:
       - HOST=0.0.0.0
       - PORT=8000
       - RECOGNITION_BLOB_ROOT=/var/lib/acx-blobs
+      - ACX_GPU_STATE_PATH=${ACX_GPU_STATE_PATH}
     volumes:
       # :ro for recognition + VLM (see docker-compose.env.yml contract comment).
       # InsightFace models are pre-seeded; Florence RW would be an RCE surface.
       - /opt/acx-backend/data/models:/data/cache:ro
       - acx_blobs:/var/lib/acx-blobs
+      # Host systemd publishes gpu-state.json here. Keep this reader mount
+      # read-only; ACX_GPU_SNAPSHOT_DIR and ACX_GPU_STATE_PATH are required in
+      # .env so deployment path agreement has one operator-owned seam.
+      - ${ACX_GPU_SNAPSHOT_DIR}:/run/acx:ro
     tmpfs:
       - /var/cache/acx/hf_modules:mode=0700,uid=10001,gid=10001,size=32m,noexec
     expose:

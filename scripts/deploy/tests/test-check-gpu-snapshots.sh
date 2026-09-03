@@ -1,0 +1,157 @@
+#!/usr/bin/env bash
+# Local contract tests for check-gpu-snapshots.sh. No Docker or SSH required.
+
+if [ -z "${BASH_VERSION:-}" ]; then
+    echo "FAIL $0 must run under bash" >&2
+    exit 2
+fi
+set -euo pipefail
+
+root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)
+checker="${root}/scripts/deploy/check-gpu-snapshots.sh"
+prod_compose="${root}/apps/prototype-description-service/docker-compose.prod.yml"
+prod_env="${root}/apps/prototype-description-service/.env.prod.example"
+fixture_root=$(mktemp -d)
+trap 'rm -rf "$fixture_root"' EXIT
+
+failures=0
+pass() { printf 'PASS: %s\n' "$*"; }
+fail() { printf 'FAIL: %s\n' "$*" >&2; failures=$((failures + 1)); }
+
+assert_contains() {
+    local label=$1 needle=$2 file=$3
+    if grep -Fq -- "$needle" "$file"; then
+        pass "$label"
+    else
+        fail "$label (missing: $needle)"
+    fi
+}
+
+run_checker() {
+    env \
+        ACX_GPU_UNIT_STATE_PATH="${fixture_root}/run/acx/gpu-state.json" \
+        ACX_GPU_UNIT_LOAD_PATH="${fixture_root}/run/acx/describe-load.json" \
+        ACX_GPU_STATE_PATH="${fixture_root}/run/acx/gpu-state.json" \
+        ACX_DESCRIBE_LOAD_PATH="${fixture_root}/run/acx/describe-load.json" \
+        ACX_GPU_STATE_STALE_SECONDS=180 \
+        ACX_DESCRIBE_LOAD_STALE_SECONDS=120 \
+        ACX_GPU_SNAPSHOT_DIR="${fixture_root}/run/acx" \
+        ACX_GPU_COMPOSE_FILE="${fixture_root}/compose.yml" \
+        ACX_GPU_READER_UID="$(id -u)" \
+        ACX_NOW_EPOCH=1000 \
+        "$@" "$checker"
+}
+
+run_checker_from_install() {
+    env -u ACX_GPU_UNIT_STATE_PATH -u ACX_GPU_UNIT_LOAD_PATH \
+        ACX_GPU_INSTALL_SCRIPT="${fixture_root}/install.sh" \
+        ACX_GPU_STATE_PATH="${fixture_root}/run/acx/gpu-state.json" \
+        ACX_DESCRIBE_LOAD_PATH="${fixture_root}/run/acx/describe-load.json" \
+        ACX_GPU_STATE_STALE_SECONDS=180 \
+        ACX_DESCRIBE_LOAD_STALE_SECONDS=120 \
+        ACX_GPU_SNAPSHOT_DIR="${fixture_root}/run/acx" \
+        ACX_GPU_COMPOSE_FILE="${fixture_root}/compose.yml" \
+        ACX_GPU_READER_UID="$(id -u)" \
+        ACX_NOW_EPOCH=1000 \
+        "$checker"
+}
+
+expect_success() {
+    local label=$1
+    shift
+    local output rc=0
+    output=$(run_checker "$@" 2>&1) || rc=$?
+    if [ "$rc" -eq 0 ]; then
+        pass "$label"
+    else
+        fail "$label (exit $rc; output: $output)"
+    fi
+}
+
+expect_failure() {
+    local label=$1 expected=$2
+    shift 2
+    local output rc=0
+    output=$(run_checker "$@" 2>&1) || rc=$?
+    if [ "$rc" -eq 0 ]; then
+        fail "$label (unexpected exit 0; output: $output)"
+    elif [[ "$output" != *"$expected"* ]]; then
+        fail "$label (missing error '$expected'; output: $output)"
+    else
+        pass "$label"
+    fi
+}
+
+mkdir -p "${fixture_root}/run/acx"
+printf '{"state":"ready","written_at":900}\n' >"${fixture_root}/run/acx/gpu-state.json"
+printf '{"queue_depth":0,"in_flight":0,"batch_in_progress":false,"written_at":900}\n' \
+    >"${fixture_root}/run/acx/describe-load.json"
+chmod 0644 "${fixture_root}/run/acx/"*.json
+cat >"${fixture_root}/compose.yml" <<EOF
+services:
+  api:
+    environment:
+      - ACX_GPU_STATE_PATH=${fixture_root}/run/acx/gpu-state.json
+    volumes:
+      - ${fixture_root}/run/acx:${fixture_root}/run/acx:ro
+EOF
+cat >"${fixture_root}/install.sh" <<EOF
+ExecStart=python3 -m infra.oci.gpu_lifecycle --load-json ${fixture_root}/run/acx/describe-load.json --gpu-state-json ${fixture_root}/run/acx/gpu-state.json
+ExecStart=python3 -m infra.oci.gpu_lifecycle --load-json ${fixture_root}/run/acx/describe-load.json --gpu-state-json ${fixture_root}/run/acx/gpu-state.json
+EOF
+
+if bash -n "$checker" 2>/dev/null; then
+    pass "checker has valid bash syntax"
+else
+    fail "checker has valid bash syntax"
+fi
+
+# Deployment contract: the example env is the one deployment seam. Compose
+# consumes those values instead of growing another copy of either host path.
+assert_contains "env documents GPU state path" "ACX_GPU_STATE_PATH=/run/acx/gpu-state.json" "$prod_env"
+assert_contains "env documents GPU freshness" "ACX_GPU_STATE_STALE_SECONDS=180" "$prod_env"
+assert_contains "env documents load path" "ACX_DESCRIBE_LOAD_PATH=/run/acx/describe-load.json" "$prod_env"
+assert_contains "env documents load refresh" "ACX_DESCRIBE_LOAD_REFRESH_SECONDS=45" "$prod_env"
+assert_contains "compose passes GPU state path" 'ACX_GPU_STATE_PATH=${ACX_GPU_STATE_PATH}' "$prod_compose"
+assert_contains "compose mounts snapshot directory read-only" '${ACX_GPU_SNAPSHOT_DIR}:/run/acx:ro' "$prod_compose"
+
+expect_success "fresh readable snapshots and agreeing mount pass"
+derived_output=$(run_checker_from_install 2>&1) || derived_rc=$?
+if [ "${derived_rc:-0}" -eq 0 ]; then
+    pass "checker derives the single writer paths from lifecycle units"
+else
+    fail "checker derives lifecycle unit paths (exit ${derived_rc}; output: ${derived_output})"
+fi
+
+mv "${fixture_root}/run/acx/gpu-state.json" "${fixture_root}/run/acx/gpu-state.missing"
+expect_failure "missing GPU state fails closed" "missing GPU state snapshot"
+mv "${fixture_root}/run/acx/gpu-state.missing" "${fixture_root}/run/acx/gpu-state.json"
+
+printf '{"state":"ready","written_at":819}\n' >"${fixture_root}/run/acx/gpu-state.json"
+expect_failure "GPU state older than its budget fails" "stale GPU state snapshot"
+printf '{"state":"ready","written_at":900}\n' >"${fixture_root}/run/acx/gpu-state.json"
+
+mv "${fixture_root}/run/acx/describe-load.json" "${fixture_root}/run/acx/describe-load.missing"
+expect_failure "missing describe-load fails closed" "missing describe load snapshot"
+mv "${fixture_root}/run/acx/describe-load.missing" "${fixture_root}/run/acx/describe-load.json"
+
+printf '{"queue_depth":0,"in_flight":0,"written_at":879}\n' >"${fixture_root}/run/acx/describe-load.json"
+expect_failure "describe-load older than its budget fails" "stale describe load snapshot"
+printf '{"queue_depth":0,"in_flight":0,"written_at":900}\n' >"${fixture_root}/run/acx/describe-load.json"
+
+chmod 000 "${fixture_root}/run/acx/gpu-state.json"
+expect_failure "snapshot unreadable by API uid fails" "unreadable by uid"
+chmod 0644 "${fixture_root}/run/acx/gpu-state.json"
+
+expect_failure "state variable disagreement fails" "ACX_GPU_STATE_PATH disagrees" \
+    ACX_GPU_STATE_PATH="${fixture_root}/run/acx/not-the-unit-path.json"
+
+sed 's/:ro$//' "${fixture_root}/compose.yml" >"${fixture_root}/compose-rw.yml"
+expect_failure "read-write mount fails" "read-only snapshot mount" \
+    ACX_GPU_COMPOSE_FILE="${fixture_root}/compose-rw.yml"
+
+if [ "$failures" -gt 0 ]; then
+    printf 'FAILED: %s case(s)\n' "$failures" >&2
+    exit 1
+fi
+printf 'ALL PASS\n'

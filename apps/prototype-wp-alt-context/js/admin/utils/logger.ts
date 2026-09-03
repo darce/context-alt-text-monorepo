@@ -135,11 +135,11 @@ const projectBoundaryError = (value: Error): FlattenedError | null => {
 };
 
 const flattenCause = (cause: unknown): unknown => {
-  if (isAppError(cause)) {
-    return projectAppError(cause);
-  }
   if (cause instanceof Error) {
     return flattenError(cause, false);
+  }
+  if (isAppError(cause)) {
+    return projectAppError(cause);
   }
   if (cause === null || typeof cause !== 'object') {
     return cause;
@@ -162,11 +162,11 @@ const flattenError = (value: Error, includeCause: boolean): FlattenedError => {
 };
 
 const flattenFieldValue = (value: unknown): unknown => {
-  if (isAppError(value)) {
-    return projectAppError(value);
-  }
   if (value instanceof Error) {
     return flattenError(value, true);
+  }
+  if (isAppError(value)) {
+    return projectAppError(value);
   }
   return value;
 };

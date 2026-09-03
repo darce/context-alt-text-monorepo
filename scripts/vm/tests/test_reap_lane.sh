@@ -148,6 +148,20 @@ fi
 : >"$lock_release"
 wait "$lock_holder_pid"
 
+# Exercise the macOS-compatible mkdir fallback even on hosts that provide
+# flock. Only the commands reached before the expected lock refusal are made
+# available, so command -v flock must fail inside reap-lane.sh.
+mkdir_lock_bin="$WORKDIR/mkdir-lock-bin"
+mkdir -p "$mkdir_lock_bin"
+ln -s "$(command -v bash)" "$mkdir_lock_bin/bash"
+ln -s "$(command -v mkdir)" "$mkdir_lock_bin/mkdir"
+mkdir "${lock_path}.d"
+PATH="$mkdir_lock_bin" run_reap "$lane_lock"
+if [[ "$rc" -eq 3 ]]; then pass "mkdir fallback concurrent reaper exit 3"
+else fail "mkdir fallback concurrent reaper expected exit 3 got $rc; out=$out"; fi
+assert_contains "mkdir fallback concurrent reaper" "another reaper holds $lock_path"
+rmdir "${lock_path}.d"
+
 # ---------------------------------------------------------------------------
 # (a) merged clean clone -> WOULD REAP (dry-run) and is deleted with --yes.
 # Isolates: all guards pass; dry-run does not delete.
@@ -617,12 +631,25 @@ assert_rc0 "--all"
 assert_gone "--all merged" "$lane_all_ok"
 assert_exists "--all unmerged" "$lane_all_bad"
 
-# A real sweep that sees candidates but cannot reclaim any must tell cron that
-# the run is stale when disk use is at or above the configurable alert level.
-lane_alert="$HOME/w3/lane-alert"
+# A real sweep that sees stale candidates but cannot reclaim any must tell cron
+# that the run is stale when disk use is at or above the configurable alert
+# level. A direct single-lane guard refusal is a successful no-op, so exercise
+# the alert through the same --all mode that cron uses.
+alert_root="$HOME/alert-root"
+mkdir -p "$alert_root"
+lane_alert="$alert_root/lane-alert"
 clone_lane "$lane_alert"
 echo dirty >>"$lane_alert/README"
-REAP_DF_ALERT_PCT=0 run_reap --yes "$lane_alert"
+
+# A direct request that reaches a guard is a successful, explained no-op. It
+# must not inherit the cron sweep's freshness-alert status, even on a pressured
+# filesystem.
+REAP_LANE_ROOTS="alert-root" REAP_DF_ALERT_PCT=0 run_reap --yes "$lane_alert"
+assert_rc0 "freshness direct guard refusal"
+assert_contains "freshness direct guard refusal" "dirty working tree"
+assert_exists "freshness direct guard refusal" "$lane_alert"
+
+REAP_LANE_ROOTS="alert-root" REAP_DF_ALERT_PCT=0 run_reap --yes --all "$alert_root"
 if [[ "$rc" -eq 4 ]]; then pass "freshness alert exit 4"
 else fail "freshness alert expected exit 4 got $rc; out=$out"; fi
 assert_summary "freshness alert" 1 0 1 0
@@ -630,9 +657,17 @@ assert_exists "freshness alert" "$lane_alert"
 
 # Below the configured pressure threshold, zero reclaimed lanes is a healthy
 # no-op and remains exit 0.
-REAP_DF_ALERT_PCT=100 run_reap --yes "$lane_alert"
+REAP_LANE_ROOTS="alert-root" REAP_DF_ALERT_PCT=100 run_reap --yes --all "$alert_root"
 assert_rc0 "freshness below threshold"
 assert_summary "freshness below threshold" 1 0 1 0
+
+# A completed sweep with no stale candidates is fresh even under an alert
+# threshold of zero.
+empty_alert_root="$HOME/empty-alert-root"
+mkdir -p "$empty_alert_root"
+REAP_DF_ALERT_PCT=0 run_reap --yes --all "$empty_alert_root"
+assert_rc0 "freshness empty sweep"
+assert_summary "freshness empty sweep" 0 0 0 0
 
 # A dry run never pages cron: it intentionally reaps nothing.
 lane_alert_dry="$HOME/w3/lane-alert-dry"

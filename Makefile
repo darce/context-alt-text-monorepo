@@ -686,21 +686,28 @@ eval-captions:
 	@$(ROOT_MAKEFILE_DIR)/scripts/eval-captions.sh $(EVAL_ARGS)
 
 .PHONY: gpu-burst-smoke gpu-burst-smoke-live
+GPU_SMOKE_PYTHON ?= apps/prototype-description-service/.venv/bin/python
 gpu-burst-smoke:
 	@python3 scripts/gpu_burst_smoke.py --dry-run
 
 # Operator-only: needs ACX_GPU_SMOKE_CONFIRM=RUN and runs on acx-backend as
-# ubuntu, since only that host has the OCI binary and vaulted key.
+# ubuntu, since only that host has the OCI binary and vaulted key. Override
+# GPU_SMOKE_PYTHON only when the service virtualenv lives elsewhere.
 gpu-burst-smoke-live:
-	@python3 scripts/gpu_burst_smoke.py --live --max-seconds 900 \
+	@test -n "$${ACX_GPU_SMOKE_SERVICE_BASE_URL:-}" || { \
+	  echo "ACX_GPU_SMOKE_SERVICE_BASE_URL must name the description service" >&2; \
+	  exit 2; \
+	}
+	@$(GPU_SMOKE_PYTHON) scripts/gpu_burst_smoke.py --live --max-seconds 900 \
 	  --evidence-out "docs/tasks/vlm/GPUSMOKE-1-evidence-$$(date -u +%F).json" \
 	  --wp-base-url "$${ACX_GPU_SMOKE_WP_BASE_URL:-https://wordpress.invalid}" \
 	  --wp-user "$${ACX_GPU_SMOKE_WP_USER:-gpu-smoke-operator}" \
 	  --wp-app-password-env "$${ACX_GPU_SMOKE_PASSWORD_ENV:-ACX_WP_APP_PASSWORD}" \
 	  --media-ids "$${ACX_GPU_SMOKE_MEDIA_IDS:-101}" \
-	  --service-base-url "$${ACX_GPU_SMOKE_SERVICE_BASE_URL:-http://<burst-private-ip>:8000}" \
+	  --service-base-url "$${ACX_GPU_SMOKE_SERVICE_BASE_URL}" \
 	  --service-api-key-env "$${ACX_GPU_SMOKE_SERVICE_API_KEY_ENV:-ACX_DESCRIPTION_API_KEY}" \
-	  --instance-id "$${ACX_GPU_SMOKE_INSTANCE_ID:-<burst-instance-ocid>}"
+	  --instance-id "$${ACX_GPU_SMOKE_INSTANCE_ID:-<burst-instance-ocid>}" \
+	  --oci-bin "$${ACX_GPU_SMOKE_OCI_BIN:-/home/ubuntu/.oci-venv/bin/oci}"
 
 # FIR-5 face bake-off: offline candidate walk (+ optional score). No tenant writes.
 # Usage: make bakeoff-face

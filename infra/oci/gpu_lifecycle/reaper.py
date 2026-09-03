@@ -816,18 +816,37 @@ def run_reap_cycle(
     if dry_run:
         return result
     with _serialized_gpu_state_publish(gpu_state_path):
-        state = (
-            GpuLifecycleState.STOPPED
-            if result.actuated or result.lease_expired
-            else state_for_instances(
-                [instance.state for instance in instances],
-                previous_state=read_previous_gpu_state(gpu_state_path),
+        stopped_instance_ids = {
+            instance_id
+            for action, instance_id in [*result.actuated, *result.lease_expired]
+            if action == "STOP"
+        }
+        post_actuation_instances = [
+            GpuInstance(
+                instance_id=instance.instance_id,
+                state=(
+                    "STOPPED"
+                    if instance.instance_id in stopped_instance_ids
+                    else instance.state
+                ),
+                idle_for_seconds=instance.idle_for_seconds,
             )
+            for instance in instances
+        ]
+        state = state_for_instances(
+            [instance.state for instance in post_actuation_instances],
+            previous_state=read_previous_gpu_state(gpu_state_path),
         )
+        if result.errors:
+            state = GpuLifecycleState.DEGRADED
         write_gpu_state_snapshot(
             state,
-            instance_id=_snapshot_instance_id(instances),
-            reason=_state_reason(state, instances=instances, has_errors=bool(result.errors)),
+            instance_id=_snapshot_instance_id(post_actuation_instances),
+            reason=_state_reason(
+                state,
+                instances=post_actuation_instances,
+                has_errors=bool(result.errors),
+            ),
             path=gpu_state_path,
         )
     return result

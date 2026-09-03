@@ -22,11 +22,18 @@ from infra.oci.gpu_lifecycle.reaper import (
 
 
 class RecordingActuator:
-    def __init__(self) -> None:
+    def __init__(self, *, fail_for: set[str] | None = None) -> None:
         self.stopped: list[str] = []
+        self.fail_for = set() if fail_for is None else fail_for
 
     def stop_instance(self, instance_id: str) -> None:
+        if instance_id in self.fail_for:
+            raise RuntimeError(f"STOP failed for {instance_id}")
         self.stopped.append(instance_id)
+
+
+def _snapshot(path: Path) -> dict[str, object]:
+    return json.loads(path.read_text(encoding="utf-8"))
 
 
 def test_reap_does_not_stop_idle_instance_while_batch_in_progress() -> None:
@@ -79,6 +86,109 @@ def test_run_reap_cycle_never_stops_fenced_batch() -> None:
     assert result.decided == []
     assert result.actuated == []
     assert actuator.stopped == []
+
+
+def test_partial_stop_publishes_state_of_still_running_instance(tmp_path: Path) -> None:
+    path = tmp_path / "gpu-state.json"
+    path.write_text('{"state":"ready","written_at":1.0}\n', encoding="utf-8")
+    idle = GpuInstance("ocid1.idle", "RUNNING", 90)
+    busy = GpuInstance("ocid1.busy", "RUNNING", 0)
+    actuator = RecordingActuator()
+
+    result = run_reap_cycle(
+        controller=GpuLifecycleController(idle_seconds=60),
+        instances=[idle, busy],
+        load_source=StaticJobLoadSource(queue_depth=0, in_flight=0),
+        actuator=actuator,
+        fence_delay_seconds=0.0,
+        gpu_state_path=path,
+    )
+
+    assert result.actuated == [("STOP", "ocid1.idle")]
+    assert actuator.stopped == ["ocid1.idle"]
+    assert _snapshot(path) | {"written_at": 0, "since": 0} == {
+        "state": "ready",
+        "instance_id": None,
+        "written_at": 0,
+        "reason": None,
+        "since": 0,
+    }
+
+
+def test_failed_stop_remains_in_full_state_reduction(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    path = tmp_path / "gpu-state.json"
+    failed = GpuInstance("ocid1.failed", "RUNNING", 90)
+    stopped = GpuInstance("ocid1.stopped", "RUNNING", 90)
+    actuator = RecordingActuator(fail_for={failed.instance_id})
+    reduced_states: list[list[str]] = []
+    real_state_for_instances = reaper_mod.state_for_instances
+
+    def recording_reducer(instance_states: list[str], **kwargs):
+        reduced_states.append(instance_states)
+        return real_state_for_instances(instance_states, **kwargs)
+
+    monkeypatch.setattr(reaper_mod, "state_for_instances", recording_reducer)
+
+    result = run_reap_cycle(
+        controller=GpuLifecycleController(idle_seconds=60),
+        instances=[failed, stopped],
+        load_source=StaticJobLoadSource(queue_depth=0, in_flight=0),
+        actuator=actuator,
+        fence_delay_seconds=0.0,
+        gpu_state_path=path,
+    )
+
+    assert result.actuated == [("STOP", "ocid1.stopped")]
+    assert len(result.errors) == 1
+    assert reduced_states == [["RUNNING", "STOPPED"]]
+    assert _snapshot(path)["state"] == "degraded"
+    assert _snapshot(path)["reason"] == "lifecycle_error"
+
+
+def test_all_targeted_stops_succeed_publishes_stopped(tmp_path: Path) -> None:
+    path = tmp_path / "gpu-state.json"
+    instances = [
+        GpuInstance("ocid1.first", "RUNNING", 90),
+        GpuInstance("ocid1.second", "RUNNING", 90),
+    ]
+
+    result = run_reap_cycle(
+        controller=GpuLifecycleController(idle_seconds=60),
+        instances=instances,
+        load_source=StaticJobLoadSource(queue_depth=0, in_flight=0),
+        actuator=RecordingActuator(),
+        fence_delay_seconds=0.0,
+        gpu_state_path=path,
+    )
+
+    assert result.actuated == [
+        ("STOP", "ocid1.first"),
+        ("STOP", "ocid1.second"),
+    ]
+    assert _snapshot(path)["state"] == "stopped"
+    assert _snapshot(path)["reason"] is None
+
+
+def test_failed_lease_expiry_stop_does_not_publish_stopped(tmp_path: Path) -> None:
+    path = tmp_path / "gpu-state.json"
+    instance = GpuInstance("ocid1.expired", "RUNNING", 3601)
+
+    result = run_reap_cycle(
+        controller=GpuLifecycleController(idle_seconds=60),
+        instances=[instance],
+        load_source=StaticJobLoadSource(queue_depth=1, in_flight=0),
+        actuator=RecordingActuator(fail_for={instance.instance_id}),
+        fence_delay_seconds=0.0,
+        max_lease_seconds=3600,
+        gpu_state_path=path,
+    )
+
+    assert result.lease_expired == []
+    assert len(result.errors) == 1
+    assert _snapshot(path)["state"] == "degraded"
+    assert _snapshot(path)["reason"] == "lifecycle_error"
 
 
 def test_json_batch_in_progress_is_has_work(tmp_path: Path) -> None:

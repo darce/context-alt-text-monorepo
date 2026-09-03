@@ -527,6 +527,16 @@ test-deploy-contract:
 	@bash scripts/deploy/tests/test-smoke-gate.sh
 	@bash scripts/deploy/tests/test-check-gpu-snapshots.sh
 
+# GPUUX-1: narrow, gate-reachable slice of the GPU lifecycle suite. test-vlm3
+# also covers infra/oci/gpu_lifecycle/tests, but it collects test_vlm3_oci_gpu_infra.py
+# alongside them, and that module imports PyYAML -- absent from the remote gate
+# host's system python -- so a collection error there takes the lifecycle tests
+# down with it before a single one runs. This target imports stdlib + pytest only,
+# so the state-snapshot writer/reader contract is provable on the gate.
+#   WORKBAY_REMOTE_GATE_WORKDIR=. make check-remote TARGETS="test-gpu-lifecycle"
+test-gpu-lifecycle:
+	@python3 -m pytest infra/oci/gpu_lifecycle/tests -q --tb=short
+
 # VLM-3 / VLMRP: OCI GPU infra posture, idle-reaper lifecycle, decision memo,
 # bake-off artifact guards, and OWLv2 deferral. Covered by test-scripts in check-all.
 test-vlm3:

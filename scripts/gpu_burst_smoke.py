@@ -42,6 +42,7 @@ from importlib import import_module
 from itertools import pairwise
 from pathlib import Path
 from typing import Any, Protocol
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -54,6 +55,9 @@ if str(SERVICE_ROOT) not in sys.path:
 _profiles = import_module("scene.config.profiles")
 DescriptionProfile = _profiles.DescriptionProfile
 get_profile_spec = _profiles.get_profile_spec
+DescribeRunItemResponse = import_module(
+    "scene.interface_adapters.http.schemas.responses"
+).DescribeRunItemResponse
 
 EXPECTED_MODEL_ID = "Qwen3-VL-30B-A3B-Instruct"
 EXPECTED_PROFILE = get_profile_spec(DescriptionProfile.GPU_QWEN30B)
@@ -81,9 +85,14 @@ OCI_CALL_TIMEOUT_SECONDS = 30.0
 HTTP_CALL_TIMEOUT_SECONDS = 15.0
 POLL_SECONDS = 2.0
 EMERGENCY_STOP_TIMEOUT_SECONDS = 120.0
+MAX_EMERGENCY_STOP_ATTEMPTS = 4
 MAX_LIVE_SECONDS = 900
 GPU_USD_PER_HOUR = 2.0
 DEFAULT_EVIDENCE_DIR = ".workbay/tmp/gpu-burst-smoke"
+WARM_START_BUDGET_SECONDS = 101
+IDLE_REAPER_SECONDS = 300
+REAPER_BUDGET_SECONDS = 120
+FENCE_BUDGET_SECONDS = 2
 
 
 class SmokeFailure(RuntimeError):
@@ -197,6 +206,16 @@ class OciClient(Protocol):
         self, compartment_id: str, *, timeout: float
     ) -> list[dict[str, Any]]: ...
 
+    def list_start_events(
+        self,
+        compartment_id: str,
+        instance_id: str,
+        *,
+        start_time: str,
+        end_time: str,
+        timeout: float,
+    ) -> list[dict[str, Any]]: ...
+
 
 class SubprocessOci:
     """Small timeout-bound facade over the OCI CLI JSON surface."""
@@ -239,7 +258,6 @@ class SubprocessOci:
                 instance_id,
                 "--action",
                 "STOP",
-                "--force",
             ],
             timeout=timeout,
         )
@@ -265,24 +283,96 @@ class SubprocessOci:
             raise SmokeFailure("OCI instance list returned no data array")
         return data
 
+    def list_start_events(
+        self,
+        compartment_id: str,
+        instance_id: str,
+        *,
+        start_time: str,
+        end_time: str,
+        timeout: float,
+    ) -> list[dict[str, Any]]:
+        payload = self._run(
+            [
+                "audit",
+                "event",
+                "list",
+                "--compartment-id",
+                compartment_id,
+                "--start-time",
+                start_time,
+                "--end-time",
+                end_time,
+                "--all",
+            ],
+            timeout=timeout,
+        )
+        data = payload.get("data") if isinstance(payload, dict) else None
+        if not isinstance(data, list) or not all(
+            isinstance(event, dict) for event in data
+        ):
+            raise SmokeFailure("OCI audit event list returned no data array")
+        return [event for event in data if _is_start_event(event, instance_id)]
+
 
 @dataclass
 class DryScenario:
     health_adapter: str = "gpu_qwen30b"
+    health_statuses: list[str] = field(default_factory=lambda: ["ok"])
     service_api_key: str = "dry-service-key"
-    tier: str = "final_gpu"
     caption: str = "A red bicycle leans beside a brick library wall."
     alt_text_draft: str = "Red bicycle beside a brick library wall"
-    model_id: str = EXPECTED_MODEL_ID
+    model_id: str = EXPECTED_PROFILE.hub_repo
     revision: str = EXPECTED_REVISION
     run_statuses: list[str] = field(default_factory=lambda: ["running", "completed"])
     returned_media_ids: list[int] = field(default_factory=lambda: [101])
     item_statuses: list[str] = field(
-        default_factory=lambda: ["queued", "queued", "running", "completed"]
+        default_factory=lambda: ["queued", "running", "running", "completed"]
     )
     item_tiers: list[str | None] = field(
-        default_factory=lambda: [None, None, None, "final_gpu"]
+        default_factory=lambda: [
+            None,
+            "provisional_cpu",
+            "provisional_cpu",
+            "final_gpu",
+        ]
     )
+    result_generations: list[int] = field(default_factory=lambda: [0, 1, 1, 2])
+
+
+def _dry_item_payload(
+    scenario: DryScenario,
+    *,
+    media_id: int,
+    status: str,
+    tier: str | None,
+    result_generation: int,
+) -> dict[str, Any]:
+    """Build the canned item through the service schema, then add pending fields."""
+
+    values: dict[str, Any] = {
+        "media_id": media_id,
+        "status": status,
+        "caption": scenario.caption if status == "completed" else None,
+        "alt_text_draft": scenario.alt_text_draft if status == "completed" else None,
+        "provenance": (
+            {"model_id": f"{scenario.model_id}@{scenario.revision}"}
+            if tier is not None
+            else None
+        ),
+    }
+    for field_name, value in (
+        ("tier", tier),
+        ("result_generation", result_generation),
+    ):
+        if field_name in DescribeRunItemResponse.model_fields:
+            values[field_name] = value
+    item = DescribeRunItemResponse(**values).model_dump(mode="json")
+    # Lane S2 owns these response-model fields; retaining them after model_dump
+    # keeps this lane's smoke contract strict before and after that merge.
+    item["tier"] = tier
+    item["result_generation"] = result_generation
+    return item
 
 
 def make_mock_transport(scenario: DryScenario) -> httpx.MockTransport:
@@ -290,9 +380,10 @@ def make_mock_transport(scenario: DryScenario) -> httpx.MockTransport:
 
     polls = 0
     item_polls = 0
+    health_polls = 0
 
     def handler(request: httpx.Request) -> httpx.Response:
-        nonlocal item_polls, polls
+        nonlocal health_polls, item_polls, polls
         path = request.url.path
         if request.method == "GET" and path == "/health/detailed":
             if (
@@ -300,9 +391,16 @@ def make_mock_transport(scenario: DryScenario) -> httpx.MockTransport:
                 != f"Bearer {scenario.service_api_key}"
             ):
                 return httpx.Response(401, json={"detail": "unauthorized"})
+            health_status = scenario.health_statuses[
+                min(health_polls, len(scenario.health_statuses) - 1)
+            ]
+            health_polls += 1
             return httpx.Response(
                 200,
-                json={"status": "ok", "description_adapter": scenario.health_adapter},
+                json={
+                    "status": health_status,
+                    "description_adapter": scenario.health_adapter,
+                },
             )
         if (
             request.method == "POST"
@@ -319,6 +417,9 @@ def make_mock_transport(scenario: DryScenario) -> httpx.MockTransport:
                 min(item_polls, len(scenario.item_statuses) - 1)
             ]
             tier = scenario.item_tiers[min(item_polls, len(scenario.item_tiers) - 1)]
+            result_generation = scenario.result_generations[
+                min(item_polls, len(scenario.result_generations) - 1)
+            ]
             item_polls += 1
             return httpx.Response(
                 200,
@@ -326,27 +427,13 @@ def make_mock_transport(scenario: DryScenario) -> httpx.MockTransport:
                     "tenant_id": "dry-tenant",
                     "run_id": "11111111-1111-4111-8111-111111111111",
                     "items": [
-                        {
-                            "media_id": media_id,
-                            "status": status,
-                            "caption": scenario.caption
-                            if status == "completed"
-                            else None,
-                            "alt_text_draft": scenario.alt_text_draft
-                            if status == "completed"
-                            else None,
-                            "provenance": (
-                                {
-                                    "tier": scenario.tier
-                                    if tier == "final_gpu"
-                                    else tier,
-                                    "model_id": scenario.model_id,
-                                    "revision": scenario.revision,
-                                }
-                                if tier is not None
-                                else None
-                            ),
-                        }
+                        _dry_item_payload(
+                            scenario,
+                            media_id=media_id,
+                            status=status,
+                            tier=tier,
+                            result_generation=result_generation,
+                        )
                         for media_id in scenario.returned_media_ids
                     ],
                 },
@@ -408,6 +495,7 @@ class FakeOci:
     reaping: bool = False
     stopping: bool = False
     current_state: str = "STOPPED"
+    start_action_count: int = 1
 
     def trigger(self) -> None:
         self.armed = True
@@ -453,6 +541,27 @@ class FakeOci:
         }
         return [target, *self.orphan_instances]
 
+    def list_start_events(
+        self,
+        compartment_id: str,
+        instance_id: str,
+        *,
+        start_time: str,
+        end_time: str,
+        timeout: float,
+    ) -> list[dict[str, Any]]:
+        del compartment_id, end_time, start_time, timeout
+        return [
+            {
+                "eventType": "com.oraclecloud.computeapi.instanceaction.end",
+                "data": {
+                    "resourceId": instance_id,
+                    "request": {"parameters": {"action": ["START"]}},
+                },
+            }
+            for _ in range(self.start_action_count)
+        ]
+
 
 @dataclass
 class SmokeResult:
@@ -478,6 +587,21 @@ def _is_gpu_burst(instance: dict[str, Any]) -> bool:
     freeform = instance.get("freeform-tags") or instance.get("freeform_tags") or {}
     role = freeform.get("role") if isinstance(freeform, dict) else None
     return name.startswith("acx-gpu-burst") or role == "gpu-burst"
+
+
+def _is_start_event(event: dict[str, Any], instance_id: str) -> bool:
+    data = event.get("data")
+    if not isinstance(data, dict) or data.get("resourceId") != instance_id:
+        return False
+    request = data.get("request")
+    if not isinstance(request, dict):
+        return False
+    parameters = request.get("parameters")
+    if not isinstance(parameters, dict):
+        return False
+    action = parameters.get("action")
+    actions = action if isinstance(action, list) else [action]
+    return any(str(value).upper() == "START" for value in actions)
 
 
 def _request_json(
@@ -531,6 +655,27 @@ def _validate_items_payload(raw_items: object) -> list[dict[str, Any]]:
                 f"{path}.status must be a str, got {type(status).__name__}"
             )
 
+        if "tier" not in item:
+            raise SmokeFailure(
+                f"{path}: contract_tier_missing (expected top-level tier)"
+            )
+        tier = item["tier"]
+        if tier is not None and (not isinstance(tier, str) or not tier):
+            raise SmokeFailure(
+                f"{path}.tier must be a non-empty str or null, got "
+                f"{type(tier).__name__}"
+            )
+        result_generation = item.get("result_generation")
+        if (
+            isinstance(result_generation, bool)
+            or not isinstance(result_generation, int)
+            or result_generation < 0
+        ):
+            raise SmokeFailure(
+                f"{path}.result_generation must be a non-negative int, got "
+                f"{type(result_generation).__name__}"
+            )
+
         provenance = item.get("provenance")
         if provenance is None:
             if status == "completed":
@@ -544,18 +689,16 @@ def _validate_items_payload(raw_items: object) -> list[dict[str, Any]]:
                 f"{path}.provenance must be an object or null, got "
                 f"{type(provenance).__name__}"
             )
-        for field_name in ("tier", "model_id"):
-            value = provenance.get(field_name)
-            if not isinstance(value, str) or not value:
-                raise SmokeFailure(
-                    f"{path}.provenance.{field_name} must be a non-empty str, got "
-                    f"{type(value).__name__}"
-                )
-        revision = provenance.get("revision") or provenance.get("model_revision")
-        if not isinstance(revision, str) or not revision:
+        model_identity = provenance.get("model_id")
+        if not isinstance(model_identity, str) or not model_identity:
             raise SmokeFailure(
-                f"{path}.provenance.revision must be a non-empty str, got "
-                f"{type(revision).__name__}"
+                f"{path}.provenance.model_id must be a non-empty str, got "
+                f"{type(model_identity).__name__}"
+            )
+        hub_repo, separator, revision = model_identity.rpartition("@")
+        if not separator or not hub_repo or not revision:
+            raise SmokeFailure(
+                f"{path}.provenance.model_id must use <hub_repo>@<revision>"
             )
     return raw_items
 
@@ -634,9 +777,15 @@ def run_smoke(
     transitions: list[dict[str, Any]] = []
     items: list[dict[str, Any]] = []
     item_timeline: list[dict[str, Any]] = []
+    service_health_samples: list[dict[str, Any]] = []
     denylist_verdicts: list[dict[str, Any]] = []
     run_id = "unavailable"
     run_status = "unavailable"
+    start_action_evidence: dict[str, Any] = {
+        "source": "oci_audit",
+        "status": "unavailable",
+        "count": 0,
+    }
     preflight_refused = False
     instance_validated = False
     compartment_id = "unavailable"
@@ -645,6 +794,52 @@ def run_smoke(
 
     def check(name: str, passed: bool, detail: str) -> None:
         checks.append({"name": name, "passed": bool(passed), "detail": detail})
+
+    def record_health(phase: str, health: dict[str, Any]) -> bool:
+        healthy = (
+            health.get("status") == "ok"
+            and health.get("description_adapter") == "gpu_qwen30b"
+        )
+        service_health_samples.append(
+            {
+                "elapsed_seconds": round(deadline.elapsed(), 3),
+                "phase": phase,
+                "status": str(health.get("status") or "unknown"),
+                "description_adapter": str(
+                    health.get("description_adapter") or "unknown"
+                ),
+                "healthy": healthy,
+            }
+        )
+        return healthy
+
+    def poll_health(phase: str) -> None:
+        try:
+            health = _request_json(
+                client,
+                "GET",
+                f"{args.service_base_url.rstrip('/')}/health/detailed",
+                deadline=deadline,
+                headers={"Authorization": f"Bearer {service_api_key}"},
+            )
+        except SmokeFailure as exc:
+            service_health_samples.append(
+                {
+                    "elapsed_seconds": round(deadline.elapsed(), 3),
+                    "phase": phase,
+                    "status": "request_failed",
+                    "description_adapter": "unknown",
+                    "healthy": False,
+                    "detail": str(exc),
+                }
+            )
+            raise
+        if not record_health(phase, health):
+            raise SmokeFailure(
+                f"description service unhealthy during {phase}: "
+                f"status={health.get('status')}, "
+                f"adapter={health.get('description_adapter')}"
+            )
 
     try:
         try:
@@ -664,6 +859,7 @@ def run_smoke(
                         "description service rejected bearer authentication"
                     ) from exc
                 raise
+            health_ok = record_health("preflight", health)
             check("service_auth", True, "bearer authentication accepted")
             adapter_ok = health.get("description_adapter") == "gpu_qwen30b"
             check(
@@ -674,6 +870,10 @@ def run_smoke(
             if not adapter_ok:
                 preflight_refused = True
                 raise PreflightRefusal("description service is not using gpu_qwen30b")
+            check("service_health_preflight", health_ok, str(health.get("status")))
+            if not health_ok:
+                preflight_refused = True
+                raise PreflightRefusal("description service is unhealthy at preflight")
 
             initial = oci.get_instance(
                 args.instance_id,
@@ -701,7 +901,6 @@ def run_smoke(
                 raise PreflightRefusal(
                     "instance identity or dedicated gpu-burst ownership is invalid"
                 )
-            instance_validated = True
             initial_state = _state(initial)
             _record_transition(
                 transitions, initial_state, elapsed=deadline.elapsed(), now=now
@@ -712,12 +911,14 @@ def run_smoke(
                 raise PreflightRefusal(
                     f"burst instance must start STOPPED, got {initial_state}"
                 )
+            instance_validated = True
         except SmokeFailure as exc:
             check("preflight", False, str(exc))
             preflight_refused = True
             raise PreflightRefusal(str(exc)) from exc
 
         auth = httpx.BasicAuth(args.wp_user, app_password)
+        run_window_started_at = _iso_utc(now())
         submitted = _request_json(
             client,
             "POST",
@@ -736,7 +937,8 @@ def run_smoke(
 
         running_observed = False
         terminal_before_running: set[int | str] = set()
-        provisional_or_degraded: set[int | str] = set()
+        degraded_items: set[int | str] = set()
+        generations_by_media_id: dict[int | str, list[tuple[str, int]]] = {}
 
         def poll_items() -> None:
             nonlocal items
@@ -753,20 +955,26 @@ def run_smoke(
             for item in items:
                 media_id = item.get("media_id", "unavailable")
                 status = str(item.get("status") or "unknown")
-                provenance = item.get("provenance")
-                tier = provenance.get("tier") if isinstance(provenance, dict) else None
+                tier = item.get("tier")
+                result_generation = int(item.get("result_generation", 0))
                 item_timeline.append(
                     {
                         "elapsed_seconds": elapsed,
                         "media_id": media_id,
                         "status": status,
                         "tier": tier,
+                        "result_generation": result_generation,
                     }
                 )
+                if isinstance(tier, str):
+                    observations = generations_by_media_id.setdefault(media_id, [])
+                    observation = (tier, result_generation)
+                    if not observations or observations[-1] != observation:
+                        observations.append(observation)
                 if not running_observed and status in TERMINAL_ITEM_STATUSES:
                     terminal_before_running.add(media_id)
-                if status == "degraded" or tier == "provisional_cpu":
-                    provisional_or_degraded.add(media_id)
+                if status == "completed" and tier == "provisional_cpu":
+                    degraded_items.add(media_id)
 
         warm_started = False
         while not warm_started:
@@ -786,6 +994,7 @@ def run_smoke(
             warm_started = observed_state == "RUNNING"
             running_observed = running_observed or warm_started
             poll_items()
+            poll_health("warm_up")
             if not warm_started:
                 sleep(POLL_SECONDS)
         check(
@@ -809,6 +1018,7 @@ def run_smoke(
             )
             running_observed = running_observed or _state(observed) == "RUNNING"
             poll_items()
+            poll_health("processing")
             run = _request_json(
                 client,
                 "GET",
@@ -827,9 +1037,9 @@ def run_smoke(
             f"offending media_ids: {sorted(terminal_before_running, key=str)}",
         )
         check(
-            "no_provisional_or_degraded_items",
-            not provisional_or_degraded,
-            f"offending media_ids: {sorted(provisional_or_degraded, key=str)}",
+            "no_degraded_items",
+            not degraded_items,
+            f"offending media_ids: {sorted(degraded_items, key=str)}",
         )
 
         returned_media_id_rows = [item.get("media_id") for item in items]
@@ -878,13 +1088,13 @@ def run_smoke(
                 if isinstance(item.get("provenance"), dict)
                 else {}
             )
-            if provenance.get("tier") != "final_gpu":
+            if item.get("tier") != "final_gpu":
                 wrong_tier_ids.add(media_id)
-            if provenance.get("model_id") != EXPECTED_MODEL_ID:
+            model_identity = str(provenance.get("model_id") or "")
+            hub_repo, separator, revision = model_identity.rpartition("@")
+            if not separator or hub_repo != EXPECTED_PROFILE.hub_repo:
                 wrong_model_ids.add(media_id)
-            if (
-                provenance.get("revision") or provenance.get("model_revision")
-            ) != EXPECTED_REVISION:
+            if not separator or revision != EXPECTED_REVISION:
                 wrong_revision_ids.add(media_id)
         check(
             "tier_final_gpu",
@@ -926,6 +1136,33 @@ def run_smoke(
             f"offending media_ids: {sorted(wrong_revision_ids)}; expected {EXPECTED_REVISION}",
         )
 
+        non_superseded_ids: set[int] = set(missing_ids)
+        for media_id in requested_ids - missing_ids:
+            observations = generations_by_media_id.get(media_id, [])
+            provisional_generations = [
+                generation
+                for tier, generation in observations
+                if tier == "provisional_cpu"
+            ]
+            final_generations = [
+                generation for tier, generation in observations if tier == "final_gpu"
+            ]
+            if (
+                not provisional_generations
+                or not final_generations
+                or not any(
+                    final_generation > provisional_generation
+                    for provisional_generation in provisional_generations
+                    for final_generation in final_generations
+                )
+            ):
+                non_superseded_ids.add(media_id)
+        check(
+            "provisional_superseded_by_final",
+            not non_superseded_ids,
+            f"offending media_ids: {sorted(non_superseded_ids)}",
+        )
+
         begin_reaper = getattr(oci, "begin_reaper", None)
         if callable(begin_reaper):
             begin_reaper()
@@ -946,6 +1183,7 @@ def run_smoke(
                 transitions, observed_state, elapsed=deadline.elapsed(), now=now
             )
             reaper_stopped = observed_state == "STOPPED"
+            poll_health("recovery" if reaper_stopped else "drain")
             if not reaper_stopped:
                 sleep(POLL_SECONDS)
         check(
@@ -953,11 +1191,24 @@ def run_smoke(
             reaper_stopped,
             "STOPPED" if reaper_stopped else "deadline before STOPPED",
         )
-        start_count = sum(
-            transition["state"] == "STARTING" for transition in transitions
+        start_events = oci.list_start_events(
+            compartment_id,
+            args.instance_id,
+            start_time=run_window_started_at,
+            end_time=_iso_utc(now()),
+            timeout=deadline.timeout(OCI_CALL_TIMEOUT_SECONDS),
         )
+        start_action_evidence = {
+            "source": "oci_audit",
+            "status": "observed",
+            "count": len(start_events),
+            "window_start": run_window_started_at,
+            "window_end": _iso_utc(now()),
+        }
         check(
-            "exactly_one_start_transition", start_count == 1, f"observed {start_count}"
+            "exactly_one_start_action",
+            len(start_events) == 1,
+            f"observed {len(start_events)} authoritative START action(s)",
         )
     except PreflightRefusal:
         preflight_refused = True
@@ -971,25 +1222,38 @@ def run_smoke(
                 "instance was not validated; STOP and OCI follow-up skipped",
             )
         else:
-            try:
-                oci.stop_instance(args.instance_id, timeout=OCI_CALL_TIMEOUT_SECONDS)
-                check(
-                    "finally_stop_issued",
-                    True,
-                    f"STOP issued ({oci.stop_calls} call(s))",
-                )
-            except (SmokeFailure, OSError, ValueError) as exc:
-                check("finally_stop_issued", False, str(exc))
-
             final_state = "UNKNOWN"
+            stop_failures: list[str] = []
+            successful_stop_calls = 0
             try:
                 emergency_deadline = Deadline(EMERGENCY_STOP_TIMEOUT_SECONDS, monotonic)
                 while final_state != "STOPPED":
                     emergency_deadline.check("waiting for compensating STOPPED")
-                    final_instance = oci.get_instance(
-                        args.instance_id,
-                        timeout=emergency_deadline.timeout(OCI_CALL_TIMEOUT_SECONDS),
-                    )
+                    try:
+                        final_instance = oci.get_instance(
+                            args.instance_id,
+                            timeout=emergency_deadline.timeout(
+                                OCI_CALL_TIMEOUT_SECONDS
+                            ),
+                        )
+                    except (SmokeFailure, PreflightRefusal, OSError, ValueError) as exc:
+                        if oci.stop_calls >= MAX_EMERGENCY_STOP_ATTEMPTS:
+                            raise SmokeFailure(
+                                "bounded compensating STOP retries exhausted after "
+                                f"state read failure: {exc}"
+                            ) from exc
+                        try:
+                            oci.stop_instance(
+                                args.instance_id,
+                                timeout=emergency_deadline.timeout(
+                                    OCI_CALL_TIMEOUT_SECONDS
+                                ),
+                            )
+                            successful_stop_calls += 1
+                        except (SmokeFailure, OSError, ValueError) as stop_exc:
+                            stop_failures.append(str(stop_exc))
+                        sleep(POLL_SECONDS)
+                        continue
                     final_state = _state(final_instance)
                     _record_transition(
                         transitions,
@@ -997,15 +1261,52 @@ def run_smoke(
                         elapsed=deadline.elapsed(),
                         now=now,
                     )
+                    if final_state == "RUNNING":
+                        if oci.stop_calls >= MAX_EMERGENCY_STOP_ATTEMPTS:
+                            raise SmokeFailure(
+                                "bounded compensating STOP retries exhausted"
+                            )
+                        try:
+                            oci.stop_instance(
+                                args.instance_id,
+                                timeout=emergency_deadline.timeout(
+                                    OCI_CALL_TIMEOUT_SECONDS
+                                ),
+                            )
+                            successful_stop_calls += 1
+                        except (SmokeFailure, OSError, ValueError) as exc:
+                            stop_failures.append(str(exc))
                     if final_state != "STOPPED":
                         sleep(POLL_SECONDS)
+                stop_detail = (
+                    "already STOPPED; no compensating STOP needed"
+                    if oci.stop_calls == 0
+                    else f"STOP issued ({oci.stop_calls} attempt(s))"
+                )
+                check(
+                    "finally_stop_issued",
+                    not stop_failures or successful_stop_calls > 0,
+                    stop_detail
+                    if not stop_failures
+                    else f"{stop_detail}; failures: {'; '.join(stop_failures)}",
+                )
                 check("instance_stopped_finally", True, final_state)
             except (SmokeFailure, OSError, ValueError) as exc:
+                check(
+                    "finally_stop_issued",
+                    False,
+                    "; ".join(stop_failures) or str(exc),
+                )
                 check(
                     "instance_stopped_finally",
                     False,
                     f"{exc}; last state {final_state}",
                 )
+
+            try:
+                poll_health("after_stop")
+            except (SmokeFailure, OSError, ValueError):
+                pass
 
             try:
                 listed = oci.list_instances(
@@ -1021,6 +1322,15 @@ def run_smoke(
                 check("no_orphan_running", not orphans, f"{len(orphans)} orphan(s)")
             except (SmokeFailure, OSError, ValueError) as exc:
                 check("no_orphan_running", False, str(exc))
+
+    unhealthy_samples = [
+        sample for sample in service_health_samples if not sample["healthy"]
+    ]
+    check(
+        "service_health_throughout",
+        not unhealthy_samples,
+        f"{len(service_health_samples)} sample(s); {len(unhealthy_samples)} unhealthy",
+    )
 
     evidence_elapsed_seconds = deadline.elapsed()
     running_seconds = _running_seconds(
@@ -1045,14 +1355,15 @@ def run_smoke(
         provenance = (
             item.get("provenance") if isinstance(item.get("provenance"), dict) else {}
         )
+        model_identity = str(provenance.get("model_id") or "")
+        hub_repo, separator, revision = model_identity.rpartition("@")
         item_provenance.append(
             {
                 "media_id": item.get("media_id", "unavailable"),
-                "tier": provenance.get("tier", "unavailable"),
-                "model_id": provenance.get("model_id", "unavailable"),
-                "revision": provenance.get("revision")
-                or provenance.get("model_revision")
-                or "unavailable",
+                "tier": item.get("tier", "unavailable"),
+                "model_id": hub_repo if separator else "unavailable",
+                "revision": revision if separator else "unavailable",
+                "result_generation": item.get("result_generation", "unavailable"),
             }
         )
     evidence = {
@@ -1064,8 +1375,10 @@ def run_smoke(
         "run_status": run_status,
         "media_ids": args.media_ids,
         "transitions": transitions,
+        "start_action_evidence": start_action_evidence,
         "item_timeline": item_timeline,
         "item_provenance": item_provenance,
+        "service_health_samples": service_health_samples,
         "denylist_verdicts": denylist_verdicts,
         "gpu_state_json": gpu_snapshot,
         "load_json": load_snapshot,
@@ -1077,8 +1390,27 @@ def run_smoke(
     }
     _write_evidence(args.evidence_out, evidence)
     _print_assertion_table(checks)
+    remaining_budget_seconds = args.max_seconds
+    warm_start_budget_seconds = min(WARM_START_BUDGET_SECONDS, remaining_budget_seconds)
+    remaining_budget_seconds -= warm_start_budget_seconds
+    idle_reaper_seconds = min(IDLE_REAPER_SECONDS, remaining_budget_seconds)
+    remaining_budget_seconds -= idle_reaper_seconds
+    reaper_budget_seconds = min(REAPER_BUDGET_SECONDS, remaining_budget_seconds)
+    remaining_budget_seconds -= reaper_budget_seconds
+    fence_budget_seconds = min(FENCE_BUDGET_SECONDS, remaining_budget_seconds)
+    remaining_budget_seconds -= fence_budget_seconds
+    inference_budget_seconds = remaining_budget_seconds
+    budget_total = (
+        warm_start_budget_seconds
+        + inference_budget_seconds
+        + idle_reaper_seconds
+        + reaper_budget_seconds
+        + fence_budget_seconds
+    )
     print(
-        f"\nBudget: {args.max_seconds}s = idle 300s + reap 120s + fence 2s + slack {max(0, args.max_seconds - 422)}s"
+        f"\nBudget: {budget_total}s = warm-start {warm_start_budget_seconds}s + "
+        f"inference {inference_budget_seconds}s + idle {idle_reaper_seconds}s + "
+        f"reap {reaper_budget_seconds}s + fence {fence_budget_seconds}s"
     )
     print(
         f"Estimated GPU cost: ${cost:.6f} ({running_seconds:.3f}s RUNNING at ${GPU_USD_PER_HOUR:.2f}/hour; "
@@ -1168,6 +1500,17 @@ def _validate_args(args: argparse.Namespace) -> tuple[str, str]:
         return "dry-run-only", "dry-service-key"
     if os.environ.get("ACX_GPU_SMOKE_CONFIRM") != "RUN":
         raise PreflightRefusal("live mode requires ACX_GPU_SMOKE_CONFIRM=RUN")
+    service_url = urlsplit(args.service_base_url)
+    if (
+        service_url.scheme not in {"http", "https"}
+        or not service_url.hostname
+        or service_url.hostname.endswith(".invalid")
+        or "<" in args.service_base_url
+        or ">" in args.service_base_url
+    ):
+        raise PreflightRefusal(
+            "--service-base-url must explicitly name the description service"
+        )
     password = os.environ.get(args.wp_app_password_env)
     if not password:
         raise PreflightRefusal(

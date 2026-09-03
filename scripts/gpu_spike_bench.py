@@ -392,20 +392,32 @@ def ensure_stopped(
         state = actuator.get_lifecycle_state(instance_id).upper()
     except Exception:  # noqa: BLE001 - best-effort stop path
         state = "UNKNOWN"
+    stop_error: Exception | None = None
     if state != "STOPPED":
         try:
             actuator.stop(instance_id)
         except Exception as exc:  # noqa: BLE001
             # Still attempt to poll in case stop partially applied.
+            stop_error = exc
             sys.stderr.write(f"ensure_stopped: stop() raised: {exc}\n")
-    wait_for_lifecycle(
-        actuator,
-        instance_id,
-        "STOPPED",
-        clock=clock,
-        timeout_seconds=timeout_seconds,
-        poll_interval_seconds=poll_interval_seconds,
-    )
+    try:
+        wait_for_lifecycle(
+            actuator,
+            instance_id,
+            "STOPPED",
+            clock=clock,
+            timeout_seconds=timeout_seconds,
+            poll_interval_seconds=poll_interval_seconds,
+        )
+    except Exception as poll_error:  # noqa: BLE001 - preserve both cleanup errors
+        if stop_error is not None:
+            raise BenchError(
+                f"STOP request failed ({stop_error}); STOPPED verification also failed "
+                f"({poll_error})"
+            ) from poll_error
+        raise
+    if stop_error is not None:
+        raise BenchError(f"STOP request failed before STOPPED verification: {stop_error}")
 
 
 # ---------------------------------------------------------------------------
@@ -424,6 +436,7 @@ class ColdBootResult:
 @dataclass
 class WarmStartResult:
     samples: list[float]
+    shutdown_samples: list[float]
     p50: float
     p95: float
     meets_target: bool
@@ -525,9 +538,10 @@ def run_warm_start_loop(
     if runs < 1:
         raise PhaseError("warm_start", f"warm-start-runs must be >= 1, got {runs}")
     samples: list[float] = []
+    shutdown_samples: list[float] = []
     try:
         for i in range(runs):
-            t0 = clock.monotonic()
+            shutdown_started = clock.monotonic()
             actuator.stop(instance_id)
             wait_for_lifecycle(
                 actuator,
@@ -537,6 +551,8 @@ def run_warm_start_loop(
                 timeout_seconds=lifecycle_timeout_seconds,
                 poll_interval_seconds=poll_interval_seconds,
             )
+            shutdown_samples.append(clock.monotonic() - shutdown_started)
+            t0 = clock.monotonic()
             actuator.start(instance_id)
             wait_for_lifecycle(
                 actuator,
@@ -557,7 +573,8 @@ def run_warm_start_loop(
             )
             samples.append(clock.monotonic() - t0)
             print(
-                f"warm-start run {i + 1}/{runs}: {samples[-1]:.3f}s",
+                f"warm-start run {i + 1}/{runs}: {samples[-1]:.3f}s "
+                f"(shutdown={shutdown_samples[-1]:.3f}s)",
                 flush=True,
             )
         p50 = percentile(samples, 50)
@@ -565,6 +582,7 @@ def run_warm_start_loop(
         meets = p95 <= target_seconds
         return WarmStartResult(
             samples=samples,
+            shutdown_samples=shutdown_samples,
             p50=p50,
             p95=p95,
             meets_target=meets,
@@ -644,6 +662,8 @@ def build_spike_artifact(
     warm_start: WarmStartResult,
     throughput: ThroughputResult,
     model_id: str,
+    boot_volume_gb: int,
+    vpus_per_gb: int,
     a10_quota_confirmed: bool = False,
     a100_or_l40s_headroom_confirmed: bool = False,
     serverless_gpu_available: bool = False,
@@ -658,7 +678,8 @@ def build_spike_artifact(
         "recorded_at": stamp,
         "status": ARTIFACT_STATUS_MEASURED,
         "shape": "VM.GPU.A10.1",
-        "boot_volume_size_in_gbs": 400,
+        "boot_volume_size_in_gbs": boot_volume_gb,
+        "boot_volume_vpus_per_gb": vpus_per_gb,
         "measurement_candidate": {
             "model_id": model_id,
             "quantization": "Q4 GGUF",
@@ -682,6 +703,13 @@ def build_spike_artifact(
                 "target_seconds": warm_start.target_seconds,
                 "meets_target": warm_start.meets_target,
                 "samples": list(warm_start.samples),
+                "source": LIVE_MEASUREMENT_SOURCE,
+            },
+            "shutdown_seconds": {
+                "value": percentile(warm_start.shutdown_samples, 50),
+                "p50": percentile(warm_start.shutdown_samples, 50),
+                "p95": percentile(warm_start.shutdown_samples, 95),
+                "samples": list(warm_start.shutdown_samples),
                 "source": LIVE_MEASUREMENT_SOURCE,
             },
             "model_load_seconds": {
@@ -721,6 +749,7 @@ def build_spike_artifact(
         "notes": [
             "Artifact produced by scripts/gpu_spike_bench.py (VLM-3B Slice 7a).",
             "Warm-start reports p50/p95 percentiles, not means [PERF-01].",
+            "Shutdown time is recorded separately and excluded from warm-start samples.",
             f"Warm-start p95 target {warm_start.target_seconds}s: "
             f"{'PASS' if warm_start.meets_target else 'FAIL'} "
             f"(p95={warm_start.p95:.3f}s).",
@@ -760,6 +789,8 @@ def run_bench(
     http: HttpClient,
     clock: Clock,
     artifact_out: Path,
+    boot_volume_gb: int,
+    vpus_per_gb: int,
     a10_quota_confirmed: bool = False,
     a100_or_l40s_headroom_confirmed: bool = False,
     serverless_gpu_available: bool = False,
@@ -773,9 +804,12 @@ def run_bench(
     cold: ColdBootResult | None = None
     warm: WarmStartResult | None = None
     thruput: ThroughputResult | None = None
-    failed_phase: str | None = None
+    prepared_artifact: dict[str, Any] | None = None
+    active_phase = "setup"
 
     def _mark(phase: str) -> None:
+        nonlocal active_phase
+        active_phase = phase
         if on_phase is not None:
             on_phase(phase)
 
@@ -835,19 +869,20 @@ def run_bench(
             flush=True,
         )
 
-        _mark("artifact_write")
+        _mark("artifact_prepare")
         artifact = build_spike_artifact(
             cold_boot=cold,
             warm_start=warm,
             throughput=thruput,
             model_id=model_id,
+            boot_volume_gb=boot_volume_gb,
+            vpus_per_gb=vpus_per_gb,
             a10_quota_confirmed=a10_quota_confirmed,
             a100_or_l40s_headroom_confirmed=a100_or_l40s_headroom_confirmed,
             serverless_gpu_available=serverless_gpu_available,
         )
         assert_no_null_measurement_values(artifact)
-        write_artifact(artifact_out, artifact)
-        print(f"artifact written: {artifact_out}", flush=True)
+        prepared_artifact = artifact
 
         return BenchResult(
             cold_boot=cold,
@@ -858,12 +893,10 @@ def run_bench(
             endpoint_url=endpoint_url,
             warm_start_meets_target=warm.meets_target,
         )
-    except PhaseError as exc:
-        failed_phase = exc.phase
+    except PhaseError:
         raise
     except Exception as exc:  # noqa: BLE001
-        failed_phase = failed_phase or "unknown"
-        raise PhaseError(failed_phase, str(exc)) from exc
+        raise PhaseError(active_phase, str(exc)) from exc
     finally:
         # Billing safety: never leave the instance RUNNING [RES-07].
         try:
@@ -877,6 +910,18 @@ def run_bench(
             print("finally: instance STOPPED", flush=True)
         except Exception as stop_exc:  # noqa: BLE001
             sys.stderr.write(f"finally STOP failed: {stop_exc}\n")
+            raise PhaseError("cleanup", str(stop_exc)) from stop_exc
+
+        # A measured artifact is complete only after billing-safe STOPPED is proven.
+        if prepared_artifact is not None:
+            try:
+                _mark("artifact_write")
+                write_artifact(artifact_out, prepared_artifact)
+                print(f"artifact written: {artifact_out}", flush=True)
+            except PhaseError:
+                raise
+            except Exception as artifact_exc:  # noqa: BLE001
+                raise PhaseError("artifact_write", str(artifact_exc)) from artifact_exc
 
 
 def dry_run_plan(
@@ -890,6 +935,8 @@ def dry_run_plan(
     a10_quota_confirmed: bool,
     a100_or_l40s_headroom_confirmed: bool,
     serverless_gpu_available: bool,
+    boot_volume_gb: int | None,
+    vpus_per_gb: int | None,
 ) -> dict[str, Any]:
     plan = {
         "mode": "dry-run",
@@ -899,9 +946,12 @@ def dry_run_plan(
         "warm_start_runs": warm_start_runs,
         "images": [str(p) for p in image_paths],
         "artifact_out": str(artifact_out),
+        "boot_volume_gb": boot_volume_gb,
+        "vpus_per_gb": vpus_per_gb,
         "phases": [
             "cold_boot: START from STOPPED → poll RUNNING → poll endpoint ready",
-            f"warm_start: STOP→START→ready × {warm_start_runs} (p50/p95 vs "
+            f"warm_start: STOP→STOPPED (shutdown separate), then START→ready × "
+            f"{warm_start_runs} (p50/p95 vs "
             f"{WARM_START_P95_TARGET_SECONDS}s)",
             "throughput: POST /v1/chat/completions per --image",
             "artifact_write: fill acx-gpu-spike/v1 measurements, flip status",
@@ -957,6 +1007,18 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=DEFAULT_WARM_START_RUNS,
         help=f"Number of STOP→START warm-start samples (default {DEFAULT_WARM_START_RUNS})",
+    )
+    parser.add_argument(
+        "--boot-volume-gb",
+        type=int,
+        default=None,
+        help="Live-run boot-volume size in GB (required unless --dry-run)",
+    )
+    parser.add_argument(
+        "--vpus-per-gb",
+        type=int,
+        default=None,
+        help="Live-run boot-volume performance in VPU/GB (required unless --dry-run)",
     )
     parser.add_argument(
         "--image",
@@ -1026,9 +1088,15 @@ def main(argv: Sequence[str] | None = None) -> int:
             a10_quota_confirmed=args.a10_quota_confirmed,
             a100_or_l40s_headroom_confirmed=args.a100_or_l40s_headroom_confirmed,
             serverless_gpu_available=args.serverless_gpu_available,
+            boot_volume_gb=args.boot_volume_gb,
+            vpus_per_gb=args.vpus_per_gb,
         )
         return 0
 
+    if args.boot_volume_gb is None or args.vpus_per_gb is None:
+        parser.error("--boot-volume-gb and --vpus-per-gb are required for live runs")
+    if args.boot_volume_gb <= 0 or args.vpus_per_gb <= 0:
+        parser.error("--boot-volume-gb and --vpus-per-gb must be positive")
     if not image_paths:
         parser.error("at least one --image is required (unless --dry-run)")
 
@@ -1047,6 +1115,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             http=http,
             clock=clock,
             artifact_out=artifact_out,
+            boot_volume_gb=args.boot_volume_gb,
+            vpus_per_gb=args.vpus_per_gb,
             a10_quota_confirmed=args.a10_quota_confirmed,
             a100_or_l40s_headroom_confirmed=args.a100_or_l40s_headroom_confirmed,
             serverless_gpu_available=args.serverless_gpu_available,

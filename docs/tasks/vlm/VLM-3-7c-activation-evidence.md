@@ -1,8 +1,11 @@
 # VLM-3 Slice 7c — GPU Tier Activation Evidence (2026-07-14)
 
-Live proof of the activation preconditions and the E2E burst on the provisioned
-scale-to-zero host. Companion to the decision memo §Activation preconditions and
-`VLM-3-7a-spike-findings.md`.
+Live proof from the activation run and E2E burst on the provisioned spike host.
+This is not evidence of production activation. Companion to the decision memo
+§Activation preconditions and `VLM-3-7a-spike-findings.md`.
+
+Status: proven on the 2026-07-14 spike host; production reaper timer install +
+backend deploy are open GPUSMOKE-1 S4 preconditions.
 
 ## Provisioned host (operator-approved launch)
 
@@ -10,8 +13,8 @@ scale-to-zero host. Companion to the decision memo §Activation preconditions an
   (VM.GPU.A10.1, golden image `acx-gpu-qwen3vl30b-golden`, private IP `<burst-private-ip>`,
   hostname `acx-gpu-burst`, NSG `acx-gpu-bench-nsg`, tags `env:production role:gpu-burst
   scale_to_zero:true`).
-- Boot volume `ocid1.bootvolume.oc1.iad.abuwcljrsnc2jxziodkdbu7bakndovidxe4iy7mcfgpa5v4mzptdkjlbzsya`
-  — **400 GB @ 30 VPU (the relaxed spec, operator-decided)**, ~$31/mo standing;
+- Boot volume `<burst-boot-volume-ocid>` — **400 GB @ 30 VPU (the relaxed spec,
+  operator-decided)**, ~$31/mo standing;
   compute ~$2/hr only while RUNNING.
 - End state after the proof: instance **STOPPED** (reaper-actuated), no orphaned
   instance, boot volume retained by design.
@@ -27,9 +30,9 @@ scale-to-zero host. Companion to the decision memo §Activation preconditions an
 | Drain + reaper | `python3 -m infra.oci.gpu_lifecycle --instance-id … --idle-seconds 30 --load-json <snapshot> --fence-delay-seconds 2 --probe-oci` → `decided=[('STOP', …)] actuated=[('STOP', …)] fenced_off=False errors=[]`; instance `STOPPED` |
 | Load snapshot | DB-derived (`describe_load.py`, VLM-5 producer) at `ACX_DESCRIBE_LOAD_PATH`; `{"queue_depth":0,"in_flight":0,"written_at":…}` consumed by the reaper |
 
-## Activation preconditions (memo §Activation) — status
+## Spike-host activation preconditions (memo §Activation) — status
 
-1. **Endpoint URL**: `ACX_GPU_ENDPOINT_URL=http://localhost:18000` (loopback →
+1. **Endpoint URL**: `ACX_GPU_ENDPOINT_URL=http://localhost:18000` on the spike host (loopback →
    SSH tunnel `localhost:18000 → acx-backend → <burst-private-ip>:8000`); loopback/private
    forms accepted per the allowlist contract. ✅
 2. **Adapter env contract**: with the env set, async GPU-final serves; with it
@@ -39,15 +42,16 @@ scale-to-zero host. Companion to the decision memo §Activation preconditions an
    HEAD + live unset-env fail-closed observed. ✅
 4. **GPU instance start**: provisioned, first-boot completed, control-plane
    STOPPED as the scale-to-zero start state; burst START/STOP exercised. ✅
-5. **Idle reaper wired**: actuated a real STOP off the DB-derived snapshot
-   (fence honored). Production timer (cron/systemd on the backend host) is the
-   remaining **operator step** — same command line as above with
-   `--idle-seconds 300`. ☐ operator
-6. **Bake-off evidence**: memo FINAL (7b). ✅
+5. **Idle reaper spike proof**: actuated a real STOP off the DB-derived snapshot
+   (fence honored). The production timer (cron/systemd on the backend host)
+   remains an open GPUSMOKE-1 S4 precondition. ☐ production
+6. **Bake-off evidence**: memo remains provisional; the license verdict is
+   pending and measured JSON reports were not regenerated. ☐ open
 
 ## Rollback (RLSE-07/08)
 
-Service restarted with **no** `ACX_GPU_ENDPOINT_URL`: sync describe serves
+On the spike host, the service restarted with **no** `ACX_GPU_ENDPOINT_URL`:
+sync describe serves
 `tier=provisional_cpu` (CPU adapter), async degrades gracefully preserving the
 provisional, `/health` green throughout (`commit_sha=2f52fe94`). Stop criteria:
 unset the env (or stop the timer) and the CPU tier carries all traffic — no

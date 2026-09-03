@@ -32,6 +32,14 @@ def test_gpu_instance_dedicated_tag_matches_bench_gate() -> None:
     assert tag_match.group(1) == expected_value
 
 
+def test_gpu_instance_ignores_runtime_state_drift_after_reaper_stop() -> None:
+    gpu_block = _gpu_instance_block()
+    lifecycle = re.search(r"lifecycle\s*\{([^}]*)\}", gpu_block, re.DOTALL)
+
+    assert lifecycle is not None
+    assert re.search(r"ignore_changes\s*=\s*\[\s*state\s*\]", lifecycle.group(1))
+
+
 def test_gpu_instance_uses_configurable_a10_shape_and_dedicated_cloud_init() -> None:
     main_tf = (OCI_ROOT / "main.tf").read_text()
     variables_tf = (OCI_ROOT / "variables.tf").read_text()

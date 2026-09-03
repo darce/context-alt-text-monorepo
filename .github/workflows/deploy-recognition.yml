@@ -17,6 +17,9 @@ on:
     paths:
       - "apps/prototype-description-service/**"
       - "scripts/deploy/**"
+      - "scripts/test_ocirv1_vault_readiness.py"
+      - "scripts/deploy/tests/**"
+      - "Makefile"
       - ".github/workflows/deploy-recognition.yml"
   workflow_dispatch:
     inputs:
@@ -39,7 +42,26 @@ permissions:
   contents: read
 
 jobs:
+  gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install deploy-contract test dependencies
+        run: python -m pip install pytest pyyaml
+
+      - name: Run deploy-contract tests
+        run: make test-deploy-contract
+
   deploy:
+    needs: gate
     runs-on: ubuntu-latest
     # One hung step must not hold the serialized per-env lane for GitHub's 6h
     # default (REMOTE_BUILD deploys take longer than the demo's).

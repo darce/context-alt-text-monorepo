@@ -16,9 +16,19 @@ free tiers.
 
 | Event | Environment | Gate |
 | --- | --- | --- |
-| Push to `main` (touching `apps/prototype-description-service/**`, `scripts/deploy/**`, or this workflow) | `dev` | none (continuous) |
-| Manual **Run workflow** → `staging` | `staging` | GitHub Environment (optional reviewer) |
-| Manual **Run workflow** → `prod` | `prod` | Must type **`confirm=PROMOTE`** in the dispatch form (workflow gate) + `main`-only deployment branch; script also enforces `CONFIRM=PROMOTE` |
+| Push to `main` (touching service, deploy, deploy-test, Makefile, or workflow paths) | `dev` | Deploy-contract test gate |
+| Manual **Run workflow** → `staging` | `staging` | Deploy-contract test gate + GitHub Environment (optional reviewer) |
+| Manual **Run workflow** → `prod` | `prod` | Deploy-contract test gate + **`confirm=PROMOTE`** in the dispatch form + `main`-only deployment branch; script also enforces `CONFIRM=PROMOTE` |
+
+## Test gate
+
+Every automatic or manually dispatched deployment first runs
+`make test-deploy-contract` in an isolated GitHub Actions job with Python 3.12.
+The gate installs only `pytest` and `pyyaml`; it uses no deployment environment,
+tailnet connection, Docker daemon, or secrets. The deploy job starts only after
+that command succeeds. Changes to `scripts/test_ocirv1_vault_readiness.py`,
+`scripts/deploy/tests/**`, or the root `Makefile` trigger the workflow so edits
+to the gate's test inputs prove the documented command still passes.
 
 ## One-time setup
 

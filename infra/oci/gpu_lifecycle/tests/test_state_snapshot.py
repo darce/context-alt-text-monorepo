@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import stat
 import threading
 from pathlib import Path
 
@@ -118,9 +119,15 @@ def test_write_failure_is_swallowed_and_cycle_completes(
 
     assert result.decided == []
     assert result.errors == []
-    warnings = [record for record in caplog.records if record.levelname == "WARNING"]
-    assert len(warnings) == 1
-    assert str(path) in warnings[0].getMessage()
+    warnings = [
+        record.getMessage()
+        for record in caplog.records
+        if record.levelname == "WARNING"
+    ]
+    assert len(warnings) == 2
+    assert any("publishing unsynchronized" in message for message in warnings)
+    assert any("failed to write GPU state snapshot" in message for message in warnings)
+    assert all(str(path) in message for message in warnings)
 
 
 @pytest.mark.parametrize(
@@ -213,6 +220,51 @@ def test_reap_cycle_refreshes_ready_without_demoting_it(
     payload = json.loads(path.read_text())
     assert payload["state"] == "ready"
     assert payload["written_at"] > 1.0
+
+
+def test_lock_failure_degrades_to_unsynchronized_snapshot_publish(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    path = tmp_path / "gpu-state.json"
+
+    def fail_lock(_file_descriptor: int, _operation: int) -> None:
+        raise OSError("simulated cross-unit permission failure")
+
+    monkeypatch.setattr("infra.oci.gpu_lifecycle.reaper.fcntl.flock", fail_lock)
+
+    run_reap_cycle(
+        controller=GpuLifecycleController(idle_seconds=60),
+        instances=[GpuInstance("ocid1.gpu", "RUNNING", 0)],
+        load_source=StaticJobLoadSource(queue_depth=1, in_flight=0),
+        actuator=RecordingActuator(),
+        fence_delay_seconds=0.0,
+        gpu_state_path=path,
+    )
+
+    assert json.loads(path.read_text())["state"] == "warming"
+    assert "simulated cross-unit permission failure" in caplog.text
+    assert str(path.with_name("gpu-state.json.lock")) in caplog.text
+
+
+def test_snapshot_lock_is_group_writable_despite_process_umask(tmp_path: Path) -> None:
+    path = tmp_path / "gpu-state.json"
+    previous_umask = os.umask(0o027)
+    try:
+        run_reap_cycle(
+            controller=GpuLifecycleController(idle_seconds=60),
+            instances=[GpuInstance("ocid1.gpu", "RUNNING", 0)],
+            load_source=StaticJobLoadSource(queue_depth=1, in_flight=0),
+            actuator=RecordingActuator(),
+            fence_delay_seconds=0.0,
+            gpu_state_path=path,
+        )
+    finally:
+        os.umask(previous_umask)
+
+    lock_mode = stat.S_IMODE(path.with_name("gpu-state.json.lock").stat().st_mode)
+    assert lock_mode == 0o660
 
 
 def test_reap_publish_cannot_be_overwritten_by_stale_start_read(

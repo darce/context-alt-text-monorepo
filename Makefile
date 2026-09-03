@@ -147,7 +147,7 @@ check-gpu-snapshots-live:
 	@case "$(GPU_SNAPSHOT_ENV)" in dev|dev-fir|staging|prod) ;; \
 		*) echo "check-gpu-snapshots-live: invalid GPU_SNAPSHOT_ENV=$(GPU_SNAPSHOT_ENV)" >&2; exit 2 ;; \
 	esac
-	@host="$${OCI_HOST:-129.213.40.111}"; user="$${OCI_USER:-ubuntu}"; \
+	@host="$${OCI_HOST:-acx-backend.tail1a44b8.ts.net}"; user="$${OCI_USER:-ubuntu}"; \
 		echo "==> Checking live GPU snapshots on $$user@$$host ($(GPU_SNAPSHOT_ENV))"; \
 		ssh -l "$$user" -- "$$host" 'set -eu; \
 			checker=$$(mktemp); \
@@ -164,9 +164,11 @@ check-gpu-snapshots-live:
 deploy-verify-dev: GPU_SNAPSHOT_ENV := dev
 deploy-verify-staging: GPU_SNAPSHOT_ENV := staging
 deploy-verify-prod: GPU_SNAPSHOT_ENV := prod
+deploy-verify: GPU_SNAPSHOT_ENV := $(ENV)
 deploy-verify-dev: check-gpu-snapshots-live
 deploy-verify-staging: check-gpu-snapshots-live
 deploy-verify-prod: check-gpu-snapshots-live
+deploy-verify: check-gpu-snapshots-live
 
 # Default target
 help:

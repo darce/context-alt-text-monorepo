@@ -77,8 +77,7 @@ rendered_mount="${snapshot_dir}:${snapshot_dir}:ro"
 if ! grep -Fq -- "$rendered_mount" <<<"$api_block"; then
     die "compose api service has no agreeing read-only snapshot mount ($rendered_mount)"
 fi
-if ! grep -Fq -- "ACX_GPU_STATE_PATH=${state_path}" <<<"$api_block" &&
-    ! grep -Fq -- 'ACX_GPU_STATE_PATH=${ACX_GPU_STATE_PATH}' <<<"$api_block"; then
+if ! grep -Fq -- "ACX_GPU_STATE_PATH=${state_path}" <<<"$api_block"; then
     die "compose api service does not pass the agreeing ACX_GPU_STATE_PATH"
 fi
 

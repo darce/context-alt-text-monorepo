@@ -148,6 +148,7 @@ def test_composed_gpu_warm_start_reaches_final_without_degrading(monkeypatch: py
 def test_default_warmup_budget_covers_start_detection_boot_and_read_timeout(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Keep at least one start-timer interval of headroom above measured p95 composition."""
     repo_root = Path(__file__).resolve().parents[4]
     sys.path.insert(0, str(repo_root))
     try:
@@ -164,20 +165,26 @@ def test_default_warmup_budget_covers_start_detection_boot_and_read_timeout(
     load_max_age = JsonFileJobLoadSource.__dataclass_fields__["max_age_seconds"].default
     evidence_path = repo_root / "docs/tasks/vlm/VLM-3-gpu-spike-2026-07-14-750gb-balanced.json"
     evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
-    measured_warm_start_p95 = evidence["measurements"]["warm_start_p95_seconds"]["value"]
+    warm_start_measurement = evidence["measurements"]["warm_start_p95_seconds"]
+    assert len(warm_start_measurement["samples"]) >= 3, "warm-start p95 evidence needs at least three samples"
+    measured_warm_start_p95 = warm_start_measurement["value"]
     monkeypatch.delenv("ACX_GPU_READ_TIMEOUT_SECONDS", raising=False)
-    configured_read_timeout = DescriptionSettings().gpu_read_timeout_seconds
+    read_timeout_field = DescriptionSettings.model_fields["gpu_read_timeout_seconds"]
+    assert read_timeout_field.default_factory is not None
+    configured_read_timeout = read_timeout_field.default_factory()
+    composed = (
+        start_interval + DEFAULT_LOAD_REFRESH_SECONDS + load_max_age + measured_warm_start_p95 + configured_read_timeout
+    )
+    headroom = DEFAULT_GPU_WARMUP_TIMEOUT_SECONDS - composed
     budget_terms = (
         f"START_INTERVAL={start_interval} + load_refresh={DEFAULT_LOAD_REFRESH_SECONDS} + "
         f"load_max_age={load_max_age} + "
         f"measured_warm_start_p95={measured_warm_start_p95} from {evidence_path.relative_to(repo_root)} + "
         f"configured_read_timeout={configured_read_timeout} "
-        f"< DEFAULT_GPU_WARMUP_TIMEOUT_SECONDS={DEFAULT_GPU_WARMUP_TIMEOUT_SECONDS}"
+        f"= composed={composed}; DEFAULT_GPU_WARMUP_TIMEOUT_SECONDS={DEFAULT_GPU_WARMUP_TIMEOUT_SECONDS}; "
+        f"headroom={headroom} must cover START_INTERVAL={start_interval}"
     )
-    assert (
-        start_interval + DEFAULT_LOAD_REFRESH_SECONDS + load_max_age + measured_warm_start_p95 + configured_read_timeout
-        < DEFAULT_GPU_WARMUP_TIMEOUT_SECONDS
-    ), budget_terms
+    assert headroom >= start_interval, budget_terms
 
 
 def test_run_enqueued_during_warmup_completes_without_retries_or_orphans(

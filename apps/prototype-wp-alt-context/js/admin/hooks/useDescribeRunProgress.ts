@@ -6,6 +6,7 @@ import {
   isDescribeRunTerminal,
   type DescribeRunResponse,
   type DescribeRunStatus,
+  type GpuState,
 } from '../api/describeApi';
 import { JOB_PROGRESS_STALL_THRESHOLD_MS } from './useJobProgressStream';
 import { gateRefetchInterval } from '../utils/recognitionCooldown';
@@ -65,6 +66,8 @@ export interface DescribeRunProgress {
   status: DescribeRunStatus | null;
   progressFraction: number | null;
   etaSeconds: number | null;
+  /** GPU lifecycle snapshot carried by the existing run-status poll. */
+  gpuState?: GpuState | null;
   isTerminal: boolean;
   stalledForSeconds: number | null;
   isPolling: boolean;
@@ -214,6 +217,7 @@ export const useDescribeRunProgress = (runId: string | null): DescribeRunProgres
     status,
     progressFraction,
     etaSeconds: run?.eta_seconds ?? null,
+    gpuState: run?.gpu_state ?? null,
     isTerminal,
     stalledForSeconds,
     isPolling: runId !== null && !isTerminal && !isError,

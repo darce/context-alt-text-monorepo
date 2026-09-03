@@ -65,12 +65,13 @@ by `scripts/vm/tests/test_vm_script_suites.py`.
 | Behavior | Existing test case name(s) |
 | --- | --- |
 | The default allowlist includes `grok-sandbox`, while similarly prefixed directories and a root itself remain outside the deletion boundary. | `g2 grok-sandbox`; `g2 grok-sandbox prefix-not-root`; `g2 root itself` |
-| An archive located inside the candidate is rejected and the candidate remains. | `archive destination inside lane` |
-| Fresh sandbox markers, live leases, and held lane locks prevent both archival and removal. | `grok-sandbox fresh marker`; `grok-sandbox live lease`; `grok-sandbox lane lock` |
+| An archive located inside the candidate is rejected and the candidate remains, including a percent-encoded `file://localhost` destination; non-local file URL authorities fail loudly. | `archive destination inside lane`; `localhost archive destination inside lane`; `non-local file URL authority` |
+| Fresh sandbox markers, live leases, and held lane locks prevent both archival and removal. Destructive eligibility is evaluated while holding the lane lock, so work created at its acquisition boundary survives. | `grok-sandbox fresh marker`; `grok-sandbox live lease`; `grok-sandbox lane lock`; `grok-sandbox lock-before-eligibility race`; `grok-sandbox lock-before-eligibility writer work` |
 | A legacy marker is not persisted when a later dirty-tree guard skips the lane. | `grok-sandbox dirty legacy did not persist marker backfill` |
 | Dry-run and `--yes` select the same aged markerless legacy sandbox, while only the destructive path backfills its marker. | `grok-sandbox stale legacy dry-run`; `grok-sandbox stale legacy dry-run did not backfill marker`; `grok-sandbox stale legacy marker backfill` |
 | A successfully reaped legacy sandbox retains the materializer-owned lock inode while removing its lease, venv, and sync-stamp siblings. A replacement lock is detected before checkout removal and again before sibling cleanup. | `grok-sandbox stale legacy lane lock inode retained`; `grok-sandbox stale legacy lease`; `grok-sandbox stale legacy venv`; `grok-sandbox stale legacy sync stamp`; `grok-sandbox late lane lock`; `grok-sandbox recreated lane lock inode retained`; `grok-sandbox recreated lane lease`; `grok-sandbox recreated lane venv`; `grok-sandbox recreated lane sync stamp` |
 | A non-sandbox archive candidate is retained until its newest checkout/git timestamp reaches the minimum age. | `archive recent lane`; `archive aged lane` |
+| Without an archive, commits reachable only through a tag or reflog are treated as unmerged local work and retained. | `no-archive tag-only work`; `no-archive reflog-only work` |
 | Branches, tag-only commits, and detached HEAD commits survive archival. | `archive reap`; `archive tag-only commit`; `detached HEAD` |
 | Equal lane basenames in different roots use distinct archive namespaces. | `collision` |
 | Re-materializing one path with an unrelated root commit creates a separate archive generation. | `rearchive first generation`; `rearchive second generation` |
@@ -78,7 +79,7 @@ by `scripts/vm/tests/test_vm_script_suites.py`.
 | A successful push is not trusted without archive read-back. | `archive that drops refs`; `archive that drops refs keeps the lane` |
 | A failed `rm` is reported as an internal error, is not counted as a reap, and leaves the lane. | `rm failure exits 1`; `rm failure summary`; `rm failure still exists` |
 | A change to refs, HEAD, reflogs, stash state, or worktree status after the decision snapshot prevents removal with `lane changed after snapshot; skipped`, including a commit followed by reset to the original HEAD. | `lane changed after snapshot`; `lane changed after snapshot fixture committed`; `lane reflog changed after snapshot`; `lane reflog changed after snapshot fixture committed and reset` |
-| Successful linked-worktree removal prunes stale parent metadata in archive and non-archive modes. | `parent worktree metadata pruned`; `non-archive parent worktree metadata pruned` |
+| Successful linked-worktree removal prunes stale parent metadata in archive and non-archive modes, while a parent with a detached linked worktree is retained in either mode. | `parent worktree metadata pruned`; `non-archive parent worktree metadata pruned`; `non-archive parent of detached worktree`; `non-archive detached child survives` |
 | Stale mkdir-lock recovery preserves the old owner inode, and two recoverers admit exactly one sweep. | `mkdir fallback atomically preserved stale owner`; `mkdir fallback stale recovery admits exactly one reaper` |
 | Missing `df` output fails safe with a numeric 100% usage value. | `df unavailable`; `df unavailable contains df_used_pct=100` |
 
@@ -95,6 +96,7 @@ the window is zero.
 | A fresh install deploys an executable reaper, creates a bare keep-repo, and schedules every supported root with `--archive-to`. | `fresh installs the script`; `fresh creates the keep-repo`; `fresh crontab contains --archive-to $HOME/lane-archive.git`; `fresh crontab contains --all $HOME/w3`; `fresh crontab contains --all $HOME/uxw2`; `fresh crontab contains --all $HOME/l1`; `fresh crontab contains --all $HOME/w`; `fresh crontab contains --all $HOME/lanes`; `fresh crontab contains --all $HOME/grok-sandbox` |
 | Reinstalling preserves existing archive refs and replaces stale managed cron text without duplicating the marker or touching an unrelated job, including older managed blocks containing blank/comment lines. | `reinstall preserves archived refs`; `roll-forward`; `roll-forward keeps exactly one marker`; `roll-forward crontab contains /usr/bin/some-other-job`; `roll-forward with blank`; `roll-forward with blank keeps exactly one managed entry` |
 | Reinstalling replaces the deployed script inode instead of overwriting it in place. | `reinstall atomically replaces the installed inode` |
+| An unexpected `crontab -l` failure is reported and aborts without replacing existing jobs; only the platform no-crontab diagnostic is treated as an empty table. | `crontab read failure exits nonzero`; `crontab read failure reports diagnostic`; `crontab read failure preserves existing jobs` |
 
 ## Red-first evidence for wave 4b
 
@@ -149,6 +151,34 @@ deletion boundary. The fixed reaper create-opens and locks the stable path, then
 checks that the path still names fd 8 both before `rm` and before sibling
 cleanup.
 
+## Red-first evidence for wave 4e
+
+Before the production changes, the adversarial fixtures for all five findings
+completed with twelve failures:
+
+```text
+FAIL: localhost archive destination inside lane missing 'archive destination is inside lane'
+FAIL: localhost archive destination inside lane should still exist
+FAIL: grok-sandbox lock-before-eligibility race missing 'dirty working tree'
+FAIL: grok-sandbox lock-before-eligibility race should still exist
+FAIL: grok-sandbox lock-before-eligibility writer work should still exist
+FAIL: no-archive tag-only work missing 'unmerged local work'
+FAIL: no-archive tag-only work should still exist
+FAIL: no-archive reflog-only work missing 'unmerged local work'
+FAIL: no-archive reflog-only work should still exist
+FAIL: non-archive parent of detached worktree missing 'repo has linked worktrees'
+FAIL: non-archive parent of detached worktree should still exist
+FAIL: crontab read failure replaced existing jobs
+```
+
+The sandbox writer is injected exactly as fd 8 is locked; the corrected order
+then observes its untracked file in the dirty-tree guard before taking the
+snapshot. The non-archive cases reset HEAD to upstream while leaving the only
+local commit reachable through an annotated tag or a reflog. The localhost
+archive case combines authority parsing and percent decoding in the containment
+boundary. The crontab fixture returns an unrelated listing error and verifies
+the existing table byte-for-byte.
+
 ## Host remediation (pending operator)
 
 No post-fix host evidence exists yet. In particular, the earlier wrong-user
@@ -176,8 +206,8 @@ follow-up `df -h /` must record the host-space result.
 Observed in the Linux 6.17.0 aarch64 sandbox (not macOS):
 
 ```text
-bash scripts/vm/tests/test_reap_lane.sh          202 PASS assertions
-bash scripts/vm/tests/test_install_reap_cron.sh   24 PASS assertions
+bash scripts/vm/tests/test_reap_lane.sh          219 PASS assertions
+bash scripts/vm/tests/test_install_reap_cron.sh   27 PASS assertions
 python3 -m pytest scripts/vm/tests/test_vm_script_suites.py -q
 2 passed
 ```

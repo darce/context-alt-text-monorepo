@@ -511,6 +511,30 @@ assert_rc0 "archive destination inside lane"
 assert_contains "archive destination inside lane" "archive destination is inside lane"
 assert_exists "archive destination inside lane" "$lane_nested_archive"
 
+# Localhost file URLs are local paths, including after percent decoding. They
+# must pass through the same containment check as a plain filesystem path.
+lane_nested_localhost="$HOME/w3/nested-localhost-archive"
+clone_lane "$lane_nested_localhost"
+nested_localhost_archive="$lane_nested_localhost/.git/archive.git"
+git init --bare --quiet "$nested_localhost_archive"
+nested_localhost_url="file://localhost${lane_nested_localhost}/.git/archive%2egit"
+REAP_MIN_AGE_SEC=0 run_reap --yes --archive-to "$nested_localhost_url" \
+  "$lane_nested_localhost"
+assert_rc0 "localhost archive destination inside lane"
+assert_contains "localhost archive destination inside lane" \
+  "archive destination is inside lane"
+assert_exists "localhost archive destination inside lane" "$lane_nested_localhost"
+
+run_reap --yes --archive-to "file://archive-host.invalid/archive.git" \
+  "$lane_nested_localhost"
+if [[ "$rc" -ne 0 ]]; then
+  pass "non-local file URL authority exits nonzero"
+else
+  fail "non-local file URL authority unexpectedly exited zero; out=$out"
+fi
+assert_contains "non-local file URL authority" "unsupported file URL authority"
+assert_exists "non-local file URL authority" "$lane_nested_localhost"
+
 # The generic lane sweep must honor the remote sandbox lifecycle before it
 # archives or deletes anything: marker TTL, occupancy lease, and per-lane lock.
 lane_gs_fresh="$HOME/grok-sandbox/feature-fresh-abc12345"
@@ -546,6 +570,34 @@ if command -v flock >/dev/null 2>&1; then
   else
     fail "grok-sandbox dirty legacy persisted marker backfill"
   fi
+
+  # The materializer lock must precede the destructive eligibility checks. A
+  # writer that dirties the checkout as that lock is acquired must be seen by
+  # the dirty-tree guard, not absorbed into the deletion-safety snapshot.
+  lane_gs_lock_race="$HOME/grok-sandbox/feature-lock-race-abc12345"
+  clone_lane "$lane_gs_lock_race"
+  mark_sandbox "$lane_gs_lock_race"
+  touch -t 200001010000 "$lane_gs_lock_race/.workbay-lane-sandbox"
+  lock_race_bin="$WORKDIR/lock-race-bin"
+  mkdir "$lock_race_bin"
+  cat >"$lock_race_bin/flock" <<'LOCK_RACE_FLOCK'
+#!/usr/bin/env bash
+set -e
+"$REAL_FLOCK" "$@"
+if [[ "${1:-}" == "-n" && "${2:-}" == "8" && ! -e "$LOCK_RACE_ONCE" ]]; then
+  : >"$LOCK_RACE_ONCE"
+  printf 'writer arrived\n' >"$LOCK_RACE_LANE/LOCK_RACE_WORK"
+fi
+LOCK_RACE_FLOCK
+  chmod +x "$lock_race_bin/flock"
+  REAL_FLOCK="$(command -v flock)" LOCK_RACE_LANE="$lane_gs_lock_race" \
+    LOCK_RACE_ONCE="$WORKDIR/lock-race-once" PATH="$lock_race_bin:$PATH" \
+    run_reap --yes --archive-to "$ARCHIVE" "$lane_gs_lock_race"
+  assert_rc0 "grok-sandbox lock-before-eligibility race"
+  assert_contains "grok-sandbox lock-before-eligibility race" "dirty working tree"
+  assert_exists "grok-sandbox lock-before-eligibility race" "$lane_gs_lock_race"
+  assert_path_exists "grok-sandbox lock-before-eligibility writer work" \
+    "$lane_gs_lock_race/LOCK_RACE_WORK"
 
   lane_gs_legacy="$HOME/grok-sandbox/feature-legacy-abc12345"
   clone_lane "$lane_gs_legacy"
@@ -835,6 +887,30 @@ git -C "$lane_nar" commit -q -m "work that never reached main"
 run_reap --yes "$lane_nar"
 assert_contains "no-archive still guards" "unmerged local work"
 assert_exists "no-archive still guards" "$lane_nar"
+
+# Non-archive mode must consider all refs and reflog tips, not only local
+# branches and HEAD. Each fixture resets HEAD to upstream so those old checks
+# alone would incorrectly deem the checkout disposable.
+lane_nar_tag="$HOME/w/lane-noarchive-tag-only"
+clone_lane "$lane_nar_tag"
+echo "tag-only local work" >"$lane_nar_tag/TAG_ONLY"
+git -C "$lane_nar_tag" add TAG_ONLY
+git -C "$lane_nar_tag" commit -q -m "tag-only local work"
+git -C "$lane_nar_tag" tag -a local-only -m "retain local-only commit"
+git -C "$lane_nar_tag" reset -q --hard HEAD^
+run_reap --yes "$lane_nar_tag"
+assert_contains "no-archive tag-only work" "unmerged local work"
+assert_exists "no-archive tag-only work" "$lane_nar_tag"
+
+lane_nar_reflog="$HOME/w/lane-noarchive-reflog-only"
+clone_lane "$lane_nar_reflog"
+echo "reflog-only local work" >"$lane_nar_reflog/REFLOG_ONLY"
+git -C "$lane_nar_reflog" add REFLOG_ONLY
+git -C "$lane_nar_reflog" commit -q -m "reflog-only local work"
+git -C "$lane_nar_reflog" reset -q --hard HEAD^
+run_reap --yes "$lane_nar_reflog"
+assert_contains "no-archive reflog-only work" "unmerged local work"
+assert_exists "no-archive reflog-only work" "$lane_nar_reflog"
 
 # A failed push must not delete anything. Release It! 5.5: verify the resource
 # you will actually use -- an archive that did not accept the refs is not one.
@@ -1126,6 +1202,17 @@ archive_has "detached HEAD" "refs/lanes/w/lane-detached/$dh_generation/HEAD" "$d
 
 PARENT="$HOME/l1/parentrepo"
 clone_lane "$PARENT"
+
+# A main worktree owns the shared object store even in non-archive mode. A
+# detached linked worktree has no branch for the ancestry guard to discover.
+parent_plain="$HOME/l1/nonarchive-parent"
+clone_lane "$parent_plain"
+parent_plain_wt="$HOME/w/nonarchive-parent-detached"
+git -C "$parent_plain" worktree add -q --detach "$parent_plain_wt" >/dev/null 2>&1
+run_reap --yes "$parent_plain"
+assert_contains "non-archive parent of detached worktree" "repo has linked worktrees"
+assert_exists "non-archive parent of detached worktree" "$parent_plain"
+assert_exists "non-archive detached child survives" "$parent_plain_wt"
 
 # Parent metadata must also be pruned when a linked worktree is removed via
 # the non-archive ancestry path.

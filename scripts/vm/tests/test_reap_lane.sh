@@ -121,6 +121,15 @@ assert_gone() {
   fi
 }
 
+assert_matches() {
+  local label="$1" pattern="$2"
+  if grep -Eq "$pattern" <<<"$out"; then
+    pass "$label matches ${pattern}"
+  else
+    fail "$label missing match for '${pattern}'; out=$out"
+  fi
+}
+
 assert_summary() {
   local label="$1" candidates="$2" reaped="$3" skipped="$4" bytes="$5"
   local pattern="^REAP SUMMARY candidates=${candidates} reaped=${reaped} skipped=${skipped} bytes_freed=${bytes} df_used_pct=[0-9]+$"
@@ -1813,6 +1822,122 @@ REAP_DF_ALERT_PCT=0 run_reap "$lane_alert_dry"
 assert_rc0 "freshness dry-run"
 assert_contains "freshness dry-run" "WOULD REAP"
 assert_summary "freshness dry-run" 1 0 0 0
+
+
+# ---------------------------------------------------------------------------
+# VMREAP-2: deterministic dirty-lane triage.
+# Every dirty skip names its category; lock-only uv.lock churn is not blocking;
+# a REAP TRIAGE block groups skipped lanes once per sweep.
+# ---------------------------------------------------------------------------
+# Seed origin with a lock + manifest so lanes can dirty them without being
+# ahead of upstream.
+lane_seed_lock="$HOME/w/lane-seed-lock"
+clone_lane "$lane_seed_lock"
+printf 'version = "0.2.23"\n' >"$lane_seed_lock/uv.lock"
+printf '[project]\nname = "x"\n' >"$lane_seed_lock/pyproject.toml"
+git -C "$lane_seed_lock" add uv.lock pyproject.toml
+git -C "$lane_seed_lock" commit -q -m "lock seed"
+git -C "$lane_seed_lock" push --quiet origin HEAD:main
+rm -rf "$lane_seed_lock"
+
+# lock-only churn: modified uv.lock, clean pyproject.toml -> not blocking.
+lane_lock_only="$HOME/w/lane-lock-only"
+clone_lane "$lane_lock_only"
+printf 'version = "0.2.25"\n' >"$lane_lock_only/uv.lock"
+run_reap "$lane_lock_only"
+assert_rc0 "triage lock-only"
+assert_contains "triage lock-only" "WOULD REAP $lane_lock_only"
+assert_not_contains "triage lock-only" "dirty working tree"
+assert_contains "triage lock-only notes churn" "REAP TRIAGE dirty_skips=0 lock-only=1 untracked-scratch=0 tracked-edits=0"
+assert_contains "triage lock-only lane listed" "REAP TRIAGE lock-only lanes=1: w/lane-lock-only"
+run_reap --yes "$lane_lock_only"
+assert_rc0 "triage lock-only --yes"
+assert_gone "triage lock-only --yes reaps" "$lane_lock_only"
+
+# lock + manifest both dirty -> tracked-edits, still guarded.
+lane_lock_manifest="$HOME/w/lane-lock-manifest"
+clone_lane "$lane_lock_manifest"
+printf 'version = "0.2.25"\n' >"$lane_lock_manifest/uv.lock"
+printf 'name = "y"\n' >>"$lane_lock_manifest/pyproject.toml"
+run_reap --yes "$lane_lock_manifest"
+assert_rc0 "triage lock+manifest"
+assert_contains "triage lock+manifest" \
+  "SKIP $lane_lock_manifest: dirty working tree (tracked-edits: 2 tracked, 0 untracked; e.g. pyproject.toml uv.lock)"
+assert_exists "triage lock+manifest kept" "$lane_lock_manifest"
+
+# deleted lock is not churn -> tracked-edits.
+lane_lock_deleted="$HOME/w/lane-lock-deleted"
+clone_lane "$lane_lock_deleted"
+rm "$lane_lock_deleted/uv.lock"
+run_reap --yes "$lane_lock_deleted"
+assert_rc0 "triage deleted lock"
+assert_contains "triage deleted lock" "dirty working tree (tracked-edits: 1 tracked, 0 untracked; e.g. uv.lock)"
+assert_exists "triage deleted lock kept" "$lane_lock_deleted"
+
+# untracked-only -> untracked-scratch with a path count.
+lane_scratch_a="$HOME/lanes/lane-scratch-a"
+clone_lane "$lane_scratch_a"
+mkdir -p "$lane_scratch_a/wr-probe"
+echo p >"$lane_scratch_a/wr-probe/x"
+echo o >"$lane_scratch_a/ut-out.txt"
+run_reap --yes "$lane_scratch_a"
+assert_rc0 "triage untracked-scratch"
+assert_contains "triage untracked-scratch" \
+  "SKIP $lane_scratch_a: dirty working tree (untracked-scratch: 2 paths)"
+assert_exists "triage untracked-scratch kept" "$lane_scratch_a"
+
+# tracked + untracked -> tracked-edits naming the tracked paths first.
+lane_tracked="$HOME/lanes/lane-tracked"
+clone_lane "$lane_tracked"
+echo dirty >>"$lane_tracked/README"
+echo o >"$lane_tracked/ut-out.txt"
+run_reap --yes "$lane_tracked"
+assert_rc0 "triage tracked-edits"
+assert_contains "triage tracked-edits" \
+  "SKIP $lane_tracked: dirty working tree (tracked-edits: 1 tracked, 1 untracked; e.g. README)"
+assert_exists "triage tracked-edits kept" "$lane_tracked"
+
+# Ignorable paths never count toward a category.
+lane_ign_plus="$HOME/lanes/lane-ign-plus"
+clone_lane "$lane_ign_plus"
+mkdir -p "$lane_ign_plus/.lane"
+echo b >"$lane_ign_plus/.lane/BRIEF.md"
+echo o >"$lane_ign_plus/ut-err.txt"
+run_reap --yes "$lane_ign_plus"
+assert_contains "triage ignorable excluded" "(untracked-scratch: 1 paths)"
+
+# Sweep-level REAP TRIAGE block: category counts, lane lists, shared cluster.
+lane_scratch_b="$HOME/lanes/lane-scratch-b"
+clone_lane "$lane_scratch_b"
+mkdir -p "$lane_scratch_b/wr-probe"
+echo p >"$lane_scratch_b/wr-probe/y"
+echo o >"$lane_scratch_b/ut-out.txt"
+echo only-b >"$lane_scratch_b/sis-b"
+run_reap --all "$HOME/lanes"
+assert_rc0 "triage sweep"
+assert_contains "triage sweep counts" \
+  "REAP TRIAGE dirty_skips=4 lock-only=0 untracked-scratch=3 tracked-edits=1"
+assert_matches "triage sweep scratch lanes" \
+  "^REAP TRIAGE untracked-scratch lanes=3 held_bytes=[1-9][0-9]*: lanes/lane-ign-plus lanes/lane-scratch-a lanes/lane-scratch-b$"
+assert_matches "triage sweep tracked lanes" \
+  "^REAP TRIAGE tracked-edits lanes=1 held_bytes=[1-9][0-9]*: lanes/lane-tracked$"
+assert_contains "triage sweep shared cluster" \
+  "REAP TRIAGE shared_untracked paths=2: ut-out.txt wr-probe/"
+assert_not_contains "triage sweep shared excludes singletons" "sis-b"
+# Triage lines precede the summary so log tails keep the summary last.
+if [[ "$(grep -n 'REAP TRIAGE' <<<"$out" | tail -1 | cut -d: -f1)" -lt \
+      "$(grep -n 'REAP SUMMARY' <<<"$out" | cut -d: -f1)" ]]; then
+  pass "triage precedes summary"
+else
+  fail "triage precedes summary; out=$out"
+fi
+
+# A clean sweep prints no triage block.
+lane_clean_sweep="$HOME/w3/lane-clean-sweep"
+clone_lane "$lane_clean_sweep"
+run_reap "$lane_clean_sweep"
+assert_rc0 "triage clean"
+assert_not_contains "triage clean" "REAP TRIAGE"
 
 if [[ "$failures" -gt 0 ]]; then
   echo "${failures} FAILED"

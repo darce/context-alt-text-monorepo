@@ -66,14 +66,12 @@ class WarmReadinessWait:
         self.stall_cycles = stall_cycles
         self.sleep_seconds = sleep_seconds
 
-    def wait(
-        self, instance_ids: list[str], probe: InstanceReadinessProbe
-    ) -> ReadinessWaitResult:
+    def wait(self, instance_ids: list[str], probe: InstanceReadinessProbe) -> ReadinessWaitResult:
         pending = list(instance_ids)
         ready: list[str] = []
         stalled: list[str] = []
         errors: list[str] = []
-        no_progress = {instance_id: 0 for instance_id in instance_ids}
+        no_progress = dict.fromkeys(instance_ids, 0)
 
         for cycle in range(self.max_cycles):
             still_pending: list[str] = []
@@ -85,10 +83,7 @@ class WarmReadinessWait:
                     no_progress[instance_id] += 1
                     if no_progress[instance_id] >= self.stall_cycles:
                         stalled.append(instance_id)
-                        errors.append(
-                            f"{instance_id}: stalled after {no_progress[instance_id]} "
-                            "no-progress cycles"
-                        )
+                        errors.append(f"{instance_id}: stalled after {no_progress[instance_id]} no-progress cycles")
                     else:
                         still_pending.append(instance_id)
                     continue
@@ -107,10 +102,7 @@ class WarmReadinessWait:
                     errors.append(f"{instance_id}: {sample.detail}")
                 if no_progress[instance_id] >= self.stall_cycles:
                     stalled.append(instance_id)
-                    errors.append(
-                        f"{instance_id}: stalled after {no_progress[instance_id]} "
-                        "no-progress cycles"
-                    )
+                    errors.append(f"{instance_id}: stalled after {no_progress[instance_id]} no-progress cycles")
                 else:
                     still_pending.append(instance_id)
             pending = still_pending
@@ -121,9 +113,7 @@ class WarmReadinessWait:
 
         timed_out = list(pending)
         for instance_id in timed_out:
-            errors.append(
-                f"{instance_id}: readiness timeout after {self.max_cycles} cycles"
-            )
+            errors.append(f"{instance_id}: readiness timeout after {self.max_cycles} cycles")
         return ReadinessWaitResult(
             ready=tuple(ready),
             stalled=tuple(stalled),

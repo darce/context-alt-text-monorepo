@@ -539,6 +539,13 @@ def test_documentation_dispositions_preserve_evidence_boundaries() -> None:
     assert bench_script.stat().st_mode & 0o111
 
 
+def test_lifecycle_installer_gives_both_units_the_same_writable_lease_path() -> None:
+    installer = (Path(__file__).resolve().parent / "deploy" / "gpu-lifecycle-install.sh").read_text()
+    assert installer.count("RuntimeDirectory=acx-gpu") == 2
+    assert installer.count("RuntimeDirectoryPreserve=yes") == 2
+    assert installer.count("--running-since-path /run/acx-gpu/running-since.json") == 2
+
+
 # ---------------------------------------------------------------------------
 # Phase behavior with fakes
 # ---------------------------------------------------------------------------
@@ -794,6 +801,67 @@ def test_run_bench_rejects_non_dedicated_instance_before_stop(tmp_path: Path) ->
         )
 
     assert actuator.stops == []
+
+
+def test_run_bench_rejects_state_change_before_start_without_claiming_cleanup(tmp_path: Path) -> None:
+    class StateChangesBeforeStart(FakeActuator):
+        def get_lifecycle_state(self, instance_id: str) -> str:
+            self.gets.append(instance_id)
+            return "STOPPED" if len(self.gets) == 1 else "STARTING"
+
+    actuator = StateChangesBeforeStart()
+
+    with pytest.raises(PhaseError) as exc_info:
+        run_bench(
+            instance_ocid="test-instance",
+            endpoint_url="https://gpu.example",
+            model_id="m",
+            image_paths=_write_images(tmp_path, n=1),
+            warm_start_runs=1,
+            actuator=actuator,
+            http=FakeHttp(),
+            clock=FakeClock(),
+            artifact_out=tmp_path / "out.json",
+            boot_volume_gb=400,
+            vpus_per_gb=120,
+            shape="test-shape",
+            quantization="test-quantization",
+            model_path="/test/model.gguf",
+        )
+
+    assert exc_info.value.phase == "cold_boot"
+    assert "instance changed state before START" in str(exc_info.value)
+    assert actuator.stops == []
+    assert "unfenced" in (run_cold_boot.__doc__ or "")
+
+
+def test_run_bench_start_failure_is_still_owned_and_stopped(tmp_path: Path) -> None:
+    class StartRaises(FakeActuator):
+        def start(self, instance_id: str) -> None:
+            raise RuntimeError(f"START failed for {instance_id}")
+
+    actuator = StartRaises()
+
+    with pytest.raises(PhaseError) as exc_info:
+        run_bench(
+            instance_ocid="test-instance",
+            endpoint_url="https://gpu.example",
+            model_id="m",
+            image_paths=_write_images(tmp_path, n=1),
+            warm_start_runs=1,
+            actuator=actuator,
+            http=FakeHttp(),
+            clock=FakeClock(),
+            artifact_out=tmp_path / "out.json",
+            boot_volume_gb=400,
+            vpus_per_gb=120,
+            shape="test-shape",
+            quantization="test-quantization",
+            model_path="/test/model.gguf",
+        )
+
+    assert exc_info.value.phase == "cold_boot"
+    assert actuator.stops == ["test-instance"]
 
 
 @pytest.mark.parametrize(

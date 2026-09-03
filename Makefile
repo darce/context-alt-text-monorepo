@@ -426,6 +426,8 @@ lint-scripts:
 	@python3 scripts/hooks/lint-no-inline-python-heredoc.py
 	@python3 scripts/hooks/lint-expected-revision.py
 	@python3 scripts/check_published_head_sha.py
+	@ruff check infra/oci scripts/gpu_burst_smoke.py scripts/gpu_spike_bench.py scripts/test_gpu_burst_smoke.py scripts/test_gpu_spike_bench.py
+	@ruff format --check infra/oci scripts/gpu_burst_smoke.py scripts/gpu_spike_bench.py scripts/test_gpu_burst_smoke.py scripts/test_gpu_spike_bench.py
 
 # MAINT-FB-B-05: validate every workbay-overrides/*/overrides.lock.json
 # component upstream_digest against the materialized upstream base copy

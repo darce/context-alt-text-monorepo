@@ -51,16 +51,19 @@ unit_load_path=${ACX_GPU_UNIT_LOAD_PATH:-}
 [ -n "$unit_load_path" ] || unit_load_path=$(unit_path_for_flag --load-json)
 state_path=${ACX_GPU_STATE_PATH:-$unit_state_path}
 load_path=${ACX_DESCRIBE_LOAD_PATH:-$unit_load_path}
-snapshot_dir=${ACX_GPU_SNAPSHOT_DIR:-${unit_state_path%/*}}
+state_dir=${ACX_GPU_SNAPSHOT_DIR:-${unit_state_path%/*}}
+load_dir=${ACX_DESCRIBE_LOAD_DIR:-${unit_load_path%/*}}
 
 [ "$state_path" = "$unit_state_path" ] ||
     die "ACX_GPU_STATE_PATH disagrees with lifecycle units: $state_path != $unit_state_path"
 [ "$load_path" = "$unit_load_path" ] ||
     die "ACX_DESCRIBE_LOAD_PATH disagrees with lifecycle units: $load_path != $unit_load_path"
-[ "$snapshot_dir" = "${unit_state_path%/*}" ] ||
-    die "ACX_GPU_SNAPSHOT_DIR disagrees with lifecycle units: $snapshot_dir != ${unit_state_path%/*}"
-[ "$snapshot_dir" = "${unit_load_path%/*}" ] ||
-    die "GPU state and describe-load units do not share one snapshot directory"
+[ "$state_dir" = "${unit_state_path%/*}" ] ||
+    die "ACX_GPU_SNAPSHOT_DIR disagrees with lifecycle units: $state_dir != ${unit_state_path%/*}"
+[ "$load_dir" = "${unit_load_path%/*}" ] ||
+    die "ACX_DESCRIBE_LOAD_DIR disagrees with lifecycle units: $load_dir != ${unit_load_path%/*}"
+[ "$state_dir" != "$load_dir" ] ||
+    die "GPU state and describe-load units must use separate snapshot directories"
 is_positive_number "$state_stale_seconds" ||
     die "ACX_GPU_STATE_STALE_SECONDS must be a positive number"
 is_positive_number "$load_stale_seconds" ||
@@ -80,12 +83,27 @@ api_block=$(awk '
 
 # Require the concrete mount that deployment will use. A literal, unexpanded
 # Compose variable is not evidence that the lifecycle path is mounted read-only.
-rendered_mount="${snapshot_dir}:${snapshot_dir}:ro"
-if ! grep -Fq -- "$rendered_mount" <<<"$api_block"; then
-    die "compose api service has no agreeing read-only snapshot mount ($rendered_mount)"
+rendered_state_mount="${state_dir}:${state_dir}:ro"
+rendered_load_mount="${load_dir}:${load_dir}"
+volume_specs=$(awk '
+    /^[[:space:]]*-[[:space:]]/ {
+        sub(/^[[:space:]]*-[[:space:]]*/, "")
+        print
+    }
+' <<<"$api_block")
+state_source_mounts=$(grep -F -- "${state_dir}:" <<<"$volume_specs" || true)
+load_source_mounts=$(grep -F -- "${load_dir}:" <<<"$volume_specs" || true)
+if [ "$state_source_mounts" != "$rendered_state_mount" ]; then
+    die "compose api service has no agreeing read-only state mount ($rendered_state_mount)"
+fi
+if [ "$load_source_mounts" != "$rendered_load_mount" ]; then
+    die "compose api service has no agreeing writable load mount ($rendered_load_mount)"
 fi
 if ! grep -Fq -- "ACX_GPU_STATE_PATH=${state_path}" <<<"$api_block"; then
     die "compose api service does not pass the agreeing ACX_GPU_STATE_PATH"
+fi
+if ! grep -Fq -- "ACX_DESCRIBE_LOAD_PATH=${load_path}" <<<"$api_block"; then
+    die "compose api service does not pass the agreeing ACX_DESCRIBE_LOAD_PATH"
 fi
 
 if [ "$config_only" -eq 1 ]; then

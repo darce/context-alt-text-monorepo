@@ -66,7 +66,7 @@ def test_reader_blank_path_env_uses_default(
     assert gpu_state.resolve_gpu_state_path() == gpu_state.DEFAULT_GPU_STATE_PATH
 
 
-def test_lifecycle_unit_users_can_write_provisioned_snapshot_directory() -> None:
+def test_snapshot_directories_enforce_distinct_writer_ownership() -> None:
     script = INSTALL_SCRIPT.read_text(encoding="utf-8")
     service_bodies = re.findall(
         r"tee /etc/systemd/system/acx-gpu-(?:start|reap)\.service.*?<<UNIT\n(.*?)\nUNIT",
@@ -75,27 +75,45 @@ def test_lifecycle_unit_users_can_write_provisioned_snapshot_directory() -> None
     )
     assert len(service_bodies) == 2
 
-    chown_match = re.search(r"sudo chown ([^:\s]+):([^\s]+) /run/acx", script)
-    tmpfiles_match = re.search(
+    state_chown_match = re.search(
+        r"^sudo chown ([^:\s]+):([^\s]+) /run/acx$", script, flags=re.MULTILINE
+    )
+    state_tmpfiles_match = re.search(
         r"^d /run/acx (\d+) ([^\s]+) ([^\s]+) -$", script, flags=re.MULTILINE
+    )
+    load_chown_match = re.search(
+        r"^sudo chown ([^:\s]+):([^\s]+) /run/acx-write$",
+        script,
+        flags=re.MULTILINE,
+    )
+    load_tmpfiles_match = re.search(
+        r"^d /run/acx-write (\d+) ([^\s]+) ([^\s]+) -$",
+        script,
+        flags=re.MULTILINE,
     )
     lock_tmpfiles_match = re.search(
         r"^f /run/acx/gpu-state\.json\.lock (\d+) ([^\s]+) ([^\s]+) -$",
         script,
         flags=re.MULTILINE,
     )
-    assert chown_match is not None
-    assert tmpfiles_match is not None
+    assert state_chown_match is not None
+    assert state_tmpfiles_match is not None
+    assert load_chown_match is not None
+    assert load_tmpfiles_match is not None
     assert lock_tmpfiles_match is not None
-    directory_owner, directory_group = chown_match.groups()
-    mode, boot_owner, boot_group = tmpfiles_match.groups()
+    state_owner, state_group = state_chown_match.groups()
+    state_mode, state_boot_owner, state_boot_group = state_tmpfiles_match.groups()
+    load_owner, load_group = load_chown_match.groups()
+    load_mode, load_boot_owner, load_boot_group = load_tmpfiles_match.groups()
     lock_mode, lock_owner, lock_group = lock_tmpfiles_match.groups()
-    assert (boot_owner, boot_group) == (directory_owner, directory_group)
-    assert int(mode[-2]) & 0o2, "the provisioned group must have write permission"
-    assert (lock_owner, lock_group) == (directory_owner, directory_group)
-    assert int(lock_mode, 8) & 0o060 == 0o060, (
-        "both lifecycle users must be able to open the provisioned lock"
-    )
+    assert (state_boot_owner, state_boot_group) == (state_owner, state_group)
+    assert int(state_mode[-3]) & 0o2, "the lifecycle owner must be able to write"
+    assert (load_boot_owner, load_boot_group) == (load_owner, load_group)
+    assert load_group == "10001"
+    assert int(load_mode[-2]) & 0o2, "API gid 10001 must be able to write load dumps"
+    assert (state_owner, state_group) != (load_owner, load_group)
+    assert (lock_owner, lock_group) == (state_owner, state_group)
+    assert int(lock_mode, 8) & 0o600 == 0o600
 
     for body in service_bodies:
         user_match = re.search(r"^User=(\S+)$", body, flags=re.MULTILINE)
@@ -103,7 +121,8 @@ def test_lifecycle_unit_users_can_write_provisioned_snapshot_directory() -> None
         assert user_match is not None
         unit_user = user_match.group(1)
         supplementary_groups = groups_match.group(1).split() if groups_match else []
-        assert unit_user == directory_owner or directory_group in supplementary_groups
+        assert unit_user == state_owner or state_group in supplementary_groups
+        assert load_group in supplementary_groups
 
 
 def test_deployed_compose_keeps_load_writable_and_gpu_state_read_only() -> None:
@@ -119,7 +138,24 @@ def test_deployed_compose_keeps_load_writable_and_gpu_state_read_only() -> None:
     assert "ACX_GPU_STATE_PATH=/run/acx/gpu-state.json" in api
     assert "ACX_DESCRIBE_LOAD_PATH=/run/acx-write/describe-load.json" in api
     assert "- /run/acx:/run/acx:ro" in api
-    assert "- /run/acx:/run/acx-write" in api
+    assert "- /run/acx-write:/run/acx-write" in api
+    assert "- /run/acx:/run/acx-write" not in api
+
+
+def test_atomic_writer_replaces_inode_instead_of_updating_bound_file(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "gpu-state.json"
+    pinned_inode = tmp_path / "file-bind-inode"
+    assert write_gpu_state_snapshot(GpuLifecycleState.STARTING, now=1.0, path=path)
+    pinned_inode.hardlink_to(path)
+    original_inode = path.stat().st_ino
+
+    assert write_gpu_state_snapshot(GpuLifecycleState.READY, now=2.0, path=path)
+
+    assert path.stat().st_ino != original_inode
+    assert json.loads(path.read_text())["state"] == "ready"
+    assert json.loads(pinned_inode.read_text())["state"] == "starting"
 
 
 def test_reader_accepts_snapshot_at_future_skew_boundary(

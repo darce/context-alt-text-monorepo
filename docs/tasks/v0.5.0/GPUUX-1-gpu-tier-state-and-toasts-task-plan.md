@@ -50,21 +50,36 @@ No two lanes in one wave touch the same file (GRPH-09). Critical path `L0→C→
 
 ### Slice B — Producer/env freshness (W1, lane B)
 
-- [ ] `apps/prototype-description-service/.env.prod.example` documents `ACX_GPU_STATE_PATH`, `ACX_GPU_STATE_STALE_SECONDS`, `ACX_DESCRIBE_LOAD_PATH`, `ACX_DESCRIBE_LOAD_REFRESH_SECONDS` next to the `ACX_GPU_ENDPOINT_*` block.
-- [ ] `scripts/deploy/check-gpu-snapshots.sh` (new): exits non-zero when `/run/acx/describe-load.json` or `/run/acx/gpu-state.json` is missing, unreadable by uid 10001, or older than the stale window; test in `scripts/deploy/tests/test_check_gpu_snapshots.py` (RED first via `make slice-start`).
-- [ ] `infra/oci/README.md` § snapshots: both files, owners, freshness, how to read them.
+- [x] `apps/prototype-description-service/.env.prod.example` documents `ACX_GPU_STATE_PATH`, `ACX_GPU_STATE_STALE_SECONDS`, `ACX_DESCRIBE_LOAD_PATH`, `ACX_DESCRIBE_LOAD_REFRESH_SECONDS` next to the `ACX_GPU_ENDPOINT_*` block.
+- [x] `scripts/deploy/check-gpu-snapshots.sh` (new): exits non-zero when `/run/acx/describe-load.json` or `/run/acx/gpu-state.json` is missing, unreadable by uid 10001, or older than the stale window; test in `scripts/deploy/tests/test_check_gpu_snapshots.py` (RED first via `make slice-start`).
+- [x] `infra/oci/README.md` § snapshots: both files, owners, freshness, how to read them.
+
+> **Slice B deviations.** The check test landed as `scripts/deploy/tests/test-check-gpu-snapshots.sh`
+> (bash, wired into `make test-scripts`), not the planned `test_check_gpu_snapshots.py`. No RED gate was
+> recorded via `make slice-start`, so TEST-06 is unsatisfied for this slice. The lane's own self-verify
+> reported exit 4 / zero tests collected because it was pointed at the pytest path that was never created.
+> The suite is unrun, not red.
 
 ### Slice C — API reader (W1, lane C)
 
-- [ ] `scene/application/gpu_state.py` (new): `GpuState(StrEnum)`, `resolve_gpu_state_path()`, `resolve_gpu_state_stale_seconds()`, `read_gpu_state(now=…) -> GpuState` fail-closed to `unknown`; log once per transition.
-- [ ] `scene/interface_adapters/http/schemas/responses.py` `DescribeRunResponse.gpu_state: GpuState = GpuState.UNKNOWN`; `_run_response` in `describe_run.py` fills it from the reader on every status/submit/cancel response.
-- [ ] `scene/tests/test_gpu_state.py` (new) + `scene/tests/test_describe_run_contract.py` schema parity; RED gate = contract test failing against the Slice 0 enum before any production edit.
+- [x] `scene/application/gpu_state.py` (new): `GpuState(StrEnum)`, `resolve_gpu_state_path()`, `resolve_gpu_state_stale_seconds()`, `read_gpu_state(now=…) -> GpuState` fail-closed to `unknown`; log once per transition.
+- [x] `scene/interface_adapters/http/schemas/responses.py` `DescribeRunResponse.gpu_state: GpuState = GpuState.UNKNOWN`; `_run_response` in `describe_run.py` fills it from the reader on every status/submit/cancel response.
+- [x] `scene/tests/test_gpu_state.py` (new).
+- [ ] `scene/tests/test_describe_run_contract.py` schema parity — **not done**. The file predates this task
+  and the branch diff does not touch it, so nothing asserts the response model against the Slice 0 enum.
+  No RED gate was recorded for this slice either.
 
 ### Slice F — Lifecycle writer (W1, lane F)
 
-- [ ] `infra/oci/gpu_lifecycle/state_snapshot.py` (new): `GpuStateSnapshot` dataclass + `write_gpu_state_snapshot(path, state, instance_id, reason, since)` atomic tmp+rename `0644`.
-- [ ] `run_reap_cycle` and `run_start_cycle` in `reaper.py` derive the state from the OCI probe + readiness result + FALLBACK decision and write it at the end of every cycle; `--gpu-state-json` flag in `_build_parser` (default `/run/acx/gpu-state.json`).
-- [ ] `infra/oci/gpu_lifecycle/tests/test_state_snapshot.py` (new): every state reachable; writer never emits `unknown`; write failure logs loudly and does not abort the cycle; `scripts/deploy/gpu-lifecycle-install.sh` unit lines carry the flag.
+- [x] `infra/oci/gpu_lifecycle/state_snapshot.py` (new): `GpuStateSnapshot` dataclass + `write_gpu_state_snapshot(path, state, instance_id, reason, since)` atomic tmp+rename `0644`.
+- [x] `run_reap_cycle` and `run_start_cycle` in `reaper.py` derive the state from the OCI probe + readiness result + FALLBACK decision and write it at the end of every cycle; `--gpu-state-json` flag in `_build_parser` (default `/run/acx/gpu-state.json`).
+- [x] `infra/oci/gpu_lifecycle/tests/test_state_snapshot.py` (new): every state reachable; writer never emits `unknown`; write failure logs loudly and does not abort the cycle; `scripts/deploy/gpu-lifecycle-install.sh` unit lines carry the flag.
+
+> **Slices D, E1 and E2 are DEFERRED** to a follow-up task by operator decision (`claude_gpuux1_land_backend_half_defer_ui`,
+> decision 7468; blocker 296). Remote implement lanes cannot run their suites: the remote test-cmd allowlist admits only
+> `pytest <path>` and `python3 -m pytest <path>`, refusing `composer`, `npm`, `npx`, `node`, `vitest`, `phpunit`, `php`,
+> `uv run` and `bash`. Independently, the codex-remote sandbox provisions no `node_modules`. Both need an upstream
+> workbay fix. Boxes below stay unchecked deliberately — this is undone work, not unrecorded work.
 
 ### Slice D — PHP passthrough (W2, lane D)
 
@@ -86,7 +101,10 @@ No two lanes in one wave touch the same file (GRPH-09). Critical path `L0→C→
 
 ## Verification
 
-- Remote gate per lane: `uv run --extra dev pytest <files>` / `npx vitest run <files>` / `composer test` from the owning app dir on the VM, RED recorded by `make slice-start`, GREEN by `record_event(test_result)`.
+- Remote gate per lane: only `pytest <files>` and `python3 -m pytest <files>` are accepted by the remote
+  test-cmd allowlist. The `uv run --extra dev pytest` / `npx vitest run` / `composer test` forms this plan
+  originally specified are all refused before dispatch — that is why slices D/E1/E2 are deferred.
+  RED recorded by `make slice-start`, GREEN by `record_event(test_result)`.
 - Wave gate: `/wb-review-slice` — 1 local Claude reviewer + grok-remote reviewers with `semantic_reinjection_packet` context, canon lenses `ddia`, `latency`, `release-it`, `interaction`.
 - Manual (post-merge, operator): cold-GPU bulk describe on demo shows `warming` chip then `ready` toast; excluded VM e2e follows the reaper fix.
 

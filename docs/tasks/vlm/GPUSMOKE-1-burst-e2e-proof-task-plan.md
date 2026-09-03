@@ -17,6 +17,10 @@ WP admin "Describe" → POST acx/v1/recognition/describe/runs → service POST /
 
 Operator directive (2026-09-03): "this needs to be proven programmatically because users will trigger image description from the web interface and the bursty gpu must procure gpu resources".
 
+## Contract notes
+
+- The run-item response change is additive: each item now exposes top-level `tier` and `result_generation`; existing provenance keys and model identity formatting are unchanged.
+
 ## Prior art (cite, do not re-derive)
 
 - VLM-3B Slice 7c live run 2026-07-14 (verified_test 784, decision 2266): START→healthy 101s; a job enqueued mid-warm-start on the single-job `/describe` route ended `degraded`; a job enqueued after readiness reached `final_gpu` gen 2 at +10s; reaper STOP verified. Ran from the laptop via SSH tunnel — not from the WP trigger.

@@ -291,6 +291,7 @@ class DescribeRunRepository:
         alt_text_draft: str | None,
         caption: str | None,
         provenance: dict | None,
+        tier: DescriptionResultTier | str | None = None,
     ) -> bool:
         """Persist the describe output for one item and clear its image bytes."""
         item = await self._get_item(tenant_id=tenant_id, run_id=run_id, media_id=media_id)
@@ -299,6 +300,7 @@ class DescribeRunRepository:
         item.alt_text_draft = alt_text_draft
         item.caption = caption
         item.provenance = provenance
+        item.tier = DescriptionResultTier(tier) if tier is not None else None
         item.image_bytes = None
         await self._session.flush()
         return True

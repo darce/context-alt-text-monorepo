@@ -835,7 +835,7 @@ def test_run_bench_rejects_state_change_before_start_without_claiming_cleanup(tm
     assert "unfenced" in (run_cold_boot.__doc__ or "")
 
 
-def test_run_bench_start_failure_is_still_owned_and_stopped(tmp_path: Path) -> None:
+def test_run_bench_start_failure_does_not_stop_again_when_state_is_stopped(tmp_path: Path) -> None:
     class StartRaises(FakeActuator):
         def start(self, instance_id: str) -> None:
             raise RuntimeError(f"START failed for {instance_id}")
@@ -861,7 +861,7 @@ def test_run_bench_start_failure_is_still_owned_and_stopped(tmp_path: Path) -> N
         )
 
     assert exc_info.value.phase == "cold_boot"
-    assert actuator.stops == ["test-instance"]
+    assert actuator.stops == []
 
 
 @pytest.mark.parametrize(
@@ -1027,6 +1027,52 @@ def test_run_bench_final_stop_failure_raises_without_completed_artifact(
 
     assert exc_info.value.phase == "cleanup"
     assert not out.exists()
+
+
+def test_run_bench_does_not_stop_again_when_successful_run_is_already_stopped(
+    tmp_path: Path,
+) -> None:
+    class RejectRedundantStop(FakeActuator):
+        def stop(self, instance_id: str) -> None:
+            if self.state == "STOPPED":
+                raise RuntimeError("STOP cannot be applied to a STOPPED instance")
+            super().stop(instance_id)
+
+    actuator = RejectRedundantStop("STOPPED")
+    clock = FakeClock()
+
+    class StopAfterThroughput(FakeHttp):
+        def post(self, url: str, *, json_body: dict[str, Any], headers=None) -> HttpResponse:
+            response = super().post(url, json_body=json_body, headers=headers)
+            if "image_url" in str(json_body):
+                actuator.state = "STOPPED"
+            return response
+
+    http = StopAfterThroughput(ready_after=0)
+    http.advance_clock = clock
+    out = tmp_path / "completed.json"
+
+    result = run_bench(
+        instance_ocid="ocid1.instance.oc1..gpu",
+        endpoint_url="http://gpu.example:8000",
+        model_id="m",
+        image_paths=_write_images(tmp_path, n=1),
+        warm_start_runs=1,
+        actuator=actuator,
+        http=http,
+        clock=clock,
+        artifact_out=out,
+        boot_volume_gb=400,
+        vpus_per_gb=120,
+        shape="test-shape",
+        quantization="test-quantization",
+        model_path="/test/model.gguf",
+        a10_quota_confirmed=True,
+        poll_interval_seconds=0.1,
+    )
+
+    assert result.warm_start_meets_target is True
+    assert out.is_file()
 
 
 def test_run_bench_final_stopped_poll_timeout_raises_without_artifact(

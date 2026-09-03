@@ -29,13 +29,15 @@ Default fence delay is 2.0s so two samples are meaningfully separated in time.
 from __future__ import annotations
 
 import argparse
+import fcntl
 import json
 import logging
 import shutil
 import subprocess
 import sys
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -336,6 +338,18 @@ class RunningSinceLeaseStore:
             return value.replace(tzinfo=UTC)
         return value.astimezone(UTC)
 
+    @contextmanager
+    def _locked_for_update(self) -> Iterator[None]:
+        """Serialize read-modify-write updates across start/reap processes."""
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        lock_path = self.path.with_name(f".{self.path.name}.lock")
+        with lock_path.open("a+") as lock_file:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+
     def read(self, instance_id: str) -> RunningSinceRecord | None:
         try:
             payload = json.loads(self.path.read_text())
@@ -377,19 +391,19 @@ class RunningSinceLeaseStore:
         if source not in self._SOURCES:
             raise ValueError(f"unsupported running-since source: {source}")
         now = self._utc_now()
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        instances = self._read_instances_for_update()
-        instances[instance_id] = {
-            "since": now.isoformat().replace("+00:00", "Z"),
-            "source": source,
-        }
-        payload = {
-            "schema_version": self._SCHEMA_VERSION,
-            "instances": instances,
-        }
-        temporary = self.path.with_name(f".{self.path.name}.tmp")
-        temporary.write_text(json.dumps(payload, sort_keys=True) + "\n")
-        temporary.replace(self.path)
+        with self._locked_for_update():
+            instances = self._read_instances_for_update()
+            instances[instance_id] = {
+                "since": now.isoformat().replace("+00:00", "Z"),
+                "source": source,
+            }
+            payload = {
+                "schema_version": self._SCHEMA_VERSION,
+                "instances": instances,
+            }
+            temporary = self.path.with_name(f".{self.path.name}.tmp")
+            temporary.write_text(json.dumps(payload, sort_keys=True) + "\n")
+            temporary.replace(self.path)
         return RunningSinceRecord(instance_id=instance_id, since=now, source=source)
 
     def record_start(self, instance_id: str) -> RunningSinceRecord:
@@ -402,20 +416,21 @@ class RunningSinceLeaseStore:
         return self.write(instance_id, source="first_observed")
 
     def remove(self, instance_id: str) -> None:
-        instances = self._read_instances_for_update()
-        if instance_id not in instances:
-            return
-        del instances[instance_id]
-        if not instances:
-            self.path.unlink(missing_ok=True)
-            return
-        payload = {
-            "schema_version": self._SCHEMA_VERSION,
-            "instances": instances,
-        }
-        temporary = self.path.with_name(f".{self.path.name}.tmp")
-        temporary.write_text(json.dumps(payload, sort_keys=True) + "\n")
-        temporary.replace(self.path)
+        with self._locked_for_update():
+            instances = self._read_instances_for_update()
+            if instance_id not in instances:
+                return
+            del instances[instance_id]
+            if not instances:
+                self.path.unlink(missing_ok=True)
+                return
+            payload = {
+                "schema_version": self._SCHEMA_VERSION,
+                "instances": instances,
+            }
+            temporary = self.path.with_name(f".{self.path.name}.tmp")
+            temporary.write_text(json.dumps(payload, sort_keys=True) + "\n")
+            temporary.replace(self.path)
 
     def _read_instances_for_update(self) -> dict[str, dict[str, str]]:
         try:
@@ -609,14 +624,6 @@ def run_reap_cycle(
             use_recorded_age=use_recorded_lease_age,
             dry_run=dry_run,
         )
-        if lease_errors:
-            return ReapCycleResult(
-                decided=[],
-                actuated=[],
-                fenced_off=True,
-                errors=lease_errors,
-                lease_expired=[],
-            )
     forced = controller.lease_expired_instances(instances, max_lease_seconds=max_lease_seconds)
     for action, instance_id in forced:
         logger.warning(

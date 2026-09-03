@@ -37,11 +37,39 @@ Operator directive (2026-09-03): "this needs to be proven programmatically becau
 ## DAG
 
 ```
-S1 recover-83d58405 ──┐
-S2 worker-warmstart-tdd ──┼──► S4 live-run (operator-gated)
-S3 smoke-script+dry-run ──┘
+wave 1 (width 2)          wave 2            integration                 gate                    live
+C  S3 smoke findings ──┐
+                       ├──► A  S1 remainder ──► E trial-merge ──► F adversarial ──► G close ──► S4 live-run
+B  S2 warm-start TDD ──┘      (bench+docs)        + remote gate      review (1L+N R)    (enforce)   (operator)
 ```
-S1 ∥ S2 ∥ S3 (independent files); S4 requires all three merged plus operator approval.
+Edges only where a landed SHA moves (GRPH-32). A/B/C touch disjoint files except `Makefile` (A adds `test-gpu-spike-bench`, C extends `test-scripts`): resolved at E, not a blocking edge (GRPH-09). Critical path C→E→F→G (GRPH-31). Width cap 2: the 8 GB host OOMs at 3 remote lanes (blocker 305). Recorded as decision 7490.
+
+## Smoke ↔ UI observability parity (ux-map)
+
+Source of truth for the UI vocabulary: `apps/prototype-wp-alt-context/docs/ux-maps/describe-gpu-tier.uxmap.json` (GPUUX-1; `gpu_state` ∈ unknown|stopped|starting|warming|ready|degraded). The smoke script is the programmatic twin of Screen 2 of that map: every transition a user would watch on the Workbench must be an assertion the smoke observes from the outside, in order.
+
+```
+ elapsed   smoke observation (assertion name)                  Workbench zone (describe-gpu-tier)
+ ───────   ───────────────────────────────────────────────     ───────────────────────────────────
+ t=0       POST acx/v1/…/describe/runs → 202 run_id            z-bulk-cta pressed
+ ≤30 s     describe-load.json queue_depth>0 (gpu_state_json)   z-gpu-tier-chip  stopped → starting
+ ≤60 s     OCI STARTING → RUNNING  (warm_start_running)        "⏳ Warming GPU … ~1 min 30 s left"
+ ≈101 s    /health 200             (gpu_state: warming→ready)  chip ready
+ ≤480 s    items pending → completed tier=final_gpu            "✔ Complete · N final (GPU) · 0 provisional"
+           for EVERY requested media_id (run_terminal_success,
+           tier_final_gpu, model_id_qwen30b, model_revision_pinned,
+           caption_not_fixture)
+ drain     idle 300 s + reap ≤120 s → STOPPED                  chip stopped
+           (instance_stopped_after_reaper, exactly_one_start_transition)
+ finally   STOP issued and STOPPED re-verified                 —  (billing invariant, no UI)
+           (finally_stop_issued, instance_stopped_finally, no_orphans)
+```
+
+Interactivity reasoning derived from the map:
+- Screen 3 (degraded, CPU drafts kept) is a *designed* UI state but a smoke **failure**: a run that ends `completed_with_errors` or with any `provisional_cpu` item means the burst path did not procure the GPU (RLSE-05: the UI must never present degraded as success, and the smoke must never exit 0 on it).
+- The items poll during warm-up mirrors the "0 of N processed" progress row: while `gpu_state` is starting/warming no item may be terminal (OBS-08: silence during warm-up is expected, a terminal item during warm-up is the wrong kind of noise).
+- "Cancel run" during warming maps to `cancel_requested` inside `_wait_for_gpu_ready`; the smoke does not exercise cancel (non-goal), S2's T4 covers the deadline branch instead.
+- Cost line on the chip (≈$0.07 per 2 min) is the same arithmetic the evidence JSON records (`running_seconds × $2/3600`), so UI copy and evidence cannot drift.
 
 ## Slices
 

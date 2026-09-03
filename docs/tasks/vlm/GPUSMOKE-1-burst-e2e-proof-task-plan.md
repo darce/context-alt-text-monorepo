@@ -52,7 +52,9 @@ Source of truth for the UI vocabulary: `apps/prototype-wp-alt-context/docs/ux-ma
  elapsed   smoke observation (assertion name)                  Workbench zone (describe-gpu-tier)
  ───────   ───────────────────────────────────────────────     ───────────────────────────────────
  t=0       POST acx/v1/…/describe/runs → 202 run_id            z-bulk-cta pressed
- ≤30 s     describe-load.json queue_depth>0 (gpu_state_json)   z-gpu-tier-chip  stopped → starting
+ ≤30 s     describe-load.json + gpu-state.json snapshotted      z-gpu-tier-chip  stopped → starting
+           once before submit (gpu_state_json, load_json:
+           recorded as evidence, NOT asserted)
  ≤60 s     OCI STARTING → RUNNING  (warm_start_running)        "⏳ Warming GPU … ~1 min 30 s left"
  ≈101 s    /health 200             (gpu_state: warming→ready)  chip ready
  ≤480 s    items pending → completed tier=final_gpu            "✔ Complete · N final (GPU) · 0 provisional"
@@ -89,7 +91,7 @@ GPUW-1 implemented the gate; this slice proves the *composed* behaviour (enqueue
 
 ### Slice 3 — `scripts/gpu_burst_smoke.py` + `make gpu-burst-smoke` (codex-remote)
 - [ ] Trigger through the **WP REST route** the admin SPA uses (`POST acx/v1/recognition/describe/runs`, application-password auth from env), not directly against the service — that is the user path. Poll `GET .../runs/{run_id}/items` until terminal.
-- [ ] Assertions: at least one item `tier=final_gpu`; caption fails `scripts/deploy/lib/fixture-denylist.sh`; provenance `model_id=Qwen3-VL-30B-A3B-Instruct` + pinned revision; `/run/acx/gpu-state.json` transitions STOPPED→STARTING→RUNNING; after drain the reaper returns it to STOPPED (poll ≤ IDLE+REAP_INTERVAL+fence); `oci compute instance get` reports `STOPPED`; no orphan instances in the compartment tag scope.
+- [ ] Assertions: at least one item `tier=final_gpu`; caption fails `scripts/deploy/lib/fixture-denylist.sh`; item-level `tier=final_gpu` (service exposes `tier` on each run item; wave 6) and provenance `model_id` parsed as `<hub_repo>@<pinned revision>` matching the Qwen3-VL-30B profile; `/run/acx/gpu-state.json` and `describe-load.json` are snapshotted into the evidence file (recorded, not asserted — OCI lifecycle state is the asserted signal); after drain the reaper returns it to STOPPED (poll ≤ IDLE+REAP_INTERVAL+fence); `oci compute instance get` reports `STOPPED`; no orphan instances in the compartment tag scope.
 - [ ] Safety: `--dry-run` (default) uses `httpx.MockTransport` + `FixedLoadSource` and runs on the gate; live mode refuses unless `ACX_GPU_SMOKE_CONFIRM=RUN`; hard wall-clock budget `--max-seconds` (default 900); `finally:` always issues STOP and asserts it; exit non-zero on any assertion (never `tail`-masked, rg-006).
 - [ ] Artifact: `docs/tasks/vlm/GPUSMOKE-1-evidence-<date>.json` with timestamps per transition, cost estimate (`running_seconds × $2/3600`), model provenance; `assert_no_null_measurement_values` reused from `gpu_spike_bench.py` (S1).
 - [ ] `make gpu-burst-smoke` (dry) and `make gpu-burst-smoke-live`; tests `scripts/test_gpu_burst_smoke.py` gated remotely.

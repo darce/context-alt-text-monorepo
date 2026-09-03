@@ -25,6 +25,7 @@ vi.mock('../../api/describeApi', async () => {
 
 const fetchItemsMock = vi.mocked(fetchDescribeRunItems);
 const applyMock = vi.mocked(applyDescribeRunDrafts);
+const runItemContract = { tier: 'final_gpu', result_generation: 1 } as const;
 
 const mixedItems = {
   run_id: 'run-abc',
@@ -33,7 +34,7 @@ const mixedItems = {
     { media_id: 90, status: 'completed', alt_text_draft: 'A blue car.', caption: 'A car.', provenance: null, existing_alt: false },
     { media_id: 70, status: 'completed', alt_text_draft: 'A stone bridge.', caption: 'A bridge.', provenance: null, existing_alt: true },
     { media_id: 72, status: 'failed', alt_text_draft: null, caption: null, provenance: null, existing_alt: false },
-  ],
+  ].map((item) => ({ ...item, ...runItemContract })),
 };
 
 /** Post-partial refetch: alt landed so existing_alt is true for the written rows. */
@@ -44,7 +45,7 @@ const afterPartialItems = {
     { media_id: 90, status: 'completed', alt_text_draft: 'A blue car.', caption: 'A car.', provenance: null, existing_alt: true },
     { media_id: 70, status: 'completed', alt_text_draft: 'A stone bridge.', caption: 'A bridge.', provenance: null, existing_alt: true },
     { media_id: 72, status: 'failed', alt_text_draft: null, caption: null, provenance: null, existing_alt: false },
-  ],
+  ].map((item) => ({ ...item, ...runItemContract })),
 };
 
 const renderView = (runId = 'run-abc') => {
@@ -354,6 +355,7 @@ describe('DescribeRunApplyView', () => {
         alt_text_draft: `Draft ${id}`,
         caption: `Caption ${id}`,
         provenance: null,
+        ...runItemContract,
         existing_alt: false,
       })),
     };
@@ -365,6 +367,7 @@ describe('DescribeRunApplyView', () => {
         alt_text_draft: `Draft ${id}`,
         caption: `Caption ${id}`,
         provenance: null,
+        ...runItemContract,
         existing_alt: true,
       })),
     };
@@ -398,7 +401,7 @@ describe('DescribeRunApplyView', () => {
         { media_id: 11, status: 'completed' as const, alt_text_draft: 'Draft A', caption: 'Untitled', provenance: null, existing_alt: false },
         { media_id: 12, status: 'completed' as const, alt_text_draft: 'Draft B', caption: 'Untitled', provenance: null, existing_alt: false },
         { media_id: 13, status: 'completed' as const, alt_text_draft: 'Draft C', caption: 'Untitled', provenance: null, existing_alt: false },
-      ],
+      ].map((item) => ({ ...item, ...runItemContract })),
     };
     const afterCollide = {
       run_id: 'run-collide',
@@ -444,6 +447,7 @@ describe('DescribeRunApplyView', () => {
           alt_text_draft: 'A stone bridge.',
           caption: 'A bridge.',
           provenance: null,
+          ...runItemContract,
           existing_alt: true,
         },
       ],
@@ -486,7 +490,7 @@ describe('DescribeRunApplyView', () => {
           { media_id: 90, status: 'completed', alt_text_draft: 'A blue car.', caption: 'A car.', provenance: null, existing_alt: true },
           { media_id: 70, status: 'completed', alt_text_draft: 'A stone bridge.', caption: 'A bridge.', provenance: null, existing_alt: true },
           { media_id: 72, status: 'failed', alt_text_draft: null, caption: null, provenance: null, existing_alt: false },
-        ],
+        ].map((item) => ({ ...item, ...runItemContract })),
       });
     renderView();
     await screen.findByText('A red flower.');
@@ -606,7 +610,7 @@ describe('DescribeRunApplyView', () => {
   it('shows a zero state when the run has no applicable drafts', async () => {
     fetchItemsMock.mockResolvedValue({
       run_id: 'run-empty',
-      items: [{ media_id: 5, status: 'failed', alt_text_draft: null, caption: null, provenance: null, existing_alt: false }],
+      items: [{ media_id: 5, status: 'failed', alt_text_draft: null, caption: null, provenance: null, ...runItemContract, existing_alt: false }],
     });
 
     renderView('run-empty');

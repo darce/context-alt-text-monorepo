@@ -29,13 +29,17 @@ Default fence delay is 2.0s so two samples are meaningfully separated in time.
 from __future__ import annotations
 
 import argparse
+import fcntl
 import json
 import logging
 import shutil
 import subprocess
 import sys
 import time
-from dataclasses import dataclass
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
+from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Protocol
 
@@ -57,9 +61,7 @@ logger = logging.getLogger(__name__)
 
 # Fail-closed STOP sentinel when load data is untrustworthy. START must not
 # treat this as real work (untrustworthy=True → refuse START).
-_BUSY_LOAD = JobLoadSnapshot(
-    queue_depth=1, in_flight=1, batch_in_progress=True, untrustworthy=True
-)
+_BUSY_LOAD = JobLoadSnapshot(queue_depth=1, in_flight=1, batch_in_progress=True, untrustworthy=True)
 _DEFAULT_LOAD_MAX_AGE_SECONDS = 120.0
 _DEFAULT_OCI_TIMEOUT_SECONDS = 120
 _DEFAULT_MAX_WAIT_SECONDS = 600
@@ -69,6 +71,7 @@ _DEFAULT_FENCE_DELAY_SECONDS = 2.0
 _DEFAULT_READY_MAX_CYCLES = 30
 _DEFAULT_READY_STALL_CYCLES = 3
 _DEFAULT_READY_SLEEP_SECONDS = 10.0
+_DEFAULT_RUNNING_SINCE_PATH = Path("/run/acx/gpu-running-since.json")
 # Live describe dumps omit batch_in_progress; warn once per process, not per poll.
 _ABSENT_BATCH_KEY_WARNED = False
 
@@ -173,9 +176,7 @@ class JsonFileJobLoadSource:
         try:
             payload = json.loads(self.path.read_text())
         except (OSError, json.JSONDecodeError) as exc:
-            logger.warning(
-                "load json unreadable; treating as busy: %s (%s)", self.path, exc
-            )
+            logger.warning("load json unreadable; treating as busy: %s (%s)", self.path, exc)
             return _BUSY_LOAD
         if not isinstance(payload, dict):
             logger.warning("load json not an object; treating as busy: %s", self.path)
@@ -199,9 +200,7 @@ class JsonFileJobLoadSource:
                 self.path,
             )
             return _BUSY_LOAD
-        if "batch_in_progress" in payload and not isinstance(
-            payload["batch_in_progress"], bool
-        ):
+        if "batch_in_progress" in payload and not isinstance(payload["batch_in_progress"], bool):
             logger.warning(
                 "load json batch_in_progress not bool; treating as busy: %s",
                 self.path,
@@ -215,8 +214,7 @@ class JsonFileJobLoadSource:
             level = logging.DEBUG if _ABSENT_BATCH_KEY_WARNED else logging.WARNING
             logger.log(
                 level,
-                "load json missing batch_in_progress; bulk runs are unprotected "
-                "until the producer writes this key: %s",
+                "load json missing batch_in_progress; bulk runs are unprotected until the producer writes this key: %s",
                 self.path,
             )
             _ABSENT_BATCH_KEY_WARNED = True
@@ -312,6 +310,148 @@ class OciCliStartActuator:
         subprocess.run(cmd, check=True, timeout=self._timeout_seconds)
 
 
+@dataclass(frozen=True)
+class RunningSinceRecord:
+    instance_id: str
+    since: datetime
+    source: str
+
+
+class RunningSinceLeaseStore:
+    """Controller-owned grant times for RUNNING leases, keyed by instance."""
+
+    _SOURCES = frozenset({"start_actuator", "first_observed"})
+    _SCHEMA_VERSION = 2
+
+    def __init__(
+        self,
+        *,
+        path: Path = _DEFAULT_RUNNING_SINCE_PATH,
+        now: Callable[[], datetime] | None = None,
+    ) -> None:
+        self.path = path
+        self._now = now or (lambda: datetime.now(UTC))
+
+    def _utc_now(self) -> datetime:
+        value = self._now()
+        if value.tzinfo is None:
+            return value.replace(tzinfo=UTC)
+        return value.astimezone(UTC)
+
+    @contextmanager
+    def _locked_for_update(self) -> Iterator[None]:
+        """Serialize read-modify-write updates across start/reap processes."""
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        lock_path = self.path.with_name(f".{self.path.name}.lock")
+        with lock_path.open("a+") as lock_file:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+
+    def read(self, instance_id: str) -> RunningSinceRecord | None:
+        try:
+            payload = json.loads(self.path.read_text())
+        except FileNotFoundError:
+            return None
+        except json.JSONDecodeError as exc:
+            logger.warning("running-since record unreadable; replacing it: %s", exc)
+            return None
+        if (
+            not isinstance(payload, dict)
+            or payload.get("schema_version") != self._SCHEMA_VERSION
+            or not isinstance(payload.get("instances"), dict)
+        ):
+            # Greenfield policy: the old single-instance schema is stale state,
+            # not something whose ownership can safely be inferred.
+            return None
+        raw_record = payload["instances"].get(instance_id)
+        if not isinstance(raw_record, dict):
+            return None
+        source = raw_record.get("source")
+        since = raw_record.get("since")
+        if source not in self._SOURCES or not isinstance(since, str):
+            logger.warning("running-since record invalid; replacing it: %s", self.path)
+            return None
+        try:
+            parsed = datetime.fromisoformat(since)
+        except ValueError:
+            logger.warning("running-since timestamp invalid; replacing it: %s", self.path)
+            return None
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=UTC)
+        return RunningSinceRecord(
+            instance_id=instance_id,
+            since=parsed.astimezone(UTC),
+            source=source,
+        )
+
+    def write(self, instance_id: str, *, source: str) -> RunningSinceRecord:
+        if source not in self._SOURCES:
+            raise ValueError(f"unsupported running-since source: {source}")
+        now = self._utc_now()
+        with self._locked_for_update():
+            instances = self._read_instances_for_update()
+            instances[instance_id] = {
+                "since": now.isoformat().replace("+00:00", "Z"),
+                "source": source,
+            }
+            payload = {
+                "schema_version": self._SCHEMA_VERSION,
+                "instances": instances,
+            }
+            temporary = self.path.with_name(f".{self.path.name}.tmp")
+            temporary.write_text(json.dumps(payload, sort_keys=True) + "\n")
+            temporary.replace(self.path)
+        return RunningSinceRecord(instance_id=instance_id, since=now, source=source)
+
+    def record_start(self, instance_id: str) -> RunningSinceRecord:
+        return self.write(instance_id, source="start_actuator")
+
+    def observe_running(self, instance_id: str) -> RunningSinceRecord:
+        record = self.read(instance_id)
+        if record is not None:
+            return record
+        return self.write(instance_id, source="first_observed")
+
+    def remove(self, instance_id: str) -> None:
+        with self._locked_for_update():
+            instances = self._read_instances_for_update()
+            if instance_id not in instances:
+                return
+            del instances[instance_id]
+            if not instances:
+                self.path.unlink(missing_ok=True)
+                return
+            payload = {
+                "schema_version": self._SCHEMA_VERSION,
+                "instances": instances,
+            }
+            temporary = self.path.with_name(f".{self.path.name}.tmp")
+            temporary.write_text(json.dumps(payload, sort_keys=True) + "\n")
+            temporary.replace(self.path)
+
+    def _read_instances_for_update(self) -> dict[str, dict[str, str]]:
+        try:
+            payload = json.loads(self.path.read_text())
+        except FileNotFoundError:
+            return {}
+        except json.JSONDecodeError as exc:
+            logger.warning("running-since record unreadable; replacing it: %s", exc)
+            return {}
+        if (
+            not isinstance(payload, dict)
+            or payload.get("schema_version") != self._SCHEMA_VERSION
+            or not isinstance(payload.get("instances"), dict)
+        ):
+            return {}
+        return dict(payload["instances"])
+
+    def age_seconds(self, record: RunningSinceRecord) -> int:
+        return max(0, int((self._utc_now() - record.since).total_seconds()))
+
+
 def fetch_instance_idle_seconds(
     *,
     instance_id: str,
@@ -319,9 +459,12 @@ def fetch_instance_idle_seconds(
     auth: str | None = None,
     timeout_seconds: int = _DEFAULT_OCI_TIMEOUT_SECONDS,
 ) -> tuple[str, int] | None:
-    """Best-effort lifecycle + time-since-last-state-change from OCI CLI.
+    """Best-effort lifecycle state from OCI CLI.
 
-    Returns ``(lifecycle_state, idle_for_seconds)`` or None on failure.
+    The returned age is always zero. OCI's instance payload has no last
+    lifecycle-transition timestamp, and ``time-created`` must never be treated
+    as the age of the current RUNNING lease. The caller replaces zero with the
+    controller-owned running-since age (or an explicit test override).
     """
     bin_path = oci_bin or shutil.which("oci") or "oci"
     cmd = [
@@ -352,29 +495,7 @@ def fetch_instance_idle_seconds(
     if not isinstance(data, dict):
         return None
     state = str(data.get("lifecycle-state") or data.get("lifecycle_state") or "UNKNOWN")
-    # Prefer time-updated / freeform last-start; fall back to time-created.
-    stamp = (
-        data.get("time-updated")
-        or data.get("time_updated")
-        or data.get("time-created")
-        or data.get("time_created")
-    )
-    idle_for = 0
-    if isinstance(stamp, str) and stamp:
-        try:
-            from datetime import datetime, timezone
-
-            # OCI returns RFC3339 with Z.
-            cleaned = stamp.replace("Z", "+00:00")
-            started = datetime.fromisoformat(cleaned)
-            if started.tzinfo is None:
-                started = started.replace(tzinfo=timezone.utc)
-            idle_for = max(
-                0, int((datetime.now(timezone.utc) - started).total_seconds())
-            )
-        except ValueError:
-            idle_for = 0
-    return state, idle_for
+    return state, 0
 
 
 @dataclass(frozen=True)
@@ -383,6 +504,10 @@ class ReapCycleResult:
     actuated: list[tuple[str, str]]
     fenced_off: bool
     errors: list[str]
+    # STOPs forced by the max-lease cost cap, which bypasses the load fence
+    # (GPUW-1). Reported separately so an operator can tell "the queue drained"
+    # from "the backstop fired because the load signal was broken".
+    lease_expired: list[tuple[str, str]] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -394,6 +519,83 @@ class StartCycleResult:
     fallbacks: tuple[FallbackDecision, ...] = ()
 
 
+def _apply_running_since_leases(
+    instances: list[GpuInstance],
+    store: RunningSinceLeaseStore,
+    *,
+    use_recorded_age: bool,
+    dry_run: bool,
+) -> tuple[list[GpuInstance], list[str]]:
+    observed: list[GpuInstance] = []
+    errors: list[str] = []
+    for instance in instances:
+        if instance.state in ("STOPPED", "STOPPING"):
+            if dry_run:
+                logger.info("dry-run would remove RUNNING lease instance=%s", instance.instance_id)
+                observed.append(instance)
+                continue
+            try:
+                store.remove(instance.instance_id)
+            except OSError as exc:
+                msg = (
+                    f"{instance.instance_id}: running-since removal failed; lease cap disabled: "
+                    f"{type(exc).__name__}: {exc}"
+                )
+                logger.error(msg)
+                errors.append(msg)
+            observed.append(instance)
+            continue
+        if instance.state != "RUNNING":
+            observed.append(instance)
+            continue
+        if not use_recorded_age:
+            logger.info(
+                "evaluating RUNNING lease instance=%s source=instance_idle_for_override age_seconds=%s",
+                instance.instance_id,
+                instance.idle_for_seconds,
+            )
+            observed.append(instance)
+            continue
+        try:
+            if dry_run:
+                record = store.read(instance.instance_id)
+                if record is None:
+                    logger.info(
+                        "dry-run would record RUNNING lease instance=%s source=first_observed",
+                        instance.instance_id,
+                    )
+                    observed.append(instance)
+                    continue
+            else:
+                record = store.observe_running(instance.instance_id)
+            age_seconds = store.age_seconds(record)
+        except (OSError, ValueError) as exc:
+            msg = (
+                f"{instance.instance_id}: running-since observation failed; lease cap disabled: "
+                f"{type(exc).__name__}: {exc}"
+            )
+            logger.error(msg)
+            errors.append(msg)
+            observed.append(instance)
+            continue
+        else:
+            source = record.source
+        logger.info(
+            "evaluating RUNNING lease instance=%s source=%s age_seconds=%s",
+            instance.instance_id,
+            source,
+            age_seconds,
+        )
+        observed.append(
+            GpuInstance(
+                instance_id=instance.instance_id,
+                state=instance.state,
+                idle_for_seconds=age_seconds,
+            )
+        )
+    return observed, errors
+
+
 def run_reap_cycle(
     *,
     controller: GpuLifecycleController,
@@ -401,21 +603,55 @@ def run_reap_cycle(
     load_source: JobLoadSource,
     actuator: InstanceStopActuator,
     fence_delay_seconds: float = _DEFAULT_FENCE_DELAY_SECONDS,
+    max_lease_seconds: int = 0,
+    running_since_store: RunningSinceLeaseStore | None = None,
+    use_recorded_lease_age: bool = True,
+    dry_run: bool = False,
 ) -> ReapCycleResult:
     """Decision → fence delay → re-sample → STOP only if still idle.
 
     Per-instance STOP failures are collected; the loop continues (rg-007).
+
+    The max-lease cost cap runs first and is not fenced: it exists precisely for
+    the case where the load signal cannot be trusted (GPUW-1).
     """
+    lease_expired: list[tuple[str, str]] = []
+    lease_errors: list[str] = []
+    if running_since_store is not None:
+        instances, lease_errors = _apply_running_since_leases(
+            instances,
+            running_since_store,
+            use_recorded_age=use_recorded_lease_age,
+            dry_run=dry_run,
+        )
+    forced = controller.lease_expired_instances(instances, max_lease_seconds=max_lease_seconds)
+    for action, instance_id in forced:
+        logger.warning(
+            "max lease %ss exceeded; forcing STOP regardless of reported load: %s",
+            max_lease_seconds,
+            instance_id,
+        )
+        try:
+            actuator.stop_instance(instance_id)
+            lease_expired.append((action, instance_id))
+        except Exception as exc:  # noqa: BLE001 - isolate per-instance (rg-007)
+            msg = f"{instance_id}: {type(exc).__name__}: {exc}"
+            logger.error("lease-expiry STOP failed: %s", msg)
+            lease_errors.append(msg)
+    # Anything already stopped by the cap must not be considered again below.
+    forced_ids = {instance_id for _, instance_id in lease_expired}
+    if forced_ids:
+        instances = [i for i in instances if i.instance_id not in forced_ids]
+
     load = load_source.snapshot()
     if load.untrustworthy:
-        logger.error(
-            "load snapshot untrustworthy; refusing STOP (fail closed)"
-        )
+        logger.error("load snapshot untrustworthy; refusing STOP (fail closed)")
         return ReapCycleResult(
             decided=[],
             actuated=[],
             fenced_off=True,
-            errors=["load snapshot untrustworthy; refusing STOP"],
+            errors=[*lease_errors, "load snapshot untrustworthy; refusing STOP"],
+            lease_expired=lease_expired,
         )
     decided = controller.reap_idle_instances(
         instances,
@@ -424,7 +660,13 @@ def run_reap_cycle(
         batch_in_progress=load.batch_in_progress,
     )
     if not decided:
-        return ReapCycleResult(decided=[], actuated=[], fenced_off=False, errors=[])
+        return ReapCycleResult(
+            decided=[],
+            actuated=[],
+            fenced_off=False,
+            errors=lease_errors,
+            lease_expired=lease_expired,
+        )
 
     fence_expired = False
     pre_stop: JobLoadSnapshot | None = None
@@ -436,9 +678,7 @@ def run_reap_cycle(
         logger.error("fence resample failed; cancelling STOP: %s", exc)
         fence_expired = True
 
-    fenced = controller.fence_stop_actions(
-        decided, pre_stop_load=pre_stop, fence_expired=fence_expired
-    )
+    fenced = controller.fence_stop_actions(decided, pre_stop_load=pre_stop, fence_expired=fence_expired)
     if not fenced:
         logger.info(
             "fence cancelled STOP (queue_depth=%s in_flight=%s batch=%s expired=%s)",
@@ -447,7 +687,13 @@ def run_reap_cycle(
             None if pre_stop is None else pre_stop.batch_in_progress,
             fence_expired,
         )
-        return ReapCycleResult(decided=decided, actuated=[], fenced_off=True, errors=[])
+        return ReapCycleResult(
+            decided=decided,
+            actuated=[],
+            fenced_off=True,
+            errors=lease_errors,
+            lease_expired=lease_expired,
+        )
 
     actuated: list[tuple[str, str]] = []
     errors: list[str] = []
@@ -462,7 +708,11 @@ def run_reap_cycle(
             logger.error("STOP failed: %s", msg)
             errors.append(msg)
     return ReapCycleResult(
-        decided=decided, actuated=actuated, fenced_off=False, errors=errors
+        decided=decided,
+        actuated=actuated,
+        fenced_off=False,
+        errors=[*lease_errors, *errors],
+        lease_expired=lease_expired,
     )
 
 
@@ -474,6 +724,8 @@ def run_start_cycle(
     actuator: InstanceStartActuator,
     probe: InstanceReadinessProbe | None = None,
     readiness_wait: WarmReadinessWait | None = None,
+    running_since_store: RunningSinceLeaseStore | None = None,
+    dry_run: bool = False,
 ) -> StartCycleResult:
     """Emit START for STOPPED instances when the job store has work.
 
@@ -482,9 +734,7 @@ def run_start_cycle(
     """
     load = load_source.snapshot()
     if load.untrustworthy:
-        logger.error(
-            "load snapshot untrustworthy; refusing START to avoid unfenced GPU burn"
-        )
+        logger.error("load snapshot untrustworthy; refusing START to avoid unfenced GPU burn")
         return StartCycleResult(
             decided=[],
             actuated=[],
@@ -496,45 +746,26 @@ def run_start_cycle(
         in_flight=load.in_flight,
         batch_in_progress=load.batch_in_progress,
     )
-    waiting_ids = (
-        controller.instances_waiting_on_boot(instances) if load.has_work else []
-    )
-    blocked = (
-        controller.instances_blocking_start(instances) if load.has_work else []
-    )
+    waiting_ids = controller.instances_waiting_on_boot(instances) if load.has_work else []
+    blocked = controller.instances_blocking_start(instances) if load.has_work else []
     errors: list[str] = []
     for instance in blocked:
-        msg = (
-            f"{instance.instance_id}: fail-closed START refused; "
-            f"state={instance.state} while work waits"
-        )
+        msg = f"{instance.instance_id}: fail-closed START refused; state={instance.state} while work waits"
         logger.error(msg)
         errors.append(msg)
     if not decided and not waiting_ids and not errors:
         return StartCycleResult(decided=[], actuated=[], errors=[])
 
-    start_ids = [
-        instance_id
-        for action, instance_id in decided
-        if action == LifecycleAction.START
-    ]
-    wait_ids = start_ids + [
-        instance_id for instance_id in waiting_ids if instance_id not in set(start_ids)
-    ]
-    if (
-        isinstance(probe, HttpReadinessProbe)
-        and not probe.is_per_instance
-        and len(wait_ids) > 1
-    ):
+    start_ids = [instance_id for action, instance_id in decided if action == LifecycleAction.START]
+    wait_ids = start_ids + [instance_id for instance_id in waiting_ids if instance_id not in set(start_ids)]
+    if isinstance(probe, HttpReadinessProbe) and not probe.is_per_instance and len(wait_ids) > 1:
         msg = (
             "HttpReadinessProbe URL is a single shared endpoint; refusing "
             "multi-id wait (template {instance_id} required)"
         )
         logger.error(msg)
         errors.append(msg)
-        return StartCycleResult(
-            decided=decided, actuated=[], errors=errors, wait_result=None
-        )
+        return StartCycleResult(decided=decided, actuated=[], errors=errors, wait_result=None)
 
     actuated: list[tuple[str, str]] = []
     start_failed: list[str] = []
@@ -543,18 +774,40 @@ def run_start_cycle(
             continue
         try:
             actuator.start_instance(instance_id)
-            actuated.append((action, instance_id))
         except Exception as exc:  # noqa: BLE001 - isolate per-instance (rg-007)
             msg = f"{instance_id}: {type(exc).__name__}: {exc}"
             logger.error("START failed: %s", msg)
             errors.append(msg)
             start_failed.append(instance_id)
+            continue
+        actuated.append((action, instance_id))
+        if running_since_store is not None:
+            if dry_run:
+                logger.info(
+                    "dry-run would record RUNNING lease instance=%s source=start_actuator",
+                    instance_id,
+                )
+                continue
+            try:
+                record = running_since_store.record_start(instance_id)
+            except (OSError, ValueError) as exc:
+                msg = (
+                    f"{instance_id}: START issued but running-since write failed; lease cap disabled: "
+                    f"{type(exc).__name__}: {exc}"
+                )
+                logger.error(msg)
+                errors.append(msg)
+            else:
+                logger.info(
+                    "recorded RUNNING lease instance=%s source=%s since=%s",
+                    instance_id,
+                    record.source,
+                    record.since.isoformat(),
+                )
 
     wait_result: ReadinessWaitResult | None = None
     fallbacks: list[FallbackDecision] = list(
-        controller.fallback_on_boot_failure(start_failed, reason="start_failed")
-        if start_failed
-        else ()
+        controller.fallback_on_boot_failure(start_failed, reason="start_failed") if start_failed else ()
     )
     wait_ids = [instance_id for _, instance_id in actuated] + [
         instance_id for instance_id in waiting_ids if instance_id not in {i for _, i in actuated}
@@ -565,12 +818,8 @@ def run_start_cycle(
             errors.extend(wait_result.errors)
         if wait_result.failed:
             fallbacks.extend(
-                controller.fallback_on_boot_failure(
-                    list(wait_result.timed_out), reason="readiness_timeout"
-                )
-                + controller.fallback_on_boot_failure(
-                    list(wait_result.stalled), reason="readiness_stall"
-                )
+                controller.fallback_on_boot_failure(list(wait_result.timed_out), reason="readiness_timeout")
+                + controller.fallback_on_boot_failure(list(wait_result.stalled), reason="readiness_stall")
             )
     return StartCycleResult(
         decided=decided,
@@ -597,6 +846,17 @@ def _build_parser() -> argparse.ArgumentParser:
         help="reap=STOP idle GPUs (default); start=START stopped GPUs when work waits",
     )
     parser.add_argument(
+        "--max-lease-seconds",
+        type=int,
+        default=3600,
+        help=(
+            "Cost backstop: force STOP of a RUNNING instance this old regardless "
+            "of reported load, bypassing the fence. Every other path fails closed "
+            "toward busy, so a dead load writer otherwise runs an A10 forever. "
+            "0 disables (not recommended). Default 3600 (1h)."
+        ),
+    )
+    parser.add_argument(
         "--idle-seconds",
         type=int,
         default=300,
@@ -606,7 +866,16 @@ def _build_parser() -> argparse.ArgumentParser:
         "--instance-idle-for",
         type=int,
         default=None,
-        help="Override idle seconds for all instances (default: probe OCI or = --idle-seconds)",
+        help=(
+            "Explicit test override for lease/idle age for all instances "
+            "(default: controller-owned --running-since-path)"
+        ),
+    )
+    parser.add_argument(
+        "--running-since-path",
+        type=Path,
+        default=_DEFAULT_RUNNING_SINCE_PATH,
+        help=(f"Controller-owned current RUNNING lease record (default: {_DEFAULT_RUNNING_SINCE_PATH})"),
     )
     parser.add_argument(
         "--instance-state",
@@ -616,7 +885,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--probe-oci",
         action="store_true",
-        help="Fetch lifecycle state / age via `oci compute instance get` (recommended)",
+        help=("Fetch lifecycle state via `oci compute instance get`; lease age always comes from --running-since-path"),
     )
     load = parser.add_mutually_exclusive_group()
     load.add_argument(
@@ -713,6 +982,8 @@ def _build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
     args = _build_parser().parse_args(argv)
+    running_since_store = RunningSinceLeaseStore(path=args.running_since_path)
+    explicit_idle_override = args.instance_idle_for is not None
 
     if args.load_json is not None:
         load_source: JobLoadSource = JsonFileJobLoadSource(
@@ -722,8 +993,7 @@ def main(argv: list[str] | None = None) -> int:
     else:
         if args.queue_depth is None or args.in_flight is None:
             print(
-                "error: provide --load-json (production) or both --queue-depth and "
-                "--in-flight (tests only)",
+                "error: provide --load-json (production) or both --queue-depth and --in-flight (tests only)",
                 file=sys.stderr,
             )
             return 2
@@ -741,7 +1011,7 @@ def main(argv: list[str] | None = None) -> int:
     for instance_id in args.instance_ids:
         state = args.instance_state
         idle_for = args.instance_idle_for
-        if args.probe_oci or state is None or idle_for is None:
+        if args.probe_oci or state is None:
             probed = fetch_instance_idle_seconds(
                 instance_id=instance_id,
                 oci_bin=args.oci_bin,
@@ -754,15 +1024,15 @@ def main(argv: list[str] | None = None) -> int:
                     state = probed_state
                 if idle_for is None:
                     idle_for = probed_idle
-            elif state is None or idle_for is None:
-                # Without a probe, refuse to treat as auto-idle forever: require
-                # explicit overrides so a bare invocation cannot STOP by construction.
+            elif args.probe_oci or state is None:
                 print(
-                    f"error: could not probe {instance_id}; pass --instance-state and "
-                    f"--instance-idle-for, or --probe-oci with working OCI CLI",
+                    f"error: could not probe {instance_id}; pass --instance-state "
+                    "or use --probe-oci with a working OCI CLI",
                     file=sys.stderr,
                 )
                 return 2
+        if idle_for is None:
+            idle_for = 0
         assert state is not None and idle_for is not None
         instances.append(
             GpuInstance(
@@ -797,6 +1067,8 @@ def main(argv: list[str] | None = None) -> int:
             actuator=start_actuator,
             probe=probe,
             readiness_wait=readiness_wait,
+            running_since_store=running_since_store,
+            dry_run=args.dry_run,
         )
         logger.info(
             "start cycle decided=%s actuated=%s errors=%s wait=%s fallbacks=%s",
@@ -820,12 +1092,17 @@ def main(argv: list[str] | None = None) -> int:
         load_source=load_source,
         actuator=actuator,
         fence_delay_seconds=args.fence_delay_seconds,
+        max_lease_seconds=args.max_lease_seconds,
+        running_since_store=running_since_store,
+        use_recorded_lease_age=not explicit_idle_override,
+        dry_run=args.dry_run,
     )
     logger.info(
-        "reap cycle decided=%s actuated=%s fenced_off=%s errors=%s",
+        "reap cycle decided=%s actuated=%s fenced_off=%s lease_expired=%s errors=%s",
         result.decided,
         result.actuated,
         result.fenced_off,
+        result.lease_expired,
         result.errors,
     )
     return 1 if result.errors else 0

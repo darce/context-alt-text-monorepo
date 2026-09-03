@@ -24,16 +24,12 @@ class RecordingStartActuator:
 
 class NeverReady:
     def probe(self, instance_id: str) -> ProbeSample:
-        return ProbeSample(
-            instance_id=instance_id, status=ProbeStatus.NOT_READY, detail="cold"
-        )
+        return ProbeSample(instance_id=instance_id, status=ProbeStatus.NOT_READY, detail="cold")
 
 
 def test_starting_never_restarts_but_waits_and_fallbacks() -> None:
     controller = GpuLifecycleController(idle_seconds=60)
-    instance = GpuInstance(
-        instance_id="ocid1.gpu", state="STARTING", idle_for_seconds=0
-    )
+    instance = GpuInstance(instance_id="ocid1.gpu", state="STARTING", idle_for_seconds=0)
     actuator = RecordingStartActuator()
     result = run_start_cycle(
         controller=controller,
@@ -41,9 +37,7 @@ def test_starting_never_restarts_but_waits_and_fallbacks() -> None:
         load_source=StaticJobLoadSource(queue_depth=1, in_flight=0),
         actuator=actuator,
         probe=NeverReady(),
-        readiness_wait=WarmReadinessWait(
-            max_cycles=2, stall_cycles=10, sleep_seconds=0.0
-        ),
+        readiness_wait=WarmReadinessWait(max_cycles=2, stall_cycles=10, sleep_seconds=0.0),
     )
     assert result.decided == []
     assert result.actuated == []
@@ -57,9 +51,7 @@ def test_starting_never_restarts_but_waits_and_fallbacks() -> None:
 
 def test_stopping_fail_closed_when_work_waits() -> None:
     controller = GpuLifecycleController(idle_seconds=60)
-    instance = GpuInstance(
-        instance_id="ocid1.gpu", state="STOPPING", idle_for_seconds=0
-    )
+    instance = GpuInstance(instance_id="ocid1.gpu", state="STOPPING", idle_for_seconds=0)
     actuator = RecordingStartActuator()
     result = run_start_cycle(
         controller=controller,
@@ -76,9 +68,7 @@ def test_stopping_fail_closed_when_work_waits() -> None:
 
 def test_unknown_fail_closed_when_work_waits() -> None:
     controller = GpuLifecycleController(idle_seconds=60)
-    instance = GpuInstance(
-        instance_id="ocid1.gpu", state="UNKNOWN", idle_for_seconds=0
-    )
+    instance = GpuInstance(instance_id="ocid1.gpu", state="UNKNOWN", idle_for_seconds=0)
     actuator = RecordingStartActuator()
     result = run_start_cycle(
         controller=controller,

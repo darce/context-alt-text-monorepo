@@ -1,4 +1,4 @@
-.PHONY: help gate-preflight test test-integration lint format check clean install setup typecheck serve stop mcp postgres-start dev-ready dev-setup dev-mint-key logs-tail logs-rotate logs-clean logs-archive worker-daemon db-reset reset admin-dev admin-test admin-open admin-token admin-status admin-down admin-oci-serve admin-oci admin-oci-mint provision-customer FORCE
+.PHONY: help gate-preflight test test-gpu-lifecycle test-integration lint format check clean install setup typecheck serve stop mcp postgres-start dev-ready dev-setup dev-mint-key logs-tail logs-rotate logs-clean logs-archive worker-daemon db-reset reset admin-dev admin-test admin-open admin-token admin-status admin-down admin-oci-serve admin-oci admin-oci-mint provision-customer FORCE
 
 PYTEST_WORKERS ?= 4
 
@@ -299,6 +299,15 @@ gate-preflight:
 test:
 	@echo "Running tests..."
 	@$(UV_RUN) pytest $(if $(filter-out 0,$(PYTEST_WORKERS)),-n $(PYTEST_WORKERS),) -m "not integration and not pg and not timing" --durations=25
+
+# Burst-GPU lifecycle controller (GPUW-1). The suite lives at the repo root, but
+# the root .venv on the gate host carries no pytest -- only this workdir's does,
+# so the remote gate can reach it from here and nowhere else. Its conftest puts
+# the repo root on sys.path for exactly this invocation. Without this target the
+# cost backstop ships guarded by tests nothing ever collects.
+test-gpu-lifecycle:
+	@echo "Running gpu-lifecycle tests..."
+	@$(UV_RUN) pytest ../../infra/oci/gpu_lifecycle/tests -q --tb=short
 
 # Integration/pg/timing tests (serial — shared DB fixtures; wall-clock-sensitive
 # timing tests stay out of the parallel lane so worker contention cannot flake them)

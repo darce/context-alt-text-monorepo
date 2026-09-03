@@ -460,6 +460,36 @@ stash_has_real_work() {
   return 1
 }
 
+# Print the complete deletion-safety state that can change independently of
+# the checkout files. The optional second argument excludes the one ref this
+# reaper creates when anchoring a linked worktree's detached HEAD.
+lane_safety_snapshot() {
+  local dir="$1" ignored_ref="${2:-}" head_ref head_sha ref_line
+  local refs_output stash_output status_output
+  head_ref="$(git -C "$dir" symbolic-ref --quiet HEAD 2>/dev/null || printf 'DETACHED')" || return 1
+  head_sha="$(git -C "$dir" rev-parse --verify HEAD)" || return 1
+  refs_output="$(git -C "$dir" for-each-ref --format='%(refname) %(objectname)' refs)" || return 1
+  stash_output="$(git -C "$dir" stash list --format='%H %gd')" || return 1
+  status_output="$(git -C "$dir" status --porcelain=v1 -uall)" || return 1
+  printf 'HEAD %s %s\n' "$head_ref" "$head_sha" || return 1
+  printf '%s\n' REFS
+  while IFS= read -r ref_line; do
+    [[ -z "$ref_line" ]] && continue
+    [[ "${ref_line%% *}" == "$ignored_ref" ]] && continue
+    printf '%s\n' "$ref_line"
+  done <<<"$refs_output"
+  printf '%s\n' STASH
+  printf '%s\n' "$stash_output"
+  printf '%s\n' STATUS
+  printf '%s\n' "$status_output"
+}
+
+lane_matches_snapshot() {
+  local dir="$1" ignored_ref="$2" expected="$3" actual
+  actual="$(lane_safety_snapshot "$dir" "$ignored_ref")" || return 1
+  [[ "$actual" == "$expected" ]]
+}
+
 # Push every commit a lane holds into the keep-repo, then prove it landed.
 # $1 = lane realpath, $2 = ref namespace (the lane's path under $HOME).
 #
@@ -513,6 +543,33 @@ archive_lane() {
     [[ -z "$ref" ]] && continue
     printf '%s\n' "$got" | grep -qxF "$ref $sha" || return 1
   done <<<"$want"
+  return 0
+}
+
+# Preserve commits named by a reflog but unreachable from every current ref.
+# The lane owns those reflogs; rm would otherwise remove their only names.
+archive_reflog_only_commits() {
+  local dir="$1" ns="$2" reachable reflog_output got sha ref
+  local reflog_shas=() ref_specs=()
+  reachable="$(git -C "$dir" rev-list --all)" || return 1
+  reflog_output="$(git -C "$dir" reflog --all --format='%H' | LC_ALL=C sort -u)" || return 1
+  while IFS= read -r sha; do
+    [[ -z "$sha" ]] && continue
+    if ! printf '%s\n' "$reachable" | grep -qxF "$sha"; then
+      reflog_shas+=("$sha")
+      ref="refs/reaped/${ns}/reflog/${sha}"
+      ref_specs+=("${sha}:${ref}")
+    fi
+  done <<<"$reflog_output"
+  [[ ${#ref_specs[@]} -gt 0 ]] || return 0
+  git -C "$dir" push --quiet --no-verify -- "$archive_to" \
+    "${ref_specs[@]}" >/dev/null 2>&1 || return 1
+  got="$(git ls-remote -- "$archive_to" "refs/reaped/${ns}/reflog/*" 2>/dev/null |
+    awk '{ print $2, $1 }')" || return 1
+  for sha in "${reflog_shas[@]}"; do
+    ref="refs/reaped/${ns}/reflog/${sha}"
+    printf '%s\n' "$got" | grep -qxF "$ref $sha" || return 1
+  done
   return 0
 }
 
@@ -577,6 +634,7 @@ process_one() {
   local path="$1"
   local real size size_kib head_sha upstream upstream_label url ref log_dir ns parent
   local now newest_mtime min_age generation cleanup_failed=0
+  local safety_snapshot safety_ignore_ref=""
 
   candidates=$((candidates + 1))
 
@@ -661,6 +719,16 @@ process_one() {
       skip "$path" "sandbox lane lock is held or cannot be verified"
       return 0
     fi
+    if [[ "$yes" -eq 1 ]]; then
+      if [[ -n "$parent" ]]; then
+        safety_ignore_ref="refs/lanes/${ns}/HEAD"
+      fi
+      safety_snapshot="$(lane_safety_snapshot "$real" "$safety_ignore_ref")" || {
+        release_grok_lane_lock
+        skip "$path" "could not capture lane snapshot"
+        return 0
+      }
+    fi
     if [[ -n "$parent" ]]; then
       if [[ "$yes" -eq 1 ]] && ! anchor_worktree_head "$real" "$ns" "$parent"; then
         release_grok_lane_lock
@@ -672,9 +740,22 @@ process_one() {
       upstream_label="archived:${archive_to}"
       if [[ "$yes" -eq 1 ]] && ! archive_lane "$real" "$ns"; then
         release_grok_lane_lock
-        skip "$path" "could not archive to ${archive_to}"
+        if ! lane_matches_snapshot "$real" "$safety_ignore_ref" "$safety_snapshot"; then
+          skip "$path" "lane changed after snapshot; skipped"
+        else
+          skip "$path" "could not archive to ${archive_to}"
+        fi
         return 0
       fi
+    fi
+    if [[ "$yes" -eq 1 ]] && ! archive_reflog_only_commits "$real" "$ns"; then
+      release_grok_lane_lock
+      if ! lane_matches_snapshot "$real" "$safety_ignore_ref" "$safety_snapshot"; then
+        skip "$path" "lane changed after snapshot; skipped"
+      else
+        skip "$path" "could not archive reflog to ${archive_to}"
+      fi
+      return 0
     fi
   elif [[ -n "${REAP_UPSTREAM:-}" ]]; then
     if [[ "$REAP_UPSTREAM" != *#* ]]; then
@@ -721,6 +802,13 @@ process_one() {
       skip "$path" "sandbox lane lock is held or cannot be verified"
       return 0
     fi
+    if [[ "$yes" -eq 1 ]]; then
+      safety_snapshot="$(lane_safety_snapshot "$real")" || {
+        release_grok_lane_lock
+        skip "$path" "could not capture lane snapshot"
+        return 0
+      }
+    fi
   fi
 
   size="$(du -sh "$real" | awk '{print $1}')"
@@ -732,12 +820,12 @@ process_one() {
     return 0
   fi
 
-  # Non-sandbox archive roots have no materializer lock. Re-check at the last
-  # possible moment so work created during archival is never removed.
-  if [[ -n "$archive_to" ]] && ! is_grok_sandbox "$real" &&
-     has_blocking_dirty "$real"; then
+  # This is the final complete state check. There remains an unavoidable race
+  # between this comparison and rm below (plus marker backfill for a legacy
+  # sandbox); callers that can mutate sandboxes must use the per-lane lock.
+  if ! lane_matches_snapshot "$real" "$safety_ignore_ref" "$safety_snapshot"; then
     release_grok_lane_lock
-    skip "$path" "dirty working tree"
+    skip "$path" "lane changed after snapshot; skipped"
     return 0
   fi
 

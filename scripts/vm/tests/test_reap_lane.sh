@@ -758,6 +758,69 @@ run_reap --yes --archive-to "$LIAR" "$lane_liar"
 assert_contains "archive that drops refs" "could not archive"
 assert_exists "archive that drops refs keeps the lane" "$lane_liar"
 
+# A reset commit is held only by the lane's reflog. Removing the checkout also
+# removes that reflog, so preserve each reflog-only commit under an immutable,
+# generation-scoped archive ref and prove its tree arrived with it.
+lane_reflog="$HOME/w/lane-reflog-only"
+clone_lane "$lane_reflog"
+echo "reflog only" >"$lane_reflog/REFLOG_ONLY"
+git -C "$lane_reflog" add REFLOG_ONLY
+git -C "$lane_reflog" commit -q -m "work retained only by reflog"
+reflog_sha="$(git -C "$lane_reflog" rev-parse HEAD)"
+git -C "$lane_reflog" reset -q --hard HEAD^
+reflog_generation="$(generation_of "$lane_reflog")"
+run_reap --yes --archive-to "$ARCHIVE" "$lane_reflog"
+assert_rc0 "archive reflog-only commit"
+assert_gone "archive reflog-only commit" "$lane_reflog"
+archive_has "archive reflog-only commit" \
+  "refs/reaped/w/lane-reflog-only/$reflog_generation/reflog/$reflog_sha" "$reflog_sha"
+if [[ "$(git -C "$ARCHIVE" show "$reflog_sha:REFLOG_ONLY" 2>/dev/null || true)" == "reflog only" ]]; then
+  pass "archive reflog-only commit tree is readable"
+else
+  fail "archive reflog-only commit tree is not readable"
+fi
+
+# Archiving can take long enough for another actor to change a non-sandbox
+# lane. Synchronize a background writer with the first post-archive `du`, then
+# prove the final safety snapshot catches the new commit before rm.
+lane_snapshot_race="$HOME/w/lane-snapshot-race"
+clone_lane "$lane_snapshot_race"
+snapshot_head="$(git -C "$lane_snapshot_race" rev-parse HEAD)"
+snapshot_trigger="$WORKDIR/snapshot-trigger"
+snapshot_done="$WORKDIR/snapshot-done"
+snapshot_du_bin="$WORKDIR/snapshot-du-bin"
+mkdir "$snapshot_du_bin"
+cat >"$snapshot_du_bin/du" <<'SNAPSHOT_DU'
+#!/usr/bin/env bash
+set -e
+if [[ ! -e "$SNAPSHOT_TRIGGER" ]]; then
+  : >"$SNAPSHOT_TRIGGER"
+  while [[ ! -e "$SNAPSHOT_DONE" ]]; do sleep 0.01; done
+fi
+exec "$REAL_DU" "$@"
+SNAPSHOT_DU
+chmod +x "$snapshot_du_bin/du"
+(
+  while [[ ! -e "$snapshot_trigger" ]]; do sleep 0.01; done
+  echo changed >"$lane_snapshot_race/AFTER_SNAPSHOT"
+  git -C "$lane_snapshot_race" add AFTER_SNAPSHOT
+  git -C "$lane_snapshot_race" commit -q -m "change after safety snapshot"
+  : >"$snapshot_done"
+) &
+snapshot_writer_pid=$!
+SNAPSHOT_TRIGGER="$snapshot_trigger" SNAPSHOT_DONE="$snapshot_done" \
+  REAL_DU="$(command -v du)" PATH="$snapshot_du_bin:$PATH" \
+  run_reap --yes --archive-to "$ARCHIVE" "$lane_snapshot_race"
+wait "$snapshot_writer_pid"
+assert_rc0 "lane changed after snapshot"
+assert_contains "lane changed after snapshot" "lane changed after snapshot; skipped"
+assert_exists "lane changed after snapshot" "$lane_snapshot_race"
+if [[ "$(git -C "$lane_snapshot_race" rev-parse HEAD)" != "$snapshot_head" ]]; then
+  pass "lane changed after snapshot fixture committed"
+else
+  fail "lane changed after snapshot fixture did not commit; out=$out"
+fi
+
 # A detached HEAD is archived too -- commits reachable only from HEAD are the
 # easiest work to lose and the hardest to notice missing.
 lane_dh="$HOME/w/lane-detached"

@@ -11,6 +11,7 @@ from infra.oci.gpu_lifecycle.state_snapshot import (
     GpuLifecycleState,
     write_gpu_state_snapshot,
 )
+
 from scene.application import gpu_state
 from scene.application.gpu_state import GpuState, read_gpu_state
 
@@ -30,11 +31,20 @@ def test_each_writer_state_round_trips_through_real_reader(
     path = tmp_path / "gpu-state.json"
     monkeypatch.setenv("ACX_GPU_STATE_PATH", str(path))
 
-    assert write_gpu_state_snapshot(state, now=1_788_390_000.0) is True
+    reason = "test_degraded" if state is GpuLifecycleState.DEGRADED else None
+    assert write_gpu_state_snapshot(
+        state,
+        instance_id="ocid1.gpu",
+        reason=reason,
+        now=1_788_390_000.0,
+    ) is True
 
     assert json.loads(path.read_text()) == {
         "state": state.value,
+        "instance_id": "ocid1.gpu",
         "written_at": 1_788_390_000.0,
+        "reason": reason,
+        "since": 1_788_390_000.0,
     }
     assert read_gpu_state(now=1_788_390_179.0) is GpuState(state.value)
 

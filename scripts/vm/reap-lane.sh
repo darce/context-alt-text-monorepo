@@ -134,28 +134,40 @@ home_real="$(realpath "$HOME")" || {
   exit 1
 }
 
+sandbox_roots=("${home_real}/grok-sandbox")
+if [[ -n "${WORKBAY_REMOTE_AGENT_ROOT:-}" ]]; then
+  remote_agent_root_real="$(realpath "$WORKBAY_REMOTE_AGENT_ROOT" 2>/dev/null || true)"
+  if [[ -n "$remote_agent_root_real" &&
+        "$remote_agent_root_real" != "${home_real}/grok-sandbox" ]]; then
+    sandbox_roots+=("$remote_agent_root_real")
+  fi
+fi
+
 # Destructive sandbox sweeps must participate in the materializer's flock
 # contract. Detect that unsupported mode once, before acquiring the sweep lock
 # or inspecting any lane; dry-runs remain useful on hosts without flock.
 if [[ "$yes" -eq 1 ]] && ! command -v flock >/dev/null 2>&1; then
-  sandbox_root="${home_real}/grok-sandbox"
   sandbox_scope=0
   for requested_root in ${all_roots[@]+"${all_roots[@]}"}; do
     requested_real="$(realpath "$requested_root" 2>/dev/null || true)"
-    if [[ "$requested_real" == "$sandbox_root" ]]; then
-      sandbox_scope=1
-      break
-    fi
+    for sandbox_root in "${sandbox_roots[@]}"; do
+      if [[ "$requested_real" == "$sandbox_root" ]]; then
+        sandbox_scope=1
+        break 2
+      fi
+    done
   done
   if [[ "$sandbox_scope" -eq 0 ]]; then
     for requested_path in ${paths[@]+"${paths[@]}"}; do
       requested_real="$(realpath "$requested_path" 2>/dev/null || true)"
-      case "$requested_real" in
-        "$sandbox_root"/*)
-          sandbox_scope=1
-          break
-          ;;
-      esac
+      for sandbox_root in "${sandbox_roots[@]}"; do
+        case "$requested_real" in
+          "$sandbox_root"/*)
+            sandbox_scope=1
+            break 2
+            ;;
+        esac
+      done
     done
   fi
   if [[ "$sandbox_scope" -eq 1 ]]; then
@@ -261,11 +273,27 @@ trap 'exit 129' HUP
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
+candidates=0
+freshness_candidates=0
+reaped=0
+skipped=0
+bytes_freed=0
+grok_lane_lock_held=0
+grok_lane_lock_path=""
+grok_lane_lock_error=""
+git_guard_error=""
+all_roots_missing=0
+valid_all_roots=0
+
 for all_root in ${all_roots[@]+"${all_roots[@]}"}; do
   if [[ ! -d "$all_root" ]]; then
     echo "reap-lane: --all root is not a directory: $all_root" >&2
-    exit 1
+    printf 'SKIP %s: --all root is not a directory\n' "$all_root"
+    candidates=$((candidates + 1))
+    skipped=$((skipped + 1))
+    continue
   fi
+  valid_all_roots=$((valid_all_roots + 1))
   shopt -s nullglob
   for cand in "$all_root"/*; do
     if [[ -d "$cand" ]]; then
@@ -274,6 +302,9 @@ for all_root in ${all_roots[@]+"${all_roots[@]}"}; do
   done
   shopt -u nullglob
 done
+if [[ "${#all_roots[@]}" -gt 0 && "$valid_all_roots" -eq 0 ]]; then
+  all_roots_missing=1
+fi
 
 # Every directory under $HOME that accumulates lane clones. [RES-07] a reclaimer
 # whose scope does not match what grows is not a reclaimer: this list read
@@ -288,15 +319,6 @@ done
 # change. An override REPLACES the defaults -- narrowing the roots for a one-off
 # sweep must not silently still reap the standing ones.
 REAP_LANE_ROOTS="${REAP_LANE_ROOTS:-w3 uxw2 l1 w lanes grok-sandbox}"
-
-candidates=0
-freshness_candidates=0
-reaped=0
-skipped=0
-bytes_freed=0
-grok_lane_lock_held=0
-grok_lane_lock_path=""
-grok_marker_backfill=0
 
 is_ignorable_path() {
   local p="${1#./}"
@@ -333,9 +355,12 @@ path_inode() {
 }
 
 is_grok_sandbox() {
-  case "$1" in
-    "$home_real/grok-sandbox/"*) return 0 ;;
-  esac
+  local sandbox_root
+  for sandbox_root in "${sandbox_roots[@]}"; do
+    case "$1" in
+      "$sandbox_root"/*) return 0 ;;
+    esac
+  done
   return 1
 }
 
@@ -344,7 +369,6 @@ is_grok_sandbox() {
 # the per-lane lock immediately before archive/anchor and holds it through rm.
 grok_sandbox_is_stale() {
   local real="$1" path="$2" root key marker lease ttl now mtime issued expiry lease_line
-  grok_marker_backfill=0
   root="$(dirname "$real")"
   key="${real##*/}"
   marker="$real/.workbay-lane-sandbox"
@@ -362,16 +386,8 @@ grok_sandbox_is_stale() {
   esac
 
   if [[ ! -f "$marker" ]]; then
-    mtime="$(path_mtime "$real" || true)"
-    now="$(date +%s)"
-    if [[ -z "$mtime" || $((now - mtime)) -le "$ttl" ]]; then
-      skip "$path" "sandbox marker missing"
-      return 1
-    fi
-    # Remember legacy eligibility without mutating the checkout. The marker is
-    # committed only after every guard/archive succeeds and immediately before
-    # deletion, while the lane lock is held when one exists.
-    grok_marker_backfill=1
+    skip "$path" "unmarked sandbox dir; operator review"
+    return 1
   else
     mtime="$(path_mtime "$marker" || true)"
     now="$(date +%s)"
@@ -417,46 +433,34 @@ grok_sandbox_is_stale() {
   return 0
 }
 
-backfill_grok_sandbox_marker() {
-  local real="$1" root key marker marker_tmp
-  [[ "$grok_marker_backfill" -eq 1 ]] || return 0
-  root="$(dirname "$real")"
-  key="${real##*/}"
-  marker="$real/.workbay-lane-sandbox"
-  marker_tmp="$root/.reap-marker-$key-$$"
-  if ! printf 'lane_key=%s\n' "$key" >"$marker_tmp" ||
-     ! touch -r "$real" "$marker_tmp"; then
-    rm -f "$marker_tmp" >/dev/null 2>&1 || true
-    return 1
-  fi
-  if ! grep -qxF '.workbay-lane-sandbox' "$real/.git/info/exclude" 2>/dev/null &&
-     ! printf '%s\n' .workbay-lane-sandbox >>"$real/.git/info/exclude"; then
-    rm -f "$marker_tmp" >/dev/null 2>&1 || true
-    return 1
-  fi
-  if ! mv "$marker_tmp" "$marker"; then
-    rm -f "$marker_tmp" >/dev/null 2>&1 || true
-    return 1
-  fi
-  grok_marker_backfill=0
-  return 0
-}
-
 acquire_grok_lane_lock() {
-  local real="$1" root key lane_lock lane_lock_inode fd_inode
+  local real="$1" root key lane_lock lane_lock_inode fd_inode lock_status
+  grok_lane_lock_error=""
   is_grok_sandbox "$real" || return 0
   root="$(dirname "$real")"
   key="${real##*/}"
   lane_lock="$root/.lane-lock-$key"
   if ! command -v flock >/dev/null 2>&1; then
+    grok_lane_lock_error="lane lock unverifiable: flock unavailable"
     return 1
   fi
   # Create-or-open the stable materializer lock path, then lock and verify the
   # inode. Treating absence as unlocked leaves no fd against which to detect a
   # path materialized during the final deletion window.
-  exec 8>>"$lane_lock"
-  if ! flock -n 8; then
+  if ! exec 8>>"$lane_lock"; then
+    grok_lane_lock_error="lane lock unverifiable: could not open lock path"
+    return 1
+  fi
+  if flock -n 8; then
+    :
+  else
+    lock_status=$?
     exec 8>&-
+    if [[ "$lock_status" -eq 1 ]]; then
+      grok_lane_lock_error="lane lock contended"
+    else
+      grok_lane_lock_error="lane lock unverifiable: flock failed with status $lock_status"
+    fi
     return 1
   fi
   # Do not use `-ef` here: macOS gives /dev/fd/8 the devfs device id even when
@@ -464,14 +468,17 @@ acquire_grok_lane_lock() {
   # so equal inode numbers provide the replacement check we need.
   lane_lock_inode="$(path_inode "$lane_lock")" || {
     exec 8>&-
+    grok_lane_lock_error="lane lock unverifiable: could not stat lock path"
     return 1
   }
   fd_inode="$(path_inode /dev/fd/8)" || {
     exec 8>&-
+    grok_lane_lock_error="lane lock unverifiable: could not stat open lock fd"
     return 1
   }
   if [[ "$lane_lock_inode" != "$fd_inode" ]]; then
     exec 8>&-
+    grok_lane_lock_error="lane lock replaced"
     return 1
   fi
   grok_lane_lock_held=1
@@ -481,12 +488,26 @@ acquire_grok_lane_lock() {
 
 grok_lane_lock_matches() {
   local real="$1" lane_lock_inode fd_inode
+  grok_lane_lock_error=""
   is_grok_sandbox "$real" || return 0
-  [[ "$grok_lane_lock_held" -eq 1 && -n "$grok_lane_lock_path" &&
-     -e "$grok_lane_lock_path" ]] || return 1
-  lane_lock_inode="$(path_inode "$grok_lane_lock_path")" || return 1
-  fd_inode="$(path_inode /dev/fd/8)" || return 1
-  [[ "$lane_lock_inode" == "$fd_inode" ]]
+  if [[ "$grok_lane_lock_held" -ne 1 || -z "$grok_lane_lock_path" ||
+        ! -e "$grok_lane_lock_path" ]]; then
+    grok_lane_lock_error="lane lock replaced"
+    return 1
+  fi
+  lane_lock_inode="$(path_inode "$grok_lane_lock_path")" || {
+    grok_lane_lock_error="lane lock unverifiable: could not stat lock path"
+    return 1
+  }
+  fd_inode="$(path_inode /dev/fd/8)" || {
+    grok_lane_lock_error="lane lock unverifiable: could not stat open lock fd"
+    return 1
+  }
+  if [[ "$lane_lock_inode" != "$fd_inode" ]]; then
+    grok_lane_lock_error="lane lock replaced"
+    return 1
+  fi
+  return 0
 }
 
 cleanup_grok_sandbox_siblings() {
@@ -559,7 +580,12 @@ has_unmerged_work() {
 }
 
 has_blocking_dirty() {
-  local dir="$1" line entry left right
+  local dir="$1" line entry left right status_output
+  git_guard_error=""
+  if ! status_output="$(git -C "$dir" status --porcelain)"; then
+    git_guard_error="could not read git status"
+    return 0
+  fi
   while IFS= read -r line; do
     [[ -z "$line" ]] && continue
     entry="${line:3}"
@@ -572,27 +598,58 @@ has_blocking_dirty() {
     elif ! is_ignorable_path "$entry"; then
       return 0
     fi
-  done < <(git -C "$dir" status --porcelain)
+  done <<<"$status_output"
   return 1
 }
 
 stash_has_real_work() {
-  local dir="$1" sha f
-  git -C "$dir" rev-parse --verify --quiet refs/stash >/dev/null || return 1
+  local dir="$1" sha f git_status stash_output tree_output
+  git_guard_error=""
+  if git -C "$dir" rev-parse --verify --quiet refs/stash >/dev/null; then
+    :
+  else
+    git_status=$?
+    if [[ "$git_status" -eq 1 ]]; then
+      return 1
+    fi
+    git_guard_error="could not read git status"
+    return 0
+  fi
+  if ! stash_output="$(git -C "$dir" stash list --format='%H')"; then
+    git_guard_error="could not read git status"
+    return 0
+  fi
   while IFS= read -r sha; do
     [[ -z "$sha" ]] && continue
-    if ! git -C "$dir" diff --quiet "${sha}^1" "$sha"; then
+    if git -C "$dir" diff --quiet "${sha}^1" "$sha"; then
+      :
+    else
+      git_status=$?
+      if [[ "$git_status" -eq 1 ]]; then
+        return 0
+      fi
+      git_guard_error="could not read git status"
       return 0
     fi
     if git -C "$dir" rev-parse --verify --quiet "${sha}^3" >/dev/null; then
+      if ! tree_output="$(git -C "$dir" ls-tree -r --name-only "${sha}^3")"; then
+        git_guard_error="could not read git status"
+        return 0
+      fi
       while IFS= read -r f; do
         [[ -z "$f" ]] && continue
         if ! is_ignorable_path "$f"; then
           return 0
         fi
-      done < <(git -C "$dir" ls-tree -r --name-only "${sha}^3")
+      done <<<"$tree_output"
+    else
+      git_status=$?
+      if [[ "$git_status" -ne 1 ]]; then
+        git_guard_error="could not read git status"
+        return 0
+      fi
     fi
-  done < <(git -C "$dir" stash list --format='%H')
+  done <<<"$stash_output"
   return 1
 }
 
@@ -644,15 +701,33 @@ lane_matches_snapshot() {
 #
 # Not --force: these refs may be the only copy of that lane's history, so a
 # diverged re-archive must be refused rather than overwritten.
+archive_error=""
+
+set_archive_error_tail() {
+  local prefix="$1" diagnostic="$2" tail_line
+  tail_line="$(printf '%s\n' "$diagnostic" | tail -n 8 | tr '\n' ' ' |
+    sed 's/[[:space:]]*$//')"
+  archive_error="${prefix}: ${tail_line:-no diagnostic}"
+}
+
+set_archive_push_error() {
+  local diagnostic="$1"
+  case "$diagnostic" in
+    *non-fast-forward*|*fetch\ first*|*already\ exists*|*would\ clobber*)
+      set_archive_error_tail "archive ref exists with different tip (non-force)" "$diagnostic"
+      ;;
+    *) set_archive_error_tail "archive push failed" "$diagnostic" ;;
+  esac
+}
+
 archive_lane() {
   local dir="$1" ns="$2" head_sha want got ref sha source_ref
+  local command_output existing_output existing_sha ancestry_status
   local ref_specs=()
+  archive_error=""
   if ! git -C "$dir" rev-parse --verify --quiet HEAD >/dev/null; then
+    archive_error="archive preparation failed: could not read HEAD"
     return 1
-  fi
-  if [[ -n "$(git -C "$dir" for-each-ref --format='%(objectname)' refs/heads)" ]]; then
-    git -C "$dir" push --quiet --no-verify -- "$archive_to" \
-      "refs/heads/*:refs/lanes/${ns}/*" >/dev/null 2>&1 || return 1
   fi
   # Keep the historical branch namespace for consumers, plus an unambiguous
   # refs/ mirror that retains tags, notes, replacement refs, and any other
@@ -661,29 +736,75 @@ archive_lane() {
     [[ -z "$source_ref" ]] && continue
     ref_specs+=("${source_ref}:refs/lanes/${ns}/refs/${source_ref#refs/}")
   done < <(git -C "$dir" for-each-ref --format='%(refname)' refs)
-  if [[ ${#ref_specs[@]} -gt 0 ]]; then
-    git -C "$dir" push --quiet --no-verify -- "$archive_to" \
-      "${ref_specs[@]}" >/dev/null 2>&1 || return 1
-  fi
-  head_sha="$(git -C "$dir" rev-parse HEAD)"
-  # Named explicitly: commits reachable only from a detached HEAD are the
-  # easiest work to lose and the hardest to notice missing.
-  git -C "$dir" push --quiet --no-verify -- "$archive_to" \
-    "${head_sha}:refs/lanes/${ns}/HEAD" >/dev/null 2>&1 || return 1
-
-  # Read the refs back out of the archive. A push that reported success but
-  # landed nothing would otherwise be indistinguishable from one that worked,
-  # and the next step is rm -rf.
+  head_sha="$(git -C "$dir" rev-parse HEAD)" || {
+    archive_error="archive preparation failed: could not read HEAD"
+    return 1
+  }
   want="$(
     git -C "$dir" for-each-ref --format="refs/lanes/${ns}/%(refname:strip=2) %(objectname)" refs/heads
     git -C "$dir" for-each-ref --format="refs/lanes/${ns}/refs/%(refname:strip=1) %(objectname)" refs
     printf 'refs/lanes/%s/HEAD %s\n' "$ns" "$head_sha"
   )"
-  got="$(git ls-remote -- "$archive_to" "refs/lanes/${ns}/*" 2>/dev/null |
-    awk '{ print $2, $1 }')" || return 1
+
+  # Diagnose immutable-ref conflicts before push. A failed probe is not by
+  # itself fatal: the push supplies the authoritative transport diagnostic.
+  if existing_output="$(git ls-remote -- "$archive_to" "refs/lanes/${ns}/*" 2>&1)"; then
+    got="$(printf '%s\n' "$existing_output" | awk '{ print $2, $1 }')"
+    while IFS=' ' read -r ref sha; do
+      [[ -z "$ref" ]] && continue
+      existing_sha="$(printf '%s\n' "$got" | awk -v wanted="$ref" '$1 == wanted { print $2; exit }')"
+      if [[ -n "$existing_sha" && "$existing_sha" != "$sha" ]]; then
+        if git -C "$dir" merge-base --is-ancestor "$existing_sha" "$sha" 2>/dev/null; then
+          : # A normal retry may advance a previously archived ref.
+        else
+          ancestry_status=$?
+          if [[ "$ancestry_status" -eq 1 ]]; then
+            archive_error="archive ref exists with different tip (non-force): ${ref}"
+            return 1
+          fi
+          # If the existing object is not local, let push decide and capture
+          # its authoritative non-fast-forward or transport diagnostic.
+        fi
+      fi
+    done <<<"$want"
+  fi
+
+  if [[ -n "$(git -C "$dir" for-each-ref --format='%(objectname)' refs/heads)" ]]; then
+    if ! command_output="$(git -C "$dir" push --quiet --no-verify -- "$archive_to" \
+        "refs/heads/*:refs/lanes/${ns}/*" 2>&1)"; then
+      set_archive_push_error "$command_output"
+      return 1
+    fi
+  fi
+  if [[ ${#ref_specs[@]} -gt 0 ]]; then
+    if ! command_output="$(git -C "$dir" push --quiet --no-verify -- "$archive_to" \
+        "${ref_specs[@]}" 2>&1)"; then
+      set_archive_push_error "$command_output"
+      return 1
+    fi
+  fi
+  # Named explicitly: commits reachable only from a detached HEAD are the
+  # easiest work to lose and the hardest to notice missing.
+  if ! command_output="$(git -C "$dir" push --quiet --no-verify -- "$archive_to" \
+      "${head_sha}:refs/lanes/${ns}/HEAD" 2>&1)"; then
+    set_archive_push_error "$command_output"
+    return 1
+  fi
+
+  # Read the refs back out of the archive. A push that reported success but
+  # landed nothing would otherwise be indistinguishable from one that worked,
+  # and the next step is rm -rf.
+  if ! command_output="$(git ls-remote -- "$archive_to" "refs/lanes/${ns}/*" 2>&1)"; then
+    set_archive_error_tail "archive verification failed" "$command_output"
+    return 1
+  fi
+  got="$(printf '%s\n' "$command_output" | awk '{ print $2, $1 }')"
   while IFS=' ' read -r ref sha; do
     [[ -z "$ref" ]] && continue
-    printf '%s\n' "$got" | grep -qxF "$ref $sha" || return 1
+    if ! printf '%s\n' "$got" | grep -qxF "$ref $sha"; then
+      archive_error="archive verification failed: missing or mismatched ${ref}"
+      return 1
+    fi
   done <<<"$want"
   return 0
 }
@@ -691,7 +812,7 @@ archive_lane() {
 # Preserve commits named by a reflog but unreachable from every current ref.
 # The lane owns those reflogs; rm would otherwise remove their only names.
 archive_reflog_only_commits() {
-  local dir="$1" ns="$2" reachable reflog_output got sha ref
+  local dir="$1" ns="$2" reachable reflog_output got sha ref command_output
   local reflog_shas=() ref_specs=()
   reachable="$(git -C "$dir" rev-list --all)" || return 1
   reflog_output="$(git -C "$dir" reflog --all --format='%H' | LC_ALL=C sort -u)" || return 1
@@ -704,13 +825,22 @@ archive_reflog_only_commits() {
     fi
   done <<<"$reflog_output"
   [[ ${#ref_specs[@]} -gt 0 ]] || return 0
-  git -C "$dir" push --quiet --no-verify -- "$archive_to" \
-    "${ref_specs[@]}" >/dev/null 2>&1 || return 1
-  got="$(git ls-remote -- "$archive_to" "refs/reaped/${ns}/reflog/*" 2>/dev/null |
-    awk '{ print $2, $1 }')" || return 1
+  if ! command_output="$(git -C "$dir" push --quiet --no-verify -- "$archive_to" \
+      "${ref_specs[@]}" 2>&1)"; then
+    set_archive_push_error "$command_output"
+    return 1
+  fi
+  if ! command_output="$(git ls-remote -- "$archive_to" "refs/reaped/${ns}/reflog/*" 2>&1)"; then
+    set_archive_error_tail "archive verification failed" "$command_output"
+    return 1
+  fi
+  got="$(printf '%s\n' "$command_output" | awk '{ print $2, $1 }')"
   for sha in "${reflog_shas[@]}"; do
     ref="refs/reaped/${ns}/reflog/${sha}"
-    printf '%s\n' "$got" | grep -qxF "$ref $sha" || return 1
+    if ! printf '%s\n' "$got" | grep -qxF "$ref $sha"; then
+      archive_error="archive verification failed: missing or mismatched ${ref}"
+      return 1
+    fi
   done
   return 0
 }
@@ -776,9 +906,20 @@ process_one() {
   local path="$1"
   local real size size_kib head_sha upstream upstream_label url ref log_dir ns parent
   local now newest_mtime min_age generation cleanup_failed=0
-  local safety_snapshot safety_ignore_ref=""
+  local safety_snapshot safety_ignore_ref="" archive_ref="" partial_archive_ref="" partial_line
 
   candidates=$((candidates + 1))
+
+  if [[ -f "$path/.workbay-reap-partial" ]]; then
+    while IFS= read -r partial_line || [[ -n "$partial_line" ]]; do
+      case "$partial_line" in
+        archive_ref=*) partial_archive_ref="${partial_line#archive_ref=}"; break ;;
+      esac
+    done <"$path/.workbay-reap-partial" || true
+    freshness_candidates=$((freshness_candidates + 1))
+    skip "$path" "partial reap after archive ${partial_archive_ref:-unknown}; operator review"
+    return 0
+  fi
 
   if [[ ! -d "$path" || ! -e "$path/.git" ]]; then
     skip "$path" "not a git directory"
@@ -815,7 +956,8 @@ process_one() {
     # eligibility read, then hold it through the final snapshot and removal so
     # a writer cannot make its work part of our trusted baseline.
     if [[ "$yes" -eq 1 ]] && ! acquire_grok_lane_lock "$real"; then
-      skip "$path" "sandbox lane lock is held"
+      freshness_candidates=$((freshness_candidates + 1))
+      skip "$path" "${grok_lane_lock_error:-lane lock unverifiable: unknown error}"
       return 0
     fi
   fi
@@ -865,11 +1007,11 @@ process_one() {
     # Ordered cheapest-and-strictest first: neither an uncommitted tree nor a
     # stash has a commit behind it, so archiving cannot make them safe.
     if has_blocking_dirty "$real"; then
-      skip "$path" "dirty working tree"
+      skip "$path" "${git_guard_error:-dirty working tree}"
       return 0
     fi
     if stash_has_real_work "$real"; then
-      skip "$path" "stash has real work"
+      skip "$path" "${git_guard_error:-stash has real work}"
       return 0
     fi
     if [[ "$yes" -eq 1 ]]; then
@@ -888,6 +1030,7 @@ process_one() {
         skip "$path" "could not anchor HEAD in ${parent}"
         return 0
       fi
+      archive_ref="refs/lanes/${ns}/HEAD"
       upstream_label="worktree-of:${parent}"
     else
       upstream_label="archived:${archive_to}"
@@ -896,17 +1039,18 @@ process_one() {
         if ! lane_matches_snapshot "$real" "$safety_ignore_ref" "$safety_snapshot"; then
           skip "$path" "lane changed after snapshot; skipped"
         else
-          skip "$path" "could not archive to ${archive_to}"
+          skip "$path" "${archive_error:-archive failed: no diagnostic}"
         fi
         return 0
       fi
+      archive_ref="refs/lanes/${ns}/HEAD"
     fi
     if [[ "$yes" -eq 1 ]] && ! archive_reflog_only_commits "$real" "$ns"; then
       release_grok_lane_lock
       if ! lane_matches_snapshot "$real" "$safety_ignore_ref" "$safety_snapshot"; then
         skip "$path" "lane changed after snapshot; skipped"
       else
-        skip "$path" "could not archive reflog to ${archive_to}"
+        skip "$path" "${archive_error:-archive reflog failed: no diagnostic}"
       fi
       return 0
     fi
@@ -943,12 +1087,12 @@ process_one() {
     fi
 
     if has_blocking_dirty "$real"; then
-      skip "$path" "dirty working tree"
+      skip "$path" "${git_guard_error:-dirty working tree}"
       return 0
     fi
 
     if stash_has_real_work "$real"; then
-      skip "$path" "stash has real work"
+      skip "$path" "${git_guard_error:-stash has real work}"
       return 0
     fi
     if [[ "$yes" -eq 1 ]]; then
@@ -965,17 +1109,13 @@ process_one() {
   head_sha="$(git -C "$real" rev-parse HEAD)"
 
   if [[ "$yes" -eq 0 ]]; then
-    if [[ "$grok_marker_backfill" -eq 1 ]]; then
-      printf 'WOULD REAP %s (legacy, marker backfill)\n' "$real"
-    else
-      printf 'WOULD REAP %s (%s)\n' "$real" "$size"
-    fi
+    printf 'WOULD REAP %s (%s)\n' "$real" "$size"
     return 0
   fi
 
   # This is the final complete state check. There remains an unavoidable race
-  # between this comparison and rm below (plus marker backfill for a legacy
-  # sandbox); callers that can mutate sandboxes must use the per-lane lock.
+  # between this comparison and rm below; callers that can mutate sandboxes
+  # must use the per-lane lock.
   if ! lane_matches_snapshot "$real" "$safety_ignore_ref" "$safety_snapshot"; then
     release_grok_lane_lock
     skip "$path" "lane changed after snapshot; skipped"
@@ -984,38 +1124,34 @@ process_one() {
 
   if ! grok_lane_lock_matches "$real"; then
     release_grok_lane_lock
-    skip "$path" "lane lock replaced; skipped"
-    return 0
-  fi
-
-  if is_grok_sandbox "$real" && ! backfill_grok_sandbox_marker "$real"; then
-    release_grok_lane_lock
-    skip "$path" "could not backfill sandbox marker"
-    return 0
-  fi
-  # Marker backfill is filesystem work, so re-check once more immediately
-  # before rm rather than extending trust from the preceding inode check.
-  if ! grok_lane_lock_matches "$real"; then
-    release_grok_lane_lock
-    skip "$path" "lane lock replaced; skipped"
+    skip "$path" "${grok_lane_lock_error:-lane lock unverifiable: unknown error}"
     return 0
   fi
 
   if ! rm -rf -- "$real" || [[ -e "$real" ]]; then
+    if [[ -n "$archive_ref" && -d "$real" ]]; then
+      if ! printf 'archive_ref=%s\nrecorded_at=%s\n' "$archive_ref" \
+          "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >"$real/.workbay-reap-partial"; then
+        echo "reap-lane: could not write partial-reap marker in $real" >&2
+      fi
+    fi
     release_grok_lane_lock
-    skip "$path" "rm failed"
+    if [[ -n "$archive_ref" ]]; then
+      skip "$path" "rm failed after archive ${archive_ref}; lane partially removed"
+    else
+      skip "$path" "rm failed; lane partially removed"
+    fi
     return 1
   fi
   reaped=$((reaped + 1))
   bytes_freed=$((bytes_freed + size_kib * 1024))
   if ! grok_lane_lock_matches "$real"; then
-    skip "$path" "lane lock replaced; skipped"
-    release_grok_lane_lock
-    return 0
-  fi
-  if ! cleanup_grok_sandbox_siblings "$real"; then
-    echo "reap-lane: could not remove sandbox siblings for $real" >&2
-    cleanup_failed=1
+    echo "reap-lane: warning: ${grok_lane_lock_error:-lane lock unverifiable} after removal; sibling cleanup skipped for $real" >&2
+  else
+    if ! cleanup_grok_sandbox_siblings "$real"; then
+      echo "reap-lane: could not remove sandbox siblings for $real" >&2
+      cleanup_failed=1
+    fi
   fi
   # Stale worktree metadata makes the parent's `worktree list` lie, and leaves
   # the per-worktree HEAD holding a commit we have already anchored properly.
@@ -1030,7 +1166,7 @@ process_one() {
   return 0
 }
 
-rc=0
+rc="$all_roots_missing"
 for path in ${paths[@]+"${paths[@]}"}; do
   if ! process_one "$path"; then
     rc=1

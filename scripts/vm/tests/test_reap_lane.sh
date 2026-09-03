@@ -6,8 +6,10 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 SCRIPT="${ROOT}/scripts/vm/reap-lane.sh"
 
 failures=0
+skips=0
 pass() { echo "PASS: $*"; }
 fail() { echo "FAIL: $*"; failures=$((failures + 1)); }
+skip_case() { echo "SKIP: $* (flock unavailable)"; skips=$((skips + 1)); }
 
 if [[ ! -f "$SCRIPT" ]]; then
   echo "FAIL: missing $SCRIPT"
@@ -124,6 +126,16 @@ assert_summary() {
   local pattern="^REAP SUMMARY candidates=${candidates} reaped=${reaped} skipped=${skipped} bytes_freed=${bytes} df_used_pct=[0-9]+$"
   if grep -Eq "$pattern" <<<"$out"; then
     pass "$label summary"
+  else
+    fail "$label missing summary matching '$pattern'; out=$out"
+  fi
+}
+
+assert_summary_counts() {
+  local label="$1" candidates="$2" reaped="$3" skipped="$4"
+  local pattern="^REAP SUMMARY candidates=${candidates} reaped=${reaped} skipped=${skipped} bytes_freed=[0-9]+ df_used_pct=[0-9]+$"
+  if grep -Eq "$pattern" <<<"$out"; then
+    pass "$label summary counts"
   else
     fail "$label missing summary matching '$pattern'; out=$out"
   fi
@@ -535,6 +547,54 @@ generation_of() {  # $1 repo
   git -C "$1" rev-list --max-parents=0 HEAD | sort | sed -n '1p'
 }
 
+# Git safety reads fail closed. A broken or unreadable index must never be
+# interpreted as a clean checkout, and an unreadable stash list must never be
+# interpreted as an empty stash.
+git_guard_bin="$WORKDIR/git-guard-bin"
+mkdir "$git_guard_bin"
+cat >"$git_guard_bin/git" <<'GIT_GUARD'
+#!/bin/sh
+case " $* " in
+  *" status --porcelain "*|*" status --porcelain=v1 "*)
+    echo "simulated unreadable index" >&2
+    exit 128
+    ;;
+esac
+exec "$REAL_GIT" "$@"
+GIT_GUARD
+chmod +x "$git_guard_bin/git"
+lane_status_fail="$HOME/w/lane-status-fail"
+clone_lane "$lane_status_fail"
+REAL_GIT="$(command -v git)" PATH="$git_guard_bin:$PATH" REAP_MIN_AGE_SEC=0 \
+  run_reap --archive-to "$ARCHIVE" "$lane_status_fail"
+assert_contains "git status failure" "could not read git status"
+assert_not_contains "git status failure" "WOULD REAP"
+assert_exists "git status failure" "$lane_status_fail"
+
+stash_guard_bin="$WORKDIR/stash-guard-bin"
+mkdir "$stash_guard_bin"
+cat >"$stash_guard_bin/git" <<'STASH_GUARD'
+#!/bin/sh
+case " $* " in
+  *" stash list "*)
+    echo "simulated unreadable stash" >&2
+    exit 128
+    ;;
+esac
+exec "$REAL_GIT" "$@"
+STASH_GUARD
+chmod +x "$stash_guard_bin/git"
+lane_stash_fail="$HOME/w/lane-stash-fail"
+clone_lane "$lane_stash_fail"
+mkdir "$lane_stash_fail/.lane"
+echo metadata >"$lane_stash_fail/.lane/meta"
+git -C "$lane_stash_fail" stash push -q -u -m metadata
+REAL_GIT="$(command -v git)" PATH="$stash_guard_bin:$PATH" REAP_MIN_AGE_SEC=0 \
+  run_reap --archive-to "$ARCHIVE" "$lane_stash_fail"
+assert_contains "git stash failure" "could not read git status"
+assert_not_contains "git stash failure" "WOULD REAP"
+assert_exists "git stash failure" "$lane_stash_fail"
+
 # The archive must outlive the lane. A local archive nested below the checkout
 # would accept and verify every ref, then disappear in the same rm -rf.
 lane_nested_archive="$HOME/w3/nested-archive"
@@ -592,14 +652,15 @@ if command -v flock >/dev/null 2>&1; then
   assert_rc0 "grok-sandbox fresh-only sweep"
   assert_exists "grok-sandbox fresh-only sweep" "$lane_gs_fresh"
 
-  # Pre-marker legacy sandboxes enter the canonical marker-gated path only
-  # after their directory itself has aged past the sandbox TTL.
+  # Marker-less directories are operator-owned, even when old and git-backed.
+  # They must never be promoted into the managed sandbox lifecycle by mtime.
   lane_gs_legacy_dirty="$HOME/grok-sandbox/feature-legacy-dirty-abc12345"
   clone_lane "$lane_gs_legacy_dirty"
   echo dirty >>"$lane_gs_legacy_dirty/README"
   touch -t 200001010000 "$lane_gs_legacy_dirty"
   run_reap --yes --archive-to "$ARCHIVE" "$lane_gs_legacy_dirty"
-  assert_contains "grok-sandbox dirty legacy" "dirty working tree"
+  assert_contains "grok-sandbox dirty legacy" \
+    "unmarked sandbox dir; operator review"
   assert_exists "grok-sandbox dirty legacy" "$lane_gs_legacy_dirty"
   if [[ ! -e "$lane_gs_legacy_dirty/.workbay-lane-sandbox" ]]; then
     pass "grok-sandbox dirty legacy did not persist marker backfill"
@@ -644,9 +705,10 @@ LOCK_RACE_FLOCK
   : >"$HOME/grok-sandbox/.venv-sync-stamp-$legacy_key"
   touch -t 200001010000 "$lane_gs_legacy"
   run_reap --archive-to "$ARCHIVE" "$lane_gs_legacy"
-  assert_rc0 "grok-sandbox stale legacy dry-run"
-  assert_contains "grok-sandbox stale legacy dry-run" \
-    "WOULD REAP $lane_gs_legacy (legacy, marker backfill)"
+  assert_rc0 "grok-sandbox unmarked dry-run"
+  assert_contains "grok-sandbox unmarked dry-run" \
+    "unmarked sandbox dir; operator review"
+  assert_not_contains "grok-sandbox unmarked dry-run" "WOULD REAP"
   assert_exists "grok-sandbox stale legacy dry-run" "$lane_gs_legacy"
   if [[ ! -e "$lane_gs_legacy/.workbay-lane-sandbox" ]]; then
     pass "grok-sandbox stale legacy dry-run did not backfill marker"
@@ -654,16 +716,18 @@ LOCK_RACE_FLOCK
     fail "grok-sandbox stale legacy dry-run mutated marker"
   fi
   run_reap --yes --archive-to "$ARCHIVE" "$lane_gs_legacy"
-  assert_rc0 "grok-sandbox stale legacy marker backfill"
-  assert_gone "grok-sandbox stale legacy marker backfill" "$lane_gs_legacy"
+  assert_rc0 "grok-sandbox unmarked destructive"
+  assert_contains "grok-sandbox unmarked destructive" \
+    "unmarked sandbox dir; operator review"
+  assert_exists "grok-sandbox unmarked destructive" "$lane_gs_legacy"
   if [[ -e "$HOME/grok-sandbox/.lane-lock-$legacy_key" ]]; then
     pass "grok-sandbox stale legacy lane lock inode retained"
   else
     fail "grok-sandbox stale legacy lane lock inode was unlinked"
   fi
-  assert_gone "grok-sandbox stale legacy lease" "$HOME/grok-sandbox/.lane-live-$legacy_key"
-  assert_gone "grok-sandbox stale legacy venv" "$HOME/grok-sandbox/.venv-lane-$legacy_key"
-  assert_gone "grok-sandbox stale legacy sync stamp" "$HOME/grok-sandbox/.venv-sync-stamp-$legacy_key"
+  assert_path_exists "grok-sandbox unmarked lease" "$HOME/grok-sandbox/.lane-live-$legacy_key"
+  assert_exists "grok-sandbox unmarked venv" "$HOME/grok-sandbox/.venv-lane-$legacy_key"
+  assert_path_exists "grok-sandbox unmarked sync stamp" "$HOME/grok-sandbox/.venv-sync-stamp-$legacy_key"
 
   # A lock absent at the eligibility check can be materialized after archive
   # and before rm. The reaper must create-and-lock the stable path itself, then
@@ -724,7 +788,7 @@ LATE_LOCK_DU
     PATH="$late_du_bin:$PATH" \
     run_reap --yes --archive-to "$ARCHIVE" "$lane_gs_late_lock"
   assert_rc0 "grok-sandbox late lane lock"
-  assert_contains "grok-sandbox late lane lock" "lane lock replaced; skipped"
+  assert_contains "grok-sandbox late lane lock" "lane lock replaced"
   assert_exists "grok-sandbox late lane lock lane" "$lane_gs_late_lock"
   assert_path_exists "grok-sandbox late lane lock lease" "$late_lease"
   assert_exists "grok-sandbox late lane lock venv" "$late_venv"
@@ -805,7 +869,14 @@ RECREATED_RM
   else
     fail "grok-sandbox recreated lane lock inode was unlinked"
   fi
-  assert_contains "grok-sandbox recreated lane lock" "lane lock replaced; skipped"
+  assert_contains "grok-sandbox recreated lane lock" \
+    "lane lock replaced after removal; sibling cleanup skipped"
+  assert_summary_counts "grok-sandbox recreated lane lock" 1 1 0
+  if grep -qF "$lane_gs_recreated_lock" "$HOME/reap-lane.log"; then
+    pass "grok-sandbox recreated lane lock logged removal"
+  else
+    fail "grok-sandbox recreated lane lock missing removal log"
+  fi
   assert_path_exists "grok-sandbox recreated lane lease" \
     "$HOME/grok-sandbox/.lane-live-$recreated_key"
   assert_exists "grok-sandbox recreated lane venv" \
@@ -815,6 +886,13 @@ RECREATED_RM
   : >"$recreated_release"
   wait_for_background_pid "$recreated_materializer_pid" "$recreated_exited" \
     "grok-sandbox recreated lane lock" || true
+else
+  skip_case "grok-sandbox stale marker and fresh-only sweep"
+  skip_case "grok-sandbox unmarked dirty directory"
+  skip_case "grok-sandbox lock-before-eligibility race"
+  skip_case "grok-sandbox unmarked old directory"
+  skip_case "grok-sandbox late lock replacement"
+  skip_case "grok-sandbox post-rm lock replacement"
 fi
 
 lane_gs_leased="$HOME/grok-sandbox/feature-leased-abc12345"
@@ -848,8 +926,8 @@ chmod +x "$flock_contention_bin/flock"
 PATH="$flock_contention_bin:$PATH" \
   run_reap --yes --archive-to "$ARCHIVE" "$lane_gs_locked"
 assert_rc0 "grok-sandbox lane lock"
-assert_contains "grok-sandbox lane lock" "sandbox lane lock is held"
-assert_not_contains "grok-sandbox lane lock" "cannot be verified"
+assert_contains "grok-sandbox lane lock" "lane lock contended"
+assert_not_contains "grok-sandbox lane lock" "unverifiable"
 assert_exists "grok-sandbox lane lock" "$lane_gs_locked"
 archive_lacks_namespace "grok-sandbox lane lock" "grok-sandbox/${lane_gs_locked##*/}"
 
@@ -862,7 +940,7 @@ PATH="$flock_success_bin:$PATH" \
 assert_rc0 "grok-sandbox available lane lock"
 assert_contains "grok-sandbox available lane lock" \
   "sandbox marker has not reached TTL"
-assert_not_contains "grok-sandbox available lane lock" "sandbox lane lock is held"
+assert_not_contains "grok-sandbox available lane lock" "lane lock contended"
 assert_exists "grok-sandbox available lane lock" "$lane_gs_locked"
 archive_lacks_namespace "grok-sandbox available lane lock" \
   "grok-sandbox/${lane_gs_locked##*/}"
@@ -890,7 +968,8 @@ chmod +x "$stat_failure_bin/stat"
 REAL_STAT="$(command -v stat)" PATH="$flock_success_bin:$stat_failure_bin:$PATH" \
   run_reap --yes --archive-to "$ARCHIVE" "$lane_gs_unverified_lock"
 assert_rc0 "grok-sandbox unverifiable lane lock"
-assert_contains "grok-sandbox unverifiable lane lock" "sandbox lane lock is held"
+assert_contains "grok-sandbox unverifiable lane lock" \
+  "lane lock unverifiable: could not stat open lock fd"
 assert_exists "grok-sandbox unverifiable lane lock" "$lane_gs_unverified_lock"
 archive_lacks_namespace "grok-sandbox unverifiable lane lock" \
   "grok-sandbox/${lane_gs_unverified_lock##*/}"
@@ -918,11 +997,48 @@ REPLACE_LOCK="$replaced_at_lock" PATH="$flock_replace_bin:$PATH" \
   run_reap --yes --archive-to "$ARCHIVE" "$lane_gs_replaced_at_lock"
 assert_rc0 "grok-sandbox replaced-at-acquire lane lock"
 assert_contains "grok-sandbox replaced-at-acquire lane lock" \
-  "sandbox lane lock is held"
+  "lane lock replaced"
 assert_exists "grok-sandbox replaced-at-acquire lane lock" \
   "$lane_gs_replaced_at_lock"
 archive_lacks_namespace "grok-sandbox replaced-at-acquire lane lock" \
   "grok-sandbox/${lane_gs_replaced_at_lock##*/}"
+
+# remote_agent.sh allows the managed sandbox root to move. The reaper must
+# resolve and recognize that configured root so marker, lock, lease, and TTL
+# guards cannot be bypassed by falling into the generic one-hour path.
+remote_agent_root="$HOME/w/custom-agent-sandboxes"
+lane_custom_agent="$remote_agent_root/feature-custom-agent-abc12345"
+clone_lane "$lane_custom_agent"
+mark_sandbox "$lane_custom_agent"
+WORKBAY_REMOTE_AGENT_ROOT="$remote_agent_root/../custom-agent-sandboxes" \
+  PATH="$flock_success_bin:$PATH" \
+  run_reap --yes --archive-to "$ARCHIVE" "$lane_custom_agent"
+assert_rc0 "custom remote-agent root"
+assert_contains "custom remote-agent root" "sandbox marker has not reached TTL"
+assert_exists "custom remote-agent root" "$lane_custom_agent"
+
+WORKBAY_REMOTE_AGENT_ROOT="$remote_agent_root" PATH="$noflock_bin" \
+  run_reap --yes "$lane_custom_agent"
+if [[ "$rc" -eq 2 ]]; then pass "custom remote-agent root no-flock exit 2"
+else fail "custom remote-agent root no-flock expected exit 2 got $rc; out=$out"; fi
+assert_contains "custom remote-agent root no-flock" \
+  "reap-lane: flock is required for destructive sandbox sweeps"
+
+# A contended lock prevents the TTL read, so the lane still counts as a
+# freshness candidate. Under pressure an all-root sweep must therefore alert.
+remote_locked_root="$HOME/w/custom-agent-locked"
+lane_custom_locked="$remote_locked_root/feature-custom-locked-abc12345"
+clone_lane "$lane_custom_locked"
+mark_sandbox "$lane_custom_locked"
+touch -t 200001010000 "$lane_custom_locked/.workbay-lane-sandbox"
+WORKBAY_REMOTE_AGENT_ROOT="$remote_locked_root" REAP_DF_ALERT_PCT=0 \
+  PATH="$flock_contention_bin:$PATH" \
+  run_reap --yes --archive-to "$ARCHIVE" --all "$remote_locked_root"
+if [[ "$rc" -eq 4 ]]; then pass "contended sandbox freshness alert exit 4"
+else fail "contended sandbox freshness alert expected exit 4 got $rc; out=$out"; fi
+assert_contains "contended sandbox freshness alert" "lane lock contended"
+assert_summary "contended sandbox freshness alert" 1 0 1 0
+assert_exists "contended sandbox freshness alert" "$lane_custom_locked"
 
 # A dry run is observational only: it must neither delete the checkout nor
 # create archive refs (including an anchor ref for a linked worktree).
@@ -1026,8 +1142,33 @@ echo "unmerged" >"$lane_bad/UNMERGED"
 git -C "$lane_bad" add UNMERGED
 git -C "$lane_bad" commit -q -m "work that never reached main"
 run_reap --yes --archive-to "$WORKDIR/does-not-exist.git" "$lane_bad"
-assert_contains "unwritable archive" "could not archive"
+assert_contains "unwritable archive" "archive push failed:"
+assert_contains "unwritable archive diagnostic" "does not appear to be a git repository"
 assert_exists "unwritable archive keeps the lane" "$lane_bad"
+
+# Existing generation refs are intentionally immutable. Diagnose that policy
+# wedge distinctly so the operator knows to inspect/preserve the conflicting
+# archived tip rather than treating it as a transient transport failure.
+lane_conflict="$HOME/w/lane-archive-conflict"
+clone_lane "$lane_conflict"
+echo conflict >"$lane_conflict/CONFLICT"
+git -C "$lane_conflict" add CONFLICT
+git -C "$lane_conflict" commit -q -m conflict
+conflict_generation="$(generation_of "$lane_conflict")"
+conflict_ref="refs/lanes/w/lane-archive-conflict/$conflict_generation/main"
+git -C "$lane_conflict" checkout -q -b archived-conflicting-tip HEAD^
+echo other >"$lane_conflict/OTHER"
+git -C "$lane_conflict" add OTHER
+git -C "$lane_conflict" commit -q -m other
+conflicting_tip="$(git -C "$lane_conflict" rev-parse HEAD)"
+git -C "$lane_conflict" checkout -q main
+git -C "$lane_conflict" push -q "$ARCHIVE" "$conflicting_tip:$conflict_ref"
+run_reap --yes --archive-to "$ARCHIVE" "$lane_conflict"
+assert_contains "non-force archive conflict" \
+  "archive ref exists with different tip (non-force)"
+assert_contains "non-force archive conflict ref" "$conflict_ref"
+assert_not_contains "non-force archive conflict" "archive push failed:"
+assert_exists "non-force archive conflict keeps the lane" "$lane_conflict"
 
 # An uncommitted tree has no commit to archive, so archiving must not weaken it.
 lane_ad="$HOME/w/lane-archive-dirty"
@@ -1046,8 +1187,9 @@ run_reap --yes --archive-to "$ARCHIVE" "$lane_as"
 assert_contains "archive + stash" "stash has real work"
 assert_exists "archive + stash keeps the lane" "$lane_as"
 
-# A failed rm is not a reap: keep the lane, omit the success log/counters, and
-# return an internal-error status so automation cannot report false progress.
+# A failed rm is not a reap. Simulate a genuinely partial removal and require a
+# durable marker containing the successful archive ref, so a later sweep does
+# not misdiagnose the damaged checkout as an ordinary dirty tree.
 lane_rm_fail="$HOME/w/lane-rm-fail"
 clone_lane "$lane_rm_fail"
 rm_fail_bin="$WORKDIR/rm-fail-bin"
@@ -1056,6 +1198,7 @@ cat >"$rm_fail_bin/rm" <<'FAKE_RM'
 #!/usr/bin/env bash
 for arg in "$@"; do
   if [[ "$arg" == "${FAIL_RM_PATH:-}" ]]; then
+    "$REAL_RM" -rf -- "$arg/.git"
     exit 1
   fi
 done
@@ -1068,9 +1211,20 @@ if [[ "$rc" -eq 1 ]]; then pass "rm failure exits 1"
 else fail "rm failure expected exit 1 got $rc; out=$out"; fi
 assert_contains "rm failure" "rm failed"
 assert_exists "rm failure" "$lane_rm_fail"
+assert_contains "rm failure archive context" "rm failed after archive refs/lanes/"
+assert_contains "rm failure partial context" "lane partially removed"
+assert_path_exists "rm failure marker" "$lane_rm_fail/.workbay-reap-partial"
+if grep -q '^archive_ref=refs/lanes/' "$lane_rm_fail/.workbay-reap-partial"; then
+  pass "rm failure marker records archive ref"
+else
+  fail "rm failure marker missing archive ref"
+fi
 assert_summary "rm failure" 1 0 1 0
 run_reap --yes --archive-to "$ARCHIVE" "$lane_rm_fail"
-assert_gone "rm retry" "$lane_rm_fail"
+assert_rc0 "partial rm follow-up"
+assert_contains "partial rm follow-up" "partial reap after archive"
+assert_not_contains "partial rm follow-up" "dirty working tree"
+assert_exists "partial rm follow-up" "$lane_rm_fail"
 
 # Same basename under two roots must not overwrite one another: ~/w/dux-l1 and
 # ~/lanes/dux-l1 both exist on the VM, and a basename namespace would archive
@@ -1137,7 +1291,7 @@ lane_liar="$HOME/w/lane-liar"
 clone_lane "$lane_liar"
 echo liar >"$lane_liar/L"; git -C "$lane_liar" add L; git -C "$lane_liar" commit -q -m liar
 run_reap --yes --archive-to "$LIAR" "$lane_liar"
-assert_contains "archive that drops refs" "could not archive"
+assert_contains "archive that drops refs" "archive verification failed:"
 assert_exists "archive that drops refs keeps the lane" "$lane_liar"
 
 # A reset commit is held only by the lane's reflog. Removing the checkout also
@@ -1402,6 +1556,19 @@ assert_rc0 "multi --all"
 assert_contains "multi --all first root" "WOULD REAP $lane_m1"
 assert_contains "multi --all second root" "WOULD REAP $lane_m2"
 
+# A cron entry names every conventional root, even when a user owns only some
+# of them. One absent root must be an explained per-root skip, not an early
+# abort that prevents a later existing root from being swept.
+lane_mixed_root="$HOME/lanes/lane-mixed-root"
+clone_lane "$lane_mixed_root"
+run_reap --all "$HOME/root-that-is-absent" --all "$HOME/lanes"
+assert_rc0 "mixed present and missing --all roots"
+assert_contains "mixed missing --all root warning" \
+  "reap-lane: --all root is not a directory: $HOME/root-that-is-absent"
+assert_contains "mixed missing --all root skip" \
+  "SKIP $HOME/root-that-is-absent: --all root is not a directory"
+assert_contains "mixed present --all root swept" "WOULD REAP $lane_mixed_root"
+
 # --all ROOT scans ROOT/* (merged clean sibling is reaped; unmerged sibling kept).
 lane_all_ok="$HOME/w3/lane-all-ok"
 lane_all_bad="$HOME/w3/lane-all-bad"
@@ -1483,4 +1650,4 @@ if [[ "$failures" -gt 0 ]]; then
   echo "${failures} FAILED"
   exit 1
 fi
-echo "all cases passed"
+echo "all cases passed, ${skips} skipped"

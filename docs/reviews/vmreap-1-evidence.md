@@ -215,6 +215,56 @@ message depends on `flock -n 8` failing. Separate fixtures verify that failed
 inode lookup and pathname replacement both preserve the lane and archive no
 refs.
 
+## Red-first evidence for wave 4h
+
+Before the production changes, the new and updated adversarial fixtures
+completed with 37 failures. Representative failures covering all nine reviewer
+findings were:
+
+```text
+FAIL: mixed present and missing --all roots expected exit 0 got 1
+FAIL: rm failure marker should still exist
+FAIL: partial rm follow-up missing 'partial reap after archive'
+FAIL: grok-sandbox recreated lane lock missing summary ... reaped=1 skipped=0
+FAIL: grok-sandbox recreated lane lock missing removal log
+FAIL: grok-sandbox lane lock missing 'lane lock contended'
+FAIL: grok-sandbox unverifiable lane lock missing 'lane lock unverifiable: could not stat open lock fd'
+FAIL: non-force archive conflict missing 'archive ref exists with different tip (non-force)'
+FAIL: unwritable archive missing 'archive push failed:'
+FAIL: git status failure missing 'could not read git status'
+FAIL: git stash failure missing 'could not read git status'
+FAIL: grok-sandbox unmarked destructive should still exist
+FAIL: custom remote-agent root missing 'sandbox marker has not reached TTL'
+FAIL: custom remote-agent root no-flock expected exit 2 got 0
+FAIL: contended sandbox freshness alert expected exit 4 got 0
+```
+
+The corrected sweep treats an absent `--all` root as a counted per-root skip
+and continues through every present root, returning nonzero only when all
+requested roots are absent. A partially failed removal records the successful
+generation-scoped archive HEAD in `.workbay-reap-partial`; subsequent sweeps
+identify that state for operator review. A lock-path replacement after checkout
+removal is now a warning, does not double-count the lane as skipped, preserves
+the success log, and avoids deleting siblings that may belong to a replacement
+materialization.
+
+Lock acquisition now distinguishes contention, an unverifiable open/flock/stat,
+and pathname replacement. Lock refusals participate in the pressured-sweep
+freshness count. Git status and stash-read failures fail closed. Marker-less
+sandbox directories are always operator-owned skips, independent of mtime, and
+the realpath-resolved `WORKBAY_REMOTE_AGENT_ROOT` receives the same marker,
+lease, TTL, lock, and no-flock protections as the default root. On hosts without
+`flock`, each gated race case prints an explicit `SKIP:` line and the suite
+reports the skip count; shim-driven lock cases remain unconditional.
+
+Archive failures now retain a bounded stderr tail and separate transport,
+verification, and immutable-ref conflicts. For
+`archive ref exists with different tip (non-force)`, the operator remedy is to
+inspect both tips with `git ls-remote` and `git show`, preserve the existing tip
+under a backup ref if it is unique, then delete or rename only the conflicting
+generation ref and rerun the reaper. The reaper deliberately never force-pushes
+over the archive's only copy.
+
 ## Host remediation (pending operator)
 
 No post-fix host evidence exists yet. In particular, the earlier wrong-user
@@ -242,15 +292,22 @@ follow-up `df -h /` must record the host-space result.
 Observed in the Linux 6.17.0 aarch64 sandbox (not macOS):
 
 ```text
-bash scripts/vm/tests/test_reap_lane.sh          237 PASS assertions
+bash scripts/vm/tests/test_reap_lane.sh          272 PASS assertions, 0 skipped
+PATH=<all host tools except flock> bash scripts/vm/tests/test_reap_lane.sh
+                                                  235 PASS assertions, 6 skipped
 bash scripts/vm/tests/test_install_reap_cron.sh   27 PASS assertions
 python3 -m pytest scripts/vm/tests/test_vm_script_suites.py -q
 2 passed
 ```
 
 These counts replace the stale pre-wave figure of 119 assertions. Platform
-conditional `flock` cases mean assertion counts may differ on macOS; the
-coordinator's macOS Bash 3.2 run is authoritative for that platform.
+conditional `flock` race cases now report their skip count explicitly, so a
+macOS run cannot silently appear to have the same coverage; the coordinator's
+macOS Bash 3.2 run remains authoritative for that platform.
+
+`shellcheck` is not installed in this Linux sandbox, so no local shellcheck
+result is claimed for wave 4h; the coordinator must run the required
+`shellcheck -S warning scripts/vm/*.sh scripts/vm/tests/*.sh` gate.
 
 ## Verification
 

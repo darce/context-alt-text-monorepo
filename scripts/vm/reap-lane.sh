@@ -75,10 +75,15 @@ home_real="$(realpath "$HOME")"
 # whose scope does not match what grows is not a reclaimer: this list read
 # `w3 uxw2 l1` (1.6G on the VM) while ~/w held 18G and ~/lanes 9.2G, and the
 # disk reached 96% with the weekly cron reporting success throughout.
+# The same failure then recurred one root later: the orchestrator creates every
+# offload lane under ~/grok-sandbox, which this list still did not name -- 60G
+# across 197 clones, disk at 92%, while the five listed roots had stopped
+# growing. A root is added here when lanes start landing in it, not after the
+# disk fills.
 # Space-separated and overridable so a new lane root is a cron edit, not a code
 # change. An override REPLACES the defaults -- narrowing the roots for a one-off
 # sweep must not silently still reap the standing ones.
-REAP_LANE_ROOTS="${REAP_LANE_ROOTS:-w3 uxw2 l1 w lanes}"
+REAP_LANE_ROOTS="${REAP_LANE_ROOTS:-w3 uxw2 l1 w lanes grok-sandbox}"
 
 is_ignorable_path() {
   local p="${1#./}"

@@ -252,6 +252,25 @@ run_reap "$lane_lanes"
 assert_rc0 "g2 lanes"
 assert_contains "g2 lanes" "WOULD REAP"
 
+# Guard 2 positive: offload lane sandboxes live in ~/grok-sandbox. [RES-07] the
+# defaults still read `w3 uxw2 l1 w lanes` while every lane the orchestrator
+# created went to ~/grok-sandbox -- 60G across 197 clones, with the cron sweeping
+# five roots that no longer grow and reporting success throughout.
+lane_gs="$HOME/grok-sandbox/feature-vmreap-1-abc1234"
+clone_lane "$lane_gs"
+run_reap "$lane_gs"
+assert_rc0 "g2 grok-sandbox"
+assert_contains "g2 grok-sandbox" "WOULD REAP"
+
+# ...and widening the roots must not come from loosening the matcher: the
+# segment-exact guard still refuses a sibling that merely shares the prefix.
+lane_gs_like="$HOME/grok-sandbox-old/lane-x"
+clone_lane "$lane_gs_like"
+run_reap --yes "$lane_gs_like"
+assert_rc0 "g2 grok-sandbox prefix-not-root"
+assert_contains "g2 grok-sandbox prefix-not-root" "not under allowlisted lane root"
+assert_exists "g2 grok-sandbox prefix-not-root kept" "$lane_gs_like"
+
 # The roots are an allowlist, not a prefix match: a sibling whose name merely
 # starts with an allowlisted root must still be refused. Without an exact
 # segment match, `w` would admit ~/work, ~/website, ~/wp-content ...

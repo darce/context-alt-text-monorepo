@@ -17,8 +17,14 @@ chmod +x "$HOME/bin/reap-lane.sh"
 marker='# acx-reap-lane'
 # Every root that accumulates lane clones. Kept in step with REAP_LANE_ROOTS in
 # reap-lane.sh; the sweep is only as wide as the narrower of the two.
+#
+# These are $HOME-relative and this installer writes the crontab of the invoking
+# user, so the cron only ever reaches lanes owned by whoever runs it. [RES-07]
+# offload lanes live under the `gate` user's ~/grok-sandbox; a cron installed as
+# `ubuntu` reported success weekly while 60G of gate-owned lanes accumulated
+# untouched. Run this installer as EACH user that owns lane roots.
 # shellcheck disable=SC2016  # $HOME must stay literal: cron expands it, not us.
-roots='$HOME/w3 $HOME/uxw2 $HOME/l1 $HOME/w $HOME/lanes'
+roots='$HOME/w3 $HOME/uxw2 $HOME/l1 $HOME/w $HOME/lanes $HOME/grok-sandbox'
 all_args=''
 for r in $roots; do
   all_args="${all_args}--all ${r} "

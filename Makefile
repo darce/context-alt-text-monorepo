@@ -695,6 +695,7 @@ gpu-burst-smoke-live:
 	  --wp-app-password-env "$${ACX_GPU_SMOKE_PASSWORD_ENV:-ACX_WP_APP_PASSWORD}" \
 	  --media-ids "$${ACX_GPU_SMOKE_MEDIA_IDS:-101}" \
 	  --service-base-url "$${ACX_GPU_SMOKE_SERVICE_BASE_URL:-http://<burst-private-ip>:8000}" \
+	  --service-api-key-env "$${ACX_GPU_SMOKE_SERVICE_API_KEY_ENV:-ACX_DESCRIPTION_API_KEY}" \
 	  --instance-id "$${ACX_GPU_SMOKE_INSTANCE_ID:-<burst-instance-ocid>}"
 
 # FIR-5 face bake-off: offline candidate walk (+ optional score). No tenant writes.

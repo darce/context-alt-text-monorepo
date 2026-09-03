@@ -34,9 +34,11 @@ def _run(
     scenario: smoke.DryScenario | None = None,
     oci: smoke.FakeOci | None = None,
     app_password: str = "not-a-secret",
+    service_api_key: str = "dry-service-key",
     extra: tuple[str, ...] = (),
 ) -> tuple[smoke.SmokeResult, smoke.FakeOci]:
     scenario = scenario or smoke.DryScenario()
+    scenario.service_api_key = service_api_key
     fake_oci = oci or smoke.FakeOci()
     clock = smoke.FastClock()
     client = httpx.Client(
@@ -48,6 +50,7 @@ def _run(
             client=client,
             oci=fake_oci,
             app_password=app_password,
+            service_api_key=service_api_key,
             monotonic=clock.monotonic,
             sleep=clock.sleep,
             now=clock.now,
@@ -144,14 +147,20 @@ def test_application_password_is_absent_from_output_and_evidence(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     password = "unique-wp-application-password"
+    service_api_key = "unique-description-service-api-key"
 
-    result, _ = _run(tmp_path, app_password=password)
+    result, _ = _run(tmp_path, app_password=password, service_api_key=service_api_key)
     captured = capsys.readouterr()
 
     assert result.exit_code == 0
     assert password not in captured.out
     assert password not in captured.err
     assert password not in (tmp_path / "evidence.json").read_text(encoding="utf-8")
+    assert service_api_key not in captured.out
+    assert service_api_key not in captured.err
+    assert service_api_key not in (tmp_path / "evidence.json").read_text(
+        encoding="utf-8"
+    )
 
 
 def test_red_tier_provisional_cpu(tmp_path: Path) -> None:
@@ -167,6 +176,15 @@ def test_red_missing_one_of_two_requested_media_items(tmp_path: Path) -> None:
     assert result.exit_code == 1
     assert not _check(result, "returned_media_ids_exact")
     assert "102" in _detail(result, "returned_media_ids_exact")
+
+
+def test_red_duplicate_returned_media_id_is_rejected(tmp_path: Path) -> None:
+    scenario = smoke.DryScenario(returned_media_ids=[101, 101])
+    result, _ = _run(tmp_path, scenario=scenario)
+
+    assert result.exit_code == 1
+    assert "duplicate media_id" in _detail(result, "flow_completed")
+    assert "101" in _detail(result, "flow_completed")
 
 
 def test_red_completed_with_errors_is_not_success(tmp_path: Path) -> None:
@@ -214,7 +232,71 @@ def test_red_health_adapter_preflight_refuses(tmp_path: Path) -> None:
 
     assert result.exit_code == 2
     assert not _check(result, "health_adapter_gpu_qwen30b")
-    assert oci.stop_calls == 1
+    assert oci.stop_calls == 0
+    assert _check(result, "finally_stop_skipped")
+    assert "instance was not validated" in _detail(result, "finally_stop_skipped")
+
+
+def test_service_health_preflight_sends_bearer_auth(tmp_path: Path) -> None:
+    scenario = smoke.DryScenario()
+    base_transport = smoke.make_mock_transport(scenario)
+
+    def require_service_auth(request: httpx.Request) -> httpx.Response:
+        if (
+            request.url.path == "/health/detailed"
+            and request.headers.get("authorization") != "Bearer dry-service-key"
+        ):
+            return httpx.Response(401, json={"detail": "unauthorized"})
+        return base_transport.handle_request(request)
+
+    fake_oci = smoke.FakeOci()
+    clock = smoke.FastClock()
+    with httpx.Client(transport=httpx.MockTransport(require_service_auth)) as client:
+        result = smoke.run_smoke(
+            _args(tmp_path),
+            client=client,
+            oci=fake_oci,
+            app_password="not-a-secret",
+            service_api_key="dry-service-key",
+            monotonic=clock.monotonic,
+            sleep=clock.sleep,
+            now=clock.now,
+        )
+
+    assert result.exit_code == 0
+    assert _check(result, "service_auth")
+
+
+def test_red_service_auth_refusal_is_distinct_and_does_not_stop(
+    tmp_path: Path,
+) -> None:
+    def reject_service_auth(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/health/detailed":
+            return httpx.Response(403, json={"detail": "forbidden"})
+        raise AssertionError(f"unexpected request after refusal: {request.url}")
+
+    fake_oci = smoke.FakeOci()
+    clock = smoke.FastClock()
+    with httpx.Client(transport=httpx.MockTransport(reject_service_auth)) as client:
+        result = smoke.run_smoke(
+            _args(tmp_path),
+            client=client,
+            oci=fake_oci,
+            app_password="not-a-secret",
+            service_api_key="rejected-service-key",
+            monotonic=clock.monotonic,
+            sleep=clock.sleep,
+            now=clock.now,
+        )
+
+    assert result.exit_code == 2
+    assert not _check(result, "service_auth")
+    assert all(
+        check["name"] != "health_adapter_gpu_qwen30b"
+        for check in result.evidence["checks"]
+    )
+    assert fake_oci.stop_calls == 0
+    assert _check(result, "finally_stop_skipped")
 
 
 def test_red_initial_instance_not_stopped_preflight_refuses(tmp_path: Path) -> None:
@@ -223,6 +305,41 @@ def test_red_initial_instance_not_stopped_preflight_refuses(tmp_path: Path) -> N
     assert result.exit_code == 2
     assert not _check(result, "initial_instance_stopped")
     assert oci.stop_calls == 1
+
+
+def test_refusal_after_start_still_issues_compensating_stop(tmp_path: Path) -> None:
+    class RefusingAfterStartOci(smoke.FakeOci):
+        def get_instance(
+            self, instance_id: str, *, timeout: float
+        ) -> dict[str, object]:
+            if self.armed and not self.stopping:
+                raise smoke.PreflightRefusal("injected refusal after START")
+            return super().get_instance(instance_id, timeout=timeout)
+
+    result, oci = _run(tmp_path, oci=RefusingAfterStartOci())
+
+    assert result.exit_code == 2
+    assert oci.stop_calls == 1
+    assert _check(result, "finally_stop_issued")
+    assert _check(result, "instance_stopped_finally")
+
+
+def test_unowned_instance_is_not_stopped(tmp_path: Path) -> None:
+    class UnownedOci(smoke.FakeOci):
+        def get_instance(
+            self, instance_id: str, *, timeout: float
+        ) -> dict[str, object]:
+            instance = super().get_instance(instance_id, timeout=timeout)
+            instance["display-name"] = "unrelated-instance"
+            instance["freeform-tags"] = {"role": "unrelated"}
+            return instance
+
+    result, oci = _run(tmp_path, oci=UnownedOci())
+
+    assert result.exit_code == 2
+    assert not _check(result, "instance_dedicated_gpu_burst")
+    assert oci.stop_calls == 0
+    assert _check(result, "finally_stop_skipped")
 
 
 def test_red_failed_run_terminal(tmp_path: Path) -> None:

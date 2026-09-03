@@ -94,14 +94,14 @@ else fail "fresh: $HOME/bin/reap-lane.sh not executable"; fi
 # Asserted as a whole `--all $HOME/<root> ` token: a bare "$HOME/w" substring
 # would be satisfied by "$HOME/w3" and the widening would go unnoticed.
 for root in w3 uxw2 l1 w lanes grok-sandbox; do
-  assert_cron_contains "fresh" "--all \$HOME/$root "
+  assert_cron_contains "fresh" "--all \"\$HOME/$root\""
 done
 
 # The weekly sweep must archive, not just guard. Ancestry alone skips every lane
 # of a squash-merged wave, which is how the VM reached 94% with the cron
 # reporting success every week.
 # shellcheck disable=SC2016  # literal $HOME: cron expands it, not us.
-assert_cron_contains "fresh" '--archive-to $HOME/lane-archive.git'
+assert_cron_contains "fresh" '--archive-to "$HOME/lane-archive.git"'
 
 if git -C "$HOME/lane-archive.git" rev-parse --is-bare-repository >/dev/null 2>&1; then
   pass "fresh creates the keep-repo"
@@ -135,7 +135,7 @@ cat >"$CRONTAB_FILE" <<'STALE'
 STALE
 run_install
 assert_rc0 "roll-forward"
-assert_cron_contains "roll-forward" "--all \$HOME/lanes "
+assert_cron_contains "roll-forward" "--all \"\$HOME/lanes\""
 # shellcheck disable=SC2016  # literal $HOME: this is cron text, not a path here.
 assert_cron_absent "roll-forward" '--all $HOME/w3 >>'
 assert_one_marker "roll-forward"
@@ -161,6 +161,40 @@ else
   fail "roll-forward with blank duplicated managed entry; crontab=$(cat "$CRONTAB_FILE")"
 fi
 assert_cron_contains "roll-forward with blank" "/usr/bin/some-other-job"
+
+# Cron invokes /bin/sh, so every HOME-derived token must survive spaces and a
+# configured remote-agent root must be exported to the installed reaper.
+space_home="$WORKDIR/home with space"
+mkdir -p "$space_home/fakebin"
+cp "$WORKDIR/fakebin/crontab" "$space_home/fakebin/crontab"
+space_crontab="$space_home/crontab.txt"
+: >"$space_crontab"
+HOME="$space_home" CRONTAB_FILE="$space_crontab" \
+  WORKBAY_REMOTE_AGENT_ROOT="$space_home/agent sandboxes" \
+  PATH="$space_home/fakebin:$PATH" bash "$SCRIPT" >/dev/null
+cron_command="$(sed -n '/reap-lane\.sh/p' "$space_crontab" | sed 's/^[^ ]* [^ ]* [^ ]* [^ ]* [^ ]* //')"
+mkdir -p "$space_home/bin"
+mv "$space_home/bin/reap-lane.sh" "$space_home/bin/reap-lane.real"
+cat >"$space_home/bin/reap-lane.sh" <<'FAKE_REAPER'
+#!/bin/sh
+printf 'remote=<%s>\n' "${WORKBAY_REMOTE_AGENT_ROOT:-}" >"$CRON_ARGS"
+for arg in "$@"; do printf 'arg=<%s>\n' "$arg" >>"$CRON_ARGS"; done
+FAKE_REAPER
+chmod +x "$space_home/bin/reap-lane.sh"
+cron_args="$space_home/cron args.txt"
+HOME="$space_home" CRON_ARGS="$cron_args" /bin/sh -c "$cron_command"
+assert_file_line() {
+  if grep -qxF "$2" "$1"; then pass "$3"
+  else fail "$3 missing '$2'; file=$(cat "$1" 2>/dev/null || true)"; fi
+}
+assert_file_line "$cron_args" "remote=<$space_home/agent sandboxes>" \
+  "space HOME preserves remote root"
+assert_file_line "$cron_args" "arg=<--archive-to>" "space HOME preserves archive flag"
+assert_file_line "$cron_args" "arg=<$space_home/lane-archive.git>" \
+  "space HOME preserves archive path"
+assert_file_line "$cron_args" "arg=<--all>" "space HOME preserves all flags"
+assert_file_line "$cron_args" "arg=<$space_home/grok-sandbox>" \
+  "space HOME preserves root path"
 
 # A listing error other than the platform's no-crontab diagnostic must abort
 # without piping an empty replacement over the user's existing jobs.

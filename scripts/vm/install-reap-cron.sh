@@ -28,10 +28,10 @@ marker='# acx-reap-lane'
 # `ubuntu` reported success weekly while 60G of gate-owned lanes accumulated
 # untouched. Run this installer as EACH user that owns lane roots.
 # shellcheck disable=SC2016  # $HOME must stay literal: cron expands it, not us.
-roots='$HOME/w3 $HOME/uxw2 $HOME/l1 $HOME/w $HOME/lanes $HOME/grok-sandbox'
-all_args=''
+roots='w3 uxw2 l1 w lanes grok-sandbox'
+all_args=""
 for r in $roots; do
-  all_args="${all_args}--all ${r} "
+  all_args="${all_args} --all \"\$HOME/${r}\""
 done
 # The keep-repo. Ancestry alone skips every lane of a squash- or rebase-merged
 # wave, so a guarded-only sweep frees nothing; archiving the commits first makes
@@ -44,7 +44,20 @@ fi
 
 # Do not mask reap-lane.sh's status: exit 4 is the freshness alert when a
 # pressured sweep sees candidates but reclaims none. Cron must observe it.
-entry="17 6 * * 1 \$HOME/bin/reap-lane.sh --yes --archive-to \$HOME/lane-archive.git ${all_args}>> \$HOME/reap-lane.log 2>&1"
+cron_quote() {
+  local value="$1"
+  value="${value//\\/\\\\}"
+  value="${value//\"/\\\"}"
+  value="${value//\$/\\\$}"
+  value="${value//\`/\\\`}"
+  printf '"%s"' "$value"
+}
+
+remote_agent_env=""
+if [[ -n "${WORKBAY_REMOTE_AGENT_ROOT:-}" ]]; then
+  remote_agent_env="WORKBAY_REMOTE_AGENT_ROOT=$(cron_quote "$WORKBAY_REMOTE_AGENT_ROOT") "
+fi
+entry="17 6 * * 1 ${remote_agent_env}\"\$HOME/bin/reap-lane.sh\" --yes --archive-to \"\$HOME/lane-archive.git\"${all_args} >> \"\$HOME/reap-lane.log\" 2>&1"
 
 # Replace any previous acx-reap-lane block rather than treating its presence as
 # "already installed". The VM was carrying an entry that swept one root of five;

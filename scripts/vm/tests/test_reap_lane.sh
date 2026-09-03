@@ -659,13 +659,13 @@ if command -v flock >/dev/null 2>&1; then
   echo dirty >>"$lane_gs_legacy_dirty/README"
   touch -t 200001010000 "$lane_gs_legacy_dirty"
   run_reap --yes --archive-to "$ARCHIVE" "$lane_gs_legacy_dirty"
-  assert_contains "grok-sandbox dirty legacy" \
+  assert_contains "grok-sandbox unmarked dirty" \
     "unmarked sandbox dir; operator review"
-  assert_exists "grok-sandbox dirty legacy" "$lane_gs_legacy_dirty"
+  assert_exists "grok-sandbox unmarked dirty" "$lane_gs_legacy_dirty"
   if [[ ! -e "$lane_gs_legacy_dirty/.workbay-lane-sandbox" ]]; then
-    pass "grok-sandbox dirty legacy did not persist marker backfill"
+    pass "grok-sandbox unmarked dirty did not create marker"
   else
-    fail "grok-sandbox dirty legacy persisted marker backfill"
+    fail "grok-sandbox unmarked dirty created marker"
   fi
 
   # The materializer lock must precede the destructive eligibility checks. A
@@ -709,11 +709,11 @@ LOCK_RACE_FLOCK
   assert_contains "grok-sandbox unmarked dry-run" \
     "unmarked sandbox dir; operator review"
   assert_not_contains "grok-sandbox unmarked dry-run" "WOULD REAP"
-  assert_exists "grok-sandbox stale legacy dry-run" "$lane_gs_legacy"
+  assert_exists "grok-sandbox unmarked dry-run" "$lane_gs_legacy"
   if [[ ! -e "$lane_gs_legacy/.workbay-lane-sandbox" ]]; then
-    pass "grok-sandbox stale legacy dry-run did not backfill marker"
+    pass "grok-sandbox unmarked dry-run did not create marker"
   else
-    fail "grok-sandbox stale legacy dry-run mutated marker"
+    fail "grok-sandbox unmarked dry-run created marker"
   fi
   run_reap --yes --archive-to "$ARCHIVE" "$lane_gs_legacy"
   assert_rc0 "grok-sandbox unmarked destructive"
@@ -721,9 +721,9 @@ LOCK_RACE_FLOCK
     "unmarked sandbox dir; operator review"
   assert_exists "grok-sandbox unmarked destructive" "$lane_gs_legacy"
   if [[ -e "$HOME/grok-sandbox/.lane-lock-$legacy_key" ]]; then
-    pass "grok-sandbox stale legacy lane lock inode retained"
+    pass "grok-sandbox unmarked lane lock inode retained"
   else
-    fail "grok-sandbox stale legacy lane lock inode was unlinked"
+    fail "grok-sandbox unmarked lane lock inode was unlinked"
   fi
   assert_path_exists "grok-sandbox unmarked lease" "$HOME/grok-sandbox/.lane-live-$legacy_key"
   assert_exists "grok-sandbox unmarked venv" "$HOME/grok-sandbox/.venv-lane-$legacy_key"
@@ -1024,6 +1024,49 @@ else fail "custom remote-agent root no-flock expected exit 2 got $rc; out=$out";
 assert_contains "custom remote-agent root no-flock" \
   "reap-lane: flock is required for destructive sandbox sweeps"
 
+# A configured agent root is an explicit deletion boundary, not merely a hint
+# that enables sandbox locking inside one of the default roots.
+remote_sibling_root="$HOME/grok-sandbox-altcontext"
+lane_remote_direct="$remote_sibling_root/feature-remote-direct-abc12345"
+clone_lane "$lane_remote_direct"
+mark_sandbox "$lane_remote_direct"
+WORKBAY_REMOTE_AGENT_ROOT="$remote_sibling_root" PATH="$flock_success_bin:$PATH" \
+  run_reap --yes --archive-to "$ARCHIVE" "$lane_remote_direct"
+assert_rc0 "remote-agent explicit root direct"
+assert_contains "remote-agent explicit root direct" "sandbox marker has not reached TTL"
+assert_exists "remote-agent explicit root direct" "$lane_remote_direct"
+
+remote_all_root="$HOME/grok-sandbox-altall"
+lane_remote_all="$remote_all_root/feature-remote-all-abc12345"
+clone_lane "$lane_remote_all"
+mark_sandbox "$lane_remote_all"
+touch -t 200001010000 "$lane_remote_all/.workbay-lane-sandbox"
+WORKBAY_REMOTE_AGENT_ROOT="$remote_all_root" PATH="$flock_success_bin:$PATH" \
+  run_reap --yes --archive-to "$ARCHIVE" --all "$remote_all_root"
+assert_rc0 "remote-agent explicit root all"
+assert_gone "remote-agent explicit root all" "$lane_remote_all"
+
+outside_remote_root="${HOME}-outside-agent-root"
+lane_outside_remote="$outside_remote_root/feature-outside-abc12345"
+clone_lane "$lane_outside_remote"
+mark_sandbox "$lane_outside_remote"
+WORKBAY_REMOTE_AGENT_ROOT="$outside_remote_root" PATH="$flock_success_bin:$PATH" \
+  run_reap --yes --archive-to "$ARCHIVE" "$lane_outside_remote"
+assert_contains "remote-agent root outside HOME" \
+  "WORKBAY_REMOTE_AGENT_ROOT must be strictly below HOME"
+assert_exists "remote-agent root outside HOME" "$lane_outside_remote"
+
+unmarked_root="$HOME/grok-sandbox-unmarked"
+lane_unmarked_pressure="$unmarked_root/feature-unmarked-abc12345"
+clone_lane "$lane_unmarked_pressure"
+WORKBAY_REMOTE_AGENT_ROOT="$unmarked_root" REAP_DF_ALERT_PCT=0 \
+  PATH="$flock_success_bin:$PATH" \
+  run_reap --yes --archive-to "$ARCHIVE" --all "$unmarked_root"
+if [[ "$rc" -eq 4 ]]; then pass "unmarked sandbox freshness alert exit 4"
+else fail "unmarked sandbox freshness alert expected exit 4 got $rc; out=$out"; fi
+assert_contains "unmarked sandbox freshness alert" "unmarked sandbox dir; operator review"
+assert_exists "unmarked sandbox freshness alert" "$lane_unmarked_pressure"
+
 # A contended lock prevents the TTL read, so the lane still counts as a
 # freshness candidate. Under pressure an all-root sweep must therefore alert.
 remote_locked_root="$HOME/w/custom-agent-locked"
@@ -1162,13 +1205,15 @@ git -C "$lane_conflict" add OTHER
 git -C "$lane_conflict" commit -q -m other
 conflicting_tip="$(git -C "$lane_conflict" rev-parse HEAD)"
 git -C "$lane_conflict" checkout -q main
+incoming_tip="$(git -C "$lane_conflict" rev-parse HEAD)"
 git -C "$lane_conflict" push -q "$ARCHIVE" "$conflicting_tip:$conflict_ref"
 run_reap --yes --archive-to "$ARCHIVE" "$lane_conflict"
-assert_contains "non-force archive conflict" \
-  "archive ref exists with different tip (non-force)"
-assert_contains "non-force archive conflict ref" "$conflict_ref"
-assert_not_contains "non-force archive conflict" "archive push failed:"
-assert_exists "non-force archive conflict keeps the lane" "$lane_conflict"
+assert_rc0 "same-generation supersession archive"
+assert_gone "same-generation supersession archive" "$lane_conflict"
+archive_has "same-generation primary archive retained" "$conflict_ref" "$conflicting_tip"
+archive_has "same-generation incoming superseded" \
+  "refs/archive/w/lane-archive-conflict/$conflict_generation/superseded/${incoming_tip:0:12}" \
+  "$incoming_tip"
 
 # An uncommitted tree has no commit to archive, so archiving must not weaken it.
 lane_ad="$HOME/w/lane-archive-dirty"
@@ -1199,6 +1244,7 @@ cat >"$rm_fail_bin/rm" <<'FAKE_RM'
 for arg in "$@"; do
   if [[ "$arg" == "${FAIL_RM_PATH:-}" ]]; then
     "$REAL_RM" -rf -- "$arg/.git"
+    chmod a-w "$arg"
     exit 1
   fi
 done
@@ -1213,11 +1259,11 @@ assert_contains "rm failure" "rm failed"
 assert_exists "rm failure" "$lane_rm_fail"
 assert_contains "rm failure archive context" "rm failed after archive refs/lanes/"
 assert_contains "rm failure partial context" "lane partially removed"
-assert_path_exists "rm failure marker" "$lane_rm_fail/.workbay-reap-partial"
-if grep -q '^archive_ref=refs/lanes/' "$lane_rm_fail/.workbay-reap-partial"; then
-  pass "rm failure marker records archive ref"
+partial_intent="$(find "$HOME/.workbay-reap/partial" -type f -name '*.json' -print -quit 2>/dev/null || true)"
+if [[ -n "$partial_intent" ]] && grep -q '"archive_ref":"refs/lanes/' "$partial_intent"; then
+  pass "rm failure external intent records archive ref"
 else
-  fail "rm failure marker missing archive ref"
+  fail "rm failure external intent missing archive ref"
 fi
 assert_summary "rm failure" 1 0 1 0
 run_reap --yes --archive-to "$ARCHIVE" "$lane_rm_fail"
@@ -1225,6 +1271,75 @@ assert_rc0 "partial rm follow-up"
 assert_contains "partial rm follow-up" "partial reap after archive"
 assert_not_contains "partial rm follow-up" "dirty working tree"
 assert_exists "partial rm follow-up" "$lane_rm_fail"
+chmod u+w "$lane_rm_fail"
+
+# Ref enumeration is a destructive-decision input. A failed read must not look
+# like an empty ref set and permit deletion of an unarchived alternate branch.
+lane_ref_enum_fail="$HOME/ref-enum-root/lane-ref-enumeration-fail"
+clone_lane "$lane_ref_enum_fail"
+git -C "$lane_ref_enum_fail" checkout -q -b unique-alternate
+echo unique >"$lane_ref_enum_fail/UNIQUE"
+git -C "$lane_ref_enum_fail" add UNIQUE
+git -C "$lane_ref_enum_fail" commit -q -m "unique alternate branch"
+unique_alternate_tip="$(git -C "$lane_ref_enum_fail" rev-parse HEAD)"
+git -C "$lane_ref_enum_fail" checkout -q main
+ref_enum_bin="$WORKDIR/ref-enum-bin"
+mkdir "$ref_enum_bin"
+cat >"$ref_enum_bin/git" <<'REF_ENUM_GIT'
+#!/bin/sh
+case " $* " in
+  *" for-each-ref "*)
+    count=0
+    [ ! -f "$REF_ENUM_COUNT" ] || count="$(cat "$REF_ENUM_COUNT")"
+    count=$((count + 1))
+    printf '%s\n' "$count" >"$REF_ENUM_COUNT"
+    if [ "$count" -ge 2 ] && [ "$count" -le 5 ]; then
+      echo "simulated ref enumeration failure" >&2
+      exit 128
+    fi
+    ;;
+esac
+exec "$REAL_GIT" "$@"
+REF_ENUM_GIT
+chmod +x "$ref_enum_bin/git"
+REAL_GIT="$(command -v git)" REF_ENUM_COUNT="$WORKDIR/ref-enum-count" \
+  REAP_LANE_ROOTS="ref-enum-root" REAP_DF_ALERT_PCT=0 PATH="$ref_enum_bin:$PATH" \
+  run_reap --yes --archive-to "$ARCHIVE" --all "$HOME/ref-enum-root"
+if [[ "$rc" -ne 0 ]]; then pass "ref enumeration failure pressured exit nonzero"
+else fail "ref enumeration failure pressured expected nonzero; out=$out"; fi
+assert_contains "ref enumeration failure" "ref enumeration failed"
+assert_exists "ref enumeration failure retains lane" "$lane_ref_enum_fail"
+assert_summary "ref enumeration failure" 1 0 1 0
+if git -C "$ARCHIVE" cat-file -e "$unique_alternate_tip^{commit}" 2>/dev/null; then
+  fail "ref enumeration failure unexpectedly archived unique alternate"
+else
+  pass "ref enumeration failure did not claim alternate was archived"
+fi
+
+if command -v timeout >/dev/null 2>&1; then
+  lane_net_timeout="$HOME/w/lane-net-timeout"
+  clone_lane "$lane_net_timeout"
+  net_timeout_bin="$WORKDIR/net-timeout-bin"
+  mkdir "$net_timeout_bin"
+  cat >"$net_timeout_bin/git" <<'NET_TIMEOUT_GIT'
+#!/bin/sh
+case " $* " in
+  *" ls-remote "*) sleep 30 ;;
+esac
+exec "$REAL_GIT" "$@"
+NET_TIMEOUT_GIT
+  chmod +x "$net_timeout_bin/git"
+  REAL_GIT="$(command -v git)" REAP_GIT_NET_TIMEOUT_SEC=1 \
+    PATH="$net_timeout_bin:$PATH" \
+    run_reap --yes --archive-to "$ARCHIVE" "$lane_net_timeout"
+  assert_contains "archive network timeout" "archive transport timed out"
+  assert_exists "archive network timeout retains lane" "$lane_net_timeout"
+  run_reap --yes --archive-to "$ARCHIVE" "$lane_net_timeout"
+  assert_rc0 "post-timeout sweep reacquires lock"
+else
+  echo "SKIP: archive network timeout (timeout unavailable)"
+  skips=$((skips + 1))
+fi
 
 # Same basename under two roots must not overwrite one another: ~/w/dux-l1 and
 # ~/lanes/dux-l1 both exist on the VM, and a basename namespace would archive

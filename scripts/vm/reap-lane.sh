@@ -135,12 +135,19 @@ home_real="$(realpath "$HOME")" || {
 }
 
 sandbox_roots=("${home_real}/grok-sandbox")
+remote_agent_root_real=""
+invalid_remote_agent_root_real=""
 if [[ -n "${WORKBAY_REMOTE_AGENT_ROOT:-}" ]]; then
   remote_agent_root_real="$(realpath "$WORKBAY_REMOTE_AGENT_ROOT" 2>/dev/null || true)"
-  if [[ -n "$remote_agent_root_real" &&
-        "$remote_agent_root_real" != "${home_real}/grok-sandbox" ]]; then
-    sandbox_roots+=("$remote_agent_root_real")
-  fi
+  case "$remote_agent_root_real" in
+    "${home_real}"/*)
+      if [[ "$remote_agent_root_real" != "${home_real}/grok-sandbox" ]]; then
+        sandbox_roots+=("$remote_agent_root_real")
+      fi
+      ;;
+    '') ;;
+    *) invalid_remote_agent_root_real="$remote_agent_root_real" ;;
+  esac
 fi
 
 # Destructive sandbox sweeps must participate in the materializer's flock
@@ -320,6 +327,32 @@ fi
 # sweep must not silently still reap the standing ones.
 REAP_LANE_ROOTS="${REAP_LANE_ROOTS:-w3 uxw2 l1 w lanes grok-sandbox}"
 
+REAP_GIT_NET_TIMEOUT_SEC="${REAP_GIT_NET_TIMEOUT_SEC:-120}"
+case "$REAP_GIT_NET_TIMEOUT_SEC" in
+  ''|*[!0-9]*|0)
+    echo "reap-lane: REAP_GIT_NET_TIMEOUT_SEC must be a positive integer" >&2
+    exit 2
+    ;;
+esac
+if command -v timeout >/dev/null 2>&1; then
+  git_net_has_timeout=1
+else
+  git_net_has_timeout=0
+  echo "reap-lane: warning: timeout unavailable; git network calls are unbounded" >&2
+fi
+
+git_net() {
+  if [[ "$git_net_has_timeout" -eq 1 ]]; then
+    timeout "$REAP_GIT_NET_TIMEOUT_SEC" git "$@"
+  else
+    git "$@"
+  fi
+}
+
+git_net_timed_out() {
+  [[ "$1" -eq 124 || "$1" -eq 137 ]]
+}
+
 is_ignorable_path() {
   local p="${1#./}"
   case "$p" in
@@ -386,6 +419,7 @@ grok_sandbox_is_stale() {
   esac
 
   if [[ ! -f "$marker" ]]; then
+    freshness_candidates=$((freshness_candidates + 1))
     skip "$path" "unmarked sandbox dir; operator review"
     return 1
   else
@@ -539,12 +573,52 @@ release_grok_lane_lock() {
 # The root itself is refused -- reaping ~/w would take every lane with it.
 is_under_lane_root() {
   local rel="${1#"${home_real}"/}" first root
+  if [[ -n "$remote_agent_root_real" ]]; then
+    case "$1" in
+      "$remote_agent_root_real"/*) return 0 ;;
+    esac
+  fi
   [[ "$rel" == */* ]] || return 1
   first="${rel%%/*}"
   for root in $REAP_LANE_ROOTS; do
     [[ "$first" == "$root" ]] && return 0
   done
   return 1
+}
+
+partial_intent_path_for() {
+  local key
+  key="$(printf '%s' "$1" | git hash-object --stdin)" || return 1
+  printf '%s/partial/%s.json\n' "${REAP_STATE_DIR:-$HOME/.workbay-reap}" "$key"
+}
+
+json_escape() {
+  local value="$1"
+  value="${value//\\/\\\\}"
+  value="${value//\"/\\\"}"
+  value="${value//$'\n'/\\n}"
+  value="${value//$'\r'/\\r}"
+  value="${value//$'\t'/\\t}"
+  printf '%s' "$value"
+}
+
+write_partial_intent() {
+  local lane_path="$1" archive_ref="$2" verified_tip="$3" intent tmp intent_dir
+  intent="$(partial_intent_path_for "$lane_path")" || return 1
+  intent_dir="$(dirname "$intent")"
+  mkdir -p "$intent_dir" || return 1
+  tmp="${intent}.tmp.$$"
+  if ! printf '{"lane_path":"%s","archive_ref":"%s","verified_tips":["%s"],"recorded_at":"%s"}\n' \
+      "$(json_escape "$lane_path")" "$(json_escape "$archive_ref")" \
+      "$(json_escape "$verified_tip")" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >"$tmp"; then
+    rm -f "$tmp" >/dev/null 2>&1 || true
+    return 1
+  fi
+  if ! mv "$tmp" "$intent"; then
+    rm -f "$tmp" >/dev/null 2>&1 || true
+    return 1
+  fi
+  partial_intent_path="$intent"
 }
 
 has_unmerged_work() {
@@ -699,8 +773,9 @@ lane_matches_snapshot() {
 # ever reached main -- and the checkout is where the space actually is (on the
 # VM: 239M of shared git objects against ~500M of checkout per lane).
 #
-# Not --force: these refs may be the only copy of that lane's history, so a
-# diverged re-archive must be refused rather than overwritten.
+# Not --force: these refs may be the only copy of that lane's history. A
+# diverged re-archive preserves its incoming tip under an immutable
+# sha-keyed supersession ref rather than overwriting the earlier copy.
 archive_error=""
 
 set_archive_error_tail() {
@@ -721,9 +796,10 @@ set_archive_push_error() {
 }
 
 archive_lane() {
-  local dir="$1" ns="$2" head_sha want got ref sha source_ref
-  local command_output existing_output existing_sha ancestry_status
-  local ref_specs=()
+  local dir="$1" ns="$2" head_sha want="" verify_want="" got ref sha source_ref
+  local command_output existing_output existing_sha ancestry_status net_status refs_output
+  local destination superseded_ref short_sha
+  local push_specs=()
   archive_error=""
   if ! git -C "$dir" rev-parse --verify --quiet HEAD >/dev/null; then
     archive_error="archive preparation failed: could not read HEAD"
@@ -732,87 +808,136 @@ archive_lane() {
   # Keep the historical branch namespace for consumers, plus an unambiguous
   # refs/ mirror that retains tags, notes, replacement refs, and any other
   # local ref without flattening unlike kinds onto one destination.
-  while IFS= read -r source_ref; do
+  if ! refs_output="$(git -C "$dir" for-each-ref --format='%(refname) %(objectname)' refs)"; then
+    archive_error="ref enumeration failed: could not enumerate local refs"
+    return 1
+  fi
+  while IFS=' ' read -r source_ref sha; do
     [[ -z "$source_ref" ]] && continue
-    ref_specs+=("${source_ref}:refs/lanes/${ns}/refs/${source_ref#refs/}")
-  done < <(git -C "$dir" for-each-ref --format='%(refname)' refs)
+    case "$source_ref" in
+      refs/heads/*)
+        destination="refs/lanes/${ns}/${source_ref#refs/heads/}"
+        want="${want}${destination} ${sha}"$'\n'
+        ;;
+    esac
+    destination="refs/lanes/${ns}/refs/${source_ref#refs/}"
+    want="${want}${destination} ${sha}"$'\n'
+  done <<<"$refs_output"
   head_sha="$(git -C "$dir" rev-parse HEAD)" || {
     archive_error="archive preparation failed: could not read HEAD"
     return 1
   }
-  want="$(
-    git -C "$dir" for-each-ref --format="refs/lanes/${ns}/%(refname:strip=2) %(objectname)" refs/heads
-    git -C "$dir" for-each-ref --format="refs/lanes/${ns}/refs/%(refname:strip=1) %(objectname)" refs
-    printf 'refs/lanes/%s/HEAD %s\n' "$ns" "$head_sha"
-  )"
+  want="${want}refs/lanes/${ns}/HEAD ${head_sha}"$'\n'
 
   # Diagnose immutable-ref conflicts before push. A failed probe is not by
   # itself fatal: the push supplies the authoritative transport diagnostic.
-  if existing_output="$(git ls-remote -- "$archive_to" "refs/lanes/${ns}/*" 2>&1)"; then
+  if existing_output="$(git_net ls-remote -- "$archive_to" "refs/lanes/${ns}/*" 2>&1)"; then
     got="$(printf '%s\n' "$existing_output" | awk '{ print $2, $1 }')"
-    while IFS=' ' read -r ref sha; do
-      [[ -z "$ref" ]] && continue
-      existing_sha="$(printf '%s\n' "$got" | awk -v wanted="$ref" '$1 == wanted { print $2; exit }')"
-      if [[ -n "$existing_sha" && "$existing_sha" != "$sha" ]]; then
-        if git -C "$dir" merge-base --is-ancestor "$existing_sha" "$sha" 2>/dev/null; then
-          : # A normal retry may advance a previously archived ref.
-        else
-          ancestry_status=$?
-          if [[ "$ancestry_status" -eq 1 ]]; then
-            archive_error="archive ref exists with different tip (non-force): ${ref}"
-            return 1
-          fi
-          # If the existing object is not local, let push decide and capture
-          # its authoritative non-fast-forward or transport diagnostic.
-        fi
-      fi
-    done <<<"$want"
+  else
+    net_status=$?
+    if git_net_timed_out "$net_status"; then
+      archive_error="archive transport timed out"
+      return 1
+    fi
+    got=""
   fi
 
-  if [[ -n "$(git -C "$dir" for-each-ref --format='%(objectname)' refs/heads)" ]]; then
-    if ! command_output="$(git -C "$dir" push --quiet --no-verify -- "$archive_to" \
-        "refs/heads/*:refs/lanes/${ns}/*" 2>&1)"; then
-      set_archive_push_error "$command_output"
+  while IFS=' ' read -r ref sha; do
+    [[ -z "$ref" ]] && continue
+    existing_sha="$(printf '%s\n' "$got" | awk -v wanted="$ref" '$1 == wanted { print $2; exit }')"
+    if [[ -n "$existing_sha" && "$existing_sha" != "$sha" ]]; then
+      if git -C "$dir" merge-base --is-ancestor "$existing_sha" "$sha" 2>/dev/null; then
+        : # A normal retry may advance a previously archived ref.
+      else
+        ancestry_status=$?
+        if [[ "$ancestry_status" -eq 1 ]]; then
+          short_sha="${sha:0:12}"
+          superseded_ref="refs/archive/${ns}/superseded/${short_sha}"
+          if command_output="$(git_net -C "$dir" push --quiet --no-verify -- \
+              "$archive_to" "${sha}:${superseded_ref}" 2>&1)"; then
+            :
+          else
+            net_status=$?
+            if git_net_timed_out "$net_status"; then
+              archive_error="archive transport timed out"
+            else
+              set_archive_push_error "$command_output"
+            fi
+            return 1
+          fi
+          if command_output="$(git_net ls-remote -- "$archive_to" "$superseded_ref" 2>&1)"; then
+            :
+          else
+            net_status=$?
+            if git_net_timed_out "$net_status"; then
+              archive_error="archive transport timed out"
+            else
+              set_archive_error_tail "archive verification failed" "$command_output"
+            fi
+            return 1
+          fi
+          if ! printf '%s\n' "$command_output" | awk -v sha="$sha" -v ref="$superseded_ref" \
+              '$1 == sha && $2 == ref { found = 1 } END { exit !found }'; then
+            archive_error="archive verification failed: missing or mismatched ${superseded_ref}"
+            return 1
+          fi
+          # The primary immutable ref remains on its previous tip; both sides
+          # are now durable, so this generation no longer wedges reclamation.
+          verify_want="${verify_want}${ref} ${existing_sha}"$'\n'
+          continue
+        fi
+        # If the existing object is not local, let push decide and capture its
+        # authoritative non-fast-forward or transport diagnostic.
+      fi
+    fi
+    push_specs+=("${sha}:${ref}")
+    verify_want="${verify_want}${ref} ${sha}"$'\n'
+  done <<<"$want"
+
+  if [[ ${#push_specs[@]} -gt 0 ]]; then
+    if command_output="$(git_net -C "$dir" push --quiet --no-verify -- "$archive_to" \
+        "${push_specs[@]}" 2>&1)"; then
+      :
+    else
+      net_status=$?
+      if git_net_timed_out "$net_status"; then
+        archive_error="archive transport timed out"
+      else
+        set_archive_push_error "$command_output"
+      fi
       return 1
     fi
-  fi
-  if [[ ${#ref_specs[@]} -gt 0 ]]; then
-    if ! command_output="$(git -C "$dir" push --quiet --no-verify -- "$archive_to" \
-        "${ref_specs[@]}" 2>&1)"; then
-      set_archive_push_error "$command_output"
-      return 1
-    fi
-  fi
-  # Named explicitly: commits reachable only from a detached HEAD are the
-  # easiest work to lose and the hardest to notice missing.
-  if ! command_output="$(git -C "$dir" push --quiet --no-verify -- "$archive_to" \
-      "${head_sha}:refs/lanes/${ns}/HEAD" 2>&1)"; then
-    set_archive_push_error "$command_output"
-    return 1
   fi
 
   # Read the refs back out of the archive. A push that reported success but
   # landed nothing would otherwise be indistinguishable from one that worked,
   # and the next step is rm -rf.
-  if ! command_output="$(git ls-remote -- "$archive_to" "refs/lanes/${ns}/*" 2>&1)"; then
-    set_archive_error_tail "archive verification failed" "$command_output"
+  if command_output="$(git_net ls-remote -- "$archive_to" "refs/lanes/${ns}/*" 2>&1)"; then
+    :
+  else
+    net_status=$?
+    if git_net_timed_out "$net_status"; then
+      archive_error="archive transport timed out"
+    else
+      set_archive_error_tail "archive verification failed" "$command_output"
+    fi
     return 1
   fi
   got="$(printf '%s\n' "$command_output" | awk '{ print $2, $1 }')"
   while IFS=' ' read -r ref sha; do
-    [[ -z "$ref" ]] && continue
+      [[ -z "$ref" ]] && continue
     if ! printf '%s\n' "$got" | grep -qxF "$ref $sha"; then
       archive_error="archive verification failed: missing or mismatched ${ref}"
       return 1
     fi
-  done <<<"$want"
+  done <<<"$verify_want"
   return 0
 }
 
 # Preserve commits named by a reflog but unreachable from every current ref.
 # The lane owns those reflogs; rm would otherwise remove their only names.
 archive_reflog_only_commits() {
-  local dir="$1" ns="$2" reachable reflog_output got sha ref command_output
+  local dir="$1" ns="$2" reachable reflog_output got sha ref command_output net_status
   local reflog_shas=() ref_specs=()
   reachable="$(git -C "$dir" rev-list --all)" || return 1
   reflog_output="$(git -C "$dir" reflog --all --format='%H' | LC_ALL=C sort -u)" || return 1
@@ -825,13 +950,21 @@ archive_reflog_only_commits() {
     fi
   done <<<"$reflog_output"
   [[ ${#ref_specs[@]} -gt 0 ]] || return 0
-  if ! command_output="$(git -C "$dir" push --quiet --no-verify -- "$archive_to" \
+  if command_output="$(git_net -C "$dir" push --quiet --no-verify -- "$archive_to" \
       "${ref_specs[@]}" 2>&1)"; then
-    set_archive_push_error "$command_output"
+    :
+  else
+    net_status=$?
+    if git_net_timed_out "$net_status"; then archive_error="archive transport timed out"
+    else set_archive_push_error "$command_output"; fi
     return 1
   fi
-  if ! command_output="$(git ls-remote -- "$archive_to" "refs/reaped/${ns}/reflog/*" 2>&1)"; then
-    set_archive_error_tail "archive verification failed" "$command_output"
+  if command_output="$(git_net ls-remote -- "$archive_to" "refs/reaped/${ns}/reflog/*" 2>&1)"; then
+    :
+  else
+    net_status=$?
+    if git_net_timed_out "$net_status"; then archive_error="archive transport timed out"
+    else set_archive_error_tail "archive verification failed" "$command_output"; fi
     return 1
   fi
   got="$(printf '%s\n' "$command_output" | awk '{ print $2, $1 }')"
@@ -907,10 +1040,21 @@ process_one() {
   local real size size_kib head_sha upstream upstream_label url ref log_dir ns parent
   local now newest_mtime min_age generation cleanup_failed=0
   local safety_snapshot safety_ignore_ref="" archive_ref="" partial_archive_ref="" partial_line
+  local intent_real="" partial_intent_path="" net_status
 
   candidates=$((candidates + 1))
 
-  if [[ -f "$path/.workbay-reap-partial" ]]; then
+  intent_real="$(realpath "$path" 2>/dev/null || true)"
+  if [[ -n "$intent_real" ]]; then
+    partial_intent_path="$(partial_intent_path_for "$intent_real" 2>/dev/null || true)"
+  fi
+  if [[ -n "$partial_intent_path" && -f "$partial_intent_path" ]]; then
+    partial_archive_ref="$(sed -n 's/.*"archive_ref":"\([^"]*\)".*/\1/p' \
+      "$partial_intent_path" | sed -n '1p')"
+    freshness_candidates=$((freshness_candidates + 1))
+    skip "$path" "partial reap after archive ${partial_archive_ref:-unknown}; operator review"
+    return 0
+  elif [[ -f "$path/.workbay-reap-partial" ]]; then
     while IFS= read -r partial_line || [[ -n "$partial_line" ]]; do
       case "$partial_line" in
         archive_ref=*) partial_archive_ref="${partial_line#archive_ref=}"; break ;;
@@ -930,6 +1074,15 @@ process_one() {
     echo "reap-lane: realpath failed: $path" >&2
     return 1
   }
+
+  if [[ -n "$invalid_remote_agent_root_real" ]]; then
+    case "$real" in
+      "$invalid_remote_agent_root_real"/*)
+        skip "$path" "WORKBAY_REMOTE_AGENT_ROOT must be strictly below HOME"
+        return 0
+        ;;
+    esac
+  fi
 
   case "$real" in
     "$home_real"/*) ;;
@@ -1036,7 +1189,9 @@ process_one() {
       upstream_label="archived:${archive_to}"
       if [[ "$yes" -eq 1 ]] && ! archive_lane "$real" "$ns"; then
         release_grok_lane_lock
-        if ! lane_matches_snapshot "$real" "$safety_ignore_ref" "$safety_snapshot"; then
+        if [[ "$archive_error" == ref\ enumeration\ failed:* ]]; then
+          skip "$path" "$archive_error"
+        elif ! lane_matches_snapshot "$real" "$safety_ignore_ref" "$safety_snapshot"; then
           skip "$path" "lane changed after snapshot; skipped"
         else
           skip "$path" "${archive_error:-archive failed: no diagnostic}"
@@ -1061,8 +1216,12 @@ process_one() {
     fi
     ref="${REAP_UPSTREAM##*#}"
     url="${REAP_UPSTREAM%#*}"
-    if ! git -C "$real" fetch --quiet -- "$url" "$ref" >/dev/null 2>&1; then
-      skip "$path" "fetch failed"
+    if git_net -C "$real" fetch --quiet -- "$url" "$ref" >/dev/null 2>&1; then
+      :
+    else
+      net_status=$?
+      if git_net_timed_out "$net_status"; then skip "$path" "fetch timed out"
+      else skip "$path" "fetch failed"; fi
       return 0
     fi
     upstream_label="$REAP_UPSTREAM"
@@ -1071,8 +1230,12 @@ process_one() {
       skip "$path" "no origin remote and REAP_UPSTREAM unset"
       return 0
     fi
-    if ! git -C "$real" fetch --quiet origin main >/dev/null 2>&1; then
-      skip "$path" "fetch failed"
+    if git_net -C "$real" fetch --quiet origin main >/dev/null 2>&1; then
+      :
+    else
+      net_status=$?
+      if git_net_timed_out "$net_status"; then skip "$path" "fetch timed out"
+      else skip "$path" "fetch failed"; fi
       return 0
     fi
     upstream_label="origin/main"
@@ -1128,13 +1291,17 @@ process_one() {
     return 0
   fi
 
-  if ! rm -rf -- "$real" || [[ -e "$real" ]]; then
-    if [[ -n "$archive_ref" && -d "$real" ]]; then
-      if ! printf 'archive_ref=%s\nrecorded_at=%s\n' "$archive_ref" \
-          "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >"$real/.workbay-reap-partial"; then
-        echo "reap-lane: could not write partial-reap marker in $real" >&2
-      fi
+  partial_intent_path=""
+  if [[ -n "$archive_ref" ]]; then
+    if ! write_partial_intent "$real" "$archive_ref" "$head_sha"; then
+      release_grok_lane_lock
+      skip "$path" "could not record partial-reap intent; lane retained"
+      return 1
     fi
+    partial_intent_path="$(partial_intent_path_for "$real")"
+  fi
+
+  if ! rm -rf -- "$real" || [[ -e "$real" ]]; then
     release_grok_lane_lock
     if [[ -n "$archive_ref" ]]; then
       skip "$path" "rm failed after archive ${archive_ref}; lane partially removed"
@@ -1161,6 +1328,9 @@ process_one() {
   log_dir="$(dirname "$log")"
   mkdir -p "$log_dir"
   printf '%s %s %s %s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$real" "$size" "$head_sha" "$upstream_label" >>"$log"
+  if [[ -n "$partial_intent_path" ]]; then
+    rm -f "$partial_intent_path"
+  fi
   release_grok_lane_lock
   [[ "$cleanup_failed" -eq 0 ]] || return 1
   return 0

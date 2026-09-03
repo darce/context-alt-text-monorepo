@@ -50,6 +50,8 @@ cron_quote() {
   value="${value//\"/\\\"}"
   value="${value//\$/\\\$}"
   value="${value//\`/\\\`}"
+  # crontab(5) rewrites an unescaped % into a newline before /bin/sh runs.
+  value="${value//%/\\%}"
   printf '"%s"' "$value"
 }
 

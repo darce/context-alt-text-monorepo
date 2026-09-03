@@ -801,6 +801,7 @@ archive_lane() {
   local destination superseded_ref short_sha
   local push_specs=()
   archive_error=""
+  archive_head_ref=""
   if ! git -C "$dir" rev-parse --verify --quiet HEAD >/dev/null; then
     archive_error="archive preparation failed: could not read HEAD"
     return 1
@@ -884,6 +885,9 @@ archive_lane() {
           # The primary immutable ref remains on its previous tip; both sides
           # are now durable, so this generation no longer wedges reclamation.
           verify_want="${verify_want}${ref} ${existing_sha}"$'\n'
+          if [[ "$ref" == "refs/lanes/${ns}/HEAD" ]]; then
+            archive_head_ref="$superseded_ref"
+          fi
           continue
         fi
         # If the existing object is not local, let push decide and capture its
@@ -1041,6 +1045,7 @@ process_one() {
   local now newest_mtime min_age generation cleanup_failed=0
   local safety_snapshot safety_ignore_ref="" archive_ref="" partial_archive_ref="" partial_line
   local intent_real="" partial_intent_path="" net_status
+  local partial_verified_tips="" occupant_head="" stale_intent
 
   candidates=$((candidates + 1))
 
@@ -1051,9 +1056,25 @@ process_one() {
   if [[ -n "$partial_intent_path" && -f "$partial_intent_path" ]]; then
     partial_archive_ref="$(sed -n 's/.*"archive_ref":"\([^"]*\)".*/\1/p' \
       "$partial_intent_path" | sed -n '1p')"
-    freshness_candidates=$((freshness_candidates + 1))
-    skip "$path" "partial reap after archive ${partial_archive_ref:-unknown}; operator review"
-    return 0
+    partial_verified_tips="$(sed -n 's/.*"verified_tips":\[\([^]]*\)\].*/\1/p' \
+      "$partial_intent_path" | sed -n '1p')"
+    occupant_head="$(git -C "$path" rev-parse --verify --quiet HEAD 2>/dev/null || true)"
+    if [[ -n "$occupant_head" && -n "$partial_verified_tips" \
+        && "$partial_verified_tips" != *"\"${occupant_head}\""* ]]; then
+      # The damaged checkout is gone: a fresh occupant at a tip the intent
+      # never verified is a new lane, so the sentinel must not block it forever.
+      stale_intent="${partial_intent_path}.stale.$(date -u +%Y%m%dT%H%M%SZ)"
+      if mv "$partial_intent_path" "$stale_intent"; then
+        echo "reap-lane: warning: stale partial intent superseded by new occupant ${occupant_head}; kept at ${stale_intent}" >&2
+      else
+        skip "$path" "stale partial intent could not be retired: ${partial_intent_path}"
+        return 0
+      fi
+    else
+      freshness_candidates=$((freshness_candidates + 1))
+      skip "$path" "partial reap after archive ${partial_archive_ref:-unknown}; operator review (intent: ${partial_intent_path})"
+      return 0
+    fi
   elif [[ -f "$path/.workbay-reap-partial" ]]; then
     while IFS= read -r partial_line || [[ -n "$partial_line" ]]; do
       case "$partial_line" in
@@ -1198,7 +1219,7 @@ process_one() {
         fi
         return 0
       fi
-      archive_ref="refs/lanes/${ns}/HEAD"
+      archive_ref="${archive_head_ref:-refs/lanes/${ns}/HEAD}"
     fi
     if [[ "$yes" -eq 1 ]] && ! archive_reflog_only_commits "$real" "$ns"; then
       release_grok_lane_lock

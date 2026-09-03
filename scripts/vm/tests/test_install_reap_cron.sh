@@ -196,6 +196,33 @@ assert_file_line "$cron_args" "arg=<--all>" "space HOME preserves all flags"
 assert_file_line "$cron_args" "arg=<$space_home/grok-sandbox>" \
   "space HOME preserves root path"
 
+# crontab(5) turns an unescaped % into a newline before the shell ever runs,
+# truncating the command. The entry must escape it and survive cron's unescape.
+percent_root="$space_home/agent 100% sandboxes"
+: >"$space_crontab"
+rm -f "$space_home/bin/reap-lane.sh"
+HOME="$space_home" CRONTAB_FILE="$space_crontab" \
+  WORKBAY_REMOTE_AGENT_ROOT="$percent_root" \
+  PATH="$space_home/fakebin:$PATH" bash "$SCRIPT" >/dev/null
+percent_line="$(sed -n '/reap-lane\.sh/p' "$space_crontab")"
+if [[ "$percent_line" == *'100\%'* ]] && [[ "${percent_line//\\%/}" != *%* ]]; then
+  pass "percent in remote root is cron-escaped"
+else
+  fail "percent in remote root left unescaped; line=$percent_line"
+fi
+cron_command="$(printf '%s\n' "$percent_line" | sed 's/^[^ ]* [^ ]* [^ ]* [^ ]* [^ ]* //; s/\\%/%/g')"
+mv "$space_home/bin/reap-lane.sh" "$space_home/bin/reap-lane.real"
+cat >"$space_home/bin/reap-lane.sh" <<'FAKE_REAPER'
+#!/bin/sh
+printf 'remote=<%s>\n' "${WORKBAY_REMOTE_AGENT_ROOT:-}" >"$CRON_ARGS"
+for arg in "$@"; do printf 'arg=<%s>\n' "$arg" >>"$CRON_ARGS"; done
+FAKE_REAPER
+chmod +x "$space_home/bin/reap-lane.sh"
+: >"$cron_args"
+HOME="$space_home" CRON_ARGS="$cron_args" /bin/sh -c "$cron_command"
+assert_file_line "$cron_args" "remote=<$percent_root>" "percent remote root survives cron unescape"
+assert_file_line "$cron_args" "arg=<--archive-to>" "percent remote root keeps archive flag"
+
 # A listing error other than the platform's no-crontab diagnostic must abort
 # without piping an empty replacement over the user's existing jobs.
 crontab_before_error="$(cat "$CRONTAB_FILE")"

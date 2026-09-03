@@ -90,28 +90,29 @@ terraform -chdir=infra/oci output -raw gpu_instance_id    # → idle reaper
 
 ### Idle reaper (decision → fence → OCI STOP)
 
-The description service dumps load to `/run/acx/describe-load.json` (override with
-`ACX_DESCRIBE_LOAD_PATH`) on async enqueue/terminal poll and at startup; the JSON is
-produced by `scene/application/describe_load.py` (DB-derived, VLM-5). Stale dumps are
-treated as busy so a dead writer cannot STOP a working GPU.
+Each description-service environment dumps load to
+`/run/acx-write/<env>/describe-load.json` (override with
+`ACX_DESCRIBE_LOAD_PATH`) on async enqueue/terminal poll and at startup. The JSON
+is produced by `scene/application/describe_load.py` (DB-derived, VLM-5). The
+lifecycle units aggregate every environment's snapshot; stale dumps are treated
+as busy so a dead writer cannot STOP a working GPU.
 
 #### GPU lifecycle snapshots
 
-The host lifecycle systemd units and the description API exchange two atomic JSON
-snapshots in `/run/acx`:
+The host lifecycle systemd units and description APIs exchange atomic JSON
+snapshots through directories with separate ownership:
 
-| File | Single writer | Reader | Freshness contract |
-| --- | --- | --- | --- |
-| `describe-load.json` | Description API (container uid 10001) | Host start/reap units | Refreshed every `ACX_DESCRIBE_LOAD_REFRESH_SECONDS` (45s by default); the lifecycle reader rejects data older than 120s. |
-| `gpu-state.json` | Host start/reap units (`ubuntu`) | Description API | The API treats data older than `ACX_GPU_STATE_STALE_SECONDS` (180s by default) as `unknown`. |
+| Path | Ownership and access | Single writer | Reader | Freshness contract |
+| --- | --- | --- | --- | --- |
+| `/run/acx/gpu-state.json` | Host-owned; mounted read-only in each API container | Host start/reap units (`ubuntu`) | Description APIs | An API treats data older than `ACX_GPU_STATE_STALE_SECONDS` (180s by default) as `unknown`. |
+| `/run/acx-write/<env>/describe-load.json` | API-owned; only the matching environment subdirectory is mounted read-write | That environment's description API (container uid 10001) | Host start/reap units aggregate `/run/acx-write/*/describe-load.json` | Refreshed every `ACX_DESCRIBE_LOAD_REFRESH_SECONDS` (45s by default); the lifecycle reader rejects stale data. |
 
-Both writers atomically replace mode-0644 files. The host directory is recreated
-on boot as `root:10001` mode 0775 so the API can publish load and uid 10001 can
-read lifecycle state. `.env.prod.example` is the deployment path seam: keep
-`ACX_GPU_SNAPSHOT_DIR`, `ACX_GPU_STATE_PATH`, and `ACX_DESCRIBE_LOAD_PATH` on the
-same `/run/acx` contract used by the installed units. `docker-compose.prod.yml`
-passes the state path to the API and exposes the host lifecycle snapshot through
-a read-only mount.
+Both writers atomically replace mode-0644 files. `/run/acx` remains host-owned
+and read-only to containers. Each API receives only its own writable
+`/run/acx-write/<env>` subdirectory, preventing dual writers while allowing the
+units to aggregate load across dev, staging, and prod. `.env.prod.example` is the
+production path seam for these two directories, and `docker-compose.prod.yml`
+enforces the corresponding read-only state and read-write load mounts.
 
 Run the fail-closed check as root so it can test readability as container uid
 10001. Export the values from the deployed environment; do not source a secrets
@@ -119,10 +120,19 @@ file into an interactive shell:
 
 ```bash
 sudo env \
+  ACX_DESCRIBE_LOAD_DIR=/run/acx-write/prod \
+  ACX_DESCRIBE_LOAD_PATH=/run/acx-write/prod/describe-load.json \
+  ACX_DESCRIBE_LOAD_STALE_SECONDS=120 \
+  ACX_GPU_COMPOSE_FILE=apps/prototype-description-service/docker-compose.prod.yml \
+  ACX_GPU_INSTALL_SCRIPT=scripts/deploy/gpu-lifecycle-install.sh \
+  ACX_GPU_READER_UID=10001 \
+  ACX_GPU_SNAPSHOT_CONFIG_ONLY=0 \
   ACX_GPU_SNAPSHOT_DIR=/run/acx \
   ACX_GPU_STATE_PATH=/run/acx/gpu-state.json \
   ACX_GPU_STATE_STALE_SECONDS=180 \
-  ACX_DESCRIBE_LOAD_PATH=/run/acx/describe-load.json \
+  ACX_GPU_UNIT_LOAD_PATH='/run/acx-write/*/describe-load.json' \
+  ACX_GPU_UNIT_STATE_PATH=/run/acx/gpu-state.json \
+  ACX_NOW_EPOCH="$(date +%s)" \
   scripts/deploy/check-gpu-snapshots.sh
 ```
 
@@ -135,7 +145,7 @@ the paths installed into the systemd units. A missing snapshot never passes.
 python -m infra.oci.gpu_lifecycle \
   --instance-id "$(terraform -chdir=infra/oci output -raw gpu_instance_id)" \
   --idle-seconds 300 \
-  --load-json /run/acx/describe-load.json \
+  --load-json '/run/acx-write/*/describe-load.json' \
   --probe-oci \
   --fence-delay-seconds 2
 ```
@@ -150,7 +160,7 @@ Copy `/etc/acx/gpu-reaper.env.example` → `/etc/acx/gpu-reaper.env` with
 
 ```bash
 */2 * * * * GPU_INSTANCE_ID=ocid1... python3 -m infra.oci.gpu_lifecycle \
-  --instance-id "$GPU_INSTANCE_ID" --load-json /run/acx/describe-load.json \
+  --instance-id "$GPU_INSTANCE_ID" --load-json '/run/acx-write/*/describe-load.json' \
   --probe-oci --idle-seconds 300 >> /var/log/acx-gpu-reaper.log 2>&1
 ```
 

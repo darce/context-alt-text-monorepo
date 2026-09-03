@@ -24,7 +24,7 @@ import { __ } from '@wordpress/i18n';
 import { fetchClusterMembers } from '../../../api/recognition';
 import { queryKeys } from '../../../api/queryKeys';
 import { classifyError, isHttpStatus } from '../../../utils/appError';
-import { shouldRetryRequest } from '../../../utils/retryPolicy';
+import { isAbortOrTimeout, shouldRetryRequest } from '../../../utils/retryPolicy';
 
 export type LiveReviewTargetStatus = 'live' | 'rebound' | 'retired' | 'auth_expired' | 'unknown';
 
@@ -85,9 +85,10 @@ export const useLiveReviewTarget = (
     // invalidation still refetches, so a real retirement 404 still lands.
     staleTime: 5_000,
     gcTime: 30_000,
-    // Shared retry predicate: never retry 404/auth/abort/timeout/5xx; transport may retry.
+    // The existence probe keeps shared transport/cooldown retries, but abort,
+    // timeout, and 404 are terminal so an unverified target cannot become live.
     retry: (failureCount, error) => {
-      if (isClusterNotFound(error)) {
+      if (isClusterNotFound(error) || isAbortOrTimeout(error)) {
         return false;
       }
       return shouldRetryRequest(failureCount, error);

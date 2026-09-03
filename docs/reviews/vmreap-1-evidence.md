@@ -68,7 +68,8 @@ by `scripts/vm/tests/test_vm_script_suites.py`.
 | An archive located inside the candidate is rejected and the candidate remains. | `archive destination inside lane` |
 | Fresh sandbox markers, live leases, and held lane locks prevent both archival and removal. | `grok-sandbox fresh marker`; `grok-sandbox live lease`; `grok-sandbox lane lock` |
 | A legacy marker is not persisted when a later dirty-tree guard skips the lane. | `grok-sandbox dirty legacy did not persist marker backfill` |
-| A successfully reaped legacy sandbox retains the materializer-owned lock inode while removing its lease, venv, and sync-stamp siblings; a concurrently recreated lock is also retained. | `grok-sandbox stale legacy lane lock inode retained`; `grok-sandbox stale legacy lease`; `grok-sandbox stale legacy venv`; `grok-sandbox stale legacy sync stamp`; `grok-sandbox recreated lane lock inode retained` |
+| Dry-run and `--yes` select the same aged markerless legacy sandbox, while only the destructive path backfills its marker. | `grok-sandbox stale legacy dry-run`; `grok-sandbox stale legacy dry-run did not backfill marker`; `grok-sandbox stale legacy marker backfill` |
+| A successfully reaped legacy sandbox retains the materializer-owned lock inode while removing its lease, venv, and sync-stamp siblings. A replacement lock is detected before checkout removal and again before sibling cleanup. | `grok-sandbox stale legacy lane lock inode retained`; `grok-sandbox stale legacy lease`; `grok-sandbox stale legacy venv`; `grok-sandbox stale legacy sync stamp`; `grok-sandbox late lane lock`; `grok-sandbox recreated lane lock inode retained`; `grok-sandbox recreated lane lease`; `grok-sandbox recreated lane venv`; `grok-sandbox recreated lane sync stamp` |
 | A non-sandbox archive candidate is retained until its newest checkout/git timestamp reaches the minimum age. | `archive recent lane`; `archive aged lane` |
 | Branches, tag-only commits, and detached HEAD commits survive archival. | `archive reap`; `archive tag-only commit`; `detached HEAD` |
 | Equal lane basenames in different roots use distinct archive namespaces. | `collision` |
@@ -77,6 +78,7 @@ by `scripts/vm/tests/test_vm_script_suites.py`.
 | A successful push is not trusted without archive read-back. | `archive that drops refs`; `archive that drops refs keeps the lane` |
 | A failed `rm` is reported as an internal error, is not counted as a reap, and leaves the lane. | `rm failure exits 1`; `rm failure summary`; `rm failure still exists` |
 | A change to refs, HEAD, reflogs, stash state, or worktree status after the decision snapshot prevents removal with `lane changed after snapshot; skipped`, including a commit followed by reset to the original HEAD. | `lane changed after snapshot`; `lane changed after snapshot fixture committed`; `lane reflog changed after snapshot`; `lane reflog changed after snapshot fixture committed and reset` |
+| Successful linked-worktree removal prunes stale parent metadata in archive and non-archive modes. | `parent worktree metadata pruned`; `non-archive parent worktree metadata pruned` |
 | Stale mkdir-lock recovery preserves the old owner inode, and two recoverers admit exactly one sweep. | `mkdir fallback atomically preserved stale owner`; `mkdir fallback stale recovery admits exactly one reaper` |
 | Missing `df` output fails safe with a numeric 100% usage value. | `df unavailable`; `df unavailable contains df_used_pct=100` |
 
@@ -91,7 +93,7 @@ the window is zero.
 | Behavior | Existing test case name(s) |
 | --- | --- |
 | A fresh install deploys an executable reaper, creates a bare keep-repo, and schedules every supported root with `--archive-to`. | `fresh installs the script`; `fresh creates the keep-repo`; `fresh crontab contains --archive-to $HOME/lane-archive.git`; `fresh crontab contains --all $HOME/w3`; `fresh crontab contains --all $HOME/uxw2`; `fresh crontab contains --all $HOME/l1`; `fresh crontab contains --all $HOME/w`; `fresh crontab contains --all $HOME/lanes`; `fresh crontab contains --all $HOME/grok-sandbox` |
-| Reinstalling preserves existing archive refs and replaces stale managed cron text without duplicating the marker or touching an unrelated job. | `reinstall preserves archived refs`; `roll-forward`; `roll-forward keeps exactly one marker`; `roll-forward crontab contains /usr/bin/some-other-job` |
+| Reinstalling preserves existing archive refs and replaces stale managed cron text without duplicating the marker or touching an unrelated job, including older managed blocks containing blank/comment lines. | `reinstall preserves archived refs`; `roll-forward`; `roll-forward keeps exactly one marker`; `roll-forward crontab contains /usr/bin/some-other-job`; `roll-forward with blank`; `roll-forward with blank keeps exactly one managed entry` |
 | Reinstalling replaces the deployed script inode instead of overwriting it in place. | `reinstall atomically replaces the installed inode` |
 
 ## Red-first evidence for wave 4b
@@ -119,16 +121,63 @@ FAIL: lane reflog changed after snapshot fixture did not commit and reset
 
 The reflog-aware snapshot and stable materializer lock path make all five cases
 GREEN. Both the existing ref/status writer and the new commit-reset writer now
-use ten-second bounded polling and bounded child joins; the pytest bridge has a
-30-second subprocess timeout.
+use ten-second bounded polling and bounded child joins. The pytest bridge uses
+a 180-second subprocess timeout; the coordinator measured 23.1 seconds of
+macOS wall time, so the former 30-second ceiling did not provide a reliable
+stall margin.
+
+## Red-first evidence for wave 4d
+
+Before the production changes, the new adversarial cases failed as follows:
+
+```text
+FAIL: grok-sandbox stale legacy dry-run missing 'WOULD REAP ... (legacy, marker backfill)'
+FAIL: grok-sandbox late lane lock missing 'lane lock replaced; skipped'
+FAIL: grok-sandbox late lane lock lane should still exist
+FAIL: grok-sandbox late lane lock lease should still exist
+FAIL: grok-sandbox late lane lock venv should still exist
+FAIL: grok-sandbox recreated lane lock missing 'lane lock replaced; skipped'
+FAIL: grok-sandbox recreated lane lease should still exist
+FAIL: grok-sandbox recreated lane venv should still exist
+FAIL: grok-sandbox recreated lane sync stamp should still exist
+FAIL: non-archive parent still lists the reaped worktree
+FAIL: roll-forward with blank duplicated managed entry
+```
+
+The lock cases begin with no lock path and replace a locked inode at each final
+deletion boundary. The fixed reaper create-opens and locks the stable path, then
+checks that the path still names fd 8 both before `rm` and before sibling
+cleanup.
+
+## Host remediation (pending operator)
+
+No post-fix host evidence exists yet. In particular, the earlier wrong-user
+defect is not closed until these commands are run as the `gate` user on the VM:
+
+```text
+cd /path/to/context-alt-text-monorepo && bash scripts/vm/install-reap-cron.sh
+ls -l "$HOME/bin/reap-lane.sh"
+crontab -l
+"$HOME/bin/reap-lane.sh" --archive-to "$HOME/lane-archive.git" --all "$HOME/grok-sandbox"
+"$HOME/bin/reap-lane.sh" --yes --archive-to "$HOME/lane-archive.git" --all "$HOME/grok-sandbox"
+tail -n 1 "$HOME/reap-lane.log"
+```
+
+Acceptance requires an executable `~/bin/reap-lane.sh` owned by `gate`, exactly
+one managed entry in `gate`'s crontab naming every root, an observational
+dry-run that identifies eligible stale sandboxes without mutation, and a first
+destructive sweep whose `REAP SUMMARY` reports a credible candidate/reaped/
+skipped split and nonzero bytes freed. Archive refs for a sampled reaped lane
+must resolve in `~/lane-archive.git`; guarded lanes must remain present; a
+follow-up `df -h /` must record the host-space result.
 
 ## Current GREEN
 
 Observed in the Linux 6.17.0 aarch64 sandbox (not macOS):
 
 ```text
-bash scripts/vm/tests/test_reap_lane.sh          186 PASS assertions
-bash scripts/vm/tests/test_install_reap_cron.sh   20 PASS assertions
+bash scripts/vm/tests/test_reap_lane.sh          202 PASS assertions
+bash scripts/vm/tests/test_install_reap_cron.sh   24 PASS assertions
 python3 -m pytest scripts/vm/tests/test_vm_script_suites.py -q
 2 passed
 ```

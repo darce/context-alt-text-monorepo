@@ -220,6 +220,7 @@ reaped=0
 skipped=0
 bytes_freed=0
 grok_lane_lock_held=0
+grok_lane_lock_path=""
 grok_marker_backfill=0
 
 is_ignorable_path() {
@@ -276,7 +277,7 @@ grok_sandbox_is_stale() {
   if [[ ! -f "$marker" ]]; then
     mtime="$(path_mtime "$real" || true)"
     now="$(date +%s)"
-    if [[ -z "$mtime" || $((now - mtime)) -le "$ttl" || "$yes" -eq 0 ]]; then
+    if [[ -z "$mtime" || $((now - mtime)) -le "$ttl" ]]; then
       skip "$path" "sandbox marker missing"
       return 1
     fi
@@ -363,16 +364,24 @@ acquire_grok_lane_lock() {
   if ! command -v flock >/dev/null 2>&1; then
     return 1
   fi
-  # Absence means the materializer does not hold this lock. Opening it for
-  # append would create a sibling that outlives the sandbox being reaped.
-  [[ -e "$lane_lock" ]] || return 0
-  exec 8<"$lane_lock"
-  if ! flock -n 8; then
+  # Create-or-open the stable materializer lock path, then lock and verify the
+  # inode. Treating absence as unlocked leaves no fd against which to detect a
+  # path materialized during the final deletion window.
+  exec 8>>"$lane_lock"
+  if ! flock -n 8 || [[ ! "$lane_lock" -ef /dev/fd/8 ]]; then
     exec 8>&-
     return 1
   fi
   grok_lane_lock_held=1
+  grok_lane_lock_path="$lane_lock"
   return 0
+}
+
+grok_lane_lock_matches() {
+  local real="$1"
+  is_grok_sandbox "$real" || return 0
+  [[ "$grok_lane_lock_held" -eq 1 && -n "$grok_lane_lock_path" &&
+     -e "$grok_lane_lock_path" && "$grok_lane_lock_path" -ef /dev/fd/8 ]]
 }
 
 cleanup_grok_sandbox_siblings() {
@@ -393,6 +402,7 @@ release_grok_lane_lock() {
     flock -u 8 >/dev/null 2>&1 || true
     exec 8>&-
     grok_lane_lock_held=0
+    grok_lane_lock_path=""
   fi
 }
 
@@ -678,6 +688,10 @@ process_one() {
     esac
   fi
 
+  # Resolve linked-worktree ownership independently of archive mode so every
+  # successful removal can prune the parent's stale worktree metadata.
+  parent="$(lane_parent_repo "$real" || true)"
+
   if is_grok_sandbox "$real"; then
     if ! grok_sandbox_is_stale "$real" "$path"; then
       return 0
@@ -710,7 +724,6 @@ process_one() {
       return 0
     fi
     ns="${real#"${home_real}"/}/${generation}"
-    parent="$(lane_parent_repo "$real" || true)"
     if [[ -z "$parent" ]] && has_linked_worktrees "$real"; then
       skip "$path" "repo has linked worktrees"
       return 0
@@ -826,7 +839,11 @@ process_one() {
   head_sha="$(git -C "$real" rev-parse HEAD)"
 
   if [[ "$yes" -eq 0 ]]; then
-    printf 'WOULD REAP %s (%s)\n' "$real" "$size"
+    if [[ "$grok_marker_backfill" -eq 1 ]]; then
+      printf 'WOULD REAP %s (legacy, marker backfill)\n' "$real"
+    else
+      printf 'WOULD REAP %s (%s)\n' "$real" "$size"
+    fi
     return 0
   fi
 
@@ -839,9 +856,22 @@ process_one() {
     return 0
   fi
 
+  if ! grok_lane_lock_matches "$real"; then
+    release_grok_lane_lock
+    skip "$path" "lane lock replaced; skipped"
+    return 0
+  fi
+
   if is_grok_sandbox "$real" && ! backfill_grok_sandbox_marker "$real"; then
     release_grok_lane_lock
     skip "$path" "could not backfill sandbox marker"
+    return 0
+  fi
+  # Marker backfill is filesystem work, so re-check once more immediately
+  # before rm rather than extending trust from the preceding inode check.
+  if ! grok_lane_lock_matches "$real"; then
+    release_grok_lane_lock
+    skip "$path" "lane lock replaced; skipped"
     return 0
   fi
 
@@ -852,6 +882,11 @@ process_one() {
   fi
   reaped=$((reaped + 1))
   bytes_freed=$((bytes_freed + size_kib * 1024))
+  if ! grok_lane_lock_matches "$real"; then
+    skip "$path" "lane lock replaced; skipped"
+    release_grok_lane_lock
+    return 0
+  fi
   if ! cleanup_grok_sandbox_siblings "$real"; then
     echo "reap-lane: could not remove sandbox siblings for $real" >&2
     cleanup_failed=1

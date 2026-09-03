@@ -54,6 +54,7 @@ current="$(crontab -l 2>/dev/null || true)"
   if [[ -n "$current" ]]; then
     printf '%s\n' "$current" | awk -v m="$marker" '
       $0 == m { skip = 1; next }
+      skip && $0 ~ /^[[:space:]]*(#.*)?$/ { next }
       skip && $0 ~ /reap-lane\.sh/ { skip = 0; next }
       { skip = 0; print }
     '

@@ -133,6 +133,25 @@ assert_one_marker "roll-forward"
 # An unrelated entry belonging to someone else must survive untouched.
 assert_cron_contains "roll-forward" "/usr/bin/some-other-job"
 
+# Blank/comment lines inside an older managed block must not end the removal
+# state before its stale command is reached.
+cat >"$CRONTAB_FILE" <<'STALE_WITH_BLANK'
+0 3 * * * /usr/bin/some-other-job
+# acx-reap-lane
+
+# legacy managed command follows
+17 6 * * 1 $HOME/bin/reap-lane.sh --yes --all $HOME/w3 >> $HOME/reap-lane.log 2>&1
+STALE_WITH_BLANK
+run_install
+assert_rc0 "roll-forward with blank"
+assert_one_marker "roll-forward with blank"
+if [[ "$(grep -cF 'reap-lane.sh' "$CRONTAB_FILE" || true)" -eq 1 ]]; then
+  pass "roll-forward with blank keeps exactly one managed entry"
+else
+  fail "roll-forward with blank duplicated managed entry; crontab=$(cat "$CRONTAB_FILE")"
+fi
+assert_cron_contains "roll-forward with blank" "/usr/bin/some-other-job"
+
 # --- the installed copy is the current one, not a stale one -------------------
 printf '# stale\n' >"$HOME/bin/reap-lane.sh"
 installed_inode_before="$(file_inode "$HOME/bin/reap-lane.sh")"

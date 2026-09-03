@@ -92,6 +92,15 @@ assert_exists() {
   fi
 }
 
+assert_path_exists() {
+  local label="$1" path="$2"
+  if [[ -e "$path" ]]; then
+    pass "$label still exists"
+  else
+    fail "$label should still exist: $path"
+  fi
+}
+
 assert_gone() {
   local label="$1" path="$2"
   if [[ ! -e "$path" ]]; then
@@ -546,6 +555,16 @@ if command -v flock >/dev/null 2>&1; then
   mkdir "$HOME/grok-sandbox/.venv-lane-$legacy_key"
   : >"$HOME/grok-sandbox/.venv-sync-stamp-$legacy_key"
   touch -t 200001010000 "$lane_gs_legacy"
+  run_reap --archive-to "$ARCHIVE" "$lane_gs_legacy"
+  assert_rc0 "grok-sandbox stale legacy dry-run"
+  assert_contains "grok-sandbox stale legacy dry-run" \
+    "WOULD REAP $lane_gs_legacy (legacy, marker backfill)"
+  assert_exists "grok-sandbox stale legacy dry-run" "$lane_gs_legacy"
+  if [[ ! -e "$lane_gs_legacy/.workbay-lane-sandbox" ]]; then
+    pass "grok-sandbox stale legacy dry-run did not backfill marker"
+  else
+    fail "grok-sandbox stale legacy dry-run mutated marker"
+  fi
   run_reap --yes --archive-to "$ARCHIVE" "$lane_gs_legacy"
   assert_rc0 "grok-sandbox stale legacy marker backfill"
   assert_gone "grok-sandbox stale legacy marker backfill" "$lane_gs_legacy"
@@ -557,6 +576,73 @@ if command -v flock >/dev/null 2>&1; then
   assert_gone "grok-sandbox stale legacy lease" "$HOME/grok-sandbox/.lane-live-$legacy_key"
   assert_gone "grok-sandbox stale legacy venv" "$HOME/grok-sandbox/.venv-lane-$legacy_key"
   assert_gone "grok-sandbox stale legacy sync stamp" "$HOME/grok-sandbox/.venv-sync-stamp-$legacy_key"
+
+  # A lock absent at the eligibility check can be materialized after archive
+  # and before rm. The reaper must create-and-lock the stable path itself, then
+  # prove the pathname still names its fd immediately before deletion.
+  lane_gs_late_lock="$HOME/grok-sandbox/feature-late-lock-abc12345"
+  clone_lane "$lane_gs_late_lock"
+  mark_sandbox "$lane_gs_late_lock"
+  touch -t 200001010000 "$lane_gs_late_lock/.workbay-lane-sandbox"
+  late_key="${lane_gs_late_lock##*/}"
+  late_lock="$HOME/grok-sandbox/.lane-lock-$late_key"
+  late_lease="$HOME/grok-sandbox/.lane-live-$late_key"
+  late_venv="$HOME/grok-sandbox/.venv-lane-$late_key"
+  late_trigger="$WORKDIR/late-lock-trigger"
+  late_ready="$WORKDIR/late-lock-ready"
+  late_release="$WORKDIR/late-lock-release"
+  late_exited="$WORKDIR/late-lock-exited"
+  late_du_bin="$WORKDIR/late-lock-du-bin"
+  mkdir "$late_du_bin"
+  cat >"$late_du_bin/du" <<'LATE_LOCK_DU'
+#!/usr/bin/env bash
+set -e
+if [[ "$*" == *"$LATE_LANE"* && ! -e "$LATE_TRIGGER" ]]; then
+  : >"$LATE_TRIGGER"
+  attempt=0
+  while [[ ! -e "$LATE_READY" && "$attempt" -lt 1000 ]]; do
+    sleep 0.01
+    attempt=$((attempt + 1))
+  done
+  [[ -e "$LATE_READY" ]] || exit 124
+fi
+exec "$REAL_DU" "$@"
+LATE_LOCK_DU
+  chmod +x "$late_du_bin/du"
+  (
+    trap ': >"$late_exited"' EXIT
+    attempt=0
+    while [[ ! -e "$late_trigger" && "$attempt" -lt 1000 ]]; do
+      sleep 0.01
+      attempt=$((attempt + 1))
+    done
+    [[ -e "$late_trigger" ]] || exit 124
+    rm -f "$late_lock"
+    exec 7>>"$late_lock"
+    flock 7
+    printf 'issued=1\nexpiry=2\n' >"$late_lease"
+    mkdir "$late_venv"
+    : >"$late_ready"
+    attempt=0
+    while [[ ! -e "$late_release" && "$attempt" -lt 1000 ]]; do
+      sleep 0.01
+      attempt=$((attempt + 1))
+    done
+    [[ -e "$late_release" ]] || exit 124
+  ) &
+  late_materializer_pid=$!
+  LATE_LANE="$lane_gs_late_lock" LATE_TRIGGER="$late_trigger" \
+    LATE_READY="$late_ready" REAL_DU="$(command -v du)" \
+    PATH="$late_du_bin:$PATH" \
+    run_reap --yes --archive-to "$ARCHIVE" "$lane_gs_late_lock"
+  assert_rc0 "grok-sandbox late lane lock"
+  assert_contains "grok-sandbox late lane lock" "lane lock replaced; skipped"
+  assert_exists "grok-sandbox late lane lock lane" "$lane_gs_late_lock"
+  assert_path_exists "grok-sandbox late lane lock lease" "$late_lease"
+  assert_exists "grok-sandbox late lane lock venv" "$late_venv"
+  : >"$late_release"
+  wait_for_background_pid "$late_materializer_pid" "$late_exited" \
+    "grok-sandbox late lane lock" || true
 
   # If a materializer replaces the path with a newly locked inode after the
   # checkout disappears, sibling cleanup must not unlink that new lock.
@@ -608,6 +694,9 @@ RECREATED_RM
     "$(command -v rm)" -f "$recreated_lock"
     exec 7>"$recreated_lock"
     flock 7
+    printf 'issued=1\nexpiry=2\n' >"$HOME/grok-sandbox/.lane-live-$recreated_key"
+    mkdir "$HOME/grok-sandbox/.venv-lane-$recreated_key"
+    : >"$HOME/grok-sandbox/.venv-sync-stamp-$recreated_key"
     : >"$recreated_ready"
     attempt=0
     while [[ ! -e "$recreated_release" && "$attempt" -lt 1000 ]]; do
@@ -628,6 +717,13 @@ RECREATED_RM
   else
     fail "grok-sandbox recreated lane lock inode was unlinked"
   fi
+  assert_contains "grok-sandbox recreated lane lock" "lane lock replaced; skipped"
+  assert_path_exists "grok-sandbox recreated lane lease" \
+    "$HOME/grok-sandbox/.lane-live-$recreated_key"
+  assert_exists "grok-sandbox recreated lane venv" \
+    "$HOME/grok-sandbox/.venv-lane-$recreated_key"
+  assert_path_exists "grok-sandbox recreated lane sync stamp" \
+    "$HOME/grok-sandbox/.venv-sync-stamp-$recreated_key"
   : >"$recreated_release"
   wait_for_background_pid "$recreated_materializer_pid" "$recreated_exited" \
     "grok-sandbox recreated lane lock" || true
@@ -1030,6 +1126,19 @@ archive_has "detached HEAD" "refs/lanes/w/lane-detached/$dh_generation/HEAD" "$d
 
 PARENT="$HOME/l1/parentrepo"
 clone_lane "$PARENT"
+
+# Parent metadata must also be pruned when a linked worktree is removed via
+# the non-archive ancestry path.
+wt_plain="$HOME/w/wt-plain"
+git -C "$PARENT" worktree add -q -b lane/wt-plain "$wt_plain" >/dev/null 2>&1
+run_reap --yes "$wt_plain"
+assert_rc0 "non-archive linked worktree"
+assert_gone "non-archive linked worktree" "$wt_plain"
+if git -C "$PARENT" worktree list | grep -qF "$wt_plain"; then
+  fail "non-archive parent still lists the reaped worktree"
+else
+  pass "non-archive parent worktree metadata pruned"
+fi
 
 wt_branch="$HOME/w/wt-branch"
 git -C "$PARENT" worktree add -q -b lane/wt-branch "$wt_branch" >/dev/null 2>&1

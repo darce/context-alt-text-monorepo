@@ -157,7 +157,9 @@ def _is_transient_describe_error(exc: BaseException) -> bool:
     current: BaseException | None = exc
     while current is not None and id(current) not in seen:
         seen.add(id(current))
-        if isinstance(current, (httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError, httpx.ProxyError)):
+        if isinstance(
+            current, (httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError, httpx.ProxyError)
+        ):
             return True
         if isinstance(current, httpx.HTTPStatusError):
             return current.response.status_code in _RETRYABLE_HTTP_STATUS_CODES

@@ -113,6 +113,50 @@ def test_record_item_result_persists_tier_and_increments_generation():
     asyncio.run(body())
 
 
+def test_record_item_result_does_not_replace_final_with_late_provisional():
+    async def body():
+        session = SimpleNamespace(flush=AsyncMock())
+        item = SimpleNamespace(
+            alt_text_draft=None,
+            caption=None,
+            provenance=None,
+            tier=None,
+            result_generation=0,
+            image_bytes=b"image",
+        )
+        repo = DescribeRunRepository(session)
+        repo._get_item = AsyncMock(return_value=item)
+
+        assert await repo.record_item_result(
+            tenant_id=uuid.uuid4(),
+            run_id=uuid.uuid4(),
+            media_id=101,
+            alt_text_draft="final draft",
+            caption="final caption",
+            provenance={"model_id": "org/gpu-model@revision"},
+            tier=DescriptionResultTier.FINAL_GPU,
+        )
+        assert not await repo.record_item_result(
+            tenant_id=uuid.uuid4(),
+            run_id=uuid.uuid4(),
+            media_id=101,
+            alt_text_draft="late provisional draft",
+            caption="late provisional caption",
+            provenance={"model_id": "org/cpu-model@revision"},
+            tier=DescriptionResultTier.PROVISIONAL_CPU,
+        )
+
+        assert item.alt_text_draft == "final draft"
+        assert item.caption == "final caption"
+        assert item.provenance == {"model_id": "org/gpu-model@revision"}
+        assert item.tier is DescriptionResultTier.FINAL_GPU
+        assert item.result_generation == 1
+        assert item.image_bytes is None
+        session.flush.assert_awaited_once()
+
+    asyncio.run(body())
+
+
 def test_create_run_rejects_empty_and_oversize_lists():
     async def body():
         engine, sf = await _sessionmaker()

@@ -324,6 +324,14 @@ path_mtime() {
   printf '%s\n' "$mtime"
 }
 
+path_inode() {
+  local inode
+  inode="$(stat -L -c %i "$1" 2>/dev/null)" ||
+    inode="$(stat -L -f %i "$1" 2>/dev/null)" || return 1
+  case "$inode" in ''|*[!0-9]*) return 1 ;; esac
+  printf '%s\n' "$inode"
+}
+
 is_grok_sandbox() {
   case "$1" in
     "$home_real/grok-sandbox/"*) return 0 ;;
@@ -435,7 +443,7 @@ backfill_grok_sandbox_marker() {
 }
 
 acquire_grok_lane_lock() {
-  local real="$1" root key lane_lock
+  local real="$1" root key lane_lock lane_lock_inode fd_inode
   is_grok_sandbox "$real" || return 0
   root="$(dirname "$real")"
   key="${real##*/}"
@@ -447,7 +455,22 @@ acquire_grok_lane_lock() {
   # inode. Treating absence as unlocked leaves no fd against which to detect a
   # path materialized during the final deletion window.
   exec 8>>"$lane_lock"
-  if ! flock -n 8 || [[ ! "$lane_lock" -ef /dev/fd/8 ]]; then
+  if ! flock -n 8; then
+    exec 8>&-
+    return 1
+  fi
+  # Do not use `-ef` here: macOS gives /dev/fd/8 the devfs device id even when
+  # it represents this open inode. The path and fd are on the same filesystem,
+  # so equal inode numbers provide the replacement check we need.
+  lane_lock_inode="$(path_inode "$lane_lock")" || {
+    exec 8>&-
+    return 1
+  }
+  fd_inode="$(path_inode /dev/fd/8)" || {
+    exec 8>&-
+    return 1
+  }
+  if [[ "$lane_lock_inode" != "$fd_inode" ]]; then
     exec 8>&-
     return 1
   fi
@@ -457,10 +480,13 @@ acquire_grok_lane_lock() {
 }
 
 grok_lane_lock_matches() {
-  local real="$1"
+  local real="$1" lane_lock_inode fd_inode
   is_grok_sandbox "$real" || return 0
   [[ "$grok_lane_lock_held" -eq 1 && -n "$grok_lane_lock_path" &&
-     -e "$grok_lane_lock_path" && "$grok_lane_lock_path" -ef /dev/fd/8 ]]
+     -e "$grok_lane_lock_path" ]] || return 1
+  lane_lock_inode="$(path_inode "$grok_lane_lock_path")" || return 1
+  fd_inode="$(path_inode /dev/fd/8)" || return 1
+  [[ "$lane_lock_inode" == "$fd_inode" ]]
 }
 
 cleanup_grok_sandbox_siblings() {

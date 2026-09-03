@@ -853,6 +853,77 @@ assert_not_contains "grok-sandbox lane lock" "cannot be verified"
 assert_exists "grok-sandbox lane lock" "$lane_gs_locked"
 archive_lacks_namespace "grok-sandbox lane lock" "grok-sandbox/${lane_gs_locked##*/}"
 
+# The contention assertion must depend on flock rejecting fd 8, not on the
+# pathname-to-fd identity check failing afterward. With the same lane and an
+# available lock, eligibility should supply the reason instead.
+touch "$lane_gs_locked/.workbay-lane-sandbox"
+PATH="$flock_success_bin:$PATH" \
+  run_reap --yes --archive-to "$ARCHIVE" "$lane_gs_locked"
+assert_rc0 "grok-sandbox available lane lock"
+assert_contains "grok-sandbox available lane lock" \
+  "sandbox marker has not reached TTL"
+assert_not_contains "grok-sandbox available lane lock" "sandbox lane lock is held"
+assert_exists "grok-sandbox available lane lock" "$lane_gs_locked"
+archive_lacks_namespace "grok-sandbox available lane lock" \
+  "grok-sandbox/${lane_gs_locked##*/}"
+
+# If either inode lookup is unavailable, destructive cleanup must fail closed.
+# The stat shim delegates every other query used by the reaper.
+lane_gs_unverified_lock="$HOME/grok-sandbox/feature-unverified-lock-abc12345"
+clone_lane "$lane_gs_unverified_lock"
+mark_sandbox "$lane_gs_unverified_lock"
+touch -t 200001010000 "$lane_gs_unverified_lock/.workbay-lane-sandbox"
+unverified_lock="$HOME/grok-sandbox/.lane-lock-${lane_gs_unverified_lock##*/}"
+: >"$unverified_lock"
+stat_failure_bin="$WORKDIR/stat-failure-bin"
+mkdir "$stat_failure_bin"
+cat >"$stat_failure_bin/stat" <<'STAT_FAILURE'
+#!/bin/sh
+for arg in "$@"; do
+  if [ "$arg" = "/dev/fd/8" ]; then
+    exit 1
+  fi
+done
+exec "$REAL_STAT" "$@"
+STAT_FAILURE
+chmod +x "$stat_failure_bin/stat"
+REAL_STAT="$(command -v stat)" PATH="$flock_success_bin:$stat_failure_bin:$PATH" \
+  run_reap --yes --archive-to "$ARCHIVE" "$lane_gs_unverified_lock"
+assert_rc0 "grok-sandbox unverifiable lane lock"
+assert_contains "grok-sandbox unverifiable lane lock" "sandbox lane lock is held"
+assert_exists "grok-sandbox unverifiable lane lock" "$lane_gs_unverified_lock"
+archive_lacks_namespace "grok-sandbox unverifiable lane lock" \
+  "grok-sandbox/${lane_gs_unverified_lock##*/}"
+
+# Replacing the stable lock pathname after fd 8 is opened must be detected even
+# when flock itself reports success.
+lane_gs_replaced_at_lock="$HOME/grok-sandbox/feature-replaced-at-lock-abc12345"
+clone_lane "$lane_gs_replaced_at_lock"
+mark_sandbox "$lane_gs_replaced_at_lock"
+touch -t 200001010000 "$lane_gs_replaced_at_lock/.workbay-lane-sandbox"
+replaced_at_lock="$HOME/grok-sandbox/.lane-lock-${lane_gs_replaced_at_lock##*/}"
+: >"$replaced_at_lock"
+flock_replace_bin="$WORKDIR/flock-replace-bin"
+mkdir "$flock_replace_bin"
+cat >"$flock_replace_bin/flock" <<'FLOCK_REPLACE'
+#!/bin/sh
+if [ "${1:-}" = "-n" ] && [ "${2:-}" = "8" ]; then
+  mv "$REPLACE_LOCK" "$REPLACE_LOCK.opened"
+  : >"$REPLACE_LOCK"
+fi
+exit 0
+FLOCK_REPLACE
+chmod +x "$flock_replace_bin/flock"
+REPLACE_LOCK="$replaced_at_lock" PATH="$flock_replace_bin:$PATH" \
+  run_reap --yes --archive-to "$ARCHIVE" "$lane_gs_replaced_at_lock"
+assert_rc0 "grok-sandbox replaced-at-acquire lane lock"
+assert_contains "grok-sandbox replaced-at-acquire lane lock" \
+  "sandbox lane lock is held"
+assert_exists "grok-sandbox replaced-at-acquire lane lock" \
+  "$lane_gs_replaced_at_lock"
+archive_lacks_namespace "grok-sandbox replaced-at-acquire lane lock" \
+  "grok-sandbox/${lane_gs_replaced_at_lock##*/}"
+
 # A dry run is observational only: it must neither delete the checkout nor
 # create archive refs (including an anchor ref for a linked worktree).
 lane_dry_archive="$HOME/w/lane-dry-archive"

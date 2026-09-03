@@ -52,6 +52,12 @@ clone_lane() {
   git_ident "$dest"
 }
 
+mark_sandbox() {
+  local lane="$1"
+  printf '%s\n' .workbay-lane-sandbox >>"$lane/.git/info/exclude"
+  printf 'lane_key=%s\n' "${lane##*/}" >"$lane/.workbay-lane-sandbox"
+}
+
 run_reap() {
   set +e
   out="$(bash "$SCRIPT" "$@" 2>&1)"
@@ -155,12 +161,25 @@ mkdir_lock_bin="$WORKDIR/mkdir-lock-bin"
 mkdir -p "$mkdir_lock_bin"
 ln -s "$(command -v bash)" "$mkdir_lock_bin/bash"
 ln -s "$(command -v mkdir)" "$mkdir_lock_bin/mkdir"
+ln -s "$(command -v rm)" "$mkdir_lock_bin/rm"
+ln -s "$(command -v rmdir)" "$mkdir_lock_bin/rmdir"
 mkdir "${lock_path}.d"
 PATH="$mkdir_lock_bin" run_reap "$lane_lock"
 if [[ "$rc" -eq 3 ]]; then pass "mkdir fallback concurrent reaper exit 3"
 else fail "mkdir fallback concurrent reaper expected exit 3 got $rc; out=$out"; fi
 assert_contains "mkdir fallback concurrent reaper" "another reaper holds $lock_path"
 rmdir "${lock_path}.d"
+
+# A mkdir lock left behind by an untrappable death must not disable every
+# future sweep. Ownership metadata lets the fallback recover only a lock whose
+# recorded process is definitely gone; missing/malformed metadata stays held.
+mkdir "${lock_path}.d"
+printf 'pid=99999999\n' >"${lock_path}.d/owner"
+PATH="$mkdir_lock_bin" run_reap --all "$WORKDIR/missing-root"
+if [[ "$rc" -eq 1 ]]; then pass "mkdir fallback stale lock recovered"
+else fail "mkdir fallback stale lock expected post-lock exit 1 got $rc; out=$out"; fi
+if [[ ! -e "${lock_path}.d" ]]; then pass "mkdir fallback stale lock released"
+else fail "mkdir fallback stale lock directory survived"; fi
 
 # ---------------------------------------------------------------------------
 # (a) merged clean clone -> WOULD REAP (dry-run) and is deleted with --yes.
@@ -323,9 +342,13 @@ assert_contains "g2 lanes" "WOULD REAP"
 # five roots that no longer grow and reporting success throughout.
 lane_gs="$HOME/grok-sandbox/feature-vmreap-1-abc1234"
 clone_lane "$lane_gs"
-run_reap "$lane_gs"
-assert_rc0 "g2 grok-sandbox"
-assert_contains "g2 grok-sandbox" "WOULD REAP"
+mark_sandbox "$lane_gs"
+touch -t 200001010000 "$lane_gs/.workbay-lane-sandbox"
+if command -v flock >/dev/null 2>&1; then
+  run_reap "$lane_gs"
+  assert_rc0 "g2 grok-sandbox"
+  assert_contains "g2 grok-sandbox" "WOULD REAP"
+fi
 
 # ...and widening the roots must not come from loosening the matcher: the
 # segment-exact guard still refuses a sibling that merely shares the prefix.
@@ -401,6 +424,74 @@ archive_lacks_namespace() {  # $1 label, $2 namespace
   else fail "$1 unexpectedly created archive refs: $refs"; fi
 }
 
+# The generic lane sweep must honor the remote sandbox lifecycle before it
+# archives or deletes anything: marker TTL, occupancy lease, and per-lane lock.
+lane_gs_fresh="$HOME/grok-sandbox/feature-fresh-abc12345"
+clone_lane "$lane_gs_fresh"
+mark_sandbox "$lane_gs_fresh"
+run_reap --yes --archive-to "$ARCHIVE" "$lane_gs_fresh"
+assert_rc0 "grok-sandbox fresh marker"
+assert_contains "grok-sandbox fresh marker" "sandbox marker has not reached TTL"
+assert_exists "grok-sandbox fresh marker" "$lane_gs_fresh"
+archive_lacks_namespace "grok-sandbox fresh marker" "grok-sandbox/${lane_gs_fresh##*/}"
+
+if command -v flock >/dev/null 2>&1; then
+  # Remove the earlier stale canary, then prove a sweep containing only a
+  # fresh sandbox is not misreported as zero-reclaim staleness.
+  run_reap --yes --archive-to "$ARCHIVE" "$lane_gs"
+  assert_rc0 "grok-sandbox stale marker"
+  assert_gone "grok-sandbox stale marker" "$lane_gs"
+  REAP_DF_ALERT_PCT=0 run_reap --yes --archive-to "$ARCHIVE" --all "$HOME/grok-sandbox"
+  assert_rc0 "grok-sandbox fresh-only sweep"
+  assert_exists "grok-sandbox fresh-only sweep" "$lane_gs_fresh"
+
+  # Pre-marker legacy sandboxes enter the canonical marker-gated path only
+  # after their directory itself has aged past the sandbox TTL.
+  lane_gs_legacy="$HOME/grok-sandbox/feature-legacy-abc12345"
+  clone_lane "$lane_gs_legacy"
+  touch -t 200001010000 "$lane_gs_legacy"
+  run_reap --yes --archive-to "$ARCHIVE" "$lane_gs_legacy"
+  assert_rc0 "grok-sandbox stale legacy marker backfill"
+  assert_gone "grok-sandbox stale legacy marker backfill" "$lane_gs_legacy"
+fi
+
+lane_gs_leased="$HOME/grok-sandbox/feature-leased-abc12345"
+clone_lane "$lane_gs_leased"
+mark_sandbox "$lane_gs_leased"
+touch -t 200001010000 "$lane_gs_leased/.workbay-lane-sandbox"
+now_epoch="$(date +%s)"
+printf 'pid=%s\nissued=%s\nexpiry=%s\n' "$$" "$now_epoch" "$((now_epoch + 3600))" \
+  >"$HOME/grok-sandbox/.lane-live-${lane_gs_leased##*/}"
+run_reap --yes --archive-to "$ARCHIVE" "$lane_gs_leased"
+assert_rc0 "grok-sandbox live lease"
+assert_contains "grok-sandbox live lease" "sandbox lease is live"
+assert_exists "grok-sandbox live lease" "$lane_gs_leased"
+archive_lacks_namespace "grok-sandbox live lease" "grok-sandbox/${lane_gs_leased##*/}"
+
+if command -v flock >/dev/null 2>&1; then
+  lane_gs_locked="$HOME/grok-sandbox/feature-locked-abc12345"
+  clone_lane "$lane_gs_locked"
+  mark_sandbox "$lane_gs_locked"
+  touch -t 200001010000 "$lane_gs_locked/.workbay-lane-sandbox"
+  lane_gs_lock="$HOME/grok-sandbox/.lane-lock-${lane_gs_locked##*/}"
+  rm -f "$lock_ready" "$lock_release"
+  (
+    exec 7>>"$lane_gs_lock"
+    flock 7
+    : >"$lock_ready"
+    while [[ ! -e "$lock_release" ]]; do sleep 0.05; done
+  ) &
+  lock_holder_pid=$!
+  for _ in {1..100}; do [[ -e "$lock_ready" ]] && break; sleep 0.05; done
+  run_reap --yes --archive-to "$ARCHIVE" "$lane_gs_locked"
+  assert_rc0 "grok-sandbox lane lock"
+  assert_contains "grok-sandbox lane lock" "sandbox lane lock is held"
+  assert_exists "grok-sandbox lane lock" "$lane_gs_locked"
+  archive_lacks_namespace "grok-sandbox lane lock" "grok-sandbox/${lane_gs_locked##*/}"
+  : >"$lock_release"
+  wait "$lock_holder_pid"
+fi
+
 # A dry run is observational only: it must neither delete the checkout nor
 # create archive refs (including an anchor ref for a linked worktree).
 lane_dry_archive="$HOME/w/lane-dry-archive"
@@ -424,6 +515,21 @@ assert_rc0 "archive reap"
 assert_gone "archive reap" "$lane_ar"
 archive_has "archive reap" "refs/lanes/w/lane-archive/main" "$ar_sha"
 archive_has "archive reap" "refs/lanes/w/lane-archive/second-branch" "$ar_sha"
+
+# A local tag can be the only ref retaining a commit. Preserve the tag object
+# itself (including annotated-tag metadata), not merely its peeled commit.
+lane_tag="$HOME/w/lane-tag-only"
+clone_lane "$lane_tag"
+echo "tag only" >"$lane_tag/TAG_ONLY"
+git -C "$lane_tag" add TAG_ONLY
+git -C "$lane_tag" commit -q -m "commit retained only by tag"
+git -C "$lane_tag" tag -a tag-only -m "retain tag-only commit"
+tag_object="$(git -C "$lane_tag" rev-parse refs/tags/tag-only)"
+git -C "$lane_tag" reset -q --hard HEAD^
+run_reap --yes --archive-to "$ARCHIVE" "$lane_tag"
+assert_rc0 "archive tag-only commit"
+assert_gone "archive tag-only commit" "$lane_tag"
+archive_has "archive tag-only commit" "refs/lanes/w/lane-tag-only/refs/tags/tag-only" "$tag_object"
 
 # Without --archive-to the old guard still holds: unmerged work is never
 # deleted just because a flag was forgotten.

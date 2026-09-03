@@ -59,16 +59,25 @@ fi
 
 lock_path="$HOME/.reap-lane.lock"
 lock_dir="${lock_path}.d"
+lock_owner="${lock_dir}/owner"
 lock_kind=""
 
 release_sweep_lock() {
+  local owner_pid="" owner_line=""
   case "$lock_kind" in
     flock)
       flock -u 9 >/dev/null 2>&1 || true
       exec 9>&-
       ;;
     mkdir)
-      rmdir "$lock_dir" >/dev/null 2>&1 || true
+      if [[ -f "$lock_owner" ]]; then
+        IFS= read -r owner_line <"$lock_owner" || true
+        case "$owner_line" in pid=*) owner_pid="${owner_line#pid=}" ;; esac
+      fi
+      if [[ "$owner_pid" == "$$" ]]; then
+        rm -f "$lock_owner" >/dev/null 2>&1 || true
+        rmdir "$lock_dir" >/dev/null 2>&1 || true
+      fi
       ;;
   esac
   lock_kind=""
@@ -83,9 +92,36 @@ if command -v flock >/dev/null 2>&1; then
   fi
   lock_kind="flock"
 else
-  if ! mkdir "$lock_dir" 2>/dev/null; then
+  mkdir_lock_acquired=0
+  if mkdir "$lock_dir" 2>/dev/null; then
+    mkdir_lock_acquired=1
+  else
+    owner_pid=""
+    if [[ -f "$lock_owner" ]]; then
+      IFS= read -r owner_line <"$lock_owner" || true
+      case "$owner_line" in pid=*) owner_pid="${owner_line#pid=}" ;; esac
+    fi
+    case "$owner_pid" in
+      ''|*[!0-9]*) ;;
+      *)
+        if ! kill -0 "$owner_pid" 2>/dev/null; then
+          rm -f "$lock_owner" >/dev/null 2>&1 || true
+          rmdir "$lock_dir" >/dev/null 2>&1 || true
+          if mkdir "$lock_dir" 2>/dev/null; then
+            mkdir_lock_acquired=1
+          fi
+        fi
+        ;;
+    esac
+  fi
+  if [[ "$mkdir_lock_acquired" -ne 1 ]]; then
     echo "reap-lane: another reaper holds $lock_path" >&2
     exit 3
+  fi
+  if ! printf 'pid=%s\n' "$$" >"$lock_owner"; then
+    rmdir "$lock_dir" >/dev/null 2>&1 || true
+    echo "reap-lane: could not record lock owner for $lock_path" >&2
+    exit 1
   fi
   lock_kind="mkdir"
 fi
@@ -125,9 +161,11 @@ home_real="$(realpath "$HOME")"
 REAP_LANE_ROOTS="${REAP_LANE_ROOTS:-w3 uxw2 l1 w lanes grok-sandbox}"
 
 candidates=0
+freshness_candidates=0
 reaped=0
 skipped=0
 bytes_freed=0
+grok_lane_lock_held=0
 
 is_ignorable_path() {
   local p="${1#./}"
@@ -142,6 +180,141 @@ is_ignorable_path() {
 skip() {
   skipped=$((skipped + 1))
   printf 'SKIP %s: %s\n' "$1" "$2"
+}
+
+path_mtime() {
+  local mtime
+  mtime="$(stat -c %Y "$1" 2>/dev/null)" || mtime="$(stat -f %m "$1" 2>/dev/null)" || return 1
+  case "$mtime" in ''|*[!0-9]*) return 1 ;; esac
+  printf '%s\n' "$mtime"
+}
+
+is_grok_sandbox() {
+  case "$1" in
+    "$home_real/grok-sandbox/"*) return 0 ;;
+  esac
+  return 1
+}
+
+# Apply the same marker/lease/TTL contract as scripts/remote_agent.sh. Returns
+# success only after the sandbox is old and unoccupied; deletion still takes
+# the per-lane lock immediately before archive/anchor and holds it through rm.
+grok_sandbox_is_stale() {
+  local real="$1" path="$2" root key marker lease ttl now mtime issued expiry marker_tmp lease_line
+  root="$(dirname "$real")"
+  key="${real##*/}"
+  marker="$real/.workbay-lane-sandbox"
+  lease="$root/.lane-live-$key"
+  ttl="${WORKBAY_REMOTE_AGENT_SANDBOX_TTL_SEC:-172800}"
+  case "$ttl" in
+    ''|*[!0-9]*)
+      skip "$path" "invalid sandbox TTL"
+      return 1
+      ;;
+    0)
+      skip "$path" "sandbox TTL reaping is disabled"
+      return 1
+      ;;
+  esac
+
+  if [[ ! -f "$marker" ]]; then
+    mtime="$(path_mtime "$real" || true)"
+    now="$(date +%s)"
+    if [[ -z "$mtime" || $((now - mtime)) -le "$ttl" || "$yes" -eq 0 ]]; then
+      skip "$path" "sandbox marker missing"
+      return 1
+    fi
+    # Legacy sandboxes predate marker-gated cleanup. Backfill only stale ones,
+    # preserve their prior age, and locally exclude the marker just as the
+    # canonical materializer does.
+    marker_tmp="$root/.reap-marker-$key-$$"
+    if ! printf 'lane_key=%s\n' "$key" >"$marker_tmp" ||
+       ! touch -r "$real" "$marker_tmp"; then
+      rm -f "$marker_tmp" >/dev/null 2>&1 || true
+      skip "$path" "could not backfill sandbox marker"
+      return 1
+    fi
+    if ! grep -qxF '.workbay-lane-sandbox' "$real/.git/info/exclude" 2>/dev/null; then
+      if ! printf '%s\n' .workbay-lane-sandbox >>"$real/.git/info/exclude"; then
+        rm -f "$marker_tmp" >/dev/null 2>&1 || true
+        skip "$path" "could not backfill sandbox marker"
+        return 1
+      fi
+    fi
+    if ! mv "$marker_tmp" "$marker"; then
+      rm -f "$marker_tmp" >/dev/null 2>&1 || true
+      skip "$path" "could not backfill sandbox marker"
+      return 1
+    fi
+  fi
+
+  mtime="$(path_mtime "$marker" || true)"
+  now="$(date +%s)"
+  if [[ -z "$mtime" ]]; then
+    skip "$path" "could not read sandbox marker age"
+    return 1
+  fi
+  if [[ $((now - mtime)) -le "$ttl" ]]; then
+    skip "$path" "sandbox marker has not reached TTL"
+    return 1
+  fi
+
+  if [[ -f "$lease" ]]; then
+    issued=""
+    expiry=""
+    while IFS= read -r lease_line || [[ -n "$lease_line" ]]; do
+      case "$lease_line" in
+        issued=*) issued="${lease_line#issued=}" ;;
+        expiry=*) expiry="${lease_line#expiry=}" ;;
+      esac
+    done <"$lease" || {
+      skip "$path" "sandbox lease is live or unreadable"
+      return 1
+    }
+    case "$issued" in
+      ''|*[!0-9]*)
+        skip "$path" "sandbox lease is live or malformed"
+        return 1
+        ;;
+    esac
+    case "$expiry" in
+      ''|*[!0-9]*)
+        skip "$path" "sandbox lease is live or malformed"
+        return 1
+        ;;
+    esac
+    if [[ "$now" -lt "$expiry" ]]; then
+      skip "$path" "sandbox lease is live"
+      return 1
+    fi
+  fi
+  return 0
+}
+
+acquire_grok_lane_lock() {
+  local real="$1" root key lane_lock
+  is_grok_sandbox "$real" || return 0
+  root="$(dirname "$real")"
+  key="${real##*/}"
+  lane_lock="$root/.lane-lock-$key"
+  if ! command -v flock >/dev/null 2>&1; then
+    return 1
+  fi
+  exec 8>>"$lane_lock"
+  if ! flock -n 8; then
+    exec 8>&-
+    return 1
+  fi
+  grok_lane_lock_held=1
+  return 0
+}
+
+release_grok_lane_lock() {
+  if [[ "$grok_lane_lock_held" -eq 1 ]]; then
+    flock -u 8 >/dev/null 2>&1 || true
+    exec 8>&-
+    grok_lane_lock_held=0
+  fi
 }
 
 # $1 = a realpath already known to be under $home_real.
@@ -225,13 +398,25 @@ stash_has_real_work() {
 # Not --force: these refs may be the only copy of that lane's history, so a
 # diverged re-archive must be refused rather than overwritten.
 archive_lane() {
-  local dir="$1" ns="$2" head_sha want got ref sha
+  local dir="$1" ns="$2" head_sha want got ref sha source_ref
+  local ref_specs=()
   if ! git -C "$dir" rev-parse --verify --quiet HEAD >/dev/null; then
     return 1
   fi
   if [[ -n "$(git -C "$dir" for-each-ref --format='%(objectname)' refs/heads)" ]]; then
     git -C "$dir" push --quiet --no-verify -- "$archive_to" \
       "refs/heads/*:refs/lanes/${ns}/*" >/dev/null 2>&1 || return 1
+  fi
+  # Keep the historical branch namespace for consumers, plus an unambiguous
+  # refs/ mirror that retains tags, notes, replacement refs, and any other
+  # local ref without flattening unlike kinds onto one destination.
+  while IFS= read -r source_ref; do
+    [[ -z "$source_ref" ]] && continue
+    ref_specs+=("${source_ref}:refs/lanes/${ns}/refs/${source_ref#refs/}")
+  done < <(git -C "$dir" for-each-ref --format='%(refname)' refs)
+  if [[ ${#ref_specs[@]} -gt 0 ]]; then
+    git -C "$dir" push --quiet --no-verify -- "$archive_to" \
+      "${ref_specs[@]}" >/dev/null 2>&1 || return 1
   fi
   head_sha="$(git -C "$dir" rev-parse HEAD)"
   # Named explicitly: commits reachable only from a detached HEAD are the
@@ -244,6 +429,7 @@ archive_lane() {
   # and the next step is rm -rf.
   want="$(
     git -C "$dir" for-each-ref --format="refs/lanes/${ns}/%(refname:strip=2) %(objectname)" refs/heads
+    git -C "$dir" for-each-ref --format="refs/lanes/${ns}/refs/%(refname:strip=1) %(objectname)" refs
     printf 'refs/lanes/%s/HEAD %s\n' "$ns" "$head_sha"
   )"
   got="$(git ls-remote -- "$archive_to" "refs/lanes/${ns}/*" 2>/dev/null |
@@ -320,6 +506,13 @@ process_one() {
     return 0
   fi
 
+  if is_grok_sandbox "$real"; then
+    if ! grok_sandbox_is_stale "$real" "$path"; then
+      return 0
+    fi
+  fi
+  freshness_candidates=$((freshness_candidates + 1))
+
   if [[ -n "$archive_to" ]]; then
     ns="${real#"${home_real}"/}"
     parent="$(lane_parent_repo "$real" || true)"
@@ -337,8 +530,13 @@ process_one() {
       skip "$path" "stash has real work"
       return 0
     fi
+    if [[ "$yes" -eq 1 ]] && ! acquire_grok_lane_lock "$real"; then
+      skip "$path" "sandbox lane lock is held or cannot be verified"
+      return 0
+    fi
     if [[ -n "$parent" ]]; then
       if [[ "$yes" -eq 1 ]] && ! anchor_worktree_head "$real" "$ns" "$parent"; then
+        release_grok_lane_lock
         skip "$path" "could not anchor HEAD in ${parent}"
         return 0
       fi
@@ -346,6 +544,7 @@ process_one() {
     else
       upstream_label="archived:${archive_to}"
       if [[ "$yes" -eq 1 ]] && ! archive_lane "$real" "$ns"; then
+        release_grok_lane_lock
         skip "$path" "could not archive to ${archive_to}"
         return 0
       fi
@@ -391,6 +590,10 @@ process_one() {
       skip "$path" "stash has real work"
       return 0
     fi
+    if [[ "$yes" -eq 1 ]] && ! acquire_grok_lane_lock "$real"; then
+      skip "$path" "sandbox lane lock is held or cannot be verified"
+      return 0
+    fi
   fi
 
   size="$(du -sh "$real" | awk '{print $1}')"
@@ -413,6 +616,7 @@ process_one() {
   log_dir="$(dirname "$log")"
   mkdir -p "$log_dir"
   printf '%s %s %s %s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$real" "$size" "$head_sha" "$upstream_label" >>"$log"
+  release_grok_lane_lock
   return 0
 }
 
@@ -428,7 +632,7 @@ printf 'REAP SUMMARY candidates=%s reaped=%s skipped=%s bytes_freed=%s df_used_p
   "$candidates" "$reaped" "$skipped" "$bytes_freed" "$df_used_pct"
 
 if [[ "$rc" -eq 0 && "$yes" -eq 1 && "${#all_roots[@]}" -gt 0 &&
-      "$candidates" -gt 0 && "$reaped" -eq 0 &&
+      "$freshness_candidates" -gt 0 && "$reaped" -eq 0 &&
       "$df_used_pct" -ge "${REAP_DF_ALERT_PCT:-85}" ]]; then
   exit 4
 fi

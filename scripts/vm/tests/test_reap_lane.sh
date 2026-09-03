@@ -465,6 +465,17 @@ generation_of() {  # $1 repo
   git -C "$1" rev-list --max-parents=0 HEAD | sort | sed -n '1p'
 }
 
+# The archive must outlive the lane. A local archive nested below the checkout
+# would accept and verify every ref, then disappear in the same rm -rf.
+lane_nested_archive="$HOME/w3/nested-archive"
+clone_lane "$lane_nested_archive"
+nested_archive="$lane_nested_archive/.git/archive.git"
+git init --bare --quiet "$nested_archive"
+REAP_MIN_AGE_SEC=0 run_reap --yes --archive-to "$nested_archive" "$lane_nested_archive"
+assert_rc0 "archive destination inside lane"
+assert_contains "archive destination inside lane" "archive destination is inside lane"
+assert_exists "archive destination inside lane" "$lane_nested_archive"
+
 # The generic lane sweep must honor the remote sandbox lifecycle before it
 # archives or deletes anything: marker TTL, occupancy lease, and per-lane lock.
 lane_gs_fresh="$HOME/grok-sandbox/feature-fresh-abc12345"

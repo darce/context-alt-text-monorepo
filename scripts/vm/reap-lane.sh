@@ -21,6 +21,7 @@ yes=0
 log="${HOME}/reap-lane.log"
 all_roots=()
 archive_to=""
+archive_to_real=""
 paths=()
 
 while [[ $# -gt 0 ]]; do
@@ -55,6 +56,28 @@ done
 
 if [[ ${#all_roots[@]} -eq 0 && ${#paths[@]} -eq 0 ]]; then
   usage
+fi
+
+# Canonicalize filesystem-backed archives once, before inspecting candidates.
+# Remote transports cannot be compared to a lane's local realpath.
+if [[ -n "$archive_to" ]]; then
+  archive_path=""
+  case "$archive_to" in
+    file:///*) archive_path="${archive_to#file://}" ;;
+    *://*|*:* ) ;;
+    *) archive_path="$archive_to" ;;
+  esac
+  if [[ -n "$archive_path" ]]; then
+    archive_to_real="$(realpath "$archive_path")" || {
+      echo "reap-lane: archive destination realpath failed: $archive_to" >&2
+      exit 1
+    }
+    # A canonical absolute destination also makes a relative local path behave
+    # consistently when git is invoked with -C for different lane checkouts.
+    if [[ "$archive_to" != file:///* ]]; then
+      archive_to="$archive_to_real"
+    fi
+  fi
 fi
 
 lock_path="$HOME/.reap-lane.lock"
@@ -94,6 +117,7 @@ if command -v flock >/dev/null 2>&1; then
 else
   mkdir_lock_acquired=0
   stale_lock_dir=""
+  recovery_claim=""
   if mkdir "$lock_dir" 2>/dev/null; then
     mkdir_lock_acquired=1
   else
@@ -110,14 +134,28 @@ else
         if ! kill -0 "$owner_pid" 2>/dev/null &&
            command -v ps >/dev/null 2>&1 &&
            ! ps -p "$owner_pid" >/dev/null 2>&1; then
+          recovery_claim="${lock_dir}/recovering"
           stale_lock_dir="${lock_dir}.stale.$$"
-          # Renaming the directory is the ownership transfer: at most one
-          # contender can move this inode. Preserve its owner file because it
-          # was written by the prior holder, not by this process.
-          if [[ ! -e "$stale_lock_dir" ]] &&
-             mv "$lock_dir" "$stale_lock_dir" 2>/dev/null &&
-             mkdir "$lock_dir" 2>/dev/null; then
-            mkdir_lock_acquired=1
+          # Claim the stale inode before renaming it. A contender delayed until
+          # after the rename must re-read the replacement's owner and may not
+          # move that new lock out from under its live holder.
+          if mkdir "$recovery_claim" 2>/dev/null; then
+            recovered_owner_pid=""
+            if [[ -f "$lock_owner" ]]; then
+              IFS= read -r owner_line <"$lock_owner" || true
+              case "$owner_line" in pid=*) recovered_owner_pid="${owner_line#pid=}" ;; esac
+            fi
+            if [[ "$recovered_owner_pid" == "$owner_pid" ]] &&
+               ! kill -0 "$recovered_owner_pid" 2>/dev/null &&
+               command -v ps >/dev/null 2>&1 &&
+               ! ps -p "$recovered_owner_pid" >/dev/null 2>&1 &&
+               [[ ! -e "$stale_lock_dir" ]] &&
+               mv "$lock_dir" "$stale_lock_dir" 2>/dev/null &&
+               mkdir "$lock_dir" 2>/dev/null; then
+              mkdir_lock_acquired=1
+            else
+              rmdir "$recovery_claim" >/dev/null 2>&1 || true
+            fi
           fi
         fi
         ;;
@@ -555,6 +593,14 @@ process_one() {
   if ! is_under_lane_root "$real"; then
     skip "$path" "not under allowlisted lane root"
     return 0
+  fi
+  if [[ -n "$archive_to_real" ]]; then
+    case "$archive_to_real" in
+      "$real"|"$real"/*)
+        skip "$path" "archive destination is inside lane"
+        return 0
+        ;;
+    esac
   fi
 
   if is_grok_sandbox "$real"; then

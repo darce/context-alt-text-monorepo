@@ -621,7 +621,7 @@ process_one() {
 }
 
 rc=0
-for path in "${paths[@]}"; do
+for path in ${paths[@]+"${paths[@]}"}; do
   if ! process_one "$path"; then
     rc=1
   fi

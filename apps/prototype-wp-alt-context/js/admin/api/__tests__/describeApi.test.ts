@@ -194,6 +194,29 @@ describe('describeApi', () => {
     expect(options).not.toHaveProperty('body');
   });
 
+  it('preserves a null tier for a queued run item that has not generated a result', async () => {
+    const itemsResponse = {
+      run_id: 'run-queued',
+      items: [
+        {
+          media_id: 72,
+          status: 'queued',
+          alt_text_draft: null,
+          caption: null,
+          provenance: null,
+          tier: null,
+          result_generation: 0,
+          existing_alt: false,
+        },
+      ],
+    } satisfies DescribeRunItemsResponse;
+    fetchApiMock.mockResolvedValue(itemsResponse);
+
+    const result = await fetchDescribeRunItems('run-queued');
+
+    expect(result.items[0]?.tier).toBeNull();
+  });
+
   it('url-encodes the run id when reading items', async () => {
     fetchApiMock.mockResolvedValue({ run_id: 'a/b', items: [] });
 

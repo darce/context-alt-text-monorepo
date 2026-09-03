@@ -10,6 +10,8 @@ export GIT_TERMINAL_PROMPT=0
 usage() {
   echo "Usage: reap-lane.sh [--yes] [--log FILE] [--archive-to REPO.git] PATH..." >&2
   echo "       reap-lane.sh [--yes] [--log FILE] --all ROOT [--all ROOT ...]" >&2
+  echo "Exit status 3 means another reaper holds the whole-sweep lock." >&2
+  echo "Exit status 4 means a pressured --yes sweep found candidates but reaped none." >&2
   exit 2
 }
 
@@ -51,6 +53,47 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+if [[ ${#all_roots[@]} -eq 0 && ${#paths[@]} -eq 0 ]]; then
+  usage
+fi
+
+lock_path="$HOME/.reap-lane.lock"
+lock_dir="${lock_path}.d"
+lock_kind=""
+
+release_sweep_lock() {
+  case "$lock_kind" in
+    flock)
+      flock -u 9 >/dev/null 2>&1 || true
+      exec 9>&-
+      ;;
+    mkdir)
+      rmdir "$lock_dir" >/dev/null 2>&1 || true
+      ;;
+  esac
+  lock_kind=""
+}
+
+if command -v flock >/dev/null 2>&1; then
+  exec 9>"$lock_path"
+  if ! flock -n 9; then
+    exec 9>&-
+    echo "reap-lane: another reaper holds $lock_path" >&2
+    exit 3
+  fi
+  lock_kind="flock"
+else
+  if ! mkdir "$lock_dir" 2>/dev/null; then
+    echo "reap-lane: another reaper holds $lock_path" >&2
+    exit 3
+  fi
+  lock_kind="mkdir"
+fi
+trap release_sweep_lock EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
 for all_root in ${all_roots[@]+"${all_roots[@]}"}; do
   if [[ ! -d "$all_root" ]]; then
     echo "reap-lane: --all root is not a directory: $all_root" >&2
@@ -64,10 +107,6 @@ for all_root in ${all_roots[@]+"${all_roots[@]}"}; do
   done
   shopt -u nullglob
 done
-
-if [[ ${#all_roots[@]} -eq 0 && ${#paths[@]} -eq 0 ]]; then
-  usage
-fi
 
 home_real="$(realpath "$HOME")"
 
@@ -85,6 +124,11 @@ home_real="$(realpath "$HOME")"
 # sweep must not silently still reap the standing ones.
 REAP_LANE_ROOTS="${REAP_LANE_ROOTS:-w3 uxw2 l1 w lanes grok-sandbox}"
 
+candidates=0
+reaped=0
+skipped=0
+bytes_freed=0
+
 is_ignorable_path() {
   local p="${1#./}"
   case "$p" in
@@ -96,6 +140,7 @@ is_ignorable_path() {
 }
 
 skip() {
+  skipped=$((skipped + 1))
   printf 'SKIP %s: %s\n' "$1" "$2"
 }
 
@@ -249,7 +294,9 @@ anchor_worktree_head() {
 # Return 0 = skip or reaped (normal); 1 = internal error.
 process_one() {
   local path="$1"
-  local real size head_sha upstream upstream_label url ref log_dir ns parent
+  local real size size_kib head_sha upstream upstream_label url ref log_dir ns parent
+
+  candidates=$((candidates + 1))
 
   if [[ ! -d "$path" || ! -e "$path/.git" ]]; then
     skip "$path" "not a git directory"
@@ -291,16 +338,17 @@ process_one() {
       return 0
     fi
     if [[ -n "$parent" ]]; then
-      if ! anchor_worktree_head "$real" "$ns" "$parent"; then
+      if [[ "$yes" -eq 1 ]] && ! anchor_worktree_head "$real" "$ns" "$parent"; then
         skip "$path" "could not anchor HEAD in ${parent}"
         return 0
       fi
       upstream_label="worktree-of:${parent}"
-    elif ! archive_lane "$real" "$ns"; then
-      skip "$path" "could not archive to ${archive_to}"
-      return 0
     else
       upstream_label="archived:${archive_to}"
+      if [[ "$yes" -eq 1 ]] && ! archive_lane "$real" "$ns"; then
+        skip "$path" "could not archive to ${archive_to}"
+        return 0
+      fi
     fi
   elif [[ -n "${REAP_UPSTREAM:-}" ]]; then
     if [[ "$REAP_UPSTREAM" != *#* ]]; then
@@ -346,6 +394,7 @@ process_one() {
   fi
 
   size="$(du -sh "$real" | awk '{print $1}')"
+  size_kib="$(du -sk "$real" | awk '{print $1}')"
   head_sha="$(git -C "$real" rev-parse HEAD)"
 
   if [[ "$yes" -eq 0 ]]; then
@@ -354,6 +403,8 @@ process_one() {
   fi
 
   rm -rf -- "$real"
+  reaped=$((reaped + 1))
+  bytes_freed=$((bytes_freed + size_kib * 1024))
   # Stale worktree metadata makes the parent's `worktree list` lie, and leaves
   # the per-worktree HEAD holding a commit we have already anchored properly.
   if [[ -n "${parent:-}" ]]; then
@@ -371,4 +422,13 @@ for path in "${paths[@]}"; do
     rc=1
   fi
 done
+
+df_used_pct="$(df -P "$HOME" | awk 'NR == 2 { sub(/%$/, "", $5); print $5; exit }')"
+printf 'REAP SUMMARY candidates=%s reaped=%s skipped=%s bytes_freed=%s df_used_pct=%s\n' \
+  "$candidates" "$reaped" "$skipped" "$bytes_freed" "$df_used_pct"
+
+if [[ "$rc" -eq 0 && "$yes" -eq 1 && "$candidates" -gt 0 && "$reaped" -eq 0 &&
+      "$df_used_pct" -ge "${REAP_DF_ALERT_PCT:-85}" ]]; then
+  exit 4
+fi
 exit "$rc"

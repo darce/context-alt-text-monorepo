@@ -503,7 +503,9 @@ def _record_transition(
     )
 
 
-def _running_seconds(transitions: list[dict[str, Any]]) -> float:
+def _running_seconds(
+    transitions: list[dict[str, Any]], *, final_elapsed_seconds: float
+) -> float:
     total = 0.0
     for current, following in pairwise(transitions):
         if current["state"] == "RUNNING":
@@ -511,6 +513,11 @@ def _running_seconds(transitions: list[dict[str, Any]]) -> float:
                 0.0,
                 float(following["elapsed_seconds"]) - float(current["elapsed_seconds"]),
             )
+    if transitions and transitions[-1]["state"] == "RUNNING":
+        total += max(
+            0.0,
+            final_elapsed_seconds - float(transitions[-1]["elapsed_seconds"]),
+        )
     return round(total, 3)
 
 
@@ -885,9 +892,21 @@ def run_smoke(
         except (SmokeFailure, OSError, ValueError) as exc:
             check("no_orphan_running", False, str(exc))
 
-    running_seconds = _running_seconds(transitions)
+    evidence_elapsed_seconds = deadline.elapsed()
+    running_seconds = _running_seconds(
+        transitions, final_elapsed_seconds=evidence_elapsed_seconds
+    )
     cost = round(running_seconds * GPU_USD_PER_HOUR / 3600.0, 6)
-    measurements = {"running_seconds": running_seconds, "cost_estimate_usd": cost}
+    stopped_finally = any(
+        check["name"] == "instance_stopped_finally" and check["passed"]
+        for check in checks
+    )
+    cost_estimate_ongoing = not stopped_finally
+    measurements = {
+        "running_seconds": running_seconds,
+        "cost_estimate_usd": cost,
+        "cost_estimate_ongoing": cost_estimate_ongoing,
+    }
     assert_no_null_measurement_values(measurements)
     item_provenance = []
     for item in items:
@@ -920,6 +939,7 @@ def run_smoke(
         "load_json": load_snapshot,
         "measurements": measurements,
         "cost_estimate_usd": cost,
+        "cost_estimate_ongoing": cost_estimate_ongoing,
         "checks": checks,
     }
     _write_evidence(args.evidence_out, evidence)
@@ -928,7 +948,8 @@ def run_smoke(
         f"\nBudget: {args.max_seconds}s = idle 300s + reap 120s + fence 2s + slack {max(0, args.max_seconds - 422)}s"
     )
     print(
-        f"Estimated GPU cost: ${cost:.6f} ({running_seconds:.3f}s RUNNING at ${GPU_USD_PER_HOUR:.2f}/hour)"
+        f"Estimated GPU cost: ${cost:.6f} ({running_seconds:.3f}s RUNNING at ${GPU_USD_PER_HOUR:.2f}/hour; "
+        f"{'ongoing' if cost_estimate_ongoing else 'closed'})"
     )
     print(f"Evidence: {args.evidence_out}")
     exit_code = (

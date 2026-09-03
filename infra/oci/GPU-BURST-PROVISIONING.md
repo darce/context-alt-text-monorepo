@@ -52,8 +52,12 @@ quota approval**, which is a human console request Oracle grants asynchronously.
    `gpu-cloud-init.yaml`). Capture its OCID → `gpu_image_ocid` in `terraform.tfvars`.
    Spike measurement candidate: `Qwen3-VL-30B-A3B-Instruct @ Q4 GGUF` (~18 GB, proves
    the 24 GB fit). Boot volume `gpu_boot_volume_size_in_gbs = 400`.
-5. **Set tfvars + apply.** `gpu_shape` (default `VM.GPU.A10.1`), `gpu_image_ocid`,
-   then `terraform apply` (or `./retry-apply.sh` — see the capacity caveat below).
+5. **Set tfvars, validate, + apply.** `gpu_shape` (default `VM.GPU.A10.1`),
+   `gpu_image_ocid`, then run `make test-infra-terraform` from the repository root.
+   This mandatory release gate runs `terraform init -backend=false` and
+   `terraform validate`; it fails if Terraform or the OCI provider is unavailable.
+   After it passes, run `terraform apply` (or `./retry-apply.sh` — see the capacity
+   caveat below).
    The GPU resource carries the `project=acx`, `env=production`, `role=gpu-burst`,
    `scale_to_zero=true`, and `purpose=gpu-spike-bench` freeform tags. The spike bench
    requires that pinned purpose tag before it permits any lifecycle action.

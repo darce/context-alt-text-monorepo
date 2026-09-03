@@ -564,6 +564,33 @@ class StartCycleResult:
     fallbacks: tuple[FallbackDecision, ...] = ()
 
 
+def _snapshot_instance_id(instances: list[GpuInstance]) -> str | None:
+    """Return the instance id when an aggregate snapshot has one subject."""
+    instance_ids = {instance.instance_id for instance in instances}
+    if len(instance_ids) == 1:
+        return next(iter(instance_ids))
+    return None
+
+
+def _state_reason(
+    state: GpuLifecycleState,
+    *,
+    instances: list[GpuInstance],
+    fallback_reason: str | None = None,
+    has_errors: bool = False,
+) -> str | None:
+    """Supply the contract-required reason for every degraded snapshot."""
+    if state is not GpuLifecycleState.DEGRADED:
+        return None
+    if fallback_reason is not None:
+        return fallback_reason
+    if not instances or any(instance.state == "UNKNOWN" for instance in instances):
+        return "instance_state_unknown"
+    if has_errors:
+        return "lifecycle_error"
+    return "readiness_failure"
+
+
 def _apply_running_since_leases(
     instances: list[GpuInstance],
     store: RunningSinceLeaseStore,
@@ -797,7 +824,12 @@ def run_reap_cycle(
                 previous_state=read_previous_gpu_state(gpu_state_path),
             )
         )
-        write_gpu_state_snapshot(state, path=gpu_state_path)
+        write_gpu_state_snapshot(
+            state,
+            instance_id=_snapshot_instance_id(instances),
+            reason=_state_reason(state, instances=instances, has_errors=bool(result.errors)),
+            path=gpu_state_path,
+        )
     return result
 
 
@@ -818,31 +850,41 @@ def _run_start_cycle(
     When a readiness probe is supplied, wait is bounded; timeout/stall is loud.
     """
     load = load_source.snapshot()
-    if load.untrustworthy:
-        logger.error("load snapshot untrustworthy; refusing START to avoid unfenced GPU burn")
-        return StartCycleResult(
-            decided=[],
-            actuated=[],
-            errors=["load snapshot untrustworthy; refusing START"],
-        )
-    decided = controller.start_needed_instances(
-        instances,
-        queue_depth=load.queue_depth,
-        in_flight=load.in_flight,
-        batch_in_progress=load.batch_in_progress,
-    )
-    waiting_ids = controller.instances_waiting_on_boot(instances) if load.has_work else []
-    blocked = controller.instances_blocking_start(instances) if load.has_work else []
     errors: list[str] = []
+    if load.untrustworthy:
+        msg = "load snapshot untrustworthy; refusing START"
+        logger.error("%s to avoid unfenced GPU burn", msg)
+        errors.append(msg)
+        decided: list[tuple[str, str]] = []
+        waiting_ids: list[str] = []
+    else:
+        decided = controller.start_needed_instances(
+            instances,
+            queue_depth=load.queue_depth,
+            in_flight=load.in_flight,
+            batch_in_progress=load.batch_in_progress,
+        )
+        waiting_ids = controller.instances_waiting_on_boot(instances) if load.has_work else []
+    running_ids = [
+        instance.instance_id
+        for instance in instances
+        if instance.state == "RUNNING"
+    ]
+    blocked = (
+        controller.instances_blocking_start(instances)
+        if not load.untrustworthy and load.has_work
+        else []
+    )
     for instance in blocked:
         msg = f"{instance.instance_id}: fail-closed START refused; state={instance.state} while work waits"
         logger.error(msg)
         errors.append(msg)
-    if not decided and not waiting_ids and not errors:
+    should_probe_running = probe is not None and readiness_wait is not None and bool(running_ids)
+    if not decided and not waiting_ids and not errors and not should_probe_running:
         return StartCycleResult(decided=[], actuated=[], errors=[])
 
     start_ids = [instance_id for action, instance_id in decided if action == LifecycleAction.START]
-    wait_ids = start_ids + [instance_id for instance_id in waiting_ids if instance_id not in set(start_ids)]
+    wait_ids = list(dict.fromkeys([*start_ids, *waiting_ids, *running_ids]))
     if isinstance(probe, HttpReadinessProbe) and not probe.is_per_instance and len(wait_ids) > 1:
         msg = (
             "HttpReadinessProbe URL is a single shared endpoint; refusing "
@@ -894,9 +936,15 @@ def _run_start_cycle(
     fallbacks: list[FallbackDecision] = list(
         controller.fallback_on_boot_failure(start_failed, reason="start_failed") if start_failed else ()
     )
-    wait_ids = [instance_id for _, instance_id in actuated] + [
-        instance_id for instance_id in waiting_ids if instance_id not in {i for _, i in actuated}
-    ]
+    wait_ids = list(
+        dict.fromkeys(
+            [
+                *(instance_id for _, instance_id in actuated),
+                *waiting_ids,
+                *running_ids,
+            ]
+        )
+    )
     if probe is not None and readiness_wait is not None and wait_ids:
         wait_result = readiness_wait.wait(wait_ids, probe)
         if wait_result.errors:
@@ -954,7 +1002,18 @@ def run_start_cycle(
                 [instance.state for instance in instances],
                 previous_state=read_previous_gpu_state(gpu_state_path),
             )
-        write_gpu_state_snapshot(state, path=gpu_state_path)
+        fallback_reason = result.fallbacks[0].reason if result.fallbacks else None
+        write_gpu_state_snapshot(
+            state,
+            instance_id=_snapshot_instance_id(instances),
+            reason=_state_reason(
+                state,
+                instances=instances,
+                fallback_reason=fallback_reason,
+                has_errors=bool(result.errors),
+            ),
+            path=gpu_state_path,
+        )
     return result
 
 

@@ -38,6 +38,8 @@ if ! git -C "$archive" rev-parse --is-bare-repository >/dev/null 2>&1; then
   git init --bare --quiet "$archive"
 fi
 
+# Do not mask reap-lane.sh's status: exit 4 is the freshness alert when a
+# pressured sweep sees candidates but reclaims none. Cron must observe it.
 entry="17 6 * * 1 \$HOME/bin/reap-lane.sh --yes --archive-to \$HOME/lane-archive.git ${all_args}>> \$HOME/reap-lane.log 2>&1"
 
 # Replace any previous acx-reap-lane block rather than treating its presence as

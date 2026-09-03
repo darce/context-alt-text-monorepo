@@ -95,7 +95,58 @@ assert_gone() {
   fi
 }
 
+assert_summary() {
+  local label="$1" candidates="$2" reaped="$3" skipped="$4" bytes="$5"
+  local pattern="^REAP SUMMARY candidates=${candidates} reaped=${reaped} skipped=${skipped} bytes_freed=${bytes} df_used_pct=[0-9]+$"
+  if grep -Eq "$pattern" <<<"$out"; then
+    pass "$label summary"
+  else
+    fail "$label missing summary matching '$pattern'; out=$out"
+  fi
+}
+
 init_origin
+
+# A second reaper must fail closed before inspecting any lane. Hold the same
+# whole-sweep lock with the platform's locking primitive and prove the checkout
+# is not even reported as a candidate.
+lane_lock="$HOME/w3/lane-lock"
+clone_lane "$lane_lock"
+lock_path="$HOME/.reap-lane.lock"
+lock_ready="$WORKDIR/lock-ready"
+lock_release="$WORKDIR/lock-release"
+if command -v flock >/dev/null 2>&1; then
+  (
+    exec 8>"$lock_path"
+    flock 8
+    : >"$lock_ready"
+    while [[ ! -e "$lock_release" ]]; do sleep 0.05; done
+  ) &
+else
+  (
+    mkdir "${lock_path}.d"
+    : >"$lock_ready"
+    while [[ ! -e "$lock_release" ]]; do sleep 0.05; done
+    rmdir "${lock_path}.d"
+  ) &
+fi
+lock_holder_pid=$!
+for _ in {1..100}; do
+  [[ -e "$lock_ready" ]] && break
+  sleep 0.05
+done
+if [[ -e "$lock_ready" ]]; then
+  run_reap "$lane_lock"
+  if [[ "$rc" -eq 3 ]]; then pass "concurrent reaper exit 3"
+  else fail "concurrent reaper expected exit 3 got $rc; out=$out"; fi
+  if [[ "$out" != *"WOULD REAP"* ]]; then pass "concurrent reaper did not inspect lane"
+  else fail "concurrent reaper inspected lane; out=$out"; fi
+  assert_exists "concurrent reaper" "$lane_lock"
+else
+  fail "concurrent reaper lock holder did not start"
+fi
+: >"$lock_release"
+wait "$lock_holder_pid"
 
 # ---------------------------------------------------------------------------
 # (a) merged clean clone -> WOULD REAP (dry-run) and is deleted with --yes.
@@ -329,6 +380,23 @@ archive_has() {  # $1 label, $2 ref, $3 expected sha
   else fail "$1: $2 is '$got', expected '$3'"; fi
 }
 
+archive_lacks_namespace() {  # $1 label, $2 namespace
+  local refs
+  refs="$(git -C "$ARCHIVE" for-each-ref --format='%(refname)' "refs/lanes/$2")"
+  if [[ -z "$refs" ]]; then pass "$1 did not archive"
+  else fail "$1 unexpectedly created archive refs: $refs"; fi
+}
+
+# A dry run is observational only: it must neither delete the checkout nor
+# create archive refs (including an anchor ref for a linked worktree).
+lane_dry_archive="$HOME/w/lane-dry-archive"
+clone_lane "$lane_dry_archive"
+run_reap --archive-to "$ARCHIVE" "$lane_dry_archive"
+assert_rc0 "archive dry-run"
+assert_contains "archive dry-run" "WOULD REAP"
+assert_exists "archive dry-run" "$lane_dry_archive"
+archive_lacks_namespace "archive dry-run" "w/lane-dry-archive"
+
 # Unmerged work is reaped once it is archived -- and every branch lands.
 lane_ar="$HOME/w/lane-archive"
 clone_lane "$lane_ar"
@@ -548,6 +616,31 @@ run_reap --yes --all "$HOME/w3"
 assert_rc0 "--all"
 assert_gone "--all merged" "$lane_all_ok"
 assert_exists "--all unmerged" "$lane_all_bad"
+
+# A real sweep that sees candidates but cannot reclaim any must tell cron that
+# the run is stale when disk use is at or above the configurable alert level.
+lane_alert="$HOME/w3/lane-alert"
+clone_lane "$lane_alert"
+echo dirty >>"$lane_alert/README"
+REAP_DF_ALERT_PCT=0 run_reap --yes "$lane_alert"
+if [[ "$rc" -eq 4 ]]; then pass "freshness alert exit 4"
+else fail "freshness alert expected exit 4 got $rc; out=$out"; fi
+assert_summary "freshness alert" 1 0 1 0
+assert_exists "freshness alert" "$lane_alert"
+
+# Below the configured pressure threshold, zero reclaimed lanes is a healthy
+# no-op and remains exit 0.
+REAP_DF_ALERT_PCT=100 run_reap --yes "$lane_alert"
+assert_rc0 "freshness below threshold"
+assert_summary "freshness below threshold" 1 0 1 0
+
+# A dry run never pages cron: it intentionally reaps nothing.
+lane_alert_dry="$HOME/w3/lane-alert-dry"
+clone_lane "$lane_alert_dry"
+REAP_DF_ALERT_PCT=0 run_reap "$lane_alert_dry"
+assert_rc0 "freshness dry-run"
+assert_contains "freshness dry-run" "WOULD REAP"
+assert_summary "freshness dry-run" 1 0 0 0
 
 if [[ "$failures" -gt 0 ]]; then
   echo "${failures} FAILED"

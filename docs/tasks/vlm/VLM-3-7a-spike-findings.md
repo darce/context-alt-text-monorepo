@@ -17,36 +17,38 @@ its throughput p50/p95 has **n=1 image** and is not a distribution estimate.
 - **Cold-start = model reload, and it is boot-volume-throughput-bound.** A scale-to-zero
   STOP clears VRAM + page cache, so every warm-start reloads the full ~18.6 GB from disk.
 
-## Boot-volume latency/cost frontier (warm-start p95 vs the 90 s target)
+## Boot-volume observations (warm-start p95 vs the 90 s target)
 
 Standing $/mo is the boot volume, which **bills continuously even while STOPPED** (the
 real scale-to-zero cost; compute is $0 between bursts).
 
 | Boot volume | disk throughput | model_load | warm-start p95 (n=3 warm starts) | ~$/mo | verdict |
 | --- | --- | --- | --- | --- | --- |
-| 100 GB @ 10 VPU (Balanced) | ~44 MB/s | 426 s | 443.9 s | ~$4 | ❌ |
+| 100 GB @ 10 VPU | no committed configuration provenance; unsupported | — | — | — | unsupported |
 | 400 GB @ 30 VPU | no committed artifact; unsupported | — | — | — | unsupported |
-| 750 GB @ 10 VPU (Balanced) | ~212 MB/s | 88 s | 106 s | ~$32 | ❌ |
+| 750 GB Balanced (exact VPU not recorded) | ~212 MB/s | 88 s | 106 s | ~$32 | ❌ |
 | 400 GB @ 60 VPU | ~264 MB/s | 70 s | 92.5 s | ~$51 | ❌ (by 2.5 s) |
-| **400 GB @ 120 VPU** | ~326 MB/s | 57 s | **85.1 s** | ~$92 | ✅ **only strict pass** |
+| 400 GB @ 120 VPU | no committed VPU provenance; unsupported | — | — | — | unsupported |
 
 Costs approximate — verify against the OCI price list. Formula:
 `GB × ($0.0255 storage + VPU × $0.0017 perf) / month`.
 
 ## Analysis
 
-- **VPU returns are sublinear** in the supported 60/120 VPU artifacts
-  (~4.4 / 2.7 MB/s per VPU), so the load stays disk-bound across that range;
-  only 120 VPU clears 90 s.
+- **No cross-VPU conclusion is supported.** The 60 VPU artifact is the only
+  committed artifact whose filename establishes an exact VPU setting; the artifact
+  previously attributed to 120 VPU establishes only its 400 GB size.
 - **"Big Balanced volume" does NOT beat high-VPU** (disproven): 750 GB Balanced = 212 MB/s
   and 106 s p95 (n=3 warm starts), versus 400 GB @ 60 VPU = 264 MB/s.
   Balanced is not cheaper-per-MB/s at scale.
-- **Diminishing returns:** $32 → $92/mo (3×) buys only 106 s → 85 s (~20%).
+- **The strict 90 s result remains unproven:** the 85.1 s observation cannot be
+  attributed to 120 VPU from committed provenance.
 
 ## Recommendation (7c boot-volume spec)
 
-- **Strict 90 s SLO →** `gpu_boot_volume_size_in_gbs=400`, `gpu_boot_volume_vpus_per_gb=120`
-  (~$92/mo). The only clean pass.
+- **Strict 90 s SLO → no supported recommendation.** No committed artifact both
+  records an exact configuration and demonstrates a strict pass; re-run the bench
+  before selecting `gpu_boot_volume_vpus_per_gb` for this target.
 - **Relaxed target (recommended) →** `750 Balanced` (~$32/mo, ~106 s p95,
   n=3 warm starts). The previously listed `400 @ 30 VPU` option has no committed
   artifact and is unsupported. The relaxed target is justified because **warm-start is NOT user-facing** — the

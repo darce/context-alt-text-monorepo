@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sys
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -77,9 +78,8 @@ class FakeActuator:
         self._pending_start_polls = 0
         self._pending_stop_polls = 0
 
-    def verify_bench_dedicated(self, instance_id: str, expected_tag: str) -> None:
-        if expected_tag != "purpose=gpu-spike-bench":
-            raise BenchError(f"unexpected dedicated tag for {instance_id}")
+    def verify_bench_dedicated(self, instance_id: str) -> None:
+        del instance_id
 
     def start(self, instance_id: str) -> None:
         self._start_count += 1
@@ -204,6 +204,30 @@ def _write_images(tmp_path: Path, n: int = 2) -> list[Path]:
         p.write_bytes(_png_bytes())
         paths.append(p)
     return paths
+
+
+def _live_cli_args(image: Path) -> list[str]:
+    return [
+        "--instance-ocid",
+        "test-instance",
+        "--endpoint-url",
+        "https://gpu.example",
+        "--live",
+        "--image",
+        str(image),
+        "--model-id",
+        "test-model",
+        "--boot-volume-gb",
+        "400",
+        "--vpus-per-gb",
+        "120",
+        "--shape",
+        "test-shape",
+        "--quantization",
+        "test-quantization",
+        "--model-path",
+        "/test/model.gguf",
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -365,11 +389,32 @@ def test_warm_start_pass_fail_vs_target() -> None:
     )
 
 
-def test_default_artifact_path_is_dated() -> None:
-    from datetime import date
+def test_default_artifact_path_identifies_run_configuration_and_timestamp() -> None:
+    path = default_artifact_path(
+        model_id="Example Org/Vision Model",
+        shape="VM.GPU.A10.1",
+        quantization="Q4_K_M",
+        boot_volume_gb=400,
+        vpus_per_gb=120,
+        now=datetime(2026, 7, 12, 13, 14, 15, tzinfo=UTC),
+    )
+    assert path == Path(
+        "docs/tasks/vlm/"
+        "VLM-3-gpu-spike-20260712T131415Z-example-org-vision-model-"
+        "vm-gpu-a10-1-q4-k-m-400gb-120vpu.json"
+    )
 
-    path = default_artifact_path(today=date(2026, 7, 12))
-    assert path == Path("docs/tasks/vlm/VLM-3-gpu-spike-2026-07-12.json")
+
+def test_write_artifact_refuses_overwrite_unless_forced(tmp_path: Path) -> None:
+    path = tmp_path / "spike.json"
+    bench.write_artifact(path, {"run": 1})
+
+    with pytest.raises(BenchError, match="already exists"):
+        bench.write_artifact(path, {"run": 2})
+    assert json.loads(path.read_text()) == {"run": 1}
+
+    bench.write_artifact(path, {"run": 2}, force=True)
+    assert json.loads(path.read_text()) == {"run": 2}
 
 
 def test_committed_artifacts_only_reconstruct_filename_bounded_provenance() -> None:
@@ -544,24 +589,19 @@ def test_warm_start_sample_excludes_shutdown_time() -> None:
     assert result.samples == [pytest.approx(0.01)]
 
 
-def test_throughput_posts_chat_completions_and_stats() -> None:
+def test_throughput_posts_chat_completions_and_stats(tmp_path: Path) -> None:
     clock = FakeClock()
     http = FakeHttp(ready_after=0)
     http.advance_clock = clock
     http.completion_duration_s = 1.5
-    images = _write_images(Path(pytest.importorskip("tempfile").mkdtemp()), n=3)
-    # Use tmp_path via fixture-like path
-    import tempfile
-
-    with tempfile.TemporaryDirectory() as td:
-        images = _write_images(Path(td), n=3)
-        result = run_throughput(
-            http=http,
-            clock=clock,
-            endpoint_url="http://gpu.example:8000",
-            model_id="Qwen3-VL-30B-A3B-Instruct",
-            image_paths=images,
-        )
+    images = _write_images(tmp_path, n=3)
+    result = run_throughput(
+        http=http,
+        clock=clock,
+        endpoint_url="http://gpu.example:8000",
+        model_id="Qwen3-VL-30B-A3B-Instruct",
+        image_paths=images,
+    )
     assert len(result.samples) == 3
     assert all(s == pytest.approx(1.5) for s in result.samples)
     assert result.mean == pytest.approx(1.5)
@@ -663,7 +703,6 @@ def test_run_bench_writes_artifact_and_stops_on_success(tmp_path: Path) -> None:
         shape="test-shape",
         quantization="test-quantization",
         model_path="/test/model.gguf",
-        bench_dedicated_tag="purpose=gpu-spike-bench",
         a10_quota_confirmed=True,
         poll_interval_seconds=0.1,
     )
@@ -683,7 +722,7 @@ def test_run_bench_writes_artifact_and_stops_on_success(tmp_path: Path) -> None:
 
 def test_run_bench_rejects_non_dedicated_instance_before_stop(tmp_path: Path) -> None:
     class NonDedicatedActuator(FakeActuator):
-        def verify_bench_dedicated(self, instance_id: str, expected_tag: str) -> None:
+        def verify_bench_dedicated(self, instance_id: str) -> None:
             raise BenchError("dedicated tag mismatch")
 
     actuator = NonDedicatedActuator("RUNNING")
@@ -704,10 +743,30 @@ def test_run_bench_rejects_non_dedicated_instance_before_stop(tmp_path: Path) ->
             shape="test-shape",
             quantization="test-quantization",
             model_path="/test/model.gguf",
-            bench_dedicated_tag="purpose=gpu-spike-bench",
         )
 
     assert actuator.stops == []
+
+
+@pytest.mark.parametrize(
+    "tags",
+    [
+        {"env": "production"},
+        {"caller-selected-key": "caller-selected-value"},
+    ],
+)
+def test_oci_actuator_requires_pinned_bench_dedicated_tag(
+    monkeypatch: pytest.MonkeyPatch, tags: dict[str, str]
+) -> None:
+    actuator = bench.OciCliInstanceActuator(oci_bin="oci")
+    monkeypatch.setattr(
+        actuator,
+        "_get_instance_data",
+        lambda _instance_id: {"freeform-tags": tags},
+    )
+
+    with pytest.raises(BenchError, match="purpose=gpu-spike-bench"):
+        actuator.verify_bench_dedicated("test-instance")
 
 
 def test_run_bench_finally_stops_on_mid_phase_error(tmp_path: Path) -> None:
@@ -736,7 +795,6 @@ def test_run_bench_finally_stops_on_mid_phase_error(tmp_path: Path) -> None:
             shape="test-shape",
             quantization="test-quantization",
             model_path="/test/model.gguf",
-            bench_dedicated_tag="purpose=gpu-spike-bench",
             poll_interval_seconds=0.1,
         )
 
@@ -783,7 +841,6 @@ def test_run_bench_throughput_failure_still_stops(tmp_path: Path) -> None:
             shape="test-shape",
             quantization="test-quantization",
             model_path="/test/model.gguf",
-            bench_dedicated_tag="purpose=gpu-spike-bench",
             poll_interval_seconds=0.1,
         )
     assert exc_info.value.phase == "throughput"
@@ -816,7 +873,6 @@ def test_run_bench_final_stop_failure_raises_without_completed_artifact(
             shape="test-shape",
             quantization="test-quantization",
             model_path="/test/model.gguf",
-            bench_dedicated_tag="purpose=gpu-spike-bench",
             poll_interval_seconds=0.1,
             lifecycle_timeout_seconds=0.2,
         )
@@ -860,7 +916,6 @@ def test_run_bench_final_stopped_poll_timeout_raises_without_artifact(
             shape="test-shape",
             quantization="test-quantization",
             model_path="/test/model.gguf",
-            bench_dedicated_tag="purpose=gpu-spike-bench",
             poll_interval_seconds=0.1,
             lifecycle_timeout_seconds=0.2,
         )
@@ -968,7 +1023,6 @@ def test_dry_run_plan_helper_structure() -> None:
         shape="test-shape",
         quantization="test-quantization",
         model_path="/test/model.gguf",
-        bench_dedicated_tag="purpose=gpu-spike-bench",
     )
     assert plan["warm_start_runs"] == 5
     assert plan["images"] == ["a.png"]
@@ -999,8 +1053,6 @@ def test_cli_requires_image_without_dry_run(monkeypatch: pytest.MonkeyPatch) -> 
                 "test-quantization",
                 "--model-path",
                 "/test/model.gguf",
-                "--bench-dedicated-tag",
-                "purpose=gpu-spike-bench",
             ]
         )
     assert exc_info.value.code == 2  # argparse error
@@ -1031,6 +1083,76 @@ def test_cli_requires_hardware_provenance_for_live_run(
     error = capsys.readouterr().err
     assert "--boot-volume-gb" in error
     assert "--shape" in error
+
+
+@pytest.mark.parametrize(
+    ("flag", "value"),
+    [
+        ("--warm-start-runs", "0"),
+        ("--poll-interval", "0"),
+        ("--boot-volume-gb", "0"),
+        ("--vpus-per-gb", "0"),
+    ],
+)
+def test_cli_rejects_invalid_live_numeric_bounds_before_constructing_actuator(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    flag: str,
+    value: str,
+) -> None:
+    constructed = False
+
+    def fail_if_constructed(*args, **kwargs):
+        nonlocal constructed
+        constructed = True
+        raise AssertionError("OCI actuator must not be constructed")
+
+    image = _write_images(tmp_path, n=1)[0]
+    args = _live_cli_args(image)
+    args.extend([flag, value])
+    monkeypatch.setenv("ACX_GPU_BENCH_LIVE", "I-UNDERSTAND-THIS-COSTS-MONEY")
+    monkeypatch.setattr(bench, "OciCliInstanceActuator", fail_if_constructed)
+
+    with pytest.raises(SystemExit) as exc_info:
+        main(args)
+
+    assert exc_info.value.code == 2
+    assert constructed is False
+
+
+def test_cli_opens_every_image_before_constructing_live_actuator(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    constructed = False
+
+    def fail_if_constructed(*args, **kwargs):
+        nonlocal constructed
+        constructed = True
+        raise AssertionError("OCI actuator must not be constructed")
+
+    unreadable_image = tmp_path / "not-a-readable-image"
+    unreadable_image.mkdir()
+    monkeypatch.setenv("ACX_GPU_BENCH_LIVE", "I-UNDERSTAND-THIS-COSTS-MONEY")
+    monkeypatch.setattr(bench, "OciCliInstanceActuator", fail_if_constructed)
+
+    with pytest.raises(SystemExit) as exc_info:
+        main(_live_cli_args(unreadable_image))
+
+    assert exc_info.value.code == 2
+    assert constructed is False
+
+
+def test_7a_findings_withdraws_unproven_strict_pass() -> None:
+    report = (
+        Path(__file__).resolve().parents[1]
+        / "docs/tasks/vlm/VLM-3-7a-spike-findings.md"
+    ).read_text()
+
+    assert (
+        "100 GB @ 10 VPU | no committed configuration provenance; unsupported" in report
+    )
+    assert "400 GB @ 120 VPU | no committed VPU provenance; unsupported" in report
+    assert "only strict pass" not in report
 
 
 def test_phase_error_message_names_phase() -> None:

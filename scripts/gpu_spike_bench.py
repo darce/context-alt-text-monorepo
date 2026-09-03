@@ -20,6 +20,7 @@ import json
 import math
 import mimetypes
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -28,7 +29,7 @@ import urllib.error
 import urllib.request
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
-from datetime import UTC, date, datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -44,6 +45,7 @@ DEFAULT_ENDPOINT_READY_TIMEOUT_S = 900.0
 DEFAULT_OCI_TIMEOUT_SECONDS = 660
 LIVE_CONFIRMATION_ENV = "ACX_GPU_BENCH_LIVE"
 LIVE_CONFIRMATION_TOKEN = "I-UNDERSTAND-THIS-COSTS-MONEY"
+BENCH_DEDICATED_TAG = ("purpose", "gpu-spike-bench")
 SYSTEM_PROMPT = (
     "You write alt text for images. Describe only what is visible, in 1-2 "
     "plain sentences."
@@ -73,7 +75,7 @@ class PhaseError(BenchError):
 
 
 class InstanceActuator(Protocol):
-    def verify_bench_dedicated(self, instance_id: str, expected_tag: str) -> None: ...
+    def verify_bench_dedicated(self, instance_id: str) -> None: ...
 
     def start(self, instance_id: str) -> None: ...
 
@@ -193,10 +195,8 @@ class OciCliInstanceActuator:
         state = data.get("lifecycle-state") or data.get("lifecycle_state") or "UNKNOWN"
         return str(state).upper()
 
-    def verify_bench_dedicated(self, instance_id: str, expected_tag: str) -> None:
-        key, separator, expected_value = expected_tag.partition("=")
-        if not separator or not key or not expected_value:
-            raise BenchError("bench-dedicated tag must have the form KEY=VALUE")
+    def verify_bench_dedicated(self, instance_id: str) -> None:
+        key, expected_value = BENCH_DEDICATED_TAG
         data = self._get_instance_data(instance_id)
         tags = data.get("freeform-tags") or data.get("freeform_tags")
         actual_value = tags.get(key) if isinstance(tags, dict) else None
@@ -724,9 +724,35 @@ def run_throughput(
 # ---------------------------------------------------------------------------
 
 
-def default_artifact_path(*, today: date | None = None) -> Path:
-    d = today or datetime.now(UTC).date()
-    return Path("docs/tasks/vlm") / f"VLM-3-gpu-spike-{d.isoformat()}.json"
+def _artifact_slug(value: str | None) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "-", (value or "unspecified").strip().lower())
+    return slug.strip("-") or "unspecified"
+
+
+def default_artifact_path(
+    *,
+    model_id: str | None,
+    shape: str | None,
+    quantization: str | None,
+    boot_volume_gb: int | None,
+    vpus_per_gb: int | None,
+    now: datetime | None = None,
+) -> Path:
+    stamp = (now or datetime.now(UTC)).astimezone(UTC).strftime("%Y%m%dT%H%M%SZ")
+    volume = f"{boot_volume_gb}gb" if boot_volume_gb is not None else "unspecified-gb"
+    vpus = f"{vpus_per_gb}vpu" if vpus_per_gb is not None else "unspecified-vpu"
+    filename = "-".join(
+        (
+            "VLM-3-gpu-spike",
+            stamp,
+            _artifact_slug(model_id),
+            _artifact_slug(shape),
+            _artifact_slug(quantization),
+            volume,
+            vpus,
+        )
+    )
+    return Path("docs/tasks/vlm") / f"{filename}.json"
 
 
 def build_spike_artifact(
@@ -839,9 +865,17 @@ def build_spike_artifact(
     }
 
 
-def write_artifact(path: Path, artifact: Mapping[str, Any]) -> None:
+def write_artifact(
+    path: Path, artifact: Mapping[str, Any], *, force: bool = False
+) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(artifact, indent=2) + "\n", encoding="utf-8")
+    try:
+        with path.open("w" if force else "x", encoding="utf-8") as artifact_file:
+            artifact_file.write(json.dumps(artifact, indent=2) + "\n")
+    except FileExistsError as exc:
+        raise BenchError(
+            f"artifact already exists: {path}; pass --force to overwrite"
+        ) from exc
 
 
 def assert_no_null_measurement_values(artifact: Mapping[str, Any]) -> None:
@@ -876,7 +910,7 @@ def run_bench(
     shape: str,
     quantization: str,
     model_path: str,
-    bench_dedicated_tag: str,
+    force_artifact: bool = False,
     a10_quota_confirmed: bool = False,
     a100_or_l40s_headroom_confirmed: bool = False,
     serverless_gpu_available: bool = False,
@@ -901,7 +935,7 @@ def run_bench(
 
     _mark("dedicated_instance_check")
     try:
-        actuator.verify_bench_dedicated(instance_ocid, bench_dedicated_tag)
+        actuator.verify_bench_dedicated(instance_ocid)
     except Exception as exc:
         raise PhaseError("dedicated_instance_check", str(exc)) from exc
 
@@ -1011,7 +1045,7 @@ def run_bench(
         if prepared_artifact is not None:
             try:
                 _mark("artifact_write")
-                write_artifact(artifact_out, prepared_artifact)
+                write_artifact(artifact_out, prepared_artifact, force=force_artifact)
                 print(f"artifact written: {artifact_out}", flush=True)
             except PhaseError:
                 raise
@@ -1035,7 +1069,6 @@ def dry_run_plan(
     shape: str | None,
     quantization: str | None,
     model_path: str | None,
-    bench_dedicated_tag: str | None,
 ) -> dict[str, Any]:
     plan = {
         "mode": "dry-run",
@@ -1050,7 +1083,7 @@ def dry_run_plan(
         "shape": shape,
         "quantization": quantization,
         "model_path": model_path,
-        "bench_dedicated_tag": bench_dedicated_tag,
+        "bench_dedicated_tag": "=".join(BENCH_DEDICATED_TAG),
         "phases": [
             "cold_boot: START from STOPPED → poll RUNNING → poll endpoint ready",
             (
@@ -1103,8 +1136,13 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help=(
             "Output path for spike artifact JSON "
-            "(default: docs/tasks/vlm/VLM-3-gpu-spike-<YYYY-MM-DD>.json)"
+            "(default includes UTC timestamp and run configuration)"
         ),
+    )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Allow overwriting an existing --artifact-out path",
     )
     parser.add_argument(
         "--warm-start-runs",
@@ -1138,15 +1176,6 @@ def build_parser() -> argparse.ArgumentParser:
         "--model-path",
         default=None,
         help="Live-run served model path recorded in the artifact (required with --live)",
-    )
-    parser.add_argument(
-        "--bench-dedicated-tag",
-        default=None,
-        metavar="KEY=VALUE",
-        help=(
-            "Expected OCI freeform tag proving the instance is bench-dedicated "
-            "(required with --live)"
-        ),
     )
     parser.add_argument(
         "--image",
@@ -1211,10 +1240,16 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(list(argv) if argv is not None else None)
-    artifact_out = args.artifact_out or default_artifact_path()
     image_paths = [Path(p) for p in args.images]
 
     if not args.live:
+        artifact_out = args.artifact_out or default_artifact_path(
+            model_id=args.model_id,
+            shape=args.shape,
+            quantization=args.quantization,
+            boot_volume_gb=args.boot_volume_gb,
+            vpus_per_gb=args.vpus_per_gb,
+        )
         dry_run_plan(
             instance_ocid=args.instance_ocid,
             endpoint_url=args.endpoint_url,
@@ -1230,7 +1265,6 @@ def main(argv: Sequence[str] | None = None) -> int:
             shape=args.shape,
             quantization=args.quantization,
             model_path=args.model_path,
-            bench_dedicated_tag=args.bench_dedicated_tag,
         )
         return 0
 
@@ -1245,7 +1279,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         "--shape": args.shape,
         "--quantization": args.quantization,
         "--model-path": args.model_path,
-        "--bench-dedicated-tag": args.bench_dedicated_tag,
     }
     missing = [flag for flag, value in required_live_inputs.items() if value is None]
     if missing:
@@ -1256,20 +1289,43 @@ def main(argv: Sequence[str] | None = None) -> int:
     assert args.shape is not None
     assert args.quantization is not None
     assert args.model_path is not None
-    assert args.bench_dedicated_tag is not None
-    if args.boot_volume_gb <= 0 or args.vpus_per_gb <= 0:
-        parser.error("--boot-volume-gb and --vpus-per-gb must be positive")
+    if args.warm_start_runs < 1:
+        parser.error("--warm-start-runs must be at least 1")
+    if not math.isfinite(args.poll_interval) or args.poll_interval <= 0:
+        parser.error("--poll-interval must be a finite positive number")
+    if args.boot_volume_gb <= 0:
+        parser.error("--boot-volume-gb must be positive")
+    if args.vpus_per_gb <= 0:
+        parser.error("--vpus-per-gb must be positive")
     if (
-        not args.shape.strip()
+        not args.model_id.strip()
+        or not args.shape.strip()
         or not args.quantization.strip()
         or not args.model_path.strip()
     ):
-        parser.error("--shape, --quantization, and --model-path must be non-empty")
-    tag_key, separator, tag_value = args.bench_dedicated_tag.partition("=")
-    if not separator or not tag_key or not tag_value:
-        parser.error("--bench-dedicated-tag must have the form KEY=VALUE")
+        parser.error(
+            "--model-id, --shape, --quantization, and --model-path must be non-empty"
+        )
     if not image_paths:
         parser.error("at least one --image is required (unless --dry-run)")
+    for image_path in image_paths:
+        try:
+            with image_path.open("rb") as image_file:
+                image_file.read(1)
+        except OSError as exc:
+            parser.error(f"--image is not a readable file: {image_path}: {exc}")
+
+    artifact_out = args.artifact_out or default_artifact_path(
+        model_id=args.model_id,
+        shape=args.shape,
+        quantization=args.quantization,
+        boot_volume_gb=args.boot_volume_gb,
+        vpus_per_gb=args.vpus_per_gb,
+    )
+    if artifact_out.exists() and not args.force:
+        parser.error(
+            f"artifact already exists: {artifact_out}; pass --force to overwrite"
+        )
 
     actuator = OciCliInstanceActuator(auth=args.oci_auth)
     http = UrlLibHttpClient()
@@ -1291,7 +1347,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             shape=args.shape,
             quantization=args.quantization,
             model_path=args.model_path,
-            bench_dedicated_tag=args.bench_dedicated_tag,
+            force_artifact=args.force,
             a10_quota_confirmed=args.a10_quota_confirmed,
             a100_or_l40s_headroom_confirmed=args.a100_or_l40s_headroom_confirmed,
             serverless_gpu_available=args.serverless_gpu_available,

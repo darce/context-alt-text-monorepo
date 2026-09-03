@@ -301,6 +301,8 @@ class DescribeRunRepository:
         item.caption = caption
         item.provenance = provenance
         item.tier = DescriptionResultTier(tier) if tier is not None else None
+        if any(value is not None for value in (alt_text_draft, caption, provenance, tier)):
+            item.result_generation = int(item.result_generation or 0) + 1
         item.image_bytes = None
         await self._session.flush()
         return True

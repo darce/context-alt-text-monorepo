@@ -9,6 +9,7 @@ set -euo pipefail
 
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)
 checker="${root}/scripts/deploy/check-gpu-snapshots.sh"
+checker_bash=${ACX_GPU_TEST_BASH:-/bin/bash}
 prod_compose="${root}/apps/prototype-description-service/docker-compose.prod.yml"
 prod_env="${root}/apps/prototype-description-service/.env.prod.example"
 makefile=${ACX_GPU_TEST_MAKEFILE:-${root}/Makefile}
@@ -58,12 +59,13 @@ run_checker() {
         ACX_GPU_COMPOSE_FILE="${fixture_root}/compose.yml" \
         ACX_GPU_READER_UID="$(id -u)" \
         ACX_NOW_EPOCH=1000 \
-        "$@" "$checker"
+        "$@" "$checker_bash" "$checker"
 }
 
 run_checker_from_install() {
+    local fixture_install=${ACX_GPU_INSTALL_SCRIPT:-${fixture_root}/install.sh}
     env -u ACX_GPU_UNIT_STATE_PATH -u ACX_GPU_UNIT_LOAD_PATH \
-        ACX_GPU_INSTALL_SCRIPT="${fixture_root}/install.sh" \
+        ACX_GPU_INSTALL_SCRIPT="$fixture_install" \
         ACX_GPU_STATE_PATH="${fixture_root}/run/acx/gpu-state.json" \
         ACX_DESCRIBE_LOAD_PATH="${fixture_root}/run/acx/describe-load.json" \
         ACX_GPU_STATE_STALE_SECONDS=180 \
@@ -72,7 +74,7 @@ run_checker_from_install() {
         ACX_GPU_COMPOSE_FILE="${fixture_root}/compose.yml" \
         ACX_GPU_READER_UID="$(id -u)" \
         ACX_NOW_EPOCH=1000 \
-        "$checker"
+        "$checker_bash" "$checker"
 }
 
 expect_success() {
@@ -134,11 +136,19 @@ cat >"${fixture_root}/install.sh" <<EOF
 ExecStart=python3 -m infra.oci.gpu_lifecycle --load-json ${fixture_root}/run/acx/describe-load.json --gpu-state-json ${fixture_root}/run/acx/gpu-state.json
 ExecStart=python3 -m infra.oci.gpu_lifecycle --load-json ${fixture_root}/run/acx/describe-load.json --gpu-state-json ${fixture_root}/run/acx/gpu-state.json
 EOF
+cat >"${fixture_root}/install-missing-flags.sh" <<'EOF'
+ExecStart=python3 -m infra.oci.gpu_lifecycle --instance-id ocid1.example
+EOF
 
-if bash -n "$checker" 2>/dev/null; then
+if "$checker_bash" -n "$checker" 2>/dev/null; then
     pass "checker has valid bash syntax"
 else
     fail "checker has valid bash syntax"
+fi
+if grep -Eq '(^|[[:space:]])mapfile([[:space:]]|$)' "$checker"; then
+    fail "checker avoids Bash 4-only mapfile"
+else
+    pass "checker avoids Bash 4-only mapfile"
 fi
 
 # Deployment contract: the example env is the one deployment seam. Compose
@@ -174,6 +184,12 @@ if [ "${derived_rc:-0}" -eq 0 ]; then
     pass "checker derives the single writer paths from lifecycle units"
 else
     fail "checker derives lifecycle unit paths (exit ${derived_rc}; output: ${derived_output})"
+fi
+missing_unit_path_output=$(ACX_GPU_INSTALL_SCRIPT="${fixture_root}/install-missing-flags.sh" run_checker_from_install 2>&1) && missing_unit_path_rc=0 || missing_unit_path_rc=$?
+if [ "$missing_unit_path_rc" -ne 0 ] && [[ "$missing_unit_path_output" == *"lifecycle units do not have exactly one agreeing --gpu-state-json path"* ]]; then
+    pass "missing lifecycle path reports the accurate unit-contract failure"
+else
+    fail "missing lifecycle path reports the accurate unit-contract failure (exit $missing_unit_path_rc; output: $missing_unit_path_output)"
 fi
 
 mv "${fixture_root}/run/acx/gpu-state.json" "${fixture_root}/run/acx/gpu-state.missing"

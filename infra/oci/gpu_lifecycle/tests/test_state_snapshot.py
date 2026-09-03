@@ -7,9 +7,9 @@ import os
 import stat
 import threading
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
-
 from infra.oci.gpu_lifecycle.controller import GpuInstance, GpuLifecycleController
 from infra.oci.gpu_lifecycle.probe import ProbeSample, ProbeStatus, WarmReadinessWait
 from infra.oci.gpu_lifecycle.reaper import (
@@ -103,10 +103,16 @@ def test_write_failure_is_swallowed_and_cycle_completes(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    parent_file = tmp_path / "not-a-directory"
-    parent_file.write_text("occupied")
-    path = parent_file / "gpu-state.json"
+    path = tmp_path / "gpu-state.json"
     monkeypatch.setenv("ACX_GPU_STATE_PATH", str(path))
+
+    def fail_tempfile(**_kwargs: object) -> None:
+        raise OSError("simulated write failure")
+
+    monkeypatch.setattr(
+        "infra.oci.gpu_lifecycle.state_snapshot.tempfile.NamedTemporaryFile",
+        fail_tempfile,
+    )
     controller = GpuLifecycleController(idle_seconds=60)
     instance = GpuInstance("ocid1.gpu", "STOPPED", 0)
 
@@ -124,9 +130,8 @@ def test_write_failure_is_swallowed_and_cycle_completes(
         for record in caplog.records
         if record.levelname == "WARNING"
     ]
-    assert len(warnings) == 2
-    assert any("publishing unsynchronized" in message for message in warnings)
-    assert any("failed to write GPU state snapshot" in message for message in warnings)
+    assert len(warnings) == 1
+    assert "failed to write GPU state snapshot" in warnings[0]
     assert all(str(path) in message for message in warnings)
 
 
@@ -222,10 +227,9 @@ def test_reap_cycle_refreshes_ready_without_demoting_it(
     assert payload["written_at"] > 1.0
 
 
-def test_lock_failure_degrades_to_unsynchronized_snapshot_publish(
+def test_lock_failure_aborts_snapshot_publish(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    caplog: pytest.LogCaptureFixture,
 ) -> None:
     path = tmp_path / "gpu-state.json"
 
@@ -234,18 +238,17 @@ def test_lock_failure_degrades_to_unsynchronized_snapshot_publish(
 
     monkeypatch.setattr("infra.oci.gpu_lifecycle.reaper.fcntl.flock", fail_lock)
 
-    run_reap_cycle(
-        controller=GpuLifecycleController(idle_seconds=60),
-        instances=[GpuInstance("ocid1.gpu", "RUNNING", 0)],
-        load_source=StaticJobLoadSource(queue_depth=1, in_flight=0),
-        actuator=RecordingActuator(),
-        fence_delay_seconds=0.0,
-        gpu_state_path=path,
-    )
+    with pytest.raises(OSError, match="simulated cross-unit permission failure"):
+        run_reap_cycle(
+            controller=GpuLifecycleController(idle_seconds=60),
+            instances=[GpuInstance("ocid1.gpu", "RUNNING", 0)],
+            load_source=StaticJobLoadSource(queue_depth=1, in_flight=0),
+            actuator=RecordingActuator(),
+            fence_delay_seconds=0.0,
+            gpu_state_path=path,
+        )
 
-    assert json.loads(path.read_text())["state"] == "warming"
-    assert "simulated cross-unit permission failure" in caplog.text
-    assert str(path.with_name("gpu-state.json.lock")) in caplog.text
+    assert not path.exists()
 
 
 def test_snapshot_lock_is_group_writable_despite_process_umask(tmp_path: Path) -> None:
@@ -265,6 +268,36 @@ def test_snapshot_lock_is_group_writable_despite_process_umask(tmp_path: Path) -
 
     lock_mode = stat.S_IMODE(path.with_name("gpu-state.json.lock").stat().st_mode)
     assert lock_mode == 0o660
+
+
+def test_snapshot_lock_is_reassigned_to_the_shared_directory_group(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "gpu-state.json"
+    directory_gid = tmp_path.stat().st_gid
+    real_fstat = os.fstat
+    fchown_calls: list[tuple[int, int]] = []
+
+    def mismatched_group(fd: int) -> SimpleNamespace:
+        lock_stat = real_fstat(fd)
+        return SimpleNamespace(st_gid=directory_gid + 1, st_mode=lock_stat.st_mode)
+
+    def record_fchown(_fd: int, uid: int, gid: int) -> None:
+        fchown_calls.append((uid, gid))
+
+    monkeypatch.setattr("infra.oci.gpu_lifecycle.reaper.os.fstat", mismatched_group)
+    monkeypatch.setattr("infra.oci.gpu_lifecycle.reaper.os.fchown", record_fchown)
+
+    run_reap_cycle(
+        controller=GpuLifecycleController(idle_seconds=60),
+        instances=[GpuInstance("ocid1.gpu", "RUNNING", 0)],
+        load_source=StaticJobLoadSource(queue_depth=1, in_flight=0),
+        actuator=RecordingActuator(),
+        fence_delay_seconds=0.0,
+        gpu_state_path=path,
+    )
+
+    assert fchown_calls == [(-1, directory_gid)]
 
 
 def test_reap_publish_cannot_be_overwritten_by_stale_start_read(

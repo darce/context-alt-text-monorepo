@@ -11,7 +11,7 @@ def test_check_gpu_snapshots_shell_suite() -> None:
     suite = repo_root / "scripts/deploy/tests/test-check-gpu-snapshots.sh"
 
     result = subprocess.run(
-        ["bash", str(suite)],
+        ["/bin/bash", str(suite)],
         cwd=repo_root,
         capture_output=True,
         text=True,

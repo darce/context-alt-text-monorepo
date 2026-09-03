@@ -69,6 +69,8 @@ def _run_items_response(run, items) -> DescribeRunItemsResponse:
                 alt_text_draft=item.alt_text_draft,
                 caption=item.caption,
                 provenance=item.provenance,
+                tier=item.tier,
+                result_generation=item.result_generation,
             )
             for item in items
         ],

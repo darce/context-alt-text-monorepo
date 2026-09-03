@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import uuid
+from types import SimpleNamespace
 from typing import cast
+from unittest.mock import AsyncMock
 
 import pytest
 from sqlalchemy import Table
@@ -14,6 +16,7 @@ from db.models.base_imports import Base
 from db.models.scene import DescribeRun, DescribeRunItem
 from scene.application.describe_run_repository import DescribeRunRepository
 from scene.domain.describe_run import DescribeItemStatus, DescribeRunStatus
+from scene.domain.description import DescriptionResultTier
 
 
 async def _sessionmaker():
@@ -70,6 +73,42 @@ def test_create_run_and_terminal_item_writes_are_idempotent():
             (102, DescribeItemStatus.FAILED),
         ]
         await engine.dispose()
+
+    asyncio.run(body())
+
+
+def test_record_item_result_persists_tier_and_increments_generation():
+    async def body():
+        session = SimpleNamespace(flush=AsyncMock())
+        item = SimpleNamespace(
+            alt_text_draft=None,
+            caption=None,
+            provenance=None,
+            tier=None,
+            result_generation=0,
+            image_bytes=b"image",
+        )
+        repo = DescribeRunRepository(session)
+        repo._get_item = AsyncMock(return_value=item)
+
+        for draft, tier in (
+            ("provisional draft", DescriptionResultTier.PROVISIONAL_CPU),
+            ("final draft", DescriptionResultTier.FINAL_GPU),
+        ):
+            assert await repo.record_item_result(
+                tenant_id=uuid.uuid4(),
+                run_id=uuid.uuid4(),
+                media_id=101,
+                alt_text_draft=draft,
+                caption=draft,
+                provenance={"model_id": "org/model@revision"},
+                tier=tier,
+            )
+
+        assert item.tier == DescriptionResultTier.FINAL_GPU
+        assert item.result_generation == 2
+        assert item.image_bytes is None
+        assert session.flush.await_count == 2
 
     asyncio.run(body())
 

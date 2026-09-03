@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """GPU spike bench for VLM-3B Slice 7a — cold boot, warm-start, throughput.
 
-Captures E19-1 ``acx-gpu-spike/v1`` measurement fields for the baked
-``Qwen3-VL-30B-A3B-Instruct`` Q4 GGUF candidate. Live OCI/GPU runs are
-operator-gated; unit tests inject fake actuator/clock/http seams and never
-touch the network [TEST-01].
+Captures E19-1 ``acx-gpu-spike/v1`` measurement fields for an explicitly
+identified model and hardware configuration. Live OCI/GPU runs are operator-
+gated; unit tests inject fake actuator/clock/http seams and never touch the
+network [TEST-01].
 
 Heuristics applied:
 - [PERF-01] report p50/p95 percentiles for warm-start and s/img (not means alone)
@@ -19,18 +19,19 @@ import base64
 import json
 import math
 import mimetypes
+import os
 import shutil
 import subprocess
 import sys
 import time
 import urllib.error
 import urllib.request
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 from pathlib import Path
-from typing import Any, Callable, Mapping, Protocol, Sequence
+from typing import Any, Protocol
 
-DEFAULT_MODEL_ID = "Qwen3-VL-30B-A3B-Instruct"
 DEFAULT_WARM_START_RUNS = 5
 WARM_START_P95_TARGET_SECONDS = 90.0
 LIVE_MEASUREMENT_SOURCE = "live_oci_gpu_spike_bench"
@@ -41,6 +42,8 @@ DEFAULT_POLL_INTERVAL_S = 2.0
 DEFAULT_LIFECYCLE_TIMEOUT_S = 900.0
 DEFAULT_ENDPOINT_READY_TIMEOUT_S = 900.0
 DEFAULT_OCI_TIMEOUT_SECONDS = 660
+LIVE_CONFIRMATION_ENV = "ACX_GPU_BENCH_LIVE"
+LIVE_CONFIRMATION_TOKEN = "I-UNDERSTAND-THIS-COSTS-MONEY"
 SYSTEM_PROMPT = (
     "You write alt text for images. Describe only what is visible, in 1-2 "
     "plain sentences."
@@ -70,6 +73,8 @@ class PhaseError(BenchError):
 
 
 class InstanceActuator(Protocol):
+    def verify_bench_dedicated(self, instance_id: str, expected_tag: str) -> None: ...
+
     def start(self, instance_id: str) -> None: ...
 
     def stop(self, instance_id: str) -> None: ...
@@ -94,7 +99,9 @@ class HttpResponse:
 
 
 class HttpClient(Protocol):
-    def get(self, url: str, *, headers: Mapping[str, str] | None = None) -> HttpResponse: ...
+    def get(
+        self, url: str, *, headers: Mapping[str, str] | None = None
+    ) -> HttpResponse: ...
 
     def post(
         self,
@@ -119,7 +126,9 @@ class UrlLibHttpClient:
     def __init__(self, *, timeout_seconds: float = 180.0) -> None:
         self._timeout = timeout_seconds
 
-    def get(self, url: str, *, headers: Mapping[str, str] | None = None) -> HttpResponse:
+    def get(
+        self, url: str, *, headers: Mapping[str, str] | None = None
+    ) -> HttpResponse:
         req = urllib.request.Request(url, headers=dict(headers or {}), method="GET")
         return self._open(req)
 
@@ -180,6 +189,24 @@ class OciCliInstanceActuator:
         self._action(instance_id, "STOP", wait_state="STOPPED")
 
     def get_lifecycle_state(self, instance_id: str) -> str:
+        data = self._get_instance_data(instance_id)
+        state = data.get("lifecycle-state") or data.get("lifecycle_state") or "UNKNOWN"
+        return str(state).upper()
+
+    def verify_bench_dedicated(self, instance_id: str, expected_tag: str) -> None:
+        key, separator, expected_value = expected_tag.partition("=")
+        if not separator or not key or not expected_value:
+            raise BenchError("bench-dedicated tag must have the form KEY=VALUE")
+        data = self._get_instance_data(instance_id)
+        tags = data.get("freeform-tags") or data.get("freeform_tags")
+        actual_value = tags.get(key) if isinstance(tags, dict) else None
+        if actual_value != expected_value:
+            raise BenchError(
+                f"instance {instance_id} is not bench-dedicated: expected freeform tag "
+                f"{key}={expected_value}"
+            )
+
+    def _get_instance_data(self, instance_id: str) -> dict[str, Any]:
         cmd = [
             self._oci_bin,
             "compute",
@@ -202,9 +229,10 @@ class OciCliInstanceActuator:
         payload = json.loads(proc.stdout)
         data = payload.get("data") if isinstance(payload, dict) else None
         if not isinstance(data, dict):
-            raise BenchError(f"oci instance get returned unexpected payload for {instance_id}")
-        state = data.get("lifecycle-state") or data.get("lifecycle_state") or "UNKNOWN"
-        return str(state).upper()
+            raise BenchError(
+                f"oci instance get returned unexpected payload for {instance_id}"
+            )
+        return data
 
     def _action(self, instance_id: str, action: str, *, wait_state: str) -> None:
         cmd = [
@@ -301,7 +329,7 @@ def endpoint_ready(
     model_id: str,
     api_key: str | None = None,
 ) -> bool:
-    """True when GET /v1/models succeeds or a minimal completion returns 2xx."""
+    """True only when the endpoint identifies the requested model."""
     base = endpoint_url.rstrip("/")
     headers: dict[str, str] = {}
     if api_key:
@@ -309,9 +337,17 @@ def endpoint_ready(
     try:
         models = http.get(f"{base}/v1/models", headers=headers or None)
         if 200 <= models.status_code < 300:
-            return True
+            payload = models.json()
+            data = payload.get("data") if isinstance(payload, dict) else None
+            if not isinstance(data, list):
+                return False
+            return any(
+                isinstance(item, dict) and item.get("id") == model_id for item in data
+            )
     except BenchError:
         pass
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return False
     # Minimal text-only completion as fallback readiness probe.
     payload = {
         "model": model_id,
@@ -320,9 +356,16 @@ def endpoint_ready(
         "messages": [{"role": "user", "content": "ping"}],
     }
     try:
-        resp = http.post(f"{base}/v1/chat/completions", json_body=payload, headers=headers or None)
-        return 200 <= resp.status_code < 300
+        resp = http.post(
+            f"{base}/v1/chat/completions", json_body=payload, headers=headers or None
+        )
+        if not (200 <= resp.status_code < 300):
+            return False
+        completion = resp.json()
+        return isinstance(completion, dict) and completion.get("model") == model_id
     except BenchError:
+        return False
+    except (UnicodeDecodeError, json.JSONDecodeError):
         return False
 
 
@@ -409,7 +452,7 @@ def ensure_stopped(
             timeout_seconds=timeout_seconds,
             poll_interval_seconds=poll_interval_seconds,
         )
-    except Exception as poll_error:  # noqa: BLE001 - preserve both cleanup errors
+    except Exception as poll_error:
         if stop_error is not None:
             raise BenchError(
                 f"STOP request failed ({stop_error}); STOPPED verification also failed "
@@ -417,7 +460,9 @@ def ensure_stopped(
             ) from poll_error
         raise
     if stop_error is not None:
-        raise BenchError(f"STOP request failed before STOPPED verification: {stop_error}")
+        raise BenchError(
+            f"STOP request failed before STOPPED verification: {stop_error}"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -515,7 +560,7 @@ def run_cold_boot(
         )
     except PhaseError:
         raise
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         raise PhaseError("cold_boot", str(exc)) from exc
 
 
@@ -590,7 +635,7 @@ def run_warm_start_loop(
         )
     except PhaseError:
         raise
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         raise PhaseError("warm_start", str(exc)) from exc
 
 
@@ -605,7 +650,9 @@ def run_throughput(
 ) -> ThroughputResult:
     """POST each image through /v1/chat/completions; s/img p50/p95/mean [PERF-01]."""
     if not image_paths:
-        raise PhaseError("throughput", "at least one --image is required for throughput phase")
+        raise PhaseError(
+            "throughput", "at least one --image is required for throughput phase"
+        )
     base = endpoint_url.rstrip("/")
     headers: dict[str, str] = {}
     if api_key:
@@ -632,6 +679,32 @@ def run_throughput(
                     "throughput",
                     f"chat/completions HTTP {resp.status_code} for {path}",
                 )
+            try:
+                completion = resp.json()
+            except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+                raise PhaseError(
+                    "throughput", f"invalid completion JSON for {path}: {exc}"
+                ) from exc
+            if not isinstance(completion, dict):
+                raise PhaseError(
+                    "throughput", f"invalid completion envelope for {path}"
+                )
+            response_model = completion.get("model")
+            if response_model is not None and response_model != model_id:
+                raise PhaseError(
+                    "throughput",
+                    f"completion model mismatch for {path}: expected {model_id}",
+                )
+            choices = completion.get("choices")
+            first_choice = choices[0] if isinstance(choices, list) and choices else None
+            message = (
+                first_choice.get("message") if isinstance(first_choice, dict) else None
+            )
+            content = message.get("content") if isinstance(message, dict) else None
+            if not isinstance(content, str) or not content.strip():
+                raise PhaseError(
+                    "throughput", f"completion content is empty or missing for {path}"
+                )
             samples.append(elapsed)
             print(f"throughput {path.name}: {elapsed:.3f}s", flush=True)
         return ThroughputResult(
@@ -642,7 +715,7 @@ def run_throughput(
         )
     except PhaseError:
         raise
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         raise PhaseError("throughput", str(exc)) from exc
 
 
@@ -652,7 +725,7 @@ def run_throughput(
 
 
 def default_artifact_path(*, today: date | None = None) -> Path:
-    d = today or date.today()
+    d = today or datetime.now(UTC).date()
     return Path("docs/tasks/vlm") / f"VLM-3-gpu-spike-{d.isoformat()}.json"
 
 
@@ -662,6 +735,9 @@ def build_spike_artifact(
     warm_start: WarmStartResult,
     throughput: ThroughputResult,
     model_id: str,
+    shape: str,
+    quantization: str,
+    model_path: str,
     boot_volume_gb: int,
     vpus_per_gb: int,
     a10_quota_confirmed: bool = False,
@@ -671,20 +747,19 @@ def build_spike_artifact(
     task_ref: str = "VLM-3",
 ) -> dict[str, Any]:
     """Fill acx-gpu-spike/v1 with zero null measurement values; flip status."""
-    stamp = recorded_at or datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
+    stamp = recorded_at or datetime.now(UTC).astimezone().isoformat(timespec="seconds")
     return {
         "schema": SCHEMA,
         "task_ref": task_ref,
         "recorded_at": stamp,
         "status": ARTIFACT_STATUS_MEASURED,
-        "shape": "VM.GPU.A10.1",
+        "shape": shape,
         "boot_volume_size_in_gbs": boot_volume_gb,
         "boot_volume_vpus_per_gb": vpus_per_gb,
         "measurement_candidate": {
             "model_id": model_id,
-            "quantization": "Q4 GGUF",
-            "estimated_model_bytes_gb": 18,
-            "model_path": "/opt/acx-gpu/models/qwen3-vl-30b-a3b-instruct-q4.gguf",
+            "quantization": quantization,
+            "model_path": model_path,
         },
         "measurements": {
             "cold_boot_seconds": {
@@ -722,6 +797,11 @@ def build_spike_artifact(
                 "p95": throughput.p95,
                 "mean": throughput.mean,
                 "samples": list(throughput.samples),
+                "sample_size_note": (
+                    "n=1 image"
+                    if len(throughput.samples) == 1
+                    else f"n={len(throughput.samples)} images"
+                ),
                 "source": LIVE_MEASUREMENT_SOURCE,
             },
         },
@@ -750,9 +830,11 @@ def build_spike_artifact(
             "Artifact produced by scripts/gpu_spike_bench.py (VLM-3B Slice 7a).",
             "Warm-start reports p50/p95 percentiles, not means [PERF-01].",
             "Shutdown time is recorded separately and excluded from warm-start samples.",
-            f"Warm-start p95 target {warm_start.target_seconds}s: "
-            f"{'PASS' if warm_start.meets_target else 'FAIL'} "
-            f"(p95={warm_start.p95:.3f}s).",
+            (
+                f"Warm-start p95 target {warm_start.target_seconds}s: "
+                f"{'PASS' if warm_start.meets_target else 'FAIL'} "
+                f"(p95={warm_start.p95:.3f}s)."
+            ),
         ],
     }
 
@@ -791,6 +873,10 @@ def run_bench(
     artifact_out: Path,
     boot_volume_gb: int,
     vpus_per_gb: int,
+    shape: str,
+    quantization: str,
+    model_path: str,
+    bench_dedicated_tag: str,
     a10_quota_confirmed: bool = False,
     a100_or_l40s_headroom_confirmed: bool = False,
     serverless_gpu_available: bool = False,
@@ -800,7 +886,7 @@ def run_bench(
     endpoint_timeout_seconds: float = DEFAULT_ENDPOINT_READY_TIMEOUT_S,
     on_phase: Callable[[str], None] | None = None,
 ) -> BenchResult:
-    """Run all phases; always STOP in ``finally`` [RES-07]."""
+    """Run all phases; always STOP in ``finally`` after the dedicated-host gate."""
     cold: ColdBootResult | None = None
     warm: WarmStartResult | None = None
     thruput: ThroughputResult | None = None
@@ -812,6 +898,12 @@ def run_bench(
         active_phase = phase
         if on_phase is not None:
             on_phase(phase)
+
+    _mark("dedicated_instance_check")
+    try:
+        actuator.verify_bench_dedicated(instance_ocid, bench_dedicated_tag)
+    except Exception as exc:
+        raise PhaseError("dedicated_instance_check", str(exc)) from exc
 
     try:
         _mark("cold_boot")
@@ -875,6 +967,9 @@ def run_bench(
             warm_start=warm,
             throughput=thruput,
             model_id=model_id,
+            shape=shape,
+            quantization=quantization,
+            model_path=model_path,
             boot_volume_gb=boot_volume_gb,
             vpus_per_gb=vpus_per_gb,
             a10_quota_confirmed=a10_quota_confirmed,
@@ -895,7 +990,7 @@ def run_bench(
         )
     except PhaseError:
         raise
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         raise PhaseError(active_phase, str(exc)) from exc
     finally:
         # Billing safety: never leave the instance RUNNING [RES-07].
@@ -908,7 +1003,7 @@ def run_bench(
                 poll_interval_seconds=poll_interval_seconds,
             )
             print("finally: instance STOPPED", flush=True)
-        except Exception as stop_exc:  # noqa: BLE001
+        except Exception as stop_exc:
             sys.stderr.write(f"finally STOP failed: {stop_exc}\n")
             raise PhaseError("cleanup", str(stop_exc)) from stop_exc
 
@@ -920,7 +1015,7 @@ def run_bench(
                 print(f"artifact written: {artifact_out}", flush=True)
             except PhaseError:
                 raise
-            except Exception as artifact_exc:  # noqa: BLE001
+            except Exception as artifact_exc:
                 raise PhaseError("artifact_write", str(artifact_exc)) from artifact_exc
 
 
@@ -928,7 +1023,7 @@ def dry_run_plan(
     *,
     instance_ocid: str,
     endpoint_url: str,
-    model_id: str,
+    model_id: str | None,
     image_paths: Sequence[Path],
     warm_start_runs: int,
     artifact_out: Path,
@@ -937,6 +1032,10 @@ def dry_run_plan(
     serverless_gpu_available: bool,
     boot_volume_gb: int | None,
     vpus_per_gb: int | None,
+    shape: str | None,
+    quantization: str | None,
+    model_path: str | None,
+    bench_dedicated_tag: str | None,
 ) -> dict[str, Any]:
     plan = {
         "mode": "dry-run",
@@ -948,11 +1047,16 @@ def dry_run_plan(
         "artifact_out": str(artifact_out),
         "boot_volume_gb": boot_volume_gb,
         "vpus_per_gb": vpus_per_gb,
+        "shape": shape,
+        "quantization": quantization,
+        "model_path": model_path,
+        "bench_dedicated_tag": bench_dedicated_tag,
         "phases": [
             "cold_boot: START from STOPPED → poll RUNNING → poll endpoint ready",
-            f"warm_start: STOP→STOPPED (shutdown separate), then START→ready × "
-            f"{warm_start_runs} (p50/p95 vs "
-            f"{WARM_START_P95_TARGET_SECONDS}s)",
+            (
+                "warm_start: STOP→STOPPED (shutdown separate), then START→ready × "
+                f"{warm_start_runs} (p50/p95 vs {WARM_START_P95_TARGET_SECONDS}s)"
+            ),
             "throughput: POST /v1/chat/completions per --image",
             "artifact_write: fill acx-gpu-spike/v1 measurements, flip status",
             "finally: STOP + wait STOPPED [RES-07]",
@@ -979,8 +1083,8 @@ def build_parser() -> argparse.ArgumentParser:
         prog="gpu_spike_bench",
         description=(
             "VLM-3B GPU spike bench: cold boot, warm-start p50/p95, model load, "
-            "seconds/image. Emits acx-gpu-spike/v1 JSON. Use --dry-run to print "
-            "the plan without touching OCI or the endpoint."
+            "seconds/image. Emits acx-gpu-spike/v1 JSON. Dry-run is the default; "
+            "live operation requires --live plus an environment confirmation."
         ),
     )
     parser.add_argument(
@@ -1021,6 +1125,30 @@ def build_parser() -> argparse.ArgumentParser:
         help="Live-run boot-volume performance in VPU/GB (required unless --dry-run)",
     )
     parser.add_argument(
+        "--shape",
+        default=None,
+        help="Live-run OCI shape recorded in the artifact (required with --live)",
+    )
+    parser.add_argument(
+        "--quantization",
+        default=None,
+        help="Live-run model quantization recorded in the artifact (required with --live)",
+    )
+    parser.add_argument(
+        "--model-path",
+        default=None,
+        help="Live-run served model path recorded in the artifact (required with --live)",
+    )
+    parser.add_argument(
+        "--bench-dedicated-tag",
+        default=None,
+        metavar="KEY=VALUE",
+        help=(
+            "Expected OCI freeform tag proving the instance is bench-dedicated "
+            "(required with --live)"
+        ),
+    )
+    parser.add_argument(
         "--image",
         action="append",
         default=[],
@@ -1029,18 +1157,27 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--model-id",
-        default=DEFAULT_MODEL_ID,
-        help=f"Model id sent to the endpoint (default {DEFAULT_MODEL_ID})",
+        default=None,
+        help="Model id sent to the endpoint and recorded in the artifact (required with --live)",
     )
     parser.add_argument(
         "--api-key",
         default=None,
         help="Optional Bearer token for the GPU endpoint",
     )
-    parser.add_argument(
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument(
         "--dry-run",
         action="store_true",
-        help="Print the execution plan and exit without OCI/endpoint calls",
+        help="Print the execution plan without OCI/endpoint calls (default)",
+    )
+    mode.add_argument(
+        "--live",
+        action="store_true",
+        help=(
+            "Permit live OCI/endpoint operations when the environment confirmation "
+            "is also set"
+        ),
     )
     parser.add_argument(
         "--a10-quota-confirmed",
@@ -1077,7 +1214,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     artifact_out = args.artifact_out or default_artifact_path()
     image_paths = [Path(p) for p in args.images]
 
-    if args.dry_run:
+    if not args.live:
         dry_run_plan(
             instance_ocid=args.instance_ocid,
             endpoint_url=args.endpoint_url,
@@ -1090,13 +1227,47 @@ def main(argv: Sequence[str] | None = None) -> int:
             serverless_gpu_available=args.serverless_gpu_available,
             boot_volume_gb=args.boot_volume_gb,
             vpus_per_gb=args.vpus_per_gb,
+            shape=args.shape,
+            quantization=args.quantization,
+            model_path=args.model_path,
+            bench_dedicated_tag=args.bench_dedicated_tag,
         )
         return 0
 
-    if args.boot_volume_gb is None or args.vpus_per_gb is None:
-        parser.error("--boot-volume-gb and --vpus-per-gb are required for live runs")
+    if os.environ.get(LIVE_CONFIRMATION_ENV) != LIVE_CONFIRMATION_TOKEN:
+        parser.error(
+            f"--live requires {LIVE_CONFIRMATION_ENV}={LIVE_CONFIRMATION_TOKEN}"
+        )
+    required_live_inputs = {
+        "--model-id": args.model_id,
+        "--boot-volume-gb": args.boot_volume_gb,
+        "--vpus-per-gb": args.vpus_per_gb,
+        "--shape": args.shape,
+        "--quantization": args.quantization,
+        "--model-path": args.model_path,
+        "--bench-dedicated-tag": args.bench_dedicated_tag,
+    }
+    missing = [flag for flag, value in required_live_inputs.items() if value is None]
+    if missing:
+        parser.error(f"required for live runs: {', '.join(missing)}")
+    assert args.boot_volume_gb is not None
+    assert args.vpus_per_gb is not None
+    assert args.model_id is not None
+    assert args.shape is not None
+    assert args.quantization is not None
+    assert args.model_path is not None
+    assert args.bench_dedicated_tag is not None
     if args.boot_volume_gb <= 0 or args.vpus_per_gb <= 0:
         parser.error("--boot-volume-gb and --vpus-per-gb must be positive")
+    if (
+        not args.shape.strip()
+        or not args.quantization.strip()
+        or not args.model_path.strip()
+    ):
+        parser.error("--shape, --quantization, and --model-path must be non-empty")
+    tag_key, separator, tag_value = args.bench_dedicated_tag.partition("=")
+    if not separator or not tag_key or not tag_value:
+        parser.error("--bench-dedicated-tag must have the form KEY=VALUE")
     if not image_paths:
         parser.error("at least one --image is required (unless --dry-run)")
 
@@ -1117,6 +1288,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             artifact_out=artifact_out,
             boot_volume_gb=args.boot_volume_gb,
             vpus_per_gb=args.vpus_per_gb,
+            shape=args.shape,
+            quantization=args.quantization,
+            model_path=args.model_path,
+            bench_dedicated_tag=args.bench_dedicated_tag,
             a10_quota_confirmed=args.a10_quota_confirmed,
             a100_or_l40s_headroom_confirmed=args.a100_or_l40s_headroom_confirmed,
             serverless_gpu_available=args.serverless_gpu_available,

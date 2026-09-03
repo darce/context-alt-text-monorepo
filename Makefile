@@ -133,7 +133,7 @@ include $(ROOT_MAKEFILE_DIR)/mk/logs.mk
 # Root targets
 # =============================================================================
 
-.PHONY: help check-all check-frontend check-mcp check-handoff check-orchestrator lint-all lint-handoff lint-orchestrator fix-lint-handoff fix-lint-orchestrator fix-lint-mcp format format-all format-handoff format-orchestrator mypy-handoff mypy-orchestrator test-all test-handoff test-orchestrator clean-all reset-local fix-php-style mcp mcp-start gemini-cli-setup dev dev-stop ace-metrics ace-metrics-json ace-reflect ace-curation-report ace-trends worktree-audit worktree-prune task-plan-audit check-codex-command-router check-skills check-harness-sync check-mcp-pins lint-hoisted-paths maint-start check-main-clean install-git-hooks localwp-mirror-integrity localwp-e2e-install localwp-e2e-auth localwp-e2e-smoke localwp-evidence localwp-a11y-smoke check-overrides-digest test-overrides-digest test-scripts test-vm-scripts mutation-guard-license-policy test-hooks test-deploy-contract test-vlm3 check-gpu-snapshots-live provision-customer provision-demo expire-demo
+.PHONY: help check-all check-frontend check-mcp check-handoff check-orchestrator lint-all lint-handoff lint-orchestrator fix-lint-handoff fix-lint-orchestrator fix-lint-mcp format format-all format-handoff format-orchestrator mypy-handoff mypy-orchestrator test-all test-handoff test-orchestrator clean-all reset-local fix-php-style mcp mcp-start gemini-cli-setup dev dev-stop ace-metrics ace-metrics-json ace-reflect ace-curation-report ace-trends worktree-audit worktree-prune task-plan-audit check-codex-command-router check-skills check-harness-sync check-mcp-pins lint-hoisted-paths maint-start check-main-clean install-git-hooks localwp-mirror-integrity localwp-e2e-install localwp-e2e-auth localwp-e2e-smoke localwp-evidence localwp-a11y-smoke check-overrides-digest test-overrides-digest test-scripts test-vm-scripts mutation-guard-license-policy test-hooks test-deploy-contract test-vlm3 test-gpu-lifecycle test-gpu-snapshot-checker check-gpu-snapshots-live provision-customer provision-demo expire-demo
 
 # Live-host deployment gate. The checker reads /run/acx and the deployed
 # compose contract on the OCI VM, so running it against a developer laptop is
@@ -570,6 +570,18 @@ test-deploy-contract:
 #   WORKBAY_REMOTE_GATE_WORKDIR=. make check-remote TARGETS="test-gpu-lifecycle"
 test-gpu-lifecycle:
 	@python3 -m pytest infra/oci/gpu_lifecycle/tests -q --tb=short
+
+# GPUUX-1: narrow, gate-reachable route to the deployment-checker shell suite.
+# Both existing callers abort before reaching it on a fresh clone, for unrelated
+# reasons: test-scripts dies on the gitignored scripts/hooks path, and
+# test-deploy-contract dies on `import yaml` in
+# scripts/test_e15_33_deploy_convergence.py. Verified on the remote gate at
+# 15f74a60 -- both EXIT=2 with zero tests run -- so check-gpu-snapshots.sh and
+# its guards are unverified on every runner that is not a developer laptop.
+# This target is bash-only and has no Python dependency at all.
+#   WORKBAY_REMOTE_GATE_WORKDIR=. make check-remote TARGETS="test-gpu-snapshot-checker"
+test-gpu-snapshot-checker:
+	@bash scripts/deploy/tests/test-check-gpu-snapshots.sh
 
 # VLM-3 / VLMRP: OCI GPU infra posture, idle-reaper lifecycle, decision memo,
 # bake-off artifact guards, and OWLv2 deferral. Covered by test-scripts in check-all.

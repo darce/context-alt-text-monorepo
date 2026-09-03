@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import socket
+import subprocess
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
@@ -134,6 +136,7 @@ class FakeHttp:
         self.completion_status = completion_status
         self._ready_probes = 0
         self.gets: list[str] = []
+        self.get_headers: list[dict[str, str] | None] = []
         self.posts: list[dict[str, Any]] = []
         self.fail_nth_post: int | None = None
         self._post_count = 0
@@ -143,6 +146,7 @@ class FakeHttp:
 
     def get(self, url: str, *, headers: dict[str, str] | None = None) -> HttpResponse:
         self.gets.append(url)
+        self.get_headers.append(headers)
         self._ready_probes += 1
         if self.advance_clock is not None:
             self.advance_clock.advance(0.01)
@@ -155,6 +159,7 @@ class FakeHttp:
                     {
                         "data": [
                             {"id": "m"},
+                            {"id": "test-model"},
                             {"id": "expected"},
                             {"id": "Qwen3-VL-30B-A3B-Instruct"},
                         ]
@@ -216,6 +221,8 @@ def _live_cli_args(image: Path) -> list[str]:
         "test-instance",
         "--endpoint-url",
         "https://gpu.example",
+        "--allow-endpoint-host",
+        "gpu.example",
         "--live",
         "--image",
         str(image),
@@ -303,7 +310,7 @@ def test_build_spike_artifact_zero_nulls_and_status_flip() -> None:
         ),
         a10_quota_confirmed=True,
     )
-    assert artifact["schema"] == "acx-gpu-spike/v1"
+    assert artifact["schema"] == "acx-gpu-spike/v2"
     assert artifact["status"] == ARTIFACT_STATUS_MEASURED
     assert artifact["status"] != ARTIFACT_STATUS_PENDING
     measurements = artifact["measurements"]
@@ -352,6 +359,7 @@ def test_build_spike_artifact_zero_nulls_and_status_flip() -> None:
     }
     assert "estimated_model_bytes_gb" not in artifact["measurement_candidate"]
     assert artifact["oci_capacity"]["a10_quota_confirmed"] is True
+    assert artifact["phase_evidence"]["lifecycle_poll"]["retries"] == 0
     assert_no_null_measurement_values(artifact)
 
 
@@ -1265,3 +1273,313 @@ def test_phase_error_message_names_phase() -> None:
     err = PhaseError("warm_start", "boom")
     assert "warm_start" in str(err)
     assert err.phase == "warm_start"
+
+
+def test_lifecycle_poll_retries_transient_reads_and_records_evidence() -> None:
+    class FlakyActuator(FakeActuator):
+        def __init__(self) -> None:
+            super().__init__("RUNNING")
+            self.failures = 2
+
+        def get_lifecycle_state(self, instance_id: str) -> str:
+            if self.failures:
+                self.failures -= 1
+                raise subprocess.CalledProcessError(1, ["oci"])
+            return super().get_lifecycle_state(instance_id)
+
+    evidence: dict[str, int] = {}
+    elapsed = bench.wait_for_lifecycle(
+        FlakyActuator(),
+        "test-instance",
+        "RUNNING",
+        clock=FakeClock(),
+        poll_interval_seconds=0.1,
+        evidence=evidence,
+    )
+
+    assert elapsed == pytest.approx(0.2)
+    assert evidence == {"retries": 2}
+
+
+def test_lifecycle_poll_continuous_failures_stop_at_bounded_threshold() -> None:
+    class BrokenActuator(FakeActuator):
+        def get_lifecycle_state(self, instance_id: str) -> str:
+            raise OSError(f"transient read for {instance_id}")
+
+    clock = FakeClock()
+    with pytest.raises(PhaseError, match="transient read.*consecutive"):
+        bench.wait_for_lifecycle(
+            BrokenActuator(),
+            "test-instance",
+            "RUNNING",
+            clock=clock,
+            timeout_seconds=100,
+            poll_interval_seconds=0.1,
+        )
+
+    assert len(clock.sleeps) < 10
+
+
+def test_ensure_stopped_tolerates_transient_read_after_stop() -> None:
+    class FlakyStopActuator(FakeActuator):
+        def __init__(self) -> None:
+            super().__init__("RUNNING")
+            self.reads_after_stop = 0
+
+        def get_lifecycle_state(self, instance_id: str) -> str:
+            if self.stops and self.reads_after_stop == 0:
+                self.reads_after_stop += 1
+                raise json.JSONDecodeError("partial payload", "{", 1)
+            return super().get_lifecycle_state(instance_id)
+
+    actuator = FlakyStopActuator()
+    bench.ensure_stopped(
+        actuator,
+        "test-instance",
+        clock=FakeClock(),
+        poll_interval_seconds=0.1,
+    )
+    assert actuator.state == "STOPPED"
+
+
+def test_describe_failure_still_stops_running_instance(tmp_path: Path) -> None:
+    class DescribeFailureActuator(FakeActuator):
+        def describe_instance(self, instance_id: str) -> bench.InstanceObservation:
+            raise OSError(f"describe failed for {instance_id}")
+
+    actuator = DescribeFailureActuator("RUNNING")
+    with pytest.raises(PhaseError, match="instance_provenance"):
+        run_bench(
+            instance_ocid="test-instance",
+            endpoint_url="http://localhost:8000",
+            model_id="m",
+            image_paths=_write_images(tmp_path, n=1),
+            warm_start_runs=1,
+            actuator=actuator,
+            http=FakeHttp(),
+            clock=FakeClock(),
+            artifact_out=tmp_path / "out.json",
+            boot_volume_gb=400,
+            vpus_per_gb=120,
+            shape="test-shape",
+            quantization="test-quantization",
+            model_path="/test/model.gguf",
+        )
+    assert actuator.stops == ["test-instance"]
+
+
+def test_endpoint_validation_rejects_public_resolution_without_allowlist(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    public_address = ".".join(str(part) for part in (198, 51, 100, 7))
+    monkeypatch.setattr(
+        socket,
+        "getaddrinfo",
+        lambda *_args, **_kwargs: [
+            (socket.AF_INET, socket.SOCK_STREAM, 6, "", (public_address, 443))
+        ],
+    )
+    with pytest.raises(BenchError, match="not private"):
+        bench.validate_endpoint_url("https://public.invalid")
+
+
+def test_cli_rejects_public_endpoint_before_constructing_clients(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    constructed: list[str] = []
+    public_address = ".".join(str(part) for part in (8, 8, 4, 4))
+    image = _write_images(tmp_path, n=1)[0]
+    args = _live_cli_args(image)
+    allow_index = args.index("--allow-endpoint-host")
+    del args[allow_index : allow_index + 2]
+    args[args.index("https://gpu.example")] = "https://public.invalid"
+    monkeypatch.setenv(bench.LIVE_CONFIRMATION_ENV, bench.LIVE_CONFIRMATION_TOKEN)
+    monkeypatch.setattr(
+        socket,
+        "getaddrinfo",
+        lambda *_args, **_kwargs: [
+            (socket.AF_INET, socket.SOCK_STREAM, 6, "", (public_address, 443))
+        ],
+    )
+    monkeypatch.setattr(
+        bench,
+        "OciCliInstanceActuator",
+        lambda **_kwargs: constructed.append("actuator"),
+    )
+    monkeypatch.setattr(bench, "UrlLibHttpClient", lambda: constructed.append("http"))
+
+    with pytest.raises(SystemExit) as exc_info:
+        main(args)
+    assert exc_info.value.code == 2
+    assert constructed == []
+
+
+def test_endpoint_validation_accepts_private_resolution(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    private_address = ".".join(str(part) for part in (10, 20, 30, 40))
+    monkeypatch.setattr(
+        socket,
+        "getaddrinfo",
+        lambda *_args, **_kwargs: [
+            (socket.AF_INET, socket.SOCK_STREAM, 6, "", (private_address, 8000))
+        ],
+    )
+    bench.validate_endpoint_url("http://private.invalid:8000")
+
+
+def test_http_client_does_not_follow_redirects() -> None:
+    assert bench.UrlLibHttpClient()._opener.handlers
+    assert any(
+        isinstance(handler, bench.NoRedirectHandler)
+        for handler in bench.UrlLibHttpClient()._opener.handlers
+    )
+
+
+def test_cli_reads_api_key_from_named_environment_without_leaking(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    secret = "test-super-secret-bearer"
+    image = _write_images(tmp_path, n=1)[0]
+    artifact_out = tmp_path / "secret-check.json"
+    http = FakeHttp()
+    clock = FakeClock()
+    http.advance_clock = clock
+    monkeypatch.setenv(bench.LIVE_CONFIRMATION_ENV, bench.LIVE_CONFIRMATION_TOKEN)
+    monkeypatch.setenv("TEST_GPU_API_KEY", secret)
+    monkeypatch.setattr(bench, "validate_endpoint_url", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        bench, "OciCliInstanceActuator", lambda **_kwargs: FakeActuator()
+    )
+    monkeypatch.setattr(bench, "UrlLibHttpClient", lambda: http)
+    monkeypatch.setattr(bench, "SystemClock", lambda: clock)
+    assert (
+        main(
+            [
+                *_live_cli_args(image),
+                "--api-key-env",
+                "TEST_GPU_API_KEY",
+                "--artifact-out",
+                str(artifact_out),
+            ]
+        )
+        == 0
+    )
+    streams = capsys.readouterr()
+    expected_header = {"Authorization": f"Bearer {secret}"}
+    assert expected_header in http.get_headers
+    assert any(post["headers"] == expected_header for post in http.posts)
+    assert secret not in artifact_out.read_text()
+    assert secret not in streams.out
+    assert secret not in streams.err
+
+
+def test_cli_removes_plain_api_key_flag() -> None:
+    with pytest.raises(SystemExit) as exc_info:
+        bench.build_parser().parse_args(
+            [
+                "--instance-ocid",
+                "test-instance",
+                "--endpoint-url",
+                "http://localhost:8000",
+                "--api-key",
+                "must-not-be-accepted",
+            ]
+        )
+    assert exc_info.value.code == 2
+
+
+def test_cli_rejects_unset_api_key_env_before_actuator(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    constructed = False
+    image = _write_images(tmp_path, n=1)[0]
+    monkeypatch.setenv(bench.LIVE_CONFIRMATION_ENV, bench.LIVE_CONFIRMATION_TOKEN)
+    monkeypatch.delenv("MISSING_GPU_API_KEY", raising=False)
+
+    def fail_if_constructed(**_kwargs):
+        nonlocal constructed
+        constructed = True
+        raise AssertionError("actuator must not be constructed")
+
+    monkeypatch.setattr(bench, "OciCliInstanceActuator", fail_if_constructed)
+    with pytest.raises(SystemExit) as exc_info:
+        main([*_live_cli_args(image), "--api-key-env", "MISSING_GPU_API_KEY"])
+    assert exc_info.value.code == 2
+    assert constructed is False
+
+
+def test_main_returns_nonzero_for_provenance_mismatch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    image = _write_images(tmp_path, n=1)[0]
+    monkeypatch.setenv(bench.LIVE_CONFIRMATION_ENV, bench.LIVE_CONFIRMATION_TOKEN)
+    monkeypatch.setattr(bench, "validate_endpoint_url", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        bench, "OciCliInstanceActuator", lambda **_kwargs: FakeActuator()
+    )
+    monkeypatch.setattr(bench, "UrlLibHttpClient", lambda: FakeHttp())
+    monkeypatch.setattr(
+        bench,
+        "run_bench",
+        lambda **_kwargs: (_ for _ in ()).throw(
+            PhaseError("instance_provenance_mismatch", "artifact preserved")
+        ),
+    )
+    assert main(_live_cli_args(image)) == 1
+
+
+def test_run_bench_writes_mismatch_artifact_then_fails(tmp_path: Path) -> None:
+    class MismatchActuator(FakeActuator):
+        def describe_instance(self, instance_id: str) -> bench.InstanceObservation:
+            del instance_id
+            return bench.InstanceObservation("different-shape", 750, 60)
+
+    artifact_out = tmp_path / "mismatch.json"
+    http = FakeHttp()
+    clock = FakeClock()
+    http.advance_clock = clock
+    with pytest.raises(PhaseError, match="instance_provenance_mismatch"):
+        run_bench(
+            instance_ocid="test-instance",
+            endpoint_url="http://localhost:8000",
+            model_id="m",
+            image_paths=_write_images(tmp_path, n=1),
+            warm_start_runs=1,
+            actuator=MismatchActuator(),
+            http=http,
+            clock=clock,
+            artifact_out=artifact_out,
+            boot_volume_gb=400,
+            vpus_per_gb=120,
+            shape="test-shape",
+            quantization="test-quantization",
+            model_path="/test/model.gguf",
+        )
+    assert json.loads(artifact_out.read_text())["status"] == (
+        bench.ARTIFACT_STATUS_PROVENANCE_MISMATCH
+    )
+
+
+def test_v1_committed_and_v2_fresh_artifacts_load() -> None:
+    artifacts_root = Path(__file__).resolve().parents[1] / "docs" / "tasks" / "vlm"
+    committed = sorted(artifacts_root.glob("VLM-3-gpu-spike-2026-07-14*.json"))
+    assert len(committed) == 4
+    for path in committed:
+        assert bench.load_spike_artifact(path)["schema"] == "acx-gpu-spike/v1"
+
+    fresh = build_spike_artifact(
+        cold_boot=ColdBootResult(1, 0.5, 0.5, 0.5),
+        warm_start=WarmStartResult([2], [1], 2, 2, True),
+        throughput=ThroughputResult([3], 3, 3, 3),
+        model_id="m",
+        shape="test-shape",
+        quantization="test-quantization",
+        model_path="/test/model.gguf",
+        boot_volume_gb=400,
+        vpus_per_gb=120,
+    )
+    assert fresh["schema"] == "acx-gpu-spike/v2"
+    assert bench.load_spike_artifact(fresh)["schema"] == "acx-gpu-spike/v2"

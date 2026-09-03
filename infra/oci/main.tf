@@ -245,6 +245,12 @@ resource "oci_core_instance" "acx_gpu_burst" {
   # keeps cost controlled.
   state = "RUNNING"
 
+  lifecycle {
+    # Preserve first boot for cloud-init, then allow the idle reaper to keep the
+    # instance STOPPED without a later terraform apply restarting it.
+    ignore_changes = [state]
+  }
+
   source_details {
     source_type             = "image"
     source_id               = var.gpu_image_ocid

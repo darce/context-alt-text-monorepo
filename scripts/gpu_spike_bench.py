@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """GPU spike bench for VLM-3B Slice 7a — cold boot, warm-start, throughput.
 
-Captures E19-1 ``acx-gpu-spike/v1`` measurement fields for an explicitly
+Captures E19-1 ``acx-gpu-spike/v2`` measurement fields for an explicitly
 identified model and hardware configuration. Live OCI/GPU runs are operator-
 gated; unit tests inject fake actuator/clock/http seams and never touch the
 network [TEST-01].
@@ -16,16 +16,19 @@ from __future__ import annotations
 
 import argparse
 import base64
+import ipaddress
 import json
 import math
 import mimetypes
 import os
 import re
 import shutil
+import socket
 import subprocess
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -39,11 +42,13 @@ LIVE_MEASUREMENT_SOURCE = "live_oci_gpu_spike_bench"
 ARTIFACT_STATUS_MEASURED = "live_oci_measurement_complete"
 ARTIFACT_STATUS_PROVENANCE_MISMATCH = "live_oci_measurement_provenance_mismatch"
 ARTIFACT_STATUS_PENDING = "local_infra_scaffold_pending_live_oci_measurement"
-SCHEMA = "acx-gpu-spike/v1"
+SCHEMA = "acx-gpu-spike/v2"
+SUPPORTED_SCHEMAS = frozenset(("acx-gpu-spike/v1", SCHEMA))
 DEFAULT_POLL_INTERVAL_S = 2.0
 DEFAULT_LIFECYCLE_TIMEOUT_S = 900.0
 DEFAULT_ENDPOINT_READY_TIMEOUT_S = 900.0
 DEFAULT_OCI_TIMEOUT_SECONDS = 660
+LIFECYCLE_POLL_MAX_CONSECUTIVE_ERRORS = 5
 LIVE_CONFIRMATION_ENV = "ACX_GPU_BENCH_LIVE"
 LIVE_CONFIRMATION_TOKEN = "I-UNDERSTAND-THIS-COSTS-MONEY"
 BENCH_DEDICATED_TAG = ("purpose", "gpu-spike-bench")
@@ -132,11 +137,19 @@ class SystemClock:
         time.sleep(seconds)
 
 
+class NoRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Make redirects observable instead of following them to an untrusted host."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        del req, fp, code, msg, headers, newurl
+
+
 class UrlLibHttpClient:
     """Minimal stdlib HTTP client (no live use in unit tests)."""
 
     def __init__(self, *, timeout_seconds: float = 180.0) -> None:
         self._timeout = timeout_seconds
+        self._opener = urllib.request.build_opener(NoRedirectHandler())
 
     def get(
         self, url: str, *, headers: Mapping[str, str] | None = None
@@ -158,7 +171,7 @@ class UrlLibHttpClient:
 
     def _open(self, req: urllib.request.Request) -> HttpResponse:
         try:
-            with urllib.request.urlopen(req, timeout=self._timeout) as resp:
+            with self._opener.open(req, timeout=self._timeout) as resp:
                 return HttpResponse(
                     status_code=getattr(resp, "status", 200),
                     body=resp.read(),
@@ -453,6 +466,60 @@ def endpoint_ready(
 # ---------------------------------------------------------------------------
 
 
+def _is_permitted_endpoint_address(address: str) -> bool:
+    ip = ipaddress.ip_address(address)
+    if ip.is_loopback:
+        return True
+    if isinstance(ip, ipaddress.IPv4Address):
+        return any(
+            ip in network
+            for network in (
+                ipaddress.ip_network("10.0.0.0/8"),
+                ipaddress.ip_network("172.16.0.0/12"),
+                ipaddress.ip_network("192.168.0.0/16"),
+                ipaddress.ip_network("100.64.0.0/10"),
+            )
+        )
+    return False
+
+
+def validate_endpoint_url(
+    endpoint_url: str, *, allowed_hosts: Sequence[str] = ()
+) -> None:
+    """Require a local/private endpoint or an explicitly allowlisted hostname."""
+    parsed = urllib.parse.urlsplit(endpoint_url)
+    if parsed.scheme not in {"http", "https"}:
+        raise BenchError("endpoint URL scheme must be http or https")
+    if (
+        not parsed.hostname
+        or parsed.username is not None
+        or parsed.password is not None
+    ):
+        raise BenchError("endpoint URL must contain a host and no userinfo")
+    host = parsed.hostname.rstrip(".").lower()
+    normalized_allowlist = {item.rstrip(".").lower() for item in allowed_hosts}
+    if host in normalized_allowlist:
+        return
+    try:
+        addresses = {
+            info[4][0]
+            for info in socket.getaddrinfo(
+                host,
+                parsed.port or (443 if parsed.scheme == "https" else 80),
+                type=socket.SOCK_STREAM,
+            )
+        }
+    except (OSError, ValueError) as exc:
+        raise BenchError(f"endpoint host could not be resolved: {host}: {exc}") from exc
+    if not addresses or any(
+        not _is_permitted_endpoint_address(address) for address in addresses
+    ):
+        raise BenchError(
+            f"endpoint host {host!r} resolves to an address that is not private; "
+            "use --allow-endpoint-host only for an intentional exception"
+        )
+
+
 def wait_for_lifecycle(
     actuator: InstanceActuator,
     instance_id: str,
@@ -461,18 +528,37 @@ def wait_for_lifecycle(
     clock: Clock,
     timeout_seconds: float = DEFAULT_LIFECYCLE_TIMEOUT_S,
     poll_interval_seconds: float = DEFAULT_POLL_INTERVAL_S,
+    evidence: dict[str, int] | None = None,
 ) -> float:
     """Poll until lifecycle state matches ``desired``. Returns elapsed seconds."""
     desired_u = desired.upper()
     t0 = clock.monotonic()
+    consecutive_errors = 0
+    retries = evidence.get("retries", 0) if evidence is not None else 0
+    last_state = "UNKNOWN"
     while True:
-        state = actuator.get_lifecycle_state(instance_id).upper()
-        if state == desired_u:
-            return clock.monotonic() - t0
+        try:
+            last_state = actuator.get_lifecycle_state(instance_id).upper()
+            consecutive_errors = 0
+            if last_state == desired_u:
+                if evidence is not None:
+                    evidence["retries"] = retries
+                return clock.monotonic() - t0
+        except (subprocess.SubprocessError, json.JSONDecodeError, OSError) as exc:
+            consecutive_errors += 1
+            retries += 1
+            if evidence is not None:
+                evidence["retries"] = retries
+            if consecutive_errors >= LIFECYCLE_POLL_MAX_CONSECUTIVE_ERRORS:
+                raise PhaseError(
+                    "lifecycle_poll",
+                    f"last error: {exc}; {consecutive_errors} consecutive "
+                    "lifecycle read errors",
+                ) from exc
         if clock.monotonic() - t0 >= timeout_seconds:
             raise PhaseError(
                 "lifecycle_poll",
-                f"timeout waiting for {desired_u} (last state={state}, "
+                f"timeout waiting for {desired_u} (last state={last_state}, "
                 f"timeout={timeout_seconds}s)",
             )
         clock.sleep(poll_interval_seconds)
@@ -555,6 +641,7 @@ class ColdBootResult:
     model_load_seconds: float
     instance_running_seconds: float
     endpoint_ready_seconds: float
+    lifecycle_poll_retries: int = 0
 
 
 @dataclass
@@ -565,6 +652,7 @@ class WarmStartResult:
     p95: float
     meets_target: bool
     target_seconds: float = WARM_START_P95_TARGET_SECONDS
+    lifecycle_poll_retries: int = 0
 
 
 @dataclass
@@ -601,6 +689,7 @@ def run_cold_boot(
 ) -> ColdBootResult:
     """START from STOPPED → RUNNING → endpoint ready [cold_boot + model_load]."""
     try:
+        lifecycle_evidence: dict[str, int] = {"retries": 0}
         state = actuator.get_lifecycle_state(instance_id).upper()
         if state != "STOPPED":
             ensure_stopped(
@@ -619,6 +708,7 @@ def run_cold_boot(
             clock=clock,
             timeout_seconds=lifecycle_timeout_seconds,
             poll_interval_seconds=poll_interval_seconds,
+            evidence=lifecycle_evidence,
         )
         t_running = clock.monotonic()
         wait_for_endpoint_ready(
@@ -636,6 +726,7 @@ def run_cold_boot(
             model_load_seconds=t_ready - t_running,
             instance_running_seconds=t_running - t0,
             endpoint_ready_seconds=t_ready - t_running,
+            lifecycle_poll_retries=lifecycle_evidence["retries"],
         )
     except PhaseError:
         raise
@@ -663,6 +754,7 @@ def run_warm_start_loop(
         raise PhaseError("warm_start", f"warm-start-runs must be >= 1, got {runs}")
     samples: list[float] = []
     shutdown_samples: list[float] = []
+    lifecycle_evidence: dict[str, int] = {"retries": 0}
     try:
         for i in range(runs):
             shutdown_started = clock.monotonic()
@@ -674,6 +766,7 @@ def run_warm_start_loop(
                 clock=clock,
                 timeout_seconds=lifecycle_timeout_seconds,
                 poll_interval_seconds=poll_interval_seconds,
+                evidence=lifecycle_evidence,
             )
             shutdown_samples.append(clock.monotonic() - shutdown_started)
             t0 = clock.monotonic()
@@ -685,6 +778,7 @@ def run_warm_start_loop(
                 clock=clock,
                 timeout_seconds=lifecycle_timeout_seconds,
                 poll_interval_seconds=poll_interval_seconds,
+                evidence=lifecycle_evidence,
             )
             wait_for_endpoint_ready(
                 http,
@@ -711,6 +805,7 @@ def run_warm_start_loop(
             p95=p95,
             meets_target=meets,
             target_seconds=target_seconds,
+            lifecycle_poll_retries=lifecycle_evidence["retries"],
         )
     except PhaseError:
         raise
@@ -948,6 +1043,13 @@ def build_spike_artifact(
                 "source": LIVE_MEASUREMENT_SOURCE,
             },
         },
+        "phase_evidence": {
+            "lifecycle_poll": {
+                "retries": (
+                    cold_boot.lifecycle_poll_retries + warm_start.lifecycle_poll_retries
+                )
+            }
+        },
         "oci_capacity": {
             "a10_quota_confirmed": a10_quota_confirmed,
             "a100_or_l40s_headroom_confirmed": a100_or_l40s_headroom_confirmed,
@@ -993,6 +1095,29 @@ def write_artifact(
         raise BenchError(
             f"artifact already exists: {path}; pass --force to overwrite"
         ) from exc
+
+
+def load_spike_artifact(source: Path | Mapping[str, Any]) -> dict[str, Any]:
+    """Load legacy v1 or current v2 evidence without rewriting measurements."""
+    if isinstance(source, Path):
+        try:
+            artifact = json.loads(source.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise BenchError(f"could not load spike artifact {source}: {exc}") from exc
+    else:
+        artifact = dict(source)
+    schema = artifact.get("schema")
+    if schema not in SUPPORTED_SCHEMAS:
+        raise BenchError(f"unsupported spike artifact schema: {schema!r}")
+    if not isinstance(artifact.get("measurements"), dict):
+        raise BenchError("spike artifact missing measurements object")
+    if schema == SCHEMA:
+        if not isinstance(artifact.get("provenance"), dict):
+            raise BenchError("v2 spike artifact missing provenance object")
+        measurements = artifact["measurements"]
+        if not isinstance(measurements.get("shutdown_seconds"), dict):
+            raise BenchError("v2 spike artifact missing shutdown_seconds")
+    return artifact
 
 
 def assert_no_null_measurement_values(artifact: Mapping[str, Any]) -> None:
@@ -1056,13 +1181,13 @@ def run_bench(
     except Exception as exc:
         raise PhaseError("dedicated_instance_check", str(exc)) from exc
 
-    _mark("instance_provenance")
     try:
-        instance_observation = actuator.describe_instance(instance_ocid)
-    except Exception as exc:
-        raise PhaseError("instance_provenance", str(exc)) from exc
+        _mark("instance_provenance")
+        try:
+            instance_observation = actuator.describe_instance(instance_ocid)
+        except Exception as exc:
+            raise PhaseError("instance_provenance", str(exc)) from exc
 
-    try:
         _mark("cold_boot")
         cold = run_cold_boot(
             actuator=actuator,
@@ -1171,6 +1296,14 @@ def run_bench(
                 _mark("artifact_write")
                 write_artifact(artifact_out, prepared_artifact, force=force_artifact)
                 print(f"artifact written: {artifact_out}", flush=True)
+                if (
+                    prepared_artifact.get("status")
+                    == ARTIFACT_STATUS_PROVENANCE_MISMATCH
+                ):
+                    raise PhaseError(
+                        "instance_provenance_mismatch",
+                        f"artifact preserved at {artifact_out}",
+                    )
             except PhaseError:
                 raise
             except Exception as artifact_exc:
@@ -1215,7 +1348,7 @@ def dry_run_plan(
                 f"{warm_start_runs} (p50/p95 vs {WARM_START_P95_TARGET_SECONDS}s)"
             ),
             "throughput: POST /v1/chat/completions per --image",
-            "artifact_write: fill acx-gpu-spike/v1 measurements, flip status",
+            "artifact_write: fill acx-gpu-spike/v2 measurements, flip status",
             "finally: STOP + wait STOPPED [RES-07]",
         ],
         "oci_capacity_flags": {
@@ -1238,9 +1371,10 @@ def dry_run_plan(
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="gpu_spike_bench",
+        allow_abbrev=False,
         description=(
             "VLM-3B GPU spike bench: cold boot, warm-start p50/p95, model load, "
-            "seconds/image. Emits acx-gpu-spike/v1 JSON. Dry-run is the default; "
+            "seconds/image. Emits acx-gpu-spike/v2 JSON. Dry-run is the default; "
             "live operation requires --live plus an environment confirmation."
         ),
     )
@@ -1314,9 +1448,17 @@ def build_parser() -> argparse.ArgumentParser:
         help="Model id sent to the endpoint and recorded in the artifact (required with --live)",
     )
     parser.add_argument(
-        "--api-key",
+        "--api-key-env",
         default=None,
-        help="Optional Bearer token for the GPU endpoint",
+        metavar="NAME",
+        help="Read the optional GPU endpoint Bearer token from environment NAME",
+    )
+    parser.add_argument(
+        "--allow-endpoint-host",
+        action="append",
+        default=[],
+        metavar="HOST",
+        help="Explicitly allow a non-private endpoint hostname (repeatable)",
     )
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument(
@@ -1439,6 +1581,18 @@ def main(argv: Sequence[str] | None = None) -> int:
         except OSError as exc:
             parser.error(f"--image is not a readable file: {image_path}: {exc}")
 
+    api_key: str | None = None
+    if args.api_key_env:
+        api_key = os.environ.get(args.api_key_env)
+        if not api_key:
+            parser.error(
+                f"--api-key-env names an unset or empty variable: {args.api_key_env}"
+            )
+    try:
+        validate_endpoint_url(args.endpoint_url, allowed_hosts=args.allow_endpoint_host)
+    except BenchError as exc:
+        parser.error(str(exc))
+
     artifact_out = args.artifact_out or default_artifact_path(
         model_id=args.model_id,
         shape=args.shape,
@@ -1475,7 +1629,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             a10_quota_confirmed=args.a10_quota_confirmed,
             a100_or_l40s_headroom_confirmed=args.a100_or_l40s_headroom_confirmed,
             serverless_gpu_available=args.serverless_gpu_available,
-            api_key=args.api_key,
+            api_key=api_key,
             poll_interval_seconds=args.poll_interval,
         )
     except PhaseError as exc:

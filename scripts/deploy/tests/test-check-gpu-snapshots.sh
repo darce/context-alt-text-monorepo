@@ -11,7 +11,7 @@ root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)
 checker="${root}/scripts/deploy/check-gpu-snapshots.sh"
 prod_compose="${root}/apps/prototype-description-service/docker-compose.prod.yml"
 prod_env="${root}/apps/prototype-description-service/.env.prod.example"
-makefile="${root}/Makefile"
+makefile=${ACX_GPU_TEST_MAKEFILE:-${root}/Makefile}
 fixture_root=$(mktemp -d)
 trap 'rm -rf "$fixture_root"' EXIT
 
@@ -25,6 +25,24 @@ assert_contains() {
         pass "$label"
     else
         fail "$label (missing: $needle)"
+    fi
+}
+
+assert_line_matches() {
+    local label=$1 pattern=$2 file=$3
+    if grep -Eq -- "$pattern" "$file"; then
+        pass "$label"
+    else
+        fail "$label (missing line matching: $pattern)"
+    fi
+}
+
+assert_output_contains() {
+    local label=$1 needle=$2 output=$3
+    if [[ "$output" == *"$needle"* ]]; then
+        pass "$label"
+    else
+        fail "$label (missing: $needle; output: $output)"
     fi
 }
 
@@ -104,6 +122,14 @@ services:
     volumes:
       - ${ACX_GPU_SNAPSHOT_DIR}:/run/acx:ro
 EOF
+cat >"${fixture_root}/compose-template-env.yml" <<EOF
+services:
+  api:
+    environment:
+      - ACX_GPU_STATE_PATH=\${ACX_GPU_STATE_PATH}
+    volumes:
+      - ${fixture_root}/run/acx:${fixture_root}/run/acx:ro
+EOF
 cat >"${fixture_root}/install.sh" <<EOF
 ExecStart=python3 -m infra.oci.gpu_lifecycle --load-json ${fixture_root}/run/acx/describe-load.json --gpu-state-json ${fixture_root}/run/acx/gpu-state.json
 ExecStart=python3 -m infra.oci.gpu_lifecycle --load-json ${fixture_root}/run/acx/describe-load.json --gpu-state-json ${fixture_root}/run/acx/gpu-state.json
@@ -123,10 +149,24 @@ assert_contains "env documents load path" "ACX_DESCRIBE_LOAD_PATH=/run/acx/descr
 assert_contains "env documents load refresh" "ACX_DESCRIBE_LOAD_REFRESH_SECONDS=45" "$prod_env"
 assert_contains "compose passes GPU state path" 'ACX_GPU_STATE_PATH=${ACX_GPU_STATE_PATH}' "$prod_compose"
 assert_contains "compose mounts snapshot directory read-only" '${ACX_GPU_SNAPSHOT_DIR}:/run/acx:ro' "$prod_compose"
-assert_contains "live snapshot checker has a make caller" "check-gpu-snapshots-live:" "$makefile"
-assert_contains "live snapshot checker caller executes the checker" "scripts/deploy/check-gpu-snapshots.sh" "$makefile"
-assert_contains "deploy verification invokes live snapshot checker" "deploy-verify-dev: check-gpu-snapshots-live" "$makefile"
-assert_contains "live snapshot checker requires an explicit environment" "GPU_SNAPSHOT_ENV is required" "$makefile"
+assert_line_matches "live snapshot checker has a make target" '^check-gpu-snapshots-live:' "$makefile"
+live_make_output=$(make -C "$root" --no-print-directory -n -f "$makefile" check-gpu-snapshots-live GPU_SNAPSHOT_ENV=dev 2>&1)
+assert_output_contains "live snapshot checker executes the checker" \
+    "scripts/deploy/check-gpu-snapshots.sh" "$live_make_output"
+assert_output_contains "live snapshot checker defaults to the SSH tailnet host" \
+    "acx-backend.tail1a44b8.ts.net" "$live_make_output"
+alias_make_output=$(make -C "$root" --no-print-directory -n -f "$makefile" deploy-verify-dev 2>&1)
+assert_output_contains "fixed deploy verification invokes live snapshot checker" \
+    "scripts/deploy/check-gpu-snapshots.sh" "$alias_make_output"
+generic_make_output=$(make -C "$root" --no-print-directory -n -f "$makefile" deploy-verify ENV=prod 2>&1)
+assert_output_contains "generic deploy verification invokes live snapshot checker" \
+    "scripts/deploy/check-gpu-snapshots.sh" "$generic_make_output"
+missing_env_output=$(env -u GPU_SNAPSHOT_ENV make -C "$root" --no-print-directory -f "$makefile" check-gpu-snapshots-live 2>&1) && missing_env_rc=0 || missing_env_rc=$?
+if [ "$missing_env_rc" -ne 0 ] && [[ "$missing_env_output" == *"GPU_SNAPSHOT_ENV is required"* ]]; then
+    pass "live snapshot checker requires an explicit environment"
+else
+    fail "live snapshot checker requires an explicit environment (exit $missing_env_rc; output: $missing_env_output)"
+fi
 
 expect_success "fresh readable snapshots and agreeing mount pass"
 derived_output=$(run_checker_from_install 2>&1) || derived_rc=$?
@@ -169,6 +209,10 @@ expect_failure "read-write mount fails" "read-only snapshot mount" \
 
 expect_failure "unrendered snapshot mount template fails" "read-only snapshot mount" \
     ACX_GPU_COMPOSE_FILE="${fixture_root}/compose-template.yml"
+
+expect_failure "unrendered GPU state environment template fails" \
+    "does not pass the agreeing ACX_GPU_STATE_PATH" \
+    ACX_GPU_COMPOSE_FILE="${fixture_root}/compose-template-env.yml"
 
 if [ "$failures" -gt 0 ]; then
     printf 'FAILED: %s case(s)\n' "$failures" >&2

@@ -92,9 +92,9 @@ const normalizeOptionalString = (value: unknown): string | undefined =>
  * skew — cached HTML with an older localized payload) degrades the one
  * capability that needs it instead of hard-failing every getConfig() caller.
  */
-const softNonEmptyString = (value: unknown, field: string): string => {
+const softNonEmptyString = (value: unknown, field: string, requestLog: Logger): string => {
   if (typeof value !== 'string' || value.trim() === '') {
-    configLog().warn(
+    requestLog.warn(
       `AltContextAdmin configuration field "${field}" is missing or empty; dependent features degrade.`,
     );
     return '';
@@ -103,6 +103,7 @@ const softNonEmptyString = (value: unknown, field: string): string => {
 };
 
 export const normalizeConfig = (raw: ApiConfig): NormalizedConfig => {
+  const requestLog = configLog().withRequest();
   const rawMax = Number(raw.max_media_per_batch ?? DEFAULT_MAX_MEDIA_PER_BATCH);
   const maxMediaPerBatch = Number.isFinite(rawMax) && rawMax > 0 ? rawMax : DEFAULT_MAX_MEDIA_PER_BATCH;
   const devMode = raw.devMode === true || raw.devMode === 'true' || raw.devMode === '1' || raw.devMode === 1;
@@ -113,8 +114,8 @@ export const normalizeConfig = (raw: ApiConfig): NormalizedConfig => {
   };
 
   return {
-    nonce: softNonEmptyString(raw.nonce, 'nonce'),
-    ajaxUrl: softNonEmptyString(raw.ajaxUrl, 'ajaxUrl'),
+    nonce: softNonEmptyString(raw.nonce, 'nonce', requestLog),
+    ajaxUrl: softNonEmptyString(raw.ajaxUrl, 'ajaxUrl', requestLog),
     endpoints: raw.endpoints,
     tenant_id: raw.tenant_id,
     tier: raw.tier,

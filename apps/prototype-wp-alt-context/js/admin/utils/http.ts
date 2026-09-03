@@ -403,7 +403,7 @@ export const fetchApi = async <T>(endpoint: string, options: HTTPOptions = {}): 
 export const fetchRequiredApi = async <T>(endpoint: string, options: HTTPOptions = {}): Promise<T> => {
   const payload = await fetchApi<T>(endpoint, options);
   if (payload === undefined) {
-    throwAsAppError(new Error(`Request to ${endpoint} succeeded but returned an empty response body.`));
+    return throwAsAppError(new Error(`Request to ${endpoint} succeeded but returned an empty response body.`));
   }
   return payload;
 };

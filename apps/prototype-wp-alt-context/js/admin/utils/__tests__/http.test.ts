@@ -733,6 +733,9 @@ describe('fetchApi throw boundary emits tagged Errors [FEBT1-W2A-01]', () => {
     } catch (error) {
       expect(error).toBeInstanceOf(Error);
       expect(isAppError(error)).toBe(true);
+      if (!(error instanceof Error)) {
+        throw new Error('expected thrown value to be an Error instance');
+      }
       if (!isAppError(error)) {
         throw new Error('expected thrown value to already be an AppError');
       }

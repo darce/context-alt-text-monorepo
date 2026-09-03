@@ -71,4 +71,10 @@ describe('gpuStatePresentation', () => {
       'GPU unavailable — kept 3 CPU drafts. Final descriptions will not upgrade.',
     );
   });
+
+  it('returns notice copy for every canonical GPU state', () => {
+    for (const state of Object.values(GPU_STATE)) {
+      expect(gpuStateNotice(state, 3).length).toBeGreaterThan(0);
+    }
+  });
 });

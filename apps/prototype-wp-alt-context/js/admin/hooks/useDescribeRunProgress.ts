@@ -3,7 +3,9 @@ import { useQuery } from '@tanstack/react-query';
 
 import {
   fetchBulkDescribeRun,
+  GPU_STATE,
   isDescribeRunTerminal,
+  isGpuState,
   type DescribeRunResponse,
   type DescribeRunStatus,
   type GpuState,
@@ -217,7 +219,7 @@ export const useDescribeRunProgress = (runId: string | null): DescribeRunProgres
     status,
     progressFraction,
     etaSeconds: run?.eta_seconds ?? null,
-    gpuState: run?.gpu_state ?? null,
+    gpuState: isGpuState(run?.gpu_state) ? run.gpu_state : GPU_STATE.UNKNOWN,
     isTerminal,
     stalledForSeconds,
     isPolling: runId !== null && !isTerminal && !isError,

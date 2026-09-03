@@ -29,15 +29,17 @@ Default fence delay is 2.0s so two samples are meaningfully separated in time.
 from __future__ import annotations
 
 import argparse
+import fcntl
 import json
 import logging
 import shutil
 import subprocess
 import sys
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Protocol
+from typing import Iterator, Protocol
 
 from infra.oci.gpu_lifecycle.controller import (
     FallbackDecision,
@@ -56,6 +58,7 @@ from infra.oci.gpu_lifecycle.state_snapshot import (
     DEFAULT_GPU_STATE_PATH,
     GpuLifecycleState,
     read_previous_gpu_state,
+    resolve_gpu_state_path,
     state_for_instances,
     write_gpu_state_snapshot,
 )
@@ -78,6 +81,31 @@ _DEFAULT_READY_STALL_CYCLES = 3
 _DEFAULT_READY_SLEEP_SECONDS = 10.0
 # Live describe dumps omit batch_in_progress; warn once per process, not per poll.
 _ABSENT_BATCH_KEY_WARNED = False
+
+
+@contextmanager
+def _serialized_gpu_state_publish(
+    path: str | Path | None,
+) -> Iterator[bool]:
+    """Serialize snapshot read-modify-write across the two systemd units."""
+    target = resolve_gpu_state_path() if path is None else Path(path)
+    lock_path = target.with_name(f"{target.name}.lock")
+    lock_file = None
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        lock_file = lock_path.open("a+", encoding="utf-8")
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+    except OSError as exc:
+        if lock_file is not None:
+            lock_file.close()
+        logger.warning("GPU state snapshot lock failed for %s: %s", target, exc)
+        yield False
+        return
+    try:
+        yield True
+    finally:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+        lock_file.close()
 
 
 class JobLoadSource(Protocol):
@@ -540,15 +568,17 @@ def run_reap_cycle(
         fence_delay_seconds=fence_delay_seconds,
         max_lease_seconds=max_lease_seconds,
     )
-    state = (
-        GpuLifecycleState.STOPPED
-        if result.actuated or result.lease_expired
-        else state_for_instances(
-            [instance.state for instance in instances],
-            previous_state=read_previous_gpu_state(gpu_state_path),
-        )
-    )
-    write_gpu_state_snapshot(state, path=gpu_state_path)
+    with _serialized_gpu_state_publish(gpu_state_path) as can_publish:
+        if can_publish:
+            state = (
+                GpuLifecycleState.STOPPED
+                if result.actuated or result.lease_expired
+                else state_for_instances(
+                    [instance.state for instance in instances],
+                    previous_state=read_previous_gpu_state(gpu_state_path),
+                )
+            )
+            write_gpu_state_snapshot(state, path=gpu_state_path)
     return result
 
 
@@ -686,20 +716,22 @@ def run_start_cycle(
         probe=probe,
         readiness_wait=readiness_wait,
     )
-    if result.fallbacks:
-        state = GpuLifecycleState.DEGRADED
-    elif result.wait_result is not None and result.wait_result.ready:
-        state = GpuLifecycleState.READY
-    elif result.actuated:
-        state = GpuLifecycleState.STARTING
-    elif result.errors:
-        state = GpuLifecycleState.DEGRADED
-    else:
-        state = state_for_instances(
-            [instance.state for instance in instances],
-            previous_state=read_previous_gpu_state(gpu_state_path),
-        )
-    write_gpu_state_snapshot(state, path=gpu_state_path)
+    with _serialized_gpu_state_publish(gpu_state_path) as can_publish:
+        if can_publish:
+            if result.fallbacks:
+                state = GpuLifecycleState.DEGRADED
+            elif result.wait_result is not None and result.wait_result.ready:
+                state = GpuLifecycleState.READY
+            elif result.actuated:
+                state = GpuLifecycleState.STARTING
+            elif result.errors:
+                state = GpuLifecycleState.DEGRADED
+            else:
+                state = state_for_instances(
+                    [instance.state for instance in instances],
+                    previous_state=read_previous_gpu_state(gpu_state_path),
+                )
+            write_gpu_state_snapshot(state, path=gpu_state_path)
     return result
 
 

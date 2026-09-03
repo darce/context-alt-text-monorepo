@@ -133,7 +133,40 @@ include $(ROOT_MAKEFILE_DIR)/mk/logs.mk
 # Root targets
 # =============================================================================
 
-.PHONY: help check-all check-frontend check-mcp check-handoff check-orchestrator lint-all lint-handoff lint-orchestrator fix-lint-handoff fix-lint-orchestrator fix-lint-mcp format format-all format-handoff format-orchestrator mypy-handoff mypy-orchestrator test-all test-handoff test-orchestrator clean-all reset-local fix-php-style mcp mcp-start gemini-cli-setup dev dev-stop ace-metrics ace-metrics-json ace-reflect ace-curation-report ace-trends worktree-audit worktree-prune task-plan-audit check-codex-command-router check-skills check-harness-sync check-mcp-pins lint-hoisted-paths maint-start check-main-clean install-git-hooks localwp-mirror-integrity localwp-e2e-install localwp-e2e-auth localwp-e2e-smoke localwp-evidence localwp-a11y-smoke check-overrides-digest test-overrides-digest test-scripts test-vm-scripts mutation-guard-license-policy test-hooks test-deploy-contract test-vlm3 provision-customer provision-demo expire-demo
+.PHONY: help check-all check-frontend check-mcp check-handoff check-orchestrator lint-all lint-handoff lint-orchestrator fix-lint-handoff fix-lint-orchestrator fix-lint-mcp format format-all format-handoff format-orchestrator mypy-handoff mypy-orchestrator test-all test-handoff test-orchestrator clean-all reset-local fix-php-style mcp mcp-start gemini-cli-setup dev dev-stop ace-metrics ace-metrics-json ace-reflect ace-curation-report ace-trends worktree-audit worktree-prune task-plan-audit check-codex-command-router check-skills check-harness-sync check-mcp-pins lint-hoisted-paths maint-start check-main-clean install-git-hooks localwp-mirror-integrity localwp-e2e-install localwp-e2e-auth localwp-e2e-smoke localwp-evidence localwp-a11y-smoke check-overrides-digest test-overrides-digest test-scripts test-vm-scripts mutation-guard-license-policy test-hooks test-deploy-contract test-vlm3 check-gpu-snapshots-live provision-customer provision-demo expire-demo
+
+# Live-host deployment gate. The checker reads /run/acx and the deployed
+# compose contract on the OCI VM, so running it against a developer laptop is
+# never meaningful. GPU_SNAPSHOT_ENV is deliberately mandatory and invalid
+# values fail before SSH; inability to reach or inspect the host also fails.
+check-gpu-snapshots-live:
+	@if [ -z "$(GPU_SNAPSHOT_ENV)" ]; then \
+		echo "check-gpu-snapshots-live: GPU_SNAPSHOT_ENV is required (dev|dev-fir|staging|prod)" >&2; \
+		exit 2; \
+	fi
+	@case "$(GPU_SNAPSHOT_ENV)" in dev|dev-fir|staging|prod) ;; \
+		*) echo "check-gpu-snapshots-live: invalid GPU_SNAPSHOT_ENV=$(GPU_SNAPSHOT_ENV)" >&2; exit 2 ;; \
+	esac
+	@host="$${OCI_HOST:-129.213.40.111}"; user="$${OCI_USER:-ubuntu}"; \
+		echo "==> Checking live GPU snapshots on $$user@$$host ($(GPU_SNAPSHOT_ENV))"; \
+		ssh -l "$$user" -- "$$host" 'set -eu; \
+			checker=$$(mktemp); \
+			trap "rm -f $$checker" EXIT; \
+			cat > "$$checker"; \
+			sudo env ACX_GPU_COMPOSE_FILE="/opt/acx-backend/$(GPU_SNAPSHOT_ENV)/docker-compose.env.yml" \
+				ACX_GPU_UNIT_STATE_PATH=/run/acx/gpu-state.json \
+				ACX_GPU_UNIT_LOAD_PATH=/run/acx/describe-load.json \
+				ACX_GPU_STATE_PATH=/run/acx/gpu-state.json \
+				ACX_DESCRIBE_LOAD_PATH=/run/acx/describe-load.json \
+				bash "$$checker"' \
+			< "$(ROOT_MAKEFILE_DIR)/scripts/deploy/check-gpu-snapshots.sh"
+
+deploy-verify-dev: GPU_SNAPSHOT_ENV := dev
+deploy-verify-staging: GPU_SNAPSHOT_ENV := staging
+deploy-verify-prod: GPU_SNAPSHOT_ENV := prod
+deploy-verify-dev: check-gpu-snapshots-live
+deploy-verify-staging: check-gpu-snapshots-live
+deploy-verify-prod: check-gpu-snapshots-live
 
 # Default target
 help:
@@ -147,6 +180,7 @@ help:
 	@echo "  make check-frontend   - Run frontend checks (lint + types + arch + tests)"
 	@echo "  make lint-all         - Run linters for all apps and packages"
 	@echo "  make test-all         - Run tests for all apps and packages"
+	@echo "  make check-gpu-snapshots-live GPU_SNAPSHOT_ENV=dev - Verify live OCI snapshots (SSH required; never a laptop-local check)"
 	@echo "  make fix-php-style    - Auto-fix WordPress plugin PHPCS violations"
 	@echo "  make clean-all        - Clean cache files in all apps"
 	@echo "  make reset-local      - Reset local backend DB + WordPress projection data (destructive)"

@@ -11,6 +11,7 @@ root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)
 checker="${root}/scripts/deploy/check-gpu-snapshots.sh"
 prod_compose="${root}/apps/prototype-description-service/docker-compose.prod.yml"
 prod_env="${root}/apps/prototype-description-service/.env.prod.example"
+makefile="${root}/Makefile"
 fixture_root=$(mktemp -d)
 trap 'rm -rf "$fixture_root"' EXIT
 
@@ -95,6 +96,14 @@ services:
     volumes:
       - ${fixture_root}/run/acx:${fixture_root}/run/acx:ro
 EOF
+cat >"${fixture_root}/compose-template.yml" <<'EOF'
+services:
+  api:
+    environment:
+      - ACX_GPU_STATE_PATH=${ACX_GPU_STATE_PATH}
+    volumes:
+      - ${ACX_GPU_SNAPSHOT_DIR}:/run/acx:ro
+EOF
 cat >"${fixture_root}/install.sh" <<EOF
 ExecStart=python3 -m infra.oci.gpu_lifecycle --load-json ${fixture_root}/run/acx/describe-load.json --gpu-state-json ${fixture_root}/run/acx/gpu-state.json
 ExecStart=python3 -m infra.oci.gpu_lifecycle --load-json ${fixture_root}/run/acx/describe-load.json --gpu-state-json ${fixture_root}/run/acx/gpu-state.json
@@ -114,6 +123,10 @@ assert_contains "env documents load path" "ACX_DESCRIBE_LOAD_PATH=/run/acx/descr
 assert_contains "env documents load refresh" "ACX_DESCRIBE_LOAD_REFRESH_SECONDS=45" "$prod_env"
 assert_contains "compose passes GPU state path" 'ACX_GPU_STATE_PATH=${ACX_GPU_STATE_PATH}' "$prod_compose"
 assert_contains "compose mounts snapshot directory read-only" '${ACX_GPU_SNAPSHOT_DIR}:/run/acx:ro' "$prod_compose"
+assert_contains "live snapshot checker has a make caller" "check-gpu-snapshots-live:" "$makefile"
+assert_contains "live snapshot checker caller executes the checker" "scripts/deploy/check-gpu-snapshots.sh" "$makefile"
+assert_contains "deploy verification invokes live snapshot checker" "deploy-verify-dev: check-gpu-snapshots-live" "$makefile"
+assert_contains "live snapshot checker requires an explicit environment" "GPU_SNAPSHOT_ENV is required" "$makefile"
 
 expect_success "fresh readable snapshots and agreeing mount pass"
 derived_output=$(run_checker_from_install 2>&1) || derived_rc=$?
@@ -139,9 +152,13 @@ printf '{"queue_depth":0,"in_flight":0,"written_at":879}\n' >"${fixture_root}/ru
 expect_failure "describe-load older than its budget fails" "stale describe load snapshot"
 printf '{"queue_depth":0,"in_flight":0,"written_at":900}\n' >"${fixture_root}/run/acx/describe-load.json"
 
-chmod 000 "${fixture_root}/run/acx/gpu-state.json"
-expect_failure "snapshot unreadable by API uid fails" "unreadable by uid"
-chmod 0644 "${fixture_root}/run/acx/gpu-state.json"
+if [ "$(id -u)" -eq 0 ]; then
+    printf 'SKIP: snapshot unreadable by API uid fails (uid 0 bypasses mode 000)\n'
+else
+    chmod 000 "${fixture_root}/run/acx/gpu-state.json"
+    expect_failure "snapshot unreadable by API uid fails" "unreadable by uid"
+    chmod 0644 "${fixture_root}/run/acx/gpu-state.json"
+fi
 
 expect_failure "state variable disagreement fails" "ACX_GPU_STATE_PATH disagrees" \
     ACX_GPU_STATE_PATH="${fixture_root}/run/acx/not-the-unit-path.json"
@@ -149,6 +166,9 @@ expect_failure "state variable disagreement fails" "ACX_GPU_STATE_PATH disagrees
 sed 's/:ro$//' "${fixture_root}/compose.yml" >"${fixture_root}/compose-rw.yml"
 expect_failure "read-write mount fails" "read-only snapshot mount" \
     ACX_GPU_COMPOSE_FILE="${fixture_root}/compose-rw.yml"
+
+expect_failure "unrendered snapshot mount template fails" "read-only snapshot mount" \
+    ACX_GPU_COMPOSE_FILE="${fixture_root}/compose-template.yml"
 
 if [ "$failures" -gt 0 ]; then
     printf 'FAILED: %s case(s)\n' "$failures" >&2

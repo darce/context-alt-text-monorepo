@@ -42,9 +42,7 @@ def test_probe_timeout_fails_loudly() -> None:
 
 class AlwaysError:
     def probe(self, instance_id: str) -> ProbeSample:
-        return ProbeSample(
-            instance_id=instance_id, status=ProbeStatus.ERROR, detail="boom"
-        )
+        return ProbeSample(instance_id=instance_id, status=ProbeStatus.ERROR, detail="boom")
 
 
 def test_not_ready_does_not_count_as_stall() -> None:
@@ -98,12 +96,8 @@ def test_one_instance_stall_does_not_halt_others() -> None:
             if instance_id == "ocid1.ok" and self.calls[instance_id] >= 2:
                 return ProbeSample(instance_id=instance_id, status=ProbeStatus.READY)
             if instance_id == "ocid1.stall":
-                return ProbeSample(
-                    instance_id=instance_id, status=ProbeStatus.ERROR, detail="hung"
-                )
-            return ProbeSample(
-                instance_id=instance_id, status=ProbeStatus.NOT_READY, detail="cold"
-            )
+                return ProbeSample(instance_id=instance_id, status=ProbeStatus.ERROR, detail="hung")
+            return ProbeSample(instance_id=instance_id, status=ProbeStatus.NOT_READY, detail="cold")
 
     probe = Mixed()
     waiter = WarmReadinessWait(max_cycles=5, stall_cycles=2, sleep_seconds=0.0)
@@ -117,9 +111,7 @@ def test_one_instance_stall_does_not_halt_others() -> None:
 
 
 def test_probe_ready_on_first_sample_is_quiet() -> None:
-    result = WarmReadinessWait(max_cycles=3, stall_cycles=2, sleep_seconds=0.0).wait(
-        ["ocid1.gpu"], AlwaysReady()
-    )
+    result = WarmReadinessWait(max_cycles=3, stall_cycles=2, sleep_seconds=0.0).wait(["ocid1.gpu"], AlwaysReady())
     assert result.ready == ("ocid1.gpu",)
     assert result.exit_code == 0
     assert result.errors == ()
@@ -127,18 +119,14 @@ def test_probe_ready_on_first_sample_is_quiet() -> None:
 
 def test_run_start_cycle_probe_timeout_appends_errors() -> None:
     controller = GpuLifecycleController(idle_seconds=60)
-    instance = GpuInstance(
-        instance_id="ocid1.gpu", state="STOPPED", idle_for_seconds=0
-    )
+    instance = GpuInstance(instance_id="ocid1.gpu", state="STOPPED", idle_for_seconds=0)
     result = run_start_cycle(
         controller=controller,
         instances=[instance],
         load_source=StaticJobLoadSource(queue_depth=1, in_flight=0),
         actuator=RecordingStartActuator(),
         probe=NeverReady(),
-        readiness_wait=WarmReadinessWait(
-            max_cycles=2, stall_cycles=10, sleep_seconds=0.0
-        ),
+        readiness_wait=WarmReadinessWait(max_cycles=2, stall_cycles=10, sleep_seconds=0.0),
     )
     assert result.actuated == [("START", "ocid1.gpu")]
     assert result.wait_result is not None
@@ -166,9 +154,7 @@ def test_http_probe_templates_instance_id_into_url() -> None:
     thread.start()
     try:
         port = server.server_address[1]
-        probe = HttpReadinessProbe(
-            url=f"http://127.0.0.1:{port}/ready/{{instance_id}}"
-        )
+        probe = HttpReadinessProbe(url=f"http://127.0.0.1:{port}/ready/{{instance_id}}")
         a = probe.probe("ocid1.a")
         b = probe.probe("ocid1.b")
         assert a.status == ProbeStatus.READY
@@ -183,18 +169,14 @@ def test_http_probe_missing_status_is_not_ready(monkeypatch) -> None:
     import urllib.request
 
     class NoStatus:
-        def __enter__(self) -> "NoStatus":
+        def __enter__(self) -> NoStatus:
             return self
 
         def __exit__(self, *args: object) -> bool:
             return False
 
-    monkeypatch.setattr(
-        urllib.request, "urlopen", lambda *args, **kwargs: NoStatus()
-    )
-    sample = HttpReadinessProbe(url="http://example.invalid/health").probe(
-        "ocid1.gpu"
-    )
+    monkeypatch.setattr(urllib.request, "urlopen", lambda *args, **kwargs: NoStatus())
+    sample = HttpReadinessProbe(url="http://example.invalid/health").probe("ocid1.gpu")
     assert sample.status == ProbeStatus.NOT_READY
     assert sample.instance_id == "ocid1.gpu"
 
@@ -219,15 +201,9 @@ def test_http_readiness_probe_local_server_2xx_non_2xx_urlerror() -> None:
     thread.start()
     try:
         port = server.server_address[1]
-        ready = HttpReadinessProbe(url=f"http://127.0.0.1:{port}/ok").probe(
-            "ocid1.gpu"
-        )
-        not_ready = HttpReadinessProbe(url=f"http://127.0.0.1:{port}/down").probe(
-            "ocid1.gpu"
-        )
-        refused = HttpReadinessProbe(url="http://127.0.0.1:1/missing").probe(
-            "ocid1.gpu"
-        )
+        ready = HttpReadinessProbe(url=f"http://127.0.0.1:{port}/ok").probe("ocid1.gpu")
+        not_ready = HttpReadinessProbe(url=f"http://127.0.0.1:{port}/down").probe("ocid1.gpu")
+        refused = HttpReadinessProbe(url="http://127.0.0.1:1/missing").probe("ocid1.gpu")
         assert ready.status == ProbeStatus.READY
         assert not_ready.status == ProbeStatus.NOT_READY
         assert refused.status == ProbeStatus.NOT_READY
@@ -263,9 +239,7 @@ def test_shared_http_probe_refuses_multi_id_wait() -> None:
         load_source=StaticJobLoadSource(queue_depth=1, in_flight=0),
         actuator=actuator,
         probe=HttpReadinessProbe(url="http://127.0.0.1:9/health"),
-        readiness_wait=WarmReadinessWait(
-            max_cycles=1, stall_cycles=1, sleep_seconds=0.0
-        ),
+        readiness_wait=WarmReadinessWait(max_cycles=1, stall_cycles=1, sleep_seconds=0.0),
     )
     assert result.wait_result is None
     assert result.actuated == []

@@ -6,16 +6,16 @@ import json
 import logging
 from pathlib import Path
 
+from infra.oci.gpu_lifecycle import reaper as reaper_mod
 from infra.oci.gpu_lifecycle.controller import (
     GpuInstance,
     GpuLifecycleController,
     JobLoadSnapshot,
 )
-from infra.oci.gpu_lifecycle import reaper as reaper_mod
 from infra.oci.gpu_lifecycle.reaper import (
+    _BUSY_LOAD,
     JsonFileJobLoadSource,
     StaticJobLoadSource,
-    _BUSY_LOAD,
     _build_parser,
     run_reap_cycle,
 )
@@ -37,9 +37,7 @@ def test_reap_does_not_stop_idle_instance_while_batch_in_progress() -> None:
         idle_for_seconds=90,
     )
 
-    actions = controller.reap_idle_instances(
-        [instance], queue_depth=0, in_flight=0, batch_in_progress=True
-    )
+    actions = controller.reap_idle_instances([instance], queue_depth=0, in_flight=0, batch_in_progress=True)
 
     assert actions == []
 
@@ -48,9 +46,7 @@ def test_fence_covers_in_flight_batch_never_stopped() -> None:
     controller = GpuLifecycleController(idle_seconds=60)
     fenced = controller.fence_stop_actions(
         [("STOP", "ocid1.instance.oc1..gpu")],
-        pre_stop_load=JobLoadSnapshot(
-            queue_depth=0, in_flight=0, batch_in_progress=True
-        ),
+        pre_stop_load=JobLoadSnapshot(queue_depth=0, in_flight=0, batch_in_progress=True),
     )
     assert fenced == []
 
@@ -76,9 +72,7 @@ def test_run_reap_cycle_never_stops_fenced_batch() -> None:
     result = run_reap_cycle(
         controller=controller,
         instances=[instance],
-        load_source=StaticJobLoadSource(
-            queue_depth=0, in_flight=0, batch_in_progress=True
-        ),
+        load_source=StaticJobLoadSource(queue_depth=0, in_flight=0, batch_in_progress=True),
         actuator=actuator,
         fence_delay_seconds=0.0,
     )
@@ -89,9 +83,7 @@ def test_run_reap_cycle_never_stops_fenced_batch() -> None:
 
 def test_json_batch_in_progress_is_has_work(tmp_path: Path) -> None:
     path = tmp_path / "load.json"
-    path.write_text(
-        json.dumps({"queue_depth": 0, "in_flight": 0, "batch_in_progress": True})
-    )
+    path.write_text(json.dumps({"queue_depth": 0, "in_flight": 0, "batch_in_progress": True}))
     snap = JsonFileJobLoadSource(path=path).snapshot()
     assert snap.batch_in_progress is True
     assert snap.has_work is True
@@ -99,9 +91,7 @@ def test_json_batch_in_progress_is_has_work(tmp_path: Path) -> None:
 
 def test_malformed_batch_flag_is_busy_fail_closed(tmp_path: Path) -> None:
     path = tmp_path / "load.json"
-    path.write_text(
-        json.dumps({"queue_depth": 0, "in_flight": 0, "batch_in_progress": 0})
-    )
+    path.write_text(json.dumps({"queue_depth": 0, "in_flight": 0, "batch_in_progress": 0}))
     snap = JsonFileJobLoadSource(path=path).snapshot()
     assert snap == _BUSY_LOAD
     assert snap.queue_depth == 1
@@ -203,9 +193,7 @@ def test_load_json_help_and_source_warn_bulk_unprotected() -> None:
     assert "unprotected" in JsonFileJobLoadSource.__doc__.lower()
 
 
-def test_absent_batch_key_warns_once_across_two_snapshots(
-    tmp_path: Path, caplog: logging.LogCaptureFixture
-) -> None:
+def test_absent_batch_key_warns_once_across_two_snapshots(tmp_path: Path, caplog: logging.LogCaptureFixture) -> None:
     reaper_mod._ABSENT_BATCH_KEY_WARNED = False
     path = tmp_path / "load.json"
     path.write_text(json.dumps({"queue_depth": 0, "in_flight": 0}))
@@ -216,19 +204,14 @@ def test_absent_batch_key_warns_once_across_two_snapshots(
     missing = [
         rec
         for rec in caplog.records
-        if rec.levelno == logging.WARNING
-        and "missing batch_in_progress" in rec.getMessage()
+        if rec.levelno == logging.WARNING and "missing batch_in_progress" in rec.getMessage()
     ]
     assert len(missing) == 1
 
 
-def test_malformed_batch_flag_still_warns_every_snapshot(
-    tmp_path: Path, caplog: logging.LogCaptureFixture
-) -> None:
+def test_malformed_batch_flag_still_warns_every_snapshot(tmp_path: Path, caplog: logging.LogCaptureFixture) -> None:
     path = tmp_path / "load.json"
-    path.write_text(
-        json.dumps({"queue_depth": 0, "in_flight": 0, "batch_in_progress": 0})
-    )
+    path.write_text(json.dumps({"queue_depth": 0, "in_flight": 0, "batch_in_progress": 0}))
     source = JsonFileJobLoadSource(path=path)
     with caplog.at_level(logging.WARNING, logger="infra.oci.gpu_lifecycle.reaper"):
         source.snapshot()
@@ -236,7 +219,6 @@ def test_malformed_batch_flag_still_warns_every_snapshot(
     malformed = [
         rec
         for rec in caplog.records
-        if rec.levelno == logging.WARNING
-        and "batch_in_progress not bool" in rec.getMessage()
+        if rec.levelno == logging.WARNING and "batch_in_progress not bool" in rec.getMessage()
     ]
     assert len(malformed) == 2

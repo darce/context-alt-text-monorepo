@@ -92,13 +92,26 @@ def _serialized_gpu_state_publish(
     """Serialize snapshot read-modify-write across the two systemd units."""
     target = resolve_gpu_state_path() if path is None else Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
-    # Lock the already shared snapshot directory rather than creating a sidecar
-    # lock file. A new file's mode is filtered through whichever unit's umask
-    # wins the creation race, so the other uid can receive EACCES before the
-    # creator has a chance to repair its group/mode. Both writers can open this
-    # deployment-owned directory, and flock coordinates them on its stable inode.
-    lock_fd = os.open(target.parent, os.O_RDONLY | os.O_DIRECTORY)
+    lock_path = target.with_name(f"{target.name}.lock")
+    created = False
     try:
+        lock_fd = os.open(
+            lock_path,
+            os.O_RDONLY | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC,
+            0o660,
+        )
+        created = True
+    except FileExistsError:
+        # A lock never needs write access: opening the provisioned 0660 file
+        # read-only also lets either lifecycle uid recover if an older deploy
+        # left a merely group-readable file behind.
+        lock_fd = os.open(lock_path, os.O_RDONLY | os.O_CLOEXEC)
+    try:
+        if created:
+            # os.open's mode is filtered through umask. Repair it before use;
+            # production pre-provisions the same path as root:10001/0660 so the
+            # normal cross-unit path never depends on this creation fallback.
+            os.fchmod(lock_fd, 0o660)
         fcntl.flock(lock_fd, fcntl.LOCK_EX)
         try:
             yield

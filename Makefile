@@ -133,7 +133,14 @@ include $(ROOT_MAKEFILE_DIR)/mk/logs.mk
 # Root targets
 # =============================================================================
 
-.PHONY: help check-all check-frontend check-mcp check-handoff check-orchestrator lint-all lint-handoff lint-orchestrator fix-lint-handoff fix-lint-orchestrator fix-lint-mcp format format-all format-handoff format-orchestrator mypy-handoff mypy-orchestrator test-all test-handoff test-orchestrator clean-all reset-local fix-php-style mcp mcp-start gemini-cli-setup dev dev-stop ace-metrics ace-metrics-json ace-reflect ace-curation-report ace-trends worktree-audit worktree-prune task-plan-audit check-codex-command-router check-skills check-harness-sync check-mcp-pins lint-hoisted-paths maint-start check-main-clean install-git-hooks localwp-mirror-integrity localwp-e2e-install localwp-e2e-auth localwp-e2e-smoke localwp-evidence localwp-a11y-smoke check-overrides-digest test-overrides-digest test-scripts test-vm-scripts mutation-guard-license-policy test-hooks test-deploy-contract test-gpu-spike-bench test-infra-terraform test-vlm3 test-gpu-lifecycle test-gpu-snapshot-checker check-gpu-snapshots-live provision-customer provision-demo expire-demo
+.PHONY: help check-all check-frontend check-mcp check-handoff check-orchestrator lint-all lint-handoff lint-orchestrator fix-lint-handoff fix-lint-orchestrator fix-lint-mcp format format-all format-handoff format-orchestrator mypy-handoff mypy-orchestrator test-all test-handoff test-orchestrator clean-all reset-local fix-php-style mcp mcp-start gemini-cli-setup dev dev-stop ace-metrics ace-metrics-json ace-reflect ace-curation-report ace-trends worktree-audit worktree-prune task-plan-audit check-codex-command-router check-skills check-harness-sync check-mcp-pins lint-hoisted-paths maint-start check-main-clean install-git-hooks localwp-mirror-integrity localwp-e2e-install localwp-e2e-auth localwp-e2e-smoke localwp-evidence localwp-a11y-smoke check-overrides-digest test-overrides-digest test-scripts test-vm-scripts mutation-guard-license-policy test-hooks test-deploy-contract test-gpu-spike-bench test-infra-terraform test-vlm3 test-gpu-lifecycle test-gpu-snapshot-checker check-gpu-snapshots check-gpu-snapshots-live provision-customer provision-demo expire-demo
+
+# Offline half of the GPU snapshot deployment contract. This validates the
+# lifecycle-unit paths against the checked-in rendered compose file without
+# requiring live snapshot files or SSH, so it is safe for check-all/CI.
+check-gpu-snapshots:
+	@ACX_GPU_SNAPSHOT_CONFIG_ONLY=1 \
+		bash "$(ROOT_MAKEFILE_DIR)/scripts/deploy/check-gpu-snapshots.sh"
 
 # Live-host deployment gate. The checker reads /run/acx and the deployed
 # compose contract on the OCI VM, so running it against a developer laptop is
@@ -299,7 +306,7 @@ localwp-a11y-smoke:
 # =============================================================================
 
 # Run all checks across the monorepo, or lane-scoped verification inside a lane worktree.
-check-all:
+check-all: check-gpu-snapshots
 	@set -eu; \
 	if [ "$(IN_LANE_WORKTREE)" = "1" ]; then \
 		echo "Lane worktree detected ($(LANE)); running only the checks configured for this lane."; \
@@ -471,8 +478,8 @@ check-overrides-digest:
 # instead of four separate pytest processes — one interpreter + collection pass.
 # The narrow targets keep their original scopes for standalone/documented use.
 test-scripts:
-	@python3 -m pytest \
-		scripts/hooks .github/hooks scripts/test_php_characterization_gate.py \
+	@status=0; \
+	set -- \
 		scripts/test_e15_31_admin_deploy_contract.py scripts/test_e15_33_deploy_convergence.py scripts/test_e15_33_boot_smoke.py \
 		scripts/test_vlm3_oci_gpu_infra.py \
 		scripts/test_vlm3_gpu_lifecycle.py \
@@ -487,11 +494,15 @@ test-scripts:
 		scripts/train/occlusion/test_equivalence_claims.py \
 		scripts/train/occlusion/test_mutation_guard_env.py \
 		scripts/test_acx_backend_image_contract.py \
-		scripts/test_gpu_burst_smoke.py scripts/test_gpu_spike_bench.py \
-		-q --tb=short --durations=25
-	@bash scripts/deploy/tests/test-smoke-gate.sh
-	@bash scripts/deploy/tests/test-check-gpu-snapshots.sh
-	@$(MAKE) test-vm-scripts
+		scripts/test_gpu_burst_smoke.py scripts/test_gpu_spike_bench.py; \
+	if [ -d scripts/hooks ] && [ -d .github/hooks ] && [ -d scripts/consumer-hooks/git ]; then \
+		set -- scripts/hooks .github/hooks scripts/test_php_characterization_gate.py "$$@"; \
+	fi; \
+	python3 -m pytest "$$@" -q --tb=short --durations=25 || status=$$?; \
+	bash scripts/deploy/tests/test-smoke-gate.sh || status=$$?; \
+	bash scripts/deploy/tests/test-check-gpu-snapshots.sh || status=$$?; \
+	$(MAKE) test-vm-scripts || status=$$?; \
+	exit "$$status"
 
 # VMDISK-1: the lane reaper is the VM's only disk reclaimer, and neither it nor
 # its cron installer was reachable from any make target -- so its guards were

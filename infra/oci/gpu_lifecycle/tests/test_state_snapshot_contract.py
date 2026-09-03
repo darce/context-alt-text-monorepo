@@ -7,13 +7,12 @@ import re
 from pathlib import Path
 
 import pytest
-from scene.application import gpu_state
-from scene.application.gpu_state import GpuState, read_gpu_state
-
 from infra.oci.gpu_lifecycle.state_snapshot import (
     GpuLifecycleState,
     write_gpu_state_snapshot,
 )
+from scene.application import gpu_state
+from scene.application.gpu_state import GpuState, read_gpu_state
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
 INSTALL_SCRIPT = REPO_ROOT / "scripts" / "deploy" / "gpu-lifecycle-install.sh"
@@ -70,12 +69,23 @@ def test_lifecycle_unit_users_can_write_provisioned_snapshot_directory() -> None
     tmpfiles_match = re.search(
         r"^d /run/acx (\d+) ([^\s]+) ([^\s]+) -$", script, flags=re.MULTILINE
     )
+    lock_tmpfiles_match = re.search(
+        r"^f /run/acx/gpu-state\.json\.lock (\d+) ([^\s]+) ([^\s]+) -$",
+        script,
+        flags=re.MULTILINE,
+    )
     assert chown_match is not None
     assert tmpfiles_match is not None
+    assert lock_tmpfiles_match is not None
     directory_owner, directory_group = chown_match.groups()
     mode, boot_owner, boot_group = tmpfiles_match.groups()
+    lock_mode, lock_owner, lock_group = lock_tmpfiles_match.groups()
     assert (boot_owner, boot_group) == (directory_owner, directory_group)
     assert int(mode[-2]) & 0o2, "the provisioned group must have write permission"
+    assert (lock_owner, lock_group) == (directory_owner, directory_group)
+    assert int(lock_mode, 8) & 0o060 == 0o060, (
+        "both lifecycle users must be able to open the provisioned lock"
+    )
 
     for body in service_bodies:
         user_match = re.search(r"^User=(\S+)$", body, flags=re.MULTILINE)

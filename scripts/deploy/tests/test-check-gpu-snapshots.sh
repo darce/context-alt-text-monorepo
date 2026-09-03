@@ -9,6 +9,7 @@ set -euo pipefail
 
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)
 checker="${root}/scripts/deploy/check-gpu-snapshots.sh"
+recognition_deploy="${root}/scripts/deploy/recognition-service.sh"
 checker_bash=${ACX_GPU_TEST_BASH:-/bin/bash}
 prod_compose="${root}/apps/prototype-description-service/docker-compose.prod.yml"
 prod_env="${root}/apps/prototype-description-service/.env.prod.example"
@@ -26,15 +27,6 @@ assert_contains() {
         pass "$label"
     else
         fail "$label (missing: $needle)"
-    fi
-}
-
-assert_line_matches() {
-    local label=$1 pattern=$2 file=$3
-    if grep -Eq -- "$pattern" "$file"; then
-        pass "$label"
-    else
-        fail "$label (missing line matching: $pattern)"
     fi
 }
 
@@ -153,6 +145,21 @@ cat >"${fixture_root}/fake-deploy.sh" <<'EOF'
 echo "MUTATION_REACHED_DEPLOY $*"
 EOF
 chmod +x "${fixture_root}/fake-deploy.sh"
+cat >"${fixture_root}/verify-harness.sh" <<'EOF'
+source "$1"
+curl() {
+    printf '{"commit_sha":"%s"}\n' "$(git -C "$REPO_ROOT" rev-parse "$GIT_REF")"
+}
+read_remote_image_repo() { :; }
+verify_running_image_matches_deployed() { return 0; }
+verify_live_gpu_snapshots() {
+    printf 'LIVE_GPU_SNAPSHOT_CHECK_CALLED:%s\n' "$1"
+    return "${FAKE_GPU_SNAPSHOT_RC:-0}"
+}
+ACX_VERIFY_ATTEMPTS=1
+ACX_VERIFY_SLEEP=0
+do_verify dev
+EOF
 
 if "$checker_bash" -n "$checker" 2>/dev/null; then
     pass "checker has valid bash syntax"
@@ -173,20 +180,36 @@ assert_contains "env documents load path" "ACX_DESCRIBE_LOAD_PATH=/run/acx/descr
 assert_contains "env documents load refresh" "ACX_DESCRIBE_LOAD_REFRESH_SECONDS=45" "$prod_env"
 assert_contains "compose passes GPU state path" 'ACX_GPU_STATE_PATH=${ACX_GPU_STATE_PATH}' "$prod_compose"
 assert_contains "compose mounts snapshot directory read-only" '${ACX_GPU_SNAPSHOT_DIR}:/run/acx:ro' "$prod_compose"
-assert_line_matches "live snapshot checker has a make target" '^check-gpu-snapshots-live:' "$makefile"
-live_make_output=$(make -C "$root" --no-print-directory -n -f "$makefile" check-gpu-snapshots-live GPU_SNAPSHOT_ENV=dev 2>&1)
+live_make_output=$(make -C "$root" --no-print-directory -n -f "$makefile" check-gpu-snapshots-live GPU_SNAPSHOT_ENV=dev 2>&1) || live_make_rc=$?
+if [ "${live_make_rc:-0}" -eq 0 ]; then
+    pass "live snapshot checker make target is runnable"
+else
+    fail "live snapshot checker make target is runnable (exit ${live_make_rc}; output: $live_make_output)"
+fi
 assert_output_contains "live snapshot checker executes the checker" \
     "scripts/deploy/check-gpu-snapshots.sh" "$live_make_output"
 assert_output_contains "live snapshot checker defaults to the SSH tailnet host" \
     "acx-backend.tail1a44b8.ts.net" "$live_make_output"
 for env_name in dev staging prod; do
-    alias_make_output=$(make -C "$root" --no-print-directory -n -f "$makefile" "deploy-verify-${env_name}" 2>&1)
+    alias_make_rc=0
+    alias_make_output=$(make -C "$root" --no-print-directory -n -f "$makefile" "deploy-verify-${env_name}" 2>&1) || alias_make_rc=$?
+    if [ "$alias_make_rc" -eq 0 ]; then
+        pass "fixed ${env_name} deploy verification make target is runnable"
+    else
+        fail "fixed ${env_name} deploy verification make target is runnable (exit $alias_make_rc; output: $alias_make_output)"
+    fi
     assert_output_contains "fixed ${env_name} deploy verification invokes live snapshot checker" \
         "scripts/deploy/check-gpu-snapshots.sh" "$alias_make_output"
     assert_output_contains "fixed ${env_name} deploy verification retains its verify recipe" \
         "recognition-service.sh\" verify ${env_name}" "$alias_make_output"
 done
-generic_make_output=$(make -C "$root" --no-print-directory -n -f "$makefile" deploy-verify ENV=prod 2>&1)
+generic_make_rc=0
+generic_make_output=$(make -C "$root" --no-print-directory -n -f "$makefile" deploy-verify ENV=prod 2>&1) || generic_make_rc=$?
+if [ "$generic_make_rc" -eq 0 ]; then
+    pass "generic deploy verification make target is runnable"
+else
+    fail "generic deploy verification make target is runnable (exit $generic_make_rc; output: $generic_make_output)"
+fi
 assert_output_contains "generic deploy verification invokes live snapshot checker" \
     "scripts/deploy/check-gpu-snapshots.sh" "$generic_make_output"
 assert_output_contains "generic deploy verification retains its verify recipe" \
@@ -202,6 +225,32 @@ assert_output_not_contains "missing environment stops before invalid-env fall-th
     "invalid GPU_SNAPSHOT_ENV" "$missing_env_output"
 assert_output_not_contains "missing environment stops before deploy verification" \
     'MUTATION_REACHED_DEPLOY' "$missing_env_output"
+
+config_make_rc=0
+config_make_output=$(make -C "$root" --no-print-directory -f "$makefile" check-gpu-snapshots 2>&1) || config_make_rc=$?
+if [ "$config_make_rc" -eq 0 ]; then
+    pass "offline snapshot configuration make target is runnable"
+else
+    fail "offline snapshot configuration make target is runnable (exit $config_make_rc; output: $config_make_output)"
+fi
+assert_output_contains "offline snapshot configuration target runs config-only" \
+    "configuration agree" "$config_make_output"
+make_database=$(make -C "$root" --no-print-directory -pn -f "$makefile" 2>/dev/null)
+assert_output_contains "check-all depends on snapshot configuration gate" \
+    "check-all: check-gpu-snapshots" "$make_database"
+
+verify_output=$(FAKE_GPU_SNAPSHOT_RC=0 "$checker_bash" "${fixture_root}/verify-harness.sh" "$recognition_deploy" 2>&1) || verify_rc=$?
+if [ "${verify_rc:-0}" -eq 0 ] && [[ "$verify_output" == *"LIVE_GPU_SNAPSHOT_CHECK_CALLED:dev"* ]]; then
+    pass "recognition post-restart verification runs live snapshot checker"
+else
+    fail "recognition post-restart verification runs live snapshot checker (exit ${verify_rc:-0}; output: $verify_output)"
+fi
+failed_verify_output=$(FAKE_GPU_SNAPSHOT_RC=1 "$checker_bash" "${fixture_root}/verify-harness.sh" "$recognition_deploy" 2>&1) && failed_verify_rc=0 || failed_verify_rc=$?
+if [ "$failed_verify_rc" -ne 0 ] && [[ "$failed_verify_output" == *"GPU snapshot verification failed"* ]]; then
+    pass "recognition post-restart verification is gated by snapshot checker exit"
+else
+    fail "recognition post-restart verification is gated by snapshot checker exit (exit $failed_verify_rc; output: $failed_verify_output)"
+fi
 
 expect_success "fresh readable snapshots and agreeing mount pass"
 derived_output=$(run_checker_from_install 2>&1) || derived_rc=$?

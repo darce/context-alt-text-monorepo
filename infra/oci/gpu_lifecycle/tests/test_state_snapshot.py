@@ -250,7 +250,7 @@ def test_lock_failure_aborts_snapshot_publish(
     assert not path.exists()
 
 
-def test_snapshot_lock_does_not_create_an_umask_sensitive_sidecar(
+def test_snapshot_lock_creation_repairs_umask_to_group_writable(
     tmp_path: Path,
 ) -> None:
     path = tmp_path / "gpu-state.json"
@@ -267,10 +267,28 @@ def test_snapshot_lock_does_not_create_an_umask_sensitive_sidecar(
     finally:
         os.umask(previous_umask)
 
-    assert not path.with_name("gpu-state.json.lock").exists()
+    lock_path = path.with_name("gpu-state.json.lock")
+    assert lock_path.stat().st_mode & 0o777 == 0o660
 
 
-def test_snapshot_publish_locks_the_shared_directory_inode(
+def test_existing_snapshot_lock_only_requires_read_permission(tmp_path: Path) -> None:
+    path = tmp_path / "gpu-state.json"
+    lock_path = path.with_name("gpu-state.json.lock")
+    lock_path.touch(mode=0o440)
+
+    run_reap_cycle(
+        controller=GpuLifecycleController(idle_seconds=60),
+        instances=[GpuInstance("ocid1.gpu", "RUNNING", 0)],
+        load_source=StaticJobLoadSource(queue_depth=1, in_flight=0),
+        actuator=RecordingActuator(),
+        fence_delay_seconds=0.0,
+        gpu_state_path=path,
+    )
+
+    assert json.loads(path.read_text())["state"] == "warming"
+
+
+def test_snapshot_publish_locks_the_group_writable_sidecar_inode(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     path = tmp_path / "gpu-state.json"
@@ -292,9 +310,10 @@ def test_snapshot_publish_locks_the_shared_directory_inode(
         gpu_state_path=path,
     )
 
+    lock_inode = path.with_name("gpu-state.json.lock").stat().st_ino
     assert locked_inodes == [
-        (tmp_path.stat().st_ino, fcntl.LOCK_EX),
-        (tmp_path.stat().st_ino, fcntl.LOCK_UN),
+        (lock_inode, fcntl.LOCK_EX),
+        (lock_inode, fcntl.LOCK_UN),
     ]
 
 

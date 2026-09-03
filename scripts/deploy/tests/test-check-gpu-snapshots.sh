@@ -47,6 +47,15 @@ assert_output_contains() {
     fi
 }
 
+assert_output_not_contains() {
+    local label=$1 needle=$2 output=$3
+    if [[ "$output" == *"$needle"* ]]; then
+        fail "$label (unexpected: $needle; output: $output)"
+    else
+        pass "$label"
+    fi
+}
+
 run_checker() {
     env \
         ACX_GPU_UNIT_STATE_PATH="${fixture_root}/run/acx/gpu-state.json" \
@@ -139,6 +148,11 @@ EOF
 cat >"${fixture_root}/install-missing-flags.sh" <<'EOF'
 ExecStart=python3 -m infra.oci.gpu_lifecycle --instance-id ocid1.example
 EOF
+cat >"${fixture_root}/fake-deploy.sh" <<'EOF'
+#!/usr/bin/env bash
+echo "MUTATION_REACHED_DEPLOY $*"
+EOF
+chmod +x "${fixture_root}/fake-deploy.sh"
 
 if "$checker_bash" -n "$checker" 2>/dev/null; then
     pass "checker has valid bash syntax"
@@ -165,18 +179,29 @@ assert_output_contains "live snapshot checker executes the checker" \
     "scripts/deploy/check-gpu-snapshots.sh" "$live_make_output"
 assert_output_contains "live snapshot checker defaults to the SSH tailnet host" \
     "acx-backend.tail1a44b8.ts.net" "$live_make_output"
-alias_make_output=$(make -C "$root" --no-print-directory -n -f "$makefile" deploy-verify-dev 2>&1)
-assert_output_contains "fixed deploy verification invokes live snapshot checker" \
-    "scripts/deploy/check-gpu-snapshots.sh" "$alias_make_output"
+for env_name in dev staging prod; do
+    alias_make_output=$(make -C "$root" --no-print-directory -n -f "$makefile" "deploy-verify-${env_name}" 2>&1)
+    assert_output_contains "fixed ${env_name} deploy verification invokes live snapshot checker" \
+        "scripts/deploy/check-gpu-snapshots.sh" "$alias_make_output"
+    assert_output_contains "fixed ${env_name} deploy verification retains its verify recipe" \
+        "recognition-service.sh\" verify ${env_name}" "$alias_make_output"
+done
 generic_make_output=$(make -C "$root" --no-print-directory -n -f "$makefile" deploy-verify ENV=prod 2>&1)
 assert_output_contains "generic deploy verification invokes live snapshot checker" \
     "scripts/deploy/check-gpu-snapshots.sh" "$generic_make_output"
-missing_env_output=$(env -u GPU_SNAPSHOT_ENV make -C "$root" --no-print-directory -f "$makefile" check-gpu-snapshots-live 2>&1) && missing_env_rc=0 || missing_env_rc=$?
-if [ "$missing_env_rc" -ne 0 ] && [[ "$missing_env_output" == *"GPU_SNAPSHOT_ENV is required"* ]]; then
-    pass "live snapshot checker requires an explicit environment"
+assert_output_contains "generic deploy verification retains its verify recipe" \
+    'recognition-service.sh" verify prod' "$generic_make_output"
+missing_env_output=$(env -u GPU_SNAPSHOT_ENV make -C "$root" --no-print-directory -f "$makefile" \
+    DEPLOY_SCRIPT="${fixture_root}/fake-deploy.sh" deploy-verify 2>&1) && missing_env_rc=0 || missing_env_rc=$?
+if [ "$missing_env_rc" -eq 2 ] && [[ "$missing_env_output" == *"GPU_SNAPSHOT_ENV is required"* ]]; then
+    pass "generic deploy verification requires an explicit environment"
 else
-    fail "live snapshot checker requires an explicit environment (exit $missing_env_rc; output: $missing_env_output)"
+    fail "generic deploy verification requires an explicit environment (exit $missing_env_rc; output: $missing_env_output)"
 fi
+assert_output_not_contains "missing environment stops before invalid-env fall-through" \
+    "invalid GPU_SNAPSHOT_ENV" "$missing_env_output"
+assert_output_not_contains "missing environment stops before deploy verification" \
+    'MUTATION_REACHED_DEPLOY' "$missing_env_output"
 
 expect_success "fresh readable snapshots and agreeing mount pass"
 derived_output=$(run_checker_from_install 2>&1) || derived_rc=$?

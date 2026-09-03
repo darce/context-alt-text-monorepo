@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
+import fcntl
 import json
 import os
-import stat
 import threading
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 from infra.oci.gpu_lifecycle.controller import GpuInstance, GpuLifecycleController
@@ -251,7 +250,9 @@ def test_lock_failure_aborts_snapshot_publish(
     assert not path.exists()
 
 
-def test_snapshot_lock_is_group_writable_despite_process_umask(tmp_path: Path) -> None:
+def test_snapshot_lock_does_not_create_an_umask_sensitive_sidecar(
+    tmp_path: Path,
+) -> None:
     path = tmp_path / "gpu-state.json"
     previous_umask = os.umask(0o027)
     try:
@@ -266,27 +267,21 @@ def test_snapshot_lock_is_group_writable_despite_process_umask(tmp_path: Path) -
     finally:
         os.umask(previous_umask)
 
-    lock_mode = stat.S_IMODE(path.with_name("gpu-state.json.lock").stat().st_mode)
-    assert lock_mode == 0o660
+    assert not path.with_name("gpu-state.json.lock").exists()
 
 
-def test_snapshot_lock_is_reassigned_to_the_shared_directory_group(
+def test_snapshot_publish_locks_the_shared_directory_inode(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     path = tmp_path / "gpu-state.json"
-    directory_gid = tmp_path.stat().st_gid
-    real_fstat = os.fstat
-    fchown_calls: list[tuple[int, int]] = []
+    locked_inodes: list[tuple[int, int]] = []
+    real_flock = fcntl.flock
 
-    def mismatched_group(fd: int) -> SimpleNamespace:
-        lock_stat = real_fstat(fd)
-        return SimpleNamespace(st_gid=directory_gid + 1, st_mode=lock_stat.st_mode)
+    def record_flock(fd: int, operation: int) -> None:
+        locked_inodes.append((os.fstat(fd).st_ino, operation))
+        real_flock(fd, operation)
 
-    def record_fchown(_fd: int, uid: int, gid: int) -> None:
-        fchown_calls.append((uid, gid))
-
-    monkeypatch.setattr("infra.oci.gpu_lifecycle.reaper.os.fstat", mismatched_group)
-    monkeypatch.setattr("infra.oci.gpu_lifecycle.reaper.os.fchown", record_fchown)
+    monkeypatch.setattr("infra.oci.gpu_lifecycle.reaper.fcntl.flock", record_flock)
 
     run_reap_cycle(
         controller=GpuLifecycleController(idle_seconds=60),
@@ -297,7 +292,10 @@ def test_snapshot_lock_is_reassigned_to_the_shared_directory_group(
         gpu_state_path=path,
     )
 
-    assert fchown_calls == [(-1, directory_gid)]
+    assert locked_inodes == [
+        (tmp_path.stat().st_ino, fcntl.LOCK_EX),
+        (tmp_path.stat().st_ino, fcntl.LOCK_UN),
+    ]
 
 
 def test_reap_publish_cannot_be_overwritten_by_stale_start_read(

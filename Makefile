@@ -161,15 +161,6 @@ check-gpu-snapshots-live:
 				bash "$$checker"' \
 			< "$(ROOT_MAKEFILE_DIR)/scripts/deploy/check-gpu-snapshots.sh"
 
-deploy-verify-dev: GPU_SNAPSHOT_ENV := dev
-deploy-verify-staging: GPU_SNAPSHOT_ENV := staging
-deploy-verify-prod: GPU_SNAPSHOT_ENV := prod
-deploy-verify: GPU_SNAPSHOT_ENV := $(ENV)
-deploy-verify-dev: check-gpu-snapshots-live
-deploy-verify-staging: check-gpu-snapshots-live
-deploy-verify-prod: check-gpu-snapshots-live
-deploy-verify: check-gpu-snapshots-live
-
 # Default target
 help:
 	@echo "Context Alt Text Monorepo Commands"

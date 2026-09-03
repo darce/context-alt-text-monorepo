@@ -75,25 +75,25 @@ No two lanes in one wave touch the same file (GRPH-09). Critical path `L0→C→
 - [x] `run_reap_cycle` and `run_start_cycle` in `reaper.py` derive the state from the OCI probe + readiness result + FALLBACK decision and write it at the end of every cycle; `--gpu-state-json` flag in `_build_parser` (default `/run/acx/gpu-state.json`).
 - [x] `infra/oci/gpu_lifecycle/tests/test_state_snapshot.py` (new): every state reachable; writer never emits `unknown`; write failure logs loudly and does not abort the cycle; `scripts/deploy/gpu-lifecycle-install.sh` unit lines carry the flag.
 
-> **Slices D, E1 and E2 are DEFERRED** to a follow-up task by operator decision (`claude_gpuux1_land_backend_half_defer_ui`,
-> decision 7468; blocker 296). Remote implement lanes cannot run their suites: the remote test-cmd allowlist admits only
-> `pytest <path>` and `python3 -m pytest <path>`, refusing `composer`, `npm`, `npx`, `node`, `vitest`, `phpunit`, `php`,
-> `uv run` and `bash`. Independently, the codex-remote sandbox provisions no `node_modules`. Both need an upstream
-> workbay fix. Boxes below stay unchecked deliberately — this is undone work, not unrecorded work.
+> **Slices D and E1 have since landed on this branch; Slice E2 (toasts) is still unbuilt.** The earlier deferral
+> (decision `claude_gpuux1_land_backend_half_defer_ui`, 7468; blocker 296) rested on two remote-lane limits that no
+> longer hold: the test-cmd allowlist now admits `vitest` and `phpunit` plus the `npx` selecting wrapper alongside
+> `pytest`, and the codex-remote sandbox does provision `node_modules`. Boxes below now reflect the branch, and their
+> wording is corrected where the landed design deliberately diverged from what this plan first specified.
 
 ### Slice D — PHP passthrough (W2, lane D)
 
-- [ ] `class-describe-controller.php` submit/status/cancel proxy responses carry `gpu_state` verbatim; unknown or missing upstream value → explicit `unknown`, never fabricated `ready` (rg-015).
-- [ ] `tests/Unit/DescribeRunControllerTest.php`: passthrough for each enum member + missing key.
+- [x] `class-describe-controller.php` submit/status/cancel proxy responses carry `gpu_state` verbatim. **Design correction:** an absent upstream key stays absent rather than being materialised as `unknown`. Synthesising a value at the WordPress boundary would be the adapter inventing contract metadata (rg-015); the `unknown` default belongs to the consumer that narrows the wire value.
+- [x] `tests/Unit/DescribeRunControllerTest.php`: passthrough for each enum member, an unrecognised value, an explicit `null`, and a missing key.
 
 ### Slice E1 — FE states (W2, lane E1)
 
-- [ ] `describeApi.ts` `GPU_STATE` `as const` + `GpuState` type; `DescribeRunResponse.gpu_state: GpuState`.
-- [ ] `syncVocabulary.ts` `gpu*` strings; `phasePresentation.ts` `GPU_STATE_PRESENTATION` strategy rows (label, icon name, tone) `satisfies Record<GpuState, …>`.
-- [ ] `MediaSelection.tsx` `BulkDescribeProgress` renders the tier chip (`z-gpu-tier-chip`) from `progress.run.gpu_state`; `warming`/`starting` render the calm waiting notice (no `role=alert`); `useDescribeRunProgress` exposes `gpuState`.
-- [ ] Tests in `hooks/__tests__/useDescribeRunProgress.test.tsx` and `pages/workbench/__tests__/BulkDescribeProgress.test.tsx`.
+- [x] `describeApi.ts` `GPU_STATE` `as const` + `GpuState` type. **Design correction:** `DescribeRunResponse.gpu_state` is typed `unknown`, not `GpuState` — the wire value is untrusted, and the `isGpuState` guard narrows it at the single consumer.
+- [x] `GPU_STATE_PRESENTATION` strategy rows (label, icon name, tone, terminal) `satisfies Record<GpuState, …>` plus the `GPU_STATE_VOCABULARY` strings. **Location correction:** both live in `gpuStatePresentation.ts`, not `phasePresentation.ts` / `syncVocabulary.ts`.
+- [x] `MediaSelection.tsx` `GpuTierStatus` renders the tier chip from `progress.run.gpu_state`; `warming`/`starting` render the calm waiting notice under `role="status"` + `aria-live="polite"` (no `role=alert`); `useDescribeRunProgress` exposes `gpuState`, defaulting to `unknown`.
+- [x] Tests in `hooks/__tests__/useDescribeRunProgress.test.tsx` and `pages/workbench/__tests__/BulkDescribeProgress.test.tsx`.
 
-### Slice E2 — Toasts (W3, lane E2)
+### Slice E2 — Toasts (W3, lane E2) — not started
 
 - [ ] `hooks/useGpuStateToasts.ts` (new): previous→next edge detection; toasts only for `starting→warming`, `warming→ready`, `*→degraded`; suppressed while `BulkDescribeProgress` is mounted; `unknown` never toasts.
 - [ ] Mounted once at the SPA shell next to `ToastProvider`; strings from `syncVocabulary.ts`.
@@ -101,10 +101,10 @@ No two lanes in one wave touch the same file (GRPH-09). Critical path `L0→C→
 
 ## Verification
 
-- Remote gate per lane: only `pytest <files>` and `python3 -m pytest <files>` are accepted by the remote
-  test-cmd allowlist. The `uv run --extra dev pytest` / `npx vitest run` / `composer test` forms this plan
-  originally specified are all refused before dispatch — that is why slices D/E1/E2 are deferred.
-  RED recorded by `make slice-start`, GREEN by `record_event(test_result)`.
+- Remote gate per lane: the test-cmd allowlist accepts `pytest`, `python3 -m pytest`, `vitest` and `phpunit`,
+  and `npx` as a selecting wrapper. It still refuses `composer test`, `uv run …` and `bash`, and it rejects any
+  `&&`-compound form — a lane needing two suites must be dispatched as one invocation per suite, or verified
+  locally. RED recorded by `make slice-start`, GREEN by `record_event(test_result)`.
 - Wave gate: `/wb-review-slice` — 1 local Claude reviewer + grok-remote reviewers with `semantic_reinjection_packet` context, canon lenses `ddia`, `latency`, `release-it`, `interaction`.
 - Manual (post-merge, operator): cold-GPU bulk describe on demo shows `warming` chip then `ready` toast; excluded VM e2e follows the reaper fix.
 

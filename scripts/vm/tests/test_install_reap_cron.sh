@@ -80,7 +80,7 @@ else fail "fresh: $HOME/bin/reap-lane.sh not executable"; fi
 # Every root that accumulates lanes must be swept, not just w3.
 # Asserted as a whole `--all $HOME/<root> ` token: a bare "$HOME/w" substring
 # would be satisfied by "$HOME/w3" and the widening would go unnoticed.
-for root in w3 uxw2 l1 w lanes; do
+for root in w3 uxw2 l1 w lanes grok-sandbox; do
   assert_cron_contains "fresh" "--all \$HOME/$root "
 done
 

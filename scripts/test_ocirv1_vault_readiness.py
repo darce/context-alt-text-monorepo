@@ -42,6 +42,19 @@ def _digest(value: bytes) -> str:
     return hashlib.sha256(value).hexdigest()
 
 
+def _assert_bounded_increasing_backoff(delays, timeout):
+    """Assert the retry policy without freezing its safe tuning factor."""
+    assert delays
+    assert all(0 < delay <= 5.0 for delay in delays)
+    assert len(set(delays)) > 1, "retry delay must not remain constant"
+    for previous, current in zip(delays, delays[1:]):
+        if previous < 5.0:
+            assert current > previous
+        else:
+            assert current == 5.0
+    assert sum(delays) < timeout
+
+
 class Runaway(AssertionError):
     """wait_until_readable kept polling past any plausible deadline."""
 
@@ -89,10 +102,11 @@ def test_module_imports_without_the_oci_sdk():
 def test_returns_once_the_written_value_reads_back():
     value = b"a-token-value"
     calls = {"n": 0}
+    not_ready_reads = 8
 
     def read_bundle():
         calls["n"] += 1
-        if calls["n"] < 3:
+        if calls["n"] <= not_ready_reads:
             raise RuntimeError("404 NotAuthorizedOrNotFound")
         return value
 
@@ -101,11 +115,11 @@ def test_returns_once_the_written_value_reads_back():
         read_bundle, "OCIR_AUTH_TOKEN", _digest(value), timeout=60,
         sleep=clock, monotonic=clock.monotonic,
     )
-    assert calls["n"] == 3
-    # Backoff must actually back off, or a slow propagation becomes a hot loop
-    # against the control plane.
-    assert clock.slept == sorted(clock.slept)
-    assert clock.slept[0] >= 1.0
+    assert calls["n"] == not_ready_reads + 1
+    # A slow propagation must not become a constant-delay hot loop against the
+    # control plane. Assert the operational contract while leaving the safe
+    # growth factor free to be tuned.
+    _assert_bounded_increasing_backoff(clock.slept, timeout=60)
 
 
 def test_the_exact_live_failure_no_longer_escapes():
@@ -208,24 +222,81 @@ def test_secret_value_never_appears_in_the_failure_message():
 # return until the consumer's read path yields the written value.
 
 
-class _FakeSecretsClient:
-    """Reproduces the asynchronous create: 404 until the first version is ACTIVE."""
+class _FakeVaultStore:
+    """Shared Vault state: submitted versions propagate to the read API later."""
 
-    def __init__(self, value, not_ready_reads):
-        self._value = value
-        self._remaining = not_ready_reads
+    SECRET_ID = "ocid1.vaultsecret.oc1..target"
+
+    def __init__(self, not_ready_reads, existing_value=None):
+        self.not_ready_reads = not_ready_reads
+        self.remaining = 0
+        self.active_value = existing_value
+        self.pending_value = None
+        self.existing = None
+        if existing_value is not None:
+            self.existing = types.SimpleNamespace(
+                secret_name="OCIR_AUTH_TOKEN",
+                key_id="ocid1.key.oc1..shared",
+                id=self.SECRET_ID,
+            )
+        self.create_calls = []
+        self.update_calls = []
+        self.read_history = []
+
+    @staticmethod
+    def _decode(details):
+        return base64.b64decode(details.secret_content.content)
+
+    def _stage(self, value):
+        self.pending_value = value
+        self.remaining = self.not_ready_reads
+
+    def create(self, details):
+        self.create_calls.append(details)
+        self.existing = types.SimpleNamespace(
+            secret_name=details.secret_name,
+            key_id=details.key_id,
+            id=self.SECRET_ID,
+        )
+        self._stage(self._decode(details))
+        return self.existing
+
+    def update(self, secret_id, details):
+        self.update_calls.append((secret_id, details))
+        self._stage(self._decode(details))
+        return self.existing
+
+    def read(self):
+        if self.pending_value is not None:
+            if self.remaining > 0:
+                self.remaining -= 1
+                if self.active_value is None:
+                    raise RuntimeError(
+                        'ServiceError: {"code": "NotAuthorizedOrNotFound", '
+                        '"status": 404, "operation_name": '
+                        '"get_secret_bundle_by_name"}'
+                    )
+            else:
+                self.active_value = self.pending_value
+                self.pending_value = None
+        if self.active_value is None:
+            raise AssertionError("read attempted before a version was submitted")
+        self.read_history.append(self.active_value)
+        return self.active_value
+
+
+class _FakeSecretsClient:
+    """Consumer API backed by the content actually submitted to fake Vault."""
+
+    def __init__(self, store):
+        self._store = store
         self.reads = 0
 
     def get_secret_bundle_by_name(self, secret_name, vault_id):
         self.reads += 1
-        if self._remaining > 0:
-            self._remaining -= 1
-            raise RuntimeError(
-                'ServiceError: {"code": "NotAuthorizedOrNotFound", "status": 404, '
-                '"operation_name": "get_secret_bundle_by_name"}'
-            )
+        value = self._store.read()
         content = types.SimpleNamespace(
-            content=base64.b64encode(self._value).decode("ascii")
+            content=base64.b64encode(value).decode("ascii")
         )
         return types.SimpleNamespace(
             data=types.SimpleNamespace(secret_bundle_content=content)
@@ -251,9 +322,10 @@ def _install_fake_clock(monkeypatch):
     return clock
 
 
-def _install_fake_oci(monkeypatch, secrets_client):
+def _install_fake_oci(monkeypatch, not_ready_reads, existing_value=None):
     """Minimal stand-in for the parts of the SDK main() touches."""
-    created = {}
+    store = _FakeVaultStore(not_ready_reads, existing_value)
+    secrets_client = _FakeSecretsClient(store)
 
     class _Vaults:
         def __init__(self, config):
@@ -265,13 +337,16 @@ def _install_fake_oci(monkeypatch, secrets_client):
             )
             if name is None:
                 return types.SimpleNamespace(data=[sibling])
-            return types.SimpleNamespace(data=[])  # secret does not exist yet
+            matches = []
+            if store.existing is not None and store.existing.secret_name == name:
+                matches.append(store.existing)
+            return types.SimpleNamespace(data=matches)
 
         def create_secret(self, details):
-            created["details"] = details
-            return types.SimpleNamespace(
-                data=types.SimpleNamespace(id="ocid1.vaultsecret.oc1..new")
-            )
+            return types.SimpleNamespace(data=store.create(details))
+
+        def update_secret(self, secret_id, details):
+            return types.SimpleNamespace(data=store.update(secret_id, details))
 
     class _Kms:
         def __init__(self, config):
@@ -298,13 +373,14 @@ def _install_fake_oci(monkeypatch, secrets_client):
     monkeypatch.setitem(sys.modules, "oci.vault", fake.vault)
     monkeypatch.setitem(sys.modules, "oci.secrets", fake.secrets)
     monkeypatch.setitem(sys.modules, "oci.key_management", fake.key_management)
-    return created
+    return store, secrets_client
 
 
-def _run_main(monkeypatch, token, not_ready_reads):
-    secrets_client = _FakeSecretsClient(token, not_ready_reads)
-    _install_fake_oci(monkeypatch, secrets_client)
-    _install_fake_clock(monkeypatch)
+def _run_main(monkeypatch, token, not_ready_reads, existing_value=None):
+    store, secrets_client = _install_fake_oci(
+        monkeypatch, not_ready_reads, existing_value
+    )
+    clock = _install_fake_clock(monkeypatch)
     monkeypatch.setattr(
         sys, "argv", ["_vault_put_secret.py", "--secret-name", "OCIR_AUTH_TOKEN"]
     )
@@ -312,14 +388,16 @@ def _run_main(monkeypatch, token, not_ready_reads):
         isatty=lambda: False, buffer=io.BytesIO(token + b"\n")
     )
     monkeypatch.setattr(sys, "stdin", stdin)
-    return vps.main(), secrets_client
+    return vps.main(), store, secrets_client, clock
 
 
 def test_main_does_not_return_until_the_secret_reads_back(monkeypatch, capsys):
     # Two 404s then success: the shape of the live failure. main() must absorb
     # them. If the gate is ever unwired from main(), reads stays at 0 and this
     # goes red -- the unit tests above cannot see that.
-    rc, secrets_client = _run_main(monkeypatch, b"20-byte-token-xxxxxx", 2)
+    rc, _, secrets_client, _ = _run_main(
+        monkeypatch, b"20-byte-token-xxxxxx", 2
+    )
     assert rc == 0
     assert secrets_client.reads == 3
     assert "readable" in capsys.readouterr().out
@@ -327,7 +405,7 @@ def test_main_does_not_return_until_the_secret_reads_back(monkeypatch, capsys):
 
 def test_main_reports_the_byte_count_but_never_the_token(monkeypatch, capsys):
     token = b"super-secret-token-value"
-    rc, _ = _run_main(monkeypatch, token, 0)
+    rc, _, _, _ = _run_main(monkeypatch, token, 0)
     assert rc == 0
     out = capsys.readouterr().out
     assert f"({len(token)} bytes)" in out
@@ -340,10 +418,33 @@ def test_main_strips_a_trailing_newline_before_storing(monkeypatch):
     # becomes part of the token and OCIR rejects it as a bad credential --
     # indistinguishable from a revoked token.
     token = b"20-byte-token-xxxxxx"
-    _, secrets_client = _run_main(monkeypatch, token, 0)
+    _, store, secrets_client, _ = _run_main(monkeypatch, token, 0)
     # The gate compares against sha256 of the *stripped* value, so reaching
     # rc == 0 above already proves the strip; assert the stored payload too.
     assert secrets_client.reads >= 1
+    assert len(store.create_calls) == 1
+    assert _FakeVaultStore._decode(store.create_calls[0]) == token
+
+
+def test_main_rotation_waits_for_the_new_submitted_version(monkeypatch, capsys):
+    old = b"old-token-value-00000"
+    new = b"new-token-value-11111"
+    assert len(old) == len(new)
+
+    rc, store, secrets_client, clock = _run_main(
+        monkeypatch, new, not_ready_reads=3, existing_value=old
+    )
+
+    assert rc == 0
+    assert store.create_calls == []
+    assert len(store.update_calls) == 1
+    secret_id, details = store.update_calls[0]
+    assert secret_id == _FakeVaultStore.SECRET_ID
+    assert _FakeVaultStore._decode(details) == new
+    assert secrets_client.reads == 4
+    assert store.read_history == [old, old, old, new]
+    _assert_bounded_increasing_backoff(clock.slept, timeout=120)
+    assert "new version" in capsys.readouterr().out
 
 
 @pytest.mark.parametrize(
@@ -356,8 +457,7 @@ def test_main_refuses_to_store_an_empty_value(monkeypatch, piped, label):
     # and the next deploy fails at OCIR with a 401 that looks exactly like a
     # revoked credential -- sending the operator to mint a token they already
     # have. Refuse at the boundary instead.
-    secrets_client = _FakeSecretsClient(b"unused", 0)
-    _install_fake_oci(monkeypatch, secrets_client)
+    _, secrets_client = _install_fake_oci(monkeypatch, 0)
     _install_fake_clock(monkeypatch)
     monkeypatch.setattr(
         sys, "argv", ["_vault_put_secret.py", "--secret-name", "OCIR_AUTH_TOKEN"]
@@ -375,8 +475,7 @@ def test_main_refuses_to_store_an_empty_value(monkeypatch, piped, label):
 def test_main_refuses_to_prompt_when_stdin_is_a_terminal(monkeypatch):
     # Without this, a bare invocation blocks on a read the operator cannot see,
     # which reads as a hang.
-    secrets_client = _FakeSecretsClient(b"unused", 0)
-    _install_fake_oci(monkeypatch, secrets_client)
+    _, secrets_client = _install_fake_oci(monkeypatch, 0)
     _install_fake_clock(monkeypatch)
     monkeypatch.setattr(
         sys, "argv", ["_vault_put_secret.py", "--secret-name", "OCIR_AUTH_TOKEN"]

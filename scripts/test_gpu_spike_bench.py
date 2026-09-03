@@ -89,10 +89,7 @@ class FakeActuator:
 
     def start(self, instance_id: str) -> None:
         self._start_count += 1
-        if (
-            self.fail_on_start_after is not None
-            and self._start_count > self.fail_on_start_after
-        ):
+        if self.fail_on_start_after is not None and self._start_count > self.fail_on_start_after:
             raise RuntimeError(f"injected start failure for {instance_id}")
         self.starts.append(instance_id)
         if self.start_polls_until_running <= 0:
@@ -103,10 +100,7 @@ class FakeActuator:
 
     def stop(self, instance_id: str) -> None:
         self._stop_count += 1
-        if (
-            self.fail_on_stop_after is not None
-            and self._stop_count > self.fail_on_stop_after
-        ):
+        if self.fail_on_stop_after is not None and self._stop_count > self.fail_on_stop_after:
             raise RuntimeError(f"injected stop failure for {instance_id}")
         self.stops.append(instance_id)
         if self.stop_polls_until_stopped <= 0:
@@ -150,9 +144,7 @@ class FakeHttp:
         self._ready_probes += 1
         if self.advance_clock is not None:
             self.advance_clock.advance(0.01)
-        if self._ready_probes > self.ready_after and url.rstrip("/").endswith(
-            "/v1/models"
-        ):
+        if self._ready_probes > self.ready_after and url.rstrip("/").endswith("/v1/models"):
             return HttpResponse(
                 status_code=200,
                 body=json.dumps(
@@ -183,18 +175,14 @@ class FakeHttp:
             return HttpResponse(status_code=500, body=b"boom")
         if url.rstrip("/").endswith("/v1/chat/completions"):
             # Readiness fallback (text-only) or real image completion.
-            if self._ready_probes <= self.ready_after and "image_url" not in str(
-                json_body
-            ):
+            if self._ready_probes <= self.ready_after and "image_url" not in str(json_body):
                 return HttpResponse(status_code=503, body=b"not ready")
             return HttpResponse(
                 status_code=self.completion_status,
                 body=json.dumps(
                     {
                         "model": json_body["model"],
-                        "choices": [
-                            {"message": {"content": "A test image description."}}
-                        ],
+                        "choices": [{"message": {"content": "A test image description."}}],
                     }
                 ).encode(),
             )
@@ -463,10 +451,7 @@ def test_warm_start_pass_fail_vs_target() -> None:
     )
     assert pass_art["measurements"]["warm_start_p95_seconds"]["meets_target"] is True
     assert fail_art["measurements"]["warm_start_p95_seconds"]["meets_target"] is False
-    assert (
-        fail_art["measurements"]["warm_start_p95_seconds"]["value"]
-        > WARM_START_P95_TARGET_SECONDS
-    )
+    assert fail_art["measurements"]["warm_start_p95_seconds"]["value"] > WARM_START_P95_TARGET_SECONDS
 
 
 def test_default_artifact_path_identifies_run_configuration_and_timestamp() -> None:
@@ -479,9 +464,7 @@ def test_default_artifact_path_identifies_run_configuration_and_timestamp() -> N
         now=datetime(2026, 7, 12, 13, 14, 15, tzinfo=UTC),
     )
     assert path == Path(
-        "docs/tasks/vlm/"
-        "VLM-3-gpu-spike-20260712T131415Z-example-org-vision-model-"
-        "vm-gpu-a10-1-q4-k-m-400gb-120vpu.json"
+        "docs/tasks/vlm/VLM-3-gpu-spike-20260712T131415Z-example-org-vision-model-vm-gpu-a10-1-q4-k-m-400gb-120vpu.json"
     )
 
 
@@ -517,16 +500,11 @@ def test_committed_artifacts_only_reconstruct_filename_bounded_provenance() -> N
     for filename, fields in expected.items():
         artifact = json.loads((artifact_dir / filename).read_text())
         assert artifact["provenance_note"] == "reconstructed from filename"
-        assert (
-            artifact["measurements"]["seconds_per_image"]["sample_size_note"]
-            == "n=1 image"
-        )
+        assert artifact["measurements"]["seconds_per_image"]["sample_size_note"] == "n=1 image"
         for key, value in fields.items():
             assert artifact[key] == value
 
-    assert "boot_volume_size_in_gbs" not in json.loads(
-        (artifact_dir / "VLM-3-gpu-spike-2026-07-14.json").read_text()
-    )
+    assert "boot_volume_size_in_gbs" not in json.loads((artifact_dir / "VLM-3-gpu-spike-2026-07-14.json").read_text())
     assert "boot_volume_vpus_per_gb" not in json.loads(
         (artifact_dir / "VLM-3-gpu-spike-2026-07-14-400gb.json").read_text()
     )
@@ -546,10 +524,7 @@ def test_documentation_dispositions_preserve_evidence_boundaries() -> None:
     assert "production reaper timer install +\nbackend deploy are open" in activation
     assert "memo FINAL" not in activation
     assert "memo remains provisional" in activation
-    assert (
-        "Status: provisional; license verdict pending; measured JSON reports not regenerated"
-        in memo
-    )
+    assert "Status: provisional; license verdict pending; measured JSON reports not regenerated" in memo
     assert "n=3 warm starts" in report
     assert "n=1 image" in report
     assert "Throughput is excellent" not in report
@@ -588,9 +563,7 @@ def test_cold_boot_records_model_load_as_ready_minus_running() -> None:
     )
     assert result.cold_boot_seconds > 0
     assert result.model_load_seconds >= 0
-    assert result.model_load_seconds == pytest.approx(
-        result.cold_boot_seconds - result.instance_running_seconds
-    )
+    assert result.model_load_seconds == pytest.approx(result.cold_boot_seconds - result.instance_running_seconds)
     assert actuator.state == "RUNNING"
     assert actuator.starts == ["ocid1.instance.oc1..gpu"]
 
@@ -614,10 +587,7 @@ def test_endpoint_ready_fallback_requires_expected_model() -> None:
         def post(self, url: str, *, json_body, headers=None) -> HttpResponse:
             return HttpResponse(status_code=200, body=b'{"model":"other"}')
 
-    assert (
-        endpoint_ready(FallbackHttp(), "https://gpu.example", model_id="expected")
-        is False
-    )
+    assert endpoint_ready(FallbackHttp(), "https://gpu.example", model_id="expected") is False
 
 
 def test_warm_start_loop_collects_samples_and_percentiles() -> None:
@@ -720,9 +690,7 @@ def test_throughput_http_error_names_phase() -> None:
         b'{"model":"other","choices":[{"message":{"content":"caption"}}]}',
     ],
 )
-def test_throughput_rejects_invalid_completion_envelope(
-    tmp_path: Path, body: bytes
-) -> None:
+def test_throughput_rejects_invalid_completion_envelope(tmp_path: Path, body: bytes) -> None:
     class EnvelopeHttp(FakeHttp):
         def post(self, url: str, *, json_body, headers=None) -> HttpResponse:
             return HttpResponse(status_code=200, body=body)
@@ -873,9 +841,7 @@ def test_oci_actuator_describes_instance_and_attached_boot_volume(
 
     monkeypatch.setattr(bench.subprocess, "run", fake_run)
 
-    observation = bench.OciCliInstanceActuator(oci_bin="oci").describe_instance(
-        "test-instance"
-    )
+    observation = bench.OciCliInstanceActuator(oci_bin="oci").describe_instance("test-instance")
 
     assert observation == bench.InstanceObservation("observed-shape", 750, 60)
     assert commands[0][1:4] == ["compute", "instance", "get"]
@@ -1043,9 +1009,7 @@ def test_run_bench_final_stopped_poll_timeout_raises_without_artifact(
 # ---------------------------------------------------------------------------
 
 
-def test_dry_run_prints_plan_and_touches_nothing(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_dry_run_prints_plan_and_touches_nothing(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     images = _write_images(tmp_path, n=1)
     code = main(
         [
@@ -1257,14 +1221,9 @@ def test_cli_opens_every_image_before_constructing_live_actuator(
 
 
 def test_7a_findings_withdraws_unproven_strict_pass() -> None:
-    report = (
-        Path(__file__).resolve().parents[1]
-        / "docs/tasks/vlm/VLM-3-7a-spike-findings.md"
-    ).read_text()
+    report = (Path(__file__).resolve().parents[1] / "docs/tasks/vlm/VLM-3-7a-spike-findings.md").read_text()
 
-    assert (
-        "100 GB @ 10 VPU | no committed configuration provenance; unsupported" in report
-    )
+    assert "100 GB @ 10 VPU | no committed configuration provenance; unsupported" in report
     assert "400 GB @ 120 VPU | no committed VPU provenance; unsupported" in report
     assert "only strict pass" not in report
 
@@ -1375,9 +1334,7 @@ def test_endpoint_validation_rejects_public_resolution_without_allowlist(
     monkeypatch.setattr(
         socket,
         "getaddrinfo",
-        lambda *_args, **_kwargs: [
-            (socket.AF_INET, socket.SOCK_STREAM, 6, "", (public_address, 443))
-        ],
+        lambda *_args, **_kwargs: [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (public_address, 443))],
     )
     with pytest.raises(BenchError, match="not private"):
         bench.validate_endpoint_url("https://public.invalid")
@@ -1397,9 +1354,7 @@ def test_cli_rejects_public_endpoint_before_constructing_clients(
     monkeypatch.setattr(
         socket,
         "getaddrinfo",
-        lambda *_args, **_kwargs: [
-            (socket.AF_INET, socket.SOCK_STREAM, 6, "", (public_address, 443))
-        ],
+        lambda *_args, **_kwargs: [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (public_address, 443))],
     )
     monkeypatch.setattr(
         bench,
@@ -1421,19 +1376,14 @@ def test_endpoint_validation_accepts_private_resolution(
     monkeypatch.setattr(
         socket,
         "getaddrinfo",
-        lambda *_args, **_kwargs: [
-            (socket.AF_INET, socket.SOCK_STREAM, 6, "", (private_address, 8000))
-        ],
+        lambda *_args, **_kwargs: [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (private_address, 8000))],
     )
     bench.validate_endpoint_url("http://private.invalid:8000")
 
 
 def test_http_client_does_not_follow_redirects() -> None:
     assert bench.UrlLibHttpClient()._opener.handlers
-    assert any(
-        isinstance(handler, bench.NoRedirectHandler)
-        for handler in bench.UrlLibHttpClient()._opener.handlers
-    )
+    assert any(isinstance(handler, bench.NoRedirectHandler) for handler in bench.UrlLibHttpClient()._opener.handlers)
 
 
 def test_cli_reads_api_key_from_named_environment_without_leaking(
@@ -1450,9 +1400,7 @@ def test_cli_reads_api_key_from_named_environment_without_leaking(
     monkeypatch.setenv(bench.LIVE_CONFIRMATION_ENV, bench.LIVE_CONFIRMATION_TOKEN)
     monkeypatch.setenv("TEST_GPU_API_KEY", secret)
     monkeypatch.setattr(bench, "validate_endpoint_url", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(
-        bench, "OciCliInstanceActuator", lambda **_kwargs: FakeActuator()
-    )
+    monkeypatch.setattr(bench, "OciCliInstanceActuator", lambda **_kwargs: FakeActuator())
     monkeypatch.setattr(bench, "UrlLibHttpClient", lambda: http)
     monkeypatch.setattr(bench, "SystemClock", lambda: clock)
     assert (
@@ -1491,9 +1439,7 @@ def test_cli_removes_plain_api_key_flag() -> None:
     assert exc_info.value.code == 2
 
 
-def test_cli_rejects_unset_api_key_env_before_actuator(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_cli_rejects_unset_api_key_env_before_actuator(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     constructed = False
     image = _write_images(tmp_path, n=1)[0]
     monkeypatch.setenv(bench.LIVE_CONFIRMATION_ENV, bench.LIVE_CONFIRMATION_TOKEN)
@@ -1511,22 +1457,16 @@ def test_cli_rejects_unset_api_key_env_before_actuator(
     assert constructed is False
 
 
-def test_main_returns_nonzero_for_provenance_mismatch(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_main_returns_nonzero_for_provenance_mismatch(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     image = _write_images(tmp_path, n=1)[0]
     monkeypatch.setenv(bench.LIVE_CONFIRMATION_ENV, bench.LIVE_CONFIRMATION_TOKEN)
     monkeypatch.setattr(bench, "validate_endpoint_url", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(
-        bench, "OciCliInstanceActuator", lambda **_kwargs: FakeActuator()
-    )
+    monkeypatch.setattr(bench, "OciCliInstanceActuator", lambda **_kwargs: FakeActuator())
     monkeypatch.setattr(bench, "UrlLibHttpClient", lambda: FakeHttp())
     monkeypatch.setattr(
         bench,
         "run_bench",
-        lambda **_kwargs: (_ for _ in ()).throw(
-            PhaseError("instance_provenance_mismatch", "artifact preserved")
-        ),
+        lambda **_kwargs: (_ for _ in ()).throw(PhaseError("instance_provenance_mismatch", "artifact preserved")),
     )
     assert main(_live_cli_args(image)) == 1
 
@@ -1558,9 +1498,80 @@ def test_run_bench_writes_mismatch_artifact_then_fails(tmp_path: Path) -> None:
             quantization="test-quantization",
             model_path="/test/model.gguf",
         )
-    assert json.loads(artifact_out.read_text())["status"] == (
-        bench.ARTIFACT_STATUS_PROVENANCE_MISMATCH
+    assert json.loads(artifact_out.read_text())["status"] == (bench.ARTIFACT_STATUS_PROVENANCE_MISMATCH)
+
+
+def test_run_bench_writes_pending_artifact_then_fails_and_stops(
+    tmp_path: Path,
+) -> None:
+    class UnobservedActuator(FakeActuator):
+        def describe_instance(self, instance_id: str) -> bench.InstanceObservation | None:
+            del instance_id
+            return None
+
+    actuator = UnobservedActuator()
+    artifact_out = tmp_path / "pending.json"
+    http = FakeHttp()
+    clock = FakeClock()
+    http.advance_clock = clock
+
+    with pytest.raises(PhaseError, match="instance_provenance_pending"):
+        run_bench(
+            instance_ocid="test-instance",
+            endpoint_url="http://localhost:8000",
+            model_id="m",
+            image_paths=_write_images(tmp_path, n=1),
+            warm_start_runs=1,
+            actuator=actuator,
+            http=http,
+            clock=clock,
+            artifact_out=artifact_out,
+            boot_volume_gb=400,
+            vpus_per_gb=120,
+            shape="test-shape",
+            quantization="test-quantization",
+            model_path="/test/model.gguf",
+        )
+
+    assert json.loads(artifact_out.read_text())["status"] == ARTIFACT_STATUS_PENDING
+    assert actuator.stops
+    assert actuator.state == "STOPPED"
+
+
+def test_main_exits_nonzero_for_unobserved_instance_and_preserves_artifact(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class UnobservedActuator(FakeActuator):
+        def describe_instance(self, instance_id: str) -> bench.InstanceObservation | None:
+            del instance_id
+            return None
+
+    actuator = UnobservedActuator()
+    artifact_out = tmp_path / "pending-main.json"
+    image = _write_images(tmp_path, n=1)[0]
+    http = FakeHttp()
+    clock = FakeClock()
+    http.advance_clock = clock
+    monkeypatch.setenv(bench.LIVE_CONFIRMATION_ENV, bench.LIVE_CONFIRMATION_TOKEN)
+    monkeypatch.setattr(bench, "validate_endpoint_url", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(bench, "OciCliInstanceActuator", lambda **_kwargs: actuator)
+    monkeypatch.setattr(bench, "UrlLibHttpClient", lambda: http)
+    monkeypatch.setattr(bench, "SystemClock", lambda: clock)
+
+    exit_code = main(
+        [
+            *_live_cli_args(image),
+            "--warm-start-runs",
+            "1",
+            "--artifact-out",
+            str(artifact_out),
+        ]
     )
+
+    assert exit_code == 1
+    assert json.loads(artifact_out.read_text())["status"] == ARTIFACT_STATUS_PENDING
+    assert actuator.stops
+    assert actuator.state == "STOPPED"
 
 
 def test_v1_committed_and_v2_fresh_artifacts_load() -> None:

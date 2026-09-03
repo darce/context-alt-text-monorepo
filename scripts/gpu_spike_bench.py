@@ -52,10 +52,7 @@ LIFECYCLE_POLL_MAX_CONSECUTIVE_ERRORS = 5
 LIVE_CONFIRMATION_ENV = "ACX_GPU_BENCH_LIVE"
 LIVE_CONFIRMATION_TOKEN = "I-UNDERSTAND-THIS-COSTS-MONEY"
 BENCH_DEDICATED_TAG = ("purpose", "gpu-spike-bench")
-SYSTEM_PROMPT = (
-    "You write alt text for images. Describe only what is visible, in 1-2 "
-    "plain sentences."
-)
+SYSTEM_PROMPT = "You write alt text for images. Describe only what is visible, in 1-2 plain sentences."
 
 
 # ---------------------------------------------------------------------------
@@ -116,9 +113,7 @@ class HttpResponse:
 
 
 class HttpClient(Protocol):
-    def get(
-        self, url: str, *, headers: Mapping[str, str] | None = None
-    ) -> HttpResponse: ...
+    def get(self, url: str, *, headers: Mapping[str, str] | None = None) -> HttpResponse: ...
 
     def post(
         self,
@@ -151,9 +146,7 @@ class UrlLibHttpClient:
         self._timeout = timeout_seconds
         self._opener = urllib.request.build_opener(NoRedirectHandler())
 
-    def get(
-        self, url: str, *, headers: Mapping[str, str] | None = None
-    ) -> HttpResponse:
+    def get(self, url: str, *, headers: Mapping[str, str] | None = None) -> HttpResponse:
         req = urllib.request.Request(url, headers=dict(headers or {}), method="GET")
         return self._open(req)
 
@@ -225,19 +218,14 @@ class OciCliInstanceActuator:
         actual_value = tags.get(key) if isinstance(tags, dict) else None
         if actual_value != expected_value:
             raise BenchError(
-                f"instance {instance_id} is not bench-dedicated: expected freeform tag "
-                f"{key}={expected_value}"
+                f"instance {instance_id} is not bench-dedicated: expected freeform tag {key}={expected_value}"
             )
 
     def describe_instance(self, instance_id: str) -> InstanceObservation:
         instance = self._get_instance_data(instance_id)
         shape = instance.get("shape")
-        compartment_id = instance.get("compartment-id") or instance.get(
-            "compartment_id"
-        )
-        availability_domain = instance.get("availability-domain") or instance.get(
-            "availability_domain"
-        )
+        compartment_id = instance.get("compartment-id") or instance.get("compartment_id")
+        availability_domain = instance.get("availability-domain") or instance.get("availability_domain")
         if (
             not isinstance(shape, str)
             or not shape
@@ -246,9 +234,7 @@ class OciCliInstanceActuator:
             or not isinstance(availability_domain, str)
             or not availability_domain
         ):
-            raise BenchError(
-                "oci instance get omitted shape, compartment, or availability domain"
-            )
+            raise BenchError("oci instance get omitted shape, compartment, or availability domain")
 
         attachments = self._run_cli_data(
             [
@@ -269,18 +255,14 @@ class OciCliInstanceActuator:
         for attachment in attachments:
             if not isinstance(attachment, dict):
                 continue
-            candidate = attachment.get("boot-volume-id") or attachment.get(
-                "boot_volume_id"
-            )
+            candidate = attachment.get("boot-volume-id") or attachment.get("boot_volume_id")
             if isinstance(candidate, str) and candidate:
                 boot_volume_id = candidate
                 break
         if boot_volume_id is None:
             raise BenchError("oci instance has no attached boot volume")
 
-        volume = self._run_cli_data(
-            ["bv", "boot-volume", "get", "--boot-volume-id", boot_volume_id]
-        )
+        volume = self._run_cli_data(["bv", "boot-volume", "get", "--boot-volume-id", boot_volume_id])
         if not isinstance(volume, dict):
             raise BenchError("oci boot-volume get returned invalid data")
         size = volume.get("size-in-gbs") or volume.get("size_in_gbs")
@@ -306,9 +288,7 @@ class OciCliInstanceActuator:
             ]
         )
         if not isinstance(data, dict):
-            raise BenchError(
-                f"oci instance get returned unexpected payload for {instance_id}"
-            )
+            raise BenchError(f"oci instance get returned unexpected payload for {instance_id}")
         return data
 
     def _run_cli_data(self, args: Sequence[str]) -> Any:
@@ -433,9 +413,7 @@ def endpoint_ready(
             data = payload.get("data") if isinstance(payload, dict) else None
             if not isinstance(data, list):
                 return False
-            return any(
-                isinstance(item, dict) and item.get("id") == model_id for item in data
-            )
+            return any(isinstance(item, dict) and item.get("id") == model_id for item in data)
     except BenchError:
         pass
     except (UnicodeDecodeError, json.JSONDecodeError):
@@ -448,9 +426,7 @@ def endpoint_ready(
         "messages": [{"role": "user", "content": "ping"}],
     }
     try:
-        resp = http.post(
-            f"{base}/v1/chat/completions", json_body=payload, headers=headers or None
-        )
+        resp = http.post(f"{base}/v1/chat/completions", json_body=payload, headers=headers or None)
         if not (200 <= resp.status_code < 300):
             return False
         completion = resp.json()
@@ -483,18 +459,12 @@ def _is_permitted_endpoint_address(address: str) -> bool:
     return False
 
 
-def validate_endpoint_url(
-    endpoint_url: str, *, allowed_hosts: Sequence[str] = ()
-) -> None:
+def validate_endpoint_url(endpoint_url: str, *, allowed_hosts: Sequence[str] = ()) -> None:
     """Require a local/private endpoint or an explicitly allowlisted hostname."""
     parsed = urllib.parse.urlsplit(endpoint_url)
     if parsed.scheme not in {"http", "https"}:
         raise BenchError("endpoint URL scheme must be http or https")
-    if (
-        not parsed.hostname
-        or parsed.username is not None
-        or parsed.password is not None
-    ):
+    if not parsed.hostname or parsed.username is not None or parsed.password is not None:
         raise BenchError("endpoint URL must contain a host and no userinfo")
     host = parsed.hostname.rstrip(".").lower()
     normalized_allowlist = {item.rstrip(".").lower() for item in allowed_hosts}
@@ -511,9 +481,7 @@ def validate_endpoint_url(
         }
     except (OSError, ValueError) as exc:
         raise BenchError(f"endpoint host could not be resolved: {host}: {exc}") from exc
-    if not addresses or any(
-        not _is_permitted_endpoint_address(address) for address in addresses
-    ):
+    if not addresses or any(not _is_permitted_endpoint_address(address) for address in addresses):
         raise BenchError(
             f"endpoint host {host!r} resolves to an address that is not private; "
             "use --allow-endpoint-host only for an intentional exception"
@@ -552,14 +520,12 @@ def wait_for_lifecycle(
             if consecutive_errors >= LIFECYCLE_POLL_MAX_CONSECUTIVE_ERRORS:
                 raise PhaseError(
                     "lifecycle_poll",
-                    f"last error: {exc}; {consecutive_errors} consecutive "
-                    "lifecycle read errors",
+                    f"last error: {exc}; {consecutive_errors} consecutive lifecycle read errors",
                 ) from exc
         if clock.monotonic() - t0 >= timeout_seconds:
             raise PhaseError(
                 "lifecycle_poll",
-                f"timeout waiting for {desired_u} (last state={last_state}, "
-                f"timeout={timeout_seconds}s)",
+                f"timeout waiting for {desired_u} (last state={last_state}, timeout={timeout_seconds}s)",
             )
         clock.sleep(poll_interval_seconds)
 
@@ -581,8 +547,7 @@ def wait_for_endpoint_ready(
         if clock.monotonic() - t0 >= timeout_seconds:
             raise PhaseError(
                 "endpoint_ready",
-                f"timeout waiting for endpoint readiness at {endpoint_url} "
-                f"(timeout={timeout_seconds}s)",
+                f"timeout waiting for endpoint readiness at {endpoint_url} (timeout={timeout_seconds}s)",
             )
         clock.sleep(poll_interval_seconds)
 
@@ -620,14 +585,11 @@ def ensure_stopped(
     except Exception as poll_error:
         if stop_error is not None:
             raise BenchError(
-                f"STOP request failed ({stop_error}); STOPPED verification also failed "
-                f"({poll_error})"
+                f"STOP request failed ({stop_error}); STOPPED verification also failed ({poll_error})"
             ) from poll_error
         raise
     if stop_error is not None:
-        raise BenchError(
-            f"STOP request failed before STOPPED verification: {stop_error}"
-        )
+        raise BenchError(f"STOP request failed before STOPPED verification: {stop_error}")
 
 
 # ---------------------------------------------------------------------------
@@ -791,8 +753,7 @@ def run_warm_start_loop(
             )
             samples.append(clock.monotonic() - t0)
             print(
-                f"warm-start run {i + 1}/{runs}: {samples[-1]:.3f}s "
-                f"(shutdown={shutdown_samples[-1]:.3f}s)",
+                f"warm-start run {i + 1}/{runs}: {samples[-1]:.3f}s (shutdown={shutdown_samples[-1]:.3f}s)",
                 flush=True,
             )
         p50 = percentile(samples, 50)
@@ -824,9 +785,7 @@ def run_throughput(
 ) -> ThroughputResult:
     """POST each image through /v1/chat/completions; s/img p50/p95/mean [PERF-01]."""
     if not image_paths:
-        raise PhaseError(
-            "throughput", "at least one --image is required for throughput phase"
-        )
+        raise PhaseError("throughput", "at least one --image is required for throughput phase")
     base = endpoint_url.rstrip("/")
     headers: dict[str, str] = {}
     if api_key:
@@ -856,13 +815,9 @@ def run_throughput(
             try:
                 completion = resp.json()
             except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-                raise PhaseError(
-                    "throughput", f"invalid completion JSON for {path}: {exc}"
-                ) from exc
+                raise PhaseError("throughput", f"invalid completion JSON for {path}: {exc}") from exc
             if not isinstance(completion, dict):
-                raise PhaseError(
-                    "throughput", f"invalid completion envelope for {path}"
-                )
+                raise PhaseError("throughput", f"invalid completion envelope for {path}")
             response_model = completion.get("model")
             if response_model is not None and response_model != model_id:
                 raise PhaseError(
@@ -871,14 +826,10 @@ def run_throughput(
                 )
             choices = completion.get("choices")
             first_choice = choices[0] if isinstance(choices, list) and choices else None
-            message = (
-                first_choice.get("message") if isinstance(first_choice, dict) else None
-            )
+            message = first_choice.get("message") if isinstance(first_choice, dict) else None
             content = message.get("content") if isinstance(message, dict) else None
             if not isinstance(content, str) or not content.strip():
-                raise PhaseError(
-                    "throughput", f"completion content is empty or missing for {path}"
-                )
+                raise PhaseError("throughput", f"completion content is empty or missing for {path}")
             samples.append(elapsed)
             print(f"throughput {path.name}: {elapsed:.3f}s", flush=True)
         return ThroughputResult(
@@ -951,12 +902,8 @@ def build_spike_artifact(
     stamp = recorded_at or datetime.now(UTC).astimezone().isoformat(timespec="seconds")
     observed = {
         "shape": instance_observation.shape if instance_observation else None,
-        "boot_volume_gb": (
-            instance_observation.boot_volume_gb if instance_observation else None
-        ),
-        "vpus_per_gb": (
-            instance_observation.vpus_per_gb if instance_observation else None
-        ),
+        "boot_volume_gb": (instance_observation.boot_volume_gb if instance_observation else None),
+        "vpus_per_gb": (instance_observation.vpus_per_gb if instance_observation else None),
     }
     asserted: dict[str, str | int] = {
         "shape": shape,
@@ -968,9 +915,7 @@ def build_spike_artifact(
             "operator_asserted": asserted_value,
             "oci_observed": observed[field_name],
             "source": "oci_observed" if instance_observation else "operator_asserted",
-            "matches": (
-                observed[field_name] == asserted_value if instance_observation else None
-            ),
+            "matches": (observed[field_name] == asserted_value if instance_observation else None),
         }
         for field_name, asserted_value in asserted.items()
     }
@@ -1036,19 +981,13 @@ def build_spike_artifact(
                 "mean": throughput.mean,
                 "samples": list(throughput.samples),
                 "sample_size_note": (
-                    "n=1 image"
-                    if len(throughput.samples) == 1
-                    else f"n={len(throughput.samples)} images"
+                    "n=1 image" if len(throughput.samples) == 1 else f"n={len(throughput.samples)} images"
                 ),
                 "source": LIVE_MEASUREMENT_SOURCE,
             },
         },
         "phase_evidence": {
-            "lifecycle_poll": {
-                "retries": (
-                    cold_boot.lifecycle_poll_retries + warm_start.lifecycle_poll_retries
-                )
-            }
+            "lifecycle_poll": {"retries": (cold_boot.lifecycle_poll_retries + warm_start.lifecycle_poll_retries)}
         },
         "oci_capacity": {
             "a10_quota_confirmed": a10_quota_confirmed,
@@ -1084,17 +1023,13 @@ def build_spike_artifact(
     }
 
 
-def write_artifact(
-    path: Path, artifact: Mapping[str, Any], *, force: bool = False
-) -> None:
+def write_artifact(path: Path, artifact: Mapping[str, Any], *, force: bool = False) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     try:
         with path.open("w" if force else "x", encoding="utf-8") as artifact_file:
             artifact_file.write(json.dumps(artifact, indent=2) + "\n")
     except FileExistsError as exc:
-        raise BenchError(
-            f"artifact already exists: {path}; pass --force to overwrite"
-        ) from exc
+        raise BenchError(f"artifact already exists: {path}; pass --force to overwrite") from exc
 
 
 def load_spike_artifact(source: Path | Mapping[str, Any]) -> dict[str, Any]:
@@ -1202,8 +1137,7 @@ def run_bench(
             endpoint_timeout_seconds=endpoint_timeout_seconds,
         )
         print(
-            f"cold_boot: {cold.cold_boot_seconds:.3f}s "
-            f"(model_load={cold.model_load_seconds:.3f}s)",
+            f"cold_boot: {cold.cold_boot_seconds:.3f}s (model_load={cold.model_load_seconds:.3f}s)",
             flush=True,
         )
 
@@ -1223,8 +1157,7 @@ def run_bench(
         )
         verdict = "PASS" if warm.meets_target else "FAIL"
         print(
-            f"warm_start: p50={warm.p50:.3f}s p95={warm.p95:.3f}s "
-            f"target={warm.target_seconds}s → {verdict}",
+            f"warm_start: p50={warm.p50:.3f}s p95={warm.p95:.3f}s target={warm.target_seconds}s → {verdict}",
             flush=True,
         )
 
@@ -1296,13 +1229,21 @@ def run_bench(
                 _mark("artifact_write")
                 write_artifact(artifact_out, prepared_artifact, force=force_artifact)
                 print(f"artifact written: {artifact_out}", flush=True)
-                if (
-                    prepared_artifact.get("status")
-                    == ARTIFACT_STATUS_PROVENANCE_MISMATCH
-                ):
+                artifact_status = prepared_artifact.get("status")
+                if artifact_status == ARTIFACT_STATUS_PROVENANCE_MISMATCH:
                     raise PhaseError(
                         "instance_provenance_mismatch",
                         f"artifact preserved at {artifact_out}",
+                    )
+                if artifact_status == ARTIFACT_STATUS_PENDING:
+                    raise PhaseError(
+                        "instance_provenance_pending",
+                        f"OCI instance provenance was unavailable; artifact preserved at {artifact_out}",
+                    )
+                if artifact_status != ARTIFACT_STATUS_MEASURED:
+                    raise PhaseError(
+                        "instance_provenance_status",
+                        f"unexpected artifact status {artifact_status!r}; artifact preserved at {artifact_out}",
                     )
             except PhaseError:
                 raise
@@ -1392,10 +1333,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--artifact-out",
         type=Path,
         default=None,
-        help=(
-            "Output path for spike artifact JSON "
-            "(default includes UTC timestamp and run configuration)"
-        ),
+        help=("Output path for spike artifact JSON (default includes UTC timestamp and run configuration)"),
     )
     parser.add_argument(
         "--force",
@@ -1469,10 +1407,7 @@ def build_parser() -> argparse.ArgumentParser:
     mode.add_argument(
         "--live",
         action="store_true",
-        help=(
-            "Permit live OCI/endpoint operations when the environment confirmation "
-            "is also set"
-        ),
+        help=("Permit live OCI/endpoint operations when the environment confirmation is also set"),
     )
     parser.add_argument(
         "--a10-quota-confirmed",
@@ -1535,9 +1470,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
 
     if os.environ.get(LIVE_CONFIRMATION_ENV) != LIVE_CONFIRMATION_TOKEN:
-        parser.error(
-            f"--live requires {LIVE_CONFIRMATION_ENV}={LIVE_CONFIRMATION_TOKEN}"
-        )
+        parser.error(f"--live requires {LIVE_CONFIRMATION_ENV}={LIVE_CONFIRMATION_TOKEN}")
     required_live_inputs = {
         "--model-id": args.model_id,
         "--boot-volume-gb": args.boot_volume_gb,
@@ -1569,9 +1502,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         or not args.quantization.strip()
         or not args.model_path.strip()
     ):
-        parser.error(
-            "--model-id, --shape, --quantization, and --model-path must be non-empty"
-        )
+        parser.error("--model-id, --shape, --quantization, and --model-path must be non-empty")
     if not image_paths:
         parser.error("at least one --image is required (unless --dry-run)")
     for image_path in image_paths:
@@ -1585,9 +1516,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.api_key_env:
         api_key = os.environ.get(args.api_key_env)
         if not api_key:
-            parser.error(
-                f"--api-key-env names an unset or empty variable: {args.api_key_env}"
-            )
+            parser.error(f"--api-key-env names an unset or empty variable: {args.api_key_env}")
     try:
         validate_endpoint_url(args.endpoint_url, allowed_hosts=args.allow_endpoint_host)
     except BenchError as exc:
@@ -1601,9 +1530,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         vpus_per_gb=args.vpus_per_gb,
     )
     if artifact_out.exists() and not args.force:
-        parser.error(
-            f"artifact already exists: {artifact_out}; pass --force to overwrite"
-        )
+        parser.error(f"artifact already exists: {artifact_out}; pass --force to overwrite")
 
     actuator = OciCliInstanceActuator(auth=args.oci_auth)
     http = UrlLibHttpClient()
@@ -1642,8 +1569,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     # Non-zero when warm-start p95 misses the 90s target so CI/ops see FAIL [RLSE-05].
     if not result.warm_start_meets_target:
         print(
-            f"warm-start p95 target missed: p95={result.warm_start.p95:.3f}s "
-            f"> {WARM_START_P95_TARGET_SECONDS}s",
+            f"warm-start p95 target missed: p95={result.warm_start.p95:.3f}s > {WARM_START_P95_TARGET_SECONDS}s",
             file=sys.stderr,
         )
         return 2

@@ -693,6 +693,7 @@ gpu-burst-smoke:
 # ubuntu, since only that host has the OCI binary and vaulted key.
 gpu-burst-smoke-live:
 	@python3 scripts/gpu_burst_smoke.py --live --max-seconds 900 \
+	  --evidence-out "docs/tasks/vlm/GPUSMOKE-1-evidence-$$(date -u +%F).json" \
 	  --wp-base-url "$${ACX_GPU_SMOKE_WP_BASE_URL:-https://wordpress.invalid}" \
 	  --wp-user "$${ACX_GPU_SMOKE_WP_USER:-gpu-smoke-operator}" \
 	  --wp-app-password-env "$${ACX_GPU_SMOKE_PASSWORD_ENV:-ACX_WP_APP_PASSWORD}" \

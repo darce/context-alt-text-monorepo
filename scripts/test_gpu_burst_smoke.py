@@ -72,6 +72,75 @@ def _detail(result: smoke.SmokeResult, name: str) -> str:
     )
 
 
+def _valid_boundary_item(**overrides: object) -> dict[str, object]:
+    item: dict[str, object] = {
+        "media_id": 101,
+        "status": "completed",
+        "caption": "A red bicycle leans beside a brick library wall.",
+        "alt_text_draft": "Red bicycle beside a brick library wall",
+        "provenance": {
+            "tier": "final_gpu",
+            "model_id": smoke.EXPECTED_MODEL_ID,
+            "revision": smoke.EXPECTED_REVISION,
+        },
+    }
+    item.update(overrides)
+    return item
+
+
+@pytest.mark.parametrize(
+    ("payload", "message"),
+    [
+        ({"not": "a list"}, r"items.*list.*dict"),
+        ([_valid_boundary_item(), "malformed"], r"items\[1\].*object.*str"),
+        (
+            [
+                {
+                    key: value
+                    for key, value in _valid_boundary_item().items()
+                    if key != "media_id"
+                }
+            ],
+            r"items\[0\]\.media_id",
+        ),
+        ([_valid_boundary_item(status=7)], r"items\[0\]\.status.*str"),
+        ([_valid_boundary_item(provenance=None)], r"items\[0\]\.provenance.*object"),
+        (
+            [
+                _valid_boundary_item(
+                    provenance={
+                        "tier": "final_gpu",
+                        "model_id": smoke.EXPECTED_MODEL_ID,
+                    }
+                )
+            ],
+            r"items\[0\]\.provenance\.revision",
+        ),
+    ],
+)
+def test_items_boundary_rejects_malformed_payload(
+    payload: object, message: str
+) -> None:
+    with pytest.raises(smoke.SmokeFailure, match=message):
+        smoke._validate_items_payload(payload)
+
+
+def test_items_boundary_preserves_a_well_formed_list() -> None:
+    items = [_valid_boundary_item()]
+
+    assert smoke._validate_items_payload(items) is items
+
+
+def test_default_dry_run_writes_evidence_outside_docs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(smoke, "REPO_ROOT", tmp_path)
+
+    assert smoke.main([]) == 0
+    assert not (tmp_path / "docs").exists()
+    assert list((tmp_path / ".workbay" / "tmp" / "gpu-burst-smoke").glob("*.json"))
+
+
 @pytest.mark.parametrize(
     ("sample", "expected"),
     [

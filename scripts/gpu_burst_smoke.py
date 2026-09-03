@@ -3,7 +3,8 @@
 
 The default is a completely offline dry run.  It uses ``httpx.MockTransport``
 and an in-memory OCI state machine, but follows the same WordPress REST, polling,
-assertion, evidence, and compensating-STOP path as live mode::
+assertion, evidence, and compensating-STOP path as live mode.  Its generated
+evidence is written below the ignored ``.workbay/tmp`` tree by default::
 
     python3 scripts/gpu_burst_smoke.py
 
@@ -82,6 +83,7 @@ POLL_SECONDS = 2.0
 EMERGENCY_STOP_TIMEOUT_SECONDS = 120.0
 MAX_LIVE_SECONDS = 900
 GPU_USD_PER_HOUR = 2.0
+DEFAULT_EVIDENCE_DIR = ".workbay/tmp/gpu-burst-smoke"
 
 
 class SmokeFailure(RuntimeError):
@@ -508,6 +510,56 @@ def _request_json(
     return body
 
 
+def _validate_items_payload(raw_items: object) -> list[dict[str, Any]]:
+    """Fail loudly when the WordPress items boundary violates its schema."""
+
+    if not isinstance(raw_items, list):
+        raise SmokeFailure(f"items must be a list, got {type(raw_items).__name__}")
+    for index, item in enumerate(raw_items):
+        path = f"items[{index}]"
+        if not isinstance(item, dict):
+            raise SmokeFailure(f"{path} must be an object, got {type(item).__name__}")
+
+        media_id = item.get("media_id")
+        if isinstance(media_id, bool) or not isinstance(media_id, int) or media_id <= 0:
+            raise SmokeFailure(
+                f"{path}.media_id must be a positive int, got {type(media_id).__name__}"
+            )
+        status = item.get("status")
+        if not isinstance(status, str):
+            raise SmokeFailure(
+                f"{path}.status must be a str, got {type(status).__name__}"
+            )
+
+        provenance = item.get("provenance")
+        if provenance is None:
+            if status == "completed":
+                raise SmokeFailure(
+                    f"{path}.provenance must be an object for a completed item, "
+                    "got NoneType"
+                )
+            continue
+        if not isinstance(provenance, dict):
+            raise SmokeFailure(
+                f"{path}.provenance must be an object or null, got "
+                f"{type(provenance).__name__}"
+            )
+        for field_name in ("tier", "model_id"):
+            value = provenance.get(field_name)
+            if not isinstance(value, str) or not value:
+                raise SmokeFailure(
+                    f"{path}.provenance.{field_name} must be a non-empty str, got "
+                    f"{type(value).__name__}"
+                )
+        revision = provenance.get("revision") or provenance.get("model_revision")
+        if not isinstance(revision, str) or not revision:
+            raise SmokeFailure(
+                f"{path}.provenance.revision must be a non-empty str, got "
+                f"{type(revision).__name__}"
+            )
+    return raw_items
+
+
 def _record_transition(
     transitions: list[dict[str, Any]],
     state: str,
@@ -696,11 +748,7 @@ def run_smoke(
                 auth=auth,
             )
             raw_items = item_body.get("items")
-            items = (
-                [item for item in raw_items if isinstance(item, dict)]
-                if isinstance(raw_items, list)
-                else []
-            )
+            items = _validate_items_payload(raw_items)
             elapsed = round(deadline.elapsed(), 3)
             for item in items:
                 media_id = item.get("media_id", "unavailable")
@@ -1082,7 +1130,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-seconds", type=int, default=MAX_LIVE_SECONDS)
     parser.add_argument(
         "--evidence-out",
-        default=f"docs/tasks/vlm/GPUSMOKE-1-evidence-{datetime.now(UTC).date().isoformat()}.json",
+        default=(
+            f"{DEFAULT_EVIDENCE_DIR}/GPUSMOKE-1-evidence-"
+            f"{datetime.now(UTC).date().isoformat()}.json"
+        ),
     )
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument(

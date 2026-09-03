@@ -554,7 +554,7 @@ describe('DescriptionHistoryPage', () => {
     fetchRunItemsMock.mockResolvedValue({
       run_id: 'run-abc',
       items: [
-        { media_id: 71, status: 'completed', alt_text_draft: 'A red flower.', caption: 'A flower.', provenance: null, existing_alt: false },
+        { media_id: 71, status: 'completed', alt_text_draft: 'A red flower.', caption: 'A flower.', provenance: null, tier: 'final_gpu', result_generation: 1, existing_alt: false },
       ],
     });
 

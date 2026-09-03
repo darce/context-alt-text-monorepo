@@ -5,9 +5,9 @@ import uuid
 import pytest
 from pydantic import ValidationError
 
-from scene.domain.description import DescriptionAdapterKind, ProviderMode, RetentionClass
+from scene.domain.description import DescriptionAdapterKind, DescriptionResultTier, ProviderMode, RetentionClass
 from scene.interface_adapters.http.schemas.requests import DescribeImageEnvelope
-from scene.interface_adapters.http.schemas.responses import VisualFactsResponse
+from scene.interface_adapters.http.schemas.responses import DescribeRunItemResponse, VisualFactsResponse
 
 # 15 contract-locked core fields + additive optional preview/fusion fields.
 PREVIEW_FIELDS = {
@@ -84,6 +84,37 @@ def test_response_forbids_extra_provenance_field():
     bad["sneaky_provider"] = "openai"
     with pytest.raises(ValidationError):
         VisualFactsResponse.model_validate(bad)
+
+
+def test_describe_run_item_serializes_tier_and_generation_and_forbids_extra_fields():
+    item = DescribeRunItemResponse.model_validate(
+        {
+            "media_id": 42,
+            "status": "completed",
+            "tier": "final_gpu",
+            "result_generation": 2,
+        }
+    )
+
+    assert item.tier is DescriptionResultTier.FINAL_GPU
+    assert item.model_dump(mode="json")["tier"] == "final_gpu"
+    assert item.model_dump()["result_generation"] == 2
+
+    with pytest.raises(ValidationError):
+        DescribeRunItemResponse.model_validate(
+            {"media_id": 42, "status": "completed", "tier": None, "result_generation": -1}
+        )
+
+    with pytest.raises(ValidationError):
+        DescribeRunItemResponse.model_validate(
+            {
+                "media_id": 42,
+                "status": "completed",
+                "tier": "final_gpu",
+                "result_generation": 2,
+                "unexpected": True,
+            }
+        )
 
 
 def test_request_canonicalizes_tenant_uuid_lowercase():

@@ -133,7 +133,7 @@ include $(ROOT_MAKEFILE_DIR)/mk/logs.mk
 # Root targets
 # =============================================================================
 
-.PHONY: help check-all check-frontend check-mcp check-handoff check-orchestrator lint-all lint-handoff lint-orchestrator fix-lint-handoff fix-lint-orchestrator fix-lint-mcp format format-all format-handoff format-orchestrator mypy-handoff mypy-orchestrator test-all test-handoff test-orchestrator clean-all reset-local fix-php-style mcp mcp-start gemini-cli-setup dev dev-stop ace-metrics ace-metrics-json ace-reflect ace-curation-report ace-trends worktree-audit worktree-prune task-plan-audit check-codex-command-router check-skills check-harness-sync check-mcp-pins lint-hoisted-paths maint-start check-main-clean install-git-hooks localwp-mirror-integrity localwp-e2e-install localwp-e2e-auth localwp-e2e-smoke localwp-evidence localwp-a11y-smoke check-overrides-digest test-overrides-digest test-scripts test-vm-scripts mutation-guard-license-policy test-hooks test-deploy-contract test-vlm3 test-gpu-lifecycle test-gpu-snapshot-checker check-gpu-snapshots-live provision-customer provision-demo expire-demo
+.PHONY: help check-all check-frontend check-mcp check-handoff check-orchestrator lint-all lint-handoff lint-orchestrator fix-lint-handoff fix-lint-orchestrator fix-lint-mcp format format-all format-handoff format-orchestrator mypy-handoff mypy-orchestrator test-all test-handoff test-orchestrator clean-all reset-local fix-php-style mcp mcp-start gemini-cli-setup dev dev-stop ace-metrics ace-metrics-json ace-reflect ace-curation-report ace-trends worktree-audit worktree-prune task-plan-audit check-codex-command-router check-skills check-harness-sync check-mcp-pins lint-hoisted-paths maint-start check-main-clean install-git-hooks localwp-mirror-integrity localwp-e2e-install localwp-e2e-auth localwp-e2e-smoke localwp-evidence localwp-a11y-smoke check-overrides-digest test-overrides-digest test-scripts test-vm-scripts mutation-guard-license-policy test-hooks test-deploy-contract test-gpu-spike-bench test-infra-terraform test-vlm3 test-gpu-lifecycle test-gpu-snapshot-checker check-gpu-snapshots-live provision-customer provision-demo expire-demo
 
 # Live-host deployment gate. The checker reads /run/acx and the deployed
 # compose contract on the OCI VM, so running it against a developer laptop is
@@ -462,6 +462,8 @@ lint-scripts:
 	@python3 scripts/hooks/lint-no-inline-python-heredoc.py
 	@python3 scripts/hooks/lint-expected-revision.py
 	@python3 scripts/check_published_head_sha.py
+	@ruff check infra/oci scripts/gpu_burst_smoke.py scripts/gpu_spike_bench.py scripts/test_gpu_burst_smoke.py scripts/test_gpu_spike_bench.py
+	@ruff format --check infra/oci scripts/gpu_burst_smoke.py scripts/gpu_spike_bench.py scripts/test_gpu_burst_smoke.py scripts/test_gpu_spike_bench.py
 
 # MAINT-FB-B-05: validate every workbay-overrides/*/overrides.lock.json
 # component upstream_digest against the materialized upstream base copy
@@ -494,6 +496,7 @@ test-scripts:
 		scripts/train/occlusion/test_equivalence_claims.py \
 		scripts/train/occlusion/test_mutation_guard_env.py \
 		scripts/test_acx_backend_image_contract.py \
+		scripts/test_gpu_burst_smoke.py scripts/test_gpu_spike_bench.py \
 		-q --tb=short --durations=25
 	@bash scripts/deploy/tests/test-smoke-gate.sh
 	@bash scripts/deploy/tests/test-check-gpu-snapshots.sh
@@ -584,6 +587,13 @@ test-gpu-lifecycle:
 #   WORKBAY_REMOTE_GATE_WORKDIR=. make check-remote TARGETS="test-gpu-snapshot-checker"
 test-gpu-snapshot-checker:
 	@bash scripts/deploy/tests/test-check-gpu-snapshots.sh
+
+test-gpu-spike-bench:
+	@python3 -m pytest scripts/test_gpu_spike_bench.py -q --tb=short
+
+test-infra-terraform:
+	@terraform -chdir=infra/oci init -backend=false -input=false
+	@terraform -chdir=infra/oci validate
 
 # VLM-3 / VLMRP: OCI GPU infra posture, idle-reaper lifecycle, decision memo,
 # bake-off artifact guards, and OWLv2 deferral. Covered by test-scripts in check-all.
@@ -740,6 +750,30 @@ dev-stop:
 .PHONY: eval-captions
 eval-captions:
 	@$(ROOT_MAKEFILE_DIR)/scripts/eval-captions.sh $(EVAL_ARGS)
+
+.PHONY: gpu-burst-smoke gpu-burst-smoke-live
+GPU_SMOKE_PYTHON ?= apps/prototype-description-service/.venv/bin/python
+gpu-burst-smoke:
+	@$(GPU_SMOKE_PYTHON) scripts/gpu_burst_smoke.py --dry-run
+
+# Operator-only: needs ACX_GPU_SMOKE_CONFIRM=RUN and runs on acx-backend as
+# ubuntu, since only that host has the OCI binary and vaulted key. Override
+# GPU_SMOKE_PYTHON only when the service virtualenv lives elsewhere.
+gpu-burst-smoke-live:
+	@test -n "$${ACX_GPU_SMOKE_SERVICE_BASE_URL:-}" || { \
+	  echo "ACX_GPU_SMOKE_SERVICE_BASE_URL must name the description service" >&2; \
+	  exit 2; \
+	}
+	@$(GPU_SMOKE_PYTHON) scripts/gpu_burst_smoke.py --live --max-seconds 1200 \
+	  --evidence-out "docs/tasks/vlm/GPUSMOKE-1-evidence-$$(date -u +%Y%m%dT%H%M%SZ).json" \
+	  --wp-base-url "$${ACX_GPU_SMOKE_WP_BASE_URL:-https://wordpress.invalid}" \
+	  --wp-user "$${ACX_GPU_SMOKE_WP_USER:-gpu-smoke-operator}" \
+	  --wp-app-password-env "$${ACX_GPU_SMOKE_PASSWORD_ENV:-ACX_WP_APP_PASSWORD}" \
+	  --media-ids "$${ACX_GPU_SMOKE_MEDIA_IDS:-101}" \
+	  --service-base-url "$${ACX_GPU_SMOKE_SERVICE_BASE_URL}" \
+	  --service-api-key-env "$${ACX_GPU_SMOKE_SERVICE_API_KEY_ENV:-ACX_DESCRIPTION_API_KEY}" \
+	  --instance-id "$${ACX_GPU_SMOKE_INSTANCE_ID:-<burst-instance-ocid>}" \
+	  --oci-bin "$${ACX_GPU_SMOKE_OCI_BIN:-/home/ubuntu/.oci-venv/bin/oci}"
 
 # FIR-5 face bake-off: offline candidate walk (+ optional score). No tenant writes.
 # Usage: make bakeoff-face

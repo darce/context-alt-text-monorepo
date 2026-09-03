@@ -266,6 +266,8 @@ export interface DescribeRunItem {
   alt_text_draft: string | null;
   caption: string | null;
   provenance: DescriptionHistoryProvenance | VisualFactsResponse | null;
+  tier: string;
+  result_generation: number;
   existing_alt: boolean;
 }
 

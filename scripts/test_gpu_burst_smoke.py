@@ -349,6 +349,8 @@ def test_red_stop_reverification_fails_if_compensating_stop_is_ineffective(
     assert result.exit_code == 1
     assert not _check(result, "instance_stopped_finally")
     assert result.evidence["measurements"]["running_seconds"] > 0
+    assert result.evidence["measurements"]["running_seconds_ongoing"] is True
+    assert result.evidence["running_seconds_ongoing"] is True
     assert result.evidence["cost_estimate_usd"] > 0
     assert result.evidence["cost_estimate_ongoing"] is True
 

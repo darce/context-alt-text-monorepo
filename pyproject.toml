@@ -66,3 +66,11 @@ ignore = [
 [tool.ruff.format]
 quote-style = "double"
 indent-style = "space"
+
+[tool.workbay.remote_test]
+# Runners a remote lane may invoke as test_cmd. Default is {pytest} only, which
+# blocked every frontend/PHP lane (GPUUX-1 blocker 296). npm/composer/node/php are
+# reserved by workbay because they can launch arbitrary repo scripts: JS lanes use
+# `npx vitest ...`, PHP lanes use `vendor/bin/phpunit ...`.
+runner_commands = ["vitest", "phpunit"]
+runner_selecting_wrappers = ["npx"]

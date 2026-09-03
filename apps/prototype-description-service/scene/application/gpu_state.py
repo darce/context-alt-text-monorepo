@@ -24,6 +24,7 @@ GPU_STATE_PATH_ENV = "ACX_GPU_STATE_PATH"
 DEFAULT_GPU_STATE_PATH = "/run/acx/gpu-state.json"
 GPU_STATE_STALE_SECONDS_ENV = "ACX_GPU_STATE_STALE_SECONDS"
 DEFAULT_GPU_STATE_STALE_SECONDS = 180.0
+GPU_STATE_FUTURE_SKEW_SECONDS = 5.0
 
 
 class GpuState(StrEnum):
@@ -43,7 +44,10 @@ _last_observed: GpuState | None = None
 
 def resolve_gpu_state_path() -> str:
     """Single source of truth for the lifecycle snapshot path (rg-008)."""
-    return os.environ.get(GPU_STATE_PATH_ENV, DEFAULT_GPU_STATE_PATH)
+    configured_path = os.environ.get(GPU_STATE_PATH_ENV)
+    if configured_path is None or not configured_path.strip():
+        return DEFAULT_GPU_STATE_PATH
+    return configured_path
 
 
 def resolve_gpu_state_stale_seconds() -> float:
@@ -107,6 +111,8 @@ def _state_from_payload(payload: dict[str, Any], *, now: float) -> GpuState:
     if isinstance(written_at, bool) or not isinstance(written_at, (int, float)):
         return GpuState.UNKNOWN
     if not math.isfinite(written_at):
+        return GpuState.UNKNOWN
+    if written_at - now > GPU_STATE_FUTURE_SKEW_SECONDS:
         return GpuState.UNKNOWN
     if now - written_at > resolve_gpu_state_stale_seconds():
         return GpuState.UNKNOWN

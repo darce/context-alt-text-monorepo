@@ -48,6 +48,15 @@ def test_real_reader_fails_closed_when_snapshot_is_missing(
     assert read_gpu_state(now=1_788_390_000.0) is GpuState.UNKNOWN
 
 
+@pytest.mark.parametrize("configured_path", ["", " \t"])
+def test_reader_blank_path_env_uses_default(
+    monkeypatch: pytest.MonkeyPatch, configured_path: str
+) -> None:
+    monkeypatch.setenv(gpu_state.GPU_STATE_PATH_ENV, configured_path)
+
+    assert gpu_state.resolve_gpu_state_path() == gpu_state.DEFAULT_GPU_STATE_PATH
+
+
 def test_lifecycle_unit_users_can_write_provisioned_snapshot_directory() -> None:
     script = INSTALL_SCRIPT.read_text(encoding="utf-8")
     service_bodies = re.findall(

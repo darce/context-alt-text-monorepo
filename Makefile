@@ -460,6 +460,7 @@ test-scripts:
 		scripts/test_acx_backend_image_contract.py \
 		-q --tb=short --durations=25
 	@bash scripts/deploy/tests/test-smoke-gate.sh
+	@bash scripts/deploy/tests/test-check-gpu-snapshots.sh
 	@$(MAKE) test-vm-scripts
 
 # VMDISK-1: the lane reaper is the VM's only disk reclaimer, and neither it nor

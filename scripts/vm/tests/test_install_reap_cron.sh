@@ -35,7 +35,17 @@ cat >"$WORKDIR/fakebin/crontab" <<'FAKE'
 #!/usr/bin/env bash
 set -euo pipefail
 case "${1:-}" in
-  -l) [[ -s "$CRONTAB_FILE" ]] || exit 1; cat "$CRONTAB_FILE" ;;
+  -l)
+    if [[ -n "${CRONTAB_LIST_ERROR:-}" ]]; then
+      printf '%s\n' "$CRONTAB_LIST_ERROR" >&2
+      exit 1
+    fi
+    if [[ ! -s "$CRONTAB_FILE" ]]; then
+      echo "no crontab for reap-test" >&2
+      exit 1
+    fi
+    cat "$CRONTAB_FILE"
+    ;;
   -)  cat >"$CRONTAB_FILE" ;;
   *)  echo "fake crontab: unsupported: $*" >&2; exit 2 ;;
 esac
@@ -151,6 +161,26 @@ else
   fail "roll-forward with blank duplicated managed entry; crontab=$(cat "$CRONTAB_FILE")"
 fi
 assert_cron_contains "roll-forward with blank" "/usr/bin/some-other-job"
+
+# A listing error other than the platform's no-crontab diagnostic must abort
+# without piping an empty replacement over the user's existing jobs.
+crontab_before_error="$(cat "$CRONTAB_FILE")"
+CRONTAB_LIST_ERROR="crontab: permission denied" run_install
+if [[ "$rc" -ne 0 ]]; then
+  pass "crontab read failure exits nonzero"
+else
+  fail "crontab read failure unexpectedly exited zero; out=$out"
+fi
+if [[ "$out" == *"crontab: permission denied"* ]]; then
+  pass "crontab read failure reports diagnostic"
+else
+  fail "crontab read failure hid diagnostic; out=$out"
+fi
+if [[ "$(cat "$CRONTAB_FILE")" == "$crontab_before_error" ]]; then
+  pass "crontab read failure preserves existing jobs"
+else
+  fail "crontab read failure replaced existing jobs"
+fi
 
 # --- the installed copy is the current one, not a stale one -------------------
 printf '# stale\n' >"$HOME/bin/reap-lane.sh"

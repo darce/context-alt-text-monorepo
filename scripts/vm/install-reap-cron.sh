@@ -49,7 +49,27 @@ entry="17 6 * * 1 \$HOME/bin/reap-lane.sh --yes --archive-to \$HOME/lane-archive
 # Replace any previous acx-reap-lane block rather than treating its presence as
 # "already installed". The VM was carrying an entry that swept one root of five;
 # a marker check that no-ops means widening the roots never reaches the machine.
-current="$(crontab -l 2>/dev/null || true)"
+crontab_error="$(mktemp "${TMPDIR:-/tmp}/reap-crontab-error.XXXXXX")"
+trap 'rm -f "$crontab_error"' EXIT
+if current="$(crontab -l 2>"$crontab_error")"; then
+  :
+else
+  crontab_status=$?
+  crontab_diagnostic="$(cat "$crontab_error")"
+  case "$crontab_diagnostic" in
+    no\ crontab\ for\ *|crontab:\ no\ crontab\ for\ *) current="" ;;
+    *)
+      if [[ -n "$crontab_diagnostic" ]]; then
+        printf '%s\n' "$crontab_diagnostic" >&2
+      else
+        echo "install-reap-cron: crontab -l failed with status $crontab_status" >&2
+      fi
+      exit "$crontab_status"
+      ;;
+  esac
+fi
+rm -f "$crontab_error"
+trap - EXIT
 {
   if [[ -n "$current" ]]; then
     printf '%s\n' "$current" | awk -v m="$marker" '

@@ -15,6 +15,29 @@ usage() {
   exit 2
 }
 
+# Decode a file-URL path without depending on Python or a GNU-only utility.
+# The decoded value is returned in decoded_file_path so trailing newlines in a
+# legal pathname are not stripped by command substitution. NUL cannot exist in
+# a pathname and cannot be represented in a shell variable, so reject it.
+percent_decode_file_path() {
+  local rest="$1" decoded="" prefix hex char
+  while [[ "$rest" == *%* ]]; do
+    prefix="${rest%%\%*}"
+    decoded="${decoded}${prefix}"
+    rest="${rest#*%}"
+    [[ "${#rest}" -ge 2 ]] || return 1
+    hex="${rest:0:2}"
+    case "$hex" in
+      ''|*[!0-9A-Fa-f]*) return 1 ;;
+      00) return 1 ;;
+    esac
+    printf -v char '%b' "\\x${hex}" || return 1
+    decoded="${decoded}${char}"
+    rest="${rest:2}"
+  done
+  decoded_file_path="${decoded}${rest}"
+}
+
 : "${HOME:?HOME must be set}"
 
 yes=0
@@ -62,10 +85,29 @@ fi
 # Remote transports cannot be compared to a lane's local realpath.
 if [[ -n "$archive_to" ]]; then
   archive_path=""
+  archive_is_local=0
   case "$archive_to" in
-    file:///*) archive_path="${archive_to#file://}" ;;
+    file://*)
+      file_url_path="${archive_to#file://}"
+      case "$file_url_path" in
+        /*) ;;
+        [Ll][Oo][Cc][Aa][Ll][Hh][Oo][Ss][Tt]/*)
+          file_url_path="/${file_url_path#*/}"
+          ;;
+        *)
+          echo "reap-lane: unsupported file URL authority: $archive_to" >&2
+          exit 2
+          ;;
+      esac
+      if ! percent_decode_file_path "$file_url_path"; then
+        echo "reap-lane: invalid percent encoding in archive URL: $archive_to" >&2
+        exit 2
+      fi
+      archive_path="$decoded_file_path"
+      archive_is_local=1
+      ;;
     *://*|*:* ) ;;
-    *) archive_path="$archive_to" ;;
+    *) archive_path="$archive_to"; archive_is_local=1 ;;
   esac
   if [[ -n "$archive_path" ]]; then
     # A destination that does not exist yet must still reach the archive step
@@ -81,7 +123,7 @@ if [[ -n "$archive_to" ]]; then
     fi
     # A canonical absolute destination also makes a relative local path behave
     # consistently when git is invoked with -C for different lane checkouts.
-    if [[ "$archive_to" != file:///* ]]; then
+    if [[ "$archive_is_local" -eq 1 ]]; then
       archive_to="$archive_to_real"
     fi
   fi
@@ -236,6 +278,10 @@ is_ignorable_path() {
 skip() {
   skipped=$((skipped + 1))
   printf 'SKIP %s: %s\n' "$1" "$2"
+  # A destructive sandbox sweep takes its lane lock before eligibility. Keep
+  # every refusal path fail-safe without requiring each newly added guard to
+  # remember a bespoke unlock.
+  release_grok_lane_lock
 }
 
 path_mtime() {
@@ -422,17 +468,34 @@ is_under_lane_root() {
 }
 
 has_unmerged_work() {
-  local dir="$1" upstream="$2" rev head_rev
-  while IFS= read -r rev; do
-    [[ -z "$rev" ]] && continue
+  local dir="$1" upstream="$2" ref rev head_rev refs_output reflog_output reflog_selector
+  refs_output="$(git -C "$dir" for-each-ref --format='%(refname)' refs)" || return 0
+  while IFS= read -r ref; do
+    [[ -z "$ref" ]] && continue
+    # Stashes have a stronger content-aware guard below. In particular, a
+    # stash containing only disposable lane metadata is intentionally allowed.
+    [[ "$ref" == "refs/stash" ]] && continue
+    # A ref to a non-commit cannot be proven recoverable from the upstream
+    # commit graph. Annotated tags are peeled to the commit they retain.
+    rev="$(git -C "$dir" rev-parse --verify --quiet "${ref}^{commit}")" || return 0
     if ! git -C "$dir" merge-base --is-ancestor "$rev" "$upstream"; then
       return 0
     fi
-  done < <(git -C "$dir" for-each-ref --format='%(objectname)' refs/heads)
+  done <<<"$refs_output"
   head_rev="$(git -C "$dir" rev-parse HEAD)"
   if ! git -C "$dir" merge-base --is-ancestor "$head_rev" "$upstream"; then
     return 0
   fi
+  reflog_output="$(git -C "$dir" reflog --all --format='%gD %H')" || return 0
+  while IFS= read -r ref; do
+    [[ -z "$ref" ]] && continue
+    reflog_selector="${ref% *}"
+    case "$reflog_selector" in refs/stash@\{*\}) continue ;; esac
+    rev="${ref##* }"
+    if ! git -C "$dir" merge-base --is-ancestor "$rev" "$upstream"; then
+      return 0
+    fi
+  done <<<"$reflog_output"
   return 1
 }
 
@@ -688,9 +751,25 @@ process_one() {
     esac
   fi
 
+  if is_grok_sandbox "$real"; then
+    # Materializers use this same lock. Take it before any destructive-run
+    # eligibility read, then hold it through the final snapshot and removal so
+    # a writer cannot make its work part of our trusted baseline.
+    if [[ "$yes" -eq 1 ]] && ! acquire_grok_lane_lock "$real"; then
+      skip "$path" "sandbox lane lock is held or cannot be verified"
+      return 0
+    fi
+  fi
+
   # Resolve linked-worktree ownership independently of archive mode so every
-  # successful removal can prune the parent's stale worktree metadata.
+  # successful removal can prune the parent's stale worktree metadata. For a
+  # destructive sandbox run this and every later eligibility read are covered
+  # by the materializer lock acquired above.
   parent="$(lane_parent_repo "$real" || true)"
+  if [[ -z "$parent" ]] && has_linked_worktrees "$real"; then
+    skip "$path" "repo has linked worktrees"
+    return 0
+  fi
 
   if is_grok_sandbox "$real"; then
     if ! grok_sandbox_is_stale "$real" "$path"; then
@@ -724,10 +803,6 @@ process_one() {
       return 0
     fi
     ns="${real#"${home_real}"/}/${generation}"
-    if [[ -z "$parent" ]] && has_linked_worktrees "$real"; then
-      skip "$path" "repo has linked worktrees"
-      return 0
-    fi
     # Ordered cheapest-and-strictest first: neither an uncommitted tree nor a
     # stash has a commit behind it, so archiving cannot make them safe.
     if has_blocking_dirty "$real"; then
@@ -736,10 +811,6 @@ process_one() {
     fi
     if stash_has_real_work "$real"; then
       skip "$path" "stash has real work"
-      return 0
-    fi
-    if [[ "$yes" -eq 1 ]] && ! acquire_grok_lane_lock "$real"; then
-      skip "$path" "sandbox lane lock is held or cannot be verified"
       return 0
     fi
     if [[ "$yes" -eq 1 ]]; then
@@ -819,10 +890,6 @@ process_one() {
 
     if stash_has_real_work "$real"; then
       skip "$path" "stash has real work"
-      return 0
-    fi
-    if [[ "$yes" -eq 1 ]] && ! acquire_grok_lane_lock "$real"; then
-      skip "$path" "sandbox lane lock is held or cannot be verified"
       return 0
     fi
     if [[ "$yes" -eq 1 ]]; then

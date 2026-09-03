@@ -10,7 +10,6 @@ from pathlib import Path
 import gpu_burst_smoke as smoke
 import httpx
 import pytest
-
 from db.models.scene import DescribeRun, DescribeRunItem
 from scene.domain.description import DescriptionResultTier
 from scene.interface_adapters.http.routers.describe_run import _run_items_response

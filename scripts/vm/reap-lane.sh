@@ -129,6 +129,41 @@ if [[ -n "$archive_to" ]]; then
   fi
 fi
 
+home_real="$(realpath "$HOME")" || {
+  echo "reap-lane: could not resolve HOME: $HOME" >&2
+  exit 1
+}
+
+# Destructive sandbox sweeps must participate in the materializer's flock
+# contract. Detect that unsupported mode once, before acquiring the sweep lock
+# or inspecting any lane; dry-runs remain useful on hosts without flock.
+if [[ "$yes" -eq 1 ]] && ! command -v flock >/dev/null 2>&1; then
+  sandbox_root="${home_real}/grok-sandbox"
+  sandbox_scope=0
+  for requested_root in ${all_roots[@]+"${all_roots[@]}"}; do
+    requested_real="$(realpath "$requested_root" 2>/dev/null || true)"
+    if [[ "$requested_real" == "$sandbox_root" ]]; then
+      sandbox_scope=1
+      break
+    fi
+  done
+  if [[ "$sandbox_scope" -eq 0 ]]; then
+    for requested_path in ${paths[@]+"${paths[@]}"}; do
+      requested_real="$(realpath "$requested_path" 2>/dev/null || true)"
+      case "$requested_real" in
+        "$sandbox_root"/*)
+          sandbox_scope=1
+          break
+          ;;
+      esac
+    done
+  fi
+  if [[ "$sandbox_scope" -eq 1 ]]; then
+    echo "reap-lane: flock is required for destructive sandbox sweeps" >&2
+    exit 2
+  fi
+fi
+
 lock_path="$HOME/.reap-lane.lock"
 lock_dir="${lock_path}.d"
 lock_owner="${lock_dir}/owner"
@@ -239,8 +274,6 @@ for all_root in ${all_roots[@]+"${all_roots[@]}"}; do
   done
   shopt -u nullglob
 done
-
-home_real="$(realpath "$HOME")"
 
 # Every directory under $HOME that accumulates lane clones. [RES-07] a reclaimer
 # whose scope does not match what grows is not a reclaimer: this list read
@@ -756,7 +789,7 @@ process_one() {
     # eligibility read, then hold it through the final snapshot and removal so
     # a writer cannot make its work part of our trusted baseline.
     if [[ "$yes" -eq 1 ]] && ! acquire_grok_lane_lock "$real"; then
-      skip "$path" "sandbox lane lock is held or cannot be verified"
+      skip "$path" "sandbox lane lock is held"
       return 0
     fi
   fi

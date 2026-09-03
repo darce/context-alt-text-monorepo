@@ -2,8 +2,8 @@
  * GPU lifecycle -> operator presentation strategy (sr-007).
  *
  * This is the single owner of GPU-state labels and severity/icon choices. The
- * `satisfies` constraint makes a backend vocabulary addition a compile error
- * until its presentation is deliberately designed.
+ * presentation table is exhaustive over the frontend GpuState union; unknown
+ * wire values are narrowed to UNKNOWN at the describeApi boundary.
  */
 import { __, sprintf } from '@wordpress/i18n';
 
@@ -115,5 +115,7 @@ export const gpuStateNotice = (state: GpuState | null, cpuDraftCount: number): s
       return GPU_STATE_VOCABULARY.readyNotice;
     case GPU_STATE.DEGRADED:
       return GPU_STATE_VOCABULARY.degradedNotice(cpuDraftCount);
+    default:
+      return GPU_STATE_VOCABULARY.notReportedNotice;
   }
 };

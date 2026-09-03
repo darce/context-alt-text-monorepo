@@ -6,6 +6,7 @@ import {
   correctDescriptionHistoryItem,
   describeMedia,
   DESCRIPTION_CORRECTION_CODE,
+  GPU_STATE,
   fetchDescribeRunItems,
   fetchDescriptionCandidates,
   fetchDescriptionHistory,
@@ -67,6 +68,10 @@ const sampleResponse = {
 describe('describeApi', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+  });
+
+  it('exports the exact canonical GPU state vocabulary', () => {
+    expect(Object.values(GPU_STATE)).toEqual(['unknown', 'stopped', 'starting', 'warming', 'ready', 'degraded']);
   });
 
   it('POSTs media_id to the describe endpoint with the REST nonce and returns the envelope', async () => {

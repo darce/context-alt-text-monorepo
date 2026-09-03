@@ -222,6 +222,20 @@ export const DESCRIBE_RESULT_TIER = {
 } as const;
 
 /**
+ * Canonical GPU lifecycle states emitted by describe-run status responses.
+ * `unknown` is a valid calm state (missing/stale snapshot), not an error.
+ * Keep in lockstep with the description-service GPUState StrEnum (sr-007).
+ */
+export const GPU_STATE = {
+  UNKNOWN: 'unknown',
+  STOPPED: 'stopped',
+  STARTING: 'starting',
+  WARMING: 'warming',
+  READY: 'ready',
+  DEGRADED: 'degraded',
+} as const;
+
+/**
  * Canonical correction rejection codes from the history correction endpoint.
  * Gate on these via resolveDescribeErrorCode — never on localized message text
  * (sr-007, WBUX-5-BR-51).
@@ -236,6 +250,7 @@ export type DescriptionCorrectionCode =
 
 export type DescribeRunStatus = (typeof DESCRIBE_RUN_STATUS)[keyof typeof DESCRIBE_RUN_STATUS];
 export type DescribeResultTier = (typeof DESCRIBE_RESULT_TIER)[keyof typeof DESCRIBE_RESULT_TIER];
+export type GpuState = (typeof GPU_STATE)[keyof typeof GPU_STATE];
 export type DescribeRunPhase = 'queued' | 'describing' | 'complete' | 'failed' | 'cancelled';
 
 const TERMINAL_DESCRIBE_RUN_STATUSES: ReadonlySet<DescribeRunStatus> = new Set([
@@ -261,7 +276,8 @@ export interface DescribeRunResponse {
   cancel_requested: boolean;
   // Backend-owned honest ETA for the remaining items; null while it cannot yet be estimated.
   eta_seconds: number | null;
-  gpu_state: null;
+  // Nullable for compatibility with older API builds that omit the snapshot.
+  gpu_state: GpuState | null;
 }
 
 /** One describe-run item as the operator reviews it before write-back (INT-01d).

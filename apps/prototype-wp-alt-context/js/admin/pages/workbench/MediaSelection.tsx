@@ -1,6 +1,18 @@
 import { ChangeEvent, useEffect, useState } from 'react';
 import * as Select from '@radix-ui/react-select';
-import { AlertTriangle, Check, CheckCircle2, ChevronDown, Clock, Loader2, XCircle } from 'lucide-react';
+import {
+  AlertTriangle,
+  Check,
+  CheckCircle2,
+  ChevronDown,
+  CircleHelp,
+  CircleStop,
+  Clock,
+  Flame,
+  Loader2,
+  Zap,
+  XCircle,
+} from 'lucide-react';
 import { __, sprintf } from '@wordpress/i18n';
 import type { WorkbenchMediaItem } from '../../hooks/useWorkbenchMedia';
 import type { WorkbenchMediaStatus } from '../../api/workbenchMediaApi';
@@ -14,7 +26,7 @@ import type { DescribeRunProgress } from '../../hooks/useDescribeRunProgress';
 import { useRecognitionCooldown } from '../../hooks/useRecognitionCooldown';
 import { useRemoteActionGate } from '../../hooks/useRemoteActionGate';
 import { useSyncOffline } from '../../hooks/useSyncOffline';
-import { DESCRIBE_RUN_STATUS, type DescribeRunStatus } from '../../api/describeApi';
+import { DESCRIBE_RUN_STATUS, type DescribeRunStatus, type GpuState } from '../../api/describeApi';
 import { isCooldownSignal } from '../../utils/retryPolicy';
 import { formatUserFacingError, isAuthExpiredError } from '../../utils/userFacingError';
 import { UserFacingErrorNotice } from '../../components/ui/UserFacingErrorNotice';
@@ -22,6 +34,15 @@ import { useWorkbenchMediaContext } from './WorkbenchMediaContext';
 import { SYNC_VOCABULARY } from './syncPresentation';
 import { ACCENT_PRIMARY_ATTR, FOOTER_ACCENT_OWNER, selectMediaFooterCtaState } from './mediaFooterCtaState';
 import { deriveIdentitiesPresentationSource } from './deriveIdentitiesPresentationSource';
+import {
+  GPU_STATE_ICON,
+  GPU_STATE_TONE,
+  GPU_STATE_VOCABULARY,
+  gpuStateNotice,
+  gpuStatePresentation,
+  type GpuStateIcon,
+  type GpuStateTone,
+} from './gpuStatePresentation';
 
 interface MediaSelectionProps {
   /**
@@ -401,9 +422,11 @@ export const BulkDescribeCta = ({
   // new run can start from the terminal state (FE-01, rg-003).
   const canDismiss = isPanelVisible && (progress.isTerminal || progress.isError);
   const offlineGated = Boolean(remoteActionAriaDisabled);
+  const gpuState = progress.gpuState ?? null;
 
   return (
     <div className="acx-media-selection__bulk-describe">
+      <GpuTierStatus gpuState={gpuState} cpuDraftCount={progress.run?.completed ?? 0} />
       <div className="acx-media-selection__bulk-describe-actions">
         <button
           type="button"
@@ -426,8 +449,11 @@ export const BulkDescribeCta = ({
             onSubmit();
           }}
           {...(accentPrimary ? { [ACCENT_PRIMARY_ATTR]: true } : {})}
+          aria-label={!isSubmitting ? __('Describe selected', 'alt-context') : undefined}
         >
-          {isSubmitting ? SYNC_VOCABULARY.describeStarting : __('Describe selected', 'alt-context')}
+          {isSubmitting
+            ? SYNC_VOCABULARY.describeStarting
+            : sprintf(__('Describe %d selected', 'alt-context'), selectedCount)}
         </button>
         {offlineGated && remoteActionTitle ? (
           <span id={DESCRIBE_OFFLINE_REASON_ID} className="screen-reader-text">
@@ -457,6 +483,58 @@ export const BulkDescribeCta = ({
           {errorMessage}
         </div>
       ) : null}
+    </div>
+  );
+};
+
+const GPU_STATE_ICON_COMPONENT = {
+  [GPU_STATE_ICON.HELP]: CircleHelp,
+  [GPU_STATE_ICON.STOPPED]: CircleStop,
+  [GPU_STATE_ICON.STARTING]: Loader2,
+  [GPU_STATE_ICON.WARMING]: Flame,
+  [GPU_STATE_ICON.READY]: Zap,
+  [GPU_STATE_ICON.DEGRADED]: AlertTriangle,
+} satisfies Record<GpuStateIcon, typeof Clock>;
+
+const gpuStateToneClass = (tone: GpuStateTone): string => {
+  switch (tone) {
+    case GPU_STATE_TONE.SUCCESS:
+      return ' acx-sync-status--success';
+    case GPU_STATE_TONE.WARNING:
+      return ' acx-sync-status--warning';
+    case GPU_STATE_TONE.PENDING:
+    case GPU_STATE_TONE.RUNNING:
+      return ' acx-sync-status--info';
+    case GPU_STATE_TONE.MUTED:
+      return '';
+  }
+};
+
+/** GPU tier never gates the primary action; it only reports tier consequences. */
+export const GpuTierStatus = ({
+  gpuState,
+  cpuDraftCount,
+}: {
+  gpuState: GpuState | null;
+  cpuDraftCount: number;
+}): React.JSX.Element => {
+  const presentation = gpuStatePresentation(gpuState);
+  const Icon = GPU_STATE_ICON_COMPONENT[presentation.icon];
+  const spin = presentation.icon === GPU_STATE_ICON.STARTING;
+
+  return (
+    <div
+      className={`acx-sync-status${gpuStateToneClass(presentation.tone)}`}
+      role="status"
+      aria-live="polite"
+      data-gpu-state={gpuState ?? 'unknown'}
+      data-gpu-terminal={presentation.terminal}
+    >
+      <span className="acx-media-selection__detail-chip">
+        <Icon className={spin ? 'acx-media-selection__bulk-describe-spin' : undefined} aria-hidden="true" size={16} />
+        {GPU_STATE_VOCABULARY.tierPrefix} {presentation.label}
+      </span>
+      <span className="acx-sync-status__label">{gpuStateNotice(gpuState, cpuDraftCount)}</span>
     </div>
   );
 };

@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import { useMutation } from '@tanstack/react-query';
 import { __, sprintf } from '@wordpress/i18n';
 
@@ -9,6 +10,7 @@ import {
 } from '../api/describeApi';
 import { resolveWpErrorMessage } from '../api/wpErrorMessage';
 import { useDescribeRunProgress, type DescribeRunProgress } from './useDescribeRunProgress';
+import { clearActiveDescribeRunId, setActiveDescribeRunId } from './activeDescribeRun';
 
 export interface UseBulkDescribeResult {
   submit: ReturnType<typeof useMutation<DescribeRunResponse, Error, number[]>>;
@@ -62,6 +64,7 @@ export const formatBulkDescribeErrorMessage = (
 export const useBulkDescribe = (): UseBulkDescribeResult => {
   const submit = useMutation<DescribeRunResponse, Error, number[]>({
     mutationFn: (mediaIds) => submitBulkDescribeRun(mediaIds),
+    onSuccess: (response) => setActiveDescribeRunId(response.run_id),
   });
   const cancel = useMutation<DescribeRunResponse, Error, string>({
     mutationFn: (runId) => cancelBulkDescribeRun(runId),
@@ -71,6 +74,12 @@ export const useBulkDescribe = (): UseBulkDescribeResult => {
   // that happens to carry data.run_id (BR-143 / [RLSE-04]).
   const runId = submit.data?.run_id ?? cancel.data?.run_id ?? null;
   const progress = useDescribeRunProgress(runId);
+
+  useEffect(() => {
+    if (runId !== null && progress.isTerminal) {
+      clearActiveDescribeRunId(runId);
+    }
+  }, [progress.isTerminal, runId]);
 
   const errorMessage = submit.error
     ? formatBulkDescribeErrorMessage(submit.error, SUBMIT_ERROR_FALLBACK)

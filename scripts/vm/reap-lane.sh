@@ -68,10 +68,17 @@ if [[ -n "$archive_to" ]]; then
     *) archive_path="$archive_to" ;;
   esac
   if [[ -n "$archive_path" ]]; then
-    archive_to_real="$(realpath "$archive_path")" || {
-      echo "reap-lane: archive destination realpath failed: $archive_to" >&2
-      exit 1
-    }
+    # A destination that does not exist yet must still reach the archive step
+    # so the operator sees "could not archive" rather than a startup failure;
+    # canonicalize through its parent (macOS realpath has no -m).
+    if ! archive_to_real="$(realpath "$archive_path" 2>/dev/null)"; then
+      archive_parent="$(cd "$(dirname "$archive_path")" 2>/dev/null && pwd -P)" || archive_parent=""
+      if [[ -n "$archive_parent" ]]; then
+        archive_to_real="${archive_parent%/}/$(basename "$archive_path")"
+      else
+        archive_to_real="$archive_path"
+      fi
+    fi
     # A canonical absolute destination also makes a relative local path behave
     # consistently when git is invoked with -C for different lane checkouts.
     if [[ "$archive_to" != file:///* ]]; then

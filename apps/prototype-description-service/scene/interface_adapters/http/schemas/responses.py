@@ -185,6 +185,8 @@ class DescribeRunItemResponse(BaseModel):
     alt_text_draft: str | None = None
     caption: str | None = None
     provenance: dict | None = None
+    tier: DescriptionResultTier | None = None
+    result_generation: int = Field(default=0, ge=0)
 
 
 class DescribeRunItemsResponse(BaseModel):

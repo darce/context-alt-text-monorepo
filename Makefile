@@ -458,6 +458,7 @@ test-scripts:
 		scripts/train/occlusion/test_equivalence_claims.py \
 		scripts/train/occlusion/test_mutation_guard_env.py \
 		scripts/test_acx_backend_image_contract.py \
+		scripts/test_gpu_burst_smoke.py scripts/test_gpu_spike_bench.py \
 		-q --tb=short --durations=25
 	@bash scripts/deploy/tests/test-smoke-gate.sh
 	@$(MAKE) test-vm-scripts
@@ -680,6 +681,21 @@ dev-stop:
 .PHONY: eval-captions
 eval-captions:
 	@$(ROOT_MAKEFILE_DIR)/scripts/eval-captions.sh $(EVAL_ARGS)
+
+.PHONY: gpu-burst-smoke gpu-burst-smoke-live
+gpu-burst-smoke:
+	@python3 scripts/gpu_burst_smoke.py --dry-run
+
+# Operator-only: needs ACX_GPU_SMOKE_CONFIRM=RUN and runs on acx-backend as
+# ubuntu, since only that host has the OCI binary and vaulted key.
+gpu-burst-smoke-live:
+	@python3 scripts/gpu_burst_smoke.py --live --max-seconds 900 \
+	  --wp-base-url "$${ACX_GPU_SMOKE_WP_BASE_URL:-https://wordpress.invalid}" \
+	  --wp-user "$${ACX_GPU_SMOKE_WP_USER:-gpu-smoke-operator}" \
+	  --wp-app-password-env "$${ACX_GPU_SMOKE_PASSWORD_ENV:-ACX_WP_APP_PASSWORD}" \
+	  --media-ids "$${ACX_GPU_SMOKE_MEDIA_IDS:-101}" \
+	  --service-base-url "$${ACX_GPU_SMOKE_SERVICE_BASE_URL:-http://<burst-private-ip>:8000}" \
+	  --instance-id "$${ACX_GPU_SMOKE_INSTANCE_ID:-<burst-instance-ocid>}"
 
 # FIR-5 face bake-off: offline candidate walk (+ optional score). No tenant writes.
 # Usage: make bakeoff-face

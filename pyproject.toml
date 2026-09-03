@@ -9,3 +9,14 @@ dependencies = []
 
 [tool.uv]
 package = false
+
+# Remote lane sandboxes are provisioned by `uv sync` at this virtual root
+# (UV_PROJECT_ENVIRONMENT=<lane venv>). Without a default dependency group the
+# lane venv holds only python and every allowlisted runner (`pytest`,
+# `python3 -m pytest`) fails with rc 126/127. The `dev` group is a uv default,
+# so root sync installs the service test toolchain into each lane venv.
+[dependency-groups]
+dev = ["prototype-description-service[dev]"]
+
+[tool.uv.sources]
+prototype-description-service = { path = "apps/prototype-description-service", editable = true }

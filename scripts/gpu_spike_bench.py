@@ -559,7 +559,6 @@ def ensure_stopped(
     clock: Clock,
     timeout_seconds: float = DEFAULT_LIFECYCLE_TIMEOUT_S,
     poll_interval_seconds: float = DEFAULT_POLL_INTERVAL_S,
-    force_stop: bool = False,
 ) -> None:
     """STOP and wait STOPPED — billing safety [RES-07]."""
     try:
@@ -567,7 +566,7 @@ def ensure_stopped(
     except Exception:  # noqa: BLE001 - best-effort stop path
         state = "UNKNOWN"
     stop_error: Exception | None = None
-    if force_stop or state != "STOPPED":
+    if state != "STOPPED":
         try:
             actuator.stop(instance_id)
         except Exception as exc:  # noqa: BLE001
@@ -1239,7 +1238,6 @@ def run_bench(
                     clock=clock,
                     timeout_seconds=lifecycle_timeout_seconds,
                     poll_interval_seconds=poll_interval_seconds,
-                    force_stop=True,
                 )
                 print("finally: instance STOPPED", flush=True)
             except Exception as stop_exc:

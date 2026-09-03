@@ -215,6 +215,12 @@ export const DESCRIBE_RUN_STATUS = {
   CANCELLED: 'cancelled',
 } as const;
 
+/** Canonical result tiers emitted for generated describe-run items (sr-007). */
+export const DESCRIBE_RESULT_TIER = {
+  PROVISIONAL_CPU: 'provisional_cpu',
+  FINAL_GPU: 'final_gpu',
+} as const;
+
 /**
  * Canonical correction rejection codes from the history correction endpoint.
  * Gate on these via resolveDescribeErrorCode — never on localized message text
@@ -229,6 +235,7 @@ export type DescriptionCorrectionCode =
   (typeof DESCRIPTION_CORRECTION_CODE)[keyof typeof DESCRIPTION_CORRECTION_CODE];
 
 export type DescribeRunStatus = (typeof DESCRIBE_RUN_STATUS)[keyof typeof DESCRIBE_RUN_STATUS];
+export type DescribeResultTier = (typeof DESCRIBE_RESULT_TIER)[keyof typeof DESCRIBE_RESULT_TIER];
 export type DescribeRunPhase = 'queued' | 'describing' | 'complete' | 'failed' | 'cancelled';
 
 const TERMINAL_DESCRIBE_RUN_STATUSES: ReadonlySet<DescribeRunStatus> = new Set([
@@ -266,6 +273,8 @@ export interface DescribeRunItem {
   alt_text_draft: string | null;
   caption: string | null;
   provenance: DescriptionHistoryProvenance | VisualFactsResponse | null;
+  tier: DescribeResultTier | null;
+  result_generation: number;
   existing_alt: boolean;
 }
 

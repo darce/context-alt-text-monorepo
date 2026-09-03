@@ -6,7 +6,6 @@ from pathlib import Path
 
 import yaml
 
-
 REPO_ROOT = Path(os.environ.get("DEPLOY_GATE_REPO_ROOT", Path(__file__).resolve().parents[1]))
 WORKFLOW_PATH = REPO_ROOT / ".github" / "workflows" / "deploy-recognition.yml"
 
@@ -44,12 +43,13 @@ def test_deploy_needs_contract_gate() -> None:
 def test_contract_gate_is_isolated_and_bounded() -> None:
     workflow = _workflow()
     _, gate = _contract_gate(workflow)
+    gate_text = str(gate).lower()
 
     assert "environment" not in gate, "gate must not consume a deployment environment"
-    assert gate.get("timeout-minutes"), "gate must have its own timeout"
-    assert all(
-        "tailscale" not in str(step).lower() for step in gate.get("steps", [])
-    ), "gate must not join the tailnet or consume tailnet credentials"
+    assert gate.get("timeout-minutes") == 10, "gate must have its own 10-minute timeout"
+    assert "tailscale" not in gate_text, "gate must not join the tailnet"
+    assert "secrets." not in gate_text, "gate must not consume GitHub secrets"
+    assert "docker" not in gate_text, "gate must not depend on Docker"
 
 
 def test_push_paths_cover_the_gate_inputs() -> None:

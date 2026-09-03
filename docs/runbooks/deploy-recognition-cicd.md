@@ -7,10 +7,10 @@ tailnet as an ephemeral node and runs the existing
 the script remains the single source of truth for build → OCIR push → systemd
 restart → `/health` verify.
 
-**Why this shape (free, reliable):** the VM builds and pushes to OCIR with its
-own cached credential, so CI carries **no Docker and no OCIR secrets** — only
-tailnet reachability + an SSH deploy key. GitHub Actions + Tailscale both run on
-free tiers.
+**Why this shape (free, reliable):** the VM builds and pushes to OCIR after its
+instance principal fetches the credential from `acx-vault`, so CI carries **no
+Docker and no OCIR secrets** — only tailnet reachability + an SSH deploy key.
+GitHub Actions + Tailscale both run on free tiers.
 
 ## Trigger policy
 
@@ -99,15 +99,25 @@ prod can only deploy from `main`).
 ### 5. VM prerequisites (already true post-secrets-consolidation)
 
 - Docker running; user in the `docker` group.
-- Cached OCIR credential: `docker login iad.ocir.io -u 'idu2kqqe2jxy/<email>'`
-  (paste an OCI auth token) — the script's remote-build push reuses it.
+- OCI CLI installed at `~/.oci-venv/bin/oci`.
+- Instance `acx-backend-dg` covered by policy `acx-backend-secret-read`, with
+  `SECRET_BUNDLE_READ` access to `acx-vault`.
+- Active `OCIR_USERNAME` and `OCIR_AUTH_TOKEN` secret versions in `acx-vault`.
+  Bootstrap or rotate them from an operator laptop with an OCI API-key profile:
+  ```bash
+  scripts/deploy/ocir-token-rotate.sh --set-username 'idu2kqqe2jxy/<email>'
+  ```
+  Later token-only rotations use `scripts/deploy/ocir-token-rotate.sh`. The
+  helper stores the token in Vault and verifies both laptop and VM login paths;
+  do not pre-seed a cached Docker login on either host.
 
 ## Operating the pipeline
 
 - **Deploy dev**: merge/push to `main` — the workflow runs automatically.
 - **Deploy staging/prod**: *Actions → Deploy recognition service → Run workflow*
-  → pick the environment. `prod` waits for the required-reviewer approval, then
-  the script's `CONFIRM=PROMOTE` gate + boot-smoke + `/health` verify run.
+  → pick the environment. On the private Free-plan repository, `prod` is gated
+  by typing `PROMOTE`; there is no required-reviewer pause. The script's own
+  `CONFIRM=PROMOTE` check, boot-smoke, and `/health` verification then run.
 - **Verify**: the script fails closed — it GETs `/health` and compares
   `commit_sha` to the deployed ref (retries for warm-up). A green run means the
   running service is at that SHA.

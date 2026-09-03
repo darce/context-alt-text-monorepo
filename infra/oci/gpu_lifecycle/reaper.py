@@ -59,9 +59,7 @@ logger = logging.getLogger(__name__)
 
 # Fail-closed STOP sentinel when load data is untrustworthy. START must not
 # treat this as real work (untrustworthy=True → refuse START).
-_BUSY_LOAD = JobLoadSnapshot(
-    queue_depth=1, in_flight=1, batch_in_progress=True, untrustworthy=True
-)
+_BUSY_LOAD = JobLoadSnapshot(queue_depth=1, in_flight=1, batch_in_progress=True, untrustworthy=True)
 _DEFAULT_LOAD_MAX_AGE_SECONDS = 120.0
 _DEFAULT_OCI_TIMEOUT_SECONDS = 120
 _DEFAULT_MAX_WAIT_SECONDS = 600
@@ -176,9 +174,7 @@ class JsonFileJobLoadSource:
         try:
             payload = json.loads(self.path.read_text())
         except (OSError, json.JSONDecodeError) as exc:
-            logger.warning(
-                "load json unreadable; treating as busy: %s (%s)", self.path, exc
-            )
+            logger.warning("load json unreadable; treating as busy: %s (%s)", self.path, exc)
             return _BUSY_LOAD
         if not isinstance(payload, dict):
             logger.warning("load json not an object; treating as busy: %s", self.path)
@@ -202,9 +198,7 @@ class JsonFileJobLoadSource:
                 self.path,
             )
             return _BUSY_LOAD
-        if "batch_in_progress" in payload and not isinstance(
-            payload["batch_in_progress"], bool
-        ):
+        if "batch_in_progress" in payload and not isinstance(payload["batch_in_progress"], bool):
             logger.warning(
                 "load json batch_in_progress not bool; treating as busy: %s",
                 self.path,
@@ -218,8 +212,7 @@ class JsonFileJobLoadSource:
             level = logging.DEBUG if _ABSENT_BATCH_KEY_WARNED else logging.WARNING
             logger.log(
                 level,
-                "load json missing batch_in_progress; bulk runs are unprotected "
-                "until the producer writes this key: %s",
+                "load json missing batch_in_progress; bulk runs are unprotected until the producer writes this key: %s",
                 self.path,
             )
             _ABSENT_BATCH_KEY_WARNED = True
@@ -360,9 +353,7 @@ class RunningSinceLeaseStore:
         try:
             parsed = datetime.fromisoformat(since)
         except ValueError:
-            logger.warning(
-                "running-since timestamp invalid; replacing it: %s", self.path
-            )
+            logger.warning("running-since timestamp invalid; replacing it: %s", self.path)
             return None
         if parsed.tzinfo is None:
             parsed = parsed.replace(tzinfo=UTC)
@@ -483,10 +474,7 @@ def _apply_running_since_leases(
             try:
                 store.remove()
             except OSError as exc:
-                msg = (
-                    f"{instance.instance_id}: running-since removal failed: "
-                    f"{type(exc).__name__}: {exc}"
-                )
+                msg = f"{instance.instance_id}: running-since removal failed: {type(exc).__name__}: {exc}"
                 logger.error(msg)
                 errors.append(msg)
             observed.append(instance)
@@ -496,8 +484,7 @@ def _apply_running_since_leases(
             continue
         if not use_recorded_age:
             logger.info(
-                "evaluating RUNNING lease instance=%s "
-                "source=instance_idle_for_override age_seconds=%s",
+                "evaluating RUNNING lease instance=%s source=instance_idle_for_override age_seconds=%s",
                 instance.instance_id,
                 instance.idle_for_seconds,
             )
@@ -507,10 +494,7 @@ def _apply_running_since_leases(
             record = store.observe_running(instance.instance_id)
             age_seconds = store.age_seconds(record)
         except (OSError, ValueError) as exc:
-            msg = (
-                f"{instance.instance_id}: running-since observation failed: "
-                f"{type(exc).__name__}: {exc}"
-            )
+            msg = f"{instance.instance_id}: running-since observation failed: {type(exc).__name__}: {exc}"
             logger.error(msg)
             errors.append(msg)
             age_seconds = 0
@@ -559,9 +543,7 @@ def run_reap_cycle(
             running_since_store,
             use_recorded_age=use_recorded_lease_age,
         )
-    forced = controller.lease_expired_instances(
-        instances, max_lease_seconds=max_lease_seconds
-    )
+    forced = controller.lease_expired_instances(instances, max_lease_seconds=max_lease_seconds)
     for action, instance_id in forced:
         logger.warning(
             "max lease %ss exceeded; forcing STOP regardless of reported load: %s",
@@ -615,9 +597,7 @@ def run_reap_cycle(
         logger.error("fence resample failed; cancelling STOP: %s", exc)
         fence_expired = True
 
-    fenced = controller.fence_stop_actions(
-        decided, pre_stop_load=pre_stop, fence_expired=fence_expired
-    )
+    fenced = controller.fence_stop_actions(decided, pre_stop_load=pre_stop, fence_expired=fence_expired)
     if not fenced:
         logger.info(
             "fence cancelled STOP (queue_depth=%s in_flight=%s batch=%s expired=%s)",
@@ -672,9 +652,7 @@ def run_start_cycle(
     """
     load = load_source.snapshot()
     if load.untrustworthy:
-        logger.error(
-            "load snapshot untrustworthy; refusing START to avoid unfenced GPU burn"
-        )
+        logger.error("load snapshot untrustworthy; refusing START to avoid unfenced GPU burn")
         return StartCycleResult(
             decided=[],
             actuated=[],
@@ -686,43 +664,26 @@ def run_start_cycle(
         in_flight=load.in_flight,
         batch_in_progress=load.batch_in_progress,
     )
-    waiting_ids = (
-        controller.instances_waiting_on_boot(instances) if load.has_work else []
-    )
+    waiting_ids = controller.instances_waiting_on_boot(instances) if load.has_work else []
     blocked = controller.instances_blocking_start(instances) if load.has_work else []
     errors: list[str] = []
     for instance in blocked:
-        msg = (
-            f"{instance.instance_id}: fail-closed START refused; "
-            f"state={instance.state} while work waits"
-        )
+        msg = f"{instance.instance_id}: fail-closed START refused; state={instance.state} while work waits"
         logger.error(msg)
         errors.append(msg)
     if not decided and not waiting_ids and not errors:
         return StartCycleResult(decided=[], actuated=[], errors=[])
 
-    start_ids = [
-        instance_id
-        for action, instance_id in decided
-        if action == LifecycleAction.START
-    ]
-    wait_ids = start_ids + [
-        instance_id for instance_id in waiting_ids if instance_id not in set(start_ids)
-    ]
-    if (
-        isinstance(probe, HttpReadinessProbe)
-        and not probe.is_per_instance
-        and len(wait_ids) > 1
-    ):
+    start_ids = [instance_id for action, instance_id in decided if action == LifecycleAction.START]
+    wait_ids = start_ids + [instance_id for instance_id in waiting_ids if instance_id not in set(start_ids)]
+    if isinstance(probe, HttpReadinessProbe) and not probe.is_per_instance and len(wait_ids) > 1:
         msg = (
             "HttpReadinessProbe URL is a single shared endpoint; refusing "
             "multi-id wait (template {instance_id} required)"
         )
         logger.error(msg)
         errors.append(msg)
-        return StartCycleResult(
-            decided=decided, actuated=[], errors=errors, wait_result=None
-        )
+        return StartCycleResult(decided=decided, actuated=[], errors=errors, wait_result=None)
 
     actuated: list[tuple[str, str]] = []
     start_failed: list[str] = []
@@ -742,10 +703,7 @@ def run_start_cycle(
             try:
                 record = running_since_store.record_start(instance_id)
             except (OSError, ValueError) as exc:
-                msg = (
-                    f"{instance_id}: START issued but running-since write failed: "
-                    f"{type(exc).__name__}: {exc}"
-                )
+                msg = f"{instance_id}: START issued but running-since write failed: {type(exc).__name__}: {exc}"
                 logger.error(msg)
                 errors.append(msg)
             else:
@@ -758,14 +716,10 @@ def run_start_cycle(
 
     wait_result: ReadinessWaitResult | None = None
     fallbacks: list[FallbackDecision] = list(
-        controller.fallback_on_boot_failure(start_failed, reason="start_failed")
-        if start_failed
-        else ()
+        controller.fallback_on_boot_failure(start_failed, reason="start_failed") if start_failed else ()
     )
     wait_ids = [instance_id for _, instance_id in actuated] + [
-        instance_id
-        for instance_id in waiting_ids
-        if instance_id not in {i for _, i in actuated}
+        instance_id for instance_id in waiting_ids if instance_id not in {i for _, i in actuated}
     ]
     if probe is not None and readiness_wait is not None and wait_ids:
         wait_result = readiness_wait.wait(wait_ids, probe)
@@ -773,12 +727,8 @@ def run_start_cycle(
             errors.extend(wait_result.errors)
         if wait_result.failed:
             fallbacks.extend(
-                controller.fallback_on_boot_failure(
-                    list(wait_result.timed_out), reason="readiness_timeout"
-                )
-                + controller.fallback_on_boot_failure(
-                    list(wait_result.stalled), reason="readiness_stall"
-                )
+                controller.fallback_on_boot_failure(list(wait_result.timed_out), reason="readiness_timeout")
+                + controller.fallback_on_boot_failure(list(wait_result.stalled), reason="readiness_stall")
             )
     return StartCycleResult(
         decided=decided,
@@ -834,10 +784,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--running-since-path",
         type=Path,
         default=_DEFAULT_RUNNING_SINCE_PATH,
-        help=(
-            "Controller-owned current RUNNING lease record "
-            f"(default: {_DEFAULT_RUNNING_SINCE_PATH})"
-        ),
+        help=(f"Controller-owned current RUNNING lease record (default: {_DEFAULT_RUNNING_SINCE_PATH})"),
     )
     parser.add_argument(
         "--instance-state",
@@ -847,10 +794,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--probe-oci",
         action="store_true",
-        help=(
-            "Fetch lifecycle state via `oci compute instance get`; lease age "
-            "always comes from --running-since-path"
-        ),
+        help=("Fetch lifecycle state via `oci compute instance get`; lease age always comes from --running-since-path"),
     )
     load = parser.add_mutually_exclusive_group()
     load.add_argument(
@@ -958,8 +902,7 @@ def main(argv: list[str] | None = None) -> int:
     else:
         if args.queue_depth is None or args.in_flight is None:
             print(
-                "error: provide --load-json (production) or both --queue-depth and "
-                "--in-flight (tests only)",
+                "error: provide --load-json (production) or both --queue-depth and --in-flight (tests only)",
                 file=sys.stderr,
             )
             return 2
@@ -1040,9 +983,7 @@ def main(argv: list[str] | None = None) -> int:
             start_result.decided,
             start_result.actuated,
             start_result.errors,
-            None
-            if start_result.wait_result is None
-            else start_result.wait_result.exit_code,
+            None if start_result.wait_result is None else start_result.wait_result.exit_code,
             start_result.fallbacks,
         )
         return 1 if start_result.errors else 0

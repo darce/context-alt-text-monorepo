@@ -58,9 +58,7 @@ def _lease_store(path: Path) -> RunningSinceLeaseStore:
 
 
 def _write_lease(path: Path, *, since: str, source: str = "start_actuator") -> None:
-    path.write_text(
-        json.dumps({"instance_id": "instance-a", "since": since, "source": source})
-    )
+    path.write_text(json.dumps({"instance_id": "instance-a", "since": since, "source": source}))
 
 
 def _running(age: int, instance_id: str = "ocid1.instance.oc1..gpu") -> GpuInstance:
@@ -72,42 +70,30 @@ def _running(age: int, instance_id: str = "ocid1.instance.oc1..gpu") -> GpuInsta
 
 def test_lease_expired_selects_running_instance_past_the_cap() -> None:
     controller = GpuLifecycleController(idle_seconds=300)
-    actions = controller.lease_expired_instances(
-        [_running(3601)], max_lease_seconds=3600
-    )
+    actions = controller.lease_expired_instances([_running(3601)], max_lease_seconds=3600)
     assert actions == [("STOP", "ocid1.instance.oc1..gpu")]
 
 
 def test_lease_not_expired_below_the_cap() -> None:
     """TEST-15: the cap must be able to *not* fire, or it kills every batch."""
     controller = GpuLifecycleController(idle_seconds=300)
-    assert (
-        controller.lease_expired_instances([_running(60)], max_lease_seconds=3600) == []
-    )
+    assert controller.lease_expired_instances([_running(60)], max_lease_seconds=3600) == []
 
 
 def test_lease_cap_ignores_instances_that_are_not_running() -> None:
     controller = GpuLifecycleController(idle_seconds=300)
-    stopped = GpuInstance(
-        instance_id="ocid1.instance.oc1..gpu", state="STOPPED", idle_for_seconds=99_999
-    )
+    stopped = GpuInstance(instance_id="ocid1.instance.oc1..gpu", state="STOPPED", idle_for_seconds=99_999)
     starting = GpuInstance(
         instance_id="ocid1.instance.oc1..gpu2",
         state="STARTING",
         idle_for_seconds=99_999,
     )
-    assert (
-        controller.lease_expired_instances([stopped, starting], max_lease_seconds=60)
-        == []
-    )
+    assert controller.lease_expired_instances([stopped, starting], max_lease_seconds=60) == []
 
 
 def test_lease_cap_disabled_by_zero() -> None:
     controller = GpuLifecycleController(idle_seconds=300)
-    assert (
-        controller.lease_expired_instances([_running(99_999)], max_lease_seconds=0)
-        == []
-    )
+    assert controller.lease_expired_instances([_running(99_999)], max_lease_seconds=0) == []
 
 
 # --- cycle-level: the cap must beat the fence -------------------------------
@@ -327,9 +313,7 @@ def test_stopped_observation_removes_running_since_record(tmp_path: Path) -> Non
 
     run_reap_cycle(
         controller=GpuLifecycleController(idle_seconds=300),
-        instances=[
-            GpuInstance(instance_id="instance-a", state="STOPPED", idle_for_seconds=0)
-        ],
+        instances=[GpuInstance(instance_id="instance-a", state="STOPPED", idle_for_seconds=0)],
         load_source=BusyLoadSource(),
         actuator=RecordingActuator(),
         fence_delay_seconds=0,
@@ -350,9 +334,7 @@ def test_start_cycle_records_lease_after_start_is_issued(tmp_path: Path) -> None
 
     result = run_start_cycle(
         controller=GpuLifecycleController(idle_seconds=300),
-        instances=[
-            GpuInstance(instance_id="instance-a", state="STOPPED", idle_for_seconds=0)
-        ],
+        instances=[GpuInstance(instance_id="instance-a", state="STOPPED", idle_for_seconds=0)],
         load_source=StaticJobLoadSource(queue_depth=1, in_flight=0),
         actuator=AssertingStartActuator(),
         running_since_store=_lease_store(path),
@@ -371,9 +353,7 @@ def test_start_cycle_records_lease_after_start_is_issued(tmp_path: Path) -> None
 
 def test_cli_defaults_the_cap_on_rather_than_off() -> None:
     """A backstop that ships disabled is not a backstop [RES-07]."""
-    args = _build_parser().parse_args(
-        ["--instance-id", "ocid1.x", "--load-json", "/tmp/x"]
-    )
+    args = _build_parser().parse_args(["--instance-id", "ocid1.x", "--load-json", "/tmp/x"])
     assert args.max_lease_seconds == 3600
 
 
@@ -406,17 +386,13 @@ def test_cli_accepts_running_since_path_override(tmp_path: Path) -> None:
     assert args.running_since_path == path
 
 
-def test_cli_state_override_uses_running_since_without_oci_age_probe(
-    tmp_path: Path, monkeypatch
-) -> None:
+def test_cli_state_override_uses_running_since_without_oci_age_probe(tmp_path: Path, monkeypatch) -> None:
     path = tmp_path / "lease.json"
 
     def fail_probe(**_kwargs):
         raise AssertionError("OCI age probe must not run")
 
-    monkeypatch.setattr(
-        "infra.oci.gpu_lifecycle.reaper.fetch_instance_idle_seconds", fail_probe
-    )
+    monkeypatch.setattr("infra.oci.gpu_lifecycle.reaper.fetch_instance_idle_seconds", fail_probe)
 
     exit_code = main(
         [

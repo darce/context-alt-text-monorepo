@@ -136,10 +136,29 @@ def test_deployed_compose_keeps_load_writable_and_gpu_state_read_only() -> None:
     api = api_match.group(1)
 
     assert "ACX_GPU_STATE_PATH=/run/acx/gpu-state.json" in api
-    assert "ACX_DESCRIBE_LOAD_PATH=/run/acx-write/describe-load.json" in api
     assert "- /run/acx:/run/acx:ro" in api
-    assert "- /run/acx-write:/run/acx-write" in api
     assert "- /run/acx:/run/acx-write" not in api
+
+    load_path_match = re.search(
+        r"^\s*- ACX_DESCRIBE_LOAD_PATH=([^\s]+)$", api, flags=re.MULTILINE
+    )
+    assert load_path_match is not None
+    load_path = load_path_match.group(1)
+    expected_load_dir = "/run/acx-write/${ACX_ENV}"
+    assert load_path == f"{expected_load_dir}/describe-load.json"
+
+    mount_matches = re.findall(
+        r"^\s*- ([^:\s]+):([^:\s]+)(?::([^\s]+))?$", api, flags=re.MULTILINE
+    )
+    load_mounts = [mount for mount in mount_matches if mount[1] == expected_load_dir]
+    assert load_mounts == [(expected_load_dir, expected_load_dir, "")]
+    assert load_path.rsplit("/", 1)[0] == load_mounts[0][1]
+
+    # H-04: mounting the shared parent restores cross-environment overwrite access.
+    assert not any(
+        source == "/run/acx-write" or target == "/run/acx-write"
+        for source, target, _options in mount_matches
+    )
 
 
 def test_atomic_writer_replaces_inode_instead_of_updating_bound_file(

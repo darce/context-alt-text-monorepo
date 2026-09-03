@@ -132,18 +132,138 @@ result: `4 failed, 9 passed in 0.15s`.
 
 ## blockers
 
-- The required broad command cannot be fully green without changing frozen,
-  non-owned legacy tests that still require `--load-json` and the shared
-  `/run/acx-write/describe-load.json` path.
 - This execution sandbox denies local AF_INET socket creation, blocking two
   unrelated readiness-probe tests.
 
 ## findings outside ownership
 
-- `infra/oci/gpu_lifecycle/tests/test_max_lease.py` has three CLI fixtures that
-  must migrate from `--load-json /tmp/x` to `--load-dir /tmp`.
-- `infra/oci/gpu_lifecycle/tests/test_state_snapshot_contract.py` still asserts
-  the old shared compose load path and mount; it must assert the `${ACX_ENV}`
-  subdirectory contract.
 - `infra/oci/gpu_lifecycle/tests/test_readiness_probe.py` requires local socket
   permission not available in this worker sandbox.
+
+## Repair pass
+
+### Failure repairs
+
+- `test_cli_defaults_the_cap_on_rather_than_off`,
+  `test_cli_accepts_an_explicit_cap`, and
+  `test_cli_accepts_running_since_path_override` still supplied the deleted
+  `--load-json /tmp/x` interface. Each now creates a real `tmp_path` load
+  directory, supplies it through `--load-dir`, and asserts the parsed
+  `args.load_dir` so the aggregate input contract is exercised directly.
+- `test_deployed_compose_keeps_load_writable_and_gpu_state_read_only` asserted
+  the shared `/run/acx-write/describe-load.json` path and parent mount. Those
+  assertions encoded H-04's cross-environment overwrite defect. The test now
+  requires `/run/acx-write/${ACX_ENV}/describe-load.json`, derives the expected
+  writable mount from that value, checks source and target agreement, retains
+  the `/run/acx` read-only state mount, and explicitly rejects any shared
+  `/run/acx-write` parent mount.
+- `test-check-gpu-snapshots.sh` no longer requires the retired
+  `/run/acx/describe-load.json`. It checks the lane-owned environment compose
+  for the namespaced load path while retaining the production state-directory
+  and freshness checks. This keeps `/run/acx` host-owned/read-only and
+  `/run/acx-write/<env>` API-owned/read-write.
+
+### Repair diff
+
+```diff
+- --load-json /tmp/x
++ --load-dir <tmp_path>/load
++ assert args.load_dir == load_dir
+
+- ACX_DESCRIBE_LOAD_PATH=/run/acx-write/describe-load.json
+- /run/acx-write:/run/acx-write
++ ACX_DESCRIBE_LOAD_PATH=/run/acx-write/${ACX_ENV}/describe-load.json
++ /run/acx-write/${ACX_ENV}:/run/acx-write/${ACX_ENV}
++ assert no mount source or target equals /run/acx-write
+
+- ACX_DESCRIBE_LOAD_PATH=/run/acx/describe-load.json
++ ACX_DESCRIBE_LOAD_PATH=/run/acx-write/${ACX_ENV}/describe-load.json
+```
+
+### Repair RED evidence
+
+Command:
+
+```text
+/home/gate/grok-sandbox/feature-gpuux-1-h04-e6e97e4d/.venv/bin/python -m pytest infra/oci/gpu_lifecycle/tests/test_max_lease.py::test_cli_defaults_the_cap_on_rather_than_off infra/oci/gpu_lifecycle/tests/test_max_lease.py::test_cli_accepts_an_explicit_cap infra/oci/gpu_lifecycle/tests/test_max_lease.py::test_cli_accepts_running_since_path_override infra/oci/gpu_lifecycle/tests/test_state_snapshot_contract.py::test_deployed_compose_keeps_load_writable_and_gpu_state_read_only -q
+```
+
+Tail before repair:
+
+```text
+FAILED infra/oci/gpu_lifecycle/tests/test_max_lease.py::test_cli_defaults_the_cap_on_rather_than_off
+FAILED infra/oci/gpu_lifecycle/tests/test_max_lease.py::test_cli_accepts_an_explicit_cap
+FAILED infra/oci/gpu_lifecycle/tests/test_max_lease.py::test_cli_accepts_running_since_path_override
+FAILED infra/oci/gpu_lifecycle/tests/test_state_snapshot_contract.py::test_deployed_compose_keeps_load_writable_and_gpu_state_read_only
+4 failed in 0.57s
+```
+
+The same targeted command after repair passed:
+
+```text
+....                                                                     [100%]
+4 passed in 0.17s
+```
+
+### Repair mutants
+
+#### (h) Revert the compose environment value to the shared file
+
+```diff
+-      - ACX_DESCRIBE_LOAD_PATH=/run/acx-write/${ACX_ENV}/describe-load.json
++      - ACX_DESCRIBE_LOAD_PATH=/run/acx-write/describe-load.json
+```
+
+KILLED by
+`test_deployed_compose_keeps_load_writable_and_gpu_state_read_only`; tail:
+
+```text
+E       AssertionError: assert '/run/acx-wri...ibe-load.json' == '/run/acx-wri...ibe-load.json'
+FAILED infra/oci/gpu_lifecycle/tests/test_state_snapshot_contract.py::test_deployed_compose_keeps_load_writable_and_gpu_state_read_only
+1 failed in 0.11s
+```
+
+#### (i) Add the shared parent mount to the API service
+
+```diff
+       - /run/acx-write/${ACX_ENV}:/run/acx-write/${ACX_ENV}
++      - /run/acx-write:/run/acx-write
+```
+
+KILLED by the explicit H-04 shared-parent regression guard; tail:
+
+```text
+>       assert not any(
+E       assert not True
+FAILED infra/oci/gpu_lifecycle/tests/test_state_snapshot_contract.py::test_deployed_compose_keeps_load_writable_and_gpu_state_read_only
+1 failed in 0.08s
+```
+
+Both mutations were applied separately and restored before final verification.
+
+### Repair final verification
+
+Command:
+
+```text
+/home/gate/grok-sandbox/feature-gpuux-1-h04-e6e97e4d/.venv/bin/python -m pytest infra/oci/gpu_lifecycle/tests scripts/deploy/tests/test_check_gpu_snapshots_shell.py -q
+```
+
+Full tail:
+
+```text
+../../.local/share/uv/python/cpython-3.12-linux-aarch64-gnu/lib/python3.12/socket.py:233: PermissionError
+=========================== short test summary info ============================
+FAILED infra/oci/gpu_lifecycle/tests/test_readiness_probe.py::test_http_probe_templates_instance_id_into_url
+FAILED infra/oci/gpu_lifecycle/tests/test_readiness_probe.py::test_http_readiness_probe_local_server_2xx_non_2xx_urlerror
+2 failed, 122 passed in 4.43s
+```
+
+The only remaining failures are outside amended ownership and occur while
+constructing `HTTPServer(("127.0.0.1", 0), ...)`: this execution sandbox denies
+AF_INET socket creation with `PermissionError: [Errno 1] Operation not
+permitted`. Per the repair brief, the readiness tests were not edited.
+
+```json
+{"findings":[],"blockers":["The sandbox denies AF_INET socket creation required by two out-of-ownership readiness-probe tests; the required broad suite therefore ends with 2 failed, 122 passed."],"tests_run":"Targeted repair pytest: 4 passed in 0.17s; shell contract: ALL PASS; mutants h and i: KILLED; required broad pytest: 2 failed, 122 passed in 4.43s.","handoff_action":"needs_guidance"}
+```

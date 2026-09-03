@@ -13,6 +13,7 @@ recognition_deploy="${root}/scripts/deploy/recognition-service.sh"
 checker_bash=${ACX_GPU_TEST_BASH:-/bin/bash}
 prod_compose="${root}/apps/prototype-description-service/docker-compose.prod.yml"
 prod_env="${root}/apps/prototype-description-service/.env.prod.example"
+environment_compose="${root}/apps/prototype-description-service/docker-compose.env.yml"
 makefile=${ACX_GPU_TEST_MAKEFILE:-${root}/Makefile}
 fixture_root=$(mktemp -d)
 trap 'rm -rf "$fixture_root"' EXIT
@@ -206,11 +207,13 @@ for environment in dev staging prod; do
         "${root}/scripts/deploy/gpu-lifecycle-install.sh"
 done
 
-# Deployment contract: the example env is the one deployment seam. Compose
-# consumes those values instead of growing another copy of either host path.
+# Production state configuration remains a single deployment seam. The
+# multi-environment compose template owns the per-environment load path.
 assert_contains "env documents GPU state path" "ACX_GPU_STATE_PATH=/run/acx/gpu-state.json" "$prod_env"
 assert_contains "env documents GPU freshness" "ACX_GPU_STATE_STALE_SECONDS=180" "$prod_env"
-assert_contains "env documents load path" "ACX_DESCRIBE_LOAD_PATH=/run/acx/describe-load.json" "$prod_env"
+assert_contains "environment compose isolates load path" \
+    'ACX_DESCRIBE_LOAD_PATH=/run/acx-write/${ACX_ENV}/describe-load.json' \
+    "$environment_compose"
 assert_contains "env documents load refresh" "ACX_DESCRIBE_LOAD_REFRESH_SECONDS=45" "$prod_env"
 assert_contains "compose passes GPU state path" 'ACX_GPU_STATE_PATH=${ACX_GPU_STATE_PATH}' "$prod_compose"
 assert_contains "compose mounts snapshot directory read-only" '${ACX_GPU_SNAPSHOT_DIR}:/run/acx:ro' "$prod_compose"

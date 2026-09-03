@@ -316,9 +316,10 @@ class RunningSinceRecord:
 
 
 class RunningSinceLeaseStore:
-    """Controller-owned grant time for the current RUNNING lease."""
+    """Controller-owned grant times for RUNNING leases, keyed by instance."""
 
     _SOURCES = frozenset({"start_actuator", "first_observed"})
+    _SCHEMA_VERSION = 2
 
     def __init__(
         self,
@@ -340,13 +341,22 @@ class RunningSinceLeaseStore:
             payload = json.loads(self.path.read_text())
         except FileNotFoundError:
             return None
-        except (OSError, json.JSONDecodeError) as exc:
+        except json.JSONDecodeError as exc:
             logger.warning("running-since record unreadable; replacing it: %s", exc)
             return None
-        if not isinstance(payload, dict) or payload.get("instance_id") != instance_id:
+        if (
+            not isinstance(payload, dict)
+            or payload.get("schema_version") != self._SCHEMA_VERSION
+            or not isinstance(payload.get("instances"), dict)
+        ):
+            # Greenfield policy: the old single-instance schema is stale state,
+            # not something whose ownership can safely be inferred.
             return None
-        source = payload.get("source")
-        since = payload.get("since")
+        raw_record = payload["instances"].get(instance_id)
+        if not isinstance(raw_record, dict):
+            return None
+        source = raw_record.get("source")
+        since = raw_record.get("since")
         if source not in self._SOURCES or not isinstance(since, str):
             logger.warning("running-since record invalid; replacing it: %s", self.path)
             return None
@@ -368,10 +378,14 @@ class RunningSinceLeaseStore:
             raise ValueError(f"unsupported running-since source: {source}")
         now = self._utc_now()
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        payload = {
-            "instance_id": instance_id,
+        instances = self._read_instances_for_update()
+        instances[instance_id] = {
             "since": now.isoformat().replace("+00:00", "Z"),
             "source": source,
+        }
+        payload = {
+            "schema_version": self._SCHEMA_VERSION,
+            "instances": instances,
         }
         temporary = self.path.with_name(f".{self.path.name}.tmp")
         temporary.write_text(json.dumps(payload, sort_keys=True) + "\n")
@@ -387,8 +401,37 @@ class RunningSinceLeaseStore:
             return record
         return self.write(instance_id, source="first_observed")
 
-    def remove(self) -> None:
-        self.path.unlink(missing_ok=True)
+    def remove(self, instance_id: str) -> None:
+        instances = self._read_instances_for_update()
+        if instance_id not in instances:
+            return
+        del instances[instance_id]
+        if not instances:
+            self.path.unlink(missing_ok=True)
+            return
+        payload = {
+            "schema_version": self._SCHEMA_VERSION,
+            "instances": instances,
+        }
+        temporary = self.path.with_name(f".{self.path.name}.tmp")
+        temporary.write_text(json.dumps(payload, sort_keys=True) + "\n")
+        temporary.replace(self.path)
+
+    def _read_instances_for_update(self) -> dict[str, dict[str, str]]:
+        try:
+            payload = json.loads(self.path.read_text())
+        except FileNotFoundError:
+            return {}
+        except json.JSONDecodeError as exc:
+            logger.warning("running-since record unreadable; replacing it: %s", exc)
+            return {}
+        if (
+            not isinstance(payload, dict)
+            or payload.get("schema_version") != self._SCHEMA_VERSION
+            or not isinstance(payload.get("instances"), dict)
+        ):
+            return {}
+        return dict(payload["instances"])
 
     def age_seconds(self, record: RunningSinceRecord) -> int:
         return max(0, int((self._utc_now() - record.since).total_seconds()))
@@ -466,15 +509,23 @@ def _apply_running_since_leases(
     store: RunningSinceLeaseStore,
     *,
     use_recorded_age: bool,
+    dry_run: bool,
 ) -> tuple[list[GpuInstance], list[str]]:
     observed: list[GpuInstance] = []
     errors: list[str] = []
     for instance in instances:
         if instance.state in ("STOPPED", "STOPPING"):
+            if dry_run:
+                logger.info("dry-run would remove RUNNING lease instance=%s", instance.instance_id)
+                observed.append(instance)
+                continue
             try:
-                store.remove()
+                store.remove(instance.instance_id)
             except OSError as exc:
-                msg = f"{instance.instance_id}: running-since removal failed: {type(exc).__name__}: {exc}"
+                msg = (
+                    f"{instance.instance_id}: running-since removal failed; lease cap disabled: "
+                    f"{type(exc).__name__}: {exc}"
+                )
                 logger.error(msg)
                 errors.append(msg)
             observed.append(instance)
@@ -491,14 +542,27 @@ def _apply_running_since_leases(
             observed.append(instance)
             continue
         try:
-            record = store.observe_running(instance.instance_id)
+            if dry_run:
+                record = store.read(instance.instance_id)
+                if record is None:
+                    logger.info(
+                        "dry-run would record RUNNING lease instance=%s source=first_observed",
+                        instance.instance_id,
+                    )
+                    observed.append(instance)
+                    continue
+            else:
+                record = store.observe_running(instance.instance_id)
             age_seconds = store.age_seconds(record)
         except (OSError, ValueError) as exc:
-            msg = f"{instance.instance_id}: running-since observation failed: {type(exc).__name__}: {exc}"
+            msg = (
+                f"{instance.instance_id}: running-since observation failed; lease cap disabled: "
+                f"{type(exc).__name__}: {exc}"
+            )
             logger.error(msg)
             errors.append(msg)
-            age_seconds = 0
-            source = "unavailable"
+            observed.append(instance)
+            continue
         else:
             source = record.source
         logger.info(
@@ -527,6 +591,7 @@ def run_reap_cycle(
     max_lease_seconds: int = 0,
     running_since_store: RunningSinceLeaseStore | None = None,
     use_recorded_lease_age: bool = True,
+    dry_run: bool = False,
 ) -> ReapCycleResult:
     """Decision → fence delay → re-sample → STOP only if still idle.
 
@@ -542,7 +607,16 @@ def run_reap_cycle(
             instances,
             running_since_store,
             use_recorded_age=use_recorded_lease_age,
+            dry_run=dry_run,
         )
+        if lease_errors:
+            return ReapCycleResult(
+                decided=[],
+                actuated=[],
+                fenced_off=True,
+                errors=lease_errors,
+                lease_expired=[],
+            )
     forced = controller.lease_expired_instances(instances, max_lease_seconds=max_lease_seconds)
     for action, instance_id in forced:
         logger.warning(
@@ -644,6 +718,7 @@ def run_start_cycle(
     probe: InstanceReadinessProbe | None = None,
     readiness_wait: WarmReadinessWait | None = None,
     running_since_store: RunningSinceLeaseStore | None = None,
+    dry_run: bool = False,
 ) -> StartCycleResult:
     """Emit START for STOPPED instances when the job store has work.
 
@@ -700,10 +775,19 @@ def run_start_cycle(
             continue
         actuated.append((action, instance_id))
         if running_since_store is not None:
+            if dry_run:
+                logger.info(
+                    "dry-run would record RUNNING lease instance=%s source=start_actuator",
+                    instance_id,
+                )
+                continue
             try:
                 record = running_since_store.record_start(instance_id)
             except (OSError, ValueError) as exc:
-                msg = f"{instance_id}: START issued but running-since write failed: {type(exc).__name__}: {exc}"
+                msg = (
+                    f"{instance_id}: START issued but running-since write failed; lease cap disabled: "
+                    f"{type(exc).__name__}: {exc}"
+                )
                 logger.error(msg)
                 errors.append(msg)
             else:
@@ -977,6 +1061,7 @@ def main(argv: list[str] | None = None) -> int:
             probe=probe,
             readiness_wait=readiness_wait,
             running_since_store=running_since_store,
+            dry_run=args.dry_run,
         )
         logger.info(
             "start cycle decided=%s actuated=%s errors=%s wait=%s fallbacks=%s",
@@ -1003,6 +1088,7 @@ def main(argv: list[str] | None = None) -> int:
         max_lease_seconds=args.max_lease_seconds,
         running_since_store=running_since_store,
         use_recorded_lease_age=not explicit_idle_override,
+        dry_run=args.dry_run,
     )
     logger.info(
         "reap cycle decided=%s actuated=%s fenced_off=%s lease_expired=%s errors=%s",

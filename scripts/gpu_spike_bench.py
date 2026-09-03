@@ -559,6 +559,7 @@ def ensure_stopped(
     clock: Clock,
     timeout_seconds: float = DEFAULT_LIFECYCLE_TIMEOUT_S,
     poll_interval_seconds: float = DEFAULT_POLL_INTERVAL_S,
+    force_stop: bool = False,
 ) -> None:
     """STOP and wait STOPPED — billing safety [RES-07]."""
     try:
@@ -566,7 +567,7 @@ def ensure_stopped(
     except Exception:  # noqa: BLE001 - best-effort stop path
         state = "UNKNOWN"
     stop_error: Exception | None = None
-    if state != "STOPPED":
+    if force_stop or state != "STOPPED":
         try:
             actuator.stop(instance_id)
         except Exception as exc:  # noqa: BLE001
@@ -651,7 +652,7 @@ def run_cold_boot(
     on_start: Callable[[], None] | None = None,
     strict_stopped_precondition: bool = False,
 ) -> ColdBootResult:
-    """START from STOPPED → RUNNING → endpoint ready [cold_boot + model_load]."""
+    """START from STOPPED; the precondition/START window is unfenced against a concurrent reaper --mode start tick."""
     try:
         lifecycle_evidence: dict[str, int] = {"retries": 0}
         state = actuator.get_lifecycle_state(instance_id).upper()
@@ -1238,6 +1239,7 @@ def run_bench(
                     clock=clock,
                     timeout_seconds=lifecycle_timeout_seconds,
                     poll_interval_seconds=poll_interval_seconds,
+                    force_stop=True,
                 )
                 print("finally: instance STOPPED", flush=True)
             except Exception as stop_exc:

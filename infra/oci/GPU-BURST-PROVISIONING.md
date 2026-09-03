@@ -54,6 +54,9 @@ quota approval**, which is a human console request Oracle grants asynchronously.
    the 24 GB fit). Boot volume `gpu_boot_volume_size_in_gbs = 400`.
 5. **Set tfvars + apply.** `gpu_shape` (default `VM.GPU.A10.1`), `gpu_image_ocid`,
    then `terraform apply` (or `./retry-apply.sh` — see the capacity caveat below).
+   The GPU resource carries the `project=acx`, `env=production`, `role=gpu-burst`,
+   `scale_to_zero=true`, and `purpose=gpu-spike-bench` freeform tags. The spike bench
+   requires that pinned purpose tag before it permits any lifecycle action.
 6. **Run the Slice-1 spike bench.** Fill `docs/tasks/vlm/VLM-3-gpu-spike-*.json`
    (`cold_boot`, `stopped→warm_start` vs the 90 s target, `model_load`, `s/img`).
 7. **Flip the ProfileSpec.** Set the winner's `available=True` + endpoint in

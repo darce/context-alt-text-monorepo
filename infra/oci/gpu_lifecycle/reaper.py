@@ -5,11 +5,13 @@ Production entrypoint (load from the describe job store dump):
   python -m infra.oci.gpu_lifecycle \\
     --instance-id ocid1.instance... \\
     --idle-seconds 300 \\
-    --load-json /run/acx/describe-load.json
+    --load-dir /run/acx-write
 
-The describe service writes ``/run/acx/describe-load.json`` (or
-``ACX_DESCRIBE_LOAD_PATH``) on enqueue / terminal poll. A stale dump is treated
-as busy so a dead writer cannot cause a STOP of a working GPU (VLMFIX-S2-02).
+Each environment's describe service writes
+``/run/acx-write/<environment>/describe-load.json`` on enqueue / terminal poll.
+The lifecycle aggregates every fresh environment snapshot. A stale dump is
+treated as busy through a bounded grace period so a dead writer cannot cause a
+premature STOP or pin the GPU forever.
 
 Static ``--queue-depth`` / ``--in-flight`` flags are for unit tests only; the
 fence delay re-samples the load source, so a constant static source is a no-op
@@ -51,6 +53,7 @@ from infra.oci.gpu_lifecycle.controller import (
     JobLoadSnapshot,
     LifecycleAction,
 )
+from infra.oci.gpu_lifecycle.load_source import AggregateJobLoadSource
 from infra.oci.gpu_lifecycle.probe import (
     HttpReadinessProbe,
     InstanceReadinessProbe,
@@ -1085,32 +1088,41 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     load = parser.add_mutually_exclusive_group()
     load.add_argument(
-        "--load-json",
+        "--load-dir",
         type=Path,
         help=(
-            "Path to {queue_depth,in_flight[,batch_in_progress]} JSON from the "
-            "describe job store. Absent batch_in_progress is False: the fence "
-            "covers only what the snapshot proves. Bulk runs are unprotected "
-            "until the producer writes batch_in_progress"
+            "Directory containing <environment>/describe-load.json snapshots. "
+            "Each JSON contains queue_depth, in_flight, and optional "
+            "batch_in_progress. Fresh snapshots are aggregated; stale or invalid "
+            "inputs fail closed. Absent batch_in_progress leaves bulk runs unprotected"
         ),
     )
     load.add_argument(
         "--queue-depth",
         type=int,
         default=None,
-        help="Static queue depth (tests only; prefer --load-json in production)",
+        help="Static queue depth (tests only; prefer --load-dir in production)",
     )
     parser.add_argument(
         "--in-flight",
         type=int,
         default=None,
-        help="Static in-flight count (tests only; prefer --load-json in production)",
+        help="Static in-flight count (tests only; prefer --load-dir in production)",
     )
     parser.add_argument(
         "--load-max-age-seconds",
         type=float,
         default=_DEFAULT_LOAD_MAX_AGE_SECONDS,
-        help="Max age of --load-json before treating as busy (default 120)",
+        help="Freshness age for per-environment load files (default 120)",
+    )
+    parser.add_argument(
+        "--load-stale-grace-seconds",
+        type=float,
+        default=os.environ.get("ACX_DESCRIBE_LOAD_STALE_GRACE_SECONDS", "600"),
+        help=(
+            "Bounded age through which a stale environment remains busy "
+            "(default: ACX_DESCRIBE_LOAD_STALE_GRACE_SECONDS or 600)"
+        ),
     )
     parser.add_argument(
         "--fence-delay-seconds",
@@ -1181,15 +1193,20 @@ def main(argv: list[str] | None = None) -> int:
     running_since_store = RunningSinceLeaseStore(path=args.running_since_path)
     explicit_idle_override = args.instance_idle_for is not None
 
-    if args.load_json is not None:
-        load_source: JobLoadSource = JsonFileJobLoadSource(
-            path=args.load_json,
-            max_age_seconds=args.load_max_age_seconds,
-        )
+    if args.load_dir is not None:
+        try:
+            load_source: JobLoadSource = AggregateJobLoadSource(
+                directory=args.load_dir,
+                stale_seconds=args.load_max_age_seconds,
+                stale_grace_seconds=args.load_stale_grace_seconds,
+            )
+        except ValueError as exc:
+            print(f"error: invalid load age configuration: {exc}", file=sys.stderr)
+            return 2
     else:
         if args.queue_depth is None or args.in_flight is None:
             print(
-                "error: provide --load-json (production) or both --queue-depth and --in-flight (tests only)",
+                "error: provide --load-dir (production) or both --queue-depth and --in-flight (tests only)",
                 file=sys.stderr,
             )
             return 2

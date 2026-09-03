@@ -10,6 +10,7 @@ import {
   fetchDescribeRunItems,
   fetchDescriptionCandidates,
   fetchDescriptionHistory,
+  isGpuState,
   resolveDescribeErrorCode,
   resolveDescribeErrorDataBooleanField,
   resolveDescribeErrorDataField,
@@ -72,6 +73,16 @@ describe('describeApi', () => {
 
   it('exports the exact canonical GPU state vocabulary', () => {
     expect(Object.values(GPU_STATE)).toEqual(['unknown', 'stopped', 'starting', 'warming', 'ready', 'degraded']);
+  });
+
+  it('recognizes only canonical GPU states at runtime', () => {
+    for (const state of Object.values(GPU_STATE)) {
+      expect(isGpuState(state)).toBe(true);
+    }
+
+    for (const value of ['bogus', '', null, undefined, 42, {}]) {
+      expect(isGpuState(value)).toBe(false);
+    }
   });
 
   it('POSTs media_id to the describe endpoint with the REST nonce and returns the envelope', async () => {

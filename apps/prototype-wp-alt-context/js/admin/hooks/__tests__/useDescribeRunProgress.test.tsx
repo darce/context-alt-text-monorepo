@@ -1,6 +1,6 @@
 import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { act, renderHook, waitFor } from '@testing-library/react';
+import { act, render, renderHook, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -11,6 +11,7 @@ import {
 } from '../useDescribeRunProgress';
 import * as describeApi from '../../api/describeApi';
 import type { DescribeRunResponse } from '../../api/describeApi';
+import { GpuTierStatus } from '../../pages/workbench/MediaSelection';
 
 vi.mock('../../api/describeApi', async (importOriginal) => {
   const actual = await importOriginal<typeof describeApi>();
@@ -115,17 +116,34 @@ describe('useDescribeRunProgress', () => {
     expect(result.current.status).toBeNull();
     expect(result.current.isPolling).toBe(false);
     expect(result.current.etaSeconds).toBeNull();
-    expect(result.current.gpuState).toBeNull();
+    expect(result.current.gpuState).toBe('unknown');
     expect(result.current.progressFraction).toBeNull();
   });
 
-  it('exposes gpu_state from the existing run-status poll response', async () => {
-    fetchBulkDescribeRunMock.mockResolvedValue(runResponse({ status: 'running', gpu_state: 'warming' }));
+  it.each([
+    ['stopping', 'unknown'],
+    ['ready', 'ready'],
+    [null, 'unknown'],
+  ] as const)('narrows API gpu_state %s to %s', async (gpuState, expected) => {
+    fetchBulkDescribeRunMock.mockResolvedValue(runResponse({ status: 'running', gpu_state: gpuState }));
 
     const { result } = renderHook(() => useDescribeRunProgress('run-1'), { wrapper });
 
-    await waitFor(() => expect(result.current.gpuState).toBe('warming'));
+    await waitFor(() => expect(result.current.gpuState).toBe(expected));
     expect(fetchBulkDescribeRunMock).toHaveBeenCalledOnce();
+  });
+
+  it('keeps GpuTierStatus renderable when the API reports an unknown state', async () => {
+    fetchBulkDescribeRunMock.mockResolvedValue(runResponse({ status: 'running', gpu_state: 'stopping' }));
+
+    const Harness = (): React.JSX.Element => {
+      const progress = useDescribeRunProgress('run-1');
+      return <GpuTierStatus gpuState={progress.gpuState ?? null} cpuDraftCount={0} />;
+    };
+
+    render(<Harness />, { wrapper });
+
+    await waitFor(() => expect(screen.getByRole('status')).toHaveAttribute('data-gpu-state', 'unknown'));
   });
 
   it('consumes backend eta_seconds verbatim and derives progressFraction', async () => {

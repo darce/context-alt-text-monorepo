@@ -28,6 +28,15 @@ if [ ! -f "$lib_file" ]; then
     echo "FAIL ocir-auth.sh missing: ${lib_file}"
     exit 1
 fi
+# The contract suite must be deterministic even when invoked from an operator
+# shell that exports deploy overrides. Override behaviour is exercised
+# separately below with explicit fixture values.
+unset ACX_VAULT_OCID
+unset ACX_OCIR_TOKEN_SECRET
+unset ACX_OCIR_USERNAME_SECRET
+unset ACX_REMOTE_OCI_BIN
+unset ACX_LOCAL_OCI_BIN
+unset ACX_VAULT_FETCH_TIMEOUT
 # shellcheck source=../lib/ocir-auth.sh
 source "$lib_file"
 
@@ -59,6 +68,16 @@ assert_absent() {
     esac
 }
 
+assert_file_bytes() {
+    local label="$1" file="$2" expected="$3"
+    if [ -f "$file" ] && cmp -s "$file" <(printf '%s' "$expected"); then
+        echo "ok   ${label}"
+    else
+        echo "FAIL ${label}: file bytes differ or ${file} was not created"
+        failures=$((failures + 1))
+    fi
+}
+
 # --- fetch snippet shape -----------------------------------------------------
 
 remote_fetch=$(ocir_vault_fetch_snippet '$HOME/.oci-venv/bin/oci' instance_principal OCIR_AUTH_TOKEN)
@@ -79,6 +98,34 @@ local_fetch=$(ocir_vault_fetch_snippet oci api_key OCIR_AUTH_TOKEN)
 assert_contains "local fetch uses the operator API key" '--auth api_key' "$local_fetch"
 assert_absent "local fetch does not claim instance principal" \
     'instance_principal' "$local_fetch"
+
+# Supported overrides are checked in a fresh Bash process so the default-value
+# assertions below cannot accidentally depend on values inherited by the test.
+override_contract=$(
+    ACX_VAULT_OCID='ocid1.vault.oc1.iad.override' \
+    ACX_OCIR_TOKEN_SECRET='OVERRIDE_TOKEN' \
+    ACX_OCIR_USERNAME_SECRET='OVERRIDE_USERNAME' \
+    ACX_REMOTE_OCI_BIN='/opt/override/remote-oci' \
+    ACX_LOCAL_OCI_BIN='/opt/override/local-oci' \
+    ACX_VAULT_FETCH_TIMEOUT='47' \
+    bash -c '
+        source "$1"
+        printf "remote=%s\nlocal=%s\n" "$ACX_REMOTE_OCI_BIN" "$ACX_LOCAL_OCI_BIN"
+        ocir_login_snippet "$ACX_REMOTE_OCI_BIN" instance_principal override.ocir.io
+    ' _ "$lib_file"
+)
+assert_contains "vault OCID override is honored" \
+    '--vault-id ocid1.vault.oc1.iad.override' "$override_contract"
+assert_contains "username secret override is honored" \
+    '--secret-name OVERRIDE_USERNAME' "$override_contract"
+assert_contains "token secret override is honored" \
+    '--secret-name OVERRIDE_TOKEN' "$override_contract"
+assert_contains "remote OCI binary override is honored" \
+    'remote=/opt/override/remote-oci' "$override_contract"
+assert_contains "local OCI binary override is honored" \
+    'local=/opt/override/local-oci' "$override_contract"
+assert_contains "fetch timeout override is honored" \
+    'timeout 47 "$@"' "$override_contract"
 
 # --- login snippet: secrecy invariants ---------------------------------------
 
@@ -120,6 +167,111 @@ assert_eq "emitted login snippet is syntactically valid bash" "0" "$snippet_synt
 # `set -eu` (not just -e): an unset acx_ocir_user must abort rather than run
 # `docker login -u ""` and produce a confusing OCIR rejection.
 assert_contains "snippet aborts on unset vars" 'set -eu' "$login"
+
+# Text inspection is useful for spotting familiar leaks, but it cannot prove
+# the emitted program actually performs a login. Execute it with controlled
+# stand-ins for every external command and observe the process boundary.
+behavior_dir=$(mktemp -d "${TMPDIR:-/tmp}/ocir-auth-test.XXXXXX")
+trap 'rm -rf "$behavior_dir"' EXIT
+fake_bin="${behavior_dir}/bin"
+mkdir "$fake_bin"
+
+cat >"${fake_bin}/oci" <<'EOF'
+#!/usr/bin/env bash
+case " $* " in
+    *" --secret-name OCIR_USERNAME "*) printf '%s' "$OCIR_TEST_USERNAME" | base64 ;;
+    *" --secret-name OCIR_AUTH_TOKEN "*) printf '%s' "$OCIR_TEST_TOKEN" | base64 ;;
+    *) echo "unexpected fake oci arguments" >&2; exit 64 ;;
+esac
+EOF
+cat >"${fake_bin}/timeout" <<'EOF'
+#!/usr/bin/env bash
+shift
+exec "$@"
+EOF
+cat >"${fake_bin}/docker" <<'EOF'
+#!/usr/bin/env bash
+: "${OCIR_TEST_DOCKER_ARGV:?}"
+: "${OCIR_TEST_DOCKER_STDIN:?}"
+printf '%s\0' "$@" >"$OCIR_TEST_DOCKER_ARGV"
+cat >"$OCIR_TEST_DOCKER_STDIN"
+EOF
+chmod +x "${fake_bin}/oci" "${fake_bin}/timeout" "${fake_bin}/docker"
+
+known_user='tenant/user@example.test'
+known_token=$(printf '%s%s' 'token-with-shell-chars-' '$!*-[byte-exact]')
+behavior_login=$(ocir_login_snippet oci instance_principal iad.ocir.io)
+docker_argv="${behavior_dir}/docker.argv"
+docker_stdin="${behavior_dir}/docker.stdin"
+behavior_stderr="${behavior_dir}/snippet.stderr"
+behavior_rc=0
+PATH="${fake_bin}:${PATH}" \
+OCIR_TEST_USERNAME="$known_user" \
+OCIR_TEST_TOKEN="$known_token" \
+OCIR_TEST_DOCKER_ARGV="$docker_argv" \
+OCIR_TEST_DOCKER_STDIN="$docker_stdin" \
+bash -c "$behavior_login" 2>"$behavior_stderr" || behavior_rc=$?
+assert_eq "emitted login snippet executes successfully" "0" "$behavior_rc"
+
+if [ -f "$docker_argv" ] && cmp -s "$docker_argv" \
+    <(printf '%s\0' login iad.ocir.io -u "$known_user" --password-stdin); then
+    echo "ok   docker receives exact login registry/user/password-stdin argv"
+else
+    echo "FAIL docker receives exact login registry/user/password-stdin argv"
+    failures=$((failures + 1))
+fi
+assert_file_bytes "docker stdin equals the Vault token byte-for-byte" \
+    "$docker_stdin" "$known_token"
+
+if [ -f "$docker_argv" ] && \
+    grep -aFq -f <(printf '%s\n' "$known_token") "$docker_argv"; then
+    echo "FAIL token never appears in docker argv"
+    failures=$((failures + 1))
+else
+    echo "ok   token never appears in docker argv"
+fi
+
+token_file_leaks=0
+for artifact in "${behavior_dir}"/* "${fake_bin}"/*; do
+    [ -f "$artifact" ] || continue
+    [ "$artifact" = "$docker_stdin" ] && continue
+    if grep -aFq -f <(printf '%s\n' "$known_token") "$artifact"; then
+        echo "FAIL token leaked to file: ${artifact}"
+        token_file_leaks=$((token_file_leaks + 1))
+    fi
+done
+assert_eq "token appears in no file except docker stdin capture" \
+    "0" "$token_file_leaks"
+
+# Delete the assignment from the generated program so acx_ocir_user is truly
+# unset at its point of use. Merely searching for `set -eu` would miss a later
+# `set +u`, while this execution proves nounset remains effective.
+unset_user_login=$(printf '%s' "$behavior_login" | sed '/^acx_ocir_user=/d')
+unset_argv="${behavior_dir}/unset-docker.argv"
+unset_stdin="${behavior_dir}/unset-docker.stdin"
+unset_stderr="${behavior_dir}/unset.stderr"
+unset_rc=0
+(
+    unset acx_ocir_user
+    PATH="${fake_bin}:${PATH}" \
+    OCIR_TEST_USERNAME="$known_user" \
+    OCIR_TEST_TOKEN="$known_token" \
+    OCIR_TEST_DOCKER_ARGV="$unset_argv" \
+    OCIR_TEST_DOCKER_STDIN="$unset_stdin" \
+    bash -c "$unset_user_login" 2>"$unset_stderr"
+) || unset_rc=$?
+if [ "$unset_rc" -ne 0 ]; then
+    echo "ok   required unset variable makes emitted snippet fail"
+else
+    echo "FAIL required unset variable makes emitted snippet fail: exit 0"
+    failures=$((failures + 1))
+fi
+if [ ! -e "$unset_argv" ] && [ ! -e "$unset_stdin" ]; then
+    echo "ok   nounset aborts before docker is invoked"
+else
+    echo "FAIL nounset aborts before docker is invoked"
+    failures=$((failures + 1))
+fi
 
 # Vault calls are bounded so a hung control-plane call cannot stall the deploy;
 # `timeout` is absent on stock macOS, so it must degrade rather than hard-fail.

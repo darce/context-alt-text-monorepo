@@ -414,7 +414,7 @@ skip_dirty() {
   kib="$(lane_kib "$real")"
   case "$dirty_category" in
     untracked-scratch)
-      reason="dirty working tree (untracked-scratch: ${dirty_untracked_count} paths)"
+      reason="dirty working tree (untracked-scratch: ${dirty_untracked_count} files)"
       triage_scratch=$((triage_scratch + 1))
       triage_scratch_lanes="${triage_scratch_lanes}${label}"$'\n'
       triage_scratch_kib=$((triage_scratch_kib + kib))
@@ -426,8 +426,18 @@ skip_dirty() {
       triage_tracked_kib=$((triage_tracked_kib + kib))
       ;;
   esac
-  triage_untracked_all="${triage_untracked_all}${dirty_untracked_paths}"
+  # Collapse to the first path component so a probe directory written into
+  # several lanes is one shared entry rather than N distinct file paths.
+  triage_untracked_all="${triage_untracked_all}$(printf '%s' "$dirty_untracked_paths" |
+    awk -F/ 'NF > 1 { print $1 "/"; next } { print }' | LC_ALL=C sort -u)"$'\n'
   skip "$path" "$reason"
+}
+
+note_lock_only_reap() {
+  if [[ "$dirty_category" == "lock-only" ]]; then
+    triage_lock_only=$((triage_lock_only + 1))
+    triage_lock_only_lanes="${triage_lock_only_lanes}$(lane_label "$1")"$'\n'
+  fi
 }
 
 sorted_words() {
@@ -753,7 +763,9 @@ has_blocking_dirty() {
   dirty_untracked_count=0
   dirty_tracked_sample=""
   dirty_untracked_paths=""
-  if ! status_output="$(git -C "$dir" status --porcelain)"; then
+  # -uall: an untracked directory would otherwise collapse to one entry and
+  # the triage count would understate a scratch cluster.
+  if ! status_output="$(git -C "$dir" status --porcelain -uall)"; then
     git_guard_error="could not read git status"
     return 0
   fi
@@ -801,9 +813,10 @@ has_blocking_dirty() {
   # lock` recreates it; 76 of the first sweep's ~90 dirty lanes were exactly
   # this one-line version bump.
   if [[ "$untracked" -eq 0 && "$manifest_dirty" -eq 0 && "$lock_mod" -eq "$tracked" ]]; then
+    # Counted by note_lock_only_reap once the lane actually reaps: a later
+    # guard (stash, snapshot drift, rm failure) can still refuse it, and the
+    # triage must only list lanes whose churn was in fact ignored.
     dirty_category="lock-only"
-    triage_lock_only=$((triage_lock_only + 1))
-    triage_lock_only_lanes="${triage_lock_only_lanes}$(lane_label "$dir")"$'\n'
     return 1
   fi
   if [[ "$tracked" -eq 0 ]]; then
@@ -1186,6 +1199,7 @@ process_one() {
   local partial_verified_tips="" occupant_head="" stale_intent
 
   candidates=$((candidates + 1))
+  dirty_category=""
 
   intent_real="$(realpath "$path" 2>/dev/null || true)"
   if [[ -n "$intent_real" ]]; then
@@ -1432,6 +1446,7 @@ process_one() {
 
   if [[ "$yes" -eq 0 ]]; then
     printf 'WOULD REAP %s (%s)\n' "$real" "$size"
+    note_lock_only_reap "$real"
     return 0
   fi
 
@@ -1470,6 +1485,7 @@ process_one() {
     return 1
   fi
   reaped=$((reaped + 1))
+  note_lock_only_reap "$real"
   bytes_freed=$((bytes_freed + size_kib * 1024))
   if ! grok_lane_lock_matches "$real"; then
     echo "reap-lane: warning: ${grok_lane_lock_error:-lane lock unverifiable} after removal; sibling cleanup skipped for $real" >&2

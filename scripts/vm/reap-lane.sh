@@ -492,11 +492,9 @@ has_linked_worktrees() {
 
 lane_newest_mtime() {
   local dir="$1" newest=0 candidate candidate_mtime git_item
-  for candidate in "$dir"; do
-    candidate_mtime="$(path_mtime "$candidate" || true)"
-    [[ -n "$candidate_mtime" ]] || return 1
-    [[ "$candidate_mtime" -gt "$newest" ]] && newest="$candidate_mtime"
-  done
+  candidate_mtime="$(path_mtime "$dir" || true)"
+  [[ -n "$candidate_mtime" ]] || return 1
+  [[ "$candidate_mtime" -gt "$newest" ]] && newest="$candidate_mtime"
   for git_item in index HEAD; do
     candidate="$(git -C "$dir" rev-parse --path-format=absolute --git-path "$git_item" 2>/dev/null)" || return 1
     candidate_mtime="$(path_mtime "$candidate" || true)"

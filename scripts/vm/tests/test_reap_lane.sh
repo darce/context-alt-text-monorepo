@@ -903,8 +903,13 @@ assert_summary "freshness empty sweep" 0 0 0 0
 # pressure instead of silently disabling the exit-4 check.
 nodf_bin="$WORKDIR/nodf-bin"
 mkdir "$nodf_bin"
-for command_name in awk bash flock realpath; do
-  ln -s "$(command -v "$command_name")" "$nodf_bin/$command_name"
+# Only df is withheld: the sweep lock's mkdir fallback (hosts without flock,
+# e.g. macOS) still needs mkdir/mv/ps/rm/rmdir, and a host without flock must
+# not get a dangling symlink.
+for command_name in awk bash flock realpath mkdir mv ps rm rmdir; do
+  command_path="$(command -v "$command_name" || true)"
+  [[ -n "$command_path" ]] || continue
+  ln -s "$command_path" "$nodf_bin/$command_name"
 done
 PATH="$nodf_bin" run_reap --all "$empty_alert_root"
 assert_rc0 "df unavailable"

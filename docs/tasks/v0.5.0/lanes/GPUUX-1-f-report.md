@@ -2,82 +2,85 @@
 
 ## Outcome
 
-Implemented the lifecycle snapshot producer and wired it to the end of every
-reap and start cycle. The writer publishes exactly `state` and `written_at`,
-uses an exhaustive OCI lifecycle-state mapping, refuses `unknown`, creates the
-parent directory when needed, and atomically replaces the target from a
-same-directory temporary file. Snapshot failures are logged at WARNING and do
-not change cycle results.
+The lifecycle snapshot producer remains wired to the end of every reap and
+start cycle. The writer publishes exactly `state` and `written_at`, uses an
+exhaustive OCI lifecycle-state mapping, refuses `unknown`, and atomically
+replaces the target from a same-directory temporary file.
 
-Both installed systemd services now pass
-`--gpu-state-json /run/acx/gpu-state.json`. When no flag is supplied, the
-writer honors `ACX_GPU_STATE_PATH` and defaults to that same path.
+The writer coverage is now independent of the description-service package.
+`test_state_snapshot.py` uses only the standard library and lane-owned modules,
+so the root test runner executes all 15 writer, atomicity, transition, and
+cycle-integration cases. Cross-package round trips through the real reader and
+the reader's missing-file fail-closed default live in
+`test_state_snapshot_contract.py`; only that file skips when `scene` is not
+installed.
 
-## TDD evidence
+## TEST-06 mutation evidence
 
-RED was committed first as `ef74a1a76a9166019e27bf0665257fede6e04552`.
-The first failing line was:
-
-```text
-E   ModuleNotFoundError: No module named 'infra.oci.gpu_lifecycle.state_snapshot'
-```
-
-The focused GREEN summary was:
+After the split, the expected `written_at` value in
+`test_replace_is_atomic_and_target_is_never_partial` was deliberately changed
+from `2.0` to `3.0`. The focused run failed with:
 
 ```text
-15 passed in 0.11s
+FAILED infra/oci/gpu_lifecycle/tests/test_state_snapshot.py::test_replace_is_atomic_and_target_is_never_partial
+1 failed in 0.10s
 ```
 
-The socket-free full lane summary was:
+The assertion detail was:
 
 ```text
-65 passed, 2 deselected in 0.17s
+E     {'written_at': 2.0} != {'written_at': 3.0}
 ```
 
-TEST-15 mutation: the producer was deliberately changed to serialize
-`"state": "unknown"` for every valid input. The round-trip test failed at the
-exact payload assertion with:
+The mutation was restored before commit. The root writer plus contract-file
+GREEN summary was:
 
 ```text
-E         {'state': 'unknown'} != {'state': 'stopped'}
+15 passed, 1 skipped in 0.15s
 ```
 
-All five parametrized states failed. The mutation was then restored before
-the GREEN runs and was never committed.
+Running from the description-service directory with `scene` resolving from
+this worktree exercised the cross-package contract instead of skipping it:
 
-## Verification
+```text
+21 passed in 0.15s
+```
 
-- `bash -n scripts/deploy/gpu-lifecycle-install.sh` passed.
-- `/usr/bin/python3 -m compileall -q infra/oci/gpu_lifecycle` passed.
-- The full pytest suite reached 65 passing tests when the two localhost-server
-  tests were deselected. Running all tests produced 64 passes and two failures
-  because this managed sandbox rejects `socket.socket()` with
-  `PermissionError: [Errno 1] Operation not permitted`.
-- The prescribed `uv run` command could not acquire its cache lock because
-  `/home/gate/.cache/uv` is read-only in this sandbox. The selected lane venv
-  has no pytest installed, so the equivalent tests were run with the ambient
-  Python 3.12 pytest from the required application directory.
+## Full-suite verification
 
-## Files changed
+The complete non-socket suite, including all tests in `test_start_actuator.py`,
+`test_cpu_fallback.py`, `test_batch_fence.py`, `test_instance_states.py`, and
+`test_max_lease.py`, plus all non-server readiness tests, passed:
 
-- `infra/oci/gpu_lifecycle/state_snapshot.py`
-- `infra/oci/gpu_lifecycle/reaper.py`
-- `infra/oci/gpu_lifecycle/tests/test_state_snapshot.py`
-- `scripts/deploy/gpu-lifecycle-install.sh`
+```text
+65 passed, 1 skipped, 2 deselected in 0.22s
+```
 
-Implementation HEAD before this report commit:
-`3d20ff75510aaea2f4a3ac245d3cd7befe74736f`.
+The exact unfiltered root command executed all writer tests and reported:
 
-## Open threads and mapping judgement
+```text
+2 failed, 65 passed, 1 skipped in 0.29s
+```
 
-There are no known implementation blockers. A running OCI instance maps to
-`warming` unless a previous valid producer snapshot recorded a non-stopped
-state; reap/start cycles without readiness evidence preserve that state while
-refreshing `written_at`. This avoids demoting `ready` on the next timer tick.
-`STOPPING` maps conservatively to `stopped`, while unrecognized/`UNKNOWN` OCI
-states and fallback outcomes map to `degraded`.
+Both failures are pre-existing localhost HTTP-server tests in
+`test_readiness_probe.py`; this managed sandbox rejects `socket.socket()` with
+`PermissionError: [Errno 1] Operation not permitted` before the code under test
+runs.
 
-The two dependency briefs disagreed on payload shape. This implementation
-follows the newer brief and the merged reader contract by emitting exactly the
-two keys the reader consumes, rather than the older draft's `instance_id`,
-`reason`, and `since` fields.
+The prescribed service-side `uv run --locked --extra dev` command was also
+attempted with a writable temporary cache. It could not download the uncached
+locked dependency `mcp==1.27.1` because network and DNS access are disabled.
+The lane-managed Python was therefore used from the service directory for the
+21-test contract GREEN above; its import-origin check resolved `scene` to
+`apps/prototype-description-service/scene/__init__.py` in this worktree.
+
+`python -m compileall` and `git diff --check` passed for the touched tests.
+`ruff` is unavailable in the lane environment.
+
+## Commit and open threads
+
+Test split commit: `fd42592d24116dadb4da3ccb3ef26f0e2938e56d`.
+
+There are no known code or mapping issues. The only open verification threads
+are the sandbox socket restriction and the unavailable network dependency
+needed to recreate the service environment with `uv`.

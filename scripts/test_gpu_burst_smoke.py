@@ -5,13 +5,13 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
+import gpu_burst_smoke as smoke
 import httpx
 import pytest
 
-import gpu_burst_smoke as smoke
-
-
-FIXTURE_DENYLIST = Path(__file__).resolve().parent / "deploy" / "lib" / "fixture-denylist.sh"
+FIXTURE_DENYLIST = (
+    Path(__file__).resolve().parent / "deploy" / "lib" / "fixture-denylist.sh"
+)
 
 
 def _args(tmp_path: Path, *extra: str):
@@ -39,7 +39,9 @@ def _run(
     scenario = scenario or smoke.DryScenario()
     fake_oci = oci or smoke.FakeOci()
     clock = smoke.FastClock()
-    client = httpx.Client(transport=smoke.make_mock_transport(scenario), follow_redirects=False)
+    client = httpx.Client(
+        transport=smoke.make_mock_transport(scenario), follow_redirects=False
+    )
     try:
         result = smoke.run_smoke(
             _args(tmp_path, *extra),
@@ -61,6 +63,12 @@ def _check(result: smoke.SmokeResult, name: str) -> bool:
     return bool(matches[0]["passed"])
 
 
+def _detail(result: smoke.SmokeResult, name: str) -> str:
+    return next(
+        check["detail"] for check in result.evidence["checks"] if check["name"] == name
+    )
+
+
 @pytest.mark.parametrize(
     ("sample", "expected"),
     [
@@ -72,7 +80,9 @@ def _check(result: smoke.SmokeResult, name: str) -> bool:
         ("person outdoors", False),
     ],
 )
-def test_fixture_denylist_python_matches_canonical_bash(sample: str, expected: bool) -> None:
+def test_fixture_denylist_python_matches_canonical_bash(
+    sample: str, expected: bool
+) -> None:
     shell = subprocess.run(
         [
             "bash",
@@ -102,6 +112,19 @@ def test_dry_run_exercises_whole_flow_and_writes_cost_evidence(tmp_path: Path) -
         "RUNNING",
         "STOPPING",
         "STOPPED",
+        "STOPPING",
+        "STOPPED",
+    ]
+    assert result.evidence["item_timeline"] == [
+        {"elapsed_seconds": 0.0, "media_id": 101, "status": "queued", "tier": None},
+        {"elapsed_seconds": 2.0, "media_id": 101, "status": "queued", "tier": None},
+        {"elapsed_seconds": 2.0, "media_id": 101, "status": "running", "tier": None},
+        {
+            "elapsed_seconds": 4.0,
+            "media_id": 101,
+            "status": "completed",
+            "tier": "final_gpu",
+        },
     ]
     assert result.evidence["item_provenance"] == [
         {
@@ -135,6 +158,54 @@ def test_red_tier_provisional_cpu(tmp_path: Path) -> None:
 
     assert result.exit_code == 1
     assert not _check(result, "tier_final_gpu")
+
+
+def test_red_missing_one_of_two_requested_media_items(tmp_path: Path) -> None:
+    result, _ = _run(tmp_path, extra=("--media-ids", "101,102"))
+
+    assert result.exit_code == 1
+    assert not _check(result, "returned_media_ids_exact")
+    assert "102" in _detail(result, "returned_media_ids_exact")
+
+
+def test_red_completed_with_errors_is_not_success(tmp_path: Path) -> None:
+    scenario = smoke.DryScenario(run_statuses=["running", "completed_with_errors"])
+    result, _ = _run(tmp_path, scenario=scenario)
+
+    assert result.exit_code == 1
+    assert not _check(result, "run_terminal_success")
+    assert _detail(result, "run_terminal_success") == "completed_with_errors"
+
+
+def test_red_requested_item_final_status_is_not_completed(tmp_path: Path) -> None:
+    scenario = smoke.DryScenario(
+        item_statuses=["queued", "queued", "running", "failed"]
+    )
+    result, _ = _run(tmp_path, scenario=scenario)
+
+    assert result.exit_code == 1
+    assert not _check(result, "all_items_completed")
+    assert "101" in _detail(result, "all_items_completed")
+
+
+def test_red_item_terminal_before_instance_running(tmp_path: Path) -> None:
+    scenario = smoke.DryScenario(item_statuses=["completed"], item_tiers=["final_gpu"])
+    result, _ = _run(tmp_path, scenario=scenario)
+
+    assert result.exit_code == 1
+    assert not _check(result, "no_item_terminal_before_running")
+    assert "101" in _detail(result, "no_item_terminal_before_running")
+
+
+def test_red_provisional_cpu_observed_mid_run(tmp_path: Path) -> None:
+    scenario = smoke.DryScenario(
+        item_tiers=[None, None, "provisional_cpu", "final_gpu"]
+    )
+    result, _ = _run(tmp_path, scenario=scenario)
+
+    assert result.exit_code == 1
+    assert not _check(result, "no_provisional_or_degraded_items")
+    assert "101" in _detail(result, "no_provisional_or_degraded_items")
 
 
 def test_red_health_adapter_preflight_refuses(tmp_path: Path) -> None:
@@ -180,7 +251,9 @@ def test_red_fixture_alt_text_cannot_hide_behind_safe_caption(tmp_path: Path) ->
     assert result.exit_code == 1
     assert not _check(result, "caption_not_fixture")
     alt_verdict = next(
-        verdict for verdict in result.evidence["denylist_verdicts"] if verdict["field"] == "alt_text_draft"
+        verdict
+        for verdict in result.evidence["denylist_verdicts"]
+        if verdict["field"] == "alt_text_draft"
     )
     assert alt_verdict["denied"] is True
 
@@ -266,7 +339,9 @@ def test_red_failed_stop_command_is_reported(tmp_path: Path) -> None:
     assert not _check(result, "finally_stop_issued")
 
 
-def test_red_stop_reverification_fails_if_compensating_stop_is_ineffective(tmp_path: Path) -> None:
+def test_red_stop_reverification_fails_if_compensating_stop_is_ineffective(
+    tmp_path: Path,
+) -> None:
     oci = smoke.FakeOci(reaper_states=["RUNNING"], stop_effective=False)
     result, _ = _run(tmp_path, oci=oci, extra=("--max-seconds", "5"))
 
@@ -274,7 +349,18 @@ def test_red_stop_reverification_fails_if_compensating_stop_is_ineffective(tmp_p
     assert not _check(result, "instance_stopped_finally")
 
 
-def test_live_without_confirmation_refuses_before_client_or_oci(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_red_compensating_stop_times_out_in_stopping(tmp_path: Path) -> None:
+    oci = smoke.FakeOci(stop_states=["STOPPING"])
+    result, _ = _run(tmp_path, oci=oci)
+
+    assert result.exit_code == 1
+    assert not _check(result, "instance_stopped_finally")
+    assert "STOPPING" in _detail(result, "instance_stopped_finally")
+
+
+def test_live_without_confirmation_refuses_before_client_or_oci(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.delenv("ACX_GPU_SMOKE_CONFIRM", raising=False)
     calls: list[str] = []
 
@@ -286,7 +372,12 @@ def test_live_without_confirmation_refuses_before_client_or_oci(monkeypatch: pyt
         calls.append(f"oci:{binary}")
         raise AssertionError("OCI client must not be constructed")
 
-    assert smoke.main(["--live"], client_factory=forbidden_client, oci_factory=forbidden_oci) == 2
+    assert (
+        smoke.main(
+            ["--live"], client_factory=forbidden_client, oci_factory=forbidden_oci
+        )
+        == 2
+    )
     assert calls == []
 
 

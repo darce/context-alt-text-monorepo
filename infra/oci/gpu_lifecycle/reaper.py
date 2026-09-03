@@ -52,6 +52,13 @@ from infra.oci.gpu_lifecycle.probe import (
     ReadinessWaitResult,
     WarmReadinessWait,
 )
+from infra.oci.gpu_lifecycle.state_snapshot import (
+    DEFAULT_GPU_STATE_PATH,
+    GpuLifecycleState,
+    read_previous_gpu_state,
+    state_for_instances,
+    write_gpu_state_snapshot,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -398,7 +405,7 @@ class StartCycleResult:
     fallbacks: tuple[FallbackDecision, ...] = ()
 
 
-def run_reap_cycle(
+def _run_reap_cycle(
     *,
     controller: GpuLifecycleController,
     instances: list[GpuInstance],
@@ -514,7 +521,38 @@ def run_reap_cycle(
     )
 
 
-def run_start_cycle(
+def run_reap_cycle(
+    *,
+    controller: GpuLifecycleController,
+    instances: list[GpuInstance],
+    load_source: JobLoadSource,
+    actuator: InstanceStopActuator,
+    fence_delay_seconds: float = _DEFAULT_FENCE_DELAY_SECONDS,
+    max_lease_seconds: int = 0,
+    gpu_state_path: str | Path | None = None,
+) -> ReapCycleResult:
+    """Run a reap cycle and refresh its state snapshot after all load-bearing work."""
+    result = _run_reap_cycle(
+        controller=controller,
+        instances=instances,
+        load_source=load_source,
+        actuator=actuator,
+        fence_delay_seconds=fence_delay_seconds,
+        max_lease_seconds=max_lease_seconds,
+    )
+    state = (
+        GpuLifecycleState.STOPPED
+        if result.actuated or result.lease_expired
+        else state_for_instances(
+            [instance.state for instance in instances],
+            previous_state=read_previous_gpu_state(gpu_state_path),
+        )
+    )
+    write_gpu_state_snapshot(state, path=gpu_state_path)
+    return result
+
+
+def _run_start_cycle(
     *,
     controller: GpuLifecycleController,
     instances: list[GpuInstance],
@@ -629,6 +667,42 @@ def run_start_cycle(
     )
 
 
+def run_start_cycle(
+    *,
+    controller: GpuLifecycleController,
+    instances: list[GpuInstance],
+    load_source: JobLoadSource,
+    actuator: InstanceStartActuator,
+    probe: InstanceReadinessProbe | None = None,
+    readiness_wait: WarmReadinessWait | None = None,
+    gpu_state_path: str | Path | None = None,
+) -> StartCycleResult:
+    """Run a start cycle and refresh its snapshot after all load-bearing work."""
+    result = _run_start_cycle(
+        controller=controller,
+        instances=instances,
+        load_source=load_source,
+        actuator=actuator,
+        probe=probe,
+        readiness_wait=readiness_wait,
+    )
+    if result.fallbacks:
+        state = GpuLifecycleState.DEGRADED
+    elif result.wait_result is not None and result.wait_result.ready:
+        state = GpuLifecycleState.READY
+    elif result.actuated:
+        state = GpuLifecycleState.STARTING
+    elif result.errors:
+        state = GpuLifecycleState.DEGRADED
+    else:
+        state = state_for_instances(
+            [instance.state for instance in instances],
+            previous_state=read_previous_gpu_state(gpu_state_path),
+        )
+    write_gpu_state_snapshot(state, path=gpu_state_path)
+    return result
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="ACX GPU idle reaper (STOP actuator)")
     parser.add_argument(
@@ -676,6 +750,15 @@ def _build_parser() -> argparse.ArgumentParser:
         "--probe-oci",
         action="store_true",
         help="Fetch lifecycle state / age via `oci compute instance get` (recommended)",
+    )
+    parser.add_argument(
+        "--gpu-state-json",
+        type=Path,
+        default=None,
+        help=(
+            "GPU state snapshot path (default: ACX_GPU_STATE_PATH or "
+            f"{DEFAULT_GPU_STATE_PATH})"
+        ),
     )
     load = parser.add_mutually_exclusive_group()
     load.add_argument(
@@ -856,6 +939,7 @@ def main(argv: list[str] | None = None) -> int:
             actuator=start_actuator,
             probe=probe,
             readiness_wait=readiness_wait,
+            gpu_state_path=args.gpu_state_json,
         )
         logger.info(
             "start cycle decided=%s actuated=%s errors=%s wait=%s fallbacks=%s",
@@ -880,6 +964,7 @@ def main(argv: list[str] | None = None) -> int:
         actuator=actuator,
         fence_delay_seconds=args.fence_delay_seconds,
         max_lease_seconds=args.max_lease_seconds,
+        gpu_state_path=args.gpu_state_json,
     )
     logger.info(
         "reap cycle decided=%s actuated=%s fenced_off=%s lease_expired=%s errors=%s",

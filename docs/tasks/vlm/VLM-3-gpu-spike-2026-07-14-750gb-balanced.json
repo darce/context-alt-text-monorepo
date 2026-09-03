@@ -4,7 +4,9 @@
   "recorded_at": "2026-07-13T23:47:18-04:00",
   "status": "live_oci_measurement_complete",
   "shape": "VM.GPU.A10.1",
-  "boot_volume_size_in_gbs": 400,
+  "boot_volume_size_in_gbs": 750,
+  "boot_volume_performance_tier": "balanced",
+  "provenance_note": "reconstructed from filename",
   "measurement_candidate": {
     "model_id": "Qwen3-VL-30B-A3B-Instruct",
     "quantization": "Q4 GGUF",

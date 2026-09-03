@@ -1,9 +1,10 @@
-# OCI Infra Topology — discovered map (source of truth for OCIDs)
+# OCI Infra Topology — redacted discovered map
 
-> **Canonical values live in [`acx-oci.env`](acx-oci.env)** — change an OCID THERE
-> (once), not in this doc or in scripts. Shell orchestration sources it via
-> [`oci-lib.sh`](oci-lib.sh), which also provides the bake/monitor/stop/capture
-> helpers. The tables below are the human narrative; if they drift, the env wins.
+> **Live OCI identifiers are operator-held and are not stored in this repo.**
+> Repo-owned configuration contracts live in [`variables.tf`](variables.tf) and
+> [`terraform.tfvars.example`](terraform.tfvars.example); lifecycle installation
+> is implemented by [`scripts/deploy/gpu-lifecycle-install.sh`](../../scripts/deploy/gpu-lifecycle-install.sh).
+> The tables below are a redacted human narrative and must be verified against OCI.
 
 > **Purpose.** Snapshot of the *actual* provisioned OCI topology so agents don't
 > re-discover it each session. Captured 2026-07-13 during VLM-3B Slice 7a GPU
@@ -74,13 +75,13 @@ Policy: Allow dynamic-group acx-backend-dg to read secret-family in compartment 
 
 | Resource | OCID | Notes |
 | --- | --- | --- |
-| VCN `acx-vcn` | `<vcn-ocid>` | 10.0.0.0/16 |
-| Subnet `acx-public-subnet` | `<subnet-ocid>` | 10.0.1.0/24, **regional** (AD=null), public IPs allowed |
+| VCN `acx-vcn` | `<vcn-ocid>` | `<vcn-cidr>` |
+| Subnet `acx-public-subnet` | `<subnet-ocid>` | `<public-subnet-cidr>`, **regional** (AD=null), public IPs allowed |
 | `acx_private_subnet` (GPU target) | **DOES NOT EXIST** | main.tf defines it; must be created (terraform apply or CLI) |
 
 **Security lists (acx-vcn):**
-- `acx-security-list`: ingress `:22` from **`99.237.250.28/32` only** (operator pinned IP); `:80`/`:443` from `0.0.0.0/0`.
-- `Default Security List`: ingress `:22` from `0.0.0.0/0`, ICMP.
+- `acx-security-list`: ingress `:22` from **`<operator-ip>/32` only**; `:80`/`:443` from the public internet.
+- `Default Security List`: ingress `:22` from the public internet, ICMP.
 - SSH to VMs is effectively **tailscale-only** for the operator; ad-hoc laptop SSH from other IPs is blocked. Use the OCI instance-agent run-command plane or tailscale for VM access.
 
 ## Instances
@@ -88,7 +89,7 @@ Policy: Allow dynamic-group acx-backend-dg to read secret-family in compartment 
 | Instance | OCID | Shape / AD | Role |
 | --- | --- | --- | --- |
 | `acx-backend` | `<instance-ocid>` | A1.Flex (ARM) / AD-3 | prod/staging/demo backend; tailscale `acx-backend.tail1a44b8.ts.net` (user `ubuntu`) |
-| `acx-gpu-bake` | `<instance-ocid>` | **VM.GPU.A10.1 / AD-1** | **EPHEMERAL bake host — ~$2/hr, capture→TERMINATE (RES-07)**; public IP 158.101.122.60 |
+| `acx-gpu-bake` | `<instance-ocid>` | **VM.GPU.A10.1 / AD-1** | **EPHEMERAL bake host — ~$2/hr, capture→TERMINATE (RES-07)**; public address operator-held |
 
 ## GPU quota (us-ashburn-1)
 
@@ -101,7 +102,7 @@ A10 in AD-1 is the only GPU option without a new limit-increase.
 | --- | --- |
 | Base Ubuntu 24.04 (A10-compatible) | `<image-ocid>` |
 | Base Ubuntu 22.04 (x86) | `<image-ocid>` |
-| Golden GPU image (`gpu_image_ocid`) | **PENDING** — captured from `acx-gpu-bake` after bake completes |
+| Golden GPU image (`gpu_image_ocid`) | **AVAILABLE and used by the 2026-07-14 spike host** — identifier operator-held, not in repo; production tfvars wiring remains open |
 
 ## Model artifacts (pinned)
 
@@ -124,7 +125,7 @@ for the golden-image serving unit, `gpu-bake-cloud-init.yaml` for the from-scrat
 
 ## Provisioning sequence (VLM-3B Slice 7a)
 
-1. ⏳ Bake golden image on `acx-gpu-bake` (in progress) → capture custom image → **terminate bake host**.
+1. ✅ Golden image bake/capture completed and the image was used by the 2026-07-14 spike host; operator must verify the ephemeral bake host was terminated.
 2. Set up remote tf state backend; adopt existing infra into one root.
 3. tfvars (`gpu_image_ocid`, `compartment_ocid`=root, `availability_domain`=AD-1, `gpu_shape`=VM.GPU.A10.1, ssh key) → `terraform apply` → private subnet + NAT + GPU.
 4. Configure oci-CLI on acx-backend from the vaulted admin key; run `scripts/gpu_spike_bench.py` from acx-backend against the private `:8000`.

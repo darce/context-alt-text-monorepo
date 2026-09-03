@@ -225,6 +225,7 @@ def test_build_spike_artifact_zero_nulls_and_status_flip() -> None:
     )
     warm = WarmStartResult(
         samples=[50.0, 55.0, 60.0, 70.0, 80.0],
+        shutdown_samples=[4.0, 5.0, 6.0, 7.0, 8.0],
         p50=60.0,
         p95=78.0,
         meets_target=True,
@@ -241,6 +242,8 @@ def test_build_spike_artifact_zero_nulls_and_status_flip() -> None:
         warm_start=warm,
         throughput=thruput,
         model_id="Qwen3-VL-30B-A3B-Instruct",
+        boot_volume_gb=400,
+        vpus_per_gb=120,
         a10_quota_confirmed=True,
     )
     assert artifact["schema"] == "acx-gpu-spike/v1"
@@ -266,6 +269,9 @@ def test_build_spike_artifact_zero_nulls_and_status_flip() -> None:
     assert measurements["seconds_per_image"]["p95"] == 1.47
     assert measurements["seconds_per_image"]["mean"] == pytest.approx(1.233333)
     assert measurements["seconds_per_image"]["samples"] == [1.0, 1.2, 1.5]
+    assert measurements["shutdown_seconds"]["samples"] == [4.0, 5.0, 6.0, 7.0, 8.0]
+    assert artifact["boot_volume_size_in_gbs"] == 400
+    assert artifact["boot_volume_vpus_per_gb"] == 120
     assert artifact["oci_capacity"]["a10_quota_confirmed"] is True
     assert_no_null_measurement_values(artifact)
 
@@ -287,6 +293,7 @@ def test_assert_no_null_measurement_values_rejects_nulls() -> None:
 def test_warm_start_pass_fail_vs_target() -> None:
     pass_result = WarmStartResult(
         samples=[10.0, 20.0, 30.0],
+        shutdown_samples=[1.0, 2.0, 3.0],
         p50=20.0,
         p95=29.0,
         meets_target=True,
@@ -294,6 +301,7 @@ def test_warm_start_pass_fail_vs_target() -> None:
     )
     fail_result = WarmStartResult(
         samples=[80.0, 90.0, 100.0, 110.0, 120.0],
+        shutdown_samples=[1.0, 2.0, 3.0, 4.0, 5.0],
         p50=100.0,
         p95=118.0,
         meets_target=False,
@@ -304,12 +312,16 @@ def test_warm_start_pass_fail_vs_target() -> None:
         warm_start=pass_result,
         throughput=ThroughputResult([1.0], 1.0, 1.0, 1.0),
         model_id="m",
+        boot_volume_gb=400,
+        vpus_per_gb=120,
     )
     fail_art = build_spike_artifact(
         cold_boot=ColdBootResult(1, 0.5, 0.5, 0.5),
         warm_start=fail_result,
         throughput=ThroughputResult([1.0], 1.0, 1.0, 1.0),
         model_id="m",
+        boot_volume_gb=400,
+        vpus_per_gb=120,
     )
     assert pass_art["measurements"]["warm_start_p95_seconds"]["meets_target"] is True
     assert fail_art["measurements"]["warm_start_p95_seconds"]["meets_target"] is False
@@ -321,6 +333,66 @@ def test_default_artifact_path_is_dated() -> None:
 
     path = default_artifact_path(today=date(2026, 7, 12))
     assert path == Path("docs/tasks/vlm/VLM-3-gpu-spike-2026-07-12.json")
+
+
+def test_committed_artifacts_only_reconstruct_filename_bounded_provenance() -> None:
+    artifact_dir = Path(__file__).resolve().parents[1] / "docs" / "tasks" / "vlm"
+    expected = {
+        "VLM-3-gpu-spike-2026-07-14.json": {},
+        "VLM-3-gpu-spike-2026-07-14-400gb.json": {
+            "boot_volume_size_in_gbs": 400,
+        },
+        "VLM-3-gpu-spike-2026-07-14-400gb-60vpu.json": {
+            "boot_volume_size_in_gbs": 400,
+            "boot_volume_vpus_per_gb": 60,
+        },
+        "VLM-3-gpu-spike-2026-07-14-750gb-balanced.json": {
+            "boot_volume_size_in_gbs": 750,
+            "boot_volume_performance_tier": "balanced",
+        },
+    }
+
+    for filename, fields in expected.items():
+        artifact = json.loads((artifact_dir / filename).read_text())
+        assert artifact["provenance_note"] == "reconstructed from filename"
+        for key, value in fields.items():
+            assert artifact[key] == value
+
+    assert "boot_volume_size_in_gbs" not in json.loads(
+        (artifact_dir / "VLM-3-gpu-spike-2026-07-14.json").read_text()
+    )
+    assert "boot_volume_vpus_per_gb" not in json.loads(
+        (artifact_dir / "VLM-3-gpu-spike-2026-07-14-400gb.json").read_text()
+    )
+    assert "boot_volume_vpus_per_gb" not in json.loads(
+        (
+            artifact_dir / "VLM-3-gpu-spike-2026-07-14-750gb-balanced.json"
+        ).read_text()
+    )
+
+
+def test_documentation_dispositions_preserve_evidence_boundaries() -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    docs = repo_root / "docs" / "tasks" / "vlm"
+    activation = (docs / "VLM-3-7c-activation-evidence.md").read_text()
+    memo = (docs / "VLM-3-gpu-detailed-tier-decision-memo.md").read_text()
+    report = (docs / "VLM-3-7a-spike-findings.md").read_text()
+    topology = (repo_root / "infra" / "oci" / "INFRA-TOPOLOGY.md").read_text()
+
+    assert "production reaper timer install +\nbackend deploy are open" in activation
+    assert "memo FINAL" not in activation
+    assert "memo remains provisional" in activation
+    assert (
+        "Status: provisional; license verdict pending; measured JSON reports not regenerated"
+        in memo
+    )
+    assert "n=3 warm starts" in report
+    assert "n=1 image" in report
+    assert "acx-oci.env" not in topology
+    assert "oci-lib.sh" not in topology
+    assert "variables.tf" in topology
+    assert "gpu-lifecycle-install.sh" in topology
+    assert "AVAILABLE and used by the 2026-07-14 spike host" in topology
 
 
 # ---------------------------------------------------------------------------
@@ -379,6 +451,28 @@ def test_warm_start_loop_collects_samples_and_percentiles() -> None:
     assert result.meets_target is (result.p95 <= WARM_START_P95_TARGET_SECONDS)
     assert len(actuator.stops) == 3
     assert len(actuator.starts) == 3
+
+
+def test_warm_start_sample_excludes_shutdown_time() -> None:
+    clock = FakeClock()
+    actuator = FakeActuator("RUNNING")
+    actuator.stop_polls_until_stopped = 3
+    http = FakeHttp(ready_after=0)
+    http.advance_clock = clock
+
+    result = run_warm_start_loop(
+        actuator=actuator,
+        http=http,
+        clock=clock,
+        instance_id="ocid1.instance.oc1..gpu",
+        endpoint_url="http://gpu.example:8000",
+        model_id="m",
+        runs=1,
+        poll_interval_seconds=0.5,
+    )
+
+    assert result.shutdown_samples == [pytest.approx(1.0)]
+    assert result.samples == [pytest.approx(0.01)]
 
 
 def test_throughput_posts_chat_completions_and_stats() -> None:
@@ -453,6 +547,8 @@ def test_run_bench_writes_artifact_and_stops_on_success(tmp_path: Path) -> None:
         http=http,
         clock=clock,
         artifact_out=out,
+        boot_volume_gb=400,
+        vpus_per_gb=120,
         a10_quota_confirmed=True,
         poll_interval_seconds=0.1,
     )
@@ -462,6 +558,8 @@ def test_run_bench_writes_artifact_and_stops_on_success(tmp_path: Path) -> None:
     assert artifact["status"] == ARTIFACT_STATUS_MEASURED
     assert_no_null_measurement_values(artifact)
     assert artifact["oci_capacity"]["a10_quota_confirmed"] is True
+    assert artifact["boot_volume_size_in_gbs"] == 400
+    assert artifact["boot_volume_vpus_per_gb"] == 120
     assert result.warm_start_meets_target is True
     # finally STOP [RES-07]
     assert actuator.state == "STOPPED"
@@ -489,6 +587,8 @@ def test_run_bench_finally_stops_on_mid_phase_error(tmp_path: Path) -> None:
             http=http,
             clock=clock,
             artifact_out=out,
+            boot_volume_gb=400,
+            vpus_per_gb=120,
             poll_interval_seconds=0.1,
         )
 
@@ -530,10 +630,83 @@ def test_run_bench_throughput_failure_still_stops(tmp_path: Path) -> None:
             http=http,
             clock=clock,
             artifact_out=tmp_path / "out.json",
+            boot_volume_gb=400,
+            vpus_per_gb=120,
             poll_interval_seconds=0.1,
         )
     assert exc_info.value.phase == "throughput"
     assert actuator.state == "STOPPED"
+
+
+def test_run_bench_final_stop_failure_raises_without_completed_artifact(
+    tmp_path: Path,
+) -> None:
+    clock = FakeClock()
+    actuator = FakeActuator("STOPPED")
+    actuator.fail_on_stop_after = 1
+    http = FakeHttp(ready_after=0)
+    http.advance_clock = clock
+    out = tmp_path / "must-not-be-promoted.json"
+
+    with pytest.raises(PhaseError) as exc_info:
+        run_bench(
+            instance_ocid="ocid1.instance.oc1..gpu",
+            endpoint_url="http://gpu.example:8000",
+            model_id="m",
+            image_paths=_write_images(tmp_path, n=1),
+            warm_start_runs=1,
+            actuator=actuator,
+            http=http,
+            clock=clock,
+            artifact_out=out,
+            boot_volume_gb=400,
+            vpus_per_gb=120,
+            poll_interval_seconds=0.1,
+            lifecycle_timeout_seconds=0.2,
+        )
+
+    assert exc_info.value.phase == "cleanup"
+    assert not out.exists()
+
+
+def test_run_bench_final_stopped_poll_timeout_raises_without_artifact(
+    tmp_path: Path,
+) -> None:
+    class FinalStopHangs(FakeActuator):
+        def stop(self, instance_id: str) -> None:
+            if self._stop_count == 1:
+                self._stop_count += 1
+                self.stops.append(instance_id)
+                self.state = "STOPPING"
+                self._pending_stop_polls = 100
+                return
+            super().stop(instance_id)
+
+    clock = FakeClock()
+    actuator = FinalStopHangs("STOPPED")
+    http = FakeHttp(ready_after=0)
+    http.advance_clock = clock
+    out = tmp_path / "must-not-exist.json"
+
+    with pytest.raises(PhaseError) as exc_info:
+        run_bench(
+            instance_ocid="ocid1.instance.oc1..gpu",
+            endpoint_url="http://gpu.example:8000",
+            model_id="m",
+            image_paths=_write_images(tmp_path, n=1),
+            warm_start_runs=1,
+            actuator=actuator,
+            http=http,
+            clock=clock,
+            artifact_out=out,
+            boot_volume_gb=400,
+            vpus_per_gb=120,
+            poll_interval_seconds=0.1,
+            lifecycle_timeout_seconds=0.2,
+        )
+
+    assert exc_info.value.phase == "cleanup"
+    assert not out.exists()
 
 
 # ---------------------------------------------------------------------------
@@ -579,9 +752,13 @@ def test_dry_run_plan_helper_structure() -> None:
         a10_quota_confirmed=False,
         a100_or_l40s_headroom_confirmed=False,
         serverless_gpu_available=False,
+        boot_volume_gb=750,
+        vpus_per_gb=10,
     )
     assert plan["warm_start_runs"] == 5
     assert plan["images"] == ["a.png"]
+    assert plan["boot_volume_gb"] == 750
+    assert plan["vpus_per_gb"] == 10
     assert any("RES-07" in p for p in plan["phases"])
 
 
@@ -596,6 +773,27 @@ def test_cli_requires_image_without_dry_run() -> None:
             ]
         )
     assert exc_info.value.code == 2  # argparse error
+
+
+def test_cli_requires_hardware_provenance_for_live_run(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    image = _write_images(tmp_path, n=1)[0]
+
+    with pytest.raises(SystemExit) as exc_info:
+        main(
+            [
+                "--instance-ocid",
+                "test-instance",
+                "--endpoint-url",
+                "http://gpu.example:8000",
+                "--image",
+                str(image),
+            ]
+        )
+
+    assert exc_info.value.code == 2
+    assert "--boot-volume-gb and --vpus-per-gb are required" in capsys.readouterr().err
 
 
 def test_phase_error_message_names_phase() -> None:

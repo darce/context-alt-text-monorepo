@@ -2,7 +2,7 @@
 
 Date: 2026-07-08
 Task: VLM-3
-Status: provisional implementation decision, pending live OCI bake-off
+Status: provisional; license verdict pending; measured JSON reports not regenerated
 
 ## Decision
 
@@ -46,6 +46,10 @@ CPU to GPU speedup: provisional target is 206 s/img divided by measured GPU s/im
 Provisional pass for private in-tenancy evaluation. Final license verdict is blocked on the exact downloaded artifact license for Qwen3-VL-30B-A3B-Instruct Q4 GGUF and must be rechecked before public demo distribution.
 
 ## Activation preconditions
+
+Activation status: activated on the spike host on 2026-07-14; production
+activation is pending GPUSMOKE-1 S4, including the production reaper timer
+install and backend deploy.
 
 Do not treat `terraform apply` alone as tier activation. Before setting the service to the GPU detailed tier, all of the following must hold:
 

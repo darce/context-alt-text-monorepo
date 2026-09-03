@@ -55,6 +55,7 @@ if str(SERVICE_ROOT) not in sys.path:
 # Load the deployment profile after bootstrapping the repo-local service package.
 _profiles = import_module("scene.config.profiles")
 _settings = import_module("scene.config.settings")
+_describe_load = import_module("scene.application.describe_load")
 DescriptionProfile = _profiles.DescriptionProfile
 get_profile_spec = _profiles.get_profile_spec
 DescribeRunItemResponse = import_module("scene.interface_adapters.http.schemas.responses").DescribeRunItemResponse
@@ -99,6 +100,8 @@ MIN_COMPOSED_BUDGET_SECONDS = (
     + AUDIT_INDEX_TIMEOUT_SECONDS
 )
 POST_STOP_HEALTH_TIMEOUT_SECONDS = 20.0
+LOAD_SNAPSHOT_SKEW_SECONDS = 2.0
+LOAD_SNAPSHOT_OBSERVATION_SECONDS = float(_describe_load.DEFAULT_LOAD_REFRESH_SECONDS)
 
 
 class SmokeFailure(RuntimeError):  # noqa: N818 - public smoke contract name
@@ -346,6 +349,8 @@ class DryScenario:
             "batch_in_progress": True,
         }
     )
+    load_snapshot_written_offset_seconds: float = 0.0
+    submitted_at: datetime | None = field(default=None, init=False)
 
 
 def _dry_item_payload(
@@ -370,7 +375,11 @@ def _dry_item_payload(
     return DescribeRunItemResponse(**values).model_dump(mode="json")
 
 
-def make_mock_transport(scenario: DryScenario) -> httpx.MockTransport:
+def make_mock_transport(
+    scenario: DryScenario,
+    *,
+    now: Callable[[], datetime] = _utc_now,
+) -> httpx.MockTransport:
     """Return the canned WP/service transport used by the default dry run."""
 
     polls = 0
@@ -396,6 +405,7 @@ def make_mock_transport(scenario: DryScenario) -> httpx.MockTransport:
             auth = request.headers.get("authorization", "")
             if not auth.startswith("Basic "):
                 return httpx.Response(401, json={"code": "missing_auth"})
+            scenario.submitted_at = now()
             return httpx.Response(202, json={"run_id": "11111111-1111-4111-8111-111111111111"})
         if request.method == "GET" and path.endswith("/items"):
             status = scenario.item_statuses[min(item_polls, len(scenario.item_statuses) - 1)]
@@ -596,20 +606,31 @@ def _unique_start_events(events: Sequence[dict[str, Any]], instance_id: str) -> 
     return list(unique.values())
 
 
-def _load_snapshot_has_fresh_work(snapshot: dict[str, Any], *, triggered_at: datetime) -> tuple[bool, str]:
+def _load_snapshot_has_fresh_work(
+    snapshot: dict[str, Any],
+    *,
+    freshness_anchor: datetime,
+) -> tuple[bool, str]:
     if snapshot.get("availability") != "available" or not isinstance(snapshot.get("value"), dict):
-        return False, f"snapshot {snapshot.get('availability', 'invalid')} after trigger"
+        return False, (
+            f"snapshot {snapshot.get('availability', 'invalid')} after pre-submit "
+            f"freshness_anchor={_iso_utc(freshness_anchor)}"
+        )
     value = snapshot["value"]
     written_at = value.get("written_at")
     fresh = isinstance(written_at, (int, float)) and not isinstance(written_at, bool)
-    fresh = fresh and float(written_at) >= triggered_at.timestamp()
+    earliest_fresh_timestamp = freshness_anchor.timestamp() - LOAD_SNAPSHOT_SKEW_SECONDS
+    fresh = fresh and float(written_at) >= earliest_fresh_timestamp
     counts = (value.get("queue_depth"), value.get("in_flight"))
     counts_valid = all(isinstance(count, int) and not isinstance(count, bool) and count >= 0 for count in counts)
     batch_value = value.get("batch_in_progress")
     batch_valid = isinstance(batch_value, bool)
     pending = sum(counts) + int(batch_value) if counts_valid and batch_valid else 0
     observed = bool(fresh and counts_valid and batch_valid and pending > 0)
-    return observed, (f"fresh={fresh}; pending={pending}; batch_in_progress={batch_value!r}; written_at={written_at!r}")
+    return observed, (
+        f"fresh={fresh}; pending={pending}; batch_in_progress={batch_value!r}; written_at={written_at!r}; "
+        f"freshness_anchor={_iso_utc(freshness_anchor)}; skew_seconds={LOAD_SNAPSHOT_SKEW_SECONDS}"
+    )
 
 
 def _request_json(
@@ -896,7 +917,8 @@ def run_smoke(
             raise PreflightRefusal(str(exc)) from exc
 
         auth = httpx.BasicAuth(args.wp_user, app_password)
-        run_window_started_at = _iso_utc(now())
+        load_freshness_anchor = now()
+        run_window_started_at = _iso_utc(load_freshness_anchor)
         submitted = _request_json(
             client,
             "POST",
@@ -909,17 +931,24 @@ def run_smoke(
         if not isinstance(candidate_run_id, str) or not candidate_run_id:
             raise SmokeFailure("WordPress submit response has no run_id")
         run_id = candidate_run_id
-        triggered_at = now()
         trigger_elapsed = deadline.elapsed()
         trigger = getattr(oci, "trigger", None)
         if callable(trigger):
             trigger()
 
-        load_snapshot_after_trigger = load_snapshot_reader(args.load_json)
-        load_observed, load_detail = _load_snapshot_has_fresh_work(
-            load_snapshot_after_trigger,
-            triggered_at=triggered_at,
+        load_observation_deadline = Deadline(
+            min(LOAD_SNAPSHOT_OBSERVATION_SECONDS, max(0.0, deadline.remaining())),
+            monotonic,
         )
+        while True:
+            load_snapshot_after_trigger = load_snapshot_reader(args.load_json)
+            load_observed, load_detail = _load_snapshot_has_fresh_work(
+                load_snapshot_after_trigger,
+                freshness_anchor=load_freshness_anchor,
+            )
+            if load_observed or load_observation_deadline.remaining() <= 0 or deadline.remaining() <= 0:
+                break
+            sleep(min(POLL_SECONDS, load_observation_deadline.remaining(), deadline.remaining()))
         check("load_snapshot_observed_after_trigger", load_observed, load_detail)
 
         running_observed = False
@@ -1530,7 +1559,7 @@ def main(
     else:
         clock = FastClock()
         scenario = DryScenario()
-        client = client_factory(transport=make_mock_transport(scenario), follow_redirects=False)
+        client = client_factory(transport=make_mock_transport(scenario, now=clock.now), follow_redirects=False)
         oci = FakeOci()
 
     try:
@@ -1538,12 +1567,13 @@ def main(
         if clock is not None:
 
             def dry_load_snapshot_reader(path: str) -> dict[str, Any]:
+                written_at = scenario.submitted_at or clock.now()
                 return {
                     "availability": "available",
                     "path": path,
                     "value": {
                         **(scenario.load_snapshot_after_trigger or {}),
-                        "written_at": clock.now().timestamp(),
+                        "written_at": (written_at.timestamp() + scenario.load_snapshot_written_offset_seconds),
                     },
                 }
 

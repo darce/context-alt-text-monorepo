@@ -111,6 +111,7 @@ Wants=network-online.target
 [Service]
 Type=oneshot
 User=ubuntu
+SupplementaryGroups=10001
 # instance_principal: the VM carries no API key. Requires a dynamic-group grant
 # of INSTANCE_POWER_ACTIONS on the GPU compartment, else every run 404s.
 Environment=OCI_CLI_AUTH=instance_principal
@@ -141,6 +142,7 @@ Wants=network-online.target
 [Service]
 Type=oneshot
 User=ubuntu
+SupplementaryGroups=10001
 Environment=OCI_CLI_AUTH=instance_principal
 EnvironmentFile=/etc/acx/gpu-lifecycle.env
 WorkingDirectory=/opt/acx-gpu
@@ -160,8 +162,9 @@ AccuracySec=10s
 WantedBy=timers.target
 UNIT
 
-# The load dump is written by the api container (uid 10001) and read by these
-# units as ubuntu, so the directory must exist before either side starts.
+# The api container (uid/gid 10001) writes the load dump and the lifecycle
+# units write gpu-state.json. SupplementaryGroups=10001 gives the ubuntu units
+# group write while keeping the shared directory unavailable to other users.
 sudo mkdir -p /run/acx
 sudo chown root:10001 /run/acx
 sudo chmod 0775 /run/acx

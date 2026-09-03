@@ -525,6 +525,7 @@ test-hooks:
 test-deploy-contract:
 	@python3 -m pytest scripts/test_e15_31_admin_deploy_contract.py scripts/test_e15_33_deploy_convergence.py scripts/test_e15_33_boot_smoke.py -q --tb=short
 	@bash scripts/deploy/tests/test-smoke-gate.sh
+	@bash scripts/deploy/tests/test-check-gpu-snapshots.sh
 
 # VLM-3 / VLMRP: OCI GPU infra posture, idle-reaper lifecycle, decision memo,
 # bake-off artifact guards, and OWLv2 deferral. Covered by test-scripts in check-all.

@@ -81,6 +81,10 @@ class FakeActuator:
     def verify_bench_dedicated(self, instance_id: str) -> None:
         del instance_id
 
+    def describe_instance(self, instance_id: str) -> bench.InstanceObservation:
+        del instance_id
+        return bench.InstanceObservation("test-shape", 400, 120)
+
     def start(self, instance_id: str) -> None:
         self._start_count += 1
         if (
@@ -292,6 +296,11 @@ def test_build_spike_artifact_zero_nulls_and_status_flip() -> None:
         model_path="/test/model.gguf",
         boot_volume_gb=400,
         vpus_per_gb=120,
+        instance_observation=bench.InstanceObservation(
+            shape="test-shape",
+            boot_volume_gb=400,
+            vpus_per_gb=120,
+        ),
         a10_quota_confirmed=True,
     )
     assert artifact["schema"] == "acx-gpu-spike/v1"
@@ -318,14 +327,77 @@ def test_build_spike_artifact_zero_nulls_and_status_flip() -> None:
     assert measurements["seconds_per_image"]["mean"] == pytest.approx(1.233333)
     assert measurements["seconds_per_image"]["samples"] == [1.0, 1.2, 1.5]
     assert measurements["shutdown_seconds"]["samples"] == [4.0, 5.0, 6.0, 7.0, 8.0]
-    assert artifact["boot_volume_size_in_gbs"] == 400
-    assert artifact["boot_volume_vpus_per_gb"] == 120
-    assert artifact["shape"] == "test-shape"
-    assert artifact["measurement_candidate"]["quantization"] == "test-quantization"
-    assert artifact["measurement_candidate"]["model_path"] == "/test/model.gguf"
+    provenance = artifact["provenance"]
+    assert "shape" not in artifact
+    assert "boot_volume_size_in_gbs" not in artifact
+    assert "boot_volume_vpus_per_gb" not in artifact
+    assert "quantization" not in artifact["measurement_candidate"]
+    assert "model_path" not in artifact["measurement_candidate"]
+    assert provenance["shape"] == {
+        "operator_asserted": "test-shape",
+        "oci_observed": "test-shape",
+        "source": "oci_observed",
+        "matches": True,
+    }
+    assert provenance["boot_volume_gb"]["oci_observed"] == 400
+    assert provenance["boot_volume_gb"]["source"] == "oci_observed"
+    assert provenance["vpus_per_gb"]["oci_observed"] == 120
+    assert provenance["quantization"] == {
+        "operator_asserted": "test-quantization",
+        "source": "operator_asserted",
+    }
+    assert provenance["model_path"] == {
+        "operator_asserted": "/test/model.gguf",
+        "source": "operator_asserted",
+    }
     assert "estimated_model_bytes_gb" not in artifact["measurement_candidate"]
     assert artifact["oci_capacity"]["a10_quota_confirmed"] is True
     assert_no_null_measurement_values(artifact)
+
+
+def test_build_spike_artifact_asserted_only_is_not_measurement_complete() -> None:
+    artifact = build_spike_artifact(
+        cold_boot=ColdBootResult(1, 0.5, 0.5, 0.5),
+        warm_start=WarmStartResult([2], [1], 2, 2, True),
+        throughput=ThroughputResult([3], 3, 3, 3),
+        model_id="m",
+        shape="asserted-shape",
+        quantization="asserted-quantization",
+        model_path="/asserted/model.gguf",
+        boot_volume_gb=400,
+        vpus_per_gb=120,
+    )
+
+    assert artifact["status"] == ARTIFACT_STATUS_PENDING
+    for field in ("shape", "boot_volume_gb", "vpus_per_gb"):
+        assert artifact["provenance"][field]["source"] == "operator_asserted"
+        assert artifact["provenance"][field]["oci_observed"] is None
+
+
+def test_build_spike_artifact_records_provenance_mismatch_loudly() -> None:
+    artifact = build_spike_artifact(
+        cold_boot=ColdBootResult(1, 0.5, 0.5, 0.5),
+        warm_start=WarmStartResult([2], [1], 2, 2, True),
+        throughput=ThroughputResult([3], 3, 3, 3),
+        model_id="m",
+        shape="asserted-shape",
+        quantization="asserted-quantization",
+        model_path="/asserted/model.gguf",
+        boot_volume_gb=400,
+        vpus_per_gb=120,
+        instance_observation=bench.InstanceObservation(
+            shape="observed-shape",
+            boot_volume_gb=750,
+            vpus_per_gb=60,
+        ),
+    )
+
+    assert artifact["status"] == bench.ARTIFACT_STATUS_PROVENANCE_MISMATCH
+    for field in ("shape", "boot_volume_gb", "vpus_per_gb"):
+        provenance = artifact["provenance"][field]
+        assert provenance["operator_asserted"] != provenance["oci_observed"]
+        assert provenance["source"] == "oci_observed"
+        assert provenance["matches"] is False
 
 
 def test_assert_no_null_measurement_values_rejects_nulls() -> None:
@@ -712,8 +784,8 @@ def test_run_bench_writes_artifact_and_stops_on_success(tmp_path: Path) -> None:
     assert artifact["status"] == ARTIFACT_STATUS_MEASURED
     assert_no_null_measurement_values(artifact)
     assert artifact["oci_capacity"]["a10_quota_confirmed"] is True
-    assert artifact["boot_volume_size_in_gbs"] == 400
-    assert artifact["boot_volume_vpus_per_gb"] == 120
+    assert artifact["provenance"]["boot_volume_gb"]["oci_observed"] == 400
+    assert artifact["provenance"]["vpus_per_gb"]["oci_observed"] == 120
     assert result.warm_start_meets_target is True
     # finally STOP [RES-07]
     assert actuator.state == "STOPPED"
@@ -767,6 +839,40 @@ def test_oci_actuator_requires_pinned_bench_dedicated_tag(
 
     with pytest.raises(BenchError, match="purpose=gpu-spike-bench"):
         actuator.verify_bench_dedicated("test-instance")
+
+
+def test_oci_actuator_describes_instance_and_attached_boot_volume(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    payloads = iter(
+        (
+            {
+                "data": {
+                    "shape": "observed-shape",
+                    "compartment-id": "test-compartment",
+                    "availability-domain": "test-ad",
+                }
+            },
+            {"data": [{"boot-volume-id": "test-boot-volume"}]},
+            {"data": {"size-in-gbs": 750, "vpus-per-gb": 60}},
+        )
+    )
+    commands: list[list[str]] = []
+
+    def fake_run(cmd, **_kwargs):
+        commands.append(cmd)
+        return type("Proc", (), {"stdout": json.dumps(next(payloads))})()
+
+    monkeypatch.setattr(bench.subprocess, "run", fake_run)
+
+    observation = bench.OciCliInstanceActuator(oci_bin="oci").describe_instance(
+        "test-instance"
+    )
+
+    assert observation == bench.InstanceObservation("observed-shape", 750, 60)
+    assert commands[0][1:4] == ["compute", "instance", "get"]
+    assert commands[1][1:4] == ["compute", "boot-volume-attachment", "list"]
+    assert commands[2][1:4] == ["bv", "boot-volume", "get"]
 
 
 def test_run_bench_finally_stops_on_mid_phase_error(tmp_path: Path) -> None:

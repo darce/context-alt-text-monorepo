@@ -2,14 +2,34 @@ import json
 import re
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
 import yaml
 
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 OCI_ROOT = REPO_ROOT / "infra" / "oci"
+sys.path.insert(0, str(REPO_ROOT / "scripts"))
+
+import gpu_spike_bench as bench
+
+
+def _gpu_instance_block() -> str:
+    main_tf = (OCI_ROOT / "main.tf").read_text()
+    start = main_tf.index('resource "oci_core_instance" "acx_gpu_burst"')
+    rest = main_tf[start:]
+    end = rest.find("\nresource ")
+    return rest if end < 0 else rest[:end]
+
+
+def test_gpu_instance_dedicated_tag_matches_bench_gate() -> None:
+    gpu_block = _gpu_instance_block()
+    key, expected_value = bench.BENCH_DEDICATED_TAG
+    tag_match = re.search(rf'"{re.escape(key)}"\s*=\s*"([^"]+)"', gpu_block)
+
+    assert tag_match is not None, f"GPU instance must declare the {key!r} tag"
+    assert tag_match.group(1) == expected_value
 
 
 def test_gpu_instance_uses_configurable_a10_shape_and_dedicated_cloud_init() -> None:
@@ -83,7 +103,9 @@ def test_gpu_endpoint_outputs_for_acx_gpu_endpoint_url() -> None:
 
 
 EXPECTED_Q4_DIGEST = "7ea0a652b4bda1c1911a93a79a7cd98b92011dfea078e87328285294b2b4ab44"
-EXPECTED_MMPROJ_DIGEST = "9f248089357599a08a23af40cb5ce0030de14a2e119b7ef57f66cb339bd20819"
+EXPECTED_MMPROJ_DIGEST = (
+    "9f248089357599a08a23af40cb5ce0030de14a2e119b7ef57f66cb339bd20819"
+)
 HUB_PIN = (
     "unsloth/Qwen3-VL-30B-A3B-Instruct-GGUF@0af19e7479857aa7f3246466a4ad16c7e7299639"
 )

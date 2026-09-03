@@ -1,20 +1,20 @@
 {
   "schema_version": 2,
   "source_kind": "package",
-  "package_version": "0.3.25",
+  "package_version": "0.3.26",
   "stack_distribution": "workbay",
-  "stack_version": "0.3.37",
+  "stack_version": "0.3.38",
   "stack_members": {
-    "mcp-workbay-handoff": "0.2.21",
-    "mcp-workbay-orchestrator": "0.2.21",
-    "workbay-bootstrap": "0.3.27",
-    "workbay-protocol": "0.2.4",
-    "workbay-system": "0.3.25"
+    "mcp-workbay-handoff": "0.2.26",
+    "mcp-workbay-orchestrator": "0.2.23",
+    "workbay-bootstrap": "0.3.28",
+    "workbay-protocol": "0.2.6",
+    "workbay-system": "0.3.26"
   },
   "stack_source": {
     "resolved_from": "git",
-    "ref": "v0.1.59",
-    "sha": "3f7c2e51b6ba4898359ce8fec8efb5743243371b"
+    "ref": "v0.1.60",
+    "sha": "deed016c691ce26f3111a57f9c83f813f3c5e08c"
   },
   "profile": "all",
   "surfaces": [
@@ -41,22 +41,27 @@
     {
       "path": "Makefile.d/ace.mk",
       "source": "shared",
-      "provenance_key": "package:0.3.25"
+      "provenance_key": "package:0.3.26"
     },
     {
       "path": "Makefile.d/check.mk",
       "source": "shared",
-      "provenance_key": "package:0.3.25"
+      "provenance_key": "package:0.3.26"
     },
     {
       "path": "Makefile.d/compaction.mk",
       "source": "shared",
-      "provenance_key": "package:0.3.25"
+      "provenance_key": "package:0.3.26"
+    },
+    {
+      "path": "Makefile.d/lane-gate.mk",
+      "source": "shared",
+      "provenance_key": "package:0.3.26"
     },
     {
       "path": "Makefile.d/plans.mk",
       "source": "shared",
-      "provenance_key": "package:0.3.25"
+      "provenance_key": "package:0.3.26"
     },
     {
       "path": "Makefile.d/plugins.mk",
@@ -65,22 +70,22 @@
     {
       "path": "Makefile.d/workflows.mk",
       "source": "shared",
-      "provenance_key": "package:0.3.25"
+      "provenance_key": "package:0.3.26"
     },
     {
       "path": "scripts/workbay/check_all_cache.py",
       "source": "shared",
-      "provenance_key": "package:0.3.25"
+      "provenance_key": "package:0.3.26"
     },
     {
       "path": "scripts/workbay/git-plan-cat.sh",
       "source": "shared",
-      "provenance_key": "package:0.3.25"
+      "provenance_key": "package:0.3.26"
     },
     {
       "path": "scripts/workbay/wb",
       "source": "shared",
-      "provenance_key": "package:0.3.25"
+      "provenance_key": "package:0.3.26"
     },
     {
       "path": ".codex/hooks.json",
@@ -89,7 +94,7 @@
     {
       "path": "scripts/remote_agent.sh",
       "source": "shared",
-      "provenance_key": "package:0.3.25"
+      "provenance_key": "package:0.3.26"
     },
     {
       "path": ".github/prompts",
@@ -147,7 +152,7 @@
     },
     {
       "path": ".claude/settings.json",
-      "action": "unchanged"
+      "action": "updated"
     },
     {
       "path": ".gitignore",
@@ -257,11 +262,11 @@
   "gitonly_mcp_tools": [
     {
       "name": "mcp-workbay-handoff",
-      "from_spec": "git+https://github.com/darce/workbay.git@v0.1.59#subdirectory=packages/mcp-workbay-handoff"
+      "from_spec": "git+https://github.com/darce/workbay.git@v0.1.60#subdirectory=packages/mcp-workbay-handoff"
     },
     {
       "name": "mcp-workbay-orchestrator",
-      "from_spec": "git+https://github.com/darce/workbay.git@v0.1.59#subdirectory=packages/mcp-workbay-orchestrator"
+      "from_spec": "git+https://github.com/darce/workbay.git@v0.1.60#subdirectory=packages/mcp-workbay-orchestrator"
     }
   ],
   "git_writes": [
@@ -273,7 +278,7 @@
       ],
       "cwd": "/Users/daniel/Development/context-alt-text-monorepo",
       "common_dir": "/Users/daniel/Development/context-alt-text-monorepo/.git",
-      "duration_ms": 23.129,
+      "duration_ms": 22.458,
       "status": "ok"
     }
   ]

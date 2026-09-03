@@ -56,9 +56,7 @@ class JobLoadSnapshot:
 
     @property
     def has_work(self) -> bool:
-        return (
-            self.queue_depth > 0 or self.in_flight > 0 or self.batch_in_progress
-        )
+        return self.queue_depth > 0 or self.in_flight > 0 or self.batch_in_progress
 
 
 class GpuLifecycleController:
@@ -90,21 +88,14 @@ class GpuLifecycleController:
 
     def instances_waiting_on_boot(self, instances: list[GpuInstance]) -> list[str]:
         """STARTING instances already booting; wait/probe, never re-START."""
-        return [
-            instance.instance_id
-            for instance in instances
-            if instance.state == GpuInstanceState.STARTING
-        ]
+        return [instance.instance_id for instance in instances if instance.state == GpuInstanceState.STARTING]
 
-    def instances_blocking_start(
-        self, instances: list[GpuInstance]
-    ) -> list[GpuInstance]:
+    def instances_blocking_start(self, instances: list[GpuInstance]) -> list[GpuInstance]:
         """STOPPING/UNKNOWN while work waits: fail closed, do not START."""
         return [
             instance
             for instance in instances
-            if instance.state
-            in (GpuInstanceState.STOPPING, GpuInstanceState.UNKNOWN)
+            if instance.state in (GpuInstanceState.STOPPING, GpuInstanceState.UNKNOWN)
         ]
 
     def reap_idle_instances(
@@ -120,8 +111,41 @@ class GpuLifecycleController:
         return [
             (LifecycleAction.STOP, instance.instance_id)
             for instance in instances
-            if instance.state == GpuInstanceState.RUNNING
-            and instance.idle_for_seconds >= self.idle_seconds
+            if instance.state == GpuInstanceState.RUNNING and instance.idle_for_seconds >= self.idle_seconds
+        ]
+
+    def lease_expired_instances(
+        self,
+        instances: list[GpuInstance],
+        *,
+        max_lease_seconds: int,
+    ) -> list[tuple[str, str]]:
+        """STOP RUNNING instances older than the max lease, whatever the load says.
+
+        Cost backstop (GPUW-1). Every other path in this module fails closed
+        *toward busy*: a missing, stale or unparseable load dump is treated as
+        work in progress and cancels the STOP. That is right for jobs and wrong
+        for money -- a writer that dies leaves an A10 running at roughly $2/hr
+        with nothing left in the system that will ever stop it. [RES-07]
+
+        These STOPs deliberately bypass ``fence_stop_actions``: a fence that
+        consults the same load source that may be broken cannot bound the
+        exposure. A batch longer than the lease is killed, which is the intended
+        trade -- raise the lease rather than disable it.
+
+        ``max_lease_seconds <= 0`` disables the cap.
+
+        For a RUNNING instance, callers populate ``idle_for_seconds`` from the
+        controller-owned running-since lease record (or an explicit test
+        override). OCI ``time-created`` is not a lifecycle-transition time and
+        must never supply this value.
+        """
+        if max_lease_seconds <= 0:
+            return []
+        return [
+            (LifecycleAction.STOP, instance.instance_id)
+            for instance in instances
+            if instance.state == GpuInstanceState.RUNNING and instance.idle_for_seconds >= max_lease_seconds
         ]
 
     def fence_stop_actions(
@@ -150,7 +174,4 @@ class GpuLifecycleController:
         reason: str,
     ) -> list[FallbackDecision]:
         """Emit florence_small fallback when the burst instance will not come up."""
-        return [
-            FallbackDecision(instance_id=instance_id, reason=reason)
-            for instance_id in failed_instance_ids
-        ]
+        return [FallbackDecision(instance_id=instance_id, reason=reason) for instance_id in failed_instance_ids]

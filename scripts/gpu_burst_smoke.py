@@ -10,11 +10,13 @@ assertion, evidence, and compensating-STOP path as live mode::
 Live mode is deliberately awkward to invoke.  Run it only on ``acx-backend`` as
 ``ubuntu`` (the host with the OCI binary and vaulted key), set the application
 password in the environment named by ``--wp-app-password-env``, and acknowledge
-the spend guard::
+the spend guard.  The description-service bearer token is read from the
+environment named by ``--service-api-key-env``::
 
     ACX_GPU_SMOKE_CONFIRM=RUN python3 scripts/gpu_burst_smoke.py --live \
       --wp-base-url https://wordpress.example --wp-user operator \
       --media-ids 101,102 --service-base-url http://<burst-private-ip>:8000 \
+      --service-api-key-env ACX_DESCRIPTION_API_KEY \
       --instance-id <burst-instance-ocid> --max-seconds 900
 
 No password is accepted on argv.  Every HTTP/OCI operation has a timeout, every
@@ -35,6 +37,7 @@ import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
+from importlib import import_module
 from itertools import pairwise
 from pathlib import Path
 from typing import Any, Protocol
@@ -46,8 +49,10 @@ SERVICE_ROOT = REPO_ROOT / "apps" / "prototype-description-service"
 if str(SERVICE_ROOT) not in sys.path:
     sys.path.insert(0, str(SERVICE_ROOT))
 
-# The deployment profile is the single source of truth for this mutable pin.
-from scene.config.profiles import DescriptionProfile, get_profile_spec
+# Load the deployment profile after bootstrapping the repo-local service package.
+_profiles = import_module("scene.config.profiles")
+DescriptionProfile = _profiles.DescriptionProfile
+get_profile_spec = _profiles.get_profile_spec
 
 EXPECTED_MODEL_ID = "Qwen3-VL-30B-A3B-Instruct"
 EXPECTED_PROFILE = get_profile_spec(DescriptionProfile.GPU_QWEN30B)
@@ -85,6 +90,14 @@ class SmokeFailure(RuntimeError):
 
 class PreflightRefusal(RuntimeError):
     """The operator or environment did not satisfy the live safety gate."""
+
+
+class HttpStatusFailure(SmokeFailure):
+    """An HTTP call returned a non-success status code."""
+
+    def __init__(self, method: str, url: str, status_code: int) -> None:
+        self.status_code = status_code
+        super().__init__(f"{method} {url} failed with HTTP {status_code}")
 
 
 def assert_no_null_measurement_values(value: Any, path: str = "measurements") -> None:
@@ -254,6 +267,7 @@ class SubprocessOci:
 @dataclass
 class DryScenario:
     health_adapter: str = "gpu_qwen30b"
+    service_api_key: str = "dry-service-key"
     tier: str = "final_gpu"
     caption: str = "A red bicycle leans beside a brick library wall."
     alt_text_draft: str = "Red bicycle beside a brick library wall"
@@ -279,6 +293,11 @@ def make_mock_transport(scenario: DryScenario) -> httpx.MockTransport:
         nonlocal item_polls, polls
         path = request.url.path
         if request.method == "GET" and path == "/health/detailed":
+            if (
+                request.headers.get("authorization")
+                != f"Bearer {scenario.service_api_key}"
+            ):
+                return httpx.Response(401, json={"detail": "unauthorized"})
             return httpx.Response(
                 200,
                 json={"status": "ok", "description_adapter": scenario.health_adapter},
@@ -466,6 +485,7 @@ def _request_json(
     *,
     deadline: Deadline,
     auth: httpx.BasicAuth | None = None,
+    headers: dict[str, str] | None = None,
     payload: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     try:
@@ -473,11 +493,14 @@ def _request_json(
             method,
             url,
             auth=auth,
+            headers=headers,
             json=payload,
             timeout=deadline.timeout(HTTP_CALL_TIMEOUT_SECONDS),
         )
         response.raise_for_status()
         body = response.json()
+    except httpx.HTTPStatusError as exc:
+        raise HttpStatusFailure(method, url, exc.response.status_code) from exc
     except (httpx.HTTPError, json.JSONDecodeError, ValueError) as exc:
         raise SmokeFailure(f"{method} {url} failed: {exc}") from exc
     if not isinstance(body, dict):
@@ -547,6 +570,7 @@ def run_smoke(
     client: httpx.Client,
     oci: OciClient,
     app_password: str,
+    service_api_key: str,
     monotonic: Callable[[], float] = time.monotonic,
     sleep: Callable[[float], None] = time.sleep,
     now: Callable[[], datetime] = _utc_now,
@@ -562,6 +586,7 @@ def run_smoke(
     run_id = "unavailable"
     run_status = "unavailable"
     preflight_refused = False
+    instance_validated = False
     compartment_id = "unavailable"
     gpu_snapshot = _load_optional_json(args.gpu_state_json)
     load_snapshot = _load_optional_json(args.load_json)
@@ -571,12 +596,23 @@ def run_smoke(
 
     try:
         try:
-            health = _request_json(
-                client,
-                "GET",
-                f"{args.service_base_url.rstrip('/')}/health/detailed",
-                deadline=deadline,
-            )
+            try:
+                health = _request_json(
+                    client,
+                    "GET",
+                    f"{args.service_base_url.rstrip('/')}/health/detailed",
+                    deadline=deadline,
+                    headers={"Authorization": f"Bearer {service_api_key}"},
+                )
+            except HttpStatusFailure as exc:
+                if exc.status_code in {401, 403}:
+                    check("service_auth", False, f"HTTP {exc.status_code}")
+                    preflight_refused = True
+                    raise PreflightRefusal(
+                        "description service rejected bearer authentication"
+                    ) from exc
+                raise
+            check("service_auth", True, "bearer authentication accepted")
             adapter_ok = health.get("description_adapter") == "gpu_qwen30b"
             check(
                 "health_adapter_gpu_qwen30b",
@@ -592,6 +628,28 @@ def run_smoke(
                 timeout=deadline.timeout(OCI_CALL_TIMEOUT_SECONDS),
             )
             compartment_id = _compartment_id(initial)
+            identity_matches = str(initial.get("id")) == args.instance_id
+            check(
+                "instance_identity_matches",
+                identity_matches,
+                "requested instance identity verified"
+                if identity_matches
+                else "OCI response identity does not match the requested instance",
+            )
+            dedicated_instance = _is_gpu_burst(initial)
+            check(
+                "instance_dedicated_gpu_burst",
+                dedicated_instance,
+                "dedicated gpu-burst identity verified"
+                if dedicated_instance
+                else "instance name/tag does not identify a dedicated gpu-burst host",
+            )
+            if not identity_matches or not dedicated_instance:
+                preflight_refused = True
+                raise PreflightRefusal(
+                    "instance identity or dedicated gpu-burst ownership is invalid"
+                )
+            instance_validated = True
             initial_state = _state(initial)
             _record_transition(
                 transitions, initial_state, elapsed=deadline.elapsed(), now=now
@@ -726,8 +784,18 @@ def run_smoke(
             f"offending media_ids: {sorted(provisional_or_degraded, key=str)}",
         )
 
+        returned_media_id_rows = [item.get("media_id") for item in items]
+        duplicate_ids = {
+            media_id
+            for media_id in returned_media_id_rows
+            if returned_media_id_rows.count(media_id) > 1
+        }
+        if duplicate_ids:
+            raise SmokeFailure(
+                f"duplicate media_id rows returned: {sorted(duplicate_ids, key=str)}"
+            )
         requested_ids = set(args.media_ids)
-        returned_ids = {item.get("media_id") for item in items}
+        returned_ids = set(returned_media_id_rows)
         check(
             "returned_media_ids_exact",
             returned_ids == requested_ids,
@@ -844,53 +912,67 @@ def run_smoke(
             "exactly_one_start_transition", start_count == 1, f"observed {start_count}"
         )
     except PreflightRefusal:
-        pass
+        preflight_refused = True
     except (SmokeFailure, OSError, ValueError) as exc:
         check("flow_completed", False, str(exc))
     finally:
-        try:
-            oci.stop_instance(args.instance_id, timeout=OCI_CALL_TIMEOUT_SECONDS)
+        if not instance_validated:
             check(
-                "finally_stop_issued", True, f"STOP issued ({oci.stop_calls} call(s))"
+                "finally_stop_skipped",
+                True,
+                "instance was not validated; STOP and OCI follow-up skipped",
             )
-        except (SmokeFailure, OSError, ValueError) as exc:
-            check("finally_stop_issued", False, str(exc))
-
-        final_state = "UNKNOWN"
-        try:
-            emergency_deadline = Deadline(EMERGENCY_STOP_TIMEOUT_SECONDS, monotonic)
-            while final_state != "STOPPED":
-                emergency_deadline.check("waiting for compensating STOPPED")
-                final_instance = oci.get_instance(
-                    args.instance_id,
-                    timeout=emergency_deadline.timeout(OCI_CALL_TIMEOUT_SECONDS),
+        else:
+            try:
+                oci.stop_instance(args.instance_id, timeout=OCI_CALL_TIMEOUT_SECONDS)
+                check(
+                    "finally_stop_issued",
+                    True,
+                    f"STOP issued ({oci.stop_calls} call(s))",
                 )
-                final_state = _state(final_instance)
-                _record_transition(
-                    transitions, final_state, elapsed=deadline.elapsed(), now=now
-                )
-                if compartment_id == "unavailable":
-                    compartment_id = _compartment_id(final_instance)
-                if final_state != "STOPPED":
-                    sleep(POLL_SECONDS)
-            check("instance_stopped_finally", True, final_state)
-        except (SmokeFailure, OSError, ValueError) as exc:
-            check("instance_stopped_finally", False, f"{exc}; last state {final_state}")
+            except (SmokeFailure, OSError, ValueError) as exc:
+                check("finally_stop_issued", False, str(exc))
 
-        try:
-            listed = oci.list_instances(
-                compartment_id, timeout=OCI_CALL_TIMEOUT_SECONDS
-            )
-            orphans = [
-                instance
-                for instance in listed
-                if str(instance.get("id")) != args.instance_id
-                and _is_gpu_burst(instance)
-                and _state(instance) == "RUNNING"
-            ]
-            check("no_orphan_running", not orphans, f"{len(orphans)} orphan(s)")
-        except (SmokeFailure, OSError, ValueError) as exc:
-            check("no_orphan_running", False, str(exc))
+            final_state = "UNKNOWN"
+            try:
+                emergency_deadline = Deadline(EMERGENCY_STOP_TIMEOUT_SECONDS, monotonic)
+                while final_state != "STOPPED":
+                    emergency_deadline.check("waiting for compensating STOPPED")
+                    final_instance = oci.get_instance(
+                        args.instance_id,
+                        timeout=emergency_deadline.timeout(OCI_CALL_TIMEOUT_SECONDS),
+                    )
+                    final_state = _state(final_instance)
+                    _record_transition(
+                        transitions,
+                        final_state,
+                        elapsed=deadline.elapsed(),
+                        now=now,
+                    )
+                    if final_state != "STOPPED":
+                        sleep(POLL_SECONDS)
+                check("instance_stopped_finally", True, final_state)
+            except (SmokeFailure, OSError, ValueError) as exc:
+                check(
+                    "instance_stopped_finally",
+                    False,
+                    f"{exc}; last state {final_state}",
+                )
+
+            try:
+                listed = oci.list_instances(
+                    compartment_id, timeout=OCI_CALL_TIMEOUT_SECONDS
+                )
+                orphans = [
+                    instance
+                    for instance in listed
+                    if str(instance.get("id")) != args.instance_id
+                    and _is_gpu_burst(instance)
+                    and _state(instance) == "RUNNING"
+                ]
+                check("no_orphan_running", not orphans, f"{len(orphans)} orphan(s)")
+            except (SmokeFailure, OSError, ValueError) as exc:
+                check("no_orphan_running", False, str(exc))
 
     evidence_elapsed_seconds = deadline.elapsed()
     running_seconds = _running_seconds(
@@ -901,7 +983,7 @@ def run_smoke(
         check["name"] == "instance_stopped_finally" and check["passed"]
         for check in checks
     )
-    running_seconds_ongoing = not stopped_finally
+    running_seconds_ongoing = instance_validated and not stopped_finally
     cost_estimate_ongoing = running_seconds_ongoing
     measurements = {
         "running_seconds": running_seconds,
@@ -990,6 +1072,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--service-base-url", default="https://description-service.invalid"
     )
+    parser.add_argument(
+        "--service-api-key-env", default="ACX_DESCRIPTION_API_KEY", metavar="NAME"
+    )
     parser.add_argument("--instance-id", default="<burst-instance-ocid>")
     parser.add_argument("--oci-bin", default="oci")
     parser.add_argument("--gpu-state-json", default="/run/acx/gpu-state.json")
@@ -1016,23 +1101,31 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _validate_args(args: argparse.Namespace) -> str:
+def _validate_args(args: argparse.Namespace) -> tuple[str, str]:
     if args.max_seconds <= 0 or args.max_seconds > MAX_LIVE_SECONDS:
         raise PreflightRefusal(
             f"--max-seconds must be between 1 and {MAX_LIVE_SECONDS}"
         )
+    environment_options = (
+        ("--wp-app-password-env", args.wp_app_password_env),
+        ("--service-api-key-env", args.service_api_key_env),
+    )
+    for option, environment_name in environment_options:
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", environment_name):
+            raise PreflightRefusal(f"{option} must name a valid environment variable")
     if not args.live:
-        return "dry-run-only"
+        return "dry-run-only", "dry-service-key"
     if os.environ.get("ACX_GPU_SMOKE_CONFIRM") != "RUN":
         raise PreflightRefusal("live mode requires ACX_GPU_SMOKE_CONFIRM=RUN")
-    if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", args.wp_app_password_env):
-        raise PreflightRefusal(
-            "--wp-app-password-env must name a valid environment variable"
-        )
     password = os.environ.get(args.wp_app_password_env)
     if not password:
         raise PreflightRefusal(
             f"live mode requires a password in {args.wp_app_password_env}"
+        )
+    service_api_key = os.environ.get(args.service_api_key_env)
+    if not service_api_key:
+        raise PreflightRefusal(
+            f"live mode requires a service API key in {args.service_api_key_env}"
         )
     resolved = shutil.which(args.oci_bin)
     if resolved is None:
@@ -1040,7 +1133,7 @@ def _validate_args(args: argparse.Namespace) -> str:
     args.oci_bin = resolved
     if args.instance_id == "<burst-instance-ocid>":
         raise PreflightRefusal("replace <burst-instance-ocid> before live mode")
-    return password
+    return password, service_api_key
 
 
 def main(
@@ -1051,7 +1144,7 @@ def main(
 ) -> int:
     args = build_parser().parse_args(argv)
     try:
-        app_password = _validate_args(args)
+        app_password, service_api_key = _validate_args(args)
     except PreflightRefusal as exc:
         print(f"REFUSED: {exc}", file=sys.stderr)
         return 2
@@ -1076,7 +1169,12 @@ def main(
                 "now": clock.now,
             }
         result = run_smoke(
-            args, client=client, oci=oci, app_password=app_password, **kwargs
+            args,
+            client=client,
+            oci=oci,
+            app_password=app_password,
+            service_api_key=service_api_key,
+            **kwargs,
         )
     finally:
         client.close()

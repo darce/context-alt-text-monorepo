@@ -54,6 +54,7 @@ if str(SERVICE_ROOT) not in sys.path:
 
 # Load the deployment profile after bootstrapping the repo-local service package.
 _profiles = import_module("scene.config.profiles")
+_settings = import_module("scene.config.settings")
 DescriptionProfile = _profiles.DescriptionProfile
 get_profile_spec = _profiles.get_profile_spec
 DescribeRunItemResponse = import_module("scene.interface_adapters.http.schemas.responses").DescribeRunItemResponse
@@ -82,13 +83,22 @@ HTTP_CALL_TIMEOUT_SECONDS = 15.0
 POLL_SECONDS = 2.0
 EMERGENCY_STOP_TIMEOUT_SECONDS = 120.0
 MAX_EMERGENCY_STOP_ATTEMPTS = 4
-MAX_LIVE_SECONDS = 900
+MAX_LIVE_SECONDS = 1200
 GPU_USD_PER_HOUR = 2.0
 DEFAULT_EVIDENCE_DIR = ".workbay/tmp/gpu-burst-smoke"
-WARM_START_BUDGET_SECONDS = 101
+WARM_START_BUDGET_SECONDS = float(_settings.DEFAULT_GPU_WARMUP_TIMEOUT_SECONDS)
 IDLE_REAPER_SECONDS = 300
 REAPER_BUDGET_SECONDS = 120
 FENCE_BUDGET_SECONDS = 2
+AUDIT_INDEX_TIMEOUT_SECONDS = 60.0
+MIN_COMPOSED_BUDGET_SECONDS = (
+    WARM_START_BUDGET_SECONDS
+    + IDLE_REAPER_SECONDS
+    + REAPER_BUDGET_SECONDS
+    + FENCE_BUDGET_SECONDS
+    + AUDIT_INDEX_TIMEOUT_SECONDS
+)
+POST_STOP_HEALTH_TIMEOUT_SECONDS = 20.0
 
 
 class SmokeFailure(RuntimeError):  # noqa: N818 - public smoke contract name
@@ -229,7 +239,12 @@ class SubprocessOci:
             )
             return json.loads(result.stdout)
         except (OSError, subprocess.SubprocessError, json.JSONDecodeError) as exc:
-            raise SmokeFailure(f"OCI command failed: {exc}") from exc
+            output_details = ""
+            if isinstance(exc, subprocess.CalledProcessError):
+                stdout_tail = str(exc.stdout or exc.output or "")[-500:]
+                stderr_tail = str(exc.stderr or "")[-500:]
+                output_details = f"; stdout tail: {stdout_tail!r}; stderr tail: {stderr_tail!r}"
+            raise SmokeFailure(f"OCI command failed: {exc}{output_details}") from exc
 
     def get_instance(self, instance_id: str, *, timeout: float) -> dict[str, Any]:
         payload = self._run(
@@ -318,12 +333,19 @@ class DryScenario:
     item_tiers: list[str | None] = field(
         default_factory=lambda: [
             None,
-            "provisional_cpu",
-            "provisional_cpu",
+            None,
+            None,
             "final_gpu",
         ]
     )
-    result_generations: list[int] = field(default_factory=lambda: [0, 1, 1, 2])
+    result_generations: list[int] = field(default_factory=lambda: [0, 0, 0, 1])
+    load_snapshot_after_trigger: dict[str, Any] | None = field(
+        default_factory=lambda: {
+            "queue_depth": 0,
+            "in_flight": 0,
+            "batch_in_progress": True,
+        }
+    )
 
 
 def _dry_item_payload(
@@ -503,12 +525,16 @@ class FakeOci:
         return [
             {
                 "eventType": "com.oraclecloud.computeapi.instanceaction.end",
+                "eventId": f"dry-start-event-{index}",
                 "data": {
                     "resourceId": instance_id,
-                    "request": {"parameters": {"action": ["START"]}},
+                    "request": {
+                        "id": f"dry-start-request-{index}",
+                        "parameters": {"action": ["START"]},
+                    },
                 },
             }
-            for _ in range(self.start_action_count)
+            for index in range(self.start_action_count)
         ]
 
 
@@ -537,6 +563,10 @@ def _is_gpu_burst(instance: dict[str, Any]) -> bool:
 
 
 def _is_start_event(event: dict[str, Any], instance_id: str) -> bool:
+    # OCI Audit emits begin/end records for one action.  Only the completed
+    # record is authoritative, otherwise a single START is counted twice.
+    if not str(event.get("eventType") or "").endswith(".end"):
+        return False
     data = event.get("data")
     if not isinstance(data, dict) or data.get("resourceId") != instance_id:
         return False
@@ -549,6 +579,37 @@ def _is_start_event(event: dict[str, Any], instance_id: str) -> bool:
     action = parameters.get("action")
     actions = action if isinstance(action, list) else [action]
     return any(str(value).upper() == "START" for value in actions)
+
+
+def _start_event_identity(event: dict[str, Any]) -> str:
+    data = event.get("data")
+    request = data.get("request") if isinstance(data, dict) else None
+    request_id = request.get("id") if isinstance(request, dict) else None
+    return str(request_id or event.get("eventId") or json.dumps(event, sort_keys=True))
+
+
+def _unique_start_events(events: Sequence[dict[str, Any]], instance_id: str) -> list[dict[str, Any]]:
+    unique: dict[str, dict[str, Any]] = {}
+    for event in events:
+        if _is_start_event(event, instance_id):
+            unique.setdefault(_start_event_identity(event), event)
+    return list(unique.values())
+
+
+def _load_snapshot_has_fresh_work(snapshot: dict[str, Any], *, triggered_at: datetime) -> tuple[bool, str]:
+    if snapshot.get("availability") != "available" or not isinstance(snapshot.get("value"), dict):
+        return False, f"snapshot {snapshot.get('availability', 'invalid')} after trigger"
+    value = snapshot["value"]
+    written_at = value.get("written_at")
+    fresh = isinstance(written_at, (int, float)) and not isinstance(written_at, bool)
+    fresh = fresh and float(written_at) >= triggered_at.timestamp()
+    counts = (value.get("queue_depth"), value.get("in_flight"))
+    counts_valid = all(isinstance(count, int) and not isinstance(count, bool) and count >= 0 for count in counts)
+    batch_value = value.get("batch_in_progress")
+    batch_valid = isinstance(batch_value, bool)
+    pending = sum(counts) + int(batch_value) if counts_valid and batch_valid else 0
+    observed = bool(fresh and counts_valid and batch_valid and pending > 0)
+    return observed, (f"fresh={fresh}; pending={pending}; batch_in_progress={batch_value!r}; written_at={written_at!r}")
 
 
 def _request_json(
@@ -693,6 +754,7 @@ def run_smoke(
     monotonic: Callable[[], float] = time.monotonic,
     sleep: Callable[[float], None] = time.sleep,
     now: Callable[[], datetime] = _utc_now,
+    load_snapshot_reader: Callable[[str], dict[str, Any]] = _load_optional_json,
 ) -> SmokeResult:
     """Run the shared dry/live orchestration and always write evidence."""
 
@@ -714,7 +776,12 @@ def run_smoke(
     instance_validated = False
     compartment_id = "unavailable"
     gpu_snapshot = _load_optional_json(args.gpu_state_json)
-    load_snapshot = _load_optional_json(args.load_json)
+    load_snapshot_before_trigger = load_snapshot_reader(args.load_json)
+    load_snapshot_after_trigger: dict[str, Any] = {
+        "availability": "unavailable",
+        "path": args.load_json,
+    }
+    phase_durations_seconds: dict[str, float] = {}
 
     def check(name: str, passed: bool, detail: str) -> None:
         checks.append({"name": name, "passed": bool(passed), "detail": detail})
@@ -732,13 +799,13 @@ def run_smoke(
         )
         return healthy
 
-    def poll_health(phase: str) -> None:
+    def poll_health(phase: str, *, request_deadline: Deadline | None = None) -> None:
         try:
             health = _request_json(
                 client,
                 "GET",
                 f"{args.service_base_url.rstrip('/')}/health/detailed",
-                deadline=deadline,
+                deadline=request_deadline or deadline,
                 headers={"Authorization": f"Bearer {service_api_key}"},
             )
         except SmokeFailure as exc:
@@ -842,9 +909,18 @@ def run_smoke(
         if not isinstance(candidate_run_id, str) or not candidate_run_id:
             raise SmokeFailure("WordPress submit response has no run_id")
         run_id = candidate_run_id
+        triggered_at = now()
+        trigger_elapsed = deadline.elapsed()
         trigger = getattr(oci, "trigger", None)
         if callable(trigger):
             trigger()
+
+        load_snapshot_after_trigger = load_snapshot_reader(args.load_json)
+        load_observed, load_detail = _load_snapshot_has_fresh_work(
+            load_snapshot_after_trigger,
+            triggered_at=triggered_at,
+        )
+        check("load_snapshot_observed_after_trigger", load_observed, load_detail)
 
         running_observed = False
         terminal_before_running: set[int | str] = set()
@@ -911,6 +987,9 @@ def run_smoke(
             warm_started,
             "RUNNING" if warm_started else "deadline before RUNNING",
         )
+        if warm_started:
+            phase_durations_seconds["warm_start"] = round(deadline.elapsed() - trigger_elapsed, 3)
+        processing_started = deadline.elapsed()
 
         while warm_started and run_status not in TERMINAL_RUN_STATUSES:
             try:
@@ -938,6 +1017,7 @@ def run_smoke(
                 sleep(POLL_SECONDS)
 
         check("run_terminal_success", run_status in SUCCESS_RUN_STATUSES, run_status)
+        phase_durations_seconds["processing"] = round(deadline.elapsed() - processing_started, 3)
         check(
             "no_item_terminal_before_running",
             not terminal_before_running,
@@ -1049,6 +1129,7 @@ def run_smoke(
         begin_reaper = getattr(oci, "begin_reaper", None)
         if callable(begin_reaper):
             begin_reaper()
+        reaper_started = deadline.elapsed()
         reaper_stopped = False
         while not reaper_stopped:
             try:
@@ -1072,24 +1153,52 @@ def run_smoke(
             reaper_stopped,
             "STOPPED" if reaper_stopped else "deadline before STOPPED",
         )
-        start_events = oci.list_start_events(
-            compartment_id,
-            args.instance_id,
-            start_time=run_window_started_at,
-            end_time=_iso_utc(now()),
-            timeout=deadline.timeout(OCI_CALL_TIMEOUT_SECONDS),
-        )
+        phase_durations_seconds["idle_reaper"] = round(deadline.elapsed() - reaper_started, 3)
+        audit_started = deadline.elapsed()
+        audit_deadline = Deadline(AUDIT_INDEX_TIMEOUT_SECONDS, monotonic)
+        start_events: list[dict[str, Any]] = []
+        audit_attempted = False
+        while not start_events:
+            try:
+                if audit_attempted:
+                    audit_deadline.check("waiting for OCI Audit START event indexing")
+                    deadline.check("waiting for OCI Audit START event indexing")
+                audit_timeout = min(
+                    audit_deadline.timeout(OCI_CALL_TIMEOUT_SECONDS),
+                    deadline.timeout(OCI_CALL_TIMEOUT_SECONDS),
+                )
+            except SmokeFailure:
+                break
+            audit_attempted = True
+            raw_start_events = oci.list_start_events(
+                compartment_id,
+                args.instance_id,
+                start_time=run_window_started_at,
+                end_time=_iso_utc(now()),
+                timeout=audit_timeout,
+            )
+            start_events = _unique_start_events(raw_start_events, args.instance_id)
+            if start_events:
+                break
+            sleep(POLL_SECONDS)
+        audit_lag_seconds = round(deadline.elapsed() - audit_started, 3)
+        phase_durations_seconds["audit_index"] = audit_lag_seconds
         start_action_evidence = {
             "source": "oci_audit",
-            "status": "observed",
+            "status": "observed" if start_events else "not_indexed",
             "count": len(start_events),
+            "audit_lag_seconds": audit_lag_seconds,
             "window_start": run_window_started_at,
             "window_end": _iso_utc(now()),
         }
         check(
             "exactly_one_start_action",
             len(start_events) == 1,
-            f"observed {len(start_events)} authoritative START action(s)",
+            (
+                f"observed {len(start_events)} authoritative START action(s)"
+                if start_events
+                else f"zero START events indexed after {audit_lag_seconds:.3f}s"
+            ),
         )
     except PreflightRefusal:
         preflight_refused = True
@@ -1174,7 +1283,10 @@ def run_smoke(
                 )
 
             with contextlib.suppress(SmokeFailure, OSError, ValueError):
-                poll_health("after_stop")
+                poll_health(
+                    "after_stop",
+                    request_deadline=Deadline(POST_STOP_HEALTH_TIMEOUT_SECONDS, monotonic),
+                )
 
             try:
                 listed = oci.list_instances(compartment_id, timeout=OCI_CALL_TIMEOUT_SECONDS)
@@ -1238,12 +1350,25 @@ def run_smoke(
         "service_health_samples": service_health_samples,
         "denylist_verdicts": denylist_verdicts,
         "gpu_state_json": gpu_snapshot,
-        "load_json": load_snapshot,
+        "load_json": {
+            "before_trigger": load_snapshot_before_trigger,
+            "after_trigger": load_snapshot_after_trigger,
+        },
+        "phase_durations_seconds": phase_durations_seconds,
+        "budget_seconds": {
+            "warm_start": WARM_START_BUDGET_SECONDS,
+            "idle_reaper": IDLE_REAPER_SECONDS,
+            "reaper": REAPER_BUDGET_SECONDS,
+            "fence": FENCE_BUDGET_SECONDS,
+            "audit_index": AUDIT_INDEX_TIMEOUT_SECONDS,
+            "max": args.max_seconds,
+        },
         "measurements": measurements,
         "running_seconds_ongoing": running_seconds_ongoing,
         "cost_estimate_usd": cost,
         "cost_estimate_ongoing": cost_estimate_ongoing,
         "checks": checks,
+        "errors": [str(check["detail"]) for check in checks if not check["passed"]],
     }
     _write_evidence(args.evidence_out, evidence, force=args.force)
     _print_assertion_table(checks)
@@ -1256,6 +1381,8 @@ def run_smoke(
     remaining_budget_seconds -= reaper_budget_seconds
     fence_budget_seconds = min(FENCE_BUDGET_SECONDS, remaining_budget_seconds)
     remaining_budget_seconds -= fence_budget_seconds
+    audit_budget_seconds = min(AUDIT_INDEX_TIMEOUT_SECONDS, remaining_budget_seconds)
+    remaining_budget_seconds -= audit_budget_seconds
     inference_budget_seconds = remaining_budget_seconds
     budget_total = (
         warm_start_budget_seconds
@@ -1263,11 +1390,12 @@ def run_smoke(
         + idle_reaper_seconds
         + reaper_budget_seconds
         + fence_budget_seconds
+        + audit_budget_seconds
     )
     print(
         f"\nBudget: {budget_total}s = warm-start {warm_start_budget_seconds}s + "
         f"inference {inference_budget_seconds}s + idle {idle_reaper_seconds}s + "
-        f"reap {reaper_budget_seconds}s + fence {fence_budget_seconds}s"
+        f"reap {reaper_budget_seconds}s + fence {fence_budget_seconds}s + audit {audit_budget_seconds}s"
     )
     print(
         f"Estimated GPU cost: ${cost:.6f} ({running_seconds:.3f}s RUNNING at ${GPU_USD_PER_HOUR:.2f}/hour; "
@@ -1305,7 +1433,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-seconds", type=int, default=MAX_LIVE_SECONDS)
     parser.add_argument(
         "--evidence-out",
-        default=(f"{DEFAULT_EVIDENCE_DIR}/GPUSMOKE-1-evidence-{datetime.now(UTC).date().isoformat()}.json"),
+        default=(f"{DEFAULT_EVIDENCE_DIR}/GPUSMOKE-1-evidence-{datetime.now(UTC):%Y%m%dT%H%M%SZ}.json"),
     )
     parser.add_argument(
         "--force",
@@ -1339,22 +1467,31 @@ def _validate_args(args: argparse.Namespace) -> tuple[str, str]:
     for option, environment_name in environment_options:
         if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", environment_name):
             raise PreflightRefusal(f"{option} must name a valid environment variable")
-    evidence_target = _evidence_path(args.evidence_out)
-    if evidence_target.exists() and not args.force:
-        raise PreflightRefusal(f"evidence output already exists: {evidence_target}; pass --force to overwrite")
     if not args.live:
+        evidence_target = _evidence_path(args.evidence_out)
+        if evidence_target.exists() and not args.force:
+            raise PreflightRefusal(f"evidence output already exists: {evidence_target}; pass --force to overwrite")
         return "dry-run-only", "dry-service-key"
     if os.environ.get("ACX_GPU_SMOKE_CONFIRM") != "RUN":
         raise PreflightRefusal("live mode requires ACX_GPU_SMOKE_CONFIRM=RUN")
-    service_url = urlsplit(args.service_base_url)
-    if (
-        service_url.scheme not in {"http", "https"}
-        or not service_url.hostname
-        or service_url.hostname.endswith(".invalid")
-        or "<" in args.service_base_url
-        or ">" in args.service_base_url
+    if args.max_seconds < MIN_COMPOSED_BUDGET_SECONDS:
+        raise PreflightRefusal(
+            f"--max-seconds must cover the {MIN_COMPOSED_BUDGET_SECONDS:g}s composed "
+            "warm-start + idle + reap + fence contract"
+        )
+    for option, value, purpose in (
+        ("--service-base-url", args.service_base_url, "description service"),
+        ("--wp-base-url", args.wp_base_url, "WordPress service"),
     ):
-        raise PreflightRefusal("--service-base-url must explicitly name the description service")
+        parsed_url = urlsplit(value)
+        if (
+            parsed_url.scheme not in {"http", "https"}
+            or not parsed_url.hostname
+            or parsed_url.hostname.endswith(".invalid")
+            or "<" in value
+            or ">" in value
+        ):
+            raise PreflightRefusal(f"{option} must explicitly name the {purpose}")
     password = os.environ.get(args.wp_app_password_env)
     if not password:
         raise PreflightRefusal(f"live mode requires a password in {args.wp_app_password_env}")
@@ -1367,6 +1504,9 @@ def _validate_args(args: argparse.Namespace) -> tuple[str, str]:
     args.oci_bin = resolved
     if args.instance_id == "<burst-instance-ocid>":
         raise PreflightRefusal("replace <burst-instance-ocid> before live mode")
+    evidence_target = _evidence_path(args.evidence_out)
+    if evidence_target.exists() and not args.force:
+        raise PreflightRefusal(f"evidence output already exists: {evidence_target}; pass --force to overwrite")
     return password, service_api_key
 
 
@@ -1389,16 +1529,29 @@ def main(
         clock = None
     else:
         clock = FastClock()
-        client = client_factory(transport=make_mock_transport(DryScenario()), follow_redirects=False)
+        scenario = DryScenario()
+        client = client_factory(transport=make_mock_transport(scenario), follow_redirects=False)
         oci = FakeOci()
 
     try:
         kwargs: dict[str, Any] = {}
         if clock is not None:
+
+            def dry_load_snapshot_reader(path: str) -> dict[str, Any]:
+                return {
+                    "availability": "available",
+                    "path": path,
+                    "value": {
+                        **(scenario.load_snapshot_after_trigger or {}),
+                        "written_at": clock.now().timestamp(),
+                    },
+                }
+
             kwargs = {
                 "monotonic": clock.monotonic,
                 "sleep": clock.sleep,
                 "now": clock.now,
+                "load_snapshot_reader": dry_load_snapshot_reader,
             }
         result = run_smoke(
             args,

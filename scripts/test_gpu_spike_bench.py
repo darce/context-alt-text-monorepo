@@ -12,7 +12,8 @@ import pytest
 # Allow `import gpu_spike_bench` when pytest collects from scripts/.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from gpu_spike_bench import (  # noqa: E402
+import gpu_spike_bench as bench
+from gpu_spike_bench import (
     ARTIFACT_STATUS_MEASURED,
     ARTIFACT_STATUS_PENDING,
     LIVE_MEASUREMENT_SOURCE,
@@ -27,6 +28,7 @@ from gpu_spike_bench import (  # noqa: E402
     build_spike_artifact,
     default_artifact_path,
     dry_run_plan,
+    endpoint_ready,
     main,
     mean,
     percentile,
@@ -35,7 +37,6 @@ from gpu_spike_bench import (  # noqa: E402
     run_throughput,
     run_warm_start_loop,
 )
-
 
 # ---------------------------------------------------------------------------
 # Fakes
@@ -75,6 +76,10 @@ class FakeActuator:
         self.stop_polls_until_stopped = 0
         self._pending_start_polls = 0
         self._pending_stop_polls = 0
+
+    def verify_bench_dedicated(self, instance_id: str, expected_tag: str) -> None:
+        if expected_tag != "purpose=gpu-spike-bench":
+            raise BenchError(f"unexpected dedicated tag for {instance_id}")
 
     def start(self, instance_id: str) -> None:
         self._start_count += 1
@@ -137,8 +142,21 @@ class FakeHttp:
         self._ready_probes += 1
         if self.advance_clock is not None:
             self.advance_clock.advance(0.01)
-        if self._ready_probes > self.ready_after and url.rstrip("/").endswith("/v1/models"):
-            return HttpResponse(status_code=200, body=b'{"data":[]}')
+        if self._ready_probes > self.ready_after and url.rstrip("/").endswith(
+            "/v1/models"
+        ):
+            return HttpResponse(
+                status_code=200,
+                body=json.dumps(
+                    {
+                        "data": [
+                            {"id": "m"},
+                            {"id": "expected"},
+                            {"id": "Qwen3-VL-30B-A3B-Instruct"},
+                        ]
+                    }
+                ).encode(),
+            )
         return HttpResponse(status_code=503, body=b"not ready")
 
     def post(
@@ -156,15 +174,18 @@ class FakeHttp:
             return HttpResponse(status_code=500, body=b"boom")
         if url.rstrip("/").endswith("/v1/chat/completions"):
             # Readiness fallback (text-only) or real image completion.
-            if self._ready_probes <= self.ready_after and "image_url" not in str(json_body):
+            if self._ready_probes <= self.ready_after and "image_url" not in str(
+                json_body
+            ):
                 return HttpResponse(status_code=503, body=b"not ready")
             return HttpResponse(
                 status_code=self.completion_status,
                 body=json.dumps(
                     {
+                        "model": json_body["model"],
                         "choices": [
                             {"message": {"content": "A test image description."}}
-                        ]
+                        ],
                     }
                 ).encode(),
             )
@@ -242,6 +263,9 @@ def test_build_spike_artifact_zero_nulls_and_status_flip() -> None:
         warm_start=warm,
         throughput=thruput,
         model_id="Qwen3-VL-30B-A3B-Instruct",
+        shape="test-shape",
+        quantization="test-quantization",
+        model_path="/test/model.gguf",
         boot_volume_gb=400,
         vpus_per_gb=120,
         a10_quota_confirmed=True,
@@ -272,6 +296,10 @@ def test_build_spike_artifact_zero_nulls_and_status_flip() -> None:
     assert measurements["shutdown_seconds"]["samples"] == [4.0, 5.0, 6.0, 7.0, 8.0]
     assert artifact["boot_volume_size_in_gbs"] == 400
     assert artifact["boot_volume_vpus_per_gb"] == 120
+    assert artifact["shape"] == "test-shape"
+    assert artifact["measurement_candidate"]["quantization"] == "test-quantization"
+    assert artifact["measurement_candidate"]["model_path"] == "/test/model.gguf"
+    assert "estimated_model_bytes_gb" not in artifact["measurement_candidate"]
     assert artifact["oci_capacity"]["a10_quota_confirmed"] is True
     assert_no_null_measurement_values(artifact)
 
@@ -312,6 +340,9 @@ def test_warm_start_pass_fail_vs_target() -> None:
         warm_start=pass_result,
         throughput=ThroughputResult([1.0], 1.0, 1.0, 1.0),
         model_id="m",
+        shape="test-shape",
+        quantization="test-quantization",
+        model_path="/test/model.gguf",
         boot_volume_gb=400,
         vpus_per_gb=120,
     )
@@ -320,12 +351,18 @@ def test_warm_start_pass_fail_vs_target() -> None:
         warm_start=fail_result,
         throughput=ThroughputResult([1.0], 1.0, 1.0, 1.0),
         model_id="m",
+        shape="test-shape",
+        quantization="test-quantization",
+        model_path="/test/model.gguf",
         boot_volume_gb=400,
         vpus_per_gb=120,
     )
     assert pass_art["measurements"]["warm_start_p95_seconds"]["meets_target"] is True
     assert fail_art["measurements"]["warm_start_p95_seconds"]["meets_target"] is False
-    assert fail_art["measurements"]["warm_start_p95_seconds"]["value"] > WARM_START_P95_TARGET_SECONDS
+    assert (
+        fail_art["measurements"]["warm_start_p95_seconds"]["value"]
+        > WARM_START_P95_TARGET_SECONDS
+    )
 
 
 def test_default_artifact_path_is_dated() -> None:
@@ -355,6 +392,10 @@ def test_committed_artifacts_only_reconstruct_filename_bounded_provenance() -> N
     for filename, fields in expected.items():
         artifact = json.loads((artifact_dir / filename).read_text())
         assert artifact["provenance_note"] == "reconstructed from filename"
+        assert (
+            artifact["measurements"]["seconds_per_image"]["sample_size_note"]
+            == "n=1 image"
+        )
         for key, value in fields.items():
             assert artifact[key] == value
 
@@ -365,9 +406,7 @@ def test_committed_artifacts_only_reconstruct_filename_bounded_provenance() -> N
         (artifact_dir / "VLM-3-gpu-spike-2026-07-14-400gb.json").read_text()
     )
     assert "boot_volume_vpus_per_gb" not in json.loads(
-        (
-            artifact_dir / "VLM-3-gpu-spike-2026-07-14-750gb-balanced.json"
-        ).read_text()
+        (artifact_dir / "VLM-3-gpu-spike-2026-07-14-750gb-balanced.json").read_text()
     )
 
 
@@ -388,11 +427,16 @@ def test_documentation_dispositions_preserve_evidence_boundaries() -> None:
     )
     assert "n=3 warm starts" in report
     assert "n=1 image" in report
+    assert "Throughput is excellent" not in report
+    assert "400 GB @ 30 VPU | no committed artifact; unsupported" in report
     assert "acx-oci.env" not in topology
     assert "oci-lib.sh" not in topology
     assert "variables.tf" in topology
     assert "gpu-lifecycle-install.sh" in topology
     assert "AVAILABLE and used by the 2026-07-14 spike host" in topology
+
+    bench_script = repo_root / "scripts" / "gpu_spike_bench.py"
+    assert bench_script.stat().st_mode & 0o111
 
 
 # ---------------------------------------------------------------------------
@@ -424,6 +468,31 @@ def test_cold_boot_records_model_load_as_ready_minus_running() -> None:
     )
     assert actuator.state == "RUNNING"
     assert actuator.starts == ["ocid1.instance.oc1..gpu"]
+
+
+@pytest.mark.parametrize("body", [b'{"data":[]}', b'{"data":[{"id":"other"}]}'])
+def test_endpoint_ready_rejects_empty_or_wrong_model_list(body: bytes) -> None:
+    class ModelsHttp(FakeHttp):
+        def get(self, url: str, *, headers=None) -> HttpResponse:
+            return HttpResponse(status_code=200, body=body)
+
+    http = ModelsHttp()
+    assert endpoint_ready(http, "https://gpu.example", model_id="expected") is False
+    assert http.posts == []
+
+
+def test_endpoint_ready_fallback_requires_expected_model() -> None:
+    class FallbackHttp(FakeHttp):
+        def get(self, url: str, *, headers=None) -> HttpResponse:
+            return HttpResponse(status_code=503)
+
+        def post(self, url: str, *, json_body, headers=None) -> HttpResponse:
+            return HttpResponse(status_code=200, body=b'{"model":"other"}')
+
+    assert (
+        endpoint_ready(FallbackHttp(), "https://gpu.example", model_id="expected")
+        is False
+    )
 
 
 def test_warm_start_loop_collects_samples_and_percentiles() -> None:
@@ -523,6 +592,48 @@ def test_throughput_http_error_names_phase() -> None:
         assert exc_info.value.phase == "throughput"
 
 
+@pytest.mark.parametrize(
+    "body",
+    [
+        b"{}",
+        b'{"model":"expected","choices":[{"message":{"content":""}}]}',
+        b'{"model":"other","choices":[{"message":{"content":"caption"}}]}',
+    ],
+)
+def test_throughput_rejects_invalid_completion_envelope(
+    tmp_path: Path, body: bytes
+) -> None:
+    class EnvelopeHttp(FakeHttp):
+        def post(self, url: str, *, json_body, headers=None) -> HttpResponse:
+            return HttpResponse(status_code=200, body=body)
+
+    with pytest.raises(PhaseError, match="throughput"):
+        run_throughput(
+            http=EnvelopeHttp(),
+            clock=FakeClock(),
+            endpoint_url="https://gpu.example",
+            model_id="expected",
+            image_paths=_write_images(tmp_path, n=1),
+        )
+
+
+def test_throughput_records_valid_completion_envelope(tmp_path: Path) -> None:
+    clock = FakeClock()
+    http = FakeHttp()
+    http.advance_clock = clock
+    http.completion_duration_s = 0.25
+
+    result = run_throughput(
+        http=http,
+        clock=clock,
+        endpoint_url="https://gpu.example",
+        model_id="expected",
+        image_paths=_write_images(tmp_path, n=1),
+    )
+
+    assert result.samples == [pytest.approx(0.25)]
+
+
 # ---------------------------------------------------------------------------
 # Full run_bench orchestration
 # ---------------------------------------------------------------------------
@@ -549,6 +660,10 @@ def test_run_bench_writes_artifact_and_stops_on_success(tmp_path: Path) -> None:
         artifact_out=out,
         boot_volume_gb=400,
         vpus_per_gb=120,
+        shape="test-shape",
+        quantization="test-quantization",
+        model_path="/test/model.gguf",
+        bench_dedicated_tag="purpose=gpu-spike-bench",
         a10_quota_confirmed=True,
         poll_interval_seconds=0.1,
     )
@@ -564,6 +679,35 @@ def test_run_bench_writes_artifact_and_stops_on_success(tmp_path: Path) -> None:
     # finally STOP [RES-07]
     assert actuator.state == "STOPPED"
     assert actuator.stops  # at least warm-start + final
+
+
+def test_run_bench_rejects_non_dedicated_instance_before_stop(tmp_path: Path) -> None:
+    class NonDedicatedActuator(FakeActuator):
+        def verify_bench_dedicated(self, instance_id: str, expected_tag: str) -> None:
+            raise BenchError("dedicated tag mismatch")
+
+    actuator = NonDedicatedActuator("RUNNING")
+
+    with pytest.raises(PhaseError, match="dedicated"):
+        run_bench(
+            instance_ocid="test-instance",
+            endpoint_url="https://gpu.example",
+            model_id="m",
+            image_paths=_write_images(tmp_path, n=1),
+            warm_start_runs=1,
+            actuator=actuator,
+            http=FakeHttp(),
+            clock=FakeClock(),
+            artifact_out=tmp_path / "out.json",
+            boot_volume_gb=400,
+            vpus_per_gb=120,
+            shape="test-shape",
+            quantization="test-quantization",
+            model_path="/test/model.gguf",
+            bench_dedicated_tag="purpose=gpu-spike-bench",
+        )
+
+    assert actuator.stops == []
 
 
 def test_run_bench_finally_stops_on_mid_phase_error(tmp_path: Path) -> None:
@@ -589,6 +733,10 @@ def test_run_bench_finally_stops_on_mid_phase_error(tmp_path: Path) -> None:
             artifact_out=out,
             boot_volume_gb=400,
             vpus_per_gb=120,
+            shape="test-shape",
+            quantization="test-quantization",
+            model_path="/test/model.gguf",
+            bench_dedicated_tag="purpose=gpu-spike-bench",
             poll_interval_seconds=0.1,
         )
 
@@ -632,6 +780,10 @@ def test_run_bench_throughput_failure_still_stops(tmp_path: Path) -> None:
             artifact_out=tmp_path / "out.json",
             boot_volume_gb=400,
             vpus_per_gb=120,
+            shape="test-shape",
+            quantization="test-quantization",
+            model_path="/test/model.gguf",
+            bench_dedicated_tag="purpose=gpu-spike-bench",
             poll_interval_seconds=0.1,
         )
     assert exc_info.value.phase == "throughput"
@@ -661,6 +813,10 @@ def test_run_bench_final_stop_failure_raises_without_completed_artifact(
             artifact_out=out,
             boot_volume_gb=400,
             vpus_per_gb=120,
+            shape="test-shape",
+            quantization="test-quantization",
+            model_path="/test/model.gguf",
+            bench_dedicated_tag="purpose=gpu-spike-bench",
             poll_interval_seconds=0.1,
             lifecycle_timeout_seconds=0.2,
         )
@@ -701,6 +857,10 @@ def test_run_bench_final_stopped_poll_timeout_raises_without_artifact(
             artifact_out=out,
             boot_volume_gb=400,
             vpus_per_gb=120,
+            shape="test-shape",
+            quantization="test-quantization",
+            model_path="/test/model.gguf",
+            bench_dedicated_tag="purpose=gpu-spike-bench",
             poll_interval_seconds=0.1,
             lifecycle_timeout_seconds=0.2,
         )
@@ -741,6 +901,57 @@ def test_dry_run_prints_plan_and_touches_nothing(
     assert not (tmp_path / "should-not-exist.json").exists()
 
 
+def test_cli_defaults_to_dry_run_without_constructing_oci(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    def fail_if_constructed(*args, **kwargs):
+        raise AssertionError("OCI actuator must not be constructed")
+
+    monkeypatch.setattr(bench, "OciCliInstanceActuator", fail_if_constructed)
+
+    assert (
+        main(
+            [
+                "--instance-ocid",
+                "test-instance",
+                "--endpoint-url",
+                "https://gpu.example",
+            ]
+        )
+        == 0
+    )
+    assert json.loads(capsys.readouterr().out)["mode"] == "dry-run"
+
+
+def test_cli_live_without_confirmation_exits_before_constructing_oci(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    constructed = False
+
+    def fail_if_constructed(*args, **kwargs):
+        nonlocal constructed
+        constructed = True
+        raise AssertionError("OCI actuator must not be constructed")
+
+    monkeypatch.delenv("ACX_GPU_BENCH_LIVE", raising=False)
+    monkeypatch.setattr(bench, "OciCliInstanceActuator", fail_if_constructed)
+
+    with pytest.raises(SystemExit) as exc_info:
+        main(
+            [
+                "--instance-ocid",
+                "test-instance",
+                "--endpoint-url",
+                "https://gpu.example",
+                "--live",
+            ]
+        )
+
+    assert exc_info.value.code == 2
+    assert constructed is False
+    assert "ACX_GPU_BENCH_LIVE" in capsys.readouterr().err
+
+
 def test_dry_run_plan_helper_structure() -> None:
     plan = dry_run_plan(
         instance_ocid="ocid.x",
@@ -754,6 +965,10 @@ def test_dry_run_plan_helper_structure() -> None:
         serverless_gpu_available=False,
         boot_volume_gb=750,
         vpus_per_gb=10,
+        shape="test-shape",
+        quantization="test-quantization",
+        model_path="/test/model.gguf",
+        bench_dedicated_tag="purpose=gpu-spike-bench",
     )
     assert plan["warm_start_runs"] == 5
     assert plan["images"] == ["a.png"]
@@ -762,7 +977,8 @@ def test_dry_run_plan_helper_structure() -> None:
     assert any("RES-07" in p for p in plan["phases"])
 
 
-def test_cli_requires_image_without_dry_run() -> None:
+def test_cli_requires_image_without_dry_run(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ACX_GPU_BENCH_LIVE", "I-UNDERSTAND-THIS-COSTS-MONEY")
     with pytest.raises(SystemExit) as exc_info:
         main(
             [
@@ -770,16 +986,34 @@ def test_cli_requires_image_without_dry_run() -> None:
                 "ocid1.instance.oc1..gpu",
                 "--endpoint-url",
                 "http://gpu.example:8000",
+                "--live",
+                "--model-id",
+                "m",
+                "--boot-volume-gb",
+                "400",
+                "--vpus-per-gb",
+                "120",
+                "--shape",
+                "test-shape",
+                "--quantization",
+                "test-quantization",
+                "--model-path",
+                "/test/model.gguf",
+                "--bench-dedicated-tag",
+                "purpose=gpu-spike-bench",
             ]
         )
     assert exc_info.value.code == 2  # argparse error
 
 
 def test_cli_requires_hardware_provenance_for_live_run(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     image = _write_images(tmp_path, n=1)[0]
 
+    monkeypatch.setenv("ACX_GPU_BENCH_LIVE", "I-UNDERSTAND-THIS-COSTS-MONEY")
     with pytest.raises(SystemExit) as exc_info:
         main(
             [
@@ -789,11 +1023,14 @@ def test_cli_requires_hardware_provenance_for_live_run(
                 "http://gpu.example:8000",
                 "--image",
                 str(image),
+                "--live",
             ]
         )
 
     assert exc_info.value.code == 2
-    assert "--boot-volume-gb and --vpus-per-gb are required" in capsys.readouterr().err
+    error = capsys.readouterr().err
+    assert "--boot-volume-gb" in error
+    assert "--shape" in error
 
 
 def test_phase_error_message_names_phase() -> None:

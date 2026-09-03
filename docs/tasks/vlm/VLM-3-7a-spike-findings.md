@@ -11,8 +11,9 @@ its throughput p50/p95 has **n=1 image** and is not a distribution estimate.
 
 - **The A10 serves the model.** Qwen3-VL-30B Q4 fits 24 GB VRAM and serves an
   OpenAI-compatible endpoint. Core VLM-3 premise proven.
-- **Throughput is excellent: ~0.58 s/image** (n=1 image in each configuration;
-  plan assumed ~5 s — 9× better). Inference was never the bottleneck.
+- **Single-image throughput observation: ~0.58 s/image** (n=1 image in each
+  configuration). This sample size does not establish sustained throughput or
+  tail latency.
 - **Cold-start = model reload, and it is boot-volume-throughput-bound.** A scale-to-zero
   STOP clears VRAM + page cache, so every warm-start reloads the full ~18.6 GB from disk.
 
@@ -24,7 +25,7 @@ real scale-to-zero cost; compute is $0 between bursts).
 | Boot volume | disk throughput | model_load | warm-start p95 (n=3 warm starts) | ~$/mo | verdict |
 | --- | --- | --- | --- | --- | --- |
 | 100 GB @ 10 VPU (Balanced) | ~44 MB/s | 426 s | 443.9 s | ~$4 | ❌ |
-| 400 GB @ 30 VPU | ~175 MB/s | 107 s | 111 s | ~$31 | ❌ |
+| 400 GB @ 30 VPU | no committed artifact; unsupported | — | — | — | unsupported |
 | 750 GB @ 10 VPU (Balanced) | ~212 MB/s | 88 s | 106 s | ~$32 | ❌ |
 | 400 GB @ 60 VPU | ~264 MB/s | 70 s | 92.5 s | ~$51 | ❌ (by 2.5 s) |
 | **400 GB @ 120 VPU** | ~326 MB/s | 57 s | **85.1 s** | ~$92 | ✅ **only strict pass** |
@@ -34,8 +35,9 @@ Costs approximate — verify against the OCI price list. Formula:
 
 ## Analysis
 
-- **VPU returns are sublinear** (~5.8 / 4.4 / 2.7 MB/s per VPU at 30 / 60 / 120), so the
-  load stays disk-bound across the range; only 120 VPU clears 90 s.
+- **VPU returns are sublinear** in the supported 60/120 VPU artifacts
+  (~4.4 / 2.7 MB/s per VPU), so the load stays disk-bound across that range;
+  only 120 VPU clears 90 s.
 - **"Big Balanced volume" does NOT beat high-VPU** (disproven): 750 GB Balanced = 212 MB/s
   and 106 s p95 (n=3 warm starts), versus 400 GB @ 60 VPU = 264 MB/s.
   Balanced is not cheaper-per-MB/s at scale.
@@ -45,8 +47,9 @@ Costs approximate — verify against the OCI price list. Formula:
 
 - **Strict 90 s SLO →** `gpu_boot_volume_size_in_gbs=400`, `gpu_boot_volume_vpus_per_gb=120`
   (~$92/mo). The only clean pass.
-- **Relaxed target (recommended) →** `400 @ 30 VPU` or `750 Balanced` (~$31-32/mo,
-  ~106-111 s p95, n=3 warm starts per configuration). Justified because **warm-start is NOT user-facing** — the
+- **Relaxed target (recommended) →** `750 Balanced` (~$32/mo, ~106 s p95,
+  n=3 warm starts). The previously listed `400 @ 30 VPU` option has no committed
+  artifact and is unsupported. The relaxed target is justified because **warm-start is NOT user-facing** — the
   `provisional_cpu → final_gpu` async supersede returns a CPU answer instantly and
   upgrades it later. The 90 s target is likely too strict for a hidden warm-up.
 - **The biggest lever is the model, not the volume (→ 7b):** load time ∝ model bytes.

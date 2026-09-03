@@ -16,9 +16,10 @@ def test_check_gpu_snapshots_shell_suite() -> None:
         capture_output=True,
         text=True,
         check=False,
+        timeout=30,
     )
 
     output = result.stdout + result.stderr
-    assert result.returncode == 0, (
-        f"{suite} exited with {result.returncode}\n{output}"
-    )
+    assert result.returncode == 0, f"{suite} exited with {result.returncode}\n{output}"
+    assert "PASS: each environment directory must be API-writable" in output
+    assert output.rstrip().endswith("ALL PASS")

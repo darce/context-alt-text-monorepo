@@ -618,39 +618,50 @@ def test_reap_dry_run_neither_creates_nor_removes_lease_records(tmp_path: Path) 
 # --- CLI --------------------------------------------------------------------
 
 
-def test_cli_defaults_the_cap_on_rather_than_off() -> None:
+def test_cli_defaults_the_cap_on_rather_than_off(tmp_path: Path) -> None:
     """A backstop that ships disabled is not a backstop [RES-07]."""
-    args = _build_parser().parse_args(["--instance-id", "ocid1.x", "--load-json", "/tmp/x"])
+    load_dir = tmp_path / "load"
+    load_dir.mkdir()
+    args = _build_parser().parse_args(
+        ["--instance-id", "ocid1.x", "--load-dir", str(load_dir)]
+    )
     assert args.max_lease_seconds == 3600
+    assert args.load_dir == load_dir
 
 
-def test_cli_accepts_an_explicit_cap() -> None:
+def test_cli_accepts_an_explicit_cap(tmp_path: Path) -> None:
+    load_dir = tmp_path / "load"
+    load_dir.mkdir()
     args = _build_parser().parse_args(
         [
             "--instance-id",
             "ocid1.x",
-            "--load-json",
-            "/tmp/x",
+            "--load-dir",
+            str(load_dir),
             "--max-lease-seconds",
             "900",
         ]
     )
     assert args.max_lease_seconds == 900
+    assert args.load_dir == load_dir
 
 
 def test_cli_accepts_running_since_path_override(tmp_path: Path) -> None:
     path = tmp_path / "lease.json"
+    load_dir = tmp_path / "load"
+    load_dir.mkdir()
     args = _build_parser().parse_args(
         [
             "--instance-id",
             "instance-a",
-            "--load-json",
-            "/tmp/x",
+            "--load-dir",
+            str(load_dir),
             "--running-since-path",
             str(path),
         ]
     )
     assert args.running_since_path == path
+    assert args.load_dir == load_dir
 
 
 def test_cli_state_override_uses_running_since_without_oci_age_probe(tmp_path: Path, monkeypatch) -> None:

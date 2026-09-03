@@ -37,6 +37,7 @@ DEFAULT_WARM_START_RUNS = 5
 WARM_START_P95_TARGET_SECONDS = 90.0
 LIVE_MEASUREMENT_SOURCE = "live_oci_gpu_spike_bench"
 ARTIFACT_STATUS_MEASURED = "live_oci_measurement_complete"
+ARTIFACT_STATUS_PROVENANCE_MISMATCH = "live_oci_measurement_provenance_mismatch"
 ARTIFACT_STATUS_PENDING = "local_infra_scaffold_pending_live_oci_measurement"
 SCHEMA = "acx-gpu-spike/v1"
 DEFAULT_POLL_INTERVAL_S = 2.0
@@ -74,8 +75,17 @@ class PhaseError(BenchError):
 # ---------------------------------------------------------------------------
 
 
+@dataclass(frozen=True)
+class InstanceObservation:
+    shape: str
+    boot_volume_gb: int
+    vpus_per_gb: int
+
+
 class InstanceActuator(Protocol):
     def verify_bench_dedicated(self, instance_id: str) -> None: ...
+
+    def describe_instance(self, instance_id: str) -> InstanceObservation | None: ...
 
     def start(self, instance_id: str) -> None: ...
 
@@ -206,17 +216,90 @@ class OciCliInstanceActuator:
                 f"{key}={expected_value}"
             )
 
+    def describe_instance(self, instance_id: str) -> InstanceObservation:
+        instance = self._get_instance_data(instance_id)
+        shape = instance.get("shape")
+        compartment_id = instance.get("compartment-id") or instance.get(
+            "compartment_id"
+        )
+        availability_domain = instance.get("availability-domain") or instance.get(
+            "availability_domain"
+        )
+        if (
+            not isinstance(shape, str)
+            or not shape
+            or not isinstance(compartment_id, str)
+            or not compartment_id
+            or not isinstance(availability_domain, str)
+            or not availability_domain
+        ):
+            raise BenchError(
+                "oci instance get omitted shape, compartment, or availability domain"
+            )
+
+        attachments = self._run_cli_data(
+            [
+                "compute",
+                "boot-volume-attachment",
+                "list",
+                "--instance-id",
+                instance_id,
+                "--compartment-id",
+                compartment_id,
+                "--availability-domain",
+                availability_domain,
+            ]
+        )
+        if not isinstance(attachments, list):
+            raise BenchError("oci boot-volume attachment list returned invalid data")
+        boot_volume_id: str | None = None
+        for attachment in attachments:
+            if not isinstance(attachment, dict):
+                continue
+            candidate = attachment.get("boot-volume-id") or attachment.get(
+                "boot_volume_id"
+            )
+            if isinstance(candidate, str) and candidate:
+                boot_volume_id = candidate
+                break
+        if boot_volume_id is None:
+            raise BenchError("oci instance has no attached boot volume")
+
+        volume = self._run_cli_data(
+            ["bv", "boot-volume", "get", "--boot-volume-id", boot_volume_id]
+        )
+        if not isinstance(volume, dict):
+            raise BenchError("oci boot-volume get returned invalid data")
+        size = volume.get("size-in-gbs") or volume.get("size_in_gbs")
+        vpus = volume.get("vpus-per-gb") or volume.get("vpus_per_gb")
+        if not isinstance(size, int) or isinstance(size, bool):
+            raise BenchError("oci boot-volume get omitted integer size-in-gbs")
+        if not isinstance(vpus, int) or isinstance(vpus, bool):
+            raise BenchError("oci boot-volume get omitted integer vpus-per-gb")
+        return InstanceObservation(
+            shape=shape,
+            boot_volume_gb=size,
+            vpus_per_gb=vpus,
+        )
+
     def _get_instance_data(self, instance_id: str) -> dict[str, Any]:
-        cmd = [
-            self._oci_bin,
-            "compute",
-            "instance",
-            "get",
-            "--instance-id",
-            instance_id,
-            "--output",
-            "json",
-        ]
+        data = self._run_cli_data(
+            [
+                "compute",
+                "instance",
+                "get",
+                "--instance-id",
+                instance_id,
+            ]
+        )
+        if not isinstance(data, dict):
+            raise BenchError(
+                f"oci instance get returned unexpected payload for {instance_id}"
+            )
+        return data
+
+    def _run_cli_data(self, args: Sequence[str]) -> Any:
+        cmd = [self._oci_bin, *args, "--output", "json"]
         if self._auth:
             cmd.extend(["--auth", self._auth])
         proc = subprocess.run(
@@ -228,10 +311,6 @@ class OciCliInstanceActuator:
         )
         payload = json.loads(proc.stdout)
         data = payload.get("data") if isinstance(payload, dict) else None
-        if not isinstance(data, dict):
-            raise BenchError(
-                f"oci instance get returned unexpected payload for {instance_id}"
-            )
         return data
 
     def _action(self, instance_id: str, action: str, *, wait_state: str) -> None:
@@ -766,26 +845,64 @@ def build_spike_artifact(
     model_path: str,
     boot_volume_gb: int,
     vpus_per_gb: int,
+    instance_observation: InstanceObservation | None = None,
     a10_quota_confirmed: bool = False,
     a100_or_l40s_headroom_confirmed: bool = False,
     serverless_gpu_available: bool = False,
     recorded_at: str | None = None,
     task_ref: str = "VLM-3",
 ) -> dict[str, Any]:
-    """Fill acx-gpu-spike/v1 with zero null measurement values; flip status."""
+    """Build an artifact whose completion status depends on OCI provenance."""
     stamp = recorded_at or datetime.now(UTC).astimezone().isoformat(timespec="seconds")
+    observed = {
+        "shape": instance_observation.shape if instance_observation else None,
+        "boot_volume_gb": (
+            instance_observation.boot_volume_gb if instance_observation else None
+        ),
+        "vpus_per_gb": (
+            instance_observation.vpus_per_gb if instance_observation else None
+        ),
+    }
+    asserted: dict[str, str | int] = {
+        "shape": shape,
+        "boot_volume_gb": boot_volume_gb,
+        "vpus_per_gb": vpus_per_gb,
+    }
+    observed_provenance = {
+        field_name: {
+            "operator_asserted": asserted_value,
+            "oci_observed": observed[field_name],
+            "source": "oci_observed" if instance_observation else "operator_asserted",
+            "matches": (
+                observed[field_name] == asserted_value if instance_observation else None
+            ),
+        }
+        for field_name, asserted_value in asserted.items()
+    }
+    if instance_observation is None:
+        status = ARTIFACT_STATUS_PENDING
+    elif all(field["matches"] for field in observed_provenance.values()):
+        status = ARTIFACT_STATUS_MEASURED
+    else:
+        status = ARTIFACT_STATUS_PROVENANCE_MISMATCH
     return {
         "schema": SCHEMA,
         "task_ref": task_ref,
         "recorded_at": stamp,
-        "status": ARTIFACT_STATUS_MEASURED,
-        "shape": shape,
-        "boot_volume_size_in_gbs": boot_volume_gb,
-        "boot_volume_vpus_per_gb": vpus_per_gb,
+        "status": status,
         "measurement_candidate": {
             "model_id": model_id,
-            "quantization": quantization,
-            "model_path": model_path,
+        },
+        "provenance": {
+            **observed_provenance,
+            "quantization": {
+                "operator_asserted": quantization,
+                "source": "operator_asserted",
+            },
+            "model_path": {
+                "operator_asserted": model_path,
+                "source": "operator_asserted",
+            },
         },
         "measurements": {
             "cold_boot_seconds": {
@@ -939,6 +1056,12 @@ def run_bench(
     except Exception as exc:
         raise PhaseError("dedicated_instance_check", str(exc)) from exc
 
+    _mark("instance_provenance")
+    try:
+        instance_observation = actuator.describe_instance(instance_ocid)
+    except Exception as exc:
+        raise PhaseError("instance_provenance", str(exc)) from exc
+
     try:
         _mark("cold_boot")
         cold = run_cold_boot(
@@ -1006,6 +1129,7 @@ def run_bench(
             model_path=model_path,
             boot_volume_gb=boot_volume_gb,
             vpus_per_gb=vpus_per_gb,
+            instance_observation=instance_observation,
             a10_quota_confirmed=a10_quota_confirmed,
             a100_or_l40s_headroom_confirmed=a100_or_l40s_headroom_confirmed,
             serverless_gpu_available=serverless_gpu_available,

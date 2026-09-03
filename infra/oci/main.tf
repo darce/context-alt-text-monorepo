@@ -268,5 +268,6 @@ resource "oci_core_instance" "acx_gpu_burst" {
     "env"           = "production"
     "role"          = "gpu-burst"
     "scale_to_zero" = "true"
+    "purpose"       = "gpu-spike-bench"
   }
 }

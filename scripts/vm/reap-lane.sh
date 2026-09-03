@@ -427,7 +427,8 @@ df_used_pct="$(df -P "$HOME" | awk 'NR == 2 { sub(/%$/, "", $5); print $5; exit 
 printf 'REAP SUMMARY candidates=%s reaped=%s skipped=%s bytes_freed=%s df_used_pct=%s\n' \
   "$candidates" "$reaped" "$skipped" "$bytes_freed" "$df_used_pct"
 
-if [[ "$rc" -eq 0 && "$yes" -eq 1 && "$candidates" -gt 0 && "$reaped" -eq 0 &&
+if [[ "$rc" -eq 0 && "$yes" -eq 1 && "${#all_roots[@]}" -gt 0 &&
+      "$candidates" -gt 0 && "$reaped" -eq 0 &&
       "$df_used_pct" -ge "${REAP_DF_ALERT_PCT:-85}" ]]; then
   exit 4
 fi

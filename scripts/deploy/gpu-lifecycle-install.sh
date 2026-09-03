@@ -111,12 +111,14 @@ Wants=network-online.target
 [Service]
 Type=oneshot
 User=ubuntu
+RuntimeDirectory=acx-gpu
+RuntimeDirectoryPreserve=yes
 # instance_principal: the VM carries no API key. Requires a dynamic-group grant
 # of INSTANCE_POWER_ACTIONS on the GPU compartment, else every run 404s.
 Environment=OCI_CLI_AUTH=instance_principal
 EnvironmentFile=/etc/acx/gpu-lifecycle.env
 WorkingDirectory=/opt/acx-gpu
-ExecStart=/usr/bin/python3 -m infra.oci.gpu_lifecycle --mode start --instance-id \\\${GPU_INSTANCE_ID} --load-json /run/acx/describe-load.json --probe-oci --oci-bin /home/ubuntu/.oci-venv/bin/oci ${ready_flag}
+ExecStart=/usr/bin/python3 -m infra.oci.gpu_lifecycle --mode start --instance-id \\\${GPU_INSTANCE_ID} --load-json /run/acx/describe-load.json --running-since-path /run/acx-gpu/running-since.json --probe-oci --oci-bin /home/ubuntu/.oci-venv/bin/oci ${ready_flag}
 UNIT
 
 sudo tee /etc/systemd/system/acx-gpu-start.timer >/dev/null <<UNIT
@@ -141,10 +143,12 @@ Wants=network-online.target
 [Service]
 Type=oneshot
 User=ubuntu
+RuntimeDirectory=acx-gpu
+RuntimeDirectoryPreserve=yes
 Environment=OCI_CLI_AUTH=instance_principal
 EnvironmentFile=/etc/acx/gpu-lifecycle.env
 WorkingDirectory=/opt/acx-gpu
-ExecStart=/usr/bin/python3 -m infra.oci.gpu_lifecycle --mode reap --instance-id \\\${GPU_INSTANCE_ID} --load-json /run/acx/describe-load.json --idle-seconds \\\${IDLE_SECONDS} --max-lease-seconds \\\${MAX_LEASE_SECONDS} --fence-delay-seconds 2 --probe-oci --oci-bin /home/ubuntu/.oci-venv/bin/oci
+ExecStart=/usr/bin/python3 -m infra.oci.gpu_lifecycle --mode reap --instance-id \\\${GPU_INSTANCE_ID} --load-json /run/acx/describe-load.json --running-since-path /run/acx-gpu/running-since.json --idle-seconds \\\${IDLE_SECONDS} --max-lease-seconds \\\${MAX_LEASE_SECONDS} --fence-delay-seconds 2 --probe-oci --oci-bin /home/ubuntu/.oci-venv/bin/oci
 UNIT
 
 sudo tee /etc/systemd/system/acx-gpu-reap.timer >/dev/null <<UNIT

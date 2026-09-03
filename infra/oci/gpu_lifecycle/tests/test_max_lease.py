@@ -57,8 +57,21 @@ def _lease_store(path: Path) -> RunningSinceLeaseStore:
     return RunningSinceLeaseStore(path=path, now=lambda: NOW)
 
 
-def _write_lease(path: Path, *, since: str, source: str = "start_actuator") -> None:
-    path.write_text(json.dumps({"instance_id": "instance-a", "since": since, "source": source}))
+def _write_lease(
+    path: Path,
+    *,
+    since: str,
+    source: str = "start_actuator",
+    instance_id: str = "instance-a",
+) -> None:
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": 2,
+                "instances": {instance_id: {"since": since, "source": source}},
+            }
+        )
+    )
 
 
 def _running(age: int, instance_id: str = "ocid1.instance.oc1..gpu") -> GpuInstance:
@@ -243,9 +256,13 @@ def test_first_running_observation_starts_lease_without_expiring_it(
     assert actuator.stopped == []
     assert result.lease_expired == []
     assert json.loads(path.read_text()) == {
-        "instance_id": "instance-a",
-        "since": "2026-09-03T12:00:00Z",
-        "source": "first_observed",
+        "instances": {
+            "instance-a": {
+                "since": "2026-09-03T12:00:00Z",
+                "source": "first_observed",
+            }
+        },
+        "schema_version": 2,
     }
 
 
@@ -324,6 +341,139 @@ def test_stopped_observation_removes_running_since_record(tmp_path: Path) -> Non
     assert not path.exists()
 
 
+def test_two_running_instance_leases_expire_independently(tmp_path: Path) -> None:
+    path = tmp_path / "running-since.json"
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": 2,
+                "instances": {
+                    "instance-a": {"since": "2026-09-03T10:00:00Z", "source": "start_actuator"},
+                    "instance-b": {"since": "2026-09-03T10:30:00Z", "source": "first_observed"},
+                },
+            }
+        )
+    )
+    actuator = RecordingActuator()
+
+    result = run_reap_cycle(
+        controller=GpuLifecycleController(idle_seconds=300),
+        instances=[_running(0, "instance-a"), _running(0, "instance-b")],
+        load_source=BusyLoadSource(),
+        actuator=actuator,
+        fence_delay_seconds=0,
+        max_lease_seconds=3600,
+        running_since_store=_lease_store(path),
+    )
+
+    assert actuator.stopped == ["instance-a", "instance-b"]
+    assert result.lease_expired == [("STOP", "instance-a"), ("STOP", "instance-b")]
+
+
+def test_stopped_sibling_does_not_reset_running_instance_lease(tmp_path: Path) -> None:
+    path = tmp_path / "running-since.json"
+    current = {"now": datetime(2026, 9, 3, 12, 0, tzinfo=UTC)}
+    store = RunningSinceLeaseStore(path=path, now=lambda: current["now"])
+    actuator = RecordingActuator()
+    instances = [
+        _running(0, "instance-a"),
+        GpuInstance(instance_id="instance-b", state="STOPPED", idle_for_seconds=0),
+    ]
+
+    first = run_reap_cycle(
+        controller=GpuLifecycleController(idle_seconds=300),
+        instances=instances,
+        load_source=BusyLoadSource(),
+        actuator=actuator,
+        fence_delay_seconds=0,
+        max_lease_seconds=3600,
+        running_since_store=store,
+    )
+    first_bytes = path.read_bytes()
+    current["now"] = datetime(2026, 9, 3, 12, 30, tzinfo=UTC)
+    second = run_reap_cycle(
+        controller=GpuLifecycleController(idle_seconds=300),
+        instances=instances,
+        load_source=BusyLoadSource(),
+        actuator=actuator,
+        fence_delay_seconds=0,
+        max_lease_seconds=3600,
+        running_since_store=store,
+    )
+    second_bytes = path.read_bytes()
+    current["now"] = datetime(2026, 9, 3, 13, 0, 1, tzinfo=UTC)
+    third = run_reap_cycle(
+        controller=GpuLifecycleController(idle_seconds=300),
+        instances=instances,
+        load_source=BusyLoadSource(),
+        actuator=actuator,
+        fence_delay_seconds=0,
+        max_lease_seconds=3600,
+        running_since_store=store,
+    )
+
+    assert first.lease_expired == []
+    assert second.lease_expired == []
+    assert first_bytes == second_bytes
+    assert actuator.stopped == ["instance-a"]
+    assert third.lease_expired == [("STOP", "instance-a")]
+
+
+def test_reap_lease_write_failure_disables_cap_loudly(monkeypatch, caplog) -> None:
+    def fail_observe(self, instance_id: str):
+        raise PermissionError(f"cannot write lease for {instance_id}")
+
+    monkeypatch.setattr(RunningSinceLeaseStore, "observe_running", fail_observe)
+
+    exit_code = main(
+        [
+            "--instance-id",
+            "instance-a",
+            "--instance-state",
+            "RUNNING",
+            "--queue-depth",
+            "1",
+            "--in-flight",
+            "1",
+            "--fence-delay-seconds",
+            "0",
+        ]
+    )
+
+    assert exit_code != 0
+    assert "lease cap disabled" in caplog.text
+
+
+def test_start_lease_write_failure_disables_cap_loudly(monkeypatch, caplog) -> None:
+    monkeypatch.setattr(
+        "infra.oci.gpu_lifecycle.reaper.OciCliStartActuator.start_instance",
+        lambda self, instance_id: None,
+    )
+
+    def fail_record(self, instance_id: str):
+        raise PermissionError(f"cannot write lease for {instance_id}")
+
+    monkeypatch.setattr(RunningSinceLeaseStore, "record_start", fail_record)
+
+    exit_code = main(
+        [
+            "--mode",
+            "start",
+            "--instance-id",
+            "instance-a",
+            "--instance-state",
+            "STOPPED",
+            "--queue-depth",
+            "1",
+            "--in-flight",
+            "0",
+        ]
+    )
+
+    assert exit_code != 0
+    assert "lease cap disabled" in caplog.text
+
+
 def test_start_cycle_records_lease_after_start_is_issued(tmp_path: Path) -> None:
     path = tmp_path / "running-since.json"
 
@@ -342,10 +492,71 @@ def test_start_cycle_records_lease_after_start_is_issued(tmp_path: Path) -> None
 
     assert result.actuated == [("START", "instance-a")]
     assert json.loads(path.read_text()) == {
-        "instance_id": "instance-a",
-        "since": "2026-09-03T12:00:00Z",
-        "source": "start_actuator",
+        "instances": {
+            "instance-a": {
+                "since": "2026-09-03T12:00:00Z",
+                "source": "start_actuator",
+            }
+        },
+        "schema_version": 2,
     }
+
+
+def test_start_dry_run_leaves_existing_lease_file_byte_identical(tmp_path: Path) -> None:
+    path = tmp_path / "running-since.json"
+    _write_lease(path, since="2026-09-03T10:00:00Z")
+    before = path.read_bytes()
+
+    exit_code = main(
+        [
+            "--mode",
+            "start",
+            "--instance-id",
+            "instance-a",
+            "--instance-state",
+            "STOPPED",
+            "--queue-depth",
+            "1",
+            "--in-flight",
+            "0",
+            "--running-since-path",
+            str(path),
+            "--dry-run",
+        ]
+    )
+
+    assert exit_code == 0
+    assert path.read_bytes() == before
+
+
+def test_reap_dry_run_neither_creates_nor_removes_lease_records(tmp_path: Path) -> None:
+    new_path = tmp_path / "new-running-since.json"
+    run_reap_cycle(
+        controller=GpuLifecycleController(idle_seconds=300),
+        instances=[_running(0, "instance-a")],
+        load_source=BusyLoadSource(),
+        actuator=RecordingActuator(),
+        fence_delay_seconds=0,
+        max_lease_seconds=3600,
+        running_since_store=_lease_store(new_path),
+        dry_run=True,
+    )
+    assert not new_path.exists()
+
+    existing_path = tmp_path / "existing-running-since.json"
+    _write_lease(existing_path, since="2026-09-03T10:00:00Z")
+    before = existing_path.read_bytes()
+    run_reap_cycle(
+        controller=GpuLifecycleController(idle_seconds=300),
+        instances=[GpuInstance(instance_id="instance-a", state="STOPPED", idle_for_seconds=0)],
+        load_source=BusyLoadSource(),
+        actuator=RecordingActuator(),
+        fence_delay_seconds=0,
+        max_lease_seconds=3600,
+        running_since_store=_lease_store(existing_path),
+        dry_run=True,
+    )
+    assert existing_path.read_bytes() == before
 
 
 # --- CLI --------------------------------------------------------------------
@@ -413,4 +624,4 @@ def test_cli_state_override_uses_running_since_without_oci_age_probe(tmp_path: P
     )
 
     assert exit_code == 0
-    assert json.loads(path.read_text())["source"] == "first_observed"
+    assert not path.exists()

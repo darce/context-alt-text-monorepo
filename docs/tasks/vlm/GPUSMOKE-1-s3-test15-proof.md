@@ -13,7 +13,7 @@ observing the failure, and restoring the production check before the next mutati
 | Disable recording `provisional_cpu`/degraded observations. | `test_red_provisional_cpu_observed_mid_run` | `AssertionError: assert 0 == 1`; the provisional observation incorrectly exited zero; 1 failed, 30 passed. |
 | Break after the first post-STOP instance read instead of polling to STOPPED. | `test_red_compensating_stop_times_out_in_stopping` | `AssertionError: assert 0 == 1`; `instance_stopped_finally` incorrectly passed with detail `STOPPING`; 3 failed, 28 passed. |
 | Disable closing an unterminated `RUNNING` interval at the evidence timestamp. | `test_red_stop_reverification_fails_if_compensating_stop_is_ineffective` | `AssertionError: assert 0.0 > 0` for `measurements.running_seconds`; 1 failed, 31 passed. |
-| Force `cost_estimate_ongoing` false after STOPPED reverification fails. | `test_red_stop_reverification_fails_if_compensating_stop_is_ineffective` | `AssertionError: assert False is True` for `cost_estimate_ongoing`; 1 failed, 31 passed. |
+| Force `running_seconds_ongoing` false after STOPPED reverification fails. | `test_red_stop_reverification_fails_if_compensating_stop_is_ineffective` | `AssertionError: assert False is True` for `measurements.running_seconds_ongoing`; 1 failed, 31 passed. |
 | Replace the `warm_start_running` result with `True`. | `test_red_warm_start_deadline_still_issues_stop` | `AssertionError: assert not True` for `warm_start_running`; 1 failed, 30 passed. |
 | Print `app_password` to stderr at the start of `run_smoke`. | `test_application_password_is_absent_from_output_and_evidence` | `AssertionError: assert 'unique-wp-application-password' not in captured.err`; 1 failed, 30 passed. |
 

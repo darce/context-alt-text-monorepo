@@ -901,9 +901,11 @@ def run_smoke(
         check["name"] == "instance_stopped_finally" and check["passed"]
         for check in checks
     )
-    cost_estimate_ongoing = not stopped_finally
+    running_seconds_ongoing = not stopped_finally
+    cost_estimate_ongoing = running_seconds_ongoing
     measurements = {
         "running_seconds": running_seconds,
+        "running_seconds_ongoing": running_seconds_ongoing,
         "cost_estimate_usd": cost,
         "cost_estimate_ongoing": cost_estimate_ongoing,
     }
@@ -938,6 +940,7 @@ def run_smoke(
         "gpu_state_json": gpu_snapshot,
         "load_json": load_snapshot,
         "measurements": measurements,
+        "running_seconds_ongoing": running_seconds_ongoing,
         "cost_estimate_usd": cost,
         "cost_estimate_ongoing": cost_estimate_ongoing,
         "checks": checks,

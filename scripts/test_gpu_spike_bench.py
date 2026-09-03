@@ -1301,12 +1301,38 @@ def test_ensure_stopped_tolerates_transient_read_after_stop() -> None:
     assert actuator.state == "STOPPED"
 
 
-def test_describe_failure_still_stops_running_instance(tmp_path: Path) -> None:
+def test_describe_failure_on_running_instance_refuses_without_stop(tmp_path: Path) -> None:
     class DescribeFailureActuator(FakeActuator):
         def describe_instance(self, instance_id: str) -> bench.InstanceObservation:
             raise OSError(f"describe failed for {instance_id}")
 
     actuator = DescribeFailureActuator("RUNNING")
+    with pytest.raises(PhaseError, match="precondition.*STOPPED"):
+        run_bench(
+            instance_ocid="test-instance",
+            endpoint_url="http://localhost:8000",
+            model_id="m",
+            image_paths=_write_images(tmp_path, n=1),
+            warm_start_runs=1,
+            actuator=actuator,
+            http=FakeHttp(),
+            clock=FakeClock(),
+            artifact_out=tmp_path / "out.json",
+            boot_volume_gb=400,
+            vpus_per_gb=120,
+            shape="test-shape",
+            quantization="test-quantization",
+            model_path="/test/model.gguf",
+        )
+    assert actuator.stops == []
+
+
+def test_describe_failure_before_start_does_not_claim_cleanup(tmp_path: Path) -> None:
+    class DescribeFailureActuator(FakeActuator):
+        def describe_instance(self, instance_id: str) -> bench.InstanceObservation:
+            raise OSError(f"describe failed for {instance_id}")
+
+    actuator = DescribeFailureActuator("STOPPED")
     with pytest.raises(PhaseError, match="instance_provenance"):
         run_bench(
             instance_ocid="test-instance",
@@ -1324,7 +1350,9 @@ def test_describe_failure_still_stops_running_instance(tmp_path: Path) -> None:
             quantization="test-quantization",
             model_path="/test/model.gguf",
         )
-    assert actuator.stops == ["test-instance"]
+
+    assert actuator.starts == []
+    assert actuator.stops == []
 
 
 def test_endpoint_validation_rejects_public_resolution_without_allowlist(

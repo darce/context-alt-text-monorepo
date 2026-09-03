@@ -1269,9 +1269,61 @@ assert_summary "rm failure" 1 0 1 0
 run_reap --yes --archive-to "$ARCHIVE" "$lane_rm_fail"
 assert_rc0 "partial rm follow-up"
 assert_contains "partial rm follow-up" "partial reap after archive"
+assert_contains "partial rm follow-up names intent" "(intent: $HOME/.workbay-reap/partial/"
 assert_not_contains "partial rm follow-up" "dirty working tree"
 assert_exists "partial rm follow-up" "$lane_rm_fail"
 chmod u+w "$lane_rm_fail"
+
+# The sentinel is keyed by path. Once the damaged checkout is replaced by a
+# fresh clone at a tip the intent never verified, it is a new lane: retire the
+# intent (kept for audit) instead of blocking the occupant forever.
+rm -rf "$lane_rm_fail"
+clone_lane "$lane_rm_fail"
+echo "new occupant" >"$lane_rm_fail/NEW_OCCUPANT"
+git -C "$lane_rm_fail" add NEW_OCCUPANT
+git -C "$lane_rm_fail" commit -q -m "new occupant work"
+run_reap --yes "$lane_rm_fail"
+assert_not_contains "new occupant after partial" "partial reap after archive"
+assert_contains "new occupant after partial" "stale partial intent superseded by new occupant"
+assert_contains "new occupant after partial" "unmerged local work"
+assert_exists "new occupant after partial" "$lane_rm_fail"
+if [[ -n "$(find "$HOME/.workbay-reap/partial" -type f -name '*.json.stale.*' -print -quit 2>/dev/null || true)" ]] \
+  && [[ -z "$(find "$HOME/.workbay-reap/partial" -type f -name '*.json' -print -quit 2>/dev/null || true)" ]]; then
+  pass "new occupant retires the intent to a .stale audit file"
+else
+  fail "new occupant did not retire the intent; dir=$(ls -la "$HOME/.workbay-reap/partial" 2>/dev/null || true)"
+fi
+
+# When the HEAD want-entry itself is redirected to the superseded ref, the
+# recorded archive ref must point at where this tip actually landed.
+lane_head_conflict="$HOME/w/lane-archive-conflict-head"
+clone_lane "$lane_head_conflict"
+echo head-conflict >"$lane_head_conflict/CONFLICT"
+git -C "$lane_head_conflict" add CONFLICT
+git -C "$lane_head_conflict" commit -q -m head-conflict
+head_generation="$(generation_of "$lane_head_conflict")"
+head_conflict_ref="refs/lanes/w/lane-archive-conflict-head/$head_generation/HEAD"
+git -C "$lane_head_conflict" checkout -q -b archived-head-tip HEAD^
+echo other-head >"$lane_head_conflict/OTHER"
+git -C "$lane_head_conflict" add OTHER
+git -C "$lane_head_conflict" commit -q -m other-head
+head_conflicting_tip="$(git -C "$lane_head_conflict" rev-parse HEAD)"
+git -C "$lane_head_conflict" checkout -q main
+head_incoming_tip="$(git -C "$lane_head_conflict" rev-parse HEAD)"
+git -C "$lane_head_conflict" push -q "$ARCHIVE" "$head_conflicting_tip:$head_conflict_ref"
+head_superseded_ref="refs/archive/w/lane-archive-conflict-head/$head_generation/superseded/${head_incoming_tip:0:12}"
+REAL_RM="$(command -v rm)" FAIL_RM_PATH="$lane_head_conflict" \
+  PATH="$rm_fail_bin:$PATH" run_reap --yes --archive-to "$ARCHIVE" "$lane_head_conflict"
+assert_contains "superseded HEAD archive ref" "rm failed after archive $head_superseded_ref"
+archive_has "superseded HEAD primary retained" "$head_conflict_ref" "$head_conflicting_tip"
+archive_has "superseded HEAD incoming archived" "$head_superseded_ref" "$head_incoming_tip"
+head_intent="$(grep -l "lane-archive-conflict-head" "$HOME"/.workbay-reap/partial/*.json 2>/dev/null | head -n1 || true)"
+if [[ -n "$head_intent" ]] && grep -q "\"archive_ref\":\"$head_superseded_ref\"" "$head_intent"; then
+  pass "superseded HEAD intent records the superseded ref"
+else
+  fail "superseded HEAD intent missing superseded ref; intent=${head_intent:-none} $(cat "$head_intent" 2>/dev/null || true)"
+fi
+chmod u+w "$lane_head_conflict"
 
 # Ref enumeration is a destructive-decision input. A failed read must not look
 # like an empty ref set and permit deletion of an unarchived alternate branch.

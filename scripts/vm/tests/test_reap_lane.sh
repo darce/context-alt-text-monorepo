@@ -1723,8 +1723,9 @@ assert_summary "freshness alert" 1 0 1 0
 assert_exists "freshness alert" "$lane_alert"
 
 # Below the configured pressure threshold, zero reclaimed lanes is a healthy
-# no-op and remains exit 0.
-REAP_LANE_ROOTS="alert-root" REAP_DF_ALERT_PCT=100 run_reap --yes --all "$alert_root"
+# no-op and remains exit 0. Use 101 so a host whose volume reports 100% used
+# (macOS APFS near-full) cannot trip the alert and fail this healthy case.
+REAP_LANE_ROOTS="alert-root" REAP_DF_ALERT_PCT=101 run_reap --yes --all "$alert_root"
 assert_rc0 "freshness below threshold"
 assert_summary "freshness below threshold" 1 0 1 0
 

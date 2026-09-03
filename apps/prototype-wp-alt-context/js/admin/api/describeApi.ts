@@ -235,6 +235,9 @@ export const GPU_STATE = {
   DEGRADED: 'degraded',
 } as const;
 
+export const isGpuState = (value: unknown): value is GpuState =>
+  typeof value === 'string' && (Object.values(GPU_STATE) as string[]).includes(value);
+
 /**
  * Canonical correction rejection codes from the history correction endpoint.
  * Gate on these via resolveDescribeErrorCode — never on localized message text
@@ -276,8 +279,8 @@ export interface DescribeRunResponse {
   cancel_requested: boolean;
   // Backend-owned honest ETA for the remaining items; null while it cannot yet be estimated.
   eta_seconds: number | null;
-  // Nullable for compatibility with older API builds that omit the snapshot.
-  gpu_state: GpuState | null;
+  // Untrusted wire value; consumers narrow it with isGpuState before presentation.
+  gpu_state: unknown;
 }
 
 /** One describe-run item as the operator reviews it before write-back (INT-01d).

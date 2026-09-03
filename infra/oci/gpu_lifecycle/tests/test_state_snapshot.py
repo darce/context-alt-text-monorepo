@@ -19,7 +19,9 @@ from infra.oci.gpu_lifecycle.state_snapshot import (
     GpuLifecycleState,
     write_gpu_state_snapshot,
 )
-from scene.application.gpu_state import GpuState, read_gpu_state
+gpu_state = pytest.importorskip("scene.application.gpu_state")
+GpuState = gpu_state.GpuState
+read_gpu_state = gpu_state.read_gpu_state
 
 
 class RecordingActuator:

@@ -289,6 +289,22 @@ grok_lane_lock_held=0
 grok_lane_lock_path=""
 grok_lane_lock_error=""
 git_guard_error=""
+# Dirty-tree classification for the lane most recently passed to
+# has_blocking_dirty, plus the sweep-level triage accumulators.
+dirty_category=""
+dirty_tracked_count=0
+dirty_untracked_count=0
+dirty_tracked_sample=""
+dirty_untracked_paths=""
+triage_lock_only=0
+triage_scratch=0
+triage_tracked=0
+triage_lock_only_lanes=""
+triage_scratch_lanes=""
+triage_tracked_lanes=""
+triage_scratch_kib=0
+triage_tracked_kib=0
+triage_untracked_all=""
 all_roots_missing=0
 valid_all_roots=0
 
@@ -370,6 +386,91 @@ skip() {
   # every refusal path fail-safe without requiring each newly added guard to
   # remember a bespoke unlock.
   release_grok_lane_lock
+}
+
+lane_label() {
+  printf '%s\n' "${1#"${home_real}"/}"
+}
+
+lane_kib() {
+  local kib
+  kib="$(du -sk "$1" 2>/dev/null | awk '{print $1; exit}')"
+  case "$kib" in ''|*[!0-9]*) kib=0 ;; esac
+  printf '%s\n' "$kib"
+}
+
+# Skip a lane that has_blocking_dirty just refused, naming the category so the
+# operator never has to re-derive it from `git status` by hand, and feed the
+# sweep-level triage. Weekly sweeps on the VM refused ~30 lanes as a bare
+# "dirty working tree"; every one of them fell into one of three mechanical
+# buckets that took five shell round-trips to reconstruct.
+skip_dirty() {
+  local path="$1" real="$2" reason label kib
+  if [[ -n "$git_guard_error" ]]; then
+    skip "$path" "$git_guard_error"
+    return 0
+  fi
+  label="$(lane_label "$real")"
+  kib="$(lane_kib "$real")"
+  case "$dirty_category" in
+    untracked-scratch)
+      reason="dirty working tree (untracked-scratch: ${dirty_untracked_count} files)"
+      triage_scratch=$((triage_scratch + 1))
+      triage_scratch_lanes="${triage_scratch_lanes}${label}"$'\n'
+      triage_scratch_kib=$((triage_scratch_kib + kib))
+      ;;
+    *)
+      reason="dirty working tree (tracked-edits: ${dirty_tracked_count} tracked, ${dirty_untracked_count} untracked; e.g.${dirty_tracked_sample})"
+      triage_tracked=$((triage_tracked + 1))
+      triage_tracked_lanes="${triage_tracked_lanes}${label}"$'\n'
+      triage_tracked_kib=$((triage_tracked_kib + kib))
+      ;;
+  esac
+  # Collapse to the first path component so a probe directory written into
+  # several lanes is one shared entry rather than N distinct file paths.
+  triage_untracked_all="${triage_untracked_all}$(printf '%s' "$dirty_untracked_paths" |
+    awk -F/ 'NF > 1 { print $1 "/"; next } { print }' | LC_ALL=C sort -u)"$'\n'
+  skip "$path" "$reason"
+}
+
+note_lock_only_reap() {
+  if [[ "$dirty_category" == "lock-only" ]]; then
+    triage_lock_only=$((triage_lock_only + 1))
+    triage_lock_only_lanes="${triage_lock_only_lanes}$(lane_label "$1")"$'\n'
+  fi
+}
+
+sorted_words() {
+  printf '%s' "$1" | LC_ALL=C sort | tr '\n' ' ' | sed 's/ $//'
+}
+
+print_triage() {
+  local shared shared_count
+  if [[ $((triage_lock_only + triage_scratch + triage_tracked)) -eq 0 ]]; then
+    return 0
+  fi
+  printf 'REAP TRIAGE dirty_skips=%s lock-only=%s untracked-scratch=%s tracked-edits=%s\n' \
+    "$((triage_scratch + triage_tracked))" "$triage_lock_only" "$triage_scratch" "$triage_tracked"
+  if [[ "$triage_lock_only" -gt 0 ]]; then
+    printf 'REAP TRIAGE lock-only lanes=%s: %s\n' "$triage_lock_only" "$(sorted_words "$triage_lock_only_lanes")"
+  fi
+  if [[ "$triage_scratch" -gt 0 ]]; then
+    printf 'REAP TRIAGE untracked-scratch lanes=%s held_bytes=%s: %s\n' \
+      "$triage_scratch" "$((triage_scratch_kib * 1024))" "$(sorted_words "$triage_scratch_lanes")"
+  fi
+  if [[ "$triage_tracked" -gt 0 ]]; then
+    printf 'REAP TRIAGE tracked-edits lanes=%s held_bytes=%s: %s\n' \
+      "$triage_tracked" "$((triage_tracked_kib * 1024))" "$(sorted_words "$triage_tracked_lanes")"
+  fi
+  # An untracked path that recurs across skipped lanes is one scratch cluster
+  # (a peer review wave writes the same probe files into every lane it
+  # touches); name it once instead of per lane.
+  shared="$(printf '%s' "$triage_untracked_all" | LC_ALL=C sort | uniq -c |
+    awk '$1 >= 2 { sub(/^[[:space:]]*[0-9]+[[:space:]]/, ""); print }')"
+  if [[ -n "$shared" ]]; then
+    shared_count="$(printf '%s\n' "$shared" | wc -l | tr -d ' ')"
+    printf 'REAP TRIAGE shared_untracked paths=%s: %s\n' "$shared_count" "$(sorted_words "$shared"$'\n')"
+  fi
 }
 
 path_mtime() {
@@ -654,26 +755,76 @@ has_unmerged_work() {
 }
 
 has_blocking_dirty() {
-  local dir="$1" line entry left right status_output
+  local dir="$1" line entry left right status_output xy
+  local tracked=0 untracked=0 lock_mod=0 manifest_dirty=0 sample="" sample_n=0 untracked_paths=""
   git_guard_error=""
-  if ! status_output="$(git -C "$dir" status --porcelain)"; then
+  dirty_category=""
+  dirty_tracked_count=0
+  dirty_untracked_count=0
+  dirty_tracked_sample=""
+  dirty_untracked_paths=""
+  # -uall: an untracked directory would otherwise collapse to one entry and
+  # the triage count would understate a scratch cluster.
+  if ! status_output="$(git -C "$dir" status --porcelain -uall)"; then
     git_guard_error="could not read git status"
     return 0
   fi
   while IFS= read -r line; do
     [[ -z "$line" ]] && continue
+    xy="${line:0:2}"
     entry="${line:3}"
     if [[ "$entry" == *" -> "* ]]; then
       left="${entry%% -> *}"
       right="${entry#* -> }"
-      if ! is_ignorable_path "$left" || ! is_ignorable_path "$right"; then
-        return 0
+      if is_ignorable_path "$left" && is_ignorable_path "$right"; then
+        continue
       fi
-    elif ! is_ignorable_path "$entry"; then
-      return 0
+      entry="$right"
+    elif is_ignorable_path "$entry"; then
+      continue
+    elif [[ "$xy" == "??" ]]; then
+      untracked=$((untracked + 1))
+      untracked_paths="${untracked_paths}${entry}"$'\n'
+      continue
+    fi
+    tracked=$((tracked + 1))
+    case "${entry##*/}" in
+      pyproject.toml) manifest_dirty=1 ;;
+      uv.lock)
+        # Only an in-place modification is churn. A deleted, added, or renamed
+        # lock is a change of intent and stays a tracked edit.
+        case "$xy" in " M"|"M "|"MM") lock_mod=$((lock_mod + 1)) ;; esac
+        ;;
+    esac
+    if [[ "$sample_n" -lt 3 ]]; then
+      sample="${sample} ${entry}"
+      sample_n=$((sample_n + 1))
     fi
   done <<<"$status_output"
-  return 1
+  dirty_tracked_count="$tracked"
+  dirty_untracked_count="$untracked"
+  dirty_tracked_sample="$sample"
+  dirty_untracked_paths="$untracked_paths"
+  if [[ "$tracked" -eq 0 && "$untracked" -eq 0 ]]; then
+    return 1
+  fi
+  # lock-only: every non-ignorable entry is a modified uv.lock and no manifest
+  # moved. The lock is a derived artifact of a clean pyproject.toml, so `uv
+  # lock` recreates it; 76 of the first sweep's ~90 dirty lanes were exactly
+  # this one-line version bump.
+  if [[ "$untracked" -eq 0 && "$manifest_dirty" -eq 0 && "$lock_mod" -eq "$tracked" ]]; then
+    # Counted by note_lock_only_reap once the lane actually reaps: a later
+    # guard (stash, snapshot drift, rm failure) can still refuse it, and the
+    # triage must only list lanes whose churn was in fact ignored.
+    dirty_category="lock-only"
+    return 1
+  fi
+  if [[ "$tracked" -eq 0 ]]; then
+    dirty_category="untracked-scratch"
+  else
+    dirty_category="tracked-edits"
+  fi
+  return 0
 }
 
 stash_has_real_work() {
@@ -1048,6 +1199,7 @@ process_one() {
   local partial_verified_tips="" occupant_head="" stale_intent
 
   candidates=$((candidates + 1))
+  dirty_category=""
 
   intent_real="$(realpath "$path" 2>/dev/null || true)"
   if [[ -n "$intent_real" ]]; then
@@ -1181,7 +1333,7 @@ process_one() {
     # Ordered cheapest-and-strictest first: neither an uncommitted tree nor a
     # stash has a commit behind it, so archiving cannot make them safe.
     if has_blocking_dirty "$real"; then
-      skip "$path" "${git_guard_error:-dirty working tree}"
+      skip_dirty "$path" "$real"
       return 0
     fi
     if stash_has_real_work "$real"; then
@@ -1271,7 +1423,7 @@ process_one() {
     fi
 
     if has_blocking_dirty "$real"; then
-      skip "$path" "${git_guard_error:-dirty working tree}"
+      skip_dirty "$path" "$real"
       return 0
     fi
 
@@ -1294,6 +1446,7 @@ process_one() {
 
   if [[ "$yes" -eq 0 ]]; then
     printf 'WOULD REAP %s (%s)\n' "$real" "$size"
+    note_lock_only_reap "$real"
     return 0
   fi
 
@@ -1332,6 +1485,7 @@ process_one() {
     return 1
   fi
   reaped=$((reaped + 1))
+  note_lock_only_reap "$real"
   bytes_freed=$((bytes_freed + size_kib * 1024))
   if ! grok_lane_lock_matches "$real"; then
     echo "reap-lane: warning: ${grok_lane_lock_error:-lane lock unverifiable} after removal; sibling cleanup skipped for $real" >&2
@@ -1371,6 +1525,7 @@ case "$df_used_pct" in
     df_used_pct=100
     ;;
 esac
+print_triage
 printf 'REAP SUMMARY candidates=%s reaped=%s skipped=%s bytes_freed=%s df_used_pct=%s\n' \
   "$candidates" "$reaped" "$skipped" "$bytes_freed" "$df_used_pct"
 

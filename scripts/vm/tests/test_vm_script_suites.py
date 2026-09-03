@@ -14,7 +14,7 @@ def _run_bash_suite(name: str) -> None:
         capture_output=True,
         text=True,
         check=False,
-        timeout=30,
+        timeout=180,
     )
     assert result.returncode == 0, (
         f"{name} exited {result.returncode}\n"

@@ -1883,7 +1883,7 @@ echo o >"$lane_scratch_a/ut-out.txt"
 run_reap --yes "$lane_scratch_a"
 assert_rc0 "triage untracked-scratch"
 assert_contains "triage untracked-scratch" \
-  "SKIP $lane_scratch_a: dirty working tree (untracked-scratch: 2 paths)"
+  "SKIP $lane_scratch_a: dirty working tree (untracked-scratch: 2 files)"
 assert_exists "triage untracked-scratch kept" "$lane_scratch_a"
 
 # tracked + untracked -> tracked-edits naming the tracked paths first.
@@ -1904,7 +1904,29 @@ mkdir -p "$lane_ign_plus/.lane"
 echo b >"$lane_ign_plus/.lane/BRIEF.md"
 echo o >"$lane_ign_plus/ut-err.txt"
 run_reap --yes "$lane_ign_plus"
-assert_contains "triage ignorable excluded" "(untracked-scratch: 1 paths)"
+assert_contains "triage ignorable excluded" "(untracked-scratch: 1 files)"
+
+# lock-only churn that a later guard refuses is not reported as ignored.
+lane_lock_stash="$HOME/w/lane-lock-stash"
+clone_lane "$lane_lock_stash"
+echo stashed >>"$lane_lock_stash/README"
+git -C "$lane_lock_stash" stash --quiet
+printf 'version = "0.2.25"\n' >"$lane_lock_stash/uv.lock"
+run_reap --yes "$lane_lock_stash"
+assert_rc0 "triage lock-only then stash"
+assert_contains "triage lock-only then stash" "stash has real work"
+assert_not_contains "triage lock-only then stash" "REAP TRIAGE"
+assert_exists "triage lock-only then stash kept" "$lane_lock_stash"
+
+# An untracked directory counts its files, not one collapsed entry.
+lane_scratch_dir="$HOME/w/lane-scratch-dir"
+clone_lane "$lane_scratch_dir"
+mkdir -p "$lane_scratch_dir/src/deep"
+echo a >"$lane_scratch_dir/src/a"
+echo b >"$lane_scratch_dir/src/b"
+echo c >"$lane_scratch_dir/src/deep/c"
+run_reap --yes "$lane_scratch_dir"
+assert_contains "triage untracked dir counts files" "(untracked-scratch: 3 files)"
 
 # Sweep-level REAP TRIAGE block: category counts, lane lists, shared cluster.
 lane_scratch_b="$HOME/lanes/lane-scratch-b"

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import re
 import sys
@@ -144,7 +145,9 @@ def test_composed_gpu_warm_start_reaches_final_without_degrading(monkeypatch: py
     asyncio.run(body())
 
 
-def test_default_warmup_budget_covers_start_detection_boot_and_read_timeout() -> None:
+def test_default_warmup_budget_covers_start_detection_boot_and_read_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     repo_root = Path(__file__).resolve().parents[4]
     sys.path.insert(0, str(repo_root))
     try:
@@ -159,16 +162,20 @@ def test_default_warmup_budget_covers_start_detection_boot_and_read_timeout() ->
     assert start_interval_match is not None, "installer START_INTERVAL default is missing"
     start_interval = int(start_interval_match.group(1))
     load_max_age = JsonFileJobLoadSource.__dataclass_fields__["max_age_seconds"].default
-    observed_warm_start = 101
-    observed_read_timeout = 175
+    evidence_path = repo_root / "docs/tasks/vlm/VLM-3-gpu-spike-2026-07-14-750gb-balanced.json"
+    evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+    measured_warm_start_p95 = evidence["measurements"]["warm_start_p95_seconds"]["value"]
+    monkeypatch.delenv("ACX_GPU_READ_TIMEOUT_SECONDS", raising=False)
+    configured_read_timeout = DescriptionSettings().gpu_read_timeout_seconds
     budget_terms = (
         f"START_INTERVAL={start_interval} + load_refresh={DEFAULT_LOAD_REFRESH_SECONDS} + "
         f"load_max_age={load_max_age} + "
-        f"observed_warm_start={observed_warm_start} + observed_read_timeout={observed_read_timeout} "
+        f"measured_warm_start_p95={measured_warm_start_p95} from {evidence_path.relative_to(repo_root)} + "
+        f"configured_read_timeout={configured_read_timeout} "
         f"< DEFAULT_GPU_WARMUP_TIMEOUT_SECONDS={DEFAULT_GPU_WARMUP_TIMEOUT_SECONDS}"
     )
     assert (
-        start_interval + DEFAULT_LOAD_REFRESH_SECONDS + load_max_age + observed_warm_start + observed_read_timeout
+        start_interval + DEFAULT_LOAD_REFRESH_SECONDS + load_max_age + measured_warm_start_p95 + configured_read_timeout
         < DEFAULT_GPU_WARMUP_TIMEOUT_SECONDS
     ), budget_terms
 

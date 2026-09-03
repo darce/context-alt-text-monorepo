@@ -159,10 +159,9 @@ wait "$lock_holder_pid"
 # available, so command -v flock must fail inside reap-lane.sh.
 mkdir_lock_bin="$WORKDIR/mkdir-lock-bin"
 mkdir -p "$mkdir_lock_bin"
-ln -s "$(command -v bash)" "$mkdir_lock_bin/bash"
-ln -s "$(command -v mkdir)" "$mkdir_lock_bin/mkdir"
-ln -s "$(command -v rm)" "$mkdir_lock_bin/rm"
-ln -s "$(command -v rmdir)" "$mkdir_lock_bin/rmdir"
+for command_name in bash mkdir mv ps rm rmdir; do
+  ln -s "$(command -v "$command_name")" "$mkdir_lock_bin/$command_name"
+done
 mkdir "${lock_path}.d"
 PATH="$mkdir_lock_bin" run_reap "$lane_lock"
 if [[ "$rc" -eq 3 ]]; then pass "mkdir fallback concurrent reaper exit 3"
@@ -180,6 +179,44 @@ if [[ "$rc" -eq 1 ]]; then pass "mkdir fallback stale lock recovered"
 else fail "mkdir fallback stale lock expected post-lock exit 1 got $rc; out=$out"; fi
 if [[ ! -e "${lock_path}.d" ]]; then pass "mkdir fallback stale lock released"
 else fail "mkdir fallback stale lock directory survived"; fi
+stale_owner_copy="$(find "$HOME" -type f -path "${lock_path}.d.stale.*/owner" -print -quit 2>/dev/null || true)"
+if [[ -n "$stale_owner_copy" ]] && grep -qxF 'pid=99999999' "$stale_owner_copy"; then
+  pass "mkdir fallback atomically preserved stale owner"
+else
+  fail "mkdir fallback removed an owner file it did not write"
+fi
+
+# Two stale-lock recoverers may agree the old PID is dead, but only the one
+# that atomically renames that lock directory may enter the sweep.
+race_lock_bin="$WORKDIR/race-lock-bin"
+mkdir "$race_lock_bin"
+for command_name in awk bash date dirname du git grep mkdir mv ps rm rmdir sleep stat; do
+  ln -s "$(command -v "$command_name")" "$race_lock_bin/$command_name"
+done
+real_realpath="$(command -v realpath)"
+cat >"$race_lock_bin/realpath" <<'RACE_REALPATH'
+#!/usr/bin/env bash
+sleep 1
+exec "$REAL_REALPATH" "$@"
+RACE_REALPATH
+chmod +x "$race_lock_bin/realpath"
+mkdir "${lock_path}.d"
+printf 'pid=99999999\n' >"${lock_path}.d/owner"
+PATH="$race_lock_bin" REAL_REALPATH="$real_realpath" \
+  bash "$SCRIPT" "$lane_lock" >"$WORKDIR/race-one.out" 2>&1 &
+race_one_pid=$!
+PATH="$race_lock_bin" REAL_REALPATH="$real_realpath" \
+  bash "$SCRIPT" "$lane_lock" >"$WORKDIR/race-two.out" 2>&1 &
+race_two_pid=$!
+set +e
+wait "$race_one_pid"; race_one_rc=$?
+wait "$race_two_pid"; race_two_rc=$?
+set -e
+if [[ "$race_one_rc:$race_two_rc" == "0:3" || "$race_one_rc:$race_two_rc" == "3:0" ]]; then
+  pass "mkdir fallback stale recovery admits exactly one reaper"
+else
+  fail "mkdir fallback stale recovery statuses $race_one_rc/$race_two_rc; one=$(cat "$WORKDIR/race-one.out"); two=$(cat "$WORKDIR/race-two.out")"
+fi
 
 # ---------------------------------------------------------------------------
 # (a) merged clean clone -> WOULD REAP (dry-run) and is deleted with --yes.
@@ -424,6 +461,10 @@ archive_lacks_namespace() {  # $1 label, $2 namespace
   else fail "$1 unexpectedly created archive refs: $refs"; fi
 }
 
+generation_of() {  # $1 repo
+  git -C "$1" rev-list --max-parents=0 HEAD | sort | sed -n '1p'
+}
+
 # The generic lane sweep must honor the remote sandbox lifecycle before it
 # archives or deletes anything: marker TTL, occupancy lease, and per-lane lock.
 lane_gs_fresh="$HOME/grok-sandbox/feature-fresh-abc12345"
@@ -447,12 +488,34 @@ if command -v flock >/dev/null 2>&1; then
 
   # Pre-marker legacy sandboxes enter the canonical marker-gated path only
   # after their directory itself has aged past the sandbox TTL.
+  lane_gs_legacy_dirty="$HOME/grok-sandbox/feature-legacy-dirty-abc12345"
+  clone_lane "$lane_gs_legacy_dirty"
+  echo dirty >>"$lane_gs_legacy_dirty/README"
+  touch -t 200001010000 "$lane_gs_legacy_dirty"
+  run_reap --yes --archive-to "$ARCHIVE" "$lane_gs_legacy_dirty"
+  assert_contains "grok-sandbox dirty legacy" "dirty working tree"
+  assert_exists "grok-sandbox dirty legacy" "$lane_gs_legacy_dirty"
+  if [[ ! -e "$lane_gs_legacy_dirty/.workbay-lane-sandbox" ]]; then
+    pass "grok-sandbox dirty legacy did not persist marker backfill"
+  else
+    fail "grok-sandbox dirty legacy persisted marker backfill"
+  fi
+
   lane_gs_legacy="$HOME/grok-sandbox/feature-legacy-abc12345"
   clone_lane "$lane_gs_legacy"
+  legacy_key="${lane_gs_legacy##*/}"
+  : >"$HOME/grok-sandbox/.lane-lock-$legacy_key"
+  printf 'issued=1\nexpiry=2\n' >"$HOME/grok-sandbox/.lane-live-$legacy_key"
+  mkdir "$HOME/grok-sandbox/.venv-lane-$legacy_key"
+  : >"$HOME/grok-sandbox/.venv-sync-stamp-$legacy_key"
   touch -t 200001010000 "$lane_gs_legacy"
   run_reap --yes --archive-to "$ARCHIVE" "$lane_gs_legacy"
   assert_rc0 "grok-sandbox stale legacy marker backfill"
   assert_gone "grok-sandbox stale legacy marker backfill" "$lane_gs_legacy"
+  assert_gone "grok-sandbox stale legacy lane lock" "$HOME/grok-sandbox/.lane-lock-$legacy_key"
+  assert_gone "grok-sandbox stale legacy lease" "$HOME/grok-sandbox/.lane-live-$legacy_key"
+  assert_gone "grok-sandbox stale legacy venv" "$HOME/grok-sandbox/.venv-lane-$legacy_key"
+  assert_gone "grok-sandbox stale legacy sync stamp" "$HOME/grok-sandbox/.venv-sync-stamp-$legacy_key"
 fi
 
 lane_gs_leased="$HOME/grok-sandbox/feature-leased-abc12345"
@@ -496,11 +559,28 @@ fi
 # create archive refs (including an anchor ref for a linked worktree).
 lane_dry_archive="$HOME/w/lane-dry-archive"
 clone_lane "$lane_dry_archive"
-run_reap --archive-to "$ARCHIVE" "$lane_dry_archive"
+REAP_MIN_AGE_SEC=0 run_reap --archive-to "$ARCHIVE" "$lane_dry_archive"
 assert_rc0 "archive dry-run"
 assert_contains "archive dry-run" "WOULD REAP"
 assert_exists "archive dry-run" "$lane_dry_archive"
 archive_lacks_namespace "archive dry-run" "w/lane-dry-archive"
+
+# Non-sandbox archive reaps need a minimum age because these roots have no
+# materializer lease/lock contract. Use the newest checkout/git timestamp.
+lane_recent="$HOME/w/lane-recent"
+clone_lane "$lane_recent"
+run_reap --yes --archive-to "$ARCHIVE" "$lane_recent"
+assert_contains "archive recent lane" "lane is too recent"
+assert_exists "archive recent lane" "$lane_recent"
+touch -t 200001010000 "$lane_recent" "$lane_recent/.git/index" "$lane_recent/.git/HEAD"
+recent_generation="$(generation_of "$lane_recent")"
+recent_sha="$(git -C "$lane_recent" rev-parse HEAD)"
+run_reap --yes --archive-to "$ARCHIVE" "$lane_recent"
+assert_gone "archive aged lane" "$lane_recent"
+archive_has "archive aged lane" "refs/lanes/w/lane-recent/$recent_generation/main" "$recent_sha"
+
+# Remaining fixtures isolate archive behavior, independently of the age gate.
+export REAP_MIN_AGE_SEC=0
 
 # Unmerged work is reaped once it is archived -- and every branch lands.
 lane_ar="$HOME/w/lane-archive"
@@ -510,11 +590,12 @@ git -C "$lane_ar" add UNMERGED
 git -C "$lane_ar" commit -q -m "work that never reached main"
 git -C "$lane_ar" branch second-branch
 ar_sha="$(git -C "$lane_ar" rev-parse HEAD)"
+ar_generation="$(generation_of "$lane_ar")"
 run_reap --yes --archive-to "$ARCHIVE" "$lane_ar"
 assert_rc0 "archive reap"
 assert_gone "archive reap" "$lane_ar"
-archive_has "archive reap" "refs/lanes/w/lane-archive/main" "$ar_sha"
-archive_has "archive reap" "refs/lanes/w/lane-archive/second-branch" "$ar_sha"
+archive_has "archive reap" "refs/lanes/w/lane-archive/$ar_generation/main" "$ar_sha"
+archive_has "archive reap" "refs/lanes/w/lane-archive/$ar_generation/second-branch" "$ar_sha"
 
 # A local tag can be the only ref retaining a commit. Preserve the tag object
 # itself (including annotated-tag metadata), not merely its peeled commit.
@@ -526,10 +607,12 @@ git -C "$lane_tag" commit -q -m "commit retained only by tag"
 git -C "$lane_tag" tag -a tag-only -m "retain tag-only commit"
 tag_object="$(git -C "$lane_tag" rev-parse refs/tags/tag-only)"
 git -C "$lane_tag" reset -q --hard HEAD^
+tag_generation="$(generation_of "$lane_tag")"
 run_reap --yes --archive-to "$ARCHIVE" "$lane_tag"
 assert_rc0 "archive tag-only commit"
 assert_gone "archive tag-only commit" "$lane_tag"
-archive_has "archive tag-only commit" "refs/lanes/w/lane-tag-only/refs/tags/tag-only" "$tag_object"
+archive_has "archive tag-only commit" \
+  "refs/lanes/w/lane-tag-only/$tag_generation/refs/tags/tag-only" "$tag_object"
 
 # Without --archive-to the old guard still holds: unmerged work is never
 # deleted just because a flag was forgotten.
@@ -570,6 +653,32 @@ run_reap --yes --archive-to "$ARCHIVE" "$lane_as"
 assert_contains "archive + stash" "stash has real work"
 assert_exists "archive + stash keeps the lane" "$lane_as"
 
+# A failed rm is not a reap: keep the lane, omit the success log/counters, and
+# return an internal-error status so automation cannot report false progress.
+lane_rm_fail="$HOME/w/lane-rm-fail"
+clone_lane "$lane_rm_fail"
+rm_fail_bin="$WORKDIR/rm-fail-bin"
+mkdir "$rm_fail_bin"
+cat >"$rm_fail_bin/rm" <<'FAKE_RM'
+#!/usr/bin/env bash
+for arg in "$@"; do
+  if [[ "$arg" == "${FAIL_RM_PATH:-}" ]]; then
+    exit 1
+  fi
+done
+exec "$REAL_RM" "$@"
+FAKE_RM
+chmod +x "$rm_fail_bin/rm"
+REAL_RM="$(command -v rm)" FAIL_RM_PATH="$lane_rm_fail" \
+  PATH="$rm_fail_bin:$PATH" run_reap --yes --archive-to "$ARCHIVE" "$lane_rm_fail"
+if [[ "$rc" -eq 1 ]]; then pass "rm failure exits 1"
+else fail "rm failure expected exit 1 got $rc; out=$out"; fi
+assert_contains "rm failure" "rm failed"
+assert_exists "rm failure" "$lane_rm_fail"
+assert_summary "rm failure" 1 0 1 0
+run_reap --yes --archive-to "$ARCHIVE" "$lane_rm_fail"
+assert_gone "rm retry" "$lane_rm_fail"
+
 # Same basename under two roots must not overwrite one another: ~/w/dux-l1 and
 # ~/lanes/dux-l1 both exist on the VM, and a basename namespace would archive
 # one over the other and then delete both.
@@ -582,27 +691,39 @@ for root in w lanes; do
   git -C "$lane_c" add WHICH
   git -C "$lane_c" commit -q -m "$root"
   case "$root" in
-    w) sha_w="$(git -C "$lane_c" rev-parse HEAD)" ;;
-    lanes) sha_lanes="$(git -C "$lane_c" rev-parse HEAD)" ;;
+    w) sha_w="$(git -C "$lane_c" rev-parse HEAD)"; gen_w="$(generation_of "$lane_c")" ;;
+    lanes) sha_lanes="$(git -C "$lane_c" rev-parse HEAD)"; gen_lanes="$(generation_of "$lane_c")" ;;
   esac
   run_reap --yes --archive-to "$ARCHIVE" "$lane_c"
   assert_gone "collision $root" "$lane_c"
 done
-archive_has "collision" "refs/lanes/w/samename/main" "$sha_w"
-archive_has "collision" "refs/lanes/lanes/samename/main" "$sha_lanes"
+archive_has "collision" "refs/lanes/w/samename/$gen_w/main" "$sha_w"
+archive_has "collision" "refs/lanes/lanes/samename/$gen_lanes/main" "$sha_lanes"
 
-# Re-archiving a path whose history diverged must refuse rather than force: the
-# refs already there are the only copy of that lane's work.
+# Re-materializing a path starts a new archive generation. Unrelated histories
+# coexist without force-pushing over the only copy of the earlier generation.
 lane_re="$HOME/w/lane-rearchive"
-clone_lane "$lane_re"
+mkdir -p "$lane_re"
+git init -b main "$lane_re" >/dev/null
+git_ident "$lane_re"
 echo one >"$lane_re/A"; git -C "$lane_re" add A; git -C "$lane_re" commit -q -m one
+re_gen_one="$(generation_of "$lane_re")"
+re_sha_one="$(git -C "$lane_re" rev-parse HEAD)"
 run_reap --yes --archive-to "$ARCHIVE" "$lane_re"
 assert_gone "rearchive first pass" "$lane_re"
-clone_lane "$lane_re"
+mkdir -p "$lane_re"
+git init -b main "$lane_re" >/dev/null
+git_ident "$lane_re"
 echo two >"$lane_re/B"; git -C "$lane_re" add B; git -C "$lane_re" commit -q -m two
+re_gen_two="$(generation_of "$lane_re")"
+re_sha_two="$(git -C "$lane_re" rev-parse HEAD)"
 run_reap --yes --archive-to "$ARCHIVE" "$lane_re"
-assert_contains "rearchive diverged" "could not archive"
-assert_exists "rearchive diverged keeps the lane" "$lane_re"
+assert_rc0 "rearchive second generation"
+assert_gone "rearchive second generation" "$lane_re"
+archive_has "rearchive first generation" \
+  "refs/lanes/w/lane-rearchive/$re_gen_one/main" "$re_sha_one"
+archive_has "rearchive second generation" \
+  "refs/lanes/w/lane-rearchive/$re_gen_two/main" "$re_sha_two"
 
 # A push can report success and still leave the archive empty (a quarantine, a
 # hook, a repo that accepts and drops). The lane is deleted on the strength of
@@ -634,11 +755,12 @@ echo "detached" >"$lane_dh/DETACHED"
 git -C "$lane_dh" add DETACHED
 git -C "$lane_dh" commit -q -m "detached work"
 dh_sha="$(git -C "$lane_dh" rev-parse HEAD)"
+dh_generation="$(generation_of "$lane_dh")"
 git -C "$lane_dh" checkout -q --detach "$dh_sha"
 git -C "$lane_dh" branch -q -D main 2>/dev/null || true
 run_reap --yes --archive-to "$ARCHIVE" "$lane_dh"
 assert_gone "detached HEAD reaped" "$lane_dh"
-archive_has "detached HEAD" "refs/lanes/w/lane-detached/HEAD" "$dh_sha"
+archive_has "detached HEAD" "refs/lanes/w/lane-detached/$dh_generation/HEAD" "$dh_sha"
 
 # --- linked worktrees --------------------------------------------------------
 # The VM's two biggest roots are not clones at all: all 35 lanes in ~/w and all
@@ -686,9 +808,11 @@ echo detached >"$wt_det/D"
 git -C "$wt_det" add D
 git -C "$wt_det" commit -q -m "detached worktree work"
 det_sha="$(git -C "$wt_det" rev-parse HEAD)"
+det_generation="$(generation_of "$wt_det")"
 run_reap --yes --archive-to "$ARCHIVE" "$wt_det"
 assert_gone "detached worktree" "$wt_det"
-if [[ "$(git -C "$PARENT" rev-parse --verify --quiet refs/lanes/w/wt-detached/HEAD)" == "$det_sha" ]]; then
+if [[ "$(git -C "$PARENT" rev-parse --verify --quiet \
+    "refs/lanes/w/wt-detached/$det_generation/HEAD")" == "$det_sha" ]]; then
   pass "detached worktree HEAD anchored in the parent"
 else
   fail "detached worktree HEAD not anchored: commit is now unreachable"
@@ -774,6 +898,18 @@ mkdir -p "$empty_alert_root"
 REAP_DF_ALERT_PCT=0 run_reap --yes --all "$empty_alert_root"
 assert_rc0 "freshness empty sweep"
 assert_summary "freshness empty sweep" 0 0 0 0
+
+# A missing df must fail safe: keep the summary numeric and assume full disk
+# pressure instead of silently disabling the exit-4 check.
+nodf_bin="$WORKDIR/nodf-bin"
+mkdir "$nodf_bin"
+for command_name in awk bash flock realpath; do
+  ln -s "$(command -v "$command_name")" "$nodf_bin/$command_name"
+done
+PATH="$nodf_bin" run_reap --all "$empty_alert_root"
+assert_rc0 "df unavailable"
+assert_contains "df unavailable" "could not determine filesystem usage"
+assert_contains "df unavailable" "df_used_pct=100"
 
 # A dry run never pages cron: it intentionally reaps nothing.
 lane_alert_dry="$HOME/w3/lane-alert-dry"

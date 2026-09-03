@@ -50,16 +50,17 @@ def _run(
     def load_snapshot_reader(_path: str) -> dict[str, object]:
         if scenario.load_snapshot_after_trigger is None:
             return {"availability": "unavailable", "path": _path}
+        written_at = scenario.submitted_at or clock.now()
         return {
             "availability": "available",
             "path": _path,
             "value": {
                 **scenario.load_snapshot_after_trigger,
-                "written_at": clock.now().timestamp(),
+                "written_at": written_at.timestamp() + scenario.load_snapshot_written_offset_seconds,
             },
         }
 
-    client = httpx.Client(transport=smoke.make_mock_transport(scenario), follow_redirects=False)
+    client = httpx.Client(transport=smoke.make_mock_transport(scenario, now=clock.now), follow_redirects=False)
     try:
         result = smoke.run_smoke(
             _args(tmp_path, *extra),
@@ -556,6 +557,27 @@ def test_red_missing_fresh_load_snapshot_after_trigger(tmp_path: Path) -> None:
 
     assert result.exit_code == 1
     assert not _check(result, "load_snapshot_observed_after_trigger")
+
+
+def test_load_snapshot_written_just_before_submit_returns_is_fresh(tmp_path: Path) -> None:
+    result, _ = _run(
+        tmp_path,
+        scenario=smoke.DryScenario(load_snapshot_written_offset_seconds=-0.5),
+    )
+
+    assert result.exit_code == 0
+    assert _check(result, "load_snapshot_observed_after_trigger")
+
+
+def test_load_snapshot_older_than_pre_submit_anchor_and_skew_fails(tmp_path: Path) -> None:
+    result, _ = _run(
+        tmp_path,
+        scenario=smoke.DryScenario(load_snapshot_written_offset_seconds=-3.0),
+    )
+
+    assert result.exit_code == 1
+    assert not _check(result, "load_snapshot_observed_after_trigger")
+    assert "freshness_anchor" in _detail(result, "load_snapshot_observed_after_trigger")
 
 
 def test_service_warmup_budget_matches_service_contract() -> None:

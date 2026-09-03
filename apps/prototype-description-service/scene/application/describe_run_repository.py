@@ -9,7 +9,7 @@ from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import delete, select, text
+from sqlalchemy import delete, or_, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models.scene import DescribeRun, DescribeRunItem
@@ -295,29 +295,61 @@ class DescribeRunRepository:
         provenance: dict | None,
         tier: DescriptionResultTier | str | None = None,
     ) -> bool:
-        """Persist the describe output for one item and clear its image bytes."""
-        item = await self._get_item(tenant_id=tenant_id, run_id=run_id, media_id=media_id)
-        if item is None:
-            return False
+        """Conditionally persist one result without superseding a concurrent GPU final."""
         incoming_tier = DescriptionResultTier(tier) if tier is not None else None
-        persisted_tier = DescriptionResultTier(item.tier) if item.tier is not None else None
-        if persisted_tier is DescriptionResultTier.FINAL_GPU and incoming_tier is DescriptionResultTier.PROVISIONAL_CPU:
+        item_identity = (
+            DescribeRunItem.tenant_id == tenant_id,
+            DescribeRunItem.run_id == run_id,
+            DescribeRunItem.media_id == media_id,
+        )
+        stored_tier = await self._session.scalar(select(DescribeRunItem.tier).where(*item_identity))
+        if stored_tier is not None:
+            try:
+                DescriptionResultTier(stored_tier)
+            except ValueError:
+                logger.warning(
+                    "treating unknown stored describe result tier as non-final "
+                    "tenant_id=%s run_id=%s media_id=%s tier=%r",
+                    tenant_id,
+                    run_id,
+                    media_id,
+                    stored_tier,
+                )
+
+        values: dict[str, Any] = {
+            "alt_text_draft": alt_text_draft,
+            "caption": caption,
+            "provenance": provenance,
+            "tier": incoming_tier,
+            "image_bytes": None,
+        }
+        if any(value is not None for value in (alt_text_draft, caption, provenance, tier)):
+            values["result_generation"] = DescribeRunItem.result_generation + 1
+
+        statement = update(DescribeRunItem).where(*item_identity).values(**values)
+        if incoming_tier is not DescriptionResultTier.FINAL_GPU:
+            statement = statement.where(
+                or_(
+                    DescribeRunItem.tier.is_(None),
+                    DescribeRunItem.tier != DescriptionResultTier.FINAL_GPU.value,
+                )
+            )
+        result = await self._session.execute(
+            statement.returning(DescribeRunItem.id).execution_options(synchronize_session="fetch")
+        )
+        written = result.scalar_one_or_none() is not None
+        if not written and stored_tier == DescriptionResultTier.FINAL_GPU.value:
             logger.debug(
-                "ignoring late provisional describe result for final item tenant_id=%s run_id=%s media_id=%s",
+                "ignoring non-final describe result for final item tenant_id=%s run_id=%s media_id=%s",
                 tenant_id,
                 run_id,
                 media_id,
             )
-            return False
-        item.alt_text_draft = alt_text_draft
-        item.caption = caption
-        item.provenance = provenance
-        item.tier = incoming_tier
-        if any(value is not None for value in (alt_text_draft, caption, provenance, tier)):
-            item.result_generation = int(item.result_generation or 0) + 1
-        item.image_bytes = None
         await self._session.flush()
-        return True
+        await self._session.scalar(
+            select(DescribeRunItem).where(*item_identity).execution_options(populate_existing=True)
+        )
+        return written
 
     async def mark_run_failed(
         self,

@@ -380,8 +380,12 @@ cleanup_grok_sandbox_siblings() {
   is_grok_sandbox "$real" || return 0
   root="$(dirname "$real")"
   key="${real##*/}"
-  rm -rf -- "$root/.lane-lock-$key" "$root/.lane-live-$key" \
-    "$root/.venv-lane-$key" "$root/.venv-sync-stamp-$key"
+  # The materializer owns the lock path. Unlinking it while fd 8 still holds
+  # the old inode lets a concurrent materializer create and lock a fresh inode
+  # that this cleanup can then remove. Leave the stable lock path in place;
+  # only checkout-owned siblings are stale after the lane is removed.
+  rm -rf -- "$root/.lane-live-$key" "$root/.venv-lane-$key" \
+    "$root/.venv-sync-stamp-$key"
 }
 
 release_grok_lane_lock() {
@@ -465,10 +469,14 @@ stash_has_real_work() {
 # reaper creates when anchoring a linked worktree's detached HEAD.
 lane_safety_snapshot() {
   local dir="$1" ignored_ref="${2:-}" head_ref head_sha ref_line
-  local refs_output stash_output status_output
+  local refs_output reflog_output stash_output status_output
   head_ref="$(git -C "$dir" symbolic-ref --quiet HEAD 2>/dev/null || printf 'DETACHED')" || return 1
   head_sha="$(git -C "$dir" rev-parse --verify HEAD)" || return 1
   refs_output="$(git -C "$dir" for-each-ref --format='%(refname) %(objectname)' refs)" || return 1
+  # HEAD and refs can return to their original values after a writer commits
+  # and resets. The sorted unique reflog object IDs make that otherwise hidden
+  # mutation part of the deletion-safety state.
+  reflog_output="$(git -C "$dir" reflog --all --format='%H' | LC_ALL=C sort -u)" || return 1
   stash_output="$(git -C "$dir" stash list --format='%H %gd')" || return 1
   status_output="$(git -C "$dir" status --porcelain=v1 -uall)" || return 1
   printf 'HEAD %s %s\n' "$head_ref" "$head_sha" || return 1
@@ -478,6 +486,8 @@ lane_safety_snapshot() {
     [[ "${ref_line%% *}" == "$ignored_ref" ]] && continue
     printf '%s\n' "$ref_line"
   done <<<"$refs_output"
+  printf '%s\n' REFLOG
+  printf '%s\n' "$reflog_output"
   printf '%s\n' STASH
   printf '%s\n' "$stash_output"
   printf '%s\n' STATUS

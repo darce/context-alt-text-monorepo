@@ -27,12 +27,17 @@ is_positive_number() {
 unit_path_for_flag() {
     local flag=$1
     local -a paths
+    local path
+    local path_count=0
     [ -r "$install_script" ] || die "lifecycle install script is missing or unreadable: $install_script"
-    mapfile -t paths < <(
+    while IFS= read -r path; do
+        paths[$path_count]=$path
+        path_count=$((path_count + 1))
+    done < <(
         sed -nE "s/.*${flag}[[:space:]]+([^[:space:]\\\\]+).*/\\1/p" "$install_script" |
             sort -u
     )
-    [ "${#paths[@]}" -eq 1 ] ||
+    [ "$path_count" -eq 1 ] ||
         die "lifecycle units do not have exactly one agreeing ${flag} path in $install_script"
     printf '%s\n' "${paths[0]}"
 }

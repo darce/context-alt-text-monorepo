@@ -88,44 +88,34 @@ _ABSENT_BATCH_KEY_WARNED = False
 @contextmanager
 def _serialized_gpu_state_publish(
     path: str | Path | None,
-) -> Iterator[bool]:
+) -> Iterator[None]:
     """Serialize snapshot read-modify-write across the two systemd units."""
     target = resolve_gpu_state_path() if path is None else Path(path)
     lock_path = target.with_name(f"{target.name}.lock")
-    lock_file = None
+    target.parent.mkdir(parents=True, exist_ok=True)
+    lock_fd = os.open(
+        lock_path,
+        os.O_APPEND | os.O_CREAT | os.O_RDWR,
+        0o660,
+    )
     try:
-        target.parent.mkdir(parents=True, exist_ok=True)
-        lock_fd = os.open(
-            lock_path,
-            os.O_APPEND | os.O_CREAT | os.O_RDWR,
-            0o660,
-        )
-        try:
-            lock_stat = os.fstat(lock_fd)
-            directory_gid = target.parent.stat().st_gid
-            if lock_stat.st_gid != directory_gid:
-                os.fchown(lock_fd, -1, directory_gid)
-            if lock_stat.st_mode & 0o777 != 0o660:
-                os.fchmod(lock_fd, 0o660)
-            lock_file = os.fdopen(lock_fd, "a+", encoding="utf-8")
-        except Exception:
-            os.close(lock_fd)
-            raise
+        lock_stat = os.fstat(lock_fd)
+        directory_gid = target.parent.stat().st_gid
+        if lock_stat.st_gid != directory_gid:
+            os.fchown(lock_fd, -1, directory_gid)
+        if lock_stat.st_mode & 0o777 != 0o660:
+            os.fchmod(lock_fd, 0o660)
+        lock_file = os.fdopen(lock_fd, "a+", encoding="utf-8")
+    except Exception:
+        os.close(lock_fd)
+        raise
+    try:
         fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
-    except OSError as exc:
-        if lock_file is not None:
-            lock_file.close()
-        logger.warning(
-            "GPU state snapshot lock failed for %s; publishing unsynchronized: %s",
-            lock_path,
-            exc,
-        )
-        yield False
-        return
-    try:
-        yield True
+        try:
+            yield
+        finally:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
     finally:
-        fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
         lock_file.close()
 
 

@@ -56,9 +56,7 @@ class JobLoadSnapshot:
 
     @property
     def has_work(self) -> bool:
-        return (
-            self.queue_depth > 0 or self.in_flight > 0 or self.batch_in_progress
-        )
+        return self.queue_depth > 0 or self.in_flight > 0 or self.batch_in_progress
 
 
 class GpuLifecycleController:
@@ -103,8 +101,7 @@ class GpuLifecycleController:
         return [
             instance
             for instance in instances
-            if instance.state
-            in (GpuInstanceState.STOPPING, GpuInstanceState.UNKNOWN)
+            if instance.state in (GpuInstanceState.STOPPING, GpuInstanceState.UNKNOWN)
         ]
 
     def reap_idle_instances(
@@ -145,9 +142,10 @@ class GpuLifecycleController:
 
         ``max_lease_seconds <= 0`` disables the cap.
 
-        Note the field name: ``idle_for_seconds`` is populated from the time of
-        the instance's last lifecycle transition, so for a RUNNING instance it
-        is the age of the current run, not a measure of inactivity.
+        For a RUNNING instance, callers populate ``idle_for_seconds`` from the
+        controller-owned running-since lease record (or an explicit test
+        override). OCI ``time-created`` is not a lifecycle-transition time and
+        must never supply this value.
         """
         if max_lease_seconds <= 0:
             return []

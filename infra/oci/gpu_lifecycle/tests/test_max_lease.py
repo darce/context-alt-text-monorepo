@@ -9,6 +9,9 @@ running A10 (~$2/hr). These pin the one path that stops on wall clock alone.
 from __future__ import annotations
 
 import json
+import threading
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import suppress
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -442,6 +445,59 @@ def test_reap_lease_write_failure_disables_cap_loudly(monkeypatch, caplog) -> No
 
     assert exit_code != 0
     assert "lease cap disabled" in caplog.text
+
+
+def test_one_lease_store_failure_does_not_abort_healthy_sibling_reap(tmp_path: Path) -> None:
+    path = tmp_path / "running-since.json"
+    _write_lease(
+        path,
+        instance_id="instance-good",
+        since="2026-09-03T10:00:00Z",
+    )
+
+    class OneBrokenLeaseStore(RunningSinceLeaseStore):
+        def observe_running(self, instance_id: str):
+            if instance_id == "instance-bad":
+                raise PermissionError("injected unreadable lease")
+            return super().observe_running(instance_id)
+
+    actuator = RecordingActuator()
+    result = run_reap_cycle(
+        controller=GpuLifecycleController(idle_seconds=300),
+        instances=[_running(0, "instance-bad"), _running(0, "instance-good")],
+        load_source=BusyLoadSource(),
+        actuator=actuator,
+        fence_delay_seconds=0,
+        max_lease_seconds=3600,
+        running_since_store=OneBrokenLeaseStore(path=path, now=lambda: NOW),
+    )
+
+    assert actuator.stopped == ["instance-good"]
+    assert result.lease_expired == [("STOP", "instance-good")]
+    assert len(result.errors) == 1
+    assert "instance-bad" in result.errors[0]
+
+
+def test_concurrent_lease_writers_preserve_both_instance_records(tmp_path: Path) -> None:
+    path = tmp_path / "running-since.json"
+    rendezvous = threading.Barrier(2)
+
+    class CoordinatedLeaseStore(RunningSinceLeaseStore):
+        def _read_instances_for_update(self) -> dict[str, dict[str, str]]:
+            instances = super()._read_instances_for_update()
+            with suppress(threading.BrokenBarrierError):
+                rendezvous.wait(timeout=0.25)
+            return instances
+
+    def write(instance_id: str) -> None:
+        CoordinatedLeaseStore(path=path, now=lambda: NOW).record_start(instance_id)
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = [executor.submit(write, instance_id) for instance_id in ("instance-a", "instance-b")]
+        for future in futures:
+            future.result()
+
+    assert set(json.loads(path.read_text())["instances"]) == {"instance-a", "instance-b"}
 
 
 def test_start_lease_write_failure_disables_cap_loudly(monkeypatch, caplog) -> None:

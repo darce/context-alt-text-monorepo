@@ -14,6 +14,7 @@ state_stale_seconds=${ACX_GPU_STATE_STALE_SECONDS:-180}
 load_stale_seconds=${ACX_DESCRIBE_LOAD_STALE_SECONDS:-120}
 reader_uid=${ACX_GPU_READER_UID:-10001}
 now_epoch=${ACX_NOW_EPOCH:-$(date +%s)}
+config_only=${ACX_GPU_SNAPSHOT_CONFIG_ONLY:-0}
 
 die() {
     echo "ERROR: $*" >&2
@@ -66,6 +67,7 @@ is_positive_number "$load_stale_seconds" ||
     die "ACX_DESCRIBE_LOAD_STALE_SECONDS must be a positive number"
 [[ "$reader_uid" =~ ^[0-9]+$ ]] || die "ACX_GPU_READER_UID must be numeric"
 [[ "$now_epoch" =~ ^[0-9]+([.][0-9]+)?$ ]] || die "ACX_NOW_EPOCH must be numeric"
+[[ "$config_only" =~ ^[01]$ ]] || die "ACX_GPU_SNAPSHOT_CONFIG_ONLY must be 0 or 1"
 
 [ -r "$compose_file" ] || die "compose file is missing or unreadable: $compose_file"
 
@@ -84,6 +86,11 @@ if ! grep -Fq -- "$rendered_mount" <<<"$api_block"; then
 fi
 if ! grep -Fq -- "ACX_GPU_STATE_PATH=${state_path}" <<<"$api_block"; then
     die "compose api service does not pass the agreeing ACX_GPU_STATE_PATH"
+fi
+
+if [ "$config_only" -eq 1 ]; then
+    echo "OK: GPU snapshot lifecycle and compose configuration agree"
+    exit 0
 fi
 
 reader_can_read() {

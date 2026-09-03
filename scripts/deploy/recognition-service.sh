@@ -1585,6 +1585,20 @@ verify_running_image_matches_deployed() {
   return 1
 }
 
+verify_live_gpu_snapshots() {
+  local env="$1" remote_dir
+  remote_dir="$(env_to_remote_dir "$env")"
+  log "Verifying live GPU snapshot contract on ${SSH_TARGET} (${env})"
+  ssh -o BatchMode=yes -o ConnectTimeout=10 -l "${OCI_USER}" -- "${OCI_HOST}" \
+    "sudo env ACX_GPU_COMPOSE_FILE='${remote_dir}/docker-compose.env.yml' \
+      ACX_GPU_UNIT_STATE_PATH=/run/acx/gpu-state.json \
+      ACX_GPU_UNIT_LOAD_PATH=/run/acx/describe-load.json \
+      ACX_GPU_STATE_PATH=/run/acx/gpu-state.json \
+      ACX_DESCRIBE_LOAD_PATH=/run/acx/describe-load.json \
+      bash -s" \
+    < "${SCRIPT_DIR}/check-gpu-snapshots.sh"
+}
+
 do_verify() {
   local env="$1"
   local url expected_sha actual_sha body attempt max_attempts sleep_s
@@ -1661,6 +1675,14 @@ do_verify() {
         # compose is mid-pull, but do not call fail() here.
         if (( attempt < max_attempts )); then
           warn "Image mismatch on attempt ${attempt}/${max_attempts}; retrying after ${sleep_s}s"
+          sleep "$sleep_s"
+          continue
+        fi
+        return 1
+      fi
+      if ! verify_live_gpu_snapshots "$env"; then
+        warn "GPU snapshot verification failed on ${env}"
+        if (( attempt < max_attempts )); then
           sleep "$sleep_s"
           continue
         fi

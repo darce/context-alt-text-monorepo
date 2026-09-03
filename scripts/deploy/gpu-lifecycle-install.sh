@@ -81,7 +81,7 @@ ready_flag=""
 if [ "$DRY_RUN" -eq 1 ]; then
     echo "--- dry run: would sync infra/oci/gpu_lifecycle -> ${HOST}:/opt/acx-gpu/infra/oci/"
     echo "--- dry run: would install acx-gpu-start.{service,timer} + acx-gpu-reap.{service,timer}"
-    echo "--- dry run: would create /run/acx (0775 root:10001) + /etc/tmpfiles.d/acx-gpu.conf"
+    echo "--- dry run: would create /run/acx (0775 root:10001) and gpu-state.json.lock (0660 root:10001)"
     exit 0
 fi
 
@@ -172,10 +172,15 @@ UNIT
 sudo mkdir -p /run/acx
 sudo chown root:10001 /run/acx
 sudo chmod 0775 /run/acx
+sudo touch /run/acx/gpu-state.json.lock
+sudo chown root:10001 /run/acx/gpu-state.json.lock
+sudo chmod 0660 /run/acx/gpu-state.json.lock
 # /run is tmpfs: recreate the directory on every boot, or the bind mount comes
-# back root-owned and the container-side writer fails silently.
+# back root-owned and the container-side writer fails silently. Pre-create the
+# shared lock too, so neither lifecycle uid's umask decides its ownership/mode.
 sudo tee /etc/tmpfiles.d/acx-gpu.conf >/dev/null <<'TMPF'
 d /run/acx 0775 root 10001 -
+f /run/acx/gpu-state.json.lock 0660 root 10001 -
 TMPF
 
 sudo systemctl daemon-reload

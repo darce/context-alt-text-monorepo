@@ -33,7 +33,7 @@ import subprocess
 import sys
 import time
 from dataclasses import dataclass, field
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Callable, Protocol, Sequence
 
@@ -359,6 +359,8 @@ class FakeOci:
         self.stop_calls += 1
         if self.stop_effective:
             self.current_state = "STOPPED"
+            self.armed = False
+            self.reaping = False
 
     def list_instances(self, compartment_id: str, *, timeout: float) -> list[dict[str, Any]]:
         del compartment_id, timeout
@@ -531,8 +533,30 @@ def run_smoke(
         if callable(trigger):
             trigger()
 
+        warm_started = False
+        while not warm_started:
+            try:
+                deadline.check("waiting for GPU warm start")
+            except SmokeFailure as exc:
+                check("deadline", False, str(exc))
+                break
+            observed = oci.get_instance(
+                args.instance_id,
+                timeout=deadline.timeout(OCI_CALL_TIMEOUT_SECONDS),
+            )
+            observed_state = _state(observed)
+            _record_transition(transitions, observed_state, elapsed=deadline.elapsed(), now=now)
+            warm_started = observed_state == "RUNNING"
+            if not warm_started:
+                sleep(POLL_SECONDS)
+        check(
+            "warm_start_running",
+            warm_started,
+            "RUNNING" if warm_started else "deadline before RUNNING",
+        )
+
         deadline_failed = False
-        while run_status not in TERMINAL_RUN_STATUSES:
+        while warm_started and run_status not in TERMINAL_RUN_STATUSES:
             try:
                 deadline.check("polling WordPress run")
             except SmokeFailure as exc:
@@ -726,7 +750,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-seconds", type=int, default=MAX_LIVE_SECONDS)
     parser.add_argument(
         "--evidence-out",
-        default=f"docs/tasks/vlm/GPUSMOKE-1-evidence-{date.today().isoformat()}.json",
+        default=f"docs/tasks/vlm/GPUSMOKE-1-evidence-{datetime.now(UTC).date().isoformat()}.json",
     )
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--dry-run", dest="live", action="store_false", help="offline MockTransport run (default)")

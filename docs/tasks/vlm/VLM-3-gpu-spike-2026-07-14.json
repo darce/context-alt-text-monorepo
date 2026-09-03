@@ -1,0 +1,72 @@
+{
+  "schema": "acx-gpu-spike/v1",
+  "task_ref": "VLM-3",
+  "recorded_at": "2026-07-13T22:42:57-04:00",
+  "status": "live_oci_measurement_complete",
+  "shape": "VM.GPU.A10.1",
+  "boot_volume_size_in_gbs": 400,
+  "measurement_candidate": {
+    "model_id": "Qwen3-VL-30B-A3B-Instruct",
+    "quantization": "Q4 GGUF",
+    "estimated_model_bytes_gb": 18,
+    "model_path": "/opt/acx-gpu/models/qwen3-vl-30b-a3b-instruct-q4.gguf"
+  },
+  "measurements": {
+    "cold_boot_seconds": {
+      "value": 434.78260358299303,
+      "source": "live_oci_gpu_spike_bench"
+    },
+    "stopped_to_warm_start_seconds": {
+      "value": 443.71551749999344,
+      "p50": 443.71551749999344,
+      "p95": 443.86599577469315,
+      "samples": [
+        443.8827155829931,
+        441.3956752499944,
+        443.71551749999344
+      ],
+      "source": "live_oci_gpu_spike_bench"
+    },
+    "warm_start_p95_seconds": {
+      "value": 443.86599577469315,
+      "target_seconds": 90.0,
+      "meets_target": false,
+      "samples": [
+        443.8827155829931,
+        441.3956752499944,
+        443.71551749999344
+      ],
+      "source": "live_oci_gpu_spike_bench"
+    },
+    "model_load_seconds": {
+      "value": 425.6777686659916,
+      "source": "live_oci_gpu_spike_bench"
+    },
+    "seconds_per_image": {
+      "value": 0.5637835000088671,
+      "p50": 0.5637835000088671,
+      "p95": 0.5637835000088671,
+      "mean": 0.5637835000088671,
+      "samples": [
+        0.5637835000088671
+      ],
+      "source": "live_oci_gpu_spike_bench"
+    }
+  },
+  "oci_capacity": {
+    "a10_quota_confirmed": false,
+    "a100_or_l40s_headroom_confirmed": false,
+    "serverless_gpu_available": false,
+    "source": "pending_operator_oci_console_or_cli_check"
+  },
+  "terraform": {
+    "gpu_resource": "oci_core_instance.acx_gpu_burst",
+    "gpu_shape_variable": "gpu_shape",
+    "validate_command": "cd infra/oci && terraform validate"
+  },
+  "notes": [
+    "Artifact produced by scripts/gpu_spike_bench.py (VLM-3B Slice 7a).",
+    "Warm-start reports p50/p95 percentiles, not means [PERF-01].",
+    "Warm-start p95 target 90.0s: FAIL (p95=443.866s)."
+  ]
+}

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import subprocess
 from pathlib import Path
 
@@ -76,12 +77,12 @@ def _valid_boundary_item(**overrides: object) -> dict[str, object]:
     item: dict[str, object] = {
         "media_id": 101,
         "status": "completed",
+        "tier": "final_gpu",
+        "result_generation": 2,
         "caption": "A red bicycle leans beside a brick library wall.",
         "alt_text_draft": "Red bicycle beside a brick library wall",
         "provenance": {
-            "tier": "final_gpu",
-            "model_id": smoke.EXPECTED_MODEL_ID,
-            "revision": smoke.EXPECTED_REVISION,
+            "model_id": f"{smoke.EXPECTED_PROFILE.hub_repo}@{smoke.EXPECTED_REVISION}",
         },
     }
     item.update(overrides)
@@ -104,17 +105,28 @@ def _valid_boundary_item(**overrides: object) -> dict[str, object]:
             r"items\[0\]\.media_id",
         ),
         ([_valid_boundary_item(status=7)], r"items\[0\]\.status.*str"),
+        (
+            [
+                {
+                    key: value
+                    for key, value in _valid_boundary_item().items()
+                    if key != "tier"
+                }
+            ],
+            r"items\[0\].*contract_tier_missing",
+        ),
+        (
+            [_valid_boundary_item(result_generation="two")],
+            r"items\[0\]\.result_generation.*int",
+        ),
         ([_valid_boundary_item(provenance=None)], r"items\[0\]\.provenance.*object"),
         (
             [
                 _valid_boundary_item(
-                    provenance={
-                        "tier": "final_gpu",
-                        "model_id": smoke.EXPECTED_MODEL_ID,
-                    }
+                    provenance={"model_id": smoke.EXPECTED_PROFILE.hub_repo}
                 )
             ],
-            r"items\[0\]\.provenance\.revision",
+            r"items\[0\]\.provenance\.model_id.*@",
         ),
     ],
 )
@@ -129,6 +141,99 @@ def test_items_boundary_preserves_a_well_formed_list() -> None:
     items = [_valid_boundary_item()]
 
     assert smoke._validate_items_payload(items) is items
+
+
+def test_subprocess_oci_uses_supported_exact_argv(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[list[str]] = []
+
+    def fake_run(argv: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        del kwargs
+        calls.append(argv)
+        if argv[1:4] == ["compute", "instance", "get"]:
+            payload = {"data": {"id": "instance-placeholder"}}
+        elif argv[1:4] == ["audit", "event", "list"]:
+            payload = {
+                "data": [
+                    {
+                        "data": {
+                            "resourceId": "instance-placeholder",
+                            "request": {"parameters": {"action": ["START"]}},
+                        }
+                    }
+                ]
+            }
+        else:
+            payload = {"data": []}
+        return subprocess.CompletedProcess(argv, 0, stdout=json.dumps(payload))
+
+    monkeypatch.setattr(smoke.subprocess, "run", fake_run)
+    oci = smoke.SubprocessOci("oci-placeholder")
+
+    oci.get_instance("instance-placeholder", timeout=3)
+    oci.stop_instance("instance-placeholder", timeout=3)
+    oci.list_instances("compartment-placeholder", timeout=3)
+    events = oci.list_start_events(
+        "compartment-placeholder",
+        "instance-placeholder",
+        start_time="2026-01-01T00:00:00Z",
+        end_time="2026-01-01T00:05:00Z",
+        timeout=3,
+    )
+
+    assert len(events) == 1
+
+    assert calls == [
+        [
+            "oci-placeholder",
+            "compute",
+            "instance",
+            "get",
+            "--instance-id",
+            "instance-placeholder",
+            "--output",
+            "json",
+        ],
+        [
+            "oci-placeholder",
+            "compute",
+            "instance",
+            "action",
+            "--instance-id",
+            "instance-placeholder",
+            "--action",
+            "STOP",
+            "--output",
+            "json",
+        ],
+        [
+            "oci-placeholder",
+            "compute",
+            "instance",
+            "list",
+            "--compartment-id",
+            "compartment-placeholder",
+            "--all",
+            "--output",
+            "json",
+        ],
+        [
+            "oci-placeholder",
+            "audit",
+            "event",
+            "list",
+            "--compartment-id",
+            "compartment-placeholder",
+            "--start-time",
+            "2026-01-01T00:00:00Z",
+            "--end-time",
+            "2026-01-01T00:05:00Z",
+            "--all",
+            "--output",
+            "json",
+        ],
+    ]
 
 
 def test_default_dry_run_writes_evidence_outside_docs(
@@ -177,35 +282,64 @@ def test_dry_run_exercises_whole_flow_and_writes_cost_evidence(tmp_path: Path) -
     result, oci = _run(tmp_path)
 
     assert result.exit_code == 0
-    assert oci.stop_calls == 1
+    assert oci.stop_calls == 0
     assert [entry["state"] for entry in result.evidence["transitions"]] == [
         "STOPPED",
         "STARTING",
         "RUNNING",
         "STOPPING",
         "STOPPED",
-        "STOPPING",
-        "STOPPED",
     ]
     assert result.evidence["item_timeline"] == [
-        {"elapsed_seconds": 0.0, "media_id": 101, "status": "queued", "tier": None},
-        {"elapsed_seconds": 2.0, "media_id": 101, "status": "queued", "tier": None},
-        {"elapsed_seconds": 2.0, "media_id": 101, "status": "running", "tier": None},
+        {
+            "elapsed_seconds": 0.0,
+            "media_id": 101,
+            "status": "queued",
+            "tier": None,
+            "result_generation": 0,
+        },
+        {
+            "elapsed_seconds": 2.0,
+            "media_id": 101,
+            "status": "running",
+            "tier": "provisional_cpu",
+            "result_generation": 1,
+        },
+        {
+            "elapsed_seconds": 2.0,
+            "media_id": 101,
+            "status": "running",
+            "tier": "provisional_cpu",
+            "result_generation": 1,
+        },
         {
             "elapsed_seconds": 4.0,
             "media_id": 101,
             "status": "completed",
             "tier": "final_gpu",
+            "result_generation": 2,
         },
     ]
     assert result.evidence["item_provenance"] == [
         {
             "media_id": 101,
             "tier": "final_gpu",
-            "model_id": smoke.EXPECTED_MODEL_ID,
+            "model_id": smoke.EXPECTED_PROFILE.hub_repo,
             "revision": smoke.EXPECTED_REVISION,
+            "result_generation": 2,
         }
     ]
+    assert _check(result, "provisional_superseded_by_final")
+    assert {
+        sample["phase"] for sample in result.evidence["service_health_samples"]
+    } >= {
+        "preflight",
+        "warm_up",
+        "processing",
+        "drain",
+        "recovery",
+        "after_stop",
+    }
     assert result.evidence["cost_estimate_usd"] > 0
     assert result.evidence["cost_estimate_ongoing"] is False
     assert (tmp_path / "evidence.json").is_file()
@@ -232,8 +366,14 @@ def test_application_password_is_absent_from_output_and_evidence(
     )
 
 
-def test_red_tier_provisional_cpu(tmp_path: Path) -> None:
-    result, _ = _run(tmp_path, scenario=smoke.DryScenario(tier="provisional_cpu"))
+def test_red_final_item_remains_provisional_cpu(tmp_path: Path) -> None:
+    result, _ = _run(
+        tmp_path,
+        scenario=smoke.DryScenario(
+            item_tiers=[None, "provisional_cpu", "provisional_cpu", "provisional_cpu"],
+            result_generations=[0, 1, 1, 1],
+        ),
+    )
 
     assert result.exit_code == 1
     assert not _check(result, "tier_final_gpu")
@@ -285,15 +425,39 @@ def test_red_item_terminal_before_instance_running(tmp_path: Path) -> None:
     assert "101" in _detail(result, "no_item_terminal_before_running")
 
 
-def test_red_provisional_cpu_observed_mid_run(tmp_path: Path) -> None:
-    scenario = smoke.DryScenario(
-        item_tiers=[None, None, "provisional_cpu", "final_gpu"]
-    )
+def test_red_final_without_provisional_supersession(tmp_path: Path) -> None:
+    scenario = smoke.DryScenario(item_tiers=[None, None, None, "final_gpu"])
     result, _ = _run(tmp_path, scenario=scenario)
 
     assert result.exit_code == 1
-    assert not _check(result, "no_provisional_or_degraded_items")
-    assert "101" in _detail(result, "no_provisional_or_degraded_items")
+    assert not _check(result, "provisional_superseded_by_final")
+    assert "101" in _detail(result, "provisional_superseded_by_final")
+
+
+def test_red_nonincreasing_result_generation_is_not_supersession(
+    tmp_path: Path,
+) -> None:
+    result, _ = _run(
+        tmp_path,
+        scenario=smoke.DryScenario(result_generations=[0, 1, 1, 1]),
+    )
+
+    assert result.exit_code == 1
+    assert not _check(result, "provisional_superseded_by_final")
+
+
+def test_red_service_health_degrades_during_processing(tmp_path: Path) -> None:
+    result, _ = _run(
+        tmp_path,
+        scenario=smoke.DryScenario(health_statuses=["ok", "ok", "ok", "degraded"]),
+    )
+
+    assert result.exit_code == 1
+    assert not _check(result, "service_health_throughout")
+    assert any(
+        sample["phase"] == "processing" and not sample["healthy"]
+        for sample in result.evidence["service_health_samples"]
+    )
 
 
 def test_red_health_adapter_preflight_refuses(tmp_path: Path) -> None:
@@ -373,7 +537,7 @@ def test_red_initial_instance_not_stopped_preflight_refuses(tmp_path: Path) -> N
 
     assert result.exit_code == 2
     assert not _check(result, "initial_instance_stopped")
-    assert oci.stop_calls == 1
+    assert oci.stop_calls == 0
 
 
 def test_refusal_after_start_still_issues_compensating_stop(tmp_path: Path) -> None:
@@ -459,15 +623,22 @@ def test_red_unpinned_revision(tmp_path: Path) -> None:
     assert not _check(result, "model_revision_pinned")
 
 
-def test_red_second_start_transition_breaks_idempotence(tmp_path: Path) -> None:
+def test_sampled_starting_states_do_not_count_as_start_actions(tmp_path: Path) -> None:
     oci = smoke.FakeOci(
         startup_states=["STARTING", "RUNNING"],
         reaper_states=["STARTING", "RUNNING", "STOPPING", "STOPPED"],
     )
     result, _ = _run(tmp_path, oci=oci)
 
+    assert result.exit_code == 0
+    assert _check(result, "exactly_one_start_action")
+
+
+def test_red_two_authoritative_start_actions_break_idempotence(tmp_path: Path) -> None:
+    result, _ = _run(tmp_path, oci=smoke.FakeOci(start_action_count=2))
+
     assert result.exit_code == 1
-    assert not _check(result, "exactly_one_start_transition")
+    assert not _check(result, "exactly_one_start_action")
 
 
 def test_red_warm_start_deadline_still_issues_stop(tmp_path: Path) -> None:
@@ -519,10 +690,14 @@ def test_red_failed_stop_command_is_reported(tmp_path: Path) -> None:
             self.stop_calls += 1
             raise smoke.SmokeFailure("injected STOP failure")
 
-    result, oci = _run(tmp_path, oci=StopFailingOci())
+    result, oci = _run(
+        tmp_path,
+        oci=StopFailingOci(reaper_states=["RUNNING"]),
+        extra=("--max-seconds", "5"),
+    )
 
     assert result.exit_code == 1
-    assert oci.stop_calls == 1
+    assert 1 < oci.stop_calls <= smoke.MAX_EMERGENCY_STOP_ATTEMPTS
     assert not _check(result, "finally_stop_issued")
 
 
@@ -542,8 +717,8 @@ def test_red_stop_reverification_fails_if_compensating_stop_is_ineffective(
 
 
 def test_red_compensating_stop_times_out_in_stopping(tmp_path: Path) -> None:
-    oci = smoke.FakeOci(stop_states=["STOPPING"])
-    result, _ = _run(tmp_path, oci=oci)
+    oci = smoke.FakeOci(reaper_states=["RUNNING"], stop_states=["STOPPING"])
+    result, _ = _run(tmp_path, oci=oci, extra=("--max-seconds", "5"))
 
     assert result.exit_code == 1
     assert not _check(result, "instance_stopped_finally")
@@ -571,6 +746,21 @@ def test_live_without_confirmation_refuses_before_client_or_oci(
         == 2
     )
     assert calls == []
+
+
+def test_live_rejects_placeholder_service_endpoint_before_network(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("ACX_GPU_SMOKE_CONFIRM", "RUN")
+    monkeypatch.setenv("ACX_WP_APP_PASSWORD", "password")
+    monkeypatch.setenv("ACX_DESCRIPTION_API_KEY", "api-key")
+    monkeypatch.setattr(smoke.shutil, "which", lambda _: "/oci-placeholder")
+    args = smoke.build_parser().parse_args(
+        ["--live", "--instance-id", "instance-placeholder"]
+    )
+
+    with pytest.raises(smoke.PreflightRefusal, match="service-base-url"):
+        smoke._validate_args(args)
 
 
 def test_missing_gpu_state_json_is_recorded_not_failed(tmp_path: Path) -> None:

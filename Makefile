@@ -692,7 +692,7 @@ eval-captions:
 .PHONY: gpu-burst-smoke gpu-burst-smoke-live
 GPU_SMOKE_PYTHON ?= apps/prototype-description-service/.venv/bin/python
 gpu-burst-smoke:
-	@python3 scripts/gpu_burst_smoke.py --dry-run
+	@$(GPU_SMOKE_PYTHON) scripts/gpu_burst_smoke.py --dry-run
 
 # Operator-only: needs ACX_GPU_SMOKE_CONFIRM=RUN and runs on acx-backend as
 # ubuntu, since only that host has the OCI binary and vaulted key. Override
@@ -702,7 +702,7 @@ gpu-burst-smoke-live:
 	  echo "ACX_GPU_SMOKE_SERVICE_BASE_URL must name the description service" >&2; \
 	  exit 2; \
 	}
-	@$(GPU_SMOKE_PYTHON) scripts/gpu_burst_smoke.py --live --max-seconds 900 \
+	@$(GPU_SMOKE_PYTHON) scripts/gpu_burst_smoke.py --live --max-seconds 1200 \
 	  --evidence-out "docs/tasks/vlm/GPUSMOKE-1-evidence-$$(date -u +%Y%m%dT%H%M%SZ).json" \
 	  --wp-base-url "$${ACX_GPU_SMOKE_WP_BASE_URL:-https://wordpress.invalid}" \
 	  --wp-user "$${ACX_GPU_SMOKE_WP_USER:-gpu-smoke-operator}" \

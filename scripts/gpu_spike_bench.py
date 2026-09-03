@@ -648,12 +648,16 @@ def run_cold_boot(
     poll_interval_seconds: float = DEFAULT_POLL_INTERVAL_S,
     lifecycle_timeout_seconds: float = DEFAULT_LIFECYCLE_TIMEOUT_S,
     endpoint_timeout_seconds: float = DEFAULT_ENDPOINT_READY_TIMEOUT_S,
+    on_start: Callable[[], None] | None = None,
+    strict_stopped_precondition: bool = False,
 ) -> ColdBootResult:
     """START from STOPPED → RUNNING → endpoint ready [cold_boot + model_load]."""
     try:
         lifecycle_evidence: dict[str, int] = {"retries": 0}
         state = actuator.get_lifecycle_state(instance_id).upper()
         if state != "STOPPED":
+            if strict_stopped_precondition:
+                raise PhaseError("cold_boot", f"instance changed state before START: {state}")
             ensure_stopped(
                 actuator,
                 instance_id,
@@ -662,6 +666,8 @@ def run_cold_boot(
                 poll_interval_seconds=poll_interval_seconds,
             )
         t0 = clock.monotonic()
+        if on_start is not None:
+            on_start()
         actuator.start(instance_id)
         wait_for_lifecycle(
             actuator,
@@ -1097,12 +1103,13 @@ def run_bench(
     endpoint_timeout_seconds: float = DEFAULT_ENDPOINT_READY_TIMEOUT_S,
     on_phase: Callable[[str], None] | None = None,
 ) -> BenchResult:
-    """Run all phases; always STOP in ``finally`` after the dedicated-host gate."""
+    """Run all phases; compensate only a START owned by this invocation."""
     cold: ColdBootResult | None = None
     warm: WarmStartResult | None = None
     thruput: ThroughputResult | None = None
     prepared_artifact: dict[str, Any] | None = None
     active_phase = "setup"
+    owned = False
 
     def _mark(phase: str) -> None:
         nonlocal active_phase
@@ -1115,6 +1122,17 @@ def run_bench(
         actuator.verify_bench_dedicated(instance_ocid)
     except Exception as exc:
         raise PhaseError("dedicated_instance_check", str(exc)) from exc
+
+    try:
+        initial_state = actuator.get_lifecycle_state(instance_ocid).upper()
+    except Exception as exc:
+        raise PhaseError("precondition", f"could not verify initial STOPPED state: {exc}") from exc
+    if initial_state != "STOPPED":
+        raise PhaseError("precondition", f"instance must be STOPPED before bench, got {initial_state}")
+
+    def _claim_start() -> None:
+        nonlocal owned
+        owned = True
 
     try:
         _mark("instance_provenance")
@@ -1135,6 +1153,8 @@ def run_bench(
             poll_interval_seconds=poll_interval_seconds,
             lifecycle_timeout_seconds=lifecycle_timeout_seconds,
             endpoint_timeout_seconds=endpoint_timeout_seconds,
+            on_start=_claim_start,
+            strict_stopped_precondition=True,
         )
         print(
             f"cold_boot: {cold.cold_boot_seconds:.3f}s (model_load={cold.model_load_seconds:.3f}s)",
@@ -1209,19 +1229,20 @@ def run_bench(
     except Exception as exc:
         raise PhaseError(active_phase, str(exc)) from exc
     finally:
-        # Billing safety: never leave the instance RUNNING [RES-07].
-        try:
-            ensure_stopped(
-                actuator,
-                instance_ocid,
-                clock=clock,
-                timeout_seconds=lifecycle_timeout_seconds,
-                poll_interval_seconds=poll_interval_seconds,
-            )
-            print("finally: instance STOPPED", flush=True)
-        except Exception as stop_exc:
-            sys.stderr.write(f"finally STOP failed: {stop_exc}\n")
-            raise PhaseError("cleanup", str(stop_exc)) from stop_exc
+        # Billing safety [RES-07], scoped to the lifecycle action we took.
+        if owned:
+            try:
+                ensure_stopped(
+                    actuator,
+                    instance_ocid,
+                    clock=clock,
+                    timeout_seconds=lifecycle_timeout_seconds,
+                    poll_interval_seconds=poll_interval_seconds,
+                )
+                print("finally: instance STOPPED", flush=True)
+            except Exception as stop_exc:
+                sys.stderr.write(f"finally STOP failed: {stop_exc}\n")
+                raise PhaseError("cleanup", str(stop_exc)) from stop_exc
 
         # A measured artifact is complete only after billing-safe STOPPED is proven.
         if prepared_artifact is not None:

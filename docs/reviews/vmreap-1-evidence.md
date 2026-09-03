@@ -67,9 +67,9 @@ by `scripts/vm/tests/test_vm_script_suites.py`.
 | The default allowlist includes `grok-sandbox`, while similarly prefixed directories and a root itself remain outside the deletion boundary. | `g2 grok-sandbox`; `g2 grok-sandbox prefix-not-root`; `g2 root itself` |
 | An archive located inside the candidate is rejected and the candidate remains, including a percent-encoded `file://localhost` destination; non-local file URL authorities fail loudly. | `archive destination inside lane`; `localhost archive destination inside lane`; `non-local file URL authority` |
 | Fresh sandbox markers, live leases, and held lane locks prevent both archival and removal. Destructive eligibility is evaluated while holding the lane lock, so work created at its acquisition boundary survives. | `grok-sandbox fresh marker`; `grok-sandbox live lease`; `grok-sandbox lane lock`; `grok-sandbox lock-before-eligibility race`; `grok-sandbox lock-before-eligibility writer work` |
-| A legacy marker is not persisted when a later dirty-tree guard skips the lane. | `grok-sandbox dirty legacy did not persist marker backfill` |
-| Dry-run and `--yes` select the same aged markerless legacy sandbox, while only the destructive path backfills its marker. | `grok-sandbox stale legacy dry-run`; `grok-sandbox stale legacy dry-run did not backfill marker`; `grok-sandbox stale legacy marker backfill` |
-| A successfully reaped legacy sandbox retains the materializer-owned lock inode while removing its lease, venv, and sync-stamp siblings. A replacement lock is detected before checkout removal and again before sibling cleanup. | `grok-sandbox stale legacy lane lock inode retained`; `grok-sandbox stale legacy lease`; `grok-sandbox stale legacy venv`; `grok-sandbox stale legacy sync stamp`; `grok-sandbox late lane lock`; `grok-sandbox recreated lane lock inode retained`; `grok-sandbox recreated lane lease`; `grok-sandbox recreated lane venv`; `grok-sandbox recreated lane sync stamp` |
+| An unmarked dirty sandbox remains unmarked and is retained for operator review. | `grok-sandbox unmarked dirty did not create marker` |
+| Markerless sandboxes are retained for operator review in dry-run and destructive modes; destructive pressured sweeps count them as unknown-freshness candidates and exit 4 when none can be reaped. | `grok-sandbox unmarked dry-run`; `grok-sandbox unmarked destructive`; `unmarked sandbox freshness alert exit 4` |
+| An unmarked sandbox retains its materializer-owned lock, lease, venv, and sync-stamp siblings. For marked stale sandboxes, a replacement lock is detected before checkout removal and again before sibling cleanup. | `grok-sandbox unmarked lane lock inode retained`; `grok-sandbox unmarked lease`; `grok-sandbox unmarked venv`; `grok-sandbox unmarked sync stamp`; `grok-sandbox late lane lock`; `grok-sandbox recreated lane lock inode retained`; `grok-sandbox recreated lane lease`; `grok-sandbox recreated lane venv`; `grok-sandbox recreated lane sync stamp` |
 | A non-sandbox archive candidate is retained until its newest checkout/git timestamp reaches the minimum age. | `archive recent lane`; `archive aged lane` |
 | Without an archive, commits reachable only through a tag or reflog are treated as unmerged local work and retained. | `no-archive tag-only work`; `no-archive reflog-only work` |
 | Branches, tag-only commits, and detached HEAD commits survive archival. | `archive reap`; `archive tag-only commit`; `detached HEAD` |
@@ -83,11 +83,11 @@ by `scripts/vm/tests/test_vm_script_suites.py`.
 | Stale mkdir-lock recovery preserves the old owner inode, and two recoverers admit exactly one sweep. | `mkdir fallback atomically preserved stale owner`; `mkdir fallback stale recovery admits exactly one reaper` |
 | Missing `df` output fails safe with a numeric 100% usage value. | `df unavailable`; `df unavailable contains df_used_pct=100` |
 
-The second safety snapshot is the final state gate before marker backfill and
-`rm`. There is still a residual race window between that snapshot and `rm`;
-the implementation comment records the same limit. The test case `lane changed
-after snapshot` demonstrates detection before that window and does not claim
-the window is zero.
+The second safety snapshot is the final state gate before the external intent
+record and `rm`. There is still a residual race window between that snapshot
+and `rm`; the implementation comment records the same limit. The test case
+`lane changed after snapshot` demonstrates detection before that window and
+does not claim the window is zero.
 
 ## Installer contracts
 
@@ -241,12 +241,13 @@ FAIL: contended sandbox freshness alert expected exit 4 got 0
 
 The corrected sweep treats an absent `--all` root as a counted per-root skip
 and continues through every present root, returning nonzero only when all
-requested roots are absent. A partially failed removal records the successful
-generation-scoped archive HEAD in `.workbay-reap-partial`; subsequent sweeps
-identify that state for operator review. A lock-path replacement after checkout
-removal is now a warning, does not double-count the lane as skipped, preserves
-the success log, and avoids deleting siblings that may belong to a replacement
-materialization.
+requested roots are absent. Before removal, the reaper records the successful
+generation-scoped archive HEAD outside the candidate under
+`${REAP_STATE_DIR:-$HOME/.workbay-reap}/partial`; a failed partial removal is
+therefore identifiable even when `.git` and write access are gone. A lock-path
+replacement after checkout removal is now a warning, does not double-count the
+lane as skipped, preserves the success log, and avoids deleting siblings that
+may belong to a replacement materialization.
 
 Lock acquisition now distinguishes contention, an unverifiable open/flock/stat,
 and pathname replacement. Lock refusals participate in the pressured-sweep
@@ -257,13 +258,35 @@ lease, TTL, lock, and no-flock protections as the default root. On hosts without
 `flock`, each gated race case prints an explicit `SKIP:` line and the suite
 reports the skip count; shim-driven lock cases remain unconditional.
 
-Archive failures now retain a bounded stderr tail and separate transport,
-verification, and immutable-ref conflicts. For
-`archive ref exists with different tip (non-force)`, the operator remedy is to
-inspect both tips with `git ls-remote` and `git show`, preserve the existing tip
-under a backup ref if it is unique, then delete or rename only the conflicting
-generation ref and rerun the reaper. The reaper deliberately never force-pushes
-over the archive's only copy.
+Archive failures retain a bounded stderr tail and separate transport and
+verification failures. A same-generation divergent tip is preserved under the
+immutable `refs/archive/<lane>/<generation>/superseded/<shortsha>` namespace;
+the existing primary remains unchanged and reclamation proceeds only after
+both tips have been read back successfully. The reaper never force-pushes over
+the archive's only copy.
+
+## Red-first evidence for wave 4i
+
+The wave-4i regression run failed before the implementation changes and the
+same named cases pass in the final shell/pytest gates:
+
+| Finding | Red-first case(s) |
+| --- | --- |
+| VMREAP-RB-01 | `ref enumeration failure pressured exit nonzero`; `ref enumeration failure retains lane`; `ref enumeration failure summary` |
+| VMREAP-RB-02 | `remote-agent explicit root direct`; `remote-agent explicit root all`; `remote-agent root outside HOME` |
+| VMREAP-RB-03 | `unmarked sandbox freshness alert exit 4` |
+| VMREAP-RB-04 | `archive network timeout`; `post-timeout sweep reacquires lock` |
+| VMREAP-RB-05 | `same-generation supersession archive`; `same-generation primary archive retained`; `same-generation incoming superseded` |
+| VMREAP-RB-06 | `rm failure external intent records archive ref`; `partial rm follow-up` |
+| VMREAP-RB-07 | `test_reap_bridge_rejects_skips_when_flock_exists` |
+| VMREAP-RB-08 | This corrected contract table and wave-4i evidence section. |
+| VMREAP-RB-09 | `space HOME preserves remote root`; `space HOME preserves archive path`; `space HOME preserves root path` |
+
+Every network-capable `ls-remote`, push, and fetch is bounded by
+`REAP_GIT_NET_TIMEOUT_SEC` (120 seconds by default) when `timeout` is present;
+hosts without it emit an explicit reduced-safety warning. The installed cron
+entry quotes every HOME-derived token and carries an install-time
+`WORKBAY_REMOTE_AGENT_ROOT` into the job environment.
 
 ## Host remediation (pending operator)
 
@@ -292,12 +315,12 @@ follow-up `df -h /` must record the host-space result.
 Observed in the Linux 6.17.0 aarch64 sandbox (not macOS):
 
 ```text
-bash scripts/vm/tests/test_reap_lane.sh          272 PASS assertions, 0 skipped
+bash scripts/vm/tests/test_reap_lane.sh          289 PASS assertions, 0 skipped
 PATH=<all host tools except flock> bash scripts/vm/tests/test_reap_lane.sh
                                                   235 PASS assertions, 6 skipped
-bash scripts/vm/tests/test_install_reap_cron.sh   27 PASS assertions
+bash scripts/vm/tests/test_install_reap_cron.sh   32 PASS assertions
 python3 -m pytest scripts/vm/tests/test_vm_script_suites.py -q
-2 passed
+3 passed
 ```
 
 These counts replace the stale pre-wave figure of 119 assertions. Platform
@@ -306,7 +329,7 @@ macOS run cannot silently appear to have the same coverage; the coordinator's
 macOS Bash 3.2 run remains authoritative for that platform.
 
 `shellcheck` is not installed in this Linux sandbox, so no local shellcheck
-result is claimed for wave 4h; the coordinator must run the required
+result is claimed for wave 4i; the coordinator must run the required
 `shellcheck -S warning scripts/vm/*.sh scripts/vm/tests/*.sh` gate.
 
 ## Verification

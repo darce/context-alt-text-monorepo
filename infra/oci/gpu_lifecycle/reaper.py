@@ -91,32 +91,21 @@ def _serialized_gpu_state_publish(
 ) -> Iterator[None]:
     """Serialize snapshot read-modify-write across the two systemd units."""
     target = resolve_gpu_state_path() if path is None else Path(path)
-    lock_path = target.with_name(f"{target.name}.lock")
     target.parent.mkdir(parents=True, exist_ok=True)
-    lock_fd = os.open(
-        lock_path,
-        os.O_APPEND | os.O_CREAT | os.O_RDWR,
-        0o660,
-    )
+    # Lock the already shared snapshot directory rather than creating a sidecar
+    # lock file. A new file's mode is filtered through whichever unit's umask
+    # wins the creation race, so the other uid can receive EACCES before the
+    # creator has a chance to repair its group/mode. Both writers can open this
+    # deployment-owned directory, and flock coordinates them on its stable inode.
+    lock_fd = os.open(target.parent, os.O_RDONLY | os.O_DIRECTORY)
     try:
-        lock_stat = os.fstat(lock_fd)
-        directory_gid = target.parent.stat().st_gid
-        if lock_stat.st_gid != directory_gid:
-            os.fchown(lock_fd, -1, directory_gid)
-        if lock_stat.st_mode & 0o777 != 0o660:
-            os.fchmod(lock_fd, 0o660)
-        lock_file = os.fdopen(lock_fd, "a+", encoding="utf-8")
-    except Exception:
-        os.close(lock_fd)
-        raise
-    try:
-        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        fcntl.flock(lock_fd, fcntl.LOCK_EX)
         try:
             yield
         finally:
-            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+            fcntl.flock(lock_fd, fcntl.LOCK_UN)
     finally:
-        lock_file.close()
+        os.close(lock_fd)
 
 
 class JobLoadSource(Protocol):

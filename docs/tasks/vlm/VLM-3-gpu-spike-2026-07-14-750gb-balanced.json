@@ -52,6 +52,7 @@
       "samples": [
         0.5700887500133831
       ],
+      "sample_size_note": "n=1 image",
       "source": "live_oci_gpu_spike_bench"
     }
   },

@@ -115,7 +115,17 @@ describe('useDescribeRunProgress', () => {
     expect(result.current.status).toBeNull();
     expect(result.current.isPolling).toBe(false);
     expect(result.current.etaSeconds).toBeNull();
+    expect(result.current.gpuState).toBeNull();
     expect(result.current.progressFraction).toBeNull();
+  });
+
+  it('exposes gpu_state from the existing run-status poll response', async () => {
+    fetchBulkDescribeRunMock.mockResolvedValue(runResponse({ status: 'running', gpu_state: 'warming' }));
+
+    const { result } = renderHook(() => useDescribeRunProgress('run-1'), { wrapper });
+
+    await waitFor(() => expect(result.current.gpuState).toBe('warming'));
+    expect(fetchBulkDescribeRunMock).toHaveBeenCalledOnce();
   });
 
   it('consumes backend eta_seconds verbatim and derives progressFraction', async () => {

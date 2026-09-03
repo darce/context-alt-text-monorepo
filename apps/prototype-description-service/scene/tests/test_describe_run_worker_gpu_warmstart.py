@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 import sys
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable
@@ -149,20 +150,26 @@ def test_default_warmup_budget_covers_start_detection_boot_and_read_timeout() ->
     try:
         from infra.oci.gpu_lifecycle.reaper import JsonFileJobLoadSource
 
-        from scene.application.describe_load import DEFAULT_LOAD_REFRESH_SECONDS as START_INTERVAL
+        from scene.application.describe_load import DEFAULT_LOAD_REFRESH_SECONDS
     finally:
         sys.path.remove(str(repo_root))
 
+    installer = (repo_root / "scripts/deploy/gpu-lifecycle-install.sh").read_text(encoding="utf-8")
+    start_interval_match = re.search(r'^START_INTERVAL="\$\{START_INTERVAL:-(\d+)s\}"$', installer, re.MULTILINE)
+    assert start_interval_match is not None, "installer START_INTERVAL default is missing"
+    start_interval = int(start_interval_match.group(1))
     load_max_age = JsonFileJobLoadSource.__dataclass_fields__["max_age_seconds"].default
     observed_warm_start = 101
     observed_read_timeout = 175
     budget_terms = (
-        f"START_INTERVAL={START_INTERVAL} + load_max_age={load_max_age} + "
+        f"START_INTERVAL={start_interval} + load_refresh={DEFAULT_LOAD_REFRESH_SECONDS} + "
+        f"load_max_age={load_max_age} + "
         f"observed_warm_start={observed_warm_start} + observed_read_timeout={observed_read_timeout} "
         f"< DEFAULT_GPU_WARMUP_TIMEOUT_SECONDS={DEFAULT_GPU_WARMUP_TIMEOUT_SECONDS}"
     )
     assert (
-        START_INTERVAL + load_max_age + observed_warm_start + observed_read_timeout < DEFAULT_GPU_WARMUP_TIMEOUT_SECONDS
+        start_interval + DEFAULT_LOAD_REFRESH_SECONDS + load_max_age + observed_warm_start + observed_read_timeout
+        < DEFAULT_GPU_WARMUP_TIMEOUT_SECONDS
     ), budget_terms
 
 

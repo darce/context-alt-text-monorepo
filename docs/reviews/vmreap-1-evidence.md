@@ -76,8 +76,14 @@ $ shellcheck scripts/vm/reap-lane.sh scripts/vm/install-reap-cron.sh \
 (clean)
 ```
 
-`make test-vm-scripts` is what `check-remote` runs; these guards are deliberately
-pytest-free (Makefile:465-471) because the gate host's root venv carries no pytest.
+`make test-vm-scripts` is reached from `make test-scripts` (root Makefile) and is
+run locally before merge. `make check-remote` does NOT run it by default: the
+remote gate's default lane is the description-service `test` target
+(`scripts/remote_gate.sh` DEFAULT_TARGETS); pass
+`make check-remote TARGETS="test-vm-scripts"` to exercise it on the gate host.
+The guards are deliberately pytest-free (Makefile `test-vm-scripts` comment)
+because the gate host's root venv carries no pytest; the pytest bridge
+`scripts/vm/tests/test_vm_script_suites.py` is additive for remote lanes only.
 
 ## STILL OPERATOR-HELD
 

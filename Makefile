@@ -90,36 +90,50 @@ LANE_TOOLING_PATHS := Makefile mk docs/workbay/instructions.md docs/workbay/temp
 ROOT_REFRESH_PATHS := $(LANE_TOOLING_PATHS) config/lane-orchestration
 LANE_APP_TOOLING_PATHS :=
 
-export ORCHESTRATOR_ROOT TASK LANE SESSION SUMMARY MESSAGE SUBJECT STATUS MERGE_READY DRY_RUN LANE_WORKTREE LANE_TEST_CMD_1 LANE_TEST_CMD_2
+export ORCHESTRATOR_ROOT MESSAGE STATUS MERGE_READY DRY_RUN
+
+# lane-report is the only recipe that reads these values from its environment.
+# Keeping their exports target-specific avoids resolving task/lane metadata for
+# every unrelated recipe while preserving the report script's environment API.
+lane-report: export TASK = $(RESOLVED_TASK)
+lane-report: export LANE = $(INFERRED_LANE)
+lane-report: export SESSION = $(TASK)-$(LANE)
+lane-report: export SUMMARY = $(LANE) lane ready for orchestrator review.
+lane-report: export SUBJECT = $(LANE) next assignment
+lane-report: export LANE_TEST_CMD_1 = $(call lane_field,test_command_1)
+lane-report: export LANE_TEST_CMD_2 = $(call lane_field,test_command_2)
 
 # --- Lane config (resolved from manifest) ---
-LANE_BRANCH :=
-LANE_WORKTREE :=
-LANE_TITLE :=
-LANE_OBJECTIVE :=
-LANE_OWNED_ARGS :=
-LANE_DOC_ARGS :=
-LANE_TEST_ARGS :=
-LANE_TEST_CMD_1 :=
-LANE_TEST_CMD_2 :=
-LANE_NON_GOAL_ARGS :=
-LANE_COMMIT_PATHS :=
-LANE_COMMIT_SUBJECT :=
-LANE_DONE_DEFINITION := Ready for orchestrator branch review with lane-local verification complete.
-LANE_BRANCH := $(call lane_field,branch)
-LANE_WORKTREE := $(call lane_field,worktree_path,1)
-LANE_TITLE := $(call lane_field,title)
-LANE_OBJECTIVE := $(call lane_field,objective)
-LANE_OWNED_ARGS := $(call lane_field,owned_args)
-LANE_DOC_ARGS := $(call lane_field,doc_args)
-LANE_TEST_ARGS := $(call lane_field,test_args)
-LANE_TEST_CMD_1 := $(call lane_field,test_command_1)
-LANE_TEST_CMD_2 := $(call lane_field,test_command_2)
-LANE_NON_GOAL_ARGS := $(call lane_field,non_goal_args)
-LANE_COMMIT_PATHS := $(call lane_field,commit_paths)
-LANE_COMMIT_SUBJECT := $(call lane_field,commit_subject)
-LANE_DONE_DEFINITION := $(or $(call lane_field,done_definition),$(LANE_DONE_DEFINITION))
-LANE_APP_TOOLING_PATHS := $(call lane_field,tooling_paths)
+_LANE_BRANCH_CMD = $(call lane_field,branch)
+_LANE_WORKTREE_CMD = $(call lane_field,worktree_path,1)
+_LANE_TITLE_CMD = $(call lane_field,title)
+_LANE_OBJECTIVE_CMD = $(call lane_field,objective)
+_LANE_OWNED_ARGS_CMD = $(call lane_field,owned_args)
+_LANE_DOC_ARGS_CMD = $(call lane_field,doc_args)
+_LANE_TEST_ARGS_CMD = $(call lane_field,test_args)
+_LANE_TEST_CMD_1_CMD = $(call lane_field,test_command_1)
+_LANE_TEST_CMD_2_CMD = $(call lane_field,test_command_2)
+_LANE_NON_GOAL_ARGS_CMD = $(call lane_field,non_goal_args)
+_LANE_COMMIT_PATHS_CMD = $(call lane_field,commit_paths)
+_LANE_COMMIT_SUBJECT_CMD = $(call lane_field,commit_subject)
+_LANE_DONE_DEFINITION_DEFAULT := Ready for orchestrator branch review with lane-local verification complete.
+_LANE_DONE_DEFINITION_CMD = $(or $(call lane_field,done_definition),$(_LANE_DONE_DEFINITION_DEFAULT))
+_LANE_APP_TOOLING_PATHS_CMD = $(call lane_field,tooling_paths)
+
+LANE_BRANCH = $(eval LANE_BRANCH := $(_LANE_BRANCH_CMD))$(LANE_BRANCH)
+LANE_WORKTREE = $(eval LANE_WORKTREE := $(_LANE_WORKTREE_CMD))$(LANE_WORKTREE)
+LANE_TITLE = $(eval LANE_TITLE := $(_LANE_TITLE_CMD))$(LANE_TITLE)
+LANE_OBJECTIVE = $(eval LANE_OBJECTIVE := $(_LANE_OBJECTIVE_CMD))$(LANE_OBJECTIVE)
+LANE_OWNED_ARGS = $(eval LANE_OWNED_ARGS := $(_LANE_OWNED_ARGS_CMD))$(LANE_OWNED_ARGS)
+LANE_DOC_ARGS = $(eval LANE_DOC_ARGS := $(_LANE_DOC_ARGS_CMD))$(LANE_DOC_ARGS)
+LANE_TEST_ARGS = $(eval LANE_TEST_ARGS := $(_LANE_TEST_ARGS_CMD))$(LANE_TEST_ARGS)
+LANE_TEST_CMD_1 = $(eval LANE_TEST_CMD_1 := $(_LANE_TEST_CMD_1_CMD))$(LANE_TEST_CMD_1)
+LANE_TEST_CMD_2 = $(eval LANE_TEST_CMD_2 := $(_LANE_TEST_CMD_2_CMD))$(LANE_TEST_CMD_2)
+LANE_NON_GOAL_ARGS = $(eval LANE_NON_GOAL_ARGS := $(_LANE_NON_GOAL_ARGS_CMD))$(LANE_NON_GOAL_ARGS)
+LANE_COMMIT_PATHS = $(eval LANE_COMMIT_PATHS := $(_LANE_COMMIT_PATHS_CMD))$(LANE_COMMIT_PATHS)
+LANE_COMMIT_SUBJECT = $(eval LANE_COMMIT_SUBJECT := $(_LANE_COMMIT_SUBJECT_CMD))$(LANE_COMMIT_SUBJECT)
+LANE_DONE_DEFINITION = $(eval LANE_DONE_DEFINITION := $(_LANE_DONE_DEFINITION_CMD))$(LANE_DONE_DEFINITION)
+LANE_APP_TOOLING_PATHS = $(eval LANE_APP_TOOLING_PATHS := $(_LANE_APP_TOOLING_PATHS_CMD))$(LANE_APP_TOOLING_PATHS)
 
 # =============================================================================
 # Included modules

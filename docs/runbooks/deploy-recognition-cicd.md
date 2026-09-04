@@ -128,10 +128,11 @@ Roll back by re-pointing the tag to a known-good image (no rebuild) or
 redeploying a prior SHA:
 ```bash
 # fastest: retag the last-good image on OCIR + restart + verify
-scripts/deploy/recognition-service.sh promote staging prod   # CONFIRM=PROMOTE for prod
+CONFIRM=PROMOTE scripts/deploy/recognition-service.sh promote staging prod
 # or redeploy a specific commit
-GIT_REF=<good-sha> REMOTE_BUILD=1 scripts/deploy/recognition-service.sh deploy prod   # CONFIRM=PROMOTE
+CONFIRM=PROMOTE GIT_REF="$GOOD_SHA" REMOTE_BUILD=1 scripts/deploy/recognition-service.sh deploy prod
 ```
+Set `GOOD_SHA` to the full known-good commit before running the second command.
 The same `promote`/`GIT_REF` levers are available by dispatching the workflow
 from an older commit.
 

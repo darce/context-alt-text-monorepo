@@ -153,6 +153,7 @@ def test_rollback_tag_preserved_even_when_smoke_bypassed(tmp_path: Path) -> None
         f'source "{SCRIPT}"; '
         f'preserve_rollback_tag() {{ echo "rollback $1" >> "{marker}"; }}; '
         f'do_boot_smoke() {{ echo "smoke $1" >> "{marker}"; }}; '
+        f'repair_blob_volume_ownership() {{ echo "repair $1" >> "{marker}"; }}; '
         f'ship_remote_image_repo_env() {{ echo "ship $1" >> "{marker}"; }}; '
         f'converge_runtime() {{ echo "converge $1" >> "{marker}"; }}; '
         "ACX_BOOT_SMOKE=0 promote_gate prod img:cand"
@@ -233,17 +234,13 @@ def test_smoke_harness_arity_covers_heredoc_positionals() -> None:
     # 3 fixed (env/image/remote_dir) + len(_SMOKE_HARNESS_ARGS_TAIL)
     harness_n = 3 + len(_SMOKE_HARNESS_ARGS_TAIL)
     assert max_n >= 7, f"expected 7-arg SMOKE body, highest $N is {max_n}"
-    assert harness_n >= max_n, (
-        f"harness supplies {harness_n} args but body needs ${max_n}"
-    )
+    assert harness_n >= max_n, f"harness supplies {harness_n} args but body needs ${max_n}"
 
 
 def test_smoke_body_defaults_network_when_env_key_missing(tmp_path: Path) -> None:
     # BR2-07: no ACX_NETWORK_NAME line must not abort under pipefail; the
     # acx-<env>-net fallback must be reachable.
-    rc, log = _run_smoke_heredoc(
-        tmp_path, env_lines=f"OTHER=1\n{_MODELS_PATH_LINE}", curl_ok=True
-    )
+    rc, log = _run_smoke_heredoc(tmp_path, env_lines=f"OTHER=1\n{_MODELS_PATH_LINE}", curl_ok=True)
     assert rc == 0
     assert "--network acx-prod-net" in log
 
@@ -274,15 +271,11 @@ def test_smoke_body_fails_and_tears_down_when_health_never_answers(tmp_path: Pat
         f"EXIT trap must docker rm the api smoke container; log:\n{log}"
     )
     assert re.search(r"docker rm -f acx-smoke-pg-", log), (
-        "EXIT trap must docker rm the ephemeral Postgres (acx-smoke-pg-*); "
-        f"docker log was:\n{log}"
+        f"EXIT trap must docker rm the ephemeral Postgres (acx-smoke-pg-*); docker log was:\n{log}"
     )
     assert re.search(r"docker volume rm(?: -f)? acx-smoke-blobs-", log) or (
         "volume rm" in log and "acx-smoke-blobs-" in log
-    ), (
-        "EXIT trap must docker volume rm the smoke blob volume "
-        f"(acx-smoke-blobs-*); docker log was:\n{log}"
-    )
+    ), f"EXIT trap must docker volume rm the smoke blob volume (acx-smoke-blobs-*); docker log was:\n{log}"
 
 
 def test_promote_gate_failure_blocks_converge_and_restart(tmp_path: Path) -> None:

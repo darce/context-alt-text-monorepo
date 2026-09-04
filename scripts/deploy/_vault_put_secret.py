@@ -24,6 +24,7 @@ from __future__ import annotations
 import argparse
 import base64
 import hashlib
+import math
 import queue
 import sys
 import threading
@@ -35,6 +36,17 @@ DEFAULT_VAULT_OCID = "ocid1.vault.oc1.iad.ejvffpzlaafc4.abuwcljr3j4chidobdkiqx6i
 
 class SecretNotReadableError(RuntimeError):
     """The stored value never became readable through the consumer's API."""
+
+
+def _non_negative_float(value):
+    """Parse a finite, non-negative command-line number."""
+    try:
+        parsed = float(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("must be a finite non-negative number") from exc
+    if not math.isfinite(parsed) or parsed < 0:
+        raise argparse.ArgumentTypeError("must be a finite non-negative number")
+    return parsed
 
 
 def _is_retryable_read_error(exc):
@@ -220,7 +232,7 @@ def main() -> int:
     ap.add_argument("--description", default=None, help="only applied when creating the secret")
     ap.add_argument(
         "--readable-timeout",
-        type=float,
+        type=_non_negative_float,
         default=120.0,
         help="seconds to wait for the written value to read back (0 to skip)",
     )

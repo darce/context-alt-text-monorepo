@@ -57,23 +57,38 @@ export const pollRun = async ({
 }) => {
   const startedAt = now();
   let delay = 500;
+  const timedOut = () => now() - startedAt >= timeoutMs;
+  const timeoutError = () =>
+    new PublicDemoClientError(PUBLIC_DEMO_ERROR_CODE.POLL_TIMEOUT, POLL_TIMEOUT_MESSAGE);
 
-  while (now() - startedAt < timeoutMs) {
-    const body = await requestJson(
-      statusUrl,
-      { method: 'GET', credentials: 'same-origin', headers: { 'X-WP-Nonce': nonce } },
-      fetchImpl,
-    );
+  while (!timedOut()) {
+    let body;
+    try {
+      body = await requestJson(
+        statusUrl,
+        { method: 'GET', credentials: 'same-origin', headers: { 'X-WP-Nonce': nonce } },
+        fetchImpl,
+      );
+    } catch (error) {
+      if (timedOut()) {
+        throw timeoutError();
+      }
+      throw error;
+    }
+
+    if (timedOut()) {
+      throw timeoutError();
+    }
     onUpdate(body);
     if (typeof body.status === 'string' && TERMINAL_STATUSES.has(body.status)) {
       return body;
     }
 
-    await sleep(delay);
+    await sleep(Math.min(delay, timeoutMs - (now() - startedAt)));
     delay = Math.min(delay * 2, 5_000);
   }
 
-  throw new PublicDemoClientError(PUBLIC_DEMO_ERROR_CODE.POLL_TIMEOUT, POLL_TIMEOUT_MESSAGE);
+  throw timeoutError();
 };
 
 const descriptionFrom = (body) => {

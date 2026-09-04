@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace AltContext\Api;
 
 require_once __DIR__ . '/class-describe-controller.php';
+require_once __DIR__ . '/interface-recognition-route-controller.php';
 require_once __DIR__ . '/../public/class-public-demo-error-code.php';
 
 use AltContext\PublicSite\PublicDemoErrorCode;

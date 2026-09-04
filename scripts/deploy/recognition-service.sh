@@ -507,6 +507,16 @@ preflight_docker() {
   command -v docker >/dev/null 2>&1 || fail "docker not found in PATH"
   docker info >/dev/null 2>&1 || fail "docker daemon not running (start colima with \`colima start\`, or start Docker Desktop)"
 }
+
+# Authentication tools are upstream trust boundaries: their stderr can contain
+# terminal-active bytes or lines that resemble this script's own status output.
+# Keep ordinary text useful for diagnosis, but strip C0/C1 controls and prefix
+# every line so captured output cannot masquerade as a deploy decision.
+sanitize_deploy_diagnostic() {
+  LC_ALL=C tr -d '\000-\010\013-\037\177-\237' \
+    | sed 's/^/diagnostic: /'
+}
+
 # Release It! 5.5 (Fail Fast): verify the credential we will actually use, before
 # the build burns minutes. The old form only checked that *some* entry for the
 # registry existed in ~/.docker/config.json -- a credential revoked upstream
@@ -526,10 +536,11 @@ ocir_login_or_fail() {
     class="$(ocir_classify_login_failure "$out")"
     hint="$(ocir_login_failure_hint "$class")"
     warn "OCIR login failed on ${scope} [${class}]: ${hint}"
+    warn "Sanitized upstream diagnostic follows"
     # The token never appears in $out -- it only ever transits a pipe -- but the
     # OCI CLI echoes request context, so keep this on stderr rather than in a
     # deploy log that gets pasted around.
-    printf '%s\n' "$out" >&2
+    printf '%s\n' "$out" | sanitize_deploy_diagnostic >&2
     fail "OCIR auth unavailable (${scope}, ${class})"
   fi
   log "OCIR authenticated on ${scope} via acx-vault/${ACX_OCIR_TOKEN_SECRET}"
@@ -1023,16 +1034,29 @@ promote_gate() {
   if [[ "${ACX_PRIOR_IMAGE_REPO}" == "__INVALID_REPO__" ]]; then
     fail "remote ACX_IMAGE_REPO on ${env} failed charset validation; refusing to deploy over a hostile/malformed sticky repo"
   fi
-  ship_remote_image_repo_env "${remote_dir}"
+  if ! ship_remote_image_repo_env "${remote_dir}"; then
+    warn "Shipping ACX_IMAGE_REPO failed for ${env}; restoring the prior sticky repository"
+    restore_prior_image_repo_env
+    return 1
+  fi
 
   if [[ "${ACX_CONVERGE_RUNTIME:-1}" == "1" ]]; then
-    converge_runtime "$env"
+    # converge_runtime contains fail-fast exits. Run it in a subshell so a
+    # failure returns control to this transaction boundary and the sticky repo
+    # can be compensated before the deploy exits.
+    if ! (converge_runtime "$env"); then
+      warn "Runtime convergence failed for ${env}; restoring the prior sticky repository"
+      restore_prior_image_repo_env
+      return 1
+    fi
   else
     # HARM-A-06: image-only hotfix must not land on a compose/unit topology that
     # differs from the repo (Gate 2 smokes the NEW topology; stale VM compose would
     # not receive those mounts). Refuse ACX_CONVERGE_RUNTIME=0 when drift exists.
     if ! runtime_in_sync "$env"; then
-      fail "ACX_CONVERGE_RUNTIME=0 refused for ${env}: deployed compose/unit drifts from repo. Re-run without ACX_CONVERGE_RUNTIME=0 to converge, or fix the VM first."
+      warn "ACX_CONVERGE_RUNTIME=0 refused for ${env}: deployed compose/unit drifts from repo"
+      restore_prior_image_repo_env
+      return 1
     fi
     warn "ACX_CONVERGE_RUNTIME=0: skipping compose+unit convergence (image-only restart; topology matches repo)"
   fi

@@ -52,10 +52,43 @@ describe('BulkDescribeCta state matrix (A11Y-24)', () => {
   });
 
   // empty / loading / error fill gaps left by the offline column (Slice 2).
-  it('disables submit in empty selection state (zero selection)', () => {
+  it('keeps the submit primary reachable at zero selection: aria-disabled + reason, never HTML disabled (rg-003 / A11Y-11 / A11Y-24)', () => {
     render(<BulkDescribeCta {...baseProps} selectedCount={0} />);
 
-    expect(screen.getByRole('button', { name: 'Describe selected' })).toBeDisabled();
+    const button = screen.getByRole('button', { name: 'Describe selected' });
+    // rg-003: reachable from the zero state — still in the tab order.
+    expect(button).not.toBeDisabled();
+    expect(button).toHaveAttribute('aria-disabled', 'true');
+    // A11Y-04 (2.5.3): visible text matches the accessible name at zero selection.
+    expect(button).toHaveTextContent('Describe selected');
+    // The hold reason must be reachable from the focusable control.
+    const reasonIds = (button.getAttribute('aria-describedby') ?? '').split(' ').filter(Boolean);
+    expect(reasonIds.length).toBeGreaterThan(0);
+    const reasonText = reasonIds
+      .map((id) => document.getElementById(id)?.textContent ?? '')
+      .join(' ');
+    expect(reasonText).toContain('Select at least one media item to describe.');
+  });
+
+  it('no-ops activation at zero selection instead of starting a run (rg-003 hold, not a silent submit)', async () => {
+    const onSubmit = vi.fn();
+    render(<BulkDescribeCta {...baseProps} selectedCount={0} onSubmit={onSubmit} />);
+
+    await userEvent.click(screen.getByRole('button', { name: 'Describe selected' }));
+
+    expect(onSubmit).not.toHaveBeenCalled();
+  });
+
+  it('submits normally once a row is selected (the hold releases)', async () => {
+    const onSubmit = vi.fn();
+    render(<BulkDescribeCta {...baseProps} selectedCount={3} onSubmit={onSubmit} />);
+
+    const button = screen.getByRole('button', { name: 'Describe selected' });
+    expect(button).not.toHaveAttribute('aria-disabled');
+    expect(button).not.toHaveAttribute('aria-describedby');
+    await userEvent.click(button);
+
+    expect(onSubmit).toHaveBeenCalledTimes(1);
   });
 
   it('shows loading label and disables submit while submitting', () => {
@@ -138,11 +171,13 @@ describe('BulkDescribeCta state matrix (A11Y-24)', () => {
     // Airplane-mode reload at zero selection: focusable (not HTML disabled), reason reachable.
     expect(button).not.toBeDisabled();
     expect(button).toHaveAttribute('aria-disabled', 'true');
-    const reasonId = button.getAttribute('aria-describedby');
-    expect(reasonId).toBeTruthy();
-    expect(document.getElementById(reasonId ?? '')).toHaveTextContent(
-      'Unavailable while the recognition service is offline',
-    );
+    // Offline AND zero selection: BOTH reasons are joined onto the one control, so
+    // neither hold is silently dropped when the other applies (A11Y-24 state matrix).
+    const reasonIds = (button.getAttribute('aria-describedby') ?? '').split(' ').filter(Boolean);
+    expect(reasonIds.length).toBe(2);
+    const reasonText = reasonIds.map((id) => document.getElementById(id)?.textContent ?? '').join(' ');
+    expect(reasonText).toContain('Unavailable while the recognition service is offline');
+    expect(reasonText).toContain('Select at least one media item to describe.');
   });
 
   it('does not fire onSubmit when clicked while offline-gated (§7 / BR-76)', async () => {

@@ -126,16 +126,38 @@ vi.mock('../../../hooks/useSyncOffline', () => ({
   useSyncOffline: () => false,
 }));
 
-vi.mock('../../../api/recognition', () => ({
-  mergeCluster: vi.fn(),
-  updateClusterLabel: vi.fn(),
-  fetchIdentitiesSuggestions: vi.fn(),
-  listRecognitionClusters: vi.fn(),
-  revertMergeCluster: vi.fn(),
-  reassignClusterIdentity: vi.fn(),
-  splitCluster: vi.fn(),
-  pinRepresentative: vi.fn(),
-}));
+// Spread the real module rather than enumerating exports: an exhaustive factory
+// throws "No <x> export is defined on the mock" the moment the component graph
+// grows a new api/recognition dependency (that is how acceptSuggestion, pulled in
+// via usePendingMergeTwins -> useSuggestionReviewMutations, broke this file).
+// Every network-touching export the render path can reach is still stubbed
+// explicitly so no test can escape to a real fetch.
+vi.mock('../../../api/recognition', async () => {
+  const actual =
+    await vi.importActual<typeof import('../../../api/recognition')>('../../../api/recognition');
+  return {
+    ...actual,
+    mergeCluster: vi.fn(),
+    updateClusterLabel: vi.fn(),
+    fetchIdentitiesSuggestions: vi.fn(),
+    listRecognitionClusters: vi.fn(),
+    revertMergeCluster: vi.fn(),
+    reassignClusterIdentity: vi.fn(),
+    splitCluster: vi.fn(),
+    pinRepresentative: vi.fn(),
+    fetchPendingSuggestions: vi.fn(),
+    fetchPendingMergeSuggestions: vi.fn(),
+    fetchPendingNameSuggestions: vi.fn(),
+    fetchTopUnlabeledClusters: vi.fn(),
+    acceptSuggestion: vi.fn(),
+    rejectSuggestion: vi.fn(),
+    acceptMergeSuggestion: vi.fn(),
+    rejectMergeSuggestion: vi.fn(),
+    acceptNameSuggestion: vi.fn(),
+    rejectNameSuggestion: vi.fn(),
+    bulkAcceptSuggestions: vi.fn(),
+  };
+});
 
 // Track active query client for cleanup
 let activeQueryClient: QueryClient | null = null;
@@ -260,6 +282,14 @@ describe('IdentityClusterList', () => {
       limit: 20,
       total: 0,
       truncated: false,
+    });
+    // usePendingMergeTwins queries this on every list render; the twin-chip
+    // surface is covered by IdentityClusterList.twinChip.test.tsx, so this file
+    // pins the "no pending twins" baseline.
+    vi.mocked(api.fetchPendingMergeSuggestions).mockResolvedValue({
+      suggestions: [],
+      limit: 50,
+      offset: 0,
     });
   });
 

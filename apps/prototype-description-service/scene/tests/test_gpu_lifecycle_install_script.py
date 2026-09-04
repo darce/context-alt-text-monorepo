@@ -6,6 +6,7 @@ root:10001 directory is not writable and GPU start/reap timers stall.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import yaml
@@ -57,7 +58,19 @@ def _flatten_runcmd(runcmd: object) -> list[str]:
 
 
 def _argv(token: str) -> list[str]:
-    return token.split()
+    """Split a command token, dropping a leading privilege-escalation wrapper.
+
+    The installer issues its chowns as `sudo chown ...` inside the remote
+    command block, so matching on argv[0] alone would silently classify every
+    installer chown as "not a chown" and make the comparisons below vacuous.
+    """
+    argv = token.split()
+    while argv and Path(argv[0]).name in {"sudo", "doas"}:
+        argv = argv[1:]
+        # Skip sudo's own options, but stop at the first VAR=value / command.
+        while argv and argv[0].startswith("-"):
+            argv = argv[1:]
+    return argv
 
 
 def _is_chown_command(argv0: str) -> bool:
@@ -136,108 +149,165 @@ def test_gpu_lifecycle_install_keeps_the_api_load_dir_group_writable() -> None:
     )
 
 
-def test_cloud_init_owns_run_acx_as_container_uid() -> None:
-    """HARM-F2: cloud-init must match installer ownership of /run/acx."""
+# --- WBUX6-MRG-02: cloud-init and the installer must not both own the contract ---
+#
+# The replaced test (`test_cloud_init_owns_run_acx_as_container_uid`) asserted
+# that cloud-init writes `d /run/acx 0775 10001 10001 -` and chowns /run/acx to
+# 10001:10001. It only ever compared cloud-init against itself, so it passed
+# happily while gpu-lifecycle-install.sh wrote the *same filename*
+# (/etc/tmpfiles.d/acx-gpu.conf) with `d /run/acx 0755 ubuntu ubuntu -`. Two
+# writers, one file, last one wins, and the assertion that should have caught it
+# was structurally incapable of doing so. The installer is the authority
+# (rg-005); these tests compare the two files.
+
+_TMPFILES_FRAGMENT = "/etc/tmpfiles.d/acx-gpu.conf"
+# `d <path> <mode> <user> <group> <age>`
+_TMPFILES_DIR_LINE = re.compile(
+    r"^d\s+(?P<path>/run/\S+)\s+(?P<mode>0[0-7]{3})\s+(?P<user>\S+)\s+(?P<group>\S+)\s"
+)
+
+
+def _tmpfiles_dir_lines(text: str) -> dict[str, str]:
+    """Map each `d /run/...` tmpfiles path to its ``user:group mode``."""
+    found: dict[str, str] = {}
+    for raw in text.splitlines():
+        match = _TMPFILES_DIR_LINE.match(raw.strip())
+        if not match or "$" in match["path"]:
+            continue
+        found[match["path"]] = f"{match['user']}:{match['group']} {match['mode']}"
+    return found
+
+
+def _cloud_init() -> dict:
     parsed = yaml.safe_load(CLOUD_INIT.read_text(encoding="utf-8"))
     assert isinstance(parsed, dict), "cloud-init.yaml must parse to a mapping"
+    return parsed
 
-    write_files = parsed.get("write_files")
+
+def _cloud_init_write_files() -> list[dict]:
+    write_files = _cloud_init().get("write_files")
     assert isinstance(write_files, list), "cloud-init.yaml must define write_files"
-    tmpfiles_entries = [
-        item
-        for item in write_files
-        if isinstance(item, dict) and item.get("path") == "/etc/tmpfiles.d/acx-gpu.conf"
+    return [item for item in write_files if isinstance(item, dict)]
+
+
+def test_only_the_installer_writes_the_tmpfiles_fragment() -> None:
+    """One filename, one writer. Two writers is a coin flip, not a contract."""
+    installer = SCRIPT.read_text(encoding="utf-8")
+    assert _TMPFILES_FRAGMENT in installer, (
+        "gpu-lifecycle-install.sh is the authority for the tmpfiles fragment "
+        f"and must still write {_TMPFILES_FRAGMENT}"
+    )
+
+    conflicting = [
+        item["path"]
+        for item in _cloud_init_write_files()
+        if item.get("path") == _TMPFILES_FRAGMENT
     ]
-    assert len(tmpfiles_entries) == 1, (
-        "exactly one write_files entry must have path '/etc/tmpfiles.d/acx-gpu.conf'; "
-        f"found {len(tmpfiles_entries)}"
+    assert conflicting == [], (
+        f"cloud-init.yaml also writes {_TMPFILES_FRAGMENT}, which "
+        "gpu-lifecycle-install.sh owns; whichever runs last silently wins. "
+        "Remove it from cloud-init.yaml."
     )
-    tmpfiles_content = tmpfiles_entries[0].get("content")
-    assert isinstance(tmpfiles_content, str), (
-        "write_files entry /etc/tmpfiles.d/acx-gpu.conf must have string content"
-    )
-    expected_tmpfiles_line = "d /run/acx 0775 10001 10001 -"
-    tmpfiles_lines = [line.strip() for line in tmpfiles_content.splitlines() if line.strip()]
-    assert expected_tmpfiles_line in tmpfiles_lines, (
-        "tmpfiles.d content must contain the full line 'd /run/acx 0775 10001 10001 -'"
-    )
-    tmpfiles_dropins = [
-        item
-        for item in write_files
-        if isinstance(item, dict)
-        and isinstance(item.get("path"), str)
-        and str(item["path"]).startswith("/etc/tmpfiles.d/")
+
+
+def test_no_cloud_init_tmpfiles_dropin_contradicts_the_installer() -> None:
+    """A different filename does not make a contradicting rule safe.
+
+    systemd-tmpfiles merges every drop-in, so a second fragment naming the same
+    path under another filename reintroduces the same ambiguity.
+    """
+    installer_dirs = _tmpfiles_dir_lines(SCRIPT.read_text(encoding="utf-8"))
+    assert installer_dirs, "installer tmpfiles parse found nothing; the lines moved"
+
+    for item in _cloud_init_write_files():
+        path = item.get("path")
+        if not isinstance(path, str) or not path.startswith("/etc/tmpfiles.d/"):
+            continue
+        content = item.get("content")
+        assert isinstance(content, str), f"write_files {path!r} must have string content"
+        for run_path, ownership in _tmpfiles_dir_lines(content).items():
+            installer_ownership = installer_dirs.get(run_path)
+            assert installer_ownership is None or installer_ownership == ownership, (
+                f"cloud-init drop-in {path} declares {run_path} as {ownership} "
+                f"while gpu-lifecycle-install.sh declares it {installer_ownership}"
+            )
+
+
+def test_cloud_init_does_not_contradict_installer_ownership_of_run_acx() -> None:
+    """/run/acx is host lifecycle state; cloud-init must not re-own it.
+
+    The installer chowns it `ubuntu:ubuntu`. A cloud-init `chown 10001:10001`
+    on the same path is the API-owned state directory that
+    `test_gpu_lifecycle_install_keeps_the_api_load_dir_group_writable` forbids
+    the installer from doing -- forbidding it in one file only relocates it.
+    """
+    tokens = _flatten_runcmd(_cloud_init().get("runcmd"))
+
+    api_owned = [
+        tok
+        for tok in tokens
+        if _is_chown_of_run_acx(tok) and _chown_owner(tok) == "10001:10001"
     ]
-    assert tmpfiles_dropins, (
-        "cloud-init.yaml must write at least one /etc/tmpfiles.d/ drop-in"
+    assert api_owned == [], (
+        "/run/acx is host-owned lifecycle state mounted read-only into the api "
+        f"container; cloud-init must not chown it to the container. found {api_owned!r}"
     )
-    for item in tmpfiles_dropins:
-        dropin_path = item.get("path")
-        dropin_content = item.get("content")
-        assert isinstance(dropin_content, str), (
-            f"write_files entry {dropin_path!r} must have string content"
+
+    installer_commands = _non_comment_command_lines(SCRIPT.read_text(encoding="utf-8"))
+    installer_owner = next(
+        (
+            _chown_owner(line)
+            for line in installer_commands
+            if _is_chown_of_run_acx(line)
+        ),
+        None,
+    )
+    assert installer_owner is not None, "installer must chown /run/acx"
+    for tok in tokens:
+        if not _is_chown_of_run_acx(tok):
+            continue
+        assert _chown_owner(tok) == installer_owner, (
+            f"cloud-init chowns /run/acx to {_chown_owner(tok)!r} while the "
+            f"installer uses {installer_owner!r}: {tok!r}"
         )
-        for raw_line in dropin_content.splitlines():
-            stripped = raw_line.strip()
-            if not stripped:
+
+
+def test_cloud_init_reaper_reads_the_directory_compose_publishes_to() -> None:
+    """The reaper must read a path something actually writes.
+
+    cloud-init pointed the reaper at `--load-json /run/acx/describe-load.json`.
+    GPUUX-1 moved publication to `/run/acx-write/<env>/describe-load.json` and
+    replaced the flag with `--load-dir`; cloud-init was never updated, so the
+    unit named a flag the CLI no longer accepts, pointing at a file nothing
+    writes.
+    """
+    reaper_units = [
+        item
+        for item in _cloud_init_write_files()
+        if isinstance(item.get("path"), str)
+        and "gpu" in str(item["path"])
+        and str(item["path"]).endswith(".service")
+    ]
+    assert reaper_units, "cloud-init must define the GPU reaper unit"
+
+    installer = SCRIPT.read_text(encoding="utf-8")
+    installer_load_dirs = set(re.findall(r"--load-dir\s+(\S+)", installer))
+    assert len(installer_load_dirs) == 1, (
+        f"installer units must agree on one --load-dir; found {installer_load_dirs}"
+    )
+    expected_load_dir = installer_load_dirs.pop()
+
+    for unit in reaper_units:
+        content = unit.get("content")
+        assert isinstance(content, str)
+        for exec_start in re.findall(r"^ExecStart=.*$", content, re.MULTILINE):
+            if "gpu_lifecycle" not in exec_start:
                 continue
-            line_tokens = stripped.split()
-            if len(line_tokens) >= 2 and line_tokens[1] == "/run/acx":
-                assert stripped == expected_tmpfiles_line, (
-                    "every /etc/tmpfiles.d/ line whose second token is /run/acx "
-                    f"must be {expected_tmpfiles_line!r}; got {stripped!r} in {dropin_path!r}"
-                )
-
-    tokens = _flatten_runcmd(parsed.get("runcmd"))
-    mkdir_cmd = "mkdir -p /run/acx /etc/acx"
-    chown_cmd = "chown 10001:10001 /run/acx"
-    chmod_cmd = "chmod 0775 /run/acx"
-    assert mkdir_cmd in tokens, (
-        "runcmd must include the full command token 'mkdir -p /run/acx /etc/acx'"
-    )
-    mkdir_idx = tokens.index(mkdir_cmd)
-    assert chown_cmd in tokens, (
-        "runcmd must include the full command token 'chown 10001:10001 /run/acx'"
-    )
-    assert chmod_cmd in tokens, (
-        "runcmd must include the full command token 'chmod 0775 /run/acx'"
-    )
-    chown_idx = tokens.index(chown_cmd)
-    chmod_idx = tokens.index(chmod_cmd)
-    assert chown_idx > mkdir_idx, (
-        f"{chown_cmd!r} must appear after {mkdir_cmd!r} "
-        f"(indices {chown_idx} <= {mkdir_idx})"
-    )
-    assert chmod_idx > mkdir_idx, (
-        f"{chmod_cmd!r} must appear after {mkdir_cmd!r} "
-        f"(indices {chmod_idx} <= {mkdir_idx})"
-    )
-
-    root_owned = [tok for tok in tokens if "chown root:10001" in tok]
-    assert root_owned == [], (
-        "runcmd must not contain 'chown root:10001'; "
-        f"found {root_owned!r}"
-    )
-    run_acx_chowns = [
-        (idx, tok) for idx, tok in enumerate(tokens) if _is_chown_of_run_acx(tok)
-    ]
-    assert run_acx_chowns, "runcmd must include a chown touching /run/acx"
-    for idx, tok in run_acx_chowns:
-        owner = _chown_owner(tok)
-        assert owner == "10001:10001", (
-            "chown on /run/acx must use owner 10001:10001, not "
-            f"{owner!r} in {tok!r} (index {idx})"
-        )
-    last_chown_idx, last_chown = run_acx_chowns[-1]
-    assert last_chown == chown_cmd, (
-        "the last chown touching /run/acx must be "
-        f"{chown_cmd!r}; got {last_chown!r} at index {last_chown_idx}"
-    )
-
-    later_destroy = [
-        tok for tok in tokens[chown_idx + 1 :] if _removes_or_recreates_run_acx(tok)
-    ]
-    assert later_destroy == [], (
-        "runcmd must not remove or recreate /run/acx after "
-        f"{chown_cmd!r}; found {later_destroy!r}"
-    )
+            assert "--load-json" not in exec_start, (
+                f"--load-json is not a gpu_lifecycle flag any more: {exec_start!r}"
+            )
+            load_dirs = re.findall(r"--load-dir\s+(\S+)", exec_start)
+            assert load_dirs == [expected_load_dir], (
+                f"cloud-init reaper must read {expected_load_dir!r} like the "
+                f"installer units do; got {load_dirs!r} in {exec_start!r}"
+            )

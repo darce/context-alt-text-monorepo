@@ -410,15 +410,19 @@ printf '{"queue_depth":0,"in_flight":0,"written_at":879}\n' >"${fixture_root}/ru
 expect_failure "environment describe-load older than its budget fails" "stale describe load (dev) snapshot"
 printf '{"queue_depth":0,"in_flight":0,"written_at":900}\n' >"${fixture_root}/run/acx-write/dev/describe-load.json"
 
-chmod 0555 "${fixture_root}/run/acx-write/staging"
-expect_failure "each environment directory must be API-writable" "not writable by uid"
-chmod 0755 "${fixture_root}/run/acx-write/staging"
+if [ "$(id -u)" -eq 0 ]; then
+    printf 'SKIP: each environment directory must be API-writable (uid 0 bypasses mode 0555; covered by the container-gid block below)\n'
+else
+    chmod 0555 "${fixture_root}/run/acx-write/staging"
+    expect_failure "each environment directory must be API-writable" "not writable by api container identity"
+    chmod 0755 "${fixture_root}/run/acx-write/staging"
+fi
 
 if [ "$(id -u)" -eq 0 ]; then
     printf 'SKIP: snapshot unreadable by API uid fails (uid 0 bypasses mode 000)\n'
 else
     chmod 000 "${fixture_root}/run/acx/gpu-state.json"
-    expect_failure "snapshot unreadable by API uid fails" "unreadable by uid"
+    expect_failure "snapshot unreadable by API uid fails" "unreadable by api container identity"
     chmod 0644 "${fixture_root}/run/acx/gpu-state.json"
 fi
 
@@ -450,6 +454,60 @@ expect_failure "unrendered snapshot mount template fails" "must end in describe-
 expect_failure "unrendered GPU state environment template fails" \
     "does not pass the agreeing ACX_GPU_STATE_PATH" \
     ACX_GPU_COMPOSE_FILE="${fixture_root}/compose-template-env.yml"
+
+# --- WBUX6-MRG-01: the writability probe must use the container's REAL gid ---
+#
+# The probe used to run `setpriv --reuid=$reader_uid --regid=$reader_uid`, i.e.
+# it assumed the container's gid equals its uid. It does not: the api image
+# creates the runtime user with an explicit uid but let the base image pick the
+# gid (observed `uid=10001(acx) gid=999(acx)`). The host grants write access to
+# /run/acx-write/<env> through group 10001, so with a drifting gid the container
+# matches neither owner nor group -- yet the gate, probing the gid it invented,
+# reported the directory writable. It could not fail. These cases exercise the
+# resolution, and the root-only block exercises the probe itself.
+
+if [ "$(id -u)" -eq 0 ] && command -v setpriv >/dev/null 2>&1; then
+    # Reproduce the production shape: the host owns the load dirs and grants
+    # write through group 10001; the container published its snapshots as
+    # 10001:10001. mktemp -d is 0700, so the fixture chain must be traversable
+    # by uid 10001 or every probe would report "unreadable" for the wrong
+    # reason and these cases would assert nothing.
+    chmod 0755 "$fixture_root" "${fixture_root}/run"
+    chown -R root:10001 "${fixture_root}/run/acx-write"
+    chmod 0775 "${fixture_root}/run/acx-write" "${fixture_root}/run/acx-write"/*
+    chown 10001:10001 "${fixture_root}/run/acx-write"/*/describe-load.json
+    chmod 0755 "${fixture_root}/run/acx"
+    chmod 0644 "${fixture_root}/run/acx/gpu-state.json"
+
+    expect_success "load dir writable by the container's real gid passes" \
+        ACX_GPU_READER_UID=10001
+
+    # The whole point of the finding: a container gid that cannot write must be
+    # OBSERVED. Probing --regid=$reader_uid reported this directory writable.
+    chown 10001:999 "${fixture_root}/run/acx-write"/*/describe-load.json
+    expect_failure "a container gid that cannot write is detected" \
+        "not writable by api container identity" \
+        ACX_GPU_READER_UID=10001
+    chown 10001:10001 "${fixture_root}/run/acx-write"/*/describe-load.json
+
+    # With nothing published there is no observable container identity. The
+    # gate must say so rather than invent one.
+    for env_name in dev dev-fir staging prod; do
+        mv "${fixture_root}/run/acx-write/${env_name}/describe-load.json" \
+            "${fixture_root}/${env_name}-load.json"
+    done
+    expect_failure "an unobservable container identity fails closed" \
+        "cannot determine the api container identity" \
+        ACX_GPU_READER_UID=10001
+    for env_name in dev dev-fir staging prod; do
+        mv "${fixture_root}/${env_name}-load.json" \
+            "${fixture_root}/run/acx-write/${env_name}/describe-load.json"
+    done
+
+    chown -R "$(id -u):$(id -g)" "${fixture_root}/run/acx-write"
+else
+    printf 'SKIP: container-gid writability probe (needs root + setpriv; runs on the Linux CI/VM)\n'
+fi
 
 if [ "$failures" -gt 0 ]; then
     printf 'FAILED: %s case(s)\n' "$failures" >&2

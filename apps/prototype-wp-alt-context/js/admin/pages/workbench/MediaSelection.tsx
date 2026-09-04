@@ -383,6 +383,14 @@ export const MediaSelectionToolbar = ({
 
 /** aria-describedby target for the §7 offline reason on the describe submit CTA. */
 const DESCRIBE_OFFLINE_REASON_ID = 'acx-describe-offline-reason';
+/** aria-describedby target for the zero-selection hold reason on the describe submit CTA. */
+const DESCRIBE_EMPTY_SELECTION_REASON_ID = 'acx-describe-empty-selection-reason';
+
+/** Join the reason ids that currently apply; `undefined` when none do. */
+const joinDescribedBy = (...ids: (string | undefined)[]): string | undefined => {
+  const present = ids.filter((id): id is string => typeof id === 'string' && id.length > 0);
+  return present.length > 0 ? present.join(' ') : undefined;
+};
 
 interface BulkDescribeCtaProps {
   selectedCount: number;
@@ -443,6 +451,11 @@ export const BulkDescribeCta = ({
     (progress.isTerminal || progress.isError) &&
     progress.run?.phase !== DESCRIBE_RUN_PHASE.COMPLETE;
   const offlineGated = Boolean(remoteActionAriaDisabled);
+  // rg-003: an empty selection HOLDS the primary (aria-disabled + no-op click) but
+  // never removes it from the tab order, so the control and its reason stay
+  // discoverable from the zero state (A11Y-11 keyboard walk, A11Y-24 empty state).
+  const emptySelectionHeld = selectedCount === 0;
+  const submitHeld = offlineGated || emptySelectionHeld;
   const gpuState = progress.gpuState ?? null;
 
   return (
@@ -458,17 +471,21 @@ export const BulkDescribeCta = ({
           // BR-73: the accent marker + accent chrome live on the submit button (the
           // actually-accent-styled primary), never on the neutral wrapper div.
           className={accentPrimary ? 'button acx-accent-primary-action' : 'button'}
-          // BR-74: offline never HTML-disables — the aria-describedby reason must stay
-          // reachable on a focusable control. Offline is gated by aria-disabled + the
-          // onClick guard; zero-selection/submitting/running still disable when online.
-          disabled={!offlineGated && (selectedCount === 0 || isSubmitting || isRunning)}
-          aria-disabled={remoteActionAriaDisabled}
-          aria-describedby={offlineGated ? DESCRIBE_OFFLINE_REASON_ID : undefined}
+          // BR-74 / rg-003: offline and zero-selection never HTML-disable — that drops
+          // the control from the tab order and strands its aria-describedby reason on
+          // an unfocusable element. Both are held by aria-disabled + the onClick guard.
+          // In-flight submit/run still HTML-disable when online (double-submit guard).
+          disabled={!offlineGated && (isSubmitting || isRunning)}
+          aria-disabled={submitHeld ? true : undefined}
+          aria-describedby={joinDescribedBy(
+            offlineGated ? DESCRIBE_OFFLINE_REASON_ID : undefined,
+            emptySelectionHeld ? DESCRIBE_EMPTY_SELECTION_REASON_ID : undefined,
+          )}
           title={remoteActionTitle}
           onClick={() => {
-            // BR-76: presentational offline guard mirrors MediaAnalyzeCta — activation is
-            // a no-op while offline-gated (the container onSubmit also fail-fasts offline).
-            if (offlineGated) {
+            // BR-76: presentational hold guard mirrors MediaAnalyzeCta — activation is a
+            // no-op while held (the container onSubmit also fail-fasts offline).
+            if (submitHeld) {
               return;
             }
             onSubmit();
@@ -478,11 +495,20 @@ export const BulkDescribeCta = ({
         >
           {isSubmitting
             ? SYNC_VOCABULARY.describeStarting
-            : sprintf(__('Describe %d selected', 'alt-context'), selectedCount)}
+            : // A11Y-04 (2.5.3): at zero selection the visible text must match the
+              // accessible name, not read "Describe 0 selected".
+              emptySelectionHeld
+              ? __('Describe selected', 'alt-context')
+              : sprintf(__('Describe %d selected', 'alt-context'), selectedCount)}
         </button>
         {offlineGated && remoteActionTitle ? (
           <span id={DESCRIBE_OFFLINE_REASON_ID} className="screen-reader-text">
             {remoteActionTitle}
+          </span>
+        ) : null}
+        {emptySelectionHeld ? (
+          <span id={DESCRIBE_EMPTY_SELECTION_REASON_ID} className="screen-reader-text">
+            {__('Select at least one media item to describe.', 'alt-context')}
           </span>
         ) : null}
         {canCancel ? (

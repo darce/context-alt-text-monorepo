@@ -119,3 +119,88 @@ def test_each_registered_deployment_uses_api_writable_tmpfiles_template() -> Non
     installer = INSTALL_SCRIPT.read_text(encoding="utf-8")
     assert "d /run/acx-write/${environment} 0775 root 10001 -" in installer
     assert 'done < "$DEPLOYMENTS_FILE"' in installer
+
+
+# --- WBUX6-MRG-01: the image's runtime gid is half of the ownership contract ---
+#
+# The installer grants the api container write access to the describe-load
+# directory through the *group* (`root:10001 0775`). That only works if the
+# container's runtime gid really is 10001. The image creates the runtime user
+# with an explicit uid but the group gid is a separate, easily-dropped flag:
+# `groupadd -r acx` (no `-g`) yields `uid=10001(acx) gid=999(acx)` on
+# python:3.12-slim, which matches neither owner nor group and falls through to
+# `other` (r-x). Nothing compared the two files, so the split shipped.
+
+DOCKERFILE = REPO_ROOT / "apps/prototype-description-service/Dockerfile"
+
+# `groupadd [-r] -g <gid> <name>` — the pinned runtime group.
+_GROUPADD_PINNED_GID = re.compile(r"groupadd[^&|\n]*?\s-g\s+(?P<gid>\d+)")
+_USERADD_UID = re.compile(r"useradd[^&|\n]*?\s-u\s+(?P<uid>\d+)")
+
+
+def _api_runtime_ids() -> tuple[str, str]:
+    """The uid and gid the api image pins for its runtime user."""
+    text = DOCKERFILE.read_text(encoding="utf-8")
+    gids = {m["gid"] for m in _GROUPADD_PINNED_GID.finditer(text)}
+    uids = {m["uid"] for m in _USERADD_UID.finditer(text)}
+    assert len(uids) == 1, (
+        f"{DOCKERFILE.name} must create exactly one runtime user with an "
+        f"explicit uid; found {sorted(uids)}"
+    )
+    assert len(gids) == 1, (
+        f"{DOCKERFILE.name} must pin exactly one runtime gid via `groupadd -g`; "
+        f"found {sorted(gids)}. Without an explicit -g the base image assigns "
+        "the gid (observed 999), so the group-write grant on "
+        "/run/acx-write/<env> silently stops applying."
+    )
+    return uids.pop(), gids.pop()
+
+
+def test_api_image_pins_its_runtime_gid_explicitly() -> None:
+    """An implicit gid is not a contract; it is whatever the base image had."""
+    uid, gid = _api_runtime_ids()
+    assert uid == gid, (
+        f"the api image pins uid {uid} but gid {gid}; the deployment contract "
+        "treats them as one identity"
+    )
+
+
+def test_load_dir_group_matches_the_gid_the_api_image_pins() -> None:
+    """The group the host grants must be the group the container actually has.
+
+    This is the assertion whose absence let WBUX6-MRG-01 ship: the installer
+    and the Dockerfile each looked self-consistent, and no test read both.
+    """
+    _, image_gid = _api_runtime_ids()
+    provisioned = _provisioned()
+
+    write_dirs = {
+        path: ownership
+        for path, ownership in provisioned.items()
+        if path == "/run/acx-write" or path.startswith("/run/acx-write/")
+    }
+    assert write_dirs, "installer must provision the describe-load write root"
+
+    for path, ownership in write_dirs.items():
+        owner, mode = ownership.split()
+        group = owner.split(":")[1]
+        assert group == image_gid, (
+            f"installer provisions {path} with group {group}, but the api image "
+            f"runs as gid {image_gid}; the container would fall through to "
+            "`other` and could not publish describe-load.json"
+        )
+        # Group-write is the mechanism that grant depends on.
+        assert mode[2] in "2367", (
+            f"{path} is provisioned {mode}; group {group} must have write "
+            "permission or the group grant is inert"
+        )
+
+
+def test_installer_template_group_is_not_hardcoded_away_from_the_image() -> None:
+    """The per-environment tmpfiles template carries the same group."""
+    _, image_gid = _api_runtime_ids()
+    installer = INSTALL_SCRIPT.read_text(encoding="utf-8")
+    assert f"d /run/acx-write/${{environment}} 0775 root {image_gid} -" in installer, (
+        "the per-environment tmpfiles template must grant the gid the api "
+        f"image pins ({image_gid})"
+    )

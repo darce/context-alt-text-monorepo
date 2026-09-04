@@ -49,9 +49,19 @@ describe('uxmap twin_pending (S4R2-F3)', () => {
   const mergeTwin = actions.find((action) => action.id === 'merge_twin');
   const keepSeparate = actions.find((action) => action.id === 'keep_separate');
 
-  it('keeps twin_pending on the cluster-list zone with live chip copy', () => {
+  /**
+   * `twin_pending` is not a member of the canonical `MapState` enum
+   * (`workbay_canvas_mcp/ux_map/models.py`, mirrored in
+   * `js/admin/__tests__/uxmap-render-parity.test.ts`). The SSOT models the
+   * twin-pending chip as an `edge_input` of `default` on `z-cluster-list` and
+   * says so in the zone label, so this guard asserts the modelled state plus
+   * the label sentence that binds it to twin-pending — a bare
+   * `toContain('twin_pending')` demanded a state the schema rejects.
+   */
+  it('keeps twin-pending on the cluster-list zone with live chip copy', () => {
     expect(clusterList).toBeDefined();
-    expect(clusterList?.states).toContain('twin_pending');
+    expect(clusterList?.states).toContain('edge_input');
+    expect(clusterList?.label).toContain('Twin-pending (an edge_input of default)');
 
     const copy = clusterList?.label ?? '';
     expect(copy).toContain(uxmapTwinPendingPlaceholder(TWIN_CHIP_PROMPT_TEMPLATE));

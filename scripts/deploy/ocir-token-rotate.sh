@@ -255,6 +255,8 @@ put_secret() {
     # $1 = allowlisted secret name. Value arrives on stdin and goes no further
     # than the helper's memory.
     local secret_name="$1" output_file="${2:-}" expected_etag="${3:-}" required_prefix="${4:-}" helper_rc=0
+    # bash 3.2 (stock macOS) treats an empty array's "${a[@]}" as unset under
+    # `set -u`, so both call sites below must expand it defensively.
     local -a conditional_args=()
     if [ -n "$expected_etag" ]; then conditional_args=(--if-match "$expected_etag"); fi
     if [ -n "$required_prefix" ]; then conditional_args+=(--require-current-prefix "$required_prefix"); fi
@@ -263,14 +265,14 @@ put_secret() {
         run_bounded_for vault-write "$operation_timeout" \
             "$OCI_PYTHON" "${SCRIPT_DIR}/_vault_put_secret.py" \
             --vault-id "$ACX_VAULT_OCID" --secret-name "$secret_name" --readable-timeout "$READABLE_TIMEOUT" \
-            --operation-timeout "$operation_timeout" "${conditional_args[@]}" >"$output_file" || helper_rc=$?
+            --operation-timeout "$operation_timeout" ${conditional_args[@]+"${conditional_args[@]}"} >"$output_file" || helper_rc=$?
         command cat "$output_file"
         return "$helper_rc"
     fi
     run_bounded_for vault-write "$operation_timeout" \
         "$OCI_PYTHON" "${SCRIPT_DIR}/_vault_put_secret.py" \
         --vault-id "$ACX_VAULT_OCID" --secret-name "$secret_name" --readable-timeout "$READABLE_TIMEOUT" \
-        --operation-timeout "$operation_timeout" "${conditional_args[@]}"
+        --operation-timeout "$operation_timeout" ${conditional_args[@]+"${conditional_args[@]}"}
 }
 
 revoke_previous_token() {

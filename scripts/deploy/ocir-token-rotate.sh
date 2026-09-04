@@ -129,6 +129,56 @@ report_login_failure() {
     printf '%s\n' "$captured" | sanitize_stderr >&2
 }
 
+# Run one local command with the same positive-integer Vault deadline used by
+# the generated consumer snippets. Keep the child PID visible to cleanup so an
+# interrupt cannot leave an OCI process behind.
+active_pid=""
+run_bounded() {
+    local label="$1" started rc
+    shift
+    "$@" &
+    active_pid=$!
+    started=$SECONDS
+    while kill -0 "$active_pid" 2>/dev/null; do
+        if [ $((SECONDS - started)) -ge "$ACX_VAULT_FETCH_TIMEOUT" ]; then
+            kill "$active_pid" 2>/dev/null || true
+            sleep 0.1
+            kill -9 "$active_pid" 2>/dev/null || true
+            wait "$active_pid" 2>/dev/null || true
+            active_pid=""
+            printf 'acx-timeout:%s after %ss\n' "$label" "$ACX_VAULT_FETCH_TIMEOUT" >&2
+            return 124
+        fi
+        sleep 0.05
+    done
+    if wait "$active_pid"; then rc=0; else rc=$?; fi
+    active_pid=""
+    if [ "$rc" -eq 127 ]; then
+        printf 'acx-command-missing:%s\n' "$label" >&2
+    fi
+    return "$rc"
+}
+
+cleanup() {
+    if [ -n "${active_pid:-}" ]; then
+        kill "$active_pid" 2>/dev/null || true
+        wait "$active_pid" 2>/dev/null || true
+    fi
+    if [ -n "${runtime_dir:-}" ]; then
+        rm -rf -- "$runtime_dir"
+    fi
+}
+
+ocir_validate_fetch_timeout || exit $?
+umask 077
+runtime_dir="$(mktemp -d "${TMPDIR:-/tmp}/acx-ocir-rotate.XXXXXX")"
+proof_docker_config="${runtime_dir}/docker"
+mkdir "$proof_docker_config"
+trap cleanup EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
 put_secret() {
     # $1 = allowlisted secret name. Value arrives on stdin and goes no further
     # than the helper's memory.
@@ -159,9 +209,28 @@ if [ -n "$SET_USERNAME" ]; then
     proof_username="$SET_USERNAME"
 else
     username_rc=0
-    proof_username="$(bash -c "$(ocir_vault_fetch_snippet "${ACX_LOCAL_OCI_BIN}" api_key "${ACX_OCIR_USERNAME_SECRET}")" 2>&1)" || username_rc=$?
+    run_bounded vault "$ACX_LOCAL_OCI_BIN" --auth api_key \
+        secrets secret-bundle get-secret-bundle-by-name \
+        --vault-id "$ACX_VAULT_OCID" \
+        --secret-name "$ACX_OCIR_USERNAME_SECRET" \
+        --query 'data."secret-bundle-content".content' \
+        --raw-output >"${runtime_dir}/username.stdout" \
+        2>"${runtime_dir}/username.stderr" || username_rc=$?
     if [ "$username_rc" -ne 0 ]; then
-        report_login_failure "laptop username fetch" "$proof_username"
+        report_login_failure "laptop username fetch" "$(command cat "${runtime_dir}/username.stderr")"
+        unset acx_token
+        exit 1
+    fi
+    username_encoded="$(command cat "${runtime_dir}/username.stdout")"
+    proof_username="$(printf '%s' "$username_encoded" | base64 -d \
+        2>>"${runtime_dir}/username.stderr")" || username_rc=$?
+    if [ "$username_rc" -ne 0 ]; then
+        report_login_failure "laptop username decode" "$(command cat "${runtime_dir}/username.stderr")"
+        unset acx_token
+        exit 1
+    fi
+    if [ -z "$(printf '%s' "$proof_username" | LC_ALL=C tr -d '[:space:]')" ]; then
+        report_login_failure "laptop username fetch" 'Vault username secret was empty'
         unset acx_token
         exit 1
     fi
@@ -170,7 +239,7 @@ fi
 # Establish validity before durable state: the freshly-read bytes go straight
 # to docker, never through Vault and never through argv.
 proof_rc=0
-proof_out="$(printf '%s' "$acx_token" | docker login "$OCIR_REGISTRY" \
+proof_out="$(printf '%s' "$acx_token" | DOCKER_CONFIG="$proof_docker_config" docker login "$OCIR_REGISTRY" \
     -u "$proof_username" --password-stdin 2>&1)" || proof_rc=$?
 if [ "$proof_rc" -ne 0 ]; then
     report_login_failure "fresh token against ${OCIR_REGISTRY}" "$proof_out"
@@ -221,10 +290,14 @@ if [ "$SKIP_VERIFY" -eq 1 ]; then
     exit 0
 fi
 
-remote_script="printf 'acx-ssh-session-ok\\n' >&2
-$(ocir_login_snippet "${ACX_REMOTE_OCI_BIN}" instance_principal "${OCIR_REGISTRY}")"
+remote_script="acx_remote_verify() {
+printf 'acx-ssh-session-ok\\n' >&2
+$(ocir_login_snippet "${ACX_REMOTE_OCI_BIN}" instance_principal "${OCIR_REGISTRY}")
+}
+acx_remote_verify"
 verify_login "${OCI_USER}@${OCI_HOST}" remote \
-    ssh -o BatchMode=yes -o ConnectTimeout=5 -l "${OCI_USER}" -- "${OCI_HOST}" 'bash -s' \
+    ssh -o BatchMode=yes -o ConnectTimeout=5 -l "${OCI_USER}" -- "${OCI_HOST}" \
+    'acx_remote_program=$(cat); bash -c "$acx_remote_program"' \
     <<<"$remote_script" || rc=1
 
 if [ "$rc" -ne 0 ]; then

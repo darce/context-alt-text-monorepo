@@ -52,6 +52,15 @@ assert_no_file() {
         failures=$((failures + 1))
     fi
 }
+assert_path_absent() {
+    local label="$1" path="$2"
+    if [ ! -e "$path" ]; then
+        echo "ok   ${label}"
+    else
+        echo "FAIL ${label}: ${path} still exists"
+        failures=$((failures + 1))
+    fi
+}
 
 # The wrapper discovers `oci` in PATH, while ACX_OCI_PYTHON points at this
 # interpreter seam. It accepts the SDK probe and records every helper write.
@@ -77,7 +86,15 @@ EOF
 cat >"${fake_bin}/oci" <<'EOF'
 #!/usr/bin/env bash
 case " $* " in
-    *" --secret-name OCIR_USERNAME "*) printf '%s' "$OCIR_TEST_STORED_USERNAME" | base64 ;;
+    *" --secret-name OCIR_USERNAME "*)
+        if [ -n "${OCIR_TEST_USERNAME_SLEEP:-}" ]; then
+            sleep "$OCIR_TEST_USERNAME_SLEEP"
+        fi
+        if [ -n "${OCIR_TEST_USERNAME_STDERR:-}" ]; then
+            printf '%s\n' "$OCIR_TEST_USERNAME_STDERR" >&2
+        fi
+        printf '%s' "$OCIR_TEST_STORED_USERNAME" | base64
+        ;;
     *" --secret-name OCIR_AUTH_TOKEN "*) printf '%s' "$OCIR_TEST_STORED_TOKEN" | base64 ;;
     *) echo "unexpected fake oci arguments: $*" >&2; exit 64 ;;
 esac
@@ -91,7 +108,10 @@ if [ -f "$OCIR_TEST_DOCKER_COUNT" ]; then count=$(cat "$OCIR_TEST_DOCKER_COUNT")
 count=$((count + 1))
 printf '%s' "$count" >"$OCIR_TEST_DOCKER_COUNT"
 value=$(cat)
-printf '%s|%s|%s\n' "$count" "$*" "$value" >>"$OCIR_TEST_DOCKER_LOG"
+config_dir="${DOCKER_CONFIG:-${HOME}/.docker}"
+printf '%s|%s|%s|%s\n' "$count" "$*" "$value" "$config_dir" >>"$OCIR_TEST_DOCKER_LOG"
+mkdir -p "$config_dir"
+printf 'fake docker credential %s\n' "$count" >>"${config_dir}/config.json"
 if [ "${OCIR_TEST_DOCKER_FAIL_AT:-}" = "$count" ]; then
     echo 'Error response from daemon: login attempt failed with status: 401 Unauthorized' >&2
     exit 1
@@ -106,7 +126,9 @@ if [ "${OCIR_TEST_SSH_MODE:-success}" = timeout ]; then
     printf 'ssh: connect to host example port 22: Connection timed out\033]52;c;VEVSU0lPTg==\a\n' >&2
     exit 255
 fi
-bash -s
+remote_command=""
+for arg in "$@"; do remote_command="$arg"; done
+bash -c "$remote_command"
 EOF
 
 cat >"${fake_bin}/timeout" <<'EOF'
@@ -125,13 +147,20 @@ rotate_stdout="${fixture_dir}/rotate.stdout"
 rotate_stderr="${fixture_dir}/rotate.stderr"
 known_user='tenant/operator@example.test'
 known_token='ROTATE_SENTINEL_token-$!*[]'
+home_dir="${fixture_dir}/home"
+home_config="${home_dir}/.docker/config.json"
+pristine_home_config='pre-existing operator docker configuration'
 
 reset_case() {
     : >"$put_log"
     : >"$docker_log"
     : >"$ssh_log"
     rm -f "$docker_count"
-    unset OCIR_TEST_DOCKER_FAIL_AT OCIR_TEST_SSH_MODE
+    mkdir -p "$(dirname "$home_config")"
+    printf '%s\n' "$pristine_home_config" >"$home_config"
+    unset ACX_VAULT_FETCH_TIMEOUT OCIR_TEST_DOCKER_FAIL_AT OCIR_TEST_SSH_MODE \
+        OCIR_TEST_STORED_USERNAME OCIR_TEST_USERNAME_SLEEP \
+        OCIR_TEST_USERNAME_STDERR
 }
 
 run_rotate() {
@@ -140,20 +169,28 @@ run_rotate() {
     rotate_rc=0
     (
         export PATH="${fake_bin}:${PATH}"
+        export HOME="$home_dir"
         export ACX_OCI_PYTHON="${fake_bin}/fake-python"
         export ACX_LOCAL_OCI_BIN=oci
         export ACX_REMOTE_OCI_BIN=oci
         export ACX_VAULT_OCID='ocid1.vault.oc1.test.contract'
+        export ACX_VAULT_FETCH_TIMEOUT="${ACX_VAULT_FETCH_TIMEOUT:-30}"
         export ACX_OCIR_TOKEN_SECRET=OCIR_AUTH_TOKEN
         export ACX_OCIR_USERNAME_SECRET=OCIR_USERNAME
         export OCIR_TEST_PUT_LOG="$put_log"
         export OCIR_TEST_DOCKER_LOG="$docker_log"
         export OCIR_TEST_DOCKER_COUNT="$docker_count"
         export OCIR_TEST_SSH_LOG="$ssh_log"
-        export OCIR_TEST_STORED_USERNAME="$known_user"
+        if [ "${OCIR_TEST_STORED_USERNAME+x}" = x ]; then
+            export OCIR_TEST_STORED_USERNAME
+        else
+            export OCIR_TEST_STORED_USERNAME="$known_user"
+        fi
         export OCIR_TEST_STORED_TOKEN="$known_token"
         export OCIR_TEST_DOCKER_FAIL_AT="${OCIR_TEST_DOCKER_FAIL_AT:-}"
         export OCIR_TEST_SSH_MODE="${OCIR_TEST_SSH_MODE:-success}"
+        export OCIR_TEST_USERNAME_SLEEP="${OCIR_TEST_USERNAME_SLEEP:-}"
+        export OCIR_TEST_USERNAME_STDERR="${OCIR_TEST_USERNAME_STDERR:-}"
         printf '%s' "$token" | bash "$rotate_script" --stdin "$@"
     ) >"$rotate_stdout" 2>"$rotate_stderr" || rotate_rc=$?
 }
@@ -176,6 +213,71 @@ assert_contains "token destination is disclosed before the write" \
     'writing vault ocid1.vault.oc1.test.contract secret OCIR_AUTH_TOKEN' "$rotate_stderr"
 assert_contains "username destination is disclosed before the write" \
     'writing vault ocid1.vault.oc1.test.contract secret OCIR_USERNAME' "$rotate_stderr"
+
+# Routine rotations fetch the existing username from Vault. OCI diagnostics
+# remain diagnostics, and the direct proof uses a disposable Docker store.
+reset_case
+OCIR_TEST_USERNAME_STDERR='fake OCI upgrade notice: use a newer profile'
+run_rotate "$known_token" --skip-verify
+assert_eq "rotation without username override exits zero" 0 "$rotate_rc"
+assert_eq "Vault username is passed cleanly to proof login" \
+    "login iad.ocir.io -u ${known_user} --password-stdin" \
+    "$(sed -n '1s/^[^|]*|\([^|]*\)|.*$/\1/p' "$docker_log")"
+assert_absent "OCI username diagnostic is not spliced into docker arguments" \
+    "$OCIR_TEST_USERNAME_STDERR" "$docker_log"
+proof_config="$(sed -n '1s/^[^|]*|[^|]*|[^|]*|//p' "$docker_log")"
+if [ "$proof_config" != "${home_dir}/.docker" ]; then
+    echo "ok   direct proof avoids the operator Docker config"
+else
+    echo "FAIL direct proof avoids the operator Docker config"
+    failures=$((failures + 1))
+fi
+assert_path_absent "direct proof Docker config is removed on exit" "$proof_config"
+assert_eq "operator Docker config remains unchanged" \
+    "$pristine_home_config" "$(cat "$home_config")"
+
+reset_case
+OCIR_TEST_STORED_USERNAME=''
+run_rotate "$known_token" --skip-verify
+if [ "$rotate_rc" -ne 0 ]; then
+    echo "ok   empty Vault username is rejected"
+else
+    echo "FAIL empty Vault username is rejected: exit 0"
+    failures=$((failures + 1))
+fi
+assert_contains "empty Vault username has a classified diagnostic" \
+    '[secret_missing]' "$rotate_stderr"
+assert_no_file "empty Vault username is rejected before docker login" "$docker_log"
+assert_no_file "empty Vault username is rejected before any Vault write" "$put_log"
+
+reset_case
+OCIR_TEST_STORED_USERNAME='   '
+run_rotate "$known_token" --skip-verify
+if [ "$rotate_rc" -ne 0 ]; then
+    echo "ok   whitespace-only Vault username is rejected"
+else
+    echo "FAIL whitespace-only Vault username is rejected: exit 0"
+    failures=$((failures + 1))
+fi
+assert_contains "whitespace-only Vault username has a classified diagnostic" \
+    '[secret_missing]' "$rotate_stderr"
+assert_no_file "whitespace-only username is rejected before docker login" "$docker_log"
+assert_no_file "whitespace-only username is rejected before any Vault write" "$put_log"
+
+reset_case
+ACX_VAULT_FETCH_TIMEOUT=1
+OCIR_TEST_USERNAME_SLEEP=3
+run_rotate "$known_token" --skip-verify
+if [ "$rotate_rc" -ne 0 ]; then
+    echo "ok   slow Vault username read is bounded"
+else
+    echo "FAIL slow Vault username read is bounded: exit 0"
+    failures=$((failures + 1))
+fi
+assert_contains "username-read timeout is Vault-classified" \
+    '[vault_unreachable]' "$rotate_stderr"
+assert_no_file "timed-out username read happens before docker login" "$docker_log"
+assert_no_file "timed-out username read happens before any Vault write" "$put_log"
 
 # Secret-name environment overrides are configuration, not write authority.
 reset_case

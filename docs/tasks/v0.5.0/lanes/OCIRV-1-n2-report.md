@@ -13,6 +13,13 @@
   against OCIR before durable state, then write token before optional username.
   `--skip-verify` now skips only the production SSH leg (RLSE-08, Principle 3,
   sr-001).
+- Repaired routine rotation after the shared helper API change by reading the
+  existing username with a directly bounded OCI call. Its stdout and stderr
+  stay separate, and empty/whitespace-only values fail before Docker or writes.
+- Moved the fresh-token proof into a trap-cleaned private Docker config and
+  buffered the remote stdin program before executing the shared watchdog, so
+  operator credentials are not persisted and unread shell source cannot be
+  consumed as watchdog stdin.
 - Added and validated `--readable-timeout`, including zero and decimal values,
   and forwarded it to every helper invocation (RES-13).
 - Added an explicit remote-session marker so failures before the marker are
@@ -26,6 +33,24 @@
   Principle 4, Principle 10).
 
 ## RED evidence per defect
+
+- OCIRV1-N2B-01: after the shared auth helper changed its fetch builder to a
+  zero-argument fragment, routine rotation without `--set-username` failed
+  before proof. The new case executes that routine path and verifies the Vault
+  username reaches Docker exactly.
+- OCIRV1-N2B-02: the former `2>&1` username capture admitted successful OCI
+  diagnostics into Docker's `-u` value. The fake OCI CLI now emits a notice on
+  stderr and the contract proves it is absent from Docker arguments.
+- OCIRV1-N2B-03: the fresh proof formerly used the operator's default Docker
+  config. The fake Docker now writes a credential marker; the contract proves
+  the proof uses a non-default directory, removes it on exit, and leaves the
+  pre-existing operator config byte-for-byte unchanged.
+- OCIRV1-N2B-04: empty and whitespace-only Vault usernames formerly reached
+  `docker login`. The contract now requires classified rejection before either
+  a Docker login or Vault write.
+- OCIRV1-N2B-05: the replacement direct OCI read is held to the shared Vault
+  watchdog contract. A deliberately slow username read must be killed and
+  classified as `vault_unreachable` before Docker or Vault mutation.
 
 - OCIRV-1-S-01: the supplied pre-change `exit 0` experiment survived all
   existing gates. With this suite, the same mutant returned 1 with 38 failed

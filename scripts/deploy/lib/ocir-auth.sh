@@ -77,15 +77,24 @@ ocir_login_snippet() {
   ocir_emit_assignment ACX_OCIR_USERNAME_SECRET "${ACX_OCIR_USERNAME_SECRET}"
   ocir_emit_assignment ACX_OCIR_TOKEN_SECRET "${ACX_OCIR_TOKEN_SECRET}"
   ocir_emit_assignment ACX_VAULT_FETCH_TIMEOUT "${ACX_VAULT_FETCH_TIMEOUT}"
+  ocir_emit_assignment ACX_OCIR_DOCKER_CONFIG_DIR "${ACX_OCIR_DOCKER_CONFIG_DIR:-}"
   printf '%s\n' \
     'case "$ACX_OCIR_OCI_BIN" in '\''$HOME/'\''*) ACX_OCIR_OCI_BIN="${HOME}/${ACX_OCIR_OCI_BIN#\$HOME/}" ;; esac' \
     'umask 077' \
-    'ACX_OCIR_DOCKER_CONFIG="$(mktemp -d "${TMPDIR:-/tmp}/acx-ocir-docker.XXXXXX")"' \
+    'acx_owns_docker_config=0' \
+    'if [ -n "$ACX_OCIR_DOCKER_CONFIG_DIR" ]; then' \
+    '  ACX_OCIR_DOCKER_CONFIG="$ACX_OCIR_DOCKER_CONFIG_DIR"' \
+    '  [ -d "$ACX_OCIR_DOCKER_CONFIG" ] || mkdir -p -- "$ACX_OCIR_DOCKER_CONFIG"' \
+    '  chmod 700 "$ACX_OCIR_DOCKER_CONFIG"' \
+    'else' \
+    '  ACX_OCIR_DOCKER_CONFIG="$(mktemp -d "${TMPDIR:-/tmp}/acx-ocir-docker.XXXXXX")"' \
+    '  acx_owns_docker_config=1' \
+    'fi' \
     'export DOCKER_CONFIG="$ACX_OCIR_DOCKER_CONFIG"' \
     'acx_active_pid=' \
     'acx_cleanup() {' \
     '  if [ -n "${acx_active_pid:-}" ]; then kill "$acx_active_pid" 2>/dev/null || true; wait "$acx_active_pid" 2>/dev/null || true; fi' \
-    '  rm -rf -- "$ACX_OCIR_DOCKER_CONFIG"' \
+    '  if [ "$acx_owns_docker_config" -eq 1 ]; then rm -rf -- "$ACX_OCIR_DOCKER_CONFIG"; fi' \
     '}' \
     'trap acx_cleanup EXIT' \
     'trap '\''exit 129'\'' HUP' \
@@ -141,7 +150,12 @@ ocir_classify_login_failure() {
       printf '%s' "$ACX_OCIR_FAILURE_OCIR_UNREACHABLE" ;;
     *acx-timeout:vault*)
       printf '%s' "$ACX_OCIR_FAILURE_VAULT_UNREACHABLE" ;;
-    *NotAuthorizedOrNotFound*|*"secret was empty"*)
+    *NotAuthorizedOrNotFound*)
+      case "$1" in
+        *acx-vault-read-ok*) printf '%s' "$ACX_OCIR_FAILURE_SECRET_MISSING" ;;
+        *) printf '%s' "$ACX_OCIR_FAILURE_VAULT_DENIED" ;;
+      esac ;;
+    *"secret was empty"*)
       printf '%s' "$ACX_OCIR_FAILURE_SECRET_MISSING" ;;
     *NotAuthenticated*|*"not authorized"*|*'"status": 401'*|*'"status": 403'*)
       printf '%s' "$ACX_OCIR_FAILURE_VAULT_DENIED" ;;
@@ -166,7 +180,7 @@ ocir_login_failure_hint() {
     "$ACX_OCIR_FAILURE_SECRET_MISSING")
       printf 'A required OCIR secret is missing from acx-vault (or has no ACTIVE version). Store OCIR_USERNAME and OCIR_AUTH_TOKEN with: make ocir-token-rotate' ;;
     "$ACX_OCIR_FAILURE_VAULT_DENIED")
-      printf 'Host cannot read acx-vault. Check dynamic-group acx-backend-dg still matches this instance and policy acx-backend-secret-read still grants SECRET_BUNDLE_READ.' ;;
+      printf 'The first required OCIR secret could not be read: it may be missing (or have no ACTIVE version), or the host may lack IAM access. Check OCIR_USERNAME/OCIR_AUTH_TOKEN in acx-vault and confirm dynamic-group acx-backend-dg plus policy acx-backend-secret-read still grant SECRET_BUNDLE_READ.' ;;
     "$ACX_OCIR_FAILURE_VAULT_UNREACHABLE")
       printf 'OCI Vault unreachable or slower than %ss. Transient -- retry; if it persists, check egress from the host.' "${ACX_VAULT_FETCH_TIMEOUT}" ;;
     "$ACX_OCIR_FAILURE_VAULT_REQUEST")

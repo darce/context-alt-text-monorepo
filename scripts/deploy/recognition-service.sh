@@ -28,6 +28,8 @@
 #                                       ACX_BUILD_TARGET). After deploy/promote, ACX_VERIFY_OPTIONAL=1
 #                                       downgrades a failed verify to a warning (does not exit).
 #   status                            Snapshot /health for dev, dev-fir, staging, prod.
+#   gpu-lifecycle                     Install and verify the acx-gpu-start/reap timers when
+#                                       ACX_DEPLOY_GPU_LIFECYCLE=1. Requires ACX_GPU_READY_URL.
 #   clear-image-repo <env>            Remove ACX_IMAGE_REPO from the remote env .env so compose falls
 #                                       back to the recognition default (${OCIR}/.../acx-backend).
 #                                       Use this to roll back sticky VLM/variant repo state after a
@@ -56,6 +58,9 @@
 #   ACX_VERIFY_ATTEMPTS      default 5  (post-deploy verify retry count for warm-up)
 #   ACX_VERIFY_SLEEP         default 5  (seconds between verify attempts)
 #   ACX_VERIFY_OPTIONAL      set to 1 to downgrade verify failure from fail to warn after deploy/promote
+#   ACX_DEPLOY_GPU_LIFECYCLE default 0: gpu-lifecycle is a no-op unless explicitly set to 1
+#   ACX_GPU_READY_URL        required when ACX_DEPLOY_GPU_LIFECYCLE=1; no production default
+#   ACX_GPU_LIFECYCLE_DRY_RUN set to 1 to render the installer plan without ssh/scp
 #   ACX_CONVERGE_RUNTIME     default 1: 'deploy' converges the deployed compose+unit with the repo
 #                              before restart. Set 0 for an image-only hotfix restart. Use
 #                              'deploy <env> --check' for a read-only drift report (no mutation).
@@ -2652,6 +2657,52 @@ BOOTSTRAP
   log "Reset complete. ${ready_url} returned ready and a fresh service-mode API key was printed above."
 }
 
+#------------------------------------------------------- GPU lifecycle timers
+# RLSE-11: the deploy pipeline owns this repeatable host convergence step. The
+# explicit flag keeps ordinary recognition deploys from changing GPU policy.
+do_gpu_lifecycle() {
+  local enabled="${ACX_DEPLOY_GPU_LIFECYCLE:-0}"
+  local dry_run="${ACX_GPU_LIFECYCLE_DRY_RUN:-0}"
+  local -a install_cmd
+
+  case "${enabled}" in
+    0)
+      log "GPU lifecycle timer installation disabled (set ACX_DEPLOY_GPU_LIFECYCLE=1 to enable)."
+      return 0
+      ;;
+    1) ;;
+    *) fail "ACX_DEPLOY_GPU_LIFECYCLE must be 0 or 1 (got: ${enabled})" ;;
+  esac
+
+  # Release It! 5.5 / rg-008: reject an incomplete enabled configuration
+  # before the installer can stage anything on the host.
+  [[ -n "${ACX_GPU_READY_URL:-}" ]] || \
+    fail "ACX_GPU_READY_URL is required when ACX_DEPLOY_GPU_LIFECYCLE=1"
+  case "${dry_run}" in
+    0|1) ;;
+    *) fail "ACX_GPU_LIFECYCLE_DRY_RUN must be 0 or 1 (got: ${dry_run})" ;;
+  esac
+
+  # OCI_USER / OCI_HOST already passed assert_safe_ssh_identity at load time.
+  # Keep them as separate argv values; the installer preserves ssh's
+  # `-l USER -- HOST` boundary rather than rebuilding USER@HOST.
+  install_cmd=(
+    "${SCRIPT_DIR}/gpu-lifecycle-install.sh"
+    --user "${OCI_USER}"
+    --host "${OCI_HOST}"
+    --ready-url "${ACX_GPU_READY_URL}"
+  )
+  if [[ "${dry_run}" == "1" ]]; then
+    install_cmd+=(--dry-run)
+    printf 'DRY-RUN:'
+    printf ' %q' "${install_cmd[@]}"
+    printf '\n'
+  else
+    log "Installing and verifying GPU lifecycle timers on ${SSH_TARGET}."
+  fi
+  "${install_cmd[@]}"
+}
+
 #---------------------------------------------------------------- dispatch
 # Skip dispatch when the script is sourced (e.g. by tests calling individual
 # functions), run it only on direct execution.
@@ -2665,6 +2716,7 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
     rollback)     [[ -n "${1:-}" && -n "${2:-}" ]] || fail "rollback requires <env> <rollback-id>"; do_rollback "$1" "$2" ;;
     reset)        [[ -n "${1:-}" ]] || fail "reset requires <env> (dev|dev-fir|staging|prod)"; do_reset "$1" ;;
     clear-image-repo) [[ -n "${1:-}" ]] || fail "clear-image-repo requires <env> (dev|dev-fir|staging|prod)"; clear_remote_image_repo_env "$1" ;;
+    gpu-lifecycle) do_gpu_lifecycle ;;
     verify)       do_verify "${1:-dev}" ;;
     status)       do_status ;;
     ""|-h|--help|help)

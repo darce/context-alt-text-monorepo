@@ -12,8 +12,10 @@
 #   acx-gpu-reap   -- STOP it when the work drains, and unconditionally at the
 #                     max-lease cap (the cost backstop; see reaper.py)
 #
-# Usage (from a laptop, over Tailscale):
-#   scripts/deploy/gpu-lifecycle-install.sh --host ubuntu@acx-backend.tail1a44b8.ts.net \
+# The recognition deploy pipeline is the normal entrypoint. Direct use remains
+# available for recovery and local dry-run inspection:
+#   scripts/deploy/gpu-lifecycle-install.sh --user ubuntu \
+#     --host acx-backend.tail1a44b8.ts.net \
 #     --ready-url http://<gpu-private-ip>:8000/health
 # READY_URL has no default: production installs must name the endpoint that
 # supplies current, evidence-backed GPU readiness.
@@ -23,6 +25,8 @@
 set -euo pipefail
 
 HOST=""
+SSH_USER="${OCI_USER:-ubuntu}"
+SSH_USER_EXPLICIT=0
 GPU_INSTANCE_NAME="${GPU_INSTANCE_NAME:-acx-gpu-burst}"
 GPU_INSTANCE_ID="${GPU_INSTANCE_ID:-}"
 MAX_LEASE_SECONDS="${MAX_LEASE_SECONDS:-3600}"
@@ -81,6 +85,7 @@ load_deployments
 
 while [ $# -gt 0 ]; do
     case "$1" in
+        --user) SSH_USER="$2"; SSH_USER_EXPLICIT=1; shift 2 ;;
         --host) HOST="$2"; shift 2 ;;
         --instance-id) GPU_INSTANCE_ID="$2"; shift 2 ;;
         --max-lease-seconds) MAX_LEASE_SECONDS="$2"; shift 2 ;;
@@ -93,6 +98,36 @@ while [ $# -gt 0 ]; do
 done
 
 [ -n "$HOST" ] || { echo "error: --host is required" >&2; exit 2; }
+
+# Keep the historical --host user@host form working for recovery commands, but
+# normalize it before any transport call. Pipeline callers always provide the
+# identity as separate values.
+if [[ "$HOST" == *@* ]]; then
+    if [ "$SSH_USER_EXPLICIT" -eq 1 ]; then
+        echo "error: --host must not contain a user when --user is provided" >&2
+        exit 2
+    fi
+    SSH_USER="${HOST%%@*}"
+    HOST="${HOST#*@}"
+fi
+
+assert_safe_ssh_identity() {
+    local name=$1 value=$2
+    if [ -z "$value" ]; then
+        echo "error: ${name} must not be empty" >&2
+        exit 2
+    fi
+    if [[ "$value" == -* ]]; then
+        echo "error: ${name} must not start with '-' (ssh option injection): ${value}" >&2
+        exit 2
+    fi
+    if [[ ! "$value" =~ ^[A-Za-z0-9_.:-]+$ ]]; then
+        echo "error: ${name} failed charset validation (allowed: [A-Za-z0-9_.:-]+); refusing: ${value}" >&2
+        exit 2
+    fi
+}
+assert_safe_ssh_identity "SSH user" "$SSH_USER"
+assert_safe_ssh_identity "SSH host" "$HOST"
 
 # A cap of 0 disables the cost backstop. That is exactly the [RES-07] shape this
 # work exists to remove, so refuse it here rather than discover it on a bill.
@@ -187,11 +222,13 @@ run_with_deadline() {
 }
 
 if [ "$DRY_RUN" -eq 1 ]; then
-    echo "--- dry run: would stage release ${release_id} at ${HOST}:${remote_stage}"
+    echo "--- dry run: would stage release ${release_id} at ${SSH_USER}@${HOST}:${remote_stage}"
     echo "--- dry run: would validate the staged package import"
     echo "--- dry run: would atomically switch /opt/acx-gpu/current -> ${remote_release}"
     echo "--- dry run: would install acx-gpu-start.{service,timer} + acx-gpu-reap.{service,timer}"
     echo "--- dry run: would create host-owned /run/acx and isolated API-writable deployment directories: ${LOAD_ENVIRONMENT_DIRS}"
+    echo "ExecStart=/usr/bin/python3 -m infra.oci.gpu_lifecycle --mode reap --instance-id \${GPU_INSTANCE_ID} --idle-seconds \${IDLE_SECONDS} --max-lease-seconds \${MAX_LEASE_SECONDS} (rendered MAX_LEASE_SECONDS=${MAX_LEASE_SECONDS})"
+    echo "--- dry run: would verify systemctl is-enabled + is-active for acx-gpu-start.timer and acx-gpu-reap.timer"
     exit 0
 fi
 
@@ -201,16 +238,17 @@ fi
 # switched only after the content-addressed staged release imports successfully;
 # older release directories remain available for rollback.
 run_with_deadline "remote release staging" \
-    ssh "${SSH_OPTIONS[@]}" "$HOST" "set -eu
+    ssh "${SSH_OPTIONS[@]}" -l "$SSH_USER" -- "$HOST" "set -eu
 sudo mkdir -p '${remote_stage}/infra/oci/gpu_lifecycle' /etc/acx
 sudo chown -R ubuntu:ubuntu /opt/acx-gpu
 find '${remote_stage}/infra/oci/gpu_lifecycle' -mindepth 1 -maxdepth 1 -delete
 touch '${remote_stage}/infra/__init__.py' '${remote_stage}/infra/oci/__init__.py'"
 run_with_deadline "GPU lifecycle module copy" \
-    scp -q "${SSH_OPTIONS[@]}" "${repo_root}"/infra/oci/gpu_lifecycle/*.py \
+    scp -q "${SSH_OPTIONS[@]}" -o "User=${SSH_USER}" -- \
+        "${repo_root}"/infra/oci/gpu_lifecycle/*.py \
         "${HOST}:${remote_stage}/infra/oci/gpu_lifecycle/"
 run_with_deadline "remote release validation and switch" \
-    ssh "${SSH_OPTIONS[@]}" "$HOST" "set -eu
+    ssh "${SSH_OPTIONS[@]}" -l "$SSH_USER" -- "$HOST" "set -eu
 PYTHONPATH='${remote_stage}' python3 -c 'import infra.oci.gpu_lifecycle.reaper'
 if [ -e '${remote_release}' ]; then
     sudo rm -rf '${remote_stage}'
@@ -222,7 +260,7 @@ sudo mv -Tf '/opt/acx-gpu/.current-${release_id}' /opt/acx-gpu/current"
 
 # --- install units -----------------------------------------------------------
 run_with_deadline "systemd unit installation" \
-    ssh "${SSH_OPTIONS[@]}" "$HOST" "set -eu
+    ssh "${SSH_OPTIONS[@]}" -l "$SSH_USER" -- "$HOST" "set -eu
 sudo tee /etc/acx/gpu-lifecycle.env >/dev/null <<ENV
 GPU_INSTANCE_ID=${GPU_INSTANCE_ID}
 MAX_LEASE_SECONDS=${MAX_LEASE_SECONDS}
@@ -331,5 +369,22 @@ sudo systemctl enable --now acx-gpu-start.timer
 echo '--- installed timers ---'
 systemctl list-timers --all --no-pager | grep acx-gpu || true
 "
+
+# A successful copy is not a successful deploy unless both cost-control timers
+# are enabled and currently scheduled. Keep this a separate, bounded transport
+# so its exit status cannot be hidden by the informational list-timers grep.
+run_with_deadline "GPU lifecycle timer verification" \
+    ssh "${SSH_OPTIONS[@]}" -l "$SSH_USER" -- "$HOST" 'set -eu
+for timer in acx-gpu-start.timer acx-gpu-reap.timer; do
+    systemctl is-enabled --quiet "$timer" || {
+        echo "error: $timer is not enabled" >&2
+        exit 1
+    }
+    systemctl is-active --quiet "$timer" || {
+        echo "error: $timer is not active" >&2
+        exit 1
+    }
+    echo "$timer enabled active"
+done'
 
 echo "gpu-lifecycle-install: done"

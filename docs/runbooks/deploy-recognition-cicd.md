@@ -105,6 +105,19 @@ ssh ubuntu@acx-backend.tail1a44b8.ts.net \
 | `TS_OAUTH_SECRET` | Tailscale OAuth client secret |
 | `ACX_DEPLOY_SSH_KEY` | Contents of the **private** `acx-ci-deploy` key |
 
+In the same repository's *Settings → Secrets and variables → Actions →
+Variables* tab, add these non-secret deployment values:
+
+| Variable | Value |
+| --- | --- |
+| `ACX_GPU_READY_URL` | The current private HTTP(S) readiness URL for the burst-GPU service |
+| `ACX_GPU_INSTANCE_ID` | The current `acx-gpu-burst` instance OCID |
+
+The workflow has no fallback readiness endpoint. Selecting the GPU lifecycle
+option with an empty `ACX_GPU_READY_URL` fails before any host mutation. Pinning
+the OCID as a repository variable also avoids giving the Actions runner OCI API
+credentials merely to resolve a display name.
+
 ### 4. GitHub Environments
 
 *Settings → Environments →* create `dev`, `staging`, `prod` (for deploy history +
@@ -144,9 +157,39 @@ prod can only deploy from `main`).
   → pick the environment. On the private Free-plan repository, `prod` is gated
   by typing `PROMOTE`; there is no required-reviewer pause. The script's own
   `CONFIRM=PROMOTE` check, boot-smoke, and `/health` verification then run.
+- **Install GPU lifecycle timers**: on a manual run, select
+  **gpu_lifecycle**. After the recognition deploy succeeds, the separately
+  flag-gated step runs `recognition-service.sh gpu-lifecycle`, converges the two
+  timers idempotently, and fails the workflow unless both timers are enabled and
+  active. Leaving the option off (the default) does not invoke the installer.
 - **Verify**: the script fails closed — it GETs `/health` and compares
   `commit_sha` to the deployed ref (retries for warm-up). A green run means the
   running service is at that SHA.
+
+The successful timer step ends with these verification lines:
+
+```text
+acx-gpu-start.timer enabled active
+acx-gpu-reap.timer enabled active
+gpu-lifecycle-install: done
+```
+
+For a local, transport-free review of exactly what the pipeline will install,
+run the following from the repository root. These commands read the same
+repository variables configured above; they do not open SSH or start a GPU:
+
+```bash
+export ACX_GPU_READY_URL="$(gh variable get ACX_GPU_READY_URL)"
+export GPU_INSTANCE_ID="$(gh variable get ACX_GPU_INSTANCE_ID)"
+ACX_DEPLOY_GPU_LIFECYCLE=1 ACX_GPU_LIFECYCLE_DRY_RUN=1 \
+  scripts/deploy/recognition-service.sh gpu-lifecycle
+```
+
+The dry-run output includes the rendered reaper `--max-lease-seconds` argument
+and the planned `systemctl is-enabled` / `systemctl is-active` checks. The
+installer argv never contains an OCI `instance action START` or `launch`
+operation: deployment installs and schedules the units; it does not directly
+start or provision a GPU instance.
 
 ## Rollback
 

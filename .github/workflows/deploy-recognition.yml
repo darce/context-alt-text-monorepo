@@ -38,6 +38,10 @@ on:
         description: "Type PROMOTE to authorize a prod deploy (required only for prod)"
         type: string
         default: ""
+      gpu_lifecycle:
+        description: "Install and verify the GPU start/reap timers after deploy"
+        type: boolean
+        default: false
 
 # One in-flight deploy per environment; never cancel a deploy mid-flight.
 concurrency:
@@ -72,6 +76,9 @@ jobs:
     # One hung step must not hold the serialized per-env lane for GitHub's 6h
     # default (REMOTE_BUILD deploys take longer than the demo's).
     timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash --noprofile --norc -eo pipefail {0}
     # push -> 'dev'; dispatch -> chosen env. The environments retain deployment
     # history; private Free-plan repos cannot configure required reviewers.
     environment: ${{ github.event.inputs.environment || 'dev' }}
@@ -149,6 +156,14 @@ jobs:
           CONFIRM: ${{ steps.target.outputs.env == 'prod' && 'PROMOTE' || '' }}
         run: |
           bash scripts/deploy/recognition-service.sh deploy "${{ steps.target.outputs.env }}"
+
+      - name: Install GPU lifecycle timers
+        if: github.event_name == 'workflow_dispatch' && github.event.inputs.gpu_lifecycle == 'true'
+        env:
+          ACX_DEPLOY_GPU_LIFECYCLE: "1"
+          ACX_GPU_READY_URL: ${{ vars.ACX_GPU_READY_URL }}
+          GPU_INSTANCE_ID: ${{ vars.ACX_GPU_INSTANCE_ID }}
+        run: bash scripts/deploy/recognition-service.sh gpu-lifecycle
 
       - name: Post-deploy status
         if: always()

@@ -66,6 +66,34 @@ def test_push_paths_cover_the_gate_inputs() -> None:
     assert "Makefile" in paths
 
 
+def test_gpu_lifecycle_dispatch_is_explicit_and_flag_gated() -> None:
+    workflow = _workflow()
+    triggers = workflow.get("on", workflow.get(True, {}))
+    gpu_input = triggers["workflow_dispatch"]["inputs"]["gpu_lifecycle"]
+
+    assert gpu_input["type"] == "boolean"
+    assert gpu_input["default"] is False
+
+    steps = workflow["jobs"]["deploy"]["steps"]
+    lifecycle_step = next(step for step in steps if step.get("name") == "Install GPU lifecycle timers")
+    deploy_index = next(index for index, step in enumerate(steps) if str(step.get("name", "")).startswith("Deploy "))
+    lifecycle_index = steps.index(lifecycle_step)
+
+    assert lifecycle_index > deploy_index
+    assert "gpu_lifecycle == 'true'" in lifecycle_step["if"]
+    assert lifecycle_step["env"]["ACX_DEPLOY_GPU_LIFECYCLE"] == "1"
+    assert "ACX_GPU_READY_URL" in lifecycle_step["env"]
+    assert "recognition-service.sh gpu-lifecycle" in lifecycle_step["run"]
+
+
+def test_deploy_job_uses_pipefail_shell_default() -> None:
+    workflow = _workflow()
+
+    assert workflow["jobs"]["deploy"]["defaults"]["run"]["shell"] == (
+        "bash --noprofile --norc -eo pipefail {0}"
+    )
+
+
 def test_make_target_keeps_credential_suites() -> None:
     result = subprocess.run(
         ["make", "-n", "test-deploy-contract"],

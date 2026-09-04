@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 from pathlib import Path
 
@@ -11,6 +12,7 @@ REPO_ROOT = Path(os.environ.get("DEPLOY_GATE_REPO_ROOT", Path(__file__).resolve(
 WORKFLOW_DIR = REPO_ROOT / ".github" / "workflows"
 WORKFLOW_PATH = REPO_ROOT / ".github" / "workflows" / "deploy-recognition.yml"
 REQUIRED_RUN_SHELL = "bash --noprofile --norc -eo pipefail {0}"
+RUNBOOK_PATH = REPO_ROOT / "docs" / "runbooks" / "deploy-recognition-cicd.md"
 
 
 def _workflow() -> dict:
@@ -132,3 +134,37 @@ def test_make_target_keeps_credential_suites() -> None:
     assert result.returncode == 0, output
     assert "test_ocirv1_vault_readiness.py" in output
     assert "test-ocir-auth.sh" in output
+
+
+def _rollback_prose() -> str:
+    """The Rollback section with fenced code blocks stripped.
+
+    Prose only: a variable named inside the command it appears in does not tell
+    the operator to set it beforehand.
+    """
+    text = RUNBOOK_PATH.read_text(encoding="utf-8")
+    start = text.index("## Rollback")
+    section = text[start : text.index("\n## ", start + 1)]
+    return re.sub(r"```.*?```", "", section, flags=re.DOTALL)
+
+
+def test_prod_rollback_commands_are_copy_pasteable() -> None:
+    """A rollback command is executed at 2am, not designed there (rg-006).
+
+    ``GIT_REF=<good-sha>`` is a literal angle-bracket placeholder: pasted
+    verbatim under incident pressure it hands ``git rev-parse`` the text
+    ``<good-sha>`` and fails. The shell-variable form runs as written.
+    """
+    runbook = RUNBOOK_PATH.read_text(encoding="utf-8")
+    assert "CONFIRM=PROMOTE scripts/deploy/recognition-service.sh promote staging prod" in runbook
+    assert (
+        'CONFIRM=PROMOTE GIT_REF="$GOOD_SHA" REMOTE_BUILD=1 scripts/deploy/recognition-service.sh deploy prod'
+        in runbook
+    ), "the prod redeploy command is not copy-pasteable as written"
+    assert "GIT_REF=<good-sha>" not in runbook, (
+        "the runbook still documents a literal angle-bracket placeholder for GIT_REF"
+    )
+    assert "GOOD_SHA" in _rollback_prose(), (
+        "the rollback section's prose never tells the operator to set GOOD_SHA "
+        "before running the redeploy command"
+    )

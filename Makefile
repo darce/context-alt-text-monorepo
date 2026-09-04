@@ -468,6 +468,7 @@ test-scripts:
 		-q --tb=short --durations=25
 	@bash scripts/deploy/tests/test-smoke-gate.sh
 	@bash scripts/deploy/tests/test-ocir-auth.sh
+	@bash scripts/deploy/tests/test-ocir-rotate.sh
 	@$(MAKE) test-vm-scripts
 
 # VMDISK-1: the lane reaper is the VM's only disk reclaimer, and neither it nor
@@ -541,6 +542,7 @@ test-deploy-contract:
 	@python3 -m pytest scripts/test_e15_31_admin_deploy_contract.py scripts/test_e15_33_deploy_convergence.py scripts/test_e15_33_boot_smoke.py scripts/test_deploy_workflow_gate.py scripts/test_ocirv1_vault_readiness.py -q --tb=short
 	@bash scripts/deploy/tests/test-smoke-gate.sh
 	@bash scripts/deploy/tests/test-ocir-auth.sh
+	@bash scripts/deploy/tests/test-ocir-rotate.sh
 
 test-gpu-spike-bench:
 	@python3 -m pytest scripts/test_gpu_spike_bench.py -q --tb=short

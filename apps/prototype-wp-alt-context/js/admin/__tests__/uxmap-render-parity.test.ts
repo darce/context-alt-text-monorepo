@@ -31,6 +31,7 @@ const OWNED_MAPS = [
   'workbench-operator-loop',
   'dashboard',
   'describe-gpu-tier',
+  'febt-1-job-error-states',
 ] as const;
 
 /**
@@ -39,7 +40,12 @@ const OWNED_MAPS = [
  * the coverage-gaming failure mode of TEST-11, and the gate below is the upward ratchet
  * (OBS-11) that stops the list sliding back down.
  */
-const REQUIRED_OWNED_MAPS = ['dashboard', 'describe-gpu-tier', 'workbench-2pane'] as const;
+const REQUIRED_OWNED_MAPS = [
+  'dashboard',
+  'describe-gpu-tier',
+  'workbench-2pane',
+  'febt-1-job-error-states',
+] as const;
 
 /**
  * Maps that exist on disk but cannot be enrolled in OWNED_MAPS yet, each with the reason and
@@ -49,10 +55,7 @@ const REQUIRED_OWNED_MAPS = ['dashboard', 'describe-gpu-tier', 'workbench-2pane'
  * become schema-conformant fails until it is promoted into OWNED_MAPS. So the list can only
  * shrink, never silently absorb the next unenrolled SSOT.
  */
-const QUARANTINED_MAPS: Record<string, string> = {
-  'febt-1-job-error-states':
-    'Arrived on main with the FEBT-1 merge. Its screens carry domain state names (pending/running/stalled/completed_with_errors/...) and an `action` zone role, none of which exist in the canonical MAP_STATES/ZONE_ROLES vocabularies, so it fails the UxMap schema in 48 places and two screens have no route. Enrolling it verbatim would assert only its own non-conformance. Owner: FEBT-1 — re-author the states against the canonical enums, then move it into OWNED_MAPS.',
-};
+const QUARANTINED_MAPS: Record<string, string> = {};
 
 /** Operator-facing labels renamed or deleted from the JSON; must not remain in the md. */
 const RETIRED_LABELS = [
@@ -486,7 +489,21 @@ describe('ux-map SSOT schema conformance (owned maps)', () => {
     ).toEqual([...OWNED_MAPS, ...Object.keys(QUARANTINED_MAPS)].sort());
   });
 
+  it('rejects shadow *.uxmap.md artifacts — each SSOT has one generated markdown owner', () => {
+    const shadowArtifacts = readdirSync(uxMapsDir)
+      .filter((name) => name.endsWith('.uxmap.md'))
+      .sort();
+    expect(
+      shadowArtifacts,
+      'a *.uxmap.md shadows the canonical generated <map_ref>.md sibling and is outside render-parity ownership',
+    ).toEqual([]);
+  });
+
   it('keeps every quarantine entry justified, non-owned, and still non-conformant', () => {
+    expect(
+      Object.keys(QUARANTINED_MAPS),
+      'QUARANTINED_MAPS reached zero; sr-001 forbids growing the exemption list again',
+    ).toEqual([]);
     for (const [mapRef, reason] of Object.entries(QUARANTINED_MAPS)) {
       expect(OWNED_MAPS as readonly string[], `${mapRef} is both owned and quarantined`).not.toContain(mapRef);
       expect(reason.length, `${mapRef} quarantine has no written rationale and owner`).toBeGreaterThan(80);

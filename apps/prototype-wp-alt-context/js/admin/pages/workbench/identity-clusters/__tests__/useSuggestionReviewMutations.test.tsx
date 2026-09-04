@@ -21,7 +21,7 @@ import type {
   TopUnlabeledCluster,
   TopUnlabeledClustersResponse,
 } from '../../../../api/recognition/types';
-import type { AcceptedMergeSuggestion } from '../../../../api/recognition/identityActionsApi';
+import type { AcceptedMergeSuggestion } from '../../../../api/recognition';
 import * as recognitionApi from '../../../../api/recognition';
 import * as rosterApi from '../../../../api/rosterApi';
 import type { RosterClusterCommitResponse } from '../../../../api/rosterApi';

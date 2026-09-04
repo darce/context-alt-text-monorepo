@@ -30,13 +30,10 @@ import threading
 import time
 
 # acx-vault, root compartment, us-ashburn-1. An OCID is not a secret (ADR-013).
-DEFAULT_VAULT_OCID = (
-    "ocid1.vault.oc1.iad.ejvffpzlaafc4."
-    "abuwcljr3j4chidobdkiqx6igrzb4p3wffl43bjelxzfghkehdpuzle7cjla"
-)
+DEFAULT_VAULT_OCID = "ocid1.vault.oc1.iad.ejvffpzlaafc4.abuwcljr3j4chidobdkiqx6igrzb4p3wffl43bjelxzfghkehdpuzle7cjla"
 
 
-class SecretNotReadable(RuntimeError):
+class SecretNotReadableError(RuntimeError):
     """The stored value never became readable through the consumer's API."""
 
 
@@ -73,9 +70,7 @@ def _read_with_deadline(read_bundle, remaining):
     worker.start()
     worker.join(remaining)
     if worker.is_alive():
-        raise SecretNotReadable(
-            "the Secrets API read exceeded the remaining readiness deadline"
-        )
+        raise SecretNotReadableError("the Secrets API read exceeded the remaining readiness deadline")
     succeeded, value = outcome.get_nowait()
     if succeeded:
         return value
@@ -125,18 +120,16 @@ def wait_until_readable(
     while True:
         remaining = deadline - monotonic()
         if remaining <= 0:
-            raise SecretNotReadable(
-                f"{secret_name} was written but did not become readable within "
-                f"{timeout:.0f}s (last: {last})"
+            raise SecretNotReadableError(
+                f"{secret_name} was written but did not become readable within {timeout:.0f}s (last: {last})"
             )
         if prepare_attempt is not None:
             prepare_attempt(remaining)
         try:
             got = _read_with_deadline(read_bundle, remaining)
-        except SecretNotReadable as exc:
-            raise SecretNotReadable(
-                f"{secret_name} was written but did not become readable within "
-                f"{timeout:.0f}s (last: {exc})"
+        except SecretNotReadableError as exc:
+            raise SecretNotReadableError(
+                f"{secret_name} was written but did not become readable within {timeout:.0f}s (last: {exc})"
             ) from exc
         except Exception as exc:
             if not _is_retryable_read_error(exc):
@@ -151,9 +144,8 @@ def wait_until_readable(
             last = f"read back {len(got)} bytes that do not match what was written"
         remaining = deadline - monotonic()
         if remaining <= 0:
-            raise SecretNotReadable(
-                f"{secret_name} was written but did not become readable within "
-                f"{timeout:.0f}s (last: {last})"
+            raise SecretNotReadableError(
+                f"{secret_name} was written but did not become readable within {timeout:.0f}s (last: {last})"
             )
         sleep(min(delay, remaining))
         delay = min(delay * 1.5, 5.0)
@@ -175,11 +167,7 @@ def _list_active_secrets(vaults_client, compartment_id, vault_id, name=None):
         if page is not None:
             kwargs["page"] = page
         response = vaults_client.list_secrets(**kwargs)
-        active.extend(
-            secret
-            for secret in response.data
-            if getattr(secret, "lifecycle_state", None) == "ACTIVE"
-        )
+        active.extend(secret for secret in response.data if getattr(secret, "lifecycle_state", None) == "ACTIVE")
         headers = getattr(response, "headers", None) or {}
         next_page = headers.get("opc-next-page") or getattr(response, "next_page", None)
         if not next_page:
@@ -205,15 +193,13 @@ def resolve_vault_context(kms_client, vaults_client, vault_id, key_id=None):
     siblings = _list_active_secrets(vaults_client, compartment_id, vault_id)
     if not siblings:
         raise SystemExit(
-            f"vault {vault_id} holds no existing secret to read the KMS key from; "
-            "pass --key-id explicitly"
+            f"vault {vault_id} holds no existing secret to read the KMS key from; pass --key-id explicitly"
         )
     sibling_keys = {getattr(sibling, "key_id", None) for sibling in siblings}
     if None in sibling_keys or len(sibling_keys) != 1:
         rendered_keys = ", ".join(sorted(key or "<missing>" for key in sibling_keys))
         raise RuntimeError(
-            f"ACTIVE secrets in vault {vault_id} use divergent KMS keys: "
-            f"{rendered_keys}; pass --key-id explicitly"
+            f"ACTIVE secrets in vault {vault_id} use divergent KMS keys: {rendered_keys}; pass --key-id explicitly"
         )
     return compartment_id, sibling_keys.pop()
 
@@ -231,11 +217,11 @@ def main() -> int:
     ap.add_argument("--vault-id", default=DEFAULT_VAULT_OCID)
     ap.add_argument("--key-id", default=None, help="defaults to a sibling secret's key")
     ap.add_argument("--profile", default="DEFAULT")
+    ap.add_argument("--description", default=None, help="only applied when creating the secret")
     ap.add_argument(
-        "--description", default=None, help="only applied when creating the secret"
-    )
-    ap.add_argument(
-        "--readable-timeout", type=float, default=120.0,
+        "--readable-timeout",
+        type=float,
+        default=120.0,
         help="seconds to wait for the written value to read back (0 to skip)",
     )
     args = ap.parse_args()
@@ -258,9 +244,7 @@ def main() -> int:
     vaults = oci.vault.VaultsClient(config)
     kms = oci.key_management.KmsVaultClient(config)
 
-    compartment_id, key_id = resolve_vault_context(
-        kms, vaults, args.vault_id, key_id=args.key_id
-    )
+    compartment_id, key_id = resolve_vault_context(kms, vaults, args.vault_id, key_id=args.key_id)
 
     content = oci.vault.models.Base64SecretContentDetails(
         content_type="BASE64",

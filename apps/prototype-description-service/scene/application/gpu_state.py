@@ -100,6 +100,9 @@ def _read_snapshot(*, now: float) -> GpuState:
 
 
 def _state_from_payload(payload: dict[str, Any], *, now: float) -> GpuState:
+    # Standalone mirror of docs/workbay/contracts/gpu-lifecycle.md. The API and
+    # lifecycle controller are separate deployables, so do not couple them with
+    # a cross-boundary validation import.
     state_raw = payload.get("state")
     if not isinstance(state_raw, str):
         return GpuState.UNKNOWN
@@ -107,11 +110,37 @@ def _state_from_payload(payload: dict[str, Any], *, now: float) -> GpuState:
         state = GpuState(state_raw)
     except ValueError:
         return GpuState.UNKNOWN
+    if state is GpuState.UNKNOWN:
+        return GpuState.UNKNOWN
     written_at = payload.get("written_at")
     if isinstance(written_at, bool) or not isinstance(written_at, (int, float)):
         return GpuState.UNKNOWN
     if not math.isfinite(written_at):
         return GpuState.UNKNOWN
+
+    instance_id = payload.get("instance_id")
+    if instance_id is not None and (
+        not isinstance(instance_id, str) or not instance_id.strip()
+    ):
+        return GpuState.UNKNOWN
+
+    reason = payload.get("reason")
+    if state is GpuState.DEGRADED:
+        if not isinstance(reason, str) or not reason.strip():
+            return GpuState.UNKNOWN
+    elif reason is not None:
+        return GpuState.UNKNOWN
+
+    if "since" in payload:
+        since = payload["since"]
+        if (
+            isinstance(since, bool)
+            or not isinstance(since, (int, float))
+            or not math.isfinite(since)
+            or since > written_at
+        ):
+            return GpuState.UNKNOWN
+
     if written_at - now > GPU_STATE_FUTURE_SKEW_SECONDS:
         return GpuState.UNKNOWN
     if now - written_at > resolve_gpu_state_stale_seconds():

@@ -14,14 +14,20 @@ export type JobMachineStatus = (typeof JOB_MACHINE_STATE)[keyof typeof JOB_MACHI
 export const JOB_MACHINE_STALL_THRESHOLD_MS = 30_000;
 
 /**
- * Max real reconnects before fail (RES-06). Incremented only at STREAM_OPEN
- * from stalled — never on STALL_TICK (RES-13, GRPH-27/28).
+ * Max *real* transport reconnect attempts before the job is declared failed (RES-06).
+ * Counted only at RECONNECTING (a fresh EventSource is being opened) — never by quiet
+ * time. A quiet stream is not a failed stream: silence has no upper bound that the client
+ * can distinguish from slow server-side work, so only an explicit terminal frame or a
+ * transport that repeatedly fails to re-establish may end a run.
  */
 export const JOB_MACHINE_RECONNECT_CEILING = 3;
 
 /**
- * Single-tick deltas above this are clock discontinuities (sleep, NTP, tab freeze),
- * not quiet time. Must exceed the stall threshold so a genuine 31s gap still stalls.
+ * Gap between two *consecutive stall ticks* above this is a clock discontinuity (sleep,
+ * NTP step, frozen tab), not observed quiet time. The tick cadence is ~1s, so any gap this
+ * large means the ticker itself was suspended and the wall-clock elapsed cannot be trusted
+ * as evidence about the stream. Measured tick-to-tick, never event-to-tick: quiet time
+ * between real events is legitimately unbounded.
  */
 export const JOB_MACHINE_MAX_TICK_DELTA_MS = 120_000;
 
@@ -35,6 +41,8 @@ export interface JobMachineState {
   readonly error: { readonly message: string } | null;
   readonly resumeStatus: Exclude<JobMachineStatus, typeof JOB_MACHINE_STATE.offline> | null;
   readonly reconnectAttempts: number;
+  /** Timestamp of the previous STALL_TICK; used only to detect a suspended ticker. */
+  readonly lastTickAt: number | null;
 }
 
 export const JOB_EVENT = {
@@ -42,6 +50,8 @@ export const JOB_EVENT = {
   STREAM_OPEN: 'STREAM_OPEN',
   PROGRESS: 'PROGRESS',
   STALL_TICK: 'STALL_TICK',
+  RECONNECTING: 'RECONNECTING',
+  RECONNECTED: 'RECONNECTED',
   OFFLINE: 'OFFLINE',
   ONLINE: 'ONLINE',
   COMPLETE: 'COMPLETE',
@@ -56,11 +66,13 @@ export type JobEvent =
   | { type: typeof JOB_EVENT.STREAM_OPEN; at: number }
   | { type: typeof JOB_EVENT.PROGRESS; done: number; total: number; at: number }
   | { type: typeof JOB_EVENT.STALL_TICK; now: number }
+  | { type: typeof JOB_EVENT.RECONNECTING; at: number }
+  | { type: typeof JOB_EVENT.RECONNECTED; at: number }
   | { type: typeof JOB_EVENT.OFFLINE; at: number }
   | { type: typeof JOB_EVENT.ONLINE; at: number }
   | { type: typeof JOB_EVENT.COMPLETE; at: number }
   | { type: typeof JOB_EVENT.COMPLETE_WITH_ERRORS; failedCount?: number; at: number }
-  | { type: typeof JOB_EVENT.FAIL; error: { message: string } }
+  | { type: typeof JOB_EVENT.FAIL; error: { message: string } | null }
   | { type: typeof JOB_EVENT.CANCEL }
   | { type: typeof JOB_EVENT.RESET };
 
@@ -74,6 +86,7 @@ export const initialJobState: JobMachineState = {
   error: null,
   resumeStatus: null,
   reconnectAttempts: 0,
+  lastTickAt: null,
 };
 
 const TERMINAL_STATUSES: ReadonlySet<JobMachineStatus> = new Set([
@@ -98,18 +111,14 @@ const startJob = (_state: JobMachineState, event: Extract<JobEvent, { type: 'STA
   error: null,
   resumeStatus: null,
   reconnectAttempts: 0,
+  lastTickAt: null,
 });
 
-const openStream = (state: JobMachineState, event: Extract<JobEvent, { type: 'STREAM_OPEN' }>): JobMachineState => {
-  if (state.status === JOB_MACHINE_STATE.stalled) {
-    return applyReconnect(state, event.at);
-  }
-  return {
-    ...state,
-    status: JOB_MACHINE_STATE.running,
-    lastEventAt: event.at,
-  };
-};
+const openStream = (state: JobMachineState, event: Extract<JobEvent, { type: 'STREAM_OPEN' }>): JobMachineState => ({
+  ...state,
+  status: JOB_MACHINE_STATE.running,
+  lastEventAt: event.at,
+});
 
 const applyProgress = (state: JobMachineState, event: Extract<JobEvent, { type: 'PROGRESS' }>): JobMachineState => ({
   ...state,
@@ -127,54 +136,65 @@ const failReconnectCeiling = (state: JobMachineState, attempts: number, at: numb
   reconnectAttempts: attempts,
   resumeStatus: null,
   error: {
-    message: `Reconnect ceiling exceeded (${JOB_MACHINE_RECONNECT_CEILING} attempts)`,
+    message: `Reconnect ceiling exceeded (${attempts} attempts)`,
   },
 });
 
-const applyReconnect = (state: JobMachineState, at: number): JobMachineState => {
-  const attempts = state.reconnectAttempts + 1;
-  if (attempts > JOB_MACHINE_RECONNECT_CEILING) {
-    return failReconnectCeiling(state, attempts, at);
-  }
-  return {
-    ...state,
-    status: JOB_MACHINE_STATE.running,
-    lastEventAt: at,
-    reconnectAttempts: attempts,
-  };
-};
-
-const onQuietTick = (
+/**
+ * A quiet stream is observed, never terminated. `lastEventAt` keeps pointing at the last
+ * *real* event so quiet duration keeps growing and the UI can render "no news for Ns";
+ * rewriting it per tick would erase the very quantity being measured. The only mutation is
+ * the one-shot running -> stalled edge plus a clock-discontinuity rebase.
+ */
+const stallIfQuiet = (
   state: JobMachineState,
   event: Extract<JobEvent, { type: 'STALL_TICK' }>,
-  quietStatus: JobMachineStatus,
 ): JobMachineState => {
   if (state.lastEventAt === null) {
     return state;
   }
-  const delta = event.now - state.lastEventAt;
-  if (delta < 0 || delta > JOB_MACHINE_MAX_TICK_DELTA_MS) {
-    return { ...state, lastEventAt: event.now };
+
+  // Sleep / NTP step / frozen tab: the ticker itself stopped, so the wall time it skipped
+  // is not evidence about the stream. Rebase the quiet window and start observing again.
+  const tickGap = state.lastTickAt === null ? 0 : event.now - state.lastTickAt;
+  const quietMs = event.now - state.lastEventAt;
+  if (tickGap < 0 || tickGap > JOB_MACHINE_MAX_TICK_DELTA_MS || quietMs < 0) {
+    return { ...state, lastEventAt: event.now, lastTickAt: event.now };
   }
-  if (delta < JOB_MACHINE_STALL_THRESHOLD_MS) {
-    return state;
+
+  if (quietMs < JOB_MACHINE_STALL_THRESHOLD_MS || state.status === JOB_MACHINE_STATE.stalled) {
+    return state.lastTickAt === event.now ? state : { ...state, lastTickAt: event.now };
   }
-  // Quiet time is not a reconnect (RES-13). Stall duration is derived from
-  // lastEventAt by the hook; do not rewrite it or increment reconnectAttempts.
-  if (state.status === quietStatus) {
-    return state;
-  }
-  return {
-    ...state,
-    status: quietStatus,
-  };
+  return { ...state, status: JOB_MACHINE_STATE.stalled, lastTickAt: event.now };
 };
 
-const stallIfQuiet = (state: JobMachineState, event: Extract<JobEvent, { type: 'STALL_TICK' }>): JobMachineState =>
-  onQuietTick(state, event, JOB_MACHINE_STATE.stalled);
+/** Quiet time since the last real event, or null when no event has arrived yet. */
+export const quietMsFor = (state: JobMachineState, now: number): number | null =>
+  state.lastEventAt === null ? null : Math.max(0, now - state.lastEventAt);
 
-const boundOfflineWait = (state: JobMachineState, event: Extract<JobEvent, { type: 'STALL_TICK' }>): JobMachineState =>
-  onQuietTick(state, event, JOB_MACHINE_STATE.offline);
+/**
+ * A real reconnect attempt: a fresh transport is being opened. This is the only site that
+ * advances the ceiling, so "Reconnect ceiling exceeded (N attempts)" is now true when emitted.
+ */
+const noteReconnectAttempt = (
+  state: JobMachineState,
+  event: Extract<JobEvent, { type: 'RECONNECTING' }>,
+): JobMachineState => {
+  const attempts = state.reconnectAttempts + 1;
+  if (attempts > JOB_MACHINE_RECONNECT_CEILING) {
+    return failReconnectCeiling(state, attempts, event.at);
+  }
+  return { ...state, reconnectAttempts: attempts };
+};
+
+/** The transport actually re-established: clear the breaker. */
+const reconnect = (state: JobMachineState, event: Extract<JobEvent, { type: 'RECONNECTED' }>): JobMachineState => ({
+  ...state,
+  status: JOB_MACHINE_STATE.running,
+  lastEventAt: event.at,
+  resumeStatus: null,
+  reconnectAttempts: 0,
+});
 
 const goOffline = (state: JobMachineState, event: Extract<JobEvent, { type: 'OFFLINE' }>): JobMachineState => {
   if (state.status === JOB_MACHINE_STATE.offline) {
@@ -214,7 +234,7 @@ const completeWithErrors = (
 ): JobMachineState => ({
   ...state,
   status: JOB_MACHINE_STATE.completedWithErrors,
-  ...(event.failedCount !== undefined ? { failedCount: event.failedCount } : {}),
+  failedCount: event.failedCount ?? state.failedCount,
   lastEventAt: event.at,
   resumeStatus: null,
 });
@@ -249,6 +269,8 @@ const TRANSITIONS: TransitionTable = {
     [JOB_EVENT.STREAM_OPEN]: openStream,
     [JOB_EVENT.PROGRESS]: applyProgress,
     [JOB_EVENT.STALL_TICK]: stallIfQuiet,
+    [JOB_EVENT.RECONNECTING]: noteReconnectAttempt,
+    [JOB_EVENT.RECONNECTED]: reconnect,
     [JOB_EVENT.OFFLINE]: goOffline,
     [JOB_EVENT.COMPLETE]: complete,
     [JOB_EVENT.COMPLETE_WITH_ERRORS]: completeWithErrors,
@@ -259,6 +281,8 @@ const TRANSITIONS: TransitionTable = {
   [JOB_MACHINE_STATE.running]: {
     [JOB_EVENT.PROGRESS]: applyProgress,
     [JOB_EVENT.STALL_TICK]: stallIfQuiet,
+    [JOB_EVENT.RECONNECTING]: noteReconnectAttempt,
+    [JOB_EVENT.RECONNECTED]: reconnect,
     [JOB_EVENT.OFFLINE]: goOffline,
     [JOB_EVENT.COMPLETE]: complete,
     [JOB_EVENT.COMPLETE_WITH_ERRORS]: completeWithErrors,
@@ -270,6 +294,8 @@ const TRANSITIONS: TransitionTable = {
     [JOB_EVENT.STREAM_OPEN]: openStream,
     [JOB_EVENT.PROGRESS]: applyProgress,
     [JOB_EVENT.STALL_TICK]: stallIfQuiet,
+    [JOB_EVENT.RECONNECTING]: noteReconnectAttempt,
+    [JOB_EVENT.RECONNECTED]: reconnect,
     [JOB_EVENT.OFFLINE]: goOffline,
     [JOB_EVENT.COMPLETE]: complete,
     [JOB_EVENT.COMPLETE_WITH_ERRORS]: completeWithErrors,
@@ -277,8 +303,12 @@ const TRANSITIONS: TransitionTable = {
     [JOB_EVENT.CANCEL]: resetIdle,
     [JOB_EVENT.RESET]: resetIdle,
   },
+  // Offline is a peer state with its own recovery edge (ONLINE), not a countdown to failure:
+  // losing wifi must never fail a job that is still running server-side. STALL_TICK is
+  // therefore deliberately absent — there is no quiet-time bound here. The only bound is
+  // RECONNECTING, which counts real transport attempts.
   [JOB_MACHINE_STATE.offline]: {
-    [JOB_EVENT.STALL_TICK]: boundOfflineWait,
+    [JOB_EVENT.RECONNECTING]: noteReconnectAttempt,
     [JOB_EVENT.ONLINE]: goOnline,
     [JOB_EVENT.FAIL]: fail,
     [JOB_EVENT.CANCEL]: resetIdle,
@@ -325,6 +355,8 @@ export const jobReducer = (state: JobMachineState, event: JobEvent): JobMachineS
     case JOB_EVENT.STREAM_OPEN:
     case JOB_EVENT.PROGRESS:
     case JOB_EVENT.STALL_TICK:
+    case JOB_EVENT.RECONNECTING:
+    case JOB_EVENT.RECONNECTED:
     case JOB_EVENT.OFFLINE:
     case JOB_EVENT.ONLINE:
     case JOB_EVENT.COMPLETE:

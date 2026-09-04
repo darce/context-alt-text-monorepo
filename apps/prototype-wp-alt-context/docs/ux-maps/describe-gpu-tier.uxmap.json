@@ -1,0 +1,129 @@
+{
+  "map_ref": "describe-gpu-tier",
+  "product": "alt-context WP plugin admin SPA — describe run GPU tier + lifecycle state",
+  "source_fixture": "workbench-operator-loop.uxmap.json",
+  "goals": [
+    "Operator can start a bulk describe run and always see whether the GPU tier is stopped, warming, ready, or degraded (INT-10 status–predict–stop).",
+    "A cold GPU start (~90–100 s measured, VLM-3B decision 2266) is a bounded, cancellable wait, never a silent hang (INT-08, CARD-09).",
+    "Provisional CPU drafts and final GPU descriptions are visibly distinct at the item and run level (HAI-05, HAI-08, PROV-06).",
+    "GPU cost boundary is disclosed before commitment; user is never surprised by a $2/GPU-hr start (INT-07, CARD-15, COST-10)."
+  ],
+  "jobs": [
+    { "id": "bulk-describe", "label": "Describe selected media with AI and apply results" },
+    { "id": "single-describe", "label": "Describe one image from the dashboard panel" },
+    { "id": "gpu-tier-awareness", "label": "Know which tier produced a description and what it will cost/take" }
+  ],
+  "screens": [
+    {
+      "id": "workbench-media-selection",
+      "kind": "screen",
+      "title": "Workbench › Media selection",
+      "purpose": "Select media, launch a bulk describe run, watch progress including GPU tier state.",
+      "route": "#/workbench",
+      "job_entry": "bulk-describe",
+      "deep_link": true,
+      "url_params": ["run_id"],
+      "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/workbench/MediaSelection.tsx",
+      "primary_action_id": "start-bulk-describe",
+      "states": ["default", "selecting", "describe-running", "describe-terminal", "error"],
+      "zones": [
+        { "id": "z-bulk-cta", "label": "Describe selected CTA", "role": "primary-action", "states": ["default", "disabled-empty-selection", "pending", "gpu-cold-preview"] },
+        { "id": "z-bulk-progress", "label": "Bulk describe progress", "role": "status", "evidence_linked": true,
+          "states": ["starting", "gpu-stopped", "gpu-starting", "gpu-warming", "describing-provisional", "describing-final", "waiting-cooldown", "degraded-cpu", "complete", "failed", "cancelled"] },
+        { "id": "z-gpu-tier-chip", "label": "GPU tier chip", "role": "status", "states": ["hidden-no-run", "unknown", "stopped", "starting", "warming", "ready", "degraded"] },
+        { "id": "z-review-link", "label": "Review results link", "role": "navigation", "states": ["hidden", "provisional-only", "final-available"] }
+      ]
+    },
+    {
+      "id": "describe-run-apply",
+      "kind": "screen",
+      "title": "Workbench › Describe run › Review & apply",
+      "purpose": "Review per-item drafts, see tier per item, apply to media.",
+      "route": "#/workbench/describe/:run_id",
+      "job_entry": "gpu-tier-awareness",
+      "deep_link": true,
+      "url_params": ["run_id"],
+      "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/DescribeRunApplyView.tsx",
+      "primary_action_id": "apply-descriptions",
+      "states": ["default", "loading", "empty", "partial-provisional", "all-final", "error"],
+      "zones": [
+        { "id": "z-item-tier-badge", "label": "Per-item tier badge", "role": "status", "evidence_linked": true, "states": ["provisional_cpu", "final_gpu", "failed"] },
+        { "id": "z-upgrade-notice", "label": "Final descriptions pending notice", "role": "status", "states": ["hidden", "gpu-warming", "upgrading", "done"] }
+      ]
+    },
+    {
+      "id": "dashboard-describe-panel",
+      "kind": "screen",
+      "title": "Dashboard › Describe with AI",
+      "purpose": "Single-image describe; shows adapter/model provenance.",
+      "route": "#/",
+      "job_entry": "single-describe",
+      "deep_link": false,
+      "url_params": [],
+      "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/dashboard/DescribePanel.tsx",
+      "primary_action_id": "describe-single",
+      "states": ["default", "submitting", "result", "error"],
+      "zones": [
+        { "id": "z-provenance", "label": "Provenance (Adapter / Model / Source / Latency)", "role": "evidence", "evidence_linked": true, "states": ["cpu", "gpu", "seeded"] },
+        { "id": "z-inline-error", "label": "Inline error (role=alert)", "role": "error", "states": ["hidden", "gpu-unreachable", "generic"] }
+      ]
+    },
+    {
+      "id": "toast-gpu-transition",
+      "kind": "overlay",
+      "title": "Toast — GPU tier transition",
+      "purpose": "One-shot notification for a tier transition the operator is NOT looking at (navigated away or terminal). Never a per-poll toast.",
+      "route": null,
+      "job_entry": "gpu-tier-awareness",
+      "deep_link": false,
+      "url_params": [],
+      "code_ref": "apps/prototype-wp-alt-context/js/admin/context/ToastContext.tsx",
+      "primary_action_id": "dismiss-toast",
+      "states": ["info-gpu-warming", "success-final-ready", "error-gpu-unavailable", "info-run-cancelled"],
+      "zones": [
+        { "id": "z-toast-body", "label": "Toast body", "role": "status", "states": ["info", "success", "error"] }
+      ]
+    }
+  ],
+  "actions": [
+    { "id": "start-bulk-describe", "verb": "Describe N selected", "target": "POST describe/run", "hierarchy": "primary", "costly": true, "irreversible": false, "preview_required": true, "screen_id": "workbench-media-selection" },
+    { "id": "cancel-run", "verb": "Cancel run", "target": "POST describe/run/:id/cancel", "hierarchy": "secondary", "costly": false, "irreversible": false, "preview_required": false, "screen_id": "workbench-media-selection" },
+    { "id": "keep-provisional", "verb": "Use CPU drafts now", "target": "navigate describe-run-apply", "hierarchy": "secondary", "costly": false, "irreversible": false, "preview_required": false, "screen_id": "workbench-media-selection" },
+    { "id": "retry-polling", "verb": "Retry", "target": "refetch run status", "hierarchy": "secondary", "costly": false, "irreversible": false, "preview_required": false, "screen_id": "workbench-media-selection" },
+    { "id": "apply-descriptions", "verb": "Apply", "target": "POST describe/run/:id/apply", "hierarchy": "primary", "costly": false, "irreversible": false, "preview_required": true, "screen_id": "describe-run-apply" },
+    { "id": "describe-single", "verb": "Describe with AI", "target": "POST scene/describe", "hierarchy": "primary", "costly": true, "irreversible": false, "preview_required": false, "screen_id": "dashboard-describe-panel" },
+    { "id": "dismiss-toast", "verb": "Dismiss", "target": "toast", "hierarchy": "tertiary", "costly": false, "irreversible": false, "preview_required": false, "screen_id": "toast-gpu-transition" }
+  ],
+  "flows": [
+    { "id": "bulk-describe-cold-gpu", "job": "bulk-describe", "label": "Bulk describe when GPU is stopped",
+      "steps": [
+        { "screen_id": "workbench-media-selection", "branch_label": "select → CTA shows 'GPU will warm (~2 min)' (gpu-cold-preview)" },
+        { "screen_id": "workbench-media-selection", "branch_label": "run queued → gpu-starting → gpu-warming (bounded ETA, Cancel)" },
+        { "screen_id": "workbench-media-selection", "branch_label": "CPU provisional drafts arrive → describing-provisional; 'Use CPU drafts now' offered" },
+        { "screen_id": "workbench-media-selection", "branch_label": "GPU ready → describing-final → complete" },
+        { "screen_id": "toast-gpu-transition", "branch_label": "only if operator left the screen: success-final-ready" },
+        { "screen_id": "describe-run-apply", "branch_label": "per-item final_gpu badges; apply" }
+      ] },
+    { "id": "bulk-describe-gpu-degraded", "job": "bulk-describe", "label": "GPU fails to come up / unreachable",
+      "steps": [
+        { "screen_id": "workbench-media-selection", "branch_label": "gpu-warming exceeds bound (>180 s) or endpoint unreachable → degraded-cpu" },
+        { "screen_id": "toast-gpu-transition", "branch_label": "error-gpu-unavailable (once), CPU drafts kept" },
+        { "screen_id": "describe-run-apply", "branch_label": "partial-provisional; z-upgrade-notice explains no upgrade coming" }
+      ] },
+    { "id": "single-describe-gpu", "job": "single-describe", "label": "Dashboard single describe on GPU tier",
+      "steps": [
+        { "screen_id": "dashboard-describe-panel", "branch_label": "submit → result; z-provenance shows Adapter=gpu_qwen30b, Model" },
+        { "screen_id": "dashboard-describe-panel", "branch_label": "GPU stopped → z-inline-error gpu-unreachable names the state + what to do" }
+      ] }
+  ],
+  "open_questions": [
+    "Should the WP operator ever get an explicit 'Start GPU' / 'Stop GPU' control (HAI-04 activate–operate–override), or is warm-on-enqueue + idle reap the only lifecycle (DEMO-UX-1-GPU-01 proposes enqueue-triggered start)? Current recommendation: no manual control in the plugin; CTA discloses the cost and lifecycle is implicit.",
+    "gpu_state source of truth: lifecycle reaper writes /run/acx/gpu-state.json vs API probes ACX_GPU_ENDPOINT_URL/health. One writer only (DATA-14).",
+    "Toast when the operator IS on the progress screen: suppress (double announcement with the polite live region, A11Y-21) — confirm with a screen-reader pass."
+  ],
+  "not_doing": [
+    "No confirm tab / modal before bulk describe (workbench not-doing inherited); cost disclosure lives in the CTA label + CTA hint.",
+    "No per-poll toasts; no toast for provisional→final per item.",
+    "No GPU cost meter in the plugin (billing is operator-side, OCI)."
+  ]
+}

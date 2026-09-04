@@ -135,6 +135,9 @@ const projectBoundaryError = (value: Error): FlattenedError | null => {
 };
 
 const flattenCause = (cause: unknown): unknown => {
+  // Error instances are checked FIRST: a tagged Error subclass must keep the
+  // {name, message, ...} record shape, never flip to the plain {tag, ...}
+  // projection reserved for classified AppError values (FEBT1G-M-07/M-10).
   if (cause instanceof Error) {
     return flattenError(cause, false);
   }
@@ -162,6 +165,7 @@ const flattenError = (value: Error, includeCause: boolean): FlattenedError => {
 };
 
 const flattenFieldValue = (value: unknown): unknown => {
+  // Error-instance check first — see flattenCause (FEBT1G-M-07/M-10).
   if (value instanceof Error) {
     return flattenError(value, true);
   }
@@ -181,8 +185,16 @@ const flattenFields = (fields: LogFields): LogFields => {
 
 const isNonEmptyFields = (fields: LogFields): boolean => Object.keys(fields).length > 0;
 
+/**
+ * Drop a missing or empty `requestId` instead of minting one.
+ *
+ * OBS-03: a logger scope is NOT a transaction. A module-scope `createLogger(...)`
+ * that minted an id at import time would correlate "which module" and not "which
+ * unit of work" — fabricated correlation provenance (rg-015). Open a unit of work
+ * with `logger.withRequest()` (or `withRequestId`) and log through the child.
+ */
 const omitEmptyRequestId = (fields: LogFields): LogFields => {
-  if (fields.requestId !== '') {
+  if (typeof fields.requestId === 'string' && fields.requestId !== '') {
     return fields;
   }
   const rest: LogFields = { ...fields };
@@ -244,6 +256,14 @@ export const createLogger = (scope: string, fields: LogFields = {}): Logger => {
     withRequest: () => createLogger(scope, { ...parentFields, requestId: newRequestId() }),
   };
 };
+
+/**
+ * Open a unit of work: returns a child logger whose `requestId` correlates every
+ * record emitted for that one action (FEBT1-W2B-01, OBS-03). Pass an existing id
+ * to join an in-flight transaction (e.g. a scan submit and its SSE stream).
+ */
+export const withRequestId = (log: Logger, requestId: string = newRequestId()): Logger =>
+  log.child({ requestId });
 
 export const createJobLogger = (scope: string, jobId: string): Logger => createLogger(scope, { jobId });
 

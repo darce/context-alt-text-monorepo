@@ -237,5 +237,30 @@ describe('recognitionCooldown', () => {
       vi.advanceTimersByTime(1);
       expect(fn).toHaveBeenCalledTimes(2);
     });
+
+    it('re-checks on wake when the window was extended mid-flight [FEBT1G-M-09][RES-06]', () => {
+      const fn = vi.fn();
+
+      openCooldown(5);
+      runAfterCooldown(fn);
+
+      // A second cooldown signal arrives before the armed timer fires.
+      vi.advanceTimersByTime(2000);
+      openCooldown(10);
+      expect(cooldownRemainingMs()).toBe(10_000);
+
+      // The original 5s deadline passes: the callback must NOT fire inside the
+      // still-active window (that was the refetch burst).
+      vi.advanceTimersByTime(3000);
+      expect(isCoolingDown()).toBe(true);
+      expect(fn).not.toHaveBeenCalled();
+
+      vi.advanceTimersByTime(6999);
+      expect(fn).not.toHaveBeenCalled();
+
+      vi.advanceTimersByTime(1);
+      expect(isCoolingDown()).toBe(false);
+      expect(fn).toHaveBeenCalledTimes(1);
+    });
   });
 });

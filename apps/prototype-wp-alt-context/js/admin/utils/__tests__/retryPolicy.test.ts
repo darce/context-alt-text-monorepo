@@ -106,7 +106,16 @@ describe('shouldRetryRequest', () => {
     expect(RETRY_MAX_ATTEMPTS).toBe(3);
   });
 
+  it('[FEBT1-W2C-13] pins the product bounds to literals so a constant change cannot pass silently', () => {
+    expect(RETRY_MAX_ATTEMPTS).toBe(3);
+    expect(MAX_RETRY_DELAY_MS).toBe(30_000);
+  });
+
   it('is bounded: stops once RETRY_MAX_ATTEMPTS is reached even for a retryable class', () => {
+    // Expressed on literals, not on the constant: raising RETRY_MAX_ATTEMPTS to 4 must fail here.
+    expect(shouldRetryRequest(2, httpError(429))).toBe(true);
+    expect(shouldRetryRequest(3, httpError(429))).toBe(false);
+    expect(shouldRetryRequest(3, new TypeError('Failed to fetch'))).toBe(false);
     expect(shouldRetryRequest(RETRY_MAX_ATTEMPTS - 1, httpError(429))).toBe(true);
     expect(shouldRetryRequest(RETRY_MAX_ATTEMPTS, httpError(429))).toBe(false);
     expect(shouldRetryRequest(RETRY_MAX_ATTEMPTS, new TypeError('Failed to fetch'))).toBe(false);

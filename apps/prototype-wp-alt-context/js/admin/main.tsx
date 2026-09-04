@@ -3,7 +3,7 @@
 import React from 'react';
 import { createRoot } from 'react-dom/client';
 import { App } from './App';
-import { createLogger } from './utils/logger';
+import { createLogger, withRequestId } from './utils/logger';
 import './styles/main.scss';
 
 const bootstrapLog = createLogger('bootstrap');
@@ -29,6 +29,21 @@ interface WpGlobalShim {
   svgPainter?: WpSvgPainterShim;
 }
 
+/**
+ * Structural check of the WordPress globals this bundle depends on, taken BEFORE
+ * any shim is installed (rg-008: validate what was actually loaded, do not report
+ * on the defaults we just supplied). `ensureWordPressGlobalShims` creates `wp` and
+ * `wp.hooks`, so reading them afterwards made both warning branches unreachable
+ * (FEBT1G-L-14).
+ */
+const missingWordPressGlobals = (): string[] => {
+  const wpGlobal = (window as typeof window & { wp?: { hooks?: unknown } }).wp;
+  if (!wpGlobal) {
+    return ['wp'];
+  }
+  return wpGlobal.hooks ? [] : ['wp.hooks'];
+};
+
 const ensureWordPressGlobalShims = (): void => {
   const win = window as typeof window & { wp?: WpGlobalShim };
   const wpGlobal = (win.wp ??= {});
@@ -52,19 +67,13 @@ const rootElement = document.getElementById('alt-context-admin-app');
 if (rootElement) {
   rootElement.removeAttribute('hidden');
 
+  const missingGlobals = missingWordPressGlobals();
+
   ensureWordPressGlobalShims();
 
-  const wpGlobal = (window as typeof window & { wp?: { hooks?: unknown } }).wp;
-  const missingGlobals: string[] = [];
-  if (!wpGlobal) {
-    missingGlobals.push('wp');
-  } else {
-    if (!wpGlobal.hooks) {
-      missingGlobals.push('wp.hooks');
-    }
-  }
   if (missingGlobals.length > 0) {
-    bootstrapLog.warn(`Missing WordPress globals: ${missingGlobals.join(', ')}`, {
+    // Bootstrap is one unit of work; correlate its records explicitly (OBS-03).
+    withRequestId(bootstrapLog).warn(`Missing WordPress globals: ${missingGlobals.join(', ')}`, {
       missingGlobals,
     });
   }

@@ -4,6 +4,7 @@ import { AuthExpiredError, HTTPError } from '../../utils/http';
 import { SPA_SESSION_EXPIRED_COPY } from '../../utils/sessionExpiredCopy';
 import { DEFAULT_COOLDOWN_SECONDS } from '../../utils/recognitionCooldown';
 import { RETRY_AFTER_MAX_MS } from '../../utils/retryAfter';
+import { setLogLevel, setLogSink, type LogRecord } from '../../utils/logger';
 import { buildStatusText } from '../jobStateMachineProgress';
 import {
   CLUSTER_RETRY_MAX_ATTEMPTS,
@@ -309,5 +310,73 @@ describe('createClusterAutoRetry', () => {
     controller.start();
     controller.manualRetry();
     expect(mutate).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('cluster auto-retry observability [FEBT1-W2B-03]', () => {
+  let records: LogRecord[] = [];
+
+  beforeEach(() => {
+    records = [];
+    setLogLevel('debug');
+    setLogSink((record) => {
+      records.push(record);
+    });
+  });
+
+  afterEach(() => {
+    setLogSink(null);
+    setLogLevel(null);
+  });
+
+  const listener = () => ({
+    mutate: vi.fn(),
+    onQueued: vi.fn(),
+    onExhausted: vi.fn(),
+    onTerminalError: vi.fn(),
+    fallbackErrorMessage: 'fallback',
+  });
+
+  it('emits one structured line per scheduled auto-retry', () => {
+    vi.useFakeTimers();
+    try {
+      const controller = createClusterAutoRetry(listener());
+      controller.start();
+      controller.noteError(clusterError(429, 'slow down', 5));
+
+      const scheduled = records.filter((record) => record.message === 'cluster.retry_scheduled');
+      expect(scheduled).toHaveLength(1);
+      expect(scheduled[0].level).toBe('info');
+      expect(scheduled[0].fields).toEqual(
+        expect.objectContaining({ attempt: 1, maxAttempts: CLUSTER_RETRY_MAX_ATTEMPTS, status: 429, tag: 'http' }),
+      );
+      expect(scheduled[0].fields.delayMs as number).toBeGreaterThan(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('distinguishes an exhausted ceiling from a declined non-cooldown error', () => {
+    vi.useFakeTimers();
+    try {
+      const controller = createClusterAutoRetry(listener());
+      controller.start();
+      for (let i = 0; i < CLUSTER_RETRY_MAX_ATTEMPTS; i += 1) {
+        controller.noteError(clusterError(429, 'slow down', 1));
+        vi.advanceTimersByTime(2_000);
+      }
+      expect(records.filter((record) => record.message === 'cluster.retry_exhausted')).toHaveLength(1);
+
+      records.length = 0;
+      const declined = createClusterAutoRetry(listener());
+      declined.start();
+      declined.noteError(clusterError(400, 'bad request'));
+      const lines = records.filter((record) => record.message === 'cluster.retry_declined');
+      expect(lines).toHaveLength(1);
+      expect(lines[0].fields).toEqual(expect.objectContaining({ status: 400, attempt: 1 }));
+      expect(records.some((record) => record.message === 'cluster.retry_scheduled')).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

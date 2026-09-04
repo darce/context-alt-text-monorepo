@@ -120,8 +120,13 @@ classify_claimed_adapter_matches_probe() {
     out=$(
         set -f
         for adapter in $claimed_adapters_blob; do
+            # Leading `(` on the pattern: bash 3.2's command-substitution
+            # parser miscounts the `)` of a case pattern nested inside `$( )`
+            # and dies with "syntax error near unexpected token `;;'". The VM
+            # runs bash 5 and parses it fine, so this only ever failed on a
+            # macOS laptop -- which is where the gate's own tests run.
             case "$adapter" in
-                *[[:space:]]*|*'*'*|*'?'*|*'['*)
+                (*[[:space:]]*|*'*'*|*'?'*|*'['*)
                     echo FAIL
                     exit 0
                     ;;

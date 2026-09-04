@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -241,6 +242,24 @@ def md_identification_line(path: Path | None) -> str | None:
     return _md_section_first_bullet(path, "## Face identification")
 
 
+def score_interpreter(root: Path) -> Path:
+    """Resolve the interpreter that runs the score CLI.
+
+    The service-local ``.venv`` only exists in whichever checkout ran the
+    install, so a linked worktree has none and hardcoding it turned every
+    real-CLI gate in this script's test module into an exit-2 abort. Prefer an
+    explicit operator pin, then that venv, then the interpreter already
+    running us -- which, under the repo venv, can import the CLI just fine.
+    """
+    override = os.environ.get("ACX_EVAL_SCORE_PYTHON")
+    if override:
+        return Path(override)
+    venv_python = root / "apps" / "prototype-description-service" / ".venv" / "bin" / "python"
+    if venv_python.is_file():
+        return venv_python
+    return Path(sys.executable)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--run-record", required=True)
@@ -289,9 +308,9 @@ def main(argv: list[str] | None = None) -> int:
     before_ident_md = md_identification_line(out_md if out_md.is_file() else None)
 
     service = root / "apps" / "prototype-description-service"
-    python = service / ".venv" / "bin" / "python"
+    python = score_interpreter(root)
     if not python.is_file():
-        print(f"missing service venv python: {python}", file=sys.stderr)
+        print(f"missing score interpreter: {python}", file=sys.stderr)
         return 2
 
     with tempfile.TemporaryDirectory(prefix="regen-eval-") as tmp:

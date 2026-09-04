@@ -92,20 +92,29 @@ export const useJobStateMachineMutations = ({
       }
       invalidateIdentities();
       onScanComplete?.(jobIds);
+      // Correlation must cover the whole batch: binding only to jobIds[0] left every other
+      // job's later sse.* / stream.done lines unjoinable to this submit (OBS-03, FEBT1-W2B-02).
       const jobId = jobIds[0];
       const workLog = log.withRequest();
-      const jobLog = workLog.child({
-        ...(jobId ? { jobId } : {}),
-        jobIds,
-        jobCount: jobIds.length,
-        batchRunId: data.batchRunId,
-      });
+      const batchLog = workLog.child({ jobIds, jobCount: jobIds.length, batchRunId: data.batchRunId });
+      const jobLog = jobId ? batchLog.child({ jobId }) : batchLog;
       logJobEvent(jobLog, 'scan.submit', {
         status: jobIds.length > 0 ? 'pending' : 'completed',
         jobId,
         done: 0,
         total,
         failedCount: 0,
+      });
+      // Every job in the batch gets its own correlation line so the later per-job
+      // sse.* / stream.done records can be joined back to this submit (OBS-03).
+      data.jobs.forEach((job) => {
+        if (!job.id) {
+          return;
+        }
+        batchLog.child({ jobId: job.id }).debug('scan.submit_job', {
+          batchRunId: data.batchRunId,
+          total: job.progress?.total ?? 0,
+        });
       });
     },
     onError: (error) => {

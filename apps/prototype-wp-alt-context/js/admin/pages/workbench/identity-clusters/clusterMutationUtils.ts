@@ -1,6 +1,6 @@
 import { __, sprintf } from '@wordpress/i18n';
 
-import { classifyError, toUserMessage } from '../../../utils/appError';
+import { classifyError, isAbortOrTimeoutName, toUserMessage } from '../../../utils/appError';
 import { isAbortOrTimeout } from '../../../utils/retryPolicy';
 
 export const CLUSTER_MUTATION_ERROR_COPY = {
@@ -34,7 +34,13 @@ export interface ClusterMutationUserError {
 
 export const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-export const isAbortError = (err: unknown): boolean => isAbortOrTimeout(err);
+/**
+ * Abort-like: user cancel and AbortSignal.timeout. The shared retry-policy
+ * predicate covers the `abort` and `timeout` tags; the name check is kept
+ * alongside it for values that never reach a tag (FEBT1G-M-13): a cancelled
+ * request must never take the retry path.
+ */
+export const isAbortError = (err: unknown): boolean => isAbortOrTimeout(err) || isAbortOrTimeoutName(err);
 
 const readStringField = (value: unknown, key: string): string | null => {
   if (typeof value !== 'object' || value === null || !Object.hasOwn(value, key)) {
@@ -148,6 +154,14 @@ export const getClusterMutationUserError = (error: unknown, label = 'that label'
       message: CLUSTER_MUTATION_ERROR_COPY.staleConflict,
       recovery: 'reload',
     };
+  }
+
+  // FEBT1-W2A-04: an HTTPError message embeds the response body preview, so the
+  // verbatim message of any wire-originated error is not user-facing copy. Only
+  // the `unknown` tag — locally minted Errors that never carry a wire body —
+  // falls through to its own message.
+  if (classified._tag === 'unknown' && error instanceof Error) {
+    return { kind: 'unknown', message: classified.message, recovery: 'retry' };
   }
 
   return {

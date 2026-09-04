@@ -96,6 +96,7 @@ const softNonEmptyString = (value: unknown, field: string, requestLog: Logger): 
   if (typeof value !== 'string' || value.trim() === '') {
     requestLog.warn(
       `AltContextAdmin configuration field "${field}" is missing or empty; dependent features degrade.`,
+      { field },
     );
     return '';
   }
@@ -103,6 +104,9 @@ const softNonEmptyString = (value: unknown, field: string, requestLog: Logger): 
 };
 
 export const normalizeConfig = (raw: ApiConfig): NormalizedConfig => {
+  // One normalization pass is one unit of work: every soft warning it emits
+  // shares this id, and a later pass gets a different one (OBS-03). A
+  // module-scope logger has no unit of work and carries no requestId (rg-015).
   const requestLog = configLog().withRequest();
   const rawMax = Number(raw.max_media_per_batch ?? DEFAULT_MAX_MEDIA_PER_BATCH);
   const maxMediaPerBatch = Number.isFinite(rawMax) && rawMax > 0 ? rawMax : DEFAULT_MAX_MEDIA_PER_BATCH;

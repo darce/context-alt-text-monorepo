@@ -64,7 +64,7 @@ def test_fence_cancels_stop_when_work_arrives_before_actuation() -> None:
     assert fenced == []
 
 
-def test_run_reap_cycle_actuates_stop_when_still_idle() -> None:
+def test_run_reap_cycle_actuates_stop_when_still_idle(tmp_path: Path) -> None:
     controller = GpuLifecycleController(idle_seconds=60)
     instance = GpuInstance(
         instance_id="ocid1.instance.oc1..gpu", state="RUNNING", idle_for_seconds=90
@@ -77,6 +77,7 @@ def test_run_reap_cycle_actuates_stop_when_still_idle() -> None:
         load_source=StaticJobLoadSource(queue_depth=0, in_flight=0),
         actuator=actuator,
         fence_delay_seconds=0.0,
+        gpu_state_path=tmp_path / "gpu-state.json",
     )
 
     assert result.decided == [("STOP", "ocid1.instance.oc1..gpu")]
@@ -85,7 +86,7 @@ def test_run_reap_cycle_actuates_stop_when_still_idle() -> None:
     assert result.fenced_off is False
 
 
-def test_run_reap_cycle_fences_stop_when_load_appears() -> None:
+def test_run_reap_cycle_fences_stop_when_load_appears(tmp_path: Path) -> None:
     controller = GpuLifecycleController(idle_seconds=60)
     instance = GpuInstance(
         instance_id="ocid1.instance.oc1..gpu", state="RUNNING", idle_for_seconds=90
@@ -111,6 +112,7 @@ def test_run_reap_cycle_fences_stop_when_load_appears() -> None:
         load_source=load,
         actuator=actuator,
         fence_delay_seconds=0.0,
+        gpu_state_path=tmp_path / "gpu-state.json",
     )
 
     assert result.decided == [("STOP", "ocid1.instance.oc1..gpu")]
@@ -137,7 +139,7 @@ def test_json_file_stale_is_busy(tmp_path: Path, monkeypatch) -> None:
     assert snap.queue_depth == 1 and snap.in_flight == 1  # busy fail-safe
 
 
-def test_run_reap_cycle_isolates_actuator_errors() -> None:
+def test_run_reap_cycle_isolates_actuator_errors(tmp_path: Path) -> None:
     class BoomActuator:
         def stop_instance(self, instance_id: str) -> None:
             raise RuntimeError(f"stop failed {instance_id}")
@@ -153,6 +155,7 @@ def test_run_reap_cycle_isolates_actuator_errors() -> None:
         load_source=StaticJobLoadSource(queue_depth=0, in_flight=0),
         actuator=BoomActuator(),
         fence_delay_seconds=0.0,
+        gpu_state_path=tmp_path / "gpu-state.json",
     )
     assert len(result.errors) == 2
     assert result.actuated == []

@@ -16,14 +16,14 @@ ssh -t ubuntu@acx-backend.tail1a44b8.ts.net 'sudoedit /opt/acx-backend/prod/secr
 ```
 
 Set `ACX_DESCRIPTION_ADAPTER=gpu_qwen30b` in both files. Set the same private
-`ACX_GPU_ENDPOINT_URL`, snapshot paths, freshness limit, recognition URL,
-tenant API key, and tenant ID shown by the worked blocks. With
+or producer-allowlisted `ACX_GPU_ENDPOINT_URL`, snapshot paths, and freshness
+limit shown by the worked blocks. With
 `RECOGNITION_SECRET_BACKEND=oci_vault`, leave the producer's direct
 `ACX_GPU_ENDPOINT_API_KEY` blank and replace its
 `RECOGNITION_VAULT_SECRET_MAP` entry with the real GPU-key Vault OCID. With the
 `env` backend, set the producer's direct key instead. Replace the demo block's
-GPU-key coordination assertion too; WordPress does not consume it. In the demo
-file, the three recognition values must be the
+GPU-key coordination assertion too; WordPress does not consume it. Recognition
+URL, API key, and tenant ID belong only in the demo file and must be the
 `WORDPRESS_CONFIG_EXTRA` `define()` values because those PHP constants are the
 operative plugin configuration. Do not paste live credentials into the
 repository or terminal output.
@@ -39,6 +39,7 @@ deployment.
 ssh ubuntu@acx-backend.tail1a44b8.ts.net 'install -d -m 700 /tmp/acx-gpu-preflight/lib'
 scp scripts/deploy/preflight-gpu-env.sh ubuntu@acx-backend.tail1a44b8.ts.net:/tmp/acx-gpu-preflight/
 scp scripts/deploy/lib/gpu-env-contract.sh ubuntu@acx-backend.tail1a44b8.ts.net:/tmp/acx-gpu-preflight/lib/
+scp infra/oci/demo/lib/describe-gate.sh ubuntu@acx-backend.tail1a44b8.ts.net:/tmp/acx-gpu-preflight/lib/
 ssh ubuntu@acx-backend.tail1a44b8.ts.net 'chmod 700 /tmp/acx-gpu-preflight/preflight-gpu-env.sh && sudo /tmp/acx-gpu-preflight/preflight-gpu-env.sh /opt/acx-backend/prod/secrets/.env /opt/acx-backend/demo/secrets/.env'
 ```
 
@@ -68,7 +69,7 @@ demo bootstrap gate. The second command is idempotent and must finish with
 ```bash
 ssh ubuntu@acx-backend.tail1a44b8.ts.net "cd /opt/acx-backend/prod && sudo docker compose -f docker-compose.env.yml -f docker-compose.admin.yml exec -T api sh -c 'test \"\$ACX_DESCRIPTION_ADAPTER\" = gpu_qwen30b'"
 ssh ubuntu@acx-backend.tail1a44b8.ts.net "cd /opt/acx-backend/demo && PLUGIN_ZIP=/tmp/alt-context.zip ./bootstrap-wp.sh"
-ssh ubuntu@acx-backend.tail1a44b8.ts.net 'rm -f /tmp/acx-gpu-preflight/preflight-gpu-env.sh /tmp/acx-gpu-preflight/lib/gpu-env-contract.sh && rmdir /tmp/acx-gpu-preflight/lib /tmp/acx-gpu-preflight'
+ssh ubuntu@acx-backend.tail1a44b8.ts.net 'rm -f /tmp/acx-gpu-preflight/preflight-gpu-env.sh /tmp/acx-gpu-preflight/lib/gpu-env-contract.sh /tmp/acx-gpu-preflight/lib/describe-gate.sh && rmdir /tmp/acx-gpu-preflight/lib /tmp/acx-gpu-preflight'
 ```
 
 If verification fails, do not run the describe pass manually. Restore the

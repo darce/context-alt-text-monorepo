@@ -259,11 +259,10 @@ compose run --rm --no-deps wpcli wp plugin activate alt-context
 # Fail-closed describe-apply: canned `seeded` captions are worse than empty alt.
 # shellcheck source=lib/describe-gate.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib/describe-gate.sh"
-# The deploy ships this canonical adapter contract beside describe-gate.sh.
-# Source it second so both this gate and the standalone preflight use the same
-# effective allowlist while the demo-local classifier remains self-contained.
-# shellcheck source=../../../scripts/deploy/lib/gpu-env-contract.sh
-source "${DEMO_DIR}/lib/gpu-env-contract.sh"
+# describe-gate.sh is deliberately the only runtime dependency here: sync-demo
+# already validates and ships it beside bootstrap-wp.sh. The repository test
+# suite binds its trusted-profile behavior to gpu-env-contract.sh, so preflight
+# and the staged VM gate cannot drift without failing before deployment.
 
 # wp-cli --format=count -> digits, or "" on failure/non-numeric so the
 # classifier BLOCKs instead of guessing.

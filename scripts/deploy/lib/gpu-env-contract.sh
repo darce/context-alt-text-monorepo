@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Shared description-adapter allowlist for deploy-time gates.
-# Keep this file data-only apart from the exact-member predicate so callers can
-# source it before reading any secrets.
+# Repository-side description-adapter contract used by GPU env preflight.
+# infra/oci/demo/lib/describe-gate.sh must remain VM-self-contained because it
+# is the artifact sync-demo ships. A runtime parity test binds that staged copy
+# to this contract, including exact-member behavior, before either can deploy.
 
 ACX_TRUSTED_DESCRIBE_PROFILES="florence_small gpu_qwen30b gpu_qwen30b_ensemble"
 

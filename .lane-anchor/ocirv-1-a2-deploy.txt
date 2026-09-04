@@ -1,2 +1,0 @@
-lane ocirv-1-a2-deploy
-Anchor commit. Keeps this branch off the integration tip so the post-merge reaper cannot classify it as consumed and delete the worktree mid-pass. Remove before merging to main.

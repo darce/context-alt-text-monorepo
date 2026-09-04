@@ -365,3 +365,33 @@ def test_check_gpu_snapshots_shell_suite() -> None:
     assert result.returncode == 0, f"{suite} exited with {result.returncode}\n{output}"
     assert "PASS: each environment directory must be API-writable" in output
     assert output.rstrip().endswith("ALL PASS")
+
+
+def test_oci_readme_gpu_lifecycle_flags_exist_in_the_cli() -> None:
+    """rg-006 guard for GPUUX1-RB-09 / GPUUX1-L-05.
+
+    The README documented `--load-json` long after the CLI had replaced it with
+    `--load-dir`, so both production operator commands failed with
+    "unrecognized arguments" exactly during manual recovery or first install.
+    """
+    readme = (REPO_ROOT / "infra" / "oci" / "README.md").read_text(encoding="utf-8")
+    reaper = (REPO_ROOT / "infra" / "oci" / "gpu_lifecycle" / "reaper.py").read_text(encoding="utf-8")
+
+    known_flags = set(re.findall(r'"(--[a-z0-9-]+)"', reaper))
+    assert "--load-dir" in known_flags, "the CLI no longer registers --load-dir; update this guard"
+
+    documented: set[str] = set()
+    in_invocation = False
+    for line in readme.splitlines():
+        # Operator commands are wrapped across backslash continuations, so the
+        # flag that regressed last time was never on the `gpu_lifecycle` line.
+        if "gpu_lifecycle" in line:
+            in_invocation = True
+        if not in_invocation:
+            continue
+        documented.update(re.findall(r"(--[a-z0-9-]+)", line))
+        in_invocation = line.rstrip().endswith("\\")
+
+    assert documented, "no gpu_lifecycle invocation found in infra/oci/README.md"
+    unknown = sorted(documented - known_flags)
+    assert not unknown, f"infra/oci/README.md documents flags the CLI does not accept: {unknown}"

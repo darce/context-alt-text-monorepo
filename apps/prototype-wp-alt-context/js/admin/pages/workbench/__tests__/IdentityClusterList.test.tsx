@@ -294,6 +294,12 @@ describe('IdentityClusterList', () => {
   });
 
   afterEach(async () => {
+    // FEBT1-GATE05-RC-02: unmount FIRST. A test that timed out inside waitFor leaves a live
+    // act()/effect chain; settling its pending promises while the tree is still mounted is
+    // what poisoned every subsequent test in this file. Nothing may be rendered while the
+    // leftover deferreds resolve.
+    cleanup();
+
     // Cancel in-flight queries to prevent async leaks between tests
     if (activeQueryClient) {
       await activeQueryClient.cancelQueries();
@@ -308,8 +314,9 @@ describe('IdentityClusterList', () => {
       await vi.runAllTimersAsync();
       await Promise.resolve();
     });
+    // No deferred may survive into the next test even if the drain above threw.
+    findClusterDeferreds = [];
     vi.useRealTimers();
-    cleanup();
   });
 
   it('renders placeholder when no identities exist', async () => {
@@ -464,18 +471,14 @@ describe('IdentityClusterList', () => {
       setMediaIdentitiesCache(client, cacheData);
     });
 
-    await actFlow(async () => {
-      await runWithTimers(() => user.click(screen.getByRole('button', { name: /edit label/i })));
-    });
+    await runWithTimers(() => user.click(screen.getByRole('button', { name: /edit label/i })));
     const input = screen.getByPlaceholderText(/enter a name/i);
-    await actFlow(async () => {
-      await user.clear(input);
-      fireEvent.change(input, { target: { value: 'New Label' } });
-    });
+    await user.clear(input);
+    fireEvent.change(input, { target: { value: 'New Label' } });
     expect(input).toHaveValue('New Label');
 
+    await runWithTimers(() => user.click(getSaveButton()));
     await actFlow(async () => {
-      await runWithTimers(() => user.click(getSaveButton()));
       await resolveFindClusterDeferreds(null);
       await resolveSaveDeferred(updateDeferred, {});
     });
@@ -517,18 +520,14 @@ describe('IdentityClusterList', () => {
       setMediaIdentitiesCache(client, cacheData);
     });
 
-    await actFlow(async () => {
-      await runWithTimers(() => user.click(screen.getByRole('button', { name: /Name this person/i })));
-    });
+    await runWithTimers(() => user.click(screen.getByRole('button', { name: /Name this person/i })));
     const input = screen.getByPlaceholderText(/enter a name/i);
-    await actFlow(async () => {
-      await user.clear(input);
-      fireEvent.change(input, { target: { value: 'Person A' } });
-    });
+    await user.clear(input);
+    fireEvent.change(input, { target: { value: 'Person A' } });
     expect(input).toHaveValue('Person A');
 
+    await runWithTimers(() => user.click(getSaveButton()));
     await actFlow(async () => {
-      await runWithTimers(() => user.click(getSaveButton()));
       await resolveFindClusterDeferreds(null);
       await resolveSaveDeferred(updateDeferred, {});
     });
@@ -562,21 +561,17 @@ describe('IdentityClusterList', () => {
 
     const { user } = await renderWithClient(<IdentityClusterList identities={[baseIdentity]} />);
 
-    await actFlow(async () => {
-      await runWithTimers(() => user.click(screen.getByRole('button', { name: /edit label/i })));
-    });
+    await runWithTimers(() => user.click(screen.getByRole('button', { name: /edit label/i })));
     const input = screen.getByRole('combobox');
+    await runWithTimers(() => {
+      fireEvent.change(input, { target: { value: 'Ada' } });
+    });
     await actFlow(async () => {
-      await runWithTimers(() => {
-        fireEvent.change(input, { target: { value: 'Ada' } });
-      });
       await resolveFindClusterDeferreds(null);
     });
 
     expect(screen.getByRole('option', { name: /Ada Lovelace \(Group\)/ })).toBeInTheDocument();
-    await actFlow(async () => {
-      await user.click(screen.getByRole('button', { name: /cancel/i }));
-    });
+    await user.click(screen.getByRole('button', { name: /cancel/i }));
     await waitForEditClosed();
   });
 
@@ -617,13 +612,9 @@ describe('IdentityClusterList', () => {
       setMediaIdentitiesCache(client, cacheData);
     });
 
-    await actFlow(async () => {
-      await runWithTimers(() => user.click(screen.getByRole('button', { name: /edit label/i })));
-    });
+    await runWithTimers(() => user.click(screen.getByRole('button', { name: /edit label/i })));
     const input = screen.getByPlaceholderText(/enter a name/i);
-    await actFlow(async () => {
-      fireEvent.change(input, { target: { value: 'Hazel McCleod' } });
-    });
+    fireEvent.change(input, { target: { value: 'Hazel McCleod' } });
     expect(input).toHaveValue('Hazel McCleod');
 
     await actFlow(async () => {
@@ -644,8 +635,8 @@ describe('IdentityClusterList', () => {
       });
     });
 
+    await runWithTimers(() => user.click(getSaveButton()));
     await actFlow(async () => {
-      await runWithTimers(() => user.click(getSaveButton()));
       await resolveSaveDeferred(mergeDeferred, mergeResult);
     });
     await waitFor(() => expect(findClusterByLabelRemote).toHaveBeenCalled());
@@ -685,14 +676,10 @@ describe('IdentityClusterList', () => {
       setMediaIdentitiesCache(client, cacheData);
     });
 
-    await actFlow(async () => {
-      await runWithTimers(() => user.click(screen.getByRole('button', { name: /edit label/i })));
-    });
+    await runWithTimers(() => user.click(screen.getByRole('button', { name: /edit label/i })));
     const input = screen.getByPlaceholderText(/enter a name/i);
-    await actFlow(async () => {
-      await user.clear(input);
-      fireEvent.change(input, { target: { value: 'Saffron Cypress' } });
-    });
+    await user.clear(input);
+    fireEvent.change(input, { target: { value: 'Saffron Cypress' } });
 
     await actFlow(async () => {
       await flushTimers(MATCH_DEBOUNCE_MS);
@@ -708,9 +695,7 @@ describe('IdentityClusterList', () => {
       await resolveDeferred(matchDeferred, { id: 'cluster-1', label: 'Saffron Cypress' });
     });
 
-    await actFlow(async () => {
-      await runWithTimers(() => user.click(getSaveButton()));
-    });
+    await runWithTimers(() => user.click(getSaveButton()));
     await waitFor(() => expect(findClusterByLabelRemote).toHaveBeenCalledTimes(2));
 
     const saveMatchDeferred = matchDeferreds[1];
@@ -777,18 +762,14 @@ describe('IdentityClusterList', () => {
       expect(screen.getByRole('button', { name: /edit label/i })).toBeInTheDocument();
     });
 
-    await actFlow(async () => {
-      await runWithTimers(() => user.click(screen.getByRole('button', { name: /edit label/i })));
-    });
+    await runWithTimers(() => user.click(screen.getByRole('button', { name: /edit label/i })));
     const input = screen.getByPlaceholderText(/enter a name/i);
-    await actFlow(async () => {
-      await user.clear(input);
-      fireEvent.change(input, { target: { value: 'Existing Label' } });
-    });
+    await user.clear(input);
+    fireEvent.change(input, { target: { value: 'Existing Label' } });
     expect(input).toHaveValue('Existing Label');
 
+    await runWithTimers(() => user.click(getSaveButton()));
     await actFlow(async () => {
-      await runWithTimers(() => user.click(getSaveButton()));
       await resolveSaveDeferred(mergeDeferred, mergeResult);
     });
     await waitForEditClosed();
@@ -801,6 +782,14 @@ describe('IdentityClusterList', () => {
   });
 
   it('shows a friendly inline message when merge rejects a self-target request', async () => {
+    // FEBT1G-M-12: resolve the label lookup inside the test. Depending on the shared
+    // never-resolved default deferred made this test time out and, via the leaked
+    // act() chain, contaminate every test after it.
+    const findClusterByLabel = vi.fn<FindClusterByLabel>(async () => ({
+      id: 'target-cluster',
+      label: 'Existing Label',
+      identityCount: 1,
+    }));
     (api.mergeCluster as Mock).mockRejectedValueOnce(
       new Error(
         'Request to /recognition/clusters/cluster-1/merge failed (400): {"code":"invalid_target_cluster_id","message":"Source and target cluster IDs must differ."}',
@@ -819,7 +808,7 @@ describe('IdentityClusterList', () => {
     useClusterSuggestionsLoaderMock.mockReturnValue(
       loaderResultFrom({
         labelMatches: existingClusters,
-        findClusterByLabel: defaultFindClusterByLabel,
+        findClusterByLabel,
       }),
     );
 
@@ -837,24 +826,26 @@ describe('IdentityClusterList', () => {
       expect(screen.getByRole('button', { name: /edit label/i })).toBeInTheDocument();
     });
 
-    await actFlow(async () => {
-      await runWithTimers(() => user.click(screen.getByRole('button', { name: /edit label/i })));
-    });
+    await runWithTimers(() => user.click(screen.getByRole('button', { name: /edit label/i })));
     const input = screen.getByPlaceholderText(/enter a name/i);
-    await actFlow(async () => {
-      await user.clear(input);
-      fireEvent.change(input, { target: { value: 'Existing Label' } });
-    });
+    await user.clear(input);
+    fireEvent.change(input, { target: { value: 'Existing Label' } });
 
-    await actFlow(async () => {
-      await runWithTimers(() => user.click(getSaveButton()));
-    });
+    await runWithTimers(() => user.click(getSaveButton()));
 
+    // The rejected merge must actually have been attempted — otherwise the alert below
+    // could come from any other failure path.
+    await waitFor(() =>
+      expect(api.mergeCluster).toHaveBeenCalledWith('cluster-1', 'target-cluster', 'Existing Label', expect.anything()),
+    );
     await waitFor(() => {
       expect(screen.getByRole('alert')).toHaveTextContent(
         'That group is already named Existing Label - nothing to merge.',
       );
     });
+    // FEBT1-GATE05-RC-02: this test must own its async completion, not hand an
+    // unresolved promise to afterEach.
+    expect(findClusterDeferreds).toHaveLength(0);
   });
 
   it('shows undo when merge completes and reverts on request', async () => {
@@ -910,18 +901,14 @@ describe('IdentityClusterList', () => {
       expect(screen.getByRole('button', { name: /edit label/i })).toBeInTheDocument();
     });
 
-    await actFlow(async () => {
-      await runWithTimers(() => user.click(screen.getByRole('button', { name: /edit label/i })));
-    });
+    await runWithTimers(() => user.click(screen.getByRole('button', { name: /edit label/i })));
     const input = screen.getByPlaceholderText(/enter a name/i);
-    await actFlow(async () => {
-      await user.clear(input);
-      fireEvent.change(input, { target: { value: 'Existing Label' } });
-    });
+    await user.clear(input);
+    fireEvent.change(input, { target: { value: 'Existing Label' } });
     expect(input).toHaveValue('Existing Label');
 
+    await runWithTimers(() => user.click(getSaveButton()));
     await actFlow(async () => {
-      await runWithTimers(() => user.click(getSaveButton()));
       await resolveSaveDeferred(mergeDeferred, mergeResult);
     });
     await waitForEditClosed();
@@ -933,8 +920,8 @@ describe('IdentityClusterList', () => {
     );
 
     const undoButton = screen.getByRole('button', { name: /Undo merge/i });
+    await user.click(undoButton);
     await actFlow(async () => {
-      await user.click(undoButton);
       await resolveDeferred(revertDeferred, revertResult);
     });
 
@@ -993,13 +980,9 @@ describe('IdentityClusterList', () => {
     await waitFor(() => {
       expect(screen.getByRole('button', { name: /Unnamed person/i })).toBeInTheDocument();
     });
-    await actFlow(async () => {
-      await runWithTimers(() => user.click(screen.getByRole('button', { name: /Unnamed person/i })));
-    });
+    await runWithTimers(() => user.click(screen.getByRole('button', { name: /Unnamed person/i })));
     expect(screen.getByRole('combobox')).toBeInTheDocument();
-    await actFlow(async () => {
-      await user.click(screen.getByRole('button', { name: /cancel/i }));
-    });
+    await user.click(screen.getByRole('button', { name: /cancel/i }));
     await waitForEditClosed();
   });
 
@@ -1024,15 +1007,11 @@ describe('IdentityClusterList', () => {
     });
 
     const wrongPersonButton = screen.getByText('Remove from group', { selector: 'button' });
-    await actFlow(async () => {
-      await user.click(wrongPersonButton);
-    });
+    await user.click(wrongPersonButton);
 
     await screen.findByRole('dialog');
 
-    await actFlow(async () => {
-      await user.click(screen.getByRole('button', { name: /remove member/i }));
-    });
+    await user.click(screen.getByRole('button', { name: /remove member/i }));
 
     await actFlow(async () => {
       await resolveDeferred(reassignDeferred, {});
@@ -1082,13 +1061,11 @@ describe('IdentityClusterList', () => {
       expect(screen.getByRole('button', { name: /split group/i })).toBeInTheDocument();
     });
 
-    await actFlow(async () => {
-      await runWithTimers(() => user.click(screen.getByRole('button', { name: /split group/i })));
-    });
+    await runWithTimers(() => user.click(screen.getByRole('button', { name: /split group/i })));
 
     await screen.findByRole('dialog');
+    await runWithTimers(() => user.click(screen.getByRole('button', { name: /use face from media #1/i })));
     await actFlow(async () => {
-      await runWithTimers(() => user.click(screen.getByRole('button', { name: /use face from media #1/i })));
       await resolveDeferred(splitDeferred, { moved_count: 5 });
     });
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());

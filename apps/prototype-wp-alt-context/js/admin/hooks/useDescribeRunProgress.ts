@@ -10,9 +10,9 @@ import {
   type DescribeRunStatus,
   type GpuState,
 } from '../api/describeApi';
-import { JOB_PROGRESS_STALL_THRESHOLD_MS } from './useJobProgressStream';
+import { getJobProgressStallThresholdMs } from './useJobProgressStream';
 import { gateRefetchInterval } from '../utils/recognitionCooldown';
-import { isAbortLike } from '../utils/retryPolicy';
+import { isAbortOrTimeout } from '../utils/retryPolicy';
 
 /**
  * Honest per-image progress for a bulk describe run (WBUX-3 S6-02).
@@ -38,9 +38,10 @@ export const FROZEN_POLL_ESCALATION_THRESHOLD = 5;
 /**
  * Pure refetchInterval decision for describe-run progress (UXP-2-BR-07).
  *
- * Transient abort/timeout must keep polling — the shared retry policy never
- * retries abort-like errors, so the next scheduled poll IS the retry. Stop only
- * on hard (non-abort) errors, terminal run status, or the frozen-streak bound.
+ * Transient abort/timeout must keep polling — user abort is never retried, and
+ * timeout is retried only once, so the next scheduled poll is the remaining
+ * retry. Stop only on hard (non-abort/timeout) errors, terminal run status, or
+ * the frozen-streak bound.
  *
  * Exported so pure unit tests can invert each branch (TEST-15) without the hook.
  */
@@ -51,7 +52,7 @@ export const getDescribeRunRefetchInterval = (args: {
   frozenPollStreak: number;
 }): number | false => {
   // Keep polling through abort/timeout; only hard failures stop (BR-07).
-  if (args.status === 'error' && !isAbortLike(args.error)) {
+  if (args.status === 'error' && !isAbortOrTimeout(args.error)) {
     return false;
   }
   if (args.frozenPollStreak >= FROZEN_POLL_ESCALATION_THRESHOLD) {
@@ -129,7 +130,7 @@ export const useDescribeRunProgress = (runId: string | null): DescribeRunProgres
       consecutiveFrozenPollsRef.current = 0;
       setFrozenPollStreak(0);
     }
-    if (errorUpdatedAt > lastCountedErrorAtRef.current && isAbortLike(queryError)) {
+    if (errorUpdatedAt > lastCountedErrorAtRef.current && isAbortOrTimeout(queryError)) {
       lastCountedErrorAtRef.current = errorUpdatedAt;
       consecutiveFrozenPollsRef.current += 1;
       setFrozenPollStreak(consecutiveFrozenPollsRef.current);
@@ -148,7 +149,7 @@ export const useDescribeRunProgress = (runId: string | null): DescribeRunProgres
   const status = run?.status ?? null;
   const isTerminal = status !== null && isDescribeRunTerminal(status);
   const frozenStreakExceeded = frozenPollStreak >= FROZEN_POLL_ESCALATION_THRESHOLD;
-  const isFrozen = query.isError && isAbortLike(query.error) && !frozenStreakExceeded;
+  const isFrozen = query.isError && isAbortOrTimeout(query.error) && !frozenStreakExceeded;
   const isError = query.isError && !isFrozen;
 
   const { refetch } = query;
@@ -199,7 +200,9 @@ export const useDescribeRunProgress = (runId: string | null): DescribeRunProgres
         return;
       }
       const elapsedMs = Date.now() - baseline;
-      setStalledForSeconds(elapsedMs >= JOB_PROGRESS_STALL_THRESHOLD_MS ? Math.floor(elapsedMs / 1000) : null);
+      setStalledForSeconds(
+        elapsedMs >= getJobProgressStallThresholdMs() ? Math.floor(elapsedMs / 1000) : null,
+      );
     };
 
     updateStallState();

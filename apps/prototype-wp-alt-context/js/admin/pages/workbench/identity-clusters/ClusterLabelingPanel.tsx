@@ -37,8 +37,12 @@ import {
 } from './buildNamingOptions';
 import { NameFaceControl, normalizeNameFaceLabel, type NameFaceResolution } from './NameFaceControl';
 import { getReservedLabelMessage, isReservedLabel } from './reservedLabel';
-import { formatUserFacingError, isAuthExpiredError } from '../../../utils/userFacingError';
-import { getProjectionNotReadyMessage, isProjectionNotReadyError } from './clusterMutationUtils';
+import {
+  CLUSTER_MUTATION_ERROR_COPY,
+  getClusterMutationUserError,
+  isAbortError,
+  type ClusterMutationRecovery,
+} from './clusterMutationUtils';
 import { MergeUndoBanner } from './MergeUndoBanner';
 import {
   dropClusterFromReviewCaches,
@@ -63,53 +67,76 @@ interface DuplicateGuardState {
   readonly mergeTarget: NamingOption | null;
 }
 
-/**
- * Parse API error response to extract user-friendly message.
- */
-const getErrorMessage = (error: unknown): string => {
-  if (isAuthExpiredError(error)) {
-    return formatUserFacingError(error, __('An unexpected error occurred. Please try again.', 'alt-context'));
-  }
-  if (error instanceof Error) {
-    if (
-      error.name === 'AbortError' ||
-      error.message.toLowerCase().includes('timed out') ||
-      error.message.toLowerCase().includes('timeout')
-    ) {
-      return __('Save is taking too long. Please try again.', 'alt-context');
-    }
-    if (isProjectionNotReadyError(error.message)) {
-      return getProjectionNotReadyMessage();
-    }
-    // Check for network errors
-    if (error.message.includes('NetworkError') || error.message.includes('Failed to fetch')) {
-      return __('Network error. Please check your connection and try again.', 'alt-context');
-    }
-    return error.message;
-  }
-  return __('An unexpected error occurred. Please try again.', 'alt-context');
-};
+interface PanelErrorState {
+  readonly message: string;
+  readonly recovery: ClusterMutationRecovery;
+}
 
 const SAVE_TIMEOUT_MS = 3000;
+/** The duplicate lookup gates the save, so it shares the save's interactive budget. */
+const DUPLICATE_LOOKUP_TIMEOUT_MS = 3000;
 
+/**
+ * Enforce an interactive budget end to end (FEBT1G-H-08).
+ *
+ * The signal is still passed so callers that honour it cancel the transport, but the
+ * deadline is enforced by the wrapper itself: a request that ignores its signal must not
+ * be able to outlive the budget and hang the UI until the global fetch timeout.
+ */
 const withTimeout = async <T,>(
   request: (signal: AbortSignal) => Promise<T>,
   timeoutMs: number,
   timeoutMessage: string,
 ): Promise<T> => {
   const controller = new AbortController();
-  const timeoutId = window.setTimeout(() => controller.abort(timeoutMessage), timeoutMs);
-  try {
-    return await request(controller.signal);
-  } catch (error) {
-    if (error instanceof DOMException && error.name === 'AbortError') {
-      throw new Error(timeoutMessage);
+  let timeoutId = 0;
+  const deadline = new Promise<never>((_resolve, reject) => {
+    timeoutId = window.setTimeout(() => {
+      controller.abort(timeoutMessage);
+      reject(new Error(timeoutMessage));
+    }, timeoutMs);
+  });
+  const attempt = (async (): Promise<T> => {
+    try {
+      return await request(controller.signal);
+    } catch (error) {
+      if (isAbortError(error)) {
+        throw new Error(timeoutMessage);
+      }
+      throw error;
     }
-    throw error;
+  })();
+  try {
+    return await Promise.race([attempt, deadline]);
   } finally {
     window.clearTimeout(timeoutId);
   }
 };
+
+const ClusterMutationErrorAlert = ({ error }: { error: PanelErrorState }): React.JSX.Element => (
+  <div className="acx-cluster-labeling-panel__error" role="alert">
+    <p>{error.message}</p>
+    {error.recovery === 'reload' ? (
+      <button type="button" className="button" onClick={() => window.location.reload()}>
+        {__('Reload page', 'alt-context')}
+      </button>
+    ) : null}
+  </div>
+);
+/** Outcome of the submit-time remote duplicate lookup (sr-007: one canonical status set). */
+const DUPLICATE_LOOKUP_STATUS = {
+  NONE: 'none',
+  DUPLICATE: 'duplicate',
+  LOOKUP_FAILED: 'lookup_failed',
+} as const;
+
+type RemoteDuplicateLookup =
+  | { readonly status: typeof DUPLICATE_LOOKUP_STATUS.NONE }
+  | { readonly status: typeof DUPLICATE_LOOKUP_STATUS.DUPLICATE; readonly guard: DuplicateGuardState }
+  | { readonly status: typeof DUPLICATE_LOOKUP_STATUS.LOOKUP_FAILED };
+
+const getDuplicateLookupFailedMessage = (): string =>
+  __('Could not check whether that name is already in use. Please try again.', 'alt-context');
 
 export const ClusterLabelingPanel = ({
   clusterId,
@@ -118,7 +145,7 @@ export const ClusterLabelingPanel = ({
   initialLabel = '',
 }: ClusterLabelingPanelProps): React.JSX.Element => {
   const [labelInput, setLabelInput] = useState(initialLabel);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<PanelErrorState | null>(null);
   const [duplicateGuard, setDuplicateGuard] = useState<DuplicateGuardState | null>(null);
   const [allowRenameAnyway, setAllowRenameAnyway] = useState(false);
   const [lastMerge, setLastMerge] = useState<MergeClusterResponse | null>(null);
@@ -167,18 +194,8 @@ export const ClusterLabelingPanel = ({
     void queryClient.invalidateQueries({ queryKey: queryKeys.media.identities(), refetchType: 'none' });
   };
 
-  const {
-    members,
-    isLoading,
-    isError,
-    truncated,
-    total,
-    isFullyLoaded,
-    isExpanding,
-    expandError,
-    showAll,
-    refetch,
-  } = useShowAllClusterMembers(clusterId);
+  const { members, isLoading, isError, truncated, total, isFullyLoaded, isExpanding, expandError, showAll, refetch } =
+    useShowAllClusterMembers(clusterId);
   const memberPositions = useMemo(() => {
     const positions: number[] = [];
     const memberIndexesByMedia = new Map<number, number[]>();
@@ -322,7 +339,7 @@ export const ClusterLabelingPanel = ({
       withTimeout(
         (signal) => updateClusterLabel(clusterId, newLabel, signal),
         SAVE_TIMEOUT_MS,
-        'save request timed out',
+        CLUSTER_MUTATION_ERROR_COPY.timeout,
       ),
     retry: false,
     onSuccess: (_result, newLabel) => handleLabelSuccess(newLabel),
@@ -333,19 +350,25 @@ export const ClusterLabelingPanel = ({
       withTimeout(
         (_signal) => commitClusterToRosterEntry({ clusterId, rosterEntryId }),
         SAVE_TIMEOUT_MS,
-        'save request timed out',
+        CLUSTER_MUTATION_ERROR_COPY.timeout,
       ),
     retry: false,
     onSuccess: (result, variables) => handleLabelSuccess(result.person_name ?? variables.name),
   });
 
   const mergeMutation = useMutation({
+    // FEBT1G-H-08: merge shares the save's interactive budget instead of falling through
+    // to the global fetch timeout.
     mutationFn: ({ targetClusterId, targetLabel }: { targetClusterId: string; targetLabel: string }) =>
-      mergeCluster(clusterId, targetClusterId, targetLabel),
+      withTimeout(
+        () => mergeCluster(clusterId, targetClusterId, targetLabel),
+        SAVE_TIMEOUT_MS,
+        CLUSTER_MUTATION_ERROR_COPY.timeout,
+      ),
     retry: false,
     onSuccess: (result) => handleMergeSuccess(result),
-    onError: (err: Error) => {
-      setError(getErrorMessage(err));
+    onError: (err: unknown) => {
+      setError(getClusterMutationUserError(err, labelInput));
     },
   });
 
@@ -363,8 +386,8 @@ export const ClusterLabelingPanel = ({
       void queryClient.invalidateQueries({ queryKey: queryKeys.media.identities() });
       void invalidateSuggestionProjection(queryClient);
     },
-    onError: (err: Error) => {
-      setError(getErrorMessage(err));
+    onError: (err: unknown) => {
+      setError(getClusterMutationUserError(err, labelInput));
     },
   });
 
@@ -386,37 +409,49 @@ export const ClusterLabelingPanel = ({
    * Collision is raw case-insensitive equality (BR-42) — not isHumanLabeledTarget —
    * so backend-labeled machine shapes (e.g. cluster-auto-1) still arm the guard.
    */
-  const evaluateRemoteDuplicateGuard = async (trimmed: string): Promise<DuplicateGuardState | null> => {
+  const evaluateRemoteDuplicateGuard = async (trimmed: string): Promise<RemoteDuplicateLookup> => {
+    let results: Awaited<ReturnType<typeof listRecognitionClusters>>;
     try {
-      const results = await listRecognitionClusters({
-        search: trimmed,
-        limit: 10,
-        labeled_only: true,
-      });
-      const normalized = trimmed.toLowerCase();
-      const match = results.clusters.find(
-        (cluster) =>
-          cluster.id !== clusterId &&
-          typeof cluster.label === 'string' &&
-          cluster.label.toLowerCase() === normalized,
+      results = await withTimeout(
+        (signal) =>
+          listRecognitionClusters(
+            {
+              search: trimmed,
+              limit: 10,
+              labeled_only: true,
+            },
+            signal,
+          ),
+        DUPLICATE_LOOKUP_TIMEOUT_MS,
+        'duplicate name check timed out',
       );
-      if (!match?.id || !match.label) {
-        return null;
-      }
-      const remoteOption: NamingOption = {
-        value: namingOptionValue('cluster', match.id),
-        label: match.label,
-        source: 'cluster',
-        identityCount: typeof match.identity_count === 'number' ? match.identity_count : undefined,
-      };
-      return {
+    } catch {
+      // FEBT1G-H-05: a failed lookup is not evidence of "no duplicate". Fail closed —
+      // this guard is the only protection when the local 20-item list is incomplete.
+      return { status: DUPLICATE_LOOKUP_STATUS.LOOKUP_FAILED };
+    }
+    const normalized = trimmed.toLowerCase();
+    const match = results.clusters.find(
+      (cluster) =>
+        cluster.id !== clusterId && typeof cluster.label === 'string' && cluster.label.toLowerCase() === normalized,
+    );
+    if (!match?.id || !match.label) {
+      return { status: DUPLICATE_LOOKUP_STATUS.NONE };
+    }
+    const remoteOption: NamingOption = {
+      value: namingOptionValue('cluster', match.id),
+      label: match.label,
+      source: 'cluster',
+      identityCount: typeof match.identity_count === 'number' ? match.identity_count : undefined,
+    };
+    return {
+      status: DUPLICATE_LOOKUP_STATUS.DUPLICATE,
+      guard: {
         label: trimmed,
         collisions: [remoteOption],
         mergeTarget: remoteOption,
-      };
-    } catch {
-      return null;
-    }
+      },
+    };
   };
 
   const isBusy = labelMutation.isPending || mergeMutation.isPending || bindMutation.isPending;
@@ -438,7 +473,7 @@ export const ClusterLabelingPanel = ({
     try {
       // BR-46: reject machine-shaped / reserved auto-ID labels before any remote guard call.
       if (isReservedLabel(trimmed)) {
-        setError(getReservedLabelMessage());
+        setError({ message: getReservedLabelMessage(), recovery: 'none' });
         return;
       }
 
@@ -449,9 +484,13 @@ export const ClusterLabelingPanel = ({
           setDuplicateGuard(localGuard);
           return;
         }
-        const remoteGuard = await evaluateRemoteDuplicateGuard(trimmed);
-        if (remoteGuard) {
-          setDuplicateGuard(remoteGuard);
+        const remoteLookup = await evaluateRemoteDuplicateGuard(trimmed);
+        if (remoteLookup.status === DUPLICATE_LOOKUP_STATUS.LOOKUP_FAILED) {
+          setError({ message: getDuplicateLookupFailedMessage(), recovery: 'retry' });
+          return;
+        }
+        if (remoteLookup.status === DUPLICATE_LOOKUP_STATUS.DUPLICATE) {
+          setDuplicateGuard(remoteLookup.guard);
           return;
         }
       }
@@ -466,7 +505,7 @@ export const ClusterLabelingPanel = ({
           await labelMutation.mutateAsync(trimmed);
         }
       } catch (err) {
-        setError(getErrorMessage(err));
+        setError(getClusterMutationUserError(err, trimmed));
       }
     } finally {
       submittingRef.current = false;
@@ -591,11 +630,7 @@ export const ClusterLabelingPanel = ({
               {__('Done', 'alt-context')}
             </button>
           </div>
-          {error && (
-            <p className="acx-cluster-labeling-panel__error" role="alert">
-              {error}
-            </p>
-          )}
+          {error ? <ClusterMutationErrorAlert error={error} /> : null}
         </div>
       </div>
     );
@@ -710,36 +745,32 @@ export const ClusterLabelingPanel = ({
               </button>
             </div>
           ) : (
-          <>
-          <label htmlFor="cluster-label-input">{__('Name', 'alt-context')}</label>
-          <NameFaceControl
-            options={comboboxOptions}
-            resolutionOptions={resolutionOptions}
-            value={labelInput}
-            onValueChange={handleTypedValueChange}
-            onCommit={resolveCommit}
-            onOptionConfirm={handleOptionConfirm}
-            isPending={isBusy}
-            isLoading={rosterLoading}
-            inputDisabled={mergeMutation.isPending}
-            disabled={mergeMutation.isPending}
-            commitLabel={__('Save name', 'alt-context')}
-            pendingLabel={
-              mergeMutation.isPending ? __('Merging...', 'alt-context') : __('Saving...', 'alt-context')
-            }
-            placeholder={__('Enter name...', 'alt-context')}
-            searchPlaceholder={__('Enter name...', 'alt-context')}
-            inputId="cluster-label-input"
-            autoFocus={false}
-            suggestionsHeader={
-              labelInput.trim()
-                ? __('Matches', 'alt-context')
-                : __('Suggested', 'alt-context')
-            }
-            className="acx-cluster-labeling-panel__input-group"
-            classPrefix="acx-cluster-labeling-panel"
-          />
-          </>
+            <>
+              <label htmlFor="cluster-label-input">{__('Name', 'alt-context')}</label>
+              <NameFaceControl
+                options={comboboxOptions}
+                resolutionOptions={resolutionOptions}
+                value={labelInput}
+                onValueChange={handleTypedValueChange}
+                onCommit={resolveCommit}
+                onOptionConfirm={handleOptionConfirm}
+                isPending={isBusy}
+                isLoading={rosterLoading}
+                inputDisabled={mergeMutation.isPending}
+                disabled={mergeMutation.isPending}
+                commitLabel={__('Save name', 'alt-context')}
+                pendingLabel={
+                  mergeMutation.isPending ? __('Merging...', 'alt-context') : __('Saving...', 'alt-context')
+                }
+                placeholder={__('Enter name...', 'alt-context')}
+                searchPlaceholder={__('Enter name...', 'alt-context')}
+                inputId="cluster-label-input"
+                autoFocus={false}
+                suggestionsHeader={labelInput.trim() ? __('Matches', 'alt-context') : __('Suggested', 'alt-context')}
+                className="acx-cluster-labeling-panel__input-group"
+                classPrefix="acx-cluster-labeling-panel"
+              />
+            </>
           )}
 
           {duplicateGuard && (
@@ -821,11 +852,7 @@ export const ClusterLabelingPanel = ({
               </div>
             </div>
           )}
-          {error && (
-            <p className="acx-cluster-labeling-panel__error" role="alert">
-              {error}
-            </p>
-          )}
+          {error ? <ClusterMutationErrorAlert error={error} /> : null}
         </div>
       </div>
     </div>

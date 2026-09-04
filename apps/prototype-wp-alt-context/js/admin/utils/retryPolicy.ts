@@ -1,57 +1,73 @@
-import { AuthExpiredError, HTTPError, ResponseParseError } from './http';
+import { classifyError, isCooldown } from './appError';
+import { clampRetryAfterMs } from './retryAfter';
 
 export const RETRY_MAX_ATTEMPTS = 3;
 export const MAX_RETRY_DELAY_MS = 30_000;
 
-/** AbortError and TimeoutError (from AbortSignal.timeout) — both are abort-like, never retry. */
-const ABORT_LIKE_NAMES = new Set(['AbortError', 'TimeoutError']);
-
-/** Duck-type: DOMException is NOT an Error subclass in the browser. */
-export const isAbortLike = (error: unknown): boolean =>
-  typeof error === 'object' && error !== null && ABORT_LIKE_NAMES.has((error as { name?: unknown }).name as string);
+/** User cancel (`abort`) or server hang (`timeout`) — polling sites keep going through both. */
+export const isAbortOrTimeout = (error: unknown): boolean => {
+  const tag = classifyError(error)._tag;
+  return tag === 'abort' || tag === 'timeout';
+};
 
 /**
- * The server's explicit "ask again later": 429, or 503 carrying Retry-After.
- * Single classification shared by the retry predicate and the recognition
- * cooldown (REF-19: one policy, no per-consumer re-derivation).
+ * True when this error should open the shared recognition cooldown:
+ * 429, or 503 carrying Retry-After. Not an `HTTPError` type guard —
+ * classified AppError values and raw HTTPError instances both qualify
+ * (W1-L1-09). Shared with the retry predicate (REF-19).
  */
-export const isCooldownSignal = (error: unknown): error is HTTPError =>
-  error instanceof HTTPError &&
-  (error.status === 429 || (error.status === 503 && error.retryAfterSeconds !== undefined));
+export const isCooldownSignal = (error: unknown): boolean => isCooldown(error);
 
 /**
  * Shared QueryClient retry predicate.
- * Retries 429, 503-with-Retry-After, and TypeError transport failures; never 4xx, parse, or abort-like.
- * AuthExpiredError is an explicit non-retry pin (UXP-NET-2): session recovery is user-driven.
+ * Retries 429, 503-with-Retry-After, TypeError transport failures, and a single timeout;
+ * never 4xx, parse, or user abort. AuthExpiredError is an explicit non-retry pin
+ * (UXP-NET-2): session recovery is user-driven.
  */
 export const shouldRetryRequest = (failureCount: number, error: unknown): boolean => {
   if (failureCount >= RETRY_MAX_ATTEMPTS) {
     return false;
   }
+  const classified = classifyError(error);
   // Regression pin: auth expiry is terminal for RQ retry (distinct from HTTPError 4xx).
-  if (error instanceof AuthExpiredError) {
+  if (classified._tag === 'auth_expired') {
     return false;
   }
-  if (error instanceof HTTPError) {
-    return isCooldownSignal(error);
+  if (classified._tag === 'http') {
+    return isCooldown(classified);
   }
-  if (error instanceof ResponseParseError) {
+  if (classified._tag === 'parse') {
     return false;
   }
-  if (isAbortLike(error)) {
+  if (classified._tag === 'abort') {
     return false;
   }
-  // Genuine network transport failure only (Fetch spec rejects with TypeError).
-  return error instanceof TypeError;
+  if (classified._tag === 'timeout') {
+    // WHY: at most one extra attempt. A 300s timeout retried on the transport
+    // budget (RETRY_MAX_ATTEMPTS) multiplies a slow-backend incident into a
+    // multi-minute client hang and amplifies load on an already-struggling
+    // server (retry amplification / circuit-breaker family, Release It!).
+    return failureCount < 1;
+  }
+  return classified._tag === 'transport' || classified._tag === 'nonce_refresh';
 };
 
 /**
- * Shared retry delay: honor Retry-After when present, else bounded exponential backoff.
- * Both branches clamped at MAX_RETRY_DELAY_MS to avoid hour freezes and setTimeout overflow.
+ * Shared retry delay: honor Retry-After when present (clamped, no jitter),
+ * else bounded exponential backoff with full jitter (RES-06).
+ * Retry-After is also min-capped at MAX_RETRY_DELAY_MS so QueryClient waits
+ * stay short even when the shared operational ceiling is higher.
  */
-export const getRetryDelay = (attemptIndex: number, error: unknown): number => {
-  if (error instanceof HTTPError && error.retryAfterSeconds !== undefined) {
-    return Math.min(error.retryAfterSeconds * 1000, MAX_RETRY_DELAY_MS);
+export const getRetryDelay = (
+  attemptIndex: number,
+  error: unknown,
+  rng: () => number = Math.random,
+): number => {
+  const exponential = Math.min(1000 * 2 ** attemptIndex, MAX_RETRY_DELAY_MS);
+  const classified = classifyError(error);
+  if (classified._tag === 'http' && classified.retryAfterMs !== undefined) {
+    const seconds = classified.retryAfterMs / 1000;
+    return Math.min(clampRetryAfterMs(seconds, exponential), MAX_RETRY_DELAY_MS);
   }
-  return Math.min(1000 * 2 ** attemptIndex, MAX_RETRY_DELAY_MS);
+  return exponential * rng();
 };

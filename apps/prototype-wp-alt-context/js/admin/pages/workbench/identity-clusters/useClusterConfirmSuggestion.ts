@@ -5,6 +5,7 @@
 import React from 'react';
 
 import type { ComboboxOption } from '../../../../components/ui/combobox';
+import { isAbortError } from './clusterMutationUtils';
 import type { ClusterGroup } from './types';
 import type { SaveDialogAction } from './useClusterConfirmDialog';
 import type { SaveStatus } from './useClusterSaveStatus';
@@ -97,7 +98,7 @@ export const useClusterConfirmSuggestion = ({
           abortController,
         );
       } catch (err) {
-        if (err && typeof err === 'object' && 'name' in err && (err as { name: string }).name === 'AbortError') {
+        if (isAbortError(err)) {
           resetSaveStatus();
           return;
         }

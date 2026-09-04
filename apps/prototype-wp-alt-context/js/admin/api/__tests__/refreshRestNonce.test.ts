@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   getNonce,
+  isNonceRefreshAuthRejection,
   NONCE_REFRESH_TIMEOUT_MS,
   NonceRefreshFailedError,
   refreshRestNonce,
@@ -9,6 +10,7 @@ import {
   resetConfigCache,
   setNonce,
 } from '../config';
+import { setLogSink, type LogRecord } from '../../utils/logger';
 
 const AJAX_URL = 'https://example.test/wp-admin/admin-ajax.php';
 
@@ -146,15 +148,35 @@ describe('refreshRestNonce (UXP-NET-2 slice 1)', () => {
 
   it('missing ajaxUrl fails SOFT: config stays usable, only refresh degrades (UXPNET2-BR-02) [TEST-15]', async () => {
     resetConfigCache();
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-    const config = registerConfig({
-      nonce: 'abc',
-      ajaxUrl: '',
-      endpoints: {},
+    // Assert on the structured LogRecord, not on console.warn: the sink is a
+    // swappable transport and this test is about the degradation warning, not
+    // about how logs happen to reach the console (FEBT1-W2C-03).
+    const records: LogRecord[] = [];
+    setLogSink((record) => {
+      records.push(record);
     });
-    expect(config.nonce).toBe('abc');
-    expect(config.ajaxUrl).toBe('');
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining('ajaxUrl'));
+    try {
+      const config = registerConfig({
+        nonce: 'abc',
+        ajaxUrl: '',
+        endpoints: {},
+      });
+      expect(config.nonce).toBe('abc');
+      expect(config.ajaxUrl).toBe('');
+
+      const ajaxWarnings = records.filter((record) => record.message.includes('ajaxUrl'));
+      expect(ajaxWarnings).toHaveLength(1);
+      const [warning] = ajaxWarnings;
+      expect(warning.level).toBe('warn');
+      expect(warning.scope).toBe('api.config');
+      expect(warning.message).toContain('missing or empty');
+      expect(typeof warning.fields.requestId).toBe('string');
+      expect(warning.fields.requestId).not.toBe('');
+      // The healthy `nonce` field must not also warn.
+      expect(records.some((record) => record.message.includes('"nonce"'))).toBe(false);
+    } finally {
+      setLogSink(null);
+    }
     expect(getNonce()).toBe('abc');
 
     const fetchMock = vi.spyOn(globalThis, 'fetch');
@@ -192,5 +214,38 @@ describe('setNonce wpApiSettings mirror (UXP-NET-2 slice 4)', () => {
     setNonce('deadbeef02');
     expect(window.wpApiSettings).toBeUndefined();
     expect(getNonce()).toBe('deadbeef02');
+  });
+});
+
+describe('isNonceRefreshAuthRejection [FEBT1-W2A-02]', () => {
+  it('treats WP logged-out sentinels and 401/403 as auth rejection', () => {
+    expect(
+      isNonceRefreshAuthRejection(
+        new NonceRefreshFailedError({ message: 'logged out', causeStatus: 400, bodyPreview: '0' }),
+      ),
+    ).toBe(true);
+    expect(
+      isNonceRefreshAuthRejection(
+        new NonceRefreshFailedError({ message: 'cookie fail', causeStatus: 400, bodyPreview: '-1' }),
+      ),
+    ).toBe(true);
+    expect(
+      isNonceRefreshAuthRejection(
+        new NonceRefreshFailedError({ message: 'forbidden', causeStatus: 403, bodyPreview: 'nope' }),
+      ),
+    ).toBe(true);
+  });
+
+  it('does not treat transport/timeout refresh failures as auth rejection', () => {
+    expect(
+      isNonceRefreshAuthRejection(
+        new NonceRefreshFailedError({ message: 'REST nonce refresh network error: Failed to fetch.' }),
+      ),
+    ).toBe(false);
+    expect(
+      isNonceRefreshAuthRejection(
+        new NonceRefreshFailedError({ message: 'REST nonce refresh timed out after 10000ms.' }),
+      ),
+    ).toBe(false);
   });
 });

@@ -1,7 +1,16 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { classifyError } from '../appError';
 import { AuthExpiredError, HTTPError, ResponseParseError } from '../http';
-import { getRetryDelay, RETRY_MAX_ATTEMPTS, shouldRetryRequest } from '../retryPolicy';
+import { clampRetryAfterMs, RETRY_AFTER_MAX_MS } from '../retryAfter';
+import {
+  getRetryDelay,
+  isAbortOrTimeout,
+  isCooldownSignal,
+  MAX_RETRY_DELAY_MS,
+  RETRY_MAX_ATTEMPTS,
+  shouldRetryRequest,
+} from '../retryPolicy';
 
 const httpError = (status: number, retryAfterSeconds?: number): HTTPError =>
   new HTTPError({
@@ -56,6 +65,13 @@ describe('shouldRetryRequest', () => {
     expect(shouldRetryRequest(0, new TypeError('NetworkError when attempting to fetch resource'))).toBe(true);
   });
 
+  it('retries every TypeError (F5 parity: previously instanceof TypeError)', () => {
+    expect(classifyError(new TypeError('Failed to fetch'))._tag).toBe('transport');
+    expect(classifyError(new TypeError('x is not a function'))._tag).toBe('transport');
+    expect(shouldRetryRequest(0, new TypeError('x is not a function'))).toBe(true);
+    expect(shouldRetryRequest(0, new TypeError('boom: Failed to fetch'))).toBe(true);
+  });
+
   it('does not retry a deterministic non-transport error (a response was received)', () => {
     // e.g. fetchRequiredApi's empty-body Error or a queryFn invariant — retrying just wastes
     // requests. Only genuine transport failures (TypeError) and explicit ask-again-later retry.
@@ -72,20 +88,34 @@ describe('shouldRetryRequest', () => {
     expect(shouldRetryRequest(0, err)).toBe(false);
   });
 
-  it('does not retry an aborted OR timed-out request', () => {
-    const abort = Object.assign(new Error('The operation was aborted.'), { name: 'AbortError' });
-    expect(shouldRetryRequest(0, abort)).toBe(false);
-    // createRecognitionTimeoutSignal uses AbortSignal.timeout(), which aborts with a
-    // 'TimeoutError' DOMException — NOT 'AbortError'. This is the real recognition timeout
-    // path; retrying it here would reopen the storm the poller interval already covers.
-    const timeout = Object.assign(new Error('The operation timed out.'), { name: 'TimeoutError' });
-    expect(shouldRetryRequest(0, timeout)).toBe(false);
-    // DOMException-shaped (not an Error subclass in the browser).
+  it('retries a timeout once and never retries a user abort [FEBT1-W2A-05]', () => {
+    const abortErr = Object.assign(new Error('The operation was aborted.'), { name: 'AbortError' });
+    const timeoutErr = Object.assign(new Error('The operation timed out.'), { name: 'TimeoutError' });
+    expect(shouldRetryRequest(0, timeoutErr)).toBe(true);
+    expect(shouldRetryRequest(1, timeoutErr)).toBe(false);
+    expect(shouldRetryRequest(0, abortErr)).toBe(false);
     expect(shouldRetryRequest(0, { name: 'AbortError', message: 'aborted' })).toBe(false);
-    expect(shouldRetryRequest(0, { name: 'TimeoutError', message: 'timed out' })).toBe(false);
+    expect(shouldRetryRequest(0, { name: 'TimeoutError', message: 'timed out' })).toBe(true);
+    expect(shouldRetryRequest(1, { name: 'TimeoutError', message: 'timed out' })).toBe(false);
+  });
+
+  it('exports a hard ceiling of exactly 3 retry attempts (RES-06)', () => {
+    // TEST-15 / FEBT1-W2C-13: a bound expressed only as RETRY_MAX_ATTEMPTS
+    // stays green if the constant changes. Pin the literal (clusterAutoRetry
+    // pattern) and keep the behavioural edges below.
+    expect(RETRY_MAX_ATTEMPTS).toBe(3);
+  });
+
+  it('[FEBT1-W2C-13] pins the product bounds to literals so a constant change cannot pass silently', () => {
+    expect(RETRY_MAX_ATTEMPTS).toBe(3);
+    expect(MAX_RETRY_DELAY_MS).toBe(30_000);
   });
 
   it('is bounded: stops once RETRY_MAX_ATTEMPTS is reached even for a retryable class', () => {
+    // Expressed on literals, not on the constant: raising RETRY_MAX_ATTEMPTS to 4 must fail here.
+    expect(shouldRetryRequest(2, httpError(429))).toBe(true);
+    expect(shouldRetryRequest(3, httpError(429))).toBe(false);
+    expect(shouldRetryRequest(3, new TypeError('Failed to fetch'))).toBe(false);
     expect(shouldRetryRequest(RETRY_MAX_ATTEMPTS - 1, httpError(429))).toBe(true);
     expect(shouldRetryRequest(RETRY_MAX_ATTEMPTS, httpError(429))).toBe(false);
     expect(shouldRetryRequest(RETRY_MAX_ATTEMPTS, new TypeError('Failed to fetch'))).toBe(false);
@@ -93,6 +123,14 @@ describe('shouldRetryRequest', () => {
 });
 
 describe('getRetryDelay', () => {
+  beforeEach(() => {
+    vi.spyOn(Math, 'random').mockReturnValue(1);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   it('honors Retry-After (delta-seconds) for 429/503', () => {
     expect(getRetryDelay(0, httpError(429, 5))).toBe(5_000);
     expect(getRetryDelay(2, httpError(503, 10))).toBe(10_000);
@@ -106,6 +144,12 @@ describe('getRetryDelay', () => {
     expect(getRetryDelay(0, new TypeError('Failed to fetch'))).toBe(1_000);
     expect(getRetryDelay(1, new TypeError('Failed to fetch'))).toBe(2_000);
     expect(getRetryDelay(2, new TypeError('Failed to fetch'))).toBe(4_000);
+  });
+
+  it('exports a 30s retry delay ceiling', () => {
+    // Same self-referential smell as RETRY_MAX_ATTEMPTS: some delay tests
+    // compare against MAX_RETRY_DELAY_MS itself. Pin the literal too.
+    expect(MAX_RETRY_DELAY_MS).toBe(30_000);
   });
 
   it('caps exponential backoff at 30s', () => {
@@ -128,5 +172,83 @@ describe('getRetryDelay', () => {
 
   it('caps the exponential backoff branch at the same ceiling', () => {
     expect(getRetryDelay(20, new TypeError('Failed to fetch'))).toBe(30_000);
+  });
+
+  it('clamps Retry-After: 3600 through the shared ceiling at the retry-delay call site [E-01]', () => {
+    expect(clampRetryAfterMs(3600, 1_000)).toBe(RETRY_AFTER_MAX_MS);
+    expect(getRetryDelay(0, httpError(429, 3600))).toBe(MAX_RETRY_DELAY_MS);
+    expect(getRetryDelay(0, httpError(429, 3600))).toBeLessThan(2 ** 31 - 1);
+  });
+
+  it('falls back off the Retry-After branch for negative/NaN/Infinity [E-01]', () => {
+    expect(getRetryDelay(0, httpError(429, Number.NaN))).toBe(1_000);
+    expect(getRetryDelay(0, httpError(429, Number.POSITIVE_INFINITY))).toBe(1_000);
+    expect(getRetryDelay(0, httpError(429, -5))).toBe(1_000);
+  });
+
+  it('applies full jitter: rng 0 → 0, rng ~1 → full computed exponential [E-06]', () => {
+    const transport = new TypeError('Failed to fetch');
+    expect(getRetryDelay(0, transport, () => 0)).toBe(0);
+    expect(getRetryDelay(1, transport, () => 0)).toBe(0);
+    expect(getRetryDelay(0, transport, () => 1)).toBe(1_000);
+    expect(getRetryDelay(1, transport, () => 1)).toBe(2_000);
+    expect(getRetryDelay(2, transport, () => 1)).toBe(4_000);
+  });
+
+  it('keeps the Retry-After branch byte-identical regardless of rng [E-06]', () => {
+    const error = httpError(429, 5);
+    expect(getRetryDelay(0, error, () => 0)).toBe(5_000);
+    expect(getRetryDelay(0, error, () => 1)).toBe(5_000);
+    expect(getRetryDelay(7, error, () => 0.25)).toBe(5_000);
+  });
+});
+
+describe('classifier clauses after F3/F5 [TEST-15]', () => {
+  it('plain-object abort is not retried; timeout is retried once (M14 / FEBT1-W2A-05)', () => {
+    expect(isAbortOrTimeout({ name: 'AbortError', message: 'aborted' })).toBe(true);
+    expect(isAbortOrTimeout({ name: 'TimeoutError', message: 'timed out' })).toBe(true);
+    expect(shouldRetryRequest(0, { name: 'AbortError', message: 'aborted' })).toBe(false);
+    expect(shouldRetryRequest(0, { name: 'TimeoutError', message: 'timed out' })).toBe(true);
+    expect(shouldRetryRequest(1, { name: 'TimeoutError', message: 'timed out' })).toBe(false);
+  });
+
+  it('pre-classified transport AppError is retried (M15)', () => {
+    const classified = classifyError(new TypeError('Failed to fetch'));
+    expect(classified._tag).toBe('transport');
+    expect(shouldRetryRequest(0, classified)).toBe(true);
+  });
+
+  it('isCooldownSignal: 429/503-with-Retry-After only, including pre-classified (M17)', () => {
+    expect(isCooldownSignal(httpError(429))).toBe(true);
+    expect(isCooldownSignal(httpError(503, 0))).toBe(true);
+    expect(isCooldownSignal(httpError(503))).toBe(false);
+    expect(isCooldownSignal(httpError(500))).toBe(false);
+    const classified = classifyError(httpError(429, 5));
+    expect(classified._tag).toBe('http');
+    if (classified._tag === 'http') {
+      expect(classified.retryAfterMs).toBe(5_000);
+    }
+    expect(isCooldownSignal(classified)).toBe(true);
+  });
+
+  it('isCooldownSignal means "should open a cooldown", not instanceof HTTPError [W1-L1-09]', () => {
+    const serverError = httpError(500, 9);
+    expect(serverError).toBeInstanceOf(HTTPError);
+    expect(isCooldownSignal(serverError)).toBe(false);
+
+    const classified = {
+      _tag: 'http' as const,
+      status: 429,
+      endpoint: 'http://example.test/e',
+      retryAfterMs: 5_000,
+      message: 'slow',
+      cause: null,
+    };
+    expect(classified).not.toBeInstanceOf(HTTPError);
+    expect(isCooldownSignal(classified)).toBe(true);
+    expect(isCooldownSignal(httpError(429, 5))).toBe(true);
+
+    const timeout = new DOMException('The operation timed out.', 'TimeoutError');
+    expect(isCooldownSignal(timeout)).toBe(false);
   });
 });

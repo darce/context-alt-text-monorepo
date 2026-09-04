@@ -410,8 +410,11 @@ printf '%s\n' "$*" >>"$OCIR_TEST_DOCKER_RECORD"
     env.update(
         {"PATH": f"{bin_dir}:{env['PATH']}", "OCIR_TEST_DOCKER_RECORD": str(records)}
     )
+    remote_dir = tmp_path / "remote" / "prod"
+    remote_dir.mkdir(parents=True)
     command = (
         f'source "{SCRIPT}"; ACX_DEPLOY_OCIR_CONFIG_DIR=/tmp/acx-test-config; '
+        f'env_to_remote_dir() {{ printf "%s" "{remote_dir}"; }}; '
         f'ACX_ROLLBACK_DIGEST_REF="${{IMAGE_BASE}}@sha256:{digest}"; '
         'restore_env_tag_to_rollback prod 0'
     )

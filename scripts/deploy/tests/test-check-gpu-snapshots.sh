@@ -9,6 +9,7 @@ set -euo pipefail
 
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)
 checker="${root}/scripts/deploy/check-gpu-snapshots.sh"
+deployments_file="${root}/scripts/deploy/gpu-snapshot-deployments.conf"
 recognition_deploy="${root}/scripts/deploy/recognition-service.sh"
 checker_bash=${ACX_GPU_TEST_BASH:-/bin/bash}
 prod_compose="${root}/apps/prototype-description-service/docker-compose.prod.yml"
@@ -107,10 +108,11 @@ expect_failure() {
 
 mkdir -p "${fixture_root}/run/acx" \
     "${fixture_root}/run/acx-write/dev" \
+    "${fixture_root}/run/acx-write/dev-fir" \
     "${fixture_root}/run/acx-write/staging" \
     "${fixture_root}/run/acx-write/prod"
 printf '{"state":"ready","written_at":900}\n' >"${fixture_root}/run/acx/gpu-state.json"
-for environment in dev staging prod; do
+for environment in dev dev-fir staging prod; do
     printf '{"queue_depth":0,"in_flight":0,"batch_in_progress":false,"written_at":900}\n' \
         >"${fixture_root}/run/acx-write/${environment}/describe-load.json"
 done
@@ -201,11 +203,11 @@ if grep -Fq -- "--load-json" "${root}/scripts/deploy/gpu-lifecycle-install.sh"; 
 else
     pass "lifecycle installer deletes the single-file load flag"
 fi
-for environment in dev staging prod; do
-    assert_contains "tmpfiles provisions ${environment} load directory" \
-        "d /run/acx-write/${environment} 0775 root 10001 -" \
-        "${root}/scripts/deploy/gpu-lifecycle-install.sh"
-done
+assert_contains "installer consumes the shared deployment registry" \
+    "gpu-snapshot-deployments.conf" \
+    "${root}/scripts/deploy/gpu-lifecycle-install.sh"
+assert_contains "checker consumes the shared deployment registry" \
+    "gpu-snapshot-deployments.conf" "$checker"
 
 # Production state configuration remains a single deployment seam. The
 # multi-environment compose template owns the per-environment load path.
@@ -290,6 +292,54 @@ else
 fi
 
 expect_success "fresh readable snapshots and agreeing mount pass"
+
+mv "${fixture_root}/run/acx-write/dev-fir/describe-load.json" \
+    "${fixture_root}/run/acx-write/dev-fir/describe-load.missing"
+expect_failure "missing dev-fir describe-load fails closed" \
+    "missing describe load (dev-fir) snapshot"
+mv "${fixture_root}/run/acx-write/dev-fir/describe-load.missing" \
+    "${fixture_root}/run/acx-write/dev-fir/describe-load.json"
+
+printf '{not-json}\n' >"${fixture_root}/run/acx-write/dev-fir/describe-load.json"
+expect_failure "corrupt dev-fir describe-load fails closed" \
+    "describe load (dev-fir) snapshot failed schema validation"
+printf '{"queue_depth":0,"in_flight":0,"written_at":879}\n' \
+    >"${fixture_root}/run/acx-write/dev-fir/describe-load.json"
+expect_failure "stale dev-fir describe-load fails closed" \
+    "stale describe load (dev-fir) snapshot"
+printf '{"queue_depth":0,"in_flight":0,"batch_in_progress":false,"written_at":900}\n' \
+    >"${fixture_root}/run/acx-write/dev-fir/describe-load.json"
+
+cp "$deployments_file" "${fixture_root}/deployments-with-future.conf"
+printf 'future-preview\n' >>"${fixture_root}/deployments-with-future.conf"
+expect_failure "checker derives future deployments from the shared registry" \
+    "missing describe-load environment directory: ${fixture_root}/run/acx-write/future-preview" \
+    ACX_GPU_DEPLOYMENTS_FILE="${fixture_root}/deployments-with-future.conf"
+installer_future_output=$(GPU_INSTANCE_ID=ocid1.test \
+    ACX_GPU_DEPLOYMENTS_FILE="${fixture_root}/deployments-with-future.conf" \
+    "${root}/scripts/deploy/gpu-lifecycle-install.sh" --host test.invalid --dry-run 2>&1) || \
+    installer_future_rc=$?
+if [ "${installer_future_rc:-0}" -eq 0 ] && \
+    [[ "$installer_future_output" == *"/run/acx-write/future-preview"* ]]; then
+    pass "installer derives future deployment directories from the shared registry"
+else
+    fail "installer derives future deployment directories from the shared registry (exit ${installer_future_rc:-0}; output: $installer_future_output)"
+fi
+
+printf 'dev\ninvalid deployment\n' >"${fixture_root}/deployments-invalid.conf"
+expect_failure "checker rejects an invalid shared deployment registry" \
+    "invalid GPU snapshot deployment" \
+    ACX_GPU_DEPLOYMENTS_FILE="${fixture_root}/deployments-invalid.conf"
+installer_invalid_output=$(GPU_INSTANCE_ID=ocid1.test \
+    ACX_GPU_DEPLOYMENTS_FILE="${fixture_root}/deployments-invalid.conf" \
+    "${root}/scripts/deploy/gpu-lifecycle-install.sh" --host test.invalid --dry-run 2>&1) && \
+    installer_invalid_rc=0 || installer_invalid_rc=$?
+if [ "$installer_invalid_rc" -ne 0 ] && \
+    [[ "$installer_invalid_output" == *"invalid GPU snapshot deployment"* ]]; then
+    pass "installer rejects an invalid shared deployment registry"
+else
+    fail "installer rejects an invalid shared deployment registry (exit $installer_invalid_rc; output: $installer_invalid_output)"
+fi
 
 printf '{"state":"bogus","written_at":900}\n' >"${fixture_root}/run/acx/gpu-state.json"
 expect_failure "GPU state outside the producer enum fails closed" \

@@ -19,12 +19,13 @@ else
 fi
 compose_file=${ACX_GPU_COMPOSE_FILE:-${repo_root:+${repo_root}/apps/prototype-description-service/docker-compose.env.yml}}
 install_script=${ACX_GPU_INSTALL_SCRIPT:-${repo_root:+${repo_root}/scripts/deploy/gpu-lifecycle-install.sh}}
+deployments_file=${ACX_GPU_DEPLOYMENTS_FILE:-${repo_root:+${repo_root}/scripts/deploy/gpu-snapshot-deployments.conf}}
 state_stale_seconds=${ACX_GPU_STATE_STALE_SECONDS:-180}
 load_stale_seconds=${ACX_DESCRIBE_LOAD_STALE_SECONDS:-120}
 reader_uid=${ACX_GPU_READER_UID:-10001}
 now_epoch=${ACX_NOW_EPOCH:-$(date +%s)}
 config_only=${ACX_GPU_SNAPSHOT_CONFIG_ONLY:-0}
-load_environments="dev staging prod"
+load_environments=
 
 die() {
     echo "ERROR: $*" >&2
@@ -34,6 +35,44 @@ die() {
 is_positive_number() {
     awk -v value="$1" 'BEGIN { exit !(value ~ /^[0-9]+([.][0-9]+)?$/ && value > 0) }'
 }
+
+append_deployment() {
+    local environment=$1 source=$2
+    [[ "$environment" =~ ^[a-z0-9]+(-[a-z0-9]+)*$ ]] ||
+        die "invalid GPU snapshot deployment '$environment' in $source"
+    case " $load_environments " in
+        *" $environment "*) die "duplicate GPU snapshot deployment '$environment' in $source" ;;
+    esac
+    load_environments="${load_environments:+${load_environments} }${environment}"
+}
+
+load_deployments() {
+    local environment line_number=0 source
+    if [ "${ACX_GPU_DEPLOYMENTS+x}" = x ]; then
+        source=ACX_GPU_DEPLOYMENTS
+        # The transported form is comma-delimited so remote `bash -s` callers
+        # do not need a checkout containing the registry.
+        while IFS= read -r environment; do
+            [ -n "$environment" ] || die "$source must not contain empty entries"
+            append_deployment "$environment" "$source"
+        done < <(tr ',' '\n' <<<"$ACX_GPU_DEPLOYMENTS")
+    else
+        [ -n "$deployments_file" ] ||
+            die "no repo checkout to read GPU snapshot deployments from; set ACX_GPU_DEPLOYMENTS"
+        [ -r "$deployments_file" ] ||
+            die "GPU snapshot deployments file is missing or unreadable: $deployments_file"
+        source=$deployments_file
+        while IFS= read -r environment || [ -n "$environment" ]; do
+            line_number=$((line_number + 1))
+            [ -n "$environment" ] ||
+                die "empty GPU snapshot deployment at ${source}:${line_number}"
+            append_deployment "$environment" "${source}:${line_number}"
+        done < "$deployments_file"
+    fi
+    [ -n "$load_environments" ] || die "GPU snapshot deployment registry is empty: $source"
+}
+
+load_deployments
 
 unit_path_for_flag() {
     local flag=$1

@@ -29,6 +29,51 @@ REAP_INTERVAL="${REAP_INTERVAL:-2min}"
 READY_URL="${READY_URL:-}"
 LOAD_STALE_GRACE_SECONDS="${ACX_DESCRIBE_LOAD_STALE_GRACE_SECONDS:-600}"
 DRY_RUN=0
+repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
+DEPLOYMENTS_FILE="${ACX_GPU_DEPLOYMENTS_FILE:-${repo_root}/scripts/deploy/gpu-snapshot-deployments.conf}"
+LOAD_ENVIRONMENTS=""
+LOAD_ENVIRONMENT_DIRS=""
+TMPFILES_ENVIRONMENT_ENTRIES=""
+
+append_deployment() {
+    local environment=$1 source=$2
+    [[ "$environment" =~ ^[a-z0-9]+(-[a-z0-9]+)*$ ]] || {
+        echo "error: invalid GPU snapshot deployment '$environment' in $source" >&2
+        exit 2
+    }
+    case " $LOAD_ENVIRONMENTS " in
+        *" $environment "*)
+            echo "error: duplicate GPU snapshot deployment '$environment' in $source" >&2
+            exit 2
+            ;;
+    esac
+    LOAD_ENVIRONMENTS="${LOAD_ENVIRONMENTS:+${LOAD_ENVIRONMENTS} }${environment}"
+    LOAD_ENVIRONMENT_DIRS="${LOAD_ENVIRONMENT_DIRS:+${LOAD_ENVIRONMENT_DIRS} }/run/acx-write/${environment}"
+    TMPFILES_ENVIRONMENT_ENTRIES="${TMPFILES_ENVIRONMENT_ENTRIES:+${TMPFILES_ENVIRONMENT_ENTRIES}
+}d /run/acx-write/${environment} 0775 root 10001 -"
+}
+
+load_deployments() {
+    local environment line_number=0
+    [ -r "$DEPLOYMENTS_FILE" ] || {
+        echo "error: GPU snapshot deployments file is missing or unreadable: $DEPLOYMENTS_FILE" >&2
+        exit 2
+    }
+    while IFS= read -r environment || [ -n "$environment" ]; do
+        line_number=$((line_number + 1))
+        [ -n "$environment" ] || {
+            echo "error: empty GPU snapshot deployment at ${DEPLOYMENTS_FILE}:${line_number}" >&2
+            exit 2
+        }
+        append_deployment "$environment" "${DEPLOYMENTS_FILE}:${line_number}"
+    done < "$DEPLOYMENTS_FILE"
+    [ -n "$LOAD_ENVIRONMENTS" ] || {
+        echo "error: GPU snapshot deployment registry is empty: $DEPLOYMENTS_FILE" >&2
+        exit 2
+    }
+}
+
+load_deployments
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -55,8 +100,6 @@ if ! [ "$LOAD_STALE_GRACE_SECONDS" -ge 120 ] 2>/dev/null; then
     echo "error: ACX_DESCRIBE_LOAD_STALE_GRACE_SECONDS must be an integer >= 120" >&2
     exit 2
 fi
-
-repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 
 # --- resolve the GPU instance OCID -------------------------------------------
 # Resolved by display name against OCI rather than pasted, so a stale OCID in a
@@ -86,7 +129,7 @@ ready_flag=""
 if [ "$DRY_RUN" -eq 1 ]; then
     echo "--- dry run: would sync infra/oci/gpu_lifecycle -> ${HOST}:/opt/acx-gpu/infra/oci/"
     echo "--- dry run: would install acx-gpu-start.{service,timer} + acx-gpu-reap.{service,timer}"
-    echo "--- dry run: would create host-owned /run/acx and isolated API-writable /run/acx-write/{dev,staging,prod}"
+    echo "--- dry run: would create host-owned /run/acx and isolated API-writable deployment directories: ${LOAD_ENVIRONMENT_DIRS}"
     exit 0
 fi
 
@@ -177,13 +220,13 @@ UNIT
 # atomically in the separate load directory. SupplementaryGroups=10001 lets the
 # ubuntu units read the API-owned load dump without granting the API host-side
 # write access to lifecycle state.
-sudo mkdir -p /run/acx /run/acx-write /run/acx-write/dev /run/acx-write/staging /run/acx-write/prod
+sudo mkdir -p /run/acx /run/acx-write ${LOAD_ENVIRONMENT_DIRS}
 sudo chown ubuntu:ubuntu /run/acx
 sudo chmod 0755 /run/acx
 sudo chown root:10001 /run/acx-write
 sudo chmod 0775 /run/acx-write
-sudo chown root:10001 /run/acx-write/dev /run/acx-write/staging /run/acx-write/prod
-sudo chmod 0775 /run/acx-write/dev /run/acx-write/staging /run/acx-write/prod
+sudo chown root:10001 ${LOAD_ENVIRONMENT_DIRS}
+sudo chmod 0775 ${LOAD_ENVIRONMENT_DIRS}
 sudo touch /run/acx/gpu-state.json.lock
 sudo chown ubuntu:ubuntu /run/acx/gpu-state.json.lock
 sudo chmod 0600 /run/acx/gpu-state.json.lock
@@ -193,9 +236,7 @@ sudo chmod 0600 /run/acx/gpu-state.json.lock
 sudo tee /etc/tmpfiles.d/acx-gpu.conf >/dev/null <<'TMPF'
 d /run/acx 0755 ubuntu ubuntu -
 d /run/acx-write 0775 root 10001 -
-d /run/acx-write/dev 0775 root 10001 -
-d /run/acx-write/staging 0775 root 10001 -
-d /run/acx-write/prod 0775 root 10001 -
+${TMPFILES_ENVIRONMENT_ENTRIES}
 f /run/acx/gpu-state.json.lock 0600 ubuntu ubuntu -
 TMPF
 

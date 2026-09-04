@@ -286,3 +286,43 @@ describe('useClusterActionMutations create-for-identity roster bind (UXW2-3-R7B-
     expect(invalidateQueries).toHaveBeenCalled();
   });
 });
+
+describe('recognition mock surface drift guard (WBUX6-W3-L6-01)', () => {
+  // Fixes the mock at the drift-resistant idiom. An exhaustive factory (no
+  // importActual spread) silently blanks every export this file does not name,
+  // so the next render-path dependency fails the whole file with a module-load
+  // throw reported as N unrelated assertion failures. These two assertions turn
+  // that regression into one honest, self-describing failure here.
+  const CONTROLLED = new Set([
+    'acceptSuggestion',
+    'createClusterForIdentity',
+    'fetchScanStatus',
+    'pinRepresentative',
+    'reassignClusterIdentity',
+    'rejectSuggestion',
+    'splitCluster',
+  ]);
+
+  it('keeps every real export reachable and untouched except the network surfaces under test', async () => {
+    const actual = await vi.importActual<typeof import('../../../../api/recognition')>(
+      '../../../../api/recognition',
+    );
+    const actualKeys = Object.keys(actual);
+    expect(actualKeys.length).toBeGreaterThan(CONTROLLED.size);
+
+    const missing = actualKeys.filter((key) => !(key in recognitionApi));
+    expect(missing).toEqual([]);
+
+    const passthrough = actualKeys.filter((key) => !CONTROLLED.has(key));
+    const rebound = passthrough.filter(
+      (key) => (recognitionApi as Record<string, unknown>)[key] !== (actual as Record<string, unknown>)[key],
+    );
+    expect(rebound).toEqual([]);
+  });
+
+  it('still replaces exactly the network surfaces this file drives', () => {
+    for (const key of CONTROLLED) {
+      expect(vi.isMockFunction((recognitionApi as Record<string, unknown>)[key])).toBe(true);
+    }
+  });
+});

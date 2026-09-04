@@ -25,18 +25,31 @@ want both:
 | Instance | Shape | Expected state | Notes |
 | --- | --- | --- | --- |
 | `acx-backend` | `VM.Standard.A1.Flex` (4 OCPU / 24 GB, ARM, no GPU) | **RUNNING** | Always-Free; serves dev/staging/prod recognition |
-| `acx-gpu-burst` | `VM.GPU.A10.1` (1× A10 24 GB VRAM, 30 OCPU / 240 GB host) | **STOPPED** | ~$2.00/GPU-hour **while running**. Created RUNNING so cloud-init finishes, then stopped; `acx-gpu-idle-reaper.timer` stops it after 300 s idle |
+| `acx-gpu-burst` | `VM.GPU.A10.1` (1× A10 24 GB VRAM, 30 OCPU / 240 GB host) | **STOPPED** | ~$2.00/GPU-hour **while running**. Created RUNNING so cloud-init finishes, then stopped. **No idle reaper is live** — see the warning below |
 
 Anything else non-terminated in the tenancy is unexpected — investigate.
+
+> **There is no automatic GPU cost cap today.** `infra/oci/cloud-init.yaml`
+> defines `acx-gpu-idle-reaper.service` / `.timer`, but that block is a **dead
+> template**: verified on `acx-backend` 2026-08-04 (`which oci` absent, no
+> `acx-gpu` timer, no reaper unit files, `/etc/acx` does not exist,
+> `acx-gpu-idle-reaper.timer` **not-found**), and recorded in
+> [`docs/tasks/ocigov/OCIGOV-1-workbay-estate-governance.md`](../tasks/ocigov/OCIGOV-1-workbay-estate-governance.md)
+> § Current State Analysis. `infra/oci/gpu_lifecycle/reaper.py` has never been
+> deployed on any booted host. Until OCIGOV-1 lands a supervisor, the only
+> things that stop a burst GPU are (a) the compensating STOP inside
+> `scripts/gpu_burst_smoke.py`, which covers its own run only, and (b) an
+> operator. Budget as if nothing will stop the instance for you, and set the
+> Budget alert described below.
 
 > **Observed 2026-08-04.** That line earned itself. The tenancy held a *second*
 > A10, `acx-gpu-smoke-20260728-0218` (`role=gpu-smoke-ephemeral`,
 > `owner=wanlora`), **`RUNNING` for 173 h** since 2026-07-28 — nothing reaped it
-> despite the "ephemeral" role tag, because `scale_to_zero` is only set on the
-> burst instance. The `acx-gpu-idle-reaper.timer` on `acx-gpu-burst` makes GPU
-> spend *look* self-limiting; hand-created smoke and one-off instances have no
-> reaper. **Always answer from the full instance list plus Cost Analysis, never
-> from one named instance.**
+> despite the "ephemeral" role tag. The committed `acx-gpu-idle-reaper.timer`
+> makes GPU spend *look* self-limiting in the repo, but it is not installed on
+> any host (see the warning above), and hand-created smoke and one-off
+> instances would be outside its OCID pin even if it were. **Always answer from
+> the full instance list plus Cost Analysis, never from one named instance.**
 
 Region: **`us-ashburn-1`** (iad). There are **no child compartments**; every
 resource lives under the tenancy root.
@@ -107,8 +120,8 @@ want to be told rather than having to remember to look.
 ## If the GPU is unexpectedly RUNNING
 
 1. Confirm nothing is legitimately using it (a bake or eval in flight) — check
-   `acx-gpu-vlm.service` on the host before stopping; the idle reaper treats an
-   in-flight job as busy so a dead writer cannot stop a working GPU.
+   `acx-gpu-vlm.service` on the host before stopping. **This is a manual check:
+   no reaper is running, so nothing else is protecting an in-flight job either.**
 2. Stop it (billing halts on OCPU/GPU immediately):
 
    ```sh
@@ -116,9 +129,13 @@ want to be told rather than having to remember to look.
      --instance-id "$(terraform -chdir=infra/oci output -raw gpu_instance_id)"
    ```
 
-3. If the idle reaper should have caught it, check `/etc/acx/gpu-reaper.env`
-   has `GPU_INSTANCE_ID=…` set (copied from `gpu-reaper.env.example` after
-   apply) and read `/var/log/acx-gpu-reaper.log`.
+3. Do **not** wait for a reaper to catch it — there is none installed. If a
+   future OCIGOV-1 supervisor is running by the time you read this, confirm it
+   first with `systemctl list-timers 'acx-gpu*'` on the host and only then look
+   at `/etc/acx/gpu-reaper.env` (`GPU_INSTANCE_ID=…`, copied from
+   `gpu-reaper.env.example` after apply) and `/var/log/acx-gpu-reaper.log`. If
+   that `list-timers` output is empty, the units do not exist and those two
+   paths will not either.
 
 See [`infra/oci/README.md` § GPU burst host](../../infra/oci/README.md#gpu-burst-host-acx_gpu_burst)
 for the lifecycle design and

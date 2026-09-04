@@ -708,7 +708,9 @@ describe('workbench-library footer state contract (z-lib-actions)', () => {
       .find((screen) => screen.id === 'workbench-library')
       ?.zones?.find((item) => item.id === 'z-lib-actions');
     expect(zone, 'workbench-2pane workbench-library is missing z-lib-actions').toBeDefined();
-    return zone as UxMapZone;
+    // Narrowed by the `toBeDefined()` above, which vitest cannot express in the type
+    // system; `@typescript-eslint/non-nullable-type-assertion-style` requires `!` here.
+    return zone!;
   };
 
   it('declares every canonical state the four holds and the degraded fallback need', () => {
@@ -800,5 +802,95 @@ describe('workbench-library footer state contract (z-lib-actions)', () => {
     expect(label, 'exactly one Cancel control may be rendered at a time').toMatch(
       /exactly one control matching \/\^Cancel \/ is rendered at a time/,
     );
+  });
+});
+
+/* ------------------------------------------------------------------ *
+ * Generator provenance: the `.md` is a derived artifact and
+ * `docs/ux-maps/render_ux_maps.py` is its only sanctioned writer
+ * (DATA-14 one authority owns the record; REF-09 a hand-edited derived
+ * artifact drifts silently). Byte-exact render fidelity cannot be
+ * asserted from vitest — the renderer is Python and the canvas package
+ * it wraps is not installable here (WBUX6-W4-A-02/A-03) — so these
+ * guards pin the render's structural contract instead: the sections a
+ * regeneration must emit, and the hand-authored prose it must carry
+ * across (`KEEP_SECTIONS`).
+ * ------------------------------------------------------------------ */
+
+const rendererPath = path.join(uxMapsDir, 'render_ux_maps.py');
+
+/**
+ * WBUX6-W4-A-05: maps whose `.md` has no `## Parity index` because it has never been
+ * through the generator. Fail-closed in both directions — an unlisted map must have the
+ * section, and a listed map must still be missing it, so enrolling a map forces the
+ * exemption out (OBS-11: the bar ratchets up, it never tracks the current state).
+ */
+const MAPS_WITHOUT_PARITY_INDEX: Record<string, string> = {};
+
+/**
+ * WBUX6-W3-L3-03: the say/don`t-say table is hand-authored prose the structural renderer
+ * cannot express, so `render_ux_maps.py` lifts it out of the existing md and re-injects it
+ * verbatim. a1599b346 dropped it once already because nothing asserted it.
+ */
+const VOCABULARY_MAPS = ['workbench-2pane', 'roster-people'] as const;
+const VOCABULARY_HEADING = "## Vocabulary (say / don't say)";
+
+describe('ux-map generated-render provenance', () => {
+  it('every owned md carries the generator parity index, or is a listed un-regenerated map', () => {
+    const missing: string[] = [];
+    const staleExemptions: string[] = [];
+    for (const mapRef of OWNED_MAPS) {
+      const { md } = loadOwnedMap(mapRef);
+      const hasIndex = md.includes('\n## Parity index\n');
+      const rationale = MAPS_WITHOUT_PARITY_INDEX[mapRef];
+      if (rationale === undefined && !hasIndex) {
+        missing.push(mapRef);
+      }
+      if (rationale !== undefined && hasIndex) {
+        staleExemptions.push(mapRef);
+      }
+    }
+    expect(missing, `owned md without a ## Parity index: ${missing.join(', ')}`).toEqual([]);
+    expect(
+      staleExemptions,
+      `these maps now carry a parity index — remove them from MAPS_WITHOUT_PARITY_INDEX: ${staleExemptions.join(', ')}`,
+    ).toEqual([]);
+    for (const [mapRef, rationale] of Object.entries(MAPS_WITHOUT_PARITY_INDEX)) {
+      expect(OWNED_MAPS, `${mapRef} exemption names a map that is not owned`).toContain(mapRef);
+      expect(rationale.length, `${mapRef} exemption has no written rationale`).toBeGreaterThan(40);
+    }
+  });
+
+  it('keeps the hand-authored vocabulary section in the md and in the renderer KEEP_SECTIONS', () => {
+    const renderer = readFileSync(rendererPath, 'utf8');
+    expect(
+      renderer,
+      'render_ux_maps.py no longer preserves the vocabulary section — a regeneration would delete it',
+    ).toContain(`KEEP_SECTIONS = ("${VOCABULARY_HEADING}",)`);
+
+    for (const mapRef of VOCABULARY_MAPS) {
+      const { md, mdName } = loadOwnedMap(mapRef);
+      expect(md, `${mdName} lost the say/don't-say table`).toContain(`\n${VOCABULARY_HEADING}\n`);
+      const section = md.slice(md.indexOf(VOCABULARY_HEADING)).split('\n## ')[0] ?? '';
+      const rows = section.split('\n').filter((line) => line.startsWith('| ') && !line.startsWith('| --- '));
+      expect(rows.length, `${mdName} vocabulary table has no say/don't-say rows`).toBeGreaterThan(3);
+    }
+  });
+
+  it('every owned map describes a journey: non-empty flows and a source fixture', () => {
+    const empty: string[] = [];
+    for (const mapRef of OWNED_MAPS) {
+      const raw = readMapJson(mapRef) as { flows?: unknown[]; source_fixture?: unknown };
+      if (!Array.isArray(raw.flows) || raw.flows.length === 0) {
+        empty.push(`${mapRef} flows`);
+      }
+      if (typeof raw.source_fixture !== 'string' || raw.source_fixture.length === 0) {
+        empty.push(`${mapRef} source_fixture`);
+      }
+    }
+    expect(
+      empty,
+      `WBUX6-W4-A-06: a map that validates while describing no journey is false coverage: ${empty.join(', ')}`,
+    ).toEqual([]);
   });
 });

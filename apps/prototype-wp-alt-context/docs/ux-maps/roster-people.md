@@ -211,6 +211,37 @@ flowchart TD
 - Is person workspace a route-owned screen or always an in-page panel? (modeled as deep-linkable screen with person=)
 - Face-group drawer max_candidates=8 — confirm product top-k policy
 
+## Parity index
+
+Machine-checked by `js/admin/__tests__/uxmap-parity.test.ts` and
+`js/admin/__tests__/uxmap-render-parity.test.ts`: every id, state, and verbatim label
+below must exist in the sibling `.uxmap.json`, and no `z-*`/`act-*` id may appear here
+that the JSON does not define. Regenerate with `docs/ux-maps/render_ux_maps.py` — never
+hand-edit one side.
+
+Zone ids: z-entries z-review-cta z-projection-gate z-person-host z-cluster-host z-person-header z-person-identities z-person-evidence z-person-actions z-cluster-samples z-cluster-actions z-lightbox-media z-lightbox-controls z-wb-entry
+
+Action ids: act-add-person act-open-person act-save-person act-open-cluster act-assign-cluster act-goto-workbench act-open-lightbox act-close-lightbox
+
+Zone labels (verbatim; the tables above escape `|` for markdown, this list does not):
+
+- Roster entries table
+- Unnamed faces CTA → Workbench review queue
+- Projection status gate notices
+- Person workspace host
+- Face-group drawer host (cluster= shim)
+- Person header
+- Linked faces
+- Cluster evidence thumbnails (cropped face crop; raw media fallback for uncroppable bbox; labelled visible no-image state)
+- Save / assign / open queue
+- Sample faces
+- Assign / dismiss drawer
+- Enlarged evidence media with accessible ordinal name
+- Close affordance
+- Workbench entry
+
+States (all zones and screens): default loading empty error degraded first_time
+
 ## Not doing
 - Resurrect Clusters tab surface (retired; cluster= drawer only)
 - Dashboard map (separate map_ref later)

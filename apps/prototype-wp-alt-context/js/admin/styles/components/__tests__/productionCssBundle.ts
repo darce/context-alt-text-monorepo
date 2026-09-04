@@ -1,11 +1,12 @@
-import { execFileSync } from 'node:child_process';
-import { createHash } from 'node:crypto';
+import { execFileSync, spawn } from 'node:child_process';
+import { createHash, randomUUID } from 'node:crypto';
 import {
   existsSync,
   globSync,
   mkdirSync,
   readFileSync,
   readdirSync,
+  realpathSync,
   rmSync,
   statSync,
   utimesSync,
@@ -49,7 +50,8 @@ const CACHE_ROOT = join(tmpdir(), 'acx-style-bundle');
  * keeps the path short while ensuring every process in one lane agrees on the same namespace.
  */
 export const artifactFixtureRootForAppRoot = (root: string): string => {
-  const laneKey = createHash('sha256').update(resolve(root)).digest('hex').slice(0, 16);
+  const canonicalRoot = realpathSync.native(resolve(root));
+  const laneKey = createHash('sha256').update(canonicalRoot).digest('hex').slice(0, 16);
   return join(CACHE_ROOT, laneKey);
 };
 
@@ -58,11 +60,16 @@ const LOCK_DIR = join(FIXTURE_ROOT, '.lock');
 const STAMP_FILE = 'build-stamp.json';
 const NAMESPACE_OWNER_FILE = 'namespace-owner.json';
 
-/** A lock held longer than this is assumed to belong to a crashed process. */
+/** A dead owner's lock lease may be reclaimed after this interval. */
 const STALE_LOCK_MS = 5 * 60_000;
 /** Give up rather than hang the suite if the lock never frees. */
 const LOCK_TIMEOUT_MS = 6 * 60_000;
 const LOCK_POLL_MS = 100;
+/** Keep the lease fresh while the synchronous Vite child occupies the main thread. */
+const LOCK_HEARTBEAT_MS = 1_000;
+/** A build cannot outlive the lease that fences it from a successor. */
+const BUILD_TIMEOUT_MS = STALE_LOCK_MS - 30_000;
+export const LOCK_OWNER_FILE = 'owner.json';
 /** Artifact directories untouched for longer than this are pruned. */
 const ARTIFACT_TTL_MS = 24 * 60 * 60_000;
 /** Stop retrying when build inputs are being rewritten continuously. */
@@ -121,22 +128,48 @@ export interface ProductionCssBundle {
  * stamp proves the artifact came from the tree under test — a strictly stronger guarantee than the
  * mtime-recency check it replaces, which only proved *some* build had run recently.
  */
-export const computeBuildInputFingerprint = (): string => {
+export interface BuildInputState {
+  readonly fingerprint: string;
+  /** Metadata generation used to detect content ABA while a build is running. */
+  readonly generation: string;
+}
+
+export const computeBuildInputState = (): BuildInputState => {
   const files = fingerprintedBuildInputs();
 
-  const digest = createHash('sha256');
+  const contentDigest = createHash('sha256');
+  const generationDigest = createHash('sha256');
+  let maxMtimeNs = 0n;
   for (const file of files) {
-    digest.update(file);
-    digest.update('\0');
-    digest.update(
+    const path = join(appRoot, file);
+    const before = statSync(path, { bigint: true });
+    const contents = readFileSync(path);
+    const after = statSync(path, { bigint: true });
+    maxMtimeNs = before.mtimeNs > maxMtimeNs ? before.mtimeNs : maxMtimeNs;
+    maxMtimeNs = after.mtimeNs > maxMtimeNs ? after.mtimeNs : maxMtimeNs;
+
+    contentDigest.update(file);
+    contentDigest.update('\0');
+    contentDigest.update(
       createHash('sha256')
-        .update(readFileSync(join(appRoot, file)))
+        .update(contents)
         .digest(),
     );
-    digest.update('\n');
+    contentDigest.update('\n');
+
+    generationDigest.update(file);
+    generationDigest.update('\0');
+    for (const stat of [before, after]) {
+      generationDigest.update(`${stat.dev}:${stat.ino}:${stat.size}:${stat.mtimeNs}:${stat.ctimeNs}\n`);
+    }
   }
-  return digest.digest('hex').slice(0, 32);
+  return {
+    fingerprint: contentDigest.digest('hex').slice(0, 32),
+    generation: `${maxMtimeNs}:${generationDigest.digest('hex').slice(0, 32)}`,
+  };
 };
+
+export const computeBuildInputFingerprint = (): string => computeBuildInputState().fingerprint;
 
 const toPosix = (entry: string): string => entry.split('\\').join('/');
 
@@ -215,44 +248,194 @@ const sleepSync = (milliseconds: number): void => {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, milliseconds);
 };
 
-const tryAcquireDirectoryLock = (lockDir: string): boolean => {
-  mkdirSync(dirname(lockDir), { recursive: true });
+export interface DirectoryLockOwnership {
+  readonly pid: number;
+  readonly nonce: string;
+}
+
+interface DirectoryLockTiming {
+  readonly staleLockMs?: number;
+  readonly timeoutMs?: number;
+  readonly pollMs?: number;
+}
+
+const ownerPathForLock = (lockDir: string): string => join(lockDir, LOCK_OWNER_FILE);
+
+const sameOwnership = (left: DirectoryLockOwnership, right: DirectoryLockOwnership): boolean =>
+  left.pid === right.pid && left.nonce === right.nonce;
+
+const sameOptionalOwnership = (
+  left: DirectoryLockOwnership | null,
+  right: DirectoryLockOwnership | null,
+): boolean => {
+  if (left === null || right === null) {
+    return left === right;
+  }
+  return sameOwnership(left, right);
+};
+
+const readLockOwnership = (lockDir: string): DirectoryLockOwnership | null => {
   try {
-    mkdirSync(lockDir);
-    return true;
+    const parsed: unknown = JSON.parse(readFileSync(ownerPathForLock(lockDir), 'utf8'));
+    if (typeof parsed !== 'object' || parsed === null || !('pid' in parsed) || !('nonce' in parsed)) {
+      return null;
+    }
+    const { pid, nonce } = parsed;
+    return typeof pid === 'number' && Number.isSafeInteger(pid) && pid > 0 && typeof nonce === 'string'
+      ? { pid, nonce }
+      : null;
   } catch {
-    let heldForMs = 0;
-    try {
-      heldForMs = Date.now() - statSync(lockDir).mtimeMs;
-    } catch {
-      // The holder released between mkdir and stat; let the caller retry immediately.
-      return false;
-    }
-    if (heldForMs > STALE_LOCK_MS) {
-      rmSync(lockDir, { recursive: true, force: true });
-    }
-    return false;
+    return null;
   }
 };
 
-const acquireDirectoryLock = (lockDir: string): void => {
-  const deadline = Date.now() + LOCK_TIMEOUT_MS;
+const processIsAlive = (pid: number): boolean => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code !== 'ESRCH';
+  }
+};
+
+export const tryAcquireDirectoryLock = (
+  lockDir: string,
+  timing: DirectoryLockTiming = {},
+): DirectoryLockOwnership | null => {
+  mkdirSync(dirname(lockDir), { recursive: true });
+  const ownership = { pid: process.pid, nonce: randomUUID() };
+  try {
+    mkdirSync(lockDir);
+    try {
+      writeFileSync(ownerPathForLock(lockDir), `${JSON.stringify(ownership)}\n`, {
+        encoding: 'utf8',
+        flag: 'wx',
+      });
+      return ownership;
+    } catch (error) {
+      rmSync(lockDir, { recursive: true, force: true });
+      throw error;
+    }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'EEXIST') {
+      throw error;
+    }
+    const incumbent = readLockOwnership(lockDir);
+    let leaseAgeMs: number;
+    try {
+      const leasePath = incumbent === null ? lockDir : ownerPathForLock(lockDir);
+      leaseAgeMs = Date.now() - statSync(leasePath).mtimeMs;
+    } catch {
+      // The holder released between mkdir and inspection; let the caller retry.
+      return null;
+    }
+    const staleLockMs = timing.staleLockMs ?? STALE_LOCK_MS;
+    if (leaseAgeMs > staleLockMs && (incumbent === null || !processIsAlive(incumbent.pid))) {
+      // Serialize stale recovery inside the incumbent directory. Without this claim, two
+      // reapers can both inspect owner A, then the slower one can delete newly-created owner B
+      // after the faster one removes A (the classic ABA unlink race).
+      const recoveryClaim = join(lockDir, '.reaping');
+      try {
+        mkdirSync(recoveryClaim);
+      } catch (claimError) {
+        if ((claimError as NodeJS.ErrnoException).code !== 'EEXIST') {
+          throw claimError;
+        }
+        return null;
+      }
+
+      const confirmedIncumbent = readLockOwnership(lockDir);
+      let confirmedLeaseAgeMs = leaseAgeMs;
+      try {
+        if (confirmedIncumbent !== null) {
+          confirmedLeaseAgeMs = Date.now() - statSync(ownerPathForLock(lockDir)).mtimeMs;
+        }
+      } catch {
+        rmSync(recoveryClaim, { recursive: true, force: true });
+        return null;
+      }
+      if (
+        sameOptionalOwnership(confirmedIncumbent, incumbent) &&
+        confirmedLeaseAgeMs > staleLockMs &&
+        (confirmedIncumbent === null || !processIsAlive(confirmedIncumbent.pid))
+      ) {
+        rmSync(lockDir, { recursive: true, force: true });
+      } else {
+        rmSync(recoveryClaim, { recursive: true, force: true });
+      }
+    }
+    return null;
+  }
+};
+
+export const acquireDirectoryLock = (
+  lockDir: string,
+  timing: DirectoryLockTiming = {},
+): DirectoryLockOwnership => {
+  const timeoutMs = timing.timeoutMs ?? LOCK_TIMEOUT_MS;
+  const deadline = Date.now() + timeoutMs;
   for (;;) {
-    if (tryAcquireDirectoryLock(lockDir)) {
-      return;
+    const ownership = tryAcquireDirectoryLock(lockDir, timing);
+    if (ownership !== null) {
+      return ownership;
     }
     if (Date.now() > deadline) {
       throw new Error(
-        `Timed out after ${LOCK_TIMEOUT_MS}ms waiting for the production-CSS lock at ${lockDir}. ` +
+        `Timed out after ${timeoutMs}ms waiting for the production-CSS lock at ${lockDir}. ` +
           'Remove it if no build is running.',
       );
     }
-    sleepSync(LOCK_POLL_MS);
+    sleepSync(timing.pollMs ?? LOCK_POLL_MS);
   }
 };
 
-const releaseDirectoryLock = (lockDir: string): void => {
+export const releaseDirectoryLock = (
+  lockDir: string,
+  ownership: DirectoryLockOwnership,
+): boolean => {
+  const incumbent = readLockOwnership(lockDir);
+  if (incumbent === null || !sameOwnership(incumbent, ownership)) {
+    return false;
+  }
   rmSync(lockDir, { recursive: true, force: true });
+  return true;
+};
+
+const runWithLockHeartbeat = <T>(
+  lockDir: string,
+  ownership: DirectoryLockOwnership,
+  operation: () => T,
+): T => {
+  const heartbeatSource = String.raw`
+const fs = require('node:fs');
+const path = require('node:path');
+const [lockDir, expectedToken, intervalText] = process.argv.slice(1);
+const expectedOwner = JSON.parse(expectedToken);
+const ownerPath = path.join(lockDir, ${JSON.stringify(LOCK_OWNER_FILE)});
+const beat = () => {
+  try {
+    process.kill(expectedOwner.pid, 0);
+    if (fs.readFileSync(ownerPath, 'utf8').trim() !== expectedToken) process.exit(0);
+    const now = new Date();
+    fs.utimesSync(ownerPath, now, now);
+    fs.utimesSync(lockDir, now, now);
+  } catch { process.exit(0); }
+};
+beat();
+setInterval(beat, Number(intervalText)).unref();
+setInterval(() => {}, 0x7fffffff);
+`;
+  const token = JSON.stringify(ownership);
+  const heartbeat = spawn(
+    process.execPath,
+    ['-e', heartbeatSource, lockDir, token, String(LOCK_HEARTBEAT_MS)],
+    { stdio: 'ignore' },
+  );
+  try {
+    return operation();
+  } finally {
+    heartbeat.kill();
+  }
 };
 
 /** An artifact directory and the time its stamp was last touched. */
@@ -360,7 +543,7 @@ export const registerAndPruneNamespaces = (
   ownerAppRoot: string,
   nowMs: number = Date.now(),
   buildLockDir?: string,
-): void => {
+): DirectoryLockOwnership | null => {
   const gcLockDir = join(cacheRoot, '.gc-lock');
   const buildDeadline = Date.now() + LOCK_TIMEOUT_MS;
   const relativeFixtureRoot = relative(cacheRoot, fixtureRoot);
@@ -374,8 +557,8 @@ export const registerAndPruneNamespaces = (
   }
 
   for (;;) {
-    let buildLockAcquired = buildLockDir === undefined;
-    acquireDirectoryLock(gcLockDir);
+    let buildOwnership: DirectoryLockOwnership | null = null;
+    const gcOwnership = acquireDirectoryLock(gcLockDir);
     try {
       mkdirSync(fixtureRoot, { recursive: true });
       writeFileSync(
@@ -394,13 +577,13 @@ export const registerAndPruneNamespaces = (
       // Build/read ownership is acquired before the shared GC lock is released. A collector can
       // therefore never observe a live namespace in the gap between registration and lane locking.
       if (buildLockDir !== undefined) {
-        buildLockAcquired = tryAcquireDirectoryLock(buildLockDir);
+        buildOwnership = tryAcquireDirectoryLock(buildLockDir);
       }
     } finally {
-      releaseDirectoryLock(gcLockDir);
+      releaseDirectoryLock(gcLockDir, gcOwnership);
     }
-    if (buildLockAcquired) {
-      return;
+    if (buildLockDir === undefined || buildOwnership !== null) {
+      return buildOwnership;
     }
     // Never wait for a lane-local build while holding the cache-parent GC lock: a second process
     // in one lane must not stall unrelated lanes from registering or collecting their namespaces.
@@ -504,19 +687,20 @@ export interface FingerprintStableArtifactOperations<T> {
  * prevents a source change during artifact reads from entering the in-process cache.
  */
 export const loadFingerprintStableArtifact = <T>(
-  initialFingerprint: string,
-  computeFingerprint: () => string,
+  initialState: BuildInputState,
+  computeState: () => BuildInputState,
   operations: FingerprintStableArtifactOperations<T>,
   maxAttempts: number = MAX_FINGERPRINT_STABILITY_ATTEMPTS,
 ): T => {
-  let fingerprint = initialFingerprint;
-  const fingerprintAfterLock = computeFingerprint();
-  if (fingerprintAfterLock !== fingerprint) {
-    operations.discardArtifact(operations.artifactDirForFingerprint(fingerprint));
-    fingerprint = fingerprintAfterLock;
+  let state = initialState;
+  const stateAfterLock = computeState();
+  if (stateAfterLock.fingerprint !== state.fingerprint) {
+    operations.discardArtifact(operations.artifactDirForFingerprint(state.fingerprint));
   }
+  state = stateAfterLock;
 
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    const { fingerprint } = state;
     const outDir = operations.artifactDirForFingerprint(fingerprint);
     operations.prepareArtifact(fingerprint);
 
@@ -526,23 +710,26 @@ export const loadFingerprintStableArtifact = <T>(
       operations.discardArtifact(outDir);
       operations.buildArtifact(outDir);
 
-      const fingerprintAfterBuild = computeFingerprint();
-      if (fingerprintAfterBuild !== fingerprint) {
+      const stateAfterBuild = computeState();
+      if (
+        stateAfterBuild.fingerprint !== state.fingerprint ||
+        stateAfterBuild.generation !== state.generation
+      ) {
         operations.discardArtifact(outDir);
-        fingerprint = fingerprintAfterBuild;
+        state = stateAfterBuild;
         continue;
       }
       operations.stampArtifact(outDir, fingerprint);
     }
 
     const artifact = operations.readArtifact(outDir, fingerprint);
-    const fingerprintBeforeReturn = computeFingerprint();
-    if (fingerprintBeforeReturn === fingerprint) {
+    const stateBeforeReturn = computeState();
+    if (stateBeforeReturn.fingerprint === fingerprint) {
       return artifact;
     }
 
     operations.discardArtifact(outDir);
-    fingerprint = fingerprintBeforeReturn;
+    state = stateBeforeReturn;
   }
 
   throw new Error(
@@ -559,25 +746,28 @@ export const loadFingerprintStableArtifact = <T>(
  */
 export const loadProductionCssBundle = (): ProductionCssBundle => {
   if (cachedBundle !== null) {
-    if (computeBuildInputFingerprint() === cachedBundle.fingerprint) {
+    if (computeBuildInputState().fingerprint === cachedBundle.fingerprint) {
       return cachedBundle;
     }
     cachedBundle = null;
   }
 
-  const fingerprintBeforeLock = computeBuildInputFingerprint();
+  const stateBeforeLock = computeBuildInputState();
 
-  registerAndPruneNamespaces(
+  const lockOwnership = registerAndPruneNamespaces(
     CACHE_ROOT,
     FIXTURE_ROOT,
     appRoot,
     Date.now(),
     LOCK_DIR,
   );
+  if (lockOwnership === null) {
+    throw new Error(`Failed to acquire the production-CSS lock at ${LOCK_DIR}.`);
+  }
   try {
     cachedBundle = loadFingerprintStableArtifact(
-      fingerprintBeforeLock,
-      computeBuildInputFingerprint,
+      stateBeforeLock,
+      computeBuildInputState,
       {
         artifactDirForFingerprint: (fingerprint) => join(FIXTURE_ROOT, fingerprint),
         prepareArtifact: (fingerprint) => {
@@ -593,9 +783,12 @@ export const loadProductionCssBundle = (): ProductionCssBundle => {
         },
         discardArtifact: (outDir) => rmSync(outDir, { recursive: true, force: true }),
         buildArtifact: (outDir) => {
-          execFileSync('npm', ['run', 'build', '--', '--outDir', outDir, '--emptyOutDir'], {
-            cwd: appRoot,
-            stdio: 'pipe',
+          runWithLockHeartbeat(LOCK_DIR, lockOwnership, () => {
+            execFileSync('npm', ['run', 'build', '--', '--outDir', outDir, '--emptyOutDir'], {
+              cwd: appRoot,
+              stdio: 'pipe',
+              timeout: BUILD_TIMEOUT_MS,
+            });
           });
         },
         stampArtifact: (outDir, fingerprint) => {
@@ -620,7 +813,7 @@ export const loadProductionCssBundle = (): ProductionCssBundle => {
     );
     return cachedBundle;
   } finally {
-    releaseDirectoryLock(LOCK_DIR);
+    releaseDirectoryLock(LOCK_DIR, lockOwnership);
   }
 };
 

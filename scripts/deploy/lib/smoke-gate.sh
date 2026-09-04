@@ -305,8 +305,13 @@ classify_alt_identity() {
         set -f
         c=0
         for adapter in $adapters_blob; do
+            # Leading `(` on the pattern: bash 3.2's command-substitution parser
+            # miscounts the `)` closing a case pattern nested inside `$( )` and
+            # dies with "syntax error near unexpected token `;;'". Deploy hosts
+            # run bash 5, so this only ever broke the macOS laptop -- where this
+            # gate's own test suite runs.
             case "$adapter" in
-                *[[:space:]]*|*'*'*|*'?'*|*'['*)
+                (*[[:space:]]*|*'*'*|*'?'*|*'['*)
                     echo FAIL
                     exit 0
                     ;;

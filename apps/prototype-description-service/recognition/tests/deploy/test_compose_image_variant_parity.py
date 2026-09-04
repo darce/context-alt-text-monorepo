@@ -11,6 +11,7 @@ pass — see lane report).
 from __future__ import annotations
 
 import re
+import shutil
 import subprocess
 import tempfile
 import textwrap
@@ -36,9 +37,7 @@ _IMAGE_LINE_RE = re.compile(
     r"^\s*image:\s*(?P<value>.+?)\s*$",
     re.MULTILINE,
 )
-_ACX_IMAGE_REPO_SUB_RE = re.compile(
-    r"\$\{ACX_IMAGE_REPO:-" + re.escape(_DEFAULT_REPO) + r"\}"
-)
+_ACX_IMAGE_REPO_SUB_RE = re.compile(r"\$\{ACX_IMAGE_REPO:-" + re.escape(_DEFAULT_REPO) + r"\}")
 # Bare hardcoded acx-backend without ACX_IMAGE_REPO substitution.
 _BARE_ACX_BACKEND_RE = re.compile(
     r"image:\s*iad\.ocir\.io/idu2kqqe2jxy/acx-backend(?![-:])"
@@ -257,8 +256,7 @@ def _run_refuse_probe(target: str) -> subprocess.CompletedProcess[str]:
 def test_compose_env_uses_acx_image_repo_substitution() -> None:
     text = COMPOSE_ENV.read_text(encoding="utf-8")
     assert compose_api_worker_images_use_image_repo(text), (
-        "docker-compose.env.yml api/worker must use "
-        "${ACX_IMAGE_REPO:-iad.ocir.io/idu2kqqe2jxy/acx-backend}:…"
+        "docker-compose.env.yml api/worker must use ${ACX_IMAGE_REPO:-iad.ocir.io/idu2kqqe2jxy/acx-backend}:…"
     )
     # Explicit negative: no bare hardcoded image lines for the app services.
     for value in _service_image_lines(text):
@@ -268,8 +266,7 @@ def test_compose_env_uses_acx_image_repo_substitution() -> None:
 def test_compose_prod_uses_acx_image_repo_substitution() -> None:
     text = COMPOSE_PROD.read_text(encoding="utf-8")
     assert compose_api_worker_images_use_image_repo(text), (
-        "docker-compose.prod.yml api/worker must use "
-        "${ACX_IMAGE_REPO:-iad.ocir.io/idu2kqqe2jxy/acx-backend}:latest"
+        "docker-compose.prod.yml api/worker must use ${ACX_IMAGE_REPO:-iad.ocir.io/idu2kqqe2jxy/acx-backend}:latest"
     )
     for value in _service_image_lines(text):
         assert "ACX_IMAGE_REPO" in value, f"hardcoded image without substitution: {value}"
@@ -297,10 +294,7 @@ def test_compose_vlm_overlay_defaults_to_vlm_repo() -> None:
         for line in text.splitlines()
         if line.strip() and not line.lstrip().startswith("#") and "ACX_DESCRIPTION_ADAPTER" in line
     ]
-    assert not active_env, (
-        "VLM overlay must not flip ACX_DESCRIPTION_ADAPTER; default stays seeded; "
-        f"got {active_env}"
-    )
+    assert not active_env, f"VLM overlay must not flip ACX_DESCRIPTION_ADAPTER; default stays seeded; got {active_env}"
 
 
 def test_compose_vlm_overlay_wins_over_sticky_slim_image_repo() -> None:
@@ -375,9 +369,7 @@ def test_refuse_remote_vlm_build_rejects_builder_vlm_and_runtime_vlm() -> None:
     # Legitimate non-vlm targets must still be accepted.
     for target in ("", "runtime", "builder"):
         result = _run_refuse_probe(target)
-        assert result.returncode == 0, (
-            f"legitimate target {target!r} must not be refused: {result.stderr}"
-        )
+        assert result.returncode == 0, f"legitimate target {target!r} must not be refused: {result.stderr}"
         assert "ACCEPTED" in (result.stdout or "")
 
 
@@ -555,9 +547,7 @@ def _probe_resolve_repo_name(target: str) -> str:
         text=True,
         timeout=15,
     )
-    assert result.returncode == 0, (
-        f"resolve_image_repo_name failed for {target!r}: {result.stderr}"
-    )
+    assert result.returncode == 0, f"resolve_image_repo_name failed for {target!r}: {result.stderr}"
     return (result.stdout or "").strip()
 
 
@@ -585,6 +575,8 @@ def _probe_ship_invocations(script_text: str | None = None) -> list[str]:
         if script_text is not None:
             source = Path(tmp) / "recognition-service.sh"
             source.write_text(script_text, encoding="utf-8")
+            # The script sources lib/*.sh relative to its own directory.
+            shutil.copytree(DEPLOY_SCRIPT.parent / "lib", Path(tmp) / "lib")
         probe = textwrap.dedent(
             f"""\
             #!/usr/bin/env bash
@@ -602,8 +594,11 @@ def _probe_ship_invocations(script_text: str | None = None) -> list[str]:
             assert_remote_disk_headroom_for_pull() {{ :; }}
             repair_blob_volume_ownership() {{ echo "repair $*" >> "$LOG"; }}
             ssh() {{ echo "ssh $*" >> "$LOG"; }}
-            promote_gate prod "acx/acx-backend:deadbeef"
-            do_restart prod
+            # do_restart re-resolves the pulled digest against the registry;
+            # the fake ssh has no docker behind it, so answer it directly.
+            remote_image_digest_ref() {{ printf '%s\\n' "${{IMAGE_BASE}}@sha256:deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"; }}
+            promote_gate prod "${{IMAGE_BASE}}@sha256:deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+            do_restart prod "${{IMAGE_BASE}}@sha256:deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
             """
         )
         result = subprocess.run(
@@ -613,9 +608,7 @@ def _probe_ship_invocations(script_text: str | None = None) -> list[str]:
             text=True,
             timeout=30,
         )
-        assert result.returncode == 0, (
-            f"probe failed: rc={result.returncode} err={result.stderr}"
-        )
+        assert result.returncode == 0, f"probe failed: rc={result.returncode} err={result.stderr}"
         return log.read_text(encoding="utf-8").splitlines() if log.exists() else []
 
 
@@ -623,21 +616,21 @@ def test_deploy_path_ships_image_repo_exactly_once_before_restart() -> None:
     """S2-A-06 behavioural: one ship, and it precedes the systemctl restart."""
     calls = _probe_ship_invocations()
     ships = [i for i, line in enumerate(calls) if line.startswith("ship ")]
-    assert len(ships) == 1, (
-        f"remote ACX_IMAGE_REPO must be shipped exactly once per deploy; got {calls}"
-    )
+    assert len(ships) == 1, f"remote ACX_IMAGE_REPO must be shipped exactly once per deploy; got {calls}"
     restarts = [i for i, line in enumerate(calls) if "systemctl restart" in line]
     assert restarts, f"deploy path must restart the unit; got {calls}"
     assert ships[0] < restarts[0], (
-        f"ship must precede the unit restart, else the unit boots on a stale "
-        f"ACX_IMAGE_REPO; got {calls}"
+        f"ship must precede the unit restart, else the unit boots on a stale ACX_IMAGE_REPO; got {calls}"
     )
 
 
 def test_mutation_removing_ship_call_fails_behavioural_gate() -> None:
     """TEST-15: delete the real ship call site and the gate must go red."""
     script = DEPLOY_SCRIPT.read_text(encoding="utf-8")
-    mutated = script.replace('  ship_remote_image_repo_env "${remote_dir}"\n', "", 1)
+    # Neutralise the call in place rather than deleting the line: the call site
+    # sits inside an `if ! ...; then` compensation block, so deleting it would
+    # produce a syntax error instead of a behavioural control.
+    mutated = script.replace('ship_remote_image_repo_env "${remote_dir}"', "true", 1)
     assert mutated != script, "mutation anchor not found"
     calls = _probe_ship_invocations(mutated)
     assert not [line for line in calls if line.startswith("ship ")], (
@@ -650,6 +643,4 @@ def test_mutation_ship_after_restart_fails_ordering_gate() -> None:
     calls = ["ssh sudo systemctl restart acx-prod", "ship /opt/acx-backend/prod"]
     ships = [i for i, line in enumerate(calls) if line.startswith("ship ")]
     restarts = [i for i, line in enumerate(calls) if "systemctl restart" in line]
-    assert not (ships[0] < restarts[0]), (
-        "ordering assertion must reject ship-after-restart"
-    )
+    assert not (ships[0] < restarts[0]), "ordering assertion must reject ship-after-restart"

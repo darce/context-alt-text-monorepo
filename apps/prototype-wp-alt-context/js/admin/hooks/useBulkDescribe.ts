@@ -11,6 +11,7 @@ import {
 import { invalidateWorkbenchListPages } from '../api/queryKeys';
 import { resolveWpErrorMessage } from '../api/wpErrorMessage';
 import { useDescribeRunProgress, type DescribeRunProgress } from './useDescribeRunProgress';
+import { clearActiveDescribeRunId, setActiveDescribeRunId } from './activeDescribeRun';
 
 export interface UseBulkDescribeResult {
   submit: ReturnType<typeof useMutation<DescribeRunResponse, Error, number[]>>;
@@ -65,6 +66,7 @@ export const useBulkDescribe = (): UseBulkDescribeResult => {
   const queryClient = useQueryClient();
   const submit = useMutation<DescribeRunResponse, Error, number[]>({
     mutationFn: (mediaIds) => submitBulkDescribeRun(mediaIds),
+    onSuccess: (response) => setActiveDescribeRunId(response.run_id),
   });
   const cancel = useMutation<DescribeRunResponse, Error, string>({
     mutationFn: (runId) => cancelBulkDescribeRun(runId),
@@ -86,6 +88,12 @@ export const useBulkDescribe = (): UseBulkDescribeResult => {
     invalidatedWorkbenchRunIdRef.current = runId;
     invalidateWorkbenchListPages(queryClient);
   }, [runId, progress.isTerminal, queryClient]);
+
+  useEffect(() => {
+    if (runId !== null && progress.isTerminal) {
+      clearActiveDescribeRunId(runId);
+    }
+  }, [progress.isTerminal, runId]);
 
   const errorMessage = submit.error
     ? formatBulkDescribeErrorMessage(submit.error, SUBMIT_ERROR_FALLBACK)

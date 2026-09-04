@@ -56,9 +56,7 @@ class JobLoadSnapshot:
 
     @property
     def has_work(self) -> bool:
-        return (
-            self.queue_depth > 0 or self.in_flight > 0 or self.batch_in_progress
-        )
+        return self.queue_depth > 0 or self.in_flight > 0 or self.batch_in_progress
 
 
 class GpuLifecycleController:
@@ -90,21 +88,14 @@ class GpuLifecycleController:
 
     def instances_waiting_on_boot(self, instances: list[GpuInstance]) -> list[str]:
         """STARTING instances already booting; wait/probe, never re-START."""
-        return [
-            instance.instance_id
-            for instance in instances
-            if instance.state == GpuInstanceState.STARTING
-        ]
+        return [instance.instance_id for instance in instances if instance.state == GpuInstanceState.STARTING]
 
-    def instances_blocking_start(
-        self, instances: list[GpuInstance]
-    ) -> list[GpuInstance]:
+    def instances_blocking_start(self, instances: list[GpuInstance]) -> list[GpuInstance]:
         """STOPPING/UNKNOWN while work waits: fail closed, do not START."""
         return [
             instance
             for instance in instances
-            if instance.state
-            in (GpuInstanceState.STOPPING, GpuInstanceState.UNKNOWN)
+            if instance.state in (GpuInstanceState.STOPPING, GpuInstanceState.UNKNOWN)
         ]
 
     def reap_idle_instances(
@@ -120,8 +111,7 @@ class GpuLifecycleController:
         return [
             (LifecycleAction.STOP, instance.instance_id)
             for instance in instances
-            if instance.state == GpuInstanceState.RUNNING
-            and instance.idle_for_seconds >= self.idle_seconds
+            if instance.state == GpuInstanceState.RUNNING and instance.idle_for_seconds >= self.idle_seconds
         ]
 
     def lease_expired_instances(
@@ -145,17 +135,17 @@ class GpuLifecycleController:
 
         ``max_lease_seconds <= 0`` disables the cap.
 
-        Note the field name: ``idle_for_seconds`` is populated from the time of
-        the instance's last lifecycle transition, so for a RUNNING instance it
-        is the age of the current run, not a measure of inactivity.
+        For a RUNNING instance, callers populate ``idle_for_seconds`` from the
+        controller-owned running-since lease record (or an explicit test
+        override). OCI ``time-created`` is not a lifecycle-transition time and
+        must never supply this value.
         """
         if max_lease_seconds <= 0:
             return []
         return [
             (LifecycleAction.STOP, instance.instance_id)
             for instance in instances
-            if instance.state == GpuInstanceState.RUNNING
-            and instance.idle_for_seconds >= max_lease_seconds
+            if instance.state == GpuInstanceState.RUNNING and instance.idle_for_seconds >= max_lease_seconds
         ]
 
     def fence_stop_actions(
@@ -184,7 +174,4 @@ class GpuLifecycleController:
         reason: str,
     ) -> list[FallbackDecision]:
         """Emit florence_small fallback when the burst instance will not come up."""
-        return [
-            FallbackDecision(instance_id=instance_id, reason=reason)
-            for instance_id in failed_instance_ids
-        ]
+        return [FallbackDecision(instance_id=instance_id, reason=reason) for instance_id in failed_instance_ids]

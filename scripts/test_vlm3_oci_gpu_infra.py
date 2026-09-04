@@ -2,14 +2,42 @@ import json
 import re
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
 import yaml
 
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 OCI_ROOT = REPO_ROOT / "infra" / "oci"
+sys.path.insert(0, str(REPO_ROOT / "scripts"))
+
+import gpu_spike_bench as bench  # noqa: E402 - path setup enables script import
+
+
+def _gpu_instance_block() -> str:
+    main_tf = (OCI_ROOT / "main.tf").read_text()
+    start = main_tf.index('resource "oci_core_instance" "acx_gpu_burst"')
+    rest = main_tf[start:]
+    end = rest.find("\nresource ")
+    return rest if end < 0 else rest[:end]
+
+
+def test_gpu_instance_dedicated_tag_matches_bench_gate() -> None:
+    gpu_block = _gpu_instance_block()
+    key, expected_value = bench.BENCH_DEDICATED_TAG
+    tag_match = re.search(rf'"{re.escape(key)}"\s*=\s*"([^"]+)"', gpu_block)
+
+    assert tag_match is not None, f"GPU instance must declare the {key!r} tag"
+    assert tag_match.group(1) == expected_value
+
+
+def test_gpu_instance_ignores_runtime_state_drift_after_reaper_stop() -> None:
+    gpu_block = _gpu_instance_block()
+    lifecycle = re.search(r"lifecycle\s*\{([^}]*)\}", gpu_block, re.DOTALL)
+
+    assert lifecycle is not None
+    assert re.search(r"ignore_changes\s*=\s*\[\s*state\s*\]", lifecycle.group(1))
 
 
 def test_gpu_instance_uses_configurable_a10_shape_and_dedicated_cloud_init() -> None:
@@ -20,11 +48,11 @@ def test_gpu_instance_uses_configurable_a10_shape_and_dedicated_cloud_init() -> 
     assert 'default     = "VM.GPU.A10.1"' in variables_tf
     assert 'resource "oci_core_instance" "acx_gpu_burst"' in main_tf
     assert "shape               = var.gpu_shape" in main_tf
+    assert 'source_type             = "image"' in main_tf
+    assert "source_id               = var.gpu_image_ocid" in main_tf
+    assert "boot_volume_size_in_gbs = var.gpu_boot_volume_size_in_gbs" in main_tf
     assert 'display_name        = "acx-gpu-burst"' in main_tf
-    assert (
-        'user_data           = base64encode(file("${path.module}/gpu-cloud-init.yaml"))'
-        in main_tf
-    )
+    assert 'user_data           = base64encode(file("${path.module}/gpu-cloud-init.yaml"))' in main_tf
     # First-boot RUNNING so cloud-init finishes; operator stops after bootstrap (S2-05).
     assert 'state = "RUNNING"' in main_tf
     assert "cloud-init" in main_tf.lower() or "gpu-cloud-init" in main_tf
@@ -56,9 +84,7 @@ def test_gpu_instance_security_posture_private_only() -> None:
     port_8000_blocks = [b for b in blocks if "min = 8000" in b]
     assert port_8000_blocks, "expected at least one port-8000 ingress rule"
     for block in port_8000_blocks:
-        assert 'source      = "0.0.0.0/0"' not in block, (
-            "port 8000 must not be world-open: " + block
-        )
+        assert 'source      = "0.0.0.0/0"' not in block, "port 8000 must not be world-open: " + block
         assert 'source      = "10.0.0.0/16"' in block
     assert 'description = "GPU VLM endpoint from ACX VCN"' in main_tf
 
@@ -84,26 +110,16 @@ def test_gpu_endpoint_outputs_for_acx_gpu_endpoint_url() -> None:
 
 EXPECTED_Q4_DIGEST = "7ea0a652b4bda1c1911a93a79a7cd98b92011dfea078e87328285294b2b4ab44"
 EXPECTED_MMPROJ_DIGEST = "9f248089357599a08a23af40cb5ce0030de14a2e119b7ef57f66cb339bd20819"
-HUB_PIN = (
-    "unsloth/Qwen3-VL-30B-A3B-Instruct-GGUF@0af19e7479857aa7f3246466a4ad16c7e7299639"
-)
+HUB_PIN = "unsloth/Qwen3-VL-30B-A3B-Instruct-GGUF@0af19e7479857aa7f3246466a4ad16c7e7299639"
 LOCAL_Q4 = "qwen3-vl-30b-a3b-instruct-q4.gguf"
 LOCAL_MMPROJ = "qwen3-vl-30b-a3b-instruct-mmproj.gguf"
 
 
 def test_gpu_cloud_init_pins_gguf_digests_from_hub_revision() -> None:
     parsed = yaml.safe_load((OCI_ROOT / "gpu-cloud-init.yaml").read_text())
-    entry = next(
-        item
-        for item in parsed["write_files"]
-        if item["path"] == "/opt/acx-gpu/models/SHA256SUMS"
-    )
+    entry = next(item for item in parsed["write_files"] if item["path"] == "/opt/acx-gpu/models/SHA256SUMS")
     content = entry["content"]
-    digest_lines = [
-        line
-        for line in content.splitlines()
-        if line.strip() and not line.lstrip().startswith("#")
-    ]
+    digest_lines = [line for line in content.splitlines() if line.strip() and not line.lstrip().startswith("#")]
     assert len(digest_lines) == 2
 
     digest_re = re.compile(r"^([0-9a-f]{64})  (.+)$")
@@ -119,23 +135,14 @@ def test_gpu_cloud_init_pins_gguf_digests_from_hub_revision() -> None:
     }
     assert HUB_PIN in content
 
-    profiles = (
-        REPO_ROOT
-        / "apps"
-        / "prototype-description-service"
-        / "scene"
-        / "config"
-        / "profiles.py"
-    ).read_text()
+    profiles = (REPO_ROOT / "apps" / "prototype-description-service" / "scene" / "config" / "profiles.py").read_text()
     hub_repo, model_revision = HUB_PIN.split("@", 1)
     pairs = re.findall(
         r'hub_repo="([^"]+)",\s*\n\s*model_revision="([^"]+)"',
         profiles,
     )
     qwen_pairs = [rev for repo, rev in pairs if repo == hub_repo]
-    assert len(qwen_pairs) == 2, (
-        f"expected 2 profiles pinning {hub_repo}, got {len(qwen_pairs)}"
-    )
+    assert len(qwen_pairs) == 2, f"expected 2 profiles pinning {hub_repo}, got {len(qwen_pairs)}"
     assert all(rev == model_revision for rev in qwen_pairs), (
         f"every {hub_repo} profile must pin revision {model_revision}, got {qwen_pairs}"
     )
@@ -159,7 +166,10 @@ def test_gpu_cloud_init_bakes_qwen_measurement_candidate() -> None:
 
 def test_terraform_configuration_validates() -> None:
     if shutil.which("terraform") is None:
-        pytest.skip("terraform binary not on PATH")
+        pytest.skip(
+            "developer check: terraform binary not on PATH; "
+            "run `make test-infra-terraform` for the mandatory release gate"
+        )
 
     # validate requires an initialized working directory; skip cleanly when
     # providers have not been downloaded (no cloud credentials / no init).
@@ -173,8 +183,8 @@ def test_terraform_configuration_validates() -> None:
         )
         if init.returncode != 0:
             pytest.skip(
-                "terraform init unavailable (providers not cached): "
-                + (init.stderr or init.stdout)[:400]
+                "developer check: terraform init unavailable; "
+                "run `make test-infra-terraform` for the mandatory release gate: " + (init.stderr or init.stdout)[:400]
             )
 
     result = subprocess.run(
@@ -188,10 +198,21 @@ def test_terraform_configuration_validates() -> None:
     assert result.returncode == 0, result.stdout + result.stderr
 
 
+def test_terraform_release_gate_is_mandatory_and_documented() -> None:
+    makefile = (REPO_ROOT / "Makefile").read_text()
+    provisioning = (OCI_ROOT / "GPU-BURST-PROVISIONING.md").read_text()
+
+    target = re.search(r"^test-infra-terraform:\n((?:\t.*\n)+)", makefile, flags=re.MULTILINE)
+    assert target is not None
+    commands = target.group(1)
+    assert "terraform -chdir=infra/oci init -backend=false" in commands
+    assert "terraform -chdir=infra/oci validate" in commands
+    assert "make test-infra-terraform" in provisioning
+    assert "release gate" in provisioning.lower()
+
+
 def test_spike_artifact_records_e19_1_measurement_fields() -> None:
-    artifact_path = (
-        REPO_ROOT / "docs" / "tasks" / "vlm" / "VLM-3-gpu-spike-2026-07-08.json"
-    )
+    artifact_path = REPO_ROOT / "docs" / "tasks" / "vlm" / "VLM-3-gpu-spike-2026-07-08.json"
     artifact = json.loads(artifact_path.read_text())
 
     assert artifact["schema"] == "acx-gpu-spike/v1"

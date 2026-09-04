@@ -29,11 +29,25 @@
     },
     "status": {
       "type": "string",
-      "enum": ["pending", "running", "completed", "completed_with_errors", "failed", "cancelled"]
+      "enum": [
+        "pending",
+        "running",
+        "completed",
+        "completed_with_errors",
+        "failed",
+        "cancelled"
+      ]
     },
     "phase": {
       "type": "string",
-      "enum": ["queued", "warming", "describing", "complete", "failed", "cancelled"]
+      "enum": [
+        "queued",
+        "warming",
+        "describing",
+        "complete",
+        "failed",
+        "cancelled"
+      ]
     },
     "completed": {
       "type": "integer",
@@ -55,13 +69,24 @@
       "type": "boolean"
     },
     "eta_seconds": {
-      "type": ["number", "null"],
+      "type": [
+        "number",
+        "null"
+      ],
       "minimum": 0,
       "description": "Estimated seconds remaining; null unless the run is in-flight with measured progress."
     },
     "gpu_state": {
-      "type": "null",
-      "description": "Reserved for future self-hosted GPU execution state."
+      "type": "string",
+      "enum": [
+        "unknown",
+        "stopped",
+        "starting",
+        "warming",
+        "ready",
+        "degraded"
+      ],
+      "description": "Burst-GPU execution state read from the lifecycle snapshot /run/acx/gpu-state.json (single writer: infra.oci.gpu_lifecycle). 'unknown' when the snapshot is missing, unreadable, or stale \u2014 never fabricated as ready. See docs/workbay/contracts/gpu-lifecycle.md \u00a7 GPU state snapshot."
     },
     "recognition_enabled": {
       "type": "boolean",

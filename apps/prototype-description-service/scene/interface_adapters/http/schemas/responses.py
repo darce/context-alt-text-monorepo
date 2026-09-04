@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from scene.application.gpu_state import GpuState
 from scene.domain.describe_run import DescribeItemStatus, DescribeRunPhase, DescribeRunStatus
 from scene.domain.description import DescriptionAdapterKind, DescriptionResultTier, ProviderMode, RetentionClass
 
@@ -169,7 +170,7 @@ class DescribeRunResponse(BaseModel):
     # WBUX-3 (S7-01): honest remaining-time estimate; null unless the run is
     # in-flight with measured progress.
     eta_seconds: float | None = None
-    gpu_state: None = None
+    gpu_state: GpuState = GpuState.UNKNOWN
     # HARM-F1: snapshot of recognition_enabled at submit. Default True so
     # omitted payloads keep today's naming-on behaviour.
     recognition_enabled: bool = True
@@ -187,6 +188,8 @@ class DescribeRunItemResponse(BaseModel):
     alt_text_draft: str | None = None
     caption: str | None = None
     provenance: dict | None = None
+    tier: DescriptionResultTier | None = None
+    result_generation: int = Field(default=0, ge=0)
 
 
 class DescribeRunItemsResponse(BaseModel):

@@ -219,6 +219,102 @@ class DescribeRunControllerTest extends TestCase
         $this->assertSame('DELETE', $calls[1]['args']['method']);
     }
 
+    /**
+     * @dataProvider recognizedGpuStateProvider
+     */
+    public function testGetDescribeRunStatusPassesRecognizedGpuStateThroughUnchanged(string $gpuState): void
+    {
+        $response = $this->requestDescribeRunStatusWithGpuState($gpuState);
+
+        $this->assertNotInstanceOf(\WP_Error::class, $response);
+        $this->assertSame($gpuState, $response->get_data()['gpu_state']);
+    }
+
+    /**
+     * @return array<string, array{0: string}>
+     */
+    public static function recognizedGpuStateProvider(): array
+    {
+        return [
+            'unknown' => ['unknown'],
+            'stopped' => ['stopped'],
+            'starting' => ['starting'],
+            'warming' => ['warming'],
+            'ready' => ['ready'],
+            'degraded' => ['degraded'],
+        ];
+    }
+
+    public function testGetDescribeRunStatusPassesUnrecognizedGpuStateThroughUnchanged(): void
+    {
+        $response = $this->requestDescribeRunStatusWithGpuState('bogus');
+
+        $this->assertNotInstanceOf(\WP_Error::class, $response);
+        $this->assertSame('bogus', $response->get_data()['gpu_state']);
+    }
+
+    public function testGetDescribeRunStatusPreservesExplicitNullGpuStateInSerializedResponse(): void
+    {
+        $response = $this->requestDescribeRunStatusWithGpuState(null);
+
+        $this->assertNotInstanceOf(\WP_Error::class, $response);
+        $this->assertArrayHasKey('gpu_state', $response->get_data());
+        $this->assertNull($response->get_data()['gpu_state']);
+        $this->assertStringContainsString('"gpu_state":null', wp_json_encode($response->get_data()));
+    }
+
+    public function testGetDescribeRunStatusDoesNotSynthesizeAbsentGpuState(): void
+    {
+        $runId = '22222222-2222-2222-2222-222222222222';
+        $upstreamPayload = $this->describeRunStatusPayload($runId);
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => json_encode($upstreamPayload),
+        ]);
+
+        $request = new WP_REST_Request('GET', '/acx/v1/recognition/describe/runs/' . $runId);
+        $request->set_param('run_id', $runId);
+
+        $response = $this->controller->get_describe_run_status($request);
+
+        $this->assertNotInstanceOf(\WP_Error::class, $response);
+        $this->assertArrayNotHasKey('gpu_state', $response->get_data());
+        $this->assertSame(json_encode($upstreamPayload), wp_json_encode($response->get_data()));
+    }
+
+    private function requestDescribeRunStatusWithGpuState(?string $gpuState): \WP_REST_Response|\WP_Error
+    {
+        $runId = '22222222-2222-2222-2222-222222222222';
+        $upstreamPayload = $this->describeRunStatusPayload($runId);
+        $upstreamPayload['gpu_state'] = $gpuState;
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => json_encode($upstreamPayload),
+        ]);
+
+        $request = new WP_REST_Request('GET', '/acx/v1/recognition/describe/runs/' . $runId);
+        $request->set_param('run_id', $runId);
+
+        return $this->controller->get_describe_run_status($request);
+    }
+
+    /**
+     * @return array<string, int|string|bool>
+     */
+    private function describeRunStatusPayload(string $runId): array
+    {
+        return [
+            'run_id' => $runId,
+            'status' => 'running',
+            'phase' => 'describing',
+            'completed' => 1,
+            'failed' => 0,
+            'skipped' => 0,
+            'total' => 2,
+            'cancel_requested' => false,
+        ];
+    }
+
     public function testSubmitDeduplicatesMediaIdsPreservingFirstSeenOrder(): void
     {
         $this->plantAttachment(101, "\xff\xd8\xff\xe0jpeg-101", 'jpg');

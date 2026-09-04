@@ -11,8 +11,14 @@ import { ToastProvider } from './context/ToastContext';
 import { DegradedModeBanner } from './pages/workbench/DegradedModeBanner';
 import { extractRouteFromHash, ensureHashInitialized, type RoutePath, DEFAULT_ROUTE } from './utils/routeHelpers';
 import { createAppQueryClient } from './utils/appQueryClient';
+import { useGpuStateToasts } from './hooks/useGpuStateToasts';
 
 const queryClient = createAppQueryClient();
+
+const GpuStateToastObserver = (): null => {
+  useGpuStateToasts();
+  return null;
+};
 
 export const App = (): React.JSX.Element => {
   const initialRoute = useMemo(() => determineInitialRoute(), []);
@@ -22,6 +28,7 @@ export const App = (): React.JSX.Element => {
     <QueryClientProvider client={queryClient}>
       <ToastProvider>
         <HashRouter>
+          <GpuStateToastObserver />
           <DegradedModeBanner />
           <Routes>
             <Route

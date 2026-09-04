@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 from pathlib import Path
@@ -9,6 +10,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[3]
 SCRIPT = ROOT / "scripts/deploy/preflight-gpu-env.sh"
 CONTRACT = ROOT / "scripts/deploy/lib/gpu-env-contract.sh"
+VERIFY_LIVE_GPU = ROOT / "scripts/deploy/lib/verify-live-gpu.sh"
 BOOTSTRAP = ROOT / "infra/oci/demo/bootstrap-wp.sh"
 DESCRIBE_GATE = ROOT / "infra/oci/demo/lib/describe-gate.sh"
 SYNC_DEMO = ROOT / "scripts/deploy/sync-demo.sh"
@@ -109,6 +111,77 @@ esac
     args.extend([str(producer_file), str(demo_file)])
     return subprocess.run(
         args,
+        cwd=ROOT,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+
+def live_gpu_payload(**overrides: object) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "adapter": "gpu",
+        "tier": "final_gpu",
+        "cached": False,
+        "model_id": (
+            "unsloth/Qwen3-VL-30B-A3B-Instruct-GGUF@"
+            "0af19e7479857aa7f3246466a4ad16c7e7299639"
+        ),
+        "model_version": "Q4_K_M",
+        "prompt_or_task_version": "3",
+        "alt_text_draft": "A blue and red gradient.",
+    }
+    payload.update(overrides)
+    return payload
+
+
+def run_live_gpu_verifier(
+    tmp_path: Path,
+    *,
+    payload: dict[str, object] | None = None,
+    curl_status: int = 0,
+) -> subprocess.CompletedProcess[str]:
+    staged_lib = tmp_path / "lib"
+    staged_lib.mkdir()
+    staged_verifier = staged_lib / "verify-live-gpu.sh"
+    staged_verifier.write_text(VERIFY_LIVE_GPU.read_text(encoding="utf-8"), encoding="utf-8")
+    staged_verifier.chmod(0o700)
+    (staged_lib / "describe-gate.sh").write_text(
+        DESCRIBE_GATE.read_text(encoding="utf-8"), encoding="utf-8"
+    )
+    demo_env = tmp_path / "demo.env"
+    demo_env.write_text(f"WORDPRESS_CONFIG_EXTRA={wordpress_config()}\n", encoding="utf-8")
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_curl = fake_bin / "curl"
+    fake_curl.write_text(
+        """#!/usr/bin/env bash
+set -euo pipefail
+output_file=
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --output) output_file="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+[[ "${FAKE_CURL_STATUS}" == 0 ]] || exit "${FAKE_CURL_STATUS}"
+test -n "$output_file"
+printf '%s' "$FAKE_CURL_RESPONSE" > "$output_file"
+""",
+        encoding="utf-8",
+    )
+    fake_curl.chmod(0o700)
+    env = os.environ.copy()
+    env.update(
+        {
+            "PATH": f"{fake_bin}:{env['PATH']}",
+            "FAKE_CURL_STATUS": str(curl_status),
+            "FAKE_CURL_RESPONSE": json.dumps(payload or live_gpu_payload()),
+        }
+    )
+    return subprocess.run(
+        [str(staged_verifier), str(demo_env)],
         cwd=ROOT,
         env=env,
         text=True,
@@ -785,7 +858,10 @@ def test_worked_examples_document_gpu_burst_profile_and_preflight(example: Path)
     text = example.read_text(encoding="utf-8")
 
     assert "# --- GPU burst profile (demo) ---" in text
-    assert "preflight-gpu-env.sh" in text
+    assert (
+        "scripts/deploy/preflight-gpu-env.sh --check-reaper /path/to/prod.env /path/to/demo.env"
+        in text
+    )
 
 
 def test_producer_example_documents_every_runtime_gpu_setting() -> None:
@@ -820,6 +896,71 @@ def test_runbook_requires_reaper_fail_fast_and_newest_reviewed_artifact() -> Non
     assert "find dist" not in runbook
     assert "printf 'Deploying reviewed plugin artifact: %s\\n'" in runbook
     assert "oci compute instance action --action STOP" in runbook
+
+
+def test_runbook_final_verification_requires_uncached_live_gpu_inference() -> None:
+    runbook = (ROOT / "docs/runbooks/gpu-demo-env-flip.md").read_text(encoding="utf-8")
+    final_verification = runbook.split("## 4. Verify and close the change", 1)[1]
+    verifier = VERIFY_LIVE_GPU.read_text(encoding="utf-8")
+
+    assert "verify-live-gpu.sh /opt/acx-backend/demo/secrets/.env" in final_verification
+    assert "/scene/describe/multipart" in verifier
+    assert '\\"tier\\":\\"gpu\\"' in verifier
+    assert 'payload.get("adapter") != "gpu"' in verifier
+    assert 'payload.get("tier") != "final_gpu"' in verifier
+    assert 'payload.get("cached") is not False' in verifier
+    assert (
+        'payload.get("model_id") != expected_model_id' in verifier
+        and "unsloth/Qwen3-VL-30B-A3B-Instruct-GGUF@0af19e7479857aa7f3246466a4ad16c7e7299639"
+        in verifier
+    )
+    assert 'payload.get("model_version") != "Q4_K_M"' in verifier
+    assert 'payload.get("prompt_or_task_version") != "3"' in verifier
+    assert 'payload.get("alt_text_draft")' in verifier
+    assert final_verification.index("verify-live-gpu.sh /opt") < final_verification.index(
+        "rm -f /tmp/acx-gpu-preflight/preflight-gpu-env.sh"
+    )
+    final_bash = final_verification.split("```bash\n", 1)[1].split("```", 1)[0]
+    syntax = subprocess.run(
+        ["bash", "-n"], input=final_bash, text=True, capture_output=True, check=False
+    )
+    assert syntax.returncode == 0, syntax.stderr
+
+
+def test_live_gpu_verifier_accepts_only_a_fresh_pinned_gpu_result(tmp_path: Path) -> None:
+    result = run_live_gpu_verifier(tmp_path)
+
+    assert result.returncode == 0, result.stderr
+    assert result.stderr == ""
+    assert result.stdout == "OK: uncached live GPU inference passed\n"
+
+
+@pytest.mark.parametrize(
+    ("overrides", "expected_error"),
+    [
+        ({"adapter": "local_cpu"}, "adapter is not gpu"),
+        ({"tier": "provisional_cpu"}, "tier is not final_gpu"),
+        ({"cached": True}, "no fresh inference was proved"),
+        ({"model_id": "wrong-model"}, "model_id is not the pinned Qwen profile"),
+        ({"model_version": "wrong-version"}, "model_version is not Q4_K_M"),
+        ({"prompt_or_task_version": "old"}, "prompt version is not 3"),
+        ({"alt_text_draft": ""}, "no generated alt_text_draft"),
+    ],
+)
+def test_live_gpu_verifier_fails_closed_on_unproved_response(
+    tmp_path: Path, overrides: dict[str, object], expected_error: str
+) -> None:
+    result = run_live_gpu_verifier(tmp_path, payload=live_gpu_payload(**overrides))
+
+    assert result.returncode != 0
+    assert expected_error in result.stderr
+
+
+def test_live_gpu_verifier_fails_when_live_request_is_unreachable(tmp_path: Path) -> None:
+    result = run_live_gpu_verifier(tmp_path, curl_status=7)
+
+    assert result.returncode != 0
+    assert "fake-tenant-key-for-preflight-tests" not in result.stdout + result.stderr
 
 
 def test_worked_examples_form_valid_pair_after_documented_replacements(tmp_path: Path) -> None:

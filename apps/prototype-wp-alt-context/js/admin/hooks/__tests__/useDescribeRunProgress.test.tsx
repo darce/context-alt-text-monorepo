@@ -10,7 +10,7 @@ import {
   useDescribeRunProgress,
 } from '../useDescribeRunProgress';
 import * as describeApi from '../../api/describeApi';
-import type { DescribeRunResponse } from '../../api/describeApi';
+import { GPU_STATE, type DescribeRunResponse } from '../../api/describeApi';
 import { GpuTierStatus } from '../../pages/workbench/MediaSelection';
 
 vi.mock('../../api/describeApi', async (importOriginal) => {
@@ -133,7 +133,7 @@ describe('useDescribeRunProgress', () => {
     expect(fetchBulkDescribeRunMock).toHaveBeenCalledOnce();
   });
 
-  it('keeps GpuTierStatus renderable when the API reports an unknown state', async () => {
+  it('hides GpuTierStatus when the API reports a malformed state', async () => {
     fetchBulkDescribeRunMock.mockResolvedValue(runResponse({ status: 'running', gpu_state: 'stopping' }));
 
     const Harness = (): React.JSX.Element => {
@@ -143,7 +143,46 @@ describe('useDescribeRunProgress', () => {
 
     render(<Harness />, { wrapper });
 
-    await waitFor(() => expect(screen.getByRole('status')).toHaveAttribute('data-gpu-state', 'unknown'));
+    await waitFor(() => expect(fetchBulkDescribeRunMock).toHaveBeenCalledOnce());
+    expect(screen.queryByRole('status')).not.toBeInTheDocument();
+  });
+
+  it('hides GpuTierStatus when the API omits gpu_state', async () => {
+    const responseWithoutGpuState = runResponse({ status: 'running' });
+    delete (responseWithoutGpuState as Partial<DescribeRunResponse>).gpu_state;
+    fetchBulkDescribeRunMock.mockResolvedValue(responseWithoutGpuState);
+
+    const Harness = (): React.JSX.Element => {
+      const progress = useDescribeRunProgress('run-1');
+      return <GpuTierStatus gpuState={progress.gpuState ?? null} cpuDraftCount={0} />;
+    };
+
+    render(<Harness />, { wrapper });
+
+    await waitFor(() => expect(fetchBulkDescribeRunMock).toHaveBeenCalledOnce());
+    expect(screen.queryByRole('status')).not.toBeInTheDocument();
+  });
+
+  it.each([
+    [GPU_STATE.STOPPED, 'GPU tier: stopped'],
+    [GPU_STATE.STARTING, 'GPU tier: starting'],
+    [GPU_STATE.WARMING, 'GPU tier: warming'],
+    [GPU_STATE.READY, 'GPU tier: ready'],
+    [GPU_STATE.DEGRADED, 'GPU tier: degraded'],
+  ] as const)('renders valid GPU state %s with accessible name %s', (gpuState, accessibleName) => {
+    render(<GpuTierStatus gpuState={gpuState} cpuDraftCount={0} />);
+
+    expect(screen.getByRole('status', { name: accessibleName })).toHaveAttribute('data-gpu-state', gpuState);
+  });
+
+  it('hides the chip when a previously known GPU state transitions to unknown', () => {
+    const { rerender } = render(<GpuTierStatus gpuState={GPU_STATE.READY} cpuDraftCount={0} />);
+
+    expect(screen.getByRole('status', { name: 'GPU tier: ready' })).toBeInTheDocument();
+
+    rerender(<GpuTierStatus gpuState={GPU_STATE.UNKNOWN} cpuDraftCount={0} />);
+
+    expect(screen.queryByRole('status')).not.toBeInTheDocument();
   });
 
   it('consumes backend eta_seconds verbatim and derives progressFraction', async () => {

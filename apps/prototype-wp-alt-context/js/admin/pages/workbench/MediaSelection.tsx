@@ -27,7 +27,7 @@ import type { DescribeRunProgress } from '../../hooks/useDescribeRunProgress';
 import { useRecognitionCooldown } from '../../hooks/useRecognitionCooldown';
 import { useRemoteActionGate } from '../../hooks/useRemoteActionGate';
 import { useSyncOffline } from '../../hooks/useSyncOffline';
-import { DESCRIBE_RUN_STATUS, type DescribeRunStatus, type GpuState } from '../../api/describeApi';
+import { DESCRIBE_RUN_STATUS, GPU_STATE, type DescribeRunStatus, type GpuState } from '../../api/describeApi';
 import { isCooldownSignal } from '../../utils/retryPolicy';
 import { formatUserFacingError, isAuthExpiredError } from '../../utils/userFacingError';
 import { UserFacingErrorNotice } from '../../components/ui/UserFacingErrorNotice';
@@ -518,17 +518,25 @@ export const GpuTierStatus = ({
 }: {
   gpuState: GpuState | null;
   cpuDraftCount: number;
-}): React.JSX.Element => {
+}): React.JSX.Element | null => {
+  // `unknown` is the fail-closed boundary result for absent, malformed, or
+  // stale wire data. It is not a reported tier, so do not fabricate a chip.
+  if (gpuState === null || gpuState === GPU_STATE.UNKNOWN) {
+    return null;
+  }
+
   const presentation = gpuStatePresentation(gpuState);
   const Icon = GPU_STATE_ICON_COMPONENT[presentation.icon];
   const spin = presentation.icon === GPU_STATE_ICON.STARTING;
+  const accessibleName = `${GPU_STATE_VOCABULARY.tierPrefix} ${presentation.label}`;
 
   return (
     <div
       className={`acx-sync-status${gpuStateToneClass(presentation.tone)}`}
       role="status"
+      aria-label={accessibleName}
       aria-live="polite"
-      data-gpu-state={gpuState ?? 'unknown'}
+      data-gpu-state={gpuState}
       data-gpu-terminal={presentation.terminal}
     >
       <span className="acx-media-selection__detail-chip">

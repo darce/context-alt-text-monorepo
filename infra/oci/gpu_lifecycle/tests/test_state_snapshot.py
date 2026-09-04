@@ -15,6 +15,7 @@ from infra.oci.gpu_lifecycle.controller import GpuInstance, GpuLifecycleControll
 from infra.oci.gpu_lifecycle.probe import ProbeSample, ProbeStatus, WarmReadinessWait
 from infra.oci.gpu_lifecycle.reaper import (
     StaticJobLoadSource,
+    _serialized_gpu_state_publish,
     run_reap_cycle,
     run_start_cycle,
 )
@@ -741,9 +742,23 @@ def test_snapshot_publish_locks_the_group_writable_sidecar_inode(
 
     lock_inode = path.with_name("gpu-state.json.lock").stat().st_ino
     assert locked_inodes == [
-        (lock_inode, fcntl.LOCK_EX),
+        (lock_inode, fcntl.LOCK_EX | fcntl.LOCK_NB),
         (lock_inode, fcntl.LOCK_UN),
     ]
+
+
+def test_snapshot_publish_lock_has_a_deadline(tmp_path: Path) -> None:
+    path = tmp_path / "gpu-state.json"
+    lock_path = path.with_name("gpu-state.json.lock")
+    lock_path.touch()
+
+    with lock_path.open("r") as holder:
+        fcntl.flock(holder.fileno(), fcntl.LOCK_EX)
+        with (
+            pytest.raises(TimeoutError, match="waiting for lifecycle lock"),
+            _serialized_gpu_state_publish(path, lock_timeout_seconds=0.0),
+        ):
+            pytest.fail("contended lifecycle lock must not be acquired")
 
 
 def test_reap_publish_cannot_be_overwritten_by_stale_start_probe(

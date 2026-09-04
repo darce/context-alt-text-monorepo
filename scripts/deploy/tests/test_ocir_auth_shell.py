@@ -5,7 +5,6 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
-
 SUITE = Path(__file__).with_name("test-ocir-auth.sh")
 REPO_ROOT = Path(__file__).resolve().parents[3]
 

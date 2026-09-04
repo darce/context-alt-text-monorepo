@@ -173,23 +173,8 @@ None for the lane-owned workflow, test, and runbook scope. `act` is not
 installed, so validation used the required structural test, an explicit PyYAML
 parse check, and the complete Make target.
 
-## Findings outside ownership
+## Finding references
 
-- OCIRV1-H-01: Docker login persists credentials; requires an ephemeral
-  `DOCKER_CONFIG` and behavioral test in deploy auth code/tests.
-- OCIRV1-H-02: generated login script lacks `pipefail` and a robust read-ok
-  sentinel; requires deploy auth code and execution-level shell tests.
-- OCIRV1-H-03: explicit `--key-id` cannot bootstrap an empty Vault; requires
-  `_vault_put_secret.py` and its tests.
-- OCIRV1-H-04: Bash 3.2 discrimination runs against arbitrary system Bash;
-  requires the sibling shell-parse test.
-- OCIRV1-M-05: timeout enforcement silently disappears without `timeout(1)`;
-  requires deploy auth code/tests.
-- OCIRV1-M-06: `--readable-timeout` is documented elsewhere but not accepted by
-  the rotation helper; requires rotation/helper tests.
-- OCIRV1-L-08: root lint/format targets omit the new deploy Python files;
-  requires Makefile and sibling Python-file ownership.
-- OCIRV1-L-07 remains: `make test-scripts` references the untracked/missing
-  `scripts/hooks` directory. Per lane ownership, that target was not changed.
-
-OCIRV1-M-07 was fixed in the lane-owned recognition deploy runbook.
+See `OCIRV1-H-01`, `OCIRV1-H-02`, `OCIRV1-H-03`, `OCIRV1-H-04`,
+`OCIRV1-M-05`, `OCIRV1-M-06`, `OCIRV1-M-07`, `OCIRV1-L-07`, and
+`OCIRV1-L-08` in the handoff store.

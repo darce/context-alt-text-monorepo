@@ -85,6 +85,26 @@ def test_missing_update_etag_is_rejected_explicitly() -> None:
         vault_put_secret.require_etag(SimpleNamespace(headers={}), "OCIR_AUTH_TOKEN")
 
 
+@pytest.mark.parametrize("name", ["POSTGRES_DSN", "RECOGNITION_ADMIN_TOKEN"])
+def test_writer_rejects_unowned_secret_names(name) -> None:
+    with pytest.raises(SystemExit, match="refusing unowned secret name"):
+        vault_put_secret.validate_destination(vault_put_secret.DEFAULT_VAULT_OCID, name)
+
+
+def test_writer_rejects_non_acx_vault() -> None:
+    with pytest.raises(SystemExit, match="refusing unowned vault"):
+        vault_put_secret.validate_destination("ocid1.vault.oc1.iad.attacker", "OCIR_AUTH_TOKEN")
+
+
+def test_generation_lock_rejects_non_stable_current_value() -> None:
+    with pytest.raises(RuntimeError, match="required prefix"):
+        vault_put_secret.validate_current_prefix(
+            b"UPDATING:other-rotation",
+            "STABLE:",
+            "OCIR_CREDENTIAL_GENERATION",
+        )
+
+
 def test_main_uses_idempotency_controls_with_stubbed_oci(monkeypatch, capsys) -> None:
     existing = SimpleNamespace(
         id="ocid1.vaultsecret.test",
@@ -112,12 +132,12 @@ def test_main_uses_idempotency_controls_with_stubbed_oci(monkeypatch, capsys) ->
             creates.append((details, kwargs))
             current_value[0] = base64.b64decode(details.secret_content.content)
             existing_present[0] = True
-            return SimpleNamespace(data=existing)
+            return SimpleNamespace(data=existing, headers={"etag": "etag-created"})
 
         def update_secret(self, *args, **kwargs):
             updates.append((args, kwargs))
             current_value[0] = base64.b64decode(args[1].secret_content.content)
-            return SimpleNamespace(data=existing)
+            return SimpleNamespace(data=existing, headers={"etag": "etag-updated"})
 
     class KmsVaultClient(Client):
         def get_vault(self, *_args, **_kwargs):
@@ -163,6 +183,23 @@ def test_main_uses_idempotency_controls_with_stubbed_oci(monkeypatch, capsys) ->
     monkeypatch.setattr(sys, "stdin", SimpleNamespace(buffer=io.BytesIO(b"new-token"), isatty=lambda: False))
     assert vault_put_secret.main() == 0
     assert updates[0][1]["if_match"] == "etag-current"
+
+    monkeypatch.setattr(sys, "stdin", SimpleNamespace(buffer=io.BytesIO(b"fenced-token"), isatty=lambda: False))
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "_vault_put_secret.py",
+            "--secret-name",
+            "OCIR_AUTH_TOKEN",
+            "--if-match",
+            "etag-owned-write",
+            "--readable-timeout",
+            "0",
+        ],
+    )
+    assert vault_put_secret.main() == 0
+    assert updates[-1][1]["if_match"] == "etag-owned-write"
 
     existing_present[0] = False
     monkeypatch.setattr(sys, "stdin", SimpleNamespace(buffer=io.BytesIO(b"first-token"), isatty=lambda: False))

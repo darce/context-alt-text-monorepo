@@ -25,6 +25,10 @@
 #
 # Options:
 #     --readable-timeout SECONDS  Consumer read-back deadline (0 skips the wait)
+#     --rotation-timeout SECONDS  Whole-operation deadline (default: 180)
+#     --previous-auth-token-id ID Prior OCI auth-token OCID to revoke
+#     --user-id ID                Owning OCI user OCID for revocation
+#     --bootstrap-no-previous-token  Assert this is the first credential
 #     --skip-verify              Skip production-VM SSH verification only
 #     -h, --help                 Show this help
 # END USAGE
@@ -51,6 +55,10 @@ FROM_STDIN=0
 SET_USERNAME=""
 SKIP_VERIFY=0
 READABLE_TIMEOUT=120
+ROTATION_TIMEOUT=180
+PREVIOUS_AUTH_TOKEN_ID=""
+AUTH_TOKEN_USER_ID=""
+BOOTSTRAP_NO_PREVIOUS=0
 while [ $# -gt 0 ]; do
     case "$1" in
         --stdin) FROM_STDIN=1 ;;
@@ -84,6 +92,25 @@ while [ $# -gt 0 ]; do
             shift
             ;;
         --skip-verify) SKIP_VERIFY=1 ;;
+        --rotation-timeout)
+            if [ $# -lt 2 ]; then echo "--rotation-timeout needs a positive integer" >&2; exit 2; fi
+            ROTATION_TIMEOUT="$2"
+            case "$ROTATION_TIMEOUT" in
+                ''|*[!0-9]*|0) echo "invalid --rotation-timeout: ${ROTATION_TIMEOUT}" >&2; exit 2 ;;
+            esac
+            shift
+            ;;
+        --previous-auth-token-id)
+            if [ $# -lt 2 ]; then echo "--previous-auth-token-id needs an OCID" >&2; exit 2; fi
+            PREVIOUS_AUTH_TOKEN_ID="$2"
+            shift
+            ;;
+        --user-id)
+            if [ $# -lt 2 ]; then echo "--user-id needs an OCID" >&2; exit 2; fi
+            AUTH_TOKEN_USER_ID="$2"
+            shift
+            ;;
+        --bootstrap-no-previous-token) BOOTSTRAP_NO_PREVIOUS=1 ;;
         -h|--help)
             awk '/^# BEGIN USAGE$/{show=1; next} /^# END USAGE$/{exit} show{sub(/^# ?/, ""); print}' "$0"
             exit 0
@@ -93,6 +120,19 @@ while [ $# -gt 0 ]; do
     shift
 done
 
+if [ "$BOOTSTRAP_NO_PREVIOUS" -eq 1 ]; then
+    if [ -n "$PREVIOUS_AUTH_TOKEN_ID" ] || [ -n "$AUTH_TOKEN_USER_ID" ]; then
+        echo "--bootstrap-no-previous-token cannot be combined with revocation identifiers" >&2
+        exit 2
+    fi
+elif [ -z "$PREVIOUS_AUTH_TOKEN_ID" ] || [ -z "$AUTH_TOKEN_USER_ID" ]; then
+    echo "rotation requires --previous-auth-token-id and --user-id; use --bootstrap-no-previous-token only for first setup" >&2
+    exit 2
+fi
+case "$PREVIOUS_AUTH_TOKEN_ID:$AUTH_TOKEN_USER_ID" in
+    *[!A-Za-z0-9._:-]*) echo "invalid OCI revocation identifier" >&2; exit 2 ;;
+esac
+
 # Rotation owns exactly these two Vault records. In particular, do not turn an
 # inherited deploy override into authority to overwrite an unrelated secret.
 if [ "$ACX_OCIR_TOKEN_SECRET" != "OCIR_AUTH_TOKEN" ]; then
@@ -101,6 +141,10 @@ if [ "$ACX_OCIR_TOKEN_SECRET" != "OCIR_AUTH_TOKEN" ]; then
 fi
 if [ "$ACX_OCIR_USERNAME_SECRET" != "OCIR_USERNAME" ]; then
     echo "refusing unowned username secret name: ${ACX_OCIR_USERNAME_SECRET}" >&2
+    exit 2
+fi
+if [ "$ACX_OCIR_GENERATION_SECRET" != "OCIR_CREDENTIAL_GENERATION" ]; then
+    echo "refusing unowned generation secret name: ${ACX_OCIR_GENERATION_SECRET}" >&2
     exit 2
 fi
 
@@ -127,16 +171,24 @@ report_login_failure() {
     local scope="$1" captured="$2" class
     class="$(ocir_classify_login_failure "$captured")"
     echo "FAIL ${scope} [${class}]: $(ocir_login_failure_hint "$class")" >&2
-    printf '%s\n' "$captured" | sanitize_stderr >&2
+    ocir_safe_login_diagnostic "$captured" >&2
+    printf '\n' >&2
 }
 
 # Run one local command with an explicit positive-integer outer deadline. Keep
 # the child PID visible to cleanup so an interrupt cannot leave a network
 # process behind.
 active_pid=""
+rotation_started=$SECONDS
 run_bounded_for() {
     local label="$1" timeout_seconds="$2" started rc
     shift 2
+    local rotation_remaining=$((ROTATION_TIMEOUT - (SECONDS - rotation_started)))
+    if [ "$rotation_remaining" -le 0 ]; then
+        printf 'acx-timeout:rotation after %ss\n' "$ROTATION_TIMEOUT" >&2
+        return 124
+    fi
+    if [ "$timeout_seconds" -gt "$rotation_remaining" ]; then timeout_seconds="$rotation_remaining"; fi
     exec 3<&0
     "$@" <&3 &
     active_pid=$!
@@ -202,11 +254,39 @@ trap 'exit 143' TERM
 put_secret() {
     # $1 = allowlisted secret name. Value arrives on stdin and goes no further
     # than the helper's memory.
-    echo "writing vault ${ACX_VAULT_OCID} secret $1" >&2
+    local secret_name="$1" output_file="${2:-}" expected_etag="${3:-}" required_prefix="${4:-}" helper_rc=0
+    local -a conditional_args=()
+    if [ -n "$expected_etag" ]; then conditional_args=(--if-match "$expected_etag"); fi
+    if [ -n "$required_prefix" ]; then conditional_args+=(--require-current-prefix "$required_prefix"); fi
+    echo "writing vault ${ACX_VAULT_OCID} secret $secret_name" >&2
+    if [ -n "$output_file" ]; then
+        run_bounded_for vault-write "$operation_timeout" \
+            "$OCI_PYTHON" "${SCRIPT_DIR}/_vault_put_secret.py" \
+            --vault-id "$ACX_VAULT_OCID" --secret-name "$secret_name" --readable-timeout "$READABLE_TIMEOUT" \
+            --operation-timeout "$operation_timeout" "${conditional_args[@]}" >"$output_file" || helper_rc=$?
+        command cat "$output_file"
+        return "$helper_rc"
+    fi
     run_bounded_for vault-write "$operation_timeout" \
         "$OCI_PYTHON" "${SCRIPT_DIR}/_vault_put_secret.py" \
-        --secret-name "$1" --readable-timeout "$READABLE_TIMEOUT" \
-        --operation-timeout "$operation_timeout"
+        --vault-id "$ACX_VAULT_OCID" --secret-name "$secret_name" --readable-timeout "$READABLE_TIMEOUT" \
+        --operation-timeout "$operation_timeout" "${conditional_args[@]}"
+}
+
+revoke_previous_token() {
+    if [ "$BOOTSTRAP_NO_PREVIOUS" -eq 1 ]; then
+        echo "bootstrap complete: no prior OCI auth token was asserted"
+        return 0
+    fi
+    revoke_rc=0
+    run_bounded revocation "$ACX_LOCAL_OCI_BIN" --auth api_key iam auth-token delete \
+        --user-id "$AUTH_TOKEN_USER_ID" --auth-token-id "$PREVIOUS_AUTH_TOKEN_ID" --force || revoke_rc=$?
+    if [ "$revoke_rc" -ne 0 ]; then
+        echo "FAIL replacement is active but prior OCI auth token was not revoked." >&2
+        echo "Recovery: oci --auth api_key iam auth-token delete --user-id '${AUTH_TOKEN_USER_ID}' --auth-token-id '${PREVIOUS_AUTH_TOKEN_ID}' --force" >&2
+        return "$revoke_rc"
+    fi
+    echo "ok   prior OCI auth token revoked at the issuer"
 }
 
 echo "Mint the token at: OCI Console > profile icon > My Profile > Auth tokens > Generate token"
@@ -272,12 +352,13 @@ if [ "$proof_rc" -ne 0 ]; then
 fi
 echo "ok   fresh token authenticated directly against ${OCIR_REGISTRY}"
 
-# Vault does not offer a transaction spanning two secrets. Store the proven
-# token first, then the optional username. For a pair change, retain the prior
-# active token in memory so a definite second-write failure can be compensated.
+# Vault does not offer a transaction spanning two secrets. A shared generation
+# record is marked UPDATING before either credential write and STABLE only after
+# both; consumers reject any changing/non-stable generation. Retain the prior
+# token so a definite second-write failure can be compensated with an ETag fence.
 previous_token=""
 previous_token_available=0
-if [ -n "$SET_USERNAME" ]; then
+if [ -n "$proof_username" ]; then
     previous_rc=0
     run_bounded vault "$ACX_LOCAL_OCI_BIN" --auth api_key \
         secrets secret-bundle get-secret-bundle-by-name \
@@ -303,35 +384,65 @@ if [ -n "$SET_USERNAME" ]; then
     fi
 fi
 
+credential_generation="$(date -u +%Y%m%dT%H%M%SZ)-$$"
+generation_rc=0
+generation_prefix="STABLE:"
+if [ "$BOOTSTRAP_NO_PREVIOUS" -eq 1 ]; then generation_prefix=""; fi
+printf 'UPDATING:%s' "$credential_generation" | \
+    put_secret "$ACX_OCIR_GENERATION_SECRET" "${runtime_dir}/generation-write.stdout" "" "$generation_prefix" || generation_rc=$?
+if [ "$generation_rc" -ne 0 ]; then
+    unset acx_token previous_token
+    exit "$generation_rc"
+fi
+generation_write_etag="$(sed -n 's/^  write_etag: //p' "${runtime_dir}/generation-write.stdout" | tail -1)"
+if [ -z "$generation_write_etag" ]; then
+    echo "UNKNOWN/INCONSISTENT: generation write did not return an ETag fence." >&2
+    unset acx_token previous_token
+    exit 75
+fi
+
 token_rc=0
-printf '%s' "$acx_token" | put_secret "$ACX_OCIR_TOKEN_SECRET" || token_rc=$?
+printf '%s' "$acx_token" | put_secret "$ACX_OCIR_TOKEN_SECRET" "${runtime_dir}/token-write.stdout" || token_rc=$?
 unset acx_token
 if [ "$token_rc" -ne 0 ]; then
+    generation_restore_rc=0
+    printf 'STABLE:ABORTED:%s' "$credential_generation" | \
+        put_secret "$ACX_OCIR_GENERATION_SECRET" "" "$generation_write_etag" || generation_restore_rc=$?
+    if [ "$generation_restore_rc" -ne 0 ]; then
+        echo "UNKNOWN/INCONSISTENT: token write failed and the generation marker could not be restored." >&2
+    fi
     unset previous_token
     exit "$token_rc"
 fi
-if [ -n "$SET_USERNAME" ]; then
+token_write_etag="$(sed -n 's/^  write_etag: //p' "${runtime_dir}/token-write.stdout" | tail -1)"
+if [ -n "$proof_username" ]; then
     username_rc=0
-    printf '%s' "$SET_USERNAME" | put_secret "$ACX_OCIR_USERNAME_SECRET" || username_rc=$?
+    printf '%s' "$proof_username" | put_secret "$ACX_OCIR_USERNAME_SECRET" || username_rc=$?
     if [ "$username_rc" -ne 0 ]; then
         # Exit 75 means the helper exhausted read-after-timeout reconciliation:
         # the username may already be ACTIVE. Rolling the token back in that
         # state could manufacture the opposite mismatch (new username + old
         # token), so preserve the known token write and report the uncertainty.
         # A definite username failure is safe to compensate.
-        if [ "$username_rc" -ne 75 ] && [ "$previous_token_available" -eq 1 ]; then
+        if [ "$username_rc" -ne 75 ] && [ "$previous_token_available" -eq 1 ] && [ -n "$token_write_etag" ]; then
             compensation_rc=0
-            printf '%s' "$previous_token" | put_secret "$ACX_OCIR_TOKEN_SECRET" || compensation_rc=$?
+            printf '%s' "$previous_token" | put_secret "$ACX_OCIR_TOKEN_SECRET" "" "$token_write_etag" || compensation_rc=$?
             unset previous_token
             if [ "$compensation_rc" -eq 0 ]; then
-                echo "FAIL username write failed; restored the prior OCIR_AUTH_TOKEN" >&2
-                exit "$username_rc"
+                generation_restore_rc=0
+                printf 'STABLE:ROLLED-BACK:%s' "$credential_generation" | \
+                    put_secret "$ACX_OCIR_GENERATION_SECRET" "" "$generation_write_etag" || generation_restore_rc=$?
+                if [ "$generation_restore_rc" -eq 0 ]; then
+                    echo "FAIL username write failed; restored the prior OCIR_AUTH_TOKEN and stable generation" >&2
+                    exit "$username_rc"
+                fi
+                compensation_rc="$generation_restore_rc"
             fi
         else
             unset previous_token
         fi
         recovery_username="${SET_USERNAME//\'/\'\\\'\'}"
-        if [ "$username_rc" -eq 75 ]; then
+        if [ "$username_rc" -eq 75 ] || [ "${compensation_rc:-0}" -eq 75 ]; then
             echo "UNKNOWN/INCONSISTENT: OCIR_AUTH_TOKEN and OCIR_USERNAME may represent different credential generations." >&2
         else
             echo "INCONSISTENT: OCIR_AUTH_TOKEN is new while OCIR_USERNAME is still previous." >&2
@@ -342,10 +453,21 @@ if [ -n "$SET_USERNAME" ]; then
 fi
 unset previous_token
 
+generation_rc=0
+printf 'STABLE:%s' "$credential_generation" | \
+    put_secret "$ACX_OCIR_GENERATION_SECRET" "" "$generation_write_etag" || generation_rc=$?
+if [ "$generation_rc" -ne 0 ]; then
+    echo "UNKNOWN/INCONSISTENT: credential values were written but the shared generation could not be committed." >&2
+    exit "$generation_rc"
+fi
+
 zero_probe="${READABLE_TIMEOUT//0/}"
 zero_probe="${zero_probe//./}"
 if [ -z "$zero_probe" ]; then
-    echo "rotation ACCEPTED-BUT-UNVERIFIED: Vault writes were accepted; immediate Vault-backed laptop and VM verification skipped because --readable-timeout 0 does not wait for propagation"
+    echo "rotation ACCEPTED-BUT-UNVERIFIED: Vault writes were accepted; prior issuer token remains active until the replacement is verified"
+    if [ "$BOOTSTRAP_NO_PREVIOUS" -eq 0 ]; then
+        echo "Pending revocation: oci --auth api_key iam auth-token delete --user-id '${AUTH_TOKEN_USER_ID}' --auth-token-id '${PREVIOUS_AUTH_TOKEN_ID}' --force"
+    fi
     exit 0
 fi
 
@@ -379,6 +501,7 @@ if [ "$SKIP_VERIFY" -eq 1 ]; then
         echo "token stored but the laptop Vault-backed verification failed (see above)" >&2
         exit 1
     fi
+    revoke_previous_token || exit $?
     echo "rotation complete: fresh token proven and laptop Vault credential verified; production-VM SSH verification skipped"
     exit 0
 fi
@@ -398,4 +521,5 @@ if [ "$rc" -ne 0 ]; then
     echo "token stored but at least one Vault-backed host verification failed (see above)" >&2
     exit 1
 fi
+revoke_previous_token || exit $?
 echo "rotation complete: both hosts authenticate from acx-vault"

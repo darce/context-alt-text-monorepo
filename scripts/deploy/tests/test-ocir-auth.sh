@@ -10,7 +10,7 @@ set -euo pipefail
 
 script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 lib_file="${script_dir}/../lib/ocir-auth.sh"
-unset ACX_VAULT_OCID ACX_OCIR_TOKEN_SECRET ACX_OCIR_USERNAME_SECRET
+unset ACX_VAULT_OCID ACX_OCIR_TOKEN_SECRET ACX_OCIR_USERNAME_SECRET ACX_OCIR_GENERATION_SECRET
 unset ACX_REMOTE_OCI_BIN ACX_LOCAL_OCI_BIN ACX_VAULT_FETCH_TIMEOUT
 # shellcheck source=../lib/ocir-auth.sh
 source "$lib_file"
@@ -59,17 +59,22 @@ case "${OCIR_TEST_OCI_MODE:-ok}" in
     empty) exit 0 ;;
     sleep) exec sleep 10 ;;
 esac
-count_file="${OCIR_TEST_RECORD_DIR}/oci.count"
-count=0
-[ ! -f "$count_file" ] || count=$(cat "$count_file")
-count=$((count + 1))
-printf '%s' "$count" >"$count_file"
-if [ "$count" -eq 1 ]; then
-    printf '%s' 'tenant/user@example.test' | base64
-else
-    # Construct the credential at runtime so no fixture file contains it.
-    printf '%s%s' 'token-with-shell-chars-' '$!*-[byte-exact]' | base64
-fi
+case " $* " in
+    *" --secret-name OCIR_CREDENTIAL_GENERATION "*)
+        generation=STABLE:test-generation
+        if [ "${OCIR_TEST_OCI_MODE:-}" = generation_change ]; then
+            generation_file="${OCIR_TEST_RECORD_DIR}/generation.count"
+            generation_count=0
+            [ ! -f "$generation_file" ] || generation_count=$(cat "$generation_file")
+            generation_count=$((generation_count + 1))
+            printf '%s' "$generation_count" >"$generation_file"
+            generation="STABLE:generation-${generation_count}"
+        fi
+        printf '%s' "$generation" | base64
+        ;;
+    *" --secret-name OCIR_USERNAME "*) printf '%s' 'tenant/user@example.test' | base64 ;;
+    *) printf '%s%s' 'token-with-shell-chars-' '$!*-[byte-exact]' | base64 ;;
+esac
 EOF
 
 cat >"${fake_bin}/docker" <<'EOF'
@@ -97,8 +102,12 @@ mkdir -p "$DOCKER_CONFIG"
 token=$(cat)
 printf '{"auths":{"test":{"auth":"%s"}}}' "$token" >"${DOCKER_CONFIG}/config.json"
 printf '%s' "$token" | cksum >"${OCIR_TEST_RECORD_DIR}/docker.stdin.cksum"
+if [ "${OCIR_TEST_DOCKER_MODE:-ok}" = fail ]; then
+    printf 'debug credential=%s; unauthorized\n' "$token" >&2
+    unset token
+    exit 41
+fi
 unset token
-[ "${OCIR_TEST_DOCKER_MODE:-ok}" != fail ] || exit 41
 EOF
 chmod +x "${fake_bin}/oci" "${fake_bin}/docker"
 
@@ -147,6 +156,7 @@ assert_contains "username is a quoted data reference" '--secret-name "$ACX_OCIR_
 assert_contains "registry is a quoted data reference" 'login "$ACX_OCIR_REGISTRY"' "$login"
 assert_contains "username expansion is quoted" '-u "$acx_ocir_user"' "$login"
 assert_contains "password reaches Docker on stdin" '--password-stdin' "$login"
+assert_contains "consumer checks a shared credential generation" 'acx_ocir_generation_before' "$login"
 assert_contains "OCI calls use the portable watchdog" 'acx_bounded vault "$ACX_OCIR_OCI_BIN"' "$login"
 assert_contains "Docker login uses the portable watchdog" 'acx_bounded ocir docker login' "$login"
 assert_absent "snippet does not silently depend on timeout(1)" 'command -v timeout' "$login"
@@ -220,6 +230,17 @@ for docker_mode in ok fail; do
         fail "${docker_mode}: token survived in ${remaining_leak}"
     fi
 done
+
+reset_records
+generation_rc=0
+OCIR_TEST_OCI_MODE=generation_change run_snippet c "$behavior_login" \
+    "${record_dir}/generation.stderr" "${record_dir}/generation.trace" || generation_rc=$?
+assert_eq "mixed credential generation is rejected before Docker" 76 "$generation_rc"
+if [ ! -e "${record_dir}/docker.argv" ]; then
+    pass "mixed credential generation never reaches Docker"
+else
+    fail "mixed credential generation reached Docker"
+fi
 
 # --- failed and empty Vault reads -------------------------------------------
 
@@ -349,6 +370,15 @@ EOF
 
 assert_eq "missing token after successful username read" secret_missing \
     "$(ocir_classify_login_failure $'acx-vault-read-ok\nServiceError: {"status": 404, "code": "NotAuthorizedOrNotFound"}')"
+assert_eq "mixed generation has a dedicated classification" credential_inconsistent \
+    "$(ocir_classify_login_failure 'acx-credential-generation:changed')"
+
+leaked_token='diagnostic-leak-SUPER-SECRET'
+safe_diagnostic=$(ocir_safe_login_diagnostic "Error 401 credential=${leaked_token}")
+assert_absent "safe login diagnostic never replays credential-bearing stderr" \
+    "$leaked_token" "$safe_diagnostic"
+assert_contains "safe login diagnostic preserves failure class" \
+    'ocir_rejected' "$safe_diagnostic"
 
 assert_contains "Docker-missing hint names Docker" 'Docker CLI' \
     "$(ocir_login_failure_hint docker_cli_missing)"

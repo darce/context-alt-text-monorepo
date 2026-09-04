@@ -13,6 +13,7 @@
 ACX_VAULT_OCID="${ACX_VAULT_OCID:-ocid1.vault.oc1.iad.ejvffpzlaafc4.abuwcljr3j4chidobdkiqx6igrzb4p3wffl43bjelxzfghkehdpuzle7cjla}"
 ACX_OCIR_TOKEN_SECRET="${ACX_OCIR_TOKEN_SECRET:-OCIR_AUTH_TOKEN}"
 ACX_OCIR_USERNAME_SECRET="${ACX_OCIR_USERNAME_SECRET:-OCIR_USERNAME}"
+ACX_OCIR_GENERATION_SECRET="${ACX_OCIR_GENERATION_SECRET:-OCIR_CREDENTIAL_GENERATION}"
 ACX_REMOTE_OCI_BIN="${ACX_REMOTE_OCI_BIN:-\$HOME/.oci-venv/bin/oci}"
 ACX_LOCAL_OCI_BIN="${ACX_LOCAL_OCI_BIN:-oci}"
 ACX_VAULT_FETCH_TIMEOUT="${ACX_VAULT_FETCH_TIMEOUT:-30}"
@@ -27,6 +28,7 @@ ACX_OCIR_FAILURE_VAULT_UNREACHABLE=vault_unreachable
 ACX_OCIR_FAILURE_VAULT_REQUEST=vault_request_failed
 ACX_OCIR_FAILURE_OCIR_UNREACHABLE=ocir_unreachable
 ACX_OCIR_FAILURE_OCIR_REJECTED=ocir_rejected
+ACX_OCIR_FAILURE_CREDENTIAL_INCONSISTENT=credential_inconsistent
 ACX_OCIR_FAILURE_SSH=ssh_failed
 ACX_OCIR_FAILURE_UNKNOWN=unknown
 
@@ -76,6 +78,7 @@ ocir_login_snippet() {
   ocir_emit_assignment ACX_VAULT_OCID "${ACX_VAULT_OCID}"
   ocir_emit_assignment ACX_OCIR_USERNAME_SECRET "${ACX_OCIR_USERNAME_SECRET}"
   ocir_emit_assignment ACX_OCIR_TOKEN_SECRET "${ACX_OCIR_TOKEN_SECRET}"
+  ocir_emit_assignment ACX_OCIR_GENERATION_SECRET "${ACX_OCIR_GENERATION_SECRET}"
   ocir_emit_assignment ACX_VAULT_FETCH_TIMEOUT "${ACX_VAULT_FETCH_TIMEOUT}"
   ocir_emit_assignment ACX_OCIR_DOCKER_CONFIG_DIR "${ACX_OCIR_DOCKER_CONFIG_DIR:-}"
   printf '%s\n' \
@@ -128,18 +131,68 @@ ocir_login_snippet() {
     '  awk '\''BEGIN { ORS="" } { seen=1; print } END { if (!seen) { print "Vault secret was empty" > "/dev/stderr"; exit 65 } }'\''' \
     '}'
 
-  printf 'ACX_OCIR_SECRET_NAME="$ACX_OCIR_USERNAME_SECRET"\n'
-  printf 'acx_ocir_user="$(%s)"\n' "$(ocir_vault_fetch_snippet)"
+  printf 'ACX_OCIR_SECRET_NAME="$ACX_OCIR_GENERATION_SECRET"\n'
+  printf 'acx_ocir_first="$(%s)"\n' "$(ocir_vault_fetch_snippet)"
+  printf '%s\n' \
+    'case "$acx_ocir_first" in' \
+    '  STABLE:*)' \
+    '    acx_ocir_generation_before="$acx_ocir_first"' \
+    '    acx_ocir_generation_mode=versioned' \
+    '    ACX_OCIR_SECRET_NAME="$ACX_OCIR_USERNAME_SECRET"'
+  printf '    acx_ocir_user="$(%s)"\n' "$(ocir_vault_fetch_snippet)"
+  printf '%s\n' \
+    '    ;;' \
+    '  UPDATING:*) printf '\''acx-credential-generation:updating\n'\'' >&2; exit 76 ;;' \
+    '  *)' \
+    '    # One-release migration path for pre-generation Vault fixtures.' \
+    '    acx_ocir_generation_mode=legacy' \
+    '    acx_ocir_user="$acx_ocir_first"' \
+    '    ;;' \
+    'esac'
   printf '%s\n' '[ -n "$acx_ocir_user" ] || { printf '\''OCIR username secret was empty\n'\'' >&2; exit 65; }'
   printf '%s\n' 'printf '\''acx-vault-read-ok\n'\'' >&2'
   printf 'ACX_OCIR_SECRET_NAME="$ACX_OCIR_TOKEN_SECRET"\n'
-  ocir_vault_fetch_snippet
-  printf ' | acx_bounded ocir docker login "$ACX_OCIR_REGISTRY" -u "$acx_ocir_user" --password-stdin >/dev/null\n'
+  printf 'set +x\n'
+  printf 'acx_ocir_token="$(%s)"\n' "$(ocir_vault_fetch_snippet)"
+  printf '%s\n' \
+    'if [ "$acx_ocir_generation_mode" = versioned ]; then' \
+    '  ACX_OCIR_SECRET_NAME="$ACX_OCIR_GENERATION_SECRET"'
+  printf '  acx_ocir_generation_after="$(%s)"\n' "$(ocir_vault_fetch_snippet)"
+  printf '%s\n' \
+    '  [ "$acx_ocir_generation_before" = "$acx_ocir_generation_after" ] || { printf '\''acx-credential-generation:changed\n'\'' >&2; exit 76; }' \
+    '  case "$acx_ocir_generation_after" in STABLE:*) ;; *) printf '\''acx-credential-generation:updating\n'\'' >&2; exit 76 ;; esac' \
+    'fi'
+  printf 'acx_ocir_login_stderr="$DOCKER_CONFIG/login.stderr"\n'
+  printf 'set +e\n'
+  printf 'printf '\''%%s'\'' "$acx_ocir_token" | acx_bounded ocir docker login "$ACX_OCIR_REGISTRY" -u "$acx_ocir_user" --password-stdin >/dev/null 2>"$acx_ocir_login_stderr"\n'
+  printf '%s\n' \
+    'acx_ocir_login_rc=$?' \
+    'set -e' \
+    'if [ "$acx_ocir_login_rc" -ne 0 ]; then' \
+    '  acx_ocir_captured="$(cat "$acx_ocir_login_stderr")"' \
+    '  case "$acx_ocir_captured" in' \
+    '    *acx-timeout:ocir*) printf '\''acx-timeout:ocir (credential-bearing stderr suppressed)\n'\'' >&2; exit "$acx_ocir_login_rc" ;;' \
+    '    *[Uu]nauthorized*|*401*|*"authentication required"*) acx_ocir_safe_class=ocir_rejected ;;' \
+    '    *"timed out"*|*"Cannot connect"*|*"Connection refused"*) acx_ocir_safe_class=ocir_unreachable ;;' \
+    '    *"command not found"*|*"No such file or directory"*) acx_ocir_safe_class=docker_cli_missing ;;' \
+    '    *) acx_ocir_safe_class=unknown ;;' \
+    '  esac' \
+    '  printf '\''acx-safe-login-error:%s (credential-bearing stderr suppressed)\n'\'' "$acx_ocir_safe_class" >&2' \
+    '  exit "$acx_ocir_login_rc"' \
+    'fi'
 }
 
 # Classify combined stderr from the generated program.
 ocir_classify_login_failure() {
   case "$1" in
+    *acx-safe-login-error:docker_cli_missing*)
+      printf '%s' "$ACX_OCIR_FAILURE_DOCKER_CLI_MISSING" ;;
+    *acx-safe-login-error:ocir_unreachable*)
+      printf '%s' "$ACX_OCIR_FAILURE_OCIR_UNREACHABLE" ;;
+    *acx-safe-login-error:ocir_rejected*)
+      printf '%s' "$ACX_OCIR_FAILURE_OCIR_REJECTED" ;;
+    *acx-credential-generation:*)
+      printf '%s' "$ACX_OCIR_FAILURE_CREDENTIAL_INCONSISTENT" ;;
     *acx-command-missing:ocir*|*"docker: command not found"*|*"docker: No such file or directory"*)
       printf '%s' "$ACX_OCIR_FAILURE_DOCKER_CLI_MISSING" ;;
     *acx-command-missing:vault*|*"oci: command not found"*|*"/oci: No such file or directory"*|*" oci: No such file or directory"*)
@@ -171,6 +224,14 @@ ocir_classify_login_failure() {
   esac
 }
 
+# Return only a normalized classification. Raw stderr from a program that
+# consumed a credential is never safe to replay: some clients echo stdin in
+# debug or error output.
+ocir_safe_login_diagnostic() {
+  printf 'acx-safe-login-error:%s (credential-bearing stderr suppressed)' \
+    "$(ocir_classify_login_failure "$1")"
+}
+
 ocir_login_failure_hint() {
   case "$1" in
     "$ACX_OCIR_FAILURE_OCI_CLI_MISSING")
@@ -189,6 +250,8 @@ ocir_login_failure_hint() {
       printf 'OCIR login was unreachable or slower than %ss. Transient -- retry; if it persists, check registry egress.' "${ACX_VAULT_FETCH_TIMEOUT}" ;;
     "$ACX_OCIR_FAILURE_OCIR_REJECTED")
       printf 'Vault returned a token but OCIR rejected it -- the stored token is revoked or expired. Mint a replacement (Console > My Profile > Auth tokens) and store it with: make ocir-token-rotate' ;;
+    "$ACX_OCIR_FAILURE_CREDENTIAL_INCONSISTENT")
+      printf 'The OCIR credential generation is changing or incomplete. Retry shortly; if it persists, rerun the token rotation recovery.' ;;
     "$ACX_OCIR_FAILURE_SSH")
       printf 'SSH failed before remote OCIR authentication completed. Check the ssh executable, remote shell, and target host.' ;;
     *)

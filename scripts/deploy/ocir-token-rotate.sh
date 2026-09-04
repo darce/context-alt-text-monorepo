@@ -313,16 +313,17 @@ if [ -n "$SET_USERNAME" ]; then
     username_rc=0
     printf '%s' "$SET_USERNAME" | put_secret "$ACX_OCIR_USERNAME_SECRET" || username_rc=$?
     if [ "$username_rc" -ne 0 ]; then
-        if [ "$previous_token_available" -eq 1 ]; then
+        # Exit 75 means the helper exhausted read-after-timeout reconciliation:
+        # the username may already be ACTIVE. Rolling the token back in that
+        # state could manufacture the opposite mismatch (new username + old
+        # token), so preserve the known token write and report the uncertainty.
+        # A definite username failure is safe to compensate.
+        if [ "$username_rc" -ne 75 ] && [ "$previous_token_available" -eq 1 ]; then
             compensation_rc=0
             printf '%s' "$previous_token" | put_secret "$ACX_OCIR_TOKEN_SECRET" || compensation_rc=$?
             unset previous_token
             if [ "$compensation_rc" -eq 0 ]; then
-                if [ "$username_rc" -eq 75 ]; then
-                    echo "UNKNOWN username write outcome; restored the prior OCIR_AUTH_TOKEN after reconciliation exhausted its deadline" >&2
-                else
-                    echo "FAIL username write failed; restored the prior OCIR_AUTH_TOKEN" >&2
-                fi
+                echo "FAIL username write failed; restored the prior OCIR_AUTH_TOKEN" >&2
                 exit "$username_rc"
             fi
         else

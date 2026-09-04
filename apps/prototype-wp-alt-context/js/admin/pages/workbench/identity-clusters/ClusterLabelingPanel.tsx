@@ -38,7 +38,7 @@ import {
 import { NameFaceControl, normalizeNameFaceLabel, type NameFaceResolution } from './NameFaceControl';
 import { getReservedLabelMessage, isReservedLabel } from './reservedLabel';
 import { formatUserFacingError, isAuthExpiredError } from '../../../utils/userFacingError';
-import { getProjectionNotReadyMessage, isProjectionNotReadyError } from './clusterMutationUtils';
+import { getProjectionNotReadyMessage, isAbortError, isProjectionNotReadyError } from './clusterMutationUtils';
 import { MergeUndoBanner } from './MergeUndoBanner';
 import {
   dropClusterFromReviewCaches,
@@ -70,12 +70,11 @@ const getErrorMessage = (error: unknown): string => {
   if (isAuthExpiredError(error)) {
     return formatUserFacingError(error, __('An unexpected error occurred. Please try again.', 'alt-context'));
   }
+  if (isAbortError(error)) {
+    return __('Save is taking too long. Please try again.', 'alt-context');
+  }
   if (error instanceof Error) {
-    if (
-      error.name === 'AbortError' ||
-      error.message.toLowerCase().includes('timed out') ||
-      error.message.toLowerCase().includes('timeout')
-    ) {
+    if (error.message.toLowerCase().includes('timed out') || error.message.toLowerCase().includes('timeout')) {
       return __('Save is taking too long. Please try again.', 'alt-context');
     }
     if (isProjectionNotReadyError(error.message)) {
@@ -91,25 +90,60 @@ const getErrorMessage = (error: unknown): string => {
 };
 
 const SAVE_TIMEOUT_MS = 3000;
+/** The duplicate lookup gates the save, so it shares the save's interactive budget. */
+const DUPLICATE_LOOKUP_TIMEOUT_MS = 3000;
 
+/**
+ * Enforce an interactive budget end to end (FEBT1G-H-08).
+ *
+ * The signal is still passed so callers that honour it cancel the transport, but the
+ * deadline is enforced by the wrapper itself: a request that ignores its signal must not
+ * be able to outlive the budget and hang the UI until the global fetch timeout.
+ */
 const withTimeout = async <T,>(
   request: (signal: AbortSignal) => Promise<T>,
   timeoutMs: number,
   timeoutMessage: string,
 ): Promise<T> => {
   const controller = new AbortController();
-  const timeoutId = window.setTimeout(() => controller.abort(timeoutMessage), timeoutMs);
-  try {
-    return await request(controller.signal);
-  } catch (error) {
-    if (error instanceof DOMException && error.name === 'AbortError') {
-      throw new Error(timeoutMessage);
+  let timeoutId = 0;
+  const deadline = new Promise<never>((_resolve, reject) => {
+    timeoutId = window.setTimeout(() => {
+      controller.abort(timeoutMessage);
+      reject(new Error(timeoutMessage));
+    }, timeoutMs);
+  });
+  const attempt = (async (): Promise<T> => {
+    try {
+      return await request(controller.signal);
+    } catch (error) {
+      if (isAbortError(error)) {
+        throw new Error(timeoutMessage);
+      }
+      throw error;
     }
-    throw error;
+  })();
+  try {
+    return await Promise.race([attempt, deadline]);
   } finally {
     window.clearTimeout(timeoutId);
   }
 };
+
+/** Outcome of the submit-time remote duplicate lookup (sr-007: one canonical status set). */
+const DUPLICATE_LOOKUP_STATUS = {
+  NONE: 'none',
+  DUPLICATE: 'duplicate',
+  LOOKUP_FAILED: 'lookup_failed',
+} as const;
+
+type RemoteDuplicateLookup =
+  | { readonly status: typeof DUPLICATE_LOOKUP_STATUS.NONE }
+  | { readonly status: typeof DUPLICATE_LOOKUP_STATUS.DUPLICATE; readonly guard: DuplicateGuardState }
+  | { readonly status: typeof DUPLICATE_LOOKUP_STATUS.LOOKUP_FAILED };
+
+const getDuplicateLookupFailedMessage = (): string =>
+  __('Could not check whether that name is already in use. Please try again.', 'alt-context');
 
 export const ClusterLabelingPanel = ({
   clusterId,
@@ -340,8 +374,10 @@ export const ClusterLabelingPanel = ({
   });
 
   const mergeMutation = useMutation({
+    // FEBT1G-H-08: merge shares the save's interactive budget instead of falling through
+    // to the global fetch timeout.
     mutationFn: ({ targetClusterId, targetLabel }: { targetClusterId: string; targetLabel: string }) =>
-      mergeCluster(clusterId, targetClusterId, targetLabel),
+      withTimeout(() => mergeCluster(clusterId, targetClusterId, targetLabel), SAVE_TIMEOUT_MS, 'merge request timed out'),
     retry: false,
     onSuccess: (result) => handleMergeSuccess(result),
     onError: (err: Error) => {
@@ -386,37 +422,49 @@ export const ClusterLabelingPanel = ({
    * Collision is raw case-insensitive equality (BR-42) — not isHumanLabeledTarget —
    * so backend-labeled machine shapes (e.g. cluster-auto-1) still arm the guard.
    */
-  const evaluateRemoteDuplicateGuard = async (trimmed: string): Promise<DuplicateGuardState | null> => {
+  const evaluateRemoteDuplicateGuard = async (trimmed: string): Promise<RemoteDuplicateLookup> => {
+    let results: Awaited<ReturnType<typeof listRecognitionClusters>>;
     try {
-      const results = await listRecognitionClusters({
-        search: trimmed,
-        limit: 10,
-        labeled_only: true,
-      });
-      const normalized = trimmed.toLowerCase();
-      const match = results.clusters.find(
-        (cluster) =>
-          cluster.id !== clusterId &&
-          typeof cluster.label === 'string' &&
-          cluster.label.toLowerCase() === normalized,
+      results = await withTimeout(
+        (signal) =>
+          listRecognitionClusters(
+            {
+              search: trimmed,
+              limit: 10,
+              labeled_only: true,
+            },
+            signal,
+          ),
+        DUPLICATE_LOOKUP_TIMEOUT_MS,
+        'duplicate name check timed out',
       );
-      if (!match?.id || !match.label) {
-        return null;
-      }
-      const remoteOption: NamingOption = {
-        value: namingOptionValue('cluster', match.id),
-        label: match.label,
-        source: 'cluster',
-        identityCount: typeof match.identity_count === 'number' ? match.identity_count : undefined,
-      };
-      return {
+    } catch {
+      // FEBT1G-H-05: a failed lookup is not evidence of "no duplicate". Fail closed —
+      // this guard is the only protection when the local 20-item list is incomplete.
+      return { status: DUPLICATE_LOOKUP_STATUS.LOOKUP_FAILED };
+    }
+    const normalized = trimmed.toLowerCase();
+    const match = results.clusters.find(
+      (cluster) =>
+        cluster.id !== clusterId && typeof cluster.label === 'string' && cluster.label.toLowerCase() === normalized,
+    );
+    if (!match?.id || !match.label) {
+      return { status: DUPLICATE_LOOKUP_STATUS.NONE };
+    }
+    const remoteOption: NamingOption = {
+      value: namingOptionValue('cluster', match.id),
+      label: match.label,
+      source: 'cluster',
+      identityCount: typeof match.identity_count === 'number' ? match.identity_count : undefined,
+    };
+    return {
+      status: DUPLICATE_LOOKUP_STATUS.DUPLICATE,
+      guard: {
         label: trimmed,
         collisions: [remoteOption],
         mergeTarget: remoteOption,
-      };
-    } catch {
-      return null;
-    }
+      },
+    };
   };
 
   const isBusy = labelMutation.isPending || mergeMutation.isPending || bindMutation.isPending;
@@ -449,9 +497,13 @@ export const ClusterLabelingPanel = ({
           setDuplicateGuard(localGuard);
           return;
         }
-        const remoteGuard = await evaluateRemoteDuplicateGuard(trimmed);
-        if (remoteGuard) {
-          setDuplicateGuard(remoteGuard);
+        const remoteLookup = await evaluateRemoteDuplicateGuard(trimmed);
+        if (remoteLookup.status === DUPLICATE_LOOKUP_STATUS.LOOKUP_FAILED) {
+          setError(getDuplicateLookupFailedMessage());
+          return;
+        }
+        if (remoteLookup.status === DUPLICATE_LOOKUP_STATUS.DUPLICATE) {
+          setDuplicateGuard(remoteLookup.guard);
           return;
         }
       }

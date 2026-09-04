@@ -160,11 +160,12 @@ check-gpu-snapshots-live:
 			checker=$$(mktemp); \
 			trap "rm -f $$checker" EXIT; \
 			cat > "$$checker"; \
-			sudo env ACX_GPU_COMPOSE_FILE="/opt/acx-backend/$(GPU_SNAPSHOT_ENV)/docker-compose.env.yml" \
-				ACX_GPU_UNIT_STATE_PATH=/run/acx/gpu-state.json \
-				ACX_GPU_UNIT_LOAD_PATH=/run/acx/describe-load.json \
+			sudo env ACX_DESCRIBE_LOAD_DIR=/run/acx-write \
+				ACX_GPU_COMPOSE_FILE="/opt/acx-backend/$(GPU_SNAPSHOT_ENV)/docker-compose.env.yml" \
+				ACX_GPU_SNAPSHOT_DIR=/run/acx \
 				ACX_GPU_STATE_PATH=/run/acx/gpu-state.json \
-				ACX_DESCRIBE_LOAD_PATH=/run/acx/describe-load.json \
+				ACX_GPU_UNIT_LOAD_DIR=/run/acx-write \
+				ACX_GPU_UNIT_STATE_PATH=/run/acx/gpu-state.json \
 				bash "$$checker"' \
 			< "$(ROOT_MAKEFILE_DIR)/scripts/deploy/check-gpu-snapshots.sh"
 

@@ -1590,11 +1590,12 @@ verify_live_gpu_snapshots() {
   remote_dir="$(env_to_remote_dir "$env")"
   log "Verifying live GPU snapshot contract on ${SSH_TARGET} (${env})"
   ssh -o BatchMode=yes -o ConnectTimeout=10 -l "${OCI_USER}" -- "${OCI_HOST}" \
-    "sudo env ACX_GPU_COMPOSE_FILE='${remote_dir}/docker-compose.env.yml' \
-      ACX_GPU_UNIT_STATE_PATH=/run/acx/gpu-state.json \
-      ACX_GPU_UNIT_LOAD_PATH=/run/acx/describe-load.json \
+    "sudo env ACX_DESCRIBE_LOAD_DIR=/run/acx-write \
+      ACX_GPU_COMPOSE_FILE='${remote_dir}/docker-compose.env.yml' \
+      ACX_GPU_SNAPSHOT_DIR=/run/acx \
       ACX_GPU_STATE_PATH=/run/acx/gpu-state.json \
-      ACX_DESCRIBE_LOAD_PATH=/run/acx/describe-load.json \
+      ACX_GPU_UNIT_LOAD_DIR=/run/acx-write \
+      ACX_GPU_UNIT_STATE_PATH=/run/acx/gpu-state.json \
       bash -s" \
     < "${SCRIPT_DIR}/check-gpu-snapshots.sh"
 }

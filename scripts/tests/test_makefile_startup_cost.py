@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import re
 import subprocess
+import warnings
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -39,6 +40,12 @@ class StartupProbe:
     calls: list[str]
     makefiles: list[Path]
     completed: subprocess.CompletedProcess[str]
+
+
+@dataclass(frozen=True)
+class StartupAssessment:
+    repo_violations: list[EagerShellAssignment]
+    overlay_violations: list[EagerShellAssignment]
 
 
 def _write_fake_uvx(tmp_path: Path) -> tuple[Path, Path]:
@@ -144,6 +151,80 @@ def _format_eager_shell_violations(violations: list[EagerShellAssignment]) -> st
     return "\n".join(messages)
 
 
+def _makefile_path(path: Path, *, root: Path) -> Path:
+    absolute_path = Path(os.path.abspath(path))
+    try:
+        return absolute_path.relative_to(Path(os.path.abspath(root)))
+    except ValueError:
+        return absolute_path
+
+
+def _repo_owned_makefiles(makefiles: list[Path], *, root: Path) -> set[Path]:
+    root = Path(os.path.abspath(root))
+    classified_paths = dict.fromkeys(_makefile_path(path, root=root) for path in makefiles)
+    candidate_paths = [path for path in classified_paths if not path.is_absolute()]
+    if not candidate_paths:
+        return set()
+
+    completed = subprocess.run(
+        [
+            "git",
+            "-C",
+            str(root),
+            "--literal-pathspecs",
+            "ls-files",
+            "--cached",
+            "--error-unmatch",
+            "-z",
+            "--",
+            *map(str, candidate_paths),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    # A one means at least one requested path is untracked; git uses 128 for
+    # repository or invocation errors, which must not be mistaken for overlays.
+    if completed.returncode not in {0, 1}:
+        completed.check_returncode()
+    return {Path(path) for path in completed.stdout.split("\0") if path}
+
+
+def _assess_startup_probe(probe: StartupProbe, *, root: Path = REPO_ROOT) -> StartupAssessment:
+    repo_owned_makefiles = _repo_owned_makefiles(probe.makefiles, root=root)
+    ownership = {
+        _makefile_path(path, root=root): _makefile_path(path, root=root) in repo_owned_makefiles
+        for path in probe.makefiles
+    }
+    violations = _find_eager_shell_assignments(probe.makefiles, root=root)
+    return StartupAssessment(
+        repo_violations=[violation for violation in violations if ownership[violation.path]],
+        overlay_violations=[violation for violation in violations if not ownership[violation.path]],
+    )
+
+
+def _overlay_advisory(
+    violations: list[EagerShellAssignment], *, calls: list[str] | None = None
+) -> str:
+    message = (
+        "parsed overlay-provided makefile fragments contain eager shell assignments:\n"
+        f"{_format_eager_shell_violations(violations)}\n"
+        "these files are not owned by this repository; the fix belongs upstream in workbay-system"
+    )
+    if calls:
+        message += (
+            "\nthese overlay assignments explain task-irrelevant uvx launches, which are advisory "
+            f"for this repository: {calls!r}"
+        )
+    return message
+
+
+def _warn_overlay_advisory(
+    violations: list[EagerShellAssignment], *, calls: list[str] | None = None
+) -> None:
+    warnings.warn(_overlay_advisory(violations, calls=calls), pytest.PytestWarning, stacklevel=2)
+
+
 def _makefiles_from_output(output: str, *, probe: Path) -> list[Path]:
     probe = Path(os.path.abspath(probe))
     for line in output.splitlines():
@@ -182,16 +263,25 @@ def _run_startup_probe(tmp_path: Path, *, dry_run: bool) -> StartupProbe:
     )
 
 
-def _assert_startup_probe(probe: StartupProbe, *, root: Path = REPO_ROOT) -> None:
-    violations = _find_eager_shell_assignments(probe.makefiles, root=root)
-    if violations:
+def _assert_startup_probe(
+    probe: StartupProbe,
+    *,
+    root: Path = REPO_ROOT,
+    assessment: StartupAssessment | None = None,
+) -> None:
+    if assessment is None:
+        assessment = _assess_startup_probe(probe, root=root)
+    if assessment.repo_violations:
         raise AssertionError(
             "parsed makefile fragments contain eager shell assignments; these make CI's pristine "
             "checkout report a different startup cost than an overlay-carrying developer worktree:\n"
-            f"{_format_eager_shell_violations(violations)}"
+            f"{_format_eager_shell_violations(assessment.repo_violations)}"
         )
     probe.completed.check_returncode()
-    assert probe.calls == [], "task-irrelevant startup launched uvx: " + repr(probe.calls)
+    if assessment.overlay_violations:
+        _warn_overlay_advisory(assessment.overlay_violations, calls=probe.calls)
+    else:
+        assert probe.calls == [], "task-irrelevant startup launched uvx: " + repr(probe.calls)
 
 
 @pytest.mark.parametrize("dry_run", [True, False], ids=["dry-run", "real-run"])
@@ -206,11 +296,25 @@ def test_dry_run_and_real_run_startup_verdicts_agree(tmp_path: Path) -> None:
     assert dry_run.makefiles == real_run.makefiles, (
         f"dry-run parsed {dry_run.makefiles!r}, but real-run parsed {real_run.makefiles!r}"
     )
-    assert dry_run.calls == real_run.calls, (
-        f"dry-run launched {dry_run.calls!r}, but real-run launched {real_run.calls!r}"
+    dry_run_assessment = _assess_startup_probe(dry_run)
+    real_run_assessment = _assess_startup_probe(real_run)
+    _assert_startup_probe(dry_run, assessment=dry_run_assessment)
+    _assert_startup_probe(real_run, assessment=real_run_assessment)
+
+    dry_run_repo_calls = [] if dry_run_assessment.overlay_violations else dry_run.calls
+    real_run_repo_calls = [] if real_run_assessment.overlay_violations else real_run.calls
+    assert dry_run_repo_calls == real_run_repo_calls, (
+        f"dry-run launched repo-owned {dry_run_repo_calls!r}, but real-run launched "
+        f"repo-owned {real_run_repo_calls!r}"
     )
-    _assert_startup_probe(dry_run)
-    _assert_startup_probe(real_run)
+    if dry_run.calls != real_run.calls and dry_run_assessment.overlay_violations:
+        _warn_overlay_advisory(
+            dry_run_assessment.overlay_violations,
+            calls=[
+                f"dry-run: {dry_run.calls!r}",
+                f"real-run: {real_run.calls!r}",
+            ],
+        )
 
 
 def test_lazy_lane_fields_keep_values_and_are_memoized(tmp_path: Path) -> None:
@@ -280,26 +384,49 @@ def test_lazy_lane_fields_keep_values_and_are_memoized(tmp_path: Path) -> None:
         assert sum(f"--field {field}" in call for call in calls) == 1
 
 
-def test_overlay_eager_shell_assignment_reports_actionable_source_line(tmp_path: Path) -> None:
-    fragment = tmp_path / "Makefile.d" / "workflows.mk"
-    fragment.parent.mkdir()
-    fragment.write_text(
-        "# synthetic overlay\n\n_WORKBAY_INSTALLED_TOOL_PYTHON := $(shell uvx tool dir)\n",
-        encoding="utf-8",
+def test_eager_shell_assignment_verdict_depends_on_git_ownership(tmp_path: Path) -> None:
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    repo_fragment = tmp_path / "mk" / "workflows.mk"
+    overlay_fragment = tmp_path / "Makefile.d" / "workflows.mk"
+    repo_fragment.parent.mkdir()
+    overlay_fragment.parent.mkdir()
+    assignment = "# synthetic overlay\n\n_WORKBAY_INSTALLED_TOOL_PYTHON := $(shell uvx tool dir)\n"
+    repo_fragment.write_text(assignment, encoding="utf-8")
+    overlay_fragment.write_text(assignment, encoding="utf-8")
+    ignore_file = tmp_path / ".gitignore"
+    ignore_file.write_text("/Makefile.d\n", encoding="utf-8")
+    subprocess.run(
+        ["git", "-C", str(tmp_path), "add", ".gitignore", "mk/workflows.mk"],
+        check=True,
     )
 
     completed = subprocess.CompletedProcess(["make"], 0, "", "")
-    probe = StartupProbe([], [fragment], completed)
+    repo_probe = StartupProbe([], [repo_fragment], completed)
+    overlay_calls = ["--from mcp-workbay-orchestrator==0.2.0 state"]
+    overlay_probe = StartupProbe(overlay_calls, [overlay_fragment], completed)
 
     with pytest.raises(AssertionError) as error:
-        _assert_startup_probe(probe, root=tmp_path)
+        _assert_startup_probe(repo_probe, root=tmp_path)
 
     assert str(error.value) == (
         "parsed makefile fragments contain eager shell assignments; these make CI's pristine "
         "checkout report a different startup cost than an overlay-carrying developer worktree:\n"
-        "Makefile.d/workflows.mk:3: _WORKBAY_INSTALLED_TOOL_PYTHON uses eager "
+        "mk/workflows.mk:3: _WORKBAY_INSTALLED_TOOL_PYTHON uses eager "
         "':=' with '$(shell ...)'; make it lazy with '=' and memoize it only "
         "when a recipe needs the value"
+    )
+    with pytest.warns(pytest.PytestWarning) as caught:
+        _assert_startup_probe(overlay_probe, root=tmp_path)
+
+    assert len(caught) == 1
+    assert str(caught[0].message) == (
+        "parsed overlay-provided makefile fragments contain eager shell assignments:\n"
+        "Makefile.d/workflows.mk:3: _WORKBAY_INSTALLED_TOOL_PYTHON uses eager "
+        "':=' with '$(shell ...)'; make it lazy with '=' and memoize it only "
+        "when a recipe needs the value\n"
+        "these files are not owned by this repository; the fix belongs upstream in workbay-system\n"
+        "these overlay assignments explain task-irrelevant uvx launches, which are advisory "
+        f"for this repository: {overlay_calls!r}"
     )
 
 

@@ -12,6 +12,7 @@ import {
   newRequestId,
   setLogLevel,
   setLogSink,
+  withRequestId,
   type LogRecord,
 } from '../logger';
 
@@ -201,10 +202,11 @@ describe('createLogger', () => {
 
     setLogSink(null);
     createLogger('x').warn('visible');
-    expect(warn).toHaveBeenCalledWith(
-      '[alt-context/x] visible',
-      expect.objectContaining({ requestId: expect.any(String) }),
-    );
+    expect(warn).toHaveBeenCalledTimes(1);
+    const [prefix, fields] = warn.mock.calls[0] as [string, Record<string, unknown>];
+    expect(prefix).toBe('[alt-context/x] visible');
+    expect(typeof fields.requestId).toBe('string');
+    expect(fields.requestId).not.toBe('');
   });
 });
 
@@ -260,6 +262,30 @@ describe('correlation id binding [O-01]', () => {
     expect(records).toHaveLength(2);
     expect(records[0].fields.requestId).toEqual(expect.any(String));
     expect(records[1].fields.requestId).toEqual(expect.any(String));
+    expect(records[0].fields.requestId).not.toBe(records[1].fields.requestId);
+  });
+
+  it('withRequestId opens a unit of work two scopes can share [O-01][OBS-03][FEBT1-W2B-01]', () => {
+    const records = captureRecords();
+    const requestId = newRequestId();
+    withRequestId(createLogger('scanSubmit'), requestId).info('submitted');
+    withRequestId(createLogger('scanStream'), requestId).info('streaming');
+
+    expect(records).toHaveLength(2);
+    expect(records[0].scope).toBe('scanSubmit');
+    expect(records[1].scope).toBe('scanStream');
+    expect(records[0].fields.requestId).toBe(requestId);
+    expect(records[1].fields.requestId).toBe(requestId);
+  });
+
+  it('withRequestId mints a fresh id per unit of work off one module logger [O-01][OBS-03][FEBT1-W2B-01]', () => {
+    const records = captureRecords();
+    const moduleLog = createLogger('jobPersistence');
+    withRequestId(moduleLog).info('action one');
+    withRequestId(moduleLog).info('action two');
+
+    expect(records).toHaveLength(2);
+    expect(typeof records[0].fields.requestId).toBe('string');
     expect(records[0].fields.requestId).not.toBe(records[1].fields.requestId);
   });
 
@@ -371,6 +397,28 @@ describe('boundary error redaction [O-03][O-05]', () => {
       name: 'NonceRefreshFailedError',
       message: 'Nonce refresh failed',
     });
+  });
+
+  it('a tagged Error subclass keeps the name-shaped record, never the tag projection [FEBT1G-M-07][FEBT1G-M-10]', () => {
+    const records = captureRecords();
+    // Mutant pin: if flattenFieldValue checks isAppError before instanceof Error,
+    // an Error subclass that happens to carry AppError-shaped fields flips the
+    // established {name, ...} record shape to {tag, ...}.
+    class TaggedBoundaryError extends Error {
+      readonly _tag = 'transport';
+      constructor() {
+        super('socket closed');
+        this.name = 'TaggedBoundaryError';
+        this.cause = undefined;
+      }
+    }
+    const tagged = new TaggedBoundaryError();
+    expect(isAppError(tagged)).toBe(true);
+
+    createLogger('x').error('failed', { error: tagged, cause: tagged });
+
+    expect(records[0].fields.error).toEqual({ name: 'TaggedBoundaryError', message: 'socket closed' });
+    expect(records[0].fields.cause).toEqual({ name: 'TaggedBoundaryError', message: 'socket closed' });
   });
 
   it('does not project boundary errors via instanceof HTTPError|ResponseParseError|NonceRefreshFailedError [W2-L5]', async () => {
@@ -493,10 +541,9 @@ describe('flattenError cause recursion [O-07]', () => {
       cause: { name: 'Error', message: 'mid' },
     });
     expect(JSON.stringify(records[0].fields.error)).not.toContain('leaf-secret');
-    expect(records[0].fields.error).toEqual(
-      expect.objectContaining({
-        cause: expect.not.objectContaining({ cause: expect.anything() }),
-      }),
-    );
+    const flattened = records[0].fields.error as { cause?: Record<string, unknown> };
+    expect(flattened.cause).toBeDefined();
+    expect(flattened.cause).not.toBeNull();
+    expect(Object.hasOwn(flattened.cause ?? {}, 'cause')).toBe(false);
   });
 });

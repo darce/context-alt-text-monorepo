@@ -1,4 +1,4 @@
-import { getNonce, refreshRestNonce } from '../api/config';
+import { getNonce, NonceRefreshFailedError, refreshRestNonce } from '../api/config';
 
 /** Backstop deadline when a caller does not pass `timeoutMs` (RES-02). */
 export const DEFAULT_FETCH_TIMEOUT_MS = 300_000;
@@ -83,6 +83,15 @@ export class AuthExpiredError extends Error {
 /**
  * Parse Retry-After header value to delay seconds.
  * Accepts delta-seconds or HTTP-date; never returns NaN.
+ *
+ * An HTTP-date that is already in the past (or exactly now) carries no wait
+ * instruction and is reported as absent, not as `0`. Returning `0` would both
+ * mark the error as a cooldown and collapse retry backoff to an immediate
+ * hot loop against a server that is already struggling (Release It! ch-5:
+ * "immediate retry will usually fail again"; retry storm / thundering herd).
+ * The comparison is wall-clock on both sides, so a client whose clock runs
+ * ahead of the server's degrades to plain exponential backoff rather than to
+ * a zero-delay loop (DDIA ch-8: never derive a duration from wall clocks).
  */
 export const parseRetryAfter = (value: string | null): number | undefined => {
   if (value === null) {
@@ -106,7 +115,8 @@ export const parseRetryAfter = (value: string | null): number | undefined => {
   }
   const t = Date.parse(trimmed);
   if (!Number.isNaN(t)) {
-    return Math.max(0, Math.ceil((t - Date.now()) / 1000));
+    const deltaSeconds = Math.ceil((t - Date.now()) / 1000);
+    return deltaSeconds > 0 ? deltaSeconds : undefined;
   }
   return undefined;
 };
@@ -163,6 +173,38 @@ const throwIfAborted = (signal: AbortSignal | undefined): void => {
     }
     throw new DOMException('The operation was aborted.', 'AbortError');
   }
+};
+
+const ABORT_LIKE_NAMES = new Set(['AbortError', 'TimeoutError']);
+
+/**
+ * Local duck-type rather than an `appError` import: `appError` imports this
+ * module, and a cycle here would be resolved at module-init time.
+ */
+const isAbortLikeError = (error: unknown): boolean => {
+  if (typeof error !== 'object' || error === null) {
+    return false;
+  }
+  const name: unknown = (error as { name?: unknown }).name;
+  return typeof name === 'string' && ABORT_LIKE_NAMES.has(name);
+};
+
+/**
+ * True when a nonce refresh never reached a verdict about the session.
+ *
+ * A timeout or transport failure tells us only that we did not hear back — the
+ * session may be perfectly healthy (DDIA ch-8: treat a timed-out call as
+ * UNKNOWN, never as a definite negative). Converting it to `AuthExpiredError`
+ * shows "your session expired" to a logged-in user and pins the request
+ * non-retryable. A refresh that *did* get a response and was rejected
+ * (`causeStatus` present — WP admin-ajax answers `-1`/`0` for a dead cookie)
+ * is a real verdict and stays session expiry.
+ */
+const isIndeterminateRefreshFailure = (error: unknown): boolean => {
+  if (isAbortLikeError(error)) {
+    return true;
+  }
+  return error instanceof NonceRefreshFailedError && error.causeStatus === undefined;
 };
 
 const abortReason = (reason: unknown): DOMException =>
@@ -302,10 +344,14 @@ export const fetchApi = async <T>(endpoint: string, options: HTTPOptions = {}): 
 
       try {
         await refreshRestNonce();
-      } catch {
+      } catch (refreshError) {
         // An abort that landed while the refresh was failing is an abort, not
         // session expiry — never surface recovery UI for an unmounted caller.
         throwIfAborted(signal);
+        // A refresh that never got an answer is not proof of session expiry.
+        if (isIndeterminateRefreshFailure(refreshError)) {
+          throw refreshError;
+        }
         throw new AuthExpiredError({ endpoint, status: 403 });
       }
 

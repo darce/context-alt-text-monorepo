@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { NonceRefreshFailedError } from '../../api/config';
-import { classifyError, isAppError } from '../appError';
+import { classifyError, isAppError, type AppError } from '../appError';
 import { HTTPError, ResponseParseError } from '../http';
 import {
   consoleSink,
@@ -13,6 +13,7 @@ import {
   redactEndpoint,
   setLogLevel,
   setLogSink,
+  withRequestId,
   type LogRecord,
 } from '../logger';
 
@@ -202,6 +203,9 @@ describe('createLogger', () => {
 
     setLogSink(null);
     createLogger('x').warn('visible');
+    expect(warn).toHaveBeenCalledTimes(1);
+    // rg-015: a module-scope logger has no unit of work, so no requestId field is
+    // fabricated and the sink is called with the prefix only.
     expect(warn).toHaveBeenCalledWith('[alt-context/x] visible');
     expect(warn.mock.calls[0]).toHaveLength(1);
   });
@@ -242,6 +246,30 @@ describe('requestId binding [FEBT1-W2B-01][OBS-03][rg-015]', () => {
     expect(records).toHaveLength(2);
     expect(records[0].fields).not.toHaveProperty('requestId');
     expect(records[1].fields).not.toHaveProperty('requestId');
+  });
+
+  it('withRequestId opens a unit of work two scopes can share [O-01][OBS-03][FEBT1-W2B-01]', () => {
+    const records = captureRecords();
+    const requestId = newRequestId();
+    withRequestId(createLogger('scanSubmit'), requestId).info('submitted');
+    withRequestId(createLogger('scanStream'), requestId).info('streaming');
+
+    expect(records).toHaveLength(2);
+    expect(records[0].scope).toBe('scanSubmit');
+    expect(records[1].scope).toBe('scanStream');
+    expect(records[0].fields.requestId).toBe(requestId);
+    expect(records[1].fields.requestId).toBe(requestId);
+  });
+
+  it('withRequestId mints a fresh id per unit of work off one module logger [O-01][OBS-03][FEBT1-W2B-01]', () => {
+    const records = captureRecords();
+    const moduleLog = createLogger('jobPersistence');
+    withRequestId(moduleLog).info('action one');
+    withRequestId(moduleLog).info('action two');
+
+    expect(records).toHaveLength(2);
+    expect(typeof records[0].fields.requestId).toBe('string');
+    expect(records[0].fields.requestId).not.toBe(records[1].fields.requestId);
   });
 
   it('withRequest units mint distinct ids and records inside one unit match', () => {
@@ -362,6 +390,28 @@ describe('boundary error redaction [O-03][O-05]', () => {
     });
   });
 
+  it('a tagged Error subclass keeps the name-shaped record, never the tag projection [FEBT1G-M-07][FEBT1G-M-10]', () => {
+    const records = captureRecords();
+    // Mutant pin: if flattenFieldValue checks isAppError before instanceof Error,
+    // an Error subclass that happens to carry AppError-shaped fields flips the
+    // established {name, ...} record shape to {tag, ...}.
+    class TaggedBoundaryError extends Error {
+      readonly _tag = 'transport';
+      constructor() {
+        super('socket closed');
+        this.name = 'TaggedBoundaryError';
+        this.cause = undefined;
+      }
+    }
+    const tagged = new TaggedBoundaryError();
+    expect(isAppError(tagged)).toBe(true);
+
+    createLogger('x').error('failed', { error: tagged, cause: tagged });
+
+    expect(records[0].fields.error).toEqual({ name: 'TaggedBoundaryError', message: 'socket closed' });
+    expect(records[0].fields.cause).toEqual({ name: 'TaggedBoundaryError', message: 'socket closed' });
+  });
+
   it('does not project boundary errors via instanceof HTTPError|ResponseParseError|NonceRefreshFailedError [W2-L5]', async () => {
     const fs = await import('node:fs/promises');
     const path = await import('node:path');
@@ -443,9 +493,41 @@ describe('boundary error redaction [O-03][O-05]', () => {
     expect(records[0].fields.error).toEqual({ name: 'Error', message: 'parse failed' });
   });
 
-  it('AppError field values flatten to a tagged safe projection [O-05][REF-19]', () => {
+  /**
+   * Merge note (feature/febt-1-g1 x main): the branch tagged HTTPError with a
+   * `_tag` field, so `classifyError` is now identity for it and the value reaching
+   * the sink is an Error instance, not a plain AppError. Error instances keep the
+   * {name, ...} record shape by FEBT1G-M-07/M-10, so the two halves of the original
+   * contract are split across the two tests below — no redaction assertion is lost.
+   */
+  it('a classified HTTPError keeps the name-shaped safe projection [O-05][REF-19][FEBT1G-M-07]', () => {
     const records = captureRecords();
     const classified = classifyError(leakingHttpError());
+    expect(isAppError(classified)).toBe(true);
+    createLogger('http').error('classified', { error: classified });
+
+    expect(records[0].fields.error).toEqual({
+      name: 'HTTPError',
+      message: 'HTTP 500',
+      status: 500,
+      endpoint: '/jobs',
+    });
+    const serialized = JSON.stringify(records[0]);
+    expect(serialized).not.toContain(BODY_SECRET);
+    expect(serialized).not.toContain(ENDPOINT_SECRET);
+    expect(serialized).not.toContain(PREVIEW_SECRET);
+    expect(serialized).not.toContain('_tag');
+  });
+
+  it('plain AppError field values flatten to a tagged safe projection [O-05][REF-19]', () => {
+    const records = captureRecords();
+    const classified: AppError = {
+      _tag: 'http',
+      status: 500,
+      endpoint: `http://example.test/jobs?token=${ENDPOINT_SECRET}`,
+      message: `Request to http://example.test/jobs failed (500): ${BODY_SECRET}`,
+      cause: { bodyPreview: PREVIEW_SECRET },
+    };
     expect(isAppError(classified)).toBe(true);
     createLogger('http').error('classified', { error: classified });
 
@@ -488,6 +570,9 @@ describe('flattenError cause recursion [O-07]', () => {
     });
     expect(JSON.stringify(errorFields)).not.toContain('leaf-secret');
     expect(errorFields.cause).not.toHaveProperty('cause');
+    expect(errorFields.cause).toBeDefined();
+    expect(errorFields.cause).not.toBeNull();
+    expect(Object.hasOwn(errorFields.cause ?? {}, 'cause')).toBe(false);
   });
 });
 

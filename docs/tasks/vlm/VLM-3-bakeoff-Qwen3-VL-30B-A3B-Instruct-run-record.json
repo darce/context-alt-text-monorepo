@@ -1,0 +1,152 @@
+{
+  "items": [
+    {
+      "describe": {
+        "adapter": "bakeoff",
+        "alt_text_draft": "Caitlin Weaver stands on a rocky shore with a calm body of water and snow-dusted hills in the background. She wears a black hooded jacket and a white vest, her eyes closed and hair blowing in the wind. The scene captures a moment during her 2023 research residency on the Antarctic peninsula.",
+        "model_id": "Qwen3-VL-30B-A3B-Instruct",
+        "model_version": "Q4_K_M"
+      },
+      "error": null,
+      "face_count": 0,
+      "identities": [],
+      "latency_s": 2.754,
+      "media_id": 3,
+      "path": "mock_images/ccqw-antartica.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "bakeoff",
+        "alt_text_draft": "Bea Burke takes a mirror selfie in a bathroom, wearing a pink \"Happy Birthday\" tiara and making a playful face with her tongue out. She holds a phone with a glittery case, wearing a light blue crop top, white pants, and a gray scrunchie.",
+        "model_id": "Qwen3-VL-30B-A3B-Instruct",
+        "model_version": "Q4_K_M"
+      },
+      "error": null,
+      "face_count": 0,
+      "identities": [],
+      "latency_s": 2.483,
+      "media_id": 2,
+      "path": "mock_images/bea-nye.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "bakeoff",
+        "alt_text_draft": "The image is a vertically oriented, upside-down photo taken in a dimly lit indoor space, likely a bar or restaurant. A woman with long blonde hair, identified as Caitlin Weaver, is in the foreground, smiling at the camera. To her right, another woman, identified as Erika Hansen Miller, is partially visible. In the background, two other people are seated at a table, one of whom is holding a phone. The scene is illuminated by warm, yellow light from a vertical lamp and a frosted glass light fixture.",
+        "model_id": "Qwen3-VL-30B-A3B-Instruct",
+        "model_version": "Q4_K_M"
+      },
+      "error": null,
+      "face_count": 0,
+      "identities": [],
+      "latency_s": 8.276,
+      "media_id": 5,
+      "path": "mock_images/ccqw-erika.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "bakeoff",
+        "alt_text_draft": "Kirstie Mccarrel and Daniel Arce relax on a colorful towel at the coast, both wearing sunglasses. Kirstie, on the left, wears a tan Yankees cap and a black bikini top, while Daniel, on the right, is shirtless. They are lying close together on a blue and purple towel with a brown textured towel behind them.",
+        "model_id": "Qwen3-VL-30B-A3B-Instruct",
+        "model_version": "Q4_K_M"
+      },
+      "error": null,
+      "face_count": 0,
+      "identities": [],
+      "latency_s": 8.235,
+      "media_id": 23,
+      "path": "mock_images/kirstie-daniel-sunglasses.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "bakeoff",
+        "alt_text_draft": "Ryann Wiseman and several friends celebrate at a birthday party, standing in front of a pink tinsel backdrop with a large number \"2\" balloon. The women, dressed in matching pink satin robes, are smiling and holding drinks, with one person raising a red sparkler. A lit lamp sits in the foreground, and the scene is illuminated by warm, festive lighting.",
+        "model_id": "Qwen3-VL-30B-A3B-Instruct",
+        "model_version": "Q4_K_M"
+      },
+      "error": null,
+      "face_count": 0,
+      "identities": [],
+      "latency_s": 1.721,
+      "media_id": 37,
+      "path": "mock_images/ryann-group-party.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "bakeoff",
+        "alt_text_draft": "A woman in a red and blue bikini sits on a gold glittery inflatable float shaped like a whale tail in a blue pool, making a peace sign with her hand.",
+        "model_id": "Qwen3-VL-30B-A3B-Instruct",
+        "model_version": "Q4_K_M"
+      },
+      "error": null,
+      "face_count": 0,
+      "identities": [],
+      "latency_s": 2.032,
+      "media_id": 30,
+      "path": "mock_images/maria-pool.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "bakeoff",
+        "alt_text_draft": "A framed painting titled \"Untitled No. 7\" by Liam Maloney, created in 2024, hangs on a wall. The artwork, an abstract portrait on linen, depicts a person with dark hair and a collared shirt in a monochromatic style. The piece is enclosed in a gold-colored frame with a textured border.",
+        "model_id": "Qwen3-VL-30B-A3B-Instruct",
+        "model_version": "Q4_K_M"
+      },
+      "error": null,
+      "face_count": 0,
+      "identities": [],
+      "latency_s": 1.746,
+      "media_id": 27,
+      "path": "mock_images/liam-maloney-painting.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "bakeoff",
+        "alt_text_draft": "Ryann Wiseman stands in a dimly lit bar with pink lighting, holding a drink and leaning against a marble counter. She wears a black top and patterned pants, with a framed Pink Panther poster and a lit candle on the counter behind her. A mirror and ornate radiator are visible on the wall to her right.",
+        "model_id": "Qwen3-VL-30B-A3B-Instruct",
+        "model_version": "Q4_K_M"
+      },
+      "error": null,
+      "face_count": 0,
+      "identities": [],
+      "latency_s": 4.134,
+      "media_id": 36,
+      "path": "mock_images/ryann-bar.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "bakeoff",
+        "alt_text_draft": "Maria Correonero crouches inside the wreckage of an aircraft, with the dark, barren landscape visible through the open door. The plane's interior is damaged, showing exposed metal and broken panels. She wears a dark coat and looks toward the camera against the overcast sky.",
+        "model_id": "Qwen3-VL-30B-A3B-Instruct",
+        "model_version": "Q4_K_M"
+      },
+      "error": null,
+      "face_count": 0,
+      "identities": [],
+      "latency_s": 8.784,
+      "media_id": 33,
+      "path": "mock_images/mcm-planecrash.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "bakeoff",
+        "alt_text_draft": "A black dog on a leash stands at the end of a narrow alley between rows of brick townhouses with white garage doors, looking toward a sunset that casts warm light over the scene.",
+        "model_id": "Qwen3-VL-30B-A3B-Instruct",
+        "model_version": "Q4_K_M"
+      },
+      "error": null,
+      "face_count": 0,
+      "identities": [],
+      "latency_s": 4.05,
+      "media_id": 34,
+      "path": "mock_images/nina-machiavelli.jpeg"
+    }
+  ],
+  "kind": "run_record",
+  "provenance": {
+    "base_url": "http://localhost:18000",
+    "head_sha": "2cf7898a449e5ecb3275e89ef868193680f38a7d",
+    "manifest_sha256": "670e257aef0c4eabb6480241be8c38521a494ae24d356e1fdcaa1bb49601b6ca",
+    "started_at": "2026-07-14T07:27:24Z"
+  },
+  "schema": "acx-eval/v1"
+}

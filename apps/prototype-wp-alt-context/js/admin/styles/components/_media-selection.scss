@@ -142,6 +142,12 @@
     min-width: 16rem;
   }
 
+  // Reserve the live-region row while telemetry changes so the action row and
+  // adjacent footer controls do not jump when a poll reports a new GPU state.
+  &__gpu-tier-status {
+    min-block-size: var(--acx-space-48);
+  }
+
   &__bulk-describe-actions {
     display: flex;
     flex-wrap: wrap;

@@ -1,0 +1,152 @@
+{
+  "items": [
+    {
+      "describe": {
+        "adapter": "bakeoff",
+        "alt_text_draft": "A person wearing a black hooded jacket and a white vest stands on a rocky shore, smiling with their eyes closed. The background features a calm body of water and distant mountains with patches of snow.",
+        "model_id": "InternVL3.5-8B",
+        "model_version": "bf16"
+      },
+      "error": null,
+      "face_count": 0,
+      "identities": [],
+      "latency_s": 3.681,
+      "media_id": 3,
+      "path": "mock_images/ccqw-antartica.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "bakeoff",
+        "alt_text_draft": "A person with long blonde hair is taking a selfie in a bathroom mirror. They are wearing a light blue top, white pants, and a tiara with the word \"YAY!\" on it. The phone case is glittery, and they have a surprised expression with their tongue sticking out.",
+        "model_id": "InternVL3.5-8B",
+        "model_version": "bf16"
+      },
+      "error": null,
+      "face_count": 0,
+      "identities": [],
+      "latency_s": 4.268,
+      "media_id": 2,
+      "path": "mock_images/bea-nye.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "bakeoff",
+        "alt_text_draft": "A group of people is gathered in a warmly lit room, with two individuals prominently smiling at the camera. The reflection in a mirror shows more people engaged in conversation, creating a cozy and social atmosphere.",
+        "model_id": "InternVL3.5-8B",
+        "model_version": "bf16"
+      },
+      "error": null,
+      "face_count": 0,
+      "identities": [],
+      "latency_s": 3.826,
+      "media_id": 5,
+      "path": "mock_images/ccqw-erika.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "bakeoff",
+        "alt_text_draft": "A woman wearing a beige baseball cap with a white \"NY\" logo and sunglasses is lying on a beach towel next to a man with gray hair and sunglasses. The woman has a tattoo on her arm and is wearing a black bikini top, while the man is shirtless. They are relaxing on a colorful checkered towel with a brown knitted blanket nearby.",
+        "model_id": "InternVL3.5-8B",
+        "model_version": "bf16"
+      },
+      "error": null,
+      "face_count": 0,
+      "identities": [],
+      "latency_s": 5.208,
+      "media_id": 23,
+      "path": "mock_images/kirstie-daniel-sunglasses.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "bakeoff",
+        "alt_text_draft": "A group of women is celebrating at a party, with one holding a red party blower and another holding a smartphone. They are dressed in matching satin outfits, and a large \"25\" balloon is visible in the background. The backdrop is decorated with shiny pink streamers, and a lit candle is placed on a table in front of them.",
+        "model_id": "InternVL3.5-8B",
+        "model_version": "bf16"
+      },
+      "error": null,
+      "face_count": 0,
+      "identities": [],
+      "latency_s": 3.647,
+      "media_id": 37,
+      "path": "mock_images/ryann-group-party.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "bakeoff",
+        "alt_text_draft": "A woman in a red and blue bikini is lounging on a large, metallic seashell float in a swimming pool, smiling and making a peace sign with her hand. The pool water is a clear blue, and the edge of the pool features decorative tiles.",
+        "model_id": "InternVL3.5-8B",
+        "model_version": "bf16"
+      },
+      "error": null,
+      "face_count": 0,
+      "identities": [],
+      "latency_s": 3.966,
+      "media_id": 30,
+      "path": "mock_images/maria-pool.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "bakeoff",
+        "alt_text_draft": "A framed black-and-white portrait of a person with short hair, wearing a jacket with visible pockets, is displayed on a wall. The painting is titled \"Untitled No. 7\" and was created by Liam Maloney in 2024 for a group show at the riverside gallery. The artwork is executed in oil on linen.",
+        "model_id": "InternVL3.5-8B",
+        "model_version": "bf16"
+      },
+      "error": null,
+      "face_count": 0,
+      "identities": [],
+      "latency_s": 3.591,
+      "media_id": 27,
+      "path": "mock_images/liam-maloney-painting.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "bakeoff",
+        "alt_text_draft": "A woman with long blonde hair is standing at a marble counter, holding a glass with a drink. She is wearing a black crop top and a patterned skirt. Behind her is a poster of a cartoon character with the text \"Raspberry Oat Milk,\" and a decorative mirror reflects her image. The room is lit with pink lighting, and there is a small stool and a candle on the counter.",
+        "model_id": "InternVL3.5-8B",
+        "model_version": "bf16"
+      },
+      "error": null,
+      "face_count": 0,
+      "identities": [],
+      "latency_s": 4.846,
+      "media_id": 36,
+      "path": "mock_images/ryann-bar.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "bakeoff",
+        "alt_text_draft": "A person with long hair is crouching inside the wreckage of an aircraft, with a barren, rocky landscape visible in the background. The aircraft's interior is damaged, with broken metal and debris scattered around.",
+        "model_id": "InternVL3.5-8B",
+        "model_version": "bf16"
+      },
+      "error": null,
+      "face_count": 0,
+      "identities": [],
+      "latency_s": 4.585,
+      "media_id": 33,
+      "path": "mock_images/mcm-planecrash.jpg"
+    },
+    {
+      "describe": {
+        "adapter": "bakeoff",
+        "alt_text_draft": "A black dog with a harness is standing on a quiet, empty street lined with brick townhouses featuring white garage doors. The street is cracked and shows signs of wear, with a few small patches of grass visible. The sky is painted with warm hues of sunset, casting a soft glow over the scene.",
+        "model_id": "InternVL3.5-8B",
+        "model_version": "bf16"
+      },
+      "error": null,
+      "face_count": 0,
+      "identities": [],
+      "latency_s": 4.333,
+      "media_id": 34,
+      "path": "mock_images/nina-machiavelli.jpeg"
+    }
+  ],
+  "kind": "run_record",
+  "provenance": {
+    "base_url": "http://localhost:18000",
+    "head_sha": "2cf7898a449e5ecb3275e89ef868193680f38a7d",
+    "manifest_sha256": "670e257aef0c4eabb6480241be8c38521a494ae24d356e1fdcaa1bb49601b6ca",
+    "started_at": "2026-07-14T08:02:39Z"
+  },
+  "schema": "acx-eval/v1"
+}

@@ -7,11 +7,21 @@
 import { __, sprintf } from '@wordpress/i18n';
 
 import { classifyError, isCooldown, toUserMessage } from '../utils/appError';
+import { createLogger } from '../utils/logger';
 import { DEFAULT_COOLDOWN_SECONDS } from '../utils/recognitionCooldown';
 import { clampRetryAfterMs } from '../utils/retryAfter';
 
 /** Total attempts including the first (first + 2 auto-retries). */
 export const CLUSTER_RETRY_MAX_ATTEMPTS = 3;
+
+const log = createLogger('hooks.clusterAutoRetry');
+
+const retryDecisionFields = (error: unknown): { tag: string; status?: number } => {
+  const classified = classifyError(error);
+  return classified._tag === 'http'
+    ? { tag: classified._tag, status: classified.status }
+    : { tag: classified._tag };
+};
 
 export const isRetryableClusterError = (error: unknown): boolean => isCooldown(error);
 
@@ -111,6 +121,14 @@ export const createClusterAutoRetry = (listener: ClusterAutoRetryListener) => {
       }
       if (canAutoRetryCluster(attempts, error)) {
         const seconds = resolveClusterRetryDelaySeconds(error);
+        // One line per retry decision (OBS-01): two invisible retries previously looked
+        // identical to one successful try in the operator log.
+        log.info('cluster.retry_scheduled', {
+          ...retryDecisionFields(error),
+          attempt: attempts,
+          maxAttempts: CLUSTER_RETRY_MAX_ATTEMPTS,
+          delayMs: seconds * 1000,
+        });
         listener.onQueued(seconds);
         timer = setTimeout(() => {
           timer = null;
@@ -124,11 +142,19 @@ export const createClusterAutoRetry = (listener: ClusterAutoRetryListener) => {
       listener.onQueued(null);
 
       if (isRetryableClusterError(error)) {
+        log.warn('cluster.retry_exhausted', {
+          ...retryDecisionFields(error),
+          attempt: attempts,
+          maxAttempts: CLUSTER_RETRY_MAX_ATTEMPTS,
+        });
         listener.onExhausted();
         listener.onTerminalError(formatClusterRetryExhaustedMessage());
         return false;
       }
 
+      // Never surface a raw Error message: an HTTPError message embeds the
+      // response body preview (FEBT1-W2A-04).
+      log.warn('cluster.retry_declined', { ...retryDecisionFields(error), attempt: attempts });
       listener.onTerminalError(toUserMessage(error, listener.fallbackErrorMessage));
       return false;
     },

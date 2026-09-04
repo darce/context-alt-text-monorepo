@@ -136,11 +136,7 @@ def stage_bakes_image_variant(stage_text: str, expected: str) -> bool:
             bake_ok = True
         if _CHMOD_0444_RE.search(ln):
             chmod_ok = True
-        if (
-            m
-            and m.group("label") == expected
-            and _CHMOD_0444_RE.search(ln)
-        ):
+        if m and m.group("label") == expected and _CHMOD_0444_RE.search(ln):
             return True
     return bake_ok and chmod_ok
 
@@ -211,9 +207,7 @@ def parse_tmpfs_spec(spec: str) -> tuple[str, dict[str, str]]:
     return path.strip(), opts
 
 
-def modules_tmpfs_for_service(
-    compose: dict, service: str, modules_path: str
-) -> dict[str, str] | None:
+def modules_tmpfs_for_service(compose: dict, service: str, modules_path: str) -> dict[str, str] | None:
     """Options dict for the tmpfs mounted at modules_path, or None if missing."""
     for spec in service_tmpfs_specs(compose, service):
         path, opts = parse_tmpfs_spec(spec)
@@ -260,8 +254,7 @@ def test_hf_modules_cache_not_nested_under_hf_home() -> None:
     """Module scratch must stay off the :ro weight mount under HF_HOME."""
     body = effective_stage_body(DOCKERFILE, DEFAULT_RUNTIME_STAGE)
     assert hf_modules_cache_outside_hf_home(body), (
-        "HF_MODULES_CACHE must not equal or nest under HF_HOME "
-        f"(got {env_assignments(body)!r})"
+        f"HF_MODULES_CACHE must not equal or nest under HF_HOME (got {env_assignments(body)!r})"
     )
 
 
@@ -270,8 +263,7 @@ def _live_hf_modules_cache_path() -> str:
     body = effective_stage_body(DOCKERFILE, DEFAULT_RUNTIME_STAGE)
     envs = env_assignments(body)
     assert "HF_MODULES_CACHE" in envs, (
-        "Dockerfile must declare ENV HF_MODULES_CACHE before compose tmpfs can "
-        "be checked against it"
+        "Dockerfile must declare ENV HF_MODULES_CACHE before compose tmpfs can be checked against it"
     )
     return envs["HF_MODULES_CACHE"]
 
@@ -287,8 +279,7 @@ def test_compose_api_and_worker_mount_modules_tmpfs() -> None:
         for service in _APP_SERVICES:
             opts = modules_tmpfs_for_service(compose, service, modules_path)
             assert opts is not None, (
-                f"{label} service {service!r} must mount tmpfs at "
-                f"{modules_path} (HF_MODULES_CACHE)"
+                f"{label} service {service!r} must mount tmpfs at {modules_path} (HF_MODULES_CACHE)"
             )
 
 
@@ -306,9 +297,7 @@ def test_modules_tmpfs_noexec_mode_and_uid_parity() -> None:
         compose = _load_compose(path)
         for service in _APP_SERVICES:
             opts = modules_tmpfs_for_service(compose, service, modules_path)
-            assert opts is not None, (
-                f"{label} {service}: missing modules tmpfs at {modules_path}"
-            )
+            assert opts is not None, f"{label} {service}: missing modules tmpfs at {modules_path}"
             assert tmpfs_contract_ok(opts, uid=uid), (
                 f"{label} {service}: tmpfs at {modules_path} must carry noexec, "
                 f"mode=0700, uid={uid}, gid={uid} (derived from Dockerfile "
@@ -397,6 +386,7 @@ def _run_do_restart(
     log.write_text("")
     bindir = tmp_path / "bin"
     bindir.mkdir()
+    digest = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
     # Fake ssh records argv and synthesises success/failure per remote command shape.
     (bindir / "ssh").write_text(
         textwrap.dedent(
@@ -406,7 +396,10 @@ def _run_do_restart(
             # Join args for pattern matching.
             cmd="$*"
             case "$cmd" in
-              *pull*api*) exit {pull_exit} ;;
+              *image*inspect*|*RepoDigests*)
+                echo "iad.ocir.io/idu2kqqe2jxy/acx-backend@sha256:{digest}"
+                exit 0 ;;
+              *pull*api*|*docker*pull*) exit {pull_exit} ;;
               *fix-blob-ownership*|*repair*) exit {repair_exit} ;;
               *systemctl*restart*) exit {systemctl_exit} ;;
             esac
@@ -431,7 +424,7 @@ def _run_do_restart(
         assert_remote_disk_headroom_for_pull() {{ :; }}
         assert_remote_build_free_space() {{ :; }}
         ship_remote_image_repo_env() {{ echo "ship $1" >> "{log}"; }}
-        if do_restart dev; then exit 0; else exit $?; fi
+        if do_restart dev "${{IMAGE_BASE}}@sha256:deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"; then exit 0; else exit $?; fi
         """
     )
     proc = subprocess.run(
@@ -492,9 +485,7 @@ def test_every_runtime_stage_bakes_stage_identity_image_variant() -> None:
         )
         # Cross-wire protection: must not bake the sibling identity.
         sibling = "vlm" if expected == "recognition" else "recognition"
-        assert not stage_bakes_image_variant(own, sibling), (
-            f"{stage} must not bake sibling identity {sibling!r}"
-        )
+        assert not stage_bakes_image_variant(own, sibling), f"{stage} must not bake sibling identity {sibling!r}"
 
 
 # ---- discriminators / TEST-15 --------------------------------------------
@@ -504,25 +495,14 @@ def test_discriminator_env_not_arg_or_run_export() -> None:
     """ENV form passes; ARG / RUN export do not satisfy env_is_declared."""
     assert env_is_declared("ENV HF_MODULES_CACHE=/var/cache/acx/hf_modules\n", "HF_MODULES_CACHE")
     assert not env_is_declared("ARG HF_MODULES_CACHE=/var/cache/acx/hf_modules\n", "HF_MODULES_CACHE")
-    assert not env_is_declared(
-        "RUN export HF_MODULES_CACHE=/var/cache/acx/hf_modules\n", "HF_MODULES_CACHE"
-    )
+    assert not env_is_declared("RUN export HF_MODULES_CACHE=/var/cache/acx/hf_modules\n", "HF_MODULES_CACHE")
     assert not env_is_declared("# ENV HF_MODULES_CACHE=/var/cache/acx/hf_modules\n", "HF_MODULES_CACHE")
 
 
 def test_discriminator_nested_under_hf_home_fails() -> None:
-    good = (
-        "ENV HF_MODULES_CACHE=/var/cache/acx/hf_modules\n"
-        "ENV HF_HOME=/data/cache/huggingface_cache\n"
-    )
-    nested = (
-        "ENV HF_HOME=/data/cache/huggingface_cache\n"
-        "ENV HF_MODULES_CACHE=/data/cache/huggingface_cache/modules\n"
-    )
-    equal = (
-        "ENV HF_HOME=/data/cache/huggingface_cache\n"
-        "ENV HF_MODULES_CACHE=/data/cache/huggingface_cache\n"
-    )
+    good = "ENV HF_MODULES_CACHE=/var/cache/acx/hf_modules\nENV HF_HOME=/data/cache/huggingface_cache\n"
+    nested = "ENV HF_HOME=/data/cache/huggingface_cache\nENV HF_MODULES_CACHE=/data/cache/huggingface_cache/modules\n"
+    equal = "ENV HF_HOME=/data/cache/huggingface_cache\nENV HF_MODULES_CACHE=/data/cache/huggingface_cache\n"
     assert hf_modules_cache_outside_hf_home(good)
     assert not hf_modules_cache_outside_hf_home(nested)
     assert not hf_modules_cache_outside_hf_home(equal)
@@ -562,16 +542,8 @@ def test_discriminator_compose_tmpfs_path_and_service_scope(tmp_path: Path) -> N
     """Missing service tmpfs or wrong path fails modules_tmpfs_for_service."""
     good = {
         "services": {
-            "api": {
-                "tmpfs": [
-                    "/var/cache/acx/hf_modules:mode=0700,uid=10001,gid=10001,size=32m,noexec"
-                ]
-            },
-            "worker": {
-                "tmpfs": [
-                    "/var/cache/acx/hf_modules:mode=0700,uid=10001,gid=10001,size=32m,noexec"
-                ]
-            },
+            "api": {"tmpfs": ["/var/cache/acx/hf_modules:mode=0700,uid=10001,gid=10001,size=32m,noexec"]},
+            "worker": {"tmpfs": ["/var/cache/acx/hf_modules:mode=0700,uid=10001,gid=10001,size=32m,noexec"]},
         }
     }
     path = "/var/cache/acx/hf_modules"
@@ -617,7 +589,9 @@ volumes:
 # ---- wave-9 deploy-script behavioural gates (lane ol01-w9a) --------------
 
 
-def _source_and_run(script_body: str, env: dict[str, str] | None = None, timeout: int = 20) -> subprocess.CompletedProcess[str]:
+def _source_and_run(
+    script_body: str, env: dict[str, str] | None = None, timeout: int = 20
+) -> subprocess.CompletedProcess[str]:
     full = f'set -euo pipefail\nsource "{DEPLOY_SCRIPT}"\n{script_body}\n'
     run_env = {**os.environ, **(env or {})}
     return subprocess.run(
@@ -665,11 +639,26 @@ def test_ssh_identity_refuses_leading_dash() -> None:
 def test_ssh_invocations_use_l_and_double_dash() -> None:
     """S2-A-12: live ssh destinations must use -l user -- host (not user@host as host arg)."""
     script = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    # Join backslash continuations first. Checking physical lines let a wrapped
+    # invocation carry its `-l`/`--` on the next line and read as a violation,
+    # and would equally let a real `user@host` invocation hide behind a wrap.
+    logical_lines: list[str] = []
+    pending = ""
+    for raw in script.splitlines():
+        pending = f"{pending} {raw.strip()}" if pending else raw
+        if pending.rstrip().endswith("\\"):
+            pending = pending.rstrip()[:-1]
+            continue
+        logical_lines.append(pending)
+        pending = ""
+    if pending:
+        logical_lines.append(pending)
+
     # Allow display-only SSH_TARGET and rsync user@host:path.
     # Every `ssh ...` that used to pass "${SSH_TARGET}" as host must now use -l/--.
     ssh_lines = [
         ln
-        for ln in script.splitlines()
+        for ln in logical_lines
         if re.search(r"\bssh\b", ln)
         and not ln.strip().startswith("#")
         and "SSH_TARGET" not in ln  # display / rsync labels only
@@ -681,7 +670,7 @@ def test_ssh_invocations_use_l_and_double_dash() -> None:
         if "-l" in ln and "--" in ln:
             continue
         # Heredoc-less ssh should carry -l/-- when talking to the deploy host.
-        if "OCI_USER" in ln or "OCI_HOST" in ln or 'ssh -' in ln or 'ssh "' in ln:
+        if "OCI_USER" in ln or "OCI_HOST" in ln or "ssh -" in ln or 'ssh "' in ln:
             assert "-l" in ln and '"${OCI_USER}"' in ln and '"${OCI_HOST}"' in ln, (
                 f"ssh line must use -l/-- identity form: {ln}"
             )
@@ -715,9 +704,9 @@ def test_expected_image_variant_and_verify_parse(tmp_path: Path) -> None:
             "bash",
             "-c",
             f'export ACX_BUILD_TARGET=runtime-vlm; source "{DEPLOY_SCRIPT}"; '
-            'echo var=$(expected_image_variant); '
-            'echo from_repo=$(variant_from_image_repo iad.ocir.io/ns/acx-backend-vlm); '
-            'echo from_rec=$(variant_from_image_repo iad.ocir.io/ns/acx-backend)',
+            "echo var=$(expected_image_variant); "
+            "echo from_repo=$(variant_from_image_repo iad.ocir.io/ns/acx-backend-vlm); "
+            "echo from_rec=$(variant_from_image_repo iad.ocir.io/ns/acx-backend)",
         ],
         capture_output=True,
         text=True,
@@ -732,9 +721,7 @@ def test_expected_image_variant_and_verify_parse(tmp_path: Path) -> None:
     bindir = tmp_path / "bin"
     bindir.mkdir()
     health = {
-        "commit_sha": subprocess.check_output(
-            ["git", "-C", str(REPO_ROOT), "rev-parse", "HEAD"], text=True
-        ).strip(),
+        "commit_sha": subprocess.check_output(["git", "-C", str(REPO_ROOT), "rev-parse", "HEAD"], text=True).strip(),
         "image_variant": "vlm",  # mismatch vs recognition default
     }
     import json
@@ -766,7 +753,7 @@ def test_expected_image_variant_and_verify_parse(tmp_path: Path) -> None:
             "bash",
             "-c",
             f'source "{DEPLOY_SCRIPT}"; '
-            'verify_running_image_matches_deployed() { return 0; }; '
+            "verify_running_image_matches_deployed() { return 0; }; "
             "do_verify dev; echo rc=$?",
         ],
         env=env,
@@ -796,7 +783,15 @@ def test_verify_uses_local_resolve_when_expect_local(tmp_path: Path) -> None:
             # Prefer inspect/Image over ACX_IMAGE_REPO so a combined remote script
             # that mentions both still returns the running Config.Image value.
             case "$*" in
-              *Config.Image*|*docker*inspect*)
+              *Config.Image*)
+                echo "iad.ocir.io/idu2kqqe2jxy/acx-backend:latest"
+                ;;
+              *.Image*|*.Id*)
+                # Immutable-identity probes: the running container and the
+                # expected digest must resolve to the same image ID.
+                echo "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                ;;
+              *docker*inspect*)
                 echo "iad.ocir.io/idu2kqqe2jxy/acx-backend:latest"
                 ;;
               *ACX_IMAGE_REPO*)
@@ -823,7 +818,11 @@ def test_verify_uses_local_resolve_when_expect_local(tmp_path: Path) -> None:
         [
             "bash",
             "-c",
-            f'source "{DEPLOY_SCRIPT}"; verify_running_image_matches_deployed prod; echo rc=$?',
+            # The candidate digest is a script-owned fence (reset at source time),
+            # so it must be set after sourcing rather than through the environment.
+            f'source "{DEPLOY_SCRIPT}"; '
+            f'ACX_CANDIDATE_DIGEST_REF="${{ACX_IMAGE_REPO}}@sha256:deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"; '
+            "verify_running_image_matches_deployed prod; echo rc=$?",
         ],
         env=env,
         capture_output=True,
@@ -875,7 +874,7 @@ def test_converge_runtime_zero_refuses_drift() -> None:
                 preserve_rollback_tag() {{ :; }}
                 do_boot_smoke() {{ return 0; }}
                 runtime_in_sync() {{ return 1; }}
-                ACX_BOOT_SMOKE=0 ACX_CONVERGE_RUNTIME=0 promote_gate dev img:x
+                ACX_BOOT_SMOKE=0 ACX_CONVERGE_RUNTIME=0 promote_gate dev "${{IMAGE_BASE}}@sha256:deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
                 """
             ),
         ],
@@ -956,7 +955,7 @@ def test_deploy_mk_clear_image_repo_requires_confirm_for_prod() -> None:
     # makefile recipe body is fragile; assert the makefile contains the prod guard
     # AND the script-level gate also refuses.
     assert re.search(
-        r'ENV.*=.*prod.*CONFIRM.*PROMOTE|CONFIRM.*PROMOTE.*ENV.*=.*prod',
+        r"ENV.*=.*prod.*CONFIRM.*PROMOTE|CONFIRM.*PROMOTE.*ENV.*=.*prod",
         text,
         re.DOTALL,
     ) or ("ENV=prod" in text and "CONFIRM" in text and "PROMOTE" in text)
@@ -965,10 +964,7 @@ def test_deploy_mk_clear_image_repo_requires_confirm_for_prod() -> None:
         [
             "bash",
             "-c",
-            f'source "{DEPLOY_SCRIPT}"; '
-            'preflight_ssh() { :; }; '
-            'ssh() { :; }; '
-            "clear_remote_image_repo_env prod",
+            f'source "{DEPLOY_SCRIPT}"; preflight_ssh() {{ :; }}; ssh() {{ :; }}; clear_remote_image_repo_env prod',
         ],
         capture_output=True,
         text=True,
@@ -1142,7 +1138,7 @@ def test_verify_image_mismatch_returns_not_exits(tmp_path: Path) -> None:
             "bash",
             "-c",
             f'source "{DEPLOY_SCRIPT}"; '
-            'if ! verify_running_image_matches_deployed dev; then echo SURVIVED rc=$?; exit 0; fi; '
+            "if ! verify_running_image_matches_deployed dev; then echo SURVIVED rc=$?; exit 0; fi; "
             "echo UNEXPECTED_PASS",
         ],
         env=env,
@@ -1172,7 +1168,7 @@ def test_ship_remote_normalises_newline_and_uses_sudo(tmp_path: Path) -> None:
     # Fake ssh: record argv, map remote path to local env_file, run snippet with
     # a local `sudo` shim that just execs the rest.
     (bindir / "sudo").write_text(
-        "#!/bin/sh\nexec \"$@\"\n",
+        '#!/bin/sh\nexec "$@"\n',
         encoding="utf-8",
     )
     (bindir / "sudo").chmod(0o755)
@@ -1281,18 +1277,19 @@ def test_bare_verify_prefers_remote_image_repo(tmp_path: Path) -> None:
 def test_boot_smoke_requires_models_path() -> None:
     """S2-A-08: Gate 2 remote body must fail closed when ACX_MODELS_PATH is absent."""
     body = _fn_body(DEPLOY_SCRIPT.read_text(encoding="utf-8"), "do_boot_smoke")
-    assert "smoke requires ACX_MODELS_PATH" in body or (
-        "models_path" in body and "exit 1" in body
-    ), "do_boot_smoke must refuse empty ACX_MODELS_PATH"
-    # Must not silently skip the cache mount.
-    assert re.search(
-        r'\[\[ -z "\$\{models_path\}" \]\]',
-        body,
-    ) or "smoke requires ACX_MODELS_PATH" in body
-    # Unconditional :ro mount after the check (not only inside if -n).
-    assert "-v \"${models_path}:/data/cache:ro\"" in body or (
-        "models_path}:/data/cache:ro" in body
+    assert "smoke requires ACX_MODELS_PATH" in body or ("models_path" in body and "exit 1" in body), (
+        "do_boot_smoke must refuse empty ACX_MODELS_PATH"
     )
+    # Must not silently skip the cache mount.
+    assert (
+        re.search(
+            r'\[\[ -z "\$\{models_path\}" \]\]',
+            body,
+        )
+        or "smoke requires ACX_MODELS_PATH" in body
+    )
+    # Unconditional :ro mount after the check (not only inside if -n).
+    assert '-v "${models_path}:/data/cache:ro"' in body or ("models_path}:/data/cache:ro" in body)
 
 
 def test_vlm_smoke_timeout_default_is_image_aware() -> None:
@@ -1301,7 +1298,7 @@ def test_vlm_smoke_timeout_default_is_image_aware() -> None:
         [
             "bash",
             "-c",
-            f'export ACX_BUILD_TARGET=runtime-vlm; unset ACX_SMOKE_TIMEOUT; '
+            f"export ACX_BUILD_TARGET=runtime-vlm; unset ACX_SMOKE_TIMEOUT; "
             f'source "{DEPLOY_SCRIPT}"; resolve_smoke_timeout',
         ],
         capture_output=True,
@@ -1314,8 +1311,7 @@ def test_vlm_smoke_timeout_default_is_image_aware() -> None:
         [
             "bash",
             "-c",
-            f'export ACX_BUILD_TARGET=; unset ACX_SMOKE_TIMEOUT; '
-            f'source "{DEPLOY_SCRIPT}"; resolve_smoke_timeout',
+            f'export ACX_BUILD_TARGET=; unset ACX_SMOKE_TIMEOUT; source "{DEPLOY_SCRIPT}"; resolve_smoke_timeout',
         ],
         capture_output=True,
         text=True,
@@ -1328,7 +1324,7 @@ def test_vlm_smoke_timeout_default_is_image_aware() -> None:
         [
             "bash",
             "-c",
-            f'export ACX_BUILD_TARGET=runtime-vlm ACX_SMOKE_TIMEOUT=99; '
+            f"export ACX_BUILD_TARGET=runtime-vlm ACX_SMOKE_TIMEOUT=99; "
             f'source "{DEPLOY_SCRIPT}"; resolve_smoke_timeout',
         ],
         capture_output=True,
@@ -1456,6 +1452,4 @@ def test_repair_skips_chown_when_root_uid_matches(tmp_path: Path) -> None:
     logged = log.read_text()
     # Probe must run; recursive chown must not (marker only written if chown exec'd).
     assert "stat" in logged, logged
-    assert "CHOWN_RAN" not in logged, (
-        f"recursive chown must be skipped when uid matches:\n{logged}"
-    )
+    assert "CHOWN_RAN" not in logged, f"recursive chown must be skipped when uid matches:\n{logged}"

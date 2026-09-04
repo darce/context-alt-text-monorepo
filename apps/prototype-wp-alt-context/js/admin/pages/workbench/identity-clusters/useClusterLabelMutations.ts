@@ -10,12 +10,9 @@ import {
   mergeCluster,
   revertMergeCluster,
   updateClusterLabel,
+  type AcceptedMergeSuggestion,
   type MergeClusterResponse,
 } from '../../../api/recognition';
-// Deep type-only import: the barrel re-exports the function but not its result
-// type (see CROSS-LANE). Type-only, so it is erased and does not bypass the
-// module mock used in tests.
-import type { AcceptedMergeSuggestion } from '../../../api/recognition/identityActionsApi';
 import { getClusterMutationErrorMessage, isDeliberateCancelError } from './clusterMutationUtils';
 import { useOptionalMergeSurvivors } from './MergeSurvivorContext';
 import {

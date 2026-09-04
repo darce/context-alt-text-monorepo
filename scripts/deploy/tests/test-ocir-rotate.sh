@@ -82,7 +82,7 @@ done
 value=$(cat)
 if [ "${OCIR_TEST_PUT_FAIL_SECRET:-}" = "$secret_name" ]; then
     printf 'simulated %s write failure\n' "$secret_name" >&2
-    exit 70
+    exit "${OCIR_TEST_PUT_FAIL_RC:-70}"
 fi
 if [ "${OCIR_TEST_COMPENSATION_FAIL:-}" = 1 ] && \
     [ "$secret_name" = OCIR_AUTH_TOKEN ] && [ -s "$OCIR_TEST_PUT_LOG" ]; then
@@ -178,7 +178,8 @@ reset_case() {
     unset ACX_VAULT_FETCH_TIMEOUT OCIR_TEST_DOCKER_FAIL_AT OCIR_TEST_SSH_MODE \
         OCIR_TEST_STORED_USERNAME OCIR_TEST_USERNAME_SLEEP \
         OCIR_TEST_USERNAME_STDERR OCIR_TEST_DOCKER_STALL_AT \
-        OCIR_TEST_PUT_FAIL_SECRET OCIR_TEST_COMPENSATION_FAIL
+        OCIR_TEST_PUT_FAIL_SECRET OCIR_TEST_PUT_FAIL_RC \
+        OCIR_TEST_COMPENSATION_FAIL
 }
 
 run_rotate() {
@@ -209,6 +210,7 @@ run_rotate() {
         export OCIR_TEST_DOCKER_STALL_AT="${OCIR_TEST_DOCKER_STALL_AT:-}"
         export OCIR_TEST_SSH_MODE="${OCIR_TEST_SSH_MODE:-success}"
         export OCIR_TEST_PUT_FAIL_SECRET="${OCIR_TEST_PUT_FAIL_SECRET:-}"
+        export OCIR_TEST_PUT_FAIL_RC="${OCIR_TEST_PUT_FAIL_RC:-70}"
         export OCIR_TEST_COMPENSATION_FAIL="${OCIR_TEST_COMPENSATION_FAIL:-}"
         export OCIR_TEST_USERNAME_SLEEP="${OCIR_TEST_USERNAME_SLEEP:-}"
         export OCIR_TEST_USERNAME_STDERR="${OCIR_TEST_USERNAME_STDERR:-}"
@@ -393,6 +395,23 @@ assert_eq "second-write failure restores prior token" \
 OCIR_AUTH_TOKEN|120|${known_token}" "$(cat "$put_log")"
 assert_contains "successful compensation is reported" \
     'restored the prior OCIR_AUTH_TOKEN' "$rotate_stderr"
+
+# An exit-75 username write may have committed despite its lost response. Do
+# not blindly restore the old token: that would create old-token + new-user if
+# the write did commit. Preserve the known token state and give a recovery
+# command for the explicitly unknown pair.
+reset_case
+OCIR_TEST_PUT_FAIL_SECRET=OCIR_USERNAME
+OCIR_TEST_PUT_FAIL_RC=75
+run_rotate 'new-token' --set-username 'new-user' --skip-verify
+assert_eq "unknown username mutation preserves exit 75" 75 "$rotate_rc"
+assert_eq "unknown username mutation does not attempt unsafe compensation" \
+    'OCIR_AUTH_TOKEN|120|new-token' "$(cat "$put_log")"
+assert_contains "unknown username mutation names uncertain pair state" \
+    'UNKNOWN/INCONSISTENT: OCIR_AUTH_TOKEN and OCIR_USERNAME may represent different credential generations.' \
+    "$rotate_stderr"
+assert_contains "unknown username mutation gives exact recovery command" \
+    "scripts/deploy/ocir-token-rotate.sh --set-username 'new-user'" "$rotate_stderr"
 
 reset_case
 OCIR_TEST_PUT_FAIL_SECRET=OCIR_USERNAME

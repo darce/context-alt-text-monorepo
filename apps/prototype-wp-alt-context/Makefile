@@ -1,4 +1,4 @@
-.PHONY: help check fix format lint typecheck arch test test-watch check-php php-cs php-cs-fix php-test phpstan mcp projection-reset localwp-link localwp-verify-activation localwp-mirror-integrity localwp-batch-run-smoke localwp-describe-run-smoke localwp-description-cli-smoke gate-package worker-daemon _js-deps _php-deps FORCE
+.PHONY: help check fix format lint lint-fix typecheck arch test test-watch check-php php-cs php-cs-fix php-test phpstan mcp projection-reset localwp-link localwp-verify-activation localwp-mirror-integrity localwp-batch-run-smoke localwp-describe-run-smoke localwp-description-cli-smoke gate-package worker-daemon _js-deps _php-deps FORCE
 
 NPM ?= corepack npm
 
@@ -31,10 +31,25 @@ check: _js-deps
 	@$(MAKE) php-test
 	@$(MAKE) check-php
 
+# LINTGATE1-NEW-02: `npm run lint:fix` is deliberately NOT part of this target.
+# Only 25 eslint violations are autofixable, but they include
+# @typescript-eslint/no-unnecessary-type-assertion and
+# non-nullable-type-assertion-style, which strip assertions that type inference
+# depends on. Applying them collapses those expressions to `any` and detonates
+# the no-unsafe-* family: measured 77 -> 6,139 problems via
+# `eslint . --fix-dry-run -f json`. Prettier (`format:fix`) is safe -- it never
+# edits types. Run `make lint-fix` if you explicitly want the eslint autofixer.
 format: _js-deps
-	@$(NPM) run lint:fix
 	@$(NPM) run format:fix
 	@$(MAKE) php-cs-fix
+
+# Opt-in only. See the LINTGATE1-NEW-02 note on `format` before running this:
+# it can take the tree from 77 to ~6,139 eslint problems in one invocation.
+lint-fix: _js-deps
+	@echo "WARNING: eslint --fix strips type assertions and has measured 77 -> 6,139 problems."
+	@echo "Review the diff before committing. Ctrl-C within 5s to abort."
+	@sleep 5
+	@$(NPM) run lint:fix
 
 fix: format check
 

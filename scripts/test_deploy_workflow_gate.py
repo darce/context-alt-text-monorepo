@@ -58,6 +58,7 @@ def test_push_paths_cover_the_gate_inputs() -> None:
     triggers = workflow.get("on", workflow.get(True, {}))
     paths = triggers["push"]["paths"]
 
+    assert "scripts/test_deploy_workflow_gate.py" in paths
     assert "scripts/test_ocirv1_vault_readiness.py" in paths
     assert "scripts/deploy/tests/**" in paths
     assert "Makefile" in paths

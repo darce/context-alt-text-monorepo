@@ -17,6 +17,7 @@ on:
     paths:
       - "apps/prototype-description-service/**"
       - "scripts/deploy/**"
+      - "scripts/test_deploy_workflow_gate.py"
       - "scripts/test_ocirv1_vault_readiness.py"
       - "scripts/deploy/tests/**"
       - "Makefile"

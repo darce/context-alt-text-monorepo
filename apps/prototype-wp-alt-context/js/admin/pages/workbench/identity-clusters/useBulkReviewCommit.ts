@@ -676,7 +676,7 @@ export const useBulkReviewCommit = ({
     })();
     initiatePromiseRef.current = run;
     await run;
-  }, [clearBulkInitiateLatch, dropFromSelection, itemsAreApprovalBlocked, openBulkHold]);
+  }, [clearBulkInitiateLatch, dropFromSelection, isBulkActiveRef, itemsAreApprovalBlocked, openBulkHold]);
 
   const initiateBulkFromItems = React.useCallback(
     async (items: readonly BulkCommitItem[]): Promise<void> => {
@@ -738,7 +738,7 @@ export const useBulkReviewCommit = ({
       initiatePromiseRef.current = run;
       await run;
     },
-    [clearBulkInitiateLatch, dropFromSelection, itemsAreApprovalBlocked, openBulkHold],
+    [clearBulkInitiateLatch, dropFromSelection, isBulkActiveRef, itemsAreApprovalBlocked, openBulkHold],
   );
 
   const undoBulk = React.useCallback((): void => {

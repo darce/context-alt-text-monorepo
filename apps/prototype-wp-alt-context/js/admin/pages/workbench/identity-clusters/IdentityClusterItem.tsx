@@ -91,6 +91,10 @@ export const IdentityClusterItem = ({
   const [matchedCluster, setMatchedCluster] = React.useState<{ id: string; label: string } | null>(null);
   const saveAbortRef = React.useRef<AbortController | null>(null);
   const matchAbortRef = React.useRef<AbortController | null>(null);
+  // FEBT2-W2-LANE-04: the undo owns its own controller rather than sharing saveAbortRef —
+  // a revert is not a save, and one ref for two lifetimes would let a new save silently
+  // cancel an in-flight undo (DOM-03, lexicons/engineering.md:528).
+  const revertAbortRef = React.useRef<AbortController | null>(null);
 
   const queryClient = useQueryClient();
   const { saveStatus, resetSaveStatus, queueSaveStatus, markSaveSuccess } = useClusterSaveStatus();
@@ -166,12 +170,14 @@ export const IdentityClusterItem = ({
   });
 
   const bindToRosterEntry = React.useCallback(
-    (rosterEntryId: number, label: string, _signal?: AbortSignal) => {
+    (rosterEntryId: number, label: string, signal?: AbortSignal) => {
       if (!editableClusterId) {
         handleMutationError(__('Cannot bind this person: missing group.', 'alt-context'));
         return;
       }
-      void commitClusterToRosterEntry({ clusterId: editableClusterId, rosterEntryId })
+      // FEBT1-LC-01 / RES-04: the caller's deadline supplies this signal; dropping it would
+      // abandon the caller while the POST kept running server-side.
+      void commitClusterToRosterEntry({ clusterId: editableClusterId, rosterEntryId }, signal)
         .then(() => {
           void queryClient.invalidateQueries({ queryKey: queryKeys.media.identities() });
           void queryClient.invalidateQueries({ queryKey: queryKeys.clusters.labels() });
@@ -215,10 +221,32 @@ export const IdentityClusterItem = ({
     saveAbortRef,
   });
 
+  /**
+   * FEBT2-W2-LANE-04: `revertMerge` has accepted a signal since FEBT2-W2-R-01, but the undo
+   * button supplied none, so a superseded undo could still commit and its onSuccess still
+   * invalidate caches for an outcome the operator had moved past (RES-10 fencing,
+   * lexicons/engineering.md:121). Each press fences the previous one.
+   *
+   * `lastMerge` is read into a local instead of asserted non-null at the call site: the
+   * banner's render guard is not a type-level guarantee, and a non-null assertion on state
+   * is exactly the internal-invariant-by-`!` this repo forbids (sr-005).
+   */
+  const handleUndoMerge = React.useCallback(() => {
+    const payload = editState.lastMerge;
+    if (!payload) {
+      return;
+    }
+    revertAbortRef.current?.abort();
+    const controller = new AbortController();
+    revertAbortRef.current = controller;
+    mutations.revertMerge(payload, controller.signal);
+  }, [editState.lastMerge, mutations]);
+
   React.useEffect(() => {
     return () => {
       saveAbortRef.current?.abort();
       matchAbortRef.current?.abort();
+      revertAbortRef.current?.abort();
     };
   }, []);
 
@@ -404,7 +432,7 @@ export const IdentityClusterItem = ({
         <MergeUndoBanner
           mergeResult={editState.lastMerge}
           isReverting={mutations.isReverting}
-          onUndo={() => mutations.revertMerge(editState.lastMerge!)}
+          onUndo={handleUndoMerge}
         />
       )}
 

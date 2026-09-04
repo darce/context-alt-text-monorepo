@@ -316,12 +316,21 @@ describe('AppError tags / mutant-killing pins [TEST-15]', () => {
     }
   });
 
-  it('DOMException/Error named TimeoutError classify as timeout (M5 / FEBT1-W2A-05)', () => {
+  // FEBT1-W2A-05: strengthened, not relaxed. This used to assert TimeoutError
+  // === 'abort', collapsing "the caller withdrew" with "the deadline elapsed".
+  // It now pins the *distinction*, which is a strictly stronger claim: the two
+  // inputs must land on two different tags, and the old assertion cannot pass.
+  it('TimeoutError classifies as timeout, AbortError as abort — never collapsed (M5)', () => {
     const timedOut = new DOMException('The operation timed out.', 'TimeoutError');
     expect(isAbortOrTimeoutName(timedOut)).toBe(true);
     expect(classifyError(timedOut)._tag).toBe('timeout');
     const named = Object.assign(new Error('timed out'), { name: 'TimeoutError' });
     expect(classifyError(named)._tag).toBe('timeout');
+    expect(classifyError(named).message).toBe('timed out');
+
+    const cancelled = new DOMException('The user aborted a request.', 'AbortError');
+    expect(classifyError(cancelled)._tag).toBe('abort');
+    expect(classifyError(timedOut)._tag).not.toBe(classifyError(cancelled)._tag);
   });
 
   it('Error-instance AbortError classifies as abort (M6)', () => {
@@ -337,15 +346,26 @@ describe('AppError tags / mutant-killing pins [TEST-15]', () => {
     expect(classifyError(error).message).toBe('boom: Failed to fetch');
   });
 
-  it('any TypeError classifies as transport (M8 / F5 parity)', () => {
-    const error = new TypeError('x is not a function');
-    expect(classifyError(error)._tag).toBe('transport');
-    expect(classifyError(error).message).toBe('x is not a function');
-    expect(classifyError(new TypeError('Failed to fetch'))._tag).toBe('transport');
-    expect(classifyError(new TypeError('Load failed'))._tag).toBe('transport');
-    expect(classifyError(new TypeError('NetworkError when attempting to fetch resource'))._tag).toBe(
-      'transport',
-    );
+  // FEBT-1-W1-E-05: strengthened, not relaxed. The old pin ("any TypeError is
+  // transport") made every programming bug retryable, so `x is not a function`
+  // was re-issued three times. The replacement keeps every genuine fetch
+  // network-failure message on 'transport' (each browser's wording is pinned
+  // explicitly, so narrowing the list cannot pass) and additionally requires a
+  // non-network TypeError to be 'unknown'.
+  it('fetch network-failure TypeErrors are transport; a bug TypeError is not (M8 / F5)', () => {
+    for (const message of [
+      'Failed to fetch',
+      'Load failed',
+      'NetworkError when attempting to fetch resource',
+      'Network request failed',
+      'fetch failed',
+    ]) {
+      expect(classifyError(new TypeError(message))._tag).toBe('transport');
+    }
+
+    const bug = new TypeError('x is not a function');
+    expect(classifyError(bug)._tag).toBe('unknown');
+    expect(classifyError(bug).message).toBe('x is not a function');
   });
 
   it("empty string classifies as unknown with 'Unknown error' (M9)", () => {

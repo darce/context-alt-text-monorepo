@@ -74,7 +74,7 @@ describe('every routed page heading matches its admin menu label (glossary Rule 
     const pageSource = readFileSync(pageFilePath, 'utf8');
 
     const headingTexts = [...pageSource.matchAll(H1_BLOCK)].map((match) => {
-      const labelMatch = match[1].match(H1_LABEL_TEXT);
+      const labelMatch = H1_LABEL_TEXT.exec(match[1]);
       return labelMatch ? labelMatch[1] : match[1].trim();
     });
 

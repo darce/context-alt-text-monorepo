@@ -1,5 +1,45 @@
-import { getNonce, isNonceRefreshAuthRejection, NonceRefreshFailedError, refreshRestNonce } from '../api/config';
-import { classifyError, isAppError } from './appError';
+import { getNonce, refreshRestNonce } from '../api/config';
+import {
+  AbortedRequestError,
+  abortLikeTag,
+  AuthExpiredError,
+  BoundaryError,
+  HTTPError,
+  isAbortOrTimeoutName,
+  isNonceRefreshAuthRejection,
+  isTaggedNonceRefreshError,
+  NonceRefreshFailedError,
+  RequestTimeoutError,
+  ResponseParseError,
+  toNonceRefreshError,
+  TransportError,
+  UnknownBoundaryError,
+} from './errorTaxonomy';
+
+/**
+ * The error vocabulary lives in the leaf module `./errorTaxonomy` so this
+ * module's import graph is a DAG (FEBT2-LA-NEW-01; GRPH-02
+ * lexicons/graph-theory.md:72). It is re-exported from here unchanged:
+ * `utils/http` stays the published home of the boundary-error surface, so no
+ * call site outside these two files moved.
+ */
+export {
+  ABORT_LIKE_ERROR_NAME_TAGS,
+  AbortedRequestError,
+  abortLikeTag,
+  AuthExpiredError,
+  BoundaryError,
+  HTTPError,
+  isAbortOrTimeoutName,
+  isNonceRefreshAuthRejection,
+  NonceRefreshError,
+  NonceRefreshFailedError,
+  RequestTimeoutError,
+  ResponseParseError,
+  toNonceRefreshError,
+  TransportError,
+  UnknownBoundaryError,
+} from './errorTaxonomy';
 
 /** Backstop deadline when a caller does not pass `timeoutMs` (RES-02). */
 export const DEFAULT_FETCH_TIMEOUT_MS = 300_000;
@@ -13,99 +53,22 @@ export interface HTTPOptions {
   timeoutMs?: number;
 }
 
-export class HTTPError extends Error {
-  readonly _tag = 'http' as const;
-  readonly status: number;
-  readonly retryAfterSeconds: number | undefined;
-  readonly endpoint: string;
-  readonly bodyPreview: string;
-  readonly cause: unknown;
-
-  constructor({
-    status,
-    retryAfterSeconds,
-    endpoint,
-    bodyPreview,
-    message,
-  }: {
-    status: number;
-    retryAfterSeconds: number | undefined;
-    endpoint: string;
-    bodyPreview: string;
-    message: string;
-  }) {
-    super(message);
-    this.name = 'HTTPError';
-    this.status = status;
-    this.retryAfterSeconds = retryAfterSeconds;
-    this.endpoint = endpoint;
-    this.bodyPreview = bodyPreview;
-    this.cause = undefined;
-  }
-
-  get retryAfterMs(): number | undefined {
-    return this.retryAfterSeconds === undefined ? undefined : this.retryAfterSeconds * 1000;
-  }
-}
-
-export class ResponseParseError extends Error {
-  readonly _tag = 'parse' as const;
-  readonly status: number;
-  readonly endpoint: string;
-  readonly bodyPreview: string;
-  readonly cause: unknown;
-
-  constructor({
-    status,
-    endpoint,
-    bodyPreview,
-    message,
-  }: {
-    status: number;
-    endpoint: string;
-    bodyPreview: string;
-    message: string;
-  }) {
-    super(message);
-    this.name = 'ResponseParseError';
-    this.status = status;
-    this.endpoint = endpoint;
-    this.bodyPreview = bodyPreview;
-    this.cause = undefined;
-  }
-}
-
-/**
- * Session/auth expiry (nonce-403 after refresh failure, or rest_not_logged_in).
- * Not an HTTPError subclass — surfaces distinct recovery UI (Slice 3).
- */
-export class AuthExpiredError extends Error {
-  readonly _tag = 'auth_expired' as const;
-  readonly endpoint: string;
-  readonly status: 401 | 403;
-  readonly cause: unknown;
-
-  constructor({ endpoint, status, message }: { endpoint: string; status: 401 | 403; message?: string }) {
-    super(message ?? `Authentication expired for ${endpoint} (${status}).`);
-    this.name = 'AuthExpiredError';
-    this.endpoint = endpoint;
-    this.status = status;
-    this.cause = undefined;
-  }
-}
-
 /**
  * Parse Retry-After header value to delay seconds.
  * Accepts delta-seconds or HTTP-date; never returns NaN.
  *
- * An HTTP-date that is already in the past (or exactly now) carries no wait
- * instruction and is reported as absent, not as `0`. Returning `0` would both
- * mark the error as a cooldown and collapse retry backoff to an immediate
- * hot loop against a server that is already struggling (Release It! ch-5:
- * "immediate retry will usually fail again"; retry storm / thundering herd).
- * The comparison is wall-clock on both sides, so a client whose clock runs
- * ahead of the server's degrades to plain exponential backoff rather than to
- * a zero-delay loop (DDIA ch-8: never derive a duration from wall clocks).
+ * A value that carries no wait instruction is reported as absent, not as `0` —
+ * for the HTTP-date route that means a date at or before now, and for the
+ * delta-seconds route it means a literal `Retry-After: 0` (FEBT1-LB-01: only
+ * the date route was closed, so a load-shedding server sending `Retry-After: 0`
+ * was still hammered immediately by every client at once, in lockstep).
+ * Returning `0` would both mark the error as a cooldown and collapse retry
+ * backoff to an immediate hot loop against a server that is already struggling
+ * (Release It! ch-5: "immediate retry will usually fail again"; retry storm /
+ * thundering herd). The date comparison is wall-clock on both sides, so a client
+ * whose clock runs ahead of the server's degrades to plain exponential backoff
+ * rather than to a zero-delay loop (DDIA ch-8: never derive a duration from
+ * wall clocks).
  */
 export const parseRetryAfter = (value: string | null): number | undefined => {
   if (value === null) {
@@ -117,7 +80,7 @@ export const parseRetryAfter = (value: string | null): number | undefined => {
   }
   if (/^\d+$/.test(trimmed)) {
     const seconds = Number(trimmed);
-    if (Number.isFinite(seconds) && seconds >= 0) {
+    if (Number.isFinite(seconds) && seconds > 0) {
       return seconds;
     }
     return undefined;
@@ -191,18 +154,51 @@ const throwIfAborted = (signal: AbortSignal | undefined): void => {
   }
 };
 
-const ABORT_LIKE_NAMES = new Set(['AbortError', 'TimeoutError']);
-
 /**
- * Local duck-type rather than an `appError` import: `appError` imports this
- * module, and a cycle here would be resolved at module-init time.
+ * Normalise anything thrown inside `fetchApi` into a tagged boundary error.
+ *
+ * This is the single place that closes the boundary (FEBT1-W2A-01): after it,
+ * `isAppError(thrown)` holds for every rejection `fetchApi` can produce, so a
+ * caller that forgets `classifyError` still sees a tagged error rather than a
+ * raw wire error. Deliberately *not* `classifyError` itself — `appError`
+ * imports this module, and calling into it here would resolve the cycle at
+ * module-init time (FEBT1-LB-03 (a)).
  */
-const isAbortLikeError = (error: unknown): boolean => {
-  if (typeof error !== 'object' || error === null) {
-    return false;
+const toBoundaryError = (error: unknown): unknown => {
+  if (error instanceof BoundaryError || isTaggedNonceRefreshError(error)) {
+    return error;
   }
-  const name: unknown = (error as { name?: unknown }).name;
-  return typeof name === 'string' && ABORT_LIKE_NAMES.has(name);
+  if (error instanceof NonceRefreshFailedError) {
+    return toNonceRefreshError(error);
+  }
+  const abortTag = abortLikeTag(error);
+  if (abortTag !== undefined) {
+    const message = errorMessage(error);
+    return abortTag === 'timeout'
+      ? new RequestTimeoutError(error, message)
+      : new AbortedRequestError(error, message);
+  }
+  // Per the Fetch spec a network failure rejects with a TypeError. Inside
+  // fetchApi the only call that can reject that way is `fetch` itself, so the
+  // tag is earned by provenance rather than by sniffing the browser's message
+  // (FEBT-1-W1-E-05).
+  if (error instanceof TypeError) {
+    return new TransportError(error, error.message);
+  }
+  return new UnknownBoundaryError(error, errorMessage(error));
+};
+
+const errorMessage = (error: unknown): string => {
+  if (error instanceof Error) {
+    return error.message;
+  }
+  if (typeof error === 'object' && error !== null) {
+    const message: unknown = (error as { message?: unknown }).message;
+    if (typeof message === 'string') {
+      return message;
+    }
+  }
+  return 'Request failed.';
 };
 
 /**
@@ -217,7 +213,7 @@ const isAbortLikeError = (error: unknown): boolean => {
  * is a real verdict and stays session expiry.
  */
 const isIndeterminateRefreshFailure = (error: unknown): boolean => {
-  if (isAbortLikeError(error)) {
+  if (isAbortOrTimeoutName(error)) {
     return true;
   }
   // Only a WP logged-out sentinel is a real verdict: `causeStatus` 401/403, or an
@@ -229,38 +225,6 @@ const isIndeterminateRefreshFailure = (error: unknown): boolean => {
 
 const abortReason = (reason: unknown): DOMException =>
   reason instanceof DOMException ? reason : new DOMException('The operation was aborted.', 'AbortError');
-
-const duckTypeName = (value: unknown): string | undefined => {
-  if (typeof value !== 'object' || value === null) {
-    return undefined;
-  }
-  const name = (value as { name?: unknown }).name;
-  return typeof name === 'string' ? name : undefined;
-};
-
-/**
- * Close the fetch boundary: every thrown value is instanceof Error AND isAppError.
- * jsdom's DOMException is not an Error subclass, so abort/timeout must be wrapped
- * rather than rethrown raw (FEBT1-W2A-01). Do not `throw classifyError(err)` —
- * that is a plain object and would destroy the stack.
- */
-const throwAsAppError = (error: unknown): never => {
-  if (error instanceof Error && isAppError(error)) {
-    throw error;
-  }
-  const classified = classifyError(error);
-  if (error instanceof Error) {
-    Object.assign(error, classified);
-    throw error;
-  }
-  const wrapped = new Error(classified.message);
-  const name = duckTypeName(error);
-  if (name !== undefined) {
-    wrapped.name = name;
-  }
-  Object.assign(wrapped, classified);
-  throw wrapped;
-};
 
 const resolveTimeoutMs = (timeoutMs: number | undefined): number => {
   if (timeoutMs === undefined || !Number.isFinite(timeoutMs) || timeoutMs <= 0) {
@@ -431,7 +395,8 @@ export const fetchApi = async <T>(endpoint: string, options: HTTPOptions = {}): 
     // All other statuses: byte-identical to pre-UXP-NET-2 behaviour.
     throwHttpError(endpoint, response.status, errorText, retryAfterHeader);
   } catch (error) {
-    throwAsAppError(error);
+    // The one exit through which every fetchApi rejection passes.
+    throw toBoundaryError(error);
   } finally {
     timeout.cancel();
   }
@@ -443,7 +408,8 @@ export const fetchApi = async <T>(endpoint: string, options: HTTPOptions = {}): 
 export const fetchRequiredApi = async <T>(endpoint: string, options: HTTPOptions = {}): Promise<T> => {
   const payload = await fetchApi<T>(endpoint, options);
   if (payload === undefined) {
-    return throwAsAppError(new Error(`Request to ${endpoint} succeeded but returned an empty response body.`));
+    const message = `Request to ${endpoint} succeeded but returned an empty response body.`;
+    throw new UnknownBoundaryError(undefined, message);
   }
   return payload;
 };

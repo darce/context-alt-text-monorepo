@@ -1080,7 +1080,7 @@ describe('banned vocabulary across js/admin pages', () => {
         (button) => button.textContent === 'Remove from group',
       );
       expect(remove, 'identity-cluster-item fixture must render the remove control').toBeTruthy();
-      fireEvent.click(remove as HTMLButtonElement);
+      fireEvent.click(remove!);
     }
     if (state === 'queue-empty') {
       await waitFor(() => {

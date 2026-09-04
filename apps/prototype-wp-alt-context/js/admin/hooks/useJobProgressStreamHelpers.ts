@@ -5,6 +5,14 @@ import { isScanSuccessStatus } from './jobStateMachineUtils';
 
 interface SseProgressFields {
   phase?: 'queued' | 'detecting' | 'clustering' | 'retrying' | 'awaiting_projection' | 'failed' | 'complete';
+  /**
+   * Real per-item failure count from the producer. `build_stream_progress_payload()` in
+   * class-job-progress-stream-service.php emits `items_failed` (absint) on both the
+   * progress and the done frame; it is the only wire source for the count that *defines*
+   * `completed_with_errors` (FEBT1-LA-03).
+   */
+  items_failed?: number;
+  failure_reason?: string;
   images_processed?: number;
   faces_found?: number;
   clusters_created?: number;
@@ -26,6 +34,18 @@ interface DoneEventData<TStatus extends string> extends SseProgressFields {
   total?: number;
 }
 
+/**
+ * Why a frame could not be turned into state. A malformed frame on the wire (`json`) and a
+ * producer/consumer contract drift (`schema`) have different operational meanings and
+ * different owners, so they must be distinguishable in the logs (FEBT1-LA-04, OBS-02).
+ * Tagged-union failure classification ported from utils/appError.ts:37 (`_tag`).
+ */
+export type ProgressParseFailureReason = 'json' | 'schema';
+
+export type ParsedProgressEvent<TStatus extends string> =
+  | { readonly ok: true; readonly progress: JobProgress; readonly status: TStatus; readonly etaSeconds: number | null }
+  | { readonly ok: false; readonly reason: ProgressParseFailureReason };
+
 const parseJson = <T>(payload: string): T | null => {
   try {
     return JSON.parse(payload) as T;
@@ -33,6 +53,10 @@ const parseJson = <T>(payload: string): T | null => {
     return null;
   }
 };
+
+/** sr-005: untrusted wire counts must be finite non-negative numbers before they reach state. */
+const asCount = (value: unknown): number | undefined =>
+  typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : undefined;
 
 const calcEtaSeconds = (elapsedMs: number, completed: number, total: number): number | null => {
   if (completed <= 0 || completed >= total) {
@@ -76,10 +100,10 @@ const copyOptionalProgressFields = (data: SseProgressFields, progress: JobProgre
 export const parseProgressEvent = <TStatus extends string>(
   payload: string,
   startTimeRef: MutableRefObject<number | null>,
-): { progress: JobProgress; status: TStatus; etaSeconds: number | null } | null => {
+): ParsedProgressEvent<TStatus> => {
   const data = parseJson<ProgressEventData<TStatus>>(payload);
   if (!data) {
-    return null;
+    return { ok: false, reason: 'json' };
   }
 
   // Validate the untrusted SSE boundary (sr-005): a malformed/schema-evolved event with
@@ -91,7 +115,7 @@ export const parseProgressEvent = <TStatus extends string>(
     typeof data.total !== 'number' ||
     !Number.isFinite(data.total)
   ) {
-    return null;
+    return { ok: false, reason: 'schema' };
   }
 
   const now = Date.now();
@@ -107,17 +131,23 @@ export const parseProgressEvent = <TStatus extends string>(
       ? calcEtaSeconds(now - startTimeRef.current, data.completed, data.total)
       : null;
 
-  return { progress, status: data.status, etaSeconds };
+  return { ok: true, progress, status: data.status, etaSeconds };
 };
 
 export const parseDoneEvent = <TStatus extends string>(
   payload: string,
   latestProgress: JobProgress | null,
-): { progress: JobProgress | null; status: TStatus } | null => {
+): { progress: JobProgress | null; status: TStatus; failedCount?: number } | null => {
   const data = parseJson<DoneEventData<TStatus>>(payload);
   if (!data) {
     return null;
   }
+
+  // Present only when the producer sent it: an absent `items_failed` must stay absent
+  // rather than becoming a fabricated 0 (rg-015, FEBT1-W2D-05).
+  const failedCount = asCount(data.items_failed);
+  const withFailedCount = <T extends object>(result: T): T & { failedCount?: number } =>
+    failedCount === undefined ? result : { ...result, failedCount };
 
   if (typeof data.completed === 'number' && typeof data.total === 'number') {
     const progress: JobProgress = {
@@ -125,20 +155,20 @@ export const parseDoneEvent = <TStatus extends string>(
       total: data.total,
     };
     copyOptionalProgressFields(data, progress);
-    return { progress, status: data.status };
+    return withFailedCount({ progress, status: data.status });
   }
 
   if (latestProgress && isScanSuccessStatus(data.status)) {
-    return {
+    return withFailedCount({
       progress: {
         completed: latestProgress.total,
         total: latestProgress.total,
       },
       status: data.status,
-    };
+    });
   }
 
-  return { progress: latestProgress, status: data.status };
+  return withFailedCount({ progress: latestProgress, status: data.status });
 };
 
 export const broadcastJobProgress = <TStatus extends string>(

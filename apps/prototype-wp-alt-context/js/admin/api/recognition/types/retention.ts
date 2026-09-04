@@ -27,10 +27,21 @@ export interface UpdateRetentionPolicyRequest {
   retention_mode: RetentionMode;
 }
 
+/**
+ * Normalized result of `downloadExportJobData`.
+ *
+ * `schema_version` is required: the adapter rejects any snapshot without an
+ * integer `schema_version` (`retentionApi.ts` `normalizeExportResponse`), so a
+ * value of this type always carries one. Leaving it optional pushed a null-guard
+ * onto every consumer for a case the boundary makes unrepresentable (ARCH-13).
+ * `tenant_id` / `exported_at` stay optional — the snapshot genuinely may omit
+ * them and the normalizer passes that absence through rather than inventing a
+ * value (rg-015).
+ */
 export interface RetentionExportResponse {
   tenant_id?: string;
   exported_at?: string;
-  schema_version?: number;
+  schema_version: number;
   payload: Record<string, unknown>;
   summary: Record<string, number>;
 }

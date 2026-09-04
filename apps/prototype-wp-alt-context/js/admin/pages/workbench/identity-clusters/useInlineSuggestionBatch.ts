@@ -40,6 +40,12 @@ export interface InlineSuggestionBatchResult {
  */
 export const useInlineSuggestionBatch = (identityIds: string[]): InlineSuggestionBatchResult => {
   const queryClient = useQueryClient();
+  // WHY the disable: the rule wants every queryFn dependency mirrored into queryKey, but the only
+  // uncovered one is `queryClient` — a provider-scoped singleton used here purely to seed sibling
+  // cache entries. It is not an input to the request, and serialising a client instance into a cache
+  // key would fragment the cache on client identity rather than on data. `identityIds`, the real
+  // request input, is already in the key.
+  // eslint-disable-next-line @tanstack/query/exhaustive-deps
   const { data, isLoading } = useQuery<IdentityBatchSuggestionsResponse>({
     queryKey: queryKeys.suggestions.projection.identityBatch(identityBatchIdsKey(identityIds)),
     queryFn: async () => {

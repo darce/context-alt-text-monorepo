@@ -39,7 +39,7 @@ const baseItem: WorkbenchMediaItem = {
   identities: [],
 };
 
-type QuerySurface = {
+interface QuerySurface {
   data?: { identities_by_media: Record<string, DetectedIdentity[]>; data_source?: string } | undefined;
   isLoading: boolean;
   isError: boolean;
@@ -48,7 +48,7 @@ type QuerySurface = {
   isPending?: boolean;
   error?: unknown;
   refetch: () => void;
-};
+}
 
 let identitiesSurface: QuerySurface;
 let detailSurface: QuerySurface;

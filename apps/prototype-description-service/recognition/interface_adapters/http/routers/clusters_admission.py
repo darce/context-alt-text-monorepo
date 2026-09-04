@@ -58,6 +58,12 @@ from recognition.shared.ids import generate_id
 
 _logger = logging.getLogger(__name__)
 
+# SEC-01 / API-05: the caller is on the untrusted side of this boundary. A server
+# fault is logged in full server-side and reported outward as this fixed string;
+# clustering-service exception text (DB driver messages, SQL fragments, absolute
+# paths) never crosses.
+INTERNAL_ERROR_DETAIL = "internal server error"
+
 # E15-3a-BR-21 Slice 2: admission fail-fast queries. Documented on the probe
 # helper below. The defaults used for the default statement_timeout restore
 # are pulled from db.settings (DB_STATEMENT_TIMEOUT) so this stays in sync
@@ -226,7 +232,10 @@ async def create_clustering_job(
                 result = await cluster_service.cluster_unclustered_identities(request.tenant_id)
             except Exception as exc:
                 _admission_status = status.HTTP_500_INTERNAL_SERVER_ERROR
-                raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)) from exc
+                _logger.exception("Sync clustering failed for tenant %s", request.tenant_id)
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=INTERNAL_ERROR_DETAIL
+                ) from exc
             finished_at = getattr(result, "finished_at", None)
             completed = getattr(result, "completed", 0)
             total = getattr(result, "total", 0)
@@ -350,7 +359,8 @@ async def recover_orphan_identities(
     try:
         result = await cluster_service.cluster_unclustered_identities(request.tenant_id)
     except Exception as exc:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)) from exc
+        _logger.exception("Orphan recovery failed for tenant %s", request.tenant_id)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=INTERNAL_ERROR_DETAIL) from exc
 
     return OrphanRecoveryResponse(
         orphans_found=int(getattr(result, "total", 0) or 0),

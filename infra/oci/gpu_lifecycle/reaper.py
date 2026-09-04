@@ -836,15 +836,19 @@ def run_reap_cycle(
             )
             for instance in instances
         ]
+        snapshot_instance_id = _snapshot_instance_id(post_actuation_instances)
         state = state_for_instances(
             [instance.state for instance in post_actuation_instances],
-            previous_state=read_previous_gpu_state(gpu_state_path),
+            previous_state=read_previous_gpu_state(
+                gpu_state_path,
+                expected_instance_id=snapshot_instance_id,
+            ),
         )
         if result.errors:
             state = GpuLifecycleState.DEGRADED
         write_gpu_state_snapshot(
             state,
-            instance_id=_snapshot_instance_id(post_actuation_instances),
+            instance_id=snapshot_instance_id,
             reason=_state_reason(
                 state,
                 instances=post_actuation_instances,
@@ -1011,6 +1015,7 @@ def run_start_cycle(
     if dry_run:
         return result
     with _serialized_gpu_state_publish(gpu_state_path):
+        snapshot_instance_id = _snapshot_instance_id(instances)
         if result.fallbacks:
             state = GpuLifecycleState.DEGRADED
         elif result.wait_result is not None and result.wait_result.ready:
@@ -1022,12 +1027,15 @@ def run_start_cycle(
         else:
             state = state_for_instances(
                 [instance.state for instance in instances],
-                previous_state=read_previous_gpu_state(gpu_state_path),
+                previous_state=read_previous_gpu_state(
+                    gpu_state_path,
+                    expected_instance_id=snapshot_instance_id,
+                ),
             )
         fallback_reason = result.fallbacks[0].reason if result.fallbacks else None
         write_gpu_state_snapshot(
             state,
-            instance_id=_snapshot_instance_id(instances),
+            instance_id=snapshot_instance_id,
             reason=_state_reason(
                 state,
                 instances=instances,

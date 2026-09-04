@@ -94,10 +94,9 @@ def test_run_reap_cycle_never_stops_fenced_batch() -> None:
 
 def test_partial_stop_publishes_state_of_still_running_instance(tmp_path: Path) -> None:
     path = tmp_path / "gpu-state.json"
-    # A FRESH prior snapshot. read_previous_gpu_state fails closed on stale
-    # evidence, so an ancient written_at would quietly convert this into a test
-    # of the stale path rather than of partial-stop reduction. The stale path
-    # has its own test directly below.
+    # Even a fresh aggregate snapshot has no identity that can be tied to the
+    # still-running instance after a partial stop, so READY is not carried
+    # forward without new readiness evidence.
     path.write_text(
         json.dumps({"state": "ready", "written_at": time.time()}) + "\n",
         encoding="utf-8",
@@ -118,7 +117,7 @@ def test_partial_stop_publishes_state_of_still_running_instance(tmp_path: Path) 
     assert result.actuated == [("STOP", "ocid1.idle")]
     assert actuator.stopped == ["ocid1.idle"]
     assert _snapshot(path) | {"written_at": 0, "since": 0} == {
-        "state": "ready",
+        "state": "warming",
         "instance_id": None,
         "written_at": 0,
         "reason": None,

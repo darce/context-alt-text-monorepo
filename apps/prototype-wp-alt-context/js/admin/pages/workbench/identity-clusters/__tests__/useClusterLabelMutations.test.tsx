@@ -16,7 +16,7 @@ import type { PendingNameSuggestionsResponse, TopUnlabeledClustersResponse } fro
 import { RequestTimeoutError } from '../../../../utils/errorTaxonomy';
 import { AuthExpiredError, HTTPError } from '../../../../utils/http';
 import { SPA_SESSION_EXPIRED_COPY } from '../../../../utils/sessionExpiredCopy';
-import { createClusterMutationTimeoutError } from '../clusterMutationUtils';
+import { CLUSTER_MUTATION_ERROR_COPY, createClusterMutationTimeoutError } from '../clusterMutationUtils';
 import { useClusterLabelMutations } from '../useClusterLabelMutations';
 import type { SuggestionReviewPage } from '../useSuggestionReviewQueries';
 
@@ -433,7 +433,7 @@ describe('revertMerge error path (FEBT1-LD-04)', () => {
     result.current.revertMerge(mergeResponse);
 
     await waitFor(() => expect(onError).toHaveBeenCalled());
-    expect(vi.mocked(onError).mock.calls[0][0]).toBe('Save is taking too long. Please try again.');
+    expect(vi.mocked(onError).mock.calls[0][0]).toBe(CLUSTER_MUTATION_ERROR_COPY.timeout);
   });
 
   it('a user cancel is silent: onAbort fires and no error copy is surfaced', async () => {
@@ -549,7 +549,7 @@ describe('useClusterLabelMutations deadline vs cancel (FEBT2 X-LANE-02 / RLSE-05
     vi.clearAllMocks();
   });
 
-  const TIMEOUT_COPY = 'Save is taking too long. Please try again.';
+  const TIMEOUT_COPY = CLUSTER_MUTATION_ERROR_COPY.timeout;
   const CANCEL_COPY = 'Save cancelled. Check the label before trying again.';
 
   /**

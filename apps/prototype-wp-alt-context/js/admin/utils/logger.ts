@@ -26,6 +26,8 @@ export interface Logger {
   warn(message: string, fields?: LogFields): void;
   error(message: string, fields?: LogFields): void;
   child(fields: LogFields): Logger;
+  /** Mint a requestId for one unit of work; module-scope loggers omit it (rg-015). */
+  withRequest(): Logger;
 }
 
 /**
@@ -244,6 +246,23 @@ const flattenFields = (fields: LogFields): LogFields => {
 
 const isNonEmptyFields = (fields: LogFields): boolean => Object.keys(fields).length > 0;
 
+/**
+ * Drop a missing or empty `requestId` instead of minting one.
+ *
+ * OBS-03: a logger scope is NOT a transaction. A module-scope `createLogger(...)`
+ * that minted an id at import time would correlate "which module" and not "which
+ * unit of work" — fabricated correlation provenance (rg-015). Open a unit of work
+ * with `logger.withRequest()` (or `withRequestId`) and log through the child.
+ */
+const omitEmptyRequestId = (fields: LogFields): LogFields => {
+  if (typeof fields.requestId === 'string' && fields.requestId !== '') {
+    return fields;
+  }
+  const rest: LogFields = { ...fields };
+  delete rest.requestId;
+  return rest;
+};
+
 export const consoleSink: LogSink = (record) => {
   const prefix = `[alt-context/${record.scope}] ${record.message}`;
   const fields = flattenFields(record.fields);
@@ -279,7 +298,7 @@ export const newRequestId = (): string => {
  * if a unit of work was opened with `withRequestId`; its absence is readable signal.
  */
 export const createLogger = (scope: string, fields: LogFields = {}): Logger => {
-  const parentFields = flattenFields(fields);
+  const parentFields = omitEmptyRequestId(flattenFields(fields));
 
   const emit = (level: LogLevel, message: string, callFields?: LogFields): void => {
     if (LOG_LEVEL_ORDER[level] < LOG_LEVEL_ORDER[minLevel]) {
@@ -290,7 +309,7 @@ export const createLogger = (scope: string, fields: LogFields = {}): Logger => {
       level,
       scope,
       message,
-      fields: flattenFields({ ...parentFields, ...callFields }),
+      fields: omitEmptyRequestId(flattenFields({ ...parentFields, ...callFields })),
     };
     try {
       activeSink(record);
@@ -305,6 +324,7 @@ export const createLogger = (scope: string, fields: LogFields = {}): Logger => {
     warn: (message, callFields) => emit('warn', message, callFields),
     error: (message, callFields) => emit('error', message, callFields),
     child: (childFields) => createLogger(scope, { ...parentFields, ...childFields }),
+    withRequest: () => createLogger(scope, { ...parentFields, requestId: newRequestId() }),
   };
 };
 

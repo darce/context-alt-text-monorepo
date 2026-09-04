@@ -331,6 +331,59 @@ describe('useJobProgressStream', () => {
       expect(done.fields.status).toBe('completed_with_errors');
       expect(done.fields).not.toHaveProperty('failedCount');
     });
+    // Ported from feature/febt-1-g1 (FEBT1-W2C-02 / FEBT1-W2D-05). The branch terminalised
+    // every parseable server `error` frame; main terminalises only definite negatives and
+    // lets transient ones ride the browser reconnect. Both halves are pinned below.
+    it('[FEBT1-W2C-02] a definite-negative server error frame terminates the stream as failed', async () => {
+      const records = captureRecords();
+      const { result } = renderHook(() => useJobProgressStream('job-missing'));
+
+      await waitFor(() => expect(MockEventSource.instances).toHaveLength(1));
+      act(() => {
+        MockEventSource.instances[0].emit('error', { message: 'Job job-missing not found' });
+      });
+
+      await waitFor(() => expect(result.current.status).toBe(JOB_STATUS.FAILED));
+      const done = records.find((entry) => entry.fields.event === 'stream.done');
+      expect(done?.fields.status).toBe(JOB_STATUS.FAILED);
+      expect(records.some((entry) => JSON.stringify(entry).includes('stream failed'))).toBe(false);
+    });
+
+    it('[FEBT1-W2D-05] the failed terminal log record omits failedCount rather than deriving it', async () => {
+      const records = captureRecords();
+      const { result } = renderHook(() => useJobProgressStream('job-fail-log'));
+
+      await waitFor(() => expect(MockEventSource.instances).toHaveLength(1));
+      act(() => {
+        MockEventSource.instances[0].emit('error', { message: 'Job job-fail-log not found' });
+      });
+
+      await waitFor(() => expect(result.current.status).toBe(JOB_STATUS.FAILED));
+      const done = records.find((entry) => entry.fields.event === 'stream.done');
+      expect(done).toBeDefined();
+      expect(done?.fields).not.toHaveProperty('failedCount');
+    });
+
+    it('[FEBT1-W2C-02] a transient server error frame is logged verbatim, not terminalised', async () => {
+      const records = captureRecords();
+      const { result } = renderHook(() => useJobProgressStream('job-proj-unavail'));
+
+      await waitFor(() => expect(MockEventSource.instances).toHaveLength(1));
+      act(() => {
+        MockEventSource.instances[0].emit('error', { message: 'projection backend unavailable' });
+      });
+
+      const serverError = await waitFor(() => {
+        const record = records.find((entry) => entry.message === 'sse.server_error');
+        if (record === undefined) {
+          throw new Error('sse.server_error was not logged');
+        }
+        return record;
+      });
+      // rg-015: the operator sees the server's own text, never a synthesised literal.
+      expect(serverError.fields.detail).toBe('projection backend unavailable');
+      expect(result.current.status).not.toBe(JOB_STATUS.FAILED);
+    });
   });
 
   describe('observer tabs honour the broadcast status [FEBT1G-H-02]', () => {

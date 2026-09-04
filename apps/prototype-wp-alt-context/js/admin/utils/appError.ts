@@ -17,7 +17,7 @@ import { SPA_SESSION_EXPIRED_COPY } from './sessionExpiredCopy';
  * lexicons/graph-theory.md:72). Both names are re-exported unchanged, so
  * `import { APP_ERROR_TAGS } from './appError'` still resolves for every caller.
  */
-export { APP_ERROR_TAGS, isAbortLikeName } from './errorTaxonomy';
+export { APP_ERROR_TAGS, isAbortOrTimeoutName } from './errorTaxonomy';
 export type { AppErrorTag } from './errorTaxonomy';
 
 
@@ -154,13 +154,15 @@ const isFetchNetworkFailureMessage = (message: string): boolean =>
 
 export const classifyError = (error: unknown): AppError => {
   try {
-    // Instance branches run *before* the structural short-circuit. Since
-    // FEBT1-W2A-01 closed the boundary, `HTTPError`/`AuthExpiredError`/
-    // `ResponseParseError` carry a `_tag` and therefore already satisfy
-    // `isAppError`; short-circuiting on them would return the Error instance
-    // and silently retire the plain, serialisable projections below (and the
-    // assertions that pin them). classifyError stays the *projection* function:
-    // one meaning, two representations.
+    // FEBT1G-M-07 / FEBT1-W2A-01: since the boundary classes carry `_tag`,
+    // an already-tagged value IS its own classification. Returning the instance
+    // preserves the stack and `instanceof`, and it is what the logger's
+    // name-shaped safe projection keys on. Re-projecting it into a plain object
+    // here would discard the capture site for no gain — one concept, one
+    // representation (NAME-02, lexicons/engineering.md:649).
+    if (isAppError(error)) {
+      return error;
+    }
     if (error instanceof AuthExpiredError) {
       return {
         _tag: 'auth_expired',
@@ -187,13 +189,6 @@ export const classifyError = (error: unknown): AppError => {
         message: error.message,
         cause: error,
       };
-    }
-    // Plain tagged objects, plus the tag-only boundary classes
-    // (AbortedRequestError / RequestTimeoutError / TransportError /
-    // UnknownBoundaryError). Those carry no fields beyond the AppError base, so
-    // returning them as-is is already the projection.
-    if (isAppError(error)) {
-      return error;
     }
     const abortTag = abortLikeTag(error);
     if (abortTag !== undefined) {
@@ -244,9 +239,20 @@ export const isCooldown = (error: unknown): boolean => {
   );
 };
 
+/** Overlay transport copy. nonce_refresh reuses this; do not invent a new string. */
+const NETWORK_ERROR_COPY = 'Network error — check your connection';
+const TIMEOUT_ERROR_COPY = 'The server took too long to respond — try again';
+
 export const toUserMessage = (error: unknown, fallback: string): string => {
-  if (classifyError(error)._tag === 'auth_expired') {
+  const classified = classifyError(error);
+  if (classified._tag === 'auth_expired') {
     return SPA_SESSION_EXPIRED_COPY.sessionExpired;
+  }
+  if (classified._tag === 'nonce_refresh') {
+    return NETWORK_ERROR_COPY;
+  }
+  if (classified._tag === 'timeout') {
+    return TIMEOUT_ERROR_COPY;
   }
   return fallback;
 };

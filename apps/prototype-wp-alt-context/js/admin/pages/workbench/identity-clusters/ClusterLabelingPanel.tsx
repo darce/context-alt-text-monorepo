@@ -26,7 +26,10 @@ import {
 } from './buildNamingOptions';
 import { NameFaceControl, normalizeNameFaceLabel, type NameFaceResolution } from './NameFaceControl';
 import { getReservedLabelMessage, isReservedLabel } from './reservedLabel';
-import { getClusterMutationErrorMessage } from './clusterMutationUtils';
+import {
+  getClusterMutationUserError,
+  type ClusterMutationRecovery,
+} from './clusterMutationUtils';
 import { getClusterLabelLookupFailedMessage } from './clusterLabelLookup';
 import { ClusterLabelingDuplicatePrompt } from './ClusterLabelingDuplicatePrompt';
 import { ClusterLabelingMemberGrid } from './ClusterLabelingMemberGrid';
@@ -44,6 +47,27 @@ interface ClusterLabelingPanelProps {
 
 const LABEL_SEARCH_MIN_CHARS = 2;
 
+/**
+ * Copy plus what the operator can DO about it. A bare string can only report;
+ * an `auth_expired` failure needs a reload affordance, because "your session
+ * expired" with no next step is a dead end (FORM-05 / A11Y-17).
+ */
+interface PanelErrorState {
+  readonly message: string;
+  readonly recovery: ClusterMutationRecovery;
+}
+
+const ClusterMutationErrorAlert = ({ error }: { error: PanelErrorState }): React.JSX.Element => (
+  <div className="acx-cluster-labeling-panel__error" role="alert">
+    <p>{error.message}</p>
+    {error.recovery === 'reload' ? (
+      <button type="button" className="button" onClick={() => window.location.reload()}>
+        {__('Reload page', 'alt-context')}
+      </button>
+    ) : null}
+  </div>
+);
+
 const toComboboxOption = (option: NamingOption): ComboboxOption => ({
   value: option.value,
   label: option.label,
@@ -59,7 +83,7 @@ export const ClusterLabelingPanel = ({
   initialLabel = '',
 }: ClusterLabelingPanelProps): React.JSX.Element => {
   const [labelInput, setLabelInput] = useState(initialLabel);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<PanelErrorState | null>(null);
   const submittingRef = useRef(false);
   const rosterRetryRef = useRef<HTMLButtonElement | null>(null);
 
@@ -139,7 +163,7 @@ export const ClusterLabelingPanel = ({
       setError(null);
       resetGuard();
     },
-    onError: (err: unknown) => setError(getClusterMutationErrorMessage(err, labelInput)),
+    onError: (err: unknown) => setError(getClusterMutationUserError(err, labelInput)),
   });
 
   const { clearLastMerge } = mutations;
@@ -167,13 +191,13 @@ export const ClusterLabelingPanel = ({
     try {
       // BR-46: reject machine-shaped / reserved auto-ID labels before any remote guard call.
       if (isReservedLabel(trimmed)) {
-        setError(getReservedLabelMessage());
+        setError({ message: getReservedLabelMessage(), recovery: 'none' });
         return;
       }
 
       const outcome = await guard.evaluate(trimmed, options);
       if (outcome === DUPLICATE_GUARD_OUTCOME.LOOKUP_FAILED) {
-        setError(getClusterLabelLookupFailedMessage());
+        setError({ message: getClusterLabelLookupFailedMessage(), recovery: 'retry' });
         return;
       }
       if (outcome === DUPLICATE_GUARD_OUTCOME.BLOCKED) {
@@ -187,7 +211,7 @@ export const ClusterLabelingPanel = ({
           await mutations.saveLabel(trimmed);
         }
       } catch (err) {
-        setError(getClusterMutationErrorMessage(err, trimmed));
+        setError(getClusterMutationUserError(err, trimmed));
       }
     } finally {
       submittingRef.current = false;
@@ -285,11 +309,7 @@ export const ClusterLabelingPanel = ({
               {__('Done', 'alt-context')}
             </button>
           </div>
-          {error && (
-            <p className="acx-cluster-labeling-panel__error" role="alert">
-              {error}
-            </p>
-          )}
+          {error ? <ClusterMutationErrorAlert error={error} /> : null}
         </div>
       </div>
     );
@@ -361,11 +381,7 @@ export const ClusterLabelingPanel = ({
               onCancel={guard.reset}
             />
           )}
-          {error && (
-            <p className="acx-cluster-labeling-panel__error" role="alert">
-              {error}
-            </p>
-          )}
+          {error ? <ClusterMutationErrorAlert error={error} /> : null}
         </div>
       </div>
     </div>

@@ -1,7 +1,47 @@
 import { __, sprintf } from '@wordpress/i18n';
 
-import { classifyError, isAbortLikeName } from '../../../utils/appError';
-import { formatUserFacingError, isAuthExpiredError } from '../../../utils/userFacingError';
+import { classifyError, isAbortOrTimeoutName, toUserMessage } from '../../../utils/appError';
+import { isAbortOrTimeout } from '../../../utils/retryPolicy';
+
+export const CLUSTER_MUTATION_ERROR_COPY = {
+  timeout: __('The server took too long to respond — try again', 'alt-context'),
+  /**
+   * A cancel is the operator's own action, not a slow system: telling them "this
+   * is taking too long" answers a question they did not ask and hides the one
+   * they did (FORM-05 / A11Y-17 — what happened, and what to do next).
+   *
+   * It stops short of "nothing was saved". An abort fired after the request left
+   * the browser has an UNKNOWN outcome, so asserting either success or failure
+   * would be a claim the client cannot make (RLSE-05).
+   */
+  cancelled: __('Save cancelled. Check the label before trying again.', 'alt-context'),
+  transport: __('Network error — check your connection', 'alt-context'),
+  parse: __('Unexpected response from server', 'alt-context'),
+  unknown: __('An unexpected error occurred. Please try again.', 'alt-context'),
+  staleConflict: __('Label already exists. Use the dropdown to merge.', 'alt-context'),
+  bindFailed: __('The group was created but the person was not bound.', 'alt-context'),
+} as const;
+
+export type ClusterMutationErrorKind =
+  | 'stale_conflict'
+  | 'timeout'
+  | 'cancelled'
+  | 'transport'
+  | 'auth_expired'
+  | 'parse'
+  | 'http'
+  | 'projection_not_ready'
+  | 'invalid_target'
+  | 'bind_failed'
+  | 'unknown';
+
+export type ClusterMutationRecovery = 'reload' | 'retry' | 'none';
+
+export interface ClusterMutationUserError {
+  readonly kind: ClusterMutationErrorKind;
+  readonly message: string;
+  readonly recovery: ClusterMutationRecovery;
+}
 
 export const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -24,9 +64,8 @@ export class ClusterMutationTimeoutError extends Error {
   readonly operation: string;
 
   constructor(operation: string) {
-    // Deliberately carries no English timeout token: if this message ever
-    // matched `matchKnownCondition`, the substring matcher would silently rescue
-    // a broken brand check and the typed channel would be untested (TEST-15).
+    // Deliberately carries no English timeout token: a substring matcher must
+    // never be able to silently rescue a broken brand check (TEST-15).
     super(`cluster_mutation_budget_expired:${operation}`);
     this.name = 'ClusterMutationTimeoutError';
     this.operation = operation;
@@ -47,17 +86,9 @@ export const isClusterMutationTimeoutError = (error: unknown): boolean =>
   (error as Record<symbol, unknown>)[CLUSTER_MUTATION_TIMEOUT_BRAND] === true;
 
 /**
- * Abort-like: user cancel and AbortSignal.timeout. The name check is kept
- * alongside the tag so this stays true if the timeout tag is ever split out of
- * `abort` (FEBT1G-M-13): a cancelled request must never take the retry path.
- */
-export const isAbortError = (err: unknown): boolean =>
-  classifyError(err)._tag === 'abort' || isAbortLikeName(err);
-
-/**
  * A *deliberate* cancel: the operator withdrew the request. Named for the policy
  * it answers ("what do I tell the operator happened?"), not for the error's
- * shape — `isAbortError` above is abort-*like* (it also answers true for a
+ * shape — `isAbortError` below is abort-*or-timeout* (it also answers true for a
  * `TimeoutError` name), so it cannot decide copy without telling a cancelling
  * operator the system is slow (DOM-03: one meaning per term per context).
  *
@@ -66,8 +97,52 @@ export const isAbortError = (err: unknown): boolean =>
  * UI policy is what let FEBT1-W2A-05's narrowing regress the progress hook
  * across a module boundary. Same shape today, different reasons to change.
  */
-export const isDeliberateCancelError = (error: unknown): boolean =>
-  classifyError(error)._tag === 'abort';
+export const isDeliberateCancelError = (error: unknown): boolean => classifyError(error)._tag === 'abort';
+
+/**
+ * Does this wire message describe a deadline the *server* hit? Matched on the
+ * two spellings HTTP intermediaries actually emit ("timed out", "timeout"), and
+ * used only to pick a copy constant — never to build the copy itself.
+ */
+const isWireTimeoutMessage = (message: string): boolean => {
+  const normalized = message.toLowerCase();
+  return normalized.includes('timed out') || normalized.includes('timeout');
+};
+
+/**
+ * Abort-like: user cancel and AbortSignal.timeout. The shared retry-policy
+ * predicate covers the `abort` and `timeout` tags; the name check is kept
+ * alongside it for values that never reach a tag (FEBT1G-M-13): a cancelled
+ * request must never take the retry path.
+ */
+export const isAbortError = (err: unknown): boolean => isAbortOrTimeout(err) || isAbortOrTimeoutName(err);
+
+const readStringField = (value: unknown, key: string): string | null => {
+  if (typeof value !== 'object' || value === null || !Object.hasOwn(value, key)) {
+    return null;
+  }
+  const field = (value as Record<string, unknown>)[key];
+  return typeof field === 'string' ? field : null;
+};
+
+const readBodyPreview = (error: unknown): string => {
+  const classified = classifyError(error);
+  return readStringField(classified.cause, 'bodyPreview') ?? readStringField(error, 'bodyPreview') ?? '';
+};
+
+const readWpErrorCode = (preview: string): string | null => {
+  if (preview === '') {
+    return null;
+  }
+  try {
+    const parsed: unknown = JSON.parse(preview);
+    return readStringField(parsed, 'code');
+  } catch {
+    return null;
+  }
+};
+
+export const getClusterErrorCode = (error: unknown): string | null => readWpErrorCode(readBodyPreview(error));
 
 export const isProjectionNotReadyError = (message: string): boolean => {
   const normalized = message.toLowerCase();
@@ -87,122 +162,129 @@ export const isInvalidTargetClusterError = (message: string): boolean => {
 export const getInvalidTargetClusterMessage = (label: string): string =>
   sprintf(__('That group is already named %s - nothing to merge.', 'alt-context'), label);
 
-const HTTP_CONFLICT_STATUS = 409;
+export const getClusterMutationUserError = (error: unknown, label = 'that label'): ClusterMutationUserError => {
+  const classified = classifyError(error);
+  const code = getClusterErrorCode(error);
+  const rawMessage = error instanceof Error ? error.message : '';
 
-const timeoutMessage = (): string => __('Save is taking too long. Please try again.', 'alt-context');
-/**
- * A cancel is the operator's own action, not a slow system: telling them "this
- * is taking too long" answers a question they did not ask and hides the one
- * they did (FORM-05 / A11Y-17 — what happened, and what to do next).
- *
- * It stops short of "nothing was saved". An abort fired after the request left
- * the browser has an UNKNOWN outcome, so asserting either success or failure
- * would be a claim the client cannot make (RLSE-05).
- */
-const cancelledMessage = (): string =>
-  __('Save cancelled. Check the label before trying again.', 'alt-context');
-const conflictMessage = (): string => __('Label already exists. Use the dropdown to merge.', 'alt-context');
-const networkMessage = (): string =>
-  __('Network error. Please check your connection and try again.', 'alt-context');
-const genericMessage = (): string => __('An unexpected error occurred. Please try again.', 'alt-context');
-
-const assertUnreachableTag = (value: never): never => {
-  throw new Error(`Unexpected AppError tag: ${String(value)}`);
-};
-
-/**
- * Message-shape recognition for server conditions the API reports as text
- * rather than as a distinct status. Matching on the message is fine; returning
- * it is not — see getClusterMutationErrorMessage.
- *
- * The 'timed out' arm here covers *wire-originated* text (a gateway body that
- * says so). It is not the control channel for our own interactive budget —
- * that is ClusterMutationTimeoutError (FEBT1-LC-02).
- */
-const matchKnownCondition = (message: string, label: string): string | null => {
-  const normalized = message.toLowerCase();
-  if (normalized.includes('timed out') || normalized.includes('timeout')) {
-    return timeoutMessage();
-  }
-  if (isProjectionNotReadyError(message)) {
-    return getProjectionNotReadyMessage();
-  }
-  if (isInvalidTargetClusterError(message)) {
-    return getInvalidTargetClusterMessage(label);
-  }
-  if (message.includes('409') || normalized.includes('conflict')) {
-    return conflictMessage();
-  }
-  if (message.includes('NetworkError') || message.includes('Failed to fetch')) {
-    return networkMessage();
-  }
-  return null;
-};
-
-/**
- * FEBT1-W2A-04: an HTTPError message embeds the response body preview, so the
- * verbatim message of any wire-originated error is not user-facing copy. Only
- * the `unknown` tag — locally minted Errors that never carry a wire body —
- * falls through to its own message.
- */
-export const getClusterMutationErrorMessage = (error: unknown, label: string): string => {
   // Typed local-budget expiry first: it is a distinct condition from a user
   // cancel and must not depend on the wording of any message. This ordering is
-  // load-bearing — checking isAbortError first would swallow the branded
+  // load-bearing — checking the abort predicates first would swallow the branded
   // sentinel the moment it grows an abort-like `name` (pinned by test).
-  //
-  // The mutation hooks swallow most cancels via isAbortError, but not all:
-  // ClusterLabelingPanel.submitLabel and IdentityClusterItem.bindToRosterEntry
-  // both route a rejected promise straight here, so the cancel copy is a state
-  // the operator can actually reach (RLSE-04).
   if (isClusterMutationTimeoutError(error)) {
-    return timeoutMessage();
-  }
-  if (isAbortError(error)) {
-    // Abort-like covers two conditions, and they are not the same news for the
-    // operator: a deliberate cancel is something they did, an elapsed deadline
-    // is the system being slow. Both were previously told "taking too long".
-    return isDeliberateCancelError(error) ? cancelledMessage() : timeoutMessage();
-  }
-  if (isAuthExpiredError(error)) {
-    return formatUserFacingError(error, genericMessage());
+    return {
+      kind: 'timeout',
+      message: CLUSTER_MUTATION_ERROR_COPY.timeout,
+      recovery: 'retry',
+    };
   }
 
-  const classified = classifyError(error);
-  const known = matchKnownCondition(classified.message, label);
-
-  switch (classified._tag) {
-    case 'http':
-      return known ?? (classified.status === HTTP_CONFLICT_STATUS ? conflictMessage() : genericMessage());
-    case 'transport':
-      return known ?? networkMessage();
-    case 'unknown':
-      return known ?? (error instanceof Error ? classified.message : genericMessage());
-    case 'abort':
-      // Not deletable dead code — a required arm (FEBT2-W2-ADJ-03). Every
-      // abort-tagged value is already claimed by isAbortError above, so no
-      // caller reaches this line today, but removing the arm makes `classified`
-      // non-`never` at the default and fails the type check:
-      //   clusterMutationUtils.ts(193,35): TS2345: Argument of type
-      //   'AppErrorBase<"abort">' is not assignable to parameter of type 'never'.
-      // It is deliberately NOT an assertion helper: this function is the copy
-      // source for an error path, so throwing here would replace a degraded
-      // message with no message at all (RLSE-05, lexicons/engineering.md:696).
-      // It returns the cancel copy so the exhaustive switch cannot silently
-      // re-acquire the timeout copy if the guard above is ever narrowed.
-      return cancelledMessage();
-    case 'timeout':
-      // Tag-driven, not message-driven. A plain `{_tag:'timeout'}` value carries
-      // no abort-like `name`, so it reaches here; deciding its copy from
-      // matchKnownCondition would make it depend on the wording of a message
-      // (the stringly-typed channel FEBT1-LC-02 removed) and drop to the generic
-      // copy for any timeout whose text lacks an English timeout token.
-      return timeoutMessage();
-    case 'parse':
-    case 'nonce_refresh':
-    case 'auth_expired':
-      return known ?? genericMessage();
-    default:
-      return assertUnreachableTag(classified);
+  if (classified._tag === 'auth_expired') {
+    return {
+      kind: 'auth_expired',
+      message: toUserMessage(error, CLUSTER_MUTATION_ERROR_COPY.unknown),
+      recovery: 'reload',
+    };
   }
+
+  // Abort-like covers two conditions, and they are not the same news for the
+  // operator: a deliberate cancel is something they did, an elapsed deadline is
+  // the system being slow. Both were previously told "taking too long".
+  if (classified._tag === 'abort') {
+    return {
+      kind: 'cancelled',
+      message: CLUSTER_MUTATION_ERROR_COPY.cancelled,
+      recovery: 'retry',
+    };
+  }
+
+  // Tag-driven, not message-driven. A plain `{_tag:'timeout'}` value carries no
+  // abort-like `name`, so deciding its copy from a substring match would make it
+  // depend on the wording of a message (the stringly-typed channel FEBT1-LC-02
+  // removed) and drop to the generic copy for any timeout whose text lacks an
+  // English timeout token.
+  if (classified._tag === 'timeout') {
+    return {
+      kind: 'timeout',
+      message: toUserMessage(error, CLUSTER_MUTATION_ERROR_COPY.timeout),
+      recovery: 'retry',
+    };
+  }
+
+  if (classified._tag === 'transport' || classified._tag === 'nonce_refresh') {
+    return {
+      kind: 'transport',
+      message: toUserMessage(error, CLUSTER_MUTATION_ERROR_COPY.transport),
+      recovery: 'retry',
+    };
+  }
+
+  if (classified._tag === 'parse') {
+    return {
+      kind: 'parse',
+      message: toUserMessage(error, CLUSTER_MUTATION_ERROR_COPY.parse),
+      recovery: 'retry',
+    };
+  }
+
+  if (code === 'projection_not_ready' || (code === null && isProjectionNotReadyError(rawMessage))) {
+    return {
+      kind: 'projection_not_ready',
+      message: getProjectionNotReadyMessage(),
+      recovery: 'retry',
+    };
+  }
+
+  if (code === 'invalid_target_cluster_id' || (code === null && isInvalidTargetClusterError(rawMessage))) {
+    return {
+      kind: 'invalid_target',
+      message: getInvalidTargetClusterMessage(label),
+      recovery: 'none',
+    };
+  }
+
+  if (code === 'acx_cluster_created_bind_failed') {
+    return {
+      kind: 'bind_failed',
+      message: CLUSTER_MUTATION_ERROR_COPY.bindFailed,
+      recovery: 'retry',
+    };
+  }
+
+  // FEBT2-LD2-NEW-05: a gateway/upstream deadline arrives as an ordinary 5xx —
+  // the tag is 'http', not 'timeout'. Recognising the wire wording here is
+  // *classification*, not copy: the operator still gets the single-owner
+  // constant, never the response text (FEBT1-W2A-04).
+  if (classified._tag === 'http' && isWireTimeoutMessage(rawMessage)) {
+    return {
+      kind: 'timeout',
+      message: CLUSTER_MUTATION_ERROR_COPY.timeout,
+      recovery: 'retry',
+    };
+  }
+
+  if (classified._tag === 'http' && classified.status === 409) {
+    return {
+      kind: 'stale_conflict',
+      message: CLUSTER_MUTATION_ERROR_COPY.staleConflict,
+      recovery: 'reload',
+    };
+  }
+
+  // FEBT1-W2A-04: an HTTPError message embeds the response body preview, so the
+  // verbatim message of any wire-originated error is not user-facing copy. Only
+  // the `unknown` tag — locally minted Errors that never carry a wire body —
+  // falls through to its own message.
+  if (classified._tag === 'unknown' && error instanceof Error) {
+    return { kind: 'unknown', message: classified.message, recovery: 'retry' };
+  }
+
+  return {
+    kind: classified._tag === 'http' ? 'http' : 'unknown',
+    message: toUserMessage(error, CLUSTER_MUTATION_ERROR_COPY.unknown),
+    recovery: 'retry',
+  };
 };
+
+export const getClusterMutationErrorMessage = (error: unknown, label: string): string =>
+  getClusterMutationUserError(error, label).message;

@@ -19,9 +19,8 @@ import { useSyncOffline } from '../../../hooks/useSyncOffline';
 import { isScanSuccessStatus } from '../../../hooks/jobStateMachineUtils';
 import {
   delay,
+  getClusterErrorCode,
   getClusterMutationErrorMessage,
-  isAbortError,
-  isClusterMutationTimeoutError,
   isDeliberateCancelError,
 } from './clusterMutationUtils';
 import { removePendingSuggestionFromCache } from './suggestionProjection';
@@ -61,13 +60,13 @@ const pollSplitJob = async (jobId: string): Promise<void> => {
  *
  * FEBT2-LD2-NEW-01 / RLSE-05 (lexicons/engineering.md:82 - "silent failure is the worst
  * failure"). Every handler below used to gate on `isAbortError`, which is abort-*like*:
- * `isAbortLikeName` answers true for `name === 'TimeoutError'`, and that is exactly what
- * `fetchApi`'s own deadline carries (`RequestTimeoutError`, utils/errorTaxonomy.ts:206).
+ * `isAbortOrTimeoutName` answers true for `name === 'TimeoutError'`, and that is exactly what
+ * `fetchApi`'s own deadline carries (`RequestTimeoutError`, utils/errorTaxonomy.ts).
  * An elapsed write therefore took the `onAbort` branch, and `onAbort` is
- * `resetSaveStatus` (IdentityClusterItem.tsx:165) - the operator saw nothing at all on a
+ * `resetSaveStatus` (IdentityClusterItem.tsx) - the operator saw nothing at all on a
  * write path. Only a *deliberate* cancel (the operator's own action) may be silent, and
  * `isDeliberateCancelError` is the predicate that answers that question
- * (clusterMutationUtils.ts:69).
+ * (clusterMutationUtils.ts).
  *
  * Copy for everything else comes from `getClusterMutationErrorMessage`, the single owner
  * of error -> operator copy for this feature area (REF-19 lexicons/engineering.md:338;
@@ -77,19 +76,17 @@ const pollSplitJob = async (jobId: string): Promise<void> => {
 const routeMutationFailure = (
   error: unknown,
   handlers: { readonly onAbort?: () => void; readonly onError?: (message: string) => void },
+  label = '',
 ): void => {
   if (isDeliberateCancelError(error)) {
     handlers.onAbort?.();
     return;
   }
-  if (isAbortError(error) || isClusterMutationTimeoutError(error)) {
-    // Abort-like but not a cancel, or the branded interactive-budget sentinel: an elapsed
-    // deadline. `label` only feeds the invalid-target-cluster copy, which is unreachable
-    // on this branch, so '' is a proven-unused argument rather than a guess (rg-015).
-    handlers.onError?.(getClusterMutationErrorMessage(error, ''));
-    return;
-  }
-  handlers.onError?.(error instanceof Error ? error.message : String(error));
+  // Everything that is not a deliberate cancel — including the abort-like
+  // deadline and the branded interactive-budget sentinel — gets its copy from
+  // the single owner. Never `error.message`: FEBT1-W2A-04, an HTTPError message
+  // embeds the response body preview, so the verbatim text is not operator copy.
+  handlers.onError?.(getClusterMutationErrorMessage(error, label));
 };
 
 export const useClusterActionMutations = ({
@@ -175,21 +172,14 @@ export const useClusterActionMutations = ({
       invalidateQueries();
       onRenameSuccess?.(result.label);
     },
-    onError: (err: unknown) => {
-      // Server-condition tokens are read off the raw message before the abort/deadline
-      // split; neither 'The operation was aborted.' nor 'The operation timed out.'
-      // carries them, so the ordering cannot steal a cancel or a deadline.
-      const message = err instanceof Error ? err.message : String(err);
-      if (message.includes('acx_cluster_created_bind_failed')) {
+    onError: (err: unknown, variables) => {
+      // Read the structured WP error code, not a substring of the message
+      // (main FEBT1-W2A-04). The cache still has to be invalidated on a partial
+      // create-then-bind failure before the copy is routed.
+      if (getClusterErrorCode(err) === 'acx_cluster_created_bind_failed') {
         invalidateQueries();
-        onError?.(__('The group was created but the person was not bound.', 'alt-context'));
-        return;
       }
-      if (message.includes('409')) {
-        onError?.(__('Label already exists. Select it from the dropdown to assign.', 'alt-context'));
-        return;
-      }
-      routeMutationFailure(err, { onAbort, onError });
+      routeMutationFailure(err, { onAbort, onError }, variables.label);
     },
   });
 
@@ -263,18 +253,10 @@ export const useClusterActionMutations = ({
 
   return {
     reassign: reassignMutation.mutate,
-    assignToCluster: (
-      identityId: string,
-      targetClusterId: string,
-      signal?: AbortSignal,
-      suggestionId?: string,
-    ) => assignToClusterMutation.mutate({ identityId, targetClusterId, signal, suggestionId }),
-    createClusterForIdentity: (
-      identityId: string,
-      label: string,
-      signal?: AbortSignal,
-      rosterEntryId?: number,
-    ) => createClusterMutation.mutate({ identityId, label, signal, rosterEntryId }),
+    assignToCluster: (identityId: string, targetClusterId: string, signal?: AbortSignal, suggestionId?: string) =>
+      assignToClusterMutation.mutate({ identityId, targetClusterId, signal, suggestionId }),
+    createClusterForIdentity: (identityId: string, label: string, signal?: AbortSignal, rosterEntryId?: number) =>
+      createClusterMutation.mutate({ identityId, label, signal, rosterEntryId }),
     // RES-03: no offline short-circuit here — the mutationFn throws so onError surfaces the reason.
     split: (clusterId: string, nClusters = 2, anchorIdentityId?: string) =>
       splitMutation.mutate({ clusterId, nClusters, anchorIdentityId }),

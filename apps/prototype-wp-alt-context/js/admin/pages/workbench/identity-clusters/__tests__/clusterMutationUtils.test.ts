@@ -4,19 +4,23 @@ import { classifyError } from '../../../../utils/appError';
 import { AuthExpiredError, HTTPError } from '../../../../utils/http';
 import { SPA_SESSION_EXPIRED_COPY } from '../../../../utils/sessionExpiredCopy';
 import {
+  CLUSTER_MUTATION_ERROR_COPY,
   ClusterMutationTimeoutError,
   createClusterMutationTimeoutError,
   getClusterMutationErrorMessage,
+  getClusterMutationUserError,
   isAbortError,
   isClusterMutationTimeoutError,
   isDeliberateCancelError,
 } from '../clusterMutationUtils';
 
 const GENERIC = 'An unexpected error occurred. Please try again.';
-const TIMEOUT = 'Save is taking too long. Please try again.';
-const CANCELLED = 'Save cancelled. Check the label before trying again.';
+// Canonical strings live in docs/ux-maps/febt-1-job-error-states.md and are
+// re-exported as CLUSTER_MUTATION_ERROR_COPY; pin against that, not a literal copy.
+const TIMEOUT = CLUSTER_MUTATION_ERROR_COPY.timeout;
+const CANCELLED = CLUSTER_MUTATION_ERROR_COPY.cancelled;
 const CONFLICT = 'Label already exists. Use the dropdown to merge.';
-const NETWORK = 'Network error. Please check your connection and try again.';
+const NETWORK = CLUSTER_MUTATION_ERROR_COPY.transport;
 const SECRET_BODY = 'stack-trace: /var/www/wp-content/plugins/secret.php line 42';
 
 const httpError = (status: number, bodyPreview: string): HTTPError =>
@@ -247,5 +251,22 @@ describe('ClusterMutationTimeoutError (FEBT1-LC-02: typed timeout channel)', () 
     // Server-reported condition (message-shape recognition) must keep working:
     // the typed sentinel replaces our own locally minted literal only.
     expect(getClusterMutationErrorMessage(httpError(504, 'upstream timed out'), 'Ada')).toBe(TIMEOUT);
+  });
+});
+
+describe('getClusterMutationUserError [FEBT1-W2A-04]', () => {
+  it('maps HTTP 409 via status, never substring, with reload recovery', () => {
+    const error = new HTTPError({
+      status: 409,
+      retryAfterSeconds: undefined,
+      endpoint: '/acx/v1/recognition/clusters/c1',
+      bodyPreview: '{"code":"cluster_version_conflict"}',
+      message: 'Request to /acx/v1/recognition/clusters/c1 failed (409): stale',
+    });
+    const mapped = getClusterMutationUserError(error, 'Ada');
+    expect(mapped.kind).toBe('stale_conflict');
+    expect(mapped.recovery).toBe('reload');
+    expect(mapped.message).toBe(CLUSTER_MUTATION_ERROR_COPY.staleConflict);
+    expect(mapped.message).not.toContain(error.endpoint);
   });
 });

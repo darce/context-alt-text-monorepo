@@ -1,5 +1,5 @@
 import { NonceRefreshFailedError } from '../utils/errorTaxonomy';
-import { createLogger, newRequestId, type Logger } from '../utils/logger';
+import { createLogger, type Logger } from '../utils/logger';
 
 /**
  * `NonceRefreshFailedError` is declared in the leaf module
@@ -10,7 +10,7 @@ import { createLogger, newRequestId, type Logger } from '../utils/logger';
  * (lexicons/engineering.md:570): the dependency arrow points at the stable error
  * vocabulary, not at this WordPress config adapter.
  */
-export { NonceRefreshFailedError } from '../utils/errorTaxonomy';
+export { isNonceRefreshAuthRejection, NonceRefreshFailedError } from '../utils/errorTaxonomy';
 
 
 let log: Logger | undefined;
@@ -73,11 +73,11 @@ const normalizeOptionalString = (value: unknown): string | undefined =>
  * skew — cached HTML with an older localized payload) degrades the one
  * capability that needs it instead of hard-failing every getConfig() caller.
  */
-const softNonEmptyString = (value: unknown, field: string, requestId: string): string => {
+const softNonEmptyString = (value: unknown, field: string, requestLog: Logger): string => {
   if (typeof value !== 'string' || value.trim() === '') {
-    configLog().warn(
+    requestLog.warn(
       `AltContextAdmin configuration field "${field}" is missing or empty; dependent features degrade.`,
-      { requestId, field },
+      { field },
     );
     return '';
   }
@@ -86,9 +86,9 @@ const softNonEmptyString = (value: unknown, field: string, requestId: string): s
 
 export const normalizeConfig = (raw: ApiConfig): NormalizedConfig => {
   // One normalization pass is one unit of work: every soft warning it emits
-  // shares this id, and a later pass gets a different one (OBS-03). The
-  // module logger's own id is minted once at import and cannot do this.
-  const requestId = newRequestId();
+  // shares this id, and a later pass gets a different one (OBS-03). A
+  // module-scope logger has no unit of work and carries no requestId (rg-015).
+  const requestLog = configLog().withRequest();
   const rawMax = Number(raw.max_media_per_batch ?? DEFAULT_MAX_MEDIA_PER_BATCH);
   const maxMediaPerBatch = Number.isFinite(rawMax) && rawMax > 0 ? rawMax : DEFAULT_MAX_MEDIA_PER_BATCH;
   const devMode = raw.devMode === true || raw.devMode === 'true' || raw.devMode === '1' || raw.devMode === 1;
@@ -99,8 +99,8 @@ export const normalizeConfig = (raw: ApiConfig): NormalizedConfig => {
   };
 
   return {
-    nonce: softNonEmptyString(raw.nonce, 'nonce', requestId),
-    ajaxUrl: softNonEmptyString(raw.ajaxUrl, 'ajaxUrl', requestId),
+    nonce: softNonEmptyString(raw.nonce, 'nonce', requestLog),
+    ajaxUrl: softNonEmptyString(raw.ajaxUrl, 'ajaxUrl', requestLog),
     endpoints: raw.endpoints,
     tenant_id: raw.tenant_id,
     tier: raw.tier,

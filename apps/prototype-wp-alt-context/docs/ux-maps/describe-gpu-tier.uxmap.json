@@ -30,7 +30,7 @@
         { "id": "z-bulk-cta", "label": "Describe selected CTA", "role": "primary-action", "states": ["default", "disabled-empty-selection", "pending", "gpu-cold-preview"] },
         { "id": "z-bulk-progress", "label": "Bulk describe progress", "role": "status", "evidence_linked": true,
           "states": ["starting", "gpu-stopped", "gpu-starting", "gpu-warming", "describing-provisional", "describing-final", "waiting-cooldown", "degraded-cpu", "complete", "failed", "cancelled"] },
-        { "id": "z-gpu-tier-chip", "label": "GPU tier chip", "role": "status", "states": ["hidden-unknown", "stopped", "starting", "warming", "ready", "degraded"] },
+        { "id": "z-gpu-tier-chip", "label": "GPU tier chip", "role": "status", "states": ["hidden-no-run", "unknown", "stopped", "starting", "warming", "ready", "degraded"] },
         { "id": "z-review-link", "label": "Review results link", "role": "navigation", "states": ["hidden", "provisional-only", "final-available"] }
       ]
     },

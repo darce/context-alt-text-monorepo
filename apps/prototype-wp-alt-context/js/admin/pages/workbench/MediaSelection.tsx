@@ -427,7 +427,11 @@ export const BulkDescribeCta = ({
 
   return (
     <div className="acx-media-selection__bulk-describe">
-      <GpuTierStatus gpuState={gpuState} cpuDraftCount={progress.run?.completed ?? 0} />
+      <GpuTierStatus
+        gpuState={gpuState}
+        cpuDraftCount={progress.run?.completed ?? 0}
+        isRunRelevant={runId !== null || isRunning}
+      />
       <div className="acx-media-selection__bulk-describe-actions">
         <button
           type="button"
@@ -515,35 +519,58 @@ const gpuStateToneClass = (tone: GpuStateTone): string => {
 export const GpuTierStatus = ({
   gpuState,
   cpuDraftCount,
+  isRunRelevant = true,
 }: {
   gpuState: GpuState | null;
   cpuDraftCount: number;
+  /** Unknown telemetry is meaningful only while a describe run exists or starts. */
+  isRunRelevant?: boolean;
 }): React.JSX.Element | null => {
-  // `unknown` is the fail-closed boundary result for absent, malformed, or
-  // stale wire data. It is not a reported tier, so do not fabricate a chip.
-  if (gpuState === null || gpuState === GPU_STATE.UNKNOWN) {
+  if (!isRunRelevant) {
     return null;
   }
 
-  const presentation = gpuStatePresentation(gpuState);
+  // Keep the live region mounted for every state of a relevant run. Null is a
+  // legacy direct-call input; the hook otherwise normalizes missing, malformed,
+  // and stale telemetry to UNKNOWN before it reaches this boundary.
+  const displayedState: GpuState = (() => {
+    switch (gpuState) {
+      case null:
+      case GPU_STATE.UNKNOWN:
+        return GPU_STATE.UNKNOWN;
+      case GPU_STATE.STOPPED:
+      case GPU_STATE.STARTING:
+      case GPU_STATE.WARMING:
+      case GPU_STATE.READY:
+      case GPU_STATE.DEGRADED:
+        return gpuState;
+      default: {
+        const unreachable: never = gpuState;
+        return unreachable;
+      }
+    }
+  })();
+
+  const presentation = gpuStatePresentation(displayedState);
   const Icon = GPU_STATE_ICON_COMPONENT[presentation.icon];
   const spin = presentation.icon === GPU_STATE_ICON.STARTING;
   const accessibleName = `${GPU_STATE_VOCABULARY.tierPrefix} ${presentation.label}`;
 
   return (
     <div
-      className={`acx-sync-status${gpuStateToneClass(presentation.tone)}`}
+      className={`acx-sync-status acx-media-selection__gpu-tier-status${gpuStateToneClass(presentation.tone)}`}
       role="status"
       aria-label={accessibleName}
       aria-live="polite"
-      data-gpu-state={gpuState}
+      aria-atomic="true"
+      data-gpu-state={displayedState}
       data-gpu-terminal={presentation.terminal}
     >
       <span className="acx-media-selection__detail-chip">
         <Icon className={spin ? 'acx-media-selection__bulk-describe-spin' : undefined} aria-hidden="true" size={16} />
         {GPU_STATE_VOCABULARY.tierPrefix} {presentation.label}
       </span>
-      <span className="acx-sync-status__label">{gpuStateNotice(gpuState, cpuDraftCount)}</span>
+      <span className="acx-sync-status__label">{gpuStateNotice(displayedState, cpuDraftCount)}</span>
     </div>
   );
 };

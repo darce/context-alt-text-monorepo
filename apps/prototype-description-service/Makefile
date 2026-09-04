@@ -270,8 +270,14 @@ check: lint typecheck test test-integration
 
 # Lint only
 lint:
-	@echo "Running Ruff checks..."
-	@$(UV_RUN) ruff check .
+	@echo "Running Ruff checks (via the repo-wide lint ratchet)..."
+	@# LINTGATE-1: `ruff check .` fails here (93 of the repo's 408 known
+	@# violations live under this app), so it could never gate a merge.
+	@# The ratchet gates the same rules against a frozen baseline: any new
+	@# violation or raised count in these files still fails. See the
+	@# `lint-ratchet` target in the root Makefile. Use `ruff check .` directly
+	@# for the raw list, or `make lint-ratchet-accept TOOL=ruff` after a fix.
+	@python3 ../../scripts/lint_ratchet.py --tool ruff
 	@$(UV_RUN) ruff format --check .
 
 # Type check only

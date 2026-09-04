@@ -138,5 +138,15 @@ Rules:
 - `DescribeRunResponse.gpu_state` carries this value verbatim on every poll
   (`packages/shared-contracts/schemas/scene-describe-run.schema.json`). PHP
   and the SPA pass it through; neither derives GPU state locally (rg-015).
-- File ownership: `/run/acx` is `10001:10001 0775` (WBUX-6); the snapshot is
-  written `0644` so the api container (uid 10001) can read it.
+- File ownership, two directories with opposite write direction (verified
+  against `scripts/deploy/gpu-lifecycle-install.sh` lines 181-198):
+  - `/run/acx` is `ubuntu:ubuntu 0755`, written only by the lifecycle units and
+    bind-mounted **read-only** into the api container. `gpu-state.json` is
+    written `0644` so the api container (uid 10001) can read it, and the
+    single-writer lock `/run/acx/gpu-state.json.lock` is `ubuntu:ubuntu 0600`.
+  - `/run/acx-write` is `root:10001 0775`, with per-environment subdirectories
+    `/run/acx-write/{dev,staging,prod}` at the same `root:10001 0775`. Write
+    access comes from the **group** (gid 10001), not from ownership. Each api
+    container bind-mounts only its own `/run/acx-write/${ACX_ENV}` read-write
+    and publishes `describe-load.json` there; the lifecycle units aggregate the
+    `/run/acx-write` parent (`--load-dir /run/acx-write`).

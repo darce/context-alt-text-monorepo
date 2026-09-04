@@ -111,8 +111,10 @@ Both writers atomically replace mode-0644 files. `/run/acx` remains host-owned
 and read-only to containers. Each API receives only its own writable
 `/run/acx-write/<env>` subdirectory, preventing dual writers while allowing the
 units to aggregate load across dev, staging, and prod. `.env.prod.example` is the
-production path seam for these two directories, and `docker-compose.prod.yml`
-enforces the corresponding read-only state and read-write load mounts.
+production path seam for these two directories, and `docker-compose.env.yml`
+enforces the corresponding read-only state and read-write load mounts. Pass
+`ACX_DESCRIBE_LOAD_DIR` as the `/run/acx-write` parent the units aggregate,
+not a per-environment subdirectory; the checker rejects the mismatch.
 
 Run the fail-closed check as root so it can test readability as container uid
 10001. Export the values from the deployed environment; do not source a secrets
@@ -120,17 +122,16 @@ file into an interactive shell:
 
 ```bash
 sudo env \
-  ACX_DESCRIBE_LOAD_DIR=/run/acx-write/prod \
-  ACX_DESCRIBE_LOAD_PATH=/run/acx-write/prod/describe-load.json \
+  ACX_DESCRIBE_LOAD_DIR=/run/acx-write \
   ACX_DESCRIBE_LOAD_STALE_SECONDS=120 \
-  ACX_GPU_COMPOSE_FILE=apps/prototype-description-service/docker-compose.prod.yml \
+  ACX_GPU_COMPOSE_FILE=apps/prototype-description-service/docker-compose.env.yml \
   ACX_GPU_INSTALL_SCRIPT=scripts/deploy/gpu-lifecycle-install.sh \
   ACX_GPU_READER_UID=10001 \
   ACX_GPU_SNAPSHOT_CONFIG_ONLY=0 \
   ACX_GPU_SNAPSHOT_DIR=/run/acx \
   ACX_GPU_STATE_PATH=/run/acx/gpu-state.json \
   ACX_GPU_STATE_STALE_SECONDS=180 \
-  ACX_GPU_UNIT_LOAD_PATH='/run/acx-write/*/describe-load.json' \
+  ACX_GPU_UNIT_LOAD_DIR=/run/acx-write \
   ACX_GPU_UNIT_STATE_PATH=/run/acx/gpu-state.json \
   ACX_NOW_EPOCH="$(date +%s)" \
   scripts/deploy/check-gpu-snapshots.sh

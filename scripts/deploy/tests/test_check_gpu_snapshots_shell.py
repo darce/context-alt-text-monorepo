@@ -15,6 +15,14 @@ CHECKER = REPO_ROOT / "scripts/deploy/check-gpu-snapshots.sh"
 MAKEFILE = REPO_ROOT / "Makefile"
 RECOGNITION_DEPLOY = REPO_ROOT / "scripts/deploy/recognition-service.sh"
 
+# The suite spawns seven `make` processes, and this repo's `make` startup
+# resolves the active task through four `uvx` package launches. That costs
+# ~6s per process on a warm cache and ~15s cold, so the suite legitimately
+# needs ~70-120s on a developer laptop while the CI gate host finishes in
+# ~30s. This budget exists to catch a hang, not to police wall-clock speed;
+# a host-tuned value turns the suite into a hardware-dependent flake.
+_DEFAULT_TIMEOUT_SECONDS = 300.0
+
 
 def _assignment_block(path: Path, start: str, end: str) -> dict[str, str]:
     text = path.read_text(encoding="utf-8")
@@ -83,10 +91,6 @@ def test_remote_snapshot_callsite_executes_without_repo_checkout(
             '{"queue_depth":0,"in_flight":0,"batch_in_progress":false,"written_at":900}\n',
             encoding="utf-8",
         )
-    (load_dir / "describe-load.json").write_text(
-        '{"queue_depth":0,"in_flight":0,"batch_in_progress":false,"written_at":900}\n',
-        encoding="utf-8",
-    )
     state_path = state_dir / "gpu-state.json"
     state_path.write_text('{"state":"ready","written_at":900}\n', encoding="utf-8")
     compose_path = tmp_path / "compose.yml"
@@ -95,9 +99,9 @@ def test_remote_snapshot_callsite_executes_without_repo_checkout(
         "  api:\n"
         "    environment:\n"
         f"      - ACX_GPU_STATE_PATH={state_path}\n"
-        f"      - ACX_DESCRIBE_LOAD_PATH={load_dir}/describe-load.json\n"
+        f"      - ACX_DESCRIBE_LOAD_PATH={load_dir}/${{ACX_ENV}}/describe-load.json\n"
         "    volumes:\n"
-        f"      - {load_dir}:{load_dir}\n"
+        f"      - {load_dir}/${{ACX_ENV}}:{load_dir}/${{ACX_ENV}}\n"
         f"      - {state_dir}:{state_dir}:ro\n",
         encoding="utf-8",
     )
@@ -154,9 +158,14 @@ def test_check_gpu_snapshots_shell_suite() -> None:
         capture_output=True,
         text=True,
         check=False,
+        timeout=float(
+            os.environ.get(
+                "ACX_GPU_SHELL_SUITE_TIMEOUT_SECONDS", _DEFAULT_TIMEOUT_SECONDS
+            )
+        ),
     )
 
     output = result.stdout + result.stderr
-    assert result.returncode == 0, (
-        f"{suite} exited with {result.returncode}\n{output}"
-    )
+    assert result.returncode == 0, f"{suite} exited with {result.returncode}\n{output}"
+    assert "PASS: each environment directory must be API-writable" in output
+    assert output.rstrip().endswith("ALL PASS")

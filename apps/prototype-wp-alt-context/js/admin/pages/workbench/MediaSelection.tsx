@@ -22,6 +22,7 @@ import { BulkDescribeReviewLink } from './BulkDescribeReviewLink';
 
 import { Checkbox } from '../../../components/ui/checkbox';
 import { useBulkDescribe } from '../../hooks/useBulkDescribe';
+import { setDescribeProgressMounted } from '../../hooks/activeDescribeRun';
 import type { DescribeRunProgress } from '../../hooks/useDescribeRunProgress';
 import { useRecognitionCooldown } from '../../hooks/useRecognitionCooldown';
 import { useRemoteActionGate } from '../../hooks/useRemoteActionGate';
@@ -584,6 +585,11 @@ const formatEtaLabel = (etaSeconds: number | null): string => {
 export const BulkDescribeProgress = ({ progress, onRetry }: { progress: DescribeRunProgress; onRetry: () => void }) => {
   const { run, status, progressFraction, etaSeconds, stalledForSeconds, isTerminal, isError, isFrozen } = progress;
   const cooldown = useRecognitionCooldown();
+
+  useEffect(() => {
+    setDescribeProgressMounted(true);
+    return () => setDescribeProgressMounted(false);
+  }, []);
 
   // A hard error whose cause IS the armed cooldown (429/503-with-Retry-After)
   // is the same signal as the waiting state, not a dead run: prefer the calm

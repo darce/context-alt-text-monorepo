@@ -1,44 +1,75 @@
-import React, { createContext, useContext, useState, useCallback, ReactNode } from 'react';
+import React, { createContext, useContext, useState, useCallback, useEffect, useRef, ReactNode } from 'react';
 import { X, CheckCircle, AlertCircle, Info } from 'lucide-react';
 import * as RadixToast from '@radix-ui/react-toast';
 import { __ } from '@wordpress/i18n';
 
 type ToastType = 'success' | 'error' | 'info';
 
+export interface ToastAction {
+  label: string;
+  altText: string;
+  onClick: () => void;
+}
+
+export interface ToastOptions {
+  action?: ToastAction;
+  durationMs?: number | null;
+}
+
 interface ToastMessage {
   id: string;
   message: string;
   type: ToastType;
+  action?: ToastAction;
+  duration?: number | null;
 }
 
 interface ToastContextType {
-  toast: (message: string, type?: ToastType) => void;
-  success: (message: string) => void;
-  error: (message: string) => void;
-  info: (message: string) => void;
+  toast: (message: string, type?: ToastType, options?: ToastOptions) => void;
+  success: (message: string, options?: ToastOptions) => void;
+  error: (message: string, options?: ToastOptions) => void;
+  info: (message: string, options?: ToastOptions) => void;
 }
 
 const ToastContext = createContext<ToastContextType | undefined>(undefined);
 
 export const ToastProvider = ({ children }: { children: ReactNode }) => {
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
+  const timerIdsRef = useRef(new Map<string, number>());
 
   const removeToast = useCallback((id: string) => {
+    const timerId = timerIdsRef.current.get(id);
+    if (timerId !== undefined) {
+      window.clearTimeout(timerId);
+      timerIdsRef.current.delete(id);
+    }
     setToasts((prev) => prev.filter((t) => t.id !== id));
   }, []);
 
+  useEffect(
+    () => () => {
+      timerIdsRef.current.forEach((timerId) => window.clearTimeout(timerId));
+      timerIdsRef.current.clear();
+    },
+    [],
+  );
+
   const toast = useCallback(
-    (message: string, type: ToastType = 'info') => {
+    (message: string, type: ToastType = 'info', options: ToastOptions = {}) => {
       const id = Math.random().toString(36).substring(2, 9);
-      setToasts((prev) => [...prev, { id, message, type }]);
-      setTimeout(() => removeToast(id), 5000);
+      const duration = options.durationMs ?? (options.action ? null : 5000);
+      setToasts((prev) => [...prev, { id, message, type, action: options.action, duration }]);
+      if (duration !== null) {
+        const timerId = window.setTimeout(() => removeToast(id), duration);
+        timerIdsRef.current.set(id, timerId);
+      }
     },
     [removeToast],
   );
 
-  const success = useCallback((message: string) => toast(message, 'success'), [toast]);
-  const error = useCallback((message: string) => toast(message, 'error'), [toast]);
-  const info = useCallback((message: string) => toast(message, 'info'), [toast]);
+  const success = useCallback((message: string, options?: ToastOptions) => toast(message, 'success', options), [toast]);
+  const error = useCallback((message: string, options?: ToastOptions) => toast(message, 'error', options), [toast]);
+  const info = useCallback((message: string, options?: ToastOptions) => toast(message, 'info', options), [toast]);
 
   return (
     <ToastContext.Provider value={{ toast, success, error, info }}>
@@ -50,6 +81,9 @@ export const ToastProvider = ({ children }: { children: ReactNode }) => {
             key={t.id}
             className={`acx-toast acx-toast--${t.type}`}
             open
+            type={t.type === 'info' ? 'background' : 'foreground'}
+            role={t.type === 'error' ? 'alert' : undefined}
+            duration={t.duration ?? Infinity}
             onOpenChange={(open: boolean) => {
               if (!open) {
                 removeToast(t.id);
@@ -76,6 +110,13 @@ export const ToastProvider = ({ children }: { children: ReactNode }) => {
             <RadixToast.Description asChild>
               <span className="acx-toast__message">{t.message}</span>
             </RadixToast.Description>
+            {t.action ? (
+              <RadixToast.Action asChild altText={t.action.altText}>
+                <button type="button" className="acx-toast__action" onClick={t.action.onClick}>
+                  {t.action.label}
+                </button>
+              </RadixToast.Action>
+            ) : null}
             <RadixToast.Close asChild>
               <button
                 type="button"

@@ -14,6 +14,9 @@ ENV_EXAMPLE = ROOT / "apps/prototype-description-service/.env.prod.example"
 README = ROOT / "infra/oci/README.md"
 CHECK_SCRIPT = ROOT / "scripts/deploy/check-gpu-snapshots.sh"
 
+# Compose template token the checker matches literally, not an operator input.
+_LITERAL_ONLY_CHECKER_TOKENS = frozenset({"ACX_ENV"})
+
 
 def _env_example() -> dict[str, str]:
     values: dict[str, str] = {}
@@ -63,14 +66,33 @@ def test_prod_env_uses_namespaced_writable_load_directory() -> None:
     assert env["ACX_DESCRIBE_LOAD_PATH"].startswith("/run/acx-write/prod/")
 
 
+def _checker_input_keys(checker: str) -> set[str]:
+    """Environment variables ``check-gpu-snapshots.sh`` actually reads.
+
+    Only assignment-form dereferences (``var=${ACX_FOO:-...}``) are operator
+    inputs. A bare ``${ACX_ENV}`` is a single-quoted compose template token the
+    checker compares against, never a value it reads from the environment.
+    """
+    assigned = set(re.findall(r"^\s*\w+=\$\{(ACX_[A-Z0-9_]+)", checker, re.MULTILINE))
+    dereferenced = set(re.findall(r"\$\{(ACX_[A-Z0-9_]+)[:}]", checker))
+    unexplained = dereferenced - assigned - _LITERAL_ONLY_CHECKER_TOKENS
+    assert not unexplained, f"checker reads undocumented inputs: {sorted(unexplained)}"
+    return assigned
+
+
 def test_readme_snapshot_check_command_tracks_checker_environment() -> None:
     command = _snapshot_check_command()
     checker = CHECK_SCRIPT.read_text(encoding="utf-8")
 
     assert "/run/acx/describe-load.json" not in command
-    assert "ACX_DESCRIBE_LOAD_DIR=/run/acx-write/prod" in command
-    assert "ACX_DESCRIBE_LOAD_PATH=/run/acx-write/prod/describe-load.json" in command
+    # The units aggregate the /run/acx-write parent; a per-environment value
+    # here fails the checker's lifecycle-agreement assertion.
+    assert re.search(r"^\s*ACX_DESCRIBE_LOAD_DIR=/run/acx-write(?=\s)", command, re.MULTILINE)
+    assert re.search(r"^\s*ACX_GPU_UNIT_LOAD_DIR=/run/acx-write(?=\s)", command, re.MULTILINE)
+    assert (
+        "ACX_GPU_COMPOSE_FILE=apps/prototype-description-service/docker-compose.env.yml"
+        in command
+    )
 
     documented_keys = set(re.findall(r"^\s*(ACX_[A-Z0-9_]+)=", command, re.MULTILINE))
-    checker_keys = set(re.findall(r"\bACX_[A-Z0-9_]+\b", checker))
-    assert documented_keys == checker_keys
+    assert documented_keys == _checker_input_keys(checker)

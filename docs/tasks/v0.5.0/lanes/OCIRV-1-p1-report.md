@@ -1,5 +1,9 @@
 # OCIRV-1 P1 test-integrity report
 
+> **Historical test evidence.** This report records the P1 lane state at
+> handoff. It is not an operator runbook or a source of current open findings;
+> use the implementation, its current tests, and the review tracker for those.
+
 ## Change summary
 
 - Kept the OCIR login suite's existing secret-hygiene text assertions and added execution of the emitted snippet under Bash with fake `oci`, `timeout`, and `docker` executables.
@@ -317,24 +321,9 @@ MUTANT_S18_AFTER_RC=1
 
 None.
 
-## Findings outside ownership
+## Handoff scope
 
-- `scripts/test_shell_parses_under_system_bash.py`: the historical compatibility
-  fixture parses on the gate's Bash 5.2.21, producing `1 failed, 56 passed`.
-  Gating that assertion on Bash 3.2 or introducing a pinned 3.2 interpreter
-  requires changing a sibling-lane test, so this lane did not edit it.
-- `scripts/deploy/lib/ocir-auth.sh`: real `docker login` persists credentials in
-  Docker's configured credential store or config. The existing fake proves
-  stdin/argv behavior but cannot prove runtime cleanup. Isolating Docker config,
-  cleaning it reliably, adding runtime-parity coverage, and updating the
-  runbook require production/documentation changes outside frozen ownership.
-- `scripts/deploy/lib/ocir-auth.sh`: the no-`timeout(1)` branch still performs an
-  unbounded Vault call. A portable deadline is a production behavior change
-  owned by another OCIRV-1 lane.
-- `scripts/deploy/_vault_put_secret.py`: explicit `--key-id` still cannot
-  bootstrap an empty vault because sibling resolution happens first. Correcting
-  the resolution order is an out-of-lane production change.
-- `scripts/deploy/_vault_put_secret.py`: `--readable-timeout 0` still performs a
-  read despite help text saying it skips the wait, and negative values are not
-  rejected. Choosing and implementing the CLI semantics belongs to the
-  production owner.
+Out-of-lane findings are intentionally omitted. Their lifecycle belongs in the
+review tracker, not in this historical test-evidence artifact. This prevents a
+closed P1 report from presenting superseded implementation claims as current
+operator guidance.

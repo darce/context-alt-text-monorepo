@@ -124,10 +124,11 @@ Vault secrets, fetched by the same mechanism as §4:
 | `OCIR_AUTH_TOKEN` | OCI auth token (docker password)  | yes     |
 
 `scripts/deploy/lib/ocir-auth.sh` emits a fetch-and-login snippet that pipes the
-token straight into `docker login --password-stdin`. The token is never written
-to disk, never placed in argv (where `ps` would expose it), and no host keeps a
-cached `~/.docker/config.json` entry. On the VM the fetch runs under
-`--auth instance_principal`; on a laptop, under the operator's API key.
+token straight into `docker login --password-stdin`; it is never placed in argv
+(where `ps` would expose it). Docker receives a private `DOCKER_CONFIG` created
+with `mktemp -d`, and an exit trap removes that directory on successful and
+failed logins, so no credential remains in the host's Docker config. On the VM
+the fetch uses `--auth instance_principal`; on a laptop, the operator's API key.
 
 `oci-cli` must be present on the VM for the remote path:
 

@@ -303,7 +303,24 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
     const closeMatchBulkPhaseRef = React.useRef<string>(BULK_COMMIT_PHASE.IDLE);
     // [REF-19] single AT-announce module; [A11Y-06] status second channel — BR-68/HARM-02.
     // The hook clears then restores repeated copy in one persistent live node.
+    //
+    // FEBT1-LD-02: two independently owned polite regions, not one shared slot.
+    // `setLiveMessage` carries *outcomes* (saved / failed / accepted / target
+    // retired); `setLivePositionMessage` carries *where you are and what is here*
+    // (queue position, empty / filtered / repair copy, selection count). They used
+    // to share one `useAriaAnnounce` slot, so any extra re-render — e.g. a hook
+    // subscribing to a query success transition — let the positional announcement
+    // silently overwrite "Saved. Moving to next review item." before AT ever saw
+    // it, and the operator lost their save confirmation (A11Y-24, RLSE-04).
+    // Two sibling regions each with their own stable node is the in-repo idiom:
+    // ScanTabContent.tsx:209 already mounts `.acx-review-lifecycle-announce`
+    // alongside this one from its own useAriaAnnounce instance.
     const { message: liveMessage, seq: liveSeq, announce: setLiveMessage } = useAriaAnnounce();
+    const {
+      message: livePositionMessage,
+      seq: livePositionSeq,
+      announce: setLivePositionMessage,
+    } = useAriaAnnounce();
     const [selectionOpen, setSelectionOpen] = React.useState(false);
     const [reviewedStoredFaceSuggestionIds, setReviewedStoredFaceSuggestionIds] = React.useState<Set<string>>(
       () => new Set(),
@@ -514,8 +531,8 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
       if (prev === selectionCountMessage) {
         return;
       }
-      setLiveMessage(selectionCountMessage);
-    }, [selectionCountMessage, setLiveMessage]);
+      setLivePositionMessage(selectionCountMessage);
+    }, [selectionCountMessage, setLivePositionMessage]);
 
     // Reset truncation confirm when selection or gate changes.
     React.useEffect(() => {
@@ -639,7 +656,7 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
       prevFilteredEmptyRef.current = filteredEmptyWithWork;
       if (currentKey && currentKey !== previousItemKeyRef.current) {
         if (previousItemKeyRef.current !== null || recoveredFromFilteredEmpty) {
-          setLiveMessage(
+          setLivePositionMessage(
             sprintf(
               /* translators: 1: current 1-based position, 2: total */
               __('Review item %1$d of %2$d', 'alt-context'),
@@ -694,20 +711,20 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
             const nextEmptyMessage = filteredEmptyWithWork
               ? `${errorCopy} ${__('No items match the current filters.', 'alt-context')}`
               : errorCopy;
-            setLiveMessage(nextEmptyMessage);
+            setLivePositionMessage(nextEmptyMessage);
             repairAnnouncedRef.current = findings.repairPending;
             repairAnnouncedMessageRef.current = nextEmptyMessage;
           } else if (filteredEmptyWithWork) {
             const nextEmptyMessage = __('No items match the current filters.', 'alt-context');
-            setLiveMessage(nextEmptyMessage);
+            setLivePositionMessage(nextEmptyMessage);
             repairAnnouncedRef.current = findings.repairPending;
             repairAnnouncedMessageRef.current = nextEmptyMessage;
           } else if (findings.repairPending && repairCopy) {
-            setLiveMessage(repairCopy);
+            setLivePositionMessage(repairCopy);
             repairAnnouncedRef.current = true;
             repairAnnouncedMessageRef.current = repairCopy;
           } else {
-            setLiveMessage(__('All caught up — no items need review', 'alt-context'));
+            setLivePositionMessage(__('All caught up — no items need review', 'alt-context'));
             repairAnnouncedRef.current = false;
             repairAnnouncedMessageRef.current = null;
           }
@@ -731,7 +748,7 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
       focusPrimaryInCard,
       length,
       safeIndex,
-      setLiveMessage,
+      setLivePositionMessage,
       topUnlabeledClusters.length,
     ]);
 
@@ -932,6 +949,8 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
     const isInitialFailureBranch =
       data.hasInitialFailure && !data.isError && !isErrorBranch;
     const isLoadingBranch = data.isLoading || findings.isLoading;
+    // Outcome channel. Never carries positional copy, so a save confirmation
+    // cannot be replaced by "Review item 1 of 1".
     const liveRegion = (
       <div
         className="acx-review-queue__live"
@@ -953,6 +972,19 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
         ) : (
           liveMessage
         )}
+      </div>
+    );
+
+    // Position / inventory channel — independently owned so it can never clobber
+    // the outcome region above (FEBT1-LD-02).
+    const livePositionRegion = (
+      <div
+        className="acx-review-queue__live-position"
+        role="status"
+        aria-live="polite"
+        data-announce-seq={livePositionSeq}
+      >
+        {livePositionMessage}
       </div>
     );
 
@@ -1087,6 +1119,7 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
     return (
       <div className="acx-review-queue" data-live-target-status={headLiveStatus}>
         {liveRegion}
+        {livePositionRegion}
         {headLiveStatus === 'auth_expired' ? (
           <UserFacingErrorNotice
             className="acx-review-queue__auth-expired"

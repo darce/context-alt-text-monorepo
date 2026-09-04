@@ -216,7 +216,12 @@ describe('ClusterLabelingPanel', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Merge into group "Slate Willow"' }));
 
     await waitFor(() => {
-      expect(mergeCluster).toHaveBeenCalledWith('panel-cluster-id', 'target-cluster-id', 'Slate Willow');
+      expect(mergeCluster).toHaveBeenCalledWith(
+        'panel-cluster-id',
+        'target-cluster-id',
+        'Slate Willow',
+        expect.any(AbortSignal),
+      );
     });
     expect(await screen.findByText(/Merged into/)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Undo merge' })).toBeInTheDocument();
@@ -333,7 +338,7 @@ describe('ClusterLabelingPanel', () => {
       expect(commitClusterToRosterEntry).toHaveBeenCalledWith({
         clusterId: 'panel-cluster-id',
         rosterEntryId: 11,
-      });
+      }, expect.any(AbortSignal));
     });
     expect(updateClusterLabel).not.toHaveBeenCalled();
     expect(screen.queryByText(/already exists/)).not.toBeInTheDocument();
@@ -988,7 +993,12 @@ describe('ClusterLabelingPanel', () => {
 
     await user.click(mergeButton);
     await waitFor(() => {
-      expect(mergeCluster).toHaveBeenCalledWith('panel-cluster-id', 'real-match-id', 'Pat Rivera');
+      expect(mergeCluster).toHaveBeenCalledWith(
+        'panel-cluster-id',
+        'real-match-id',
+        'Pat Rivera',
+        expect.any(AbortSignal),
+      );
     });
   });
 
@@ -1211,7 +1221,7 @@ describe('ClusterLabelingPanel', () => {
       expect(commitClusterToRosterEntry).toHaveBeenCalledWith({
         clusterId: 'panel-cluster-id',
         rosterEntryId: 42,
-      });
+      }, expect.any(AbortSignal));
     });
     expect(updateClusterLabel).not.toHaveBeenCalled();
     expect(screen.queryByText(/already exists/)).not.toBeInTheDocument();
@@ -1284,7 +1294,7 @@ describe('ClusterLabelingPanel', () => {
       expect(commitClusterToRosterEntry).toHaveBeenCalledWith({
         clusterId: 'source-cluster-id',
         rosterEntryId: 42,
-      });
+      }, expect.any(AbortSignal));
     });
     expect(updateClusterLabel).not.toHaveBeenCalled();
     expect(mergeCluster).not.toHaveBeenCalled();
@@ -1321,7 +1331,7 @@ describe('ClusterLabelingPanel', () => {
       expect(commitClusterToRosterEntry).toHaveBeenCalledWith({
         clusterId: 'panel-cluster-id',
         rosterEntryId: 42,
-      });
+      }, expect.any(AbortSignal));
     });
     expect(updateClusterLabel).not.toHaveBeenCalled();
     expect(mergeCluster).not.toHaveBeenCalled();
@@ -1414,12 +1424,12 @@ describe('ClusterLabelingPanel', () => {
       expect(commitClusterToRosterEntry).toHaveBeenCalledWith({
         clusterId: 'panel-cluster-id',
         rosterEntryId: 2,
-      });
+      }, expect.any(AbortSignal));
     });
     expect(commitClusterToRosterEntry).not.toHaveBeenCalledWith({
       clusterId: 'panel-cluster-id',
       rosterEntryId: 1,
-    });
+    }, expect.any(AbortSignal));
     expect(updateClusterLabel).not.toHaveBeenCalled();
   });
 
@@ -1477,7 +1487,7 @@ describe('ClusterLabelingPanel', () => {
     expect(commitClusterToRosterEntry).toHaveBeenCalledWith({
       clusterId: 'panel-cluster-id',
       rosterEntryId: 42,
-    });
+    }, expect.any(AbortSignal));
     expect(updateClusterLabel).not.toHaveBeenCalled();
     release?.();
   });
@@ -1730,7 +1740,7 @@ describe('ClusterLabelingPanel', () => {
       expect(commitClusterToRosterEntry).toHaveBeenCalledWith({
         clusterId: 'panel-cluster-id',
         rosterEntryId: 42,
-      });
+      }, expect.any(AbortSignal));
     });
     expect(updateClusterLabel).not.toHaveBeenCalled();
   });
@@ -1748,7 +1758,7 @@ describe('ClusterLabelingPanel', () => {
       expect(commitClusterToRosterEntry).toHaveBeenCalledWith({
         clusterId: 'panel-cluster-id',
         rosterEntryId: target.id,
-      });
+      }, expect.any(AbortSignal));
     });
     expect(updateClusterLabel).not.toHaveBeenCalled();
   });

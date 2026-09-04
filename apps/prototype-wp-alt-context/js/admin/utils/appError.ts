@@ -1,6 +1,9 @@
 import { NonceRefreshFailedError } from '../api/config';
-import { AuthExpiredError, HTTPError, ResponseParseError } from './http';
+import { abortLikeTag, AuthExpiredError, HTTPError, ResponseParseError } from './http';
+import { hasRetryAfterWait } from './retryAfter';
 import { SPA_SESSION_EXPIRED_COPY } from './sessionExpiredCopy';
+
+export { isAbortLikeName } from './http';
 
 export const APP_ERROR_TAGS = [
   'http',
@@ -8,6 +11,7 @@ export const APP_ERROR_TAGS = [
   'auth_expired',
   'nonce_refresh',
   'abort',
+  'timeout',
   'transport',
   'unknown',
 ] as const;
@@ -20,6 +24,7 @@ const APP_ERROR_TAG_INDEX: Record<AppErrorTag, true> = {
   auth_expired: true,
   nonce_refresh: true,
   abort: true,
+  timeout: true,
   transport: true,
   unknown: true,
 };
@@ -47,6 +52,7 @@ export type AppError =
     })
   | AppErrorBase<'nonce_refresh'>
   | AppErrorBase<'abort'>
+  | AppErrorBase<'timeout'>
   | AppErrorBase<'transport'>
   | AppErrorBase<'unknown'>;
 
@@ -76,23 +82,13 @@ export const isAppError = (value: unknown): value is AppError => {
       return (value.status === 401 || value.status === 403) && typeof value.endpoint === 'string';
     case 'nonce_refresh':
     case 'abort':
+    case 'timeout':
     case 'transport':
     case 'unknown':
       return true;
     default:
       return assertNever(value._tag);
   }
-};
-
-const ABORT_LIKE_NAMES = new Set(['AbortError', 'TimeoutError']);
-
-/** Duck-type: DOMException, Error, or any object whose name is AbortError|TimeoutError. */
-export const isAbortLikeName = (value: unknown): boolean => {
-  if (typeof value !== 'object' || value === null) {
-    return false;
-  }
-  const name = (value as { name?: unknown }).name;
-  return typeof name === 'string' && ABORT_LIKE_NAMES.has(name);
 };
 
 const unknownMessage = (value: unknown): string => {
@@ -116,7 +112,7 @@ const abortMessage = (error: unknown): string => {
 };
 
 const classifyHttpError = (error: HTTPError): AppError => {
-  if (error.retryAfterSeconds === undefined) {
+  if (error.retryAfterMs === undefined) {
     return {
       _tag: 'http',
       status: error.status,
@@ -129,17 +125,39 @@ const classifyHttpError = (error: HTTPError): AppError => {
     _tag: 'http',
     status: error.status,
     endpoint: error.endpoint,
-    retryAfterMs: error.retryAfterSeconds * 1000,
+    retryAfterMs: error.retryAfterMs,
     message: error.message,
     cause: error,
   };
 };
 
+/**
+ * Messages a `fetch` network failure rejects with, per browser. Every other
+ * `TypeError` is a programming bug (`x is not a function`) and must not be
+ * retried as if the network dropped (FEBT-1-W1-E-05). A network failure raised
+ * inside `fetchApi` never reaches this list — the boundary already tagged it
+ * `TransportError` by provenance.
+ */
+const FETCH_NETWORK_FAILURE_MESSAGES = [
+  'Failed to fetch',
+  'Load failed',
+  'NetworkError when attempting to fetch resource',
+  'Network request failed',
+  'fetch failed',
+] as const;
+
+const isFetchNetworkFailureMessage = (message: string): boolean =>
+  FETCH_NETWORK_FAILURE_MESSAGES.some((known) => message.includes(known));
+
 export const classifyError = (error: unknown): AppError => {
   try {
-    if (isAppError(error)) {
-      return error;
-    }
+    // Instance branches run *before* the structural short-circuit. Since
+    // FEBT1-W2A-01 closed the boundary, `HTTPError`/`AuthExpiredError`/
+    // `ResponseParseError` carry a `_tag` and therefore already satisfy
+    // `isAppError`; short-circuiting on them would return the Error instance
+    // and silently retire the plain, serialisable projections below (and the
+    // assertions that pin them). classifyError stays the *projection* function:
+    // one meaning, two representations.
     if (error instanceof AuthExpiredError) {
       return {
         _tag: 'auth_expired',
@@ -167,14 +185,22 @@ export const classifyError = (error: unknown): AppError => {
         cause: error,
       };
     }
-    if (isAbortLikeName(error)) {
+    // Plain tagged objects, plus the tag-only boundary classes
+    // (AbortedRequestError / RequestTimeoutError / TransportError /
+    // UnknownBoundaryError). Those carry no fields beyond the AppError base, so
+    // returning them as-is is already the projection.
+    if (isAppError(error)) {
+      return error;
+    }
+    const abortTag = abortLikeTag(error);
+    if (abortTag !== undefined) {
       return {
-        _tag: 'abort',
+        _tag: abortTag,
         message: abortMessage(error),
         cause: error,
       };
     }
-    if (error instanceof TypeError) {
+    if (error instanceof TypeError && isFetchNetworkFailureMessage(error.message)) {
       return {
         _tag: 'transport',
         message: error.message,
@@ -211,7 +237,7 @@ export const isCooldown = (error: unknown): boolean => {
   const classified = classifyError(error);
   return (
     classified._tag === 'http' &&
-    (classified.status === 429 || (classified.status === 503 && classified.retryAfterMs !== undefined))
+    (classified.status === 429 || (classified.status === 503 && hasRetryAfterWait(classified.retryAfterMs)))
   );
 };
 

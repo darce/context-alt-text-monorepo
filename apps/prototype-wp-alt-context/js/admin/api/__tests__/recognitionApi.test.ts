@@ -27,6 +27,7 @@ import {
   type BulkAcceptResponse,
   type PendingNameSuggestion,
 } from '../recognition';
+import { RetentionExportResponseError } from '../recognition/retentionApi';
 import { DATA_SOURCE, PROJECTION_STATUS } from '../recognition/types';
 
 const mockConfig = {
@@ -363,7 +364,66 @@ describe('recognitionApi', () => {
     );
   });
 
-  it('normalizes retention export payloads from backend data/counts fields', async () => {
+  it('normalizes the flat retention export snapshot the service actually returns', async () => {
+    // rg-015: `GET /retention/export/{job_id}/data` returns `ExportJob.data_json`
+    // verbatim (retention.py:208-211), i.e. the bare snapshot from
+    // `TenantExportService.export_tenant_data`, proxied through unchanged. There
+    // is no `data`/`payload` wrapper and no `counts`/`summary` field on the wire.
+    fetchApiMock.mockResolvedValue({
+      tenant_id: 'tenant-1',
+      exported_at: '2026-03-12T12:00:00Z',
+      schema_version: 3,
+      clusters: [{ id: 'cluster-1' }],
+      media_identities: [],
+    });
+
+    const result = await downloadExportJobData('export-job-1');
+
+    expect(result.tenant_id).toBe('tenant-1');
+    expect(result.exported_at).toBe('2026-03-12T12:00:00Z');
+    expect(result.schema_version).toBe(3);
+    expect(result.payload).toEqual({
+      tenant_id: 'tenant-1',
+      exported_at: '2026-03-12T12:00:00Z',
+      schema_version: 3,
+      clusters: [{ id: 'cluster-1' }],
+      media_identities: [],
+    });
+    // Counts are derived from the snapshot's own arrays, never read from an
+    // upstream field that does not exist.
+    expect(result.summary).toEqual({ clusters: 1, media_identities: 0 });
+    expect(fetchApiMock).toHaveBeenCalledWith(
+      expect.stringContaining('/retentionExport/export-job-1/data'),
+      expect.objectContaining({ method: 'GET', restNonce: 'nonce-123' }),
+    );
+  });
+
+  it('derives counts from the arrays even when the response also carries a counts field [rg-015]', async () => {
+    // A valid flat snapshot that additionally carries a stray `counts`. rg-015:
+    // the adapter must not prefer upstream-supplied metadata it does not have a
+    // contract for — the arrays are the only truth about what was exported.
+    fetchApiMock.mockResolvedValue({
+      schema_version: 3,
+      clusters: [{ id: 'cluster-1' }, { id: 'cluster-2' }],
+      media_identities: [{ id: 'identity-1' }],
+      counts: { clusters: 99, media_identities: 0 },
+      summary: { clusters: 0 },
+    });
+
+    const result = await downloadExportJobData('export-job-1');
+
+    expect(result.summary).toEqual({ clusters: 2, media_identities: 1 });
+    expect(fetchApiMock).toHaveBeenCalledWith(
+      expect.stringContaining('/retentionExport/export-job-1/data'),
+      expect.objectContaining({ method: 'GET', restNonce: 'nonce-123' }),
+    );
+  });
+
+  it('rejects the fabricated {counts, data} envelope instead of silently accepting it [FEBT1-LG-01][rg-015]', async () => {
+    // The shape this test used to assert as correct. The service never emits it,
+    // so accepting it meant an adapter supporting two upstream shapes and
+    // inventing `summary` from a field that is not on the wire. `members` is not
+    // even an export collection — proof the old expectation was fabricated.
     fetchApiMock.mockResolvedValue({
       tenant_id: 'tenant-1',
       exported_at: '2026-03-12T12:00:00Z',
@@ -374,21 +434,26 @@ describe('recognitionApi', () => {
       },
     });
 
-    const result = await downloadExportJobData('export-job-1');
-
-    expect(result).toEqual({
-      tenant_id: 'tenant-1',
-      exported_at: '2026-03-12T12:00:00Z',
-      schema_version: 1,
-      summary: { clusters: 2, members: 3 },
-      payload: {
-        clusters: [{ id: 'cluster-1' }],
-      },
-    });
+    await expect(downloadExportJobData('export-job-1')).rejects.toThrow(RetentionExportResponseError);
+    // The request is still issued to the documented endpoint; the rejection is
+    // in the adapter, not a short-circuit before the call.
     expect(fetchApiMock).toHaveBeenCalledWith(
       expect.stringContaining('/retentionExport/export-job-1/data'),
       expect.objectContaining({ method: 'GET', restNonce: 'nonce-123' }),
     );
+  });
+
+  it('rejects a `payload`-wrapped envelope and an empty response [FEBT1-LG-01][rg-015]', async () => {
+    fetchApiMock.mockResolvedValue({ schema_version: 3, payload: { clusters: [] }, summary: { clusters: 0 } });
+    await expect(downloadExportJobData('export-job-1')).rejects.toThrow(RetentionExportResponseError);
+
+    fetchApiMock.mockResolvedValue({ schema_version: 3, data: { clusters: [] }, counts: { clusters: 0 } });
+    await expect(downloadExportJobData('export-job-1')).rejects.toThrow(RetentionExportResponseError);
+
+    // The pre-fix adapter returned `{ payload: {}, summary: {} }` here, which the
+    // caller wrote to disk as a successful, empty export (RLSE-05).
+    fetchApiMock.mockResolvedValue({});
+    await expect(downloadExportJobData('export-job-1')).rejects.toThrow('Export data response was malformed');
   });
 
   it('exports the phase-0 suggestion stub types through the recognition barrel', () => {

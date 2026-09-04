@@ -23,8 +23,20 @@ describe('clampRetryAfterMs [E-01]', () => {
     expect(clampRetryAfterMs(-1, FALLBACK_MS)).toBe(FALLBACK_MS);
   });
 
-  it('preserves Retry-After: 0 (retry immediately) and in-range values', () => {
+  it('raises Retry-After: 0 to the floor — no wait is ever immediate', () => {
     expect(clampRetryAfterMs(0, FALLBACK_MS)).toBe(RETRY_AFTER_MIN_MS);
     expect(clampRetryAfterMs(12, FALLBACK_MS)).toBe(12_000);
+  });
+});
+
+// FEBT1-LB-01: pinned to the literal, not to the constant. Every other
+// assertion here reads RETRY_AFTER_MIN_MS, so setting the constant back to 0
+// kept them all green while restoring the immediate retry the floor exists to
+// prevent (observed as a surviving mutant, TEST-15). Changing the floor must
+// be a deliberate edit to this line.
+describe('RETRY_AFTER_MIN_MS product bound', () => {
+  it('is 1s: the smallest wait that is not an immediate retry', () => {
+    expect(RETRY_AFTER_MIN_MS).toBe(1_000);
+    expect(RETRY_AFTER_MIN_MS).toBeGreaterThan(0);
   });
 });

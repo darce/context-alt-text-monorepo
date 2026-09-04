@@ -11,7 +11,7 @@ import { fetchMediaIdentities } from '../admin/api/recognition/identityQueriesAp
 import { DATA_SOURCE, type DataSource } from '../admin/api/recognition/types/dataSource';
 import type { DetectedIdentity } from '../admin/api/recognition/types/identity';
 import { FaceOverlayLayer } from '../components/ui/FaceOverlayLayer';
-import { AuthExpiredError } from '../admin/utils/http';
+import { isAuthExpiredError } from '../admin/utils/userFacingError';
 import { ATTACHMENT_EDIT_COPY } from './copy';
 import { UncuratedFaceList } from './UncuratedFaceList';
 
@@ -79,7 +79,12 @@ export const AttachmentFacesApp: React.FC<AttachmentFacesAppProps> = ({
   }
 
   if (isError) {
-    const sessionExpired = error instanceof AuthExpiredError;
+    // FEBT1-LB-03: tag check, not `instanceof`. The boundary now guarantees a
+    // tagged error, and a structural check also holds for an AuthExpiredError
+    // that crossed a serialisation seam (React Query cache hydration, a worker
+    // postMessage) where the prototype does not survive. Repo idiom:
+    // userFacingError.ts:10.
+    const sessionExpired = isAuthExpiredError(error);
     return (
       <div
         className="acx-attachment-faces"

@@ -4,11 +4,16 @@ Suggestion management routes.
 
 from __future__ import annotations
 
+import uuid
 from collections.abc import Awaitable, Callable, Sequence
 from typing import TypeVar
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from pydantic import Field
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from db.models import MediaIdentity as MediaIdentityModel
 from recognition.application.orchestration import ClusterService
 from recognition.application.suggestions.roster_candidates import (
     DEFAULT_ROSTER_CANDIDATES_TOP_K,
@@ -57,6 +62,34 @@ from recognition.interface_adapters.http.schemas.responses import (
     SuggestionResponse,
 )
 from recognition.interface_adapters.http.validation import validate_entity_id, validate_paging, validate_top_k
+from recognition.shared.tenant import coerce_tenant_uuid
+
+
+class AcceptMergeSuggestionRequest(SuggestionActionRequest):
+    """Accept a merge suggestion, optionally pinning the operator's chosen survivor.
+
+    ``target_cluster_id`` is additive and optional (API-09): omitting it keeps the
+    server-ranked survivor from ``_select_merge_target``. When present it must name
+    one of the suggestion's two clusters — an unrelated id is rejected, never
+    silently replaced by the auto-selected survivor.
+    """
+
+    target_cluster_id: str | None = None
+
+
+class AcceptMergeSuggestionResponse(MergeSuggestionResponse):
+    """Merge-suggestion response for the atomic accept endpoint.
+
+    ``moved_identity_ids`` is the set the merge transaction actually moved, read
+    back from ``media_identities.moved_by_merge_id`` inside the same transaction
+    rather than derived from a client- or server-side guess (rg-015). It is the
+    revert set for ``POST /recognition/clusters/revert-merge``; it is empty when
+    the merge moved nothing and on an already-ACCEPTED replay, where the moving
+    transaction belongs to an earlier request.
+    """
+
+    moved_identity_ids: list[str] = Field(default_factory=list)
+
 
 router = APIRouter(tags=["suggestions"], dependencies=[Depends(require_auth), Depends(enforce_rate_limit)])
 
@@ -443,16 +476,24 @@ async def bulk_accept_suggestions(
     return BulkAcceptResponse(accepted_count=result.accepted_count, skipped_count=result.skipped_count)
 
 
-@router.post("/suggestions/merge/{suggestion_id}/accept", response_model=MergeSuggestionResponse)
+@router.post("/suggestions/merge/{suggestion_id}/accept", response_model=AcceptMergeSuggestionResponse)
 async def accept_merge_suggestion(
     suggestion_id: str,
-    request: SuggestionActionRequest,
+    request: AcceptMergeSuggestionRequest,
     auth=Depends(require_write_access),
     session=Depends(get_session),
     cluster_service_builder=Depends(get_cluster_service_builder),
-) -> MergeSuggestionResponse:
-    """Accept a merge suggestion, merging the cluster pair."""
+) -> AcceptMergeSuggestionResponse:
+    """Accept a merge suggestion, merging the cluster pair under one transaction.
+
+    The merge, the merge-suggestion cleanup and the ACCEPTED status stamp share a
+    single ``session.commit()``: any failure before that commit leaves the merge
+    rolled back, so the client never has to compensate a half-applied write
+    (ARCH-03 — do not split an all-or-nothing write across two round trips).
+    """
     validate_entity_id(suggestion_id, field_name="suggestion_id")
+    if request.target_cluster_id is not None:
+        validate_entity_id(request.target_cluster_id, field_name="target_cluster_id")
     if auth and auth.tenant_claim and auth.tenant_claim != request.tenant_id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="tenant mismatch")
 
@@ -469,19 +510,25 @@ async def accept_merge_suggestion(
     if suggestion.status != SuggestionStatus.PENDING:
         if suggestion.status == SuggestionStatus.ACCEPTED:
             source_id, target_id = await _resolve_accepted_merge_ids(suggestion, cluster_repo)
-            return _to_merge_response(
-                suggestion,
-                source_cluster_id=source_id,
-                target_cluster_id=target_id,
+            return _to_accept_merge_response(
+                _to_merge_response(
+                    suggestion,
+                    source_cluster_id=source_id,
+                    target_cluster_id=target_id,
+                )
             )
-        return _to_merge_response(suggestion)
+        return _to_accept_merge_response(_to_merge_response(suggestion))
 
     cluster_a = await cluster_repo.get_by_id(suggestion.cluster_a_id)
     cluster_b = await cluster_repo.get_by_id(suggestion.cluster_b_id)
     if not cluster_a or not cluster_b:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Cluster not found")
 
-    source_cluster_id, target_cluster_id, target_label = _select_merge_target(cluster_a, cluster_b)
+    source_cluster_id, target_cluster_id, target_label = _resolve_merge_pair(
+        cluster_a,
+        cluster_b,
+        requested_target_cluster_id=request.target_cluster_id,
+    )
     merged = await cluster_service.merge_cluster(
         source_cluster_id,
         request.tenant_id,
@@ -492,20 +539,29 @@ async def accept_merge_suggestion(
     if merged is None:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Merge failed")
 
+    # Read the moved set back from the same uncommitted transaction, before the
+    # single commit, so it is the rows the merge stamped rather than a guess.
+    moved_identity_ids = await _load_moved_identity_ids(session, request.tenant_id, str(suggestion.id))
+
     await repo.delete_by_cluster(request.tenant_id, source_cluster_id)
     await repo.delete_by_cluster(request.tenant_id, target_cluster_id)
     suggestion.status = SuggestionStatus.ACCEPTED
 
     # Commit before response so client refetches see committed state
     # (see clusters.py PATCH handler comment for full race condition explanation).
+    # This is also the only commit on the path: merge + cleanup + ACCEPTED stamp
+    # land together or not at all.
     await session.commit()
 
-    # Authoritative survivor/retired ids from _select_merge_target (source=retired,
+    # Authoritative survivor/retired ids from _resolve_merge_pair (source=retired,
     # target=survivor). Clients must not re-rank cluster_a/b presentation fields.
-    return _to_merge_response(
-        suggestion,
-        source_cluster_id=source_cluster_id,
-        target_cluster_id=target_cluster_id,
+    return _to_accept_merge_response(
+        _to_merge_response(
+            suggestion,
+            source_cluster_id=source_cluster_id,
+            target_cluster_id=target_cluster_id,
+        ),
+        moved_identity_ids=moved_identity_ids,
     )
 
 
@@ -771,6 +827,74 @@ def _select_merge_target(cluster_a: IdentityCluster, cluster_b: IdentityCluster)
     # None falls back to preserving target.label in the use case.
     selected_label = target.label if _is_meaningful_label(target.label) else None
     return source.id, target.id, selected_label
+
+
+def _resolve_merge_pair(
+    cluster_a: IdentityCluster,
+    cluster_b: IdentityCluster,
+    *,
+    requested_target_cluster_id: str | None,
+) -> tuple[str, str, str | None]:
+    """Resolve (retired, survivor, label), honouring an explicit operator survivor.
+
+    ``_select_merge_target`` stays the default when the caller expresses no
+    preference. An explicit ``target_cluster_id`` outside the suggestion's own
+    pair is rejected rather than silently downgraded to the auto-selected
+    survivor: discarding an operator's choice without telling them is worse than
+    failing the request.
+    """
+    if requested_target_cluster_id is None:
+        return _select_merge_target(cluster_a, cluster_b)
+
+    requested = requested_target_cluster_id.lower()
+    candidates = {(cluster.id or "").lower(): cluster for cluster in (cluster_a, cluster_b) if cluster.id}
+    target = candidates.get(requested)
+    if target is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="target_cluster_id must be one of the suggestion's clusters",
+        )
+    source = cluster_b if target is cluster_a else cluster_a
+    if not target.id or not source.id:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cluster identifiers missing")
+    # Mirrors _select_merge_target: placeholder cluster-* labels must not enter
+    # merge's reserved-label guard; None preserves target.label in the use case.
+    selected_label = target.label if _is_meaningful_label(target.label) else None
+    return source.id, target.id, selected_label
+
+
+async def _load_moved_identity_ids(session: AsyncSession, tenant_id: str, merge_id: str) -> list[str]:
+    """Read the identities this merge moved, from the still-open transaction.
+
+    ``cluster_merge.merge_cluster`` stamps ``media_identities.moved_by_merge_id``
+    with the merge-suggestion id on exactly the rows it reassigned, so the revert
+    set is read back rather than reconstructed from a convenience guess (rg-015).
+    """
+    try:
+        merge_uuid = uuid.UUID(str(merge_id))
+        tenant_uuid = coerce_tenant_uuid(tenant_id)
+    except ValueError:
+        return []
+
+    result = await session.execute(
+        select(MediaIdentityModel.id).where(
+            MediaIdentityModel.tenant_id == tenant_uuid,
+            MediaIdentityModel.moved_by_merge_id == merge_uuid,
+        )
+    )
+    return [str(identity_id) for identity_id in result.scalars().all()]
+
+
+def _to_accept_merge_response(
+    base: MergeSuggestionResponse,
+    *,
+    moved_identity_ids: list[str] | None = None,
+) -> AcceptMergeSuggestionResponse:
+    """Widen a merge response with the accept endpoint's revert set."""
+    return AcceptMergeSuggestionResponse(
+        **base.model_dump(),
+        moved_identity_ids=list(moved_identity_ids or []),
+    )
 
 
 async def _resolve_accepted_merge_ids(

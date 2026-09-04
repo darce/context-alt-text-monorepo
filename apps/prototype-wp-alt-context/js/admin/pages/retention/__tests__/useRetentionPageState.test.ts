@@ -1,10 +1,12 @@
 import { act, renderHook } from '@testing-library/react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { HTTPError } from '../../../utils/http';
 import { createMockMutation, createMockQuery } from '../../../test-utils/mockHooks';
+import { RetentionExportResponseError } from '../../../api/recognition/retentionApi';
 import {
   buildExportDocument,
+  downloadExportPayload,
   extractImportSnapshot,
   RetentionImportValidationError,
   useRetentionPageState,
@@ -26,6 +28,7 @@ vi.mock('../../../context/ToastContext', () => ({
 
 const updateMutateAsync = vi.fn();
 const importMutateAsync = vi.fn();
+const downloadMutateAsync = vi.fn();
 
 vi.mock('../useRetentionPageMutations', () => ({
   useRetentionPageMutations: () => ({
@@ -34,7 +37,7 @@ vi.mock('../useRetentionPageMutations', () => ({
     purgeMutation: createMockMutation({ mutateAsync: vi.fn() }),
     importMutation: createMockMutation({ mutateAsync: importMutateAsync }),
     applyPreset: createMockMutation({ mutateAsync: vi.fn() }),
-    downloadJobData: createMockMutation({ mutateAsync: vi.fn() }),
+    downloadJobData: createMockMutation({ mutateAsync: downloadMutateAsync }),
   }),
 }));
 
@@ -135,7 +138,7 @@ describe('retention export/import round trip [FEBT1G-H-06][rg-005]', () => {
       summary: { clusters: 2, media_identities: 1 },
     });
     // The envelope wraps the snapshot under `data` and carries `counts`; the
-    // backend contract (ImportRequest.data -> _extract_counts) counts top-level
+    // backend contract (ImportRequest.data -> _validate_collections) counts top-level
     // collections, so the envelope itself would import as zero of everything.
     expect(Object.keys(downloaded)).toContain('counts');
     expect(downloaded.data).toEqual(SNAPSHOT);
@@ -189,5 +192,129 @@ describe('array rejection is attributable to a dedicated guard [FEBT1G-H-06]', (
     expect(() => extractImportSnapshot([SNAPSHOT])).toThrow(
       'Invalid export file: expected a JSON object, not an array.',
     );
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/*  FEBT1-LE-02 — the download resource-release path                   */
+/* ------------------------------------------------------------------ */
+
+/** jsdom Blob is not a fetch-compatible body, so read it with FileReader. */
+const readBlobAsText = (blob: Blob): Promise<string> =>
+  new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.addEventListener('load', () => resolve(String(reader.result)));
+    reader.addEventListener('error', () => reject(reader.error ?? new Error('blob read failed')));
+    reader.readAsText(blob);
+  });
+
+describe('downloadExportPayload releases the object URL [FEBT1-LE-02][RES-04][RES-20]', () => {
+  const OBJECT_URL = 'blob:https://example.test/abcd-1234';
+  const RESPONSE = {
+    tenant_id: 'tenant-1',
+    exported_at: '2026-01-01T00:00:00+00:00',
+    schema_version: 3,
+    payload: SNAPSHOT,
+    summary: { clusters: 2, media_identities: 1 },
+  };
+
+  // jsdom implements neither createObjectURL nor revokeObjectURL, which is why
+  // this path had no test at all. Stub the gap rather than leave it unexercised.
+  let createObjectURL: ReturnType<typeof vi.fn>;
+  let revokeObjectURL: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    createObjectURL = vi.fn(() => OBJECT_URL);
+    revokeObjectURL = vi.fn();
+    Object.defineProperty(URL, 'createObjectURL', { value: createObjectURL, configurable: true, writable: true });
+    Object.defineProperty(URL, 'revokeObjectURL', { value: revokeObjectURL, configurable: true, writable: true });
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('clicks a detached anchor and revokes the object URL on the happy path', async () => {
+    const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
+
+    downloadExportPayload(RESPONSE);
+
+    expect(createObjectURL).toHaveBeenCalledTimes(1);
+    expect(click).toHaveBeenCalledTimes(1);
+    expect(revokeObjectURL).toHaveBeenCalledTimes(1);
+    expect(revokeObjectURL).toHaveBeenCalledWith(OBJECT_URL);
+    expect(document.querySelectorAll('a[download]')).toHaveLength(0);
+
+    const blob = createObjectURL.mock.calls[0][0] as Blob;
+    expect(blob.type).toBe('application/json');
+    const written = JSON.parse(await readBlobAsText(blob)) as Record<string, unknown>;
+    expect(written.data).toEqual(SNAPSHOT);
+    expect(written.counts).toEqual({ clusters: 2, media_identities: 1 });
+    expect(written.tenant_id).toBe('tenant-1');
+  });
+
+  it('names the anchor with a .json download filename', () => {
+    let downloadAttr: string | null = null;
+    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function click(this: HTMLAnchorElement) {
+      downloadAttr = this.getAttribute('download');
+    });
+
+    downloadExportPayload(RESPONSE);
+
+    expect(downloadAttr).not.toBeNull();
+    expect(String(downloadAttr)).toMatch(/^alt-context-retention-export-.+\.json$/);
+  });
+
+  it('revokes the object URL and removes the anchor when click() throws', () => {
+    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {
+      throw new Error('download blocked');
+    });
+
+    expect(() => downloadExportPayload(RESPONSE)).toThrow('download blocked');
+
+    // RES-20: the scope that acquired both resources released both, on the path
+    // where it gave up — not only on the happy path.
+    expect(revokeObjectURL).toHaveBeenCalledTimes(1);
+    expect(revokeObjectURL).toHaveBeenCalledWith(OBJECT_URL);
+    expect(document.querySelectorAll('a[download]')).toHaveLength(0);
+  });
+
+  it('downloadExport surfaces a locally authored message for a malformed response [FEBT1-LG-01]', async () => {
+    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
+    downloadMutateAsync.mockRejectedValue(new RetentionExportResponseError('Export data response was malformed.'));
+
+    const { result } = renderHook(() => useRetentionPageState());
+    act(() => {
+      result.current.dispatch({ type: 'SET_EXPORT_JOB_ID', jobId: 'job-1' });
+    });
+    await act(async () => {
+      await result.current.actions.downloadExport();
+    });
+
+    expect(createObjectURL).not.toHaveBeenCalled();
+    expect(toastSuccess).not.toHaveBeenCalled();
+    expect(toastError).toHaveBeenCalledTimes(1);
+    expect(String(toastError.mock.calls[0][0])).toBe(
+      'The export data returned by the server was malformed; nothing was downloaded.',
+    );
+  });
+
+  it('downloadExport writes the file and revokes the URL on success', async () => {
+    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
+    downloadMutateAsync.mockResolvedValue(RESPONSE);
+
+    const { result } = renderHook(() => useRetentionPageState());
+    act(() => {
+      result.current.dispatch({ type: 'SET_EXPORT_JOB_ID', jobId: 'job-1' });
+    });
+    await act(async () => {
+      await result.current.actions.downloadExport();
+    });
+
+    expect(createObjectURL).toHaveBeenCalledTimes(1);
+    expect(revokeObjectURL).toHaveBeenCalledTimes(1);
+    expect(toastSuccess).toHaveBeenCalledWith('Tenant export downloaded.');
+    expect(toastError).not.toHaveBeenCalled();
   });
 });

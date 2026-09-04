@@ -3,7 +3,8 @@
  *
  * Existence probe: members fetch with limit:1. A 404 is the retirement signal
  * (`cluster_not_found`). Transient/5xx/network errors are NOT retirement —
- * fail-safe keeps status `'live'`.
+ * the probe fails open to status `'unverified'`, which keeps the pane mounted
+ * without claiming the target was seen (FEBT1-LD-03).
  *
  * On retirement:
  *   (B) recorded local-merge survivor → onRebind + announce (once)
@@ -27,7 +28,35 @@ import { classifyError, isHttpStatus } from '../../../utils/appError';
 import { shouldRetryRequest } from '../../../utils/retryPolicy';
 import { isAbortError } from './clusterMutationUtils';
 
-export type LiveReviewTargetStatus = 'live' | 'rebound' | 'retired' | 'auth_expired';
+/**
+ * Canonical status set for the open-review-target probe (sr-007).
+ *
+ * `UNVERIFIED` is the designed third state (RLSE-04 / REF-33): the probe has not
+ * answered — still in flight, or it failed with something that is not a
+ * retirement or an auth expiry. It is NOT retirement.
+ *
+ * Fail-open is deliberate and asymmetric: this probe guards a *read* surface, and
+ * closing an operator's open review pane on a 503 blip is destructive, so an
+ * unanswered probe keeps the pane mounted. The duplicate-lookup guard on the
+ * *write* path must fail closed for the same null. Same absence of an answer,
+ * opposite correct default — which is why they cannot share one channel.
+ */
+export const LIVE_REVIEW_TARGET_STATUS = {
+  /** Probe answered 200: the target provably exists. */
+  LIVE: 'live',
+  /** Probe has not answered (in flight, or a non-terminal failure). Keep the pane open. */
+  UNVERIFIED: 'unverified',
+  REBOUND: 'rebound',
+  RETIRED: 'retired',
+  AUTH_EXPIRED: 'auth_expired',
+} as const;
+
+export type LiveReviewTargetStatus =
+  (typeof LIVE_REVIEW_TARGET_STATUS)[keyof typeof LIVE_REVIEW_TARGET_STATUS];
+
+/** True when the target must stay mounted: everything except a definitive retirement. */
+export const isOpenTargetRetained = (status: LiveReviewTargetStatus): boolean =>
+  status !== LIVE_REVIEW_TARGET_STATUS.RETIRED && status !== LIVE_REVIEW_TARGET_STATUS.REBOUND;
 
 export interface LiveReviewTargetResult {
   status: LiveReviewTargetStatus;
@@ -35,10 +64,11 @@ export interface LiveReviewTargetResult {
   /**
    * Existence-probe error, null while the probe has not failed.
    *
-   * FEBT1-W2A-06: `status: 'live'` is the fail-safe default — a blip must not
-   * close the operator's pane — so it is not evidence of existence. A non-null
-   * `error` alongside `'live'` means the probe never got an answer; a consumer
-   * that needs proof (rather than a safe default) must read this, not `status`.
+   * FEBT1-W2A-06 / FEBT1-LD-03: `status` now carries the unverified state itself
+   * (`'unverified'`), so a consumer no longer has to read `error` to tell
+   * "checked and present" from "never got an answer". `error` remains the
+   * *reason* channel: non-null on every probe failure, including the 5xx blips
+   * that keep the pane open.
    */
   error: unknown;
 }
@@ -122,22 +152,31 @@ export const useLiveReviewTarget = (
     }
   }
 
-  // Auth expiry must not be absorbed into fail-safe 'live' (UXP-NET-2 / FORM-05).
+  // FEBT1-LD-03: `'live'` is a claim of existence, so only a settled 200 may make
+  // it. Reading a success-side query field subscribes this consumer to the success
+  // transition and costs one extra render — that is exactly the render the shared
+  // announcement channel used to lose a message to (FEBT1-LD-02), which is why the
+  // channel had to be split before this state could exist.
+  const verified = existenceQuery.isSuccess;
+
+  // Auth expiry must not be absorbed into the fail-open default (UXP-NET-2 / FORM-05).
   // Keep resolvedClusterId so in-progress UI is not wiped ([INT-11]).
   const status: LiveReviewTargetStatus = authExpired
-    ? 'auth_expired'
-    : !retired
-      ? 'live'
-      : survivorId
-        ? 'rebound'
-        : 'retired';
+    ? LIVE_REVIEW_TARGET_STATUS.AUTH_EXPIRED
+    : retired
+      ? survivorId
+        ? LIVE_REVIEW_TARGET_STATUS.REBOUND
+        : LIVE_REVIEW_TARGET_STATUS.RETIRED
+      : verified
+        ? LIVE_REVIEW_TARGET_STATUS.LIVE
+        : LIVE_REVIEW_TARGET_STATUS.UNVERIFIED;
 
   const resolvedClusterId: string | null =
-    status === 'live' || status === 'auth_expired'
-      ? openClusterId
-      : status === 'rebound'
-        ? survivorId
-        : null;
+    status === LIVE_REVIEW_TARGET_STATUS.REBOUND
+      ? survivorId
+      : status === LIVE_REVIEW_TARGET_STATUS.RETIRED
+        ? null
+        : openClusterId;
 
   // Surface every probe failure, not only auth expiry: a consumer that reads a
   // null error as "verified live" would be consuming "I don't know" as "I

@@ -13,6 +13,11 @@ from infra.oci.gpu_lifecycle.controller import JobLoadSnapshot
 
 logger = logging.getLogger(__name__)
 
+# Keep this standalone boundary adapter in parity with the snapshot contract in
+# docs/workbay/contracts/gpu-lifecycle.md. The lifecycle and API are separate
+# deployables, so sharing validation code would create a deployment coupling.
+LOAD_SNAPSHOT_FUTURE_SKEW_SECONDS = 5.0
+
 _FAIL_CLOSED_BUSY = JobLoadSnapshot(
     queue_depth=1,
     in_flight=1,
@@ -80,7 +85,16 @@ class AggregateJobLoadSource:
                 continue
             snapshot, written_at = parsed
             age = now - written_at
-            if age <= self.stale_seconds:
+            if age < -LOAD_SNAPSHOT_FUTURE_SKEW_SECONDS:
+                logger.warning(
+                    "describe load for environment %s is future-dated "
+                    "(skew=%.1fs > %.1fs); treating as busy",
+                    environment,
+                    -age,
+                    LOAD_SNAPSHOT_FUTURE_SKEW_SECONDS,
+                )
+                snapshots.append(_FAIL_CLOSED_BUSY)
+            elif age <= self.stale_seconds:
                 fresh_count += 1
                 snapshots.append(snapshot)
             elif age <= self.stale_grace_seconds:
@@ -141,11 +155,11 @@ class AggregateJobLoadSource:
             return None
 
         written_at = payload.get("written_at")
-        try:
-            written_timestamp = float(written_at)
-        except (TypeError, ValueError, OverflowError):
-            written_timestamp = math.nan
-        if isinstance(written_at, bool) or not math.isfinite(written_timestamp):
+        if (
+            isinstance(written_at, bool)
+            or not isinstance(written_at, (int, float))
+            or not math.isfinite(written_at)
+        ):
             logger.warning(
                 "describe load for environment %s has invalid written_at; treating as busy: %s",
                 environment,
@@ -153,18 +167,21 @@ class AggregateJobLoadSource:
             )
             return None
         try:
-            queue_depth = int(payload["queue_depth"])
-            in_flight = int(payload["in_flight"])
-        except (KeyError, TypeError, ValueError, OverflowError):
+            queue_depth = payload["queue_depth"]
+            in_flight = payload["in_flight"]
+        except KeyError:
             logger.warning(
                 "describe load for environment %s is missing queue_depth/in_flight; treating as busy: %s",
                 environment,
                 path,
             )
             return None
-        if queue_depth < 0 or in_flight < 0:
+        if any(
+            isinstance(value, bool) or not isinstance(value, int) or value < 0
+            for value in (queue_depth, in_flight)
+        ):
             logger.warning(
-                "describe load for environment %s has negative work counts; treating as busy: %s",
+                "describe load for environment %s has invalid work counts; treating as busy: %s",
                 environment,
                 path,
             )
@@ -183,5 +200,5 @@ class AggregateJobLoadSource:
                 in_flight=in_flight,
                 batch_in_progress=batch_in_progress,
             ),
-            written_timestamp,
+            written_at,
         )

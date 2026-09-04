@@ -13,6 +13,7 @@ recognition_deploy="${root}/scripts/deploy/recognition-service.sh"
 checker_bash=${ACX_GPU_TEST_BASH:-/bin/bash}
 prod_compose="${root}/apps/prototype-description-service/docker-compose.prod.yml"
 prod_env="${root}/apps/prototype-description-service/.env.prod.example"
+environment_compose="${root}/apps/prototype-description-service/docker-compose.env.yml"
 makefile=${ACX_GPU_TEST_MAKEFILE:-${root}/Makefile}
 fixture_root=$(mktemp -d)
 trap 'rm -rf "$fixture_root"' EXIT
@@ -51,9 +52,8 @@ assert_output_not_contains() {
 run_checker() {
     env \
         ACX_GPU_UNIT_STATE_PATH="${fixture_root}/run/acx/gpu-state.json" \
-        ACX_GPU_UNIT_LOAD_PATH="${fixture_root}/run/acx-write/describe-load.json" \
+        ACX_GPU_UNIT_LOAD_DIR="${fixture_root}/run/acx-write" \
         ACX_GPU_STATE_PATH="${fixture_root}/run/acx/gpu-state.json" \
-        ACX_DESCRIBE_LOAD_PATH="${fixture_root}/run/acx-write/describe-load.json" \
         ACX_GPU_STATE_STALE_SECONDS=180 \
         ACX_DESCRIBE_LOAD_STALE_SECONDS=120 \
         ACX_GPU_SNAPSHOT_DIR="${fixture_root}/run/acx" \
@@ -66,10 +66,9 @@ run_checker() {
 
 run_checker_from_install() {
     local fixture_install=${ACX_GPU_INSTALL_SCRIPT:-${fixture_root}/install.sh}
-    env -u ACX_GPU_UNIT_STATE_PATH -u ACX_GPU_UNIT_LOAD_PATH \
+    env -u ACX_GPU_UNIT_STATE_PATH -u ACX_GPU_UNIT_LOAD_DIR \
         ACX_GPU_INSTALL_SCRIPT="$fixture_install" \
         ACX_GPU_STATE_PATH="${fixture_root}/run/acx/gpu-state.json" \
-        ACX_DESCRIBE_LOAD_PATH="${fixture_root}/run/acx-write/describe-load.json" \
         ACX_GPU_STATE_STALE_SECONDS=180 \
         ACX_DESCRIBE_LOAD_STALE_SECONDS=120 \
         ACX_GPU_SNAPSHOT_DIR="${fixture_root}/run/acx" \
@@ -106,20 +105,25 @@ expect_failure() {
     fi
 }
 
-mkdir -p "${fixture_root}/run/acx" "${fixture_root}/run/acx-write"
+mkdir -p "${fixture_root}/run/acx" \
+    "${fixture_root}/run/acx-write/dev" \
+    "${fixture_root}/run/acx-write/staging" \
+    "${fixture_root}/run/acx-write/prod"
 printf '{"state":"ready","written_at":900}\n' >"${fixture_root}/run/acx/gpu-state.json"
-printf '{"queue_depth":0,"in_flight":0,"batch_in_progress":false,"written_at":900}\n' \
-    >"${fixture_root}/run/acx-write/describe-load.json"
+for environment in dev staging prod; do
+    printf '{"queue_depth":0,"in_flight":0,"batch_in_progress":false,"written_at":900}\n' \
+        >"${fixture_root}/run/acx-write/${environment}/describe-load.json"
+done
 chmod 0644 "${fixture_root}/run/acx/gpu-state.json" \
-    "${fixture_root}/run/acx-write/describe-load.json"
+    "${fixture_root}"/run/acx-write/*/describe-load.json
 cat >"${fixture_root}/compose.yml" <<EOF
 services:
   api:
     environment:
       - ACX_GPU_STATE_PATH=${fixture_root}/run/acx/gpu-state.json
-      - ACX_DESCRIBE_LOAD_PATH=${fixture_root}/run/acx-write/describe-load.json
+      - ACX_DESCRIBE_LOAD_PATH=${fixture_root}/run/acx-write/\${ACX_ENV}/describe-load.json
     volumes:
-      - ${fixture_root}/run/acx-write:${fixture_root}/run/acx-write
+      - ${fixture_root}/run/acx-write/\${ACX_ENV}:${fixture_root}/run/acx-write/\${ACX_ENV}
       - ${fixture_root}/run/acx:${fixture_root}/run/acx:ro
 EOF
 cat >"${fixture_root}/compose-old-layout.yml" <<EOF
@@ -127,9 +131,9 @@ services:
   api:
     environment:
       - ACX_GPU_STATE_PATH=${fixture_root}/run/acx/gpu-state.json
-      - ACX_DESCRIBE_LOAD_PATH=${fixture_root}/run/acx-write/describe-load.json
+      - ACX_DESCRIBE_LOAD_PATH=${fixture_root}/run/acx-write/\${ACX_ENV}/describe-load.json
     volumes:
-      - ${fixture_root}/run/acx:${fixture_root}/run/acx-write
+      - ${fixture_root}/run/acx/\${ACX_ENV}:${fixture_root}/run/acx-write/\${ACX_ENV}
       - ${fixture_root}/run/acx:${fixture_root}/run/acx:ro
 EOF
 cat >"${fixture_root}/compose-template.yml" <<'EOF'
@@ -147,14 +151,14 @@ services:
   api:
     environment:
       - ACX_GPU_STATE_PATH=\${ACX_GPU_STATE_PATH}
-      - ACX_DESCRIBE_LOAD_PATH=${fixture_root}/run/acx-write/describe-load.json
+      - ACX_DESCRIBE_LOAD_PATH=${fixture_root}/run/acx-write/\${ACX_ENV}/describe-load.json
     volumes:
-      - ${fixture_root}/run/acx-write:${fixture_root}/run/acx-write
+      - ${fixture_root}/run/acx-write/\${ACX_ENV}:${fixture_root}/run/acx-write/\${ACX_ENV}
       - ${fixture_root}/run/acx:${fixture_root}/run/acx:ro
 EOF
 cat >"${fixture_root}/install.sh" <<EOF
-ExecStart=python3 -m infra.oci.gpu_lifecycle --load-json ${fixture_root}/run/acx-write/describe-load.json --gpu-state-json ${fixture_root}/run/acx/gpu-state.json
-ExecStart=python3 -m infra.oci.gpu_lifecycle --load-json ${fixture_root}/run/acx-write/describe-load.json --gpu-state-json ${fixture_root}/run/acx/gpu-state.json
+ExecStart=python3 -m infra.oci.gpu_lifecycle --load-dir ${fixture_root}/run/acx-write --gpu-state-json ${fixture_root}/run/acx/gpu-state.json
+ExecStart=python3 -m infra.oci.gpu_lifecycle --load-dir ${fixture_root}/run/acx-write --gpu-state-json ${fixture_root}/run/acx/gpu-state.json
 EOF
 cat >"${fixture_root}/install-missing-flags.sh" <<'EOF'
 ExecStart=python3 -m infra.oci.gpu_lifecycle --instance-id ocid1.example
@@ -190,12 +194,26 @@ if grep -Eq '(^|[[:space:]])mapfile([[:space:]]|$)' "$checker"; then
 else
     pass "checker avoids Bash 4-only mapfile"
 fi
+assert_contains "lifecycle units use aggregate load directory" \
+    "--load-dir /run/acx-write" "${root}/scripts/deploy/gpu-lifecycle-install.sh"
+if grep -Fq -- "--load-json" "${root}/scripts/deploy/gpu-lifecycle-install.sh"; then
+    fail "lifecycle installer deletes the single-file load flag"
+else
+    pass "lifecycle installer deletes the single-file load flag"
+fi
+for environment in dev staging prod; do
+    assert_contains "tmpfiles provisions ${environment} load directory" \
+        "d /run/acx-write/${environment} 0775 root 10001 -" \
+        "${root}/scripts/deploy/gpu-lifecycle-install.sh"
+done
 
-# Deployment contract: the example env is the one deployment seam. Compose
-# consumes those values instead of growing another copy of either host path.
+# Production state configuration remains a single deployment seam. The
+# multi-environment compose template owns the per-environment load path.
 assert_contains "env documents GPU state path" "ACX_GPU_STATE_PATH=/run/acx/gpu-state.json" "$prod_env"
 assert_contains "env documents GPU freshness" "ACX_GPU_STATE_STALE_SECONDS=180" "$prod_env"
-assert_contains "env documents load path" "ACX_DESCRIBE_LOAD_PATH=/run/acx-write/prod/describe-load.json" "$prod_env"
+assert_contains "environment compose isolates load path" \
+    'ACX_DESCRIBE_LOAD_PATH=/run/acx-write/${ACX_ENV}/describe-load.json' \
+    "$environment_compose"
 assert_contains "env documents load refresh" "ACX_DESCRIBE_LOAD_REFRESH_SECONDS=45" "$prod_env"
 assert_contains "compose passes GPU state path" 'ACX_GPU_STATE_PATH=${ACX_GPU_STATE_PATH}' "$prod_compose"
 assert_contains "compose mounts snapshot directory read-only" '${ACX_GPU_SNAPSHOT_DIR}:/run/acx:ro' "$prod_compose"
@@ -293,13 +311,17 @@ printf '{"state":"ready","written_at":819}\n' >"${fixture_root}/run/acx/gpu-stat
 expect_failure "GPU state older than its budget fails" "stale GPU state snapshot"
 printf '{"state":"ready","written_at":900}\n' >"${fixture_root}/run/acx/gpu-state.json"
 
-mv "${fixture_root}/run/acx-write/describe-load.json" "${fixture_root}/run/acx-write/describe-load.missing"
-expect_failure "missing describe-load fails closed" "missing describe load snapshot"
-mv "${fixture_root}/run/acx-write/describe-load.missing" "${fixture_root}/run/acx-write/describe-load.json"
+mv "${fixture_root}/run/acx-write/dev/describe-load.json" "${fixture_root}/run/acx-write/dev/describe-load.missing"
+expect_failure "missing environment describe-load fails closed" "missing describe load (dev) snapshot"
+mv "${fixture_root}/run/acx-write/dev/describe-load.missing" "${fixture_root}/run/acx-write/dev/describe-load.json"
 
-printf '{"queue_depth":0,"in_flight":0,"written_at":879}\n' >"${fixture_root}/run/acx-write/describe-load.json"
-expect_failure "describe-load older than its budget fails" "stale describe load snapshot"
-printf '{"queue_depth":0,"in_flight":0,"written_at":900}\n' >"${fixture_root}/run/acx-write/describe-load.json"
+printf '{"queue_depth":0,"in_flight":0,"written_at":879}\n' >"${fixture_root}/run/acx-write/dev/describe-load.json"
+expect_failure "environment describe-load older than its budget fails" "stale describe load (dev) snapshot"
+printf '{"queue_depth":0,"in_flight":0,"written_at":900}\n' >"${fixture_root}/run/acx-write/dev/describe-load.json"
+
+chmod 0555 "${fixture_root}/run/acx-write/staging"
+expect_failure "each environment directory must be API-writable" "not writable by uid"
+chmod 0755 "${fixture_root}/run/acx-write/staging"
 
 if [ "$(id -u)" -eq 0 ]; then
     printf 'SKIP: snapshot unreadable by API uid fails (uid 0 bypasses mode 000)\n'
@@ -316,18 +338,22 @@ sed 's/:ro$//' "${fixture_root}/compose.yml" >"${fixture_root}/compose-rw.yml"
 expect_failure "read-write state mount fails" "read-only state mount" \
     ACX_GPU_COMPOSE_FILE="${fixture_root}/compose-rw.yml"
 
-expect_failure "old shared host-directory layout fails" "read-only state mount" \
+expect_failure "old shared host-directory layout fails" "writable load mount" \
     ACX_GPU_COMPOSE_FILE="${fixture_root}/compose-old-layout.yml"
 
 expect_failure "shared state and load unit directory fails" "separate snapshot directories" \
-    ACX_GPU_UNIT_LOAD_PATH="${fixture_root}/run/acx/describe-load.json" \
-    ACX_DESCRIBE_LOAD_PATH="${fixture_root}/run/acx/describe-load.json" \
+    ACX_GPU_UNIT_LOAD_DIR="${fixture_root}/run/acx" \
     ACX_DESCRIBE_LOAD_DIR="${fixture_root}/run/acx"
 
-expect_failure "load variable disagreement fails" "ACX_DESCRIBE_LOAD_PATH disagrees" \
-    ACX_DESCRIBE_LOAD_PATH="${fixture_root}/run/acx-write/not-the-unit-path.json"
+expect_failure "load directory variable disagreement fails" "ACX_DESCRIBE_LOAD_DIR disagrees" \
+    ACX_DESCRIBE_LOAD_DIR="${fixture_root}/run/not-the-unit-directory"
 
-expect_failure "unrendered snapshot mount template fails" "read-only state mount" \
+expect_failure "compose-derived parent must agree with lifecycle load directory" \
+    "compose-derived load parent disagrees with lifecycle --load-dir" \
+    ACX_GPU_UNIT_LOAD_DIR="${fixture_root}/run/other-load-root" \
+    ACX_DESCRIBE_LOAD_DIR="${fixture_root}/run/other-load-root"
+
+expect_failure "unrendered snapshot mount template fails" "must end in describe-load.json" \
     ACX_GPU_COMPOSE_FILE="${fixture_root}/compose-template.yml"
 
 expect_failure "unrendered GPU state environment template fails" \

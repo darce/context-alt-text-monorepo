@@ -56,6 +56,13 @@ export const GPU_STATE_VOCABULARY = {
       __('GPU unavailable — kept %d CPU drafts. Final descriptions will not upgrade.', 'alt-context'),
       draftCount,
     ),
+  warmingToast: __('GPU warming — CPU drafts first', 'alt-context'),
+  readyToast: __('GPU ready — Final descriptions in progress', 'alt-context'),
+  degradedToast: __('GPU unavailable — CPU drafts kept', 'alt-context'),
+  backToRun: __('Back to run', 'alt-context'),
+  backToRunAltText: __('Return to the active describe run', 'alt-context'),
+  reviewResults: __('Review results', 'alt-context'),
+  reviewResultsAltText: __('Review the active describe run results', 'alt-context'),
 } as const;
 
 export const GPU_STATE_PRESENTATION = {

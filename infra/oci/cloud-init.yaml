@@ -41,7 +41,7 @@ write_files:
       Environment=OCI_CLI_AUTH=api_key
       # GPU instance OCID is set post-apply (terraform output gpu_instance_id).
       EnvironmentFile=-/etc/acx/gpu-reaper.env
-      ExecStart=/usr/bin/python3 -m infra.oci.gpu_lifecycle --load-json /run/acx/describe-load.json --probe-oci --idle-seconds 300 --fence-delay-seconds 2 --instance-id ${GPU_INSTANCE_ID}
+      ExecStart=/usr/bin/python3 -m infra.oci.gpu_lifecycle --load-dir /run/acx-write --probe-oci --idle-seconds 300 --fence-delay-seconds 2 --instance-id ${GPU_INSTANCE_ID}
 
   - path: /etc/systemd/system/acx-gpu-idle-reaper.timer
     permissions: "0644"
@@ -108,10 +108,14 @@ write_files:
       # Local health check log
       echo "[$(date)] Keepalive burst complete." >> /var/log/acx-keepalive.log
 
-  - path: /etc/tmpfiles.d/acx-gpu.conf
-    permissions: "0644"
-    content: |
-      d /run/acx 0775 10001 10001 -
+  # NOTE: /etc/tmpfiles.d/acx-gpu.conf is deliberately NOT written here.
+  # scripts/deploy/gpu-lifecycle-install.sh is the single authority for the
+  # /run/acx + /run/acx-write ownership contract (rg-005). This file used to
+  # write `d /run/acx 0775 10001 10001 -` while the installer writes
+  # `d /run/acx 0755 ubuntu ubuntu -` for the same path -- two writers of one
+  # filename, last one wins, and no test compared them (WBUX6-MRG-02).
+  # scripts/deploy/tests/test_gpu_lifecycle_contract_ownership.py enforces that
+  # this file never reintroduces a conflicting definition.
 
 runcmd:
   # H-OCI-13: Install Docker via apt repository with GPG verification
@@ -141,8 +145,11 @@ runcmd:
   - systemctl enable acx-backend.service
   # GPU idle reaper timer (requires /etc/acx/gpu-reaper.env with GPU_INSTANCE_ID).
   - mkdir -p /run/acx /etc/acx
-  # WHY: container gid is 999, not 10001; owner must be 10001:10001 so uid 10001 can write.
-  - chown 10001:10001 /run/acx && chmod 0775 /run/acx
+  # Ownership of /run/acx and /run/acx-write is set by gpu-lifecycle-install.sh,
+  # not here. /run/acx is host lifecycle state (ubuntu:ubuntu 0755) mounted
+  # read-only into the api container; the container publishes its load dump to
+  # /run/acx-write/<env> (root:10001 0775), writable through group 10001, which
+  # the api image pins via `groupadd -r -g 10001 acx`.
   - systemctl enable --now acx-gpu-idle-reaper.timer
   # Optional Free Tier-only keepalive pattern (disabled by default for PAYG):
   # - (crontab -l 2>/dev/null; echo "0 */6 * * * /usr/local/bin/acx-keepalive.sh") | crontab -

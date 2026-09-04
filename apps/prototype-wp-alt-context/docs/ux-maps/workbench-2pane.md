@@ -29,6 +29,18 @@
 
 ### Workbench (2-pane) (`workbench-2pane-shell`)
 
+Purpose: Two-pane operator surface: left control (face-group/recognize/name/curate), right media library (alt-text + long-description). Overlays host conflicts and dead-letter.
+
+url_params: `panes`, `cluster`, `media`, `panel`, `status`, `endpoint`, `s`, `p`, `perPage`
+
+| zone id | label | role | states |
+| --- | --- | --- | --- |
+| `z-topbar` | Workbench header + recognition endpoint (read-only status; server-resolved) + sync/projection status strip | status | default, loading, error, degraded |
+| `z-left-host` | Left pane host (control surface) | content | default, loading, empty, error |
+| `z-splitter` | Pane divider / collapse-left control | other | default |
+| `z-right-host` | Right pane host (media library) | content | default, loading, empty, error |
+| `z-overlay-host` | Overlay host (conflicts \| dead-letter) | other | default, empty |
+
 ```
 +------------------------------------------------------------+
 | Workbench (2-pane)  [screen]  #/workbench                  |
@@ -52,6 +64,18 @@
 
 ### Control surface (left pane) (`workbench-control`)
 
+Purpose: Recognize, name, and curate: recognition endpoint + health, face-group status region, face-group list, run/refresh controls, and the name/curate forced-choice form.
+
+url_params: `panes`, `cluster`, `endpoint`
+
+| zone id | label | role | states |
+| --- | --- | --- | --- |
+| `z-endpoint` | Recognition endpoint + health (read-only: InsightFace :10010 interim; FIR when stable; target is server-resolved via ACX_RECOGNITION_URL, no UI toggle per RECOG-1) | status | default, loading, error, degraded |
+| `z-recognition-controls` | Face-group/recognition controls (run, refresh, threshold) | job | default, loading, error |
+| `z-cluster-umap` | Face-group status (scan/sync health; not a 2D scatter) | status | default, loading, empty, error, first_time, degraded |
+| `z-cluster-list` | Face-group list / selection (size, confidence, unnamed-first) + NameFaceControl (loading = in-flight name write; the suggestions disclosure being open or closed is part of default). Twin-pending (an edge_input of default) copy: Same person as <survivor label>? — Merge into <survivor label> / Not the same (chip on the unlabeled twin; decision persists on the labeled survivor; COG-03 one decision per pair; DATA-14 single authority = resolveMergeSurvivor.ts). Actions merge_twin / keep_separate code_ref: IdentityClusterItem.tsx | queue | default, loading, empty, error, first_time, degraded, edge_input |
+| `z-name-curate` | Name this person (NameFaceControl; confirm / correct / merge / split; forced-choice; loading = pending roster write; error = roster write failed; edge_input = ambiguous candidate set or duplicate-name guard; default = overlay closed or suggestions open) | forced_choice | default, loading, error, edge_input |
+
 ```
 +------------------------------------------------------------+
 | Control surface (left pane)  [screen]  #/workbench         |
@@ -63,6 +87,7 @@
 |   - Face-group status (scan/sync health; not a 2D scatter… |
 |   - Face-group list / selection (size, confidence, unname… |
 |   - Name this person (NameFaceControl; confirm / correct … |
+|     z-name-curate states=[default,loading,error,edge_input] |
 +------------------------------------------------------------+
 | ACTIONS                                                    |
 |   [PRIMARY] Run / refresh recognition + grouping -> job-p… |
@@ -79,6 +104,18 @@
 ```
 
 ### Media library (right pane) (`workbench-library`)
+
+Purpose: Media library table with alt-text caption and long-description columns; inline editing, AI-suggested captions/descriptions (editable before accept), and bulk describe/scan.
+
+url_params: `panes`, `media`, `cluster`, `status`, `s`, `p`, `perPage`
+
+| zone id | label | role | states |
+| --- | --- | --- | --- |
+| `z-lib-filters` | Library filters (status, has-alt, has-description, face group, search) | form | default, loading, error |
+| `z-lib-table` | Media library table (thumb \| title \| status \| alt-text \| long description \| people) | queue | default, loading, empty, error, first_time, edge_input |
+| `z-lib-inline-edit` | Inline person naming (NameFaceControl) + alt-text / long-description editor (loading = pending save; the suggestions disclosure being open or closed is part of default) | form | default, loading, error, edge_input |
+| `z-lib-ai-suggest` | AI name / caption suggestions (evidence-linked; editable before accept; loading = suggestion request in flight; the suggestions disclosure being open or closed is part of default) | ai_review | default, loading, empty, error |
+| `z-lib-actions` | Footer job zone (MediaSelection.tsx footer): ONE job CTA — 'Describe N selected' (primary accent in select state; zero-state label 'Describe selected', rg-003) with a recognition disclosure directly under it (aria-describedby): ON = names people it knows while describing; OFF = descriptions only, change in Settings; unknown = settings not loaded. 'Analyze selected' is removed (L2c) — recognition is not a separate operator step (INT-05 one job entry; COG-03 one decision: the global toggle). While recognition runs first (toggle ON) the primary stays focusable with aria-disabled="true" and the label 'Identifying people...' (never HTML-disabled, same invariant as offline — RLSE-04, A11Y-21) and Cancel aborts the identification. Run progress phases queued -> warming -> describing -> complete \| failed \| cancelled come from describeApi DESCRIBE_RUN_PHASE (single authority, sr-007) and render as loading (queued/warming/describing) or default (terminal). Done copy: ✔ N drafts ready to review[ · M failed]; Review drafts links to #/description-history?run=<id>. | job | default, loading, error, degraded |
 
 ```
 +------------------------------------------------------------+
@@ -104,6 +141,16 @@
 
 ### Conflict Inbox (`workbench-conflicts`)
 
+Purpose: Review people conflicts; commit human judgment with evidence
+
+url_params: `panel`
+
+| zone id | label | role | states |
+| --- | --- | --- | --- |
+| `z-conflict-list` | Conflict list | queue | default, loading, empty, error |
+| `z-conflict-detail` | Conflict detail / candidates | forced_choice | default, loading, empty, error |
+| `z-conflict-actions` | Resolve / defer actions | form | default, loading, empty, error |
+
 ```
 +------------------------------------------------------------+
 | Conflict Inbox  [overlay]  #/workbench?panel=conflicts     |
@@ -122,6 +169,15 @@
 ```
 
 ### Failed Sync Queue (Dead Letter) (`workbench-dead-letter`)
+
+Purpose: Inspect failed sync ops; retry or discard
+
+url_params: `panel`
+
+| zone id | label | role | states |
+| --- | --- | --- | --- |
+| `z-dl-list` | Dead-letter items | queue | default, loading, empty, error |
+| `z-dl-actions` | Retry / discard | form | default, loading, empty, error |
 
 ```
 +------------------------------------------------------------+
@@ -142,6 +198,14 @@
 
 ### Roster (person workspace) (`exit-roster`)
 
+Purpose: Manage identified persons after naming/curating in Workbench
+
+url_params: `personFilter`, `person`
+
+| zone id | label | role | states |
+| --- | --- | --- | --- |
+| `z-roster-entry` | Roster entry | nav | default |
+
 ```
 +------------------------------------------------------------+
 | Roster (person workspace)  [exit]  #/roster                |
@@ -155,6 +219,16 @@
 ```
 
 ### Settings / service health (`exit-settings`)
+
+Purpose: Configure the service: recognition endpoint + connection health, the global recognition ON/OFF toggle, and Data & retention (consolidated from the retired alt-context-retention submenu, E1)
+
+url_params: `section`
+
+| zone id | label | role | states |
+| --- | --- | --- | --- |
+| `z-settings-form` | Settings form + test connection | form | default, loading, error |
+| `z-settings-recognition` | Recognition toggle (acx_recognition_enabled; default ON; global, not per-image — OFF makes Describe produce descriptions only and the Workbench footer disclosure says so; analyze endpoint answers 409 recognition_disabled) | form | default, loading, error |
+| `z-settings-retention` | Data & retention section (RetentionPage.tsx RetentionSection; one stable h3#acx-retention-title across loading/error/loaded so the ?section=retention deep-link focus survives pending -> loaded; retention mode, export, import, audit events) | form | default, loading, error, degraded |
 
 ```
 +------------------------------------------------------------+
@@ -241,6 +315,46 @@ flowchart TD
 - OPEN: Alt-text vs long-description: two fixed columns or one expandable row-detail? [PERC-01,UI-04]
 - RESOLVED (WBUX-6): 'Describe selected' vs 'Analyze selected' unified into one Describe CTA; recognition on/off is a GLOBAL Settings toggle (default ON), not a per-image choice — one decision per operator, per-image override deferred until a real demand appears (COG-03, INT-05).
 - OPEN: Bulk-describe cost preview granularity: per-image cost surfaced before start? [INT-07]
+
+## Parity index
+
+Machine-checked by `js/admin/__tests__/uxmap-parity.test.ts` and
+`js/admin/__tests__/uxmap-render-parity.test.ts`: every id, state, and verbatim label
+below must exist in `workbench-2pane.uxmap.json`. Regenerate this section whenever the
+JSON SSOT changes — do not hand-edit one side.
+
+Zone ids: z-topbar z-left-host z-splitter z-right-host z-overlay-host z-endpoint z-recognition-controls z-cluster-umap z-cluster-list z-name-curate z-lib-filters z-lib-table z-lib-inline-edit z-lib-ai-suggest z-lib-actions z-conflict-list z-conflict-detail z-conflict-actions z-dl-list z-dl-actions z-roster-entry z-settings-form z-settings-recognition z-settings-retention
+
+Action ids: act-scan-media-queue act-run-recognition act-select-cluster act-name-cluster act-curate-cluster merge_twin keep_separate act-view-endpoint-settings act-edit-alt act-edit-desc act-accept-ai-caption act-bulk-describe act-open-conflicts act-open-dead-letter act-resolve-conflict act-retry-dead-letter act-discard-dead-letter act-goto-roster
+
+Zone labels (verbatim; the tables above escape `|` for markdown, this list does not):
+
+- Workbench header + recognition endpoint (read-only status; server-resolved) + sync/projection status strip
+- Left pane host (control surface)
+- Pane divider / collapse-left control
+- Right pane host (media library)
+- Overlay host (conflicts | dead-letter)
+- Recognition endpoint + health (read-only: InsightFace :10010 interim; FIR when stable; target is server-resolved via ACX_RECOGNITION_URL, no UI toggle per RECOG-1)
+- Face-group/recognition controls (run, refresh, threshold)
+- Face-group status (scan/sync health; not a 2D scatter)
+- Face-group list / selection (size, confidence, unnamed-first) + NameFaceControl (loading = in-flight name write; the suggestions disclosure being open or closed is part of default). Twin-pending (an edge_input of default) copy: Same person as <survivor label>? — Merge into <survivor label> / Not the same (chip on the unlabeled twin; decision persists on the labeled survivor; COG-03 one decision per pair; DATA-14 single authority = resolveMergeSurvivor.ts). Actions merge_twin / keep_separate code_ref: IdentityClusterItem.tsx
+- Name this person (NameFaceControl; confirm / correct / merge / split; forced-choice; loading = pending roster write; error = roster write failed; edge_input = ambiguous candidate set or duplicate-name guard; default = overlay closed or suggestions open)
+- Library filters (status, has-alt, has-description, face group, search)
+- Media library table (thumb | title | status | alt-text | long description | people)
+- Inline person naming (NameFaceControl) + alt-text / long-description editor (loading = pending save; the suggestions disclosure being open or closed is part of default)
+- AI name / caption suggestions (evidence-linked; editable before accept; loading = suggestion request in flight; the suggestions disclosure being open or closed is part of default)
+- Footer job zone (MediaSelection.tsx footer): ONE job CTA — 'Describe N selected' (primary accent in select state; zero-state label 'Describe selected', rg-003) with a recognition disclosure directly under it (aria-describedby): ON = names people it knows while describing; OFF = descriptions only, change in Settings; unknown = settings not loaded. 'Analyze selected' is removed (L2c) — recognition is not a separate operator step (INT-05 one job entry; COG-03 one decision: the global toggle). While recognition runs first (toggle ON) the primary stays focusable with aria-disabled="true" and the label 'Identifying people...' (never HTML-disabled, same invariant as offline — RLSE-04, A11Y-21) and Cancel aborts the identification. Run progress phases queued -> warming -> describing -> complete | failed | cancelled come from describeApi DESCRIBE_RUN_PHASE (single authority, sr-007) and render as loading (queued/warming/describing) or default (terminal). Done copy: ✔ N drafts ready to review[ · M failed]; Review drafts links to #/description-history?run=<id>.
+- Conflict list
+- Conflict detail / candidates
+- Resolve / defer actions
+- Dead-letter items
+- Retry / discard
+- Roster entry
+- Settings form + test connection
+- Recognition toggle (acx_recognition_enabled; default ON; global, not per-image — OFF makes Describe produce descriptions only and the Workbench footer disclosure says so; analyze endpoint answers 409 recognition_disabled)
+- Data & retention section (RetentionPage.tsx RetentionSection; one stable h3#acx-retention-title across loading/error/loaded so the ?section=retention deep-link focus survives pending -> loaded; retention mode, export, import, audit events)
+
+States (all zones and screens): default loading error degraded empty offline first_time edge_input
 
 ## Not doing
 - Clusters tab inside Roster (retired; cluster structure lives in Workbench left pane now)

@@ -110,6 +110,28 @@ def test_submit_accepts_case_insensitive_true_false_recognition_enabled(monkeypa
         asyncio.run(_assert_row())
 
 
+def _spy_fusion_loader(monkeypatch, loads: list, result):
+    """Bind the loader spy to every reference a Stage-2 leak could reach.
+
+    Patching only `describe_run_mod.load_fusion_naming_inputs` is vacuous: the
+    router module does not import that symbol, so `raising=False` invents a
+    fresh attribute nobody reads and `loads == []` can never go red. Patch the
+    definition site (late/dynamic imports) *and* the worker's module-level
+    binding with `raising=True` so a moved or renamed symbol fails loudly, and
+    keep the router patch as the belt for a re-added module-level import.
+    """
+    import scene.application.describe_run_worker as wmod
+    import scene.application.naming_preview_service as nps
+
+    async def spy(**kwargs):
+        loads.append(kwargs)
+        return result
+
+    monkeypatch.setattr(nps, "load_fusion_naming_inputs", spy, raising=True)
+    monkeypatch.setattr(wmod, "load_fusion_naming_inputs", spy, raising=True)
+    monkeypatch.setattr(describe_run_mod, "load_fusion_naming_inputs", spy, raising=False)
+
+
 def _fusion_aware_fake_service(captured: dict):
     """Stage-2 fake that injects roster names only when fusion inputs are present.
 
@@ -162,14 +184,10 @@ def test_stage2_skips_load_fusion_naming_inputs_when_recognition_disabled(monkey
     """Identity-off Stage-2 must not load fusion inputs or inject roster names."""
     from types import SimpleNamespace
 
-    loads: list[int] = []
+    loads: list = []
     captured: dict = {}
 
-    async def fake_load(**kwargs):
-        loads.append(1)
-        return ["Ada"], object()
-
-    monkeypatch.setattr(describe_run_mod, "load_fusion_naming_inputs", fake_load, raising=False)
+    _spy_fusion_loader(monkeypatch, loads, (["Ada"], object()))
     monkeypatch.setattr(describe_run_mod, "VisualFactsService", _fusion_aware_fake_service(captured))
 
     with _client() as (_http, sf):
@@ -185,23 +203,23 @@ def test_stage2_skips_load_fusion_naming_inputs_when_recognition_disabled(monkey
     assert kwargs.get("confirmed_faces") in ([], None)
     assert kwargs.get("naming_policy") is None
     assert captured["injected_names"] == []
-    assert (outcome.provenance or {}).get("injected_names", captured["injected_names"]) == []
     assert outcome.alt_text_draft == "draft"
+    # No roster name may reach the operator-visible surfaces. Asserting
+    # provenance.get("injected_names", captured[...]) was a tautology: the
+    # router never writes that key, so the default made the check a no-op.
+    assert "Ada" not in (outcome.alt_text_draft or "")
+    assert "Ada" not in json.dumps(outcome.provenance or {}, default=str)
 
 
 def test_stage2_loads_fusion_naming_inputs_once_and_injects_names_when_recognition_enabled(monkeypatch):
     """Positive twin: identity-on Stage-2 reuses the preloaded snapshot and injects names."""
     from types import SimpleNamespace
 
-    loads: list[int] = []
+    loads: list = []
     captured: dict = {}
     policy = object()
 
-    async def fake_load(**kwargs):
-        loads.append(1)
-        return ["Ada"], policy
-
-    monkeypatch.setattr(describe_run_mod, "load_fusion_naming_inputs", fake_load, raising=False)
+    _spy_fusion_loader(monkeypatch, loads, (["Ada"], policy))
     monkeypatch.setattr(describe_run_mod, "VisualFactsService", _fusion_aware_fake_service(captured))
 
     with _client() as (_http, sf):
@@ -226,14 +244,10 @@ def test_stage2_fails_closed_when_recognition_enabled_and_naming_inputs_missing(
 
     from scene.application.describe_run_worker import MissingNamingSnapshotError
 
-    loads: list[int] = []
+    loads: list = []
     captured: dict = {}
 
-    async def fake_load(**kwargs):
-        loads.append(1)
-        return ["Ada"], object()
-
-    monkeypatch.setattr(describe_run_mod, "load_fusion_naming_inputs", fake_load, raising=False)
+    _spy_fusion_loader(monkeypatch, loads, (["Ada"], object()))
     monkeypatch.setattr(describe_run_mod, "VisualFactsService", _fusion_aware_fake_service(captured))
 
     with _client() as (_http, sf):

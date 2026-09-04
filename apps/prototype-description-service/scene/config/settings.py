@@ -16,7 +16,9 @@ from scene.config.profiles import DescriptionProfile
 from shared.secrets import get_secret_provider
 
 _DEFAULT_MAX_IMAGE_BYTES = 25 * 1024 * 1024  # 25 MiB, matches recognition multipart cap.
-DEFAULT_GPU_WARMUP_TIMEOUT_SECONDS = 480.0
+# Covers one complete 30-second start-timer interval beyond the measured p95
+# composition of detection, snapshot freshness, GPU boot, and response read.
+DEFAULT_GPU_WARMUP_TIMEOUT_SECONDS = 510.0
 _MAX_GPU_WARMUP_TIMEOUT_SECONDS = 3600.0
 
 

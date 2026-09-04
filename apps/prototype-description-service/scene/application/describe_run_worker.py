@@ -26,7 +26,7 @@ from scene.application.naming_preview_service import (
 from scene.application.settings.vlm import VlmSettings
 from scene.config.settings import DEFAULT_GPU_WARMUP_TIMEOUT_SECONDS, DescriptionSettings
 from scene.domain.describe_run import DescribeItemStatus, DescribeRunPhase, DescribeRunStatus
-from scene.domain.description import DescriptionAdapterKind
+from scene.domain.description import DescriptionAdapterKind, DescriptionResultTier
 
 logger = logging.getLogger(__name__)
 
@@ -78,6 +78,7 @@ class DescribeItemOutcome:
     provenance: dict = field(default_factory=dict)
     phrase_boxes: tuple = ()
     attachments: tuple = ()
+    tier: DescriptionResultTier | str | None = None
 
 
 @dataclass(frozen=True)
@@ -549,6 +550,7 @@ async def run_describe_job(
                         alt_text_draft=outcome.alt_text_draft,
                         caption=outcome.caption,
                         provenance=outcome.provenance or None,
+                        tier=outcome.tier,
                     )
                     await repo.mark_item(
                         tenant_id=tenant_id,

@@ -19,6 +19,7 @@ import pytest
 import scene.interface_adapters.http.routers.describe_run as describe_run_mod
 from scene.application.describe_run_repository import DescribeRunRepository
 from scene.domain.describe_run import DescribeRunStatus
+from scene.domain.description import DescriptionResultTier
 from scene.tests.demo_quota_harness import demo_quota_client
 from scene.tests.demo_quota_harness import recognition_used as _used
 from scene.tests.test_describe_run_worker import TENANT_ID, _client, _submit
@@ -149,6 +150,8 @@ def _fusion_aware_fake_service(captured: dict):
                 alt_text_draft = draft
                 visual_facts = _FakeFacts()
                 injected_names = names
+                # Seeded/CPU adapter: mirrors VisualFactsService's non-GPU tier.
+                tier = DescriptionResultTier.PROVISIONAL_CPU
 
             return _FakeResponse()
 

@@ -215,6 +215,29 @@ export const DESCRIBE_RUN_STATUS = {
   CANCELLED: 'cancelled',
 } as const;
 
+/** Canonical result tiers emitted for generated describe-run items (sr-007). */
+export const DESCRIBE_RESULT_TIER = {
+  PROVISIONAL_CPU: 'provisional_cpu',
+  FINAL_GPU: 'final_gpu',
+} as const;
+
+/**
+ * Canonical GPU lifecycle states emitted by describe-run status responses.
+ * `unknown` is a valid calm state (missing/stale snapshot), not an error.
+ * Keep in lockstep with the description-service GPUState StrEnum (sr-007).
+ */
+export const GPU_STATE = {
+  UNKNOWN: 'unknown',
+  STOPPED: 'stopped',
+  STARTING: 'starting',
+  WARMING: 'warming',
+  READY: 'ready',
+  DEGRADED: 'degraded',
+} as const;
+
+export const isGpuState = (value: unknown): value is GpuState =>
+  typeof value === 'string' && (Object.values(GPU_STATE) as string[]).includes(value);
+
 /**
  * Canonical correction rejection codes from the history correction endpoint.
  * Gate on these via resolveDescribeErrorCode — never on localized message text
@@ -229,6 +252,8 @@ export type DescriptionCorrectionCode =
   (typeof DESCRIPTION_CORRECTION_CODE)[keyof typeof DESCRIPTION_CORRECTION_CODE];
 
 export type DescribeRunStatus = (typeof DESCRIBE_RUN_STATUS)[keyof typeof DESCRIBE_RUN_STATUS];
+export type DescribeResultTier = (typeof DESCRIBE_RESULT_TIER)[keyof typeof DESCRIBE_RESULT_TIER];
+export type GpuState = (typeof GPU_STATE)[keyof typeof GPU_STATE];
 
 /** Canonical describe-run phase set, including GPU warmup as a RUNNING sub-phase. */
 export const DESCRIBE_RUN_PHASE = {
@@ -265,7 +290,8 @@ export interface DescribeRunResponse {
   cancel_requested: boolean;
   // Backend-owned honest ETA for the remaining items; null while it cannot yet be estimated.
   eta_seconds: number | null;
-  gpu_state: null;
+  // Untrusted wire value; consumers narrow it with isGpuState before presentation.
+  gpu_state: unknown;
 }
 
 /** One describe-run item as the operator reviews it before write-back (INT-01d).
@@ -277,6 +303,8 @@ export interface DescribeRunItem {
   alt_text_draft: string | null;
   caption: string | null;
   provenance: DescriptionHistoryProvenance | VisualFactsResponse | null;
+  tier: DescribeResultTier | null;
+  result_generation: number;
   existing_alt: boolean;
 }
 

@@ -24,6 +24,7 @@ from scene.application.describe_run_worker import (
     run_describe_job,
 )
 from scene.application.description_repository import ImageDescriptionRepository
+from scene.application.gpu_state import read_gpu_state
 from scene.application.visual_facts_service import VisualFactsService
 from scene.config.settings import DescriptionSettings
 from scene.domain.describe_run import (
@@ -60,7 +61,7 @@ def _run_response(run) -> DescribeRunResponse:
         total=run.total_items,
         cancel_requested=run.cancel_requested,
         eta_seconds=compute_eta_seconds(run),
-        gpu_state=None,
+        gpu_state=read_gpu_state(),
         recognition_enabled=bool(run.recognition_enabled),
     )
 
@@ -76,6 +77,8 @@ def _run_items_response(run, items) -> DescribeRunItemsResponse:
                 alt_text_draft=item.alt_text_draft,
                 caption=item.caption,
                 provenance=item.provenance,
+                tier=item.tier,
+                result_generation=item.result_generation,
             )
             for item in items
         ],
@@ -176,6 +179,7 @@ def _build_describe_one(
             provenance=provenance,
             phrase_boxes=tuple(service.last_phrase_boxes or ()),
             attachments=tuple(service.last_attachments or ()),
+            tier=response.tier,
         )
 
     return describe_one

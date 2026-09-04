@@ -94,26 +94,45 @@ SCRIPT = _ROOT / _INSTALLER_REL
 CLOUD_INIT = _ROOT / _CLOUD_INIT_REL
 
 
-def test_gpu_lifecycle_install_owns_run_acx_as_container_uid() -> None:
+def test_gpu_lifecycle_install_keeps_the_api_load_dir_group_writable() -> None:
+    """WBUX-6 F1's invariant, retargeted onto GPUUX-1's split-directory layout.
+
+    F1 asserted `chown 10001:10001 /run/acx` because the API published
+    describe-load.json straight into the single shared `/run/acx`. GPUUX-1
+    (M-08) split that: `/run/acx` became host-owned lifecycle state mounted
+    read-only into the API, and the API's load dump moved to a separate
+    per-environment `/run/acx-write/<env>`. The old assertion's subject no
+    longer exists, but the invariant behind it does — the directory the API
+    writes into must be writable by the container's writer, and the lifecycle
+    state directory must not be API-owned.
+    """
     text = SCRIPT.read_text(encoding="utf-8")
     commands = _non_comment_command_lines(text)
 
-    assert any("chown 10001:10001 /run/acx" in line for line in commands), (
-        "non-comment installer command must include 'chown 10001:10001 /run/acx'"
+    # The load dir the API writes into must carry group 10001 and group-write.
+    assert any("chown root:10001 ${LOAD_ENVIRONMENT_DIRS}" in line for line in commands), (
+        "installer must give every registered load directory group 10001"
     )
-    assert any("chmod 0775 /run/acx" in line for line in commands), (
-        "non-comment installer command must include 'chmod 0775 /run/acx'"
+    assert any("chmod 0775 ${LOAD_ENVIRONMENT_DIRS}" in line for line in commands), (
+        "installer must keep every registered load directory group-writable"
     )
-    assert any("d /run/acx 0775 10001 10001 -" in line for line in commands), (
-        "non-comment tmpfiles.d line must be 'd /run/acx 0775 10001 10001 -'"
+    assert "d /run/acx-write/${environment} 0775 root 10001 -" in text, (
+        "the per-environment tmpfiles template must re-create the load dir "
+        "group-writable by 10001 after a tmpfs reboot"
     )
-    assert any("echo" in line and "0775 10001:10001" in line for line in commands), (
-        "dry-run echo must contain '0775 10001:10001'"
+
+    # The lifecycle state dir is host-owned; the API only gets it read-only.
+    assert any("chown ubuntu:ubuntu /run/acx" in line for line in commands), (
+        "installer must keep /run/acx owned by the host lifecycle units"
     )
-    root_owned = [line for line in commands if "root:10001" in line]
-    assert root_owned == [], (
-        "non-comment installer lines must not contain 'root:10001'; "
-        f"found {root_owned!r}"
+    api_owned_state = [
+        line
+        for line in commands
+        if "10001:10001 /run/acx" in line or "d /run/acx 0775 10001 10001 -" in line
+    ]
+    assert api_owned_state == [], (
+        "/run/acx is the host-owned lifecycle state directory and is mounted "
+        f"read-only into the API; it must not be API-owned. found {api_owned_state!r}"
     )
 
 

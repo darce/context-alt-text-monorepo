@@ -28,6 +28,7 @@ from scene.application.fusion.reconcile import (
 )
 from scene.application.identity_merge import NormalizedBox, PhraseBox
 from scene.domain.describe_run import DescribeItemStatus, DescribeRunStatus
+from scene.domain.description import DescriptionResultTier
 
 TENANT_ID = uuid.UUID("00000000-0000-0000-0000-0000000000cd")
 GENERIC_DRAFT = "A man stands by the window."
@@ -707,6 +708,8 @@ def _fake_visual_facts_service(captured_faces: list):
         duration_ms = 1
         alt_text_draft = GENERIC_DRAFT
         visual_facts = _FakeFacts()
+        # Seeded/CPU adapter: mirrors VisualFactsService's non-GPU tier.
+        tier = DescriptionResultTier.PROVISIONAL_CPU
 
     class _FakeService:
         last_phrase_boxes = ()

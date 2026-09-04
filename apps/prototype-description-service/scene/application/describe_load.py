@@ -9,6 +9,7 @@ session — never a tenant-scoped request/worker session [DIAG-02], [SEC-01].
 from __future__ import annotations
 
 import asyncio
+import fcntl
 import json
 import logging
 import math
@@ -53,6 +54,30 @@ _LOAD_SNAPSHOT_WRITE_LOCK = threading.Lock()
 # "not in (COMPLETED, ...)" so a newly added status defaults to *not* holding
 # the GPU open, instead of silently pinning an A10 forever [sr-007].
 _ACTIVE_BULK_RUN_STATUSES = (DescribeRunStatus.PENDING, DescribeRunStatus.RUNNING)
+
+
+def _open_load_snapshot_fence(target: Path) -> int:
+    """Open the persistent lock coordinated with the lifecycle reaper."""
+    lock_path = target.with_name(f"{target.name}.lock")
+    created = False
+    try:
+        lock_fd = os.open(
+            lock_path,
+            os.O_RDONLY | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC,
+            0o660,
+        )
+        created = True
+    except FileExistsError:
+        lock_fd = os.open(lock_path, os.O_RDONLY | os.O_CLOEXEC)
+    if created:
+        # Creation mode is filtered through umask. Both deployables use the
+        # shared lifecycle group, so restore the provisioned cross-uid mode.
+        try:
+            os.fchmod(lock_fd, 0o660)
+        except BaseException:
+            os.close(lock_fd)
+            raise
+    return lock_fd
 
 
 def resolve_load_path() -> str:
@@ -154,15 +179,17 @@ async def load_snapshot(session: AsyncSession) -> dict[str, int | float | bool]:
 
 
 def write_load_snapshot(snapshot: dict[str, Any], path: str | Path) -> None:
-    """Atomically dump a load snapshot for the GPU idle reaper (VLMFIX-S2-01)."""
+    """Atomically dump load while holding the reaper's process fence."""
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
     payload = json.dumps(snapshot, separators=(",", ":"))
 
     with _LOAD_SNAPSHOT_WRITE_LOCK:
+        lock_fd = _open_load_snapshot_fence(target)
         fd = -1
         tmp: Path | None = None
         try:
+            fcntl.flock(lock_fd, fcntl.LOCK_EX)
             fd, tmp_name = tempfile.mkstemp(
                 dir=target.parent,
                 prefix=f".{target.name}.",
@@ -181,6 +208,10 @@ def write_load_snapshot(snapshot: dict[str, Any], path: str | Path) -> None:
                 os.close(fd)
             if tmp is not None:
                 tmp.unlink(missing_ok=True)
+            try:
+                fcntl.flock(lock_fd, fcntl.LOCK_UN)
+            finally:
+                os.close(lock_fd)
 
 
 async def dump_load_snapshot(

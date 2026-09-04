@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from scene.application.describe_run_repository import DescribeRunRepository
 from scene.application.describe_run_worker import DescribeItemOutcome, run_describe_job
+from scene.application.gpu_state import GpuState
 from scene.domain.describe_run import DescribeRunPhase, DescribeRunStatus
 from scene.interface_adapters.http.schemas.responses import DescribeRunResponse
 from scene.tests.test_describe_run_worker import TENANT_ID, _make_db_async
@@ -41,7 +42,7 @@ def test_describe_run_phase_enum_and_response_schema_include_warming():
         total=1,
         cancel_requested=False,
         eta_seconds=None,
-        gpu_state=None,
+        gpu_state=GpuState.UNKNOWN,
     )
     assert payload.phase == "warming"
 

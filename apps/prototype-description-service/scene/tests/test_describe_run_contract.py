@@ -45,6 +45,7 @@ def test_run_response_matches_shared_schema_via_actual_builder():
 
 
 def test_describe_run_response_round_trips_recognition_enabled():
+    from scene.application.gpu_state import GpuState
     from scene.domain.describe_run import DescribeRunPhase, DescribeRunStatus
     from scene.interface_adapters.http.schemas.responses import DescribeRunResponse
 
@@ -59,7 +60,7 @@ def test_describe_run_response_round_trips_recognition_enabled():
         total=1,
         cancel_requested=False,
         eta_seconds=None,
-        gpu_state=None,
+        gpu_state=GpuState.UNKNOWN,
         recognition_enabled=False,
     )
     dumped = payload.model_dump(mode="json")
@@ -79,7 +80,7 @@ def test_describe_run_response_round_trips_recognition_enabled():
         total=1,
         cancel_requested=False,
         eta_seconds=None,
-        gpu_state=None,
+        gpu_state=GpuState.UNKNOWN,
     )
     assert omitted.recognition_enabled is True
     _validate(omitted.model_dump(mode="json"), "scene-describe-run.schema.json")

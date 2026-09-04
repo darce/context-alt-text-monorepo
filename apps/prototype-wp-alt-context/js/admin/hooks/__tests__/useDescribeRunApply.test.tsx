@@ -22,10 +22,10 @@ const applyMock = vi.mocked(describeApi.applyDescribeRunDrafts);
 const itemsResponse: DescribeRunItemsResponse = {
   run_id: 'run-abc',
   items: [
-    { media_id: 71, status: 'completed', alt_text_draft: 'A flower.', caption: 'A flower.', provenance: null, existing_alt: false },
-    { media_id: 70, status: 'completed', alt_text_draft: 'A bridge.', caption: 'A bridge.', provenance: null, existing_alt: true },
-    { media_id: 72, status: 'failed', alt_text_draft: null, caption: null, provenance: null, existing_alt: false },
-    { media_id: 73, status: 'completed', alt_text_draft: '   ', caption: null, provenance: null, existing_alt: true },
+    { media_id: 71, status: 'completed', alt_text_draft: 'A flower.', caption: 'A flower.', provenance: null, tier: 'final_gpu', result_generation: 1, existing_alt: false },
+    { media_id: 70, status: 'completed', alt_text_draft: 'A bridge.', caption: 'A bridge.', provenance: null, tier: 'final_gpu', result_generation: 1, existing_alt: true },
+    { media_id: 72, status: 'failed', alt_text_draft: null, caption: null, provenance: null, tier: 'final_gpu', result_generation: 1, existing_alt: false },
+    { media_id: 73, status: 'completed', alt_text_draft: '   ', caption: null, provenance: null, tier: 'final_gpu', result_generation: 1, existing_alt: true },
   ],
 };
 

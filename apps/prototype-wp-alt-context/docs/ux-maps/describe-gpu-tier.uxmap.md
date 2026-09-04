@@ -16,6 +16,8 @@ Predecessor finding: `DEMO-UX-1-GPU-01` (open, db id 10035). Reserved wire field
 
 One writer (DATA-14): the lifecycle unit owns `gpu-state.json`; the API only reads. `tier` on each item stays `provisional_cpu | final_gpu`.
 
+Presentation boundary: absent, malformed, stale, or explicit `unknown` state shows no GPU tier chip, including a transition from a previously reported state. The chip appears only for `stopped | starting | warming | ready | degraded` so idle telemetry noise never masquerades as a reported tier.
+
 ## Screen 1 — Workbench, GPU cold, before commit (INT-07 preview, INT-06 label, CARD-15)
 
 ```

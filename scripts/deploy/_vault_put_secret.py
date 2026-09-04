@@ -34,6 +34,24 @@ import time
 
 # acx-vault, root compartment, us-ashburn-1. An OCID is not a secret (ADR-013).
 DEFAULT_VAULT_OCID = "ocid1.vault.oc1.iad.ejvffpzlaafc4.abuwcljr3j4chidobdkiqx6igrzb4p3wffl43bjelxzfghkehdpuzle7cjla"
+ALLOWED_SECRET_NAMES = frozenset({"OCIR_AUTH_TOKEN", "OCIR_USERNAME", "OCIR_CREDENTIAL_GENERATION"})
+
+
+def validate_destination(vault_id: str, secret_name: str) -> None:
+    """Enforce the writer's narrow acx-vault/OCIR mutation authority."""
+    if vault_id != DEFAULT_VAULT_OCID:
+        raise SystemExit(f"refusing unowned vault: {vault_id}")
+    if secret_name not in ALLOWED_SECRET_NAMES:
+        raise SystemExit(f"refusing unowned secret name: {secret_name}")
+
+
+def validate_current_prefix(current_value: bytes | None, required_prefix: str | None, secret_name: str) -> None:
+    """Reject a mutation unless the current value is in the required state."""
+    if required_prefix is None:
+        return
+    prefix = required_prefix.encode("utf-8")
+    if current_value is None or not current_value.startswith(prefix):
+        raise RuntimeError(f"{secret_name} current value does not satisfy required prefix {required_prefix!r}")
 
 
 def _non_negative_float(value):
@@ -365,6 +383,8 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--secret-name", required=True)
     ap.add_argument("--vault-id", default=DEFAULT_VAULT_OCID)
+    ap.add_argument("--if-match", default=None, help="require this ETag for a fenced replacement")
+    ap.add_argument("--require-current-prefix", default=None, help="require current decoded bytes to start with text")
     ap.add_argument("--key-id", default=None, help="defaults to a sibling secret's key")
     ap.add_argument("--profile", default="DEFAULT")
     ap.add_argument("--description", default=None, help="only applied when creating the secret")
@@ -381,6 +401,8 @@ def main() -> int:
         help="overall discovery/write/read-back deadline (default: readable timeout plus 30 seconds)",
     )
     args = ap.parse_args()
+
+    validate_destination(args.vault_id, args.secret_name)
 
     import oci  # noqa: PLC0415 -- lazy so the readiness gate stays unit-testable
 
@@ -457,7 +479,13 @@ def main() -> int:
     existing = find_secret(vaults, compartment_id, args.vault_id, args.secret_name, invoke=invoke)
     update_etag = None
     conditional_update = _accepts_keyword(vaults.update_secret, "if_match")
-    if existing is not None and conditional_update:
+    if args.if_match is not None and existing is None:
+        raise RuntimeError(f"cannot conditionally update missing secret {args.secret_name}")
+    if args.if_match is not None and not conditional_update:
+        raise RuntimeError(f"SDK cannot enforce the requested ETag for {args.secret_name}")
+    if args.if_match is not None:
+        update_etag = args.if_match
+    elif existing is not None and conditional_update:
         metadata_response = invoke(
             f"get current {args.secret_name} metadata",
             vaults.get_secret,
@@ -475,11 +503,17 @@ def main() -> int:
         ).data
         return base64.b64decode(bundle.secret_bundle_content.content)
 
+    current_value = read_bundle() if existing is not None else None
+    validate_current_prefix(current_value, args.require_current_prefix, args.secret_name)
+
+    mutation_etag = update_etag
+
     def create_secret():
+        nonlocal mutation_etag
         create_kwargs = {}
         if _accepts_keyword(vaults.create_secret, "opc_retry_token"):
             create_kwargs["opc_retry_token"] = retry_token
-        return invoke(
+        response = invoke(
             f"create {args.secret_name}",
             vaults.create_secret,
             oci.vault.models.CreateSecretDetails(
@@ -492,26 +526,31 @@ def main() -> int:
             ),
             mutation=True,
             **create_kwargs,
-        ).data
+        )
+        mutation_etag = require_etag(response, args.secret_name)
+        return response.data
 
     def update_secret():
+        nonlocal mutation_etag
         if conditional_update and update_etag is None:
             raise RuntimeError(f"cannot update {args.secret_name} without an ETag precondition")
         update_kwargs = {"if_match": update_etag} if conditional_update else {}
-        return invoke(
+        response = invoke(
             f"update {args.secret_name}",
             vaults.update_secret,
             existing.id,
             oci.vault.models.UpdateSecretDetails(secret_content=content),
             mutation=True,
             **update_kwargs,
-        ).data
+        )
+        mutation_etag = require_etag(response, args.secret_name)
+        return response.data
 
     try:
         secret, action = write_secret_if_needed(
             existing=existing,
             value=value,
-            read_current=read_bundle,
+            read_current=lambda: current_value,
             create_secret=create_secret,
             update_secret=update_secret,
         )
@@ -536,6 +575,8 @@ def main() -> int:
     print(f"{action}: {args.secret_name} ({len(value)} bytes)")
     secret_id = getattr(secret, "id", "<accepted; id unavailable before reconciliation deadline>")
     print(f"  secret_id: {secret_id}")
+    if mutation_etag is not None:
+        print(f"  write_etag: {mutation_etag}")
 
     if args.readable_timeout == 0:
         print("  readable: ACCEPTED-BUT-UNVERIFIED (--readable-timeout 0)")

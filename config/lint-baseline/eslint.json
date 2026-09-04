@@ -1,0 +1,249 @@
+{
+  "tool": "eslint",
+  "version": 1,
+  "total": 77,
+  "config_guard": {
+    "enabled_rules": [
+      "@tanstack/query/exhaustive-deps",
+      "@tanstack/query/no-unstable-deps",
+      "@tanstack/query/stable-query-client",
+      "@typescript-eslint/adjacent-overload-signatures",
+      "@typescript-eslint/array-type",
+      "@typescript-eslint/await-thenable",
+      "@typescript-eslint/ban-ts-comment",
+      "@typescript-eslint/ban-tslint-comment",
+      "@typescript-eslint/class-literal-property-style",
+      "@typescript-eslint/consistent-generic-constructors",
+      "@typescript-eslint/consistent-indexed-object-style",
+      "@typescript-eslint/consistent-type-assertions",
+      "@typescript-eslint/consistent-type-definitions",
+      "@typescript-eslint/dot-notation",
+      "@typescript-eslint/no-array-constructor",
+      "@typescript-eslint/no-array-delete",
+      "@typescript-eslint/no-base-to-string",
+      "@typescript-eslint/no-confusing-non-null-assertion",
+      "@typescript-eslint/no-duplicate-enum-values",
+      "@typescript-eslint/no-duplicate-type-constituents",
+      "@typescript-eslint/no-empty-function",
+      "@typescript-eslint/no-empty-object-type",
+      "@typescript-eslint/no-explicit-any",
+      "@typescript-eslint/no-extra-non-null-assertion",
+      "@typescript-eslint/no-floating-promises",
+      "@typescript-eslint/no-for-in-array",
+      "@typescript-eslint/no-implied-eval",
+      "@typescript-eslint/no-inferrable-types",
+      "@typescript-eslint/no-misused-new",
+      "@typescript-eslint/no-misused-promises",
+      "@typescript-eslint/no-namespace",
+      "@typescript-eslint/no-non-null-asserted-optional-chain",
+      "@typescript-eslint/no-redundant-type-constituents",
+      "@typescript-eslint/no-require-imports",
+      "@typescript-eslint/no-this-alias",
+      "@typescript-eslint/no-unnecessary-type-assertion",
+      "@typescript-eslint/no-unnecessary-type-constraint",
+      "@typescript-eslint/no-unsafe-argument",
+      "@typescript-eslint/no-unsafe-assignment",
+      "@typescript-eslint/no-unsafe-call",
+      "@typescript-eslint/no-unsafe-declaration-merging",
+      "@typescript-eslint/no-unsafe-enum-comparison",
+      "@typescript-eslint/no-unsafe-function-type",
+      "@typescript-eslint/no-unsafe-member-access",
+      "@typescript-eslint/no-unsafe-return",
+      "@typescript-eslint/no-unsafe-unary-minus",
+      "@typescript-eslint/no-unused-expressions",
+      "@typescript-eslint/no-unused-vars",
+      "@typescript-eslint/no-wrapper-object-types",
+      "@typescript-eslint/non-nullable-type-assertion-style",
+      "@typescript-eslint/only-throw-error",
+      "@typescript-eslint/prefer-as-const",
+      "@typescript-eslint/prefer-find",
+      "@typescript-eslint/prefer-for-of",
+      "@typescript-eslint/prefer-function-type",
+      "@typescript-eslint/prefer-includes",
+      "@typescript-eslint/prefer-namespace-keyword",
+      "@typescript-eslint/prefer-nullish-coalescing",
+      "@typescript-eslint/prefer-optional-chain",
+      "@typescript-eslint/prefer-promise-reject-errors",
+      "@typescript-eslint/prefer-regexp-exec",
+      "@typescript-eslint/prefer-string-starts-ends-with",
+      "@typescript-eslint/require-await",
+      "@typescript-eslint/restrict-plus-operands",
+      "@typescript-eslint/restrict-template-expressions",
+      "@typescript-eslint/triple-slash-reference",
+      "@typescript-eslint/unbound-method",
+      "for-direction",
+      "func-style",
+      "no-async-promise-executor",
+      "no-case-declarations",
+      "no-compare-neg-zero",
+      "no-cond-assign",
+      "no-constant-binary-expression",
+      "no-constant-condition",
+      "no-control-regex",
+      "no-debugger",
+      "no-delete-var",
+      "no-dupe-else-if",
+      "no-duplicate-case",
+      "no-empty",
+      "no-empty-character-class",
+      "no-empty-pattern",
+      "no-empty-static-block",
+      "no-ex-assign",
+      "no-extra-boolean-cast",
+      "no-fallthrough",
+      "no-global-assign",
+      "no-invalid-regexp",
+      "no-irregular-whitespace",
+      "no-loss-of-precision",
+      "no-misleading-character-class",
+      "no-nonoctal-decimal-escape",
+      "no-octal",
+      "no-prototype-builtins",
+      "no-regex-spaces",
+      "no-self-assign",
+      "no-shadow-restricted-names",
+      "no-sparse-arrays",
+      "no-unexpected-multiline",
+      "no-unsafe-finally",
+      "no-unsafe-optional-chaining",
+      "no-unused-labels",
+      "no-unused-private-class-members",
+      "no-useless-backreference",
+      "no-useless-catch",
+      "no-useless-escape",
+      "no-var",
+      "prefer-const",
+      "prefer-rest-params",
+      "prefer-spread",
+      "quotes",
+      "react-hooks/exhaustive-deps",
+      "react-hooks/rules-of-hooks",
+      "require-yield",
+      "use-isnan",
+      "valid-typeof"
+    ]
+  },
+  "counts": {
+    "apps/prototype-wp-alt-context/js/admin/__tests__/banned-vocabulary.test.tsx": {
+      "@typescript-eslint/non-nullable-type-assertion-style": 1
+    },
+    "apps/prototype-wp-alt-context/js/admin/__tests__/dashboard-uxmap-code-parity.test.ts": {
+      "no-useless-escape": 1
+    },
+    "apps/prototype-wp-alt-context/js/admin/__tests__/uxmap-render-parity.test.ts": {
+      "@typescript-eslint/prefer-regexp-exec": 1
+    },
+    "apps/prototype-wp-alt-context/js/admin/api/settingsApi.ts": {
+      "@typescript-eslint/no-redundant-type-constituents": 1
+    },
+    "apps/prototype-wp-alt-context/js/admin/hooks/__tests__/useDescribeRunProgress.test.tsx": {
+      "@typescript-eslint/array-type": 2
+    },
+    "apps/prototype-wp-alt-context/js/admin/hooks/__tests__/useJobProgressStream.test.tsx": {
+      "@typescript-eslint/non-nullable-type-assertion-style": 1
+    },
+    "apps/prototype-wp-alt-context/js/admin/hooks/__tests__/useJobStateMachineEffects.test.ts": {
+      "@typescript-eslint/no-unsafe-return": 2
+    },
+    "apps/prototype-wp-alt-context/js/admin/hooks/__tests__/useMediaIdentities.test.tsx": {
+      "@typescript-eslint/no-unnecessary-type-assertion": 2
+    },
+    "apps/prototype-wp-alt-context/js/admin/hooks/__tests__/useWorkbenchMedia.test.tsx": {
+      "@typescript-eslint/array-type": 1,
+      "@typescript-eslint/no-unnecessary-type-assertion": 4,
+      "@typescript-eslint/no-unsafe-assignment": 1,
+      "@typescript-eslint/require-await": 5
+    },
+    "apps/prototype-wp-alt-context/js/admin/pages/__tests__/DashboardPage.test.tsx": {
+      "@typescript-eslint/non-nullable-type-assertion-style": 1
+    },
+    "apps/prototype-wp-alt-context/js/admin/pages/__tests__/WorkbenchPage.scatter.test.tsx": {
+      "@typescript-eslint/no-unnecessary-type-assertion": 2
+    },
+    "apps/prototype-wp-alt-context/js/admin/pages/__tests__/menuHeadingParity.test.ts": {
+      "@typescript-eslint/prefer-regexp-exec": 1
+    },
+    "apps/prototype-wp-alt-context/js/admin/pages/__tests__/pageHeadingBoundary.test.ts": {
+      "@typescript-eslint/prefer-regexp-exec": 1
+    },
+    "apps/prototype-wp-alt-context/js/admin/pages/workbench/WorkbenchTwoPaneLayout.tsx": {
+      "@typescript-eslint/no-unnecessary-type-assertion": 1,
+      "@typescript-eslint/non-nullable-type-assertion-style": 1
+    },
+    "apps/prototype-wp-alt-context/js/admin/pages/workbench/__tests__/MediaSelection.authExpired.test.tsx": {
+      "@typescript-eslint/consistent-type-definitions": 1
+    },
+    "apps/prototype-wp-alt-context/js/admin/pages/workbench/__tests__/MediaSelection.identitiesDegraded.test.tsx": {
+      "@typescript-eslint/consistent-type-definitions": 1
+    },
+    "apps/prototype-wp-alt-context/js/admin/pages/workbench/__tests__/ScanTabContent.labelPanelReachable.test.tsx": {
+      "@typescript-eslint/no-unused-vars": 1
+    },
+    "apps/prototype-wp-alt-context/js/admin/pages/workbench/__tests__/ScanTabContent.reviewUrl.test.tsx": {
+      "@typescript-eslint/array-type": 2,
+      "@typescript-eslint/no-unused-vars": 1
+    },
+    "apps/prototype-wp-alt-context/js/admin/pages/workbench/__tests__/ownedGettextLiterals.test.ts": {
+      "@typescript-eslint/consistent-type-definitions": 1
+    },
+    "apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/ClusterLabelingPanel.tsx": {
+      "@typescript-eslint/no-unused-vars": 1
+    },
+    "apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/IdentityClusterItem.tsx": {
+      "@typescript-eslint/no-unused-vars": 1
+    },
+    "apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/__tests__/ClusterEditForm.test.tsx": {
+      "func-style": 1
+    },
+    "apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/__tests__/ClusterLabelingPanel.duplicateGuardBudget.test.tsx": {
+      "@typescript-eslint/require-await": 1
+    },
+    "apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/__tests__/PersonCommitControl.test.tsx": {
+      "@typescript-eslint/no-unsafe-assignment": 2
+    },
+    "apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/__tests__/representativeVocabulary.source.test.tsx": {
+      "@typescript-eslint/no-unused-vars": 1
+    },
+    "apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/__tests__/useClusterSuggestions.test.tsx": {
+      "@typescript-eslint/require-await": 2
+    },
+    "apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/useBulkReviewCommit.ts": {
+      "react-hooks/exhaustive-deps": 2
+    },
+    "apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/useInlineSuggestionBatch.ts": {
+      "@tanstack/query/exhaustive-deps": 1
+    },
+    "apps/prototype-wp-alt-context/js/admin/utils/__tests__/http.test.ts": {
+      "@typescript-eslint/prefer-promise-reject-errors": 1
+    },
+    "apps/prototype-wp-alt-context/js/attachment-edit/AttachmentFacesApp.tsx": {
+      "@typescript-eslint/no-unused-vars": 1,
+      "func-style": 2
+    },
+    "apps/prototype-wp-alt-context/js/attachment-edit/UncuratedFaceList.tsx": {
+      "func-style": 3
+    },
+    "apps/prototype-wp-alt-context/js/attachment-edit/__tests__/AttachmentFacesApp.test.tsx": {
+      "@typescript-eslint/no-empty-function": 1,
+      "@typescript-eslint/require-await": 3,
+      "@typescript-eslint/unbound-method": 1,
+      "func-style": 4
+    },
+    "apps/prototype-wp-alt-context/js/attachment-edit/__tests__/UncuratedFaceList.test.tsx": {
+      "func-style": 1,
+      "quotes": 1
+    },
+    "apps/prototype-wp-alt-context/js/attachment-edit/__tests__/keyboardWalk.test.tsx": {
+      "@typescript-eslint/prefer-for-of": 1,
+      "@typescript-eslint/prefer-nullish-coalescing": 1,
+      "@typescript-eslint/require-await": 2,
+      "func-style": 3
+    },
+    "apps/prototype-wp-alt-context/js/attachment-edit/copy.ts": {
+      "func-style": 1
+    },
+    "apps/prototype-wp-alt-context/js/attachment-edit/main.tsx": {
+      "func-style": 3
+    }
+  }
+}

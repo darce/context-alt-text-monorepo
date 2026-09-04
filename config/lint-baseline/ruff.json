@@ -1,0 +1,437 @@
+{
+  "tool": "ruff",
+  "version": 1,
+  "total": 408,
+  "config_guard": {
+    "select": [
+      "ASYNC",
+      "B",
+      "C4",
+      "E",
+      "F",
+      "I",
+      "N",
+      "SIM",
+      "UP",
+      "W"
+    ],
+    "ignore": [
+      "B008",
+      "B904",
+      "E501",
+      "SIM108"
+    ],
+    "per_file_ignores": {
+      "*/tests/**/*.py": [
+        "B017",
+        "F401",
+        "F811"
+      ],
+      "__init__.py": [
+        "F401"
+      ],
+      "tests/**/*.py": [
+        "B017",
+        "F401",
+        "F811"
+      ]
+    }
+  },
+  "counts": {
+    "apps/prototype-description-service/recognition/application/assignment/__init__.py": {
+      "I001": 1
+    },
+    "apps/prototype-description-service/recognition/application/persistence/representative_selector.py": {
+      "SIM103": 1
+    },
+    "apps/prototype-description-service/recognition/infrastructure/embeddings/face_pipeline_adapter.py": {
+      "SIM105": 1
+    },
+    "apps/prototype-description-service/recognition/infrastructure/embeddings/face_quality_factors.py": {
+      "SIM103": 1,
+      "UP035": 1
+    },
+    "apps/prototype-description-service/recognition/infrastructure/repositories/atlas_repository.py": {
+      "I001": 1
+    },
+    "apps/prototype-description-service/recognition/interface_adapters/http/routers/suggestions.py": {
+      "I001": 1
+    },
+    "apps/prototype-description-service/recognition/tests/api/test_demo_router.py": {
+      "SIM118": 1
+    },
+    "apps/prototype-description-service/recognition/tests/api/test_health_probes.py": {
+      "SIM103": 2,
+      "SIM300": 1
+    },
+    "apps/prototype-description-service/recognition/tests/api/test_roster_candidates.py": {
+      "I001": 1
+    },
+    "apps/prototype-description-service/recognition/tests/deploy/test_compose_image_variant_parity.py": {
+      "SIM102": 1,
+      "SIM103": 1,
+      "SIM110": 1,
+      "UP035": 1
+    },
+    "apps/prototype-description-service/recognition/tests/deploy/test_cross_slice_contract_gates.py": {
+      "F841": 1,
+      "SIM103": 3
+    },
+    "apps/prototype-description-service/recognition/tests/deploy/test_dockerfile_stage_topology.py": {
+      "I001": 1
+    },
+    "apps/prototype-description-service/recognition/tests/deploy/test_image_coordinate_doc_parity.py": {
+      "F541": 1
+    },
+    "apps/prototype-description-service/recognition/tests/deploy/test_runtime_packaging.py": {
+      "SIM103": 3,
+      "SIM114": 1
+    },
+    "apps/prototype-description-service/recognition/tests/service/test_demo_provisioning_service.py": {
+      "I001": 1
+    },
+    "apps/prototype-description-service/recognition/tests/test_atlas_repository.py": {
+      "C416": 3
+    },
+    "apps/prototype-description-service/recognition/tests/unit/test_face_pipeline_adapter.py": {
+      "I001": 1
+    },
+    "apps/prototype-description-service/recognition/tests/unit/test_face_pipeline_pure_contracts.py": {
+      "I001": 1
+    },
+    "apps/prototype-description-service/recognition/tests/unit/test_fir_release_gates.py": {
+      "I001": 1
+    },
+    "apps/prototype-description-service/scene/tests/test_context_pack.py": {
+      "N818": 1
+    },
+    "apps/prototype-description-service/scene/tests/test_eval_harness_face_metrics.py": {
+      "I001": 1
+    },
+    "apps/prototype-description-service/scene/tests/test_eval_harness_manifest.py": {
+      "I001": 1,
+      "SIM115": 1
+    },
+    "apps/prototype-description-service/scripts/bench/corpus.py": {
+      "UP035": 1
+    },
+    "apps/prototype-description-service/scripts/bench/driver.py": {
+      "F401": 1,
+      "I001": 1
+    },
+    "apps/prototype-description-service/scripts/bench/preflight.py": {
+      "UP017": 1
+    },
+    "apps/prototype-description-service/scripts/bench/production_shaped_guard.py": {
+      "I001": 1
+    },
+    "apps/prototype-description-service/scripts/bench/score_report.py": {
+      "C408": 1,
+      "I001": 1,
+      "N803": 1,
+      "SIM102": 1,
+      "UP017": 1
+    },
+    "apps/prototype-description-service/scripts/bench/tests/test_attrition_floor.py": {
+      "F841": 1,
+      "I001": 2
+    },
+    "apps/prototype-description-service/scripts/bench/tests/test_cluster_gate.py": {
+      "I001": 1
+    },
+    "apps/prototype-description-service/scripts/bench/tests/test_detection_localization.py": {
+      "I001": 2
+    },
+    "apps/prototype-description-service/scripts/bench/tests/test_e2e_frame.py": {
+      "I001": 1
+    },
+    "apps/prototype-description-service/scripts/bench/tests/test_precision_precondition.py": {
+      "N802": 2,
+      "N806": 2
+    },
+    "apps/prototype-description-service/scripts/bench/tests/test_score_head_to_head.py": {
+      "C416": 1
+    },
+    "apps/prototype-description-service/scripts/eval_harness/calibrate_face_thresholds.py": {
+      "SIM102": 1
+    },
+    "apps/prototype-description-service/scripts/eval_harness/cli.py": {
+      "UP035": 1
+    },
+    "apps/prototype-description-service/scripts/eval_harness/manifest.py": {
+      "SIM102": 1
+    },
+    "apps/prototype-description-service/scripts/eval_harness/report.py": {
+      "I001": 1
+    },
+    "apps/prototype-description-service/scripts/eval_harness/scan_stale_reports.py": {
+      "I001": 1,
+      "UP035": 1
+    },
+    "apps/prototype-description-service/scripts/eval_harness/tests/test_check_published_head_sha_guard.py": {
+      "I001": 1
+    },
+    "apps/prototype-description-service/scripts/eval_harness/tests/test_check_published_identification.py": {
+      "I001": 1
+    },
+    "apps/prototype-description-service/scripts/eval_harness/tests/test_cli_exit_gates.py": {
+      "I001": 1
+    },
+    "apps/prototype-description-service/scripts/eval_harness/tests/test_eval_captions_operator.py": {
+      "I001": 1
+    },
+    "apps/prototype-description-service/scripts/eval_harness/tests/test_eval_exit_contract.py": {
+      "I001": 1
+    },
+    "apps/prototype-description-service/scripts/eval_harness/tests/test_eval_refusal_message.py": {
+      "I001": 1
+    },
+    "apps/prototype-description-service/scripts/eval_harness/tests/test_manifest_invariants.py": {
+      "I001": 1
+    },
+    "apps/prototype-description-service/scripts/eval_harness/tests/test_r6d2_legacy_import_session.py": {
+      "I001": 1
+    },
+    "apps/prototype-description-service/scripts/eval_harness/tests/test_r6d3_extract_head_shas.py": {
+      "I001": 1
+    },
+    "apps/prototype-description-service/scripts/eval_harness/tests/test_r6d3_s2r3_14_vlm2a_rebaseline.py": {
+      "I001": 1
+    },
+    "apps/prototype-description-service/scripts/eval_harness/tests/test_r6d3_s2r4_15_disclosure.py": {
+      "I001": 1
+    },
+    "apps/prototype-description-service/scripts/eval_harness/tests/test_r6d4_cli_score_omits_annotation_mode.py": {
+      "I001": 1
+    },
+    "apps/prototype-description-service/scripts/eval_harness/tests/test_r6d4_readme_worked_example.py": {
+      "I001": 1
+    },
+    "apps/prototype-description-service/scripts/eval_harness/tests/test_r6e1_parent_mode_fill.py": {
+      "B009": 3
+    },
+    "apps/prototype-description-service/scripts/eval_harness/tests/test_r6e4_stale_report_scan.py": {
+      "I001": 1,
+      "SIM300": 1
+    },
+    "apps/prototype-description-service/scripts/eval_harness/tests/test_regen_eval_report_gate.py": {
+      "I001": 1
+    },
+    "apps/prototype-description-service/scripts/eval_harness/tests/test_remediation.py": {
+      "SIM300": 7
+    },
+    "apps/prototype-description-service/scripts/eval_harness/tests/test_score_roster_only_refusal.py": {
+      "I001": 1
+    },
+    "apps/prototype-description-service/scripts/seed_vlm_cache.py": {
+      "I001": 1
+    },
+    "scripts/_maint_start_inline.py": {
+      "UP017": 1,
+      "W292": 1
+    },
+    "scripts/ace/ace_reflect.py": {
+      "SIM105": 1,
+      "UP017": 2
+    },
+    "scripts/check_harness_sync.py": {
+      "F541": 1,
+      "I001": 1
+    },
+    "scripts/check_published_identification.py": {
+      "UP035": 1
+    },
+    "scripts/check_shared_contract_fixtures.py": {
+      "C408": 1,
+      "I001": 1,
+      "SIM300": 9,
+      "W191": 115,
+      "W292": 1
+    },
+    "scripts/check_skills.py": {
+      "I001": 1,
+      "SIM102": 1
+    },
+    "scripts/check_workflow_facade.py": {
+      "I001": 1,
+      "W292": 1
+    },
+    "scripts/eval_refusal_message.py": {
+      "UP035": 1
+    },
+    "scripts/grok-egress-proxy.py": {
+      "E401": 1,
+      "E702": 5,
+      "I001": 1,
+      "SIM115": 1
+    },
+    "scripts/lint_hoisted_paths.py": {
+      "UP035": 1,
+      "W292": 1
+    },
+    "scripts/mcp/handoff_integrity_guard.py": {
+      "F401": 1,
+      "W292": 1
+    },
+    "scripts/regen_eval_report.py": {
+      "I001": 1
+    },
+    "scripts/smoke_agent_workflows.py": {
+      "UP035": 1,
+      "W292": 1
+    },
+    "scripts/test_cap_owner_summary_doc.py": {
+      "I001": 1,
+      "W191": 26,
+      "W292": 1
+    },
+    "scripts/test_check_harness_sync.py": {
+      "E402": 2,
+      "I001": 1
+    },
+    "scripts/test_check_shared_contract_fixtures.py": {
+      "F401": 1,
+      "I001": 1,
+      "W191": 19,
+      "W292": 1
+    },
+    "scripts/test_check_skills.py": {
+      "I001": 1
+    },
+    "scripts/test_consumer_root_verification_doc.py": {
+      "I001": 1
+    },
+    "scripts/test_consumer_setup_doc.py": {
+      "I001": 1
+    },
+    "scripts/test_current_task_demotion_surfaces.py": {
+      "I001": 1,
+      "W292": 1
+    },
+    "scripts/test_db_reset_remote_dev_fir.py": {
+      "I001": 1
+    },
+    "scripts/test_delete_local_mcp_package_dirs.py": {
+      "I001": 1
+    },
+    "scripts/test_e15_28_demo_bootstrap.py": {
+      "I001": 1
+    },
+    "scripts/test_e15_28_demo_seed_and_epic.py": {
+      "I001": 1
+    },
+    "scripts/test_e15_28_demo_stack_infra.py": {
+      "I001": 1
+    },
+    "scripts/test_e15_28_demo_walkthrough_proof.py": {
+      "I001": 1
+    },
+    "scripts/test_e15_33_deploy_convergence.py": {
+      "F541": 1,
+      "SIM102": 1,
+      "SIM110": 1
+    },
+    "scripts/test_e15_3a_localwp_proof_bundle_capture_checklist.py": {
+      "I001": 1,
+      "W292": 1
+    },
+    "scripts/test_harness_terminal_stall_investigation_doc.py": {
+      "I001": 1
+    },
+    "scripts/test_infra_oci_readme_reset_section.py": {
+      "I001": 1
+    },
+    "scripts/test_local_remote_reset_doc_crosslink.py": {
+      "I001": 1
+    },
+    "scripts/test_localwp_batch_run_smoke.py": {
+      "I001": 1,
+      "W292": 1
+    },
+    "scripts/test_localwp_gate_status.py": {
+      "I001": 1
+    },
+    "scripts/test_localwp_runbook.py": {
+      "I001": 1
+    },
+    "scripts/test_localwp_verify_activation_make.py": {
+      "I001": 1,
+      "W292": 1
+    },
+    "scripts/test_localwp_wp.py": {
+      "I001": 1
+    },
+    "scripts/test_maint_start_inline.py": {
+      "W292": 1
+    },
+    "scripts/test_make_reset_remote_target.py": {
+      "I001": 1
+    },
+    "scripts/test_mk_orchestrator_module_invocations.py": {
+      "I001": 1,
+      "W292": 1
+    },
+    "scripts/test_php_characterization_gate.py": {
+      "F401": 1
+    },
+    "scripts/test_recognition_service_reset_subcommand.py": {
+      "I001": 1
+    },
+    "scripts/test_rg014_external_package_scope.py": {
+      "I001": 1,
+      "W292": 1
+    },
+    "scripts/test_scripts_inventory.py": {
+      "I001": 1,
+      "W292": 1
+    },
+    "scripts/test_smoke_agent_workflows.py": {
+      "W292": 1
+    },
+    "scripts/test_sync_compose_dev_fir.py": {
+      "I001": 1
+    },
+    "scripts/test_vlm3_decision_memo.py": {
+      "I001": 1
+    },
+    "scripts/test_vlm3_gpu_bakeoff_artifacts.py": {
+      "I001": 1
+    },
+    "scripts/test_vlm3_owlv2_deferral.py": {
+      "I001": 1
+    },
+    "scripts/train/occlusion/license_policy.py": {
+      "C416": 1,
+      "I001": 1,
+      "SIM102": 12,
+      "SIM103": 7,
+      "SIM109": 21,
+      "SIM110": 1,
+      "UP035": 1
+    },
+    "scripts/train/occlusion/mutation_guard.py": {
+      "N806": 1,
+      "SIM109": 1,
+      "SIM300": 1,
+      "UP042": 1
+    },
+    "scripts/train/occlusion/test_license_policy.py": {
+      "C420": 1,
+      "SIM300": 3
+    },
+    "scripts/train/occlusion/test_mutation_guard_env.py": {
+      "UP037": 9
+    },
+    "scripts/validate_claude_settings_pin.py": {
+      "SIM118": 1,
+      "UP035": 1
+    },
+    "scripts/vscode_copilot_hook_dispatch.py": {
+      "I001": 1
+    },
+    "scripts/worktree_audit.py": {
+      "I001": 1,
+      "SIM110": 1
+    }
+  }
+}

@@ -1,7 +1,7 @@
 # UX Map — roster-people
 
 **Product:** `prototype-wp-alt-context`
-**Source fixture:** `packages/mcp-workbay-canvas/tests/fixtures/ux_maps/roster-people.uxmap.json`
+**Source fixture:** `apps/prototype-wp-alt-context/docs/ux-maps/roster-people.uxmap.json`
 
 ## Goals
 - Six ACX submenus are MECE and frequency-ordered (NAV-05/NAV-06): Overview orients; Review Queue is the one home to name a person from a photo (highest-frequency demo task); People manages named people only; Description Runs is the one home to see what the describer did; Data Retention is keep/delete/export policy (not description history); Settings configures the service (rare, last). WordPress parent slug stays Overview.
@@ -182,6 +182,19 @@ url_params: `tab`, `panel`, `media`
 | states: default | loading | error                          |
 +------------------------------------------------------------+
 ```
+
+## Actions
+
+| id | verb | target | hierarchy | costly | irreversible | preview required | screen id |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `act-add-person` | Add Person | `roster-shell` | primary | no | no | no | `roster-shell` |
+| `act-open-person` | Open person workspace | `roster-person-workspace` | secondary | no | no | no | `roster-shell` |
+| `act-save-person` | Save person changes | `roster-person-workspace` | primary | yes | no | yes | `roster-person-workspace` |
+| `act-open-cluster` | Open face-group drawer | `roster-cluster-drawer` | secondary | no | no | no | `roster-shell` |
+| `act-assign-cluster` | Assign face group to person | `person` | primary | yes | no | yes | `roster-cluster-drawer` |
+| `act-goto-workbench` | Go to Workbench | `exit-workbench` | secondary | no | no | no | `roster-shell` |
+| `act-open-lightbox` | Open evidence lightbox | `roster-face-lightbox` | secondary | no | no | no | `roster-person-workspace` |
+| `act-close-lightbox` | Close lightbox | `roster-person-workspace` | primary | no | no | no | `roster-face-lightbox` |
 
 ## Flows
 ### Open face-group drawer → assign → person workspace (`flow-cluster-to-person`)

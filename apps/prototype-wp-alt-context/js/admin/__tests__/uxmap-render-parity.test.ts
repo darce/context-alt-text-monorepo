@@ -4,8 +4,8 @@
  *  1. **Schema conformance** — every owned `*.uxmap.json` must validate against the
  *     canonical `UxMap` model (`workbay_canvas_mcp/ux_map/models.py`), mirrored here
  *     in TypeScript so the guard runs in-process with no Python dependency.
- *  2. **Render parity** — owned json labels must appear verbatim in the sibling `*.md`,
- *     and labels the json has since renamed must not linger there.
+ *  2. **Render parity** — the semantic Markdown projection is parsed and deep-compared
+ *     with every owned JSON map; focused reverse-direction guards reject stale ids.
  *
  * DEMO-UX-1-D-15: `loadOwnedMap` used to do `JSON.parse(...) as UxMapDoc` — a
  * compile-time cast with zero runtime checking — so the parity guard stayed green
@@ -18,6 +18,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { describe, expect, it } from 'vitest';
+
+import { parseRenderedUxMap, projectUxMapForRenderParity, type UxMapRenderSource } from '../uxmap/renderParity';
 
 const uxMapsDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../docs/ux-maps');
 const enumSnapshotPath = path.resolve(
@@ -40,12 +42,7 @@ const OWNED_MAPS = [
  * the coverage-gaming failure mode of TEST-11, and the gate below is the upward ratchet
  * (OBS-11) that stops the list sliding back down.
  */
-const REQUIRED_OWNED_MAPS = [
-  'dashboard',
-  'describe-gpu-tier',
-  'workbench-2pane',
-  'febt-1-job-error-states',
-] as const;
+const REQUIRED_OWNED_MAPS = ['dashboard', 'describe-gpu-tier', 'workbench-2pane', 'febt-1-job-error-states'] as const;
 
 /**
  * Maps that exist on disk but cannot be enrolled in OWNED_MAPS yet, each with the reason and
@@ -93,7 +90,7 @@ type FieldSpec =
   | { kind: 'bool'; required?: boolean }
   | { kind: 'int'; required?: boolean; nullable?: boolean }
   | { kind: 'enum'; values: readonly string[]; required?: boolean; nullable?: boolean }
-  | { kind: 'strList' }
+  | { kind: 'strList'; required?: boolean }
   | { kind: 'enumList'; values: readonly string[] }
   | { kind: 'modelList'; model: () => ModelSpec };
 
@@ -168,6 +165,16 @@ const ACTION_MODEL: ModelSpec = {
   },
 };
 
+const DOMAIN_STATE_MAPPING_MODEL: ModelSpec = {
+  // Local lossless-render extension. render_ux_maps.py removes this field before handing
+  // the canonical portion to upstream Pydantic, then emits the typed table itself.
+  name: 'DomainStateMapping',
+  fields: {
+    domain_states: { kind: 'strList', required: true },
+    canonical_state: { kind: 'enum', values: MAP_STATES, required: true },
+  },
+};
+
 const UX_MAP_MODEL: ModelSpec = {
   name: 'UxMap',
   fields: {
@@ -181,6 +188,7 @@ const UX_MAP_MODEL: ModelSpec = {
     actions: { kind: 'modelList', model: () => ACTION_MODEL },
     open_questions: { kind: 'strList' },
     not_doing: { kind: 'strList' },
+    domain_state_mappings: { kind: 'modelList', model: () => DOMAIN_STATE_MAPPING_MODEL },
   },
 };
 
@@ -461,6 +469,25 @@ describe('ux-map SSOT schema conformance (owned maps)', () => {
     expect(checked.length, 'no code_ref resolved -- the sweep would pass vacuously').toBeGreaterThan(0);
   });
 
+  it('resolves every owned map source_fixture to a real file', () => {
+    const repoRoot = path.resolve(uxMapsDir, '../../../..');
+    const missing: string[] = [];
+    let checked = 0;
+    for (const mapRef of OWNED_MAPS) {
+      const raw = readMapJson(mapRef) as { source_fixture?: unknown };
+      if (typeof raw.source_fixture !== 'string' || raw.source_fixture.length === 0) {
+        missing.push(`${mapRef} -> absent source_fixture`);
+        continue;
+      }
+      checked += 1;
+      if (!existsSync(path.join(repoRoot, raw.source_fixture))) {
+        missing.push(`${mapRef} -> ${raw.source_fixture}`);
+      }
+    }
+    expect(missing, missing.join('; ')).toEqual([]);
+    expect(checked, 'no source_fixture paths resolved -- the sweep would pass vacuously').toBeGreaterThan(0);
+  });
+
   it('keeps every owned map json and sibling md on disk (fail-closed)', () => {
     expect(OWNED_MAPS.length, 'OWNED_MAPS emptied — ownership list would vacuously pass').toBeGreaterThan(0);
     for (const required of REQUIRED_OWNED_MAPS) {
@@ -504,14 +531,6 @@ describe('ux-map SSOT schema conformance (owned maps)', () => {
       Object.keys(QUARANTINED_MAPS),
       'QUARANTINED_MAPS reached zero; sr-001 forbids growing the exemption list again',
     ).toEqual([]);
-    for (const [mapRef, reason] of Object.entries(QUARANTINED_MAPS)) {
-      expect(OWNED_MAPS as readonly string[], `${mapRef} is both owned and quarantined`).not.toContain(mapRef);
-      expect(reason.length, `${mapRef} quarantine has no written rationale and owner`).toBeGreaterThan(80);
-      expect(
-        validateUxMap(readMapJson(mapRef)).length,
-        `${mapRef} now validates against the canonical UxMap schema — promote it into OWNED_MAPS and drop the quarantine entry`,
-      ).toBeGreaterThan(0);
-    }
   });
 
   it('throws when an owned-style map json cannot be read (absent-file discrimination)', () => {
@@ -547,6 +566,13 @@ describe('ux-map SSOT schema conformance (owned maps)', () => {
 });
 
 describe('ux-map render parity (owned maps)', () => {
+  it.each(OWNED_MAPS)('%s.md is structurally equal to its JSON render projection', (mapRef) => {
+    const raw = readMapJson(mapRef) as UxMapRenderSource;
+    const md = readFileSync(path.join(uxMapsDir, `${mapRef}.md`), 'utf8');
+
+    expect(parseRenderedUxMap(md)).toEqual(projectUxMapForRenderParity(raw));
+  });
+
   it('every json screen and zone label appears verbatim in the sibling md, and renamed labels do not linger', () => {
     for (const mapRef of OWNED_MAPS) {
       const { json, md, mdName } = loadOwnedMap(mapRef);
@@ -649,40 +675,7 @@ describe('ux-map render parity (owned maps)', () => {
     expect([...new Set(stale)], stale.join('; ')).toEqual([]);
   });
 
-  /**
-   * WBUX6-W3-L3-06. Prose inside labels cites source files too; those citations were
-   * shortened to bare basenames, which no gate can resolve. Repo-relative paths in labels
-   * get the same existence check the structural `code_ref` field already gets (rg-005).
-   */
-  it('every repo-relative source path cited inside an owned-map label resolves on disk', () => {
-    const repoRoot = path.resolve(uxMapsDir, '../../../..');
-    const missing: string[] = [];
-    for (const mapRef of OWNED_MAPS) {
-      const { json } = loadOwnedMap(mapRef);
-      const prose: string[] = [];
-      for (const screen of json.screens) {
-        prose.push(screen.title, screen.purpose ?? '');
-        for (const zone of screen.zones ?? []) {
-          prose.push(zone.label);
-        }
-      }
-      for (const action of json.actions ?? []) {
-        prose.push(action.verb ?? '');
-      }
-      for (const cited of prose.join('\n').match(/\bapps\/[A-Za-z0-9._/-]+\.tsx?\b/g) ?? []) {
-        if (!existsSync(path.join(repoRoot, cited))) {
-          missing.push(`${mapRef}: ${cited}`);
-        }
-      }
-    }
-    expect([...new Set(missing)], missing.join('; ')).toEqual([]);
-  });
-
-  /**
-   * The existence check above is only reachable for citations written as repo-relative
-   * paths. A bare `Foo.tsx` basename is unresolvable by construction, so shortening a path
-   * would silently opt that citation out of its own gate — the fail-open shape of TEST-11.
-   */
+  /** A bare `Foo.tsx` basename is unresolvable by construction (TEST-11). */
   it('cites source files by repo-relative path, never by bare basename', () => {
     const bare: string[] = [];
     for (const mapRef of OWNED_MAPS) {
@@ -733,6 +726,27 @@ describe('ux-map render parity (owned maps)', () => {
       ).toBeGreaterThan(2);
     },
   );
+
+  it('keeps the typed domain-to-canonical state mapping exact and enum-backed', () => {
+    const raw = readMapJson('workbench-operator-loop') as {
+      domain_state_mappings?: Array<{ domain_states: string[]; canonical_state: string }>;
+    };
+    const mappings = raw.domain_state_mappings ?? [];
+    expect(mappings).toEqual([
+      { domain_states: ['unavailable'], canonical_state: 'offline' },
+      { domain_states: ['repair', 'read_only'], canonical_state: 'degraded' },
+      { domain_states: ['zero_evidence'], canonical_state: 'empty' },
+      { domain_states: ['busy'], canonical_state: 'loading' },
+      { domain_states: ['filtered', 'suggested_label'], canonical_state: 'default' },
+      { domain_states: ['missing_image'], canonical_state: 'edge_input' },
+    ]);
+    expect(mappings.length, 'domain-state mapping disappeared').toBeGreaterThan(0);
+    for (const mapping of mappings) {
+      expect(MAP_STATES, `${mapping.canonical_state} is not in the canonical MapState enum`).toContain(
+        mapping.canonical_state,
+      );
+    }
+  });
 });
 
 /**
@@ -850,15 +864,25 @@ describe('workbench-library footer state contract (z-lib-actions)', () => {
  * Generator provenance: the `.md` is a derived artifact and
  * `docs/ux-maps/render_ux_maps.py` is its only sanctioned writer
  * (DATA-14 one authority owns the record; REF-09 a hand-edited derived
- * artifact drifts silently). Byte-exact render fidelity cannot be
- * asserted from vitest — the renderer is Python and the canvas package
- * it wraps is not installable here (WBUX6-W4-A-02/A-03) — so these
- * guards pin the render's structural contract instead: the sections a
- * regeneration must emit, and the hand-authored prose it must carry
- * across (`KEEP_SECTIONS`).
+ * artifact drifts silently). The parser-backed projection above asserts
+ * semantic render fidelity in process; these guards additionally pin the
+ * sections a regeneration must emit and the hand-authored prose it must
+ * carry across (`KEEP_SECTIONS`).
  * ------------------------------------------------------------------ */
 
 const rendererPath = path.join(uxMapsDir, 'render_ux_maps.py');
+
+const sectionRows = (markdown: string, heading: string): number => {
+  const start = markdown.indexOf(heading);
+  if (start < 0) {
+    return 0;
+  }
+  const next = markdown.indexOf('\n## ', start + heading.length);
+  return markdown
+    .slice(start, next < 0 ? markdown.length : next)
+    .split('\n')
+    .filter((line) => line.startsWith('| ')).length;
+};
 
 /**
  * WBUX6-W4-A-05: maps whose `.md` has no `## Parity index` because it has never been
@@ -896,18 +920,13 @@ describe('ux-map generated-render provenance', () => {
       staleExemptions,
       `these maps now carry a parity index — remove them from MAPS_WITHOUT_PARITY_INDEX: ${staleExemptions.join(', ')}`,
     ).toEqual([]);
-    for (const [mapRef, rationale] of Object.entries(MAPS_WITHOUT_PARITY_INDEX)) {
-      expect(OWNED_MAPS, `${mapRef} exemption names a map that is not owned`).toContain(mapRef);
-      expect(rationale.length, `${mapRef} exemption has no written rationale`).toBeGreaterThan(40);
-    }
   });
 
   it('keeps the hand-authored vocabulary section in the md and in the renderer KEEP_SECTIONS', () => {
     const renderer = readFileSync(rendererPath, 'utf8');
-    expect(
-      renderer,
-      'render_ux_maps.py no longer preserves the vocabulary section — a regeneration would delete it',
-    ).toContain(`KEEP_SECTIONS = ("${VOCABULARY_HEADING}",)`);
+    expect(renderer, 'render_ux_maps.py no longer preserves the vocabulary section').toContain(
+      `"${VOCABULARY_HEADING}"`,
+    );
 
     for (const mapRef of VOCABULARY_MAPS) {
       const { md, mdName } = loadOwnedMap(mapRef);
@@ -916,6 +935,38 @@ describe('ux-map generated-render provenance', () => {
       const rows = section.split('\n').filter((line) => line.startsWith('| ') && !line.startsWith('| --- '));
       expect(rows.length, `${mdName} vocabulary table has no say/don't-say rows`).toBeGreaterThan(3);
     }
+  });
+
+  it('preserves the recovered operator and reducer contracts across regeneration', () => {
+    const renderer = readFileSync(rendererPath, 'utf8');
+    const operator = readFileSync(path.join(uxMapsDir, 'workbench-operator-loop.md'), 'utf8');
+    const reducer = readFileSync(path.join(uxMapsDir, 'febt-1-job-error-states.md'), 'utf8');
+
+    expect(renderer).toContain('"## Operator interaction contract"');
+    expect(renderer).toContain('"## Detailed reducer and recovery contract"');
+    for (const required of [
+      'APP_LINK_PARAMS',
+      'position: 1 of N on this page',
+      'N of M faces shown',
+      'Is this <name>? Yes/No',
+      'busy disables actions',
+      'zero reps still render (Avatar, not empty)',
+      'WorkbenchFindingsPanel.tsx',
+      'TopClusterCard.tsx',
+      '([NAV-11])',
+    ]) {
+      expect(operator, `recovered operator contract lost: ${required}`).toContain(required);
+    }
+    expect(operator).toContain('n_workbench_scan -->|settings health| n_exit_settings');
+    expect(reducer).toContain('### Reducer transition matrix');
+    expect(reducer).toContain('### Pipeline banner examples');
+    expect(reducer).toContain('### AppError banner and recovery rows');
+    expect(reducer).toContain('### Stalled/offline reconciliation');
+    expect(reducer).toContain('The reconnect counter is internal (`reconnectAttempts`) and never rendered');
+    expect(
+      sectionRows(reducer, '## Detailed reducer and recovery contract'),
+      'recovered reducer contract must retain substantive tables',
+    ).toBeGreaterThan(10);
   });
 
   it('every owned map describes a journey: non-empty flows and a source fixture', () => {

@@ -31,7 +31,11 @@ from pathlib import Path
 MAPS_DIR = Path(__file__).resolve().parent
 
 # Hand-authored sections preserved across regeneration. Order is significant and stable.
-KEEP_SECTIONS = ("## Vocabulary (say / don't say)",)
+KEEP_SECTIONS = (
+    "## Vocabulary (say / don't say)",
+    "## Operator interaction contract",
+    "## Detailed reducer and recovery contract",
+)
 
 
 def _load_renderer():
@@ -106,6 +110,43 @@ def _parity_index(doc: dict) -> list[str]:
     ]
 
 
+def _action_table(doc: dict) -> list[str]:
+    rows = [
+        "## Actions",
+        "",
+        "| id | verb | target | hierarchy | costly | irreversible | preview required | screen id |",
+        "| --- | --- | --- | --- | --- | --- | --- | --- |",
+    ]
+    for action in doc.get("actions", []):
+        def escaped(key: str) -> str:
+            return str(action.get(key, "")).replace("|", "\\|")
+
+        screen_id = f"`{escaped('screen_id')}`" if action.get("screen_id") else "—"
+        rows.append(
+            f"| `{escaped('id')}` | {escaped('verb')} | `{escaped('target')}` | "
+            f"{escaped('hierarchy')} | {'yes' if action.get('costly') else 'no'} | "
+            f"{'yes' if action.get('irreversible') else 'no'} | "
+            f"{'yes' if action.get('preview_required') else 'no'} | {screen_id} |"
+        )
+    return rows + [""]
+
+
+def _domain_state_mapping(doc: dict) -> list[str]:
+    mappings = doc.get("domain_state_mappings", [])
+    if not mappings:
+        return []
+    rows = [
+        "## Domain state mapping",
+        "",
+        "| domain state(s) | canonical state |",
+        "| --- | --- |",
+    ]
+    for mapping in mappings:
+        domain_states = ", ".join(f"`{state}`" for state in mapping["domain_states"])
+        rows.append(f"| {domain_states} | `{mapping['canonical_state']}` |")
+    return rows + [""]
+
+
 def _extract_kept(md_path: Path) -> list[str]:
     if not md_path.exists():
         return []
@@ -121,7 +162,10 @@ def _extract_kept(md_path: Path) -> list[str]:
 def render(map_ref: str) -> str:
     ux_map_model, render_markdown_bundle = _load_renderer()
     doc = json.loads((MAPS_DIR / f"{map_ref}.uxmap.json").read_text(encoding="utf8"))
-    bundle = render_markdown_bundle(ux_map_model.model_validate(doc)).split("\n")
+    # Local render extensions are lossless tables appended around the upstream bundle;
+    # keep them out of the strict upstream Pydantic model and render them below.
+    canonical_doc = {key: value for key, value in doc.items() if key != "domain_state_mappings"}
+    bundle = render_markdown_bundle(ux_map_model.model_validate(canonical_doc)).split("\n")
     screens = {screen["id"]: screen for screen in doc["screens"]}
 
     out: list[str] = []
@@ -132,7 +176,10 @@ def render(map_ref: str) -> str:
         if not kept_emitted and line.startswith("## "):
             out += kept
             kept_emitted = True
+        if line == "## Flows":
+            out += _action_table(doc)
         if line == "## Not doing":
+            out += _domain_state_mapping(doc)
             out += _parity_index(doc)
         out.append(line)
         heading = re.match(r"^### .*\(`([a-z0-9_-]+)`\)$", line)

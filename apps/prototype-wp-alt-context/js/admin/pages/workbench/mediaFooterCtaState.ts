@@ -105,3 +105,118 @@ export const deriveReviewSurfaceActive = ({
   cardPrimaryPresent,
   controlCollapsed,
 }: ReviewSurfaceActiveInputs): boolean => cardPrimaryPresent && !controlCollapsed;
+
+/**
+ * Recognition-policy state for the footer primary (WBUX6-MRG-05).
+ *
+ * `GET /acx/v1/settings` is an I/O point on the primary action's path. Modelling it
+ * as `boolean | undefined` overloaded "still loading" and "the fetch failed" into the
+ * same value, and because that query runs with `retry: false`, a single failed fetch
+ * left the primary held on `Loading settings…` with no timeout, no containment
+ * boundary, and no degradation path — an unbounded wait on an integration point
+ * [RES-13 lexicons/engineering.md:124], an undesigned state [RLSE-04 :695], and an
+ * unreachable step that de-conforms the whole flow [A11Y-24 lexicons/accessibility.md:154].
+ *
+ * The four members make the states explicit. Note the asymmetry: a guard gating a
+ * WRITE must fail closed, but this is a PROBE that only chooses whether to run an
+ * optional enrichment pass; failing it closed strands the operator's primary action.
+ * So `UNAVAILABLE` is a designed degraded outcome that RELEASES the hold and describes
+ * with recognition treated as off — a reserved cheaper fallback path rather than a
+ * breach turning into an outage [COST-10 lexicons/ml-systems.md:553], and a designed
+ * secondary outcome instead of a forced answer [CAL-02 lexicons/ml-systems.md:322].
+ * It is a STATE, not a hold; only `LOADING` holds.
+ *
+ * sr-007: centralized as an `as const` object so no caller compares bare strings.
+ */
+export const RECOGNITION_POLICY = {
+  /** GET /settings has not resolved and has not failed — the only policy that holds. */
+  LOADING: 'loading',
+  ON: 'on',
+  OFF: 'off',
+  /** GET /settings failed with no usable policy — degrade, do not hold. */
+  UNAVAILABLE: 'unavailable',
+} as const;
+export type RecognitionPolicy = (typeof RECOGNITION_POLICY)[keyof typeof RECOGNITION_POLICY];
+
+export interface RecognitionPolicyInputs {
+  /** React Query reported the settings fetch failed (with `retry: false`, terminally). */
+  isError: boolean;
+  /** `recognition_enabled` off the envelope. Boundary data — validated, never asserted (sr-005). */
+  recognitionEnabled: unknown;
+}
+
+/**
+ * Collapse (query error × envelope value) into one explicit policy.
+ *
+ * Ordering mirrors `deriveIdentitiesPresentationSource`: retained data outranks an
+ * error, so a background refetch failing over a good cached policy keeps the real
+ * policy rather than degrading a surface that already knows the answer. Only an
+ * error with no usable boolean becomes `UNAVAILABLE`.
+ *
+ * The envelope value is validated explicitly against both booleans (sr-005) — any
+ * other shape is "not a policy", never coerced.
+ */
+export const deriveRecognitionPolicy = ({
+  isError,
+  recognitionEnabled,
+}: RecognitionPolicyInputs): RecognitionPolicy => {
+  if (recognitionEnabled === true) {
+    return RECOGNITION_POLICY.ON;
+  }
+  if (recognitionEnabled === false) {
+    return RECOGNITION_POLICY.OFF;
+  }
+  return isError ? RECOGNITION_POLICY.UNAVAILABLE : RECOGNITION_POLICY.LOADING;
+};
+
+/**
+ * The policy holds the primary only while it is genuinely unresolved. `UNAVAILABLE`
+ * deliberately returns false: the hold releases and Describe proceeds.
+ */
+export const isRecognitionPolicyHolding = (policy: RecognitionPolicy): boolean =>
+  policy === RECOGNITION_POLICY.LOADING;
+
+/** Whether the identify pass runs before describe. Only a KNOWN-on policy triggers it. */
+export const shouldIdentifyBeforeDescribe = (policy: RecognitionPolicy): boolean =>
+  policy === RECOGNITION_POLICY.ON;
+
+/**
+ * What a click on the footer primary must actually do (WBUX6-W4-R-01).
+ *
+ * The container previously repeated the presentational hold conditions inline, so the
+ * belt was unreachable behind the presentational buckle: deleting a term left every
+ * test green because `submitHeld` blocked the click first — a guard that cannot be
+ * driven red is a guard that certifies nothing [TEST-15 lexicons/engineering.md:396].
+ * Naming the decision makes the container's own contract directly assertable, and the
+ * effector stays a thin dispatcher over an exhaustive switch (sr-007).
+ */
+export const DESCRIBE_SUBMIT_ACTION = {
+  /** Do nothing: a hold is in force. */
+  HOLD: 'hold',
+  /** Start the describe run immediately (recognition off, or its policy unavailable). */
+  DESCRIBE: 'describe',
+  /** Run the identify pass first, then describe (recognition known on). */
+  IDENTIFY_THEN_DESCRIBE: 'identify_then_describe',
+} as const;
+export type DescribeSubmitAction = (typeof DESCRIBE_SUBMIT_ACTION)[keyof typeof DESCRIBE_SUBMIT_ACTION];
+
+export interface DescribeSubmitInputs {
+  offline: boolean;
+  isIdentifying: boolean;
+  recognitionPolicy: RecognitionPolicy;
+  selectedCount: number;
+}
+
+export const resolveDescribeSubmitAction = ({
+  offline,
+  isIdentifying,
+  recognitionPolicy,
+  selectedCount,
+}: DescribeSubmitInputs): DescribeSubmitAction => {
+  if (offline || isIdentifying || selectedCount === 0 || isRecognitionPolicyHolding(recognitionPolicy)) {
+    return DESCRIBE_SUBMIT_ACTION.HOLD;
+  }
+  return shouldIdentifyBeforeDescribe(recognitionPolicy)
+    ? DESCRIBE_SUBMIT_ACTION.IDENTIFY_THEN_DESCRIBE
+    : DESCRIBE_SUBMIT_ACTION.DESCRIBE;
+};

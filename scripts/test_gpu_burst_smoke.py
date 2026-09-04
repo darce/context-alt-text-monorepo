@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import json
+import os
 import re
+import signal
 import subprocess
+import sys
 import uuid
 from pathlib import Path
 
@@ -1102,6 +1105,162 @@ def test_missing_gpu_state_json_is_recorded_not_failed(tmp_path: Path) -> None:
 
     assert result.exit_code == 0
     assert result.evidence["gpu_state_json"]["availability"] == "unavailable"
+
+
+def _write_load_snapshot(directory: Path, environment: str, **value: object) -> Path:
+    target = directory / environment / smoke.LOAD_SNAPSHOT_FILENAME
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(json.dumps(value), encoding="utf-8")
+    return target
+
+
+def test_default_load_source_matches_the_published_lifecycle_layout() -> None:
+    """WBUX6-W4-R-04: the documented default must resolve where the API publishes."""
+
+    install_script = (Path(__file__).resolve().parent / "deploy" / "gpu-lifecycle-install.sh").read_text(
+        encoding="utf-8"
+    )
+    unit_load_dirs = set(re.findall(r"--load-dir\s+(\S+)", install_script))
+
+    assert len(unit_load_dirs) == 1, unit_load_dirs
+    unit_load_dir = unit_load_dirs.pop()
+    defaults = smoke.build_parser().parse_args([])
+
+    assert unit_load_dir == smoke.DEFAULT_LOAD_DIR
+    assert defaults.load_json is None
+    assert smoke._load_source(defaults) == unit_load_dir
+
+
+def test_explicit_load_json_overrides_the_load_dir() -> None:
+    args = smoke.build_parser().parse_args(["--load-json", "/tmp/explicit-load.json"])
+
+    assert smoke._load_source(args) == "/tmp/explicit-load.json"
+
+
+def test_load_snapshot_reader_takes_the_freshest_published_environment(tmp_path: Path) -> None:
+    _write_load_snapshot(tmp_path, "dev", written_at=100.0, queue_depth=0, in_flight=0)
+    _write_load_snapshot(tmp_path, "prod", written_at=900.0, queue_depth=3, in_flight=1)
+
+    snapshot = smoke._read_load_snapshot(str(tmp_path))
+
+    assert snapshot["availability"] == "available"
+    assert snapshot["value"]["queue_depth"] == 3
+    assert snapshot["path"] == str(tmp_path / "prod" / smoke.LOAD_SNAPSHOT_FILENAME)
+    assert str(tmp_path / "dev" / smoke.LOAD_SNAPSHOT_FILENAME) in snapshot["scanned"]
+
+
+def test_load_snapshot_reader_names_what_it_scanned_when_nothing_published(tmp_path: Path) -> None:
+    (tmp_path / "prod").mkdir()
+
+    snapshot = smoke._read_load_snapshot(str(tmp_path))
+
+    assert snapshot["availability"] == "unavailable"
+    assert snapshot["scanned"] == [str(tmp_path / "prod" / smoke.LOAD_SNAPSHOT_FILENAME)]
+
+
+def test_load_snapshot_reader_still_reads_an_explicit_single_file(tmp_path: Path) -> None:
+    target = tmp_path / "describe-load.json"
+    target.write_text(json.dumps({"written_at": 12.0}), encoding="utf-8")
+
+    snapshot = smoke._read_load_snapshot(str(target))
+
+    assert snapshot["availability"] == "available"
+    assert snapshot["value"] == {"written_at": 12.0}
+    assert smoke._read_load_snapshot(str(tmp_path / "absent.json"))["availability"] == "unavailable"
+
+
+def test_evidence_records_the_load_source_it_read(tmp_path: Path) -> None:
+    result, _ = _run(tmp_path)
+
+    assert result.evidence["load_json"]["source"] == str(tmp_path / "missing-load.json")
+
+
+# A hung run is killed with SIGTERM, so SIGTERM is an exit route the compensating
+# STOP has to cover. The harness runs the real CLI entry point (smoke.main) with
+# an in-memory OCI machine that wedges once the instance is RUNNING, and records
+# the STOP to a file the parent process reads back.
+_SIGTERM_HARNESS = """
+import json
+import os
+import sys
+import time
+from pathlib import Path
+
+sys.path.insert(0, os.environ["ACX_SMOKE_SCRIPTS_DIR"])
+
+import gpu_burst_smoke as smoke
+
+record = Path(os.environ["ACX_SMOKE_STOP_RECORD"])
+
+
+class StallingOci(smoke.FakeOci):
+    stalled = False
+
+    def get_instance(self, instance_id, *, timeout):
+        instance = super().get_instance(instance_id, timeout=timeout)
+        if instance["lifecycle-state"] == "RUNNING" and not self.stalled:
+            self.stalled = True
+            print("READY", flush=True)
+            time.sleep(60)
+        return instance
+
+    def stop_instance(self, instance_id, *, timeout):
+        super().stop_instance(instance_id, timeout=timeout)
+        record.write_text(json.dumps({"stop_calls": self.stop_calls}), encoding="utf-8")
+
+
+smoke.FakeOci = StallingOci
+raise SystemExit(smoke.main(["--evidence-out", os.environ["ACX_SMOKE_EVIDENCE"]]))
+"""
+
+
+def test_sigterm_unwinds_into_the_compensating_stop(tmp_path: Path) -> None:
+    harness = tmp_path / "sigterm_harness.py"
+    harness.write_text(_SIGTERM_HARNESS, encoding="utf-8")
+    record = tmp_path / "stop-calls.json"
+    environment = {
+        **os.environ,
+        "ACX_SMOKE_SCRIPTS_DIR": str(Path(__file__).resolve().parent),
+        "ACX_SMOKE_STOP_RECORD": str(record),
+        "ACX_SMOKE_EVIDENCE": str(tmp_path / "evidence.json"),
+    }
+    process = subprocess.Popen(
+        [sys.executable, str(harness)],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        env=environment,
+    )
+    try:
+        ready = process.stdout.readline()
+        assert "READY" in ready, ready
+        process.send_signal(signal.SIGTERM)
+        _, stderr = process.communicate(timeout=20)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.communicate()
+        raise AssertionError("SIGTERM did not terminate the run; the compensating STOP never unwound") from None
+    finally:
+        if process.poll() is None:  # pragma: no cover - defensive cleanup
+            process.kill()
+
+    assert record.exists(), f"no compensating STOP was issued; stderr={stderr}"
+    assert json.loads(record.read_text(encoding="utf-8"))["stop_calls"] >= 1
+    assert process.returncode == 128 + signal.SIGTERM, stderr
+    assert "TERMINATED" in stderr
+
+
+def test_terminating_signal_handlers_are_scoped_and_restored() -> None:
+    at_import = signal.getsignal(signal.SIGTERM)
+
+    assert getattr(at_import, "__module__", None) != smoke.__name__
+
+    with smoke.terminating_signals_raise():
+        installed = signal.getsignal(signal.SIGTERM)
+        assert getattr(installed, "__module__", None) == smoke.__name__
+        assert signal.getsignal(signal.SIGHUP) is installed
+
+    assert signal.getsignal(signal.SIGTERM) is at_import
 
 
 def test_null_measurement_guard_has_red_and_green_cases() -> None:

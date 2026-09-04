@@ -38,7 +38,12 @@ import {
 import { ReviewQueue } from '../identity-clusters';
 import { REVIEW_QUEUE_DRAIN_MESSAGE } from '../identity-clusters/reviewQueueDriver';
 import { BulkDescribeCta } from '../MediaSelection';
-import { ACCENT_PRIMARY_ATTR, FOOTER_ACCENT_OWNER, selectMediaFooterCtaState } from '../mediaFooterCtaState';
+import {
+  ACCENT_PRIMARY_ATTR,
+  FOOTER_ACCENT_OWNER,
+  RECOGNITION_POLICY,
+  selectMediaFooterCtaState,
+} from '../mediaFooterCtaState';
 
 /** Single source of truth for the accent-primary marker selector (BR-83 — was a literal). */
 const ACCENT_PRIMARY_SELECTOR = `[${ACCENT_PRIMARY_ATTR}]`;
@@ -122,6 +127,9 @@ const describeProps = {
   isPanelVisible: false,
   errorMessage: null as string | null,
   isIdentifying: false,
+  // WBUX6-MRG-05: a RESOLVED policy. Leaving it unset would hold the primary on
+  // "Loading settings…", which is not the accent-reconciliation state under test.
+  recognitionPolicy: RECOGNITION_POLICY.OFF,
   onSubmit: vi.fn(),
   onCancel: vi.fn(),
   onDismiss: vi.fn(),

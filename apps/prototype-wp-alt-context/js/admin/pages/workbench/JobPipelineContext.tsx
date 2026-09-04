@@ -5,6 +5,8 @@ import { useJobStateMachine } from '../../hooks/useJobStateMachine';
 import { useWorkbenchNav } from './WorkbenchNavContext';
 import type { BatchRunStatus, JobProgress } from '../../api/recognition/types/scan';
 import type { ClusterResponse } from '../../api/recognition';
+import { deriveScanStallReport } from '../../hooks/useJobStateMachineDerivedState';
+import type { ScanStallState } from '../../hooks/useJobStateMachineDerivedState';
 import type { PipelinePhase } from '../../hooks/jobStateMachineUtils';
 import type { ProjectionSyncState } from '../../hooks/useJobStateMachineEffects';
 import type { RecognitionHistorySource } from '../../hooks/recognitionJobHistoryUtils';
@@ -24,7 +26,14 @@ export interface ScanRunViewModel {
   onRetryClustering?: () => void;
   progress?: JobProgress | null;
   batchRunStatus?: BatchRunStatus | null;
+  /** Observed silence duration. Non-null only when `stallState` is `stalled`. */
   stallSeconds?: number | null;
+  /**
+   * Explicit liveness-probe state. A null `stallSeconds` is NOT evidence of
+   * health: it is also what a dead or disabled probe produces. Consumers must
+   * branch on this instead of on `typeof stallSeconds === 'number'`.
+   */
+  stallState?: ScanStallState;
   etaSeconds?: number | null;
   isSynced?: boolean;
 }
@@ -83,13 +92,13 @@ export const SCAN_START_TIMEOUT_MS = 15_000;
  */
 export const SCAN_PROGRESS_TIMEOUT_MS = 300_000;
 
-type ScanWaiter = {
+interface ScanWaiter {
   resolve: () => void;
   reject: (error: Error) => void;
   started: boolean;
   progressKey: string;
   timeoutId: number;
-};
+}
 
 const scanWaitFailedMessage = (): string => __('People identification failed. Nothing was described.', 'alt-context');
 const scanWaitCancelledMessage = (): string => __('People identification was cancelled.', 'alt-context');
@@ -221,6 +230,35 @@ export const JobPipelineProvider: React.FC<{ children: React.ReactNode }> = ({ c
     [armWaiterDeadline, scan],
   );
 
+  /**
+   * An operator-initiated retry is fresh evidence of intent, not of progress: it
+   * replaces a dead stream/cluster attempt whose next observation may be minutes
+   * away. Re-arm the pending waiter's deadline explicitly so recovery does not
+   * inherit the remainder of a window that was already spent on the failed
+   * attempt (RES-13; rg-007 per-unit no-progress tracking — the re-arm touches
+   * only this waiter and cannot disturb any other in-flight unit).
+   *
+   * The split bound is preserved: a retry before the run ever started re-arms the
+   * *start* window, never the far longer progress window.
+   */
+  const rearmWaiterOnRetry = useCallback((): void => {
+    const waiter = scanWaiterRef.current;
+    if (!waiter) {
+      return;
+    }
+    armWaiterDeadline(waiter, waiter.started ? SCAN_PROGRESS_TIMEOUT_MS : SCAN_START_TIMEOUT_MS);
+  }, [armWaiterDeadline]);
+
+  const handleRetryScanStream = useCallback((): void => {
+    rearmWaiterOnRetry();
+    retryScanStream();
+  }, [rearmWaiterOnRetry, retryScanStream]);
+
+  const handleRetryClustering = useCallback((): void => {
+    rearmWaiterOnRetry();
+    retryClustering();
+  }, [rearmWaiterOnRetry, retryClustering]);
+
   const cancelScanAndReject = useCallback(
     (jobIds: string[]) => {
       const waiter = scanWaiterRef.current;
@@ -279,6 +317,22 @@ export const JobPipelineProvider: React.FC<{ children: React.ReactNode }> = ({ c
     [],
   );
 
+  /**
+   * `useJobProgressStream` disables its stall detector whenever the tab is not
+   * primary, the browser is offline, or there is no job id — and reports `null`,
+   * indistinguishable from "no stall". This provider holds exactly the evidence
+   * needed to tell those apart, so it narrows the report here.
+   */
+  const scanStallReport = useMemo(
+    () =>
+      deriveScanStallReport({
+        currentPhase,
+        stalledForSeconds: scanStallSeconds,
+        probeObserving: isOnline && isPrimary && Boolean(latestJobId),
+      }),
+    [currentPhase, isOnline, isPrimary, latestJobId, scanStallSeconds],
+  );
+
   const handleSelectJobFromHistory = React.useCallback(
     (id: string): void => {
       selectJob(id);
@@ -298,7 +352,7 @@ export const JobPipelineProvider: React.FC<{ children: React.ReactNode }> = ({ c
         onRetryClustering: canRetryClustering
           ? () => {
               setScanError(null);
-              retryClustering();
+              handleRetryClustering();
             }
           : undefined,
         progress:
@@ -306,7 +360,8 @@ export const JobPipelineProvider: React.FC<{ children: React.ReactNode }> = ({ c
             ? clusterProgress
             : scanProgress,
         batchRunStatus,
-        stallSeconds: scanStallSeconds,
+        stallSeconds: scanStallReport.seconds,
+        stallState: scanStallReport.state,
         etaSeconds,
         isSynced: !isPrimary && !!latestJobId,
       },
@@ -331,9 +386,9 @@ export const JobPipelineProvider: React.FC<{ children: React.ReactNode }> = ({ c
       scanAndWait,
       cancelScan: cancelScanAndReject,
       cluster,
-      retryClustering,
+      retryClustering: handleRetryClustering,
       retryProjectionSync,
-      retryScanStream,
+      retryScanStream: handleRetryScanStream,
       handleSelectJobFromHistory,
       clearHistory,
     }),
@@ -345,12 +400,12 @@ export const JobPipelineProvider: React.FC<{ children: React.ReactNode }> = ({ c
       jobId,
       scanError,
       canRetryClustering,
-      retryClustering,
+      handleRetryClustering,
       currentPhase,
       clusterProgress,
       scanProgress,
       batchRunStatus,
-      scanStallSeconds,
+      scanStallReport,
       etaSeconds,
       isPrimary,
       projectionSyncState,
@@ -366,7 +421,7 @@ export const JobPipelineProvider: React.FC<{ children: React.ReactNode }> = ({ c
       cancelScanAndReject,
       cluster,
       retryProjectionSync,
-      retryScanStream,
+      handleRetryScanStream,
       handleSelectJobFromHistory,
       clearHistory,
     ],

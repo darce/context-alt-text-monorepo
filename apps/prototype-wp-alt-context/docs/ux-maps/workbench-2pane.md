@@ -3,6 +3,26 @@
 **Product:** `prototype-wp-alt-context`
 **Source fixture:** `apps/prototype-wp-alt-context/docs/ux-maps/workbench-2pane.uxmap.json`
 
+## Vocabulary (say / don't say)
+
+Controlled say/don't-say list for operator-facing workbench copy (UXW2-3; NAV-13/NAV-14).
+Engineering terms stay legal in code identifiers, `acx_*` CSS classes, and job ids — never in
+rendered strings on the review surfaces. Roster page and dashboard/jobs/ops surfaces are owned
+by other lanes and are not yet covered by this list.
+
+| Don't say | Say | Notes |
+| --- | --- | --- |
+| cluster | face group (unnamed) / person (once named) | A cluster the operator has not named yet is "these faces" / "this face group"; after naming it is the person |
+| identities / instances | faces | Members of a group are faces |
+| Review Cluster | Review these faces | Panel headline + review triggers |
+| %d faces in cluster | %d faces | Count of member faces on a review card |
+| Skip this cluster for now | Skip these faces for now | |
+| Unnamed cluster | Unnamed face group | Merge suggestion sides |
+| first/second cluster | first/second group | Merge suggestion alt text + context |
+| This cluster is no longer available. | These faces are no longer available. | Queue empty-item fallback |
+| Cluster member / Remove from cluster | Face / Remove this face | Review panel member rows + removal dialog |
+| Just label — don't add to roster | (removed) | Naming always creates/binds a roster person; the roster is a consequence, not a decision |
+
 ## Goals
 - Five ACX submenus are MECE and frequency-ordered (NAV-05/NAV-06): Overview orients; Review Queue is the one home to name a person from a photo (highest-frequency demo task); People manages named people only; Description Runs is the one home to see what the describer did; Settings configures the service (rare, last) and hosts Data & retention as a section (#/settings?section=retention; the standalone Data Retention submenu is retired, E1). WordPress parent slug stays Overview.
 - One primary action per screen (NAV-01), reachable from zero state (rg-003); other CTAs are secondary. In the library footer the single primary is Describe — recognition is a global Settings toggle disclosed under the button, never a second competing CTA (INT-05, COG-03).
@@ -54,7 +74,6 @@ url_params: `panes`, `cluster`, `media`, `panel`, `status`, `endpoint`, `s`, `p`
 |   - Overlay host (conflicts | dead-letter) (other) states… |
 +------------------------------------------------------------+
 | ACTIONS                                                    |
-|   [PRIMARY] Scan media queue (job-pipeline entry; the 2-p… |
 |   [secondary] Open Conflict Inbox -> workbench-conflicts   |
 |   [secondary] Open Failed Sync Queue -> workbench-dead-le… |
 +------------------------------------------------------------+
@@ -73,7 +92,7 @@ url_params: `panes`, `cluster`, `endpoint`
 | `z-endpoint` | Recognition endpoint + health (read-only: InsightFace :10010 interim; FIR when stable; target is server-resolved via ACX_RECOGNITION_URL, no UI toggle per RECOG-1) | status | default, loading, error, degraded |
 | `z-recognition-controls` | Face-group/recognition controls (run, refresh, threshold) | job | default, loading, error |
 | `z-cluster-umap` | Face-group status (scan/sync health; not a 2D scatter) | status | default, loading, empty, error, first_time, degraded |
-| `z-cluster-list` | Face-group list / selection (size, confidence, unnamed-first) + NameFaceControl (loading = in-flight name write; the suggestions disclosure being open or closed is part of default). Twin-pending (an edge_input of default) copy: Same person as <survivor label>? — Merge into <survivor label> / Not the same (chip on the unlabeled twin; decision persists on the labeled survivor; COG-03 one decision per pair; DATA-14 single authority = resolveMergeSurvivor.ts). Actions merge_twin / keep_separate code_ref: IdentityClusterItem.tsx | queue | default, loading, empty, error, first_time, degraded, edge_input |
+| `z-cluster-list` | Face-group list / selection (size, confidence, unnamed-first) + NameFaceControl (loading = in-flight name write; the suggestions disclosure being open or closed is part of default). Twin-pending (an edge_input of default) copy: Same person as <survivor label>? — Merge into <survivor label> / Not the same (chip on the unlabeled twin; decision persists on the labeled survivor; COG-03 one decision per pair; DATA-14 single authority is the survivor resolver). Actions merge_twin / keep_separate are implemented in the list item — see code_ref. | queue | default, loading, empty, error, first_time, degraded, edge_input |
 | `z-name-curate` | Name this person (NameFaceControl; confirm / correct / merge / split; forced-choice; loading = pending roster write; error = roster write failed; edge_input = ambiguous candidate set or duplicate-name guard; default = overlay closed or suggestions open) | forced_choice | default, loading, error, edge_input |
 
 ```
@@ -87,7 +106,6 @@ url_params: `panes`, `cluster`, `endpoint`
 |   - Face-group status (scan/sync health; not a 2D scatter… |
 |   - Face-group list / selection (size, confidence, unname… |
 |   - Name this person (NameFaceControl; confirm / correct … |
-|     z-name-curate states=[default,loading,error,edge_input] |
 +------------------------------------------------------------+
 | ACTIONS                                                    |
 |   [PRIMARY] Run / refresh recognition + grouping -> job-p… |
@@ -95,9 +113,9 @@ url_params: `panes`, `cluster`, `endpoint`
 |   [secondary] Save name (NameFaceControl) -> identity-sto… |
 |   [secondary] Select face group (list) -> workbench-libra… |
 |   [secondary] View / change recognition endpoint + recogn… |
-|   [secondary] Keep twin separate (IdentityClusterItem.tsx… |
+|   [secondary] Keep twin separate -> identity-store         |
 |   [DESTRUCTIVE] Merge / split / correct group -> identity… |
-|   [DESTRUCTIVE] Merge twin into labeled survivor (Identit… |
+|   [DESTRUCTIVE] Merge twin into labeled survivor -> ident… |
 +------------------------------------------------------------+
 | states: default | loading | empty | error | first_time | … |
 +------------------------------------------------------------+
@@ -115,7 +133,7 @@ url_params: `panes`, `media`, `cluster`, `status`, `s`, `p`, `perPage`
 | `z-lib-table` | Media library table (thumb \| title \| status \| alt-text \| long description \| people) | queue | default, loading, empty, error, first_time, edge_input |
 | `z-lib-inline-edit` | Inline person naming (NameFaceControl) + alt-text / long-description editor (loading = pending save; the suggestions disclosure being open or closed is part of default) | form | default, loading, error, edge_input |
 | `z-lib-ai-suggest` | AI name / caption suggestions (evidence-linked; editable before accept; loading = suggestion request in flight; the suggestions disclosure being open or closed is part of default) | ai_review | default, loading, empty, error |
-| `z-lib-actions` | Footer job zone (MediaSelection.tsx footer): ONE job CTA — 'Describe N selected' (primary accent in select state; zero-state label 'Describe selected', rg-003) with a recognition disclosure directly under it (aria-describedby): ON = names people it knows while describing; OFF = descriptions only, change in Settings; unknown = settings not loaded. 'Analyze selected' is removed (L2c) — recognition is not a separate operator step (INT-05 one job entry; COG-03 one decision: the global toggle). While recognition runs first (toggle ON) the primary stays focusable with aria-disabled="true" and the label 'Identifying people...' (never HTML-disabled, same invariant as offline — RLSE-04, A11Y-21) and Cancel aborts the identification. Run progress phases queued -> warming -> describing -> complete \| failed \| cancelled come from describeApi DESCRIBE_RUN_PHASE (single authority, sr-007) and render as loading (queued/warming/describing) or default (terminal). Done copy: ✔ N drafts ready to review[ · M failed]; Review drafts links to #/description-history?run=<id>. | job | default, loading, error, degraded |
+| `z-lib-actions` | Footer job zone (the media-selection footer): ONE job CTA — 'Describe N selected' (plain count, no plural switch; primary accent in select state; zero-state label 'Describe selected', rg-003) with a recognition disclosure directly under it (aria-describedby): ON = names people it knows while describing; OFF = descriptions only, change in Settings; unknown = settings not loaded. MediaAnalyzeCta / 'Analyze selected' is deleted (L2c, WBUX-6) — Describe owns the scan trigger, so recognition is never a separate operator step (INT-05 one job entry; COG-03 one decision: the global toggle). Four hold reasons keep the primary focusable with aria-disabled="true" plus an onClick no-op — never the HTML disabled attribute — and each contributes a reason id joined into aria-describedby: offline (empty/offline state), zero-selection (empty state), identifying (loading state, label 'Identifying people…'), settings-pending (loading state, label 'Loading settings…'). settings-unavailable is a fifth, hold-adjacent state and NOT a hold: when the recognition-settings query errors the hold is RELEASED, Describe proceeds with recognition treated as off, and the disclosure reads 'Recognition settings unavailable — describing without identifying people · ~N credits' paired with an AlertTriangle icon so the degradation is never colour-alone (sr-004; degraded state; RLSE-05 the failure is visible, never silent). A11Y contract for that notice (WBUX6-W4-B-02): the disclosure text node stays the aria-describedby target and is therefore only reachable on focus, so the degraded copy is ALSO mirrored into a separate polite live region (role="status" aria-live="polite") that is not the describedby target — one surface to describe, one surface to announce, never the same node doing both (A11Y-21). A single Cancel control spans the identifying and describing phases; its visible label is state-dependent, not a fixed string — identifying = 'Cancel people identification', describing = 'Cancel describe run', in-flight cancel = 'Cancelling…' — and exactly one control matching /^Cancel / is rendered at a time. Run progress phases queued -> warming -> describing -> complete \| failed \| cancelled come from describeApi DESCRIBE_RUN_PHASE (single authority, sr-007) and render as loading (queued/warming/describing) or default (terminal). Done copy: ✔ N drafts ready to review[ · M failed]; Review drafts links to #/description-history?run=<id>. | job | default, loading, empty, error, offline, degraded |
 
 ```
 +------------------------------------------------------------+
@@ -127,7 +145,7 @@ url_params: `panes`, `media`, `cluster`, `status`, `s`, `p`, `perPage`
 |   - Media library table (thumb | title | status | alt-tex… |
 |   - Inline person naming (NameFaceControl) + alt-text / l… |
 |   - AI name / caption suggestions (evidence-linked; edita… |
-|   - Footer job zone (MediaSelection.tsx footer): ONE job … |
+|   - Footer job zone (the media-selection footer): ONE job… |
 +------------------------------------------------------------+
 | ACTIONS                                                    |
 |   [PRIMARY] Describe N selected (footer primary; runs rec… |
@@ -228,7 +246,7 @@ url_params: `section`
 | --- | --- | --- | --- |
 | `z-settings-form` | Settings form + test connection | form | default, loading, error |
 | `z-settings-recognition` | Recognition toggle (acx_recognition_enabled; default ON; global, not per-image — OFF makes Describe produce descriptions only and the Workbench footer disclosure says so; analyze endpoint answers 409 recognition_disabled) | form | default, loading, error |
-| `z-settings-retention` | Data & retention section (RetentionPage.tsx RetentionSection; one stable h3#acx-retention-title across loading/error/loaded so the ?section=retention deep-link focus survives pending -> loaded; retention mode, export, import, audit events) | form | default, loading, error, degraded |
+| `z-settings-retention` | Data & retention section (RetentionSection on the retention screen; one stable h3#acx-retention-title across loading/error/loaded so the ?section=retention deep-link focus survives pending -> loaded; retention mode, export, import, audit events) | form | default, loading, error, degraded |
 
 ```
 +------------------------------------------------------------+
@@ -238,7 +256,7 @@ url_params: `section`
 | ZONES                                                      |
 |   - Settings form + test connection (form) states=[defaul… |
 |   - Recognition toggle (acx_recognition_enabled; default … |
-|   - Data & retention section (RetentionPage.tsx Retention… |
+|   - Data & retention section (RetentionSection on the ret… |
 +------------------------------------------------------------+
 | states: default | loading | error                          |
 +------------------------------------------------------------+
@@ -320,12 +338,13 @@ flowchart TD
 
 Machine-checked by `js/admin/__tests__/uxmap-parity.test.ts` and
 `js/admin/__tests__/uxmap-render-parity.test.ts`: every id, state, and verbatim label
-below must exist in `workbench-2pane.uxmap.json`. Regenerate this section whenever the
-JSON SSOT changes — do not hand-edit one side.
+below must exist in the sibling `.uxmap.json`, and no `z-*`/`act-*` id may appear here
+that the JSON does not define. Regenerate with `docs/ux-maps/render_ux_maps.py` — never
+hand-edit one side.
 
 Zone ids: z-topbar z-left-host z-splitter z-right-host z-overlay-host z-endpoint z-recognition-controls z-cluster-umap z-cluster-list z-name-curate z-lib-filters z-lib-table z-lib-inline-edit z-lib-ai-suggest z-lib-actions z-conflict-list z-conflict-detail z-conflict-actions z-dl-list z-dl-actions z-roster-entry z-settings-form z-settings-recognition z-settings-retention
 
-Action ids: act-scan-media-queue act-run-recognition act-select-cluster act-name-cluster act-curate-cluster merge_twin keep_separate act-view-endpoint-settings act-edit-alt act-edit-desc act-accept-ai-caption act-bulk-describe act-open-conflicts act-open-dead-letter act-resolve-conflict act-retry-dead-letter act-discard-dead-letter act-goto-roster
+Action ids: act-run-recognition act-select-cluster act-name-cluster act-curate-cluster merge_twin keep_separate act-view-endpoint-settings act-edit-alt act-edit-desc act-accept-ai-caption act-bulk-describe act-open-conflicts act-open-dead-letter act-resolve-conflict act-retry-dead-letter act-discard-dead-letter act-goto-roster
 
 Zone labels (verbatim; the tables above escape `|` for markdown, this list does not):
 
@@ -337,13 +356,13 @@ Zone labels (verbatim; the tables above escape `|` for markdown, this list does 
 - Recognition endpoint + health (read-only: InsightFace :10010 interim; FIR when stable; target is server-resolved via ACX_RECOGNITION_URL, no UI toggle per RECOG-1)
 - Face-group/recognition controls (run, refresh, threshold)
 - Face-group status (scan/sync health; not a 2D scatter)
-- Face-group list / selection (size, confidence, unnamed-first) + NameFaceControl (loading = in-flight name write; the suggestions disclosure being open or closed is part of default). Twin-pending (an edge_input of default) copy: Same person as <survivor label>? — Merge into <survivor label> / Not the same (chip on the unlabeled twin; decision persists on the labeled survivor; COG-03 one decision per pair; DATA-14 single authority = resolveMergeSurvivor.ts). Actions merge_twin / keep_separate code_ref: IdentityClusterItem.tsx
+- Face-group list / selection (size, confidence, unnamed-first) + NameFaceControl (loading = in-flight name write; the suggestions disclosure being open or closed is part of default). Twin-pending (an edge_input of default) copy: Same person as <survivor label>? — Merge into <survivor label> / Not the same (chip on the unlabeled twin; decision persists on the labeled survivor; COG-03 one decision per pair; DATA-14 single authority is the survivor resolver). Actions merge_twin / keep_separate are implemented in the list item — see code_ref.
 - Name this person (NameFaceControl; confirm / correct / merge / split; forced-choice; loading = pending roster write; error = roster write failed; edge_input = ambiguous candidate set or duplicate-name guard; default = overlay closed or suggestions open)
 - Library filters (status, has-alt, has-description, face group, search)
 - Media library table (thumb | title | status | alt-text | long description | people)
 - Inline person naming (NameFaceControl) + alt-text / long-description editor (loading = pending save; the suggestions disclosure being open or closed is part of default)
 - AI name / caption suggestions (evidence-linked; editable before accept; loading = suggestion request in flight; the suggestions disclosure being open or closed is part of default)
-- Footer job zone (MediaSelection.tsx footer): ONE job CTA — 'Describe N selected' (primary accent in select state; zero-state label 'Describe selected', rg-003) with a recognition disclosure directly under it (aria-describedby): ON = names people it knows while describing; OFF = descriptions only, change in Settings; unknown = settings not loaded. 'Analyze selected' is removed (L2c) — recognition is not a separate operator step (INT-05 one job entry; COG-03 one decision: the global toggle). While recognition runs first (toggle ON) the primary stays focusable with aria-disabled="true" and the label 'Identifying people...' (never HTML-disabled, same invariant as offline — RLSE-04, A11Y-21) and Cancel aborts the identification. Run progress phases queued -> warming -> describing -> complete | failed | cancelled come from describeApi DESCRIBE_RUN_PHASE (single authority, sr-007) and render as loading (queued/warming/describing) or default (terminal). Done copy: ✔ N drafts ready to review[ · M failed]; Review drafts links to #/description-history?run=<id>.
+- Footer job zone (the media-selection footer): ONE job CTA — 'Describe N selected' (plain count, no plural switch; primary accent in select state; zero-state label 'Describe selected', rg-003) with a recognition disclosure directly under it (aria-describedby): ON = names people it knows while describing; OFF = descriptions only, change in Settings; unknown = settings not loaded. MediaAnalyzeCta / 'Analyze selected' is deleted (L2c, WBUX-6) — Describe owns the scan trigger, so recognition is never a separate operator step (INT-05 one job entry; COG-03 one decision: the global toggle). Four hold reasons keep the primary focusable with aria-disabled="true" plus an onClick no-op — never the HTML disabled attribute — and each contributes a reason id joined into aria-describedby: offline (empty/offline state), zero-selection (empty state), identifying (loading state, label 'Identifying people…'), settings-pending (loading state, label 'Loading settings…'). settings-unavailable is a fifth, hold-adjacent state and NOT a hold: when the recognition-settings query errors the hold is RELEASED, Describe proceeds with recognition treated as off, and the disclosure reads 'Recognition settings unavailable — describing without identifying people · ~N credits' paired with an AlertTriangle icon so the degradation is never colour-alone (sr-004; degraded state; RLSE-05 the failure is visible, never silent). A11Y contract for that notice (WBUX6-W4-B-02): the disclosure text node stays the aria-describedby target and is therefore only reachable on focus, so the degraded copy is ALSO mirrored into a separate polite live region (role="status" aria-live="polite") that is not the describedby target — one surface to describe, one surface to announce, never the same node doing both (A11Y-21). A single Cancel control spans the identifying and describing phases; its visible label is state-dependent, not a fixed string — identifying = 'Cancel people identification', describing = 'Cancel describe run', in-flight cancel = 'Cancelling…' — and exactly one control matching /^Cancel / is rendered at a time. Run progress phases queued -> warming -> describing -> complete | failed | cancelled come from describeApi DESCRIBE_RUN_PHASE (single authority, sr-007) and render as loading (queued/warming/describing) or default (terminal). Done copy: ✔ N drafts ready to review[ · M failed]; Review drafts links to #/description-history?run=<id>.
 - Conflict list
 - Conflict detail / candidates
 - Resolve / defer actions
@@ -352,9 +371,9 @@ Zone labels (verbatim; the tables above escape `|` for markdown, this list does 
 - Roster entry
 - Settings form + test connection
 - Recognition toggle (acx_recognition_enabled; default ON; global, not per-image — OFF makes Describe produce descriptions only and the Workbench footer disclosure says so; analyze endpoint answers 409 recognition_disabled)
-- Data & retention section (RetentionPage.tsx RetentionSection; one stable h3#acx-retention-title across loading/error/loaded so the ?section=retention deep-link focus survives pending -> loaded; retention mode, export, import, audit events)
+- Data & retention section (RetentionSection on the retention screen; one stable h3#acx-retention-title across loading/error/loaded so the ?section=retention deep-link focus survives pending -> loaded; retention mode, export, import, audit events)
 
-States (all zones and screens): default loading error degraded empty offline first_time edge_input
+States (all zones and screens): default loading error degraded offline empty first_time edge_input
 
 ## Not doing
 - Clusters tab inside Roster (retired; cluster structure lives in Workbench left pane now)

@@ -13,7 +13,7 @@
  * owns the schema (DRIFT-03: an SSOT that cannot be loaded has stopped being a source
  * of truth). The cast is now a validated parse.
  */
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -25,7 +25,21 @@ const enumSnapshotPath = path.resolve(
   'fixtures/uxmap-enums.snapshot.json',
 );
 
-const OWNED_MAPS = ['roster-people', 'workbench-2pane', 'workbench-operator-loop', 'dashboard'] as const;
+const OWNED_MAPS = [
+  'roster-people',
+  'workbench-2pane',
+  'workbench-operator-loop',
+  'dashboard',
+  'describe-gpu-tier',
+] as const;
+
+/**
+ * WBUX6-W3-L3-01: `describe-gpu-tier` arrived with the GPUUX-1 merge and was absent from
+ * both `OWNED_MAPS` lists, so an entire SSOT was ungated — a fail-open ownership list is
+ * the coverage-gaming failure mode of TEST-11, and the gate below is the upward ratchet
+ * (OBS-11) that stops the list sliding back down.
+ */
+const REQUIRED_OWNED_MAPS = ['dashboard', 'describe-gpu-tier', 'workbench-2pane'] as const;
 
 /** Operator-facing labels renamed or deleted from the JSON; must not remain in the md. */
 const RETIRED_LABELS = [
@@ -41,28 +55,9 @@ const RETIRED_LABELS = [
  * Adding a member here without adding it upstream re-opens the drift.
  * ------------------------------------------------------------------ */
 
-const MAP_STATES = [
-  'default',
-  'loading',
-  'empty',
-  'error',
-  'offline',
-  'first_time',
-  'edge_input',
-  'degraded',
-] as const;
+const MAP_STATES = ['default', 'loading', 'empty', 'error', 'offline', 'first_time', 'edge_input', 'degraded'] as const;
 
-const ZONE_ROLES = [
-  'content',
-  'nav',
-  'status',
-  'queue',
-  'job',
-  'ai_review',
-  'forced_choice',
-  'form',
-  'other',
-] as const;
+const ZONE_ROLES = ['content', 'nav', 'status', 'queue', 'job', 'ai_review', 'forced_choice', 'form', 'other'] as const;
 
 const SCREEN_KINDS = ['screen', 'overlay', 'exit'] as const;
 
@@ -196,20 +191,30 @@ const preview = (input: unknown): string => {
 const validateScalar = (value: unknown, spec: FieldSpec, loc: string, issues: Issue[]): void => {
   switch (spec.kind) {
     case 'str':
-      if (spec.nullable && value === null) return;
-      if (typeof value !== 'string') issues.push({ loc, type: 'string_type', input: value });
+      if (spec.nullable && value === null) {
+        return;
+      }
+      if (typeof value !== 'string') {
+        issues.push({ loc, type: 'string_type', input: value });
+      }
       return;
     case 'bool':
-      if (typeof value !== 'boolean') issues.push({ loc, type: 'bool_type', input: value });
+      if (typeof value !== 'boolean') {
+        issues.push({ loc, type: 'bool_type', input: value });
+      }
       return;
     case 'int':
-      if (spec.nullable && value === null) return;
+      if (spec.nullable && value === null) {
+        return;
+      }
       if (typeof value !== 'number' || !Number.isInteger(value)) {
         issues.push({ loc, type: 'int_type', input: value });
       }
       return;
     case 'enum':
-      if (spec.nullable && value === null) return;
+      if (spec.nullable && value === null) {
+        return;
+      }
       if (typeof value !== 'string' || !spec.values.includes(value)) {
         issues.push({ loc, type: 'enum', input: value });
       }
@@ -272,11 +277,15 @@ const validateModel = (value: unknown, spec: ModelSpec, loc: string, issues: Iss
 
 /** Mirrors the `_unique_*` model validators on Screen and UxMap. */
 const validateUniqueness = (doc: unknown, issues: Issue[]): void => {
-  if (!isRecord(doc)) return;
+  if (!isRecord(doc)) {
+    return;
+  }
 
   const collect = (key: string): string[] => {
     const rows = doc[key];
-    if (!Array.isArray(rows)) return [];
+    if (!Array.isArray(rows)) {
+      return [];
+    }
     return rows.filter(isRecord).map((row) => String(row.id));
   };
 
@@ -289,7 +298,9 @@ const validateUniqueness = (doc: unknown, issues: Issue[]): void => {
 
   const screens = Array.isArray(doc.screens) ? doc.screens : [];
   screens.forEach((screen, index) => {
-    if (!isRecord(screen) || !Array.isArray(screen.zones)) return;
+    if (!isRecord(screen) || !Array.isArray(screen.zones)) {
+      return;
+    }
     const ids = screen.zones.filter(isRecord).map((zone) => String(zone.id));
     if (new Set(ids).size !== ids.length) {
       issues.push({ loc: `screens.${index}.zones`, type: 'duplicate_zone_ids', input: ids });
@@ -319,17 +330,24 @@ interface UxMapEnumSnapshot {
 interface UxMapZone {
   id: string;
   label: string;
+  role: string;
   states?: string[];
 }
 interface UxMapScreen {
   id: string;
   title: string;
+  purpose?: string;
   code_ref?: string | null;
   url_params?: string[];
   zones?: UxMapZone[];
 }
+interface UxMapAction {
+  id: string;
+  verb?: string;
+}
 interface UxMapDoc {
   screens: UxMapScreen[];
+  actions?: UxMapAction[];
 }
 
 const readMapJson = (mapRef: string): unknown =>
@@ -359,27 +377,79 @@ describe('ux-map SSOT schema conformance (owned maps)', () => {
     expect(formatIssues(issues)).toEqual(['constructor | extra_forbidden | mutant']);
   });
 
+  it('keeps source paths out of operator-visible copy (WBUX6-W3-L3-06)', () => {
+    // A repo path in a `label`/`verb`/`purpose` is not operator copy -- it is a code
+    // pointer in the wrong field. It also silently couples the map to the retired-
+    // vocabulary ban: `.../identity-clusters/Foo.tsx` tripped /\bclusters?\b/ on a
+    // PATH SEGMENT, so a pure rename turned an unrelated test red. `code_ref` is the
+    // sanctioned home (banned-vocabulary.test.tsx exempts it by name); the upstream
+    // workbay_canvas_mcp Zone/Action models forbid extra keys, so until they carry a
+    // code_ref of their own the only correct answer for a zone or action is to omit
+    // the path, not to smuggle it into prose.
+    const COPY_KEYS = new Set(['title', 'label', 'purpose', 'verb', 'goals', 'description', 'branch_label']);
+    const EXEMPT_KEYS = new Set(['id', 'url_params', 'code_ref', 'open_questions', 'not_doing']);
+    const SOURCE_PATH = /(?:apps|packages|scripts|infra)\/[\w./-]+\.(?:tsx?|php|py|scss|json|ya?ml|sh)\b/;
+    const offenders: string[] = [];
+    const sweep = (value: unknown, key: string | undefined, loc: string): void => {
+      if (key && EXEMPT_KEYS.has(key)) {
+        return;
+      }
+      if (typeof value === 'string') {
+        const hit = key && COPY_KEYS.has(key) ? SOURCE_PATH.exec(value) : null;
+        if (hit) {
+          offenders.push(`${loc} -> ${hit[0]}`);
+        }
+        return;
+      }
+      if (Array.isArray(value)) {
+        value.forEach((item, i) => sweep(item, key, `${loc}[${i}]`));
+        return;
+      }
+      if (value && typeof value === 'object') {
+        for (const [childKey, child] of Object.entries(value)) {
+          sweep(child, childKey, `${loc}.${childKey}`);
+        }
+      }
+    };
+    for (const mapRef of OWNED_MAPS) {
+      sweep(readMapJson(mapRef), undefined, mapRef);
+    }
+    expect(offenders, offenders.join('; ')).toEqual([]);
+    // The sweep must be able to see a violation, or it passes vacuously.
+    const canary: string[] = [];
+    const saved = offenders.length;
+    sweep({ label: 'x apps/prototype-wp-alt-context/js/admin/Foo.tsx' }, undefined, 'canary');
+    canary.push(...offenders.slice(saved));
+    expect(canary).toHaveLength(1);
+  });
+
   it('resolves every owned map screen code_ref to a real file', () => {
     const repoRoot = path.resolve(uxMapsDir, '../../../..');
     const missing: string[] = [];
+    const checked: string[] = [];
+    const check = (owner: string, ref: string): void => {
+      checked.push(ref);
+      if (!existsSync(path.join(repoRoot, ref))) {
+        missing.push(`${owner} -> ${ref}`);
+      }
+    };
     for (const mapRef of OWNED_MAPS) {
       const { json } = loadOwnedMap(mapRef);
       for (const screen of json.screens) {
-        if (!screen.code_ref) {
-          continue;
-        }
-        const abs = path.join(repoRoot, screen.code_ref);
-        if (!existsSync(abs)) {
-          missing.push(`${mapRef} ${screen.id} -> ${screen.code_ref}`);
+        if (screen.code_ref) {
+          check(`${mapRef} ${screen.id}`, screen.code_ref);
         }
       }
     }
     expect(missing, missing.join('; ')).toEqual([]);
+    expect(checked.length, 'no code_ref resolved -- the sweep would pass vacuously').toBeGreaterThan(0);
   });
 
   it('keeps every owned map json and sibling md on disk (fail-closed)', () => {
     expect(OWNED_MAPS.length, 'OWNED_MAPS emptied — ownership list would vacuously pass').toBeGreaterThan(0);
-    expect(OWNED_MAPS).toContain('dashboard');
+    for (const required of REQUIRED_OWNED_MAPS) {
+      expect(OWNED_MAPS, `${required} dropped from OWNED_MAPS — an SSOT would go ungated`).toContain(required);
+    }
     for (const mapRef of OWNED_MAPS) {
       expect(
         existsSync(path.join(uxMapsDir, `${mapRef}.uxmap.json`)),
@@ -392,6 +462,17 @@ describe('ux-map SSOT schema conformance (owned maps)', () => {
     }
   });
 
+  it('enrolls every *.uxmap.json on disk — ownership cannot be fail-open', () => {
+    const onDisk = readdirSync(uxMapsDir)
+      .filter((name) => name.endsWith('.uxmap.json'))
+      .map((name) => name.slice(0, -'.uxmap.json'.length))
+      .sort();
+    expect(
+      onDisk,
+      'a *.uxmap.json exists that OWNED_MAPS does not gate (or OWNED_MAPS names a map that is gone)',
+    ).toEqual([...OWNED_MAPS].sort());
+  });
+
   it('throws when an owned-style map json cannot be read (absent-file discrimination)', () => {
     expect(() => readMapJson('__absent-owned-map__')).toThrow(/ENOENT|no such file/i);
   });
@@ -399,9 +480,7 @@ describe('ux-map SSOT schema conformance (owned maps)', () => {
   it('rejects malformed payloads that are not a UxMap object', () => {
     expect(formatIssues(validateUxMap(null)).length, 'null must fail schema').toBeGreaterThan(0);
     expect(formatIssues(validateUxMap([])).length, 'array must fail schema').toBeGreaterThan(0);
-    expect(formatIssues(validateUxMap({ map_ref: 1 })).length, 'wrong field types must fail schema').toBeGreaterThan(
-      0,
-    );
+    expect(formatIssues(validateUxMap({ map_ref: 1 })).length, 'wrong field types must fail schema').toBeGreaterThan(0);
     expect(() => {
       JSON.parse('{');
     }, 'garbage json must not parse').toThrow();
@@ -421,10 +500,7 @@ describe('ux-map SSOT schema conformance (owned maps)', () => {
   for (const mapRef of OWNED_MAPS) {
     it(`${mapRef}.uxmap.json validates against the canonical UxMap schema`, () => {
       const issues = validateUxMap(readMapJson(mapRef));
-      expect(
-        formatIssues(issues),
-        `${mapRef}.uxmap.json: ${issues.length} schema errors`,
-      ).toEqual([]);
+      expect(formatIssues(issues), `${mapRef}.uxmap.json: ${issues.length} schema errors`).toEqual([]);
     });
   }
 });
@@ -437,17 +513,13 @@ describe('ux-map render parity (owned maps)', () => {
 
       for (const screen of json.screens) {
         jsonLabels.add(screen.title);
-        expect(
-          md.includes(screen.title),
-          `screen ${screen.id} title "${screen.title}" missing from ${mdName}`,
-        ).toBe(true);
+        expect(md.includes(screen.title), `screen ${screen.id} title "${screen.title}" missing from ${mdName}`).toBe(
+          true,
+        );
 
         for (const zone of screen.zones ?? []) {
           jsonLabels.add(zone.label);
-          expect(
-            md.includes(zone.label),
-            `zone ${zone.id} label "${zone.label}" missing from ${mdName}`,
-          ).toBe(true);
+          expect(md.includes(zone.label), `zone ${zone.id} label "${zone.label}" missing from ${mdName}`).toBe(true);
         }
       }
 
@@ -455,10 +527,7 @@ describe('ux-map render parity (owned maps)', () => {
         if (jsonLabels.has(stale)) {
           continue;
         }
-        expect(
-          md.includes(stale),
-          `renamed/retired label "${stale}" still appears in ${mdName}`,
-        ).toBe(false);
+        expect(md.includes(stale), `renamed/retired label "${stale}" still appears in ${mdName}`).toBe(false);
       }
     }
   });
@@ -474,9 +543,7 @@ describe('ux-map render parity (owned maps)', () => {
           continue;
         }
         const expected = `url_params: ${params.map((param) => `\`${param}\``).join(', ')}`;
-        expect(md.includes(expected), `${mapRef} ${screen.id} missing "${expected}" from ${mdName}`).toBe(
-          true,
-        );
+        expect(md.includes(expected), `${mapRef} ${screen.id} missing "${expected}" from ${mdName}`).toBe(true);
       }
 
       if (usesPanes) {
@@ -486,19 +553,252 @@ describe('ux-map render parity (owned maps)', () => {
     }
   });
 
-  it('workbench-control z-name-curate ASCII states match json (no retired empty)', () => {
-    const { json, md, mdName } = loadOwnedMap('workbench-2pane');
+  /**
+   * Replaces the old single `z-name-curate states=[…]` ASCII assertion. That line existed
+   * nowhere in the deterministic render — it was hand-typed into the fenced ASCII block, so
+   * the gate was requiring the md to *diverge* from its own generator (REF-09: a derived
+   * artifact that is hand-edited drifts silently). The zone-table row is what
+   * `docs/ux-maps/render_ux_maps.py` actually emits, and asserting it for every zone of
+   * every owned map is strictly more coverage than the one hand-typed line ever gave.
+   */
+  it('every owned-map zone table row carries the json role and states verbatim', () => {
+    const missing: string[] = [];
+    for (const mapRef of OWNED_MAPS) {
+      const { json, md, mdName } = loadOwnedMap(mapRef);
+      for (const screen of json.screens) {
+        for (const zone of screen.zones ?? []) {
+          const row = `| \`${zone.id}\` | ${zone.label.replaceAll('|', '\\|')} | ${zone.role} | ${(
+            zone.states ?? []
+          ).join(', ')} |`;
+          if (!md.includes(row)) {
+            missing.push(`${mdName} ${zone.id}: expected row\n    ${row}`);
+          }
+        }
+      }
+    }
+    expect(missing, missing.join('\n  ')).toEqual([]);
+  });
+
+  /**
+   * WBUX6-W3-L3-05 reverse direction. The json→md checks above cannot see an id the JSON
+   * has *deleted* that still lingers in the render — exactly how `act-scan-media-queue`
+   * survived its own removal. A silent stale id is the doc equivalent of RLSE-05: the
+   * reader believes a control exists that the SSOT no longer defines.
+   */
+  it('no z-/act- id appears in an owned md that the sibling json does not define', () => {
+    const stale: string[] = [];
+    for (const mapRef of OWNED_MAPS) {
+      const { json, md, mdName } = loadOwnedMap(mapRef);
+      const known = new Set<string>();
+      for (const screen of json.screens) {
+        known.add(screen.id);
+        for (const zone of screen.zones ?? []) {
+          known.add(zone.id);
+        }
+      }
+      for (const action of json.actions ?? []) {
+        known.add(action.id);
+      }
+      for (const token of md.match(/\b(?:z|act)-[a-z0-9][a-z0-9-]*\b/g) ?? []) {
+        if (!known.has(token)) {
+          stale.push(`${mdName}: ${token}`);
+        }
+      }
+    }
+    expect([...new Set(stale)], stale.join('; ')).toEqual([]);
+  });
+
+  /**
+   * WBUX6-W3-L3-06. Prose inside labels cites source files too; those citations were
+   * shortened to bare basenames, which no gate can resolve. Repo-relative paths in labels
+   * get the same existence check the structural `code_ref` field already gets (rg-005).
+   */
+  it('every repo-relative source path cited inside an owned-map label resolves on disk', () => {
+    const repoRoot = path.resolve(uxMapsDir, '../../../..');
+    const missing: string[] = [];
+    for (const mapRef of OWNED_MAPS) {
+      const { json } = loadOwnedMap(mapRef);
+      const prose: string[] = [];
+      for (const screen of json.screens) {
+        prose.push(screen.title, screen.purpose ?? '');
+        for (const zone of screen.zones ?? []) {
+          prose.push(zone.label);
+        }
+      }
+      for (const action of json.actions ?? []) {
+        prose.push(action.verb ?? '');
+      }
+      for (const cited of prose.join('\n').match(/\bapps\/[A-Za-z0-9._/-]+\.tsx?\b/g) ?? []) {
+        if (!existsSync(path.join(repoRoot, cited))) {
+          missing.push(`${mapRef}: ${cited}`);
+        }
+      }
+    }
+    expect([...new Set(missing)], missing.join('; ')).toEqual([]);
+  });
+
+  /**
+   * The existence check above is only reachable for citations written as repo-relative
+   * paths. A bare `Foo.tsx` basename is unresolvable by construction, so shortening a path
+   * would silently opt that citation out of its own gate — the fail-open shape of TEST-11.
+   */
+  it('cites source files by repo-relative path, never by bare basename', () => {
+    const bare: string[] = [];
+    for (const mapRef of OWNED_MAPS) {
+      const { json } = loadOwnedMap(mapRef);
+      const prose: string[] = [];
+      for (const screen of json.screens) {
+        prose.push(screen.title, screen.purpose ?? '');
+        for (const zone of screen.zones ?? []) {
+          prose.push(zone.label);
+        }
+      }
+      for (const action of json.actions ?? []) {
+        prose.push(action.verb ?? '');
+      }
+      for (const hit of prose.join('\n').match(/(?<![/\w.])[A-Za-z][A-Za-z0-9_]*\.tsx?\b/g) ?? []) {
+        bare.push(`${mapRef}: ${hit}`);
+      }
+    }
+    expect(
+      [...new Set(bare)],
+      `bare source-file basenames (write them as apps/…/File.tsx): ${bare.join('; ')}`,
+    ).toEqual([]);
+  });
+
+  /**
+   * WBUX6-W3-L3-03. `a1599b346` dropped the say/don't-say table from workbench-2pane.md
+   * while `roster-people.md` kept it, so the two review surfaces stopped sharing one
+   * controlled vocabulary (DATA-14: divergent copies of the same rule). Both operator
+   * surfaces must carry it.
+   */
+  it.each(['workbench-2pane', 'roster-people'] as const)(
+    '%s.md keeps the controlled say/dont-say vocabulary section',
+    (mapRef) => {
+      const md = readFileSync(path.join(uxMapsDir, `${mapRef}.md`), 'utf8');
+      expect(md, `${mapRef}.md lost its "## Vocabulary (say / don't say)" section`).toMatch(
+        /^## Vocabulary \(say \/ don't say\)$/m,
+      );
+      // Both surfaces must carry a real say/don't-say table, not just the heading. Column
+      // order differs between the two maps, so match the header cells, not a fixed row.
+      const section = md.split(/^## /m).find((chunk) => chunk.startsWith("Vocabulary (say / don't say)\n"));
+      const header = (section ?? '').split('\n').find((line) => line.startsWith('| '));
+      expect(header, `${mapRef}.md vocabulary section has no table`).toBeDefined();
+      expect(header, `${mapRef}.md vocabulary table has no "Don't say" column`).toMatch(/\|\s*Don't say\s*\|/);
+      expect(header, `${mapRef}.md vocabulary table has no "Say" column`).toMatch(/\|\s*Say\s*\|/);
+      expect(
+        (section ?? '').split('\n').filter((line) => line.startsWith('| ')).length,
+        `${mapRef}.md vocabulary table has no entries`,
+      ).toBeGreaterThan(2);
+    },
+  );
+});
+
+/**
+ * WBUX-6-r0902w2-S1R1-F1 + the post-merge MediaSelection footer contract. The SSOT must
+ * encode the states the footer actually has: four aria-disabled holds (RLSE-04 every state
+ * is designed; A11Y-21 the hold is announced, never HTML-disabled and therefore never
+ * focus-stripped) plus `settings-unavailable`, which RELEASES the hold and degrades to
+ * recognition-off rather than failing silently (RLSE-05).
+ */
+describe('workbench-library footer state contract (z-lib-actions)', () => {
+  const footer = () => {
+    const { json } = loadOwnedMap('workbench-2pane');
     const zone = json.screens
-      .find((screen) => screen.id === 'workbench-control')
-      ?.zones?.find((item) => item.id === 'z-name-curate');
-    expect(zone?.states, `${mdName} z-name-curate missing json states`).toEqual([
+      .find((screen) => screen.id === 'workbench-library')
+      ?.zones?.find((item) => item.id === 'z-lib-actions');
+    expect(zone, 'workbench-2pane workbench-library is missing z-lib-actions').toBeDefined();
+    return zone as UxMapZone;
+  };
+
+  it('declares every canonical state the four holds and the degraded fallback need', () => {
+    expect(footer().states, 'z-lib-actions states must cover offline + zero-selection holds').toEqual([
       'default',
       'loading',
+      'empty',
       'error',
-      'edge_input',
+      'offline',
+      'degraded',
     ]);
-    const ascii = md.match(/z-name-curate states=\[[^\]]+\]/s);
-    expect(ascii, `${mdName} missing z-name-curate ASCII states`).not.toBeNull();
-    expect(ascii?.[0]).toBe('z-name-curate states=[default,loading,error,edge_input]');
+  });
+
+  it.each(['offline', 'zero-selection', 'identifying', 'settings-pending', 'settings-unavailable'])(
+    'names the %s footer state in the zone label',
+    (reason) => {
+      expect(footer().label, `z-lib-actions label must name the ${reason} state`).toContain(reason);
+    },
+  );
+
+  it('holds are aria-disabled with a reason id, never the HTML disabled attribute', () => {
+    const label = footer().label;
+    expect(label).toContain('aria-disabled="true"');
+    expect(label).toContain('aria-describedby');
+    expect(label, 'the footer must not claim the HTML disabled attribute').toMatch(/never the HTML disabled attribute/);
+  });
+
+  it('settings-unavailable releases the hold instead of adding a fifth one', () => {
+    const label = footer().label;
+    expect(label).toMatch(/Four hold reasons/);
+    expect(label, 'settings-unavailable must be documented as hold-adjacent, not a hold').toMatch(
+      /settings-unavailable is a fifth, hold-adjacent state and NOT a hold/,
+    );
+    expect(label, 'the released hold must say recognition falls back to off').toMatch(/hold is RELEASED/);
+  });
+
+  /**
+   * Amendment from the workbench-CTA lane: the degraded disclosure has fixed copy and is
+   * paired with an icon, never colour alone (sr-004).
+   */
+  it('pins the settings-unavailable disclosure copy and its non-colour cue', () => {
+    const label = footer().label;
+    expect(label, 'degraded disclosure copy is the contract, not an approximation').toContain(
+      'Recognition settings unavailable — describing without identifying people · ~N credits',
+    );
+    expect(label, 'the degradation must carry an icon, not colour alone (sr-004)').toMatch(/AlertTriangle icon/);
+  });
+
+  /**
+   * WBUX6-W4-B-02, routed to this lane: an `aria-describedby` target is only heard on
+   * focus, so a degradation that appears while focus is elsewhere is silent. The SSOT
+   * splits the two surfaces — one node to describe, a separate polite live region to
+   * announce (A11Y-21) — rather than overloading one node with both duties.
+   */
+  it('splits the describedby target from the announcement surface for the degraded notice', () => {
+    const label = footer().label;
+    expect(label, 'the degraded notice needs its own live region').toMatch(/role="status" aria-live="polite"/);
+    expect(label, 'the live region must not double as the describedby target').toMatch(/is not the describedby target/);
+    expect(label).toMatch(/one surface to describe, one surface to announce/);
+  });
+
+  it('keeps one Cancel across identifying and describing, and no separate scan CTA', () => {
+    const { json } = loadOwnedMap('workbench-2pane');
+    expect(footer().label).toMatch(/single Cancel control spans the identifying and describing phases/);
+    expect(
+      (json.actions ?? []).map((action) => action.id),
+      'act-scan-media-queue is deleted — Describe owns the scan trigger',
+    ).not.toContain('act-scan-media-queue');
+  });
+
+  /**
+   * Amendment: the single Cancel control's visible label is state-dependent. Pinning one
+   * literal string here would have made the SSOT stale the moment the phase changed, so the
+   * map encodes a state -> label mapping (RLSE-04: every state is designed).
+   */
+  it.each([
+    ['identifying', 'Cancel people identification'],
+    ['describing', 'Cancel describe run'],
+    ['in-flight cancel', 'Cancelling…'],
+  ])('maps the %s phase to the Cancel label %s', (_phase, expected) => {
+    expect(footer().label, `the Cancel state->label mapping is missing "${expected}"`).toContain(expected);
+  });
+
+  it('describes Cancel as one state-dependent control, not a fixed string', () => {
+    const label = footer().label;
+    expect(label, 'a single literal Cancel label would be a stale pin').toMatch(
+      /visible label is state-dependent, not a fixed string/,
+    );
+    expect(label, 'exactly one Cancel control may be rendered at a time').toMatch(
+      /exactly one control matching \/\^Cancel \/ is rendered at a time/,
+    );
   });
 });

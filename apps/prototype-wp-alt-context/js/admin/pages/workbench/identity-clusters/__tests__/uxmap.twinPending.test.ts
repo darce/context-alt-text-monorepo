@@ -50,6 +50,26 @@ describe('uxmap twin_pending (S4R2-F3)', () => {
   const keepSeparate = actions.find((action) => action.id === 'keep_separate');
 
   /**
+   * WBUX6-W3-L3-06: this guard used to assert that the zone label and the action
+   * verbs literally CONTAINED 'IdentityClusterItem.tsx'. That put a source path
+   * in operator-visible copy, which is the defect that finding names -- and it
+   * was load-bearing in the wrong direction: `.../identity-clusters/Foo.tsx`
+   * trips the retired-vocabulary ban on a PATH SEGMENT, so a pure rename turned
+   * an unrelated test red. `code_ref` is the sanctioned home for pointers, but
+   * the upstream workbay_canvas_mcp Zone/Action models forbid extra keys, so a
+   * zone- or action-level code_ref cannot round-trip through the renderer yet.
+   *
+   * Asserting a path string is in any case the weak form of the claim: it pins
+   * the pointer's TEXT, not its TRUTH -- it stays green after the component is
+   * gutted. Read the implementation instead and assert it really carries the
+   * copy the map attributes to it. That is what the original assertion meant.
+   */
+  const implementationSource = readFileSync(
+    path.join(pluginRoot, 'js/admin/pages/workbench/identity-clusters/IdentityClusterItem.tsx'),
+    'utf8',
+  );
+
+  /**
    * `twin_pending` is not a member of the canonical `MapState` enum
    * (`workbay_canvas_mcp/ux_map/models.py`, mirrored in
    * `js/admin/__tests__/uxmap-render-parity.test.ts`). The SSOT models the
@@ -67,14 +87,21 @@ describe('uxmap twin_pending (S4R2-F3)', () => {
     expect(copy).toContain(uxmapTwinPendingPlaceholder(TWIN_CHIP_PROMPT_TEMPLATE));
     expect(copy).toContain(uxmapTwinPendingPlaceholder(TWIN_CHIP_ACCEPT_TEMPLATE));
     expect(copy).toContain(TWIN_CHIP_REJECT_LABEL);
-    expect(copy).toContain('IdentityClusterItem.tsx');
+    // The map attributes this zone's twin-pending chip to IdentityClusterItem;
+    // assert the component actually renders that copy rather than that the label
+    // spells the filename.
+    expect(implementationSource).toContain('TWIN_CHIP_PROMPT_TEMPLATE');
+    expect(implementationSource).toContain('TWIN_CHIP_REJECT_LABEL');
   });
 
   it('maps merge_twin / keep_separate without a preview', () => {
     expect(mergeTwin).toBeDefined();
     expect(keepSeparate).toBeDefined();
-    expect(mergeTwin?.verb).toContain('IdentityClusterItem.tsx');
-    expect(keepSeparate?.verb).toContain('IdentityClusterItem.tsx');
+    // Same substitution as above: the accept/reject affordances these two
+    // actions describe are the twin chip's, so pin that the component renders
+    // both -- not that the verbs quote a path.
+    expect(implementationSource).toContain('TWIN_CHIP_ACCEPT_TEMPLATE');
+    expect(implementationSource).toContain('TWIN_CHIP_REJECT_LABEL');
     expect(mergeTwin?.preview_required).toBe(false);
     expect(mergeTwin?.costly).toBe(false);
     expect(keepSeparate?.preview_required).toBe(false);

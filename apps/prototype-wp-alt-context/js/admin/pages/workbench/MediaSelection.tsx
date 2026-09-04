@@ -43,7 +43,17 @@ import { formatUserFacingError, isAuthExpiredError } from '../../utils/userFacin
 import { UserFacingErrorNotice } from '../../components/ui/UserFacingErrorNotice';
 import { useWorkbenchMediaContext } from './WorkbenchMediaContext';
 import { SYNC_VOCABULARY } from './syncPresentation';
-import { ACCENT_PRIMARY_ATTR, FOOTER_ACCENT_OWNER, selectMediaFooterCtaState } from './mediaFooterCtaState';
+import {
+  ACCENT_PRIMARY_ATTR,
+  FOOTER_ACCENT_OWNER,
+  DESCRIBE_SUBMIT_ACTION,
+  RECOGNITION_POLICY,
+  deriveRecognitionPolicy,
+  isRecognitionPolicyHolding,
+  resolveDescribeSubmitAction,
+  selectMediaFooterCtaState,
+  type RecognitionPolicy,
+} from './mediaFooterCtaState';
 import { deriveIdentitiesPresentationSource } from './deriveIdentitiesPresentationSource';
 import {
   GPU_STATE_ICON,
@@ -105,9 +115,14 @@ export const MediaSelection = ({ reviewActive = false }: MediaSelectionProps): R
     queryFn: fetchSettings,
     retry: false,
   });
-  const recognitionEnabled = settingsQuery.data?.recognition_enabled;
-  const recognitionPolicyKnown = typeof recognitionEnabled === 'boolean';
-  const isSettingsPending = !recognitionPolicyKnown;
+  // WBUX6-MRG-05: `retry: false` means one failed fetch is terminal, so the error path
+  // needs its own state. `undefined` no longer doubles as "loading" and "failed"; the
+  // failed probe degrades (recognition treated off) instead of holding the primary
+  // forever [RES-13 lexicons/engineering.md:124][RLSE-04 :695][A11Y-24 accessibility.md:154].
+  const recognitionPolicy = deriveRecognitionPolicy({
+    isError: settingsQuery.isError,
+    recognitionEnabled: settingsQuery.data?.recognition_enabled,
+  });
   const selectedMediaIds = Object.entries(selection)
     .filter(([, selected]) => selected)
     .map(([id]) => Number(id))
@@ -216,14 +231,22 @@ export const MediaSelection = ({ reviewActive = false }: MediaSelectionProps): R
             remoteActionTitle={remoteGate.title}
             remoteActionAriaDisabled={remoteGate['aria-disabled']}
             accentPrimary={footerCta.accentOwner === FOOTER_ACCENT_OWNER.DESCRIBE}
-            recognitionEnabled={recognitionEnabled}
+            recognitionPolicy={recognitionPolicy}
             isIdentifying={identify.pending}
-            isSettingsPending={isSettingsPending}
             onSubmit={() => {
-              if (offline || identify.pending) return;
-              if (!recognitionPolicyKnown || selectedMediaIds.length === 0) return;
+              // WBUX6-W4-R-01: the container's own guard, named and unit-testable, so
+              // it is no longer a belt that only the presentational buckle can reach.
+              const action = resolveDescribeSubmitAction({
+                offline,
+                isIdentifying: identify.pending,
+                recognitionPolicy,
+                selectedCount: selectedMediaIds.length,
+              });
+              if (action === DESCRIBE_SUBMIT_ACTION.HOLD) return;
               const ids = selectedMediaIds;
-              if (recognitionEnabled !== true) {
+              // OFF and UNAVAILABLE both skip the identify pass. UNAVAILABLE is the
+              // degraded path: describe still runs, recognition is simply not applied.
+              if (action === DESCRIBE_SUBMIT_ACTION.DESCRIBE) {
                 startDescribe(ids);
                 return;
               }
@@ -452,13 +475,12 @@ interface BulkDescribeCtaProps {
   /** §7 accent ownership: mark the describe surface as the single accent primary. */
   accentPrimary?: boolean;
   /**
-   * GET /acx/v1/settings `recognition_enabled`. `undefined` while loading/unknown
-   * holds the primary and does not claim recognition is off (HAI-05 / FORM-04).
+   * Explicit recognition-policy state derived from GET /acx/v1/settings. `LOADING`
+   * holds the primary and does not claim recognition is off (HAI-05 / FORM-04);
+   * `UNAVAILABLE` is a designed degraded STATE that releases the hold (WBUX6-MRG-05).
    */
-  recognitionEnabled?: boolean;
+  recognitionPolicy?: RecognitionPolicy;
   isIdentifying: boolean;
-  /** True while GET /settings has not produced a boolean policy. */
-  isSettingsPending?: boolean;
   onSubmit: () => void;
   onCancel: () => void;
   onDismiss: () => void;
@@ -479,9 +501,8 @@ export const BulkDescribeCta = ({
   remoteActionTitle,
   remoteActionAriaDisabled,
   accentPrimary = false,
-  recognitionEnabled,
+  recognitionPolicy = RECOGNITION_POLICY.LOADING,
   isIdentifying = false,
-  isSettingsPending = false,
   onSubmit,
   onCancel,
   onDismiss,
@@ -511,9 +532,29 @@ export const BulkDescribeCta = ({
   // never removes it from the tab order, so the control and its reason stay
   // discoverable from the zero state (A11Y-11 keyboard walk, A11Y-24 empty state).
   const emptySelectionHeld = selectedCount === 0;
-  const recognitionKnownOn = recognitionEnabled === true;
-  const recognitionKnownOff = recognitionEnabled === false;
-  // In-flight identification and an unknown recognition policy hold the primary for
+  // WBUX6-MRG-05: only an UNRESOLVED policy holds. A FAILED settings probe does not —
+  // holding on a terminal failure (`retry: false`) is an unbounded wait with no
+  // degradation path [RES-13 lexicons/engineering.md:124]. The write-guard/probe
+  // asymmetry: a guard on a write fails closed; a probe that would strand the
+  // operator's primary fails open to the cheaper path [COST-10 ml-systems.md:553].
+  const isSettingsPending = isRecognitionPolicyHolding(recognitionPolicy);
+  // WBUX6-W4-B-02: ONE string, rendered on TWO surfaces with different jobs — the
+  // disclosure node DESCRIBES (aria-describedby target, reachable only on focus) and a
+  // separate polite region ANNOUNCES (reaches an operator whose focus is elsewhere when
+  // the probe settles). Never the same node doing both [A11Y-21]. Deriving it once here
+  // is what stops the two surfaces drifting apart; the copy is pinned verbatim in
+  // docs/ux-maps/workbench-2pane.uxmap.json (z-lib-actions).
+  const recognitionUnavailableNotice =
+    recognitionPolicy === RECOGNITION_POLICY.UNAVAILABLE
+      ? sprintf(
+          __(
+            'Recognition settings unavailable — describing without identifying people · ~%d credits',
+            'alt-context',
+          ),
+          selectedCount,
+        )
+      : '';
+  // In-flight identification and an unresolved recognition policy hold the primary for
   // the same reason: acting now would either double-submit or act on an unknown policy.
   const submitHeld = offlineGated || emptySelectionHeld || isIdentifying || isSettingsPending;
   const gpuState = progress.gpuState ?? null;
@@ -566,8 +607,20 @@ export const BulkDescribeCta = ({
                   ? __('Describe selected', 'alt-context')
                   : sprintf(__('Describe %d selected', 'alt-context'), selectedCount)}
         </button>
+        {/*
+          INT-08: the submit POST is a >1s wait whose control is natively disabled, so the
+          wait itself must be announced. It is NOT interruptible — `submitBulkDescribeRun`
+          takes no abort signal and the upstream run is created server-side, so a client
+          "Cancel" here would strand a paid run (the BR-143 hazard) rather than being the
+          side-effect-free Cancel INT-08 asks for. Progress is honoured; abort is not
+          offered, because an unsafe abort is worse than none.
+        */}
         <span role="status" aria-live="polite" className="screen-reader-text">
-          {isIdentifying ? __('Identifying people…', 'alt-context') : ''}
+          {isIdentifying
+            ? __('Identifying people…', 'alt-context')
+            : isSubmitting
+              ? SYNC_VOCABULARY.describeStarting
+              : ''}
         </span>
         {offlineGated && remoteActionTitle ? (
           <span id={DESCRIBE_OFFLINE_REASON_ID} className="screen-reader-text">
@@ -580,8 +633,19 @@ export const BulkDescribeCta = ({
           </span>
         ) : null}
         {canCancel ? (
+          // WBUX6-W4-R-02: ONE Cancel control spans both waits, but its label names the
+          // operation actually in flight — identification and the describe run are
+          // different objects with different consequences, and while identifying this
+          // button aborts the scan, never a describe run (there is none yet). A label
+          // that names the wrong operation makes the user act on the wrong object
+          // [INT-06 lexicons/interaction-ux.md:163] and gives voice-control users a
+          // phrase for something that is not happening [A11Y-04 accessibility.md:72].
           <button type="button" className="button button-link" disabled={isCancelling} onClick={onCancel}>
-            {isCancelling ? __('Cancelling…', 'alt-context') : __('Cancel describe run', 'alt-context')}
+            {isCancelling
+              ? __('Cancelling…', 'alt-context')
+              : isIdentifying
+                ? __('Cancel people identification', 'alt-context')
+                : __('Cancel describe run', 'alt-context')}
           </button>
         ) : null}
         {canDismiss ? (
@@ -598,17 +662,56 @@ export const BulkDescribeCta = ({
         )}
       </div>
       <p id={DESCRIBE_RECOGNITION_DISCLOSURE_ID} className="acx-media-selection__bulk-describe-disclosure">
-        {recognitionKnownOn ? (
-          <>
-            {sprintf(__('Identifies people first (AI) · ~%d credits · Turn off in', 'alt-context'), selectedCount)}{' '}
-            <a href={toSettings()}>{__('Settings', 'alt-context')}</a>
-          </>
-        ) : recognitionKnownOff ? (
-          sprintf(__('People are not identified (recognition off) · ~%d credits', 'alt-context'), selectedCount)
-        ) : (
-          __('Checking recognition settings…', 'alt-context')
-        )}
+        {/* sr-007: exhaustive switch over the centralized policy — no bare string compares. */}
+        {((): React.ReactNode => {
+          switch (recognitionPolicy) {
+            case RECOGNITION_POLICY.ON:
+              return (
+                <>
+                  {sprintf(
+                    __('Identifies people first (AI) · ~%d credits · Turn off in', 'alt-context'),
+                    selectedCount,
+                  )}{' '}
+                  <a href={toSettings()}>{__('Settings', 'alt-context')}</a>
+                </>
+              );
+            case RECOGNITION_POLICY.OFF:
+              return sprintf(
+                __('People are not identified (recognition off) · ~%d credits', 'alt-context'),
+                selectedCount,
+              );
+            case RECOGNITION_POLICY.UNAVAILABLE:
+              // Non-blocking degradation notice: Describe stays actionable. [sr-004] the
+              // state is carried by text + an icon, never colour alone [A11Y-24]. This
+              // node DESCRIBES only — the announcement lives in its own region below.
+              return (
+                <>
+                  <AlertTriangle aria-hidden="true" size={16} />{' '}
+                  {recognitionUnavailableNotice}
+                </>
+              );
+            case RECOGNITION_POLICY.LOADING:
+              return __('Checking recognition settings…', 'alt-context');
+            default: {
+              const unreachable: never = recognitionPolicy;
+              return unreachable;
+            }
+          }
+        })()}
       </p>
+      {/*
+        WBUX6-W4-B-02 announcement surface. Deliberately a SEPARATE node from the
+        disclosure <p> above: that one is the aria-describedby target (describes on
+        focus), this one announces to an operator whose focus is elsewhere when the
+        settings probe settles. Collapsing them — putting aria-live on the describedby
+        node — would make one node do both jobs and re-announce the description every
+        time focus lands on it [A11Y-21]. It carries NO id and is never referenced by
+        aria-describedby. Kept mounted and empty in every other state so the transition
+        into the degraded state is what gets announced.
+      */}
+      <span role="status" aria-live="polite" className="screen-reader-text">
+        {recognitionUnavailableNotice}
+      </span>
       {isPanelVisible ? (
         <BulkDescribeProgress
           progress={progress}

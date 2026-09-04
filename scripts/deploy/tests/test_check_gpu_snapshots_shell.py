@@ -363,8 +363,15 @@ def test_check_gpu_snapshots_shell_suite() -> None:
 
     output = result.stdout + result.stderr
     assert result.returncode == 0, f"{suite} exited with {result.returncode}\n{output}"
-    assert "PASS: each environment directory must be API-writable" in output
-    assert output.rstrip().endswith("ALL PASS")
+    # WBUX6-W4-F-03: under root this case is a documented `skip_covered` (uid 0
+    # bypasses mode 0555), so pinning only the PASS form makes this guard
+    # unrunnable on the privileged CI job. Accept either, never absence.
+    case = "each environment directory must be API-writable"
+    assert f"PASS: {case}" in output or f"SKIP: {case}" in output, output
+    # WBUX6-L5-NEW-04: a skip must not land under an unqualified "ALL PASS", but
+    # the qualified summary is still a clean run.
+    tail = output.rstrip()
+    assert tail.endswith("ALL PASS") or "PASSED WITH" in tail, output
 
 
 def test_oci_readme_gpu_lifecycle_flags_exist_in_the_cli() -> None:

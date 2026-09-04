@@ -7,6 +7,8 @@ import { act, render } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { BatchRunStatus, JobProgress } from '../../../api/recognition/types/scan';
+import type { PipelinePhase } from '../../../hooks/jobStateMachineUtils';
+import { SCAN_STALL_STATE } from '../../../hooks/useJobStateMachineDerivedState';
 import {
   JobPipelineProvider,
   SCAN_PROGRESS_TIMEOUT_MS,
@@ -35,7 +37,7 @@ const { machine, captured } = vi.hoisted(() => {
   const machine = {
     isScanRunning: false,
     isCancellingScan: false,
-    currentPhase: 'idle' as const,
+    currentPhase: 'idle' as PipelinePhase,
     projectionSyncState: 'idle' as const,
     projectionError: null as string | null,
     statusText: '',
@@ -97,13 +99,13 @@ vi.mock('@wordpress/i18n', () => ({
 const ctxRef: { current: JobPipelineContextValue | null } = { current: null };
 
 /** Internal test invariant (sr-005): the probe always renders inside the provider. */
-function pipeline(): JobPipelineContextValue {
+const pipeline = (): JobPipelineContextValue => {
   const value = ctxRef.current;
   if (!value) {
     throw new Error('JobPipeline context was not captured by the probe');
   }
   return value;
-}
+};
 
 const Probe = (): null => {
   ctxRef.current = useJobPipeline();
@@ -115,16 +117,31 @@ const PipelineTree = ({
   batchRunStatus = null,
   scanProgress = null,
   activeJobIds = [],
+  currentPhase,
+  scanStallSeconds = null,
+  isPrimary = true,
+  isOnline = true,
+  latestJobId,
 }: {
   running: boolean;
   batchRunStatus?: BatchRunStatus | null;
   scanProgress?: JobProgress | null;
   activeJobIds?: string[];
+  currentPhase?: PipelinePhase;
+  scanStallSeconds?: number | null;
+  isPrimary?: boolean;
+  isOnline?: boolean;
+  latestJobId?: string | null;
 }): React.JSX.Element => {
   machine.isScanRunning = running;
   machine.batchRunStatus = batchRunStatus;
   machine.scanProgress = scanProgress;
   machine.activeJobIds = activeJobIds;
+  machine.currentPhase = currentPhase ?? (running ? 'scanning' : 'idle');
+  machine.scanStallSeconds = scanStallSeconds;
+  machine.isPrimary = isPrimary;
+  machine.isOnline = isOnline;
+  machine.latestJobId = latestJobId ?? (activeJobIds.length > 0 ? activeJobIds[0] : null);
   return (
     <JobPipelineProvider>
       <Probe />
@@ -152,8 +169,15 @@ describe('JobPipelineContext.scanAndWait', () => {
     machine.batchRunStatus = null;
     machine.scanProgress = null;
     machine.activeJobIds = [];
+    machine.currentPhase = 'idle';
+    machine.scanStallSeconds = null;
+    machine.isPrimary = true;
+    machine.isOnline = true;
+    machine.latestJobId = null;
     machine.scan.mockReset();
     machine.cancelScan.mockReset();
+    machine.retryScanStream.mockReset();
+    machine.retryClustering.mockReset();
     captured.onScanError = undefined;
   });
 
@@ -379,6 +403,150 @@ describe('JobPipelineContext.scanAndWait', () => {
     });
 
     await rejected;
+  });
+
+  describe('stall probe fidelity [WBUX6-W3-L2-02]', () => {
+    it('reports live only when the stall detector is actually running', () => {
+      render(<PipelineTree running={true} activeJobIds={['j1']} scanStallSeconds={null} />);
+
+      expect(pipeline().scanRun.stallState).toBe(SCAN_STALL_STATE.LIVE);
+      expect(pipeline().scanRun.stallSeconds).toBeNull();
+    });
+
+    it('reports unobserved — not live — for a run whose stream cannot report (secondary tab)', () => {
+      render(<PipelineTree running={true} activeJobIds={['j1']} scanStallSeconds={null} isPrimary={false} />);
+
+      // Before the third state existed this rendered identically to a healthy run.
+      expect(pipeline().scanRun.stallState).toBe(SCAN_STALL_STATE.UNOBSERVED);
+      expect(pipeline().scanRun.stallSeconds).toBeNull();
+    });
+
+    it('reports unobserved while offline', () => {
+      render(<PipelineTree running={true} activeJobIds={['j1']} scanStallSeconds={null} isOnline={false} />);
+
+      expect(pipeline().scanRun.stallState).toBe(SCAN_STALL_STATE.UNOBSERVED);
+    });
+
+    it('reports unobserved when a run is in flight with no job id to stream', () => {
+      render(<PipelineTree running={true} activeJobIds={[]} latestJobId={null} scanStallSeconds={null} />);
+
+      expect(pipeline().scanRun.stallState).toBe(SCAN_STALL_STATE.UNOBSERVED);
+    });
+
+    it('surfaces a real stall reading with its duration', () => {
+      render(<PipelineTree running={true} activeJobIds={['j1']} scanStallSeconds={31} />);
+
+      expect(pipeline().scanRun.stallState).toBe(SCAN_STALL_STATE.STALLED);
+      expect(pipeline().scanRun.stallSeconds).toBe(31);
+    });
+
+    it('suppresses the probe when nothing is running', () => {
+      render(<PipelineTree running={false} scanStallSeconds={90} />);
+
+      expect(pipeline().scanRun.stallState).toBe(SCAN_STALL_STATE.IDLE);
+      expect(pipeline().scanRun.stallSeconds).toBeNull();
+    });
+  });
+
+  describe('retry re-arms the pending waiter [WBUX6-W3-L2-01]', () => {
+    const almost = SCAN_PROGRESS_TIMEOUT_MS - 1_000;
+
+    const startedWaiter = (): {
+      promise: Promise<void>;
+      rerender: (ui: React.JSX.Element) => void;
+      settlement: { settled: boolean };
+    } => {
+      const { rerender } = render(<PipelineTree running={false} />);
+      let promise!: Promise<void>;
+      act(() => {
+        promise = pipeline().scanAndWait([1]);
+      });
+      const settlement = trackSettlement(promise);
+      act(() => {
+        rerender(<PipelineTree running={true} scanProgress={progressAt(1)} activeJobIds={['j1']} />);
+      });
+      return { promise, rerender, settlement };
+    };
+
+    it.each([
+      ['retryScanStream', (ctx: JobPipelineContextValue) => ctx.retryScanStream()],
+      ['retryClustering', (ctx: JobPipelineContextValue) => ctx.retryClustering()],
+    ])('%s restarts the silence window instead of inheriting the spent one', async (_name, invoke) => {
+      vi.useFakeTimers();
+      try {
+        const { promise, settlement } = startedWaiter();
+
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(almost);
+        });
+        expect(settlement.settled).toBe(false);
+
+        act(() => {
+          invoke(pipeline());
+        });
+
+        // Without the re-arm the original deadline fires 1s from here.
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(almost);
+        });
+        expect(settlement.settled).toBe(false);
+        expect(machine.cancelScan).not.toHaveBeenCalled();
+
+        const rejected = expect(promise).rejects.toThrow('People identification failed. Nothing was described.');
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(2_000);
+        });
+        await rejected;
+        expect(machine.cancelScan).toHaveBeenCalledWith(['j1']);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('forwards the retry to the state machine', () => {
+      render(<PipelineTree running={true} activeJobIds={['j1']} />);
+      act(() => {
+        pipeline().retryScanStream();
+        pipeline().retryClustering();
+      });
+
+      expect(machine.retryScanStream).toHaveBeenCalledTimes(1);
+      expect(machine.retryClustering).toHaveBeenCalledTimes(1);
+    });
+
+    it('re-arms the start window, not the progress window, when the run never started', async () => {
+      vi.useFakeTimers();
+      try {
+        render(<PipelineTree running={false} />);
+        let promise!: Promise<void>;
+        act(() => {
+          promise = pipeline().scanAndWait([1]);
+        });
+        const settlement = trackSettlement(promise);
+        void promise.catch(() => undefined);
+
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(SCAN_START_TIMEOUT_MS - 1_000);
+        });
+        act(() => {
+          pipeline().retryScanStream();
+        });
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(SCAN_START_TIMEOUT_MS - 1_000);
+        });
+        expect(settlement.settled).toBe(false);
+
+        // The split bound survives the retry: a never-started run still dies on the
+        // 15s start window, not on the 5-minute progress window.
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(2_000);
+        });
+        expect(settlement.settled).toBe(true);
+        expect(machine.cancelScan).not.toHaveBeenCalled();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
   });
 
   describe('bound values', () => {

@@ -25,3 +25,11 @@ coverage
 
 # Characterization golden fixtures (byte-exact compact JSON; never Prettier-formatted)
 tests/fixtures/**/*.json
+
+# WBUX6-W4-A-01. Generated ux-map markdown: `docs/ux-maps/render_ux_maps.py` is the only
+# writer. Prettier reflows the render, the next render undoes the reflow, and the two
+# rewrite each other forever — a derived artifact gets exactly one owner (DATA-14).
+# Note the deliberate asymmetry: the sibling `*.uxmap.json` files are HAND-AUTHORED
+# sources and Prettier IS their owner, so they must stay formatted. Do not "consistently"
+# add them here.
+docs/ux-maps/*.md

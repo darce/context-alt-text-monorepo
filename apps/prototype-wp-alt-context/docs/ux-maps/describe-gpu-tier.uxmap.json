@@ -1,7 +1,7 @@
 {
   "map_ref": "describe-gpu-tier",
   "product": "alt-context WP plugin admin SPA — describe run GPU tier + lifecycle state",
-  "source_fixture": "apps/prototype-wp-alt-context/docs/ux-maps/workbench-operator-loop.uxmap.json",
+  "source_fixture": "apps/prototype-wp-alt-context/js/admin/pages/DescribeRunApplyView.tsx",
   "goals": [
     "Operator can start a bulk describe run and always see whether the GPU tier is stopped, warming, ready, or degraded (INT-10 status–predict–stop).",
     "A cold GPU start (~90–100 s measured, VLM-3B decision 2266) is a bounded, cancellable wait, never a silent hang (INT-08, CARD-09).",

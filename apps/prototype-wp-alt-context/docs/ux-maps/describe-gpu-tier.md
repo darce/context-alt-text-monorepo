@@ -1,7 +1,7 @@
 # UX Map — describe-gpu-tier
 
 **Product:** `alt-context WP plugin admin SPA — describe run GPU tier + lifecycle state`
-**Source fixture:** `apps/prototype-wp-alt-context/docs/ux-maps/workbench-operator-loop.uxmap.json`
+**Source fixture:** `apps/prototype-wp-alt-context/js/admin/pages/DescribeRunApplyView.tsx`
 
 ## Goals
 - Operator can start a bulk describe run and always see whether the GPU tier is stopped, warming, ready, or degraded (INT-10 status–predict–stop).

@@ -1,20 +1,6 @@
 #!/usr/bin/env bash
-# Characterization test for the Vault-backed OCIR credential path
-# (scripts/deploy/lib/ocir-auth.sh, OCIRV-1).
-#
-# Two things are pinned here that cannot be re-checked cheaply at deploy time:
-#   1. SECRECY -- the auth token must reach `docker login` only through
-#      --password-stdin. If a refactor ever routes it through argv (ps-visible)
-#      or a temp file, these assertions go red.
-#   2. FAILURE CLASSIFICATION -- Release It! 5.5 wants system failure reported
-#      differently from application failure. A Vault denial, a Vault timeout and
-#      an OCIR rejection each need a different fix; the previous incident burned
-#      a session on a 20-pair username matrix because they all looked alike.
-#
-# Run: bash scripts/deploy/tests/test-ocir-auth.sh
+# Executable contract tests for scripts/deploy/lib/ocir-auth.sh (OCIRV-1).
 
-# R2-11: refuse non-bash before `set -o pipefail`. dash/sh reject pipefail
-# with exit 2 and print no assertions, which a caller can misread as green.
 if [ -z "${BASH_VERSION:-}" ]; then
     echo "FAIL $0 must run under bash, not sh/dash. Example: bash $0" >&2
     exit 2
@@ -24,358 +10,359 @@ set -euo pipefail
 
 script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 lib_file="${script_dir}/../lib/ocir-auth.sh"
-if [ ! -f "$lib_file" ]; then
-    echo "FAIL ocir-auth.sh missing: ${lib_file}"
-    exit 1
-fi
-# The contract suite must be deterministic even when invoked from an operator
-# shell that exports deploy overrides. Override behaviour is exercised
-# separately below with explicit fixture values.
-unset ACX_VAULT_OCID
-unset ACX_OCIR_TOKEN_SECRET
-unset ACX_OCIR_USERNAME_SECRET
-unset ACX_REMOTE_OCI_BIN
-unset ACX_LOCAL_OCI_BIN
-unset ACX_VAULT_FETCH_TIMEOUT
+unset ACX_VAULT_OCID ACX_OCIR_TOKEN_SECRET ACX_OCIR_USERNAME_SECRET
+unset ACX_REMOTE_OCI_BIN ACX_LOCAL_OCI_BIN ACX_VAULT_FETCH_TIMEOUT
 # shellcheck source=../lib/ocir-auth.sh
 source "$lib_file"
 
 failures=0
 
+pass() { echo "ok   $1"; }
+fail() { echo "FAIL $1"; failures=$((failures + 1)); }
+
 assert_eq() {
     local label="$1" expected="$2" actual="$3"
-    if [ "$expected" = "$actual" ]; then
-        echo "ok   ${label}"
-    else
-        echo "FAIL ${label}: expected ${expected}, got ${actual}"
-        failures=$((failures + 1))
+    if [ "$expected" = "$actual" ]; then pass "$label"; else
+        fail "${label}: expected ${expected}, got ${actual}"
     fi
 }
 
 assert_contains() {
     local label="$1" needle="$2" haystack="$3"
-    case "$haystack" in
-        *"$needle"*) echo "ok   ${label}" ;;
-        *) echo "FAIL ${label}: missing '${needle}'"; failures=$((failures + 1)) ;;
-    esac
+    case "$haystack" in *"$needle"*) pass "$label" ;; *) fail "${label}: missing '${needle}'" ;; esac
 }
 
 assert_absent() {
     local label="$1" needle="$2" haystack="$3"
-    case "$haystack" in
-        *"$needle"*) echo "FAIL ${label}: unexpectedly present '${needle}'"; failures=$((failures + 1)) ;;
-        *) echo "ok   ${label}" ;;
-    esac
+    case "$haystack" in *"$needle"*) fail "${label}: unexpectedly present '${needle}'" ;; *) pass "$label" ;; esac
 }
 
-assert_file_bytes() {
-    local label="$1" file="$2" expected="$3"
-    if [ -f "$file" ] && cmp -s "$file" <(printf '%s' "$expected"); then
-        echo "ok   ${label}"
-    else
-        echo "FAIL ${label}: file bytes differ or ${file} was not created"
-        failures=$((failures + 1))
-    fi
+assert_nonzero() {
+    local label="$1" actual="$2"
+    if [ "$actual" -ne 0 ]; then pass "$label"; else fail "${label}: unexpectedly exited 0"; fi
 }
 
-# --- fetch snippet shape -----------------------------------------------------
-
-remote_fetch=$(ocir_vault_fetch_snippet '$HOME/.oci-venv/bin/oci' instance_principal OCIR_AUTH_TOKEN)
-
-assert_contains "fetch uses get-secret-bundle-by-name (runbook s4 form)" \
-    'secrets secret-bundle get-secret-bundle-by-name' "$remote_fetch"
-assert_contains "fetch threads the acx-vault OCID" \
-    "--vault-id ${ACX_VAULT_OCID}" "$remote_fetch"
-assert_contains "fetch names the secret, not an OCID (stable across rotation)" \
-    '--secret-name OCIR_AUTH_TOKEN' "$remote_fetch"
-assert_contains "fetch base64-decodes the bundle content" \
-    '| base64 -d' "$remote_fetch"
-# The VM carries no credential file; instance principal is the whole point.
-assert_contains "remote fetch uses instance_principal" \
-    '--auth instance_principal' "$remote_fetch"
-
-local_fetch=$(ocir_vault_fetch_snippet oci api_key OCIR_AUTH_TOKEN)
-assert_contains "local fetch uses the operator API key" '--auth api_key' "$local_fetch"
-assert_absent "local fetch does not claim instance principal" \
-    'instance_principal' "$local_fetch"
-
-# Supported overrides are checked in a fresh Bash process so the default-value
-# assertions below cannot accidentally depend on values inherited by the test.
-override_contract=$(
-    ACX_VAULT_OCID='ocid1.vault.oc1.iad.override' \
-    ACX_OCIR_TOKEN_SECRET='OVERRIDE_TOKEN' \
-    ACX_OCIR_USERNAME_SECRET='OVERRIDE_USERNAME' \
-    ACX_REMOTE_OCI_BIN='/opt/override/remote-oci' \
-    ACX_LOCAL_OCI_BIN='/opt/override/local-oci' \
-    ACX_VAULT_FETCH_TIMEOUT='47' \
-    bash -c '
-        source "$1"
-        printf "remote=%s\nlocal=%s\n" "$ACX_REMOTE_OCI_BIN" "$ACX_LOCAL_OCI_BIN"
-        ocir_login_snippet "$ACX_REMOTE_OCI_BIN" instance_principal override.ocir.io
-    ' _ "$lib_file"
-)
-assert_contains "vault OCID override is honored" \
-    '--vault-id ocid1.vault.oc1.iad.override' "$override_contract"
-assert_contains "username secret override is honored" \
-    '--secret-name OVERRIDE_USERNAME' "$override_contract"
-assert_contains "token secret override is honored" \
-    '--secret-name OVERRIDE_TOKEN' "$override_contract"
-assert_contains "remote OCI binary override is honored" \
-    'remote=/opt/override/remote-oci' "$override_contract"
-assert_contains "local OCI binary override is honored" \
-    'local=/opt/override/local-oci' "$override_contract"
-assert_contains "fetch timeout override is honored" \
-    'timeout 47 "$@"' "$override_contract"
-
-# --- login snippet: secrecy invariants ---------------------------------------
-
-login=$(ocir_login_snippet '$HOME/.oci-venv/bin/oci' instance_principal iad.ocir.io)
-
-assert_contains "login reads the password from stdin" '--password-stdin' "$login"
-assert_contains "login targets the requested registry" \
-    'docker login iad.ocir.io' "$login"
-
-# SECRECY: the token must never be captured into a variable, echoed, or written
-# to a file -- only piped. `-p` would put it in argv, where any user on the host
-# can read it out of ps.
-# Matched on the whole login line, not the literal 'docker login -p': the
-# registry argument sits between them, so a naive literal never fires. A
-# mutant that piped the token through `xargs -I{} docker login ... -p {}`
-# survived that weaker form.
-login_cmd=$(printf '%s' "$login" | grep -F 'docker login')
-assert_absent "token never passed via docker login -p" ' -p ' "$login_cmd"
-assert_absent "token never passed via --password=" '--password=' "$login_cmd"
-assert_absent "token never routed through xargs into argv" 'xargs' "$login_cmd"
-assert_absent "token never redirected to a file" \
-    'OCIR_AUTH_TOKEN --query' "$(printf '%s' "$login" | grep -F '>' | grep -v '>/dev/null' || true)"
-assert_absent "token never assigned to a shell variable" \
-    'acx_ocir_token=' "$login"
-assert_absent "no cached docker config dependency remains" \
-    '.docker/config.json' "$login"
-
-# The username is not a secret, so a variable is fine -- but it must be quoted,
-# or a namespace/email with shell-active characters would word-split.
-assert_contains "username expansion is quoted" \
-    '-u "${acx_ocir_user}"' "$login"
-
-# The emitted text is executed by a remote bash -s; a syntax error there would
-# surface as an opaque non-zero exit mid-deploy.
-snippet_syntax=0
-printf '%s' "$login" | bash -n 2>/dev/null || snippet_syntax=$?
-assert_eq "emitted login snippet is syntactically valid bash" "0" "$snippet_syntax"
-
-# `set -eu` (not just -e): an unset acx_ocir_user must abort rather than run
-# `docker login -u ""` and produce a confusing OCIR rejection.
-assert_contains "snippet aborts on unset vars" 'set -eu' "$login"
-
-# Text inspection is useful for spotting familiar leaks, but it cannot prove
-# the emitted program actually performs a login. Execute it with controlled
-# stand-ins for every external command and observe the process boundary.
 behavior_dir=$(mktemp -d "${TMPDIR:-/tmp}/ocir-auth-test.XXXXXX")
 trap 'rm -rf "$behavior_dir"' EXIT
 fake_bin="${behavior_dir}/bin"
-mkdir "$fake_bin"
+portable_bin="${behavior_dir}/portable-bin"
+record_dir="${behavior_dir}/records"
+test_home="${behavior_dir}/home"
+test_tmp="${behavior_dir}/tmp"
+mkdir -p "$fake_bin" "$portable_bin" "$record_dir" "$test_home" "$test_tmp"
 
 cat >"${fake_bin}/oci" <<'EOF'
-#!/usr/bin/env bash
-case " $* " in
-    *" --secret-name OCIR_USERNAME "*) printf '%s' "$OCIR_TEST_USERNAME" | base64 ;;
-    *" --secret-name OCIR_AUTH_TOKEN "*) printf '%s' "$OCIR_TEST_TOKEN" | base64 ;;
-    *) echo "unexpected fake oci arguments" >&2; exit 64 ;;
+#!/bin/bash
+set -eu
+case "${OCIR_TEST_OCI_MODE:-ok}" in
+    fail) echo 'ServiceError: forced OCI failure' >&2; exit 42 ;;
+    empty) exit 0 ;;
+    sleep) exec sleep 10 ;;
 esac
+count_file="${OCIR_TEST_RECORD_DIR}/oci.count"
+count=0
+[ ! -f "$count_file" ] || count=$(cat "$count_file")
+count=$((count + 1))
+printf '%s' "$count" >"$count_file"
+if [ "$count" -eq 1 ]; then
+    printf '%s' 'tenant/user@example.test' | base64
+else
+    # Construct the credential at runtime so no fixture file contains it.
+    printf '%s%s' 'token-with-shell-chars-' '$!*-[byte-exact]' | base64
+fi
 EOF
-cat >"${fake_bin}/timeout" <<'EOF'
-#!/usr/bin/env bash
-shift
-exec "$@"
-EOF
+
 cat >"${fake_bin}/docker" <<'EOF'
-#!/usr/bin/env bash
-: "${OCIR_TEST_DOCKER_ARGV:?}"
-: "${OCIR_TEST_DOCKER_STDIN:?}"
-printf '%s\0' "$@" >"$OCIR_TEST_DOCKER_ARGV"
-cat >"$OCIR_TEST_DOCKER_STDIN"
+#!/bin/bash
+set -eu
+: "${OCIR_TEST_RECORD_DIR:?}"
+printf '%s\0' "$@" >"${OCIR_TEST_RECORD_DIR}/docker.argv"
+env >"${OCIR_TEST_RECORD_DIR}/docker.env"
+
+# Inventory files visible before stdin is consumed. A mutant that stages the
+# token in a file is caught by its checksum even if it deletes the file later.
+: >"${OCIR_TEST_RECORD_DIR}/visible-files.cksum"
+find "${HOME}" "${TMPDIR}" -type f 2>/dev/null | while IFS= read -r file; do
+    [ "$file" = "${OCIR_TEST_RECORD_DIR}/visible-files.cksum" ] && continue
+    cksum "$file" >>"${OCIR_TEST_RECORD_DIR}/visible-files.cksum" 2>/dev/null || true
+done
+
+case "${OCIR_TEST_DOCKER_MODE:-ok}" in
+    sleep) exec sleep 10 ;;
+esac
+
+# Emulate Docker persisting auth in its configured credential directory. The
+# generated snippet must remove this even when login reports failure.
+mkdir -p "$DOCKER_CONFIG"
+token=$(cat)
+printf '{"auths":{"test":{"auth":"%s"}}}' "$token" >"${DOCKER_CONFIG}/config.json"
+printf '%s' "$token" | cksum >"${OCIR_TEST_RECORD_DIR}/docker.stdin.cksum"
+unset token
+[ "${OCIR_TEST_DOCKER_MODE:-ok}" != fail ] || exit 41
 EOF
-chmod +x "${fake_bin}/oci" "${fake_bin}/timeout" "${fake_bin}/docker"
+chmod +x "${fake_bin}/oci" "${fake_bin}/docker"
+
+# Build a PATH with exactly the commands the generated program and fakes need.
+# In particular, it deliberately has no timeout(1).
+for utility in awk base64 cat cksum env find mkdir mktemp rm sleep; do
+    utility_path=$(command -v "$utility")
+    ln -s "$utility_path" "${portable_bin}/${utility}"
+done
+ln -s "${fake_bin}/oci" "${portable_bin}/oci"
+ln -s "${fake_bin}/docker" "${portable_bin}/docker"
 
 known_user='tenant/user@example.test'
 known_token=$(printf '%s%s' 'token-with-shell-chars-' '$!*-[byte-exact]')
-behavior_login=$(ocir_login_snippet oci instance_principal iad.ocir.io)
-docker_argv="${behavior_dir}/docker.argv"
-docker_stdin="${behavior_dir}/docker.stdin"
-behavior_stderr="${behavior_dir}/snippet.stderr"
-behavior_rc=0
-PATH="${fake_bin}:${PATH}" \
-OCIR_TEST_USERNAME="$known_user" \
-OCIR_TEST_TOKEN="$known_token" \
-OCIR_TEST_DOCKER_ARGV="$docker_argv" \
-OCIR_TEST_DOCKER_STDIN="$docker_stdin" \
-bash -c "$behavior_login" 2>"$behavior_stderr" || behavior_rc=$?
-assert_eq "emitted login snippet executes successfully" "0" "$behavior_rc"
 
-if [ -f "$docker_argv" ] && cmp -s "$docker_argv" \
-    <(printf '%s\0' login iad.ocir.io -u "$known_user" --password-stdin); then
-    echo "ok   docker receives exact login registry/user/password-stdin argv"
-else
-    echo "FAIL docker receives exact login registry/user/password-stdin argv"
-    failures=$((failures + 1))
-fi
-assert_file_bytes "docker stdin equals the Vault token byte-for-byte" \
-    "$docker_stdin" "$known_token"
+reset_records() {
+    find "$record_dir" -mindepth 1 -maxdepth 1 -type f -delete
+}
 
-if [ -f "$docker_argv" ] && \
-    grep -aFq -f <(printf '%s\n' "$known_token") "$docker_argv"; then
-    echo "FAIL token never appears in docker argv"
-    failures=$((failures + 1))
-else
-    echo "ok   token never appears in docker argv"
-fi
+run_snippet() {
+    local transport="$1" snippet="$2" stderr_file="$3" trace_file="$4"
+    local rc=0
+    if [ "$transport" = c ]; then
+        HOME="$test_home" TMPDIR="$test_tmp" \
+        PATH="${fake_bin}:${PATH}" OCIR_TEST_RECORD_DIR="$record_dir" \
+        BASH_XTRACEFD=4 /bin/bash -x -c "$snippet" \
+            4>"$trace_file" 2>"$stderr_file" || rc=$?
+    else
+        HOME="$test_home" TMPDIR="$test_tmp" \
+        PATH="${fake_bin}:${PATH}" OCIR_TEST_RECORD_DIR="$record_dir" \
+        BASH_XTRACEFD=4 /bin/bash -x -s \
+            4>"$trace_file" 2>"$stderr_file" <<<"$snippet" || rc=$?
+    fi
+    return "$rc"
+}
 
-token_file_leaks=0
-for artifact in "${behavior_dir}"/* "${fake_bin}"/*; do
-    [ -f "$artifact" ] || continue
-    [ "$artifact" = "$docker_stdin" ] && continue
-    if grep -aFq -f <(printf '%s\n' "$known_token") "$artifact"; then
-        echo "FAIL token leaked to file: ${artifact}"
-        token_file_leaks=$((token_file_leaks + 1))
+# --- generated program structure --------------------------------------------
+
+login=$(ocir_login_snippet '$HOME/.oci-venv/bin/oci' instance_principal iad.ocir.io)
+behavior_login=$(ocir_login_snippet oci api_key iad.ocir.io)
+assert_contains "snippet enables pipeline failure propagation" 'set -euo pipefail' "$login"
+assert_contains "snippet uses a private Docker credential directory" 'export DOCKER_CONFIG="$ACX_OCIR_DOCKER_CONFIG"' "$login"
+assert_contains "private Docker config has an EXIT cleanup" 'trap acx_cleanup EXIT' "$login"
+assert_contains "username is a quoted data reference" '--secret-name "$ACX_OCIR_SECRET_NAME"' "$login"
+assert_contains "registry is a quoted data reference" 'login "$ACX_OCIR_REGISTRY"' "$login"
+assert_contains "username expansion is quoted" '-u "$acx_ocir_user"' "$login"
+assert_contains "password reaches Docker on stdin" '--password-stdin' "$login"
+assert_contains "OCI calls use the portable watchdog" 'acx_bounded vault "$ACX_OCIR_OCI_BIN"' "$login"
+assert_contains "Docker login uses the portable watchdog" 'acx_bounded ocir docker login' "$login"
+assert_absent "snippet does not silently depend on timeout(1)" 'command -v timeout' "$login"
+
+snippet_syntax=0
+printf '%s' "$login" | /bin/bash -n 2>/dev/null || snippet_syntax=$?
+assert_eq "emitted login snippet is valid Bash" 0 "$snippet_syntax"
+
+# --- credential confinement and cleanup -------------------------------------
+
+for docker_mode in ok fail; do
+    reset_records
+    stderr_file="${record_dir}/${docker_mode}.stderr"
+    trace_file="${record_dir}/${docker_mode}.trace"
+    behavior_rc=0
+    OCIR_TEST_DOCKER_MODE="$docker_mode" run_snippet c "$behavior_login" "$stderr_file" "$trace_file" || behavior_rc=$?
+    if [ "$docker_mode" = ok ]; then
+        if [ "$behavior_rc" -eq 0 ]; then
+            pass "${docker_mode}: generated login succeeds"
+        else
+            fail "${docker_mode}: generated login exited ${behavior_rc}: $(tr '\n' ' ' <"$stderr_file")"
+        fi
+    else
+        assert_nonzero "${docker_mode}: generated login preserves Docker failure" "$behavior_rc"
+    fi
+
+    expected_argv="${record_dir}/expected.argv"
+    printf '%s\0' login iad.ocir.io -u "$known_user" --password-stdin >"$expected_argv"
+    if cmp -s "${record_dir}/docker.argv" "$expected_argv"; then
+        pass "${docker_mode}: Docker receives exact non-secret argv"
+    else
+        fail "${docker_mode}: Docker argv differs"
+    fi
+
+    expected_cksum=$(printf '%s' "$known_token" | cksum)
+    actual_cksum=missing
+    [ ! -f "${record_dir}/docker.stdin.cksum" ] || actual_cksum=$(cat "${record_dir}/docker.stdin.cksum")
+    assert_eq "${docker_mode}: Docker stdin is the exact token" "$expected_cksum" "$actual_cksum"
+
+    if grep -aFq "$known_token" "${record_dir}/docker.argv" "${record_dir}/docker.env" "$trace_file" 2>/dev/null; then
+        fail "${docker_mode}: token leaked into argv, environment, or shell trace"
+    else
+        pass "${docker_mode}: token absent from argv, environment, and shell trace"
+    fi
+
+    if grep -Fq "${expected_cksum%% *}" "${record_dir}/visible-files.cksum" 2>/dev/null; then
+        fail "${docker_mode}: token existed in a file visible to Docker before stdin"
+    else
+        pass "${docker_mode}: token was not staged in a file"
+    fi
+
+    docker_config=$(sed -n 's/^DOCKER_CONFIG=//p' "${record_dir}/docker.env" 2>/dev/null || true)
+    case "$docker_config" in
+        "${test_tmp}"/acx-ocir-docker.*) pass "${docker_mode}: Docker uses the private config" ;;
+        *) fail "${docker_mode}: unexpected DOCKER_CONFIG ${docker_config}" ;;
+    esac
+    if [ ! -e "$docker_config" ]; then
+        pass "${docker_mode}: private Docker config removed on exit"
+    else
+        fail "${docker_mode}: private Docker config survived exit"
+    fi
+    if [ ! -e "${test_home}/.docker/config.json" ]; then
+        pass "${docker_mode}: host Docker config was never created"
+    else
+        fail "${docker_mode}: host Docker config was created"
+    fi
+    remaining_leak=$(grep -R -a -l -F "$known_token" "$test_home" "$test_tmp" "$record_dir" 2>/dev/null || true)
+    if [ -z "$remaining_leak" ]; then
+        pass "${docker_mode}: no surviving file contains the token"
+    else
+        fail "${docker_mode}: token survived in ${remaining_leak}"
     fi
 done
-assert_eq "token appears in no file except docker stdin capture" \
-    "0" "$token_file_leaks"
 
-# Delete the assignment from the generated program so acx_ocir_user is truly
-# unset at its point of use. Merely searching for `set -eu` would miss a later
-# `set +u`, while this execution proves nounset remains effective.
-unset_user_login=$(printf '%s' "$behavior_login" | sed '/^acx_ocir_user=/d')
-unset_argv="${behavior_dir}/unset-docker.argv"
-unset_stdin="${behavior_dir}/unset-docker.stdin"
-unset_stderr="${behavior_dir}/unset.stderr"
-unset_rc=0
-(
-    unset acx_ocir_user
-    PATH="${fake_bin}:${PATH}" \
-    OCIR_TEST_USERNAME="$known_user" \
-    OCIR_TEST_TOKEN="$known_token" \
-    OCIR_TEST_DOCKER_ARGV="$unset_argv" \
-    OCIR_TEST_DOCKER_STDIN="$unset_stdin" \
-    bash -c "$unset_user_login" 2>"$unset_stderr"
-) || unset_rc=$?
-if [ "$unset_rc" -ne 0 ]; then
-    echo "ok   required unset variable makes emitted snippet fail"
-else
-    echo "FAIL required unset variable makes emitted snippet fail: exit 0"
-    failures=$((failures + 1))
-fi
-if [ ! -e "$unset_argv" ] && [ ! -e "$unset_stdin" ]; then
-    echo "ok   nounset aborts before docker is invoked"
-else
-    echo "FAIL nounset aborts before docker is invoked"
-    failures=$((failures + 1))
-fi
+# --- failed and empty Vault reads -------------------------------------------
 
-# Vault calls are bounded so a hung control-plane call cannot stall the deploy;
-# `timeout` is absent on stock macOS, so it must degrade rather than hard-fail.
-assert_contains "vault fetch is time-bounded" "timeout ${ACX_VAULT_FETCH_TIMEOUT}" "$login"
-assert_contains "missing timeout(1) degrades instead of failing" \
-    'command -v timeout' "$login"
-
-# --- failure classification ---------------------------------------------------
-# Inputs are real stderr fragments from the OCI CLI and the Docker daemon.
-
-assert_eq "instance principal not in the dynamic group -> vault_denied" \
-    vault_denied \
-    "$(ocir_classify_login_failure 'ServiceError: {"status": 404, "code": "NotAuthorizedOrNotFound", "message": "Authorization failed or requested resource not found."}')"
-
-assert_eq "expired/absent signer -> vault_denied" \
-    vault_denied \
-    "$(ocir_classify_login_failure 'NotAuthenticated: The required information to complete authentication was not provided.')"
-
-assert_eq "control-plane timeout -> vault_unreachable" \
-    vault_unreachable \
-    "$(ocir_classify_login_failure 'HTTPSConnectionPool(host=secrets.vaults.us-ashburn-1.oci.oraclecloud.com): Read timed out. (read timeout=30)')"
-
-assert_eq "revoked token -> ocir_rejected" \
-    ocir_rejected \
-    "$(ocir_classify_login_failure 'Error response from daemon: login attempt to https://iad.ocir.io/v2/ failed with status: 401 Unauthorized')"
-
-assert_eq "oci-cli not installed -> oci_cli_missing" \
-    oci_cli_missing \
-    "$(ocir_classify_login_failure 'bash: line 2: /home/ubuntu/.oci-venv/bin/oci: No such file or directory')"
-
-# OCI collapses 404 and 403 into one NotAuthorizedOrNotFound code, so the code
-# alone cannot separate "the secret is missing" from "the grant is broken" --
-# and those have opposite fixes. The snippet emits a sentinel once it has
-# successfully read a secret from the vault; its presence is the disambiguator.
-# Captured live from the VM before OCIR_AUTH_TOKEN existed.
-VAULT_404='ServiceError:
-{
-    "code": "NotAuthorizedOrNotFound",
-    "message": "Authorization failed or requested resource not found.",
-    "operation_name": "get_secret_bundle_by_name",
-    "status": 404
-}'
-
-assert_eq "denial after a successful vault read -> secret_missing" \
-    secret_missing \
-    "$(ocir_classify_login_failure "acx-vault-read-ok
-${VAULT_404}")"
-
-assert_eq "same denial with no prior read -> vault_denied" \
-    vault_denied \
-    "$(ocir_classify_login_failure "${VAULT_404}")"
-
-assert_contains "secret_missing hint routes to storing a token, not to IAM" \
-    'make ocir-token-rotate' "$(ocir_login_failure_hint secret_missing)"
-assert_absent "secret_missing hint does not send the operator to audit policy" \
-    'acx-backend-secret-read' "$(ocir_login_failure_hint secret_missing)"
-
-assert_contains "login snippet emits the read-ok sentinel" \
-    'acx-vault-read-ok' "$login"
-# The sentinel must go to stderr: stdout is the token pipe into docker login.
-assert_contains "sentinel goes to stderr, not into the token pipe" \
-    "printf 'acx-vault-read-ok\\n' >&2" "$login"
-
-assert_eq "unrecognised stderr -> unknown" \
-    unknown \
-    "$(ocir_classify_login_failure 'docker: Cannot connect to the Docker daemon at unix:///var/run/docker.sock.')"
-
-# TEST-15: the classifier is ordered, and the order is load-bearing. A missing
-# binary message can also contain "not found"; if oci_cli_missing ever stops
-# winning, the operator is sent to check IAM policy for a pip problem.
-assert_eq "missing-binary wins over any later pattern" \
-    oci_cli_missing \
-    "$(ocir_classify_login_failure 'oci: command not found -- 401 Unauthorized NotAuthorizedOrNotFound')"
-
-# --- remediation hints --------------------------------------------------------
-# Each class must route somewhere different; identical hints would erase the
-# whole point of classifying.
-
-hint_denied=$(ocir_login_failure_hint vault_denied)
-hint_unreach=$(ocir_login_failure_hint vault_unreachable)
-hint_rejected=$(ocir_login_failure_hint ocir_rejected)
-hint_missing=$(ocir_login_failure_hint oci_cli_missing)
-
-assert_contains "vault_denied hint names the dynamic group" \
-    'acx-backend-dg' "$hint_denied"
-assert_contains "vault_denied hint names the policy" \
-    'acx-backend-secret-read' "$hint_denied"
-assert_contains "unreachable hint says it is transient" 'retry' "$hint_unreach"
-assert_contains "ocir_rejected hint routes to rotation" \
-    'make ocir-token-rotate' "$hint_rejected"
-assert_contains "oci_cli_missing hint gives the install line" \
-    '.oci-venv' "$hint_missing"
-
-# RLSE-11 / Release It! 5.4: the Console click-path is the failure mode this
-# work removed. Exactly one hint may mention it -- the one case where Oracle has
-# no API that returns the token. Any other Console reference is a regression
-# back to crank-turning.
-console_hints=0
-for class in vault_denied vault_unreachable ocir_rejected oci_cli_missing secret_missing unknown; do
-    case "$(ocir_login_failure_hint "$class")" in
-        *Console*) console_hints=$((console_hints + 1)) ;;
-    esac
+for oci_mode in fail empty; do
+    reset_records
+    stderr_file="${record_dir}/vault-${oci_mode}.stderr"
+    trace_file="${record_dir}/vault-${oci_mode}.trace"
+    vault_rc=0
+    OCIR_TEST_OCI_MODE="$oci_mode" run_snippet c "$behavior_login" "$stderr_file" "$trace_file" || vault_rc=$?
+    assert_nonzero "${oci_mode} Vault read fails the snippet" "$vault_rc"
+    assert_absent "${oci_mode} Vault read emits no read-ok sentinel" \
+        'acx-vault-read-ok' "$(cat "$stderr_file")"
+    if [ ! -e "${record_dir}/docker.argv" ]; then
+        pass "${oci_mode} Vault read aborts before Docker"
+    else
+        fail "${oci_mode} Vault read invoked Docker"
+    fi
 done
-assert_eq "only the revoked-token hint sends a human to the Console" "1" "$console_hints"
+
+# --- injection resistance on both transports -------------------------------
+
+injection_case() {
+    local variable="$1" transport="$2"
+    local marker="${behavior_dir}/injected-${variable}-${transport}"
+    local payload='$(touch '"$marker"')'
+    local bin=oci auth=api_key registry=iad.ocir.io snippet rc=0
+
+    ACX_VAULT_OCID='ocid1.vault.test'
+    ACX_OCIR_USERNAME_SECRET=OCIR_USERNAME
+    ACX_OCIR_TOKEN_SECRET=OCIR_AUTH_TOKEN
+    ACX_VAULT_FETCH_TIMEOUT=2
+    case "$variable" in
+        ACX_LOCAL_OCI_BIN) bin="$payload" ;;
+        ACX_REMOTE_OCI_BIN) bin="$payload" ;;
+        ACX_OCIR_USERNAME_SECRET) ACX_OCIR_USERNAME_SECRET="$payload" ;;
+        ACX_OCIR_TOKEN_SECRET) ACX_OCIR_TOKEN_SECRET="$payload" ;;
+        ACX_VAULT_FETCH_TIMEOUT) ACX_VAULT_FETCH_TIMEOUT="$payload" ;;
+        ACX_VAULT_OCID) ACX_VAULT_OCID="$payload" ;;
+        OCIR_REGISTRY) registry="$payload" ;;
+    esac
+
+    if snippet=$(ocir_login_snippet "$bin" "$auth" "$registry" 2>"${record_dir}/inject-generate.stderr"); then
+        reset_records
+        run_snippet "$transport" "$snippet" "${record_dir}/inject.stderr" "${record_dir}/inject.trace" || rc=$?
+    else
+        rc=$?
+    fi
+    [ "$rc" -ge 0 ] # execution result is irrelevant; only code execution matters.
+    if [ ! -e "$marker" ]; then
+        pass "${variable} substitution is inert via bash -${transport}"
+    else
+        fail "${variable} executed via bash -${transport}"
+    fi
+}
+
+for variable in ACX_LOCAL_OCI_BIN ACX_REMOTE_OCI_BIN ACX_OCIR_USERNAME_SECRET \
+    ACX_OCIR_TOKEN_SECRET ACX_VAULT_FETCH_TIMEOUT ACX_VAULT_OCID OCIR_REGISTRY; do
+    injection_case "$variable" c
+    injection_case "$variable" s
+done
+
+for invalid_timeout in 0 00 abc; do
+    ACX_VAULT_FETCH_TIMEOUT="$invalid_timeout"
+    invalid_stderr="${record_dir}/timeout-${invalid_timeout}.stderr"
+    invalid_rc=0
+    ocir_login_snippet oci api_key iad.ocir.io >"${record_dir}/invalid.snippet" 2>"$invalid_stderr" || invalid_rc=$?
+    assert_nonzero "timeout ${invalid_timeout} is rejected" "$invalid_rc"
+    assert_contains "timeout ${invalid_timeout} has a clear diagnostic" \
+        'must be a positive integer' "$(cat "$invalid_stderr")"
+done
+ACX_VAULT_FETCH_TIMEOUT=30
+
+# --- portable deadlines without timeout(1) ----------------------------------
+
+deadline_login=$(ACX_VAULT_FETCH_TIMEOUT=1 ocir_login_snippet oci api_key iad.ocir.io)
+if [ ! -e "${portable_bin}/timeout" ]; then pass "timeout(1) is absent from watchdog PATH"; else fail "portable PATH contains timeout"; fi
+
+reset_records
+vault_timeout_stderr="${record_dir}/vault-timeout.stderr"
+vault_started=$SECONDS
+vault_timeout_rc=0
+HOME="$test_home" TMPDIR="$test_tmp" PATH="$portable_bin" \
+OCIR_TEST_RECORD_DIR="$record_dir" OCIR_TEST_OCI_MODE=sleep \
+/bin/bash -c "$deadline_login" 2>"$vault_timeout_stderr" || vault_timeout_rc=$?
+vault_elapsed=$((SECONDS - vault_started))
+assert_nonzero "sleeping OCI is killed without timeout(1)" "$vault_timeout_rc"
+if [ "$vault_elapsed" -lt 4 ]; then pass "sleeping OCI respects the one-second deadline"; else fail "sleeping OCI ran ${vault_elapsed}s"; fi
+vault_timeout_output=$(cat "$vault_timeout_stderr")
+assert_eq "OCI watchdog failure is Vault-classified" vault_unreachable \
+    "$(ocir_classify_login_failure "$vault_timeout_output")"
+
+reset_records
+docker_timeout_stderr="${record_dir}/docker-timeout.stderr"
+docker_started=$SECONDS
+docker_timeout_rc=0
+HOME="$test_home" TMPDIR="$test_tmp" PATH="$portable_bin" \
+OCIR_TEST_RECORD_DIR="$record_dir" OCIR_TEST_DOCKER_MODE=sleep \
+/bin/bash -c "$deadline_login" 2>"$docker_timeout_stderr" || docker_timeout_rc=$?
+docker_elapsed=$((SECONDS - docker_started))
+assert_nonzero "sleeping Docker is killed without timeout(1)" "$docker_timeout_rc"
+if [ "$docker_elapsed" -lt 4 ]; then pass "sleeping Docker respects the one-second deadline"; else fail "sleeping Docker ran ${docker_elapsed}s"; fi
+docker_timeout_output=$(cat "$docker_timeout_stderr")
+assert_eq "Docker watchdog failure is OCIR-classified" ocir_unreachable \
+    "$(ocir_classify_login_failure "$docker_timeout_output")"
+
+# --- table-driven classifier and hint contract ------------------------------
+
+while IFS='|' read -r label expected probe; do
+    [ -n "$label" ] || continue
+    assert_eq "$label" "$expected" "$(ocir_classify_login_failure "$probe")"
+done <<'EOF'
+missing OCI executable names OCI|oci_cli_missing|bash: line 2: /home/ubuntu/.oci-venv/bin/oci: No such file or directory
+missing Docker executable names Docker|docker_cli_missing|bash: line 5: docker: command not found
+ssh path failure names SSH|ssh_failed|ssh: connect to host vm: No such file or directory
+missing first username secret|secret_missing|ServiceError: {"status": 404, "code": "NotAuthorizedOrNotFound", "message": "Authorization failed or requested resource not found."}
+explicit Vault access denial|vault_denied|ServiceError: {"status": 403, "code": "NotAuthorized", "message": "not authorized"}
+invalid Vault request is terminal|vault_request_failed|ServiceError: {"status": 400, "code": "InvalidParameter"}
+conflicting Vault request is terminal|vault_request_failed|ServiceError: {"status": 409, "code": "Conflict"}
+Vault throttling is transient|vault_unreachable|ServiceError: {"status": 429, "code": "TooManyRequests"}
+Vault server error is transient|vault_unreachable|ServiceError: {"status": 503, "code": "InternalError"}
+Vault read timeout is transient|vault_unreachable|HTTPSConnectionPool(host=secrets.vaults.us-ashburn-1.oci.oraclecloud.com): Read timed out. (read timeout=30)
+OCIR rejection names registry auth|ocir_rejected|Error response from daemon: login attempt to https://iad.ocir.io/v2/ failed with status: 401 Unauthorized
+unrecognized daemon error stays unknown|unknown|docker: Cannot connect to the Docker daemon at unix:///var/run/docker.sock.
+EOF
+
+assert_contains "Docker-missing hint names Docker" 'Docker CLI' \
+    "$(ocir_login_failure_hint docker_cli_missing)"
+assert_absent "Docker-missing hint does not prescribe oci-cli" 'oci-cli' \
+    "$(ocir_login_failure_hint docker_cli_missing)"
+assert_contains "terminal Vault hint says not to retry unchanged" 'non-transient' \
+    "$(ocir_login_failure_hint vault_request_failed)"
+assert_contains "transient Vault hint recommends retry" 'retry' \
+    "$(ocir_login_failure_hint vault_unreachable)"
+assert_contains "missing-secret hint includes username" 'OCIR_USERNAME' \
+    "$(ocir_login_failure_hint secret_missing)"
+assert_contains "denial hint names IAM policy" 'acx-backend-secret-read' \
+    "$(ocir_login_failure_hint vault_denied)"
+
+console_hints=0
+for class in oci_cli_missing docker_cli_missing secret_missing vault_denied \
+    vault_unreachable vault_request_failed ocir_unreachable ocir_rejected ssh_failed unknown; do
+    case "$(ocir_login_failure_hint "$class")" in *Console*) console_hints=$((console_hints + 1)) ;; esac
+done
+assert_eq "only revoked-token remediation requires the Console" 1 "$console_hints"
 
 echo
 if [ "$failures" -gt 0 ]; then

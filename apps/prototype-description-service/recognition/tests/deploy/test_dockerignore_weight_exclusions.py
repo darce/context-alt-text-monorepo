@@ -32,9 +32,7 @@ DEPLOY_SCRIPT = REPO_ROOT / "scripts" / "deploy" / "recognition-service.sh"
 # Protected weight artifact classes (single source for class identity).
 # Path-anchored ONNX is a required class but is not depth-recursive on either side
 # (LICENSE/README under that dir must remain transferrable).
-WEIGHT_EXTENSION_CLASSES: frozenset[str] = frozenset(
-    ("safetensors", "bin", "pt", "pth", "gguf", "msgpack")
-)
+WEIGHT_EXTENSION_CLASSES: frozenset[str] = frozenset(("safetensors", "bin", "pt", "pth", "gguf", "msgpack"))
 HF_SNAPSHOT_CLASS = "models--"
 ONNX_CLASS = "onnx"
 ONNX_PATTERN = "recognition/infrastructure/face_pipeline/models/*.onnx"
@@ -48,31 +46,27 @@ _DEAD_CACHE_PATTERNS = (
 _EXCLUDE_RE = re.compile(r"""--exclude=(?:'([^']+)'|"([^"]+)"|(\S+))""")
 _INCLUDE_RE = re.compile(r"""--include=(?:'([^']+)'|"([^"]+)"|(\S+))""")
 # rsync --filter='+ *.bin' / '--filter=- *.bin' (first token after = is rule).
-_FILTER_RE = re.compile(
-    r"""--filter=(?:'([^']+)'|"([^"]+)"|(\S+))"""
-)
+_FILTER_RE = re.compile(r"""--filter=(?:'([^']+)'|"([^"]+)"|(\S+))""")
 _FILES_FROM_RE = re.compile(r"""--files-from=(?:'([^']+)'|"([^"]+)"|(\S+))""")
 
 # Docker depth-recursive weight patterns: **/ + class shape.
-_DOCKER_EXT_RE = re.compile(
-    r"^\*\*/\*\.(?P<ext>safetensors|bin|pt|pth|gguf|msgpack)$"
-)
+_DOCKER_EXT_RE = re.compile(r"^\*\*/\*\.(?P<ext>safetensors|bin|pt|pth|gguf|msgpack)$")
 _DOCKER_HF_RE = re.compile(r"^\*\*/models--\*/$")
 
 # rsync depth-recursive weight patterns: no non-trailing slash (basename-any-depth).
-_RSYNC_EXT_RE = re.compile(
-    r"^\*\.(?P<ext>safetensors|bin|pt|pth|gguf|msgpack)$"
-)
+_RSYNC_EXT_RE = re.compile(r"^\*\.(?P<ext>safetensors|bin|pt|pth|gguf|msgpack)$")
 _RSYNC_HF_RE = re.compile(r"^models--\*/$")
 
 # Context-shipping rsync: SERVICE_DIR → REMOTE_BUILD_DIR (the real build-context
 # transfer). Other inert rsync calls must not satisfy the weight-exclude gate (RC6).
-_CONTEXT_RSYNC_DEST_RE = re.compile(
-    r"""["']?\$\{?SSH_TARGET\}?:\$\{?REMOTE_BUILD_DIR\}?/?["']?"""
-)
-_CONTEXT_RSYNC_SRC_RE = re.compile(
-    r"""["']?\$\{?SERVICE_DIR\}?/?["']?"""
-)
+_CONTEXT_RSYNC_DEST_RE = re.compile(r"""["']?\$\{?SSH_TARGET\}?:\$\{?(?P<dest_var>\w+)\}?/?["']?""")
+# The destination may be a per-build generation directory rather than
+# REMOTE_BUILD_DIR itself (OCIRV1-FD-01 fenced concurrent builds behind
+# `build_dir="${REMOTE_BUILD_DIR%/}-..."`). Provenance is still required: the
+# variable must be assigned from REMOTE_BUILD_DIR somewhere in the script, so an
+# rsync to an unrelated remote path still fails this gate.
+_DEST_VAR_PROVENANCE_RE_TMPL = r"""^\s*(?:local\s+)?{var}=[^\n]*\$\{{?REMOTE_BUILD_DIR"""
+_CONTEXT_RSYNC_SRC_RE = re.compile(r"""["']?\$\{?SERVICE_DIR\}?/?["']?""")
 
 
 def _iter_rsync_commands(text: str) -> list[str]:
@@ -84,13 +78,16 @@ def _iter_rsync_commands(text: str) -> list[str]:
         line = raw.rstrip()
         stripped = line.strip()
         if not in_rsync:
-            if re.search(r"(?:^|&&|;|\|)\s*rsync\b", stripped) or stripped.startswith(
-                "rsync "
-            ) or stripped == "rsync":
+            if stripped.startswith("#"):
+                continue
+            # The invocation may be wrapped (`run_with_deadline ... rsync -az ...`),
+            # so anchor on the rsync token itself and keep only what follows it.
+            start = re.search(r"\brsync\s+-", stripped)
+            if start is not None:
                 in_rsync = True
-                buf = stripped
-                if stripped.endswith("\\"):
-                    buf = stripped[:-1] + " "
+                buf = stripped[start.start() :]
+                if buf.endswith("\\"):
+                    buf = buf[:-1] + " "
                     continue
                 commands.append(buf)
                 buf = ""
@@ -113,7 +110,17 @@ def context_shipping_rsync_commands(text: str) -> list[str]:
     """Rsync invocations that ship SERVICE_DIR → REMOTE_BUILD_DIR (build context)."""
     hits: list[str] = []
     for cmd in _iter_rsync_commands(text):
-        if _CONTEXT_RSYNC_SRC_RE.search(cmd) and _CONTEXT_RSYNC_DEST_RE.search(cmd):
+        if not _CONTEXT_RSYNC_SRC_RE.search(cmd):
+            continue
+        match = _CONTEXT_RSYNC_DEST_RE.search(cmd)
+        if match is None:
+            continue
+        dest_var = match.group("dest_var")
+        if dest_var == "REMOTE_BUILD_DIR" or re.search(
+            _DEST_VAR_PROVENANCE_RE_TMPL.format(var=re.escape(dest_var)),
+            text,
+            re.MULTILINE,
+        ):
             hits.append(cmd)
     return hits
 
@@ -331,8 +338,7 @@ def test_rsync_weight_classes_are_rsync_depth_recursive() -> None:
     text = DEPLOY_SCRIPT.read_text()
     context_cmds = context_shipping_rsync_commands(text)
     assert context_cmds, (
-        "deploy script must contain a context-shipping rsync "
-        "(SERVICE_DIR → SSH_TARGET:REMOTE_BUILD_DIR)"
+        "deploy script must contain a context-shipping rsync (SERVICE_DIR → SSH_TARGET:REMOTE_BUILD_DIR)"
     )
     classes = rsync_weight_classes(text)
     missing = expected_weight_classes() - classes
@@ -343,9 +349,7 @@ def test_rsync_weight_classes_are_rsync_depth_recursive() -> None:
     )
     excludes = rsync_excludes_from_script(text)
     for ext in WEIGHT_EXTENSION_CLASSES:
-        assert f"*.{ext}" in excludes, (
-            f"context-shipping rsync must --exclude='*.{ext}'"
-        )
+        assert f"*.{ext}" in excludes, f"context-shipping rsync must --exclude='*.{ext}'"
     assert "models--*/" in excludes
     assert ONNX_PATTERN in excludes
 
@@ -357,8 +361,7 @@ def test_weight_class_sets_match_across_writers() -> None:
     assert di, "dockerignore weight class set empty"
     assert rs, "rsync weight class set empty"
     assert di == rs == expected_weight_classes(), (
-        f"class set mismatch: dockerignore={sorted(di)} rsync={sorted(rs)} "
-        f"expected={sorted(expected_weight_classes())}"
+        f"class set mismatch: dockerignore={sorted(di)} rsync={sorted(rs)} expected={sorted(expected_weight_classes())}"
     )
 
 
@@ -369,12 +372,8 @@ def test_no_rsync_exclude_begins_with_double_star_slash() -> None:
     believing it widened the guard. Under rsync rules that form is the wrong-tool
     spelling; basename-at-any-depth requires no non-trailing slash.
     """
-    bad = sorted(
-        p for p in rsync_excludes_from_script(DEPLOY_SCRIPT.read_text()) if p.startswith("**/")
-    )
-    assert not bad, (
-        f"rsync --exclude patterns must not begin with '**/' (wrong-tool Docker spelling): {bad}"
-    )
+    bad = sorted(p for p in rsync_excludes_from_script(DEPLOY_SCRIPT.read_text()) if p.startswith("**/"))
+    assert not bad, f"rsync --exclude patterns must not begin with '**/' (wrong-tool Docker spelling): {bad}"
 
 
 def test_dead_cache_dir_patterns_are_absent() -> None:
@@ -503,9 +502,7 @@ def test_parity_bites_when_dockerignore_gains_unshared_class() -> None:
 def test_parity_bites_when_rsync_has_orphan_class() -> None:
     """TEST-15: weight class only on rsync side also fails set equality."""
     di_text = "**/*.safetensors\n"
-    script_text = (
-        "rsync -az --exclude='*.safetensors' --exclude='*.pth' src/ dst/\n"
-    )
+    script_text = "rsync -az --exclude='*.safetensors' --exclude='*.pth' src/ dst/\n"
     di = docker_weight_classes(di_text)
     rs = rsync_weight_classes(script_text)
     assert rs - di == {"pth"}
@@ -548,7 +545,7 @@ def test_image_tag_derivation_mutation_would_collide(tmp_path: Path) -> None:
     a mirror asserts on its own reimplementation and stays green no matter what
     the shell does.
     """
-    assert _probe_repo_name("") .stdout.strip() != _probe_repo_name("runtime-vlm").stdout.strip(), (
+    assert _probe_repo_name("").stdout.strip() != _probe_repo_name("runtime-vlm").stdout.strip(), (
         "empty and runtime-vlm targets must not share a repository (RA-07)"
     )
 
@@ -566,9 +563,7 @@ def test_image_tag_derivation_mutation_would_collide(tmp_path: Path) -> None:
 
     collided = _probe_repo_name("runtime-vlm", script=mutant).stdout.strip()
     baseline = _probe_repo_name("", script=mutant).stdout.strip()
-    assert collided == baseline, (
-        "mutation harness is inert: dropping the -vlm suffix did not cause a collision"
-    )
+    assert collided == baseline, "mutation harness is inert: dropping the -vlm suffix did not cause a collision"
 
 
 def test_dockerignore_negation_reincludes_weight_class() -> None:
@@ -585,9 +580,7 @@ def test_dockerignore_negation_reincludes_weight_class() -> None:
     )
     classes = docker_weight_classes(body)
     assert "bin" not in classes, "later !**/*.bin must drop bin from excluded set"
-    assert "safetensors" not in classes, (
-        "later !**/*.safetensors must drop safetensors from excluded set"
-    )
+    assert "safetensors" not in classes, "later !**/*.safetensors must drop safetensors from excluded set"
     assert "pt" in classes
     # Control: mere line presence of **/*.bin would stay green under the old gate.
     lines = set(_active_dockerignore_lines(body))
@@ -607,9 +600,7 @@ def test_rsync_include_before_exclude_drops_class() -> None:
         '  "${SERVICE_DIR}/" "${SSH_TARGET}:${REMOTE_BUILD_DIR}/"\n'
     )
     classes = rsync_weight_classes(script)
-    assert "bin" not in classes, (
-        "leading --include='*.bin' must drop bin from the excluded set (rsync first-match)"
-    )
+    assert "bin" not in classes, "leading --include='*.bin' must drop bin from the excluded set (rsync first-match)"
     assert "safetensors" in classes
     # filter=+ form is the same disposition.
     filtered = (
@@ -647,10 +638,7 @@ def test_rsync_excludes_bound_to_context_shipping_invocation() -> None:
     )
     script = context + "\n" + inert
     # File-global grep would still find the excludes; context binding must not.
-    file_global = {
-        (m.group(1) or m.group(2) or m.group(3))
-        for m in _EXCLUDE_RE.finditer(script)
-    }
+    file_global = {(m.group(1) or m.group(2) or m.group(3)) for m in _EXCLUDE_RE.finditer(script)}
     assert "*.bin" in file_global, "control: whole-file grep would stay green"
     context_excludes = set()
     for cmd in context_shipping_rsync_commands(script):

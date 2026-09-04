@@ -18,6 +18,7 @@
 
 ROOT_MAKEFILE := $(abspath $(lastword $(MAKEFILE_LIST)))
 ROOT_MAKEFILE_DIR := $(patsubst %/,%,$(dir $(ROOT_MAKEFILE)))
+OCIRV1_PYTHON_FILES := scripts/deploy scripts/test_deploy_workflow_gate.py scripts/test_ocirv1_vault_readiness.py scripts/test_shell_parses_under_system_bash.py
 
 # Scorer 0/1/2/3 contract shared with scripts/eval_exit_contract.py.
 # GNU Make still collapses every failed recipe to process exit 2.
@@ -509,11 +510,11 @@ lint-dashboard-txt:
 # See scripts/_task_start_inline.py and scripts/_task_finish_inline.py
 # for the canonical pattern.
 lint-scripts:
-	@python3 scripts/hooks/lint-no-inline-python-heredoc.py
-	@python3 scripts/hooks/lint-expected-revision.py
+	@if [ -d scripts/hooks ]; then python3 scripts/hooks/lint-no-inline-python-heredoc.py; fi
+	@if [ -d scripts/hooks ]; then python3 scripts/hooks/lint-expected-revision.py; fi
 	@python3 scripts/check_published_head_sha.py
-	@ruff check infra/oci scripts/gpu_burst_smoke.py scripts/gpu_spike_bench.py scripts/test_gpu_burst_smoke.py scripts/test_gpu_spike_bench.py
-	@ruff format --check infra/oci scripts/gpu_burst_smoke.py scripts/gpu_spike_bench.py scripts/test_gpu_burst_smoke.py scripts/test_gpu_spike_bench.py
+	@ruff check infra/oci scripts/gpu_burst_smoke.py scripts/gpu_spike_bench.py scripts/test_gpu_burst_smoke.py scripts/test_gpu_spike_bench.py $(OCIRV1_PYTHON_FILES)
+	@ruff format --check infra/oci scripts/gpu_burst_smoke.py scripts/gpu_spike_bench.py scripts/test_gpu_burst_smoke.py scripts/test_gpu_spike_bench.py $(OCIRV1_PYTHON_FILES)
 
 # MAINT-FB-B-05: validate every workbay-overrides/*/overrides.lock.json
 # component upstream_digest against the materialized upstream base copy
@@ -547,12 +548,17 @@ test-scripts:
 		scripts/train/occlusion/test_equivalence_claims.py \
 		scripts/train/occlusion/test_mutation_guard_env.py \
 		scripts/test_acx_backend_image_contract.py \
+		scripts/test_deploy_workflow_gate.py \
+		scripts/test_ocirv1_vault_readiness.py \
+		scripts/test_shell_parses_under_system_bash.py \
 		scripts/test_gpu_burst_smoke.py scripts/test_gpu_spike_bench.py; \
 	if [ -d scripts/hooks ] && [ -d .github/hooks ] && [ -d scripts/consumer-hooks/git ]; then \
 		set -- scripts/hooks .github/hooks scripts/test_php_characterization_gate.py "$$@"; \
 	fi; \
 	python3 -m pytest "$$@" -q --tb=short --durations=25 || status=$$?; \
 	bash scripts/deploy/tests/test-smoke-gate.sh || status=$$?; \
+	bash scripts/deploy/tests/test-ocir-auth.sh || status=$$?; \
+	bash scripts/deploy/tests/test-ocir-rotate.sh || status=$$?; \
 	bash scripts/deploy/tests/test-check-gpu-snapshots.sh || status=$$?; \
 	$(MAKE) test-vm-scripts || status=$$?; \
 	exit "$$status"
@@ -612,13 +618,23 @@ test-overrides-digest:
 # Run unit tests for scripts/hooks and .github/hooks.
 # Addresses AHMCP-14-BR-02: hook tests were not reachable via package Makefiles.
 test-hooks:
-	@python3 -m pytest scripts/hooks .github/hooks scripts/test_php_characterization_gate.py -q --tb=short
+	@python3 -m pytest $(wildcard scripts/hooks .github/hooks) scripts/test_php_characterization_gate.py -q --tb=short
 
 # E15-31B: deploy-contract guard — prod deploys/systemd restarts must install
 # and retain the /admin compose overlay. Covered by test-scripts in check-all.
+# OCIRV-1: land a freshly minted OCI auth token in acx-vault and prove both
+# hosts authenticate from it. The only remaining human step in the OCIR
+# credential lifecycle -- Oracle has no API that returns a token's secret.
+# The token is read from stdin, never from argv or a file.
+.PHONY: ocir-token-rotate
+ocir-token-rotate:
+	@bash scripts/deploy/ocir-token-rotate.sh $(OCIR_ROTATE_ARGS)
+
 test-deploy-contract:
-	@python3 -m pytest scripts/test_e15_31_admin_deploy_contract.py scripts/test_e15_33_deploy_convergence.py scripts/test_e15_33_boot_smoke.py -q --tb=short
+	@python3 -m pytest scripts/test_e15_31_admin_deploy_contract.py scripts/test_e15_33_deploy_convergence.py scripts/test_e15_33_boot_smoke.py scripts/test_deploy_workflow_gate.py scripts/test_ocirv1_vault_readiness.py -q --tb=short
 	@bash scripts/deploy/tests/test-smoke-gate.sh
+	@bash scripts/deploy/tests/test-ocir-auth.sh
+	@bash scripts/deploy/tests/test-ocir-rotate.sh
 	@bash scripts/deploy/tests/test-check-gpu-snapshots.sh
 
 # GPUUX-1: narrow, gate-reachable slice of the GPU lifecycle suite. test-vlm3
@@ -688,6 +704,9 @@ install-git-hooks:
 # TypeScript/JS: npm run lint:fix + npm run format:fix
 # PHP: composer cs-fix
 format-all:
+	@echo "=== Formatting deploy gate Python ==="
+	@ruff check --fix --unsafe-fixes $(OCIRV1_PYTHON_FILES)
+	@ruff format $(OCIRV1_PYTHON_FILES)
 	@echo "=== Formatting codex-subagent-bridge ==="
 	@$(MAKE) -C packages/codex-subagent-bridge format-bridge
 	@echo "=== Formatting description-service ==="

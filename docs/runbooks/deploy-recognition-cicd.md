@@ -7,18 +7,28 @@ tailnet as an ephemeral node and runs the existing
 the script remains the single source of truth for build → OCIR push → systemd
 restart → `/health` verify.
 
-**Why this shape (free, reliable):** the VM builds and pushes to OCIR with its
-own cached credential, so CI carries **no Docker and no OCIR secrets** — only
-tailnet reachability + an SSH deploy key. GitHub Actions + Tailscale both run on
-free tiers.
+**Why this shape (free, reliable):** the VM builds and pushes to OCIR after its
+instance principal fetches the credential from `acx-vault`, so CI carries **no
+Docker and no OCIR secrets** — only tailnet reachability + an SSH deploy key.
+GitHub Actions + Tailscale both run on free tiers.
 
 ## Trigger policy
 
 | Event | Environment | Gate |
 | --- | --- | --- |
-| Push to `main` (touching `apps/prototype-description-service/**`, `scripts/deploy/**`, or this workflow) | `dev` | none (continuous) |
-| Manual **Run workflow** → `staging` | `staging` | GitHub Environment (optional reviewer) |
-| Manual **Run workflow** → `prod` | `prod` | Must type **`confirm=PROMOTE`** in the dispatch form (workflow gate) + `main`-only deployment branch; script also enforces `CONFIRM=PROMOTE` |
+| Push to `main` (touching service, deploy, deploy-test, Makefile, or workflow paths) | `dev` | Deploy-contract test gate |
+| Manual **Run workflow** → `staging` | `staging` | Deploy-contract test gate + GitHub Environment (optional reviewer) |
+| Manual **Run workflow** → `prod` | `prod` | Deploy-contract test gate + **`confirm=PROMOTE`** in the dispatch form + `main`-only deployment branch; script also enforces `CONFIRM=PROMOTE` |
+
+## Test gate
+
+Every automatic or manually dispatched deployment first runs
+`make test-deploy-contract` in an isolated GitHub Actions job with Python 3.12.
+The gate installs only `pytest` and `pyyaml`; it uses no deployment environment,
+tailnet connection, Docker daemon, or secrets. The deploy job starts only after
+that command succeeds. Changes to `scripts/test_ocirv1_vault_readiness.py`,
+`scripts/deploy/tests/**`, or the root `Makefile` trigger the workflow so edits
+to the gate's test inputs prove the documented command still passes.
 
 ## One-time setup
 
@@ -35,15 +45,19 @@ tailnet uses the **grants** policy model (not the legacy `acls` key).
     "tag:ci":     ["autogroup:admin"]
   }
   ```
-  **Connectivity:** if the policy still has the default allow-all grant
-  (`{"src":["*"],"dst":["*"],"ip":["*"]}`), `tag:ci` can already reach the VM on
-  `:22` — no grant edit needed. If/when you tighten that wildcard, add an
-  explicit least-privilege grant instead:
+  **Connectivity:** add the least-privilege grant as part of this setup step —
+  it is not an optional later tightening:
   ```jsonc
   "grants": [
     { "src": ["tag:ci"], "dst": ["tag:oci-vm"], "ip": ["tcp:22"] }
   ]
   ```
+  A default allow-all grant (`{"src":["*"],"dst":["*"],"ip":["*"]}`) does make
+  the deploy work without this edit, and that is exactly the problem: the CI
+  OAuth identity's blast radius then covers every port on every node in the
+  tailnet, not TCP/22 on the deployment VM. Remove the wildcard, or record the
+  accepted blast radius explicitly. Leaving it in place unexamined is not a
+  default this runbook endorses.
 - **OAuth client** (*Settings → OAuth clients → Generate OAuth client*): scope
   **Auth Keys / `auth_keys` = Write**, and assign tag **`tag:ci`**. Copy the
   client **ID** and **secret** (secret shown once). The GitHub Action uses this
@@ -89,15 +103,25 @@ prod can only deploy from `main`).
 ### 5. VM prerequisites (already true post-secrets-consolidation)
 
 - Docker running; user in the `docker` group.
-- Cached OCIR credential: `docker login iad.ocir.io -u 'idu2kqqe2jxy/<email>'`
-  (paste an OCI auth token) — the script's remote-build push reuses it.
+- OCI CLI installed at `~/.oci-venv/bin/oci`.
+- Instance `acx-backend-dg` covered by policy `acx-backend-secret-read`, with
+  `SECRET_BUNDLE_READ` access to `acx-vault`.
+- Active `OCIR_USERNAME` and `OCIR_AUTH_TOKEN` secret versions in `acx-vault`.
+  Bootstrap or rotate them from an operator laptop with an OCI API-key profile:
+  ```bash
+  scripts/deploy/ocir-token-rotate.sh --set-username 'idu2kqqe2jxy/<email>'
+  ```
+  Later token-only rotations use `scripts/deploy/ocir-token-rotate.sh`. The
+  helper stores the token in Vault and verifies both laptop and VM login paths;
+  do not pre-seed a cached Docker login on either host.
 
 ## Operating the pipeline
 
 - **Deploy dev**: merge/push to `main` — the workflow runs automatically.
 - **Deploy staging/prod**: *Actions → Deploy recognition service → Run workflow*
-  → pick the environment. `prod` waits for the required-reviewer approval, then
-  the script's `CONFIRM=PROMOTE` gate + boot-smoke + `/health` verify run.
+  → pick the environment. On the private Free-plan repository, `prod` is gated
+  by typing `PROMOTE`; there is no required-reviewer pause. The script's own
+  `CONFIRM=PROMOTE` check, boot-smoke, and `/health` verification then run.
 - **Verify**: the script fails closed — it GETs `/health` and compares
   `commit_sha` to the deployed ref (retries for warm-up). A green run means the
   running service is at that SHA.
@@ -108,9 +132,9 @@ Roll back by re-pointing the tag to a known-good image (no rebuild) or
 redeploying a prior SHA:
 ```bash
 # fastest: retag the last-good image on OCIR + restart + verify
-scripts/deploy/recognition-service.sh promote staging prod   # CONFIRM=PROMOTE for prod
+CONFIRM=PROMOTE scripts/deploy/recognition-service.sh promote staging prod
 # or redeploy a specific commit
-GIT_REF=<good-sha> REMOTE_BUILD=1 scripts/deploy/recognition-service.sh deploy prod   # CONFIRM=PROMOTE
+CONFIRM=PROMOTE GIT_REF=<good-sha> REMOTE_BUILD=1 scripts/deploy/recognition-service.sh deploy prod
 ```
 The same `promote`/`GIT_REF` levers are available by dispatching the workflow
 from an older commit.

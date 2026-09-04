@@ -51,6 +51,10 @@ concurrency:
 permissions:
   contents: read
 
+defaults:
+  run:
+    shell: bash --noprofile --norc -eo pipefail {0}
+
 jobs:
   gate:
     runs-on: ubuntu-latest
@@ -76,9 +80,6 @@ jobs:
     # One hung step must not hold the serialized per-env lane for GitHub's 6h
     # default (REMOTE_BUILD deploys take longer than the demo's).
     timeout-minutes: 45
-    defaults:
-      run:
-        shell: bash --noprofile --norc -eo pipefail {0}
     # push -> 'dev'; dispatch -> chosen env. The environments retain deployment
     # history; private Free-plan repos cannot configure required reviewers.
     environment: ${{ github.event.inputs.environment || 'dev' }}

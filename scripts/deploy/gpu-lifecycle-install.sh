@@ -25,7 +25,68 @@
 set -euo pipefail
 
 verify_gpu_lifecycle_timers() {
-    local timer
+    [ "$#" -eq 5 ] || {
+        echo "error: effective-unit verification requires four expected hashes and max lease" >&2
+        return 2
+    }
+    local expected_start_service_hash=$1 expected_start_timer_hash=$2
+    local expected_reap_service_hash=$3 expected_reap_timer_hash=$4
+    local expected_max_lease=$5 effective_unit_dir expected_env_file
+    local unit expected_hash fragment_path drop_in_paths effective_hash exec_start timer
+    effective_unit_dir="${ACX_EFFECTIVE_SYSTEMD_DIR:-/etc/systemd/system}"
+    expected_env_file="${ACX_EXPECTED_ENV_FILE:-/etc/acx/gpu-lifecycle.env}"
+
+    for unit in \
+        acx-gpu-start.service acx-gpu-start.timer \
+        acx-gpu-reap.service acx-gpu-reap.timer; do
+        case "$unit" in
+            acx-gpu-start.service) expected_hash=$expected_start_service_hash ;;
+            acx-gpu-start.timer) expected_hash=$expected_start_timer_hash ;;
+            acx-gpu-reap.service) expected_hash=$expected_reap_service_hash ;;
+            acx-gpu-reap.timer) expected_hash=$expected_reap_timer_hash ;;
+        esac
+        fragment_path=$(systemctl show "$unit" --property=FragmentPath --value) || {
+            echo "error: could not resolve the effective fragment for $unit" >&2
+            return 1
+        }
+        if [ "$fragment_path" != "${effective_unit_dir}/${unit}" ]; then
+            echo "error: $unit effective fragment is unexpected: ${fragment_path:-<empty>}" >&2
+            return 1
+        fi
+        drop_in_paths=$(systemctl show "$unit" --property=DropInPaths --value) || {
+            echo "error: could not inspect drop-ins for $unit" >&2
+            return 1
+        }
+        if [ -n "$drop_in_paths" ]; then
+            echo "error: $unit has unexpected effective drop-ins: $drop_in_paths" >&2
+            return 1
+        fi
+        effective_hash=$(sha256sum "$fragment_path" | awk '{print $1}') || {
+            echo "error: could not hash the effective fragment for $unit" >&2
+            return 1
+        }
+        if [ "$effective_hash" != "$expected_hash" ]; then
+            echo "error: $unit effective content does not match this release" >&2
+            return 1
+        fi
+    done
+
+    exec_start=$(systemctl show acx-gpu-reap.service --property=ExecStart --value) || {
+        echo "error: could not inspect the effective acx-gpu-reap.service ExecStart" >&2
+        return 1
+    }
+    case "$exec_start" in
+        *"--mode reap"*"--max-lease-seconds"*'${MAX_LEASE_SECONDS}'*) ;;
+        *)
+            echo "error: effective acx-gpu-reap.service lacks the max-lease argument" >&2
+            return 1
+            ;;
+    esac
+    grep -Fqx "MAX_LEASE_SECONDS=${expected_max_lease}" "$expected_env_file" || {
+        echo "error: effective reaper max lease is not ${expected_max_lease}s" >&2
+        return 1
+    }
+
     for timer in acx-gpu-start.timer acx-gpu-reap.timer; do
         systemctl is-enabled --quiet "$timer" || {
             echo "error: $timer is not enabled" >&2
@@ -44,7 +105,13 @@ verify_gpu_lifecycle_timers() {
 # shipped to and run on the host.
 if [ "${1:-}" = "--verify-systemd-only" ]; then
     [ "$#" -eq 1 ] || { echo "error: --verify-systemd-only accepts no arguments" >&2; exit 2; }
-    verify_gpu_lifecycle_timers
+    expected_unit_dir="${ACX_EXPECTED_SYSTEMD_DIR:-/etc/systemd/system}"
+    verify_gpu_lifecycle_timers \
+        "$(sha256sum "${expected_unit_dir}/acx-gpu-start.service" | awk '{print $1}')" \
+        "$(sha256sum "${expected_unit_dir}/acx-gpu-start.timer" | awk '{print $1}')" \
+        "$(sha256sum "${expected_unit_dir}/acx-gpu-reap.service" | awk '{print $1}')" \
+        "$(sha256sum "${expected_unit_dir}/acx-gpu-reap.timer" | awk '{print $1}')" \
+        "${ACX_EXPECTED_MAX_LEASE_SECONDS:?ACX_EXPECTED_MAX_LEASE_SECONDS is required}"
     exit $?
 fi
 
@@ -175,9 +242,45 @@ if [ -z "$READY_URL" ]; then
     echo "error: READY_URL (--ready-url) is required; provide the GPU service readiness endpoint" >&2
     exit 2
 fi
-ready_url_pattern='^https?://[A-Za-z0-9._~:/?#@%+,={}-]+$'
+# Parse the authority instead of accepting any character soup after ``http://``.
+# In particular, ``http:///health`` has a scheme and path but no host.
+case "$READY_URL" in
+    http://*) ready_url_remainder=${READY_URL#http://} ;;
+    https://*) ready_url_remainder=${READY_URL#https://} ;;
+    *)
+        echo "error: READY_URL (--ready-url) must use http or https" >&2
+        exit 2
+        ;;
+esac
+ready_url_pattern='^https?://[][A-Za-z0-9._~:/?#%+,={}-]+$'
 if [[ ! "$READY_URL" =~ $ready_url_pattern ]]; then
-    echo "error: READY_URL (--ready-url) must be an http(s) URL without whitespace or shell metacharacters" >&2
+    echo "error: READY_URL (--ready-url) contains whitespace or shell metacharacters" >&2
+    exit 2
+fi
+ready_url_authority=${ready_url_remainder%%[/?#]*}
+if [ -z "$ready_url_authority" ] || [[ "$ready_url_authority" == *@* ]]; then
+    echo "error: READY_URL (--ready-url) must contain a non-empty hostname without userinfo" >&2
+    exit 2
+fi
+ready_url_port=""
+if [[ "$ready_url_authority" =~ ^\[([0-9A-Fa-f:.]+)\](:([0-9]+))?$ ]]; then
+    ready_url_hostname=${BASH_REMATCH[1]}
+    ready_url_port=${BASH_REMATCH[3]:-}
+elif [[ "$ready_url_authority" =~ ^([A-Za-z0-9][A-Za-z0-9.-]*)(:([0-9]+))?$ ]]; then
+    ready_url_hostname=${BASH_REMATCH[1]}
+    ready_url_port=${BASH_REMATCH[3]:-}
+else
+    echo "error: READY_URL (--ready-url) has a malformed hostname or port" >&2
+    exit 2
+fi
+if [ -z "$ready_url_hostname" ]; then
+    echo "error: READY_URL (--ready-url) must contain a non-empty hostname" >&2
+    exit 2
+fi
+if [ -n "$ready_url_port" ] \
+    && { ! [ "$ready_url_port" -ge 1 ] 2>/dev/null \
+        || ! [ "$ready_url_port" -le 65535 ] 2>/dev/null; }; then
+    echo "error: READY_URL (--ready-url) port must be between 1 and 65535" >&2
     exit 2
 fi
 
@@ -206,12 +309,16 @@ echo "gpu instance: ${GPU_INSTANCE_NAME} (...${GPU_INSTANCE_ID: -12})"
 echo "OCID source:  ${gpu_instance_id_source}"
 echo "max lease:    ${MAX_LEASE_SECONDS}s   idle: ${IDLE_SECONDS}s"
 
-release_id=$(
+release_id=$({
     for source_path in "${repo_root}"/infra/oci/gpu_lifecycle/*.py; do
         printf '%s %s\n' "${source_path#"${repo_root}/"}" \
             "$(git -C "$repo_root" hash-object "$source_path")"
-    done | git -C "$repo_root" hash-object --stdin
-)
+    done
+    printf 'installer %s\n' "$(git -C "$repo_root" hash-object "$0")"
+    printf 'instance=%s\nmax=%s\nidle=%s\nready=%s\nstart=%s\nreap=%s\ngrace=%s\ndeployments=%s\n' \
+        "$GPU_INSTANCE_ID" "$MAX_LEASE_SECONDS" "$IDLE_SECONDS" "$READY_URL" \
+        "$START_INTERVAL" "$REAP_INTERVAL" "$LOAD_STALE_GRACE_SECONDS" "$LOAD_ENVIRONMENTS"
+} | git -C "$repo_root" hash-object --stdin)
 remote_release="/opt/acx-gpu/releases/${release_id}"
 remote_stage="/opt/acx-gpu/releases/.staging-${release_id}"
 
@@ -265,7 +372,7 @@ fi
 # switched only after the content-addressed staged release imports successfully;
 # older release directories remain available for rollback.
 run_with_deadline "remote release staging" \
-    ssh "${SSH_OPTIONS[@]}" -l "$SSH_USER" -- "$HOST" "set -eu
+    ssh "${SSH_OPTIONS[@]}" -l "$SSH_USER" -- "$HOST" "set -euo pipefail
 sudo mkdir -p '${remote_stage}/infra/oci/gpu_lifecycle' /etc/acx
 sudo chown -R ubuntu:ubuntu /opt/acx-gpu
 find '${remote_stage}/infra/oci/gpu_lifecycle' -mindepth 1 -maxdepth 1 -delete
@@ -275,29 +382,62 @@ run_with_deadline "GPU lifecycle module copy" \
         "${repo_root}"/infra/oci/gpu_lifecycle/*.py \
         "${HOST}:${remote_stage}/infra/oci/gpu_lifecycle/"
 run_with_deadline "remote release validation and switch" \
-    ssh "${SSH_OPTIONS[@]}" -l "$SSH_USER" -- "$HOST" "set -eu
+    ssh "${SSH_OPTIONS[@]}" -l "$SSH_USER" -- "$HOST" "set -euo pipefail
 PYTHONPATH='${remote_stage}' python3 -c 'import infra.oci.gpu_lifecycle.reaper'
 if [ -e '${remote_release}' ]; then
     sudo rm -rf '${remote_stage}'
 else
     sudo mv '${remote_stage}' '${remote_release}'
 fi
+previous_release=\$(readlink -f /opt/acx-gpu/current 2>/dev/null || true)
+if [ -n "\$previous_release" ] && [ "\$previous_release" != '${remote_release}' ] \
+    && [ -d "\$previous_release" ]; then
+    # Upgrade older releases into rollback-capable generations before changing
+    # the live symlink. Never overwrite an existing release snapshot.
+    if [ ! -d "\$previous_release/systemd" ]; then
+        sudo mkdir -p "\$previous_release/systemd"
+        sudo cp /etc/acx/gpu-lifecycle.env "\$previous_release/systemd/gpu-lifecycle.env"
+        sudo cp /etc/tmpfiles.d/acx-gpu.conf "\$previous_release/systemd/acx-gpu.conf"
+        for unit in acx-gpu-start.service acx-gpu-start.timer acx-gpu-reap.service acx-gpu-reap.timer; do
+            sudo cp "/etc/systemd/system/\$unit" "\$previous_release/systemd/\$unit"
+        done
+        sudo chmod 0644 "\$previous_release/systemd/"*
+    fi
+    ln -sfn "\$previous_release" '/opt/acx-gpu/.previous-${release_id}'
+    sudo mv -Tf '/opt/acx-gpu/.previous-${release_id}' /opt/acx-gpu/previous
+fi
 ln -sfn '${remote_release}' '/opt/acx-gpu/.current-${release_id}'
 sudo mv -Tf '/opt/acx-gpu/.current-${release_id}' /opt/acx-gpu/current"
 
 # --- install units -----------------------------------------------------------
+verification_function=$(declare -f verify_gpu_lifecycle_timers)
 run_with_deadline "systemd unit installation" \
-    ssh "${SSH_OPTIONS[@]}" -l "$SSH_USER" -- "$HOST" "set -eu
-sudo tee /etc/acx/gpu-lifecycle.env >/dev/null <<ENV
+    ssh "${SSH_OPTIONS[@]}" -l "$SSH_USER" -- "$HOST" "set -euo pipefail
+${verification_function}
+start_timer_armed=0
+cleanup_unverified_start_timer() {
+    status=\$?
+    if [ "\$status" -ne 0 ] && [ "\$start_timer_armed" -eq 1 ]; then
+        echo 'error: lifecycle verification failed; disabling acx-gpu-start.timer' >&2
+        if ! sudo systemctl disable --now acx-gpu-start.timer; then
+            echo 'error: failed to disable acx-gpu-start.timer during cleanup' >&2
+        fi
+    fi
+    exit "\$status"
+}
+trap cleanup_unverified_start_timer EXIT
+sudo mkdir -p '${remote_release}/systemd'
+sudo tee '${remote_release}/systemd/gpu-lifecycle.env' >/dev/null <<ENV
 GPU_INSTANCE_ID=${GPU_INSTANCE_ID}
 MAX_LEASE_SECONDS=${MAX_LEASE_SECONDS}
 IDLE_SECONDS=${IDLE_SECONDS}
 ACX_DESCRIBE_LOAD_STALE_GRACE_SECONDS=${LOAD_STALE_GRACE_SECONDS}
 READY_URL=${READY_URL}
 ENV
-sudo chmod 0644 /etc/acx/gpu-lifecycle.env
+sudo chmod 0644 '${remote_release}/systemd/gpu-lifecycle.env'
 
-sudo tee /etc/systemd/system/acx-gpu-start.service >/dev/null <<UNIT
+sudo tee /etc/systemd/system/acx-gpu-start.service \
+    '${remote_release}/systemd/acx-gpu-start.service' >/dev/null <<UNIT
 [Unit]
 Description=ACX burst GPU start-on-demand (START when describe work is waiting)
 After=network-online.target
@@ -319,7 +459,8 @@ WorkingDirectory=/opt/acx-gpu/current
 ExecStart=/usr/bin/python3 -m infra.oci.gpu_lifecycle --mode start --instance-id \\\${GPU_INSTANCE_ID} --load-dir /run/acx-write --load-stale-grace-seconds \\\${ACX_DESCRIBE_LOAD_STALE_GRACE_SECONDS} --gpu-state-json /run/acx/gpu-state.json --running-since-path /run/acx-gpu/running-since.json --probe-oci --oci-bin /home/ubuntu/.oci-venv/bin/oci --ready-url \\\${READY_URL}
 UNIT
 
-sudo tee /etc/systemd/system/acx-gpu-start.timer >/dev/null <<UNIT
+sudo tee /etc/systemd/system/acx-gpu-start.timer \
+    '${remote_release}/systemd/acx-gpu-start.timer' >/dev/null <<UNIT
 [Unit]
 Description=Poll describe load and start the burst GPU
 
@@ -332,7 +473,8 @@ AccuracySec=5s
 WantedBy=timers.target
 UNIT
 
-sudo tee /etc/systemd/system/acx-gpu-reap.service >/dev/null <<UNIT
+sudo tee /etc/systemd/system/acx-gpu-reap.service \
+    '${remote_release}/systemd/acx-gpu-reap.service' >/dev/null <<UNIT
 [Unit]
 Description=ACX burst GPU reaper (STOP on drain; forced STOP at the max lease)
 After=network-online.target
@@ -352,7 +494,8 @@ WorkingDirectory=/opt/acx-gpu/current
 ExecStart=/usr/bin/python3 -m infra.oci.gpu_lifecycle --mode reap --instance-id \\\${GPU_INSTANCE_ID} --load-dir /run/acx-write --load-stale-grace-seconds \\\${ACX_DESCRIBE_LOAD_STALE_GRACE_SECONDS} --gpu-state-json /run/acx/gpu-state.json --running-since-path /run/acx-gpu/running-since.json --idle-seconds \\\${IDLE_SECONDS} --max-lease-seconds \\\${MAX_LEASE_SECONDS} --fence-delay-seconds 2 --probe-oci --oci-bin /home/ubuntu/.oci-venv/bin/oci
 UNIT
 
-sudo tee /etc/systemd/system/acx-gpu-reap.timer >/dev/null <<UNIT
+sudo tee /etc/systemd/system/acx-gpu-reap.timer \
+    '${remote_release}/systemd/acx-gpu-reap.timer' >/dev/null <<UNIT
 [Unit]
 Description=Run the ACX burst GPU reaper every ${REAP_INTERVAL}
 
@@ -383,29 +526,44 @@ sudo chmod 0600 /run/acx/gpu-state.json.lock
 # /run is tmpfs: recreate the directory on every boot, or the bind mount comes
 # back root-owned and the container-side writer fails silently. Pre-create the
 # state lock too, so no process umask decides its ownership or mode.
-sudo tee /etc/tmpfiles.d/acx-gpu.conf >/dev/null <<'TMPF'
+sudo tee '${remote_release}/systemd/acx-gpu.conf' >/dev/null <<'TMPF'
 d /run/acx 0755 ubuntu ubuntu -
 d /run/acx-write 0775 root 10001 -
 ${TMPFILES_ENVIRONMENT_ENTRIES}
 f /run/acx/gpu-state.json.lock 0600 ubuntu ubuntu -
 TMPF
 
+# Install from the release snapshot rather than hashing files after they are
+# live. Effective-fragment hashes below therefore compare staged expectations
+# with independently installed files.
+sudo install -m 0644 '${remote_release}/systemd/gpu-lifecycle.env' /etc/acx/gpu-lifecycle.env
+sudo install -m 0644 '${remote_release}/systemd/acx-gpu.conf' /etc/tmpfiles.d/acx-gpu.conf
+for unit in acx-gpu-start.service acx-gpu-start.timer acx-gpu-reap.service acx-gpu-reap.timer; do
+    sudo install -m 0644 "${remote_release}/systemd/\$unit" "/etc/systemd/system/\$unit"
+done
+sudo chmod 0644 '${remote_release}/systemd/'*
+expected_start_service_hash=\$(sha256sum '${remote_release}/systemd/acx-gpu-start.service' | awk '{print \$1}')
+expected_start_timer_hash=\$(sha256sum '${remote_release}/systemd/acx-gpu-start.timer' | awk '{print \$1}')
+expected_reap_service_hash=\$(sha256sum '${remote_release}/systemd/acx-gpu-reap.service' | awk '{print \$1}')
+expected_reap_timer_hash=\$(sha256sum '${remote_release}/systemd/acx-gpu-reap.timer' | awk '{print \$1}')
+
 sudo systemctl daemon-reload
 sudo systemctl enable --now acx-gpu-reap.timer
 # Prove the cost backstop synchronously before scheduling anything capable of
 # starting the GPU. acx-gpu-reap.service can only observe or STOP an instance.
 sudo systemctl start acx-gpu-reap.service
+start_timer_armed=1
 sudo systemctl enable --now acx-gpu-start.timer
+verify_gpu_lifecycle_timers \
+    "\$expected_start_service_hash" "\$expected_start_timer_hash" \
+    "\$expected_reap_service_hash" "\$expected_reap_timer_hash" \
+    '${MAX_LEASE_SECONDS}'
 echo '--- installed timers ---'
-systemctl list-timers --all --no-pager | grep acx-gpu || true
+if ! systemctl list-timers --all --no-pager | grep acx-gpu; then
+    echo 'warning: installed timers were verified but list-timers diagnostic was empty' >&2
+fi
+start_timer_armed=0
+trap - EXIT
 "
-
-# A successful copy is not a successful deploy unless both cost-control timers
-# are enabled and currently scheduled. Keep this a separate, bounded transport
-# so its exit status cannot be hidden by the informational list-timers grep.
-printf -v verification_script '%s\nverify_gpu_lifecycle_timers\n' \
-    "$(declare -f verify_gpu_lifecycle_timers)"
-run_with_deadline "GPU lifecycle timer verification" \
-    ssh "${SSH_OPTIONS[@]}" -l "$SSH_USER" -- "$HOST" "$verification_script"
 
 echo "gpu-lifecycle-install: done"

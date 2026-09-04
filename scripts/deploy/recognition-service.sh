@@ -846,7 +846,9 @@ terminate_process_tree() {
 
 run_with_deadline() {
   local deadline="$1" label="$2" pid elapsed=0 rc owner_pid current_parent
-  owner_pid="${BASHPID}"
+  # BASHPID is bash 4.0+; macOS operators run this from /bin/bash 3.2. A child
+  # that execs sh reports the forking shell as its PPID, which is this shell.
+  owner_pid="${BASHPID:-$(exec sh -c 'echo $PPID')}"
   shift 2
   "$@" &
   pid=$!

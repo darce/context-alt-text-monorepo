@@ -81,10 +81,16 @@ def fixture_env(tmp_path: Path) -> dict[str, str]:
 
 def _run_piped(env: dict[str, str], cwd: Path) -> subprocess.CompletedProcess[str]:
     """Invoke the checker the way the deploy path does: over stdin."""
+    return _run_piped_source(CHECKER.read_text(encoding="utf-8"), env, cwd)
+
+
+def _run_piped_source(
+    source: str, env: dict[str, str], cwd: Path
+) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         ["/bin/bash", "-s"],
         cwd=cwd,
-        input=CHECKER.read_text(encoding="utf-8"),
+        input=source,
         capture_output=True,
         text=True,
         env=env,
@@ -106,6 +112,74 @@ def test_piped_invocation_emits_nothing_on_stderr(
     result = _run_piped(fixture_env, tmp_path)
 
     assert result.stderr == ""
+
+
+def test_exact_line_75_prefix_fails_closed(
+    fixture_env: dict[str, str], tmp_path: Path
+) -> None:
+    """Regression: the historical line-75 clean prefix exited zero."""
+    truncated = "".join(
+        CHECKER.read_text(encoding="utf-8").splitlines(keepends=True)[:75]
+    )
+
+    result = _run_piped_source(truncated, fixture_env, tmp_path)
+
+    assert result.returncode != 0
+
+
+def test_clean_prefix_that_only_loads_the_registry_fails_completion_guard(
+    fixture_env: dict[str, str], tmp_path: Path
+) -> None:
+    source = CHECKER.read_text(encoding="utf-8")
+    truncated = source.split("\nload_deployments\n", 1)[0] + "\nload_deployments\n"
+
+    result = _run_piped_source(truncated, fixture_env, tmp_path)
+
+    assert result.returncode != 0
+    assert "ended before completing validation" in result.stderr
+
+
+@pytest.mark.parametrize(
+    ("deployments", "missing"),
+    [("dev", "dev-fir"), ("dev,dev-fir,staging", "prod")],
+)
+def test_shortened_registry_names_the_missing_required_environment(
+    fixture_env: dict[str, str],
+    tmp_path: Path,
+    deployments: str,
+    missing: str,
+) -> None:
+    """A registry cannot prove its own completeness by containing one valid name."""
+    fixture_env["ACX_GPU_DEPLOYMENTS"] = deployments
+
+    result = _run_piped(fixture_env, tmp_path)
+
+    assert result.returncode != 0
+    assert f"missing required environment '{missing}'" in result.stderr
+
+
+@pytest.mark.parametrize(
+    ("written_at", "should_pass"), [(1005, True), (1005.001, False)]
+)
+def test_checker_matches_the_five_second_runtime_future_skew_boundary(
+    fixture_env: dict[str, str],
+    tmp_path: Path,
+    written_at: float,
+    should_pass: bool,
+) -> None:
+    state_path = Path(fixture_env["ACX_GPU_UNIT_STATE_PATH"])
+    state_path.write_text(
+        json.dumps({"state": "ready", "written_at": written_at}), encoding="utf-8"
+    )
+    fixture_env["ACX_GPU_SNAPSHOT_CONFIG_ONLY"] = "0"
+
+    result = _run_piped(fixture_env, tmp_path)
+
+    if should_pass:
+        assert result.returncode == 0, result.stderr
+    else:
+        assert result.returncode != 0
+        assert "exceeds 5s future-skew tolerance" in result.stderr
 
 
 @pytest.mark.parametrize(

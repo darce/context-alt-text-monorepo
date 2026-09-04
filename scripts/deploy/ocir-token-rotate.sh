@@ -13,7 +13,8 @@
 # misconfigured one. That is the crank-turning this replaces.
 #
 # BEGIN USAGE
-# Usage (interactive -- the token is never echoed, never in argv, never on disk):
+# Usage (interactive -- never echoed or in argv; Docker uses an auto-removed
+# temporary config for the direct authentication proof):
 #     scripts/deploy/ocir-token-rotate.sh [--readable-timeout SECONDS]
 #
 # Usage (piped, for a password manager):
@@ -209,7 +210,7 @@ put_secret() {
 }
 
 echo "Mint the token at: OCI Console > profile icon > My Profile > Auth tokens > Generate token"
-echo "Paste it below. It is not echoed, not logged, and not written to disk."
+echo "Paste it below. It is not echoed or logged; Docker writes proof credentials only to an auto-removed temporary config."
 
 if [ "$FROM_STDIN" -eq 1 ]; then
     acx_token="$(command cat)"

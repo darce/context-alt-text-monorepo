@@ -10,6 +10,8 @@ import {
   logJobEvent,
   LOG_LEVEL_ORDER,
   newRequestId,
+  redactEndpoint,
+  REDACTED_SEGMENT,
   setLogLevel,
   setLogSink,
   withRequestId,
@@ -201,7 +203,7 @@ describe('createLogger', () => {
     expect(warn).not.toHaveBeenCalled();
 
     setLogSink(null);
-    createLogger('x').warn('visible');
+    withRequestId(createLogger('x')).warn('visible');
     expect(warn).toHaveBeenCalledTimes(1);
     const [prefix, fields] = warn.mock.calls[0] as [string, Record<string, unknown>];
     expect(prefix).toBe('[alt-context/x] visible');
@@ -231,15 +233,72 @@ const captureRecords = (): LogRecord[] => {
   return records;
 };
 
+const PATH_SECRET = 'SECRET_PATH_TOKEN_XYZ_42';
+
+describe('redactEndpoint fails closed [O-03][OBS-05][WEB-44][FEBT1-LE-01]', () => {
+  it('keeps route literals and the api version token', () => {
+    expect(redactEndpoint('/wp-json/acx/v1/recognition/clusters')).toBe(
+      '/wp-json/acx/v1/recognition/clusters',
+    );
+    expect(redactEndpoint('/wp-json/acx/v1/identity-clusters')).toBe('/wp-json/acx/v1/identity-clusters');
+  });
+
+  it('collapses a secret carried in a PATH segment, not only in the query string', () => {
+    expect(redactEndpoint(`/wp-json/acx/v1/jobs/${PATH_SECRET}/data`)).toBe(
+      `/wp-json/acx/v1/jobs/${REDACTED_SEGMENT}/data`,
+    );
+    expect(redactEndpoint(`/wp-json/acx/v1/jobs/${PATH_SECRET}/data`)).not.toContain(PATH_SECRET);
+  });
+
+  it.each([
+    ['uuid', '/jobs/f47ac10b-58cc-4372-a567-0e02b2c3d479/data', `/jobs/${REDACTED_SEGMENT}/data`],
+    ['numeric id', '/media/12345', `/media/${REDACTED_SEGMENT}`],
+    ['hex digest', '/media/deadbeefcafe1234', `/media/${REDACTED_SEGMENT}`],
+    ['mixed alnum nonce', '/media/ab12cd34', `/media/${REDACTED_SEGMENT}`],
+    ['uppercase token', '/media/ABCDEF', `/media/${REDACTED_SEGMENT}`],
+    ['underscore token', '/media/some_token', `/media/${REDACTED_SEGMENT}`],
+    ['overlong word token', `/media/${'a'.repeat(33)}`, `/media/${REDACTED_SEGMENT}`],
+  ])('collapses an unknown %s segment', (_label, endpoint, expected) => {
+    expect(redactEndpoint(endpoint)).toBe(expected);
+  });
+
+  it('drops origin, query and fragment entirely', () => {
+    expect(redactEndpoint(`https://example.test/jobs?token=${ENDPOINT_SECRET}#${PATH_SECRET}`)).toBe('/jobs');
+  });
+
+  it('returns the stand-in when the endpoint cannot be parsed at all', () => {
+    expect(redactEndpoint('http://%%%')).toBe(REDACTED_SEGMENT);
+  });
+
+  it('a path-segment secret never reaches the sink through a logged AppError [O-03]', () => {
+    const records = captureRecords();
+    createLogger('http').error('request failed', {
+      error: new HTTPError({
+        status: 500,
+        retryAfterSeconds: undefined,
+        endpoint: `http://example.test/jobs/${PATH_SECRET}/data`,
+        bodyPreview: PREVIEW_SECRET,
+        message: `Request to http://example.test/jobs/${PATH_SECRET}/data failed (500)`,
+      }),
+    });
+
+    expect(JSON.stringify(records[0])).not.toContain(PATH_SECRET);
+    expect((records[0].fields.error as { endpoint?: string }).endpoint).toBe(
+      `/jobs/${REDACTED_SEGMENT}/data`,
+    );
+    setLogSink(null);
+  });
+});
+
 describe('correlation id binding [O-01]', () => {
   afterEach(() => {
     setLogSink(null);
     setLogLevel(null);
   });
 
-  it('createLogger without fields still emits requestId on every level [O-01][OBS-03]', () => {
+  it('a unit of work propagates one requestId to every level [O-01][OBS-03][FEBT1-W2B-01]', () => {
     const records = captureRecords();
-    const log = createLogger('bootstrap');
+    const log = withRequestId(createLogger('bootstrap'));
     log.debug('d');
     log.info('i');
     log.warn('w');
@@ -254,15 +313,32 @@ describe('correlation id binding [O-01]', () => {
     }
   });
 
-  it('two loggers receive distinct request ids [O-01][OBS-03]', () => {
+  /**
+   * Replaces the former 'two loggers receive distinct request ids' assertion,
+   * which pinned the FEBT1-W2B-01 defect: an import-time uuid per createLogger
+   * meant a scan submit and its SSE stream could never share a grep key. The
+   * replacement is strictly stronger — it pins BOTH halves of the contract
+   * (correlation is opened explicitly, and once opened it is shareable across
+   * scopes) rather than only that two loggers differ.
+   */
+  it('module loggers carry no requestId; joining one unit of work gives both the same key [O-01][OBS-03][FEBT1-W2B-01]', () => {
     const records = captureRecords();
-    createLogger('a').info('one');
-    createLogger('b').info('two');
+    const submit = createLogger('a');
+    const stream = createLogger('b');
+    submit.info('one');
+    stream.info('two');
 
     expect(records).toHaveLength(2);
-    expect(records[0].fields.requestId).toEqual(expect.any(String));
-    expect(records[1].fields.requestId).toEqual(expect.any(String));
-    expect(records[0].fields.requestId).not.toBe(records[1].fields.requestId);
+    expect(records[0].fields).not.toHaveProperty('requestId');
+    expect(records[1].fields).not.toHaveProperty('requestId');
+
+    const requestId = newRequestId();
+    withRequestId(submit, requestId).info('one');
+    withRequestId(stream, requestId).info('two');
+
+    expect(records).toHaveLength(4);
+    expect(records[2].fields.requestId).toBe(requestId);
+    expect(records[3].fields.requestId).toBe(requestId);
   });
 
   it('withRequestId opens a unit of work two scopes can share [O-01][OBS-03][FEBT1-W2B-01]', () => {
@@ -289,9 +365,9 @@ describe('correlation id binding [O-01]', () => {
     expect(records[0].fields.requestId).not.toBe(records[1].fields.requestId);
   });
 
-  it('child logger inherits the parent requestId [O-01][OBS-03]', () => {
+  it('child logger inherits the unit-of-work requestId [O-01][OBS-03]', () => {
     const records = captureRecords();
-    const parent = createLogger('jobPersistence');
+    const parent = withRequestId(createLogger('jobPersistence'));
     const child = parent.child({ extra: 1 });
     parent.info('parent');
     child.info('child');
@@ -304,9 +380,27 @@ describe('correlation id binding [O-01]', () => {
     expect(records[1].fields.extra).toBe(1);
   });
 
+  it('a child of a logger with no unit of work stays uncorrelated [O-01][OBS-03][FEBT1-W2B-01]', () => {
+    const records = captureRecords();
+    createLogger('jobPersistence').child({ extra: 1 }).info('child');
+
+    expect(records).toHaveLength(1);
+    expect(records[0].fields).not.toHaveProperty('requestId');
+    expect(records[0].fields.extra).toBe(1);
+  });
+
+  it('createJobLogger carries jobId but not a correlation id [O-01][OBS-03][FEBT1-W2B-01]', () => {
+    const records = captureRecords();
+    createJobLogger('jobPersistence', 'job-123').info('start');
+
+    expect(records).toHaveLength(1);
+    expect(records[0].fields.jobId).toBe('job-123');
+    expect(records[0].fields).not.toHaveProperty('requestId');
+  });
+
   it('createJobLogger records jobId and requestId on every line [O-01][OBS-03]', () => {
     const records = captureRecords();
-    const log = createJobLogger('jobPersistence', 'job-123');
+    const log = withRequestId(createJobLogger('jobPersistence', 'job-123'));
     log.info('start');
     log.warn('stall');
     log.error('fail');
@@ -330,7 +424,7 @@ describe('logJobEvent [O-02]', () => {
 
   it('emits exactly one wide record with event, state, job id, and request id [O-02][OBS-02]', () => {
     const records = captureRecords();
-    const log = createJobLogger('job', 'job-123');
+    const log = withRequestId(createJobLogger('job', 'job-123'));
     logJobEvent(
       log,
       { type: 'PROGRESS' },

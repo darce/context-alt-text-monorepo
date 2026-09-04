@@ -3,7 +3,13 @@ import { describe, expect, it, vi } from 'vitest';
 import { classifyError } from '../../../../utils/appError';
 import { AuthExpiredError, HTTPError } from '../../../../utils/http';
 import { SPA_SESSION_EXPIRED_COPY } from '../../../../utils/sessionExpiredCopy';
-import { getClusterMutationErrorMessage, isAbortError } from '../clusterMutationUtils';
+import {
+  ClusterMutationTimeoutError,
+  createClusterMutationTimeoutError,
+  getClusterMutationErrorMessage,
+  isAbortError,
+  isClusterMutationTimeoutError,
+} from '../clusterMutationUtils';
 
 const GENERIC = 'An unexpected error occurred. Please try again.';
 const TIMEOUT = 'Save is taking too long. Please try again.';
@@ -118,5 +124,53 @@ describe('getClusterMutationErrorMessage never returns wire text [FEBT1-W2A-04]'
   it('falls back to generic copy for non-Error throws', () => {
     expect(getClusterMutationErrorMessage('boom', 'Ada')).toBe(GENERIC);
     expect(getClusterMutationErrorMessage(null, 'Ada')).toBe(GENERIC);
+  });
+});
+
+describe('ClusterMutationTimeoutError (FEBT1-LC-02: typed timeout channel)', () => {
+  it('classifies by brand, not by the wording of any message', () => {
+    const timedOut = createClusterMutationTimeoutError('save');
+
+    expect(isClusterMutationTimeoutError(timedOut)).toBe(true);
+    expect(getClusterMutationErrorMessage(timedOut, 'Ada')).toBe(TIMEOUT);
+    // The proof that the channel is typed: the message contains none of the
+    // English tokens the old substring matcher keyed on, and it still maps.
+    expect(timedOut.message.toLowerCase()).not.toContain('timed out');
+    expect(timedOut.message.toLowerCase()).not.toContain('timeout');
+    // …and the substring matcher, run directly on that message, finds nothing —
+    // so the mapping above can only have come from the brand.
+    expect(getClusterMutationErrorMessage(new Error(timedOut.message), 'Ada')).not.toBe(TIMEOUT);
+  });
+
+  it('never leaks its diagnostic token as user copy', () => {
+    const timedOut = createClusterMutationTimeoutError('duplicate_lookup');
+    expect(timedOut.operation).toBe('duplicate_lookup');
+    expect(getClusterMutationErrorMessage(timedOut, 'Ada')).not.toContain('duplicate_lookup');
+  });
+
+  it('is distinguishable from a user cancel, which the hooks swallow silently', () => {
+    const cancelled = new DOMException('The operation was aborted.', 'AbortError');
+    expect(isClusterMutationTimeoutError(cancelled)).toBe(false);
+    expect(isAbortError(createClusterMutationTimeoutError('save'))).toBe(false);
+  });
+
+  it('rejects non-timeout values', () => {
+    expect(isClusterMutationTimeoutError(new Error('save request timed out'))).toBe(false);
+    expect(isClusterMutationTimeoutError(null)).toBe(false);
+    expect(isClusterMutationTimeoutError('cluster_mutation_timeout')).toBe(false);
+    expect(isClusterMutationTimeoutError(httpError(504, 'gateway timeout'))).toBe(false);
+  });
+
+  it('is an Error subclass so existing error plumbing still carries it', () => {
+    const timedOut = createClusterMutationTimeoutError('merge');
+    expect(timedOut).toBeInstanceOf(Error);
+    expect(timedOut).toBeInstanceOf(ClusterMutationTimeoutError);
+    expect(timedOut.name).toBe('ClusterMutationTimeoutError');
+  });
+
+  it('still maps wire-originated timeout text, which is a separate channel', () => {
+    // Server-reported condition (message-shape recognition) must keep working:
+    // the typed sentinel replaces our own locally minted literal only.
+    expect(getClusterMutationErrorMessage(httpError(504, 'upstream timed out'), 'Ada')).toBe(TIMEOUT);
   });
 });

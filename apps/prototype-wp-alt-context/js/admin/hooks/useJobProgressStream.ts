@@ -2,54 +2,35 @@ import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'r
 
 import type { JobProgress } from '../api/recognition/types/scan';
 import { getEndpoint, getNonce } from '../api/config';
-import { createLogger, logJobEvent } from '../utils/logger';
+import {
+  createLogger,
+  logJobEvent,
+  newRequestId,
+  redactEndpoint,
+  withRequestId,
+  type Logger,
+} from '../utils/logger';
 import {
   JOB_EVENT,
   JOB_MACHINE_STALL_THRESHOLD_MS,
-  JOB_MACHINE_STATE,
+  JOB_STATUS,
   initialJobState,
+  isTerminalJobStatus,
+  isWireJobStatus,
   jobReducer,
+  projectWireStatus,
+  type JobEvent,
+  type WireJobStatus,
 } from './jobMachine';
 import { useJobCoordination } from './useJobCoordination';
 import { broadcastJobProgress, parseDoneEvent, parseProgressEvent } from './useJobProgressStreamHelpers';
 
 const log = createLogger('hooks.jobProgressStream');
 
-export const JOB_STATUS = {
-  PENDING: 'pending',
-  RUNNING: 'running',
-  COMPLETED: 'completed',
-  // Terminal partial-success the WP SSE producer forwards verbatim from the description-service
-  // (some items succeeded, some failed). Must be recognized as terminal on the SSE channel too.
-  COMPLETED_WITH_ERRORS: 'completed_with_errors',
-  FAILED: 'failed',
-  // The WP SSE producer's TERMINAL_JOB_STATUSES includes 'rejected'
-  // (class-job-progress-stream-service.php). Omitting it here made emitTerminal's
-  // else-branch report a rejected job as completed.
-  REJECTED: 'rejected',
-  CLUSTERING: 'clustering',
-} as const;
-
-export type JobStatus = (typeof JOB_STATUS)[keyof typeof JOB_STATUS];
-
-const JOB_STATUS_VALUES: readonly string[] = Object.values(JOB_STATUS);
-
-/**
- * Explicit validation of untrusted SSE boundary data (sr-005): the parse helpers cast the
- * wire `status` to JobStatus without checking it, so an unknown or absent status must be
- * rejected here rather than falling through a default branch that means "success".
- */
-export const isJobStatus = (value: unknown): value is JobStatus =>
-  typeof value === 'string' && JOB_STATUS_VALUES.includes(value);
-
-const TERMINAL_JOB_STATUSES: ReadonlySet<JobStatus> = new Set([
-  JOB_STATUS.COMPLETED,
-  JOB_STATUS.COMPLETED_WITH_ERRORS,
-  JOB_STATUS.REJECTED,
-  JOB_STATUS.FAILED,
-]);
-
-export const isTerminalJobStatus = (status: JobStatus): boolean => TERMINAL_JOB_STATUSES.has(status);
+// One vocabulary, one owner (FEBT1-LA-05, REF-26): the status map and its predicates live in
+// jobMachine.ts and are re-exported here only so existing importers keep one import site.
+export { JOB_STATUS, isTerminalJobStatus, isWireJobStatus };
+export type { JobStatus, WireJobStatus } from './jobMachine';
 
 const unreachableStatus = (value: never): never => {
   throw new Error(`Unhandled JobStatus: ${JSON.stringify(value)}`);
@@ -59,7 +40,7 @@ export const getJobProgressStallThresholdMs = (): number => JOB_MACHINE_STALL_TH
 
 export interface JobProgressStream {
   progress: JobProgress | null;
-  status: JobStatus;
+  status: WireJobStatus;
   isOnline: boolean;
   etaSeconds: number | null;
   isPrimary: boolean;
@@ -77,11 +58,45 @@ const streamEventFields = (event: Event): { type: string; readyState?: number } 
 };
 
 /**
+ * The single wire-status -> machine-event mapping (FEBT1-LA-05). Both the SSE frame handlers
+ * and the BroadcastChannel observer path route through it, so a secondary tab and the primary
+ * tab can no longer disagree about what a status means.
+ */
+const jobEventForWireStatus = (
+  status: WireJobStatus,
+  fields: {
+    readonly done: number;
+    readonly total: number;
+    readonly at: number;
+    readonly failedCount?: number;
+    readonly error?: { message: string } | null;
+  },
+): JobEvent => {
+  switch (status) {
+    case JOB_STATUS.PENDING:
+    case JOB_STATUS.RUNNING:
+    case JOB_STATUS.CLUSTERING:
+      return { type: JOB_EVENT.PROGRESS, status, done: fields.done, total: fields.total, at: fields.at };
+    case JOB_STATUS.COMPLETED:
+      return { type: JOB_EVENT.COMPLETE, at: fields.at };
+    case JOB_STATUS.COMPLETED_WITH_ERRORS:
+      return fields.failedCount === undefined
+        ? { type: JOB_EVENT.COMPLETE_WITH_ERRORS, at: fields.at }
+        : { type: JOB_EVENT.COMPLETE_WITH_ERRORS, failedCount: fields.failedCount, at: fields.at };
+    case JOB_STATUS.FAILED:
+      return { type: JOB_EVENT.FAIL, error: fields.error ?? null };
+    case JOB_STATUS.REJECTED:
+      return { type: JOB_EVENT.REJECT, error: fields.error ?? null };
+    default:
+      return unreachableStatus(status);
+  }
+};
+
+/**
  * Hook to connect to the backend SSE endpoint for real-time job progress updates.
  */
 export const useJobProgressStream = (jobId: string | null): JobProgressStream => {
   const [progress, setProgress] = useState<JobProgress | null>(null);
-  const [status, setStatus] = useState<JobStatus>(JOB_STATUS.PENDING);
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const [etaSeconds, setEtaSeconds] = useState<number | null>(null);
   const [connectionNonce, setConnectionNonce] = useState(0);
@@ -91,8 +106,16 @@ export const useJobProgressStream = (jobId: string | null): JobProgressStream =>
   const progressRef = useRef<JobProgress | null>(null);
   const eventSourceRef = useRef<EventSource | null>(null);
   const hasOpenedRef = useRef(false);
+  // One correlation id per SSE unit of work (OBS-03). A module-scope logger mints its
+  // requestId once at import time, which correlates "which module", not "which job".
+  const jobRequestIdRef = useRef<string | null>(null);
+  const jobStartedAtRef = useRef<number | null>(null);
 
   const { isPrimary, channel } = useJobCoordination(jobId);
+
+  // Single source of truth (FEBT1-LA-05): the returned status is a projection of the machine,
+  // not a parallel useState slot that the machine and the SSE handlers both wrote to.
+  const status = useMemo<WireJobStatus>(() => projectWireStatus(machine), [machine]);
 
   const retry = useCallback(() => {
     streamOpenedAtRef.current = Date.now();
@@ -123,11 +146,12 @@ export const useJobProgressStream = (jobId: string | null): JobProgressStream =>
 
   useEffect(() => {
     setProgress(null);
-    setStatus(JOB_STATUS.PENDING);
     setEtaSeconds(null);
     startTimeRef.current = null;
     streamOpenedAtRef.current = null;
     progressRef.current = null;
+    jobRequestIdRef.current = jobId ? newRequestId() : null;
+    jobStartedAtRef.current = jobId ? Date.now() : null;
     if (jobId) {
       dispatch({ type: JOB_EVENT.START, jobId, at: Date.now() });
       if (!navigator.onLine) {
@@ -154,7 +178,7 @@ export const useJobProgressStream = (jobId: string | null): JobProgressStream =>
   // window is (last tick observed) - (last real event), which the machine now preserves
   // because STALL_TICK no longer re-stamps lastEventAt.
   const stalledForSeconds = useMemo<number | null>(() => {
-    if (!streamIsActive || machine.status !== JOB_MACHINE_STATE.stalled) {
+    if (!streamIsActive || machine.status !== JOB_STATUS.STALLED) {
       return null;
     }
     if (machine.lastEventAt === null || machine.lastTickAt === null) {
@@ -170,7 +194,7 @@ export const useJobProgressStream = (jobId: string | null): JobProgressStream =>
   // nothing previously produced zero log lines while the UI counter climbed.
   const stalledSinceRef = useRef<number | null>(null);
   useEffect(() => {
-    if (machine.status !== JOB_MACHINE_STATE.stalled) {
+    if (machine.status !== JOB_STATUS.STALLED) {
       stalledSinceRef.current = null;
       return;
     }
@@ -180,6 +204,7 @@ export const useJobProgressStream = (jobId: string | null): JobProgressStream =>
     stalledSinceRef.current = machine.lastEventAt;
     log.warn('sse.stalled', {
       jobId: machine.jobId ?? undefined,
+      requestId: jobRequestIdRef.current ?? undefined,
       quietMs: machine.lastTickAt !== null && machine.lastEventAt !== null
         ? machine.lastTickAt - machine.lastEventAt
         : null,
@@ -198,44 +223,28 @@ export const useJobProgressStream = (jobId: string | null): JobProgressStream =>
     const handleMessage = (event: MessageEvent) => {
       const payload = event.data as {
         type: string;
-        payload: { progress: JobProgress | null; status: JobStatus; etaSeconds: number | null };
+        payload: { progress: JobProgress | null; status: WireJobStatus; etaSeconds: number | null };
       };
       if (payload.type !== 'JOB_PROGRESS') {
         return;
       }
       const broadcastStatus = payload.payload.status;
-      if (!isJobStatus(broadcastStatus)) {
+      if (!isWireJobStatus(broadcastStatus)) {
         log.warn('sse.broadcast_unknown_status', { status: String(broadcastStatus) });
         return;
       }
 
       setProgress(payload.payload.progress);
-      setStatus(broadcastStatus);
       setEtaSeconds(payload.payload.etaSeconds);
-      const at = Date.now();
-      const done = payload.payload.progress?.completed ?? 0;
-      const total = payload.payload.progress?.total ?? 0;
       // Forcing every broadcast to PROGRESS left secondary tabs permanently 'running' after
       // the primary tab finished or failed (FEBT1G-H-02).
-      switch (broadcastStatus) {
-        case JOB_STATUS.COMPLETED:
-          dispatch({ type: JOB_EVENT.COMPLETE, at });
-          break;
-        case JOB_STATUS.COMPLETED_WITH_ERRORS:
-          dispatch({ type: JOB_EVENT.COMPLETE_WITH_ERRORS, at });
-          break;
-        case JOB_STATUS.FAILED:
-        case JOB_STATUS.REJECTED:
-          dispatch({ type: JOB_EVENT.FAIL, error: null });
-          break;
-        case JOB_STATUS.PENDING:
-        case JOB_STATUS.RUNNING:
-        case JOB_STATUS.CLUSTERING:
-          dispatch({ type: JOB_EVENT.PROGRESS, done, total, at });
-          break;
-        default:
-          unreachableStatus(broadcastStatus);
-      }
+      dispatch(
+        jobEventForWireStatus(broadcastStatus, {
+          done: payload.payload.progress?.completed ?? 0,
+          total: payload.payload.progress?.total ?? 0,
+          at: Date.now(),
+        }),
+      );
     };
 
     channel.addEventListener('message', handleMessage);
@@ -251,8 +260,9 @@ export const useJobProgressStream = (jobId: string | null): JobProgressStream =>
       return;
     }
 
-    const jobLog = log.child({ jobId });
-    const streamUrl = new URL(`${getEndpoint('recognitionJobs')}/${jobId}/stream`, window.location.origin);
+    const jobLog: Logger = withRequestId(log.child({ jobId }), jobRequestIdRef.current ?? newRequestId());
+    const endpoint = `${getEndpoint('recognitionJobs')}/${jobId}/stream`;
+    const streamUrl = new URL(endpoint, window.location.origin);
     // Live nonce at every (re)connect so post-refresh reconnects carry the new value.
     const nonce = getNonce();
     if (nonce) {
@@ -265,6 +275,17 @@ export const useJobProgressStream = (jobId: string | null): JobProgressStream =>
     eventSourceRef.current = eventSource;
     dispatch({ type: JOB_EVENT.STREAM_OPEN, at: streamOpenedAtRef.current });
 
+    // OBS-01/OBS-02: the SSE job lifetime is a unit of work, so it opens with one wide,
+    // correlated record instead of being visible only when it fails. The nonce never
+    // reaches the log — only the pathname does.
+    jobLog.info('stream.open', {
+      event: 'stream.open',
+      jobId,
+      endpoint: redactEndpoint(streamUrl.toString()),
+      connectionNonce,
+      reconnectAttempts: machine.reconnectAttempts,
+    });
+
     const close = () => {
       closed = true;
       eventSource?.close();
@@ -274,61 +295,56 @@ export const useJobProgressStream = (jobId: string | null): JobProgressStream =>
       eventSource = null;
     };
 
+    const streamDurationMs = (): number | null =>
+      jobStartedAtRef.current === null ? null : Date.now() - jobStartedAtRef.current;
+
     /**
-     * The status set is closed and the default branch is explicit: an unknown or
-     * non-terminal status on a terminal frame fails closed instead of silently reporting
-     * success (FEBT1G-H-03). No field here is synthesised — `failedCount` is omitted when the
-     * wire did not carry one and `error` carries the real server message or null (rg-015).
+     * The status set is closed and the non-terminal branch is explicit: a non-terminal status
+     * on a terminal frame fails closed instead of silently reporting success (FEBT1G-H-03).
+     * No field here is synthesised — `failedCount` is omitted when the wire did not carry one
+     * and `error` carries the real server message or null (rg-015).
      */
     const emitTerminal = (
-      nextStatus: JobStatus,
+      nextStatus: WireJobStatus,
       nextProgress: JobProgress | null,
       at: number,
       error: { message: string } | null = null,
+      failedCount?: number,
     ): void => {
-      switch (nextStatus) {
-        case JOB_STATUS.COMPLETED:
-          dispatch({ type: JOB_EVENT.COMPLETE, at });
-          break;
-        case JOB_STATUS.COMPLETED_WITH_ERRORS:
-          dispatch({ type: JOB_EVENT.COMPLETE_WITH_ERRORS, at });
-          break;
-        case JOB_STATUS.FAILED:
-        case JOB_STATUS.REJECTED:
-          dispatch({ type: JOB_EVENT.FAIL, error });
-          break;
-        case JOB_STATUS.PENDING:
-        case JOB_STATUS.RUNNING:
-        case JOB_STATUS.CLUSTERING:
-          dispatch({
-            type: JOB_EVENT.FAIL,
-            error: error ?? { message: `Stream ended in non-terminal status "${nextStatus}"` },
-          });
-          break;
-        default:
-          unreachableStatus(nextStatus);
-      }
-      logJobEvent(jobLog, 'stream.done', {
-        status: nextStatus,
-        jobId,
-        done: nextProgress?.completed,
-        total: nextProgress?.total,
-      });
+      const terminalStatus: WireJobStatus = isTerminalJobStatus(nextStatus) ? nextStatus : JOB_STATUS.FAILED;
+      const terminalError = isTerminalJobStatus(nextStatus)
+        ? error
+        : (error ?? { message: `Stream ended in non-terminal status "${nextStatus}"` });
+      dispatch(
+        jobEventForWireStatus(terminalStatus, {
+          done: nextProgress?.completed ?? 0,
+          total: nextProgress?.total ?? 0,
+          at,
+          error: terminalError,
+          failedCount,
+        }),
+      );
+      // The wide record for the SSE unit of work (OBS-02): outcome, size, duration and
+      // reconnect count on ONE line. `logJobEvent` owns the closed lifecycle fields; the
+      // request-scoped dimensions ride on a child logger rather than widening that contract.
+      logJobEvent(
+        jobLog.child({ durationMs: streamDurationMs(), reconnectAttempts: machine.reconnectAttempts }),
+        'stream.done',
+        { status: terminalStatus, jobId, done: nextProgress?.completed, total: nextProgress?.total, failedCount },
+      );
     };
 
     const emitUnknownTerminal = (rawStatus: unknown, nextProgress: JobProgress | null): void => {
       jobLog.error('sse.done_unknown_status', { status: String(rawStatus) });
-      setStatus(JOB_STATUS.FAILED);
       dispatch({
         type: JOB_EVENT.FAIL,
         error: { message: `Stream reported an unrecognised status "${String(rawStatus)}"` },
       });
-      logJobEvent(jobLog, 'stream.done', {
-        status: JOB_STATUS.FAILED,
-        jobId,
-        done: nextProgress?.completed,
-        total: nextProgress?.total,
-      });
+      logJobEvent(
+        jobLog.child({ durationMs: streamDurationMs(), reconnectAttempts: machine.reconnectAttempts }),
+        'stream.done',
+        { status: JOB_STATUS.FAILED, jobId, done: nextProgress?.completed, total: nextProgress?.total },
+      );
     };
 
     eventSource.addEventListener('progress', (event) => {
@@ -336,14 +352,15 @@ export const useJobProgressStream = (jobId: string | null): JobProgressStream =>
         return;
       }
 
-      const parsed = parseProgressEvent<JobStatus>(event.data as string, startTimeRef);
-      if (!parsed) {
+      const parsed = parseProgressEvent<string>(event.data as string, startTimeRef);
+      if (!parsed.ok) {
         // Expected producer churn (malformed or schema-evolved frame): the stream stays open
-        // and later frames still complete the job, so this is not an ERROR (OBS-04).
-        jobLog.warn('sse.progress_parse_failed');
+        // and later frames still complete the job, so this is not an ERROR (OBS-04). The
+        // reason discriminates a bad frame on the wire from contract drift (FEBT1-LA-04).
+        jobLog.warn('sse.progress_parse_failed', { reason: parsed.reason });
         return;
       }
-      if (!isJobStatus(parsed.status)) {
+      if (!isWireJobStatus(parsed.status)) {
         jobLog.warn('sse.progress_unknown_status', { status: String(parsed.status) });
         return;
       }
@@ -352,15 +369,19 @@ export const useJobProgressStream = (jobId: string | null): JobProgressStream =>
 
       progressRef.current = parsed.progress;
       setProgress(parsed.progress);
-      setStatus(parsed.status);
       setEtaSeconds(parsed.etaSeconds);
-      dispatch({
-        type: JOB_EVENT.PROGRESS,
-        done: parsed.progress.completed,
-        total: parsed.progress.total,
-        at: receivedAt,
+      dispatch(
+        jobEventForWireStatus(parsed.status, {
+          done: parsed.progress.completed,
+          total: parsed.progress.total,
+          at: receivedAt,
+        }),
+      );
+      broadcastJobProgress(channel, {
+        progress: parsed.progress,
+        status: parsed.status,
+        etaSeconds: parsed.etaSeconds,
       });
-      broadcastJobProgress(channel, parsed);
     });
 
     eventSource.addEventListener('done', (event) => {
@@ -368,11 +389,10 @@ export const useJobProgressStream = (jobId: string | null): JobProgressStream =>
         return;
       }
 
-      const parsed = parseDoneEvent<JobStatus>(event.data as string, progressRef.current);
+      const parsed = parseDoneEvent<string>(event.data as string, progressRef.current);
       if (!parsed) {
         // A terminal frame we cannot read is a real failure: nothing else will arrive.
         jobLog.error('sse.done_parse_failed');
-        setStatus(JOB_STATUS.FAILED);
         dispatch({ type: JOB_EVENT.FAIL, error: { message: 'Terminal stream frame could not be parsed' } });
         close();
         return;
@@ -382,14 +402,13 @@ export const useJobProgressStream = (jobId: string | null): JobProgressStream =>
       setProgress(parsed.progress);
       setEtaSeconds(null);
 
-      if (!isJobStatus(parsed.status)) {
+      if (!isWireJobStatus(parsed.status)) {
         emitUnknownTerminal(parsed.status, parsed.progress);
         close();
         return;
       }
 
-      setStatus(parsed.status);
-      emitTerminal(parsed.status, parsed.progress, receivedAt);
+      emitTerminal(parsed.status, parsed.progress, receivedAt, null, parsed.failedCount);
       broadcastJobProgress(channel, {
         progress: parsed.progress,
         status: parsed.status,
@@ -407,7 +426,6 @@ export const useJobProgressStream = (jobId: string | null): JobProgressStream =>
         try {
           const errorData = JSON.parse(event.data as string) as { message?: string };
           if (errorData.message?.includes('not found')) {
-            setStatus(JOB_STATUS.FAILED);
             // Carry the real server message instead of a synthesised literal (rg-015).
             emitTerminal(
               JOB_STATUS.FAILED,
@@ -460,6 +478,9 @@ export const useJobProgressStream = (jobId: string | null): JobProgressStream =>
     };
 
     return () => close();
+    // `machine.reconnectAttempts` is read for log dimensions only; re-opening the transport
+    // on every counter change would defeat the reconnect ceiling it reports.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [channel, connectionNonce, isOnline, isPrimary, jobId]);
 
   return { progress, status, isOnline, etaSeconds, isPrimary, lastEventAt, stalledForSeconds, retry };

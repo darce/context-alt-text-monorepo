@@ -7,7 +7,7 @@ import {
   registerConfig,
   resetConfigCache,
 } from '../../api/config';
-import { classifyError, isCooldown } from '../appError';
+import { classifyError, isAppError, isCooldown } from '../appError';
 import {
   AuthExpiredError,
   DEFAULT_FETCH_TIMEOUT_MS,
@@ -220,10 +220,17 @@ describe('fetchApi HTTPError', () => {
 });
 
 describe('parseRetryAfter', () => {
-  it('parses non-negative delta-seconds', () => {
+  // FEBT1-LB-01: strengthened, not relaxed. `Retry-After: 0` used to parse to
+  // `0`, which every downstream consumer read as "the server named a wait of
+  // zero" and turned into an immediate retry. It now reports *absent* — the
+  // same answer parseRetryAfter already gave for an HTTP-date that is not in
+  // the future — so the caller falls back to its own jittered backoff. The
+  // positive delta-seconds cases are kept, so this cannot pass by returning
+  // undefined for everything.
+  it('parses positive delta-seconds; a zero wait is reported as absent', () => {
     expect(parseRetryAfter('5')).toBe(5);
-    expect(parseRetryAfter('0')).toBe(0);
     expect(parseRetryAfter('120')).toBe(120);
+    expect(parseRetryAfter('0')).toBeUndefined();
   });
 
   it('returns undefined for missing or malformed values (never NaN)', () => {
@@ -556,7 +563,13 @@ describe('fetchApi review-fix discrimination pins (UXPNET2-BR-04/05)', () => {
 
     await expect(
       fetchApi<{ ok: boolean }>(REST_URL, { restNonce: STALE_NONCE, signal: controller.signal }),
-    ).rejects.toSatisfy((err: unknown) => err instanceof DOMException && err.name === 'AbortError');
+    ).rejects.toSatisfy(
+      (err: unknown) =>
+        // FEBT1-W2A-01: the boundary now rejects with a *tagged* error. The
+        // AbortError name is still pinned (the BR-04 claim), and the tag pin is
+        // added on top: 'abort', never 'auth_expired', never 'timeout'.
+        isAppError(err) && err._tag === 'abort' && err instanceof Error && err.name === 'AbortError',
+    );
   });
 });
 
@@ -733,9 +746,14 @@ describe('fetchApi default timeout [E-04]', () => {
 
     await vi.advanceTimersByTimeAsync(1);
 
-    expect(rejected).toBeInstanceOf(DOMException);
-    expect((rejected as DOMException).name).toBe('TimeoutError');
-    expect(classifyError(rejected)._tag).toBe('abort');
+    // FEBT1-W2A-05: strengthened. The old pin asserted `_tag 'abort'` for a
+    // 300s hang — that assertion was wrong, not load-bearing: a deadline that
+    // elapsed is not a caller cancellation. It now pins 'timeout', and adds the
+    // boundary claim `isAppError(rejected)` that FEBT1-W2A-01 introduced.
+    expect(rejected).toBeInstanceOf(Error);
+    expect((rejected as Error).name).toBe('TimeoutError');
+    expect(isAppError(rejected)).toBe(true);
+    expect(classifyError(rejected)._tag).toBe('timeout');
   });
 
   it('lets an explicit timeoutMs override the default', async () => {
@@ -756,8 +774,8 @@ describe('fetchApi default timeout [E-04]', () => {
 
     await vi.advanceTimersByTimeAsync(1);
 
-    expect(classifyError(rejected)._tag).toBe('abort');
-    expect((rejected as DOMException).name).toBe('TimeoutError');
+    expect(classifyError(rejected)._tag).toBe('timeout');
+    expect((rejected as Error).name).toBe('TimeoutError');
   });
 
   it('still aborts when a caller-supplied signal aborts early', async () => {
@@ -777,5 +795,98 @@ describe('fetchApi default timeout [E-04]', () => {
 
     const result = await fetchApi<{ ok: boolean }>(REST_URL);
     expect(result).toEqual({ ok: true });
+  });
+});
+
+/**
+ * FEBT1-W2A-01 / FEBT1-LB-03: the boundary is closed.
+ *
+ * `fetchApi` is the single seam between `fetch` and the app. Before this,
+ * whatever `fetch` or `response.json()` happened to throw escaped verbatim, so
+ * a caller could not rely on a rejection carrying a tag at all — it had to
+ * re-classify defensively, and any caller that forgot got `undefined` where it
+ * expected a tag. Every route out of `fetchApi` is enumerated here; a new
+ * throw site that skips the boundary wrapper fails this block.
+ */
+describe('fetchApi closes the error boundary [FEBT1-W2A-01]', () => {
+  beforeEach(() => {
+    resetConfigCache();
+    registerConfig({ nonce: 'a1b2c3d4e5', ajaxUrl: AJAX_URL, endpoints: {} });
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    resetConfigCache();
+  });
+
+  const rejectionOf = async (run: () => Promise<unknown>): Promise<unknown> => {
+    try {
+      await run();
+    } catch (error: unknown) {
+      return error;
+    }
+    throw new Error('expected the call to reject');
+  };
+
+  it('tags an HTTP status failure', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('nope', { status: 500 }));
+    const rejected = await rejectionOf(() => fetchApi(REST_URL));
+    expect(isAppError(rejected)).toBe(true);
+    expect(rejected).toBeInstanceOf(HTTPError);
+    expect(classifyError(rejected)._tag).toBe('http');
+  });
+
+  it('tags a malformed-JSON response', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('{not json', { status: 200 }));
+    const rejected = await rejectionOf(() => fetchApi(REST_URL));
+    expect(isAppError(rejected)).toBe(true);
+    expect(rejected).toBeInstanceOf(ResponseParseError);
+    expect(classifyError(rejected)._tag).toBe('parse');
+  });
+
+  it('tags an expired session', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify({ code: 'rest_not_logged_in' }), { status: 401 }),
+    );
+    const rejected = await rejectionOf(() => fetchApi(REST_URL));
+    expect(isAppError(rejected)).toBe(true);
+    // The instanceof contract is preserved for the ~20 existing consumers.
+    expect(rejected).toBeInstanceOf(AuthExpiredError);
+    expect(classifyError(rejected)._tag).toBe('auth_expired');
+  });
+
+  it('tags a genuine fetch network failure as transport, by provenance [FEBT-1-W1-E-05]', async () => {
+    // This is what a real network drop looks like: fetch rejects with a
+    // TypeError. It must stay 'transport' (and therefore retryable) even though
+    // classifyError no longer trusts the TypeError constructor alone.
+    vi.spyOn(globalThis, 'fetch').mockRejectedValue(new TypeError('Failed to fetch'));
+    const rejected = await rejectionOf(() => fetchApi(REST_URL));
+    expect(isAppError(rejected)).toBe(true);
+    expect(classifyError(rejected)._tag).toBe('transport');
+  });
+
+  it('tags a transport failure even when the browser wording is unknown to the classifier', async () => {
+    // Provenance, not message-sniffing: fetch rejected, so it is transport
+    // whatever the engine called it.
+    vi.spyOn(globalThis, 'fetch').mockRejectedValue(new TypeError('some future wording'));
+    const rejected = await rejectionOf(() => fetchApi(REST_URL));
+    expect(classifyError(rejected)._tag).toBe('transport');
+  });
+
+  it('tags a non-Error throw as unknown rather than letting it escape raw', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(() => {
+      throw 'a bare string';
+    });
+    const rejected = await rejectionOf(() => fetchApi(REST_URL));
+    expect(isAppError(rejected)).toBe(true);
+    expect(rejected).toBeInstanceOf(Error);
+    expect(classifyError(rejected)._tag).toBe('unknown');
+  });
+
+  it('tags the empty-required-body failure of fetchRequiredApi', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(null, { status: 204 }));
+    const rejected = await rejectionOf(() => fetchRequiredApi(REST_URL));
+    expect(isAppError(rejected)).toBe(true);
+    expect(classifyError(rejected)._tag).toBe('unknown');
   });
 });

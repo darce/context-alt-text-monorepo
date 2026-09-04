@@ -216,6 +216,28 @@ describe('AttachmentFacesApp five designed states', () => {
     expect(screen.getByRole('button', { name: ATTACHMENT_EDIT_COPY.reloadPage })).toBeInTheDocument();
   });
 
+  // FEBT1-LB-03: the session-expired branch moved from `instanceof
+  // AuthExpiredError` to the structural tag check. A prototype-less error is
+  // the case `instanceof` silently got wrong — it is what survives React
+  // Query cache hydration or a postMessage hop — and it must still reach the
+  // recovery UI rather than the dead-end "face data unavailable" copy.
+  it('a tag-only auth_expired error (no prototype) still renders session-expired [TEST-15]', async () => {
+    fetchMock.mockRejectedValue({
+      _tag: 'auth_expired',
+      status: 403,
+      endpoint: '/media-identities',
+      message: 'Session expired.',
+      cause: undefined,
+    });
+    renderApp(<AttachmentFacesApp {...defaultProps} />);
+
+    await waitFor(() => {
+      expect(screen.getByRole('status')).toHaveTextContent(ATTACHMENT_EDIT_COPY.sessionExpired);
+    });
+    expect(screen.getByTestId('acx-attachment-faces-app')).toHaveAttribute('data-state', 'session-expired');
+    expect(screen.getByRole('button', { name: ATTACHMENT_EDIT_COPY.reloadPage })).toBeInTheDocument();
+  });
+
   it('generic query error still shows faceDataUnavailable, not session-expired [TEST-15]', async () => {
     fetchMock.mockRejectedValue(new Error('network down'));
     renderApp(<AttachmentFacesApp {...defaultProps} />);

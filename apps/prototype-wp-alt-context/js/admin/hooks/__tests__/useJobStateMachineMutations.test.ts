@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { BatchAnalyzeResponse } from '../../api/recognition/types/scan';
 import { HTTPError } from '../../utils/http';
-import { setLogLevel, setLogSink, type LogRecord } from '../../utils/logger';
+import { REDACTED_SEGMENT, setLogLevel, setLogSink, type LogRecord } from '../../utils/logger';
 import { useCancelScanJobs, useClusterIdentities, useScanIdentities } from '../useRecognitionHooks';
 import { useJobStateMachineMutations } from '../useJobStateMachineMutations';
 
@@ -56,6 +56,20 @@ const leakingScanError = (): HTTPError =>
     endpoint: 'https://example.test/wp-json/acx/v1/recognition/analyze?token=secret-token',
     bodyPreview: 'raw-response-body-secret',
     message: 'Request failed (500): raw-response-body-secret',
+  });
+
+/**
+ * A leaking endpoint whose path carries a real job id, not just route literals. The old
+ * private redactor in useJobStateMachineMutations returned `url.pathname` verbatim, so this
+ * id reached the sink; the shared `redactEndpoint` fails closed per segment (FEBT-1-W1-O-06).
+ */
+const idBearingScanError = (): HTTPError =>
+  new HTTPError({
+    status: 404,
+    retryAfterSeconds: undefined,
+    endpoint: 'https://example.test/wp-json/acx/v1/jobs/7f3c1e2a-0000-4000-8000-000000000001/cancel',
+    bodyPreview: 'not found',
+    message: 'Request failed (404): not found',
   });
 
 const scanResponse = (jobIds: string[], total = 10): BatchAnalyzeResponse => ({
@@ -196,6 +210,10 @@ describe('useJobStateMachineMutations logging [O-02][O-06]', () => {
     const errorRecords = records.filter((record) => record.level === 'error');
     expect(errorRecords).toHaveLength(1);
     expect(errorRecords[0].message).toBe('Scan submission failed');
+    // A failed submit is still a unit of work: both of its records must carry the same
+    // correlation id, or the wide event cannot be joined to the classified error (OBS-03).
+    expect(jobEvents[0].fields.requestId).toEqual(expect.any(String));
+    expect(errorRecords[0].fields.requestId).toBe(jobEvents[0].fields.requestId);
     expect(errorRecords[0].fields).toEqual(
       expect.objectContaining({
         tag: 'http',
@@ -256,5 +274,64 @@ describe('useJobStateMachineMutations logging [O-02][O-06]', () => {
       }),
     );
     expect(JSON.stringify(records)).not.toContain('raw-response-body-secret');
+  });
+  it('[FEBT-1-W1-O-06] redacts an id segment inside a logged endpoint via the shared redactor', () => {
+    const records = captureRecords();
+    const error = idBearingScanError();
+    renderMutations();
+
+    scanOptions?.onError?.(error, [1], undefined, mockMutationContext);
+
+    const errorRecords = records.filter((record) => record.level === 'error');
+    expect(errorRecords).toHaveLength(1);
+    expect(errorRecords[0].fields.endpoint).toBe(`/wp-json/acx/v1/jobs/${REDACTED_SEGMENT}/cancel`);
+    expect(JSON.stringify(records)).not.toContain('7f3c1e2a');
+  });
+
+  it('[FEBT-1-W1-O-06] redacts an id segment on the cancel path too', () => {
+    const records = captureRecords();
+    const error = idBearingScanError();
+    renderMutations(['job-9']);
+
+    cancelOptions?.onError?.(error, ['job-9'], undefined, mockCancelContext);
+
+    const errorRecords = records.filter((record) => record.level === 'error');
+    expect(errorRecords).toHaveLength(1);
+    expect(errorRecords[0].fields.endpoint).toBe(`/wp-json/acx/v1/jobs/${REDACTED_SEGMENT}/cancel`);
+    const cancelEvent = records.find((record) => record.fields.event === 'scan.cancel');
+    expect(cancelEvent?.fields.requestId).toEqual(expect.any(String));
+    expect(errorRecords[0].fields.requestId).toBe(cancelEvent?.fields.requestId);
+  });
+
+  it('[FEBT-1-W1-O-02][OBS-03] one correlation id spans a submit and every per-job line', () => {
+    const records = captureRecords();
+    renderMutations();
+
+    scanOptions?.onMutate?.([1, 2], mockMutationContext);
+    scanOptions?.onSuccess?.(scanResponse(['job-1', 'job-2'], 4), [1, 2], undefined, mockMutationContext);
+
+    const correlated = records.filter(
+      (record) => record.fields.event === 'scan.submit' || record.message === 'scan.submit_job',
+    );
+    expect(correlated).toHaveLength(3);
+    const ids = new Set(correlated.map((record) => record.fields.requestId));
+    expect(ids.size).toBe(1);
+    expect([...ids][0]).toEqual(expect.any(String));
+  });
+
+  it('[FEBT-1-W1-O-02][OBS-03] a cancel is its own unit of work, not the scan\'s', () => {
+    const records = captureRecords();
+    renderMutations(['job-9']);
+
+    scanOptions?.onMutate?.([1], mockMutationContext);
+    scanOptions?.onSuccess?.(scanResponse(['job-9'], 4), [1], undefined, mockMutationContext);
+    cancelOptions?.onMutate?.(['job-9'], mockCancelContext);
+    cancelOptions?.onSuccess?.(undefined as never, ['job-9'], undefined, mockCancelContext);
+
+    const submit = records.find((record) => record.fields.event === 'scan.submit');
+    const cancel = records.find((record) => record.fields.event === 'scan.cancel');
+    expect(submit?.fields.requestId).toEqual(expect.any(String));
+    expect(cancel?.fields.requestId).toEqual(expect.any(String));
+    expect(cancel?.fields.requestId).not.toBe(submit?.fields.requestId);
   });
 });

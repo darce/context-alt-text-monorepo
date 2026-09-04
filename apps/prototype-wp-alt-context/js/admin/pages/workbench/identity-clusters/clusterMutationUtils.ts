@@ -6,6 +6,47 @@ import { formatUserFacingError, isAuthExpiredError } from '../../../utils/userFa
 export const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /**
+ * FEBT1-LC-02 / sr-007: locally minted interactive-budget expiry travels as a typed
+ * value, never as an English sentence classified by `.includes('timed out')`. A
+ * stringly-typed control channel silently degrades to raw-message passthrough the
+ * moment the literal is reworded or translated.
+ *
+ * The brand is a registry symbol so the predicate stays structural: it survives a
+ * duplicated module instance (two copies of this file in one bundle) and does not
+ * depend on `instanceof` prototype identity.
+ */
+const CLUSTER_MUTATION_TIMEOUT_BRAND = Symbol.for('acx.clusterMutationTimeout');
+
+export class ClusterMutationTimeoutError extends Error {
+  readonly [CLUSTER_MUTATION_TIMEOUT_BRAND] = true;
+
+  /** Diagnostic only — never user-facing copy. */
+  readonly operation: string;
+
+  constructor(operation: string) {
+    // Deliberately carries no English timeout token: if this message ever
+    // matched `matchKnownCondition`, the substring matcher would silently rescue
+    // a broken brand check and the typed channel would be untested (TEST-15).
+    super(`cluster_mutation_budget_expired:${operation}`);
+    this.name = 'ClusterMutationTimeoutError';
+    this.operation = operation;
+  }
+}
+
+/**
+ * Mint the timeout signal for a client-side interactive budget (FEBT1G-H-08).
+ * `operation` is a stable machine token (`'save'`, `'merge'`, `'duplicate_lookup'`),
+ * not a sentence: it is for logs and tests, and never reaches the DOM.
+ */
+export const createClusterMutationTimeoutError = (operation: string): ClusterMutationTimeoutError =>
+  new ClusterMutationTimeoutError(operation);
+
+export const isClusterMutationTimeoutError = (error: unknown): boolean =>
+  typeof error === 'object' &&
+  error !== null &&
+  (error as Record<symbol, unknown>)[CLUSTER_MUTATION_TIMEOUT_BRAND] === true;
+
+/**
  * Abort-like: user cancel and AbortSignal.timeout. The name check is kept
  * alongside the tag so this stays true if the timeout tag is ever split out of
  * `abort` (FEBT1G-M-13): a cancelled request must never take the retry path.
@@ -47,6 +88,10 @@ const assertUnreachableTag = (value: never): never => {
  * Message-shape recognition for server conditions the API reports as text
  * rather than as a distinct status. Matching on the message is fine; returning
  * it is not — see getClusterMutationErrorMessage.
+ *
+ * The 'timed out' arm here covers *wire-originated* text (a gateway body that
+ * says so). It is not the control channel for our own interactive budget —
+ * that is ClusterMutationTimeoutError (FEBT1-LC-02).
  */
 const matchKnownCondition = (message: string, label: string): string | null => {
   const normalized = message.toLowerCase();
@@ -75,6 +120,12 @@ const matchKnownCondition = (message: string, label: string): string | null => {
  * falls through to its own message.
  */
 export const getClusterMutationErrorMessage = (error: unknown, label: string): string => {
+  // Typed local-budget expiry first: it is a distinct condition from a user
+  // cancel (which the mutation hooks swallow via isAbortError before reaching
+  // here) and must not depend on the wording of any message.
+  if (isClusterMutationTimeoutError(error)) {
+    return timeoutMessage();
+  }
   if (isAbortError(error)) {
     return timeoutMessage();
   }
@@ -96,6 +147,11 @@ export const getClusterMutationErrorMessage = (error: unknown, label: string): s
     case 'nonce_refresh':
     case 'auth_expired':
     case 'abort':
+    // FEBT1-W2A-05 blast radius: 'timeout' split out of 'abort'. Grouped here
+    // deliberately — a timeout message matches matchKnownCondition's 'timed
+    // out' arm, so `known` already yields the timeout copy; this arm changes no
+    // existing behaviour. The abort/timeout *copy* seam itself is out of fence.
+    case 'timeout':
       return known ?? genericMessage();
     default:
       return assertUnreachableTag(classified);

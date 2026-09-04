@@ -3,51 +3,36 @@
  *
  * UI for labeling a cluster with a name, showing a grid of member faces for verification.
  * Naming options come from the shared person∪cluster union; duplicates block pre-save.
+ *
+ * FEBT1G-M-14: the member grid, the duplicate-guard domain logic, the write orchestration
+ * and the collision prompt live in sibling modules. What remains here is the naming form:
+ * typed value, submit routing, and error surface.
  */
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { __, sprintf } from '@wordpress/i18n';
+import { useQuery } from '@tanstack/react-query';
+import { __ } from '@wordpress/i18n';
 
-import {
-  listRecognitionClusters,
-  mergeCluster,
-  revertMergeCluster,
-  updateClusterLabel,
-  type MergeClusterResponse,
-} from '../../../api/recognition';
-import { commitClusterToRosterEntry } from '../../../api/rosterApi';
+import { listRecognitionClusters } from '../../../api/recognition';
 import { queryKeys } from '../../../api/queryKeys';
-import { FaceThumbnail } from '../../../../components/ui/FaceThumbnail';
-import { Avatar } from '../../../../components/ui/avatar';
 import type { ComboboxOption } from '../../../../components/ui/combobox';
-import { isCroppableBbox } from '../../../../components/ui/faceGeometry';
-import { unavailableImageName } from '../../../../components/ui/faceThumbDisplay';
-import { EmptyState, EmptyStateVariant } from '../../../components/ui/EmptyState';
-import { isDedicatedFaceThumbUrl } from '../../../../components/ui/isDedicatedFaceThumbUrl';
 import { useRosterEntries } from '../../../hooks/useRosterHooks';
 import {
   buildNamingOptions,
   findCollisionsForLabel,
   NAMING_GROUP_ALL_LABELS,
-  namingOptionValue,
-  uniqueClusterCollisionTarget,
   unwrapClusterOptionId,
   type NamingOption,
 } from './buildNamingOptions';
 import { NameFaceControl, normalizeNameFaceLabel, type NameFaceResolution } from './NameFaceControl';
 import { getReservedLabelMessage, isReservedLabel } from './reservedLabel';
-import { formatUserFacingError, isAuthExpiredError } from '../../../utils/userFacingError';
-import { getProjectionNotReadyMessage, isAbortError, isProjectionNotReadyError } from './clusterMutationUtils';
+import { getClusterMutationErrorMessage } from './clusterMutationUtils';
+import { getClusterLabelLookupFailedMessage } from './clusterLabelLookup';
+import { ClusterLabelingDuplicatePrompt } from './ClusterLabelingDuplicatePrompt';
+import { ClusterLabelingMemberGrid } from './ClusterLabelingMemberGrid';
 import { MergeUndoBanner } from './MergeUndoBanner';
-import {
-  dropClusterFromReviewCaches,
-  invalidateReviewCachesWithoutRefetch,
-  invalidateSuggestionProjection,
-  isHumanLabeledTarget,
-  REVIEW_DROP_MODE,
-} from './suggestionProjection';
-import { useShowAllClusterMembers } from './useShowAllClusterMembers';
+import { DUPLICATE_GUARD_OUTCOME, useClusterLabelingDuplicateGuard } from './useClusterLabelingDuplicateGuard';
+import { useClusterLabelingMutations } from './useClusterLabelingMutations';
 
 interface ClusterLabelingPanelProps {
   clusterId: string;
@@ -57,93 +42,15 @@ interface ClusterLabelingPanelProps {
   initialLabel?: string;
 }
 
-interface DuplicateGuardState {
-  readonly label: string;
-  readonly collisions: readonly NamingOption[];
-  readonly mergeTarget: NamingOption | null;
-}
+const LABEL_SEARCH_MIN_CHARS = 2;
 
-/**
- * Parse API error response to extract user-friendly message.
- */
-const getErrorMessage = (error: unknown): string => {
-  if (isAuthExpiredError(error)) {
-    return formatUserFacingError(error, __('An unexpected error occurred. Please try again.', 'alt-context'));
-  }
-  if (isAbortError(error)) {
-    return __('Save is taking too long. Please try again.', 'alt-context');
-  }
-  if (error instanceof Error) {
-    if (error.message.toLowerCase().includes('timed out') || error.message.toLowerCase().includes('timeout')) {
-      return __('Save is taking too long. Please try again.', 'alt-context');
-    }
-    if (isProjectionNotReadyError(error.message)) {
-      return getProjectionNotReadyMessage();
-    }
-    // Check for network errors
-    if (error.message.includes('NetworkError') || error.message.includes('Failed to fetch')) {
-      return __('Network error. Please check your connection and try again.', 'alt-context');
-    }
-    return error.message;
-  }
-  return __('An unexpected error occurred. Please try again.', 'alt-context');
-};
-
-const SAVE_TIMEOUT_MS = 3000;
-/** The duplicate lookup gates the save, so it shares the save's interactive budget. */
-const DUPLICATE_LOOKUP_TIMEOUT_MS = 3000;
-
-/**
- * Enforce an interactive budget end to end (FEBT1G-H-08).
- *
- * The signal is still passed so callers that honour it cancel the transport, but the
- * deadline is enforced by the wrapper itself: a request that ignores its signal must not
- * be able to outlive the budget and hang the UI until the global fetch timeout.
- */
-const withTimeout = async <T,>(
-  request: (signal: AbortSignal) => Promise<T>,
-  timeoutMs: number,
-  timeoutMessage: string,
-): Promise<T> => {
-  const controller = new AbortController();
-  let timeoutId = 0;
-  const deadline = new Promise<never>((_resolve, reject) => {
-    timeoutId = window.setTimeout(() => {
-      controller.abort(timeoutMessage);
-      reject(new Error(timeoutMessage));
-    }, timeoutMs);
-  });
-  const attempt = (async (): Promise<T> => {
-    try {
-      return await request(controller.signal);
-    } catch (error) {
-      if (isAbortError(error)) {
-        throw new Error(timeoutMessage);
-      }
-      throw error;
-    }
-  })();
-  try {
-    return await Promise.race([attempt, deadline]);
-  } finally {
-    window.clearTimeout(timeoutId);
-  }
-};
-
-/** Outcome of the submit-time remote duplicate lookup (sr-007: one canonical status set). */
-const DUPLICATE_LOOKUP_STATUS = {
-  NONE: 'none',
-  DUPLICATE: 'duplicate',
-  LOOKUP_FAILED: 'lookup_failed',
-} as const;
-
-type RemoteDuplicateLookup =
-  | { readonly status: typeof DUPLICATE_LOOKUP_STATUS.NONE }
-  | { readonly status: typeof DUPLICATE_LOOKUP_STATUS.DUPLICATE; readonly guard: DuplicateGuardState }
-  | { readonly status: typeof DUPLICATE_LOOKUP_STATUS.LOOKUP_FAILED };
-
-const getDuplicateLookupFailedMessage = (): string =>
-  __('Could not check whether that name is already in use. Please try again.', 'alt-context');
+const toComboboxOption = (option: NamingOption): ComboboxOption => ({
+  value: option.value,
+  label: option.label,
+  source: option.source,
+  identityCount: option.identityCount,
+  group: NAMING_GROUP_ALL_LABELS,
+});
 
 export const ClusterLabelingPanel = ({
   clusterId,
@@ -153,121 +60,8 @@ export const ClusterLabelingPanel = ({
 }: ClusterLabelingPanelProps): React.JSX.Element => {
   const [labelInput, setLabelInput] = useState(initialLabel);
   const [error, setError] = useState<string | null>(null);
-  const [duplicateGuard, setDuplicateGuard] = useState<DuplicateGuardState | null>(null);
-  const [allowRenameAnyway, setAllowRenameAnyway] = useState(false);
-  const [lastMerge, setLastMerge] = useState<MergeClusterResponse | null>(null);
-  const [showAllAnnouncement, setShowAllAnnouncement] = useState<string | null>(null);
-  const memberGridRef = useRef<HTMLDivElement | null>(null);
-  const wasExpandingRef = useRef(false);
   const submittingRef = useRef(false);
   const rosterRetryRef = useRef<HTMLButtonElement | null>(null);
-  const duplicateGuardFirstActionRef = useRef<HTMLButtonElement | null>(null);
-  const queryClient = useQueryClient();
-
-  // Reset panel-local state when the labeled cluster changes (FIX-4). key= at call site remounts;
-  // this effect covers non-key remounts / prop-only updates.
-  useEffect(() => {
-    setLabelInput(initialLabel);
-    setError(null);
-    setDuplicateGuard(null);
-    setAllowRenameAnyway(false);
-    setLastMerge(null);
-    setShowAllAnnouncement(null);
-  }, [clusterId, initialLabel]);
-
-  const handleLabelSuccess = (label: string) => {
-    setError(null);
-    setDuplicateGuard(null);
-    setAllowRenameAnyway(false);
-    // UXW2-2 (B6): the labelled cluster's pending rows leave the review caches
-    // now — backend suggestion curation lags the label write.
-    dropClusterFromReviewCaches(queryClient, clusterId, { mode: REVIEW_DROP_MODE.LABEL });
-    invalidateReviewCachesWithoutRefetch(queryClient);
-    void queryClient.invalidateQueries({ queryKey: queryKeys.media.identities(), refetchType: 'none' });
-    void queryClient.invalidateQueries({ queryKey: queryKeys.roster.entries() });
-    onLabel(label);
-  };
-
-  const handleMergeSuccess = (result: MergeClusterResponse) => {
-    setError(null);
-    setDuplicateGuard(null);
-    setAllowRenameAnyway(false);
-    setLastMerge(result);
-    // UXW2-2-R1-21: drop the authoritative retired source, not the local panel id.
-    if (typeof result.source_id === 'string' && result.source_id !== '') {
-      dropClusterFromReviewCaches(queryClient, result.source_id, { mode: REVIEW_DROP_MODE.MERGE });
-    }
-    invalidateReviewCachesWithoutRefetch(queryClient);
-    void queryClient.invalidateQueries({ queryKey: queryKeys.media.identities(), refetchType: 'none' });
-  };
-
-  const {
-    members,
-    isLoading,
-    isError,
-    truncated,
-    total,
-    isFullyLoaded,
-    isExpanding,
-    expandError,
-    showAll,
-    refetch,
-  } = useShowAllClusterMembers(clusterId);
-  const memberPositions = useMemo(() => {
-    const positions: number[] = [];
-    const memberIndexesByMedia = new Map<number, number[]>();
-
-    members.forEach((member, memberIndex) => {
-      const mediaMemberIndexes = memberIndexesByMedia.get(member.media_id) ?? [];
-      mediaMemberIndexes.push(memberIndex);
-      memberIndexesByMedia.set(member.media_id, mediaMemberIndexes);
-    });
-
-    memberIndexesByMedia.forEach((memberIndexes) => {
-      memberIndexes
-        .sort((leftIndex, rightIndex) => {
-          const leftX = members[leftIndex]?.bbox?.x;
-          const rightX = members[rightIndex]?.bbox?.x;
-          const leftHasPosition = Number.isFinite(leftX);
-          const rightHasPosition = Number.isFinite(rightX);
-
-          if (
-            leftHasPosition &&
-            rightHasPosition &&
-            typeof leftX === 'number' &&
-            typeof rightX === 'number' &&
-            leftX !== rightX
-          ) {
-            return leftX - rightX;
-          }
-          if (leftHasPosition !== rightHasPosition) {
-            return leftHasPosition ? -1 : 1;
-          }
-          return leftIndex - rightIndex;
-        })
-        .forEach((memberIndex, positionIndex) => {
-          positions[memberIndex] = positionIndex + 1;
-        });
-    });
-
-    return positions;
-  }, [members]);
-
-  // AT affordance: when expansion completes the show-all button unmounts, so
-  // announce completion and move focus to the member grid before it drops.
-  useEffect(() => {
-    if (wasExpandingRef.current && !isExpanding && isFullyLoaded && !expandError) {
-      setShowAllAnnouncement(
-        sprintf(
-          /* translators: %d: total member count */
-          __('All %d members shown', 'alt-context'),
-          total,
-        ),
-      );
-      memberGridRef.current?.focus();
-    }
-    wasExpandingRef.current = isExpanding;
-  }, [isExpanding, isFullyLoaded, expandError, total]);
 
   const {
     data: persons = [],
@@ -282,52 +76,44 @@ export const ClusterLabelingPanel = ({
     }
   }, [rosterError]);
 
-  useEffect(() => {
-    if (duplicateGuard) {
-      duplicateGuardFirstActionRef.current?.focus();
-    }
-  }, [duplicateGuard]);
-
   // Labeled clusters for the union (shared builder; debounced free-text still uses persons + full list).
+  const trimmedInput = labelInput.trim();
+  const searchTerm = trimmedInput.length >= LABEL_SEARCH_MIN_CHARS ? trimmedInput : '';
   const { data: labeledClusters = [] } = useQuery({
-    queryKey: queryKeys.clusters.labelSearch(labelInput.trim().length >= 2 ? labelInput.trim() : ''),
+    queryKey: queryKeys.clusters.labelSearch(searchTerm),
     queryFn: () =>
       listRecognitionClusters({
         limit: 20,
         offset: 0,
         labeled_only: true,
-        search: labelInput.trim().length >= 2 ? labelInput.trim() : undefined,
+        search: searchTerm === '' ? undefined : searchTerm,
       }),
     select: (response) => response.clusters,
     staleTime: 30000,
   });
 
+  // ClusterSummary.label is runtime-nullable (BR-46); naming entries require a string.
+  const namedClusters = useMemo(
+    () =>
+      labeledClusters.filter(
+        (cluster): cluster is typeof cluster & { label: string } =>
+          typeof cluster.label === 'string' && cluster.label.trim() !== '',
+      ),
+    [labeledClusters],
+  );
+
   const { options: namingOptions, collisionsByLabel } = useMemo(
     () =>
       buildNamingOptions({
         rosterEntries: rosterError ? [] : persons,
-        // ClusterSummary.label is runtime-nullable (BR-46); naming entries require a string.
-        labelMatches: labeledClusters.filter(
-          (cluster): cluster is typeof cluster & { label: string } =>
-            typeof cluster.label === 'string' && cluster.label.trim() !== '',
-        ),
+        labelMatches: namedClusters,
         filter: labelInput,
         excludeClusterId: clusterId,
       }),
-    [persons, rosterError, labeledClusters, labelInput, clusterId],
+    [persons, rosterError, namedClusters, labelInput, clusterId],
   );
 
-  const comboboxOptions: ComboboxOption[] = useMemo(
-    () =>
-      namingOptions.map((option) => ({
-        value: option.value,
-        label: option.label,
-        source: option.source,
-        identityCount: option.identityCount,
-        group: NAMING_GROUP_ALL_LABELS,
-      })),
-    [namingOptions],
-  );
+  const comboboxOptions: ComboboxOption[] = useMemo(() => namingOptions.map(toComboboxOption), [namingOptions]);
 
   // Full unfiltered union for create-vs-bind (UXW2-3-R1-07). Displayed options
   // stay filter-before-slice; resolution must not inherit that truncation.
@@ -335,149 +121,44 @@ export const ClusterLabelingPanel = ({
     () =>
       buildNamingOptions({
         rosterEntries: rosterError ? [] : persons,
-        labelMatches: labeledClusters.filter(
-          (cluster): cluster is typeof cluster & { label: string } =>
-            typeof cluster.label === 'string' && cluster.label.trim() !== '',
-        ),
+        labelMatches: namedClusters,
         limit: null,
         excludeClusterId: clusterId,
-      }).options.map((option) => ({
-        value: option.value,
-        label: option.label,
-        source: option.source,
-        identityCount: option.identityCount,
-        group: NAMING_GROUP_ALL_LABELS,
-      })),
-    [persons, rosterError, labeledClusters, clusterId],
+      }).options.map(toComboboxOption),
+    [persons, rosterError, namedClusters, clusterId],
   );
 
-  const labelMutation = useMutation({
-    mutationFn: (newLabel: string) =>
-      withTimeout(
-        (signal) => updateClusterLabel(clusterId, newLabel, signal),
-        SAVE_TIMEOUT_MS,
-        'save request timed out',
-      ),
-    retry: false,
-    onSuccess: (_result, newLabel) => handleLabelSuccess(newLabel),
-  });
+  const guard = useClusterLabelingDuplicateGuard({ clusterId, collisionsByLabel });
 
-  const bindMutation = useMutation({
-    mutationFn: ({ rosterEntryId }: { rosterEntryId: number; name: string }) =>
-      withTimeout(
-        (_signal) => commitClusterToRosterEntry({ clusterId, rosterEntryId }),
-        SAVE_TIMEOUT_MS,
-        'save request timed out',
-      ),
-    retry: false,
-    onSuccess: (result, variables) => handleLabelSuccess(result.person_name ?? variables.name),
-  });
+  const resetGuard = guard.reset;
 
-  const mergeMutation = useMutation({
-    // FEBT1G-H-08: merge shares the save's interactive budget instead of falling through
-    // to the global fetch timeout.
-    mutationFn: ({ targetClusterId, targetLabel }: { targetClusterId: string; targetLabel: string }) =>
-      withTimeout(() => mergeCluster(clusterId, targetClusterId, targetLabel), SAVE_TIMEOUT_MS, 'merge request timed out'),
-    retry: false,
-    onSuccess: (result) => handleMergeSuccess(result),
-    onError: (err: Error) => {
-      setError(getErrorMessage(err));
+  const mutations = useClusterLabelingMutations({
+    clusterId,
+    onLabel,
+    onWriteSuccess: () => {
+      setError(null);
+      resetGuard();
     },
+    onError: (err: unknown) => setError(getClusterMutationErrorMessage(err, labelInput)),
   });
 
-  const revertMutation = useMutation({
-    mutationFn: (payload: MergeClusterResponse) =>
-      revertMergeCluster({
-        targetClusterId: payload.target_id,
-        movedIdentityIds: payload.moved_identity_ids,
-        sourceLabel: payload.source_label,
-      }),
-    retry: false,
-    onSuccess: () => {
-      setLastMerge(null);
-      void queryClient.invalidateQueries({ queryKey: queryKeys.clusters.all });
-      void queryClient.invalidateQueries({ queryKey: queryKeys.media.identities() });
-      void invalidateSuggestionProjection(queryClient);
-    },
-    onError: (err: Error) => {
-      setError(getErrorMessage(err));
-    },
-  });
+  const { clearLastMerge } = mutations;
 
-  const evaluateDuplicateGuard = (trimmed: string): DuplicateGuardState | null => {
-    const collisions = findCollisionsForLabel(collisionsByLabel, trimmed, clusterId);
-    if (collisions.length === 0) {
-      return null;
-    }
-    return {
-      label: trimmed,
-      collisions,
-      mergeTarget: uniqueClusterCollisionTarget(collisions),
-    };
-  };
-
-  /**
-   * When the local collision set is empty/pending (limit 20, disabled <2 chars),
-   * look up an exact remote labeled match so free-text create cannot silent-dupe (FIX-8).
-   * Collision is raw case-insensitive equality (BR-42) — not isHumanLabeledTarget —
-   * so backend-labeled machine shapes (e.g. cluster-auto-1) still arm the guard.
-   */
-  const evaluateRemoteDuplicateGuard = async (trimmed: string): Promise<RemoteDuplicateLookup> => {
-    let results: Awaited<ReturnType<typeof listRecognitionClusters>>;
-    try {
-      results = await withTimeout(
-        (signal) =>
-          listRecognitionClusters(
-            {
-              search: trimmed,
-              limit: 10,
-              labeled_only: true,
-            },
-            signal,
-          ),
-        DUPLICATE_LOOKUP_TIMEOUT_MS,
-        'duplicate name check timed out',
-      );
-    } catch {
-      // FEBT1G-H-05: a failed lookup is not evidence of "no duplicate". Fail closed —
-      // this guard is the only protection when the local 20-item list is incomplete.
-      return { status: DUPLICATE_LOOKUP_STATUS.LOOKUP_FAILED };
-    }
-    const normalized = trimmed.toLowerCase();
-    const match = results.clusters.find(
-      (cluster) =>
-        cluster.id !== clusterId && typeof cluster.label === 'string' && cluster.label.toLowerCase() === normalized,
-    );
-    if (!match?.id || !match.label) {
-      return { status: DUPLICATE_LOOKUP_STATUS.NONE };
-    }
-    const remoteOption: NamingOption = {
-      value: namingOptionValue('cluster', match.id),
-      label: match.label,
-      source: 'cluster',
-      identityCount: typeof match.identity_count === 'number' ? match.identity_count : undefined,
-    };
-    return {
-      status: DUPLICATE_LOOKUP_STATUS.DUPLICATE,
-      guard: {
-        label: trimmed,
-        collisions: [remoteOption],
-        mergeTarget: remoteOption,
-      },
-    };
-  };
-
-  const isBusy = labelMutation.isPending || mergeMutation.isPending || bindMutation.isPending;
+  // Reset panel-local state when the labeled cluster changes (FIX-4). key= at call site
+  // remounts; this effect covers non-key remounts / prop-only updates.
+  useEffect(() => {
+    setLabelInput(initialLabel);
+    setError(null);
+    resetGuard();
+    clearLastMerge();
+  }, [clusterId, initialLabel, resetGuard, clearLastMerge]);
 
   const submitLabel = async (
     rawLabel: string,
     options?: { skipPersonOnlyGuard?: boolean; skipDuplicateGuard?: boolean; rosterEntryId?: number },
   ) => {
     const trimmed = rawLabel.trim();
-    if (!trimmed) {
-      return;
-    }
-    if (submittingRef.current || isBusy) {
+    if (!trimmed || submittingRef.current || mutations.isBusy) {
       return;
     }
     submittingRef.current = true;
@@ -490,35 +171,23 @@ export const ClusterLabelingPanel = ({
         return;
       }
 
-      if (!allowRenameAnyway && !options?.skipDuplicateGuard) {
-        const localGuard = evaluateDuplicateGuard(trimmed);
-        const skipPersonOnly = Boolean(options?.skipPersonOnlyGuard && localGuard && !localGuard.mergeTarget);
-        if (localGuard && !skipPersonOnly) {
-          setDuplicateGuard(localGuard);
-          return;
-        }
-        const remoteLookup = await evaluateRemoteDuplicateGuard(trimmed);
-        if (remoteLookup.status === DUPLICATE_LOOKUP_STATUS.LOOKUP_FAILED) {
-          setError(getDuplicateLookupFailedMessage());
-          return;
-        }
-        if (remoteLookup.status === DUPLICATE_LOOKUP_STATUS.DUPLICATE) {
-          setDuplicateGuard(remoteLookup.guard);
-          return;
-        }
+      const outcome = await guard.evaluate(trimmed, options);
+      if (outcome === DUPLICATE_GUARD_OUTCOME.LOOKUP_FAILED) {
+        setError(getClusterLabelLookupFailedMessage());
+        return;
       }
-
-      setDuplicateGuard(null);
-      setAllowRenameAnyway(false);
+      if (outcome === DUPLICATE_GUARD_OUTCOME.BLOCKED) {
+        return;
+      }
 
       try {
         if (typeof options?.rosterEntryId === 'number') {
-          await bindMutation.mutateAsync({ rosterEntryId: options.rosterEntryId, name: trimmed });
+          await mutations.bindToRosterEntry({ rosterEntryId: options.rosterEntryId, name: trimmed });
         } else {
-          await labelMutation.mutateAsync(trimmed);
+          await mutations.saveLabel(trimmed);
         }
       } catch (err) {
-        setError(getErrorMessage(err));
+        setError(getClusterMutationErrorMessage(err, trimmed));
       }
     } finally {
       submittingRef.current = false;
@@ -549,15 +218,8 @@ export const ClusterLabelingPanel = ({
 
   const handleTypedValueChange = (value: string) => {
     setLabelInput(value);
-    setAllowRenameAnyway(false);
     clearError();
-    if (duplicateGuard) {
-      setDuplicateGuard(null);
-    }
-  };
-
-  const handleOptionConfirm = (option: ComboboxOption): void => {
-    handleSelectOption(String(option.value));
+    guard.reset();
   };
 
   const handleSelectOption = (optionValue: string): void => {
@@ -566,50 +228,36 @@ export const ClusterLabelingPanel = ({
       return;
     }
     setLabelInput(matched.label);
-    setAllowRenameAnyway(false);
     clearError();
 
     // Cluster selection primes the duplicate guard so merge is explicit (INT-07).
     const clusterIdFromValue = unwrapClusterOptionId(optionValue);
     if (clusterIdFromValue && matched.source === 'cluster') {
       const collisions = findCollisionsForLabel(collisionsByLabel, matched.label, clusterId);
-      setDuplicateGuard({
+      const selectedOption = {
+        value: matched.value,
         label: matched.label,
-        collisions:
-          collisions.length > 0
-            ? collisions
-            : [
-                {
-                  value: matched.value,
-                  label: matched.label,
-                  source: 'cluster',
-                  identityCount: matched.identityCount as number | undefined,
-                },
-              ],
-        mergeTarget: {
-          value: matched.value,
-          label: matched.label,
-          source: 'cluster',
-          identityCount: matched.identityCount as number | undefined,
-        },
+        source: 'cluster' as const,
+        identityCount: matched.identityCount as number | undefined,
+      };
+      guard.armGuard({
+        label: matched.label,
+        collisions: collisions.length > 0 ? collisions : [selectedOption],
+        mergeTarget: selectedOption,
       });
       return;
     }
-    setDuplicateGuard(null);
+    guard.reset();
   };
 
-  const mergeTargetId = duplicateGuard?.mergeTarget ? unwrapClusterOptionId(duplicateGuard.mergeTarget.value) : null;
-  const mergeTargetLabel = duplicateGuard?.mergeTarget?.label;
-  const mergeTargetCount = duplicateGuard?.mergeTarget?.identityCount;
-  // BR-66 / BR-58: outcome-sample copy must match the merge button predicate — never advertise
-  // a merge that the machine-labeled-target guard suppresses.
-  const canOfferMerge =
-    Boolean(mergeTargetId) &&
-    typeof mergeTargetLabel === 'string' &&
-    mergeTargetLabel.length > 0 &&
-    isHumanLabeledTarget(mergeTargetLabel);
+  const handleRenameAnyway = (label: string) => {
+    guard.allowRenameAnyway();
+    void submitLabel(label, { skipDuplicateGuard: true });
+  };
 
+  const { lastMerge } = mutations;
   if (lastMerge) {
+    const doneLabel = lastMerge.target_label ?? labelInput;
     return (
       <div className="acx-cluster-labeling-panel">
         <div className="acx-cluster-labeling-panel__header">
@@ -618,7 +266,7 @@ export const ClusterLabelingPanel = ({
             type="button"
             className="acx-close-button"
             onClick={() => {
-              onLabel(lastMerge.target_label ?? labelInput);
+              onLabel(doneLabel);
               onClose();
             }}
             aria-label={__('Close', 'alt-context')}
@@ -629,17 +277,11 @@ export const ClusterLabelingPanel = ({
         <div className="acx-cluster-labeling-panel__content">
           <MergeUndoBanner
             mergeResult={lastMerge}
-            isReverting={revertMutation.isPending}
-            onUndo={() => revertMutation.mutate(lastMerge)}
+            isReverting={mutations.isReverting}
+            onUndo={() => mutations.revert(lastMerge)}
           />
           <div className="acx-cluster-labeling-panel__input-group">
-            <button
-              type="button"
-              className="button button-secondary"
-              onClick={() => {
-                onLabel(lastMerge.target_label ?? labelInput);
-              }}
-            >
+            <button type="button" className="button button-secondary" onClick={() => onLabel(doneLabel)}>
               {__('Done', 'alt-context')}
             </button>
           </div>
@@ -663,86 +305,7 @@ export const ClusterLabelingPanel = ({
       </div>
 
       <div className="acx-cluster-labeling-panel__content">
-        <div className="acx-cluster-labeling-panel__grid" ref={memberGridRef} tabIndex={-1}>
-          {isLoading ? (
-            <p>{__('Loading faces...', 'alt-context')}</p>
-          ) : isError ? (
-            <div className="acx-cluster-labeling-panel__error" role="alert" data-testid="acx-cluster-members-error">
-              <p>{__('Unable to load these faces.', 'alt-context')}</p>
-              <button type="button" className="button" onClick={() => refetch()}>
-                {__('Retry', 'alt-context')}
-              </button>
-            </div>
-          ) : members.length > 0 ? (
-            members.map((member, memberIndex) => {
-              const memberAlt = sprintf(
-                __('Face %1$d in media %2$d', 'alt-context'),
-                memberPositions[memberIndex] ?? memberIndex + 1,
-                member.media_id,
-              );
-
-              return (
-                <div key={member.identity_id} className="acx-cluster-labeling-panel__face">
-                  {member.thumb_url && isDedicatedFaceThumbUrl(member.thumb_url) ? (
-                    <Avatar src={member.thumb_url} size="lg" alt={memberAlt} />
-                  ) : member.media_url && isCroppableBbox(member.bbox) ? (
-                    <FaceThumbnail mediaUrl={member.media_url} bbox={member.bbox} size="lg" alt={memberAlt} />
-                  ) : member.thumb_url ? (
-                    <Avatar src={member.thumb_url} size="lg" alt={memberAlt} />
-                  ) : (
-                    <div
-                      className="acx-cluster-labeling-panel__face-unavailable"
-                      role="img"
-                      aria-label={unavailableImageName(memberAlt)}
-                    >
-                      <span className="acx-cluster-labeling-panel__face-unavailable-label">
-                        {__('No image', 'alt-context')}
-                      </span>
-                    </div>
-                  )}
-                </div>
-              );
-            })
-          ) : (
-            <EmptyState
-              variant={EmptyStateVariant.EMPTY}
-              heading={__('No faces available to name', 'alt-context')}
-              body={__('Return to the review suggestions and choose another face group.', 'alt-context')}
-              action={{ label: __('Back to review suggestions', 'alt-context'), onClick: onClose }}
-              headingLevel={3}
-            />
-          )}
-        </div>
-        <p className="acx-cluster-members-show-all__announce" role="status" aria-live="polite">
-          {showAllAnnouncement}
-        </p>
-        {truncated && !isFullyLoaded ? (
-          <div className="acx-cluster-members-show-all">
-            <button
-              type="button"
-              className="button acx-cluster-members-show-all__button"
-              onClick={() => {
-                void showAll();
-              }}
-              disabled={isExpanding}
-              data-truncated={truncated ? 'true' : 'false'}
-              data-total={total}
-            >
-              {isExpanding
-                ? __('Loading all members…', 'alt-context')
-                : sprintf(
-                    /* translators: %d: total member count */
-                    __('Show all (%d)', 'alt-context'),
-                    total,
-                  )}
-            </button>
-            {expandError ? (
-              <p className="acx-cluster-members-show-all__error" role="alert">
-                {expandError}
-              </p>
-            ) : null}
-          </div>
-        ) : null}
+        <ClusterLabelingMemberGrid clusterId={clusterId} onClose={onClose} />
 
         <div className="acx-cluster-labeling-panel__form">
           {rosterError ? (
@@ -762,116 +325,41 @@ export const ClusterLabelingPanel = ({
               </button>
             </div>
           ) : (
-          <>
-          <label htmlFor="cluster-label-input">{__('Name', 'alt-context')}</label>
-          <NameFaceControl
-            options={comboboxOptions}
-            resolutionOptions={resolutionOptions}
-            value={labelInput}
-            onValueChange={handleTypedValueChange}
-            onCommit={resolveCommit}
-            onOptionConfirm={handleOptionConfirm}
-            isPending={isBusy}
-            isLoading={rosterLoading}
-            inputDisabled={mergeMutation.isPending}
-            disabled={mergeMutation.isPending}
-            commitLabel={__('Save name', 'alt-context')}
-            pendingLabel={
-              mergeMutation.isPending ? __('Merging...', 'alt-context') : __('Saving...', 'alt-context')
-            }
-            placeholder={__('Enter name...', 'alt-context')}
-            searchPlaceholder={__('Enter name...', 'alt-context')}
-            inputId="cluster-label-input"
-            autoFocus={false}
-            suggestionsHeader={
-              labelInput.trim()
-                ? __('Matches', 'alt-context')
-                : __('Suggested', 'alt-context')
-            }
-            className="acx-cluster-labeling-panel__input-group"
-            classPrefix="acx-cluster-labeling-panel"
-          />
-          </>
+            <>
+              <label htmlFor="cluster-label-input">{__('Name', 'alt-context')}</label>
+              <NameFaceControl
+                options={comboboxOptions}
+                resolutionOptions={resolutionOptions}
+                value={labelInput}
+                onValueChange={handleTypedValueChange}
+                onCommit={resolveCommit}
+                onOptionConfirm={(option) => handleSelectOption(String(option.value))}
+                isPending={mutations.isBusy}
+                isLoading={rosterLoading}
+                inputDisabled={mutations.isMerging}
+                disabled={mutations.isMerging}
+                commitLabel={__('Save name', 'alt-context')}
+                pendingLabel={mutations.isMerging ? __('Merging...', 'alt-context') : __('Saving...', 'alt-context')}
+                placeholder={__('Enter name...', 'alt-context')}
+                searchPlaceholder={__('Enter name...', 'alt-context')}
+                inputId="cluster-label-input"
+                autoFocus={false}
+                suggestionsHeader={labelInput.trim() ? __('Matches', 'alt-context') : __('Suggested', 'alt-context')}
+                className="acx-cluster-labeling-panel__input-group"
+                classPrefix="acx-cluster-labeling-panel"
+              />
+            </>
           )}
 
-          {duplicateGuard && (
-            <div
-              className="acx-cluster-labeling-panel__duplicate-guard"
-              role="group"
-              aria-labelledby="acx-cluster-labeling-panel-duplicate-guard-label"
-            >
-              <p
-                id="acx-cluster-labeling-panel-duplicate-guard-label"
-                className="acx-cluster-labeling-panel__suggestion-text"
-              >
-                {sprintf(
-                  __('A name matching "%s" already exists. Choose how to proceed.', 'alt-context'),
-                  duplicateGuard.label,
-                )}
-              </p>
-              {canOfferMerge ? (
-                <p className="acx-cluster-labeling-panel__outcome-sample">
-                  {typeof mergeTargetCount === 'number'
-                    ? sprintf(
-                        /* translators: 1: cluster label, 2: member count */
-                        __('Merge target: group "%1$s" (%2$d members)', 'alt-context'),
-                        mergeTargetLabel,
-                        mergeTargetCount,
-                      )
-                    : sprintf(
-                        /* translators: %s: cluster label */
-                        __('Merge target: group "%s"', 'alt-context'),
-                        mergeTargetLabel,
-                      )}
-                </p>
-              ) : null}
-              <div className="acx-cluster-labeling-panel__suggestion-actions">
-                {canOfferMerge && mergeTargetId ? (
-                  <button
-                    ref={duplicateGuardFirstActionRef}
-                    type="button"
-                    className="button button-primary"
-                    disabled={isBusy}
-                    onClick={() =>
-                      mergeMutation.mutate({
-                        targetClusterId: mergeTargetId,
-                        targetLabel: mergeTargetLabel,
-                      })
-                    }
-                  >
-                    {sprintf(
-                      /* translators: %s: target cluster label */
-                      __('Merge into group "%s"', 'alt-context'),
-                      mergeTargetLabel,
-                    )}
-                  </button>
-                ) : null}
-                <button
-                  ref={canOfferMerge && mergeTargetId ? undefined : duplicateGuardFirstActionRef}
-                  type="button"
-                  className="button"
-                  disabled={isBusy}
-                  onClick={() => {
-                    setAllowRenameAnyway(true);
-                    setDuplicateGuard(null);
-                    void submitLabel(duplicateGuard.label, { skipDuplicateGuard: true });
-                  }}
-                >
-                  {__('Rename anyway', 'alt-context')}
-                </button>
-                <button
-                  type="button"
-                  className="button"
-                  disabled={isBusy}
-                  onClick={() => {
-                    setDuplicateGuard(null);
-                    setAllowRenameAnyway(false);
-                  }}
-                >
-                  {__('Cancel', 'alt-context')}
-                </button>
-              </div>
-            </div>
+          {guard.duplicateGuard && (
+            <ClusterLabelingDuplicatePrompt
+              guard={guard.duplicateGuard}
+              isBusy={mutations.isBusy}
+              firstActionRef={guard.firstActionRef}
+              onMerge={(targetClusterId, targetLabel) => mutations.merge({ targetClusterId, targetLabel })}
+              onRenameAnyway={handleRenameAnyway}
+              onCancel={guard.reset}
+            />
           )}
           {error && (
             <p className="acx-cluster-labeling-panel__error" role="alert">

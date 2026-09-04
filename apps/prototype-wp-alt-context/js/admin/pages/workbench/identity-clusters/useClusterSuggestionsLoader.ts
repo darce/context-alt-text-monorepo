@@ -17,15 +17,12 @@ import {
   type IdentityBatchSuggestionsResponse,
 } from '../../../api/recognition';
 import { useRosterEntries } from '../../../hooks/useRosterHooks';
-import { classifyError } from '../../../utils/appError';
-import { createLogger } from '../../../utils/logger';
 import { buildNamingOptions, type NamingOption } from './buildNamingOptions';
-import { isAbortError } from './clusterMutationUtils';
+import { lookupClusterByLabel, unwrapClusterLabelLookup } from './clusterLabelLookup';
 import {
   IDENTITY_BATCH_STALE_MS,
   PROJECTION_TOP_K,
   identityBatchIdsKey,
-  isHumanLabeledTarget,
   projectIdentityWindow,
   readIdentityBatchUpdatedAt,
   readIdentityFromBatchCache,
@@ -59,7 +56,12 @@ export interface ClusterSuggestionsLoaderResult {
   isLoading: boolean;
   /** Roster query failed — consumers degrade to cluster-only options */
   rosterError: boolean;
-  /** Find cluster ID by label (case-insensitive); remote search only; BR-17 gated */
+  /**
+   * Find cluster ID by label (case-insensitive); remote search only; BR-17 gated.
+   * `null` means the lookup ran and found nothing. A lookup that could not run throws
+   * `ClusterLabelLookupError` so write callers fail CLOSED (FEBT1G-H-04). Callers that
+   * want the outcome as a value import `lookupClusterByLabel` from `clusterLabelLookup`.
+   */
   findClusterByLabel: (label: string, signal?: AbortSignal) => Promise<ClusterLabelMatch | null>;
   /** Envelope total from the at-rest labelled-cluster page (never derived from clusters.length). */
   atRestTotal: number;
@@ -69,23 +71,10 @@ export interface ClusterSuggestionsLoaderResult {
   isAtRestMode: boolean;
 }
 
-const log = createLogger('identityClusters.suggestionsLoader');
 const DEFAULT_DEBOUNCE_MS = 300;
 const EMPTY_COLLISIONS: ReadonlyMap<string, readonly NamingOption[]> = new Map();
 /** Typed label search is disabled until the debounced input reaches this length. */
 export const ACX_LABEL_SEARCH_MIN_CHARS = 2;
-/**
- * FEBT1-W2B-06: the typed label is a roster name and it travels in the query
- * string, so only the pathname may reach a log sink.
- */
-const redactEndpoint = (endpoint: string): string => {
-  try {
-    return new URL(endpoint, 'http://localhost').pathname;
-  } catch {
-    return endpoint;
-  }
-};
-
 /** RES-05: at-rest labelled list is capped at 50. If response.total > 50 the dropdown is incomplete until the operator types 2+ chars (server-side search). */
 const AT_REST_LABELED_LIMIT = 50;
 
@@ -194,43 +183,8 @@ export const useClusterSuggestionsLoader = ({
   }, [rosterEntries, rosterError, labelMatches, atRestLabeledClusters, debouncedValue, editableClusterId, isAtRestMode]);
 
   const findClusterByLabel = React.useCallback(
-    async (label: string, signal?: AbortSignal): Promise<ClusterLabelMatch | null> => {
-      const normalizedLabel = label.toLowerCase().trim();
-      if (!normalizedLabel) {
-        return null;
-      }
-
-      try {
-        const results = await listRecognitionClusters({ search: label, limit: 10, labeled_only: true }, signal);
-        const match = results.clusters.find(
-          (cluster) =>
-            cluster.id !== editableClusterId &&
-            typeof cluster.label === 'string' &&
-            cluster.label.toLowerCase() === normalizedLabel &&
-            // BR-17: auto cluster-* labels are never merge/assign targets (FIX-2).
-            isHumanLabeledTarget(cluster.label),
-        );
-        if (match?.id && match.label) {
-          return {
-            id: match.id,
-            label: match.label,
-            identityCount: typeof match.identity_count === 'number' ? match.identity_count : undefined,
-          };
-        }
-      } catch (err) {
-        if (isAbortError(err)) {
-          return null;
-        }
-        const classified = classifyError(err);
-        log.warn('Failed to find cluster by label', {
-          tag: classified._tag,
-          ...('status' in classified ? { status: classified.status } : {}),
-          ...('endpoint' in classified ? { endpoint: redactEndpoint(classified.endpoint) } : {}),
-        });
-      }
-
-      return null;
-    },
+    async (label: string, signal?: AbortSignal): Promise<ClusterLabelMatch | null> =>
+      unwrapClusterLabelLookup(await lookupClusterByLabel({ label, editableClusterId, signal })),
     [editableClusterId],
   );
 

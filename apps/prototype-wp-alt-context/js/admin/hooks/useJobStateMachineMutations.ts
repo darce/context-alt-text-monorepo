@@ -4,13 +4,26 @@ import { __ } from '@wordpress/i18n';
 import type { ClusterResponse } from '../api/recognition';
 import { resolveScanErrorMessage } from '../api/recognition/scanApiError';
 import { classifyError } from '../utils/appError';
-import { createLogger, logJobEvent, type LogFields } from '../utils/logger';
+import {
+  createLogger,
+  logJobEvent,
+  newRequestId,
+  redactEndpoint,
+  withRequestId,
+  type LogFields,
+  type Logger,
+} from '../utils/logger';
 import { createClusterAutoRetry } from './clusterAutoRetry';
 import type { JobType } from './useJobPersistence';
 import { useScanIdentities, useClusterIdentities, useCancelScanJobs } from './useRecognitionHooks';
 
 const log = createLogger('jobStateMachineMutations');
 
+/**
+ * Endpoint redaction has exactly one owner (REF-19/REF-21, FEBT-1-W1-O-06): this used to
+ * hold a private `new URL(...).pathname` redactor, i.e. a second copy of a PII rule that
+ * failed OPEN and drifted away from the logger's. It now delegates to `redactEndpoint`.
+ */
 const classifiedLogFields = (error: unknown): LogFields => {
   const classified = classifyError(error);
   const fields: LogFields = { tag: classified._tag };
@@ -18,11 +31,7 @@ const classifiedLogFields = (error: unknown): LogFields => {
     fields.status = classified.status;
   }
   if ('endpoint' in classified) {
-    try {
-      fields.endpoint = new URL(classified.endpoint, 'http://localhost').pathname;
-    } catch {
-      fields.endpoint = classified.endpoint;
-    }
+    fields.endpoint = redactEndpoint(classified.endpoint);
   }
   return fields;
 };
@@ -62,6 +71,19 @@ export const useJobStateMachineMutations = ({
     activeJobIds.forEach((id) => removeJob(id));
   }, [activeJobIds, removeJob]);
 
+  // One correlation id per unit of work, minted when the action starts and reused by its
+  // outcome handler so submit/success and submit/failure share a grep key (OBS-03).
+  const scanRequestIdRef = useRef<string | null>(null);
+  const cancelRequestIdRef = useRef<string | null>(null);
+  const scanLog = useCallback(
+    (): Logger => withRequestId(log, scanRequestIdRef.current ?? newRequestId()),
+    [],
+  );
+  const cancelLog = useCallback(
+    (): Logger => withRequestId(log, cancelRequestIdRef.current ?? newRequestId()),
+    [],
+  );
+
   const [clusterQueuedSeconds, setClusterQueuedSeconds] = useState<number | null>(null);
   const [canRetryClustering, setCanRetryClustering] = useState(false);
 
@@ -74,6 +96,7 @@ export const useJobStateMachineMutations = ({
 
   const scanMutation = useScanIdentities({
     onMutate: () => {
+      scanRequestIdRef.current = newRequestId();
       onScanStart?.();
       clearActiveJobs();
       setIsWaitingForScanCompletion(false);
@@ -99,7 +122,7 @@ export const useJobStateMachineMutations = ({
       // Correlation must cover the whole batch: binding only to jobIds[0] left every other
       // job's later sse.* / stream.done lines unjoinable to this submit (OBS-03, FEBT1-W2B-02).
       const jobId = jobIds[0];
-      const batchLog = log.child({ jobIds, jobCount: jobIds.length, batchRunId: data.batchRunId });
+      const batchLog = scanLog().child({ jobIds, jobCount: jobIds.length, batchRunId: data.batchRunId });
       const jobLog = jobId ? batchLog.child({ jobId }) : batchLog;
       logJobEvent(jobLog, 'scan.submit', {
         status: jobIds.length > 0 ? 'pending' : 'completed',
@@ -121,8 +144,9 @@ export const useJobStateMachineMutations = ({
       });
     },
     onError: (error) => {
-      log.error('Scan submission failed', classifiedLogFields(error));
-      logJobEvent(log, 'scan.submit', {
+      const failedLog = scanLog();
+      failedLog.error('Scan submission failed', classifiedLogFields(error));
+      logJobEvent(failedLog, 'scan.submit', {
         status: 'failed',
         failedCount: 1,
       });
@@ -194,11 +218,13 @@ export const useJobStateMachineMutations = ({
 
   const cancelMutation = useCancelScanJobs({
     onMutate: () => {
+      cancelRequestIdRef.current = newRequestId();
       setIsCancellingScan(true);
     },
     onSuccess: () => {
       const jobId = activeJobIds[0];
-      const jobLog = jobId ? log.child({ jobId }) : log;
+      const base = cancelLog();
+      const jobLog = jobId ? base.child({ jobId }) : base;
       logJobEvent(jobLog, 'scan.cancel', {
         status: 'cancelled',
         jobId,
@@ -210,7 +236,8 @@ export const useJobStateMachineMutations = ({
     },
     onError: (error) => {
       const jobId = activeJobIds[0];
-      const jobLog = jobId ? log.child({ jobId }) : log;
+      const base = cancelLog();
+      const jobLog = jobId ? base.child({ jobId }) : base;
       jobLog.error('Cancel failed', classifiedLogFields(error));
       logJobEvent(jobLog, 'scan.cancel', {
         status: 'failed',

@@ -59,12 +59,49 @@ interface FlattenedError {
   cause?: unknown;
 }
 
-const redactEndpoint = (endpoint: string): string => {
+/** Stand-in emitted for any path segment that is not provably a route literal (REF-33). */
+export const REDACTED_SEGMENT = '<redacted>';
+
+/**
+ * Segments that provably cannot carry entropy: lowercase word(s) joined by
+ * hyphens, or an API version token (`v1`). A uuid, numeric id, hex digest,
+ * base64 token, or nonce cannot match this, so it can never be emitted.
+ */
+const SAFE_PATH_SEGMENT = /^(?:[a-z]+(?:-[a-z]+)*|v[0-9]+)$/;
+
+/** Upper bound so a long word-shaped token cannot ride through the allowlist. */
+const MAX_SAFE_SEGMENT_LENGTH = 32;
+
+const redactPathSegment = (segment: string): string => {
+  if (segment === '') {
+    return segment;
+  }
+  if (segment.length <= MAX_SAFE_SEGMENT_LENGTH && SAFE_PATH_SEGMENT.test(segment)) {
+    return segment;
+  }
+  return REDACTED_SEGMENT;
+};
+
+/**
+ * Reduce a request endpoint to a route shape safe to write to a log sink
+ * (OBS-05 secret hygiene, WEB-44 "a token in a URL is a secret in every log").
+ *
+ * Fail-closed by construction: origin, query and fragment are dropped outright,
+ * and each remaining path segment is emitted ONLY when it matches the route
+ * literal allowlist. Everything else — ids, nonces, digests, anything unknown —
+ * collapses to `<redacted>`, so `/wp-json/acx/v1/jobs/<uuid>/data` logs as
+ * `/wp-json/acx/v1/jobs/<redacted>/data`. The previous implementation returned
+ * `url.pathname` verbatim, i.e. it failed OPEN into the sink (FEBT1-LE-01).
+ *
+ * Single owner for endpoint redaction (REF-19/REF-21: redact inside the logger,
+ * not per caller). Callers outside this module import it rather than re-deriving.
+ */
+export const redactEndpoint = (endpoint: string): string => {
   try {
     const url = endpoint.includes('://') ? new URL(endpoint) : new URL(endpoint, 'http://localhost');
-    return url.pathname;
+    return url.pathname.split('/').map(redactPathSegment).join('/');
   } catch {
-    return '<redacted>';
+    return REDACTED_SEGMENT;
   }
 };
 
@@ -81,6 +118,7 @@ const safeAppErrorMessage = (error: AppError): string => {
       return 'Nonce refresh failed';
     case 'auth_expired':
     case 'abort':
+    case 'timeout':
     case 'transport':
     case 'unknown':
       return error.message;
@@ -182,21 +220,6 @@ const flattenFields = (fields: LogFields): LogFields => {
 
 const isNonEmptyFields = (fields: LogFields): boolean => Object.keys(fields).length > 0;
 
-/**
- * Fallback correlation id for a logger created without one.
- *
- * OBS-03: a logger scope is NOT a transaction. A module-scope `createLogger(...)`
- * mints this id once at import time, so it correlates "which module" and not
- * "which unit of work". Call sites that span more than one user action must open
- * a unit of work with `withRequestId` and log through the returned child.
- */
-const bindCorrelationId = (fields: LogFields): LogFields => {
-  if (typeof fields.requestId === 'string' && fields.requestId !== '') {
-    return fields;
-  }
-  return { ...fields, requestId: newRequestId() };
-};
-
 export const consoleSink: LogSink = (record) => {
   const prefix = `[alt-context/${record.scope}] ${record.message}`;
   const fields = flattenFields(record.fields);
@@ -221,8 +244,18 @@ export const newRequestId = (): string => {
   return `req-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
 };
 
+/**
+ * Create a logger for a module scope.
+ *
+ * OBS-03: a logger scope is NOT a transaction, so `createLogger` does NOT mint a
+ * `requestId`. Minting one here would put an import-time uuid on every line of a
+ * module-scope logger — a grep key that correlates "which module" (already carried
+ * by `scope`) and not "which unit of work", while looking indistinguishable from a
+ * real one (FEBT1-W2B-01). `requestId` is therefore present on a record if and only
+ * if a unit of work was opened with `withRequestId`; its absence is readable signal.
+ */
 export const createLogger = (scope: string, fields: LogFields = {}): Logger => {
-  const parentFields = bindCorrelationId(flattenFields(fields));
+  const parentFields = flattenFields(fields);
 
   const emit = (level: LogLevel, message: string, callFields?: LogFields): void => {
     if (LOG_LEVEL_ORDER[level] < LOG_LEVEL_ORDER[minLevel]) {
@@ -253,12 +286,18 @@ export const createLogger = (scope: string, fields: LogFields = {}): Logger => {
 
 /**
  * Open a unit of work: returns a child logger whose `requestId` correlates every
- * record emitted for that one action (FEBT1-W2B-01, OBS-03). Pass an existing id
- * to join an in-flight transaction (e.g. a scan submit and its SSE stream).
+ * record emitted for that one action, including records from further `child()`
+ * calls (FEBT1-W2B-01, OBS-03). Pass an existing id to join an in-flight
+ * transaction so two scopes — e.g. a scan submit and its SSE stream — share one
+ * grep key. This is the ONLY seam that mints a correlation id.
  */
 export const withRequestId = (log: Logger, requestId: string = newRequestId()): Logger =>
   log.child({ requestId });
 
+/**
+ * Job-scoped logger. `jobId` identifies the long-running job, not one user action:
+ * wrap with `withRequestId` to correlate a single action against that job.
+ */
 export const createJobLogger = (scope: string, jobId: string): Logger => createLogger(scope, { jobId });
 
 export const logJobEvent = (

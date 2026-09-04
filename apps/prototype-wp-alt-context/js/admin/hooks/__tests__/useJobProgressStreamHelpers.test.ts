@@ -2,41 +2,71 @@ import { createRef } from 'react';
 import { describe, expect, it } from 'vitest';
 
 import type { JobProgress } from '../../api/recognition/types/scan';
-import { parseDoneEvent, parseProgressEvent } from '../useJobProgressStreamHelpers';
+import {
+  parseDoneEvent,
+  parseProgressEvent,
+  type ParsedProgressEvent,
+} from '../useJobProgressStreamHelpers';
+
+const newRef = (initial: number | null = null): React.MutableRefObject<number | null> => {
+  const ref = createRef<number | null>() as React.MutableRefObject<number | null>;
+  ref.current = initial;
+  return ref;
+};
+
+/**
+ * Internal invariant only (sr-005): the payloads below are fixtures this file wrote, so a
+ * failed parse is a defect in the code under test, not untrusted input to validate.
+ */
+function assertParsed<TStatus extends string>(
+  result: ParsedProgressEvent<TStatus>,
+): asserts result is Extract<ParsedProgressEvent<TStatus>, { ok: true }> {
+  if (!result.ok) {
+    throw new Error(`expected a parsed progress event, got reason="${result.reason}"`);
+  }
+}
 
 // ---------------------------------------------------------------------------
 // parseProgressEvent
 // ---------------------------------------------------------------------------
 
 describe('parseProgressEvent', () => {
-  it('returns null for invalid JSON', () => {
-    const ref = createRef<number | null>() as React.MutableRefObject<number | null>;
-    ref.current = null;
-    expect(parseProgressEvent('not-json', ref)).toBeNull();
+  it('[FEBT1-LA-04] reports reason "json" for a syntactically invalid frame', () => {
+    expect(parseProgressEvent('not-json', newRef())).toEqual({ ok: false, reason: 'json' });
   });
 
-  it('returns null when completed/total are non-numeric or absent (COR-4: sr-005 SSE boundary validation)', () => {
-    const ref = createRef<number | null>() as React.MutableRefObject<number | null>;
-    ref.current = null;
-    expect(parseProgressEvent(JSON.stringify({ status: 'running', total: null }), ref)).toBeNull();
-    expect(parseProgressEvent(JSON.stringify({ status: 'running', completed: '3', total: 10 }), ref)).toBeNull();
-    expect(parseProgressEvent(JSON.stringify({ status: 'running' }), ref)).toBeNull();
+  it('[FEBT1-LA-04] reports reason "schema" when completed/total are non-numeric or absent', () => {
+    const ref = newRef();
+    // A frame that parsed as JSON but failed validation is producer contract drift, not a
+    // corrupt frame: collapsing both onto one boolean made the two indistinguishable in logs.
+    expect(parseProgressEvent(JSON.stringify({ status: 'running', total: null }), ref)).toEqual({
+      ok: false,
+      reason: 'schema',
+    });
+    expect(parseProgressEvent(JSON.stringify({ status: 'running', completed: '3', total: 10 }), ref)).toEqual({
+      ok: false,
+      reason: 'schema',
+    });
+    expect(parseProgressEvent(JSON.stringify({ status: 'running' }), ref)).toEqual({ ok: false, reason: 'schema' });
     expect(ref.current).toBeNull();
   });
 
+  it('[FEBT1-LA-04] a valid JSON array is a schema failure, not a json failure', () => {
+    expect(parseProgressEvent(JSON.stringify([1, 2, 3]), newRef())).toEqual({ ok: false, reason: 'schema' });
+  });
+
   it('parses basic completed/total/status', () => {
-    const ref = createRef<number | null>() as React.MutableRefObject<number | null>;
-    ref.current = null;
-    const result = parseProgressEvent<'scanning'>(JSON.stringify({ completed: 3, total: 10, status: 'scanning' }), ref);
-    expect(result).not.toBeNull();
-    expect(result!.progress.completed).toBe(3);
-    expect(result!.progress.total).toBe(10);
-    expect(result!.status).toBe('scanning');
+    const result = parseProgressEvent<'scanning'>(
+      JSON.stringify({ completed: 3, total: 10, status: 'scanning' }),
+      newRef(),
+    );
+    assertParsed(result);
+    expect(result.progress.completed).toBe(3);
+    expect(result.progress.total).toBe(10);
+    expect(result.status).toBe('scanning');
   });
 
   it('populates all checkpoint fields from payload', () => {
-    const ref = createRef<number | null>() as React.MutableRefObject<number | null>;
-    ref.current = null;
     const payload = {
       completed: 5,
       total: 20,
@@ -50,9 +80,9 @@ describe('parseProgressEvent', () => {
       last_successful_processed_identities: 4,
       last_error_code: 'timeout',
     };
-    const result = parseProgressEvent<'clustering'>(JSON.stringify(payload), ref);
-    expect(result).not.toBeNull();
-    const p = result!.progress;
+    const result = parseProgressEvent<'clustering'>(JSON.stringify(payload), newRef());
+    assertParsed(result);
+    const p = result.progress;
     expect(p.phase).toBe('clustering');
     expect(p.images_processed).toBe(5);
     expect(p.faces_found).toBe(10);
@@ -64,54 +94,48 @@ describe('parseProgressEvent', () => {
   });
 
   it('does not set optional fields when absent from payload', () => {
-    const ref = createRef<number | null>() as React.MutableRefObject<number | null>;
-    ref.current = null;
-    const result = parseProgressEvent<'scanning'>(JSON.stringify({ completed: 1, total: 5, status: 'scanning' }), ref);
-    expect(result).not.toBeNull();
-    expect(result!.progress.phase).toBeUndefined();
-    expect(result!.progress.retry_count).toBeUndefined();
-    expect(result!.progress.last_error_code).toBeUndefined();
+    const result = parseProgressEvent<'scanning'>(
+      JSON.stringify({ completed: 1, total: 5, status: 'scanning' }),
+      newRef(),
+    );
+    assertParsed(result);
+    expect(result.progress.phase).toBeUndefined();
+    expect(result.progress.retry_count).toBeUndefined();
+    expect(result.progress.last_error_code).toBeUndefined();
   });
 
   it('sets startTimeRef.current on first non-zero progress', () => {
-    const ref = createRef<number | null>() as React.MutableRefObject<number | null>;
-    ref.current = null;
+    const ref = newRef();
     expect(ref.current).toBeNull();
     parseProgressEvent(JSON.stringify({ completed: 1, total: 10, status: 's' }), ref);
     expect(ref.current).toBeTypeOf('number');
   });
 
   it('does not set startTimeRef.current when completed is 0', () => {
-    const ref = createRef<number | null>() as React.MutableRefObject<number | null>;
-    ref.current = null;
+    const ref = newRef();
     parseProgressEvent(JSON.stringify({ completed: 0, total: 10, status: 's' }), ref);
     expect(ref.current).toBeNull();
   });
 
   it('does not overwrite existing startTimeRef.current', () => {
-    const ref = createRef<number | null>() as React.MutableRefObject<number | null>;
-    ref.current = 12345;
+    const ref = newRef(12345);
     parseProgressEvent(JSON.stringify({ completed: 5, total: 10, status: 's' }), ref);
     expect(ref.current).toBe(12345);
   });
 
   it('returns etaSeconds when elapsed time and progress are available', () => {
-    const ref = createRef<number | null>() as React.MutableRefObject<number | null>;
     // Simulate a start time 10 seconds ago
-    ref.current = Date.now() - 10_000;
-    const result = parseProgressEvent(JSON.stringify({ completed: 5, total: 10, status: 's' }), ref);
-    expect(result).not.toBeNull();
-    // 5 remaining at same rate → approx 10s ETA; just verify it's a non-null number
-    expect(result!.etaSeconds).toBeTypeOf('number');
-    expect(result!.etaSeconds).toBeGreaterThan(0);
+    const result = parseProgressEvent(JSON.stringify({ completed: 5, total: 10, status: 's' }), newRef(Date.now() - 10_000));
+    assertParsed(result);
+    // 5 remaining at same rate -> approx 10s ETA; just verify it's a non-null number
+    expect(result.etaSeconds).toBeTypeOf('number');
+    expect(result.etaSeconds).toBeGreaterThan(0);
   });
 
   it('returns etaSeconds null when completed is 0', () => {
-    const ref = createRef<number | null>() as React.MutableRefObject<number | null>;
-    ref.current = null;
-    const result = parseProgressEvent(JSON.stringify({ completed: 0, total: 10, status: 's' }), ref);
-    expect(result).not.toBeNull();
-    expect(result!.etaSeconds).toBeNull();
+    const result = parseProgressEvent(JSON.stringify({ completed: 0, total: 10, status: 's' }), newRef());
+    assertParsed(result);
+    expect(result.etaSeconds).toBeNull();
   });
 });
 
@@ -191,5 +215,54 @@ describe('parseDoneEvent', () => {
     const result = parseDoneEvent<'failed'>(JSON.stringify({ status: 'failed' }), null);
     expect(result).not.toBeNull();
     expect(result!.progress).toBeNull();
+  });
+
+  it('[FEBT1-LA-03] carries items_failed through as failedCount', () => {
+    // Field name verified against build_stream_progress_payload() in
+    // class-job-progress-stream-service.php, which emits absint( items_failed ).
+    const result = parseDoneEvent<'completed_with_errors'>(
+      JSON.stringify({ status: 'completed_with_errors', completed: 10, total: 10, items_failed: 3 }),
+      null,
+    );
+    expect(result).not.toBeNull();
+    expect(result!.failedCount).toBe(3);
+  });
+
+  it('[FEBT1-LA-03] carries a zero items_failed rather than dropping it', () => {
+    const result = parseDoneEvent<'completed'>(
+      JSON.stringify({ status: 'completed', completed: 10, total: 10, items_failed: 0 }),
+      null,
+    );
+    expect(result).not.toBeNull();
+    expect(result!.failedCount).toBe(0);
+  });
+
+  it('[FEBT1-LA-03] omits failedCount entirely when the wire carried no items_failed (rg-015)', () => {
+    const result = parseDoneEvent<'completed_with_errors'>(
+      JSON.stringify({ status: 'completed_with_errors', completed: 10, total: 10 }),
+      null,
+    );
+    expect(result).not.toBeNull();
+    expect(result).not.toHaveProperty('failedCount');
+  });
+
+  it.each([['-1', -1], ['NaN', Number.NaN], ['string', '3']] as const)(
+    '[FEBT1-LA-03] rejects a non-count items_failed (%s) instead of forwarding it',
+    (_label, value) => {
+      const result = parseDoneEvent<'completed_with_errors'>(
+        JSON.stringify({ status: 'completed_with_errors', completed: 10, total: 10, items_failed: value }),
+        null,
+      );
+      expect(result).not.toBeNull();
+      expect(result).not.toHaveProperty('failedCount');
+    },
+  );
+
+  it('[FEBT1-LA-03] carries failedCount on the latestProgress fallback path too', () => {
+    const latest: JobProgress = { completed: 30, total: 50 };
+    const result = parseDoneEvent<'failed'>(JSON.stringify({ status: 'failed', items_failed: 7 }), latest);
+    expect(result).not.toBeNull();
+    expect(result!.failedCount).toBe(7);
+    expect(result!.progress).toBe(latest);
   });
 });

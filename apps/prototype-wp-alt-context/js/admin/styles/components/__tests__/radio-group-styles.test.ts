@@ -1,10 +1,15 @@
-import { execSync } from 'node:child_process';
-import { existsSync, globSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
+import {
+  isInsideFixtureRoot,
+  loadProductionCssBundle,
+  readArtifactStamp,
+  SHARED_BUILD_OUT_DIR,
+} from './productionCssBundle';
+
 const componentsRoot = join(__dirname, '..');
-const appRoot = join(componentsRoot, '..', '..', '..', '..');
 const radioGroupScssPath = join(componentsRoot, '_radio-group.scss');
 const indexScssPath = join(componentsRoot, 'index.scss');
 
@@ -35,21 +40,29 @@ describe('E15-25 slice 1: radio-group stylesheet', () => {
   });
 
   it('ships radio-group rules in the production admin CSS bundle', () => {
-    // FEBT1-GATE-04: this assertion is only meaningful against a bundle built from the
-    // tree under test. Pin the build boundary so a missing or stale artifact fails as a
-    // build problem instead of masquerading as a source regression (or a green pass).
-    const buildStartedAt = Date.now();
-    execSync('npm run build', { cwd: appRoot, stdio: 'pipe' });
-    const cssFiles = globSync(join(appRoot, 'public/assets/dist/assets/*.css'));
-    expect(cssFiles.length).toBeGreaterThan(0);
+    // FEBT1-GATE-04 / FEBT1-LH-01: this assertion is only meaningful against a bundle built
+    // from the tree under test. The fixture pins that boundary by content-addressing the
+    // artifact on the build inputs, so a missing or stale artifact fails as a build problem
+    // instead of masquerading as a source regression (or a green pass), and no concurrent
+    // `vite build` can empty the directory we read from.
+    const bundle = loadProductionCssBundle();
 
-    const freshCssFiles = cssFiles.filter((filePath) => statSync(filePath).mtimeMs >= buildStartedAt - 1000);
-    expect(freshCssFiles).not.toHaveLength(0);
+    expect(bundle.cssFilePaths.length).toBeGreaterThan(0);
+    expect(readArtifactStamp(bundle)).toBe(bundle.fingerprint);
+    expect(bundle.cssFilePaths.every(isInsideFixtureRoot)).toBe(true);
+    expect(bundle.cssFilePaths.some((filePath) => filePath.startsWith(SHARED_BUILD_OUT_DIR))).toBe(false);
 
-    const combined = freshCssFiles.map((filePath) => readFileSync(filePath, 'utf8')).join('\n');
-
-    expect(combined).toContain('.acx-radio-group__item');
-    expect(combined).toContain('.acx-radio-group__indicator');
-    expect(combined).toMatch(/data-state=.?checked/);
+    // Selector-boundary anchored: a plain substring match is satisfied by a longer sibling
+    // class (`__indicator-dot`), and `data-state=.?checked` is satisfied by `unchecked`.
+    // Both mutants survived until these assertions were tightened.
+    expect(bundle.css).toMatch(/\.acx-radio-group__item(?![\w-])/);
+    expect(bundle.css).toMatch(/\.acx-radio-group__indicator(?![\w-])/);
+    // Scoped to the radio-group item: an unscoped `[data-state=checked]` match is satisfied by
+    // _media-selection.scss, which emits the same attribute selector, so renaming the
+    // radio-group's own checked rule survived as a mutant until this was scoped.
+    expect(bundle.css).toMatch(/\.acx-radio-group__item\[data-state=['"]?checked['"]?\]/);
+    expect(bundle.css).toMatch(
+      /\.acx-radio-group__item\[data-state=['"]?checked['"]?\]\s+\.acx-radio-group__indicator(?![\w-])/,
+    );
   }, 120_000);
 });

@@ -1,11 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { NonceRefreshFailedError } from '../../api/config';
 import { classifyError } from '../appError';
 import { AuthExpiredError, HTTPError, ResponseParseError } from '../http';
-import { clampRetryAfterMs, RETRY_AFTER_MAX_MS } from '../retryAfter';
+import { clampRetryAfterMs, RETRY_AFTER_MAX_MS, RETRY_AFTER_MIN_MS } from '../retryAfter';
 import {
+  AMBIGUOUS_RETRY_MAX_ATTEMPTS,
   getRetryDelay,
   isAbortLike,
+  isDeliberateAbort,
   isCooldownSignal,
   MAX_RETRY_DELAY_MS,
   RETRY_MAX_ATTEMPTS,
@@ -65,11 +68,17 @@ describe('shouldRetryRequest', () => {
     expect(shouldRetryRequest(0, new TypeError('NetworkError when attempting to fetch resource'))).toBe(true);
   });
 
-  it('retries every TypeError (F5 parity: previously instanceof TypeError)', () => {
+  // FEBT-1-W1-E-05: strengthened, not relaxed. The old pin required *every*
+  // TypeError to retry, so `x is not a function` — a deterministic programming
+  // bug that will fail identically three times — burned the whole budget. The
+  // network-failure half of the claim is kept verbatim; the bug half is
+  // inverted to a non-retry, which is the stronger assertion.
+  it('retries a fetch network-failure TypeError, never a programming-bug TypeError [F5]', () => {
     expect(classifyError(new TypeError('Failed to fetch'))._tag).toBe('transport');
-    expect(classifyError(new TypeError('x is not a function'))._tag).toBe('transport');
-    expect(shouldRetryRequest(0, new TypeError('x is not a function'))).toBe(true);
     expect(shouldRetryRequest(0, new TypeError('boom: Failed to fetch'))).toBe(true);
+
+    expect(classifyError(new TypeError('x is not a function'))._tag).toBe('unknown');
+    expect(shouldRetryRequest(0, new TypeError('x is not a function'))).toBe(false);
   });
 
   it('does not retry a deterministic non-transport error (a response was received)', () => {
@@ -88,17 +97,44 @@ describe('shouldRetryRequest', () => {
     expect(shouldRetryRequest(0, err)).toBe(false);
   });
 
-  it('does not retry an aborted OR timed-out request', () => {
+  it('never retries an aborted request, at any failure count', () => {
     const abort = Object.assign(new Error('The operation was aborted.'), { name: 'AbortError' });
     expect(shouldRetryRequest(0, abort)).toBe(false);
-    // createRecognitionTimeoutSignal uses AbortSignal.timeout(), which aborts with a
-    // 'TimeoutError' DOMException — NOT 'AbortError'. This is the real recognition timeout
-    // path; retrying it here would reopen the storm the poller interval already covers.
-    const timeout = Object.assign(new Error('The operation timed out.'), { name: 'TimeoutError' });
-    expect(shouldRetryRequest(0, timeout)).toBe(false);
+    expect(shouldRetryRequest(1, abort)).toBe(false);
     // DOMException-shaped (not an Error subclass in the browser).
     expect(shouldRetryRequest(0, { name: 'AbortError', message: 'aborted' })).toBe(false);
-    expect(shouldRetryRequest(0, { name: 'TimeoutError', message: 'timed out' })).toBe(false);
+  });
+
+  // FEBT1-W2A-05 + FEBT1-LB-02. A timeout and a nonce refresh that never
+  // reached a verdict are AMBIGUOUS outcomes (DDIA ch-8): the request may have
+  // reached the server. shouldRetryRequest is wired only to React Query
+  // queries — idempotent GETs — so exactly one repeat is safe, and the budget
+  // is deliberately smaller than RETRY_MAX_ATTEMPTS. Expressed on literals so
+  // widening AMBIGUOUS_RETRY_MAX_ATTEMPTS to 2 fails here.
+  it('retries an ambiguous outcome exactly once, not RETRY_MAX_ATTEMPTS times', () => {
+    expect(AMBIGUOUS_RETRY_MAX_ATTEMPTS).toBe(1);
+    expect(AMBIGUOUS_RETRY_MAX_ATTEMPTS).toBeLessThan(RETRY_MAX_ATTEMPTS);
+
+    const timeout = Object.assign(new Error('The operation timed out.'), { name: 'TimeoutError' });
+    expect(shouldRetryRequest(0, timeout)).toBe(true);
+    expect(shouldRetryRequest(1, timeout)).toBe(false);
+    expect(shouldRetryRequest(2, timeout)).toBe(false);
+    expect(shouldRetryRequest(0, { name: 'TimeoutError', message: 'timed out' })).toBe(true);
+
+    const nonceRefresh = new NonceRefreshFailedError({
+      message: 'Nonce refresh did not reach a verdict.',
+      causeStatus: 0,
+      bodyPreview: '',
+    });
+    expect(classifyError(nonceRefresh)._tag).toBe('nonce_refresh');
+    expect(shouldRetryRequest(0, nonceRefresh)).toBe(true);
+    expect(shouldRetryRequest(1, nonceRefresh)).toBe(false);
+  });
+
+  it('an abort and a timeout are not the same decision [FEBT1-W2A-05]', () => {
+    const abort = Object.assign(new Error('The operation was aborted.'), { name: 'AbortError' });
+    const timeout = Object.assign(new Error('The operation timed out.'), { name: 'TimeoutError' });
+    expect(shouldRetryRequest(0, abort)).not.toBe(shouldRetryRequest(0, timeout));
   });
 
   it('[FEBT1-W2C-13] pins the product bounds to literals so a constant change cannot pass silently', () => {
@@ -131,8 +167,23 @@ describe('getRetryDelay', () => {
     expect(getRetryDelay(2, httpError(503, 10))).toBe(10_000);
   });
 
-  it('honors Retry-After: 0 (retry immediately)', () => {
-    expect(getRetryDelay(0, httpError(429, 0))).toBe(0);
+  // FEBT1-LB-01 + FEBT1-LE-03: strengthened, not relaxed. The old pin asserted
+  // that `Retry-After: 0` retries immediately — that is exactly the aggressive
+  // retry Release It! ch-5 names as an outage amplifier, and every client in
+  // the fleet does it at the same instant. `Retry-After: 0` now carries no wait
+  // instruction, so the caller falls through to its own *jittered* backoff.
+  it('a Retry-After of 0 yields a non-zero, jittered delay — never an immediate retry', () => {
+    const zeroWait = httpError(429, 0);
+
+    expect(getRetryDelay(0, zeroWait)).toBeGreaterThanOrEqual(RETRY_AFTER_MIN_MS);
+
+    // Jittered, not a fixed constant: two different rng draws must differ, so a
+    // fix that merely returned RETRY_AFTER_MIN_MS unconditionally fails here.
+    const low = getRetryDelay(3, zeroWait, () => 0.25);
+    const high = getRetryDelay(3, zeroWait, () => 0.9);
+    expect(low).not.toBe(high);
+    expect(low).toBeGreaterThanOrEqual(RETRY_AFTER_MIN_MS);
+    expect(high).toBeLessThanOrEqual(8_000);
   });
 
   it('falls back to bounded exponential backoff for transport failures', () => {
@@ -175,13 +226,36 @@ describe('getRetryDelay', () => {
     expect(getRetryDelay(0, httpError(429, -5))).toBe(1_000);
   });
 
-  it('applies full jitter: rng 0 → 0, rng ~1 → full computed exponential [E-06]', () => {
+  // FEBT1-LB-01: strengthened, not relaxed. `rng 0 → 0` was a *bug* pinned as a
+  // property: full jitter over [0,1) reaches zero, and a zero-delay "backoff"
+  // is an immediate retry against a fault that is still present. The upper half
+  // of the jitter window is kept verbatim; the lower half now pins the floor.
+  it('applies full jitter, floored: rng 0 → the floor, rng ~1 → full computed exponential [E-06]', () => {
     const transport = new TypeError('Failed to fetch');
-    expect(getRetryDelay(0, transport, () => 0)).toBe(0);
-    expect(getRetryDelay(1, transport, () => 0)).toBe(0);
+    expect(getRetryDelay(0, transport, () => 0)).toBe(RETRY_AFTER_MIN_MS);
+    expect(getRetryDelay(1, transport, () => 0)).toBe(RETRY_AFTER_MIN_MS);
+    // Literal, not the constant: zeroing RETRY_AFTER_MIN_MS must fail here.
+    expect(getRetryDelay(4, transport, () => 0)).toBe(1_000);
     expect(getRetryDelay(0, transport, () => 1)).toBe(1_000);
     expect(getRetryDelay(1, transport, () => 1)).toBe(2_000);
     expect(getRetryDelay(2, transport, () => 1)).toBe(4_000);
+    // Still jitter, not a constant: the window between floor and ceiling is real.
+    expect(getRetryDelay(4, transport, () => 0.5)).toBe(8_000);
+  });
+
+  it('no retry delay is ever zero, for any tag or rng draw [FEBT1-LB-01]', () => {
+    const cases: unknown[] = [
+      new TypeError('Failed to fetch'),
+      httpError(429, 0),
+      httpError(503, 0),
+      httpError(429),
+      Object.assign(new Error('timed out'), { name: 'TimeoutError' }),
+    ];
+    for (const error of cases) {
+      for (const draw of [0, 0.0001, 0.5, 1]) {
+        expect(getRetryDelay(0, error, () => draw)).toBeGreaterThanOrEqual(RETRY_AFTER_MIN_MS);
+      }
+    }
   });
 
   it('keeps the Retry-After branch byte-identical regardless of rng [E-06]', () => {
@@ -196,7 +270,13 @@ describe('classifier clauses after F3/F5 [TEST-15]', () => {
   it('plain-object abort is not retried (M14)', () => {
     expect(isAbortLike({ name: 'AbortError', message: 'aborted' })).toBe(true);
     expect(shouldRetryRequest(0, { name: 'AbortError', message: 'aborted' })).toBe(false);
-    expect(shouldRetryRequest(0, { name: 'TimeoutError', message: 'timed out' })).toBe(false);
+    // FEBT1-W2A-05: `isAbortLike` keeps its published contract — cancellation-
+    // shaped, abort *or* elapsed deadline — because useDescribeRunProgress
+    // freezes the UI on both. The retry split lives in `isDeliberateAbort`, so
+    // the ambiguous-outcome budget stays reachable for a timeout.
+    expect(isAbortLike({ name: 'TimeoutError', message: 'timed out' })).toBe(true);
+    expect(isDeliberateAbort({ name: 'AbortError', message: 'aborted' })).toBe(true);
+    expect(isDeliberateAbort({ name: 'TimeoutError', message: 'timed out' })).toBe(false);
   });
 
   it('pre-classified transport AppError is retried (M15)', () => {
@@ -207,7 +287,11 @@ describe('classifier clauses after F3/F5 [TEST-15]', () => {
 
   it('isCooldownSignal: 429/503-with-Retry-After only, including pre-classified (M17)', () => {
     expect(isCooldownSignal(httpError(429))).toBe(true);
-    expect(isCooldownSignal(httpError(503, 0))).toBe(true);
+    // FEBT1-LE-03: strengthened. A 503 whose Retry-After names no wait is not
+    // an "ask again later" — it carries no window to arm a cooldown with, and
+    // treating it as one produced a zero-length cooldown that gated nothing.
+    expect(isCooldownSignal(httpError(503, 0))).toBe(false);
+    expect(isCooldownSignal(httpError(503, 5))).toBe(true);
     expect(isCooldownSignal(httpError(503))).toBe(false);
     expect(isCooldownSignal(httpError(500))).toBe(false);
     const classified = classifyError(httpError(429, 5));

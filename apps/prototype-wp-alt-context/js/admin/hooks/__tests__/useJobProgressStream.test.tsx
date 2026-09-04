@@ -1,6 +1,7 @@
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { JOB_STATUS as MACHINE_JOB_STATUS } from '../jobMachine';
 import { JOB_STATUS, useJobProgressStream } from '../useJobProgressStream';
 import { useJobCoordination } from '../useJobCoordination';
 import { resetConfigCache, setNonce } from '../../api/config';
@@ -495,6 +496,160 @@ describe('useJobProgressStream', () => {
       } finally {
         vi.useRealTimers();
       }
+    });
+  });
+  describe('one unified status vocabulary [FEBT1-LA-05]', () => {
+    it('re-exports the machine\'s status map rather than owning a second one', () => {
+      // The hook used to declare its own 7-member JOB_STATUS while jobMachine declared a
+      // disjoint 8-member one. Identity — not deep equality — is the only assertion that
+      // catches a re-introduced second copy (REF-26).
+      expect(JOB_STATUS).toBe(MACHINE_JOB_STATUS);
+    });
+
+    it('projects the transport-only `stalled` state back to running, never leaking it as a status', async () => {
+      vi.useFakeTimers();
+      try {
+        const { result } = renderHook(() => useJobProgressStream('job-projection'));
+        await waitFor(() => expect(MockEventSource.instances).toHaveLength(1));
+        act(() => {
+          MockEventSource.instances[0].emit('progress', { completed: 1, total: 5, status: 'running' });
+        });
+        act(() => {
+          vi.advanceTimersByTime(31_000);
+        });
+
+        // Quiet time is reported on its own channel; the lifecycle status stays `running`
+        // so out-of-hook consumers (isScanRunning, buildStatusText) keep working (RLSE-04).
+        expect(result.current.stalledForSeconds).toBeGreaterThanOrEqual(30);
+        expect(result.current.status).toBe(JOB_STATUS.RUNNING);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('adopts the producer clustering status verbatim instead of flattening it to running', async () => {
+      const { result } = renderHook(() => useJobProgressStream('job-clustering'));
+      await waitFor(() => expect(MockEventSource.instances).toHaveLength(1));
+      act(() => {
+        MockEventSource.instances[0].emit('progress', { completed: 1, total: 5, status: 'clustering' });
+      });
+      await waitFor(() => expect(result.current.status).toBe(JOB_STATUS.CLUSTERING));
+    });
+
+    it('does not promote pending to running just because the transport opened', async () => {
+      const { result } = renderHook(() => useJobProgressStream('job-transport-only'));
+      await waitFor(() => expect(MockEventSource.instances).toHaveLength(1));
+      // STREAM_OPEN fired on mount. Only the producer may claim `running` (rg-015).
+      expect(result.current.status).toBe(JOB_STATUS.PENDING);
+    });
+
+    it('ignores a progress frame carrying a terminal status instead of treating it as live', async () => {
+      const records = captureRecords();
+      const { result } = renderHook(() => useJobProgressStream('job-bad-progress-status'));
+      await waitFor(() => expect(MockEventSource.instances).toHaveLength(1));
+      act(() => {
+        MockEventSource.instances[0].emit('progress', { completed: 1, total: 5, status: 'not_a_status' });
+      });
+      await waitFor(() =>
+        expect(records.some((record) => record.message === 'sse.progress_unknown_status')).toBe(true),
+      );
+      expect(result.current.status).toBe(JOB_STATUS.PENDING);
+    });
+  });
+
+  describe('failed counts reach the machine [FEBT1-LA-03]', () => {
+    it('carries items_failed from the done frame onto the stream.done record', async () => {
+      const records = captureRecords();
+      renderHook(() => useJobProgressStream('job-failed-count'));
+      await waitFor(() => expect(MockEventSource.instances).toHaveLength(1));
+      act(() => {
+        MockEventSource.instances[0].emit('done', {
+          status: 'completed_with_errors',
+          completed: 8,
+          total: 10,
+          items_failed: 2,
+        });
+      });
+
+      const done = await waitFor(() => {
+        const record = records.find((entry) => entry.fields.event === 'stream.done');
+        expect(record).toBeDefined();
+        return record as LogRecord;
+      });
+      expect(done.fields.failedCount).toBe(2);
+    });
+  });
+
+  describe('parse failures are discriminated [FEBT1-LA-04]', () => {
+    it('reports json vs schema so a corrupt frame is distinguishable from contract drift', async () => {
+      const records = captureRecords();
+      renderHook(() => useJobProgressStream('job-parse-reason'));
+      await waitFor(() => expect(MockEventSource.instances).toHaveLength(1));
+      act(() => {
+        MockEventSource.instances[0].emitRaw('progress', '{not json');
+        MockEventSource.instances[0].emit('progress', { completed: 'x', total: 5, status: 'running' });
+      });
+
+      const reasons = records
+        .filter((record) => record.message === 'sse.progress_parse_failed')
+        .map((record) => record.fields.reason);
+      expect(reasons).toEqual(['json', 'schema']);
+    });
+  });
+
+  describe('the SSE unit of work is observable [FEBT-1-W1-O-02]', () => {
+    it('emits one correlated stream.open event per connection', async () => {
+      const records = captureRecords();
+      renderHook(() => useJobProgressStream('job-observable'));
+      await waitFor(() => expect(MockEventSource.instances).toHaveLength(1));
+
+      // Mutant 21 survived an earlier round because this filter keyed only on the `event`
+      // field: renaming the record or downgrading its level left it green. Pin all three.
+      const opens = records.filter((record) => record.message === 'stream.open');
+      expect(opens).toHaveLength(1);
+      expect(opens[0].level).toBe('info');
+      expect(opens[0].fields.event).toBe('stream.open');
+      expect(opens[0].fields.jobId).toBe('job-observable');
+      expect(opens[0].fields.requestId).toBeTypeOf('string');
+      expect(opens[0].fields.reconnectAttempts).toBe(0);
+    });
+
+    it('never writes the stream nonce or a raw id segment into the log', async () => {
+      const records = captureRecords();
+      setNonce('super-secret-nonce');
+      renderHook(() => useJobProgressStream('7f3c1e2a-0000-4000-8000-000000000001'));
+      await waitFor(() => expect(MockEventSource.instances).toHaveLength(1));
+
+      const open = records.find((record) => record.message === 'stream.open');
+      expect(open).toBeDefined();
+      const endpoint = (open as LogRecord).fields.endpoint as string;
+      expect(endpoint).not.toContain('super-secret-nonce');
+      expect(endpoint).not.toContain('7f3c1e2a');
+      expect(endpoint).toContain('<redacted>');
+    });
+
+    it('correlates stream.open and stream.done for one job under a single requestId', async () => {
+      const records = captureRecords();
+      renderHook(() => useJobProgressStream('job-correlated'));
+      await waitFor(() => expect(MockEventSource.instances).toHaveLength(1));
+      act(() => {
+        MockEventSource.instances[0].emit('done', { status: 'completed', completed: 4, total: 4 });
+      });
+
+      const open = await waitFor(() => {
+        const found = records.find((record) => record.message === 'stream.open');
+        expect(found).toBeDefined();
+        return found as LogRecord;
+      });
+      const done = await waitFor(() => {
+        const found = records.find((record) => record.fields.event === 'stream.done');
+        expect(found).toBeDefined();
+        return found as LogRecord;
+      });
+      expect(open.fields.requestId).toBeTypeOf('string');
+      expect(done.fields.requestId).toBe(open.fields.requestId);
+      expect(done.fields.durationMs).toBeTypeOf('number');
+      expect(done.fields.reconnectAttempts).toBe(0);
     });
   });
 });

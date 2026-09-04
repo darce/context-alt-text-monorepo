@@ -1,0 +1,901 @@
+{
+  "tool": "ruff-format",
+  "version": 1,
+  "total": 296,
+  "config_guard": {
+    "format_options": {
+      "indent-style": "space",
+      "quote-style": "double"
+    }
+  },
+  "counts": {
+    "CLAUDE.md": {
+      "unformatted": 1
+    },
+    "apps/prototype-description-service/db/models/atlas.py": {
+      "unformatted": 1
+    },
+    "apps/prototype-description-service/db/settings.py": {
+      "unformatted": 1
+    },
+    "apps/prototype-description-service/recognition/application/assignment/__init__.py": {
+      "unformatted": 1
+    },
+    "apps/prototype-description-service/recognition/application/assignment/joint.py": {
+      "unformatted": 1
+    },
+    "apps/prototype-description-service/recognition/application/clustering/hierarchical_clustering.py": {
+      "unformatted": 1
+    },
+    "apps/prototype-description-service/recognition/application/embedding/detector.py": {
+      "unformatted": 1
+    },
+    "apps/prototype-description-service/recognition/application/embedding/manifest.py": {
+      "unformatted": 1
+    },
+    "apps/prototype-description-service/recognition/application/orchestration/cluster_merge.py": {
+      "unformatted": 1
+    },
+    "apps/prototype-description-service/recognition/application/persistence/assignment_writer.py": {
+      "unformatted": 1
+    },
+    "apps/prototype-description-service/recognition/application/persistence/representative_selector.py": {
+      "unformatted": 1
+    },
+    "apps/prototype-description-service/recognition/application/scan/service.py": {
+      "unformatted": 1
+    },
+    "apps/prototype-description-service/recognition/application/services/demo_provisioning_service.py": {
+      "unformatted": 1
+    },
+    "apps/prototype-description-service/recognition/application/services/purge_service.py": {
+      "unformatted": 1
+    },
+    "apps/prototype-description-service/recognition/application/suggestions/refresh_service.py": {
+      "unformatted": 1
+    },
+    "apps/prototype-description-service/recognition/application/suggestions/roster_candidates.py": {
+      "unformatted": 1
+    },
+    "apps/prototype-description-service/recognition/config/settings.py": {
+      "unformatted": 1
+    },
+    "apps/prototype-description-service/recognition/infrastructure/embeddings/face_pipeline_adapter.py": {
+      "unformatted": 1
+    },
+    "apps/prototype-description-service/recognition/infrastructure/embeddings/face_quality_factors.py": {
+      "unformatted": 1
+    },
+    "apps/prototype-description-service/recognition/infrastructure/face_pipeline/_common.py": {
+      "unformatted": 1
+    },
+    "apps/prototype-description-service/recognition/interface_adapters/http/middleware/metrics.py": {
+      "unformatted": 1
+    },
+    "apps/prototype-description-service/recognition/tests/api/test_api_suggestions.py": {
+      "unformatted": 1
+    },
+    "apps/prototype-description-service/recognition/tests/api/test_create_cluster_for_identity.py": {
+      "unformatted": 1
+    },
+    "apps/prototype-description-service/recognition/tests/api/test_demo_router.py": {
+      "unformatted": 1
+    },
+    "apps/prototype-description-service/recognition/tests/api/test_health_probes.py": {
+      "unformatted": 1
+    },
+    "apps/prototype-description-service/recognition/tests/api/test_roster_candidates.py": {
+      "unformatted": 1
+    },
+    "apps/prototype-description-service/recognition/tests/conftest.py": {
+      "unformatted": 1
+    },
+    "apps/prototype-description-service/recognition/tests/deploy/test_dockerfile_stage_topology.py": {
+      "unformatted": 1
+    },
+    "apps/prototype-description-service/recognition/tests/deploy/test_image_coordinate_doc_parity.py": {
+      "unformatted": 1
+    },
+    "apps/prototype-description-service/recognition/tests/deploy/test_runtime_packaging.py": {
+      "unformatted": 1
+    },
+    "apps/prototype-description-service/recognition/tests/deploy/test_vlm_cache_gate.py": {
+      "unformatted": 1
+    },
+    "apps/prototype-description-service/recognition/tests/dockerfile_stages.py": {
+      "unformatted": 1
+    },
+    "apps/prototype-description-service/recognition/tests/integration/test_scan_queue_claim_backoff_pg.py": {
+      "unformatted": 1
+    },
+    "apps/prototype-description-service/recognition/tests/service/test_demo_provisioning_service.py": {
+      "unformatted": 1
+    },
+    "apps/prototype-description-service/recognition/tests/test_atlas_repository.py": {
+      "unformatted": 1
+    },
+    "apps/prototype-description-service/recognition/tests/test_atlas_schema_purge.py": {
+      "unformatted": 1
+    },
+    "apps/prototype-description-service/recognition/tests/test_identity_schema_migration.py": {
+      "unformatted": 1
+    },
+    "apps/prototype-description-service/recognition/tests/unit/face_pipeline_support.py": {
+      "unformatted": 1
+    },
+    "apps/prototype-description-service/recognition/tests/unit/test_atlas_repository_centroids.py": {
+      "unformatted": 1
+    },
+    "apps/prototype-description-service/recognition/tests/unit/test_bench_extra_isolation.py": {
+      "unformatted": 1
+    },
+    "apps/prototype-description-service/recognition/tests/unit/test_cluster_repository_provenance.py": {
+      "unformatted": 1
+    },
+    "apps/prototype-description-service/recognition/tests/unit/test_face_pipeline_adapter.py": {
+      "unformatted": 1
+    },
+    "apps/prototype-description-service/recognition/tests/unit/test_fir2_br_postmerge_contracts.py": {
+      "unformatted": 1
+    },
+    "apps/prototype-description-service/recognition/tests/unit/test_fir_final_postmerge_observability_contracts.py": {
+      "unformatted": 1
+    },
+    "apps/prototype-description-service/recognition/tests/unit/test_fir_final_postmerge_runtime_contracts.py": {
+      "unformatted": 1
+    },
+    "apps/prototype-description-service/recognition/tests/unit/test_fir_release_gates.py": {
+      "unformatted": 1
+    },
+    "apps/prototype-description-service/recognition/tests/unit/test_insightface_characterization_golden.py": {
+      "unformatted": 1
+    },
+    "apps/prototype-description-service/recognition/tests/unit/test_joint_assignment.py": {
+      "unformatted": 1
+    },
+    "apps/prototype-description-service/recognition/tests/unit/test_no_face_extra_strings.py": {
+      "unformatted": 1
+    },
+    "apps/prototype-description-service/recognition/tests/unit/test_process_chunk_phases.py": {
+      "unformatted": 1
+    },
+    "apps/prototype-description-service/recognition/tests/unit/test_representative_quality_gate.py": {
+      "unformatted": 1
+    },
+    "apps/prototype-description-service/recognition/tests/unit/test_roster_candidates.py": {
+      "unformatted": 1
+    },
+    "apps/prototype-description-service/recognition/tests/unit/test_scan_queue_service.py": {
+      "unformatted": 1
+    },
+    "apps/prototype-description-service/recognition/tests/unit/test_scan_worker.py": {
+      "unformatted": 1
+    },
+    "apps/prototype-description-service/recognition/tests/unit/test_scan_worker_isolation.py": {
+      "unformatted": 1
+    },
+    "apps/prototype-description-service/recognition/worker/scan_worker.py": {
+      "unformatted": 1
+    },
+    "apps/prototype-description-service/scene/application/gpu_state.py": {
+      "unformatted": 1
+    },
+    "apps/prototype-description-service/scene/infrastructure/vlm/florence_local_adapter.py": {
+      "unformatted": 1
+    },
+    "apps/prototype-description-service/scene/tests/test_context_pack.py": {
+      "unformatted": 1
+    },
+    "apps/prototype-description-service/scene/tests/test_describe_run_worker.py": {
+      "unformatted": 1
+    },
+    "apps/prototype-description-service/scene/tests/test_description_profiles.py": {
+      "unformatted": 1
+    },
+    "apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff.py": {
+      "unformatted": 1
+    },
+    "apps/prototype-description-service/scene/tests/test_eval_harness_bakeoff_report.py": {
+      "unformatted": 1
+    },
+    "apps/prototype-description-service/scene/tests/test_eval_harness_caption_metrics.py": {
+      "unformatted": 1
+    },
+    "apps/prototype-description-service/scene/tests/test_eval_harness_cli.py": {
+      "unformatted": 1
+    },
+    "apps/prototype-description-service/scene/tests/test_eval_harness_face_assignment.py": {
+      "unformatted": 1
+    },
+    "apps/prototype-description-service/scene/tests/test_eval_harness_face_bakeoff.py": {
+      "unformatted": 1
+    },
+    "apps/prototype-description-service/scene/tests/test_eval_harness_face_metrics.py": {
+      "unformatted": 1
+    },
+    "apps/prototype-description-service/scene/tests/test_eval_harness_gallery_split.py": {
+      "unformatted": 1
+    },
+    "apps/prototype-description-service/scene/tests/test_eval_harness_landmark_cache.py": {
+      "unformatted": 1
+    },
+    "apps/prototype-description-service/scene/tests/test_eval_harness_manifest.py": {
+      "unformatted": 1
+    },
+    "apps/prototype-description-service/scene/tests/test_eval_harness_open_set_identification.py": {
+      "unformatted": 1
+    },
+    "apps/prototype-description-service/scene/tests/test_eval_harness_perf_leg.py": {
+      "unformatted": 1
+    },
+    "apps/prototype-description-service/scene/tests/test_eval_harness_pipeline.py": {
+      "unformatted": 1
+    },
+    "apps/prototype-description-service/scene/tests/test_eval_harness_report.py": {
+      "unformatted": 1
+    },
+    "apps/prototype-description-service/scene/tests/test_eval_harness_seed_roster.py": {
+      "unformatted": 1
+    },
+    "apps/prototype-description-service/scene/tests/test_eval_harness_strata_join.py": {
+      "unformatted": 1
+    },
+    "apps/prototype-description-service/scene/tests/test_eval_harness_synthetic_occlusion.py": {
+      "unformatted": 1
+    },
+    "apps/prototype-description-service/scene/tests/test_priv1_pseudonymize.py": {
+      "unformatted": 1
+    },
+    "apps/prototype-description-service/scripts/bench/corpus.py": {
+      "unformatted": 1
+    },
+    "apps/prototype-description-service/scripts/bench/driver.py": {
+      "unformatted": 1
+    },
+    "apps/prototype-description-service/scripts/bench/export_map.py": {
+      "unformatted": 1
+    },
+    "apps/prototype-description-service/scripts/bench/score_report.py": {
+      "unformatted": 1
+    },
+    "apps/prototype-description-service/scripts/bench/stack_pair.py": {
+      "unformatted": 1
+    },
+    "apps/prototype-description-service/scripts/bench/tests/test_attrition_floor.py": {
+      "unformatted": 1
+    },
+    "apps/prototype-description-service/scripts/bench/tests/test_cluster_gate.py": {
+      "unformatted": 1
+    },
+    "apps/prototype-description-service/scripts/bench/tests/test_detection_localization.py": {
+      "unformatted": 1
+    },
+    "apps/prototype-description-service/scripts/bench/tests/test_e2e_mocked.py": {
+      "unformatted": 1
+    },
+    "apps/prototype-description-service/scripts/bench/tests/test_preflight.py": {
+      "unformatted": 1
+    },
+    "apps/prototype-description-service/scripts/bench/tests/test_score_head_to_head.py": {
+      "unformatted": 1
+    },
+    "apps/prototype-description-service/scripts/eval_harness/buffalo_bench.py": {
+      "unformatted": 1
+    },
+    "apps/prototype-description-service/scripts/eval_harness/build_bakeoff_report.py": {
+      "unformatted": 1
+    },
+    "apps/prototype-description-service/scripts/eval_harness/calibrate_face_thresholds.py": {
+      "unformatted": 1
+    },
+    "apps/prototype-description-service/scripts/eval_harness/caption_metrics.py": {
+      "unformatted": 1
+    },
+    "apps/prototype-description-service/scripts/eval_harness/cli.py": {
+      "unformatted": 1
+    },
+    "apps/prototype-description-service/scripts/eval_harness/face_assignment.py": {
+      "unformatted": 1
+    },
+    "apps/prototype-description-service/scripts/eval_harness/face_bakeoff.py": {
+      "unformatted": 1
+    },
+    "apps/prototype-description-service/scripts/eval_harness/face_metrics.py": {
+      "unformatted": 1
+    },
+    "apps/prototype-description-service/scripts/eval_harness/face_run_record.py": {
+      "unformatted": 1
+    },
+    "apps/prototype-description-service/scripts/eval_harness/fusion_runner.py": {
+      "unformatted": 1
+    },
+    "apps/prototype-description-service/scripts/eval_harness/gallery_split.py": {
+      "unformatted": 1
+    },
+    "apps/prototype-description-service/scripts/eval_harness/manifest.py": {
+      "unformatted": 1
+    },
+    "apps/prototype-description-service/scripts/eval_harness/perf_leg.py": {
+      "unformatted": 1
+    },
+    "apps/prototype-description-service/scripts/eval_harness/remediation.py": {
+      "unformatted": 1
+    },
+    "apps/prototype-description-service/scripts/eval_harness/report.py": {
+      "unformatted": 1
+    },
+    "apps/prototype-description-service/scripts/eval_harness/scan_stale_reports.py": {
+      "unformatted": 1
+    },
+    "apps/prototype-description-service/scripts/eval_harness/strata_join.py": {
+      "unformatted": 1
+    },
+    "apps/prototype-description-service/scripts/eval_harness/synthetic_occlusion.py": {
+      "unformatted": 1
+    },
+    "apps/prototype-description-service/scripts/eval_harness/tests/test_calibrate_face_thresholds.py": {
+      "unformatted": 1
+    },
+    "apps/prototype-description-service/scripts/eval_harness/tests/test_check_published_head_sha_guard.py": {
+      "unformatted": 1
+    },
+    "apps/prototype-description-service/scripts/eval_harness/tests/test_check_published_identification.py": {
+      "unformatted": 1
+    },
+    "apps/prototype-description-service/scripts/eval_harness/tests/test_cli_exit_gates.py": {
+      "unformatted": 1
+    },
+    "apps/prototype-description-service/scripts/eval_harness/tests/test_eval_captions_operator.py": {
+      "unformatted": 1
+    },
+    "apps/prototype-description-service/scripts/eval_harness/tests/test_eval_harness_report.py": {
+      "unformatted": 1
+    },
+    "apps/prototype-description-service/scripts/eval_harness/tests/test_eval_refusal_message.py": {
+      "unformatted": 1
+    },
+    "apps/prototype-description-service/scripts/eval_harness/tests/test_identification_boxed_gt.py": {
+      "unformatted": 1
+    },
+    "apps/prototype-description-service/scripts/eval_harness/tests/test_ingest_checks.py": {
+      "unformatted": 1
+    },
+    "apps/prototype-description-service/scripts/eval_harness/tests/test_manifest_invariants.py": {
+      "unformatted": 1
+    },
+    "apps/prototype-description-service/scripts/eval_harness/tests/test_r6d2_legacy_import_session.py": {
+      "unformatted": 1
+    },
+    "apps/prototype-description-service/scripts/eval_harness/tests/test_r6d3_extract_head_shas.py": {
+      "unformatted": 1
+    },
+    "apps/prototype-description-service/scripts/eval_harness/tests/test_r6d3_s2r3_14_vlm2a_rebaseline.py": {
+      "unformatted": 1
+    },
+    "apps/prototype-description-service/scripts/eval_harness/tests/test_r6d3_s2r4_15_disclosure.py": {
+      "unformatted": 1
+    },
+    "apps/prototype-description-service/scripts/eval_harness/tests/test_r6d4_cli_score_omits_annotation_mode.py": {
+      "unformatted": 1
+    },
+    "apps/prototype-description-service/scripts/eval_harness/tests/test_r6e1_parent_mode_fill.py": {
+      "unformatted": 1
+    },
+    "apps/prototype-description-service/scripts/eval_harness/tests/test_r6e4_stale_report_scan.py": {
+      "unformatted": 1
+    },
+    "apps/prototype-description-service/scripts/eval_harness/tests/test_regen_eval_report_gate.py": {
+      "unformatted": 1
+    },
+    "apps/prototype-description-service/scripts/eval_harness/tests/test_remediation.py": {
+      "unformatted": 1
+    },
+    "apps/prototype-description-service/scripts/eval_harness/tests/test_score_roster_only_refusal.py": {
+      "unformatted": 1
+    },
+    "apps/prototype-description-service/scripts/seed_vlm_cache.py": {
+      "unformatted": 1
+    },
+    "docs/archive/tasks/10.0/10.1/projection-stall-direct-db-investigation-2026-03-24.md": {
+      "unformatted": 1
+    },
+    "docs/archive/tasks/10.0/10.2/clustering-pipeline-structural-refactoring.md": {
+      "unformatted": 1
+    },
+    "docs/archive/tasks/10.0/10.2/rls-seam-fixes-and-polling-correction.md": {
+      "unformatted": 1
+    },
+    "docs/archive/tasks/10.0/10.2/wire-suggested-label-through-sovereign-sync.md": {
+      "unformatted": 1
+    },
+    "docs/archive/tasks/10.0/10.3/recognition-502-remediation-plan.md": {
+      "unformatted": 1
+    },
+    "docs/archive/tasks/10.0/recognition-clustering-stability-latency-task-plan.md": {
+      "unformatted": 1
+    },
+    "docs/archive/tasks/12.0/deprecated-alias-test-migration.md": {
+      "unformatted": 1
+    },
+    "docs/archive/tasks/12.0/mcp-batch-record-review-findings-task-plan.md": {
+      "unformatted": 1
+    },
+    "docs/archive/tasks/12.0/refactoring-agent-handoff-mcp-evaluation.md": {
+      "unformatted": 1
+    },
+    "docs/archive/tasks/4.0/4.10.1/identity-cluster-suggestions-plan.md": {
+      "unformatted": 1
+    },
+    "docs/archive/tasks/4.0/4.10.2/curation-logging-and-recompute-plan.md": {
+      "unformatted": 1
+    },
+    "docs/archive/tasks/4.0/4.10.3/batch-processing-resilience-plan.md": {
+      "unformatted": 1
+    },
+    "docs/archive/tasks/4.0/4.10.3/cleanup.md": {
+      "unformatted": 1
+    },
+    "docs/archive/tasks/4.0/4.11.0/MCP_INVESTIGATION.md": {
+      "unformatted": 1
+    },
+    "docs/archive/tasks/4.0/4.11.0/auto-labeling-implementation-plan.md": {
+      "unformatted": 1
+    },
+    "docs/archive/tasks/4.0/4.11.0/curriculum-threshold-fix-plan-2026-01-20.md": {
+      "unformatted": 1
+    },
+    "docs/archive/tasks/4.0/4.11.0/implementation-gap-analysis-2026-01-20.md": {
+      "unformatted": 1
+    },
+    "docs/archive/tasks/4.0/4.11.0/implementation-plan.md": {
+      "unformatted": 1
+    },
+    "docs/archive/tasks/4.0/4.11.0/progress-tracking-investigation-2026-01-20.md": {
+      "unformatted": 1
+    },
+    "docs/archive/tasks/4.0/4.11.1/dynamic-suggestion-refresh-plan.md": {
+      "unformatted": 1
+    },
+    "docs/archive/tasks/4.0/4.11.1/false-positive-analysis.md": {
+      "unformatted": 1
+    },
+    "docs/archive/tasks/4.0/4.11.1/pipeline-analysis-2026-01-26.md": {
+      "unformatted": 1
+    },
+    "docs/archive/tasks/4.0/4.11.1/proactive-label-suggestions.md": {
+      "unformatted": 1
+    },
+    "docs/archive/tasks/4.0/4.11.1/root-cause-analysis-2026-01-25.md": {
+      "unformatted": 1
+    },
+    "docs/archive/tasks/4.0/4.11.2/background-surfacing-ui-hang-plan.md": {
+      "unformatted": 1
+    },
+    "docs/archive/tasks/4.0/4.11.2/dev-slice-review-2026-02-05.md": {
+      "unformatted": 1
+    },
+    "docs/archive/tasks/4.0/4.12.0/post-batch-suggestion-backfill-low-confidence-plan.md": {
+      "unformatted": 1
+    },
+    "docs/archive/tasks/4.0/4.13.1/thumbnail-deprecation-task-plan.md": {
+      "unformatted": 1
+    },
+    "docs/archive/tasks/4.0/4.2.3/CLUSTERING_CONSOLIDATION_PLAN.md": {
+      "unformatted": 1
+    },
+    "docs/archive/tasks/4.0/4.2.3/clustering-algorithm-comprehensive-analysis.md": {
+      "unformatted": 1
+    },
+    "docs/archive/tasks/4.0/4.2.3/clustering-improvements-dev-plan.md": {
+      "unformatted": 1
+    },
+    "docs/archive/tasks/4.0/4.2.3/clustering-pipeline-analysis.md": {
+      "unformatted": 1
+    },
+    "docs/archive/tasks/4.0/4.2.3/complete-link-guard-implementation.md": {
+      "unformatted": 1
+    },
+    "docs/archive/tasks/4.0/4.2.3/early-stage-suggestion-guard.md": {
+      "unformatted": 1
+    },
+    "docs/archive/tasks/4.0/4.2.3/improve-suggestion-ux-reduce-false-negatives.md": {
+      "unformatted": 1
+    },
+    "docs/archive/tasks/4.0/4.2.3/structural-clustering-guard-evaluation.md": {
+      "unformatted": 1
+    },
+    "docs/archive/tasks/4.0/4.2.4/ALGORITHM_EVALUATION.md": {
+      "unformatted": 1
+    },
+    "docs/archive/tasks/4.0/4.2.4/EMBEDDING_MODEL_EVALUATION.md": {
+      "unformatted": 1
+    },
+    "docs/archive/tasks/4.0/4.2.4/RECOGNITION_SERVICE_V4.2.4_IMPLEMENTATION_PLAN.md": {
+      "unformatted": 1
+    },
+    "docs/archive/tasks/4.0/4.2.6/batch_consistency_implementation.md": {
+      "unformatted": 1
+    },
+    "docs/archive/tasks/4.0/4.2.7/2025-12-15_gpt-5.2_canonical_report_regression_harness.md": {
+      "unformatted": 1
+    },
+    "docs/archive/tasks/4.0/4.2.7/clustering_fixes_implementation_plan.md": {
+      "unformatted": 1
+    },
+    "docs/archive/tasks/4.0/4.2.7/representative_recomputation_plan.md": {
+      "unformatted": 1
+    },
+    "docs/archive/tasks/4.0/4.2.8/cluster-curation-recompute-implementation.md": {
+      "unformatted": 1
+    },
+    "docs/archive/tasks/4.0/4.2.8/cluster-split-and-suggestions-implementation.md": {
+      "unformatted": 1
+    },
+    "docs/archive/tasks/4.0/4.2.8/connection-pool-leak-fix.md": {
+      "unformatted": 1
+    },
+    "docs/archive/tasks/4.0/4.2.8/duplicate-detection-and-reporting.md": {
+      "unformatted": 1
+    },
+    "docs/archive/tasks/4.0/4.2.8/workstream-2-async-queueing-implementation.md": {
+      "unformatted": 1
+    },
+    "docs/archive/tasks/4.0/4.2.8/workstream-3-per-candidate-adaptive-thresholds.md": {
+      "unformatted": 1
+    },
+    "docs/archive/tasks/4.0/4.2.9/hybrid-clustering-strategy.md": {
+      "unformatted": 1
+    },
+    "docs/archive/tasks/4.0/4.2.9/refactoring-gaps-and-improvements.md": {
+      "unformatted": 1
+    },
+    "docs/archive/tasks/4.0/4.9.10/4.9.10.a/latency_analysis.md": {
+      "unformatted": 1
+    },
+    "docs/archive/tasks/4.0/4.9.10/async_enqueue_and_status.md": {
+      "unformatted": 1
+    },
+    "docs/archive/tasks/4.0/4.9.10/dynamic_suggestion_updates_implementation_plan.md": {
+      "unformatted": 1
+    },
+    "docs/archive/tasks/4.0/4.9.10/fix-identity-reassignment-and-performance-metrics.md": {
+      "unformatted": 1
+    },
+    "docs/archive/tasks/4.0/4.9.10/fix-identity-reassignment-implementation_plan.md": {
+      "unformatted": 1
+    },
+    "docs/archive/tasks/4.0/4.9.10/representative_lifecycle_implementation_plan.md": {
+      "unformatted": 1
+    },
+    "docs/archive/tasks/4.0/4.9.11/future-merge-refactofing.md": {
+      "unformatted": 1
+    },
+    "docs/archive/tasks/4.0/4.9.11/pgcache-evaluation.md": {
+      "unformatted": 1
+    },
+    "docs/archive/tasks/4.0/cluster-rework/centroid-fidelity-plan.md": {
+      "unformatted": 1
+    },
+    "docs/archive/tasks/4.0/cluster-rework/clustering-fix-implementation-plan.md": {
+      "unformatted": 1
+    },
+    "docs/archive/tasks/4.0/cluster-rework/debug-clustering-batch-size-regression.md": {
+      "unformatted": 1
+    },
+    "docs/archive/tasks/4.0/face-scan-implementation-guide.md": {
+      "unformatted": 1
+    },
+    "docs/archive/tasks/4.0/identity-nomenclature-implementation-guide.md": {
+      "unformatted": 1
+    },
+    "docs/archive/tasks/4.0/tenant-isolation-plan.md": {
+      "unformatted": 1
+    },
+    "docs/archive/tasks/4.0/workbench-cluster-editing-implementation.md": {
+      "unformatted": 1
+    },
+    "docs/archive/tasks/6.0/daemon-10-lane-scoped-mcp-orchestration-task-plan.md": {
+      "unformatted": 1
+    },
+    "docs/archive/tasks/6.0/daemon-4-orchestrator-guidance-loop-task-plan.md": {
+      "unformatted": 1
+    },
+    "docs/archive/tasks/6.0/daemon-5-task-plan-driven-orchestrator-task-plan.md": {
+      "unformatted": 1
+    },
+    "docs/archive/tasks/6.0/daemon-8-portable-orchestration-backend-task-plan.md": {
+      "unformatted": 1
+    },
+    "docs/archive/tasks/6.0/phase-3-minimal-durable-sync-replay-task-plan.md": {
+      "unformatted": 1
+    },
+    "docs/archive/tasks/6.0/phase-5-retention-export-and-audit-controls-task-plan.md": {
+      "unformatted": 1
+    },
+    "docs/archive/tasks/7.0/agent-agnostic-orchestration-task-plan.md": {
+      "unformatted": 1
+    },
+    "docs/archive/tasks/7.0/mcp-orchestration-reliability-task-plan.md": {
+      "unformatted": 1
+    },
+    "docs/archive/tasks/8.0/ace-ctx7-documentation-evolution-task-plan.md": {
+      "unformatted": 1
+    },
+    "docs/archive/tasks/8.0/orchestration-hardening-task-plan.md": {
+      "unformatted": 1
+    },
+    "docs/archive/tasks/8.0/structured-memory-search-task-plan.md": {
+      "unformatted": 1
+    },
+    "docs/assessments/archive/e15-3a-br21-clustering-insert-statement-timeout-2026-04-23.md": {
+      "unformatted": 1
+    },
+    "docs/assessments/current/identity-schema-truth-divergence-assessment-2026-07-05.md": {
+      "unformatted": 1
+    },
+    "docs/specs/recognition-roster-curation-loop-spec.md": {
+      "unformatted": 1
+    },
+    "docs/specs/session-lifecycle-resilience-spec.md": {
+      "unformatted": 1
+    },
+    "docs/tasks/depiction/DEPICT-0-prompt-lineage-seam-task-plan.md": {
+      "unformatted": 1
+    },
+    "docs/tasks/depiction/DEPICT-1-context-voice-and-register-contract-task-plan.md": {
+      "unformatted": 1
+    },
+    "docs/tasks/depiction/DEPICT-2-depiction-metrics-task-plan.md": {
+      "unformatted": 1
+    },
+    "docs/tasks/fir/FIR-4-s5-review-grok.md": {
+      "unformatted": 1
+    },
+    "docs/tasks/fir/FIR-8-recognition-profile-bench-toggle-task-plan.md": {
+      "unformatted": 1
+    },
+    "docs/tasks/tech-debt/archive-or-transfer-candidates/terminal-guard-test-performance.md": {
+      "unformatted": 1
+    },
+    "infra/oci/gpu_lifecycle/reaper.py": {
+      "unformatted": 1
+    },
+    "infra/oci/gpu_lifecycle/state_snapshot.py": {
+      "unformatted": 1
+    },
+    "infra/oci/gpu_lifecycle/tests/conftest.py": {
+      "unformatted": 1
+    },
+    "infra/oci/gpu_lifecycle/tests/test_batch_fence.py": {
+      "unformatted": 1
+    },
+    "infra/oci/gpu_lifecycle/tests/test_max_lease.py": {
+      "unformatted": 1
+    },
+    "infra/oci/gpu_lifecycle/tests/test_state_snapshot.py": {
+      "unformatted": 1
+    },
+    "infra/oci/gpu_lifecycle/tests/test_state_snapshot_contract.py": {
+      "unformatted": 1
+    },
+    "literature/extracted/refactoring/distilled/effective-python.md": {
+      "unformatted": 1
+    },
+    "literature/extracted/refactoring/distilled/using-asyncio-in-python.md": {
+      "unformatted": 1
+    },
+    "scripts/_maint_start_inline.py": {
+      "unformatted": 1
+    },
+    "scripts/_overlay_clone.py": {
+      "unformatted": 1
+    },
+    "scripts/ace/ace_reflect.py": {
+      "unformatted": 1
+    },
+    "scripts/ace/test_ace_reflect.py": {
+      "unformatted": 1
+    },
+    "scripts/apply_cursor_skills_only_surface.py": {
+      "unformatted": 1
+    },
+    "scripts/check_harness_sync.py": {
+      "unformatted": 1
+    },
+    "scripts/check_mcp_pins.py": {
+      "unformatted": 1
+    },
+    "scripts/check_overrides_lock_digest.py": {
+      "unformatted": 1
+    },
+    "scripts/check_published_head_sha.py": {
+      "unformatted": 1
+    },
+    "scripts/check_published_identification.py": {
+      "unformatted": 1
+    },
+    "scripts/check_skills.py": {
+      "unformatted": 1
+    },
+    "scripts/check_workflow_facade.py": {
+      "unformatted": 1
+    },
+    "scripts/deploy/tests/test_check_gpu_snapshots_piped.py": {
+      "unformatted": 1
+    },
+    "scripts/deploy/tests/test_gpu_lifecycle_contract_ownership.py": {
+      "unformatted": 1
+    },
+    "scripts/deploy/tests/test_gpu_lifecycle_install.py": {
+      "unformatted": 1
+    },
+    "scripts/deploy/tests/test_prod_compose_load_mount.py": {
+      "unformatted": 1
+    },
+    "scripts/eval_refusal_message.py": {
+      "unformatted": 1
+    },
+    "scripts/generate_agent_workflows.py": {
+      "unformatted": 1
+    },
+    "scripts/grok-egress-proxy.py": {
+      "unformatted": 1
+    },
+    "scripts/lint_hoisted_paths.py": {
+      "unformatted": 1
+    },
+    "scripts/lint_ratchet.py": {
+      "unformatted": 1
+    },
+    "scripts/maint_archive_stale.py": {
+      "unformatted": 1
+    },
+    "scripts/mcp/handoff_integrity_guard.py": {
+      "unformatted": 1
+    },
+    "scripts/overlay_resolver.py": {
+      "unformatted": 1
+    },
+    "scripts/privacy/priv1_pseudonymize.py": {
+      "unformatted": 1
+    },
+    "scripts/regen_eval_report.py": {
+      "unformatted": 1
+    },
+    "scripts/smoke_agent_workflows.py": {
+      "unformatted": 1
+    },
+    "scripts/task_plan_audit.py": {
+      "unformatted": 1
+    },
+    "scripts/test_acx_backend_image_contract.py": {
+      "unformatted": 1
+    },
+    "scripts/test_check_harness_sync.py": {
+      "unformatted": 1
+    },
+    "scripts/test_check_skills.py": {
+      "unformatted": 1
+    },
+    "scripts/test_consumer_root_verification_doc.py": {
+      "unformatted": 1
+    },
+    "scripts/test_consumer_setup_doc.py": {
+      "unformatted": 1
+    },
+    "scripts/test_current_task_demotion_surfaces.py": {
+      "unformatted": 1
+    },
+    "scripts/test_db_reset_remote_dev_fir.py": {
+      "unformatted": 1
+    },
+    "scripts/test_e15_28_demo_bootstrap.py": {
+      "unformatted": 1
+    },
+    "scripts/test_e15_28_demo_stack_infra.py": {
+      "unformatted": 1
+    },
+    "scripts/test_e15_33_boot_smoke.py": {
+      "unformatted": 1
+    },
+    "scripts/test_e15_33_deploy_convergence.py": {
+      "unformatted": 1
+    },
+    "scripts/test_e15_3a_localwp_proof_bundle_capture_checklist.py": {
+      "unformatted": 1
+    },
+    "scripts/test_harness_terminal_stall_investigation_doc.py": {
+      "unformatted": 1
+    },
+    "scripts/test_infra_oci_readme_reset_section.py": {
+      "unformatted": 1
+    },
+    "scripts/test_lint_hoisted_paths.py": {
+      "unformatted": 1
+    },
+    "scripts/test_lint_ratchet.py": {
+      "unformatted": 1
+    },
+    "scripts/test_localwp_batch_run_smoke.py": {
+      "unformatted": 1
+    },
+    "scripts/test_localwp_verify_activation_make.py": {
+      "unformatted": 1
+    },
+    "scripts/test_localwp_wp.py": {
+      "unformatted": 1
+    },
+    "scripts/test_maint_archive_stale.py": {
+      "unformatted": 1
+    },
+    "scripts/test_maint_start_inline.py": {
+      "unformatted": 1
+    },
+    "scripts/test_make_reset_remote_target.py": {
+      "unformatted": 1
+    },
+    "scripts/test_mk_orchestrator_module_invocations.py": {
+      "unformatted": 1
+    },
+    "scripts/test_php_characterization_gate.py": {
+      "unformatted": 1
+    },
+    "scripts/test_recognition_service_reset_subcommand.py": {
+      "unformatted": 1
+    },
+    "scripts/test_remote_gate_guards.py": {
+      "unformatted": 1
+    },
+    "scripts/test_rg014_external_package_scope.py": {
+      "unformatted": 1
+    },
+    "scripts/test_scripts_inventory.py": {
+      "unformatted": 1
+    },
+    "scripts/test_smoke_agent_workflows.py": {
+      "unformatted": 1
+    },
+    "scripts/test_sync_compose_dev_fir.py": {
+      "unformatted": 1
+    },
+    "scripts/test_vlm3_gpu_bakeoff_artifacts.py": {
+      "unformatted": 1
+    },
+    "scripts/test_vlm3_gpu_lifecycle.py": {
+      "unformatted": 1
+    },
+    "scripts/tests/test_makefile_startup_cost.py": {
+      "unformatted": 1
+    },
+    "scripts/train/occlusion/license_policy.py": {
+      "unformatted": 1
+    },
+    "scripts/train/occlusion/mutation_guard.py": {
+      "unformatted": 1
+    },
+    "scripts/train/occlusion/test_equivalence_claims.py": {
+      "unformatted": 1
+    },
+    "scripts/train/occlusion/test_license_policy.py": {
+      "unformatted": 1
+    },
+    "scripts/train/occlusion/test_license_policy_hardening.py": {
+      "unformatted": 1
+    },
+    "scripts/train/occlusion/test_mutation_guard_env.py": {
+      "unformatted": 1
+    },
+    "scripts/validate_claude_settings_pin.py": {
+      "unformatted": 1
+    },
+    "scripts/verify_e15_epicsync_doc_chain.py": {
+      "unformatted": 1
+    },
+    "scripts/vm/tests/test_vm_script_suites.py": {
+      "unformatted": 1
+    },
+    "scripts/worktree_audit.py": {
+      "unformatted": 1
+    }
+  }
+}

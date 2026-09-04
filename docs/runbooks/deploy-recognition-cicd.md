@@ -45,15 +45,19 @@ tailnet uses the **grants** policy model (not the legacy `acls` key).
     "tag:ci":     ["autogroup:admin"]
   }
   ```
-  **Connectivity:** if the policy still has the default allow-all grant
-  (`{"src":["*"],"dst":["*"],"ip":["*"]}`), `tag:ci` can already reach the VM on
-  `:22` — no grant edit needed. If/when you tighten that wildcard, add an
-  explicit least-privilege grant instead:
+  **Connectivity:** add the least-privilege grant as part of this setup step —
+  it is not an optional later tightening:
   ```jsonc
   "grants": [
     { "src": ["tag:ci"], "dst": ["tag:oci-vm"], "ip": ["tcp:22"] }
   ]
   ```
+  A default allow-all grant (`{"src":["*"],"dst":["*"],"ip":["*"]}`) does make
+  the deploy work without this edit, and that is exactly the problem: the CI
+  OAuth identity's blast radius then covers every port on every node in the
+  tailnet, not TCP/22 on the deployment VM. Remove the wildcard, or record the
+  accepted blast radius explicitly. Leaving it in place unexamined is not a
+  default this runbook endorses.
 - **OAuth client** (*Settings → OAuth clients → Generate OAuth client*): scope
   **Auth Keys / `auth_keys` = Write**, and assign tag **`tag:ci`**. Copy the
   client **ID** and **secret** (secret shown once). The GitHub Action uses this

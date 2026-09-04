@@ -1,5 +1,5 @@
 import { execSync } from 'node:child_process';
-import { existsSync, globSync, readFileSync } from 'node:fs';
+import { existsSync, globSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
@@ -35,9 +35,18 @@ describe('E15-25 slice 1: radio-group stylesheet', () => {
   });
 
   it('ships radio-group rules in the production admin CSS bundle', () => {
+    // FEBT1-GATE-04: this assertion is only meaningful against a bundle built from the
+    // tree under test. Pin the build boundary so a missing or stale artifact fails as a
+    // build problem instead of masquerading as a source regression (or a green pass).
+    const buildStartedAt = Date.now();
     execSync('npm run build', { cwd: appRoot, stdio: 'pipe' });
     const cssFiles = globSync(join(appRoot, 'public/assets/dist/assets/*.css'));
-    const combined = cssFiles.map((filePath) => readFileSync(filePath, 'utf8')).join('\n');
+    expect(cssFiles.length).toBeGreaterThan(0);
+
+    const freshCssFiles = cssFiles.filter((filePath) => statSync(filePath).mtimeMs >= buildStartedAt - 1000);
+    expect(freshCssFiles).not.toHaveLength(0);
+
+    const combined = freshCssFiles.map((filePath) => readFileSync(filePath, 'utf8')).join('\n');
 
     expect(combined).toContain('.acx-radio-group__item');
     expect(combined).toContain('.acx-radio-group__indicator');

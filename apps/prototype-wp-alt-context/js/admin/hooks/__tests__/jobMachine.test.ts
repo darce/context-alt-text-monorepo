@@ -32,6 +32,7 @@ const _events: Record<JobEvent['type'], true> = {
   [JOB_EVENT.STREAM_OPEN]: true,
   [JOB_EVENT.PROGRESS]: true,
   [JOB_EVENT.STALL_TICK]: true,
+  [JOB_EVENT.RECONNECTING]: true,
   [JOB_EVENT.RECONNECTED]: true,
   [JOB_EVENT.OFFLINE]: true,
   [JOB_EVENT.ONLINE]: true,
@@ -50,6 +51,7 @@ const SAMPLE_EVENTS: { readonly [E in JobEvent['type']]: Extract<JobEvent, { typ
   STREAM_OPEN: { type: JOB_EVENT.STREAM_OPEN, at: AT },
   PROGRESS: { type: JOB_EVENT.PROGRESS, done: 4, total: 12, at: AT },
   STALL_TICK: { type: JOB_EVENT.STALL_TICK, now: AT + JOB_MACHINE_STALL_THRESHOLD_MS },
+  RECONNECTING: { type: JOB_EVENT.RECONNECTING, at: AT },
   RECONNECTED: { type: JOB_EVENT.RECONNECTED, at: AT },
   OFFLINE: { type: JOB_EVENT.OFFLINE, at: AT },
   ONLINE: { type: JOB_EVENT.ONLINE, at: AT },
@@ -67,6 +69,7 @@ const EXPECTED_STATUS: Record<JobMachineStatus, Record<JobEvent['type'], JobMach
     STREAM_OPEN: null,
     PROGRESS: null,
     STALL_TICK: null,
+    RECONNECTING: null,
     RECONNECTED: null,
     OFFLINE: JOB_MACHINE_STATE.offline,
     ONLINE: null,
@@ -81,7 +84,8 @@ const EXPECTED_STATUS: Record<JobMachineStatus, Record<JobEvent['type'], JobMach
     STREAM_OPEN: JOB_MACHINE_STATE.running,
     PROGRESS: JOB_MACHINE_STATE.running,
     STALL_TICK: JOB_MACHINE_STATE.stalled,
-    RECONNECTED: null,
+    RECONNECTING: JOB_MACHINE_STATE.pending,
+    RECONNECTED: JOB_MACHINE_STATE.running,
     OFFLINE: JOB_MACHINE_STATE.offline,
     ONLINE: null,
     COMPLETE: JOB_MACHINE_STATE.completed,
@@ -95,7 +99,8 @@ const EXPECTED_STATUS: Record<JobMachineStatus, Record<JobEvent['type'], JobMach
     STREAM_OPEN: null,
     PROGRESS: JOB_MACHINE_STATE.running,
     STALL_TICK: JOB_MACHINE_STATE.stalled,
-    RECONNECTED: null,
+    RECONNECTING: JOB_MACHINE_STATE.running,
+    RECONNECTED: JOB_MACHINE_STATE.running,
     OFFLINE: JOB_MACHINE_STATE.offline,
     ONLINE: null,
     COMPLETE: JOB_MACHINE_STATE.completed,
@@ -109,6 +114,7 @@ const EXPECTED_STATUS: Record<JobMachineStatus, Record<JobEvent['type'], JobMach
     STREAM_OPEN: JOB_MACHINE_STATE.running,
     PROGRESS: JOB_MACHINE_STATE.running,
     STALL_TICK: JOB_MACHINE_STATE.stalled,
+    RECONNECTING: JOB_MACHINE_STATE.stalled,
     RECONNECTED: JOB_MACHINE_STATE.running,
     OFFLINE: JOB_MACHINE_STATE.offline,
     ONLINE: null,
@@ -122,7 +128,8 @@ const EXPECTED_STATUS: Record<JobMachineStatus, Record<JobEvent['type'], JobMach
     START: null,
     STREAM_OPEN: null,
     PROGRESS: null,
-    STALL_TICK: JOB_MACHINE_STATE.offline,
+    STALL_TICK: null,
+    RECONNECTING: JOB_MACHINE_STATE.offline,
     RECONNECTED: null,
     OFFLINE: null,
     // Fixture resumeStatus is `running`.
@@ -138,6 +145,7 @@ const EXPECTED_STATUS: Record<JobMachineStatus, Record<JobEvent['type'], JobMach
     STREAM_OPEN: null,
     PROGRESS: null,
     STALL_TICK: null,
+    RECONNECTING: null,
     RECONNECTED: null,
     OFFLINE: null,
     ONLINE: null,
@@ -152,6 +160,7 @@ const EXPECTED_STATUS: Record<JobMachineStatus, Record<JobEvent['type'], JobMach
     STREAM_OPEN: null,
     PROGRESS: null,
     STALL_TICK: null,
+    RECONNECTING: null,
     RECONNECTED: null,
     OFFLINE: null,
     ONLINE: null,
@@ -166,6 +175,7 @@ const EXPECTED_STATUS: Record<JobMachineStatus, Record<JobEvent['type'], JobMach
     STREAM_OPEN: null,
     PROGRESS: null,
     STALL_TICK: null,
+    RECONNECTING: null,
     RECONNECTED: null,
     OFFLINE: null,
     ONLINE: null,
@@ -187,6 +197,7 @@ const fixtureFor = (status: JobMachineStatus): JobMachineState => ({
   error: status === JOB_MACHINE_STATE.failed ? { message: 'prior' } : null,
   resumeStatus: status === JOB_MACHINE_STATE.offline ? JOB_MACHINE_STATE.running : null,
   reconnectAttempts: 0,
+  lastTickAt: null,
 });
 
 const tableCells = ALL_STATUSES.flatMap((status) =>
@@ -216,7 +227,7 @@ describe('jobReducer stall, progress, offline, terminal', () => {
   it('STALL_TICK below threshold is identity and at exactly the threshold stalls', () => {
     const state = fixtureFor(JOB_MACHINE_STATE.running);
     const below = jobReducer(state, { type: JOB_EVENT.STALL_TICK, now: AT + JOB_MACHINE_STALL_THRESHOLD_MS - 1 });
-    expect(below).toBe(state);
+    expect(below).toEqual({ ...state, lastTickAt: AT + JOB_MACHINE_STALL_THRESHOLD_MS - 1 });
 
     const atThreshold = jobReducer(state, { type: JOB_EVENT.STALL_TICK, now: AT + JOB_MACHINE_STALL_THRESHOLD_MS });
     expect(atThreshold).not.toBe(state);
@@ -326,6 +337,7 @@ describe('initialJobState', () => {
       error: null,
       resumeStatus: null,
       reconnectAttempts: 0,
+      lastTickAt: null,
     });
   });
 });
@@ -436,7 +448,9 @@ describe('FEBT-1 W1 fix lane (L6A-01, M-01..M-06)', () => {
 
       const stalled = jobReducer(notYet, { type: JOB_EVENT.STALL_TICK, now: t + 330_002 });
       expect(stalled.status).toBe(JOB_MACHINE_STATE.stalled);
-      expect(stalled.lastEventAt).toBe(t + 330_002);
+      // A quiet tick observes; it does not re-timestamp. lastEventAt still points at the
+      // last real event so quiet duration keeps growing.
+      expect(stalled.lastEventAt).toBe(t + 300_000);
       expect(stalled.resumeStatus).toBeNull();
     });
   });
@@ -461,40 +475,95 @@ describe('FEBT-1 W1 fix lane (L6A-01, M-01..M-06)', () => {
     });
   });
 
-  describe('M-03 reconnect ceiling', () => {
-    it('stays stalled below the ceiling and fails when the ceiling is crossed', () => {
+  describe('M-03 reconnect ceiling counts real reconnects, never quiet time', () => {
+    it('never fails from quiet ticks alone, however long the silence runs', () => {
       let state = jobReducer(fixtureFor(JOB_MACHINE_STATE.running), {
         type: JOB_EVENT.STALL_TICK,
         now: AT + 30_000,
       });
       expect(state.status).toBe(JOB_MACHINE_STATE.stalled);
 
-      state = jobReducer(state, { type: JOB_EVENT.STALL_TICK, now: AT + 60_000 });
+      // 10 minutes of silence on an OPEN stream (burst-GPU warmup, one very large image).
+      // Nothing reconnected, so nothing may be counted against the reconnect ceiling.
+      for (let now = AT + 60_000; now <= AT + 600_000; now += 30_000) {
+        state = jobReducer(state, { type: JOB_EVENT.STALL_TICK, now });
+      }
       expect(state.status).toBe(JOB_MACHINE_STATE.stalled);
-
-      state = jobReducer(state, { type: JOB_EVENT.STALL_TICK, now: AT + 90_000 });
-      expect(state.status).toBe(JOB_MACHINE_STATE.stalled);
-
-      state = jobReducer(state, { type: JOB_EVENT.STALL_TICK, now: AT + 120_000 });
-      expect(state.status).toBe(JOB_MACHINE_STATE.failed);
-      expect(state.error).not.toBeNull();
-      expect(state.error?.message.toLowerCase()).toContain('reconnect');
+      expect(state.error).toBeNull();
+      expect(state.reconnectAttempts).toBe(0);
+      // lastEventAt is never re-stamped by a tick, so the quiet window is still measurable.
+      expect(state.lastEventAt).toBe(AT);
     });
 
-    it('ONLINE resets the reconnect counter so the next stall does not fail immediately', () => {
-      let state = jobReducer(fixtureFor(JOB_MACHINE_STATE.running), {
-        type: JOB_EVENT.STALL_TICK,
-        now: AT + 30_000,
-      });
-      state = jobReducer(state, { type: JOB_EVENT.STALL_TICK, now: AT + 60_000 });
-      state = jobReducer(state, { type: JOB_EVENT.STALL_TICK, now: AT + 90_000 });
-      expect(state.status).toBe(JOB_MACHINE_STATE.stalled);
+    it('counts one attempt per RECONNECTING and fails only when the ceiling is crossed', () => {
+      let state = fixtureFor(JOB_MACHINE_STATE.stalled);
+      for (let attempt = 1; attempt <= JOB_MACHINE_RECONNECT_CEILING; attempt += 1) {
+        state = jobReducer(state, { type: JOB_EVENT.RECONNECTING, at: AT + attempt });
+        expect(state.status).toBe(JOB_MACHINE_STATE.stalled);
+        expect(state.reconnectAttempts).toBe(attempt);
+      }
+
+      state = jobReducer(state, { type: JOB_EVENT.RECONNECTING, at: AT + 99 });
+      expect(state.status).toBe(JOB_MACHINE_STATE.failed);
+      expect(state.error?.message.toLowerCase()).toContain('reconnect');
+      // The message must state the attempts actually made, not the constant.
+      expect(state.error?.message).toContain(String(JOB_MACHINE_RECONNECT_CEILING + 1));
+    });
+
+    it('a successful RECONNECTED clears the breaker so the next outage gets a full budget', () => {
+      let state = fixtureFor(JOB_MACHINE_STATE.stalled);
+      state = jobReducer(state, { type: JOB_EVENT.RECONNECTING, at: AT + 1 });
+      state = jobReducer(state, { type: JOB_EVENT.RECONNECTING, at: AT + 2 });
+      expect(state.reconnectAttempts).toBe(2);
+
+      state = jobReducer(state, { type: JOB_EVENT.RECONNECTED, at: AT + 3 });
+      expect(state.status).toBe(JOB_MACHINE_STATE.running);
+      expect(state.reconnectAttempts).toBe(0);
+
+      for (let attempt = 1; attempt <= JOB_MACHINE_RECONNECT_CEILING; attempt += 1) {
+        state = jobReducer(state, { type: JOB_EVENT.RECONNECTING, at: AT + 10 + attempt });
+      }
+      expect(state.status).not.toBe(JOB_MACHINE_STATE.failed);
+    });
+
+    it('ONLINE resets the reconnect counter so the next outage gets a full budget', () => {
+      let state = fixtureFor(JOB_MACHINE_STATE.running);
+      state = jobReducer(state, { type: JOB_EVENT.RECONNECTING, at: AT + 1 });
+      state = jobReducer(state, { type: JOB_EVENT.RECONNECTING, at: AT + 2 });
+      expect(state.reconnectAttempts).toBe(2);
 
       const offline = jobReducer(state, offlineEvent(AT + 91_000));
       const online = jobReducer(offline, onlineEvent(AT + 92_000));
-      const stalledAgain = jobReducer(online, { type: JOB_EVENT.STALL_TICK, now: AT + 122_000 });
-      expect(stalledAgain.status).toBe(JOB_MACHINE_STATE.stalled);
-      expect(stalledAgain.error).toBeNull();
+      expect(online.reconnectAttempts).toBe(0);
+      expect(online.error).toBeNull();
+    });
+
+    it('[FEBT1-W2C-10] PROGRESS resets reconnectAttempts, proving the transport is healthy', () => {
+      const stalledAfterRetries: JobMachineState = {
+        ...fixtureFor(JOB_MACHINE_STATE.stalled),
+        reconnectAttempts: 2,
+      };
+
+      const resumed = jobReducer(stalledAfterRetries, {
+        type: JOB_EVENT.PROGRESS,
+        done: 6,
+        total: 10,
+        at: AT + 5_000,
+      });
+      expect(resumed.status).toBe(JOB_MACHINE_STATE.running);
+      expect(resumed.reconnectAttempts).toBe(0);
+
+      // Without the reset, these two attempts would land on 3 and 4 and cross the ceiling.
+      let after = jobReducer(resumed, { type: JOB_EVENT.RECONNECTING, at: AT + 6_000 });
+      after = jobReducer(after, { type: JOB_EVENT.RECONNECTING, at: AT + 7_000 });
+      expect(after.status).not.toBe(JOB_MACHINE_STATE.failed);
+      expect(after.reconnectAttempts).toBe(2);
+    });
+
+    it('[FEBT1-W2C-10] START resets reconnectAttempts for the new job', () => {
+      const dirty: JobMachineState = { ...fixtureFor(JOB_MACHINE_STATE.failed), reconnectAttempts: 3 };
+      const next = jobReducer(dirty, { type: JOB_EVENT.START, jobId: 'job-fresh', at: AT });
+      expect(next.reconnectAttempts).toBe(0);
     });
   });
 
@@ -505,29 +574,108 @@ describe('FEBT-1 W1 fix lane (L6A-01, M-01..M-06)', () => {
       expect(next.status).toBe(JOB_MACHINE_STATE.stalled);
     });
 
-    it('an offline pending job fails after the reconnect ceiling of quiet ticks', () => {
+    it('[FEBT1-GATE-02] an offline wait is never ended by quiet time', () => {
       const pending = fixtureFor(JOB_MACHINE_STATE.pending);
       let state = jobReducer(pending, offlineEvent(AT));
       expect(state.status).toBe(JOB_MACHINE_STATE.offline);
 
-      state = jobReducer(state, { type: JOB_EVENT.STALL_TICK, now: AT + 30_000 });
+      for (let now = AT + 30_000; now <= AT + 600_000; now += 30_000) {
+        state = jobReducer(state, { type: JOB_EVENT.STALL_TICK, now });
+      }
+      // Losing wifi must not fail a job that is still running server-side.
       expect(state.status).toBe(JOB_MACHINE_STATE.offline);
+      expect(state.error).toBeNull();
 
-      state = jobReducer(state, { type: JOB_EVENT.STALL_TICK, now: AT + 60_000 });
-      expect(state.status).toBe(JOB_MACHINE_STATE.offline);
+      const online = jobReducer(state, onlineEvent(AT + 601_000));
+      expect(online.status).toBe(JOB_MACHINE_STATE.pending);
+    });
 
-      state = jobReducer(state, { type: JOB_EVENT.STALL_TICK, now: AT + 90_000 });
-      expect(state.status).toBe(JOB_MACHINE_STATE.offline);
-
-      state = jobReducer(state, { type: JOB_EVENT.STALL_TICK, now: AT + 120_000 });
+    it('[FEBT1-GATE-02] an offline wait IS bounded by real reconnect attempts', () => {
+      let state = jobReducer(fixtureFor(JOB_MACHINE_STATE.pending), offlineEvent(AT));
+      for (let attempt = 1; attempt <= JOB_MACHINE_RECONNECT_CEILING; attempt += 1) {
+        state = jobReducer(state, { type: JOB_EVENT.RECONNECTING, at: AT + attempt });
+        expect(state.status).toBe(JOB_MACHINE_STATE.offline);
+      }
+      state = jobReducer(state, { type: JOB_EVENT.RECONNECTING, at: AT + 50 });
       expect(state.status).toBe(JOB_MACHINE_STATE.failed);
       expect(state.error).not.toBeNull();
     });
   });
 
+  describe('M-04b payload-level transitions (FEBT1-W2C-11)', () => {
+    // The status-only table cannot see a CANCEL that leaks the previous job's payload:
+    // a mutant returning { ...state, status: idle } keeps jobId/done/total/error.
+    it.each(
+      ALL_STATUSES.filter(
+        (status) => EXPECTED_STATUS[status][JOB_EVENT.CANCEL] === JOB_MACHINE_STATE.idle,
+      ),
+    )('CANCEL from %s clears every payload field, not just the status', (status) => {
+      const dirty: JobMachineState = {
+        ...fixtureFor(status),
+        reconnectAttempts: 2,
+        failedCount: 4,
+        error: { message: 'prior' },
+      };
+      expect(jobReducer(dirty, { type: JOB_EVENT.CANCEL })).toEqual(initialJobState);
+    });
+
+    it.each(
+      ALL_STATUSES.filter(
+        (status) => EXPECTED_STATUS[status][JOB_EVENT.RESET] === JOB_MACHINE_STATE.idle,
+      ),
+    )('RESET from %s clears every payload field, not just the status', (status) => {
+      const dirty: JobMachineState = {
+        ...fixtureFor(status),
+        reconnectAttempts: 2,
+        failedCount: 4,
+        error: { message: 'prior' },
+      };
+      expect(jobReducer(dirty, { type: JOB_EVENT.RESET })).toEqual(initialJobState);
+    });
+
+    it('START from a dirty terminal state clears the previous run payload', () => {
+      const dirty: JobMachineState = {
+        ...fixtureFor(JOB_MACHINE_STATE.completedWithErrors),
+        error: { message: 'prior' },
+        reconnectAttempts: 3,
+      };
+      expect(jobReducer(dirty, { type: JOB_EVENT.START, jobId: 'job-next', at: AT })).toEqual({
+        ...initialJobState,
+        status: JOB_MACHINE_STATE.pending,
+        jobId: 'job-next',
+        lastEventAt: AT,
+      });
+    });
+
+    it('COMPLETE_WITH_ERRORS without a wire count keeps the known count instead of inventing 0', () => {
+      const state: JobMachineState = { ...fixtureFor(JOB_MACHINE_STATE.running), failedCount: 7 };
+      const next = jobReducer(state, { type: JOB_EVENT.COMPLETE_WITH_ERRORS, at: AT });
+      expect(next.status).toBe(JOB_MACHINE_STATE.completedWithErrors);
+      expect(next.failedCount).toBe(7);
+    });
+  });
+
   describe('M-05 clock discontinuity', () => {
-    it('does not stall on a 6-hour jump in one tick', () => {
-      const state = fixtureFor(JOB_MACHINE_STATE.running);
+    it('[FEBT1-W2C-12] a clock rewind rebases instead of stalling or ticking backwards', () => {
+      const state: JobMachineState = { ...fixtureFor(JOB_MACHINE_STATE.running), lastTickAt: AT };
+      const rewound = jobReducer(state, { type: JOB_EVENT.STALL_TICK, now: AT - 1 });
+      expect(rewound.status).toBe(JOB_MACHINE_STATE.running);
+      expect(rewound.lastEventAt).toBe(AT - 1);
+
+      const after = jobReducer(rewound, { type: JOB_EVENT.STALL_TICK, now: AT - 1 + 31_000 });
+      expect(after.status).toBe(JOB_MACHINE_STATE.stalled);
+    });
+
+    it('[FEBT1-W2C-12] a large backwards jump also rebases rather than stalling', () => {
+      const state: JobMachineState = { ...fixtureFor(JOB_MACHINE_STATE.running), lastTickAt: AT };
+      const rewound = jobReducer(state, { type: JOB_EVENT.STALL_TICK, now: AT - 3_600_000 });
+      expect(rewound.status).toBe(JOB_MACHINE_STATE.running);
+      expect(rewound.lastEventAt).toBe(AT - 3_600_000);
+    });
+
+    it('does not stall on a 6-hour jump between two consecutive ticks', () => {
+      // The ticker has already run once (lastTickAt), then the machine slept for 6h.
+      const state: JobMachineState = { ...fixtureFor(JOB_MACHINE_STATE.running), lastTickAt: AT };
       const sixHours = AT + 6 * 60 * 60 * 1000;
       const jumped = jobReducer(state, { type: JOB_EVENT.STALL_TICK, now: sixHours });
       expect(jumped.status).toBe(JOB_MACHINE_STATE.running);

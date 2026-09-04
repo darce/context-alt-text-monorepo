@@ -128,7 +128,12 @@ export const runAfterCooldown = (fn: () => void): void => {
     fn();
     return;
   }
-  setTimeout(fn, cooldownRemainingMs());
+  // Re-check on wake instead of firing blind: openCooldown can extend expiresAtMs
+  // after this timer is armed, and running at the stale deadline would put a
+  // refetch burst back inside the active window (FEBT1G-M-09, RES-06).
+  setTimeout(() => {
+    runAfterCooldown(fn);
+  }, cooldownRemainingMs());
 };
 
 /** Test-only: clear module state between tests. */

@@ -24,6 +24,28 @@ const useCancelScanJobsMock = vi.mocked(useCancelScanJobs);
 type ScanOptions = NonNullable<Parameters<typeof useScanIdentities>[0]>;
 type CancelOptions = NonNullable<Parameters<typeof useCancelScanJobs>[0]>;
 
+/**
+ * The TanStack v5 mutation-callback context, derived from the real callback signature
+ * instead of `{} as never` (FEBT1-W2C-04). If the arity or the context type changes, the
+ * call sites below stop compiling — which is the whole point of pinning them here.
+ */
+type ScanMutationContext = Parameters<NonNullable<ScanOptions['onSuccess']>>[3];
+type CancelMutationContext = Parameters<NonNullable<CancelOptions['onSuccess']>>[3];
+
+/**
+ * The hooks return the full TanStack UseMutationResult (~20 members); these tests only
+ * drive the callbacks. The narrowing lives in this one audited helper instead of being
+ * repeated as inline `as unknown as ...` at every call site
+ * (effective-typescript Item 9 / Item 42, FEBT1-W2C-04). The input shape is declared, so a
+ * stub that stops providing `mutate`/`isPending` fails to compile.
+ */
+interface MutationResultStub {
+  mutate: () => void;
+  isPending: boolean;
+}
+
+const asMutationResult = <TResult>(stub: MutationResultStub): TResult => stub as unknown as TResult;
+
 let scanOptions: ScanOptions | undefined;
 let cancelOptions: CancelOptions | undefined;
 
@@ -48,7 +70,8 @@ const scanResponse = (jobIds: string[], total = 10): BatchAnalyzeResponse => ({
   })),
 });
 
-const mockMutationContext = {} as never;
+const mockMutationContext = {} as ScanMutationContext;
+const mockCancelContext = {} as CancelMutationContext;
 
 const captureRecords = (): LogRecord[] => {
   const records: LogRecord[] = [];
@@ -100,14 +123,14 @@ describe('useJobStateMachineMutations logging [O-02][O-06]', () => {
     setLogLevel('debug');
     useScanIdentitiesMock.mockImplementation((options) => {
       scanOptions = options;
-      return { mutate: vi.fn(), isPending: false } as unknown as ReturnType<typeof useScanIdentities>;
+      return asMutationResult<ReturnType<typeof useScanIdentities>>({ mutate: vi.fn(), isPending: false });
     });
-    useClusterIdentitiesMock.mockReturnValue({ mutate: vi.fn(), isPending: false } as unknown as ReturnType<
-      typeof useClusterIdentities
-    >);
+    useClusterIdentitiesMock.mockReturnValue(
+      asMutationResult<ReturnType<typeof useClusterIdentities>>({ mutate: vi.fn(), isPending: false }),
+    );
     useCancelScanJobsMock.mockImplementation((options) => {
       cancelOptions = options;
-      return { mutate: vi.fn(), isPending: false } as unknown as ReturnType<typeof useCancelScanJobs>;
+      return asMutationResult<ReturnType<typeof useCancelScanJobs>>({ mutate: vi.fn(), isPending: false });
     });
   });
 
@@ -139,6 +162,18 @@ describe('useJobStateMachineMutations logging [O-02][O-06]', () => {
     expect(jobEvents[0].fields.requestId).toEqual(expect.any(String));
     expect(addJob).toHaveBeenCalledTimes(2);
     expect(onScanComplete).toHaveBeenCalledWith(['job-1', 'job-2']);
+
+    // FEBT1-W2B-02: the submit line must be joinable to EVERY job in the batch, not just
+    // jobIds[0] — job-2's later sse.*/stream.done records carry only its own jobId.
+    expect(jobEvents[0].fields.jobIds).toEqual(['job-1', 'job-2']);
+    expect(jobEvents[0].fields.jobCount).toBe(2);
+    expect(jobEvents[0].fields.batchRunId).toBe('run-1');
+
+    const perJob = records.filter((record) => record.message === 'scan.submit_job');
+    expect(perJob.map((record) => record.fields.jobId)).toEqual(['job-1', 'job-2']);
+    perJob.forEach((record) => {
+      expect(record.fields.batchRunId).toBe('run-1');
+    });
   });
 
   it('emits one scan.submit event plus classified error fields on failure [O-02][O-06][O-03]', () => {
@@ -179,7 +214,7 @@ describe('useJobStateMachineMutations logging [O-02][O-06]', () => {
     const records = captureRecords();
     const { onCancelComplete } = renderMutations(['job-9']);
 
-    cancelOptions?.onSuccess?.([], ['job-9'], undefined, mockMutationContext);
+    cancelOptions?.onSuccess?.([], ['job-9'], undefined, mockCancelContext);
 
     const jobEvents = records.filter((record) => record.fields.event === 'scan.cancel');
     expect(jobEvents).toHaveLength(1);
@@ -198,7 +233,7 @@ describe('useJobStateMachineMutations logging [O-02][O-06]', () => {
     const error = leakingScanError();
     renderMutations(['job-9']);
 
-    cancelOptions?.onError?.(error, ['job-9'], undefined, mockMutationContext);
+    cancelOptions?.onError?.(error, ['job-9'], undefined, mockCancelContext);
 
     const jobEvents = records.filter((record) => record.fields.event === 'scan.cancel');
     expect(jobEvents).toHaveLength(1);

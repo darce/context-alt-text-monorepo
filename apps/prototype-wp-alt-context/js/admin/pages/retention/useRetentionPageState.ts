@@ -110,14 +110,93 @@ export const retentionReducer = (state: RetentionDialogState, action: RetentionA
 /*  Utilities                                                          */
 /* ------------------------------------------------------------------ */
 
+/**
+ * Top-level collection keys carried by a recognition tenant-export snapshot.
+ *
+ * rg-005 (schema/contract parity): this list mirrors `_extract_counts` in
+ * `recognition/application/services/import_service.py`. The backend counts these
+ * keys at the TOP LEVEL of `ImportRequest.data`, so the snapshot — not the
+ * download envelope that wraps it under `data` — is what must be submitted.
+ */
+export const EXPORT_COLLECTION_KEYS = [
+  'clusters',
+  'media_identities',
+  'identity_suggestions',
+  'name_suggestions',
+  'cluster_merge_suggestions',
+  'scan_jobs',
+] as const;
+
+/** Locally authored, safe-to-display boundary rejection (never carries remote text). */
+export class RetentionImportValidationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'RetentionImportValidationError';
+  }
+}
+
+const isPlainObject = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value);
+
+/**
+ * Validate a user-supplied export file and return the snapshot the backend expects.
+ *
+ * Boundary data, so it is validated explicitly rather than with a TS assertion
+ * helper (sr-005). Fail Fast ("Release It!"): a malformed snapshot is rejected
+ * here, before a request is issued, instead of being accepted as an empty import.
+ *
+ * `downloadExportPayload` writes `{ tenant_id, exported_at, schema_version,
+ * counts, data: <snapshot> }`. The import contract is `{ data: <snapshot> }`, so
+ * the envelope must be unwrapped; a bare snapshot (no `data` key) is also accepted.
+ */
+export const extractImportSnapshot = (parsed: unknown): Record<string, unknown> => {
+  if (Array.isArray(parsed)) {
+    throw new RetentionImportValidationError(
+      __('Invalid export file: expected a JSON object, not an array.', 'alt-context'),
+    );
+  }
+  if (!isPlainObject(parsed)) {
+    throw new RetentionImportValidationError(
+      __('Invalid export file: expected a JSON object.', 'alt-context'),
+    );
+  }
+
+  const snapshot = isPlainObject(parsed.data) ? parsed.data : parsed;
+
+  if (!Number.isInteger(snapshot.schema_version)) {
+    throw new RetentionImportValidationError(
+      __('Invalid export file: missing or non-integer schema_version.', 'alt-context'),
+    );
+  }
+
+  const presentKeys = EXPORT_COLLECTION_KEYS.filter((key) => key in snapshot);
+  if (presentKeys.length === 0) {
+    throw new RetentionImportValidationError(
+      __('Invalid export file: no exported collections found.', 'alt-context'),
+    );
+  }
+  for (const key of presentKeys) {
+    if (!Array.isArray(snapshot[key])) {
+      throw new RetentionImportValidationError(
+        __('Invalid export file: exported collections must be arrays.', 'alt-context'),
+      );
+    }
+  }
+
+  return snapshot;
+};
+
+/** The envelope written to disk by `downloadExport`; the snapshot lives under `data`. */
+export const buildExportDocument = (response: RetentionExportResponse): Record<string, unknown> => ({
+  ...(response.tenant_id ? { tenant_id: response.tenant_id } : {}),
+  ...(response.exported_at ? { exported_at: response.exported_at } : {}),
+  ...(typeof response.schema_version === 'number' ? { schema_version: response.schema_version } : {}),
+  counts: response.summary,
+  data: response.payload,
+});
+
 const downloadExportPayload = (response: RetentionExportResponse): void => {
-  const exportDocument = {
-    ...(response.tenant_id ? { tenant_id: response.tenant_id } : {}),
-    ...(response.exported_at ? { exported_at: response.exported_at } : {}),
-    ...(typeof response.schema_version === 'number' ? { schema_version: response.schema_version } : {}),
-    counts: response.summary,
-    data: response.payload,
-  };
+  const exportDocument = buildExportDocument(response);
   const blob = new Blob([JSON.stringify(exportDocument, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement('a');
@@ -206,10 +285,7 @@ export const useRetentionPageState = () => {
     try {
       const text = await state.importFile.text();
       const parsed: unknown = JSON.parse(text);
-      if (!parsed || typeof parsed !== 'object') {
-        throw new Error(__('Invalid export file: expected a JSON object.', 'alt-context'));
-      }
-      const data = parsed as Record<string, unknown>;
+      const data = extractImportSnapshot(parsed);
       await importMutation.mutateAsync({ data });
       dispatch({ type: 'CLOSE_IMPORT_DIALOG' });
       if (importFileRef.current) {
@@ -217,6 +293,10 @@ export const useRetentionPageState = () => {
       }
       success(__('Import completed.', 'alt-context'));
     } catch (error) {
+      if (error instanceof RetentionImportValidationError) {
+        showError(error.message);
+        return;
+      }
       showError(toUserMessage(error, __('Unable to import data.', 'alt-context')));
     }
   };

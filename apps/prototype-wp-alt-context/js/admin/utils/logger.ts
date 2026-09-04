@@ -132,11 +132,14 @@ const projectBoundaryError = (value: Error): FlattenedError | null => {
 };
 
 const flattenCause = (cause: unknown): unknown => {
-  if (isAppError(cause)) {
-    return projectAppError(cause);
-  }
+  // Error instances are checked FIRST: a tagged Error subclass must keep the
+  // {name, message, ...} record shape, never flip to the plain {tag, ...}
+  // projection reserved for classified AppError values (FEBT1G-M-07/M-10).
   if (cause instanceof Error) {
     return flattenError(cause, false);
+  }
+  if (isAppError(cause)) {
+    return projectAppError(cause);
   }
   if (cause === null || typeof cause !== 'object') {
     return cause;
@@ -159,11 +162,12 @@ const flattenError = (value: Error, includeCause: boolean): FlattenedError => {
 };
 
 const flattenFieldValue = (value: unknown): unknown => {
-  if (isAppError(value)) {
-    return projectAppError(value);
-  }
+  // Error-instance check first — see flattenCause (FEBT1G-M-07/M-10).
   if (value instanceof Error) {
     return flattenError(value, true);
+  }
+  if (isAppError(value)) {
+    return projectAppError(value);
   }
   return value;
 };
@@ -178,6 +182,14 @@ const flattenFields = (fields: LogFields): LogFields => {
 
 const isNonEmptyFields = (fields: LogFields): boolean => Object.keys(fields).length > 0;
 
+/**
+ * Fallback correlation id for a logger created without one.
+ *
+ * OBS-03: a logger scope is NOT a transaction. A module-scope `createLogger(...)`
+ * mints this id once at import time, so it correlates "which module" and not
+ * "which unit of work". Call sites that span more than one user action must open
+ * a unit of work with `withRequestId` and log through the returned child.
+ */
 const bindCorrelationId = (fields: LogFields): LogFields => {
   if (typeof fields.requestId === 'string' && fields.requestId !== '') {
     return fields;
@@ -238,6 +250,14 @@ export const createLogger = (scope: string, fields: LogFields = {}): Logger => {
     child: (childFields) => createLogger(scope, { ...parentFields, ...childFields }),
   };
 };
+
+/**
+ * Open a unit of work: returns a child logger whose `requestId` correlates every
+ * record emitted for that one action (FEBT1-W2B-01, OBS-03). Pass an existing id
+ * to join an in-flight transaction (e.g. a scan submit and its SSE stream).
+ */
+export const withRequestId = (log: Logger, requestId: string = newRequestId()): Logger =>
+  log.child({ requestId });
 
 export const createJobLogger = (scope: string, jobId: string): Logger => createLogger(scope, { jobId });
 

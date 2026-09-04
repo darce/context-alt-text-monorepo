@@ -1,7 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { registerConfig, resetConfigCache, getNonce } from '../../api/config';
-import { classifyError } from '../appError';
+import {
+  getNonce,
+  NONCE_REFRESH_TIMEOUT_MS,
+  NonceRefreshFailedError,
+  registerConfig,
+  resetConfigCache,
+} from '../../api/config';
+import { classifyError, isCooldown } from '../appError';
 import {
   AuthExpiredError,
   DEFAULT_FETCH_TIMEOUT_MS,
@@ -54,6 +60,24 @@ describe('fetchApi', () => {
     const result = await fetchApi<void>('http://example.test/endpoint', { method: 'POST' });
 
     expect(result).toBeUndefined();
+  });
+
+  // Narrowing the guard to `status === 204` alone left the 204 test green
+  // (FEBT1-W2C-14). A non-empty body proves the guard short-circuits before
+  // the body is ever read, rather than the body merely happening to be empty.
+  it('returns undefined for 205 responses even when a body is present', async () => {
+    // `new Response(body, { status: 205 })` is rejected by the spec (null-body
+    // status), so shadow `status` on an otherwise real 200 response.
+    const response = new Response(JSON.stringify({ ignored: true }), { status: 200 });
+    Object.defineProperty(response, 'status', { value: 205 });
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(response);
+
+    const result = await fetchApi<{ ignored: boolean }>('http://example.test/endpoint', {
+      method: 'POST',
+    });
+
+    expect(result).toBeUndefined();
+    expect(response.bodyUsed).toBe(false);
   });
 
   it('returns undefined for successful empty response bodies', async () => {
@@ -209,6 +233,88 @@ describe('parseRetryAfter', () => {
     expect(parseRetryAfter('soon')).toBeUndefined();
     expect(parseRetryAfter('-3')).toBeUndefined();
     expect(parseRetryAfter('5.5')).toBeUndefined();
+  });
+});
+
+// The HTTP-date branch had no coverage at all (FEBT1-W2C-08): deleting
+// http.ts's `Date.parse` arm left every test above green, which is exactly how
+// the past-date → 0s hot-retry bug (FEBT1-W2A-03) survived review.
+describe('parseRetryAfter HTTP-date branch', () => {
+  const FROZEN_NOW = Date.UTC(2026, 0, 1, 0, 0, 0); // Thu, 01 Jan 2026 00:00:00 GMT
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(FROZEN_NOW);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('converts a future RFC 7231 HTTP-date to delta-seconds', () => {
+    expect(parseRetryAfter('Thu, 01 Jan 2026 00:02:00 GMT')).toBe(120);
+  });
+
+  it('rounds a sub-second remainder UP so the client never retries early', () => {
+    vi.setSystemTime(FROZEN_NOW + 500); // 119.5s of wait left
+    expect(parseRetryAfter('Thu, 01 Jan 2026 00:02:00 GMT')).toBe(120);
+  });
+
+  it('treats a past HTTP-date as absent, never as 0 (retry-storm pin)', () => {
+    // 0 would mark the error a cooldown AND collapse backoff to an immediate
+    // hot loop; absent falls back to exponential backoff.
+    expect(parseRetryAfter('Thu, 01 Jan 1970 00:00:00 GMT')).toBeUndefined();
+    expect(parseRetryAfter('Wed, 21 Oct 2015 07:28:00 GMT')).toBeUndefined();
+  });
+
+  it('treats an HTTP-date equal to now as absent', () => {
+    expect(parseRetryAfter('Thu, 01 Jan 2026 00:00:00 GMT')).toBeUndefined();
+  });
+});
+
+describe('Retry-After HTTP-date reaches the classified error', () => {
+  beforeEach(() => {
+    resetConfigCache();
+    seedConfig();
+    vi.useFakeTimers();
+    vi.setSystemTime(Date.UTC(2026, 0, 1, 0, 0, 0));
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+    resetConfigCache();
+  });
+
+  it('503 + future HTTP-date → retryAfterSeconds set and classified as a cooldown', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response('overloaded', {
+        status: 503,
+        headers: { 'Retry-After': 'Thu, 01 Jan 2026 00:00:30 GMT' },
+      }),
+    );
+
+    await expect(fetchApi(REST_URL)).rejects.toMatchObject({ retryAfterSeconds: 30 });
+  });
+
+  it('503 + past HTTP-date → no retryAfterSeconds, so it is NOT a cooldown', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response('overloaded', {
+        status: 503,
+        headers: { 'Retry-After': 'Wed, 21 Oct 2015 07:28:00 GMT' },
+      }),
+    );
+
+    const error = await fetchApi(REST_URL).then(
+      () => {
+        throw new Error('expected 503 to reject');
+      },
+      (err: unknown) => err,
+    );
+
+    expect(error).toBeInstanceOf(HTTPError);
+    expect((error as HTTPError).retryAfterSeconds).toBeUndefined();
+    expect(isCooldown(error)).toBe(false);
   });
 });
 
@@ -454,6 +560,108 @@ describe('fetchApi review-fix discrimination pins (UXPNET2-BR-04/05)', () => {
   });
 });
 
+// FEBT1-W2A-02: a nonce refresh that never got an answer says nothing about the
+// session. Collapsing it into AuthExpiredError showed a logged-in user "your
+// session expired" and pinned the request non-retryable.
+describe('fetchApi nonce-refresh failure discrimination', () => {
+  beforeEach(() => {
+    resetConfigCache();
+    seedConfig();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    resetConfigCache();
+  });
+
+  const nonce403ThenRefresh = (refresh: () => Promise<Response>): void => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation((url) => {
+      if (isAjaxCall(url)) {
+        return refresh();
+      }
+      return Promise.resolve(new Response(nonce403Body, { status: 403 }));
+    });
+  };
+
+  it('refresh transport failure → NonceRefreshFailedError, not session expiry', async () => {
+    nonce403ThenRefresh(() => Promise.reject(new TypeError('Failed to fetch')));
+
+    const error = await fetchApi(REST_URL).then(
+      () => {
+        throw new Error('expected nonce-403 flow to reject');
+      },
+      (err: unknown) => err,
+    );
+
+    expect(error).toBeInstanceOf(NonceRefreshFailedError);
+    expect(error).not.toBeInstanceOf(AuthExpiredError);
+    expect((error as NonceRefreshFailedError).causeStatus).toBeUndefined();
+    expect(classifyError(error)._tag).toBe('nonce_refresh');
+  });
+
+  it('refresh timeout → NonceRefreshFailedError, not session expiry', async () => {
+    vi.useFakeTimers();
+    try {
+      vi.spyOn(globalThis, 'fetch').mockImplementation((url, init) => {
+        if (isAjaxCall(url)) {
+          return new Promise<Response>((_resolve, reject) => {
+            (init?.signal as AbortSignal | undefined)?.addEventListener('abort', () => {
+              reject(new DOMException('The operation was aborted.', 'AbortError'));
+            });
+          });
+        }
+        return Promise.resolve(new Response(nonce403Body, { status: 403 }));
+      });
+
+      let settled: unknown;
+      void fetchApi(REST_URL).then(
+        () => {
+          throw new Error('expected nonce-403 flow to reject');
+        },
+        (err: unknown) => {
+          settled = err;
+        },
+      );
+
+      await vi.advanceTimersByTimeAsync(NONCE_REFRESH_TIMEOUT_MS + 1);
+
+      expect(settled).toBeInstanceOf(NonceRefreshFailedError);
+      expect(settled).not.toBeInstanceOf(AuthExpiredError);
+      expect(classifyError(settled)._tag).toBe('nonce_refresh');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('refresh that DID get a verdict (WP answers 0/-1) stays AuthExpiredError', async () => {
+    nonce403ThenRefresh(() => Promise.resolve(new Response('-1', { status: 403 })));
+
+    const error = await fetchApi(REST_URL).then(
+      () => {
+        throw new Error('expected nonce-403 flow to reject');
+      },
+      (err: unknown) => err,
+    );
+
+    expect(error).toBeInstanceOf(AuthExpiredError);
+    expect((error as AuthExpiredError).status).toBe(403);
+    expect(classifyError(error)._tag).toBe('auth_expired');
+  });
+
+  it('missing ajaxUrl (deploy skew) → NonceRefreshFailedError, not session expiry', async () => {
+    resetConfigCache();
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    registerConfig({ nonce: STALE_NONCE, ajaxUrl: '', endpoints: {} });
+    const fetchMock = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(new Response(nonce403Body, { status: 403 }));
+
+    await expect(fetchApi(REST_URL)).rejects.toBeInstanceOf(NonceRefreshFailedError);
+    // No ajax round-trip was even attempted.
+    expect(fetchMock.mock.calls.filter(([url]) => isAjaxCall(url))).toHaveLength(0);
+  });
+});
+
 describe('AuthExpiredError', () => {
   it('preserves exact 401 and 403 constructor status (M4 / F2)', () => {
     expect(new AuthExpiredError({ endpoint: REST_URL, status: 401 }).status).toBe(401);
@@ -499,6 +707,12 @@ describe('fetchApi default timeout [E-04]', () => {
     vi.useRealTimers();
     vi.restoreAllMocks();
     resetConfigCache();
+  });
+
+  // Every deadline assertion below is relative to DEFAULT_FETCH_TIMEOUT_MS, so
+  // shrinking the constant kept them all green (FEBT1-W2C-09). Pin the value.
+  it('pins the default deadline at 5 minutes', () => {
+    expect(DEFAULT_FETCH_TIMEOUT_MS).toBe(300_000);
   });
 
   it('rejects a hung fetch within the default deadline as a classified abort', async () => {

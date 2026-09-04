@@ -1,4 +1,4 @@
-import { createLogger, type Logger } from '../utils/logger';
+import { createLogger, newRequestId, type Logger } from '../utils/logger';
 
 let log: Logger | undefined;
 const configLog = (): Logger => {
@@ -80,10 +80,11 @@ const normalizeOptionalString = (value: unknown): string | undefined =>
  * skew — cached HTML with an older localized payload) degrades the one
  * capability that needs it instead of hard-failing every getConfig() caller.
  */
-const softNonEmptyString = (value: unknown, field: string): string => {
+const softNonEmptyString = (value: unknown, field: string, requestId: string): string => {
   if (typeof value !== 'string' || value.trim() === '') {
     configLog().warn(
       `AltContextAdmin configuration field "${field}" is missing or empty; dependent features degrade.`,
+      { requestId, field },
     );
     return '';
   }
@@ -91,6 +92,10 @@ const softNonEmptyString = (value: unknown, field: string): string => {
 };
 
 export const normalizeConfig = (raw: ApiConfig): NormalizedConfig => {
+  // One normalization pass is one unit of work: every soft warning it emits
+  // shares this id, and a later pass gets a different one (OBS-03). The
+  // module logger's own id is minted once at import and cannot do this.
+  const requestId = newRequestId();
   const rawMax = Number(raw.max_media_per_batch ?? DEFAULT_MAX_MEDIA_PER_BATCH);
   const maxMediaPerBatch = Number.isFinite(rawMax) && rawMax > 0 ? rawMax : DEFAULT_MAX_MEDIA_PER_BATCH;
   const devMode = raw.devMode === true || raw.devMode === 'true' || raw.devMode === '1' || raw.devMode === 1;
@@ -101,8 +106,8 @@ export const normalizeConfig = (raw: ApiConfig): NormalizedConfig => {
   };
 
   return {
-    nonce: softNonEmptyString(raw.nonce, 'nonce'),
-    ajaxUrl: softNonEmptyString(raw.ajaxUrl, 'ajaxUrl'),
+    nonce: softNonEmptyString(raw.nonce, 'nonce', requestId),
+    ajaxUrl: softNonEmptyString(raw.ajaxUrl, 'ajaxUrl', requestId),
     endpoints: raw.endpoints,
     tenant_id: raw.tenant_id,
     tier: raw.tier,

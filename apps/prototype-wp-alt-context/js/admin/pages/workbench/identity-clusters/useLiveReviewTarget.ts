@@ -24,14 +24,23 @@ import { __ } from '@wordpress/i18n';
 import { fetchClusterMembers } from '../../../api/recognition';
 import { queryKeys } from '../../../api/queryKeys';
 import { classifyError, isHttpStatus } from '../../../utils/appError';
+import { shouldRetryRequest } from '../../../utils/retryPolicy';
+import { isAbortError } from './clusterMutationUtils';
 
 export type LiveReviewTargetStatus = 'live' | 'rebound' | 'retired' | 'auth_expired';
 
 export interface LiveReviewTargetResult {
   status: LiveReviewTargetStatus;
   resolvedClusterId: string | null;
-  /** Existence-probe error when status is auth_expired; null otherwise. */
-  error: unknown | null;
+  /**
+   * Existence-probe error, null while the probe has not failed.
+   *
+   * FEBT1-W2A-06: `status: 'live'` is the fail-safe default — a blip must not
+   * close the operator's pane — so it is not evidence of existence. A non-null
+   * `error` alongside `'live'` means the probe never got an answer; a consumer
+   * that needs proof (rather than a safe default) must read this, not `status`.
+   */
+  error: unknown;
 }
 
 export interface UseLiveReviewTargetOptions {
@@ -84,15 +93,16 @@ export const useLiveReviewTarget = (
     // invalidation still refetches, so a real retirement 404 still lands.
     staleTime: 5_000,
     gcTime: 30_000,
-    // Never retry a definitive retirement 404 or auth expiry; other errors may retry once.
+    // Never retry a definitive retirement 404, an auth expiry, or an abort/
+    // timeout; anything else follows the shared policy, capped at one retry so
+    // the probe cannot outlive the pane it guards. FEBT1-GATE-06: the comment
+    // and the predicate must not drift — the classification lives in
+    // shouldRetryRequest, not in a hand-rolled copy of it.
     retry: (failureCount, error) => {
-      if (isClusterNotFound(error)) {
+      if (isClusterNotFound(error) || isAuthExpired(error) || isAbortError(error)) {
         return false;
       }
-      if (isAuthExpired(error)) {
-        return false;
-      }
-      return failureCount < 1;
+      return failureCount < 1 && shouldRetryRequest(failureCount, error);
     },
   });
 
@@ -129,7 +139,11 @@ export const useLiveReviewTarget = (
         ? survivorId
         : null;
 
-  const error: unknown | null = authExpired ? existenceQuery.error : null;
+  // Surface every probe failure, not only auth expiry: a consumer that reads a
+  // null error as "verified live" would be consuming "I don't know" as "I
+  // checked and it is there". Only `isError`/`error` are read here — reading
+  // further query fields would subscribe consumers to extra re-renders.
+  const error: unknown = existenceQuery.isError ? existenceQuery.error : null;
 
   // Side effects: announce + rebind/close. Prefer rebind; allow late upgrade
   // when survivor lands after a prior close for the same open id.

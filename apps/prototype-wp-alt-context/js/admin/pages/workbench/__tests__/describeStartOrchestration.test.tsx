@@ -303,7 +303,9 @@ describe('describe-start orchestration (WBUX-6 L2b)', () => {
     expect(identifying).toHaveAttribute('aria-disabled', 'true');
     expect(identifying.getAttribute('aria-describedby')).toBeTruthy();
 
-    await userEvent.click(screen.getByRole('button', { name: 'Cancel describe run' }));
+    // WBUX6-W4-R-02: the in-flight operation is identification, not a describe run.
+    expect(screen.queryByRole('button', { name: 'Cancel describe run' })).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Cancel people identification' }));
 
     expect(cancelScan).toHaveBeenCalled();
     expect(await screen.findByRole('alert')).toHaveTextContent('People identification was cancelled.');

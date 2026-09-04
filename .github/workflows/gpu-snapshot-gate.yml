@@ -1,0 +1,98 @@
+name: GPU snapshot gate
+
+# WBUX6-L5-NEW-04: scripts/deploy/tests/test-check-gpu-snapshots.sh carries the
+# strongest assertions about the /run/acx ownership contract -- the ones that
+# caught WBUX6-MRG-01 -- and they need real root plus setpriv(1) to run. Before
+# this workflow those cases ran on exactly one machine in the world: a developer
+# laptop with `docker run`, by hand. Everywhere else they printed SKIP and the
+# suite still said ALL PASS.
+#
+# The one automated Linux caller was the `gate` job in deploy-recognition.yml
+# (`make test-deploy-contract`), and it did not close the hole:
+#   - it runs only on `push` to main, so it never gated a pull request; and
+#   - it runs as the unprivileged `runner` user, so the root-only block skipped
+#     there too.
+#
+# So this job runs the suite inside a container, where the default user is root
+# and setpriv is available, with ACX_GPU_TEST_REQUIRE_FULL_COVERAGE=1 so a SKIP
+# is a hard failure. A gate whose strongest case can silently not run is not a
+# gate (RLSE-05 silent failure is the worst failure,
+# ~/Development/heuristics-canon-research/lexicons/engineering.md:696;
+# OBS-11 the bar must be absolute, not a trailing function of what this
+# runner happened to manage, lexicons/engineering.md:481).
+
+on:
+  pull_request:
+    paths:
+      - "scripts/deploy/**"
+      - "infra/oci/**"
+      - "apps/prototype-description-service/Dockerfile"
+      - "apps/prototype-description-service/docker-compose*.yml"
+      - "apps/prototype-description-service/.env.prod.example"
+      - "docs/workbay/contracts/gpu-lifecycle.md"
+      - "Makefile"
+      - "mk/deploy.mk"
+      - ".github/workflows/gpu-snapshot-gate.yml"
+  push:
+    branches: [main]
+    paths:
+      - "scripts/deploy/**"
+      - "infra/oci/**"
+      - "apps/prototype-description-service/Dockerfile"
+      - "apps/prototype-description-service/docker-compose*.yml"
+      - "apps/prototype-description-service/.env.prod.example"
+      - "docs/workbay/contracts/gpu-lifecycle.md"
+      - "Makefile"
+      - "mk/deploy.mk"
+      - ".github/workflows/gpu-snapshot-gate.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gpu-snapshot-gate-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  snapshot-checker:
+    name: check-gpu-snapshots (root + setpriv)
+    runs-on: ubuntu-latest
+    # Container jobs run as root, which is what the privilege-drop probe needs.
+    container:
+      image: ubuntu:24.04
+    timeout-minutes: 10
+    steps:
+      - name: Install suite prerequisites
+        run: |
+          set -euo pipefail
+          apt-get update
+          # util-linux carries setpriv(1); without it the root-only block is
+          # skipped, which ACX_GPU_TEST_REQUIRE_FULL_COVERAGE=1 turns into a
+          # failure rather than a quiet pass.
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            bash ca-certificates coreutils git make python3 python3-pip util-linux
+          command -v setpriv
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Trust the checkout inside the container
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: Confirm the privileged probe can actually run here
+        run: |
+          set -euo pipefail
+          test "$(id -u)" -eq 0 || { echo "this job must run as root" >&2; exit 1; }
+
+      - name: Run the GPU snapshot checker suite (skips are fatal)
+        env:
+          ACX_GPU_TEST_REQUIRE_FULL_COVERAGE: "1"
+        run: bash scripts/deploy/tests/test-check-gpu-snapshots.sh
+
+      - name: Run the GPU lifecycle ownership contract tests
+        run: |
+          set -euo pipefail
+          python3 -m pip install --break-system-packages --quiet pytest
+          python3 -m pytest scripts/deploy/tests/test_gpu_lifecycle_contract_ownership.py \
+            -q --tb=short

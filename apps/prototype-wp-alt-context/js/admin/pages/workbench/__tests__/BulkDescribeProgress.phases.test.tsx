@@ -32,6 +32,8 @@ const runResponse = (overrides: Partial<DescribeRunResponse> = {}): DescribeRunR
   cancel_requested: false,
   eta_seconds: null,
   gpu_state: null,
+  // Phase copy is identical for both worlds; take the contract default.
+  recognition_enabled: true,
   ...overrides,
 });
 

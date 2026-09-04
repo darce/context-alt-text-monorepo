@@ -103,9 +103,7 @@ describe('ux-map render parity (UXW2-3-R3-23)', () => {
     // library-footer control.
     const scan = actions.find((action) => action.id === 'act-scan-media-queue');
     if (scan) {
-      expect(scan.screen_id, 'act-scan-media-queue must not claim the library footer').not.toBe(
-        'workbench-library',
-      );
+      expect(scan.screen_id, 'act-scan-media-queue must not claim the library footer').not.toBe('workbench-library');
       expect(scan.verb).toMatch(/no separate scan control/);
     }
   });

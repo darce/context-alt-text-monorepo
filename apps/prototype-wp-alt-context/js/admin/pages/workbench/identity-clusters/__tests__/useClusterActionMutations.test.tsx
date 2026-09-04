@@ -13,15 +13,25 @@ vi.mock('@wordpress/i18n', () => ({
   __: (text: string) => text,
 }));
 
-vi.mock('../../../../api/recognition', () => ({
-  acceptSuggestion: vi.fn(),
-  createClusterForIdentity: vi.fn(),
-  fetchScanStatus: vi.fn(),
-  pinRepresentative: vi.fn(),
-  reassignClusterIdentity: vi.fn(),
-  rejectSuggestion: vi.fn(),
-  splitCluster: vi.fn(),
-}));
+// Spread the real module (WBUX6-W3-L6-01): an exhaustive factory silently blanks every
+// export this test does not name, so one new render-path dependency wipes the whole file
+// with a failure unrelated to the behaviour under test. Only the network surfaces
+// useClusterActionMutations itself calls are replaced.
+vi.mock('../../../../api/recognition', async () => {
+  const actual = await vi.importActual<typeof import('../../../../api/recognition')>(
+    '../../../../api/recognition',
+  );
+  return {
+    ...actual,
+    acceptSuggestion: vi.fn(),
+    createClusterForIdentity: vi.fn(),
+    fetchScanStatus: vi.fn(),
+    pinRepresentative: vi.fn(),
+    reassignClusterIdentity: vi.fn(),
+    rejectSuggestion: vi.fn(),
+    splitCluster: vi.fn(),
+  };
+});
 
 let offline = false;
 

@@ -22,7 +22,9 @@ environment named by ``--service-api-key-env``::
 
 No password is accepted on argv.  Every HTTP/OCI operation has a timeout, every
 poll loop checks one overall deadline, and live execution always issues STOP in
-``finally`` before it reports success or failure.
+``finally`` before it reports success or failure.  SIGTERM and SIGHUP are routed
+into that same unwind so an orchestrator or CI timeout cannot leave the instance
+RUNNING; SIGKILL is uncatchable and remains the host reaper's problem.
 """
 
 from __future__ import annotations
@@ -33,10 +35,11 @@ import json
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from importlib import import_module
@@ -101,6 +104,14 @@ MIN_COMPOSED_BUDGET_SECONDS = (
 )
 POST_STOP_HEALTH_TIMEOUT_SECONDS = 20.0
 LOAD_SNAPSHOT_SKEW_SECONDS = 2.0
+# WBUX6-MRG-02 moved publication from one `/run/acx/describe-load.json` to a
+# per-environment layout. Keep this in parity with the `--load-dir` flag the
+# lifecycle units carry in scripts/deploy/gpu-lifecycle-install.sh, which is the
+# same authority scripts/deploy/check-gpu-snapshots.sh resolves its load dir
+# from.
+DEFAULT_LOAD_DIR = "/run/acx-write"
+LOAD_SNAPSHOT_FILENAME = "describe-load.json"
+TERMINATION_SIGNAL_NAMES = ("SIGTERM", "SIGHUP")
 LOAD_SNAPSHOT_OBSERVATION_SECONDS = float(_describe_load.DEFAULT_LOAD_REFRESH_SECONDS)
 
 
@@ -110,6 +121,62 @@ class SmokeFailure(RuntimeError):  # noqa: N818 - public smoke contract name
 
 class PreflightRefusal(RuntimeError):  # noqa: N818 - public smoke contract name
     """The operator or environment did not satisfy the live safety gate."""
+
+
+class SmokeTerminated(KeyboardInterrupt):
+    """A termination signal, raised so the compensating STOP path unwinds.
+
+    It subclasses ``KeyboardInterrupt`` so SIGTERM and SIGHUP take exactly the
+    exit route SIGINT already takes: no ``except SmokeFailure`` swallows it, and
+    the single ``finally`` STOP in :func:`run_smoke` stays the one writer of the
+    stop action.
+    """
+
+    def __init__(self, signum: int) -> None:
+        self.signum = signum
+        super().__init__(f"terminated by signal {signal.Signals(signum).name}")
+
+
+@contextlib.contextmanager
+def terminating_signals_raise() -> Iterator[None]:
+    """Route SIGTERM/SIGHUP into the compensating-STOP unwind, for one run only.
+
+    A running A10 outlives this process, so its compensation has to fire on every
+    exit route the process can actually take. With no handler a SIGTERM -- how an
+    orchestrator, a CI timeout, or ``timeout(1)`` kills a hung run -- ends the
+    interpreter without unwinding, and the instance keeps billing. Handlers are
+    installed only for the duration of a CLI run and restored afterwards, so
+    importing this module never changes a caller's disposition.
+
+    SIGKILL cannot be caught, so ``kill -9`` still leaks the instance; the host
+    idle reaper is the only backstop for that case.
+    """
+
+    installed: dict[int, Any] = {}
+
+    def _raise(signum: int, _frame: Any) -> None:
+        # Ignore repeats so a second signal cannot interrupt the STOP that is
+        # already unwinding; SIGKILL stays the operator's escape hatch.
+        for number in installed:
+            with contextlib.suppress(OSError, ValueError):
+                signal.signal(number, signal.SIG_IGN)
+        raise SmokeTerminated(signum)
+
+    for name in TERMINATION_SIGNAL_NAMES:
+        number = getattr(signal, name, None)
+        if number is None:
+            continue
+        try:
+            installed[int(number)] = signal.signal(number, _raise)
+        except (OSError, ValueError):
+            # Not the main thread, or the platform has no such signal.
+            continue
+    try:
+        yield
+    finally:
+        for number, previous in installed.items():
+            with contextlib.suppress(OSError, ValueError):
+                signal.signal(number, previous)
 
 
 class HttpStatusFailure(SmokeFailure):
@@ -178,6 +245,49 @@ def _load_optional_json(path: str) -> dict[str, Any]:
     except (OSError, json.JSONDecodeError) as exc:
         return {"availability": "unreadable", "path": path, "error": str(exc)}
     return {"availability": "available", "path": path, "value": payload}
+
+
+def _snapshot_written_at(snapshot: dict[str, Any]) -> float:
+    value = snapshot.get("value")
+    written_at = value.get("written_at") if isinstance(value, dict) else None
+    if isinstance(written_at, (int, float)) and not isinstance(written_at, bool):
+        return float(written_at)
+    return float("-inf")
+
+
+def _read_load_snapshot(source: str) -> dict[str, Any]:
+    """Read describe-load evidence from a per-environment root or a single file.
+
+    WBUX6-MRG-02 publishes to ``<load-dir>/<environment>/describe-load.json``, so
+    a reader that names one fixed file observes nothing on the deployed host.
+    Walk the environments that host actually published, take the freshest
+    publication, and always report every candidate scanned: a snapshot that is
+    missing must stay distinguishable from one reporting idleness (OBS-08,
+    silence is not success).
+    """
+
+    directory = Path(source)
+    if not directory.is_dir():
+        return _load_optional_json(source)
+    try:
+        candidates = sorted(child / LOAD_SNAPSHOT_FILENAME for child in directory.iterdir() if child.is_dir())
+    except OSError as exc:
+        return {"availability": "unreadable", "path": source, "error": str(exc)}
+    scanned = [str(candidate) for candidate in candidates]
+    published = [
+        snapshot
+        for snapshot in (_load_optional_json(str(candidate)) for candidate in candidates)
+        if snapshot.get("availability") == "available"
+    ]
+    if not published:
+        return {"availability": "unavailable", "path": source, "scanned": scanned}
+    return {**max(published, key=_snapshot_written_at), "scanned": scanned}
+
+
+def _load_source(args: argparse.Namespace) -> str:
+    """Resolve where this run reads describe-load evidence from."""
+
+    return args.load_json or args.load_dir
 
 
 @dataclass
@@ -775,7 +885,7 @@ def run_smoke(
     monotonic: Callable[[], float] = time.monotonic,
     sleep: Callable[[float], None] = time.sleep,
     now: Callable[[], datetime] = _utc_now,
-    load_snapshot_reader: Callable[[str], dict[str, Any]] = _load_optional_json,
+    load_snapshot_reader: Callable[[str], dict[str, Any]] = _read_load_snapshot,
 ) -> SmokeResult:
     """Run the shared dry/live orchestration and always write evidence."""
 
@@ -797,10 +907,11 @@ def run_smoke(
     instance_validated = False
     compartment_id = "unavailable"
     gpu_snapshot = _load_optional_json(args.gpu_state_json)
-    load_snapshot_before_trigger = load_snapshot_reader(args.load_json)
+    load_source = _load_source(args)
+    load_snapshot_before_trigger = load_snapshot_reader(load_source)
     load_snapshot_after_trigger: dict[str, Any] = {
         "availability": "unavailable",
-        "path": args.load_json,
+        "path": load_source,
     }
     phase_durations_seconds: dict[str, float] = {}
 
@@ -941,7 +1052,7 @@ def run_smoke(
             monotonic,
         )
         while True:
-            load_snapshot_after_trigger = load_snapshot_reader(args.load_json)
+            load_snapshot_after_trigger = load_snapshot_reader(load_source)
             load_observed, load_detail = _load_snapshot_has_fresh_work(
                 load_snapshot_after_trigger,
                 freshness_anchor=load_freshness_anchor,
@@ -1380,6 +1491,7 @@ def run_smoke(
         "denylist_verdicts": denylist_verdicts,
         "gpu_state_json": gpu_snapshot,
         "load_json": {
+            "source": load_source,
             "before_trigger": load_snapshot_before_trigger,
             "after_trigger": load_snapshot_after_trigger,
         },
@@ -1458,7 +1570,19 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--instance-id", default="<burst-instance-ocid>")
     parser.add_argument("--oci-bin", default="oci")
     parser.add_argument("--gpu-state-json", default="/run/acx/gpu-state.json")
-    parser.add_argument("--load-json", default="/run/acx/describe-load.json")
+    parser.add_argument(
+        "--load-dir",
+        default=DEFAULT_LOAD_DIR,
+        help=(
+            "per-environment describe-load root the API publishes into "
+            f"(<load-dir>/<environment>/{LOAD_SNAPSHOT_FILENAME}); default {DEFAULT_LOAD_DIR}"
+        ),
+    )
+    parser.add_argument(
+        "--load-json",
+        default=None,
+        help="explicit single describe-load.json to read instead of walking --load-dir",
+    )
     parser.add_argument("--max-seconds", type=int, default=MAX_LIVE_SECONDS)
     parser.add_argument(
         "--evidence-out",
@@ -1583,14 +1707,24 @@ def main(
                 "now": clock.now,
                 "load_snapshot_reader": dry_load_snapshot_reader,
             }
-        result = run_smoke(
-            args,
-            client=client,
-            oci=oci,
-            app_password=app_password,
-            service_api_key=service_api_key,
-            **kwargs,
+        # The handler lives here, not at import: a SIGTERM must unwind the one
+        # compensating-STOP path in run_smoke, and only a CLI run owns the
+        # process disposition.
+        with terminating_signals_raise():
+            result = run_smoke(
+                args,
+                client=client,
+                oci=oci,
+                app_password=app_password,
+                service_api_key=service_api_key,
+                **kwargs,
+            )
+    except SmokeTerminated as exc:
+        print(
+            f"TERMINATED: {exc}; the compensating STOP path ran before exit",
+            file=sys.stderr,
         )
+        return 128 + exc.signum
     finally:
         client.close()
     return result.exit_code

@@ -35,6 +35,8 @@ const runResponse = (overrides: Partial<DescribeRunResponse> = {}): DescribeRunR
   cancel_requested: false,
   eta_seconds: null,
   gpu_state: null,
+  // Snapshot of the site's recognition setting at submit (schema default true); this test's world is recognition-on.
+  recognition_enabled: true,
   ...overrides,
 });
 

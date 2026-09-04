@@ -158,6 +158,15 @@ def _build_describe_one(
                 tenant_id=tenant_id,
                 media_id=media_id,
                 image_bytes=image_bytes,
+                # No context to drop: the /describe/run multipart form defines
+                # only tenant_id, media_ids, recognition_enabled and
+                # image_<media_id> -- unlike /describe, which carries an
+                # envelope context/context_pack. Identity context does reach
+                # here, as naming_inputs. Passing None rather than a synthesized
+                # stand-in keeps context_hash the empty-context digest, so a
+                # bulk row can only share a cache row with a genuinely
+                # context-free describe (rg-015: never invent contract
+                # metadata). Add a form field before threading anything here.
                 context=None,
                 confirmed_faces=confirmed_faces,
                 naming_policy=naming_policy,

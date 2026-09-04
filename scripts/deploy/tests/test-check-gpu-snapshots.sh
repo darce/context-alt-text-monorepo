@@ -20,8 +20,50 @@ fixture_root=$(mktemp -d)
 trap 'rm -rf "$fixture_root"' EXIT
 
 failures=0
+skips=0
+skipped_labels=()
+# WBUX6-L5-NEW-04: a SKIP that only prints and then lands under `ALL PASS` is a
+# gate that reports success for a case it never ran. Count them, name them in
+# the summary, and let a runner that is supposed to be able to run everything
+# turn any skip into a failure (RLSE-05 silent failure is the worst failure,
+# ~/Development/heuristics-canon-research/lexicons/engineering.md:696;
+# OBS-11 the bar must not follow what the runner happens to manage,
+# lexicons/engineering.md:481; TEST-11 a coverage number the system itself
+# can lower is coverage-gaming, lexicons/engineering.md:392).
+require_full_coverage=${ACX_GPU_TEST_REQUIRE_FULL_COVERAGE:-0}
+[[ "$require_full_coverage" =~ ^[01]$ ]] ||
+    { echo "ACX_GPU_TEST_REQUIRE_FULL_COVERAGE must be 0 or 1" >&2; exit 2; }
 pass() { printf 'PASS: %s\n' "$*"; }
 fail() { printf 'FAIL: %s\n' "$*" >&2; failures=$((failures + 1)); }
+
+# Two skip reasons, and only one of them is a coverage hole.
+#
+#   skip           -- this runner LACKS the privilege the case needs. Nothing
+#                     else covers it, so on a runner that is supposed to be
+#                     privileged (ACX_GPU_TEST_REQUIRE_FULL_COVERAGE=1) this is
+#                     a failure, not a note. That flag is what stops the CI job
+#                     from quietly degrading to "everything important skipped"
+#                     if it ever loses its container/root/setpriv.
+#   skip_covered   -- this runner HAS too much privilege: root bypasses the mode
+#                     bits the case sets, so the case is unrunnable as root by
+#                     construction and the container-gid block below asserts the
+#                     same property through the group grant instead. Counted and
+#                     named, never fatal -- making it fatal would demand a case
+#                     that cannot exist and push the next maintainer to relax
+#                     the flag entirely (sr-001).
+_record_skip() {
+    printf 'SKIP: %s\n' "$*"
+    skipped_labels+=("$*")
+    skips=$((skips + 1))
+}
+skip() {
+    if [ "$require_full_coverage" -eq 1 ]; then
+        fail "$* (SKIPPED for lack of privilege, but ACX_GPU_TEST_REQUIRE_FULL_COVERAGE=1 says this runner must be able to execute it)"
+        return
+    fi
+    _record_skip "$@"
+}
+skip_covered() { _record_skip "$@"; }
 
 assert_contains() {
     local label=$1 needle=$2 file=$3
@@ -411,7 +453,7 @@ expect_failure "environment describe-load older than its budget fails" "stale de
 printf '{"queue_depth":0,"in_flight":0,"written_at":900}\n' >"${fixture_root}/run/acx-write/dev/describe-load.json"
 
 if [ "$(id -u)" -eq 0 ]; then
-    printf 'SKIP: each environment directory must be API-writable (uid 0 bypasses mode 0555; covered by the container-gid block below)\n'
+    skip_covered "each environment directory must be API-writable (uid 0 bypasses mode 0555; covered by the container-gid block below)"
 else
     chmod 0555 "${fixture_root}/run/acx-write/staging"
     expect_failure "each environment directory must be API-writable" "not writable by api container identity"
@@ -419,7 +461,7 @@ else
 fi
 
 if [ "$(id -u)" -eq 0 ]; then
-    printf 'SKIP: snapshot unreadable by API uid fails (uid 0 bypasses mode 000)\n'
+    skip_covered "snapshot unreadable by API uid fails (uid 0 bypasses mode 000; the container-gid block below covers unreadability through the group grant)"
 else
     chmod 000 "${fixture_root}/run/acx/gpu-state.json"
     expect_failure "snapshot unreadable by API uid fails" "unreadable by api container identity"
@@ -454,6 +496,127 @@ expect_failure "unrendered snapshot mount template fails" "must end in describe-
 expect_failure "unrendered GPU state environment template fails" \
     "does not pass the agreeing ACX_GPU_STATE_PATH" \
     ACX_GPU_COMPOSE_FILE="${fixture_root}/compose-template-env.yml"
+
+# --- WBUX6-L5-NEW-03: uid 0 must never take the `test -r/-w` fast path -------
+#
+# Root bypasses mode bits, so a probe that runs as uid 0 reports "the api
+# container can read this" about an identity it never assumed and can never
+# fail. Deployment runs the checker as root over SSH -- exactly the path where
+# the assertion was inert.
+#
+# The kernel-level version of this needs real root (the block further down), but
+# the *decision* -- drop privilege via setpriv, or refuse -- is observable
+# anywhere by shimming the three programs the checker consults about identity.
+# Keeping these runnable on a developer laptop is the point: the assertions that
+# only run under root were the ones nobody was running (WBUX6-L5-NEW-04).
+shim_bin="${fixture_root}/shim-root"
+mkdir -p "$shim_bin"
+setpriv_log="${fixture_root}/setpriv.log"
+observed_gid=4242
+
+cat >"${shim_bin}/id" <<'SHIM'
+#!/bin/sh
+# Present a root shell to the checker without needing one.
+case "$1" in
+    -u) echo 0 ;;
+    *) exec /usr/bin/id "$@" ;;
+esac
+SHIM
+
+cat >"${shim_bin}/stat" <<SHIM
+#!/bin/sh
+# Publish a fixed group for the snapshot so the assertion below does not depend
+# on the real gid of whoever runs the suite (on many runners uid == gid, which
+# would make "used the observed gid" and "used the reader uid" indistinguishable
+# -- the exact confusion WBUX6-MRG-01 was made of).
+echo ${observed_gid}
+SHIM
+
+cat >"${shim_bin}/setpriv" <<SHIM
+#!/bin/sh
+# Record the identity the checker asked to assume, then run the probe. It
+# cannot really drop privilege here; the assertion is about which identity was
+# requested, not about the kernel honouring it.
+printf '%s\n' "\$*" >>"${setpriv_log}"
+while [ \$# -gt 0 ]; do
+    case "\$1" in
+        --*) shift ;;
+        *) break ;;
+    esac
+done
+exec "\$@"
+SHIM
+chmod +x "${shim_bin}/id" "${shim_bin}/stat" "${shim_bin}/setpriv"
+
+: >"$setpriv_log"
+expect_success "uid 0 drops privilege through setpriv instead of probing as root" \
+    PATH="${shim_bin}:${PATH}" ACX_GPU_READER_UID=0
+if [ -s "$setpriv_log" ]; then
+    pass "uid 0 never probes with a bare test -r/-w"
+else
+    fail "uid 0 never probes with a bare test -r/-w (setpriv was never invoked; root bypassed the mode bits it was supposed to read)"
+fi
+assert_contains "the privilege drop targets the OBSERVED snapshot group" \
+    "--regid=${observed_gid}" "$setpriv_log"
+if grep -Fq -- "--regid=0" "$setpriv_log"; then
+    fail "the privilege drop must not reuse the reader uid as the gid"
+else
+    pass "the privilege drop must not reuse the reader uid as the gid"
+fi
+
+# ...and when no snapshot has been published there is no group to observe, so
+# the resolution must die rather than fall back to the reader uid -- the exact
+# guess that made WBUX6-MRG-01 unfalsifiable. The root-only block below asserts
+# this too, but only where it can run; this one runs everywhere.
+for env_name in dev dev-fir staging prod; do
+    mv "${fixture_root}/run/acx-write/${env_name}/describe-load.json" \
+        "${fixture_root}/${env_name}-unobservable.json"
+done
+expect_failure "an unobservable container gid is never guessed from the reader uid" \
+    "cannot determine the api container identity" \
+    PATH="${shim_bin}:${PATH}" ACX_GPU_READER_UID=0
+for env_name in dev dev-fir staging prod; do
+    mv "${fixture_root}/${env_name}-unobservable.json" \
+        "${fixture_root}/run/acx-write/${env_name}/describe-load.json"
+done
+
+# Refusal, not a pass: uid 0 with no setpriv cannot assume the api identity at
+# all, so the only honest answer is an error. A restricted PATH is how the
+# absence is made real on a runner that does ship setpriv.
+shim_nosetpriv="${fixture_root}/shim-root-nosetpriv"
+mkdir -p "$shim_nosetpriv"
+cp "${shim_bin}/id" "${shim_bin}/stat" "$shim_nosetpriv/"
+missing_tool=
+for tool in awk sed grep tr sort wc cat date dirname basename env bash python3; do
+    tool_path=$(command -v "$tool" 2>/dev/null) || { missing_tool=$tool; break; }
+    ln -sf "$tool_path" "${shim_nosetpriv}/${tool}"
+done
+if [ -n "$missing_tool" ]; then
+    fail "setpriv-free PATH fixture could not be built (missing $missing_tool)"
+else
+    expect_failure "uid 0 without setpriv refuses to probe rather than passing" \
+        "cannot assume the api container identity" \
+        PATH="$shim_nosetpriv" ACX_GPU_READER_UID=0
+fi
+
+# The third branch is the one a laptop actually hits: not root, and not the api
+# uid either. It must report "unknown" too. Shimming `id` rather than testing
+# the ambient uid keeps this case running on every host, including the root
+# container job -- an assertion that only runs for some callers is the defect
+# this whole block exists to prevent (WBUX6-L5-NEW-04).
+shim_otheruid="${fixture_root}/shim-otheruid"
+mkdir -p "$shim_otheruid"
+cat >"${shim_otheruid}/id" <<'SHIM'
+#!/bin/sh
+case "$1" in
+    -u) echo 7777 ;;
+    *) exec /usr/bin/id "$@" ;;
+esac
+SHIM
+chmod +x "${shim_otheruid}/id"
+expect_failure "an unprivileged uid that is not the api uid refuses to probe" \
+    "cannot assume the api container identity" \
+    PATH="${shim_otheruid}:${PATH}" ACX_GPU_READER_UID=10001
 
 # --- WBUX6-MRG-01: the writability probe must use the container's REAL gid ---
 #
@@ -506,11 +669,19 @@ if [ "$(id -u)" -eq 0 ] && command -v setpriv >/dev/null 2>&1; then
 
     chown -R "$(id -u):$(id -g)" "${fixture_root}/run/acx-write"
 else
-    printf 'SKIP: container-gid writability probe (needs root + setpriv; runs on the Linux CI/VM)\n'
+    skip "container-gid writability probe (needs root + setpriv; enrolled on the Linux container job in .github/workflows/gpu-snapshot-gate.yml)"
 fi
 
 if [ "$failures" -gt 0 ]; then
     printf 'FAILED: %s case(s)\n' "$failures" >&2
     exit 1
+fi
+if [ "$skips" -gt 0 ]; then
+    # Never let a skipped case hide behind an unqualified "ALL PASS".
+    printf 'PASSED WITH %s SKIPPED case(s):\n' "$skips"
+    printf '  - %s\n' "${skipped_labels[@]}"
+    printf 'Set ACX_GPU_TEST_REQUIRE_FULL_COVERAGE=1 to make a privilege-lacking skip fatal;\n'
+    printf 'the root + setpriv runner is .github/workflows/gpu-snapshot-gate.yml.\n'
+    exit 0
 fi
 printf 'ALL PASS\n'

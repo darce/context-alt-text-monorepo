@@ -114,8 +114,22 @@ write_files:
   # write `d /run/acx 0775 10001 10001 -` while the installer writes
   # `d /run/acx 0755 ubuntu ubuntu -` for the same path -- two writers of one
   # filename, last one wins, and no test compared them (WBUX6-MRG-02).
-  # scripts/deploy/tests/test_gpu_lifecycle_contract_ownership.py enforces that
-  # this file never reintroduces a conflicting definition.
+  # Enforced by apps/prototype-description-service/scene/tests/
+  # test_gpu_lifecycle_install_script.py, the only test module that reads this
+  # file and the installer together:
+  #   - test_only_the_installer_writes_the_tmpfiles_fragment: no write_files
+  #     entry here may have path /etc/tmpfiles.d/acx-gpu.conf.
+  #   - test_no_cloud_init_tmpfiles_dropin_contradicts_the_installer: any
+  #     /etc/tmpfiles.d/* drop-in here must declare each `d /run/...` line with
+  #     the same user:group and mode the installer declares (a different
+  #     filename still merges).
+  #   - test_cloud_init_does_not_contradict_installer_ownership_of_run_acx: no
+  #     runcmd may chown /run/acx to an owner other than the installer's.
+  #   - test_cloud_init_reaper_reads_the_directory_compose_publishes_to: the
+  #     reaper unit below must use --load-dir with the installer's value.
+  # scripts/deploy/tests/test_gpu_lifecycle_contract_ownership.py does NOT
+  # guard this file -- it only reads the installer, the deployments conf, the
+  # contract doc, and the Dockerfile. Do not cite it here again.
 
 runcmd:
   # H-OCI-13: Install Docker via apt repository with GPG verification

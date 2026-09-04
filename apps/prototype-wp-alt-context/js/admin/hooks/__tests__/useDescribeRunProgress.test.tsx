@@ -23,18 +23,10 @@ vi.mock('../../api/describeApi', async (importOriginal) => {
 const fetchBulkDescribeRunMock = vi.mocked(describeApi.fetchBulkDescribeRun);
 const adminRoot = join(__dirname, '..', '..');
 const appRoot = join(adminRoot, '..', '..');
-const mediaSelectionStyles = readFileSync(
-  join(adminRoot, 'styles', 'components', '_media-selection.scss'),
-  'utf8',
-);
-const gpuUxMapMarkdown = readFileSync(
-  join(appRoot, 'docs', 'ux-maps', 'describe-gpu-tier.uxmap.md'),
-  'utf8',
-);
-const gpuUxMap = JSON.parse(
-  readFileSync(join(appRoot, 'docs', 'ux-maps', 'describe-gpu-tier.uxmap.json'), 'utf8'),
-) as {
-  screens: Array<{ id: string; zones: Array<{ id: string; states: string[] }> }>;
+const mediaSelectionStyles = readFileSync(join(adminRoot, 'styles', 'components', '_media-selection.scss'), 'utf8');
+const gpuUxMapMarkdown = readFileSync(join(appRoot, 'docs', 'ux-maps', 'describe-gpu-tier.notes.md'), 'utf8');
+const gpuUxMap = JSON.parse(readFileSync(join(appRoot, 'docs', 'ux-maps', 'describe-gpu-tier.uxmap.json'), 'utf8')) as {
+  screens: { id: string; zones: { id: string; label: string; states: string[] }[] }[];
 };
 
 const runResponse = (overrides: Partial<DescribeRunResponse> = {}): DescribeRunResponse => ({
@@ -49,6 +41,8 @@ const runResponse = (overrides: Partial<DescribeRunResponse> = {}): DescribeRunR
   cancel_requested: false,
   eta_seconds: null,
   gpu_state: null,
+  // Snapshot of the site's recognition setting at submit (schema default true); this test's world is recognition-on. Overridden to false in the pass-through test below.
+  recognition_enabled: true,
   ...overrides,
 });
 
@@ -263,17 +257,23 @@ describe('useDescribeRunProgress', () => {
     render(<GpuTierStatus gpuState={GPU_STATE.READY} cpuDraftCount={0} />);
 
     expect(screen.getByRole('status')).toHaveClass('acx-media-selection__gpu-tier-status');
-    expect(mediaSelectionStyles).toMatch(
-      /&__gpu-tier-status\s*{[^}]*min-block-size:\s*var\(--acx-space-\d+\)/s,
-    );
+    expect(mediaSelectionStyles).toMatch(/&__gpu-tier-status\s*{[^}]*min-block-size:\s*var\(--acx-space-\d+\)/s);
   });
 
   it('keeps the GPU UX-map JSON and rendered contract aligned on visible unknown', () => {
     const workbenchScreen = gpuUxMap.screens.find((candidate) => candidate.id === 'workbench-media-selection');
     const gpuZone = workbenchScreen?.zones.find((candidate) => candidate.id === 'z-gpu-tier-chip');
 
-    expect(gpuZone?.states).toEqual(expect.arrayContaining(['hidden-no-run', 'unknown']));
-    expect(gpuZone?.states).not.toContain('hidden-unknown');
+    // WBUX6-W4-A-04: `states` is the canvas renderer's closed vocabulary
+    // (default/loading/empty/degraded/error/first_time/edge_input/offline) --
+    // every uxmap.json in this directory draws from it and no domain state name
+    // appears in any of them. The real contract is the domain -> render mapping,
+    // which the SSOT carries in the zone label, so pin the mapping instead of the
+    // presence of a name the render schema cannot express.
+    expect(gpuZone?.label).toContain('hidden-no-run = empty');
+    expect(gpuZone?.label).toMatch(/\bunknown\b[^;]*=\s*default/);
+    expect(gpuZone?.label).not.toContain('hidden-unknown');
+    expect(gpuZone?.states).toEqual(expect.arrayContaining(['default', 'empty']));
     expect(gpuUxMapMarkdown).toContain('explicit `unknown` telemetry renders the calm `GPU tier: not reported` state');
     expect(gpuUxMapMarkdown).toContain('the zone is hidden only when there is no relevant run');
   });
@@ -451,5 +451,28 @@ describe('useDescribeRunProgress', () => {
       expect(result.current.etaSeconds).toBe(30);
       expect(result.current.isPolling).toBe(true);
     });
+  });
+});
+
+/**
+ * DescribeRunProgress deliberately projects a subset of the envelope (status,
+ * progressFraction, etaSeconds, gpuState) and re-exposes the whole response as
+ * `run`. `recognition_enabled` reaches consumers only through `run`, so if a
+ * future refactor narrows `run` to a projection the flag vanishes silently --
+ * the type stays valid and every other assertion stays green. This is the one
+ * place the value is load-bearing (TEST-15: prove the green can go red).
+ */
+describe('useDescribeRunProgress recognition_enabled pass-through', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it.each([true, false])('surfaces the run snapshot recognition_enabled=%s unchanged', async (enabled) => {
+    fetchBulkDescribeRunMock.mockResolvedValue(runResponse({ recognition_enabled: enabled }));
+
+    const { result } = renderHook(() => useDescribeRunProgress('run-1'), { wrapper });
+
+    await waitFor(() => expect(result.current.status).toBe('running'));
+    expect(result.current.run?.recognition_enabled).toBe(enabled);
   });
 });

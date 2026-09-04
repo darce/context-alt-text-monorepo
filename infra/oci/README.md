@@ -556,19 +556,19 @@ The wrapper supports two build modes:
 
 | Mode | Trigger | When to use |
 |---|---|---|
-| **Local build** (default) | `make deploy-dev` | Fast iteration on a workstation with a healthy local docker daemon. Mac users need colima or Docker Desktop. |
-| **Remote build** | `make deploy-dev REMOTE_BUILD=1` | Build runs on the OCI VM via SSH+rsync. Native arm64 (no cross-compile). No local docker required. Recommended path. |
+| **Remote build** (default) | `make deploy-dev` | Build runs on the OCI VM via SSH+rsync. Native arm64 (no cross-compile). No local docker required. |
+| **Local build** (explicit opt-out) | `make deploy-dev REMOTE_BUILD=0` | Fast iteration on a workstation with a healthy local docker daemon. Mac users need colima or Docker Desktop. |
 
 ```bash
 # See every available deploy target:
 make deploy-help
 
-# Standard dev iteration (build + push :dev + :SHA + restart acx-dev + verify):
+# Standard dev deploy: build on the VM, push :dev + :SHA, restart acx-dev, verify.
+# This consumes CPU and disk on the multi-environment serving host.
 make deploy-dev
 
-# Same, but build on the VM — no colima/Docker Desktop needed locally.
-# This is the friction-free path; pair with Tailscale for stable SSH.
-make deploy-dev REMOTE_BUILD=1
+# Explicit local-build opt-out for workstation iteration:
+make deploy-dev REMOTE_BUILD=0
 
 # Build only, no push (sanity before paying for an OCIR push):
 make deploy-build                      # local
@@ -580,8 +580,8 @@ make deploy-verify-dev                 # or: make deploy-verify ENV=dev
 # Snapshot all three envs at once:
 make deploy-status
 
-# Make remote-build the default (add to ~/.zshrc):
-export ACX_REMOTE_BUILD=1
+# Make local-build the default (add to ~/.zshrc):
+export ACX_REMOTE_BUILD=0
 
 # Override defaults via env vars:
 OCI_HOST=<other-tailnet-or-ip> make deploy-dev REMOTE_BUILD=1
@@ -589,13 +589,22 @@ ACX_ALLOW_DIRTY=1 make deploy-dev      # allow dirty tree (dev only)
 ACX_REMOTE_BUILD_DIR=/var/tmp/acx-build make deploy-dev REMOTE_BUILD=1
 ```
 
-**Remote-build prerequisites** (one-time):
+**Remote-build prerequisites:**
 
 - VM has docker installed and the `ubuntu` user is in the `docker` group
   (already true for the standard cloud-init).
-- VM has cached OCIR auth: SSH in once and run
-  `docker login iad.ocir.io -u 'idu2kqqe2jxy/<email>'`. The token is stored
-  in `~ubuntu/.docker/config.json`.
+- VM has OCI CLI installed at `~/.oci-venv/bin/oci`, and its instance principal
+  can read active `OCIR_USERNAME` and `OCIR_AUTH_TOKEN` versions from
+  `acx-vault`. The deploy creates a private, ephemeral Docker config, populates
+  it from Vault, and removes it on exit; no cached Docker login is required or
+  wanted.
+- On an authentication failure, use the deploy's classified error: verify the
+  two secrets have active versions for `secret_missing`, check dynamic group
+  `acx-backend-dg` and policy `acx-backend-secret-read` for `vault_denied`, or
+  rotate the Vault token for `ocir_rejected`. A pre-existing
+  `~ubuntu/.docker/config.json` left by the old procedure is an unrotated copy
+  outside this lifecycle; remove it after confirming it contains no unrelated
+  registry credentials.
 - Workstation has `rsync` (default on macOS).
 
 **Remote-build trade-offs:**

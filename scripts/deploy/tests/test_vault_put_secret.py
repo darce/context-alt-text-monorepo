@@ -9,6 +9,7 @@ import sys
 import time
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import Mock
 
 import pytest
 
@@ -164,3 +165,25 @@ def test_read_back_retries_use_full_jitter() -> None:
 
     assert first != second
     assert all(0 <= delay <= 2 for delay in first + second)
+
+
+@pytest.mark.parametrize("flag", ["--readable-timeout", "--operation-timeout"])
+@pytest.mark.parametrize("timeout", ["-1", "nan", "inf", "-inf", "abc"])
+def test_invalid_timeout_is_rejected_before_vault_mutation(monkeypatch, flag, timeout) -> None:
+    vaults_client = Mock()
+    fake_oci = SimpleNamespace(
+        vault=SimpleNamespace(VaultsClient=Mock(return_value=vaults_client)),
+    )
+    monkeypatch.setitem(sys.modules, "oci", fake_oci)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["_vault_put_secret.py", "--secret-name", "OCIR_AUTH_TOKEN", flag, timeout],
+    )
+
+    with pytest.raises(SystemExit) as exc_info:
+        vault_put_secret.main()
+
+    assert exc_info.value.code == 2
+    vaults_client.create_secret.assert_not_called()
+    vaults_client.update_secret.assert_not_called()

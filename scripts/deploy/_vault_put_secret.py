@@ -25,6 +25,7 @@ import argparse
 import base64
 import hashlib
 import inspect
+import math
 import queue
 import random
 import sys
@@ -33,6 +34,25 @@ import time
 
 # acx-vault, root compartment, us-ashburn-1. An OCID is not a secret (ADR-013).
 DEFAULT_VAULT_OCID = "ocid1.vault.oc1.iad.ejvffpzlaafc4.abuwcljr3j4chidobdkiqx6igrzb4p3wffl43bjelxzfghkehdpuzle7cjla"
+
+
+def _non_negative_float(value):
+    """Parse a finite, non-negative command-line number."""
+    try:
+        parsed = float(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("must be a finite non-negative number") from exc
+    if not math.isfinite(parsed) or parsed < 0:
+        raise argparse.ArgumentTypeError("must be a finite non-negative number")
+    return parsed
+
+
+def _positive_float(value):
+    """Parse a finite, strictly positive command-line number."""
+    parsed = _non_negative_float(value)
+    if parsed <= 0:
+        raise argparse.ArgumentTypeError("must be a finite positive number")
+    return parsed
 
 
 class SecretNotReadableError(RuntimeError):
@@ -330,13 +350,13 @@ def main() -> int:
     ap.add_argument("--description", default=None, help="only applied when creating the secret")
     ap.add_argument(
         "--readable-timeout",
-        type=float,
+        type=_non_negative_float,
         default=120.0,
         help="seconds to wait for the written value to read back (0 to skip)",
     )
     ap.add_argument(
         "--operation-timeout",
-        type=float,
+        type=_positive_float,
         default=None,
         help="overall discovery/write/read-back deadline (default: readable timeout plus 30 seconds)",
     )
@@ -346,13 +366,9 @@ def main() -> int:
 
     if sys.stdin.isatty():
         raise SystemExit("refusing to prompt: pipe the value on stdin")
-    if args.readable_timeout < 0:
-        raise SystemExit("--readable-timeout must be non-negative")
     operation_timeout = args.operation_timeout
     if operation_timeout is None:
         operation_timeout = args.readable_timeout + 30.0
-    if operation_timeout <= 0:
-        raise SystemExit("--operation-timeout must be positive")
     deadline = OperationDeadline(operation_timeout)
 
     # Read raw bytes so a token containing non-UTF8 or a trailing newline the

@@ -37,7 +37,22 @@ import { join, relative, resolve } from 'node:path';
  *      mutate a shared fixture (TEST-07).
  */
 
-const FIXTURE_ROOT = join(tmpdir(), 'acx-style-bundle');
+const testsRoot = __dirname;
+const appRoot = resolve(testsRoot, '..', '..', '..', '..', '..');
+
+/**
+ * Give each worktree lane its own cache and eviction scope.
+ *
+ * The old single root made the four-entry LRU global: the fifth concurrent lane could delete a
+ * sibling's artifact between that lane's test processes. Hashing the resolved application root
+ * keeps the path short while ensuring every process in one lane agrees on the same namespace.
+ */
+export const artifactFixtureRootForAppRoot = (root: string): string => {
+  const laneKey = createHash('sha256').update(resolve(root)).digest('hex').slice(0, 16);
+  return join(tmpdir(), 'acx-style-bundle', laneKey);
+};
+
+const FIXTURE_ROOT = artifactFixtureRootForAppRoot(appRoot);
 const LOCK_DIR = join(FIXTURE_ROOT, '.lock');
 const STAMP_FILE = 'build-stamp.json';
 
@@ -51,17 +66,14 @@ const ARTIFACT_TTL_MS = 24 * 60 * 60_000;
 /**
  * Hard cap on retained artifact directories, TTL notwithstanding (FEBT2-W2-U-03).
  *
- * A TTL alone bounds *age*, not *rate*. During a parallel-lane wave every edit in every
- * lane mints a new fingerprint and a full build artifact, so directories accrue far faster
- * than a 24h cutoff collects them — an unbounded cache is a leak (RES-08), and this one
- * filled the host volume twice. The cap makes retention proportional to concurrent lanes
- * rather than to edit rate. Small on purpose: the only artifact whose reuse matters is the
- * current fingerprint's, which `keepDirName` protects unconditionally.
+ * A TTL alone bounds *age*, not *rate*. During a parallel-lane wave every edit in a lane can mint
+ * a new fingerprint and full build artifact, so directories accrue faster than a 24h cutoff
+ * collects them — an unbounded cache is a leak (RES-08), and this one filled the host volume
+ * twice. The cap now applies inside the worktree-specific root above: four artifacts per active
+ * lane, never four artifacts shared by all lanes. The current fingerprint remains protected
+ * unconditionally by `keepDirName`.
  */
 export const MAX_RETAINED_ARTIFACTS = 4;
-
-const testsRoot = __dirname;
-const appRoot = resolve(testsRoot, '..', '..', '..', '..', '..');
 
 /**
  * Files whose contents can change the production bundle. Test sources are excluded: vitest never

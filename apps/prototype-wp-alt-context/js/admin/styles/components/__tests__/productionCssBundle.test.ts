@@ -17,6 +17,7 @@ import { beforeAll, describe, expect, it } from 'vitest';
 
 import type { ProductionCssBundle } from './productionCssBundle';
 import {
+  artifactFixtureRootForAppRoot,
   type ArtifactEntry,
   buildInputCandidates,
   fingerprintedBuildInputs,
@@ -125,6 +126,17 @@ describe('artifact retention policy [FEBT2-W2-U-03]', () => {
   /** `n` fresh artifacts, newest first by name: `fresh-0` is the most recently used. */
   const freshRun = (n: number): ArtifactEntry[] =>
     Array.from({ length: n }, (_, i) => at(`fresh-${i}`, CUTOFF + 1_000 - i));
+
+  it('gives concurrent lanes independent eviction scopes', () => {
+    const laneA = artifactFixtureRootForAppRoot('/worktrees/feature-a/apps/prototype-wp-alt-context');
+    const laneB = artifactFixtureRootForAppRoot('/worktrees/feature-b/apps/prototype-wp-alt-context');
+
+    expect(
+      laneA,
+      'Sibling lanes sharing one artifact root consume the same four-entry LRU and can evict the ' +
+        "current lane's CSS bundle while its gate is still running.",
+    ).not.toBe(laneB);
+  });
 
   it('keeps the in-use artifact even when it is the oldest thing on disk', () => {
     const entries = [at('in-use', 0), ...freshRun(2)];

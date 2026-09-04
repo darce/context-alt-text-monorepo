@@ -1,4 +1,5 @@
 import { renderHook, act } from '@testing-library/react';
+import { setLogLevel, setLogSink, type LogRecord } from '../../utils/logger';
 import { useJobPersistence } from '../useJobPersistence';
 
 describe('useJobPersistence', () => {
@@ -11,7 +12,18 @@ describe('useJobPersistence', () => {
 
   afterEach(() => {
     vi.useRealTimers();
+    setLogSink(null);
+    setLogLevel(null);
   });
+
+  const captureRecords = (): LogRecord[] => {
+    const records: LogRecord[] = [];
+    setLogLevel('debug');
+    setLogSink((record) => {
+      records.push(record);
+    });
+    return records;
+  };
 
   it('hydrates empty state when nothing is in localStorage', () => {
     const { result } = renderHook(() => useJobPersistence());
@@ -118,5 +130,49 @@ describe('useJobPersistence', () => {
     const stored = JSON.parse(window.localStorage.getItem(STORAGE_KEY) ?? '[]') as { id: string }[];
     expect(stored).toHaveLength(1);
     expect(stored[0]?.id).toBe('active');
+  });
+  describe('hydrate is one observable unit of work [FEBT-1-W1-O-02]', () => {
+    it('emits a single correlated jobs.hydrate event reporting restored and purged counts', () => {
+      const staleTime = Date.now() - 25 * 60 * 60 * 1000;
+      window.localStorage.setItem(
+        STORAGE_KEY,
+        JSON.stringify([
+          { id: 'active', type: 'scan', startedAt: Date.now(), totalItems: 5 },
+          { id: 'stale', type: 'scan', startedAt: staleTime, totalItems: 5 },
+        ]),
+      );
+      const records = captureRecords();
+
+      renderHook(() => useJobPersistence());
+
+      const hydrate = records.filter((record) => record.message === 'jobs.hydrate');
+      expect(hydrate).toHaveLength(1);
+      expect(hydrate[0].fields).toEqual(
+        expect.objectContaining({ outcome: 'restored', stored: 2, restored: 1, purged: 1, jobIds: ['active'] }),
+      );
+      expect(hydrate[0].fields.requestId).toEqual(expect.any(String));
+    });
+
+    it('reports the empty hydrate rather than staying silent', () => {
+      const records = captureRecords();
+      renderHook(() => useJobPersistence());
+
+      const hydrate = records.filter((record) => record.message === 'jobs.hydrate');
+      expect(hydrate).toHaveLength(1);
+      expect(hydrate[0].fields.outcome).toBe('empty');
+    });
+
+    it('reports a corrupt payload as parse_failed at error level', () => {
+      window.localStorage.setItem(STORAGE_KEY, '{not json');
+      const records = captureRecords();
+
+      const { result } = renderHook(() => useJobPersistence());
+
+      expect(result.current.activeJobs).toEqual([]);
+      const hydrate = records.filter((record) => record.message === 'jobs.hydrate');
+      expect(hydrate).toHaveLength(1);
+      expect(hydrate[0].level).toBe('error');
+      expect(hydrate[0].fields.outcome).toBe('parse_failed');
+    });
   });
 });

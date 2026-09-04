@@ -17,7 +17,7 @@ const WORKBENCH_URL =
 const MEDIA_URL = 'https://example.test/photo.jpg';
 
 /** API order intentionally ≠ visual (bbox.y, bbox.x) reading order. */
-function outOfOrderFixture(): FaceOverlayIdentity[] {
+const outOfOrderFixture = (): FaceOverlayIdentity[] => {
   return [
     // Uncurated — sorts second among uncurated (y=200, x=300)
     {
@@ -48,7 +48,7 @@ function outOfOrderFixture(): FaceOverlayIdentity[] {
       is_auto_label: true,
     },
   ];
-}
+};
 
 describe('selectUncuratedFacesInReadingOrder', () => {
   it('drops curated faces and sorts by bbox.y then bbox.x', () => {
@@ -118,7 +118,7 @@ describe('UncuratedFaceList', () => {
   });
 
   it('sanitizes hostile identity_id into selector-safe list/overlay aria ids [UXP5-BRV-02]', () => {
-    const hostile = `evil "id" {x}`;
+    const hostile = 'evil "id" {x}';
     render(
       <UncuratedFaceList
         identities={[

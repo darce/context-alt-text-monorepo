@@ -14,9 +14,10 @@ from recognition.domain.cluster import ReservedClusterLabelError
 from recognition.domain.representative import ClusterRepresentative
 from recognition.domain.suggestion import SuggestedLabelSource
 from recognition.infrastructure.repositories.merge_suggestion_repository import SqlAlchemyMergeSuggestionRepository
+from recognition.interface_adapters.http import deps as dependencies
 from recognition.interface_adapters.http.exception_handlers import register_exception_handlers
 from recognition.interface_adapters.http.schemas.responses import ClusterResponse
-from recognition.tests.api.conftest import FakeNameSuggestion, FakeSuggestion
+from recognition.tests.api.conftest import FakeNameSuggestion, FakeSession, FakeSessionResult, FakeSuggestion
 
 
 def test_list_suggestions_empty_by_default(api_client, tenant_id) -> None:
@@ -327,12 +328,8 @@ async def test_accept_merge_suggestion_both_placeholder_labels_succeeds(
     cluster_b_id = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
     suggestion_id = str(uuid.uuid4())
 
-    fake_cluster_repository.seed(
-        cluster_a_id, tenant_id, label="cluster-aaa", identity_count=5, user_confirmed=False
-    )
-    fake_cluster_repository.seed(
-        cluster_b_id, tenant_id, label="cluster-bbb", identity_count=2, user_confirmed=False
-    )
+    fake_cluster_repository.seed(cluster_a_id, tenant_id, label="cluster-aaa", identity_count=5, user_confirmed=False)
+    fake_cluster_repository.seed(cluster_b_id, tenant_id, label="cluster-bbb", identity_count=2, user_confirmed=False)
     fake_cluster_service.clusters.extend(
         [
             ClusterResponse(
@@ -1076,3 +1073,201 @@ async def test_accept_rejects_other_pending_suggestions(
 
     assert resp.status_code == 200
     assert fake_suggestion_service.suggestions[other.id].status.value == "rejected"
+
+
+def _fake_session_of(api_client) -> FakeSession:  # noqa: ANN001
+    """Reach the FakeSession the api_client fixture bound to ``get_session``."""
+    session_dep = api_client.app.dependency_overrides[dependencies.get_session]
+    for cell in session_dep.__closure__ or ():
+        if isinstance(cell.cell_contents, FakeSession):
+            return cell.cell_contents
+    raise AssertionError("api_client did not override get_session with a FakeSession")
+
+
+def _seed_merge_pair(fake_cluster_service, fake_cluster_repository, tenant_id):  # noqa: ANN001
+    """Seed an unlabelled 50-member A and a labelled 2-member B (ranking picks B)."""
+    cluster_a_id = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+    cluster_b_id = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+    fake_cluster_repository.seed(cluster_a_id, tenant_id, label=None, identity_count=50)
+    fake_cluster_repository.seed(cluster_b_id, tenant_id, label="Named Person", identity_count=2)
+    fake_cluster_service.clusters.extend(
+        [
+            ClusterResponse(
+                id=cluster_a_id,
+                tenant_id=tenant_id,
+                label=None,
+                is_labeled=False,
+                is_auto_label=False,
+                identity_count=50,
+                representatives=[],
+            ),
+            ClusterResponse(
+                id=cluster_b_id,
+                tenant_id=tenant_id,
+                label="Named Person",
+                is_labeled=True,
+                is_auto_label=False,
+                identity_count=2,
+                representatives=[],
+            ),
+        ]
+    )
+    return cluster_a_id, cluster_b_id
+
+
+def _pending_merge_suggestion(cluster_a_id: str, cluster_b_id: str) -> SimpleNamespace:
+    from recognition.domain.suggestion import SuggestionStatus
+
+    return SimpleNamespace(
+        id=str(uuid.uuid4()),
+        cluster_a_id=cluster_a_id,
+        cluster_b_id=cluster_b_id,
+        similarity=0.91,
+        status=SuggestionStatus.PENDING,
+        confidence_score=0.91,
+        expires_at=None,
+        source_job_id=None,
+    )
+
+
+def _bind_merge_repo(monkeypatch, suggestion, *, delete_error: Exception | None = None) -> None:  # noqa: ANN001
+    async def fake_get_by_id(self, _tenant_id_arg: str, _sid: str):  # noqa: ANN001
+        return suggestion
+
+    async def fake_delete_by_cluster(self, _tenant_id_arg: str, _cluster_id: str) -> int:  # noqa: ANN001
+        if delete_error is not None:
+            raise delete_error
+        return 0
+
+    monkeypatch.setattr(SqlAlchemyMergeSuggestionRepository, "get_by_id", fake_get_by_id)
+    monkeypatch.setattr(SqlAlchemyMergeSuggestionRepository, "delete_by_cluster", fake_delete_by_cluster)
+
+
+@pytest.mark.asyncio
+async def test_accept_merge_suggestion_returns_moved_identity_ids(
+    api_client,
+    tenant_id,
+    fake_cluster_service,
+    fake_cluster_repository,
+    monkeypatch,
+) -> None:
+    """FEBT1-LD-01(a): the revert set must be read back from the merge transaction.
+
+    Red if the endpoint stops querying ``media_identities.moved_by_merge_id`` and
+    returns a fabricated or empty list instead.
+    """
+    cluster_a_id, cluster_b_id = _seed_merge_pair(fake_cluster_service, fake_cluster_repository, tenant_id)
+    suggestion = _pending_merge_suggestion(cluster_a_id, cluster_b_id)
+    _bind_merge_repo(monkeypatch, suggestion)
+
+    moved = [uuid.uuid4(), uuid.uuid4()]
+    fake_session = _fake_session_of(api_client)
+    fake_session.default_execute_result = FakeSessionResult(
+        scalar_one_or_none_value=fake_session.default_execute_result.scalar_one_or_none(),
+        all_rows=moved,
+    )
+
+    resp = api_client.post(
+        f"/recognition/suggestions/merge/{suggestion.id}/accept",
+        headers={"X-Tenant-ID": tenant_id},
+        json={"tenant_id": tenant_id},
+    )
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["moved_identity_ids"] == [str(identity_id) for identity_id in moved]
+    # The set is scoped to this merge's provenance stamp, not to the whole tenant.
+    executed = " ".join(fake_session.executed_statements)
+    assert "moved_by_merge_id" in executed
+
+
+@pytest.mark.asyncio
+async def test_accept_merge_suggestion_rolls_back_merge_when_accept_marking_fails(
+    api_client,
+    tenant_id,
+    fake_cluster_service,
+    fake_cluster_repository,
+    monkeypatch,
+) -> None:
+    """FEBT1-LD-01(c): merge + ACCEPTED stamp are one unit of work.
+
+    If the accept-marking half fails, nothing commits, so the merge is rolled back
+    and the suggestion stays PENDING. Red if a commit is moved before the stamp
+    (ARCH-03: design the failure path, do not leave a half-applied write behind).
+    """
+    from recognition.domain.suggestion import SuggestionStatus
+
+    cluster_a_id, cluster_b_id = _seed_merge_pair(fake_cluster_service, fake_cluster_repository, tenant_id)
+    suggestion = _pending_merge_suggestion(cluster_a_id, cluster_b_id)
+    _bind_merge_repo(monkeypatch, suggestion, delete_error=RuntimeError("accept marking failed"))
+
+    fake_session = _fake_session_of(api_client)
+    commits_before = fake_session.commit_calls
+
+    with pytest.raises(RuntimeError, match="accept marking failed"):
+        api_client.post(
+            f"/recognition/suggestions/merge/{suggestion.id}/accept",
+            headers={"X-Tenant-ID": tenant_id},
+            json={"tenant_id": tenant_id},
+        )
+
+    # No commit at all: the merge writes stay inside the aborted transaction.
+    assert fake_session.commit_calls == commits_before
+    assert suggestion.status == SuggestionStatus.PENDING
+
+
+@pytest.mark.asyncio
+async def test_accept_merge_suggestion_honours_operator_chosen_survivor(
+    api_client,
+    tenant_id,
+    fake_cluster_service,
+    fake_cluster_repository,
+    monkeypatch,
+) -> None:
+    """FEBT1-LD-01(b): an explicit target_cluster_id overrides _select_merge_target."""
+    cluster_a_id, cluster_b_id = _seed_merge_pair(fake_cluster_service, fake_cluster_repository, tenant_id)
+    suggestion = _pending_merge_suggestion(cluster_a_id, cluster_b_id)
+    _bind_merge_repo(monkeypatch, suggestion)
+
+    resp = api_client.post(
+        f"/recognition/suggestions/merge/{suggestion.id}/accept",
+        headers={"X-Tenant-ID": tenant_id},
+        json={"tenant_id": tenant_id, "target_cluster_id": cluster_a_id},
+    )
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    # Ranking would have retired A (unlabelled); the operator kept it instead.
+    assert body["target_cluster_id"] == cluster_a_id
+    assert body["source_cluster_id"] == cluster_b_id
+    merge_calls = [c for c in fake_cluster_service.calls if c["method"] == "merge_cluster"]
+    assert merge_calls[-1]["target_cluster_id"] == cluster_a_id
+    assert merge_calls[-1]["source_cluster_id"] == cluster_b_id
+
+
+@pytest.mark.asyncio
+async def test_accept_merge_suggestion_rejects_target_outside_the_pair(
+    api_client,
+    tenant_id,
+    fake_cluster_service,
+    fake_cluster_repository,
+    monkeypatch,
+) -> None:
+    """FEBT1-LD-01(b): a survivor id outside the pair must fail loudly, not auto-select."""
+    cluster_a_id, cluster_b_id = _seed_merge_pair(fake_cluster_service, fake_cluster_repository, tenant_id)
+    suggestion = _pending_merge_suggestion(cluster_a_id, cluster_b_id)
+    _bind_merge_repo(monkeypatch, suggestion)
+
+    fake_session = _fake_session_of(api_client)
+    commits_before = fake_session.commit_calls
+
+    resp = api_client.post(
+        f"/recognition/suggestions/merge/{suggestion.id}/accept",
+        headers={"X-Tenant-ID": tenant_id},
+        json={"tenant_id": tenant_id, "target_cluster_id": str(uuid.uuid4())},
+    )
+
+    assert resp.status_code == 422, resp.text
+    assert "target_cluster_id" in resp.text
+    assert not [c for c in fake_cluster_service.calls if c["method"] == "merge_cluster"]
+    assert fake_session.commit_calls == commits_before

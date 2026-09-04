@@ -1,7 +1,13 @@
 import { useReducer, useRef } from 'react';
 import { __ } from '@wordpress/i18n';
 
-import type { RetentionExportResponse, RetentionMode, StartExportJobResponse } from '../../api/recognition';
+import {
+  EXPORT_COLLECTION_KEYS,
+  RetentionExportResponseError,
+  type RetentionExportResponse,
+  type RetentionMode,
+  type StartExportJobResponse,
+} from '../../api/recognition';
 import { useToast } from '../../context/ToastContext';
 import { toUserMessage } from '../../utils/appError';
 import { useRetentionPageMutations } from './useRetentionPageMutations';
@@ -113,19 +119,13 @@ export const retentionReducer = (state: RetentionDialogState, action: RetentionA
 /**
  * Top-level collection keys carried by a recognition tenant-export snapshot.
  *
- * rg-005 (schema/contract parity): this list mirrors `_extract_counts` in
- * `recognition/application/services/import_service.py`. The backend counts these
- * keys at the TOP LEVEL of `ImportRequest.data`, so the snapshot — not the
- * download envelope that wraps it under `data` — is what must be submitted.
+ * sr-007/rg-005: the canonical definition lives next to the boundary adapter
+ * that also validates them (`api/recognition/retentionApi.ts`), which mirrors
+ * `IMPORT_COLLECTION_KEYS` in
+ * `recognition/application/services/import_service.py`. Re-exported here for
+ * the existing consumers of this module; do not fork a second copy.
  */
-export const EXPORT_COLLECTION_KEYS = [
-  'clusters',
-  'media_identities',
-  'identity_suggestions',
-  'name_suggestions',
-  'cluster_merge_suggestions',
-  'scan_jobs',
-] as const;
+export { EXPORT_COLLECTION_KEYS };
 
 /** Locally authored, safe-to-display boundary rejection (never carries remote text). */
 export class RetentionImportValidationError extends Error {
@@ -186,26 +186,50 @@ export const extractImportSnapshot = (parsed: unknown): Record<string, unknown> 
   return snapshot;
 };
 
-/** The envelope written to disk by `downloadExport`; the snapshot lives under `data`. */
+/**
+ * The envelope written to disk by `downloadExport`; the snapshot lives under `data`.
+ *
+ * `schema_version` is written unconditionally: `downloadExportJobData` rejects any
+ * snapshot without an integer `schema_version`, so a `RetentionExportResponse`
+ * always carries one. The former `typeof … === 'number'` guard was dead code that
+ * read as if the field were optional and quietly allowed a schema-less file to be
+ * written to disk — one an operator could only discover on a later import.
+ * `tenant_id` / `exported_at` keep their guards: those are genuinely optional.
+ */
 export const buildExportDocument = (response: RetentionExportResponse): Record<string, unknown> => ({
   ...(response.tenant_id ? { tenant_id: response.tenant_id } : {}),
   ...(response.exported_at ? { exported_at: response.exported_at } : {}),
-  ...(typeof response.schema_version === 'number' ? { schema_version: response.schema_version } : {}),
+  schema_version: response.schema_version,
   counts: response.summary,
   data: response.payload,
 });
 
-const downloadExportPayload = (response: RetentionExportResponse): void => {
+/**
+ * Write the export document to disk via a transient object URL.
+ *
+ * RES-04/RES-20: the scope that acquires the object URL and the detached
+ * anchor releases both on every path, including when `click()` throws — an
+ * object URL that is never revoked pins its blob for the lifetime of the
+ * document. Exported so the release path is directly testable (jsdom does not
+ * implement `URL.createObjectURL`, so the test stubs it).
+ */
+export const downloadExportPayload = (response: RetentionExportResponse): void => {
   const exportDocument = buildExportDocument(response);
   const blob = new Blob([JSON.stringify(exportDocument, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
-  const anchor = document.createElement('a');
-  anchor.href = url;
-  anchor.download = `alt-context-retention-export-${new Date().toISOString()}.json`;
-  document.body.append(anchor);
-  anchor.click();
-  anchor.remove();
-  URL.revokeObjectURL(url);
+  try {
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = `alt-context-retention-export-${new Date().toISOString()}.json`;
+    document.body.append(anchor);
+    try {
+      anchor.click();
+    } finally {
+      anchor.remove();
+    }
+  } finally {
+    URL.revokeObjectURL(url);
+  }
 };
 
 /* ------------------------------------------------------------------ */
@@ -264,6 +288,10 @@ export const useRetentionPageState = () => {
       dispatch({ type: 'CLOSE_EXPORT_DIALOG' });
       success(__('Tenant export downloaded.', 'alt-context'));
     } catch (error) {
+      if (error instanceof RetentionExportResponseError) {
+        showError(__('The export data returned by the server was malformed; nothing was downloaded.', 'alt-context'));
+        return;
+      }
       showError(toUserMessage(error, __('Unable to download export data.', 'alt-context')));
     }
   };

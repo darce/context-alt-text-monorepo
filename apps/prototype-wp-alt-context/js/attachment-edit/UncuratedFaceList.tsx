@@ -27,28 +27,28 @@ export interface UncuratedFaceListProps {
 
 type FaceWithBbox = FaceOverlayIdentity & { bbox: BoundingBox };
 
-function compareBboxReadingOrder(a: FaceWithBbox, b: FaceWithBbox): number {
+const compareBboxReadingOrder = (a: FaceWithBbox, b: FaceWithBbox): number => {
   const ay = a.bbox.y;
   const by = b.bbox.y;
   if (ay !== by) {
     return ay - by;
   }
   return a.bbox.x - b.bbox.x;
-}
+};
 
 /** Uncurated faces with complete finite bboxes, sorted bbox.y then bbox.x (matches FaceOverlayLayer). */
-export function selectUncuratedFacesInReadingOrder(
+export const selectUncuratedFacesInReadingOrder = (
   identities: FaceOverlayIdentity[],
-): FaceWithBbox[] {
+): FaceWithBbox[] => {
   return identities
     .filter((id): id is FaceWithBbox => isCompleteFiniteBbox(id.bbox) && !isCuratedFace(id))
     .slice()
     .sort(compareBboxReadingOrder);
-}
+};
 
-export function uncuratedListRowDomId(faceId: string): string {
+export const uncuratedListRowDomId = (faceId: string): string => {
   return `acx-uncurated-list-${sanitizeDomIdToken(faceId)}`;
-}
+};
 
 export const UncuratedFaceList: React.FC<UncuratedFaceListProps> = ({
   identities,

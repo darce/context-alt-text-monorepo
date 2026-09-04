@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { NAMING_OPTIONS_LIMIT } from '../buildNamingOptions';
 import { useClusterSuggestionsLoader } from '../useClusterSuggestionsLoader';
+import { ClusterLabelLookupError, lookupClusterByLabel, CLUSTER_LABEL_LOOKUP_STATUS } from '../clusterLabelLookup';
 import * as recognitionApi from '../../../../api/recognition';
 import { useRosterEntries } from '../../../../hooks/useRosterHooks';
 import { createMockQuery } from '../../../../test-utils/mockHooks';
@@ -207,7 +208,8 @@ describe('useClusterSuggestionsLoader', () => {
     });
     const consoleWarn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
 
-    await expect(result.current.findClusterByLabel('Alice')).resolves.toBeNull();
+    // FEBT1G-H-04: a lookup that could not RUN must not read as "name is free".
+    await expect(result.current.findClusterByLabel('Alice')).rejects.toBeInstanceOf(ClusterLabelLookupError);
     expect(consoleWarn).not.toHaveBeenCalled();
 
     const warns = records.filter((record) => record.level === 'warn');
@@ -215,6 +217,8 @@ describe('useClusterSuggestionsLoader', () => {
     expect(warns[0]?.message).toBe('Failed to find cluster by label');
     expect(warns[0]?.fields.tag).toBe('http');
     expect(warns[0]?.fields.status).toBe(500);
+    // FEBT1-LD-05: `toContain` passed identically before and after redaction, so it gated
+    // nothing. Assert the exact redacted form — the `?search=Alice` query must be gone.
     expect(warns[0]?.fields.endpoint).toBe('/acx/v1/recognition/clusters');
     expect(String(warns[0]?.fields.endpoint)).not.toContain('?');
     expect(String(warns[0]?.fields.endpoint)).not.toContain('Alice');
@@ -224,6 +228,32 @@ describe('useClusterSuggestionsLoader', () => {
 
     consoleWarn.mockRestore();
     queryClient.clear();
+  });
+
+  it('lookupClusterByLabel reports lookup failure as a distinct status, not a null match [FEBT1G-H-04]', async () => {
+    vi.mocked(recognitionApi.listRecognitionClusters).mockRejectedValue(
+      new HTTPError({
+        status: 500,
+        retryAfterSeconds: undefined,
+        endpoint: '/acx/v1/recognition/clusters?search=Alice',
+        bodyPreview: 'nope',
+        message: 'server exploded',
+      }),
+    );
+    const failed = await lookupClusterByLabel({ label: 'Alice', editableClusterId: null });
+    expect(failed.status).toBe(CLUSTER_LABEL_LOOKUP_STATUS.LOOKUP_FAILED);
+
+    vi.mocked(recognitionApi.listRecognitionClusters).mockResolvedValue({
+      clusters: [],
+      total: 0,
+      limit: 10,
+      offset: 0,
+    } as unknown as Awaited<ReturnType<typeof recognitionApi.listRecognitionClusters>>);
+    const none = await lookupClusterByLabel({ label: 'Alice', editableClusterId: null });
+    expect(none.status).toBe(CLUSTER_LABEL_LOOKUP_STATUS.NONE);
+
+    // The two outcomes are distinguishable — that is the whole finding.
+    expect(failed.status).not.toBe(none.status);
   });
 
   it('mints a distinct requestId per findClusterByLabel run [FEBT1-W2B-01]', async () => {
@@ -246,8 +276,11 @@ describe('useClusterSuggestionsLoader', () => {
     });
     const consoleWarn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
 
-    await expect(result.current.findClusterByLabel('Alice')).resolves.toBeNull();
-    await expect(result.current.findClusterByLabel('Alice')).resolves.toBeNull();
+    // FEBT1G-H-04: a failed lookup no longer resolves `null` (which is
+    // indistinguishable from "no match"); it rejects with a typed lookup error.
+    // The correlation claim below is unaffected by that contract change.
+    await expect(result.current.findClusterByLabel('Alice')).rejects.toThrow();
+    await expect(result.current.findClusterByLabel('Alice')).rejects.toThrow();
 
     const warns = records.filter((record) => record.level === 'warn');
     expect(warns).toHaveLength(2);

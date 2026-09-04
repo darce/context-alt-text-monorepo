@@ -4,7 +4,6 @@
  */
 
 import * as React from 'react';
-import { __ } from '@wordpress/i18n';
 
 import { SPA_SESSION_EXPIRED_COPY } from '../../utils/sessionExpiredCopy';
 import { formatUserFacingError, isAuthExpiredError } from '../../utils/userFacingError';
@@ -25,11 +24,10 @@ export const UserFacingErrorNotice: React.FC<UserFacingErrorNoticeProps> = ({
   announce = true,
 }) => {
   const authExpired = isAuthExpiredError(error);
-  // Single owner: SPA_SESSION_EXPIRED_COPY (REF-19 / E-03). __() wraps the
-  // constant so runtime translation still applies without a second literal.
-  const message = authExpired
-    ? __(SPA_SESSION_EXPIRED_COPY.sessionExpired, 'alt-context')
-    : formatUserFacingError(error, fallback);
+  // REF-19: this component owns no copy. formatUserFacingError already maps
+  // auth expiry to the session-expired string, so there is no auth branch to
+  // duplicate here; `authExpired` drives affordances only (button, kind attr).
+  const message = formatUserFacingError(error, fallback);
 
   return (
     <div
@@ -41,7 +39,7 @@ export const UserFacingErrorNotice: React.FC<UserFacingErrorNoticeProps> = ({
       <span>{message}</span>
       {authExpired ? (
         <button type="button" onClick={() => window.location.reload()}>
-          {__(SPA_SESSION_EXPIRED_COPY.reloadPage, 'alt-context')}
+          {SPA_SESSION_EXPIRED_COPY.reloadPage}
         </button>
       ) : null}
     </div>

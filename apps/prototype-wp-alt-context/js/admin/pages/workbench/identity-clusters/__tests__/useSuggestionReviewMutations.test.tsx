@@ -21,6 +21,7 @@ import type {
   TopUnlabeledCluster,
   TopUnlabeledClustersResponse,
 } from '../../../../api/recognition/types';
+import type { AcceptedMergeSuggestion } from '../../../../api/recognition';
 import * as recognitionApi from '../../../../api/recognition';
 import * as rosterApi from '../../../../api/rosterApi';
 import type { RosterClusterCommitResponse } from '../../../../api/rosterApi';
@@ -94,6 +95,17 @@ const makeMerge = (id: string): PendingMergeSuggestion => ({
   status: 'pending',
   cluster_a_label: 'Alice',
   cluster_b_label: 'Bob',
+});
+
+const makeAccepted = (
+  id: string,
+  overrides: Partial<AcceptedMergeSuggestion> = {},
+): AcceptedMergeSuggestion => ({
+  ...makeMerge(id),
+  source_cluster_id: 'a',
+  target_cluster_id: 'b',
+  moved_identity_ids: [],
+  ...overrides,
 });
 
 const makeMergePage = (suggestions: PendingMergeSuggestion[]): PendingMergeSuggestionsResponse => ({
@@ -841,9 +853,17 @@ describe('useSuggestionReviewMutations (Slice 2 hold/flush)', () => {
   });
 
   it('BR-18/20: acceptMerge hold→success removes from cache + invalidates mergePending/media/clusters', async () => {
-    queryClient.setQueryData(mergePendingKey, makeMergePage([makeMerge('merge-1'), makeMerge('merge-2')]));
+    // merge-2 references an unrelated cluster pair so this asserts targeted
+    // removal of the accepted row, not collateral drop of a cluster sibling.
+    queryClient.setQueryData(
+      mergePendingKey,
+      makeMergePage([
+        makeMerge('merge-1'),
+        { ...makeMerge('merge-2'), cluster_a_id: 'c', cluster_b_id: 'd' },
+      ]),
+    );
     const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
-    vi.mocked(recognitionApi.acceptMergeSuggestion).mockResolvedValue(makeMerge('merge-1'));
+    vi.mocked(recognitionApi.acceptMergeSuggestion).mockResolvedValue(makeAccepted('merge-1'));
 
     const { result } = renderMutations();
     act(() => {
@@ -867,7 +887,7 @@ describe('useSuggestionReviewMutations (Slice 2 hold/flush)', () => {
     // accept response flips to smaller confirmed B as survivor.
     const largerUnconfirmed = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
     const smallerConfirmed = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb';
-    const acceptResponse: PendingMergeSuggestion = {
+    const acceptResponse: AcceptedMergeSuggestion = {
       id: 'merge-flip',
       cluster_a_id: largerUnconfirmed,
       cluster_b_id: smallerConfirmed,
@@ -879,6 +899,7 @@ describe('useSuggestionReviewMutations (Slice 2 hold/flush)', () => {
       cluster_b_identity_count: 2,
       source_cluster_id: largerUnconfirmed,
       target_cluster_id: smallerConfirmed,
+      moved_identity_ids: [],
     };
     vi.mocked(recognitionApi.acceptMergeSuggestion).mockResolvedValue(acceptResponse);
     queryClient.setQueryData(mergePendingKey, makeMergePage([makeMerge('merge-flip')]));
@@ -1551,12 +1572,13 @@ describe('useSuggestionReviewMutations (Slice 2 hold/flush)', () => {
         { ...makeName('name-surv'), id: 'name-surv', cluster_id: 'cluster-2' },
       ]),
     );
-    const mergeRow = {
+    const mergeRow: AcceptedMergeSuggestion = {
       ...makeMerge('merge-1'),
       cluster_a_id: 'cluster-1',
       cluster_b_id: 'cluster-2',
       source_cluster_id: 'cluster-1',
       target_cluster_id: 'cluster-2',
+      moved_identity_ids: [],
     };
     queryClient.setQueryData(
       mergePendingKey,
@@ -1593,12 +1615,13 @@ describe('useSuggestionReviewMutations (Slice 2 hold/flush)', () => {
   });
 
   it('R3-08: unmount during acceptMerge still drops the retired source', async () => {
-    const mergeRow = {
+    const mergeRow: AcceptedMergeSuggestion = {
       ...makeMerge('merge-1'),
       cluster_a_id: 'cluster-1',
       cluster_b_id: 'cluster-2',
       source_cluster_id: 'cluster-1',
       target_cluster_id: 'cluster-2',
+      moved_identity_ids: [],
     };
     queryClient.setQueryData(mergePendingKey, makeMergePage([mergeRow, makeMerge('merge-sib')]));
     const topUnlabeledKey = queryKeys.clusters.topUnlabeled('test-tenant');
@@ -1607,7 +1630,7 @@ describe('useSuggestionReviewMutations (Slice 2 hold/flush)', () => {
       makeTopUnlabeledPage([makeTopCluster('cluster-1'), makeTopCluster('cluster-2')]),
     );
 
-    let resolveAccept: (value: PendingMergeSuggestion) => void = () => undefined;
+    let resolveAccept: (value: AcceptedMergeSuggestion) => void = () => undefined;
     vi.mocked(recognitionApi.acceptMergeSuggestion).mockImplementation(
       () =>
         new Promise((resolve) => {
@@ -1643,12 +1666,13 @@ describe('useSuggestionReviewMutations (Slice 2 hold/flush)', () => {
     queryClient.setQueryData(namePendingKey, makeNamePage([{ ...makeName('name-inn'), cluster_id: 'innocent' }]));
     const topUnlabeledKey = queryKeys.clusters.topUnlabeled('test-tenant');
     queryClient.setQueryData(topUnlabeledKey, makeTopUnlabeledPage([makeTopCluster('innocent')]));
-    const foreign: PendingMergeSuggestion = {
+    const foreign: AcceptedMergeSuggestion = {
       ...makeMerge('merge-1'),
       cluster_a_id: 'cluster-a',
       cluster_b_id: 'cluster-b',
       source_cluster_id: 'innocent',
       target_cluster_id: 'cluster-b',
+      moved_identity_ids: [],
     };
     queryClient.setQueryData(mergePendingKey, makeMergePage([foreign]));
     vi.mocked(recognitionApi.acceptMergeSuggestion).mockResolvedValue(foreign);

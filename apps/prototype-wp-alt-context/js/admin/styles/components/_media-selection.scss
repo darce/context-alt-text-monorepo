@@ -155,6 +155,12 @@
     gap: var(--acx-space-8);
   }
 
+  &__bulk-describe-disclosure {
+    margin: 0;
+    color: var(--acx-color-text-muted);
+    font-size: var(--acx-text-sm);
+  }
+
   &__bulk-describe-error {
     color: var(--acx-color-danger);
     font-size: var(--acx-text-sm);

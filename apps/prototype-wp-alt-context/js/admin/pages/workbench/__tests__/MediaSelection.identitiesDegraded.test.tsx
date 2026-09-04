@@ -52,7 +52,7 @@ const labeledIdentity: DetectedIdentity = {
   similarity: 0.85,
 };
 
-type IdentitiesSurface = {
+interface IdentitiesSurface {
   data?: { identities_by_media: Record<string, DetectedIdentity[]>; data_source?: string };
   isLoading: boolean;
   isError: boolean;
@@ -146,10 +146,6 @@ vi.mock('../../../hooks/useRecognitionCooldown', () => ({
     remainingSeconds: 0,
     remainingMs: 0,
   }),
-}));
-
-vi.mock('../MediaAnalyzeCta', () => ({
-  MediaAnalyzeCta: () => null,
 }));
 
 vi.mock('../BulkDescribeReviewLink', () => ({

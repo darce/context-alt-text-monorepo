@@ -1,4 +1,5 @@
 import { ChangeEvent, useEffect, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import * as Select from '@radix-ui/react-select';
 import {
   AlertTriangle,
@@ -16,9 +17,11 @@ import {
 import { __, _n, sprintf } from '@wordpress/i18n';
 import type { WorkbenchMediaItem } from '../../hooks/useWorkbenchMedia';
 import type { WorkbenchMediaStatus } from '../../api/workbenchMediaApi';
+import { fetchSettings, type SettingsResponse } from '../../api/settingsApi';
+import { toSettings } from '../../navigation/appLinks';
 import { MediaSelectionTableBody } from './MediaSelectionTableBody';
-import { MediaAnalyzeCta } from './MediaAnalyzeCta';
 import { BulkDescribeReviewLink } from './BulkDescribeReviewLink';
+import { useJobPipeline } from './JobPipelineContext';
 
 import { Checkbox } from '../../../components/ui/checkbox';
 import { useBulkDescribe } from '../../hooks/useBulkDescribe';
@@ -55,7 +58,7 @@ import {
 interface MediaSelectionProps {
   /**
    * §7: a review card / label / review panel primary is on screen. When true the
-   * card owns the single viewport accent primary, so both footer CTAs step down.
+   * card owns the single viewport accent primary, so the footer Describe CTA steps down.
    */
   reviewActive?: boolean;
 }
@@ -90,6 +93,21 @@ export const MediaSelection = ({ reviewActive = false }: MediaSelectionProps): R
   const identityQuery = mediaQuery.identitiesQuery;
   const detailQuery = mediaQuery.detailQuery;
   const bulkDescribe = useBulkDescribe();
+  const pipeline = useJobPipeline();
+  const [identify, setIdentify] = useState<{ pending: boolean; error: string | null }>({ pending: false, error: null });
+  const startDescribe = (ids: number[]) => {
+    setDismissedRunId(null);
+    bulkDescribe.submit.mutate(ids);
+  };
+  // L1 settings query: share SettingsPage's ['settings'] key so a save updates this footer.
+  const settingsQuery = useQuery<SettingsResponse>({
+    queryKey: ['settings'],
+    queryFn: fetchSettings,
+    retry: false,
+  });
+  const recognitionEnabled = settingsQuery.data?.recognition_enabled;
+  const recognitionPolicyKnown = typeof recognitionEnabled === 'boolean';
+  const isSettingsPending = !recognitionPolicyKnown;
   const selectedMediaIds = Object.entries(selection)
     .filter(([, selected]) => selected)
     .map(([id]) => Number(id))
@@ -194,18 +212,41 @@ export const MediaSelection = ({ reviewActive = false }: MediaSelectionProps): R
             runId={activeDescribeRunId}
             progress={describeProgress}
             isPanelVisible={isDescribePanelVisible}
-            errorMessage={bulkDescribe.errorMessage}
+            errorMessage={identify.error ?? bulkDescribe.errorMessage}
             remoteActionTitle={remoteGate.title}
             remoteActionAriaDisabled={remoteGate['aria-disabled']}
             accentPrimary={footerCta.accentOwner === FOOTER_ACCENT_OWNER.DESCRIBE}
+            recognitionEnabled={recognitionEnabled}
+            isIdentifying={identify.pending}
+            isSettingsPending={isSettingsPending}
             onSubmit={() => {
-              if (offline) {
+              if (offline || identify.pending) return;
+              if (!recognitionPolicyKnown || selectedMediaIds.length === 0) return;
+              const ids = selectedMediaIds;
+              if (recognitionEnabled !== true) {
+                startDescribe(ids);
                 return;
               }
-              setDismissedRunId(null);
-              bulkDescribe.submit.mutate(selectedMediaIds);
+              setIdentify({ pending: true, error: null });
+              void pipeline.scanAndWait(ids).then(
+                () => {
+                  setIdentify({ pending: false, error: null });
+                  startDescribe(ids);
+                },
+                (error: unknown) => {
+                  const message =
+                    error instanceof Error && error.message
+                      ? error.message
+                      : __('People identification failed. Nothing was described.', 'alt-context');
+                  setIdentify({ pending: false, error: message });
+                },
+              );
             }}
             onCancel={() => {
+              if (identify.pending) {
+                pipeline.cancelScan(pipeline.history.activeJobIds);
+                return;
+              }
               if (activeDescribeRunId) {
                 bulkDescribe.cancel.mutate(activeDescribeRunId);
               }
@@ -213,7 +254,6 @@ export const MediaSelection = ({ reviewActive = false }: MediaSelectionProps): R
             onDismiss={() => setDismissedRunId(activeDescribeRunId)}
             onRetryPolling={() => describeProgress.retry()}
           />
-          <MediaAnalyzeCta accentPrimary={footerCta.accentOwner === FOOTER_ACCENT_OWNER.ANALYZE} />
         </div>
       </div>
       {detailAuthExpired ? (
@@ -385,6 +425,8 @@ export const MediaSelectionToolbar = ({
 const DESCRIBE_OFFLINE_REASON_ID = 'acx-describe-offline-reason';
 /** aria-describedby target for the zero-selection hold reason on the describe submit CTA. */
 const DESCRIBE_EMPTY_SELECTION_REASON_ID = 'acx-describe-empty-selection-reason';
+/** aria-describedby target for the HAI-05 recognition disclosure under the primary. */
+const DESCRIBE_RECOGNITION_DISCLOSURE_ID = 'acx-describe-recognition-disclosure';
 
 /** Join the reason ids that currently apply; `undefined` when none do. */
 const joinDescribedBy = (...ids: (string | undefined)[]): string | undefined => {
@@ -409,6 +451,14 @@ interface BulkDescribeCtaProps {
   remoteActionAriaDisabled?: true;
   /** §7 accent ownership: mark the describe surface as the single accent primary. */
   accentPrimary?: boolean;
+  /**
+   * GET /acx/v1/settings `recognition_enabled`. `undefined` while loading/unknown
+   * holds the primary and does not claim recognition is off (HAI-05 / FORM-04).
+   */
+  recognitionEnabled?: boolean;
+  isIdentifying: boolean;
+  /** True while GET /settings has not produced a boolean policy. */
+  isSettingsPending?: boolean;
   onSubmit: () => void;
   onCancel: () => void;
   onDismiss: () => void;
@@ -429,6 +479,9 @@ export const BulkDescribeCta = ({
   remoteActionTitle,
   remoteActionAriaDisabled,
   accentPrimary = false,
+  recognitionEnabled,
+  isIdentifying = false,
+  isSettingsPending = false,
   onSubmit,
   onCancel,
   onDismiss,
@@ -441,8 +494,11 @@ export const BulkDescribeCta = ({
     (progressPhase === DESCRIBE_RUN_PHASE.QUEUED ||
       progressPhase === DESCRIBE_RUN_PHASE.WARMING ||
       progressPhase === DESCRIBE_RUN_PHASE.DESCRIBING);
-  const canCancel =
+  const canCancelDescribe =
     isRunning && runId !== null && !progress.isTerminal && !progress.isError && !progressOwnsCancel;
+  // Identifying is a cancellable wait of its own: the footer owns Cancel while the
+  // describe progress panel is not yet mounted to own it.
+  const canCancel = isIdentifying || canCancelDescribe;
   // Cannot cancel an errored/finished run — offer to clear the panel instead so a
   // new run can start from the terminal state (FE-01, rg-003). Complete-phase
   // dismiss lives on the named done-state in BulkDescribeProgress.
@@ -455,7 +511,11 @@ export const BulkDescribeCta = ({
   // never removes it from the tab order, so the control and its reason stay
   // discoverable from the zero state (A11Y-11 keyboard walk, A11Y-24 empty state).
   const emptySelectionHeld = selectedCount === 0;
-  const submitHeld = offlineGated || emptySelectionHeld;
+  const recognitionKnownOn = recognitionEnabled === true;
+  const recognitionKnownOff = recognitionEnabled === false;
+  // In-flight identification and an unknown recognition policy hold the primary for
+  // the same reason: acting now would either double-submit or act on an unknown policy.
+  const submitHeld = offlineGated || emptySelectionHeld || isIdentifying || isSettingsPending;
   const gpuState = progress.gpuState ?? null;
 
   return (
@@ -471,36 +531,44 @@ export const BulkDescribeCta = ({
           // BR-73: the accent marker + accent chrome live on the submit button (the
           // actually-accent-styled primary), never on the neutral wrapper div.
           className={accentPrimary ? 'button acx-accent-primary-action' : 'button'}
-          // BR-74 / rg-003: offline and zero-selection never HTML-disable — that drops
-          // the control from the tab order and strands its aria-describedby reason on
-          // an unfocusable element. Both are held by aria-disabled + the onClick guard.
-          // In-flight submit/run still HTML-disable when online (double-submit guard).
+          // BR-74 / rg-003: offline, identifying, settings-pending, and zero-selection
+          // never HTML-disable — that drops the control from the tab order and strands
+          // its aria-describedby reason on an unfocusable element. All are held by
+          // aria-disabled + the onClick guard. In-flight submit/run still HTML-disable
+          // when online (double-submit guard).
           disabled={!offlineGated && (isSubmitting || isRunning)}
           aria-disabled={submitHeld ? true : undefined}
           aria-describedby={joinDescribedBy(
+            DESCRIBE_RECOGNITION_DISCLOSURE_ID,
             offlineGated ? DESCRIBE_OFFLINE_REASON_ID : undefined,
             emptySelectionHeld ? DESCRIBE_EMPTY_SELECTION_REASON_ID : undefined,
           )}
           title={remoteActionTitle}
           onClick={() => {
-            // BR-76: presentational hold guard mirrors MediaAnalyzeCta — activation is a
-            // no-op while held (the container onSubmit also fail-fasts offline).
+            // BR-76: presentational hold guard — activation is a no-op while held (the
+            // container onSubmit also fail-fasts offline and while identifying).
             if (submitHeld) {
               return;
             }
             onSubmit();
           }}
           {...(accentPrimary ? { [ACCENT_PRIMARY_ATTR]: true } : {})}
-          aria-label={!isSubmitting ? __('Describe selected', 'alt-context') : undefined}
         >
-          {isSubmitting
-            ? SYNC_VOCABULARY.describeStarting
-            : // A11Y-04 (2.5.3): at zero selection the visible text must match the
-              // accessible name, not read "Describe 0 selected".
-              emptySelectionHeld
-              ? __('Describe selected', 'alt-context')
-              : sprintf(__('Describe %d selected', 'alt-context'), selectedCount)}
+          {isIdentifying
+            ? __('Identifying people…', 'alt-context')
+            : isSettingsPending
+              ? __('Loading settings…', 'alt-context')
+              : isSubmitting
+                ? SYNC_VOCABULARY.describeStarting
+                : // A11Y-04 (2.5.3): the visible text IS the accessible name, so at zero
+                  // selection it must not read "Describe 0 selected".
+                  emptySelectionHeld
+                  ? __('Describe selected', 'alt-context')
+                  : sprintf(__('Describe %d selected', 'alt-context'), selectedCount)}
         </button>
+        <span role="status" aria-live="polite" className="screen-reader-text">
+          {isIdentifying ? __('Identifying people…', 'alt-context') : ''}
+        </span>
         {offlineGated && remoteActionTitle ? (
           <span id={DESCRIBE_OFFLINE_REASON_ID} className="screen-reader-text">
             {remoteActionTitle}
@@ -529,6 +597,18 @@ export const BulkDescribeCta = ({
           />
         )}
       </div>
+      <p id={DESCRIBE_RECOGNITION_DISCLOSURE_ID} className="acx-media-selection__bulk-describe-disclosure">
+        {recognitionKnownOn ? (
+          <>
+            {sprintf(__('Identifies people first (AI) · ~%d credits · Turn off in', 'alt-context'), selectedCount)}{' '}
+            <a href={toSettings()}>{__('Settings', 'alt-context')}</a>
+          </>
+        ) : recognitionKnownOff ? (
+          sprintf(__('People are not identified (recognition off) · ~%d credits', 'alt-context'), selectedCount)
+        ) : (
+          __('Checking recognition settings…', 'alt-context')
+        )}
+      </p>
       {isPanelVisible ? (
         <BulkDescribeProgress
           progress={progress}

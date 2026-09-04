@@ -273,6 +273,44 @@ exec "$@"
     assert not ssh_marker.exists(), "receiver ran even though the checker producer failed"
 
 
+def test_make_gate_names_a_missing_digest_tool_before_opening_ssh(tmp_path: Path) -> None:
+    """The digest tool is preflighted like `timeout`, not discovered mid-pipeline.
+
+    `sha256sum` is absent from a stock macOS PATH. Without a preflight the
+    recipe's `set -eu` aborted somewhere inside the payload pipeline, after the
+    SSH connection had already been opened, with no hint about which tool was
+    missing.
+    """
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    ssh_marker = tmp_path / "ssh-reached"
+    _write_executable(
+        fake_bin / "ssh",
+        f"#!/bin/sh\ntouch '{ssh_marker}'\ncat >/dev/null\n",
+    )
+    env = os.environ.copy()
+    env["PATH"] = f"{fake_bin}:{env['PATH']}"
+
+    result = subprocess.run(
+        [
+            "make",
+            "--no-print-directory",
+            "check-gpu-snapshots-live",
+            "GPU_SNAPSHOT_ENV=dev",
+            "GPU_SNAPSHOT_SHA256=acx-absent-digest-tool",
+        ],
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 2, result.stderr
+    assert "acx-absent-digest-tool command is required" in result.stderr
+    assert not ssh_marker.exists(), "the gate opened SSH before preflighting the digest tool"
+
+
 def test_make_outer_deadline_terminates_a_post_connection_stall(tmp_path: Path) -> None:
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()

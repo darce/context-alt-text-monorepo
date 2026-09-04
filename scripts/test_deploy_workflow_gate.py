@@ -82,7 +82,8 @@ def test_gpu_lifecycle_dispatch_is_explicit_and_flag_gated() -> None:
     assert lifecycle_index > deploy_index
     assert "gpu_lifecycle == 'true'" in lifecycle_step["if"]
     assert lifecycle_step["env"]["ACX_DEPLOY_GPU_LIFECYCLE"] == "1"
-    assert "ACX_GPU_READY_URL" in lifecycle_step["env"]
+    assert lifecycle_step["env"]["ACX_GPU_READY_URL"] == "${{ vars.ACX_GPU_READY_URL }}"
+    assert lifecycle_step["env"]["GPU_INSTANCE_ID"] == "${{ vars.ACX_GPU_INSTANCE_ID }}"
     assert "recognition-service.sh gpu-lifecycle" in lifecycle_step["run"]
 
 
@@ -92,6 +93,17 @@ def test_deploy_job_uses_pipefail_shell_default() -> None:
     assert workflow["jobs"]["deploy"]["defaults"]["run"]["shell"] == (
         "bash --noprofile --norc -eo pipefail {0}"
     )
+
+
+def test_gpu_lifecycle_dry_run_does_not_mask_gh_variable_failures() -> None:
+    runbook = RUNBOOK_PATH.read_text(encoding="utf-8")
+
+    assert 'export ACX_GPU_READY_URL="$(gh variable get' not in runbook
+    assert 'export GPU_INSTANCE_ID="$(gh variable get' not in runbook
+    assert 'ACX_GPU_READY_URL="$(gh variable get ACX_GPU_READY_URL)" || exit 1' in runbook
+    assert 'GPU_INSTANCE_ID="$(gh variable get ACX_GPU_INSTANCE_ID)" || exit 1' in runbook
+    assert "`pinned`" in runbook
+    assert "`resolved-by-name`" in runbook
 
 
 def test_make_target_keeps_credential_suites() -> None:

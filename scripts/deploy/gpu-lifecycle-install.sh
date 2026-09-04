@@ -24,6 +24,30 @@
 
 set -euo pipefail
 
+verify_gpu_lifecycle_timers() {
+    local timer
+    for timer in acx-gpu-start.timer acx-gpu-reap.timer; do
+        systemctl is-enabled --quiet "$timer" || {
+            echo "error: $timer is not enabled" >&2
+            return 1
+        }
+        systemctl is-active --quiet "$timer" || {
+            echo "error: $timer is not active" >&2
+            return 1
+        }
+        echo "$timer enabled active"
+    done
+}
+
+# Hermetic verification entrypoint used by deploy-contract tests. Keeping the
+# check in this script means tests execute the same fail-closed code that is
+# shipped to and run on the host.
+if [ "${1:-}" = "--verify-systemd-only" ]; then
+    [ "$#" -eq 1 ] || { echo "error: --verify-systemd-only accepts no arguments" >&2; exit 2; }
+    verify_gpu_lifecycle_timers
+    exit $?
+fi
+
 HOST=""
 SSH_USER="${OCI_USER:-ubuntu}"
 SSH_USER_EXPLICIT=0
@@ -161,7 +185,9 @@ fi
 # Resolved by display name against OCI rather than pasted, so a stale OCID in a
 # unit file cannot silently point the reaper at an instance that no longer
 # exists and report a clean exit forever (rg-005).
+gpu_instance_id_source="pinned"
 if [ -z "$GPU_INSTANCE_ID" ]; then
+    gpu_instance_id_source="resolved-by-name"
     command -v oci >/dev/null 2>&1 || {
         echo "error: no --instance-id given and no local oci CLI to resolve '${GPU_INSTANCE_NAME}'" >&2
         exit 2
@@ -177,6 +203,7 @@ if [ -z "$GPU_INSTANCE_ID" ]; then
     }
 fi
 echo "gpu instance: ${GPU_INSTANCE_NAME} (...${GPU_INSTANCE_ID: -12})"
+echo "OCID source:  ${gpu_instance_id_source}"
 echo "max lease:    ${MAX_LEASE_SECONDS}s   idle: ${IDLE_SECONDS}s"
 
 release_id=$(
@@ -365,6 +392,9 @@ TMPF
 
 sudo systemctl daemon-reload
 sudo systemctl enable --now acx-gpu-reap.timer
+# Prove the cost backstop synchronously before scheduling anything capable of
+# starting the GPU. acx-gpu-reap.service can only observe or STOP an instance.
+sudo systemctl start acx-gpu-reap.service
 sudo systemctl enable --now acx-gpu-start.timer
 echo '--- installed timers ---'
 systemctl list-timers --all --no-pager | grep acx-gpu || true
@@ -373,18 +403,9 @@ systemctl list-timers --all --no-pager | grep acx-gpu || true
 # A successful copy is not a successful deploy unless both cost-control timers
 # are enabled and currently scheduled. Keep this a separate, bounded transport
 # so its exit status cannot be hidden by the informational list-timers grep.
+printf -v verification_script '%s\nverify_gpu_lifecycle_timers\n' \
+    "$(declare -f verify_gpu_lifecycle_timers)"
 run_with_deadline "GPU lifecycle timer verification" \
-    ssh "${SSH_OPTIONS[@]}" -l "$SSH_USER" -- "$HOST" 'set -eu
-for timer in acx-gpu-start.timer acx-gpu-reap.timer; do
-    systemctl is-enabled --quiet "$timer" || {
-        echo "error: $timer is not enabled" >&2
-        exit 1
-    }
-    systemctl is-active --quiet "$timer" || {
-        echo "error: $timer is not active" >&2
-        exit 1
-    }
-    echo "$timer enabled active"
-done'
+    ssh "${SSH_OPTIONS[@]}" -l "$SSH_USER" -- "$HOST" "$verification_script"
 
 echo "gpu-lifecycle-install: done"

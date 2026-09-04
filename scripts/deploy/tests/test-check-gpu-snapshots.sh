@@ -316,6 +316,7 @@ expect_failure "checker derives future deployments from the shared registry" \
     "missing describe-load environment directory: ${fixture_root}/run/acx-write/future-preview" \
     ACX_GPU_DEPLOYMENTS_FILE="${fixture_root}/deployments-with-future.conf"
 installer_future_output=$(GPU_INSTANCE_ID=ocid1.test \
+    READY_URL=http://10.0.1.2:8000/health \
     ACX_GPU_DEPLOYMENTS_FILE="${fixture_root}/deployments-with-future.conf" \
     "${root}/scripts/deploy/gpu-lifecycle-install.sh" --host test.invalid \
     --ready-url http://127.0.0.1:8000/health/ready --dry-run 2>&1) || \
@@ -332,6 +333,7 @@ expect_failure "checker rejects an invalid shared deployment registry" \
     "invalid GPU snapshot deployment" \
     ACX_GPU_DEPLOYMENTS_FILE="${fixture_root}/deployments-invalid.conf"
 installer_invalid_output=$(GPU_INSTANCE_ID=ocid1.test \
+    READY_URL=http://10.0.1.2:8000/health \
     ACX_GPU_DEPLOYMENTS_FILE="${fixture_root}/deployments-invalid.conf" \
     "${root}/scripts/deploy/gpu-lifecycle-install.sh" --host test.invalid --dry-run 2>&1) && \
     installer_invalid_rc=0 || installer_invalid_rc=$?

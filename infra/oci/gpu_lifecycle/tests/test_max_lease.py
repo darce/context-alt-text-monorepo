@@ -12,15 +12,18 @@ import json
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import suppress
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
 from infra.oci.gpu_lifecycle.controller import (
     GpuInstance,
     GpuLifecycleController,
+    JobLoadSnapshot,
 )
 from infra.oci.gpu_lifecycle.reaper import (
+    CorruptRunningSinceLeaseError,
     RunningSinceLeaseStore,
     StaticJobLoadSource,
     _build_parser,
@@ -53,11 +56,27 @@ class BusyLoadSource:
         return JobLoadSnapshot(queue_depth=5, in_flight=2, batch_in_progress=True)
 
 
+class UntrustworthyLoadSource:
+    def snapshot(self) -> JobLoadSnapshot:
+        return JobLoadSnapshot(
+            queue_depth=0,
+            in_flight=0,
+            untrustworthy=True,
+        )
+
+
 NOW = datetime(2026, 9, 3, 12, 0, tzinfo=UTC)
+TEST_MONOTONIC = 100_000.0
+TEST_BOOT_ID = "test-boot"
 
 
 def _lease_store(path: Path) -> RunningSinceLeaseStore:
-    return RunningSinceLeaseStore(path=path, now=lambda: NOW)
+    return RunningSinceLeaseStore(
+        path=path,
+        now=lambda: NOW,
+        monotonic=lambda: TEST_MONOTONIC,
+        boot_id=TEST_BOOT_ID,
+    )
 
 
 def _write_lease(
@@ -66,12 +85,20 @@ def _write_lease(
     since: str,
     source: str = "start_actuator",
     instance_id: str = "instance-a",
+    with_monotonic_origin: bool = True,
 ) -> None:
+    record: dict[str, object] = {"since": since, "source": source}
+    if with_monotonic_origin:
+        parsed = datetime.fromisoformat(since.replace("Z", "+00:00"))
+        record.update(
+            monotonic_since=TEST_MONOTONIC - (NOW - parsed).total_seconds(),
+            boot_id=TEST_BOOT_ID,
+        )
     path.write_text(
         json.dumps(
             {
                 "schema_version": 2,
-                "instances": {instance_id: {"since": since, "source": source}},
+                "instances": {instance_id: record},
             }
         )
     )
@@ -134,6 +161,25 @@ def test_lease_expiry_stops_even_when_load_claims_a_batch_is_running() -> None:
     # Reported separately from a normal drain so an operator can tell the
     # backstop firing from the queue emptying.
     assert result.actuated == []
+
+
+def test_lease_expiry_does_not_strand_gpu_on_untrustworthy_load() -> None:
+    controller = GpuLifecycleController(idle_seconds=300)
+    actuator = RecordingActuator()
+
+    result = run_reap_cycle(
+        controller=controller,
+        instances=[_running(7200)],
+        load_source=UntrustworthyLoadSource(),
+        actuator=actuator,
+        fence_delay_seconds=0,
+        max_lease_seconds=3600,
+    )
+
+    assert actuator.stopped == []
+    assert result.lease_expired == []
+    assert result.fenced_off is True
+    assert "load snapshot untrustworthy" in result.errors[-1]
 
 
 def test_within_lease_the_busy_fence_still_protects_the_batch() -> None:
@@ -261,12 +307,56 @@ def test_first_running_observation_starts_lease_without_expiring_it(
     assert json.loads(path.read_text()) == {
         "instances": {
             "instance-a": {
+                "boot_id": TEST_BOOT_ID,
+                "monotonic_since": TEST_MONOTONIC,
                 "since": "2026-09-03T12:00:00Z",
                 "source": "first_observed",
             }
         },
         "schema_version": 2,
     }
+
+
+@pytest.mark.parametrize("wall_jump", [timedelta(hours=-1), timedelta(days=365)])
+def test_lease_age_uses_monotonic_clock_across_wall_clock_steps(
+    tmp_path: Path,
+    wall_jump: timedelta,
+) -> None:
+    clock = {"wall": NOW, "monotonic": 100.0}
+    store = RunningSinceLeaseStore(
+        path=tmp_path / "running-since.json",
+        now=lambda: clock["wall"],
+        monotonic=lambda: clock["monotonic"],
+        boot_id="boot-a",
+    )
+    store.record_start("instance-a")
+
+    clock["wall"] = NOW + wall_jump
+    clock["monotonic"] = 160.0
+    record = store.read("instance-a")
+
+    assert record is not None
+    assert store.age_seconds(record) == 60
+
+
+def test_future_skewed_lease_without_valid_monotonic_origin_is_rejected(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "running-since.json"
+    _write_lease(
+        path,
+        since="2027-09-03T12:00:00Z",
+        with_monotonic_origin=False,
+    )
+    store = RunningSinceLeaseStore(
+        path=path,
+        now=lambda: NOW,
+        monotonic=lambda: 100.0,
+        boot_id="boot-a",
+    )
+
+    with pytest.raises(CorruptRunningSinceLeaseError, match="future-dated"):
+        store.read("instance-a")
 
 
 def test_old_start_actuator_lease_forces_stop_despite_busy_load(tmp_path: Path) -> None:
@@ -346,17 +436,15 @@ def test_stopped_observation_removes_running_since_record(tmp_path: Path) -> Non
 
 def test_two_running_instance_leases_expire_independently(tmp_path: Path) -> None:
     path = tmp_path / "running-since.json"
-    path.write_text(
-        json.dumps(
-            {
-                "schema_version": 2,
-                "instances": {
-                    "instance-a": {"since": "2026-09-03T10:00:00Z", "source": "start_actuator"},
-                    "instance-b": {"since": "2026-09-03T10:30:00Z", "source": "first_observed"},
-                },
-            }
-        )
-    )
+    _write_lease(path, since="2026-09-03T10:00:00Z")
+    payload = json.loads(path.read_text())
+    payload["instances"]["instance-b"] = {
+        "since": "2026-09-03T10:30:00Z",
+        "source": "first_observed",
+        "monotonic_since": TEST_MONOTONIC - 5_400,
+        "boot_id": TEST_BOOT_ID,
+    }
+    path.write_text(json.dumps(payload))
     actuator = RecordingActuator()
 
     result = run_reap_cycle(
@@ -375,8 +463,16 @@ def test_two_running_instance_leases_expire_independently(tmp_path: Path) -> Non
 
 def test_stopped_sibling_does_not_reset_running_instance_lease(tmp_path: Path) -> None:
     path = tmp_path / "running-since.json"
-    current = {"now": datetime(2026, 9, 3, 12, 0, tzinfo=UTC)}
-    store = RunningSinceLeaseStore(path=path, now=lambda: current["now"])
+    current = {
+        "now": datetime(2026, 9, 3, 12, 0, tzinfo=UTC),
+        "monotonic": TEST_MONOTONIC,
+    }
+    store = RunningSinceLeaseStore(
+        path=path,
+        now=lambda: current["now"],
+        monotonic=lambda: current["monotonic"],
+        boot_id=TEST_BOOT_ID,
+    )
     actuator = RecordingActuator()
     instances = [
         _running(0, "instance-a"),
@@ -394,6 +490,7 @@ def test_stopped_sibling_does_not_reset_running_instance_lease(tmp_path: Path) -
     )
     first_bytes = path.read_bytes()
     current["now"] = datetime(2026, 9, 3, 12, 30, tzinfo=UTC)
+    current["monotonic"] += 1_800
     second = run_reap_cycle(
         controller=GpuLifecycleController(idle_seconds=300),
         instances=instances,
@@ -405,6 +502,7 @@ def test_stopped_sibling_does_not_reset_running_instance_lease(tmp_path: Path) -
     )
     second_bytes = path.read_bytes()
     current["now"] = datetime(2026, 9, 3, 13, 0, 1, tzinfo=UTC)
+    current["monotonic"] += 1_801
     third = run_reap_cycle(
         controller=GpuLifecycleController(idle_seconds=300),
         instances=instances,
@@ -469,7 +567,12 @@ def test_one_lease_store_failure_does_not_abort_healthy_sibling_reap(tmp_path: P
         actuator=actuator,
         fence_delay_seconds=0,
         max_lease_seconds=3600,
-        running_since_store=OneBrokenLeaseStore(path=path, now=lambda: NOW),
+        running_since_store=OneBrokenLeaseStore(
+            path=path,
+            now=lambda: NOW,
+            monotonic=lambda: TEST_MONOTONIC,
+            boot_id=TEST_BOOT_ID,
+        ),
     )
 
     assert actuator.stopped == ["instance-good"]
@@ -550,6 +653,8 @@ def test_start_cycle_records_lease_after_start_is_issued(tmp_path: Path) -> None
     assert json.loads(path.read_text()) == {
         "instances": {
             "instance-a": {
+                "boot_id": TEST_BOOT_ID,
+                "monotonic_since": TEST_MONOTONIC,
                 "since": "2026-09-03T12:00:00Z",
                 "source": "start_actuator",
             }

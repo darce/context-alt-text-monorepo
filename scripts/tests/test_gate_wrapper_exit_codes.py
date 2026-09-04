@@ -209,14 +209,14 @@ esac
     )
 
 
-def test_remote_run_pushes_scratch_ref_and_checks_out_the_pushed_sha(tmp_path: Path) -> None:
-    """Run the real transport path through a branch-hook-enforcing fake git."""
+@pytest.mark.parametrize("remote_exit", [0, 41])
+def test_remote_run_pushes_scratch_ref_and_checks_out_the_pushed_sha(
+    tmp_path: Path,
+    remote_exit: int,
+) -> None:
+    """Exercise the transport contract without running Linux gate tools locally."""
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
-    remote_home = tmp_path / "remote-home"
-    remote_clone = remote_home / "src" / "repo"
-    remote_clone.mkdir(parents=True)
-    (remote_clone / ".remote-gate-clone").touch()
     call_log = tmp_path / "git-calls"
     ssh_argv_log = tmp_path / "ssh-argv"
     pushed_sha = tmp_path / "pushed-sha"
@@ -239,10 +239,6 @@ case "$1 $2" in
     [[ "$refspec" == "HEAD:refs/workbay/gate" ]] || exit 72
     printf '%s\\n' "$REMOTE_GATE_TEST_SHA" > "$REMOTE_GATE_TEST_PUSHED_SHA"
     ;;
-  "checkout -qf")
-    [[ "$3" == "$(<"$REMOTE_GATE_TEST_PUSHED_SHA")" ]] || exit 73
-    ;;
-  "update-ref -d"|"clean -fdq") exit 0 ;;
   *) echo "unexpected git invocation: $*" >&2; exit 74 ;;
 esac
 """,
@@ -251,16 +247,7 @@ esac
         fake_bin / "ssh",
         """#!/usr/bin/env bash
 printf '%s\\0' "$@" > "$REMOTE_GATE_TEST_SSH_ARGV_LOG"
-exec bash -c "${!#}"
-""",
-    )
-    _write_executable(
-        fake_bin / "make",
-        """#!/usr/bin/env bash
-if [[ "$*" == "-n gate-preflight" ]]; then exit 2; fi
-if [[ "$*" == "test" ]]; then exit 0; fi
-echo "unexpected make invocation: $*" >&2
-exit 75
+exit "$REMOTE_GATE_TEST_SSH_EXIT"
 """,
     )
 
@@ -269,7 +256,6 @@ exit 75
         cwd=REPO_ROOT,
         env={
             **os.environ,
-            "HOME": str(remote_home),
             "PATH": f"{fake_bin}{os.pathsep}{os.environ['PATH']}",
             "WORKBAY_REMOTE_GATE_HOST": "gate@example.invalid",
             "WORKBAY_REMOTE_GATE_DIR": "src/repo",
@@ -278,6 +264,7 @@ exit 75
             "REMOTE_GATE_TEST_PUSHED_SHA": str(pushed_sha),
             "REMOTE_GATE_TEST_SHA": expected_sha,
             "REMOTE_GATE_TEST_SSH_ARGV_LOG": str(ssh_argv_log),
+            "REMOTE_GATE_TEST_SSH_EXIT": str(remote_exit),
         },
         text=True,
         capture_output=True,
@@ -286,9 +273,12 @@ exit 75
 
     calls = call_log.read_text(encoding="utf-8").splitlines()
     ssh_argv = _read_null_terminated_argv(ssh_argv_log)
-    assert completed.returncode == 0, f"remote run failed; stdout={completed.stdout!r}; stderr={completed.stderr!r}"
+    assert completed.returncode == remote_exit, (
+        f"remote run masked ssh exit {remote_exit}; "
+        f"stdout={completed.stdout!r}; stderr={completed.stderr!r}"
+    )
     assert "push --quiet --force gate@example.invalid:src/repo HEAD:refs/workbay/gate" in calls
-    assert f"checkout -qf {expected_sha}" in calls
+    assert pushed_sha.read_text(encoding="utf-8").strip() == expected_sha
     assert ssh_argv[:-1] == [
         "-o",
         "BatchMode=yes",
@@ -301,3 +291,4 @@ exit 75
         "gate@example.invalid",
     ]
     assert ssh_argv[-1].startswith("set -euo pipefail\n")
+    assert f"git checkout -qf {expected_sha} || exit 1" in ssh_argv[-1]

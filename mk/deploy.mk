@@ -158,16 +158,20 @@ deploy-rollback-dev-fir:
 # Verify a deployed environment matches local HEAD.
 # Reads remote ACX_IMAGE_REPO when present so VLM deploys verify without re-exporting
 # ACX_BUILD_TARGET. Bounded retries via ACX_VERIFY_ATTEMPTS / ACX_VERIFY_SLEEP.
-deploy-verify:
+deploy-verify: GPU_SNAPSHOT_ENV := $(ENV)
+deploy-verify: check-gpu-snapshots-live
 	@"$(DEPLOY_SCRIPT)" verify $(ENV)
 
-deploy-verify-dev:
+deploy-verify-dev: GPU_SNAPSHOT_ENV := dev
+deploy-verify-dev: check-gpu-snapshots-live
 	@"$(DEPLOY_SCRIPT)" verify dev
 
-deploy-verify-staging:
+deploy-verify-staging: GPU_SNAPSHOT_ENV := staging
+deploy-verify-staging: check-gpu-snapshots-live
 	@"$(DEPLOY_SCRIPT)" verify staging
 
-deploy-verify-prod:
+deploy-verify-prod: GPU_SNAPSHOT_ENV := prod
+deploy-verify-prod: check-gpu-snapshots-live
 	@"$(DEPLOY_SCRIPT)" verify prod
 
 # Cross-env health snapshot. Cheap triage tool.

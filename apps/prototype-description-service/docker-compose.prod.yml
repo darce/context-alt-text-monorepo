@@ -43,11 +43,21 @@ services:
       - HOST=0.0.0.0
       - PORT=8000
       - RECOGNITION_BLOB_ROOT=/var/lib/acx-blobs
+      - ACX_GPU_STATE_PATH=${ACX_GPU_STATE_PATH}
+      - ACX_GPU_STATE_STALE_SECONDS=${ACX_GPU_STATE_STALE_SECONDS:-180}
+      - ACX_DESCRIBE_LOAD_PATH=${ACX_DESCRIBE_LOAD_PATH}
+      - ACX_DESCRIBE_LOAD_REFRESH_SECONDS=${ACX_DESCRIBE_LOAD_REFRESH_SECONDS}
     volumes:
       # :ro for recognition + VLM (see docker-compose.env.yml contract comment).
       # InsightFace models are pre-seeded; Florence RW would be an RCE surface.
       - /opt/acx-backend/data/models:/data/cache:ro
       - acx_blobs:/var/lib/acx-blobs
+      # Host lifecycle units own gpu-state.json under /run/acx, so the API gets
+      # that directory read-only. The API exclusively owns describe-load.json
+      # under its namespaced /run/acx-write/prod directory and needs that mount
+      # writable for atomic temp-file + rename publication.
+      - ${ACX_GPU_SNAPSHOT_DIR}:/run/acx:ro
+      - ${ACX_DESCRIBE_LOAD_DIR}:/run/acx-write/prod
     tmpfs:
       - /var/cache/acx/hf_modules:mode=0700,uid=10001,gid=10001,size=32m,noexec
     expose:

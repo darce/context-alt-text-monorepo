@@ -1,11 +1,23 @@
-# Virtual root project — exists so the remote grok sandbox's root `uv sync`
+# Virtual root project — exists so the remote offload sandbox's root `uv sync`
 # (scripts/remote_agent.sh) succeeds in this monorepo, whose real Python
-# projects live under apps/*. Not a build target; installs nothing.
+# projects live under apps/*. Not a build target.
+#
+# It installs exactly one thing: pytest. remote_agent.sh runs `uv sync` and then
+# hands the caller's TEST_CMD a PATH of "$SBX/.venv/bin:$PATH" on the documented
+# premise that "the lane venv's bin makes a bare 'pytest' resolve". With
+# `dependencies = []` that premise is false here — the lane venv is empty, bare
+# `pytest` and `python3 -m pytest` both fail with "No module named pytest", and
+# `uv run --extra dev pytest` (the only command that would work) is refused by
+# the orchestrator's remote test-cmd allowlist. Pinning pytest here is what makes
+# the PATH contract true. Keep the floor compatible with the app projects'
+# own pin (apps/prototype-description-service/pyproject.toml).
 [project]
 name = "context-alt-text-monorepo-root"
 version = "0.0.0"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "pytest>=8.3.0,<10.0.0",
+]
 
 [tool.uv]
 package = false

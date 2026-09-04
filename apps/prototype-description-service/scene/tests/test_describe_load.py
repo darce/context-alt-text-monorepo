@@ -7,6 +7,7 @@ Key set, atomic write, single-run-only counts, and RLS-bypass discipline
 from __future__ import annotations
 
 import asyncio
+import fcntl
 import json
 import os
 import tempfile
@@ -179,6 +180,26 @@ def test_write_load_snapshot_serializes_concurrent_unique_temp_files(tmp_path: P
     assert temp_paths[0] != temp_paths[1]
     assert not list(tmp_path.glob("*.tmp"))
     assert json.loads(target.read_text()) == {"writer": 2}
+
+
+def test_write_load_snapshot_holds_process_fence_during_publish(tmp_path: Path, monkeypatch):
+    target = tmp_path / "describe-load.json"
+    real_replace = os.replace
+
+    def assert_fenced_replace(src, dst):
+        lock_fd = os.open(tmp_path / "describe-load.json.lock", os.O_RDONLY)
+        try:
+            with pytest.raises(BlockingIOError):
+                fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        finally:
+            os.close(lock_fd)
+        real_replace(src, dst)
+
+    monkeypatch.setattr(load_mod.os, "replace", assert_fenced_replace)
+
+    write_load_snapshot({"writer": 1}, target)
+
+    assert json.loads(target.read_text()) == {"writer": 1}
 
 
 def test_run_startup_load_snapshot_writes_file_with_counts(tmp_path: Path):

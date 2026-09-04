@@ -31,7 +31,7 @@
     "arch:tips": "node scripts/check-architecture-compliance.js --tips",
     "arch:verbose": "node scripts/check-architecture-compliance.js --tips --verbose",
     "check": "npm run lint && npm run typecheck && npm run arch && npm run test -- --run",
-    "check:all": "npm run lint:fix && npm run format:fix && npm run typecheck && npm run arch:verbose && npm run test",
+    "check:all": "npm run lint && npm run typecheck && npm run arch:verbose && npm run test",
     "typecheck": "tsc --noEmit --project tsconfig.type-check.json",
     "generate:contracts": "json2ts -i ../../packages/shared-contracts/schemas/ -o js/admin/api/generated",
     "nuke": "rm -rf node_modules public && npm ci && npm run build"

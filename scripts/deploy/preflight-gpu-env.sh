@@ -8,8 +8,14 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/gpu-env-contract.sh
 source "${script_dir}/lib/gpu-env-contract.sh"
 
+check_reaper=0
+if [[ "${1:-}" == --check-reaper ]]; then
+    check_reaper=1
+    shift
+fi
+
 if [[ $# -ne 2 ]]; then
-    echo "Usage: scripts/deploy/preflight-gpu-env.sh <producer-env-file> <demo-env-file>" >&2
+    echo "Usage: scripts/deploy/preflight-gpu-env.sh [--check-reaper] <producer-env-file> <demo-env-file>" >&2
     exit 2
 fi
 
@@ -28,6 +34,11 @@ relevant_keys=(
     ACX_GPU_ENDPOINT_URL
     ACX_GPU_ENDPOINT_API_KEY
     ACX_GPU_ENDPOINT_ALLOWLIST
+    ACX_GPU_CONNECT_TIMEOUT_SECONDS
+    ACX_GPU_READ_TIMEOUT_SECONDS
+    ACX_GPU_MAX_CONCURRENT_CALLS
+    ACX_GPU_WARMUP_TIMEOUT_SECONDS
+    ACX_GPU_PROMPT_VERSION
     ACX_GPU_SNAPSHOT_DIR
     ACX_GPU_STATE_PATH
     ACX_GPU_STATE_STALE_SECONDS
@@ -39,17 +50,29 @@ relevant_keys=(
     WORDPRESS_CONFIG_EXTRA
 )
 
-# Compose uses the final assignment. Reject duplicate contract keys instead of
-# letting an earlier safe-looking value conceal the value deployment consumes.
-reject_duplicate_keys() {
-    local role="$1" file="$2" key line count
+# The contract deliberately uses a strict Compose-dotenv subset. This keeps the
+# value checked here byte-identical to the value Compose deploys: no whitespace
+# around '=', export prefix, interpolation, or inline comments. Quotes around a
+# complete value are supported. Count non-canonical assignments too so they
+# cannot conceal an earlier safe-looking value.
+validate_contract_assignments() {
+    local role="$1" file="$2" key line count value
     for key in "${relevant_keys[@]}"; do
         count=0
         while IFS= read -r line || [[ -n "$line" ]]; do
             line="${line%$'\r'}"
-            case "$line" in
-                "${key}="*) count=$((count + 1)) ;;
-            esac
+            if [[ "$line" =~ ^[[:space:]]*(export[[:space:]]+)?${key}[[:space:]]*= ]]; then
+                count=$((count + 1))
+                if [[ "$line" != "${key}="* ]]; then
+                    echo "ERROR [7] ${role} env ${key} assignment is not canonical KEY=value syntax. Remove whitespace/export ambiguity before deployment." >&2
+                    exit 1
+                fi
+                value="${line#*=}"
+                if [[ "$value" == *'$'* || "$value" =~ [[:space:]]# ]]; then
+                    echo "ERROR [7] ${role} env ${key} must not use interpolation or an inline comment. Store the exact deployed value." >&2
+                    exit 1
+                fi
+            fi
         done < "$file"
         if (( count > 1 )); then
             echo "ERROR [7] ${role} env contains duplicate ${key} assignments. Keep only the final effective assignment before deployment (count=${count})." >&2
@@ -58,8 +81,8 @@ reject_duplicate_keys() {
     done
 }
 
-reject_duplicate_keys producer "$producer_env"
-reject_duplicate_keys demo "$demo_env"
+validate_contract_assignments producer "$producer_env"
+validate_contract_assignments demo "$demo_env"
 
 # Return the final exact KEY= entry without evaluating shell syntax.
 env_get() {
@@ -79,14 +102,6 @@ env_get() {
         esac
     done < "$file"
     printf '%s' "$value"
-}
-
-php_define_value() {
-    local name="$1" source_value="$2"
-    printf '%s' "$source_value" \
-        | tr ';' '\n' \
-        | sed -n "s/.*define(['\"]${name}['\"],[[:space:]]*['\"]\([^'\"]*\)['\"].*/\1/p" \
-        | sed -n '1p'
 }
 
 is_placeholder() {
@@ -114,20 +129,40 @@ hostname_matches_allowlist() {
     return 1
 }
 
-is_private_ipv4() {
-    local address="$1" first second third fourth
-    IFS=. read -r first second third fourth <<< "$address"
-    for octet in "$first" "$second" "$third" "$fourth"; do
-        [[ "$octet" =~ ^[0-9]+$ ]] && (( 10#$octet <= 255 )) || return 1
-    done
-    [[ "$first" == 10 || "$first" == 127 ]] && return 0
-    [[ "$first" == 192 && "$second" == 168 ]] && return 0
-    [[ "$first" == 172 ]] && (( 10#$second >= 16 && 10#$second <= 31 )) && return 0
-    return 1
+ip_address_class() {
+    python3 -c '
+import ipaddress
+import sys
+try:
+    address = ipaddress.ip_address(sys.argv[1])
+except ValueError:
+    raise SystemExit(2)
+raise SystemExit(0 if address.is_private or address.is_loopback else 1)
+' "$1" 2>/dev/null
+}
+
+resolved_addresses_are_private() {
+    local host="$1" addresses
+    addresses="$(getent ahosts "$host" 2>/dev/null | awk 'NF { print $1 }' | sort -u)" || return 1
+    [[ -n "$addresses" ]] || return 1
+    printf '%s\n' "$addresses" | python3 -c '
+import ipaddress
+import sys
+addresses = [line.strip() for line in sys.stdin if line.strip()]
+if not addresses:
+    raise SystemExit(1)
+for raw in addresses:
+    try:
+        address = ipaddress.ip_address(raw)
+    except ValueError:
+        raise SystemExit(1)
+    if not (address.is_private or address.is_loopback):
+        raise SystemExit(1)
+' 2>/dev/null
 }
 
 is_private_gpu_endpoint() {
-    local url="$1" allowlist="$2" authority host
+    local url="$1" allowlist="$2" authority host address_status
     is_http_url "$url" || return 1
     authority="${url#*://}"
     authority="${authority%%/*}"
@@ -135,15 +170,18 @@ is_private_gpu_endpoint() {
     if [[ "$authority" == \[*\]* ]]; then
         host="${authority#\[}"
         host="${host%%\]*}"
-        [[ "$host" == ::1 ]] && return 0
-        return 1
-    fi
-    host="${authority%%:*}"
-    if [[ "$host" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-        is_private_ipv4 "$host"
+        ip_address_class "$host"
         return
     fi
-    hostname_matches_allowlist "$host" "$allowlist"
+    host="${authority%%:*}"
+    if ip_address_class "$host"; then
+        return 0
+    else
+        address_status=$?
+        [[ "$address_status" -eq 2 ]] || return 1
+    fi
+    hostname_matches_allowlist "$host" "$allowlist" || return 1
+    resolved_addresses_are_private "$host"
 }
 
 is_tenant_uuid() {
@@ -152,7 +190,124 @@ is_tenant_uuid() {
 
 vault_map_value() {
     local map="$1" key="$2"
-    printf '%s' "$map" | sed -n "s/.*[\"']${key}[\"'][[:space:]]*:[[:space:]]*[\"']\([^\"']*\)[\"'].*/\1/p" | sed -n '1p'
+    printf '%s' "$map" | python3 -c '
+import json
+import sys
+
+class DuplicateKey(ValueError):
+    pass
+
+def object_without_duplicates(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise DuplicateKey(key)
+        result[key] = value
+    return result
+
+try:
+    mapping = json.load(sys.stdin, object_pairs_hook=object_without_duplicates)
+except (json.JSONDecodeError, DuplicateKey):
+    raise SystemExit(1)
+if not isinstance(mapping, dict) or not mapping:
+    raise SystemExit(1)
+if any(not isinstance(key, str) or not key or not isinstance(value, str) or not value for key, value in mapping.items()):
+    raise SystemExit(1)
+value = mapping.get(sys.argv[1])
+if not isinstance(value, str):
+    raise SystemExit(1)
+sys.stdout.write(value)
+' "$key" 2>/dev/null
+}
+
+is_finite_positive_number() {
+    python3 -c '
+import math
+import sys
+try:
+    value = float(sys.argv[1])
+except ValueError:
+    raise SystemExit(1)
+raise SystemExit(0 if math.isfinite(value) and value > 0 else 1)
+' "$1" 2>/dev/null
+}
+
+validate_runtime_gpu_settings() {
+    local file="$1" key value entry
+    for key in ACX_GPU_CONNECT_TIMEOUT_SECONDS ACX_GPU_READ_TIMEOUT_SECONDS; do
+        value="$(env_get "$file" "$key")"
+        if ! is_finite_positive_number "$value"; then
+            echo "ERROR [10] producer ${key} must be a finite positive number (redacted length=${#value})." >&2
+            exit 1
+        fi
+    done
+
+    value="$(env_get "$file" ACX_GPU_MAX_CONCURRENT_CALLS)"
+    if [[ ! "$value" =~ ^[1-9][0-9]*$ ]]; then
+        echo "ERROR [10] producer ACX_GPU_MAX_CONCURRENT_CALLS must be a positive integer (redacted length=${#value})." >&2
+        exit 1
+    fi
+
+    value="$(env_get "$file" ACX_GPU_WARMUP_TIMEOUT_SECONDS)"
+    if ! is_finite_positive_number "$value" \
+        || ! python3 -c 'import sys; raise SystemExit(0 if float(sys.argv[1]) <= 3600 else 1)' "$value" 2>/dev/null; then
+        echo "ERROR [10] producer ACX_GPU_WARMUP_TIMEOUT_SECONDS must be finite and in (0, 3600] (redacted length=${#value})." >&2
+        exit 1
+    fi
+
+    value="$(env_get "$file" ACX_GPU_ENDPOINT_ALLOWLIST)"
+    [[ -n "$value" ]] || {
+        echo "ERROR [10] producer ACX_GPU_ENDPOINT_ALLOWLIST must be a non-empty comma-separated hostname pattern list." >&2
+        exit 1
+    }
+    while IFS= read -r entry || [[ -n "$entry" ]]; do
+        if [[ -z "$entry" || "$entry" =~ [[:space:]] || ! "$entry" =~ ^(\*\.)?[A-Za-z0-9][A-Za-z0-9._?-]*$ ]]; then
+            echo "ERROR [10] producer ACX_GPU_ENDPOINT_ALLOWLIST contains an invalid hostname pattern; values are redacted." >&2
+            exit 1
+        fi
+    done < <(printf '%s' "$value" | tr ',' '\n')
+
+    value="$(env_get "$file" ACX_GPU_PROMPT_VERSION)"
+    [[ -n "$value" ]] || {
+        echo "ERROR [10] producer ACX_GPU_PROMPT_VERSION must be non-empty." >&2
+        exit 1
+    }
+}
+
+preflight_gpu_reaper() {
+    local unit environment_file instance_id max_lease
+    command -v systemctl >/dev/null 2>&1 || {
+        echo "ERROR [11] acx-gpu-reap.timer cannot be verified because systemctl is unavailable." >&2
+        exit 1
+    }
+    systemctl is-enabled --quiet acx-gpu-reap.timer \
+        && systemctl is-active --quiet acx-gpu-reap.timer || {
+            echo "ERROR [11] acx-gpu-reap.timer must be enabled and active before the GPU flip." >&2
+            exit 1
+        }
+    unit="$(systemctl cat acx-gpu-reap.service 2>/dev/null)" || {
+        echo "ERROR [11] acx-gpu-reap.service effective unit could not be read." >&2
+        exit 1
+    }
+    [[ "$unit" == *'--mode reap'* && "$unit" == *'--instance-id ${GPU_INSTANCE_ID}'* \
+        && "$unit" == *'--max-lease-seconds ${MAX_LEASE_SECONDS}'* ]] || {
+        echo "ERROR [11] acx-gpu-reap.service must target GPU_INSTANCE_ID with a finite MAX_LEASE_SECONDS." >&2
+        exit 1
+    }
+    environment_file="$(systemctl show acx-gpu-reap.service --property=EnvironmentFiles --value 2>/dev/null)"
+    environment_file="${environment_file%% *}"
+    [[ -r "$environment_file" ]] || {
+        echo "ERROR [11] acx-gpu-reap.service EnvironmentFile is missing or unreadable." >&2
+        exit 1
+    }
+    instance_id="$(env_get "$environment_file" GPU_INSTANCE_ID)"
+    max_lease="$(env_get "$environment_file" MAX_LEASE_SECONDS)"
+    [[ "$instance_id" =~ ^ocid1\.instance\.oc[0-9]+\.[A-Za-z0-9._-]+$ \
+        && "$max_lease" =~ ^[1-9][0-9]*$ ]] || {
+        echo "ERROR [11] reaper GPU_INSTANCE_ID must be an instance OCID and MAX_LEASE_SECONDS a finite positive integer." >&2
+        exit 1
+    }
+    printf "MANUAL STOP fallback: oci compute instance action --action STOP --instance-id '%s'\n" "$instance_id"
 }
 
 validate_side() {
@@ -187,7 +342,9 @@ validate_side() {
     secret_backend="$(env_get "$file" RECOGNITION_SECRET_BACKEND)"
     if [[ "$role" == producer && "$secret_backend" == oci_vault ]]; then
         vault_map="$(env_get "$file" RECOGNITION_VAULT_SECRET_MAP)"
-        vault_gpu_ref="$(vault_map_value "$vault_map" ACX_GPU_ENDPOINT_API_KEY)"
+        if ! vault_gpu_ref="$(vault_map_value "$vault_map" ACX_GPU_ENDPOINT_API_KEY)"; then
+            vault_gpu_ref=""
+        fi
         if is_placeholder "$vault_gpu_ref" || ! printf '%s' "$vault_gpu_ref" | LC_ALL=C grep -Eq '^ocid1\.vaultsecret\.oc[0-9]+\.[A-Za-z0-9_-]*\.[A-Za-z0-9._-]+$'; then
             echo "ERROR [3] producer oci_vault backend requires a non-placeholder ACX_GPU_ENDPOINT_API_KEY OCID in RECOGNITION_VAULT_SECRET_MAP (redacted length=${#vault_gpu_ref})." >&2
             exit 1
@@ -196,8 +353,11 @@ validate_side() {
             echo "ERROR [3] producer oci_vault backend requires ACX_GPU_ENDPOINT_API_KEY to be blank; Vault is the only credential source (redacted length=${#endpoint_api_key})." >&2
             exit 1
         fi
-    elif [[ -n "$endpoint_url" ]] && is_placeholder "$endpoint_api_key"; then
+    elif [[ "$role" == producer && -n "$endpoint_url" ]] && is_placeholder "$endpoint_api_key"; then
         echo "ERROR [3] ${role} env backend requires a non-placeholder ACX_GPU_ENDPOINT_API_KEY while ACX_GPU_ENDPOINT_URL is set (redacted length=${#endpoint_api_key})." >&2
+        exit 1
+    elif [[ "$role" == demo && -n "$endpoint_api_key" ]]; then
+        echo "ERROR [3] demo ACX_GPU_ENDPOINT_API_KEY must be absent; only the producer consumes this secret (redacted length=${#endpoint_api_key})." >&2
         exit 1
     fi
 
@@ -208,8 +368,9 @@ validate_side() {
         state_dir="${state_path%/*}"
         [[ -n "$state_dir" ]] || state_dir="/"
     fi
-    if [[ -z "$snapshot_dir" || -z "$state_path" || "$normalized_snapshot_dir" != "$state_dir" ]]; then
-        echo "ERROR [4] ${role} ACX_GPU_SNAPSHOT_DIR and ACX_GPU_STATE_PATH must both be set and name the same directory. Set ACX_GPU_STATE_PATH=<snapshot-dir>/gpu-state.json." >&2
+    if [[ "$normalized_snapshot_dir" != /run/acx || "$state_dir" != /run/acx \
+        || "${state_path##*/}" != gpu-state.json ]]; then
+        echo "ERROR [4] ${role} ACX_GPU_SNAPSHOT_DIR and ACX_GPU_STATE_PATH must be /run/acx and /run/acx/gpu-state.json, respectively, as required by the compose mount and lifecycle units." >&2
         exit 1
     fi
 
@@ -219,7 +380,7 @@ validate_side() {
             exit 1
             ;;
     esac
-    if [[ -z "${stale_seconds//0/}" ]]; then
+    if [[ -z "${stale_seconds//0/}" ]] || ! is_finite_positive_number "$stale_seconds"; then
         echo "ERROR [5] ${role} ACX_GPU_STATE_STALE_SECONDS must be a positive integer (redacted length=${#stale_seconds})." >&2
         exit 1
     fi
@@ -229,9 +390,13 @@ validate_side() {
         recognition_api_key="$(env_get "$file" ACX_RECOGNITION_API_KEY)"
         recognition_tenant_id="$(env_get "$file" ACX_RECOGNITION_TENANT_ID)"
         wordpress_config_extra="$(env_get "$file" WORDPRESS_CONFIG_EXTRA)"
-        [[ -n "$recognition_url" ]] || recognition_url="$(php_define_value ACX_RECOGNITION_URL "$wordpress_config_extra")"
-        [[ -n "$recognition_api_key" ]] || recognition_api_key="$(php_define_value ACX_RECOGNITION_API_KEY "$wordpress_config_extra")"
-        [[ -n "$recognition_tenant_id" ]] || recognition_tenant_id="$(php_define_value ACX_RECOGNITION_TENANT_ID "$wordpress_config_extra")"
+        if [[ -n "$recognition_url" || -n "$recognition_api_key" || -n "$recognition_tenant_id" ]]; then
+            echo "ERROR [6] demo standalone ACX_RECOGNITION_* entries are ambiguous. Remove them and edit only WORDPRESS_CONFIG_EXTRA PHP constants." >&2
+            exit 1
+        fi
+        recognition_url="$(php_define_value ACX_RECOGNITION_URL "$wordpress_config_extra")"
+        recognition_api_key="$(php_define_value ACX_RECOGNITION_API_KEY "$wordpress_config_extra")"
+        recognition_tenant_id="$(php_define_value ACX_RECOGNITION_TENANT_ID "$wordpress_config_extra")"
 
         [[ -n "$recognition_url" ]] || missing_recognition+=(ACX_RECOGNITION_URL)
         [[ -n "$recognition_api_key" ]] || missing_recognition+=(ACX_RECOGNITION_API_KEY)
@@ -259,6 +424,11 @@ validate_side() {
     fi
 }
 
+if (( check_reaper )); then
+    preflight_gpu_reaper
+fi
+
+validate_runtime_gpu_settings "$producer_env"
 validate_side producer "$producer_env"
 validate_side demo "$demo_env"
 
@@ -275,11 +445,5 @@ for key in "${shared_keys[@]}"; do
         exit 1
     fi
 done
-producer_secret_backend="$(env_get "$producer_env" RECOGNITION_SECRET_BACKEND)"
-if [[ "$producer_secret_backend" != oci_vault ]] \
-    && [[ "$(env_get "$producer_env" ACX_GPU_ENDPOINT_API_KEY)" != "$(env_get "$demo_env" ACX_GPU_ENDPOINT_API_KEY)" ]]; then
-    echo "ERROR [8] producer and demo ACX_GPU_ENDPOINT_API_KEY values differ. Make the two credential assertions identical; values are redacted." >&2
-    exit 1
-fi
 adapter="$(env_get "$producer_env" ACX_DESCRIPTION_ADAPTER)"
 printf 'OK: GPU env preflight passed (producer+demo, adapter=%s).\n' "$adapter"

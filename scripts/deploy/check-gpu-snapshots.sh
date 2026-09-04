@@ -7,6 +7,21 @@ if [ -z "${BASH_VERSION:-}" ]; then
 fi
 set -euo pipefail
 
+# A syntactically complete prefix must never be mistaken for a completed gate.
+# This also protects a locally truncated checker whose shortened bytes would
+# otherwise receive a valid transport digest.
+checker_complete=0
+checker_exit_guard() {
+    local rc=$?
+    trap - EXIT
+    if [ "$rc" -eq 0 ] && [ "$checker_complete" -ne 1 ]; then
+        echo "ERROR: GPU snapshot checker ended before completing validation" >&2
+        exit 97
+    fi
+    exit "$rc"
+}
+trap checker_exit_guard EXIT
+
 # The deploy path ships this checker to the VM over stdin (`bash -s`), which
 # leaves BASH_SOURCE unset; `set -u` then makes an unguarded read fatal, and a
 # bare `cd ""/../..` would silently resolve repo_root to `/`. A piped run has no
@@ -25,7 +40,14 @@ load_stale_seconds=${ACX_DESCRIBE_LOAD_STALE_SECONDS:-120}
 reader_uid=${ACX_GPU_READER_UID:-10001}
 now_epoch=${ACX_NOW_EPOCH:-$(date +%s)}
 config_only=${ACX_GPU_SNAPSHOT_CONFIG_ONLY:-0}
+# Keep this synchronized with the runtime snapshot readers until the policy is
+# promoted to one shared source of truth.
+future_skew_tolerance_seconds=5
+# This independently reviewed minimum prevents a shortened registry from
+# narrowing the deployment gate while still permitting future environments.
+required_deployments="dev dev-fir staging prod"
 load_environments=
+deployment_count=0
 
 die() {
     echo "ERROR: $*" >&2
@@ -44,6 +66,7 @@ append_deployment() {
         *" $environment "*) die "duplicate GPU snapshot deployment '$environment' in $source" ;;
     esac
     load_environments="${load_environments:+${load_environments} }${environment}"
+    deployment_count=$((deployment_count + 1))
 }
 
 load_deployments() {
@@ -70,6 +93,14 @@ load_deployments() {
         done < "$deployments_file"
     fi
     [ -n "$load_environments" ] || die "GPU snapshot deployment registry is empty: $source"
+
+    local required
+    for required in $required_deployments; do
+        case " $load_environments " in
+            *" $required "*) ;;
+            *) die "GPU snapshot deployment registry is missing required environment '$required': $source" ;;
+        esac
+    done
 }
 
 load_deployments
@@ -168,6 +199,7 @@ if ! grep -Fq -- "ACX_GPU_STATE_PATH=${state_path}" <<<"$api_block"; then
 fi
 
 if [ "$config_only" -eq 1 ]; then
+    checker_complete=1
     echo "OK: GPU snapshot lifecycle and compose configuration agree"
     exit 0
 fi
@@ -287,13 +319,15 @@ else:
 print(written_at)
 ' "$kind" "$path") || die "$label snapshot failed schema validation: $path"
     age=$(awk -v now="$now_epoch" -v written="$written_at" 'BEGIN { printf "%.6f", now - written }')
-    awk -v age="$age" 'BEGIN { exit !(age >= 0) }' ||
-        die "$label snapshot written_at is in the future: $written_at ($path)"
+    awk -v age="$age" -v tolerance="$future_skew_tolerance_seconds" \
+        'BEGIN { exit !(age >= -tolerance) }' ||
+        die "$label snapshot written_at exceeds ${future_skew_tolerance_seconds}s future-skew tolerance: $written_at ($path)"
     awk -v age="$age" -v budget="$budget" 'BEGIN { exit !(age <= budget) }' ||
         die "stale $label snapshot: age ${age}s exceeds ${budget}s budget ($path)"
 }
 
 check_snapshot "GPU state" "gpu-state" "$unit_state_path" "$state_stale_seconds"
+checked_deployment_count=0
 for environment in $load_environments; do
     environment_dir="${unit_load_dir}/${environment}"
     [ -d "$environment_dir" ] ||
@@ -307,6 +341,11 @@ for environment in $load_environments; do
     fi
     check_snapshot "describe load (${environment})" "load" \
         "${environment_dir}/describe-load.json" "$load_stale_seconds"
+    checked_deployment_count=$((checked_deployment_count + 1))
 done
 
+[ "$checked_deployment_count" -eq "$deployment_count" ] ||
+    die "GPU snapshot checker evaluated ${checked_deployment_count} of ${deployment_count} registered environments"
+
+checker_complete=1
 echo "OK: GPU state and per-environment describe-load deployment contract is fresh"

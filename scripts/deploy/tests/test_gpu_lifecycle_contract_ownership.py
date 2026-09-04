@@ -107,9 +107,14 @@ def test_contract_does_not_claim_the_state_dir_is_api_owned() -> None:
 def test_each_registered_deployment_uses_api_writable_tmpfiles_template() -> None:
     """The validated registry must drive one root:10001 0775 tmpfiles rule."""
     deployments = DEPLOYMENTS.read_text(encoding="utf-8").splitlines()
+    required_deployments = {"dev", "dev-fir", "staging", "prod"}
     assert deployments, "GPU snapshot deployment registry must not be empty"
     assert len(deployments) == len(set(deployments)), "deployments must be unique"
     assert all(re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", item) for item in deployments)
+    assert required_deployments <= set(deployments), (
+        "GPU snapshot deployment registry is missing required environments: "
+        f"{sorted(required_deployments - set(deployments))}"
+    )
 
     installer = INSTALL_SCRIPT.read_text(encoding="utf-8")
     assert "d /run/acx-write/${environment} 0775 root 10001 -" in installer

@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import re
 import subprocess
+import time
 from pathlib import Path
 
 import pytest
@@ -55,6 +56,23 @@ def _remote_callsite_assignments() -> list[tuple[str, dict[str, str]]]:
                 "verify_live_gpu_snapshots() {",
                 "\n}\n",
             ),
+        ),
+    ]
+
+
+def _transport_blocks() -> list[tuple[str, str]]:
+    return [
+        (
+            "Makefile",
+            MAKEFILE.read_text(encoding="utf-8")
+            .split("check-gpu-snapshots-live:", 1)[1]
+            .split("\n# Default target", 1)[0],
+        ),
+        (
+            "scripts/deploy/recognition-service.sh",
+            RECOGNITION_DEPLOY.read_text(encoding="utf-8")
+            .split("verify_live_gpu_snapshots() {", 1)[1]
+            .split("\n}\n", 1)[0],
         ),
     ]
 
@@ -154,6 +172,108 @@ def test_remote_snapshot_callsite_executes_without_repo_checkout(
         f"{source_name} remote checker invocation fell back to the absent repo install script\n"
         f"{output}"
     )
+
+
+@pytest.mark.parametrize(("source_name", "block"), _transport_blocks())
+def test_each_transport_frames_and_bounds_the_checker_payload(
+    source_name: str, block: str
+) -> None:
+    for required in (
+        "ACX_GPU_CHECKER_V1",
+        "expected_bytes",
+        "expected_sha",
+        "sha256sum",
+        "truncated GPU checker payload",
+        "timeout --foreground",
+        "BatchMode=yes",
+        "ConnectTimeout=10",
+        "ServerAliveInterval=5",
+        "ServerAliveCountMax=2",
+    ):
+        assert required in block, f"{source_name} is missing transport guard {required}"
+
+
+def _write_executable(path: Path, source: str) -> None:
+    path.write_text(source, encoding="utf-8")
+    path.chmod(0o755)
+
+
+def test_make_transport_does_not_hide_a_missing_checker_producer(tmp_path: Path) -> None:
+    """Regression: the old pipeline executed an empty checker and exited zero."""
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    ssh_marker = tmp_path / "ssh-reached"
+    _write_executable(
+        fake_bin / "ssh",
+        f"#!/bin/sh\ntouch '{ssh_marker}'\ncat >/dev/null\n",
+    )
+    _write_executable(
+        fake_bin / "timeout",
+        """#!/usr/bin/env bash
+while (( $# )); do
+  case "$1" in
+    --foreground|--signal=*|--kill-after=*) shift ;;
+    *s) shift; break ;;
+    *) break ;;
+  esac
+done
+exec "$@"
+""",
+    )
+    env = os.environ.copy()
+    env["PATH"] = f"{fake_bin}:{env['PATH']}"
+
+    result = subprocess.run(
+        [
+            "make",
+            "--no-print-directory",
+            "check-gpu-snapshots-live",
+            "GPU_SNAPSHOT_ENV=dev",
+            f"GPU_SNAPSHOT_CHECKER={tmp_path / 'missing-checker.sh'}",
+        ],
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert not ssh_marker.exists(), "receiver ran even though the checker producer failed"
+
+
+def test_make_outer_deadline_terminates_a_post_connection_stall(tmp_path: Path) -> None:
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    ssh_marker = tmp_path / "ssh-connected"
+    _write_executable(
+        fake_bin / "ssh",
+        f"#!/bin/sh\ntouch '{ssh_marker}'\nexec sleep 10\n",
+    )
+    env = os.environ.copy()
+    env["PATH"] = f"{fake_bin}:{env['PATH']}"
+
+    started = time.monotonic()
+    result = subprocess.run(
+        [
+            "make",
+            "--no-print-directory",
+            "check-gpu-snapshots-live",
+            "GPU_SNAPSHOT_ENV=dev",
+            "GPU_SNAPSHOT_GATE_TIMEOUT_SECONDS=1",
+        ],
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=8,
+    )
+    elapsed = time.monotonic() - started
+
+    assert ssh_marker.exists(), "the fake SSH command never reached its connected stall"
+    assert result.returncode != 0
+    assert elapsed < 6, f"outer deadline did not bound the SSH command ({elapsed:.2f}s)"
 
 
 def test_check_gpu_snapshots_shell_suite() -> None:

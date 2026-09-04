@@ -50,6 +50,27 @@ VM identity may only *read* secret contents, not manage them):
 Allow dynamic-group acx-backend-dg to read secret-family in compartment acx-secrets where request.permission = 'SECRET_BUNDLE_READ'
 ```
 
+> **Drift — the deployed policy is broader than the line above.** Verified
+> 2026-09-02: no `acx-secrets` compartment exists, every secret lives in the
+> **root** compartment, and the live policy `acx-backend-secret-read` reads
+> `... to read secret-family **in tenancy** where request.permission =
+> 'SECRET_BUNDLE_READ'`. So the VM identity can read *every* secret in the
+> tenancy, not a scoped subset — the documented control was never implemented.
+> This is what let a tenancy-admin API key sit in a VM-readable vault for seven
+> weeks (OCIRV-1 blocker 175; key revoked and secrets scheduled for deletion
+> 2026-09-02).
+>
+> Closing the drift means making the documented line true, not editing it down:
+> create `acx-secrets`, move the six secrets the VM actually consumes into it
+> with `oci vault secret change-compartment`, then re-scope
+> `acx-backend-secret-read` to that compartment. OCIDs are stable across a
+> compartment move, so `RECOGNITION_VAULT_SECRET_MAP` needs no change. The six:
+> `PGPASSWORD`, `POSTGRES_DSN`, `POSTGRES_SYNC_DSN`, `RECOGNITION_ADMIN_TOKEN`
+> (runtime map) plus `OCIR_USERNAME`, `OCIR_AUTH_TOKEN` (image pull). A
+> compartment boundary is preferable to enumerating secret OCIDs in the policy
+> because a secret added to root later is then *not* readable by default
+> ([SEC-04] fail-safe defaults).
+
 Precedent: instance-principal signing is already used by
 `infra/oci/gpu_lifecycle/reaper.py` — reuse that signer construction pattern.
 
@@ -84,6 +105,62 @@ grep -q '^POSTGRES_PASSWORD=' .env \
 
 This is the accepted two-fetch-mechanism trade-off ([ARCH-06]; ADR-013).
 
+## 4b. OCIR docker credential (OCIRV-1)
+
+The registry credential used by `scripts/deploy/recognition-service.sh` is two
+Vault secrets, fetched by the same mechanism as §4:
+
+| Secret            | Contents                          | Secret? |
+| ----------------- | --------------------------------- | ------- |
+| `OCIR_USERNAME`   | `<namespace>/<oci-user-email>`    | no      |
+| `OCIR_AUTH_TOKEN` | OCI auth token (docker password)  | yes     |
+
+`scripts/deploy/lib/ocir-auth.sh` emits a fetch-and-login snippet that pipes the
+token straight into `docker login --password-stdin`; it is never placed in argv
+(where `ps` would expose it). Docker receives a private `DOCKER_CONFIG` created
+with `mktemp -d`, and an exit trap removes that directory on successful and
+failed logins, so no credential remains in the host's Docker config. On the VM
+the fetch uses `--auth instance_principal`; on a laptop, the operator's API key.
+
+`oci-cli` must be present on the VM for the remote path:
+
+```bash
+python3 -m venv ~/.oci-venv && ~/.oci-venv/bin/pip install oci-cli
+```
+
+Failures are classified rather than collapsed into "auth missing", because the
+three causes have different fixes and OCI returns the same
+`NotAuthorizedOrNotFound` code for a missing secret and a missing grant. The
+snippet emits a sentinel once it has read *any* secret from the vault, which
+disambiguates the two: see `ocir_classify_login_failure`.
+
+**Why this exists.** The credential used to be a `docker login` a human ran by
+hand on each host from a token pasted out of the Console. Nothing recorded which
+host held which token, and a revoked credential was indistinguishable from a
+misconfigured one — one incident burned a session on a 20-pair
+username/endpoint matrix before concluding the token itself was dead.
+Release It! §5.4 (Steady State) rejects exactly this shape: if the system needs
+regular crank-turning, admins stay logged in and fiddling follows.
+
+**Residual manual step.** Oracle has no API that returns an auth token's secret
+(`CreateAuthToken` returns it once; the Python SDK's `MyAuthToken` model omits
+the field), so minting is irreducibly human. Everything after the mint is not:
+
+```bash
+make ocir-token-rotate          # prompts, does not echo, stores, verifies both hosts
+pbpaste | make ocir-token-rotate OCIR_ROTATE_ARGS=--stdin    # from a password manager
+```
+
+Creating a secret is **asynchronous**: the OCID exists immediately, but
+`get-secret-bundle-by-name` returns `NotAuthorizedOrNotFound` (404) until the
+first version reaches ACTIVE. The rotate script therefore blocks on the
+*consumer's* read path — the same call the deploy preflight makes — and only
+reports success once the stored value reads back byte-identical. Expect a few
+seconds under `waiting for OCIR_AUTH_TOKEN to become readable`. Without that
+wait the laptop verify races the create and reports `secret_missing`, telling
+the operator to store a token they just stored (observed live 2026-08-28).
+Override the 120s ceiling with `--readable-timeout`.
+
 ## 5. Rotation (single-place operation)
 
 1. Update the secret's value in OCI Vault (new secret version).
@@ -91,5 +168,8 @@ This is the accepted two-fetch-mechanism trade-off ([ARCH-06]; ADR-013).
    (`systemctl restart acx-<env>`) — they re-fetch the current version at boot.
 3. Postgres container password: also re-run the `ExecStartPre` fetch (restart
    picks it up) and, if the DB role password changed, `ALTER ROLE` accordingly.
+4. `OCIR_AUTH_TOKEN`: `make ocir-token-rotate`. No host is touched — the next
+   deploy's preflight fetches the new version. Revoke the old token in the
+   Console afterwards (the 2-token-per-user quota is easy to exhaust).
 
 No OCID map change is needed on rotation (the OCID is stable across versions).

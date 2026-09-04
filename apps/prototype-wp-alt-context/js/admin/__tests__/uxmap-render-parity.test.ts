@@ -573,6 +573,62 @@ describe('ux-map render parity (owned maps)', () => {
     expect(parseRenderedUxMap(md)).toEqual(projectUxMapForRenderParity(raw));
   });
 
+  it('retains each screen state in source order instead of accepting an aggregate parity-index match', () => {
+    const raw = readMapJson('workbench-operator-loop') as UxMapRenderSource;
+    const md = readFileSync(path.join(uxMapsDir, 'workbench-operator-loop.md'), 'utf8');
+    const parsed = parseRenderedUxMap(md);
+
+    for (const screen of raw.screens) {
+      expect(parsed.screens.find((candidate) => candidate.id === screen.id)?.states).toEqual(screen.states ?? []);
+    }
+  });
+
+  it('retains flow order and every ordered screen_id/branch_label step', () => {
+    const raw = readMapJson('workbench-operator-loop') as UxMapRenderSource;
+    const md = readFileSync(path.join(uxMapsDir, 'workbench-operator-loop.md'), 'utf8');
+    const parsed = parseRenderedUxMap(md);
+
+    expect(parsed.flows.map((flow) => ({ id: flow.id, steps: flow.steps }))).toEqual(
+      raw.flows.map((flow) => ({ id: flow.id, steps: flow.steps })),
+    );
+  });
+
+  it('keeps generated ASCII frames at one width and their ordered states equal to JSON', () => {
+    const widths = new Set<number>();
+    let checkedScreens = 0;
+    for (const mapRef of OWNED_MAPS) {
+      const raw = readMapJson(mapRef) as UxMapRenderSource;
+      const md = readFileSync(path.join(uxMapsDir, `${mapRef}.md`), 'utf8');
+      const parsed = parseRenderedUxMap(md);
+      let fenceLanguage: string | null = null;
+      for (const line of md.split('\n')) {
+        if (line.startsWith('```')) {
+          fenceLanguage = fenceLanguage === null ? line.slice(3) : null;
+        } else if (
+          (fenceLanguage === '' || fenceLanguage === 'text') &&
+          (/^\+-+\+$/.test(line) || /^\| states(?:\+|):/.test(line))
+        ) {
+          widths.add(line.length);
+        }
+      }
+      for (const screen of raw.screens) {
+        const parsedScreen = parsed.screens.find((candidate) => candidate.id === screen.id);
+        expect(parsedScreen, `${mapRef} ${screen.id} is missing from its generated Markdown`).toBeDefined();
+        expect(parsedScreen?.states, `${mapRef} ${screen.id} ASCII states drifted`).toEqual(screen.states ?? []);
+        checkedScreens += 1;
+      }
+    }
+    expect(checkedScreens, 'no generated screen sketch was checked').toBeGreaterThan(0);
+    expect([...widths], 'generated ASCII frames must use one canonical width').toEqual([62]);
+  });
+
+  it('rejects action boolean cells other than exact yes/no tokens with a useful location', () => {
+    const md = readFileSync(path.join(uxMapsDir, 'workbench-operator-loop.md'), 'utf8');
+    const mutant = md.replace('| no | no | no | `workbench-shell` |', '| maybe | no | no | `workbench-shell` |');
+
+    expect(() => parseRenderedUxMap(mutant)).toThrow(/action act-open-scan costly must be exactly yes or no/);
+  });
+
   it('every json screen and zone label appears verbatim in the sibling md, and renamed labels do not linger', () => {
     for (const mapRef of OWNED_MAPS) {
       const { json, md, mdName } = loadOwnedMap(mapRef);
@@ -731,6 +787,7 @@ describe('ux-map render parity (owned maps)', () => {
     const raw = readMapJson('workbench-operator-loop') as {
       domain_state_mappings?: Array<{ domain_states: string[]; canonical_state: string }>;
     };
+    const canonicalStateEnum = (JSON.parse(readFileSync(enumSnapshotPath, 'utf8')) as UxMapEnumSnapshot).mapStates;
     const mappings = raw.domain_state_mappings ?? [];
     expect(mappings).toEqual([
       { domain_states: ['unavailable'], canonical_state: 'offline' },
@@ -742,10 +799,24 @@ describe('ux-map render parity (owned maps)', () => {
     ]);
     expect(mappings.length, 'domain-state mapping disappeared').toBeGreaterThan(0);
     for (const mapping of mappings) {
-      expect(MAP_STATES, `${mapping.canonical_state} is not in the canonical MapState enum`).toContain(
+      expect(canonicalStateEnum, `${mapping.canonical_state} is not in the canonical MapState enum`).toContain(
         mapping.canonical_state,
       );
     }
+  });
+
+  it('keeps auth-expired reload primary, matching the rendered recovery behavior (rg-003)', () => {
+    const raw = readMapJson('febt-1-job-error-states') as {
+      actions: Array<{ id: string; hierarchy: string; screen_id: string | null }>;
+      screens: Array<{ id: string; code_ref?: string | null }>;
+    };
+    expect(raw.actions.find((action) => action.id === 'reload')).toMatchObject({
+      hierarchy: 'primary',
+      screen_id: 'request-error-banner',
+    });
+    expect(raw.screens.find((screen) => screen.id === 'request-error-banner')?.code_ref).toBe(
+      'apps/prototype-wp-alt-context/js/admin/utils/userFacingError.ts',
+    );
   });
 });
 
@@ -944,6 +1015,8 @@ describe('ux-map generated-render provenance', () => {
 
     expect(renderer).toContain('"## Operator interaction contract"');
     expect(renderer).toContain('"## Detailed reducer and recovery contract"');
+    expect(renderer).toContain('%% steps: ');
+    expect(renderer).toContain('_ascii_state_rows');
     for (const required of [
       'APP_LINK_PARAMS',
       'position: 1 of N on this page',

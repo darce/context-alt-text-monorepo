@@ -472,6 +472,7 @@ url_params: `personFilter`, `person`
 ```mermaid
 flowchart TD
   %% flow: First-time orientation → start first scan → review queue job=job-start-recognition
+  %% steps: [{"screen_id":"dashboard-shell","branch_label":"fresh tenant; orientation before grid"},{"screen_id":"exit-workbench","branch_label":"Start your first scan"},{"screen_id":"dashboard-shell","branch_label":"scan/job appears in Recent Activity"}]
   n_dashboard_first["Overview (first_time)"]
   n_exit_workbench["Workbench (exit)"]
   n_dashboard_first -->|orientation before grid| n_dashboard_first
@@ -484,6 +485,7 @@ flowchart TD
 ```mermaid
 flowchart TD
   %% flow: Read health and identity counts → open review queue or resolve sync debt job=job-triage-dashboard
+  %% steps: [{"screen_id":"dashboard-shell","branch_label":"populated dashboard"},{"screen_id":"dashboard-shell","branch_label":"Identity Recognition promoted when review work exists and sync has no attention"},{"screen_id":"exit-workbench","branch_label":"Open Review Queue / Conflict Inbox / Failed Sync Queue"}]
   n_dashboard_review["Overview (default)"]
   n_exit_workbench_review["Workbench (exit)"]
   n_dashboard_review -->|Identity Recognition promoted when review work exists and sync has no attention| n_dashboard_review
@@ -495,6 +497,7 @@ flowchart TD
 ```mermaid
 flowchart TD
   %% flow: Check coverage → fix missing descriptions → inspect data retention job=job-maintain-library
+  %% steps: [{"screen_id":"dashboard-shell","branch_label":"Library Coverage"},{"screen_id":"exit-workbench","branch_label":"Fix missing descriptions"},{"screen_id":"exit-retention","branch_label":"Open Data Retention"}]
   n_dashboard_maintenance["Overview (default)"]
   n_exit_workbench_fix["Workbench (exit)"]
   n_exit_retention["Data Retention (exit)"]

@@ -151,6 +151,7 @@ The reconnect counter is internal (`reconnectAttempts`) and never rendered; the 
 ```mermaid
 flowchart TD
   %% flow: idle → pending → running → completed job=run-job
+  %% steps: [{"screen_id":"workbench-pipeline","branch_label":"idle"},{"screen_id":"workbench-pipeline","branch_label":"pending"},{"screen_id":"workbench-pipeline","branch_label":"running"},{"screen_id":"workbench-pipeline","branch_label":"completed"}]
   n_workbench_pipeline["Workbench — job pipeline (screen)"]
   n_workbench_pipeline -->|idle| n_workbench_pipeline
   n_workbench_pipeline -->|pending| n_workbench_pipeline
@@ -162,6 +163,7 @@ flowchart TD
 ```mermaid
 flowchart TD
   %% flow: running → stalled (30 s no event) → running (SSE reconnect) or failed job=run-job
+  %% steps: [{"screen_id":"workbench-pipeline","branch_label":"running"},{"screen_id":"workbench-pipeline","branch_label":"stalled"},{"screen_id":"workbench-pipeline","branch_label":"running | failed"}]
   n_workbench_pipeline["Workbench — job pipeline (screen)"]
   n_workbench_pipeline -->|running| n_workbench_pipeline
   n_workbench_pipeline -->|stalled| n_workbench_pipeline
@@ -172,6 +174,7 @@ flowchart TD
 ```mermaid
 flowchart TD
   %% flow: 401/403 → auth_expired banner → reload job=recover-from-failure
+  %% steps: [{"screen_id":"request-error-banner","branch_label":"auth_expired"},{"screen_id":"reload-page","branch_label":null}]
   n_request_error_banner["Request error banner (overlay)"]
   n_reload_page["Reload page (session expired) (exit)"]
   n_request_error_banner -->|auth_expired| n_reload_page
@@ -182,6 +185,7 @@ flowchart TD
 ```mermaid
 flowchart TD
   %% flow: http 429/503 + Retry-After (isCooldown) → wait banner → auto retry job=recover-from-failure
+  %% steps: [{"screen_id":"request-error-banner","branch_label":"http"},{"screen_id":"workbench-pipeline","branch_label":"running"}]
   n_request_error_banner["Request error banner (overlay)"]
   n_workbench_pipeline["Workbench — job pipeline (screen)"]
   n_request_error_banner -->|http| n_workbench_pipeline

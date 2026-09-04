@@ -19,6 +19,8 @@
 #   promote <from> <to>               Retag :FROM_TAG -> :TO_TAG on OCIR + restart + verify.
 #                                       e.g. promote dev staging, promote staging prod (CONFIRM=PROMOTE),
 #                                       promote staging dev (rollback path; also rolls back dev-fir — shared :dev tag).
+#   rollback <env> <id>                Restore registry/VM env tag from rollback-<12-char-digest-id>,
+#                                       restart, and verify. prod requires CONFIRM=PROMOTE.
 #   verify         <env>              GET /health and compare commit_sha to GIT_REF (default HEAD).
 #                                       Retries up to ACX_VERIFY_ATTEMPTS times for warm-up. Fails closed.
 #                                       Expected image repo prefers remote .env ACX_IMAGE_REPO (so
@@ -81,6 +83,8 @@
 #                              Default 24 for recognition; longer UNVALIDATED default (120s) when the
 #                              VLM target/variant is selected. Override this env var to raise the
 #                              budget; replace the default once a real arm64 VLM smoke is measured.
+#   ACX_PUSH_TIMEOUT         positive integer wall-clock seconds for each registry push (default 900).
+#   ACX_PULL_TIMEOUT         positive integer wall-clock seconds for each registry pull (default 900).
 #   CONFIRM                  required for prod actions: CONFIRM=PROMOTE (applies to deploy prod and promote * prod)
 #
 # Image variants / rollback (RA-07):
@@ -176,16 +180,39 @@ fail() { printf '%sxx%s %s\n'  "${RED}"    "${RESET}" "$*" >&2; exit 1; }
 ACX_DEPLOY_OCIR_CONFIG_DIR=""
 ACX_DEPLOY_OCIR_REMOTE_CONFIG=0
 ACX_DEPLOY_OCIR_REMOTE_AUTHENTICATED=0
+ACX_CANDIDATE_DIGEST_REF=""
+ACX_ROLLBACK_DIGEST_REF=""
+ACX_ROLLBACK_IMAGE_BASE=""
+ACX_ROLLBACK_TAG=""
+
+# Quote one argument for the remote bash command string.  OpenSSH concatenates
+# argv into a command string, so passing a local argv element is not itself a
+# quoting boundary.  Every caller-controlled value in a remote command goes
+# through this helper after its own semantic validation.
+remote_quote() {
+  printf '%q' "$1"
+}
+
+validate_deploy_tmpdir() {
+  local value="${TMPDIR:-/tmp}"
+  if [[ "${value}" != /* || ! -d "${value}" || ! "${value}" =~ ^/[A-Za-z0-9_./-]+$ ]]; then
+    fail "TMPDIR must be an existing absolute directory using only [A-Za-z0-9_./-]; refusing unsafe value: ${value}"
+  fi
+}
+validate_deploy_tmpdir
 
 cleanup_deploy_ocir_docker_config() {
-  local rc=$? config_dir="${ACX_DEPLOY_OCIR_CONFIG_DIR:-}"
+  local rc=$? config_dir="${ACX_DEPLOY_OCIR_CONFIG_DIR:-}" config_q
   trap - EXIT HUP INT TERM
   if [[ -n "${config_dir}" ]]; then
     if [[ "${ACX_DEPLOY_OCIR_REMOTE_CONFIG:-0}" == "1" ]]; then
-      ssh -o BatchMode=yes -o ConnectTimeout=5 -o ConnectionAttempts=1 \
+      config_q="$(remote_quote "${config_dir}")"
+      if ! ssh -o BatchMode=yes -o ConnectTimeout=5 -o ConnectionAttempts=1 \
         -o ServerAliveInterval=2 -o ServerAliveCountMax=2 \
         -l "${OCI_USER}" -- "${OCI_HOST}" \
-        "rm -rf -- '${config_dir}'" >/dev/null 2>&1 || true
+        "rm -rf -- ${config_q}" >/dev/null; then
+        warn "Remote OCIR credential cleanup failed for ${config_dir}; the remote expiry reaper remains armed"
+      fi
     fi
     rm -rf -- "${config_dir}"
   fi
@@ -200,7 +227,7 @@ init_deploy_ocir_docker_config() {
   if [[ -n "${ACX_DEPLOY_OCIR_CONFIG_DIR}" ]]; then
     return 0
   fi
-  umask 077
+  validate_deploy_tmpdir
   ACX_DEPLOY_OCIR_CONFIG_DIR="$(mktemp -d "${TMPDIR:-/tmp}/acx-ocir-deploy.XXXXXX")" \
     || fail "Could not create the deploy-scoped Docker credential directory"
   ACX_OCIR_DOCKER_CONFIG_DIR="${ACX_DEPLOY_OCIR_CONFIG_DIR}"
@@ -219,9 +246,16 @@ init_remote_ocir_docker_config() {
   fi
   # Arm cleanup before the create attempt: ssh may create the directory and
   # still return non-zero (for example, if a following chmod fails).
+  local config_q ttl ttl_q
+  ttl="${ACX_OCIR_REMOTE_CONFIG_TTL:-3600}"
+  if [[ ! "${ttl}" =~ ^[1-9][0-9]*$ ]]; then
+    fail "ACX_OCIR_REMOTE_CONFIG_TTL must be a positive integer (got: ${ttl})"
+  fi
+  config_q="$(remote_quote "${ACX_DEPLOY_OCIR_CONFIG_DIR}")"
+  ttl_q="$(remote_quote "${ttl}")"
   ACX_DEPLOY_OCIR_REMOTE_CONFIG=1
   if ! ssh -o BatchMode=yes -o ConnectTimeout=5 -l "${OCI_USER}" -- "${OCI_HOST}" \
-    "umask 077; if [ ! -d '${ACX_DEPLOY_OCIR_CONFIG_DIR}' ]; then mkdir -- '${ACX_DEPLOY_OCIR_CONFIG_DIR}'; fi; chmod 700 '${ACX_DEPLOY_OCIR_CONFIG_DIR}'"; then
+    "umask 077; config=${config_q}; if [ ! -d \"\$config\" ]; then mkdir -p -- \"\$config\"; fi; chmod 700 \"\$config\"; nohup bash -c 'sleep \"\$1\"; rm -rf -- \"\$2\"' acx-ocir-reaper ${ttl_q} \"\$config\" >/dev/null 2>&1 </dev/null &"; then
     fail "Could not create remote deploy-scoped Docker credential directory on ${SSH_TARGET}"
   fi
 }
@@ -266,6 +300,13 @@ assert_safe_image_repo() {
   fi
   if [[ ! "${value}" =~ ^[A-Za-z0-9_.:/-]+$ ]]; then
     fail "${name} failed charset validation (allowed: [A-Za-z0-9_.:/-]+); refusing: ${value}"
+  fi
+}
+
+assert_safe_image_ref() {
+  local name="$1" value="$2"
+  if [[ -z "${value}" || ! "${value}" =~ ^[A-Za-z0-9_.:/@-]+$ ]]; then
+    fail "${name} failed charset validation (allowed: [A-Za-z0-9_.:/@-]+); refusing: ${value:-empty}"
   fi
 }
 
@@ -466,6 +507,16 @@ preflight_docker() {
   command -v docker >/dev/null 2>&1 || fail "docker not found in PATH"
   docker info >/dev/null 2>&1 || fail "docker daemon not running (start colima with \`colima start\`, or start Docker Desktop)"
 }
+
+# Authentication tools are upstream trust boundaries: their stderr can contain
+# terminal-active bytes or lines that resemble this script's own status output.
+# Keep ordinary text useful for diagnosis, but strip C0/C1 controls and prefix
+# every line so captured output cannot masquerade as a deploy decision.
+sanitize_deploy_diagnostic() {
+  LC_ALL=C tr -d '\000-\010\013-\037\177-\237' \
+    | sed 's/^/diagnostic: /'
+}
+
 # Release It! 5.5 (Fail Fast): verify the credential we will actually use, before
 # the build burns minutes. The old form only checked that *some* entry for the
 # registry existed in ~/.docker/config.json -- a credential revoked upstream
@@ -485,10 +536,11 @@ ocir_login_or_fail() {
     class="$(ocir_classify_login_failure "$out")"
     hint="$(ocir_login_failure_hint "$class")"
     warn "OCIR login failed on ${scope} [${class}]: ${hint}"
+    warn "Sanitized upstream diagnostic follows"
     # The token never appears in $out -- it only ever transits a pipe -- but the
     # OCI CLI echoes request context, so keep this on stderr rather than in a
     # deploy log that gets pasted around.
-    printf '%s\n' "$out" >&2
+    printf '%s\n' "$out" | sanitize_deploy_diagnostic >&2
     fail "OCIR auth unavailable (${scope}, ${class})"
   fi
   log "OCIR authenticated on ${scope} via acx-vault/${ACX_OCIR_TOKEN_SECRET}"
@@ -792,51 +844,178 @@ do_build_remote() {
 }
 
 #---------------------------------------------------------------- push / restart
-# Push both :tag and :sha so rollback by SHA stays available.
-# Push a single fully-qualified image ref, honoring local vs remote-build mode.
-_push_ref() {
-  local ref="$1"
-  if [[ "${REMOTE_BUILD}" == "1" ]]; then
-    ssh -l "${OCI_USER}" -- "${OCI_HOST}" \
-      "DOCKER_CONFIG='${ACX_DEPLOY_OCIR_CONFIG_DIR}' docker push ${ref}"
-  else
-    docker push "${ref}"
-  fi
+# Run a command with a portable outer wall-clock deadline.  This intentionally
+# does not rely on GNU timeout(1), which is absent on a stock macOS workstation.
+terminate_process_tree() {
+  local root_pid="$1" signal_name="$2" child_pid
+  while read -r child_pid; do
+    [[ -n "${child_pid}" ]] || continue
+    terminate_process_tree "${child_pid}" "${signal_name}"
+  done < <(ps -eo pid=,ppid= | awk -v parent="${root_pid}" '$2 == parent { print $1 }')
+  kill -s "${signal_name}" "${root_pid}" 2>/dev/null || true
 }
 
-# Push the immutable :SHA tag. Done BEFORE the boot smoke so the candidate is
-# fetchable for the smoke without promoting the env tag (:latest) yet.
+run_with_deadline() {
+  local deadline="$1" label="$2" pid elapsed=0 rc owner_pid current_parent
+  # BASHPID is bash 4.0+; macOS operators run this from /bin/bash 3.2. A child
+  # that execs sh reports the forking shell as its PPID, which is this shell.
+  owner_pid="${BASHPID:-$(exec sh -c 'echo $PPID')}"
+  shift 2
+  "$@" &
+  pid=$!
+  while kill -0 "${pid}" 2>/dev/null; do
+    if (( elapsed >= deadline )); then
+      terminate_process_tree "${pid}" TERM
+      sleep 1
+      current_parent="$(ps -o ppid= -p "${pid}" 2>/dev/null | tr -d ' ' || true)"
+      if [[ "${current_parent}" == "${owner_pid}" ]]; then
+        terminate_process_tree "${pid}" KILL
+      fi
+      wait "${pid}" 2>/dev/null || true
+      warn "${label} timed out after ${deadline}s; outcome UNKNOWN. Inspect the target state before retrying."
+      return 124
+    fi
+    sleep 1
+    elapsed=$((elapsed + 1))
+  done
+  wait "${pid}" || { rc=$?; return "${rc}"; }
+}
+
+remote_docker_with_config() {
+  local config_q arg quoted_args=""
+  config_q="$(remote_quote "${ACX_DEPLOY_OCIR_CONFIG_DIR}")"
+  for arg in "$@"; do
+    quoted_args+=" $(remote_quote "${arg}")"
+  done
+  ssh -o BatchMode=yes -o ConnectTimeout=10 -o ConnectionAttempts=1 \
+    -o ServerAliveInterval=15 -o ServerAliveCountMax=3 \
+    -l "${OCI_USER}" -- "${OCI_HOST}" \
+    "DOCKER_CONFIG=${config_q} exec docker${quoted_args}"
+}
+
+# Push a single fully-qualified image ref, honoring local vs remote-build mode.
+_push_ref() {
+  local ref="$1" timeout rc=0
+  assert_safe_image_repo "push image ref" "${ref}"
+  timeout="${ACX_PUSH_TIMEOUT:-900}"
+  if [[ ! "${timeout}" =~ ^[1-9][0-9]*$ ]]; then
+    fail "ACX_PUSH_TIMEOUT must be a positive integer (got: ${timeout})"
+  fi
+  if [[ "${REMOTE_BUILD}" == "1" ]]; then
+    run_with_deadline "${timeout}" "push of ${ref}" remote_docker_with_config push "${ref}" || rc=$?
+  else
+    run_with_deadline "${timeout}" "push of ${ref}" docker push "${ref}" || rc=$?
+  fi
+  return "${rc}"
+}
+
+# Pull one fully-qualified image ref with the same wall-clock bound as pushes.
+# The build-host variant follows REMOTE_BUILD; the remote-only variant is used
+# for smoke/restart/rollback, which always materialise bytes on the target VM.
+_pull_ref() {
+  local ref="$1" timeout rc=0
+  assert_safe_image_ref "pull image ref" "${ref}"
+  timeout="${ACX_PULL_TIMEOUT:-900}"
+  if [[ ! "${timeout}" =~ ^[1-9][0-9]*$ ]]; then
+    fail "ACX_PULL_TIMEOUT must be a positive integer (got: ${timeout})"
+  fi
+  if [[ "${REMOTE_BUILD}" == "1" ]]; then
+    run_with_deadline "${timeout}" "pull of ${ref}" remote_docker_with_config pull "${ref}" || rc=$?
+  else
+    run_with_deadline "${timeout}" "pull of ${ref}" docker pull "${ref}" || rc=$?
+  fi
+  return "${rc}"
+}
+
+_pull_ref_remote() {
+  local ref="$1" timeout rc=0
+  assert_safe_image_ref "remote pull image ref" "${ref}"
+  timeout="${ACX_PULL_TIMEOUT:-900}"
+  if [[ ! "${timeout}" =~ ^[1-9][0-9]*$ ]]; then
+    fail "ACX_PULL_TIMEOUT must be a positive integer (got: ${timeout})"
+  fi
+  run_with_deadline "${timeout}" "remote pull of ${ref}" remote_docker_with_config pull "${ref}" || rc=$?
+  return "${rc}"
+}
+
+# Read the registry digest recorded on the just-pushed local/remote image.
+image_digest_ref() {
+  local ref="$1" output digest_ref
+  if [[ "${REMOTE_BUILD}" == "1" ]]; then
+    output="$(remote_docker_with_config image inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "${ref}")" || return
+  else
+    output="$(docker image inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "${ref}")" || return
+  fi
+  digest_ref="$(printf '%s\n' "${output}" | awk -v repo="${IMAGE_BASE}@sha256:" 'index($0, repo) == 1 { print; exit }')"
+  if [[ ! "${digest_ref}" =~ ^[A-Za-z0-9_.:/-]+@sha256:[a-f0-9]{64}$ ]]; then
+    warn "Could not resolve a sha256 registry digest for ${ref} (got: ${digest_ref:-empty})"
+    return 1
+  fi
+  printf '%s\n' "${digest_ref}"
+}
+
+remote_image_digest_ref() {
+  local ref="$1" output digest_ref
+  output="$(remote_docker_with_config image inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "${ref}")" \
+    || return
+  digest_ref="$(printf '%s\n' "${output}" | awk -v repo="${ref%@sha256:*}@sha256:" 'index($0, repo) == 1 { print; exit }')"
+  if [[ ! "${digest_ref}" =~ ^[A-Za-z0-9_.:/-]+@sha256:[a-f0-9]{64}$ ]]; then
+    warn "Could not resolve a remote sha256 registry digest for ${ref} (got: ${digest_ref:-empty})"
+    return 1
+  fi
+  printf '%s\n' "${digest_ref}"
+}
+
+# Push the SHA-named tag, then capture its content digest.  The tag remains
+# mutable; only ACX_CANDIDATE_DIGEST_REF is used by smoke and promotion.
 do_push_sha() {
   local sha; sha="$(git -C "${REPO_ROOT}" rev-parse "${GIT_REF}")"
   if [[ "${REMOTE_BUILD}" == "1" ]]; then preflight_remote_ocir_auth; else preflight_ocir_auth; fi
   log "Pushing ${IMAGE_BASE}:${sha:0:8}"
   _push_ref "${IMAGE_BASE}:${sha}"
+  ACX_CANDIDATE_DIGEST_REF="$(image_digest_ref "${IMAGE_BASE}:${sha}")" \
+    || fail "SHA-named tag was pushed but its registry digest could not be captured"
+  log "Candidate digest fence: ${ACX_CANDIDATE_DIGEST_REF}"
 }
 
 # Promote the env tag (e.g. :latest for prod). Called ONLY after the boot smoke
 # passes, so a bad image never poisons the env tag in OCIR.
 do_push_tag() {
-  local tag="$1"
+  local tag="$1" source_digest="${2:-${ACX_CANDIDATE_DIGEST_REF:-}}" promoted_digest
   assert_safe_shell_token "image tag" "${tag}"
   assert_safe_image_repo "IMAGE_BASE" "${IMAGE_BASE}"
-  log "Promoting ${IMAGE_BASE}:${tag} in OCIR"
+  if [[ ! "${source_digest}" =~ ^${IMAGE_BASE}@sha256:[a-f0-9]{64}$ ]]; then
+    warn "refusing tag promotion without a valid candidate digest: ${source_digest:-empty}"
+    return 1
+  fi
+  log "Promoting ${source_digest} -> ${IMAGE_BASE}:${tag} in OCIR"
+  _pull_ref "${source_digest}" || return
+  if [[ "${REMOTE_BUILD}" == "1" ]]; then
+    remote_docker_with_config tag "${source_digest}" "${IMAGE_BASE}:${tag}" || return
+  else
+    docker tag "${source_digest}" "${IMAGE_BASE}:${tag}" || return
+  fi
   if ! _push_ref "${IMAGE_BASE}:${tag}"; then
     warn "push of ${IMAGE_BASE}:${tag} failed"
     return 1
   fi
+  promoted_digest="$(image_digest_ref "${IMAGE_BASE}:${tag}")" || return
+  if [[ "${promoted_digest}" != "${source_digest}" ]]; then
+    warn "DIGEST MISMATCH: smoke fenced ${source_digest}, but promotion resolved ${promoted_digest}"
+    return 1
+  fi
 }
 
-# Shared pre-restart safety gate for <env> on candidate <image>: preserve a
-# rollback tag, boot-smoke the candidate (abort on failure), ship ACX_IMAGE_REPO
+# Shared pre-restart safety gate for <env> on candidate digest: boot-smoke the
+# candidate (abort on failure), ship ACX_IMAGE_REPO
 # into remote .env (before any env-tag promotion), converge compose+unit.
 # Used by both do_deploy and do_promote so the prod path is uniform.
 promote_gate() {
   local env="$1" image="$2" remote_dir
   remote_dir="$(env_to_remote_dir "$env")"
-  # Rollback tag is non-blocking and must exist even when the smoke is
-  # bypassed (ACX_BOOT_SMOKE=0) — it is the recovery path for exactly the
-  # deploys risky enough to bypass the gate.
-  preserve_rollback_tag "$env"
+  if [[ ! "${image}" =~ ^${IMAGE_BASE}@sha256:[a-f0-9]{64}$ ]]; then
+    fail "promote gate requires a digest-pinned candidate (got: ${image})"
+  fi
   if [[ "${ACX_BOOT_SMOKE:-1}" == "1" ]]; then
     if ! do_boot_smoke "$env" "$image"; then
       fail "Pre-promote boot smoke failed for ${env} (${image}); prod left on the old image (no restart). Fix the build and re-run, or set ACX_BOOT_SMOKE=0 to bypass."
@@ -855,16 +1034,29 @@ promote_gate() {
   if [[ "${ACX_PRIOR_IMAGE_REPO}" == "__INVALID_REPO__" ]]; then
     fail "remote ACX_IMAGE_REPO on ${env} failed charset validation; refusing to deploy over a hostile/malformed sticky repo"
   fi
-  ship_remote_image_repo_env "${remote_dir}"
+  if ! ship_remote_image_repo_env "${remote_dir}"; then
+    warn "Shipping ACX_IMAGE_REPO failed for ${env}; restoring the prior sticky repository"
+    restore_prior_image_repo_env
+    return 1
+  fi
 
   if [[ "${ACX_CONVERGE_RUNTIME:-1}" == "1" ]]; then
-    converge_runtime "$env"
+    # converge_runtime contains fail-fast exits. Run it in a subshell so a
+    # failure returns control to this transaction boundary and the sticky repo
+    # can be compensated before the deploy exits.
+    if ! (converge_runtime "$env"); then
+      warn "Runtime convergence failed for ${env}; restoring the prior sticky repository"
+      restore_prior_image_repo_env
+      return 1
+    fi
   else
     # HARM-A-06: image-only hotfix must not land on a compose/unit topology that
     # differs from the repo (Gate 2 smokes the NEW topology; stale VM compose would
     # not receive those mounts). Refuse ACX_CONVERGE_RUNTIME=0 when drift exists.
     if ! runtime_in_sync "$env"; then
-      fail "ACX_CONVERGE_RUNTIME=0 refused for ${env}: deployed compose/unit drifts from repo. Re-run without ACX_CONVERGE_RUNTIME=0 to converge, or fix the VM first."
+      warn "ACX_CONVERGE_RUNTIME=0 refused for ${env}: deployed compose/unit drifts from repo"
+      restore_prior_image_repo_env
+      return 1
     fi
     warn "ACX_CONVERGE_RUNTIME=0: skipping compose+unit convergence (image-only restart; topology matches repo)"
   fi
@@ -1220,24 +1412,107 @@ converge_check() {
   log "no runtime drift for ${env} (compose + unit match repo)"
 }
 
-# Formalize the manual E15-29 rollback step: before a new promote, tag the
-# currently-promoted image as :rollback-<id> so a bad deploy can be retagged
-# back to the previous good image. Best-effort — never blocks the deploy.
-preserve_rollback_tag() {
-  local env="$1" env_tag prev_id
-  env_tag="$(env_to_tag "$env")"
-  # `|| true`: a missing image makes the pipeline exit non-zero; without this,
-  # set -e would abort the whole deploy on a first deploy / pruned image.
-  prev_id="$(ssh -l "${OCI_USER}" -- "${OCI_HOST}" "docker image inspect --format '{{.Id}}' ${IMAGE_BASE}:${env_tag} 2>/dev/null" | sed 's/^sha256://' | cut -c1-12)" || true
-  if [[ -n "${prev_id}" ]]; then
-    if ssh -l "${OCI_USER}" -- "${OCI_HOST}" "docker tag ${IMAGE_BASE}:${env_tag} ${IMAGE_BASE}:rollback-${prev_id}"; then
-      log "Preserved rollback tag ${IMAGE_BASE}:rollback-${prev_id}"
-    else
-      warn "could not create rollback tag for ${env} (continuing)"
-    fi
-  else
-    warn "no current ${IMAGE_BASE}:${env_tag} on ${SSH_TARGET} to preserve as rollback (first deploy?)"
+# Return the immutable image ID of the api container that is actually serving
+# the environment. Config.Image is only the mutable compose tag and therefore
+# cannot establish rollback provenance.
+read_running_api_image_id() {
+  local env="$1" remote_dir compose_files remote_dir_q timeout image_id rc=0
+  remote_dir="$(env_to_remote_dir "${env}")"
+  compose_files="$(env_to_compose_files "${env}")"
+  remote_dir_q="$(remote_quote "${remote_dir}")"
+  timeout="${ACX_REMOTE_INSPECT_TIMEOUT:-60}"
+  if [[ ! "${timeout}" =~ ^[1-9][0-9]*$ ]]; then
+    fail "ACX_REMOTE_INSPECT_TIMEOUT must be a positive integer (got: ${timeout})"
   fi
+  # shellcheck disable=SC2086 # compose_files is intentionally word-split remotely.
+  image_id="$(run_with_deadline "${timeout}" "running image inspection for ${env}" \
+    ssh -o BatchMode=yes -o ConnectTimeout=10 -o ConnectionAttempts=1 \
+      -o ServerAliveInterval=15 -o ServerAliveCountMax=3 \
+      -l "${OCI_USER}" -- "${OCI_HOST}" \
+      "cd ${remote_dir_q} && cid=\$(docker compose ${compose_files} ps -q api 2>/dev/null | head -1) && [ -n \"\$cid\" ] && docker inspect --format '{{.Image}}' \"\$cid\"")" || rc=$?
+  if (( rc != 0 )) || [[ ! "${image_id}" =~ ^sha256:[a-f0-9]{64}$ ]]; then
+    warn "Could not resolve the running api image ID for ${env} (got: ${image_id:-empty})"
+    return 1
+  fi
+  printf '%s\n' "${image_id}"
+}
+
+# Capture the image actually serving on the target by immutable image ID before
+# a build can overwrite any host-local tag, then publish rollback-<digest-prefix>
+# in that image's repository. Prod fails closed when preservation fails; lower
+# environments emit a loud warning.
+preserve_rollback_tag() {
+  local env="$1" running_image_id running_image_ref running_base inspect_output prev_digest prev_base prev_id rollback_ref resolved_id timeout rc=0
+  timeout="${ACX_PUSH_TIMEOUT:-900}"
+  if [[ ! "${timeout}" =~ ^[1-9][0-9]*$ ]]; then
+    fail "ACX_PUSH_TIMEOUT must be a positive integer (got: ${timeout})"
+  fi
+  if ! running_image_id="$(read_running_api_image_id "${env}")"; then
+    if [[ "${env}" == "prod" ]]; then
+      fail "Cannot identify the image actually serving prod; refusing deployment before build/restart"
+    fi
+    warn "ROLLBACK NOT PRESERVED: no running api image found (first ${env} deploy?)"
+    return 0
+  fi
+  if ! running_image_ref="$(read_running_api_image "${env}")" \
+    || [[ ! "${running_image_ref}" =~ ^[A-Za-z0-9_.:/@-]+$ ]]; then
+    if [[ "${env}" == "prod" ]]; then
+      fail "Cannot identify the repository configured by the running prod container"
+    fi
+    warn "ROLLBACK NOT PRESERVED: running image reference is unavailable or malformed"
+    return 0
+  fi
+  if [[ "${running_image_ref}" == *@sha256:* ]]; then
+    running_base="${running_image_ref%@sha256:*}"
+  elif [[ "${running_image_ref##*/}" == *:* ]]; then
+    running_base="${running_image_ref%:*}"
+  else
+    running_base="${running_image_ref}"
+  fi
+  assert_safe_image_repo "running image repository" "${running_base}"
+  inspect_output="$(remote_docker_with_config image inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "${running_image_id}")" || rc=$?
+  prev_digest="$(printf '%s\n' "${inspect_output}" | awk -v repo="${running_base}@sha256:" 'index($0, repo) == 1 { print; exit }')"
+  if (( rc != 0 )) || [[ ! "${prev_digest}" =~ ^[A-Za-z0-9_.:/-]+@sha256:[a-f0-9]{64}$ ]]; then
+    if [[ "${env}" == "prod" ]]; then
+      fail "Cannot resolve the running prod image to a registry digest; rollback preservation is mandatory"
+    fi
+    warn "ROLLBACK NOT PRESERVED: running image ${running_image_id} has no verified registry digest"
+    return 0
+  fi
+  prev_base="${prev_digest%@sha256:*}"
+  assert_safe_image_repo "rollback image repository" "${prev_base}"
+  prev_id="${prev_digest##*:}"
+  prev_id="${prev_id:0:12}"
+  rollback_ref="${prev_base}:rollback-${prev_id}"
+  if ! remote_docker_with_config tag "${running_image_id}" "${rollback_ref}"; then
+    if [[ "${env}" == "prod" ]]; then
+      fail "Could not tag the running prod image for rollback"
+    fi
+    warn "ROLLBACK NOT PRESERVED: could not tag ${running_image_id} as ${rollback_ref}"
+    return 0
+  fi
+  if ! run_with_deadline "${timeout}" "push of ${rollback_ref}" remote_docker_with_config push "${rollback_ref}"; then
+    if [[ "${env}" == "prod" ]]; then
+      fail "Could not publish mandatory prod rollback tag ${rollback_ref}"
+    fi
+    warn "ROLLBACK NOT PRESERVED: could not publish ${rollback_ref}"
+    return 0
+  fi
+  # A successful push is not enough for a recovery artifact: pull the registry
+  # tag back and prove it resolves to the exact image ID serving this target.
+  if ! _pull_ref_remote "${rollback_ref}" >/dev/null \
+    || ! resolved_id="$(remote_docker_with_config image inspect --format '{{.Id}}' "${rollback_ref}")" \
+    || [[ "${resolved_id}" != "${running_image_id}" ]]; then
+    if [[ "${env}" == "prod" ]]; then
+      fail "Published rollback tag ${rollback_ref} did not resolve to the running prod image"
+    fi
+    warn "ROLLBACK NOT PRESERVED: ${rollback_ref} did not resolve to ${running_image_id}"
+    return 0
+  fi
+  ACX_ROLLBACK_DIGEST_REF="${prev_digest}"
+  ACX_ROLLBACK_IMAGE_BASE="${prev_base}"
+  ACX_ROLLBACK_TAG="rollback-${prev_id}"
+  log "Preserved registry rollback ${rollback_ref} -> ${prev_digest}"
 }
 
 # Pre-promote boot smoke: boot the freshly-built :SHA in a throwaway container on
@@ -1250,7 +1525,10 @@ preserve_rollback_tag() {
 do_boot_smoke() {
   local env="$1" image="$2" remote_dir smoke_timeout poll_interval attempts
   remote_dir="$(env_to_remote_dir "$env")"
-  assert_safe_image_repo "smoke image repo" "${image%%:*}"
+  if [[ ! "${image}" =~ ^${IMAGE_BASE}@sha256:[a-f0-9]{64}$ ]]; then
+    warn "boot smoke refused non-digest candidate: ${image}"
+    return 1
+  fi
   # Image-aware budget: recognition default 24s; VLM uses the unmeasured longer
   # default. ACX_SMOKE_TIMEOUT overrides either, validated as a positive integer.
   smoke_timeout="$(resolve_smoke_timeout)"
@@ -1270,7 +1548,9 @@ do_boot_smoke() {
   # fail-fast (validate_required_secrets / validate_oci_vault_boot) no-ops — this
   # gate proves the image IMPORTS, not that prod secrets are configured (that is
   # Gate 2, which uses the deployed .env + real entrypoint).
-  if ! ssh -l "${OCI_USER}" -- "${OCI_HOST}" "DOCKER_CONFIG='${ACX_DEPLOY_OCIR_CONFIG_DIR}' docker pull ${image} >/dev/null && docker run --rm -e RECOGNITION_RUNTIME_MODE=development --entrypoint python ${image} -c 'import api.main'"; then
+  if ! _pull_ref_remote "${image}" >/dev/null \
+    || [[ "$(remote_image_digest_ref "${image}" || true)" != "${image}" ]] \
+    || ! ssh -l "${OCI_USER}" -- "${OCI_HOST}" "docker run --rm -e RECOGNITION_RUNTIME_MODE=development --entrypoint python ${image} -c 'import api.main'"; then
     warn "boot smoke: 'import api.main' failed on ${image} (packaging/import error)"
     return 1
   fi
@@ -1415,11 +1695,16 @@ repair_blob_volume_ownership() {
 }
 
 do_restart() {
-  local env="$1"
-  local remote_dir unit compose_files
-  remote_dir="$(env_to_remote_dir "$env")"
+  local env="$1" expected_digest="${2:-${ACX_CANDIDATE_DIGEST_REF:-}}"
+  local unit expected_repo env_tag pulled_digest
   unit="$(env_to_unit "$env")"
-  compose_files="$(env_to_compose_files "$env")"
+  expected_repo="${expected_digest%@sha256:*}"
+  env_tag="$(env_to_tag "${env}")"
+  if [[ ! "${expected_digest}" =~ ^[A-Za-z0-9_.:/-]+@sha256:[a-f0-9]{64}$ \
+    || "${expected_repo}" != "${ACX_IMAGE_REPO}" ]]; then
+    warn "restart requires the smoke-fenced digest for ACX_IMAGE_REPO=${ACX_IMAGE_REPO} (got: ${expected_digest:-empty})"
+    return 1
+  fi
   # ACX_IMAGE_REPO is shipped once in promote_gate (S2-A-06), including the
   # ACX_CONVERGE_RUNTIME=0 image-only path — do not rewrite .env again here.
   # A-11: pull materialises layers on the VM — free-space floor for VLM.
@@ -1428,10 +1713,20 @@ do_restart() {
   # This also covers ACX_BOOT_SMOKE=0, where the earlier remote pull/login was
   # deliberately skipped.
   preflight_remote_ocir_auth
-  log "Pulling ${ACX_IMAGE_REPO} on ${SSH_TARGET}"
-  # shellcheck disable=SC2086
-  if ! ssh -l "${OCI_USER}" -- "${OCI_HOST}" "cd ${remote_dir} && DOCKER_CONFIG='${ACX_DEPLOY_OCIR_CONFIG_DIR}' docker compose ${compose_files} pull api"; then
-    warn "compose pull api failed on ${env}"
+  log "Pulling smoke-fenced ${expected_digest} on ${SSH_TARGET}"
+  if ! _pull_ref_remote "${expected_digest}"; then
+    warn "digest-pinned api pull failed on ${env}"
+    return 1
+  fi
+  pulled_digest="$(remote_image_digest_ref "${expected_digest}" || true)"
+  if [[ "${pulled_digest}" != "${expected_digest}" ]]; then
+    warn "DIGEST MISMATCH: restart expected ${expected_digest}, target resolved ${pulled_digest:-empty}"
+    return 1
+  fi
+  # Compose names the mutable environment tag. Point the VM-local tag at the
+  # exact bytes that passed smoke; never re-pull that mutable tag across the gate.
+  if ! remote_docker_with_config tag "${expected_digest}" "${expected_repo}:${env_tag}"; then
+    warn "could not stage ${expected_digest} as the VM-local ${expected_repo}:${env_tag}"
     return 1
   fi
   if ! repair_blob_volume_ownership "$env"; then
@@ -1442,6 +1737,90 @@ do_restart() {
     warn "systemctl restart ${unit} failed"
     return 1
   fi
+}
+
+# Restore both the registry env tag and the VM's cached tag to the digest that
+# was serving before this transaction. This closes the latent-rollout window
+# when digest staging succeeds but a later repair/restart/verify step fails.
+restore_env_tag_to_rollback() {
+  local env="$1" restart_runtime="${2:-0}" env_tag timeout rollback_base unit pulled_digest
+  if [[ ! "${ACX_ROLLBACK_DIGEST_REF:-}" =~ ^[A-Za-z0-9_.:/-]+@sha256:[a-f0-9]{64}$ ]]; then
+    warn "ROLLBACK REQUIRED but no previous serving digest was captured"
+    return 1
+  fi
+  rollback_base="${ACX_ROLLBACK_IMAGE_BASE:-${ACX_ROLLBACK_DIGEST_REF%@sha256:*}}"
+  if [[ "${ACX_ROLLBACK_DIGEST_REF}" != "${rollback_base}@sha256:"* ]]; then
+    warn "ROLLBACK REQUIRED but the captured repository and digest disagree"
+    return 1
+  fi
+  assert_safe_image_repo "rollback image repository" "${rollback_base}"
+  env_tag="$(env_to_tag "${env}")"
+  timeout="${ACX_PUSH_TIMEOUT:-900}"
+  if [[ ! "${timeout}" =~ ^[1-9][0-9]*$ ]]; then
+    warn "ACX_PUSH_TIMEOUT must be a positive integer (got: ${timeout})"
+    return 1
+  fi
+  if ! _pull_ref_remote "${ACX_ROLLBACK_DIGEST_REF}" >/dev/null; then
+    warn "rollback digest pull failed for ${ACX_ROLLBACK_DIGEST_REF}"
+    return 1
+  fi
+  pulled_digest="$(remote_image_digest_ref "${ACX_ROLLBACK_DIGEST_REF}" || true)"
+  if [[ "${pulled_digest}" != "${ACX_ROLLBACK_DIGEST_REF}" ]]; then
+    warn "ROLLBACK DIGEST MISMATCH: expected ${ACX_ROLLBACK_DIGEST_REF}, got ${pulled_digest:-empty}"
+    return 1
+  fi
+  if ! remote_docker_with_config tag "${ACX_ROLLBACK_DIGEST_REF}" "${rollback_base}:${env_tag}"; then
+    warn "could not restore VM-local ${rollback_base}:${env_tag}"
+    return 1
+  fi
+  if ! run_with_deadline "${timeout}" "rollback push of ${rollback_base}:${env_tag}" \
+    remote_docker_with_config push "${rollback_base}:${env_tag}"; then
+    warn "could not restore registry tag ${rollback_base}:${env_tag}"
+    return 1
+  fi
+  if [[ "${restart_runtime}" == "1" ]]; then
+    unit="$(env_to_unit "${env}")"
+    if ! ssh -l "${OCI_USER}" -- "${OCI_HOST}" "sudo systemctl restart $(remote_quote "${unit}")"; then
+      warn "could not restart ${unit} on the restored image"
+      return 1
+    fi
+  fi
+  log "Restored ${rollback_base}:${env_tag} to ${ACX_ROLLBACK_DIGEST_REF}"
+}
+
+rollback_command_hint() {
+  local env="$1"
+  if [[ -n "${ACX_ROLLBACK_TAG:-}" ]]; then
+    printf '%s rollback %s %s' "$0" "${env}" "${ACX_ROLLBACK_TAG#rollback-}"
+  else
+    printf '%s rollback %s <rollback-id>' "$0" "${env}"
+  fi
+}
+
+do_rollback() {
+  local env="$1" rollback_id="$2" rollback_ref digest env_tag
+  if [[ ! "${rollback_id}" =~ ^[a-f0-9]{12}$ ]]; then
+    fail "rollback id must be the 12-character digest prefix printed by a failed deployment"
+  fi
+  if [[ "${env}" == "prod" && "${CONFIRM:-}" != "PROMOTE" ]]; then
+    fail "Production rollback requires CONFIRM=PROMOTE"
+  fi
+  init_deploy_ocir_docker_config
+  preflight_ssh
+  preflight_remote_ocir_auth
+  rollback_ref="${IMAGE_BASE}:rollback-${rollback_id}"
+  _pull_ref_remote "${rollback_ref}"
+  digest="$(remote_docker_with_config image inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "${rollback_ref}" \
+    | awk -v repo="${IMAGE_BASE}@sha256:" 'index($0, repo) == 1 { print; exit }')"
+  if [[ ! "${digest}" =~ ^${IMAGE_BASE}@sha256:${rollback_id}[a-f0-9]{52}$ ]]; then
+    fail "Rollback tag ${rollback_ref} did not resolve to a valid digest"
+  fi
+  ACX_ROLLBACK_DIGEST_REF="${digest}"
+  ACX_ROLLBACK_IMAGE_BASE="${IMAGE_BASE}"
+  env_tag="$(env_to_tag "${env}")"
+  restore_env_tag_to_rollback "${env}" 1 \
+    || fail "Rollback failed; ${IMAGE_BASE}:${env_tag} outcome is unknown"
+  ACX_VERIFY_EXPECT_LOCAL=1 do_verify "${env}"
 }
 
 #---------------------------------------------------------------- deploy
@@ -1473,6 +1852,11 @@ do_deploy() {
   preflight_git_clean "$env"
   preflight_branch_synced "$env"
 
+  # Snapshot and publish the previous-good digest before remote build can
+  # overwrite the VM's environment tag with the candidate.
+  preflight_remote_ocir_auth
+  preserve_rollback_tag "$env"
+
   if [[ "${REMOTE_BUILD}" == "1" ]]; then
     log "Mode: remote-build (${SSH_TARGET}, no local docker required)"
     do_build_remote "$tag"
@@ -1483,27 +1867,30 @@ do_deploy() {
   # Push :SHA first, gate on the boot smoke, and only then promote the env tag
   # (e.g. :latest) so a failed smoke never poisons the promotion tag in OCIR.
   do_push_sha
-  promote_gate "$env" "${IMAGE_BASE}:${sha}"
+  promote_gate "$env" "${ACX_CANDIDATE_DIGEST_REF}"
   # S2-A-06: if tag promotion fails after ship, restore prior sticky repo.
-  if ! do_push_tag "$tag"; then
+  if ! do_push_tag "$tag" "${ACX_CANDIDATE_DIGEST_REF}"; then
+    restore_env_tag_to_rollback "$env" 0 || warn "automatic env-tag restore failed; run: $(rollback_command_hint "$env")"
     restore_prior_image_repo_env
-    fail "Push of env tag failed after shipping ACX_IMAGE_REPO; prior sticky repo restored where possible."
+    fail "Push of env tag failed after shipping ACX_IMAGE_REPO. Recovery: $(rollback_command_hint "$env")"
   fi
 
-  if ! do_restart "$env"; then
+  if ! do_restart "$env" "${ACX_CANDIDATE_DIGEST_REF}"; then
+    restore_env_tag_to_rollback "$env" 0 || warn "automatic env-tag restore failed; run: $(rollback_command_hint "$env")"
     restore_prior_image_repo_env
-    fail "Restart failed after shipping ACX_IMAGE_REPO; prior sticky repo restored where possible."
+    fail "Restart failed; the previous env tag was restored where possible. Recovery: $(rollback_command_hint "$env")"
   fi
 
   log "Deploy submitted. Verifying..."
-  sleep 5
   # S2-A-04: deploy path uses local resolve as authority (not the remote .env
   # we just wrote — that comparison would be tautological).
   if ! ACX_VERIFY_EXPECT_LOCAL=1 do_verify "$env"; then
+    restore_env_tag_to_rollback "$env" 1 || warn "automatic runtime rollback failed; run: $(rollback_command_hint "$env")"
+    restore_prior_image_repo_env
     if [[ "${ACX_VERIFY_OPTIONAL:-0}" == "1" ]]; then
-      warn "Verify failed but ACX_VERIFY_OPTIONAL=1; not failing the deploy."
+      warn "Verify failed but ACX_VERIFY_OPTIONAL=1; previous image restored. Recovery: $(rollback_command_hint "$env")"
     else
-      fail "Deploy verification failed. Re-run '$0 verify $env' to retry, or set ACX_VERIFY_OPTIONAL=1 to downgrade to a warning."
+      fail "Deploy verification failed; previous image restored where possible. Recovery: $(rollback_command_hint "$env")"
     fi
   fi
 }
@@ -1534,6 +1921,9 @@ do_promote() {
     fail "Production promotion requires CONFIRM=PROMOTE. Re-run: CONFIRM=PROMOTE $0 promote $from_env $to_env"
   fi
 
+  preflight_remote_ocir_auth
+  preserve_rollback_tag "$to_env"
+
   # Pull the source image so the boot smoke can run it before it is promoted.
   if [[ "${REMOTE_BUILD}" == "1" ]]; then
     log "Mode: remote-retag (${SSH_TARGET})"
@@ -1542,45 +1932,40 @@ do_promote() {
     # A-11: promote remote branch materialises layers — same free-space floor.
     assert_remote_disk_headroom_for_pull
     log "Pulling source image ${IMAGE_BASE}:${from_tag} on ${SSH_TARGET}"
-    ssh -l "${OCI_USER}" -- "${OCI_HOST}" "DOCKER_CONFIG='${ACX_DEPLOY_OCIR_CONFIG_DIR}' docker pull ${IMAGE_BASE}:${from_tag}"
+    _pull_ref "${IMAGE_BASE}:${from_tag}"
   else
     preflight_docker
     preflight_ocir_auth
     log "Pulling source image ${IMAGE_BASE}:${from_tag}"
-    docker pull "${IMAGE_BASE}:${from_tag}"
+    _pull_ref "${IMAGE_BASE}:${from_tag}"
   fi
+  ACX_CANDIDATE_DIGEST_REF="$(image_digest_ref "${IMAGE_BASE}:${from_tag}")" \
+    || fail "Could not capture digest for promotion source ${IMAGE_BASE}:${from_tag}"
 
   # Same safety gate as deploy: boot-smoke the source image + converge compose/
-  # unit + preserve rollback BEFORE the source is retagged over the env tag.
-  promote_gate "$to_env" "${IMAGE_BASE}:${from_tag}"
+  # unit after rollback was captured, then retag exactly the digest that passed.
+  promote_gate "$to_env" "${ACX_CANDIDATE_DIGEST_REF}"
 
-  if [[ "${REMOTE_BUILD}" == "1" ]]; then
-    log "Tagging ${from_tag} -> ${to_tag} on ${SSH_TARGET}"
-    if ! ssh -l "${OCI_USER}" -- "${OCI_HOST}" "docker tag ${IMAGE_BASE}:${from_tag} ${IMAGE_BASE}:${to_tag} && DOCKER_CONFIG='${ACX_DEPLOY_OCIR_CONFIG_DIR}' docker push ${IMAGE_BASE}:${to_tag}"; then
-      restore_prior_image_repo_env
-      fail "Remote tag/push failed after shipping ACX_IMAGE_REPO; prior sticky repo restored where possible."
-    fi
-  else
-    log "Tagging ${from_tag} -> ${to_tag}"
-    if ! docker tag "${IMAGE_BASE}:${from_tag}" "${IMAGE_BASE}:${to_tag}" \
-      || ! docker push "${IMAGE_BASE}:${to_tag}"; then
-      restore_prior_image_repo_env
-      fail "Tag/push failed after shipping ACX_IMAGE_REPO; prior sticky repo restored where possible."
-    fi
+  if ! do_push_tag "$to_tag" "${ACX_CANDIDATE_DIGEST_REF}"; then
+    restore_env_tag_to_rollback "$to_env" 0 || warn "automatic env-tag restore failed; run: $(rollback_command_hint "$to_env")"
+    restore_prior_image_repo_env
+    fail "Promotion tag/push failed. Recovery: $(rollback_command_hint "$to_env")"
   fi
 
-  if ! do_restart "$to_env"; then
+  if ! do_restart "$to_env" "${ACX_CANDIDATE_DIGEST_REF}"; then
+    restore_env_tag_to_rollback "$to_env" 0 || warn "automatic env-tag restore failed; run: $(rollback_command_hint "$to_env")"
     restore_prior_image_repo_env
-    fail "Restart failed after shipping ACX_IMAGE_REPO; prior sticky repo restored where possible."
+    fail "Restart failed; previous env tag restored where possible. Recovery: $(rollback_command_hint "$to_env")"
   fi
 
   log "Promotion submitted. Verifying..."
-  sleep 5
   if ! ACX_VERIFY_EXPECT_LOCAL=1 do_verify "$to_env"; then
+    restore_env_tag_to_rollback "$to_env" 1 || warn "automatic runtime rollback failed; run: $(rollback_command_hint "$to_env")"
+    restore_prior_image_repo_env
     if [[ "${ACX_VERIFY_OPTIONAL:-0}" == "1" ]]; then
-      warn "Verify failed but ACX_VERIFY_OPTIONAL=1; not failing the promotion."
+      warn "Verify failed but ACX_VERIFY_OPTIONAL=1; previous image restored. Recovery: $(rollback_command_hint "$to_env")"
     else
-      fail "Promotion verification failed. Re-run '$0 verify $to_env' to retry, or set ACX_VERIFY_OPTIONAL=1 to downgrade to a warning."
+      fail "Promotion verification failed; previous image restored where possible. Recovery: $(rollback_command_hint "$to_env")"
     fi
   fi
 }
@@ -1589,13 +1974,21 @@ do_promote() {
 # Read the running api container's Config.Image from the remote host (rg-015).
 # Returns the raw reference on stdout; empty on inspect failure.
 read_running_api_image() {
-  local env="$1" remote_dir compose_files
+  local env="$1" remote_dir compose_files remote_dir_q timeout
   remote_dir="$(env_to_remote_dir "$env")"
   compose_files="$(env_to_compose_files "$env")"
+  remote_dir_q="$(remote_quote "${remote_dir}")"
+  timeout="${ACX_REMOTE_INSPECT_TIMEOUT:-60}"
+  if [[ ! "${timeout}" =~ ^[1-9][0-9]*$ ]]; then
+    fail "ACX_REMOTE_INSPECT_TIMEOUT must be a positive integer (got: ${timeout})"
+  fi
   # shellcheck disable=SC2086 # compose_files is intentionally word-split (-f a -f b).
-  ssh -o BatchMode=yes -o ConnectTimeout=10 -l "${OCI_USER}" -- "${OCI_HOST}" \
-    "cd '${remote_dir}' && cid=\$(docker compose ${compose_files} ps -q api 2>/dev/null | head -1) && \
-     [ -n \"\$cid\" ] && docker inspect --format '{{.Config.Image}}' \"\$cid\"" 2>/dev/null || true
+  run_with_deadline "${timeout}" "running image reference inspection for ${env}" \
+    ssh -o BatchMode=yes -o ConnectTimeout=10 -o ConnectionAttempts=1 \
+      -o ServerAliveInterval=15 -o ServerAliveCountMax=3 \
+      -l "${OCI_USER}" -- "${OCI_HOST}" \
+      "cd ${remote_dir_q} && cid=\$(docker compose ${compose_files} ps -q api 2>/dev/null | head -1) && \
+       [ -n \"\$cid\" ] && docker inspect --format '{{.Config.Image}}' \"\$cid\"" 2>/dev/null
 }
 
 # Read remote .env ACX_IMAGE_REPO (empty if unset). Charset-validated when present.
@@ -1672,7 +2065,7 @@ verify_running_image_matches_deployed() {
     return 1
   fi
   expected_ref="${expected_repo}:${env_tag}"
-  running_image="$(read_running_api_image "$env")"
+  running_image="$(read_running_api_image "$env" || true)"
   if [[ -z "${running_image}" ]]; then
     warn "IMAGE VERIFY: could not read running api Config.Image on ${env} (container missing?)"
     return 1
@@ -1688,6 +2081,17 @@ verify_running_image_matches_deployed() {
   # return (not fail/exit) so callers can honor ACX_VERIFY_OPTIONAL.
   warn "IMAGE MISMATCH: ${env} running container image is '${running_image}', expected repository '${expected_repo}' via ${source_note} (deployed as ${expected_ref}). Variant deploys must not silently run a different repo."
   return 1
+}
+
+verify_retry_sleep() {
+  local attempt="$1" max_attempts="$2" base="$3" jitter delay
+  (( attempt < max_attempts )) || return 0
+  if (( base == 0 )); then
+    return 0
+  fi
+  jitter=$((RANDOM % (base / 2 + 1)))
+  delay=$((base + jitter))
+  sleep "${delay}"
 }
 
 do_verify() {
@@ -1714,7 +2118,7 @@ do_verify() {
     log "GET ${url} (attempt ${attempt}/${max_attempts})"
     if ! body="$(curl --fail --silent --show-error --max-time 10 "$url" 2>&1)"; then
       warn "Health check fetch failed: ${body}"
-      sleep "$sleep_s"
+      verify_retry_sleep "$attempt" "$max_attempts" "$sleep_s"
       continue
     fi
     echo "$body"
@@ -1724,7 +2128,7 @@ do_verify() {
 
     if [[ -z "$actual_sha" || "$actual_sha" == "unknown" ]]; then
       warn "Service did not report a commit SHA (attempt ${attempt}/${max_attempts}). Image may have been built without --build-arg GIT_COMMIT_SHA."
-      sleep "$sleep_s"
+      verify_retry_sleep "$attempt" "$max_attempts" "$sleep_s"
       continue
     fi
 
@@ -1754,7 +2158,7 @@ do_verify() {
       if [[ -n "${actual_variant}" && "${actual_variant}" != "${expected_variant}" ]]; then
         warn "VARIANT MISMATCH: ${env} /health image_variant='${actual_variant}', expected '${expected_variant}' (recognition vs VLM share commit_sha — this is the build-immutable signal)"
         if (( attempt < max_attempts )); then
-          sleep "$sleep_s"
+          verify_retry_sleep "$attempt" "$max_attempts" "$sleep_s"
           continue
         fi
         return 1
@@ -1765,8 +2169,8 @@ do_verify() {
         # Image mismatch is not a warm-up flake — still retry once more in case
         # compose is mid-pull, but do not call fail() here.
         if (( attempt < max_attempts )); then
-          warn "Image mismatch on attempt ${attempt}/${max_attempts}; retrying after ${sleep_s}s"
-          sleep "$sleep_s"
+          warn "Image mismatch on attempt ${attempt}/${max_attempts}; retrying with jittered backoff"
+          verify_retry_sleep "$attempt" "$max_attempts" "$sleep_s"
           continue
         fi
         return 1
@@ -1775,7 +2179,7 @@ do_verify() {
       return 0
     else
       warn "SKEW: ${env} runs ${actual_sha:0:8}, expected ${expected_sha:0:8} (attempt ${attempt}/${max_attempts}; warm-up retry)"
-      sleep "$sleep_s"
+      verify_retry_sleep "$attempt" "$max_attempts" "$sleep_s"
     fi
   done
 
@@ -1973,6 +2377,7 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
     build-remote) do_build_remote "${1:-dev}" ;;
     deploy)       [[ -n "${1:-}" ]] || fail "deploy requires <env>"; do_deploy "$@" ;;
     promote)      [[ -n "${1:-}" && -n "${2:-}" ]] || fail "promote requires <from-env> <to-env>"; do_promote "$1" "$2" ;;
+    rollback)     [[ -n "${1:-}" && -n "${2:-}" ]] || fail "rollback requires <env> <rollback-id>"; do_rollback "$1" "$2" ;;
     reset)        [[ -n "${1:-}" ]] || fail "reset requires <env> (dev|dev-fir|staging|prod)"; do_reset "$1" ;;
     clear-image-repo) [[ -n "${1:-}" ]] || fail "clear-image-repo requires <env> (dev|dev-fir|staging|prod)"; clear_remote_image_repo_env "$1" ;;
     verify)       do_verify "${1:-dev}" ;;

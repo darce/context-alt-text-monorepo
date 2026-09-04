@@ -1048,6 +1048,8 @@ def run_start_cycle(
 
 
 def _positive_integer(value: str) -> int:
+    if not value.isascii() or not value.isdecimal():
+        raise argparse.ArgumentTypeError("must be a positive integer")
     try:
         parsed = int(value)
     except ValueError as exc:

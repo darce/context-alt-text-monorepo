@@ -1,8 +1,13 @@
 import { useReducer, useRef } from 'react';
 import { __ } from '@wordpress/i18n';
 
-import type { RetentionExportResponse, RetentionMode, StartExportJobResponse } from '../../api/recognition';
-import { EXPORT_COLLECTION_KEYS, RetentionExportResponseError } from '../../api/recognition/retentionApi';
+import {
+  EXPORT_COLLECTION_KEYS,
+  RetentionExportResponseError,
+  type RetentionExportResponse,
+  type RetentionMode,
+  type StartExportJobResponse,
+} from '../../api/recognition';
 import { useToast } from '../../context/ToastContext';
 import { toUserMessage } from '../../utils/appError';
 import { useRetentionPageMutations } from './useRetentionPageMutations';
@@ -181,11 +186,20 @@ export const extractImportSnapshot = (parsed: unknown): Record<string, unknown> 
   return snapshot;
 };
 
-/** The envelope written to disk by `downloadExport`; the snapshot lives under `data`. */
+/**
+ * The envelope written to disk by `downloadExport`; the snapshot lives under `data`.
+ *
+ * `schema_version` is written unconditionally: `downloadExportJobData` rejects any
+ * snapshot without an integer `schema_version`, so a `RetentionExportResponse`
+ * always carries one. The former `typeof … === 'number'` guard was dead code that
+ * read as if the field were optional and quietly allowed a schema-less file to be
+ * written to disk — one an operator could only discover on a later import.
+ * `tenant_id` / `exported_at` keep their guards: those are genuinely optional.
+ */
 export const buildExportDocument = (response: RetentionExportResponse): Record<string, unknown> => ({
   ...(response.tenant_id ? { tenant_id: response.tenant_id } : {}),
   ...(response.exported_at ? { exported_at: response.exported_at } : {}),
-  ...(typeof response.schema_version === 'number' ? { schema_version: response.schema_version } : {}),
+  schema_version: response.schema_version,
   counts: response.summary,
   data: response.payload,
 });

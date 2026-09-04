@@ -328,12 +328,8 @@ async def test_accept_merge_suggestion_both_placeholder_labels_succeeds(
     cluster_b_id = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
     suggestion_id = str(uuid.uuid4())
 
-    fake_cluster_repository.seed(
-        cluster_a_id, tenant_id, label="cluster-aaa", identity_count=5, user_confirmed=False
-    )
-    fake_cluster_repository.seed(
-        cluster_b_id, tenant_id, label="cluster-bbb", identity_count=2, user_confirmed=False
-    )
+    fake_cluster_repository.seed(cluster_a_id, tenant_id, label="cluster-aaa", identity_count=5, user_confirmed=False)
+    fake_cluster_repository.seed(cluster_b_id, tenant_id, label="cluster-bbb", identity_count=2, user_confirmed=False)
     fake_cluster_service.clusters.extend(
         [
             ClusterResponse(

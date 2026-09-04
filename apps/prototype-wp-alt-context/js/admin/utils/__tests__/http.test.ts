@@ -690,7 +690,8 @@ const hungFetch = (): void => {
         return;
       }
       if (signal.aborted) {
-        reject(signal.reason ?? new DOMException('The operation was aborted.', 'AbortError'));
+        const reason: unknown = signal.reason;
+        reject(reason instanceof Error ? reason : new DOMException('The operation was aborted.', 'AbortError'));
         return;
       }
       signal.addEventListener(
@@ -875,6 +876,10 @@ describe('fetchApi closes the error boundary [FEBT1-W2A-01]', () => {
 
   it('tags a non-Error throw as unknown rather than letting it escape raw', async () => {
     vi.spyOn(globalThis, 'fetch').mockImplementation(() => {
+      // WHY the disable: throwing a non-Error IS the condition under test. This case proves fetchApi
+      // wraps a bare-string throw into an AppError instead of letting it escape raw, so replacing it
+      // with `throw new Error(...)` would delete the behaviour the assertions below verify (TEST-15).
+      // eslint-disable-next-line @typescript-eslint/only-throw-error
       throw 'a bare string';
     });
     const rejected = await rejectionOf(() => fetchApi(REST_URL));

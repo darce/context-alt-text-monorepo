@@ -7,9 +7,10 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-// `utils/http` must initialise before `api/config` here: config -> logger -> appError ->
-// config is an existing module cycle, and entering it from config first leaves
-// `NonceRefreshFailedError` undefined at http.ts's class-extends site.
+// FEBT2-LA-NEW-01: this import order is no longer load-bearing. The cycle
+// `api/config -> utils/logger -> utils/appError -> {utils/http, api/config}` was
+// broken by extracting `utils/errorTaxonomy`, and the graph is now pinned acyclic by
+// js/admin/utils/__tests__/httpModuleGraph.test.ts. Kept as-is only to avoid churn.
 import { commitClusterToRosterEntry } from '../rosterApi';
 import { registerConfig, resetConfigCache } from '../config';
 

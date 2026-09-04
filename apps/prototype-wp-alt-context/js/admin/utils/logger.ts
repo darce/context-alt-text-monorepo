@@ -28,6 +28,30 @@ export interface Logger {
   child(fields: LogFields): Logger;
 }
 
+/**
+ * The job's *state*, as `logJobEvent` projects it onto a record. Deliberately
+ * CLOSED, and deliberately narrow: it holds what is true of the job at the
+ * moment of the event, not what is true of one observation of it.
+ *
+ * Per-event dimensions — stream `durationMs`, `reconnectAttempts`, retry
+ * counters, anything that measures *this* attempt rather than the job — do NOT
+ * belong here. They ride on a child logger:
+ *
+ * ```ts
+ * logJobEvent(jobLog.child({ durationMs, reconnectAttempts }), event, state);
+ * ```
+ *
+ * `child()` fields are merged into `LogRecord.fields` by `emit`, so the emitted
+ * record is still one wide event carrying every dimension (OBS-02,
+ * lexicons/engineering.md:472) and a post-mortem greps one line, not two.
+ * Widening this interface instead would give the same field two owners — the
+ * caller could set it either way and the two could disagree (REF-19 no
+ * information leakage, lexicons/engineering.md:338) — and would add optional
+ * members with zero call sites inside this module (REF-12 YAGNI,
+ * lexicons/engineering.md:331). Recorded for FEBT2-LB-NEW-04, where lane B hit
+ * this seam and correctly used `child()`; the contract is now written down and
+ * pinned by a test rather than rediscovered.
+ */
 export interface JobLogStateSummary {
   readonly status: string;
   readonly jobId?: string | null;

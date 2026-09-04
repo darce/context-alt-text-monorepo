@@ -68,6 +68,17 @@ const requireMovedIdentityIds = (value: unknown): string[] => {
 export interface AcceptMergeSuggestionRequest {
   suggestionId: string;
   targetClusterId?: string;
+  /**
+   * FEBT2 LD2-NEW-02: the accept is a write, and its caller
+   * (`useClusterLabelMutations.merge`) already accepts a signal and aborts the
+   * previous save when a new one starts. Accepting the signal and dropping it
+   * made cancellation silently inert on exactly one of the two merge branches —
+   * the caller believed the request was cancelled while it stayed in flight and
+   * its `onSuccess` still rewrote the caches (RLSE-05, silent failure /
+   * lexicons/engineering.md:696; RES-04, the abandoned request still holds the
+   * resource / lexicons/engineering.md:115).
+   */
+  signal?: AbortSignal;
 }
 
 /**
@@ -86,7 +97,7 @@ export async function acceptMergeSuggestion(suggestionId: string): Promise<Accep
 export async function acceptMergeSuggestion(
   request: string | AcceptMergeSuggestionRequest,
 ): Promise<AcceptedMergeSuggestion> {
-  const { suggestionId, targetClusterId }: AcceptMergeSuggestionRequest =
+  const { suggestionId, targetClusterId, signal }: AcceptMergeSuggestionRequest =
     typeof request === 'string' ? { suggestionId: request } : request;
   const base = getEndpoint('recognitionMergeSuggestions');
   const url = new URL(`${stripTrailingSlash(base)}/${suggestionId}/accept`, window.location.origin);
@@ -96,6 +107,7 @@ export async function acceptMergeSuggestion(
     method: 'POST',
     body: targetClusterId ? { target_cluster_id: targetClusterId } : undefined,
     restNonce: getConfig().nonce,
+    signal,
   });
   const suggestion = mapPendingMergeSuggestion(raw);
 

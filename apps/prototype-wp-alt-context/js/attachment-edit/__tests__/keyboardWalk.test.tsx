@@ -41,7 +41,7 @@ const defaultProps = {
  * curated: c-early (y=10) then c-late (y=100)
  * uncurated: u-early (y=200,x=50) then u-late (y=200,x=300)
  */
-function outOfOrderWalkFixture(): MediaIdentitiesResponse {
+const outOfOrderWalkFixture = (): MediaIdentitiesResponse => {
   return {
     data_source: 'local_projection',
     identities_by_media: {
@@ -89,9 +89,9 @@ function outOfOrderWalkFixture(): MediaIdentitiesResponse {
       ],
     },
   };
-}
+};
 
-function createTestClient(): QueryClient {
+const createTestClient = (): QueryClient => {
   return new QueryClient({
     defaultOptions: {
       queries: {
@@ -99,11 +99,11 @@ function createTestClient(): QueryClient {
       },
     },
   });
-}
+};
 
-function renderApp(ui: ReactNode) {
+const renderApp = (ui: ReactNode) => {
   return render(<QueryClientProvider client={createTestClient()}>{ui}</QueryClientProvider>);
-}
+};
 
 /** Expected Tab sequence: curated chips → uncurated markers → list links. */
 const EXPECTED_WALK_LABELS = [
@@ -169,13 +169,19 @@ describe('AttachmentFacesApp keyboard walk [A11Y-11]', () => {
     const focusedLabels: string[] = [];
     const focusedIds: string[] = [];
 
-    for (let i = 0; i < EXPECTED_WALK_LABELS.length; i += 1) {
+    for (const expectedLabel of EXPECTED_WALK_LABELS) {
       await user.tab();
       const active = document.activeElement;
-      expect(active).toBeTruthy();
-      expect(active).not.toBe(document.body);
+      expect(active, `nothing focused at expected tab stop "${expectedLabel}"`).toBeTruthy();
+      expect(active, `focus fell through to <body> at expected tab stop "${expectedLabel}"`).not.toBe(
+        document.body,
+      );
 
+      // `||` is load-bearing below: an aria-label that is present but EMPTY must fall through to
+      // textContent. `??` only falls through on null/undefined, so it would push '' into
+      // focusedLabels and break the walk assertion.
       const label =
+        // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing
         active?.getAttribute('aria-label') ||
         (active?.textContent ?? '').trim() ||
         '';
@@ -217,6 +223,10 @@ describe('AttachmentFacesApp keyboard walk [A11Y-11]', () => {
     });
 
     const marker = screen.getByRole('button', { name: 'Unnamed face 1 of 2' });
+    // WHY the disable: React runs `act` in asynchronous mode only when the callback returns a
+    // thenable. The `async` keyword is the protocol signal that flushes effects and the microtask
+    // queue; removing it to satisfy require-await would silently downgrade this to a sync act.
+    // eslint-disable-next-line @typescript-eslint/require-await
     await act(async () => {
       marker.focus();
     });
@@ -230,6 +240,10 @@ describe('AttachmentFacesApp keyboard walk [A11Y-11]', () => {
 
     // Focus a list link → overlay marker highlighted (no click: jsdom navigation noise).
     const link = screen.getByTestId('acx-name-person-link-u-late');
+    // WHY the disable: React runs `act` in asynchronous mode only when the callback returns a
+    // thenable. The `async` keyword is the protocol signal that flushes effects and the microtask
+    // queue; removing it to satisfy require-await would silently downgrade this to a sync act.
+    // eslint-disable-next-line @typescript-eslint/require-await
     await act(async () => {
       link.focus();
     });

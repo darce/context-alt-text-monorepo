@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { downloadExportJobData, EXPORT_COLLECTION_KEYS, RetentionExportResponseError } from '../retentionApi';
 
-const fetchRequiredApi = vi.fn();
+const fetchRequiredApi = vi.fn<(...args: unknown[]) => unknown>();
 
 vi.mock('../../../utils/http', () => ({
   fetchRequiredApi: (...args: unknown[]) => fetchRequiredApi(...args),

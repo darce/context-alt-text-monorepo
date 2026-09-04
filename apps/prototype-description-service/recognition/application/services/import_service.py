@@ -27,13 +27,26 @@ IMPORT_COLLECTION_KEYS: Final[tuple[str, ...]] = (
 )
 
 
+#: Audit event recorded by :meth:`TenantImportService.validate_and_import`.
+#:
+#: Named for what the service actually does. This code path restores nothing:
+#: it validates the submitted snapshot and records that it was accepted. An
+#: ``import_completed`` event would tell an operator reading the retention
+#: audit log that their data was restored when no row was ever written
+#: (RLSE-05: a failure path that leaves the user believing success). The event
+#: name is the operator-visible claim, so it must not overstate the work
+#: (DOM-03: one meaning per term).
+IMPORT_AUDIT_EVENT_TYPE: Final[str] = "import_validated"
+
+
 class TenantImportService:
-    """Validates an export payload and records an import audit event.
+    """Validates an export payload and records that it was accepted.
 
     Full data restoration (re-inserting all rows from the export) is a
-    future concern. This MVP validates the schema version, checks the
-    tenant context, and records a ``import_completed`` audit event so the
-    import is visible in the retention audit log.
+    future concern and is **not** performed here. This MVP validates the
+    schema version, checks the tenant context, and records an
+    ``import_validated`` audit event so the submission is visible in the
+    retention audit log without claiming a restore that did not happen.
     """
 
     def __init__(self, session: AsyncSession, audit_service: AuditService | None = None) -> None:
@@ -52,9 +65,8 @@ class TenantImportService:
         closes the common case but cannot be relied upon, so the submitted
         snapshot is validated structurally here and rejected explicitly
         (``ValueError`` -> HTTP 422) rather than accepted with best-effort
-        counts. An ``import_completed`` audit event that records success with
-        understated or zeroed counts is a lie in the audit log; a rejection
-        is honest.
+        counts. An audit event that records success with understated or
+        zeroed counts is a lie in the audit log; a rejection is honest.
 
         Args:
             data: The decoded export JSON as a plain dict.
@@ -92,7 +104,7 @@ class TenantImportService:
         await self._audit_service.record_event(
             self._session,
             tenant_id=tenant_id,
-            event_type="import_completed",
+            event_type=IMPORT_AUDIT_EVENT_TYPE,
             actor=actor,
             scope="tenant",
             payload={
@@ -118,7 +130,7 @@ def _validate_collections(data: dict[str, Any]) -> dict[str, int]:
     """Validate the snapshot's collections and return their real item counts.
 
     Every count returned is the length of an actually-present list, so the
-    recorded ``import_completed`` audit event cannot understate what was
+    recorded ``import_validated`` audit event cannot understate what was
     submitted. A payload with no known collection is the envelope-instead-of-
     snapshot mistake (``{"schema_version": n, "data": {...}}``) and is
     rejected rather than imported as zero of everything.

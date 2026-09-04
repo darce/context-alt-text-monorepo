@@ -1,7 +1,8 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it } from 'vitest';
 
+import type { ProductionCssBundle } from './productionCssBundle';
 import {
   isInsideFixtureRoot,
   loadProductionCssBundle,
@@ -14,6 +15,16 @@ const targetCardScssPath = join(componentsRoot, '_target-card.scss');
 const indexScssPath = join(componentsRoot, 'index.scss');
 
 describe('E15-25 slice 3: target-card stylesheet', () => {
+  let bundle: ProductionCssBundle;
+
+  // FEBT2-W2-U-01: hoisted out of the test body. A cold cache runs a real `vite build`,
+  // and lane contention can add a wait on the fixture's 6-minute global build lock, so the
+  // old in-body 120s budget was reachable — and its expiry was reported as a target-card
+  // stylesheet regression rather than as a build timeout (RES-02/RES-03).
+  beforeAll(() => {
+    bundle = loadProductionCssBundle();
+  }, 600_000);
+
   it('registers target-card in components index.scss', () => {
     const indexScss = readFileSync(indexScssPath, 'utf8');
     expect(indexScss).toMatch(/@use\s+['"]\.\/target-card['"]/);
@@ -35,8 +46,6 @@ describe('E15-25 slice 3: target-card stylesheet', () => {
     // builds once into a content-addressed directory keyed on the build inputs, so this
     // assertion is still only satisfiable by a bundle emitted from the tree under test, and
     // no other process can empty what we read.
-    const bundle = loadProductionCssBundle();
-
     expect(bundle.cssFilePaths.length).toBeGreaterThan(0);
     expect(readArtifactStamp(bundle)).toBe(bundle.fingerprint);
     expect(bundle.cssFilePaths.every(isInsideFixtureRoot)).toBe(true);
@@ -47,5 +56,5 @@ describe('E15-25 slice 3: target-card stylesheet', () => {
     // survived as a mutant until this assertion was tightened.
     expect(bundle.css).toMatch(/\.acx-target-card--active(?![\w-])/);
     expect(bundle.css).toMatch(/\.acx-target-card__health(?![\w-])/);
-  }, 120_000);
+  });
 });

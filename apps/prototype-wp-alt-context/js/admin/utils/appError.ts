@@ -1,22 +1,25 @@
-import { NonceRefreshFailedError } from '../api/config';
-import { abortLikeTag, AuthExpiredError, HTTPError, ResponseParseError } from './http';
+import {
+  abortLikeTag,
+  AuthExpiredError,
+  HTTPError,
+  NonceRefreshFailedError,
+  ResponseParseError,
+  type AppErrorTag,
+} from './errorTaxonomy';
 import { hasRetryAfterWait } from './retryAfter';
 import { SPA_SESSION_EXPIRED_COPY } from './sessionExpiredCopy';
 
-export { isAbortLikeName } from './http';
+/**
+ * The closed tag set and the boundary error classes live in the leaf module
+ * `./errorTaxonomy`; this module owns the *classification* of an unknown thrown
+ * value into that vocabulary. Splitting the two is what removes the back-edge
+ * `utils/appError -> api/config` (FEBT2-LA-NEW-01; GRPH-02
+ * lexicons/graph-theory.md:72). Both names are re-exported unchanged, so
+ * `import { APP_ERROR_TAGS } from './appError'` still resolves for every caller.
+ */
+export { APP_ERROR_TAGS, isAbortLikeName } from './errorTaxonomy';
+export type { AppErrorTag } from './errorTaxonomy';
 
-export const APP_ERROR_TAGS = [
-  'http',
-  'parse',
-  'auth_expired',
-  'nonce_refresh',
-  'abort',
-  'timeout',
-  'transport',
-  'unknown',
-] as const;
-
-export type AppErrorTag = (typeof APP_ERROR_TAGS)[number];
 
 const APP_ERROR_TAG_INDEX: Record<AppErrorTag, true> = {
   http: true,

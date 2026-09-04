@@ -441,6 +441,52 @@ describe('logJobEvent [O-02]', () => {
     expect(records[0].fields.requestId).toEqual(expect.any(String));
     expect(String(records[0].fields.requestId).length).toBeGreaterThan(0);
   });
+
+  /**
+   * FEBT2-LB-NEW-04. `JobLogStateSummary` is closed to *job state*, so per-event
+   * dimensions (stream duration, reconnect count — exactly the fields a
+   * post-mortem greps for) ride on a child logger. This pins the contract that
+   * makes that a real answer rather than a workaround: child fields land on the
+   * SAME wide record as the state summary, so one grep still returns one line
+   * (OBS-02). Without the merge, the documented seam would be a lie.
+   */
+  it('per-event dimensions from child() land on the same wide record as the state summary [FEBT2-LB-NEW-04][OBS-02]', () => {
+    const records = captureRecords();
+    const log = withRequestId(createJobLogger('job', 'job-123'));
+
+    logJobEvent(
+      log.child({ durationMs: 4200, reconnectAttempts: 2 }),
+      { type: 'STREAM_CLOSED' },
+      { status: 'complete', jobId: 'job-123', done: 10, total: 10, failedCount: 0 },
+    );
+
+    expect(records).toHaveLength(1);
+    expect(records[0].fields.durationMs).toBe(4200);
+    expect(records[0].fields.reconnectAttempts).toBe(2);
+    // The state summary and the correlation id survive alongside them.
+    expect(records[0].fields.event).toBe('STREAM_CLOSED');
+    expect(records[0].fields.status).toBe('complete');
+    expect(records[0].fields.jobId).toBe('job-123');
+    expect(records[0].fields.done).toBe(10);
+    expect(records[0].fields.requestId).toEqual(expect.any(String));
+  });
+
+  /**
+   * The other half of the closed-interface contract: a state summary is the
+   * single owner of the job-state fields, so a child logger must NOT be able to
+   * shadow one. `emit` spreads call fields last, which is what keeps
+   * `logJobEvent`'s projection authoritative (REF-19).
+   */
+  it('state-summary fields win over a same-named child field [FEBT2-LB-NEW-04][REF-19]', () => {
+    const records = captureRecords();
+    const log = createJobLogger('job', 'job-123').child({ status: 'stale-from-child', done: 999 });
+
+    logJobEvent(log, 'PROGRESS', { status: 'running', jobId: 'job-123', done: 3, total: 10 });
+
+    expect(records).toHaveLength(1);
+    expect(records[0].fields.status).toBe('running');
+    expect(records[0].fields.done).toBe(3);
+  });
 });
 
 describe('boundary error redaction [O-03][O-05]', () => {

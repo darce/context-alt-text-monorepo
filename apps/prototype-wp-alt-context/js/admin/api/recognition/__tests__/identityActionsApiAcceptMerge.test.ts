@@ -81,6 +81,22 @@ describe('acceptMergeSuggestion', () => {
     expect(requestOptions()?.body).toEqual({ target_cluster_id: CLUSTER_A });
   });
 
+  it('FEBT2-LD2-NEW-02: forwards the caller signal so the accept is cancellable', async () => {
+    // Predicted first failure without the fix: `signal` is undefined here,
+    // because the request object destructure dropped it before fetch.
+    const controller = new AbortController();
+
+    await acceptMergeSuggestion({ suggestionId: SUGGESTION_ID, signal: controller.signal });
+
+    expect(requestOptions()?.signal).toBe(controller.signal);
+  });
+
+  it('FEBT2-LD2-NEW-02: the bare-id call passes no signal rather than a fabricated one', async () => {
+    await acceptMergeSuggestion(SUGGESTION_ID);
+
+    expect(requestOptions()?.signal).toBeUndefined();
+  });
+
   it('posts to the accept path for the given suggestion', async () => {
     await acceptMergeSuggestion(SUGGESTION_ID);
 

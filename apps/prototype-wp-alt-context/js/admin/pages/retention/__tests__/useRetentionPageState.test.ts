@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { HTTPError } from '../../../utils/http';
 import { createMockMutation, createMockQuery } from '../../../test-utils/mockHooks';
-import { RetentionExportResponseError } from '../../../api/recognition/retentionApi';
+import { RetentionExportResponseError } from '../../../api/recognition';
 import {
   buildExportDocument,
   downloadExportPayload,
@@ -203,7 +203,10 @@ describe('array rejection is attributable to a dedicated guard [FEBT1G-H-06]', (
 const readBlobAsText = (blob: Blob): Promise<string> =>
   new Promise((resolve, reject) => {
     const reader = new FileReader();
-    reader.addEventListener('load', () => resolve(String(reader.result)));
+    reader.addEventListener('load', () => {
+      const result = reader.result;
+      resolve(typeof result === 'string' ? result : '');
+    });
     reader.addEventListener('error', () => reject(reader.error ?? new Error('blob read failed')));
     reader.readAsText(blob);
   });
@@ -236,7 +239,7 @@ describe('downloadExportPayload releases the object URL [FEBT1-LE-02][RES-04][RE
   });
 
   it('clicks a detached anchor and revokes the object URL on the happy path', async () => {
-    const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
+    const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => undefined);
 
     downloadExportPayload(RESPONSE);
 
@@ -281,7 +284,7 @@ describe('downloadExportPayload releases the object URL [FEBT1-LE-02][RES-04][RE
   });
 
   it('downloadExport surfaces a locally authored message for a malformed response [FEBT1-LG-01]', async () => {
-    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
+    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => undefined);
     downloadMutateAsync.mockRejectedValue(new RetentionExportResponseError('Export data response was malformed.'));
 
     const { result } = renderHook(() => useRetentionPageState());
@@ -301,7 +304,7 @@ describe('downloadExportPayload releases the object URL [FEBT1-LE-02][RES-04][RE
   });
 
   it('downloadExport writes the file and revokes the URL on success', async () => {
-    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
+    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => undefined);
     downloadMutateAsync.mockResolvedValue(RESPONSE);
 
     const { result } = renderHook(() => useRetentionPageState());

@@ -37,6 +37,8 @@ export const DUPLICATE_LOOKUP_TIMEOUT_MS = 3000;
 export const CLUSTER_LABELING_OPERATION = {
   SAVE: 'save',
   MERGE: 'merge',
+  /** Undo of a committed merge — a write in its own right, not a variant of MERGE. */
+  REVERT_MERGE: 'revert_merge',
   DUPLICATE_LOOKUP: 'duplicate_lookup',
 } as const;
 

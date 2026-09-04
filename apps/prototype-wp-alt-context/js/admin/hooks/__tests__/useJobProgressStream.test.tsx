@@ -1,8 +1,14 @@
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { JOB_STATUS as MACHINE_JOB_STATUS } from '../jobMachine';
-import { JOB_STATUS, useJobProgressStream } from '../useJobProgressStream';
+import { JOB_MACHINE_RECONNECT_CEILING, JOB_STATUS as MACHINE_JOB_STATUS } from '../jobMachine';
+import {
+  computeReconnectDelayMs,
+  JOB_STATUS,
+  RECONNECT_BACKOFF_BASE_MS,
+  RECONNECT_BACKOFF_MAX_MS,
+  useJobProgressStream,
+} from '../useJobProgressStream';
 import { useJobCoordination } from '../useJobCoordination';
 import { resetConfigCache, setNonce } from '../../api/config';
 import { setLogLevel, setLogSink, type LogRecord } from '../../utils/logger';
@@ -320,7 +326,7 @@ describe('useJobProgressStream', () => {
       const done = await waitFor(() => {
         const record = records.find((entry) => entry.fields.event === 'stream.done');
         expect(record).toBeDefined();
-        return record as LogRecord;
+        return record!;
       });
       expect(done.fields.status).toBe('completed_with_errors');
       expect(done.fields).not.toHaveProperty('failedCount');
@@ -456,28 +462,46 @@ describe('useJobProgressStream', () => {
       }
     });
 
-    it('the browser re-establishing the transport does not count against the ceiling forever', async () => {
+    it('a re-established transport does not count against the ceiling forever', async () => {
       vi.useFakeTimers();
+      // Shortest draw, so the ten reconnect cycles below consume ~no quiet time and the single
+      // sse.stalled assertion at the end still measures one deliberate 31s silence.
+      const random = vi.spyOn(Math, 'random').mockReturnValue(0);
       try {
         const records = captureRecords();
         const { result } = renderHook(() => useJobProgressStream('job-browser-reconnect'));
         await waitFor(() => expect(MockEventSource.instances).toHaveLength(1));
-        const source = MockEventSource.instances[0];
 
         // The onopen/onerror handlers exist so the machine can observe real reconnects at all
         // — before this fix RECONNECTED had no production dispatch site.
-        expect(source.onopen).toBeInstanceOf(Function);
-        expect(source.onerror).toBeInstanceOf(Function);
+        expect(MockEventSource.instances[0].onopen).toBeInstanceOf(Function);
+        expect(MockEventSource.instances[0].onerror).toBeInstanceOf(Function);
 
         act(() => {
-          source.onopen?.(new Event('open'));
-          for (let attempt = 0; attempt < 10; attempt += 1) {
+          MockEventSource.instances[0].onopen?.(new Event('open'));
+        });
+
+        for (let attempt = 1; attempt <= 10; attempt += 1) {
+          const source = MockEventSource.instances[attempt - 1];
+          act(() => {
             source.readyState = MockEventSource.CONNECTING;
             source.onerror?.(new Event('error'));
-            source.readyState = MockEventSource.OPEN;
-            source.onopen?.(new Event('open'));
-          }
-        });
+          });
+
+          // The client owns the reconnect now (FEBT2-LB-NEW-01): the dropped transport is
+          // released rather than left to the browser's fixed-interval retry, and no
+          // replacement exists until the jittered window elapses.
+          expect(source.readyState).toBe(MockEventSource.CLOSED);
+          expect(MockEventSource.instances).toHaveLength(attempt);
+
+          act(() => {
+            vi.advanceTimersByTime(computeReconnectDelayMs(1, 0) + 1);
+          });
+          await waitFor(() => expect(MockEventSource.instances).toHaveLength(attempt + 1));
+          act(() => {
+            MockEventSource.instances[attempt].onopen?.(new Event('open'));
+          });
+        }
 
         // Every failed attempt was answered by a successful re-open, so the breaker stays closed.
         expect(result.current.status).not.toBe(JOB_STATUS.FAILED);
@@ -494,6 +518,172 @@ describe('useJobProgressStream', () => {
         expect(stalled).toHaveLength(1);
         expect(stalled[0].fields.reconnectAttempts).toBe(0);
       } finally {
+        random.mockRestore();
+        vi.useRealTimers();
+      }
+    });
+  });
+
+  describe('reconnects are jittered so N tabs do not stampede [FEBT2-LB-NEW-01][RES-06]', () => {
+    it('draws the delay from the full window [0, backoff], not a fixed interval', () => {
+      // Full jitter, not `window/2 + rand(window/2)`: the low edge must reach 0 and the high
+      // edge must reach the whole window, or tabs stay clustered inside a narrow band.
+      expect(computeReconnectDelayMs(1, 0)).toBe(0);
+      expect(computeReconnectDelayMs(1, 1)).toBe(RECONNECT_BACKOFF_BASE_MS);
+      expect(computeReconnectDelayMs(1, 0.5)).toBe(RECONNECT_BACKOFF_BASE_MS / 2);
+
+      // The window itself doubles per attempt and is capped, so attempt 20 is not a 12-day wait.
+      expect(computeReconnectDelayMs(2, 1)).toBe(2 * RECONNECT_BACKOFF_BASE_MS);
+      expect(computeReconnectDelayMs(3, 1)).toBe(4 * RECONNECT_BACKOFF_BASE_MS);
+      expect(computeReconnectDelayMs(20, 1)).toBe(RECONNECT_BACKOFF_MAX_MS);
+
+      // Two tabs dropped by the same network event draw different delays. This is the whole
+      // point of the finding: identical inputs must not produce identical wake-up times.
+      expect(computeReconnectDelayMs(3, 0.1)).not.toBe(computeReconnectDelayMs(3, 0.9));
+    });
+
+    it('never returns a negative or above-window delay for an out-of-range draw', () => {
+      // A delay outside the window is either an instant retry storm or a stream that never
+      // comes back; the clamp is cheap and the failure is not.
+      expect(computeReconnectDelayMs(1, -5)).toBe(0);
+      expect(computeReconnectDelayMs(1, 7)).toBe(RECONNECT_BACKOFF_BASE_MS);
+      expect(computeReconnectDelayMs(0, 1)).toBe(RECONNECT_BACKOFF_BASE_MS);
+      expect(computeReconnectDelayMs(-3, 1)).toBe(RECONNECT_BACKOFF_BASE_MS);
+    });
+
+    it('waits the jittered delay before re-opening, and logs the wait', async () => {
+      vi.useFakeTimers();
+      const random = vi.spyOn(Math, 'random').mockReturnValue(0.5);
+      try {
+        const records = captureRecords();
+        renderHook(() => useJobProgressStream('job-jitter'));
+        await waitFor(() => expect(MockEventSource.instances).toHaveLength(1));
+        const source = MockEventSource.instances[0];
+
+        act(() => {
+          source.readyState = MockEventSource.CONNECTING;
+          source.onerror?.(new Event('error'));
+        });
+
+        const delayMs = computeReconnectDelayMs(1, 0.5);
+        const scheduled = records.filter((record) => record.message === 'sse.reconnect_scheduled');
+        expect(scheduled).toHaveLength(1);
+        expect(scheduled[0].fields.delayMs).toBe(delayMs);
+
+        // One tick short of the window: still no new transport. This is the assertion that
+        // goes red if the delay is dropped and the reconnect becomes immediate again.
+        act(() => {
+          vi.advanceTimersByTime(delayMs - 1);
+        });
+        expect(MockEventSource.instances).toHaveLength(1);
+
+        act(() => {
+          vi.advanceTimersByTime(1);
+        });
+        await waitFor(() => expect(MockEventSource.instances).toHaveLength(2));
+      } finally {
+        random.mockRestore();
+        vi.useRealTimers();
+      }
+    });
+
+    it('cancels a pending reconnect when the stream goes offline', async () => {
+      vi.useFakeTimers();
+      const random = vi.spyOn(Math, 'random').mockReturnValue(1);
+      try {
+        renderHook(() => useJobProgressStream('job-offline-reconnect'));
+        await waitFor(() => expect(MockEventSource.instances).toHaveLength(1));
+
+        act(() => {
+          MockEventSource.instances[0].readyState = MockEventSource.CONNECTING;
+          MockEventSource.instances[0].onerror?.(new Event('error'));
+        });
+
+        act(() => {
+          window.dispatchEvent(new Event('offline'));
+        });
+
+        // A timer that outlives its stream would open a transport while the browser knows it
+        // has no network — the reconnect must be released with the scope that armed it
+        // (RES-20).
+        act(() => {
+          vi.advanceTimersByTime(RECONNECT_BACKOFF_MAX_MS * 2);
+        });
+        expect(MockEventSource.instances).toHaveLength(1);
+      } finally {
+        random.mockRestore();
+        vi.useRealTimers();
+      }
+    });
+
+    it('releases a pending reconnect when the transport is torn down for an unrelated reason', async () => {
+      vi.useFakeTimers();
+      const random = vi.spyOn(Math, 'random').mockReturnValue(1);
+      try {
+        const channelA = {} as unknown as BroadcastChannel;
+        const channelB = {} as unknown as BroadcastChannel;
+        useJobCoordinationMock.mockReturnValue({ isPrimary: true, channel: channelA });
+        const { rerender } = renderHook(() => useJobProgressStream('job-torn-down'));
+        await waitFor(() => expect(MockEventSource.instances).toHaveLength(1));
+
+        act(() => {
+          MockEventSource.instances[0].readyState = MockEventSource.CONNECTING;
+          MockEventSource.instances[0].onerror?.(new Event('error'));
+        });
+        expect(MockEventSource.instances).toHaveLength(1);
+
+        // A new coordination channel re-opens the transport immediately, so the reconnect the
+        // dead transport armed is now redundant.
+        useJobCoordinationMock.mockReturnValue({ isPrimary: true, channel: channelB });
+        rerender();
+        await waitFor(() => expect(MockEventSource.instances).toHaveLength(2));
+
+        act(() => {
+          vi.advanceTimersByTime(RECONNECT_BACKOFF_MAX_MS * 2);
+        });
+        // If the orphaned timer still fires it churns a third connection nobody asked for —
+        // exactly the extra load the jitter exists to avoid.
+        expect(MockEventSource.instances).toHaveLength(2);
+      } finally {
+        random.mockRestore();
+        vi.useRealTimers();
+      }
+    });
+
+    it('stops scheduling once the reconnect ceiling is spent', async () => {
+      vi.useFakeTimers();
+      const random = vi.spyOn(Math, 'random').mockReturnValue(1);
+      try {
+        const records = captureRecords();
+        const { result } = renderHook(() => useJobProgressStream('job-ceiling'));
+        await waitFor(() => expect(MockEventSource.instances).toHaveLength(1));
+
+        // Attempts that never re-open: nothing dispatches RECONNECTED, so the machine's
+        // counter climbs to the ceiling exactly as it does against a dead service.
+        for (let attempt = 1; attempt <= JOB_MACHINE_RECONNECT_CEILING; attempt += 1) {
+          const source = MockEventSource.instances[attempt - 1];
+          act(() => {
+            source.readyState = MockEventSource.CONNECTING;
+            source.onerror?.(new Event('error'));
+            vi.advanceTimersByTime(RECONNECT_BACKOFF_MAX_MS);
+          });
+          await waitFor(() => expect(MockEventSource.instances).toHaveLength(attempt + 1));
+        }
+
+        const lastSource = MockEventSource.instances[MockEventSource.instances.length - 1];
+        act(() => {
+          lastSource.readyState = MockEventSource.CONNECTING;
+          lastSource.onerror?.(new Event('error'));
+          vi.advanceTimersByTime(RECONNECT_BACKOFF_MAX_MS * 4);
+        });
+
+        // Past the ceiling the machine has failed the job; a retry loop with nothing to stop
+        // it would keep hammering a service that already told us it is down (RES-06).
+        expect(result.current.status).toBe(JOB_STATUS.FAILED);
+        expect(MockEventSource.instances).toHaveLength(JOB_MACHINE_RECONNECT_CEILING + 1);
+        expect(records.filter((record) => record.message === 'sse.reconnect_ceiling')).toHaveLength(1);
+      } finally {
+        random.mockRestore();
         vi.useRealTimers();
       }
     });
@@ -574,7 +764,7 @@ describe('useJobProgressStream', () => {
       const done = await waitFor(() => {
         const record = records.find((entry) => entry.fields.event === 'stream.done');
         expect(record).toBeDefined();
-        return record as LogRecord;
+        return record!;
       });
       expect(done.fields.failedCount).toBe(2);
     });
@@ -622,7 +812,7 @@ describe('useJobProgressStream', () => {
 
       const open = records.find((record) => record.message === 'stream.open');
       expect(open).toBeDefined();
-      const endpoint = (open as LogRecord).fields.endpoint as string;
+      const endpoint = open!.fields.endpoint as string;
       expect(endpoint).not.toContain('super-secret-nonce');
       expect(endpoint).not.toContain('7f3c1e2a');
       expect(endpoint).toContain('<redacted>');
@@ -639,17 +829,125 @@ describe('useJobProgressStream', () => {
       const open = await waitFor(() => {
         const found = records.find((record) => record.message === 'stream.open');
         expect(found).toBeDefined();
-        return found as LogRecord;
+        return found!;
       });
       const done = await waitFor(() => {
         const found = records.find((record) => record.fields.event === 'stream.done');
         expect(found).toBeDefined();
-        return found as LogRecord;
+        return found!;
       });
       expect(open.fields.requestId).toBeTypeOf('string');
       expect(done.fields.requestId).toBe(open.fields.requestId);
       expect(done.fields.durationMs).toBeTypeOf('number');
       expect(done.fields.reconnectAttempts).toBe(0);
+    });
+  });
+
+  describe('correlation spans the scan submit and the stream [FEBT2-LB-NEW-03][OBS-03]', () => {
+    it('inherits the submit unit id so one grep joins scan.submit to stream.open/stream.done', async () => {
+      const records = captureRecords();
+      const resolveRequestId = vi.fn(() => 'req-from-submit');
+      renderHook(() => useJobProgressStream('job-owned', { resolveRequestId }));
+      await waitFor(() => expect(MockEventSource.instances).toHaveLength(1));
+      act(() => {
+        MockEventSource.instances[0].emit('done', { status: 'completed', completed: 2, total: 2 });
+      });
+
+      expect(resolveRequestId).toHaveBeenCalledWith('job-owned');
+      const open = records.find((record) => record.message === 'stream.open')!;
+      const done = await waitFor(() => {
+        const found = records.find((record) => record.fields.event === 'stream.done');
+        expect(found).toBeDefined();
+        return found!;
+      });
+      // The exact id the submit published, not merely "a string" — the whole point is that
+      // the operator's grep for the submit's id also returns these two lines.
+      expect(open.fields.requestId).toBe('req-from-submit');
+      expect(done.fields.requestId).toBe('req-from-submit');
+      expect(open.fields.requestIdSource).toBe('submit');
+    });
+
+    it('mints its own id and says so when no submit claims the job', async () => {
+      const records = captureRecords();
+      const resolveRequestId = vi.fn(() => null);
+      renderHook(() => useJobProgressStream('job-orphan', { resolveRequestId }));
+      await waitFor(() => expect(MockEventSource.instances).toHaveLength(1));
+
+      const open = records.find((record) => record.message === 'stream.open')!;
+      expect(open.fields.requestId).toBeTypeOf('string');
+      expect(open.fields.requestId).not.toBe('');
+      // OBS-08: an orphaned stream must not read as a correlated one. Both carry *a*
+      // requestId, so the only thing that distinguishes them is this field being honest.
+      expect(open.fields.requestIdSource).toBe('stream');
+    });
+
+    it('reports requestIdSource stream when no resolver is supplied at all', async () => {
+      const records = captureRecords();
+      renderHook(() => useJobProgressStream('job-no-resolver'));
+      await waitFor(() => expect(MockEventSource.instances).toHaveLength(1));
+
+      const open = records.find((record) => record.message === 'stream.open')!;
+      expect(open.fields.requestIdSource).toBe('stream');
+      expect(open.fields.requestId).toBeTypeOf('string');
+    });
+
+    it('re-resolves per job: a second job never inherits the first job\'s id', async () => {
+      const records = captureRecords();
+      const resolveRequestId = vi.fn((id: string) => (id === 'job-first' ? 'req-first' : null));
+      const { rerender } = renderHook(({ id }: { id: string }) => useJobProgressStream(id, { resolveRequestId }), {
+        initialProps: { id: 'job-first' },
+      });
+      await waitFor(() => expect(MockEventSource.instances).toHaveLength(1));
+
+      rerender({ id: 'job-second' });
+      await waitFor(() => expect(MockEventSource.instances).toHaveLength(2));
+
+      const opens = records.filter((record) => record.message === 'stream.open');
+      expect(opens).toHaveLength(2);
+      expect(opens[0].fields.requestId).toBe('req-first');
+      expect(opens[0].fields.requestIdSource).toBe('submit');
+      expect(opens[1].fields.requestId).not.toBe('req-first');
+      expect(opens[1].fields.requestIdSource).toBe('stream');
+    });
+
+    it('does not re-open the transport when the caller passes a fresh options object', async () => {
+      renderHook(() =>
+        // A new object literal every render is the ordinary React call shape; if the hook read
+        // it as an effect dependency, every parent render would tear down and re-open the SSE
+        // connection and reset the reconnect ceiling the machine counts.
+        useJobProgressStream('job-stable', { resolveRequestId: () => 'req-stable' }),
+      );
+      await waitFor(() => expect(MockEventSource.instances).toHaveLength(1));
+      expect(MockEventSource.instances).toHaveLength(1);
+    });
+  });
+
+  describe('the transport is released when the job goes away [FEBT2-LB-NEW-02][RES-20]', () => {
+    it('closes the EventSource when jobId becomes null', async () => {
+      const { rerender } = renderHook<unknown, { id: string | null }>(({ id }) => useJobProgressStream(id), {
+        initialProps: { id: 'job-cancelled' },
+      });
+      await waitFor(() => expect(MockEventSource.instances).toHaveLength(1));
+      const source = MockEventSource.instances[0];
+      expect(source.readyState).not.toBe(MockEventSource.CLOSED);
+
+      // What a successful cancel produces upstream: activeJobs empties, latestJobId derives
+      // to null. If this did NOT close the socket the operator would keep receiving frames
+      // for work they stopped, and a connection would leak per cancel (RES-04/RES-20).
+      rerender({ id: null });
+
+      await waitFor(() => expect(source.readyState).toBe(MockEventSource.CLOSED));
+      expect(MockEventSource.instances).toHaveLength(1);
+    });
+
+    it('closes the EventSource on unmount', async () => {
+      const { unmount } = renderHook(() => useJobProgressStream('job-unmounted'));
+      await waitFor(() => expect(MockEventSource.instances).toHaveLength(1));
+      const source = MockEventSource.instances[0];
+
+      unmount();
+
+      expect(source.readyState).toBe(MockEventSource.CLOSED);
     });
   });
 });

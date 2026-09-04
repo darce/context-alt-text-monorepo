@@ -31,13 +31,13 @@ export const ATTACHMENT_FACES_QUERY_OPTIONS = {
   staleTime: Infinity,
 };
 
-function isDegradedDataSource(dataSource: DataSource | undefined): boolean {
+const isDegradedDataSource = (dataSource: DataSource | undefined): boolean => {
   return dataSource === DATA_SOURCE.ENDPOINT_ERROR || dataSource === DATA_SOURCE.UNAVAILABLE;
-}
+};
 
-function hasClusteringPending(identities: DetectedIdentity[]): boolean {
+const hasClusteringPending = (identities: DetectedIdentity[]): boolean => {
   return identities.some((identity) => identity.clustering_pending === true);
-}
+};
 
 export const AttachmentFacesApp: React.FC<AttachmentFacesAppProps> = ({
   attachmentId,
@@ -56,7 +56,7 @@ export const AttachmentFacesApp: React.FC<AttachmentFacesAppProps> = ({
   });
 
   const handleActivate = React.useCallback(
-    (_faceId: string) => {
+    () => {
       if (!workbenchUrl) {
         return;
       }

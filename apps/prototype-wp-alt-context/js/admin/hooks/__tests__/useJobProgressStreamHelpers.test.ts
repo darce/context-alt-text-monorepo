@@ -18,6 +18,11 @@ const newRef = (initial: number | null = null): React.MutableRefObject<number | 
  * Internal invariant only (sr-005): the payloads below are fixtures this file wrote, so a
  * failed parse is a defect in the code under test, not untrusted input to validate.
  */
+// WHY the disable below: TypeScript assertion signatures ("asserts x is T") are only callable when
+// declared as a function declaration, or as a const carrying an explicit type annotation. The bare
+// arrow-expression form func-style asks for makes every call site fail with TS2775. sr-005 mandates
+// assertion helpers for internal invariants, so the language constraint wins over the style rule.
+// eslint-disable-next-line func-style
 function assertParsed<TStatus extends string>(
   result: ParsedProgressEvent<TStatus>,
 ): asserts result is Extract<ParsedProgressEvent<TStatus>, { ok: true }> {

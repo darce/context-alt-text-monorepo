@@ -110,12 +110,27 @@ export const useClusterLabelingMutations = ({
   });
 
   const revertMutation = useMutation({
+    // FEBT2-W2-R-01: the module docstring above claims a shared interactive budget for its
+    // four writes; the undo was the one that fell through to the global fetch timeout, so
+    // the claim was false for a quarter of the surface it described. It now shares the save
+    // budget and threads the signal to fetch, like its three siblings (RES-02 "every
+    // socket/pool/RPC/wait() needs a bounded timeout", lexicons/engineering.md:113; RES-04
+    // — a deadline that only abandons the caller still leaks the server-side write,
+    // lexicons/engineering.md:115).
     mutationFn: (payload: MergeClusterResponse) =>
-      revertMergeCluster({
-        targetClusterId: payload.target_id,
-        movedIdentityIds: payload.moved_identity_ids,
-        sourceLabel: payload.source_label,
-      }),
+      withTimeout(
+        (signal) =>
+          revertMergeCluster(
+            {
+              targetClusterId: payload.target_id,
+              movedIdentityIds: payload.moved_identity_ids,
+              sourceLabel: payload.source_label,
+            },
+            signal,
+          ),
+        SAVE_TIMEOUT_MS,
+        CLUSTER_LABELING_OPERATION.REVERT_MERGE,
+      ),
     retry: false,
     onSuccess: () => {
       setLastMerge(null);

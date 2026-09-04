@@ -16,7 +16,7 @@ import {
 // type (see CROSS-LANE). Type-only, so it is erased and does not bypass the
 // module mock used in tests.
 import type { AcceptedMergeSuggestion } from '../../../api/recognition/identityActionsApi';
-import { getClusterMutationErrorMessage, isAbortError } from './clusterMutationUtils';
+import { getClusterMutationErrorMessage, isDeliberateCancelError } from './clusterMutationUtils';
 import { useOptionalMergeSurvivors } from './MergeSurvivorContext';
 import {
   dropClusterFromReviewCaches,
@@ -114,7 +114,13 @@ export const useClusterLabelMutations = ({
       onRenameSuccess?.(updatedLabel);
     },
     onError: (err: unknown) => {
-      if (isAbortError(err)) {
+      // FEBT2 X-LANE-02: gate the silent path on a *deliberate* cancel, not on
+      // abort-*like*. The abort-like predicate also answers true for
+      // `TimeoutError` — the name utils/http.createTimeoutSignal aborts an
+      // elapsed request with — so a rename that hit the transport deadline reset
+      // the save status and told the operator nothing (RLSE-05; DOM-03: two
+      // meanings bound to one predicate).
+      if (isDeliberateCancelError(err)) {
         invalidateQueries();
         onAbort?.();
         return;
@@ -160,9 +166,14 @@ export const useClusterLabelMutations = ({
       // merge and the ACCEPTED stamp in one transaction. One request, one outcome —
       // there is no half-applied state for the client to compensate for, so the
       // former two-hop sequence and its compensation error are deleted, not disabled.
+      // FEBT2 LD2-NEW-02: the signal is threaded on BOTH branches. The
+      // caller aborts the previous save when a new one starts, so a
+      // signal-deaf accept keeps writing and its onSuccess rewrites caches for
+      // a save the operator already superseded (RLSE-05,
+      // lexicons/engineering.md:696).
       if (suggestionId) {
         return toMergeClusterResponse(
-          await acceptMergeSuggestion({ suggestionId, targetClusterId }),
+          await acceptMergeSuggestion({ suggestionId, targetClusterId, signal }),
         );
       }
       return mergeCluster(clusterId, targetClusterId, targetLabel, signal);
@@ -183,7 +194,9 @@ export const useClusterLabelMutations = ({
       // mergeCluster failure can still race a merge that committed server-side.
       // The atomic accept path cannot half-apply, so it needs no compensation.
       invalidateQueries();
-      if (isAbortError(err)) {
+      // FEBT2 X-LANE-02: see the rename gate — an elapsed transport deadline is
+      // not an operator cancel and must reach the operator as copy.
+      if (isDeliberateCancelError(err)) {
         onAbort?.();
         return;
       }
@@ -192,12 +205,20 @@ export const useClusterLabelMutations = ({
   });
 
   const revertMergeMutation = useMutation({
-    mutationFn: (payload: MergeClusterResponse) =>
-      revertMergeCluster({
-        targetClusterId: payload.target_id,
-        movedIdentityIds: payload.moved_identity_ids,
-        sourceLabel: payload.source_label ?? currentLabel ?? derivedLabel ?? null,
-      }),
+    // FEBT2-W2-R-01: `signal` is carried in the mutation variables, exactly as rename and
+    // merge already do. The risk this closes is not a hang — utils/http bounds every call
+    // with DEFAULT_FETCH_TIMEOUT_MS — it is a superseded write landing: an undo the operator
+    // has already moved past could still commit and its onSuccess still invalidate caches
+    // for an outcome nobody asked for (RES-10).
+    mutationFn: ({ payload, signal }: { payload: MergeClusterResponse; signal?: AbortSignal }) =>
+      revertMergeCluster(
+        {
+          targetClusterId: payload.target_id,
+          movedIdentityIds: payload.moved_identity_ids,
+          sourceLabel: payload.source_label ?? currentLabel ?? derivedLabel ?? null,
+        },
+        signal,
+      ),
     // Don't retry on client errors
     retry: false,
     onSuccess: () => {
@@ -208,7 +229,9 @@ export const useClusterLabelMutations = ({
     // `Error` was both a type lie and an information leak — an HTTPError message
     // embeds the response body preview, so `err.message` is never user copy.
     onError: (err: unknown) => {
-      if (isAbortError(err)) {
+      // FEBT2 X-LANE-02: see the rename gate — an elapsed transport deadline is
+      // not an operator cancel and must reach the operator as copy.
+      if (isDeliberateCancelError(err)) {
         onAbort?.();
         return;
       }
@@ -224,7 +247,8 @@ export const useClusterLabelMutations = ({
       signal?: AbortSignal,
       suggestionId?: string,
     ) => mergeMutation.mutate({ targetClusterId, targetLabel, signal, suggestionId }),
-    revertMerge: revertMergeMutation.mutate,
+    revertMerge: (payload: MergeClusterResponse, signal?: AbortSignal) =>
+      revertMergeMutation.mutate({ payload, signal }),
     isRenaming: renameMutation.isPending,
     isMerging: mergeMutation.isPending,
     isReverting: revertMergeMutation.isPending,

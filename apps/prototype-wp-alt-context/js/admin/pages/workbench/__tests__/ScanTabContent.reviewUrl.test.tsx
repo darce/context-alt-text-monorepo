@@ -122,7 +122,7 @@ interface ReviewQueueStubProps {
 
 vi.mock('../identity-clusters', async () => {
   const actual = await vi.importActual<typeof import('../identity-clusters')>('../identity-clusters');
-  const ReviewQueueStub = React.forwardRef<unknown, ReviewQueueStubProps>(function ReviewQueueStub(props, _ref) {
+  const ReviewQueueStub = React.forwardRef<unknown, ReviewQueueStubProps>(function ReviewQueueStub(props) {
     return (
       <div data-testid="review-queue">
         <h3 id="acx-workbench-queue-heading">Review Suggestions</h3>
@@ -154,10 +154,8 @@ const clusterNotFound = (clusterId: string): HTTPError =>
     message: 'cluster not found',
   });
 
-const functionalWrites = (): Array<[(prev: URLSearchParams) => URLSearchParams, unknown?]> =>
-  setSearchParamsSpy.mock.calls.filter((call) => typeof call[0] === 'function') as Array<
-    [(prev: URLSearchParams) => URLSearchParams, unknown?]
-  >;
+const functionalWrites = (): [(prev: URLSearchParams) => URLSearchParams, unknown?][] =>
+  setSearchParamsSpy.mock.calls.filter((call) => typeof call[0] === 'function') as [(prev: URLSearchParams) => URLSearchParams, unknown?][];
 
 /** status live regions are unnamed; pin role + text via the `name` callback. */
 const statusNamed =

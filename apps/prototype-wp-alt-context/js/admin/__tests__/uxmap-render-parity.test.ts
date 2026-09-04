@@ -497,7 +497,7 @@ describe('ux-map render parity (owned maps)', () => {
       'error',
       'edge_input',
     ]);
-    const ascii = md.match(/z-name-curate states=\[[^\]]+\]/s);
+    const ascii = /z-name-curate states=\[[^\]]+\]/s.exec(md);
     expect(ascii, `${mdName} missing z-name-curate ASCII states`).not.toBeNull();
     expect(ascii?.[0]).toBe('z-name-curate states=[default,loading,error,edge_input]');
   });

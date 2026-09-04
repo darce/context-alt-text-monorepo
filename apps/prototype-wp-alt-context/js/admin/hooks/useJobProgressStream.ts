@@ -12,6 +12,7 @@ import {
 } from '../utils/logger';
 import {
   JOB_EVENT,
+  JOB_MACHINE_RECONNECT_CEILING,
   JOB_MACHINE_STALL_THRESHOLD_MS,
   JOB_STATUS,
   initialJobState,
@@ -37,6 +38,51 @@ const unreachableStatus = (value: never): never => {
 };
 
 export const getJobProgressStallThresholdMs = (): number => JOB_MACHINE_STALL_THRESHOLD_MS;
+
+/** First reconnect window. Doubles per attempt up to RECONNECT_BACKOFF_MAX_MS. */
+export const RECONNECT_BACKOFF_BASE_MS = 1_000;
+/** Ceiling on the backoff window, so attempt 4+ never schedules a multi-minute dead stream. */
+export const RECONNECT_BACKOFF_MAX_MS = 30_000;
+
+/**
+ * Full jitter: a uniform draw from `[0, exponential window]` (FEBT2-LB-NEW-01).
+ *
+ * The browser's native EventSource retry is a fixed interval, identical in every tab, so one
+ * network event releases N tabs at the same instant against the description service at exactly
+ * the moment it is least healthy — the retry-storm/stampede class (RES-06,
+ * lexicons/engineering.md:117; API-08, lexicons/engineering.md:509; strategy order and the
+ * "fleet-synchronized retries amplify outages" reading in
+ * distilled/engineering/restful-web-api-patterns.md:415). Full jitter, not
+ * `window/2 + rand(window/2)`, because only the full draw de-clusters the first attempt, which
+ * is the one that arrives while the dependency is still down.
+ *
+ * Pure and randomness-injected so a test can pin both edges of the window exactly rather than
+ * asserting against a real `Math.random()` (TEST-15, lexicons/engineering.md:396).
+ */
+export const computeReconnectDelayMs = (attempt: number, random: number): number => {
+  const boundedAttempt = Math.max(1, Math.floor(attempt));
+  const windowMs = Math.min(RECONNECT_BACKOFF_MAX_MS, RECONNECT_BACKOFF_BASE_MS * 2 ** (boundedAttempt - 1));
+  const boundedRandom = Math.min(1, Math.max(0, random));
+  return Math.floor(windowMs * boundedRandom);
+};
+
+/**
+ * The correlation source for one stream. `'submit'` means the id was inherited from the
+ * scan-submit unit that created this job; `'stream'` means no submit claimed it and the
+ * stream minted its own. The distinction is logged rather than inferred: an operator must be
+ * able to tell "this stream is joined to a submit" from "this stream is orphaned", the same
+ * way OBS-08 requires telling "no events" from "capture broken".
+ */
+export type JobRequestIdSource = 'submit' | 'stream';
+
+export interface JobProgressStreamOptions {
+  /**
+   * Returns the submit-unit correlation id that owns `jobId`, or `null` when no submit in
+   * this session claims it. Returning a stale id is a contract violation: an unjoinable log
+   * line is honest, a wrongly-joined one is a false trail (ml CAL-02).
+   */
+  resolveRequestId?: (jobId: string) => string | null;
+}
 
 export interface JobProgressStream {
   progress: JobProgress | null;
@@ -95,7 +141,27 @@ const jobEventForWireStatus = (
 /**
  * Hook to connect to the backend SSE endpoint for real-time job progress updates.
  */
-export const useJobProgressStream = (jobId: string | null): JobProgressStream => {
+export const useJobProgressStream = (
+  jobId: string | null,
+  options: JobProgressStreamOptions = {},
+): JobProgressStream => {
+  // Read through a ref so a caller passing an inline options object cannot churn the
+  // transport effect: re-opening the EventSource on every parent render would defeat the
+  // reconnect ceiling the machine counts.
+  //
+  // The ref is seeded from the first render's options and refreshed in a commit-phase
+  // effect, never during render. Render-phase ref mutation is unsafe under concurrent
+  // rendering — React may start a render and throw it away, and the discarded render's
+  // write still sticks. What makes the effect form correct for the one consumer below is
+  // hook order, which React does guarantee: passive effects of a component run in
+  // declaration order on every commit, so this effect has already refreshed the ref by the
+  // time the `[jobId]` effect declared after it reads `resolveRequestIdRef.current`. First
+  // mount is covered by the `useRef` initializer, later renders by the effect.
+  const resolveRequestIdRef = useRef(options.resolveRequestId);
+  useEffect(() => {
+    resolveRequestIdRef.current = options.resolveRequestId;
+  });
+
   const [progress, setProgress] = useState<JobProgress | null>(null);
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const [etaSeconds, setEtaSeconds] = useState<number | null>(null);
@@ -109,7 +175,12 @@ export const useJobProgressStream = (jobId: string | null): JobProgressStream =>
   // One correlation id per SSE unit of work (OBS-03). A module-scope logger mints its
   // requestId once at import time, which correlates "which module", not "which job".
   const jobRequestIdRef = useRef<string | null>(null);
+  const jobRequestIdSourceRef = useRef<JobRequestIdSource | null>(null);
   const jobStartedAtRef = useRef<number | null>(null);
+  // The pending jittered reconnect. Held on a ref so the transport effect's cleanup can cancel
+  // it: a timer that outlives its stream would re-open a transport for a job that is gone
+  // (RES-20, lexicons/engineering.md:131 — the scope that allocates releases on every path).
+  const reconnectTimerRef = useRef<number | null>(null);
 
   const { isPrimary, channel } = useJobCoordination(jobId);
 
@@ -117,14 +188,34 @@ export const useJobProgressStream = (jobId: string | null): JobProgressStream =>
   // not a parallel useState slot that the machine and the SSE handlers both wrote to.
   const status = useMemo<WireJobStatus>(() => projectWireStatus(machine), [machine]);
 
+  // The machine is the single owner of the reconnect count (REF-21): the backoff window is
+  // derived from it rather than from a second private counter that could disagree with the
+  // ceiling the machine enforces. Mirrored in a commit-phase effect for the same reason as
+  // `resolveRequestIdRef` above — the transport effect is declared after this one, so by the
+  // time an `onerror` fires the ref has been refreshed by every commit that preceded it.
+  const reconnectAttemptsRef = useRef(machine.reconnectAttempts);
+  useEffect(() => {
+    reconnectAttemptsRef.current = machine.reconnectAttempts;
+  });
+
+  const cancelPendingReconnect = useCallback(() => {
+    if (reconnectTimerRef.current !== null) {
+      window.clearTimeout(reconnectTimerRef.current);
+      reconnectTimerRef.current = null;
+    }
+  }, []);
+
   const retry = useCallback(() => {
+    // An operator pressing Retry is not part of a herd: one human, one click, and they are
+    // owed an immediate attempt. Only the automatic reconnect below is jittered.
+    cancelPendingReconnect();
     streamOpenedAtRef.current = Date.now();
     // A fresh transport is being opened: this is the reconnect site the ceiling counts.
     dispatch({ type: JOB_EVENT.RECONNECTING, at: streamOpenedAtRef.current });
     eventSourceRef.current?.close();
     eventSourceRef.current = null;
     setConnectionNonce((value) => value + 1);
-  }, []);
+  }, [cancelPendingReconnect]);
 
   useEffect(() => {
     const goOnline = () => {
@@ -145,12 +236,18 @@ export const useJobProgressStream = (jobId: string | null): JobProgressStream =>
   }, []);
 
   useEffect(() => {
+    // A reconnect scheduled for the previous job must not open a transport for the new one.
+    cancelPendingReconnect();
     setProgress(null);
     setEtaSeconds(null);
     startTimeRef.current = null;
     streamOpenedAtRef.current = null;
     progressRef.current = null;
-    jobRequestIdRef.current = jobId ? newRequestId() : null;
+    // One grep from scan.submit to stream.done (OBS-03, FEBT2-LB-NEW-03): the submit unit's
+    // id when a submit claims this job, a fresh id when none does. Never a stale id.
+    const inheritedRequestId = jobId ? (resolveRequestIdRef.current?.(jobId) ?? null) : null;
+    jobRequestIdRef.current = jobId ? (inheritedRequestId ?? newRequestId()) : null;
+    jobRequestIdSourceRef.current = jobId ? (inheritedRequestId === null ? 'stream' : 'submit') : null;
     jobStartedAtRef.current = jobId ? Date.now() : null;
     if (jobId) {
       dispatch({ type: JOB_EVENT.START, jobId, at: Date.now() });
@@ -160,7 +257,7 @@ export const useJobProgressStream = (jobId: string | null): JobProgressStream =>
     } else {
       dispatch({ type: JOB_EVENT.RESET });
     }
-  }, [jobId]);
+  }, [cancelPendingReconnect, jobId]);
 
   const streamIsActive = Boolean(jobId) && isOnline && isPrimary && !isTerminalJobStatus(status);
 
@@ -284,6 +381,9 @@ export const useJobProgressStream = (jobId: string | null): JobProgressStream =>
       endpoint: redactEndpoint(streamUrl.toString()),
       connectionNonce,
       reconnectAttempts: machine.reconnectAttempts,
+      // Without this an orphaned stream is indistinguishable from a correlated one: both
+      // carry *a* requestId (OBS-08 — silence, or a lookalike id, must not read as health).
+      requestIdSource: jobRequestIdSourceRef.current ?? 'stream',
     });
 
     const close = () => {
@@ -471,17 +571,47 @@ export const useJobProgressStream = (jobId: string | null): JobProgressStream =>
         jobLog.debug('sse.connection_closed', { readyState: EventSource.CLOSED });
         return;
       }
-      if (eventSource?.readyState === EventSource.CONNECTING) {
-        // The browser is re-establishing the transport: this is the other real reconnect site.
-        dispatch({ type: JOB_EVENT.RECONNECTING, at: Date.now() });
+      if (eventSource?.readyState !== EventSource.CONNECTING) {
+        return;
       }
+
+      // The transport dropped and is being re-established: the other real reconnect site.
+      const attempt = reconnectAttemptsRef.current + 1;
+      dispatch({ type: JOB_EVENT.RECONNECTING, at: Date.now() });
+      // Take the reconnect away from the browser (FEBT2-LB-NEW-01). Its native retry is a
+      // fixed interval, so every tab dropped by one network event comes back in lockstep;
+      // owning the transport is the only way the client can jitter that (RES-06,
+      // lexicons/engineering.md:117).
+      close();
+
+      if (attempt > JOB_MACHINE_RECONNECT_CEILING) {
+        // The machine has already failed the job on the RECONNECTING above. Scheduling another
+        // attempt here would be a retry loop with nothing to stop it, and the operator would
+        // see a failed job that is still hammering the service (RES-06 "what stops it?").
+        jobLog.warn('sse.reconnect_ceiling', { attempt, ceiling: JOB_MACHINE_RECONNECT_CEILING });
+        return;
+      }
+
+      const delayMs = computeReconnectDelayMs(attempt, Math.random());
+      // A scheduled-but-not-yet-fired reconnect is otherwise invisible: without this line the
+      // gap between a drop and the re-open reads the same as a hung client (OBS-08,
+      // lexicons/engineering.md:478).
+      jobLog.debug('sse.reconnect_scheduled', { attempt, delayMs, ceiling: JOB_MACHINE_RECONNECT_CEILING });
+      cancelPendingReconnect();
+      reconnectTimerRef.current = window.setTimeout(() => {
+        reconnectTimerRef.current = null;
+        setConnectionNonce((value) => value + 1);
+      }, delayMs);
     };
 
-    return () => close();
+    return () => {
+      cancelPendingReconnect();
+      close();
+    };
     // `machine.reconnectAttempts` is read for log dimensions only; re-opening the transport
     // on every counter change would defeat the reconnect ceiling it reports.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [channel, connectionNonce, isOnline, isPrimary, jobId]);
+  }, [cancelPendingReconnect, channel, connectionNonce, isOnline, isPrimary, jobId]);
 
   return { progress, status, isOnline, etaSeconds, isPrimary, lastEventAt, stalledForSeconds, retry };
 };

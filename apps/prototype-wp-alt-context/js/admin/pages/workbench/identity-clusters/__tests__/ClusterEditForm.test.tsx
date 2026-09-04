@@ -10,10 +10,10 @@ const nameFacePropsRef = vi.hoisted(() => ({
 
 vi.mock('../NameFaceControl', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../NameFaceControl')>();
-  function NameFaceControlSpy(props: React.ComponentProps<typeof actual.NameFaceControl>) {
+  const NameFaceControlSpy = (props: React.ComponentProps<typeof actual.NameFaceControl>) => {
     nameFacePropsRef.current = props;
     return actual.NameFaceControl(props);
-  }
+  };
   return {
     ...actual,
     NameFaceControl: NameFaceControlSpy,

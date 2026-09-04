@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import textwrap
 import uuid
 from datetime import UTC, datetime
 from typing import Any, cast
@@ -23,6 +24,32 @@ from recognition.interface_adapters.http.deps.services import (
 )
 from recognition.interface_adapters.http.routers import retention as retention_router
 from recognition.tests.api.conftest import FakeSession
+
+
+def _export_snapshot(tenant_id: str, **overrides: Any) -> dict[str, Any]:
+    """Build a snapshot with the exact top-level shape TenantExportService emits.
+
+    rg-005 / FEBT2-LE-NEW-02: the fake must not be looser than the real
+    exporter. A fake that omits collections lets a response contract be
+    written against the fake instead of against production, which is how the
+    admin client came to believe in wire shapes the exporter never produced
+    (FEBT1-LG-01). Every key here mirrors
+    ``TenantExportService.export_tenant_data``.
+    """
+    snapshot: dict[str, Any] = {
+        "tenant_id": tenant_id,
+        "retention_mode": "retain_all",
+        "exported_at": datetime.now(tz=UTC).isoformat(),
+        "schema_version": EXPORT_SCHEMA_VERSION,
+        "clusters": [{"id": str(uuid.uuid4())}],
+        "media_identities": [],
+        "identity_suggestions": [],
+        "name_suggestions": [],
+        "cluster_merge_suggestions": [],
+        "scan_jobs": [],
+    }
+    snapshot.update(overrides)
+    return snapshot
 
 
 class FakeRetentionPolicyService:
@@ -68,20 +95,24 @@ class FakeRetentionExportService:
         self.count = count
         self.calls: list[tuple[str, str]] = []
         self._fake_job_id = "fake-export-job-id"
+        self.data_json_override: dict[str, Any] | None = None
 
     async def count_exportable_identities(self, tenant_id: str) -> int:
         assert tenant_id == self.tenant_id
         return self.count
 
     async def export_tenant_data(self, tenant_id: str, actor: str) -> dict[str, Any]:
+        """Mirror ``TenantExportService.export_tenant_data`` exactly.
+
+        FEBT2-W2-V-02 / rg-005: this fake used to nest the collections under a
+        ``data`` key and add a ``counts`` key the real exporter never emits.
+        That is the phantom envelope FEBT1-LG-01 blamed the admin client for
+        inventing -- the fake taught it. A fake that is looser than, or simply
+        different from, the production collaborator lets a contract be written
+        against the double instead of against the system.
+        """
         self.calls.append((tenant_id, actor))
-        return {
-            "tenant_id": tenant_id,
-            "exported_at": datetime.now(tz=UTC),
-            "schema_version": EXPORT_SCHEMA_VERSION,
-            "counts": {"clusters": 2, "members": 3},
-            "data": {"clusters": [{"id": str(uuid.uuid4())}]},
-        }
+        return _export_snapshot(tenant_id)
 
     async def start_async_export(self, tenant_id: str, actor: str) -> dict[str, Any]:
         self.calls.append((tenant_id, actor))
@@ -95,12 +126,7 @@ class FakeRetentionExportService:
             "status": "completed",
             "file_size": 1024,
             "error_message": None,
-            "data_json": {
-                "tenant_id": tenant_id,
-                "exported_at": datetime.now(tz=UTC).isoformat(),
-                "schema_version": EXPORT_SCHEMA_VERSION,
-                "clusters": [{"id": str(uuid.uuid4())}],
-            },
+            "data_json": self.data_json_override or _export_snapshot(tenant_id),
         }
 
 
@@ -826,3 +852,216 @@ def test_apply_preset_empty_string_returns_422(monkeypatch) -> None:
     )
 
     assert response.status_code == 422
+
+
+def _auth(monkeypatch, tenant_id: str) -> None:
+    async def _fake_lookup(api_key, settings, session):  # noqa: ANN001
+        return tenant_id, "api-key-id", "enterprise", False
+
+    from recognition.interface_adapters.http.deps import auth
+
+    monkeypatch.setattr(auth, "_lookup_api_key", _fake_lookup)
+
+
+_EXPORT_CONTRACT_KEYS = (
+    "tenant_id",
+    "retention_mode",
+    "exported_at",
+    "schema_version",
+    "clusters",
+    "media_identities",
+    "identity_suggestions",
+    "name_suggestions",
+    "cluster_merge_suggestions",
+    "scan_jobs",
+)
+
+
+def _real_exporter_return_keys() -> set[str]:
+    """Top-level keys of the dict literal ``TenantExportService.export_tenant_data`` returns.
+
+    Read from the real source rather than restated, so the constant below cannot
+    drift away from production without this test noticing (ARCH-13: the
+    structure enforces the correspondence, not a reviewer's memory).
+    """
+    import ast as _ast
+    import inspect as _inspect
+
+    from recognition.application.services.export_service import TenantExportService
+
+    tree = _ast.parse(textwrap.dedent(_inspect.getsource(TenantExportService.export_tenant_data)))
+    returns = [n for n in _ast.walk(tree) if isinstance(n, _ast.Return) and isinstance(n.value, _ast.Dict)]
+    if len(returns) != 1:
+        raise AssertionError(
+            f"expected exactly one dict-literal return in export_tenant_data, found {len(returns)}; "
+            "the fake-fidelity guard can no longer read the real contract"
+        )
+    keys = {k.value for k in returns[0].value.keys if isinstance(k, _ast.Constant) and isinstance(k.value, str)}
+    if not keys:
+        raise AssertionError("export_tenant_data's return dict yielded no literal keys; refusing a vacuous pass")
+    return keys
+
+
+def test_export_contract_keys_match_the_real_exporter() -> None:
+    """rg-005: the constant the tests pin the wire shape to is the exporter's own shape."""
+    assert set(_EXPORT_CONTRACT_KEYS) == _real_exporter_return_keys()
+
+
+@pytest.mark.asyncio
+async def test_fake_export_service_mirrors_the_real_exporter_shape() -> None:
+    """FEBT2-W2-V-02 / rg-005: a test double must not be a different contract.
+
+    The fake used to nest collections under ``data`` and add a ``counts`` key
+    the exporter never emits. Tests written against that double would certify a
+    wire shape production does not produce -- which is exactly how the admin
+    client came to believe in a phantom envelope (FEBT1-LG-01).
+    """
+    tenant_id = str(uuid.uuid4())
+    payload = await FakeRetentionExportService(tenant_id).export_tenant_data(tenant_id, "api_key:test")
+
+    assert set(payload) == _real_exporter_return_keys()
+    assert "data" not in payload
+    assert "counts" not in payload
+
+
+def test_export_job_data_envelope_matches_the_export_contract(monkeypatch) -> None:
+    """FEBT2-LE-NEW-02: the download envelope is pinned server-side.
+
+    The route previously had no ``response_model``, so nothing on the server
+    said what the download looks like and the admin client invented envelopes
+    the exporter never emits (FEBT1-LG-01). The collections sit at the top
+    level; there is no ``data`` wrapper.
+    """
+    tenant_id = str(uuid.uuid4())
+    client, _, _, _, _ = _build_client(monkeypatch, tenant_id=tenant_id)
+    _auth(monkeypatch, tenant_id)
+
+    response = client.get(
+        "/recognition/retention/export/fake-export-job-id/data",
+        headers={"Authorization": "Bearer good-key"},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    for key in _EXPORT_CONTRACT_KEYS:
+        assert key in body, f"export contract key {key!r} missing from the download envelope"
+    assert "data" not in body
+    assert isinstance(body["schema_version"], int)
+    assert all(isinstance(body[key], list) for key in _EXPORT_CONTRACT_KEYS[4:])
+
+
+@pytest.mark.parametrize("missing_key", _EXPORT_CONTRACT_KEYS)
+def test_export_job_data_rejects_a_snapshot_that_violates_the_contract(monkeypatch, missing_key: str) -> None:
+    """rg-015: an off-contract stored snapshot is an explicit fault, not a second supported shape."""
+    tenant_id = str(uuid.uuid4())
+    client, _, export_service, _, _ = _build_client(monkeypatch, tenant_id=tenant_id)
+    _auth(monkeypatch, tenant_id)
+
+    snapshot = _export_snapshot(tenant_id)
+    del snapshot[missing_key]
+    export_service.data_json_override = snapshot
+
+    response = client.get(
+        "/recognition/retention/export/fake-export-job-id/data",
+        headers={"Authorization": "Bearer good-key"},
+    )
+
+    assert response.status_code == 500
+    assert response.json()["detail"] == "stored export snapshot does not match the export contract"
+
+
+def test_export_job_data_does_not_silently_drop_unknown_keys(monkeypatch) -> None:
+    """A response_model that filters extras would silently truncate a download (RLSE-05)."""
+    tenant_id = str(uuid.uuid4())
+    client, _, export_service, _, _ = _build_client(monkeypatch, tenant_id=tenant_id)
+    _auth(monkeypatch, tenant_id)
+
+    export_service.data_json_override = _export_snapshot(tenant_id, future_collection=[{"id": "x"}])
+
+    response = client.get(
+        "/recognition/retention/export/fake-export-job-id/data",
+        headers={"Authorization": "Bearer good-key"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["future_collection"] == [{"id": "x"}]
+
+
+def test_export_job_data_unclassified_failure_returns_500_not_501(monkeypatch) -> None:
+    """FEBT2-LE-NEW-03: a server fault is 500. 501 tells the client the feature does not exist."""
+    tenant_id = str(uuid.uuid4())
+    client, _, export_service, _, _ = _build_client(monkeypatch, tenant_id=tenant_id)
+    _auth(monkeypatch, tenant_id)
+
+    async def _boom(job_id: str, tenant_id: str) -> dict[str, Any]:
+        raise RuntimeError("transient database failure")
+
+    export_service.get_export_status = _boom
+
+    response = client.get(
+        "/recognition/retention/export/fake-export-job-id/data",
+        headers={"Authorization": "Bearer good-key"},
+    )
+
+    assert response.status_code == 500
+    assert response.status_code != 501
+    # SEC-01: the driver text is logged server-side and must not cross the boundary.
+    assert "transient database failure" not in response.text
+    assert response.json()["detail"] == retention_router.INTERNAL_ERROR_DETAIL
+
+
+def test_import_unclassified_failure_returns_500_not_501(monkeypatch) -> None:
+    """FEBT2-LE-NEW-03: the import route's catch-all must not claim 'not implemented'."""
+    tenant_id = str(uuid.uuid4())
+    client, _, _, _, import_service = _build_client(monkeypatch, tenant_id=tenant_id)
+    _auth(monkeypatch, tenant_id)
+
+    async def _boom(data, tenant_id: str, actor: str) -> dict[str, Any]:  # noqa: ANN001
+        raise RuntimeError("transient database failure")
+
+    import_service.validate_and_import = _boom
+
+    response = client.post(
+        "/recognition/retention/import",
+        json={"data": {"schema_version": EXPORT_SCHEMA_VERSION, "clusters": []}},
+        headers={"Authorization": "Bearer good-key"},
+    )
+
+    assert response.status_code == 500
+    assert response.status_code != 501
+    # SEC-01: the driver text is logged server-side and must not cross the boundary.
+    assert "transient database failure" not in response.text
+    assert response.json()["detail"] == retention_router.INTERNAL_ERROR_DETAIL
+
+
+# The single-module "no 501 in retention.py" guard and its
+# ``source.count("HTTP_500_INTERNAL_SERVER_ERROR") >= 9`` companion that used to
+# live here are gone. The first read one file and so certified nothing about
+# ``analyze.py``, which kept a 501 catch-all through the wave that claimed to fix
+# that class. The second was a lower bound on a substring count: it still passed
+# if a tenth 500 was added while one of the nine that mattered was deleted, so it
+# could never fail for the reason it was written. Both are replaced by the
+# AST-based, directory-wide, fail-closed properties in
+# ``test_router_error_boundary_contract.py`` (ARCH-13).
+
+
+def test_export_job_data_publishes_its_response_model_in_openapi(monkeypatch) -> None:
+    """ARCH-13: the contract must be structural, not just a runtime check in the handler.
+
+    Validating inside the handler makes the server honest; declaring
+    ``response_model`` is what publishes the shape to every client generator.
+    Dropping the decorator argument would leave the route documented as an
+    untyped object again -- the exact gap that let the admin client invent
+    envelopes (FEBT1-LG-01) -- while all behavioural tests stayed green.
+    """
+    tenant_id = str(uuid.uuid4())
+    client, _, _, _, _ = _build_client(monkeypatch, tenant_id=tenant_id)
+    app = cast(FastAPI, client.app)
+
+    schema = app.openapi()
+    content = schema["paths"]["/recognition/retention/export/{job_id}/data"]["get"]["responses"]["200"]["content"]
+    assert content["application/json"]["schema"]["$ref"].endswith("/ExportSnapshotResponse")
+
+    properties = schema["components"]["schemas"]["ExportSnapshotResponse"]["properties"]
+    for key in _EXPORT_CONTRACT_KEYS:
+        assert key in properties, f"export contract key {key!r} is not published in the OpenAPI schema"

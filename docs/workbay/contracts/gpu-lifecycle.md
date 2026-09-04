@@ -62,15 +62,16 @@ healthy sibling cannot mask a dead instance. Missing HTTP status is
 Existing keys: `queue_depth`, `in_flight`, `written_at`.
 
 Additive optional: `batch_in_progress` (bool). **The current describe-service
-producer does not write this key.** Absent → false. The consumer must not
-claim batch protection when the key is missing. Present but not a bool →
-treat the snapshot as busy (fail closed). A STOP must never fire while
-`has_work` is true (`queue_depth > 0` or `in_flight > 0` or
+producer writes this key.** A true value keeps bulk runs protected across
+item-state gaps that do not increment `in_flight` or `queue_depth`. A STOP must
+never fire while `has_work` is true (`queue_depth > 0` or `in_flight > 0` or
 `batch_in_progress`).
 
-Bulk / multi-job runs that never increment `in_flight`/`queue_depth` for the
-whole batch are **unprotected until the producer writes `batch_in_progress`**.
-`--load-json` help and `JsonFileJobLoadSource` document this loudly.
+Absent remains false for compatibility with older or alternate producers. The
+consumer must not claim batch protection when the key is missing and warns
+once so operators can identify an incomplete producer contract. Present but
+not a bool is treated as busy (fail closed). `--load-json` help and
+`JsonFileJobLoadSource` document these compatibility semantics.
 
 Unreadable / stale / missing load JSON is an **untrustworthy** sentinel
 (`untrustworthy=true`, busy counts). STOP path: fail closed (no STOP). START

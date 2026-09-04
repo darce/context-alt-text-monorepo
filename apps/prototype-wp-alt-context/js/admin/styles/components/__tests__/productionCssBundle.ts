@@ -12,7 +12,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, relative, resolve } from 'node:path';
+import { dirname, join, relative, resolve } from 'node:path';
 
 /**
  * Why this exists (FEBT1-LH-01 / FEBT1-GATE-04):
@@ -39,6 +39,7 @@ import { join, relative, resolve } from 'node:path';
 
 const testsRoot = __dirname;
 const appRoot = resolve(testsRoot, '..', '..', '..', '..', '..');
+const CACHE_ROOT = join(tmpdir(), 'acx-style-bundle');
 
 /**
  * Give each worktree lane its own cache and eviction scope.
@@ -49,12 +50,13 @@ const appRoot = resolve(testsRoot, '..', '..', '..', '..', '..');
  */
 export const artifactFixtureRootForAppRoot = (root: string): string => {
   const laneKey = createHash('sha256').update(resolve(root)).digest('hex').slice(0, 16);
-  return join(tmpdir(), 'acx-style-bundle', laneKey);
+  return join(CACHE_ROOT, laneKey);
 };
 
 const FIXTURE_ROOT = artifactFixtureRootForAppRoot(appRoot);
 const LOCK_DIR = join(FIXTURE_ROOT, '.lock');
 const STAMP_FILE = 'build-stamp.json';
+const NAMESPACE_OWNER_FILE = 'namespace-owner.json';
 
 /** A lock held longer than this is assumed to belong to a crashed process. */
 const STALE_LOCK_MS = 5 * 60_000;
@@ -63,6 +65,8 @@ const LOCK_TIMEOUT_MS = 6 * 60_000;
 const LOCK_POLL_MS = 100;
 /** Artifact directories untouched for longer than this are pruned. */
 const ARTIFACT_TTL_MS = 24 * 60 * 60_000;
+/** Bound legacy namespaces created before owner metadata was introduced. */
+const MAX_RETAINED_UNKNOWN_NAMESPACES = 4;
 /**
  * Hard cap on retained artifact directories, TTL notwithstanding (FEBT2-W2-U-03).
  *
@@ -209,39 +213,44 @@ const sleepSync = (milliseconds: number): void => {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, milliseconds);
 };
 
-const acquireGlobalLock = (): void => {
-  const deadline = Date.now() + LOCK_TIMEOUT_MS;
-  mkdirSync(FIXTURE_ROOT, { recursive: true });
-
-  for (;;) {
+const tryAcquireDirectoryLock = (lockDir: string): boolean => {
+  mkdirSync(dirname(lockDir), { recursive: true });
+  try {
+    mkdirSync(lockDir);
+    return true;
+  } catch {
+    let heldForMs = 0;
     try {
-      mkdirSync(LOCK_DIR);
-      return;
+      heldForMs = Date.now() - statSync(lockDir).mtimeMs;
     } catch {
-      let heldForMs = 0;
-      try {
-        heldForMs = Date.now() - statSync(LOCK_DIR).mtimeMs;
-      } catch {
-        // The holder released between mkdir and stat; retry immediately.
-        continue;
-      }
-      if (heldForMs > STALE_LOCK_MS) {
-        rmSync(LOCK_DIR, { recursive: true, force: true });
-        continue;
-      }
-      if (Date.now() > deadline) {
-        throw new Error(
-          `Timed out after ${LOCK_TIMEOUT_MS}ms waiting for the production-CSS build lock at ${LOCK_DIR}. ` +
-            'Remove it if no build is running.',
-        );
-      }
-      sleepSync(LOCK_POLL_MS);
+      // The holder released between mkdir and stat; let the caller retry immediately.
+      return false;
     }
+    if (heldForMs > STALE_LOCK_MS) {
+      rmSync(lockDir, { recursive: true, force: true });
+    }
+    return false;
   }
 };
 
-const releaseGlobalLock = (): void => {
-  rmSync(LOCK_DIR, { recursive: true, force: true });
+const acquireDirectoryLock = (lockDir: string): void => {
+  const deadline = Date.now() + LOCK_TIMEOUT_MS;
+  for (;;) {
+    if (tryAcquireDirectoryLock(lockDir)) {
+      return;
+    }
+    if (Date.now() > deadline) {
+      throw new Error(
+        `Timed out after ${LOCK_TIMEOUT_MS}ms waiting for the production-CSS lock at ${lockDir}. ` +
+          'Remove it if no build is running.',
+      );
+    }
+    sleepSync(LOCK_POLL_MS);
+  }
+};
+
+const releaseDirectoryLock = (lockDir: string): void => {
+  rmSync(lockDir, { recursive: true, force: true });
 };
 
 /** An artifact directory and the time its stamp was last touched. */
@@ -250,6 +259,158 @@ export interface ArtifactEntry {
   /** Stamp mtime; `0` for a directory with no stamp (a crashed or half-written build). */
   readonly lastUsedMs: number;
 }
+
+/** A worktree cache namespace as observed by the parent-level collector. */
+export interface NamespaceEntry {
+  readonly name: string;
+  readonly lastUsedMs: number;
+  /** `null` means an owner marker from an older fixture version is absent or unreadable. */
+  readonly ownerRootExists: boolean | null;
+  /** A build process currently owns this namespace's lane-local lock. */
+  readonly lockHeld: boolean;
+}
+
+/**
+ * Select retired or ownerless namespace directories for parent-level collection.
+ *
+ * A namespace whose recorded application root still exists belongs to a live worktree and is
+ * never selected, even when old. A recorded owner that no longer exists is safe to collect in
+ * full: no future process in that retired lane can revisit its lane-local artifact pruner.
+ * Ownerless legacy namespaces fall back to the same TTL plus count bound as the old cache.
+ */
+export const selectNamespacesToPrune = (
+  entries: readonly NamespaceEntry[],
+  keepNamespace: string,
+  cutoffMs: number,
+  maxRetainedUnknown: number = MAX_RETAINED_UNKNOWN_NAMESPACES,
+): string[] => {
+  const candidates = entries.filter(
+    (entry) =>
+      entry.name !== keepNamespace && entry.name !== '.gc-lock' && !entry.lockHeld,
+  );
+  const retired = candidates.filter((entry) => entry.ownerRootExists === false);
+  const unknown = candidates.filter((entry) => entry.ownerRootExists === null);
+  const expiredUnknown = unknown.filter((entry) => entry.lastUsedMs < cutoffMs);
+  const retainableUnknown = unknown
+    .filter((entry) => entry.lastUsedMs >= cutoffMs)
+    .sort((a, b) => b.lastUsedMs - a.lastUsedMs || a.name.localeCompare(b.name));
+  const overflowUnknown = retainableUnknown.slice(Math.max(maxRetainedUnknown, 0));
+
+  return [
+    ...new Set(
+      [...retired, ...expiredUnknown, ...overflowUnknown].map((entry) => entry.name),
+    ),
+  ].sort();
+};
+
+const readNamespaceOwner = (namespaceRoot: string): string | null => {
+  try {
+    const parsed: unknown = JSON.parse(
+      readFileSync(join(namespaceRoot, NAMESPACE_OWNER_FILE), 'utf8'),
+    );
+    if (typeof parsed !== 'object' || parsed === null || !('appRoot' in parsed)) {
+      return null;
+    }
+    const { appRoot: recordedRoot } = parsed;
+    return typeof recordedRoot === 'string' ? recordedRoot : null;
+  } catch {
+    return null;
+  }
+};
+
+const namespaceLastUsedMs = (namespaceRoot: string): number => {
+  let latest = statSync(namespaceRoot).mtimeMs;
+  for (const child of readdirSync(namespaceRoot, { withFileTypes: true })) {
+    const activityPath = child.isDirectory()
+      ? join(namespaceRoot, child.name, STAMP_FILE)
+      : join(namespaceRoot, child.name);
+    if (existsSync(activityPath)) {
+      latest = Math.max(latest, statSync(activityPath).mtimeMs);
+    }
+  }
+  return latest;
+};
+
+const readNamespaceEntries = (cacheRoot: string): NamespaceEntry[] =>
+  readdirSync(cacheRoot, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory() && entry.name !== '.gc-lock')
+    .map((entry) => {
+      const namespaceRoot = join(cacheRoot, entry.name);
+      const ownerRoot = readNamespaceOwner(namespaceRoot);
+      return {
+        name: entry.name,
+        lastUsedMs: namespaceLastUsedMs(namespaceRoot),
+        ownerRootExists: ownerRoot === null ? null : existsSync(ownerRoot),
+        lockHeld: existsSync(join(namespaceRoot, '.lock')),
+      };
+    });
+
+/**
+ * Register this lane and collect namespaces left behind by removed worktrees.
+ *
+ * This parent operation has its own shared lock: lane-local build locks cannot coordinate two
+ * different namespace directories. Live owners are excluded from deletion, so sibling lanes can
+ * still build concurrently after this short metadata/GC phase.
+ */
+export const registerAndPruneNamespaces = (
+  cacheRoot: string,
+  fixtureRoot: string,
+  ownerAppRoot: string,
+  nowMs: number = Date.now(),
+  buildLockDir?: string,
+): void => {
+  const gcLockDir = join(cacheRoot, '.gc-lock');
+  const buildDeadline = Date.now() + LOCK_TIMEOUT_MS;
+  const relativeFixtureRoot = relative(cacheRoot, fixtureRoot);
+  if (
+    relativeFixtureRoot === '' ||
+    relativeFixtureRoot.startsWith('..') ||
+    relativeFixtureRoot.includes('/') ||
+    relativeFixtureRoot.includes('\\')
+  ) {
+    throw new Error(`Fixture namespace ${fixtureRoot} must be a direct child of ${cacheRoot}.`);
+  }
+
+  for (;;) {
+    let buildLockAcquired = buildLockDir === undefined;
+    acquireDirectoryLock(gcLockDir);
+    try {
+      mkdirSync(fixtureRoot, { recursive: true });
+      writeFileSync(
+        join(fixtureRoot, NAMESPACE_OWNER_FILE),
+        `${JSON.stringify({ appRoot: ownerAppRoot }, null, 2)}\n`,
+        'utf8',
+      );
+      const doomed = selectNamespacesToPrune(
+        readNamespaceEntries(cacheRoot),
+        relativeFixtureRoot,
+        nowMs - ARTIFACT_TTL_MS,
+      );
+      for (const name of doomed) {
+        rmSync(join(cacheRoot, name), { recursive: true, force: true });
+      }
+      // Build/read ownership is acquired before the shared GC lock is released. A collector can
+      // therefore never observe a live namespace in the gap between registration and lane locking.
+      if (buildLockDir !== undefined) {
+        buildLockAcquired = tryAcquireDirectoryLock(buildLockDir);
+      }
+    } finally {
+      releaseDirectoryLock(gcLockDir);
+    }
+    if (buildLockAcquired) {
+      return;
+    }
+    // Never wait for a lane-local build while holding the cache-parent GC lock: a second process
+    // in one lane must not stall unrelated lanes from registering or collecting their namespaces.
+    if (Date.now() > buildDeadline) {
+      throw new Error(
+        `Timed out after ${LOCK_TIMEOUT_MS}ms waiting for the production-CSS lock at ${buildLockDir}. ` +
+          'Remove it if no build is running.',
+      );
+    }
+    sleepSync(LOCK_POLL_MS);
+  }
+};
 
 /**
  * Which artifact directories to delete. Pure so the retention policy can be tested without
@@ -337,7 +498,13 @@ export const loadProductionCssBundle = (): ProductionCssBundle => {
   const outDir = join(FIXTURE_ROOT, fingerprint);
   const stampPath = join(outDir, STAMP_FILE);
 
-  acquireGlobalLock();
+  registerAndPruneNamespaces(
+    CACHE_ROOT,
+    FIXTURE_ROOT,
+    appRoot,
+    Date.now(),
+    LOCK_DIR,
+  );
   try {
     // Before the build, not after: pruning afterwards means the disk must hold the old
     // artifacts *and* the new one simultaneously, which is exactly the moment the volume
@@ -373,7 +540,7 @@ export const loadProductionCssBundle = (): ProductionCssBundle => {
     });
     return cachedBundle;
   } finally {
-    releaseGlobalLock();
+    releaseDirectoryLock(LOCK_DIR);
   }
 };
 

@@ -10,10 +10,18 @@
  * fail today, so the pure `selectUnfingerprinted` seam is exercised with a planted
  * unlisted file — the permanent discrimination guard TEST-15 asks for.
  */
-import { readFileSync } from 'node:fs';
-import { basename, join } from 'node:path';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
+import { tmpdir } from 'node:os';
+import { basename, dirname, join } from 'node:path';
 
-import { beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import type { ProductionCssBundle } from './productionCssBundle';
 import {
@@ -24,7 +32,10 @@ import {
   loadProductionCssBundle,
   manifestBuildSources,
   MAX_RETAINED_ARTIFACTS,
+  type NamespaceEntry,
+  registerAndPruneNamespaces,
   selectArtifactsToPrune,
+  selectNamespacesToPrune,
   selectUnfingerprinted,
   uncoveredBuildInputs,
   unfingerprintedManifestSources,
@@ -85,12 +96,34 @@ describe('build-input fingerprint coverage [FEBT2-LG-NEW-02]', () => {
 
 describe('rollup agrees with the fingerprint [FEBT2-LG-NEW-02]', () => {
   let bundle: ProductionCssBundle;
+  const cacheRoot = dirname(artifactFixtureRootForAppRoot('/unused/app-root'));
+  const retiredNamespaces = Array.from({ length: 6 }, (_, index) =>
+    join(cacheRoot, `retired-fixture-${process.pid}-${index}`),
+  );
 
   // A cold cache runs a real `vite build`, which is far past the 5s default. The
   // fixture memoises per fingerprint, so this is paid once for the whole suite.
   beforeAll(() => {
+    for (const [index, namespaceRoot] of retiredNamespaces.entries()) {
+      mkdirSync(join(namespaceRoot, 'old-fingerprint'), { recursive: true });
+      writeFileSync(
+        join(namespaceRoot, 'namespace-owner.json'),
+        `${JSON.stringify({ appRoot: join(cacheRoot, `removed-worktree-${process.pid}-${index}`) })}\n`,
+        'utf8',
+      );
+    }
     bundle = loadProductionCssBundle();
   }, 600_000);
+
+  afterAll(() => {
+    for (const namespaceRoot of retiredNamespaces) {
+      rmSync(namespaceRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('collects namespaces accumulated by retired worktrees before building', () => {
+    expect(retiredNamespaces.filter((namespaceRoot) => existsSync(namespaceRoot))).toEqual([]);
+  });
 
   it('hashes every source rollup recorded in its manifest', () => {
     // Assert the input side too: an empty source list passes the coverage check while
@@ -222,5 +255,86 @@ describe('artifact retention policy [FEBT2-W2-U-03]', () => {
     const doomed = selectArtifactsToPrune(entries, 'keep', CUTOFF);
     expect(new Set(doomed).size).toBe(doomed.length);
     expect(doomed).toContain('stale');
+  });
+});
+
+describe('retired worktree namespace collection [FEBT2-W2-U-03]', () => {
+  const CUTOFF = 1_000_000;
+  const namespace = (
+    name: string,
+    lastUsedMs: number,
+    ownerRootExists: boolean | null,
+    lockHeld = false,
+  ): NamespaceEntry => ({ name, lastUsedMs, ownerRootExists, lockHeld });
+
+  it('collects artifacts accumulated by every retired worktree root', () => {
+    const entries = [
+      namespace('active-a', CUTOFF + 10, true),
+      namespace('active-b', CUTOFF + 9, true),
+      ...Array.from({ length: 12 }, (_, index) =>
+        namespace(`retired-${index}`, CUTOFF + index, false),
+      ),
+    ];
+
+    const doomed = selectNamespacesToPrune(entries, 'active-a', CUTOFF);
+
+    expect(doomed).toEqual(
+      Array.from({ length: 12 }, (_, index) => `retired-${index}`).sort(),
+    );
+    expect(doomed).not.toContain('active-a');
+    expect(doomed).not.toContain('active-b');
+  });
+
+  it('removes retired namespaces from the shared cache under the parent collector', () => {
+    const cacheRoot = mkdtempSync(join(tmpdir(), 'acx-style-bundle-gc-test-'));
+    const activeAppRoot = join(cacheRoot, 'active-worktree', 'app');
+    const activeNamespace = join(cacheRoot, 'active-namespace');
+    const retiredNamespace = join(cacheRoot, 'retired-namespace');
+    const retiredAppRoot = join(cacheRoot, 'removed-worktree', 'app');
+
+    try {
+      mkdirSync(activeAppRoot, { recursive: true });
+      mkdirSync(join(retiredNamespace, 'old-fingerprint'), { recursive: true });
+      writeFileSync(
+        join(retiredNamespace, 'namespace-owner.json'),
+        `${JSON.stringify({ appRoot: retiredAppRoot })}\n`,
+        'utf8',
+      );
+
+      registerAndPruneNamespaces(cacheRoot, activeNamespace, activeAppRoot, CUTOFF);
+
+      expect(existsSync(activeNamespace)).toBe(true);
+      expect(existsSync(retiredNamespace)).toBe(false);
+      expect(existsSync(join(cacheRoot, '.gc-lock'))).toBe(false);
+    } finally {
+      rmSync(cacheRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('bounds ownerless legacy namespaces without deleting live worktrees', () => {
+    const entries = [
+      namespace('active', CUTOFF - 100, true),
+      namespace('stale-unknown', CUTOFF - 1, null),
+      namespace('fresh-unknown', CUTOFF + 1, null),
+    ];
+
+    expect(selectNamespacesToPrune(entries, 'active', CUTOFF)).toEqual([
+      'stale-unknown',
+    ]);
+  });
+
+  it('caps fresh ownerless namespaces and protects an in-progress retired lane', () => {
+    const entries = [
+      namespace('retired-but-building', CUTOFF - 10, false, true),
+      ...Array.from({ length: 7 }, (_, index) =>
+        namespace(`unknown-${index}`, CUTOFF + 100 - index, null),
+      ),
+    ];
+
+    expect(selectNamespacesToPrune(entries, 'current', CUTOFF)).toEqual([
+      'unknown-4',
+      'unknown-5',
+      'unknown-6',
+    ]);
   });
 });

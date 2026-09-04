@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import re
+import shlex
 from pathlib import Path
 
 import yaml
-
+from infra.oci.gpu_lifecycle.reaper import _build_parser
 
 ROOT = Path(__file__).resolve().parents[3]
 COMPOSE = ROOT / "apps/prototype-description-service/docker-compose.prod.yml"
@@ -33,6 +34,37 @@ def _snapshot_check_command() -> str:
     matches = [command for command in commands if "check-gpu-snapshots.sh" in command]
     assert len(matches) == 1, "README must contain one fenced snapshot-check command"
     return matches[0]
+
+
+def _production_reaper_command() -> str:
+    readme = README.read_text(encoding="utf-8")
+    commands = re.findall(r"```bash\n(.*?)```", readme, flags=re.DOTALL)
+    matches = [command for command in commands if "# Production:" in command]
+    assert len(matches) == 1, "README must contain one fenced production reaper command"
+    return matches[0]
+
+
+def test_readme_production_reaper_command_uses_supported_arguments() -> None:
+    command = _production_reaper_command().replace(
+        '"$(terraform -chdir=infra/oci output -raw gpu_instance_id)"',
+        "ocid1.instance.test",
+    )
+    shell_words = shlex.split(command.replace("\\\n", " "), comments=True)
+    module_index = shell_words.index("infra.oci.gpu_lifecycle")
+
+    args = _build_parser().parse_args(shell_words[module_index + 1 :])
+
+    assert args.mode == "reap"
+    assert args.instance_ids == ["ocid1.instance.test"]
+    assert args.load_dir == Path("/run/acx-write")
+    assert args.load_max_age_seconds == 120
+    assert args.load_stale_grace_seconds == 600
+    assert args.gpu_state_json == Path("/run/acx/gpu-state.json")
+    assert args.running_since_path == Path("/run/acx-gpu/running-since.json")
+    assert args.idle_seconds == 300
+    assert args.max_lease_seconds == 3600
+    assert args.fence_delay_seconds == 2
+    assert args.probe_oci is True
 
 
 def test_prod_compose_splits_read_only_state_from_writable_load() -> None:

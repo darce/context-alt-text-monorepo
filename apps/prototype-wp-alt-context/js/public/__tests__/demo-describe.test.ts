@@ -56,7 +56,7 @@ describe('public demo describe polling', () => {
   });
 
   it('hard-stops after the configured polling deadline with operator-friendly copy', async () => {
-    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(response({ status: 'running' }));
+    const fetchImpl = vi.fn<typeof fetch>().mockImplementation(async () => response({ status: 'running' }));
     let clock = 0;
 
     await expect(

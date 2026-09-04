@@ -20,7 +20,7 @@ describe('public demo describe polling', () => {
       nonce: 'nonce',
       fetchImpl,
       now: () => clock,
-      sleep: async (milliseconds) => {
+      sleep: async (milliseconds: number) => {
         waits.push(milliseconds);
         clock += milliseconds;
       },
@@ -46,7 +46,7 @@ describe('public demo describe polling', () => {
       nonce: 'nonce',
       fetchImpl,
       now: () => clock,
-      sleep: async (milliseconds) => {
+      sleep: async (milliseconds: number) => {
         waits.push(milliseconds);
         clock += milliseconds;
       },
@@ -66,12 +66,30 @@ describe('public demo describe polling', () => {
         fetchImpl,
         timeoutMs: 1_200,
         now: () => clock,
-        sleep: async (milliseconds) => {
+        sleep: async (milliseconds: number) => {
           clock += milliseconds;
         },
       }),
     ).rejects.toMatchObject({ code: 'acx_public_demo_poll_timeout', message: POLL_TIMEOUT_MESSAGE });
     expect(fetchImpl).toHaveBeenCalledTimes(2);
+  });
+
+  it('reports a deadline breach before an invalid response that arrives too late', async () => {
+    let clock = 0;
+    const fetchImpl = vi.fn<typeof fetch>().mockImplementation(async () => {
+      clock = 1_200;
+      return response(null);
+    });
+
+    await expect(
+      pollRun({
+        statusUrl: '/status/run-too-late',
+        nonce: 'nonce',
+        fetchImpl,
+        timeoutMs: 1_200,
+        now: () => clock,
+      }),
+    ).rejects.toMatchObject({ code: 'acx_public_demo_poll_timeout', message: POLL_TIMEOUT_MESSAGE });
   });
 
   it('surfaces typed REST errors instead of polling again', async () => {

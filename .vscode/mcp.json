@@ -27,7 +27,13 @@
         "workbay-orchestrator-mcp"
       ],
       "env": {
-        "WORKBAY_TOOL_ROSTER_POLICY": "all"
+        "WORKBAY_TOOL_ROSTER_POLICY": "all",
+        "WORKBAY_REMOTE_GATE_HOST": "gate@acx-backend.tail1a44b8.ts.net",
+        "WORKBAY_GROK_MODEL": "grok-4.6",
+        "WORKBAY_HANDOFF_DEFAULT_AGENT": "workbay-orchestrator-mcp",
+        "WORKBAY_REMOTE_SANDBOX_PREFLIGHT_OK": "1",
+        "WORKBAY_REMOTE_WRITABLE_ROOTS_PREFLIGHT_OK": "1",
+        "WORKBAY_DISPATCH_BREAKER_RESET": "codex-remote"
       }
     },
     "codebase-graph-mcp": {

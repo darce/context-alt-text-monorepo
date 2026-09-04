@@ -142,6 +142,7 @@ behavior_login=$(ocir_login_snippet oci api_key iad.ocir.io)
 assert_contains "snippet enables pipeline failure propagation" 'set -euo pipefail' "$login"
 assert_contains "snippet uses a private Docker credential directory" 'export DOCKER_CONFIG="$ACX_OCIR_DOCKER_CONFIG"' "$login"
 assert_contains "private Docker config has an EXIT cleanup" 'trap acx_cleanup EXIT' "$login"
+assert_contains "snippet accepts a caller-owned Docker config" 'ACX_OCIR_DOCKER_CONFIG_DIR=' "$login"
 assert_contains "username is a quoted data reference" '--secret-name "$ACX_OCIR_SECRET_NAME"' "$login"
 assert_contains "registry is a quoted data reference" 'login "$ACX_OCIR_REGISTRY"' "$login"
 assert_contains "username expansion is quoted" '-u "$acx_ocir_user"' "$login"
@@ -335,7 +336,7 @@ done <<'EOF'
 missing OCI executable names OCI|oci_cli_missing|bash: line 2: /home/ubuntu/.oci-venv/bin/oci: No such file or directory
 missing Docker executable names Docker|docker_cli_missing|bash: line 5: docker: command not found
 ssh path failure names SSH|ssh_failed|ssh: connect to host vm: No such file or directory
-missing first username secret|secret_missing|ServiceError: {"status": 404, "code": "NotAuthorizedOrNotFound", "message": "Authorization failed or requested resource not found."}
+ambiguous first username read failure|vault_denied|ServiceError: {"status": 404, "code": "NotAuthorizedOrNotFound", "message": "Authorization failed or requested resource not found."}
 explicit Vault access denial|vault_denied|ServiceError: {"status": 403, "code": "NotAuthorized", "message": "not authorized"}
 invalid Vault request is terminal|vault_request_failed|ServiceError: {"status": 400, "code": "InvalidParameter"}
 conflicting Vault request is terminal|vault_request_failed|ServiceError: {"status": 409, "code": "Conflict"}
@@ -345,6 +346,9 @@ Vault read timeout is transient|vault_unreachable|HTTPSConnectionPool(host=secre
 OCIR rejection names registry auth|ocir_rejected|Error response from daemon: login attempt to https://iad.ocir.io/v2/ failed with status: 401 Unauthorized
 unrecognized daemon error stays unknown|unknown|docker: Cannot connect to the Docker daemon at unix:///var/run/docker.sock.
 EOF
+
+assert_eq "missing token after successful username read" secret_missing \
+    "$(ocir_classify_login_failure $'acx-vault-read-ok\nServiceError: {"status": 404, "code": "NotAuthorizedOrNotFound"}')"
 
 assert_contains "Docker-missing hint names Docker" 'Docker CLI' \
     "$(ocir_login_failure_hint docker_cli_missing)"
@@ -356,7 +360,15 @@ assert_contains "transient Vault hint recommends retry" 'retry' \
     "$(ocir_login_failure_hint vault_unreachable)"
 assert_contains "missing-secret hint includes username" 'OCIR_USERNAME' \
     "$(ocir_login_failure_hint secret_missing)"
+assert_contains "confirmed missing-secret hint prescribes rotation" 'make ocir-token-rotate' \
+    "$(ocir_login_failure_hint secret_missing)"
 assert_contains "denial hint names IAM policy" 'acx-backend-secret-read' \
+    "$(ocir_login_failure_hint vault_denied)"
+assert_contains "ambiguous first-read hint names missing secrets" 'may be missing' \
+    "$(ocir_login_failure_hint vault_denied)"
+assert_contains "ambiguous first-read hint names the IAM grant" 'SECRET_BUNDLE_READ' \
+    "$(ocir_login_failure_hint vault_denied)"
+assert_absent "ambiguous first-read hint does not prescribe rotation" 'make ocir-token-rotate' \
     "$(ocir_login_failure_hint vault_denied)"
 
 console_hints=0

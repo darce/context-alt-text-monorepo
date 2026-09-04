@@ -65,6 +65,8 @@ const LOCK_TIMEOUT_MS = 6 * 60_000;
 const LOCK_POLL_MS = 100;
 /** Artifact directories untouched for longer than this are pruned. */
 const ARTIFACT_TTL_MS = 24 * 60 * 60_000;
+/** Stop retrying when build inputs are being rewritten continuously. */
+export const MAX_FINGERPRINT_STABILITY_ATTEMPTS = 3;
 /** Bound legacy namespaces created before owner metadata was introduced. */
 const MAX_RETAINED_UNKNOWN_NAMESPACES = 4;
 /**
@@ -483,6 +485,72 @@ const readStampedFingerprint = (stampPath: string): string | null => {
 
 let cachedBundle: ProductionCssBundle | null = null;
 
+export interface FingerprintStableArtifactOperations<T> {
+  readonly artifactDirForFingerprint: (fingerprint: string) => string;
+  readonly prepareArtifact: (fingerprint: string) => void;
+  readonly readStampedFingerprint: (outDir: string) => string | null;
+  readonly touchArtifact: (outDir: string) => void;
+  readonly discardArtifact: (outDir: string) => void;
+  readonly buildArtifact: (outDir: string) => void;
+  readonly stampArtifact: (outDir: string, fingerprint: string) => void;
+  readonly readArtifact: (outDir: string, fingerprint: string) => T;
+}
+
+/**
+ * Resolve an artifact while its caller holds the build lock.
+ *
+ * The fingerprint supplied by the caller was observed before lock acquisition. Rechecking it here
+ * closes both long race windows: waiting for another process and running Vite. The final check also
+ * prevents a source change during artifact reads from entering the in-process cache.
+ */
+export const loadFingerprintStableArtifact = <T>(
+  initialFingerprint: string,
+  computeFingerprint: () => string,
+  operations: FingerprintStableArtifactOperations<T>,
+  maxAttempts: number = MAX_FINGERPRINT_STABILITY_ATTEMPTS,
+): T => {
+  let fingerprint = initialFingerprint;
+  const fingerprintAfterLock = computeFingerprint();
+  if (fingerprintAfterLock !== fingerprint) {
+    operations.discardArtifact(operations.artifactDirForFingerprint(fingerprint));
+    fingerprint = fingerprintAfterLock;
+  }
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    const outDir = operations.artifactDirForFingerprint(fingerprint);
+    operations.prepareArtifact(fingerprint);
+
+    if (operations.readStampedFingerprint(outDir) === fingerprint) {
+      operations.touchArtifact(outDir);
+    } else {
+      operations.discardArtifact(outDir);
+      operations.buildArtifact(outDir);
+
+      const fingerprintAfterBuild = computeFingerprint();
+      if (fingerprintAfterBuild !== fingerprint) {
+        operations.discardArtifact(outDir);
+        fingerprint = fingerprintAfterBuild;
+        continue;
+      }
+      operations.stampArtifact(outDir, fingerprint);
+    }
+
+    const artifact = operations.readArtifact(outDir, fingerprint);
+    const fingerprintBeforeReturn = computeFingerprint();
+    if (fingerprintBeforeReturn === fingerprint) {
+      return artifact;
+    }
+
+    operations.discardArtifact(outDir);
+    fingerprint = fingerprintBeforeReturn;
+  }
+
+  throw new Error(
+    `Production CSS build inputs changed during ${maxAttempts} consecutive attempts; ` +
+      'refusing to cache an artifact whose fingerprint does not match its contents.',
+  );
+};
+
 /**
  * Build the production admin bundle at most once per fingerprint across all processes, then return
  * its CSS as an immutable snapshot. Throws — rather than returning an empty bundle — when the build
@@ -491,12 +559,13 @@ let cachedBundle: ProductionCssBundle | null = null;
  */
 export const loadProductionCssBundle = (): ProductionCssBundle => {
   if (cachedBundle !== null) {
-    return cachedBundle;
+    if (computeBuildInputFingerprint() === cachedBundle.fingerprint) {
+      return cachedBundle;
+    }
+    cachedBundle = null;
   }
 
-  const fingerprint = computeBuildInputFingerprint();
-  const outDir = join(FIXTURE_ROOT, fingerprint);
-  const stampPath = join(outDir, STAMP_FILE);
+  const fingerprintBeforeLock = computeBuildInputFingerprint();
 
   registerAndPruneNamespaces(
     CACHE_ROOT,
@@ -506,38 +575,49 @@ export const loadProductionCssBundle = (): ProductionCssBundle => {
     LOCK_DIR,
   );
   try {
-    // Before the build, not after: pruning afterwards means the disk must hold the old
-    // artifacts *and* the new one simultaneously, which is exactly the moment the volume
-    // fills. `keepDirName` protects the artifact we are about to reuse.
-    pruneStaleArtifacts(fingerprint);
-
-    if (readStampedFingerprint(stampPath) === fingerprint) {
-      // Mark the artifact as in use so the pruner keeps it.
-      const now = new Date();
-      utimesSync(stampPath, now, now);
-    } else {
-      rmSync(outDir, { recursive: true, force: true });
-      execFileSync('npm', ['run', 'build', '--', '--outDir', outDir, '--emptyOutDir'], {
-        cwd: appRoot,
-        stdio: 'pipe',
-      });
-      writeFileSync(stampPath, `${JSON.stringify({ fingerprint }, null, 2)}\n`, 'utf8');
-    }
-
-    const cssFilePaths = globSync(join(outDir, 'assets/*.css')).sort();
-    if (cssFilePaths.length === 0) {
-      throw new Error(
-        `The production build emitted no CSS into ${outDir}. This is a build failure, not a stylesheet regression.`,
-      );
-    }
-    const css = cssFilePaths.map((filePath) => readFileSync(filePath, 'utf8')).join('\n');
-
-    cachedBundle = Object.freeze({
-      css,
-      cssFilePaths: Object.freeze([...cssFilePaths]),
-      fingerprint,
-      outDir,
-    });
+    cachedBundle = loadFingerprintStableArtifact(
+      fingerprintBeforeLock,
+      computeBuildInputFingerprint,
+      {
+        artifactDirForFingerprint: (fingerprint) => join(FIXTURE_ROOT, fingerprint),
+        prepareArtifact: (fingerprint) => {
+          // Before the build, not after: pruning afterwards means the disk must hold the old
+          // artifacts *and* the new one simultaneously, which is exactly the moment the volume
+          // fills. `fingerprint` protects the artifact we are about to reuse.
+          pruneStaleArtifacts(fingerprint);
+        },
+        readStampedFingerprint: (outDir) => readStampedFingerprint(join(outDir, STAMP_FILE)),
+        touchArtifact: (outDir) => {
+          const now = new Date();
+          utimesSync(join(outDir, STAMP_FILE), now, now);
+        },
+        discardArtifact: (outDir) => rmSync(outDir, { recursive: true, force: true }),
+        buildArtifact: (outDir) => {
+          execFileSync('npm', ['run', 'build', '--', '--outDir', outDir, '--emptyOutDir'], {
+            cwd: appRoot,
+            stdio: 'pipe',
+          });
+        },
+        stampArtifact: (outDir, fingerprint) => {
+          writeFileSync(join(outDir, STAMP_FILE), `${JSON.stringify({ fingerprint }, null, 2)}\n`, 'utf8');
+        },
+        readArtifact: (outDir, fingerprint) => {
+          const cssFilePaths = globSync(join(outDir, 'assets/*.css')).sort();
+          if (cssFilePaths.length === 0) {
+            throw new Error(
+              `The production build emitted no CSS into ${outDir}. This is a build failure, not a stylesheet regression.`,
+            );
+          }
+          const css = cssFilePaths.map((filePath) => readFileSync(filePath, 'utf8')).join('\n');
+          return Object.freeze({
+            css,
+            cssFilePaths: Object.freeze([...cssFilePaths]),
+            fingerprint,
+            outDir,
+          });
+        },
+      },
+    );
     return cachedBundle;
   } finally {
     releaseDirectoryLock(LOCK_DIR);

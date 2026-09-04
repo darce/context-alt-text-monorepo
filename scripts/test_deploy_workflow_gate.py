@@ -97,8 +97,7 @@ def test_every_workflow_run_step_uses_fail_closed_bash(workflow_path: Path) -> N
                 unsafe_steps.append(f"{job_name}: {step.get('name', '<unnamed>')}")
 
     assert unsafe_steps == [], (
-        f"{workflow_path.relative_to(REPO_ROOT)} has run steps without "
-        f"shell: {REQUIRED_RUN_SHELL!r}: {unsafe_steps}"
+        f"{workflow_path.relative_to(REPO_ROOT)} has run steps without shell: {REQUIRED_RUN_SHELL!r}: {unsafe_steps}"
     )
 
 
@@ -195,6 +194,5 @@ def test_prod_rollback_commands_are_copy_pasteable() -> None:
         "the runbook still documents a literal angle-bracket placeholder for GIT_REF"
     )
     assert "GOOD_SHA" in _rollback_prose(), (
-        "the rollback section's prose never tells the operator to set GOOD_SHA "
-        "before running the redeploy command"
+        "the rollback section's prose never tells the operator to set GOOD_SHA before running the redeploy command"
     )

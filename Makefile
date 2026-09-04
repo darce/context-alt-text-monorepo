@@ -175,18 +175,23 @@ check-gpu-snapshots-live:
 	esac
 	@host="$${OCI_HOST:-acx-backend.tail1a44b8.ts.net}"; user="$${OCI_USER:-ubuntu}"; \
 		echo "==> Checking live GPU snapshots on $$user@$$host ($(GPU_SNAPSHOT_ENV))"; \
+		{ paste -sd, "$(ROOT_MAKEFILE_DIR)/scripts/deploy/gpu-snapshot-deployments.conf"; \
+			printf '\n'; \
+			cat "$(ROOT_MAKEFILE_DIR)/scripts/deploy/check-gpu-snapshots.sh"; \
+		} | \
 		ssh -l "$$user" -- "$$host" 'set -eu; \
+			IFS= read -r deployments; \
 			checker=$$(mktemp); \
 			trap "rm -f $$checker" EXIT; \
 			cat > "$$checker"; \
 			sudo env ACX_DESCRIBE_LOAD_DIR=/run/acx-write \
 				ACX_GPU_COMPOSE_FILE="/opt/acx-backend/$(GPU_SNAPSHOT_ENV)/docker-compose.env.yml" \
+				ACX_GPU_DEPLOYMENTS="$$deployments" \
 				ACX_GPU_SNAPSHOT_DIR=/run/acx \
 				ACX_GPU_STATE_PATH=/run/acx/gpu-state.json \
 				ACX_GPU_UNIT_LOAD_DIR=/run/acx-write \
 				ACX_GPU_UNIT_STATE_PATH=/run/acx/gpu-state.json \
-				bash "$$checker"' \
-			< "$(ROOT_MAKEFILE_DIR)/scripts/deploy/check-gpu-snapshots.sh"
+				bash "$$checker"'
 
 # Default target
 help:

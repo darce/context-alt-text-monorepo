@@ -15,6 +15,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 INSTALL_SCRIPT = REPO_ROOT / "scripts/deploy/gpu-lifecycle-install.sh"
+DEPLOYMENTS = REPO_ROOT / "scripts/deploy/gpu-snapshot-deployments.conf"
 CONTRACT = REPO_ROOT / "docs/workbay/contracts/gpu-lifecycle.md"
 
 # `d <path> <mode> <user> <group> <age>` — the systemd-tmpfiles directory lines.
@@ -28,10 +29,12 @@ _BRACE = re.compile(r"\{([^{}]+)\}")
 def _provisioned() -> dict[str, str]:
     """Map each provisioned /run directory to its ``user:group mode`` string."""
     text = INSTALL_SCRIPT.read_text(encoding="utf-8")
-    found = {
-        m["path"]: f"{m['user']}:{m['group']} {m['mode']}"
-        for m in _TMPFILES_DIR.finditer(text)
-    }
+    found = {}
+    for match in _TMPFILES_DIR.finditer(text):
+        path = match["path"]
+        ownership = f"{match['user']}:{match['group']} {match['mode']}"
+        if "$" not in path:
+            found[path] = ownership
     # A silently-empty parse would make every assertion below vacuous.
     assert {"/run/acx", "/run/acx-write"} <= set(found), (
         f"installer tmpfiles parse found only {sorted(found)}; "
@@ -41,7 +44,7 @@ def _provisioned() -> dict[str, str]:
 
 
 def _contract_text() -> str:
-    """Contract prose with `{dev,staging,prod}` brace forms expanded.
+    """Contract prose with grouped deployment brace forms expanded.
 
     The contract legitimately writes one line for a group of sibling
     directories that share ownership. Expanding the braces lets the path
@@ -99,3 +102,15 @@ def test_a_subdirectory_that_breaks_from_its_parent_must_be_stated_explicitly() 
 def test_contract_does_not_claim_the_state_dir_is_api_owned() -> None:
     """`/run/acx` is read-only to the api container; uid 10001 must not own it."""
     assert "`/run/acx` is `10001:10001" not in CONTRACT.read_text(encoding="utf-8")
+
+
+def test_each_registered_deployment_uses_api_writable_tmpfiles_template() -> None:
+    """The validated registry must drive one root:10001 0775 tmpfiles rule."""
+    deployments = DEPLOYMENTS.read_text(encoding="utf-8").splitlines()
+    assert deployments, "GPU snapshot deployment registry must not be empty"
+    assert len(deployments) == len(set(deployments)), "deployments must be unique"
+    assert all(re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", item) for item in deployments)
+
+    installer = INSTALL_SCRIPT.read_text(encoding="utf-8")
+    assert "d /run/acx-write/${environment} 0775 root 10001 -" in installer
+    assert 'done < "$DEPLOYMENTS_FILE"' in installer

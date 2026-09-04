@@ -66,13 +66,18 @@ def state_for_instance(instance_state: str) -> GpuLifecycleState:
 def read_previous_gpu_state(
     path: str | Path | None = None,
     *,
+    expected_instance_id: str | None,
     now: datetime | float | None = None,
     max_age_seconds: float = DEFAULT_PREVIOUS_GPU_STATE_MAX_AGE_SECONDS,
     max_future_skew_seconds: float = (
         DEFAULT_PREVIOUS_GPU_STATE_MAX_FUTURE_SKEW_SECONDS
     ),
 ) -> GpuLifecycleState | None:
-    """Read a fresh, contract-valid state for cycles without readiness evidence."""
+    """Read state only when it belongs to the currently reconciled instance."""
+    if expected_instance_id is not None and (
+        not isinstance(expected_instance_id, str) or not expected_instance_id.strip()
+    ):
+        raise ValueError("expected_instance_id must be a non-blank string or None")
     target = resolve_gpu_state_path() if path is None else Path(path)
     try:
         payload = json.loads(target.read_text(encoding="utf-8"))
@@ -93,6 +98,8 @@ def read_previous_gpu_state(
     if instance_id is not None and (
         not isinstance(instance_id, str) or not instance_id.strip()
     ):
+        return None
+    if expected_instance_id is None or instance_id != expected_instance_id:
         return None
     reason = payload.get("reason")
     if state is GpuLifecycleState.DEGRADED:

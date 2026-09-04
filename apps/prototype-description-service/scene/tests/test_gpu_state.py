@@ -119,6 +119,24 @@ def test_missing_or_non_numeric_written_at_is_unknown(snapshot_path: Path) -> No
     assert read_gpu_state(now=NOW) is GpuState.UNKNOWN
 
 
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"state": "degraded", "written_at": NOW},
+        {"state": "ready", "written_at": NOW, "reason": "readiness_timeout"},
+        {"state": "ready", "written_at": NOW, "instance_id": " \t"},
+        {"state": "ready", "written_at": NOW, "since": NOW + 0.001},
+    ],
+)
+def test_producer_invalid_shape_is_unknown(
+    snapshot_path: Path,
+    payload: dict[str, object],
+) -> None:
+    snapshot_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    assert read_gpu_state(now=NOW) is GpuState.UNKNOWN
+
+
 def test_transition_logs_once_per_state_change(snapshot_path: Path, caplog: pytest.LogCaptureFixture) -> None:
     _write_snapshot(snapshot_path, state="ready", written_at=NOW - 5)
     with caplog.at_level(logging.INFO, logger="scene.application.gpu_state"):

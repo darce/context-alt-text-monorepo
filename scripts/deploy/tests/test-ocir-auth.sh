@@ -318,9 +318,11 @@ HOME="$test_home" TMPDIR="$test_tmp" PATH="$portable_bin" \
 OCIR_TEST_RECORD_DIR="$record_dir" OCIR_TEST_DOCKER_MODE=sleep \
 /bin/bash -c "$deadline_login" 2>"$docker_timeout_stderr" || docker_timeout_rc=$?
 docker_elapsed=$((SECONDS - docker_started))
-assert_nonzero "sleeping Docker is killed without timeout(1)" "$docker_timeout_rc"
+assert_eq "sleeping Docker returns the watchdog timeout status" 124 "$docker_timeout_rc"
 if [ "$docker_elapsed" -lt 4 ]; then pass "sleeping Docker respects the one-second deadline"; else fail "sleeping Docker ran ${docker_elapsed}s"; fi
 docker_timeout_output=$(cat "$docker_timeout_stderr")
+assert_contains "Docker watchdog emits the OCIR timeout marker" \
+    'acx-timeout:ocir' "$docker_timeout_output"
 assert_eq "Docker watchdog failure is OCIR-classified" ocir_unreachable \
     "$(ocir_classify_login_failure "$docker_timeout_output")"
 

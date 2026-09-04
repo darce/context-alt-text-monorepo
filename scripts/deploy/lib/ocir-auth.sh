@@ -93,8 +93,10 @@ ocir_login_snippet() {
     'trap '\''exit 143'\'' TERM' \
     'acx_bounded() {' \
     '  acx_label="$1"; shift' \
-    '  "$@" &' \
+    '  exec 3<&0' \
+    '  "$@" <&3 &' \
     '  acx_active_pid=$!' \
+    '  exec 3<&-' \
     '  acx_started=$SECONDS' \
     '  while kill -0 "$acx_active_pid" 2>/dev/null; do' \
     '    if [ $((SECONDS - acx_started)) -ge "$ACX_VAULT_FETCH_TIMEOUT" ]; then' \

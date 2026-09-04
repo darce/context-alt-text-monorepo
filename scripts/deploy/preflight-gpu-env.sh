@@ -27,6 +27,7 @@ relevant_keys=(
     ACX_DESCRIPTION_ADAPTER
     ACX_GPU_ENDPOINT_URL
     ACX_GPU_ENDPOINT_API_KEY
+    ACX_GPU_ENDPOINT_ALLOWLIST
     ACX_GPU_SNAPSHOT_DIR
     ACX_GPU_STATE_PATH
     ACX_GPU_STATE_STALE_SECONDS
@@ -101,6 +102,50 @@ is_http_url() {
     printf '%s' "$1" | LC_ALL=C grep -Eq '^https?://[^/[:space:]]+(/[^[:space:]]*)?$'
 }
 
+hostname_matches_allowlist() {
+    local host="$1" allowlist="$2" entry
+    host="$(printf '%s' "$host" | LC_ALL=C tr '[:upper:]' '[:lower:]')"
+    allowlist="${allowlist:-localhost,acx-gpu-burst,*.oraclevcn.com}"
+    while IFS= read -r entry || [[ -n "$entry" ]]; do
+        entry="$(printf '%s' "$entry" | tr -d '[:space:]' | LC_ALL=C tr '[:upper:]' '[:lower:]')"
+        [[ -n "$entry" ]] || continue
+        [[ "$host" == $entry ]] && return 0
+    done < <(printf '%s' "$allowlist" | tr ',' '\n')
+    return 1
+}
+
+is_private_ipv4() {
+    local address="$1" first second third fourth
+    IFS=. read -r first second third fourth <<< "$address"
+    for octet in "$first" "$second" "$third" "$fourth"; do
+        [[ "$octet" =~ ^[0-9]+$ ]] && (( 10#$octet <= 255 )) || return 1
+    done
+    [[ "$first" == 10 || "$first" == 127 ]] && return 0
+    [[ "$first" == 192 && "$second" == 168 ]] && return 0
+    [[ "$first" == 172 ]] && (( 10#$second >= 16 && 10#$second <= 31 )) && return 0
+    return 1
+}
+
+is_private_gpu_endpoint() {
+    local url="$1" allowlist="$2" authority host
+    is_http_url "$url" || return 1
+    authority="${url#*://}"
+    authority="${authority%%/*}"
+    [[ "$authority" != *@* ]] || return 1
+    if [[ "$authority" == \[*\]* ]]; then
+        host="${authority#\[}"
+        host="${host%%\]*}"
+        [[ "$host" == ::1 ]] && return 0
+        return 1
+    fi
+    host="${authority%%:*}"
+    if [[ "$host" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        is_private_ipv4 "$host"
+        return
+    fi
+    hostname_matches_allowlist "$host" "$allowlist"
+}
+
 is_tenant_uuid() {
     printf '%s' "$1" | LC_ALL=C grep -Eq '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$'
 }
@@ -114,12 +159,13 @@ validate_side() {
     local role="$1" file="$2"
     local adapter endpoint_url endpoint_api_key snapshot_dir state_path stale_seconds
     local recognition_url recognition_api_key recognition_tenant_id wordpress_config_extra
-    local secret_backend vault_map vault_gpu_ref normalized_snapshot_dir state_dir
+    local secret_backend vault_map vault_gpu_ref normalized_snapshot_dir state_dir endpoint_allowlist
     local missing_recognition=()
 
     adapter="$(env_get "$file" ACX_DESCRIPTION_ADAPTER)"
     endpoint_url="$(env_get "$file" ACX_GPU_ENDPOINT_URL)"
     endpoint_api_key="$(env_get "$file" ACX_GPU_ENDPOINT_API_KEY)"
+    endpoint_allowlist="$(env_get "$producer_env" ACX_GPU_ENDPOINT_ALLOWLIST)"
     snapshot_dir="$(env_get "$file" ACX_GPU_SNAPSHOT_DIR)"
     state_path="$(env_get "$file" ACX_GPU_STATE_PATH)"
     stale_seconds="$(env_get "$file" ACX_GPU_STATE_STALE_SECONDS)"
@@ -133,6 +179,10 @@ validate_side() {
         echo "ERROR [2] ${role} ACX_GPU_ENDPOINT_URL must be a valid http:// or https:// URL for a gpu_* adapter (redacted length=${#endpoint_url})." >&2
         exit 1
     fi
+    if [[ "$adapter" == gpu_* ]] && ! is_private_gpu_endpoint "$endpoint_url" "$endpoint_allowlist"; then
+        echo "ERROR [9] ${role} ACX_GPU_ENDPOINT_URL must use a private/loopback IP or an ACX_GPU_ENDPOINT_ALLOWLIST hostname (redacted length=${#endpoint_url})." >&2
+        exit 1
+    fi
 
     secret_backend="$(env_get "$file" RECOGNITION_SECRET_BACKEND)"
     if [[ "$role" == producer && "$secret_backend" == oci_vault ]]; then
@@ -140,6 +190,10 @@ validate_side() {
         vault_gpu_ref="$(vault_map_value "$vault_map" ACX_GPU_ENDPOINT_API_KEY)"
         if is_placeholder "$vault_gpu_ref" || ! printf '%s' "$vault_gpu_ref" | LC_ALL=C grep -Eq '^ocid1\.vaultsecret\.oc[0-9]+\.[A-Za-z0-9_-]*\.[A-Za-z0-9._-]+$'; then
             echo "ERROR [3] producer oci_vault backend requires a non-placeholder ACX_GPU_ENDPOINT_API_KEY OCID in RECOGNITION_VAULT_SECRET_MAP (redacted length=${#vault_gpu_ref})." >&2
+            exit 1
+        fi
+        if [[ -n "$endpoint_api_key" ]]; then
+            echo "ERROR [3] producer oci_vault backend requires ACX_GPU_ENDPOINT_API_KEY to be blank; Vault is the only credential source (redacted length=${#endpoint_api_key})." >&2
             exit 1
         fi
     elif [[ -n "$endpoint_url" ]] && is_placeholder "$endpoint_api_key"; then
@@ -170,54 +224,43 @@ validate_side() {
         exit 1
     fi
 
-    recognition_url="$(env_get "$file" ACX_RECOGNITION_URL)"
-    recognition_api_key="$(env_get "$file" ACX_RECOGNITION_API_KEY)"
-    recognition_tenant_id="$(env_get "$file" ACX_RECOGNITION_TENANT_ID)"
-    wordpress_config_extra="$(env_get "$file" WORDPRESS_CONFIG_EXTRA)"
-    if [[ "$role" == demo && -n "$wordpress_config_extra" ]]; then
+    if [[ "$role" == demo ]]; then
+        recognition_url="$(env_get "$file" ACX_RECOGNITION_URL)"
+        recognition_api_key="$(env_get "$file" ACX_RECOGNITION_API_KEY)"
+        recognition_tenant_id="$(env_get "$file" ACX_RECOGNITION_TENANT_ID)"
+        wordpress_config_extra="$(env_get "$file" WORDPRESS_CONFIG_EXTRA)"
         [[ -n "$recognition_url" ]] || recognition_url="$(php_define_value ACX_RECOGNITION_URL "$wordpress_config_extra")"
         [[ -n "$recognition_api_key" ]] || recognition_api_key="$(php_define_value ACX_RECOGNITION_API_KEY "$wordpress_config_extra")"
         [[ -n "$recognition_tenant_id" ]] || recognition_tenant_id="$(php_define_value ACX_RECOGNITION_TENANT_ID "$wordpress_config_extra")"
-    fi
 
-    [[ -n "$recognition_url" ]] || missing_recognition+=(ACX_RECOGNITION_URL)
-    [[ -n "$recognition_api_key" ]] || missing_recognition+=(ACX_RECOGNITION_API_KEY)
-    [[ -n "$recognition_tenant_id" ]] || missing_recognition+=(ACX_RECOGNITION_TENANT_ID)
-    if (( ${#missing_recognition[@]} > 0 )); then
-        printf 'ERROR [6] %s recognition config is incomplete. Set:' "$role" >&2
-        printf ' %s' "${missing_recognition[@]}" >&2
-        printf '. Secret values remain redacted; ACX_RECOGNITION_API_KEY length=%s.\n' "${#recognition_api_key}" >&2
-        exit 1
-    fi
-    if ! is_http_url "$recognition_url"; then
-        echo "ERROR [6] ${role} ACX_RECOGNITION_URL must be a valid http:// or https:// URL (redacted length=${#recognition_url})." >&2
-        exit 1
-    fi
-    if is_placeholder "$recognition_api_key"; then
-        echo "ERROR [6] ${role} ACX_RECOGNITION_API_KEY must not be a documented placeholder (redacted length=${#recognition_api_key})." >&2
-        exit 1
-    fi
-    if ! is_tenant_uuid "$recognition_tenant_id" \
-        || is_placeholder "$recognition_tenant_id" \
-        || [[ "$recognition_tenant_id" == 00000000-0000-4000-8000-000000000001 ]]; then
-        echo "ERROR [6] ${role} ACX_RECOGNITION_TENANT_ID must be an explicit RFC 4122 UUID (redacted length=${#recognition_tenant_id})." >&2
-        exit 1
+        [[ -n "$recognition_url" ]] || missing_recognition+=(ACX_RECOGNITION_URL)
+        [[ -n "$recognition_api_key" ]] || missing_recognition+=(ACX_RECOGNITION_API_KEY)
+        [[ -n "$recognition_tenant_id" ]] || missing_recognition+=(ACX_RECOGNITION_TENANT_ID)
+        if (( ${#missing_recognition[@]} > 0 )); then
+            printf 'ERROR [6] demo recognition config is incomplete. Set:' >&2
+            printf ' %s' "${missing_recognition[@]}" >&2
+            printf '. Secret values remain redacted; ACX_RECOGNITION_API_KEY length=%s.\n' "${#recognition_api_key}" >&2
+            exit 1
+        fi
+        if ! is_http_url "$recognition_url"; then
+            echo "ERROR [6] demo ACX_RECOGNITION_URL must be a valid http:// or https:// URL (redacted length=${#recognition_url})." >&2
+            exit 1
+        fi
+        if is_placeholder "$recognition_api_key"; then
+            echo "ERROR [6] demo ACX_RECOGNITION_API_KEY must not be a documented placeholder (redacted length=${#recognition_api_key})." >&2
+            exit 1
+        fi
+        if ! is_tenant_uuid "$recognition_tenant_id" \
+            || is_placeholder "$recognition_tenant_id" \
+            || [[ "$recognition_tenant_id" == 00000000-0000-4000-8000-000000000001 ]]; then
+            echo "ERROR [6] demo ACX_RECOGNITION_TENANT_ID must be an explicit RFC 4122 UUID (redacted length=${#recognition_tenant_id})." >&2
+            exit 1
+        fi
     fi
 }
 
 validate_side producer "$producer_env"
 validate_side demo "$demo_env"
-
-producer_recognition_url="$(env_get "$producer_env" ACX_RECOGNITION_URL)"
-producer_recognition_key="$(env_get "$producer_env" ACX_RECOGNITION_API_KEY)"
-producer_tenant_id="$(env_get "$producer_env" ACX_RECOGNITION_TENANT_ID)"
-demo_wordpress_extra="$(env_get "$demo_env" WORDPRESS_CONFIG_EXTRA)"
-demo_recognition_url="$(env_get "$demo_env" ACX_RECOGNITION_URL)"
-demo_recognition_key="$(env_get "$demo_env" ACX_RECOGNITION_API_KEY)"
-demo_tenant_id="$(env_get "$demo_env" ACX_RECOGNITION_TENANT_ID)"
-[[ -n "$demo_recognition_url" ]] || demo_recognition_url="$(php_define_value ACX_RECOGNITION_URL "$demo_wordpress_extra")"
-[[ -n "$demo_recognition_key" ]] || demo_recognition_key="$(php_define_value ACX_RECOGNITION_API_KEY "$demo_wordpress_extra")"
-[[ -n "$demo_tenant_id" ]] || demo_tenant_id="$(php_define_value ACX_RECOGNITION_TENANT_ID "$demo_wordpress_extra")"
 
 shared_keys=(
     ACX_DESCRIPTION_ADAPTER
@@ -238,18 +281,5 @@ if [[ "$producer_secret_backend" != oci_vault ]] \
     echo "ERROR [8] producer and demo ACX_GPU_ENDPOINT_API_KEY values differ. Make the two credential assertions identical; values are redacted." >&2
     exit 1
 fi
-if [[ "$producer_recognition_url" != "$demo_recognition_url" ]]; then
-    echo "ERROR [8] producer and demo ACX_RECOGNITION_URL values differ. Make the two halves identical; values are redacted." >&2
-    exit 1
-fi
-if [[ "$producer_recognition_key" != "$demo_recognition_key" ]]; then
-    echo "ERROR [8] producer and demo ACX_RECOGNITION_API_KEY values differ. Make the two credential assertions identical; values are redacted." >&2
-    exit 1
-fi
-if [[ "$producer_tenant_id" != "$demo_tenant_id" ]]; then
-    echo "ERROR [8] producer and demo ACX_RECOGNITION_TENANT_ID values differ. Make the two halves identical; values are redacted." >&2
-    exit 1
-fi
-
 adapter="$(env_get "$producer_env" ACX_DESCRIPTION_ADAPTER)"
 printf 'OK: GPU env preflight passed (producer+demo, adapter=%s).\n' "$adapter"

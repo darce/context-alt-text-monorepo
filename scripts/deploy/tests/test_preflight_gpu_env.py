@@ -19,6 +19,7 @@ def valid_env() -> dict[str, str]:
     return {
         "ACX_DESCRIPTION_ADAPTER": "gpu_qwen30b",
         "ACX_GPU_ENDPOINT_URL": "http://acx-gpu-burst.compute.oraclevcn.com:8000",
+        "ACX_GPU_ENDPOINT_ALLOWLIST": "localhost,acx-gpu-burst,*.oraclevcn.com",
         "ACX_GPU_ENDPOINT_API_KEY": "fake-gpu-key-for-preflight-tests",
         "ACX_GPU_SNAPSHOT_DIR": "/run/acx",
         "ACX_GPU_STATE_PATH": "/run/acx/gpu-state.json",
@@ -116,6 +117,25 @@ def test_03_vault_backend_accepts_map_reference_and_blank_direct_value(tmp_path:
     assert result.returncode == 0, result.stderr
 
 
+def test_03_vault_backend_rejects_direct_value_even_with_valid_map(tmp_path: Path) -> None:
+    producer = valid_env()
+    producer.update(
+        {
+            "RECOGNITION_SECRET_BACKEND": "oci_vault",
+            "RECOGNITION_VAULT_SECRET_MAP": (
+                '{"ACX_GPU_ENDPOINT_API_KEY":"ocid1.vaultsecret.oc1.iad.fakegpuendpointkey"}'
+            ),
+            "ACX_GPU_ENDPOINT_API_KEY": "PLAINTEXT_GPU_SECRET_DO_NOT_PRINT",
+        }
+    )
+
+    result = run_preflight(tmp_path, producer=producer)
+
+    assert result.returncode != 0
+    assert "ERROR [3] producer oci_vault backend" in result.stderr
+    assert "PLAINTEXT_GPU_SECRET_DO_NOT_PRINT" not in result.stderr
+
+
 @pytest.mark.parametrize(
     "vault_map",
     [
@@ -184,13 +204,13 @@ def test_06_demo_recognition_config_is_required(tmp_path: Path, missing_key: str
 
 @pytest.mark.parametrize("url", ["api.altcontext.com", "ftp://api.altcontext.com", "https://"])
 def test_06_recognition_url_shape_is_validated(tmp_path: Path, url: str) -> None:
-    producer = valid_env()
-    producer["ACX_RECOGNITION_URL"] = url
+    demo = valid_env()
+    demo["ACX_RECOGNITION_URL"] = url
 
-    result = run_preflight(tmp_path, producer=producer)
+    result = run_preflight(tmp_path, demo=demo)
 
     assert result.returncode != 0
-    assert "ERROR [6] producer ACX_RECOGNITION_URL" in result.stderr
+    assert "ERROR [6] demo ACX_RECOGNITION_URL" in result.stderr
     if url != "https://":
         assert url not in result.stderr
 
@@ -204,25 +224,25 @@ def test_06_recognition_url_shape_is_validated(tmp_path: Path, url: str) -> None
     ],
 )
 def test_06_tenant_id_must_be_rfc4122_uuid(tmp_path: Path, tenant_id: str) -> None:
-    producer = valid_env()
-    producer["ACX_RECOGNITION_TENANT_ID"] = tenant_id
+    demo = valid_env()
+    demo["ACX_RECOGNITION_TENANT_ID"] = tenant_id
 
-    result = run_preflight(tmp_path, producer=producer)
+    result = run_preflight(tmp_path, demo=demo)
 
     assert result.returncode != 0
-    assert "ERROR [6] producer ACX_RECOGNITION_TENANT_ID" in result.stderr
+    assert "ERROR [6] demo ACX_RECOGNITION_TENANT_ID" in result.stderr
     assert tenant_id not in result.stderr
 
 
 def test_06_recognition_placeholder_is_rejected_without_disclosure(tmp_path: Path) -> None:
-    producer = valid_env()
+    demo = valid_env()
     placeholder = "replace-with-tenant-api-key"
-    producer["ACX_RECOGNITION_API_KEY"] = placeholder
+    demo["ACX_RECOGNITION_API_KEY"] = placeholder
 
-    result = run_preflight(tmp_path, producer=producer)
+    result = run_preflight(tmp_path, demo=demo)
 
     assert result.returncode != 0
-    assert "ERROR [6] producer ACX_RECOGNITION_API_KEY" in result.stderr
+    assert "ERROR [6] demo ACX_RECOGNITION_API_KEY" in result.stderr
     assert placeholder not in result.stderr
 
 
@@ -254,23 +274,17 @@ def test_07_duplicate_contract_keys_are_rejected(tmp_path: Path, key: str, unsaf
         "ACX_GPU_SNAPSHOT_DIR",
         "ACX_GPU_STATE_PATH",
         "ACX_GPU_STATE_STALE_SECONDS",
-        "ACX_RECOGNITION_URL",
-        "ACX_RECOGNITION_API_KEY",
-        "ACX_RECOGNITION_TENANT_ID",
     ],
 )
 def test_08_mismatched_flip_halves_are_rejected(tmp_path: Path, key: str) -> None:
     demo = valid_env()
     replacements = {
         "ACX_DESCRIPTION_ADAPTER": "gpu_qwen30b_ensemble",
-        "ACX_GPU_ENDPOINT_URL": "https://other-gpu.internal:8000",
+        "ACX_GPU_ENDPOINT_URL": "https://10.0.0.2:8000",
         "ACX_GPU_ENDPOINT_API_KEY": "different-fake-gpu-key",
         "ACX_GPU_SNAPSHOT_DIR": "/run/acx-other",
         "ACX_GPU_STATE_PATH": "/run/acx/gpu-state-other.json",
         "ACX_GPU_STATE_STALE_SECONDS": "181",
-        "ACX_RECOGNITION_URL": "https://staging.api.altcontext.com",
-        "ACX_RECOGNITION_API_KEY": "different-fake-tenant-key",
-        "ACX_RECOGNITION_TENANT_ID": "123e4567-e89b-42d3-a456-426614174001",
     }
     demo[key] = replacements[key]
     if key == "ACX_GPU_SNAPSHOT_DIR":
@@ -283,7 +297,8 @@ def test_08_mismatched_flip_halves_are_rejected(tmp_path: Path, key: str) -> Non
     assert replacements[key] not in result.stderr
 
 
-def test_secret_values_are_never_printed(tmp_path: Path) -> None:
+@pytest.mark.parametrize("error_number", range(1, 10))
+def test_every_numbered_error_path_redacts_sentinel_secrets(tmp_path: Path, error_number: int) -> None:
     producer = valid_env()
     demo = valid_env()
     gpu_secret = "GPU_SECRET_DO_NOT_PRINT"
@@ -292,14 +307,97 @@ def test_secret_values_are_never_printed(tmp_path: Path) -> None:
     demo["ACX_GPU_ENDPOINT_API_KEY"] = gpu_secret
     producer["ACX_RECOGNITION_API_KEY"] = recognition_secret
     demo["ACX_RECOGNITION_API_KEY"] = recognition_secret
-    producer["ACX_GPU_STATE_STALE_SECONDS"] = "invalid"
+    producer_text = None
 
-    result = run_preflight(tmp_path, producer=producer, demo=demo)
+    if error_number == 1:
+        producer["ACX_DESCRIPTION_ADAPTER"] = "seeded"
+    elif error_number == 2:
+        producer["ACX_GPU_ENDPOINT_URL"] = "ftp://gpu.invalid"
+    elif error_number == 3:
+        producer["ACX_GPU_ENDPOINT_API_KEY"] = f"replace-{gpu_secret}"
+    elif error_number == 4:
+        producer["ACX_GPU_STATE_PATH"] = "/run/other/gpu-state.json"
+    elif error_number == 5:
+        producer["ACX_GPU_STATE_STALE_SECONDS"] = "invalid"
+    elif error_number == 6:
+        demo["ACX_RECOGNITION_API_KEY"] = f"replace-{recognition_secret}"
+    elif error_number == 7:
+        producer_text = env_text(producer) + "ACX_GPU_STATE_STALE_SECONDS=999\n"
+    elif error_number == 8:
+        demo["ACX_GPU_STATE_STALE_SECONDS"] = "181"
+    elif error_number == 9:
+        producer["ACX_GPU_ENDPOINT_URL"] = "https://public.example.com/gpu"
+
+    result = run_preflight(
+        tmp_path,
+        producer=producer,
+        demo=demo,
+        producer_text=producer_text,
+    )
     output = result.stdout + result.stderr
 
     assert result.returncode != 0
+    assert f"ERROR [{error_number}]" in result.stderr
     assert gpu_secret not in output
     assert recognition_secret not in output
+
+
+def test_producer_does_not_require_plugin_recognition_config(tmp_path: Path) -> None:
+    producer = valid_env()
+    del producer["ACX_RECOGNITION_URL"]
+    del producer["ACX_RECOGNITION_API_KEY"]
+    del producer["ACX_RECOGNITION_TENANT_ID"]
+
+    result = run_preflight(tmp_path, producer=producer)
+
+    assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.parametrize(
+    "endpoint",
+    [
+        "http://10.20.30.40:8000",
+        "http://127.0.0.1:8000",
+        "http://acx-gpu-burst:8000",
+        "https://worker.compute.oraclevcn.com:8000",
+    ],
+)
+def test_09_accepts_private_or_allowlisted_gpu_endpoint(tmp_path: Path, endpoint: str) -> None:
+    producer = valid_env()
+    demo = valid_env()
+    producer["ACX_GPU_ENDPOINT_URL"] = endpoint
+    demo["ACX_GPU_ENDPOINT_URL"] = endpoint
+
+    result = run_preflight(tmp_path, producer=producer, demo=demo)
+
+    assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.parametrize(
+    "endpoint",
+    ["https://example.com/gpu", "http://8.8.8.8:8000", "http://172.32.0.1:8000"],
+)
+def test_09_rejects_public_gpu_endpoint(tmp_path: Path, endpoint: str) -> None:
+    producer = valid_env()
+    producer["ACX_GPU_ENDPOINT_URL"] = endpoint
+
+    result = run_preflight(tmp_path, producer=producer)
+
+    assert result.returncode != 0
+    assert "ERROR [9] producer ACX_GPU_ENDPOINT_URL" in result.stderr
+    assert endpoint not in result.stderr
+
+
+def test_09_honors_producer_endpoint_allowlist(tmp_path: Path) -> None:
+    producer = valid_env()
+    demo = valid_env()
+    producer["ACX_GPU_ENDPOINT_ALLOWLIST"] = "gpu-??.internal.example"
+    producer["ACX_GPU_ENDPOINT_URL"] = "https://gpu-a1.internal.example:8000"
+    demo["ACX_GPU_ENDPOINT_URL"] = "https://gpu-a1.internal.example:8000"
+
+    result = run_preflight(tmp_path, producer=producer, demo=demo)
+
+    assert result.returncode == 0, result.stderr
 
 
 def test_wordpress_config_extra_supplies_demo_recognition_constants(tmp_path: Path) -> None:
@@ -374,10 +472,19 @@ def trusted_allowlist(contract: Path) -> str:
     return result.stdout
 
 
-def test_repository_and_staged_contract_have_runtime_parity() -> None:
-    assert trusted_allowlist(CONTRACT) == trusted_allowlist(DESCRIBE_GATE)
-    assert trusted_results(CONTRACT, "acx_is_trusted_describe_profile") == trusted_results(
-        DESCRIBE_GATE, "is_trusted_describe_profile"
+def test_repository_and_staged_contract_have_one_definition_and_runtime_parity(tmp_path: Path) -> None:
+    staged_lib = tmp_path / "lib"
+    staged_lib.mkdir()
+    staged_contract = staged_lib / "gpu-env-contract.sh"
+    staged_gate = staged_lib / "describe-gate.sh"
+    contract_text = CONTRACT.read_text(encoding="utf-8")
+    staged_contract.write_text(contract_text, encoding="utf-8")
+    staged_gate.write_text(DESCRIBE_GATE.read_text(encoding="utf-8"), encoding="utf-8")
+
+    assert 'ACX_TRUSTED_DESCRIBE_PROFILES="' not in contract_text
+    assert trusted_allowlist(staged_contract) == trusted_allowlist(staged_gate)
+    assert trusted_results(staged_contract, "acx_is_trusted_describe_profile") == trusted_results(
+        staged_gate, "is_trusted_describe_profile"
     )
 
 
@@ -411,20 +518,25 @@ def test_staged_bootstrap_layout_contains_every_runtime_dependency(tmp_path: Pat
 
 
 @pytest.mark.parametrize("example", [PRODUCER_EXAMPLE, DEMO_EXAMPLE])
-def test_worked_examples_include_complete_gpu_burst_profile(example: Path) -> None:
+def test_worked_examples_document_gpu_burst_profile_and_preflight(example: Path) -> None:
     text = example.read_text(encoding="utf-8")
 
     assert "# --- GPU burst profile (demo) ---" in text
     assert "preflight-gpu-env.sh" in text
-    for key in (
-        "ACX_DESCRIPTION_ADAPTER",
-        "ACX_GPU_ENDPOINT_URL",
-        "ACX_GPU_ENDPOINT_API_KEY",
-        "ACX_GPU_SNAPSHOT_DIR",
-        "ACX_GPU_STATE_PATH",
-        "ACX_GPU_STATE_STALE_SECONDS",
-        "ACX_RECOGNITION_URL",
-        "ACX_RECOGNITION_API_KEY",
-        "ACX_RECOGNITION_TENANT_ID",
-    ):
-        assert f"{key}=" in text or f"define('{key}'" in text
+
+
+def test_worked_examples_form_valid_pair_after_documented_replacements(tmp_path: Path) -> None:
+    producer_text = PRODUCER_EXAMPLE.read_text(encoding="utf-8").replace(
+        '"ACX_GPU_ENDPOINT_API_KEY":"ocid1.vaultsecret.oc1..REPLACE_GPU_ENDPOINT_KEY"',
+        '"ACX_GPU_ENDPOINT_API_KEY":"ocid1.vaultsecret.oc1.iad.fakegpuendpointkey"',
+    )
+    demo_text = (
+        DEMO_EXAMPLE.read_text(encoding="utf-8")
+        .replace("replace-with-a10-endpoint-key", "fake-gpu-key-for-preflight-tests")
+        .replace("replace-with-tenant-api-key", "fake-tenant-key-for-preflight-tests")
+        .replace("00000000-0000-4000-8000-000000000001", "123e4567-e89b-42d3-a456-426614174000")
+    )
+
+    result = run_preflight(tmp_path, producer_text=producer_text, demo_text=demo_text)
+
+    assert result.returncode == 0, result.stderr

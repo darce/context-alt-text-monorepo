@@ -1,17 +1,21 @@
 #!/usr/bin/env bash
-# Repository-side description-adapter contract used by GPU env preflight.
-# infra/oci/demo/lib/describe-gate.sh must remain VM-self-contained because it
-# is the artifact sync-demo ships. A runtime parity test binds that staged copy
-# to this contract, including exact-member behavior, before either can deploy.
+# Repository-side adapter for the GPU env preflight. The VM-self-contained
+# describe gate is the single definition site for trusted profiles. A staged
+# preflight package places it beside this file; repository runs find the same
+# source from the repository-relative fallback.
 
-ACX_TRUSTED_DESCRIBE_PROFILES="florence_small gpu_qwen30b gpu_qwen30b_ensemble"
+contract_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+describe_gate_contract="${contract_dir}/describe-gate.sh"
+if [[ ! -r "$describe_gate_contract" ]]; then
+    describe_gate_contract="${contract_dir}/../../../infra/oci/demo/lib/describe-gate.sh"
+fi
+if [[ ! -r "$describe_gate_contract" ]]; then
+    echo "ERROR: trusted description profile contract is missing: describe-gate.sh" >&2
+    return 1
+fi
+# shellcheck source=../../../infra/oci/demo/lib/describe-gate.sh
+source "$describe_gate_contract"
 
 acx_is_trusted_describe_profile() {
-    local profile="$1"
-    local candidate
-    [ -n "$profile" ] || return 1
-    for candidate in $ACX_TRUSTED_DESCRIBE_PROFILES; do
-        [ "$candidate" = "$profile" ] && return 0
-    done
-    return 1
+    is_trusted_describe_profile "$1"
 }

@@ -4,6 +4,7 @@
 
 import { __ } from '@wordpress/i18n';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useEffect, useRef } from 'react';
 
 import {
   acceptSuggestion,
@@ -101,6 +102,22 @@ export const useClusterActionMutations = ({
   // RES-15: gate split only — reassign/pin/reject stay live offline (outbox curation).
   const offline = useSyncOffline();
   const splitGate = useRemoteActionGate(offline);
+  const splitAbortRef = useRef<AbortController | null>(null);
+
+  useEffect(
+    () => () => {
+      // Stop waiting on a write whose UI owner is gone. This does not claim the
+      // split did not land: after a network interruption the outcome is unknown
+      // (literature/extracted/refactoring/distilled/
+      // designing-data-intensive-applications.md:305). `splitCluster`
+      // already threads this signal through to fetchApi; this hook supplies the
+      // lifecycle owner it lacked (RES-13,
+      // docs/reviews/uxp-2/lexicons/engineering.md:47).
+      splitAbortRef.current?.abort();
+      splitAbortRef.current = null;
+    },
+    [],
+  );
 
   const reassignMutation = useMutation({
     mutationKey: ['reassign-identities', clusterId],
@@ -189,16 +206,22 @@ export const useClusterActionMutations = ({
       clusterId,
       nClusters = 2,
       anchorIdentityId,
+      signal,
     }: {
       clusterId: string;
       nClusters?: number;
       anchorIdentityId?: string;
+      signal: AbortSignal;
     }) => {
       if (offline) {
         throw new Error(offlineActionReason());
       }
       const mode = (identityCount ?? 0) > SPLIT_ASYNC_THRESHOLD ? 'async' : 'sync';
-      const result = await splitCluster(clusterId, { nClusters, anchorIdentityId, splitMode: 'forced', mode });
+      const result = await splitCluster(
+        clusterId,
+        { nClusters, anchorIdentityId, splitMode: 'forced', mode },
+        signal,
+      );
       if ('job_id' in result) {
         await pollSplitJob(result.job_id);
       }
@@ -210,6 +233,11 @@ export const useClusterActionMutations = ({
     },
     onError: (err: unknown) => {
       routeMutationFailure(err, { onAbort, onError });
+    },
+    onSettled: (_data, _error, variables) => {
+      if (splitAbortRef.current?.signal === variables.signal) {
+        splitAbortRef.current = null;
+      }
     },
   });
 
@@ -258,8 +286,12 @@ export const useClusterActionMutations = ({
     createClusterForIdentity: (identityId: string, label: string, signal?: AbortSignal, rosterEntryId?: number) =>
       createClusterMutation.mutate({ identityId, label, signal, rosterEntryId }),
     // RES-03: no offline short-circuit here — the mutationFn throws so onError surfaces the reason.
-    split: (clusterId: string, nClusters = 2, anchorIdentityId?: string) =>
-      splitMutation.mutate({ clusterId, nClusters, anchorIdentityId }),
+    split: (clusterId: string, nClusters = 2, anchorIdentityId?: string) => {
+      splitAbortRef.current?.abort();
+      const controller = new AbortController();
+      splitAbortRef.current = controller;
+      splitMutation.mutate({ clusterId, nClusters, anchorIdentityId, signal: controller.signal });
+    },
     rejectSuggestion: (suggestionId: string) => rejectSuggestionMutation.mutate(suggestionId),
     pinRepresentative: (representativeId: string, isPinned: boolean, signal?: AbortSignal) =>
       pinRepresentativeMutation.mutate({ representativeId, isPinned, signal }),

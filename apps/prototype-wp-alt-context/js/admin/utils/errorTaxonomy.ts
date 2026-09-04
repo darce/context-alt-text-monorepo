@@ -46,6 +46,21 @@ export const APP_ERROR_TAGS = [
 export type AppErrorTag = (typeof APP_ERROR_TAGS)[number];
 
 /**
+ * Stable machine codes carried by `event: error` frames on the job-progress
+ * stream. Keep this vocabulary here, next to the other boundary taxonomies, so
+ * producers and consumers do not grow independent string literals (sr-007,
+ * docs/workbay/constitution.md:24). Human-readable `message` copy is diagnostic
+ * only and must never be the primary control channel: otherwise a copy change
+ * silently changes lifecycle semantics (RLSE-05,
+ * docs/reviews/uxp-2/lexicons/engineering.md:293).
+ */
+export const JOB_STREAM_ERROR_CODE = {
+  JOB_NOT_FOUND: 'job_not_found',
+} as const;
+
+export type JobStreamErrorCode = (typeof JOB_STREAM_ERROR_CODE)[keyof typeof JOB_STREAM_ERROR_CODE];
+
+/**
  * The two DOM error names that mean "this request did not finish", and the
  * `AppError` tag each one carries. Single owner (REF-19) for the mapping —
  * `appError.classifyError` imports it rather than re-deriving the name set,

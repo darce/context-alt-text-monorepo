@@ -165,6 +165,9 @@ check-gpu-snapshots:
 # compose contract on the OCI VM, so running it against a developer laptop is
 # never meaningful. GPU_SNAPSHOT_ENV is deliberately mandatory and invalid
 # values fail before SSH; inability to reach or inspect the host also fails.
+GPU_SNAPSHOT_GATE_TIMEOUT_SECONDS ?= 60
+GPU_SNAPSHOT_CHECKER ?= $(ROOT_MAKEFILE_DIR)/scripts/deploy/check-gpu-snapshots.sh
+GPU_SNAPSHOT_DEPLOYMENTS ?= $(ROOT_MAKEFILE_DIR)/scripts/deploy/gpu-snapshot-deployments.conf
 check-gpu-snapshots-live:
 	@if [ -z "$(GPU_SNAPSHOT_ENV)" ]; then \
 		echo "check-gpu-snapshots-live: GPU_SNAPSHOT_ENV is required (dev|dev-fir|staging|prod)" >&2; \
@@ -173,17 +176,37 @@ check-gpu-snapshots-live:
 	@case "$(GPU_SNAPSHOT_ENV)" in dev|dev-fir|staging|prod) ;; \
 		*) echo "check-gpu-snapshots-live: invalid GPU_SNAPSHOT_ENV=$(GPU_SNAPSHOT_ENV)" >&2; exit 2 ;; \
 	esac
-	@host="$${OCI_HOST:-acx-backend.tail1a44b8.ts.net}"; user="$${OCI_USER:-ubuntu}"; \
+	@set -eu; \
+		case "$(GPU_SNAPSHOT_GATE_TIMEOUT_SECONDS)" in ''|*[!0-9]*|0) \
+			echo "check-gpu-snapshots-live: GPU_SNAPSHOT_GATE_TIMEOUT_SECONDS must be a positive integer" >&2; exit 2 ;; \
+		esac; \
+		command -v timeout >/dev/null 2>&1 || { echo "check-gpu-snapshots-live: timeout command is required" >&2; exit 2; }; \
+		host="$${OCI_HOST:-acx-backend.tail1a44b8.ts.net}"; user="$${OCI_USER:-ubuntu}"; \
+		payload=$$(mktemp); trap 'rm -f "$$payload"' EXIT HUP INT TERM; \
 		echo "==> Checking live GPU snapshots on $$user@$$host ($(GPU_SNAPSHOT_ENV))"; \
-		{ paste -sd, "$(ROOT_MAKEFILE_DIR)/scripts/deploy/gpu-snapshot-deployments.conf"; \
-			printf '\n'; \
-			cat "$(ROOT_MAKEFILE_DIR)/scripts/deploy/check-gpu-snapshots.sh"; \
-		} | \
-		ssh -l "$$user" -- "$$host" 'set -eu; \
-			IFS= read -r deployments; \
+		{ paste -sd, "$(GPU_SNAPSHOT_DEPLOYMENTS)"; cat "$(GPU_SNAPSHOT_CHECKER)"; } > "$$payload"; \
+		expected_bytes=$$(wc -c < "$$payload" | tr -d ' '); \
+		expected_sha=$$(sha256sum "$$payload" | awk '{print $$1}'); \
+		{ printf 'ACX_GPU_CHECKER_V1 %s %s\n' "$$expected_bytes" "$$expected_sha"; cat "$$payload"; } | \
+		timeout --foreground --signal=TERM --kill-after=5s "$(GPU_SNAPSHOT_GATE_TIMEOUT_SECONDS)s" \
+		ssh -o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=5 \
+			-o ServerAliveCountMax=2 -l "$$user" -- "$$host" 'set -eu; \
+			IFS=" " read -r protocol expected_bytes expected_sha extra || { echo "ERROR: missing GPU checker transport header" >&2; exit 90; }; \
+			[ "$$protocol" = ACX_GPU_CHECKER_V1 ] && [ -z "$${extra:-}" ] || { echo "ERROR: invalid GPU checker transport header" >&2; exit 90; }; \
+			case "$$expected_bytes" in ""|*[!0-9]*) echo "ERROR: invalid GPU checker byte count" >&2; exit 90 ;; esac; \
+			payload=$$(mktemp); \
 			checker=$$(mktemp); \
-			trap "rm -f $$checker" EXIT; \
-			cat > "$$checker"; \
+			trap "rm -f $$payload $$checker" EXIT; \
+			dd bs=1 count="$$expected_bytes" of="$$payload" status=none; \
+			actual_bytes=$$(wc -c < "$$payload" | tr -d " "); \
+			[ "$$actual_bytes" = "$$expected_bytes" ] || { echo "ERROR: truncated GPU checker payload ($$actual_bytes of $$expected_bytes bytes)" >&2; exit 91; }; \
+			extra_bytes=$$(dd bs=1 count=1 status=none | wc -c | tr -d " "); \
+			[ "$$extra_bytes" = 0 ] || { echo "ERROR: oversized GPU checker payload" >&2; exit 91; }; \
+			actual_sha=$$(sha256sum "$$payload" | sed "s/ .*//"); \
+			[ "$$actual_sha" = "$$expected_sha" ] || { echo "ERROR: GPU checker payload digest mismatch" >&2; exit 92; }; \
+			IFS= read -r deployments < "$$payload" || { echo "ERROR: GPU checker payload has no deployment registry" >&2; exit 93; }; \
+			sed "1d" "$$payload" > "$$checker"; \
+			[ -s "$$checker" ] || { echo "ERROR: GPU checker payload has no checker" >&2; exit 93; }; \
 			sudo env ACX_DESCRIBE_LOAD_DIR=/run/acx-write \
 				ACX_GPU_COMPOSE_FILE="/opt/acx-backend/$(GPU_SNAPSHOT_ENV)/docker-compose.env.yml" \
 				ACX_GPU_DEPLOYMENTS="$$deployments" \

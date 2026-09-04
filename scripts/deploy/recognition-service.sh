@@ -1586,16 +1586,47 @@ verify_running_image_matches_deployed() {
 }
 
 verify_live_gpu_snapshots() {
-  local env="$1" remote_dir
+  local env="$1" remote_dir payload expected_bytes expected_sha gate_timeout transport_rc=0
   remote_dir="$(env_to_remote_dir "$env")"
+  gate_timeout="${ACX_GPU_SNAPSHOT_GATE_TIMEOUT_SECONDS:-60}"
+  if ! [[ "${gate_timeout}" =~ ^[1-9][0-9]*$ ]]; then
+    fail "ACX_GPU_SNAPSHOT_GATE_TIMEOUT_SECONDS must be a positive integer (got: ${gate_timeout})"
+  fi
+  command -v timeout >/dev/null 2>&1 || fail "timeout command is required for GPU snapshot verification"
   log "Verifying live GPU snapshot contract on ${SSH_TARGET} (${env})"
-  {
+  payload="$(mktemp)"
+  if ! {
     paste -sd, "${SCRIPT_DIR}/gpu-snapshot-deployments.conf"
-    printf '\n'
     cat "${SCRIPT_DIR}/check-gpu-snapshots.sh"
-  } | ssh -o BatchMode=yes -o ConnectTimeout=10 -l "${OCI_USER}" -- "${OCI_HOST}" \
+  } >"${payload}"; then
+    rm -f "${payload}"
+    fail "could not build GPU snapshot checker payload"
+  fi
+  expected_bytes="$(wc -c <"${payload}" | tr -d ' ')"
+  expected_sha="$(sha256sum "${payload}" | awk '{print $1}')"
+  {
+    printf 'ACX_GPU_CHECKER_V1 %s %s\n' "${expected_bytes}" "${expected_sha}"
+    cat "${payload}"
+  } | timeout --foreground --signal=TERM --kill-after=5s "${gate_timeout}s" \
+    ssh -o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=5 \
+      -o ServerAliveCountMax=2 -l "${OCI_USER}" -- "${OCI_HOST}" \
     "set -eu
-    IFS= read -r deployments
+    IFS=' ' read -r protocol expected_bytes expected_sha extra || { echo 'ERROR: missing GPU checker transport header' >&2; exit 90; }
+    [ \"\$protocol\" = ACX_GPU_CHECKER_V1 ] && [ -z \"\${extra:-}\" ] || { echo 'ERROR: invalid GPU checker transport header' >&2; exit 90; }
+    case \"\$expected_bytes\" in ''|*[!0-9]*) echo 'ERROR: invalid GPU checker byte count' >&2; exit 90 ;; esac
+    payload=\$(mktemp)
+    checker=\$(mktemp)
+    trap 'rm -f \"\$payload\" \"\$checker\"' EXIT
+    dd bs=1 count=\"\$expected_bytes\" of=\"\$payload\" status=none
+    actual_bytes=\$(wc -c <\"\$payload\" | tr -d ' ')
+    [ \"\$actual_bytes\" = \"\$expected_bytes\" ] || { echo \"ERROR: truncated GPU checker payload (\$actual_bytes of \$expected_bytes bytes)\" >&2; exit 91; }
+    extra_bytes=\$(dd bs=1 count=1 status=none | wc -c | tr -d ' ')
+    [ \"\$extra_bytes\" = 0 ] || { echo 'ERROR: oversized GPU checker payload' >&2; exit 91; }
+    actual_sha=\$(sha256sum \"\$payload\" | awk '{print \$1}')
+    [ \"\$actual_sha\" = \"\$expected_sha\" ] || { echo 'ERROR: GPU checker payload digest mismatch' >&2; exit 92; }
+    IFS= read -r deployments <\"\$payload\" || { echo 'ERROR: GPU checker payload has no deployment registry' >&2; exit 93; }
+    sed '1d' \"\$payload\" >\"\$checker\"
+    [ -s \"\$checker\" ] || { echo 'ERROR: GPU checker payload has no checker' >&2; exit 93; }
     sudo env ACX_DESCRIBE_LOAD_DIR=/run/acx-write \
       ACX_GPU_COMPOSE_FILE='${remote_dir}/docker-compose.env.yml' \
       ACX_GPU_DEPLOYMENTS=\$deployments \
@@ -1603,7 +1634,9 @@ verify_live_gpu_snapshots() {
       ACX_GPU_STATE_PATH=/run/acx/gpu-state.json \
       ACX_GPU_UNIT_LOAD_DIR=/run/acx-write \
       ACX_GPU_UNIT_STATE_PATH=/run/acx/gpu-state.json \
-      bash -s"
+      bash \"\$checker\"" || transport_rc=$?
+  rm -f "${payload}"
+  return "${transport_rc}"
 }
 
 do_verify() {

@@ -59,6 +59,7 @@ abstract class TestCase extends PHPUnitTestCase
         $GLOBALS['__ac_rest_fields'] = [];
         $GLOBALS['__ac_scripts'] = [];
         $GLOBALS['__ac_styles'] = [];
+        $GLOBALS['__ac_shortcodes'] = [];
         $GLOBALS['__ac_menu_pages'] = [];
         $GLOBALS['__ac_submenu_pages'] = [];
         $GLOBALS['__ac_localized_scripts'] = [];
@@ -66,6 +67,7 @@ abstract class TestCase extends PHPUnitTestCase
         $GLOBALS['__ac_current_user_capabilities'] = [];
         $GLOBALS['__ac_attachment_metadata'] = [];
         $GLOBALS['__ac_attachment_urls'] = [];
+        $GLOBALS['__ac_attachment_titles'] = [];
         $GLOBALS['__ac_attachment_mimes'] = [];
         $GLOBALS['__ac_attachment_image_src'] = [];
         $GLOBALS['__ac_attached_file'] = [];

@@ -1,0 +1,410 @@
+<?php
+
+declare(strict_types=1);
+
+namespace AltContext\Api;
+
+require_once __DIR__ . '/class-describe-controller.php';
+require_once __DIR__ . '/../public/class-public-demo-error-code.php';
+
+use AltContext\PublicSite\PublicDemoErrorCode;
+use WP_Error;
+use WP_REST_Request;
+use WP_REST_Response;
+
+use function absint;
+use function add_option;
+use function apply_filters;
+use function array_filter;
+use function array_map;
+use function array_merge;
+use function array_unique;
+use function array_values;
+use function ceil;
+use function delete_option;
+use function filter_var;
+use function get_option;
+use function get_transient;
+use function gmdate;
+use function hash;
+use function hash_equals;
+use function in_array;
+use function is_array;
+use function is_string;
+use function is_wp_error;
+use function max;
+use function min;
+use function register_rest_route;
+use function sanitize_text_field;
+use function set_transient;
+use function time;
+use function update_option;
+use function wp_verify_nonce;
+use function wp_generate_uuid4;
+
+use const FILTER_VALIDATE_IP;
+
+/**
+ * Narrow anonymous adapter over the existing describe-run pipeline.
+ *
+ * The public boundary accepts one attachment ID from an operator-curated
+ * allowlist. It never accepts bytes or URLs. Enable/configure it explicitly:
+ *
+ *   wp option update acx_public_demo_enabled 1
+ *   wp option update acx_public_demo_media_ids '[41,42]' --format=json
+ *   wp option update acx_public_demo_daily_cap 50
+ *
+ * Fail-fast limits form a cost/stability bulkhead around the paid describe
+ * pipeline: three requests per IP per minute, a daily site cap, and exactly
+ * one in-flight public run.
+ */
+final class PublicDemoDescribeController implements RecognitionRouteControllerInterface {
+	private const INFLIGHT_OPTION       = 'acx_public_demo_inflight';
+	private const INFLIGHT_TTL_SECONDS  = 600;
+	private const RATE_TTL_SECONDS      = 120;
+	private const DEFAULT_RATE_PER_MIN  = 3;
+	private const DEFAULT_DAILY_CAP     = 50;
+	private const TERMINAL_STATUSES     = array( 'completed', 'completed_with_errors', 'failed', 'cancelled' );
+
+	private DescribeController $pipeline;
+	private ?string $inflight_token = null;
+
+	public function __construct( ?DescribeController $pipeline = null ) {
+		$this->pipeline = $pipeline ?? new DescribeController();
+	}
+
+	public function register_routes(): void {
+		register_rest_route(
+			'acx/v1',
+			'/public/demo/describe',
+			array(
+				'methods'             => 'POST',
+				'callback'            => array( $this, 'submit' ),
+				'permission_callback' => array( $this, 'check_public_permission' ),
+				'args'                => array(
+					'media_id' => array(
+						'type'        => 'integer',
+						'required'    => true,
+						'description' => 'One attachment ID from the configured public demo allowlist.',
+					),
+				),
+			)
+		);
+
+		register_rest_route(
+			'acx/v1',
+			'/public/demo/describe/runs/(?P<run_id>[^/]+)',
+			array(
+				'methods'             => 'GET',
+				'callback'            => array( $this, 'status' ),
+				'permission_callback' => array( $this, 'check_public_permission' ),
+			)
+		);
+	}
+
+	public function check_public_permission( WP_REST_Request $request ): bool|WP_Error {
+		$enabled = get_option( 'acx_public_demo_enabled', false );
+		if ( true !== $enabled && 1 !== $enabled && '1' !== $enabled ) {
+			return new WP_Error(
+				PublicDemoErrorCode::DISABLED,
+				'The public description demo is not enabled.',
+				array( 'status' => 403 )
+			);
+		}
+
+		$nonce = $request->get_header( 'X-WP-Nonce' );
+		if ( '' === $nonce || ! wp_verify_nonce( $nonce, 'wp_rest' ) ) {
+			return new WP_Error(
+				PublicDemoErrorCode::INVALID_NONCE,
+				'This demo page token is missing or expired. Refresh the page and try again.',
+				array( 'status' => 403 )
+			);
+		}
+
+		return true;
+	}
+
+	public function submit( WP_REST_Request $request ): WP_REST_Response|WP_Error {
+		$media_id = absint( $request->get_param( 'media_id' ) );
+		if ( ! in_array( $media_id, $this->allowlisted_media_ids(), true ) ) {
+			return new WP_Error(
+				PublicDemoErrorCode::MEDIA_NOT_ALLOWED,
+				'That image is not available in this demo.',
+				array( 'status' => 403 )
+			);
+		}
+
+		$client_key = $this->client_rate_key();
+		if ( is_wp_error( $client_key ) ) {
+			return $client_key;
+		}
+
+		$rate_result = $this->consume_rate_token( $client_key );
+		if ( $rate_result instanceof WP_REST_Response ) {
+			return $rate_result;
+		}
+
+		if ( ! $this->acquire_inflight_bulkhead( $media_id ) ) {
+			return $this->limited_response(
+				PublicDemoErrorCode::BUSY,
+				'Another description is already running. Please try again shortly.',
+				5
+			);
+		}
+
+		$daily_result = $this->reserve_daily_capacity();
+		if ( $daily_result instanceof WP_REST_Response ) {
+			$this->release_inflight_bulkhead();
+			return $daily_result;
+		}
+
+		$pipeline_request = new WP_REST_Request( 'POST', '/acx/v1/recognition/describe/runs' );
+		$pipeline_request->set_param( 'media_ids', array( $media_id ) );
+		$response = $this->pipeline->submit_describe_run( $pipeline_request );
+
+		if ( $response instanceof WP_Error || $response->get_status() >= 400 ) {
+			$this->release_inflight_bulkhead();
+			return $response;
+		}
+
+		$data   = $response->get_data();
+		$run_id = is_array( $data ) && is_string( $data['run_id'] ?? null )
+			? sanitize_text_field( $data['run_id'] )
+			: '';
+		if ( '' === $run_id || ! $this->bind_inflight_run( $run_id ) ) {
+			return new WP_Error(
+				PublicDemoErrorCode::INVALID_PIPELINE_DATA,
+				'The description started but its status could not be tracked safely.',
+				array( 'status' => 502 )
+			);
+		}
+
+		return $response;
+	}
+
+	public function status( WP_REST_Request $request ): WP_REST_Response|WP_Error {
+		$run_id   = sanitize_text_field( (string) $request->get_param( 'run_id' ) );
+		$inflight = get_option( self::INFLIGHT_OPTION, false );
+		if ( '' === $run_id || ! is_array( $inflight ) || ! is_string( $inflight['run_id'] ?? null ) || ! hash_equals( $inflight['run_id'], $run_id ) ) {
+			return new WP_Error(
+				PublicDemoErrorCode::RUN_NOT_AVAILABLE,
+				'That public demo run is not available.',
+				array( 'status' => 403 )
+			);
+		}
+
+		$pipeline_request = new WP_REST_Request( 'GET', '/acx/v1/recognition/describe/runs/' . $run_id );
+		$pipeline_request->set_param( 'run_id', $run_id );
+		$response = $this->pipeline->get_describe_run_status( $pipeline_request );
+
+		if ( $response instanceof WP_REST_Response ) {
+			$data   = $response->get_data();
+			$status = is_array( $data ) && is_string( $data['status'] ?? null ) ? $data['status'] : '';
+			if ( in_array( $status, array( 'completed', 'completed_with_errors' ), true ) ) {
+				$response = $this->with_public_description( $response, $pipeline_request, absint( $inflight['media_id'] ?? 0 ) );
+			}
+			if ( in_array( $status, self::TERMINAL_STATUSES, true ) ) {
+				$this->release_inflight_bulkhead( $run_id );
+			}
+		}
+
+		return $response;
+	}
+
+	/** @return list<int> */
+	private function allowlisted_media_ids(): array {
+		$configured = get_option( 'acx_public_demo_media_ids', array() );
+		if ( ! is_array( $configured ) ) {
+			return array();
+		}
+
+		$ids = array_map( 'absint', $configured );
+		$ids = array_values( array_filter( $ids ) );
+		return array_values( array_unique( $ids ) );
+	}
+
+	private function client_rate_key(): string|WP_Error {
+		// Deliberately trust only the direct peer address. Forwarded headers are
+		// attacker-controlled unless a deployment-specific trusted-proxy layer
+		// normalizes them before WordPress.
+		// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- validated as an IP immediately below; transforming it would change rate-limit identity.
+		$address = is_string( $_SERVER['REMOTE_ADDR'] ?? null ) ? (string) $_SERVER['REMOTE_ADDR'] : '';
+		if ( false === filter_var( $address, FILTER_VALIDATE_IP ) ) {
+			return new WP_Error(
+				PublicDemoErrorCode::CLIENT_UNAVAILABLE,
+				'The demo could not identify this client safely.',
+				array( 'status' => 403 )
+			);
+		}
+
+		return hash( 'sha256', $address );
+	}
+
+	private function consume_rate_token( string $client_key ): bool|WP_REST_Response {
+		$lock_key = 'acx_public_demo_rate_lock_' . $client_key;
+		$lock_token = $this->acquire_lock( $lock_key, 5 );
+		if ( false === $lock_token ) {
+			return $this->limited_response( PublicDemoErrorCode::STATE_UNAVAILABLE, 'The demo is temporarily busy. Please retry.', 1 );
+		}
+
+		try {
+			$now     = time();
+			$rate    = max( 1, (int) apply_filters( 'acx_public_demo_rate_per_minute', self::DEFAULT_RATE_PER_MIN ) );
+			$key     = 'acx_public_demo_rate_' . $client_key;
+			$bucket  = get_transient( $key );
+			$tokens  = is_array( $bucket ) ? (float) ( $bucket['tokens'] ?? $rate ) : (float) $rate;
+			$updated = is_array( $bucket ) ? (int) ( $bucket['updated'] ?? $now ) : $now;
+			$tokens  = min( (float) $rate, $tokens + max( 0, $now - $updated ) * ( $rate / 60 ) );
+
+			if ( $tokens < 1.0 ) {
+				$retry_after = max( 1, (int) ceil( ( 1.0 - $tokens ) / ( $rate / 60 ) ) );
+				return $this->limited_response( PublicDemoErrorCode::RATE_LIMITED, 'Too many demo requests. Please wait and try again.', $retry_after );
+			}
+
+			if ( ! set_transient( $key, array( 'tokens' => $tokens - 1.0, 'updated' => $now ), self::RATE_TTL_SECONDS ) ) {
+				return $this->limited_response( PublicDemoErrorCode::STATE_UNAVAILABLE, 'The demo rate limiter is unavailable. Please retry.', 5 );
+			}
+		} finally {
+			$this->release_lock( $lock_key, $lock_token );
+		}
+
+		return true;
+	}
+
+	private function acquire_inflight_bulkhead( int $media_id ): bool {
+		$token = $this->acquire_lock( self::INFLIGHT_OPTION, self::INFLIGHT_TTL_SECONDS, 'pending', array( 'media_id' => $media_id ) );
+		if ( false === $token ) {
+			return false;
+		}
+		$this->inflight_token = $token;
+		return true;
+	}
+
+	private function bind_inflight_run( string $run_id ): bool {
+		$current = get_option( self::INFLIGHT_OPTION, false );
+		if (
+			null === $this->inflight_token
+			|| ! is_array( $current )
+			|| 'pending' !== ( $current['run_id'] ?? null )
+			|| ! is_string( $current['token'] ?? null )
+			|| ! hash_equals( $current['token'], $this->inflight_token )
+		) {
+			return false;
+		}
+
+		$bound = array(
+			'run_id'    => $run_id,
+			'media_id'  => absint( $current['media_id'] ?? 0 ),
+			'token'     => is_string( $current['token'] ?? null ) ? $current['token'] : '',
+			'expires_at' => time() + self::INFLIGHT_TTL_SECONDS,
+		);
+		update_option( self::INFLIGHT_OPTION, $bound, false );
+		return $bound === get_option( self::INFLIGHT_OPTION, false );
+	}
+
+	private function release_inflight_bulkhead( ?string $expected_run_id = null ): void {
+		$current = get_option( self::INFLIGHT_OPTION, false );
+		if ( null !== $expected_run_id && ( ! is_array( $current ) || ! is_string( $current['run_id'] ?? null ) || ! hash_equals( $current['run_id'], $expected_run_id ) ) ) {
+			return;
+		}
+		if ( null === $expected_run_id && null !== $this->inflight_token && ( ! is_array( $current ) || ! is_string( $current['token'] ?? null ) || ! hash_equals( $current['token'], $this->inflight_token ) ) ) {
+			return;
+		}
+		delete_option( self::INFLIGHT_OPTION );
+	}
+
+	private function reserve_daily_capacity(): bool|WP_REST_Response {
+		$date        = gmdate( 'Ymd' );
+		$count_key   = 'acx_public_demo_daily_usage';
+		$lock_key    = 'acx_public_demo_daily_lock';
+		$retry_after = max( 1, 86400 - ( time() % 86400 ) );
+		$lock_token = $this->acquire_lock( $lock_key, 5 );
+		if ( false === $lock_token ) {
+			return $this->limited_response( PublicDemoErrorCode::STATE_UNAVAILABLE, 'The demo usage counter is temporarily unavailable.', 1 );
+		}
+
+		try {
+			$cap   = max( 0, absint( get_option( 'acx_public_demo_daily_cap', self::DEFAULT_DAILY_CAP ) ) );
+			$usage = get_option( $count_key, array() );
+			$count = is_array( $usage ) && $date === ( $usage['date'] ?? null ) ? max( 0, absint( $usage['count'] ?? 0 ) ) : 0;
+			if ( $count >= $cap ) {
+				return $this->limited_response( PublicDemoErrorCode::DAILY_CAP_REACHED, 'Today\'s demo limit has been reached. Please return tomorrow.', $retry_after );
+			}
+
+			$next = array( 'date' => $date, 'count' => $count + 1 );
+			update_option( $count_key, $next, false );
+			if ( $next !== get_option( $count_key, array() ) ) {
+				return $this->limited_response( PublicDemoErrorCode::STATE_UNAVAILABLE, 'The demo usage counter could not be updated safely.', 5 );
+			}
+		} finally {
+			$this->release_lock( $lock_key, $lock_token );
+		}
+
+		return true;
+	}
+
+	/** @param array<string,mixed> $extra */
+	private function acquire_lock( string $option, int $ttl, string $run_id = '', array $extra = array() ): string|false {
+		$token = wp_generate_uuid4();
+		$value = array_merge( $extra, array( 'run_id' => $run_id, 'token' => $token, 'expires_at' => time() + $ttl ) );
+		if ( add_option( $option, $value, '', false ) ) {
+			return $token;
+		}
+
+		$current = get_option( $option, false );
+		if ( ! is_array( $current ) || (int) ( $current['expires_at'] ?? 0 ) >= time() ) {
+			return false;
+		}
+
+		delete_option( $option );
+		return add_option( $option, $value, '', false ) ? $token : false;
+	}
+
+	private function release_lock( string $option, string $token ): void {
+		$current = get_option( $option, false );
+		if ( ! is_array( $current ) || ! is_string( $current['token'] ?? null ) || ! hash_equals( $current['token'], $token ) ) {
+			return;
+		}
+		delete_option( $option );
+	}
+
+	private function with_public_description( WP_REST_Response $status_response, WP_REST_Request $pipeline_request, int $media_id ): WP_REST_Response {
+		$items_response = $this->pipeline->get_describe_run_items( $pipeline_request );
+		if ( ! $items_response instanceof WP_REST_Response || $items_response->get_status() >= 400 ) {
+			return $status_response;
+		}
+
+		$items_data = $items_response->get_data();
+		$items      = is_array( $items_data ) && is_array( $items_data['items'] ?? null ) ? $items_data['items'] : array();
+		foreach ( $items as $item ) {
+			if ( ! is_array( $item ) || $media_id !== absint( $item['media_id'] ?? 0 ) ) {
+				continue;
+			}
+			$description = is_string( $item['alt_text_draft'] ?? null ) ? $item['alt_text_draft'] : '';
+			if ( '' === $description ) {
+				continue;
+			}
+			$data = $status_response->get_data();
+			if ( is_array( $data ) ) {
+				// Expose only the selected attachment's draft, never the admin items envelope.
+				$data['description'] = $description;
+				$status_response->set_data( $data );
+			}
+			break;
+		}
+
+		return $status_response;
+	}
+
+	private function limited_response( string $code, string $message, int $retry_after ): WP_REST_Response {
+		return new WP_REST_Response(
+			array(
+				'code'    => $code,
+				'message' => $message,
+				'data'    => array( 'status' => 429 ),
+			),
+			429,
+			array( 'Retry-After' => (string) max( 1, $retry_after ) )
+		);
+	}
+}

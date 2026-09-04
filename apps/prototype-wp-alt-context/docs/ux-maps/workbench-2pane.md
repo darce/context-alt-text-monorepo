@@ -262,6 +262,28 @@ url_params: `section`
 +------------------------------------------------------------+
 ```
 
+## Actions
+
+| id | verb | target | hierarchy | costly | irreversible | preview required | screen id |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `act-run-recognition` | Run / refresh recognition + grouping | `job-pipeline` | primary | yes | no | yes | `workbench-control` |
+| `act-select-cluster` | Select face group (list) | `workbench-library` | secondary | no | no | no | `workbench-control` |
+| `act-name-cluster` | Save name (NameFaceControl) | `identity-store` | secondary | yes | no | yes | `workbench-control` |
+| `act-curate-cluster` | Merge / split / correct group | `identity-store` | destructive | yes | no | yes | `workbench-control` |
+| `merge_twin` | Merge twin into labeled survivor | `identity-store` | destructive | no | no | no | `workbench-control` |
+| `keep_separate` | Keep twin separate | `identity-store` | secondary | no | no | no | `workbench-control` |
+| `act-view-endpoint-settings` | View / change recognition endpoint + recognition ON/OFF toggle (Settings; server-resolved endpoint) | `exit-settings` | secondary | no | no | no | `workbench-control` |
+| `act-edit-alt` | Edit alt-text inline | `media-store` | secondary | no | no | no | `workbench-library` |
+| `act-edit-desc` | Edit long description inline | `media-store` | secondary | no | no | no | `workbench-library` |
+| `act-accept-ai-caption` | Accept AI caption/description (editable) | `media-store` | secondary | no | no | yes | `workbench-library` |
+| `act-bulk-describe` | Describe N selected (footer primary; runs recognition first when the Settings toggle is ON, then description; disclosure states ON/OFF/unknown) | `job-pipeline` | primary | yes | no | yes | `workbench-library` |
+| `act-open-conflicts` | Open Conflict Inbox | `workbench-conflicts` | secondary | no | no | no | `workbench-2pane-shell` |
+| `act-open-dead-letter` | Open Failed Sync Queue | `workbench-dead-letter` | secondary | no | no | no | `workbench-2pane-shell` |
+| `act-resolve-conflict` | Resolve conflict | `identity-store` | primary | yes | no | yes | `workbench-conflicts` |
+| `act-retry-dead-letter` | Retry failed op | `sync` | primary | yes | no | yes | `workbench-dead-letter` |
+| `act-discard-dead-letter` | Discard failed op | `sync` | destructive | yes | yes | yes | `workbench-dead-letter` |
+| `act-goto-roster` | Go to Roster | `exit-roster` | secondary | no | no | no | `workbench-control` |
+
 ## Flows
 ### Run recognition -> select face group -> name/curate -> library people column updates (`flow-recognize-name-curate`)
 

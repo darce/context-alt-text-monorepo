@@ -1,7 +1,7 @@
 {
   "map_ref": "roster-people",
   "product": "prototype-wp-alt-context",
-  "source_fixture": "packages/mcp-workbay-canvas/tests/fixtures/ux_maps/roster-people.uxmap.json",
+  "source_fixture": "apps/prototype-wp-alt-context/docs/ux-maps/roster-people.uxmap.json",
   "goals": [
     "Six ACX submenus are MECE and frequency-ordered (NAV-05/NAV-06): Overview orients; Review Queue is the one home to name a person from a photo (highest-frequency demo task); People manages named people only; Description Runs is the one home to see what the describer did; Data Retention is keep/delete/export policy (not description history); Settings configures the service (rare, last). WordPress parent slug stays Overview.",
     "One primary action per screen (NAV-01), reachable from zero state (rg-003); other CTAs are secondary.",

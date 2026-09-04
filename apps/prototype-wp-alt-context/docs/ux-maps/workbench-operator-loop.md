@@ -1,7 +1,7 @@
 # UX Map — workbench-operator-loop
 
 **Product:** `prototype-wp-alt-context`
-**Source fixture:** `packages/mcp-workbay-canvas/tests/fixtures/ux_maps/workbench-operator-loop.uxmap.json`
+**Source fixture:** `apps/prototype-wp-alt-context/docs/ux-maps/workbench-operator-loop.uxmap.json`
 
 ## Goals
 
@@ -22,7 +22,7 @@
 | id | kind | route | title | url_params |
 | --- | --- | --- | --- | --- |
 | `workbench-shell` | screen | `#/workbench` | Workbench | `tab`, `panel`, `advanced`, `status`, `media`, `rq`, `queue`, `face`, `cluster` |
-| `workbench-scan` | screen | `#/workbench?tab=scan` | Scan media queue | `tab`, `status`, `media`, `s`, `p`, `perPage`, `panel`, `cluster` |
+| `workbench-scan` | screen | `#/workbench?tab=scan` | Scan media queue | `tab`, `status`, `media`, `s`, `p`, `perPage`, `rq`, `panel`, `cluster` |
 | `workbench-review-panel` | screen | `#/workbench?tab=scan&panel=review&cluster=` | Review these faces | `tab`, `panel`, `cluster`, `rq` |
 | `workbench-conflicts` | overlay | `#/workbench?panel=conflicts` | Conflict Inbox | `panel` |
 | `workbench-dead-letter` | overlay | `#/workbench?panel=dead-letter` | Failed Sync Queue (Dead Letter) | `panel` |
@@ -250,6 +250,34 @@ Purpose: Configure recognition target and connection health
 +------------------------------------------------------------+
 ```
 
+## Operator interaction contract
+
+Deep-link param SSOT: `js/admin/navigation/appLinks.ts` (`APP_LINK_PARAMS`).
+
+The Review Suggestions header announces `position: 1 of N on this page`. The top group card reports `N of M faces shown` and presents `Is this <name>? Yes/No` when a suggested label is available. While a save is in flight, `busy disables actions`; in the empty-representative edge case, `zero reps still render (Avatar, not empty)`.
+
+Component pointers:
+
+- `apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/WorkbenchFindingsPanel.tsx`
+- `apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/TopClusterCard.tsx`
+
+Suggested task slice: **Deep-link parity** — panel/tab/status round-trip via `appLinks` ([NAV-11]).
+
+## Actions
+
+| id | verb | target | hierarchy | costly | irreversible | preview required | screen id |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `act-open-scan` | Open Scan | `workbench-scan` | primary | no | no | no | `workbench-shell` |
+| `act-scan-selected` | Scan selected media | `job-pipeline` | primary | yes | no | yes | `workbench-scan` |
+| `act-open-conflicts` | Open Conflict Inbox | `workbench-conflicts` | secondary | no | no | no | `workbench-shell` |
+| `act-open-dead-letter` | Open Failed Sync Queue | `workbench-dead-letter` | secondary | no | no | no | `workbench-shell` |
+| `act-resolve-conflict` | Resolve conflict | `identity-store` | primary | yes | no | yes | `workbench-conflicts` |
+| `act-retry-dead-letter` | Retry failed op | `sync` | primary | yes | no | yes | `workbench-dead-letter` |
+| `act-discard-dead-letter` | Discard failed op | `sync` | destructive | yes | yes | yes | `workbench-dead-letter` |
+| `act-review-back` | Back to Review Suggestions | `workbench-scan` | primary | no | no | no | `workbench-review-panel` |
+| `act-goto-roster` | Go to Roster | `exit-roster` | secondary | no | no | no | `workbench-scan` |
+| `act-retry-projection` | Retry projection sync | `projection` | secondary | yes | no | yes | `workbench-shell` |
+
 ## Flows
 
 ### Select media → scan → continue (`flow-scan-happy`)
@@ -287,11 +315,32 @@ flowchart TD
   n_workbench_dead_letter -->|panel=dead-letter| n_workbench_shell
 ```
 
+### Scan → settings health (`flow-scan-to-settings`)
+
+```mermaid
+flowchart TD
+  %% flow: Scan → settings health job=job-clear-queue
+  n_workbench_scan["Scan media queue (screen)"]
+  n_exit_settings["Settings / service health (exit)"]
+  n_workbench_scan -->|settings health| n_exit_settings
+```
+
 ## Open questions
 
 - Should Scan CTAs require selection count preview on the same surface before start? ([INT-07])
 - Conflict shortlist max_candidates=5 — confirm product policy vs model top-k
 - Does empty media queue show first_time guidance or empty-only copy?
+
+## Domain state mapping
+
+| domain state(s) | canonical state |
+| --- | --- |
+| `unavailable` | `offline` |
+| `repair`, `read_only` | `degraded` |
+| `zero_evidence` | `empty` |
+| `busy` | `loading` |
+| `filtered`, `suggested_label` | `default` |
+| `missing_image` | `edge_input` |
 
 ## Parity index
 

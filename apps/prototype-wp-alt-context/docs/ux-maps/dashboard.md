@@ -447,22 +447,23 @@ url_params: `personFilter`, `person`
 
 ## Actions
 
-| id | hierarchy | verb | target |
-| --- | --- | --- | --- |
-| `act-start-first-scan` | primary | Start your first scan | `#/workbench?tab=scan` |
-| `act-dismiss-orientation` | tertiary | Dismiss getting started | dashboard-shell |
-| `act-open-review-queue` | secondary | Open Review Queue | `#/workbench?tab=scan` |
-| `act-fix-missing-descriptions` | secondary | Fix missing descriptions | `#/workbench?status=missing` |
-| `act-open-retention` | secondary | Open Data Retention | `#/retention` |
-| `act-open-conflicts` | secondary | Open Conflict Inbox | `#/workbench?tab=scan&panel=conflicts` |
-| `act-open-failed-sync` | secondary | Open Failed Sync Queue | `#/workbench?tab=scan&panel=dead-letter` |
-| `act-reset-mirror` | destructive | Reset mirror | dashboard sync health |
-| `act-view-results` | secondary | View Results | `#/workbench?advanced=open` |
-| `act-retry-identity-stats` | secondary | Retry | dashboard-shell |
-| `act-retry-identity-stats-unavailable` | secondary | Retry identity stats | dashboard-shell |
-| `act-go-to-review-queue` | secondary | Go to Review Queue | `#/workbench?advanced=open` |
-| `act-review-unassigned` | secondary | Review unassigned persons | `#/workbench?tab=scan` |
-| `act-go-to-scan-tab` | secondary | Go to Scan tab | `#/workbench?tab=scan` |
+| id | verb | target | hierarchy | costly | irreversible | preview required | screen id |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `act-start-first-scan` | Start your first scan | `#/workbench?tab=scan` | primary | no | no | no | `dashboard-shell` |
+| `act-dismiss-orientation` | Dismiss getting started | `dashboard-shell` | tertiary | no | no | no | `dashboard-shell` |
+| `act-open-review-queue` | Open Review Queue | `#/workbench?tab=scan` | secondary | no | no | no | `dashboard-shell` |
+| `act-fix-missing-descriptions` | Fix missing descriptions | `#/workbench?status=missing` | secondary | no | no | no | `dashboard-shell` |
+| `act-open-retention` | Open Data Retention | `#/retention` | secondary | no | no | no | `dashboard-shell` |
+| `act-open-conflicts` | Open Conflict Inbox | `#/workbench?tab=scan&panel=conflicts` | secondary | no | no | no | `dashboard-shell` |
+| `act-open-failed-sync` | Open Failed Sync Queue | `#/workbench?tab=scan&panel=dead-letter` | secondary | no | no | no | `dashboard-shell` |
+| `act-reset-mirror` | Reset mirror | `dashboard sync health` | destructive | yes | yes | yes | `dashboard-shell` |
+| `act-view-results` | View Results | `#/workbench?advanced=open` | secondary | no | no | no | `dashboard-shell` |
+| `act-run-a-scan` | Run a scan | `#/workbench?tab=scan` | secondary | no | no | no | `dashboard-shell` |
+| `act-retry-identity-stats` | Retry | `dashboard-shell` | secondary | no | no | no | `dashboard-shell` |
+| `act-retry-identity-stats-unavailable` | Retry identity stats | `dashboard-shell` | secondary | no | no | no | `dashboard-shell` |
+| `act-go-to-review-queue` | Go to Review Queue | `#/workbench?advanced=open` | secondary | no | no | no | `dashboard-shell` |
+| `act-review-unassigned` | Review unassigned persons | `#/workbench?tab=scan` | secondary | no | no | no | `dashboard-shell` |
+| `act-go-to-scan-tab` | Go to Scan tab | `#/workbench?tab=scan` | secondary | no | no | no | `dashboard-shell` |
 
 ## Flows
 
@@ -470,6 +471,7 @@ url_params: `personFilter`, `person`
 
 ```mermaid
 flowchart TD
+  %% flow: First-time orientation → start first scan → review queue job=job-start-recognition
   n_dashboard_first["Overview (first_time)"]
   n_exit_workbench["Workbench (exit)"]
   n_dashboard_first -->|orientation before grid| n_dashboard_first
@@ -481,6 +483,7 @@ flowchart TD
 
 ```mermaid
 flowchart TD
+  %% flow: Read health and identity counts → open review queue or resolve sync debt job=job-triage-dashboard
   n_dashboard_review["Overview (default)"]
   n_exit_workbench_review["Workbench (exit)"]
   n_dashboard_review -->|Identity Recognition promoted when review work exists and sync has no attention| n_dashboard_review
@@ -491,6 +494,7 @@ flowchart TD
 
 ```mermaid
 flowchart TD
+  %% flow: Check coverage → fix missing descriptions → inspect data retention job=job-maintain-library
   n_dashboard_maintenance["Overview (default)"]
   n_exit_workbench_fix["Workbench (exit)"]
   n_exit_retention["Data Retention (exit)"]
@@ -511,7 +515,7 @@ flowchart TD
 
 Zone ids: z-dashboard-hero z-orientation z-sync-health z-identity-recognition z-library-coverage z-recent-activity z-retention-posture z-wb-entry z-retention-entry z-roster-entry
 
-Action ids: act-start-first-scan act-dismiss-orientation act-open-review-queue act-fix-missing-descriptions act-open-retention act-open-conflicts act-open-failed-sync act-reset-mirror act-view-results act-retry-identity-stats act-retry-identity-stats-unavailable act-go-to-review-queue act-review-unassigned act-go-to-scan-tab
+Action ids: act-start-first-scan act-dismiss-orientation act-open-review-queue act-fix-missing-descriptions act-open-retention act-open-conflicts act-open-failed-sync act-reset-mirror act-view-results act-run-a-scan act-retry-identity-stats act-retry-identity-stats-unavailable act-go-to-review-queue act-review-unassigned act-go-to-scan-tab
 
 Zone labels (verbatim):
 
@@ -526,7 +530,7 @@ Zone labels (verbatim):
 - Data Retention entry
 - Roster entry
 
-Screen states: default loading error first_time degraded
+Screen states: default loading error first_time degraded empty
 
 ## Not doing
 

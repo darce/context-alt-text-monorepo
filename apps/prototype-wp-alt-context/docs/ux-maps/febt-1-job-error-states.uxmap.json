@@ -1,7 +1,7 @@
 {
   "map_ref": "febt-1-job-error-states",
   "product": "AltContext WP admin SPA — job pipeline error and progress states",
-  "source_fixture": "workbench-operator-loop",
+  "source_fixture": "apps/prototype-wp-alt-context/docs/ux-maps/workbench-operator-loop.uxmap.json",
   "goals": [
     "Every request failure the operator can see maps to exactly one AppError tag and one recovery action.",
     "Job progress states are the reducer's states, not derived ad hoc in components.",
@@ -63,7 +63,7 @@
         },
         {
           "id": "error-action",
-          "label": "Recovery by AppError tag — Retry: http, parse, nonce_refresh, transport, timeout and unknown; Reload page: auth_expired only; no banner or action: abort; Wait countdown then auto-retry: http cooldown. Retry is the screen's one static primary; Reload and Wait are subordinate, and only the tag-appropriate recovery renders.",
+          "label": "Recovery by AppError tag — Retry: http, parse, nonce_refresh, transport, timeout and unknown; Reload page: auth_expired only; no banner or action: abort; Wait countdown then auto-retry: http cooldown. Retry and Reload are tag-specific primary actions; Wait is subordinate, and exactly one tag-appropriate recovery renders.",
           "role": "form",
           "states": ["error", "offline", "degraded"]
         }
@@ -79,17 +79,94 @@
     }
   ],
   "actions": [
-    { "id": "start-job", "verb": "Start job", "target": "workbench-pipeline", "hierarchy": "primary", "costly": true, "irreversible": false, "preview_required": false, "screen_id": "workbench-pipeline" },
-    { "id": "cancel-job", "verb": "Cancel job", "target": "workbench-pipeline", "hierarchy": "secondary", "costly": false, "irreversible": true, "preview_required": false, "screen_id": "workbench-pipeline" },
-    { "id": "retry-request", "verb": "Retry", "target": "request-error-banner", "hierarchy": "primary", "costly": false, "irreversible": false, "preview_required": false, "screen_id": "request-error-banner" },
-    { "id": "reload", "verb": "Reload page", "target": "reload-page", "hierarchy": "secondary", "costly": false, "irreversible": false, "preview_required": false, "screen_id": "request-error-banner" },
-    { "id": "wait-cooldown", "verb": "Wait (countdown)", "target": "request-error-banner", "hierarchy": "secondary", "costly": false, "irreversible": false, "preview_required": false, "screen_id": "request-error-banner" }
+    {
+      "id": "start-job",
+      "verb": "Start job",
+      "target": "workbench-pipeline",
+      "hierarchy": "primary",
+      "costly": true,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "workbench-pipeline"
+    },
+    {
+      "id": "cancel-job",
+      "verb": "Cancel job",
+      "target": "workbench-pipeline",
+      "hierarchy": "secondary",
+      "costly": false,
+      "irreversible": true,
+      "preview_required": false,
+      "screen_id": "workbench-pipeline"
+    },
+    {
+      "id": "retry-request",
+      "verb": "Retry",
+      "target": "request-error-banner",
+      "hierarchy": "primary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "request-error-banner"
+    },
+    {
+      "id": "reload",
+      "verb": "Reload page",
+      "target": "reload-page",
+      "hierarchy": "primary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "request-error-banner"
+    },
+    {
+      "id": "wait-cooldown",
+      "verb": "Wait (countdown)",
+      "target": "request-error-banner",
+      "hierarchy": "secondary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "request-error-banner"
+    }
   ],
   "flows": [
-    { "id": "job-happy-path", "job": "run-job", "label": "idle → pending → running → completed", "steps": [ { "screen_id": "workbench-pipeline", "branch_label": "idle" }, { "screen_id": "workbench-pipeline", "branch_label": "pending" }, { "screen_id": "workbench-pipeline", "branch_label": "running" }, { "screen_id": "workbench-pipeline", "branch_label": "completed" } ] },
-    { "id": "job-stall-reconnect", "job": "run-job", "label": "running → stalled (30 s no event) → running (SSE reconnect) or failed", "steps": [ { "screen_id": "workbench-pipeline", "branch_label": "running" }, { "screen_id": "workbench-pipeline", "branch_label": "stalled" }, { "screen_id": "workbench-pipeline", "branch_label": "running | failed" } ] },
-    { "id": "auth-expired-recovery", "job": "recover-from-failure", "label": "401/403 → auth_expired banner → reload", "steps": [ { "screen_id": "request-error-banner", "branch_label": "auth_expired" }, { "screen_id": "reload-page" } ] },
-    { "id": "cooldown-429", "job": "recover-from-failure", "label": "http 429/503 + Retry-After (isCooldown) → wait banner → auto retry", "steps": [ { "screen_id": "request-error-banner", "branch_label": "http" }, { "screen_id": "workbench-pipeline", "branch_label": "running" } ] }
+    {
+      "id": "job-happy-path",
+      "job": "run-job",
+      "label": "idle → pending → running → completed",
+      "steps": [
+        { "screen_id": "workbench-pipeline", "branch_label": "idle" },
+        { "screen_id": "workbench-pipeline", "branch_label": "pending" },
+        { "screen_id": "workbench-pipeline", "branch_label": "running" },
+        { "screen_id": "workbench-pipeline", "branch_label": "completed" }
+      ]
+    },
+    {
+      "id": "job-stall-reconnect",
+      "job": "run-job",
+      "label": "running → stalled (30 s no event) → running (SSE reconnect) or failed",
+      "steps": [
+        { "screen_id": "workbench-pipeline", "branch_label": "running" },
+        { "screen_id": "workbench-pipeline", "branch_label": "stalled" },
+        { "screen_id": "workbench-pipeline", "branch_label": "running | failed" }
+      ]
+    },
+    {
+      "id": "auth-expired-recovery",
+      "job": "recover-from-failure",
+      "label": "401/403 → auth_expired banner → reload",
+      "steps": [{ "screen_id": "request-error-banner", "branch_label": "auth_expired" }, { "screen_id": "reload-page" }]
+    },
+    {
+      "id": "cooldown-429",
+      "job": "recover-from-failure",
+      "label": "http 429/503 + Retry-After (isCooldown) → wait banner → auto retry",
+      "steps": [
+        { "screen_id": "request-error-banner", "branch_label": "http" },
+        { "screen_id": "workbench-pipeline", "branch_label": "running" }
+      ]
+    }
   ],
   "open_questions": [],
   "not_doing": ["new screens", "copy changes", "confirm tab", "toast redesign"]

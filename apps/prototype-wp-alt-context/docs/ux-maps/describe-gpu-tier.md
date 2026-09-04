@@ -1,7 +1,7 @@
 # UX Map — describe-gpu-tier
 
 **Product:** `alt-context WP plugin admin SPA — describe run GPU tier + lifecycle state`
-**Source fixture:** `workbench-operator-loop.uxmap.json`
+**Source fixture:** `apps/prototype-wp-alt-context/docs/ux-maps/workbench-operator-loop.uxmap.json`
 
 ## Goals
 - Operator can start a bulk describe run and always see whether the GPU tier is stopped, warming, ready, or degraded (INT-10 status–predict–stop).
@@ -130,6 +130,18 @@ Purpose: One-shot notification for a tier transition the operator is NOT looking
 | states: default | error | degraded                         |
 +------------------------------------------------------------+
 ```
+
+## Actions
+
+| id | verb | target | hierarchy | costly | irreversible | preview required | screen id |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `start-bulk-describe` | Describe N selected | `POST describe/run` | primary | yes | no | yes | `workbench-media-selection` |
+| `cancel-run` | Cancel run | `POST describe/run/:id/cancel` | secondary | no | no | no | `workbench-media-selection` |
+| `keep-provisional` | Use CPU drafts now | `navigate describe-run-apply` | secondary | no | no | no | `workbench-media-selection` |
+| `retry-polling` | Retry | `refetch run status` | secondary | no | no | no | `workbench-media-selection` |
+| `apply-descriptions` | Apply | `POST describe/run/:id/apply` | primary | no | no | yes | `describe-run-apply` |
+| `describe-single` | Describe with AI | `POST scene/describe` | primary | yes | no | no | `dashboard-describe-panel` |
+| `dismiss-toast` | Dismiss | `toast` | tertiary | no | no | no | `toast-gpu-transition` |
 
 ## Flows
 ### Bulk describe when GPU is stopped (`bulk-describe-cold-gpu`)

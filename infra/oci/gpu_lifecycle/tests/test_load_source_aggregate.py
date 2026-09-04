@@ -339,7 +339,7 @@ def test_omitted_batch_state_is_unknown_but_explicit_false_is_trustworthy(
     assert "recovered environment=dev" in caplog.text
 
 
-def test_malformed_snapshot_unknown_quarantine_expires_to_escalated(
+def test_truncated_snapshot_unknown_quarantine_expires_to_escalated(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
@@ -348,7 +348,7 @@ def test_malformed_snapshot_unknown_quarantine_expires_to_escalated(
     monkeypatch.setattr("infra.oci.gpu_lifecycle.load_source.time.time", lambda: now[0])
     malformed = tmp_path / "dev" / "describe-load.json"
     malformed.parent.mkdir(parents=True)
-    malformed.write_text("not-json", encoding="utf-8")
+    malformed.write_text('{"queue_depth": 0, "in_flight":', encoding="utf-8")
     os.utime(malformed, (NOW, NOW))
     _write_load(tmp_path, "prod", queue_depth=0, in_flight=0)
     source = AggregateJobLoadSource(
@@ -372,6 +372,40 @@ def test_malformed_snapshot_unknown_quarantine_expires_to_escalated(
     assert escalated.escalated_environments == ("dev",)
     assert "environment=dev reason=malformed" in caplog.text
     assert "evidence escalated" in caplog.text
+
+
+def test_rewriting_malformed_snapshot_does_not_extend_quarantine_forever(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    now = [NOW]
+    monkeypatch.setattr("infra.oci.gpu_lifecycle.load_source.time.time", lambda: now[0])
+    malformed = tmp_path / "dev" / "describe-load.json"
+    malformed.parent.mkdir(parents=True)
+    malformed.write_text("not-json", encoding="utf-8")
+    os.utime(malformed, (NOW, NOW))
+    source = AggregateJobLoadSource(
+        directory=tmp_path,
+        stale_seconds=120,
+        unknown_grace_seconds=60,
+        expected_environments=("dev",),
+    )
+
+    assert source.snapshot().evidence == "unknown"
+
+    now[0] += 59
+    malformed.write_text("still-not-json", encoding="utf-8")
+    os.utime(malformed, (now[0], now[0]))
+    assert source.snapshot().evidence == "unknown"
+
+    now[0] += 2
+    malformed.write_text("{broken-again", encoding="utf-8")
+    os.utime(malformed, (now[0], now[0]))
+    snapshot = source.snapshot()
+
+    assert snapshot.evidence == "escalated"
+    assert snapshot.untrustworthy is True
+    assert snapshot.escalated_environments == ("dev",)
 
 
 @pytest.mark.parametrize("unknown_grace_seconds", [0, -1, float("inf"), float("nan")])

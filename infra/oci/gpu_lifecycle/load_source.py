@@ -98,6 +98,12 @@ class AggregateJobLoadSource:
         repr=False,
         compare=False,
     )
+    _unknown_since: dict[str, float] = field(
+        default_factory=dict,
+        init=False,
+        repr=False,
+        compare=False,
+    )
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "directory", Path(self.directory))
@@ -221,6 +227,16 @@ class AggregateJobLoadSource:
         observed: _EnvironmentObservation | None = None,
         escalation_deadline: float | None = None,
     ) -> _EnvironmentObservation:
+        # CON-11: an unhealthy writer must not renew its own quarantine by
+        # repeatedly replacing the file with another malformed generation.
+        # Preserve the beginning of uninterrupted uncertainty until a
+        # trustworthy observation explicitly clears it in _log_transition.
+        unknown_since = min(unknown_since, now)
+        previous_unknown_since = self._unknown_since.get(environment)
+        if previous_unknown_since is not None:
+            unknown_since = min(unknown_since, previous_unknown_since)
+        self._unknown_since[environment] = unknown_since
+
         deadline = unknown_since + self.unknown_grace_seconds if escalation_deadline is None else escalation_deadline
         evidence = LoadEvidence.ESCALATED if now > deadline else LoadEvidence.UNKNOWN
         return _EnvironmentObservation(
@@ -319,6 +335,7 @@ class AggregateJobLoadSource:
             return
         self._last_state[observation.environment] = state
         if observation.evidence is LoadEvidence.TRUSTWORTHY:
+            self._unknown_since.pop(observation.environment, None)
             if previous is not None and previous[0] is not LoadEvidence.TRUSTWORTHY:
                 logger.warning(
                     "describe load evidence recovered environment=%s previous_reason=%s",

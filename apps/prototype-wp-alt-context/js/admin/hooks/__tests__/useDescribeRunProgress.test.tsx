@@ -1,5 +1,6 @@
 import React from 'react';
 import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, render, renderHook, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -20,19 +21,21 @@ vi.mock('../../api/describeApi', async (importOriginal) => {
 });
 
 const fetchBulkDescribeRunMock = vi.mocked(describeApi.fetchBulkDescribeRun);
+const adminRoot = join(__dirname, '..', '..');
+const appRoot = join(adminRoot, '..', '..');
 const mediaSelectionStyles = readFileSync(
-  new URL('../../styles/components/_media-selection.scss', import.meta.url),
+  join(adminRoot, 'styles', 'components', '_media-selection.scss'),
+  'utf8',
+);
+const gpuUxMapMarkdown = readFileSync(
+  join(appRoot, 'docs', 'ux-maps', 'describe-gpu-tier.uxmap.md'),
   'utf8',
 );
 const gpuUxMap = JSON.parse(
-  readFileSync(new URL('../../../../docs/ux-maps/describe-gpu-tier.uxmap.json', import.meta.url), 'utf8'),
+  readFileSync(join(appRoot, 'docs', 'ux-maps', 'describe-gpu-tier.uxmap.json'), 'utf8'),
 ) as {
   screens: Array<{ id: string; zones: Array<{ id: string; states: string[] }> }>;
 };
-const gpuUxMapMarkdown = readFileSync(
-  new URL('../../../../docs/ux-maps/describe-gpu-tier.uxmap.md', import.meta.url),
-  'utf8',
-);
 
 const runResponse = (overrides: Partial<DescribeRunResponse> = {}): DescribeRunResponse => ({
   tenant_id: 'tenant',

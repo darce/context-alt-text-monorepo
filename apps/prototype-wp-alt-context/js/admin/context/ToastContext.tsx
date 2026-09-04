@@ -13,6 +13,7 @@ export interface ToastAction {
 
 export interface ToastOptions {
   action?: ToastAction;
+  /** Milliseconds before dismissal; null persists until the user dismisses it. */
   durationMs?: number | null;
 }
 
@@ -57,7 +58,8 @@ export const ToastProvider = ({ children }: { children: ReactNode }) => {
   const toast = useCallback(
     (message: string, type: ToastType = 'info', options: ToastOptions = {}) => {
       const id = Math.random().toString(36).substring(2, 9);
-      const duration = options.durationMs ?? (options.action ? null : 5000);
+      const duration =
+        options.durationMs !== undefined ? options.durationMs : options.action ? null : 5000;
       setToasts((prev) => [...prev, { id, message, type, action: options.action, duration }]);
       if (duration !== null) {
         const timerId = window.setTimeout(() => removeToast(id), duration);

@@ -23,6 +23,9 @@ const ToastProbe = (): React.JSX.Element => {
       <button type="button" onClick={() => info('Heads up')}>
         info
       </button>
+      <button type="button" onClick={() => info('Persistent', { durationMs: null })}>
+        persistent
+      </button>
       <button
         type="button"
         onClick={() =>
@@ -167,6 +170,23 @@ describe('ToastContext dismissal timing', () => {
     });
 
     expect(screen.getByText('GPU ready')).toBeInTheDocument();
+  });
+
+  it('treats an explicit null duration as persistent until dismissed', () => {
+    render(
+      <ToastProvider>
+        <ToastProbe />
+      </ToastProvider>,
+    );
+    act(() => screen.getByRole('button', { name: 'persistent' }).click());
+
+    act(() => {
+      vi.advanceTimersByTime(60_000);
+    });
+
+    expect(screen.getByText('Persistent')).toBeInTheDocument();
+    act(() => screen.getByRole('button', { name: 'Close' }).click());
+    expect(screen.queryByText('Persistent')).not.toBeInTheDocument();
   });
 
   it('removes non-actionable toasts after the default timeout', () => {

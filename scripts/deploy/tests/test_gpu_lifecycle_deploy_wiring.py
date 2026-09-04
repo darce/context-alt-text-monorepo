@@ -26,7 +26,7 @@ def _run_lifecycle(
     dry_run: bool = True,
     verify_rc: int = 0,
     reaper_rc: int = 0,
-    instance_id: str = "ocid1.instance.oc1.test",
+    instance_id: str = "ocid1.instance.oc1.us-ashburn-1.aaaa",
     drop_in_paths: str = "",
     mismatched_unit: str | None = None,
     reap_exec_start: str = (
@@ -59,18 +59,25 @@ def _run_lifecycle(
         """#!/usr/bin/env bash
 set -euo pipefail
 printf 'ssh' >>"$FAKE_TRANSPORT_LOG"
-printf ' <%s>' "$@" >>"$FAKE_TRANSPORT_LOG"
+argument_number=0
+for argument in "$@"; do
+  argument_number=$((argument_number + 1))
+  if [ "$argument_number" -lt "$#" ]; then
+    printf ' <%s>' "$argument" >>"$FAKE_TRANSPORT_LOG"
+  fi
+done
 printf '\n' >>"$FAKE_TRANSPORT_LOG"
-case "$*" in
-  *"sudo systemctl start acx-gpu-reap.service"*)
-    systemctl start acx-gpu-reap.service
-    "$FAKE_INSTALLER" --verify-systemd-only || {
-      status=$?
-      systemctl disable --now acx-gpu-start.timer
-      exit "$status"
-    }
-    ;;
-esac
+remote_body=${!#}
+if [[ "$remote_body" == *"activate_gpu_lifecycle_timers"* ]]; then
+  "$FAKE_INSTALLER" --activate-systemd-only
+fi
+""",
+    )
+    _write_executable(
+        fake_bin / "sudo",
+        """#!/usr/bin/env bash
+set -euo pipefail
+exec "$@"
 """,
     )
     _write_executable(
@@ -185,18 +192,77 @@ def test_flag_on_rejects_malformed_ready_url_authority_before_transport(
     assert calls == ""
 
 
-def test_flag_on_rejects_non_instance_ocid_before_transport(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "instance_id",
+    (
+        "ocid1.volume.oc1.us-ashburn-1.aaaa",
+        "ocid1.instance.oc1.us-ashburn-1.aaaa; touch /tmp/pwned",
+        "ocid1.instance.oc1.us-ashburn-1.aaaa$(id)",
+        "ocid1.instance.oc1.us-ashburn-1.",
+    ),
+)
+def test_flag_on_rejects_non_instance_ocid_before_transport(
+    tmp_path: Path, instance_id: str
+) -> None:
     result, calls = _run_lifecycle(
         tmp_path,
         enabled=True,
         ready_url="http://10.0.1.36:8000/health",
-        instance_id="ocid1.volume.oc1.test",
+        instance_id=instance_id,
     )
 
     assert result.returncode == 2
     assert "ACX_GPU_INSTANCE_ID" in result.stderr
     assert "ocid1.instance.oc1." in result.stderr
     assert calls == ""
+
+
+def test_installer_rejects_shell_bearing_instance_ocid_before_logging(tmp_path: Path) -> None:
+    result = subprocess.run(
+        [
+            str(INSTALLER),
+            "--host",
+            "backend.test",
+            "--ready-url",
+            "http://10.0.1.36:8000/health",
+            "--instance-id",
+            "ocid1.instance.oc1.us-ashburn-1.aaaa;echo-pwned",
+            "--dry-run",
+        ],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 2
+    assert "GPU instance OCID" in result.stderr
+    assert "gpu instance:" not in result.stdout
+
+
+@pytest.mark.parametrize("max_lease", ("0", "86401", "1h", "-1"))
+def test_installer_rejects_unbounded_or_non_numeric_max_lease(max_lease: str) -> None:
+    result = subprocess.run(
+        [
+            str(INSTALLER),
+            "--host",
+            "backend.test",
+            "--ready-url",
+            "http://10.0.1.36:8000/health",
+            "--instance-id",
+            "ocid1.instance.oc1.us-ashburn-1.aaaa",
+            "--max-lease-seconds",
+            max_lease,
+            "--dry-run",
+        ],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 2
+    assert "1 through 86400" in result.stderr
 
 
 def test_flag_on_invokes_dry_run_without_a_gpu_start_command(tmp_path: Path) -> None:
@@ -232,9 +298,12 @@ def test_install_fails_when_timer_verification_finds_an_inactive_timer(tmp_path:
     assert result.returncode != 0
     assert "acx-gpu-start.timer" in calls
     assert "acx-gpu-reap.timer" in calls
-    assert "systemctl is-enabled" in calls
-    assert "systemctl is-active" in calls
+    assert "systemctl <is-enabled>" in calls
+    assert "systemctl <is-active>" in calls
     assert "acx-gpu-start.timer is not active" in result.stderr
+    assert calls.count("systemctl <start> <acx-gpu-reap.service>") == 2
+    assert calls.count("systemctl <disable> <--now> <acx-gpu-start.timer>") == 2
+    assert "running fail-safe STOP path" in result.stderr
     for ssh_call in (line for line in calls.splitlines() if line.startswith("ssh")):
         assert "<-l> <ci-user> <--> <backend.test>" in ssh_call
 
@@ -300,6 +369,13 @@ def test_installer_own_verifier_fails_loudly_with_fake_systemctl(tmp_path: Path)
     lifecycle_env = tmp_path / "gpu-lifecycle.env"
     lifecycle_env.write_text("MAX_LEASE_SECONDS=3600\n", encoding="utf-8")
     _write_executable(
+        fake_bin / "sudo",
+        """#!/usr/bin/env bash
+set -euo pipefail
+exec "$@"
+""",
+    )
+    _write_executable(
         fake_bin / "systemctl",
         """#!/usr/bin/env bash
 if [ "$1" = show ]; then
@@ -326,7 +402,7 @@ exit 0
     environment["ACX_EXPECTED_MAX_LEASE_SECONDS"] = "3600"
 
     result = subprocess.run(
-        [str(INSTALLER), "--verify-systemd-only"],
+        [str(INSTALLER), "--activate-systemd-only"],
         cwd=REPO_ROOT,
         env=environment,
         capture_output=True,
@@ -347,18 +423,11 @@ def test_reaper_is_proved_before_start_timer_is_enabled(tmp_path: Path) -> None:
     )
 
     assert result.returncode == 0, result.stdout + result.stderr
-    reap_proof = calls.index("sudo systemctl start acx-gpu-reap.service")
-    start_timer_enable = calls.index("sudo systemctl enable --now acx-gpu-start.timer")
+    reap_proof = calls.index("systemctl <start> <acx-gpu-reap.service>")
+    start_timer_enable = calls.index("systemctl <enable> <--now> <acx-gpu-start.timer>")
     assert reap_proof < start_timer_enable
-    assert "systemctl start acx-gpu-start" not in calls
-
-    assert calls.index("start_timer_armed=1") < calls.index(
-        "sudo systemctl enable --now acx-gpu-start.timer"
-    )
-    assert calls.index("sudo systemctl enable --now acx-gpu-start.timer") < calls.rindex(
-        "verify_gpu_lifecycle_timers"
-    )
-    assert calls.rindex("verify_gpu_lifecycle_timers") < calls.rindex("trap - EXIT")
+    assert "systemctl <start> <acx-gpu-start" not in calls
+    assert calls.index("systemctl <show> <acx-gpu-reap.service>") < start_timer_enable
 
 
 def test_every_remote_shell_enables_pipefail() -> None:

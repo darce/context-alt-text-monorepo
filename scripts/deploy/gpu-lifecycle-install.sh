@@ -32,9 +32,15 @@ verify_gpu_lifecycle_timers() {
     local expected_start_service_hash=$1 expected_start_timer_hash=$2
     local expected_reap_service_hash=$3 expected_reap_timer_hash=$4
     local expected_max_lease=$5 effective_unit_dir expected_env_file
-    local unit expected_hash fragment_path drop_in_paths effective_hash exec_start timer
+    local unit expected_hash fragment_path drop_in_paths effective_hash exec_start
     effective_unit_dir="${ACX_EFFECTIVE_SYSTEMD_DIR:-/etc/systemd/system}"
     expected_env_file="${ACX_EXPECTED_ENV_FILE:-/etc/acx/gpu-lifecycle.env}"
+    if [[ ! "$expected_max_lease" =~ ^[0-9]+$ ]] \
+        || ! [ "$expected_max_lease" -ge 1 ] 2>/dev/null \
+        || ! [ "$expected_max_lease" -le 86400 ] 2>/dev/null; then
+        echo "error: effective reaper max lease must be an integer from 1 through 86400" >&2
+        return 1
+    fi
 
     for unit in \
         acx-gpu-start.service acx-gpu-start.timer \
@@ -87,17 +93,62 @@ verify_gpu_lifecycle_timers() {
         return 1
     }
 
-    for timer in acx-gpu-start.timer acx-gpu-reap.timer; do
-        systemctl is-enabled --quiet "$timer" || {
-            echo "error: $timer is not enabled" >&2
-            return 1
-        }
-        systemctl is-active --quiet "$timer" || {
-            echo "error: $timer is not active" >&2
-            return 1
-        }
-        echo "$timer enabled active"
-    done
+    systemctl is-enabled --quiet acx-gpu-reap.timer || {
+        echo "error: acx-gpu-reap.timer is not enabled" >&2
+        return 1
+    }
+    systemctl is-active --quiet acx-gpu-reap.timer || {
+        echo "error: acx-gpu-reap.timer is not active" >&2
+        return 1
+    }
+    echo "acx-gpu-reap.timer enabled active"
+}
+
+verify_gpu_lifecycle_start_timer() {
+    systemctl is-enabled --quiet acx-gpu-start.timer || {
+        echo "error: acx-gpu-start.timer is not enabled" >&2
+        return 1
+    }
+    systemctl is-active --quiet acx-gpu-start.timer || {
+        echo "error: acx-gpu-start.timer is not active" >&2
+        return 1
+    }
+    echo "acx-gpu-start.timer enabled active"
+}
+
+activate_gpu_lifecycle_timers() {
+    [ "$#" -eq 5 ] || {
+        echo "error: lifecycle activation requires four expected hashes and max lease" >&2
+        return 2
+    }
+    local start_timer_armed=0
+    cleanup_unverified_start_timer() {
+        local status=$?
+        trap - ERR EXIT
+        if [ "$status" -ne 0 ] && [ "$start_timer_armed" -eq 1 ]; then
+            echo 'error: lifecycle verification failed; running fail-safe STOP path' >&2
+            if ! sudo systemctl disable --now acx-gpu-start.timer; then
+                echo 'error: failed to disable acx-gpu-start.timer during cleanup' >&2
+            fi
+            if ! sudo systemctl start acx-gpu-reap.service; then
+                echo 'error: fail-safe acx-gpu-reap.service invocation failed' >&2
+            fi
+        fi
+        exit "$status"
+    }
+    trap cleanup_unverified_start_timer ERR EXIT
+
+    sudo systemctl disable --now acx-gpu-start.timer
+    sudo systemctl enable --now acx-gpu-reap.timer
+    sudo systemctl start acx-gpu-reap.service
+    verify_gpu_lifecycle_timers "$@"
+
+    # Set the cleanup guard first: enable --now can partially succeed.
+    start_timer_armed=1
+    sudo systemctl enable --now acx-gpu-start.timer
+    verify_gpu_lifecycle_start_timer
+    start_timer_armed=0
+    trap - ERR EXIT
 }
 
 # Hermetic verification entrypoint used by deploy-contract tests. Keeping the
@@ -107,6 +158,18 @@ if [ "${1:-}" = "--verify-systemd-only" ]; then
     [ "$#" -eq 1 ] || { echo "error: --verify-systemd-only accepts no arguments" >&2; exit 2; }
     expected_unit_dir="${ACX_EXPECTED_SYSTEMD_DIR:-/etc/systemd/system}"
     verify_gpu_lifecycle_timers \
+        "$(sha256sum "${expected_unit_dir}/acx-gpu-start.service" | awk '{print $1}')" \
+        "$(sha256sum "${expected_unit_dir}/acx-gpu-start.timer" | awk '{print $1}')" \
+        "$(sha256sum "${expected_unit_dir}/acx-gpu-reap.service" | awk '{print $1}')" \
+        "$(sha256sum "${expected_unit_dir}/acx-gpu-reap.timer" | awk '{print $1}')" \
+        "${ACX_EXPECTED_MAX_LEASE_SECONDS:?ACX_EXPECTED_MAX_LEASE_SECONDS is required}"
+    exit $?
+fi
+
+if [ "${1:-}" = "--activate-systemd-only" ]; then
+    [ "$#" -eq 1 ] || { echo "error: --activate-systemd-only accepts no arguments" >&2; exit 2; }
+    expected_unit_dir="${ACX_EXPECTED_SYSTEMD_DIR:-/etc/systemd/system}"
+    activate_gpu_lifecycle_timers \
         "$(sha256sum "${expected_unit_dir}/acx-gpu-start.service" | awk '{print $1}')" \
         "$(sha256sum "${expected_unit_dir}/acx-gpu-start.timer" | awk '{print $1}')" \
         "$(sha256sum "${expected_unit_dir}/acx-gpu-reap.service" | awk '{print $1}')" \
@@ -222,8 +285,10 @@ assert_safe_ssh_identity "SSH host" "$HOST"
 
 # A cap of 0 disables the cost backstop. That is exactly the [RES-07] shape this
 # work exists to remove, so refuse it here rather than discover it on a bill.
-if ! [ "$MAX_LEASE_SECONDS" -gt 0 ] 2>/dev/null; then
-    echo "error: --max-lease-seconds must be > 0; 0 leaves an A10 able to run unbounded" >&2
+if [[ ! "$MAX_LEASE_SECONDS" =~ ^[0-9]+$ ]] \
+    || ! [ "$MAX_LEASE_SECONDS" -ge 1 ] 2>/dev/null \
+    || ! [ "$MAX_LEASE_SECONDS" -le 86400 ] 2>/dev/null; then
+    echo "error: --max-lease-seconds must be an integer from 1 through 86400" >&2
     exit 2
 fi
 if [[ ! "$IDLE_SECONDS" =~ ^[0-9]+$ ]] || ! [ "$IDLE_SECONDS" -gt 0 ] 2>/dev/null; then
@@ -305,6 +370,11 @@ if [ -z "$GPU_INSTANCE_ID" ]; then
         exit 2
     }
 fi
+if [[ ! "$GPU_INSTANCE_ID" =~ ^ocid1\.instance\.oc1\.[a-z0-9-]+\.[a-z0-9]+$ ]]; then
+    echo "error: GPU instance OCID must match ocid1.instance.oc1.<region>.<identifier>" >&2
+    exit 2
+fi
+printf -v remote_gpu_instance_id '%q' "$GPU_INSTANCE_ID"
 echo "gpu instance: ${GPU_INSTANCE_NAME} (...${GPU_INSTANCE_ID: -12})"
 echo "OCID source:  ${gpu_instance_id_source}"
 echo "max lease:    ${MAX_LEASE_SECONDS}s   idle: ${IDLE_SECONDS}s"
@@ -411,24 +481,16 @@ sudo mv -Tf '/opt/acx-gpu/.current-${release_id}' /opt/acx-gpu/current"
 
 # --- install units -----------------------------------------------------------
 verification_function=$(declare -f verify_gpu_lifecycle_timers)
+start_verification_function=$(declare -f verify_gpu_lifecycle_start_timer)
+activation_function=$(declare -f activate_gpu_lifecycle_timers)
 run_with_deadline "systemd unit installation" \
     ssh "${SSH_OPTIONS[@]}" -l "$SSH_USER" -- "$HOST" "set -euo pipefail
 ${verification_function}
-start_timer_armed=0
-cleanup_unverified_start_timer() {
-    status=\$?
-    if [ "\$status" -ne 0 ] && [ "\$start_timer_armed" -eq 1 ]; then
-        echo 'error: lifecycle verification failed; disabling acx-gpu-start.timer' >&2
-        if ! sudo systemctl disable --now acx-gpu-start.timer; then
-            echo 'error: failed to disable acx-gpu-start.timer during cleanup' >&2
-        fi
-    fi
-    exit "\$status"
-}
-trap cleanup_unverified_start_timer EXIT
+${start_verification_function}
+${activation_function}
 sudo mkdir -p '${remote_release}/systemd'
 sudo tee '${remote_release}/systemd/gpu-lifecycle.env' >/dev/null <<ENV
-GPU_INSTANCE_ID=${GPU_INSTANCE_ID}
+GPU_INSTANCE_ID=${remote_gpu_instance_id}
 MAX_LEASE_SECONDS=${MAX_LEASE_SECONDS}
 IDLE_SECONDS=${IDLE_SECONDS}
 ACX_DESCRIBE_LOAD_STALE_GRACE_SECONDS=${LOAD_STALE_GRACE_SECONDS}
@@ -548,13 +610,7 @@ expected_reap_service_hash=\$(sha256sum '${remote_release}/systemd/acx-gpu-reap.
 expected_reap_timer_hash=\$(sha256sum '${remote_release}/systemd/acx-gpu-reap.timer' | awk '{print \$1}')
 
 sudo systemctl daemon-reload
-sudo systemctl enable --now acx-gpu-reap.timer
-# Prove the cost backstop synchronously before scheduling anything capable of
-# starting the GPU. acx-gpu-reap.service can only observe or STOP an instance.
-sudo systemctl start acx-gpu-reap.service
-start_timer_armed=1
-sudo systemctl enable --now acx-gpu-start.timer
-verify_gpu_lifecycle_timers \
+activate_gpu_lifecycle_timers \
     "\$expected_start_service_hash" "\$expected_start_timer_hash" \
     "\$expected_reap_service_hash" "\$expected_reap_timer_hash" \
     '${MAX_LEASE_SECONDS}'
@@ -562,8 +618,6 @@ echo '--- installed timers ---'
 if ! systemctl list-timers --all --no-pager | grep acx-gpu; then
     echo 'warning: installed timers were verified but list-timers diagnostic was empty' >&2
 fi
-start_timer_armed=0
-trap - EXIT
 "
 
 echo "gpu-lifecycle-install: done"

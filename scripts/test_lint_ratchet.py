@@ -11,7 +11,11 @@ direct assertion of that rule.
 from __future__ import annotations
 
 import json
+import shutil
+import subprocess
+from pathlib import Path
 
+import lint_ratchet
 import pytest
 from lint_ratchet import (
     Baseline,
@@ -215,3 +219,155 @@ def test_tool_mismatch_is_rejected(tmp_path):
     (tmp_path / "ruff.json").write_text((tmp_path / "eslint.json").read_text())
     with pytest.raises(RatchetError, match="declares tool"):
         load_baseline("ruff", tmp_path)
+
+
+# --------------------------------------------------------------------------
+# ruff-format ratchet (LINTGATE1-NEW-03)
+# --------------------------------------------------------------------------
+
+
+def test_newly_unformatted_file_is_a_regression():
+    """The whole point of the format ratchet: new drift must fail the gate."""
+    drift = compare(
+        mk(tool="ruff-format", counts={"a.py": {"unformatted": 1}}),
+        mk(tool="ruff-format", counts={"a.py": {"unformatted": 1}, "b.py": {"unformatted": 1}}),
+    )
+    assert not drift.clean
+    assert drift.regressions == ["b.py: unformatted (new violation)"]
+
+
+def test_reformatted_file_is_stale_not_clean():
+    drift = compare(
+        mk(tool="ruff-format", counts={"a.py": {"unformatted": 1}, "b.py": {"unformatted": 1}}),
+        mk(tool="ruff-format", counts={"a.py": {"unformatted": 1}}),
+    )
+    assert not drift.clean
+    assert drift.stale
+
+
+def test_changing_a_ruff_format_option_is_a_suppression():
+    """Flipping indent-style to tab would make every baselined file 'pass'
+    without a single one being fixed, so redefining "formatted" must fail."""
+    problems = compare_config_guard(
+        {"format_options": {"indent-style": "space", "quote-style": "double"}},
+        {"format_options": {"indent-style": "tab", "quote-style": "double"}},
+    )
+    assert problems == ["ruff format option 'indent-style' changed 'space' -> 'tab'"]
+
+
+def test_identical_ruff_format_options_are_clean():
+    guard = {"format_options": {"indent-style": "space", "quote-style": "double"}}
+    assert compare_config_guard(guard, dict(guard)) == []
+
+
+def test_dropping_a_ruff_format_option_is_flagged():
+    problems = compare_config_guard(
+        {"format_options": {"quote-style": "double"}}, {"format_options": {}}
+    )
+    assert problems == ["ruff format option 'quote-style' changed 'double' -> None"]
+
+
+def test_format_accept_cannot_add_a_newly_unformatted_file():
+    """OBS-11 for the format ratchet: --accept may only shrink the frozen set."""
+    base = mk(tool="ruff-format", counts={"a.py": {"unformatted": 1}})
+    accepted, refusals = tighten(
+        base,
+        mk(tool="ruff-format", counts={"a.py": {"unformatted": 1}, "b.py": {"unformatted": 1}}),
+    )
+    assert refusals == ["b.py: unformatted (new entry)"]
+    assert "b.py" not in accepted.counts
+
+
+def test_format_accept_records_paid_down_debt():
+    base = mk(tool="ruff-format", counts={"a.py": {"unformatted": 1}, "b.py": {"unformatted": 1}})
+    accepted, refusals = tighten(base, mk(tool="ruff-format", counts={"a.py": {"unformatted": 1}}))
+    assert refusals == []
+    assert accepted.counts == {"a.py": {"unformatted": 1}}
+    assert accepted.total == 1
+
+
+# --------------------------------------------------------------------------
+# Tool resolution must be cwd-independent (LINTGATE1-NEW-03)
+# --------------------------------------------------------------------------
+
+
+def test_ruff_is_resolved_to_an_explicit_path_not_a_bare_name(monkeypatch):
+    """A bare `ruff` lands on the pyenv shim, which resolves its version from
+    the *caller's* directory. `make lint` from apps/prototype-description-service/
+    then died with "ruff: command not found" while the same run from the repo
+    root passed. A gate whose verdict depends on the invoking directory is not
+    a gate, so the collectors must never shell out to a bare tool name.
+    """
+    seen: list[list[str]] = []
+
+    def fake_run(cmd, cwd):
+        seen.append(cmd)
+        return subprocess.CompletedProcess(cmd, 0, stdout="[]", stderr="")
+
+    monkeypatch.setattr(lint_ratchet, "_run", fake_run)
+    lint_ratchet.collect_ruff()
+    lint_ratchet.collect_ruff_format()
+
+    assert seen, "collectors did not invoke _run"
+    for cmd in seen:
+        assert cmd[0] != "ruff", (
+            f"collector shelled out to a bare 'ruff' ({cmd}); use _ruff_bin() so the "
+            "gate does not depend on the caller's directory"
+        )
+        assert Path(cmd[0]).is_absolute() or shutil.which(cmd[0]), (
+            f"ruff path {cmd[0]!r} is neither absolute nor resolvable"
+        )
+
+
+def test_ruff_bin_prefers_the_repo_venv_over_path(monkeypatch, tmp_path):
+    """The repo venv is the deterministic source; PATH is the fallback only."""
+    venv_ruff = tmp_path / ".venv" / "bin" / "ruff"
+    venv_ruff.parent.mkdir(parents=True)
+    venv_ruff.write_text("#!/bin/sh\n")
+    monkeypatch.setattr(lint_ratchet, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(shutil, "which", lambda _name: "/somewhere/else/ruff")
+    assert lint_ratchet._ruff_bin() == str(venv_ruff)
+
+
+def test_ruff_bin_errors_when_nothing_is_resolvable(monkeypatch, tmp_path):
+    monkeypatch.setattr(lint_ratchet, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(shutil, "which", lambda _name: None)
+    with pytest.raises(RatchetError, match="not found"):
+        lint_ratchet._ruff_bin()
+
+
+def test_ruff_format_uses_json_output_not_the_human_renderer(monkeypatch):
+    """ruff 0.16 replaced the stable "Would reformat: <path>" lines with a rich
+    diagnostic block; scraping it would have silently reported zero drift."""
+    seen: list[list[str]] = []
+
+    def fake_run(cmd, cwd):
+        seen.append(cmd)
+        return subprocess.CompletedProcess(cmd, 0, stdout="[]", stderr="")
+
+    monkeypatch.setattr(lint_ratchet, "_run", fake_run)
+    lint_ratchet.collect_ruff_format()
+    assert seen[0][1:4] == ["format", "--check", "--output-format"]
+    assert seen[0][4] == "json"
+
+
+def test_ruff_format_drift_without_named_files_is_an_error(monkeypatch):
+    """Exit 1 with an empty file list means the output contract changed; that
+    must fail loudly rather than bless an empty baseline."""
+    monkeypatch.setattr(
+        lint_ratchet,
+        "_run",
+        lambda cmd, cwd: subprocess.CompletedProcess(cmd, 1, stdout="[]", stderr=""),
+    )
+    with pytest.raises(RatchetError, match="named no files"):
+        lint_ratchet.collect_ruff_format()
+
+
+def test_ruff_format_unexpected_exit_code_is_an_error(monkeypatch):
+    monkeypatch.setattr(
+        lint_ratchet,
+        "_run",
+        lambda cmd, cwd: subprocess.CompletedProcess(cmd, 2, stdout="", stderr="boom"),
+    )
+    with pytest.raises(RatchetError, match="exit 2"):
+        lint_ratchet.collect_ruff_format()

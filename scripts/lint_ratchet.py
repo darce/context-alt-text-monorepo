@@ -235,10 +235,33 @@ def eslint_config_guard(binary: Path | None = None) -> dict[str, object]:
     return {"enabled_rules": sorted(enabled)}
 
 
+def _ruff_bin() -> str:
+    """Resolve ruff to an explicit path, mirroring `_eslint_bin`.
+
+    A bare `ruff` on PATH is not cwd-independent here: it lands on the pyenv
+    shim, and pyenv's shell hook exports PYENV_DIR/PYENV_VERSION for whatever
+    directory the caller was in. `make lint` from apps/prototype-description-service/
+    therefore resolved the app's .python-version (3.12.7, no ruff installed)
+    and the gate died with "ruff: command not found", while the byte-identical
+    run from the repo root reported 408 and passed. A merge gate whose verdict
+    depends on the invoking directory is not a gate. `subprocess(cwd=...)` does
+    not fix this — PYENV_DIR/PYENV_VERSION are inherited and outrank cwd.
+    """
+    binary = REPO_ROOT / ".venv" / "bin" / "ruff"
+    if binary.exists():
+        return str(binary)
+    # Fall back to PATH only when the repo venv is absent, and resolve it now so
+    # a shim that cannot execute fails here with a name, not later as empty JSON.
+    found = shutil.which("ruff")
+    if found is None:
+        raise RatchetError(
+            f"ruff not found at {binary} and not on PATH. Run `uv sync` at the repo root."
+        )
+    return found
+
+
 def collect_ruff() -> Baseline:
-    if shutil.which("ruff") is None:
-        raise RatchetError("ruff is not on PATH.")
-    proc = _run(["ruff", "check", "--output-format", "json", "."], cwd=REPO_ROOT)
+    proc = _run([_ruff_bin(), "check", "--output-format", "json", "."], cwd=REPO_ROOT)
     if not proc.stdout.strip():
         raise RatchetError(f"ruff produced no JSON output.\n{proc.stderr}")
     try:
@@ -268,7 +291,67 @@ def ruff_config_guard(pyproject: Path | None = None) -> dict[str, object]:
     }
 
 
-COLLECTORS = {"eslint": collect_eslint, "ruff": collect_ruff}
+def ruff_format_config_guard(pyproject: Path | None = None) -> dict[str, object]:
+    """Record `[tool.ruff.format]` so redefining "formatted" is detectable.
+
+    Count comparison alone cannot see this: flipping `indent-style` to "tab"
+    would make the 128 baselined files pass without a single one being fixed.
+    """
+    pyproject = pyproject or (REPO_ROOT / "pyproject.toml")
+    data = tomllib.loads(pyproject.read_text())
+    fmt = data.get("tool", {}).get("ruff", {}).get("format", {}) or {}
+    return {"format_options": {k: fmt[k] for k in sorted(fmt)}}
+
+
+def collect_ruff_format() -> Baseline:
+    """Gate `ruff format --check` against a frozen set of unformatted files.
+
+    `ruff format --check .` reports 128 files on this repo, so the raw command
+    can never gate a merge (sr-002). Reformatting all 128 in the same slice as
+    a gate change is the entanglement LINTGATE1-NEW-04 warns against. Freezing
+    the known-unformatted set keeps every one of them visible and makes any
+    NEW unformatted file a hard failure, while `--accept` can only shrink the
+    set. Nothing is relaxed (sr-001): the debt is recorded, not suppressed.
+    """
+    # JSON, not the human renderer: ruff 0.16 replaced the stable
+    # "Would reformat: <path>" lines with a rich diagnostic block, which would
+    # have silently parsed as zero unformatted files — a gate that passes by
+    # failing to understand its own tool. `--output-format json` is the same
+    # machine interface `collect_ruff` relies on.
+    proc = _run(
+        [_ruff_bin(), "format", "--check", "--output-format", "json", "."],
+        cwd=REPO_ROOT,
+    )
+    # 0 = all formatted, 1 = some would be reformatted; anything else is a real
+    # failure (bad config, unparseable file) and must not be read as "clean".
+    if proc.returncode not in (0, 1):
+        raise RatchetError(
+            f"ruff format --check failed with exit {proc.returncode}.\n{proc.stderr}"
+        )
+    if not proc.stdout.strip():
+        raise RatchetError(f"ruff format --check produced no JSON output.\n{proc.stderr}")
+    try:
+        report = json.loads(proc.stdout)
+    except json.JSONDecodeError as exc:
+        raise RatchetError(
+            f"ruff format JSON output was unparseable: {exc}\n{proc.stderr}"
+        ) from exc
+    counts: dict[str, dict[str, int]] = {}
+    for item in report:
+        counts[_relpath(item["filename"])] = {"unformatted": 1}
+    if proc.returncode == 1 and not counts:
+        raise RatchetError(
+            "ruff format --check signalled drift but named no files; "
+            f"output format may have changed.\n{proc.stdout[:500]}\n{proc.stderr}"
+        )
+    return Baseline(tool="ruff-format", counts=counts, config_guard=ruff_format_config_guard())
+
+
+COLLECTORS = {
+    "eslint": collect_eslint,
+    "ruff": collect_ruff,
+    "ruff-format": collect_ruff_format,
+}
 
 
 # --------------------------------------------------------------------------
@@ -305,6 +388,18 @@ def compare_config_guard(baseline: dict[str, object], current: dict[str, object]
     cur_ignore = set(current.get("ignore", []) or [])
     for code in sorted(cur_ignore - base_ignore):
         problems.append(f"ruff ignore gained {code!r}")
+
+    # Any change to what "formatted" means invalidates the frozen file set, so
+    # surface it rather than silently re-interpreting the baseline.
+    base_fmt = baseline.get("format_options", {}) or {}
+    cur_fmt = current.get("format_options", {}) or {}
+    if base_fmt != cur_fmt:
+        for key in sorted(set(base_fmt) | set(cur_fmt)):
+            if base_fmt.get(key) != cur_fmt.get(key):
+                problems.append(
+                    f"ruff format option {key!r} changed "
+                    f"{base_fmt.get(key)!r} -> {cur_fmt.get(key)!r}"
+                )
 
     base_pfi = baseline.get("per_file_ignores", {}) or {}
     cur_pfi = current.get("per_file_ignores", {}) or {}
@@ -441,7 +536,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument(
         "--tool",
-        choices=["eslint", "ruff", "all"],
+        choices=["eslint", "ruff", "ruff-format", "all"],
         default="all",
         help="Which linter to gate (default: all).",
     )
@@ -463,7 +558,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    tools = ["eslint", "ruff"] if args.tool == "all" else [args.tool]
+    tools = ["eslint", "ruff", "ruff-format"] if args.tool == "all" else [args.tool]
     exit_code = 0
     for tool in tools:
         try:

@@ -1,7 +1,7 @@
 {
   "tool": "ruff",
   "version": 1,
-  "total": 408,
+  "total": 244,
   "config_guard": {
     "select": [
       "ASYNC",
@@ -244,9 +244,7 @@
     "scripts/check_shared_contract_fixtures.py": {
       "C408": 1,
       "I001": 1,
-      "SIM300": 9,
-      "W191": 115,
-      "W292": 1
+      "SIM300": 9
     },
     "scripts/check_skills.py": {
       "I001": 1,
@@ -281,19 +279,14 @@
       "W292": 1
     },
     "scripts/test_cap_owner_summary_doc.py": {
-      "I001": 1,
-      "W191": 26,
-      "W292": 1
+      "I001": 1
     },
     "scripts/test_check_harness_sync.py": {
       "E402": 2,
       "I001": 1
     },
     "scripts/test_check_shared_contract_fixtures.py": {
-      "F401": 1,
-      "I001": 1,
-      "W191": 19,
-      "W292": 1
+      "F401": 1
     },
     "scripts/test_check_skills.py": {
       "I001": 1

@@ -1,0 +1,2 @@
+lane ocirv-1-a1-rotate
+Anchor commit. Keeps this branch off the integration tip so the post-merge reaper cannot classify it as consumed and delete the worktree mid-pass. Remove before merging to main.

@@ -40,11 +40,23 @@ const baseProps = {
   progress: idleProgress,
   isPanelVisible: false,
   errorMessage: null as string | null,
+  isIdentifying: false,
+  isSettingsPending: false,
   onSubmit: vi.fn(),
   onCancel: vi.fn(),
   onDismiss: vi.fn(),
   onRetryPolling: vi.fn(),
 };
+
+/** The aria-describedby targets currently wired to a control, in DOM-id order. */
+const describedIds = (button: HTMLElement): string[] =>
+  (button.getAttribute('aria-describedby') ?? '').split(/\s+/).filter(Boolean);
+
+/** Concatenated text of every aria-describedby target, for reason-reachability asserts. */
+const describedText = (button: HTMLElement): string =>
+  describedIds(button)
+    .map((id) => document.getElementById(id)?.textContent ?? '')
+    .join(' ');
 
 describe('BulkDescribeCta state matrix (A11Y-24)', () => {
   afterEach(() => {
@@ -59,15 +71,10 @@ describe('BulkDescribeCta state matrix (A11Y-24)', () => {
     // rg-003: reachable from the zero state — still in the tab order.
     expect(button).not.toBeDisabled();
     expect(button).toHaveAttribute('aria-disabled', 'true');
-    // A11Y-04 (2.5.3): visible text matches the accessible name at zero selection.
+    // A11Y-04 (2.5.3): visible text IS the accessible name at zero selection.
     expect(button).toHaveTextContent('Describe selected');
     // The hold reason must be reachable from the focusable control.
-    const reasonIds = (button.getAttribute('aria-describedby') ?? '').split(' ').filter(Boolean);
-    expect(reasonIds.length).toBeGreaterThan(0);
-    const reasonText = reasonIds
-      .map((id) => document.getElementById(id)?.textContent ?? '')
-      .join(' ');
-    expect(reasonText).toContain('Select at least one media item to describe.');
+    expect(describedText(button)).toContain('Select at least one media item to describe.');
   });
 
   it('no-ops activation at zero selection instead of starting a run (rg-003 hold, not a silent submit)', async () => {
@@ -83,12 +90,51 @@ describe('BulkDescribeCta state matrix (A11Y-24)', () => {
     const onSubmit = vi.fn();
     render(<BulkDescribeCta {...baseProps} selectedCount={3} onSubmit={onSubmit} />);
 
-    const button = screen.getByRole('button', { name: 'Describe selected' });
+    const button = screen.getByRole('button', { name: 'Describe 3 selected' });
     expect(button).not.toHaveAttribute('aria-disabled');
-    expect(button).not.toHaveAttribute('aria-describedby');
+    // Only the standing recognition disclosure remains described; the zero-selection
+    // hold reason must be gone, or the reason would outlive the hold it explains.
+    expect(describedIds(button)).toHaveLength(1);
+    expect(describedText(button)).not.toContain('Select at least one media item to describe.');
     await userEvent.click(button);
 
     expect(onSubmit).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps identifying primary focusable with aria-disabled, live status, and Cancel', async () => {
+    const onCancel = vi.fn();
+    render(<BulkDescribeCta {...baseProps} isIdentifying onCancel={onCancel} />);
+
+    const button = screen.getByRole('button', { name: 'Identifying people…' });
+    expect(button).not.toBeDisabled();
+    expect(button).toHaveAttribute('aria-disabled', 'true');
+    expect(describedIds(button).length).toBeGreaterThan(0);
+    expect(screen.getAllByRole('status').some((node) => node.textContent === 'Identifying people…')).toBe(true);
+
+    const cancel = screen.getByRole('button', { name: 'Cancel describe run' });
+    expect(cancel).not.toBeDisabled();
+    await userEvent.click(cancel);
+    expect(onCancel).toHaveBeenCalledOnce();
+  });
+
+  it('does not fire onSubmit when clicked while identifying (no double-start)', async () => {
+    const onSubmit = vi.fn();
+    render(<BulkDescribeCta {...baseProps} isIdentifying onSubmit={onSubmit} />);
+
+    await userEvent.click(screen.getByRole('button', { name: 'Identifying people…' }));
+
+    expect(onSubmit).not.toHaveBeenCalled();
+  });
+
+  it('holds submit with a loading label while settings are pending (still focusable)', async () => {
+    const onSubmit = vi.fn();
+    render(<BulkDescribeCta {...baseProps} isSettingsPending onSubmit={onSubmit} />);
+
+    const button = screen.getByRole('button', { name: 'Loading settings…' });
+    expect(button).not.toBeDisabled();
+    expect(button).toHaveAttribute('aria-disabled', 'true');
+    await userEvent.click(button);
+    expect(onSubmit).not.toHaveBeenCalled();
   });
 
   it('shows loading label and disables submit while submitting', () => {
@@ -127,16 +173,20 @@ describe('BulkDescribeCta state matrix (A11Y-24)', () => {
       />,
     );
 
-    const button = screen.getByRole('button', { name: 'Describe selected' });
+    const button = screen.getByRole('button', { name: 'Describe 2 selected' });
     // §7 offline row: still focusable (not HTML disabled), reason reachable.
     expect(button).not.toBeDisabled();
     expect(button).toHaveAttribute('aria-disabled', 'true');
     expect(button).toHaveAttribute('title', 'Unavailable while the recognition service is offline');
-    const reasonId = button.getAttribute('aria-describedby');
-    expect(reasonId).toBeTruthy();
-    expect(document.getElementById(reasonId ?? '')).toHaveTextContent(
-      'Unavailable while the recognition service is offline',
-    );
+    const reasonIds = (button.getAttribute('aria-describedby') ?? '').split(/\s+/).filter(Boolean);
+    expect(reasonIds.length).toBeGreaterThan(0);
+    expect(
+      reasonIds.some(
+        (id) =>
+          document.getElementById(id)?.textContent ===
+          'Unavailable while the recognition service is offline',
+      ),
+    ).toBe(true);
     // The onSubmit prop itself guards offline in the container (if (offline) return).
   });
 
@@ -146,13 +196,13 @@ describe('BulkDescribeCta state matrix (A11Y-24)', () => {
     expect(marked).toHaveLength(1);
     // BR-73: the marker sits on the actually-accent-styled submit button — never the
     // wrapper div — and the accent chrome class rides with it.
-    const button = screen.getByRole('button', { name: 'Describe selected' });
+    const button = screen.getByRole('button', { name: 'Describe 2 selected' });
     expect(marked[0]).toBe(button);
     expect(button.className).toContain('acx-accent-primary-action');
 
     rerender(<BulkDescribeCta {...baseProps} accentPrimary={false} />);
     expect(container.querySelectorAll('[data-acx-accent-primary]')).toHaveLength(0);
-    expect(screen.getByRole('button', { name: 'Describe selected' }).className).not.toContain(
+    expect(screen.getByRole('button', { name: 'Describe 2 selected' }).className).not.toContain(
       'acx-accent-primary-action',
     );
   });
@@ -171,13 +221,14 @@ describe('BulkDescribeCta state matrix (A11Y-24)', () => {
     // Airplane-mode reload at zero selection: focusable (not HTML disabled), reason reachable.
     expect(button).not.toBeDisabled();
     expect(button).toHaveAttribute('aria-disabled', 'true');
-    // Offline AND zero selection: BOTH reasons are joined onto the one control, so
-    // neither hold is silently dropped when the other applies (A11Y-24 state matrix).
-    const reasonIds = (button.getAttribute('aria-describedby') ?? '').split(' ').filter(Boolean);
-    expect(reasonIds.length).toBe(2);
-    const reasonText = reasonIds.map((id) => document.getElementById(id)?.textContent ?? '').join(' ');
+    // Offline AND zero selection: BOTH holds are joined onto the one control alongside
+    // the standing recognition disclosure, so neither reason is silently dropped when
+    // the other applies (A11Y-24 state matrix).
+    expect(describedIds(button)).toHaveLength(3);
+    const reasonText = describedText(button);
     expect(reasonText).toContain('Unavailable while the recognition service is offline');
     expect(reasonText).toContain('Select at least one media item to describe.');
+    expect(reasonText).toContain('Checking recognition settings…');
   });
 
   it('does not fire onSubmit when clicked while offline-gated (§7 / BR-76)', async () => {
@@ -191,7 +242,7 @@ describe('BulkDescribeCta state matrix (A11Y-24)', () => {
       />,
     );
 
-    await userEvent.click(screen.getByRole('button', { name: 'Describe selected' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Describe 2 selected' }));
     expect(onSubmit).not.toHaveBeenCalled();
   });
 
@@ -199,7 +250,7 @@ describe('BulkDescribeCta state matrix (A11Y-24)', () => {
     const onSubmit = vi.fn();
     render(<BulkDescribeCta {...baseProps} onSubmit={onSubmit} />);
 
-    const button = screen.getByRole('button', { name: 'Describe selected' });
+    const button = screen.getByRole('button', { name: 'Describe 2 selected' });
     expect(button).not.toBeDisabled();
     await userEvent.click(button);
     expect(onSubmit).toHaveBeenCalledOnce();

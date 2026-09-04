@@ -18,7 +18,6 @@
  * comparisons import the member instead of scattering bare string literals.
  */
 export const FOOTER_ACCENT_OWNER = {
-  ANALYZE: 'analyze',
   DESCRIBE: 'describe',
   CARD: 'card',
 } as const;
@@ -33,7 +32,6 @@ export type FooterCtaVariant = (typeof FOOTER_CTA_VARIANT)[keyof typeof FOOTER_C
 export interface MediaFooterCtaState {
   /** Surface carrying the accent-primary token; `card` → no footer CTA is accent. */
   accentOwner: FooterAccentOwner;
-  analyzeVariant: FooterCtaVariant;
   describeVariant: FooterCtaVariant;
 }
 
@@ -47,11 +45,10 @@ export interface MediaFooterCtaInputs {
 /**
  * §7 per-state selector:
  *  - review active → the queue owns the accent (its card marker or its bulk-commit
- *    marker); both footer CTAs render secondary (reconciled to a single viewport
- *    accent primary).
- *  - describe run in flight → its progress owns the footer surface; Analyze steps
- *    down to secondary.
- *  - select (default) → Analyze is the single accent primary, Describe secondary.
+ *    marker); the footer Describe CTA renders secondary (reconciled to a single
+ *    viewport accent primary).
+ *  - describe run in flight → its progress owns the footer surface.
+ *  - select (default) → Describe is the single accent primary (WBUX-6 L2c).
  *
  * Ordering matters: an active review surface outranks a describe run for accent
  * ownership so the queue's on-screen primary is never doubled by the footer.
@@ -71,21 +68,18 @@ export const selectMediaFooterCtaState = ({
   if (reviewActive) {
     return {
       accentOwner: FOOTER_ACCENT_OWNER.CARD,
-      analyzeVariant: FOOTER_CTA_VARIANT.SECONDARY,
       describeVariant: FOOTER_CTA_VARIANT.SECONDARY,
     };
   }
   if (describeRunning) {
     return {
       accentOwner: FOOTER_ACCENT_OWNER.DESCRIBE,
-      analyzeVariant: FOOTER_CTA_VARIANT.SECONDARY,
       describeVariant: FOOTER_CTA_VARIANT.SECONDARY,
     };
   }
   return {
-    accentOwner: FOOTER_ACCENT_OWNER.ANALYZE,
-    analyzeVariant: FOOTER_CTA_VARIANT.PRIMARY,
-    describeVariant: FOOTER_CTA_VARIANT.SECONDARY,
+    accentOwner: FOOTER_ACCENT_OWNER.DESCRIBE,
+    describeVariant: FOOTER_CTA_VARIANT.PRIMARY,
   };
 };
 

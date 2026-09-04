@@ -26,6 +26,8 @@ final class PublicDemoDescribeControllerTest extends TestCase
             public array $submissions = [];
             public int $nextRun = 1;
             public string $status = 'running';
+            /** @var array<string,mixed> */
+            public array $statusData = [];
 
             public function __construct()
             {
@@ -37,15 +39,30 @@ final class PublicDemoDescribeControllerTest extends TestCase
                 $ids = $request->get_param('media_ids');
                 $this->submissions[] = $ids;
 
-                return new WP_REST_Response(['run_id' => 'public-run-' . $this->nextRun++], 202);
+                return new WP_REST_Response([
+                    'run_id' => 'public-run-' . $this->nextRun++,
+                    'status' => 'pending',
+                    'phase' => 'queued',
+                    'gpu_state' => 'stopped',
+                    'completed' => 0,
+                    'total' => 1,
+                    'tenant_id' => 'must-not-leak',
+                ], 202);
             }
 
             public function get_describe_run_status(WP_REST_Request $request): WP_REST_Response|WP_Error
             {
-                return new WP_REST_Response([
+                return new WP_REST_Response(array_merge([
                     'run_id' => (string) $request->get_param('run_id'),
                     'status' => $this->status,
-                ]);
+                    'phase' => 'describing',
+                    'gpu_state' => 'ready',
+                    'completed' => 0,
+                    'failed' => 0,
+                    'skipped' => 0,
+                    'total' => 1,
+                    'tenant_id' => 'must-not-leak',
+                ], $this->statusData));
             }
 
             public function get_describe_run_items(WP_REST_Request $request): WP_REST_Response|WP_Error
@@ -148,12 +165,79 @@ final class PublicDemoDescribeControllerTest extends TestCase
 
         self::assertSame([[41]], $this->pipeline->submissions);
         self::assertSame('public-run-1', $submitted->get_data()['run_id']);
+        self::assertSame(
+            ['run_id', 'status', 'phase', 'gpu_state', 'progress', 'deadline_seconds'],
+            array_keys($submitted->get_data())
+        );
+        self::assertSame(['done' => 0, 'total' => 1], $submitted->get_data()['progress']);
 
         $this->pipeline->status = 'completed';
+        $this->pipeline->statusData = ['phase' => 'complete', 'completed' => 1];
         $status = $this->controller->status($this->authorizedRequest('GET', ['run_id' => 'public-run-1']));
         self::assertSame('completed', $status->get_data()['status']);
         self::assertSame('A person walking beside a lake.', $status->get_data()['description']);
+        self::assertArrayNotHasKey('tenant_id', $status->get_data());
         self::assertArrayNotHasKey('acx_public_demo_inflight', $GLOBALS['__ac_options']);
+    }
+
+    public function testAgedLeaseWithLiveBackendRunIsRenewedAndRejectsAdmission(): void
+    {
+        $this->enable([41]);
+        $this->setOption('acx_public_demo_inflight', [
+            'run_id' => 'still-live',
+            'media_id' => 41,
+            'token' => 'old-token',
+            'expires_at' => time() - 1,
+        ]);
+
+        $result = $this->controller->submit($this->authorizedRequest('POST', ['media_id' => 41]));
+
+        self::assertSame(429, $result->get_status());
+        self::assertSame(PublicDemoErrorCode::BUSY, $result->get_data()['code']);
+        self::assertSame('still-live', $GLOBALS['__ac_options']['acx_public_demo_inflight']['run_id']);
+        self::assertGreaterThan(time(), $GLOBALS['__ac_options']['acx_public_demo_inflight']['expires_at']);
+        self::assertSame([], $this->pipeline->submissions);
+    }
+
+    public function testAgedLeaseWithTerminalBackendRunAllowsAdmission(): void
+    {
+        $this->enable([41]);
+        $this->pipeline->status = 'completed';
+        $this->setOption('acx_public_demo_inflight', [
+            'run_id' => 'finished-run',
+            'media_id' => 41,
+            'token' => 'old-token',
+            'expires_at' => time() - 1,
+        ]);
+
+        $result = $this->controller->submit($this->authorizedRequest('POST', ['media_id' => 41]));
+
+        self::assertSame(202, $result->get_status());
+        self::assertSame([41], $this->pipeline->submissions[0]);
+        self::assertSame('public-run-1', $GLOBALS['__ac_options']['acx_public_demo_inflight']['run_id']);
+    }
+
+    public function testStatusRebuildsPublicEnvelopeAndMapsRawFailure(): void
+    {
+        $this->enable([41]);
+        $this->controller->submit($this->authorizedRequest('POST', ['media_id' => 41]));
+        $this->pipeline->status = 'failed';
+        $this->pipeline->statusData = [
+            'phase' => 'failed',
+            'error' => 'secret upstream exception text',
+            'error_message' => 'database credentials leaked',
+        ];
+
+        $status = $this->controller->status($this->authorizedRequest('GET', ['run_id' => 'public-run-1']));
+        $data = $status->get_data();
+
+        self::assertSame(
+            ['run_id', 'status', 'phase', 'gpu_state', 'progress', 'error'],
+            array_keys($data)
+        );
+        self::assertSame(PublicDemoErrorCode::PIPELINE_FAILED, $data['error']['code']);
+        self::assertStringNotContainsString('secret', json_encode($data, JSON_THROW_ON_ERROR));
+        self::assertStringNotContainsString('credentials', json_encode($data, JSON_THROW_ON_ERROR));
     }
 
     public function testDailyCapReturnsRetryAfterWithoutDelegating(): void

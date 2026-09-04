@@ -24,6 +24,7 @@ use function array_values;
 use function ceil;
 use function delete_option;
 use function filter_var;
+use function getenv;
 use function get_option;
 use function get_transient;
 use function gmdate;
@@ -31,6 +32,8 @@ use function hash;
 use function hash_equals;
 use function in_array;
 use function is_array;
+use function is_int;
+use function is_numeric;
 use function is_string;
 use function is_wp_error;
 use function max;
@@ -39,6 +42,7 @@ use function register_rest_route;
 use function sanitize_text_field;
 use function set_transient;
 use function time;
+use function trim;
 use function update_option;
 use function wp_verify_nonce;
 use function wp_generate_uuid4;
@@ -65,7 +69,12 @@ final class PublicDemoDescribeController implements RecognitionRouteControllerIn
 	private const RATE_TTL_SECONDS      = 120;
 	private const DEFAULT_RATE_PER_MIN  = 3;
 	private const DEFAULT_DAILY_CAP     = 50;
+	private const DEFAULT_GPU_WARMUP_TIMEOUT_SECONDS = 510;
+	private const DEFAULT_INFERENCE_TIMEOUT_SECONDS  = 180;
 	private const TERMINAL_STATUSES     = array( 'completed', 'completed_with_errors', 'failed', 'cancelled' );
+	private const LIVE_STATUSES         = array( 'pending', 'running' );
+	private const PHASES                = array( 'queued', 'warming', 'describing', 'complete', 'failed', 'cancelled' );
+	private const GPU_STATES            = array( 'unknown', 'stopped', 'starting', 'warming', 'ready', 'degraded' );
 
 	private DescribeController $pipeline;
 	private ?string $inflight_token = null;
@@ -165,7 +174,7 @@ final class PublicDemoDescribeController implements RecognitionRouteControllerIn
 
 		if ( $response instanceof WP_Error || $response->get_status() >= 400 ) {
 			$this->release_inflight_bulkhead();
-			return $response;
+			return $this->translated_pipeline_error( $response );
 		}
 
 		$data   = $response->get_data();
@@ -180,7 +189,7 @@ final class PublicDemoDescribeController implements RecognitionRouteControllerIn
 			);
 		}
 
-		return $response;
+		return $this->public_envelope_response( $response, true );
 	}
 
 	public function status( WP_REST_Request $request ): WP_REST_Response|WP_Error {
@@ -197,19 +206,20 @@ final class PublicDemoDescribeController implements RecognitionRouteControllerIn
 		$pipeline_request = new WP_REST_Request( 'GET', '/acx/v1/recognition/describe/runs/' . $run_id );
 		$pipeline_request->set_param( 'run_id', $run_id );
 		$response = $this->pipeline->get_describe_run_status( $pipeline_request );
-
-		if ( $response instanceof WP_REST_Response ) {
-			$data   = $response->get_data();
-			$status = is_array( $data ) && is_string( $data['status'] ?? null ) ? $data['status'] : '';
-			if ( in_array( $status, array( 'completed', 'completed_with_errors' ), true ) ) {
-				$response = $this->with_public_description( $response, $pipeline_request, absint( $inflight['media_id'] ?? 0 ) );
-			}
-			if ( in_array( $status, self::TERMINAL_STATUSES, true ) ) {
-				$this->release_inflight_bulkhead( $run_id );
-			}
+		if ( $response instanceof WP_Error || $response->get_status() >= 400 ) {
+			return $this->translated_pipeline_error( $response );
 		}
 
-		return $response;
+		$data   = $response->get_data();
+		$status = is_array( $data ) && is_string( $data['status'] ?? null ) ? $data['status'] : '';
+		$description = 'completed' === $status
+			? $this->public_description( $pipeline_request, absint( $inflight['media_id'] ?? 0 ) )
+			: '';
+		if ( in_array( $status, self::TERMINAL_STATUSES, true ) ) {
+			$this->release_inflight_bulkhead( $run_id );
+		}
+
+		return $this->public_envelope_response( $response, false, $description );
 	}
 
 	/** @return list<int> */
@@ -273,12 +283,88 @@ final class PublicDemoDescribeController implements RecognitionRouteControllerIn
 	}
 
 	private function acquire_inflight_bulkhead( int $media_id ): bool {
-		$token = $this->acquire_lock( self::INFLIGHT_OPTION, self::INFLIGHT_TTL_SECONDS, 'pending', array( 'media_id' => $media_id ) );
-		if ( false === $token ) {
+		$token = wp_generate_uuid4();
+		$value = array(
+			'media_id'  => $media_id,
+			'run_id'    => 'pending',
+			'token'     => $token,
+			'expires_at' => time() + self::INFLIGHT_TTL_SECONDS,
+		);
+		if ( add_option( self::INFLIGHT_OPTION, $value, '', false ) ) {
+			$this->inflight_token = $token;
+			return true;
+		}
+
+		$guard = $this->acquire_lock( self::INFLIGHT_OPTION . '_reconcile', 5 );
+		if ( false === $guard ) {
 			return false;
 		}
-		$this->inflight_token = $token;
-		return true;
+
+		try {
+			$current = get_option( self::INFLIGHT_OPTION, false );
+			if ( false === $current ) {
+				$acquired = add_option( self::INFLIGHT_OPTION, $value, '', false );
+				$this->inflight_token = $acquired ? $token : null;
+				return $acquired;
+			}
+			if ( ! is_array( $current ) || (int) ( $current['expires_at'] ?? 0 ) >= time() ) {
+				return false;
+			}
+
+			$run_id = is_string( $current['run_id'] ?? null ) ? $current['run_id'] : '';
+			if ( '' === $run_id || 'pending' === $run_id ) {
+				$this->renew_inflight_lease( $current, $run_id );
+				return false;
+			}
+			$state = $this->reconcile_backend_run( $run_id );
+			if ( 'terminal' !== $state && 'unknown' !== $state ) {
+				$this->renew_inflight_lease( $current, $run_id );
+				return false;
+			}
+
+			if ( get_option( self::INFLIGHT_OPTION, false ) !== $current ) {
+				return false;
+			}
+			delete_option( self::INFLIGHT_OPTION );
+			$acquired = add_option( self::INFLIGHT_OPTION, $value, '', false );
+			$this->inflight_token = $acquired ? $token : null;
+			return $acquired;
+		} finally {
+			$this->release_lock( self::INFLIGHT_OPTION . '_reconcile', $guard );
+		}
+	}
+
+	/** @param array<string,mixed> $expected */
+	private function renew_inflight_lease( array $expected, string $run_id ): void {
+		$current = get_option( self::INFLIGHT_OPTION, false );
+		if ( $current !== $expected || ! is_string( $current['token'] ?? null ) ) {
+			return;
+		}
+		$current['expires_at'] = time() + self::INFLIGHT_TTL_SECONDS;
+		$current['run_id'] = $run_id;
+		update_option( self::INFLIGHT_OPTION, $current, false );
+	}
+
+	private function reconcile_backend_run( string $run_id ): string {
+		$request = new WP_REST_Request( 'GET', '/acx/v1/recognition/describe/runs/' . $run_id );
+		$request->set_param( 'run_id', $run_id );
+		$response = $this->pipeline->get_describe_run_status( $request );
+		if ( $response instanceof WP_Error ) {
+			$data = $response->get_error_data();
+			return is_array( $data ) && 404 === (int) ( $data['status'] ?? 0 ) ? 'unknown' : 'indeterminate';
+		}
+		if ( 404 === $response->get_status() ) {
+			return 'unknown';
+		}
+		if ( $response->get_status() >= 400 ) {
+			return 'indeterminate';
+		}
+		$data = $response->get_data();
+		$status = is_array( $data ) && is_string( $data['status'] ?? null ) ? $data['status'] : '';
+		if ( in_array( $status, self::TERMINAL_STATUSES, true ) ) {
+			return 'terminal';
+		}
+		return in_array( $status, self::LIVE_STATUSES, true ) ? 'live' : 'indeterminate';
 	}
 
 	private function bind_inflight_run( string $run_id ): bool {
@@ -369,10 +455,10 @@ final class PublicDemoDescribeController implements RecognitionRouteControllerIn
 		delete_option( $option );
 	}
 
-	private function with_public_description( WP_REST_Response $status_response, WP_REST_Request $pipeline_request, int $media_id ): WP_REST_Response {
+	private function public_description( WP_REST_Request $pipeline_request, int $media_id ): string {
 		$items_response = $this->pipeline->get_describe_run_items( $pipeline_request );
 		if ( ! $items_response instanceof WP_REST_Response || $items_response->get_status() >= 400 ) {
-			return $status_response;
+			return '';
 		}
 
 		$items_data = $items_response->get_data();
@@ -381,20 +467,121 @@ final class PublicDemoDescribeController implements RecognitionRouteControllerIn
 			if ( ! is_array( $item ) || $media_id !== absint( $item['media_id'] ?? 0 ) ) {
 				continue;
 			}
-			$description = is_string( $item['alt_text_draft'] ?? null ) ? $item['alt_text_draft'] : '';
+			$description = is_string( $item['alt_text_draft'] ?? null ) ? trim( $item['alt_text_draft'] ) : '';
 			if ( '' === $description ) {
 				continue;
 			}
-			$data = $status_response->get_data();
-			if ( is_array( $data ) ) {
-				// Expose only the selected attachment's draft, never the admin items envelope.
-				$data['description'] = $description;
-				$status_response->set_data( $data );
-			}
-			break;
+			return $description;
 		}
 
-		return $status_response;
+		return '';
+	}
+
+	private function public_envelope_response( WP_REST_Response $upstream, bool $include_deadline, string $description = '' ): WP_REST_Response|WP_Error {
+		$data = $upstream->get_data();
+		if ( ! is_array( $data ) ) {
+			return $this->invalid_pipeline_response();
+		}
+		$run_id = is_string( $data['run_id'] ?? null ) ? sanitize_text_field( $data['run_id'] ) : '';
+		$status = is_string( $data['status'] ?? null ) ? $data['status'] : '';
+		$phase = is_string( $data['phase'] ?? null ) ? $data['phase'] : '';
+		$gpu_state = is_string( $data['gpu_state'] ?? null ) ? $data['gpu_state'] : '';
+		$completed = $data['completed'] ?? null;
+		$failed = $data['failed'] ?? 0;
+		$skipped = $data['skipped'] ?? 0;
+		$total = $data['total'] ?? null;
+		if (
+			'' === $run_id
+			|| ! in_array( $status, array_merge( self::LIVE_STATUSES, self::TERMINAL_STATUSES ), true )
+			|| ! in_array( $phase, self::PHASES, true )
+			|| ! in_array( $gpu_state, self::GPU_STATES, true )
+			|| ! is_int( $completed ) || ! is_int( $failed ) || ! is_int( $skipped ) || ! is_int( $total )
+			|| ! $this->status_matches_phase( $status, $phase )
+		) {
+			return $this->invalid_pipeline_response();
+		}
+		$done = (int) $completed + (int) $failed + (int) $skipped;
+		$total = (int) $total;
+		if ( $done < 0 || $total < 0 || $done > $total ) {
+			return $this->invalid_pipeline_response();
+		}
+
+		$public = array(
+			'run_id' => $run_id,
+			'status' => $status,
+			'phase' => $phase,
+			'gpu_state' => $gpu_state,
+			'progress' => array( 'done' => $done, 'total' => $total ),
+		);
+		if ( $include_deadline ) {
+			$public['deadline_seconds'] = $this->public_deadline_seconds();
+		}
+		if ( 'completed' === $status && '' !== $description ) {
+			$public['description'] = $description;
+		}
+		if ( 'completed_with_errors' === $status ) {
+			$public['error'] = array(
+				'code' => PublicDemoErrorCode::PARTIAL_FAILURE,
+				'message' => 'The description did not complete successfully. Please try another image.',
+			);
+		} elseif ( in_array( $status, array( 'failed', 'cancelled' ), true ) ) {
+			$public['error'] = array(
+				'code' => PublicDemoErrorCode::PIPELINE_FAILED,
+				'message' => 'The image could not be described. Please try again later.',
+			);
+		}
+
+		return new WP_REST_Response( $public, $upstream->get_status() );
+	}
+
+	private function status_matches_phase( string $status, string $phase ): bool {
+		if ( 'pending' === $status ) {
+			return 'queued' === $phase;
+		}
+		if ( 'running' === $status ) {
+			return in_array( $phase, array( 'warming', 'describing' ), true );
+		}
+		$terminal_phases = array(
+			'completed' => 'complete',
+			'completed_with_errors' => 'complete',
+			'failed' => 'failed',
+			'cancelled' => 'cancelled',
+		);
+		return ( $terminal_phases[ $status ] ?? '' ) === $phase;
+	}
+
+	private function public_deadline_seconds(): int {
+		$configured = getenv( 'ACX_GPU_WARMUP_TIMEOUT_SECONDS' );
+		$warmup = is_string( $configured ) && is_numeric( $configured )
+			? max( 1, (int) $configured )
+			: self::DEFAULT_GPU_WARMUP_TIMEOUT_SECONDS;
+		$inference = max( 1, (int) apply_filters( 'acx_proxy_timeout_description_seconds', self::DEFAULT_INFERENCE_TIMEOUT_SECONDS ) );
+		return $warmup + $inference;
+	}
+
+	private function invalid_pipeline_response(): WP_Error {
+		return new WP_Error(
+			PublicDemoErrorCode::INVALID_PIPELINE_DATA,
+			'The description service returned an invalid response. Please try again later.',
+			array( 'status' => 502 )
+		);
+	}
+
+	private function translated_pipeline_error( WP_REST_Response|WP_Error $upstream ): WP_Error {
+		$status = 502;
+		if ( $upstream instanceof WP_REST_Response ) {
+			$status = $upstream->get_status() >= 500 ? 503 : 502;
+		} else {
+			$data = $upstream->get_error_data();
+			if ( is_array( $data ) && (int) ( $data['status'] ?? 0 ) >= 500 ) {
+				$status = 503;
+			}
+		}
+		return new WP_Error(
+			PublicDemoErrorCode::PIPELINE_FAILED,
+			'The description service is temporarily unavailable. Please try again later.',
+			array( 'status' => $status )
+		);
 	}
 
 	private function limited_response( string $code, string $message, int $retry_after ): WP_REST_Response {

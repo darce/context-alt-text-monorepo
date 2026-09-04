@@ -2678,8 +2678,8 @@ do_gpu_lifecycle() {
   # before the installer can stage anything on the host.
   [[ -n "${ACX_GPU_READY_URL:-}" ]] || \
     fail "ACX_GPU_READY_URL is required when ACX_DEPLOY_GPU_LIFECYCLE=1"
-  if [[ ! "${GPU_INSTANCE_ID:-}" =~ ^ocid1\.instance\.oc1\. ]]; then
-    printf 'error: ACX_GPU_INSTANCE_ID must be an OCI instance OCID beginning with ocid1.instance.oc1.\n' >&2
+  if [[ ! "${GPU_INSTANCE_ID:-}" =~ ^ocid1\.instance\.oc1\.[a-z0-9-]+\.[a-z0-9]+$ ]]; then
+    printf 'error: ACX_GPU_INSTANCE_ID must match ocid1.instance.oc1.<region>.<identifier>.\n' >&2
     return 2
   fi
   case "${dry_run}" in
@@ -2694,6 +2694,7 @@ do_gpu_lifecycle() {
     "${SCRIPT_DIR}/gpu-lifecycle-install.sh"
     --user "${OCI_USER}"
     --host "${OCI_HOST}"
+    --instance-id "${GPU_INSTANCE_ID}"
     --ready-url "${ACX_GPU_READY_URL}"
   )
   if [[ "${dry_run}" == "1" ]]; then

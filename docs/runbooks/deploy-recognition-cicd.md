@@ -230,7 +230,10 @@ start_timer_armed=0
 cleanup_unverified_start_timer() {
   status=$?
   if [ "$status" -ne 0 ] && [ "$start_timer_armed" -eq 1 ]; then
-    sudo systemctl disable --now acx-gpu-start.timer || :
+    sudo systemctl disable --now acx-gpu-start.timer || \
+      echo "ERROR: could not disable START timer" >&2
+    sudo systemctl start acx-gpu-reap.service || \
+      echo "ERROR: fail-safe STOP invocation failed" >&2
   fi
   exit "$status"
 }
@@ -240,6 +243,12 @@ sudo systemctl disable --now acx-gpu-start.timer
 previous_release=$(readlink -f /opt/acx-gpu/previous)
 test -d "$previous_release/infra/oci/gpu_lifecycle"
 test -d "$previous_release/systemd"
+
+# Reject a generation whose cost cap is absent, disabled, or unreasonable.
+max_lease=$(sed -n 's/^MAX_LEASE_SECONDS=//p' \
+  "$previous_release/systemd/gpu-lifecycle.env")
+[[ "$max_lease" =~ ^[0-9]+$ ]]
+(( max_lease >= 1 && max_lease <= 86400 ))
 
 sudo install -m 0644 "$previous_release/systemd/gpu-lifecycle.env" \
   /etc/acx/gpu-lifecycle.env
@@ -253,6 +262,8 @@ done
 ln -sfn "$previous_release" /opt/acx-gpu/.rollback-current
 sudo mv -Tf /opt/acx-gpu/.rollback-current /opt/acx-gpu/current
 sudo systemctl daemon-reload
+sudo cmp -s "$previous_release/systemd/gpu-lifecycle.env" \
+  /etc/acx/gpu-lifecycle.env
 
 # Restore and synchronously prove the STOP-only backstop before start is armed.
 sudo systemctl enable --now acx-gpu-reap.timer
@@ -264,8 +275,18 @@ for unit in acx-gpu-start.service acx-gpu-start.timer \
   test -z "$(systemctl show "$unit" --property=DropInPaths --value)"
   sudo cmp -s "$previous_release/systemd/$unit" "$fragment"
 done
-systemctl show acx-gpu-reap.service --property=ExecStart --value \
-  | grep -F -- '--max-lease-seconds'
+expected_exec=$(sed -n 's/^ExecStart=//p' \
+  "$previous_release/systemd/acx-gpu-reap.service")
+effective_exec=$(systemctl show acx-gpu-reap.service \
+  --property=ExecStart --value)
+case "$effective_exec" in
+  *"argv[]=$expected_exec ;"*) ;;
+  *) echo "ERROR: effective reaper command differs from selected generation" >&2; exit 1 ;;
+esac
+case "$effective_exec" in
+  *'--max-lease-seconds ${MAX_LEASE_SECONDS}'*) ;;
+  *) echo "ERROR: effective reaper does not consume MAX_LEASE_SECONDS" >&2; exit 1 ;;
+esac
 systemctl is-enabled --quiet acx-gpu-reap.timer
 systemctl is-active --quiet acx-gpu-reap.timer
 

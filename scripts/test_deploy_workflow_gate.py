@@ -183,6 +183,12 @@ def test_gpu_lifecycle_rollback_is_fail_fast_and_shell_parseable() -> None:
     assert "--property=FragmentPath" in commands
     assert "--property=DropInPaths" in commands
     assert "cmp -s" in commands
+    assert "MAX_LEASE_SECONDS" in commands
+    assert "86400" in commands
+    assert 'cmp -s "$previous_release/systemd/gpu-lifecycle.env"' in commands
+    assert "expected_exec=" in commands
+    assert "effective_exec=" in commands
+    assert "argv[]=$expected_exec" in commands
     assert commands.index("systemctl start acx-gpu-reap.service") < commands.index(
         "enable --now acx-gpu-start.timer"
     )

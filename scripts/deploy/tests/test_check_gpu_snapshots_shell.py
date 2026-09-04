@@ -14,6 +14,7 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 CHECKER = REPO_ROOT / "scripts/deploy/check-gpu-snapshots.sh"
 MAKEFILE = REPO_ROOT / "Makefile"
 RECOGNITION_DEPLOY = REPO_ROOT / "scripts/deploy/recognition-service.sh"
+DEPLOYMENTS = REPO_ROOT / "scripts/deploy/gpu-snapshot-deployments.conf"
 
 # The suite spawns seven `make` processes, and this repo's `make` startup
 # resolves the active task through four `uvx` package launches. That costs
@@ -27,6 +28,9 @@ _DEFAULT_TIMEOUT_SECONDS = 300.0
 def _assignment_block(path: Path, start: str, end: str) -> dict[str, str]:
     text = path.read_text(encoding="utf-8")
     section = text.split(start, 1)[1].split(end, 1)[0]
+    # A remote variable inside a locally double-quoted SSH command is escaped
+    # in source so the remote shell, rather than the laptop shell, expands it.
+    section = section.replace(r"\$", "$")
     assignments = re.findall(
         r"\b(ACX_[A-Z0-9_]+)=(?:\"([^\"]*)\"|'([^']*)'|([^\s\\]+))",
         section,
@@ -60,6 +64,8 @@ def _fixture_value(key: str, value: str, fixture_root: Path) -> str:
     load_dir = fixture_root / "run/acx-write"
     if key == "ACX_GPU_COMPOSE_FILE":
         return str(fixture_root / "compose.yml")
+    if key == "ACX_GPU_DEPLOYMENTS":
+        return ",".join(DEPLOYMENTS.read_text(encoding="utf-8").splitlines())
     if value.startswith("/run/acx-write"):
         return value.replace("/run/acx-write", str(load_dir), 1)
     if value.startswith("/run/acx"):
@@ -76,6 +82,7 @@ def test_remote_snapshot_callsite_executes_without_repo_checkout(
     expected_keys = {
         "ACX_DESCRIBE_LOAD_DIR",
         "ACX_GPU_COMPOSE_FILE",
+        "ACX_GPU_DEPLOYMENTS",
         "ACX_GPU_SNAPSHOT_DIR",
         "ACX_GPU_STATE_PATH",
         "ACX_GPU_UNIT_LOAD_DIR",

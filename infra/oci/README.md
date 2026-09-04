@@ -125,6 +125,7 @@ sudo env \
   ACX_DESCRIBE_LOAD_DIR=/run/acx-write \
   ACX_DESCRIBE_LOAD_STALE_SECONDS=120 \
   ACX_GPU_COMPOSE_FILE=apps/prototype-description-service/docker-compose.env.yml \
+  ACX_GPU_DEPLOYMENTS_FILE=scripts/deploy/gpu-snapshot-deployments.conf \
   ACX_GPU_INSTALL_SCRIPT=scripts/deploy/gpu-lifecycle-install.sh \
   ACX_GPU_READER_UID=10001 \
   ACX_GPU_SNAPSHOT_CONFIG_ONLY=0 \
@@ -137,7 +138,9 @@ sudo env \
   scripts/deploy/check-gpu-snapshots.sh
 ```
 
-The command exits non-zero for a missing/unreadable/malformed/stale file, a
+The deployment registry is shared with the lifecycle installer, so every listed
+environment must have a writable, fresh snapshot directory. The command exits
+non-zero for a missing/unreadable/malformed/stale file, a
 non-read-only or drifted compose mount, or a configured path that differs from
 the paths installed into the systemd units. A missing snapshot never passes.
 

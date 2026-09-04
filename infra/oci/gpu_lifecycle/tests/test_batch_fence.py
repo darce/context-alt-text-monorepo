@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from pathlib import Path
 
 from infra.oci.gpu_lifecycle import reaper as reaper_mod
@@ -19,14 +20,24 @@ from infra.oci.gpu_lifecycle.reaper import (
     _build_parser,
     run_reap_cycle,
 )
+from infra.oci.gpu_lifecycle.state_snapshot import (
+    DEFAULT_PREVIOUS_GPU_STATE_MAX_AGE_SECONDS,
+)
 
 
 class RecordingActuator:
-    def __init__(self) -> None:
+    def __init__(self, *, fail_for: set[str] | None = None) -> None:
         self.stopped: list[str] = []
+        self.fail_for = set() if fail_for is None else fail_for
 
     def stop_instance(self, instance_id: str) -> None:
+        if instance_id in self.fail_for:
+            raise RuntimeError(f"STOP failed for {instance_id}")
         self.stopped.append(instance_id)
+
+
+def _snapshot(path: Path) -> dict[str, object]:
+    return json.loads(path.read_text(encoding="utf-8"))
 
 
 def test_reap_does_not_stop_idle_instance_while_batch_in_progress() -> None:
@@ -81,6 +92,151 @@ def test_run_reap_cycle_never_stops_fenced_batch() -> None:
     assert actuator.stopped == []
 
 
+def test_partial_stop_publishes_state_of_still_running_instance(tmp_path: Path) -> None:
+    path = tmp_path / "gpu-state.json"
+    # Even a fresh aggregate snapshot has no identity that can be tied to the
+    # still-running instance after a partial stop, so READY is not carried
+    # forward without new readiness evidence.
+    path.write_text(
+        json.dumps({"state": "ready", "written_at": time.time()}) + "\n",
+        encoding="utf-8",
+    )
+    idle = GpuInstance("ocid1.idle", "RUNNING", 90)
+    busy = GpuInstance("ocid1.busy", "RUNNING", 0)
+    actuator = RecordingActuator()
+
+    result = run_reap_cycle(
+        controller=GpuLifecycleController(idle_seconds=60),
+        instances=[idle, busy],
+        load_source=StaticJobLoadSource(queue_depth=0, in_flight=0),
+        actuator=actuator,
+        fence_delay_seconds=0.0,
+        gpu_state_path=path,
+    )
+
+    assert result.actuated == [("STOP", "ocid1.idle")]
+    assert actuator.stopped == ["ocid1.idle"]
+    assert _snapshot(path) | {"written_at": 0, "since": 0} == {
+        "state": "warming",
+        "instance_id": None,
+        "written_at": 0,
+        "reason": None,
+        "since": 0,
+    }
+    # The defect this test exists for: a partial stop must never publish
+    # STOPPED while another instance is still RUNNING.
+    assert _snapshot(path)["state"] != "stopped"
+
+
+def test_partial_stop_with_stale_previous_state_degrades_instead_of_reusing(
+    tmp_path: Path,
+) -> None:
+    """A stale prior snapshot must not be reused, and must not become STOPPED."""
+    path = tmp_path / "gpu-state.json"
+    stale_written_at = time.time() - (
+        DEFAULT_PREVIOUS_GPU_STATE_MAX_AGE_SECONDS + 60.0
+    )
+    path.write_text(
+        json.dumps({"state": "ready", "written_at": stale_written_at}) + "\n",
+        encoding="utf-8",
+    )
+    idle = GpuInstance("ocid1.idle", "RUNNING", 90)
+    busy = GpuInstance("ocid1.busy", "RUNNING", 0)
+    actuator = RecordingActuator()
+
+    result = run_reap_cycle(
+        controller=GpuLifecycleController(idle_seconds=60),
+        instances=[idle, busy],
+        load_source=StaticJobLoadSource(queue_depth=0, in_flight=0),
+        actuator=actuator,
+        fence_delay_seconds=0.0,
+        gpu_state_path=path,
+    )
+
+    assert result.actuated == [("STOP", "ocid1.idle")]
+    published = _snapshot(path)
+    # Stale readiness evidence is discarded rather than republished as ready.
+    assert published["state"] == "warming"
+    # And the partial-stop guarantee still holds on the stale path.
+    assert published["state"] != "stopped"
+
+
+def test_failed_stop_remains_in_full_state_reduction(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    path = tmp_path / "gpu-state.json"
+    failed = GpuInstance("ocid1.failed", "RUNNING", 90)
+    stopped = GpuInstance("ocid1.stopped", "RUNNING", 90)
+    actuator = RecordingActuator(fail_for={failed.instance_id})
+    reduced_states: list[list[str]] = []
+    real_state_for_instances = reaper_mod.state_for_instances
+
+    def recording_reducer(instance_states: list[str], **kwargs):
+        reduced_states.append(instance_states)
+        return real_state_for_instances(instance_states, **kwargs)
+
+    monkeypatch.setattr(reaper_mod, "state_for_instances", recording_reducer)
+
+    result = run_reap_cycle(
+        controller=GpuLifecycleController(idle_seconds=60),
+        instances=[failed, stopped],
+        load_source=StaticJobLoadSource(queue_depth=0, in_flight=0),
+        actuator=actuator,
+        fence_delay_seconds=0.0,
+        gpu_state_path=path,
+    )
+
+    assert result.actuated == [("STOP", "ocid1.stopped")]
+    assert len(result.errors) == 1
+    assert reduced_states == [["RUNNING", "STOPPED"]]
+    assert _snapshot(path)["state"] == "degraded"
+    assert _snapshot(path)["reason"] == "lifecycle_error"
+
+
+def test_all_targeted_stops_succeed_publishes_stopped(tmp_path: Path) -> None:
+    path = tmp_path / "gpu-state.json"
+    instances = [
+        GpuInstance("ocid1.first", "RUNNING", 90),
+        GpuInstance("ocid1.second", "RUNNING", 90),
+    ]
+
+    result = run_reap_cycle(
+        controller=GpuLifecycleController(idle_seconds=60),
+        instances=instances,
+        load_source=StaticJobLoadSource(queue_depth=0, in_flight=0),
+        actuator=RecordingActuator(),
+        fence_delay_seconds=0.0,
+        gpu_state_path=path,
+    )
+
+    assert result.actuated == [
+        ("STOP", "ocid1.first"),
+        ("STOP", "ocid1.second"),
+    ]
+    assert _snapshot(path)["state"] == "stopped"
+    assert _snapshot(path)["reason"] is None
+
+
+def test_failed_lease_expiry_stop_does_not_publish_stopped(tmp_path: Path) -> None:
+    path = tmp_path / "gpu-state.json"
+    instance = GpuInstance("ocid1.expired", "RUNNING", 3601)
+
+    result = run_reap_cycle(
+        controller=GpuLifecycleController(idle_seconds=60),
+        instances=[instance],
+        load_source=StaticJobLoadSource(queue_depth=1, in_flight=0),
+        actuator=RecordingActuator(fail_for={instance.instance_id}),
+        fence_delay_seconds=0.0,
+        max_lease_seconds=3600,
+        gpu_state_path=path,
+    )
+
+    assert result.lease_expired == []
+    assert len(result.errors) == 1
+    assert _snapshot(path)["state"] == "degraded"
+    assert _snapshot(path)["reason"] == "lifecycle_error"
+
+
 def test_json_batch_in_progress_is_has_work(tmp_path: Path) -> None:
     path = tmp_path / "load.json"
     path.write_text(json.dumps({"queue_depth": 0, "in_flight": 0, "batch_in_progress": True}))
@@ -101,8 +257,9 @@ def test_malformed_batch_flag_is_busy_fail_closed(tmp_path: Path) -> None:
     assert snap.has_work is True
 
 
-def test_absent_batch_key_idle_allows_stop(tmp_path: Path) -> None:
-    """Absent batch_in_progress is not protection; idle snapshot may STOP."""
+def test_mutable_json_source_without_atomic_writer_fence_refuses_stop(
+    tmp_path: Path,
+) -> None:
     path = tmp_path / "load.json"
     path.write_text(json.dumps({"queue_depth": 0, "in_flight": 0}))
     snap = JsonFileJobLoadSource(path=path).snapshot()
@@ -124,8 +281,78 @@ def test_absent_batch_key_idle_allows_stop(tmp_path: Path) -> None:
         fence_delay_seconds=0.0,
     )
     assert result.decided == [("STOP", "ocid1.instance.oc1..gpu")]
-    assert result.actuated == [("STOP", "ocid1.instance.oc1..gpu")]
-    assert actuator.stopped == ["ocid1.instance.oc1..gpu"]
+    assert result.actuated == []
+    assert result.fenced_off is True
+    assert "generation fence unavailable" in result.errors[-1]
+    assert actuator.stopped == []
+
+
+def test_writer_validated_generation_cancels_stop_after_final_sample() -> None:
+    class AtomicGenerationSource:
+        def __init__(self) -> None:
+            self.generation = 1
+            self.load = JobLoadSnapshot(queue_depth=0, in_flight=0)
+
+        def snapshot(self) -> JobLoadSnapshot:
+            return self.load
+
+        def fence_token(self) -> int:
+            return self.generation
+
+        def actuate_if_generation(self, expected: object, action) -> bool:
+            # A request arrives after the consumer's final observation but
+            # before compare-and-act enters the writer-coordinated section.
+            self.generation += 1
+            self.load = JobLoadSnapshot(queue_depth=1, in_flight=0)
+            if self.generation != expected:
+                return False
+            action()
+            return True
+
+    source = AtomicGenerationSource()
+    actuator = RecordingActuator()
+    result = run_reap_cycle(
+        controller=GpuLifecycleController(idle_seconds=60),
+        instances=[GpuInstance("ocid1.gpu", "RUNNING", 90)],
+        load_source=source,
+        actuator=actuator,
+        fence_delay_seconds=0.0,
+    )
+
+    assert result.decided == [("STOP", "ocid1.gpu")]
+    assert result.actuated == []
+    assert result.fenced_off is True
+    assert actuator.stopped == []
+
+
+def test_writer_validated_generation_permits_atomic_stop() -> None:
+    class AtomicGenerationSource:
+        generation = 1
+
+        def snapshot(self) -> JobLoadSnapshot:
+            return JobLoadSnapshot(queue_depth=0, in_flight=0)
+
+        def fence_token(self) -> int:
+            return self.generation
+
+        def actuate_if_generation(self, expected: object, action) -> bool:
+            if self.generation != expected:
+                return False
+            action()
+            return True
+
+    actuator = RecordingActuator()
+    result = run_reap_cycle(
+        controller=GpuLifecycleController(idle_seconds=60),
+        instances=[GpuInstance("ocid1.gpu", "RUNNING", 90)],
+        load_source=AtomicGenerationSource(),
+        actuator=actuator,
+        fence_delay_seconds=0.0,
+    )
+
+    assert result.actuated == [("STOP", "ocid1.gpu")]
+    assert result.fenced_off is False
+    assert actuator.stopped == ["ocid1.gpu"]
 
 
 def test_absent_batch_key_still_fences_on_in_flight(tmp_path: Path) -> None:

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from scene.application.gpu_state import GpuState
 from scene.domain.describe_run import DescribeItemStatus, DescribeRunPhase, DescribeRunStatus
 from scene.domain.description import DescriptionAdapterKind, DescriptionResultTier, ProviderMode, RetentionClass
 
@@ -169,7 +170,7 @@ class DescribeRunResponse(BaseModel):
     # WBUX-3 (S7-01): honest remaining-time estimate; null unless the run is
     # in-flight with measured progress.
     eta_seconds: float | None = None
-    gpu_state: None = None
+    gpu_state: GpuState = GpuState.UNKNOWN
 
 
 class DescribeRunItemResponse(BaseModel):

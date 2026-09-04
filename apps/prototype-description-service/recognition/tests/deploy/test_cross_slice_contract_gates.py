@@ -665,11 +665,26 @@ def test_ssh_identity_refuses_leading_dash() -> None:
 def test_ssh_invocations_use_l_and_double_dash() -> None:
     """S2-A-12: live ssh destinations must use -l user -- host (not user@host as host arg)."""
     script = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    # Join backslash continuations first. Checking physical lines let a wrapped
+    # invocation carry its `-l`/`--` on the next line and read as a violation,
+    # and would equally let a real `user@host` invocation hide behind a wrap.
+    logical_lines: list[str] = []
+    pending = ""
+    for raw in script.splitlines():
+        pending = f"{pending} {raw.strip()}" if pending else raw
+        if pending.rstrip().endswith("\\"):
+            pending = pending.rstrip()[:-1]
+            continue
+        logical_lines.append(pending)
+        pending = ""
+    if pending:
+        logical_lines.append(pending)
+
     # Allow display-only SSH_TARGET and rsync user@host:path.
     # Every `ssh ...` that used to pass "${SSH_TARGET}" as host must now use -l/--.
     ssh_lines = [
         ln
-        for ln in script.splitlines()
+        for ln in logical_lines
         if re.search(r"\bssh\b", ln)
         and not ln.strip().startswith("#")
         and "SSH_TARGET" not in ln  # display / rsync labels only

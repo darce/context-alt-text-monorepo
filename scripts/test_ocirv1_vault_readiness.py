@@ -43,15 +43,10 @@ def _digest(value: bytes) -> str:
 
 
 def _assert_bounded_increasing_backoff(delays, timeout):
-    """Assert the retry policy without freezing its safe tuning factor."""
+    """Assert bounded exponential backoff with per-attempt jitter."""
     assert delays
-    assert all(0 < delay <= 5.0 for delay in delays)
+    assert all(0 < delay <= 6.0 for delay in delays)
     assert len(set(delays)) > 1, "retry delay must not remain constant"
-    for previous, current in zip(delays[:-1], delays[1:], strict=True):
-        if previous < 5.0:
-            assert current > previous
-        else:
-            assert current == 5.0
     assert sum(delays) <= timeout
 
 
@@ -241,14 +236,15 @@ def test_secret_value_never_appears_in_the_failure_message():
     assert _digest(secret) not in message
 
 
-def test_zero_timeout_skips_readback_entirely():
+def test_zero_timeout_is_rejected():
     calls = {"n": 0}
 
     def failing_read():
         calls["n"] += 1
         raise AssertionError("timeout zero must not perform a read")
 
-    assert vps.wait_until_readable(failing_read, "S", _digest(b"target"), timeout=0)
+    with pytest.raises(ValueError, match="positive"):
+        vps.wait_until_readable(failing_read, "S", _digest(b"target"), timeout=0)
     assert calls["n"] == 0
 
 
@@ -291,7 +287,8 @@ def test_503_is_retried():
         sleep=clock,
         monotonic=clock.monotonic,
     )
-    assert clock.slept == [1.0]
+    assert len(clock.slept) == 1
+    assert 0.8 <= clock.slept[0] <= 1.2
 
 
 def test_blocking_read_cannot_overrun_the_outer_deadline():
@@ -337,6 +334,9 @@ class _FakeVaultStore:
         self.update_calls = []
         self.read_history = []
         self.list_calls = []
+        self.version_names = []
+        if existing_value is not None:
+            self.version_names.append(f"acx-{hashlib.sha256(existing_value).hexdigest()[:32]}")
 
     @staticmethod
     def _decode(details):
@@ -355,11 +355,13 @@ class _FakeVaultStore:
             lifecycle_state="ACTIVE",
         )
         self._stage(self._decode(details))
+        self.version_names.append(details.secret_content.name)
         return self.existing
 
     def update(self, secret_id, details):
         self.update_calls.append((secret_id, details))
         self._stage(self._decode(details))
+        self.version_names.append(details.secret_content.name)
         return self.existing
 
     def read(self):
@@ -439,8 +441,9 @@ def _install_fake_oci(
     secrets_clients = []
 
     class _Vaults:
-        def __init__(self, config):
-            pass
+        def __init__(self, config, **kwargs):
+            self.init_kwargs = kwargs
+            self.base_client = types.SimpleNamespace(timeout=kwargs.get("timeout"))
 
         def list_secrets(
             self,
@@ -464,15 +467,23 @@ def _install_fake_oci(
                 matches.append(store.existing)
             return types.SimpleNamespace(data=matches, headers={})
 
-        def create_secret(self, details):
+        def create_secret(self, details, **kwargs):
             return types.SimpleNamespace(data=store.create(details))
 
-        def update_secret(self, secret_id, details):
+        def get_secret(self, secret_id, **kwargs):
+            return types.SimpleNamespace(data=store.existing, headers={"etag": "current-etag"})
+
+        def list_secret_versions(self, secret_id, **kwargs):
+            versions = [types.SimpleNamespace(name=name) for name in store.version_names]
+            return types.SimpleNamespace(data=versions, headers={})
+
+        def update_secret(self, secret_id, details, **kwargs):
             return types.SimpleNamespace(data=store.update(secret_id, details))
 
     class _Kms:
-        def __init__(self, config):
-            pass
+        def __init__(self, config, **kwargs):
+            self.init_kwargs = kwargs
+            self.base_client = types.SimpleNamespace(timeout=kwargs.get("timeout"))
 
         def get_vault(self, vault_id):
             return types.SimpleNamespace(data=types.SimpleNamespace(compartment_id="ocid1.compartment.oc1..c"))
@@ -582,10 +593,50 @@ def test_main_rotation_waits_for_the_new_submitted_version(monkeypatch, capsys):
     secret_id, details = store.update_calls[0]
     assert secret_id == _FakeVaultStore.SECRET_ID
     assert _FakeVaultStore._decode(details) == new
-    assert secrets_client.reads == 4
-    assert store.read_history == [old, old, old, new]
+    assert secrets_client.reads == 5  # one idempotency pre-read + propagation reads
+    assert store.read_history == [old, old, old, old, new]
     _assert_bounded_increasing_backoff(clock.slept, timeout=120)
     assert "new version" in capsys.readouterr().out
+
+
+def test_identical_rerun_does_not_create_a_duplicate_version(monkeypatch, capsys):
+    token = b"already-active-token"
+    rc, store, secrets_client, _, _ = _run_main(monkeypatch, token, not_ready_reads=0, existing_value=token)
+
+    assert rc == 0
+    assert store.create_calls == []
+    assert store.update_calls == []
+    assert secrets_client.reads == 2  # idempotency comparison plus final readiness proof
+    assert "unchanged" in capsys.readouterr().out
+
+
+def test_lost_update_response_reuses_the_pending_version(monkeypatch, capsys):
+    old = b"old-active-token"
+    new = b"accepted-pending-token"
+    store, secrets_clients, _ = _install_fake_oci(monkeypatch, not_ready_reads=2, existing_value=old)
+    store.pending_value = new
+    store.remaining = 2
+    store.version_names.append(f"acx-{hashlib.sha256(new).hexdigest()[:32]}")
+    _install_fake_clock(monkeypatch)
+    monkeypatch.setattr(sys, "argv", ["_vault_put_secret.py", "--secret-name", "OCIR_AUTH_TOKEN"])
+    monkeypatch.setattr(
+        sys,
+        "stdin",
+        types.SimpleNamespace(isatty=lambda: False, buffer=io.BytesIO(new)),
+    )
+
+    assert vps.main() == 0
+    assert store.update_calls == []
+    assert secrets_clients[0].reads == 3
+    assert "existing version pending" in capsys.readouterr().out
+
+
+def test_operation_deadline_bounds_a_stuck_control_plane_call():
+    deadline = vps.OperationDeadline(0.05)
+    started = time.monotonic()
+    with pytest.raises(TimeoutError, match="acceptance is indeterminate"):
+        deadline.call("update secret", lambda: time.sleep(1))
+    assert time.monotonic() - started < 0.25
 
 
 @pytest.mark.parametrize(
@@ -645,14 +696,14 @@ def test_explicit_key_bootstraps_an_empty_vault(monkeypatch, capsys):
         b"token",
         0,
         sibling_secrets=[],
-        extra_args=("--key-id", key_id, "--readable-timeout", "0"),
+        extra_args=("--key-id", key_id, "--readable-timeout", "5"),
     )
 
     assert rc == 0
     assert store.create_calls[0].key_id == key_id
     assert all(call["name"] is not None for call in store.list_calls)
-    assert secrets_client is None
-    assert "check skipped" in capsys.readouterr().out
+    assert secrets_client.reads == 1
+    assert "value matches" in capsys.readouterr().out
 
 
 def test_empty_vault_without_explicit_key_names_the_recovery_flag():

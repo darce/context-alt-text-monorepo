@@ -539,7 +539,7 @@ ocir-token-rotate:
 	@bash scripts/deploy/ocir-token-rotate.sh $(OCIR_ROTATE_ARGS)
 
 test-deploy-contract:
-	@python3 -m pytest scripts/test_e15_31_admin_deploy_contract.py scripts/test_e15_33_deploy_convergence.py scripts/test_e15_33_boot_smoke.py scripts/test_deploy_workflow_gate.py scripts/test_ocirv1_vault_readiness.py -q --tb=short
+	@python3 -m pytest scripts/test_e15_31_admin_deploy_contract.py scripts/test_e15_33_deploy_convergence.py scripts/test_e15_33_boot_smoke.py scripts/test_deploy_workflow_gate.py scripts/test_ocirv1_vault_readiness.py scripts/deploy/tests -q --tb=short
 	@bash scripts/deploy/tests/test-smoke-gate.sh
 	@bash scripts/deploy/tests/test-ocir-auth.sh
 	@bash scripts/deploy/tests/test-ocir-rotate.sh

@@ -3,11 +3,10 @@
 from __future__ import annotations
 
 import os
-from pathlib import Path
 import subprocess
+from pathlib import Path
 
 import pytest
-
 
 SCRIPT = Path(__file__).parents[1] / "recognition-service.sh"
 
@@ -97,9 +96,7 @@ def _assert_shared_config_was_cleaned(tmp_path: Path, records: Path) -> None:
     assert not login_path.exists()
     assert not list(tmp_path.glob("acx-ocir-deploy.*/config.json"))
     survivors = [
-        path
-        for path in tmp_path.rglob("*")
-        if path.is_file() and b"deploy-token-byte-exact" in path.read_bytes()
+        path for path in tmp_path.rglob("*") if path.is_file() and b"deploy-token-byte-exact" in path.read_bytes()
     ]
     assert survivors == []
 
@@ -161,7 +158,7 @@ printf '%s' "$last" >"$OCIR_TEST_RECORD_DIR/ssh.command"
     command = (
         f'source "{SCRIPT}"; REMOTE_BUILD=1; '
         f'ACX_DEPLOY_OCIR_CONFIG_DIR="{config_dir}"; '
-        '_push_ref iad.ocir.io/test/image:sha'
+        "_push_ref iad.ocir.io/test/image:sha"
     )
     result = subprocess.run(
         ["/bin/bash", "-c", command],
@@ -177,9 +174,7 @@ printf '%s' "$last" >"$OCIR_TEST_RECORD_DIR/ssh.command"
 
 
 @pytest.mark.parametrize(("fail_push", "expected_rc"), [(False, 0), (True, 42)])
-def test_remote_push_issues_bounded_remote_cleanup(
-    tmp_path: Path, fail_push: bool, expected_rc: int
-) -> None:
+def test_remote_push_issues_bounded_remote_cleanup(tmp_path: Path, fail_push: bool, expected_rc: int) -> None:
     bin_dir = tmp_path / "bin"
     records = tmp_path / "records"
     bin_dir.mkdir()
@@ -210,7 +205,7 @@ esac
     command = (
         f'source "{SCRIPT}"; preflight_remote_ocir_auth; '
         'printf "%s" "$ACX_DEPLOY_OCIR_CONFIG_DIR" >"$OCIR_TEST_RECORD_DIR/config.path"; '
-        '_push_ref iad.ocir.io/test/image:sha'
+        "_push_ref iad.ocir.io/test/image:sha"
     )
     result = subprocess.run(
         ["/bin/bash", "-c", command],
@@ -231,13 +226,50 @@ esac
 def test_all_remote_registry_commands_carry_the_deploy_config() -> None:
     source = SCRIPT.read_text()
     remote_registry_commands = [
-        line.strip()
-        for line in source.splitlines()
-        if 'ssh -l "${OCI_USER}"' in line or '"DOCKER_CONFIG=' in line
+        line.strip() for line in source.splitlines() if 'ssh -l "${OCI_USER}"' in line or '"DOCKER_CONFIG=' in line
     ]
     joined = "\n".join(remote_registry_commands)
     assert "DOCKER_CONFIG='${ACX_DEPLOY_OCIR_CONFIG_DIR}' docker push ${ref}" in joined
     assert "DOCKER_CONFIG='${ACX_DEPLOY_OCIR_CONFIG_DIR}' docker pull ${image}" in joined
     assert "DOCKER_CONFIG='${ACX_DEPLOY_OCIR_CONFIG_DIR}' docker pull ${IMAGE_BASE}:${from_tag}" in joined
-    assert "DOCKER_CONFIG='${ACX_DEPLOY_OCIR_CONFIG_DIR}' docker push ${IMAGE_BASE}:${to_tag}" in joined
+    assert '_push_ref "${IMAGE_BASE}:${to_tag}"' in source
     assert "DOCKER_CONFIG='${ACX_DEPLOY_OCIR_CONFIG_DIR}' docker compose ${compose_files} pull api" in joined
+
+
+def test_pushes_have_a_validated_deadline_and_remote_keepalives() -> None:
+    source = SCRIPT.read_text()
+    push = source.split("_push_ref()", 1)[1].split("do_push_sha()", 1)[0]
+    assert 'run_with_timeout "remote docker push ${ref}" "${PUSH_TIMEOUT}"' in push
+    assert 'run_with_timeout "local docker push ${ref}" "${PUSH_TIMEOUT}"' in push
+    assert "ServerAliveInterval=10" in push
+    assert "ServerAliveCountMax=3" in push
+    assert "ACX_PUSH_TIMEOUT must be a positive integer" in source
+
+
+def test_remote_build_is_immutable_and_resource_isolated() -> None:
+    source = SCRIPT.read_text()
+    build = source.split("do_build_remote()", 1)[1].split("_push_ref()", 1)[0]
+    assert "docker buildx build" in build
+    assert "--builder '${REMOTE_BUILDER_NAME}' --load" in build
+    assert "cpu-quota=150000" in source
+    assert "memory=4g" in source
+    assert 'if [[ "${2:-}" != "--immutable-only" ]]' in build
+    assert "-t ${IMAGE_BASE}:${sha}" in build
+    deploy = source.split("do_deploy()", 1)[1].split("do_promote()", 1)[0]
+    assert 'do_build_remote "$tag" --immutable-only' in deploy
+    assert 'do_build "$tag" --immutable-only' in deploy
+
+
+def test_failed_cutovers_restore_restart_and_verify_the_rollback() -> None:
+    source = SCRIPT.read_text()
+    rollback = source.split("rollback_failed_cutover()", 1)[1].split("abort_after_failed_cutover()", 1)[0]
+    assert "${ACX_ROLLBACK_REF}" in rollback
+    assert "restore_prior_image_repo_env" in rollback
+    assert 'do_restart "$env"' in rollback
+    assert 'verify_rollback_health "$env"' in rollback
+    for body in (
+        source.split("do_deploy()", 1)[1].split("do_promote()", 1)[0],
+        source.split("do_promote()", 1)[1].split("do_verify()", 1)[0],
+    ):
+        assert "abort_after_failed_cutover" in body
+        assert "ACX_VERIFY_OPTIONAL" not in body

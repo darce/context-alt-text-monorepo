@@ -8,6 +8,7 @@ import yaml
 
 REPO_ROOT = Path(os.environ.get("DEPLOY_GATE_REPO_ROOT", Path(__file__).resolve().parents[1]))
 WORKFLOW_PATH = REPO_ROOT / ".github" / "workflows" / "deploy-recognition.yml"
+RUNBOOK_PATH = REPO_ROOT / "docs" / "runbooks" / "deploy-recognition-cicd.md"
 
 
 def _workflow() -> dict:
@@ -77,3 +78,13 @@ def test_make_target_keeps_credential_suites() -> None:
     assert result.returncode == 0, output
     assert "test_ocirv1_vault_readiness.py" in output
     assert "test-ocir-auth.sh" in output
+    assert "scripts/deploy/tests" in output
+
+
+def test_prod_rollback_commands_set_confirmation_in_the_environment() -> None:
+    runbook = RUNBOOK_PATH.read_text()
+    assert "CONFIRM=PROMOTE scripts/deploy/recognition-service.sh promote staging prod" in runbook
+    assert (
+        'CONFIRM=PROMOTE GIT_REF="$GOOD_SHA" REMOTE_BUILD=1 scripts/deploy/recognition-service.sh deploy prod'
+    ) in runbook
+    assert "GIT_REF=<good-sha>" not in runbook

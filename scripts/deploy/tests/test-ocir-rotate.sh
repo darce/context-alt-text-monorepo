@@ -80,6 +80,9 @@ while [ $# -gt 0 ]; do
     shift
 done
 value=$(cat)
+if [ "${OCIR_TEST_PUT_FAIL_SECRET:-}" = "$secret_name" ]; then
+    exit 73
+fi
 printf '%s|%s|%s\n' "$secret_name" "$readable_timeout" "$value" >>"$OCIR_TEST_PUT_LOG"
 EOF
 
@@ -161,6 +164,7 @@ reset_case() {
     unset ACX_VAULT_FETCH_TIMEOUT OCIR_TEST_DOCKER_FAIL_AT OCIR_TEST_SSH_MODE \
         OCIR_TEST_STORED_USERNAME OCIR_TEST_USERNAME_SLEEP \
         OCIR_TEST_USERNAME_STDERR
+    unset OCIR_TEST_PUT_FAIL_SECRET
 }
 
 run_rotate() {
@@ -191,6 +195,7 @@ run_rotate() {
         export OCIR_TEST_SSH_MODE="${OCIR_TEST_SSH_MODE:-success}"
         export OCIR_TEST_USERNAME_SLEEP="${OCIR_TEST_USERNAME_SLEEP:-}"
         export OCIR_TEST_USERNAME_STDERR="${OCIR_TEST_USERNAME_STDERR:-}"
+        export OCIR_TEST_PUT_FAIL_SECRET="${OCIR_TEST_PUT_FAIL_SECRET:-}"
         printf '%s' "$token" | bash "$rotate_script" --stdin "$@"
     ) >"$rotate_stdout" 2>"$rotate_stderr" || rotate_rc=$?
 }
@@ -198,21 +203,40 @@ run_rotate() {
 # Happy path executes the whole wrapper: direct proof, ordered writes, local
 # Vault round-trip and remote-over-SSH round-trip.
 reset_case
-run_rotate "$known_token" --set-username "$known_user" --readable-timeout 0
+run_rotate "$known_token" --set-username "$known_user" --readable-timeout 120
 assert_eq "complete rotation exits zero" 0 "$rotate_rc"
 assert_contains "success sentinel proves wrapper reached its end" \
     'rotation complete: both hosts authenticate from acx-vault' "$rotate_stdout"
 assert_eq "fresh proof plus two Vault-backed login legs ran" 3 "$(cat "$docker_count")"
 assert_eq "remote verification ran once" 1 "$(wc -l <"$ssh_log" | tr -d ' ')"
 assert_contains "token is committed first with forwarded timeout" \
-    "OCIR_AUTH_TOKEN|0|${known_token}" "$put_log"
+    "OCIR_AUTH_TOKEN|120|${known_token}" "$put_log"
 assert_eq "token and username are the only writes, in safe order" \
-    "OCIR_AUTH_TOKEN|0|${known_token}
-OCIR_USERNAME|0|${known_user}" "$(cat "$put_log")"
+    "OCIR_AUTH_TOKEN|120|${known_token}
+OCIR_USERNAME|120|${known_user}" "$(cat "$put_log")"
 assert_contains "token destination is disclosed before the write" \
     'writing vault ocid1.vault.oc1.test.contract secret OCIR_AUTH_TOKEN' "$rotate_stderr"
 assert_contains "username destination is disclosed before the write" \
     'writing vault ocid1.vault.oc1.test.contract secret OCIR_USERNAME' "$rotate_stderr"
+
+# A partial two-secret write restores the prior token instead of publishing an
+# old-username/new-token pair to fresh consumers.
+reset_case
+OCIR_TEST_PUT_FAIL_SECRET=OCIR_USERNAME
+run_rotate 'new-token-that-proves' --set-username "$known_user" --skip-verify
+if [ "$rotate_rc" -ne 0 ]; then
+    echo "ok   username write failure exits non-zero"
+else
+    echo "FAIL username write failure exits non-zero"
+    failures=$((failures + 1))
+fi
+assert_eq "username failure compensates with the prior token" \
+    "OCIR_AUTH_TOKEN|120|new-token-that-proves
+OCIR_AUTH_TOKEN|120|${known_token}" "$(cat "$put_log")"
+assert_contains "compensation is explicit to the operator" \
+    'restoring the prior token before exiting' "$rotate_stderr"
+assert_contains "restored credential is verified against OCIR" \
+    'compensation verified: the restored Vault credential authenticates' "$rotate_stderr"
 
 # Routine rotations fetch the existing username from Vault. OCI diagnostics
 # remain diagnostics, and the direct proof uses a disposable Docker store.
@@ -332,7 +356,7 @@ assert_no_file "safe skip mode does not contact SSH host" "$ssh_log"
 assert_contains "safe skip result states exactly what was omitted" \
     'production-VM SSH verification skipped' "$rotate_stdout"
 
-# Timeout accepts integers/decimals including zero and is passed to each write.
+# Timeout accepts positive integers/decimals and is passed to each write.
 reset_case
 run_rotate "$known_token" --set-username "$known_user" --readable-timeout 2.5 --skip-verify
 assert_eq "decimal readable timeout is accepted" 0 "$rotate_rc"
@@ -345,7 +369,7 @@ for valid_timeout in .5 5.; do
     assert_contains "numeric timeout '${valid_timeout}' reaches helper" \
         "OCIR_AUTH_TOKEN|${valid_timeout}|" "$put_log"
 done
-for invalid_timeout in -1 nope 1.2.3 .; do
+for invalid_timeout in 0 -1 nope 1.2.3 .; do
     reset_case
     run_rotate "$known_token" --readable-timeout "$invalid_timeout"
     if [ "$rotate_rc" -ne 0 ]; then
@@ -354,8 +378,13 @@ for invalid_timeout in -1 nope 1.2.3 .; do
         echo "FAIL invalid timeout '${invalid_timeout}' is rejected: exit 0"
         failures=$((failures + 1))
     fi
-    assert_contains "invalid timeout '${invalid_timeout}' has a clear diagnostic" \
-        'invalid --readable-timeout' "$rotate_stderr"
+    if [ "$invalid_timeout" = 0 ]; then
+        assert_contains "invalid timeout '${invalid_timeout}' has a clear diagnostic" \
+            'READABLE_TIMEOUT must be a positive number' "$rotate_stderr"
+    else
+        assert_contains "invalid timeout '${invalid_timeout}' has a clear diagnostic" \
+            'invalid --readable-timeout' "$rotate_stderr"
+    fi
     assert_no_file "invalid timeout '${invalid_timeout}' causes no write" "$put_log"
 done
 reset_case
@@ -367,7 +396,7 @@ else
     failures=$((failures + 1))
 fi
 assert_contains "missing timeout has a clear diagnostic" \
-    '--readable-timeout needs a non-negative number' "$rotate_stderr"
+    '--readable-timeout needs a positive number' "$rotate_stderr"
 assert_no_file "missing timeout causes no write" "$put_log"
 
 # A failure after a local command ran stays in the OCIR/Vault taxonomy. A

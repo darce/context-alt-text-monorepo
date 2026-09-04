@@ -23,7 +23,7 @@
 #     scripts/deploy/ocir-token-rotate.sh --set-username '<namespace>/<email>'
 #
 # Options:
-#     --readable-timeout SECONDS  Consumer read-back deadline (0 skips the wait)
+#     --readable-timeout SECONDS  End-to-end Vault deadline (positive; default 120)
 #     --skip-verify              Skip production-VM SSH verification only
 #     -h, --help                 Show this help
 # END USAGE
@@ -50,6 +50,8 @@ FROM_STDIN=0
 SET_USERNAME=""
 SKIP_VERIFY=0
 READABLE_TIMEOUT=120
+OCIR_LOGIN_TIMEOUT="${ACX_OCIR_LOGIN_TIMEOUT:-30}"
+OCIR_VERIFY_TIMEOUT="${ACX_OCIR_VERIFY_TIMEOUT:-60}"
 while [ $# -gt 0 ]; do
     case "$1" in
         --stdin) FROM_STDIN=1 ;;
@@ -63,20 +65,20 @@ while [ $# -gt 0 ]; do
             ;;
         --readable-timeout)
             if [ $# -lt 2 ]; then
-                echo "--readable-timeout needs a non-negative number" >&2
+                echo "--readable-timeout needs a positive number" >&2
                 exit 2
             fi
             READABLE_TIMEOUT="$2"
             case "$READABLE_TIMEOUT" in
                 ''|*[!0-9.]*|*.*.*)
-                    echo "invalid --readable-timeout: ${READABLE_TIMEOUT} (expected a non-negative number)" >&2
+                    echo "invalid --readable-timeout: ${READABLE_TIMEOUT} (expected a positive number)" >&2
                     exit 2
                     ;;
             esac
             case "$READABLE_TIMEOUT" in
                 *[0-9]*) ;;
                 *)
-                    echo "invalid --readable-timeout: ${READABLE_TIMEOUT} (expected a non-negative number)" >&2
+                    echo "invalid --readable-timeout: ${READABLE_TIMEOUT} (expected a positive number)" >&2
                     exit 2
                     ;;
             esac
@@ -90,6 +92,14 @@ while [ $# -gt 0 ]; do
         *) echo "unknown argument: $1" >&2; exit 2 ;;
     esac
     shift
+done
+
+for timeout_name in READABLE_TIMEOUT OCIR_LOGIN_TIMEOUT OCIR_VERIFY_TIMEOUT; do
+    timeout_value="${!timeout_name}"
+    if ! awk -v value="$timeout_value" 'BEGIN { exit !(value ~ /^([0-9]+([.][0-9]*)?|[.][0-9]+)$/ && value > 0) }'; then
+        echo "${timeout_name} must be a positive number (got: ${timeout_value})" >&2
+        exit 2
+    fi
 done
 
 # Rotation owns exactly these two Vault records. In particular, do not turn an
@@ -133,20 +143,23 @@ report_login_failure() {
 # the generated consumer snippets. Keep the child PID visible to cleanup so an
 # interrupt cannot leave an OCI process behind.
 active_pid=""
-run_bounded() {
-    local label="$1" started rc
-    shift
-    "$@" &
+run_bounded_for() {
+    local timeout="$1" label="$2" started rc
+    shift 2
+    # Explicit stdin redirection prevents non-interactive Bash from replacing
+    # an asynchronous command's stdin with /dev/null (SSH verification and
+    # docker --password-stdin both rely on this byte stream).
+    "$@" <&0 &
     active_pid=$!
     started=$SECONDS
     while kill -0 "$active_pid" 2>/dev/null; do
-        if [ $((SECONDS - started)) -ge "$ACX_VAULT_FETCH_TIMEOUT" ]; then
+        if awk -v elapsed="$((SECONDS - started))" -v limit="$timeout" 'BEGIN { exit !(elapsed >= limit) }'; then
             kill "$active_pid" 2>/dev/null || true
             sleep 0.1
             kill -9 "$active_pid" 2>/dev/null || true
             wait "$active_pid" 2>/dev/null || true
             active_pid=""
-            printf 'acx-timeout:%s after %ss\n' "$label" "$ACX_VAULT_FETCH_TIMEOUT" >&2
+            printf 'acx-timeout:%s after %ss\n' "$label" "$timeout" >&2
             return 124
         fi
         sleep 0.05
@@ -157,6 +170,12 @@ run_bounded() {
         printf 'acx-command-missing:%s\n' "$label" >&2
     fi
     return "$rc"
+}
+
+run_bounded() {
+    local label="$1"
+    shift
+    run_bounded_for "$ACX_VAULT_FETCH_TIMEOUT" "$label" "$@"
 }
 
 cleanup() {
@@ -187,6 +206,21 @@ put_secret() {
         --secret-name "$1" --readable-timeout "$READABLE_TIMEOUT"
 }
 
+fetch_secret_value() {
+    # $1 = allowlisted secret name; decoded value is emitted without touching disk.
+    local secret_name="$1" error_file="$2" fetch_rc=0 encoded
+    encoded="$(run_bounded vault "$ACX_LOCAL_OCI_BIN" --auth api_key \
+        secrets secret-bundle get-secret-bundle-by-name \
+        --vault-id "$ACX_VAULT_OCID" \
+        --secret-name "$secret_name" \
+        --query 'data."secret-bundle-content".content' \
+        --raw-output 2>"$error_file")" || fetch_rc=$?
+    if [ "$fetch_rc" -ne 0 ]; then
+        return "$fetch_rc"
+    fi
+    printf '%s' "$encoded" | base64 -d 2>>"$error_file"
+}
+
 echo "Mint the token at: OCI Console > profile icon > My Profile > Auth tokens > Generate token"
 echo "Paste it below. It is not echoed, not logged, and not written to disk."
 
@@ -209,23 +243,9 @@ if [ -n "$SET_USERNAME" ]; then
     proof_username="$SET_USERNAME"
 else
     username_rc=0
-    run_bounded vault "$ACX_LOCAL_OCI_BIN" --auth api_key \
-        secrets secret-bundle get-secret-bundle-by-name \
-        --vault-id "$ACX_VAULT_OCID" \
-        --secret-name "$ACX_OCIR_USERNAME_SECRET" \
-        --query 'data."secret-bundle-content".content' \
-        --raw-output >"${runtime_dir}/username.stdout" \
-        2>"${runtime_dir}/username.stderr" || username_rc=$?
+    proof_username="$(fetch_secret_value "$ACX_OCIR_USERNAME_SECRET" "${runtime_dir}/username.stderr")" || username_rc=$?
     if [ "$username_rc" -ne 0 ]; then
         report_login_failure "laptop username fetch" "$(command cat "${runtime_dir}/username.stderr")"
-        unset acx_token
-        exit 1
-    fi
-    username_encoded="$(command cat "${runtime_dir}/username.stdout")"
-    proof_username="$(printf '%s' "$username_encoded" | base64 -d \
-        2>>"${runtime_dir}/username.stderr")" || username_rc=$?
-    if [ "$username_rc" -ne 0 ]; then
-        report_login_failure "laptop username decode" "$(command cat "${runtime_dir}/username.stderr")"
         unset acx_token
         exit 1
     fi
@@ -239,7 +259,8 @@ fi
 # Establish validity before durable state: the freshly-read bytes go straight
 # to docker, never through Vault and never through argv.
 proof_rc=0
-proof_out="$(printf '%s' "$acx_token" | DOCKER_CONFIG="$proof_docker_config" docker login "$OCIR_REGISTRY" \
+proof_out="$(printf '%s' "$acx_token" | run_bounded_for "$OCIR_LOGIN_TIMEOUT" ocir-fresh-token-login \
+    env DOCKER_CONFIG="$proof_docker_config" docker login "$OCIR_REGISTRY" \
     -u "$proof_username" --password-stdin 2>&1)" || proof_rc=$?
 if [ "$proof_rc" -ne 0 ]; then
     report_login_failure "fresh token against ${OCIR_REGISTRY}" "$proof_out"
@@ -248,14 +269,49 @@ if [ "$proof_rc" -ne 0 ]; then
 fi
 echo "ok   fresh token authenticated directly against ${OCIR_REGISTRY}"
 
-# Vault does not offer a transaction spanning two secrets. Store the proven
-# token first, then the optional username, so a token-write failure can never
-# replace the username while leaving the old token in place.
-printf '%s' "$acx_token" | put_secret "$ACX_OCIR_TOKEN_SECRET"
-unset acx_token
-if [ -n "$SET_USERNAME" ]; then
-    printf '%s' "$SET_USERNAME" | put_secret "$ACX_OCIR_USERNAME_SECRET"
+# Vault does not offer a transaction spanning two secrets. When changing the
+# username, retain the prior token in memory so a failed username write can
+# compensate instead of publishing an old-username/new-token pair.
+old_token_available=0
+old_token=""
+if [ -n "$SET_USERNAME" ] \
+    && old_token="$(fetch_secret_value "$ACX_OCIR_TOKEN_SECRET" "${runtime_dir}/old-token.stderr")"; then
+    old_token_available=1
 fi
+token_write_rc=0
+printf '%s' "$acx_token" | put_secret "$ACX_OCIR_TOKEN_SECRET" || token_write_rc=$?
+unset acx_token
+if [ "$token_write_rc" -ne 0 ]; then
+    exit "$token_write_rc"
+fi
+if [ -n "$SET_USERNAME" ]; then
+    username_write_rc=0
+    printf '%s' "$SET_USERNAME" | put_secret "$ACX_OCIR_USERNAME_SECRET" || username_write_rc=$?
+    if [ "$username_write_rc" -ne 0 ]; then
+        if [ "$old_token_available" -eq 1 ]; then
+            echo "username write failed; restoring the prior token before exiting" >&2
+            if ! printf '%s' "$old_token" | put_secret "$ACX_OCIR_TOKEN_SECRET"; then
+                echo "CRITICAL compensation failed: Vault may contain an old-username/new-token pair; mint a token and rerun with --set-username" >&2
+            else
+                compensation_username="$(fetch_secret_value "$ACX_OCIR_USERNAME_SECRET" "${runtime_dir}/compensation-username.stderr" || true)"
+                compensation_rc=0
+                compensation_out="$(printf '%s' "$old_token" | run_bounded_for "$OCIR_LOGIN_TIMEOUT" ocir-compensation-login \
+                    env DOCKER_CONFIG="$proof_docker_config" docker login "$OCIR_REGISTRY" \
+                    -u "$compensation_username" --password-stdin 2>&1)" || compensation_rc=$?
+                if [ "$compensation_rc" -eq 0 ]; then
+                    echo "compensation verified: the restored Vault credential authenticates against ${OCIR_REGISTRY}" >&2
+                else
+                    echo "CRITICAL compensation verification failed; fresh Vault consumers may be unable to authenticate" >&2
+                    report_login_failure "restored Vault credential" "$compensation_out"
+                fi
+            fi
+        else
+            echo "username write failed and no prior token was readable; bootstrap is incomplete and consumers remain unavailable" >&2
+        fi
+        exit "$username_write_rc"
+    fi
+fi
+unset old_token
 
 # Release It! 5.5: prove the stored credential through each consumer path while
 # the operator is still present, and distinguish SSH transport from a command
@@ -279,6 +335,7 @@ verify_login() {
 
 rc=0
 verify_login "laptop Vault credential" local \
+    run_bounded_for "$OCIR_VERIFY_TIMEOUT" laptop-vault-login \
     bash -c "$(ocir_login_snippet "${ACX_LOCAL_OCI_BIN}" api_key "${OCIR_REGISTRY}")" || rc=1
 
 if [ "$SKIP_VERIFY" -eq 1 ]; then
@@ -296,7 +353,9 @@ $(ocir_login_snippet "${ACX_REMOTE_OCI_BIN}" instance_principal "${OCIR_REGISTRY
 }
 acx_remote_verify"
 verify_login "${OCI_USER}@${OCI_HOST}" remote \
-    ssh -o BatchMode=yes -o ConnectTimeout=5 -l "${OCI_USER}" -- "${OCI_HOST}" \
+    run_bounded_for "$OCIR_VERIFY_TIMEOUT" production-vm-vault-login \
+    ssh -o BatchMode=yes -o ConnectTimeout=5 -o ConnectionAttempts=1 \
+    -o ServerAliveInterval=5 -o ServerAliveCountMax=3 -l "${OCI_USER}" -- "${OCI_HOST}" \
     'acx_remote_program=$(cat); bash -c "$acx_remote_program"' \
     <<<"$remote_script" || rc=1
 

@@ -259,6 +259,11 @@ compose run --rm --no-deps wpcli wp plugin activate alt-context
 # Fail-closed describe-apply: canned `seeded` captions are worse than empty alt.
 # shellcheck source=lib/describe-gate.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib/describe-gate.sh"
+# The deploy ships this canonical adapter contract beside describe-gate.sh.
+# Source it second so both this gate and the standalone preflight use the same
+# effective allowlist while the demo-local classifier remains self-contained.
+# shellcheck source=../../../scripts/deploy/lib/gpu-env-contract.sh
+source "${DEMO_DIR}/lib/gpu-env-contract.sh"
 
 # wp-cli --format=count -> digits, or "" on failure/non-numeric so the
 # classifier BLOCKs instead of guessing.
@@ -363,7 +368,7 @@ case "$DESCRIBE_VERDICT" in
         echo "==> BLOCKED: cannot verify description provenance (got '${PROVENANCE}') for adapter '${ADAPTER_PROFILE}' (coverage=${MEDIA_WITH_ALT}/${TOTAL_MEDIA}). Fail closed; this is an environment fault, not a config fault. Describe pass skipped." >&2
       fi
     else
-      echo "==> BLOCKED: refusing to publish descriptions — live description service adapter='${ADAPTER_PROFILE}' produces canned fixture captions, which is worse for accessibility than empty alt text. Change the description SERVICE profile (the running producer's ACX_DESCRIPTION_ADAPTER), not the demo host secrets/.env. Trusted service profiles: florence_small, gpu_qwen30b, gpu_qwen30b_ensemble. (coverage=${MEDIA_WITH_ALT}/${TOTAL_MEDIA})" >&2
+      echo "==> BLOCKED: refusing to publish descriptions — live description service adapter='${ADAPTER_PROFILE}' produces canned fixture captions, which is worse for accessibility than empty alt text. Change the description SERVICE profile (the running producer's ACX_DESCRIPTION_ADAPTER), not the demo host secrets/.env. Trusted service profiles: ${ACX_TRUSTED_DESCRIBE_PROFILES}. (coverage=${MEDIA_WITH_ALT}/${TOTAL_MEDIA})" >&2
     fi
     exit 1
     ;;

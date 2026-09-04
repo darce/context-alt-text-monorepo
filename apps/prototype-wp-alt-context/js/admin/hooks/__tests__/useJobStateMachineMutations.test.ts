@@ -159,7 +159,8 @@ describe('useJobStateMachineMutations logging [O-02][O-06]', () => {
         failedCount: 0,
       }),
     );
-    expect(jobEvents[0].fields.requestId).toEqual(expect.any(String));
+    expect(typeof jobEvents[0].fields.requestId).toBe('string');
+    expect(String(jobEvents[0].fields.requestId).length).toBeGreaterThan(0);
     expect(addJob).toHaveBeenCalledTimes(2);
     expect(onScanComplete).toHaveBeenCalledWith(['job-1', 'job-2']);
 
@@ -174,6 +175,57 @@ describe('useJobStateMachineMutations logging [O-02][O-06]', () => {
     perJob.forEach((record) => {
       expect(record.fields.batchRunId).toBe('run-1');
     });
+  });
+
+  it('logs full jobIds, jobCount, and batchRunId on scan.submit [FEBT1-W2B-02]', () => {
+    const records = captureRecords();
+    renderMutations();
+
+    scanOptions?.onSuccess?.(
+      scanResponse(['job-1', 'job-2', 'job-3'], 4),
+      [1, 2, 3],
+      undefined,
+      mockMutationContext,
+    );
+
+    const jobEvents = records.filter((record) => record.fields.event === 'scan.submit');
+    expect(jobEvents).toHaveLength(1);
+    expect(jobEvents[0].fields).toEqual(
+      expect.objectContaining({
+        event: 'scan.submit',
+        jobIds: ['job-1', 'job-2', 'job-3'],
+        jobCount: 3,
+        batchRunId: 'run-1',
+      }),
+    );
+  });
+
+  it('mints a distinct requestId per scan submit unit [FEBT1-W2B-01]', () => {
+    const records = captureRecords();
+    renderMutations();
+
+    scanOptions?.onSuccess?.(scanResponse(['job-1'], 4), [1], undefined, mockMutationContext);
+    scanOptions?.onSuccess?.(scanResponse(['job-2'], 4), [2], undefined, mockMutationContext);
+
+    const jobEvents = records.filter((record) => record.fields.event === 'scan.submit');
+    expect(jobEvents).toHaveLength(2);
+    expect(typeof jobEvents[0].fields.requestId).toBe('string');
+    expect(typeof jobEvents[1].fields.requestId).toBe('string');
+    expect(jobEvents[0].fields.requestId).not.toBe(jobEvents[1].fields.requestId);
+  });
+
+  it('scan failure records inside one unit share requestId [FEBT1-W2B-01]', () => {
+    const records = captureRecords();
+    renderMutations();
+
+    scanOptions?.onError?.(leakingScanError(), [1], undefined, mockMutationContext);
+
+    const errorRecords = records.filter((record) => record.level === 'error');
+    const jobEvents = records.filter((record) => record.fields.event === 'scan.submit');
+    expect(errorRecords).toHaveLength(1);
+    expect(jobEvents).toHaveLength(1);
+    expect(errorRecords[0].fields.requestId).toBe(jobEvents[0].fields.requestId);
+    expect(typeof errorRecords[0].fields.requestId).toBe('string');
   });
 
   it('emits one scan.submit event plus classified error fields on failure [O-02][O-06][O-03]', () => {

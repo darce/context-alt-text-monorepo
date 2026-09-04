@@ -17,7 +17,7 @@ import {
 import { offlineActionReason, useRemoteActionGate } from '../../../hooks/useRemoteActionGate';
 import { useSyncOffline } from '../../../hooks/useSyncOffline';
 import { isScanSuccessStatus } from '../../../hooks/jobStateMachineUtils';
-import { delay, isAbortError } from './clusterMutationUtils';
+import { delay, getClusterErrorCode, getClusterMutationErrorMessage, isAbortError } from './clusterMutationUtils';
 import { removePendingSuggestionFromCache } from './suggestionProjection';
 
 interface UseClusterActionMutationsOptions {
@@ -143,22 +143,15 @@ export const useClusterActionMutations = ({
       invalidateQueries();
       onRenameSuccess?.(result.label);
     },
-    onError: (err: unknown) => {
+    onError: (err: unknown, variables) => {
       if (isAbortError(err)) {
         onAbort?.();
         return;
       }
-      const message = err instanceof Error ? err.message : String(err);
-      if (message.includes('acx_cluster_created_bind_failed')) {
+      if (getClusterErrorCode(err) === 'acx_cluster_created_bind_failed') {
         invalidateQueries();
-        onError?.(__('The group was created but the person was not bound.', 'alt-context'));
-        return;
       }
-      if (message.includes('409')) {
-        onError?.(__('Label already exists. Select it from the dropdown to assign.', 'alt-context'));
-      } else {
-        onError?.(message);
-      }
+      onError?.(getClusterMutationErrorMessage(err, variables.label));
     },
   });
 
@@ -242,18 +235,10 @@ export const useClusterActionMutations = ({
 
   return {
     reassign: reassignMutation.mutate,
-    assignToCluster: (
-      identityId: string,
-      targetClusterId: string,
-      signal?: AbortSignal,
-      suggestionId?: string,
-    ) => assignToClusterMutation.mutate({ identityId, targetClusterId, signal, suggestionId }),
-    createClusterForIdentity: (
-      identityId: string,
-      label: string,
-      signal?: AbortSignal,
-      rosterEntryId?: number,
-    ) => createClusterMutation.mutate({ identityId, label, signal, rosterEntryId }),
+    assignToCluster: (identityId: string, targetClusterId: string, signal?: AbortSignal, suggestionId?: string) =>
+      assignToClusterMutation.mutate({ identityId, targetClusterId, signal, suggestionId }),
+    createClusterForIdentity: (identityId: string, label: string, signal?: AbortSignal, rosterEntryId?: number) =>
+      createClusterMutation.mutate({ identityId, label, signal, rosterEntryId }),
     // RES-03: no offline short-circuit here — the mutationFn throws so onError surfaces the reason.
     split: (clusterId: string, nClusters = 2, anchorIdentityId?: string) =>
       splitMutation.mutate({ clusterId, nClusters, anchorIdentityId }),

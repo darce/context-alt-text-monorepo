@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { NonceRefreshFailedError } from '../../api/config';
-import { classifyError, isAppError } from '../appError';
+import { classifyError, isAppError, type AppError } from '../appError';
 import { HTTPError, ResponseParseError } from '../http';
 import {
   consoleSink,
@@ -10,6 +10,7 @@ import {
   logJobEvent,
   LOG_LEVEL_ORDER,
   newRequestId,
+  redactEndpoint,
   setLogLevel,
   setLogSink,
   withRequestId,
@@ -203,10 +204,10 @@ describe('createLogger', () => {
     setLogSink(null);
     createLogger('x').warn('visible');
     expect(warn).toHaveBeenCalledTimes(1);
-    const [prefix, fields] = warn.mock.calls[0] as [string, Record<string, unknown>];
-    expect(prefix).toBe('[alt-context/x] visible');
-    expect(typeof fields.requestId).toBe('string');
-    expect(fields.requestId).not.toBe('');
+    // rg-015: a module-scope logger has no unit of work, so no requestId field is
+    // fabricated and the sink is called with the prefix only.
+    expect(warn).toHaveBeenCalledWith('[alt-context/x] visible');
+    expect(warn.mock.calls[0]).toHaveLength(1);
   });
 });
 
@@ -231,38 +232,20 @@ const captureRecords = (): LogRecord[] => {
   return records;
 };
 
-describe('correlation id binding [O-01]', () => {
+describe('requestId binding [FEBT1-W2B-01][OBS-03][rg-015]', () => {
   afterEach(() => {
     setLogSink(null);
     setLogLevel(null);
   });
 
-  it('createLogger without fields still emits requestId on every level [O-01][OBS-03]', () => {
-    const records = captureRecords();
-    const log = createLogger('bootstrap');
-    log.debug('d');
-    log.info('i');
-    log.warn('w');
-    log.error('e');
-
-    expect(records).toHaveLength(4);
-    const requestId = records[0].fields.requestId;
-    expect(requestId).toEqual(expect.any(String));
-    expect(String(requestId).length).toBeGreaterThan(0);
-    for (const record of records) {
-      expect(record.fields.requestId).toBe(requestId);
-    }
-  });
-
-  it('two loggers receive distinct request ids [O-01][OBS-03]', () => {
+  it('module-scope createLogger records omit requestId rather than minting one', () => {
     const records = captureRecords();
     createLogger('a').info('one');
     createLogger('b').info('two');
 
     expect(records).toHaveLength(2);
-    expect(records[0].fields.requestId).toEqual(expect.any(String));
-    expect(records[1].fields.requestId).toEqual(expect.any(String));
-    expect(records[0].fields.requestId).not.toBe(records[1].fields.requestId);
+    expect(records[0].fields).not.toHaveProperty('requestId');
+    expect(records[1].fields).not.toHaveProperty('requestId');
   });
 
   it('withRequestId opens a unit of work two scopes can share [O-01][OBS-03][FEBT1-W2B-01]', () => {
@@ -289,36 +272,48 @@ describe('correlation id binding [O-01]', () => {
     expect(records[0].fields.requestId).not.toBe(records[1].fields.requestId);
   });
 
-  it('child logger inherits the parent requestId [O-01][OBS-03]', () => {
+  it('withRequest units mint distinct ids and records inside one unit match', () => {
     const records = captureRecords();
-    const parent = createLogger('jobPersistence');
-    const child = parent.child({ extra: 1 });
-    parent.info('parent');
-    child.info('child');
+    const log = createLogger('x');
+    const unitA = log.withRequest();
+    const unitB = log.withRequest();
+    unitA.info('a1');
+    unitA.warn('a2');
+    unitB.info('b1');
 
-    expect(records).toHaveLength(2);
-    const requestId = records[0].fields.requestId;
-    expect(requestId).toEqual(expect.any(String));
-    expect(String(requestId).length).toBeGreaterThan(0);
-    expect(records[1].fields.requestId).toBe(requestId);
-    expect(records[1].fields.extra).toBe(1);
+    expect(records).toHaveLength(3);
+    const requestIdA = records[0].fields.requestId;
+    expect(typeof requestIdA).toBe('string');
+    expect(String(requestIdA).length).toBeGreaterThan(0);
+    expect(records[1].fields.requestId).toBe(requestIdA);
+    expect(records[2].fields.requestId).not.toBe(requestIdA);
+    expect(typeof records[2].fields.requestId).toBe('string');
   });
 
-  it('createJobLogger records jobId and requestId on every line [O-01][OBS-03]', () => {
+  it('child of a withRequest unit inherits that requestId', () => {
+    const records = captureRecords();
+    const unit = createLogger('jobPersistence').withRequest();
+    unit.info('parent');
+    unit.child({ extra: 1 }).info('child');
+
+    expect(records).toHaveLength(2);
+    expect(records[0].fields.requestId).toBe(records[1].fields.requestId);
+    expect(records[1].fields.extra).toBe(1);
+    expect(typeof records[0].fields.requestId).toBe('string');
+  });
+
+  it('createJobLogger records jobId and omits requestId until withRequest', () => {
     const records = captureRecords();
     const log = createJobLogger('jobPersistence', 'job-123');
     log.info('start');
-    log.warn('stall');
-    log.error('fail');
+    log.withRequest().warn('stall');
 
-    expect(records).toHaveLength(3);
-    const requestId = records[0].fields.requestId;
-    expect(requestId).toEqual(expect.any(String));
-    expect(String(requestId).length).toBeGreaterThan(0);
-    for (const record of records) {
-      expect(record.fields.jobId).toBe('job-123');
-      expect(record.fields.requestId).toBe(requestId);
-    }
+    expect(records).toHaveLength(2);
+    expect(records[0].fields.jobId).toBe('job-123');
+    expect(records[0].fields).not.toHaveProperty('requestId');
+    expect(records[1].fields.jobId).toBe('job-123');
+    expect(typeof records[1].fields.requestId).toBe('string');
+    expect(String(records[1].fields.requestId).length).toBeGreaterThan(0);
   });
 });
 
@@ -328,14 +323,10 @@ describe('logJobEvent [O-02]', () => {
     setLogLevel(null);
   });
 
-  it('emits exactly one wide record with event, state, job id, and request id [O-02][OBS-02]', () => {
+  it('emits exactly one wide record with event, state, and job id [O-02][OBS-02]', () => {
     const records = captureRecords();
-    const log = createJobLogger('job', 'job-123');
-    logJobEvent(
-      log,
-      { type: 'PROGRESS' },
-      { status: 'running', jobId: 'job-123', done: 3, total: 10, failedCount: 0 },
-    );
+    const log = createJobLogger('job', 'job-123').withRequest();
+    logJobEvent(log, { type: 'PROGRESS' }, { status: 'running', jobId: 'job-123', done: 3, total: 10, failedCount: 0 });
 
     expect(records).toHaveLength(1);
     expect(records[0].fields.event).toBe('PROGRESS');
@@ -344,7 +335,7 @@ describe('logJobEvent [O-02]', () => {
     expect(records[0].fields.done).toBe(3);
     expect(records[0].fields.total).toBe(10);
     expect(records[0].fields.failedCount).toBe(0);
-    expect(records[0].fields.requestId).toEqual(expect.any(String));
+    expect(typeof records[0].fields.requestId).toBe('string');
     expect(String(records[0].fields.requestId).length).toBeGreaterThan(0);
   });
 });
@@ -502,9 +493,41 @@ describe('boundary error redaction [O-03][O-05]', () => {
     expect(records[0].fields.error).toEqual({ name: 'Error', message: 'parse failed' });
   });
 
-  it('AppError field values flatten to a tagged safe projection [O-05][REF-19]', () => {
+  /**
+   * Merge note (feature/febt-1-g1 x main): the branch tagged HTTPError with a
+   * `_tag` field, so `classifyError` is now identity for it and the value reaching
+   * the sink is an Error instance, not a plain AppError. Error instances keep the
+   * {name, ...} record shape by FEBT1G-M-07/M-10, so the two halves of the original
+   * contract are split across the two tests below — no redaction assertion is lost.
+   */
+  it('a classified HTTPError keeps the name-shaped safe projection [O-05][REF-19][FEBT1G-M-07]', () => {
     const records = captureRecords();
     const classified = classifyError(leakingHttpError());
+    expect(isAppError(classified)).toBe(true);
+    createLogger('http').error('classified', { error: classified });
+
+    expect(records[0].fields.error).toEqual({
+      name: 'HTTPError',
+      message: 'HTTP 500',
+      status: 500,
+      endpoint: '/jobs',
+    });
+    const serialized = JSON.stringify(records[0]);
+    expect(serialized).not.toContain(BODY_SECRET);
+    expect(serialized).not.toContain(ENDPOINT_SECRET);
+    expect(serialized).not.toContain(PREVIEW_SECRET);
+    expect(serialized).not.toContain('_tag');
+  });
+
+  it('plain AppError field values flatten to a tagged safe projection [O-05][REF-19]', () => {
+    const records = captureRecords();
+    const classified: AppError = {
+      _tag: 'http',
+      status: 500,
+      endpoint: `http://example.test/jobs?token=${ENDPOINT_SECRET}`,
+      message: `Request to http://example.test/jobs failed (500): ${BODY_SECRET}`,
+      cause: { bodyPreview: PREVIEW_SECRET },
+    };
     expect(isAppError(classified)).toBe(true);
     createLogger('http').error('classified', { error: classified });
 
@@ -535,15 +558,29 @@ describe('flattenError cause recursion [O-07]', () => {
     const outer = new Error('outer', { cause: mid });
     createLogger('x').error('failed', { error: outer });
 
-    expect(records[0].fields.error).toEqual({
+    const errorFields = records[0].fields.error as {
+      name?: string;
+      message?: string;
+      cause?: Record<string, unknown>;
+    };
+    expect(errorFields).toEqual({
       name: 'Error',
       message: 'outer',
       cause: { name: 'Error', message: 'mid' },
     });
-    expect(JSON.stringify(records[0].fields.error)).not.toContain('leaf-secret');
-    const flattened = records[0].fields.error as { cause?: Record<string, unknown> };
-    expect(flattened.cause).toBeDefined();
-    expect(flattened.cause).not.toBeNull();
-    expect(Object.hasOwn(flattened.cause ?? {}, 'cause')).toBe(false);
+    expect(JSON.stringify(errorFields)).not.toContain('leaf-secret');
+    expect(errorFields.cause).not.toHaveProperty('cause');
+    expect(errorFields.cause).toBeDefined();
+    expect(errorFields.cause).not.toBeNull();
+    expect(Object.hasOwn(errorFields.cause ?? {}, 'cause')).toBe(false);
+  });
+});
+
+describe('redactEndpoint [FEBT1-W2B-06][REF-19]', () => {
+  it('returns pathname only and strips query including cluster labels', () => {
+    expect(redactEndpoint('/acx/v1/recognition/clusters?search=Alice')).toBe('/acx/v1/recognition/clusters');
+    expect(redactEndpoint('https://example.test/jobs?token=secret-token')).toBe('/jobs');
+    expect(redactEndpoint('/acx/v1/recognition/clusters?search=Alice')).not.toContain('?');
+    expect(redactEndpoint('/acx/v1/recognition/clusters?search=Alice')).not.toContain('Alice');
   });
 });

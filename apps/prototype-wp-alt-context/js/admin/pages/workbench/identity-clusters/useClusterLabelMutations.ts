@@ -98,7 +98,7 @@ export const useClusterLabelMutations = ({
         return;
       }
       invalidateQueries();
-      onError?.(getClusterMutationErrorMessage(err, currentLabel ?? derivedLabel ?? ''));
+      onError?.(getClusterMutationErrorMessage(err, currentLabel ?? derivedLabel ?? 'that label'));
     },
   });
 
@@ -194,19 +194,15 @@ export const useClusterLabelMutations = ({
       invalidateQueries();
       onRevertSuccess?.();
     },
-    onError: (err: Error) => {
-      onError?.(err.message);
+    onError: (err: unknown) => {
+      onError?.(getClusterMutationErrorMessage(err, currentLabel ?? derivedLabel ?? 'that label'));
     },
   });
 
   return {
     rename: (label: string, signal?: AbortSignal) => renameMutation.mutate({ label, signal }),
-    merge: (
-      targetClusterId: string,
-      targetLabel?: string,
-      signal?: AbortSignal,
-      suggestionId?: string,
-    ) => mergeMutation.mutate({ targetClusterId, targetLabel, signal, suggestionId }),
+    merge: (targetClusterId: string, targetLabel?: string, signal?: AbortSignal, suggestionId?: string) =>
+      mergeMutation.mutate({ targetClusterId, targetLabel, signal, suggestionId }),
     revertMerge: revertMergeMutation.mutate,
     isRenaming: renameMutation.isPending,
     isMerging: mergeMutation.isPending,

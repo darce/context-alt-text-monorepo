@@ -18,7 +18,7 @@ import {
 } from '../../../api/recognition';
 import { useRosterEntries } from '../../../hooks/useRosterHooks';
 import { classifyError } from '../../../utils/appError';
-import { createLogger } from '../../../utils/logger';
+import { createLogger, redactEndpoint } from '../../../utils/logger';
 import { buildNamingOptions, type NamingOption } from './buildNamingOptions';
 import { isAbortError } from './clusterMutationUtils';
 import {
@@ -74,17 +74,10 @@ const DEFAULT_DEBOUNCE_MS = 300;
 const EMPTY_COLLISIONS: ReadonlyMap<string, readonly NamingOption[]> = new Map();
 /** Typed label search is disabled until the debounced input reaches this length. */
 export const ACX_LABEL_SEARCH_MIN_CHARS = 2;
-/**
- * FEBT1-W2B-06: the typed label is a roster name and it travels in the query
- * string, so only the pathname may reach a log sink.
- */
-const redactEndpoint = (endpoint: string): string => {
-  try {
-    return new URL(endpoint, 'http://localhost').pathname;
-  } catch {
-    return endpoint;
-  }
-};
+// FEBT1-W2B-06: the typed label is a roster name and it travels in the query
+// string, so only the pathname may reach a log sink. The shared
+// `redactEndpoint` (utils/logger) is used instead of a local copy: it also
+// falls back to '<redacted>' rather than echoing an unparseable endpoint.
 
 /** RES-05: at-rest labelled list is capped at 50. If response.total > 50 the dropdown is incomplete until the operator types 2+ chars (server-side search). */
 const AT_REST_LABELED_LIMIT = 50;
@@ -222,7 +215,7 @@ export const useClusterSuggestionsLoader = ({
           return null;
         }
         const classified = classifyError(err);
-        log.warn('Failed to find cluster by label', {
+        log.withRequest().warn('Failed to find cluster by label', {
           tag: classified._tag,
           ...('status' in classified ? { status: classified.status } : {}),
           ...('endpoint' in classified ? { endpoint: redactEndpoint(classified.endpoint) } : {}),

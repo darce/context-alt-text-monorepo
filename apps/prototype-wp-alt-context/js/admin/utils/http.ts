@@ -1,4 +1,5 @@
-import { getNonce, NonceRefreshFailedError, refreshRestNonce } from '../api/config';
+import { getNonce, isNonceRefreshAuthRejection, NonceRefreshFailedError, refreshRestNonce } from '../api/config';
+import { classifyError, isAppError } from './appError';
 
 /** Backstop deadline when a caller does not pass `timeoutMs` (RES-02). */
 export const DEFAULT_FETCH_TIMEOUT_MS = 300_000;
@@ -13,10 +14,12 @@ export interface HTTPOptions {
 }
 
 export class HTTPError extends Error {
+  readonly _tag = 'http' as const;
   readonly status: number;
   readonly retryAfterSeconds: number | undefined;
   readonly endpoint: string;
   readonly bodyPreview: string;
+  readonly cause: unknown;
 
   constructor({
     status,
@@ -37,13 +40,20 @@ export class HTTPError extends Error {
     this.retryAfterSeconds = retryAfterSeconds;
     this.endpoint = endpoint;
     this.bodyPreview = bodyPreview;
+    this.cause = undefined;
+  }
+
+  get retryAfterMs(): number | undefined {
+    return this.retryAfterSeconds === undefined ? undefined : this.retryAfterSeconds * 1000;
   }
 }
 
 export class ResponseParseError extends Error {
+  readonly _tag = 'parse' as const;
   readonly status: number;
   readonly endpoint: string;
   readonly bodyPreview: string;
+  readonly cause: unknown;
 
   constructor({
     status,
@@ -61,6 +71,7 @@ export class ResponseParseError extends Error {
     this.status = status;
     this.endpoint = endpoint;
     this.bodyPreview = bodyPreview;
+    this.cause = undefined;
   }
 }
 
@@ -69,14 +80,17 @@ export class ResponseParseError extends Error {
  * Not an HTTPError subclass — surfaces distinct recovery UI (Slice 3).
  */
 export class AuthExpiredError extends Error {
+  readonly _tag = 'auth_expired' as const;
   readonly endpoint: string;
   readonly status: 401 | 403;
+  readonly cause: unknown;
 
   constructor({ endpoint, status, message }: { endpoint: string; status: 401 | 403; message?: string }) {
     super(message ?? `Authentication expired for ${endpoint} (${status}).`);
     this.name = 'AuthExpiredError';
     this.endpoint = endpoint;
     this.status = status;
+    this.cause = undefined;
   }
 }
 
@@ -116,6 +130,8 @@ export const parseRetryAfter = (value: string | null): number | undefined => {
   const t = Date.parse(trimmed);
   if (!Number.isNaN(t)) {
     const deltaSeconds = Math.ceil((t - Date.now()) / 1000);
+    // Past or present HTTP-date is header-absent, not 0 — otherwise a 503
+    // becomes an immediate retry loop and a 429 skips exponential backoff.
     return deltaSeconds > 0 ? deltaSeconds : undefined;
   }
   return undefined;
@@ -204,11 +220,47 @@ const isIndeterminateRefreshFailure = (error: unknown): boolean => {
   if (isAbortLikeError(error)) {
     return true;
   }
-  return error instanceof NonceRefreshFailedError && error.causeStatus === undefined;
+  // Only a WP logged-out sentinel is a real verdict: `causeStatus` 401/403, or an
+  // admin-ajax `0`/`-1` body on a 200. Every other refresh failure — transport,
+  // timeout, 5xx, non-sentinel body — stays retryable `nonce_refresh` rather than
+  // session expiry (FEBT1-W2A-02).
+  return error instanceof NonceRefreshFailedError && !isNonceRefreshAuthRejection(error);
 };
 
 const abortReason = (reason: unknown): DOMException =>
   reason instanceof DOMException ? reason : new DOMException('The operation was aborted.', 'AbortError');
+
+const duckTypeName = (value: unknown): string | undefined => {
+  if (typeof value !== 'object' || value === null) {
+    return undefined;
+  }
+  const name = (value as { name?: unknown }).name;
+  return typeof name === 'string' ? name : undefined;
+};
+
+/**
+ * Close the fetch boundary: every thrown value is instanceof Error AND isAppError.
+ * jsdom's DOMException is not an Error subclass, so abort/timeout must be wrapped
+ * rather than rethrown raw (FEBT1-W2A-01). Do not `throw classifyError(err)` —
+ * that is a plain object and would destroy the stack.
+ */
+const throwAsAppError = (error: unknown): never => {
+  if (error instanceof Error && isAppError(error)) {
+    throw error;
+  }
+  const classified = classifyError(error);
+  if (error instanceof Error) {
+    Object.assign(error, classified);
+    throw error;
+  }
+  const wrapped = new Error(classified.message);
+  const name = duckTypeName(error);
+  if (name !== undefined) {
+    wrapped.name = name;
+  }
+  Object.assign(wrapped, classified);
+  throw wrapped;
+};
 
 const resolveTimeoutMs = (timeoutMs: number | undefined): number => {
   if (timeoutMs === undefined || !Number.isFinite(timeoutMs) || timeoutMs <= 0) {
@@ -348,7 +400,7 @@ export const fetchApi = async <T>(endpoint: string, options: HTTPOptions = {}): 
         // An abort that landed while the refresh was failing is an abort, not
         // session expiry — never surface recovery UI for an unmounted caller.
         throwIfAborted(signal);
-        // A refresh that never got an answer is not proof of session expiry.
+        // A refresh that never got a logged-out verdict is not proof of expiry.
         if (isIndeterminateRefreshFailure(refreshError)) {
           throw refreshError;
         }
@@ -378,6 +430,8 @@ export const fetchApi = async <T>(endpoint: string, options: HTTPOptions = {}): 
 
     // All other statuses: byte-identical to pre-UXP-NET-2 behaviour.
     throwHttpError(endpoint, response.status, errorText, retryAfterHeader);
+  } catch (error) {
+    throwAsAppError(error);
   } finally {
     timeout.cancel();
   }
@@ -389,7 +443,7 @@ export const fetchApi = async <T>(endpoint: string, options: HTTPOptions = {}): 
 export const fetchRequiredApi = async <T>(endpoint: string, options: HTTPOptions = {}): Promise<T> => {
   const payload = await fetchApi<T>(endpoint, options);
   if (payload === undefined) {
-    throw new Error(`Request to ${endpoint} succeeded but returned an empty response body.`);
+    return throwAsAppError(new Error(`Request to ${endpoint} succeeded but returned an empty response body.`));
   }
   return payload;
 };

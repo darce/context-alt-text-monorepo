@@ -317,7 +317,8 @@ expect_failure "checker derives future deployments from the shared registry" \
     ACX_GPU_DEPLOYMENTS_FILE="${fixture_root}/deployments-with-future.conf"
 installer_future_output=$(GPU_INSTANCE_ID=ocid1.test \
     ACX_GPU_DEPLOYMENTS_FILE="${fixture_root}/deployments-with-future.conf" \
-    "${root}/scripts/deploy/gpu-lifecycle-install.sh" --host test.invalid --dry-run 2>&1) || \
+    "${root}/scripts/deploy/gpu-lifecycle-install.sh" --host test.invalid \
+    --ready-url http://127.0.0.1:8000/health/ready --dry-run 2>&1) || \
     installer_future_rc=$?
 if [ "${installer_future_rc:-0}" -eq 0 ] && \
     [[ "$installer_future_output" == *"/run/acx-write/future-preview"* ]]; then

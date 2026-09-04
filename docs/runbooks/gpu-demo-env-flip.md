@@ -46,7 +46,8 @@ ssh ubuntu@acx-backend.tail1a44b8.ts.net 'install -d -m 700 /tmp/acx-gpu-preflig
 scp scripts/deploy/preflight-gpu-env.sh ubuntu@acx-backend.tail1a44b8.ts.net:/tmp/acx-gpu-preflight/
 scp scripts/deploy/lib/gpu-env-contract.sh ubuntu@acx-backend.tail1a44b8.ts.net:/tmp/acx-gpu-preflight/lib/
 scp infra/oci/demo/lib/describe-gate.sh ubuntu@acx-backend.tail1a44b8.ts.net:/tmp/acx-gpu-preflight/lib/
-ssh ubuntu@acx-backend.tail1a44b8.ts.net 'chmod 700 /tmp/acx-gpu-preflight/preflight-gpu-env.sh && sudo /tmp/acx-gpu-preflight/preflight-gpu-env.sh --check-reaper /opt/acx-backend/prod/secrets/.env /opt/acx-backend/demo/secrets/.env'
+scp scripts/deploy/lib/verify-live-gpu.sh ubuntu@acx-backend.tail1a44b8.ts.net:/tmp/acx-gpu-preflight/lib/
+ssh ubuntu@acx-backend.tail1a44b8.ts.net 'chmod 700 /tmp/acx-gpu-preflight/preflight-gpu-env.sh /tmp/acx-gpu-preflight/lib/verify-live-gpu.sh && sudo /tmp/acx-gpu-preflight/preflight-gpu-env.sh --check-reaper /opt/acx-backend/prod/secrets/.env /opt/acx-backend/demo/secrets/.env'
 ```
 
 ## 3. Deploy in producer-then-consumer order
@@ -71,14 +72,20 @@ on the shared trusted-profile allowlist.
 ## 4. Verify and close the change
 
 Verify the container received the requested non-secret profile and re-run the
-demo bootstrap gate. The second command is idempotent and must finish with
-`Bootstrap complete`.
+demo bootstrap gate. The bootstrap command is idempotent and must finish with
+`Bootstrap complete`, but it is not proof of inference: it can legitimately
+skip generation when the demo has no media or already has complete coverage.
+The remote block therefore submits a fresh, authenticated multipart request
+with explicit `tier=gpu` and fails unless the response proves an uncached final
+GPU result with model identity and non-empty generated alt text. Do not remove
+the staged contract helpers until this live request succeeds.
 
 ```bash
 set -euo pipefail
 ssh ubuntu@acx-backend.tail1a44b8.ts.net "cd /opt/acx-backend/prod && sudo docker compose -f docker-compose.env.yml -f docker-compose.admin.yml exec -T api sh -c 'test \"\$ACX_DESCRIPTION_ADAPTER\" = gpu_qwen30b'"
 ssh ubuntu@acx-backend.tail1a44b8.ts.net "cd /opt/acx-backend/demo && PLUGIN_ZIP=/tmp/alt-context.zip ./bootstrap-wp.sh"
-ssh ubuntu@acx-backend.tail1a44b8.ts.net 'rm -f /tmp/acx-gpu-preflight/preflight-gpu-env.sh /tmp/acx-gpu-preflight/lib/gpu-env-contract.sh /tmp/acx-gpu-preflight/lib/describe-gate.sh && rmdir /tmp/acx-gpu-preflight/lib /tmp/acx-gpu-preflight'
+ssh ubuntu@acx-backend.tail1a44b8.ts.net '/tmp/acx-gpu-preflight/lib/verify-live-gpu.sh /opt/acx-backend/demo/secrets/.env'
+ssh ubuntu@acx-backend.tail1a44b8.ts.net 'rm -f /tmp/acx-gpu-preflight/preflight-gpu-env.sh /tmp/acx-gpu-preflight/lib/gpu-env-contract.sh /tmp/acx-gpu-preflight/lib/describe-gate.sh /tmp/acx-gpu-preflight/lib/verify-live-gpu.sh && rmdir /tmp/acx-gpu-preflight/lib /tmp/acx-gpu-preflight'
 ```
 
 If verification fails, do not run the describe pass manually. Restore the

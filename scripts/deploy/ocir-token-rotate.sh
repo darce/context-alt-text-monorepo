@@ -13,14 +13,16 @@
 # misconfigured one. That is the crank-turning this replaces.
 #
 # BEGIN USAGE
-# Usage (interactive -- the token is never echoed, never in argv, never on disk):
+# Usage (interactive -- credentials are never echoed or placed in argv):
 #     scripts/deploy/ocir-token-rotate.sh [--readable-timeout SECONDS]
 #
 # Usage (piped, for a password manager):
 #     pbpaste | scripts/deploy/ocir-token-rotate.sh --stdin
 #
-# Bootstrap only: seed the docker username after the proven token is stored.
-#     scripts/deploy/ocir-token-rotate.sh --set-username '<namespace>/<email>'
+# Bootstrap only: read the docker username without placing it in argv.
+#     scripts/deploy/ocir-token-rotate.sh --set-username
+# With --stdin, supply the username on fd 3 (the token remains on stdin):
+#     password-manager token | scripts/deploy/ocir-token-rotate.sh --stdin --set-username 3< <(password-manager username)
 #
 # Options:
 #     --readable-timeout SECONDS  Consumer read-back deadline (0 skips the wait)
@@ -47,19 +49,14 @@ OCI_HOST="${OCI_HOST:-acx-backend.tail1a44b8.ts.net}"
 OCI_USER="${OCI_USER:-ubuntu}"
 
 FROM_STDIN=0
-SET_USERNAME=""
+SET_USERNAME=0
 SKIP_VERIFY=0
 READABLE_TIMEOUT=120
 while [ $# -gt 0 ]; do
     case "$1" in
         --stdin) FROM_STDIN=1 ;;
         --set-username)
-            if [ $# -lt 2 ]; then
-                echo "--set-username needs a value" >&2
-                exit 2
-            fi
-            SET_USERNAME="$2"
-            shift
+            SET_USERNAME=1
             ;;
         --readable-timeout)
             if [ $# -lt 2 ]; then
@@ -136,8 +133,12 @@ active_pid=""
 run_bounded() {
     local label="$1" started rc
     shift
-    "$@" &
+    # Bash otherwise connects an asynchronous command's stdin to /dev/null
+    # when job control is unavailable. Preserve the caller's pipe explicitly.
+    exec 3<&0
+    "$@" <&3 &
     active_pid=$!
+    exec 3<&-
     started=$SECONDS
     while kill -0 "$active_pid" 2>/dev/null; do
         if [ $((SECONDS - started)) -ge "$ACX_VAULT_FETCH_TIMEOUT" ]; then
@@ -187,8 +188,37 @@ put_secret() {
         --secret-name "$1" --readable-timeout "$READABLE_TIMEOUT"
 }
 
+fetch_secret() {
+    # $1 = allowlisted secret name; $2 = human-readable scope for diagnostics.
+    # The decoded credential is returned in fetched_secret, never in argv or a
+    # file. Only sanitized OCI diagnostics use the private runtime directory.
+    local secret_name="$1" scope="$2" encoded fetch_rc=0
+    fetched_secret=""
+    encoded="$(run_bounded vault "$ACX_LOCAL_OCI_BIN" --auth api_key \
+        secrets secret-bundle get-secret-bundle-by-name \
+        --vault-id "$ACX_VAULT_OCID" \
+        --secret-name "$secret_name" \
+        --query 'data."secret-bundle-content".content' \
+        --raw-output 2>"${runtime_dir}/fetch.stderr")" || fetch_rc=$?
+    if [ "$fetch_rc" -ne 0 ]; then
+        report_login_failure "$scope" "$(command cat "${runtime_dir}/fetch.stderr")"
+        return 1
+    fi
+    fetched_secret="$(printf '%s' "$encoded" | base64 -d \
+        2>>"${runtime_dir}/fetch.stderr")" || fetch_rc=$?
+    if [ "$fetch_rc" -ne 0 ]; then
+        report_login_failure "$scope" "$(command cat "${runtime_dir}/fetch.stderr")"
+        fetched_secret=""
+        return 1
+    fi
+    if [ -z "$fetched_secret" ]; then
+        report_login_failure "$scope" 'Vault secret was empty'
+        return 1
+    fi
+}
+
 echo "Mint the token at: OCI Console > profile icon > My Profile > Auth tokens > Generate token"
-echo "Paste it below. It is not echoed, not logged, and not written to disk."
+echo "Paste it below. It is not echoed, logged, or retained on disk."
 
 if [ "$FROM_STDIN" -eq 1 ]; then
     acx_token="$(command cat)"
@@ -203,32 +233,49 @@ if [ -z "$acx_token" ]; then
     exit 2
 fi
 
+new_username=""
+if [ "$SET_USERNAME" -eq 1 ]; then
+    if [ "$FROM_STDIN" -eq 1 ]; then
+        if ! ( : <&3 ) 2>/dev/null; then
+            echo "--stdin --set-username requires the username on file descriptor 3" >&2
+            unset acx_token
+            exit 2
+        fi
+        IFS= read -r new_username <&3 || true
+        exec 3<&-
+    else
+        printf 'OCI docker username: ' >&2
+        IFS= read -rs new_username || true
+        printf '\n' >&2
+    fi
+    if [ -z "$(printf '%s' "$new_username" | LC_ALL=C tr -d '[:space:]')" ]; then
+        echo "refusing an empty OCI docker username" >&2
+        unset acx_token new_username
+        exit 2
+    fi
+fi
+
 # Resolve the username before proving the token. A bootstrap username is used
 # directly; otherwise fetch only the existing non-secret username from Vault.
-if [ -n "$SET_USERNAME" ]; then
-    proof_username="$SET_USERNAME"
+if [ "$SET_USERNAME" -eq 1 ]; then
+    proof_username="$new_username"
+
+    # The first half of the two-secret update remains reversible until the
+    # username has been durably confirmed. Vault has no multi-secret
+    # transaction, so retain the prior token in memory for compensation.
+    if ! fetch_secret "$ACX_OCIR_TOKEN_SECRET" "rollback token fetch"; then
+        unset acx_token new_username proof_username fetched_secret
+        exit 1
+    fi
+    previous_token="$fetched_secret"
+    unset fetched_secret
 else
-    username_rc=0
-    run_bounded vault "$ACX_LOCAL_OCI_BIN" --auth api_key \
-        secrets secret-bundle get-secret-bundle-by-name \
-        --vault-id "$ACX_VAULT_OCID" \
-        --secret-name "$ACX_OCIR_USERNAME_SECRET" \
-        --query 'data."secret-bundle-content".content' \
-        --raw-output >"${runtime_dir}/username.stdout" \
-        2>"${runtime_dir}/username.stderr" || username_rc=$?
-    if [ "$username_rc" -ne 0 ]; then
-        report_login_failure "laptop username fetch" "$(command cat "${runtime_dir}/username.stderr")"
+    if ! fetch_secret "$ACX_OCIR_USERNAME_SECRET" "laptop username fetch"; then
         unset acx_token
         exit 1
     fi
-    username_encoded="$(command cat "${runtime_dir}/username.stdout")"
-    proof_username="$(printf '%s' "$username_encoded" | base64 -d \
-        2>>"${runtime_dir}/username.stderr")" || username_rc=$?
-    if [ "$username_rc" -ne 0 ]; then
-        report_login_failure "laptop username decode" "$(command cat "${runtime_dir}/username.stderr")"
-        unset acx_token
-        exit 1
-    fi
+    proof_username="$fetched_secret"
+    unset fetched_secret
     if [ -z "$(printf '%s' "$proof_username" | LC_ALL=C tr -d '[:space:]')" ]; then
         report_login_failure "laptop username fetch" 'Vault username secret was empty'
         unset acx_token
@@ -236,11 +283,19 @@ else
     fi
 fi
 
-# Establish validity before durable state: the freshly-read bytes go straight
-# to docker, never through Vault and never through argv.
+# Establish validity before durable state. Docker cannot accept its username
+# through stdin, so place the pair in its mode-0600 config inside the private,
+# trap-cleaned runtime directory. `docker login` then receives no credential in
+# argv, and the config is removed immediately after this proof.
+proof_config_file="${proof_docker_config}/config.json"
+printf '%s\0%s' "$proof_username" "$acx_token" | "$OCI_PYTHON" -c \
+    'import base64,json,sys; u,t=sys.stdin.buffer.read().split(b"\0",1); json.dump({"auths":{sys.argv[1]:{"auth":base64.b64encode(u+b":"+t).decode("ascii")}}},open(sys.argv[2],"w"))' \
+    "$OCIR_REGISTRY" "$proof_config_file"
+chmod 600 "$proof_config_file"
 proof_rc=0
-proof_out="$(printf '%s' "$acx_token" | DOCKER_CONFIG="$proof_docker_config" docker login "$OCIR_REGISTRY" \
-    -u "$proof_username" --password-stdin 2>&1)" || proof_rc=$?
+proof_out="$(DOCKER_CONFIG="$proof_docker_config" run_bounded ocir \
+    docker login "$OCIR_REGISTRY" 2>&1)" || proof_rc=$?
+rm -f -- "$proof_config_file"
 if [ "$proof_rc" -ne 0 ]; then
     report_login_failure "fresh token against ${OCIR_REGISTRY}" "$proof_out"
     unset acx_token
@@ -249,13 +304,56 @@ fi
 echo "ok   fresh token authenticated directly against ${OCIR_REGISTRY}"
 
 # Vault does not offer a transaction spanning two secrets. Store the proven
-# token first, then the optional username, so a token-write failure can never
-# replace the username while leaving the old token in place.
+# token first, then replay the idempotent username value with bounded,
+# jittered backoff. If it cannot be confirmed, restore the previous token so
+# the first half of the pair update is compensating-reversible (RES-01).
 printf '%s' "$acx_token" | put_secret "$ACX_OCIR_TOKEN_SECRET"
-unset acx_token
-if [ -n "$SET_USERNAME" ]; then
-    printf '%s' "$SET_USERNAME" | put_secret "$ACX_OCIR_USERNAME_SECRET"
+if [ "$SET_USERNAME" -eq 1 ]; then
+    username_written=0
+    username_attempt=1
+    while [ "$username_attempt" -le 3 ]; do
+        if printf '%s' "$new_username" | put_secret "$ACX_OCIR_USERNAME_SECRET"; then
+            username_written=1
+            break
+        fi
+        if [ "$username_attempt" -lt 3 ]; then
+            # Exponential 100/200ms base plus 0-100ms jitter (COST-12).
+            retry_base_ms=$((100 * (1 << (username_attempt - 1))))
+            retry_ms=$((retry_base_ms + RANDOM % 101))
+            printf 'username write attempt %s failed; retrying in %s.%03ss\n' \
+                "$username_attempt" "$((retry_ms / 1000))" "$((retry_ms % 1000))" >&2
+            sleep "$((retry_ms / 1000)).$(printf '%03d' "$((retry_ms % 1000))")"
+        fi
+        username_attempt=$((username_attempt + 1))
+    done
+    if [ "$username_written" -ne 1 ]; then
+        echo "username write could not be confirmed; restoring the previous token" >&2
+        rollback_rc=1
+        rollback_attempt=1
+        while [ "$rollback_attempt" -le 3 ]; do
+            if printf '%s' "$previous_token" | put_secret "$ACX_OCIR_TOKEN_SECRET"; then
+                rollback_rc=0
+                break
+            fi
+            if [ "$rollback_attempt" -lt 3 ]; then
+                retry_base_ms=$((100 * (1 << (rollback_attempt - 1))))
+                retry_ms=$((retry_base_ms + RANDOM % 101))
+                printf 'token rollback attempt %s failed; retrying in %s.%03ss\n' \
+                    "$rollback_attempt" "$((retry_ms / 1000))" "$((retry_ms % 1000))" >&2
+                sleep "$((retry_ms / 1000)).$(printf '%03d' "$((retry_ms % 1000))")"
+            fi
+            rollback_attempt=$((rollback_attempt + 1))
+        done
+        unset acx_token new_username previous_token proof_username
+        if [ "$rollback_rc" -ne 0 ]; then
+            echo "CRITICAL: previous OCIR token rollback failed; Vault credential pair needs immediate repair" >&2
+        else
+            echo "previous OCIR token restored; username update was not completed" >&2
+        fi
+        exit 1
+    fi
 fi
+unset acx_token new_username previous_token proof_username
 
 # Release It! 5.5: prove the stored credential through each consumer path while
 # the operator is still present, and distinguish SSH transport from a command

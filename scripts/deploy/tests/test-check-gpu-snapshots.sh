@@ -195,7 +195,7 @@ fi
 # consumes those values instead of growing another copy of either host path.
 assert_contains "env documents GPU state path" "ACX_GPU_STATE_PATH=/run/acx/gpu-state.json" "$prod_env"
 assert_contains "env documents GPU freshness" "ACX_GPU_STATE_STALE_SECONDS=180" "$prod_env"
-assert_contains "env documents load path" "ACX_DESCRIBE_LOAD_PATH=/run/acx/describe-load.json" "$prod_env"
+assert_contains "env documents load path" "ACX_DESCRIBE_LOAD_PATH=/run/acx-write/prod/describe-load.json" "$prod_env"
 assert_contains "env documents load refresh" "ACX_DESCRIBE_LOAD_REFRESH_SECONDS=45" "$prod_env"
 assert_contains "compose passes GPU state path" 'ACX_GPU_STATE_PATH=${ACX_GPU_STATE_PATH}' "$prod_compose"
 assert_contains "compose mounts snapshot directory read-only" '${ACX_GPU_SNAPSHOT_DIR}:/run/acx:ro' "$prod_compose"

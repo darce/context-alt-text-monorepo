@@ -159,18 +159,11 @@ def state_for_instances(
     if not instance_states:
         return GpuLifecycleState.DEGRADED
     mapped = {state_for_instance(state) for state in instance_states}
-    # DEGRADED is a per-cycle fail-closed verdict and must be recomputed rather
-    # than carried forward as hysteresis, or one failed cycle becomes absorbing.
-    if (
-        GpuLifecycleState.WARMING in mapped
-        and previous_state
-        in {
-            GpuLifecycleState.WARMING,
-            GpuLifecycleState.READY,
-        }
-    ):
-        mapped.remove(GpuLifecycleState.WARMING)
-        mapped.add(previous_state)
+    # READY and DEGRADED are per-cycle probe verdicts. OCI RUNNING alone proves
+    # only WARMING, so neither verdict may displace it on a later unprobed
+    # cycle. This gives DEGRADED an exit edge and prevents stale READY evidence
+    # from being republished as though a current readiness probe produced it.
+    del previous_state
     for state in (
         GpuLifecycleState.DEGRADED,
         GpuLifecycleState.READY,

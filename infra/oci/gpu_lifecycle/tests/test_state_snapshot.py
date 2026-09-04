@@ -10,6 +10,7 @@ import threading
 from pathlib import Path
 
 import pytest
+from infra.oci.gpu_lifecycle import state_snapshot as state_snapshot_module
 from infra.oci.gpu_lifecycle.controller import GpuInstance, GpuLifecycleController
 from infra.oci.gpu_lifecycle.probe import ProbeSample, ProbeStatus, WarmReadinessWait
 from infra.oci.gpu_lifecycle.reaper import (
@@ -226,6 +227,39 @@ def test_running_instance_does_not_preserve_previous_starting_state() -> None:
     ) is GpuLifecycleState.WARMING
 
 
+def test_degraded_does_not_latch_across_cycles() -> None:
+    assert state_for_instances(
+        ["RUNNING"],
+        previous_state=GpuLifecycleState.DEGRADED,
+    ) is GpuLifecycleState.WARMING
+
+
+def test_degraded_does_not_displace_ready_observation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mapped_states = {
+        "warming-observation": GpuLifecycleState.WARMING,
+        "ready-observation": GpuLifecycleState.READY,
+    }
+    monkeypatch.setattr(
+        state_snapshot_module,
+        "state_for_instance",
+        mapped_states.__getitem__,
+    )
+
+    assert state_for_instances(
+        list(mapped_states),
+        previous_state=GpuLifecycleState.DEGRADED,
+    ) is GpuLifecycleState.READY
+
+
+def test_ready_state_is_preserved_for_warming_observation() -> None:
+    assert state_for_instances(
+        ["RUNNING"],
+        previous_state=GpuLifecycleState.READY,
+    ) is GpuLifecycleState.READY
+
+
 def test_writer_emits_documented_metadata_and_tracks_state_change_time(
     tmp_path: Path,
 ) -> None:
@@ -265,6 +299,44 @@ def test_writer_emits_documented_metadata_and_tracks_state_change_time(
         "reason": "readiness_timeout",
         "since": 120.0,
     }
+
+
+def test_since_not_preserved_across_instance_change(tmp_path: Path) -> None:
+    path = tmp_path / "gpu-state.json"
+    assert write_gpu_state_snapshot(
+        GpuLifecycleState.READY,
+        instance_id="ocid1.instance-a",
+        now=100.0,
+        path=path,
+    )
+
+    assert write_gpu_state_snapshot(
+        GpuLifecycleState.READY,
+        instance_id="ocid1.instance-b",
+        now=110.0,
+        path=path,
+    )
+
+    assert json.loads(path.read_text())["since"] == 110.0
+
+
+def test_since_is_preserved_for_same_instance_and_state(tmp_path: Path) -> None:
+    path = tmp_path / "gpu-state.json"
+    assert write_gpu_state_snapshot(
+        GpuLifecycleState.READY,
+        instance_id="ocid1.instance-a",
+        now=100.0,
+        path=path,
+    )
+
+    assert write_gpu_state_snapshot(
+        GpuLifecycleState.READY,
+        instance_id="ocid1.instance-a",
+        now=110.0,
+        path=path,
+    )
+
+    assert json.loads(path.read_text())["since"] == 100.0
 
 
 def test_writer_requires_reason_for_degraded_snapshot(tmp_path: Path) -> None:

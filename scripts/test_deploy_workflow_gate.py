@@ -87,12 +87,19 @@ def test_gpu_lifecycle_dispatch_is_explicit_and_flag_gated() -> None:
     assert "recognition-service.sh gpu-lifecycle" in lifecycle_step["run"]
 
 
-def test_deploy_job_uses_pipefail_shell_default() -> None:
+def test_every_run_step_uses_pipefail_shell_default() -> None:
     workflow = _workflow()
+    expected_shell = "bash --noprofile --norc -eo pipefail {0}"
 
-    assert workflow["jobs"]["deploy"]["defaults"]["run"]["shell"] == (
-        "bash --noprofile --norc -eo pipefail {0}"
-    )
+    assert workflow["defaults"]["run"]["shell"] == expected_shell
+    for job_name, job in workflow["jobs"].items():
+        job_shell = job.get("defaults", {}).get("run", {}).get("shell", expected_shell)
+        for step in job.get("steps", []):
+            if "run" not in step:
+                continue
+            assert step.get("shell", job_shell) == expected_shell, (
+                f"{job_name}/{step.get('name', '<unnamed>')} does not use pipefail"
+            )
 
 
 def test_gpu_lifecycle_dry_run_does_not_mask_gh_variable_failures() -> None:
@@ -152,4 +159,30 @@ def test_prod_rollback_commands_are_copy_pasteable() -> None:
     assert "GOOD_SHA" in _rollback_prose(), (
         "the rollback section's prose never tells the operator to set GOOD_SHA "
         "before running the redeploy command"
+    )
+
+
+def test_gpu_lifecycle_rollback_is_fail_fast_and_shell_parseable() -> None:
+    runbook = RUNBOOK_PATH.read_text(encoding="utf-8")
+    marked = runbook.split("<!-- gpu-lifecycle-rollback:start -->", 1)[1].split(
+        "<!-- gpu-lifecycle-rollback:end -->", 1
+    )[0]
+    block = re.search(r"```bash\n(.*?)```", marked, flags=re.DOTALL)
+    assert block is not None
+    commands = block.group(1)
+
+    parsed = subprocess.run(
+        ["bash", "-n"], input=commands, text=True, capture_output=True, check=False
+    )
+    assert parsed.returncode == 0, parsed.stderr
+    assert "set -euo pipefail" in commands
+    assert commands.index("disable --now acx-gpu-start.timer") < commands.index(
+        "previous_release=$(readlink -f"
+    )
+    assert "systemctl start acx-gpu-reap.service" in commands
+    assert "--property=FragmentPath" in commands
+    assert "--property=DropInPaths" in commands
+    assert "cmp -s" in commands
+    assert commands.index("systemctl start acx-gpu-reap.service") < commands.index(
+        "enable --now acx-gpu-start.timer"
     )

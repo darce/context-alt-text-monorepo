@@ -212,6 +212,73 @@ re-introduce an angle-bracket placeholder here: the shell passes it through
 verbatim, `git rev-parse` rejects it, and the rollback fails at the worst
 possible moment. `scripts/test_deploy_workflow_gate.py` asserts this.
 
+### Roll back the GPU lifecycle release
+
+The installer preserves the previous content-addressed lifecycle generation at
+`/opt/acx-gpu/previous`. This rollback disables the start timer first, leaves
+the reap timer in place while restoring, then restores the previous Python
+release, environment, tmpfiles configuration, and exact units. It verifies the
+effective fragments and rejects drop-ins before re-arming the start timer
+([RLSE-08]). Run it from a machine with the same SSH access as the deploy:
+
+<!-- gpu-lifecycle-rollback:start -->
+```bash
+ssh -l "${OCI_USER:-ubuntu}" -- "${OCI_HOST:?set OCI_HOST}" \
+  'bash --noprofile --norc -s' <<'REMOTE'
+set -euo pipefail
+start_timer_armed=0
+cleanup_unverified_start_timer() {
+  status=$?
+  if [ "$status" -ne 0 ] && [ "$start_timer_armed" -eq 1 ]; then
+    sudo systemctl disable --now acx-gpu-start.timer || :
+  fi
+  exit "$status"
+}
+trap cleanup_unverified_start_timer EXIT
+
+sudo systemctl disable --now acx-gpu-start.timer
+previous_release=$(readlink -f /opt/acx-gpu/previous)
+test -d "$previous_release/infra/oci/gpu_lifecycle"
+test -d "$previous_release/systemd"
+
+sudo install -m 0644 "$previous_release/systemd/gpu-lifecycle.env" \
+  /etc/acx/gpu-lifecycle.env
+sudo install -m 0644 "$previous_release/systemd/acx-gpu.conf" \
+  /etc/tmpfiles.d/acx-gpu.conf
+for unit in acx-gpu-start.service acx-gpu-start.timer \
+  acx-gpu-reap.service acx-gpu-reap.timer; do
+  sudo install -m 0644 "$previous_release/systemd/$unit" \
+    "/etc/systemd/system/$unit"
+done
+ln -sfn "$previous_release" /opt/acx-gpu/.rollback-current
+sudo mv -Tf /opt/acx-gpu/.rollback-current /opt/acx-gpu/current
+sudo systemctl daemon-reload
+
+# Restore and synchronously prove the STOP-only backstop before start is armed.
+sudo systemctl enable --now acx-gpu-reap.timer
+sudo systemctl start acx-gpu-reap.service
+for unit in acx-gpu-start.service acx-gpu-start.timer \
+  acx-gpu-reap.service acx-gpu-reap.timer; do
+  fragment=$(systemctl show "$unit" --property=FragmentPath --value)
+  test "$fragment" = "/etc/systemd/system/$unit"
+  test -z "$(systemctl show "$unit" --property=DropInPaths --value)"
+  sudo cmp -s "$previous_release/systemd/$unit" "$fragment"
+done
+systemctl show acx-gpu-reap.service --property=ExecStart --value \
+  | grep -F -- '--max-lease-seconds'
+systemctl is-enabled --quiet acx-gpu-reap.timer
+systemctl is-active --quiet acx-gpu-reap.timer
+
+start_timer_armed=1
+sudo systemctl enable --now acx-gpu-start.timer
+systemctl is-enabled --quiet acx-gpu-start.timer
+systemctl is-active --quiet acx-gpu-start.timer
+start_timer_armed=0
+trap - EXIT
+REMOTE
+```
+<!-- gpu-lifecycle-rollback:end -->
+
 The same `promote`/`GIT_REF` levers are available by dispatching the workflow
 from an older commit.
 

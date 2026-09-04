@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import type { PendingMergeSuggestion } from '../../../../api/recognition/types';
 import {
   authoritativeMergeSurvivor,
+  isMeaningfulMergeLabel,
   resolveMergeSurvivor,
   resolveMergeSurvivorFromResponse,
 } from '../resolveMergeSurvivor';
@@ -18,6 +19,17 @@ const base = (overrides: Partial<PendingMergeSuggestion> = {}): PendingMergeSugg
   cluster_a_identity_count: 1,
   cluster_b_identity_count: 1,
   ...overrides,
+});
+
+describe('isMeaningfulMergeLabel (HARM-F5 / DATA-14)', () => {
+  it.each([
+    ['Cluster-9f2', false],
+    [' cluster-9f2', false],
+    ['cluster_9f2', false],
+    ['Ada Lovelace', true],
+  ])('%j is meaningful → %s', (label, expected) => {
+    expect(isMeaningfulMergeLabel(label)).toBe(expected);
+  });
 });
 
 describe('resolveMergeSurvivor', () => {
@@ -73,10 +85,9 @@ describe('resolveMergeSurvivor', () => {
     expect(aWinsById).toEqual({ survivorId: 'zzz', retiredId: 'aaa' });
   });
 
-  it('BR-69: matches the backend (no trim) — a whitespace-padded label is meaningful', () => {
-    // Backend `_is_meaningful_label` does not trim: '  cluster-auto' does NOT
-    // start with 'cluster-' (leading spaces), so it ranks as meaningful. The old
-    // trimming client replica disagreed and mis-picked the survivor.
+  it('HARM-F5: whitespace-padded reserved labels are not meaningful', () => {
+    // Backend `is_reserved_label_shape` trims + lowercases; padded `cluster-*`
+    // must not win the client-rank fallback.
     const result = resolveMergeSurvivor(
       base({
         cluster_a_id: 'aaa',
@@ -87,7 +98,8 @@ describe('resolveMergeSurvivor', () => {
         cluster_b_identity_count: 1,
       }),
     );
-    expect(result).toEqual({ survivorId: 'aaa', retiredId: 'bbb' });
+    expect(isMeaningfulMergeLabel('  cluster-auto')).toBe(false);
+    expect(result).toEqual({ survivorId: 'bbb', retiredId: 'aaa' });
   });
 
   it('treats null identity counts as 0', () => {

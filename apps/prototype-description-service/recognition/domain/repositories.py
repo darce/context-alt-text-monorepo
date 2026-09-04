@@ -647,6 +647,7 @@ class MergeSuggestionCreateData:
     refreshed_at: datetime | None = None
     expires_at: datetime | None = None
     source_job_id: str | None = None
+    survivor_cluster_id: str | None = None
 
 
 class MergeSuggestionRepository(Protocol):

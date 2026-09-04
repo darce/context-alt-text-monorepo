@@ -46,11 +46,17 @@ class DescribeRunRepository:
         media_ids: Sequence[int],
         created_by_user_id: int | None = None,
         images: Mapping[int, tuple[bytes, str | None]] | None = None,
+        recognition_enabled: bool = True,
     ) -> uuid.UUID:
         # PHP-04: dedup while preserving first-seen order so a caller cannot
         # trigger redundant VLM inference by repeating a media_id.
         media_ids = list(dict.fromkeys(media_ids))
-        request = DescribeRunRequest(tenant_id=tenant_id, media_ids=media_ids, max_items=self._max_items)
+        request = DescribeRunRequest(
+            tenant_id=tenant_id,
+            media_ids=media_ids,
+            max_items=self._max_items,
+            recognition_enabled=recognition_enabled,
+        )
         request.validate()
         images = images or {}
         run = DescribeRun(
@@ -64,6 +70,7 @@ class DescribeRunRepository:
             failed_items=0,
             skipped_items=0,
             created_by_user_id=created_by_user_id,
+            recognition_enabled=request.recognition_enabled,
         )
         run.items = [
             DescribeRunItem(

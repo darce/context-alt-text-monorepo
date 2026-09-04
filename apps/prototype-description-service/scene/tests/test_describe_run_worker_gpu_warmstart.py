@@ -116,7 +116,13 @@ def test_composed_gpu_warm_start_reaches_final_without_degrading(monkeypatch: py
         async with _database() as (session_factory, _engine):
             run_id = await _create_run(session_factory, [1])
 
-            async def describe_one(media_id: int, image_bytes: bytes | None, content_type: str | None):
+            async def describe_one(
+                media_id: int,
+                image_bytes: bytes | None,
+                content_type: str | None,
+                *,
+                naming_inputs=None,
+            ):
                 describe_health_counts.append(len(health_events))
                 assert image_bytes == b"rawbytes"
                 assert content_type == "image/png"
@@ -211,7 +217,13 @@ def test_run_enqueued_during_warmup_completes_without_retries_or_orphans(
             first_run_id = await _create_run(session_factory, [11])
             attempts = {11: 0, 22: 0}
 
-            async def describe_one(media_id: int, _image_bytes: bytes | None, _content_type: str | None):
+            async def describe_one(
+                media_id: int,
+                _image_bytes: bytes | None,
+                _content_type: str | None,
+                *,
+                naming_inputs=None,
+            ):
                 attempts[media_id] += 1
                 return _final_outcome(media_id)
 
@@ -293,7 +305,13 @@ def test_warmup_deadline_fails_run_without_hanging(monkeypatch: pytest.MonkeyPat
             run_id = await _create_run(session_factory, [99])
             describe_calls = 0
 
-            async def describe_one(_media_id: int, _image_bytes: bytes | None, _content_type: str | None):
+            async def describe_one(
+                _media_id: int,
+                _image_bytes: bytes | None,
+                _content_type: str | None,
+                *,
+                naming_inputs=None,
+            ):
                 nonlocal describe_calls
                 describe_calls += 1
                 return _final_outcome(99)

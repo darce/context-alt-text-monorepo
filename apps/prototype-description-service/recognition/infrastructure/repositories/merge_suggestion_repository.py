@@ -43,6 +43,10 @@ class SqlAlchemyMergeSuggestionRepository(MergeSuggestionRepository):
         if cluster_a_uuid == cluster_b_uuid:
             raise ValueError("cluster ids must be different")
 
+        survivor_uuid = _coerce_uuid(payload.survivor_cluster_id) if payload.survivor_cluster_id else None
+        if survivor_uuid is not None and survivor_uuid not in {cluster_a_uuid, cluster_b_uuid}:
+            raise ValueError("survivor_cluster_id must be one of the pair")
+
         cluster_a_uuid, cluster_b_uuid = _canonical_pair(cluster_a_uuid, cluster_b_uuid)
 
         existing_stmt = (
@@ -57,6 +61,7 @@ class SqlAlchemyMergeSuggestionRepository(MergeSuggestionRepository):
             if existing.resolution == SuggestionStatus.PENDING.value:
                 existing.similarity = _clamp_similarity(payload.similarity)
                 existing.confidence_score = payload.confidence_score
+                existing.survivor_cluster_id = survivor_uuid
                 if payload.refreshed_at:
                     existing.refreshed_at = payload.refreshed_at
                 if payload.expires_at is not None:
@@ -73,6 +78,7 @@ class SqlAlchemyMergeSuggestionRepository(MergeSuggestionRepository):
             tenant_id=tenant_uuid,
             cluster_a_id=cluster_a_uuid,
             cluster_b_id=cluster_b_uuid,
+            survivor_cluster_id=survivor_uuid,
             similarity=_clamp_similarity(payload.similarity),
             confidence_score=payload.confidence_score,
             resolution=SuggestionStatus.PENDING.value,
@@ -190,6 +196,7 @@ class SqlAlchemyMergeSuggestionRepository(MergeSuggestionRepository):
             resolved_at=model.resolved_at,
             refreshed_at=model.refreshed_at,
             source=model.source,
+            survivor_cluster_id=str(model.survivor_cluster_id) if model.survivor_cluster_id is not None else None,
         )
 
     def _build_bbox(self, identity: MediaIdentity | None) -> FaceBox | None:
@@ -232,6 +239,7 @@ class SqlAlchemyMergeSuggestionRepository(MergeSuggestionRepository):
             cluster_b_representative_media_id=details_b["representative_media_id"],
             cluster_b_representative_media_url=details_b["representative_media_url"],
             cluster_b_representative_bbox=details_b["representative_bbox"],
+            survivor_cluster_id=str(model.survivor_cluster_id) if model.survivor_cluster_id is not None else None,
         )
 
 

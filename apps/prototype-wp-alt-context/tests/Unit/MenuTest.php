@@ -44,7 +44,6 @@ class MenuTest extends TestCase
                 ['alt-context-workbench', 'Review Queue'],
                 ['alt-context-roster', 'People'],
                 ['alt-context-description-history', 'Description Runs'],
-                ['alt-context-retention', 'Data Retention'],
                 ['alt-context-settings', 'Settings'],
             ],
             $menuItems
@@ -76,7 +75,6 @@ class MenuTest extends TestCase
             'alt-context-workbench' => $workbenchPage,
             'alt-context-roster' => $rosterPage,
             'alt-context-description-history' => $descriptionHistoryPage,
-            'alt-context-retention' => $retentionPage,
             'alt-context-settings' => $settingsPage,
         ];
 
@@ -135,7 +133,11 @@ class MenuTest extends TestCase
         $this->assertTrue(defined(Menu::class . '::SUBMENU_IA'));
 
         $goals = array_column(Menu::SUBMENU_IA, 'goal');
-        $this->assertCount(6, Menu::SUBMENU_IA);
+        $this->assertCount(5, Menu::SUBMENU_IA);
+        $this->assertSame(
+            ['Overview', 'Review Queue', 'People', 'Description Runs', 'Settings'],
+            array_column(Menu::SUBMENU_IA, 'menu_title')
+        );
         $this->assertSame($goals, array_unique($goals), 'Each submenu must own exactly one user goal (NAV-05).');
 
         $byGoal = [];
@@ -147,8 +149,8 @@ class MenuTest extends TestCase
         $this->assertSame('alt-context-workbench', $byGoal['name_person']);
         $this->assertSame('alt-context-roster', $byGoal['manage_named_people']);
         $this->assertSame('alt-context-description-history', $byGoal['see_description_history']);
-        $this->assertSame('alt-context-retention', $byGoal['control_data_lifecycle']);
         $this->assertSame('alt-context-settings', $byGoal['configure_service']);
+        $this->assertArrayNotHasKey('control_data_lifecycle', $byGoal);
 
         $menu = new Menu(
             new DashboardPage(),
@@ -181,12 +183,19 @@ class MenuTest extends TestCase
 
     public function testRegistersRetentionSubmenu(): void
     {
-        $menu = new Menu(
+        $menu = new class (
             new DashboardPage(),
             new WorkbenchPage(),
             new RosterPage(),
             new SettingsPage()
-        );
+        ) extends Menu {
+            public bool $terminated = false;
+
+            protected function terminate(): void
+            {
+                $this->terminated = true;
+            }
+        };
 
         $menu->register_menu();
 
@@ -198,11 +207,19 @@ class MenuTest extends TestCase
             }
         }
 
-        $this->assertIsArray($retentionPage);
-        $this->assertSame('alt-context-dashboard', $retentionPage['parent_slug'] ?? null);
-        $this->assertSame('Data Retention', $retentionPage['menu_title'] ?? null);
-        $this->assertSame('manage_options', $retentionPage['capability'] ?? null);
-        $this->assertIsArray($retentionPage['callback'] ?? null);
-        $this->assertSame('render_retention_page', $retentionPage['callback'][1] ?? null);
+        $this->assertNull($retentionPage, 'Retention is a Settings section, not a top-level submenu (NAV-05).');
+
+        $_GET['page'] = 'alt-context-retention';
+        $menu->render_retention_page();
+        unset($_GET['page']);
+
+        $this->assertSame(
+            '/wp-admin/admin.php?page=alt-context-settings#/settings?section=retention',
+            $GLOBALS['__ac_safe_redirect']['location'] ?? null
+        );
+        $this->assertTrue(
+            $menu->terminated,
+            'Redirect must invoke the injectable terminator after wp_safe_redirect (TEST-15).'
+        );
     }
 }

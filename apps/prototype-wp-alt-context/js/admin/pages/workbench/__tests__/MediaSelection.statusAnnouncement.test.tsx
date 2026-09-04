@@ -158,10 +158,6 @@ vi.mock('../../../hooks/useRecognitionCooldown', () => ({
   }),
 }));
 
-vi.mock('../MediaAnalyzeCta', () => ({
-  MediaAnalyzeCta: () => null,
-}));
-
 vi.mock('../BulkDescribeReviewLink', () => ({
   BulkDescribeReviewLink: () => null,
 }));

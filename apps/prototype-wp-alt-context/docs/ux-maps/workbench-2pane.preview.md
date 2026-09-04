@@ -51,7 +51,7 @@
 │ Clusters      sort:[ unnamed first ▼ ]   │ │ AI: "Two panelists at a table" [use][edit]        │
 │ ▸①  42  0.91  «unnamed»        [select]│ │ long[ …expandable textarea… ]                     │
 │ ▸②  31  0.88  Ada Lovelace             │▐│ ───────────────────────────────────────────────   │
-│ ▸③  17  0.55  «low conf» ⚠            │ │ 2 selected · [ Describe selected ⟳ ] est.$0.03    │
+│ ▸③  17  0.55  «low conf» ⚠            │ │ 2 selected · [ Describe 2 selected ⟳ ] est.$0.03  │
 │                                          │ │                                                   │
 │ (z-left-host → workbench-control)        │ │ (z-right-host → workbench-library)                │
 └──────────────────────────────────────────┴─┴───────────────────────────────────────────────────┘
@@ -141,7 +141,7 @@ of name/merge/split is **DEP-4**.
 │   AI suggests: "Two panelists at a table with microphones"      [ use ] [ edit ]                │ (z-lib-ai-suggest · ai_review)
 │   long desc [ A wide shot of two panelists seated behind a table… ] (expandable)                │
 ├─────────────────────────────────────────────────────────────────────────────────────────────────┤
-│ 2 selected · [ Describe selected ⟳ ]  est. $0.03  · job: idle                                   │ (z-lib-actions · job)
+│ 2 selected · [ Describe 2 selected ⟳ ]  est. $0.03  · job: idle                                 │ (z-lib-actions · job)
 └─────────────────────────────────────────────────────────────────────────────────────────────────┘
   columns are truncated + hover-expand; alt-text and long-description are SEPARATE columns so
   a scanning operator sees at a glance which rows still need each field (needs-alt ≠ needs-desc).
@@ -150,6 +150,46 @@ of name/merge/split is **DEP-4**.
 ```
 
 ---
+
+### 3b. Footer job zone — the three idle states + identifying (`z-lib-actions`)
+
+```
+┌─ idle · ON ──────────────────────────────────────────────────────────────────────────────────┐
+│ recognition ON (Settings default)                                                            │
+│   2 selected · [ Describe 2 selected ⟳ ]  est. $0.03  · job: idle                            │
+│   ▸ names people it knows while describing                        (aria-describedby, INT-04) │
+└──────────────────────────────────────────────────────────────────────────────────────────────┘
+
+┌─ idle · OFF ─────────────────────────────────────────────────────────────────────────────────┐
+│ recognition OFF                                                                              │
+│   2 selected · [ Describe 2 selected ⟳ ]  est. $0.03  · job: idle                            │
+│   ▸ descriptions only — turn people naming on in Settings         (aria-describedby)         │
+└──────────────────────────────────────────────────────────────────────────────────────────────┘
+
+┌─ idle · unknown ─────────────────────────────────────────────────────────────────────────────┐
+│ settings not loaded yet (unknown)                                                            │
+│   2 selected · [ Describe 2 selected ⟳ ]  aria-disabled="true" · focusable                   │
+│   ▸ checking recognition setting…            never starts describe on a guessed policy (F3)  │
+└──────────────────────────────────────────────────────────────────────────────────────────────┘
+
+┌─ identifying ────────────────────────────────────────────────────────────────────────────────┐
+│ recognition ON, scan running before describe                                                 │
+│   2 selected · [ Identifying people… ⟳ ]  aria-disabled="true" · focusable · [ Cancel ]      │
+│   ▸ never HTML-disabled (same invariant as offline) — RLSE-04, A11Y-21; Cancel aborts the run│
+└──────────────────────────────────────────────────────────────────────────────────────────────┘
+
+┌─ idle · zero selection ──────────────────────────────────────────────────────────────────────┐
+│ zero selection (rg-003: the primary stays reachable from the zero state)                     │
+│   0 selected · [ Describe selected ]  aria-disabled="true" · focusable · click is a no-op    │
+└──────────────────────────────────────────────────────────────────────────────────────────────┘
+```
+
+One footer primary in every state (NAV-01, INT-05): recognition is a **global Settings toggle**
+disclosed under the button, never a second competing CTA (COG-03). The identifying and unknown
+states are `aria-disabled` only — HTML `disabled` would drop the sole job entry out of tab order.
+
+---
+
 
 ## 4. Coordinated selection — day-one linked-highlight · **DEP-3** filter
 

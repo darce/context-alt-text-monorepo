@@ -839,6 +839,12 @@ def ensure_tables(op) -> None:
             sa.ForeignKey("identity_clusters.id", ondelete="CASCADE"),
             nullable=False,
         ),
+        sa.Column(
+            "survivor_cluster_id",
+            sa.dialects.postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("identity_clusters.id", ondelete="SET NULL"),
+            nullable=True,
+        ),
         sa.Column("similarity", sa.Float(), nullable=False),
         sa.Column("confidence_score", sa.Float(), nullable=True),
         sa.Column("created_at", sa.TIMESTAMP(timezone=True), server_default=sa.func.now(), nullable=False),
@@ -871,6 +877,11 @@ def ensure_tables(op) -> None:
             name="cluster_merge_valid_resolution",
         ),
         sa.CheckConstraint("cluster_a_id < cluster_b_id", name="cluster_merge_canonical_order"),
+        sa.CheckConstraint(
+            "survivor_cluster_id IS NULL OR survivor_cluster_id = cluster_a_id"
+            " OR survivor_cluster_id = cluster_b_id",
+            name="cluster_merge_survivor_in_pair",
+        ),
         sa.UniqueConstraint(
             "cluster_a_id",
             "cluster_b_id",
@@ -1482,6 +1493,7 @@ def ensure_tables(op) -> None:
         sa.Column("failed_items", sa.Integer(), nullable=False, server_default=sa.text("0")),
         sa.Column("skipped_items", sa.Integer(), nullable=False, server_default=sa.text("0")),
         sa.Column("cancel_requested", sa.Boolean(), nullable=False, server_default=sa.text("false")),
+        sa.Column("recognition_enabled", sa.Boolean(), nullable=False, server_default=sa.text("true")),
         sa.Column("error_message", sa.Text(), nullable=True),
         sa.Column("created_at", sa.TIMESTAMP(timezone=True), server_default=sa.func.now(), nullable=False),
         sa.Column("started_at", sa.TIMESTAMP(timezone=True), nullable=True),
@@ -1492,7 +1504,7 @@ def ensure_tables(op) -> None:
             name="valid_describe_run_status",
         ),
         sa.CheckConstraint(
-            "phase IN ('queued', 'describing', 'complete', 'failed', 'cancelled')",
+            "phase IN ('queued', 'warming', 'describing', 'complete', 'failed', 'cancelled')",
             name="valid_describe_run_phase",
         ),
         sa.CheckConstraint("run_kind IN ('bulk', 'single')", name="valid_describe_run_kind"),

@@ -363,8 +363,15 @@ def test_check_gpu_snapshots_shell_suite() -> None:
 
     output = result.stdout + result.stderr
     assert result.returncode == 0, f"{suite} exited with {result.returncode}\n{output}"
-    assert "PASS: each environment directory must be API-writable" in output
-    assert output.rstrip().endswith("ALL PASS")
+    # WBUX6-W4-F-03: under root this case is a documented `skip_covered` (uid 0
+    # bypasses mode 0555), so pinning only the PASS form makes this guard
+    # unrunnable on the privileged CI job. Accept either, never absence.
+    case = "each environment directory must be API-writable"
+    assert f"PASS: {case}" in output or f"SKIP: {case}" in output, output
+    # WBUX6-L5-NEW-04: a skip must not land under an unqualified "ALL PASS", but
+    # the qualified summary is still a clean run.
+    tail = output.rstrip()
+    assert tail.endswith("ALL PASS") or "PASSED WITH" in tail, output
 
 
 def test_oci_readme_gpu_lifecycle_flags_exist_in_the_cli() -> None:
@@ -395,3 +402,35 @@ def test_oci_readme_gpu_lifecycle_flags_exist_in_the_cli() -> None:
     assert documented, "no gpu_lifecycle invocation found in infra/oci/README.md"
     unknown = sorted(documented - known_flags)
     assert not unknown, f"infra/oci/README.md documents flags the CLI does not accept: {unknown}"
+
+
+def test_writability_probe_assumes_the_container_gid_not_its_uid() -> None:
+    """WBUX6-W4-R-03: pin the gid invariant on the harness that actually runs.
+
+    The `setpriv --regid="$reader_gid"` probe is the only assertion that can
+    observe WBUX6-MRG-01 (container uid 10001 with a drifting gid matches
+    neither owner nor group on `root:10001 0775` and falls through to `other`).
+    Its behavioural coverage lives in `test-check-gpu-snapshots.sh`, gated
+    behind `id -u == 0 && command -v setpriv` -- so on macOS and on any
+    unprivileged runner, reverting `--regid` to `"$reader_uid"` stays green.
+    This static guard needs no privileges and therefore runs everywhere the
+    suite runs: a claimed fault-tolerance mechanism must be exercised before
+    the claim ships [RES-16 lexicons/engineering.md:127], and a gate whose
+    strongest case can silently not run is not a gate [OBS-11 :481].
+    """
+    checker = CHECKER.read_text(encoding="utf-8")
+
+    assert "resolve_reader_gid()" in checker, (
+        "check-gpu-snapshots.sh no longer resolves the reader gid from evidence; "
+        "the writability probe is back to guessing the container identity (WBUX6-MRG-01)"
+    )
+    assert '--regid="$reader_gid"' in checker, (
+        "the setpriv writability probe must drop to the resolved container GID, not the uid; "
+        '--regid="$reader_uid" makes the probe pass for an identity the container never assumes'
+    )
+    # The rationale comment quotes the fail-open form verbatim, so only executable
+    # lines may be searched for its return.
+    code = [line for line in checker.splitlines() if not line.lstrip().startswith("#")]
+    assert not [line for line in code if '--regid="$reader_uid"' in line], (
+        'the fail-open --regid="$reader_uid" probe has been reintroduced (WBUX6-MRG-01)'
+    )

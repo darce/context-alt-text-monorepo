@@ -195,7 +195,7 @@ def test_worker_completes_items_persists_drafts_and_clears_bytes():
             )
             await s.commit()
 
-        async def describe_one(media_id, image_bytes, content_type):
+        async def describe_one(media_id, image_bytes, content_type, *, naming_inputs=None):
             assert image_bytes == b"rawbytes"
             assert content_type == "image/png"
             return DescribeItemOutcome(
@@ -241,7 +241,7 @@ def test_worker_marks_failed_item_and_continues_to_completion():
             run_id = await DescribeRunRepository(s).create_run(tenant_id=TENANT_ID, media_ids=[1, 2, 3])
             await s.commit()
 
-        async def describe_one(media_id, image_bytes, content_type):
+        async def describe_one(media_id, image_bytes, content_type, *, naming_inputs=None):
             if media_id == 2:
                 raise TimeoutError("simulated timeout")
             return DescribeItemOutcome(alt_text_draft=f"alt {media_id}")
@@ -280,7 +280,7 @@ def test_worker_timeout_marks_item_failed():
             run_id = await DescribeRunRepository(s).create_run(tenant_id=TENANT_ID, media_ids=[5])
             await s.commit()
 
-        async def describe_one(media_id, image_bytes, content_type):
+        async def describe_one(media_id, image_bytes, content_type, *, naming_inputs=None):
             await asyncio.sleep(0.05)
             return DescribeItemOutcome()
 
@@ -311,7 +311,7 @@ def test_worker_cancel_before_run_skips_all_items():
             assert await repo.request_cancel(tenant_id=TENANT_ID, run_id=run_id)
             await s.commit()
 
-        async def describe_one(media_id, image_bytes, content_type):
+        async def describe_one(media_id, image_bytes, content_type, *, naming_inputs=None):
             return DescribeItemOutcome()
 
         await run_describe_job(
@@ -360,7 +360,7 @@ def test_worker_cancel_mid_run_ends_cancelled_not_completed(monkeypatch):
 
         monkeypatch.setattr(DescribeRunRepository, "get_run", patched_get_run)
 
-        async def describe_one(media_id, image_bytes, content_type):
+        async def describe_one(media_id, image_bytes, content_type, *, naming_inputs=None):
             if media_id == 1:
                 state["cancel"] = True
             return DescribeItemOutcome(alt_text_draft=f"alt {media_id}")
@@ -447,7 +447,7 @@ def test_worker_sets_tenant_context_on_its_session(monkeypatch):
             run_id = await DescribeRunRepository(s).create_run(tenant_id=TENANT_ID, media_ids=[1])
             await s.commit()
 
-        async def describe_one(media_id, image_bytes, content_type):
+        async def describe_one(media_id, image_bytes, content_type, *, naming_inputs=None):
             return DescribeItemOutcome(alt_text_draft="x")
 
         await run_describe_job(
@@ -478,7 +478,7 @@ def test_worker_fatal_error_marks_run_failed(monkeypatch):
 
         monkeypatch.setattr(DescribeRunRepository, "mark_item", boom)
 
-        async def describe_one(media_id, image_bytes, content_type):
+        async def describe_one(media_id, image_bytes, content_type, *, naming_inputs=None):
             return DescribeItemOutcome(alt_text_draft="x")
 
         await run_describe_job(
@@ -697,7 +697,7 @@ def test_gpu_worker_waits_for_readiness_then_retries_transient_item(monkeypatch)
 
         calls = 0
 
-        async def describe_one(media_id, image_bytes, content_type):
+        async def describe_one(media_id, image_bytes, content_type, *, naming_inputs=None):
             nonlocal calls
             calls += 1
             events.append(f"describe-{calls}")
@@ -757,7 +757,7 @@ def test_gpu_worker_opens_run_local_breaker_after_exhausted_retries(monkeypatch)
 
         calls: list[int] = []
 
-        async def describe_one(media_id, image_bytes, content_type):
+        async def describe_one(media_id, image_bytes, content_type, *, naming_inputs=None):
             calls.append(media_id)
             raise httpx.ConnectError("GPU disappeared")
 
@@ -794,7 +794,7 @@ def test_gpu_item_retry_is_bounded_and_permanent_errors_are_not_retried(monkeypa
     async def body():
         transient_calls = 0
 
-        async def transient(*_):
+        async def transient(*_, **__):
             nonlocal transient_calls
             transient_calls += 1
             raise httpx.ReadTimeout("temporary")
@@ -812,7 +812,7 @@ def test_gpu_item_retry_is_bounded_and_permanent_errors_are_not_retried(monkeypa
 
         permanent_calls = 0
 
-        async def permanent(*_):
+        async def permanent(*_, **__):
             nonlocal permanent_calls
             permanent_calls += 1
             raise ValueError("invalid image")
@@ -858,7 +858,7 @@ def test_seeded_worker_performs_exactly_one_attempt_on_transient_error():
         calls = 0
         request = httpx.Request("POST", "http://gpu.internal/v1/chat/completions")
 
-        async def describe_one(media_id, image_bytes, content_type):
+        async def describe_one(media_id, image_bytes, content_type, *, naming_inputs=None):
             nonlocal calls
             calls += 1
             raise httpx.ConnectError("transient endpoint fault", request=request)
@@ -898,7 +898,7 @@ def test_warmup_timeout_marks_run_failed_and_reclaims_item_bytes(monkeypatch):
             )
             await s.commit()
 
-        async def describe_one(media_id, image_bytes, content_type):
+        async def describe_one(media_id, image_bytes, content_type, *, naming_inputs=None):
             raise AssertionError("describe must not run when warmup never succeeds")
 
         policy = wmod.GpuRunPolicy(

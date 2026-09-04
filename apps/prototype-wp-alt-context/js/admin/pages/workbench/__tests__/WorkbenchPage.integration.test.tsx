@@ -65,6 +65,10 @@ vi.mock('../../../hooks/useRecognitionHooks', async (importOriginal) => {
   };
 });
 
+vi.mock('../../../api/settingsApi', () => ({
+  fetchSettings: vi.fn(() => Promise.resolve({ recognition_enabled: true })),
+}));
+
 vi.mock('../../../api/recognition', async () => {
   const actual = await vi.importActual<typeof import('../../../api/recognition')>('../../../api/recognition');
   return {
@@ -303,9 +307,10 @@ describe('WorkbenchPage (integration-lite)', () => {
     const rowCheckbox = await screen.findByRole('checkbox', { name: /Select media item Photo Name/i });
     await user.click(rowCheckbox);
 
-    const scanButton = screen.getByRole('button', { name: /Analyze selected media/i });
-    await waitFor(() => expect(scanButton).toBeEnabled());
-    await user.click(scanButton);
+    await screen.findByText(/Identifies people first \(AI\)/);
+    const describeButton = screen.getByRole('button', { name: /Describe 1 selected/i });
+    await waitFor(() => expect(describeButton).toBeEnabled());
+    await user.click(describeButton);
 
     await waitFor(() => {
       expect(recognitionApi.scanFacesBatched).toHaveBeenCalledWith({ mediaIds: [11] });
@@ -808,6 +813,7 @@ describe('WorkbenchPage (integration-lite)', () => {
       identities_by_media: { '11': [] },
     });
     client.setQueryData(queryKeys.sync.health(), syncHealthEnvelope('open'));
+    client.setQueryData(['settings'], { recognition_enabled: true });
 
     onlineManager.setOnline(false);
     renderWithClient(client);
@@ -818,19 +824,18 @@ describe('WorkbenchPage (integration-lite)', () => {
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
 
     // Banner lives in App.tsx (unit-tested with aria-live); this page-level test
-    // proves the gated analyze CTA reacts to the sync-health envelope flip.
+    // proves the gated Describe CTA reacts to the sync-health envelope flip.
     const rowCheckbox = await screen.findByRole('checkbox', { name: /Select media item Photo Name/i });
     await user.click(rowCheckbox);
 
-    const scanButton = await screen.findByRole('button', { name: /Analyze selected media/i });
+    const describeButton = await screen.findByRole('button', { name: /Describe 1 selected/i });
     // Selection present so the gate is from the breaker, not zero-selection.
-    expect(await screen.findByText(/Ready to analyze 1 media item/i)).toBeInTheDocument();
     await waitFor(() => {
       // §7 offline row: aria-disabled + reason, NEVER HTML disabled (still focusable).
-      expect(scanButton).not.toBeDisabled();
-      expect(scanButton).toHaveAttribute('aria-disabled', 'true');
-      expect(scanButton).toHaveAttribute('title', 'Unavailable while the recognition service is offline');
-      expect(scanButton).toHaveAttribute('aria-describedby');
+      expect(describeButton).not.toBeDisabled();
+      expect(describeButton).toHaveAttribute('aria-disabled', 'true');
+      expect(describeButton).toHaveAttribute('title', 'Unavailable while the recognition service is offline');
+      expect(describeButton).toHaveAttribute('aria-describedby');
     });
 
     // Reconnect must trigger a real health request without waiting for the next
@@ -847,8 +852,8 @@ describe('WorkbenchPage (integration-lite)', () => {
 
     expect(recognitionApi.fetchSyncHealth).toHaveBeenCalled();
 
-    expect(scanButton).toBeEnabled();
-    expect(scanButton).not.toHaveAttribute('title');
-    expect(scanButton).not.toHaveAttribute('aria-disabled');
+    expect(describeButton).toBeEnabled();
+    expect(describeButton).not.toHaveAttribute('title');
+    expect(describeButton).not.toHaveAttribute('aria-disabled');
   });
 });

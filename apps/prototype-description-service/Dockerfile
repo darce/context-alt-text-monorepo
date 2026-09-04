@@ -127,7 +127,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 #   /var/cache/acx/hf_modules — private HF trust_remote_code module scratch.
 #     Compose mounts a per-container noexec tmpfs here; image seed for bare runs.
 #     HF_MODULES_CACHE MUST be set as ENV (transformers reads it at import time).
-RUN groupadd -r acx && useradd -r -g acx -u 10001 acx \
+#
+# The gid is pinned as deliberately as the uid (WBUX6-MRG-01). `groupadd -r acx`
+# without `-g` lets the base image hand out whatever system gid is free —
+# observed `uid=10001(acx) gid=999(acx)` on python:3.12-slim. The GPU host
+# provisions the describe-load publish directory `root:10001 0775`
+# (scripts/deploy/gpu-lifecycle-install.sh), which grants write access through
+# the *group*, so a drifting gid makes the container match neither owner nor
+# group: it falls through to `other` (r-x) and the describe-load publish fails
+# with EACCES. Owning the directory as 10001:10001 instead would also work but
+# would hand the container chmod/chown/rename rights over the host's directory;
+# group-write with a pinned gid is the least-privilege half of that pair.
+RUN groupadd -r -g 10001 acx && useradd -r -g acx -u 10001 acx \
     && mkdir -p /data/cache /var/lib/acx-blobs /var/cache/acx/hf_modules /var/log/acx \
     && chown acx:acx /data/cache /var/lib/acx-blobs /var/cache/acx/hf_modules /var/log/acx
 ENV HF_MODULES_CACHE=/var/cache/acx/hf_modules

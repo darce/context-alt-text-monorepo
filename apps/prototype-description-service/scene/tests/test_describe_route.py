@@ -431,12 +431,12 @@ class _GroundedAdapter:
 def test_naming_preview_failure_degrades_to_generic_with_merge_error(monkeypatch):
     # S3-BR-02: a mid-preview exception must never break the core describe
     # response — both drafts still return, reason=merge_error.
-    from scene.interface_adapters.http.routers import describe as describe_module
+    from scene.application import naming_preview_service as naming_preview_module
 
     async def boom(*args, **kwargs):
         raise RuntimeError("db exploded mid-preview")
 
-    monkeypatch.setattr(describe_module, "load_confirmed_faces", boom)
+    monkeypatch.setattr(naming_preview_module, "load_confirmed_faces", boom)
     with _client() as client:
         r = _post_png(client, TENANT_ID)
         assert r.status_code == 200, r.text

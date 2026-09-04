@@ -16,7 +16,13 @@ from recognition.interface_adapters.http.deps import get_optional_session, requi
 from recognition.interface_adapters.http.deps.demo_quota import maybe_consume_demo_quota
 from scene.application.describe_load import dump_load_snapshot
 from scene.application.describe_run_repository import DescribeRunRepository
-from scene.application.describe_run_worker import DescribeItemOutcome, gpu_run_policy, run_describe_job
+from scene.application.describe_run_worker import (
+    DescribeItemOutcome,
+    FusionNamingInputs,
+    MissingNamingSnapshotError,
+    gpu_run_policy,
+    run_describe_job,
+)
 from scene.application.description_repository import ImageDescriptionRepository
 from scene.application.gpu_state import read_gpu_state
 from scene.application.visual_facts_service import VisualFactsService
@@ -56,6 +62,7 @@ def _run_response(run) -> DescribeRunResponse:
         cancel_requested=run.cancel_requested,
         eta_seconds=compute_eta_seconds(run),
         gpu_state=read_gpu_state(),
+        recognition_enabled=bool(run.recognition_enabled),
     )
 
 
@@ -101,7 +108,12 @@ async def _prepare_repo(*, session, auth, tenant_id: uuid.UUID) -> DescribeRunRe
 
 
 def _build_describe_one(
-    *, session_factory: async_sessionmaker[AsyncSession], tenant_id: uuid.UUID, adapter=None, settings=None
+    *,
+    session_factory: async_sessionmaker[AsyncSession],
+    tenant_id: uuid.UUID,
+    adapter=None,
+    settings=None,
+    recognition_enabled: bool = True,
 ):
     """Real per-item describe adapter: load bytes -> VisualFactsService -> outcome.
 
@@ -113,11 +125,28 @@ def _build_describe_one(
     settings = settings or DescriptionSettings()
     timeout = _generation_timeout_seconds(settings, adapter)
 
-    async def describe_one(media_id: int, image_bytes: bytes | None, content_type: str | None) -> DescribeItemOutcome:
+    async def describe_one(
+        media_id: int,
+        image_bytes: bytes | None,
+        content_type: str | None,
+        *,
+        naming_inputs: FusionNamingInputs | None = None,
+    ) -> DescribeItemOutcome:
         if not image_bytes:
             raise ValueError(f"no image bytes stored for media_id={media_id}")
+        if naming_inputs is None and recognition_enabled:
+            raise MissingNamingSnapshotError(
+                f"recognition-enabled bulk describe requires preloaded naming_inputs for media_id={media_id}"
+            )
         async with session_factory() as svc_session:
             await set_tenant_context(svc_session, tenant_id)
+            confirmed_faces: list = []
+            naming_policy = None
+            if naming_inputs is not None:
+                confirmed_faces, naming_policy = naming_inputs
+                # DATA-19: face elements + naming_policy are the shared snapshot;
+                # copy the list so Stage-2 mutation cannot alias Stage-3's sequence.
+                confirmed_faces = list(confirmed_faces or [])
             service = VisualFactsService(
                 adapter=adapter,
                 repository=ImageDescriptionRepository(svc_session),
@@ -129,7 +158,18 @@ def _build_describe_one(
                 tenant_id=tenant_id,
                 media_id=media_id,
                 image_bytes=image_bytes,
+                # No context to drop: the /describe/run multipart form defines
+                # only tenant_id, media_ids, recognition_enabled and
+                # image_<media_id> -- unlike /describe, which carries an
+                # envelope context/context_pack. Identity context does reach
+                # here, as naming_inputs. Passing None rather than a synthesized
+                # stand-in keeps context_hash the empty-context digest, so a
+                # bulk row can only share a cache row with a genuinely
+                # context-free describe (rg-015: never invent contract
+                # metadata). Add a form field before threading anything here.
                 context=None,
+                confirmed_faces=confirmed_faces,
+                naming_policy=naming_policy,
             )
             await svc_session.commit()
         provenance = {
@@ -146,6 +186,8 @@ def _build_describe_one(
             alt_text_draft=response.alt_text_draft,
             caption=response.visual_facts.caption,
             provenance=provenance,
+            phrase_boxes=tuple(service.last_phrase_boxes or ()),
+            attachments=tuple(service.last_attachments or ()),
             tier=response.tier,
         )
 
@@ -166,6 +208,24 @@ def _parse_media_ids(raw: object) -> list[int]:
     if any(m <= 0 for m in parsed):
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "media_ids must be positive integers")
     return parsed
+
+
+def _parse_recognition_enabled(raw: object) -> bool:
+    """Multipart boolean; omitted → True so today's naming-on path stays the default."""
+    if raw is None:
+        return True
+    if isinstance(raw, bool):
+        return raw
+    if not isinstance(raw, str):
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT, "form field 'recognition_enabled' must be a boolean"
+        )
+    value = raw.strip().lower()
+    if value == "true":
+        return True
+    if value == "false":
+        return False
+    raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "form field 'recognition_enabled' must be a boolean")
 
 
 async def _read_image_parts(form, settings: DescriptionSettings) -> Mapping[int, tuple[bytes, str | None]]:
@@ -230,6 +290,7 @@ async def create_describe_run(
         raise HTTPException(status.HTTP_403_FORBIDDEN, "tenant mismatch between auth and request envelope")
 
     media_ids = _parse_media_ids(form.get("media_ids"))
+    recognition_enabled = _parse_recognition_enabled(form.get("recognition_enabled"))
     settings = DescriptionSettings()
     images = await _read_image_parts(form, settings)
     missing = [m for m in media_ids if m not in images]
@@ -262,6 +323,7 @@ async def create_describe_run(
             media_ids=media_ids,
             created_by_user_id=getattr(auth, "user_id", None),
             images=images,
+            recognition_enabled=recognition_enabled,
         )
     except ValueError as exc:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)) from exc
@@ -282,6 +344,7 @@ async def create_describe_run(
             tenant_id=tenant_id,
             adapter=adapter,
             settings=settings,
+            recognition_enabled=recognition_enabled,
         ),
         timeout_seconds=_generation_timeout_seconds(settings, adapter),
         gpu_policy=run_gpu_policy,

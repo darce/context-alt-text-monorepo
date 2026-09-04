@@ -159,13 +159,14 @@ def state_for_instances(
     if not instance_states:
         return GpuLifecycleState.DEGRADED
     mapped = {state_for_instance(state) for state in instance_states}
+    # DEGRADED is a per-cycle fail-closed verdict and must be recomputed rather
+    # than carried forward as hysteresis, or one failed cycle becomes absorbing.
     if (
         GpuLifecycleState.WARMING in mapped
         and previous_state
         in {
             GpuLifecycleState.WARMING,
             GpuLifecycleState.READY,
-            GpuLifecycleState.DEGRADED,
         }
     ):
         mapped.remove(GpuLifecycleState.WARMING)
@@ -220,7 +221,12 @@ def write_gpu_state_snapshot(
             previous = json.loads(target.read_text(encoding="utf-8"))
         except (OSError, UnicodeDecodeError, json.JSONDecodeError):
             previous = None
-        if isinstance(previous, dict) and previous.get("state") == published_state.value:
+        if (
+            isinstance(previous, dict)
+            and instance_id is not None
+            and previous.get("instance_id") == instance_id
+            and previous.get("state") == published_state.value
+        ):
             previous_since = previous.get("since")
             if (
                 not isinstance(previous_since, bool)

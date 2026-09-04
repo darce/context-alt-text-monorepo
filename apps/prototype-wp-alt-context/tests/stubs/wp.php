@@ -61,6 +61,8 @@ if (!class_exists('WP_REST_Request')) {
         private $params;
         /** @var array<string,mixed> */
         private $bodyParams;
+        /** @var array<string,string> */
+        private $headers;
 
         /**
          * @param string|array<string,mixed> $method HTTP method or params array (backward compatible)
@@ -80,12 +82,24 @@ if (!class_exists('WP_REST_Request')) {
                 $this->route = '';
                 $this->params = $method;
                 $this->bodyParams = [];
+                $this->headers = [];
             } else {
                 $this->method = $method;
                 $this->route = $route;
                 $this->params = $params;
                 $this->bodyParams = [];
+                $this->headers = [];
             }
+        }
+
+        public function set_header(string $key, string $value): void
+        {
+            $this->headers[strtolower($key)] = $value;
+        }
+
+        public function get_header(string $key): string
+        {
+            return $this->headers[strtolower($key)] ?? '';
         }
 
         public function get_param(string $key)
@@ -421,6 +435,13 @@ if (!function_exists('add_action')) {
         ];
 
         return true;
+    }
+}
+
+if (!function_exists('add_shortcode')) {
+    function add_shortcode($tag, $callback): void
+    {
+        $GLOBALS['__ac_shortcodes'][(string) $tag] = $callback;
     }
 }
 
@@ -802,6 +823,25 @@ if (!function_exists('wp_get_attachment_image_src')) {
         $height = is_array($meta) ? (int) ($meta['height'] ?? 0) : 0;
 
         return [$url, $width, $height];
+    }
+}
+
+if (!function_exists('wp_get_attachment_image_url')) {
+    function wp_get_attachment_image_url($attachment_id, $size = 'thumbnail', $icon = false)
+    {
+        $source = wp_get_attachment_image_src($attachment_id, $size, $icon);
+        return is_array($source) ? (string) ($source[0] ?? '') : false;
+    }
+}
+
+if (!function_exists('get_the_title')) {
+    function get_the_title($post = 0): string
+    {
+        $id = is_object($post) ? (int) ($post->ID ?? 0) : (int) $post;
+        if (isset($GLOBALS['__ac_posts'][$id]) && is_object($GLOBALS['__ac_posts'][$id])) {
+            return (string) ($GLOBALS['__ac_posts'][$id]->post_title ?? '');
+        }
+        return (string) ($GLOBALS['__ac_attachment_titles'][$id] ?? '');
     }
 }
 

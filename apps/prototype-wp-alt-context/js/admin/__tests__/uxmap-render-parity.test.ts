@@ -41,6 +41,19 @@ const OWNED_MAPS = [
  */
 const REQUIRED_OWNED_MAPS = ['dashboard', 'describe-gpu-tier', 'workbench-2pane'] as const;
 
+/**
+ * Maps that exist on disk but cannot be enrolled in OWNED_MAPS yet, each with the reason and
+ * the owner who must promote it. This is the named-exemption form of the ownership ratchet,
+ * not an escape hatch: the on-disk gate below still fails for any map that is neither owned
+ * nor listed here, a listed map whose file is gone fails, and a listed map that has since
+ * become schema-conformant fails until it is promoted into OWNED_MAPS. So the list can only
+ * shrink, never silently absorb the next unenrolled SSOT.
+ */
+const QUARANTINED_MAPS: Record<string, string> = {
+  'febt-1-job-error-states':
+    'Arrived on main with the FEBT-1 merge. Its screens carry domain state names (pending/running/stalled/completed_with_errors/...) and an `action` zone role, none of which exist in the canonical MAP_STATES/ZONE_ROLES vocabularies, so it fails the UxMap schema in 48 places and two screens have no route. Enrolling it verbatim would assert only its own non-conformance. Owner: FEBT-1 — re-author the states against the canonical enums, then move it into OWNED_MAPS.',
+};
+
 /** Operator-facing labels renamed or deleted from the JSON; must not remain in the md. */
 const RETIRED_LABELS = [
   'Person identity header',
@@ -469,8 +482,19 @@ describe('ux-map SSOT schema conformance (owned maps)', () => {
       .sort();
     expect(
       onDisk,
-      'a *.uxmap.json exists that OWNED_MAPS does not gate (or OWNED_MAPS names a map that is gone)',
-    ).toEqual([...OWNED_MAPS].sort());
+      'a *.uxmap.json exists that neither OWNED_MAPS gates nor QUARANTINED_MAPS names (or one of those lists names a map that is gone)',
+    ).toEqual([...OWNED_MAPS, ...Object.keys(QUARANTINED_MAPS)].sort());
+  });
+
+  it('keeps every quarantine entry justified, non-owned, and still non-conformant', () => {
+    for (const [mapRef, reason] of Object.entries(QUARANTINED_MAPS)) {
+      expect(OWNED_MAPS as readonly string[], `${mapRef} is both owned and quarantined`).not.toContain(mapRef);
+      expect(reason.length, `${mapRef} quarantine has no written rationale and owner`).toBeGreaterThan(80);
+      expect(
+        validateUxMap(readMapJson(mapRef)).length,
+        `${mapRef} now validates against the canonical UxMap schema — promote it into OWNED_MAPS and drop the quarantine entry`,
+      ).toBeGreaterThan(0);
+    }
   });
 
   it('throws when an owned-style map json cannot be read (absent-file discrimination)', () => {

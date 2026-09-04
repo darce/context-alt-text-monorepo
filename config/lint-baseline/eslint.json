@@ -1,7 +1,7 @@
 {
   "tool": "eslint",
   "version": 1,
-  "total": 77,
+  "total": 69,
   "config_guard": {
     "enabled_rules": [
       "@tanstack/query/exhaustive-deps",
@@ -130,14 +130,8 @@
     "apps/prototype-wp-alt-context/js/admin/__tests__/dashboard-uxmap-code-parity.test.ts": {
       "no-useless-escape": 1
     },
-    "apps/prototype-wp-alt-context/js/admin/__tests__/uxmap-render-parity.test.ts": {
-      "@typescript-eslint/prefer-regexp-exec": 1
-    },
     "apps/prototype-wp-alt-context/js/admin/api/settingsApi.ts": {
       "@typescript-eslint/no-redundant-type-constituents": 1
-    },
-    "apps/prototype-wp-alt-context/js/admin/hooks/__tests__/useDescribeRunProgress.test.tsx": {
-      "@typescript-eslint/array-type": 2
     },
     "apps/prototype-wp-alt-context/js/admin/hooks/__tests__/useJobProgressStream.test.tsx": {
       "@typescript-eslint/non-nullable-type-assertion-style": 1
@@ -160,21 +154,9 @@
     "apps/prototype-wp-alt-context/js/admin/pages/__tests__/WorkbenchPage.scatter.test.tsx": {
       "@typescript-eslint/no-unnecessary-type-assertion": 2
     },
-    "apps/prototype-wp-alt-context/js/admin/pages/__tests__/menuHeadingParity.test.ts": {
-      "@typescript-eslint/prefer-regexp-exec": 1
-    },
-    "apps/prototype-wp-alt-context/js/admin/pages/__tests__/pageHeadingBoundary.test.ts": {
-      "@typescript-eslint/prefer-regexp-exec": 1
-    },
     "apps/prototype-wp-alt-context/js/admin/pages/workbench/WorkbenchTwoPaneLayout.tsx": {
       "@typescript-eslint/no-unnecessary-type-assertion": 1,
       "@typescript-eslint/non-nullable-type-assertion-style": 1
-    },
-    "apps/prototype-wp-alt-context/js/admin/pages/workbench/__tests__/MediaSelection.authExpired.test.tsx": {
-      "@typescript-eslint/consistent-type-definitions": 1
-    },
-    "apps/prototype-wp-alt-context/js/admin/pages/workbench/__tests__/MediaSelection.identitiesDegraded.test.tsx": {
-      "@typescript-eslint/consistent-type-definitions": 1
     },
     "apps/prototype-wp-alt-context/js/admin/pages/workbench/__tests__/ScanTabContent.labelPanelReachable.test.tsx": {
       "@typescript-eslint/no-unused-vars": 1
@@ -187,9 +169,6 @@
       "@typescript-eslint/consistent-type-definitions": 1
     },
     "apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/ClusterLabelingPanel.tsx": {
-      "@typescript-eslint/no-unused-vars": 1
-    },
-    "apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/IdentityClusterItem.tsx": {
       "@typescript-eslint/no-unused-vars": 1
     },
     "apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/__tests__/ClusterEditForm.test.tsx": {

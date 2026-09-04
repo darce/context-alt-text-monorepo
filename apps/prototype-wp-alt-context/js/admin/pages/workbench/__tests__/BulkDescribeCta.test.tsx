@@ -509,7 +509,7 @@ describe('BulkDescribeCta — failed settings probe releases the primary (WBUX6-
 // ---------------------------------------------------------------------------
 
 const { settingsProbe, describeMutate } = vi.hoisted(() => ({
-  settingsProbe: { fail: false },
+  settingsProbe: { fail: false, recognitionEnabled: false },
   describeMutate: vi.fn(),
 }));
 
@@ -533,7 +533,7 @@ vi.mock('../../../api/settingsApi', () => ({
   fetchSettings: vi.fn(() =>
     settingsProbe.fail
       ? Promise.reject(new Error('settings endpoint exploded'))
-      : Promise.resolve({ recognition_enabled: false }),
+      : Promise.resolve({ recognition_enabled: settingsProbe.recognitionEnabled }),
   ),
 }));
 
@@ -636,6 +636,7 @@ const renderContainer = () => {
 describe('MediaSelection settings probe wiring (WBUX6-MRG-05)', () => {
   afterEach(() => {
     settingsProbe.fail = false;
+    settingsProbe.recognitionEnabled = false;
     describeMutate.mockClear();
   });
 
@@ -670,5 +671,21 @@ describe('MediaSelection settings probe wiring (WBUX6-MRG-05)', () => {
     expect(screen.queryByText(/Recognition settings unavailable/)).not.toBeInTheDocument();
     await userEvent.click(button);
     expect(describeMutate).toHaveBeenCalledWith([11, 12]);
+  });
+
+  // WBUX6-W4-H-01 residue: every container case above resolves the probe to
+  // `recognition_enabled: false`, so nothing proved the container reads the flag
+  // rather than hard-coding the OFF branch. The product default is ON
+  // (`RecognitionPolicy::DEFAULT = true`), which is the disclosure operators
+  // actually see, and a state the design does not exercise is a state the design
+  // has not made [RLSE-04 lexicons/engineering.md:695].
+  it('renders the ON disclosure when the probe reports recognition enabled (the flag is read, not assumed)', async () => {
+    settingsProbe.recognitionEnabled = true;
+    renderContainer();
+
+    await screen.findByRole('button', { name: 'Describe 2 selected' });
+    await waitFor(() => expect(screen.getByText(/Identifies people first \(AI\)/)).toBeInTheDocument());
+    expect(screen.queryByText(/People are not identified \(recognition off\)/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Recognition settings unavailable/)).not.toBeInTheDocument();
   });
 });

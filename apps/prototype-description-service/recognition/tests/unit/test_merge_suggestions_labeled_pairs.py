@@ -365,9 +365,9 @@ async def test_upsert_pending_persists_survivor_when_labeled_id_sorts_after() ->
     )
 
     model = captured["model"]
-    assert getattr(model, "cluster_a_id") == unlabeled_id
-    assert getattr(model, "cluster_b_id") == labeled_id
-    assert getattr(model, "survivor_cluster_id") == labeled_id
+    assert model.cluster_a_id == unlabeled_id
+    assert model.cluster_b_id == labeled_id
+    assert model.survivor_cluster_id == labeled_id
     assert suggestion.survivor_cluster_id == str(labeled_id)
     assert suggestion.cluster_a_id == str(unlabeled_id)
     assert suggestion.cluster_b_id == str(labeled_id)

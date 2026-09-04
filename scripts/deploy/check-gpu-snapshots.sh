@@ -7,9 +7,18 @@ if [ -z "${BASH_VERSION:-}" ]; then
 fi
 set -euo pipefail
 
-repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
-compose_file=${ACX_GPU_COMPOSE_FILE:-${repo_root}/apps/prototype-description-service/docker-compose.env.yml}
-install_script=${ACX_GPU_INSTALL_SCRIPT:-${repo_root}/scripts/deploy/gpu-lifecycle-install.sh}
+# The deploy path ships this checker to the VM over stdin (`bash -s`), which
+# leaves BASH_SOURCE unset; `set -u` then makes an unguarded read fatal, and a
+# bare `cd ""/../..` would silently resolve repo_root to `/`. A piped run has no
+# checkout, so its paths must arrive through the environment instead.
+script_path=${BASH_SOURCE[0]:-}
+if [ -n "$script_path" ]; then
+    repo_root=$(cd "$(dirname "$script_path")/../.." && pwd)
+else
+    repo_root=
+fi
+compose_file=${ACX_GPU_COMPOSE_FILE:-${repo_root:+${repo_root}/apps/prototype-description-service/docker-compose.env.yml}}
+install_script=${ACX_GPU_INSTALL_SCRIPT:-${repo_root:+${repo_root}/scripts/deploy/gpu-lifecycle-install.sh}}
 state_stale_seconds=${ACX_GPU_STATE_STALE_SECONDS:-180}
 load_stale_seconds=${ACX_DESCRIBE_LOAD_STALE_SECONDS:-120}
 reader_uid=${ACX_GPU_READER_UID:-10001}
@@ -31,6 +40,8 @@ unit_path_for_flag() {
     local -a paths
     local path
     local path_count=0
+    [ -n "$install_script" ] ||
+        die "no repo checkout to read lifecycle units from; set ACX_GPU_UNIT_STATE_PATH and ACX_GPU_UNIT_LOAD_DIR, or ACX_GPU_INSTALL_SCRIPT"
     [ -r "$install_script" ] || die "lifecycle install script is missing or unreadable: $install_script"
     while IFS= read -r path; do
         paths[$path_count]=$path
@@ -69,6 +80,8 @@ is_positive_number "$load_stale_seconds" ||
 [[ "$reader_uid" =~ ^[0-9]+$ ]] || die "ACX_GPU_READER_UID must be numeric"
 [[ "$now_epoch" =~ ^[0-9]+([.][0-9]+)?$ ]] || die "ACX_NOW_EPOCH must be numeric"
 [[ "$config_only" =~ ^[01]$ ]] || die "ACX_GPU_SNAPSHOT_CONFIG_ONLY must be 0 or 1"
+[ -n "$compose_file" ] ||
+    die "no repo checkout to read the compose file from; set ACX_GPU_COMPOSE_FILE"
 [ -r "$compose_file" ] || die "compose file is missing or unreadable: $compose_file"
 
 api_block=$(awk '

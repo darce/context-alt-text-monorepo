@@ -100,7 +100,7 @@ if ! [ "$MAX_LEASE_SECONDS" -gt 0 ] 2>/dev/null; then
     echo "error: --max-lease-seconds must be > 0; 0 leaves an A10 able to run unbounded" >&2
     exit 2
 fi
-if ! [ "$IDLE_SECONDS" -gt 0 ] 2>/dev/null; then
+if [[ ! "$IDLE_SECONDS" =~ ^[0-9]+$ ]] || ! [ "$IDLE_SECONDS" -gt 0 ] 2>/dev/null; then
     echo "error: IDLE_SECONDS (--idle-seconds) must be a positive integer (> 0)" >&2
     exit 2
 fi

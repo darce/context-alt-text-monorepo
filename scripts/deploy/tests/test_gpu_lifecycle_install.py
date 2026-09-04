@@ -35,7 +35,7 @@ def _run_installer(*arguments: str, environment: dict[str, str] | None = None) -
     )
 
 
-@pytest.mark.parametrize("idle_seconds", ["-1", "0", "abc", ""])
+@pytest.mark.parametrize("idle_seconds", ["-1", "0", "abc", "", " 1", "1 ", "+1"])
 def test_installer_rejects_non_positive_idle_seconds(idle_seconds: str) -> None:
     result = _run_installer(
         environment={
@@ -105,15 +105,22 @@ def test_transport_is_bounded_and_release_switch_is_atomic() -> None:
     assert "WorkingDirectory=/opt/acx-gpu/current" in script
     assert "rm -rf /opt/acx-gpu/infra/oci/gpu_lifecycle" not in script
 
+    stage_position = script.index('remote_stage="/opt/acx-gpu/releases/.staging-')
+    copy_position = script.index('scp -q "${SSH_OPTIONS[@]}"')
+    validate_position = script.index("python3 -c 'import infra.oci.gpu_lifecycle.reaper'")
+    switch_position = script.index("sudo mv -Tf '/opt/acx-gpu/.current-${release_id}' /opt/acx-gpu/current")
+    assert stage_position < copy_position < validate_position < switch_position
 
-def test_idle_seconds_cli_type_rejects_non_positive_values() -> None:
+
+@pytest.mark.parametrize("idle_seconds", ["-1", "0", "abc", "", " 1", "1 ", "+1"])
+def test_idle_seconds_cli_type_rejects_non_positive_values(idle_seconds: str) -> None:
     command = [
         sys.executable,
         "-c",
         (
             "from infra.oci.gpu_lifecycle.reaper import _build_parser; "
             "_build_parser().parse_args(['--instance-id', 'ocid1.test', "
-            "'--idle-seconds', '0'])"
+            f"'--idle-seconds', {idle_seconds!r}])"
         ),
     ]
     result = subprocess.run(

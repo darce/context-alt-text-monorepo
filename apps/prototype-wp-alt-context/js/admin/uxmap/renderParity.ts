@@ -19,6 +19,7 @@ export interface RenderParityMap {
     purpose: string;
     route: string;
     url_params: string[];
+    states: string[];
     zones: Array<{ id: string; label: string; role: string; states: string[] }>;
   }>;
   actions: Array<{
@@ -35,6 +36,7 @@ export interface RenderParityMap {
     id: string;
     label: string;
     job: string;
+    steps: Array<{ screen_id: string; branch_label: string | null }>;
   }>;
   domain_state_mappings?: Array<{ domain_states: string[]; canonical_state: string }>;
   open_questions: string[];
@@ -101,6 +103,37 @@ const listSection = (markdown: string, heading: string): string[] =>
     .filter((line) => line.startsWith('- '))
     .map((line) => line.slice(2));
 
+const parseScreenStates = (block: string, screenId: string): string[] => {
+  const explicit = /^Screen states:\s*(.+?)\.?$/m.exec(block)?.[1];
+  const explicitStates = explicit
+    ? explicit
+        .split(/,\s*|\s+/)
+        .map(unquote)
+        .filter(Boolean)
+    : undefined;
+  const asciiLines = block
+    .split('\n')
+    .filter((line) => /^\| states(?:\+|):/.test(line));
+  const asciiStates = asciiLines.flatMap((line) => {
+    const body = /^\| states(?:\+|):\s*(.*?)\s*\|$/.exec(line)?.[1] ?? '';
+    return body
+      .split('|')
+      .map((state) => state.trim())
+      .filter(Boolean);
+  });
+  if (asciiStates.includes('…')) {
+    throw new Error(`screen ${screenId} has truncated ASCII states`);
+  }
+  if (
+    explicitStates &&
+    asciiStates.length > 0 &&
+    JSON.stringify(explicitStates) !== JSON.stringify(asciiStates)
+  ) {
+    throw new Error(`screen ${screenId} has different states in its lossless block and ASCII sketch`);
+  }
+  return explicitStates ?? asciiStates;
+};
+
 const parseScreens = (markdown: string): RenderParityMap['screens'] => {
   const screensSection = section(markdown, 'Screens');
   const summary = screensSection.split('\n### ')[0] ?? '';
@@ -157,11 +190,22 @@ const parseScreens = (markdown: string): RenderParityMap['screens'] => {
       ...base,
       purpose,
       url_params: parsedParams,
+      states: parseScreenStates(block, id),
       zones,
     };
   });
 
   return screens.sort((a, b) => a.id.localeCompare(b.id));
+};
+
+const parseBooleanCell = (value: string | undefined, actionId: string, column: string): boolean => {
+  if (value === 'yes') {
+    return true;
+  }
+  if (value === 'no') {
+    return false;
+  }
+  throw new Error(`action ${actionId} ${column} must be exactly yes or no; received ${JSON.stringify(value ?? '')}`);
 };
 
 const parseActions = (markdown: string): RenderParityMap['actions'] => {
@@ -171,14 +215,15 @@ const parseActions = (markdown: string): RenderParityMap['actions'] => {
       continue;
     }
     const [rawId, verb, target, hierarchy, costly, irreversible, previewRequired, rawScreenId] = splitTableRow(line);
+    const id = unquote(rawId ?? '');
     actions.push({
-      id: unquote(rawId ?? ''),
+      id,
       verb: verb ?? '',
       target: unquote(target ?? ''),
       hierarchy: hierarchy ?? '',
-      costly: costly === 'yes',
-      irreversible: irreversible === 'yes',
-      preview_required: previewRequired === 'yes',
+      costly: parseBooleanCell(costly, id, 'costly'),
+      irreversible: parseBooleanCell(irreversible, id, 'irreversible'),
+      preview_required: parseBooleanCell(previewRequired, id, 'preview_required'),
       screen_id: rawScreenId === '—' ? null : unquote(rawScreenId ?? ''),
     });
   }
@@ -188,13 +233,40 @@ const parseActions = (markdown: string): RenderParityMap['actions'] => {
 const parseFlows = (markdown: string): RenderParityMap['flows'] => {
   const flowsSection = section(markdown, 'Flows');
   const blocks = [...flowsSection.matchAll(/^### (.+) \(`([^`]+)`\)\n([\s\S]*?)(?=^### |(?![\s\S]))/gm)];
-  return blocks
-    .map((match) => {
-      const body = match[3] ?? '';
-      const job = /%% flow: .* job=([^\s]+)$/m.exec(body)?.[1] ?? '';
-      return { id: match[2] ?? '', label: match[1] ?? '', job };
-    })
-    .sort((a, b) => a.id.localeCompare(b.id));
+  return blocks.map((match) => {
+    const body = match[3] ?? '';
+    const id = match[2] ?? '';
+    const job = /%% flow: .* job=([^\s]+)$/m.exec(body)?.[1] ?? '';
+    const encodedSteps = /^\s*%% steps: (.+)$/m.exec(body)?.[1];
+    if (!encodedSteps) {
+      throw new Error(`flow ${id} has no lossless ordered steps comment`);
+    }
+    const steps = JSON.parse(encodedSteps) as unknown;
+    if (
+      !Array.isArray(steps) ||
+      steps.length === 0 ||
+      steps.some(
+        (step) =>
+          typeof step !== 'object' ||
+          step === null ||
+          typeof (step as Record<string, unknown>).screen_id !== 'string' ||
+          !('branch_label' in step) ||
+          ![null, 'string'].includes(
+            (step as Record<string, unknown>).branch_label === null
+              ? null
+              : typeof (step as Record<string, unknown>).branch_label,
+          ),
+      )
+    ) {
+      throw new Error(`flow ${id} has invalid lossless ordered steps`);
+    }
+    return {
+      id,
+      label: match[1] ?? '',
+      job,
+      steps: steps as Array<{ screen_id: string; branch_label: string | null }>,
+    };
+  });
 };
 
 const parseDomainStateMappings = (markdown: string): RenderParityMap['domain_state_mappings'] => {
@@ -270,6 +342,7 @@ export const projectUxMapForRenderParity = (doc: UxMapRenderSource): RenderedUxM
         purpose: screen.purpose,
         route: screen.route,
         url_params: screen.url_params ?? [],
+        states: screen.states ?? [],
         zones: (screen.zones ?? []).map((zone) => ({
           id: zone.id,
           label: zone.label,
@@ -284,8 +357,11 @@ export const projectUxMapForRenderParity = (doc: UxMapRenderSource): RenderedUxM
         id: flow.id,
         label: flow.label ?? flow.id,
         job: flow.job,
-      }))
-      .sort((a, b) => a.id.localeCompare(b.id)),
+        steps: flow.steps.map((step) => ({
+          screen_id: step.screen_id,
+          branch_label: step.branch_label ?? null,
+        })),
+      })),
     ...(doc.domain_state_mappings ? { domain_state_mappings: doc.domain_state_mappings } : {}),
     open_questions: doc.open_questions,
     not_doing: doc.not_doing,

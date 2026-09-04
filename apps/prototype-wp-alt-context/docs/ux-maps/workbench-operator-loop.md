@@ -114,7 +114,8 @@ url_params: `tab`, `status`, `media`, `s`, `p`, `perPage`, `rq`, `panel`, `clust
 |   [PRIMARY] Scan selected media -> job-pipeline (costly,p… |
 |   [secondary] Go to Roster -> exit-roster                  |
 +------------------------------------------------------------+
-| states: default | loading | empty | error | first_time | edge_input |
+| states: default | loading | empty | error | first_time     |
+| states+: edge_input                                        |
 +------------------------------------------------------------+
 ```
 
@@ -285,6 +286,7 @@ Suggested task slice: **Deep-link parity** — panel/tab/status round-trip via `
 ```mermaid
 flowchart TD
   %% flow: Select media → scan → continue job=job-clear-queue
+  %% steps: [{"screen_id":"workbench-shell","branch_label":"enter"},{"screen_id":"workbench-scan","branch_label":"select + scan"},{"screen_id":"workbench-scan","branch_label":"results / next"}]
   n_workbench_shell["Workbench (screen)"]
   n_workbench_scan["Scan media queue (screen)"]
   n_workbench_shell -->|enter| n_workbench_scan
@@ -296,6 +298,7 @@ flowchart TD
 ```mermaid
 flowchart TD
   %% flow: Scan → conflict overlay → resolve → roster if needed job=job-resolve-conflicts
+  %% steps: [{"screen_id":"workbench-scan","branch_label":"scan produces conflicts"},{"screen_id":"workbench-conflicts","branch_label":"open panel=conflicts"},{"screen_id":"workbench-conflicts","branch_label":"resolve"},{"screen_id":"exit-roster","branch_label":"optional assign"}]
   n_workbench_scan["Scan media queue (screen)"]
   n_workbench_conflicts["Conflict Inbox (overlay)"]
   n_workbench_scan -->|scan produces conflicts| n_workbench_conflicts
@@ -309,6 +312,7 @@ flowchart TD
 ```mermaid
 flowchart TD
   %% flow: Sync failure → dead letter → retry/discard job=job-recover-sync
+  %% steps: [{"screen_id":"workbench-shell","branch_label":"degraded sync strip"},{"screen_id":"workbench-dead-letter","branch_label":"panel=dead-letter"},{"screen_id":"workbench-shell","branch_label":"retry or discard complete"}]
   n_workbench_shell["Workbench (screen)"]
   n_workbench_dead_letter["Failed Sync Queue (Dead Letter) (overlay)"]
   n_workbench_shell -->|degraded sync strip| n_workbench_dead_letter
@@ -320,6 +324,7 @@ flowchart TD
 ```mermaid
 flowchart TD
   %% flow: Scan → settings health job=job-clear-queue
+  %% steps: [{"screen_id":"workbench-scan","branch_label":"settings health"},{"screen_id":"exit-settings","branch_label":null}]
   n_workbench_scan["Scan media queue (screen)"]
   n_exit_settings["Settings / service health (exit)"]
   n_workbench_scan -->|settings health| n_exit_settings

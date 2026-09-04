@@ -117,7 +117,8 @@ url_params: `panes`, `cluster`, `endpoint`
 |   [DESTRUCTIVE] Merge / split / correct group -> identity… |
 |   [DESTRUCTIVE] Merge twin into labeled survivor -> ident… |
 +------------------------------------------------------------+
-| states: default | loading | empty | error | first_time | … |
+| states: default | loading | empty | error | first_time     |
+| states+: degraded                                          |
 +------------------------------------------------------------+
 ```
 
@@ -153,7 +154,8 @@ url_params: `panes`, `media`, `cluster`, `status`, `s`, `p`, `perPage`
 |   [secondary] Edit alt-text inline -> media-store          |
 |   [secondary] Edit long description inline -> media-store  |
 +------------------------------------------------------------+
-| states: default | loading | empty | error | first_time | … |
+| states: default | loading | empty | error | first_time     |
+| states+: edge_input                                        |
 +------------------------------------------------------------+
 ```
 
@@ -290,6 +292,7 @@ url_params: `section`
 ```mermaid
 flowchart TD
   %% flow: Run recognition -> select face group -> name/curate -> library people column updates job=job-name-curate
+  %% steps: [{"screen_id":"workbench-2pane-shell","branch_label":"enter"},{"screen_id":"workbench-control","branch_label":"run recognition (preview cost)"},{"screen_id":"workbench-control","branch_label":"select face group (umap/list)"},{"screen_id":"workbench-control","branch_label":"name / curate"},{"screen_id":"workbench-library","branch_label":"right pane reflects assignment"}]
   n_workbench_2pane_shell["Workbench (2-pane) (screen)"]
   n_workbench_control["Control surface (left pane) (screen)"]
   n_workbench_2pane_shell -->|enter| n_workbench_control
@@ -304,6 +307,7 @@ flowchart TD
 ```mermaid
 flowchart TD
   %% flow: Filter needs-alt -> accept/edit AI caption -> edit long description job=job-caption-library
+  %% steps: [{"screen_id":"workbench-library","branch_label":"filter has-alt=false"},{"screen_id":"workbench-library","branch_label":"accept/edit AI caption"},{"screen_id":"workbench-library","branch_label":"edit long description"}]
   n_workbench_library["Media library (right pane) (screen)"]
   n_workbench_library -->|filter has-alt=false| n_workbench_library
   n_workbench_library -->|accept/edit AI caption| n_workbench_library
@@ -314,6 +318,7 @@ flowchart TD
 ```mermaid
 flowchart TD
   %% flow: UMAP scatter -> select face group -> right library filters to face-group media job=job-cluster-recognize
+  %% steps: [{"screen_id":"workbench-control","branch_label":"umap scatter"},{"screen_id":"workbench-control","branch_label":"select face-group point/region"},{"screen_id":"workbench-library","branch_label":"face-group= filters library"}]
   n_workbench_control["Control surface (left pane) (screen)"]
   n_workbench_control -->|umap scatter| n_workbench_control
   n_workbench_library["Media library (right pane) (screen)"]
@@ -325,6 +330,7 @@ flowchart TD
 ```mermaid
 flowchart TD
   %% flow: Recognition produces conflicts -> conflict overlay -> resolve -> roster if needed job=job-triage-sync
+  %% steps: [{"screen_id":"workbench-control","branch_label":"recognition produces conflicts"},{"screen_id":"workbench-conflicts","branch_label":"open panel=conflicts"},{"screen_id":"workbench-conflicts","branch_label":"resolve"},{"screen_id":"exit-roster","branch_label":"optional manage person"}]
   n_workbench_control["Control surface (left pane) (screen)"]
   n_workbench_conflicts["Conflict Inbox (overlay)"]
   n_workbench_control -->|recognition produces conflicts| n_workbench_conflicts
@@ -338,6 +344,7 @@ flowchart TD
 ```mermaid
 flowchart TD
   %% flow: Sync failure -> dead letter -> retry/discard job=job-triage-sync
+  %% steps: [{"screen_id":"workbench-2pane-shell","branch_label":"degraded sync strip"},{"screen_id":"workbench-dead-letter","branch_label":"panel=dead-letter"},{"screen_id":"workbench-2pane-shell","branch_label":"retry or discard complete"}]
   n_workbench_2pane_shell["Workbench (2-pane) (screen)"]
   n_workbench_dead_letter["Failed Sync Queue (Dead Letter) (overlay)"]
   n_workbench_2pane_shell -->|degraded sync strip| n_workbench_dead_letter

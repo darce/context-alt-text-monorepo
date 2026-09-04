@@ -71,6 +71,23 @@ def _screen_block(screen: dict) -> list[str]:
     return out
 
 
+def _ascii_state_rows(states: list[str], width: int = 60) -> list[str]:
+    """Render every state without changing the renderer's canonical frame width."""
+    if not states:
+        return []
+    rows: list[str] = []
+    content = " states: "
+    for state in states:
+        suffix = state if content.endswith(": ") else f" | {state}"
+        if len(content) + len(suffix) > width:
+            rows.append(f"|{content.ljust(width)}|")
+            content = f" states+: {state}"
+        else:
+            content += suffix
+    rows.append(f"|{content.ljust(width)}|")
+    return rows
+
+
 def _parity_index(doc: dict) -> list[str]:
     zone_ids: list[str] = []
     labels: list[str] = []
@@ -167,10 +184,13 @@ def render(map_ref: str) -> str:
     canonical_doc = {key: value for key, value in doc.items() if key != "domain_state_mappings"}
     bundle = render_markdown_bundle(ux_map_model.model_validate(canonical_doc)).split("\n")
     screens = {screen["id"]: screen for screen in doc["screens"]}
+    flows = {flow["id"]: flow for flow in doc["flows"]}
 
     out: list[str] = []
     kept = _extract_kept(MAPS_DIR / f"{map_ref}.md")
     kept_emitted = not kept
+    active_flow: dict | None = None
+    active_screen: dict | None = None
 
     for line in bundle:
         if not kept_emitted and line.startswith("## "):
@@ -181,9 +201,25 @@ def render(map_ref: str) -> str:
         if line == "## Not doing":
             out += _domain_state_mapping(doc)
             out += _parity_index(doc)
+        if active_screen is not None and line.startswith("| states:"):
+            out += _ascii_state_rows(active_screen.get("states", []))
+            continue
         out.append(line)
         heading = re.match(r"^### .*\(`([a-z0-9_-]+)`\)$", line)
+        if heading and heading.group(1) in flows:
+            active_flow = flows[heading.group(1)]
+        if active_flow is not None and line.lstrip().startswith("%% flow:"):
+            steps = [
+                {
+                    "screen_id": step["screen_id"],
+                    "branch_label": step.get("branch_label"),
+                }
+                for step in active_flow["steps"]
+            ]
+            out.append("  %% steps: " + json.dumps(steps, ensure_ascii=False, separators=(",", ":")))
+            active_flow = None
         if heading and heading.group(1) in screens:
+            active_screen = screens[heading.group(1)]
             out.append("")
             out += _screen_block(screens[heading.group(1)])
             # `_screen_block` ends with a blank line; drop the duplicate blank the bundle

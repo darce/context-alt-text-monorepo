@@ -68,7 +68,8 @@ url_params: `person`, `personFilter`, `queue`, `face`, `cluster`
 |   [secondary] Go to Workbench -> exit-workbench            |
 |   [secondary] Open face-group drawer -> roster-cluster-dr… |
 +------------------------------------------------------------+
-| states: default | loading | empty | error | degraded | first_time |
+| states: default | loading | empty | error | degraded       |
+| states+: first_time                                        |
 +------------------------------------------------------------+
 ```
 
@@ -202,6 +203,7 @@ url_params: `tab`, `panel`, `media`
 ```mermaid
 flowchart TD
   %% flow: Open face-group drawer → assign → person workspace job=job-cluster-review
+  %% steps: [{"screen_id":"roster-shell","branch_label":"from entries/clusters"},{"screen_id":"roster-cluster-drawer","branch_label":"cluster= drawer"},{"screen_id":"roster-person-workspace","branch_label":"assign identity"}]
   n_roster_shell["Roster (People) (screen)"]
   n_roster_cluster_drawer["Face-group drawer (deep-link shim) (overlay)"]
   n_roster_shell -->|from entries/clusters| n_roster_cluster_drawer
@@ -215,6 +217,7 @@ flowchart TD
 ```mermaid
 flowchart TD
   %% flow: Roster → Workbench continue scan job=job-manage-person
+  %% steps: [{"screen_id":"roster-person-workspace","branch_label":"done assigning"},{"screen_id":"exit-workbench","branch_label":"continue media queue"}]
   n_roster_person_workspace["Person workspace (screen)"]
   n_exit_workbench["Workbench (exit)"]
   n_roster_person_workspace -->|done assigning| n_exit_workbench

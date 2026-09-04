@@ -13,6 +13,7 @@ import userEvent from '@testing-library/user-event';
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 
 import { ClusterLabelingPanel } from '../ClusterLabelingPanel';
+import { CLUSTER_MUTATION_ERROR_COPY } from '../clusterMutationUtils';
 import {
   fetchClusterMembers,
   listRecognitionClusters,
@@ -136,7 +137,8 @@ describe('ClusterLabelingPanel duplicate guard and interactive budget', () => {
       await vi.advanceTimersByTimeAsync(3000);
     });
 
-    expect(await screen.findByRole('alert')).toHaveTextContent('Save is taking too long. Please try again.');
+    // Copy is owned by docs/ux-maps/febt-1-job-error-states.md, not by this test.
+    expect(await screen.findByRole('alert')).toHaveTextContent(CLUSTER_MUTATION_ERROR_COPY.timeout);
   });
 
   it('FEBT1G-H-08: merge is held to the same interactive budget as save', async () => {
@@ -171,6 +173,7 @@ describe('ClusterLabelingPanel duplicate guard and interactive budget', () => {
       await vi.advanceTimersByTimeAsync(3000);
     });
 
-    expect(await screen.findByRole('alert')).toHaveTextContent('Save is taking too long. Please try again.');
+    // Copy is owned by docs/ux-maps/febt-1-job-error-states.md, not by this test.
+    expect(await screen.findByRole('alert')).toHaveTextContent(CLUSTER_MUTATION_ERROR_COPY.timeout);
   });
 });

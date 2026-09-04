@@ -4,8 +4,11 @@ import { clampRetryAfterMs } from './retryAfter';
 export const RETRY_MAX_ATTEMPTS = 3;
 export const MAX_RETRY_DELAY_MS = 30_000;
 
-/** AbortError and TimeoutError (from AbortSignal.timeout) — both are abort-like, never retry. */
-export const isAbortLike = (error: unknown): boolean => classifyError(error)._tag === 'abort';
+/** User cancel (`abort`) or server hang (`timeout`) — polling sites keep going through both. */
+export const isAbortOrTimeout = (error: unknown): boolean => {
+  const tag = classifyError(error)._tag;
+  return tag === 'abort' || tag === 'timeout';
+};
 
 /**
  * True when this error should open the shared recognition cooldown:
@@ -17,8 +20,9 @@ export const isCooldownSignal = (error: unknown): boolean => isCooldown(error);
 
 /**
  * Shared QueryClient retry predicate.
- * Retries 429, 503-with-Retry-After, and TypeError transport failures; never 4xx, parse, or abort-like.
- * AuthExpiredError is an explicit non-retry pin (UXP-NET-2): session recovery is user-driven.
+ * Retries 429, 503-with-Retry-After, TypeError transport failures, and a single timeout;
+ * never 4xx, parse, or user abort. AuthExpiredError is an explicit non-retry pin
+ * (UXP-NET-2): session recovery is user-driven.
  */
 export const shouldRetryRequest = (failureCount: number, error: unknown): boolean => {
   if (failureCount >= RETRY_MAX_ATTEMPTS) {
@@ -35,10 +39,17 @@ export const shouldRetryRequest = (failureCount: number, error: unknown): boolea
   if (classified._tag === 'parse') {
     return false;
   }
-  if (isAbortLike(error)) {
+  if (classified._tag === 'abort') {
     return false;
   }
-  return classified._tag === 'transport';
+  if (classified._tag === 'timeout') {
+    // WHY: at most one extra attempt. A 300s timeout retried on the transport
+    // budget (RETRY_MAX_ATTEMPTS) multiplies a slow-backend incident into a
+    // multi-minute client hang and amplifies load on an already-struggling
+    // server (retry amplification / circuit-breaker family, Release It!).
+    return failureCount < 1;
+  }
+  return classified._tag === 'transport' || classified._tag === 'nonce_refresh';
 };
 
 /**

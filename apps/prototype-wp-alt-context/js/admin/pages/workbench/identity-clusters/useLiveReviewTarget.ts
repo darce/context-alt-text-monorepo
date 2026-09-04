@@ -2,8 +2,8 @@
  * Live-derived open review target (E21-5 §11 / FBT-1 ⑤ / B1).
  *
  * Existence probe: members fetch with limit:1. A 404 is the retirement signal
- * (`cluster_not_found`). Transient/5xx/network errors are NOT retirement —
- * fail-safe keeps status `'live'`.
+ * (`cluster_not_found`). Timeout/5xx/transport failures are NOT retirement and
+ * are NOT `'live'` — they settle as `'unknown'` (OBS-06, RES-13, rg-015).
  *
  * On retirement:
  *   (B) recorded local-merge survivor → onRebind + announce (once)
@@ -27,7 +27,7 @@ import { classifyError, isHttpStatus } from '../../../utils/appError';
 import { shouldRetryRequest } from '../../../utils/retryPolicy';
 import { isAbortError } from './clusterMutationUtils';
 
-export type LiveReviewTargetStatus = 'live' | 'rebound' | 'retired' | 'auth_expired';
+export type LiveReviewTargetStatus = 'live' | 'rebound' | 'retired' | 'auth_expired' | 'unknown';
 
 export interface LiveReviewTargetResult {
   status: LiveReviewTargetStatus;
@@ -108,6 +108,8 @@ export const useLiveReviewTarget = (
 
   const retired = openClusterId != null && existenceQuery.isError && isClusterNotFound(existenceQuery.error);
   const authExpired = openClusterId != null && existenceQuery.isError && isAuthExpired(existenceQuery.error);
+  const probeUnknown =
+    openClusterId != null && existenceQuery.isError && !retired && !authExpired;
 
   // S5-02: resolve survivor lazily at read time — do not memoize against
   // [retired, openClusterId] alone. recordMergeSurvivor mutates a ref-backed
@@ -122,18 +124,21 @@ export const useLiveReviewTarget = (
     }
   }
 
-  // Auth expiry must not be absorbed into fail-safe 'live' (UXP-NET-2 / FORM-05).
-  // Keep resolvedClusterId so in-progress UI is not wiped ([INT-11]).
+  // Auth expiry and unverified probe failures must not be absorbed into 'live'
+  // (UXP-NET-2 / FORM-05 / FEBT1-W2A-06). Keep resolvedClusterId so in-progress
+  // UI is not wiped ([INT-11]).
   const status: LiveReviewTargetStatus = authExpired
     ? 'auth_expired'
-    : !retired
-      ? 'live'
-      : survivorId
+    : retired
+      ? survivorId
         ? 'rebound'
-        : 'retired';
+        : 'retired'
+      : probeUnknown
+        ? 'unknown'
+        : 'live';
 
   const resolvedClusterId: string | null =
-    status === 'live' || status === 'auth_expired'
+    status === 'live' || status === 'auth_expired' || status === 'unknown'
       ? openClusterId
       : status === 'rebound'
         ? survivorId

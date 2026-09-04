@@ -3,12 +3,19 @@ import { describe, expect, it, vi } from 'vitest';
 import { classifyError } from '../../../../utils/appError';
 import { AuthExpiredError, HTTPError } from '../../../../utils/http';
 import { SPA_SESSION_EXPIRED_COPY } from '../../../../utils/sessionExpiredCopy';
-import { getClusterMutationErrorMessage, isAbortError } from '../clusterMutationUtils';
+import {
+  CLUSTER_MUTATION_ERROR_COPY,
+  getClusterMutationErrorMessage,
+  getClusterMutationUserError,
+  isAbortError,
+} from '../clusterMutationUtils';
 
 const GENERIC = 'An unexpected error occurred. Please try again.';
-const TIMEOUT = 'Save is taking too long. Please try again.';
+// Canonical strings live in docs/ux-maps/febt-1-job-error-states.md and are
+// re-exported as CLUSTER_MUTATION_ERROR_COPY; pin against that, not a literal copy.
+const TIMEOUT = CLUSTER_MUTATION_ERROR_COPY.timeout;
 const CONFLICT = 'Label already exists. Use the dropdown to merge.';
-const NETWORK = 'Network error. Please check your connection and try again.';
+const NETWORK = CLUSTER_MUTATION_ERROR_COPY.transport;
 const SECRET_BODY = 'stack-trace: /var/www/wp-content/plugins/secret.php line 42';
 
 const httpError = (status: number, bodyPreview: string): HTTPError =>
@@ -54,9 +61,9 @@ describe('isAbortError', () => {
 });
 
 describe('getClusterMutationErrorMessage abort', () => {
-  it('maps pre-classified abort AppError to the timeout copy', () => {
+  it('maps pre-classified abort AppError to the ux-map timeout copy', () => {
     const classified = classifyError(new DOMException('The operation was aborted.', 'AbortError'));
-    expect(getClusterMutationErrorMessage(classified, 'Ada')).toBe(TIMEOUT);
+    expect(getClusterMutationErrorMessage(classified, 'Ada')).toBe(CLUSTER_MUTATION_ERROR_COPY.timeout);
   });
 
   it('maps a TimeoutError name to the timeout copy [FEBT1G-M-08]', () => {
@@ -118,5 +125,22 @@ describe('getClusterMutationErrorMessage never returns wire text [FEBT1-W2A-04]'
   it('falls back to generic copy for non-Error throws', () => {
     expect(getClusterMutationErrorMessage('boom', 'Ada')).toBe(GENERIC);
     expect(getClusterMutationErrorMessage(null, 'Ada')).toBe(GENERIC);
+  });
+});
+
+describe('getClusterMutationUserError [FEBT1-W2A-04]', () => {
+  it('maps HTTP 409 via status, never substring, with reload recovery', () => {
+    const error = new HTTPError({
+      status: 409,
+      retryAfterSeconds: undefined,
+      endpoint: '/acx/v1/recognition/clusters/c1',
+      bodyPreview: '{"code":"cluster_version_conflict"}',
+      message: 'Request to /acx/v1/recognition/clusters/c1 failed (409): stale',
+    });
+    const mapped = getClusterMutationUserError(error, 'Ada');
+    expect(mapped.kind).toBe('stale_conflict');
+    expect(mapped.recovery).toBe('reload');
+    expect(mapped.message).toBe(CLUSTER_MUTATION_ERROR_COPY.staleConflict);
+    expect(mapped.message).not.toContain(error.endpoint);
   });
 });

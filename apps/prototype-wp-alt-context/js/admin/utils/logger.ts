@@ -26,6 +26,8 @@ export interface Logger {
   warn(message: string, fields?: LogFields): void;
   error(message: string, fields?: LogFields): void;
   child(fields: LogFields): Logger;
+  /** Mint a requestId for one unit of work; module-scope loggers omit it (rg-015). */
+  withRequest(): Logger;
 }
 
 export interface JobLogStateSummary {
@@ -59,7 +61,7 @@ interface FlattenedError {
   cause?: unknown;
 }
 
-const redactEndpoint = (endpoint: string): string => {
+export const redactEndpoint = (endpoint: string): string => {
   try {
     const url = endpoint.includes('://') ? new URL(endpoint) : new URL(endpoint, 'http://localhost');
     return url.pathname;
@@ -81,6 +83,7 @@ const safeAppErrorMessage = (error: AppError): string => {
       return 'Nonce refresh failed';
     case 'auth_expired':
     case 'abort':
+    case 'timeout':
     case 'transport':
     case 'unknown':
       return error.message;
@@ -183,18 +186,20 @@ const flattenFields = (fields: LogFields): LogFields => {
 const isNonEmptyFields = (fields: LogFields): boolean => Object.keys(fields).length > 0;
 
 /**
- * Fallback correlation id for a logger created without one.
+ * Drop a missing or empty `requestId` instead of minting one.
  *
  * OBS-03: a logger scope is NOT a transaction. A module-scope `createLogger(...)`
- * mints this id once at import time, so it correlates "which module" and not
- * "which unit of work". Call sites that span more than one user action must open
- * a unit of work with `withRequestId` and log through the returned child.
+ * that minted an id at import time would correlate "which module" and not "which
+ * unit of work" — fabricated correlation provenance (rg-015). Open a unit of work
+ * with `logger.withRequest()` (or `withRequestId`) and log through the child.
  */
-const bindCorrelationId = (fields: LogFields): LogFields => {
+const omitEmptyRequestId = (fields: LogFields): LogFields => {
   if (typeof fields.requestId === 'string' && fields.requestId !== '') {
     return fields;
   }
-  return { ...fields, requestId: newRequestId() };
+  const rest: LogFields = { ...fields };
+  delete rest.requestId;
+  return rest;
 };
 
 export const consoleSink: LogSink = (record) => {
@@ -222,7 +227,7 @@ export const newRequestId = (): string => {
 };
 
 export const createLogger = (scope: string, fields: LogFields = {}): Logger => {
-  const parentFields = bindCorrelationId(flattenFields(fields));
+  const parentFields = omitEmptyRequestId(flattenFields(fields));
 
   const emit = (level: LogLevel, message: string, callFields?: LogFields): void => {
     if (LOG_LEVEL_ORDER[level] < LOG_LEVEL_ORDER[minLevel]) {
@@ -233,7 +238,7 @@ export const createLogger = (scope: string, fields: LogFields = {}): Logger => {
       level,
       scope,
       message,
-      fields: flattenFields({ ...parentFields, ...callFields }),
+      fields: omitEmptyRequestId(flattenFields({ ...parentFields, ...callFields })),
     };
     try {
       activeSink(record);
@@ -248,6 +253,7 @@ export const createLogger = (scope: string, fields: LogFields = {}): Logger => {
     warn: (message, callFields) => emit('warn', message, callFields),
     error: (message, callFields) => emit('error', message, callFields),
     child: (childFields) => createLogger(scope, { ...parentFields, ...childFields }),
+    withRequest: () => createLogger(scope, { ...parentFields, requestId: newRequestId() }),
   };
 };
 

@@ -2,8 +2,12 @@
 
 FEBT1-LG-02: the import trust boundary is the service, not the client. A
 malformed snapshot must be rejected explicitly instead of being accepted with
-best-effort counts and an ``import_completed`` audit event that understates or
-zeroes what was imported (RLSE-05: silent failure is the worst failure).
+best-effort counts and an audit event that understates or zeroes what was
+imported (RLSE-05: silent failure is the worst failure).
+
+FEBT2-LE-NEW-01: the service restores nothing, so the audit event it writes is
+named ``import_validated``. ``import_completed`` claimed a restore that never
+happened -- the same RLSE-05 failure mode read from the operator's side.
 """
 
 from __future__ import annotations
@@ -16,7 +20,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from recognition.application.services.audit_service import AuditService
 from recognition.application.services.export_service import EXPORT_SCHEMA_VERSION
-from recognition.application.services.import_service import IMPORT_COLLECTION_KEYS, TenantImportService
+from recognition.application.services.import_service import (
+    IMPORT_AUDIT_EVENT_TYPE,
+    IMPORT_COLLECTION_KEYS,
+    TenantImportService,
+)
 
 
 class _FakeSession:
@@ -81,7 +89,7 @@ async def test_valid_snapshot_records_real_counts() -> None:
     assert result["schema_version"] == EXPORT_SCHEMA_VERSION
     assert session.commit_count == 1
     assert len(audit.events) == 1
-    assert audit.events[0]["event_type"] == "import_completed"
+    assert audit.events[0]["event_type"] == "import_validated"
     assert audit.events[0]["payload"]["counts"] == result["counts"]
 
 
@@ -176,3 +184,15 @@ def test_collection_keys_match_the_export_contract() -> None:
         "cluster_merge_suggestions",
         "scan_jobs",
     )
+
+
+def test_audit_event_type_does_not_claim_a_restore() -> None:
+    """RLSE-05 discrimination guard: the event name must not overstate the work.
+
+    TenantImportService writes no rows. Naming its audit event ``*_completed``
+    tells an operator reading the retention audit log that their data was
+    restored. This asserts the literal so a rename back to a completion verb
+    turns this test red instead of quietly re-introducing the false claim.
+    """
+    assert IMPORT_AUDIT_EVENT_TYPE == "import_validated"
+    assert "completed" not in IMPORT_AUDIT_EVENT_TYPE

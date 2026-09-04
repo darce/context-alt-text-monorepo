@@ -1,4 +1,17 @@
+import { NonceRefreshFailedError } from '../utils/errorTaxonomy';
 import { createLogger, newRequestId, type Logger } from '../utils/logger';
+
+/**
+ * `NonceRefreshFailedError` is declared in the leaf module
+ * `utils/errorTaxonomy` and re-exported from its historical home here. It moved
+ * because `utils/http` and `utils/appError` both need it, and importing it from
+ * this module closed a load-time cycle that left the class binding undefined at
+ * a subclass's `extends` site (FEBT2-LA-NEW-01 / FEBT2-LC-NEW-03). ARCH-20
+ * (lexicons/engineering.md:570): the dependency arrow points at the stable error
+ * vocabulary, not at this WordPress config adapter.
+ */
+export { NonceRefreshFailedError } from '../utils/errorTaxonomy';
+
 
 let log: Logger | undefined;
 const configLog = (): Logger => {
@@ -51,26 +64,6 @@ const NONCE_BODY_PATTERN = /^[a-f0-9]{8,20}$/i;
  * awaits a promise that never settles and the whole SPA stalls ([RES-02]).
  */
 export const NONCE_REFRESH_TIMEOUT_MS = 10_000;
-
-export class NonceRefreshFailedError extends Error {
-  readonly causeStatus: number | undefined;
-  readonly bodyPreview: string;
-
-  constructor({
-    message,
-    causeStatus,
-    bodyPreview,
-  }: {
-    message: string;
-    causeStatus?: number;
-    bodyPreview?: string;
-  }) {
-    super(message);
-    this.name = 'NonceRefreshFailedError';
-    this.causeStatus = causeStatus;
-    this.bodyPreview = bodyPreview ?? '';
-  }
-}
 
 const normalizeOptionalString = (value: unknown): string | undefined =>
   typeof value === 'string' && value.trim() !== '' ? value : undefined;

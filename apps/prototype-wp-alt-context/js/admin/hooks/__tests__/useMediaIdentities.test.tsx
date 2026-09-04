@@ -201,7 +201,7 @@ describe('useMediaIdentities', () => {
     fetchMediaIdentitiesMock.mockResolvedValueOnce({
       identities_by_media: {},
       data_source: 'local_projection',
-    } as recognitionApi.MediaIdentitiesResponse);
+    });
     const second = renderHook(() => useMediaIdentities([9], true), { wrapper });
     await act(async () => {
       await vi.advanceTimersByTimeAsync(0);
@@ -323,7 +323,7 @@ describe('useMediaIdentities', () => {
     fetchMediaIdentitiesMock.mockResolvedValueOnce({
       identities_by_media: {},
       data_source: 'local_projection',
-    } as recognitionApi.MediaIdentitiesResponse);
+    });
     await act(async () => {
       await result.current.refetch();
     });

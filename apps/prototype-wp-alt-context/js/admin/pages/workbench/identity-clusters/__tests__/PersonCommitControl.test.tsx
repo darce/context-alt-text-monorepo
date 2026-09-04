@@ -189,7 +189,7 @@ describe('PersonCommitControl single-gesture naming (UXW2-3)', () => {
       rosterEntryId: 42,
     });
     expect(onCommit).not.toHaveBeenCalledWith(
-      expect.objectContaining({ newEntryName: expect.anything() }),
+      expect.objectContaining({ newEntryName: expect.anything() as unknown }),
     );
   });
 
@@ -210,7 +210,7 @@ describe('PersonCommitControl single-gesture naming (UXW2-3)', () => {
       rosterEntryId: 42,
     });
     expect(onCommit).not.toHaveBeenCalledWith(
-      expect.objectContaining({ newEntryName: expect.anything() }),
+      expect.objectContaining({ newEntryName: expect.anything() as unknown }),
     );
   });
 

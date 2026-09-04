@@ -1,7 +1,8 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it } from 'vitest';
 
+import type { ProductionCssBundle } from './productionCssBundle';
 import {
   isInsideFixtureRoot,
   loadProductionCssBundle,
@@ -14,6 +15,19 @@ const radioGroupScssPath = join(componentsRoot, '_radio-group.scss');
 const indexScssPath = join(componentsRoot, 'index.scss');
 
 describe('E15-25 slice 1: radio-group stylesheet', () => {
+  let bundle: ProductionCssBundle;
+
+  // FEBT2-W2-U-01: the build is hoisted out of the test body. On a cold artifact cache
+  // `loadProductionCssBundle` runs a real `vite build`, and under lane contention it can
+  // also wait out the fixture's 6-minute global build lock — so the old in-body 120s
+  // budget was reachable, and when it fired the failure read as a radio-group stylesheet
+  // regression rather than as the build/lock timeout it actually was (RES-02/RES-03:
+  // the bound must exceed the operation it guards, and a misattributed failure is worse
+  // than a slow one). Paying it in `beforeAll` prices the setup as setup.
+  beforeAll(() => {
+    bundle = loadProductionCssBundle();
+  }, 600_000);
+
   it('registers radio-group in components index.scss', () => {
     const indexScss = readFileSync(indexScssPath, 'utf8');
 
@@ -45,8 +59,6 @@ describe('E15-25 slice 1: radio-group stylesheet', () => {
     // artifact on the build inputs, so a missing or stale artifact fails as a build problem
     // instead of masquerading as a source regression (or a green pass), and no concurrent
     // `vite build` can empty the directory we read from.
-    const bundle = loadProductionCssBundle();
-
     expect(bundle.cssFilePaths.length).toBeGreaterThan(0);
     expect(readArtifactStamp(bundle)).toBe(bundle.fingerprint);
     expect(bundle.cssFilePaths.every(isInsideFixtureRoot)).toBe(true);
@@ -64,5 +76,5 @@ describe('E15-25 slice 1: radio-group stylesheet', () => {
     expect(bundle.css).toMatch(
       /\.acx-radio-group__item\[data-state=['"]?checked['"]?\]\s+\.acx-radio-group__indicator(?![\w-])/,
     );
-  }, 120_000);
+  });
 });

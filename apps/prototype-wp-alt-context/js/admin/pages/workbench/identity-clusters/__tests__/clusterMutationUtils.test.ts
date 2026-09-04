@@ -9,10 +9,12 @@ import {
   getClusterMutationErrorMessage,
   isAbortError,
   isClusterMutationTimeoutError,
+  isDeliberateCancelError,
 } from '../clusterMutationUtils';
 
 const GENERIC = 'An unexpected error occurred. Please try again.';
 const TIMEOUT = 'Save is taking too long. Please try again.';
+const CANCELLED = 'Save cancelled. Check the label before trying again.';
 const CONFLICT = 'Label already exists. Use the dropdown to merge.';
 const NETWORK = 'Network error. Please check your connection and try again.';
 const SECRET_BODY = 'stack-trace: /var/www/wp-content/plugins/secret.php line 42';
@@ -59,10 +61,45 @@ describe('isAbortError', () => {
   });
 });
 
-describe('getClusterMutationErrorMessage abort', () => {
-  it('maps pre-classified abort AppError to the timeout copy', () => {
+describe('isDeliberateCancelError [FEBT2-LA-NEW-02]', () => {
+  it('is true only for a deliberate cancel, never for an elapsed deadline', () => {
+    expect(isDeliberateCancelError(new DOMException('The operation was aborted.', 'AbortError'))).toBe(
+      true,
+    );
+    const timedOut = new Error('The operation timed out.');
+    timedOut.name = 'TimeoutError';
+    expect(isDeliberateCancelError(timedOut)).toBe(false);
+    expect(isDeliberateCancelError(createClusterMutationTimeoutError('save'))).toBe(false);
+    expect(isDeliberateCancelError(new Error('boom'))).toBe(false);
+  });
+
+  it('is narrower than isAbortError, which is abort-*like*', () => {
+    const timedOut = new Error('The operation timed out.');
+    timedOut.name = 'TimeoutError';
+    // The gap between the two predicates is the whole finding: one predicate
+    // cannot decide both "swallow this" and "what do I tell the operator".
+    expect(isAbortError(timedOut)).toBe(true);
+    expect(isDeliberateCancelError(timedOut)).toBe(false);
+  });
+});
+
+describe('getClusterMutationErrorMessage abort vs timeout [FEBT2-LA-NEW-03]', () => {
+  it('never tells a cancelling operator the system is slow', () => {
+    // Regression pin for the copy defect itself: these two conditions must not
+    // collapse onto one string (RLSE-04 — an undesigned state).
+    expect(CANCELLED).not.toBe(TIMEOUT);
+  });
+
+  it('maps a deliberate cancel to the cancel copy, not the timeout copy', () => {
     const classified = classifyError(new DOMException('The operation was aborted.', 'AbortError'));
-    expect(getClusterMutationErrorMessage(classified, 'Ada')).toBe(TIMEOUT);
+    expect(classified._tag).toBe('abort');
+    expect(getClusterMutationErrorMessage(classified, 'Ada')).toBe(CANCELLED);
+  });
+
+  it('maps a raw DOMException AbortError to the cancel copy', () => {
+    expect(
+      getClusterMutationErrorMessage(new DOMException('The operation was aborted.', 'AbortError'), 'Ada'),
+    ).toBe(CANCELLED);
   });
 
   it('maps a TimeoutError name to the timeout copy [FEBT1G-M-08]', () => {
@@ -70,6 +107,44 @@ describe('getClusterMutationErrorMessage abort', () => {
     err.name = 'TimeoutError';
     expect(getClusterMutationErrorMessage(err, 'Ada')).toBe(TIMEOUT);
   });
+
+  it('maps a tagged timeout AppError from its tag, not from its wording', () => {
+    // No English timeout token anywhere in the message: matchKnownCondition
+    // cannot rescue this, so the tag has to carry it (FEBT1-LC-02).
+    const classified = { _tag: 'timeout' as const, message: 'deadline elapsed', cause: null };
+    expect(getClusterMutationErrorMessage(classified, 'Ada')).toBe(TIMEOUT);
+  });
+
+  it('checks the branded sentinel before the abort-like guard [wave-1 contract]', () => {
+    // Order pin: give the branded timeout an abort-like name. If the
+    // isAbortError check ran first it would classify as a deliberate cancel and
+    // return the cancel copy, swallowing the typed timeout channel.
+    const timedOut = createClusterMutationTimeoutError('save');
+    timedOut.name = 'AbortError';
+    expect(isClusterMutationTimeoutError(timedOut)).toBe(true);
+    expect(isAbortError(timedOut)).toBe(true);
+    expect(isDeliberateCancelError(timedOut)).toBe(true);
+    expect(getClusterMutationErrorMessage(timedOut, 'Ada')).toBe(TIMEOUT);
+  });
+});
+
+describe("matchKnownCondition's wire-timeout arm [FEBT2-LD2-NEW-05]", () => {
+  // Mutation control found this arm entirely unguarded: dropping the bare
+  // 'timeout' clause, and broadening it to 'time', both survived. These pin the
+  // two ends of its intended range without inventing a wire-format spec.
+  it('recognises wire text carrying only the bare word, not "timed out"', () => {
+    expect(getClusterMutationErrorMessage(httpError(504, 'gateway timeout'), 'Ada')).toBe(TIMEOUT);
+  });
+
+  it('does not fire on unrelated words that merely start with "time"', () => {
+    expect(getClusterMutationErrorMessage(httpError(400, 'timestamp mismatch'), 'Ada')).toBe(GENERIC);
+  });
+
+  // Deliberately NOT asserted: a body such as 'connection timeout_ms config
+  // invalid' still matches and yields the timeout copy. That is the open,
+  // low-severity substring over-match; tightening it needs the service's
+  // error-message wire format, and pinning the current behaviour here would
+  // cement the defect.
 });
 
 describe('getClusterMutationErrorMessage never returns wire text [FEBT1-W2A-04]', () => {

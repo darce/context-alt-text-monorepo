@@ -116,12 +116,9 @@ describe('ClusterLabelingPanel duplicate guard and interactive budget', () => {
   it('FEBT1G-H-05: a failed remote duplicate lookup blocks the write instead of failing open', async () => {
     // The naming-options query (limit 20) succeeds and finds nothing; only the
     // submit-time uniqueness lookup (limit 10) fails.
-    vi.mocked(listRecognitionClusters).mockImplementation(async (params?: { limit?: number }) => {
-      if (params?.limit === 10) {
-        throw new Error('network down');
-      }
-      return emptyList;
-    });
+    vi.mocked(listRecognitionClusters).mockImplementation((params?: { limit?: number }) =>
+      params?.limit === 10 ? Promise.reject(new Error('network down')) : Promise.resolve(emptyList),
+    );
 
     renderPanel();
     await typeNameAndSave(setupUser(false), 'Slate Willow');

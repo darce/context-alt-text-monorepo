@@ -23,11 +23,16 @@ import {
   triggerSync,
   updateRetentionPolicy,
   updateClusterLabel,
+  acceptMergeSuggestion,
+  EXPORT_COLLECTION_KEYS,
+  RetentionExportResponseError,
+  type AcceptedMergeSuggestion,
+  type AcceptMergeSuggestionRequest,
   type BulkAcceptRequest,
   type BulkAcceptResponse,
   type PendingNameSuggestion,
+  type RetentionExportResponse,
 } from '../recognition';
-import { RetentionExportResponseError } from '../recognition/retentionApi';
 import { DATA_SOURCE, PROJECTION_STATUS } from '../recognition/types';
 
 const mockConfig = {
@@ -454,6 +459,94 @@ describe('recognitionApi', () => {
     // caller wrote to disk as a successful, empty export (RLSE-05).
     fetchApiMock.mockResolvedValue({});
     await expect(downloadExportJobData('export-job-1')).rejects.toThrow('Export data response was malformed');
+  });
+
+  /**
+   * FEBT2-LD2-NEW-03 / FEBT2-LE-NEW-06: the barrel exported the functions but not
+   * the types and error class those functions traffic in, so every consumer had
+   * to deep-import or lose type safety. These are discrimination guards: the
+   * value imports at the top of this file resolve through `../recognition`, so
+   * dropping any of them from the barrel turns this file red at import time.
+   */
+  it('narrows the export-download rejection through the barrel-exported error class [FEBT2-LE-NEW-06]', async () => {
+    fetchApiMock.mockResolvedValue({ schema_version: 1, counts: { clusters: 2 }, data: { clusters: [] } });
+
+    await expect(downloadExportJobData('export-job-1')).rejects.toBeInstanceOf(RetentionExportResponseError);
+    // Not merely "some Error": the barrel must carry the narrowable subclass, or
+    // the fail-loud contract degrades to a generic catch at the barrel callers.
+    expect(RetentionExportResponseError.prototype).toBeInstanceOf(Error);
+    expect(Object.getPrototypeOf(RetentionExportResponseError.prototype)).toBe(Error.prototype);
+  });
+
+  it('exports the canonical export-collection key list through the barrel [rg-015]', () => {
+    // The single frontend copy of the wire contract's collection keys. A barrel
+    // consumer must be able to reach it without a deep import, otherwise it
+    // re-derives the key list and drifts from the backend (rg-005).
+    expect([...EXPORT_COLLECTION_KEYS]).toEqual([
+      'clusters',
+      'media_identities',
+      'identity_suggestions',
+      'name_suggestions',
+      'cluster_merge_suggestions',
+      'scan_jobs',
+    ]);
+  });
+
+  it('keeps the bare-string mutationFn inference on the barrel-exported acceptMergeSuggestion [FEBT2-LD2-NEW-03]', async () => {
+    // The bare-`string` overload is declared LAST so `mutationFn: acceptMergeSuggestion`
+    // infers `string`. A conditional `infer` resolves an overloaded function
+    // against its LAST signature, so reordering the overloads flips this to
+    // `AcceptMergeSuggestionRequest` and fails the type-check gate.
+    type InferMutationVariables<T> = T extends (variables: infer V) => Promise<unknown> ? V : never;
+    expectTypeOf<InferMutationVariables<typeof acceptMergeSuggestion>>().toEqualTypeOf<string>();
+
+    const mergePayload = {
+      id: 'merge-suggestion-1',
+      cluster_a_id: 'cluster-a',
+      cluster_b_id: 'cluster-b',
+      similarity: 0.91,
+      status: 'accepted',
+      source_cluster_id: 'cluster-a',
+      target_cluster_id: 'cluster-b',
+      moved_identity_ids: ['identity-1'],
+    };
+    fetchApiMock.mockResolvedValue(mergePayload);
+
+    // Both overloads are reachable through the barrel, and the request object
+    // still carries the optional survivor pin to the wire.
+    const pinned: AcceptMergeSuggestionRequest = { suggestionId: 'merge-suggestion-1', targetClusterId: 'cluster-b' };
+    const accepted: AcceptedMergeSuggestion = await acceptMergeSuggestion(pinned);
+
+    expect(accepted.source_cluster_id).toBe('cluster-a');
+    expect(accepted.target_cluster_id).toBe('cluster-b');
+    expect(accepted.moved_identity_ids).toEqual(['identity-1']);
+    expect(fetchApiMock).toHaveBeenCalledWith(
+      expect.stringContaining('/merge-suggestion-1/accept'),
+      expect.objectContaining({ method: 'POST', body: { target_cluster_id: 'cluster-b' } }),
+    );
+
+    fetchApiMock.mockClear();
+    const bare: AcceptedMergeSuggestion = await acceptMergeSuggestion('merge-suggestion-1');
+    expect(bare.moved_identity_ids).toEqual(['identity-1']);
+    // No survivor pinned => no body, so the server keeps its own ordering.
+    expect(fetchApiMock).toHaveBeenCalledWith(
+      expect.stringContaining('/merge-suggestion-1/accept'),
+      expect.objectContaining({ method: 'POST', body: undefined }),
+    );
+  });
+
+  it('types schema_version as always present on a normalized export response [FEBT2-LE-NEW-05]', async () => {
+    fetchApiMock.mockResolvedValue({ schema_version: 3, clusters: [{ id: 'cluster-1' }] });
+
+    const result: RetentionExportResponse = await downloadExportJobData('export-job-1');
+
+    // Required, not optional: the adapter throws on a missing/non-integer
+    // schema_version, so `number | undefined` would force a null-guard on a case
+    // the boundary makes unrepresentable.
+    expectTypeOf<RetentionExportResponse['schema_version']>().toEqualTypeOf<number>();
+    expectTypeOf<RetentionExportResponse['tenant_id']>().toEqualTypeOf<string | undefined>();
+    const schemaVersion: number = result.schema_version;
+    expect(schemaVersion).toBe(3);
   });
 
   it('exports the phase-0 suggestion stub types through the recognition barrel', () => {

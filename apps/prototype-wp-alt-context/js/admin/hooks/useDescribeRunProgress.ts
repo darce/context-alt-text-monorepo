@@ -36,6 +36,24 @@ export const DESCRIBE_RUN_POLL_INTERVAL_MS = 2_000;
 export const FROZEN_POLL_ESCALATION_THRESHOLD = 5;
 
 /**
+ * "The poll did not come back" — the *presentation* policy for describe-run
+ * progress: freeze the bar and keep polling, rather than dead-ending the
+ * operator on a transient failure.
+ *
+ * Named for its policy, not its shape, and deliberately distinct from the retry
+ * decision even though both currently reduce to `isAbortLike`. They answer
+ * different questions and have different reasons to change: FEBT1-W2A-05
+ * narrowed the *retry* predicate and silently moved this UI policy across a
+ * module boundary (three tests red). A retry-side narrowing must land here as a
+ * compile-or-test event, not as a behaviour change nobody asked for
+ * (DOM-03 one meaning per term per context; REF-10 the shared implementation is
+ * coincidental, not a shared rule).
+ *
+ * Exported so a unit test can pin both abort-like tags directly (TEST-15).
+ */
+export const isFrozenPollFailure = (error: unknown): boolean => isAbortLike(error);
+
+/**
  * Pure refetchInterval decision for describe-run progress (UXP-2-BR-07).
  *
  * Transient abort/timeout must keep polling — the shared retry policy never
@@ -51,7 +69,7 @@ export const getDescribeRunRefetchInterval = (args: {
   frozenPollStreak: number;
 }): number | false => {
   // Keep polling through abort/timeout; only hard failures stop (BR-07).
-  if (args.status === 'error' && !isAbortLike(args.error)) {
+  if (args.status === 'error' && !isFrozenPollFailure(args.error)) {
     return false;
   }
   if (args.frozenPollStreak >= FROZEN_POLL_ESCALATION_THRESHOLD) {
@@ -129,7 +147,7 @@ export const useDescribeRunProgress = (runId: string | null): DescribeRunProgres
       consecutiveFrozenPollsRef.current = 0;
       setFrozenPollStreak(0);
     }
-    if (errorUpdatedAt > lastCountedErrorAtRef.current && isAbortLike(queryError)) {
+    if (errorUpdatedAt > lastCountedErrorAtRef.current && isFrozenPollFailure(queryError)) {
       lastCountedErrorAtRef.current = errorUpdatedAt;
       consecutiveFrozenPollsRef.current += 1;
       setFrozenPollStreak(consecutiveFrozenPollsRef.current);
@@ -148,7 +166,7 @@ export const useDescribeRunProgress = (runId: string | null): DescribeRunProgres
   const status = run?.status ?? null;
   const isTerminal = status !== null && isDescribeRunTerminal(status);
   const frozenStreakExceeded = frozenPollStreak >= FROZEN_POLL_ESCALATION_THRESHOLD;
-  const isFrozen = query.isError && isAbortLike(query.error) && !frozenStreakExceeded;
+  const isFrozen = query.isError && isFrozenPollFailure(query.error) && !frozenStreakExceeded;
   const isError = query.isError && !isFrozen;
 
   const { refetch } = query;

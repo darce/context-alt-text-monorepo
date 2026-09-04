@@ -97,7 +97,7 @@ const captureRecords = (): LogRecord[] => {
 
 const renderMutations = (activeJobIds: string[] = []) => {
   const addJob = vi.fn();
-  const removeJob = vi.fn();
+  const removeJob = vi.fn<(id: string) => void>();
   const setIsWaitingForScanCompletion = vi.fn();
   const setIsCancellingScan = vi.fn();
   const setActiveBatchRunId = vi.fn();
@@ -124,6 +124,8 @@ const renderMutations = (activeJobIds: string[] = []) => {
   return {
     ...rendered,
     addJob,
+    removeJob,
+    setActiveBatchRunId,
     onScanComplete,
     onScanError,
     onCancelComplete,
@@ -333,5 +335,136 @@ describe('useJobStateMachineMutations logging [O-02][O-06]', () => {
     expect(submit?.fields.requestId).toEqual(expect.any(String));
     expect(cancel?.fields.requestId).toEqual(expect.any(String));
     expect(cancel?.fields.requestId).not.toBe(submit?.fields.requestId);
+  });
+});
+
+describe('[FEBT2-W2-T][OBS-03] the submit unit publishes a correlation id the SSE stream can inherit', () => {
+  beforeEach(() => {
+    scanOptions = undefined;
+    cancelOptions = undefined;
+    setLogLevel('debug');
+    useScanIdentitiesMock.mockImplementation((options) => {
+      scanOptions = options;
+      return asMutationResult<ReturnType<typeof useScanIdentities>>({ mutate: vi.fn(), isPending: false });
+    });
+    useClusterIdentitiesMock.mockReturnValue(
+      asMutationResult<ReturnType<typeof useClusterIdentities>>({ mutate: vi.fn(), isPending: false }),
+    );
+    useCancelScanJobsMock.mockImplementation((options) => {
+      cancelOptions = options;
+      return asMutationResult<ReturnType<typeof useCancelScanJobs>>({ mutate: vi.fn(), isPending: false });
+    });
+  });
+
+  afterEach(() => {
+    setLogSink(null);
+    setLogLevel(null);
+    vi.clearAllMocks();
+  });
+
+  it('resolves every job the submit created to the SAME id the submit logged', () => {
+    const records = captureRecords();
+    const { result } = renderMutations();
+
+    scanOptions?.onMutate?.([1, 2], mockMutationContext);
+    scanOptions?.onSuccess?.(scanResponse(['job-1', 'job-2'], 4), [1, 2], undefined, mockMutationContext);
+
+    const submit = records.find((record) => record.fields.event === 'scan.submit');
+    const submitRequestId = submit?.fields.requestId;
+    expect(submitRequestId).toEqual(expect.any(String));
+    // Not "some string" — the SAME string the submit line carries, which is the only thing
+    // that makes the later stream.* lines greppable from the submit (OBS-03).
+    expect(result.current.resolveScanRequestId('job-1')).toBe(submitRequestId);
+    expect(result.current.resolveScanRequestId('job-2')).toBe(submitRequestId);
+  });
+
+  it('answers null — not a lookalike id — for a job this submit did not create', () => {
+    const { result } = renderMutations();
+
+    scanOptions?.onMutate?.([1], mockMutationContext);
+    scanOptions?.onSuccess?.(scanResponse(['job-1'], 4), [1], undefined, mockMutationContext);
+
+    // A job rehydrated from persistence, or one the backend auto-chained, was never part of
+    // this submit. Claiming it would make a grep return a confident wrong answer, which is
+    // worse than returning nothing (ml CAL-02 'unknown is a valid result'; rg-015).
+    expect(result.current.resolveScanRequestId('job-unrelated')).toBeNull();
+  });
+
+  it('answers null before any submit has succeeded', () => {
+    const { result } = renderMutations();
+
+    expect(result.current.resolveScanRequestId('job-1')).toBeNull();
+    // In-flight: onMutate has minted an id but no job ids exist yet to pin it to.
+    scanOptions?.onMutate?.([1], mockMutationContext);
+    expect(result.current.resolveScanRequestId('job-1')).toBeNull();
+  });
+
+  it('answers null for a zero-job submit rather than pinning an empty batch', () => {
+    const { result } = renderMutations();
+
+    scanOptions?.onMutate?.([1], mockMutationContext);
+    scanOptions?.onSuccess?.(scanResponse([], 0), [1], undefined, mockMutationContext);
+
+    expect(result.current.resolveScanRequestId('job-1')).toBeNull();
+  });
+
+  it('drops the previous submit pin the moment a new submit starts', () => {
+    const { result } = renderMutations();
+
+    scanOptions?.onMutate?.([1], mockMutationContext);
+    scanOptions?.onSuccess?.(scanResponse(['job-old'], 4), [1], undefined, mockMutationContext);
+    const firstId = result.current.resolveScanRequestId('job-old');
+    expect(firstId).toEqual(expect.any(String));
+
+    scanOptions?.onMutate?.([2], mockMutationContext);
+    // The old batch's stream lines must not be joined to the NEW submit.
+    expect(result.current.resolveScanRequestId('job-old')).toBeNull();
+
+    scanOptions?.onSuccess?.(scanResponse(['job-new'], 4), [2], undefined, mockMutationContext);
+    expect(result.current.resolveScanRequestId('job-old')).toBeNull();
+    const secondId = result.current.resolveScanRequestId('job-new');
+    expect(secondId).toEqual(expect.any(String));
+    expect(secondId).not.toBe(firstId);
+  });
+
+  it('[FEBT2-LB-NEW-02][RES-20] a successful cancel releases EVERY active job id, not just the first', () => {
+    const { removeJob } = renderMutations(['job-a', 'job-b', 'job-c']);
+
+    cancelOptions?.onMutate?.(['job-a', 'job-b', 'job-c'], mockCancelContext);
+    cancelOptions?.onSuccess?.(undefined as never, ['job-a', 'job-b', 'job-c'], undefined, mockCancelContext);
+
+    // This is the first link in the chain that closes the SSE transport after a cancel:
+    // emptying activeJobs is what drives latestJobId to null in useJobStateMachine, which is
+    // what tears the EventSource down. A cancel that released only jobIds[0] would leave a
+    // live stream for work the operator stopped (RES-20: finish what you start).
+    expect(removeJob.mock.calls.map(([id]) => id)).toEqual(['job-a', 'job-b', 'job-c']);
+  });
+
+  it('[FEBT2-W2-T-02][RES-07] a successful cancel reclaims the batch-run id, not just the jobs', () => {
+    const { removeJob, setActiveBatchRunId } = renderMutations(['job-a']);
+
+    cancelOptions?.onMutate?.(['job-a'], mockCancelContext);
+    cancelOptions?.onSuccess?.(undefined as never, ['job-a'], undefined, mockCancelContext);
+
+    // Releasing the jobs is not enough. useJobStateMachine derives
+    // `activeBatchRunId ?? latestScanJob?.batchRunId`, and useRecognitionHooks enables
+    // `useBatchRunStatus(batchRunId, Boolean(batchRunId))` off that value — so a retained
+    // id outlives the run it names and polls a batch that is gone, forever. Cancel is an
+    // exit from the run and must reclaim what the run allocated (RES-07: whatever
+    // accumulates needs a reclaimer shipped with it).
+    expect(removeJob.mock.calls.map(([id]) => id)).toEqual(['job-a']);
+    expect(setActiveBatchRunId).toHaveBeenCalledWith(null);
+  });
+
+  it('[FEBT2-W2-T-02] the batch-run id survives a FAILED cancel — nothing was reclaimed', () => {
+    const { setActiveBatchRunId } = renderMutations(['job-a']);
+
+    cancelOptions?.onMutate?.(['job-a'], mockCancelContext);
+    cancelOptions?.onError?.(new Error('cancel rejected'), ['job-a'], undefined, mockCancelContext);
+
+    // Negative control for the reclaim above: the run is still live when the cancel
+    // request fails, so clearing the id here would blind the poll to a run that is still
+    // producing progress. Only the success path is an exit.
+    expect(setActiveBatchRunId).not.toHaveBeenCalled();
   });
 });

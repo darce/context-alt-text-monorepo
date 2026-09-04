@@ -19,6 +19,8 @@ import {
 import { commitClusterToRosterEntry } from '../../../../api/rosterApi';
 import { DATA_SOURCE } from '../../../../api/recognition/types';
 import type { TopUnlabeledClustersResponse } from '../../../../api/recognition/types/cluster';
+import { SAVE_TIMEOUT_MS } from '../clusterLabelingBudget';
+import { isClusterMutationTimeoutError } from '../clusterMutationUtils';
 import { useRosterEntries } from '../../../../hooks/useRosterHooks';
 import { createMockQuery } from '../../../../test-utils/mockHooks';
 import { classifyError } from '../../../../utils/appError';
@@ -225,6 +227,46 @@ describe('ClusterLabelingPanel', () => {
     });
     expect(await screen.findByText(/Merged into/)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Undo merge' })).toBeInTheDocument();
+  });
+
+  it('FEBT2-W2-R-01: the merge undo runs under the same interactive budget as its siblings', async () => {
+    // The hook's docstring claims a shared interactive budget for all four of its writes.
+    // The undo was the one exception, falling through to the global fetch timeout (RES-02,
+    // lexicons/engineering.md:113). This pins the claim: a live signal at dispatch, aborted
+    // by the deadline with the branded sentinel, so no `onError` can read an expired budget
+    // as a user cancel and go silent (RLSE-05, lexicons/engineering.md:696).
+    vi.mocked(listRecognitionClusters).mockResolvedValue(makeClusterListResponse());
+    let revertSignal: AbortSignal | undefined;
+    vi.mocked(revertMergeCluster).mockImplementation((_payload, signal) => {
+      revertSignal = signal;
+      return new Promise(() => undefined);
+    });
+
+    vi.useFakeTimers();
+    try {
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTimeAsync });
+      renderPanel();
+
+      const input = await screen.findByRole('combobox', { name: 'Name' });
+      await user.clear(input);
+      await user.type(input, 'Slate Willow');
+      await user.click(await screen.findByRole('option', { name: /confirm match/i }));
+      await user.click(await screen.findByRole('button', { name: 'Merge into group "Slate Willow"' }));
+      await user.click(await screen.findByRole('button', { name: 'Undo merge' }));
+
+      await waitFor(() => expect(revertMergeCluster).toHaveBeenCalled());
+      expect(revertSignal).toBeInstanceOf(AbortSignal);
+      expect(revertSignal?.aborted).toBe(false);
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(SAVE_TIMEOUT_MS);
+      });
+
+      expect(revertSignal?.aborted).toBe(true);
+      expect(isClusterMutationTimeoutError(revertSignal?.reason)).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('moves focus to the first duplicate-guard action when the guard opens (UXW2-3-R6-06)', async () => {

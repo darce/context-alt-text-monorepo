@@ -9,7 +9,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { BoundingBox } from '../../../../api/recognition/types/identity';
 import type { DetectedIdentity } from '../../../../api/recognition';
 import type { PendingMergeSuggestion, TopUnlabeledCluster } from '../../../../api/recognition/types';
-import { NEXT_ACTION_KIND, NONE_REASON } from '../reviewQueueDriver';
+import { NEXT_ACTION_KIND } from '../reviewQueueDriver';
 
 /**
  * E21-20-REV1-06 / REV2-06 / TEST-15: module-mock sentinel discrimination.

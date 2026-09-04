@@ -27,10 +27,18 @@ const AMBIGUOUS_OUTCOME_TAGS = {
 } as const;
 
 /**
- * Cancellation-shaped: a deliberate abort *or* an elapsed deadline. This is the
- * UI-facing "the poll did not come back, freeze rather than dead-end" predicate
- * (useDescribeRunProgress.ts:54,132,151) and its contract is unchanged by the
- * FEBT1-W2A-05 tag split — both shapes still answer true.
+ * Cancellation-shaped: a deliberate abort *or* an elapsed deadline. Its one
+ * UI-facing consumer is `isFrozenPollFailure` in `hooks/useDescribeRunProgress`,
+ * which names the "the poll did not come back, freeze rather than dead-end"
+ * decision; nothing in the UI calls `isAbortLike` directly. The contract is
+ * unchanged by the FEBT1-W2A-05 tag split — both shapes still answer true.
+ *
+ * No line numbers here on purpose (FEBT2-W2-Q-02): the previous
+ * `useDescribeRunProgress.ts:54,132,151` reference had drifted to 72/150/169 and
+ * pointed at the wrong symbol, so the comment asserted a call site the code did
+ * not have (NAME-03, lexicons/engineering.md:650; CLM-03,
+ * lexicons/business-marketing.md:297 — the doc is the stale side). A symbol name
+ * is greppable and survives every edit above it; a line number does not.
  */
 export const isAbortLike = (error: unknown): boolean => {
   const tag = classifyError(error)._tag;
@@ -101,11 +109,7 @@ export const shouldRetryRequest = (failureCount: number, error: unknown): boolea
  * floor removes the zero without removing the jitter: the delay is still drawn
  * from a random window, so a fleet does not resynchronise.
  */
-export const getRetryDelay = (
-  attemptIndex: number,
-  error: unknown,
-  rng: () => number = Math.random,
-): number => {
+export const getRetryDelay = (attemptIndex: number, error: unknown, rng: () => number = Math.random): number => {
   const exponential = Math.min(1000 * 2 ** attemptIndex, MAX_RETRY_DELAY_MS);
   const classified = classifyError(error);
   const retryAfterMs = classified._tag === 'http' ? classified.retryAfterMs : undefined;

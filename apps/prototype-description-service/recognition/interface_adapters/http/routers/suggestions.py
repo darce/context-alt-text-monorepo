@@ -57,8 +57,8 @@ from recognition.interface_adapters.http.schemas.responses import (
     NameSuggestionResponse,
     RepresentativeResponse,
     RosterCandidateResponse,
-    RosterCandidateThresholdsResponse,
     RosterCandidatesResponse,
+    RosterCandidateThresholdsResponse,
     SuggestionResponse,
 )
 from recognition.interface_adapters.http.validation import validate_entity_id, validate_paging, validate_top_k

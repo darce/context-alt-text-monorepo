@@ -48,6 +48,17 @@ const LOCK_TIMEOUT_MS = 6 * 60_000;
 const LOCK_POLL_MS = 100;
 /** Artifact directories untouched for longer than this are pruned. */
 const ARTIFACT_TTL_MS = 24 * 60 * 60_000;
+/**
+ * Hard cap on retained artifact directories, TTL notwithstanding (FEBT2-W2-U-03).
+ *
+ * A TTL alone bounds *age*, not *rate*. During a parallel-lane wave every edit in every
+ * lane mints a new fingerprint and a full build artifact, so directories accrue far faster
+ * than a 24h cutoff collects them — an unbounded cache is a leak (RES-08), and this one
+ * filled the host volume twice. The cap makes retention proportional to concurrent lanes
+ * rather than to edit rate. Small on purpose: the only artifact whose reuse matters is the
+ * current fingerprint's, which `keepDirName` protects unconditionally.
+ */
+export const MAX_RETAINED_ARTIFACTS = 4;
 
 const testsRoot = __dirname;
 const appRoot = resolve(testsRoot, '..', '..', '..', '..', '..');
@@ -69,12 +80,12 @@ const BUILD_INPUT_GLOBS = [
   'package-lock.json',
 ] as const;
 
-function isBuildInput(relativePath: string): boolean {
+const isBuildInput = (relativePath: string): boolean => {
   if (relativePath.includes('__tests__')) {
     return false;
   }
   return !/\.(test|spec)\.[cm]?tsx?$/.test(relativePath);
-}
+};
 
 export interface ProductionCssBundle {
   /** Every emitted CSS file, concatenated. */
@@ -92,27 +103,101 @@ export interface ProductionCssBundle {
  * stamp proves the artifact came from the tree under test — a strictly stronger guarantee than the
  * mtime-recency check it replaces, which only proved *some* build had run recently.
  */
-export function computeBuildInputFingerprint(): string {
-  const files = BUILD_INPUT_GLOBS.flatMap((pattern) => globSync(pattern, { cwd: appRoot }))
-    .map((entry) => entry.split('\\').join('/'))
-    .filter(isBuildInput)
-    .sort();
+export const computeBuildInputFingerprint = (): string => {
+  const files = fingerprintedBuildInputs();
 
   const digest = createHash('sha256');
   for (const file of files) {
     digest.update(file);
     digest.update('\0');
-    digest.update(createHash('sha256').update(readFileSync(join(appRoot, file))).digest());
+    digest.update(
+      createHash('sha256')
+        .update(readFileSync(join(appRoot, file)))
+        .digest(),
+    );
     digest.update('\n');
   }
   return digest.digest('hex').slice(0, 32);
-}
+};
 
-function sleepSync(milliseconds: number): void {
+const toPosix = (entry: string): string => entry.split('\\').join('/');
+
+/** Repository-relative paths, POSIX-separated, that BUILD_INPUT_GLOBS actually hashes. */
+export const fingerprintedBuildInputs = (): string[] =>
+  BUILD_INPUT_GLOBS.flatMap((pattern) => globSync(pattern, { cwd: appRoot }))
+    .map(toPosix)
+    .filter(isBuildInput)
+    .sort();
+
+/**
+ * Every non-test file under `js/`, regardless of extension — the set rollup is allowed
+ * to consume. Deliberately NOT filtered by BUILD_INPUT_GLOBS: this is the independent
+ * side of the comparison below.
+ */
+export const buildInputCandidates = (): string[] =>
+  globSync('js/**/*', { cwd: appRoot })
+    .map(toPosix)
+    .filter((entry) => statSync(join(appRoot, entry)).isFile())
+    .filter(isBuildInput)
+    .sort();
+
+/** Pure seam so a test can prove the detector detects (TEST-15) without planting a file. */
+export const selectUnfingerprinted = (candidates: readonly string[], fingerprinted: Iterable<string>): string[] => {
+  const covered = new Set(fingerprinted);
+  return candidates.filter((entry) => !covered.has(entry)).sort();
+};
+
+/**
+ * Build inputs the fingerprint would not see (FEBT2-LG-NEW-02).
+ *
+ * BUILD_INPUT_GLOBS enumerates extensions. A lane that adds a new build-input file type
+ * under `js/` — an `.svg` imported by rollup, an `.mjs`, a `.woff2` — and forgets to
+ * extend the globs does not get an error: the fingerprint simply stops changing, the
+ * cached artifact is reused, and the style suites assert against yesterday's bundle
+ * while reporting green. Silent staleness, not a failure (RLSE-05). Non-empty here
+ * means the omission is now loud.
+ */
+export const uncoveredBuildInputs = (): string[] =>
+  selectUnfingerprinted(buildInputCandidates(), fingerprintedBuildInputs());
+
+/**
+ * Sources rollup itself recorded as build inputs, read from the build's own manifest
+ * rather than guessed from the entry list. Throws on a missing manifest: an absent one
+ * would otherwise yield an empty source list, which every coverage check trivially passes.
+ */
+export const manifestBuildSources = (bundle: ProductionCssBundle): string[] => {
+  const manifestPath = join(bundle.outDir, '.vite', 'manifest.json');
+  if (!existsSync(manifestPath)) {
+    throw new Error(
+      `No rollup manifest at ${manifestPath}. vite.config.ts sets build.manifest; a missing ` +
+        'manifest means the artifact was not produced by the configured build.',
+    );
+  }
+  const parsed: unknown = JSON.parse(readFileSync(manifestPath, 'utf8'));
+  if (typeof parsed !== 'object' || parsed === null) {
+    throw new Error(`Rollup manifest at ${manifestPath} is not an object.`);
+  }
+  const sources = Object.values(parsed as Record<string, unknown>)
+    .map((chunk) => (typeof chunk === 'object' && chunk !== null && 'src' in chunk ? chunk.src : undefined))
+    .filter((src): src is string => typeof src === 'string')
+    .map(toPosix);
+
+  return sources.sort();
+};
+
+/**
+ * Manifest-recorded sources the fingerprint does not hash. Split from
+ * `manifestBuildSources` so a test can assert the source list is non-empty: a comparison
+ * against an accidentally-empty list reports "all covered" and certifies nothing (TEST-15).
+ */
+export const unfingerprintedManifestSources = (bundle: ProductionCssBundle): string[] =>
+  selectUnfingerprinted(manifestBuildSources(bundle), fingerprintedBuildInputs());
+
+const sleepSync = (milliseconds: number): void => {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, milliseconds);
-}
+};
 
-function acquireGlobalLock(): void {
+const acquireGlobalLock = (): void => {
   const deadline = Date.now() + LOCK_TIMEOUT_MS;
   mkdirSync(FIXTURE_ROOT, { recursive: true });
 
@@ -141,28 +226,72 @@ function acquireGlobalLock(): void {
       sleepSync(LOCK_POLL_MS);
     }
   }
+};
+
+const releaseGlobalLock = (): void => {
+  rmSync(LOCK_DIR, { recursive: true, force: true });
+};
+
+/** An artifact directory and the time its stamp was last touched. */
+export interface ArtifactEntry {
+  readonly name: string;
+  /** Stamp mtime; `0` for a directory with no stamp (a crashed or half-written build). */
+  readonly lastUsedMs: number;
 }
 
-function releaseGlobalLock(): void {
-  rmSync(LOCK_DIR, { recursive: true, force: true });
-}
+/**
+ * Which artifact directories to delete. Pure so the retention policy can be tested without
+ * a filesystem or a clock — `Date.now()` in the decision would make every assertion about
+ * "older than the TTL" depend on wall time (TEST-08).
+ *
+ * Two independent bounds, both required: the TTL evicts *stale* artifacts, the cap evicts
+ * *excess* ones. Neither subsumes the other — a wave can mint 50 artifacts in an hour, all
+ * inside the TTL; a quiet week leaves 2 artifacts, both past it.
+ */
+export const selectArtifactsToPrune = (
+  entries: readonly ArtifactEntry[],
+  keepDirName: string,
+  cutoffMs: number,
+  maxRetained: number = MAX_RETAINED_ARTIFACTS,
+): string[] => {
+  const candidates = entries.filter((entry) => entry.name !== keepDirName && entry.name !== '.lock');
+  const expired = candidates.filter((entry) => entry.lastUsedMs < cutoffMs);
+  // Most-recently-used first; name breaks ties so the selection is deterministic under equal
+  // mtimes, which a same-second wave produces routinely (TEST-08).
+  const retainable = candidates
+    .filter((entry) => entry.lastUsedMs >= cutoffMs)
+    .sort((a, b) => b.lastUsedMs - a.lastUsedMs || a.name.localeCompare(b.name));
+  // `keepDirName` is retained unconditionally above, so it consumes one of the slots.
+  const overflow = retainable.slice(Math.max(maxRetained - 1, 0));
+
+  return [...expired, ...overflow].map((entry) => entry.name).sort();
+};
+
+/** Artifact directories currently on disk, with the stamp mtime the policy reads. */
+const readArtifactEntries = (): ArtifactEntry[] => {
+  if (!existsSync(FIXTURE_ROOT)) {
+    return [];
+  }
+  return readdirSync(FIXTURE_ROOT, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => {
+      const stampPath = join(FIXTURE_ROOT, entry.name, STAMP_FILE);
+      return {
+        name: entry.name,
+        lastUsedMs: existsSync(stampPath) ? statSync(stampPath).mtimeMs : 0,
+      };
+    });
+};
 
 /** Bounded tmpdir growth. Runs under the global lock, so it cannot race a reader. */
-function pruneStaleArtifacts(keepDirName: string): void {
-  const cutoff = Date.now() - ARTIFACT_TTL_MS;
-  for (const entry of readdirSync(FIXTURE_ROOT, { withFileTypes: true })) {
-    if (!entry.isDirectory() || entry.name === keepDirName || entry.name === '.lock') {
-      continue;
-    }
-    const stampPath = join(FIXTURE_ROOT, entry.name, STAMP_FILE);
-    const lastUsedMs = existsSync(stampPath) ? statSync(stampPath).mtimeMs : 0;
-    if (lastUsedMs < cutoff) {
-      rmSync(join(FIXTURE_ROOT, entry.name), { recursive: true, force: true });
-    }
+const pruneStaleArtifacts = (keepDirName: string): void => {
+  const doomed = selectArtifactsToPrune(readArtifactEntries(), keepDirName, Date.now() - ARTIFACT_TTL_MS);
+  for (const name of doomed) {
+    rmSync(join(FIXTURE_ROOT, name), { recursive: true, force: true });
   }
-}
+};
 
-function readStampedFingerprint(stampPath: string): string | null {
+const readStampedFingerprint = (stampPath: string): string | null => {
   if (!existsSync(stampPath)) {
     return null;
   }
@@ -175,9 +304,9 @@ function readStampedFingerprint(stampPath: string): string | null {
   if (typeof parsed !== 'object' || parsed === null || !('fingerprint' in parsed)) {
     return null;
   }
-  const { fingerprint } = parsed as { fingerprint: unknown };
+  const { fingerprint } = parsed;
   return typeof fingerprint === 'string' ? fingerprint : null;
-}
+};
 
 let cachedBundle: ProductionCssBundle | null = null;
 
@@ -187,7 +316,7 @@ let cachedBundle: ProductionCssBundle | null = null;
  * emits no CSS, so a broken build fails as a build problem instead of masquerading as a source
  * regression or passing on someone else's leftover artifact.
  */
-export function loadProductionCssBundle(): ProductionCssBundle {
+export const loadProductionCssBundle = (): ProductionCssBundle => {
   if (cachedBundle !== null) {
     return cachedBundle;
   }
@@ -198,6 +327,11 @@ export function loadProductionCssBundle(): ProductionCssBundle {
 
   acquireGlobalLock();
   try {
+    // Before the build, not after: pruning afterwards means the disk must hold the old
+    // artifacts *and* the new one simultaneously, which is exactly the moment the volume
+    // fills. `keepDirName` protects the artifact we are about to reuse.
+    pruneStaleArtifacts(fingerprint);
+
     if (readStampedFingerprint(stampPath) === fingerprint) {
       // Mark the artifact as in use so the pruner keeps it.
       const now = new Date();
@@ -219,8 +353,6 @@ export function loadProductionCssBundle(): ProductionCssBundle {
     }
     const css = cssFilePaths.map((filePath) => readFileSync(filePath, 'utf8')).join('\n');
 
-    pruneStaleArtifacts(fingerprint);
-
     cachedBundle = Object.freeze({
       css,
       cssFilePaths: Object.freeze([...cssFilePaths]),
@@ -231,7 +363,7 @@ export function loadProductionCssBundle(): ProductionCssBundle {
   } finally {
     releaseGlobalLock();
   }
-}
+};
 
 /**
  * Read back the fingerprint an artifact directory was stamped with. A stamp is only written after
@@ -239,14 +371,14 @@ export function loadProductionCssBundle(): ProductionCssBundle {
  * by a build of a tree hashing to that fingerprint — not by a leftover or half-written artifact.
  * Safe to call at any time: a stamped artifact directory is immutable.
  */
-export function readArtifactStamp(bundle: ProductionCssBundle): string | null {
+export const readArtifactStamp = (bundle: ProductionCssBundle): string | null => {
   return readStampedFingerprint(join(bundle.outDir, STAMP_FILE));
-}
+};
 
 /** Exposed so a test can assert the fixture never reads from the shared, emptyable build output. */
 export const SHARED_BUILD_OUT_DIR = join(appRoot, 'public/assets/dist');
 
-export function isInsideFixtureRoot(path: string): boolean {
+export const isInsideFixtureRoot = (path: string): boolean => {
   const rel = relative(FIXTURE_ROOT, path);
   return rel !== '' && !rel.startsWith('..');
-}
+};

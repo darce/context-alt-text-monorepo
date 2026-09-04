@@ -75,6 +75,13 @@ export const useJobStateMachineMutations = ({
   // outcome handler so submit/success and submit/failure share a grep key (OBS-03).
   const scanRequestIdRef = useRef<string | null>(null);
   const cancelRequestIdRef = useRef<string | null>(null);
+  // The submit unit's correlation id, pinned to the job ids that submit actually created
+  // (OBS-03). Membership is half the pin: a job that this submit did not create — one
+  // rehydrated from persistence, or the next submit's — must resolve to "unknown" and mint
+  // its own id. A fabricated join is worse than an absent one, because it makes a grep
+  // return a confident wrong answer instead of nothing (ml CAL-02: unknown is a valid
+  // result; rg-015: adapters do not invent contract metadata).
+  const scanCorrelationRef = useRef<{ requestId: string; jobIds: readonly string[] } | null>(null);
   const scanLog = useCallback(
     (): Logger => withRequestId(log, scanRequestIdRef.current ?? newRequestId()),
     [],
@@ -97,6 +104,9 @@ export const useJobStateMachineMutations = ({
   const scanMutation = useScanIdentities({
     onMutate: () => {
       scanRequestIdRef.current = newRequestId();
+      // The previous submit's pin is dead the moment a new submit starts: leaving it live
+      // would correlate the old batch's stream lines to the new submit.
+      scanCorrelationRef.current = null;
       onScanStart?.();
       clearActiveJobs();
       setIsWaitingForScanCompletion(false);
@@ -106,6 +116,11 @@ export const useJobStateMachineMutations = ({
       setActiveBatchRunId(data.batchRunId);
       const jobIds = data.jobs.map((job) => job.id).filter((id): id is string => Boolean(id));
       const total = data.jobs.reduce((sum, job) => sum + (job.progress?.total ?? 0), 0);
+      // Membership is the only gate. An explicit `jobIds.length > 0` clause here was dead:
+      // an empty batch pins an empty id list, which `includes()` already disclaims for every
+      // job, so the two gates masked each other and no mutant could tell them apart.
+      const submitRequestId = scanRequestIdRef.current;
+      scanCorrelationRef.current = submitRequestId === null ? null : { requestId: submitRequestId, jobIds };
       if (jobIds.length > 0) {
         data.jobs.forEach((job) => {
           if (!job.id) {
@@ -231,6 +246,13 @@ export const useJobStateMachineMutations = ({
       });
       setIsWaitingForScanCompletion(false);
       clearActiveJobs();
+      // FEBT2-W2-T-02 (RES-07): the batch-run id is the last thing keeping the run alive.
+      // `clearActiveJobs()` only drops the jobs, and useJobStateMachine falls back
+      // `activeBatchRunId ?? latestScanJob?.batchRunId`, so a retained id kept
+      // `useBatchRunStatus(batchRunId, Boolean(batchRunId))` polling forever against a run
+      // that no longer exists. The scan's own `onMutate` already clears it on start; a
+      // cancel is the other exit from the run and must reclaim it too.
+      setActiveBatchRunId(null);
       invalidateIdentities();
       onCancelComplete?.();
     },
@@ -250,10 +272,24 @@ export const useJobStateMachineMutations = ({
     },
   });
 
+  /**
+   * The seam that lets one grep span scan-submit -> SSE (FEBT2-LB-NEW-03). Returns the
+   * submit unit's requestId when `jobId` is one this submit created, and `null` when the
+   * ownership is unknown so the caller mints a fresh id instead of inheriting a stale one.
+   */
+  const resolveScanRequestId = useCallback((jobId: string): string | null => {
+    const pinned = scanCorrelationRef.current;
+    if (!pinned?.jobIds.includes(jobId)) {
+      return null;
+    }
+    return pinned.requestId;
+  }, []);
+
   return {
     scanMutation,
     clusterMutation,
     cancelMutation,
+    resolveScanRequestId,
     startCluster,
     retryClustering,
     clusterQueuedSeconds,

@@ -53,7 +53,7 @@ vi.mock('../identity-clusters', () => ({
   ),
   ClusterReviewPanel: () => <div data-testid="review-panel" />,
   ReviewQueue: React.forwardRef<unknown, { onLabel?: (clusterId: string) => void }>(
-    function ReviewQueueStub({ onLabel }, _ref) {
+    function ReviewQueueStub({ onLabel }) {
       return (
         <div data-testid="review-queue">
           <h3 id="acx-workbench-queue-heading">Review Suggestions</h3>

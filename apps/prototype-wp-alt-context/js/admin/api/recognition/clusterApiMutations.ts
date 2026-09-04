@@ -60,7 +60,18 @@ export const reassignClusterIdentity = async (
   });
 };
 
-export const revertMergeCluster = async (request: RevertMergeRequest): Promise<RevertMergeResponse> => {
+/**
+ * FEBT2-W2-R-01: `signal` is threaded here for the same reason it is on `mergeCluster`,
+ * `renameCluster` and `reassignClusterIdentity` — not to bound the wait (utils/http already
+ * gives every call `DEFAULT_FETCH_TIMEOUT_MS`), but so a superseded revert can be abandoned
+ * before it lands. Without it the caller has no way to disown an in-flight revert, and the
+ * write of an undo the operator already moved past still commits (RES-10: a holder whose
+ * authority has lapsed must not still be able to write).
+ */
+export const revertMergeCluster = async (
+  request: RevertMergeRequest,
+  signal?: AbortSignal,
+): Promise<RevertMergeResponse> => {
   const base = getEndpoint('recognitionRevertMerge');
   return fetchRequiredApi<RevertMergeResponse>(base, {
     method: 'POST',
@@ -70,6 +81,7 @@ export const revertMergeCluster = async (request: RevertMergeRequest): Promise<R
       source_label: request.sourceLabel ?? null,
     },
     restNonce: getConfig().nonce,
+    signal,
   });
 };
 
@@ -89,9 +101,19 @@ export const pinRepresentative = async (
   });
 };
 
+/**
+ * FEBT2-W2-LANE-05: `signal` is threaded for the same reason as on `revertMergeCluster`
+ * and `mergeCluster` — not to bound the wait (`utils/http` already applies
+ * `DEFAULT_FETCH_TIMEOUT_MS`) but so a superseded split can be disowned before it lands.
+ * Split is the heaviest write in this module, so the blast radius of a landed-but-abandoned
+ * split is the largest here (RES-10: authority that has lapsed must not still be able to
+ * write). It is the trailing optional parameter every sibling mutation already uses, so
+ * existing two-argument call sites are unchanged (NAME-04).
+ */
 export const splitCluster = async (
   clusterId: string,
   request: SplitClusterRequest = {},
+  signal?: AbortSignal,
 ): Promise<SplitClusterResponse | AsyncSplitClusterResponse> => {
   const base = getEndpoint('recognitionClusters');
   const { nClusters = 0, anchorIdentityId, splitMode, mode } = request;
@@ -114,6 +136,7 @@ export const splitCluster = async (
       method: 'POST',
       body,
       restNonce: getConfig().nonce,
+      signal,
     },
   );
 };

@@ -13,6 +13,7 @@ import { queryKeys } from '../../../../api/queryKeys';
 import * as recognitionApi from '../../../../api/recognition';
 import { DATA_SOURCE } from '../../../../api/recognition/types';
 import type { PendingNameSuggestionsResponse, TopUnlabeledClustersResponse } from '../../../../api/recognition/types';
+import { RequestTimeoutError } from '../../../../utils/errorTaxonomy';
 import { AuthExpiredError, HTTPError } from '../../../../utils/http';
 import { SPA_SESSION_EXPIRED_COPY } from '../../../../utils/sessionExpiredCopy';
 import { createClusterMutationTimeoutError } from '../clusterMutationUtils';
@@ -157,7 +158,10 @@ describe('useClusterLabelMutations merge accept-by-id (L1R-07 / BR-16)', () => {
 
     await waitFor(() => expect(invalidateQueries).toHaveBeenCalled());
     // An empty revert set is a valid outcome (already-accepted replay), not an error.
-    const applied = vi.mocked(onMergeSuccess).mock.calls[0][0];
+    const applied = vi.mocked(onMergeSuccess).mock.calls[0][0] as {
+      moved_identity_ids: string[];
+      identities_moved: number;
+    };
     expect(applied.moved_identity_ids).toEqual([]);
     expect(applied.identities_moved).toBe(0);
   });
@@ -173,6 +177,26 @@ describe('useClusterLabelMutations merge accept-by-id (L1R-07 / BR-16)', () => {
 
     await waitFor(() => expect(onError).toHaveBeenCalled());
     expect(onMergeSuccess).not.toHaveBeenCalled();
+  });
+
+  it('FEBT2-LD2-NEW-02: threads the caller signal into the atomic accept, not just into mergeCluster', async () => {
+    // The caller aborts the in-flight save when a new one starts. Before the fix
+    // the accept branch dropped the signal, so a superseded suggestion-accept
+    // stayed in flight and its onSuccess rewrote the caches.
+    // Predicted first failure: received object has no `signal` key.
+    const controller = new AbortController();
+    const { result, invalidateQueries } = renderLabelMutations();
+
+    result.current.merge('target-c', 'Target', controller.signal, 'sug-merge-1');
+
+    await waitFor(() => expect(invalidateQueries).toHaveBeenCalled());
+    // Identity, not deep equality: two distinct AbortSignals are structurally
+    // equal (no own enumerable properties), so `toHaveBeenCalledWith` would pass
+    // on a freshly minted signal and certify nothing (TEST-15,
+    // lexicons/engineering.md:396).
+    const request = vi.mocked(recognitionApi.acceptMergeSuggestion).mock.calls[0][0];
+    expect(request).toMatchObject({ suggestionId: 'sug-merge-1', targetClusterId: 'target-c' });
+    expect((request as { signal?: AbortSignal }).signal).toBe(controller.signal);
   });
 
   it('uses the plain merge endpoint when no suggestion is threaded', async () => {
@@ -382,7 +406,7 @@ describe('revertMerge error path (FEBT1-LD-04)', () => {
     result.current.revertMerge(mergeResponse);
 
     await waitFor(() => expect(onError).toHaveBeenCalled());
-    const message = vi.mocked(onError).mock.calls[0][0];
+    const message = vi.mocked(onError).mock.calls[0][0] as string;
     expect(message).toBe('An unexpected error occurred. Please try again.');
     expect(message).not.toContain(secret);
     expect(message).not.toContain('/acx/v1/');
@@ -432,5 +456,223 @@ describe('revertMerge error path (FEBT1-LD-04)', () => {
 
     await waitFor(() => expect(onError).toHaveBeenCalled());
     expect(vi.mocked(onError).mock.calls[0][0]).toBe('An unexpected error occurred. Please try again.');
+  });
+
+  /**
+   * FEBT2-W2-R-01. Rename and merge already accept a caller signal; revert did not, so a
+   * revert the operator had already superseded could still land its write and still run its
+   * onSuccess cache invalidation (RES-10). The mutation variables now carry the signal and
+   * the hook must hand it to the API call — a signal accepted at the hook boundary and
+   * dropped before the request is the same defect wearing a better signature.
+   */
+  it('threads the caller signal down to revertMergeCluster so a superseded revert can be abandoned', async () => {
+    vi.mocked(recognitionApi.revertMergeCluster).mockResolvedValue({} as never);
+    const controller = new AbortController();
+    const { result } = renderRevert();
+
+    result.current.revertMerge(mergeResponse, controller.signal);
+
+    await waitFor(() => expect(recognitionApi.revertMergeCluster).toHaveBeenCalled());
+    expect(recognitionApi.revertMergeCluster).toHaveBeenCalledWith(
+      {
+        targetClusterId: 'target-c',
+        movedIdentityIds: ['id-1'],
+        sourceLabel: 'Source',
+      },
+      controller.signal,
+    );
+  });
+
+  it('an abort of a superseded revert is silent and never invalidates for the abandoned write', async () => {
+    const controller = new AbortController();
+    vi.mocked(recognitionApi.revertMergeCluster).mockImplementation(
+      (_request, signal) =>
+        new Promise((_resolve, reject) => {
+          signal?.addEventListener('abort', () =>
+            reject(new DOMException('The operation was aborted.', 'AbortError')),
+          );
+        }),
+    );
+    const { result, onError, onAbort } = renderRevert();
+
+    result.current.revertMerge(mergeResponse, controller.signal);
+    await waitFor(() => expect(recognitionApi.revertMergeCluster).toHaveBeenCalled());
+    controller.abort();
+
+    // The API is mocked here, so this pins the hook half of the chain only: if the hook
+    // does not forward the signal, the stub never sees an abort, nothing rejects, and this
+    // waitFor times out. The transport half is pinned in
+    // api/recognition/__tests__/clusterApiMutationsRevertSignal.test.ts.
+    await waitFor(() => expect(onAbort).toHaveBeenCalledTimes(1));
+    expect(onError).not.toHaveBeenCalled();
+  });
+
+  it('a revert with no signal still fires — the parameter is optional', async () => {
+    vi.mocked(recognitionApi.revertMergeCluster).mockResolvedValue({} as never);
+    const { result } = renderRevert();
+
+    result.current.revertMerge(mergeResponse);
+
+    await waitFor(() => expect(recognitionApi.revertMergeCluster).toHaveBeenCalled());
+    expect(vi.mocked(recognitionApi.revertMergeCluster).mock.calls[0][1]).toBeUndefined();
+  });
+});
+
+
+describe('useClusterLabelMutations deadline vs cancel (FEBT2 X-LANE-02 / RLSE-05)', () => {
+  const renderAll = () => {
+    const onError = vi.fn();
+    const onAbort = vi.fn();
+    const invalidateQueries = vi.fn();
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+    );
+    const { result } = renderHook(
+      () =>
+        useClusterLabelMutations({
+          clusterId: 'panel-c',
+          currentLabel: 'Source',
+          derivedLabel: null,
+          onError,
+          onAbort,
+          cancelIdentityQueries: vi.fn().mockResolvedValue(undefined),
+          invalidateQueries,
+          updateCachedClusterLabel: vi.fn(),
+        }),
+      { wrapper },
+    );
+    return { result, onError, onAbort };
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  const TIMEOUT_COPY = 'Save is taking too long. Please try again.';
+  const CANCEL_COPY = 'Save cancelled. Check the label before trying again.';
+
+  /**
+   * The exact value the transport produces for an elapsed request:
+   * `utils/http.createTimeoutSignal` aborts with
+   * `new DOMException('The operation timed out.', 'TimeoutError')`, which
+   * `toBoundaryError` normalises to `RequestTimeoutError` (`_tag: 'timeout'`,
+   * `name: 'TimeoutError'`). Built here rather than imported from the hook's own
+   * helpers so the test pins the wire shape, not an internal constructor.
+   */
+  const transportDeadline = (): Error => new RequestTimeoutError(null, 'The operation timed out.');
+
+  /**
+   * Predicted first failure if any of the three gates regresses to the
+   * abort-*like* predicate: `onAbort` fires (useClusterMutations wires it to
+   * resetSaveStatus -> setSaveStatus('idle')), `onError` never fires, and the
+   * operator's write elapses with no notice whatsoever.
+   */
+  it('surfaces operator copy when a transport deadline elapses on rename', async () => {
+    vi.mocked(recognitionApi.updateClusterLabel).mockRejectedValue(transportDeadline());
+    const { result, onError, onAbort } = renderAll();
+
+    result.current.rename('Renamed');
+
+    await waitFor(() => expect(onError).toHaveBeenCalledTimes(1));
+    expect(onError).toHaveBeenCalledWith(TIMEOUT_COPY);
+    expect(onAbort).not.toHaveBeenCalled();
+  });
+
+  it('surfaces operator copy when a transport deadline elapses on merge', async () => {
+    vi.mocked(recognitionApi.mergeCluster).mockRejectedValue(transportDeadline());
+    const { result, onError, onAbort } = renderAll();
+
+    result.current.merge('target-c', 'Target');
+
+    await waitFor(() => expect(onError).toHaveBeenCalledTimes(1));
+    expect(onError).toHaveBeenCalledWith(TIMEOUT_COPY);
+    expect(onAbort).not.toHaveBeenCalled();
+  });
+
+  it('surfaces operator copy when a transport deadline elapses on revert', async () => {
+    vi.mocked(recognitionApi.revertMergeCluster).mockRejectedValue(transportDeadline());
+    const { result, onError, onAbort } = renderAll();
+
+    result.current.revertMerge(mergeResponse);
+
+    await waitFor(() => expect(onError).toHaveBeenCalledTimes(1));
+    expect(onError).toHaveBeenCalledWith(TIMEOUT_COPY);
+    expect(onAbort).not.toHaveBeenCalled();
+  });
+
+  /**
+   * A raw `DOMException(..., 'TimeoutError')` — the value the abort itself
+   * carries before `toBoundaryError` wraps it. Pinned separately so the fix
+   * cannot be narrowed to "only the wrapped class", which would leave every
+   * unwrapped deadline silent again.
+   */
+  it('surfaces operator copy for the raw TimeoutError DOMException the transport aborts with', async () => {
+    vi.mocked(recognitionApi.updateClusterLabel).mockRejectedValue(
+      new DOMException('The operation timed out.', 'TimeoutError'),
+    );
+    const { result, onError, onAbort } = renderAll();
+
+    result.current.rename('Renamed');
+
+    await waitFor(() => expect(onError).toHaveBeenCalledTimes(1));
+    expect(onError).toHaveBeenCalledWith(TIMEOUT_COPY);
+    expect(onAbort).not.toHaveBeenCalled();
+  });
+
+  /**
+   * The other half of the split (DOM-03): a deliberate cancel is the operator's
+   * own action, so it stays silent on all three mutations. Widening the gate to
+   * "any error" would make this red.
+   */
+  it('stays silent for a deliberate operator cancel on rename, merge and revert', async () => {
+    const cancel = (): DOMException => new DOMException('The user aborted a request.', 'AbortError');
+
+    vi.mocked(recognitionApi.updateClusterLabel).mockRejectedValue(cancel());
+    const rename = renderAll();
+    rename.result.current.rename('Renamed');
+    await waitFor(() => expect(rename.onAbort).toHaveBeenCalledTimes(1));
+    expect(rename.onError).not.toHaveBeenCalled();
+
+    vi.mocked(recognitionApi.mergeCluster).mockRejectedValue(cancel());
+    const merge = renderAll();
+    merge.result.current.merge('target-c', 'Target');
+    await waitFor(() => expect(merge.onAbort).toHaveBeenCalledTimes(1));
+    expect(merge.onError).not.toHaveBeenCalled();
+
+    vi.mocked(recognitionApi.revertMergeCluster).mockRejectedValue(cancel());
+    const revert = renderAll();
+    revert.result.current.revertMerge(mergeResponse);
+    await waitFor(() => expect(revert.onAbort).toHaveBeenCalledTimes(1));
+    expect(revert.onError).not.toHaveBeenCalled();
+  });
+
+  /**
+   * Discrimination guard: a cancel that escapes the silent gate must NOT be told
+   * "taking too long". This is what makes the two conditions distinguishable
+   * rather than merely both-non-silent, so a fix that routes everything to the
+   * timeout copy cannot pass.
+   */
+  it('never labels a deliberate cancel as slowness', async () => {
+    vi.mocked(recognitionApi.updateClusterLabel).mockRejectedValue(
+      new DOMException('The user aborted a request.', 'AbortError'),
+    );
+    const { result, onError, onAbort } = renderAll();
+
+    result.current.rename('Renamed');
+
+    await waitFor(() => expect(onAbort).toHaveBeenCalledTimes(1));
+    expect(onError).not.toHaveBeenCalledWith(TIMEOUT_COPY);
+    expect(onError).not.toHaveBeenCalledWith(CANCEL_COPY);
+  });
+
+  it('leaves ordinary server failures on their existing path', async () => {
+    vi.mocked(recognitionApi.updateClusterLabel).mockRejectedValue(new Error('boom'));
+    const { result, onError, onAbort } = renderAll();
+
+    result.current.rename('Renamed');
+
+    await waitFor(() => expect(onError).toHaveBeenCalledWith('boom'));
+    expect(onAbort).not.toHaveBeenCalled();
   });
 });

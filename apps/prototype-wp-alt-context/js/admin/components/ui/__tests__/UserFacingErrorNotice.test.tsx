@@ -23,7 +23,7 @@ describe('UserFacingErrorNotice (SPA auth-expired surface)', () => {
   const originalReloadPage = SPA_SESSION_EXPIRED_COPY.reloadPage;
 
   const mutableCopy = (): { sessionExpired: string; reloadPage: string } =>
-    SPA_SESSION_EXPIRED_COPY as { sessionExpired: string; reloadPage: string };
+    SPA_SESSION_EXPIRED_COPY;
 
   afterEach(() => {
     mutableCopy().sessionExpired = originalSessionExpired;

@@ -623,3 +623,55 @@ def test_classify_score_exit_reason_comes_from_code(
     assert decision.reason == reason
     assert must_have in decision.message
     assert must_not not in decision.message
+
+
+# ---------------------------------------------------------------------------
+# Interpreter resolution (lane-worktree hermeticity)
+# ---------------------------------------------------------------------------
+
+
+def test_score_interpreter_falls_back_to_the_running_interpreter(
+    tmp_path: Path,
+) -> None:
+    """A linked worktree has no service-local .venv and must still score.
+
+    The venv lives in the root worktree only, so hardcoding it made every
+    real-CLI test in this module abort with exit 2 in any lane worktree —
+    the gate stopped testing the publication contract and started testing
+    whether the checkout happened to be the one that ran `uv sync`.
+    """
+    mod = _load_regen()
+    repo = tmp_path / "no-venv"
+    (repo / "apps" / "prototype-description-service").mkdir(parents=True)
+
+    resolved = mod.score_interpreter(repo)
+
+    assert resolved == Path(sys.executable)
+
+
+def test_score_interpreter_prefers_the_service_venv_over_the_caller(
+    tmp_path: Path,
+) -> None:
+    """When the venv exists it stays authoritative — the stub tests rely on it."""
+    mod = _load_regen()
+    repo = _scratch_repo(tmp_path)
+    _install_stub_python(repo)
+
+    resolved = mod.score_interpreter(repo)
+
+    assert resolved == repo / "apps" / "prototype-description-service" / ".venv" / "bin" / "python"
+
+
+def test_score_interpreter_honours_an_explicit_override(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Operators pinning a specific interpreter must beat both discoveries."""
+    mod = _load_regen()
+    repo = _scratch_repo(tmp_path)
+    _install_stub_python(repo)
+    pinned = tmp_path / "pinned-python"
+    pinned.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    pinned.chmod(pinned.stat().st_mode | stat.S_IXUSR)
+    monkeypatch.setenv("ACX_EVAL_SCORE_PYTHON", str(pinned))
+
+    assert mod.score_interpreter(repo) == pinned

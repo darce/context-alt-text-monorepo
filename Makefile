@@ -48,18 +48,23 @@ PYTHON ?= $(MCP_PYTHON)
 # --- Task / lane inference ---
 _ACTIVE_TASK_CMD = $(shell $(MCP_CMD) $(MCP_STATE_ARGS) state 2>/dev/null | python3 -c 'import sys,json; data=json.load(sys.stdin); print(data.get("task_ref",""))' 2>/dev/null)
 ACTIVE_TASK = $(eval ACTIVE_TASK := $(_ACTIVE_TASK_CMD))$(ACTIVE_TASK)
-SUPPORTED_TASKS := $(shell $(LANE_CONFIG_CMD) list-tasks 2>/dev/null)
-SOLE_TASK := $(if $(filter 1,$(words $(SUPPORTED_TASKS))),$(SUPPORTED_TASKS),)
+_SUPPORTED_TASKS_CMD = $(shell $(LANE_CONFIG_CMD) list-tasks 2>/dev/null)
+SUPPORTED_TASKS = $(eval SUPPORTED_TASKS := $(_SUPPORTED_TASKS_CMD))$(SUPPORTED_TASKS)
+SOLE_TASK = $(if $(filter 1,$(words $(SUPPORTED_TASKS))),$(SUPPORTED_TASKS),)
 REQUESTED_TASK := $(strip $(TASK))
 REQUESTED_LANE := $(strip $(LANE))
-INFERRED_TASK := $(shell $(LANE_CONFIG_CMD) infer-task --branch "$(CURRENT_BRANCH)" --worktree-path "$(WORKTREE_ROOT_REAL)" --orchestrator-root "$(ORCHESTRATOR_ROOT)" 2>/dev/null)
-RESOLVED_TASK := $(strip $(shell $(LANE_CONFIG_CMD) resolve-task --explicit-task "$(REQUESTED_TASK)" --active-task "$(ACTIVE_TASK)" --sole-task "$(SOLE_TASK)" --branch "$(CURRENT_BRANCH)" --worktree-path "$(WORKTREE_ROOT_REAL)" --orchestrator-root "$(ORCHESTRATOR_ROOT)" $(if $(REQUESTED_LANE),--lane-id "$(REQUESTED_LANE)",) $(if $(filter 1,$(IN_ORCHESTRATOR_ROOT)),--in-orchestrator-root,) 2>/dev/null))
+_INFERRED_TASK_CMD = $(shell $(LANE_CONFIG_CMD) infer-task --branch "$(CURRENT_BRANCH)" --worktree-path "$(WORKTREE_ROOT_REAL)" --orchestrator-root "$(ORCHESTRATOR_ROOT)" 2>/dev/null)
+INFERRED_TASK = $(eval INFERRED_TASK := $(_INFERRED_TASK_CMD))$(INFERRED_TASK)
+_RESOLVED_TASK_CMD = $(strip $(shell $(LANE_CONFIG_CMD) resolve-task --explicit-task "$(REQUESTED_TASK)" --active-task "$(ACTIVE_TASK)" --sole-task "$(SOLE_TASK)" --branch "$(CURRENT_BRANCH)" --worktree-path "$(WORKTREE_ROOT_REAL)" --orchestrator-root "$(ORCHESTRATOR_ROOT)" $(if $(REQUESTED_LANE),--lane-id "$(REQUESTED_LANE)",) $(if $(filter 1,$(IN_ORCHESTRATOR_ROOT)),--in-orchestrator-root,) 2>/dev/null))
+RESOLVED_TASK = $(eval RESOLVED_TASK := $(_RESOLVED_TASK_CMD))$(RESOLVED_TASK)
 TASK ?= $(RESOLVED_TASK)
-INFERRED_LANE := $(shell $(LANE_CONFIG_CMD) infer-lane --branch "$(CURRENT_BRANCH)" $(if $(TASK),--task-ref "$(TASK)",) 2>/dev/null)
+_INFERRED_LANE_CMD = $(shell $(LANE_CONFIG_CMD) infer-lane --branch "$(CURRENT_BRANCH)" $(if $(TASK),--task-ref "$(TASK)",) 2>/dev/null)
+INFERRED_LANE = $(eval INFERRED_LANE := $(_INFERRED_LANE_CMD))$(INFERRED_LANE)
 LANE ?= $(INFERRED_LANE)
-TASK_LANES := $(shell $(if $(TASK),$(LANE_CONFIG_CMD) list-lanes --task-ref "$(TASK)" 2>/dev/null,))
+_TASK_LANES_CMD = $(shell $(if $(TASK),$(LANE_CONFIG_CMD) list-lanes --task-ref "$(TASK)" 2>/dev/null,))
+TASK_LANES = $(eval TASK_LANES := $(_TASK_LANES_CMD))$(TASK_LANES)
 lane_field = $(shell $(if $(and $(TASK),$(LANE)),$(LANE_CONFIG_CMD) field --task-ref "$(TASK)" --lane-id "$(LANE)" --field $(1) $(if $(2),--orchestrator-root "$(ORCHESTRATOR_ROOT)",) 2>/dev/null,))
-IN_LANE_WORKTREE := $(if $(and $(filter 0,$(IN_ORCHESTRATOR_ROOT)),$(LANE)),1,0)
+IN_LANE_WORKTREE = $(if $(and $(filter 0,$(IN_ORCHESTRATOR_ROOT)),$(LANE)),1,0)
 
 # --- Override defaults ---
 SESSION ?= $(TASK)-$(LANE)
@@ -86,36 +91,50 @@ LANE_TOOLING_PATHS := Makefile mk docs/workbay/instructions.md docs/workbay/temp
 ROOT_REFRESH_PATHS := $(LANE_TOOLING_PATHS) config/lane-orchestration
 LANE_APP_TOOLING_PATHS :=
 
-export ORCHESTRATOR_ROOT TASK LANE SESSION SUMMARY MESSAGE SUBJECT STATUS MERGE_READY DRY_RUN LANE_WORKTREE LANE_TEST_CMD_1 LANE_TEST_CMD_2
+export ORCHESTRATOR_ROOT MESSAGE STATUS MERGE_READY DRY_RUN
+
+# lane-report is the only recipe that reads these values from its environment.
+# Keeping their exports target-specific avoids resolving task/lane metadata for
+# every unrelated recipe while preserving the report script's environment API.
+lane-report: export TASK = $(RESOLVED_TASK)
+lane-report: export LANE = $(INFERRED_LANE)
+lane-report: export SESSION = $(TASK)-$(LANE)
+lane-report: export SUMMARY = $(LANE) lane ready for orchestrator review.
+lane-report: export SUBJECT = $(LANE) next assignment
+lane-report: export LANE_TEST_CMD_1 = $(call lane_field,test_command_1)
+lane-report: export LANE_TEST_CMD_2 = $(call lane_field,test_command_2)
 
 # --- Lane config (resolved from manifest) ---
-LANE_BRANCH :=
-LANE_WORKTREE :=
-LANE_TITLE :=
-LANE_OBJECTIVE :=
-LANE_OWNED_ARGS :=
-LANE_DOC_ARGS :=
-LANE_TEST_ARGS :=
-LANE_TEST_CMD_1 :=
-LANE_TEST_CMD_2 :=
-LANE_NON_GOAL_ARGS :=
-LANE_COMMIT_PATHS :=
-LANE_COMMIT_SUBJECT :=
-LANE_DONE_DEFINITION := Ready for orchestrator branch review with lane-local verification complete.
-LANE_BRANCH := $(call lane_field,branch)
-LANE_WORKTREE := $(call lane_field,worktree_path,1)
-LANE_TITLE := $(call lane_field,title)
-LANE_OBJECTIVE := $(call lane_field,objective)
-LANE_OWNED_ARGS := $(call lane_field,owned_args)
-LANE_DOC_ARGS := $(call lane_field,doc_args)
-LANE_TEST_ARGS := $(call lane_field,test_args)
-LANE_TEST_CMD_1 := $(call lane_field,test_command_1)
-LANE_TEST_CMD_2 := $(call lane_field,test_command_2)
-LANE_NON_GOAL_ARGS := $(call lane_field,non_goal_args)
-LANE_COMMIT_PATHS := $(call lane_field,commit_paths)
-LANE_COMMIT_SUBJECT := $(call lane_field,commit_subject)
-LANE_DONE_DEFINITION := $(or $(call lane_field,done_definition),$(LANE_DONE_DEFINITION))
-LANE_APP_TOOLING_PATHS := $(call lane_field,tooling_paths)
+_LANE_BRANCH_CMD = $(call lane_field,branch)
+_LANE_WORKTREE_CMD = $(call lane_field,worktree_path,1)
+_LANE_TITLE_CMD = $(call lane_field,title)
+_LANE_OBJECTIVE_CMD = $(call lane_field,objective)
+_LANE_OWNED_ARGS_CMD = $(call lane_field,owned_args)
+_LANE_DOC_ARGS_CMD = $(call lane_field,doc_args)
+_LANE_TEST_ARGS_CMD = $(call lane_field,test_args)
+_LANE_TEST_CMD_1_CMD = $(call lane_field,test_command_1)
+_LANE_TEST_CMD_2_CMD = $(call lane_field,test_command_2)
+_LANE_NON_GOAL_ARGS_CMD = $(call lane_field,non_goal_args)
+_LANE_COMMIT_PATHS_CMD = $(call lane_field,commit_paths)
+_LANE_COMMIT_SUBJECT_CMD = $(call lane_field,commit_subject)
+_LANE_DONE_DEFINITION_DEFAULT := Ready for orchestrator branch review with lane-local verification complete.
+_LANE_DONE_DEFINITION_CMD = $(or $(call lane_field,done_definition),$(_LANE_DONE_DEFINITION_DEFAULT))
+_LANE_APP_TOOLING_PATHS_CMD = $(call lane_field,tooling_paths)
+
+LANE_BRANCH = $(eval LANE_BRANCH := $(_LANE_BRANCH_CMD))$(LANE_BRANCH)
+LANE_WORKTREE = $(eval LANE_WORKTREE := $(_LANE_WORKTREE_CMD))$(LANE_WORKTREE)
+LANE_TITLE = $(eval LANE_TITLE := $(_LANE_TITLE_CMD))$(LANE_TITLE)
+LANE_OBJECTIVE = $(eval LANE_OBJECTIVE := $(_LANE_OBJECTIVE_CMD))$(LANE_OBJECTIVE)
+LANE_OWNED_ARGS = $(eval LANE_OWNED_ARGS := $(_LANE_OWNED_ARGS_CMD))$(LANE_OWNED_ARGS)
+LANE_DOC_ARGS = $(eval LANE_DOC_ARGS := $(_LANE_DOC_ARGS_CMD))$(LANE_DOC_ARGS)
+LANE_TEST_ARGS = $(eval LANE_TEST_ARGS := $(_LANE_TEST_ARGS_CMD))$(LANE_TEST_ARGS)
+LANE_TEST_CMD_1 = $(eval LANE_TEST_CMD_1 := $(_LANE_TEST_CMD_1_CMD))$(LANE_TEST_CMD_1)
+LANE_TEST_CMD_2 = $(eval LANE_TEST_CMD_2 := $(_LANE_TEST_CMD_2_CMD))$(LANE_TEST_CMD_2)
+LANE_NON_GOAL_ARGS = $(eval LANE_NON_GOAL_ARGS := $(_LANE_NON_GOAL_ARGS_CMD))$(LANE_NON_GOAL_ARGS)
+LANE_COMMIT_PATHS = $(eval LANE_COMMIT_PATHS := $(_LANE_COMMIT_PATHS_CMD))$(LANE_COMMIT_PATHS)
+LANE_COMMIT_SUBJECT = $(eval LANE_COMMIT_SUBJECT := $(_LANE_COMMIT_SUBJECT_CMD))$(LANE_COMMIT_SUBJECT)
+LANE_DONE_DEFINITION = $(eval LANE_DONE_DEFINITION := $(_LANE_DONE_DEFINITION_CMD))$(LANE_DONE_DEFINITION)
+LANE_APP_TOOLING_PATHS = $(eval LANE_APP_TOOLING_PATHS := $(_LANE_APP_TOOLING_PATHS_CMD))$(LANE_APP_TOOLING_PATHS)
 
 # =============================================================================
 # Included modules
@@ -134,7 +153,73 @@ include $(ROOT_MAKEFILE_DIR)/mk/logs.mk
 # Root targets
 # =============================================================================
 
-.PHONY: help check-all check-frontend check-mcp check-handoff check-orchestrator lint-all lint-handoff lint-orchestrator fix-lint-handoff fix-lint-orchestrator fix-lint-mcp format format-all format-handoff format-orchestrator mypy-handoff mypy-orchestrator test-all test-handoff test-orchestrator clean-all reset-local fix-php-style mcp mcp-start gemini-cli-setup dev dev-stop ace-metrics ace-metrics-json ace-reflect ace-curation-report ace-trends worktree-audit worktree-prune task-plan-audit check-codex-command-router check-skills check-harness-sync check-mcp-pins lint-hoisted-paths maint-start check-main-clean install-git-hooks localwp-mirror-integrity localwp-e2e-install localwp-e2e-auth localwp-e2e-smoke localwp-evidence localwp-a11y-smoke check-overrides-digest test-overrides-digest test-scripts test-vm-scripts mutation-guard-license-policy test-hooks test-deploy-contract test-gpu-spike-bench test-infra-terraform test-vlm3 provision-customer provision-demo expire-demo
+.PHONY: help check-all check-frontend check-mcp check-handoff check-orchestrator lint-all lint-handoff lint-orchestrator fix-lint-handoff fix-lint-orchestrator fix-lint-mcp format format-all format-handoff format-orchestrator mypy-handoff mypy-orchestrator test-all test-handoff test-orchestrator clean-all reset-local fix-php-style mcp mcp-start gemini-cli-setup dev dev-stop ace-metrics ace-metrics-json ace-reflect ace-curation-report ace-trends worktree-audit worktree-prune task-plan-audit check-codex-command-router check-skills check-harness-sync check-mcp-pins lint-hoisted-paths maint-start check-main-clean install-git-hooks localwp-mirror-integrity localwp-e2e-install localwp-e2e-auth localwp-e2e-smoke localwp-evidence localwp-a11y-smoke check-overrides-digest test-overrides-digest test-scripts test-vm-scripts mutation-guard-license-policy test-hooks test-deploy-contract test-gpu-spike-bench test-infra-terraform test-vlm3 test-gpu-lifecycle test-gpu-snapshot-checker check-gpu-snapshots check-gpu-snapshots-live provision-customer provision-demo expire-demo
+
+# Offline half of the GPU snapshot deployment contract. This validates the
+# lifecycle-unit paths against the checked-in rendered compose file without
+# requiring live snapshot files or SSH, so it is safe for check-all/CI.
+check-gpu-snapshots:
+	@ACX_GPU_SNAPSHOT_CONFIG_ONLY=1 \
+		bash "$(ROOT_MAKEFILE_DIR)/scripts/deploy/check-gpu-snapshots.sh"
+
+# Live-host deployment gate. The checker reads /run/acx and the deployed
+# compose contract on the OCI VM, so running it against a developer laptop is
+# never meaningful. GPU_SNAPSHOT_ENV is deliberately mandatory and invalid
+# values fail before SSH; inability to reach or inspect the host also fails.
+GPU_SNAPSHOT_GATE_TIMEOUT_SECONDS ?= 60
+GPU_SNAPSHOT_CHECKER ?= $(ROOT_MAKEFILE_DIR)/scripts/deploy/check-gpu-snapshots.sh
+GPU_SNAPSHOT_DEPLOYMENTS ?= $(ROOT_MAKEFILE_DIR)/scripts/deploy/gpu-snapshot-deployments.conf
+# Homebrew coreutils installs the GNU tool as gsha256sum, so macOS operators can
+# point the gate at it without shadowing the system PATH.
+GPU_SNAPSHOT_SHA256 ?= sha256sum
+check-gpu-snapshots-live:
+	@if [ -z "$(GPU_SNAPSHOT_ENV)" ]; then \
+		echo "check-gpu-snapshots-live: GPU_SNAPSHOT_ENV is required (dev|dev-fir|staging|prod)" >&2; \
+		exit 2; \
+	fi
+	@case "$(GPU_SNAPSHOT_ENV)" in dev|dev-fir|staging|prod) ;; \
+		*) echo "check-gpu-snapshots-live: invalid GPU_SNAPSHOT_ENV=$(GPU_SNAPSHOT_ENV)" >&2; exit 2 ;; \
+	esac
+	@set -eu; \
+		case "$(GPU_SNAPSHOT_GATE_TIMEOUT_SECONDS)" in ''|*[!0-9]*|0) \
+			echo "check-gpu-snapshots-live: GPU_SNAPSHOT_GATE_TIMEOUT_SECONDS must be a positive integer" >&2; exit 2 ;; \
+		esac; \
+		command -v timeout >/dev/null 2>&1 || { echo "check-gpu-snapshots-live: timeout command is required" >&2; exit 2; }; \
+		command -v "$(GPU_SNAPSHOT_SHA256)" >/dev/null 2>&1 || { echo "check-gpu-snapshots-live: $(GPU_SNAPSHOT_SHA256) command is required (macOS: brew install coreutils, then GPU_SNAPSHOT_SHA256=gsha256sum)" >&2; exit 2; }; \
+		host="$${OCI_HOST:-acx-backend.tail1a44b8.ts.net}"; user="$${OCI_USER:-ubuntu}"; \
+		payload=$$(mktemp); trap 'rm -f "$$payload"' EXIT HUP INT TERM; \
+		echo "==> Checking live GPU snapshots on $$user@$$host ($(GPU_SNAPSHOT_ENV))"; \
+		{ paste -sd, "$(GPU_SNAPSHOT_DEPLOYMENTS)"; cat "$(GPU_SNAPSHOT_CHECKER)"; } > "$$payload"; \
+		expected_bytes=$$(wc -c < "$$payload" | tr -d ' '); \
+		expected_sha=$$("$(GPU_SNAPSHOT_SHA256)" "$$payload" | awk '{print $$1}'); \
+		{ printf 'ACX_GPU_CHECKER_V1 %s %s\n' "$$expected_bytes" "$$expected_sha"; cat "$$payload"; } | \
+		timeout --foreground --signal=TERM --kill-after=5s "$(GPU_SNAPSHOT_GATE_TIMEOUT_SECONDS)s" \
+		ssh -o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=5 \
+			-o ServerAliveCountMax=2 -l "$$user" -- "$$host" 'set -eu; \
+			IFS=" " read -r protocol expected_bytes expected_sha extra || { echo "ERROR: missing GPU checker transport header" >&2; exit 90; }; \
+			[ "$$protocol" = ACX_GPU_CHECKER_V1 ] && [ -z "$${extra:-}" ] || { echo "ERROR: invalid GPU checker transport header" >&2; exit 90; }; \
+			case "$$expected_bytes" in ""|*[!0-9]*) echo "ERROR: invalid GPU checker byte count" >&2; exit 90 ;; esac; \
+			payload=$$(mktemp); \
+			checker=$$(mktemp); \
+			trap "rm -f $$payload $$checker" EXIT; \
+			dd bs=1 count="$$expected_bytes" of="$$payload" status=none; \
+			actual_bytes=$$(wc -c < "$$payload" | tr -d " "); \
+			[ "$$actual_bytes" = "$$expected_bytes" ] || { echo "ERROR: truncated GPU checker payload ($$actual_bytes of $$expected_bytes bytes)" >&2; exit 91; }; \
+			extra_bytes=$$(dd bs=1 count=1 status=none | wc -c | tr -d " "); \
+			[ "$$extra_bytes" = 0 ] || { echo "ERROR: oversized GPU checker payload" >&2; exit 91; }; \
+			actual_sha=$$(sha256sum "$$payload" | sed "s/ .*//"); \
+			[ "$$actual_sha" = "$$expected_sha" ] || { echo "ERROR: GPU checker payload digest mismatch" >&2; exit 92; }; \
+			IFS= read -r deployments < "$$payload" || { echo "ERROR: GPU checker payload has no deployment registry" >&2; exit 93; }; \
+			sed "1d" "$$payload" > "$$checker"; \
+			[ -s "$$checker" ] || { echo "ERROR: GPU checker payload has no checker" >&2; exit 93; }; \
+			sudo env ACX_DESCRIBE_LOAD_DIR=/run/acx-write \
+				ACX_GPU_COMPOSE_FILE="/opt/acx-backend/$(GPU_SNAPSHOT_ENV)/docker-compose.env.yml" \
+				ACX_GPU_DEPLOYMENTS="$$deployments" \
+				ACX_GPU_SNAPSHOT_DIR=/run/acx \
+				ACX_GPU_STATE_PATH=/run/acx/gpu-state.json \
+				ACX_GPU_UNIT_LOAD_DIR=/run/acx-write \
+				ACX_GPU_UNIT_STATE_PATH=/run/acx/gpu-state.json \
+				bash "$$checker"'
 
 # Default target
 help:
@@ -148,6 +233,7 @@ help:
 	@echo "  make check-frontend   - Run frontend checks (lint + types + arch + tests)"
 	@echo "  make lint-all         - Run linters for all apps and packages"
 	@echo "  make test-all         - Run tests for all apps and packages"
+	@echo "  make check-gpu-snapshots-live GPU_SNAPSHOT_ENV=dev - Verify live OCI snapshots (SSH required; never a laptop-local check)"
 	@echo "  make fix-php-style    - Auto-fix WordPress plugin PHPCS violations"
 	@echo "  make clean-all        - Clean cache files in all apps"
 	@echo "  make reset-local      - Reset local backend DB + WordPress projection data (destructive)"
@@ -273,7 +359,7 @@ localwp-a11y-smoke:
 # =============================================================================
 
 # Run all checks across the monorepo, or lane-scoped verification inside a lane worktree.
-check-all:
+check-all: check-gpu-snapshots
 	@set -eu; \
 	if [ "$(IN_LANE_WORKTREE)" = "1" ]; then \
 		echo "Lane worktree detected ($(LANE)); running only the checks configured for this lane."; \
@@ -445,12 +531,13 @@ check-overrides-digest:
 # instead of four separate pytest processes — one interpreter + collection pass.
 # The narrow targets keep their original scopes for standalone/documented use.
 test-scripts:
-	@python3 -m pytest \
-		$(wildcard scripts/hooks .github/hooks) scripts/test_php_characterization_gate.py \
+	@status=0; \
+	set -- \
 		scripts/test_e15_31_admin_deploy_contract.py scripts/test_e15_33_deploy_convergence.py scripts/test_e15_33_boot_smoke.py \
 		scripts/test_vlm3_oci_gpu_infra.py \
 		scripts/test_vlm3_gpu_lifecycle.py \
 		infra/oci/gpu_lifecycle/tests \
+		scripts/deploy/tests \
 		scripts/test_vlm3_owlv2_deferral.py \
 		scripts/test_vlm3_gpu_bakeoff_artifacts.py \
 		scripts/test_vlm3_decision_memo.py \
@@ -464,12 +551,17 @@ test-scripts:
 		scripts/test_deploy_workflow_gate.py \
 		scripts/test_ocirv1_vault_readiness.py \
 		scripts/test_shell_parses_under_system_bash.py \
-		scripts/test_gpu_burst_smoke.py scripts/test_gpu_spike_bench.py \
-		-q --tb=short --durations=25
-	@bash scripts/deploy/tests/test-smoke-gate.sh
-	@bash scripts/deploy/tests/test-ocir-auth.sh
-	@bash scripts/deploy/tests/test-ocir-rotate.sh
-	@$(MAKE) test-vm-scripts
+		scripts/test_gpu_burst_smoke.py scripts/test_gpu_spike_bench.py; \
+	if [ -d scripts/hooks ] && [ -d .github/hooks ] && [ -d scripts/consumer-hooks/git ]; then \
+		set -- scripts/hooks .github/hooks scripts/test_php_characterization_gate.py "$$@"; \
+	fi; \
+	python3 -m pytest "$$@" -q --tb=short --durations=25 || status=$$?; \
+	bash scripts/deploy/tests/test-smoke-gate.sh || status=$$?; \
+	bash scripts/deploy/tests/test-ocir-auth.sh || status=$$?; \
+	bash scripts/deploy/tests/test-ocir-rotate.sh || status=$$?; \
+	bash scripts/deploy/tests/test-check-gpu-snapshots.sh || status=$$?; \
+	$(MAKE) test-vm-scripts || status=$$?; \
+	exit "$$status"
 
 # VMDISK-1: the lane reaper is the VM's only disk reclaimer, and neither it nor
 # its cron installer was reachable from any make target -- so its guards were
@@ -543,6 +635,29 @@ test-deploy-contract:
 	@bash scripts/deploy/tests/test-smoke-gate.sh
 	@bash scripts/deploy/tests/test-ocir-auth.sh
 	@bash scripts/deploy/tests/test-ocir-rotate.sh
+	@bash scripts/deploy/tests/test-check-gpu-snapshots.sh
+
+# GPUUX-1: narrow, gate-reachable slice of the GPU lifecycle suite. test-vlm3
+# also covers infra/oci/gpu_lifecycle/tests, but it collects test_vlm3_oci_gpu_infra.py
+# alongside them, and that module imports PyYAML -- absent from the remote gate
+# host's system python -- so a collection error there takes the lifecycle tests
+# down with it before a single one runs. This target imports stdlib + pytest only,
+# so the state-snapshot writer/reader contract is provable on the gate.
+#   WORKBAY_REMOTE_GATE_WORKDIR=. make check-remote TARGETS="test-gpu-lifecycle"
+test-gpu-lifecycle:
+	@python3 -m pytest infra/oci/gpu_lifecycle/tests -q --tb=short
+
+# GPUUX-1: narrow, gate-reachable route to the deployment-checker shell suite.
+# Both existing callers abort before reaching it on a fresh clone, for unrelated
+# reasons: test-scripts dies on the gitignored scripts/hooks path, and
+# test-deploy-contract dies on `import yaml` in
+# scripts/test_e15_33_deploy_convergence.py. Verified on the remote gate at
+# 15f74a60 -- both EXIT=2 with zero tests run -- so check-gpu-snapshots.sh and
+# its guards are unverified on every runner that is not a developer laptop.
+# This target is bash-only and has no Python dependency at all.
+#   WORKBAY_REMOTE_GATE_WORKDIR=. make check-remote TARGETS="test-gpu-snapshot-checker"
+test-gpu-snapshot-checker:
+	@bash scripts/deploy/tests/test-check-gpu-snapshots.sh
 
 test-gpu-spike-bench:
 	@python3 -m pytest scripts/test_gpu_spike_bench.py -q --tb=short

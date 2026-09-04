@@ -40,6 +40,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -303,6 +304,34 @@ def ruff_format_config_guard(pyproject: Path | None = None) -> dict[str, object]
     return {"format_options": {k: fmt[k] for k in sorted(fmt)}}
 
 
+_RUFF_FORMAT_LOCATION = re.compile(r"^\s*-->\s+(.+):\d+:\d+\s*$")
+_RUFF_FORMAT_LEGACY_PREFIX = "Would reformat: "
+
+
+def _ruff_format_reported_paths(output: str) -> set[str]:
+    """Extract paths from Ruff's supported human diagnostics.
+
+    Ruff 0.16 renders a source location after each ``unformatted`` diagnostic;
+    older releases emitted one ``Would reformat: <path>`` line. Both originate
+    from stable ``format --check`` mode rather than the formatter's preview-only
+    JSON serializer.
+    """
+    paths: set[str] = set()
+    for line in output.splitlines():
+        location = _RUFF_FORMAT_LOCATION.match(line)
+        if location:
+            path = location.group(1)
+        elif line.startswith(_RUFF_FORMAT_LEGACY_PREFIX):
+            path = line.removeprefix(_RUFF_FORMAT_LEGACY_PREFIX)
+        else:
+            continue
+        candidate = Path(path)
+        if not candidate.is_absolute():
+            candidate = REPO_ROOT / candidate
+        paths.add(_relpath(candidate))
+    return paths
+
+
 def collect_ruff_format() -> Baseline:
     """Gate `ruff format --check` against a frozen set of unformatted files.
 
@@ -313,13 +342,13 @@ def collect_ruff_format() -> Baseline:
     NEW unformatted file a hard failure, while `--accept` can only shrink the
     set. Nothing is relaxed (sr-001): the debt is recorded, not suppressed.
     """
-    # JSON, not the human renderer: ruff 0.16 replaced the stable
-    # "Would reformat: <path>" lines with a rich diagnostic block, which would
-    # have silently parsed as zero unformatted files — a gate that passes by
-    # failing to understand its own tool. `--output-format json` is the same
-    # machine interface `collect_ruff` relies on.
+    # The formatter's --output-format interface is preview-only in Ruff 0.16.
+    # Use the supported check interface and its exit status, retaining paths
+    # from both the current rich diagnostics and the older one-line renderer.
+    # An unrecognized drift response fails loudly instead of reading as clean
+    # (CARD-07 / OBS-08), so the ratchet remains an honest signal (sr-001).
     proc = _run(
-        [_ruff_bin(), "format", "--check", "--output-format", "json", "."],
+        [_ruff_bin(), "format", "--check", "--quiet", "."],
         cwd=REPO_ROOT,
     )
     # 0 = all formatted, 1 = some would be reformatted; anything else is a real
@@ -328,21 +357,13 @@ def collect_ruff_format() -> Baseline:
         raise RatchetError(
             f"ruff format --check failed with exit {proc.returncode}.\n{proc.stderr}"
         )
-    if not proc.stdout.strip():
-        raise RatchetError(f"ruff format --check produced no JSON output.\n{proc.stderr}")
-    try:
-        report = json.loads(proc.stdout)
-    except json.JSONDecodeError as exc:
-        raise RatchetError(
-            f"ruff format JSON output was unparseable: {exc}\n{proc.stderr}"
-        ) from exc
-    counts: dict[str, dict[str, int]] = {}
-    for item in report:
-        counts[_relpath(item["filename"])] = {"unformatted": 1}
+    output = "\n".join(part for part in (proc.stdout, proc.stderr) if part)
+    paths = _ruff_format_reported_paths(output)
+    counts = {path: {"unformatted": 1} for path in sorted(paths)}
     if proc.returncode == 1 and not counts:
         raise RatchetError(
             "ruff format --check signalled drift but named no files; "
-            f"output format may have changed.\n{proc.stdout[:500]}\n{proc.stderr}"
+            f"diagnostic format may have changed.\n{output[:500]}"
         )
     return Baseline(tool="ruff-format", counts=counts, config_guard=ruff_format_config_guard())
 

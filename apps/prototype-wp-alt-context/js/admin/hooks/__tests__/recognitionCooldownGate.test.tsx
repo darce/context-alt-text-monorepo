@@ -108,6 +108,10 @@ describe('recognition cooldown gate over the six pollers', () => {
       cancel_requested: false,
       eta_seconds: null,
       gpu_state: null,
+      // The describe poller is in the recognition-cooldown cohort precisely
+      // because the run does identity fusion; a recognition-off run would not
+      // share that backpressure. recognition-on is load-bearing here.
+      recognition_enabled: true,
     });
   });
 

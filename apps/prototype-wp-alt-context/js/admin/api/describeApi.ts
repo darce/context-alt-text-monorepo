@@ -254,7 +254,18 @@ export type DescriptionCorrectionCode =
 export type DescribeRunStatus = (typeof DESCRIBE_RUN_STATUS)[keyof typeof DESCRIBE_RUN_STATUS];
 export type DescribeResultTier = (typeof DESCRIBE_RESULT_TIER)[keyof typeof DESCRIBE_RESULT_TIER];
 export type GpuState = (typeof GPU_STATE)[keyof typeof GPU_STATE];
-export type DescribeRunPhase = 'queued' | 'describing' | 'complete' | 'failed' | 'cancelled';
+
+/** Canonical describe-run phase set, including GPU warmup as a RUNNING sub-phase. */
+export const DESCRIBE_RUN_PHASE = {
+  QUEUED: 'queued',
+  WARMING: 'warming',
+  DESCRIBING: 'describing',
+  COMPLETE: 'complete',
+  FAILED: 'failed',
+  CANCELLED: 'cancelled',
+} as const;
+
+export type DescribeRunPhase = (typeof DESCRIBE_RUN_PHASE)[keyof typeof DESCRIBE_RUN_PHASE];
 
 const TERMINAL_DESCRIBE_RUN_STATUSES: ReadonlySet<DescribeRunStatus> = new Set([
   DESCRIBE_RUN_STATUS.COMPLETED,
@@ -281,6 +292,20 @@ export interface DescribeRunResponse {
   eta_seconds: number | null;
   // Untrusted wire value; consumers narrow it with isGpuState before presentation.
   gpu_state: unknown;
+  // WBUX6-MRG-03: `recognition_enabled` is REQUIRED and non-nullable in
+  // packages/shared-contracts/schemas/scene-describe-run.schema.json (which is
+  // `additionalProperties: false`) and in the Python response model. This
+  // interface omitted it, so the run's own record of whether identity fusion
+  // was in play was invisible to every TS consumer -- and nothing failed.
+  // Mirror the schema exactly rather than projecting a subset: a boundary type
+  // that silently drops a contract field is the shape rg-005/rg-015 forbid, and
+  // a divergence no test can see is not a decision, it is drift
+  // (~/Development/heuristics-canon-research/lexicons/security.md:66, SEC-01
+  // validate at every trust boundary).
+  //
+  // GATE: scene-describe-run.schema.json `required` must equal the keys of this
+  // interface. See js/admin/api/__tests__/describeRunResponseContract.test.ts.
+  recognition_enabled: boolean;
 }
 
 /** One describe-run item as the operator reviews it before write-back (INT-01d).

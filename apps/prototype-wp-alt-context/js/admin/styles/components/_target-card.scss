@@ -134,3 +134,18 @@
 .acx-settings__tenant-status-icon {
   font-size: var(--acx-text-sm);
 }
+
+.acx-settings__recognition {
+  display: flex;
+  flex-direction: column;
+  gap: var(--acx-space-8);
+  margin: var(--acx-space-12) 0 var(--acx-space-16);
+}
+
+.acx-settings__recognition-option {
+  display: flex;
+  align-items: center;
+  gap: var(--acx-space-8);
+  margin: 0;
+  font-weight: var(--acx-font-weight-medium);
+}

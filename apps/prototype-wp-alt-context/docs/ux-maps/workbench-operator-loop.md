@@ -293,6 +293,45 @@ flowchart TD
 - Conflict shortlist max_candidates=5 — confirm product policy vs model top-k
 - Does empty media queue show first_time guidance or empty-only copy?
 
+## Parity index
+
+Machine-checked by `js/admin/__tests__/uxmap-parity.test.ts` and
+`js/admin/__tests__/uxmap-render-parity.test.ts`: every id, state, and verbatim label
+below must exist in the sibling `.uxmap.json`, and no `z-*`/`act-*` id may appear here
+that the JSON does not define. Regenerate with `docs/ux-maps/render_ux_maps.py` — never
+hand-edit one side.
+
+Zone ids: z-tabs z-sync z-overlay-host z-main-tab z-advanced z-review-queue z-review-panel z-filters z-media-queue z-job-cta z-identity-preview z-review-suggestions-header z-review-suggestions-group-card z-conflict-list z-conflict-detail z-conflict-actions z-dl-list z-dl-actions z-review-header z-review-faces z-roster-main z-settings-form
+
+Action ids: act-open-scan act-scan-selected act-open-conflicts act-open-dead-letter act-resolve-conflict act-retry-dead-letter act-discard-dead-letter act-review-back act-goto-roster act-retry-projection
+
+Zone labels (verbatim; the tables above escape `|` for markdown, this list does not):
+
+- Workbench steps tabs
+- Sync / projection status strip
+- Overlay host (conflicts | dead-letter)
+- Active tab content (Scan)
+- Advanced drawer
+- Review queue header / count with kind+band filter chips, card-at-a-time (rq= URL is the single owner of chip state; empty covers both a filter-empty queue and a fully drained one)
+- Face-group review panel (panel=review&cluster=)
+- Status / search filters
+- Media selection table
+- Scan / analyze CTAs + job progress
+- Identity / findings preview (AI-assisted; offline = recognition service unreachable; degraded = repair / reduced-capability mode; empty = zero evidence rows)
+- Review Suggestions queue header / count (default also covers the filter-narrowed count; degraded = repair / reduced-capability mode)
+- Top-of-queue group card + Name this person (NameFaceControl; default also covers an AI-suggested label and the open suggestions disclosure; loading = save in flight; degraded = read-only card; edge_input = missing or uncroppable face image)
+- Conflict list
+- Conflict detail / candidates
+- Resolve / defer actions
+- Dead-letter items
+- Retry / discard
+- Header + Back
+- Faces grid
+- Entries / clusters workspace
+- Settings form + test connection
+
+States (all zones and screens): default loading error degraded offline empty first_time edge_input
+
 ## Not doing
 
 - Resurrect confirm tab (E21-10)

@@ -213,6 +213,8 @@ vi.mock('../api/settingsApi', async () => {
       tenant_id: '',
       tenant_id_source: 'option',
       tenant_paired: false,
+      alt_style: 'alt_only',
+      recognition_enabled: true,
       description_budget: {
         max_attempts: -1,
         usage: { used: 0, remaining: null, reset_at: null },

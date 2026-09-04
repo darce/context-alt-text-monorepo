@@ -225,13 +225,15 @@ class MergeSuggestionResponse(BaseModel):
     # Authoritative post-accept merge topology (source=retired, target=survivor).
     source_cluster_id: str | None = None
     target_cluster_id: str | None = None
+    survivor_cluster_id: str | None = None
+    survivor_label: str | None = None
 
     @field_validator("id", "cluster_a_id", "cluster_b_id")
     @classmethod
     def validate_ids(cls, v: str) -> str:
         return _validate_uuid(v)
 
-    @field_validator("source_cluster_id", "target_cluster_id")
+    @field_validator("source_cluster_id", "target_cluster_id", "survivor_cluster_id")
     @classmethod
     def validate_optional_merge_cluster_ids(cls, v: str | None) -> str | None:
         if v is None:

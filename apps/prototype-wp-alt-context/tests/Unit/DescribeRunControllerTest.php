@@ -99,6 +99,12 @@ class DescribeRunControllerTest extends TestCase
         $this->assertStringContainsString('name="media_ids"', $body);
         $this->assertStringContainsString('[101,202]', $body);
 
+        // HARM-F1: default ON (option absent) forwards recognition_enabled=true.
+        $this->assertMatchesRegularExpression(
+            '/name="recognition_enabled"\r\n\r\ntrue\r\n/',
+            $body
+        );
+
         // One `image_<media_id>` file part per id, carrying the raw bytes.
         $this->assertStringContainsString('name="image_101"; filename="101.jpg"', $body);
         $this->assertStringContainsString('Content-Type: image/jpeg', $body);
@@ -112,6 +118,29 @@ class DescribeRunControllerTest extends TestCase
         $this->assertIsArray($stored);
         $this->assertSame([101, 202], $stored['media_ids'] ?? null);
         $this->assertArrayHasKey('created_at', $stored);
+    }
+
+    public function testSubmitForwardsRecognitionEnabledFalseWhenOptionOff(): void
+    {
+        $this->setOption('acx_recognition_enabled', '0');
+        $this->plantAttachment(101, "\xff\xd8\xff\xe0jpeg-101", 'jpg');
+
+        $this->queueHttpResponse([
+            'response' => ['code' => 202, 'message' => 'Accepted'],
+            'body' => '{"run_id":"11111111-1111-1111-1111-111111111111","status":"pending","phase":"queued","completed":0,"failed":0,"skipped":0,"total":1,"cancel_requested":false,"gpu_state":null}',
+        ]);
+
+        $request = new WP_REST_Request('POST', '/acx/v1/recognition/describe/runs');
+        $request->set_param('media_ids', [101]);
+
+        $response = $this->controller->submit_describe_run($request);
+
+        $this->assertNotInstanceOf(\WP_Error::class, $response);
+        $body = (string) $this->getHttpCalls()[0]['args']['body'];
+        $this->assertMatchesRegularExpression(
+            '/name="recognition_enabled"\r\n\r\nfalse\r\n/',
+            $body
+        );
     }
 
     public function testSubmitRejectsMoreThan200MediaIds(): void

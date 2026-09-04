@@ -12,12 +12,14 @@ require_once __DIR__ . '/services/class-description-candidate-service.php';
 require_once __DIR__ . '/services/class-describe-media-service.php';
 require_once __DIR__ . '/services/class-description-history-service.php';
 require_once __DIR__ . '/services/trait-expects-meta-after-core-transforms.php';
+require_once __DIR__ . '/../settings/class-recognition-policy.php';
 require_once __DIR__ . '/../support/class-telemetry.php';
 
 use AltContext\Api\Services\DescriptionCandidateService;
 use AltContext\Api\Services\DescriptionHistoryService;
 use AltContext\Api\Services\DescribeMediaService;
 use AltContext\Api\Services\ExpectsMetaAfterCoreTransforms;
+use AltContext\Settings\RecognitionPolicy;
 use AltContext\Support\Telemetry;
 use WP_Error;
 use WP_REST_Request;
@@ -372,8 +374,9 @@ class DescribeController extends AbstractRecognitionProxyController implements D
 		// file we cannot read fails the whole run fast (400 naming the id) instead
 		// of silently dropping it.
 		$multipart_body = array(
-			'tenant_id' => $this->get_tenant_id(),
-			'media_ids' => wp_json_encode( array_values( $media_ids ) ),
+			'tenant_id'           => $this->get_tenant_id(),
+			'media_ids'           => wp_json_encode( array_values( $media_ids ) ),
+			'recognition_enabled' => RecognitionPolicy::enabled() ? 'true' : 'false',
 		);
 
 		// PHP-01: bound aggregate raw bytes BEFORE loading them. Stat each file

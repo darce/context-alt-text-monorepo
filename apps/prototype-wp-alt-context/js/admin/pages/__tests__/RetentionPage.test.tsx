@@ -1,7 +1,7 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
-import { RetentionPage } from '../RetentionPage';
+import { RetentionSection } from '../RetentionPage';
 import { retentionReducer, type RetentionDialogState } from '../retention/useRetentionPageState';
 import {
   useApplyRetentionPreset,
@@ -52,7 +52,7 @@ vi.mock('../../context/ToastContext', () => ({
   }),
 }));
 
-describe('RetentionPage', () => {
+describe('RetentionSection', () => {
   const ActualBlob = globalThis.Blob;
   const mockedUseRetentionStatus = vi.mocked(useRetentionStatus);
   const mockedUseUpdateRetentionPolicy = vi.mocked(useUpdateRetentionPolicy);
@@ -175,7 +175,7 @@ describe('RetentionPage', () => {
   });
 
   it('pairs the purge danger note with an icon second channel', () => {
-    render(<RetentionPage />);
+    render(<RetentionSection />);
 
     expect(screen.getByText(/This action is irreversible/i)).toBeInTheDocument();
     expect(screen.getByTestId('acx-retention-danger-icon')).toBeInTheDocument();
@@ -183,9 +183,9 @@ describe('RetentionPage', () => {
   });
 
   it('renders policy state and links to description-run history instead of a second audit home', () => {
-    render(<RetentionPage />);
+    render(<RetentionSection />);
 
-    expect(screen.getByText('Data Retention')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Data & retention', level: 3 })).toBeInTheDocument();
     expect(screen.getByRole('radio', { name: /Dispose after confirmation/ })).toBeChecked();
     expect(screen.queryByText('Showing the five most recent audit events.')).not.toBeInTheDocument();
     expect(screen.queryByRole('heading', { name: 'Full audit log' })).not.toBeInTheDocument();
@@ -196,7 +196,7 @@ describe('RetentionPage', () => {
   });
 
   it('updates the retention policy', async () => {
-    render(<RetentionPage />);
+    render(<RetentionSection />);
 
     fireEvent.click(screen.getByRole('radio', { name: /Purge on demand/ }));
     fireEvent.click(screen.getByRole('button', { name: 'Save policy' }));
@@ -207,7 +207,7 @@ describe('RetentionPage', () => {
   });
 
   it('exports tenant data: start export starts the async job', async () => {
-    render(<RetentionPage />);
+    render(<RetentionSection />);
 
     fireEvent.click(screen.getByRole('button', { name: 'Export data' }));
     const startButton = screen.getByRole('button', { name: 'Start export' });
@@ -227,7 +227,7 @@ describe('RetentionPage', () => {
       }),
     );
 
-    render(<RetentionPage />);
+    render(<RetentionSection />);
 
     // Open dialog and start the export
     fireEvent.click(screen.getByRole('button', { name: 'Export data' }));
@@ -266,7 +266,7 @@ describe('RetentionPage', () => {
       }),
     );
 
-    render(<RetentionPage />);
+    render(<RetentionSection />);
 
     const exportPanel = screen.getByRole('heading', { name: 'Export controls' }).closest('section');
     expect(exportPanel).toBeTruthy();
@@ -314,7 +314,7 @@ describe('RetentionPage', () => {
   });
 
   it('uses a separate persistent assertive region when an export fails', async () => {
-    const { rerender } = render(<RetentionPage />);
+    const { rerender } = render(<RetentionSection />);
     const exportPanel = screen.getByRole('heading', { name: 'Export controls' }).closest('section');
     expect(exportPanel).toBeTruthy();
     const statusRegion = within(exportPanel!).getByRole('status');
@@ -333,7 +333,7 @@ describe('RetentionPage', () => {
         data: { job_id: 'job-1', status: 'failed', file_size: null, error_message: 'Export failed' },
       }),
     );
-    rerender(<RetentionPage />);
+    rerender(<RetentionSection />);
 
     expect(within(exportPanel!).getByRole('status')).toBe(statusRegion);
     expect(statusRegion).toBeEmptyDOMElement();
@@ -342,7 +342,7 @@ describe('RetentionPage', () => {
   });
 
   it('requires typed confirmation before purge', async () => {
-    render(<RetentionPage />);
+    render(<RetentionSection />);
 
     fireEvent.click(screen.getByRole('button', { name: 'Purge data' }));
 
@@ -370,7 +370,7 @@ describe('RetentionPage', () => {
       }),
     );
 
-    render(<RetentionPage />);
+    render(<RetentionSection />);
 
     expect(screen.getByText('Backend unavailable — retention status cannot be loaded.')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
@@ -380,7 +380,7 @@ describe('RetentionPage', () => {
   it('opens import dialog and calls importMutateAsync on confirm', async () => {
     const fileContent = JSON.stringify({ schema_version: 2, clusters: [] });
     const user = userEvent.setup();
-    render(<RetentionPage />);
+    render(<RetentionSection />);
 
     await user.click(screen.getByRole('button', { name: 'Import data' }));
     expect(await screen.findByText('Import tenant data')).toBeInTheDocument();
@@ -410,13 +410,13 @@ describe('RetentionPage', () => {
   });
 
   it('does not mount a full audit log on Data Retention', () => {
-    render(<RetentionPage />);
+    render(<RetentionSection />);
     expect(screen.queryByRole('heading', { name: 'Full audit log' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Next' })).not.toBeInTheDocument();
   });
 
   it('applies GDPR preset when Apply GDPR preset button is clicked', async () => {
-    render(<RetentionPage />);
+    render(<RetentionSection />);
 
     const presetButton = screen.getByRole('button', { name: 'Apply GDPR preset' });
     expect(presetButton).not.toBeDisabled();

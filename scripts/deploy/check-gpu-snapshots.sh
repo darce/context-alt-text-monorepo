@@ -204,28 +204,102 @@ if [ "$config_only" -eq 1 ]; then
     exit 0
 fi
 
-reader_can_read() {
-    local path=$1 current_uid
+# The api container's runtime gid is NOT its uid. The image creates the runtime
+# user with an explicit `useradd -u 10001` but the group takes whatever system
+# gid the base image has free (observed `uid=10001(acx) gid=999(acx)` on
+# python:3.12-slim). The host provisions the describe-load directory
+# `root:10001 0775`, i.e. write access is granted through the *group*, so a
+# drifting gid makes the container match neither owner nor group and fall
+# through to `other` (r-x).
+#
+# Probing with `--regid="$reader_uid"` assumed away exactly that failure mode:
+# the gate reported the directory writable by an identity the container never
+# has, so it could not fail (WBUX6-MRG-01). Resolve the gid from evidence in
+# descending order of authority, and die rather than guess — a gate that cannot
+# observe its failure mode is worse than no gate.
+reader_gid=
+reader_gid_source=
+_stat_gid() {
+    stat -c %g "$1" 2>/dev/null || stat -f %g "$1" 2>/dev/null || true
+}
+
+resolve_reader_gid() {
+    local environment candidate artifact
+    [ -z "$reader_gid" ] || return 0
+
+    # The only trustworthy source is the group the container actually published
+    # a snapshot as: an observation of the running system rather than a claim
+    # about it. It needs no checkout, so it also serves the piped `bash -s`
+    # path, and it deliberately offers no operator override -- an override on
+    # this gate would let the very assumption that caused WBUX6-MRG-01 be
+    # reintroduced by hand.
+    for environment in $load_environments; do
+        artifact="${unit_load_dir}/${environment}/describe-load.json"
+        [ -f "$artifact" ] || continue
+        candidate=$(_stat_gid "$artifact")
+        if [[ "$candidate" =~ ^[0-9]+$ ]]; then
+            reader_gid=$candidate
+            reader_gid_source="observed group of $artifact"
+            return 0
+        fi
+    done
+
+    # No published snapshot means no observable container identity, and the
+    # api image's gid is not knowable from the host. Guessing it is what made
+    # this gate fail-open, so fail closed instead.
+    die "cannot determine the api container identity: no describe-load.json has been published under $unit_load_dir, so the writability check has no gid to probe. If the api container is running, it is failing to publish -- check that its runtime gid matches the group on ${unit_load_dir}/<env>"
+}
+
+reader_identity() {
+    if [ -n "$reader_gid" ]; then
+        printf 'uid %s gid %s (%s)' "$reader_uid" "$reader_gid" "$reader_gid_source"
+    else
+        printf 'uid %s' "$reader_uid"
+    fi
+}
+
+# WBUX6-L5-NEW-03: root must never take the `test -r/-w` fast path. Under uid 0
+# the kernel bypasses mode bits entirely (DAC_OVERRIDE / DAC_READ_SEARCH), so
+# `test -r` on a mode-000 file and `test -w` on a mode-0555 directory both
+# succeed -- the probe reports "the api container can read/write this" about an
+# identity it never assumed, and the gate cannot fail. Deployment runs this
+# checker as root over SSH, i.e. precisely the path where the assertion was
+# inert. Drop privileges or refuse: a probe that cannot observe its failure
+# mode must say so rather than return a pass (RLSE-05 silent failure is the
+# worst failure, lexicons/engineering.md:696; OBS-12 sensors must touch the
+# controlled stock, lexicons/engineering.md:482).
+#
+# Ordering matters: the uid-0 branch is tested FIRST, because `reader_uid` may
+# itself be 0 (default when ACX_GPU_READER_UID is unset on a root shell) and the
+# equality branch would then silently reinstate the bypass.
+probe_as_reader() {
+    local mode=$1 path=$2 current_uid
     current_uid=$(id -u)
-    if [ "$current_uid" = "$reader_uid" ]; then
-        test -r "$path"
-    elif [ "$current_uid" = 0 ] && command -v setpriv >/dev/null 2>&1; then
-        setpriv --reuid="$reader_uid" --regid="$reader_uid" --clear-groups test -r "$path"
+    if [ "$current_uid" -eq 0 ]; then
+        command -v setpriv >/dev/null 2>&1 || return 2
+        resolve_reader_gid
+        setpriv --reuid="$reader_uid" --regid="$reader_gid" --clear-groups \
+            test "$mode" "$path"
+    elif [ "$current_uid" = "$reader_uid" ]; then
+        test "$mode" "$path"
     else
         return 2
     fi
 }
 
+reader_can_read() {
+    probe_as_reader -r "$1"
+}
+
 writer_can_write_directory() {
-    local path=$1 current_uid
-    current_uid=$(id -u)
-    if [ "$current_uid" = "$reader_uid" ]; then
-        test -w "$path"
-    elif [ "$current_uid" = 0 ] && command -v setpriv >/dev/null 2>&1; then
-        setpriv --reuid="$reader_uid" --regid="$reader_uid" --clear-groups test -w "$path"
-    else
-        return 2
-    fi
+    probe_as_reader -w "$1"
+}
+
+# Shared wording for rc=2: the probe could not assume the api identity at all.
+# Distinct from a failed probe -- it is "unknown", never "fine".
+probe_unavailable() {
+    printf 'cannot assume the api container identity (uid %s) to verify %s: run as root with setpriv(1) (util-linux), or as uid %s directly. Running as uid 0 without setpriv is refused because root bypasses the mode bits this check exists to read' \
+        "$reader_uid" "$1" "$reader_uid"
 }
 
 check_snapshot() {
@@ -234,9 +308,9 @@ check_snapshot() {
     [ -f "$path" ] || die "$label snapshot is not a regular file: $path"
     reader_can_read "$path" || readability_rc=$?
     if [ "$readability_rc" -eq 2 ]; then
-        die "cannot verify $label snapshot readability as uid $reader_uid; run as root"
+        die "$(probe_unavailable "$label snapshot readability")"
     elif [ "$readability_rc" -ne 0 ]; then
-        die "$label snapshot is unreadable by uid $reader_uid: $path"
+        die "$label snapshot is unreadable by api container identity $(reader_identity): $path"
     fi
 
     written_at=$(python3 -c '
@@ -335,9 +409,9 @@ for environment in $load_environments; do
     writable_rc=0
     writer_can_write_directory "$environment_dir" || writable_rc=$?
     if [ "$writable_rc" -eq 2 ]; then
-        die "cannot verify describe-load directory writability as uid $reader_uid; run as root"
+        die "$(probe_unavailable "describe-load directory writability")"
     elif [ "$writable_rc" -ne 0 ]; then
-        die "describe-load directory is not writable by uid $reader_uid: $environment_dir"
+        die "describe-load directory is not writable by api container identity $(reader_identity): $environment_dir"
     fi
     check_snapshot "describe load (${environment})" "load" \
         "${environment_dir}/describe-load.json" "$load_stale_seconds"

@@ -78,11 +78,11 @@ const unlabeledCluster = (overrides: Partial<ClusterGroup> = {}): ClusterGroup =
   ...overrides,
 });
 
-const renderItem = (cluster: ClusterGroup = bobCluster()) => {
+const renderItem = (cluster: ClusterGroup = bobCluster(), { canMutate = true }: { canMutate?: boolean } = {}) => {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={client}>
-      <IdentityClusterItem cluster={cluster} canLabel canMutate />
+      <IdentityClusterItem cluster={cluster} canLabel canMutate={canMutate} />
     </QueryClientProvider>,
   );
 };
@@ -257,5 +257,64 @@ describe('IdentityClusterItem unlabeled copy (UXW2-4-R7E-02)', () => {
 
     expect(screen.queryByRole('button', { name: 'cluster-7' })).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Unnamed person' })).toBeInTheDocument();
+  });
+});
+
+describe('IdentityClusterItem mutation affordance gates (WBUX6-W3-L6-02 / WBUX6-W3-L6-03)', () => {
+  afterEach(() => {
+    cleanup();
+  });
+
+  const splitButton = () => screen.queryByRole('button', { name: /split group/i });
+  const removeButton = () => screen.queryByRole('button', { name: /remove from group/i });
+
+  // A group whose own clusterId is null but whose member still carries one:
+  // getEditableClusterId falls back to the member, so the row stays editable
+  // (canEdit) and only the split gate observes the missing group id. This is the
+  // only fixture shape that isolates `Boolean(cluster.clusterId)` from canEdit.
+  const memberOnlyClusterId = (): ClusterGroup => ({
+    key: 'member-only',
+    clusterId: null,
+    label: 'bob',
+    isAutoLabel: false,
+    clusteringPending: false,
+    members: [member({ cluster_id: 'editable' })],
+  });
+
+  const twoMemberCluster = (): ClusterGroup => ({
+    ...bobCluster(),
+    members: [member(), member({ identity_id: 'id-2', representative_id: 'rep-2', media_id: 2 })],
+  });
+
+  it('offers Split only when the group itself carries a cluster id', () => {
+    renderItem(bobCluster());
+    expect(splitButton()).toBeInTheDocument();
+
+    cleanup();
+
+    renderItem(memberOnlyClusterId());
+    // Row is still editable via the member-derived id, so the absence below is
+    // the split gate, not a blanket "no actions" early return.
+    expect(screen.getByRole('button', { name: /edit label/i })).toBeInTheDocument();
+    expect(splitButton()).not.toBeInTheDocument();
+  });
+
+  it('offers Remove from group only for a single-member group', () => {
+    renderItem(bobCluster());
+    expect(removeButton()).toBeInTheDocument();
+
+    cleanup();
+
+    renderItem(twoMemberCluster());
+    expect(screen.getByRole('button', { name: /edit label/i })).toBeInTheDocument();
+    expect(removeButton()).not.toBeInTheDocument();
+  });
+
+  it('withholds both mutating affordances when canMutate is false', () => {
+    renderItem(bobCluster(), { canMutate: false });
+
+    expect(screen.getByRole('button', { name: /edit label/i })).toBeInTheDocument();
+    expect(splitButton()).not.toBeInTheDocument();
+    expect(removeButton()).not.toBeInTheDocument();
   });
 });

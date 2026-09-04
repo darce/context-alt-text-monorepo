@@ -47,6 +47,9 @@ const runResponse = (runId: string, gpuState: GpuState): DescribeRunResponse => 
   cancel_requested: false,
   eta_seconds: null,
   gpu_state: gpuState,
+  // GPU lifecycle toasts are indifferent to identity fusion; take the
+  // contract default (schema: recognition_enabled defaults true).
+  recognition_enabled: true,
 });
 
 const LocationProbe = (): React.JSX.Element => {

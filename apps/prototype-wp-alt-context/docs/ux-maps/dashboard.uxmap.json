@@ -35,80 +35,49 @@
       "deep_link": true,
       "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/DashboardPage.tsx",
       "primary_action_id": "act-start-first-scan",
-      "states": [
-        "default",
-        "loading",
-        "error",
-        "first_time",
-        "degraded"
-      ],
+      "states": ["default", "loading", "error", "first_time", "degraded"],
       "zones": [
         {
           "id": "z-dashboard-hero",
           "label": "Dashboard hero (Alt Context / Overview / contextual subtitle)",
           "role": "content",
-          "states": [
-            "default"
-          ]
+          "states": ["default"]
         },
         {
           "id": "z-orientation",
           "label": "Orientation surface (Getting Started with Identity Recognition; before grid unless first_named)",
           "role": "content",
-          "states": [
-            "default",
-            "first_time"
-          ]
+          "states": ["default", "first_time"]
         },
         {
           "id": "z-sync-health",
           "label": "Sync Health section (summary, pending changes, conflicts, failed sync events, topology work)",
           "role": "status",
-          "states": [
-            "default",
-            "loading",
-            "error"
-          ]
+          "states": ["default", "loading", "error"]
         },
         {
           "id": "z-identity-recognition",
           "label": "Identity Recognition section (people, assigned, pending review, media with faces, guidance)",
           "role": "content",
-          "states": [
-            "default",
-            "loading",
-            "error",
-            "first_time"
-          ]
+          "states": ["default", "loading", "error", "first_time"]
         },
         {
           "id": "z-library-coverage",
           "label": "Library Coverage section (total media, missing alt text, coverage, fix CTA)",
           "role": "content",
-          "states": [
-            "default",
-            "loading"
-          ]
+          "states": ["default", "loading"]
         },
         {
           "id": "z-recent-activity",
           "label": "Recent Activity section (recognition jobs, provenance, status, duration, results link)",
           "role": "queue",
-          "states": [
-            "default",
-            "empty",
-            "degraded",
-            "error"
-          ]
+          "states": ["default", "empty", "degraded", "error"]
         },
         {
           "id": "z-retention-posture",
           "label": "Data Retention section (mode, last export, last purge, Open Data Retention link)",
           "role": "status",
-          "states": [
-            "default",
-            "error"
-          ]
+          "states": ["default", "error"]
         }
       ]
     },
@@ -121,26 +90,15 @@
       "wp_page": "alt-context-workbench",
       "job_entry": false,
       "deep_link": true,
-      "url_params": [
-        "tab",
-        "panel",
-        "advanced",
-        "status"
-      ],
+      "url_params": ["tab", "panel", "advanced", "status"],
       "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/WorkbenchPage.tsx",
-      "states": [
-        "default",
-        "loading",
-        "error"
-      ],
+      "states": ["default", "loading", "error"],
       "zones": [
         {
           "id": "z-wb-entry",
           "label": "Workbench entry",
           "role": "nav",
-          "states": [
-            "default"
-          ]
+          "states": ["default"]
         }
       ]
     },
@@ -155,19 +113,13 @@
       "deep_link": true,
       "url_params": [],
       "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/RetentionPage.tsx",
-      "states": [
-        "default",
-        "loading",
-        "error"
-      ],
+      "states": ["default", "loading", "error"],
       "zones": [
         {
           "id": "z-retention-entry",
           "label": "Data Retention entry",
           "role": "nav",
-          "states": [
-            "default"
-          ]
+          "states": ["default"]
         }
       ]
     },
@@ -180,25 +132,15 @@
       "wp_page": "alt-context-roster",
       "job_entry": false,
       "deep_link": true,
-      "url_params": [
-        "personFilter",
-        "person"
-      ],
+      "url_params": ["personFilter", "person"],
       "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/RosterPage.tsx",
-      "states": [
-        "default",
-        "loading",
-        "empty",
-        "error"
-      ],
+      "states": ["default", "loading", "empty", "error"],
       "zones": [
         {
           "id": "z-roster-entry",
           "label": "Roster entry",
           "role": "nav",
-          "states": [
-            "default"
-          ]
+          "states": ["default"]
         }
       ]
     }

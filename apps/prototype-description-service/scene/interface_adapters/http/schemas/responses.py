@@ -171,6 +171,9 @@ class DescribeRunResponse(BaseModel):
     # in-flight with measured progress.
     eta_seconds: float | None = None
     gpu_state: GpuState = GpuState.UNKNOWN
+    # HARM-F1: snapshot of recognition_enabled at submit. Default True so
+    # omitted payloads keep today's naming-on behaviour.
+    recognition_enabled: bool = True
 
 
 class DescribeRunItemResponse(BaseModel):

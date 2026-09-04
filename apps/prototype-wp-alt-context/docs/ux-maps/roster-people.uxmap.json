@@ -28,75 +28,40 @@
       "wp_page": "alt-context-roster",
       "job_entry": true,
       "deep_link": true,
-      "url_params": [
-        "person",
-        "personFilter",
-        "queue",
-        "face",
-        "cluster"
-      ],
+      "url_params": ["person", "personFilter", "queue", "face", "cluster"],
       "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/RosterPage.tsx",
       "primary_action_id": "act-add-person",
-      "states": [
-        "default",
-        "loading",
-        "empty",
-        "error",
-        "degraded",
-        "first_time"
-      ],
+      "states": ["default", "loading", "empty", "error", "degraded", "first_time"],
       "zones": [
         {
           "id": "z-entries",
           "label": "Roster entries table",
           "role": "content",
-          "states": [
-            "default",
-            "loading",
-            "empty",
-            "error"
-          ]
+          "states": ["default", "loading", "empty", "error"]
         },
         {
           "id": "z-review-cta",
           "label": "Unnamed faces CTA → Workbench review queue",
           "role": "content",
-          "states": [
-            "default",
-            "loading",
-            "empty"
-          ]
+          "states": ["default", "loading", "empty"]
         },
         {
           "id": "z-projection-gate",
           "label": "Projection status gate notices",
           "role": "status",
-          "states": [
-            "default",
-            "loading",
-            "error",
-            "degraded"
-          ]
+          "states": ["default", "loading", "error", "degraded"]
         },
         {
           "id": "z-person-host",
           "label": "Person workspace host",
           "role": "other",
-          "states": [
-            "default",
-            "empty"
-          ]
+          "states": ["default", "empty"]
         },
         {
           "id": "z-cluster-host",
           "label": "Face-group drawer host (cluster= shim)",
           "role": "other",
-          "states": [
-            "default",
-            "empty",
-            "loading",
-            "error"
-          ]
+          "states": ["default", "empty", "loading", "error"]
         }
       ]
     },
@@ -108,67 +73,36 @@
       "route": "#/roster?person=",
       "job_entry": true,
       "deep_link": true,
-      "url_params": [
-        "person",
-        "queue",
-        "face"
-      ],
+      "url_params": ["person", "queue", "face"],
       "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/roster/PersonWorkspacePanel.tsx",
       "primary_action_id": "act-save-person",
-      "states": [
-        "default",
-        "loading",
-        "empty",
-        "error",
-        "degraded"
-      ],
+      "states": ["default", "loading", "empty", "error", "degraded"],
       "zones": [
         {
           "id": "z-person-header",
           "label": "Person header",
           "role": "content",
-          "states": [
-            "default",
-            "loading"
-          ]
+          "states": ["default", "loading"]
         },
         {
           "id": "z-person-identities",
           "label": "Linked faces",
           "role": "ai_review",
           "evidence_linked": true,
-          "states": [
-            "default",
-            "loading",
-            "empty",
-            "error",
-            "degraded"
-          ]
+          "states": ["default", "loading", "empty", "error", "degraded"]
         },
         {
           "id": "z-person-evidence",
           "label": "Cluster evidence thumbnails (cropped face crop; raw media fallback for uncroppable bbox; labelled visible no-image state)",
           "role": "ai_review",
           "evidence_linked": true,
-          "states": [
-            "default",
-            "loading",
-            "empty",
-            "error",
-            "degraded"
-          ]
+          "states": ["default", "loading", "empty", "error", "degraded"]
         },
         {
           "id": "z-person-actions",
           "label": "Save / assign / open queue",
           "role": "form",
-          "states": [
-            "default",
-            "loading",
-            "empty",
-            "error",
-            "degraded"
-          ]
+          "states": ["default", "loading", "empty", "error", "degraded"]
         }
       ]
     },
@@ -180,17 +114,10 @@
       "route": "#/roster?cluster=",
       "job_entry": false,
       "deep_link": true,
-      "url_params": [
-        "cluster"
-      ],
+      "url_params": ["cluster"],
       "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/roster/ClusterDrawerPanel.tsx",
       "primary_action_id": "act-assign-cluster",
-      "states": [
-        "default",
-        "loading",
-        "empty",
-        "error"
-      ],
+      "states": ["default", "loading", "empty", "error"],
       "zones": [
         {
           "id": "z-cluster-samples",
@@ -198,23 +125,13 @@
           "role": "forced_choice",
           "evidence_linked": true,
           "max_candidates": 8,
-          "states": [
-            "default",
-            "loading",
-            "empty",
-            "error"
-          ]
+          "states": ["default", "loading", "empty", "error"]
         },
         {
           "id": "z-cluster-actions",
           "label": "Assign / dismiss drawer",
           "role": "form",
-          "states": [
-            "default",
-            "loading",
-            "empty",
-            "error"
-          ]
+          "states": ["default", "loading", "empty", "error"]
         }
       ]
     },
@@ -227,29 +144,20 @@
       "deep_link": false,
       "code_ref": "apps/prototype-wp-alt-context/js/components/ui/FaceLightbox.tsx",
       "primary_action_id": "act-close-lightbox",
-      "states": [
-        "default",
-        "error"
-      ],
+      "states": ["default", "error"],
       "zones": [
         {
           "id": "z-lightbox-media",
           "label": "Enlarged evidence media with accessible ordinal name",
           "role": "ai_review",
           "evidence_linked": true,
-          "states": [
-            "default",
-            "error"
-          ]
+          "states": ["default", "error"]
         },
         {
           "id": "z-lightbox-controls",
           "label": "Close affordance",
           "role": "form",
-          "states": [
-            "default",
-            "error"
-          ]
+          "states": ["default", "error"]
         }
       ],
       "route": "#/roster?person= (in-panel dialog; no dedicated route)"
@@ -263,25 +171,15 @@
       "wp_page": "alt-context-workbench",
       "job_entry": false,
       "deep_link": true,
-      "url_params": [
-        "tab",
-        "panel",
-        "media"
-      ],
+      "url_params": ["tab", "panel", "media"],
       "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/WorkbenchPage.tsx",
-      "states": [
-        "default",
-        "loading",
-        "error"
-      ],
+      "states": ["default", "loading", "error"],
       "zones": [
         {
           "id": "z-wb-entry",
           "label": "Workbench entry",
           "role": "nav",
-          "states": [
-            "default"
-          ]
+          "states": ["default"]
         }
       ]
     }

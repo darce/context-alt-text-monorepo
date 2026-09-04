@@ -17,15 +17,25 @@ vi.mock('@wordpress/i18n', () => ({
   __: (text: string) => text,
 }));
 
-vi.mock('../../../../api/recognition', () => ({
-  acceptSuggestion: vi.fn(),
-  createClusterForIdentity: vi.fn(),
-  fetchScanStatus: vi.fn(),
-  pinRepresentative: vi.fn(),
-  reassignClusterIdentity: vi.fn(),
-  rejectSuggestion: vi.fn(),
-  splitCluster: vi.fn(),
-}));
+// Spread the real module (WBUX6-W3-L6-01): an exhaustive factory silently blanks every
+// export this test does not name, so one new render-path dependency wipes the whole file
+// with a failure unrelated to the behaviour under test. Only the network surfaces
+// useClusterActionMutations itself calls are replaced.
+vi.mock('../../../../api/recognition', async () => {
+  const actual = await vi.importActual<typeof import('../../../../api/recognition')>(
+    '../../../../api/recognition',
+  );
+  return {
+    ...actual,
+    acceptSuggestion: vi.fn(),
+    createClusterForIdentity: vi.fn(),
+    fetchScanStatus: vi.fn(),
+    pinRepresentative: vi.fn(),
+    reassignClusterIdentity: vi.fn(),
+    rejectSuggestion: vi.fn(),
+    splitCluster: vi.fn(),
+  };
+});
 
 let offline = false;
 
@@ -281,6 +291,46 @@ describe('useClusterActionMutations create-for-identity roster bind (UXW2-3-R7B-
     await waitFor(() => expect(onError).toHaveBeenCalled());
     expect(onError).toHaveBeenCalledWith('The group was created but the person was not bound.');
     expect(invalidateQueries).toHaveBeenCalled();
+  });
+});
+
+describe('recognition mock surface drift guard (WBUX6-W3-L6-01)', () => {
+  // Fixes the mock at the drift-resistant idiom. An exhaustive factory (no
+  // importActual spread) silently blanks every export this file does not name,
+  // so the next render-path dependency fails the whole file with a module-load
+  // throw reported as N unrelated assertion failures. These two assertions turn
+  // that regression into one honest, self-describing failure here.
+  const CONTROLLED = new Set([
+    'acceptSuggestion',
+    'createClusterForIdentity',
+    'fetchScanStatus',
+    'pinRepresentative',
+    'reassignClusterIdentity',
+    'rejectSuggestion',
+    'splitCluster',
+  ]);
+
+  it('keeps every real export reachable and untouched except the network surfaces under test', async () => {
+    const actual = await vi.importActual<typeof import('../../../../api/recognition')>(
+      '../../../../api/recognition',
+    );
+    const actualKeys = Object.keys(actual);
+    expect(actualKeys.length).toBeGreaterThan(CONTROLLED.size);
+
+    const missing = actualKeys.filter((key) => !(key in recognitionApi));
+    expect(missing).toEqual([]);
+
+    const passthrough = actualKeys.filter((key) => !CONTROLLED.has(key));
+    const rebound = passthrough.filter(
+      (key) => (recognitionApi as Record<string, unknown>)[key] !== (actual as Record<string, unknown>)[key],
+    );
+    expect(rebound).toEqual([]);
+  });
+
+  it('still replaces exactly the network surfaces this file drives', () => {
+    for (const key of CONTROLLED) {
+      expect(vi.isMockFunction((recognitionApi as Record<string, unknown>)[key])).toBe(true);
+    }
   });
 });
 

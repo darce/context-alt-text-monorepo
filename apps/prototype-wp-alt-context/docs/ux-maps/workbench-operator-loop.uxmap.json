@@ -36,74 +36,40 @@
       "wp_page": "alt-context-workbench",
       "job_entry": true,
       "deep_link": true,
-      "url_params": [
-        "tab",
-        "panel",
-        "advanced",
-        "status",
-        "media",
-        "rq",
-        "queue",
-        "face",
-        "cluster"
-      ],
+      "url_params": ["tab", "panel", "advanced", "status", "media", "rq", "queue", "face", "cluster"],
       "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/WorkbenchPage.tsx",
       "primary_action_id": "act-open-scan",
-      "states": [
-        "default",
-        "loading",
-        "error",
-        "degraded",
-        "offline"
-      ],
+      "states": ["default", "loading", "error", "degraded", "offline"],
       "zones": [
         {
           "id": "z-tabs",
           "label": "Workbench steps tabs",
           "role": "nav",
-          "states": [
-            "default"
-          ]
+          "states": ["default"]
         },
         {
           "id": "z-sync",
           "label": "Sync / projection status strip",
           "role": "status",
-          "states": [
-            "default",
-            "loading",
-            "error",
-            "degraded"
-          ]
+          "states": ["default", "loading", "error", "degraded"]
         },
         {
           "id": "z-overlay-host",
           "label": "Overlay host (conflicts | dead-letter)",
           "role": "other",
-          "states": [
-            "default",
-            "empty"
-          ]
+          "states": ["default", "empty"]
         },
         {
           "id": "z-main-tab",
           "label": "Active tab content (Scan)",
           "role": "content",
-          "states": [
-            "default",
-            "loading",
-            "empty",
-            "error"
-          ]
+          "states": ["default", "loading", "empty", "error"]
         },
         {
           "id": "z-advanced",
           "label": "Advanced drawer",
           "role": "form",
-          "states": [
-            "default",
-            "empty"
-          ]
+          "states": ["default", "empty"]
         }
       ]
     },
@@ -115,125 +81,61 @@
       "route": "#/workbench?tab=scan",
       "job_entry": true,
       "deep_link": true,
-      "url_params": [
-        "tab",
-        "status",
-        "media",
-        "s",
-        "p",
-        "perPage",
-        "rq",
-        "panel",
-        "cluster"
-      ],
+      "url_params": ["tab", "status", "media", "s", "p", "perPage", "rq", "panel", "cluster"],
       "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/workbench/ScanTabContent.tsx",
       "primary_action_id": "act-scan-selected",
-      "states": [
-        "default",
-        "loading",
-        "empty",
-        "error",
-        "first_time",
-        "edge_input"
-      ],
+      "states": ["default", "loading", "empty", "error", "first_time", "edge_input"],
       "zones": [
         {
           "id": "z-review-queue",
           "label": "Review queue header / count with kind+band filter chips, card-at-a-time (rq= URL is the single owner of chip state; empty covers both a filter-empty queue and a fully drained one)",
           "role": "queue",
           "evidence_linked": true,
-          "states": [
-            "default",
-            "loading",
-            "empty",
-            "error",
-            "first_time",
-            "edge_input"
-          ]
+          "states": ["default", "loading", "empty", "error", "first_time", "edge_input"]
         },
         {
           "id": "z-review-panel",
           "label": "Face-group review panel (panel=review&cluster=)",
           "role": "ai_review",
           "evidence_linked": true,
-          "states": [
-            "default",
-            "loading",
-            "empty",
-            "error",
-            "first_time",
-            "edge_input"
-          ]
+          "states": ["default", "loading", "empty", "error", "first_time", "edge_input"]
         },
         {
           "id": "z-filters",
           "label": "Status / search filters",
           "role": "form",
-          "states": [
-            "default",
-            "loading",
-            "error"
-          ]
+          "states": ["default", "loading", "error"]
         },
         {
           "id": "z-media-queue",
           "label": "Media selection table",
           "role": "queue",
-          "states": [
-            "default",
-            "loading",
-            "empty",
-            "error",
-            "first_time",
-            "edge_input"
-          ]
+          "states": ["default", "loading", "empty", "error", "first_time", "edge_input"]
         },
         {
           "id": "z-job-cta",
           "label": "Scan / analyze CTAs + job progress",
           "role": "job",
-          "states": [
-            "default",
-            "loading",
-            "error"
-          ]
+          "states": ["default", "loading", "error"]
         },
         {
           "id": "z-identity-preview",
           "label": "Identity / findings preview (AI-assisted; offline = recognition service unreachable; degraded = repair / reduced-capability mode; empty = zero evidence rows)",
           "role": "ai_review",
           "evidence_linked": true,
-          "states": [
-            "default",
-            "empty",
-            "loading",
-            "error",
-            "degraded",
-            "offline"
-          ]
+          "states": ["default", "empty", "loading", "error", "degraded", "offline"]
         },
         {
           "id": "z-review-suggestions-header",
           "label": "Review Suggestions queue header / count (default also covers the filter-narrowed count; degraded = repair / reduced-capability mode)",
           "role": "status",
-          "states": [
-            "default",
-            "loading",
-            "empty",
-            "error",
-            "degraded"
-          ]
+          "states": ["default", "loading", "empty", "error", "degraded"]
         },
         {
           "id": "z-review-suggestions-group-card",
           "label": "Top-of-queue group card + Name this person (NameFaceControl; default also covers an AI-suggested label and the open suggestions disclosure; loading = save in flight; degraded = read-only card; edge_input = missing or uncroppable face image)",
           "role": "ai_review",
-          "states": [
-            "default",
-            "loading",
-            "degraded",
-            "edge_input"
-          ]
+          "states": ["default", "loading", "degraded", "edge_input"]
         }
       ]
     },
@@ -245,28 +147,16 @@
       "route": "#/workbench?panel=conflicts",
       "job_entry": false,
       "deep_link": true,
-      "url_params": [
-        "panel"
-      ],
+      "url_params": ["panel"],
       "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/workbench/ConflictInbox.tsx",
       "primary_action_id": "act-resolve-conflict",
-      "states": [
-        "default",
-        "loading",
-        "empty",
-        "error"
-      ],
+      "states": ["default", "loading", "empty", "error"],
       "zones": [
         {
           "id": "z-conflict-list",
           "label": "Conflict list",
           "role": "queue",
-          "states": [
-            "default",
-            "loading",
-            "empty",
-            "error"
-          ]
+          "states": ["default", "loading", "empty", "error"]
         },
         {
           "id": "z-conflict-detail",
@@ -274,23 +164,13 @@
           "role": "forced_choice",
           "evidence_linked": true,
           "max_candidates": 5,
-          "states": [
-            "default",
-            "loading",
-            "empty",
-            "error"
-          ]
+          "states": ["default", "loading", "empty", "error"]
         },
         {
           "id": "z-conflict-actions",
           "label": "Resolve / defer actions",
           "role": "form",
-          "states": [
-            "default",
-            "loading",
-            "empty",
-            "error"
-          ]
+          "states": ["default", "loading", "empty", "error"]
         }
       ]
     },
@@ -302,39 +182,22 @@
       "route": "#/workbench?panel=dead-letter",
       "job_entry": false,
       "deep_link": true,
-      "url_params": [
-        "panel"
-      ],
+      "url_params": ["panel"],
       "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/workbench/DeadLetterPanel.tsx",
       "primary_action_id": "act-retry-dead-letter",
-      "states": [
-        "default",
-        "loading",
-        "empty",
-        "error"
-      ],
+      "states": ["default", "loading", "empty", "error"],
       "zones": [
         {
           "id": "z-dl-list",
           "label": "Dead-letter items",
           "role": "queue",
-          "states": [
-            "default",
-            "loading",
-            "empty",
-            "error"
-          ]
+          "states": ["default", "loading", "empty", "error"]
         },
         {
           "id": "z-dl-actions",
           "label": "Retry / discard",
           "role": "form",
-          "states": [
-            "default",
-            "loading",
-            "empty",
-            "error"
-          ]
+          "states": ["default", "loading", "empty", "error"]
         }
       ]
     },
@@ -346,40 +209,23 @@
       "route": "#/workbench?tab=scan&panel=review&cluster=",
       "job_entry": false,
       "deep_link": true,
-      "url_params": [
-        "tab",
-        "panel",
-        "cluster",
-        "rq"
-      ],
+      "url_params": ["tab", "panel", "cluster", "rq"],
       "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/ClusterReviewPanel.tsx",
       "primary_action_id": "act-review-back",
-      "states": [
-        "default",
-        "loading",
-        "error",
-        "empty"
-      ],
+      "states": ["default", "loading", "error", "empty"],
       "zones": [
         {
           "id": "z-review-header",
           "label": "Header + Back",
           "role": "nav",
-          "states": [
-            "default"
-          ]
+          "states": ["default"]
         },
         {
           "id": "z-review-faces",
           "label": "Faces grid",
           "role": "ai_review",
           "evidence_linked": true,
-          "states": [
-            "default",
-            "loading",
-            "error",
-            "empty"
-          ]
+          "states": ["default", "loading", "error", "empty"]
         }
       ]
     },
@@ -392,26 +238,15 @@
       "wp_page": "alt-context-roster",
       "job_entry": true,
       "deep_link": true,
-      "url_params": [
-        "personFilter",
-        "person"
-      ],
+      "url_params": ["personFilter", "person"],
       "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/RosterPage.tsx",
-      "states": [
-        "default",
-        "loading",
-        "empty",
-        "error"
-      ],
+      "states": ["default", "loading", "empty", "error"],
       "zones": [
         {
           "id": "z-roster-main",
           "label": "Entries / clusters workspace",
           "role": "content",
-          "states": [
-            "default",
-            "empty"
-          ]
+          "states": ["default", "empty"]
         }
       ]
     },
@@ -426,20 +261,13 @@
       "deep_link": true,
       "url_params": [],
       "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/SettingsPage.tsx",
-      "states": [
-        "default",
-        "error"
-      ],
+      "states": ["default", "error"],
       "zones": [
         {
           "id": "z-settings-form",
           "label": "Settings form + test connection",
           "role": "form",
-          "states": [
-            "default",
-            "loading",
-            "error"
-          ]
+          "states": ["default", "loading", "error"]
         }
       ]
     }

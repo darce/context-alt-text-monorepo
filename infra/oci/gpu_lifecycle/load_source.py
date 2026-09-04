@@ -5,8 +5,11 @@ from __future__ import annotations
 import json
 import logging
 import math
+import re
 import time
-from dataclasses import dataclass
+from collections.abc import Collection
+from dataclasses import dataclass, field
+from enum import StrEnum
 from pathlib import Path
 
 from infra.oci.gpu_lifecycle.controller import JobLoadSnapshot
@@ -17,188 +20,351 @@ logger = logging.getLogger(__name__)
 # docs/workbay/contracts/gpu-lifecycle.md. The lifecycle and API are separate
 # deployables, so sharing validation code would create a deployment coupling.
 LOAD_SNAPSHOT_FUTURE_SKEW_SECONDS = 5.0
+DEFAULT_UNKNOWN_GRACE_SECONDS = 600.0
+DEFAULT_DEPLOYMENTS_FILE = Path(__file__).resolve().parents[3] / "scripts/deploy/gpu-snapshot-deployments.conf"
 
-_FAIL_CLOSED_BUSY = JobLoadSnapshot(
-    queue_depth=1,
-    in_flight=1,
-    batch_in_progress=True,
-    untrustworthy=True,
-)
+_ENVIRONMENT_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]*")
+
+
+class LoadEvidence(StrEnum):
+    """Confidence in the aggregate's observed load fields."""
+
+    TRUSTWORTHY = "trustworthy"
+    UNKNOWN = "unknown"
+    ESCALATED = "escalated"
+
+
+class UnknownReason(StrEnum):
+    """Stable reason vocabulary for load-evidence alerts."""
+
+    MISSING = "missing"
+    STALE = "stale"
+    MALFORMED = "malformed"
+
+
+@dataclass(frozen=True)
+class AggregateJobLoadSnapshot(JobLoadSnapshot):
+    """Protocol-compatible snapshot with explicit evidence confidence.
+
+    The inherited counters contain only values a producer actually published;
+    they are never inflated to encode an error. The counters and inherited
+    ``batch_in_progress`` value are authoritative only when ``evidence`` is
+    ``TRUSTWORTHY``.
+    """
+
+    evidence: LoadEvidence = LoadEvidence.TRUSTWORTHY
+    unknown_environments: tuple[str, ...] = ()
+    unknown_reasons: tuple[tuple[str, UnknownReason], ...] = ()
+    escalated_environments: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class _EnvironmentObservation:
+    environment: str
+    queue_depth: int = 0
+    in_flight: int = 0
+    batch_in_progress: bool | None = None
+    written_at: float | None = None
+    evidence: LoadEvidence = LoadEvidence.TRUSTWORTHY
+    reason: UnknownReason | None = None
+    unknown_since: float | None = None
 
 
 @dataclass(frozen=True)
 class AggregateJobLoadSource:
-    """Aggregate ``<environment>/describe-load.json`` snapshots.
+    """Aggregate the declared environments' ``describe-load.json`` files.
 
-    Fresh valid files are summed. A stale file contributes a fail-closed busy
-    sentinel through the bounded grace deadline, after which it is ignored if
-    at least one other environment is fresh. Missing/unreadable input, or a
-    scan with no fresh files, preserves the lifecycle's existing fail-closed
-    busy outcome.
+    Missing, stale, and malformed producer evidence is a first-class unknown,
+    not invented work and not proof of idleness. Unknown evidence fails closed
+    through ``JobLoadSnapshot.untrustworthy`` for the existing reaper protocol.
+    Once ``unknown_grace_seconds`` expires it becomes ``ESCALATED`` so the
+    caller and monitoring can distinguish a quarantined transient from an
+    outage requiring recovery.
+
+    TODO: the reaper should give ``ESCALATED`` a recovery policy that permits a
+    conservative START while continuing to fence normal idle STOPs. Its legacy
+    ``untrustworthy`` branch deliberately treats UNKNOWN and ESCALATED alike.
     """
 
     directory: Path
     stale_seconds: float
     stale_grace_seconds: float = 600.0
+    unknown_grace_seconds: float = DEFAULT_UNKNOWN_GRACE_SECONDS
+    expected_environments: Collection[str] | None = None
+    deployments_file: Path = DEFAULT_DEPLOYMENTS_FILE
+    _last_state: dict[str, tuple[LoadEvidence, UnknownReason | None]] = field(
+        default_factory=dict,
+        init=False,
+        repr=False,
+        compare=False,
+    )
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "directory", Path(self.directory))
+        object.__setattr__(self, "deployments_file", Path(self.deployments_file))
         if not math.isfinite(self.stale_seconds) or self.stale_seconds <= 0:
             raise ValueError("stale_seconds must be a positive finite number")
         if not math.isfinite(self.stale_grace_seconds) or self.stale_grace_seconds <= 0:
             raise ValueError("stale_grace_seconds must be a positive finite number")
         if self.stale_grace_seconds < self.stale_seconds:
             raise ValueError("stale_grace_seconds must be at least stale_seconds")
+        if not math.isfinite(self.unknown_grace_seconds) or self.unknown_grace_seconds <= 0:
+            raise ValueError("unknown_grace_seconds must be a positive finite number")
 
-    def snapshot(self) -> JobLoadSnapshot:
-        if not self.directory.is_dir():
-            logger.warning(
-                "aggregate load directory missing; treating as busy: %s",
-                self.directory,
-            )
-            return _FAIL_CLOSED_BUSY
+        environments = (
+            self._read_expected_environments(self.deployments_file)
+            if self.expected_environments is None
+            else self._validate_expected_environments(self.expected_environments)
+        )
+        object.__setattr__(self, "expected_environments", environments)
 
-        try:
-            paths = sorted(self.directory.glob("*/describe-load.json"))
-        except OSError as exc:
-            logger.warning(
-                "aggregate load directory unreadable; treating as busy: %s (%s)",
-                self.directory,
-                exc,
-            )
-            return _FAIL_CLOSED_BUSY
-        if not paths:
-            logger.warning(
-                "aggregate load directory has no environment snapshots; treating as busy: %s",
-                self.directory,
-            )
-            return _FAIL_CLOSED_BUSY
-
+    def snapshot(self) -> AggregateJobLoadSnapshot:
         now = time.time()
-        snapshots: list[JobLoadSnapshot] = []
-        fresh_count = 0
-        for path in paths:
-            environment = path.parent.name
-            parsed = self._read_snapshot(path, environment=environment)
-            if parsed is None:
-                snapshots.append(_FAIL_CLOSED_BUSY)
-                continue
-            snapshot, written_at = parsed
-            age = now - written_at
-            if age < -LOAD_SNAPSHOT_FUTURE_SKEW_SECONDS:
-                logger.warning(
-                    "describe load for environment %s is future-dated "
-                    "(skew=%.1fs > %.1fs); treating as busy",
-                    environment,
-                    -age,
-                    LOAD_SNAPSHOT_FUTURE_SKEW_SECONDS,
-                )
-                snapshots.append(_FAIL_CLOSED_BUSY)
-            elif age <= self.stale_seconds:
-                fresh_count += 1
-                snapshots.append(snapshot)
-            elif age <= self.stale_grace_seconds:
-                logger.warning(
-                    "describe load for environment %s is stale (age=%.1fs > %.1fs); "
-                    "treating as busy until %.1fs grace deadline",
-                    environment,
-                    age,
-                    self.stale_seconds,
-                    self.stale_grace_seconds,
-                )
-                snapshots.append(_FAIL_CLOSED_BUSY)
-            else:
-                logger.warning(
-                    "describe load for environment %s ignored after stale grace (age=%.1fs > %.1fs): %s",
-                    environment,
-                    age,
-                    self.stale_grace_seconds,
-                    path,
-                )
+        observations = [self._observe_environment(environment, now=now) for environment in self.expected_environments]
 
-        if fresh_count == 0:
-            logger.warning(
-                "aggregate load has no fresh environment snapshots; treating as busy: %s",
-                self.directory,
-            )
-            return _FAIL_CLOSED_BUSY
+        for observation in observations:
+            self._log_transition(observation)
 
-        return JobLoadSnapshot(
-            queue_depth=sum(snapshot.queue_depth for snapshot in snapshots),
-            in_flight=sum(snapshot.in_flight for snapshot in snapshots),
-            batch_in_progress=any(snapshot.batch_in_progress for snapshot in snapshots),
-            untrustworthy=any(snapshot.untrustworthy for snapshot in snapshots),
+        evidence = LoadEvidence.TRUSTWORTHY
+        if any(observation.evidence is LoadEvidence.ESCALATED for observation in observations):
+            evidence = LoadEvidence.ESCALATED
+        elif any(observation.evidence is LoadEvidence.UNKNOWN for observation in observations):
+            evidence = LoadEvidence.UNKNOWN
+
+        uncertain = [
+            observation for observation in observations if observation.evidence is not LoadEvidence.TRUSTWORTHY
+        ]
+        return AggregateJobLoadSnapshot(
+            queue_depth=sum(observation.queue_depth for observation in observations),
+            in_flight=sum(observation.in_flight for observation in observations),
+            batch_in_progress=any(observation.batch_in_progress is True for observation in observations),
+            untrustworthy=evidence is not LoadEvidence.TRUSTWORTHY,
+            evidence=evidence,
+            unknown_environments=tuple(observation.environment for observation in uncertain),
+            unknown_reasons=tuple(
+                (observation.environment, observation.reason)
+                for observation in uncertain
+                if observation.reason is not None
+            ),
+            escalated_environments=tuple(
+                observation.environment
+                for observation in observations
+                if observation.evidence is LoadEvidence.ESCALATED
+            ),
         )
 
-    @staticmethod
-    def _read_snapshot(
-        path: Path,
-        *,
+    def _observe_environment(self, environment: str, *, now: float) -> _EnvironmentObservation:
+        path = self.directory / environment / "describe-load.json"
+        try:
+            path.stat()
+        except FileNotFoundError:
+            unknown_since = self._filesystem_timestamp(
+                path.parent,
+                self.directory,
+                self.directory.parent,
+                now=now,
+            )
+            return self._uncertain_observation(
+                environment,
+                reason=UnknownReason.MISSING,
+                unknown_since=unknown_since,
+                now=now,
+            )
+        except OSError:
+            return self._uncertain_observation(
+                environment,
+                reason=UnknownReason.MALFORMED,
+                unknown_since=self._filesystem_timestamp(path.parent, self.directory, now=now),
+                now=now,
+            )
+
+        observation = self._read_snapshot(path, environment=environment, now=now)
+        if observation.evidence is not LoadEvidence.TRUSTWORTHY:
+            return observation
+
+        assert observation.written_at is not None
+        age = now - observation.written_at
+        if age < -LOAD_SNAPSHOT_FUTURE_SKEW_SECONDS:
+            return self._uncertain_observation(
+                environment,
+                reason=UnknownReason.MALFORMED,
+                unknown_since=self._filesystem_timestamp(path, path.parent, now=now),
+                now=now,
+                observed=observation,
+            )
+        if age > self.stale_seconds:
+            # A stale producer became unknown when it crossed the freshness
+            # deadline. stale_grace_seconds remains a minimum quarantine
+            # deadline; the snapshot is never discarded after that deadline.
+            unknown_since = observation.written_at + self.stale_seconds
+            escalation_deadline = max(
+                observation.written_at + self.stale_grace_seconds,
+                unknown_since + self.unknown_grace_seconds,
+            )
+            return self._uncertain_observation(
+                environment,
+                reason=UnknownReason.STALE,
+                unknown_since=unknown_since,
+                now=now,
+                observed=observation,
+                escalation_deadline=escalation_deadline,
+            )
+        return observation
+
+    def _uncertain_observation(
+        self,
         environment: str,
-    ) -> tuple[JobLoadSnapshot, float] | None:
+        *,
+        reason: UnknownReason,
+        unknown_since: float,
+        now: float,
+        observed: _EnvironmentObservation | None = None,
+        escalation_deadline: float | None = None,
+    ) -> _EnvironmentObservation:
+        deadline = unknown_since + self.unknown_grace_seconds if escalation_deadline is None else escalation_deadline
+        evidence = LoadEvidence.ESCALATED if now > deadline else LoadEvidence.UNKNOWN
+        return _EnvironmentObservation(
+            environment=environment,
+            queue_depth=0 if observed is None else observed.queue_depth,
+            in_flight=0 if observed is None else observed.in_flight,
+            batch_in_progress=None if observed is None else observed.batch_in_progress,
+            written_at=None if observed is None else observed.written_at,
+            evidence=evidence,
+            reason=reason,
+            unknown_since=unknown_since,
+        )
+
+    def _read_snapshot(self, path: Path, *, environment: str, now: float) -> _EnvironmentObservation:
+        unknown_since = self._filesystem_timestamp(path, path.parent, now=now)
         try:
             payload = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, UnicodeError, json.JSONDecodeError) as exc:
-            logger.warning(
-                "describe load for environment %s is unreadable; treating as busy: %s (%s)",
+        except (OSError, UnicodeError, json.JSONDecodeError):
+            return self._uncertain_observation(
                 environment,
-                path,
-                exc,
+                reason=UnknownReason.MALFORMED,
+                unknown_since=unknown_since,
+                now=now,
             )
-            return None
         if not isinstance(payload, dict):
-            logger.warning(
-                "describe load for environment %s is not an object; treating as busy: %s",
+            return self._uncertain_observation(
                 environment,
-                path,
+                reason=UnknownReason.MALFORMED,
+                unknown_since=unknown_since,
+                now=now,
             )
-            return None
 
         written_at = payload.get("written_at")
-        if (
-            isinstance(written_at, bool)
-            or not isinstance(written_at, (int, float))
-            or not math.isfinite(written_at)
-        ):
-            logger.warning(
-                "describe load for environment %s has invalid written_at; treating as busy: %s",
+        if isinstance(written_at, bool) or not isinstance(written_at, (int, float)) or not math.isfinite(written_at):
+            return self._uncertain_observation(
                 environment,
-                path,
+                reason=UnknownReason.MALFORMED,
+                unknown_since=unknown_since,
+                now=now,
             )
-            return None
         try:
             queue_depth = payload["queue_depth"]
             in_flight = payload["in_flight"]
         except KeyError:
-            logger.warning(
-                "describe load for environment %s is missing queue_depth/in_flight; treating as busy: %s",
+            return self._uncertain_observation(
                 environment,
-                path,
+                reason=UnknownReason.MALFORMED,
+                unknown_since=unknown_since,
+                now=now,
             )
-            return None
         if any(
-            isinstance(value, bool) or not isinstance(value, int) or value < 0
-            for value in (queue_depth, in_flight)
+            isinstance(value, bool) or not isinstance(value, int) or value < 0 for value in (queue_depth, in_flight)
         ):
-            logger.warning(
-                "describe load for environment %s has invalid work counts; treating as busy: %s",
+            return self._uncertain_observation(
                 environment,
-                path,
+                reason=UnknownReason.MALFORMED,
+                unknown_since=unknown_since,
+                now=now,
             )
-            return None
-        batch_in_progress = payload.get("batch_in_progress", False)
-        if not isinstance(batch_in_progress, bool):
-            logger.warning(
-                "describe load for environment %s has non-bool batch_in_progress; treating as busy: %s",
-                environment,
-                path,
-            )
-            return None
-        return (
-            JobLoadSnapshot(
+
+        if "batch_in_progress" not in payload:
+            observed = _EnvironmentObservation(
+                environment=environment,
                 queue_depth=queue_depth,
                 in_flight=in_flight,
-                batch_in_progress=batch_in_progress,
-            ),
-            written_at,
+                batch_in_progress=None,
+                written_at=float(written_at),
+            )
+            return self._uncertain_observation(
+                environment,
+                reason=UnknownReason.MALFORMED,
+                unknown_since=unknown_since,
+                now=now,
+                observed=observed,
+            )
+        batch_in_progress = payload["batch_in_progress"]
+        if not isinstance(batch_in_progress, bool):
+            return self._uncertain_observation(
+                environment,
+                reason=UnknownReason.MALFORMED,
+                unknown_since=unknown_since,
+                now=now,
+            )
+        return _EnvironmentObservation(
+            environment=environment,
+            queue_depth=queue_depth,
+            in_flight=in_flight,
+            batch_in_progress=batch_in_progress,
+            written_at=float(written_at),
         )
+
+    def _log_transition(self, observation: _EnvironmentObservation) -> None:
+        state = (observation.evidence, observation.reason)
+        previous = self._last_state.get(observation.environment)
+        if previous == state:
+            return
+        self._last_state[observation.environment] = state
+        if observation.evidence is LoadEvidence.TRUSTWORTHY:
+            if previous is not None and previous[0] is not LoadEvidence.TRUSTWORTHY:
+                logger.warning(
+                    "describe load evidence recovered environment=%s previous_reason=%s",
+                    observation.environment,
+                    previous[1],
+                )
+            return
+        logger.warning(
+            "describe load evidence %s environment=%s reason=%s unknown_since=%s",
+            observation.evidence,
+            observation.environment,
+            observation.reason,
+            observation.unknown_since,
+        )
+
+    @staticmethod
+    def _filesystem_timestamp(*paths: Path, now: float) -> float:
+        for candidate in paths:
+            try:
+                return candidate.stat().st_mtime
+            except OSError:
+                continue
+        return now
+
+    @classmethod
+    def _read_expected_environments(cls, path: Path) -> tuple[str, ...]:
+        try:
+            lines = path.read_text(encoding="utf-8").splitlines()
+        except (OSError, UnicodeError) as exc:
+            raise ValueError(f"deployment registry is missing or unreadable: {path} ({exc})") from exc
+        return cls._validate_expected_environments(lines, source=path)
+
+    @staticmethod
+    def _validate_expected_environments(
+        environments: Collection[str],
+        *,
+        source: Path | None = None,
+    ) -> tuple[str, ...]:
+        label = f"deployment registry {source}" if source is not None else "expected_environments"
+        if isinstance(environments, str):
+            raise ValueError(f"{label} must be a collection of environment names, not a string")
+        values = tuple(environments)
+        if not values:
+            raise ValueError(f"{label} must declare at least one environment")
+        if any(not isinstance(value, str) or _ENVIRONMENT_NAME.fullmatch(value) is None for value in values):
+            raise ValueError(f"{label} contains an invalid environment name")
+        if len(set(values)) != len(values):
+            raise ValueError(f"{label} contains duplicate environments")
+        return tuple(sorted(values))

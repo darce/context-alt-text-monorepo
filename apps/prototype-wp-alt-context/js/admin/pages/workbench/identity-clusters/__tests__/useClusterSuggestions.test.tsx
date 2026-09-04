@@ -859,21 +859,21 @@ describe('useClusterSuggestions', () => {
       const { wrapper, queryClient } = createWrapper();
       mockEmptySuggestions();
       const listRecognitionClustersMock = vi.mocked(recognitionApi.listRecognitionClusters);
-      listRecognitionClustersMock.mockImplementation(async (params) => {
+      listRecognitionClustersMock.mockImplementation((params) => {
         if (params?.search && params.search.length >= 2) {
-          return {
+          return Promise.resolve({
             clusters: [{ ...baseCluster, id: 'cluster-maya', label: 'Maya Chen', identity_count: 3 }],
             limit: 20,
             total: 1,
             truncated: false,
-          };
+          });
         }
-        return {
+        return Promise.resolve({
           clusters: [{ ...baseCluster, id: 'cluster-flaxen', label: 'Flaxen Yarrow', identity_count: 4 }],
           limit: 50,
           total: 1,
           truncated: false,
-        };
+        });
       });
 
       const { result, rerender } = renderHook(
@@ -1143,21 +1143,21 @@ describe('useClusterSuggestions', () => {
         identity_count: 1,
       }));
 
-      listRecognitionClustersMock.mockImplementation(async (params) => {
+      listRecognitionClustersMock.mockImplementation((params) => {
         if (params?.search && String(params.search).length >= 2) {
-          return {
+          return Promise.resolve({
             clusters: [{ ...baseCluster, id: 'cluster-zenobia', label: 'Zenobia Vance', identity_count: 5 }],
             limit: 20,
             total: 1,
             truncated: false,
-          };
+          });
         }
-        return {
+        return Promise.resolve({
           clusters: atRestPage,
           limit: 50,
           total: 80,
           truncated: true,
-        };
+        });
       });
 
       const { result, rerender } = renderHook(

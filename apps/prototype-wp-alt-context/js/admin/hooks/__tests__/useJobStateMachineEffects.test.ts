@@ -61,7 +61,7 @@ describe('useJobStateMachineEffects', () => {
     projectionSyncState: 'idle' as ProjectionSyncState,
     projectionSyncNonce: 0,
     setProjectionSyncState: vi.fn(),
-    setProjectionError: vi.fn(),
+    setProjectionError: vi.fn<(message: string | null) => void>(),
   });
 
   it('does not trigger manual clustering when the backend already transitioned the scan job', async () => {

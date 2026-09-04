@@ -48,7 +48,7 @@ interface QuerySurface {
   isPending?: boolean;
   error?: unknown;
   refetch: () => void;
-};
+}
 
 let identitiesSurface: QuerySurface;
 let detailSurface: QuerySurface;

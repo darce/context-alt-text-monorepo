@@ -9,6 +9,7 @@ import {
   DESCRIBE_RUN_POLL_INTERVAL_MS,
   FROZEN_POLL_ESCALATION_THRESHOLD,
   getDescribeRunRefetchInterval,
+  isFrozenPollFailure,
   useDescribeRunProgress,
 } from '../useDescribeRunProgress';
 import * as describeApi from '../../api/describeApi';
@@ -50,6 +51,27 @@ const wrapper = ({ children }: React.PropsWithChildren): React.JSX.Element => {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return <QueryClientProvider client={client}>{children}</QueryClientProvider>;
 };
+
+describe('isFrozenPollFailure (FEBT2-LA-NEW-02 policy seam)', () => {
+  // The UI freeze policy is "the poll did not come back", which is true of BOTH
+  // abort-like shapes. The retry policy is narrower on purpose. Narrowing this
+  // one to deliberate aborts is exactly the FEBT1-W2A-05 regression, so it has
+  // to fail here rather than silently un-freezing the progress bar.
+  it('freezes on an elapsed deadline', () => {
+    expect(isFrozenPollFailure(Object.assign(new Error('timed out'), { name: 'TimeoutError' }))).toBe(
+      true,
+    );
+  });
+
+  it('freezes on a deliberate cancel', () => {
+    expect(isFrozenPollFailure(Object.assign(new Error('aborted'), { name: 'AbortError' }))).toBe(true);
+  });
+
+  it('does not freeze on a hard failure', () => {
+    expect(isFrozenPollFailure(new Error('boom'))).toBe(false);
+    expect(isFrozenPollFailure(null)).toBe(false);
+  });
+});
 
 describe('getDescribeRunRefetchInterval (UXP-2-BR-07 pure policy)', () => {
   const running = runResponse({ status: 'running', completed: 1, total: 4 });

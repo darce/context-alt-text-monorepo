@@ -589,7 +589,7 @@ describe('DashboardPage', () => {
 
     const syncSection = screen.getByRole('heading', { name: 'Sync Health' }).closest('section');
     expect(syncSection).not.toBeNull();
-    const openQueue = within(syncSection as HTMLElement).getByRole('link', { name: /Open Review Queue/ });
+    const openQueue = within(syncSection!).getByRole('link', { name: /Open Review Queue/ });
     expect(openQueue).toHaveClass('acx-dashboard__action-card--secondary');
     expect(openQueue).not.toHaveClass('acx-dashboard__action-card--primary');
 

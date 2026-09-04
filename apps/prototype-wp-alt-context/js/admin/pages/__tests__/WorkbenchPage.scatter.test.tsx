@@ -21,9 +21,9 @@ const { pipeline } = vi.hoisted(() => ({
     },
     status: {
       isOnline: true,
-      projectionSyncState: 'idle' as string,
+      projectionSyncState: 'idle',
       projectionError: null as string | null,
-      currentPhase: 'idle' as string,
+      currentPhase: 'idle',
       scanProgress: null as { clusters_created?: number } | null,
       clusterProgress: null as { clusters_created?: number } | null,
     },

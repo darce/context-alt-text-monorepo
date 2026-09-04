@@ -1260,14 +1260,109 @@ describe('ReviewQueue', () => {
 
       await act(async () => {
         screen.getByRole('button', { name: 'Next review item' }).click();
-        await Promise.resolve();
-        await Promise.resolve();
-        await Promise.resolve();
+        for (let tick = 0; tick < 8; tick += 1) {
+          await Promise.resolve();
+        }
       });
 
       expect(acceptSuggestion).toHaveBeenCalledTimes(1);
       expect(acceptSuggestion).toHaveBeenCalledWith('sugg-1');
       expect(screen.getByText('Saved. Moving to next review item.')).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('FEBT1-LD-02: an extra re-render cannot overwrite the save confirmation with the queue position', async () => {
+    // The save confirmation and the queue-position line are announced in the same
+    // commit: flush resolves → "Saved. Moving to next review item." → navigate()
+    // → the card-transition effect announces "Review item N of M". On the old
+    // single-slot channel the survivor was whichever setState landed last, so one
+    // extra re-render from any unrelated subscriber silently dropped the operator's
+    // save confirmation (A11Y-24: every state announced; RLSE-04). The two regions
+    // are now independently owned, so BOTH must be observable at once.
+    let pendingRows = [
+      {
+        id: 'sugg-1',
+        identity_id: 'identity-1',
+        suggested_cluster_id: 'cluster-1',
+        representative_similarity: 0.95,
+        avg_member_similarity: 0.9,
+        cluster_label: 'Alex',
+        cluster_identity_count: 3,
+      },
+      {
+        id: 'sugg-2',
+        identity_id: 'identity-2',
+        suggested_cluster_id: 'cluster-2',
+        representative_similarity: 0.7,
+        avg_member_similarity: 0.65,
+        cluster_label: 'Jordan',
+        cluster_identity_count: 2,
+      },
+    ];
+    vi.mocked(fetchPendingSuggestions).mockImplementation(() =>
+      Promise.resolve({
+        suggestions: pendingRows.map((row) => ({ ...row })),
+        limit: 10,
+        offset: 0,
+      }),
+    );
+    vi.mocked(acceptSuggestion).mockImplementation((id: string) => {
+      pendingRows = pendingRows.filter((row) => row.id !== id);
+      return Promise.resolve({
+        suggestion_id: id,
+        resolution: 'accepted' as const,
+        identity_id: 'identity-1',
+        cluster_id: 'cluster-1',
+        message: 'ok',
+      });
+    });
+
+    const { queryClient } = renderQueue();
+    await screen.findByRole('button', { name: 'Yes' });
+    await reviewCurrentStoredFaces();
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      act(() => {
+        screen.getByRole('button', { name: 'Yes' }).click();
+      });
+
+      await act(async () => {
+        screen.getByRole('button', { name: 'Next review item' }).click();
+        for (let tick = 0; tick < 8; tick += 1) {
+          await Promise.resolve();
+        }
+      });
+
+      const outcomeRegion = document.querySelector('.acx-review-queue__live');
+      const positionRegion = document.querySelector('.acx-review-queue__live-position');
+      expect(outcomeRegion).toHaveTextContent('Saved. Moving to next review item.');
+      // The position announcement really did fire in the same commit — without
+      // this the test would pass on a channel that simply never announced.
+      expect(positionRegion).toHaveTextContent(/Review item \d+ of \d+/);
+      // ...and it did not land in, or clear, the outcome region.
+      expect(outcomeRegion).not.toHaveTextContent(/Review item/);
+
+      // Now force the extra re-render that FEBT1-LD-02 identifies as the trigger:
+      // a subscriber waking on an unrelated query transition. The confirmation
+      // must survive it.
+      await act(async () => {
+        queryClient.setQueryData(queryKeys.clusters.topUnlabeled('test-tenant-id'), {
+          clusters: [],
+          limit: 20,
+          total: 0,
+          truncated: false,
+          repair_pending: false,
+          singleton_count: 0,
+          data_source: DATA_SOURCE.LOCAL_PROJECTION,
+        });
+        await Promise.resolve();
+      });
+
+      expect(document.querySelector('.acx-review-queue__live')).toHaveTextContent(
+        'Saved. Moving to next review item.',
+      );
     } finally {
       vi.useRealTimers();
     }
@@ -1826,13 +1921,24 @@ describe('ReviewQueue', () => {
   it('DUX-L7-RV-03: re-announces identical copy through one persistent live node', async () => {
     // Capture announce so we can fire the SAME string twice consecutively —
     // plain useState would Object.is-bail; useAriaAnnounce must bump seq.
+    // FEBT1-LD-02: ReviewQueue now owns TWO independent announce channels, so the
+    // spy must address one deliberately. `announce` is a stable useCallback per
+    // hook instance, so the first distinct one captured is the outcome channel
+    // (`.acx-review-queue__live`) — the region this test asserts on.
     const original = useAriaAnnounceMod.useAriaAnnounce;
-    let latestAnnounce: ((message: string) => void) | null = null;
+    const capturedAnnounces: ((message: string) => void)[] = [];
     const spy = vi.spyOn(useAriaAnnounceMod, 'useAriaAnnounce').mockImplementation(() => {
       const result = original();
-      latestAnnounce = result.announce;
+      if (!capturedAnnounces.includes(result.announce)) {
+        capturedAnnounces.push(result.announce);
+      }
       return result;
     });
+    const latestAnnounce = (message: string): void => {
+      const outcomeAnnounce = capturedAnnounces[0];
+      expect(outcomeAnnounce).toBeDefined();
+      outcomeAnnounce(message);
+    };
 
     try {
       vi.mocked(fetchPendingSuggestions).mockResolvedValue({
@@ -1854,7 +1960,7 @@ describe('ReviewQueue', () => {
       renderQueue();
       await screen.findByRole('button', { name: 'Yes' });
       await waitFor(() => {
-        expect(latestAnnounce).not.toBeNull();
+        expect(capturedAnnounces.length).toBeGreaterThan(0);
       });
 
       const persistentLive = document.querySelector('.acx-review-queue__live');
@@ -1863,7 +1969,7 @@ describe('ReviewQueue', () => {
 
       const repeatCopy = LIVE_TARGET_CLOSE_ANNOUNCE;
       act(() => {
-        latestAnnounce?.(repeatCopy);
+        latestAnnounce(repeatCopy);
       });
       await waitFor(() => {
         expect(persistentLive).toHaveTextContent(repeatCopy);
@@ -1873,7 +1979,7 @@ describe('ReviewQueue', () => {
       expect(seq1).toBeTruthy();
 
       act(() => {
-        latestAnnounce?.(repeatCopy);
+        latestAnnounce(repeatCopy);
       });
       await waitFor(() => {
         const live2 = document.querySelector('.acx-review-queue__live');
@@ -1897,13 +2003,24 @@ describe('ReviewQueue', () => {
     // unchanged (Object.is-equal), that mutant never touches the Text node at
     // all: no DOM mutation occurs, so a screen reader stays silent. Assert on
     // the actual DOM mutation sequence via MutationObserver instead.
+    // FEBT1-LD-02: ReviewQueue now owns TWO independent announce channels, so the
+    // spy must address one deliberately. `announce` is a stable useCallback per
+    // hook instance, so the first distinct one captured is the outcome channel
+    // (`.acx-review-queue__live`) — the region this test asserts on.
     const original = useAriaAnnounceMod.useAriaAnnounce;
-    let latestAnnounce: ((message: string) => void) | null = null;
+    const capturedAnnounces: ((message: string) => void)[] = [];
     const spy = vi.spyOn(useAriaAnnounceMod, 'useAriaAnnounce').mockImplementation(() => {
       const result = original();
-      latestAnnounce = result.announce;
+      if (!capturedAnnounces.includes(result.announce)) {
+        capturedAnnounces.push(result.announce);
+      }
       return result;
     });
+    const latestAnnounce = (message: string): void => {
+      const outcomeAnnounce = capturedAnnounces[0];
+      expect(outcomeAnnounce).toBeDefined();
+      outcomeAnnounce(message);
+    };
 
     try {
       vi.mocked(fetchPendingSuggestions).mockResolvedValue({
@@ -1925,7 +2042,7 @@ describe('ReviewQueue', () => {
       renderQueue();
       await screen.findByRole('button', { name: 'Yes' });
       await waitFor(() => {
-        expect(latestAnnounce).not.toBeNull();
+        expect(capturedAnnounces.length).toBeGreaterThan(0);
       });
 
       const persistentLive = document.querySelector<HTMLElement>('.acx-review-queue__live')!;
@@ -1935,7 +2052,7 @@ describe('ReviewQueue', () => {
 
       // First announce: establishes the baseline text on the persistent node.
       act(() => {
-        latestAnnounce?.(repeatCopy);
+        latestAnnounce(repeatCopy);
       });
       await waitFor(() => {
         expect(persistentLive).toHaveTextContent(repeatCopy);
@@ -1959,7 +2076,7 @@ describe('ReviewQueue', () => {
       observer.observe(persistentLive, { childList: true });
 
       act(() => {
-        latestAnnounce?.(repeatCopy);
+        latestAnnounce(repeatCopy);
       });
       await waitFor(() => {
         expect(persistentLive).toHaveTextContent(repeatCopy);
@@ -2030,7 +2147,9 @@ describe('ReviewQueue', () => {
       expect(screen.getByTestId('acx-review-card')).toBeInTheDocument();
     });
     await waitFor(() => {
-      expect(document.querySelector('.acx-review-queue__live')).toHaveTextContent('Review item 1 of 1');
+      expect(document.querySelector('.acx-review-queue__live-position')).toHaveTextContent(
+        'Review item 1 of 1',
+      );
     });
     await waitFor(() => {
       expect(screen.getByTestId('acx-review-select')).toHaveFocus();
@@ -3330,7 +3449,7 @@ describe('ReviewQueue', () => {
 
     // The live region must announce the outage AND the filtered-empty hint.
     await waitFor(() => {
-      const live = document.querySelector('.acx-review-queue__live');
+      const live = document.querySelector('.acx-review-queue__live-position');
       expect(live).toHaveTextContent('Unable to load unlabeled faces.');
       expect(live).toHaveTextContent('No items match the current filters.');
     });
@@ -3524,9 +3643,15 @@ describe('ReviewQueue', () => {
     expect(await screen.findByRole('button', { name: /^Resync review queue$/ })).toBeInTheDocument();
     expect(screen.queryByTestId('acx-review-card')).not.toBeInTheDocument();
     expect(screen.queryByText(REVIEW_QUEUE_DRAIN_MESSAGE)).toBeNull();
-    const live = screen.getByRole('status');
-    expect(live.textContent).not.toBe(REVIEW_QUEUE_DRAIN_MESSAGE);
-    expect(live.textContent).not.toContain('All caught up');
+    // Both polite regions must be free of a false drain claim (FEBT1-LD-02 split
+    // the outcome and position channels; a drain sentence could only ever be in
+    // the position one, but neither may claim it).
+    const liveRegions = screen.getAllByRole('status');
+    expect(liveRegions.length).toBeGreaterThanOrEqual(2);
+    for (const live of liveRegions) {
+      expect(live.textContent).not.toBe(REVIEW_QUEUE_DRAIN_MESSAGE);
+      expect(live.textContent).not.toContain('All caught up');
+    }
   });
 
   it('R5-09: findings Resync and queue Resync have distinct accessible names', async () => {
@@ -3635,7 +3760,7 @@ describe('ReviewQueue', () => {
       expect(document.getElementById('acx-findings-panel-repair-copy')).toHaveTextContent(
         '3 groups missing face data',
       );
-      expect(container.querySelector('.acx-review-queue__live')).toHaveTextContent(
+      expect(container.querySelector('.acx-review-queue__live-position')).toHaveTextContent(
         '3 groups missing face data',
       );
     });
@@ -3643,7 +3768,9 @@ describe('ReviewQueue', () => {
     const panelClaim = (document.getElementById('acx-findings-panel-repair-copy')?.textContent ?? '')
       .replace(/\s+/g, ' ')
       .trim();
-    const queueLiveClaim = (container.querySelector('.acx-review-queue__live')?.textContent ?? '').trim();
+    const queueLiveClaim = (
+      container.querySelector('.acx-review-queue__live-position')?.textContent ?? ''
+    ).trim();
     const queueVisualClaim = (document.getElementById('acx-review-queue-repair-copy')?.textContent ?? '')
       .replace(/\s+/g, ' ')
       .trim();
@@ -3720,7 +3847,7 @@ describe('ReviewQueue', () => {
 
     const { container } = renderQueue();
     await screen.findByTestId('acx-review-queue-repair');
-    const liveRegion = container.querySelector('.acx-review-queue__live');
+    const liveRegion = container.querySelector('.acx-review-queue__live-position');
     expect(liveRegion).toBeTruthy();
     expect(within(liveRegion as HTMLElement).getByText(/missing face data/i)).toBeInTheDocument();
   });
@@ -3743,7 +3870,7 @@ describe('ReviewQueue', () => {
 
     const { container, queryClient } = renderQueue();
     await screen.findByTestId('acx-review-queue-repair');
-    const liveRegion = () => container.querySelector('.acx-review-queue__live');
+    const liveRegion = () => container.querySelector('.acx-review-queue__live-position');
     expect(within(liveRegion() as HTMLElement).getByText(/missing face data/i)).toBeInTheDocument();
     const seq = liveRegion()?.getAttribute('data-announce-seq');
 
@@ -3783,7 +3910,7 @@ describe('ReviewQueue', () => {
 
     const { container, queryClient } = renderQueue();
     await screen.findByTestId('acx-review-queue-repair');
-    const liveRegion = () => container.querySelector('.acx-review-queue__live');
+    const liveRegion = () => container.querySelector('.acx-review-queue__live-position');
     await waitFor(() => {
       expect(liveRegion()).toHaveTextContent('7 groups elsewhere are missing face data');
     });
@@ -3842,7 +3969,7 @@ describe('ReviewQueue', () => {
 
     const { container, queryClient } = renderQueue();
     await screen.findByTestId('acx-review-queue-repair');
-    const liveRegion = () => container.querySelector('.acx-review-queue__live');
+    const liveRegion = () => container.querySelector('.acx-review-queue__live-position');
     expect(within(liveRegion() as HTMLElement).getByText(/missing face data/i)).toBeInTheDocument();
 
     queryClient.setQueryData(queryKeys.clusters.topUnlabeled('test-tenant-id'), {
@@ -3915,7 +4042,9 @@ describe('ReviewQueue', () => {
         ).length;
 
       expect(filteredAnnounceCount()).toBe(1);
-      const seqAfterFirst = document.querySelector('.acx-review-queue__live')?.getAttribute('data-announce-seq');
+      const seqAfterFirst = document
+        .querySelector('.acx-review-queue__live-position')
+        ?.getAttribute('data-announce-seq');
       expect(seqAfterFirst).toBeTruthy();
 
       const topKey = queryKeys.clusters.topUnlabeled('test-tenant-id');
@@ -3935,9 +4064,9 @@ describe('ReviewQueue', () => {
       }
 
       expect(filteredAnnounceCount()).toBe(1);
-      expect(document.querySelector('.acx-review-queue__live')?.getAttribute('data-announce-seq')).toBe(
-        seqAfterFirst,
-      );
+      expect(
+        document.querySelector('.acx-review-queue__live-position')?.getAttribute('data-announce-seq'),
+      ).toBe(seqAfterFirst);
     } finally {
       spy.mockRestore();
     }
@@ -4874,18 +5003,22 @@ describe('ReviewQueue', () => {
       // HARM-02: the live region is now seq-keyed (useAriaAnnounce), so it REMOUNTS
       // on each announce — re-query the current node inside waitFor rather than
       // holding a stale reference to the mount-time node.
-      const liveRegion = container.querySelector('.acx-review-queue__live');
+      const liveRegion = container.querySelector('.acx-review-queue__live-position');
       expect(liveRegion).not.toBeNull();
       expect(liveRegion).toHaveAttribute('aria-live', 'polite');
 
       await user.click(screen.getByTestId('acx-review-select'));
       await waitFor(() => {
-        expect(container.querySelector('.acx-review-queue__live')).toHaveTextContent('1 selected');
+        expect(container.querySelector('.acx-review-queue__live-position')).toHaveTextContent(
+          '1 selected',
+        );
       });
 
       await user.click(screen.getByTestId('acx-review-select'));
       await waitFor(() => {
-        expect(container.querySelector('.acx-review-queue__live')).toHaveTextContent('0 selected');
+        expect(container.querySelector('.acx-review-queue__live-position')).toHaveTextContent(
+          '0 selected',
+        );
       });
     });
 
@@ -5460,7 +5593,14 @@ describe('ReviewQueue', () => {
       await waitFor(() => {
         expect(screen.getByTestId('acx-review-queue-retired-head')).toBeInTheDocument();
       });
-      expect(screen.getByRole('status')).toHaveTextContent(LIVE_TARGET_CLOSE_ANNOUNCE);
+      // Retirement is an outcome, so it must land in the outcome region — and the
+      // position region must not have absorbed it (FEBT1-LD-02).
+      expect(document.querySelector('.acx-review-queue__live')).toHaveTextContent(
+        LIVE_TARGET_CLOSE_ANNOUNCE,
+      );
+      expect(document.querySelector('.acx-review-queue__live-position')).not.toHaveTextContent(
+        LIVE_TARGET_CLOSE_ANNOUNCE,
+      );
       // Criterion 4: no stale card body for the retired head cluster.
       expect(screen.queryByTestId('acx-review-card')).not.toBeInTheDocument();
     });

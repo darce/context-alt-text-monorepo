@@ -27,7 +27,7 @@ const defaultProps = {
   workbenchUrl: 'https://example.test/wp-admin/admin.php?page=alt-context-workbench',
 };
 
-function createTestClient(): QueryClient {
+const createTestClient = (): QueryClient => {
   return new QueryClient({
     defaultOptions: {
       queries: {
@@ -35,16 +35,16 @@ function createTestClient(): QueryClient {
       },
     },
   });
-}
+};
 
-function renderApp(ui: ReactNode, client = createTestClient()) {
+const renderApp = (ui: ReactNode, client = createTestClient()) => {
   return {
     client,
     ...render(<QueryClientProvider client={client}>{ui}</QueryClientProvider>),
   };
-}
+};
 
-function curatedUncuratedFixture(): MediaIdentitiesResponse {
+const curatedUncuratedFixture = (): MediaIdentitiesResponse => {
   return {
     data_source: 'local_projection',
     identities_by_media: {
@@ -82,10 +82,10 @@ function curatedUncuratedFixture(): MediaIdentitiesResponse {
       ],
     },
   };
-}
+};
 
 /** backend_proxy envelope — local mappers hardcode clustering_pending false. */
-function clusteringPendingBackendProxyFixture(): MediaIdentitiesResponse {
+const clusteringPendingBackendProxyFixture = (): MediaIdentitiesResponse => {
   return {
     data_source: 'backend_proxy',
     identities_by_media: {
@@ -104,7 +104,7 @@ function clusteringPendingBackendProxyFixture(): MediaIdentitiesResponse {
       ],
     },
   };
-}
+};
 
 describe('ATTACHMENT_FACES_QUERY_OPTIONS one-shot contract', () => {
   it('pins retry/focus/reconnect/staleTime and omits refetchInterval', () => {
@@ -126,8 +126,8 @@ describe('AttachmentFacesApp five designed states', () => {
     resetConfigCache();
   });
 
-  it('shows loading status while the query is pending', async () => {
-    fetchMock.mockReturnValue(new Promise(() => {}));
+  it('shows loading status while the query is pending', () => {
+    fetchMock.mockReturnValue(new Promise(() => undefined));
     renderApp(<AttachmentFacesApp {...defaultProps} />);
 
     expect(screen.getByRole('status')).toHaveTextContent(ATTACHMENT_EDIT_COPY.loadingFaces);
@@ -216,6 +216,28 @@ describe('AttachmentFacesApp five designed states', () => {
     expect(screen.getByRole('button', { name: ATTACHMENT_EDIT_COPY.reloadPage })).toBeInTheDocument();
   });
 
+  // FEBT1-LB-03: the session-expired branch moved from `instanceof
+  // AuthExpiredError` to the structural tag check. A prototype-less error is
+  // the case `instanceof` silently got wrong — it is what survives React
+  // Query cache hydration or a postMessage hop — and it must still reach the
+  // recovery UI rather than the dead-end "face data unavailable" copy.
+  it('a tag-only auth_expired error (no prototype) still renders session-expired [TEST-15]', async () => {
+    fetchMock.mockRejectedValue({
+      _tag: 'auth_expired',
+      status: 403,
+      endpoint: '/media-identities',
+      message: 'Session expired.',
+      cause: undefined,
+    });
+    renderApp(<AttachmentFacesApp {...defaultProps} />);
+
+    await waitFor(() => {
+      expect(screen.getByRole('status')).toHaveTextContent(ATTACHMENT_EDIT_COPY.sessionExpired);
+    });
+    expect(screen.getByTestId('acx-attachment-faces-app')).toHaveAttribute('data-state', 'session-expired');
+    expect(screen.getByRole('button', { name: ATTACHMENT_EDIT_COPY.reloadPage })).toBeInTheDocument();
+  });
+
   it('generic query error still shows faceDataUnavailable, not session-expired [TEST-15]', async () => {
     fetchMock.mockRejectedValue(new Error('network down'));
     renderApp(<AttachmentFacesApp {...defaultProps} />);
@@ -237,6 +259,10 @@ describe('AttachmentFacesApp five designed states', () => {
       expect(screen.getByRole('button', { name: 'Sam Rivera' })).toBeInTheDocument();
     });
 
+    // WHY the disable: React runs `act` in asynchronous mode only when the callback returns a
+    // thenable. The `async` keyword is the protocol signal that flushes effects and the microtask
+    // queue; removing it to satisfy require-await would silently downgrade this to a sync act.
+    // eslint-disable-next-line @typescript-eslint/require-await
     await act(async () => {
       window.dispatchEvent(new Event('focus'));
       window.dispatchEvent(new Event('online'));
@@ -275,10 +301,10 @@ describe('AttachmentFacesApp five designed states', () => {
     const chip = screen.getByRole('button', { name: 'Sam Rivera' });
     expect(chip.className).toContain('acx-face-overlay__chip--curated');
 
-    const { readFileSync } = await import('node:fs');
-    const { join } = await import('node:path');
-    const scssPath = join(__dirname, '..', 'attachment-edit.scss');
-    const overlayScssPath = join(
+    const fs = await import('node:fs');
+    const path = await import('node:path');
+    const scssPath = path.join(__dirname, '..', 'attachment-edit.scss');
+    const overlayScssPath = path.join(
       __dirname,
       '..',
       '..',
@@ -287,8 +313,8 @@ describe('AttachmentFacesApp five designed states', () => {
       'components',
       '_face-overlay.scss',
     );
-    const scss = readFileSync(scssPath, 'utf8');
-    const overlayScss = readFileSync(overlayScssPath, 'utf8');
+    const scss = fs.readFileSync(scssPath, 'utf8');
+    const overlayScss = fs.readFileSync(overlayScssPath, 'utf8');
     expect(scss).toMatch(/@use\s+['"]\.\.\/admin\/styles\/tokens\/colors['"]/);
     expect(scss).toMatch(/@use\s+['"]\.\.\/admin\/styles\/components\/face-overlay['"]/);
     expect(overlayScss).toMatch(/&__chip--curated\s*\{[^}]*background-color:\s*var\(--acx-color-success-bg\)/);
@@ -368,6 +394,10 @@ describe('mountAttachmentEdit', () => {
       },
     };
 
+    // WHY the disable: React runs `act` in asynchronous mode only when the callback returns a
+    // thenable. The `async` keyword is the protocol signal that flushes effects and the microtask
+    // queue; removing it to satisfy require-await would silently downgrade this to a sync act.
+    // eslint-disable-next-line @typescript-eslint/require-await
     await act(async () => {
       expect(mountAttachmentEdit()).toBe(true);
     });

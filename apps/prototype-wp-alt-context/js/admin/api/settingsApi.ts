@@ -109,7 +109,7 @@ export type SettingsSaveResultValue =
 
 export interface SaveSettingsResponse {
   saved: string[];
-  result: SettingsSaveResultValue | string;
+  result: SettingsSaveResultValue;
   /** Present when result is partial/error — fields that did not persist. */
   failed?: string[];
 }

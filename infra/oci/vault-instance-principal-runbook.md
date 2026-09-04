@@ -43,14 +43,15 @@ a tightly-scoped tag; do not match the whole tenancy):
 Any {instance.id = 'ocid1.instance.oc1..<BACKEND_VM_OCID>'}
 ```
 
-Policy — **read-only `secret-bundle`, one compartment** (least privilege; the
-VM identity may only *read* secret contents, not manage them):
+Policy — the **currently deployed** statement is read-only but tenancy-wide
+(the VM identity may only *read* secret contents, not manage them):
 
 ```
-Allow dynamic-group acx-backend-dg to read secret-family in compartment acx-secrets where request.permission = 'SECRET_BUNDLE_READ'
+Allow dynamic-group acx-backend-dg to read secret-family in tenancy where request.permission = 'SECRET_BUNDLE_READ'
 ```
 
-> **Drift — the deployed policy is broader than the line above.** Verified
+> **Drift — named follow-up: scope `acx-backend-secret-read` to an
+> `acx-secrets` compartment.** Verified
 > 2026-09-02: no `acx-secrets` compartment exists, every secret lives in the
 > **root** compartment, and the live policy `acx-backend-secret-read` reads
 > `... to read secret-family **in tenancy** where request.permission =
@@ -60,13 +61,20 @@ Allow dynamic-group acx-backend-dg to read secret-family in compartment acx-secr
 > weeks (OCIRV-1 blocker 175; key revoked and secrets scheduled for deletion
 > 2026-09-02).
 >
-> Closing the drift means making the documented line true, not editing it down:
-> create `acx-secrets`, move the six secrets the VM actually consumes into it
-> with `oci vault secret change-compartment`, then re-scope
-> `acx-backend-secret-read` to that compartment. OCIDs are stable across a
-> compartment move, so `RECOGNITION_VAULT_SECRET_MAP` needs no change. The six:
-> `PGPASSWORD`, `POSTGRES_DSN`, `POSTGRES_SYNC_DSN`, `RECOGNITION_ADMIN_TOKEN`
-> (runtime map) plus `OCIR_USERNAME`, `OCIR_AUTH_TOKEN` (image pull). A
+> This migration is a separate operator-gated change; do not apply it as part
+> of credential rotation. Closing the drift means creating `acx-secrets`,
+> moving the six secrets the VM actually consumes into it
+> (`pg-password`, `POSTGRES_DSN`, `POSTGRES_SYNC_DSN`,
+> `RECOGNITION_ADMIN_TOKEN`, `OCIR_USERNAME`, and `OCIR_AUTH_TOKEN`), then
+> applying this **target-state** policy:
+>
+> ```
+> Allow dynamic-group acx-backend-dg to read secret-family in compartment acx-secrets where request.permission = 'SECRET_BUNDLE_READ'
+> ```
+>
+> Use `oci vault secret change-compartment` for those moves, then re-scope
+> `acx-backend-secret-read` to the new compartment. OCIDs are stable across a
+> compartment move, so `RECOGNITION_VAULT_SECRET_MAP` needs no change. A
 > compartment boundary is preferable to enumerating secret OCIDs in the policy
 > because a secret added to root later is then *not* readable by default
 > ([SEC-04] fail-safe defaults).
@@ -158,7 +166,12 @@ reports success once the stored value reads back byte-identical. Expect a few
 seconds under `waiting for OCIR_AUTH_TOKEN to become readable`. Without that
 wait the laptop verify races the create and reports `secret_missing`, telling
 the operator to store a token they just stored (observed live 2026-08-28).
-Override the 120s ceiling with `--readable-timeout`.
+Override the 120s ceiling with, for example,
+`OCIR_ROTATE_ARGS='--readable-timeout 30' make ocir-token-rotate`, or invoke the
+wrapper directly with
+`scripts/deploy/ocir-token-rotate.sh --readable-timeout 30`. Zero explicitly
+skips the consumer read-back wait; it
+does not skip the mandatory direct OCIR proof.
 
 ## 5. Rotation (single-place operation)
 
@@ -167,8 +180,19 @@ Override the 120s ceiling with `--readable-timeout`.
    (`systemctl restart acx-<env>`) — they re-fetch the current version at boot.
 3. Postgres container password: also re-run the `ExecStartPre` fetch (restart
    picks it up) and, if the DB role password changed, `ALTER ROLE` accordingly.
-4. `OCIR_AUTH_TOKEN`: `make ocir-token-rotate`. No host is touched — the next
-   deploy's preflight fetches the new version. Revoke the old token in the
-   Console afterwards (the 2-token-per-user quota is easy to exhaust).
+4. `OCIR_AUTH_TOKEN`: `make ocir-token-rotate`. The wrapper first contacts OCIR
+   from the operator's laptop to prove the pasted token before any Vault write.
+   After storing it, it verifies the Vault-backed credential with local Docker
+   and opens an SSH session to the production VM for its Docker login check.
+   `--skip-verify` skips only that production-VM SSH leg. Revoke the old token
+   in the Console afterwards (the 2-token-per-user quota is easy to exhaust).
+
+When `--set-username` is used, Vault cannot atomically update two secrets. The
+wrapper proves the new username/token pair, writes `OCIR_AUTH_TOKEN` first, and
+only after that helper reports success writes `OCIR_USERNAME`. A helper failure
+can be indeterminate if Vault accepted a write before its read-back check
+failed; inspect the named destination and retry. In particular, a later
+username-write failure can leave the proven new token paired with the old
+username and requires the operator to retry immediately.
 
 No OCID map change is needed on rotation (the OCID is stable across versions).

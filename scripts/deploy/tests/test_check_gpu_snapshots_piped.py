@@ -21,6 +21,7 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 CHECKER = REPO_ROOT / "scripts/deploy/check-gpu-snapshots.sh"
+DEPLOYMENTS = REPO_ROOT / "scripts/deploy/gpu-snapshot-deployments.conf"
 
 COMPOSE = """\
 services:
@@ -40,7 +41,7 @@ def fixture_env(tmp_path: Path) -> dict[str, str]:
     state_dir = tmp_path / "run/acx"
     load_dir = tmp_path / "run/acx-write"
     state_dir.mkdir(parents=True)
-    for env_name in ("dev", "staging", "prod"):
+    for env_name in DEPLOYMENTS.read_text(encoding="utf-8").splitlines():
         env_dir = load_dir / env_name
         env_dir.mkdir(parents=True)
         (env_dir / "describe-load.json").write_text(
@@ -69,6 +70,9 @@ def fixture_env(tmp_path: Path) -> dict[str, str]:
         "ACX_GPU_STATE_PATH": str(state_path),
         "ACX_GPU_SNAPSHOT_DIR": str(state_dir),
         "ACX_DESCRIBE_LOAD_DIR": str(load_dir),
+        "ACX_GPU_DEPLOYMENTS": ",".join(
+            DEPLOYMENTS.read_text(encoding="utf-8").splitlines()
+        ),
         "ACX_GPU_SNAPSHOT_CONFIG_ONLY": "1",
         "ACX_GPU_READER_UID": str(os.getuid()),
         "ACX_NOW_EPOCH": "1000",
@@ -108,6 +112,7 @@ def test_piped_invocation_emits_nothing_on_stderr(
     ("dropped", "expected_hint"),
     [
         ("ACX_GPU_COMPOSE_FILE", "ACX_GPU_COMPOSE_FILE"),
+        ("ACX_GPU_DEPLOYMENTS", "ACX_GPU_DEPLOYMENTS"),
         ("ACX_GPU_UNIT_LOAD_DIR", "ACX_GPU_UNIT_LOAD_DIR"),
         ("ACX_GPU_UNIT_STATE_PATH", "ACX_GPU_UNIT_STATE_PATH"),
     ],

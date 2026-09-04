@@ -151,6 +151,10 @@ SMOKE_TIMEOUT_VLM_DEFAULT=120
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+# OCIR credential resolution (Vault-backed, OCIRV-1). Sourced rather than
+# inlined so scripts/deploy/tests/test-ocir-auth.sh can pin its invariants.
+# shellcheck source=lib/ocir-auth.sh
+source "${SCRIPT_DIR}/lib/ocir-auth.sh"
 SERVICE_DIR="${REPO_ROOT}/apps/prototype-description-service"
 # Display label only. Live ssh invocations use `-l "${OCI_USER}" -- "${OCI_HOST}"`
 # so a leading-dash identity can never be parsed as an ssh option (S2-A-12).
@@ -405,13 +409,38 @@ preflight_docker() {
   command -v docker >/dev/null 2>&1 || fail "docker not found in PATH"
   docker info >/dev/null 2>&1 || fail "docker daemon not running (start colima with \`colima start\`, or start Docker Desktop)"
 }
-preflight_ocir_auth() {
-  local cfg="${HOME}/.docker/config.json"
-  if [[ ! -f "$cfg" ]] || ! grep -q "\"${OCIR_REGISTRY}\"" "$cfg" 2>/dev/null; then
-    warn "No cached OCIR credential for ${OCIR_REGISTRY}."
-    warn "Run: docker login ${OCIR_REGISTRY} -u '${OCIR_NAMESPACE}/<email>' (paste OCI auth token as password)"
-    fail "OCIR auth missing"
+# Release It! 5.5 (Fail Fast): verify the credential we will actually use, before
+# the build burns minutes. The old form only checked that *some* entry for the
+# registry existed in ~/.docker/config.json -- a credential revoked upstream
+# still looked healthy here and failed at push, which is exactly the "the one
+# resource nobody checked is where it fails late" trap.
+#
+# The new form performs the real login against a freshly fetched Vault token, so
+# a green preflight means the push will authenticate. Failures are classified
+# (system vs application) so the operator is routed to the one thing that broke
+# instead of re-deriving it from an opaque "auth missing".
+ocir_login_or_fail() {
+  local scope="$1" out rc=0
+  shift
+  out="$("$@" 2>&1)" || rc=$?
+  if [[ "$rc" -ne 0 ]]; then
+    local class hint
+    class="$(ocir_classify_login_failure "$out")"
+    hint="$(ocir_login_failure_hint "$class")"
+    warn "OCIR login failed on ${scope} [${class}]: ${hint}"
+    # The token never appears in $out -- it only ever transits a pipe -- but the
+    # OCI CLI echoes request context, so keep this on stderr rather than in a
+    # deploy log that gets pasted around.
+    printf '%s\n' "$out" >&2
+    fail "OCIR auth unavailable (${scope}, ${class})"
   fi
+  log "OCIR authenticated on ${scope} via acx-vault/${ACX_OCIR_TOKEN_SECRET}"
+}
+
+preflight_ocir_auth() {
+  local snippet
+  snippet="$(ocir_login_snippet "${ACX_LOCAL_OCI_BIN}" api_key "${OCIR_REGISTRY}")"
+  ocir_login_or_fail "laptop" bash -c "$snippet"
 }
 preflight_ssh() {
   if ! ssh -o BatchMode=yes -o ConnectTimeout=5 -l "${OCI_USER}" -- "${OCI_HOST}" 'echo ok' >/dev/null 2>&1; then
@@ -425,12 +454,14 @@ preflight_remote_docker() {
   fi
 }
 preflight_remote_ocir_auth() {
-  if ! ssh -o BatchMode=yes -o ConnectTimeout=5 -l "${OCI_USER}" -- "${OCI_HOST}" \
-       "test -f ~/.docker/config.json && grep -q '\"${OCIR_REGISTRY}\"' ~/.docker/config.json"; then
-    warn "No cached OCIR credential on ${SSH_TARGET} (~/.docker/config.json missing or unauthenticated for ${OCIR_REGISTRY})."
-    warn "On the VM run: docker login ${OCIR_REGISTRY} -u '${OCIR_NAMESPACE}/<email>' (paste OCI auth token as password)"
-    fail "remote OCIR auth missing"
-  fi
+  # ACX_REMOTE_OCI_BIN carries a literal $HOME for the remote shell to expand, so
+  # the snippet is fed to `bash -s` over stdin rather than interpolated into
+  # argv. The here-string binds to the function call; ssh inherits that stdin.
+  local snippet
+  snippet="$(ocir_login_snippet "${ACX_REMOTE_OCI_BIN}" instance_principal "${OCIR_REGISTRY}")"
+  ocir_login_or_fail "${SSH_TARGET}" \
+    ssh -o BatchMode=yes -o ConnectTimeout=5 -l "${OCI_USER}" -- "${OCI_HOST}" \
+      'bash -s' <<<"$snippet"
 }
 preflight_rsync() {
   command -v rsync >/dev/null 2>&1 || fail "rsync not found in PATH (required for remote-build mode)"

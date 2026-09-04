@@ -10,15 +10,24 @@ so the route handler stays focused on transport concerns.
 from __future__ import annotations
 
 import io
+import json
+import logging
 import uuid
 from pathlib import Path
 
 import pytest
 from fastapi import HTTPException
+from fastapi.exception_handlers import http_exception_handler
 from starlette.datastructures import FormData, Headers, UploadFile
+from starlette.requests import Request
 
-from recognition.application.storage import FilesystemObjectStore
+from recognition.application.storage import FilesystemObjectStore, ObjectStoreError
+from recognition.interface_adapters.http.middleware.correlation import (
+    CORRELATION_ID_HEADER,
+    _correlation_id_var,
+)
 from recognition.interface_adapters.http.routers.analyze_multipart import (
+    logger,
     multipart_to_media_items,
 )
 
@@ -138,3 +147,43 @@ def test_helper_returns_empty_list_when_no_image_parts(store: FilesystemObjectSt
     )
     items = multipart_to_media_items(form_data=form, object_store=store, job_id=job_id)
     assert items == []
+
+
+@pytest.mark.asyncio
+async def test_storage_failure_response_is_opaque_and_correlated(caplog: pytest.LogCaptureFixture) -> None:
+    secret_path = "/srv/private/blobs/tenant-secret/image.png"
+    driver_error = f"permission denied writing {secret_path}"
+    correlation_id = "req-multipart-storage-failure"
+
+    class FailingObjectStore:
+        def put(self, *, job_id: str, media_id: str, data: bytes) -> str:
+            raise ObjectStoreError(driver_error)
+
+    form = _form(
+        ("image_42", _put_content_type(_upload("a.png", PNG_BYTES, "image/png"), "image/png")),
+    )
+    token = _correlation_id_var.set(correlation_id)
+    try:
+        with caplog.at_level(logging.ERROR, logger=logger.name), pytest.raises(HTTPException) as excinfo:
+            multipart_to_media_items(
+                form_data=form,
+                object_store=FailingObjectStore(),
+                job_id="job-test",
+            )
+        request = Request({"type": "http", "method": "POST", "path": "/recognition/analyze/multipart"})
+        response = await http_exception_handler(request, excinfo.value)
+    finally:
+        _correlation_id_var.reset(token)
+
+    body_text = response.body.decode("utf-8")
+    assert response.status_code == 500
+    assert json.loads(body_text)["detail"] == "internal server error"
+    assert driver_error not in body_text
+    assert secret_path not in body_text
+    assert response.headers[CORRELATION_ID_HEADER] == correlation_id
+
+    records = [record for record in caplog.records if record.name == logger.name]
+    assert len(records) == 1
+    assert records[0].correlation_id == correlation_id
+    assert records[0].exc_info is not None
+    assert driver_error in str(records[0].exc_info[1])

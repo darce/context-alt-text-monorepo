@@ -48,7 +48,11 @@ from recognition.interface_adapters.http.deps.object_store import (
     ObjectStoreFactory,
     get_object_store_factory_for_request,
 )
-from recognition.interface_adapters.http.middleware.correlation import get_correlation_id
+from recognition.interface_adapters.http.middleware.correlation import (
+    CORRELATION_ID_HEADER,
+    generate_correlation_id,
+    get_correlation_id,
+)
 from recognition.interface_adapters.http.schemas.requests import MediaItem
 from recognition.interface_adapters.http.schemas.responses import (
     JobProgressResponse,
@@ -60,6 +64,7 @@ logger = logging.getLogger(__name__)
 
 _DEFAULT_ALLOWED_MIME_TYPES: frozenset[str] = frozenset({"image/jpeg", "image/png", "image/webp"})
 _IMAGE_KEY_PREFIX = "image_"
+INTERNAL_ERROR_DETAIL = "internal server error"
 
 
 def multipart_to_media_items(
@@ -125,12 +130,19 @@ def multipart_to_media_items(
         try:
             blob_uri = object_store.put(job_id=job_id, media_id=str(media_id), data=data)
         except ObjectStoreError as exc:
-            # The helper's validation should have prevented this; surface
-            # as 500 so it shows up in logs rather than masquerading as a
-            # client error.
+            correlation_id = get_correlation_id() or generate_correlation_id()
+            logger.exception(
+                "Failed to store multipart image",
+                extra={
+                    "correlation_id": correlation_id,
+                    "job_id": job_id,
+                    "image_part": key,
+                },
+            )
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"failed to store image part '{key}': {exc}",
+                detail=INTERNAL_ERROR_DETAIL,
+                headers={CORRELATION_ID_HEADER: correlation_id},
             ) from exc
 
         items.append(MediaItem(media_id=media_id, blob_uri=blob_uri))

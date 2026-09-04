@@ -9,7 +9,6 @@ from pathlib import Path
 
 import pytest
 
-
 REPO_ROOT = Path(__file__).resolve().parents[3]
 CHECKER = REPO_ROOT / "scripts/deploy/check-gpu-snapshots.sh"
 MAKEFILE = REPO_ROOT / "Makefile"

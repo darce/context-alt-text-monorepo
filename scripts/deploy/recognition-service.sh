@@ -58,7 +58,7 @@
 #   ACX_VERIFY_ATTEMPTS      default 5  (post-deploy verify retry count for warm-up)
 #   ACX_VERIFY_SLEEP         default 5  (seconds between verify attempts)
 #   ACX_VERIFY_OPTIONAL      set to 1 to downgrade verify failure from fail to warn after deploy/promote
-#   ACX_DEPLOY_GPU_LIFECYCLE default 0: gpu-lifecycle is a no-op unless explicitly set to 1
+#   ACX_DEPLOY_GPU_LIFECYCLE default 0: explicit gpu-lifecycle exits 2 unless set to 1
 #   ACX_GPU_READY_URL        required when ACX_DEPLOY_GPU_LIFECYCLE=1; no production default
 #   ACX_GPU_LIFECYCLE_DRY_RUN set to 1 to render the installer plan without ssh/scp
 #   ACX_CONVERGE_RUNTIME     default 1: 'deploy' converges the deployed compose+unit with the repo
@@ -2667,8 +2667,8 @@ do_gpu_lifecycle() {
 
   case "${enabled}" in
     0)
-      log "GPU lifecycle timer installation disabled (set ACX_DEPLOY_GPU_LIFECYCLE=1 to enable)."
-      return 0
+      printf 'error: GPU lifecycle timer installation disabled; nothing done (set ACX_DEPLOY_GPU_LIFECYCLE=1 to enable)\n' >&2
+      return 2
       ;;
     1) ;;
     *) fail "ACX_DEPLOY_GPU_LIFECYCLE must be 0 or 1 (got: ${enabled})" ;;
@@ -2678,6 +2678,10 @@ do_gpu_lifecycle() {
   # before the installer can stage anything on the host.
   [[ -n "${ACX_GPU_READY_URL:-}" ]] || \
     fail "ACX_GPU_READY_URL is required when ACX_DEPLOY_GPU_LIFECYCLE=1"
+  if [[ ! "${GPU_INSTANCE_ID:-}" =~ ^ocid1\.instance\.oc1\. ]]; then
+    printf 'error: ACX_GPU_INSTANCE_ID must be an OCI instance OCID beginning with ocid1.instance.oc1.\n' >&2
+    return 2
+  fi
   case "${dry_run}" in
     0|1) ;;
     *) fail "ACX_GPU_LIFECYCLE_DRY_RUN must be 0 or 1 (got: ${dry_run})" ;;

@@ -179,13 +179,17 @@ run the following from the repository root. These commands read the same
 repository variables configured above; they do not open SSH or start a GPU:
 
 ```bash
-export ACX_GPU_READY_URL="$(gh variable get ACX_GPU_READY_URL)"
-export GPU_INSTANCE_ID="$(gh variable get ACX_GPU_INSTANCE_ID)"
+ACX_GPU_READY_URL="$(gh variable get ACX_GPU_READY_URL)" || exit 1
+export ACX_GPU_READY_URL
+GPU_INSTANCE_ID="$(gh variable get ACX_GPU_INSTANCE_ID)" || exit 1
+export GPU_INSTANCE_ID
 ACX_DEPLOY_GPU_LIFECYCLE=1 ACX_GPU_LIFECYCLE_DRY_RUN=1 \
   scripts/deploy/recognition-service.sh gpu-lifecycle
 ```
 
-The dry-run output includes the rendered reaper `--max-lease-seconds` argument
+The dry-run output identifies the OCID source as `pinned` (when
+`GPU_INSTANCE_ID` is supplied) or `resolved-by-name`, and includes the rendered
+reaper `--max-lease-seconds` argument
 and the planned `systemctl is-enabled` / `systemctl is-active` checks. The
 installer argv never contains an OCI `instance action START` or `launch`
 operation: deployment installs and schedules the units; it does not directly

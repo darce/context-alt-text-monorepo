@@ -489,6 +489,7 @@ test-scripts:
 		scripts/test_vlm3_oci_gpu_infra.py \
 		scripts/test_vlm3_gpu_lifecycle.py \
 		infra/oci/gpu_lifecycle/tests \
+		scripts/deploy/tests \
 		scripts/test_vlm3_owlv2_deferral.py \
 		scripts/test_vlm3_gpu_bakeoff_artifacts.py \
 		scripts/test_vlm3_decision_memo.py \

@@ -1,7 +1,7 @@
 # UX Map — febt-1-job-error-states
 
 **Product:** `AltContext WP admin SPA — job pipeline error and progress states`
-**Source fixture:** `apps/prototype-wp-alt-context/docs/ux-maps/workbench-operator-loop.uxmap.json`
+**Source fixture:** `apps/prototype-wp-alt-context/js/admin/pages/workbench/JobPipelineContext.tsx`
 
 ## Goals
 - Every request failure the operator can see maps to exactly one AppError tag and one recovery action.

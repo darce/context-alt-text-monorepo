@@ -1,7 +1,7 @@
 # UX Map — roster-people
 
 **Product:** `prototype-wp-alt-context`
-**Source fixture:** `apps/prototype-wp-alt-context/docs/ux-maps/roster-people.uxmap.json`
+**Source fixture:** `apps/prototype-wp-alt-context/js/admin/pages/RosterPage.tsx`
 
 ## Goals
 - Six ACX submenus are MECE and frequency-ordered (NAV-05/NAV-06): Overview orients; Review Queue is the one home to name a person from a photo (highest-frequency demo task); People manages named people only; Description Runs is the one home to see what the describer did; Data Retention is keep/delete/export policy (not description history); Settings configures the service (rare, last). WordPress parent slug stays Overview.

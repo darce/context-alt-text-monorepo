@@ -1,7 +1,7 @@
 # UX Map — workbench-operator-loop
 
 **Product:** `prototype-wp-alt-context`
-**Source fixture:** `apps/prototype-wp-alt-context/docs/ux-maps/workbench-operator-loop.uxmap.json`
+**Source fixture:** `apps/prototype-wp-alt-context/js/admin/pages/WorkbenchPage.tsx`
 
 ## Goals
 

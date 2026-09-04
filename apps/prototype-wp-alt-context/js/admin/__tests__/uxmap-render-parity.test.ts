@@ -13,6 +13,7 @@
  * owns the schema (DRIFT-03: an SSOT that cannot be loaded has stopped being a source
  * of truth). The cast is now a validated parse.
  */
+import { spawnSync } from 'node:child_process';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -25,6 +26,10 @@ const uxMapsDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..
 const enumSnapshotPath = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   'fixtures/uxmap-enums.snapshot.json',
+);
+const negativeFixturesDir = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  'uxmap-render-parity.fixtures',
 );
 
 const OWNED_MAPS = [
@@ -332,10 +337,105 @@ const validateUniqueness = (doc: unknown, issues: Issue[]): void => {
   });
 };
 
+const validateCompletenessAndReferences = (doc: unknown, issues: Issue[]): void => {
+  if (!isRecord(doc)) {
+    return;
+  }
+
+  const rows = (key: string): Record<string, unknown>[] =>
+    Array.isArray(doc[key]) ? doc[key].filter(isRecord) : [];
+  const screens = rows('screens');
+  const jobs = rows('jobs');
+  const actions = rows('actions');
+  const flows = rows('flows');
+  const screenIds = new Set(screens.map((screen) => screen.id).filter((id): id is string => typeof id === 'string'));
+  const jobIds = new Set(jobs.map((job) => job.id).filter((id): id is string => typeof id === 'string'));
+  const actionIds = new Set(actions.map((action) => action.id).filter((id): id is string => typeof id === 'string'));
+
+  if (!Array.isArray(doc.screens) || doc.screens.length === 0) {
+    issues.push({ loc: 'screens', type: 'too_short', input: doc.screens });
+  }
+  for (const [collection, items] of Object.entries({ jobs, screens, actions, flows })) {
+    items.forEach((item, index) => {
+      for (const key of ['id', 'label']) {
+        if (key in item && typeof item[key] === 'string' && item[key].trim() === '') {
+          issues.push({ loc: `${collection}.${index}.${key}`, type: 'string_too_short', input: item[key] });
+        }
+      }
+    });
+  }
+  screens.forEach((screen, screenIndex) => {
+    if (typeof screen.primary_action_id === 'string' && !actionIds.has(screen.primary_action_id)) {
+      issues.push({
+        loc: `screens.${screenIndex}.primary_action_id`,
+        type: 'unknown_action_id',
+        input: screen.primary_action_id,
+      });
+    }
+    if (Array.isArray(screen.zones)) {
+      screen.zones.filter(isRecord).forEach((zone, zoneIndex) => {
+        for (const key of ['id', 'label']) {
+          if (typeof zone[key] === 'string' && zone[key].trim() === '') {
+            issues.push({
+              loc: `screens.${screenIndex}.zones.${zoneIndex}.${key}`,
+              type: 'string_too_short',
+              input: zone[key],
+            });
+          }
+        }
+      });
+    }
+  });
+  actions.forEach((action, actionIndex) => {
+    if (typeof action.screen_id === 'string' && !screenIds.has(action.screen_id)) {
+      issues.push({ loc: `actions.${actionIndex}.screen_id`, type: 'unknown_screen_id', input: action.screen_id });
+    }
+  });
+  flows.forEach((flow, flowIndex) => {
+    if (typeof flow.job === 'string' && !jobIds.has(flow.job)) {
+      issues.push({ loc: `flows.${flowIndex}.job`, type: 'unknown_job_id', input: flow.job });
+    }
+    if (!Array.isArray(flow.steps) || flow.steps.length === 0) {
+      issues.push({ loc: `flows.${flowIndex}.steps`, type: 'too_short', input: flow.steps });
+    }
+    if (Array.isArray(flow.steps)) {
+      flow.steps.filter(isRecord).forEach((step, stepIndex) => {
+        if (typeof step.screen_id === 'string' && !screenIds.has(step.screen_id)) {
+          issues.push({
+            loc: `flows.${flowIndex}.steps.${stepIndex}.screen_id`,
+            type: 'unknown_screen_id',
+            input: step.screen_id,
+          });
+        }
+        if (typeof step.branch_label === 'string' && step.branch_label.trim() === '') {
+          issues.push({
+            loc: `flows.${flowIndex}.steps.${stepIndex}.branch_label`,
+            type: 'string_too_short',
+            input: step.branch_label,
+          });
+        }
+      });
+    }
+  });
+
+  if (typeof doc.source_fixture === 'string') {
+    const fixture = doc.source_fixture;
+    const mapRef = typeof doc.map_ref === 'string' ? doc.map_ref : '';
+    if (!/\.(?:tsx?|php)$/.test(fixture)) {
+      issues.push({ loc: 'source_fixture', type: 'invalid_source_fixture', input: fixture });
+    }
+    const fixtureBasename = fixture.replaceAll('\\', '/').split('/').at(-1);
+    if (mapRef !== '' && fixtureBasename === `${mapRef}.uxmap.json`) {
+      issues.push({ loc: 'source_fixture', type: 'self_reference', input: fixture });
+    }
+  }
+};
+
 const validateUxMap = (doc: unknown): Issue[] => {
   const issues: Issue[] = [];
   validateModel(doc, UX_MAP_MODEL, '', issues);
   validateUniqueness(doc, issues);
+  validateCompletenessAndReferences(doc, issues);
   return issues;
 };
 
@@ -480,6 +580,12 @@ describe('ux-map SSOT schema conformance (owned maps)', () => {
         continue;
       }
       checked += 1;
+      if (!/\.(?:tsx?|php)$/.test(raw.source_fixture)) {
+        missing.push(`${mapRef} -> source_fixture must be upstream TypeScript/PHP: ${raw.source_fixture}`);
+      }
+      if (path.basename(raw.source_fixture) === `${mapRef}.uxmap.json`) {
+        missing.push(`${mapRef} -> source_fixture self-references its own map`);
+      }
       if (!existsSync(path.join(repoRoot, raw.source_fixture))) {
         missing.push(`${mapRef} -> ${raw.source_fixture}`);
       }
@@ -545,6 +651,40 @@ describe('ux-map SSOT schema conformance (owned maps)', () => {
       JSON.parse('{');
     }, 'garbage json must not parse').toThrow();
   });
+
+  it.each(['invalid-empty-structure', 'invalid-references'])(
+    'rejects fail-closed semantic fixture %s',
+    (fixtureName) => {
+      const fixture = JSON.parse(
+        readFileSync(path.join(negativeFixturesDir, `${fixtureName}.uxmap.json`), 'utf8'),
+      ) as unknown;
+      const formatted = formatIssues(validateUxMap(fixture));
+
+      expect(formatted.length, `${fixtureName} unexpectedly passed validation`).toBeGreaterThan(0);
+      if (fixtureName === 'invalid-empty-structure') {
+        expect(formatted).toEqual(
+          expect.arrayContaining([
+            expect.stringContaining('jobs.0.id | string_too_short'),
+            expect.stringContaining('jobs.0.label | string_too_short'),
+            expect.stringContaining('screens | too_short'),
+          ]),
+        );
+      } else {
+        expect(formatted).toEqual(
+          expect.arrayContaining([
+            expect.stringContaining('source_fixture | invalid_source_fixture'),
+            expect.stringContaining('source_fixture | self_reference'),
+            expect.stringContaining('screens.0.primary_action_id | unknown_action_id'),
+            expect.stringContaining('flows.0.job | unknown_job_id'),
+            expect.stringContaining('flows.0.steps.0.screen_id | unknown_screen_id'),
+            expect.stringContaining('flows.0.steps.0.branch_label | string_too_short'),
+            expect.stringContaining('flows.1.steps | too_short'),
+            expect.stringContaining('actions.0.screen_id | unknown_screen_id'),
+          ]),
+        );
+      }
+    },
+  );
 
   it('keeps the checked-in Python enum snapshot available', () => {
     expect(existsSync(enumSnapshotPath)).toBe(true);
@@ -624,7 +764,7 @@ describe('ux-map render parity (owned maps)', () => {
 
   it('rejects action boolean cells other than exact yes/no tokens with a useful location', () => {
     const md = readFileSync(path.join(uxMapsDir, 'workbench-operator-loop.md'), 'utf8');
-    const mutant = md.replace('| no | no | no | `workbench-shell` |', '| maybe | no | no | `workbench-shell` |');
+    const mutant = md.replace('| no | no | no | `workbench-shell` |', '| MUTANT | no | no | `workbench-shell` |');
 
     expect(() => parseRenderedUxMap(mutant)).toThrow(/action act-open-scan costly must be exactly yes or no/);
   });
@@ -972,6 +1112,37 @@ const VOCABULARY_MAPS = ['workbench-2pane', 'roster-people'] as const;
 const VOCABULARY_HEADING = "## Vocabulary (say / don't say)";
 
 describe('ux-map generated-render provenance', () => {
+  it('executes the sanctioned renderer in --check mode without its optional canvas package', () => {
+    const result = spawnSync('python3', [rendererPath, '--check'], {
+      cwd: path.resolve(uxMapsDir, '..'),
+      encoding: 'utf8',
+    });
+
+    expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
+    expect(result.stdout).toContain('all UX-map artifacts are current');
+  });
+
+  it('restores kept sections at their original generated-heading anchors', () => {
+    const probe = [
+      'import importlib.util, pathlib, sys',
+      `p = pathlib.Path(${JSON.stringify(rendererPath)})`,
+      's = importlib.util.spec_from_file_location("uxmap_renderer", p)',
+      'm = importlib.util.module_from_spec(s)',
+      's.loader.exec_module(m)',
+      'original = "# T\\n\\n## Goals\\n\\ng\\n\\n## Keep A\\n\\na\\n\\n## Screens\\n\\ns\\n\\n## Keep B\\n\\nb\\n\\n## Actions\\n"',
+      'generated = "# T\\n\\n## Goals\\n\\ng2\\n\\n## Screens\\n\\ns2\\n\\n## Actions\\n"',
+      'kept = m._extract_kept_text(original, ("## Keep A", "## Keep B"))',
+      'actual = m._restore_kept(generated, kept)',
+      'expected = "# T\\n\\n## Goals\\n\\ng2\\n\\n## Keep A\\n\\na\\n\\n## Screens\\n\\ns2\\n\\n## Keep B\\n\\nb\\n\\n## Actions\\n"',
+      'anchors = {name: [anchor for anchor, _ in m._extract_kept(m.MAPS_DIR / f"{name}.md")] for name in ("roster-people", "workbench-operator-loop", "febt-1-job-error-states")}',
+      'wanted = {"roster-people": ["## Screens"], "workbench-operator-loop": ["## Actions"], "febt-1-job-error-states": ["## Actions"]}',
+      'sys.exit(0 if actual == expected and anchors == wanted else 1)',
+    ].join('; ');
+    const result = spawnSync('python3', ['-c', probe], { encoding: 'utf8' });
+
+    expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
+  });
+
   it('every owned md carries the generator parity index, or is a listed un-regenerated map', () => {
     const missing: string[] = [];
     const staleExemptions: string[] = [];

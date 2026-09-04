@@ -1,7 +1,7 @@
 # UX Map — workbench-2pane
 
 **Product:** `prototype-wp-alt-context`
-**Source fixture:** `apps/prototype-wp-alt-context/docs/ux-maps/workbench-2pane.uxmap.json`
+**Source fixture:** `apps/prototype-wp-alt-context/js/admin/pages/WorkbenchPage.tsx`
 
 ## Vocabulary (say / don't say)
 

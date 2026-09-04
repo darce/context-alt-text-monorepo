@@ -1,7 +1,7 @@
 {
   "map_ref": "febt-1-job-error-states",
   "product": "AltContext WP admin SPA — job pipeline error and progress states",
-  "source_fixture": "apps/prototype-wp-alt-context/docs/ux-maps/workbench-operator-loop.uxmap.json",
+  "source_fixture": "apps/prototype-wp-alt-context/js/admin/pages/workbench/JobPipelineContext.tsx",
   "goals": [
     "Every request failure the operator can see maps to exactly one AppError tag and one recovery action.",
     "Job progress states are the reducer's states, not derived ad hoc in components.",

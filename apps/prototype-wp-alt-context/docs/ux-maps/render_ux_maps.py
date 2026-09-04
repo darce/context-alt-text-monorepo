@@ -11,21 +11,24 @@ per-screen inventory blocks (purpose / url_params / zone table) and the parity i
 `js/admin/__tests__/uxmap-render-parity.test.ts` asserts against.
 
 Hand-authored prose sections listed in `KEEP_SECTIONS` are lifted out of the existing
-`.md` and re-injected verbatim, so narrative that the structural renderer cannot express
-survives a regeneration.
+`.md` and re-injected verbatim at their original generated-heading anchors, so narrative
+that the structural renderer cannot express survives a regeneration without moving.
 
-Usage (the canvas package is not a declared dependency of this app; point PYTHONPATH at
-an installed copy):
+Usage (the canvas package is optional and only required when writing artifacts):
 
     PYTHONPATH=<parent-of-workbay_canvas_mcp> python3 docs/ux-maps/render_ux_maps.py \
         workbench-2pane describe-gpu-tier
+
+    python3 docs/ux-maps/render_ux_maps.py --check
 """
 
 from __future__ import annotations
 
 import json
 import re
+import subprocess
 import sys
+from difflib import unified_diff
 from pathlib import Path
 
 MAPS_DIR = Path(__file__).resolve().parent
@@ -43,7 +46,7 @@ def _load_renderer():
         from workbay_canvas_mcp.ux_map.models import UxMap
         from workbay_canvas_mcp.ux_map.render_markdown import render_markdown_bundle
     except ImportError as exc:  # pragma: no cover - operator-facing guidance
-        raise SystemExit(
+        raise ImportError(
             "workbay_canvas_mcp is not importable. Install mcp-workbay-canvas or set "
             "PYTHONPATH to a checkout/venv that contains it, then re-run."
         ) from exc
@@ -164,16 +167,45 @@ def _domain_state_mapping(doc: dict) -> list[str]:
     return rows + [""]
 
 
-def _extract_kept(md_path: Path) -> list[str]:
+def _extract_kept_text(text: str, headings: tuple[str, ...] = KEEP_SECTIONS) -> list[tuple[str | None, str]]:
+    """Capture each kept section and the generated heading that originally followed it."""
+    heading_matches = list(re.finditer(r"^## .+$", text, re.MULTILINE))
+    kept: list[tuple[int, str | None, str]] = []
+    for heading in headings:
+        match = re.search(rf"^{re.escape(heading)}$", text, re.MULTILINE)
+        if not match:
+            continue
+        following = next((item for item in heading_matches if item.start() > match.start()), None)
+        end = following.start() if following else len(text)
+        anchor = following.group(0) if following else None
+        kept.append((match.start(), anchor, text[match.start():end].strip("\n")))
+    return [(anchor, section) for _, anchor, section in sorted(kept)]
+
+
+def _extract_kept(md_path: Path) -> list[tuple[str | None, str]]:
     if not md_path.exists():
         return []
-    text = md_path.read_text(encoding="utf8")
-    kept: list[str] = []
-    for heading in KEEP_SECTIONS:
-        match = re.search(rf"^{re.escape(heading)}$.*?(?=^## |\Z)", text, re.MULTILINE | re.DOTALL)
-        if match:
-            kept += match.group(0).rstrip("\n").split("\n") + [""]
-    return kept
+    return _extract_kept_text(md_path.read_text(encoding="utf8"))
+
+
+def _restore_kept(generated: str, kept: list[tuple[str | None, str]]) -> str:
+    """Restore preserved sections immediately before the same following heading."""
+    anchored: dict[str | None, list[str]] = {}
+    for anchor, section in kept:
+        anchored.setdefault(anchor, []).append(section)
+
+    restored = generated
+    for anchor, sections in anchored.items():
+        insertion = "\n\n".join(section.strip("\n") for section in sections) + "\n\n"
+        if anchor is None:
+            restored = restored.rstrip("\n") + "\n\n" + insertion.rstrip("\n") + "\n"
+            continue
+        marker = f"{anchor}\n"
+        position = restored.find(marker)
+        if position < 0:
+            raise ValueError(f"cannot restore kept section: anchor {anchor!r} is absent from generated output")
+        restored = restored[:position] + insertion + restored[position:]
+    return restored
 
 
 def render(map_ref: str) -> str:
@@ -188,14 +220,10 @@ def render(map_ref: str) -> str:
 
     out: list[str] = []
     kept = _extract_kept(MAPS_DIR / f"{map_ref}.md")
-    kept_emitted = not kept
     active_flow: dict | None = None
     active_screen: dict | None = None
 
     for line in bundle:
-        if not kept_emitted and line.startswith("## "):
-            out += kept
-            kept_emitted = True
         if line == "## Flows":
             out += _action_table(doc)
         if line == "## Not doing":
@@ -226,15 +254,86 @@ def render(map_ref: str) -> str:
             # emits immediately after the heading.
             if out and out[-1] == "":
                 out.pop()
-    return "\n".join(out)
+    return _restore_kept("\n".join(out), kept)
+
+
+def _check_projection(map_ref: str) -> tuple[str, str]:
+    """Return expected/actual lossless projections without importing the optional renderer."""
+    repo_root = MAPS_DIR.parents[3]
+    parity_module = repo_root / "apps/prototype-wp-alt-context/js/admin/uxmap/renderParity.ts"
+    json_path = MAPS_DIR / f"{map_ref}.uxmap.json"
+    markdown_path = MAPS_DIR / f"{map_ref}.md"
+    script = "\n".join(
+        [
+            "import fs from 'node:fs';",
+            f"import {{ parseRenderedUxMap, projectUxMapForRenderParity }} from {json.dumps(parity_module.as_uri())};",
+            f"const source = JSON.parse(fs.readFileSync({json.dumps(str(json_path))}, 'utf8'));",
+            f"const markdown = fs.readFileSync({json.dumps(str(markdown_path))}, 'utf8');",
+            "console.log(JSON.stringify({expected: projectUxMapForRenderParity(source), actual: parseRenderedUxMap(markdown)}, null, 2));",
+        ]
+    )
+    completed = subprocess.run(
+        ["node", "--experimental-strip-types", "--input-type=module", "--eval", script],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if completed.returncode != 0:
+        raise RuntimeError(completed.stderr.strip() or completed.stdout.strip())
+    projections = json.loads(completed.stdout)
+    expected = json.dumps(projections["expected"], ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+    actual = json.dumps(projections["actual"], ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+    return expected, actual
+
+
+def check(refs: list[str]) -> int:
+    drifted = False
+    for ref in refs:
+        try:
+            try:
+                expected = render(ref)
+                actual = (MAPS_DIR / f"{ref}.md").read_text(encoding="utf8")
+            except ImportError:
+                # The optional canvas package is deliberately not an app dependency.
+                # The lossless projection exercises the same source/renderer boundary
+                # and still rejects every machine-owned semantic drift in --check mode.
+                expected, actual = _check_projection(ref)
+        except (OSError, RuntimeError, json.JSONDecodeError) as exc:
+            print(f"{ref}: parity check failed: {exc}", file=sys.stderr)
+            drifted = True
+            continue
+        if expected == actual:
+            continue
+        drifted = True
+        sys.stderr.writelines(
+            unified_diff(
+                actual.splitlines(keepends=True),
+                expected.splitlines(keepends=True),
+                fromfile=f"{ref}.md (parsed)",
+                tofile=f"{ref}.uxmap.json (rendered in memory)",
+            )
+        )
+    if drifted:
+        return 1
+    print(f"all UX-map artifacts are current ({len(refs)} checked)")
+    return 0
 
 
 def main(argv: list[str]) -> int:
-    refs = argv[1:] or [path.name[: -len(".uxmap.json")] for path in sorted(MAPS_DIR.glob("*.uxmap.json"))]
-    for ref in refs:
-        target = MAPS_DIR / f"{ref}.md"
-        target.write_text(render(ref), encoding="utf8")
-        print(f"rendered {target.name}")
+    args = argv[1:]
+    check_only = bool(args and args[0] == "--check")
+    if check_only:
+        args = args[1:]
+    refs = args or [path.name[: -len(".uxmap.json")] for path in sorted(MAPS_DIR.glob("*.uxmap.json"))]
+    if check_only:
+        return check(refs)
+    try:
+        for ref in refs:
+            target = MAPS_DIR / f"{ref}.md"
+            target.write_text(render(ref), encoding="utf8")
+            print(f"rendered {target.name}")
+    except ImportError as exc:
+        raise SystemExit(str(exc)) from exc
     return 0
 
 

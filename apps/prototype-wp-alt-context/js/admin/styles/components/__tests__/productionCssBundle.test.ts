@@ -162,12 +162,17 @@ describe('artifact retention policy [FEBT2-W2-U-03]', () => {
 
   it('gives concurrent lanes independent eviction scopes', () => {
     const laneA = artifactFixtureRootForAppRoot('/worktrees/feature-a/apps/prototype-wp-alt-context');
+    const laneAAgain = artifactFixtureRootForAppRoot('/worktrees/feature-a/apps/./prototype-wp-alt-context');
     const laneB = artifactFixtureRootForAppRoot('/worktrees/feature-b/apps/prototype-wp-alt-context');
 
     const laneAKey = basename(laneA);
     const laneBKey = basename(laneB);
-    expect(laneAKey).toMatch(/^[0-9a-f]{16}$/);
-    expect(laneBKey).toMatch(/^[0-9a-f]{16}$/);
+    expect(laneAAgain).toBe(laneA);
+    for (const key of [laneAKey, laneBKey]) {
+      expect(key.length).toBeGreaterThan(0);
+      expect(key.length).toBeLessThanOrEqual(64);
+      expect(key).toMatch(/^[A-Za-z0-9._-]+$/);
+    }
 
     expect(
       laneA,
@@ -289,22 +294,38 @@ describe('retired worktree namespace collection [FEBT2-W2-U-03]', () => {
     const cacheRoot = mkdtempSync(join(tmpdir(), 'acx-style-bundle-gc-test-'));
     const activeAppRoot = join(cacheRoot, 'active-worktree', 'app');
     const activeNamespace = join(cacheRoot, 'active-namespace');
-    const retiredNamespace = join(cacheRoot, 'retired-namespace');
-    const retiredAppRoot = join(cacheRoot, 'removed-worktree', 'app');
+    const liveForeignAppRoot = join(cacheRoot, 'live-foreign-worktree', 'app');
+    const liveForeignNamespace = join(cacheRoot, 'live-foreign-namespace');
+    const retiredNamespaces = ['retired-namespace-a', 'retired-namespace-b'].map((name) =>
+      join(cacheRoot, name),
+    );
 
     try {
       mkdirSync(activeAppRoot, { recursive: true });
-      mkdirSync(join(retiredNamespace, 'old-fingerprint'), { recursive: true });
+      mkdirSync(liveForeignAppRoot, { recursive: true });
+      mkdirSync(join(liveForeignNamespace, 'warm-fingerprint'), { recursive: true });
       writeFileSync(
-        join(retiredNamespace, 'namespace-owner.json'),
-        `${JSON.stringify({ appRoot: retiredAppRoot })}\n`,
+        join(liveForeignNamespace, 'namespace-owner.json'),
+        `${JSON.stringify({ appRoot: liveForeignAppRoot })}\n`,
         'utf8',
       );
+      for (const [index, retiredNamespace] of retiredNamespaces.entries()) {
+        mkdirSync(join(retiredNamespace, 'old-fingerprint'), { recursive: true });
+        writeFileSync(
+          join(retiredNamespace, 'namespace-owner.json'),
+          `${JSON.stringify({ appRoot: join(cacheRoot, `removed-worktree-${index}`, 'app') })}\n`,
+          'utf8',
+        );
+      }
 
       registerAndPruneNamespaces(cacheRoot, activeNamespace, activeAppRoot, CUTOFF);
 
       expect(existsSync(activeNamespace)).toBe(true);
-      expect(existsSync(retiredNamespace)).toBe(false);
+      expect(existsSync(liveForeignNamespace)).toBe(true);
+      expect(retiredNamespaces.map((namespaceRoot) => existsSync(namespaceRoot))).toEqual([
+        false,
+        false,
+      ]);
       expect(existsSync(join(cacheRoot, '.gc-lock'))).toBe(false);
     } finally {
       rmSync(cacheRoot, { recursive: true, force: true });

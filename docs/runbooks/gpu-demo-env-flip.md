@@ -16,9 +16,14 @@ ssh -t ubuntu@acx-backend.tail1a44b8.ts.net 'sudoedit /opt/acx-backend/prod/secr
 ```
 
 Set `ACX_DESCRIPTION_ADAPTER=gpu_qwen30b` in both files. Set the same private
-`ACX_GPU_ENDPOINT_URL`, endpoint-key reference/value, snapshot paths, freshness
-limit, recognition URL, tenant API key, and tenant ID shown by the worked
-blocks. In the demo file, the three recognition values must be the
+`ACX_GPU_ENDPOINT_URL`, snapshot paths, freshness limit, recognition URL,
+tenant API key, and tenant ID shown by the worked blocks. With
+`RECOGNITION_SECRET_BACKEND=oci_vault`, leave the producer's direct
+`ACX_GPU_ENDPOINT_API_KEY` blank and replace its
+`RECOGNITION_VAULT_SECRET_MAP` entry with the real GPU-key Vault OCID. With the
+`env` backend, set the producer's direct key instead. Replace the demo block's
+GPU-key coordination assertion too; WordPress does not consume it. In the demo
+file, the three recognition values must be the
 `WORDPRESS_CONFIG_EXTRA` `define()` values because those PHP constants are the
 operative plugin configuration. Do not paste live credentials into the
 repository or terminal output.
@@ -26,14 +31,15 @@ repository or terminal output.
 ## 2. Preflight both files
 
 Stage the validator in a private temporary directory on the VM, then validate
-both halves of the flip. Success is exactly one `OK:` line per file; any
-numbered error stops the change before deployment.
+both halves in one invocation. Success is exactly one `OK:` line; any duplicate,
+placeholder, malformed value, or cross-file mismatch stops the change before
+deployment.
 
 ```bash
 ssh ubuntu@acx-backend.tail1a44b8.ts.net 'install -d -m 700 /tmp/acx-gpu-preflight/lib'
 scp scripts/deploy/preflight-gpu-env.sh ubuntu@acx-backend.tail1a44b8.ts.net:/tmp/acx-gpu-preflight/
 scp scripts/deploy/lib/gpu-env-contract.sh ubuntu@acx-backend.tail1a44b8.ts.net:/tmp/acx-gpu-preflight/lib/
-ssh ubuntu@acx-backend.tail1a44b8.ts.net 'chmod 700 /tmp/acx-gpu-preflight/preflight-gpu-env.sh && sudo /tmp/acx-gpu-preflight/preflight-gpu-env.sh /opt/acx-backend/prod/secrets/.env && sudo /tmp/acx-gpu-preflight/preflight-gpu-env.sh /opt/acx-backend/demo/secrets/.env'
+ssh ubuntu@acx-backend.tail1a44b8.ts.net 'chmod 700 /tmp/acx-gpu-preflight/preflight-gpu-env.sh && sudo /tmp/acx-gpu-preflight/preflight-gpu-env.sh /opt/acx-backend/prod/secrets/.env /opt/acx-backend/demo/secrets/.env'
 ```
 
 ## 3. Deploy in producer-then-consumer order

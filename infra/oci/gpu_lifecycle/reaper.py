@@ -34,6 +34,7 @@ import argparse
 import fcntl
 import json
 import logging
+import math
 import os
 import shutil
 import subprocess
@@ -41,7 +42,7 @@ import sys
 import time
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Protocol
@@ -84,6 +85,7 @@ _DEFAULT_READY_MAX_CYCLES = 30
 _DEFAULT_READY_STALL_CYCLES = 3
 _DEFAULT_READY_SLEEP_SECONDS = 10.0
 _DEFAULT_RUNNING_SINCE_PATH = Path("/run/acx/gpu-running-since.json")
+_RUNNING_SINCE_FUTURE_SKEW_SECONDS = 5.0
 # Live describe dumps omit batch_in_progress; warn once per process, not per poll.
 _ABSENT_BATCH_KEY_WARNED = False
 
@@ -312,8 +314,20 @@ class OciCliStopActuator:
         if self._dry_run:
             logger.info("dry-run STOP %s: %s", instance_id, " ".join(cmd))
             return
+        if self.get_instance_state(instance_id) == "STOPPED":
+            logger.info("STOP already converged for %s", instance_id)
+            return
         logger.info("actuating STOP for %s", instance_id)
         subprocess.run(cmd, check=True, timeout=self._timeout_seconds)
+
+    def get_instance_state(self, instance_id: str) -> str | None:
+        observed = fetch_instance_idle_seconds(
+            instance_id=instance_id,
+            oci_bin=self._oci_bin,
+            auth=self._auth,
+            timeout_seconds=self._timeout_seconds,
+        )
+        return None if observed is None else observed[0]
 
 
 class OciCliStartActuator:
@@ -354,8 +368,20 @@ class OciCliStartActuator:
         if self._dry_run:
             logger.info("dry-run START %s: %s", instance_id, " ".join(cmd))
             return
+        if self.get_instance_state(instance_id) == "RUNNING":
+            logger.info("START already converged for %s", instance_id)
+            return
         logger.info("actuating START for %s", instance_id)
         subprocess.run(cmd, check=True, timeout=self._timeout_seconds)
+
+    def get_instance_state(self, instance_id: str) -> str | None:
+        observed = fetch_instance_idle_seconds(
+            instance_id=instance_id,
+            oci_bin=self._oci_bin,
+            auth=self._auth,
+            timeout_seconds=self._timeout_seconds,
+        )
+        return None if observed is None else observed[0]
 
 
 @dataclass(frozen=True)
@@ -363,6 +389,12 @@ class RunningSinceRecord:
     instance_id: str
     since: datetime
     source: str
+    monotonic_since: float | None = None
+    boot_id: str | None = None
+
+
+class CorruptRunningSinceLeaseError(ValueError):
+    """Persisted lease metadata is unsafe to use as a duration origin."""
 
 
 class RunningSinceLeaseStore:
@@ -376,9 +408,33 @@ class RunningSinceLeaseStore:
         *,
         path: Path = _DEFAULT_RUNNING_SINCE_PATH,
         now: Callable[[], datetime] | None = None,
+        monotonic: Callable[[], float] | None = None,
+        max_future_skew_seconds: float = _RUNNING_SINCE_FUTURE_SKEW_SECONDS,
     ) -> None:
         self.path = path
         self._now = now or (lambda: datetime.now(UTC))
+        self._persist_monotonic = now is None and monotonic is None
+        if monotonic is not None:
+            self._monotonic = monotonic
+        elif now is not None:
+            self._monotonic = lambda: self._utc_now().timestamp()
+        else:
+            self._monotonic = time.monotonic
+        if (
+            isinstance(max_future_skew_seconds, bool)
+            or not isinstance(max_future_skew_seconds, (int, float))
+            or not math.isfinite(max_future_skew_seconds)
+            or max_future_skew_seconds < 0
+        ):
+            raise ValueError("max_future_skew_seconds must be finite and non-negative")
+        self._max_future_skew_seconds = float(max_future_skew_seconds)
+        self._age_baselines: dict[str, tuple[datetime, int, float]] = {}
+        self._max_ages: dict[str, int] = {}
+        try:
+            boot_id = Path("/proc/sys/kernel/random/boot_id").read_text().strip()
+        except OSError:
+            boot_id = ""
+        self._boot_id = boot_id or None
 
     def _utc_now(self) -> datetime:
         value = self._now()
@@ -427,24 +483,58 @@ class RunningSinceLeaseStore:
         except ValueError:
             logger.warning("running-since timestamp invalid; replacing it: %s", self.path)
             return None
-        if parsed.tzinfo is None:
-            parsed = parsed.replace(tzinfo=UTC)
+        if parsed.tzinfo is None or parsed.utcoffset() is None:
+            message = f"running-since timestamp has no timezone: {self.path}"
+            logger.warning("%s; treating lease as expired", message)
+            raise CorruptRunningSinceLeaseError(message)
+        parsed = parsed.astimezone(UTC)
+        future_skew = (parsed - self._utc_now()).total_seconds()
+        if future_skew > self._max_future_skew_seconds:
+            message = (
+                "running-since timestamp is future-dated "
+                f"by {future_skew:.1f}s (allowance={self._max_future_skew_seconds:.1f}s): "
+                f"{self.path}"
+            )
+            logger.warning("%s; treating lease as expired", message)
+            raise CorruptRunningSinceLeaseError(message)
+        monotonic_since = raw_record.get("monotonic_since")
+        boot_id = raw_record.get("boot_id")
+        if (monotonic_since is not None or boot_id is not None) and (
+            isinstance(monotonic_since, bool)
+            or not isinstance(monotonic_since, (int, float))
+            or not math.isfinite(monotonic_since)
+            or monotonic_since < 0
+            or not isinstance(boot_id, str)
+            or not boot_id.strip()
+        ):
+            message = f"running-since monotonic metadata is invalid: {self.path}"
+            logger.warning("%s; treating lease as expired", message)
+            raise CorruptRunningSinceLeaseError(message)
         return RunningSinceRecord(
             instance_id=instance_id,
-            since=parsed.astimezone(UTC),
+            since=parsed,
             source=source,
+            monotonic_since=(None if monotonic_since is None else float(monotonic_since)),
+            boot_id=boot_id,
         )
 
     def write(self, instance_id: str, *, source: str) -> RunningSinceRecord:
         if source not in self._SOURCES:
             raise ValueError(f"unsupported running-since source: {source}")
         now = self._utc_now()
+        monotonic_now = self._monotonic()
         with self._locked_for_update():
             instances = self._read_instances_for_update()
-            instances[instance_id] = {
+            record_payload: dict[str, str | float] = {
                 "since": now.isoformat().replace("+00:00", "Z"),
                 "source": source,
             }
+            if self._persist_monotonic and self._boot_id is not None:
+                record_payload.update(
+                    monotonic_since=monotonic_now,
+                    boot_id=self._boot_id,
+                )
+            instances[instance_id] = record_payload
             payload = {
                 "schema_version": self._SCHEMA_VERSION,
                 "instances": instances,
@@ -452,7 +542,15 @@ class RunningSinceLeaseStore:
             temporary = self.path.with_name(f".{self.path.name}.tmp")
             temporary.write_text(json.dumps(payload, sort_keys=True) + "\n")
             temporary.replace(self.path)
-        return RunningSinceRecord(instance_id=instance_id, since=now, source=source)
+        self._age_baselines[instance_id] = (now, 0, monotonic_now)
+        self._max_ages[instance_id] = 0
+        return RunningSinceRecord(
+            instance_id=instance_id,
+            since=now,
+            source=source,
+            monotonic_since=(monotonic_now if self._persist_monotonic else None),
+            boot_id=(self._boot_id if self._persist_monotonic else None),
+        )
 
     def record_start(self, instance_id: str) -> RunningSinceRecord:
         return self.write(instance_id, source="start_actuator")
@@ -471,6 +569,8 @@ class RunningSinceLeaseStore:
             del instances[instance_id]
             if not instances:
                 self.path.unlink(missing_ok=True)
+                self._age_baselines.pop(instance_id, None)
+                self._max_ages.pop(instance_id, None)
                 return
             payload = {
                 "schema_version": self._SCHEMA_VERSION,
@@ -479,8 +579,10 @@ class RunningSinceLeaseStore:
             temporary = self.path.with_name(f".{self.path.name}.tmp")
             temporary.write_text(json.dumps(payload, sort_keys=True) + "\n")
             temporary.replace(self.path)
+        self._age_baselines.pop(instance_id, None)
+        self._max_ages.pop(instance_id, None)
 
-    def _read_instances_for_update(self) -> dict[str, dict[str, str]]:
+    def _read_instances_for_update(self) -> dict[str, dict[str, object]]:
         try:
             payload = json.loads(self.path.read_text())
         except FileNotFoundError:
@@ -497,7 +599,30 @@ class RunningSinceLeaseStore:
         return dict(payload["instances"])
 
     def age_seconds(self, record: RunningSinceRecord) -> int:
-        return max(0, int((self._utc_now() - record.since).total_seconds()))
+        monotonic_now = self._monotonic()
+        if record.boot_id == self._boot_id and record.monotonic_since is not None:
+            if monotonic_now < record.monotonic_since:
+                raise CorruptRunningSinceLeaseError(
+                    f"monotonic lease origin for {record.instance_id} is in the future; treating lease as expired"
+                )
+            return int(monotonic_now - record.monotonic_since)
+        baseline = self._age_baselines.get(record.instance_id)
+        if baseline is not None and baseline[0] == record.since:
+            _, baseline_age, baseline_monotonic = baseline
+            age = baseline_age + max(0, int(monotonic_now - baseline_monotonic))
+            age = max(age, self._max_ages.get(record.instance_id, 0))
+            self._max_ages[record.instance_id] = age
+            return age
+
+        wall_age = (self._utc_now() - record.since).total_seconds()
+        if wall_age < -self._max_future_skew_seconds:
+            raise CorruptRunningSinceLeaseError(
+                f"running-since timestamp for {record.instance_id} is future-dated; treating lease as expired"
+            )
+        age = max(0, int(wall_age))
+        self._age_baselines[record.instance_id] = (record.since, age, monotonic_now)
+        self._max_ages[record.instance_id] = age
+        return age
 
 
 def fetch_instance_idle_seconds(
@@ -556,6 +681,7 @@ class ReapCycleResult:
     # (GPUW-1). Reported separately so an operator can tell "the queue drained"
     # from "the backstop fired because the load signal was broken".
     lease_expired: list[tuple[str, str]] = field(default_factory=list)
+    snapshot_persisted: bool = True
 
 
 @dataclass(frozen=True)
@@ -565,6 +691,99 @@ class StartCycleResult:
     errors: list[str]
     wait_result: ReadinessWaitResult | None = None
     fallbacks: tuple[FallbackDecision, ...] = ()
+    snapshot_persisted: bool = True
+
+
+def _reconcile_ambiguous_action(
+    actuator: InstanceStartActuator | InstanceStopActuator,
+    instance_id: str,
+    *,
+    desired_state: str,
+) -> bool:
+    """Return whether a read-after-timeout proves the desired state."""
+    state_getter = getattr(actuator, "get_instance_state", None)
+    if not callable(state_getter):
+        logger.error(
+            "%s outcome unknown for %s; actuator has no reconciliation probe",
+            desired_state,
+            instance_id,
+        )
+        return False
+    try:
+        observed_state = state_getter(instance_id)
+    except Exception as exc:  # noqa: BLE001 - reconciliation itself is best effort
+        logger.error(
+            "%s outcome unknown for %s; reconciliation failed: %s",
+            desired_state,
+            instance_id,
+            exc,
+        )
+        return False
+    if observed_state == desired_state:
+        logger.warning(
+            "%s response was lost for %s, but reconciliation observed %s",
+            desired_state,
+            instance_id,
+            desired_state,
+        )
+        return True
+    logger.error(
+        "%s outcome remains unknown for %s after reconciliation observed %s",
+        desired_state,
+        instance_id,
+        observed_state or "UNKNOWN",
+    )
+    return False
+
+
+def _path_generation(path: Path) -> tuple[int, int, int, int] | None:
+    try:
+        stat = path.stat()
+    except FileNotFoundError:
+        return None
+    return (stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns)
+
+
+def _load_generation(load_source: JobLoadSource) -> object:
+    """Capture a best-effort monotonic identity for on-disk load evidence."""
+    fence_token = getattr(load_source, "fence_token", None)
+    if callable(fence_token):
+        return fence_token()
+    generation = getattr(load_source, "generation", None)
+    if generation is not None:
+        return generation
+    directory = getattr(load_source, "directory", None)
+    if isinstance(directory, Path):
+        return tuple(
+            (str(path.relative_to(directory)), _path_generation(path))
+            for path in sorted(directory.glob("*/describe-load.json"))
+        )
+    path = getattr(load_source, "path", None)
+    if isinstance(path, Path):
+        return _path_generation(path)
+    return None
+
+
+def _validated_stop_observation(
+    load_source: JobLoadSource,
+    *,
+    expected_generation: object,
+) -> JobLoadSnapshot | None:
+    """Revalidate load and its generation immediately before a STOP."""
+    try:
+        before = _load_generation(load_source)
+        load = load_source.snapshot()
+        after = _load_generation(load_source)
+    except Exception as exc:  # noqa: BLE001 - an unusable fence fails closed
+        logger.error("load fence validation failed; cancelling STOP: %s", exc)
+        return None
+    if not isinstance(load, JobLoadSnapshot) or load.untrustworthy:
+        logger.error("load fence validation is untrustworthy; cancelling STOP")
+        return None
+    if before != after or (expected_generation is not None and before != expected_generation):
+        logger.warning("load generation advanced after STOP decision; cancelling STOP")
+        return None
+    return load
 
 
 def _snapshot_instance_id(instances: list[GpuInstance]) -> str | None:
@@ -644,6 +863,18 @@ def _apply_running_since_leases(
             else:
                 record = store.observe_running(instance.instance_id)
             age_seconds = store.age_seconds(record)
+        except CorruptRunningSinceLeaseError as exc:
+            msg = f"{instance.instance_id}: corrupt running-since lease; forcing cost-cap expiry: {exc}"
+            logger.warning(msg)
+            errors.append(msg)
+            observed.append(
+                GpuInstance(
+                    instance_id=instance.instance_id,
+                    state=instance.state,
+                    idle_for_seconds=sys.maxsize,
+                )
+            )
+            continue
         except (OSError, ValueError) as exc:
             msg = (
                 f"{instance.instance_id}: running-since observation failed; lease cap disabled: "
@@ -709,6 +940,16 @@ def _run_reap_cycle(
         try:
             actuator.stop_instance(instance_id)
             lease_expired.append((action, instance_id))
+        except subprocess.SubprocessError as exc:
+            if _reconcile_ambiguous_action(
+                actuator,
+                instance_id,
+                desired_state="STOPPED",
+            ):
+                lease_expired.append((action, instance_id))
+                continue
+            msg = f"{instance_id}: STOP outcome unknown after {type(exc).__name__}: {exc}"
+            lease_errors.append(msg)
         except Exception as exc:  # noqa: BLE001 - isolate per-instance (rg-007)
             msg = f"{instance_id}: {type(exc).__name__}: {exc}"
             logger.error("lease-expiry STOP failed: %s", msg)
@@ -719,7 +960,7 @@ def _run_reap_cycle(
         instances = [i for i in instances if i.instance_id not in forced_ids]
 
     load = load_source.snapshot()
-    if load.untrustworthy:
+    if not isinstance(load, JobLoadSnapshot) or load.untrustworthy:
         logger.error("load snapshot untrustworthy; refusing STOP (fail closed)")
         return ReapCycleResult(
             decided=[],
@@ -745,10 +986,19 @@ def _run_reap_cycle(
 
     fence_expired = False
     pre_stop: JobLoadSnapshot | None = None
+    pre_stop_generation: object = None
     try:
         if fence_delay_seconds > 0:
             time.sleep(fence_delay_seconds)
-        pre_stop = load_source.snapshot()
+        generation_before = _load_generation(load_source)
+        observed_load = load_source.snapshot()
+        if not isinstance(observed_load, JobLoadSnapshot):
+            raise ValueError("load source abstained from the fence observation")
+        pre_stop = observed_load
+        pre_stop_generation = _load_generation(load_source)
+        if generation_before != pre_stop_generation:
+            logger.warning("load generation changed during fence observation")
+            fence_expired = True
     except Exception as exc:  # noqa: BLE001 - fence expiry fails closed
         logger.error("fence resample failed; cancelling STOP: %s", exc)
         fence_expired = True
@@ -775,9 +1025,36 @@ def _run_reap_cycle(
     for action, instance_id in fenced:
         if action != "STOP":
             continue
+        current_load = _validated_stop_observation(
+            load_source,
+            expected_generation=pre_stop_generation,
+        )
+        if not controller.fence_stop_actions(
+            [(action, instance_id)],
+            pre_stop_load=current_load,
+            fence_expired=current_load is None,
+        ):
+            logger.info("generation fence cancelled STOP for %s", instance_id)
+            return ReapCycleResult(
+                decided=decided,
+                actuated=actuated,
+                fenced_off=True,
+                errors=[*lease_errors, *errors],
+                lease_expired=lease_expired,
+            )
         try:
             actuator.stop_instance(instance_id)
             actuated.append((action, instance_id))
+        except subprocess.SubprocessError as exc:
+            if _reconcile_ambiguous_action(
+                actuator,
+                instance_id,
+                desired_state="STOPPED",
+            ):
+                actuated.append((action, instance_id))
+                continue
+            msg = f"{instance_id}: STOP outcome unknown after {type(exc).__name__}: {exc}"
+            errors.append(msg)
         except Exception as exc:  # noqa: BLE001 - isolate per-instance (VLMFIX-S2-03)
             msg = f"{instance_id}: {type(exc).__name__}: {exc}"
             logger.error("STOP failed: %s", msg)
@@ -804,34 +1081,38 @@ def run_reap_cycle(
     dry_run: bool = False,
     gpu_state_path: str | Path | None = None,
 ) -> ReapCycleResult:
-    """Run a reap cycle and refresh its state snapshot after all load-bearing work."""
-    result = _run_reap_cycle(
-        controller=controller,
-        instances=instances,
-        load_source=load_source,
-        actuator=actuator,
-        fence_delay_seconds=fence_delay_seconds,
-        max_lease_seconds=max_lease_seconds,
-        running_since_store=running_since_store,
-        use_recorded_lease_age=use_recorded_lease_age,
-        dry_run=dry_run,
-    )
+    """Serialize observe/decide/actuate/publish as one lifecycle transition."""
     if dry_run:
-        return result
+        return _run_reap_cycle(
+            controller=controller,
+            instances=instances,
+            load_source=load_source,
+            actuator=actuator,
+            fence_delay_seconds=fence_delay_seconds,
+            max_lease_seconds=max_lease_seconds,
+            running_since_store=running_since_store,
+            use_recorded_lease_age=use_recorded_lease_age,
+            dry_run=True,
+        )
     with _serialized_gpu_state_publish(gpu_state_path):
+        result = _run_reap_cycle(
+            controller=controller,
+            instances=instances,
+            load_source=load_source,
+            actuator=actuator,
+            fence_delay_seconds=fence_delay_seconds,
+            max_lease_seconds=max_lease_seconds,
+            running_since_store=running_since_store,
+            use_recorded_lease_age=use_recorded_lease_age,
+            dry_run=False,
+        )
         stopped_instance_ids = {
-            instance_id
-            for action, instance_id in [*result.actuated, *result.lease_expired]
-            if action == "STOP"
+            instance_id for action, instance_id in [*result.actuated, *result.lease_expired] if action == "STOP"
         }
         post_actuation_instances = [
             GpuInstance(
                 instance_id=instance.instance_id,
-                state=(
-                    "STOPPED"
-                    if instance.instance_id in stopped_instance_ids
-                    else instance.state
-                ),
+                state=("STOPPED" if instance.instance_id in stopped_instance_ids else instance.state),
                 idle_for_seconds=instance.idle_for_seconds,
             )
             for instance in instances
@@ -846,7 +1127,7 @@ def run_reap_cycle(
         )
         if result.errors:
             state = GpuLifecycleState.DEGRADED
-        write_gpu_state_snapshot(
+        snapshot_persisted = write_gpu_state_snapshot(
             state,
             instance_id=snapshot_instance_id,
             reason=_state_reason(
@@ -856,7 +1137,7 @@ def run_reap_cycle(
             ),
             path=gpu_state_path,
         )
-    return result
+    return replace(result, snapshot_persisted=snapshot_persisted)
 
 
 def _run_start_cycle(
@@ -877,7 +1158,7 @@ def _run_start_cycle(
     """
     load = load_source.snapshot()
     errors: list[str] = []
-    if load.untrustworthy:
+    if not isinstance(load, JobLoadSnapshot) or load.untrustworthy:
         msg = "load snapshot untrustworthy; refusing START"
         logger.error("%s to avoid unfenced GPU burn", msg)
         errors.append(msg)
@@ -891,16 +1172,8 @@ def _run_start_cycle(
             batch_in_progress=load.batch_in_progress,
         )
         waiting_ids = controller.instances_waiting_on_boot(instances) if load.has_work else []
-    running_ids = [
-        instance.instance_id
-        for instance in instances
-        if instance.state == "RUNNING"
-    ]
-    blocked = (
-        controller.instances_blocking_start(instances)
-        if not load.untrustworthy and load.has_work
-        else []
-    )
+    running_ids = [instance.instance_id for instance in instances if instance.state == "RUNNING"]
+    blocked = controller.instances_blocking_start(instances) if not load.untrustworthy and load.has_work else []
     for instance in blocked:
         msg = f"{instance.instance_id}: fail-closed START refused; state={instance.state} while work waits"
         logger.error(msg)
@@ -927,13 +1200,24 @@ def _run_start_cycle(
             continue
         try:
             actuator.start_instance(instance_id)
+        except subprocess.SubprocessError as exc:
+            if not _reconcile_ambiguous_action(
+                actuator,
+                instance_id,
+                desired_state="RUNNING",
+            ):
+                msg = f"{instance_id}: START outcome unknown after {type(exc).__name__}: {exc}"
+                errors.append(msg)
+                continue
+            actuated.append((action, instance_id))
         except Exception as exc:  # noqa: BLE001 - isolate per-instance (rg-007)
             msg = f"{instance_id}: {type(exc).__name__}: {exc}"
             logger.error("START failed: %s", msg)
             errors.append(msg)
             start_failed.append(instance_id)
             continue
-        actuated.append((action, instance_id))
+        else:
+            actuated.append((action, instance_id))
         if running_since_store is not None:
             if dry_run:
                 logger.info(
@@ -1001,20 +1285,29 @@ def run_start_cycle(
     dry_run: bool = False,
     gpu_state_path: str | Path | None = None,
 ) -> StartCycleResult:
-    """Run a start cycle and refresh its snapshot after all load-bearing work."""
-    result = _run_start_cycle(
-        controller=controller,
-        instances=instances,
-        load_source=load_source,
-        actuator=actuator,
-        probe=probe,
-        readiness_wait=readiness_wait,
-        running_since_store=running_since_store,
-        dry_run=dry_run,
-    )
+    """Serialize observe/decide/actuate/publish as one lifecycle transition."""
     if dry_run:
-        return result
+        return _run_start_cycle(
+            controller=controller,
+            instances=instances,
+            load_source=load_source,
+            actuator=actuator,
+            probe=probe,
+            readiness_wait=readiness_wait,
+            running_since_store=running_since_store,
+            dry_run=True,
+        )
     with _serialized_gpu_state_publish(gpu_state_path):
+        result = _run_start_cycle(
+            controller=controller,
+            instances=instances,
+            load_source=load_source,
+            actuator=actuator,
+            probe=probe,
+            readiness_wait=readiness_wait,
+            running_since_store=running_since_store,
+            dry_run=False,
+        )
         snapshot_instance_id = _snapshot_instance_id(instances)
         if result.fallbacks:
             state = GpuLifecycleState.DEGRADED
@@ -1033,7 +1326,7 @@ def run_start_cycle(
                 ),
             )
         fallback_reason = result.fallbacks[0].reason if result.fallbacks else None
-        write_gpu_state_snapshot(
+        snapshot_persisted = write_gpu_state_snapshot(
             state,
             instance_id=snapshot_instance_id,
             reason=_state_reason(
@@ -1044,7 +1337,7 @@ def run_start_cycle(
             ),
             path=gpu_state_path,
         )
-    return result
+    return replace(result, snapshot_persisted=snapshot_persisted)
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -1054,7 +1347,7 @@ def _build_parser() -> argparse.ArgumentParser:
         action="append",
         dest="instance_ids",
         required=True,
-        help="OCI instance OCID to consider (repeatable)",
+        help="OCI instance OCID to consider (exactly one is supported)",
     )
     parser.add_argument(
         "--mode",
@@ -1108,10 +1401,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--gpu-state-json",
         type=Path,
         default=None,
-        help=(
-            "GPU state snapshot path (default: ACX_GPU_STATE_PATH or "
-            f"{DEFAULT_GPU_STATE_PATH})"
-        ),
+        help=(f"GPU state snapshot path (default: ACX_GPU_STATE_PATH or {DEFAULT_GPU_STATE_PATH})"),
     )
     load = parser.add_mutually_exclusive_group()
     load.add_argument(
@@ -1214,9 +1504,51 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _publish_initial_probe_failure(
+    *,
+    instance_id: str,
+    gpu_state_path: str | Path | None,
+) -> bool:
+    """Revoke stale positive readiness evidence after an OCI boundary failure."""
+    try:
+        with _serialized_gpu_state_publish(gpu_state_path):
+            return write_gpu_state_snapshot(
+                GpuLifecycleState.DEGRADED,
+                instance_id=instance_id,
+                reason="oci_probe_failed",
+                path=gpu_state_path,
+            )
+    except (OSError, TimeoutError) as exc:
+        logger.warning(
+            "failed to publish degraded state after OCI probe failure for %s: %s",
+            instance_id,
+            exc,
+        )
+        return False
+
+
 def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
     args = _build_parser().parse_args(argv)
+    if len(args.instance_ids) != 1:
+        print(
+            "error: exactly one --instance-id is supported; run one lifecycle unit per instance",
+            file=sys.stderr,
+        )
+        return 2
+    if (
+        args.oci_timeout_seconds <= 0
+        or args.max_wait_seconds <= 0
+        or not math.isfinite(args.fence_delay_seconds)
+        or args.fence_delay_seconds < 0
+        or not math.isfinite(args.ready_sleep_seconds)
+        or args.ready_sleep_seconds < 0
+    ):
+        print(
+            "error: OCI timeouts must be positive and lifecycle delays must be finite and non-negative",
+            file=sys.stderr,
+        )
+        return 2
     running_since_store = RunningSinceLeaseStore(path=args.running_since_path)
     explicit_idle_override = args.instance_idle_for is not None
 
@@ -1265,6 +1597,11 @@ def main(argv: list[str] | None = None) -> int:
                 if idle_for is None:
                     idle_for = probed_idle
             elif args.probe_oci or state is None:
+                if not args.dry_run:
+                    _publish_initial_probe_failure(
+                        instance_id=instance_id,
+                        gpu_state_path=args.gpu_state_json,
+                    )
                 print(
                     f"error: could not probe {instance_id}; pass --instance-state "
                     "or use --probe-oci with a working OCI CLI",
@@ -1319,7 +1656,7 @@ def main(argv: list[str] | None = None) -> int:
             None if start_result.wait_result is None else start_result.wait_result.exit_code,
             start_result.fallbacks,
         )
-        return 1 if start_result.errors else 0
+        return 1 if start_result.errors or not start_result.snapshot_persisted else 0
 
     actuator = OciCliStopActuator(
         oci_bin=args.oci_bin,
@@ -1347,7 +1684,7 @@ def main(argv: list[str] | None = None) -> int:
         result.lease_expired,
         result.errors,
     )
-    return 1 if result.errors else 0
+    return 1 if result.errors or not result.snapshot_persisted else 0
 
 
 if __name__ == "__main__":

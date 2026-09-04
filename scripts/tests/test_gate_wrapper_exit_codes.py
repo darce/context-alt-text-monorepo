@@ -20,11 +20,7 @@ def _write_executable(path: Path, source: str) -> None:
 
 def _pipeline_wrappers() -> set[Path]:
     """Discover top-level gate wrappers that filter command output through a pipeline."""
-    return {
-        path
-        for path in (REPO_ROOT / "scripts").glob("*gate*.sh")
-        if "|" in path.read_text(encoding="utf-8")
-    }
+    return {path for path in (REPO_ROOT / "scripts").glob("*gate*.sh") if "|" in path.read_text(encoding="utf-8")}
 
 
 def test_pipeline_wrapper_discovery_matches_expected_inventory() -> None:
@@ -274,8 +270,7 @@ exit "$REMOTE_GATE_TEST_SSH_EXIT"
     calls = call_log.read_text(encoding="utf-8").splitlines()
     ssh_argv = _read_null_terminated_argv(ssh_argv_log)
     assert completed.returncode == remote_exit, (
-        f"remote run masked ssh exit {remote_exit}; "
-        f"stdout={completed.stdout!r}; stderr={completed.stderr!r}"
+        f"remote run masked ssh exit {remote_exit}; stdout={completed.stdout!r}; stderr={completed.stderr!r}"
     )
     assert "push --quiet --force gate@example.invalid:src/repo HEAD:refs/workbay/gate" in calls
     assert pushed_sha.read_text(encoding="utf-8").strip() == expected_sha

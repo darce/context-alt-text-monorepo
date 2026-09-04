@@ -29,6 +29,7 @@ import {
   type ArtifactEntry,
   buildInputCandidates,
   fingerprintedBuildInputs,
+  loadFingerprintStableArtifact,
   loadProductionCssBundle,
   manifestBuildSources,
   MAX_RETAINED_ARTIFACTS,
@@ -42,6 +43,68 @@ import {
 } from './productionCssBundle';
 
 const ROLLUP_ENTRY_POINTS = ['js/admin/main.tsx', 'js/attachment-edit/main.tsx'] as const;
+
+describe('fingerprint stability while building [FIXWAV-M-03]', () => {
+  it('discards and retries an artifact when a source changes during the build', () => {
+    const fixtureRoot = mkdtempSync(join(tmpdir(), 'acx-style-bundle-race-test-'));
+    const sourcePath = join(fixtureRoot, 'source.scss');
+    const discardedBuiltArtifacts: string[] = [];
+    let buildCount = 0;
+
+    writeFileSync(sourcePath, 'old-source', 'utf8');
+    const computeFingerprint = (): string => readFileSync(sourcePath, 'utf8');
+    const initialFingerprint = computeFingerprint();
+
+    try {
+      const artifact = loadFingerprintStableArtifact(
+        initialFingerprint,
+        computeFingerprint,
+        {
+          artifactDirForFingerprint: (fingerprint) => join(fixtureRoot, fingerprint),
+          prepareArtifact: () => undefined,
+          readStampedFingerprint: (outDir) => {
+            const stampPath = join(outDir, 'stamp');
+            return existsSync(stampPath) ? readFileSync(stampPath, 'utf8') : null;
+          },
+          touchArtifact: () => undefined,
+          discardArtifact: (outDir) => {
+            if (existsSync(join(outDir, 'built-source'))) {
+              discardedBuiltArtifacts.push(outDir);
+            }
+            rmSync(outDir, { recursive: true, force: true });
+          },
+          buildArtifact: (outDir) => {
+            mkdirSync(outDir, { recursive: true });
+            writeFileSync(join(outDir, 'built-source'), readFileSync(sourcePath, 'utf8'), 'utf8');
+            buildCount += 1;
+            if (buildCount === 1) {
+              // Model an editor or generator replacing an input while Vite is running.
+              writeFileSync(sourcePath, 'new-source', 'utf8');
+            }
+          },
+          stampArtifact: (outDir, fingerprint) => writeFileSync(join(outDir, 'stamp'), fingerprint, 'utf8'),
+          readArtifact: (outDir, fingerprint) => ({
+            builtSource: readFileSync(join(outDir, 'built-source'), 'utf8'),
+            fingerprint,
+            outDir,
+          }),
+        },
+      );
+
+      expect(buildCount).toBe(2);
+      expect(discardedBuiltArtifacts).toContain(join(fixtureRoot, 'old-source'));
+      expect(existsSync(join(fixtureRoot, 'old-source'))).toBe(false);
+      expect(artifact).toEqual({
+        builtSource: 'new-source',
+        fingerprint: 'new-source',
+        outDir: join(fixtureRoot, 'new-source'),
+      });
+      expect(readFileSync(join(artifact.outDir, 'stamp'), 'utf8')).toBe('new-source');
+    } finally {
+      rmSync(fixtureRoot, { recursive: true, force: true });
+    }
+  });
+});
 
 describe('build-input fingerprint coverage [FEBT2-LG-NEW-02]', () => {
   it('hashes every non-test file under js/', () => {

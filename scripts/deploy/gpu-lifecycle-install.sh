@@ -13,7 +13,10 @@
 #                     max-lease cap (the cost backstop; see reaper.py)
 #
 # Usage (from a laptop, over Tailscale):
-#   scripts/deploy/gpu-lifecycle-install.sh --host ubuntu@acx-backend.tail1a44b8.ts.net
+#   scripts/deploy/gpu-lifecycle-install.sh --host ubuntu@acx-backend.tail1a44b8.ts.net \
+#     --ready-url http://<gpu-private-ip>:8000/health
+# READY_URL has no default: production installs must name the endpoint that
+# supplies current, evidence-backed GPU readiness.
 # Dry run (print what would change, touch nothing):
 #   scripts/deploy/gpu-lifecycle-install.sh --host ... --dry-run
 
@@ -23,11 +26,12 @@ HOST=""
 GPU_INSTANCE_NAME="${GPU_INSTANCE_NAME:-acx-gpu-burst}"
 GPU_INSTANCE_ID="${GPU_INSTANCE_ID:-}"
 MAX_LEASE_SECONDS="${MAX_LEASE_SECONDS:-3600}"
-IDLE_SECONDS="${IDLE_SECONDS:-300}"
+IDLE_SECONDS="${IDLE_SECONDS-300}"
 START_INTERVAL="${START_INTERVAL:-30s}"
 REAP_INTERVAL="${REAP_INTERVAL:-2min}"
-READY_URL="${READY_URL:-}"
+READY_URL="${READY_URL-}"
 LOAD_STALE_GRACE_SECONDS="${ACX_DESCRIBE_LOAD_STALE_GRACE_SECONDS:-600}"
+REMOTE_COMMAND_TIMEOUT_SECONDS="${REMOTE_COMMAND_TIMEOUT_SECONDS:-180}"
 DRY_RUN=0
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 DEPLOYMENTS_FILE="${ACX_GPU_DEPLOYMENTS_FILE:-${repo_root}/scripts/deploy/gpu-snapshot-deployments.conf}"
@@ -96,8 +100,25 @@ if ! [ "$MAX_LEASE_SECONDS" -gt 0 ] 2>/dev/null; then
     echo "error: --max-lease-seconds must be > 0; 0 leaves an A10 able to run unbounded" >&2
     exit 2
 fi
+if ! [ "$IDLE_SECONDS" -gt 0 ] 2>/dev/null; then
+    echo "error: IDLE_SECONDS (--idle-seconds) must be a positive integer (> 0)" >&2
+    exit 2
+fi
 if ! [ "$LOAD_STALE_GRACE_SECONDS" -ge 120 ] 2>/dev/null; then
     echo "error: ACX_DESCRIBE_LOAD_STALE_GRACE_SECONDS must be an integer >= 120" >&2
+    exit 2
+fi
+if ! [ "$REMOTE_COMMAND_TIMEOUT_SECONDS" -gt 0 ] 2>/dev/null; then
+    echo "error: REMOTE_COMMAND_TIMEOUT_SECONDS must be a positive integer (> 0)" >&2
+    exit 2
+fi
+if [ -z "$READY_URL" ]; then
+    echo "error: READY_URL (--ready-url) is required; provide the GPU service readiness endpoint" >&2
+    exit 2
+fi
+ready_url_pattern='^https?://[A-Za-z0-9._~:/?#@%+,={}-]+$'
+if [[ ! "$READY_URL" =~ $ready_url_pattern ]]; then
+    echo "error: READY_URL (--ready-url) must be an http(s) URL without whitespace or shell metacharacters" >&2
     exit 2
 fi
 
@@ -123,11 +144,52 @@ fi
 echo "gpu instance: ${GPU_INSTANCE_NAME} (...${GPU_INSTANCE_ID: -12})"
 echo "max lease:    ${MAX_LEASE_SECONDS}s   idle: ${IDLE_SECONDS}s"
 
-ready_flag=""
-[ -n "$READY_URL" ] && ready_flag="--ready-url ${READY_URL}"
+release_id=$(
+    for source_path in "${repo_root}"/infra/oci/gpu_lifecycle/*.py; do
+        printf '%s %s\n' "${source_path#"${repo_root}/"}" \
+            "$(git -C "$repo_root" hash-object "$source_path")"
+    done | git -C "$repo_root" hash-object --stdin
+)
+remote_release="/opt/acx-gpu/releases/${release_id}"
+remote_stage="/opt/acx-gpu/releases/.staging-${release_id}"
+
+SSH_OPTIONS=(
+    -o BatchMode=yes
+    -o ConnectTimeout=10
+    -o ServerAliveInterval=15
+    -o ServerAliveCountMax=3
+)
+
+run_with_deadline() {
+    local description=$1 process_id sleep_id="" status timer_id
+    shift
+    "$@" &
+    process_id=$!
+    (
+        trap 'kill "$sleep_id" 2>/dev/null || true; exit 0' TERM INT
+        sleep "$REMOTE_COMMAND_TIMEOUT_SECONDS" &
+        sleep_id=$!
+        wait "$sleep_id"
+        echo "error: ${description} exceeded ${REMOTE_COMMAND_TIMEOUT_SECONDS}s" >&2
+        kill -TERM "$process_id" 2>/dev/null || true
+        sleep 5
+        kill -KILL "$process_id" 2>/dev/null || true
+    ) &
+    timer_id=$!
+    if wait "$process_id"; then
+        status=0
+    else
+        status=$?
+    fi
+    kill -TERM "$timer_id" 2>/dev/null || true
+    wait "$timer_id" 2>/dev/null || true
+    return "$status"
+}
 
 if [ "$DRY_RUN" -eq 1 ]; then
-    echo "--- dry run: would sync infra/oci/gpu_lifecycle -> ${HOST}:/opt/acx-gpu/infra/oci/"
+    echo "--- dry run: would stage release ${release_id} at ${HOST}:${remote_stage}"
+    echo "--- dry run: would validate the staged package import"
+    echo "--- dry run: would atomically switch /opt/acx-gpu/current -> ${remote_release}"
     echo "--- dry run: would install acx-gpu-start.{service,timer} + acx-gpu-reap.{service,timer}"
     echo "--- dry run: would create host-owned /run/acx and isolated API-writable deployment directories: ${LOAD_ENVIRONMENT_DIRS}"
     exit 0
@@ -135,19 +197,38 @@ fi
 
 # --- ship the module ---------------------------------------------------------
 # Copied to a dedicated root rather than run from a checkout, so the units do not
-# depend on a worktree that a later cleanup may reap.
-ssh "$HOST" 'set -eu; sudo mkdir -p /opt/acx-gpu/infra/oci /etc/acx; sudo chown -R ubuntu:ubuntu /opt/acx-gpu'
-ssh "$HOST" 'set -eu; rm -rf /opt/acx-gpu/infra/oci/gpu_lifecycle'
-scp -q -r "${repo_root}/infra/oci/gpu_lifecycle" "${HOST}:/opt/acx-gpu/infra/oci/gpu_lifecycle"
-ssh "$HOST" 'set -eu; touch /opt/acx-gpu/infra/__init__.py /opt/acx-gpu/infra/oci/__init__.py'
+# depend on a worktree that a later cleanup may reap. The live `current` link is
+# switched only after the content-addressed staged release imports successfully;
+# older release directories remain available for rollback.
+run_with_deadline "remote release staging" \
+    ssh "${SSH_OPTIONS[@]}" "$HOST" "set -eu
+sudo mkdir -p '${remote_stage}/infra/oci/gpu_lifecycle' /etc/acx
+sudo chown -R ubuntu:ubuntu /opt/acx-gpu
+find '${remote_stage}/infra/oci/gpu_lifecycle' -mindepth 1 -maxdepth 1 -delete
+touch '${remote_stage}/infra/__init__.py' '${remote_stage}/infra/oci/__init__.py'"
+run_with_deadline "GPU lifecycle module copy" \
+    scp -q "${SSH_OPTIONS[@]}" "${repo_root}"/infra/oci/gpu_lifecycle/*.py \
+        "${HOST}:${remote_stage}/infra/oci/gpu_lifecycle/"
+run_with_deadline "remote release validation and switch" \
+    ssh "${SSH_OPTIONS[@]}" "$HOST" "set -eu
+PYTHONPATH='${remote_stage}' python3 -c 'import infra.oci.gpu_lifecycle.reaper'
+if [ -e '${remote_release}' ]; then
+    sudo rm -rf '${remote_stage}'
+else
+    sudo mv '${remote_stage}' '${remote_release}'
+fi
+ln -sfn '${remote_release}' '/opt/acx-gpu/.current-${release_id}'
+sudo mv -Tf '/opt/acx-gpu/.current-${release_id}' /opt/acx-gpu/current"
 
 # --- install units -----------------------------------------------------------
-ssh "$HOST" "set -eu
+run_with_deadline "systemd unit installation" \
+    ssh "${SSH_OPTIONS[@]}" "$HOST" "set -eu
 sudo tee /etc/acx/gpu-lifecycle.env >/dev/null <<ENV
 GPU_INSTANCE_ID=${GPU_INSTANCE_ID}
 MAX_LEASE_SECONDS=${MAX_LEASE_SECONDS}
 IDLE_SECONDS=${IDLE_SECONDS}
 ACX_DESCRIBE_LOAD_STALE_GRACE_SECONDS=${LOAD_STALE_GRACE_SECONDS}
+READY_URL=${READY_URL}
 ENV
 sudo chmod 0644 /etc/acx/gpu-lifecycle.env
 
@@ -159,6 +240,8 @@ Wants=network-online.target
 
 [Service]
 Type=oneshot
+TimeoutStartSec=1200s
+RuntimeMaxSec=1200s
 User=ubuntu
 SupplementaryGroups=10001
 RuntimeDirectory=acx-gpu
@@ -167,8 +250,8 @@ RuntimeDirectoryPreserve=yes
 # of INSTANCE_POWER_ACTIONS on the GPU compartment, else every run 404s.
 Environment=OCI_CLI_AUTH=instance_principal
 EnvironmentFile=/etc/acx/gpu-lifecycle.env
-WorkingDirectory=/opt/acx-gpu
-ExecStart=/usr/bin/python3 -m infra.oci.gpu_lifecycle --mode start --instance-id \\\${GPU_INSTANCE_ID} --load-dir /run/acx-write --load-stale-grace-seconds \\\${ACX_DESCRIBE_LOAD_STALE_GRACE_SECONDS} --gpu-state-json /run/acx/gpu-state.json --running-since-path /run/acx-gpu/running-since.json --probe-oci --oci-bin /home/ubuntu/.oci-venv/bin/oci ${ready_flag}
+WorkingDirectory=/opt/acx-gpu/current
+ExecStart=/usr/bin/python3 -m infra.oci.gpu_lifecycle --mode start --instance-id \\\${GPU_INSTANCE_ID} --load-dir /run/acx-write --load-stale-grace-seconds \\\${ACX_DESCRIBE_LOAD_STALE_GRACE_SECONDS} --gpu-state-json /run/acx/gpu-state.json --running-since-path /run/acx-gpu/running-since.json --probe-oci --oci-bin /home/ubuntu/.oci-venv/bin/oci --ready-url \\\${READY_URL}
 UNIT
 
 sudo tee /etc/systemd/system/acx-gpu-start.timer >/dev/null <<UNIT
@@ -192,13 +275,15 @@ Wants=network-online.target
 
 [Service]
 Type=oneshot
+TimeoutStartSec=1200s
+RuntimeMaxSec=1200s
 User=ubuntu
 SupplementaryGroups=10001
 RuntimeDirectory=acx-gpu
 RuntimeDirectoryPreserve=yes
 Environment=OCI_CLI_AUTH=instance_principal
 EnvironmentFile=/etc/acx/gpu-lifecycle.env
-WorkingDirectory=/opt/acx-gpu
+WorkingDirectory=/opt/acx-gpu/current
 ExecStart=/usr/bin/python3 -m infra.oci.gpu_lifecycle --mode reap --instance-id \\\${GPU_INSTANCE_ID} --load-dir /run/acx-write --load-stale-grace-seconds \\\${ACX_DESCRIBE_LOAD_STALE_GRACE_SECONDS} --gpu-state-json /run/acx/gpu-state.json --running-since-path /run/acx-gpu/running-since.json --idle-seconds \\\${IDLE_SECONDS} --max-lease-seconds \\\${MAX_LEASE_SECONDS} --fence-delay-seconds 2 --probe-oci --oci-bin /home/ubuntu/.oci-venv/bin/oci
 UNIT
 

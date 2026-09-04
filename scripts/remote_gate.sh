@@ -240,7 +240,10 @@ run)
     # Keeping the guard fully armed for real branch pushes is the point: the fix
     # is to stop pretending the gate publishes a branch, not to override it.
     git push --quiet --force "${REMOTE_HOST}:${REMOTE_DIR}" "HEAD:refs/workbay/gate"
-    "${SSH[@]}" "set -u
+    # Shell options do not cross the SSH process boundary. Keep `-e` off here
+    # because target failures are captured and summarized below, but make every
+    # present or future output-filtering pipeline report the runner's status.
+    "${SSH[@]}" "set -uo pipefail
         cd \"\$HOME/${REMOTE_DIR}\" || exit 1
         [ -f \"${CLONE_SENTINEL}\" ] || { echo 'remote-gate: clone sentinel missing; refusing (re-run bootstrap)' >&2; exit 1; }
         exec 9>.gate.lock

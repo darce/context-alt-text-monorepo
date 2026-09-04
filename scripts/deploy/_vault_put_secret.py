@@ -24,7 +24,9 @@ from __future__ import annotations
 import argparse
 import base64
 import hashlib
+import queue
 import sys
+import threading
 import time
 
 # acx-vault, root compartment, us-ashburn-1. An OCID is not a secret (ADR-013).
@@ -38,6 +40,48 @@ class SecretNotReadable(RuntimeError):
     """The stored value never became readable through the consumer's API."""
 
 
+def _is_retryable_read_error(exc):
+    """Return whether an OCI consumer read can usefully be attempted again."""
+    status = getattr(exc, "status", None)
+    code = getattr(exc, "code", None)
+    if status == 404 and code == "NotAuthorizedOrNotFound":
+        # A newly-created version temporarily has exactly this response while
+        # it propagates to the Secrets (data-plane) API.
+        return True
+    if isinstance(status, int) and 500 <= status < 600:
+        return True
+
+    # OCI's transport exceptions come from requests/urllib3. Avoid importing
+    # either package here so the module remains usable by its SDK-free tests.
+    if isinstance(exc, (ConnectionError, TimeoutError)):
+        return True
+    exception_type = type(exc)
+    return exception_type.__module__.split(".", 1)[0] in {"requests", "urllib3"}
+
+
+def _read_with_deadline(read_bundle, remaining):
+    """Run one read without allowing it to outlive the outer deadline."""
+    outcome = queue.Queue(maxsize=1)
+
+    def run():
+        try:
+            outcome.put((True, read_bundle()))
+        except BaseException as exc:  # transferred to the calling thread below
+            outcome.put((False, exc))
+
+    worker = threading.Thread(target=run, daemon=True)
+    worker.start()
+    worker.join(remaining)
+    if worker.is_alive():
+        raise SecretNotReadable(
+            "the Secrets API read exceeded the remaining readiness deadline"
+        )
+    succeeded, value = outcome.get_nowait()
+    if succeeded:
+        return value
+    raise value
+
+
 def wait_until_readable(
     read_bundle,
     secret_name,
@@ -45,6 +89,7 @@ def wait_until_readable(
     timeout=120.0,
     sleep=None,
     monotonic=None,
+    prepare_attempt=None,
 ):
     """Block until `secret_name` reads back as the value we just wrote.
 
@@ -60,20 +105,42 @@ def wait_until_readable(
     -- not merely that the control plane finished bookkeeping.
 
     `read_bundle` is a zero-argument callable returning the decoded bytes, or
-    raising on failure. Injected so this stays testable without the OCI SDK.
+    raising on failure. `prepare_attempt`, when provided, receives the seconds
+    remaining so the underlying client's own request timeout can be tightened
+    before each call. Both are injected so this stays testable without the OCI
+    SDK.
     """
     # Resolved here rather than as default arguments: a default binds `time.sleep`
     # once at import, so a caller (or a test) that patches `time.sleep` later has
     # no effect on it.
     sleep = sleep or time.sleep
     monotonic = monotonic or time.monotonic
+    if timeout == 0:
+        return True
+    if timeout < 0:
+        raise ValueError("timeout must be non-negative")
     deadline = monotonic() + timeout
     delay = 1.0
     last = "no attempt made"
     while True:
+        remaining = deadline - monotonic()
+        if remaining <= 0:
+            raise SecretNotReadable(
+                f"{secret_name} was written but did not become readable within "
+                f"{timeout:.0f}s (last: {last})"
+            )
+        if prepare_attempt is not None:
+            prepare_attempt(remaining)
         try:
-            got = read_bundle()
-        except Exception as exc:  # noqa: BLE001 -- any read failure is retryable here
+            got = _read_with_deadline(read_bundle, remaining)
+        except SecretNotReadable as exc:
+            raise SecretNotReadable(
+                f"{secret_name} was written but did not become readable within "
+                f"{timeout:.0f}s (last: {exc})"
+            ) from exc
+        except Exception as exc:
+            if not _is_retryable_read_error(exc):
+                raise
             last = f"{type(exc).__name__}: {exc}"
         else:
             if hashlib.sha256(got).hexdigest() == expected_digest:
@@ -82,39 +149,77 @@ def wait_until_readable(
             # not propagated yet. Comparing digests rather than lengths means a
             # replacement token of the same length is still correctly rejected.
             last = f"read back {len(got)} bytes that do not match what was written"
-        if monotonic() >= deadline:
+        remaining = deadline - monotonic()
+        if remaining <= 0:
             raise SecretNotReadable(
                 f"{secret_name} was written but did not become readable within "
                 f"{timeout:.0f}s (last: {last})"
             )
-        sleep(delay)
+        sleep(min(delay, remaining))
         delay = min(delay * 1.5, 5.0)
 
 
-def resolve_vault_context(kms_client, vaults_client, vault_id):
+def _list_active_secrets(vaults_client, compartment_id, vault_id, name=None):
+    """Return every ACTIVE secret, following the Vaults API page tokens."""
+    active = []
+    page = None
+    seen_pages = set()
+    while True:
+        kwargs = {
+            "compartment_id": compartment_id,
+            "vault_id": vault_id,
+            "lifecycle_state": "ACTIVE",
+        }
+        if name is not None:
+            kwargs["name"] = name
+        if page is not None:
+            kwargs["page"] = page
+        response = vaults_client.list_secrets(**kwargs)
+        active.extend(
+            secret
+            for secret in response.data
+            if getattr(secret, "lifecycle_state", None) == "ACTIVE"
+        )
+        headers = getattr(response, "headers", None) or {}
+        next_page = headers.get("opc-next-page") or getattr(response, "next_page", None)
+        if not next_page:
+            return active
+        if next_page in seen_pages:
+            raise RuntimeError(f"Vaults API repeated pagination token {next_page!r}")
+        seen_pages.add(next_page)
+        page = next_page
+
+
+def resolve_vault_context(kms_client, vaults_client, vault_id, key_id=None):
     """Return (compartment_id, key_id) for the vault.
 
-    The KMS key is read off a sibling secret rather than hardcoded, so a new
-    secret always lands on the same key as the ones ADR-013 already stores. A
-    second hardcoded OCID here would be a silent divergence waiting to happen.
+    An explicit key is authoritative. Otherwise the KMS key is inferred only
+    when every ACTIVE sibling agrees, avoiding both a second hardcoded OCID and
+    a nondeterministic choice from the Vaults API's result ordering.
     """
     vault = kms_client.get_vault(vault_id).data
     compartment_id = vault.compartment_id
-    siblings = vaults_client.list_secrets(
-        compartment_id=compartment_id, vault_id=vault_id
-    ).data
+    if key_id is not None:
+        return compartment_id, key_id
+
+    siblings = _list_active_secrets(vaults_client, compartment_id, vault_id)
     if not siblings:
         raise SystemExit(
             f"vault {vault_id} holds no existing secret to read the KMS key from; "
             "pass --key-id explicitly"
         )
-    return compartment_id, siblings[0].key_id
+    sibling_keys = {getattr(sibling, "key_id", None) for sibling in siblings}
+    if None in sibling_keys or len(sibling_keys) != 1:
+        rendered_keys = ", ".join(sorted(key or "<missing>" for key in sibling_keys))
+        raise RuntimeError(
+            f"ACTIVE secrets in vault {vault_id} use divergent KMS keys: "
+            f"{rendered_keys}; pass --key-id explicitly"
+        )
+    return compartment_id, sibling_keys.pop()
 
 
 def find_secret(vaults_client, compartment_id, vault_id, name):
-    for s in vaults_client.list_secrets(
-        compartment_id=compartment_id, vault_id=vault_id, name=name
-    ).data:
+    for s in _list_active_secrets(vaults_client, compartment_id, vault_id, name=name):
         if s.secret_name == name:
             return s
     return None
@@ -153,8 +258,9 @@ def main() -> int:
     vaults = oci.vault.VaultsClient(config)
     kms = oci.key_management.KmsVaultClient(config)
 
-    compartment_id, sibling_key = resolve_vault_context(kms, vaults, args.vault_id)
-    key_id = args.key_id or sibling_key
+    compartment_id, key_id = resolve_vault_context(
+        kms, vaults, args.vault_id, key_id=args.key_id
+    )
 
     content = oci.vault.models.Base64SecretContentDetails(
         content_type="BASE64",
@@ -184,22 +290,42 @@ def main() -> int:
     print(f"{action}: {args.secret_name} ({len(value)} bytes)")
     print(f"  secret_id: {secret.id}")
 
-    # Do not return until the value is readable through the same call the deploy
-    # preflight makes. Anything less hands the caller a success it cannot use.
-    secrets_client = oci.secrets.SecretsClient(config)
+    if args.readable_timeout == 0:
+        print("  readable: check skipped (--readable-timeout 0)")
+    else:
+        # Own retries here. OCI operation defaults can otherwise retry for much
+        # longer than this command's advertised outer readiness deadline.
+        no_retry = oci.retry.NoneRetryStrategy()
+        initial_timeout = max(args.readable_timeout, 0.001)
+        secrets_client = oci.secrets.SecretsClient(
+            config,
+            retry_strategy=no_retry,
+            timeout=(min(5.0, initial_timeout), initial_timeout),
+        )
 
-    def read_bundle():
-        bundle = secrets_client.get_secret_bundle_by_name(
-            secret_name=args.secret_name, vault_id=args.vault_id
-        ).data
-        return base64.b64decode(bundle.secret_bundle_content.content)
+        def prepare_attempt(remaining):
+            # Requests has separate connect/read budgets. The daemon-thread
+            # guard in wait_until_readable remains the authoritative total cap.
+            bounded = max(remaining, 0.001)
+            secrets_client.base_client.timeout = (min(5.0, bounded), bounded)
 
-    print(f"  waiting for {args.secret_name} to become readable ...", flush=True)
-    wait_until_readable(
-        read_bundle, args.secret_name, hashlib.sha256(value).hexdigest(),
-        timeout=args.readable_timeout,
-    )
-    print("  readable: value matches what was written")
+        def read_bundle():
+            bundle = secrets_client.get_secret_bundle_by_name(
+                secret_name=args.secret_name,
+                vault_id=args.vault_id,
+                retry_strategy=no_retry,
+            ).data
+            return base64.b64decode(bundle.secret_bundle_content.content)
+
+        print(f"  waiting for {args.secret_name} to become readable ...", flush=True)
+        wait_until_readable(
+            read_bundle,
+            args.secret_name,
+            hashlib.sha256(value).hexdigest(),
+            timeout=args.readable_timeout,
+            prepare_attempt=prepare_attempt,
+        )
+        print("  readable: value matches what was written")
     return 0
 
 

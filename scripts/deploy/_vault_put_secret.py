@@ -312,6 +312,26 @@ def write_secret_if_needed(*, existing, value, read_current, create_secret, upda
     return update_secret(), "new version"
 
 
+def mutation_retry_token(vault_id: str, secret_name: str, value: bytes) -> str:
+    """Return a stable OCI create idempotency key without exposing the value."""
+    digest = hashlib.sha256()
+    for field in (vault_id.encode("utf-8"), secret_name.encode("utf-8"), value):
+        digest.update(len(field).to_bytes(8, "big"))
+        digest.update(field)
+    return digest.hexdigest()
+
+
+def require_etag(response, secret_name: str) -> str:
+    """Extract the update precondition supplied by OCI's get-secret response."""
+    headers = getattr(response, "headers", None)
+    if headers is None:
+        raise RuntimeError(f"get-secret response for {secret_name} is missing the ETag headers")
+    etag = headers.get("etag") or headers.get("ETag")
+    if not isinstance(etag, str) or not etag:
+        raise RuntimeError(f"get-secret response for {secret_name} is missing a valid ETag")
+    return etag
+
+
 def _set_client_timeout(client, remaining: float) -> None:
     """Tighten the SDK's connect/read budgets to the shared remaining time."""
     bounded = max(remaining, 0.001)
@@ -432,8 +452,18 @@ def main() -> int:
         content_type="BASE64",
         content=base64.b64encode(value).decode("ascii"),
     )
+    retry_token = mutation_retry_token(args.vault_id, args.secret_name, value)
 
     existing = find_secret(vaults, compartment_id, args.vault_id, args.secret_name, invoke=invoke)
+    update_etag = None
+    conditional_update = _accepts_keyword(vaults.update_secret, "if_match")
+    if existing is not None and conditional_update:
+        metadata_response = invoke(
+            f"get current {args.secret_name} metadata",
+            vaults.get_secret,
+            existing.id,
+        )
+        update_etag = require_etag(metadata_response, args.secret_name)
 
     def read_bundle():
         client = get_secrets_client()
@@ -446,6 +476,9 @@ def main() -> int:
         return base64.b64decode(bundle.secret_bundle_content.content)
 
     def create_secret():
+        create_kwargs = {}
+        if _accepts_keyword(vaults.create_secret, "opc_retry_token"):
+            create_kwargs["opc_retry_token"] = retry_token
         return invoke(
             f"create {args.secret_name}",
             vaults.create_secret,
@@ -458,15 +491,20 @@ def main() -> int:
                 secret_content=content,
             ),
             mutation=True,
+            **create_kwargs,
         ).data
 
     def update_secret():
+        if conditional_update and update_etag is None:
+            raise RuntimeError(f"cannot update {args.secret_name} without an ETag precondition")
+        update_kwargs = {"if_match": update_etag} if conditional_update else {}
         return invoke(
             f"update {args.secret_name}",
             vaults.update_secret,
             existing.id,
             oci.vault.models.UpdateSecretDetails(secret_content=content),
             mutation=True,
+            **update_kwargs,
         ).data
 
     try:

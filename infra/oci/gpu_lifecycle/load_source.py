@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import fcntl
 import json
 import logging
 import math
+import os
 import re
 import time
-from collections.abc import Collection
+from collections.abc import Callable, Collection
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
@@ -158,6 +160,86 @@ class AggregateJobLoadSource:
                 if observation.evidence is LoadEvidence.ESCALATED
             ),
         )
+
+    def fence_token(self) -> tuple[tuple[str, tuple[int, int, int, int] | None], ...]:
+        """Return the atomic-rename generation of every declared producer."""
+        generations: list[tuple[str, tuple[int, int, int, int] | None]] = []
+        for environment in self.expected_environments:
+            path = self.directory / environment / "describe-load.json"
+            try:
+                stat = path.stat()
+            except FileNotFoundError:
+                generation = None
+            else:
+                generation = (stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns)
+            generations.append((environment, generation))
+        return tuple(generations)
+
+    def actuate_if_generation(
+        self,
+        expected_generation: object,
+        action: Callable[[], None],
+    ) -> bool:
+        """Run ``action`` while all producer publication locks stay held.
+
+        Publishers replace snapshots atomically while holding the matching
+        per-environment lock. Taking every lock in sorted deployment order
+        closes the final compare-to-STOP race without deadlocking concurrent
+        publishers. A busy publisher makes this STOP attempt fail closed; the
+        next reaper cycle can reconsider the newly published generation.
+        """
+        lock_fds: list[int] = []
+        try:
+            for environment in self.expected_environments:
+                lock_path = self.directory / environment / "describe-load.json.lock"
+                lock_fd = self._open_fence_lock(lock_path)
+                try:
+                    fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except BaseException:
+                    os.close(lock_fd)
+                    raise
+                lock_fds.append(lock_fd)
+        except OSError as exc:
+            logger.warning("describe load publication fence unavailable; cancelling STOP: %s", exc)
+            self._release_fence_locks(lock_fds)
+            return False
+
+        try:
+            if self.fence_token() != expected_generation:
+                logger.warning("describe load generation advanced; cancelling STOP")
+                return False
+            action()
+            return True
+        finally:
+            self._release_fence_locks(lock_fds)
+
+    @staticmethod
+    def _open_fence_lock(path: Path) -> int:
+        created = False
+        try:
+            lock_fd = os.open(
+                path,
+                os.O_RDONLY | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC,
+                0o660,
+            )
+            created = True
+        except FileExistsError:
+            lock_fd = os.open(path, os.O_RDONLY | os.O_CLOEXEC)
+        if created:
+            try:
+                os.fchmod(lock_fd, 0o660)
+            except BaseException:
+                os.close(lock_fd)
+                raise
+        return lock_fd
+
+    @staticmethod
+    def _release_fence_locks(lock_fds: list[int]) -> None:
+        for lock_fd in reversed(lock_fds):
+            try:
+                fcntl.flock(lock_fd, fcntl.LOCK_UN)
+            finally:
+                os.close(lock_fd)
 
     def _observe_environment(self, environment: str, *, now: float) -> _EnvironmentObservation:
         path = self.directory / environment / "describe-load.json"

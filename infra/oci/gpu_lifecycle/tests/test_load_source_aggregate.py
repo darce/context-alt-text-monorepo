@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import fcntl
 import json
 import logging
 import os
@@ -12,7 +13,11 @@ from infra.oci.gpu_lifecycle.load_source import (
     LOAD_SNAPSHOT_FUTURE_SKEW_SECONDS,
     AggregateJobLoadSource,
 )
-from infra.oci.gpu_lifecycle.reaper import _build_parser
+from infra.oci.gpu_lifecycle.reaper import (
+    _actuate_stop_with_generation_fence,
+    _build_parser,
+    _load_generation,
+)
 
 NOW = 10_000.0
 
@@ -448,3 +453,57 @@ def test_default_registry_supplies_the_expected_producer_set(tmp_path: Path) -> 
     source = AggregateJobLoadSource(directory=tmp_path, stale_seconds=120)
 
     assert source.expected_environments == ("dev", "dev-fir", "prod", "staging")
+
+
+def test_compare_and_act_holds_every_producer_lock_through_stop(tmp_path: Path) -> None:
+    _write_load(tmp_path, "dev", queue_depth=0, in_flight=0)
+    _write_load(tmp_path, "prod", queue_depth=0, in_flight=0)
+    source = _source(tmp_path)
+    generation = source.fence_token()
+    action_calls: list[bool] = []
+
+    def action() -> None:
+        for environment in ("dev", "prod"):
+            lock_path = tmp_path / environment / "describe-load.json.lock"
+            lock_fd = os.open(lock_path, os.O_RDONLY)
+            try:
+                with pytest.raises(BlockingIOError):
+                    fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            finally:
+                os.close(lock_fd)
+        action_calls.append(True)
+
+    assert source.actuate_if_generation(generation, action) is True
+    assert action_calls == [True]
+
+
+def test_compare_and_act_cancels_when_a_producer_generation_advanced(tmp_path: Path) -> None:
+    _write_load(tmp_path, "dev", queue_depth=0, in_flight=0)
+    source = _source(tmp_path)
+    generation = source.fence_token()
+
+    _write_load(tmp_path, "dev", queue_depth=1, in_flight=0)
+    action_calls: list[bool] = []
+
+    assert source.actuate_if_generation(generation, lambda: action_calls.append(True)) is False
+    assert action_calls == []
+
+
+def test_reaper_production_path_actuates_aggregate_idle_stop(tmp_path: Path) -> None:
+    _write_load(tmp_path, "dev", queue_depth=0, in_flight=0)
+    source = _source(tmp_path)
+    stopped: list[str] = []
+
+    class _Actuator:
+        def stop_instance(self, instance_id: str) -> None:
+            stopped.append(instance_id)
+
+    result = _actuate_stop_with_generation_fence(
+        source,
+        _Actuator(),
+        instance_id="ocid1.gpu",
+        expected_generation=_load_generation(source),
+    )
+
+    assert result == (True, True)
+    assert stopped == ["ocid1.gpu"]

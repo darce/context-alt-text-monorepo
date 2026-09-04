@@ -3,11 +3,10 @@
 from __future__ import annotations
 
 import os
-from pathlib import Path
 import subprocess
+from pathlib import Path
 
 import pytest
-
 
 SCRIPT = Path(__file__).parents[1] / "recognition-service.sh"
 
@@ -97,9 +96,7 @@ def _assert_shared_config_was_cleaned(tmp_path: Path, records: Path) -> None:
     assert not login_path.exists()
     assert not list(tmp_path.glob("acx-ocir-deploy.*/config.json"))
     survivors = [
-        path
-        for path in tmp_path.rglob("*")
-        if path.is_file() and b"deploy-token-byte-exact" in path.read_bytes()
+        path for path in tmp_path.rglob("*") if path.is_file() and b"deploy-token-byte-exact" in path.read_bytes()
     ]
     assert survivors == []
 
@@ -161,7 +158,7 @@ printf '%s' "$last" >"$OCIR_TEST_RECORD_DIR/ssh.command"
     command = (
         f'source "{SCRIPT}"; REMOTE_BUILD=1; '
         f'ACX_DEPLOY_OCIR_CONFIG_DIR="{config_dir}"; '
-        '_push_ref iad.ocir.io/test/image:sha'
+        "_push_ref iad.ocir.io/test/image:sha"
     )
     result = subprocess.run(
         ["/bin/bash", "-c", command],
@@ -177,9 +174,7 @@ printf '%s' "$last" >"$OCIR_TEST_RECORD_DIR/ssh.command"
 
 
 @pytest.mark.parametrize(("fail_push", "expected_rc"), [(False, 0), (True, 42)])
-def test_remote_push_issues_bounded_remote_cleanup(
-    tmp_path: Path, fail_push: bool, expected_rc: int
-) -> None:
+def test_remote_push_issues_bounded_remote_cleanup(tmp_path: Path, fail_push: bool, expected_rc: int) -> None:
     bin_dir = tmp_path / "bin"
     records = tmp_path / "records"
     bin_dir.mkdir()
@@ -210,7 +205,7 @@ esac
     command = (
         f'source "{SCRIPT}"; preflight_remote_ocir_auth; '
         'printf "%s" "$ACX_DEPLOY_OCIR_CONFIG_DIR" >"$OCIR_TEST_RECORD_DIR/config.path"; '
-        '_push_ref iad.ocir.io/test/image:sha'
+        "_push_ref iad.ocir.io/test/image:sha"
     )
     result = subprocess.run(
         ["/bin/bash", "-c", command],
@@ -234,9 +229,9 @@ def test_all_remote_registry_commands_carry_the_deploy_config() -> None:
     source = SCRIPT.read_text()
     assert "remote_docker_with_config()" in source
     assert 'config_q="$(remote_quote "${ACX_DEPLOY_OCIR_CONFIG_DIR}")"' in source
-    assert "_pull_ref_remote \"${image}\"" in source
-    assert "_pull_ref \"${IMAGE_BASE}:${from_tag}\"" in source
-    assert "remote_docker_with_config push \"${rollback_ref}\"" in source
+    assert '_pull_ref_remote "${image}"' in source
+    assert '_pull_ref "${IMAGE_BASE}:${from_tag}"' in source
+    assert 'remote_docker_with_config push "${rollback_ref}"' in source
     assert "DOCKER_CONFIG='${ACX_DEPLOY_OCIR_CONFIG_DIR}'" not in source
 
 
@@ -278,9 +273,7 @@ def test_config_initialization_does_not_leak_umask(tmp_path: Path) -> None:
         'init_deploy_ocir_docker_config; after="$(umask)"; '
         'cleanup_deploy_ocir_docker_config; printf "%s %s" "$before" "$after"'
     )
-    result = subprocess.run(
-        ["/bin/bash", "-c", command], env=env, text=True, capture_output=True, check=False
-    )
+    result = subprocess.run(["/bin/bash", "-c", command], env=env, text=True, capture_output=True, check=False)
     assert result.returncode == 0, result.stderr
     assert result.stdout.endswith("0022 0022")
 
@@ -323,20 +316,19 @@ fi
     )
     env = os.environ.copy()
     env["PATH"] = f"{bin_dir}:{env['PATH']}"
-    command = (
-        f'source "{SCRIPT}"; REMOTE_BUILD=0; '
-        f'do_push_tag latest "${{IMAGE_BASE}}@sha256:{expected}"'
-    )
-    result = subprocess.run(
-        ["/bin/bash", "-c", command], env=env, text=True, capture_output=True, check=False
-    )
+    command = f'source "{SCRIPT}"; REMOTE_BUILD=0; do_push_tag latest "${{IMAGE_BASE}}@sha256:{expected}"'
+    result = subprocess.run(["/bin/bash", "-c", command], env=env, text=True, capture_output=True, check=False)
     assert result.returncode != 0
     assert "DIGEST MISMATCH" in result.stderr
 
 
 def test_rollback_is_captured_before_remote_build_and_used_on_failures() -> None:
     source = SCRIPT.read_text()
-    deploy = source[source.index("do_deploy() {") : source.index("#---------------------------------------------------------------- promote")]
+    deploy = source[
+        source.index("do_deploy() {") : source.index(
+            "#---------------------------------------------------------------- promote"
+        )
+    ]
     assert deploy.index('preserve_rollback_tag "$env"') < deploy.index('do_build_remote "$tag"')
     assert 'restore_env_tag_to_rollback "$env" 0' in deploy
     assert 'restore_env_tag_to_rollback "$env" 1' in deploy
@@ -378,16 +370,12 @@ fi
 """,
     )
     env = os.environ.copy()
-    env.update(
-        {"PATH": f"{bin_dir}:{env['PATH']}", "OCIR_TEST_DOCKER_RECORD": str(records)}
-    )
+    env.update({"PATH": f"{bin_dir}:{env['PATH']}", "OCIR_TEST_DOCKER_RECORD": str(records)})
     command = (
         f'source "{SCRIPT}"; ACX_DEPLOY_OCIR_CONFIG_DIR=/tmp/acx-test-config; '
         'preserve_rollback_tag prod; printf "%s %s" "$ACX_ROLLBACK_DIGEST_REF" "$ACX_ROLLBACK_TAG"'
     )
-    result = subprocess.run(
-        ["/bin/bash", "-c", command], env=env, text=True, capture_output=True, check=False
-    )
+    result = subprocess.run(["/bin/bash", "-c", command], env=env, text=True, capture_output=True, check=False)
     assert result.returncode == 0, result.stderr
     assert f"@sha256:{digest} rollback-{digest[:12]}" in result.stdout
     commands = records.read_text()
@@ -420,23 +408,22 @@ fi
 """,
     )
     env = os.environ.copy()
-    env.update(
-        {"PATH": f"{bin_dir}:{env['PATH']}", "OCIR_TEST_DOCKER_RECORD": str(records)}
-    )
+    env.update({"PATH": f"{bin_dir}:{env['PATH']}", "OCIR_TEST_DOCKER_RECORD": str(records)})
     remote_dir = tmp_path / "remote" / "prod"
     remote_dir.mkdir(parents=True)
     command = (
         f'source "{SCRIPT}"; ACX_DEPLOY_OCIR_CONFIG_DIR=/tmp/acx-test-config; '
         f'env_to_remote_dir() {{ printf "%s" "{remote_dir}"; }}; '
         f'ACX_ROLLBACK_DIGEST_REF="${{IMAGE_BASE}}@sha256:{digest}"; '
-        'restore_env_tag_to_rollback prod 0'
+        "restore_env_tag_to_rollback prod 0"
     )
-    result = subprocess.run(
-        ["/bin/bash", "-c", command], env=env, text=True, capture_output=True, check=False
-    )
+    result = subprocess.run(["/bin/bash", "-c", command], env=env, text=True, capture_output=True, check=False)
     assert result.returncode == 0, result.stderr
     commands = records.read_text()
-    assert f"tag iad.ocir.io/idu2kqqe2jxy/acx-backend@sha256:{digest} iad.ocir.io/idu2kqqe2jxy/acx-backend:latest" in commands
+    assert (
+        f"tag iad.ocir.io/idu2kqqe2jxy/acx-backend@sha256:{digest} iad.ocir.io/idu2kqqe2jxy/acx-backend:latest"
+        in commands
+    )
     assert "push iad.ocir.io/idu2kqqe2jxy/acx-backend:latest" in commands
     assert "compose -f docker-compose.env.yml -f docker-compose.admin.yml pull api" not in commands
 
@@ -462,9 +449,7 @@ remote_docker_with_config() {{
 preserve_rollback_tag prod
 printf '%s\\n' "$ACX_ROLLBACK_DIGEST_REF $ACX_ROLLBACK_IMAGE_BASE"
 '''
-    result = subprocess.run(
-        ["/bin/bash", "-c", command], text=True, capture_output=True, check=False
-    )
+    result = subprocess.run(["/bin/bash", "-c", command], text=True, capture_output=True, check=False)
     assert result.returncode == 0, result.stderr
     assert f"{old_repo}@sha256:{digest} {old_repo}" in result.stdout
     commands = records.read_text().splitlines()
@@ -475,16 +460,14 @@ printf '%s\\n' "$ACX_ROLLBACK_DIGEST_REF $ACX_ROLLBACK_IMAGE_BASE"
 
 
 @pytest.mark.parametrize("remote_build", ["0", "1"])
-def test_stalled_pull_has_deadline_in_both_build_modes(
-    tmp_path: Path, remote_build: str
-) -> None:
+def test_stalled_pull_has_deadline_in_both_build_modes(tmp_path: Path, remote_build: str) -> None:
     command = f'''
 source "{SCRIPT}"
 REMOTE_BUILD={remote_build}
 ACX_PULL_TIMEOUT=1
 docker() {{ sleep 30; }}
 remote_docker_with_config() {{ sleep 30; }}
-_pull_ref iad.ocir.io/test/image@sha256:{'a' * 64}
+_pull_ref iad.ocir.io/test/image@sha256:{"a" * 64}
 '''
     result = subprocess.run(
         ["/bin/bash", "-c", command],
@@ -519,9 +502,7 @@ do_restart() {{ record restart "$@"; }}
 do_verify() {{ record verify "$@"; }}
 do_deploy dev
 '''
-    result = subprocess.run(
-        ["/bin/bash", "-c", command], text=True, capture_output=True, check=False
-    )
+    result = subprocess.run(["/bin/bash", "-c", command], text=True, capture_output=True, check=False)
     assert result.returncode == 0, result.stderr
     image_base = "iad.ocir.io/idu2kqqe2jxy/acx-backend"
     digest_ref = f"{image_base}@sha256:{'a' * 64}"
@@ -554,9 +535,7 @@ else
   exit $?
 fi
 '''
-    result = subprocess.run(
-        ["/bin/bash", "-c", command], text=True, capture_output=True, check=False
-    )
+    result = subprocess.run(["/bin/bash", "-c", command], text=True, capture_output=True, check=False)
     assert result.returncode != 0
     assert "Restored" not in result.stdout
 
@@ -568,7 +547,7 @@ def test_single_attempt_verify_does_not_sleep_after_terminal_failure(tmp_path: P
     _executable(bin_dir / "curl", "#!/usr/bin/env bash\necho immediate-401 >&2\nexit 22\n")
     _executable(
         bin_dir / "sleep",
-        "#!/usr/bin/env bash\nprintf called >\"$OCIR_TEST_SLEEP_RECORD\"\n",
+        '#!/usr/bin/env bash\nprintf called >"$OCIR_TEST_SLEEP_RECORD"\n',
     )
     env = os.environ.copy()
     env.update(

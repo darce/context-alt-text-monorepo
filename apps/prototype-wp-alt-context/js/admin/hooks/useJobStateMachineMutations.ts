@@ -2,10 +2,30 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { __ } from '@wordpress/i18n';
 
 import type { ClusterResponse } from '../api/recognition';
-import { formatScanSubmissionError, resolveScanErrorMessage } from '../api/recognition/scanApiError';
+import { resolveScanErrorMessage } from '../api/recognition/scanApiError';
+import { classifyError } from '../utils/appError';
+import { createLogger, logJobEvent, type LogFields } from '../utils/logger';
 import { createClusterAutoRetry } from './clusterAutoRetry';
 import type { JobType } from './useJobPersistence';
 import { useScanIdentities, useClusterIdentities, useCancelScanJobs } from './useRecognitionHooks';
+
+const log = createLogger('jobStateMachineMutations');
+
+const classifiedLogFields = (error: unknown): LogFields => {
+  const classified = classifyError(error);
+  const fields: LogFields = { tag: classified._tag };
+  if ('status' in classified) {
+    fields.status = classified.status;
+  }
+  if ('endpoint' in classified) {
+    try {
+      fields.endpoint = new URL(classified.endpoint, 'http://localhost').pathname;
+    } catch {
+      fields.endpoint = classified.endpoint;
+    }
+  }
+  return fields;
+};
 
 interface JobStateMachineMutationOptions {
   activeJobIds: string[];
@@ -62,6 +82,7 @@ export const useJobStateMachineMutations = ({
     onSuccess: (data) => {
       setActiveBatchRunId(data.batchRunId);
       const jobIds = data.jobs.map((job) => job.id).filter((id): id is string => Boolean(id));
+      const total = data.jobs.reduce((sum, job) => sum + (job.progress?.total ?? 0), 0);
       if (jobIds.length > 0) {
         data.jobs.forEach((job) => {
           if (!job.id) {
@@ -75,12 +96,36 @@ export const useJobStateMachineMutations = ({
       }
       invalidateIdentities();
       onScanComplete?.(jobIds);
+      // Correlation must cover the whole batch: binding only to jobIds[0] left every other
+      // job's later sse.* / stream.done lines unjoinable to this submit (OBS-03, FEBT1-W2B-02).
+      const jobId = jobIds[0];
+      const batchLog = log.child({ jobIds, jobCount: jobIds.length, batchRunId: data.batchRunId });
+      const jobLog = jobId ? batchLog.child({ jobId }) : batchLog;
+      logJobEvent(jobLog, 'scan.submit', {
+        status: jobIds.length > 0 ? 'pending' : 'completed',
+        jobId,
+        done: 0,
+        total,
+        failedCount: 0,
+      });
+      // Every job in the batch gets its own correlation line so the later per-job
+      // sse.* / stream.done records can be joined back to this submit (OBS-03).
+      data.jobs.forEach((job) => {
+        if (!job.id) {
+          return;
+        }
+        batchLog.child({ jobId: job.id }).debug('scan.submit_job', {
+          batchRunId: data.batchRunId,
+          total: job.progress?.total ?? 0,
+        });
+      });
     },
     onError: (error) => {
-      if (!formatScanSubmissionError(error) && error instanceof Error) {
-        // Non-JSON proxy/HTTP error bodies must not reach the UI (E15-27-BR-11).
-        console.error('Scan submission failed', error);
-      }
+      log.error('Scan submission failed', classifiedLogFields(error));
+      logJobEvent(log, 'scan.submit', {
+        status: 'failed',
+        failedCount: 1,
+      });
       onScanError?.(resolveScanErrorMessage(error, __('Recognition job failed. Please try again.', 'alt-context')));
     },
   });
@@ -152,13 +197,26 @@ export const useJobStateMachineMutations = ({
       setIsCancellingScan(true);
     },
     onSuccess: () => {
+      const jobId = activeJobIds[0];
+      const jobLog = jobId ? log.child({ jobId }) : log;
+      logJobEvent(jobLog, 'scan.cancel', {
+        status: 'cancelled',
+        jobId,
+      });
       setIsWaitingForScanCompletion(false);
       clearActiveJobs();
       invalidateIdentities();
       onCancelComplete?.();
     },
     onError: (error) => {
-      console.error('Cancel failed', error);
+      const jobId = activeJobIds[0];
+      const jobLog = jobId ? log.child({ jobId }) : log;
+      jobLog.error('Cancel failed', classifiedLogFields(error));
+      logJobEvent(jobLog, 'scan.cancel', {
+        status: 'failed',
+        jobId,
+        failedCount: 1,
+      });
     },
     onSettled: () => {
       setIsCancellingScan(false);

@@ -264,6 +264,12 @@ describe('IdentityClusterList', () => {
   });
 
   afterEach(async () => {
+    // FEBT1-GATE05-RC-02: unmount FIRST. A test that timed out inside waitFor leaves a live
+    // act()/effect chain; settling its pending promises while the tree is still mounted is
+    // what poisoned every subsequent test in this file. Nothing may be rendered while the
+    // leftover deferreds resolve.
+    cleanup();
+
     // Cancel in-flight queries to prevent async leaks between tests
     if (activeQueryClient) {
       await activeQueryClient.cancelQueries();
@@ -278,8 +284,9 @@ describe('IdentityClusterList', () => {
       await vi.runAllTimersAsync();
       await Promise.resolve();
     });
+    // No deferred may survive into the next test even if the drain above threw.
+    findClusterDeferreds = [];
     vi.useRealTimers();
-    cleanup();
   });
 
   it('renders placeholder when no identities exist', async () => {
@@ -771,6 +778,14 @@ describe('IdentityClusterList', () => {
   });
 
   it('shows a friendly inline message when merge rejects a self-target request', async () => {
+    // FEBT1G-M-12: resolve the label lookup inside the test. Depending on the shared
+    // never-resolved default deferred made this test time out and, via the leaked
+    // act() chain, contaminate every test after it.
+    const findClusterByLabel = vi.fn<FindClusterByLabel>(async () => ({
+      id: 'target-cluster',
+      label: 'Existing Label',
+      identityCount: 1,
+    }));
     (api.mergeCluster as Mock).mockRejectedValueOnce(
       new Error(
         'Request to /recognition/clusters/cluster-1/merge failed (400): {"code":"invalid_target_cluster_id","message":"Source and target cluster IDs must differ."}',
@@ -789,7 +804,7 @@ describe('IdentityClusterList', () => {
     useClusterSuggestionsLoaderMock.mockReturnValue(
       loaderResultFrom({
         labelMatches: existingClusters,
-        findClusterByLabel: defaultFindClusterByLabel,
+        findClusterByLabel,
       }),
     );
 
@@ -820,11 +835,19 @@ describe('IdentityClusterList', () => {
       await runWithTimers(() => user.click(getSaveButton()));
     });
 
+    // The rejected merge must actually have been attempted — otherwise the alert below
+    // could come from any other failure path.
+    await waitFor(() =>
+      expect(api.mergeCluster).toHaveBeenCalledWith('cluster-1', 'target-cluster', 'Existing Label', expect.anything()),
+    );
     await waitFor(() => {
       expect(screen.getByRole('alert')).toHaveTextContent(
         'That group is already named Existing Label - nothing to merge.',
       );
     });
+    // FEBT1-GATE05-RC-02: this test must own its async completion, not hand an
+    // unresolved promise to afterEach.
+    expect(findClusterDeferreds).toHaveLength(0);
   });
 
   it('shows undo when merge completes and reverts on request', async () => {

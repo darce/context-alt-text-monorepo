@@ -23,9 +23,10 @@ host's default API-key profile (``~/.oci/config``) unless ``--oci-auth`` /
 acx-backend). No dynamic-group policy is provisioned here — operators must
 grant ``INSTANCE_POWER_ACTIONS`` for the GPU compartment.
 
-The fencing guard re-samples load after ``--fence-delay-seconds`` so a request
-that arrived in the decision→actuation gap cannot be reaped mid-flight.
-Default fence delay is 2.0s so two samples are meaningfully separated in time.
+The fencing guard re-samples load after ``--fence-delay-seconds`` and requires
+a mutable source to compare its writer-issued generation atomically with STOP.
+Sources without that end-to-end capability fail closed. The default delay is
+2.0s so the preliminary samples are meaningfully separated in time.
 """
 
 from __future__ import annotations
@@ -128,6 +129,18 @@ def _serialized_gpu_state_publish(
 
 class JobLoadSource(Protocol):
     def snapshot(self) -> JobLoadSnapshot: ...
+
+
+class AtomicStopFenceLoadSource(JobLoadSource, Protocol):
+    """Load source whose producer fencing covers validation through STOP."""
+
+    def fence_token(self) -> object: ...
+
+    def actuate_if_generation(
+        self,
+        expected_generation: object,
+        action: Callable[[], None],
+    ) -> bool: ...
 
 
 class InstanceStopActuator(Protocol):
@@ -409,17 +422,12 @@ class RunningSinceLeaseStore:
         path: Path = _DEFAULT_RUNNING_SINCE_PATH,
         now: Callable[[], datetime] | None = None,
         monotonic: Callable[[], float] | None = None,
+        boot_id: str | None = None,
         max_future_skew_seconds: float = _RUNNING_SINCE_FUTURE_SKEW_SECONDS,
     ) -> None:
         self.path = path
         self._now = now or (lambda: datetime.now(UTC))
-        self._persist_monotonic = now is None and monotonic is None
-        if monotonic is not None:
-            self._monotonic = monotonic
-        elif now is not None:
-            self._monotonic = lambda: self._utc_now().timestamp()
-        else:
-            self._monotonic = time.monotonic
+        self._monotonic = monotonic or time.monotonic
         if (
             isinstance(max_future_skew_seconds, bool)
             or not isinstance(max_future_skew_seconds, (int, float))
@@ -428,12 +436,13 @@ class RunningSinceLeaseStore:
         ):
             raise ValueError("max_future_skew_seconds must be finite and non-negative")
         self._max_future_skew_seconds = float(max_future_skew_seconds)
-        self._age_baselines: dict[str, tuple[datetime, int, float]] = {}
-        self._max_ages: dict[str, int] = {}
-        try:
-            boot_id = Path("/proc/sys/kernel/random/boot_id").read_text().strip()
-        except OSError:
-            boot_id = ""
+        if boot_id is None:
+            try:
+                boot_id = Path("/proc/sys/kernel/random/boot_id").read_text().strip()
+            except OSError:
+                boot_id = ""
+        elif not isinstance(boot_id, str) or not boot_id.strip():
+            raise ValueError("boot_id must be a non-blank string or None")
         self._boot_id = boot_id or None
 
     def _utc_now(self) -> datetime:
@@ -441,6 +450,17 @@ class RunningSinceLeaseStore:
         if value.tzinfo is None:
             return value.replace(tzinfo=UTC)
         return value.astimezone(UTC)
+
+    def _monotonic_now(self) -> float:
+        value = self._monotonic()
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(value)
+            or value < 0
+        ):
+            raise ValueError("monotonic clock must return finite non-negative seconds")
+        return float(value)
 
     @contextmanager
     def _locked_for_update(self) -> Iterator[None]:
@@ -488,26 +508,30 @@ class RunningSinceLeaseStore:
             logger.warning("%s; treating lease as expired", message)
             raise CorruptRunningSinceLeaseError(message)
         parsed = parsed.astimezone(UTC)
-        future_skew = (parsed - self._utc_now()).total_seconds()
-        if future_skew > self._max_future_skew_seconds:
-            message = (
-                "running-since timestamp is future-dated "
-                f"by {future_skew:.1f}s (allowance={self._max_future_skew_seconds:.1f}s): "
-                f"{self.path}"
-            )
-            logger.warning("%s; treating lease as expired", message)
-            raise CorruptRunningSinceLeaseError(message)
         monotonic_since = raw_record.get("monotonic_since")
-        boot_id = raw_record.get("boot_id")
-        if (monotonic_since is not None or boot_id is not None) and (
+        record_boot_id = raw_record.get("boot_id")
+        has_valid_monotonic_origin = not (
             isinstance(monotonic_since, bool)
             or not isinstance(monotonic_since, (int, float))
             or not math.isfinite(monotonic_since)
             or monotonic_since < 0
-            or not isinstance(boot_id, str)
-            or not boot_id.strip()
-        ):
-            message = f"running-since monotonic metadata is invalid: {self.path}"
+            or not isinstance(record_boot_id, str)
+            or not record_boot_id.strip()
+        )
+        if not has_valid_monotonic_origin or record_boot_id != self._boot_id:
+            future_skew = (parsed - self._utc_now()).total_seconds()
+            if future_skew > self._max_future_skew_seconds:
+                message = (
+                    "running-since timestamp is future-dated "
+                    f"by {future_skew:.1f}s (allowance={self._max_future_skew_seconds:.1f}s): "
+                    f"{self.path}"
+                )
+                logger.warning("%s; treating lease as expired", message)
+                raise CorruptRunningSinceLeaseError(message)
+            message = (
+                "running-since monotonic origin is missing or belongs to a "
+                f"different boot: {self.path}"
+            )
             logger.warning("%s; treating lease as expired", message)
             raise CorruptRunningSinceLeaseError(message)
         return RunningSinceRecord(
@@ -515,21 +539,21 @@ class RunningSinceLeaseStore:
             since=parsed,
             source=source,
             monotonic_since=(None if monotonic_since is None else float(monotonic_since)),
-            boot_id=boot_id,
+            boot_id=record_boot_id,
         )
 
     def write(self, instance_id: str, *, source: str) -> RunningSinceRecord:
         if source not in self._SOURCES:
             raise ValueError(f"unsupported running-since source: {source}")
         now = self._utc_now()
-        monotonic_now = self._monotonic()
+        monotonic_now = self._monotonic_now()
         with self._locked_for_update():
             instances = self._read_instances_for_update()
             record_payload: dict[str, str | float] = {
                 "since": now.isoformat().replace("+00:00", "Z"),
                 "source": source,
             }
-            if self._persist_monotonic and self._boot_id is not None:
+            if self._boot_id is not None:
                 record_payload.update(
                     monotonic_since=monotonic_now,
                     boot_id=self._boot_id,
@@ -542,14 +566,12 @@ class RunningSinceLeaseStore:
             temporary = self.path.with_name(f".{self.path.name}.tmp")
             temporary.write_text(json.dumps(payload, sort_keys=True) + "\n")
             temporary.replace(self.path)
-        self._age_baselines[instance_id] = (now, 0, monotonic_now)
-        self._max_ages[instance_id] = 0
         return RunningSinceRecord(
             instance_id=instance_id,
             since=now,
             source=source,
-            monotonic_since=(monotonic_now if self._persist_monotonic else None),
-            boot_id=(self._boot_id if self._persist_monotonic else None),
+            monotonic_since=(monotonic_now if self._boot_id is not None else None),
+            boot_id=self._boot_id,
         )
 
     def record_start(self, instance_id: str) -> RunningSinceRecord:
@@ -569,8 +591,6 @@ class RunningSinceLeaseStore:
             del instances[instance_id]
             if not instances:
                 self.path.unlink(missing_ok=True)
-                self._age_baselines.pop(instance_id, None)
-                self._max_ages.pop(instance_id, None)
                 return
             payload = {
                 "schema_version": self._SCHEMA_VERSION,
@@ -579,8 +599,6 @@ class RunningSinceLeaseStore:
             temporary = self.path.with_name(f".{self.path.name}.tmp")
             temporary.write_text(json.dumps(payload, sort_keys=True) + "\n")
             temporary.replace(self.path)
-        self._age_baselines.pop(instance_id, None)
-        self._max_ages.pop(instance_id, None)
 
     def _read_instances_for_update(self) -> dict[str, dict[str, object]]:
         try:
@@ -599,30 +617,16 @@ class RunningSinceLeaseStore:
         return dict(payload["instances"])
 
     def age_seconds(self, record: RunningSinceRecord) -> int:
-        monotonic_now = self._monotonic()
-        if record.boot_id == self._boot_id and record.monotonic_since is not None:
-            if monotonic_now < record.monotonic_since:
-                raise CorruptRunningSinceLeaseError(
-                    f"monotonic lease origin for {record.instance_id} is in the future; treating lease as expired"
-                )
-            return int(monotonic_now - record.monotonic_since)
-        baseline = self._age_baselines.get(record.instance_id)
-        if baseline is not None and baseline[0] == record.since:
-            _, baseline_age, baseline_monotonic = baseline
-            age = baseline_age + max(0, int(monotonic_now - baseline_monotonic))
-            age = max(age, self._max_ages.get(record.instance_id, 0))
-            self._max_ages[record.instance_id] = age
-            return age
-
-        wall_age = (self._utc_now() - record.since).total_seconds()
-        if wall_age < -self._max_future_skew_seconds:
+        monotonic_now = self._monotonic_now()
+        if record.boot_id != self._boot_id or record.monotonic_since is None:
             raise CorruptRunningSinceLeaseError(
-                f"running-since timestamp for {record.instance_id} is future-dated; treating lease as expired"
+                f"monotonic lease origin for {record.instance_id} is unavailable; treating lease as expired"
             )
-        age = max(0, int(wall_age))
-        self._age_baselines[record.instance_id] = (record.since, age, monotonic_now)
-        self._max_ages[record.instance_id] = age
-        return age
+        if monotonic_now < record.monotonic_since:
+            raise CorruptRunningSinceLeaseError(
+                f"monotonic lease origin for {record.instance_id} is in the future; treating lease as expired"
+            )
+        return int(monotonic_now - record.monotonic_since)
 
 
 def fetch_instance_idle_seconds(
@@ -677,9 +681,9 @@ class ReapCycleResult:
     actuated: list[tuple[str, str]]
     fenced_off: bool
     errors: list[str]
-    # STOPs forced by the max-lease cost cap, which bypasses the load fence
-    # (GPUW-1). Reported separately so an operator can tell "the queue drained"
-    # from "the backstop fired because the load signal was broken".
+    # STOPs forced by the max-lease cost cap after the load boundary is known to
+    # be trustworthy. Reported separately so an operator can distinguish the
+    # queue draining from the cost backstop firing.
     lease_expired: list[tuple[str, str]] = field(default_factory=list)
     snapshot_persisted: bool = True
 
@@ -784,6 +788,41 @@ def _validated_stop_observation(
         logger.warning("load generation advanced after STOP decision; cancelling STOP")
         return None
     return load
+
+
+def _actuate_stop_with_generation_fence(
+    load_source: JobLoadSource,
+    actuator: InstanceStopActuator,
+    *,
+    instance_id: str,
+    expected_generation: object,
+) -> tuple[bool, bool]:
+    """Actuate only while a writer-coordinated generation remains current.
+
+    A consumer-side stat/read/stat check cannot close the final process-boundary
+    race. Mutable production sources must therefore supply compare-and-act
+    semantics coordinated with their writer. Static test sources are immutable
+    by construction and need no such handshake.
+    """
+    if isinstance(load_source, StaticJobLoadSource):
+        actuator.stop_instance(instance_id)
+        return True, True
+    compare_and_act = getattr(load_source, "actuate_if_generation", None)
+    if not callable(compare_and_act):
+        logger.error(
+            "load source has no writer-coordinated generation fence; cancelling STOP for %s",
+            instance_id,
+        )
+        return False, False
+    return (
+        bool(
+            compare_and_act(
+                expected_generation,
+                lambda: actuator.stop_instance(instance_id),
+            )
+        ),
+        True,
+    )
 
 
 def _snapshot_instance_id(instances: list[GpuInstance]) -> str | None:
@@ -918,8 +957,9 @@ def _run_reap_cycle(
 
     Per-instance STOP failures are collected; the loop continues (rg-007).
 
-    The max-lease cost cap runs first and is not fenced: it exists precisely for
-    the case where the load signal cannot be trusted (GPUW-1).
+    The max-lease cost cap may override trustworthy busy evidence, but it never
+    STOPs while the load boundary is untrustworthy. Otherwise the same evidence
+    would refuse the compensating START and strand the GPU unavailable.
     """
     lease_expired: list[tuple[str, str]] = []
     lease_errors: list[str] = []
@@ -930,10 +970,20 @@ def _run_reap_cycle(
             use_recorded_age=use_recorded_lease_age,
             dry_run=dry_run,
         )
+    load = load_source.snapshot()
+    if not isinstance(load, JobLoadSnapshot) or load.untrustworthy:
+        logger.error("load snapshot untrustworthy; refusing STOP (fail closed)")
+        return ReapCycleResult(
+            decided=[],
+            actuated=[],
+            fenced_off=True,
+            errors=[*lease_errors, "load snapshot untrustworthy; refusing STOP"],
+        )
+
     forced = controller.lease_expired_instances(instances, max_lease_seconds=max_lease_seconds)
     for action, instance_id in forced:
         logger.warning(
-            "max lease %ss exceeded; forcing STOP regardless of reported load: %s",
+            "max lease %ss exceeded; forcing STOP despite trustworthy busy load: %s",
             max_lease_seconds,
             instance_id,
         )
@@ -959,16 +1009,6 @@ def _run_reap_cycle(
     if forced_ids:
         instances = [i for i in instances if i.instance_id not in forced_ids]
 
-    load = load_source.snapshot()
-    if not isinstance(load, JobLoadSnapshot) or load.untrustworthy:
-        logger.error("load snapshot untrustworthy; refusing STOP (fail closed)")
-        return ReapCycleResult(
-            decided=[],
-            actuated=[],
-            fenced_off=True,
-            errors=[*lease_errors, "load snapshot untrustworthy; refusing STOP"],
-            lease_expired=lease_expired,
-        )
     decided = controller.reap_idle_instances(
         instances,
         queue_depth=load.queue_depth,
@@ -1043,7 +1083,24 @@ def _run_reap_cycle(
                 lease_expired=lease_expired,
             )
         try:
-            actuator.stop_instance(instance_id)
+            stopped, fence_supported = _actuate_stop_with_generation_fence(
+                load_source,
+                actuator,
+                instance_id=instance_id,
+                expected_generation=pre_stop_generation,
+            )
+            if not stopped:
+                logger.info("atomic generation fence cancelled STOP for %s", instance_id)
+                fence_errors = [] if fence_supported else [
+                    f"{instance_id}: writer-coordinated STOP generation fence unavailable"
+                ]
+                return ReapCycleResult(
+                    decided=decided,
+                    actuated=actuated,
+                    fenced_off=True,
+                    errors=[*lease_errors, *errors, *fence_errors],
+                    lease_expired=lease_expired,
+                )
             actuated.append((action, instance_id))
         except subprocess.SubprocessError as exc:
             if _reconcile_ambiguous_action(
@@ -1360,9 +1417,9 @@ def _build_parser() -> argparse.ArgumentParser:
         type=int,
         default=3600,
         help=(
-            "Cost backstop: force STOP of a RUNNING instance this old regardless "
-            "of reported load, bypassing the fence. Every other path fails closed "
-            "toward busy, so a dead load writer otherwise runs an A10 forever. "
+            "Cost backstop: force STOP of a RUNNING instance this old despite "
+            "trustworthy reported work. An untrustworthy load boundary still "
+            "fails closed so STOP cannot strand a GPU that START would refuse. "
             "0 disables (not recommended). Default 3600 (1h)."
         ),
     )

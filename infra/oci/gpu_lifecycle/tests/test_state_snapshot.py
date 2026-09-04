@@ -117,7 +117,7 @@ def test_malformed_written_at_is_not_preserved(
     ) is None
 
 
-def test_fresh_ready_snapshot_is_preserved_for_running_instance(
+def test_fresh_ready_snapshot_is_not_reused_without_current_probe(
     tmp_path: Path,
 ) -> None:
     path = tmp_path / "gpu-state.json"
@@ -130,7 +130,7 @@ def test_fresh_ready_snapshot_is_preserved_for_running_instance(
     assert previous_state is GpuLifecycleState.READY
     assert state_for_instances(
         ["RUNNING"], previous_state=previous_state
-    ) is GpuLifecycleState.READY
+    ) is GpuLifecycleState.WARMING
 
 
 def test_fresh_snapshot_for_different_instance_is_not_preserved(
@@ -234,6 +234,38 @@ def test_degraded_does_not_latch_across_cycles() -> None:
     ) is GpuLifecycleState.WARMING
 
 
+def test_transient_reap_error_decays_on_the_next_healthy_cycle(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "gpu-state.json"
+
+    class FailingStop:
+        def stop_instance(self, instance_id: str) -> None:
+            raise RuntimeError(f"transient STOP failure for {instance_id}")
+
+    first = run_reap_cycle(
+        controller=GpuLifecycleController(idle_seconds=60),
+        instances=[GpuInstance("ocid1.gpu", "RUNNING", 90)],
+        load_source=StaticJobLoadSource(queue_depth=0, in_flight=0),
+        actuator=FailingStop(),
+        fence_delay_seconds=0.0,
+        gpu_state_path=path,
+    )
+    assert first.errors
+    assert json.loads(path.read_text())["state"] == "degraded"
+
+    second = run_reap_cycle(
+        controller=GpuLifecycleController(idle_seconds=60),
+        instances=[GpuInstance("ocid1.gpu", "RUNNING", 0)],
+        load_source=StaticJobLoadSource(queue_depth=1, in_flight=0),
+        actuator=RecordingActuator(),
+        fence_delay_seconds=0.0,
+        gpu_state_path=path,
+    )
+    assert second.errors == []
+    assert json.loads(path.read_text())["state"] == "warming"
+
+
 def test_degraded_does_not_displace_ready_observation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -253,11 +285,11 @@ def test_degraded_does_not_displace_ready_observation(
     ) is GpuLifecycleState.READY
 
 
-def test_ready_state_is_preserved_for_warming_observation() -> None:
+def test_ready_state_is_not_preserved_for_warming_observation() -> None:
     assert state_for_instances(
         ["RUNNING"],
         previous_state=GpuLifecycleState.READY,
-    ) is GpuLifecycleState.READY
+    ) is GpuLifecycleState.WARMING
 
 
 def test_writer_emits_documented_metadata_and_tracks_state_change_time(
@@ -574,7 +606,7 @@ def test_reap_cycle_writes_stopped_after_stop(
     assert json.loads(path.read_text())["state"] == "stopped"
 
 
-def test_reap_cycle_refreshes_ready_without_demoting_it(
+def test_reap_cycle_revokes_ready_without_a_current_probe(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     path = tmp_path / "gpu-state.json"
@@ -595,7 +627,7 @@ def test_reap_cycle_refreshes_ready_without_demoting_it(
     )
 
     payload = json.loads(path.read_text())
-    assert payload["state"] == "ready"
+    assert payload["state"] == "warming"
     assert payload["written_at"] >= previous_written_at
 
 
@@ -714,35 +746,20 @@ def test_snapshot_publish_locks_the_group_writable_sidecar_inode(
     ]
 
 
-def test_reap_publish_cannot_be_overwritten_by_stale_start_read(
+def test_reap_publish_cannot_be_overwritten_by_stale_start_probe(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     path = tmp_path / "gpu-state.json"
     path.write_text('{"state":"ready","written_at":1.0}\n')
     monkeypatch.setenv("ACX_GPU_STATE_PATH", str(path))
-    start_has_read = threading.Event()
+    start_has_probed = threading.Event()
     release_start = threading.Event()
     reap_finished = threading.Event()
-    real_read = read_previous_gpu_state
-
-    def pause_start_after_read(
-        snapshot_path: str | Path | None = None,
-        *,
-        expected_instance_id: str | None,
-    ) -> GpuLifecycleState | None:
-        previous = real_read(
-            snapshot_path,
-            expected_instance_id=expected_instance_id,
-        )
-        if threading.current_thread().name == "stale-start-cycle":
-            start_has_read.set()
+    class PausingReady:
+        def probe(self, instance_id: str) -> ProbeSample:
+            start_has_probed.set()
             assert release_start.wait(timeout=2.0)
-        return previous
-
-    monkeypatch.setattr(
-        "infra.oci.gpu_lifecycle.reaper.read_previous_gpu_state",
-        pause_start_after_read,
-    )
+            return ProbeSample(instance_id=instance_id, status=ProbeStatus.READY)
 
     start_thread = threading.Thread(
         name="stale-start-cycle",
@@ -752,6 +769,10 @@ def test_reap_publish_cannot_be_overwritten_by_stale_start_read(
             "instances": [GpuInstance("ocid1.gpu", "RUNNING", 0)],
             "load_source": StaticJobLoadSource(queue_depth=0, in_flight=0),
             "actuator": RecordingActuator(),
+            "probe": PausingReady(),
+            "readiness_wait": WarmReadinessWait(
+                max_cycles=1, stall_cycles=2, sleep_seconds=0.0
+            ),
             "gpu_state_path": path,
         },
     )
@@ -769,7 +790,7 @@ def test_reap_publish_cannot_be_overwritten_by_stale_start_read(
 
     reap_thread = threading.Thread(name="stopping-reap-cycle", target=reap)
     start_thread.start()
-    assert start_has_read.wait(timeout=2.0)
+    assert start_has_probed.wait(timeout=2.0)
     reap_thread.start()
     reap_finished.wait(timeout=0.25)
     release_start.set()

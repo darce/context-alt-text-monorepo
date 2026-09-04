@@ -8,9 +8,6 @@ import time
 from pathlib import Path
 
 from infra.oci.gpu_lifecycle import reaper as reaper_mod
-from infra.oci.gpu_lifecycle.state_snapshot import (
-    DEFAULT_PREVIOUS_GPU_STATE_MAX_AGE_SECONDS,
-)
 from infra.oci.gpu_lifecycle.controller import (
     GpuInstance,
     GpuLifecycleController,
@@ -22,6 +19,9 @@ from infra.oci.gpu_lifecycle.reaper import (
     StaticJobLoadSource,
     _build_parser,
     run_reap_cycle,
+)
+from infra.oci.gpu_lifecycle.state_snapshot import (
+    DEFAULT_PREVIOUS_GPU_STATE_MAX_AGE_SECONDS,
 )
 
 
@@ -257,8 +257,9 @@ def test_malformed_batch_flag_is_busy_fail_closed(tmp_path: Path) -> None:
     assert snap.has_work is True
 
 
-def test_absent_batch_key_idle_allows_stop(tmp_path: Path) -> None:
-    """Absent batch_in_progress is not protection; idle snapshot may STOP."""
+def test_mutable_json_source_without_atomic_writer_fence_refuses_stop(
+    tmp_path: Path,
+) -> None:
     path = tmp_path / "load.json"
     path.write_text(json.dumps({"queue_depth": 0, "in_flight": 0}))
     snap = JsonFileJobLoadSource(path=path).snapshot()
@@ -280,8 +281,78 @@ def test_absent_batch_key_idle_allows_stop(tmp_path: Path) -> None:
         fence_delay_seconds=0.0,
     )
     assert result.decided == [("STOP", "ocid1.instance.oc1..gpu")]
-    assert result.actuated == [("STOP", "ocid1.instance.oc1..gpu")]
-    assert actuator.stopped == ["ocid1.instance.oc1..gpu"]
+    assert result.actuated == []
+    assert result.fenced_off is True
+    assert "generation fence unavailable" in result.errors[-1]
+    assert actuator.stopped == []
+
+
+def test_writer_validated_generation_cancels_stop_after_final_sample() -> None:
+    class AtomicGenerationSource:
+        def __init__(self) -> None:
+            self.generation = 1
+            self.load = JobLoadSnapshot(queue_depth=0, in_flight=0)
+
+        def snapshot(self) -> JobLoadSnapshot:
+            return self.load
+
+        def fence_token(self) -> int:
+            return self.generation
+
+        def actuate_if_generation(self, expected: object, action) -> bool:
+            # A request arrives after the consumer's final observation but
+            # before compare-and-act enters the writer-coordinated section.
+            self.generation += 1
+            self.load = JobLoadSnapshot(queue_depth=1, in_flight=0)
+            if self.generation != expected:
+                return False
+            action()
+            return True
+
+    source = AtomicGenerationSource()
+    actuator = RecordingActuator()
+    result = run_reap_cycle(
+        controller=GpuLifecycleController(idle_seconds=60),
+        instances=[GpuInstance("ocid1.gpu", "RUNNING", 90)],
+        load_source=source,
+        actuator=actuator,
+        fence_delay_seconds=0.0,
+    )
+
+    assert result.decided == [("STOP", "ocid1.gpu")]
+    assert result.actuated == []
+    assert result.fenced_off is True
+    assert actuator.stopped == []
+
+
+def test_writer_validated_generation_permits_atomic_stop() -> None:
+    class AtomicGenerationSource:
+        generation = 1
+
+        def snapshot(self) -> JobLoadSnapshot:
+            return JobLoadSnapshot(queue_depth=0, in_flight=0)
+
+        def fence_token(self) -> int:
+            return self.generation
+
+        def actuate_if_generation(self, expected: object, action) -> bool:
+            if self.generation != expected:
+                return False
+            action()
+            return True
+
+    actuator = RecordingActuator()
+    result = run_reap_cycle(
+        controller=GpuLifecycleController(idle_seconds=60),
+        instances=[GpuInstance("ocid1.gpu", "RUNNING", 90)],
+        load_source=AtomicGenerationSource(),
+        actuator=actuator,
+        fence_delay_seconds=0.0,
+    )
+
+    assert result.actuated == [("STOP", "ocid1.gpu")]
+    assert result.fenced_off is False
+    assert actuator.stopped == ["ocid1.gpu"]
 
 
 def test_absent_batch_key_still_fences_on_in_flight(tmp_path: Path) -> None:

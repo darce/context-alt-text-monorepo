@@ -16,7 +16,7 @@ Predecessor finding: `DEMO-UX-1-GPU-01` (open, db id 10035). Reserved wire field
 
 One writer (DATA-14): the lifecycle unit owns `gpu-state.json`; the API only reads. `tier` on each item stays `provisional_cpu | final_gpu`.
 
-Presentation boundary: absent, malformed, stale, or explicit `unknown` state shows no GPU tier chip, including a transition from a previously reported state. The chip appears only for `stopped | starting | warming | ready | degraded` so idle telemetry noise never masquerades as a reported tier.
+Presentation boundary: while a describe run is relevant, absent, malformed, stale, or explicit `unknown` telemetry renders the calm `GPU tier: not reported` state and explains that CPU describing can continue. The same mounted polite live region swaps content for `stopped | starting | warming | ready | degraded`; the zone is hidden only when there is no relevant run, so idle telemetry noise never masquerades as run state.
 
 ## Screen 1 — Workbench, GPU cold, before commit (INT-07 preview, INT-06 label, CARD-15)
 
@@ -94,13 +94,13 @@ Not `role=alert`: the run *succeeded* at the CPU tier; alert is reserved for a l
 
 Implementation seam: a `useGpuStateToasts(run)` hook keyed on `(run_id, gpu_state)` edge transitions, mounted at the SPA shell (not inside `BulkDescribeProgress`) so it survives navigation; `phasePresentation.ts` strategy-map gains `gpu_state` rows (REF-02, no switch); `SYNC_VOCABULARY` gains the say/don't-say strings (NAV-13: say "GPU tier", "CPU draft", "final"; don't say "burst host", "llama", "provisional" in operator copy).
 
-## Canon critique of the current build (IDs verified against heuristics-canon-research 2026-09-02)
+## Canon critique and implementation status (IDs verified against heuristics-canon-research 2026-09-02)
 
-| rule / card | finding against current code | seam |
+| rule / card | current implementation status | seam |
 | --- | --- | --- |
-| RLSE-04 undesigned state | `gpu_state: null` both sides; warming/stopped/degraded have no designed UI state | `describeApi.ts:250`, `DescribeRunResponse` |
+| RLSE-04 undesigned state | `unknown`, `stopped`, `starting`, `warming`, `ready`, and `degraded` have designed chip states; missing or malformed telemetry narrows to visible `unknown` during a relevant run | `useDescribeRunProgress`, `GpuTierStatus` |
 | INT-08 / CARD-09 | cold start ≈100 s renders as a stalled 0 % bar; no bound, no cancel affordance tied to warm-up | `BulkDescribeProgress` |
-| INT-10 status–predict–stop | operator cannot see GPU state, predict when finals arrive, or stop the GPU | chip zone missing |
+| INT-10 status–predict–stop | the mounted chip zone reports GPU state and CPU/final consequences while the existing run controls provide cancellation | `z-gpu-tier-chip`, `BulkDescribeCta` |
 | HAI-05 / HAI-08 / PROV-06 | tier (`provisional_cpu`/`final_gpu`) never reaches the UI; drafts and finals look identical | `DescribeRunApplyView.tsx`, PHP proxy |
 | INT-07 / CARD-15 | CTA does not disclose that clicking starts a $2/hr instance | `z-bulk-cta` label |
 | OBS-08 / RLSE-05 / CARD-07 | lifecycle: missing load snapshot → reaper exits 1 silently every 2 min; only max-lease STOP acts, computed from `time-created` (July) | `reaper.py:355-360`, `controller.py:127` |

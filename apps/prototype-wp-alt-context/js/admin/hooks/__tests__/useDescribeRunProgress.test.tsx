@@ -1,4 +1,5 @@
 import React from 'react';
+import { readFileSync } from 'node:fs';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, render, renderHook, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -19,6 +20,19 @@ vi.mock('../../api/describeApi', async (importOriginal) => {
 });
 
 const fetchBulkDescribeRunMock = vi.mocked(describeApi.fetchBulkDescribeRun);
+const mediaSelectionStyles = readFileSync(
+  new URL('../../styles/components/_media-selection.scss', import.meta.url),
+  'utf8',
+);
+const gpuUxMap = JSON.parse(
+  readFileSync(new URL('../../../../docs/ux-maps/describe-gpu-tier.uxmap.json', import.meta.url), 'utf8'),
+) as {
+  screens: Array<{ id: string; zones: Array<{ id: string; states: string[] }> }>;
+};
+const gpuUxMapMarkdown = readFileSync(
+  new URL('../../../../docs/ux-maps/describe-gpu-tier.uxmap.md', import.meta.url),
+  'utf8',
+);
 
 const runResponse = (overrides: Partial<DescribeRunResponse> = {}): DescribeRunResponse => ({
   tenant_id: 'tenant',
@@ -129,38 +143,69 @@ describe('useDescribeRunProgress', () => {
 
     const { result } = renderHook(() => useDescribeRunProgress('run-1'), { wrapper });
 
-    await waitFor(() => expect(result.current.gpuState).toBe(expected));
+    // `status` is null before React Query commits the response. Awaiting it first
+    // prevents UNKNOWN cases from passing against the hook's initial value.
+    await waitFor(() => expect(result.current.status).toBe('running'));
+    expect(result.current.gpuState).toBe(expected);
     expect(fetchBulkDescribeRunMock).toHaveBeenCalledOnce();
   });
 
-  it('hides GpuTierStatus when the API reports a malformed state', async () => {
-    fetchBulkDescribeRunMock.mockResolvedValue(runResponse({ status: 'running', gpu_state: 'stopping' }));
+  it('renders not-reported after a known state receives malformed GPU telemetry', async () => {
+    fetchBulkDescribeRunMock
+      .mockResolvedValueOnce(runResponse({ status: 'running', gpu_state: GPU_STATE.READY }))
+      .mockResolvedValueOnce(runResponse({ status: 'running', gpu_state: 'stopping' }));
 
     const Harness = (): React.JSX.Element => {
       const progress = useDescribeRunProgress('run-1');
-      return <GpuTierStatus gpuState={progress.gpuState ?? null} cpuDraftCount={0} />;
+      return (
+        <>
+          <GpuTierStatus gpuState={progress.gpuState ?? null} cpuDraftCount={0} />
+          <button type="button" onClick={progress.retry}>
+            Refresh status
+          </button>
+        </>
+      );
     };
 
     render(<Harness />, { wrapper });
 
-    await waitFor(() => expect(fetchBulkDescribeRunMock).toHaveBeenCalledOnce());
-    expect(screen.queryByRole('status')).not.toBeInTheDocument();
+    await screen.findByRole('status', { name: 'GPU tier: ready' });
+    act(() => screen.getByRole('button', { name: 'Refresh status' }).click());
+
+    expect(await screen.findByRole('status', { name: 'GPU tier: not reported' })).toHaveTextContent(
+      'GPU tier not reported. Describing can still continue on CPU.',
+    );
+    expect(fetchBulkDescribeRunMock).toHaveBeenCalledTimes(2);
   });
 
-  it('hides GpuTierStatus when the API omits gpu_state', async () => {
+  it('renders not-reported after a known state receives an omitted gpu_state', async () => {
     const responseWithoutGpuState = runResponse({ status: 'running' });
     delete (responseWithoutGpuState as Partial<DescribeRunResponse>).gpu_state;
-    fetchBulkDescribeRunMock.mockResolvedValue(responseWithoutGpuState);
+    fetchBulkDescribeRunMock
+      .mockResolvedValueOnce(runResponse({ status: 'running', gpu_state: GPU_STATE.READY }))
+      .mockResolvedValueOnce(responseWithoutGpuState);
 
     const Harness = (): React.JSX.Element => {
       const progress = useDescribeRunProgress('run-1');
-      return <GpuTierStatus gpuState={progress.gpuState ?? null} cpuDraftCount={0} />;
+      return (
+        <>
+          <GpuTierStatus gpuState={progress.gpuState ?? null} cpuDraftCount={0} />
+          <button type="button" onClick={progress.retry}>
+            Refresh status
+          </button>
+        </>
+      );
     };
 
     render(<Harness />, { wrapper });
 
-    await waitFor(() => expect(fetchBulkDescribeRunMock).toHaveBeenCalledOnce());
-    expect(screen.queryByRole('status')).not.toBeInTheDocument();
+    await screen.findByRole('status', { name: 'GPU tier: ready' });
+    act(() => screen.getByRole('button', { name: 'Refresh status' }).click());
+
+    expect(await screen.findByRole('status', { name: 'GPU tier: not reported' })).toHaveTextContent(
+      'GPU tier not reported. Describing can still continue on CPU.',
+    );
+    expect(fetchBulkDescribeRunMock).toHaveBeenCalledTimes(2);
   });
 
   it.each([
@@ -175,14 +220,59 @@ describe('useDescribeRunProgress', () => {
     expect(screen.getByRole('status', { name: accessibleName })).toHaveAttribute('data-gpu-state', gpuState);
   });
 
-  it('hides the chip when a previously known GPU state transitions to unknown', () => {
+  it('renders icon-and-text not-reported status while a run is relevant', () => {
+    render(<GpuTierStatus gpuState={GPU_STATE.UNKNOWN} cpuDraftCount={0} />);
+
+    const status = screen.getByRole('status', { name: 'GPU tier: not reported' });
+    expect(status).toHaveTextContent('GPU tier not reported. Describing can still continue on CPU.');
+    expect(status.querySelector('svg')).toBeInTheDocument();
+  });
+
+  it('announces not-reported in the mounted live region when a known state becomes unknown', () => {
     const { rerender } = render(<GpuTierStatus gpuState={GPU_STATE.READY} cpuDraftCount={0} />);
 
-    expect(screen.getByRole('status', { name: 'GPU tier: ready' })).toBeInTheDocument();
+    const liveRegion = screen.getByRole('status', { name: 'GPU tier: ready' });
 
     rerender(<GpuTierStatus gpuState={GPU_STATE.UNKNOWN} cpuDraftCount={0} />);
 
+    const updatedLiveRegion = screen.getByRole('status', { name: 'GPU tier: not reported' });
+    expect(updatedLiveRegion).toBe(liveRegion);
+    expect(updatedLiveRegion).toHaveAttribute('aria-atomic', 'true');
+    expect(updatedLiveRegion).toHaveTextContent('GPU tier not reported. Describing can still continue on CPU.');
+  });
+
+  it('renders the not-reported presentation for a direct legacy null GPU state', () => {
+    render(<GpuTierStatus gpuState={null} cpuDraftCount={0} />);
+
+    expect(screen.getByRole('status', { name: 'GPU tier: not reported' })).toHaveAttribute(
+      'data-gpu-state',
+      GPU_STATE.UNKNOWN,
+    );
+  });
+
+  it('hides GPU status only when there is no relevant run', () => {
+    render(<GpuTierStatus gpuState={GPU_STATE.UNKNOWN} cpuDraftCount={0} isRunRelevant={false} />);
+
     expect(screen.queryByRole('status')).not.toBeInTheDocument();
+  });
+
+  it('reserves a tokenized block-size slot for GPU status changes', () => {
+    render(<GpuTierStatus gpuState={GPU_STATE.READY} cpuDraftCount={0} />);
+
+    expect(screen.getByRole('status')).toHaveClass('acx-media-selection__gpu-tier-status');
+    expect(mediaSelectionStyles).toMatch(
+      /&__gpu-tier-status\s*{[^}]*min-block-size:\s*var\(--acx-space-\d+\)/s,
+    );
+  });
+
+  it('keeps the GPU UX-map JSON and rendered contract aligned on visible unknown', () => {
+    const workbenchScreen = gpuUxMap.screens.find((candidate) => candidate.id === 'workbench-media-selection');
+    const gpuZone = workbenchScreen?.zones.find((candidate) => candidate.id === 'z-gpu-tier-chip');
+
+    expect(gpuZone?.states).toEqual(expect.arrayContaining(['hidden-no-run', 'unknown']));
+    expect(gpuZone?.states).not.toContain('hidden-unknown');
+    expect(gpuUxMapMarkdown).toContain('explicit `unknown` telemetry renders the calm `GPU tier: not reported` state');
+    expect(gpuUxMapMarkdown).toContain('the zone is hidden only when there is no relevant run');
   });
 
   it('consumes backend eta_seconds verbatim and derives progressFraction', async () => {

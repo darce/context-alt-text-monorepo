@@ -4,9 +4,13 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from pathlib import Path
 
 from infra.oci.gpu_lifecycle import reaper as reaper_mod
+from infra.oci.gpu_lifecycle.state_snapshot import (
+    DEFAULT_PREVIOUS_GPU_STATE_MAX_AGE_SECONDS,
+)
 from infra.oci.gpu_lifecycle.controller import (
     GpuInstance,
     GpuLifecycleController,
@@ -90,7 +94,14 @@ def test_run_reap_cycle_never_stops_fenced_batch() -> None:
 
 def test_partial_stop_publishes_state_of_still_running_instance(tmp_path: Path) -> None:
     path = tmp_path / "gpu-state.json"
-    path.write_text('{"state":"ready","written_at":1.0}\n', encoding="utf-8")
+    # A FRESH prior snapshot. read_previous_gpu_state fails closed on stale
+    # evidence, so an ancient written_at would quietly convert this into a test
+    # of the stale path rather than of partial-stop reduction. The stale path
+    # has its own test directly below.
+    path.write_text(
+        json.dumps({"state": "ready", "written_at": time.time()}) + "\n",
+        encoding="utf-8",
+    )
     idle = GpuInstance("ocid1.idle", "RUNNING", 90)
     busy = GpuInstance("ocid1.busy", "RUNNING", 0)
     actuator = RecordingActuator()
@@ -113,6 +124,42 @@ def test_partial_stop_publishes_state_of_still_running_instance(tmp_path: Path) 
         "reason": None,
         "since": 0,
     }
+    # The defect this test exists for: a partial stop must never publish
+    # STOPPED while another instance is still RUNNING.
+    assert _snapshot(path)["state"] != "stopped"
+
+
+def test_partial_stop_with_stale_previous_state_degrades_instead_of_reusing(
+    tmp_path: Path,
+) -> None:
+    """A stale prior snapshot must not be reused, and must not become STOPPED."""
+    path = tmp_path / "gpu-state.json"
+    stale_written_at = time.time() - (
+        DEFAULT_PREVIOUS_GPU_STATE_MAX_AGE_SECONDS + 60.0
+    )
+    path.write_text(
+        json.dumps({"state": "ready", "written_at": stale_written_at}) + "\n",
+        encoding="utf-8",
+    )
+    idle = GpuInstance("ocid1.idle", "RUNNING", 90)
+    busy = GpuInstance("ocid1.busy", "RUNNING", 0)
+    actuator = RecordingActuator()
+
+    result = run_reap_cycle(
+        controller=GpuLifecycleController(idle_seconds=60),
+        instances=[idle, busy],
+        load_source=StaticJobLoadSource(queue_depth=0, in_flight=0),
+        actuator=actuator,
+        fence_delay_seconds=0.0,
+        gpu_state_path=path,
+    )
+
+    assert result.actuated == [("STOP", "ocid1.idle")]
+    published = _snapshot(path)
+    # Stale readiness evidence is discarded rather than republished as ready.
+    assert published["state"] == "warming"
+    # And the partial-stop guarantee still holds on the stale path.
+    assert published["state"] != "stopped"
 
 
 def test_failed_stop_remains_in_full_state_reduction(

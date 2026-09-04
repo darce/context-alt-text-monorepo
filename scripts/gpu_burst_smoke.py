@@ -130,6 +130,14 @@ class SmokeTerminated(KeyboardInterrupt):
     exit route SIGINT already takes: no ``except SmokeFailure`` swallows it, and
     the single ``finally`` STOP in :func:`run_smoke` stays the one writer of the
     stop action.
+
+    WBUX6-W5-03, deliberate: this propagates past ``_write_evidence``, so a
+    signal-terminated run emits NO evidence artifact. A partial run must not
+    leave a file that reads as a verdict. The observable substitutes are the
+    compensating STOP, the ``TERMINATED:`` stderr line, and the ``128+signum``
+    exit status -- so the run is not silent either (OBS-08 silence is not
+    success, ~/Development/heuristics-canon-research/lexicons/engineering.md:478).
+    Guarded by ``test_sigterm_unwinds_into_the_compensating_stop``.
     """
 
     def __init__(self, signum: int) -> None:
@@ -177,6 +185,45 @@ def terminating_signals_raise() -> Iterator[None]:
         for number, previous in installed.items():
             with contextlib.suppress(OSError, ValueError):
                 signal.signal(number, previous)
+
+
+@contextlib.contextmanager
+def terminating_signals_deferred() -> Iterator[None]:
+    """Make the compensating STOP uninterruptible by a catchable signal.
+
+    :func:`terminating_signals_raise` routes a signal INTO the unwind. That is
+    only half the guarantee: once the process is already unwinding for some
+    other reason (a ``SmokeFailure``, a blown deadline, a refusal after start),
+    the STOP loop in :func:`run_smoke`'s ``finally`` is ordinary Python, and a
+    SIGTERM arriving mid-loop raises straight through it. The A10 is then left
+    RUNNING and billing -- the exact outcome the ``finally`` exists to prevent,
+    reachable by a signal that arrives two lines later than the one already
+    covered.
+
+    A compensating action must run to completion once started; the window in
+    which it can be abandoned is the bulkhead's leak. The loop is bounded by
+    ``EMERGENCY_STOP_TIMEOUT_SECONDS``, so masking cannot hang the process, and
+    SIGKILL is still the operator's escape hatch (RES-16 a claimed
+    fault-tolerance mechanism must be exercised before the claim ships,
+    ~/Development/heuristics-canon-research/lexicons/engineering.md:127;
+    RLSE-05 silent failure is the worst failure, engineering.md:696).
+    """
+
+    previous: dict[int, Any] = {}
+    for name in (*TERMINATION_SIGNAL_NAMES, "SIGINT"):
+        number = getattr(signal, name, None)
+        if number is None:
+            continue
+        try:
+            previous[int(number)] = signal.signal(number, signal.SIG_IGN)
+        except (OSError, ValueError):
+            continue
+    try:
+        yield
+    finally:
+        for number, handler in previous.items():
+            with contextlib.suppress(OSError, ValueError):
+                signal.signal(number, handler)
 
 
 class HttpStatusFailure(SmokeFailure):
@@ -281,13 +328,35 @@ def _read_load_snapshot(source: str) -> dict[str, Any]:
     ]
     if not published:
         return {"availability": "unavailable", "path": source, "scanned": scanned}
-    return {**max(published, key=_snapshot_written_at), "scanned": scanned}
+    # WBUX6-W5-04: freshness is not identity. The smoke triggers exactly ONE
+    # service, so on a host publishing several environments the freshest
+    # snapshot may belong to an environment this run never drove -- the sensor
+    # would then be reading a stock the actuator does not control (OBS-12,
+    # ~/Development/heuristics-canon-research/lexicons/engineering.md:482).
+    # Report the ambiguity instead of resolving it silently; the caller pins the
+    # environment with --load-environment.
+    return {
+        **max(published, key=_snapshot_written_at),
+        "scanned": scanned,
+        "published_paths": [str(snapshot["path"]) for snapshot in published],
+        "attribution": "environment-pinned" if len(published) == 1 else "freshest-of-many",
+    }
 
 
 def _load_source(args: argparse.Namespace) -> str:
-    """Resolve where this run reads describe-load evidence from."""
+    """Resolve where this run reads describe-load evidence from.
 
-    return args.load_json or args.load_dir
+    ``--load-json`` names one file outright. ``--load-environment`` names the
+    environment this run drove, which is the only identity-grounded reading of
+    the per-environment layout. With neither, the reader walks ``--load-dir``
+    and must declare its attribution (WBUX6-W5-04).
+    """
+
+    if args.load_json:
+        return args.load_json
+    if args.load_environment:
+        return str(Path(args.load_dir) / args.load_environment / LOAD_SNAPSHOT_FILENAME)
+    return args.load_dir
 
 
 @dataclass
@@ -725,6 +794,19 @@ def _load_snapshot_has_fresh_work(
         return False, (
             f"snapshot {snapshot.get('availability', 'invalid')} after pre-submit "
             f"freshness_anchor={_iso_utc(freshness_anchor)}"
+        )
+    # WBUX6-W5-04: a snapshot picked by freshness out of several published
+    # environments is not evidence that THIS run's trigger produced the load.
+    # Refuse rather than attribute another environment's work to this run
+    # (OBS-12 sensors must touch the controlled stock, engineering.md:482;
+    # RLSE-05 silent failure is the worst failure, engineering.md:696).
+    if snapshot.get("attribution") == "freshest-of-many":
+        return False, (
+            "load snapshot is ambiguous: "
+            f"{len(snapshot.get('published_paths', []))} environments published under "
+            f"{snapshot.get('path')!r}'s root and this run drove only one; "
+            "re-run with --load-environment <env> so the reading is identity-grounded; "
+            f"published={snapshot.get('published_paths')}"
         )
     value = snapshot["value"]
     written_at = value.get("written_at")
@@ -1352,94 +1434,95 @@ def run_smoke(
                 "instance was not validated; STOP and OCI follow-up skipped",
             )
         else:
-            final_state = "UNKNOWN"
-            stop_failures: list[str] = []
-            successful_stop_calls = 0
-            try:
-                emergency_deadline = Deadline(EMERGENCY_STOP_TIMEOUT_SECONDS, monotonic)
-                while final_state != "STOPPED":
-                    emergency_deadline.check("waiting for compensating STOPPED")
-                    try:
-                        final_instance = oci.get_instance(
-                            args.instance_id,
-                            timeout=emergency_deadline.timeout(OCI_CALL_TIMEOUT_SECONDS),
+            with terminating_signals_deferred():
+                final_state = "UNKNOWN"
+                stop_failures: list[str] = []
+                successful_stop_calls = 0
+                try:
+                    emergency_deadline = Deadline(EMERGENCY_STOP_TIMEOUT_SECONDS, monotonic)
+                    while final_state != "STOPPED":
+                        emergency_deadline.check("waiting for compensating STOPPED")
+                        try:
+                            final_instance = oci.get_instance(
+                                args.instance_id,
+                                timeout=emergency_deadline.timeout(OCI_CALL_TIMEOUT_SECONDS),
+                            )
+                        except (SmokeFailure, PreflightRefusal, OSError, ValueError) as exc:
+                            if oci.stop_calls >= MAX_EMERGENCY_STOP_ATTEMPTS:
+                                raise SmokeFailure(
+                                    f"bounded compensating STOP retries exhausted after state read failure: {exc}"
+                                ) from exc
+                            try:
+                                oci.stop_instance(
+                                    args.instance_id,
+                                    timeout=emergency_deadline.timeout(OCI_CALL_TIMEOUT_SECONDS),
+                                )
+                                successful_stop_calls += 1
+                            except (SmokeFailure, OSError, ValueError) as stop_exc:
+                                stop_failures.append(str(stop_exc))
+                            sleep(POLL_SECONDS)
+                            continue
+                        final_state = _state(final_instance)
+                        _record_transition(
+                            transitions,
+                            final_state,
+                            elapsed=deadline.elapsed(),
+                            now=now,
                         )
-                    except (SmokeFailure, PreflightRefusal, OSError, ValueError) as exc:
-                        if oci.stop_calls >= MAX_EMERGENCY_STOP_ATTEMPTS:
-                            raise SmokeFailure(
-                                f"bounded compensating STOP retries exhausted after state read failure: {exc}"
-                            ) from exc
-                        try:
-                            oci.stop_instance(
-                                args.instance_id,
-                                timeout=emergency_deadline.timeout(OCI_CALL_TIMEOUT_SECONDS),
-                            )
-                            successful_stop_calls += 1
-                        except (SmokeFailure, OSError, ValueError) as stop_exc:
-                            stop_failures.append(str(stop_exc))
-                        sleep(POLL_SECONDS)
-                        continue
-                    final_state = _state(final_instance)
-                    _record_transition(
-                        transitions,
-                        final_state,
-                        elapsed=deadline.elapsed(),
-                        now=now,
+                        if final_state in {"STARTING", "RUNNING"}:
+                            if oci.stop_calls >= MAX_EMERGENCY_STOP_ATTEMPTS:
+                                raise SmokeFailure("bounded compensating STOP retries exhausted")
+                            try:
+                                oci.stop_instance(
+                                    args.instance_id,
+                                    timeout=emergency_deadline.timeout(OCI_CALL_TIMEOUT_SECONDS),
+                                )
+                                successful_stop_calls += 1
+                            except (SmokeFailure, OSError, ValueError) as exc:
+                                stop_failures.append(str(exc))
+                        if final_state != "STOPPED":
+                            sleep(POLL_SECONDS)
+                    stop_detail = (
+                        "already STOPPED; no compensating STOP needed"
+                        if oci.stop_calls == 0
+                        else f"STOP issued ({oci.stop_calls} attempt(s))"
                     )
-                    if final_state in {"STARTING", "RUNNING"}:
-                        if oci.stop_calls >= MAX_EMERGENCY_STOP_ATTEMPTS:
-                            raise SmokeFailure("bounded compensating STOP retries exhausted")
-                        try:
-                            oci.stop_instance(
-                                args.instance_id,
-                                timeout=emergency_deadline.timeout(OCI_CALL_TIMEOUT_SECONDS),
-                            )
-                            successful_stop_calls += 1
-                        except (SmokeFailure, OSError, ValueError) as exc:
-                            stop_failures.append(str(exc))
-                    if final_state != "STOPPED":
-                        sleep(POLL_SECONDS)
-                stop_detail = (
-                    "already STOPPED; no compensating STOP needed"
-                    if oci.stop_calls == 0
-                    else f"STOP issued ({oci.stop_calls} attempt(s))"
-                )
-                check(
-                    "finally_stop_issued",
-                    not stop_failures or successful_stop_calls > 0,
-                    stop_detail if not stop_failures else f"{stop_detail}; failures: {'; '.join(stop_failures)}",
-                )
-                check("instance_stopped_finally", True, final_state)
-            except (SmokeFailure, OSError, ValueError) as exc:
-                check(
-                    "finally_stop_issued",
-                    False,
-                    "; ".join(stop_failures) or str(exc),
-                )
-                check(
-                    "instance_stopped_finally",
-                    False,
-                    f"{exc}; last state {final_state}",
-                )
+                    check(
+                        "finally_stop_issued",
+                        not stop_failures or successful_stop_calls > 0,
+                        stop_detail if not stop_failures else f"{stop_detail}; failures: {'; '.join(stop_failures)}",
+                    )
+                    check("instance_stopped_finally", True, final_state)
+                except (SmokeFailure, OSError, ValueError) as exc:
+                    check(
+                        "finally_stop_issued",
+                        False,
+                        "; ".join(stop_failures) or str(exc),
+                    )
+                    check(
+                        "instance_stopped_finally",
+                        False,
+                        f"{exc}; last state {final_state}",
+                    )
 
-            with contextlib.suppress(SmokeFailure, OSError, ValueError):
-                poll_health(
-                    "after_stop",
-                    request_deadline=Deadline(POST_STOP_HEALTH_TIMEOUT_SECONDS, monotonic),
-                )
+                with contextlib.suppress(SmokeFailure, OSError, ValueError):
+                    poll_health(
+                        "after_stop",
+                        request_deadline=Deadline(POST_STOP_HEALTH_TIMEOUT_SECONDS, monotonic),
+                    )
 
-            try:
-                listed = oci.list_instances(compartment_id, timeout=OCI_CALL_TIMEOUT_SECONDS)
-                orphans = [
-                    instance
-                    for instance in listed
-                    if str(instance.get("id")) != args.instance_id
-                    and _is_gpu_burst(instance)
-                    and _state(instance) == "RUNNING"
-                ]
-                check("no_orphan_running", not orphans, f"{len(orphans)} orphan(s)")
-            except (SmokeFailure, OSError, ValueError) as exc:
-                check("no_orphan_running", False, str(exc))
+                try:
+                    listed = oci.list_instances(compartment_id, timeout=OCI_CALL_TIMEOUT_SECONDS)
+                    orphans = [
+                        instance
+                        for instance in listed
+                        if str(instance.get("id")) != args.instance_id
+                        and _is_gpu_burst(instance)
+                        and _state(instance) == "RUNNING"
+                    ]
+                    check("no_orphan_running", not orphans, f"{len(orphans)} orphan(s)")
+                except (SmokeFailure, OSError, ValueError) as exc:
+                    check("no_orphan_running", False, str(exc))
 
     unhealthy_samples = [sample for sample in service_health_samples if not sample["healthy"]]
     check(
@@ -1576,6 +1659,17 @@ def build_parser() -> argparse.ArgumentParser:
         help=(
             "per-environment describe-load root the API publishes into "
             f"(<load-dir>/<environment>/{LOAD_SNAPSHOT_FILENAME}); default {DEFAULT_LOAD_DIR}"
+        ),
+    )
+    parser.add_argument(
+        "--load-environment",
+        default=None,
+        metavar="ENV",
+        help=(
+            "environment this run drives; reads exactly "
+            f"<load-dir>/<ENV>/{LOAD_SNAPSHOT_FILENAME}. Required on a host that "
+            "publishes more than one environment, because freshness alone cannot "
+            "attribute observed load to this run (WBUX6-W5-04)"
         ),
     )
     parser.add_argument(

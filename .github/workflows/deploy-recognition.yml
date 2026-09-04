@@ -16,6 +16,11 @@ on:
     branches: [main]
     paths:
       - "apps/prototype-description-service/**"
+      # WBUX6-W4-F-04: the gate job runs the deploy contract tests, and those
+      # read infra/oci (cloud-init ownership, the gpu_lifecycle CLI flags the
+      # runbooks document). Editing them without this entry would ship an
+      # unverified contract change.
+      - "infra/oci/**"
       - "scripts/deploy/**"
       - "scripts/test_deploy_workflow_gate.py"
       - "scripts/test_ocirv1_vault_readiness.py"

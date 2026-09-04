@@ -281,6 +281,11 @@ describe('describe-start orchestration (WBUX-6 L2b)', () => {
       resolveSettings({
         recognition_enabled: true,
       } as Awaited<ReturnType<typeof fetchSettings>>);
+      // Same microtask flush the sibling settle-cases use (lines 240/254): resolving the
+      // deferred only QUEUES react-query's state update, so without it the assertions
+      // below race the settle. Its absence also left this the one `act(async …)` in the
+      // file with no await, which is what @typescript-eslint/require-await reported.
+      await Promise.resolve();
     });
 
     await screen.findByText(/Identifies people first \(AI\)/);

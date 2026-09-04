@@ -294,6 +294,66 @@ describe('useLiveReviewTarget', () => {
     expect(onClose).not.toHaveBeenCalled();
   });
 
+  it('probe TimeoutError is not live and surfaces a non-null error [FEBT1-W2A-06]', async () => {
+    const timeout = new DOMException('The operation timed out.', 'TimeoutError');
+    vi.mocked(fetchClusterMembers).mockRejectedValue(timeout);
+    const onClose = vi.fn();
+
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: true } },
+    });
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+    );
+
+    const { result } = renderHook(() => useLiveReviewTarget('cluster-timeout', { onClose }), {
+      wrapper,
+    });
+
+    await waitFor(() => {
+      expect(result.current.status).not.toBe(LIVE_REVIEW_TARGET_STATUS.LIVE);
+      expect(result.current.error).not.toBeNull();
+    });
+    expect(result.current.status).toBe(LIVE_REVIEW_TARGET_STATUS.UNVERIFIED);
+    expect(result.current.error).toBe(timeout);
+    expect(result.current.resolvedClusterId).toBe('cluster-timeout');
+    expect(onClose).not.toHaveBeenCalled();
+    expect(fetchClusterMembers).toHaveBeenCalledTimes(1);
+  });
+
+  it('probe HTTP 500 is not live and surfaces a non-null error [FEBT1-W2A-06]', async () => {
+    const serverError = new HTTPError({
+      status: 500,
+      retryAfterSeconds: undefined,
+      endpoint: '/acx/v1/recognition/clusters/cluster-500/members',
+      bodyPreview: 'internal boom',
+      message: 'Request to /acx/v1/recognition/clusters/cluster-500/members failed (500): internal boom',
+    });
+    vi.mocked(fetchClusterMembers).mockRejectedValue(serverError);
+    const onClose = vi.fn();
+
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: true } },
+    });
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+    );
+
+    const { result } = renderHook(() => useLiveReviewTarget('cluster-500', { onClose }), {
+      wrapper,
+    });
+
+    await waitFor(() => {
+      expect(result.current.status).not.toBe(LIVE_REVIEW_TARGET_STATUS.LIVE);
+      expect(result.current.error).not.toBeNull();
+    });
+    expect(result.current.status).toBe(LIVE_REVIEW_TARGET_STATUS.UNVERIFIED);
+    expect(result.current.error).toBe(serverError);
+    expect(result.current.resolvedClusterId).toBe('cluster-500');
+    expect(onClose).not.toHaveBeenCalled();
+    expect(fetchClusterMembers).toHaveBeenCalledTimes(1);
+  });
+
   it('FEBT1-LD-05: the retry predicate short-circuits abort/timeout — one probe, no retry', async () => {
     // AbortSignal.timeout rejects with a DOMException named TimeoutError; a user
     // cancel rejects with AbortError. Neither may be retried: the probe must not
@@ -351,7 +411,7 @@ describe('useLiveReviewTarget', () => {
     await waitFor(() => {
       expect(result.current.status).toBe('auth_expired');
     });
-    expect(result.current.status).not.toBe('live');
+    expect(result.current.status).not.toBe(LIVE_REVIEW_TARGET_STATUS.LIVE);
     expect(result.current.error).toBe(authExpired);
     expect(result.current.resolvedClusterId).toBe('cluster-auth');
     expect(onClose).not.toHaveBeenCalled();
@@ -415,7 +475,7 @@ describe('useLiveReviewTarget', () => {
     await waitFor(() => {
       expect(result.current.status).toBe('auth_expired');
     });
-    expect(result.current.status).not.toBe('live');
+    expect(result.current.status).not.toBe(LIVE_REVIEW_TARGET_STATUS.LIVE);
     expect(result.current.error).toBe(classified);
     expect(result.current.resolvedClusterId).toBe('cluster-auth');
     expect(onClose).not.toHaveBeenCalled();

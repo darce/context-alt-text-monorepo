@@ -1120,7 +1120,13 @@ export const ReviewQueue = React.forwardRef<ReviewQueueHandle, ReviewQueueProps>
       <div className="acx-review-queue" data-live-target-status={headLiveStatus}>
         {liveRegion}
         {livePositionRegion}
-        {headLiveStatus === 'auth_expired' ? (
+        {/*
+          `unverified` covers both "the probe has not settled yet" and "the probe
+          failed", so status alone cannot gate an alert — an in-flight probe would
+          shout at every operator on first paint. The reason channel disambiguates:
+          announce only once there is something to announce (RLSE-05 / AGT-10).
+        */}
+        {headLiveStatus === 'auth_expired' || (headLiveStatus === 'unverified' && headLiveError !== null) ? (
           <UserFacingErrorNotice
             className="acx-review-queue__auth-expired"
             error={headLiveError}

@@ -30,7 +30,7 @@ const AMBIGUOUS_OUTCOME_TAGS = {
  * Cancellation-shaped: a deliberate abort *or* an elapsed deadline. Its one
  * UI-facing consumer is `isFrozenPollFailure` in `hooks/useDescribeRunProgress`,
  * which names the "the poll did not come back, freeze rather than dead-end"
- * decision; nothing in the UI calls `isAbortLike` directly. The contract is
+ * decision; nothing in the UI calls `isAbortOrTimeout` directly. The contract is
  * unchanged by the FEBT1-W2A-05 tag split — both shapes still answer true.
  *
  * No line numbers here on purpose (FEBT2-W2-Q-02): the previous
@@ -40,7 +40,7 @@ const AMBIGUOUS_OUTCOME_TAGS = {
  * lexicons/business-marketing.md:297 — the doc is the stale side). A symbol name
  * is greppable and survives every edit above it; a line number does not.
  */
-export const isAbortLike = (error: unknown): boolean => {
+export const isAbortOrTimeout = (error: unknown): boolean => {
   const tag = classifyError(error)._tag;
   return tag === 'abort' || tag === 'timeout';
 };
@@ -50,7 +50,7 @@ export const isAbortLike = (error: unknown): boolean => {
  * `AbortSignal.timeout` (`_tag 'timeout'`) out of this: a deadline that elapsed
  * is a server-side ambiguity (DDIA ch-8 UNKNOWN outcome), whereas an abort is
  * the caller withdrawing interest, and retrying it resurrects work nobody is
- * waiting for. Retry decisions must use this, not `isAbortLike`.
+ * waiting for. Retry decisions must use this, not `isAbortOrTimeout`.
  */
 export const isDeliberateAbort = (error: unknown): boolean => classifyError(error)._tag === 'abort';
 

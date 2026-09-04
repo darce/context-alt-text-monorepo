@@ -18,7 +18,7 @@ import { __ } from '@wordpress/i18n';
 
 import { listRecognitionClusters, type ClusterSummary } from '../../../api/recognition';
 import { classifyError } from '../../../utils/appError';
-import { createLogger, redactEndpoint } from '../../../utils/logger';
+import { createLogger, redactEndpoint, withRequestId } from '../../../utils/logger';
 import { isAbortError } from './clusterMutationUtils';
 import { isHumanLabeledTarget } from './suggestionProjection';
 import type { ClusterLabelMatch } from './useClusterMatchAction';
@@ -113,8 +113,10 @@ export const lookupClusterByLabel = async ({
       return { status: CLUSTER_LABEL_LOOKUP_STATUS.ABORTED };
     }
     // AGT-10 / REF-37: degrade loudly — the failure is reported to the caller *and* logged.
+    // FEBT1-W2B-01: one lookup run is one unit of work, so it opens its own
+    // correlation id here. The module-scope logger mints none (rg-015).
     const classified = classifyError(err);
-    log.warn('Failed to find cluster by label', {
+    withRequestId(log).warn('Failed to find cluster by label', {
       tag: classified._tag,
       ...('status' in classified ? { status: classified.status } : {}),
       ...('endpoint' in classified ? { endpoint: redactEndpoint(classified.endpoint) } : {}),

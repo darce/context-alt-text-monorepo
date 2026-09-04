@@ -270,9 +270,24 @@ check: lint typecheck test test-integration
 
 # Lint only
 lint:
-	@echo "Running Ruff checks..."
-	@$(UV_RUN) ruff check .
-	@$(UV_RUN) ruff format --check .
+	@echo "Running Ruff checks (via the repo-wide lint ratchet)..."
+	@# LINTGATE-1: `ruff check .` fails here (93 of the repo's 244 known
+	@# violations live under this app), so it could never gate a merge.
+	@# The ratchet gates the same rules against a frozen baseline: any new
+	@# violation or raised count in these files still fails. See the
+	@# `lint-ratchet` target in the root Makefile. Use `ruff check .` directly
+	@# for the raw list, or `make lint-ratchet-accept TOOL=ruff` after a fix.
+	@python3 ../../scripts/lint_ratchet.py --tool ruff
+	@# LINTGATE1-NEW-03: `ruff format --check .` reports 128 unformatted files
+	@# under this app, so this line failed on every invocation and the whole
+	@# target could never pass (sr-002). Same ratchet treatment: the frozen set
+	@# lives in config/lint-baseline/ruff-format.json and any NEWLY unformatted
+	@# file fails. Run from the repo root it covers 296 files -- a strict
+	@# superset of this app's 128, because ruff resolves each file against the
+	@# nearest pyproject.toml, so app files keep this app's format config.
+	@# Pay debt down with `ruff format <paths>` then
+	@# `make lint-ratchet-accept TOOL=ruff-format`.
+	@python3 ../../scripts/lint_ratchet.py --tool ruff-format
 
 # Type check only
 typecheck:

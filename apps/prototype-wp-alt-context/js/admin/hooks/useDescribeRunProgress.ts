@@ -12,7 +12,7 @@ import {
 } from '../api/describeApi';
 import { getJobProgressStallThresholdMs } from './useJobProgressStream';
 import { gateRefetchInterval } from '../utils/recognitionCooldown';
-import { isAbortLike } from '../utils/retryPolicy';
+import { isAbortOrTimeout } from '../utils/retryPolicy';
 
 /**
  * Honest per-image progress for a bulk describe run (WBUX-3 S6-02).
@@ -41,7 +41,7 @@ export const FROZEN_POLL_ESCALATION_THRESHOLD = 5;
  * operator on a transient failure.
  *
  * Named for its policy, not its shape, and deliberately distinct from the retry
- * decision even though both currently reduce to `isAbortLike`. They answer
+ * decision even though both currently reduce to `isAbortOrTimeout`. They answer
  * different questions and have different reasons to change: FEBT1-W2A-05
  * narrowed the *retry* predicate and silently moved this UI policy across a
  * module boundary (three tests red). A retry-side narrowing must land here as a
@@ -51,14 +51,15 @@ export const FROZEN_POLL_ESCALATION_THRESHOLD = 5;
  *
  * Exported so a unit test can pin both abort-like tags directly (TEST-15).
  */
-export const isFrozenPollFailure = (error: unknown): boolean => isAbortLike(error);
+export const isFrozenPollFailure = (error: unknown): boolean => isAbortOrTimeout(error);
 
 /**
  * Pure refetchInterval decision for describe-run progress (UXP-2-BR-07).
  *
- * Transient abort/timeout must keep polling — the shared retry policy never
- * retries abort-like errors, so the next scheduled poll IS the retry. Stop only
- * on hard (non-abort) errors, terminal run status, or the frozen-streak bound.
+ * Transient abort/timeout must keep polling — user abort is never retried, and
+ * timeout is retried only once, so the next scheduled poll is the remaining
+ * retry. Stop only on hard (non-abort/timeout) errors, terminal run status, or
+ * the frozen-streak bound.
  *
  * Exported so pure unit tests can invert each branch (TEST-15) without the hook.
  */

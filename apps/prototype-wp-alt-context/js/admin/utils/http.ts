@@ -5,7 +5,8 @@ import {
   AuthExpiredError,
   BoundaryError,
   HTTPError,
-  isAbortLikeName,
+  isAbortOrTimeoutName,
+  isNonceRefreshAuthRejection,
   isTaggedNonceRefreshError,
   NonceRefreshFailedError,
   RequestTimeoutError,
@@ -29,7 +30,8 @@ export {
   AuthExpiredError,
   BoundaryError,
   HTTPError,
-  isAbortLikeName,
+  isAbortOrTimeoutName,
+  isNonceRefreshAuthRejection,
   NonceRefreshError,
   NonceRefreshFailedError,
   RequestTimeoutError,
@@ -91,6 +93,8 @@ export const parseRetryAfter = (value: string | null): number | undefined => {
   const t = Date.parse(trimmed);
   if (!Number.isNaN(t)) {
     const deltaSeconds = Math.ceil((t - Date.now()) / 1000);
+    // Past or present HTTP-date is header-absent, not 0 — otherwise a 503
+    // becomes an immediate retry loop and a 429 skips exponential backoff.
     return deltaSeconds > 0 ? deltaSeconds : undefined;
   }
   return undefined;
@@ -209,10 +213,14 @@ const errorMessage = (error: unknown): string => {
  * is a real verdict and stays session expiry.
  */
 const isIndeterminateRefreshFailure = (error: unknown): boolean => {
-  if (isAbortLikeName(error)) {
+  if (isAbortOrTimeoutName(error)) {
     return true;
   }
-  return error instanceof NonceRefreshFailedError && error.causeStatus === undefined;
+  // Only a WP logged-out sentinel is a real verdict: `causeStatus` 401/403, or an
+  // admin-ajax `0`/`-1` body on a 200. Every other refresh failure — transport,
+  // timeout, 5xx, non-sentinel body — stays retryable `nonce_refresh` rather than
+  // session expiry (FEBT1-W2A-02).
+  return error instanceof NonceRefreshFailedError && !isNonceRefreshAuthRejection(error);
 };
 
 const abortReason = (reason: unknown): DOMException =>
@@ -356,7 +364,7 @@ export const fetchApi = async <T>(endpoint: string, options: HTTPOptions = {}): 
         // An abort that landed while the refresh was failing is an abort, not
         // session expiry — never surface recovery UI for an unmounted caller.
         throwIfAborted(signal);
-        // A refresh that never got an answer is not proof of session expiry.
+        // A refresh that never got a logged-out verdict is not proof of expiry.
         if (isIndeterminateRefreshFailure(refreshError)) {
           throw refreshError;
         }

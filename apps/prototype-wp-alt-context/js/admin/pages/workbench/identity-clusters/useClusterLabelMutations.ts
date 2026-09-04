@@ -126,7 +126,7 @@ export const useClusterLabelMutations = ({
         return;
       }
       invalidateQueries();
-      onError?.(getClusterMutationErrorMessage(err, currentLabel ?? derivedLabel ?? ''));
+      onError?.(getClusterMutationErrorMessage(err, currentLabel ?? derivedLabel ?? 'that label'));
     },
   });
 
@@ -235,7 +235,7 @@ export const useClusterLabelMutations = ({
         onAbort?.();
         return;
       }
-      onError?.(getClusterMutationErrorMessage(err, currentLabel ?? derivedLabel ?? ''));
+      onError?.(getClusterMutationErrorMessage(err, currentLabel ?? derivedLabel ?? 'that label'));
     },
   });
 

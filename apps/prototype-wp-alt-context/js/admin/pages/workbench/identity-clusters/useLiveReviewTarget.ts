@@ -2,9 +2,10 @@
  * Live-derived open review target (E21-5 §11 / FBT-1 ⑤ / B1).
  *
  * Existence probe: members fetch with limit:1. A 404 is the retirement signal
- * (`cluster_not_found`). Transient/5xx/network errors are NOT retirement —
- * the probe fails open to status `'unverified'`, which keeps the pane mounted
- * without claiming the target was seen (FEBT1-LD-03).
+ * (`cluster_not_found`). Timeout/5xx/transport failures are NOT retirement and
+ * are NOT `'live'` — the probe fails open to status `'unverified'`, which keeps
+ * the pane mounted without claiming the target was seen
+ * (FEBT1-LD-03 / FEBT1-W2A-06; OBS-06, RES-13, rg-015).
  *
  * On retirement:
  *   (B) recorded local-merge survivor → onRebind + announce (once)
@@ -138,7 +139,6 @@ export const useLiveReviewTarget = (
 
   const retired = openClusterId != null && existenceQuery.isError && isClusterNotFound(existenceQuery.error);
   const authExpired = openClusterId != null && existenceQuery.isError && isAuthExpired(existenceQuery.error);
-
   // S5-02: resolve survivor lazily at read time — do not memoize against
   // [retired, openClusterId] alone. recordMergeSurvivor mutates a ref-backed
   // map without changing those deps; a memoized null after 404 stayed stale

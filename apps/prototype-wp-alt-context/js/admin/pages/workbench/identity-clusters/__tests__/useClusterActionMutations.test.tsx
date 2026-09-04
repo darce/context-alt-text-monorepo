@@ -7,8 +7,9 @@ import { queryKeys } from '../../../../api/queryKeys';
 import type { JobStatusResponse } from '../../../../api/recognition';
 import * as recognitionApi from '../../../../api/recognition';
 import { RequestTimeoutError } from '../../../../utils/errorTaxonomy';
+import { HTTPError } from '../../../../utils/http';
 import { CLUSTER_LABELING_OPERATION } from '../clusterLabelingBudget';
-import { createClusterMutationTimeoutError } from '../clusterMutationUtils';
+import { CLUSTER_MUTATION_ERROR_COPY, createClusterMutationTimeoutError } from '../clusterMutationUtils';
 import { useClusterActionMutations } from '../useClusterActionMutations';
 import type { SuggestionReviewPage } from '../useSuggestionReviewQueries';
 
@@ -110,9 +111,7 @@ describe('useClusterActionMutations pollSplitJob (BND-1-AUDIT-1)', () => {
     expect(result.current.splitGate['aria-disabled']).toBe(true);
 
     result.current.split('c1', 2);
-    await waitFor(() =>
-      expect(onError).toHaveBeenCalledWith('Unavailable while the recognition service is offline'),
-    );
+    await waitFor(() => expect(onError).toHaveBeenCalledWith('Unavailable while the recognition service is offline'));
     expect(recognitionApi.splitCluster).not.toHaveBeenCalled();
   });
 
@@ -266,9 +265,14 @@ describe('useClusterActionMutations create-for-identity roster bind (UXW2-3-R7B-
 
   it('on acx_cluster_created_bind_failed surfaces bind error and still invalidates', async () => {
     vi.mocked(recognitionApi.createClusterForIdentity).mockRejectedValue(
-      new Error(
-        'Request to /create-for-identity failed (409): {"code":"acx_cluster_created_bind_failed","data":{"cluster_id":"c-new"}}',
-      ),
+      new HTTPError({
+        status: 409,
+        retryAfterSeconds: undefined,
+        endpoint: '/create-for-identity',
+        bodyPreview: '{"code":"acx_cluster_created_bind_failed","data":{"cluster_id":"c-new"}}',
+        message:
+          'Request to /create-for-identity failed (409): {"code":"acx_cluster_created_bind_failed","data":{"cluster_id":"c-new"}}',
+      }),
     );
     const { result, onError, invalidateQueries } = renderCreate();
 
@@ -319,7 +323,7 @@ describe('useClusterActionMutations deadline vs cancel (FEBT2-LD2-NEW-01 / RLSE-
     result.current.assignToCluster('id-1', 'target-c');
 
     await waitFor(() => expect(onError).toHaveBeenCalledTimes(1));
-    expect(onError).toHaveBeenCalledWith('Save is taking too long. Please try again.');
+    expect(onError).toHaveBeenCalledWith(CLUSTER_MUTATION_ERROR_COPY.timeout);
     expect(onAbort).not.toHaveBeenCalled();
   });
 
@@ -334,7 +338,7 @@ describe('useClusterActionMutations deadline vs cancel (FEBT2-LD2-NEW-01 / RLSE-
     result.current.createClusterForIdentity('anchor-1', 'Alex');
 
     await waitFor(() => expect(onError).toHaveBeenCalledTimes(1));
-    expect(onError).toHaveBeenCalledWith('Save is taking too long. Please try again.');
+    expect(onError).toHaveBeenCalledWith(CLUSTER_MUTATION_ERROR_COPY.timeout);
     // The sentinel message is a machine token; it must never reach the operator.
     expect(onError).not.toHaveBeenCalledWith(expect.stringContaining('cluster_mutation_budget_expired'));
     expect(onAbort).not.toHaveBeenCalled();
@@ -346,14 +350,14 @@ describe('useClusterActionMutations deadline vs cancel (FEBT2-LD2-NEW-01 / RLSE-
 
     result.current.pinRepresentative('rep-1', true);
 
-    await waitFor(() => expect(onError).toHaveBeenCalledWith('Save is taking too long. Please try again.'));
+    await waitFor(() => expect(onError).toHaveBeenCalledWith(CLUSTER_MUTATION_ERROR_COPY.timeout));
     expect(onAbort).not.toHaveBeenCalled();
 
     onError.mockClear();
     vi.mocked(recognitionApi.splitCluster).mockRejectedValue(transportDeadline());
     result.current.split('c1', 2);
 
-    await waitFor(() => expect(onError).toHaveBeenCalledWith('Save is taking too long. Please try again.'));
+    await waitFor(() => expect(onError).toHaveBeenCalledWith(CLUSTER_MUTATION_ERROR_COPY.timeout));
     expect(onAbort).not.toHaveBeenCalled();
   });
 

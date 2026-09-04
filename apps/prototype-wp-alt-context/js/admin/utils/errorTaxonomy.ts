@@ -81,8 +81,14 @@ export const abortLikeTag = (value: unknown): 'abort' | 'timeout' | undefined =>
   return isAbortLikeErrorName(name) ? ABORT_LIKE_ERROR_NAME_TAGS[name] : undefined;
 };
 
-/** Duck-type: DOMException, Error, or any object whose name is AbortError|TimeoutError. */
-export const isAbortLikeName = (value: unknown): boolean => abortLikeTag(value) !== undefined;
+/**
+ * Duck-type: DOMException, Error, or any object whose name is AbortError|TimeoutError.
+ *
+ * Named for what it answers, not for a family adjective. `main` reached the same
+ * predicate under this name independently; keeping both spellings would be a
+ * synonym for one concept (NAME-02, lexicons/engineering.md:649).
+ */
+export const isAbortOrTimeoutName = (value: unknown): boolean => abortLikeTag(value) !== undefined;
 
 /**
  * Every error that escapes `fetchApi` extends this, so the boundary is closed:
@@ -239,6 +245,15 @@ export class UnknownBoundaryError extends BoundaryError {
  * call sites are unchanged.
  */
 export class NonceRefreshFailedError extends Error {
+  /**
+   * The tag lives on the base, not only on the subclass (FEBT1-W2A-02). Every
+   * nonce-refresh failure means the same thing whether or not it went through
+   * `toNonceRefreshError`, so it carries the same tag — one concept, one
+   * spelling (NAME-02, lexicons/engineering.md:649). `classifyError` is then
+   * identity for it and the original stack survives.
+   */
+  readonly _tag = 'nonce_refresh' as const;
+  readonly cause: unknown;
   readonly causeStatus: number | undefined;
   readonly bodyPreview: string;
 
@@ -246,22 +261,28 @@ export class NonceRefreshFailedError extends Error {
     message,
     causeStatus,
     bodyPreview,
+    cause,
   }: {
     message: string;
     causeStatus?: number;
     bodyPreview?: string;
+    cause?: unknown;
   }) {
     super(message);
     this.name = 'NonceRefreshFailedError';
+    // Assigned even when undefined: `isAppError` requires the own property to
+    // exist, while the logger omits an `undefined` cause from the record.
+    this.cause = cause;
     this.causeStatus = causeStatus;
     this.bodyPreview = bodyPreview ?? '';
   }
 }
 
 /**
- * A nonce refresh failure carrying the tag that closes the boundary. Subclasses
- * `NonceRefreshFailedError` so `instanceof NonceRefreshFailedError`,
- * `causeStatus` and `bodyPreview` keep working for every existing caller.
+ * A nonce refresh failure that has been through the boundary wrapper: identical
+ * to its base except that `cause` points at the original failure, so the capture
+ * site of the inner error is retained. The tag itself lives on the base — every
+ * nonce-refresh failure is tagged whether or not it was wrapped.
  *
  * Declared in the same module as its base — deliberately, and permanently. A
  * base/subclass pair split across modules is only safe while the graph happens
@@ -269,23 +290,37 @@ export class NonceRefreshFailedError extends Error {
  * REF-27 (lexicons/engineering.md:347) forbids depending on.
  */
 export class NonceRefreshError extends NonceRefreshFailedError {
-  readonly _tag = 'nonce_refresh' as const;
-  readonly cause: unknown;
-
   constructor(source: NonceRefreshFailedError) {
     super({
       message: source.message,
       causeStatus: source.causeStatus,
       bodyPreview: source.bodyPreview,
+      cause: source,
     });
     this.name = source.name;
-    this.cause = source;
   }
 }
 
-/** True for an already-tagged nonce-refresh failure (idempotent re-wrap guard). */
+/**
+ * True only when the refresh got a real logged-out verdict: a `causeStatus` of
+ * 401/403, or a WP admin-ajax `0`/`-1` sentinel body on a 200 (FEBT1-W2A-02).
+ *
+ * Everything else a failed refresh can produce — transport error, timeout, 5xx,
+ * a non-sentinel body — is an UNKNOWN outcome, not proof the session died
+ * (DDIA ch-8). Lives beside `NonceRefreshFailedError` because it reads that
+ * class's private-ish shape; `api/config` re-exports it from its historical home.
+ */
+export const isNonceRefreshAuthRejection = (error: NonceRefreshFailedError): boolean => {
+  if (error.causeStatus === 401 || error.causeStatus === 403) {
+    return true;
+  }
+  const body = error.bodyPreview.trim();
+  return body === '0' || body === '-1';
+};
+
+/** True for an already-wrapped nonce-refresh failure (idempotent re-wrap guard). */
 export const isTaggedNonceRefreshError = (error: unknown): error is NonceRefreshError =>
-  error instanceof NonceRefreshFailedError && '_tag' in error;
+  error instanceof NonceRefreshError;
 
 export const toNonceRefreshError = (source: NonceRefreshFailedError): NonceRefreshError =>
   isTaggedNonceRefreshError(source) ? source : new NonceRefreshError(source);

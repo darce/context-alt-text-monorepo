@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { AuthExpiredError, HTTPError } from '../../utils/http';
+import { SPA_SESSION_EXPIRED_COPY } from '../../utils/sessionExpiredCopy';
 import { DEFAULT_COOLDOWN_SECONDS } from '../../utils/recognitionCooldown';
 import { RETRY_AFTER_MAX_MS } from '../../utils/retryAfter';
 import { setLogLevel, setLogSink, type LogRecord } from '../../utils/logger';
@@ -95,9 +96,7 @@ describe('clusterAutoRetry pure helpers', () => {
 
   it('falls back to DEFAULT_COOLDOWN_SECONDS for negative/NaN/Infinity Retry-After [E-01]', () => {
     expect(resolveClusterRetryDelaySeconds(rateLimited(Number.NaN))).toBe(DEFAULT_COOLDOWN_SECONDS);
-    expect(resolveClusterRetryDelaySeconds(rateLimited(Number.POSITIVE_INFINITY))).toBe(
-      DEFAULT_COOLDOWN_SECONDS,
-    );
+    expect(resolveClusterRetryDelaySeconds(rateLimited(Number.POSITIVE_INFINITY))).toBe(DEFAULT_COOLDOWN_SECONDS);
     expect(resolveClusterRetryDelaySeconds(rateLimited(-3))).toBe(DEFAULT_COOLDOWN_SECONDS);
   });
 
@@ -254,7 +253,7 @@ describe('createClusterAutoRetry', () => {
     expect(mutate).toHaveBeenCalledTimes(1);
 
     expect(controller.noteError(clientError())).toBe(false);
-    expect(onTerminalError).toHaveBeenCalledWith('Request to /cluster failed (400): bad');
+    expect(onTerminalError).toHaveBeenCalledWith('Clustering failed. Please try again.');
     expect(onExhausted).not.toHaveBeenCalled();
     expect(onQueued).toHaveBeenCalledWith(null);
 
@@ -272,7 +271,7 @@ describe('createClusterAutoRetry', () => {
 
     controller.start();
     expect(controller.noteError(authExpired)).toBe(false);
-    expect(onTerminalError).toHaveBeenCalledWith(authExpired.message);
+    expect(onTerminalError).toHaveBeenCalledWith(SPA_SESSION_EXPIRED_COPY.sessionExpired);
     expect(onExhausted).not.toHaveBeenCalled();
 
     vi.advanceTimersByTime(60_000);

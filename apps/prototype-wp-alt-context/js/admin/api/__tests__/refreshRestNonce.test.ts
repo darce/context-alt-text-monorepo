@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   getNonce,
+  isNonceRefreshAuthRejection,
   NONCE_REFRESH_TIMEOUT_MS,
   NonceRefreshFailedError,
   refreshRestNonce,
@@ -213,5 +214,38 @@ describe('setNonce wpApiSettings mirror (UXP-NET-2 slice 4)', () => {
     setNonce('deadbeef02');
     expect(window.wpApiSettings).toBeUndefined();
     expect(getNonce()).toBe('deadbeef02');
+  });
+});
+
+describe('isNonceRefreshAuthRejection [FEBT1-W2A-02]', () => {
+  it('treats WP logged-out sentinels and 401/403 as auth rejection', () => {
+    expect(
+      isNonceRefreshAuthRejection(
+        new NonceRefreshFailedError({ message: 'logged out', causeStatus: 400, bodyPreview: '0' }),
+      ),
+    ).toBe(true);
+    expect(
+      isNonceRefreshAuthRejection(
+        new NonceRefreshFailedError({ message: 'cookie fail', causeStatus: 400, bodyPreview: '-1' }),
+      ),
+    ).toBe(true);
+    expect(
+      isNonceRefreshAuthRejection(
+        new NonceRefreshFailedError({ message: 'forbidden', causeStatus: 403, bodyPreview: 'nope' }),
+      ),
+    ).toBe(true);
+  });
+
+  it('does not treat transport/timeout refresh failures as auth rejection', () => {
+    expect(
+      isNonceRefreshAuthRejection(
+        new NonceRefreshFailedError({ message: 'REST nonce refresh network error: Failed to fetch.' }),
+      ),
+    ).toBe(false);
+    expect(
+      isNonceRefreshAuthRejection(
+        new NonceRefreshFailedError({ message: 'REST nonce refresh timed out after 10000ms.' }),
+      ),
+    ).toBe(false);
   });
 });

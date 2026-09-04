@@ -10,12 +10,14 @@
  * fail today, so the pure `selectUnfingerprinted` seam is exercised with a planted
  * unlisted file — the permanent discrimination guard TEST-15 asks for.
  */
+import { spawn } from 'node:child_process';
 import {
   existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -26,6 +28,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { ProductionCssBundle } from './productionCssBundle';
 import {
   artifactFixtureRootForAppRoot,
+  type BuildInputState,
   type ArtifactEntry,
   buildInputCandidates,
   fingerprintedBuildInputs,
@@ -33,11 +36,14 @@ import {
   loadProductionCssBundle,
   manifestBuildSources,
   MAX_RETAINED_ARTIFACTS,
+  LOCK_OWNER_FILE,
   type NamespaceEntry,
   registerAndPruneNamespaces,
   selectArtifactsToPrune,
   selectNamespacesToPrune,
   selectUnfingerprinted,
+  releaseDirectoryLock,
+  tryAcquireDirectoryLock,
   uncoveredBuildInputs,
   unfingerprintedManifestSources,
 } from './productionCssBundle';
@@ -49,16 +55,21 @@ describe('fingerprint stability while building [FIXWAV-M-03]', () => {
     const fixtureRoot = mkdtempSync(join(tmpdir(), 'acx-style-bundle-race-test-'));
     const sourcePath = join(fixtureRoot, 'source.scss');
     const discardedBuiltArtifacts: string[] = [];
+    const stampedBuilds: number[] = [];
     let buildCount = 0;
+    let generation = 0;
 
     writeFileSync(sourcePath, 'old-source', 'utf8');
-    const computeFingerprint = (): string => readFileSync(sourcePath, 'utf8');
-    const initialFingerprint = computeFingerprint();
+    const computeState = (): BuildInputState => ({
+      fingerprint: readFileSync(sourcePath, 'utf8'),
+      generation: String(generation),
+    });
+    const initialState = computeState();
 
     try {
       const artifact = loadFingerprintStableArtifact(
-        initialFingerprint,
-        computeFingerprint,
+        initialState,
+        computeState,
         {
           artifactDirForFingerprint: (fingerprint) => join(fixtureRoot, fingerprint),
           prepareArtifact: () => undefined,
@@ -80,9 +91,13 @@ describe('fingerprint stability while building [FIXWAV-M-03]', () => {
             if (buildCount === 1) {
               // Model an editor or generator replacing an input while Vite is running.
               writeFileSync(sourcePath, 'new-source', 'utf8');
+              generation += 1;
             }
           },
-          stampArtifact: (outDir, fingerprint) => writeFileSync(join(outDir, 'stamp'), fingerprint, 'utf8'),
+          stampArtifact: (outDir, fingerprint) => {
+            stampedBuilds.push(buildCount);
+            writeFileSync(join(outDir, 'stamp'), fingerprint, 'utf8');
+          },
           readArtifact: (outDir, fingerprint) => ({
             builtSource: readFileSync(join(outDir, 'built-source'), 'utf8'),
             fingerprint,
@@ -92,6 +107,7 @@ describe('fingerprint stability while building [FIXWAV-M-03]', () => {
       );
 
       expect(buildCount).toBe(2);
+      expect(stampedBuilds).toEqual([2]);
       expect(discardedBuiltArtifacts).toContain(join(fixtureRoot, 'old-source'));
       expect(existsSync(join(fixtureRoot, 'old-source'))).toBe(false);
       expect(artifact).toEqual({
@@ -101,6 +117,109 @@ describe('fingerprint stability while building [FIXWAV-M-03]', () => {
       });
       expect(readFileSync(join(artifact.outDir, 'stamp'), 'utf8')).toBe('new-source');
     } finally {
+      rmSync(fixtureRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects an A-to-B-to-A change generation even when the content hash returns to A', () => {
+    let generation = 1;
+    let buildCount = 0;
+    const stampedBuilds: number[] = [];
+    const discardedBuilds: number[] = [];
+    const computeState = (): BuildInputState => ({ fingerprint: 'A', generation: String(generation) });
+
+    const artifact = loadFingerprintStableArtifact(
+      computeState(),
+      computeState,
+      {
+        artifactDirForFingerprint: (fingerprint) => fingerprint,
+        prepareArtifact: () => undefined,
+        readStampedFingerprint: () => null,
+        touchArtifact: () => undefined,
+        discardArtifact: () => discardedBuilds.push(buildCount),
+        buildArtifact: () => {
+          buildCount += 1;
+          if (buildCount === 1) {
+            // The contents are A again when observed, but the metadata generation advanced.
+            generation += 1;
+          }
+        },
+        stampArtifact: () => stampedBuilds.push(buildCount),
+        readArtifact: () => ({ buildCount }),
+      },
+    );
+
+    expect(artifact).toEqual({ buildCount: 2 });
+    expect(buildCount).toBe(2);
+    expect(stampedBuilds).toEqual([2]);
+    expect(discardedBuilds).toEqual([0, 1, 1]);
+  });
+
+  it('bounds continuously mutating builds and never stamps a discarded attempt', () => {
+    let generation = 1;
+    let buildCount = 0;
+    let discardCount = 0;
+    const stampCalls: string[] = [];
+    const maxAttempts = 2;
+    const computeState = (): BuildInputState => ({ fingerprint: 'A', generation: String(generation) });
+
+    expect(() =>
+      loadFingerprintStableArtifact(
+        computeState(),
+        computeState,
+        {
+          artifactDirForFingerprint: (fingerprint) => fingerprint,
+          prepareArtifact: () => undefined,
+          readStampedFingerprint: () => null,
+          touchArtifact: () => undefined,
+          discardArtifact: () => {
+            discardCount += 1;
+          },
+          buildArtifact: () => {
+            buildCount += 1;
+            generation += 1;
+          },
+          stampArtifact: (_outDir, fingerprint) => stampCalls.push(fingerprint),
+          readArtifact: () => 'unreachable',
+        },
+        maxAttempts,
+      ),
+    ).toThrow(`changed during ${maxAttempts} consecutive attempts`);
+    expect(buildCount).toBe(maxAttempts);
+    expect(discardCount).toBe(maxAttempts * 2);
+    expect(stampCalls).toEqual([]);
+  });
+});
+
+describe('fenced directory lock', () => {
+  it('does not steal an expired-looking lease from a live holder process', () => {
+    const fixtureRoot = mkdtempSync(join(tmpdir(), 'acx-style-lock-test-'));
+    const lockDir = join(fixtureRoot, '.lock');
+    const holderSource = String.raw`
+const fs = require('node:fs');
+const path = require('node:path');
+const lockDir = process.argv[1];
+fs.mkdirSync(lockDir);
+fs.writeFileSync(path.join(lockDir, ${JSON.stringify(LOCK_OWNER_FILE)}), JSON.stringify({pid: process.pid, nonce: 'holder'}) + '\n');
+setInterval(() => {}, 0x7fffffff);
+`;
+    const holder = spawn(process.execPath, ['-e', holderSource, lockDir], { stdio: 'ignore' });
+
+    try {
+      const ownerPath = join(lockDir, LOCK_OWNER_FILE);
+      const deadline = Date.now() + 5_000;
+      while (!existsSync(ownerPath) && Date.now() < deadline) {
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
+      }
+      expect(existsSync(ownerPath)).toBe(true);
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 25);
+
+      expect(tryAcquireDirectoryLock(lockDir, { staleLockMs: 10 })).toBeNull();
+      expect(JSON.parse(readFileSync(ownerPath, 'utf8'))).toEqual({ pid: holder.pid, nonce: 'holder' });
+      expect(releaseDirectoryLock(lockDir, { pid: process.pid, nonce: 'impostor' })).toBe(false);
+      expect(existsSync(lockDir)).toBe(true);
+    } finally {
+      holder.kill();
       rmSync(fixtureRoot, { recursive: true, force: true });
     }
   });
@@ -159,7 +278,7 @@ describe('build-input fingerprint coverage [FEBT2-LG-NEW-02]', () => {
 
 describe('rollup agrees with the fingerprint [FEBT2-LG-NEW-02]', () => {
   let bundle: ProductionCssBundle;
-  const cacheRoot = dirname(artifactFixtureRootForAppRoot('/unused/app-root'));
+  const cacheRoot = dirname(artifactFixtureRootForAppRoot(process.cwd()));
   const retiredNamespaces = Array.from({ length: 6 }, (_, index) =>
     join(cacheRoot, `retired-fixture-${process.pid}-${index}`),
   );
@@ -224,9 +343,15 @@ describe('artifact retention policy [FEBT2-W2-U-03]', () => {
     Array.from({ length: n }, (_, i) => at(`fresh-${i}`, CUTOFF + 1_000 - i));
 
   it('gives concurrent lanes independent eviction scopes', () => {
-    const laneA = artifactFixtureRootForAppRoot('/worktrees/feature-a/apps/prototype-wp-alt-context');
-    const laneAAgain = artifactFixtureRootForAppRoot('/worktrees/feature-a/apps/./prototype-wp-alt-context');
-    const laneB = artifactFixtureRootForAppRoot('/worktrees/feature-b/apps/prototype-wp-alt-context');
+    const fixtureRoot = mkdtempSync(join(tmpdir(), 'acx-style-namespace-test-'));
+    const laneARoot = join(fixtureRoot, 'feature-a', 'apps', 'prototype-wp-alt-context');
+    const laneBRoot = join(fixtureRoot, 'feature-b', 'apps', 'prototype-wp-alt-context');
+    mkdirSync(laneARoot, { recursive: true });
+    mkdirSync(laneBRoot, { recursive: true });
+
+    const laneA = artifactFixtureRootForAppRoot(laneARoot);
+    const laneAAgain = artifactFixtureRootForAppRoot(join(laneARoot, '.'));
+    const laneB = artifactFixtureRootForAppRoot(laneBRoot);
 
     const laneAKey = basename(laneA);
     const laneBKey = basename(laneB);
@@ -242,6 +367,21 @@ describe('artifact retention policy [FEBT2-W2-U-03]', () => {
       'Sibling lanes sharing one artifact root consume the same four-entry LRU and can evict the ' +
         "current lane's CSS bundle while its gate is still running.",
     ).not.toBe(laneB);
+    rmSync(fixtureRoot, { recursive: true, force: true });
+  });
+
+  it('maps a symlink alias to the real worktree namespace', () => {
+    const fixtureRoot = mkdtempSync(join(tmpdir(), 'acx-style-symlink-test-'));
+    const realRoot = join(fixtureRoot, 'real-app');
+    const aliasRoot = join(fixtureRoot, 'alias-app');
+    try {
+      mkdirSync(realRoot);
+      symlinkSync(realRoot, aliasRoot, 'dir');
+
+      expect(artifactFixtureRootForAppRoot(aliasRoot)).toBe(artifactFixtureRootForAppRoot(realRoot));
+    } finally {
+      rmSync(fixtureRoot, { recursive: true, force: true });
+    }
   });
 
   it('keeps the in-use artifact even when it is the oldest thing on disk', () => {

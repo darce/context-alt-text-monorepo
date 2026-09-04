@@ -15,6 +15,14 @@ CHECKER = REPO_ROOT / "scripts/deploy/check-gpu-snapshots.sh"
 MAKEFILE = REPO_ROOT / "Makefile"
 RECOGNITION_DEPLOY = REPO_ROOT / "scripts/deploy/recognition-service.sh"
 DEPLOYMENTS = REPO_ROOT / "scripts/deploy/gpu-snapshot-deployments.conf"
+GPU_LIFECYCLE_CONTRACT = REPO_ROOT / "docs/workbay/contracts/gpu-lifecycle.md"
+GPUUX_TASK_PLAN = REPO_ROOT / "docs/tasks/v0.5.0/GPUUX-1-gpu-tier-state-and-toasts-task-plan.md"
+DESCRIBE_LOAD_PRODUCER = REPO_ROOT / "apps/prototype-description-service/scene/application/describe_load.py"
+GPU_STATE_WRITER = REPO_ROOT / "infra/oci/gpu_lifecycle/state_snapshot.py"
+DESCRIBE_RUN_CONTRACT_TEST = REPO_ROOT / "apps/prototype-description-service/scene/tests/test_describe_run_contract.py"
+GPU_TOAST_HOOK = REPO_ROOT / "apps/prototype-wp-alt-context/js/admin/hooks/useGpuStateToasts.ts"
+GPU_TOAST_TEST = REPO_ROOT / "apps/prototype-wp-alt-context/js/admin/hooks/__tests__/useGpuStateToasts.test.tsx"
+GPU_TOAST_MOUNT = REPO_ROOT / "apps/prototype-wp-alt-context/js/admin/App.tsx"
 
 # The suite spawns seven `make` processes, and this repo's `make` startup
 # resolves the active task through four `uvx` package launches. That costs
@@ -23,6 +31,41 @@ DEPLOYMENTS = REPO_ROOT / "scripts/deploy/gpu-snapshot-deployments.conf"
 # ~30s. This budget exists to catch a hang, not to police wall-clock speed;
 # a host-tuned value turns the suite into a hardware-dependent flake.
 _DEFAULT_TIMEOUT_SECONDS = 300.0
+
+
+def test_gpu_lifecycle_contract_tracks_batch_in_progress_producer() -> None:
+    contract = GPU_LIFECYCLE_CONTRACT.read_text(encoding="utf-8")
+    producer = DESCRIBE_LOAD_PRODUCER.read_text(encoding="utf-8")
+
+    assert '"batch_in_progress": await batch_in_progress(session)' in producer
+    assert re.search(r"The current describe-service\s+producer writes this key\.", contract)
+    assert "producer does not write this key" not in contract
+    assert "unprotected until the producer writes `batch_in_progress`" not in contract
+
+
+def test_gpuux_task_plan_is_static_and_matches_delivered_contract() -> None:
+    plan = GPUUX_TASK_PLAN.read_text(encoding="utf-8")
+    writer = GPU_STATE_WRITER.read_text(encoding="utf-8")
+    schema_test = DESCRIBE_RUN_CONTRACT_TEST.read_text(encoding="utf-8")
+    toast_hook = GPU_TOAST_HOOK.read_text(encoding="utf-8")
+    toast_test = GPU_TOAST_TEST.read_text(encoding="utf-8")
+    toast_mount = GPU_TOAST_MOUNT.read_text(encoding="utf-8")
+
+    assert "GpuStateSnapshot" not in writer
+    assert "test_run_response_matches_shared_schema_via_actual_builder" in schema_test
+    assert "useGpuStateToasts" in toast_hook
+    assert "useGpuStateToasts" in toast_test
+    assert "useGpuStateToasts();" in toast_mount
+
+    for mutable_or_stale_claim in (
+        "Review Coverage Target",
+        "No RED gate was recorded",
+        "GpuStateSnapshot",
+        "schema parity — **not done**",
+        "still unbuilt",
+        "— not started",
+    ):
+        assert mutable_or_stale_claim not in plan
 
 
 def _assignment_block(path: Path, start: str, end: str) -> dict[str, str]:
@@ -131,12 +174,7 @@ def test_remote_snapshot_callsite_executes_without_repo_checkout(
     )
 
     command_env = os.environ.copy()
-    command_env.update(
-        {
-            key: _fixture_value(key, value, tmp_path)
-            for key, value in assignments.items()
-        }
-    )
+    command_env.update({key: _fixture_value(key, value, tmp_path) for key, value in assignments.items()})
     command_env.update(
         {
             "ACX_GPU_SNAPSHOT_CONFIG_ONLY": "1",
@@ -158,25 +196,19 @@ def test_remote_snapshot_callsite_executes_without_repo_checkout(
     output = result.stdout + result.stderr
 
     assert set(assignments) == expected_keys, (
-        f"{source_name} remote checker environment drifted: "
-        f"expected {sorted(expected_keys)}, got {sorted(assignments)}"
+        f"{source_name} remote checker environment drifted: expected {sorted(expected_keys)}, got {sorted(assignments)}"
     )
     assert list(assignments) == sorted(assignments), (
         f"{source_name} remote checker environment must remain alphabetically ordered"
     )
-    assert result.returncode == 0, (
-        f"{source_name} remote checker invocation exited with {result.returncode}\n{output}"
-    )
+    assert result.returncode == 0, f"{source_name} remote checker invocation exited with {result.returncode}\n{output}"
     assert "lifecycle install script is missing or unreadable" not in output, (
-        f"{source_name} remote checker invocation fell back to the absent repo install script\n"
-        f"{output}"
+        f"{source_name} remote checker invocation fell back to the absent repo install script\n{output}"
     )
 
 
 @pytest.mark.parametrize(("source_name", "block"), _transport_blocks())
-def test_each_transport_frames_and_bounds_the_checker_payload(
-    source_name: str, block: str
-) -> None:
+def test_each_transport_frames_and_bounds_the_checker_payload(source_name: str, block: str) -> None:
     for required in (
         "ACX_GPU_CHECKER_V1",
         "expected_bytes",
@@ -252,7 +284,6 @@ def test_make_outer_deadline_terminates_a_post_connection_stall(tmp_path: Path) 
     env = os.environ.copy()
     env["PATH"] = f"{fake_bin}:{env['PATH']}"
 
-    started = time.monotonic()
     result = subprocess.run(
         [
             "make",
@@ -266,13 +297,18 @@ def test_make_outer_deadline_terminates_a_post_connection_stall(tmp_path: Path) 
         capture_output=True,
         text=True,
         check=False,
-        timeout=8,
+        timeout=float(os.environ.get("ACX_GPU_SHELL_SUITE_TIMEOUT_SECONDS", _DEFAULT_TIMEOUT_SECONDS)),
     )
-    elapsed = time.monotonic() - started
+    finished = time.time()
 
     assert ssh_marker.exists(), "the fake SSH command never reached its connected stall"
     assert result.returncode != 0
-    assert elapsed < 6, f"outer deadline did not bound the SSH command ({elapsed:.2f}s)"
+    # Measure the deadline window itself, from the moment the SSH command
+    # reached its stall. Timing the whole `make` invocation would fold in
+    # Makefile parse cost (lane-config `uvx` shell-outs), which varies per
+    # worktree and has nothing to do with the outer deadline.
+    stalled_for = finished - ssh_marker.stat().st_mtime
+    assert stalled_for < 6, f"outer deadline did not bound the SSH command ({stalled_for:.2f}s)"
 
 
 def test_check_gpu_snapshots_shell_suite() -> None:
@@ -284,11 +320,7 @@ def test_check_gpu_snapshots_shell_suite() -> None:
         capture_output=True,
         text=True,
         check=False,
-        timeout=float(
-            os.environ.get(
-                "ACX_GPU_SHELL_SUITE_TIMEOUT_SECONDS", _DEFAULT_TIMEOUT_SECONDS
-            )
-        ),
+        timeout=float(os.environ.get("ACX_GPU_SHELL_SUITE_TIMEOUT_SECONDS", _DEFAULT_TIMEOUT_SECONDS)),
     )
 
     output = result.stdout + result.stderr

@@ -1,11 +1,20 @@
 # GPUUX-1 lane G1 report
 
-Implemented all four lifecycle remediations with RED-first coverage:
+Implemented all four lifecycle remediations with RED-first coverage. The
+finding bodies live in WorkBay handoff; see `GPUUX1-H-01`, `GPUUX1-H-02`,
+`GPUUX1-M-04` and `GPUUX1-M-05` on task ref `GPUUX-1`.
 
-- H-01: steady-state OCI `RUNNING` instances now participate in bounded readiness waits whenever a probe is configured. Current probe evidence promotes warming to ready and demotes ready to degraded, while shared HTTP endpoint refusal and per-instance failure isolation remain intact.
-- H-02: OCI `RUNNING` no longer preserves the prior `starting` state. With no readiness URL, the producer advances to `warming`.
-- M-04: the atomic producer now emits `instance_id`, `reason`, and state-change `since` alongside `state` and `written_at`. Degraded snapshots require a non-blank reason through explicit production validation. The live describe-service reader continues to accept the enriched payload and retains its freshness behavior.
-- M-05: missing, empty, and whitespace-only `ACX_GPU_STATE_PATH` values now resolve to the same default in producer and consumer.
+Steady-state OCI `RUNNING` instances now participate in bounded readiness waits
+whenever a probe is configured; current probe evidence promotes warming to ready
+and demotes ready to degraded, while shared HTTP endpoint refusal and
+per-instance failure isolation remain intact. `RUNNING` no longer preserves the
+prior `starting` state — with no readiness URL the producer advances to
+`warming`. The atomic producer emits `instance_id`, `reason` and state-change
+`since` alongside `state` and `written_at`, and degraded snapshots require a
+non-blank reason through explicit production validation; the live
+describe-service reader accepts the enriched payload and retains its freshness
+behavior. Missing, empty and whitespace-only `ACX_GPU_STATE_PATH` values resolve
+to the same default in producer and consumer.
 
 RED was recorded before implementation as `8 failed, 20 passed` in `test_state_snapshot.py`. The complete non-network lane selection is green at `119 passed, 2 deselected`. The mandatory unchanged command reaches `119 passed` but its two localhost HTTP-server tests fail before exercising application code because this managed sandbox denies socket creation with `PermissionError: [Errno 1] Operation not permitted`.
 

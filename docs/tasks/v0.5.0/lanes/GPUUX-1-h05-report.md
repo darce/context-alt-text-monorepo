@@ -1,146 +1,224 @@
-# GPUUX-1 H-05 snapshot freshness report
+# GPUUX-1 H-05 lane report
 
 ## Change summary
 
-- `read_previous_gpu_state()` now validates the whole snapshot before returning
-  a state: `written_at` must be finite numeric UTC epoch seconds, no more than
-  5 seconds in the future, and no older than 180 seconds.
-- Invalid `instance_id` and `reason` shapes fail closed to `None`, so live OCI
-  instance state reduction determines the next published state.
-- The keyword-only `now`, `max_age_seconds`, and `max_future_skew_seconds`
-  parameters preserve the existing positional call from `reaper.py`.
-- The 180-second producer default is locked to the real consumer default by a
-  cross-package contract test. The existing contract states at
-  `docs/workbay/contracts/gpu-lifecycle.md`: “default 180 s”.
-- Atomic temp-file-plus-rename publication and the reaper flock were unchanged.
+GPUUX1-H-05 and GPUUX1-M-06 are duplicate reports of the same deployment-gate
+defect, and this change closes both. `check_snapshot` now receives an explicit
+snapshot kind and validates the complete boundary shape before applying the
+existing freshness checks.
+
+- GPU state snapshots require a producer state, valid optional `instance_id`,
+  state-appropriate `reason`, and valid optional `since` metadata.
+- Load snapshots require non-negative integer `queue_depth` and `in_flight`;
+  optional `batch_in_progress` must be a JSON boolean.
+- Invalid JSON, invalid roots, and invalid `written_at` values now fail through
+  explicit production errors rather than `assert`. Every schema error names the
+  offending file and field/rule.
+- Existing `written_at` freshness, readability, and directory checks remain in
+  place.
+
+The canonical producer enum is `GpuLifecycleState` in
+`infra/oci/gpu_lifecycle/state_snapshot.py:26-33`. The checker is shipped over
+stdin to a VM with no repository checkout, so importing that module at runtime
+is not possible. It therefore contains a standalone tuple mirror, guarded by
+`scripts/deploy/tests/test_check_gpu_snapshot_schema_parity.py`, which compares
+the tuple against every canonical enum value so drift fails CI. GPU metadata
+rules come from `infra/oci/gpu_lifecycle/state_snapshot.py:92-102` and
+`:197-205`. Load keys/types come from the producer at
+`apps/prototype-description-service/scene/application/describe_load.py:128-153`
+and the contract at `docs/workbay/contracts/gpu-lifecycle.md:60-69`.
 
 ## RED evidence
 
-The required tests were added before the implementation and run once against
-the vulnerable reader. Exact pytest tail:
+Tests were added before the checker implementation. Command:
 
-```text
-FAILED infra/oci/gpu_lifecycle/tests/test_state_snapshot.py::test_previous_snapshot_rejects_invalid_contract_metadata[degraded-ocid1.gpu-None]
-FAILED infra/oci/gpu_lifecycle/tests/test_state_snapshot.py::test_previous_snapshot_rejects_invalid_contract_metadata[degraded-ocid1.gpu-]
-13 failed, 41 passed in 6.99s
+```sh
+lane_root="$(git rev-parse --show-toplevel)"; if [ -x "$lane_root/.venv/bin/python" ]; then resolved_python="$lane_root/.venv/bin/python"; else resolved_python="$(command -v python3)" || { echo 'python3 is unavailable' >&2; exit 1; }; fi; "$resolved_python" -c "import infra.oci.gpu_lifecycle.state_snapshot as module; print(module.__file__)"; "$resolved_python" -m pytest scripts/deploy/tests/test_check_gpu_snapshots_shell.py scripts/deploy/tests/test_check_gpu_snapshot_schema_parity.py -q
 ```
 
-The failures were `TypeError: read_previous_gpu_state() got an unexpected
-keyword argument 'now'`, proving the new freshness behavior was absent.
+Tail before the fix (TEST-06):
+
+```text
+FAIL: GPU state outside the producer enum fails closed (unexpected exit 0; output: OK: GPU state and per-environment describe-load deployment contract is fresh)
+FAIL: GPU state key is required (unexpected exit 0; output: OK: GPU state and per-environment describe-load deployment contract is fresh)
+FAIL: degraded GPU state requires a reason (unexpected exit 0; output: OK: GPU state and per-environment describe-load deployment contract is fresh)
+FAIL: GPU instance_id must be a non-blank string when present (unexpected exit 0; output: OK: GPU state and per-environment describe-load deployment contract is fresh)
+FAIL: GPU reason is forbidden outside degraded state (unexpected exit 0; output: OK: GPU state and per-environment describe-load deployment contract is fresh)
+FAIL: load queue_depth is required (unexpected exit 0; output: OK: GPU state and per-environment describe-load deployment contract is fresh)
+FAIL: load queue_depth must be an integer (unexpected exit 0; output: OK: GPU state and per-environment describe-load deployment contract is fresh)
+FAIL: load counters must be non-negative (unexpected exit 0; output: OK: GPU state and per-environment describe-load deployment contract is fresh)
+FAIL: load batch flag must be a real boolean (unexpected exit 0; output: OK: GPU state and per-environment describe-load deployment contract is fresh)
+FAILED scripts/deploy/tests/test_check_gpu_snapshots_shell.py::test_check_gpu_snapshots_shell_suite
+FAILED scripts/deploy/tests/test_check_gpu_snapshot_schema_parity.py::test_checker_gpu_state_literal_matches_canonical_producer_enum
+2 failed, 2 passed in 4.89s
+```
 
 ## tests_run
 
-Import-origin check plus RED run:
+Focused green command:
 
 ```sh
-lane_root="$(git rev-parse --show-toplevel)"; if [ -x "$lane_root/.venv/bin/python" ]; then resolved_python="$lane_root/.venv/bin/python"; else resolved_python="$(command -v python3)" || { echo 'python3 is unavailable' >&2; exit 1; }; fi; "$resolved_python" -c "import infra.oci.gpu_lifecycle.state_snapshot as module; print(module.__file__)"; "$resolved_python" -m pytest infra/oci/gpu_lifecycle/tests/test_state_snapshot.py infra/oci/gpu_lifecycle/tests/test_state_snapshot_contract.py -q
-```
-
-Import origin:
-
-```text
-/home/gate/grok-sandbox/feature-gpuux-1-h05-7a33b42c/infra/oci/gpu_lifecycle/state_snapshot.py
-```
-
-First implementation run:
-
-```sh
-lane_root="$(git rev-parse --show-toplevel)"; if [ -x "$lane_root/.venv/bin/python" ]; then resolved_python="$lane_root/.venv/bin/python"; else resolved_python="$(command -v python3)" || { echo 'python3 is unavailable' >&2; exit 1; }; fi; "$resolved_python" -m pytest infra/oci/gpu_lifecycle/tests/test_state_snapshot.py infra/oci/gpu_lifecycle/tests/test_state_snapshot_contract.py -q
-```
-
-```text
-FAILED infra/oci/gpu_lifecycle/tests/test_state_snapshot.py::test_reap_cycle_refreshes_ready_without_demoting_it
-1 failed, 53 passed in 0.59s
-```
-
-The prior regression fixture used `written_at=1.0`; it was corrected to create
-a genuinely fresh writer-produced snapshot.
-
-Green run before mutation testing:
-
-```sh
-lane_root="$(git rev-parse --show-toplevel)"; if [ -x "$lane_root/.venv/bin/python" ]; then resolved_python="$lane_root/.venv/bin/python"; else resolved_python="$(command -v python3)" || { echo 'python3 is unavailable' >&2; exit 1; }; fi; "$resolved_python" -m pytest infra/oci/gpu_lifecycle/tests/test_state_snapshot.py infra/oci/gpu_lifecycle/tests/test_state_snapshot_contract.py -q
-```
-
-```text
-.......................................................                  [100%]
-55 passed in 1.10s
-```
-
-Each mutant below used that same exact pytest command.
-
-Final post-mutant verification (with the import-origin check repeated):
-
-```sh
-lane_root="$(git rev-parse --show-toplevel)"; if [ -x "$lane_root/.venv/bin/python" ]; then resolved_python="$lane_root/.venv/bin/python"; else resolved_python="$(command -v python3)" || { echo 'python3 is unavailable' >&2; exit 1; }; fi; "$resolved_python" -c "import infra.oci.gpu_lifecycle.state_snapshot as module; print(module.__file__)"; "$resolved_python" -m pytest infra/oci/gpu_lifecycle/tests/test_state_snapshot.py infra/oci/gpu_lifecycle/tests/test_state_snapshot_contract.py -q; git diff --check
+lane_root="$(git rev-parse --show-toplevel)"; if [ -x "$lane_root/.venv/bin/python" ]; then resolved_python="$lane_root/.venv/bin/python"; else resolved_python="$(command -v python3)" || { echo 'python3 is unavailable' >&2; exit 1; }; fi; "$resolved_python" -c "import infra.oci.gpu_lifecycle.state_snapshot as module; print(module.__file__)"; "$resolved_python" -m pytest scripts/deploy/tests/test_check_gpu_snapshots_shell.py scripts/deploy/tests/test_check_gpu_snapshot_schema_parity.py -q
 ```
 
 ```text
 /home/gate/grok-sandbox/feature-gpuux-1-h05-7a33b42c/infra/oci/gpu_lifecycle/state_snapshot.py
-.......................................................                  [100%]
-55 passed in 0.96s
+....                                                                     [100%]
+4 passed in 4.47s
 ```
 
-## mutants
+Full deploy-test command before mutation checks:
 
-### A: delete the age check — KILLED
+```sh
+lane_root="$(git rev-parse --show-toplevel)"; if [ -x "$lane_root/.venv/bin/python" ]; then resolved_python="$lane_root/.venv/bin/python"; else resolved_python="$(command -v python3)" || { echo 'python3 is unavailable' >&2; exit 1; }; fi; "$resolved_python" -c "import infra.oci.gpu_lifecycle.state_snapshot as module; print(module.__file__)"; "$resolved_python" -m pytest scripts/deploy/tests -q
+```
+
+```text
+/home/gate/grok-sandbox/feature-gpuux-1-h05-7a33b42c/infra/oci/gpu_lifecycle/state_snapshot.py
+...................                                                      [100%]
+19 passed in 4.22s
+```
+
+Post-mutation final verification repeated the required focused target and the
+whole deploy-test directory:
+
+```sh
+lane_root="$(git rev-parse --show-toplevel)"; if [ -x "$lane_root/.venv/bin/python" ]; then resolved_python="$lane_root/.venv/bin/python"; else resolved_python="$(command -v python3)" || { echo 'python3 is unavailable' >&2; exit 1; }; fi; "$resolved_python" -c "import infra.oci.gpu_lifecycle.state_snapshot as module; print(module.__file__)"; "$resolved_python" -m pytest scripts/deploy/tests/test_check_gpu_snapshots_shell.py -q; "$resolved_python" -m pytest scripts/deploy/tests -q; git diff --check; /bin/bash -n scripts/deploy/check-gpu-snapshots.sh scripts/deploy/tests/test-check-gpu-snapshots.sh
+```
+
+```text
+/home/gate/grok-sandbox/feature-gpuux-1-h05-7a33b42c/infra/oci/gpu_lifecycle/state_snapshot.py
+...                                                                      [100%]
+3 passed in 4.00s
+...................                                                      [100%]
+19 passed in 4.49s
+```
+
+Syntax/diff checks:
+
+```sh
+git diff --check
+/bin/bash -n scripts/deploy/check-gpu-snapshots.sh scripts/deploy/tests/test-check-gpu-snapshots.sh
+```
+
+Both completed with no output (success).
+
+Python lint command:
+
+```sh
+lane_root="$(git rev-parse --show-toplevel)"; if [ -x "$lane_root/.venv/bin/python" ]; then resolved_python="$lane_root/.venv/bin/python"; else resolved_python="$(command -v python3)" || { echo 'python3 is unavailable' >&2; exit 1; }; fi; "$resolved_python" -m ruff check --fix scripts/deploy/tests/test_check_gpu_snapshot_schema_parity.py; "$resolved_python" -m ruff check scripts/deploy/tests/test_check_gpu_snapshots_piped.py scripts/deploy/tests/test_check_gpu_snapshot_schema_parity.py
+```
+
+```text
+Found 1 error (1 fixed, 0 remaining).
+All checks passed!
+```
+
+## Mutants
+
+Each mutant used:
+
+```sh
+lane_root="$(git rev-parse --show-toplevel)"; if [ -x "$lane_root/.venv/bin/python" ]; then resolved_python="$lane_root/.venv/bin/python"; else resolved_python="$(command -v python3)" || { echo 'python3 is unavailable' >&2; exit 1; }; fi; "$resolved_python" -m pytest scripts/deploy/tests/test_check_gpu_snapshots_shell.py -q
+```
+
+### (a) Delete state-enum membership check — KILLED
+
+Diff:
 
 ```diff
--    if current_time - written_at > max_age_seconds:
--        return None
+-    if not isinstance(state, str) or state not in valid_gpu_states:
++    if not isinstance(state, str):
 ```
 
 Exact pytest tail:
 
 ```text
-FAILED infra/oci/gpu_lifecycle/tests/test_state_snapshot.py::test_stale_ready_snapshot_is_not_preserved
-1 failed, 54 passed in 0.87s
-```
-
-### B: invert the future-skew comparison — KILLED
-
-```diff
--    if written_at - current_time > max_future_skew_seconds:
-+    if written_at - current_time < max_future_skew_seconds:
-```
-
-Exact pytest tail:
-
-```text
-FAILED infra/oci/gpu_lifecycle/tests/test_state_snapshot.py::test_future_dated_ready_snapshot_is_not_preserved
-FAILED infra/oci/gpu_lifecycle/tests/test_state_snapshot.py::test_fresh_ready_snapshot_is_preserved_for_running_instance
-FAILED infra/oci/gpu_lifecycle/tests/test_state_snapshot.py::test_written_snapshot_round_trips_to_previous_state_within_freshness_bound
-FAILED infra/oci/gpu_lifecycle/tests/test_state_snapshot.py::test_reap_cycle_refreshes_ready_without_demoting_it
-4 failed, 51 passed in 0.94s
-```
-
-### C: replace the max-age default with infinity — KILLED
-
-```diff
--    max_age_seconds: float = DEFAULT_PREVIOUS_GPU_STATE_MAX_AGE_SECONDS,
-+    max_age_seconds: float = float("inf"),
-```
-
-Exact pytest tail:
-
-```text
--- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+FAIL: GPU state outside the producer enum fails closed (unexpected exit 0; output: OK: GPU state and per-environment describe-load deployment contract is fresh)
+FAILED: 1 case(s)
+scripts/deploy/tests/test_check_gpu_snapshots_shell.py:169: AssertionError
 =========================== short test summary info ============================
-FAILED infra/oci/gpu_lifecycle/tests/test_state_snapshot.py::test_stale_ready_snapshot_is_not_preserved
-FAILED infra/oci/gpu_lifecycle/tests/test_state_snapshot.py::test_future_dated_ready_snapshot_is_not_preserved
-FAILED infra/oci/gpu_lifecycle/tests/test_state_snapshot.py::test_fresh_ready_snapshot_is_preserved_for_running_instance
-FAILED infra/oci/gpu_lifecycle/tests/test_state_snapshot.py::test_written_snapshot_round_trips_to_previous_state_within_freshness_bound
-FAILED infra/oci/gpu_lifecycle/tests/test_state_snapshot.py::test_reap_cycle_refreshes_ready_without_demoting_it
-FAILED infra/oci/gpu_lifecycle/tests/test_state_snapshot.py::test_reap_publish_cannot_be_overwritten_by_stale_start_read
-6 failed, 49 passed, 1 warning in 2.94s
+FAILED scripts/deploy/tests/test_check_gpu_snapshots_shell.py::test_check_gpu_snapshots_shell_suite
+1 failed, 2 passed in 4.09s
 ```
 
-All mutants were reverted after their runs.
+### (b) Delete load required-key check — KILLED
 
-## blockers
+Diff:
+
+```diff
+-        if field not in payload:
+-            fail(f"{field} is required")
+```
+
+Exact pytest tail:
+
+```text
+FAIL: load queue_depth is required (missing error 'queue_depth is required'; output: Traceback (most recent call last):
+  File "<string>", line 66, in <module>
+KeyError: 'queue_depth'
+ERROR: describe load (dev) snapshot failed schema validation: /tmp/tmp.hgEFhMHCAw/run/acx-write/dev/describe-load.json)
+FAILED: 1 case(s)
+scripts/deploy/tests/test_check_gpu_snapshots_shell.py:169: AssertionError
+=========================== short test summary info ============================
+FAILED scripts/deploy/tests/test_check_gpu_snapshots_shell.py::test_check_gpu_snapshots_shell_suite
+1 failed, 2 passed in 4.42s
+```
+
+### (c) Accept arbitrary numeric counters — KILLED
+
+Diff:
+
+```diff
+-        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
++        if isinstance(value, bool) or not isinstance(value, (int, float)):
+```
+
+Exact pytest tail:
+
+```text
+FAIL: load counters must be non-negative (unexpected exit 0; output: OK: GPU state and per-environment describe-load deployment contract is fresh)
+FAILED: 1 case(s)
+scripts/deploy/tests/test_check_gpu_snapshots_shell.py:169: AssertionError
+=========================== short test summary info ============================
+FAILED scripts/deploy/tests/test_check_gpu_snapshots_shell.py::test_check_gpu_snapshots_shell_suite
+1 failed, 2 passed in 10.06s
+```
+
+### (d) Replace explicit validation with `assert` under `python3 -O` — KILLED
+
+Diff:
+
+```diff
+-    written_at=$(python3 -c '
++    written_at=$(python3 -O -c '
+-    if not isinstance(state, str) or state not in valid_gpu_states:
+-        fail(f"state must be one of {valid_gpu_states}")
++    assert isinstance(state, str) and state in valid_gpu_states
+```
+
+Optimized Python deleted the assertion and accepted `state: bogus`; the test
+therefore exposed the validation bypass and killed the mutant. Exact pytest
+tail:
+
+```text
+FAIL: GPU state outside the producer enum fails closed (unexpected exit 0; output: OK: GPU state and per-environment describe-load deployment contract is fresh)
+FAILED: 1 case(s)
+scripts/deploy/tests/test_check_gpu_snapshots_shell.py:169: AssertionError
+=========================== short test summary info ============================
+FAILED scripts/deploy/tests/test_check_gpu_snapshots_shell.py::test_check_gpu_snapshots_shell_suite
+1 failed, 2 passed in 7.80s
+```
+
+All four mutations were reverted before final verification.
+
+## Blockers
 
 None.
 
-## findings you noticed outside your ownership
+## Findings noticed outside ownership
 
-None.
+- `infra/oci/gpu_lifecycle/load_source.py:155-157` converts counters with
+  `int(...)`, so values such as the string `"0"` can be accepted by that reader
+  even though the producer and deployment boundary contract require JSON
+  integers. This lane did not change the consumer.

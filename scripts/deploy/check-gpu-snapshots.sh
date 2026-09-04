@@ -158,7 +158,7 @@ writer_can_write_directory() {
 }
 
 check_snapshot() {
-    local label=$1 path=$2 budget=$3 readability_rc=0 written_at age
+    local label=$1 kind=$2 path=$3 budget=$4 readability_rc=0 written_at age
     [ -e "$path" ] || die "missing $label snapshot: $path"
     [ -f "$path" ] || die "$label snapshot is not a regular file: $path"
     reader_can_read "$path" || readability_rc=$?
@@ -168,17 +168,93 @@ check_snapshot() {
         die "$label snapshot is unreadable by uid $reader_uid: $path"
     fi
 
-    written_at=$(python3 -c \
-        'import json, math, sys; value=json.load(open(sys.argv[1], encoding="utf-8")).get("written_at"); assert not isinstance(value, bool) and isinstance(value, (int, float)) and math.isfinite(value), "written_at must be finite epoch seconds"; print(value)' \
-        "$path" 2>/dev/null) || die "$label snapshot has no valid written_at: $path"
+    written_at=$(python3 -c '
+import json
+import math
+import sys
+
+kind, path = sys.argv[1:]
+
+
+def fail(message):
+    print(f"{path}: {message}", file=sys.stderr)
+    raise SystemExit(1)
+
+
+try:
+    with open(path, encoding="utf-8") as snapshot_file:
+        payload = json.load(snapshot_file)
+except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+    fail(f"snapshot must contain valid JSON: {exc}")
+
+if not isinstance(payload, dict):
+    fail("snapshot root must be an object")
+
+written_at = payload.get("written_at")
+if (
+    isinstance(written_at, bool)
+    or not isinstance(written_at, (int, float))
+    or not math.isfinite(written_at)
+):
+    fail("written_at must be finite epoch seconds")
+
+if kind == "gpu-state":
+    # Standalone mirror: parity-tested against GpuLifecycleState because the
+    # production checker is piped to a host where the repository is absent.
+    valid_gpu_states = ("stopped", "starting", "warming", "ready", "degraded")
+    if "state" not in payload:
+        fail("state is required")
+    state = payload["state"]
+    if not isinstance(state, str) or state not in valid_gpu_states:
+        fail(f"state must be one of {valid_gpu_states}")
+
+    instance_id = payload.get("instance_id")
+    if instance_id is not None and (
+        not isinstance(instance_id, str) or not instance_id.strip()
+    ):
+        fail("instance_id must be null or a non-blank string")
+
+    reason = payload.get("reason")
+    if state == "degraded":
+        if not isinstance(reason, str) or not reason.strip():
+            fail("reason must be a non-blank string for degraded state")
+    elif reason is not None:
+        fail("reason is only valid for degraded state")
+
+    if "since" in payload:
+        since = payload["since"]
+        if (
+            isinstance(since, bool)
+            or not isinstance(since, (int, float))
+            or not math.isfinite(since)
+        ):
+            fail("since must be finite epoch seconds when present")
+        if since > written_at:
+            fail("since must not be later than written_at")
+elif kind == "load":
+    for field in ("queue_depth", "in_flight"):
+        if field not in payload:
+            fail(f"{field} is required")
+        value = payload[field]
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            fail(f"{field} must be a non-negative integer")
+    if "batch_in_progress" in payload and not isinstance(
+        payload["batch_in_progress"], bool
+    ):
+        fail("batch_in_progress must be a boolean when present")
+else:
+    fail(f"unknown snapshot kind {kind!r}")
+
+print(written_at)
+' "$kind" "$path") || die "$label snapshot failed schema validation: $path"
     age=$(awk -v now="$now_epoch" -v written="$written_at" 'BEGIN { printf "%.6f", now - written }')
     awk -v age="$age" 'BEGIN { exit !(age >= 0) }' ||
-        die "$label snapshot written_at is in the future: $written_at"
+        die "$label snapshot written_at is in the future: $written_at ($path)"
     awk -v age="$age" -v budget="$budget" 'BEGIN { exit !(age <= budget) }' ||
         die "stale $label snapshot: age ${age}s exceeds ${budget}s budget ($path)"
 }
 
-check_snapshot "GPU state" "$unit_state_path" "$state_stale_seconds"
+check_snapshot "GPU state" "gpu-state" "$unit_state_path" "$state_stale_seconds"
 for environment in $load_environments; do
     environment_dir="${unit_load_dir}/${environment}"
     [ -d "$environment_dir" ] ||
@@ -190,7 +266,7 @@ for environment in $load_environments; do
     elif [ "$writable_rc" -ne 0 ]; then
         die "describe-load directory is not writable by uid $reader_uid: $environment_dir"
     fi
-    check_snapshot "describe load (${environment})" \
+    check_snapshot "describe load (${environment})" "load" \
         "${environment_dir}/describe-load.json" "$load_stale_seconds"
 done
 

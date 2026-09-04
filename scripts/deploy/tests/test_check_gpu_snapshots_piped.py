@@ -13,6 +13,7 @@ The checker itself is the unit under test here; the call sites that build the
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 from pathlib import Path
 
@@ -69,6 +70,7 @@ def fixture_env(tmp_path: Path) -> dict[str, str]:
         "ACX_GPU_SNAPSHOT_DIR": str(state_dir),
         "ACX_DESCRIBE_LOAD_DIR": str(load_dir),
         "ACX_GPU_SNAPSHOT_CONFIG_ONLY": "1",
+        "ACX_GPU_READER_UID": str(os.getuid()),
         "ACX_NOW_EPOCH": "1000",
     }
 
@@ -130,3 +132,35 @@ def test_checker_never_dereferences_bash_source_unguarded() -> None:
 
     assert "${BASH_SOURCE[0]}" not in source
     assert "${BASH_SOURCE[0]:-}" in source
+
+
+def test_piped_checker_rejects_gpu_state_outside_producer_enum(
+    fixture_env: dict[str, str], tmp_path: Path
+) -> None:
+    state_path = Path(fixture_env["ACX_GPU_UNIT_STATE_PATH"])
+    state_path.write_text(
+        json.dumps({"state": "bogus", "written_at": 900}), encoding="utf-8"
+    )
+    fixture_env["ACX_GPU_SNAPSHOT_CONFIG_ONLY"] = "0"
+
+    result = _run_piped(fixture_env, tmp_path)
+
+    assert result.returncode != 0
+    assert str(state_path) in result.stderr
+    assert "state must be one of" in result.stderr
+
+
+def test_piped_checker_rejects_load_snapshot_missing_required_counter(
+    fixture_env: dict[str, str], tmp_path: Path
+) -> None:
+    load_path = Path(fixture_env["ACX_GPU_UNIT_LOAD_DIR"]) / "dev/describe-load.json"
+    load_path.write_text(
+        json.dumps({"in_flight": 0, "written_at": 900}), encoding="utf-8"
+    )
+    fixture_env["ACX_GPU_SNAPSHOT_CONFIG_ONLY"] = "0"
+
+    result = _run_piped(fixture_env, tmp_path)
+
+    assert result.returncode != 0
+    assert str(load_path) in result.stderr
+    assert "queue_depth is required" in result.stderr

@@ -290,6 +290,44 @@ else
 fi
 
 expect_success "fresh readable snapshots and agreeing mount pass"
+
+printf '{"state":"bogus","written_at":900}\n' >"${fixture_root}/run/acx/gpu-state.json"
+expect_failure "GPU state outside the producer enum fails closed" \
+    "state must be one of"
+printf '{"written_at":900}\n' >"${fixture_root}/run/acx/gpu-state.json"
+expect_failure "GPU state key is required" "state is required"
+printf '{"state":"degraded","written_at":900}\n' >"${fixture_root}/run/acx/gpu-state.json"
+expect_failure "degraded GPU state requires a reason" \
+    "reason must be a non-blank string for degraded state"
+printf '{"state":"ready","instance_id":"","written_at":900}\n' >"${fixture_root}/run/acx/gpu-state.json"
+expect_failure "GPU instance_id must be a non-blank string when present" \
+    "instance_id must be null or a non-blank string"
+printf '{"state":"ready","reason":"not-degraded","written_at":900}\n' >"${fixture_root}/run/acx/gpu-state.json"
+expect_failure "GPU reason is forbidden outside degraded state" \
+    "reason is only valid for degraded state"
+printf '{"state":"degraded","instance_id":"ocid1.gpu","reason":"probe_failed","since":850,"written_at":900}\n' \
+    >"${fixture_root}/run/acx/gpu-state.json"
+expect_success "fully valid degraded GPU and load snapshots pass"
+printf '{"state":"ready","written_at":900}\n' >"${fixture_root}/run/acx/gpu-state.json"
+
+printf '{"in_flight":0,"written_at":900}\n' >"${fixture_root}/run/acx-write/dev/describe-load.json"
+expect_failure "load queue_depth is required" "queue_depth is required"
+printf '{"queue_depth":"0","in_flight":0,"written_at":900}\n' \
+    >"${fixture_root}/run/acx-write/dev/describe-load.json"
+expect_failure "load queue_depth must be an integer" \
+    "queue_depth must be a non-negative integer"
+printf '{"queue_depth":-1,"in_flight":0,"written_at":900}\n' \
+    >"${fixture_root}/run/acx-write/dev/describe-load.json"
+expect_failure "load counters must be non-negative" \
+    "queue_depth must be a non-negative integer"
+printf '{"queue_depth":0,"in_flight":0,"batch_in_progress":0,"written_at":900}\n' \
+    >"${fixture_root}/run/acx-write/dev/describe-load.json"
+expect_failure "load batch flag must be a real boolean" \
+    "batch_in_progress must be a boolean when present"
+printf '{"queue_depth":0,"in_flight":0,"batch_in_progress":false,"written_at":900}\n' \
+    >"${fixture_root}/run/acx-write/dev/describe-load.json"
+expect_success "fully valid GPU and load snapshot shapes pass"
+
 derived_output=$(run_checker_from_install 2>&1) || derived_rc=$?
 if [ "${derived_rc:-0}" -eq 0 ]; then
     pass "checker derives the single writer paths from lifecycle units"

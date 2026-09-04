@@ -1,7 +1,7 @@
 tenancy_ocid     = "ocid1.tenancy.oc1..aaaaaa..."
 user_ocid        = "ocid1.user.oc1..aaaaaa..."
-fingerprint      = "ac:72:..."
-private_key_path = "~/.oci/oci_api_key.pem"
+fingerprint      = "aa:bb:cc:..."  # `oci iam user api-key list --user-id <user_ocid>`
+private_key_path = "~/.oci/oci_api_key.pem"  # must match the fingerprint above; update both on rotation
 region           = "us-ashburn-1"
 
 compartment_ocid    = "ocid1.compartment.oc1..aaaaaa..."

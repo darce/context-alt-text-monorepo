@@ -3,9 +3,12 @@ import { useQuery } from '@tanstack/react-query';
 
 import {
   fetchBulkDescribeRun,
+  GPU_STATE,
   isDescribeRunTerminal,
+  isGpuState,
   type DescribeRunResponse,
   type DescribeRunStatus,
+  type GpuState,
 } from '../api/describeApi';
 import { getJobProgressStallThresholdMs } from './useJobProgressStream';
 import { gateRefetchInterval } from '../utils/recognitionCooldown';
@@ -65,6 +68,8 @@ export interface DescribeRunProgress {
   status: DescribeRunStatus | null;
   progressFraction: number | null;
   etaSeconds: number | null;
+  /** GPU lifecycle snapshot carried by the existing run-status poll. */
+  gpuState?: GpuState | null;
   isTerminal: boolean;
   stalledForSeconds: number | null;
   isPolling: boolean;
@@ -216,6 +221,7 @@ export const useDescribeRunProgress = (runId: string | null): DescribeRunProgres
     status,
     progressFraction,
     etaSeconds: run?.eta_seconds ?? null,
+    gpuState: isGpuState(run?.gpu_state) ? run.gpu_state : GPU_STATE.UNKNOWN,
     isTerminal,
     stalledForSeconds,
     isPolling: runId !== null && !isTerminal && !isError,

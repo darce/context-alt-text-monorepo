@@ -72,10 +72,14 @@ if [ "${1:-}" = -c ]; then
 fi
 secret_name=""
 readable_timeout=""
+vault_id=""
+if_match=""
 while [ $# -gt 0 ]; do
     case "$1" in
         --secret-name) secret_name="$2"; shift ;;
         --readable-timeout) readable_timeout="$2"; shift ;;
+        --vault-id) vault_id="$2"; shift ;;
+        --if-match) if_match="$2"; shift ;;
     esac
     shift
 done
@@ -84,17 +88,21 @@ if [ "${OCIR_TEST_PUT_FAIL_SECRET:-}" = "$secret_name" ]; then
     printf 'simulated %s write failure\n' "$secret_name" >&2
     exit "${OCIR_TEST_PUT_FAIL_RC:-70}"
 fi
-if [ "${OCIR_TEST_COMPENSATION_FAIL:-}" = 1 ] && \
-    [ "$secret_name" = OCIR_AUTH_TOKEN ] && [ -s "$OCIR_TEST_PUT_LOG" ]; then
+if [ -n "${OCIR_TEST_COMPENSATION_FAIL:-}" ] && \
+    [ "$secret_name" = OCIR_AUTH_TOKEN ] && grep -q '^OCIR_AUTH_TOKEN|' "$OCIR_TEST_PUT_LOG"; then
     printf 'simulated compensation failure\n' >&2
-    exit 71
+    exit "$OCIR_TEST_COMPENSATION_FAIL"
 fi
 printf '%s|%s|%s\n' "$secret_name" "$readable_timeout" "$value" >>"$OCIR_TEST_PUT_LOG"
+printf '%s|%s|%s\n' "$secret_name" "$vault_id" "$if_match" >>"$OCIR_TEST_PUT_ARGS_LOG"
+printf '  write_etag: etag-%s\n' "$secret_name"
 EOF
 
 cat >"${fake_bin}/oci" <<'EOF'
 #!/usr/bin/env bash
 case " $* " in
+    *" iam auth-token delete "*) printf '%s\n' "$*" >>"$OCIR_TEST_REVOKE_LOG" ;;
+    *" --secret-name OCIR_CREDENTIAL_GENERATION "*) printf '%s' 'STABLE:prior-generation' | base64 ;;
     *" --secret-name OCIR_USERNAME "*)
         if [ -n "${OCIR_TEST_USERNAME_SLEEP:-}" ]; then
             sleep "$OCIR_TEST_USERNAME_SLEEP"
@@ -122,7 +130,7 @@ printf '%s|%s|%s|%s\n' "$count" "$*" "$value" "$config_dir" >>"$OCIR_TEST_DOCKER
 mkdir -p "$config_dir"
 printf 'fake docker credential %s\n' "$count" >>"${config_dir}/config.json"
 if [ "${OCIR_TEST_DOCKER_FAIL_AT:-}" = "$count" ]; then
-    echo 'Error response from daemon: login attempt failed with status: 401 Unauthorized' >&2
+    printf 'Error response from daemon: credential=%s status: 401 Unauthorized\n' "$value" >&2
     exit 1
 fi
 if [ "${OCIR_TEST_DOCKER_STALL_AT:-}" = "$count" ]; then
@@ -157,6 +165,8 @@ chmod +x "${fake_bin}/fake-python" "${fake_bin}/oci" \
     "${fake_bin}/docker" "${fake_bin}/ssh" "${fake_bin}/timeout"
 
 put_log="${fixture_dir}/put.log"
+put_args_log="${fixture_dir}/put-args.log"
+revoke_log="${fixture_dir}/revoke.log"
 docker_log="${fixture_dir}/docker.log"
 docker_count="${fixture_dir}/docker.count"
 ssh_log="${fixture_dir}/ssh.log"
@@ -170,6 +180,8 @@ pristine_home_config='pre-existing operator docker configuration'
 
 reset_case() {
     : >"$put_log"
+    : >"$put_args_log"
+    : >"$revoke_log"
     : >"$docker_log"
     : >"$ssh_log"
     rm -f "$docker_count"
@@ -197,6 +209,8 @@ run_rotate() {
         export ACX_OCIR_TOKEN_SECRET=OCIR_AUTH_TOKEN
         export ACX_OCIR_USERNAME_SECRET=OCIR_USERNAME
         export OCIR_TEST_PUT_LOG="$put_log"
+        export OCIR_TEST_PUT_ARGS_LOG="$put_args_log"
+        export OCIR_TEST_REVOKE_LOG="$revoke_log"
         export OCIR_TEST_DOCKER_LOG="$docker_log"
         export OCIR_TEST_DOCKER_COUNT="$docker_count"
         export OCIR_TEST_SSH_LOG="$ssh_log"
@@ -214,7 +228,9 @@ run_rotate() {
         export OCIR_TEST_COMPENSATION_FAIL="${OCIR_TEST_COMPENSATION_FAIL:-}"
         export OCIR_TEST_USERNAME_SLEEP="${OCIR_TEST_USERNAME_SLEEP:-}"
         export OCIR_TEST_USERNAME_STDERR="${OCIR_TEST_USERNAME_STDERR:-}"
-        printf '%s' "$token" | bash "$rotate_script" --stdin "$@"
+        printf '%s' "$token" | bash "$rotate_script" --stdin \
+            --previous-auth-token-id ocid1.credential.test.previous \
+            --user-id ocid1.user.test.operator "$@"
     ) >"$rotate_stdout" 2>"$rotate_stderr" || rotate_rc=$?
 }
 
@@ -231,11 +247,17 @@ assert_eq "fresh proof plus two Vault-backed login legs ran" 3 "$(cat "$docker_c
 assert_eq "remote verification ran once" 1 "$(wc -l <"$ssh_log" | tr -d ' ')"
 assert_contains "token is committed first with forwarded timeout" \
     "OCIR_AUTH_TOKEN|1|${known_token}" "$put_log"
-assert_eq "token and username are the only writes, in safe order" \
-    "OCIR_AUTH_TOKEN|1|${known_token}
-OCIR_USERNAME|1|${known_user}" "$(cat "$put_log")"
+assert_contains "transaction opens with a fail-closed generation" \
+    'OCIR_CREDENTIAL_GENERATION|1|UPDATING:' "$put_log"
+assert_contains "transaction commits a stable generation" \
+    'OCIR_CREDENTIAL_GENERATION|1|STABLE:' "$put_log"
 assert_contains "token destination is disclosed before the write" \
     'writing vault ocid1.vault.oc1.test.contract secret OCIR_AUTH_TOKEN' "$rotate_stderr"
+assert_contains "configured Vault is forwarded to the mutation helper" \
+    'OCIR_AUTH_TOKEN|ocid1.vault.oc1.test.contract|' "$put_args_log"
+assert_contains "verified rotation revokes the prior issuer credential" \
+    'iam auth-token delete --user-id ocid1.user.test.operator --auth-token-id ocid1.credential.test.previous --force' \
+    "$revoke_log"
 assert_contains "username destination is disclosed before the write" \
     'writing vault ocid1.vault.oc1.test.contract secret OCIR_USERNAME' "$rotate_stderr"
 
@@ -310,7 +332,7 @@ bad_secret_rc=0
 printf '%s' "$known_token" | PATH="${fake_bin}:${PATH}" \
     ACX_OCIR_TOKEN_SECRET=RECOGNITION_ADMIN_TOKEN \
     ACX_OCIR_USERNAME_SECRET=OCIR_USERNAME \
-    bash "$rotate_script" --stdin >"$rotate_stdout" 2>"$rotate_stderr" || bad_secret_rc=$?
+    bash "$rotate_script" --stdin --bootstrap-no-previous-token >"$rotate_stdout" 2>"$rotate_stderr" || bad_secret_rc=$?
 if [ "$bad_secret_rc" -ne 0 ]; then
     echo "ok   unowned secret name is rejected"
 else
@@ -324,7 +346,7 @@ bad_username_rc=0
 printf '%s' "$known_token" | PATH="${fake_bin}:${PATH}" \
     ACX_OCIR_TOKEN_SECRET=OCIR_AUTH_TOKEN \
     ACX_OCIR_USERNAME_SECRET=POSTGRES_DSN \
-    bash "$rotate_script" --stdin >"$rotate_stdout" 2>"$rotate_stderr" || bad_username_rc=$?
+    bash "$rotate_script" --stdin --bootstrap-no-previous-token >"$rotate_stdout" 2>"$rotate_stderr" || bad_username_rc=$?
 if [ "$bad_username_rc" -ne 0 ]; then
     echo "ok   unowned username secret name is rejected"
 else
@@ -345,6 +367,7 @@ else
     failures=$((failures + 1))
 fi
 assert_contains "direct proof identifies OCIR rejection" '[ocir_rejected]' "$rotate_stderr"
+assert_absent "direct proof never replays credential-bearing Docker stderr" 'bad-token' "$rotate_stderr"
 assert_no_file "failed direct proof leaves Vault untouched" "$put_log"
 
 # The direct proof uses the same watchdog as Vault reads. A registry connection
@@ -371,6 +394,21 @@ else
 fi
 assert_no_file "timed-out direct proof leaves Vault untouched" "$put_log"
 
+reset_case
+ACX_VAULT_FETCH_TIMEOUT=30
+OCIR_TEST_DOCKER_STALL_AT=1
+SECONDS=0
+run_rotate "$known_token" --set-username "$known_user" --rotation-timeout 1
+elapsed=$SECONDS
+assert_eq "transaction deadline stops a long first integration call" 1 "$rotate_rc"
+if [ "$elapsed" -lt 5 ]; then
+    echo "ok   transaction deadline caps the integration chain"
+else
+    echo "FAIL transaction deadline caps the integration chain: ${elapsed}s"
+    failures=$((failures + 1))
+fi
+assert_no_file "transaction timeout before proof leaves Vault untouched" "$put_log"
+
 # Zero-wait is deliberately accepted-but-unverified. It cannot immediately
 # consume a value whose data-plane propagation the operator chose not to wait for.
 reset_case
@@ -394,7 +432,9 @@ else
 fi
 assert_eq "second-write failure restores prior token" \
     "OCIR_AUTH_TOKEN|120|new-token
-OCIR_AUTH_TOKEN|120|${known_token}" "$(cat "$put_log")"
+OCIR_AUTH_TOKEN|120|${known_token}" "$(grep '^OCIR_AUTH_TOKEN|' "$put_log")"
+assert_contains "compensation carries the token write ETag fence" \
+    'OCIR_AUTH_TOKEN|ocid1.vault.oc1.test.contract|etag-OCIR_AUTH_TOKEN' "$put_args_log"
 assert_contains "successful compensation is reported" \
     'restored the prior OCIR_AUTH_TOKEN' "$rotate_stderr"
 
@@ -408,7 +448,7 @@ OCIR_TEST_PUT_FAIL_RC=75
 run_rotate 'new-token' --set-username 'new-user' --skip-verify
 assert_eq "unknown username mutation preserves exit 75" 75 "$rotate_rc"
 assert_eq "unknown username mutation does not attempt unsafe compensation" \
-    'OCIR_AUTH_TOKEN|120|new-token' "$(cat "$put_log")"
+    'OCIR_AUTH_TOKEN|120|new-token' "$(grep '^OCIR_AUTH_TOKEN|' "$put_log")"
 assert_contains "unknown username mutation names uncertain pair state" \
     'UNKNOWN/INCONSISTENT: OCIR_AUTH_TOKEN and OCIR_USERNAME may represent different credential generations.' \
     "$rotate_stderr"
@@ -429,6 +469,13 @@ assert_contains "failed compensation names inconsistent values" \
     'INCONSISTENT: OCIR_AUTH_TOKEN is new while OCIR_USERNAME is still previous' "$rotate_stderr"
 assert_contains "failed compensation gives exact recovery command" \
     "scripts/deploy/ocir-token-rotate.sh --set-username 'new-user'" "$rotate_stderr"
+
+reset_case
+OCIR_TEST_PUT_FAIL_SECRET=OCIR_USERNAME
+OCIR_TEST_COMPENSATION_FAIL=75
+run_rotate 'new-token' --set-username 'new-user' --skip-verify
+assert_contains "unknown compensation outcome is reported as unknown" \
+    'UNKNOWN/INCONSISTENT' "$rotate_stderr"
 
 # --skip-verify never skips the fresh-token proof or local Vault verification;
 # it only avoids opening the production SSH session.
@@ -560,10 +607,11 @@ xtrace_rc=0
     export ACX_LOCAL_OCI_BIN=oci ACX_REMOTE_OCI_BIN=oci
     export ACX_OCIR_TOKEN_SECRET=OCIR_AUTH_TOKEN ACX_OCIR_USERNAME_SECRET=OCIR_USERNAME
     export OCIR_TEST_PUT_LOG="$put_log" OCIR_TEST_DOCKER_LOG="$docker_log"
+    export OCIR_TEST_PUT_ARGS_LOG="$put_args_log" OCIR_TEST_REVOKE_LOG="$revoke_log"
     export OCIR_TEST_DOCKER_COUNT="$docker_count" OCIR_TEST_SSH_LOG="$ssh_log"
     export OCIR_TEST_STORED_USERNAME="$known_user" OCIR_TEST_STORED_TOKEN="$known_token"
     printf '%s' "$known_token" | bash -x "$rotate_script" --stdin \
-        --set-username "$known_user" --skip-verify
+        --set-username "$known_user" --skip-verify --bootstrap-no-previous-token
 ) >"$rotate_stdout" 2>"$rotate_stderr" || xtrace_rc=$?
 assert_eq "wrapper succeeds under inherited xtrace" 0 "$xtrace_rc"
 assert_absent "token is absent from inherited xtrace stderr" "$known_token" "$rotate_stderr"
@@ -573,6 +621,7 @@ help_rc=0
 bash "$rotate_script" --help >"$rotate_stdout" 2>"$rotate_stderr" || help_rc=$?
 assert_eq "help exits zero" 0 "$help_rc"
 assert_contains "help includes timeout option" '--readable-timeout SECONDS' "$rotate_stdout"
+assert_contains "help includes whole-rotation deadline" '--rotation-timeout SECONDS' "$rotate_stdout"
 assert_contains "help explains safe skip scope" 'Skip production-VM SSH verification only' "$rotate_stdout"
 assert_contains "help discloses the temporary Docker config" \
     'temporary config for the direct authentication proof' "$rotate_stdout"

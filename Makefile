@@ -168,6 +168,9 @@ check-gpu-snapshots:
 GPU_SNAPSHOT_GATE_TIMEOUT_SECONDS ?= 60
 GPU_SNAPSHOT_CHECKER ?= $(ROOT_MAKEFILE_DIR)/scripts/deploy/check-gpu-snapshots.sh
 GPU_SNAPSHOT_DEPLOYMENTS ?= $(ROOT_MAKEFILE_DIR)/scripts/deploy/gpu-snapshot-deployments.conf
+# Homebrew coreutils installs the GNU tool as gsha256sum, so macOS operators can
+# point the gate at it without shadowing the system PATH.
+GPU_SNAPSHOT_SHA256 ?= sha256sum
 check-gpu-snapshots-live:
 	@if [ -z "$(GPU_SNAPSHOT_ENV)" ]; then \
 		echo "check-gpu-snapshots-live: GPU_SNAPSHOT_ENV is required (dev|dev-fir|staging|prod)" >&2; \
@@ -181,12 +184,13 @@ check-gpu-snapshots-live:
 			echo "check-gpu-snapshots-live: GPU_SNAPSHOT_GATE_TIMEOUT_SECONDS must be a positive integer" >&2; exit 2 ;; \
 		esac; \
 		command -v timeout >/dev/null 2>&1 || { echo "check-gpu-snapshots-live: timeout command is required" >&2; exit 2; }; \
+		command -v "$(GPU_SNAPSHOT_SHA256)" >/dev/null 2>&1 || { echo "check-gpu-snapshots-live: $(GPU_SNAPSHOT_SHA256) command is required (macOS: brew install coreutils, then GPU_SNAPSHOT_SHA256=gsha256sum)" >&2; exit 2; }; \
 		host="$${OCI_HOST:-acx-backend.tail1a44b8.ts.net}"; user="$${OCI_USER:-ubuntu}"; \
 		payload=$$(mktemp); trap 'rm -f "$$payload"' EXIT HUP INT TERM; \
 		echo "==> Checking live GPU snapshots on $$user@$$host ($(GPU_SNAPSHOT_ENV))"; \
 		{ paste -sd, "$(GPU_SNAPSHOT_DEPLOYMENTS)"; cat "$(GPU_SNAPSHOT_CHECKER)"; } > "$$payload"; \
 		expected_bytes=$$(wc -c < "$$payload" | tr -d ' '); \
-		expected_sha=$$(sha256sum "$$payload" | awk '{print $$1}'); \
+		expected_sha=$$("$(GPU_SNAPSHOT_SHA256)" "$$payload" | awk '{print $$1}'); \
 		{ printf 'ACX_GPU_CHECKER_V1 %s %s\n' "$$expected_bytes" "$$expected_sha"; cat "$$payload"; } | \
 		timeout --foreground --signal=TERM --kill-after=5s "$(GPU_SNAPSHOT_GATE_TIMEOUT_SECONDS)s" \
 		ssh -o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=5 \

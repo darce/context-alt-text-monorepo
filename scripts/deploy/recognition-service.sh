@@ -879,8 +879,16 @@ run_with_deadline() {
   # that execs sh reports the forking shell as its PPID, which is this shell.
   owner_pid="${BASHPID:-$(exec sh -c 'echo $PPID')}"
   shift 2
-  "$@" &
+  # A job backgrounded by a non-interactive shell inherits /dev/null on stdin,
+  # which silently swallows any heredoc/here-string the caller attached — e.g.
+  # do_boot_smoke's SMOKE script piped to `ssh ... bash -s`, where an empty stdin
+  # makes the remote shell exit 0 without running a single gate (fail-open smoke).
+  # Duplicate the caller's stdin onto fd 3 and hand it to the child so bounding a
+  # command never changes what that command reads (same pattern as acx_bounded).
+  exec 3<&0
+  "$@" <&3 &
   pid=$!
+  exec 3<&-
   started_at="${SECONDS}"
   while kill -0 "${pid}" 2>/dev/null; do
     # kill -0 also succeeds for an exited-but-unreaped zombie. Detect that

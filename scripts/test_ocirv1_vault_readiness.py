@@ -43,7 +43,13 @@ def _digest(value: bytes) -> str:
 
 
 def _assert_bounded_increasing_backoff(delays, timeout):
-    """Assert the retry policy without freezing its safe tuning factor."""
+    """Assert the retry policy without freezing its safe tuning factor.
+
+    `delays` are the jitter *caps*: `_Clock.uniform` returns each draw's upper
+    bound, so the recorded sleeps are exactly the schedule the policy would use
+    with jitter disabled. The cap schedule is what must grow and stay bounded;
+    `_assert_full_jitter` covers the randomisation on top of it.
+    """
     assert delays
     assert all(0 < delay <= 5.0 for delay in delays)
     assert len(set(delays)) > 1, "retry delay must not remain constant"
@@ -53,6 +59,18 @@ def _assert_bounded_increasing_backoff(delays, timeout):
         else:
             assert current == 5.0
     assert sum(delays) <= timeout
+
+
+def _assert_full_jitter(clock, delays):
+    """Assert every wait was drawn from [0, cap] rather than taken at the cap.
+
+    Fleet-synchronised retries (two rotation legs, or a rerun after a failure)
+    converge on the same schedule and hammer the control plane in lockstep. Full
+    jitter is the defence, so its absence is a regression, not a tuning choice.
+    """
+    assert clock.draws, "retry sleeps must be drawn from a jitter range"
+    assert all(low == 0 for low, _ in clock.draws), clock.draws
+    assert [high for _, high in clock.draws] == delays
 
 
 class _ServiceError(Exception):
@@ -84,16 +102,31 @@ class _Clock:
     """
 
     MAX_SLEEPS = 200
+    # A real attempt costs time even when a full-jitter draw rounds to zero.
+    # Without this floor a zero draw would leave the fake clock stationary and
+    # spin the gate against its own deadline.
+    MIN_TICK = 0.001
 
     def __init__(self):
         self.slept = []
+        self.draws = []
         self.now = 0.0
 
     def __call__(self, seconds):
         self.slept.append(seconds)
-        self.now += seconds
+        self.now += max(seconds, self.MIN_TICK)
         if len(self.slept) > self.MAX_SLEEPS:
             raise RunawayError(f"polled {len(self.slept)} times without honouring the deadline")
+
+    def uniform(self, low, high):
+        """Deterministic `random.uniform` double: records the range, returns its cap.
+
+        Returning the upper bound keeps every read-count assertion exact while
+        still recording what the policy asked for, so the jitter range itself
+        stays assertable (`_assert_full_jitter`).
+        """
+        self.draws.append((low, high))
+        return high
 
     def monotonic(self):
         return self.now
@@ -125,12 +158,14 @@ def test_returns_once_the_written_value_reads_back():
         timeout=60,
         sleep=clock,
         monotonic=clock.monotonic,
+        random_uniform=clock.uniform,
     )
     assert calls["n"] == not_ready_reads + 1
     # A slow propagation must not become a constant-delay hot loop against the
     # control plane. Assert the operational contract while leaving the safe
     # growth factor free to be tuned.
     _assert_bounded_increasing_backoff(clock.slept, timeout=60)
+    _assert_full_jitter(clock, clock.slept)
 
 
 def test_the_exact_live_failure_no_longer_escapes():
@@ -157,6 +192,7 @@ def test_the_exact_live_failure_no_longer_escapes():
         timeout=60,
         sleep=clock,
         monotonic=clock.monotonic,
+        random_uniform=clock.uniform,
     )
 
 
@@ -178,6 +214,7 @@ def test_stale_prior_version_is_not_accepted():
             timeout=1,
             sleep=clock,
             monotonic=clock.monotonic,
+            random_uniform=clock.uniform,
         )
     assert "do not match" in str(excinfo.value)
 
@@ -195,6 +232,7 @@ def test_gives_up_with_an_actionable_message():
             timeout=1,
             sleep=clock,
             monotonic=clock.monotonic,
+            random_uniform=clock.uniform,
         )
     message = str(excinfo.value)
     assert "OCIR_AUTH_TOKEN" in message
@@ -218,6 +256,7 @@ def test_bounded_so_a_stuck_control_plane_cannot_hang_the_rotation():
             timeout=30,
             sleep=clock,
             monotonic=clock.monotonic,
+            random_uniform=clock.uniform,
         )
     assert time.monotonic() - started < 5
 
@@ -233,6 +272,7 @@ def test_secret_value_never_appears_in_the_failure_message():
             timeout=1,
             sleep=clock,
             monotonic=clock.monotonic,
+            random_uniform=clock.uniform,
         )
     message = str(excinfo.value)
     assert secret.decode() not in message
@@ -268,6 +308,7 @@ def test_programming_error_propagates_without_retry():
             timeout=3,
             sleep=clock,
             monotonic=clock.monotonic,
+            random_uniform=clock.uniform,
         )
     assert calls["n"] == 1
 
@@ -290,8 +331,10 @@ def test_503_is_retried():
         timeout=10,
         sleep=clock,
         monotonic=clock.monotonic,
+        random_uniform=clock.uniform,
     )
     assert clock.slept == [1.0]
+    _assert_full_jitter(clock, [1.0])
 
 
 def test_blocking_read_cannot_overrun_the_outer_deadline():
@@ -337,6 +380,14 @@ class _FakeVaultStore:
         self.update_calls = []
         self.read_history = []
         self.list_calls = []
+        # OCI hands back an ETag on every get/create/update and requires the
+        # current one as an update precondition, so the double carries it too:
+        # a fixture that returns bare payloads cannot catch a lost precondition.
+        self.etag = "etag-v0"
+        self.etag_history = []
+        self.get_secret_calls = []
+        self.create_tokens = []
+        self.update_if_match = []
 
     @staticmethod
     def _decode(details):
@@ -346,8 +397,13 @@ class _FakeVaultStore:
         self.pending_value = value
         self.remaining = self.not_ready_reads
 
-    def create(self, details):
+    def _rotate_etag(self):
+        self.etag_history.append(self.etag)
+        self.etag = f"etag-v{len(self.etag_history)}"
+
+    def create(self, details, opc_retry_token=None):
         self.create_calls.append(details)
+        self.create_tokens.append(opc_retry_token)
         self.existing = types.SimpleNamespace(
             secret_name=details.secret_name,
             key_id=details.key_id,
@@ -355,11 +411,18 @@ class _FakeVaultStore:
             lifecycle_state="ACTIVE",
         )
         self._stage(self._decode(details))
+        self._rotate_etag()
         return self.existing
 
-    def update(self, secret_id, details):
+    def update(self, secret_id, details, if_match=None):
         self.update_calls.append((secret_id, details))
+        self.update_if_match.append(if_match)
+        # The live API rejects a stale precondition; so must the double, or a
+        # regression that drops --if-match still shows green here.
+        if if_match != self.etag:
+            raise _ServiceError(409, "NoEtagMatch")
         self._stage(self._decode(details))
+        self._rotate_etag()
         return self.existing
 
     def read(self):
@@ -413,6 +476,9 @@ def _install_fake_clock(monkeypatch):
         "time",
         types.SimpleNamespace(sleep=clock, monotonic=clock.monotonic),
     )
+    # Same reason for the jitter source: main() exposes no seam for it, and a
+    # live RNG would make every read-count assertion below nondeterministic.
+    monkeypatch.setattr(vps, "random", types.SimpleNamespace(uniform=clock.uniform))
     return clock
 
 
@@ -464,11 +530,17 @@ def _install_fake_oci(
                 matches.append(store.existing)
             return types.SimpleNamespace(data=matches, headers={})
 
-        def create_secret(self, details):
-            return types.SimpleNamespace(data=store.create(details))
+        def get_secret(self, secret_id):
+            store.get_secret_calls.append(secret_id)
+            return types.SimpleNamespace(data=store.existing, headers={"etag": store.etag})
 
-        def update_secret(self, secret_id, details):
-            return types.SimpleNamespace(data=store.update(secret_id, details))
+        def create_secret(self, details, opc_retry_token=None):
+            secret = store.create(details, opc_retry_token)
+            return types.SimpleNamespace(data=secret, headers={"etag": store.etag})
+
+        def update_secret(self, secret_id, details, if_match=None):
+            secret = store.update(secret_id, details, if_match)
+            return types.SimpleNamespace(data=secret, headers={"etag": store.etag})
 
     class _Kms:
         def __init__(self, config):
@@ -567,6 +639,9 @@ def test_main_strips_a_trailing_newline_before_storing(monkeypatch):
     assert secrets_client.reads >= 1
     assert len(store.create_calls) == 1
     assert _FakeVaultStore._decode(store.create_calls[0]) == token
+    # The create carries a value-derived idempotency key, so a retried create
+    # after a lost response cannot land a second secret.
+    assert store.create_tokens == [vps.mutation_retry_token(vps.DEFAULT_VAULT_OCID, "OCIR_AUTH_TOKEN", token)]
 
 
 def test_main_rotation_waits_for_the_new_submitted_version(monkeypatch, capsys):
@@ -582,10 +657,19 @@ def test_main_rotation_waits_for_the_new_submitted_version(monkeypatch, capsys):
     secret_id, details = store.update_calls[0]
     assert secret_id == _FakeVaultStore.SECRET_ID
     assert _FakeVaultStore._decode(details) == new
-    assert secrets_client.reads == 4
-    assert store.read_history == [old, old, old, new]
+    # One read-before-write (the duplicate-version / precondition check), then
+    # three stale propagation reads, then the match.
+    assert secrets_client.reads == 5
+    assert store.read_history == [old, old, old, old, new]
     _assert_bounded_increasing_backoff(clock.slept, timeout=120)
-    assert "new version" in capsys.readouterr().out
+    _assert_full_jitter(clock, clock.slept)
+    # The replacement must be fenced on the ETag read just before it, or a
+    # concurrent rotation leg silently loses a version.
+    assert store.get_secret_calls == [_FakeVaultStore.SECRET_ID]
+    assert store.update_if_match == [store.etag_history[0]]
+    out = capsys.readouterr().out
+    assert "new version" in out
+    assert f"write_etag: {store.etag}" in out
 
 
 @pytest.mark.parametrize(
@@ -652,7 +736,9 @@ def test_explicit_key_bootstraps_an_empty_vault(monkeypatch, capsys):
     assert store.create_calls[0].key_id == key_id
     assert all(call["name"] is not None for call in store.list_calls)
     assert secrets_client is None
-    assert "check skipped" in capsys.readouterr().out
+    # --readable-timeout 0 skips the read-back, so the report must say the write
+    # is unverified rather than imply the value was confirmed readable.
+    assert "ACCEPTED-BUT-UNVERIFIED" in capsys.readouterr().out
 
 
 def test_empty_vault_without_explicit_key_names_the_recovery_flag():

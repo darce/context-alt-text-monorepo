@@ -10,24 +10,15 @@ so the route handler stays focused on transport concerns.
 from __future__ import annotations
 
 import io
-import json
-import logging
 import uuid
 from pathlib import Path
 
 import pytest
 from fastapi import HTTPException
-from fastapi.exception_handlers import http_exception_handler
 from starlette.datastructures import FormData, Headers, UploadFile
-from starlette.requests import Request
 
 from recognition.application.storage import FilesystemObjectStore, ObjectStoreError
-from recognition.interface_adapters.http.middleware.correlation import (
-    CORRELATION_ID_HEADER,
-    _correlation_id_var,
-)
 from recognition.interface_adapters.http.routers.analyze_multipart import (
-    logger,
     multipart_to_media_items,
 )
 
@@ -60,6 +51,10 @@ def store(tmp_path: Path) -> FilesystemObjectStore:
 def _put_content_type(upload: UploadFile, content_type: str) -> UploadFile:
     upload.headers = Headers({"content-type": content_type})
     return upload
+
+
+def _stored_files(store: FilesystemObjectStore) -> list[Path]:
+    return [path for path in store.root.rglob("*") if path.is_file()]
 
 
 def test_helper_round_trips_one_image_part(store: FilesystemObjectStore) -> None:
@@ -138,6 +133,95 @@ def test_helper_rejects_non_integer_media_id(store: FilesystemObjectStore) -> No
     assert excinfo.value.status_code == 400
 
 
+@pytest.mark.parametrize(
+    ("second_key", "second_upload", "expected_status"),
+    [
+        (
+            "image_not-an-int",
+            _put_content_type(_upload("b.png", PNG_BYTES, "image/png"), "image/png"),
+            400,
+        ),
+        (
+            "image_2",
+            _put_content_type(_upload("b.gif", b"GIF89a-fake", "image/gif"), "image/gif"),
+            415,
+        ),
+        (
+            "image_2",
+            _put_content_type(_upload("b.png", b"", "image/png"), "image/png"),
+            422,
+        ),
+    ],
+    ids=["invalid-key", "unsupported-mime", "empty-data"],
+)
+def test_helper_validates_every_part_before_writing(
+    store: FilesystemObjectStore,
+    second_key: str,
+    second_upload: UploadFile,
+    expected_status: int,
+) -> None:
+    form = _form(
+        ("image_1", _put_content_type(_upload("a.png", PNG_BYTES, "image/png"), "image/png")),
+        (second_key, second_upload),
+    )
+
+    with pytest.raises(HTTPException) as excinfo:
+        multipart_to_media_items(form_data=form, object_store=store, job_id="validate-first")
+
+    assert excinfo.value.status_code == expected_status
+    assert _stored_files(store) == []
+
+
+def test_helper_read_failure_before_write_leaves_no_orphan(store: FilesystemObjectStore) -> None:
+    class _UnreadableFile(io.BytesIO):
+        def read(self, *_args, **_kwargs):
+            raise OSError("read failed for /private/spool/upload.tmp")
+
+    unreadable = UploadFile(filename="b.png", file=_UnreadableFile(PNG_BYTES))
+    unreadable.headers = Headers({"content-type": "image/png"})
+    form = _form(
+        ("image_1", _put_content_type(_upload("a.png", PNG_BYTES, "image/png"), "image/png")),
+        ("image_2", unreadable),
+    )
+
+    with pytest.raises(OSError, match="read failed"):
+        multipart_to_media_items(form_data=form, object_store=store, job_id="unreadable")
+
+    assert _stored_files(store) == []
+
+
+def test_helper_rejects_duplicate_media_id_before_writing(store: FilesystemObjectStore) -> None:
+    form = _form(
+        ("image_7", _put_content_type(_upload("a.png", PNG_BYTES, "image/png"), "image/png")),
+        ("image_07", _put_content_type(_upload("b.jpg", JPEG_BYTES, "image/jpeg"), "image/jpeg")),
+    )
+
+    with pytest.raises(HTTPException) as excinfo:
+        multipart_to_media_items(form_data=form, object_store=store, job_id="duplicates")
+
+    assert excinfo.value.status_code == 400
+    assert "duplicate" in str(excinfo.value.detail).lower()
+    assert _stored_files(store) == []
+
+
+def test_helper_rejects_more_than_five_images_before_writing(store: FilesystemObjectStore) -> None:
+    form = _form(
+        *(
+            (
+                f"image_{media_id}",
+                _put_content_type(_upload(f"{media_id}.png", PNG_BYTES, "image/png"), "image/png"),
+            )
+            for media_id in range(1, 7)
+        )
+    )
+
+    with pytest.raises(HTTPException) as excinfo:
+        multipart_to_media_items(form_data=form, object_store=store, job_id="too-many")
+
+    assert excinfo.value.status_code == 400
+    assert _stored_files(store) == []
+
+
 def test_helper_returns_empty_list_when_no_image_parts(store: FilesystemObjectStore) -> None:
     """An empty result tells the route handler to raise 422 for itself; the
     helper does not opine on whether zero parts is meaningful."""
@@ -149,41 +233,29 @@ def test_helper_returns_empty_list_when_no_image_parts(store: FilesystemObjectSt
     assert items == []
 
 
-@pytest.mark.asyncio
-async def test_storage_failure_response_is_opaque_and_correlated(caplog: pytest.LogCaptureFixture) -> None:
+def test_storage_failure_after_first_write_cleans_up_all_parts(store: FilesystemObjectStore) -> None:
     secret_path = "/srv/private/blobs/tenant-secret/image.png"
     driver_error = f"permission denied writing {secret_path}"
-    correlation_id = "req-multipart-storage-failure"
 
     class FailingObjectStore:
+        def __init__(self) -> None:
+            self.put_calls = 0
+
         def put(self, *, job_id: str, media_id: str, data: bytes) -> str:
-            raise ObjectStoreError(driver_error)
+            self.put_calls += 1
+            if self.put_calls == 2:
+                raise ObjectStoreError(driver_error)
+            return store.put(job_id=job_id, media_id=media_id, data=data)
+
+        def cleanup(self, *, job_id: str) -> None:
+            store.cleanup(job_id=job_id)
 
     form = _form(
-        ("image_42", _put_content_type(_upload("a.png", PNG_BYTES, "image/png"), "image/png")),
+        ("image_41", _put_content_type(_upload("a.png", PNG_BYTES, "image/png"), "image/png")),
+        ("image_42", _put_content_type(_upload("b.png", PNG_BYTES, "image/png"), "image/png")),
     )
-    token = _correlation_id_var.set(correlation_id)
-    try:
-        with caplog.at_level(logging.ERROR, logger=logger.name), pytest.raises(HTTPException) as excinfo:
-            multipart_to_media_items(
-                form_data=form,
-                object_store=FailingObjectStore(),
-                job_id="job-test",
-            )
-        request = Request({"type": "http", "method": "POST", "path": "/recognition/analyze/multipart"})
-        response = await http_exception_handler(request, excinfo.value)
-    finally:
-        _correlation_id_var.reset(token)
 
-    body_text = response.body.decode("utf-8")
-    assert response.status_code == 500
-    assert json.loads(body_text)["detail"] == "internal server error"
-    assert driver_error not in body_text
-    assert secret_path not in body_text
-    assert response.headers[CORRELATION_ID_HEADER] == correlation_id
+    with pytest.raises(ObjectStoreError, match="permission denied"):
+        multipart_to_media_items(form_data=form, object_store=FailingObjectStore(), job_id="job-test")
 
-    records = [record for record in caplog.records if record.name == logger.name]
-    assert len(records) == 1
-    assert records[0].correlation_id == correlation_id
-    assert records[0].exc_info is not None
-    assert driver_error in str(records[0].exc_info[1])
+    assert _stored_files(store) == []

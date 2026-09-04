@@ -146,26 +146,30 @@ the paths installed into the systemd units. A missing snapshot never passes.
 
 ```bash
 # Production: real load file + OCI probe (not static --queue-depth 0 --in-flight 0)
-python -m infra.oci.gpu_lifecycle \
+python3 -m infra.oci.gpu_lifecycle \
+  --mode reap \
   --instance-id "$(terraform -chdir=infra/oci output -raw gpu_instance_id)" \
+  --load-dir /run/acx-write \
+  --load-max-age-seconds 120 \
+  --load-stale-grace-seconds 600 \
+  --gpu-state-json /run/acx/gpu-state.json \
+  --running-since-path /run/acx-gpu/running-since.json \
   --idle-seconds 300 \
-  --load-json '/run/acx-write/*/describe-load.json' \
-  --probe-oci \
-  --fence-delay-seconds 2
+  --max-lease-seconds 3600 \
+  --fence-delay-seconds 2 \
+  --probe-oci
 ```
 
 Auth: default OCI CLI API-key (`~/.oci/config`). On acx-backend with instance
 principal, pass `--oci-auth instance_principal` (requires a dynamic group policy
 granting `INSTANCE_POWER_ACTIONS` on the GPU compartment).
 
-Scheduler: cloud-init installs `acx-gpu-idle-reaper.timer` (every 2 minutes).
-Copy `/etc/acx/gpu-reaper.env.example` → `/etc/acx/gpu-reaper.env` with
-`GPU_INSTANCE_ID=…` after apply. Manual cron equivalent:
+Scheduler: `scripts/deploy/gpu-lifecycle-install.sh` installs
+`acx-gpu-reap.timer` (every 2 minutes) and writes the resolved instance and
+freshness settings to `/etc/acx/gpu-lifecycle.env`. Manual cron equivalent:
 
 ```bash
-*/2 * * * * GPU_INSTANCE_ID=ocid1... python3 -m infra.oci.gpu_lifecycle \
-  --instance-id "$GPU_INSTANCE_ID" --load-json '/run/acx-write/*/describe-load.json' \
-  --probe-oci --idle-seconds 300 >> /var/log/acx-gpu-reaper.log 2>&1
+*/2 * * * * cd /opt/acx-gpu && /usr/bin/python3 -m infra.oci.gpu_lifecycle --mode reap --instance-id ocid1... --load-dir /run/acx-write --load-max-age-seconds 120 --load-stale-grace-seconds 600 --gpu-state-json /run/acx/gpu-state.json --running-since-path /run/acx-gpu/running-since.json --idle-seconds 300 --max-lease-seconds 3600 --fence-delay-seconds 2 --probe-oci --oci-auth instance_principal --oci-bin /home/ubuntu/.oci-venv/bin/oci >> /var/log/acx-gpu-reaper.log 2>&1
 ```
 
 See `docs/tasks/vlm/VLM-3-gpu-detailed-tier-decision-memo.md` § Activation preconditions.

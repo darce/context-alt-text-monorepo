@@ -13,6 +13,7 @@ from pathlib import Path
 
 import pytest
 
+import scene.application.gpu_state as gpu_state
 from scene.application.gpu_state import (
     DEFAULT_GPU_STATE_PATH,
     DEFAULT_GPU_STATE_STALE_SECONDS,
@@ -103,13 +104,47 @@ def test_unreadable_file_is_unknown(snapshot_path: Path) -> None:
         snapshot_path.chmod(0o644)
 
 
-def test_invalid_stale_seconds_string_uses_default_180(snapshot_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv(GPU_STATE_STALE_SECONDS_ENV, "not-a-number")
-    assert resolve_gpu_state_stale_seconds() == DEFAULT_GPU_STATE_STALE_SECONDS
-    _write_snapshot(snapshot_path, state="ready", written_at=NOW - 5)
+@pytest.mark.parametrize("raw", ["18O", "-1", "0", ""])
+def test_gpu_state_settings_reject_explicit_invalid_stale_seconds(
+    monkeypatch: pytest.MonkeyPatch,
+    raw: str,
+) -> None:
+    monkeypatch.setenv(GPU_STATE_STALE_SECONDS_ENV, raw)
+
+    with pytest.raises(ValueError, match=GPU_STATE_STALE_SECONDS_ENV):
+        gpu_state.GpuStateSettings.from_environment()
+
+
+def test_gpu_state_settings_default_stale_seconds_when_unset(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv(GPU_STATE_STALE_SECONDS_ENV, raising=False)
+
+    settings = gpu_state.GpuStateSettings.from_environment()
+
+    assert settings.stale_seconds == DEFAULT_GPU_STATE_STALE_SECONDS
+
+
+def test_gpu_state_settings_honour_valid_explicit_stale_seconds(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv(GPU_STATE_STALE_SECONDS_ENV, "75.5")
+
+    settings = gpu_state.GpuStateSettings.from_environment()
+
+    assert settings.stale_seconds == 75.5
+
+
+def test_gpu_state_settings_are_not_reparsed_after_construction(
+    monkeypatch: pytest.MonkeyPatch,
+    snapshot_path: Path,
+) -> None:
+    monkeypatch.setenv(GPU_STATE_STALE_SECONDS_ENV, "75")
+    settings = gpu_state.GpuStateSettings.from_environment()
+    monkeypatch.setattr(gpu_state, "_GPU_STATE_SETTINGS", settings)
+
+    monkeypatch.setenv(GPU_STATE_STALE_SECONDS_ENV, "10")
+    _write_snapshot(snapshot_path, state="ready", written_at=NOW - 50)
+
+    assert settings.stale_seconds == 75
+    assert resolve_gpu_state_stale_seconds() == 75
     assert read_gpu_state(now=NOW) is GpuState.READY
-    _write_snapshot(snapshot_path, state="ready", written_at=NOW - 181)
-    assert read_gpu_state(now=NOW) is GpuState.UNKNOWN
 
 
 def test_missing_or_non_numeric_written_at_is_unknown(snapshot_path: Path) -> None:

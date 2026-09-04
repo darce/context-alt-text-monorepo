@@ -14,6 +14,7 @@ import math
 import os
 import threading
 import time
+from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
 from typing import Any
@@ -42,6 +43,37 @@ _OBSERVED_LOCK = threading.Lock()
 _last_observed: GpuState | None = None
 
 
+@dataclass(frozen=True)
+class GpuStateSettings:
+    """Immutable GPU snapshot policy loaded once when the service starts.
+
+    An unset stale-seconds variable intentionally uses the documented 180s
+    default. An explicitly configured value must be a finite positive number;
+    malformed configuration fails startup instead of silently changing policy.
+    """
+
+    stale_seconds: float
+
+    @classmethod
+    def from_environment(cls) -> GpuStateSettings:
+        raw = os.environ.get(GPU_STATE_STALE_SECONDS_ENV)
+        if raw is None:
+            return cls(stale_seconds=DEFAULT_GPU_STATE_STALE_SECONDS)
+        try:
+            seconds = float(raw)
+        except ValueError:
+            seconds = math.nan
+        if not math.isfinite(seconds) or seconds <= 0:
+            raise ValueError(
+                f"{GPU_STATE_STALE_SECONDS_ENV} must be a finite number in the "
+                f"range 0 < seconds < infinity; got {raw!r}"
+            )
+        return cls(stale_seconds=seconds)
+
+
+_GPU_STATE_SETTINGS = GpuStateSettings.from_environment()
+
+
 def resolve_gpu_state_path() -> str:
     """Single source of truth for the lifecycle snapshot path (rg-008)."""
     configured_path = os.environ.get(GPU_STATE_PATH_ENV)
@@ -51,23 +83,8 @@ def resolve_gpu_state_path() -> str:
 
 
 def resolve_gpu_state_stale_seconds() -> float:
-    """Return the snapshot freshness window; invalid values use 180s."""
-    raw = os.environ.get(GPU_STATE_STALE_SECONDS_ENV)
-    if raw is None:
-        return DEFAULT_GPU_STATE_STALE_SECONDS
-    try:
-        seconds = float(raw)
-    except ValueError:
-        seconds = 0.0
-    if not math.isfinite(seconds) or seconds <= 0:
-        _logger.warning(
-            "invalid %s=%r; using default %.0fs",
-            GPU_STATE_STALE_SECONDS_ENV,
-            raw,
-            DEFAULT_GPU_STATE_STALE_SECONDS,
-        )
-        return DEFAULT_GPU_STATE_STALE_SECONDS
-    return seconds
+    """Return the immutable snapshot freshness window loaded at startup."""
+    return _GPU_STATE_SETTINGS.stale_seconds
 
 
 def reset_gpu_state_observation_for_tests() -> None:

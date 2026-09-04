@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { queryKeys } from '../../../../api/queryKeys';
 import type { JobStatusResponse } from '../../../../api/recognition';
 import * as recognitionApi from '../../../../api/recognition';
+import { HTTPError } from '../../../../utils/http';
 import { useClusterActionMutations } from '../useClusterActionMutations';
 import type { SuggestionReviewPage } from '../useSuggestionReviewQueries';
 
@@ -117,9 +118,7 @@ describe('useClusterActionMutations pollSplitJob (BND-1-AUDIT-1)', () => {
     expect(result.current.splitGate['aria-disabled']).toBe(true);
 
     result.current.split('c1', 2);
-    await waitFor(() =>
-      expect(onError).toHaveBeenCalledWith('Unavailable while the recognition service is offline'),
-    );
+    await waitFor(() => expect(onError).toHaveBeenCalledWith('Unavailable while the recognition service is offline'));
     expect(recognitionApi.splitCluster).not.toHaveBeenCalled();
   });
 
@@ -273,9 +272,14 @@ describe('useClusterActionMutations create-for-identity roster bind (UXW2-3-R7B-
 
   it('on acx_cluster_created_bind_failed surfaces bind error and still invalidates', async () => {
     vi.mocked(recognitionApi.createClusterForIdentity).mockRejectedValue(
-      new Error(
-        'Request to /create-for-identity failed (409): {"code":"acx_cluster_created_bind_failed","data":{"cluster_id":"c-new"}}',
-      ),
+      new HTTPError({
+        status: 409,
+        retryAfterSeconds: undefined,
+        endpoint: '/create-for-identity',
+        bodyPreview: '{"code":"acx_cluster_created_bind_failed","data":{"cluster_id":"c-new"}}',
+        message:
+          'Request to /create-for-identity failed (409): {"code":"acx_cluster_created_bind_failed","data":{"cluster_id":"c-new"}}',
+      }),
     );
     const { result, onError, invalidateQueries } = renderCreate();
 

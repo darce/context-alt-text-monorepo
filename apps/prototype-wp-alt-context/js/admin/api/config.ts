@@ -1,3 +1,11 @@
+import { createLogger, type Logger } from '../utils/logger';
+
+let log: Logger | undefined;
+const configLog = (): Logger => {
+  log ??= createLogger('api.config');
+  return log;
+};
+
 export interface AdminUrlsConfig {
   mediaEditBase?: string;
   roster?: string;
@@ -45,8 +53,10 @@ const NONCE_BODY_PATTERN = /^[a-f0-9]{8,20}$/i;
 export const NONCE_REFRESH_TIMEOUT_MS = 10_000;
 
 export class NonceRefreshFailedError extends Error {
+  readonly _tag = 'nonce_refresh' as const;
   readonly causeStatus: number | undefined;
   readonly bodyPreview: string;
+  readonly cause: unknown;
 
   constructor({
     message,
@@ -61,8 +71,18 @@ export class NonceRefreshFailedError extends Error {
     this.name = 'NonceRefreshFailedError';
     this.causeStatus = causeStatus;
     this.bodyPreview = bodyPreview ?? '';
+    this.cause = undefined;
   }
 }
+
+/** WP rest-nonce logged-out / cookie-fail sentinels — not a transport blip. */
+export const isNonceRefreshAuthRejection = (error: NonceRefreshFailedError): boolean => {
+  if (error.causeStatus === 401 || error.causeStatus === 403) {
+    return true;
+  }
+  const body = error.bodyPreview.trim();
+  return body === '0' || body === '-1';
+};
 
 const normalizeOptionalString = (value: unknown): string | undefined =>
   typeof value === 'string' && value.trim() !== '' ? value : undefined;
@@ -72,15 +92,22 @@ const normalizeOptionalString = (value: unknown): string | undefined =>
  * skew — cached HTML with an older localized payload) degrades the one
  * capability that needs it instead of hard-failing every getConfig() caller.
  */
-const softNonEmptyString = (value: unknown, field: string): string => {
+const softNonEmptyString = (value: unknown, field: string, requestLog: Logger): string => {
   if (typeof value !== 'string' || value.trim() === '') {
-    console.warn(`AltContextAdmin configuration field "${field}" is missing or empty; dependent features degrade.`);
+    requestLog.warn(
+      `AltContextAdmin configuration field "${field}" is missing or empty; dependent features degrade.`,
+      { field },
+    );
     return '';
   }
   return value;
 };
 
 export const normalizeConfig = (raw: ApiConfig): NormalizedConfig => {
+  // One normalization pass is one unit of work: every soft warning it emits
+  // shares this id, and a later pass gets a different one (OBS-03). A
+  // module-scope logger has no unit of work and carries no requestId (rg-015).
+  const requestLog = configLog().withRequest();
   const rawMax = Number(raw.max_media_per_batch ?? DEFAULT_MAX_MEDIA_PER_BATCH);
   const maxMediaPerBatch = Number.isFinite(rawMax) && rawMax > 0 ? rawMax : DEFAULT_MAX_MEDIA_PER_BATCH;
   const devMode = raw.devMode === true || raw.devMode === 'true' || raw.devMode === '1' || raw.devMode === 1;
@@ -91,8 +118,8 @@ export const normalizeConfig = (raw: ApiConfig): NormalizedConfig => {
   };
 
   return {
-    nonce: softNonEmptyString(raw.nonce, 'nonce'),
-    ajaxUrl: softNonEmptyString(raw.ajaxUrl, 'ajaxUrl'),
+    nonce: softNonEmptyString(raw.nonce, 'nonce', requestLog),
+    ajaxUrl: softNonEmptyString(raw.ajaxUrl, 'ajaxUrl', requestLog),
     endpoints: raw.endpoints,
     tenant_id: raw.tenant_id,
     tier: raw.tier,

@@ -12,12 +12,7 @@ import {
   updateClusterLabel,
   type MergeClusterResponse,
 } from '../../../api/recognition';
-import {
-  getClusterMutationErrorMessage,
-  getProjectionNotReadyMessage,
-  isAbortError,
-  isProjectionNotReadyError,
-} from './clusterMutationUtils';
+import { getClusterMutationErrorMessage, isAbortError } from './clusterMutationUtils';
 import { useOptionalMergeSurvivors } from './MergeSurvivorContext';
 import {
   dropClusterFromReviewCaches,
@@ -25,6 +20,24 @@ import {
   removePendingSuggestionFromCache,
   REVIEW_DROP_MODE,
 } from './suggestionProjection';
+
+/**
+ * FEBT1G-H-07: a suggested merge is two requests against a backend that already
+ * commits the structural merge in the first one. When hop 2 (suggestion accept)
+ * fails, hop 1 is durable: the caller must be told the merge landed rather than
+ * be shown a plain failure while the source cluster is retired. Carries the
+ * committed merge result so the error path can still apply hop-1 state.
+ * The atomic fix is a backend contract change — see the lane report.
+ */
+class MergeSuggestionResolutionError extends Error {
+  readonly mergeResult: MergeClusterResponse;
+
+  constructor(mergeResult: MergeClusterResponse, cause: unknown) {
+    super('merge_suggestion_not_resolved', { cause });
+    this.name = 'MergeSuggestionResolutionError';
+    this.mergeResult = mergeResult;
+  }
+}
 
 interface UseClusterLabelMutationsOptions {
   clusterId: string | null;
@@ -85,16 +98,25 @@ export const useClusterLabelMutations = ({
         return;
       }
       invalidateQueries();
-      const message = err instanceof Error ? err.message : String(err);
-      if (isProjectionNotReadyError(message)) {
-        onError?.(getProjectionNotReadyMessage());
-      } else if (message.includes('409')) {
-        onError?.(__('Label already exists. Use the dropdown to merge.', 'alt-context'));
-      } else {
-        onError?.(message);
-      }
+      onError?.(getClusterMutationErrorMessage(err, currentLabel ?? derivedLabel ?? 'that label'));
     },
   });
+
+  // Hop-1 (structural merge) state, applied on both the clean and the
+  // partial-failure path — the merge itself is committed in either case.
+  const applyCommittedMerge = (result: MergeClusterResponse): void => {
+    // Authoritative survivor from MergeClusterResponse (source retired → target survives).
+    if (result.source_id && result.target_id) {
+      mergeSurvivors?.recordMergeSurvivor(result.source_id, result.target_id);
+    }
+    if (clusterId) {
+      updateCachedClusterLabel(clusterId, result.target_label ?? '');
+    }
+    if (typeof result.source_id === 'string' && result.source_id !== '') {
+      dropClusterFromReviewCaches(queryClient, result.source_id, { mode: REVIEW_DROP_MODE.MERGE });
+    }
+    invalidateReviewCachesWithoutRefetch(queryClient);
+  };
 
   const mergeMutation = useMutation({
     mutationKey: ['merge-cluster', clusterId],
@@ -115,34 +137,42 @@ export const useClusterLabelMutations = ({
       // Structural merge first; then resolve the pending row by id when confirm threaded it (BR-16).
       const result = await mergeCluster(clusterId, targetClusterId, targetLabel, signal);
       if (suggestionId) {
-        await acceptSuggestion(suggestionId);
+        try {
+          await acceptSuggestion(suggestionId);
+        } catch (err) {
+          throw new MergeSuggestionResolutionError(result, err);
+        }
       }
       return result;
     },
     // Don't retry on client errors
     retry: false,
     onSuccess: (result, variables) => {
-      // Authoritative survivor from MergeClusterResponse (source retired → target survives).
-      if (result.source_id && result.target_id) {
-        mergeSurvivors?.recordMergeSurvivor(result.source_id, result.target_id);
-      }
-      if (clusterId) {
-        updateCachedClusterLabel(clusterId, result.target_label ?? '');
-      }
-      if (typeof result.source_id === 'string' && result.source_id !== '') {
-        dropClusterFromReviewCaches(queryClient, result.source_id, { mode: REVIEW_DROP_MODE.MERGE });
-      }
+      applyCommittedMerge(result);
       // L1V-03: drop accepted pending row before invalidate so review queue is not stale until refetch.
       if (variables.suggestionId) {
         removePendingSuggestionFromCache(queryClient, variables.suggestionId);
       }
-      invalidateReviewCachesWithoutRefetch(queryClient);
       invalidateQueries();
       onMergeSuccess?.(result);
     },
     onError: (err: unknown, variables) => {
       // L1V-02: hop-1 merge may have committed before hop-2 accept failed — always refresh caches.
       invalidateQueries();
+      if (err instanceof MergeSuggestionResolutionError) {
+        // The merge is durable: record the survivor so the retired source
+        // rebinds instead of closing, and keep the pending suggestion row —
+        // it is genuinely unresolved.
+        applyCommittedMerge(err.mergeResult);
+        invalidateQueries();
+        onError?.(
+          __(
+            'Merged, but the suggestion could not be cleared. It may reappear until the next sync.',
+            'alt-context',
+          ),
+        );
+        return;
+      }
       if (isAbortError(err)) {
         onAbort?.();
         return;
@@ -164,19 +194,15 @@ export const useClusterLabelMutations = ({
       invalidateQueries();
       onRevertSuccess?.();
     },
-    onError: (err: Error) => {
-      onError?.(err.message);
+    onError: (err: unknown) => {
+      onError?.(getClusterMutationErrorMessage(err, currentLabel ?? derivedLabel ?? 'that label'));
     },
   });
 
   return {
     rename: (label: string, signal?: AbortSignal) => renameMutation.mutate({ label, signal }),
-    merge: (
-      targetClusterId: string,
-      targetLabel?: string,
-      signal?: AbortSignal,
-      suggestionId?: string,
-    ) => mergeMutation.mutate({ targetClusterId, targetLabel, signal, suggestionId }),
+    merge: (targetClusterId: string, targetLabel?: string, signal?: AbortSignal, suggestionId?: string) =>
+      mergeMutation.mutate({ targetClusterId, targetLabel, signal, suggestionId }),
     revertMerge: revertMergeMutation.mutate,
     isRenaming: renameMutation.isPending,
     isMerging: mergeMutation.isPending,

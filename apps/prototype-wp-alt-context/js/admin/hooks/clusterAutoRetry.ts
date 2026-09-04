@@ -1,22 +1,36 @@
 /**
- * Bounded post-batch cluster auto-retry on 429 (RES-06, API-08, RES-01, AGT-10).
- * Mutations never blind-retry: only HTTP 429 is retried, with a hard ceiling.
+ * Bounded post-batch cluster auto-retry on cooldown signals (RES-06, API-08, RES-01, AGT-10, E-07).
+ * Mutations never blind-retry: only isCooldown (429, or 503 with Retry-After) is retried, with a hard ceiling.
  * Shared poller cooldown is armed globally via MutationCache — do not open the cooldown here.
  */
 
 import { __, sprintf } from '@wordpress/i18n';
 
-import { HTTPError } from '../utils/http';
+import { classifyError, isCooldown, toUserMessage } from '../utils/appError';
+import { createLogger } from '../utils/logger';
 import { DEFAULT_COOLDOWN_SECONDS } from '../utils/recognitionCooldown';
+import { clampRetryAfterMs } from '../utils/retryAfter';
 
 /** Total attempts including the first (first + 2 auto-retries). */
 export const CLUSTER_RETRY_MAX_ATTEMPTS = 3;
 
-export const isRetryableClusterError = (error: unknown): error is HTTPError =>
-  error instanceof HTTPError && error.status === 429;
+const log = createLogger('hooks.clusterAutoRetry');
 
-export const resolveClusterRetryDelaySeconds = (error: HTTPError): number =>
-  error.retryAfterSeconds ?? DEFAULT_COOLDOWN_SECONDS;
+const retryDecisionFields = (error: unknown): { tag: string; status?: number } => {
+  const classified = classifyError(error);
+  return classified._tag === 'http'
+    ? { tag: classified._tag, status: classified.status }
+    : { tag: classified._tag };
+};
+
+export const isRetryableClusterError = (error: unknown): boolean => isCooldown(error);
+
+export const resolveClusterRetryDelaySeconds = (error: unknown): number => {
+  const classified = classifyError(error);
+  const retryAfterSeconds =
+    classified._tag === 'http' && classified.retryAfterMs !== undefined ? classified.retryAfterMs / 1000 : undefined;
+  return clampRetryAfterMs(retryAfterSeconds, DEFAULT_COOLDOWN_SECONDS * 1000) / 1000;
+};
 
 /** True when another auto-retry is still allowed after this failed attempt. */
 export const canAutoRetryCluster = (attemptCount: number, error: unknown): boolean =>
@@ -33,23 +47,23 @@ export interface ClusterAutoRetryListener {
   mutate: () => void;
   /** Queued wait between auto-retries; null clears the queued status surface. */
   onQueued: (seconds: number | null) => void;
-  /** Ceiling hit after 429s — show manual Retry clustering affordance. */
+  /** Ceiling hit after cooldown retries — show manual Retry clustering affordance. */
   onExhausted: () => void;
-  /** Terminal failure (non-429 or 429 after ceiling). */
+  /** Terminal failure (non-cooldown or cooldown after ceiling). */
   onTerminalError: (message: string) => void;
   /** Fallback when error is not an Error instance. */
   fallbackErrorMessage: string;
 }
 
 /**
- * Imperative controller for cluster 429 auto-retry. Owns attempt count + delay timer.
+ * Imperative controller for cluster cooldown auto-retry. Owns attempt count + delay timer.
  * Compatible with vi.useFakeTimers (uses global setTimeout/clearTimeout).
  */
 export const createClusterAutoRetry = (listener: ClusterAutoRetryListener) => {
   let attempts = 0;
   let timer: ReturnType<typeof setTimeout> | null = null;
   // Mutation callbacks fire from Mutation.execute() even after unmount; the
-  // latch stops a late 429 from arming a zombie timer that POSTs in the background.
+  // latch stops a late cooldown from arming a zombie timer that POSTs in the background.
   let disposed = false;
 
   const clearTimer = (): void => {
@@ -106,8 +120,15 @@ export const createClusterAutoRetry = (listener: ClusterAutoRetryListener) => {
         return false;
       }
       if (canAutoRetryCluster(attempts, error)) {
-        const httpError = error as HTTPError;
-        const seconds = resolveClusterRetryDelaySeconds(httpError);
+        const seconds = resolveClusterRetryDelaySeconds(error);
+        // One line per retry decision (OBS-01): two invisible retries previously looked
+        // identical to one successful try in the operator log.
+        log.info('cluster.retry_scheduled', {
+          ...retryDecisionFields(error),
+          attempt: attempts,
+          maxAttempts: CLUSTER_RETRY_MAX_ATTEMPTS,
+          delayMs: seconds * 1000,
+        });
         listener.onQueued(seconds);
         timer = setTimeout(() => {
           timer = null;
@@ -121,13 +142,20 @@ export const createClusterAutoRetry = (listener: ClusterAutoRetryListener) => {
       listener.onQueued(null);
 
       if (isRetryableClusterError(error)) {
+        log.warn('cluster.retry_exhausted', {
+          ...retryDecisionFields(error),
+          attempt: attempts,
+          maxAttempts: CLUSTER_RETRY_MAX_ATTEMPTS,
+        });
         listener.onExhausted();
         listener.onTerminalError(formatClusterRetryExhaustedMessage());
         return false;
       }
 
-      const message = error instanceof Error ? error.message : listener.fallbackErrorMessage;
-      listener.onTerminalError(message);
+      // Never surface a raw Error message: an HTTPError message embeds the
+      // response body preview (FEBT1-W2A-04).
+      log.warn('cluster.retry_declined', { ...retryDecisionFields(error), attempt: attempts });
+      listener.onTerminalError(toUserMessage(error, listener.fallbackErrorMessage));
       return false;
     },
 

@@ -153,7 +153,7 @@ include $(ROOT_MAKEFILE_DIR)/mk/logs.mk
 # Root targets
 # =============================================================================
 
-.PHONY: help check-all check-frontend check-mcp check-handoff check-orchestrator lint-all lint-handoff lint-orchestrator fix-lint-handoff fix-lint-orchestrator fix-lint-mcp format format-all format-handoff format-orchestrator mypy-handoff mypy-orchestrator test-all test-handoff test-orchestrator clean-all reset-local fix-php-style mcp mcp-start gemini-cli-setup dev dev-stop ace-metrics ace-metrics-json ace-reflect ace-curation-report ace-trends worktree-audit worktree-prune task-plan-audit check-codex-command-router check-skills check-harness-sync check-mcp-pins lint-hoisted-paths maint-start check-main-clean install-git-hooks localwp-mirror-integrity localwp-e2e-install localwp-e2e-auth localwp-e2e-smoke localwp-evidence localwp-a11y-smoke check-overrides-digest test-overrides-digest test-scripts test-vm-scripts mutation-guard-license-policy test-hooks test-deploy-contract test-gpu-spike-bench test-infra-terraform test-vlm3 test-gpu-lifecycle test-gpu-snapshot-checker check-gpu-snapshots check-gpu-snapshots-live provision-customer provision-demo expire-demo
+.PHONY: help check-all check-frontend check-mcp check-handoff check-orchestrator lint-all lint-ratchet lint-ratchet-accept lint-handoff lint-orchestrator fix-lint-handoff fix-lint-orchestrator fix-lint-mcp format format-all format-handoff format-orchestrator mypy-handoff mypy-orchestrator test-all test-handoff test-orchestrator clean-all reset-local fix-php-style mcp mcp-start gemini-cli-setup dev dev-stop ace-metrics ace-metrics-json ace-reflect ace-curation-report ace-trends worktree-audit worktree-prune task-plan-audit check-codex-command-router check-skills check-harness-sync check-mcp-pins lint-hoisted-paths maint-start check-main-clean install-git-hooks localwp-mirror-integrity localwp-e2e-install localwp-e2e-auth localwp-e2e-smoke localwp-evidence localwp-a11y-smoke check-overrides-digest test-overrides-digest test-scripts test-vm-scripts mutation-guard-license-policy test-hooks test-deploy-contract test-gpu-spike-bench test-infra-terraform test-vlm3 test-gpu-lifecycle test-gpu-snapshot-checker check-gpu-snapshots check-gpu-snapshots-live provision-customer provision-demo expire-demo
 
 # Offline half of the GPU snapshot deployment contract. This validates the
 # lifecycle-unit paths against the checked-in rendered compose file without
@@ -368,6 +368,7 @@ check-all: check-gpu-snapshots
 		echo "✅ Lane-scoped checks passed for $(LANE)!"; \
 		else \
 			$(MAKE) lint-all; \
+			$(MAKE) lint-ratchet; \
 			$(MAKE) lint-task-plans; \
 			$(MAKE) lint-dashboard-txt; \
 			$(MAKE) lint-scripts; \
@@ -494,6 +495,22 @@ test-all:
 # hooks are bypassed locally.
 lint-task-plans:
 	@python3 scripts/hooks/guard-task-plan-findings.py --scan-repo
+
+# LINTGATE-1. eslint and ruff both failed on main (77 and 408 violations), so
+# neither could serve as a merge gate (sr-002: a declared gate must succeed on
+# invocation). The ratchet freezes that debt in config/lint-baseline/*.json and
+# fails on any movement away from it: a new violation or a raised count is a
+# REGRESSION, a disabled rule or widened ignore list is a SUPPRESSION (sr-001),
+# and a *paid-down* count is STALE until recorded. Failing on improvement is
+# deliberate — canon OBS-11 requires the bar to ratchet from the best
+# demonstrated result rather than track whatever the tree happens to look like.
+lint-ratchet:
+	@python3 scripts/lint_ratchet.py --tool all
+
+# Record paid-down debt. Refuses to raise any count or weaken any config guard,
+# so it can only tighten the bar. Commit the updated baseline.
+lint-ratchet-accept:
+	@python3 scripts/lint_ratchet.py --tool $(or $(TOOL),all) --accept
 
 # E17-9 Slice 4 / E17-7 Slice 4 follow-up. Guard tracked files from
 # reintroducing the obsolete dashboard markdown name after the rename

@@ -1,6 +1,21 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { POLL_TIMEOUT_MESSAGE, PublicDemoClientError, pollRun } from '../demo-describe.js';
+import {
+  POLL_TIMEOUT_MESSAGE,
+  PublicDemoClientError,
+  parsePublicDemoEnvelope,
+  pollRun,
+  statusPresentation,
+} from '../demo-describe.js';
+
+const running = (overrides: Record<string, unknown> = {}) => ({
+  run_id: 'run-1',
+  status: 'running',
+  phase: 'describing',
+  gpu_state: 'ready',
+  progress: { done: 0, total: 1 },
+  ...overrides,
+});
 
 const response = (body: unknown, status = 200): Response =>
   new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
@@ -9,9 +24,9 @@ describe('public demo describe polling', () => {
   it('backs off exponentially and stops polling on a terminal response', async () => {
     const fetchImpl = vi
       .fn<typeof fetch>()
-      .mockResolvedValueOnce(response({ status: 'pending' }))
-      .mockResolvedValueOnce(response({ status: 'running' }))
-      .mockResolvedValueOnce(response({ status: 'completed', description: 'A lakeside path.' }));
+      .mockResolvedValueOnce(response(running({ status: 'pending', phase: 'queued' })))
+      .mockResolvedValueOnce(response(running()))
+      .mockResolvedValueOnce(response(running({ status: 'completed', phase: 'complete', progress: { done: 1, total: 1 }, description: 'A lakeside path.' })));
     const waits: number[] = [];
     let clock = 0;
 
@@ -32,8 +47,8 @@ describe('public demo describe polling', () => {
   });
 
   it('caps polling intervals at five seconds', async () => {
-    const statuses = Array.from({ length: 7 }, () => response({ status: 'running' }));
-    statuses.push(response({ status: 'failed' }));
+    const statuses = Array.from({ length: 7 }, () => response(running()));
+    statuses.push(response(running({ status: 'failed', phase: 'failed', error: { code: 'acx_public_demo_pipeline_failed', message: 'The image could not be described.' } })));
     const fetchImpl = vi.fn<typeof fetch>();
     for (const item of statuses) {
       fetchImpl.mockResolvedValueOnce(item);
@@ -41,7 +56,7 @@ describe('public demo describe polling', () => {
     const waits: number[] = [];
     let clock = 0;
 
-    await pollRun({
+    await expect(pollRun({
       statusUrl: '/status/run-2',
       nonce: 'nonce',
       fetchImpl,
@@ -50,13 +65,13 @@ describe('public demo describe polling', () => {
         waits.push(milliseconds);
         clock += milliseconds;
       },
-    });
+    })).rejects.toMatchObject({ code: 'acx_public_demo_pipeline_failed' });
 
     expect(waits).toEqual([500, 1_000, 2_000, 4_000, 5_000, 5_000, 5_000]);
   });
 
   it('hard-stops after the configured polling deadline with operator-friendly copy', async () => {
-    const fetchImpl = vi.fn<typeof fetch>().mockImplementation(async () => response({ status: 'running' }));
+    const fetchImpl = vi.fn<typeof fetch>().mockImplementation(async () => response(running()));
     let clock = 0;
 
     await expect(
@@ -101,5 +116,71 @@ describe('public demo describe polling', () => {
       pollRun({ statusUrl: '/status/run-4', nonce: 'nonce', fetchImpl }),
     ).rejects.toEqual(new PublicDemoClientError('acx_public_demo_busy', 'Another run is active.', 429));
     expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    [],
+    {},
+    running({ status: 'surprise' }),
+    running({ status: 'pending', phase: 'describing' }),
+    running({ progress: { done: -1, total: 1 } }),
+    running({ progress: { done: 2, total: 1 } }),
+  ])('rejects malformed success envelopes immediately', async (payload) => {
+    await expect(
+      pollRun({ statusUrl: '/status/malformed', nonce: 'nonce', fetchImpl: vi.fn(async () => response(payload)) }),
+    ).rejects.toMatchObject({ code: 'acx_public_demo_invalid_response' });
+  });
+
+  it('requires a non-empty description for a completed run', async () => {
+    await expect(
+      pollRun({
+        statusUrl: '/status/no-draft',
+        nonce: 'nonce',
+        fetchImpl: vi.fn(async () => response(running({ status: 'completed', phase: 'complete', progress: { done: 1, total: 1 } }))),
+      }),
+    ).rejects.toMatchObject({ code: 'acx_public_demo_incomplete_result' });
+  });
+
+  it('treats completed_with_errors as a typed failure', async () => {
+    await expect(
+      pollRun({
+        statusUrl: '/status/partial',
+        nonce: 'nonce',
+        fetchImpl: vi.fn(async () => response(running({
+          status: 'completed_with_errors',
+          phase: 'complete',
+          progress: { done: 1, total: 1 },
+          error: { code: 'acx_public_demo_partial_failure', message: 'The description did not complete successfully.' },
+        }))),
+      }),
+    ).rejects.toMatchObject({ code: 'acx_public_demo_partial_failure' });
+  });
+
+  it('aborts an in-flight fetch at the remaining deadline', async () => {
+    const fetchImpl = vi.fn<typeof fetch>((_input, init) => new Promise<Response>((_resolve, reject) => {
+      init?.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')), { once: true });
+    }));
+
+    await expect(
+      pollRun({ statusUrl: '/status/hung', nonce: 'nonce', fetchImpl, timeoutMs: 10 }),
+    ).rejects.toMatchObject({ code: 'acx_public_demo_poll_timeout' });
+    expect(fetchImpl.mock.calls[0]?.[1]?.signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it('aborts an in-flight fetch when navigation starts', async () => {
+    const navigation = new AbortController();
+    const fetchImpl = vi.fn<typeof fetch>((_input, init) => new Promise<Response>((_resolve, reject) => {
+      init?.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')), { once: true });
+      navigation.abort();
+    }));
+
+    await expect(
+      pollRun({ statusUrl: '/status/leaving', nonce: 'nonce', fetchImpl, navigationSignal: navigation.signal }),
+    ).rejects.toMatchObject({ code: 'acx_public_demo_request_aborted' });
+  });
+
+  it('renders warming and describing phases honestly', () => {
+    expect(statusPresentation(parsePublicDemoEnvelope(running({ phase: 'warming', gpu_state: 'starting' }))).message).toContain('warming up');
+    expect(statusPresentation(parsePublicDemoEnvelope(running({ phase: 'describing', progress: { done: 1, total: 2 } }))).message).toContain('50%');
   });
 });

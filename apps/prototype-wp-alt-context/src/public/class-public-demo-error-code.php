@@ -18,6 +18,8 @@ final class PublicDemoErrorCode {
 	public const STATE_UNAVAILABLE     = 'acx_public_demo_state_unavailable';
 	public const RUN_NOT_AVAILABLE     = 'acx_public_demo_run_not_available';
 	public const INVALID_PIPELINE_DATA = 'acx_public_demo_invalid_pipeline_data';
+	public const PIPELINE_FAILED       = 'acx_public_demo_pipeline_failed';
+	public const PARTIAL_FAILURE       = 'acx_public_demo_partial_failure';
 
 	private function __construct() {
 	}

@@ -65,16 +65,19 @@
   color: var(--acx-color-text-secondary, #374151);
 }
 
-.acx-demo[data-state='running'] .acx-demo__status {
+.acx-demo[data-state='queued'] .acx-demo__status,
+.acx-demo[data-state='warming'] .acx-demo__status,
+.acx-demo[data-state='describing'] .acx-demo__status {
   color: var(--acx-color-accent, #2563eb);
 }
 
-.acx-demo[data-state='done'] .acx-demo__status {
+.acx-demo[data-state='completed'] .acx-demo__status {
   color: var(--acx-color-success, #15803d);
 }
 
 .acx-demo[data-state='limited'] .acx-demo__status,
-.acx-demo[data-state='error'] .acx-demo__status {
+.acx-demo[data-state='error'] .acx-demo__status,
+.acx-demo[data-state='failed'] .acx-demo__status {
   color: var(--acx-color-danger, #b91c1c);
 }
 

@@ -234,8 +234,8 @@ def test_all_remote_registry_commands_carry_the_deploy_config() -> None:
     source = SCRIPT.read_text()
     assert "remote_docker_with_config()" in source
     assert 'config_q="$(remote_quote "${ACX_DEPLOY_OCIR_CONFIG_DIR}")"' in source
-    assert "remote_docker_with_config pull \"${image}\"" in source
-    assert "remote_docker_with_config pull \"${IMAGE_BASE}:${from_tag}\"" in source
+    assert "_pull_ref_remote \"${image}\"" in source
+    assert "_pull_ref \"${IMAGE_BASE}:${from_tag}\"" in source
     assert "remote_docker_with_config push \"${rollback_ref}\"" in source
     assert "DOCKER_CONFIG='${ACX_DEPLOY_OCIR_CONFIG_DIR}'" not in source
 
@@ -348,12 +348,20 @@ def test_previous_serving_digest_is_published_as_rollback(tmp_path: Path) -> Non
     records = tmp_path / "docker.commands"
     bin_dir.mkdir()
     digest = "c" * 64
+    image_id = f"sha256:{'b' * 64}"
     _executable(
         bin_dir / "ssh",
-        """#!/usr/bin/env bash
+        f"""#!/usr/bin/env bash
 set -euo pipefail
 last=
 for arg in "$@"; do last="$arg"; done
+if [[ "$last" == *".Config.Image"* ]]; then
+  printf '%s\n' 'iad.ocir.io/idu2kqqe2jxy/acx-backend:latest'
+  exit 0
+elif [[ "$last" == *".Image"* ]]; then
+  printf '%s\n' '{image_id}'
+  exit 0
+fi
 bash -c "$last"
 """,
     )
@@ -362,7 +370,9 @@ bash -c "$last"
         f"""#!/usr/bin/env bash
 set -euo pipefail
 printf '%s\\n' "$*" >>"$OCIR_TEST_DOCKER_RECORD"
-if [[ "$1 $2" == "image inspect" ]]; then
+if [[ "$*" == *"{{.Id}}"* ]]; then
+  printf '%s\\n' "{image_id}"
+elif [[ "$1 $2" == "image inspect" ]]; then
   printf '%s\\n' "iad.ocir.io/idu2kqqe2jxy/acx-backend@sha256:{digest}"
 fi
 """,
@@ -381,7 +391,7 @@ fi
     assert result.returncode == 0, result.stderr
     assert f"@sha256:{digest} rollback-{digest[:12]}" in result.stdout
     commands = records.read_text()
-    assert f"tag iad.ocir.io/idu2kqqe2jxy/acx-backend@sha256:{digest} " in commands
+    assert f"tag {image_id} " in commands
     assert f"push iad.ocir.io/idu2kqqe2jxy/acx-backend:rollback-{digest[:12]}" in commands
 
 
@@ -401,9 +411,12 @@ bash -c "$last"
     )
     _executable(
         bin_dir / "docker",
-        """#!/usr/bin/env bash
+        f"""#!/usr/bin/env bash
 set -euo pipefail
 printf '%s\n' "$*" >>"$OCIR_TEST_DOCKER_RECORD"
+if [[ "$1 $2" == "image inspect" ]]; then
+  printf '%s\n' "iad.ocir.io/idu2kqqe2jxy/acx-backend@sha256:{digest}"
+fi
 """,
     )
     env = os.environ.copy()
@@ -425,7 +438,127 @@ printf '%s\n' "$*" >>"$OCIR_TEST_DOCKER_RECORD"
     commands = records.read_text()
     assert f"tag iad.ocir.io/idu2kqqe2jxy/acx-backend@sha256:{digest} iad.ocir.io/idu2kqqe2jxy/acx-backend:latest" in commands
     assert "push iad.ocir.io/idu2kqqe2jxy/acx-backend:latest" in commands
-    assert "compose -f docker-compose.env.yml -f docker-compose.admin.yml pull api" in commands
+    assert "compose -f docker-compose.env.yml -f docker-compose.admin.yml pull api" not in commands
+
+
+def test_rollback_digest_comes_from_the_running_container(tmp_path: Path) -> None:
+    records = tmp_path / "commands"
+    digest = "e" * 64
+    image_id = f"sha256:{'f' * 64}"
+    old_repo = "iad.ocir.io/idu2kqqe2jxy/acx-backend-vlm"
+    command = f'''
+source "{SCRIPT}"
+ACX_DEPLOY_OCIR_CONFIG_DIR=/tmp/acx-test-config
+read_running_api_image_id() {{ printf '%s\\n' '{image_id}'; }}
+read_running_api_image() {{ printf '%s\\n' '{old_repo}:latest'; }}
+remote_docker_with_config() {{
+  printf '%s\\n' "$*" >>"{records}"
+  if [[ "$*" == *"{{{{.Id}}}}"* ]]; then
+    printf '%s\\n' '{image_id}'
+  elif [[ "$1 $2 ${{3:-}}" == "image inspect --format" ]]; then
+    printf '%s\\n' '{old_repo}@sha256:{digest}'
+  fi
+}}
+preserve_rollback_tag prod
+printf '%s\\n' "$ACX_ROLLBACK_DIGEST_REF $ACX_ROLLBACK_IMAGE_BASE"
+'''
+    result = subprocess.run(
+        ["/bin/bash", "-c", command], text=True, capture_output=True, check=False
+    )
+    assert result.returncode == 0, result.stderr
+    assert f"{old_repo}@sha256:{digest} {old_repo}" in result.stdout
+    commands = records.read_text().splitlines()
+    assert commands[0].endswith(image_id)
+    assert all("acx-backend:latest" not in item for item in commands)
+    assert f"tag {image_id} {old_repo}:rollback-{digest[:12]}" in commands
+    assert f"push {old_repo}:rollback-{digest[:12]}" in commands
+
+
+@pytest.mark.parametrize("remote_build", ["0", "1"])
+def test_stalled_pull_has_deadline_in_both_build_modes(
+    tmp_path: Path, remote_build: str
+) -> None:
+    command = f'''
+source "{SCRIPT}"
+REMOTE_BUILD={remote_build}
+ACX_PULL_TIMEOUT=1
+docker() {{ sleep 30; }}
+remote_docker_with_config() {{ sleep 30; }}
+_pull_ref iad.ocir.io/test/image@sha256:{'a' * 64}
+'''
+    result = subprocess.run(
+        ["/bin/bash", "-c", command],
+        text=True,
+        capture_output=True,
+        timeout=6,
+        check=False,
+    )
+    assert result.returncode == 124
+    assert "outcome UNKNOWN" in result.stderr
+
+
+def test_deploy_records_transaction_order_and_pins_restart_digest(tmp_path: Path) -> None:
+    records = tmp_path / "sequence"
+    digest = f"${{IMAGE_BASE}}@sha256:{'a' * 64}"
+    command = f'''
+source "{SCRIPT}"
+REMOTE_BUILD=1
+record() {{ printf '%s\\n' "$*" >>"{records}"; }}
+init_deploy_ocir_docker_config() {{ :; }}
+preflight_ssh() {{ :; }}
+preflight_remote_face_pipeline_models() {{ :; }}
+preflight_git_clean() {{ :; }}
+preflight_branch_synced() {{ :; }}
+preflight_remote_ocir_auth() {{ :; }}
+preserve_rollback_tag() {{ record preserve "$@"; }}
+do_build_remote() {{ record build "$@"; }}
+do_push_sha() {{ ACX_CANDIDATE_DIGEST_REF="{digest}"; record push-sha "$ACX_CANDIDATE_DIGEST_REF"; }}
+promote_gate() {{ record smoke "$@"; }}
+do_push_tag() {{ record promote "$@"; }}
+do_restart() {{ record restart "$@"; }}
+do_verify() {{ record verify "$@"; }}
+do_deploy dev
+'''
+    result = subprocess.run(
+        ["/bin/bash", "-c", command], text=True, capture_output=True, check=False
+    )
+    assert result.returncode == 0, result.stderr
+    image_base = "iad.ocir.io/idu2kqqe2jxy/acx-backend"
+    digest_ref = f"{image_base}@sha256:{'a' * 64}"
+    assert records.read_text().splitlines() == [
+        "preserve dev",
+        "build dev",
+        f"push-sha {digest_ref}",
+        f"smoke dev {digest_ref}",
+        f"promote dev {digest_ref}",
+        f"restart dev {digest_ref}",
+        "verify dev",
+    ]
+
+
+def test_restore_failure_is_propagated_and_never_claimed_success(tmp_path: Path) -> None:
+    records = tmp_path / "commands"
+    digest = "d" * 64
+    command = f'''
+source "{SCRIPT}"
+ACX_DEPLOY_OCIR_CONFIG_DIR=/tmp/acx-test-config
+ACX_ROLLBACK_IMAGE_BASE="$IMAGE_BASE"
+ACX_ROLLBACK_DIGEST_REF="$IMAGE_BASE@sha256:{digest}"
+remote_docker_with_config() {{
+  printf '%s\\n' "$*" >>"{records}"
+  [[ "$1" != push ]]
+}}
+if restore_env_tag_to_rollback prod 0; then
+  exit 0
+else
+  exit $?
+fi
+'''
+    result = subprocess.run(
+        ["/bin/bash", "-c", command], text=True, capture_output=True, check=False
+    )
+    assert result.returncode != 0
+    assert "Restored" not in result.stdout
 
 
 def test_single_attempt_verify_does_not_sleep_after_terminal_failure(tmp_path: Path) -> None:

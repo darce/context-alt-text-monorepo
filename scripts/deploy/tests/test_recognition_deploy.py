@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 import subprocess
-
+from pathlib import Path
 
 SCRIPT = Path(__file__).parents[1] / "recognition-service.sh"
 

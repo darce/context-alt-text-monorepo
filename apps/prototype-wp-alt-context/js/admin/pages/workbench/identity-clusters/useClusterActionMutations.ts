@@ -17,7 +17,12 @@ import {
 import { offlineActionReason, useRemoteActionGate } from '../../../hooks/useRemoteActionGate';
 import { useSyncOffline } from '../../../hooks/useSyncOffline';
 import { isScanSuccessStatus } from '../../../hooks/jobStateMachineUtils';
-import { delay, getClusterErrorCode, getClusterMutationErrorMessage, isAbortError } from './clusterMutationUtils';
+import {
+  delay,
+  getClusterErrorCode,
+  getClusterMutationErrorMessage,
+  isDeliberateCancelError,
+} from './clusterMutationUtils';
 import { removePendingSuggestionFromCache } from './suggestionProjection';
 
 interface UseClusterActionMutationsOptions {
@@ -50,6 +55,40 @@ const pollSplitJob = async (jobId: string): Promise<void> => {
   throw new Error(__('Split job timed out. Please retry.', 'alt-context'));
 };
 
+/**
+ * Route a failed cluster-action write to exactly one outcome: silence, or copy.
+ *
+ * FEBT2-LD2-NEW-01 / RLSE-05 (lexicons/engineering.md:82 - "silent failure is the worst
+ * failure"). Every handler below used to gate on `isAbortError`, which is abort-*like*:
+ * `isAbortOrTimeoutName` answers true for `name === 'TimeoutError'`, and that is exactly what
+ * `fetchApi`'s own deadline carries (`RequestTimeoutError`, utils/errorTaxonomy.ts).
+ * An elapsed write therefore took the `onAbort` branch, and `onAbort` is
+ * `resetSaveStatus` (IdentityClusterItem.tsx) - the operator saw nothing at all on a
+ * write path. Only a *deliberate* cancel (the operator's own action) may be silent, and
+ * `isDeliberateCancelError` is the predicate that answers that question
+ * (clusterMutationUtils.ts).
+ *
+ * Copy for everything else comes from `getClusterMutationErrorMessage`, the single owner
+ * of error -> operator copy for this feature area (REF-19 lexicons/engineering.md:338;
+ * DOM-03 :528 - one meaning per term per context). This hook does not mint a second
+ * timeout sentinel or a second timeout string.
+ */
+const routeMutationFailure = (
+  error: unknown,
+  handlers: { readonly onAbort?: () => void; readonly onError?: (message: string) => void },
+  label = '',
+): void => {
+  if (isDeliberateCancelError(error)) {
+    handlers.onAbort?.();
+    return;
+  }
+  // Everything that is not a deliberate cancel — including the abort-like
+  // deadline and the branded interactive-budget sentinel — gets its copy from
+  // the single owner. Never `error.message`: FEBT1-W2A-04, an HTTPError message
+  // embeds the response body preview, so the verbatim text is not operator copy.
+  handlers.onError?.(getClusterMutationErrorMessage(error, label));
+};
+
 export const useClusterActionMutations = ({
   clusterId,
   identityCount,
@@ -75,12 +114,7 @@ export const useClusterActionMutations = ({
       invalidateQueries();
     },
     onError: (err: unknown) => {
-      if (isAbortError(err)) {
-        onAbort?.();
-        return;
-      }
-      const message = err instanceof Error ? err.message : String(err);
-      onError?.(message);
+      routeMutationFailure(err, { onAbort, onError });
     },
   });
 
@@ -114,12 +148,7 @@ export const useClusterActionMutations = ({
       onRenameSuccess?.('');
     },
     onError: (err: unknown) => {
-      if (isAbortError(err)) {
-        onAbort?.();
-        return;
-      }
-      const message = err instanceof Error ? err.message : String(err);
-      onError?.(message);
+      routeMutationFailure(err, { onAbort, onError });
     },
   });
 
@@ -144,14 +173,13 @@ export const useClusterActionMutations = ({
       onRenameSuccess?.(result.label);
     },
     onError: (err: unknown, variables) => {
-      if (isAbortError(err)) {
-        onAbort?.();
-        return;
-      }
+      // Read the structured WP error code, not a substring of the message
+      // (main FEBT1-W2A-04). The cache still has to be invalidated on a partial
+      // create-then-bind failure before the copy is routed.
       if (getClusterErrorCode(err) === 'acx_cluster_created_bind_failed') {
         invalidateQueries();
       }
-      onError?.(getClusterMutationErrorMessage(err, variables.label));
+      routeMutationFailure(err, { onAbort, onError }, variables.label);
     },
   });
 
@@ -181,12 +209,7 @@ export const useClusterActionMutations = ({
       invalidateQueries();
     },
     onError: (err: unknown) => {
-      if (isAbortError(err)) {
-        onAbort?.();
-        return;
-      }
-      const message = err instanceof Error ? err.message : String(err);
-      onError?.(message);
+      routeMutationFailure(err, { onAbort, onError });
     },
   });
 
@@ -224,12 +247,7 @@ export const useClusterActionMutations = ({
       invalidateQueries();
     },
     onError: (err: unknown) => {
-      if (isAbortError(err)) {
-        onAbort?.();
-        return;
-      }
-      const message = err instanceof Error ? err.message : String(err);
-      onError?.(message);
+      routeMutationFailure(err, { onAbort, onError });
     },
   });
 

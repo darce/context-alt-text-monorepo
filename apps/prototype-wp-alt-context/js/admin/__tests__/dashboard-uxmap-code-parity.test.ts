@@ -243,7 +243,7 @@ describe('dashboard ux-map code parity (DUX-W2D14)', () => {
     expect(recentSrc).toMatch(/historySource === 'unavailable'/);
     expect(zoneById['z-recent-activity']?.states).toEqual(expect.arrayContaining(['default', 'empty', 'degraded', 'error']));
     const unavailableHeadingMatch =
-      /EmptyStateVariant\.UNAVAILABLE[\s\S]{0,200}?heading=\{\__\(\s*'((?:\\'|[^'])*)'/.exec(recentSrc);
+      /EmptyStateVariant\.UNAVAILABLE[\s\S]{0,200}?heading=\{__\(\s*'((?:\\'|[^'])*)'/.exec(recentSrc);
     expect(unavailableHeadingMatch, 'expected an i18n heading on the UNAVAILABLE EmptyState').toBeTruthy();
     const unavailableHeading = (unavailableHeadingMatch?.[1] ?? '').replace(/\\'/g, "'");
     expect(errorSketch).toContain(unavailableHeading);

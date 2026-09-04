@@ -1,5 +1,17 @@
-/** Inclusive floor. Retry-After: 0 means retry immediately. */
-export const RETRY_AFTER_MIN_MS = 0;
+/**
+ * Inclusive floor for every retry wait. No retry is ever immediate.
+ *
+ * Release It! ch-5 / RES-06: "immediate retry against a persistent fault fails
+ * again and amplifies the outage". restful-web-api-patterns ch-7 ranks
+ * *immediate* retry last and permits it only for LB/gateway blips, and names
+ * fleet-synchronised retry schedules as the retry-storm trigger. A zero floor
+ * let three separate routes produce a synchronised zero-delay retry:
+ * `Retry-After: 0`, a `clampRetryAfterMs` fallback of 0, and full jitter that
+ * rolled `rng() === 0`. 1s is the smallest wait that is not "immediate" and
+ * matches `MIN_GATED_INTERVAL_MS` in recognitionCooldown.ts, which already
+ * refuses to hand a caller a zero-length window.
+ */
+export const RETRY_AFTER_MIN_MS = 1_000;
 
 /**
  * Operational ceiling: 5 minutes.
@@ -8,6 +20,19 @@ export const RETRY_AFTER_MIN_MS = 0;
  * misbehaving intermediary cannot freeze recognition pollers with no escape.
  */
 export const RETRY_AFTER_MAX_MS = 300_000;
+
+/**
+ * True when a parsed Retry-After actually instructs the client to wait.
+ *
+ * Single owner (REF-19) for "this Retry-After carries a wait instruction",
+ * shared by `isCooldown`, `getRetryDelay` and `cooldownSecondsFromError`.
+ * `0` and absent are the same answer: the server named no delay, so the client
+ * must fall back to its own jittered backoff rather than retry at once. This is
+ * the delta-seconds twin of the rule `parseRetryAfter` already applies to an
+ * HTTP-date that is not in the future.
+ */
+export const hasRetryAfterWait = (retryAfterMs: number | undefined): retryAfterMs is number =>
+  retryAfterMs !== undefined && Number.isFinite(retryAfterMs) && retryAfterMs > 0;
 
 const clampMs = (ms: number): number => Math.min(Math.max(ms, RETRY_AFTER_MIN_MS), RETRY_AFTER_MAX_MS);
 

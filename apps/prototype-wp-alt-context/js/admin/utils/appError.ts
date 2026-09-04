@@ -1,19 +1,25 @@
-import { NonceRefreshFailedError } from '../api/config';
-import { AuthExpiredError, HTTPError, ResponseParseError } from './http';
+import {
+  abortLikeTag,
+  AuthExpiredError,
+  HTTPError,
+  NonceRefreshFailedError,
+  ResponseParseError,
+  type AppErrorTag,
+} from './errorTaxonomy';
+import { hasRetryAfterWait } from './retryAfter';
 import { SPA_SESSION_EXPIRED_COPY } from './sessionExpiredCopy';
 
-export const APP_ERROR_TAGS = [
-  'http',
-  'parse',
-  'auth_expired',
-  'nonce_refresh',
-  'abort',
-  'timeout',
-  'transport',
-  'unknown',
-] as const;
+/**
+ * The closed tag set and the boundary error classes live in the leaf module
+ * `./errorTaxonomy`; this module owns the *classification* of an unknown thrown
+ * value into that vocabulary. Splitting the two is what removes the back-edge
+ * `utils/appError -> api/config` (FEBT2-LA-NEW-01; GRPH-02
+ * lexicons/graph-theory.md:72). Both names are re-exported unchanged, so
+ * `import { APP_ERROR_TAGS } from './appError'` still resolves for every caller.
+ */
+export { APP_ERROR_TAGS, isAbortOrTimeoutName } from './errorTaxonomy';
+export type { AppErrorTag } from './errorTaxonomy';
 
-export type AppErrorTag = (typeof APP_ERROR_TAGS)[number];
 
 const APP_ERROR_TAG_INDEX: Record<AppErrorTag, true> = {
   http: true,
@@ -88,24 +94,6 @@ export const isAppError = (value: unknown): value is AppError => {
   }
 };
 
-const ABORT_ERROR_NAME = 'AbortError';
-const TIMEOUT_ERROR_NAME = 'TimeoutError';
-const ABORT_OR_TIMEOUT_NAMES = new Set([ABORT_ERROR_NAME, TIMEOUT_ERROR_NAME]);
-
-const duckTypeName = (value: unknown): string | undefined => {
-  if (typeof value !== 'object' || value === null) {
-    return undefined;
-  }
-  const name = (value as { name?: unknown }).name;
-  return typeof name === 'string' ? name : undefined;
-};
-
-/** Duck-type: DOMException, Error, or any object whose name is AbortError or TimeoutError. */
-export const isAbortOrTimeoutName = (value: unknown): boolean => {
-  const name = duckTypeName(value);
-  return name !== undefined && ABORT_OR_TIMEOUT_NAMES.has(name);
-};
-
 const unknownMessage = (value: unknown): string => {
   if (value instanceof Error) {
     return value.message;
@@ -127,7 +115,7 @@ const abortMessage = (error: unknown): string => {
 };
 
 const classifyHttpError = (error: HTTPError): AppError => {
-  if (error.retryAfterSeconds === undefined) {
+  if (error.retryAfterMs === undefined) {
     return {
       _tag: 'http',
       status: error.status,
@@ -140,14 +128,38 @@ const classifyHttpError = (error: HTTPError): AppError => {
     _tag: 'http',
     status: error.status,
     endpoint: error.endpoint,
-    retryAfterMs: error.retryAfterSeconds * 1000,
+    retryAfterMs: error.retryAfterMs,
     message: error.message,
     cause: error,
   };
 };
 
+/**
+ * Messages a `fetch` network failure rejects with, per browser. Every other
+ * `TypeError` is a programming bug (`x is not a function`) and must not be
+ * retried as if the network dropped (FEBT-1-W1-E-05). A network failure raised
+ * inside `fetchApi` never reaches this list — the boundary already tagged it
+ * `TransportError` by provenance.
+ */
+const FETCH_NETWORK_FAILURE_MESSAGES = [
+  'Failed to fetch',
+  'Load failed',
+  'NetworkError when attempting to fetch resource',
+  'Network request failed',
+  'fetch failed',
+] as const;
+
+const isFetchNetworkFailureMessage = (message: string): boolean =>
+  FETCH_NETWORK_FAILURE_MESSAGES.some((known) => message.includes(known));
+
 export const classifyError = (error: unknown): AppError => {
   try {
+    // FEBT1G-M-07 / FEBT1-W2A-01: since the boundary classes carry `_tag`,
+    // an already-tagged value IS its own classification. Returning the instance
+    // preserves the stack and `instanceof`, and it is what the logger's
+    // name-shaped safe projection keys on. Re-projecting it into a plain object
+    // here would discard the capture site for no gain — one concept, one
+    // representation (NAME-02, lexicons/engineering.md:649).
     if (isAppError(error)) {
       return error;
     }
@@ -178,22 +190,15 @@ export const classifyError = (error: unknown): AppError => {
         cause: error,
       };
     }
-    const name = duckTypeName(error);
-    if (name === TIMEOUT_ERROR_NAME) {
+    const abortTag = abortLikeTag(error);
+    if (abortTag !== undefined) {
       return {
-        _tag: 'timeout',
+        _tag: abortTag,
         message: abortMessage(error),
         cause: error,
       };
     }
-    if (name === ABORT_ERROR_NAME) {
-      return {
-        _tag: 'abort',
-        message: abortMessage(error),
-        cause: error,
-      };
-    }
-    if (error instanceof TypeError) {
+    if (error instanceof TypeError && isFetchNetworkFailureMessage(error.message)) {
       return {
         _tag: 'transport',
         message: error.message,
@@ -230,7 +235,7 @@ export const isCooldown = (error: unknown): boolean => {
   const classified = classifyError(error);
   return (
     classified._tag === 'http' &&
-    (classified.status === 429 || (classified.status === 503 && classified.retryAfterMs !== undefined))
+    (classified.status === 429 || (classified.status === 503 && hasRetryAfterWait(classified.retryAfterMs)))
   );
 };
 

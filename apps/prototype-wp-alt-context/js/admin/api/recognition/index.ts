@@ -133,6 +133,10 @@ export {
   rejectNameSuggestion,
   bulkAcceptSuggestions,
 } from './identityActionsApi';
+// The types `acceptMergeSuggestion` traffics in ship with the function, so a
+// barrel consumer can narrow the accept result and pin a survivor without a deep
+// import (DOM-03: one export surface per concept, not one per file path).
+export type { AcceptedMergeSuggestion, AcceptMergeSuggestionRequest } from './identityActionsApi';
 
 // Sync status
 export { fetchSyncHealth, fetchSyncStatus, triggerSync, resetMirror } from './syncApi';
@@ -148,6 +152,12 @@ export {
   importTenantData,
   fetchAuditEvents,
   applyRetentionPreset,
+  // `downloadExportJobData` fails loud on a non-conforming envelope. Shipping the
+  // error class and the collection-key list through the same barrel keeps that
+  // fail-closed contract narrowable by barrel consumers instead of degrading to a
+  // generic catch (ARCH-13: structural support for a property that must hold).
+  RetentionExportResponseError,
+  EXPORT_COLLECTION_KEYS,
 } from './retentionApi';
 
 // Conflict and dead-letter operations

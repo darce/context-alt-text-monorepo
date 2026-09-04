@@ -12,7 +12,7 @@
  */
 
 import { classifyError } from './appError';
-import { clampRetryAfterMs } from './retryAfter';
+import { clampRetryAfterMs, hasRetryAfterWait } from './retryAfter';
 import { isCooldownSignal } from './retryPolicy';
 
 /** Window applied when the server sends 429 without a usable Retry-After. */
@@ -46,12 +46,16 @@ export const openCooldown = (seconds: number): void => {
   }
 };
 
+/**
+ * FEBT1-LE-03: gate on `hasRetryAfterWait`, not on `!== undefined`. A
+ * `Retry-After` that names no wait is not a window — falling through to
+ * DEFAULT_COOLDOWN_SECONDS is the same rule `getRetryDelay` and `isCooldown`
+ * apply (REF-19, one owner for "this Retry-After carries a wait instruction").
+ */
 const cooldownSecondsFromError = (error: unknown): number => {
   const classified = classifyError(error);
-  const seconds =
-    classified._tag === 'http' && classified.retryAfterMs !== undefined
-      ? classified.retryAfterMs / 1000
-      : undefined;
+  const retryAfterMs = classified._tag === 'http' ? classified.retryAfterMs : undefined;
+  const seconds = hasRetryAfterWait(retryAfterMs) ? retryAfterMs / 1000 : undefined;
   return clampRetryAfterMs(seconds, DEFAULT_COOLDOWN_SECONDS * 1000) / 1000;
 };
 

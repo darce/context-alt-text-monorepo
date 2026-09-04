@@ -59,7 +59,7 @@ interface IdentitiesSurface {
   isPlaceholderData?: boolean;
   isFetching?: boolean;
   refetch: () => void;
-};
+}
 
 let identitiesSurface: IdentitiesSurface;
 let itemsWithIdentities: WorkbenchMediaItem[];

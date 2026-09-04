@@ -178,7 +178,12 @@ describe('IdentityClusterList twin chip (WBUX-6/C3 S4-F1/F4/F6)', () => {
       limit: 50,
       offset: 0,
     });
-    vi.mocked(recognitionApi.acceptMergeSuggestion).mockResolvedValue(pendingMerge());
+    vi.mocked(recognitionApi.acceptMergeSuggestion).mockResolvedValue({
+      ...pendingMerge(),
+      source_cluster_id: UNLABELED_ID,
+      target_cluster_id: LABELED_ID,
+      moved_identity_ids: [],
+    });
     vi.mocked(recognitionApi.rejectMergeSuggestion).mockResolvedValue(pendingMerge());
   });
 

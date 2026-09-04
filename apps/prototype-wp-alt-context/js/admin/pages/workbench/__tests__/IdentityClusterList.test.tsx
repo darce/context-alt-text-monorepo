@@ -886,7 +886,7 @@ describe('IdentityClusterList', () => {
       }),
     );
 
-    const { client, user } = await renderWithClient(<IdentityClusterList identities={[baseIdentity]} />);
+    const { client, user, unmount } = await renderWithClient(<IdentityClusterList identities={[baseIdentity]} />);
     const cacheData: MediaIdentitiesResponse = {
       identities_by_media: {
         '1': [baseIdentity],
@@ -926,15 +926,30 @@ describe('IdentityClusterList', () => {
     });
 
     await waitFor(() =>
-      expect(api.revertMergeCluster).toHaveBeenCalledWith({
-        targetClusterId: 'target-cluster',
-        movedIdentityIds: ['identity-1'],
-        sourceLabel: 'Cluster 1',
-      }),
+      // FEBT2-W2-LANE-04: the undo now owns an AbortController, so a superseded revert can
+      // actually be abandoned (RES-10). Asserted as a live AbortSignal rather than
+      // `expect.anything()` so re-dropping the argument turns this red.
+      expect(api.revertMergeCluster).toHaveBeenCalledWith(
+        {
+          targetClusterId: 'target-cluster',
+          movedIdentityIds: ['identity-1'],
+          sourceLabel: 'Cluster 1',
+        },
+        expect.any(AbortSignal),
+      ),
     );
     await waitFor(() => expect(screen.queryByRole('button', { name: /undo merge/i })).not.toBeInTheDocument(), {
       timeout: 2000,
     });
+
+    // FEBT2-W2-LANE-04: the forwarded signal has to be a *live* controller at dispatch and
+    // has to abort when the card unmounts. Without both halves the argument is decoration:
+    // a pre-aborted signal would cancel every undo, and a never-aborted one lets a revert
+    // outlive the surface that asked for it (RES-10, lexicons/engineering.md:121).
+    const revertSignal = (api.revertMergeCluster as Mock).mock.calls[0][1] as AbortSignal;
+    expect(revertSignal.aborted).toBe(false);
+    unmount();
+    expect(revertSignal.aborted).toBe(true);
   });
 
   it('renders face thumbnail when media_url is provided', async () => {
@@ -1130,7 +1145,13 @@ describe('IdentityClusterList', () => {
       // First (server-ranked) match is the one shown, even where >=2 rows exist.
       expect(screen.getByText('Person 0')).toBeInTheDocument();
       expect(screen.queryByText('Person 0 alt')).not.toBeInTheDocument();
-    });
+      // FEBT2-W2-LANE-06: the explicit budget below is a *render-throughput* allowance for
+      // mounting 60 cards under jsdom, not a latency claim about the product. This test
+      // asserts fan-out correctness (one batched fetch, 60 resolved prompts, first-ranked
+      // row wins); leaving it on the 5s default made its verdict depend on host load, so a
+      // green run certified nothing and a red run named nothing (TEST-15,
+      // lexicons/engineering.md:396). The card count is the assertion and must not shrink.
+    }, 30_000);
 
     it('renders nothing for an identity absent from the keyed envelope (empty-match)', async () => {
       const identities = makeUnlabeled(2);

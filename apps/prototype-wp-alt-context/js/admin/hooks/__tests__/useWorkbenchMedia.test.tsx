@@ -228,7 +228,7 @@ describe('useWorkbenchMedia', () => {
         ],
       },
       data_source: 'local_projection',
-    } as recognitionApi.MediaIdentitiesResponse);
+    });
 
     const { result } = renderHook(() => useWorkbenchMedia({ page: 1, perPage: 10, enabled: true }), {
       wrapper,
@@ -246,7 +246,7 @@ describe('useWorkbenchMedia', () => {
     expect(result.current.identitiesQuery.isPlaceholderData).toBe(false);
     expect(result.current.identitiesQuery.isError).toBe(false);
     expect(result.current.identitiesQuery.data).toEqual(
-      expect.objectContaining({ identities_by_media: expect.any(Object) }),
+      expect.objectContaining({ identities_by_media: expect.any(Object) as unknown }),
     );
 
     queryClient.clear();
@@ -298,7 +298,7 @@ describe('useWorkbenchMedia', () => {
         ],
       },
       data_source: 'local_projection',
-    } as recognitionApi.MediaIdentitiesResponse);
+    });
 
     const { result } = renderHook(() => useWorkbenchMedia({ page: 1, perPage: 10, enabled: true }), {
       wrapper,
@@ -361,7 +361,7 @@ describe('useWorkbenchMedia', () => {
     };
 
     const fetchWorkbenchMediaMock = vi.mocked(fetchWorkbenchMedia);
-    fetchWorkbenchMediaMock.mockImplementation(async ({ page }) => (page === 1 ? page1 : page2));
+    fetchWorkbenchMediaMock.mockImplementation(({ page }) => Promise.resolve(page === 1 ? page1 : page2));
     vi.mocked(fetchWorkbenchMediaDetail).mockResolvedValue({
       detailsByMedia: {},
       limit: 100,
@@ -389,7 +389,7 @@ describe('useWorkbenchMedia', () => {
             ],
           },
           data_source: 'local_projection',
-        } as recognitionApi.MediaIdentitiesResponse;
+        };
       }
       return page2Deferred.promise;
     });
@@ -464,7 +464,7 @@ describe('useWorkbenchMedia', () => {
     ({
       identities_by_media: {},
       data_source: 'local_projection',
-    }) as recognitionApi.MediaIdentitiesResponse;
+    });
 
   it('S4-T1: no speculative next-page prefetch while stage-2 isFetching; exactly one after settle', async () => {
     const { wrapper, queryClient } = createWrapper();
@@ -480,7 +480,7 @@ describe('useWorkbenchMedia', () => {
     };
 
     const fetchWorkbenchMediaMock = vi.mocked(fetchWorkbenchMedia);
-    fetchWorkbenchMediaMock.mockImplementation(async ({ page }) => (page === 1 ? page1 : page2));
+    fetchWorkbenchMediaMock.mockImplementation(({ page }) => Promise.resolve(page === 1 ? page1 : page2));
 
     const detailDeferred = createDeferred<WorkbenchMediaDetailResponse>();
     const identitiesDeferred = createDeferred<recognitionApi.MediaIdentitiesResponse>();
@@ -545,10 +545,10 @@ describe('useWorkbenchMedia', () => {
     };
 
     const fetchWorkbenchMediaMock = vi.mocked(fetchWorkbenchMedia);
-    fetchWorkbenchMediaMock.mockImplementation(async ({ page }) => {
-      if (page === 1) return page1;
-      if (page === 2) return page2;
-      return page3;
+    fetchWorkbenchMediaMock.mockImplementation(({ page }) => {
+      if (page === 1) return Promise.resolve(page1);
+      if (page === 2) return Promise.resolve(page2);
+      return Promise.resolve(page3);
     });
 
     // Page-1 stage-2 settles immediately so initial prefetch of page 2 can fire.
@@ -649,11 +649,11 @@ describe('useWorkbenchMedia', () => {
     };
 
     const fetchWorkbenchMediaMock = vi.mocked(fetchWorkbenchMedia);
-    fetchWorkbenchMediaMock.mockImplementation(async ({ page }) => (page === 1 ? page1 : page2));
+    fetchWorkbenchMediaMock.mockImplementation(({ page }) => Promise.resolve(page === 1 ? page1 : page2));
     vi.mocked(fetchWorkbenchMediaDetail).mockResolvedValue(emptyDetail());
 
     let identitiesCalls = 0;
-    const identitiesDeferreds: Array<ReturnType<typeof createDeferred<recognitionApi.MediaIdentitiesResponse>>> =
+    const identitiesDeferreds: ReturnType<typeof createDeferred<recognitionApi.MediaIdentitiesResponse>>[] =
       [];
     vi.mocked(recognitionApi.fetchMediaIdentities).mockImplementation(async () => {
       identitiesCalls += 1;
@@ -725,7 +725,7 @@ describe('useWorkbenchMedia', () => {
     };
 
     const fetchWorkbenchMediaMock = vi.mocked(fetchWorkbenchMedia);
-    fetchWorkbenchMediaMock.mockImplementation(async ({ page }) => (page === 1 ? page1 : page2));
+    fetchWorkbenchMediaMock.mockImplementation(({ page }) => Promise.resolve(page === 1 ? page1 : page2));
     vi.mocked(fetchWorkbenchMediaDetail).mockResolvedValue(emptyDetail());
     vi.mocked(recognitionApi.fetchMediaIdentities).mockResolvedValue(emptyIdentities());
 

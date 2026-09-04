@@ -99,6 +99,22 @@ describe('recognitionCooldown', () => {
       expect(isCoolingDown()).toBe(false);
     });
 
+    // FEBT1-LE-03: a 429 whose Retry-After names no wait must still arm a real
+    // window. The old path read `retryAfterMs !== undefined`, passed 0 seconds
+    // through clampRetryAfterMs, and (with the old zero floor) armed a
+    // zero-length cooldown — a gate that gates nothing, so every one of the
+    // seven gated pollers kept hammering a service that had just said stop.
+    it('a Retry-After of 0 arms the default window, never a zero-length one', () => {
+      openCooldownFromError(httpError(429, 0));
+      expect(cooldownRemainingMs()).toBe(DEFAULT_COOLDOWN_SECONDS * 1000);
+      expect(isCoolingDown()).toBe(true);
+    });
+
+    it('a 503 whose Retry-After names no wait is not an ask-again-later [FEBT1-LE-03]', () => {
+      openCooldownFromError(httpError(503, 0));
+      expect(isCoolingDown()).toBe(false);
+    });
+
     it('clamps Retry-After: 3600 to the shared ceiling at the cooldown call site [E-01]', () => {
       openCooldownFromError(httpError(429, 3600));
       expect(cooldownRemainingMs()).toBe(RETRY_AFTER_MAX_MS);

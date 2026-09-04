@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { renderHook, waitFor } from '@testing-library/react';
+import { act, renderHook, waitFor } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -8,6 +8,8 @@ import type { ClusterMembersResponse } from '../../../../api/recognition';
 import { classifyError } from '../../../../utils/appError';
 import { AuthExpiredError, HTTPError } from '../../../../utils/http';
 import {
+  isOpenTargetRetained,
+  LIVE_REVIEW_TARGET_STATUS,
   LIVE_TARGET_CLOSE_ANNOUNCE,
   LIVE_TARGET_REBIND_ANNOUNCE,
   useLiveReviewTarget,
@@ -213,6 +215,85 @@ describe('useLiveReviewTarget', () => {
     expect(openId).toBeNull();
   });
 
+  it('FEBT1-LD-03: a 5xx blip fails open as unverified — pane retained, never claimed live', async () => {
+    // The fail-open property is "the operator's pane is not closed", not the
+    // literal string 'live'. Pinning 'live' pinned a proxy that also asserted a
+    // claim the probe never earned (RLSE-04 / REF-33: unverified is a designed
+    // state, not a forced binary). This asserts the property directly.
+    const blip = new HTTPError({
+      status: 503,
+      retryAfterSeconds: 1,
+      endpoint: '/members',
+      bodyPreview: '',
+      message: 'unavailable',
+    });
+    vi.mocked(fetchClusterMembers).mockRejectedValue(blip);
+    const onClose = vi.fn();
+    const onRebind = vi.fn();
+
+    // 503 + Retry-After is a cooldown signal, so the hook's predicate allows its
+    // single retry; a short retryDelay keeps the settled failure inside the
+    // assertion window instead of measuring the backoff.
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: true, retryDelay: 1 } },
+    });
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+    );
+
+    const { result } = renderHook(
+      () => useLiveReviewTarget('cluster-blip', { onClose, onRebind }),
+      { wrapper },
+    );
+
+    await waitFor(() => {
+      expect(fetchClusterMembers).toHaveBeenCalled();
+    });
+    // FEBT1-LD-05: `error` is non-null on a 5xx probe — the reason channel is
+    // populated even though the status is the safe default. Wait on the error so
+    // the status assertion below reads the *settled* failure, not the pending state.
+    await waitFor(() => {
+      expect(result.current.error).toBe(blip);
+    });
+    expect(result.current.status).toBe(LIVE_REVIEW_TARGET_STATUS.UNVERIFIED);
+    // Fail-open: the target is retained and still resolvable.
+    expect(isOpenTargetRetained(result.current.status)).toBe(true);
+    expect(result.current.resolvedClusterId).toBe('cluster-blip');
+    expect(onClose).not.toHaveBeenCalled();
+    expect(onRebind).not.toHaveBeenCalled();
+    // And it must never masquerade as a verified target.
+    expect(result.current.status).not.toBe(LIVE_REVIEW_TARGET_STATUS.LIVE);
+  });
+
+  it('FEBT1-LD-03: status is unverified before the probe settles (no optimistic live)', async () => {
+    let settle: (value: ClusterMembersResponse) => void = () => undefined;
+    vi.mocked(fetchClusterMembers).mockImplementation(
+      () =>
+        new Promise<ClusterMembersResponse>((resolve) => {
+          settle = resolve;
+        }),
+    );
+    const onClose = vi.fn();
+
+    const { result } = renderHook(() => useLiveReviewTarget('cluster-slow', { onClose }), {
+      wrapper: createWrapper(),
+    });
+
+    expect(result.current.status).toBe(LIVE_REVIEW_TARGET_STATUS.UNVERIFIED);
+    expect(result.current.resolvedClusterId).toBe('cluster-slow');
+    expect(result.current.error).toBeNull();
+
+    await act(async () => {
+      settle(okMembers());
+      await Promise.resolve();
+    });
+
+    await waitFor(() => {
+      expect(result.current.status).toBe(LIVE_REVIEW_TARGET_STATUS.LIVE);
+    });
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
   it('probe TimeoutError is not live and surfaces a non-null error [FEBT1-W2A-06]', async () => {
     const timeout = new DOMException('The operation timed out.', 'TimeoutError');
     vi.mocked(fetchClusterMembers).mockRejectedValue(timeout);
@@ -230,10 +311,10 @@ describe('useLiveReviewTarget', () => {
     });
 
     await waitFor(() => {
-      expect(result.current.status).not.toBe('live');
+      expect(result.current.status).not.toBe(LIVE_REVIEW_TARGET_STATUS.LIVE);
       expect(result.current.error).not.toBeNull();
     });
-    expect(result.current.status).toBe('unknown');
+    expect(result.current.status).toBe(LIVE_REVIEW_TARGET_STATUS.UNVERIFIED);
     expect(result.current.error).toBe(timeout);
     expect(result.current.resolvedClusterId).toBe('cluster-timeout');
     expect(onClose).not.toHaveBeenCalled();
@@ -263,13 +344,47 @@ describe('useLiveReviewTarget', () => {
     });
 
     await waitFor(() => {
-      expect(result.current.status).not.toBe('live');
+      expect(result.current.status).not.toBe(LIVE_REVIEW_TARGET_STATUS.LIVE);
       expect(result.current.error).not.toBeNull();
     });
-    expect(result.current.status).toBe('unknown');
+    expect(result.current.status).toBe(LIVE_REVIEW_TARGET_STATUS.UNVERIFIED);
     expect(result.current.error).toBe(serverError);
     expect(result.current.resolvedClusterId).toBe('cluster-500');
     expect(onClose).not.toHaveBeenCalled();
+    expect(fetchClusterMembers).toHaveBeenCalledTimes(1);
+  });
+
+  it('FEBT1-LD-05: the retry predicate short-circuits abort/timeout — one probe, no retry', async () => {
+    // AbortSignal.timeout rejects with a DOMException named TimeoutError; a user
+    // cancel rejects with AbortError. Neither may be retried: the probe must not
+    // outlive the pane it guards.
+    const timedOut = new DOMException('The operation timed out.', 'TimeoutError');
+    vi.mocked(fetchClusterMembers).mockRejectedValue(timedOut);
+    const onClose = vi.fn();
+
+    // Retry enabled so a missing short-circuit would re-fire the probe.
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: true, retryDelay: 1 } },
+    });
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+    );
+
+    const { result } = renderHook(() => useLiveReviewTarget('cluster-timeout', { onClose }), {
+      wrapper,
+    });
+
+    await waitFor(() => {
+      expect(result.current.error).toBe(timedOut);
+    });
+    expect(fetchClusterMembers).toHaveBeenCalledTimes(1);
+    // Abort/timeout is not retirement: fail open, pane retained.
+    expect(result.current.status).toBe(LIVE_REVIEW_TARGET_STATUS.UNVERIFIED);
+    expect(result.current.resolvedClusterId).toBe('cluster-timeout');
+    expect(onClose).not.toHaveBeenCalled();
+
+    // A settled probe must stay settled — no late retry after the assertion window.
+    await new Promise((resolve) => setTimeout(resolve, 30));
     expect(fetchClusterMembers).toHaveBeenCalledTimes(1);
   });
 
@@ -296,7 +411,7 @@ describe('useLiveReviewTarget', () => {
     await waitFor(() => {
       expect(result.current.status).toBe('auth_expired');
     });
-    expect(result.current.status).not.toBe('live');
+    expect(result.current.status).not.toBe(LIVE_REVIEW_TARGET_STATUS.LIVE);
     expect(result.current.error).toBe(authExpired);
     expect(result.current.resolvedClusterId).toBe('cluster-auth');
     expect(onClose).not.toHaveBeenCalled();
@@ -360,7 +475,7 @@ describe('useLiveReviewTarget', () => {
     await waitFor(() => {
       expect(result.current.status).toBe('auth_expired');
     });
-    expect(result.current.status).not.toBe('live');
+    expect(result.current.status).not.toBe(LIVE_REVIEW_TARGET_STATUS.LIVE);
     expect(result.current.error).toBe(classified);
     expect(result.current.resolvedClusterId).toBe('cluster-auth');
     expect(onClose).not.toHaveBeenCalled();

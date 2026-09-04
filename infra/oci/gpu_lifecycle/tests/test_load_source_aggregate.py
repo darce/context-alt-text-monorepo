@@ -8,7 +8,10 @@ from pathlib import Path
 
 import pytest
 from infra.oci.gpu_lifecycle.controller import JobLoadSnapshot
-from infra.oci.gpu_lifecycle.load_source import AggregateJobLoadSource
+from infra.oci.gpu_lifecycle.load_source import (
+    LOAD_SNAPSHOT_FUTURE_SKEW_SECONDS,
+    AggregateJobLoadSource,
+)
 from infra.oci.gpu_lifecycle.reaper import _build_parser
 
 NOW = 10_000.0
@@ -69,6 +72,67 @@ def test_two_fresh_idle_files_are_idle(tmp_path: Path) -> None:
 
     assert snapshot == JobLoadSnapshot(queue_depth=0, in_flight=0)
     assert snapshot.has_work is False
+
+
+def test_future_dated_file_beyond_clock_skew_fails_closed(tmp_path: Path) -> None:
+    _write_load(
+        tmp_path,
+        "dev",
+        queue_depth=0,
+        in_flight=0,
+        written_at=NOW + LOAD_SNAPSHOT_FUTURE_SKEW_SECONDS + 0.001,
+    )
+
+    snapshot = _source(tmp_path).snapshot()
+
+    assert snapshot.untrustworthy is True
+    assert snapshot.has_work is True
+
+
+def test_future_dated_file_within_clock_skew_is_fresh(tmp_path: Path) -> None:
+    _write_load(
+        tmp_path,
+        "dev",
+        queue_depth=0,
+        in_flight=0,
+        written_at=NOW + LOAD_SNAPSHOT_FUTURE_SKEW_SECONDS,
+    )
+
+    snapshot = _source(tmp_path).snapshot()
+
+    assert snapshot == JobLoadSnapshot(queue_depth=0, in_flight=0)
+    assert snapshot.has_work is False
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("written_at", str(NOW)),
+        ("queue_depth", "0"),
+        ("queue_depth", False),
+        ("in_flight", False),
+    ],
+)
+def test_non_native_load_numbers_fail_closed(
+    tmp_path: Path,
+    field: str,
+    value: object,
+) -> None:
+    payload: dict[str, object] = {
+        "queue_depth": 0,
+        "in_flight": 0,
+        "batch_in_progress": False,
+        "written_at": NOW,
+    }
+    payload[field] = value
+    path = tmp_path / "dev" / "describe-load.json"
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    snapshot = _source(tmp_path).snapshot()
+
+    assert snapshot.untrustworthy is True
+    assert snapshot.has_work is True
 
 
 def test_stale_within_grace_is_busy_while_fresh_busy_is_aggregated(tmp_path: Path) -> None:

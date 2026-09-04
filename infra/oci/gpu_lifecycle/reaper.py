@@ -85,15 +85,46 @@ _DEFAULT_FENCE_DELAY_SECONDS = 2.0
 _DEFAULT_READY_MAX_CYCLES = 30
 _DEFAULT_READY_STALL_CYCLES = 3
 _DEFAULT_READY_SLEEP_SECONDS = 10.0
+_DEFAULT_LOCK_TIMEOUT_SECONDS = 30.0
+_LOCK_RETRY_SECONDS = 0.05
 _DEFAULT_RUNNING_SINCE_PATH = Path("/run/acx/gpu-running-since.json")
 _RUNNING_SINCE_FUTURE_SKEW_SECONDS = 5.0
 # Live describe dumps omit batch_in_progress; warn once per process, not per poll.
 _ABSENT_BATCH_KEY_WARNED = False
 
 
+def _acquire_flock_with_timeout(
+    lock_fd: int,
+    *,
+    timeout_seconds: float,
+) -> None:
+    """Acquire an exclusive flock without allowing a stuck peer to pin a unit."""
+    if (
+        isinstance(timeout_seconds, bool)
+        or not isinstance(timeout_seconds, (int, float))
+        or not math.isfinite(timeout_seconds)
+        or timeout_seconds < 0
+    ):
+        raise ValueError("lock timeout must be finite and non-negative")
+    deadline = time.monotonic() + float(timeout_seconds)
+    while True:
+        try:
+            fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return
+        except BlockingIOError:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError(
+                    f"timed out after {float(timeout_seconds):.1f}s waiting for lifecycle lock"
+                ) from None
+            time.sleep(min(_LOCK_RETRY_SECONDS, remaining))
+
+
 @contextmanager
 def _serialized_gpu_state_publish(
     path: str | Path | None,
+    *,
+    lock_timeout_seconds: float = _DEFAULT_LOCK_TIMEOUT_SECONDS,
 ) -> Iterator[None]:
     """Serialize snapshot read-modify-write across the two systemd units."""
     target = resolve_gpu_state_path() if path is None else Path(path)
@@ -118,7 +149,10 @@ def _serialized_gpu_state_publish(
             # production pre-provisions the same path as root:10001/0660 so the
             # normal cross-unit path never depends on this creation fallback.
             os.fchmod(lock_fd, 0o660)
-        fcntl.flock(lock_fd, fcntl.LOCK_EX)
+        _acquire_flock_with_timeout(
+            lock_fd,
+            timeout_seconds=lock_timeout_seconds,
+        )
         try:
             yield
         finally:
@@ -424,6 +458,7 @@ class RunningSinceLeaseStore:
         monotonic: Callable[[], float] | None = None,
         boot_id: str | None = None,
         max_future_skew_seconds: float = _RUNNING_SINCE_FUTURE_SKEW_SECONDS,
+        lock_timeout_seconds: float = _DEFAULT_LOCK_TIMEOUT_SECONDS,
     ) -> None:
         self.path = path
         self._now = now or (lambda: datetime.now(UTC))
@@ -436,6 +471,14 @@ class RunningSinceLeaseStore:
         ):
             raise ValueError("max_future_skew_seconds must be finite and non-negative")
         self._max_future_skew_seconds = float(max_future_skew_seconds)
+        if (
+            isinstance(lock_timeout_seconds, bool)
+            or not isinstance(lock_timeout_seconds, (int, float))
+            or not math.isfinite(lock_timeout_seconds)
+            or lock_timeout_seconds < 0
+        ):
+            raise ValueError("lock_timeout_seconds must be finite and non-negative")
+        self._lock_timeout_seconds = float(lock_timeout_seconds)
         if boot_id is None:
             try:
                 boot_id = Path("/proc/sys/kernel/random/boot_id").read_text().strip()
@@ -468,7 +511,10 @@ class RunningSinceLeaseStore:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         lock_path = self.path.with_name(f".{self.path.name}.lock")
         with lock_path.open("a+") as lock_file:
-            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+            _acquire_flock_with_timeout(
+                lock_file.fileno(),
+                timeout_seconds=self._lock_timeout_seconds,
+            )
             try:
                 yield
             finally:

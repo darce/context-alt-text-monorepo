@@ -8,6 +8,7 @@ running A10 (~$2/hr). These pin the one path that stops on wall clock alone.
 
 from __future__ import annotations
 
+import fcntl
 import json
 import threading
 from concurrent.futures import ThreadPoolExecutor
@@ -601,6 +602,24 @@ def test_concurrent_lease_writers_preserve_both_instance_records(tmp_path: Path)
             future.result()
 
     assert set(json.loads(path.read_text())["instances"]) == {"instance-a", "instance-b"}
+
+
+def test_running_since_lock_has_a_deadline(tmp_path: Path) -> None:
+    path = tmp_path / "running-since.json"
+    lock_path = path.with_name(f".{path.name}.lock")
+    lock_path.touch()
+    store = RunningSinceLeaseStore(
+        path=path,
+        now=lambda: NOW,
+        monotonic=lambda: TEST_MONOTONIC,
+        boot_id=TEST_BOOT_ID,
+        lock_timeout_seconds=0.0,
+    )
+
+    with lock_path.open("r") as holder:
+        fcntl.flock(holder.fileno(), fcntl.LOCK_EX)
+        with pytest.raises(TimeoutError, match="waiting for lifecycle lock"):
+            store.record_start("instance-a")
 
 
 def test_start_lease_write_failure_disables_cap_loudly(monkeypatch, caplog) -> None:

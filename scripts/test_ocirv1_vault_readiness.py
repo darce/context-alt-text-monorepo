@@ -47,7 +47,7 @@ def _assert_bounded_increasing_backoff(delays, timeout):
     assert delays
     assert all(0 < delay <= 5.0 for delay in delays)
     assert len(set(delays)) > 1, "retry delay must not remain constant"
-    for previous, current in zip(delays, delays[1:]):
+    for previous, current in zip(delays[:-1], delays[1:], strict=True):
         if previous < 5.0:
             assert current > previous
         else:
@@ -64,7 +64,7 @@ class _ServiceError(Exception):
         self.code = code
 
 
-class Runaway(AssertionError):
+class RunawayError(AssertionError):
     """wait_until_readable kept polling past any plausible deadline."""
 
 
@@ -93,9 +93,7 @@ class _Clock:
         self.slept.append(seconds)
         self.now += seconds
         if len(self.slept) > self.MAX_SLEEPS:
-            raise Runaway(
-                f"polled {len(self.slept)} times without honouring the deadline"
-            )
+            raise RunawayError(f"polled {len(self.slept)} times without honouring the deadline")
 
     def monotonic(self):
         return self.now
@@ -121,8 +119,12 @@ def test_returns_once_the_written_value_reads_back():
 
     clock = _Clock()
     assert vps.wait_until_readable(
-        read_bundle, "OCIR_AUTH_TOKEN", _digest(value), timeout=60,
-        sleep=clock, monotonic=clock.monotonic,
+        read_bundle,
+        "OCIR_AUTH_TOKEN",
+        _digest(value),
+        timeout=60,
+        sleep=clock,
+        monotonic=clock.monotonic,
     )
     assert calls["n"] == not_ready_reads + 1
     # A slow propagation must not become a constant-delay hot loop against the
@@ -149,8 +151,12 @@ def test_the_exact_live_failure_no_longer_escapes():
 
     clock = _Clock()
     assert vps.wait_until_readable(
-        read_bundle, "OCIR_AUTH_TOKEN", _digest(value), timeout=60,
-        sleep=clock, monotonic=clock.monotonic,
+        read_bundle,
+        "OCIR_AUTH_TOKEN",
+        _digest(value),
+        timeout=60,
+        sleep=clock,
+        monotonic=clock.monotonic,
     )
 
 
@@ -164,10 +170,14 @@ def test_stale_prior_version_is_not_accepted():
     assert len(old) == len(new)
 
     clock = _Clock()
-    with pytest.raises(vps.SecretNotReadable) as excinfo:
+    with pytest.raises(vps.SecretNotReadableError) as excinfo:
         vps.wait_until_readable(
-            lambda: old, "OCIR_AUTH_TOKEN", _digest(new), timeout=1,
-            sleep=clock, monotonic=clock.monotonic,
+            lambda: old,
+            "OCIR_AUTH_TOKEN",
+            _digest(new),
+            timeout=1,
+            sleep=clock,
+            monotonic=clock.monotonic,
         )
     assert "do not match" in str(excinfo.value)
 
@@ -177,10 +187,14 @@ def test_gives_up_with_an_actionable_message():
         raise _ServiceError(404, "NotAuthorizedOrNotFound")
 
     clock = _Clock()
-    with pytest.raises(vps.SecretNotReadable) as excinfo:
+    with pytest.raises(vps.SecretNotReadableError) as excinfo:
         vps.wait_until_readable(
-            lambda: read_bundle(), "OCIR_AUTH_TOKEN", _digest(b"x"),
-            timeout=1, sleep=clock, monotonic=clock.monotonic,
+            lambda: read_bundle(),
+            "OCIR_AUTH_TOKEN",
+            _digest(b"x"),
+            timeout=1,
+            sleep=clock,
+            monotonic=clock.monotonic,
         )
     message = str(excinfo.value)
     assert "OCIR_AUTH_TOKEN" in message
@@ -193,13 +207,17 @@ def test_gives_up_with_an_actionable_message():
 def test_bounded_so_a_stuck_control_plane_cannot_hang_the_rotation():
     # A stuck control plane answers, but never with our value. The gate must
     # give up on its own deadline; _Clock turns a missing deadline into a
-    # Runaway rather than a hung suite.
+    # RunawayError rather than a hung suite.
     started = time.monotonic()
     clock = _Clock()
-    with pytest.raises(vps.SecretNotReadable):
+    with pytest.raises(vps.SecretNotReadableError):
         vps.wait_until_readable(
-            lambda: b"never-matches", "S", _digest(b"target"),
-            timeout=30, sleep=clock, monotonic=clock.monotonic,
+            lambda: b"never-matches",
+            "S",
+            _digest(b"target"),
+            timeout=30,
+            sleep=clock,
+            monotonic=clock.monotonic,
         )
     assert time.monotonic() - started < 5
 
@@ -207,10 +225,14 @@ def test_bounded_so_a_stuck_control_plane_cannot_hang_the_rotation():
 def test_secret_value_never_appears_in_the_failure_message():
     secret = b"super-secret-token-value"
     clock = _Clock()
-    with pytest.raises(vps.SecretNotReadable) as excinfo:
+    with pytest.raises(vps.SecretNotReadableError) as excinfo:
         vps.wait_until_readable(
-            lambda: secret, "OCIR_AUTH_TOKEN", _digest(b"different"),
-            timeout=1, sleep=clock, monotonic=clock.monotonic,
+            lambda: secret,
+            "OCIR_AUTH_TOKEN",
+            _digest(b"different"),
+            timeout=1,
+            sleep=clock,
+            monotonic=clock.monotonic,
         )
     message = str(excinfo.value)
     assert secret.decode() not in message
@@ -226,9 +248,7 @@ def test_zero_timeout_skips_readback_entirely():
         calls["n"] += 1
         raise AssertionError("timeout zero must not perform a read")
 
-    assert vps.wait_until_readable(
-        failing_read, "S", _digest(b"target"), timeout=0
-    )
+    assert vps.wait_until_readable(failing_read, "S", _digest(b"target"), timeout=0)
     assert calls["n"] == 0
 
 
@@ -281,7 +301,7 @@ def test_blocking_read_cannot_overrun_the_outer_deadline():
         time.sleep(1)
         return b"too late"
 
-    with pytest.raises(vps.SecretNotReadable, match="deadline"):
+    with pytest.raises(vps.SecretNotReadableError, match="deadline"):
         vps.wait_until_readable(slow_read, "S", _digest(b"target"), timeout=0.05)
     assert time.monotonic() - started < 0.25
 
@@ -373,12 +393,8 @@ class _FakeSecretsClient:
         self.read_kwargs.append(kwargs)
         self.request_timeouts.append(self.base_client.timeout)
         value = self._store.read()
-        content = types.SimpleNamespace(
-            content=base64.b64encode(value).decode("ascii")
-        )
-        return types.SimpleNamespace(
-            data=types.SimpleNamespace(secret_bundle_content=content)
-        )
+        content = types.SimpleNamespace(content=base64.b64encode(value).decode("ascii"))
+        return types.SimpleNamespace(data=types.SimpleNamespace(secret_bundle_content=content))
 
 
 def _install_fake_clock(monkeypatch):
@@ -459,9 +475,7 @@ def _install_fake_oci(
             pass
 
         def get_vault(self, vault_id):
-            return types.SimpleNamespace(
-                data=types.SimpleNamespace(compartment_id="ocid1.compartment.oc1..c")
-            )
+            return types.SimpleNamespace(data=types.SimpleNamespace(compartment_id="ocid1.compartment.oc1..c"))
 
     models = types.SimpleNamespace(
         Base64SecretContentDetails=lambda content_type, content: types.SimpleNamespace(
@@ -498,18 +512,14 @@ def _run_main(
     extra_args=(),
     sibling_secrets=_DEFAULT_SIBLINGS,
 ):
-    store, secrets_clients, no_retry = _install_fake_oci(
-        monkeypatch, not_ready_reads, existing_value, sibling_secrets
-    )
+    store, secrets_clients, no_retry = _install_fake_oci(monkeypatch, not_ready_reads, existing_value, sibling_secrets)
     clock = _install_fake_clock(monkeypatch)
     monkeypatch.setattr(
         sys,
         "argv",
         ["_vault_put_secret.py", "--secret-name", "OCIR_AUTH_TOKEN", *extra_args],
     )
-    stdin = types.SimpleNamespace(
-        isatty=lambda: False, buffer=io.BytesIO(token + b"\n")
-    )
+    stdin = types.SimpleNamespace(isatty=lambda: False, buffer=io.BytesIO(token + b"\n"))
     monkeypatch.setattr(sys, "stdin", stdin)
     rc = vps.main()
     secrets_client = secrets_clients[0] if secrets_clients else None
@@ -520,9 +530,7 @@ def test_main_does_not_return_until_the_secret_reads_back(monkeypatch, capsys):
     # Two 404s then success: the shape of the live failure. main() must absorb
     # them. If the gate is ever unwired from main(), reads stays at 0 and this
     # goes red -- the unit tests above cannot see that.
-    rc, _, secrets_client, _, _ = _run_main(
-        monkeypatch, b"20-byte-token-xxxxxx", 2
-    )
+    rc, _, secrets_client, _, _ = _run_main(monkeypatch, b"20-byte-token-xxxxxx", 2)
     assert rc == 0
     assert secrets_client.reads == 3
     assert "readable" in capsys.readouterr().out
@@ -534,10 +542,7 @@ def test_main_disables_sdk_retries_and_bounds_each_request(monkeypatch):
     assert rc == 0
     assert secrets_client.init_kwargs["retry_strategy"] is no_retry
     assert secrets_client.init_kwargs["timeout"] == (5.0, 120.0)
-    assert all(
-        kwargs["retry_strategy"] is no_retry
-        for kwargs in secrets_client.read_kwargs
-    )
+    assert all(kwargs["retry_strategy"] is no_retry for kwargs in secrets_client.read_kwargs)
     assert all(connect <= read <= 120 for connect, read in secrets_client.request_timeouts)
 
 
@@ -569,9 +574,7 @@ def test_main_rotation_waits_for_the_new_submitted_version(monkeypatch, capsys):
     new = b"new-token-value-11111"
     assert len(old) == len(new)
 
-    rc, store, secrets_client, clock, _ = _run_main(
-        monkeypatch, new, not_ready_reads=3, existing_value=old
-    )
+    rc, store, secrets_client, clock, _ = _run_main(monkeypatch, new, not_ready_reads=3, existing_value=old)
 
     assert rc == 0
     assert store.create_calls == []
@@ -597,12 +600,8 @@ def test_main_refuses_to_store_an_empty_value(monkeypatch, piped, label):
     # have. Refuse at the boundary instead.
     _, secrets_clients, _ = _install_fake_oci(monkeypatch, 0)
     _install_fake_clock(monkeypatch)
-    monkeypatch.setattr(
-        sys, "argv", ["_vault_put_secret.py", "--secret-name", "OCIR_AUTH_TOKEN"]
-    )
-    monkeypatch.setattr(
-        sys, "stdin", types.SimpleNamespace(isatty=lambda: False, buffer=io.BytesIO(piped))
-    )
+    monkeypatch.setattr(sys, "argv", ["_vault_put_secret.py", "--secret-name", "OCIR_AUTH_TOKEN"])
+    monkeypatch.setattr(sys, "stdin", types.SimpleNamespace(isatty=lambda: False, buffer=io.BytesIO(piped)))
     with pytest.raises(SystemExit) as excinfo:
         vps.main()
     assert "empty" in str(excinfo.value), label
@@ -615,12 +614,8 @@ def test_main_refuses_to_prompt_when_stdin_is_a_terminal(monkeypatch):
     # which reads as a hang.
     _, secrets_clients, _ = _install_fake_oci(monkeypatch, 0)
     _install_fake_clock(monkeypatch)
-    monkeypatch.setattr(
-        sys, "argv", ["_vault_put_secret.py", "--secret-name", "OCIR_AUTH_TOKEN"]
-    )
-    monkeypatch.setattr(
-        sys, "stdin", types.SimpleNamespace(isatty=lambda: True, buffer=io.BytesIO(b"x"))
-    )
+    monkeypatch.setattr(sys, "argv", ["_vault_put_secret.py", "--secret-name", "OCIR_AUTH_TOKEN"])
+    monkeypatch.setattr(sys, "stdin", types.SimpleNamespace(isatty=lambda: True, buffer=io.BytesIO(b"x")))
     with pytest.raises(SystemExit) as excinfo:
         vps.main()
     assert "stdin" in str(excinfo.value)
@@ -640,9 +635,7 @@ def _secret(name, key_id, lifecycle_state="ACTIVE"):
 
 class _FakeKms:
     def get_vault(self, vault_id):
-        return types.SimpleNamespace(
-            data=types.SimpleNamespace(compartment_id="ocid1.compartment.oc1..c")
-        )
+        return types.SimpleNamespace(data=types.SimpleNamespace(compartment_id="ocid1.compartment.oc1..c"))
 
 
 def test_explicit_key_bootstraps_an_empty_vault(monkeypatch, capsys):
@@ -677,14 +670,10 @@ def test_divergent_sibling_keys_are_rejected_explicitly():
 
     class DivergentVaults:
         def list_secrets(self, **kwargs):
-            return types.SimpleNamespace(
-                data=[_secret("A", key) for key in keys], headers={}
-            )
+            return types.SimpleNamespace(data=[_secret("A", key) for key in keys], headers={})
 
     with pytest.raises(RuntimeError, match="divergent") as excinfo:
-        vps.resolve_vault_context(
-            _FakeKms(), DivergentVaults(), "ocid1.vault.oc1..v"
-        )
+        vps.resolve_vault_context(_FakeKms(), DivergentVaults(), "ocid1.vault.oc1..v")
     assert all(key in str(excinfo.value) for key in keys)
 
 
@@ -700,13 +689,12 @@ def test_sibling_lookup_follows_every_page():
                     data=[_secret("A", key_id)],
                     headers={"opc-next-page": "page-2"},
                 )
-            return types.SimpleNamespace(
-                data=[_secret("B", key_id)], headers={}
-            )
+            return types.SimpleNamespace(data=[_secret("B", key_id)], headers={})
 
-    assert vps.resolve_vault_context(
-        _FakeKms(), PaginatedVaults(), "ocid1.vault.oc1..v"
-    ) == ("ocid1.compartment.oc1..c", key_id)
+    assert vps.resolve_vault_context(_FakeKms(), PaginatedVaults(), "ocid1.vault.oc1..v") == (
+        "ocid1.compartment.oc1..c",
+        key_id,
+    )
     assert [call.get("page") for call in calls] == [None, "page-2"]
     assert all(call["lifecycle_state"] == "ACTIVE" for call in calls)
 
@@ -722,8 +710,6 @@ def test_find_secret_rejects_non_active_name_match():
                 headers={},
             )
 
-    assert vps.find_secret(
-        DeletedVaults(), "ocid1.compartment.oc1..c", "ocid1.vault.oc1..v", "TARGET"
-    ) is None
+    assert vps.find_secret(DeletedVaults(), "ocid1.compartment.oc1..c", "ocid1.vault.oc1..v", "TARGET") is None
     assert calls[0]["name"] == "TARGET"
     assert calls[0]["lifecycle_state"] == "ACTIVE"

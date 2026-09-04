@@ -11,7 +11,7 @@
  * unlisted file — the permanent discrimination guard TEST-15 asks for.
  */
 import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 
 import { beforeAll, describe, expect, it } from 'vitest';
 
@@ -130,6 +130,11 @@ describe('artifact retention policy [FEBT2-W2-U-03]', () => {
   it('gives concurrent lanes independent eviction scopes', () => {
     const laneA = artifactFixtureRootForAppRoot('/worktrees/feature-a/apps/prototype-wp-alt-context');
     const laneB = artifactFixtureRootForAppRoot('/worktrees/feature-b/apps/prototype-wp-alt-context');
+
+    const laneAKey = basename(laneA);
+    const laneBKey = basename(laneB);
+    expect(laneAKey).toMatch(/^[0-9a-f]{16}$/);
+    expect(laneBKey).toMatch(/^[0-9a-f]{16}$/);
 
     expect(
       laneA,

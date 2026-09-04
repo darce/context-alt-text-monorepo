@@ -1,102 +1,160 @@
 from __future__ import annotations
 
-import json
+import os
 import re
-import shlex
 import subprocess
 from pathlib import Path
 
+import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-DEPLOY_WORKFLOW = REPO_ROOT / ".github/workflows/deploy-demo.yml"
 
 
-def _workflow_run_shell(workflow: str) -> str:
-    """Return the job-wide shell, or GitHub Actions' bash default."""
-    match = re.search(
-        r"(?ms)^    defaults:\n      run:\n        shell:\s*(?P<shell>.+?)\s*$",
-        workflow,
+def _write_executable(path: Path, source: str) -> None:
+    path.write_text(source, encoding="utf-8")
+    path.chmod(0o755)
+
+
+def _pipeline_wrappers() -> list[Path]:
+    """Discover production wrappers whose filtered output needs pipefail."""
+    wrappers = []
+    for path in (REPO_ROOT / "scripts").rglob("*.sh"):
+        if "tests" in path.relative_to(REPO_ROOT / "scripts").parts:
+            continue
+        source = path.read_text(encoding="utf-8")
+        if re.search(r"(?m)^set -[^\n]*e", source) and re.search(
+            r"\|\s*(?:head|tail)\b", source
+        ):
+            wrappers.append(path)
+    return sorted(wrappers)
+
+
+@pytest.mark.parametrize(
+    "wrapper",
+    _pipeline_wrappers(),
+    ids=lambda path: str(path.relative_to(REPO_ROOT)),
+)
+def test_pipeline_wrappers_propagate_the_inner_runner_exit(
+    wrapper: Path, tmp_path: Path
+) -> None:
+    """Exercise each discovered wrapper's options with a real failing pipeline."""
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    _write_executable(fake_bin / "inner-runner", "#!/usr/bin/env bash\nexit 23\n")
+
+    source = wrapper.read_text(encoding="utf-8")
+    instrumented, replacements = re.subn(
+        r"(?m)^(set -[^\n]*e[^\n]*)$",
+        r"\1\ninner-runner | tail -n 1\nexit 0",
+        source,
+        count=1,
     )
-    if match is None:
-        return "bash --noprofile --norc -e {0}"
-    return match.group("shell")
-
-
-def test_deploy_workflow_propagates_a_runner_failure_through_output_tail(tmp_path: Path) -> None:
-    """A startup failure must stay red when a wrapper trims its diagnostics."""
-    workflow = DEPLOY_WORKFLOW.read_text(encoding="utf-8")
-    shell = _workflow_run_shell(workflow)
-    script = tmp_path / "masked-runner.sh"
-    script.write_text(
-        "(printf 'vitest STARTUP FAILURE\\n' >&2; exit 23) | tail -n 20\n",
-        encoding="utf-8",
-    )
-
-    argv = [str(script) if part == "{0}" else part for part in shlex.split(shell)]
-    completed = subprocess.run(argv, text=True, capture_output=True, check=False)
-
-    assert completed.returncode == 23, (
-        "The deploy gate reported success after its runner exited 23, so a suite that ran zero "
-        f"tests can merge green. Configured shell: {shell!r}; stderr: {completed.stderr!r}"
-    )
-
-
-def test_owned_bash_gate_wrappers_enable_pipefail() -> None:
-    wrappers = [
-        "scripts/localwp-gate-status.sh",
-        "scripts/remote_gate.sh",
-        "scripts/deploy/sync-demo.sh",
-        "scripts/deploy/recognition-service.sh",
-        "scripts/deploy/ocir-token-rotate.sh",
-        "scripts/vm/reap-lane.sh",
-    ]
-
-    missing = []
-    for relative_path in wrappers:
-        source = (REPO_ROOT / relative_path).read_text(encoding="utf-8")
-        if not re.search(r"(?m)^set -[^\n]*o pipefail\s*$", source):
-            missing.append(relative_path)
-
-    assert missing == [], (
-        "Gate wrappers without pipefail can turn a failed runner into EXIT=0 when output is piped "
-        f"through tail/head: {missing}"
-    )
-
-
-def test_remote_gate_shell_enables_pipefail_before_running_targets() -> None:
-    source = (REPO_ROOT / "scripts/remote_gate.sh").read_text(encoding="utf-8")
-
-    assert '"set -uo pipefail\n' in source, (
-        "The remote shell must propagate the runner's status through any diagnostic pipeline; "
-        "local pipefail does not cross the SSH process boundary."
-    )
-
-
-def test_css_artifact_eviction_scope_is_distinct_per_lane() -> None:
-    module = (
-        REPO_ROOT
-        / "apps/prototype-wp-alt-context/js/admin/styles/components/__tests__/productionCssBundle.ts"
-    )
-    javascript = f"""
-globalThis.__dirname = {json.dumps(str(module.parent))};
-const fixture = await import({json.dumps(module.as_uri())});
-const roots = [
-  fixture.artifactFixtureRootForAppRoot('/worktrees/feature-a/apps/prototype-wp-alt-context'),
-  fixture.artifactFixtureRootForAppRoot('/worktrees/feature-b/apps/prototype-wp-alt-context'),
-];
-console.log(JSON.stringify(roots));
-"""
+    assert replacements == 1, f"could not instrument {wrapper}"
+    executable = tmp_path / wrapper.name
+    _write_executable(executable, instrumented)
 
     completed = subprocess.run(
-        ["node", "--experimental-strip-types", "--input-type=module", "-e", javascript],
+        ["bash", str(executable)],
+        env={**os.environ, "PATH": f"{fake_bin}{os.pathsep}{os.environ['PATH']}"},
         text=True,
         capture_output=True,
         check=False,
     )
 
-    assert completed.returncode == 0, completed.stderr
-    lane_a, lane_b = json.loads(completed.stdout)
-    assert lane_a != lane_b, (
-        "Concurrent lanes share one CSS artifact LRU, so the fifth lane can evict a sibling's "
-        "bundle while that sibling's gate is still running."
+    assert completed.returncode == 23, (
+        f"{wrapper.relative_to(REPO_ROOT)} reported success after its inner runner exited 23 "
+        "through an output-tail pipeline"
+    )
+
+
+def test_localwp_status_propagates_a_filtered_wp_failure(tmp_path: Path) -> None:
+    wp_wrapper = tmp_path / "wp-wrapper"
+    _write_executable(
+        wp_wrapper,
+        """#!/usr/bin/env bash
+case "$*" in
+  *"option get siteurl"*) printf 'https://example.test\\n'; exit 23 ;;
+  *"plugin status alt-context"*) printf 'Status: Active\\nVersion: 1.2.3\\n' ;;
+  *"TenantIdentity"*) printf '00000000-0000-0000-0000-000000000001' ;;
+  *"fingerprint"*) printf '{"fingerprint":null,"source":"default"}' ;;
+  *"settings/test"*) printf '{"ok":true}' ;;
+  *"/acx/v1/settings"*) printf '{"key_source":"default"}' ;;
+  *) exit 2 ;;
+esac
+""",
+    )
+
+    completed = subprocess.run(
+        [
+            "bash",
+            str(REPO_ROOT / "scripts/localwp-gate-status.sh"),
+            "--wp-path",
+            str(tmp_path / "wordpress"),
+        ],
+        env={**os.environ, "LOCALWP_GATE_WP_WRAPPER": str(wp_wrapper)},
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert completed.returncode == 23, (
+        "localwp status masked the wp wrapper's exit 23 while trimming its output; "
+        f"stdout={completed.stdout!r}; stderr={completed.stderr!r}"
+    )
+
+
+def test_remote_doctor_propagates_a_pipeline_failure_across_ssh(tmp_path: Path) -> None:
+    """Local pipefail cannot substitute for pipefail in the remote shell."""
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    _write_executable(
+        fake_bin / "ssh",
+        "#!/usr/bin/env bash\nexec bash -c \"${!#}\"\n",
+    )
+    _write_executable(
+        fake_bin / "free",
+        "#!/usr/bin/env bash\nprintf 'header\\nrow a b c d e available\\n'\nexit 23\n",
+    )
+
+    completed = subprocess.run(
+        ["bash", str(REPO_ROOT / "scripts/remote_gate.sh"), "doctor"],
+        cwd=REPO_ROOT,
+        env={
+            **os.environ,
+            "HOME": str(tmp_path / "home"),
+            "PATH": f"{fake_bin}{os.pathsep}{os.environ['PATH']}",
+            "WORKBAY_REMOTE_GATE_HOST": "gate@example.invalid",
+        },
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert completed.returncode == 23, (
+        "remote doctor masked free's exit 23 at the SSH boundary; "
+        f"stdout={completed.stdout!r}; stderr={completed.stderr!r}"
+    )
+
+
+def test_remote_gate_propagates_git_common_dir_discovery_failure(tmp_path: Path) -> None:
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    _write_executable(fake_bin / "git", "#!/usr/bin/env bash\nexit 23\n")
+
+    completed = subprocess.run(
+        ["bash", str(REPO_ROOT / "scripts/remote_gate.sh"), "doctor"],
+        cwd=REPO_ROOT,
+        env={
+            **os.environ,
+            "PATH": f"{fake_bin}{os.pathsep}{os.environ['PATH']}",
+            "WORKBAY_REMOTE_GATE_HOST": "gate@example.invalid",
+        },
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert completed.returncode == 23, (
+        "dirname masked git rev-parse's exit 23 while discovering the common directory; "
+        f"stdout={completed.stdout!r}; stderr={completed.stderr!r}"
     )

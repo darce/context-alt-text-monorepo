@@ -4,15 +4,70 @@ import os
 import subprocess
 from pathlib import Path
 
+import pytest
 import yaml
 
 REPO_ROOT = Path(os.environ.get("DEPLOY_GATE_REPO_ROOT", Path(__file__).resolve().parents[1]))
+WORKFLOW_DIR = REPO_ROOT / ".github" / "workflows"
 WORKFLOW_PATH = REPO_ROOT / ".github" / "workflows" / "deploy-recognition.yml"
+REQUIRED_RUN_SHELL = "bash --noprofile --norc -eo pipefail {0}"
 
 
 def _workflow() -> dict:
     with WORKFLOW_PATH.open(encoding="utf-8") as workflow_file:
         return yaml.safe_load(workflow_file)
+
+
+def _deploy_workflow_paths() -> list[Path]:
+    """Discover workflows that can reach a deploy job."""
+    paths = []
+    for workflow_path in sorted(WORKFLOW_DIR.glob("*.y*ml")):
+        with workflow_path.open(encoding="utf-8") as workflow_file:
+            workflow = yaml.safe_load(workflow_file)
+        if "deploy" in workflow.get("jobs", {}):
+            paths.append(workflow_path)
+    return paths
+
+
+def _workflow_cases() -> list[object]:
+    cases: list[object] = []
+    for workflow_path in _deploy_workflow_paths():
+        if workflow_path.name == "deploy-recognition.yml":
+            cases.append(
+                pytest.param(
+                    workflow_path,
+                    marks=pytest.mark.xfail(
+                        strict=True,
+                        reason="owned by demoland-1-g3",
+                    ),
+                )
+            )
+        else:
+            cases.append(workflow_path)
+    return cases
+
+
+@pytest.mark.parametrize("workflow_path", _workflow_cases(), ids=lambda path: path.name)
+def test_every_deploy_workflow_run_step_uses_fail_closed_bash(workflow_path: Path) -> None:
+    with workflow_path.open(encoding="utf-8") as workflow_file:
+        workflow = yaml.safe_load(workflow_file)
+
+    unsafe_steps = []
+    for job_name, job in workflow.get("jobs", {}).items():
+        if not isinstance(job, dict):
+            continue
+        job_shell = job.get("defaults", {}).get("run", {}).get("shell")
+        for step in job.get("steps", []):
+            if not isinstance(step, dict) or "run" not in step:
+                continue
+            effective_shell = step.get("shell", job_shell)
+            if effective_shell != REQUIRED_RUN_SHELL:
+                unsafe_steps.append(f"{job_name}: {step.get('name', '<unnamed>')}")
+
+    assert unsafe_steps == [], (
+        f"{workflow_path.relative_to(REPO_ROOT)} has run steps without "
+        f"shell: {REQUIRED_RUN_SHELL!r}: {unsafe_steps}"
+    )
 
 
 def _contract_gate(workflow: dict) -> tuple[str, dict]:

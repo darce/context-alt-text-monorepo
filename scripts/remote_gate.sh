@@ -45,7 +45,8 @@ set -euo pipefail
 # worktree's toplevel — the config file and clone slug must be identical whether
 # invoked from the main checkout or a linked session worktree, and `.workbay/`
 # is gitignored so it only ever exists in the main checkout.
-repo_root="$(dirname "$(git rev-parse --path-format=absolute --git-common-dir)")"
+git_common_dir="$(git rev-parse --path-format=absolute --git-common-dir)"
+repo_root="$(dirname "$git_common_dir")"
 repo_slug="$(basename "$repo_root")"
 
 # Layer 3 capture FIRST: the config file is dot-sourced, so caller env must be
@@ -153,7 +154,7 @@ case "$cmd" in
 bootstrap)
     # uv is provisioned by the runbook's Phase 1 (pinned tarball, no curl|sh);
     # bootstrap only prepares the receive clone.
-    "${SSH[@]}" 'set -e
+    "${SSH[@]}" 'set -euo pipefail
         command -v git >/dev/null || { echo "bootstrap: git missing on host" >&2; exit 1; }
         [ -x "$HOME/.local/bin/uv" ] || { echo "bootstrap: uv missing — run runbook Phase 1 first" >&2; exit 1; }
         mkdir -p "$HOME"/'"$REMOTE_DIR"'
@@ -173,9 +174,13 @@ doctor)
     for kv in ${extra_env[@]+"${extra_env[@]}"}; do
         case "$kv" in *://*) probe_urls+=("${kv#*=}") ;; esac
     done
-    "${SSH[@]}" 'set -e
-        echo "user=$(id -un) groups=$(id -Gn)"
-        echo "arch=$(uname -m) cores=$(nproc)"
+    "${SSH[@]}" 'set -euo pipefail
+        user="$(id -un)"
+        groups="$(id -Gn)"
+        echo "user=${user} groups=${groups}"
+        arch="$(uname -m)"
+        cores="$(nproc)"
+        echo "arch=${arch} cores=${cores}"
         free -h | awk "NR==2{print \"mem_available=\" \$7}"
         df -h "$HOME" | awk "NR==2{print \"disk_free=\" \$4}"
         du -sh "$HOME/.cache/uv" 2>/dev/null || echo "uv_cache=none"
@@ -240,10 +245,10 @@ run)
     # Keeping the guard fully armed for real branch pushes is the point: the fix
     # is to stop pretending the gate publishes a branch, not to override it.
     git push --quiet --force "${REMOTE_HOST}:${REMOTE_DIR}" "HEAD:refs/workbay/gate"
-    # Shell options do not cross the SSH process boundary. Keep `-e` off here
-    # because target failures are captured and summarized below, but make every
-    # present or future output-filtering pipeline report the runner's status.
-    "${SSH[@]}" "set -uo pipefail
+    # Shell options do not cross the SSH process boundary. Target failures are
+    # captured with explicit `|| rc=$?` guards below so errexit can stay enabled
+    # for every other command in this remote body.
+    "${SSH[@]}" "set -euo pipefail
         cd \"\$HOME/${REMOTE_DIR}\" || exit 1
         [ -f \"${CLONE_SENTINEL}\" ] || { echo 'remote-gate: clone sentinel missing; refusing (re-run bootstrap)' >&2; exit 1; }
         exec 9>.gate.lock
@@ -296,13 +301,13 @@ run)
         # logged, never silent.
         if make -n gate-preflight >/dev/null 2>&1; then
             echo \"=== gate-preflight ===\"
+            rc=0
             \$runner env \
                 ${extra_env[*]:-} \
                 TMPDIR=/tmp \
                 WORKBAY_DISABLE_INVOKING_HOOKS=1 \
                 PATH=\"\$PWD/.venv/bin:\$HOME/.local/bin:\$PATH\" \
-                make gate-preflight
-            rc=\$?
+                make gate-preflight || rc=\$?
             echo \"EXIT=\$rc (gate-preflight)\"
             if [ \"\$rc\" -ne 0 ]; then
                 echo 'remote-gate: PREFLIGHT FAILED — refusing to run targets (the suite would skip and report green)' >&2
@@ -315,6 +320,7 @@ run)
         overall=0
         for t in ${targets[*]}; do
             echo \"=== \$t ===\"
+            rc=0
             \$runner env \
                 ${extra_env[*]:-} \
                 TMPDIR=/tmp \
@@ -322,8 +328,7 @@ run)
                 WORKBAY_HANDOFF_DEFAULT_AGENT=\${WORKBAY_HANDOFF_DEFAULT_AGENT:-remote-gate} \
                 PYTEST_WORKERS=${WORKERS} \
                 PATH=\"\$PWD/.venv/bin:\$HOME/.local/bin:\$PATH\" \
-                make \"\$t\"
-            rc=\$?
+                make \"\$t\" || rc=\$?
             echo \"EXIT=\$rc (\$t)\"
             [ \"\$rc\" -eq 0 ] || overall=1
         done

@@ -1047,6 +1047,16 @@ def run_start_cycle(
     return result
 
 
+def _positive_integer(value: str) -> int:
+    try:
+        parsed = int(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("must be a positive integer") from exc
+    if parsed <= 0:
+        raise argparse.ArgumentTypeError("must be a positive integer")
+    return parsed
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="ACX GPU idle reaper (STOP actuator)")
     parser.add_argument(
@@ -1075,7 +1085,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--idle-seconds",
-        type=int,
+        type=_positive_integer,
         default=300,
         help="Idle threshold before STOP is considered (default 300)",
     )

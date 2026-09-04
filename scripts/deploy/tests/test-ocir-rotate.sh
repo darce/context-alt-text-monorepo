@@ -223,6 +223,8 @@ run_rotate() {
 reset_case
 run_rotate "$known_token" --set-username "$known_user" --readable-timeout 1
 assert_eq "complete rotation exits zero" 0 "$rotate_rc"
+assert_contains "startup discloses Docker's temporary credential store" \
+    'Docker writes proof credentials only to an auto-removed temporary config' "$rotate_stdout"
 assert_contains "success sentinel proves wrapper reached its end" \
     'rotation complete: both hosts authenticate from acx-vault' "$rotate_stdout"
 assert_eq "fresh proof plus two Vault-backed login legs ran" 3 "$(cat "$docker_count")"
@@ -572,6 +574,9 @@ bash "$rotate_script" --help >"$rotate_stdout" 2>"$rotate_stderr" || help_rc=$?
 assert_eq "help exits zero" 0 "$help_rc"
 assert_contains "help includes timeout option" '--readable-timeout SECONDS' "$rotate_stdout"
 assert_contains "help explains safe skip scope" 'Skip production-VM SSH verification only' "$rotate_stdout"
+assert_contains "help discloses the temporary Docker config" \
+    'temporary config for the direct authentication proof' "$rotate_stdout"
+assert_absent "help makes no false no-disk promise" 'never on disk' "$rotate_stdout"
 assert_absent "help does not print Bash conditionals" 'if [' "$rotate_stdout"
 assert_absent "help does not print executable exit" 'exit 2' "$rotate_stdout"
 

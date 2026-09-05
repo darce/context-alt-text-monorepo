@@ -36,6 +36,16 @@ import { SCREEN_METADATA_KEYS, parseRenderedUxMap, projectUxMapForRenderParity, 
 import unicodeWidth from './uxmap-render-parity.fixtures/unicode-width.json';
 
 const uxMapsDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../docs/ux-maps');
+
+it.each(readdirSync(uxMapsDir).filter((name) => name.endsWith('.uxmap.json')))(
+  'preserves the complete projection with CRLF Markdown for %s',
+  (filename) => {
+    const markdown = readFileSync(path.join(uxMapsDir, filename.replace('.uxmap.json', '.md')), 'utf8')
+      .replaceAll('\r\n', '\n');
+    expect(parseRenderedUxMap(markdown.replaceAll('\n', '\r\n'))).toEqual(parseRenderedUxMap(markdown));
+  },
+);
+
 const enumSnapshotPath = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   'uxmap-render-parity.fixtures/uxmap-enums.snapshot.json',

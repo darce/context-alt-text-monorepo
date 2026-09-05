@@ -548,6 +548,8 @@ export const projectUxMapForRenderParity = (doc: UxMapRenderSource): RenderedUxM
 };
 
 export const parseRenderedUxMap = (markdown: string): RenderedUxMapProjection => {
+  // Git autocrlf checkouts must have the same projection as LF checkouts.
+  markdown = markdown.replaceAll('\r\n', '\n');
   const mapRef = /^# UX Map — (.+)$/m.exec(markdown)?.[1] ?? '';
   const product = /^\*\*Product:\*\* `([^`]*)`$/m.exec(markdown)?.[1] ?? '';
   const sourceFixture = /^\*\*Source fixture:\*\* `([^`]*)`$/m.exec(markdown)?.[1] ?? null;

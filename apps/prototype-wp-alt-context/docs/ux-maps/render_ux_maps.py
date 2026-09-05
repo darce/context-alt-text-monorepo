@@ -24,6 +24,7 @@ Usage (the canvas package is optional and only required when writing artifacts):
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -38,6 +39,7 @@ REPO_ROOT = Path(__file__).resolve().parents[4]
 MAPS_DIR = Path(os.environ.get("UX_MAPS_DIR", Path(__file__).resolve().parent)).resolve()
 ASCII_FRAME_WIDTH = 62
 ASCII_CONTENT_WIDTH = ASCII_FRAME_WIDTH - 2
+VISIBLE_PROJECTION_PATH = Path(__file__).resolve().with_name("render_ux_maps.visible.json")
 
 # Hand-authored sections preserved across regeneration. Order is significant and stable.
 KEEP_SECTIONS = (
@@ -310,54 +312,69 @@ def render(map_ref: str) -> str:
     return _normalize_ascii_frames(_restore_kept("\n".join(out), kept))
 
 
-def _visible_render_issues(doc: dict, markdown: str) -> list[str]:
-    """Validate visible ASCII/Mermaid rows that the lossless comments cannot cover."""
-    issues: list[str] = []
-    screens_section = markdown.partition("## Screens")[2].partition("\n## Actions")[0]
-    for screen in doc["screens"]:
-        match = re.search(
-            rf"^### .* \(`{re.escape(screen['id'])}`\)\n([\s\S]*?)(?=^### |\Z)",
-            screens_section,
-            re.MULTILINE,
-        )
-        if not match:
-            issues.append(f"screen {screen['id']}: visible block is absent")
+def _visible_projection(markdown: str) -> list[dict[str, object]]:
+    """Project every operator-visible row from plain-text and Mermaid fences.
+
+    Whitespace is retained because padding is part of an ASCII frame's contract. The
+    renderer-backed and fallback checks intentionally share this extractor so neither
+    path can enforce a weaker set of visible rows.
+    """
+    projection: list[dict[str, object]] = []
+    heading = ""
+    fence_heading = ""
+    fence_language: str | None = None
+    rows: list[str] = []
+    for line in markdown.splitlines():
+        if fence_language is None:
+            if line.startswith("#"):
+                heading = line
+            if line.startswith("```"):
+                fence_language = line[3:].strip()
+                fence_heading = heading
+                rows = []
             continue
-        fence = re.search(r"```(?:text)?\n([\s\S]*?)```", match.group(1))
-        visible = fence.group(1) if fence else ""
-        # The canonical renderer truncates long values, so a stable leading fragment
-        # is the discriminating comparison for the operator-visible screen title row.
-        fragment = screen["title"][: min(len(screen["title"]), 24)]
-        kind_marker = f"[{screen['kind']}]"
-        header_row = next((line for line in visible.splitlines() if kind_marker in line), None)
-        if fragment not in (header_row if header_row is not None else visible):
-            issues.append(f"screen {screen['id']}: visible title {fragment!r} is absent")
-
-    flows_section = markdown.partition("## Flows")[2].partition("\n## Open questions")[0]
-    for flow in doc["flows"]:
-        match = re.search(
-            rf"^### .* \(`{re.escape(flow['id'])}`\)\n([\s\S]*?)(?=^### |\Z)",
-            flows_section,
-            re.MULTILINE,
-        )
-        if not match:
-            issues.append(f"flow {flow['id']}: visible Mermaid block is absent")
+        if line.startswith("```"):
+            if fence_language in {"", "text", "mermaid"}:
+                projection.append(
+                    {"heading": fence_heading, "language": fence_language, "rows": rows}
+                )
+            fence_language = None
+            rows = []
             continue
-        mermaid = re.search(r"```mermaid\n([\s\S]*?)```", match.group(1))
-        edge_labels = re.findall(r"-->\|([^|]+)\|", mermaid.group(1) if mermaid else "")
-        expected_labels = [
-            step["branch_label"] for step in flow["steps"] if step.get("branch_label")
-        ]
-        if len(edge_labels) < max(1, len(flow["steps"]) - 1):
-            issues.append(f"flow {flow['id']}: visible Mermaid edge row is absent")
-        for label in edge_labels:
-            if not any(label == expected or label in expected or expected in label for expected in expected_labels):
-                issues.append(f"flow {flow['id']}: visible Mermaid label {label!r} is not sourced by JSON")
-    return issues
+        rows.append(line)
+    if fence_language is not None:
+        raise ValueError(f"unterminated {fence_language or 'plain-text'} fence after {fence_heading!r}")
+    return projection
 
 
-def _check_projection(map_ref: str) -> tuple[str, str]:
-    """Return expected/actual lossless projections without importing the optional renderer."""
+def _source_digest(json_path: Path) -> str:
+    return hashlib.sha256(json_path.read_bytes()).hexdigest()
+
+
+def _projection_digest(projection: list[dict[str, object]]) -> str:
+    encoded = json.dumps(projection, ensure_ascii=False, separators=(",", ":")).encode("utf8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _read_visible_snapshot(map_ref: str, json_path: Path) -> str:
+    try:
+        snapshot = json.loads(VISIBLE_PROJECTION_PATH.read_text(encoding="utf8"))
+        entry = snapshot["maps"][map_ref]
+        recorded_digest = entry["source_sha256"]
+        projection_digest = entry["projection_sha256"]
+    except (OSError, KeyError, TypeError, json.JSONDecodeError) as exc:
+        raise RuntimeError(f"{map_ref}: visible projection snapshot is absent or invalid") from exc
+    if recorded_digest != _source_digest(json_path):
+        raise RuntimeError(
+            f"{map_ref}: UX-map JSON changed without regenerating its visible projection snapshot"
+        )
+    if not isinstance(projection_digest, str) or not re.fullmatch(r"[0-9a-f]{64}", projection_digest):
+        raise RuntimeError(f"{map_ref}: visible projection snapshot digest is invalid")
+    return projection_digest
+
+
+def _check_projection(map_ref: str, rendered: str | None = None) -> tuple[str, str]:
+    """Return complete expected/actual projections with or without the optional renderer."""
     parity_module = REPO_ROOT / "apps/prototype-wp-alt-context/js/admin/uxmap/renderParity.ts"
     json_path = MAPS_DIR / f"{map_ref}.uxmap.json"
     markdown_path = MAPS_DIR / f"{map_ref}.md"
@@ -379,10 +396,15 @@ def _check_projection(map_ref: str) -> tuple[str, str]:
     if completed.returncode != 0:
         raise RuntimeError(completed.stderr.strip() or completed.stdout.strip())
     projections = json.loads(completed.stdout)
-    doc = json.loads(json_path.read_text(encoding="utf8"))
     markdown = markdown_path.read_text(encoding="utf8")
-    projections["expected"]["visibleRenderIssues"] = []
-    projections["actual"]["visibleRenderIssues"] = _visible_render_issues(doc, markdown)
+    projections["expected"]["visibleProjectionSha256"] = (
+        _projection_digest(_visible_projection(rendered))
+        if rendered is not None
+        else _read_visible_snapshot(map_ref, json_path)
+    )
+    projections["actual"]["visibleProjectionSha256"] = _projection_digest(
+        _visible_projection(markdown)
+    )
     expected = json.dumps(projections["expected"], ensure_ascii=False, indent=2, sort_keys=True) + "\n"
     actual = json.dumps(projections["actual"], ensure_ascii=False, indent=2, sort_keys=True) + "\n"
     return expected, actual
@@ -393,14 +415,14 @@ def check(refs: list[str]) -> int:
     for ref in refs:
         try:
             try:
-                expected = render(ref)
-                actual = (MAPS_DIR / f"{ref}.md").read_text(encoding="utf8")
+                rendered = render(ref)
+                expected, actual = _check_projection(ref, rendered)
             except ImportError:
                 # The optional canvas package is deliberately not an app dependency.
-                # The lossless projection exercises the same source/renderer boundary
-                # and still rejects every machine-owned semantic drift in --check mode.
+                # A source-pinned snapshot supplies the renderer-side visible rows;
+                # both branches use the same complete projection and comparison.
                 expected, actual = _check_projection(ref)
-        except (OSError, RuntimeError, json.JSONDecodeError) as exc:
+        except (OSError, RuntimeError, ValueError) as exc:
             print(f"{ref}: parity check failed: {exc}", file=sys.stderr)
             drifted = True
             continue
@@ -444,14 +466,34 @@ def _atomic_write(target: Path, rendered: str) -> None:
             temporary.unlink(missing_ok=True)
 
 
+def _updated_visible_snapshot(rendered_by_ref: dict[str, str]) -> str:
+    """Record renderer output for dependency-free checks, pinned to exact JSON bytes."""
+    try:
+        snapshot = json.loads(VISIBLE_PROJECTION_PATH.read_text(encoding="utf8"))
+    except FileNotFoundError:
+        snapshot = {"version": 1, "maps": {}}
+    if snapshot.get("version") != 1 or not isinstance(snapshot.get("maps"), dict):
+        raise ValueError(f"invalid visible projection snapshot: {VISIBLE_PROJECTION_PATH}")
+    for ref, markdown in rendered_by_ref.items():
+        json_path = MAPS_DIR / f"{ref}.uxmap.json"
+        snapshot["maps"][ref] = {
+            "source_sha256": _source_digest(json_path),
+            "projection_sha256": _projection_digest(_visible_projection(markdown)),
+        }
+    return json.dumps(snapshot, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+
+
 def _render_and_write(refs: list[str]) -> None:
     """Render and validate the complete batch before replacing any target."""
     batch: list[tuple[Path, str]] = []
+    rendered_by_ref: dict[str, str] = {}
     for ref in refs:
         rendered = render(ref)
         if not rendered.strip():
             raise ValueError(f"{ref}: renderer produced an empty artifact")
         batch.append((MAPS_DIR / f"{ref}.md", rendered))
+        rendered_by_ref[ref] = rendered
+    batch.append((VISIBLE_PROJECTION_PATH, _updated_visible_snapshot(rendered_by_ref)))
     for target, rendered in batch:
         _atomic_write(target, rendered)
         print(f"rendered {target.name}")

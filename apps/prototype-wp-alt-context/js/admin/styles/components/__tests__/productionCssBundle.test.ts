@@ -89,7 +89,7 @@ const runFixtureProbe = (root: string, scenario: string, body: string): void => 
 };
 
 describe('production build status cleanup', () => {
-  it.each(['live', 'empty', 'malformed', 'failed'])('retains the lock on EPERM with a %s listing', (listing) => {
+  it.each(['live', 'empty', 'malformed', 'failed', 'missing-state', 'garbage-state', 'garbage-pid'])('retains the lock on EPERM with a %s listing', (listing) => {
     const root = mkdtempSync(join(tmpdir(), 'acx-eperm-probe-'));
     const lockDir = join(root, '.lock');
     const ownership = acquireDirectoryLock(lockDir);
@@ -108,6 +108,9 @@ describe('production build status cleanup', () => {
             if (listing === 'failed') throw new Error('ps failed');
             if (listing === 'empty') return '';
             if (listing === 'malformed') return 'unreadable';
+            if (listing === 'missing-state') return '1 1 S\n123 2147483647\n';
+            if (listing === 'garbage-state') return '1 1 S\n123 2147483647 Zgarbage\n';
+            if (listing === 'garbage-pid') return '1 1 S\nunreadable 2147483647 Z\n';
             return '123 2147483647 S\n';
           },
         }));
@@ -116,7 +119,10 @@ describe('production build status cleanup', () => {
       expect((caught as Error).cause).toBe(denied);
       expect((caught as Error).message).toContain('signal probe: EPERM');
       expect((caught as Error).message).toContain(listing === 'failed' ? 'ps listing failed'
-        : listing === 'live' ? '123 2147483647 S' : 'ps parsed zero lines');
+        : listing === 'live' ? '123 2147483647 S'
+        : listing === 'missing-state' ? '123 2147483647'
+        : listing === 'garbage-state' ? '123 2147483647 Zgarbage'
+        : listing === 'garbage-pid' ? 'unreadable 2147483647 Z' : 'ps parsed zero lines');
       expect(existsSync(join(lockDir, '.build-in-progress'))).toBe(true);
       expect(tryAcquireDirectoryLock(lockDir)).toBeNull();
     } finally {

@@ -863,12 +863,17 @@ const listedGroupIsAlive = (
     const matches: string[] = [];
     for (const line of output.split('\n')) {
       const [pid, pgid, stat] = line.trim().split(/\s+/);
-      if (!/^\d+$/.test(pid ?? '') || !/^\d+$/.test(pgid ?? '') || !stat) continue;
-      parsed++;
-      if (Number(pgid) === processGroupId) {
+      const matchingGroup = /^\d+$/.test(pgid ?? '') && Number(pgid) === processGroupId;
+      // Check membership before dropping malformed rows: an unreadable member cannot
+      // establish teardown, even when other rows in the listing are parsable.
+      const valid = /^\d+$/.test(pid ?? '') && /^\d+$/.test(pgid ?? '') &&
+        /^[RSDTtZXxKWPIU][<NLsl+>EXVW-]*$/.test(stat ?? '');
+      if (matchingGroup) {
         matches.push(line);
-        if (!stat.startsWith('Z')) alive = true;
+        if (!valid || !stat.startsWith('Z')) alive = true;
       }
+      if (!valid) continue;
+      parsed++;
     }
     report(parsed === 0
       ? `ps parsed zero lines; output=${JSON.stringify(output)}`

@@ -220,9 +220,12 @@ possible moment. `scripts/test_deploy_workflow_gate.py` asserts this.
 
 ### Roll back the GPU lifecycle release
 
-The installer stages rollback snapshots in a temporary directory and publishes
-them with an atomic rename. Before updating `previous`, it requires the saved
-environment, tmpfiles configuration, and all four unit files. An incomplete
+The installer renders units into a fresh directory on every run, including
+idempotent reruns, and atomically replaces the release's `systemd` symlink only
+after validation. Published directories remain intact, so a partial write cannot
+damage an existing rollback snapshot. Before publishing or updating `previous`,
+it requires a non-empty saved environment, tmpfiles configuration, and all four
+unit files, plus `Service.ExecStart` and `Timer.OnUnitActiveSec`. An incomplete
 snapshot from an older installer aborts deployment and leaves both release
 links unchanged; restore its missing artifacts from that generation before
 retrying.

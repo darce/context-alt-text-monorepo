@@ -1,0 +1,32 @@
+{
+  "keys": [
+    "Purpose",
+    "url_params",
+    "Action states",
+    "Screen states"
+  ],
+  "variants": [
+    "{key}: {value}",
+    " {key}: {value}",
+    "  {key}: {value}",
+    "   {key}: {value}",
+    "    {key}: {value}",
+    "\t{key}: {value}",
+    "> {key}: {value}",
+    "- {key}: {value}",
+    "* {key}: {value}",
+    "+ {key}: {value}",
+    "1. {key}: {value}",
+    "1) {key}: {value}",
+    "  > - **{key}**: {value}  ",
+    "**{key}**: {value}",
+    "**{key}:** {value}",
+    "`{key}`: {value}",
+    "`{key}:` {value}",
+    "{key}: {value}\t  ",
+    "__{key}__: {value}",
+    "__{key}:__ {value}",
+    "**`{key}`**: {value}",
+    ">\t1. __{key}__ : {value}\t"
+  ]
+}

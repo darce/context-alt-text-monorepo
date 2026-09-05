@@ -19,6 +19,41 @@ spec.loader.exec_module(renderer)
 
 
 class RendererBoundaryTests(unittest.TestCase):
+    def test_declaration_variants_fail_both_check_paths(self):
+        ref = "febt-1-job-error-states"
+        original = SOURCE.with_name(f"{ref}.md").read_text()
+        fixtures = renderer.REPO_ROOT / "apps/prototype-wp-alt-context/js/admin/__tests__/uxmap-render-parity.fixtures"
+        fixture = json.loads((fixtures / "declaration-mutations.json").read_text())
+        # Supply optional declarations so every consumed key participates.
+        states = ", ".join(json.loads(SOURCE.with_name(f"{ref}.uxmap.json").read_text())["screens"][0]["states"])
+        original = original.replace("Purpose:", f"url_params: `probe`\n\nScreen states: {states}\n\nPurpose:", 1)
+        with tempfile.TemporaryDirectory() as directory:
+            maps = Path(directory)
+            shutil.copyfile(SOURCE.with_name(f"{ref}.uxmap.json"), maps / f"{ref}.uxmap.json")
+            target = maps / f"{ref}.md"
+            with patch.object(renderer, "MAPS_DIR", maps):
+                for available in [False, True]:
+                    with patch.object(renderer, "render", return_value=original,
+                                      side_effect=None if available else renderer.OptionalRendererUnavailable()):
+                        for field in fixture["keys"]:
+                            row = re.search(rf"^{field}: .*$", original, re.MULTILINE)[0]
+                            # TypeScript covers the full Cartesian product in-process.
+                            # Exercise every format/key through both process boundaries,
+                            # distributing case, value and order across these probes.
+                            for index, template in enumerate(fixture["variants"]):
+                                key = [field, field.upper(), field.lower()][index % 3]
+                                value = row.split(": ", 1)[1] if index % 2 else "retired_state"
+                                duplicate = template.format(key=key, value=value)
+                                rows = [duplicate, row] if index % 2 else [row, duplicate]
+                                with self.subTest(available=available, field=field, duplicate=duplicate):
+                                    mutant = original.replace(row, "\n\n".join(rows), 1)
+                                    target.write_text(mutant)
+                                    output = io.StringIO()
+                                    with contextlib.redirect_stderr(output), contextlib.redirect_stdout(io.StringIO()):
+                                        self.assertEqual(renderer.check([ref]), 1)
+                                    first = mutant[:mutant.index("\n\n".join(rows))].count("\n") + 1
+                                    self.assertIn(f"duplicate {field} declarations at lines {first} and {first + 2}", output.getvalue())
+
     def test_duplicate_screen_metadata_fails_both_check_paths(self):
         ref = "workbench-operator-loop"
         original = SOURCE.with_name(f"{ref}.md").read_text()

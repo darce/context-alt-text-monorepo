@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-import json
 import hashlib
+import json
 import os
 import pwd
 import re
-import shutil
 import shlex
+import shutil
 import signal
 import subprocess
 import sys
@@ -63,7 +63,7 @@ def install_probe_python(fake_bin: Path) -> None:
     with pytest's interpreter and a synthetic boot identity on non-Linux hosts.
     """
     bootstrap = fake_bin / "probe-python.py"
-    bootstrap.write_text('''import subprocess
+    bootstrap.write_text("""import subprocess
 import sys
 original_run = subprocess.run
 def run(command, **kwargs):
@@ -83,40 +83,47 @@ elif args[0] == "-":
 else:
     raise RuntimeError("unexpected preflight Python invocation")
 exec(compile(code, "<preflight-test>", "exec"), {"__name__": "__main__"})
-''')
+""")
     wrapper = fake_bin / "python3"
-    wrapper.write_text(
-        f'#!/bin/sh\nexec {shlex.quote(sys.executable)} {shlex.quote(str(bootstrap))} "$@"\n'
-    )
+    wrapper.write_text(f'#!/bin/sh\nexec {shlex.quote(sys.executable)} {shlex.quote(str(bootstrap))} "$@"\n')
     wrapper.chmod(0o755)
 
 
 def test_probe_harness_handles_old_system_python_and_missing_proc(tmp_path: Path) -> None:
     install_probe_python(tmp_path)
     bootstrap = tmp_path / "probe-python.py"
-    bootstrap.write_text(bootstrap.read_text().replace(
-        "original_run = subprocess.run",
-        '''host_run = subprocess.run
+    bootstrap.write_text(
+        bootstrap.read_text().replace(
+            "original_run = subprocess.run",
+            """host_run = subprocess.run
 def original_run(command, **kwargs):
     if command[0] == "/usr/bin/python3":
         return subprocess.CompletedProcess(command, 1, "3.9.6", "ImportError: datetime.UTC")
-    return host_run(command, **kwargs)''',
-    ))
+    return host_run(command, **kwargs)""",
+        )
+    )
     lease_probe = SCRIPT.read_text().split('lease_probe = """', 1)[1].split('"""', 1)[0]
     # Simulate macOS/masked procfs even when verification runs on Linux.
-    lease_probe = '''from pathlib import Path
+    lease_probe = (
+        """from pathlib import Path
 original_read_text = Path.read_text
 def read_text(path, *args, **kwargs):
     if str(path) == "/proc/sys/kernel/random/boot_id":
         raise FileNotFoundError("simulated missing procfs")
     return original_read_text(path, *args, **kwargs)
 Path.read_text = read_text
-''' + lease_probe
+"""
+        + lease_probe
+    )
     command = ["/usr/bin/python3", "-c", lease_probe, str(ROOT), str(tmp_path / "lease.json")]
     result = subprocess.run(
-        [str(tmp_path / "python3"), "-c",
-         f"import subprocess; result = subprocess.run({command!r}); raise SystemExit(result.returncode)"],
-        capture_output=True, text=True,
+        [
+            str(tmp_path / "python3"),
+            "-c",
+            f"import subprocess; result = subprocess.run({command!r}); raise SystemExit(result.returncode)",
+        ],
+        capture_output=True,
+        text=True,
     )
     assert result.returncode == 0, result.stderr
     assert not list(tmp_path.glob(".acx-lease-preflight-*"))
@@ -1093,10 +1100,17 @@ def test_11_reaper_preflight_rejects_executable_argv_mismatch(tmp_path: Path, ex
     assert "MANUAL STOP" not in result.stdout
 
 
-@pytest.mark.parametrize("assignment", [
-    " MAX_LEASE_SECONDS=0", "\tMAX_LEASE_SECONDS=0", "\rMAX_LEASE_SECONDS=0", ' MAX_LEASE_SECONDS="0"',
-    "MAX_LEASE_SECONDS =0", "MAX_LEASE_SECONDS=3600\\\nMAX_LEASE_SECONDS=0",
-])
+@pytest.mark.parametrize(
+    "assignment",
+    [
+        " MAX_LEASE_SECONDS=0",
+        "\tMAX_LEASE_SECONDS=0",
+        "\rMAX_LEASE_SECONDS=0",
+        ' MAX_LEASE_SECONDS="0"',
+        "MAX_LEASE_SECONDS =0",
+        "MAX_LEASE_SECONDS=3600\\\nMAX_LEASE_SECONDS=0",
+    ],
+)
 def test_11_reaper_preflight_rejects_ambiguous_systemd_assignment(tmp_path: Path, assignment: str) -> None:
     reaper_env = tmp_path / "gpu-lifecycle.env"
     reaper_env.write_text(
@@ -1122,9 +1136,10 @@ def test_11_reaper_preflight_accepts_quoted_last_wins_systemd_assignment(tmp_pat
 def test_11_installer_payload_passes_reaper_preflight(tmp_path: Path, custom_registry: bool) -> None:
     installer = (ROOT / "scripts/deploy/gpu-lifecycle-install.sh").read_text()
     staging = installer.split('run_with_deadline "remote release staging"', 1)[1]
-    staging = 'run_with_deadline "remote release staging"' + staging.split(
-        'run_with_deadline "remote release validation and switch"', 1
-    )[0]
+    staging = (
+        'run_with_deadline "remote release staging"'
+        + staging.split('run_with_deadline "remote release validation and switch"', 1)[0]
+    )
     service_root = tmp_path / "service"
     registry = ROOT / "scripts/deploy/gpu-snapshot-deployments.conf"
     if custom_registry:
@@ -1135,7 +1150,10 @@ def test_11_installer_payload_passes_reaper_preflight(tmp_path: Path, custom_reg
     staging = staging.replace("/etc/acx", str(tmp_path / "etc-acx"))
     staging = staging.replace("/opt/acx-gpu", str(tmp_path / "opt-acx-gpu"))
     result = subprocess.run(
-        ["bash", "-c", r'''
+        [
+            "bash",
+            "-c",
+            r"""
 set -eu
 repo_root=$1
 remote_stage=$2
@@ -1151,27 +1169,47 @@ scp() {
     set -- "${@:1:$#-1}" "${destination#local:}"
     cp "$@"
 }
-''' + staging, "installer-payload", str(ROOT), str(service_root), str(registry)],
-        text=True, capture_output=True, check=False,
+"""
+            + staging,
+            "installer-payload",
+            str(ROOT),
+            str(service_root),
+            str(registry),
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
     )
     assert result.returncode == 0, result.stderr
     shipped_registry = service_root / "scripts/deploy/gpu-snapshot-deployments.conf"
     assert shipped_registry.read_bytes() == registry.read_bytes()
     monitored = subprocess.run(
-        [sys.executable, "-c", "from pathlib import Path; "
-         "from infra.oci.gpu_lifecycle import load_source; "
-         "assert Path(load_source.__file__).resolve().is_relative_to(Path.cwd()); "
-         "print('\\n'.join(load_source.AggregateJobLoadSource(Path('/run/acx'), 180).expected_environments))"],
-        cwd=service_root, env=dict(os.environ, PYTHONPATH=str(service_root)),
-        text=True, capture_output=True, check=False,
+        [
+            sys.executable,
+            "-c",
+            "from pathlib import Path; "
+            "from infra.oci.gpu_lifecycle import load_source; "
+            "assert Path(load_source.__file__).resolve().is_relative_to(Path.cwd()); "
+            "print('\\n'.join(load_source.AggregateJobLoadSource(Path('/run/acx'), 180).expected_environments))",
+        ],
+        cwd=service_root,
+        env=dict(os.environ, PYTHONPATH=str(service_root)),
+        text=True,
+        capture_output=True,
+        check=False,
     )
     assert monitored.returncode == 0, monitored.stderr
     assert set(monitored.stdout.splitlines()) == set(registry.read_text().splitlines())
     reaper_env = tmp_path / "gpu-lifecycle.env"
     reaper_env.write_text("GPU_INSTANCE_ID=ocid1.instance.oc1.iad.fakeinstance\nMAX_LEASE_SECONDS=3600\n")
-    result = run_preflight(tmp_path, check_reaper=True, systemctl_script=reaper_systemctl_script(
-        reaper_env, working_directory=service_root,
-    ))
+    result = run_preflight(
+        tmp_path,
+        check_reaper=True,
+        systemctl_script=reaper_systemctl_script(
+            reaper_env,
+            working_directory=service_root,
+        ),
+    )
     assert result.returncode == 0, result.stderr
 
 
@@ -1191,9 +1229,17 @@ def test_11_installer_release_identity_includes_deployment_registry(tmp_path: Pa
 
     def release_id() -> str:
         result = subprocess.run(
-            ["bash", "-ec", 'repo_root=$1\nDEPLOYMENTS_FILE=$2\nrelease_id=$(' + identity + '\nprintf "%s" "$release_id"',
-             "release-identity", str(source_root), str(registry)],
-            text=True, capture_output=True, check=False,
+            [
+                "bash",
+                "-ec",
+                "repo_root=$1\nDEPLOYMENTS_FILE=$2\nrelease_id=$(" + identity + '\nprintf "%s" "$release_id"',
+                "release-identity",
+                str(source_root),
+                str(registry),
+            ],
+            text=True,
+            capture_output=True,
+            check=False,
         )
         assert result.returncode == 0, result.stderr
         return result.stdout
@@ -1205,7 +1251,9 @@ def test_11_installer_release_identity_includes_deployment_registry(tmp_path: Pa
 
 
 @pytest.mark.parametrize("registry_content", [None, "invalid registry\n"])
-def test_11_reaper_preflight_validates_service_deployment_registry(tmp_path: Path, registry_content: str | None) -> None:
+def test_11_reaper_preflight_validates_service_deployment_registry(
+    tmp_path: Path, registry_content: str | None
+) -> None:
     service_root = tmp_path / "service"
     shutil.copytree(ROOT / "infra/oci/gpu_lifecycle", service_root / "infra/oci/gpu_lifecycle")
     # Preserve regular-package boundaries so Python cannot fall back to the
@@ -1651,8 +1699,13 @@ def test_runbook_final_verification_requires_uncached_live_gpu_inference() -> No
 
 
 def run_stop_block(
-    tmp_path: Path, *, process_status: int = 1, cancel: bool = False, lease: str | None = None,
-    occupied: bool = False, lease_status: int | None = None,
+    tmp_path: Path,
+    *,
+    process_status: int = 1,
+    cancel: bool = False,
+    lease: str | None = None,
+    occupied: bool = False,
+    lease_status: int | None = None,
 ) -> subprocess.CompletedProcess[str]:
     runbook = (ROOT / "docs/runbooks/gpu-demo-env-flip.md").read_text()
     block = runbook.rsplit("```bash\n", 1)[1].split("```", 1)[0]
@@ -2028,8 +2081,13 @@ def test_sync_demo_missing_contract_fails_before_remote_mutation(tmp_path: Path)
         stub = fake_bin / name
         stub.write_text('#!/bin/sh\nprintf called >> "$REMOTE_CALL_LOG"\nexit 99\n')
         stub.chmod(0o700)
-    env = dict(os.environ, PATH=f"{fake_bin}:{os.environ['PATH']}", REMOTE_CALL_LOG=str(remote_log),
-               GPU_ENV_CONTRACT_SRC=str(tmp_path / "missing-contract.sh"), OCI_HOST="fake.invalid")
+    env = dict(
+        os.environ,
+        PATH=f"{fake_bin}:{os.environ['PATH']}",
+        REMOTE_CALL_LOG=str(remote_log),
+        GPU_ENV_CONTRACT_SRC=str(tmp_path / "missing-contract.sh"),
+        OCI_HOST="fake.invalid",
+    )
     result = subprocess.run(["bash", str(SYNC_DEMO)], cwd=ROOT, env=env, text=True, capture_output=True, timeout=8)
     assert result.returncode == 2, result.stderr
     assert "source file not found" in result.stderr
@@ -2258,9 +2316,14 @@ def test_verifier_request_waits_for_stopped_gpu_through_real_run_worker(
 def test_11_rejects_unset_required_reaper_environment(tmp_path: Path, unset: str) -> None:
     env_file = tmp_path / "reaper.env"
     env_file.write_text("GPU_INSTANCE_ID=ocid1.instance.oc1.iad.fakeinstance\nMAX_LEASE_SECONDS=3600\n")
-    result = run_preflight(tmp_path, check_reaper=True, systemctl_script=reaper_systemctl_script(
-        env_file, unset_environment=unset,
-    ))
+    result = run_preflight(
+        tmp_path,
+        check_reaper=True,
+        systemctl_script=reaper_systemctl_script(
+            env_file,
+            unset_environment=unset,
+        ),
+    )
     assert result.returncode != 0
     assert "UnsetEnvironment" in result.stderr
     assert "MANUAL STOP" not in result.stdout
@@ -2269,9 +2332,14 @@ def test_11_rejects_unset_required_reaper_environment(tmp_path: Path, unset: str
 def test_11_rejects_unrelated_timer_target(tmp_path: Path) -> None:
     env_file = tmp_path / "reaper.env"
     env_file.write_text("GPU_INSTANCE_ID=ocid1.instance.oc1.iad.fakeinstance\nMAX_LEASE_SECONDS=3600\n")
-    result = run_preflight(tmp_path, check_reaper=True, systemctl_script=reaper_systemctl_script(
-        env_file, timer_target="unrelated.service",
-    ))
+    result = run_preflight(
+        tmp_path,
+        check_reaper=True,
+        systemctl_script=reaper_systemctl_script(
+            env_file,
+            timer_target="unrelated.service",
+        ),
+    )
     assert result.returncode != 0
     assert "must activate acx-gpu-reap.service" in result.stderr
     assert "MANUAL STOP" not in result.stdout
@@ -2282,9 +2350,14 @@ def test_11_environment_file_optional_metadata(tmp_path: Path, optional: bool) -
     env_file = tmp_path / "reaper.env"
     env_file.write_text("GPU_INSTANCE_ID=ocid1.instance.oc1.iad.fakeinstance\nMAX_LEASE_SECONDS=3600\n")
     files = f"{env_file} (ignore_errors=no) {tmp_path / 'absent.env'} (ignore_errors={'yes' if optional else 'no'})"
-    result = run_preflight(tmp_path, check_reaper=True, systemctl_script=reaper_systemctl_script(
-        env_file, environment_files=files,
-    ))
+    result = run_preflight(
+        tmp_path,
+        check_reaper=True,
+        systemctl_script=reaper_systemctl_script(
+            env_file,
+            environment_files=files,
+        ),
+    )
     assert (result.returncode == 0) == optional, result.stderr
     assert ("MANUAL STOP" in result.stdout) == optional
 
@@ -2296,10 +2369,14 @@ def test_11_reaper_oci_executable(tmp_path: Path, kind: str) -> None:
     unit = reaper_systemctl_script(reaper_env)
     binary = tmp_path / "candidate"
     if kind != "missing":
-        binary.write_text("#!/bin/sh\n" + (
-            '[ "$1" = --help ] || exit 9\necho "Oracle Cloud Infrastructure CLI"\n'
-            if kind in ("valid", "non-executable") else "echo unrelated-tool\n"
-        ))
+        binary.write_text(
+            "#!/bin/sh\n"
+            + (
+                '[ "$1" = --help ] || exit 9\necho "Oracle Cloud Infrastructure CLI"\n'
+                if kind in ("valid", "non-executable")
+                else "echo unrelated-tool\n"
+            )
+        )
         binary.chmod(0o644 if kind == "non-executable" else 0o755)
     unit = unit.replace(str(tmp_path / "oci-stub"), "/bin/true" if kind == "true" else str(binary))
     result = run_preflight(tmp_path, check_reaper=True, systemctl_script=unit)
@@ -2355,7 +2432,10 @@ def test_11_reaper_checks_lease_directory_writes_without_changing_state(tmp_path
 @pytest.mark.parametrize("escalate", [False, True])
 @pytest.mark.parametrize("system_imports", [False, True])
 def test_11_lease_probe_interpreter_selection(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, escalate: bool, system_imports: bool,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    escalate: bool,
+    system_imports: bool,
 ) -> None:
     """Intercept absolute system executables without changing the host or using sudo."""
     import io
@@ -2364,8 +2444,10 @@ def test_11_lease_probe_interpreter_selection(
 
     system_python = tmp_path / "system-python3"
     system_python.write_text(
-        "#!/bin/sh\n" + (
-            f"exec {shlex.quote(sys.executable)} \"$@\"\n" if system_imports
+        "#!/bin/sh\n"
+        + (
+            f'exec {shlex.quote(sys.executable)} "$@"\n'
+            if system_imports
             else "echo 3.9.6\necho 'ImportError: datetime.UTC' >&2\nexit 1\n"
         )
     )
@@ -2373,14 +2455,30 @@ def test_11_lease_probe_interpreter_selection(
     env_file = tmp_path / "reaper.env"
     unit = reaper_systemctl_script(env_file)
     exec_start = next(line.removeprefix("ExecStart=") for line in unit.splitlines() if line.startswith("ExecStart="))
-    monkeypatch.setattr(sys, "argv", [
-        "-c", exec_start, str(ROOT), "ocid1.instance.oc1.iad.fakeinstance",
-        "3600", "600", "60", "probe-user",
-    ])
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "-c",
+            exec_start,
+            str(ROOT),
+            "ocid1.instance.oc1.iad.fakeinstance",
+            "3600",
+            "600",
+            "60",
+            "probe-user",
+        ],
+    )
     monkeypatch.setattr(sys, "path", sys.path.copy())
-    monkeypatch.setattr(pwd, "getpwnam", lambda name: SimpleNamespace(
-        pw_uid=os.geteuid() + int(escalate), pw_name=name, pw_dir=str(tmp_path),
-    ))
+    monkeypatch.setattr(
+        pwd,
+        "getpwnam",
+        lambda name: SimpleNamespace(
+            pw_uid=os.geteuid() + int(escalate),
+            pw_name=name,
+            pw_dir=str(tmp_path),
+        ),
+    )
     diagnostics = io.StringIO()
     monkeypatch.setattr(os, "fdopen", lambda *args: diagnostics)
     original_run = subprocess.run
@@ -2390,7 +2488,7 @@ def test_11_lease_probe_interpreter_selection(
         calls.append(command)
         if command[0] == "/usr/bin/sudo":
             assert escalate
-            command = command[command.index("-i") + 1:]
+            command = command[command.index("-i") + 1 :]
             command = command[3:]  # HOME, PATH and LC_ALL
         if command[0] == "/usr/bin/python3":
             command = [str(system_python), *command[1:]]
@@ -2399,7 +2497,11 @@ def test_11_lease_probe_interpreter_selection(
         return original_run(command, **kwargs)
 
     monkeypatch.setattr(subprocess, "run", run)
-    program = SCRIPT.read_text().split("reaper_execstart_is_structural() {\n    python3 -c '\n", 1)[1].split("\n' \"$@\" 3>&2", 1)[0]
+    program = (
+        SCRIPT.read_text()
+        .split("reaper_execstart_is_structural() {\n    python3 -c '\n", 1)[1]
+        .split('\n\' "$@" 3>&2', 1)[0]
+    )
     status = 0
     try:
         exec(compile(program, str(SCRIPT), "exec"), {})
@@ -2438,12 +2540,86 @@ def test_multiline_adapter_assignment_matches_compose(tmp_path: Path, quote: str
     compose_file = tmp_path / "compose.yml"
     compose_file.write_text("services:\n  smoke:\n    image: scratch\n    env_file: producer.env\n")
     result = subprocess.run(
-        ["docker", "compose", "--env-file", str(tmp_path / "producer.env"),
-         "-f", str(compose_file), "config", "--format", "json"],
-        text=True, capture_output=True, timeout=15,
+        [
+            "docker",
+            "compose",
+            "--env-file",
+            str(tmp_path / "producer.env"),
+            "-f",
+            str(compose_file),
+            "config",
+            "--format",
+            "json",
+        ],
+        text=True,
+        capture_output=True,
+        timeout=15,
     )
     assert result.returncode == 0, result.stderr
     deployed = json.loads(result.stdout)["services"]["smoke"]["environment"]
     assert "ACX_DESCRIPTION_ADAPTER" not in deployed
     assert "ACX_DESCRIPTION_ADAPTER=gpu_qwen30b" in deployed["OTHER"]
     assert preflight.returncode != 0
+
+
+@pytest.mark.parametrize(
+    "override", ["ACX_DESCRIPTION_ADAPTER: seeded", "ACX_DESCRIPTION_ADAPTER", "export ACX_DESCRIPTION_ADAPTER: seeded"]
+)
+def test_noncanonical_override_matches_real_compose(tmp_path: Path, override: str) -> None:
+    result = run_preflight(tmp_path, producer_text=env_text(valid_env()) + override + "\n")
+    assert result.returncode != 0, "preflight certified a Compose override"
+    assert "canonical" in result.stderr
+    if not shutil.which("docker") or subprocess.run(["docker", "compose", "version"], capture_output=True).returncode:
+        pytest.skip("Docker Compose is required for dotenv parity")
+    compose = tmp_path / "compose.yml"
+    compose.write_text("services:\n  smoke:\n    image: scratch\n    env_file: producer.env\n")
+    parsed = subprocess.run(
+        ["docker", "compose", "-f", str(compose), "config", "--format", "json"],
+        capture_output=True,
+        text=True,
+        env={**os.environ, "ACX_DESCRIPTION_ADAPTER": "seeded"},
+    )
+    assert parsed.returncode == 0, parsed.stderr
+    assert json.loads(parsed.stdout)["services"]["smoke"]["environment"].get("ACX_DESCRIPTION_ADAPTER") != "gpu_qwen30b"
+
+
+@pytest.mark.parametrize(
+    "source,url,accepted",
+    [
+        ("local", "https://api.altcontext.com", False),
+        ("service", "http://api.altcontext.com", False),
+        ("service", "http://127.0.0.2:8000", False),
+        ("service", "https://api.altcontext.com", True),
+        ("service", "http://localhost:8000", True),
+        ("service", "http://127.0.0.1:8000", True),
+        ("service", "http://[::1]:8000", True),
+    ],
+)
+def test_recognition_policy_matches_consumer(tmp_path: Path, source: str, url: str, accepted: bool) -> None:
+    config = wordpress_config(url=url) + f" define('ACX_RECOGNITION_SOURCE','{source}');"
+    demo = valid_demo_env()
+    demo["WORDPRESS_CONFIG_EXTRA"] = config
+    result = run_preflight(tmp_path, demo=demo)
+    assert (result.returncode == 0) is accepted, result.stderr
+    live_dir = tmp_path / "live"
+    live_dir.mkdir()
+    live = run_live_gpu_verifier(live_dir, wordpress_config_extra=config)
+    assert (live.returncode == 0) is accepted, live.stderr
+    if not shutil.which("php"):
+        pytest.skip("PHP required for consumer parity")
+    resolver = ROOT / "apps/prototype-wp-alt-context/src/api/class-recognition-endpoint-resolver.php"
+    probe = subprocess.run(
+        [
+            "php",
+            "-r",
+            "function apply_filters($name, $value) { return $value; } function get_option($name, $default) { return $default; } require $argv[1]; "
+            + config
+            + " $r = new \\AltContext\\Api\\RecognitionEndpointResolver(); echo json_encode([$r->get_recognition_source(), $r->get_effective_base_url()]);",
+            str(resolver),
+        ],
+        capture_output=True,
+        text=True,
+    )
+    assert probe.returncode == 0, probe.stderr
+    mode, effective = json.loads(probe.stdout)
+    assert (mode == "service" and effective == url) is accepted

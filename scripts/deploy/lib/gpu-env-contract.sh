@@ -80,3 +80,29 @@ sys.stdout.write(values.get(name) or "")
 acx_is_trusted_describe_profile() {
     is_trusted_describe_profile "$1"
 }
+
+# Match RecognitionEndpointResolver's production source and HTTP policy.
+# URL shape validation remains the caller's responsibility.
+acx_validate_recognition_target() {
+    local config="$1" url="$2" source
+    source="$(php_define_value ACX_RECOGNITION_SOURCE "$config")"
+    if [[ -n "$source" && "$source" != service ]]; then
+        echo "ERROR [6] demo ACX_RECOGNITION_SOURCE must be service or absent." >&2
+        return 1
+    fi
+    python3 - "$url" <<'PY'
+import sys
+from urllib.parse import urlsplit
+
+try:
+    parsed = urlsplit(sys.argv[1])
+    accepted = bool(parsed.hostname) and (
+        parsed.scheme == "https"
+        or (parsed.scheme == "http" and parsed.hostname in {"localhost", "127.0.0.1", "::1"})
+    )
+except ValueError:
+    accepted = False
+if not accepted:
+    raise SystemExit("ERROR [6] recognition URL requires HTTPS except for localhost, 127.0.0.1 or ::1 (value redacted).")
+PY
+}

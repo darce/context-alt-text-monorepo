@@ -43,6 +43,7 @@ relevant_keys=(
     ACX_GPU_STATE_PATH
     ACX_GPU_STATE_STALE_SECONDS
     ACX_RECOGNITION_URL
+    ACX_RECOGNITION_SOURCE
     ACX_RECOGNITION_API_KEY
     ACX_RECOGNITION_TENANT_ID
     RECOGNITION_SECRET_BACKEND
@@ -89,7 +90,7 @@ PY
         count=0
         while IFS= read -r line || [[ -n "$line" ]]; do
             line="${line%$'\r'}"
-            if [[ "$line" =~ ^[[:space:]]*(export[[:space:]]+)?${key}[[:space:]]*= ]]; then
+            if [[ "$line" =~ ^[[:space:]]*(export[[:space:]]+)?${key}([[:space:]]*[=:]|[[:space:]]*(#.*)?$) ]]; then
                 count=$((count + 1))
                 if [[ "$line" != "${key}="* ]]; then
                     echo "ERROR [7] ${role} env ${key} assignment is not canonical KEY=value syntax. Remove whitespace/export ambiguity before deployment." >&2
@@ -810,6 +811,10 @@ validate_side() {
         recognition_url="$(php_define_value ACX_RECOGNITION_URL "$wordpress_config_extra")"
         recognition_api_key="$(php_define_value ACX_RECOGNITION_API_KEY "$wordpress_config_extra")"
         recognition_tenant_id="$(php_define_value ACX_RECOGNITION_TENANT_ID "$wordpress_config_extra")"
+        if [[ -n "$(env_get "$file" ACX_RECOGNITION_SOURCE)" ]]; then
+            echo "ERROR [6] demo standalone ACX_RECOGNITION_SOURCE is ambiguous; use WORDPRESS_CONFIG_EXTRA." >&2
+            exit 1
+        fi
 
         [[ -n "$recognition_url" ]] || missing_recognition+=(ACX_RECOGNITION_URL)
         [[ -n "$recognition_api_key" ]] || missing_recognition+=(ACX_RECOGNITION_API_KEY)
@@ -824,6 +829,7 @@ validate_side() {
             echo "ERROR [6] demo ACX_RECOGNITION_URL must be a valid http:// or https:// URL (redacted length=${#recognition_url})." >&2
             exit 1
         fi
+        acx_validate_recognition_target "$wordpress_config_extra" "$recognition_url"
         if is_placeholder "$recognition_api_key"; then
             echo "ERROR [6] demo ACX_RECOGNITION_API_KEY must not be a documented placeholder (redacted length=${#recognition_api_key})." >&2
             exit 1

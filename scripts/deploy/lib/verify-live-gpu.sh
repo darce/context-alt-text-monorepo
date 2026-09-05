@@ -34,9 +34,25 @@ for required_name in base_url api_key tenant_id; do
     fi
 done
 
-smoke_image="$(mktemp /tmp/acx-gpu-smoke.XXXXXX.png)"
-response_file="$(mktemp /tmp/acx-gpu-response.XXXXXX.json)"
-trap 'rm -f "$smoke_image" "$response_file"' EXIT
+smoke_image="$(mktemp /tmp/acx-gpu-smoke.XXXXXX)"
+response_file="$(mktemp /tmp/acx-gpu-response.XXXXXX)"
+curl_config="$(mktemp /tmp/acx-gpu-curl.XXXXXX)"
+trap 'rm -f "$smoke_image" "$response_file" "$curl_config"' EXIT
+chmod 600 "$curl_config"
+printf '%s\0%s\0' "$api_key" "$tenant_id" | python3 -c '
+import sys
+
+values = sys.stdin.buffer.read().split(b"\0")
+if len(values) != 3 or values[-1] or any(b"\r" in value or b"\n" in value for value in values[:2]):
+    raise SystemExit("live GPU smoke failed: credential contains an invalid control character")
+
+def curl_quote(value):
+    return value.decode("utf-8").replace("\\", "\\\\").replace("\"", "\\\"")
+
+with open(sys.argv[1], "w", encoding="utf-8") as handle:
+    handle.write(f"header = \"X-API-Key: {curl_quote(values[0])}\"\n")
+    handle.write(f"header = \"X-Tenant-ID: {curl_quote(values[1])}\"\n")
+' "$curl_config"
 python3 - "$smoke_image" <<'PY'
 import struct
 import sys
@@ -68,8 +84,7 @@ PY
 media_id="$(python3 -c 'import secrets; print(secrets.randbelow(2_000_000_000) + 1)')"
 request_json="$(printf '{\"tenant_id\":\"%s\",\"media_id\":%s,\"tier\":\"gpu\",\"context\":{\"filename\":\"gpu-flip-smoke.png\"}}' "$tenant_id" "$media_id")"
 curl --fail-with-body --silent --show-error --max-time 30 \
-    -H "X-API-Key: ${api_key}" \
-    -H "X-Tenant-ID: ${tenant_id}" \
+    --config "$curl_config" \
     -F "request=${request_json};type=application/json" \
     -F "image_${media_id}=@${smoke_image};type=image/png" \
     --output "$response_file" \
@@ -99,17 +114,19 @@ case "$LIVE_GPU_POLL_TIMEOUT_SECONDS" in
         exit 2
         ;;
 esac
-poll_deadline=$(( $(date +%s) + LIVE_GPU_POLL_TIMEOUT_SECONDS ))
+monotonic_seconds() {
+    python3 -c 'import time; print(int(time.monotonic()))'
+}
+poll_deadline=$(( $(monotonic_seconds) + LIVE_GPU_POLL_TIMEOUT_SECONDS ))
 poll_complete=0
 while :; do
-    poll_now="$(date +%s)"
+    poll_now="$(monotonic_seconds)"
     poll_remaining=$(( poll_deadline - poll_now ))
     (( poll_remaining > 0 )) || break
     request_timeout=30
     (( poll_remaining < request_timeout )) && request_timeout="$poll_remaining"
     curl --fail-with-body --silent --show-error --max-time "$request_timeout" \
-        -H "X-API-Key: ${api_key}" \
-        -H "X-Tenant-ID: ${tenant_id}" \
+        --config "$curl_config" \
         --output "$response_file" \
         "${base_url%/}/scene/describe/jobs/${job_id}"
     if python3 - "$response_file" "$job_id" <<'PY'
@@ -144,7 +161,7 @@ PY
         poll_status=$?
         [[ "$poll_status" -eq 10 ]] || exit "$poll_status"
     fi
-    poll_now="$(date +%s)"
+    poll_now="$(monotonic_seconds)"
     poll_remaining=$(( poll_deadline - poll_now ))
     (( poll_remaining > 0 )) || break
     sleep_seconds=5

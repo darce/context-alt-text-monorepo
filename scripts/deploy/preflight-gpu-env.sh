@@ -105,12 +105,13 @@ env_get() {
 }
 
 is_placeholder() {
-    local lowered
-    lowered="$(printf '%s' "$1" | LC_ALL=C tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')"
-    case "$lowered" in
-        ''|*replace*|*placeholder*|*change-me*|*changeme*|*paste-key*|*paste_secret*|'<'*|'>'*) return 0 ;;
-        *) return 1 ;;
-    esac
+    printf '%s' "$1" | python3 -c '
+import sys
+
+value = "".join(character for character in sys.stdin.read() if not character.isspace()).casefold()
+placeholders = ("replace", "placeholder", "change-me", "changeme", "paste-key", "paste_secret")
+raise SystemExit(0 if not value or any(marker in value for marker in placeholders) or value.startswith(("<", ">")) else 1)
+' 2>/dev/null
 }
 
 is_http_url() {
@@ -129,6 +130,8 @@ try:
 except ValueError:
     raise SystemExit(1)
 if parsed.scheme not in {"http", "https"}:
+    raise SystemExit(1)
+if "?" in raw or "#" in raw or parsed.query or parsed.fragment:
     raise SystemExit(1)
 host = parsed.hostname
 if not parsed.netloc or host is None or parsed.username is not None or parsed.password is not None:
@@ -329,6 +332,8 @@ except ValueError:
 if argv[:4] != ["/usr/bin/python3", "-m", "infra.oci.gpu_lifecycle", "--mode"]:
     raise SystemExit(1)
 if len(argv) < 5 or argv[4] != "reap":
+    raise SystemExit(1)
+if [index for index, token in enumerate(argv) if token == "--mode"] != [3]:
     raise SystemExit(1)
 
 required = {

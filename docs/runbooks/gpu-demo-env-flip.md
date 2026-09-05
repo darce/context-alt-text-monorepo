@@ -59,8 +59,14 @@ an unverified adapter.
 ```bash
 set -euo pipefail
 CONFIRM=PROMOTE scripts/deploy/recognition-service.sh deploy prod
-PLUGIN_ZIP="$(ls -t dist/alt-context-*.zip 2>/dev/null | head -1 || true)"
-test -n "$PLUGIN_ZIP"
+PLUGIN_ZIP=dist/alt-context-reviewed.zip # Replace with the artifact named in the review record.
+PLUGIN_ZIP_SHA256=replace-with-reviewed-sha256 # Replace with that record's SHA-256.
+case "$PLUGIN_ZIP" in dist/alt-context-*.zip) ;; *) echo "Refusing unscoped plugin artifact path." >&2; exit 1 ;; esac
+case "$PLUGIN_ZIP_SHA256" in replace-*|*[!0-9a-fA-F]*|'') echo "Set the reviewed artifact SHA-256." >&2; exit 1 ;; esac
+test "${#PLUGIN_ZIP_SHA256}" -eq 64
+test -f "$PLUGIN_ZIP"
+ACTUAL_PLUGIN_ZIP_SHA256="$(shasum -a 256 "$PLUGIN_ZIP" | awk '{print $1}')"
+test "$ACTUAL_PLUGIN_ZIP_SHA256" = "$PLUGIN_ZIP_SHA256"
 printf 'Deploying reviewed plugin artifact: %s\n' "$PLUGIN_ZIP"
 PLUGIN_ZIP="$PLUGIN_ZIP" make deploy-demo
 ```
@@ -95,9 +101,13 @@ pre-flip env files and restart both consumers. If the A10 is unexpectedly
 running after any failure, run the STOP block only after its executable guard
 proves that no bake or evaluation is in flight. Bake/evaluation operators must
 hold `/run/acx-gpu/bake.lease` or `/run/acx-gpu/evaluation.lease` for the full
-activity; the guard also checks the corresponding live processes and fails
-closed when `pgrep` is unavailable. These commands are compensating actions,
-so run them as a separate block rather than appending them to the happy path.
+activity. They must also acquire `/run/acx-gpu/activity.lock` with an atomic
+`mkdir` before starting and remove it only after the activity ends. The STOP
+block holds that same mutex across both its guard and the OCI action, closing
+the guard/action race; a stale or occupied mutex fails closed. The guard also
+checks the corresponding live processes and fails closed when `pgrep` is
+unavailable. These commands are compensating actions, so run them as a
+separate block rather than appending them to the happy path.
 
 ```bash
 set -euo pipefail
@@ -109,6 +119,20 @@ set -euo pipefail
 GPU_HOST=ubuntu@acx-backend.tail1a44b8.ts.net
 GPU_INSTANCE_ID="$(terraform -chdir=infra/oci output -raw gpu_instance_id)"
 test -n "$GPU_INSTANCE_ID"
+ACTIVITY_LOCK=/run/acx-gpu/activity.lock
+activity_lock_held=0
+release_activity_lock() {
+    if [[ "$activity_lock_held" -eq 1 ]]; then
+        ssh "$GPU_HOST" "sudo rmdir '$ACTIVITY_LOCK'"
+        activity_lock_held=0
+    fi
+}
+trap release_activity_lock EXIT HUP INT TERM
+if ! ssh "$GPU_HOST" "sudo mkdir '$ACTIVITY_LOCK'"; then
+    echo "Refusing STOP: the shared A10 activity mutex is occupied." >&2
+    exit 1
+fi
+activity_lock_held=1
 ssh "$GPU_HOST" 'set -euo pipefail
 command -v pgrep >/dev/null
 if pgrep -af "scripts[.]eval_harness[.](bakeoff|cli)|gpu[-_]bake" >/dev/null; then
@@ -122,6 +146,8 @@ for lease in /run/acx-gpu/bake.lease /run/acx-gpu/evaluation.lease; do
     fi
 done'
 oci compute instance action --action STOP --instance-id "$GPU_INSTANCE_ID"
+release_activity_lock
+trap - EXIT HUP INT TERM
 ```
 
 Design grounding: Release It!, ch. 5.5 (fail before consuming deployment

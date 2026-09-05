@@ -167,8 +167,50 @@ class RendererBoundaryTests(unittest.TestCase):
 
     def test_duplicate_retained_contract_cannot_hide_an_unchecked_table(self):
         text = SOURCE.with_name("febt-1-job-error-states.md").read_text()
-        with self.assertRaisesRegex(ValueError, "duplicate retained contract"):
-            renderer._extract_kept_text(text + "\n## Detailed reducer and recovery contract\n\n| auth_expired | Retry |\n")
+        heading = "## Detailed reducer and recovery contract"
+        for variant in [heading, heading + " ##", "  " + heading, heading + " \t", "   " + heading + " ### \t"]:
+            with self.subTest(heading=variant), self.assertRaisesRegex(ValueError, "duplicate retained contract"):
+                renderer._extract_kept_text(text + f"\n{variant}\n\n| auth_expired | Retry |\n")
+
+    def test_retained_heading_variants_and_zone_rows_fail_both_check_paths(self):
+        ref = "febt-1-job-error-states"
+        original = SOURCE.with_name(f"{ref}.md").read_text()
+        heading = "## Detailed reducer and recovery contract"
+        variants = [heading + " ##", "  " + heading, heading + " \t", "   " + heading + " ### \t"]
+        mutations = [
+            (original + f"\n{variant}\n\n| auth_expired | Retry |\n", "duplicate retained contract")
+            for variant in variants
+        ]
+        # A variant must also be detected when it replaces the only contract heading.
+        for variant in variants:
+            before, contract = original.split(heading, 1)
+            mutant = before + variant + contract.replace("Reload page", "Incorrect recovery")
+            mutations.append((mutant, "retainedContracts"))
+        row = re.search(r"^\| `error-action` \|.*$", original, re.MULTILINE)[0]
+        fixtures = renderer.REPO_ROOT / "apps/prototype-wp-alt-context/js/admin/__tests__/uxmap-render-parity.fixtures"
+        for mutation in json.loads((fixtures / "zone-row-mutations.json").read_text()):
+            bad = mutation["row"]
+            mutations.append((original.replace(row, bad + "\n" + row), "noncanonical Zones table row: " + bad))
+        for duplicate in [row, "| `error-action` | Incorrect recovery | form | error |"]:
+            mutations.append((original.replace(row, duplicate + "\n" + row), "zone error-action has duplicate Zones table rows"))
+        with tempfile.TemporaryDirectory() as directory:
+            maps = Path(directory)
+            shutil.copyfile(SOURCE.with_name(f"{ref}.uxmap.json"), maps / f"{ref}.uxmap.json")
+            target = maps / f"{ref}.md"
+            with patch.object(renderer, "MAPS_DIR", maps):
+                for available in [False, True]:
+                    with patch.object(renderer, "render", return_value=original,
+                                      side_effect=None if available else renderer.OptionalRendererUnavailable()):
+                        target.write_text(original)
+                        with contextlib.redirect_stdout(io.StringIO()):
+                            self.assertEqual(renderer.check([ref]), 0)
+                        for mutant, error in mutations:
+                            with self.subTest(available=available, error=error):
+                                target.write_text(mutant)
+                                output = io.StringIO()
+                                with contextlib.redirect_stderr(output), contextlib.redirect_stdout(io.StringIO()):
+                                    self.assertEqual(renderer.check([ref]), 1)
+                                self.assertIn(error, output.getvalue())
 
     def test_conditional_primary_actions_fail_closed(self):
         path = SOURCE.with_name("febt-1-job-error-states.uxmap.json")

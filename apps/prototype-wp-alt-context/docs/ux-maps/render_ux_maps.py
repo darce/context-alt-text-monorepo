@@ -318,10 +318,14 @@ def _domain_state_mapping(doc: dict) -> list[str]:
 
 def _extract_kept_text(text: str, headings: tuple[str, ...] = KEEP_SECTIONS) -> list[tuple[str | None, str]]:
     """Capture each kept section and the generated heading that originally followed it."""
-    heading_matches = list(re.finditer(r"^## .+$", text, re.MULTILINE))
+    # ATX headings may be indented, padded, or closed with hashes. Detect their
+    # semantic names, while preserving the section bytes for authority comparison.
+    heading_matches = list(re.finditer(
+        r"^ {0,3}##[ \t]+([^\r\n]*?)(?:[ \t]+#+)?[ \t]*\r?$", text, re.MULTILINE
+    ))
     kept: list[tuple[int, str | None, str]] = []
     for heading in headings:
-        matches = list(re.finditer(rf"^{re.escape(heading)}$", text, re.MULTILINE))
+        matches = [match for match in heading_matches if "## " + match.group(1) == heading]
         if len(matches) > 1:
             raise ValueError(f"duplicate retained contract heading: {heading}")
         if not matches:
@@ -329,7 +333,7 @@ def _extract_kept_text(text: str, headings: tuple[str, ...] = KEEP_SECTIONS) -> 
         match = matches[0]
         following = next((item for item in heading_matches if item.start() > match.start()), None)
         end = following.start() if following else len(text)
-        anchor = following.group(0) if following else None
+        anchor = "## " + following.group(1) if following else None
         kept.append((match.start(), anchor, text[match.start():end].strip("\n")))
     return [(anchor, section) for _, anchor, section in sorted(kept)]
 

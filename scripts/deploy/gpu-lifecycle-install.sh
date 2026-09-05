@@ -24,6 +24,23 @@
 
 set -euo pipefail
 
+sha256_file() {
+    [ "$#" -eq 1 ] || {
+        echo "error: sha256_file requires exactly one path" >&2
+        return 2
+    }
+    if command -v sha256sum >/dev/null 2>&1; then
+        sha256sum "$1"
+        return
+    fi
+    if command -v shasum >/dev/null 2>&1; then
+        shasum -a 256 "$1"
+        return
+    fi
+    echo "error: neither sha256sum nor shasum is available" >&2
+    return 127
+}
+
 verify_gpu_lifecycle_timers() {
     [ "$#" -eq 5 ] || {
         echo "error: effective-unit verification requires four expected hashes and max lease" >&2
@@ -67,7 +84,7 @@ verify_gpu_lifecycle_timers() {
             echo "error: $unit has unexpected effective drop-ins: $drop_in_paths" >&2
             return 1
         fi
-        effective_hash=$(sha256sum "$fragment_path" | awk '{print $1}') || {
+        effective_hash=$(sha256_file "$fragment_path" | awk '{print $1}') || {
             echo "error: could not hash the effective fragment for $unit" >&2
             return 1
         }
@@ -185,10 +202,10 @@ if [ "${1:-}" = "--verify-systemd-only" ]; then
     [ "$#" -eq 1 ] || { echo "error: --verify-systemd-only accepts no arguments" >&2; exit 2; }
     expected_unit_dir="${ACX_EXPECTED_SYSTEMD_DIR:-/etc/systemd/system}"
     verify_gpu_lifecycle_timers \
-        "$(sha256sum "${expected_unit_dir}/acx-gpu-start.service" | awk '{print $1}')" \
-        "$(sha256sum "${expected_unit_dir}/acx-gpu-start.timer" | awk '{print $1}')" \
-        "$(sha256sum "${expected_unit_dir}/acx-gpu-reap.service" | awk '{print $1}')" \
-        "$(sha256sum "${expected_unit_dir}/acx-gpu-reap.timer" | awk '{print $1}')" \
+        "$(sha256_file "${expected_unit_dir}/acx-gpu-start.service" | awk '{print $1}')" \
+        "$(sha256_file "${expected_unit_dir}/acx-gpu-start.timer" | awk '{print $1}')" \
+        "$(sha256_file "${expected_unit_dir}/acx-gpu-reap.service" | awk '{print $1}')" \
+        "$(sha256_file "${expected_unit_dir}/acx-gpu-reap.timer" | awk '{print $1}')" \
         "${ACX_EXPECTED_MAX_LEASE_SECONDS:?ACX_EXPECTED_MAX_LEASE_SECONDS is required}"
     exit $?
 fi
@@ -199,10 +216,10 @@ if [ "${1:-}" = "--activate-systemd-only" ]; then
     trap cleanup_gpu_lifecycle_transaction ERR EXIT
     fence_gpu_lifecycle_start
     activate_gpu_lifecycle_timers \
-        "$(sha256sum "${expected_unit_dir}/acx-gpu-start.service" | awk '{print $1}')" \
-        "$(sha256sum "${expected_unit_dir}/acx-gpu-start.timer" | awk '{print $1}')" \
-        "$(sha256sum "${expected_unit_dir}/acx-gpu-reap.service" | awk '{print $1}')" \
-        "$(sha256sum "${expected_unit_dir}/acx-gpu-reap.timer" | awk '{print $1}')" \
+        "$(sha256_file "${expected_unit_dir}/acx-gpu-start.service" | awk '{print $1}')" \
+        "$(sha256_file "${expected_unit_dir}/acx-gpu-start.timer" | awk '{print $1}')" \
+        "$(sha256_file "${expected_unit_dir}/acx-gpu-reap.service" | awk '{print $1}')" \
+        "$(sha256_file "${expected_unit_dir}/acx-gpu-reap.timer" | awk '{print $1}')" \
         "${ACX_EXPECTED_MAX_LEASE_SECONDS:?ACX_EXPECTED_MAX_LEASE_SECONDS is required}"
     lifecycle_transaction_complete=1
     trap - ERR EXIT
@@ -492,6 +509,7 @@ else
 fi"
 
 # --- install units -----------------------------------------------------------
+sha256_function=$(declare -f sha256_file)
 verification_function=$(declare -f verify_gpu_lifecycle_timers)
 start_verification_function=$(declare -f verify_gpu_lifecycle_start_timer)
 activation_function=$(declare -f activate_gpu_lifecycle_timers)
@@ -499,6 +517,7 @@ start_fence_function=$(declare -f fence_gpu_lifecycle_start)
 cleanup_function=$(declare -f cleanup_gpu_lifecycle_transaction)
 run_with_deadline "systemd unit installation" \
     ssh "${SSH_OPTIONS[@]}" -l "$SSH_USER" -- "$HOST" "set -euo pipefail
+${sha256_function}
 ${verification_function}
 ${start_verification_function}
 ${activation_function}
@@ -647,10 +666,10 @@ for unit in acx-gpu-start.service acx-gpu-start.timer acx-gpu-reap.service acx-g
     sudo install -m 0644 "${remote_release}/systemd/\$unit" "/etc/systemd/system/\$unit"
 done
 sudo chmod 0644 '${remote_release}/systemd/'*
-expected_start_service_hash=\$(sha256sum '${remote_release}/systemd/acx-gpu-start.service' | awk '{print \$1}')
-expected_start_timer_hash=\$(sha256sum '${remote_release}/systemd/acx-gpu-start.timer' | awk '{print \$1}')
-expected_reap_service_hash=\$(sha256sum '${remote_release}/systemd/acx-gpu-reap.service' | awk '{print \$1}')
-expected_reap_timer_hash=\$(sha256sum '${remote_release}/systemd/acx-gpu-reap.timer' | awk '{print \$1}')
+expected_start_service_hash=\$(sha256_file '${remote_release}/systemd/acx-gpu-start.service' | awk '{print \$1}')
+expected_start_timer_hash=\$(sha256_file '${remote_release}/systemd/acx-gpu-start.timer' | awk '{print \$1}')
+expected_reap_service_hash=\$(sha256_file '${remote_release}/systemd/acx-gpu-reap.service' | awk '{print \$1}')
+expected_reap_timer_hash=\$(sha256_file '${remote_release}/systemd/acx-gpu-reap.timer' | awk '{print \$1}')
 
 sudo systemctl daemon-reload
 activate_gpu_lifecycle_timers \

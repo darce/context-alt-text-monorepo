@@ -48,6 +48,11 @@ both halves in one invocation. The reaper check loads the argument parser
 from the effective service WorkingDirectory; that checkout and its
 `scripts/deploy/gpu-snapshot-deployments.conf` registry must be readable and
 valid. It verifies both the executable path and the effective arguments.
+The effective OCI executable must return help identifying the Oracle Cloud
+Infrastructure CLI within ten seconds. This local probe uses the service
+user, its home directory, and the standard system-service PATH; switching
+users requires noninteractive sudo. Missing, non-executable, and unrelated
+binaries fail closed. The probe does not call an OCI API.
 Reaper EnvironmentFiles must use exact `KEY=value` assignments for the
 installer keys (`GPU_INSTANCE_ID`, `MAX_LEASE_SECONDS`, `IDLE_SECONDS`,
 `ACX_DESCRIBE_LOAD_STALE_GRACE_SECONDS`, and `READY_URL`). Whole-value single

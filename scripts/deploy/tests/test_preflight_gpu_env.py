@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import hashlib
 import os
+import pwd
 import re
 import shutil
 import signal
@@ -938,13 +939,19 @@ def reaper_systemctl_script(
     unset_environment: str = "",
     timer_target: str = "acx-gpu-reap.service",
 ) -> str:
+    oci = environment_file.parent / "oci-stub"
+    oci.write_text("#!/bin/sh\n[ \"$1\" = --help ] || exit 9\nprintf 'Oracle Cloud Infrastructure CLI\\n'\n")
+    oci.chmod(0o755)
     reap_active_result = "exit 0" if reap_timer_active else "exit 3"
     start_active_result = "exit 0" if start_timer_active else "exit 3"
     exec_start = exec_start or (
         "{ path=/usr/bin/python3 ; argv[]=/usr/bin/python3 -m infra.oci.gpu_lifecycle "
         "--mode reap --instance-id ${GPU_INSTANCE_ID} "
-        "--max-lease-seconds ${MAX_LEASE_SECONDS} --load-dir /run/acx-write ; ignore_errors=no ; }"
+        "--max-lease-seconds ${MAX_LEASE_SECONDS} --load-dir /run/acx-write "
+        f"--oci-bin {oci} ; ignore_errors=no ; }}"
     )
+    if "--oci-bin" not in exec_start:
+        exec_start = exec_start.replace(" ; ignore_errors=", f" --oci-bin {oci} ; ignore_errors=")
     environment_files = environment_files or f"{environment_file} (ignore_errors=no)"
     return f"""#!/usr/bin/env bash
 if [[ "$1" == show && "$2" == acx-gpu-reap.timer ]]; then
@@ -957,6 +964,7 @@ case "$1:$3" in
   is-active:acx-gpu-start.timer) {start_active_result} ;;
   show:*)
     cat <<'PROPERTIES'
+User={pwd.getpwuid(os.geteuid()).pw_name}
 ExecStart={exec_start}
 WorkingDirectory={working_directory}
 FragmentPath=/etc/systemd/system/acx-gpu-reap.service
@@ -1023,12 +1031,12 @@ set -eu
 repo_root=$1
 remote_stage=$2
 HOST=local
-SSH_OPTIONS=()
+SSH_OPTIONS=(-o BatchMode=yes)
 run_with_deadline() { shift; "$@"; }
 sudo() { if [ "$1" != chown ]; then "$@"; fi; }
-ssh() { eval "$2"; }
+ssh() { shift 2; eval "$2"; }
 scp() {
-    shift # -q
+    shift 3 # -q -o BatchMode=yes
     local destination="${!#}"
     set -- "${@:1:$#-1}" "${destination#local:}"
     cp "$@"
@@ -1114,7 +1122,7 @@ def test_11_reaper_preflight_proves_timer_target_and_stop_fallback(tmp_path: Pat
                 " --load-stale-grace-seconds ${ACX_DESCRIBE_LOAD_STALE_GRACE_SECONDS}"
                 " --gpu-state-json /run/acx/gpu-state.json --running-since-path /run/acx-gpu/running-since.json"
                 " --idle-seconds ${IDLE_SECONDS} --fence-delay-seconds 2 --probe-oci"
-                " --oci-bin /home/ubuntu/.oci-venv/bin/oci ; ignore_errors=no"
+                " ; ignore_errors=no"
             ),
         )
 
@@ -2153,3 +2161,25 @@ def test_11_environment_file_optional_metadata(tmp_path: Path, optional: bool) -
     ))
     assert (result.returncode == 0) == optional, result.stderr
     assert ("MANUAL STOP" in result.stdout) == optional
+
+
+@pytest.mark.parametrize("kind", ["missing", "non-executable", "non-oci", "true", "valid"])
+def test_11_reaper_oci_executable(tmp_path: Path, kind: str) -> None:
+    reaper_env = tmp_path / "gpu-lifecycle.env"
+    reaper_env.write_text("GPU_INSTANCE_ID=ocid1.instance.oc1.iad.fakeinstance\nMAX_LEASE_SECONDS=3600\n")
+    unit = reaper_systemctl_script(reaper_env)
+    binary = tmp_path / "candidate"
+    if kind != "missing":
+        binary.write_text("#!/bin/sh\n" + (
+            '[ "$1" = --help ] || exit 9\necho "Oracle Cloud Infrastructure CLI"\n'
+            if kind in ("valid", "non-executable") else "echo unrelated-tool\n"
+        ))
+        binary.chmod(0o644 if kind == "non-executable" else 0o755)
+    unit = unit.replace(str(tmp_path / "oci-stub"), "/bin/true" if kind == "true" else str(binary))
+    result = run_preflight(tmp_path, check_reaper=True, systemctl_script=unit)
+    if kind == "valid":
+        assert result.returncode == 0, result.stderr
+    else:
+        assert result.returncode != 0
+        assert "OCI executable must run as the service user" in result.stderr
+        assert "MANUAL STOP" not in result.stdout

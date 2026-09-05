@@ -143,6 +143,7 @@ export interface ProductionCssBundle {
   /** Metadata read under the build lock, before another builder can evict the artifact. */
   readonly artifactStamp: string | null;
   readonly manifestSources: readonly string[];
+  readonly manifestEntryPoints: readonly string[];
 }
 
 /**
@@ -240,7 +241,10 @@ export const uncoveredBuildInputs = (): string[] =>
  */
 export const manifestBuildSources = (bundle: ProductionCssBundle): string[] => [...bundle.manifestSources];
 
-const readManifestBuildSources = (outDir: string): string[] => {
+const readManifestMetadata = (outDir: string): {
+  manifestSources: readonly string[];
+  manifestEntryPoints: readonly string[];
+} => {
   const manifestPath = join(outDir, '.vite', 'manifest.json');
   if (!existsSync(manifestPath)) {
     throw new Error(
@@ -257,7 +261,14 @@ const readManifestBuildSources = (outDir: string): string[] => {
     .filter((src): src is string => typeof src === 'string')
     .map(toPosix);
 
-  return sources.sort();
+  const entryPoints = Object.entries(parsed as Record<string, unknown>)
+    .filter(([, chunk]) => typeof chunk === 'object' && chunk !== null && 'isEntry' in chunk && chunk.isEntry === true)
+    .map(([key]) => key);
+
+  return {
+    manifestSources: Object.freeze(sources.sort()),
+    manifestEntryPoints: Object.freeze(entryPoints.sort()),
+  };
 };
 
 /**
@@ -1561,7 +1572,7 @@ export const readProductionCssArtifact = (outDir: string, fingerprint: string): 
     fingerprint,
     outDir,
     artifactStamp: readStampedFingerprint(join(outDir, STAMP_FILE)),
-    manifestSources: Object.freeze(readManifestBuildSources(outDir)),
+    ...readManifestMetadata(outDir),
   });
 };
 

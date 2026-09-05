@@ -86,7 +86,10 @@ def test_installer_requires_readiness_url() -> None:
 
 def test_start_unit_always_executes_a_readiness_probe() -> None:
     script = INSTALLER.read_text(encoding="utf-8")
-    start_unit = script.split("sudo tee /etc/systemd/system/acx-gpu-start.service", 1)[1].split("\nUNIT", 1)[0]
+    start_unit = re.search(
+        r"sudo tee [^\n]*/acx-gpu-start\.service.*?<<UNIT\n(.*?)\nUNIT",
+        script, flags=re.DOTALL,
+    ).group(1)
 
     assert "--ready-url" in start_unit
     assert "${READY_URL}" in start_unit
@@ -95,7 +98,7 @@ def test_start_unit_always_executes_a_readiness_probe() -> None:
 def test_oneshot_units_have_systemd_execution_deadlines() -> None:
     script = INSTALLER.read_text(encoding="utf-8")
     services = re.findall(
-        r"tee /etc/systemd/system/acx-gpu-(?:start|reap)\.service.*?<<UNIT\n(.*?)\nUNIT",
+        r"sudo tee [^\n]*/acx-gpu-(?:start|reap)\.service.*?<<UNIT\n(.*?)\nUNIT",
         script,
         flags=re.DOTALL,
     )
@@ -109,7 +112,7 @@ def test_oneshot_units_have_systemd_execution_deadlines() -> None:
 def test_oneshot_units_share_persistent_boot_fenced_lifecycle_state() -> None:
     script = INSTALLER.read_text(encoding="utf-8")
     services = re.findall(
-        r"tee /etc/systemd/system/acx-gpu-(?:start|reap)\.service.*?<<UNIT\n(.*?)\nUNIT",
+        r"sudo tee [^\n]*/acx-gpu-(?:start|reap)\.service.*?<<UNIT\n(.*?)\nUNIT",
         script,
         flags=re.DOTALL,
     )

@@ -190,6 +190,41 @@ fence_gpu_lifecycle_start() {
     }
 }
 
+validate_gpu_lifecycle_snapshot() {
+    local snapshot_dir=$1 artifact section key
+    for artifact in gpu-lifecycle.env acx-gpu.conf acx-gpu-start.service \
+        acx-gpu-start.timer acx-gpu-reap.service acx-gpu-reap.timer; do
+        if [ ! -f "$snapshot_dir/$artifact" ] \
+            || [ ! -r "$snapshot_dir/$artifact" ] \
+            || [ ! -s "$snapshot_dir/$artifact" ]; then
+            echo "error: incomplete rollback snapshot: $snapshot_dir/$artifact" >&2
+            return 1
+        fi
+        case "$artifact" in
+            *.service) section=Service; key=ExecStart ;;
+            *.timer) section=Timer; key=OnUnitActiveSec ;;
+            *) continue ;;
+        esac
+        # A truncated but non-empty unit cannot restore the STOP backstop.
+        # Check the key in its actual section, including later empty resets.
+        if ! awk -v section="$section" -v key="$key" '
+            /^[[:space:]]*[#;]/ { next }
+            /^[[:space:]]*\[/ {
+                active = ($0 ~ "^[[:space:]]*\\[" section "\\][[:space:]]*$")
+            }
+            active && $0 ~ "^[[:space:]]*" key "[[:space:]]*=" {
+                value = $0
+                sub(/^[^=]*=[[:space:]]*/, "", value)
+                valid = (value ~ /[^[:space:]]/)
+            }
+            END { exit !valid }
+        ' "$snapshot_dir/$artifact"; then
+            echo "error: incomplete rollback snapshot: $snapshot_dir/$artifact lacks $section.$key" >&2
+            return 1
+        fi
+    done
+}
+
 snapshot_gpu_lifecycle_release() {
     local previous_release=$1 snapshot_stage="" snapshot_dir artifact
     snapshot_dir="$previous_release/systemd"
@@ -216,18 +251,12 @@ snapshot_gpu_lifecycle_release() {
     fi
     # Validate staged and historical snapshots before publication or updating
     # previous. Empty artifacts cannot restore the STOP backstop on rollback.
-    for artifact in gpu-lifecycle.env acx-gpu.conf acx-gpu-start.service \
-        acx-gpu-start.timer acx-gpu-reap.service acx-gpu-reap.timer; do
-        if [ ! -f "$snapshot_dir/$artifact" ] \
-            || [ ! -r "$snapshot_dir/$artifact" ] \
-            || [ ! -s "$snapshot_dir/$artifact" ]; then
-            echo "error: incomplete rollback snapshot: $snapshot_dir/$artifact" >&2
-            if [ -n "$snapshot_stage" ]; then
-                sudo rm -rf "$snapshot_stage"
-            fi
-            return 1
+    if ! validate_gpu_lifecycle_snapshot "$snapshot_dir"; then
+        if [ -n "$snapshot_stage" ]; then
+            sudo rm -rf "$snapshot_stage"
         fi
-    done
+        return 1
+    fi
     if [ -n "$snapshot_stage" ]; then
         sudo python3 -c 'import os, sys; os.rename(sys.argv[1], sys.argv[2])' \
             "$snapshot_stage" "$previous_release/systemd" || {
@@ -238,9 +267,14 @@ snapshot_gpu_lifecycle_release() {
 }
 
 lifecycle_transaction_complete=0
+unit_stage=''
 cleanup_gpu_lifecycle_transaction() {
     local status=$?
     trap - ERR EXIT
+    if [ -n "${unit_stage:-}" ]; then
+        sudo rm -rf "$unit_stage" "$unit_stage.link" || \
+            echo 'warning: could not remove unpublished lifecycle generation' >&2
+    fi
     if [ "$status" -ne 0 ] && [ "$lifecycle_transaction_complete" -eq 0 ]; then
         echo 'error: lifecycle transaction failed; running fail-safe STOP path' >&2
         if ! fence_gpu_lifecycle_start; then
@@ -598,6 +632,7 @@ activation_function=$(declare -f activate_gpu_lifecycle_timers)
 start_fence_function=$(declare -f fence_gpu_lifecycle_start)
 cleanup_function=$(declare -f cleanup_gpu_lifecycle_transaction)
 snapshot_function=$(declare -f snapshot_gpu_lifecycle_release)
+snapshot_validation_function=$(declare -f validate_gpu_lifecycle_snapshot)
 run_with_deadline "systemd unit installation" \
     ssh "${SSH_OPTIONS[@]}" -l "$SSH_USER" -- "$HOST" "set -euo pipefail
 ${sha256_function}
@@ -607,7 +642,9 @@ ${activation_function}
 ${start_fence_function}
 ${cleanup_function}
 ${snapshot_function}
+${snapshot_validation_function}
 lifecycle_transaction_complete=0
+unit_stage=''
 trap cleanup_gpu_lifecycle_transaction ERR EXIT
 
 # ARCH-13/COST-04: establish the fail-safe before changing the live release or
@@ -625,18 +662,21 @@ ln -sfn '${remote_release}' '/opt/acx-gpu/.current-${release_id}'
 # os.replace atomically replaces the symlink itself on both Linux and BSD.
 sudo python3 -c 'import os, sys; os.replace(sys.argv[1], sys.argv[2])' '/opt/acx-gpu/.current-${release_id}' /opt/acx-gpu/current
 
-sudo mkdir -p '${remote_release}/systemd'
-sudo tee '${remote_release}/systemd/gpu-lifecycle.env' >/dev/null <<ENV
+# Every render, including an idempotent rerun, gets a private generation.
+# Never tee into the published rollback snapshot or effective service files.
+sudo mkdir -p '${remote_release}'
+unit_stage=\$(sudo mktemp -d '${remote_release}/.systemd.XXXXXX')
+sudo chmod 0755 \"\$unit_stage\"
+sudo tee \"\$unit_stage/gpu-lifecycle.env\" >/dev/null <<ENV
 GPU_INSTANCE_ID=${remote_gpu_instance_id}
 MAX_LEASE_SECONDS=${MAX_LEASE_SECONDS}
 IDLE_SECONDS=${IDLE_SECONDS}
 ACX_DESCRIBE_LOAD_STALE_GRACE_SECONDS=${LOAD_STALE_GRACE_SECONDS}
 READY_URL=${READY_URL}
 ENV
-sudo chmod 0644 '${remote_release}/systemd/gpu-lifecycle.env'
+sudo chmod 0644 \"\$unit_stage/gpu-lifecycle.env\"
 
-sudo tee /etc/systemd/system/acx-gpu-start.service \
-    '${remote_release}/systemd/acx-gpu-start.service' >/dev/null <<UNIT
+sudo tee \"\$unit_stage/acx-gpu-start.service\" >/dev/null <<UNIT
 [Unit]
 Description=ACX burst GPU start-on-demand (START when describe work is waiting)
 After=network-online.target
@@ -658,8 +698,7 @@ WorkingDirectory=/opt/acx-gpu/current
 ExecStart=/usr/bin/flock --wait 120 /var/lib/acx-gpu/lifecycle.lock /usr/bin/python3 -m infra.oci.gpu_lifecycle --mode start --instance-id \\\${GPU_INSTANCE_ID} --load-dir /run/acx-write --load-stale-grace-seconds \\\${ACX_DESCRIBE_LOAD_STALE_GRACE_SECONDS} --gpu-state-json /run/acx/gpu-state.json --running-since-path /var/lib/acx-gpu/running-since.json --probe-oci --oci-bin /home/ubuntu/.oci-venv/bin/oci --ready-url \\\${READY_URL}
 UNIT
 
-sudo tee /etc/systemd/system/acx-gpu-start.timer \
-    '${remote_release}/systemd/acx-gpu-start.timer' >/dev/null <<UNIT
+sudo tee \"\$unit_stage/acx-gpu-start.timer\" >/dev/null <<UNIT
 [Unit]
 Description=Poll describe load and start the burst GPU
 
@@ -672,8 +711,7 @@ AccuracySec=5s
 WantedBy=timers.target
 UNIT
 
-sudo tee /etc/systemd/system/acx-gpu-reap.service \
-    '${remote_release}/systemd/acx-gpu-reap.service' >/dev/null <<UNIT
+sudo tee \"\$unit_stage/acx-gpu-reap.service\" >/dev/null <<UNIT
 [Unit]
 Description=ACX burst GPU reaper (STOP on drain; forced STOP at the max lease)
 After=network-online.target
@@ -693,8 +731,7 @@ WorkingDirectory=/opt/acx-gpu/current
 ExecStart=/usr/bin/flock --wait 120 /var/lib/acx-gpu/lifecycle.lock /usr/bin/python3 -m infra.oci.gpu_lifecycle --mode reap --instance-id \\\${GPU_INSTANCE_ID} --load-dir /run/acx-write --load-stale-grace-seconds \\\${ACX_DESCRIBE_LOAD_STALE_GRACE_SECONDS} --gpu-state-json /run/acx/gpu-state.json --running-since-path /var/lib/acx-gpu/running-since.json --idle-seconds \\\${IDLE_SECONDS} --max-lease-seconds \\\${MAX_LEASE_SECONDS} --fence-delay-seconds 2 --probe-oci --oci-bin /home/ubuntu/.oci-venv/bin/oci
 UNIT
 
-sudo tee /etc/systemd/system/acx-gpu-reap.timer \
-    '${remote_release}/systemd/acx-gpu-reap.timer' >/dev/null <<UNIT
+sudo tee \"\$unit_stage/acx-gpu-reap.timer\" >/dev/null <<UNIT
 [Unit]
 Description=Run the ACX burst GPU reaper every ${REAP_INTERVAL}
 
@@ -725,12 +762,21 @@ sudo chmod 0600 /run/acx/gpu-state.json.lock
 # /run is tmpfs: recreate the directory on every boot, or the bind mount comes
 # back root-owned and the container-side writer fails silently. Pre-create the
 # state lock too, so no process umask decides its ownership or mode.
-sudo tee '${remote_release}/systemd/acx-gpu.conf' >/dev/null <<'TMPF'
+sudo tee \"\$unit_stage/acx-gpu.conf\" >/dev/null <<'TMPF'
 d /run/acx 0755 ubuntu ubuntu -
 d /run/acx-write 0775 root 10001 -
 ${TMPFILES_ENVIRONMENT_ENTRIES}
 f /run/acx/gpu-state.json.lock 0600 ubuntu ubuntu -
 TMPF
+
+# Publish only a complete generation. Replacing the symlink is atomic even
+# on reruns; the old directory remains immutable for rollback readers.
+sudo chmod 0644 \"\$unit_stage/\"*
+validate_gpu_lifecycle_snapshot \"\$unit_stage\"
+sudo ln -s \"\$unit_stage\" \"\$unit_stage.link\"
+sudo python3 -c 'import os, sys; os.replace(sys.argv[1], sys.argv[2])' \
+    \"\$unit_stage.link\" '${remote_release}/systemd'
+unit_stage=''
 
 # Install from the release snapshot rather than hashing files after they are
 # live. Effective-fragment hashes below therefore compare staged expectations

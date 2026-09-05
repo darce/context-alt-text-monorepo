@@ -47,6 +47,8 @@ def _run_lifecycle(
     snapshot_kind: str = "complete",
     snapshot_copy_failure: bool = False,
     empty_rollback_artifact: str | None = None,
+    damaged_rollback_unit: str | None = None,
+    partial_reaper_write: bool = False,
 ) -> tuple[subprocess.CompletedProcess[str], str]:
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir(exist_ok=True)
@@ -62,7 +64,10 @@ def _run_lifecycle(
         "acx-gpu-reap.service",
         "acx-gpu-reap.timer",
     )):
-        content = f"test fixture for {unit}\n"
+        content = (
+            "[Service]\nExecStart=/usr/bin/true\n" if unit.endswith(".service")
+            else "[Timer]\nOnUnitActiveSec=2min\n"
+        )
         (expected_systemd / unit).write_text(content, encoding="utf-8")
         (effective_systemd / unit).write_text(content, encoding="utf-8")
     lifecycle_env = tmp_path / "gpu-lifecycle.env"
@@ -104,6 +109,9 @@ def _run_lifecycle(
             else:
                 artifact_dir = old_release / "systemd"
             (artifact_dir / empty_rollback_artifact).write_text("")
+        if damaged_rollback_unit is not None:
+            artifact_dir = effective_systemd if snapshot_kind == "missing" else old_release / "systemd"
+            (artifact_dir / damaged_rollback_unit).write_text("[Unit]\n")
     _write_executable(
         fake_bin / "ssh",
         r"""#!/usr/bin/env bash
@@ -163,6 +171,16 @@ fi
 set -euo pipefail
 case "${1:-}" in
   chown) exit 0 ;;
+  tee)
+    if [ "${FAKE_PARTIAL_REAPER_WRITE:-0}" = 1 ] && [[ "$*" == *acx-gpu-reap.service* ]]; then
+      shift
+      for path in "$@"; do printf '[Unit]\\n' >"$path"; done
+      cat >/dev/null
+      echo 'injected partial reaper write' >&2
+      exit 74
+    fi
+    exec "$@"
+    ;;
   cp)
     if [ "${FAKE_SNAPSHOT_COPY_FAILURE:-0}" = 1 ] && [[ "$2" == */acx-gpu.conf ]]; then
       echo 'injected snapshot copy failure' >&2
@@ -290,6 +308,7 @@ printf '\n' >>"$FAKE_TRANSPORT_LOG"
             "FAKE_REMOTE_STALL": str(remote_stall),
             "REAP_INTERVAL": reap_interval,
             "FAKE_SNAPSHOT_COPY_FAILURE": "1" if snapshot_copy_failure else "0",
+            "FAKE_PARTIAL_REAPER_WRITE": "1" if partial_reaper_write else "0",
             "FAKE_FENCE_FAILURE": fence_failure,
             "FAKE_FENCE_LOAD_STATE": fence_load_state,
             "PATH": f"{fake_bin}:{os.environ['PATH']}",
@@ -781,6 +800,76 @@ def test_empty_rollback_artifact_must_not_replace_previous(
         assert (release_root / "old release/systemd" / artifact).read_bytes() == b""
 
 
+def test_failed_idempotent_rewrite_must_preserve_valid_rollback(tmp_path: Path) -> None:
+    def install(generation: str, *, fail: bool = False) -> subprocess.CompletedProcess[str]:
+        result, _ = _run_lifecycle(
+            tmp_path, enabled=True, ready_url=f"http://gpu-{generation}.test/health",
+            dry_run=False, partial_reaper_write=fail,
+        )
+        return result
+
+    for generation in ("a", "b"):
+        result = install(generation)
+        assert result.returncode == 0, result.stdout + result.stderr
+    release_root = tmp_path / "host/opt-acx-gpu"
+    release_b = (release_root / "current").resolve()
+    original = {path.name: path.read_bytes() for path in (release_b / "systemd").iterdir()}
+    published = (release_b / "systemd").resolve()
+    live_reaper = (tmp_path / "effective-systemd/acx-gpu-reap.service").read_bytes()
+
+    result = install("b", fail=True)
+    assert result.returncode != 0
+    assert "injected partial reaper write" in result.stderr
+    assert (release_b / "systemd").resolve() == published
+    assert (tmp_path / "effective-systemd/acx-gpu-reap.service").read_bytes() == live_reaper
+    assert set(release_b.glob(".systemd.*")) == {published}
+    # Check after the next upgrade too: it must preserve B as a usable rollback.
+    result = install("c")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert (release_root / "previous").resolve() == release_b
+    assert {path.name: path.read_bytes() for path in (release_b / "systemd").iterdir()} == original
+    assert b"ExecStart=" in (release_b / "systemd/acx-gpu-reap.service").read_bytes()
+
+
+def test_successful_idempotent_rewrite_publishes_complete_generation(tmp_path: Path) -> None:
+    result, _ = _run_lifecycle(
+        tmp_path, enabled=True, ready_url="http://gpu.test/health", dry_run=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    snapshot = tmp_path / "host/opt-acx-gpu/current/systemd"
+    original_dir = snapshot.resolve()
+    original = {path.name: path.read_bytes() for path in snapshot.iterdir()}
+    result, _ = _run_lifecycle(
+        tmp_path, enabled=True, ready_url="http://gpu.test/health", dry_run=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert snapshot.is_symlink()
+    assert snapshot.resolve() != original_dir
+    assert {path.name: path.read_bytes() for path in snapshot.iterdir()} == original
+    assert {path.name: path.read_bytes() for path in original_dir.iterdir()} == original
+
+
+@pytest.mark.parametrize("snapshot_kind", ["complete", "missing"])
+@pytest.mark.parametrize("unit", [
+    "acx-gpu-start.service", "acx-gpu-reap.service", "acx-gpu-start.timer", "acx-gpu-reap.timer",
+])
+def test_snapshot_missing_required_unit_key_must_not_replace_previous(
+    tmp_path: Path, snapshot_kind: str, unit: str,
+) -> None:
+    result, _ = _run_lifecycle(
+        tmp_path, enabled=True, ready_url="http://gpu.test/health", dry_run=False,
+        previous_release=True, snapshot_kind=snapshot_kind, damaged_rollback_unit=unit,
+    )
+    assert result.returncode != 0, result.stdout + result.stderr
+    assert "incomplete rollback snapshot" in result.stderr
+    assert unit in result.stderr
+    release_root = tmp_path / "host/opt-acx-gpu"
+    assert (release_root / "previous").resolve().name == "older release"
+    assert (release_root / "current").resolve().name == "old release"
+    if snapshot_kind == "missing":
+        assert not (release_root / "old release/systemd").exists()
+
+
 def test_snapshot_copy_failure_retry_publishes_only_complete_generation(tmp_path: Path) -> None:
     result, _ = _run_lifecycle(
         tmp_path, enabled=True, ready_url="http://gpu.test:8000/health",
@@ -849,7 +938,7 @@ def test_fail_safe_guard_precedes_live_release_and_effective_artifact_mutations(
     guard = transaction.index("trap cleanup_gpu_lifecycle_transaction ERR EXIT")
     fence = transaction.index("fence_gpu_lifecycle_start")
     switch = transaction.index("previous_release=\\$(python3 -c")
-    artifact_write = transaction.index("sudo tee /etc/systemd/system/acx-gpu-start.service")
+    artifact_write = transaction.index("sudo tee ")
     prove_reaper = transaction.index("activate_gpu_lifecycle_timers \\")
     rearm_start = source.index("sudo systemctl enable --now acx-gpu-start.timer")
 

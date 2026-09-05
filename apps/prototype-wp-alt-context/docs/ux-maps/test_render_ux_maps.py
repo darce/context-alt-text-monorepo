@@ -19,6 +19,31 @@ spec.loader.exec_module(renderer)
 
 
 class RendererBoundaryTests(unittest.TestCase):
+    def test_duplicate_screen_metadata_fails_both_check_paths(self):
+        ref = "workbench-operator-loop"
+        original = SOURCE.with_name(f"{ref}.md").read_text()
+        with tempfile.TemporaryDirectory() as directory:
+            maps = Path(directory)
+            shutil.copyfile(SOURCE.with_name(f"{ref}.uxmap.json"), maps / f"{ref}.uxmap.json")
+            target = maps / f"{ref}.md"
+            with patch.object(renderer, "MAPS_DIR", maps):
+                for available in [False, True]:
+                    with patch.object(renderer, "render", return_value=original,
+                                      side_effect=None if available else renderer.OptionalRendererUnavailable()):
+                        target.write_text(original)
+                        with contextlib.redirect_stdout(io.StringIO()):
+                            self.assertEqual(renderer.check([ref]), 0)
+                        for field in ["Purpose", "url_params"]:
+                            row = re.search(rf"^{field}: .*$", original, re.MULTILINE)[0]
+                            for duplicate in [row, f"{field}: contradictory metadata"]:
+                                for rows in [f"{row}\n\n{duplicate}", f"{duplicate}\n\n{row}"]:
+                                    with self.subTest(available=available, field=field, rows=rows):
+                                        target.write_text(original.replace(row, rows, 1))
+                                        output = io.StringIO()
+                                        with contextlib.redirect_stderr(output), contextlib.redirect_stdout(io.StringIO()):
+                                            self.assertEqual(renderer.check([ref]), 1)
+                                        self.assertIn(f"screen workbench-shell has duplicate {field} declarations", output.getvalue())
+
     def test_action_rows_and_duplicate_sections_fail_both_check_paths(self):
         ref = "febt-1-job-error-states"
         original = SOURCE.with_name(f"{ref}.md").read_text()

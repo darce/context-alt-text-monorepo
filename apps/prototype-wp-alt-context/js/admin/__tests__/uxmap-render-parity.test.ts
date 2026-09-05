@@ -1055,6 +1055,18 @@ describe('ux-map render parity (owned maps)', () => {
     expect(parseRenderedUxMap(mutant)).not.toEqual(parseRenderedUxMap(md));
   });
 
+  it.each(['Purpose', 'url_params'])('rejects duplicate screen %s declarations', (field) => {
+    const md = readFileSync(path.join(uxMapsDir, 'workbench-operator-loop.md'), 'utf8');
+    const row = new RegExp(`^${field}: .*$`, 'm').exec(md)![0];
+    for (const duplicate of [row, `${field}: contradictory metadata`]) {
+      for (const rows of [`${row}\n\n${duplicate}`, `${duplicate}\n\n${row}`]) {
+        expect(() => parseRenderedUxMap(md.replace(row, rows))).toThrow(
+          `screen workbench-shell has duplicate ${field} declarations`,
+        );
+      }
+    }
+  });
+
   it.each([
     ['orphan summary', 'screen retired-screen has a Screens table row but no detail block'],
     ['conflicting duplicate summary', 'screen workbench-shell has duplicate Screens table rows'],

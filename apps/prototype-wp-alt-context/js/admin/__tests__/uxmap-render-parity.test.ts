@@ -36,12 +36,28 @@ import { SCREEN_METADATA_KEYS, scanDeclarations, parseRenderedUxMap, projectUxMa
 import unicodeWidth from './uxmap-render-parity.fixtures/unicode-width.json';
 
 // Synchronous children need OS-enforced deadlines; Vitest timers cannot interrupt them.
+const SHORT_COMMAND_DEADLINE_MS = 55_000;
+// The boundary suite took 281 seconds under sandbox contention.
+const BOUNDARY_SUITE_DEADLINE_MS = 300_000;
+const vitestBudget = (deadlineMs: number): number => deadlineMs + Math.max(5_000, deadlineMs / 10);
 const spawnSync: typeof spawnSyncUnbounded = ((...args: Parameters<typeof spawnSyncUnbounded>) => {
   const [command, argv, options] = args;
-  const result = spawnSyncUnbounded(command, argv, { ...options, timeout: 55_000, killSignal: 'SIGKILL' });
-  if (result.error) throw new Error(`Subprocess ${command} failed (55s deadline): ${result.error.message}`);
+  const deadlineMs = options?.timeout ?? SHORT_COMMAND_DEADLINE_MS;
+  const result = spawnSyncUnbounded(command, argv, { ...options, timeout: deadlineMs, killSignal: 'SIGKILL' });
+  if ((result.error as NodeJS.ErrnoException | undefined)?.code === 'ETIMEDOUT') {
+    throw new Error(`Subprocess timeout after ${deadlineMs} ms: ${command} ${JSON.stringify(argv)}`);
+  }
+  if (result.error) throw new Error(`Subprocess ${command} failed: ${result.error.message}`);
   return result;
 }) as typeof spawnSyncUnbounded;
+
+it('reports an exceeded subprocess deadline as a timeout before parity assertions', () => {
+  // A small deadline exercises the same wrapper without waiting for a production budget.
+  const deadlineMs = 25;
+  expect(() => spawnSync(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {
+    encoding: 'utf8', timeout: deadlineMs,
+  })).toThrow(`Subprocess timeout after ${deadlineMs} ms: ${process.execPath}`);
+}, vitestBudget(SHORT_COMMAND_DEADLINE_MS));
 
 const uxMapsDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../docs/ux-maps');
 
@@ -1020,14 +1036,14 @@ describe('ux-map render parity (owned maps)', () => {
       encoding: 'utf8',
     });
     expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
-  }, 60_000);
+  }, vitestBudget(SHORT_COMMAND_DEADLINE_MS));
 
   it('distinguishes Unicode version metadata from real property-range drift', () => {
     const result = spawnSync(uxMapPython, [path.join(uxMapsDir, 'test_sync_unicode_width.py')], {
       encoding: 'utf8',
     });
     expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
-  }, 60_000);
+  }, vitestBudget(SHORT_COMMAND_DEADLINE_MS));
 
   it('rejects an extra unconditional primary recovery on the same screen', () => {
     const raw = readMapJson('febt-1-job-error-states') as { actions: Record<string, unknown>[] };
@@ -1715,11 +1731,11 @@ describe('ux-map generated-render provenance', () => {
     const result = spawnSync(
       uxMapPython,
       ['-m', 'unittest', 'discover', '-s', uxMapsDir, '-p', 'test_render_ux_maps.py'],
-      { encoding: 'utf8' },
+      { encoding: 'utf8', timeout: BOUNDARY_SUITE_DEADLINE_MS },
     );
     expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
     // Exhaustive declarations run in-process; only representatives cross the boundary.
-  }, 300_000);
+  }, vitestBudget(BOUNDARY_SUITE_DEADLINE_MS));
 
   it('executes the sanctioned renderer in --check mode without its optional canvas package', () => {
     const result = spawnSync(uxMapPython, [rendererPath, '--check'], {
@@ -1729,7 +1745,7 @@ describe('ux-map generated-render provenance', () => {
 
     expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
     expect(result.stdout).toContain('all UX-map artifacts are current');
-  }, 60_000);
+  }, vitestBudget(SHORT_COMMAND_DEADLINE_MS));
 
   it('--check rejects any visible ASCII or Mermaid row mutation without the canvas package', () => {
     const mutations = [
@@ -1743,7 +1759,7 @@ describe('ux-map generated-render provenance', () => {
       expect(result.status, `${result.stdout}${result.stderr}`).toBe(1);
       expect(result.stderr).toContain('visibleProjectionSha256');
     }
-  }, 60_000);
+  }, vitestBudget(SHORT_COMMAND_DEADLINE_MS));
 
   it('renderer-backed --check rejects a mutation inside a retained detailed-contract fence', () => {
     const probe = [

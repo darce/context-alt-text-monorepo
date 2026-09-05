@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 from pathlib import Path
 
@@ -141,6 +142,7 @@ def run_live_gpu_verifier(
     *,
     payload: dict[str, object] | None = None,
     curl_status: int = 0,
+    enqueue_payload: dict[str, object] | None = None,
 ) -> subprocess.CompletedProcess[str]:
     staged_lib = tmp_path / "lib"
     staged_lib.mkdir()
@@ -159,15 +161,22 @@ def run_live_gpu_verifier(
         """#!/usr/bin/env bash
 set -euo pipefail
 output_file=
+url=
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --output) output_file="$2"; shift 2 ;;
-    *) shift ;;
+    -*) shift ;;
+    *) url="$1"; shift ;;
   esac
 done
 [[ "${FAKE_CURL_STATUS}" == 0 ]] || exit "${FAKE_CURL_STATUS}"
 test -n "$output_file"
-printf '%s' "$FAKE_CURL_RESPONSE" > "$output_file"
+printf '%s\n' "$url" >> "$FAKE_CURL_LOG"
+case "$url" in
+  */scene/describe/async) printf '%s' "$FAKE_CURL_ENQUEUE_RESPONSE" > "$output_file" ;;
+  */scene/describe/jobs/*) printf '%s' "$FAKE_CURL_RESPONSE" > "$output_file" ;;
+  *) exit 64 ;;
+esac
 """,
         encoding="utf-8",
     )
@@ -177,7 +186,28 @@ printf '%s' "$FAKE_CURL_RESPONSE" > "$output_file"
         {
             "PATH": f"{fake_bin}:{env['PATH']}",
             "FAKE_CURL_STATUS": str(curl_status),
-            "FAKE_CURL_RESPONSE": json.dumps(payload or live_gpu_payload()),
+            "FAKE_CURL_LOG": str(tmp_path / "curl.log"),
+            "FAKE_CURL_ENQUEUE_RESPONSE": json.dumps(
+                enqueue_payload
+                or {
+                    "job_id": "123e4567-e89b-42d3-a456-426614174999",
+                    "status": "queued",
+                    "tier": None,
+                    "result_generation": 0,
+                    "visual_facts": None,
+                    "error": None,
+                }
+            ),
+            "FAKE_CURL_RESPONSE": json.dumps(
+                {
+                    "job_id": "123e4567-e89b-42d3-a456-426614174999",
+                    "status": "final",
+                    "tier": "final_gpu",
+                    "result_generation": 2,
+                    "visual_facts": payload or live_gpu_payload(),
+                    "error": None,
+                }
+            ),
         }
     )
     return subprocess.run(
@@ -686,20 +716,35 @@ def test_10_rejects_invalid_runtime_gpu_setting(tmp_path: Path, key: str, value:
         assert value not in result.stderr
 
 
-def reaper_systemctl_script(environment_file: Path, *, timer_active: bool = True) -> str:
-    active_result = "exit 0" if timer_active else "exit 3"
+def reaper_systemctl_script(
+    environment_file: Path,
+    *,
+    reap_timer_active: bool = True,
+    start_timer_active: bool = True,
+    exec_start: str | None = None,
+    environment_files: str | None = None,
+) -> str:
+    reap_active_result = "exit 0" if reap_timer_active else "exit 3"
+    start_active_result = "exit 0" if start_timer_active else "exit 3"
+    exec_start = exec_start or (
+        "{ path=/usr/bin/python3 ; argv[]=/usr/bin/python3 -m infra.oci.gpu_lifecycle "
+        "--mode reap --instance-id ${GPU_INSTANCE_ID} "
+        "--max-lease-seconds ${MAX_LEASE_SECONDS} ; ignore_errors=no ; }"
+    )
+    environment_files = environment_files or f"{environment_file} (ignore_errors=no)"
     return f"""#!/usr/bin/env bash
-case "$1" in
-  is-enabled) exit 0 ;;
-  is-active) {active_result} ;;
-  cat)
-    cat <<'UNIT'
-[Service]
-EnvironmentFile=/etc/acx/gpu-lifecycle.env
-ExecStart=/usr/bin/python3 -m infra.oci.gpu_lifecycle --mode reap --instance-id ${{GPU_INSTANCE_ID}} --max-lease-seconds ${{MAX_LEASE_SECONDS}}
-UNIT
+case "$1:$3" in
+  is-enabled:acx-gpu-reap.timer|is-enabled:acx-gpu-start.timer) exit 0 ;;
+  is-active:acx-gpu-reap.timer) {reap_active_result} ;;
+  is-active:acx-gpu-start.timer) {start_active_result} ;;
+  show:*)
+    cat <<'PROPERTIES'
+ExecStart={exec_start}
+FragmentPath=/etc/systemd/system/acx-gpu-reap.service
+DropInPaths=
+EnvironmentFiles={environment_files}
+PROPERTIES
     ;;
-  show) printf '%s (ignore_errors=no)\\n' '{environment_file}' ;;
   *) exit 2 ;;
 esac
 """
@@ -734,11 +779,70 @@ def test_11_reaper_preflight_fails_closed_when_timer_is_inactive(tmp_path: Path)
     result = run_preflight(
         tmp_path,
         check_reaper=True,
-        systemctl_script=reaper_systemctl_script(reaper_env, timer_active=False),
+        systemctl_script=reaper_systemctl_script(reaper_env, reap_timer_active=False),
     )
 
     assert result.returncode != 0
     assert "ERROR [11] acx-gpu-reap.timer must be enabled and active" in result.stderr
+
+
+def test_11_reaper_preflight_fails_closed_when_start_timer_is_inactive(tmp_path: Path) -> None:
+    reaper_env = tmp_path / "gpu-lifecycle.env"
+    reaper_env.write_text(
+        "GPU_INSTANCE_ID=ocid1.instance.oc1.iad.fakeinstance\nMAX_LEASE_SECONDS=3600\n",
+        encoding="utf-8",
+    )
+
+    result = run_preflight(
+        tmp_path,
+        check_reaper=True,
+        systemctl_script=reaper_systemctl_script(reaper_env, start_timer_active=False),
+    )
+
+    assert result.returncode != 0
+    assert "ERROR [11] acx-gpu-start.timer must be enabled and active" in result.stderr
+
+
+def test_11_reaper_preflight_rejects_non_reaper_execstart(tmp_path: Path) -> None:
+    reaper_env = tmp_path / "gpu-lifecycle.env"
+    reaper_env.write_text(
+        "GPU_INSTANCE_ID=ocid1.instance.oc1.iad.fakeinstance\nMAX_LEASE_SECONDS=3600\n",
+        encoding="utf-8",
+    )
+
+    result = run_preflight(
+        tmp_path,
+        check_reaper=True,
+        systemctl_script=reaper_systemctl_script(reaper_env, exec_start="/bin/true"),
+    )
+
+    assert result.returncode != 0
+    assert "ERROR [11] acx-gpu-reap.service ExecStart" in result.stderr
+
+
+def test_11_reaper_preflight_honors_all_environment_files_in_order(tmp_path: Path) -> None:
+    base_env = tmp_path / "base.env"
+    base_env.write_text(
+        "GPU_INSTANCE_ID=ocid1.instance.oc1.iad.fakeinstance\nMAX_LEASE_SECONDS=3600\n",
+        encoding="utf-8",
+    )
+    override_env = tmp_path / "override.env"
+    override_env.write_text("MAX_LEASE_SECONDS=86401\n", encoding="utf-8")
+    environment_files = (
+        f"{base_env} (ignore_errors=no) {override_env} (ignore_errors=no)"
+    )
+
+    result = run_preflight(
+        tmp_path,
+        check_reaper=True,
+        systemctl_script=reaper_systemctl_script(
+            base_env,
+            environment_files=environment_files,
+        ),
+    )
+
+    assert result.returncode != 0
+    assert "MAX_LEASE_SECONDS must be in 1..86400" in result.stderr
 
 
 def test_wordpress_config_extra_supplies_demo_recognition_constants(tmp_path: Path) -> None:
@@ -904,7 +1008,9 @@ def test_runbook_final_verification_requires_uncached_live_gpu_inference() -> No
     verifier = VERIFY_LIVE_GPU.read_text(encoding="utf-8")
 
     assert "verify-live-gpu.sh /opt/acx-backend/demo/secrets/.env" in final_verification
-    assert "/scene/describe/multipart" in verifier
+    assert "/scene/describe/async" in verifier
+    assert "/scene/describe/jobs/" in verifier
+    assert "/scene/describe/multipart" not in verifier
     assert '\\"tier\\":\\"gpu\\"' in verifier
     assert 'payload.get("adapter") != "gpu"' in verifier
     assert 'payload.get("tier") != "final_gpu"' in verifier
@@ -933,6 +1039,24 @@ def test_live_gpu_verifier_accepts_only_a_fresh_pinned_gpu_result(tmp_path: Path
     assert result.returncode == 0, result.stderr
     assert result.stderr == ""
     assert result.stdout == "OK: uncached live GPU inference passed\n"
+    requests = (tmp_path / "curl.log").read_text(encoding="utf-8").splitlines()
+    assert requests == [
+        "https://api.altcontext.com/scene/describe/async",
+        (
+            "https://api.altcontext.com/scene/describe/jobs/"
+            "123e4567-e89b-42d3-a456-426614174999"
+        ),
+    ]
+
+
+def test_live_gpu_verifier_queues_work_before_polling_for_gpu_start(tmp_path: Path) -> None:
+    result = run_live_gpu_verifier(tmp_path)
+
+    assert result.returncode == 0, result.stderr
+    verifier = VERIFY_LIVE_GPU.read_text(encoding="utf-8")
+    assert "/scene/describe/async" in verifier
+    assert "/scene/describe/jobs/" in verifier
+    assert "/scene/describe/multipart" not in verifier
 
 
 @pytest.mark.parametrize(
@@ -961,6 +1085,23 @@ def test_live_gpu_verifier_fails_when_live_request_is_unreachable(tmp_path: Path
 
     assert result.returncode != 0
     assert "fake-tenant-key-for-preflight-tests" not in result.stdout + result.stderr
+
+
+def test_15_deploy_shell_surface_remains_bash_3_2_compatible() -> None:
+    forbidden = {
+        "mapfile/readarray": re.compile(r"(?m)(?:^|[ \t])(mapfile|readarray)(?:[ \t]|$)"),
+        "associative arrays": re.compile(r"(?m)(?:^|[ \t])declare[ \t]+-A(?:[ \t]|$)"),
+        "case conversion": re.compile(r"\$\{[^}\n]+(?:,,|\^\^)[^}\n]*\}"),
+        "combined pipe": re.compile(r"\|&"),
+    }
+    violations: list[str] = []
+    for shell_file in sorted((ROOT / "scripts/deploy").rglob("*.sh")):
+        text = shell_file.read_text(encoding="utf-8")
+        for feature, pattern in forbidden.items():
+            if pattern.search(text):
+                violations.append(f"{shell_file.relative_to(ROOT)}: {feature}")
+
+    assert violations == []
 
 
 def test_worked_examples_form_valid_pair_after_documented_replacements(tmp_path: Path) -> None:

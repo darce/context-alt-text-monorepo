@@ -275,36 +275,87 @@ validate_runtime_gpu_settings() {
 }
 
 preflight_gpu_reaper() {
-    local unit environment_file instance_id max_lease
+    local timer unit_properties exec_start fragment_path environment_files
+    local environment_file optional_file instance_id="" max_lease="" value
+    local environment_file_count=0
     command -v systemctl >/dev/null 2>&1 || {
-        echo "ERROR [11] acx-gpu-reap.timer cannot be verified because systemctl is unavailable." >&2
+        echo "ERROR [11] GPU lifecycle timers cannot be verified because systemctl is unavailable." >&2
         exit 1
     }
-    systemctl is-enabled --quiet acx-gpu-reap.timer \
-        && systemctl is-active --quiet acx-gpu-reap.timer || {
-            echo "ERROR [11] acx-gpu-reap.timer must be enabled and active before the GPU flip." >&2
+
+    for timer in acx-gpu-reap.timer acx-gpu-start.timer; do
+        systemctl is-enabled --quiet "$timer" \
+            && systemctl is-active --quiet "$timer" || {
+            echo "ERROR [11] ${timer} must be enabled and active before the GPU flip." >&2
             exit 1
         }
-    unit="$(systemctl cat acx-gpu-reap.service 2>/dev/null)" || {
-        echo "ERROR [11] acx-gpu-reap.service effective unit could not be read." >&2
+    done
+
+    unit_properties="$(systemctl show acx-gpu-reap.service \
+        --property=ExecStart \
+        --property=FragmentPath \
+        --property=DropInPaths \
+        --property=EnvironmentFiles 2>/dev/null)" || {
+        echo "ERROR [11] acx-gpu-reap.service effective properties could not be read." >&2
         exit 1
     }
-    [[ "$unit" == *'--mode reap'* && "$unit" == *'--instance-id ${GPU_INSTANCE_ID}'* \
-        && "$unit" == *'--max-lease-seconds ${MAX_LEASE_SECONDS}'* ]] || {
-        echo "ERROR [11] acx-gpu-reap.service must target GPU_INSTANCE_ID with a finite MAX_LEASE_SECONDS." >&2
+    exec_start="$(printf '%s\n' "$unit_properties" | sed -n 's/^ExecStart=//p')"
+    fragment_path="$(printf '%s\n' "$unit_properties" | sed -n 's/^FragmentPath=//p')"
+    environment_files="$(printf '%s\n' "$unit_properties" | sed -n 's/^EnvironmentFiles=//p')"
+    case "$exec_start" in
+        '/usr/bin/python3 -m infra.oci.gpu_lifecycle --mode reap '*|\{\ path=/usr/bin/python3\ \;\ argv\[\]=/usr/bin/python3\ -m\ infra.oci.gpu_lifecycle\ --mode\ reap\ *) ;;
+        *)
+            echo "ERROR [11] acx-gpu-reap.service ExecStart must be the GPU lifecycle reaper." >&2
+            exit 1
+            ;;
+    esac
+    [[ "$exec_start" == *'--instance-id ${GPU_INSTANCE_ID}'* \
+        && "$exec_start" == *'--max-lease-seconds ${MAX_LEASE_SECONDS}'* \
+        && "$fragment_path" == /* && "$fragment_path" != /dev/null ]] || {
+        echo "ERROR [11] acx-gpu-reap.service must structurally target GPU_INSTANCE_ID and MAX_LEASE_SECONDS." >&2
         exit 1
     }
-    environment_file="$(systemctl show acx-gpu-reap.service --property=EnvironmentFiles --value 2>/dev/null)"
-    environment_file="${environment_file%% *}"
-    [[ -r "$environment_file" ]] || {
-        echo "ERROR [11] acx-gpu-reap.service EnvironmentFile is missing or unreadable." >&2
+
+    [[ -n "$environment_files" ]] || {
+        echo "ERROR [11] acx-gpu-reap.service has no effective EnvironmentFiles." >&2
         exit 1
     }
-    instance_id="$(env_get "$environment_file" GPU_INSTANCE_ID)"
-    max_lease="$(env_get "$environment_file" MAX_LEASE_SECONDS)"
+    while IFS= read -r environment_file; do
+        case "$environment_file" in
+            /*|'-/'*) ;;
+            *) continue ;;
+        esac
+        optional_file=0
+        if [[ "$environment_file" == -/* ]]; then
+            optional_file=1
+            environment_file="${environment_file#-}"
+        fi
+        if [[ ! -r "$environment_file" || ! -f "$environment_file" ]]; then
+            if (( optional_file )); then
+                continue
+            fi
+            echo "ERROR [11] acx-gpu-reap.service EnvironmentFile is missing or unreadable." >&2
+            exit 1
+        fi
+        environment_file_count=$((environment_file_count + 1))
+        if LC_ALL=C grep -q '^GPU_INSTANCE_ID=' "$environment_file"; then
+            value="$(env_get "$environment_file" GPU_INSTANCE_ID)"
+            instance_id="$value"
+        fi
+        if LC_ALL=C grep -q '^MAX_LEASE_SECONDS=' "$environment_file"; then
+            value="$(env_get "$environment_file" MAX_LEASE_SECONDS)"
+            max_lease="$value"
+        fi
+    done < <(printf '%s\n' "$environment_files" | tr ' ' '\n')
+
+    (( environment_file_count > 0 )) || {
+        echo "ERROR [11] acx-gpu-reap.service has no readable effective EnvironmentFiles." >&2
+        exit 1
+    }
     [[ "$instance_id" =~ ^ocid1\.instance\.oc[0-9]+\.[A-Za-z0-9._-]+$ \
-        && "$max_lease" =~ ^[1-9][0-9]*$ ]] || {
-        echo "ERROR [11] reaper GPU_INSTANCE_ID must be an instance OCID and MAX_LEASE_SECONDS a finite positive integer." >&2
+        && "$max_lease" =~ ^[1-9][0-9]{0,4}$ ]] \
+        && (( max_lease <= 86400 )) || {
+        echo "ERROR [11] reaper GPU_INSTANCE_ID must be an instance OCID and MAX_LEASE_SECONDS must be in 1..86400." >&2
         exit 1
     }
     printf "MANUAL STOP fallback: oci compute instance action --action STOP --instance-id '%s'\n" "$instance_id"

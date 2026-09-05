@@ -15,7 +15,10 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=describe-gate.sh
 source "${script_dir}/describe-gate.sh"
 
-mapfile -t wordpress_config_lines < <(sed -n 's/^WORDPRESS_CONFIG_EXTRA=//p' "$demo_env")
+wordpress_config_lines=()
+while IFS= read -r line; do
+    wordpress_config_lines+=("$line")
+done < <(sed -n 's/^WORDPRESS_CONFIG_EXTRA=//p' "$demo_env")
 if [[ ${#wordpress_config_lines[@]} -ne 1 ]]; then
     echo "ERROR: demo env must contain exactly one canonical WORDPRESS_CONFIG_EXTRA assignment." >&2
     exit 1
@@ -59,16 +62,83 @@ with open(sys.argv[1], "wb") as handle:
 PY
 
 # A random media id makes an existing cache row overwhelmingly unlikely. The
-# response must still report cached=false, so a collision fails closed.
+# asynchronous route durably queues work, which publishes describe load for the
+# start timer before the worker waits for GPU readiness. The response must still
+# report cached=false, so a collision fails closed.
 media_id="$(python3 -c 'import secrets; print(secrets.randbelow(2_000_000_000) + 1)')"
 request_json="$(printf '{\"tenant_id\":\"%s\",\"media_id\":%s,\"tier\":\"gpu\",\"context\":{\"filename\":\"gpu-flip-smoke.png\"}}' "$tenant_id" "$media_id")"
-curl --fail-with-body --silent --show-error --max-time 600 \
+curl --fail-with-body --silent --show-error --max-time 30 \
     -H "X-API-Key: ${api_key}" \
     -H "X-Tenant-ID: ${tenant_id}" \
     -F "request=${request_json};type=application/json" \
     -F "image_${media_id}=@${smoke_image};type=image/png" \
     --output "$response_file" \
-    "${base_url%/}/scene/describe/multipart"
+    "${base_url%/}/scene/describe/async"
+
+job_id="$(python3 - "$response_file" <<'PY'
+import json
+import sys
+import uuid
+
+with open(sys.argv[1], encoding="utf-8") as handle:
+    payload = json.load(handle)
+try:
+    job_id = str(uuid.UUID(payload.get("job_id", "")))
+except (AttributeError, TypeError, ValueError):
+    raise SystemExit("live GPU smoke failed: async enqueue returned no valid job_id") from None
+if payload.get("status") not in {"queued", "running", "provisional", "final"}:
+    raise SystemExit("live GPU smoke failed: async enqueue did not accept the job")
+print(job_id)
+PY
+)"
+
+poll_attempt=0
+poll_complete=0
+while (( poll_attempt < 180 )); do
+    curl --fail-with-body --silent --show-error --max-time 30 \
+        -H "X-API-Key: ${api_key}" \
+        -H "X-Tenant-ID: ${tenant_id}" \
+        --output "$response_file" \
+        "${base_url%/}/scene/describe/jobs/${job_id}"
+    if python3 - "$response_file" "$job_id" <<'PY'
+import json
+import sys
+
+path, expected_job_id = sys.argv[1:]
+with open(path, encoding="utf-8") as handle:
+    payload = json.load(handle)
+if payload.get("job_id") != expected_job_id:
+    raise SystemExit("live GPU smoke failed: poll returned a different job_id")
+status = payload.get("status")
+if status == "final":
+    if payload.get("tier") != "final_gpu":
+        raise SystemExit("live GPU smoke failed: final job tier is not final_gpu")
+    visual_facts = payload.get("visual_facts")
+    if not isinstance(visual_facts, dict):
+        raise SystemExit("live GPU smoke failed: final job has no visual_facts")
+    with open(path, "w", encoding="utf-8") as handle:
+        json.dump(visual_facts, handle)
+    raise SystemExit(0)
+if status in {"degraded", "failed"}:
+    raise SystemExit(f"live GPU smoke failed: async job ended with status {status}")
+if status not in {"queued", "running", "provisional"}:
+    raise SystemExit("live GPU smoke failed: async job returned an unknown status")
+raise SystemExit(10)
+PY
+    then
+        poll_complete=1
+        break
+    else
+        poll_status=$?
+        [[ "$poll_status" -eq 10 ]] || exit "$poll_status"
+    fi
+    poll_attempt=$((poll_attempt + 1))
+    sleep 5
+done
+if [[ "$poll_complete" -ne 1 ]]; then
+    echo "live GPU smoke failed: async job did not finish within 15 minutes" >&2
+    exit 1
+fi
 
 python3 - "$response_file" <<'PY'
 import json

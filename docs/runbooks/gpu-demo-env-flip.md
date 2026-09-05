@@ -75,10 +75,12 @@ Verify the container received the requested non-secret profile and re-run the
 demo bootstrap gate. The bootstrap command is idempotent and must finish with
 `Bootstrap complete`, but it is not proof of inference: it can legitimately
 skip generation when the demo has no media or already has complete coverage.
-The remote block therefore submits a fresh, authenticated multipart request
-with explicit `tier=gpu` and fails unless the response proves an uncached final
-GPU result with model identity and non-empty generated alt text. Do not remove
-the staged contract helpers until this live request succeeds.
+The remote block therefore submits a fresh, authenticated asynchronous request
+with explicit `tier=gpu`. Enqueueing publishes pending describe load so
+`acx-gpu-start.timer` can wake a stopped burst instance; the verifier then polls
+the durable job for up to 15 minutes. It fails unless the response proves an
+uncached final GPU result with model identity and non-empty generated alt text.
+Do not remove the staged contract helpers until this live request succeeds.
 
 ```bash
 set -euo pipefail

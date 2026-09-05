@@ -376,7 +376,7 @@ Path(reaper.__file__).resolve().relative_to(root)
 parser = reaper._build_parser()
 parser.allow_abbrev = False
 values = dict(zip(("GPU_INSTANCE_ID", "MAX_LEASE_SECONDS", "IDLE_SECONDS",
-                   "ACX_DESCRIBE_LOAD_STALE_GRACE_SECONDS"), sys.argv[3:]))
+                   "ACX_DESCRIBE_LOAD_STALE_GRACE_SECONDS"), sys.argv[3:7]))
 resolved = []
 for token in argv[3:]:
     if token.startswith("${") and token.endswith("}"):
@@ -395,6 +395,33 @@ if (args.oci_timeout_seconds <= 0 or args.max_wait_seconds <= 0
         or not math.isfinite(args.fence_delay_seconds) or args.fence_delay_seconds < 0
         or not math.isfinite(args.ready_sleep_seconds) or args.ready_sleep_seconds < 0):
     raise SystemExit(1)
+# Probe only CLI help, never an OCI API or lifecycle command. Use the service
+# identity and a clean system-service environment, not the operators PATH.
+import os
+import pwd
+import subprocess
+try:
+    account = pwd.getpwnam(sys.argv[7] or "root")
+    runtime_env = {
+        "HOME": account.pw_dir,
+        "PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+        "LC_ALL": "C",
+    }
+    binary = args.oci_bin or "oci"
+    command = [binary, "--help"]
+    if account.pw_uid != os.geteuid():
+        command = ["/usr/bin/sudo", "-n", "-u", account.pw_name, "--",
+                   "/usr/bin/env", "-i",
+                   *[f"{key}={value}" for key, value in runtime_env.items()],
+                   *command]
+    result = subprocess.run(command, cwd=root, env=runtime_env,
+                            capture_output=True, text=True, timeout=10)
+    if result.returncode or "Oracle Cloud Infrastructure" not in result.stdout:
+        raise ValueError("not OCI CLI help")
+except (KeyError, OSError, ValueError, subprocess.SubprocessError):
+    print("ERROR [11] OCI executable must run as the service user and identify "
+          "the Oracle Cloud Infrastructure CLI via --help.", file=os.fdopen(3, "w"))
+    raise SystemExit(1)
 # Use exactly the production constructor inputs: this validates the deployment
 # registry shipped with the effective service checkout. Construction reads no
 # snapshots and performs no actuation.
@@ -403,7 +430,7 @@ reaper.AggregateJobLoadSource(
     stale_seconds=args.load_max_age_seconds,
     stale_grace_seconds=args.load_stale_grace_seconds,
 )
-' "$@" 2>/dev/null
+' "$@" 3>&2 2>/dev/null
 }
 
 validate_reaper_environment_file() {
@@ -438,7 +465,7 @@ PY
 preflight_gpu_reaper() {
     local timer unit_properties exec_start fragment_path environment_files working_directory
     local timer_target unset_environment parsed_environment_files
-    local idle_seconds="" stale_grace=""
+    local idle_seconds="" stale_grace="" service_user
     local environment_file optional_file instance_id="" max_lease="" value
     local environment_file_count=0
     command -v systemctl >/dev/null 2>&1 || {
@@ -464,6 +491,7 @@ preflight_gpu_reaper() {
     }
 
     unit_properties="$(systemctl show acx-gpu-reap.service \
+        --property=User \
         --property=ExecStart \
         --property=WorkingDirectory \
         --property=FragmentPath \
@@ -473,6 +501,7 @@ preflight_gpu_reaper() {
         echo "ERROR [11] acx-gpu-reap.service effective properties could not be read." >&2
         exit 1
     }
+    service_user="$(printf '%s\n' "$unit_properties" | sed -n 's/^User=//p')"
     exec_start="$(printf '%s\n' "$unit_properties" | sed -n 's/^ExecStart=//p')"
     fragment_path="$(printf '%s\n' "$unit_properties" | sed -n 's/^FragmentPath=//p')"
     environment_files="$(printf '%s\n' "$unit_properties" | sed -n 's/^EnvironmentFiles=//p')"
@@ -569,7 +598,7 @@ while raw:
         echo "ERROR [11] reaper GPU_INSTANCE_ID must be an instance OCID and MAX_LEASE_SECONDS must be in 1..86400." >&2
         exit 1
     }
-    reaper_execstart_is_structural "$exec_start" "$working_directory" "$instance_id" "$max_lease" "$idle_seconds" "$stale_grace" || {
+    reaper_execstart_is_structural "$exec_start" "$working_directory" "$instance_id" "$max_lease" "$idle_seconds" "$stale_grace" "$service_user" || {
         echo "ERROR [11] acx-gpu-reap.service ExecStart must be the structurally valid GPU lifecycle reaper." >&2
         exit 1
     }

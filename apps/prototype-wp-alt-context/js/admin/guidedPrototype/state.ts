@@ -137,6 +137,10 @@ export const applyGuidedCandidate = (scenario: GuidedScenario): GuidedScenario =
     throw new Error('Cannot apply a rejected description.');
   }
 
+  if (scenario.candidate.text === scenario.appliedText) {
+    return cloneScenario(scenario);
+  }
+
   return withHistory(
     { ...cloneScenario(scenario), appliedText: scenario.candidate.text },
     { kind: 'applied', text: scenario.candidate.text, previousAppliedText: scenario.appliedText },

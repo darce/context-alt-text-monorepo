@@ -14,6 +14,11 @@ describe('GuidedPrototypePage', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Confirm Keanu Reeves' }));
     expect(screen.getByText('Keanu Reeves wears a grey jacket against a plain background.')).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        'Confirmed identity changes the name in the candidate; the visual facts and page context stay visible.',
+      ),
+    ).toBeInTheDocument();
     expect(screen.getAllByText('Identity confirmed from the sample record.').length).toBeGreaterThan(0);
 
     const editor = screen.getByRole('textbox', { name: 'Description draft' });
@@ -21,6 +26,7 @@ describe('GuidedPrototypePage', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Save description edit' }));
     expect(screen.getByText('Edited by you')).toBeInTheDocument();
 
+    fireEvent.click(screen.getByRole('button', { name: 'Apply to practice copy' }));
     fireEvent.click(screen.getByRole('button', { name: 'Apply to practice copy' }));
     expect(screen.getAllByText('Applied to the practice copy.').length).toBeGreaterThan(0);
     expect(document.querySelector('[data-applied-text]')).toHaveTextContent('Keanu Reeves wears a grey jacket.');

@@ -151,14 +151,14 @@ export const GuidedPrototypePage = (): React.JSX.Element => {
           onConfirmIdentity={() =>
             updateScenario(
               (current) => confirmGuidedIdentity(current),
-              'Identity confirmed from the sample record.',
+              'Identity confirmed from the sample record. The description has not been applied.',
               'review',
             )
           }
           onLeaveUnidentified={() =>
             updateScenario(
               (current) => leaveGuidedIdentityUnidentified(current),
-              'Identity left unidentified.',
+              'Identity left unidentified. You can still review a description.',
               'review',
             )
           }

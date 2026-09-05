@@ -19,6 +19,64 @@ spec.loader.exec_module(renderer)
 
 
 class RendererBoundaryTests(unittest.TestCase):
+    def test_action_rows_and_duplicate_sections_fail_both_check_paths(self):
+        ref = "febt-1-job-error-states"
+        original = SOURCE.with_name(f"{ref}.md").read_text()
+        row = re.search(r"^\| `reload` \|.*$", original, re.MULTILINE)[0]
+        conflicting = row.replace("Reload page", "Retry")
+        mutations = [
+            (original.replace(row, bad + "\n" + row), "noncanonical Actions table row: " + bad)
+            for bad in [conflicting.replace("`reload`", "reload"), "  " + conflicting]
+        ]
+        mutations.append((original.replace(row, conflicting + "\n" + row), "action reload has duplicate Actions table rows"))
+        for heading in ["Goals", "Jobs", "Screens", "Actions", "Flows", "Parity index", "Not doing"]:
+            mutations.append((original + f"\n## {heading}\n\n" + conflicting + "\n", f"duplicate machine-owned section: {heading}"))
+        for heading in ["## Actions ", "  ## Actions", "## Actions ##"]:
+            mutations.append((original + f"\n{heading}\n\n" + conflicting + "\n", "duplicate machine-owned section: Actions"))
+        with tempfile.TemporaryDirectory() as directory:
+            maps = Path(directory)
+            shutil.copyfile(SOURCE.with_name(f"{ref}.uxmap.json"), maps / f"{ref}.uxmap.json")
+            target = maps / f"{ref}.md"
+            with patch.object(renderer, "MAPS_DIR", maps):
+                for available in [False, True]:
+                    with patch.object(renderer, "render", return_value=original,
+                                      side_effect=None if available else renderer.OptionalRendererUnavailable()):
+                        target.write_text(original)
+                        with contextlib.redirect_stdout(io.StringIO()):
+                            self.assertEqual(renderer.check([ref]), 0)
+                        for mutant, error in mutations:
+                            with self.subTest(renderer_available=available, error=error):
+                                target.write_text(mutant)
+                                output = io.StringIO()
+                                with contextlib.redirect_stderr(output), contextlib.redirect_stdout(io.StringIO()):
+                                    self.assertEqual(renderer.check([ref]), 1)
+                                self.assertIn(error, output.getvalue())
+
+    def test_regeneration_with_omitted_optional_action_fields(self):
+        ref = "workbench-operator-loop"
+        doc = json.loads(SOURCE.with_name(f"{ref}.uxmap.json").read_text())
+        original = SOURCE.with_name(f"{ref}.md").read_text()
+        for action in doc["actions"]:
+            for field in ["costly", "irreversible", "preview_required"]:
+                if action.get(field) is False:
+                    del action[field]
+            if action.get("screen_id") is None:
+                del action["screen_id"]
+        with tempfile.TemporaryDirectory() as directory:
+            maps = Path(directory)
+            (maps / f"{ref}.uxmap.json").write_text(json.dumps(doc))
+            snapshot = maps / "visible.json"
+            shutil.copyfile(renderer.VISIBLE_PROJECTION_PATH, snapshot)
+            with patch.object(renderer, "MAPS_DIR", maps), patch.object(renderer, "VISIBLE_PROJECTION_PATH", snapshot):
+                # Defaults preserve the committed output; exercise the real action
+                # renderer and snapshot writer without requiring the canvas package.
+                regenerated = re.sub(r"## Actions\n[\s\S]*?(?=\n## )", "\n".join(renderer._action_table(doc)), original)
+                with patch.object(renderer, "render", return_value=regenerated), contextlib.redirect_stdout(io.StringIO()):
+                    renderer._render_and_write([ref])
+                for rendered in [None, regenerated]:
+                    expected, actual = renderer._check_projection(ref, rendered)
+                    self.assertEqual(expected, actual)
+
     def test_noncanonical_screen_rows_fail_both_check_paths_with_row_text(self):
         ref = "workbench-operator-loop"
         original = SOURCE.with_name(f"{ref}.md").read_text()

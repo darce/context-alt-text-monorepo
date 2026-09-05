@@ -57,7 +57,15 @@ export interface RenderedUxMapProjection extends RenderParityMap {
   parityIndex: RenderParityIndex;
 }
 
-export interface UxMapRenderSource extends Omit<RenderParityMap, 'screens' | 'flows'> {
+export interface UxMapRenderSource extends Omit<RenderParityMap, 'screens' | 'flows' | 'actions'> {
+  actions: Array<
+    Omit<RenderParityMap['actions'][number], 'costly' | 'irreversible' | 'preview_required' | 'screen_id'> & {
+      costly?: boolean;
+      irreversible?: boolean;
+      preview_required?: boolean;
+      screen_id?: string | null;
+    }
+  >;
   screens: Array<
     Omit<RenderParityMap['screens'][number], 'url_params' | 'zones'> & {
       states?: string[];
@@ -74,13 +82,20 @@ export interface UxMapRenderSource extends Omit<RenderParityMap, 'screens' | 'fl
 }
 
 const section = (markdown: string, heading: string): string => {
-  const marker = `## ${heading}`;
-  const start = markdown.indexOf(marker);
-  if (start < 0) {
+  const headings = [...markdown.matchAll(/^ {0,3}##[ \t]+([^\r\n]*?)(?:[ \t]+#+)?[ \t]*\r?$/gm)];
+  const matches = headings.filter((match) => match[1] === heading);
+  if (matches.length > 1) {
+    throw new Error(`duplicate machine-owned section: ${heading}`);
+  }
+  const match = matches[0];
+  if (!match) {
     return '';
   }
-  const next = markdown.indexOf('\n## ', start + marker.length);
-  return markdown.slice(start + marker.length, next < 0 ? markdown.length : next).trim();
+  const next = headings[headings.indexOf(match) + 1];
+  // Preserve indentation so malformed table rows cannot become canonical here.
+  return markdown
+    .slice(match.index! + match[0].length, next?.index ?? markdown.length)
+    .replace(/^[\r\n]+|[\r\n]+$/g, '');
 };
 
 const unquote = (value: string): string => value.replace(/^`|`$/g, '');
@@ -238,13 +253,35 @@ const parseBooleanCell = (value: string | undefined, actionId: string, column: s
 
 const parseActions = (markdown: string): RenderParityMap['actions'] => {
   const actions: RenderParityMap['actions'] = [];
-  for (const line of section(markdown, 'Actions').split('\n')) {
-    if (!line.startsWith('| `')) {
-      continue;
+  const lines = section(markdown, 'Actions')
+    .split('\n')
+    .filter((line) => line.trim() !== '');
+  const header = lines[0] ?? '';
+  const headerMatch =
+    /^\| id \| verb \| target \| hierarchy \| costly \| irreversible \| preview required \| screen id \|(?: when \(recovery state\) \|)?$/.exec(
+      header,
+    );
+  const columnCount = header.endsWith(' when (recovery state) |') ? 9 : 8;
+  if (lines.length > 0 && !headerMatch) {
+    throw new Error(`noncanonical Actions table row: ${header}`);
+  }
+  const separator = lines[1] ?? '';
+  if (lines.length > 0 && separator !== `|${' --- |'.repeat(columnCount)}`) {
+    throw new Error(`noncanonical Actions table row: ${separator}`);
+  }
+  const ids = new Set<string>();
+  for (const line of lines.slice(2)) {
+    const cells = splitTableRow(line);
+    const canonicalRow = `| ${cells.map((cell) => cell.replaceAll('|', '\\|')).join(' | ')} |`;
+    if (line !== canonicalRow || cells.length !== columnCount || !/^`[^`]+`$/.test(cells[0] ?? '')) {
+      throw new Error(`noncanonical Actions table row: ${line}`);
     }
-    const [rawId, verb, target, hierarchy, costly, irreversible, previewRequired, rawScreenId, when] =
-      splitTableRow(line);
+    const [rawId, verb, target, hierarchy, costly, irreversible, previewRequired, rawScreenId, when] = cells;
     const id = unquote(rawId ?? '');
+    if (ids.has(id)) {
+      throw new Error(`action ${id} has duplicate Actions table rows: ${line}`);
+    }
+    ids.add(id);
     actions.push({
       id,
       verb: verb ?? '',
@@ -382,7 +419,13 @@ export const projectUxMapForRenderParity = (doc: UxMapRenderSource): RenderedUxM
         })),
       }))
       .sort((a, b) => a.id.localeCompare(b.id)),
-    actions: doc.actions,
+    actions: doc.actions.map((action) => ({
+      ...action,
+      costly: action.costly ?? false,
+      irreversible: action.irreversible ?? false,
+      preview_required: action.preview_required ?? false,
+      screen_id: action.screen_id ?? null,
+    })),
     flows: doc.flows.map((flow) => ({
       id: flow.id,
       label: flow.label ?? flow.id,

@@ -1091,6 +1091,83 @@ describe('ux-map render parity (owned maps)', () => {
     expect(() => parseRenderedUxMap(mutant)).toThrow(`noncanonical Screens table row: ${row}`);
   });
 
+  it.each(['unquoted', 'indented', 'duplicate'])('rejects %s conflicting action rows', (mutation) => {
+    const md = readFileSync(path.join(uxMapsDir, 'febt-1-job-error-states.md'), 'utf8');
+    const row = /^\| `reload` \|.*$/m.exec(md)![0];
+    const conflicting = row.replace('Reload page', 'Retry');
+    const bad =
+      mutation === 'unquoted'
+        ? conflicting.replace('`reload`', 'reload')
+        : mutation === 'indented'
+          ? `  ${conflicting}`
+          : conflicting;
+    expect(() => parseRenderedUxMap(md.replace(row, `${bad}\n${row}`))).toThrow(
+      mutation === 'duplicate'
+        ? `action reload has duplicate Actions table rows: ${row}`
+        : `noncanonical Actions table row: ${bad}`,
+    );
+  });
+
+  it.each([
+    'Goals',
+    'Jobs',
+    'Screens',
+    'Actions',
+    'Flows',
+    'Parity index',
+    'Not doing',
+    'Open questions',
+    'Domain state mapping',
+    'Suggested task-slice decomposition (from map)',
+  ])('rejects duplicate machine-owned %s sections', (heading) => {
+    const md = readFileSync(path.join(uxMapsDir, 'febt-1-job-error-states.md'), 'utf8');
+    const row = /^\| `reload` \|.*$/m.exec(md)![0];
+    const first = md.includes(`## ${heading}\n`) ? md : `${md}\n## ${heading}\n`;
+    expect(() => parseRenderedUxMap(`${first}\n## ${heading}\n\n${row.replace('Reload page', 'Retry')}\n`)).toThrow(
+      `duplicate machine-owned section: ${heading}`,
+    );
+  });
+
+  it('matches complete section headings instead of their prefixes', () => {
+    const md = readFileSync(path.join(uxMapsDir, 'febt-1-job-error-states.md'), 'utf8');
+    const mutant = md.replace('## Actions\n', '## Actions commentary\n\nUnrelated prose.\n\n## Actions\n');
+    expect(parseRenderedUxMap(mutant)).toEqual(parseRenderedUxMap(md));
+  });
+
+  it.each(['## Actions ', '  ## Actions', '## Actions ##'])('rejects the duplicate heading %s', (heading) => {
+    const md = readFileSync(path.join(uxMapsDir, 'febt-1-job-error-states.md'), 'utf8');
+    expect(() => parseRenderedUxMap(`${md}\n${heading}\n\nRetry\n`)).toThrow(
+      'duplicate machine-owned section: Actions',
+    );
+  });
+
+  it('normalizes omitted optional action fields to the renderer defaults', () => {
+    const raw = readMapJson('workbench-operator-loop') as UxMapRenderSource;
+    const md = readFileSync(path.join(uxMapsDir, 'workbench-operator-loop.md'), 'utf8');
+    for (const action of raw.actions) {
+      for (const field of ['costly', 'irreversible', 'preview_required'] as const) {
+        if (action[field] === false) {
+          delete action[field];
+        }
+      }
+      if (action.screen_id === null) {
+        delete action.screen_id;
+      }
+    }
+    expect(projectUxMapForRenderParity(raw)).toEqual(parseRenderedUxMap(md));
+  });
+
+  it('normalizes an omitted action screen_id to null', () => {
+    const raw = readMapJson('workbench-operator-loop') as UxMapRenderSource;
+    const md = readFileSync(path.join(uxMapsDir, 'workbench-operator-loop.md'), 'utf8');
+    const action = raw.actions[0]!;
+    const row = md.split('\n').find((line) => line.startsWith(`| \`${action.id}\` |`))!;
+    const unboundRow = row.replace(`| \`${action.screen_id}\` |`, '| — |');
+    expect(unboundRow).not.toBe(row);
+    delete action.screen_id;
+    expect(projectUxMapForRenderParity(raw)).toEqual(parseRenderedUxMap(md.replace(row, unboundRow)));
+  });
+
   it('rejects action boolean cells other than exact yes/no tokens with a useful location', () => {
     const md = readFileSync(path.join(uxMapsDir, 'workbench-operator-loop.md'), 'utf8');
     const mutant = md.replace('| no | no | no | `workbench-shell` |', '| MUTANT | no | no | `workbench-shell` |');
@@ -1466,7 +1543,8 @@ describe('ux-map generated-render provenance', () => {
       { encoding: 'utf8' },
     );
     expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
-  }, 60_000);
+    // The expanded integration suite starts Node for each mutation in both check paths.
+  }, 300_000);
 
   it('executes the sanctioned renderer in --check mode without its optional canvas package', () => {
     const result = spawnSync(uxMapPython, [rendererPath, '--check'], {

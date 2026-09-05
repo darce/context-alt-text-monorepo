@@ -3,10 +3,12 @@ import { createHash, randomUUID } from 'node:crypto';
 import {
   existsSync,
   globSync,
+  mkdtempSync,
   mkdirSync,
   readFileSync,
   readdirSync,
   realpathSync,
+  renameSync,
   rmSync,
   statSync,
   utimesSync,
@@ -69,6 +71,7 @@ const LOCK_POLL_MS = 100;
 const LOCK_HEARTBEAT_MS = 1_000;
 /** A build cannot outlive the lease that fences it from a successor. */
 const BUILD_TIMEOUT_MS = STALE_LOCK_MS - 30_000;
+const BUILD_TERMINATION_GRACE_MS = 5_000;
 export const LOCK_OWNER_FILE = 'owner.json';
 /** Artifact directories untouched for longer than this are pruned. */
 const ARTIFACT_TTL_MS = 24 * 60 * 60_000;
@@ -134,14 +137,14 @@ export interface BuildInputState {
   readonly generation: string;
 }
 
-export const computeBuildInputState = (): BuildInputState => {
-  const files = fingerprintedBuildInputs();
+export const computeBuildInputState = (root: string = appRoot): BuildInputState => {
+  const files = fingerprintedBuildInputs(root);
 
   const contentDigest = createHash('sha256');
   const generationDigest = createHash('sha256');
   let maxMtimeNs = 0n;
   for (const file of files) {
-    const path = join(appRoot, file);
+    const path = join(root, file);
     const before = statSync(path, { bigint: true });
     const contents = readFileSync(path);
     const after = statSync(path, { bigint: true });
@@ -174,8 +177,8 @@ export const computeBuildInputFingerprint = (): string => computeBuildInputState
 const toPosix = (entry: string): string => entry.split('\\').join('/');
 
 /** Repository-relative paths, POSIX-separated, that BUILD_INPUT_GLOBS actually hashes. */
-export const fingerprintedBuildInputs = (): string[] =>
-  BUILD_INPUT_GLOBS.flatMap((pattern) => globSync(pattern, { cwd: appRoot }))
+export const fingerprintedBuildInputs = (root: string = appRoot): string[] =>
+  BUILD_INPUT_GLOBS.flatMap((pattern) => globSync(pattern, { cwd: root }))
     .map(toPosix)
     .filter(isBuildInput)
     .sort();
@@ -250,87 +253,129 @@ const sleepSync = (milliseconds: number): void => {
 
 export interface DirectoryLockOwnership {
   readonly pid: number;
+  readonly startToken: string;
   readonly nonce: string;
 }
 
-interface DirectoryLockTiming {
-  readonly staleLockMs?: number;
+export interface DirectoryLockOptions {
+  readonly staleAfterMs?: number;
   readonly timeoutMs?: number;
   readonly pollMs?: number;
+  readonly now?: () => number;
+  readonly isProcessAlive?: (pid: number, startToken: string) => boolean;
 }
 
 const ownerPathForLock = (lockDir: string): string => join(lockDir, LOCK_OWNER_FILE);
 
 const sameOwnership = (left: DirectoryLockOwnership, right: DirectoryLockOwnership): boolean =>
-  left.pid === right.pid && left.nonce === right.nonce;
-
-const sameOptionalOwnership = (
-  left: DirectoryLockOwnership | null,
-  right: DirectoryLockOwnership | null,
-): boolean => {
-  if (left === null || right === null) {
-    return left === right;
-  }
-  return sameOwnership(left, right);
-};
+  left.pid === right.pid && left.startToken === right.startToken && left.nonce === right.nonce;
 
 const readLockOwnership = (lockDir: string): DirectoryLockOwnership | null => {
   try {
     const parsed: unknown = JSON.parse(readFileSync(ownerPathForLock(lockDir), 'utf8'));
-    if (typeof parsed !== 'object' || parsed === null || !('pid' in parsed) || !('nonce' in parsed)) {
+    if (
+      typeof parsed !== 'object' ||
+      parsed === null ||
+      !('pid' in parsed) ||
+      !('startToken' in parsed) ||
+      !('nonce' in parsed)
+    ) {
       return null;
     }
-    const { pid, nonce } = parsed;
-    return typeof pid === 'number' && Number.isSafeInteger(pid) && pid > 0 && typeof nonce === 'string'
-      ? { pid, nonce }
+    const { pid, startToken, nonce } = parsed;
+    return typeof pid === 'number' &&
+      Number.isSafeInteger(pid) &&
+      pid > 0 &&
+      typeof startToken === 'string' &&
+      startToken.length > 0 &&
+      typeof nonce === 'string' &&
+      nonce.length > 0
+      ? { pid, startToken, nonce }
       : null;
   } catch {
     return null;
   }
 };
 
-const processIsAlive = (pid: number): boolean => {
+const processStartToken = (pid: number): string | null => {
   try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return (error as NodeJS.ErrnoException).code !== 'ESRCH';
+    if (process.platform === 'linux') {
+      const stat = readFileSync(`/proc/${pid}/stat`, 'utf8');
+      const afterCommand = stat.slice(stat.lastIndexOf(')') + 2).trim().split(/\s+/);
+      // `afterCommand[0]` is field 3 (state); field 22 is the kernel process start time.
+      return afterCommand.length >= 20 ? `linux:${afterCommand[19]}` : null;
+    }
+    const started = execFileSync('ps', ['-o', 'lstart=', '-p', String(pid)], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim();
+    return started === '' ? null : `${process.platform}:${started}`;
+  } catch {
+    return null;
+  }
+};
+
+const processIdentityIsAlive = (pid: number, startToken: string): boolean =>
+  processStartToken(pid) === startToken;
+
+const publishLockOwnership = (
+  lockDir: string,
+  ownership: DirectoryLockOwnership,
+): DirectoryLockOwnership | null => {
+  const temporaryOwnerPath = join(lockDir, `.owner-${ownership.pid}-${randomUUID()}.tmp`);
+  try {
+    writeFileSync(temporaryOwnerPath, `${JSON.stringify(ownership)}\n`, {
+      encoding: 'utf8',
+      flag: 'wx',
+    });
+    renameSync(temporaryOwnerPath, ownerPathForLock(lockDir));
+    // Fence a namespace replacement between mkdir/recovery and metadata publication.
+    const published = readLockOwnership(lockDir);
+    return published !== null && sameOwnership(published, ownership) ? ownership : null;
+  } catch {
+    try {
+      rmSync(temporaryOwnerPath, { force: true });
+    } catch {
+      // A concurrent namespace replacement may already have removed the temporary file.
+    }
+    return null;
   }
 };
 
 export const tryAcquireDirectoryLock = (
   lockDir: string,
-  timing: DirectoryLockTiming = {},
+  options: DirectoryLockOptions = {},
 ): DirectoryLockOwnership | null => {
   mkdirSync(dirname(lockDir), { recursive: true });
-  const ownership = { pid: process.pid, nonce: randomUUID() };
+  const startToken = processStartToken(process.pid);
+  if (startToken === null) {
+    throw new Error(`Cannot establish the current process identity for lock ${lockDir}.`);
+  }
+  const ownership = { pid: process.pid, startToken, nonce: randomUUID() };
   try {
     mkdirSync(lockDir);
-    try {
-      writeFileSync(ownerPathForLock(lockDir), `${JSON.stringify(ownership)}\n`, {
-        encoding: 'utf8',
-        flag: 'wx',
-      });
-      return ownership;
-    } catch (error) {
-      rmSync(lockDir, { recursive: true, force: true });
-      throw error;
-    }
+    const published = publishLockOwnership(lockDir, ownership);
+    return published;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'EEXIST') {
       throw error;
     }
     const incumbent = readLockOwnership(lockDir);
+    // Missing or malformed metadata is never evidence of a dead owner. In particular, a
+    // contender may be observing the short mkdir-to-rename publication window.
+    if (incumbent === null) {
+      return null;
+    }
     let leaseAgeMs: number;
     try {
-      const leasePath = incumbent === null ? lockDir : ownerPathForLock(lockDir);
-      leaseAgeMs = Date.now() - statSync(leasePath).mtimeMs;
+      leaseAgeMs = (options.now ?? Date.now)() - statSync(ownerPathForLock(lockDir)).mtimeMs;
     } catch {
       // The holder released between mkdir and inspection; let the caller retry.
       return null;
     }
-    const staleLockMs = timing.staleLockMs ?? STALE_LOCK_MS;
-    if (leaseAgeMs > staleLockMs && (incumbent === null || !processIsAlive(incumbent.pid))) {
+    const staleAfterMs = options.staleAfterMs ?? STALE_LOCK_MS;
+    const isProcessAlive = options.isProcessAlive ?? processIdentityIsAlive;
+    if (leaseAgeMs > staleAfterMs && !isProcessAlive(incumbent.pid, incumbent.startToken)) {
       // Serialize stale recovery inside the incumbent directory. Without this claim, two
       // reapers can both inspect owner A, then the slower one can delete newly-created owner B
       // after the faster one removes A (the classic ABA unlink race).
@@ -345,21 +390,31 @@ export const tryAcquireDirectoryLock = (
       }
 
       const confirmedIncumbent = readLockOwnership(lockDir);
-      let confirmedLeaseAgeMs = leaseAgeMs;
+      if (confirmedIncumbent === null || !sameOwnership(confirmedIncumbent, incumbent)) {
+        rmSync(recoveryClaim, { recursive: true, force: true });
+        return null;
+      }
+      let confirmedLeaseAgeMs: number;
       try {
-        if (confirmedIncumbent !== null) {
-          confirmedLeaseAgeMs = Date.now() - statSync(ownerPathForLock(lockDir)).mtimeMs;
-        }
+        confirmedLeaseAgeMs = (options.now ?? Date.now)() - statSync(ownerPathForLock(lockDir)).mtimeMs;
       } catch {
         rmSync(recoveryClaim, { recursive: true, force: true });
         return null;
       }
       if (
-        sameOptionalOwnership(confirmedIncumbent, incumbent) &&
-        confirmedLeaseAgeMs > staleLockMs &&
-        (confirmedIncumbent === null || !processIsAlive(confirmedIncumbent.pid))
+        confirmedLeaseAgeMs > staleAfterMs &&
+        !isProcessAlive(confirmedIncumbent.pid, confirmedIncumbent.startToken)
       ) {
         rmSync(lockDir, { recursive: true, force: true });
+        try {
+          mkdirSync(lockDir);
+        } catch (replacementError) {
+          if ((replacementError as NodeJS.ErrnoException).code !== 'EEXIST') {
+            throw replacementError;
+          }
+          return null;
+        }
+        return publishLockOwnership(lockDir, ownership);
       } else {
         rmSync(recoveryClaim, { recursive: true, force: true });
       }
@@ -370,22 +425,23 @@ export const tryAcquireDirectoryLock = (
 
 export const acquireDirectoryLock = (
   lockDir: string,
-  timing: DirectoryLockTiming = {},
+  options: DirectoryLockOptions = {},
 ): DirectoryLockOwnership => {
-  const timeoutMs = timing.timeoutMs ?? LOCK_TIMEOUT_MS;
-  const deadline = Date.now() + timeoutMs;
+  const timeoutMs = options.timeoutMs ?? LOCK_TIMEOUT_MS;
+  const now = options.now ?? Date.now;
+  const deadline = now() + timeoutMs;
   for (;;) {
-    const ownership = tryAcquireDirectoryLock(lockDir, timing);
+    const ownership = tryAcquireDirectoryLock(lockDir, options);
     if (ownership !== null) {
       return ownership;
     }
-    if (Date.now() > deadline) {
+    if (now() > deadline) {
       throw new Error(
         `Timed out after ${timeoutMs}ms waiting for the production-CSS lock at ${lockDir}. ` +
           'Remove it if no build is running.',
       );
     }
-    sleepSync(timing.pollMs ?? LOCK_POLL_MS);
+    sleepSync(options.pollMs ?? LOCK_POLL_MS);
   }
 };
 
@@ -401,10 +457,11 @@ export const releaseDirectoryLock = (
   return true;
 };
 
-const runWithLockHeartbeat = <T>(
+export const runWithLockHeartbeat = <T>(
   lockDir: string,
   ownership: DirectoryLockOwnership,
   operation: () => T,
+  heartbeatMs: number = LOCK_HEARTBEAT_MS,
 ): T => {
   const heartbeatSource = String.raw`
 const fs = require('node:fs');
@@ -428,13 +485,132 @@ setInterval(() => {}, 0x7fffffff);
   const token = JSON.stringify(ownership);
   const heartbeat = spawn(
     process.execPath,
-    ['-e', heartbeatSource, lockDir, token, String(LOCK_HEARTBEAT_MS)],
+    ['-e', heartbeatSource, lockDir, token, String(heartbeatMs)],
     { stdio: 'ignore' },
   );
   try {
     return operation();
   } finally {
     heartbeat.kill();
+  }
+};
+
+export class ProductionCssBuildTimeoutError extends Error {
+  readonly code = 'RES-13';
+
+  constructor(timeoutMs: number) {
+    super(`Production CSS build exceeded its ${timeoutMs}ms deadline (RES-13).`);
+    this.name = 'ProductionCssBuildTimeoutError';
+  }
+}
+
+export interface ProcessGroupWaitOptions {
+  readonly timeoutMs: number;
+  readonly terminationGraceMs?: number;
+  readonly now?: () => number;
+  readonly sleep?: (milliseconds: number) => void;
+  readonly readExitCode: () => number | null;
+  readonly isProcessAlive?: (pid: number) => boolean;
+  readonly sendSignal?: (pidOrGroup: number, signal: NodeJS.Signals) => void;
+}
+
+const pidIsAlive = (pid: number): boolean => {
+  try {
+    if (process.platform === 'linux') {
+      const stat = readFileSync(`/proc/${pid}/stat`, 'utf8');
+      const state = stat.slice(stat.lastIndexOf(')') + 2).trim().split(/\s+/, 1)[0];
+      return state !== 'Z';
+    }
+    const state = execFileSync('ps', ['-o', 'stat=', '-p', String(pid)], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim();
+    return state !== '' && !state.startsWith('Z');
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    return code !== 'ESRCH' && code !== 'ENOENT';
+  }
+};
+
+/** Synchronously supervise a detached process group without relying on an unbounded sync timeout. */
+export const waitForProcessGroup = (pid: number, options: ProcessGroupWaitOptions): number => {
+  const now = options.now ?? Date.now;
+  const pause = options.sleep ?? sleepSync;
+  const isAlive = options.isProcessAlive ?? pidIsAlive;
+  const sendSignal = options.sendSignal ?? ((pidOrGroup, signal) => process.kill(pidOrGroup, signal));
+  const deadline = now() + options.timeoutMs;
+
+  for (;;) {
+    const exitCode = options.readExitCode();
+    const alive = isAlive(pid);
+    if (exitCode !== null && !alive) {
+      return exitCode;
+    }
+    if (!alive) {
+      throw new Error('Production CSS build exited without publishing an exit status.');
+    }
+    if (now() >= deadline) {
+      break;
+    }
+    pause(Math.min(25, Math.max(1, deadline - now())));
+  }
+
+  sendSignal(-pid, 'SIGTERM');
+  const killDeadline = now() + (options.terminationGraceMs ?? BUILD_TERMINATION_GRACE_MS);
+  while (isAlive(pid) && now() < killDeadline) {
+    pause(Math.min(25, Math.max(1, killDeadline - now())));
+  }
+  if (isAlive(pid)) {
+    sendSignal(-pid, 'SIGKILL');
+    while (isAlive(pid)) {
+      pause(10);
+    }
+  }
+  throw new ProductionCssBuildTimeoutError(options.timeoutMs);
+};
+
+const runProductionBuild = (outDir: string): void => {
+  const statusRoot = mkdtempSync(join(tmpdir(), 'acx-style-build-status-'));
+  const statusPath = join(statusRoot, 'exit-code');
+  const supervisorSource = String.raw`
+const { spawn } = require('node:child_process');
+const fs = require('node:fs');
+const [statusPath, cwd, command, argsToken] = process.argv.slice(1);
+const child = spawn(command, JSON.parse(argsToken), { cwd, stdio: 'ignore' });
+child.once('error', () => { fs.writeFileSync(statusPath, '127'); process.exit(127); });
+child.once('exit', (code, signal) => {
+  const exitCode = code === null ? 128 + ({ SIGTERM: 15, SIGKILL: 9 }[signal] || 1) : code;
+  fs.writeFileSync(statusPath, String(exitCode));
+  process.exit(exitCode);
+});
+`;
+  const buildArgs = ['run', 'build', '--', '--outDir', outDir, '--emptyOutDir'];
+  const supervisor = spawn(
+    process.execPath,
+    ['-e', supervisorSource, statusPath, appRoot, 'npm', JSON.stringify(buildArgs)],
+    { detached: true, stdio: 'ignore' },
+  );
+  if (supervisor.pid === undefined) {
+    rmSync(statusRoot, { recursive: true, force: true });
+    throw new Error('Failed to start the detached production CSS build process group.');
+  }
+  try {
+    const exitCode = waitForProcessGroup(supervisor.pid, {
+      timeoutMs: BUILD_TIMEOUT_MS,
+      readExitCode: () => {
+        try {
+          const value = Number(readFileSync(statusPath, 'utf8'));
+          return Number.isInteger(value) ? value : null;
+        } catch {
+          return null;
+        }
+      },
+    });
+    if (exitCode !== 0) {
+      throw new Error(`Production CSS build exited with status ${exitCode}.`);
+    }
+  } finally {
+    rmSync(statusRoot, { recursive: true, force: true });
   }
 };
 
@@ -784,11 +960,7 @@ export const loadProductionCssBundle = (): ProductionCssBundle => {
         discardArtifact: (outDir) => rmSync(outDir, { recursive: true, force: true }),
         buildArtifact: (outDir) => {
           runWithLockHeartbeat(LOCK_DIR, lockOwnership, () => {
-            execFileSync('npm', ['run', 'build', '--', '--outDir', outDir, '--emptyOutDir'], {
-              cwd: appRoot,
-              stdio: 'pipe',
-              timeout: BUILD_TIMEOUT_MS,
-            });
+            runProductionBuild(outDir);
           });
         },
         stampArtifact: (outDir, fingerprint) => {

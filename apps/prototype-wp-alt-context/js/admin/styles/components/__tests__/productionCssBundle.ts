@@ -308,9 +308,9 @@ const buildGuardExists = (lockDir: string): boolean => {
 const sameOwnership = (left: DirectoryLockOwnership, right: DirectoryLockOwnership): boolean =>
   left.pid === right.pid && left.startToken === right.startToken && left.nonce === right.nonce;
 
-const readLockOwnership = (lockDir: string): DirectoryLockOwnership | null => {
+const readLockOwnership = (lockDir: string, file = LOCK_OWNER_FILE): DirectoryLockOwnership | null => {
   try {
-    const parsed: unknown = JSON.parse(readFileSync(ownerPathForLock(lockDir), 'utf8'));
+    const parsed: unknown = JSON.parse(readFileSync(join(lockDir, file), 'utf8'));
     if (
       typeof parsed !== 'object' ||
       parsed === null ||
@@ -528,7 +528,21 @@ export const tryAcquireDirectoryLock = (
     const isProcessAlive = options.isProcessAlive ?? processIdentityIsAlive;
     const teardownIsComplete = (owner: DirectoryLockOwnership): boolean => {
       if (owner.teardown_uncertain === undefined) {
-        return !buildGuardExists(lockDir);
+        if (!buildGuardExists(lockDir)) return true;
+        const guard = readLockOwnership(lockDir, BUILD_GUARD_FILE);
+        if (guard === null || !sameOwnership(guard, owner) || guard.teardown_uncertain === undefined) {
+          return false;
+        }
+        // The supervisor publishes its identity before starting npm. After an owner crash,
+        // confirm the whole group is gone, never just its leader.
+        try {
+          return !(options.isProcessGroupAlive ??
+            ((pgid: number) => processGroupExistsViaSignal(pgid, (id, signal) => process.kill(id, signal))))(
+            guard.teardown_uncertain.pgid,
+          );
+        } catch {
+          return false;
+        }
       }
       try {
         const isGroupAlive =
@@ -973,20 +987,73 @@ const waitForIdentifiedProcessGroup = (
   throw new ProductionCssBuildTimeoutError(options.timeoutMs);
 };
 
-const runProductionBuild = (outDir: string): void => {
+const runProductionBuild = (outDir: string, lockDir?: string): void => {
+  if (lockDir !== undefined) {
+    // A stability retry starts a new group. Do not leave the previous group's now-dead
+    // identity in the guard during this supervisor's startup window.
+    const owner = readLockOwnership(lockDir);
+    if (owner === null || owner.pid !== process.pid) throw new Error(`Lost build ownership of ${lockDir}.`);
+    writeFileSync(join(lockDir, BUILD_GUARD_FILE), JSON.stringify(owner));
+  }
   const statusRoot = mkdtempSync(join(tmpdir(), 'acx-style-build-status-'));
   const statusPath = join(statusRoot, 'exit-code');
   const supervisorSource = String.raw`
-const { spawn } = require('node:child_process');
+const { spawn, execFileSync } = require('node:child_process');
 const fs = require('node:fs');
-const [statusPath, cwd, command, argsToken] = process.argv.slice(1);
+const { readFileSync } = fs;
+const [statusPath, cwd, command, argsToken, parentText, guardPath, lifetimeText, graceText] = process.argv.slice(1);
+const processStartToken = (pid) => {
+  try {
+    if (process.platform === 'linux') {
+      const stat = readFileSync('/proc/' + pid + '/stat', 'utf8');
+      const fields = stat.slice(stat.lastIndexOf(')') + 2).trim().split(/\s+/);
+      return /^[0-9]+$/.test(fields[19]) ? 'v1:linux:' + fields[19] : null;
+    }
+    const started = execFileSync('ps', ['-o', 'lstart=', '-p', String(pid)], { encoding: 'utf8' }).trim();
+    return started ? 'v1:' + process.platform + ':' + Buffer.from(started).toString('base64url') : null;
+  } catch { return null; }
+};
+// Publish before any build member exists. An interrupted/failed publication leaves the
+// pre-created guard closed to recovery, and this supervisor never launches npm.
+if (guardPath) {
+  const owner = JSON.parse(fs.readFileSync(guardPath, 'utf8'));
+  const temporaryPath = guardPath + '.supervisor';
+  fs.writeFileSync(temporaryPath, JSON.stringify({ ...owner,
+    teardown_uncertain: { pgid: process.pid, startToken: processStartToken(process.pid) } }));
+  fs.renameSync(temporaryPath, guardPath);
+}
+let stopping = false;
+const stopGroup = () => {
+  if (stopping) return;
+  stopping = true;
+  // Retain the leader identity through TERM grace, then kill our entire group in one syscall.
+  // Recovery independently confirms teardown using the persisted group metadata.
+  process.kill(-process.pid, 'SIGTERM');
+  setTimeout(() => process.kill(-process.pid, 'SIGKILL'), Number(graceText));
+};
+process.on('SIGTERM', stopGroup);
+const deadline = process.hrtime.bigint() + BigInt(lifetimeText) * 1000000n;
+setInterval(() => {
+  if (process.ppid !== Number(parentText) || process.hrtime.bigint() >= deadline) stopGroup();
+}, 100).unref();
+// This bounded timer also keeps the supervisor identifiable after publishing a result.
+setTimeout(stopGroup, Number(lifetimeText));
+if (process.ppid !== Number(parentText)) {
+  stopGroup();
+} else {
 const child = spawn(command, JSON.parse(argsToken), { cwd, stdio: 'ignore' });
-const retainGroupIdentity = () => setInterval(() => {}, 0x7fffffff);
+let published = false;
 const publishExitCode = (code) => {
+  if (published) return;
+  published = true;
   const temporaryPath = statusPath + '.tmp';
-  fs.writeFileSync(temporaryPath, String(code));
-  fs.renameSync(temporaryPath, statusPath);
-  retainGroupIdentity();
+  try {
+    fs.writeFileSync(temporaryPath, String(code));
+    fs.renameSync(temporaryPath, statusPath);
+  } catch {
+    stopGroup();
+  }
+  setTimeout(stopGroup, Number(graceText)).unref();
 };
 child.once('error', () => { publishExitCode(127); });
 child.once('exit', (code, signal) => {
@@ -995,11 +1062,14 @@ child.once('exit', (code, signal) => {
   // stable start token prevents this numeric PGID from being recycled before the signal.
   publishExitCode(exitCode);
 });
+}
 `;
   const buildArgs = ['run', 'build', '--', '--outDir', outDir, '--emptyOutDir'];
   const supervisor = spawn(
     process.execPath,
-    ['-e', supervisorSource, statusPath, appRoot, 'npm', JSON.stringify(buildArgs)],
+    ['-e', supervisorSource, statusPath, appRoot, 'npm', JSON.stringify(buildArgs),
+      String(process.pid), lockDir === undefined ? '' : join(lockDir, BUILD_GUARD_FILE),
+      String(BUILD_TIMEOUT_MS + BUILD_TERMINATION_GRACE_MS), String(BUILD_TERMINATION_GRACE_MS)],
     { detached: true, stdio: 'ignore' },
   );
   if (supervisor.pid === undefined) {
@@ -1121,10 +1191,18 @@ const readNamespaceEntries = (cacheRoot: string, keepNamespace: string): Namespa
     .filter((entry) => entry.isDirectory() && entry.name !== '.gc-lock' && entry.name !== keepNamespace)
     .flatMap((entry) => {
       const namespaceRoot = join(cacheRoot, entry.name);
-      if (existsSync(join(namespaceRoot, '.lock'))) return [];
       const ownerRoot = readNamespaceOwner(namespaceRoot);
       const ownerRootExists = ownerRoot === null ? null : existsSync(ownerRoot);
       if (ownerRootExists === true) return [];
+      const lockDir = join(namespaceRoot, '.lock');
+      if (existsSync(lockDir)) {
+        // Registration/acquisition also takes the GC lock, so no worker can enter between
+        // this fenced recovery and collection. Never wait here for a live or uncertain owner.
+        if (ownerRootExists !== false) return [];
+        const recovered = tryAcquireDirectoryLock(lockDir);
+        if (recovered === null) return [];
+        releaseDirectoryLock(lockDir, recovered);
+      }
       return [{
         name: entry.name,
         lastUsedMs: namespaceLastUsedMs(namespaceRoot),
@@ -1387,7 +1465,7 @@ export const loadProductionCssBundle = (): ProductionCssBundle => {
         discardArtifact: (outDir) => rmSync(outDir, { recursive: true, force: true }),
         buildArtifact: (outDir) => {
           runWithLockHeartbeat(LOCK_DIR, lockOwnership, () => {
-            runProductionBuild(outDir);
+            runProductionBuild(outDir, LOCK_DIR);
           });
         },
         stampArtifact: (outDir, fingerprint) => {

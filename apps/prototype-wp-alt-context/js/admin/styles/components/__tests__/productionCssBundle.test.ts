@@ -81,6 +81,88 @@ const runFixtureProbe = (root: string, scenario: string, body: string): void => 
   expect(result.status).toBe(0);
 };
 
+describe('supervisor lifetime and owner death', () => {
+  it.each(['owner-dies-running', 'owner-dies-finished', 'deadline'])(
+    'tears down the whole group and recovers the lock after %s',
+    (scenario) => {
+      const root = mkdtempSync(join(tmpdir(), 'acx-supervisor-lifetime-test-'));
+      try {
+        runFixtureProbe(root, scenario, String.raw`
+const { spawn } = await import('node:child_process');
+const lockDir = join(root, '.lock');
+const readyPath = join(root, 'build-ready');
+fs.writeFileSync(join(root, 'npm'), '#!' + process.execPath + '\n' +
+  'require("node:fs").writeFileSync(' + JSON.stringify(readyPath) + ', String(process.pid));\n' +
+  (scenario === 'owner-dies-finished' ? '' : 'process.on("SIGTERM", () => {}); setInterval(() => {}, 1000);'),
+  { mode: 0o755 });
+const ownerSource = source
+  .replace('const BUILD_TERMINATION_GRACE_MS = 5_000;', 'const BUILD_TERMINATION_GRACE_MS = 100;')
+  .replace('timeoutMs: BUILD_TIMEOUT_MS,', 'timeoutMs: 20000,')
+  .replace('const BUILD_TIMEOUT_MS = STALE_LOCK_MS - 30_000;',
+    'const BUILD_TIMEOUT_MS = ' + (scenario === 'deadline' ? 800 : 10000) + ';');
+const owner = spawn(process.execPath, ['--input-type=module', '-e',
+  'import fs from "node:fs"; import { syncBuiltinESMExports } from "node:module";\n' +
+  'const fixture = await import(' + JSON.stringify('data:text/javascript;base64,' + Buffer.from(ownerSource).toString('base64')) + ');\n' +
+  // Keep the owner waiting even after a fast npm exit so its death exercises the result state.
+  'const read = fs.readFileSync; fs.readFileSync = (path, ...args) => typeof path === "string" && path.endsWith("/exit-code") ? "" : read(path, ...args); syncBuiltinESMExports();\n' +
+  'const lock = ' + JSON.stringify(lockDir) + '; const ownership = fixture.tryAcquireDirectoryLock(lock);\n' +
+  'try { fixture.runWithBuildLock(lock, ownership, () => fixture.runProductionBuild(' + JSON.stringify(join(root, 'out')) + ', lock)); } catch {}',
+], { env: { ...process.env, PATH: root + ':' + process.env.PATH }, stdio: 'inherit' });
+let pgid;
+const exited = new Promise(resolve => owner.once('exit', resolve));
+const waitUntil = async (predicate) => {
+  const deadline = performance.now() + 5000;
+  while (!predicate()) {
+    assert.ok(performance.now() < deadline, 'supervisor did not complete bounded teardown');
+    await new Promise(resolve => setTimeout(resolve, 20));
+  }
+};
+const running = (pid) => {
+  try {
+    if (process.platform === 'linux') {
+      const stat = fs.readFileSync('/proc/' + pid + '/stat', 'utf8');
+      return stat.slice(stat.lastIndexOf(')') + 2).split(' ')[0] !== 'Z';
+    }
+    process.kill(pid, 0); return true;
+  } catch (error) { if (['ENOENT', 'ESRCH'].includes(error.code)) return false; throw error; }
+};
+try {
+  await waitUntil(() => fs.existsSync(readyPath));
+  const guard = JSON.parse(fs.readFileSync(join(lockDir, '.build-in-progress'), 'utf8'));
+  pgid = guard.teardown_uncertain?.pgid;
+  // On the pre-fix implementation the guard has no group metadata; locate the supervisor
+  // through /proc so the mutation probe can still clean up its orphan in finally.
+  if (!pgid && process.platform === 'linux') {
+    pgid = Number(fs.readFileSync('/proc/' + owner.pid + '/task/' + owner.pid + '/children', 'utf8').trim().split(' ')[0]);
+  }
+  const buildPid = Number(fs.readFileSync(readyPath, 'utf8'));
+  if (scenario === 'owner-dies-finished') await waitUntil(() => !running(buildPid));
+  assert.ok(running(pgid), 'supervisor must still hold the group identity');
+  assert.equal(fixture.tryAcquireDirectoryLock(lockDir, { now: () => Date.now() + 1000000 }), null);
+  if (scenario !== 'deadline') owner.kill('SIGKILL');
+  await waitUntil(() => !running(pgid) && !running(buildPid));
+  await exited;
+  // SIGKILL can leave a zombie briefly until the OS reaps it. Recovery deliberately waits
+  // for ESRCH for the whole group instead of treating a dead leader as sufficient evidence.
+  let recovered;
+  await waitUntil(() => (recovered = fixture.tryAcquireDirectoryLock(lockDir, {
+    now: () => Date.now() + 1000000,
+  })) !== null);
+  assert.ok(recovered, 'confirmed teardown must permit stale lock recovery');
+  fixture.releaseDirectoryLock(lockDir, recovered);
+} finally {
+  owner.kill('SIGKILL');
+  if (pgid) { try { process.kill(-pgid, 'SIGKILL'); } catch {} }
+  await exited;
+}
+`);
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    },
+  );
+});
+
 describe('production status publication races', () => {
   it.each(['publication-race', '', ' ', '0x0', '0\n', '1.5', '256'])(
     'does not accept partial or malformed status %j as build success',
@@ -125,6 +207,7 @@ if (scenario !== 'publication-race') assert.ok(statusReads >= 2, 'invalid status
         rmSync(root, { recursive: true, force: true });
       }
     },
+    15_000,
   );
 });
 
@@ -1377,6 +1460,43 @@ describe('retired worktree namespace collection [FEBT2-W2-U-03]', () => {
     ownerRootExists: boolean | null,
     lockHeld = false,
   ): NamespaceEntry => ({ name, lastUsedMs, ownerRootExists, lockHeld });
+
+  it.each(['dead', 'live', 'uncertain', 'gone-group', 'malformed', 'fresh'])(
+    'uses fenced recovery for a retired namespace with a %s lock',
+    (scenario) => {
+      const root = mkdtempSync(join(tmpdir(), 'acx-retired-lock-test-'));
+      try {
+        runFixtureProbe(root, scenario, String.raw`
+const cache = join(root, 'cache');
+const retired = join(cache, 'retired');
+const lock = join(retired, '.lock');
+fs.mkdirSync(retired, { recursive: true });
+fs.writeFileSync(join(retired, 'namespace-owner.json'), JSON.stringify({ appRoot: join(root, 'removed') }));
+const owner = fixture.tryAcquireDirectoryLock(lock);
+const deadPid = 2147483647;
+const record = { ...owner, pid: scenario === 'live' ? process.pid : deadPid };
+if (scenario === 'uncertain' || scenario === 'gone-group') {
+  record.teardown_uncertain = { pgid: scenario === 'uncertain' ? process.pid : deadPid, startToken: owner.startToken };
+}
+fs.writeFileSync(join(lock, 'owner.json'), scenario === 'malformed' ? '{' : JSON.stringify(record));
+if (scenario !== 'fresh') fs.utimesSync(join(lock, 'owner.json'), new Date(0), new Date(0));
+// Deterministically model a surviving group, including permission-denied inspection.
+if (scenario === 'uncertain') {
+  const kill = process.kill;
+  process.kill = (pid, signal) => {
+    if (pid === -process.pid) throw Object.assign(new Error('denied'), { code: 'EPERM' });
+    return kill(pid, signal);
+  };
+}
+fixture.registerAndPruneNamespaces(cache, join(cache, 'current'), root);
+assert.equal(fs.existsSync(retired), !['dead', 'gone-group'].includes(scenario));
+assert.equal(fs.existsSync(join(cache, '.gc-lock')), false);
+`);
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    },
+  );
 
   it('collects artifacts accumulated by every retired worktree root', () => {
     const entries = [

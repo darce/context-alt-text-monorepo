@@ -329,6 +329,65 @@ final class PublicDemoDescribeControllerTest extends TestCase
         self::assertCount(2, $this->pipeline->submissions);
     }
 
+    public function testR7AcceptedIdSurvivesReconciliationGuardContention(): void
+    {
+        $this->enable([41]);
+        // Pause request one after backend acceptance, before recording its ID.
+        $acquire = new \ReflectionMethod(PublicDemoDescribeController::class, 'acquire_inflight_bulkhead');
+        $started = new \ReflectionMethod(PublicDemoDescribeController::class, 'mark_submission_started');
+        $bind = new \ReflectionMethod(PublicDemoDescribeController::class, 'bind_inflight_run');
+        foreach ([$acquire, $started, $bind] as $method) {
+            $method->setAccessible(true);
+        }
+        self::assertTrue($acquire->invoke($this->controller, 41));
+        self::assertTrue($started->invoke($this->controller));
+        $accepted = $this->pipeline->submit_describe_run($this->authorizedRequest('POST', ['media_ids' => [41]]));
+        $runId = $accepted->get_data()['run_id'];
+        $bound = null;
+
+        // Request two holds the reconciliation guard when request one resumes.
+        $GLOBALS['__ac_get_option_before_read']['acx_public_demo_inflight'] = function () use ($bind, $runId, &$bound): void {
+            unset($GLOBALS['__ac_get_option_before_read']['acx_public_demo_inflight']);
+            self::assertGreaterThan(time(), $GLOBALS['__ac_options']['acx_public_demo_inflight_reconcile']['expires_at']);
+            $bound = $bind->invoke($this->controller, $runId);
+        };
+        $second = new PublicDemoDescribeController($this->pipeline);
+        $result = $second->submit($this->authorizedRequest('POST', ['media_id' => 41]));
+
+        self::assertSame(429, $result->get_status());
+        self::assertTrue($bound);
+        self::assertSame($runId, $GLOBALS['__ac_options']['acx_public_demo_inflight']['run_id']);
+        self::assertSame(200, $this->controller->status($this->authorizedRequest('GET', ['run_id' => $runId]))->get_status());
+        $GLOBALS['__ac_options']['acx_public_demo_inflight']['expires_at'] = time() - 1;
+        self::assertSame(429, $second->submit($this->authorizedRequest('POST', ['media_id' => 41]))->get_status());
+        self::assertCount(1, $this->pipeline->submissions);
+
+        $this->pipeline->status = 'completed';
+        $this->pipeline->statusData = ['phase' => 'complete', 'completed' => 1];
+        self::assertSame(200, $this->controller->status($this->authorizedRequest('GET', ['run_id' => $runId]))->get_status());
+        self::assertArrayNotHasKey('acx_public_demo_inflight', $GLOBALS['__ac_options']);
+        self::assertSame(202, $second->submit($this->authorizedRequest('POST', ['media_id' => 41]))->get_status());
+    }
+
+    public function testBindingMustNotOverwriteReplacementAtWriteBoundary(): void
+    {
+        $acquire = new \ReflectionMethod(PublicDemoDescribeController::class, 'acquire_inflight_bulkhead');
+        $bind = new \ReflectionMethod(PublicDemoDescribeController::class, 'bind_inflight_run');
+        $acquire->setAccessible(true);
+        $bind->setAccessible(true);
+        self::assertTrue($acquire->invoke($this->controller, 41));
+        $replacement = [
+            'run_id' => 'replacement-run', 'media_id' => 41,
+            'token' => 'replacement-owner', 'expires_at' => time() + 600,
+        ];
+        $GLOBALS['__ac_option_before_update']['acx_public_demo_inflight'] = static function () use ($replacement): void {
+            $GLOBALS['__ac_options']['acx_public_demo_inflight'] = $replacement;
+        };
+
+        self::assertFalse($bind->invoke($this->controller, 'late-accepted-run'));
+        self::assertSame($replacement, $GLOBALS['__ac_options']['acx_public_demo_inflight']);
+    }
+
     public function testR6AcceptedRunTrackingFailureMustKeepBulkhead(): void
     {
         $this->enable([41]);

@@ -26,6 +26,9 @@ final class PublicDemoDescribeControllerTest extends TestCase
             public array $submissions = [];
             public int $nextRun = 1;
             public string $status = 'running';
+            public mixed $gpuState = 'ready';
+            public bool $omitGpuState = false;
+            public int $itemRequests = 0;
             /** @var array<string,mixed> */
             public array $statusData = [];
 
@@ -39,34 +42,47 @@ final class PublicDemoDescribeControllerTest extends TestCase
                 $ids = $request->get_param('media_ids');
                 $this->submissions[] = $ids;
 
-                return new WP_REST_Response([
+                $data = [
                     'run_id' => 'public-run-' . $this->nextRun++,
                     'status' => 'pending',
                     'phase' => 'queued',
-                    'gpu_state' => 'stopped',
-                    'completed' => 0,
-                    'total' => 1,
-                    'tenant_id' => 'must-not-leak',
-                ], 202);
-            }
-
-            public function get_describe_run_status(WP_REST_Request $request): WP_REST_Response|WP_Error
-            {
-                return new WP_REST_Response(array_merge([
-                    'run_id' => (string) $request->get_param('run_id'),
-                    'status' => $this->status,
-                    'phase' => 'describing',
-                    'gpu_state' => 'ready',
+                    'gpu_state' => $this->gpuState,
                     'completed' => 0,
                     'failed' => 0,
                     'skipped' => 0,
                     'total' => 1,
                     'tenant_id' => 'must-not-leak',
-                ], $this->statusData));
+                ];
+                if ($this->omitGpuState) {
+                    unset($data['gpu_state']);
+                }
+
+                return new WP_REST_Response($data, 202);
+            }
+
+            public function get_describe_run_status(WP_REST_Request $request): WP_REST_Response|WP_Error
+            {
+                $data = array_merge([
+                    'run_id' => (string) $request->get_param('run_id'),
+                    'status' => $this->status,
+                    'phase' => 'describing',
+                    'gpu_state' => $this->gpuState,
+                    'completed' => 0,
+                    'failed' => 0,
+                    'skipped' => 0,
+                    'total' => 1,
+                    'tenant_id' => 'must-not-leak',
+                ], $this->statusData);
+                if ($this->omitGpuState) {
+                    unset($data['gpu_state']);
+                }
+
+                return new WP_REST_Response($data);
             }
 
             public function get_describe_run_items(WP_REST_Request $request): WP_REST_Response|WP_Error
             {
+                ++$this->itemRequests;
                 return new WP_REST_Response(['items' => [[
                     'media_id' => 41,
                     'alt_text_draft' => 'A person walking beside a lake.',
@@ -215,6 +231,146 @@ final class PublicDemoDescribeControllerTest extends TestCase
         self::assertSame(202, $result->get_status());
         self::assertSame([41], $this->pipeline->submissions[0]);
         self::assertSame('public-run-1', $GLOBALS['__ac_options']['acx_public_demo_inflight']['run_id']);
+    }
+
+    public function testAgedLeaseWithMismatchedTerminalBackendRunIsRenewedAndRejectsAdmission(): void
+    {
+        $this->enable([41]);
+        $this->pipeline->status = 'completed';
+        $this->pipeline->statusData = ['run_id' => 'foreign-terminal', 'phase' => 'complete', 'completed' => 1];
+        $this->setOption('acx_public_demo_inflight', [
+            'run_id' => 'recorded-run',
+            'media_id' => 41,
+            'token' => 'old-token',
+            'expires_at' => time() - 1,
+        ]);
+
+        $result = $this->controller->submit($this->authorizedRequest('POST', ['media_id' => 41]));
+
+        self::assertSame(429, $result->get_status());
+        self::assertSame(PublicDemoErrorCode::BUSY, $result->get_data()['code']);
+        self::assertSame('recorded-run', $GLOBALS['__ac_options']['acx_public_demo_inflight']['run_id']);
+        self::assertGreaterThan(time(), $GLOBALS['__ac_options']['acx_public_demo_inflight']['expires_at']);
+        self::assertSame([], $this->pipeline->submissions);
+    }
+
+    public function testStatusRejectsMismatchedUpstreamRunWithoutFetchingItemsOrReleasingLease(): void
+    {
+        $this->enable([41]);
+        $this->controller->submit($this->authorizedRequest('POST', ['media_id' => 41]));
+        $this->pipeline->status = 'completed';
+        $this->pipeline->statusData = ['run_id' => 'foreign-run', 'phase' => 'complete', 'completed' => 1];
+
+        $result = $this->controller->status($this->authorizedRequest('GET', ['run_id' => 'public-run-1']));
+
+        self::assertInstanceOf(WP_Error::class, $result);
+        self::assertSame(PublicDemoErrorCode::INVALID_RESPONSE, $result->get_error_code());
+        self::assertSame(502, $result->get_error_data()['status']);
+        self::assertSame(0, $this->pipeline->itemRequests);
+        self::assertSame('public-run-1', $GLOBALS['__ac_options']['acx_public_demo_inflight']['run_id']);
+    }
+
+    public function testNullAndAbsentGpuStateAreNormalizedToUnknownOnSubmitAndStatus(): void
+    {
+        $this->enable([41]);
+        $this->pipeline->gpuState = null;
+
+        $submitted = $this->controller->submit($this->authorizedRequest('POST', ['media_id' => 41]));
+        self::assertSame('unknown', $submitted->get_data()['gpu_state']);
+
+        $status = $this->controller->status($this->authorizedRequest('GET', ['run_id' => 'public-run-1']));
+        self::assertSame('unknown', $status->get_data()['gpu_state']);
+
+        unset($GLOBALS['__ac_options']['acx_public_demo_inflight']);
+        $this->pipeline->gpuState = 'ready';
+        $this->pipeline->omitGpuState = true;
+        $submittedWithoutState = $this->controller->submit($this->authorizedRequest('POST', ['media_id' => 41]));
+        self::assertSame('unknown', $submittedWithoutState->get_data()['gpu_state']);
+
+        $statusWithoutState = $this->controller->status($this->authorizedRequest('GET', ['run_id' => 'public-run-2']));
+        self::assertSame('unknown', $statusWithoutState->get_data()['gpu_state']);
+    }
+
+    /** @dataProvider invalidCounterProvider */
+    public function testEnvelopeRejectsEachInvalidProgressCounter(array $invalidCounters): void
+    {
+        $this->enable([41]);
+        $this->pipeline->statusData = $invalidCounters;
+        $this->controller->submit($this->authorizedRequest('POST', ['media_id' => 41]));
+
+        $result = $this->controller->status($this->authorizedRequest('GET', ['run_id' => 'public-run-1']));
+
+        self::assertInstanceOf(WP_Error::class, $result);
+        self::assertSame(PublicDemoErrorCode::INVALID_RESPONSE, $result->get_error_code());
+    }
+
+    /** @return iterable<string,array{array<string,mixed>}> */
+    public static function invalidCounterProvider(): iterable
+    {
+        yield 'negative completed masked by failed' => [['completed' => -1, 'failed' => 1]];
+        yield 'negative failed masked by completed' => [['completed' => 1, 'failed' => -1]];
+        yield 'negative skipped masked by completed' => [['completed' => 1, 'skipped' => -1]];
+        yield 'negative total' => [['total' => -1]];
+        yield 'fractional completed' => [['completed' => 0.5]];
+        yield 'string total' => [['total' => '1']];
+        yield 'null failed' => [['failed' => null]];
+        yield 'null skipped' => [['skipped' => null]];
+    }
+
+    /** @dataProvider deadlineConfigSourceProvider */
+    public function testDeadlineIncludesWarmupAndInferenceBudgetsFromEveryCanonicalConfigSource(string $sourceSetup): void
+    {
+        $script = $sourceSetup . <<<'PHP'
+define('ABSPATH', getcwd() . '/');
+function get_file_data($file, $headers) { return ['Version' => '0.0.6']; }
+function plugin_dir_path($file) { return dirname($file) . '/'; }
+function plugin_dir_url($file) { return 'https://example.test/wp-content/plugins/alt-context/'; }
+function esc_html__($message, $domain = null) { return $message; }
+function wp_die($message) { throw new RuntimeException((string) $message); }
+function add_action($hook, $callback, $priority = 10, $acceptedArgs = 1) { return true; }
+function register_activation_hook($file, $callback) { return true; }
+function register_deactivation_hook($file, $callback) { return true; }
+function register_uninstall_hook($file, $callback) { return true; }
+function apply_filters($hook, $value, ...$args) { return $value; }
+require 'alt-context.php';
+require_once 'src/api/class-public-demo-describe-controller.php';
+$reflection = new ReflectionClass(AltContext\Api\PublicDemoDescribeController::class);
+$controller = $reflection->newInstanceWithoutConstructor();
+$deadline = $reflection->getMethod('public_deadline_seconds')->invoke($controller);
+echo (string) $deadline;
+PHP;
+
+        $command = sprintf(
+            'cd %s && %s -r %s',
+            escapeshellarg(__DIR__ . '/../..'),
+            escapeshellarg((string) PHP_BINARY),
+            escapeshellarg($script)
+        );
+        $output = shell_exec($command);
+
+        self::assertSame(217, (int) trim((string) $output), 'Deadline must include 37s warm-up + 180s inference. Output: ' . $output);
+    }
+
+    /** @return iterable<string,array{string}> */
+    public static function deadlineConfigSourceProvider(): iterable
+    {
+        yield 'getenv' => [<<<'PHP'
+putenv('ACX_GPU_WARMUP_TIMEOUT_SECONDS=37');
+unset($_ENV['ACX_GPU_WARMUP_TIMEOUT_SECONDS'], $_SERVER['ACX_GPU_WARMUP_TIMEOUT_SECONDS']);
+
+PHP];
+        yield 'dotenv ENV store' => [<<<'PHP'
+putenv('ACX_GPU_WARMUP_TIMEOUT_SECONDS');
+$_ENV['ACX_GPU_WARMUP_TIMEOUT_SECONDS'] = '37';
+unset($_SERVER['ACX_GPU_WARMUP_TIMEOUT_SECONDS']);
+
+PHP];
+        yield 'dotenv SERVER store' => [<<<'PHP'
+putenv('ACX_GPU_WARMUP_TIMEOUT_SECONDS');
+unset($_ENV['ACX_GPU_WARMUP_TIMEOUT_SECONDS']);
+$_SERVER['ACX_GPU_WARMUP_TIMEOUT_SECONDS'] = '37';
+
+PHP];
     }
 
     public function testStatusRebuildsPublicEnvelopeAndMapsRawFailure(): void

@@ -6,6 +6,7 @@ import {
   parsePublicDemoEnvelope,
   pollRun,
   statusPresentation,
+  initializeDemo,
 } from '../demo-describe.js';
 
 const running = (overrides: Record<string, unknown> = {}) => ({
@@ -125,6 +126,9 @@ describe('public demo describe polling', () => {
     running({ status: 'pending', phase: 'describing' }),
     running({ progress: { done: -1, total: 1 } }),
     running({ progress: { done: 2, total: 1 } }),
+    running({ progress: { done: 0.5, total: 1 } }),
+    running({ progress: { done: '0', total: 1 } }),
+    running({ progress: { total: 1 } }),
   ])('rejects malformed success envelopes immediately', async (payload) => {
     await expect(
       pollRun({ statusUrl: '/status/malformed', nonce: 'nonce', fetchImpl: vi.fn(async () => response(payload)) }),
@@ -142,6 +146,7 @@ describe('public demo describe polling', () => {
   });
 
   it('treats completed_with_errors as a typed failure', async () => {
+    const presentations: ReturnType<typeof statusPresentation>[] = [];
     await expect(
       pollRun({
         statusUrl: '/status/partial',
@@ -152,8 +157,11 @@ describe('public demo describe polling', () => {
           progress: { done: 1, total: 1 },
           error: { code: 'acx_public_demo_partial_failure', message: 'The description did not complete successfully.' },
         }))),
+        onUpdate: (update) => presentations.push(statusPresentation(update)),
       }),
     ).rejects.toMatchObject({ code: 'acx_public_demo_partial_failure' });
+    expect(presentations.length).toBeGreaterThan(0);
+    expect(presentations.every(({ state, message }) => state !== 'completed' && !/description complete/i.test(message))).toBe(true);
   });
 
   it('aborts an in-flight fetch at the remaining deadline', async () => {
@@ -165,6 +173,7 @@ describe('public demo describe polling', () => {
       pollRun({ statusUrl: '/status/hung', nonce: 'nonce', fetchImpl, timeoutMs: 10 }),
     ).rejects.toMatchObject({ code: 'acx_public_demo_poll_timeout' });
     expect(fetchImpl.mock.calls[0]?.[1]?.signal).toBeInstanceOf(AbortSignal);
+    expect(fetchImpl.mock.calls[0]?.[1]?.signal?.aborted).toBe(true);
   });
 
   it('aborts an in-flight fetch when navigation starts', async () => {
@@ -182,5 +191,49 @@ describe('public demo describe polling', () => {
   it('renders warming and describing phases honestly', () => {
     expect(statusPresentation(parsePublicDemoEnvelope(running({ phase: 'warming', gpu_state: 'starting' }))).message).toContain('warming up');
     expect(statusPresentation(parsePublicDemoEnvelope(running({ phase: 'describing', progress: { done: 1, total: 2 } }))).message).toContain('50%');
+  });
+
+  it('re-enables form controls after a polling timeout', async () => {
+    vi.useFakeTimers();
+    document.body.innerHTML = `
+      <div data-acx-demo data-submit-url="/submit" data-nonce="nonce">
+        <form class="acx-demo__form">
+          <input type="radio" name="acx-demo-media" value="41" checked>
+          <button type="submit">Describe</button>
+        </form>
+        <span data-acx-demo-icon></span>
+        <p data-acx-demo-message></p>
+        <p data-acx-demo-result tabindex="-1"></p>
+      </div>`;
+    const root = document.querySelector<HTMLElement>('[data-acx-demo]');
+    const form = root?.querySelector<HTMLFormElement>('form');
+    let pollSignal: AbortSignal | undefined;
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(response(running({ status: 'pending', phase: 'queued', gpu_state: 'stopped', deadline_seconds: 1 })))
+      .mockImplementationOnce((_input, init) => new Promise<Response>((_resolve, reject) => {
+        pollSignal = init?.signal ?? undefined;
+        pollSignal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')), { once: true });
+      }));
+    vi.stubGlobal('fetch', fetchImpl);
+
+    try {
+      expect(root).toBeInstanceOf(HTMLElement);
+      expect(form).toBeInstanceOf(HTMLFormElement);
+      initializeDemo(root as HTMLElement);
+      form?.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+      expect(Array.from(form?.elements ?? []).every((control) => (control as HTMLInputElement).disabled)).toBe(true);
+
+      await vi.advanceTimersByTimeAsync(1_000);
+      await Promise.resolve();
+
+      expect(pollSignal?.aborted).toBe(true);
+      expect(Array.from(form?.elements ?? []).every((control) => !(control as HTMLInputElement).disabled)).toBe(true);
+      expect(root?.querySelector('[data-acx-demo-message]')?.textContent).toBe(POLL_TIMEOUT_MESSAGE);
+    } finally {
+      vi.unstubAllGlobals();
+      vi.useRealTimers();
+      document.body.innerHTML = '';
+    }
   });
 });

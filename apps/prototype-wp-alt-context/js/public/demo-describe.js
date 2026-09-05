@@ -230,7 +230,7 @@ export const statusPresentation = (body) => {
   return { state: 'failed', message: body.error?.message ?? 'The image could not be described. Please try again later.' };
 };
 
-const initializeDemo = (root) => {
+export const initializeDemo = (root) => {
   const form = root.querySelector('.acx-demo__form');
   const statusMessage = root.querySelector('[data-acx-demo-message]');
   const statusIcon = root.querySelector('[data-acx-demo-icon]');

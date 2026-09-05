@@ -475,6 +475,20 @@
     }
   }
 
+  &__explanation {
+    grid-column: 1 / -1;
+    margin-bottom: 0;
+    color: var(--acx-color-text-muted);
+    font-size: var(--acx-text-sm);
+  }
+
+  &__field-error {
+    margin-top: calc(var(--acx-space-12) * -1);
+    margin-bottom: var(--acx-space-12);
+    color: var(--acx-color-danger-strong);
+    font-weight: var(--acx-font-weight-semibold);
+  }
+
   &__apply {
     display: flex;
     align-items: flex-start;

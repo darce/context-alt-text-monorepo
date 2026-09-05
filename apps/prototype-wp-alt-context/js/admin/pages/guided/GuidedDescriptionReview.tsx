@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 
 import type {
   GuidedCandidateStatus,
@@ -50,12 +50,26 @@ export const GuidedDescriptionReview = ({
   onUndo,
 }: GuidedDescriptionReviewProps): React.JSX.Element => {
   const [editValue, setEditValue] = useState(scenario.candidate.text);
+  const [editError, setEditError] = useState('');
+  const editorRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
     setEditValue(scenario.candidate.text);
+    setEditError('');
   }, [scenario.candidate.text]);
 
   const appliedEvent = lastApplication(scenario.history);
+
+  const handleSaveEdit = (): void => {
+    if (editValue.trim() === '') {
+      setEditError('A description cannot be empty.');
+      editorRef.current?.focus();
+      return;
+    }
+
+    setEditError('');
+    onSaveEdit(editValue);
+  };
 
   return (
     <section className="acx-guided-review" aria-labelledby="acx-guided-review-title">
@@ -115,14 +129,24 @@ export const GuidedDescriptionReview = ({
           <h3>Proposed draft</h3>
           <label htmlFor="guided-description-draft">Description draft</label>
           <textarea
+            ref={editorRef}
             id="guided-description-draft"
-            aria-label="Description draft"
+            aria-describedby={editError ? 'guided-description-draft-error' : undefined}
+            aria-invalid={editError ? 'true' : undefined}
             value={editValue}
             rows={4}
-            onChange={(event) => setEditValue(event.target.value)}
+            onChange={(event) => {
+              setEditValue(event.target.value);
+              setEditError('');
+            }}
           />
+          {editError ? (
+            <p id="guided-description-draft-error" className="acx-guided-review__field-error" role="alert">
+              {editError}
+            </p>
+          ) : null}
           <div className="acx-guided-review__actions">
-            <button type="button" className="acx-button acx-button--secondary" onClick={() => onSaveEdit(editValue)}>
+            <button type="button" className="acx-button acx-button--secondary" onClick={handleSaveEdit}>
               Save description edit
             </button>
             <button

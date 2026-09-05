@@ -11,10 +11,12 @@ import {
   openSync,
   readFileSync,
   readdirSync,
+  readlinkSync,
   realpathSync,
   renameSync,
   rmSync,
   statSync,
+  symlinkSync,
   utimesSync,
   writeFileSync,
 } from 'node:fs';
@@ -385,8 +387,74 @@ const processStartToken = (pid: number): string | null => {
   }
 };
 
-const processIdentityIsAlive = (pid: number, startToken: string): boolean =>
-  processStartToken(pid) === startToken;
+const processIdentityIsAlive = (pid: number, startToken: string): boolean => {
+  const observed = processStartToken(pid);
+  if (observed !== null) return observed === startToken;
+  // Unreadable /proc or a failed ps is uncertainty, not evidence of death. Only the
+  // kernel's ESRCH (or a successfully read different start token above) permits recovery.
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code !== 'ESRCH';
+  }
+};
+
+/**
+ * Publish recovery ownership atomically: a mkdir followed by owner.json leaves a permanent
+ * ownerless claim if the reaper dies between those writes. A symlink carries all metadata in
+ * its creation syscall. Its target is data, never a path to follow.
+ *
+ * Reclaiming a dead claim is itself serialized by a claim keyed to that claim's unique nonce.
+ * After taking it we recheck the original target before unlinking, so a delayed contender
+ * cannot unlink a replacement claim (ABA). These secondary claims use the same recovery
+ * protocol if their owner dies. Bound crash-chain depth and leave uncertain state untouched.
+ */
+const tryAcquireRecoveryClaim = (
+  claimPath: string,
+  ownership: DirectoryLockOwnership,
+  options: DirectoryLockOptions,
+  depth = 0,
+): boolean => {
+  if (depth >= 32) return false;
+  const now = options.now ?? Date.now;
+  try {
+    symlinkSync(JSON.stringify({ ...ownership, nonce: randomUUID(), createdAt: now() }), claimPath);
+    return true;
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === 'ENOENT') return false; // Another reaper removed the incumbent; retry acquisition.
+    if (code !== 'EEXIST') throw error;
+  }
+  let target: string;
+  let incumbent: DirectoryLockOwnership & { createdAt: number };
+  try {
+    target = readlinkSync(claimPath);
+    incumbent = JSON.parse(target);
+    if (
+      incumbent === null || typeof incumbent !== 'object' ||
+      !Number.isSafeInteger(incumbent.pid) || incumbent.pid <= 0 ||
+      typeof incumbent.startToken !== 'string' || !isValidProcessStartToken(incumbent.startToken) ||
+      typeof incumbent.nonce !== 'string' || !/^[a-zA-Z0-9-]{1,64}$/.test(incumbent.nonce) ||
+      !Number.isFinite(incumbent.createdAt) ||
+      now() - incumbent.createdAt <= (options.staleAfterMs ?? STALE_LOCK_MS) ||
+      (options.isProcessAlive ?? processIdentityIsAlive)(incumbent.pid, incumbent.startToken)
+    ) return false;
+  } catch {
+    // Legacy ownerless directories and unreadable metadata require operator inspection.
+    return false;
+  }
+  const recoveryPath = join(dirname(claimPath), `.reaping-${incumbent.nonce}`);
+  if (!tryAcquireRecoveryClaim(recoveryPath, ownership, options, depth + 1)) return false;
+  try {
+    if (readlinkSync(claimPath) === target) rmSync(claimPath, { force: true });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+  } finally {
+    rmSync(recoveryPath, { force: true });
+  }
+  return false; // Re-enter the caller's bounded acquisition loop after clearing a dead claim.
+};
 
 const publishLockOwnership = (
   lockDir: string,
@@ -480,14 +548,7 @@ export const tryAcquireDirectoryLock = (
       // reapers can both inspect owner A, then the slower one can delete newly-created owner B
       // after the faster one removes A (the classic ABA unlink race).
       const recoveryClaim = join(lockDir, '.reaping');
-      try {
-        mkdirSync(recoveryClaim);
-      } catch (claimError) {
-        if ((claimError as NodeJS.ErrnoException).code !== 'EEXIST') {
-          throw claimError;
-        }
-        return null;
-      }
+      if (!tryAcquireRecoveryClaim(recoveryClaim, ownership, options)) return null;
 
       const confirmedIncumbent = readLockOwnership(lockDir);
       if (confirmedIncumbent === null || !sameOwnership(confirmedIncumbent, incumbent)) {

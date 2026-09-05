@@ -10,7 +10,7 @@
  * fail today, so the pure `selectUnfingerprinted` seam is exercised with a planted
  * unlisted file — the permanent discrimination guard TEST-15 asks for.
  */
-import { spawn } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import {
   existsSync,
   mkdirSync,
@@ -541,6 +541,144 @@ describe('production build deadline', () => {
       rmSync(fixtureRoot, { recursive: true, force: true });
     }
   });
+
+  it.each(['EPERM', 'kill-confirmation'] as const)(
+    'persists %s uncertainty through stale recovery and rechecks the group under the claim',
+    (failure) => {
+      const fixtureRoot = mkdtempSync(join(tmpdir(), 'acx-style-fence-policy-test-'));
+      const lockDir = join(fixtureRoot, '.lock');
+      const ownership = tryAcquireDirectoryLock(lockDir);
+      let now = 0;
+      try {
+        expect(() => runWithBuildLock(lockDir, ownership!, () => waitForProcessGroup(1357, {
+          timeoutMs: 1, terminationGraceMs: 1, killConfirmationMs: 1,
+          now: () => now,
+          sleep: (milliseconds) => { now += milliseconds; },
+          readExitCode: () => null,
+          processGroupStartToken: 'leader-1357',
+          readProcessStartToken: () => 'leader-1357',
+          isProcessGroupAlive: () => true,
+          sendSignal: () => {
+            if (failure === 'EPERM') {
+              const error = new Error('Operation not permitted') as NodeJS.ErrnoException;
+              error.code = 'EPERM';
+              throw error;
+            }
+          },
+        }))).toThrow(ProductionCssBuildTeardownError);
+        const old = new Date(Date.now() - 60_000);
+        utimesSync(join(lockDir, LOCK_OWNER_FILE), old, old);
+        const deadOwner = { staleAfterMs: 1, isProcessAlive: () => false };
+        expect(tryAcquireDirectoryLock(lockDir, {
+          ...deadOwner, isProcessGroupAlive: () => true,
+        })).toBeNull();
+        const owner = JSON.parse(readFileSync(join(lockDir, LOCK_OWNER_FILE), 'utf8'));
+        expect(owner.teardown_uncertain).toEqual({ pgid: 1357, startToken: 'leader-1357' });
+        let probes = 0;
+        expect(tryAcquireDirectoryLock(lockDir, {
+          ...deadOwner, isProcessGroupAlive: () => ++probes > 1,
+        })).toBeNull();
+        expect(probes).toBe(2);
+        expect(existsSync(join(lockDir, '.reaping'))).toBe(false);
+        const successor = tryAcquireDirectoryLock(lockDir, {
+          ...deadOwner, isProcessGroupAlive: () => false,
+        });
+        expect(successor).not.toBeNull();
+        if (successor !== null) releaseDirectoryLock(lockDir, successor);
+      } finally {
+        rmSync(fixtureRoot, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it.skipIf(process.platform === 'win32').each(['EPERM', 'kill-confirmation'] as const)(
+    'fences successors after the owner exits following %s teardown [D5-R6-02/D5-R7-01]',
+    (failure) => {
+      const fixtureRoot = mkdtempSync(join(tmpdir(), 'acx-style-orphan-fence-test-'));
+      const lockDir = join(fixtureRoot, '.lock');
+      const pidPath = join(fixtureRoot, 'group-pid');
+      // A separate, reaped owner is essential: retaining an ordinary lease only fences successors
+      // while that owner lives. Load the actual fixture so this exercises its public entrypoints.
+      const ownerSource = String.raw`
+import fs from 'node:fs';
+import { spawn } from 'node:child_process';
+import { dirname } from 'node:path';
+import { stripTypeScriptTypes } from 'node:module';
+const [sourcePath, lockDir, pidPath, failure] = process.argv.slice(1);
+const source = 'const __dirname = ' + JSON.stringify(dirname(sourcePath)) + ';\n' +
+  stripTypeScriptTypes(fs.readFileSync(sourcePath, 'utf8'));
+const fixture = await import('data:text/javascript;base64,' + Buffer.from(source).toString('base64'));
+const { tryAcquireDirectoryLock, runWithBuildLock, waitForProcessGroup,
+  ProductionCssBuildTeardownError } = fixture;
+const ownership = tryAcquireDirectoryLock(lockDir);
+const group = spawn(process.execPath, ['-e', 'setInterval(() => {}, 0x7fffffff)'], {
+  detached: true, stdio: 'ignore',
+});
+group.unref();
+fs.writeFileSync(pidPath, String(group.pid));
+let now = 0;
+try {
+  runWithBuildLock(lockDir, ownership, () => waitForProcessGroup(group.pid, {
+    timeoutMs: 1, terminationGraceMs: 1, killConfirmationMs: 1,
+    now: () => now, sleep: ms => { now += ms; }, readExitCode: () => null,
+    sendSignal: (id, signal) => {
+      if (signal === 0) return process.kill(id, 0);
+      if (failure === 'EPERM') {
+        const error = new Error('Injected signal permission failure');
+        error.code = 'EPERM';
+        throw error;
+      }
+      // Model accepted signals whose teardown cannot be confirmed; the real group survives.
+    },
+  }));
+  throw new Error('Expected uncertain teardown');
+} catch (error) {
+  if (!(error instanceof ProductionCssBuildTeardownError)) throw error;
+}
+`;
+      try {
+        execFileSync(process.execPath, ['--input-type=module', '-e', ownerSource,
+          join(__dirname, 'productionCssBundle.ts'),
+          lockDir, pidPath, failure,
+        ], { timeout: 10_000, stdio: 'pipe' });
+        const pgid = Number(readFileSync(pidPath, 'utf8'));
+        expect(() => process.kill(-pgid, 0)).not.toThrow();
+        const ownerPath = join(lockDir, LOCK_OWNER_FILE);
+        const old = new Date(Date.now() - 60_000);
+        utimesSync(ownerPath, old, old);
+
+        // This assertion fails on the original code: the owner is dead and its ordinary lease
+        // is stale, yet the supervised process group can still mutate the build artifacts.
+        expect(tryAcquireDirectoryLock(lockDir, { staleAfterMs: 1 })).toBeNull();
+        const owner = JSON.parse(readFileSync(ownerPath, 'utf8'));
+        expect(owner.teardown_uncertain).toEqual({ pgid, startToken: expect.any(String) });
+        expect(releaseDirectoryLock(lockDir, owner)).toBe(false);
+
+        // A group-probe failure is uncertainty, including after the owner has exited.
+        expect(tryAcquireDirectoryLock(lockDir, {
+          staleAfterMs: 1,
+          isProcessGroupAlive: () => { throw new Error('Probe unavailable'); },
+        })).toBeNull();
+        // Deterministically exercise recovery once the whole group is proven absent. Real group
+        // teardown is in finally; orphan reaping latency must not make this policy test flaky.
+        const successor = tryAcquireDirectoryLock(lockDir, {
+          staleAfterMs: 1, isProcessGroupAlive: () => false,
+        });
+        expect(successor).not.toBeNull();
+        if (successor !== null) releaseDirectoryLock(lockDir, successor);
+      } finally {
+        if (existsSync(pidPath)) {
+          try {
+            process.kill(-Number(readFileSync(pidPath, 'utf8')), 'SIGKILL');
+          } catch (error) {
+            if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error;
+          }
+        }
+        rmSync(fixtureRoot, { recursive: true, force: true });
+      }
+    },
+    15_000,
+  );
 
   it('does not consult the wall clock for process or termination deadlines', () => {
     let alive = true;

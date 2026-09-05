@@ -38,6 +38,12 @@ import { dirname, join, relative, resolve } from 'node:path';
  *      means no acquisition order and no circular wait (CON-13/CON-21).
  *   4. The returned bundle is a frozen snapshot of already-read strings, so no test body can
  *      mutate a shared fixture (TEST-07).
+ *
+ * RES-13-TEARDOWN: an uncertain teardown persists `teardown_uncertain` in owner.json.
+ * Owner death or a missing/reused group leader does not clear this fence: recovery must observe
+ * ESRCH for the entire PGID. Permission/probe failures retain it. Operator override: stop all
+ * fixture users, inspect the recorded PGID/startToken and terminate any surviving build members,
+ * then explicitly remove that namespace's .lock directory. Never remove it based on owner age.
  */
 
 const testsRoot = __dirname;
@@ -255,6 +261,13 @@ export interface DirectoryLockOwnership {
   readonly pid: number;
   readonly startToken: string;
   readonly nonce: string;
+  readonly teardown_uncertain?: SupervisedProcessGroup;
+}
+
+interface SupervisedProcessGroup {
+  readonly pgid: number;
+  /** Null means identity capture failed; only absence of the whole group permits recovery. */
+  readonly startToken: string | null;
 }
 
 export interface DirectoryLockOptions {
@@ -263,6 +276,8 @@ export interface DirectoryLockOptions {
   readonly pollMs?: number;
   readonly now?: () => number;
   readonly isProcessAlive?: (pid: number, startToken: string) => boolean;
+  /** Whole-group probe; leader exit alone cannot prove teardown complete. */
+  readonly isProcessGroupAlive?: (pgid: number) => boolean;
   /** Deterministic fault-injection seam for owner-publication tests. */
   readonly publishOwnership?: (
     lockDir: string,
@@ -288,6 +303,23 @@ const readLockOwnership = (lockDir: string): DirectoryLockOwnership | null => {
       return null;
     }
     const { pid, startToken, nonce } = parsed;
+    let teardown_uncertain: SupervisedProcessGroup | undefined;
+    if ('teardown_uncertain' in parsed) {
+      const group = parsed.teardown_uncertain;
+      if (
+        typeof group !== 'object' ||
+        group === null ||
+        !('pgid' in group) ||
+        typeof group.pgid !== 'number' ||
+        !Number.isSafeInteger(group.pgid) ||
+        group.pgid <= 0 ||
+        !('startToken' in group) ||
+        (group.startToken !== null && typeof group.startToken !== 'string')
+      ) {
+        return null;
+      }
+      teardown_uncertain = { pgid: group.pgid, startToken: group.startToken };
+    }
     return typeof pid === 'number' &&
       Number.isSafeInteger(pid) &&
       pid > 0 &&
@@ -295,7 +327,7 @@ const readLockOwnership = (lockDir: string): DirectoryLockOwnership | null => {
       isValidProcessStartToken(startToken) &&
       typeof nonce === 'string' &&
       nonce.length > 0
-      ? { pid, startToken, nonce }
+      ? { pid, startToken, nonce, ...(teardown_uncertain === undefined ? {} : { teardown_uncertain }) }
       : null;
   } catch {
     return null;
@@ -410,7 +442,22 @@ export const tryAcquireDirectoryLock = (
     }
     const staleAfterMs = options.staleAfterMs ?? STALE_LOCK_MS;
     const isProcessAlive = options.isProcessAlive ?? processIdentityIsAlive;
-    if (leaseAgeMs > staleAfterMs && !isProcessAlive(incumbent.pid, incumbent.startToken)) {
+    const teardownIsComplete = (owner: DirectoryLockOwnership): boolean => {
+      if (owner.teardown_uncertain === undefined) return true;
+      try {
+        const isGroupAlive =
+          options.isProcessGroupAlive ??
+          ((pgid: number) => processGroupExistsViaSignal(pgid, (id, signal) => process.kill(id, signal)));
+        return !isGroupAlive(owner.teardown_uncertain.pgid);
+      } catch {
+        return false;
+      }
+    };
+    if (
+      leaseAgeMs > staleAfterMs &&
+      !isProcessAlive(incumbent.pid, incumbent.startToken) &&
+      teardownIsComplete(incumbent)
+    ) {
       // Serialize stale recovery inside the incumbent directory. Without this claim, two
       // reapers can both inspect owner A, then the slower one can delete newly-created owner B
       // after the faster one removes A (the classic ABA unlink race).
@@ -438,7 +485,8 @@ export const tryAcquireDirectoryLock = (
       }
       if (
         confirmedLeaseAgeMs > staleAfterMs &&
-        !isProcessAlive(confirmedIncumbent.pid, confirmedIncumbent.startToken)
+        !isProcessAlive(confirmedIncumbent.pid, confirmedIncumbent.startToken) &&
+        teardownIsComplete(confirmedIncumbent)
       ) {
         rmSync(lockDir, { recursive: true, force: true });
         try {
@@ -486,7 +534,11 @@ export const releaseDirectoryLock = (
   ownership: DirectoryLockOwnership,
 ): boolean => {
   const incumbent = readLockOwnership(lockDir);
-  if (incumbent === null || !sameOwnership(incumbent, ownership)) {
+  if (
+    incumbent === null ||
+    !sameOwnership(incumbent, ownership) ||
+    incumbent.teardown_uncertain !== undefined
+  ) {
     return false;
   }
   rmSync(lockDir, { recursive: true, force: true });
@@ -555,6 +607,7 @@ export class ProductionCssBuildTeardownError extends Error {
   readonly code = 'RES-13-TEARDOWN';
   /** A successor must not enter while the previous process group may still be alive. */
   readonly retainBuildLock = true;
+  supervisedGroup?: SupervisedProcessGroup;
 
   constructor(timeoutMs: number, detail?: string, options?: ErrorOptions) {
     super(
@@ -565,7 +618,7 @@ export class ProductionCssBuildTeardownError extends Error {
   }
 }
 
-/** Release ordinary failures, but deliberately strand the lease when teardown is uncertain. */
+/** Persist uncertain teardown so the fence survives the lock owner's exit. */
 export const runWithBuildLock = <T>(
   lockDir: string,
   ownership: DirectoryLockOwnership,
@@ -576,6 +629,22 @@ export const runWithBuildLock = <T>(
     return operation();
   } catch (error) {
     retainLock = error instanceof ProductionCssBuildTeardownError && error.retainBuildLock;
+    if (error instanceof ProductionCssBuildTeardownError) {
+      const incumbent = readLockOwnership(lockDir);
+      if (incumbent !== null && sameOwnership(incumbent, ownership)) {
+        if (
+          error.supervisedGroup === undefined ||
+          publishLockOwnership(lockDir, {
+            ...incumbent,
+            teardown_uncertain: error.supervisedGroup,
+          }) === null
+        ) {
+          // Missing metadata fails closed too. If publication failed (or no group identity was
+          // supplied), remove the ordinary lease from recovery's view, preserving it for diagnosis.
+          renameSync(ownerPathForLock(lockDir), join(lockDir, `.teardown-uncertain-${ownership.nonce}`));
+        }
+      }
+    }
     throw error;
   } finally {
     if (!retainLock) releaseDirectoryLock(lockDir, ownership);
@@ -708,6 +777,23 @@ const terminateProcessGroup = (
 
 /** Synchronously supervise a detached process group without relying on an unbounded sync timeout. */
 export const waitForProcessGroup = (pid: number, options: ProcessGroupWaitOptions): number => {
+  const startToken =
+    options.processGroupStartToken ?? (options.readProcessStartToken ?? processStartToken)(pid);
+  try {
+    return waitForIdentifiedProcessGroup(pid, options, startToken);
+  } catch (error) {
+    if (error instanceof ProductionCssBuildTeardownError) {
+      error.supervisedGroup = { pgid: pid, startToken };
+    }
+    throw error;
+  }
+};
+
+const waitForIdentifiedProcessGroup = (
+  pid: number,
+  options: ProcessGroupWaitOptions,
+  expectedStartToken: string | null,
+): number => {
   const now = options.now ?? monotonicNow;
   const pause = options.sleep ?? sleepSync;
   const sendSignal = options.sendSignal ?? ((pidOrGroup, signal) => process.kill(pidOrGroup, signal));
@@ -719,7 +805,6 @@ export const waitForProcessGroup = (pid: number, options: ProcessGroupWaitOption
         ? processGroupIsAlive(pid, sendSignal)
         : processGroupExistsViaSignal(pid, sendSignal));
   const readStartToken = options.readProcessStartToken ?? processStartToken;
-  const expectedStartToken = options.processGroupStartToken ?? readStartToken(pid);
   if (expectedStartToken === null) {
     throw new ProductionCssBuildTeardownError(
       options.killConfirmationMs ?? BUILD_TERMINATION_GRACE_MS,
@@ -801,15 +886,9 @@ child.once('exit', (code, signal) => {
   }
   try {
     const supervisorStartToken = processStartToken(supervisor.pid);
-    if (supervisorStartToken === null) {
-      throw new ProductionCssBuildTeardownError(
-        BUILD_TERMINATION_GRACE_MS,
-        `Cannot establish the detached production CSS leader identity for process group ${supervisor.pid} (RES-13-TEARDOWN).`,
-      );
-    }
     const exitCode = waitForProcessGroup(supervisor.pid, {
       timeoutMs: BUILD_TIMEOUT_MS,
-      processGroupStartToken: supervisorStartToken,
+      processGroupStartToken: supervisorStartToken ?? undefined,
       readExitCode: () => {
         try {
           const value = Number(readFileSync(statusPath, 'utf8'));

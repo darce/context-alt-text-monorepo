@@ -25,6 +25,37 @@ PRODUCER_EXAMPLE = ROOT / "apps/prototype-description-service/.env.prod.example"
 DEMO_EXAMPLE = ROOT / "infra/oci/demo/.env.example"
 
 
+@pytest.mark.parametrize("boot_file", [None, "", " \n"])
+def test_lease_store_requires_available_boot_identity(tmp_path: Path, monkeypatch, boot_file) -> None:
+    from infra.oci.gpu_lifecycle import reaper
+
+    original_read_text = Path.read_text
+
+    def read_text(path, *args, **kwargs):
+        if str(path) == "/proc/sys/kernel/random/boot_id":
+            if boot_file is None:
+                raise OSError("simulated unreadable procfs")
+            return boot_file
+        return original_read_text(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", read_text)
+    path = tmp_path / "lease.json"
+    # Assert fail-fast behavior even before inspecting the named exception.
+    with pytest.raises(RuntimeError, match="boot identity unavailable") as error:
+        reaper.RunningSinceLeaseStore(path=path)
+    assert type(error.value).__name__ == "BootIdentityUnavailableError"
+    assert not list(tmp_path.iterdir())
+
+    store = reaper.RunningSinceLeaseStore(path=path, boot_id="test-boot")
+    store.write("preflight", source="first_observed")
+    record = store.read("preflight")
+    assert record is not None
+    assert record.boot_id == "test-boot"
+    other_boot = reaper.RunningSinceLeaseStore(path=path, boot_id="other-boot")
+    with pytest.raises(reaper.CorruptRunningSinceLeaseError, match="different boot"):
+        other_boot.read("preflight")
+
+
 def install_probe_python(fake_bin: Path) -> None:
     """Intercept ExecStart probes in every shared-harness subprocess.
 

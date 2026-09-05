@@ -12,7 +12,9 @@ import {
 } from '../../guidedPrototype/state';
 import { GuidedPrototypeEntrance } from '../GuidedPrototypeEntrance';
 import { GuidedDescriptionReview } from './GuidedDescriptionReview';
-import { GuidedPrototypeGuide, type GuidedGuideStep } from './GuidedPrototypeGuide';
+import { focusGuidedSection, GuidedPrototypeGuide, type GuidedGuideStep } from './GuidedPrototypeGuide';
+import { GuidedResetDialog } from './GuidedResetDialog';
+import { GuidedSamplePhoto } from './GuidedSamplePhoto';
 
 const initialScenario = (): GuidedScenario => createGuidedScenario();
 
@@ -21,7 +23,7 @@ export const GuidedPrototypePage = (): React.JSX.Element => {
   const [guideOpen, setGuideOpen] = useState(false);
   const [activeStep, setActiveStep] = useState<GuidedGuideStep>('understand');
   const [feedback, setFeedback] = useState('');
-  const [sessionState] = useState<'active'>('active');
+  const [resetVersion, setResetVersion] = useState(0);
 
   const historyLabels = useMemo(
     () =>
@@ -45,55 +47,103 @@ export const GuidedPrototypePage = (): React.JSX.Element => {
     setFeedback('The guide is open. Start with the image and page context.');
   };
 
+  const handleGuideToggle = (): void => {
+    setGuideOpen((current) => !current);
+  };
+
+  const handleGuideSelect = (step: GuidedGuideStep): void => {
+    setActiveStep(step);
+    setFeedback(`Guide moved to ${step}.`);
+  };
+
+  const handleGuideEnd = (): void => {
+    setGuideOpen(false);
+    setFeedback('Guide ended. You can continue with the same practice scenario.');
+    focusGuidedSection('understand');
+  };
+
   const updateScenario = (
     operation: (current: GuidedScenario) => GuidedScenario,
     message: string,
     step?: GuidedGuideStep,
-  ): void => {
-    setScenario((current) => operation(current));
-    setFeedback(message);
-    if (step) {
-      setActiveStep(step);
+    announceError = true,
+  ): string | undefined => {
+    try {
+      // Evaluate the operation in the event handler so a domain validation error
+      // can be shown in the single page feedback channel rather than escaping a
+      // React state updater during render.
+      const nextScenario = operation(scenario);
+      setScenario(nextScenario);
+      setFeedback(message);
+      if (step) {
+        setActiveStep(step);
+      }
+      return undefined;
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unable to update this practice scenario.';
+      setFeedback(announceError ? errorMessage : '');
+      return errorMessage;
     }
   };
 
-  const handleSaveEdit = (text: string): void => {
-    try {
-      updateScenario((current) => saveGuidedEdit(current, text), 'Your edit is ready for review.', 'review');
-    } catch (error) {
-      setFeedback(error instanceof Error ? error.message : 'Unable to save this edit.');
-    }
+  const handleSaveEdit = (text: string): string | undefined => {
+    return updateScenario(
+      (current) => saveGuidedEdit(current, text),
+      'Your edit is ready for review.',
+      'review',
+      false,
+    );
   };
 
   const handleApply = (): void => {
-    try {
-      updateScenario((current) => applyGuidedCandidate(current), 'Applied to the practice copy.', 'apply');
-    } catch (error) {
-      setFeedback(error instanceof Error ? error.message : 'Unable to apply this description.');
-    }
+    updateScenario((current) => applyGuidedCandidate(current), 'Applied to the practice copy.', 'apply');
   };
 
   const resetPractice = (): void => {
     setScenario(initialScenario());
+    setResetVersion((current) => current + 1);
     setActiveStep('understand');
     setFeedback('Practice reset. The original applied text is back.');
   };
 
+  const handleConfirmIdentity = (): void => {
+    updateScenario(
+      (current) => confirmGuidedIdentity(current),
+      'Identity confirmed from the sample record. The description has not been applied.',
+      'review',
+    );
+  };
+
+  const handleLeaveUnidentified = (): void => {
+    updateScenario(
+      (current) => leaveGuidedIdentityUnidentified(current),
+      'Identity left unidentified. You can still review a description.',
+      'review',
+    );
+  };
+
+  const handleReject = (): void => {
+    updateScenario(
+      (current) => rejectGuidedCandidate(current),
+      'Draft rejected; the applied text was left alone.',
+      'review',
+    );
+  };
+
+  const handleUndo = (): void => {
+    updateScenario((current) => undoGuidedApplication(current), 'Application undone.', 'review');
+    focusGuidedSection('apply');
+  };
+
   return (
     <main className="acx-guided-page" aria-labelledby="acx-guided-page-title">
-      <GuidedPrototypeEntrance sessionState={sessionState} onBegin={beginGuide} />
+      <GuidedPrototypeEntrance onBegin={beginGuide} />
       <GuidedPrototypeGuide
         activeStep={activeStep}
         open={guideOpen}
-        onToggle={() => setGuideOpen((current) => !current)}
-        onSelect={(step) => {
-          setActiveStep(step);
-          setFeedback(`Guide moved to ${step}.`);
-        }}
-        onEnd={() => {
-          setGuideOpen(false);
-          setFeedback('Guide ended. You can continue with the same practice scenario.');
-        }}
+        onToggle={handleGuideToggle}
+        onSelect={handleGuideSelect}
+        onEnd={handleGuideEnd}
       />
 
       <section className="acx-guided-page__workspace" aria-labelledby="acx-guided-page-title">
@@ -106,21 +156,16 @@ export const GuidedPrototypePage = (): React.JSX.Element => {
               final review.
             </p>
           </div>
-          <button type="button" className="acx-button acx-button--tertiary" onClick={resetPractice}>
-            Reset practice
-          </button>
+          <GuidedResetDialog onConfirm={resetPractice} />
         </header>
 
-        <div className="acx-guided-page__scenario">
-          <figure className="acx-guided-page__media-card">
-            <div className="acx-guided-page__image-placeholder" role="img" aria-label={scenario.originalMedia.altText}>
-              Portrait practice image
-            </div>
-            <figcaption>
-              <strong>Original media</strong>
-              <span>{scenario.originalMedia.altText}</span>
-            </figcaption>
-          </figure>
+        <section
+          id="guided-section-understand"
+          className="acx-guided-page__scenario"
+          aria-label="Image and page context"
+          tabIndex={-1}
+        >
+          <GuidedSamplePhoto mediaAltText={scenario.originalMedia.altText} credit={scenario.sourceRecord.credit} />
           <div className="acx-guided-page__provenance">
             <h3>Provenance you can inspect</h3>
             <dl>
@@ -140,7 +185,7 @@ export const GuidedPrototypePage = (): React.JSX.Element => {
               </div>
             </dl>
           </div>
-        </div>
+        </section>
 
         <p className="acx-guided-page__feedback" role="status" aria-live="polite">
           {feedback}
@@ -148,30 +193,13 @@ export const GuidedPrototypePage = (): React.JSX.Element => {
 
         <GuidedDescriptionReview
           scenario={scenario}
-          onConfirmIdentity={() =>
-            updateScenario(
-              (current) => confirmGuidedIdentity(current),
-              'Identity confirmed from the sample record. The description has not been applied.',
-              'review',
-            )
-          }
-          onLeaveUnidentified={() =>
-            updateScenario(
-              (current) => leaveGuidedIdentityUnidentified(current),
-              'Identity left unidentified. You can still review a description.',
-              'review',
-            )
-          }
+          resetVersion={resetVersion}
+          onConfirmIdentity={handleConfirmIdentity}
+          onLeaveUnidentified={handleLeaveUnidentified}
           onSaveEdit={handleSaveEdit}
-          onReject={() =>
-            updateScenario(
-              (current) => rejectGuidedCandidate(current),
-              'Draft rejected; the applied text was left alone.',
-              'review',
-            )
-          }
+          onReject={handleReject}
           onApply={handleApply}
-          onUndo={() => updateScenario((current) => undoGuidedApplication(current), 'Application undone.', 'review')}
+          onUndo={handleUndo}
         />
 
         <section className="acx-guided-history" aria-labelledby="acx-guided-history-title">

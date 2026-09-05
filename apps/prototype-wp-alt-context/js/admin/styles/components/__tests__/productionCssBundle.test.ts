@@ -151,6 +151,18 @@ describe('production build status cleanup', () => {
     ['valid zombie', '123 42 Z', 42, false],
     ['maximum PID zombie', '4194304 42 Z', 42, false],
     ['unrelated malformed row', '0 43 z', 42, false],
+    ...(['Z', 'S'] as const).flatMap((state) => [42, 43].flatMap((pgid) =>
+      ([
+        ['two fields', `123 ${pgid}`, false],
+        ['four fields', `123 ${pgid} ${state} S`, false],
+        ['trailing state', `123 ${pgid} ${state} Z`, false],
+        ['trailing garbage', `123 ${pgid} ${state} unreadable`, false],
+        ['interior blanks', `123   ${pgid}   ${state}`, true],
+        ['tabs', `123\t${pgid}\t${state}`, true],
+        ['extra field with blanks', `123   ${pgid}   ${state}   S`, false],
+        ['extra field with tabs', `123\t${pgid}\t${state}\tunreadable`, false],
+      ] as const).map(([shape, line, valid]) =>
+        [`${shape}, ${state}, PGID ${pgid}`, line, 42, pgid === 42 && (!valid || state !== 'Z')] as const))),
   ] as const)('validates ps fields on EPERM: %s', (_name, line, group, retained) => {
     const root = mkdtempSync(join(tmpdir(), 'acx-ps-fields-'));
     const lockDir = join(root, '.lock');
@@ -430,11 +442,19 @@ describe('supervisor lifetime and owner death', () => {
 const { spawn } = await import('node:child_process');
 const lockDir = join(root, '.lock');
 const readyPath = join(root, 'build-ready');
+const publicationGate = join(root, 'hold-publication');
+if (scenario === 'owner-dies-finished') fs.writeFileSync(publicationGate, '');
 fs.writeFileSync(join(root, 'npm'), '#!' + process.execPath + '\n' +
   'require("node:fs").writeFileSync(' + JSON.stringify(readyPath) + ', String(process.pid));\n' +
   (scenario === 'owner-dies-finished' ? '' : 'process.on("SIGTERM", () => {}); setInterval(() => {}, 1000);'),
   { mode: 0o755 });
 const ownerSource = source
+  // Hold the completed-build supervisor until the test has observed its identity and
+  // killed the owner. Releasing this gate lets the real owner-death teardown run.
+  .replace('setTimeout(stopGroup, Number(graceText)).unref();',
+    'while (fs.existsSync(' + JSON.stringify(publicationGate) + ')) ' +
+    'Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20);\n' +
+    'setTimeout(stopGroup, Number(graceText)).unref();')
   .replace('const BUILD_TERMINATION_GRACE_MS = 5_000;', 'const BUILD_TERMINATION_GRACE_MS = 100;')
   .replace('timeoutMs: BUILD_TIMEOUT_MS,', 'timeoutMs: 20000,')
   .replace('const BUILD_TIMEOUT_MS = STALE_LOCK_MS - 30_000;',
@@ -475,10 +495,15 @@ try {
     pgid = Number(fs.readFileSync('/proc/' + owner.pid + '/task/' + owner.pid + '/children', 'utf8').trim().split(' ')[0]);
   }
   const buildPid = Number(fs.readFileSync(readyPath, 'utf8'));
-  if (scenario === 'owner-dies-finished') await waitUntil(() => !running(buildPid));
+  if (scenario === 'owner-dies-finished') {
+    await waitUntil(() => !running(buildPid));
+    // Exceed the automatic teardown window to guard against reintroducing the race.
+    await new Promise(resolve => setTimeout(resolve, 350));
+  }
   assert.ok(running(pgid), 'supervisor must still hold the group identity');
   assert.equal(fixture.tryAcquireDirectoryLock(lockDir, { now: () => Date.now() + 1000000 }), null);
   if (scenario !== 'deadline') owner.kill('SIGKILL');
+  fs.rmSync(publicationGate, { force: true });
   await waitUntil(() => !running(pgid) && !running(buildPid));
   await exited;
   // SIGKILL can leave a zombie briefly until the OS reaps it. Recovery deliberately waits
@@ -490,6 +515,7 @@ try {
   assert.ok(recovered, 'confirmed teardown must permit stale lock recovery');
   fixture.releaseDirectoryLock(lockDir, recovered);
 } finally {
+  fs.rmSync(publicationGate, { force: true });
   owner.kill('SIGKILL');
   if (pgid) { try { process.kill(-pgid, 'SIGKILL'); } catch {} }
   await exited;

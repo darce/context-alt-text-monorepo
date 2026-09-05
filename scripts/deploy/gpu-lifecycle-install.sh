@@ -606,6 +606,8 @@ fi
 # depend on a worktree that a later cleanup may reap. The live `current` link is
 # switched only after the content-addressed staged release imports successfully;
 # older release directories remain available for rollback.
+# Validate the identity at the boundary where remote transport begins.
+: "${SSH_USER:?SSH_USER must be set before remote staging}"
 run_with_deadline "remote release staging" \
     ssh "${SSH_OPTIONS[@]}" -l "$SSH_USER" -- "$HOST" "set -euo pipefail
 sudo mkdir -p '${remote_stage}/infra/oci/gpu_lifecycle' '${remote_stage}/scripts/deploy' /etc/acx

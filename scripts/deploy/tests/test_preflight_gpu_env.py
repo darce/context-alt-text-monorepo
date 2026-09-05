@@ -8,6 +8,7 @@ import re
 import shutil
 import signal
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -1014,13 +1015,18 @@ def test_11_reaper_preflight_accepts_quoted_last_wins_systemd_assignment(tmp_pat
     assert result.returncode == 0, result.stderr
 
 
-def test_11_installer_payload_passes_reaper_preflight(tmp_path: Path) -> None:
+@pytest.mark.parametrize("custom_registry", [False, True])
+def test_11_installer_payload_passes_reaper_preflight(tmp_path: Path, custom_registry: bool) -> None:
     installer = (ROOT / "scripts/deploy/gpu-lifecycle-install.sh").read_text()
     staging = installer.split('run_with_deadline "remote release staging"', 1)[1]
     staging = 'run_with_deadline "remote release staging"' + staging.split(
         'run_with_deadline "remote release validation and switch"', 1
     )[0]
     service_root = tmp_path / "service"
+    registry = ROOT / "scripts/deploy/gpu-snapshot-deployments.conf"
+    if custom_registry:
+        registry = tmp_path / "custom deployments.conf"
+        registry.write_text("dev\ndev-fir\nstaging\nprod\ncustom-production\n")
     # Run the actual staging commands with local transports and no privileges.
     # No installer startup, OCI calls, units, or live host are exercised.
     staging = staging.replace("/etc/acx", str(tmp_path / "etc-acx"))
@@ -1030,6 +1036,7 @@ def test_11_installer_payload_passes_reaper_preflight(tmp_path: Path) -> None:
 set -eu
 repo_root=$1
 remote_stage=$2
+DEPLOYMENTS_FILE=$3
 HOST=local
 SSH_OPTIONS=(-o BatchMode=yes)
 run_with_deadline() { shift; "$@"; }
@@ -1041,10 +1048,22 @@ scp() {
     set -- "${@:1:$#-1}" "${destination#local:}"
     cp "$@"
 }
-''' + staging, "installer-payload", str(ROOT), str(service_root)],
+''' + staging, "installer-payload", str(ROOT), str(service_root), str(registry)],
         text=True, capture_output=True, check=False,
     )
     assert result.returncode == 0, result.stderr
+    shipped_registry = service_root / "scripts/deploy/gpu-snapshot-deployments.conf"
+    assert shipped_registry.read_bytes() == registry.read_bytes()
+    monitored = subprocess.run(
+        [sys.executable, "-c", "from pathlib import Path; "
+         "from infra.oci.gpu_lifecycle import load_source; "
+         "assert Path(load_source.__file__).resolve().is_relative_to(Path.cwd()); "
+         "print('\\n'.join(load_source.AggregateJobLoadSource(Path('/run/acx'), 180).expected_environments))"],
+        cwd=service_root, env=dict(os.environ, PYTHONPATH=str(service_root)),
+        text=True, capture_output=True, check=False,
+    )
+    assert monitored.returncode == 0, monitored.stderr
+    assert set(monitored.stdout.splitlines()) == set(registry.read_text().splitlines())
     reaper_env = tmp_path / "gpu-lifecycle.env"
     reaper_env.write_text("GPU_INSTANCE_ID=ocid1.instance.oc1.iad.fakeinstance\nMAX_LEASE_SECONDS=3600\n")
     result = run_preflight(tmp_path, check_reaper=True, systemctl_script=reaper_systemctl_script(
@@ -1053,7 +1072,8 @@ scp() {
     assert result.returncode == 0, result.stderr
 
 
-def test_11_installer_release_identity_includes_deployment_registry(tmp_path: Path) -> None:
+@pytest.mark.parametrize("custom_registry", [False, True])
+def test_11_installer_release_identity_includes_deployment_registry(tmp_path: Path, custom_registry: bool) -> None:
     installer = (ROOT / "scripts/deploy/gpu-lifecycle-install.sh").read_text()
     identity = installer.split("release_id=$(", 1)[1].split("\nremote_release=", 1)[0]
     source_root = tmp_path / "source"
@@ -1062,11 +1082,14 @@ def test_11_installer_release_identity_includes_deployment_registry(tmp_path: Pa
     (lifecycle / "reaper.py").write_text("# unchanged module\n")
     registry = source_root / "scripts/deploy/gpu-snapshot-deployments.conf"
     registry.parent.mkdir(parents=True)
+    registry.write_text("prod\n")
+    if custom_registry:
+        registry = tmp_path / "custom deployments.conf"
 
     def release_id() -> str:
         result = subprocess.run(
-            ["bash", "-ec", 'repo_root=$1\nrelease_id=$(' + identity + '\nprintf "%s" "$release_id"',
-             "release-identity", str(source_root)],
+            ["bash", "-ec", 'repo_root=$1\nDEPLOYMENTS_FILE=$2\nrelease_id=$(' + identity + '\nprintf "%s" "$release_id"',
+             "release-identity", str(source_root), str(registry)],
             text=True, capture_output=True, check=False,
         )
         assert result.returncode == 0, result.stderr

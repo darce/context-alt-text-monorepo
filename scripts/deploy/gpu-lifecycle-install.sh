@@ -146,7 +146,7 @@ echo "max lease:    ${MAX_LEASE_SECONDS}s   idle: ${IDLE_SECONDS}s"
 
 release_id=$(
     for source_path in "${repo_root}"/infra/oci/gpu_lifecycle/*.py \
-        "${repo_root}/scripts/deploy/gpu-snapshot-deployments.conf"; do
+        "$DEPLOYMENTS_FILE"; do
         printf '%s %s\n' "${source_path#"${repo_root}/"}" \
             "$(git -C "$repo_root" hash-object "$source_path")"
     done | git -C "$repo_root" hash-object --stdin
@@ -211,8 +211,8 @@ run_with_deadline "GPU lifecycle module copy" \
     scp -q "${SSH_OPTIONS[@]}" "${repo_root}"/infra/oci/gpu_lifecycle/*.py \
         "${HOST}:${remote_stage}/infra/oci/gpu_lifecycle/"
 run_with_deadline "GPU deployment registry copy" \
-    scp -q "${SSH_OPTIONS[@]}" "${repo_root}/scripts/deploy/gpu-snapshot-deployments.conf" \
-        "${HOST}:${remote_stage}/scripts/deploy/"
+    scp -q "${SSH_OPTIONS[@]}" "$DEPLOYMENTS_FILE" \
+        "${HOST}:${remote_stage}/scripts/deploy/gpu-snapshot-deployments.conf"
 run_with_deadline "remote release validation and switch" \
     ssh "${SSH_OPTIONS[@]}" "$HOST" "set -eu
 PYTHONPATH='${remote_stage}' python3 -c 'import infra.oci.gpu_lifecycle.reaper'

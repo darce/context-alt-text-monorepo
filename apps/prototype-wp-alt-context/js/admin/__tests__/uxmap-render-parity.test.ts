@@ -1055,6 +1055,20 @@ describe('ux-map render parity (owned maps)', () => {
     expect(parseRenderedUxMap(mutant)).not.toEqual(parseRenderedUxMap(md));
   });
 
+  it.each(
+    JSON.parse(readFileSync(path.join(negativeFixturesDir, 'action-state-mutations.json'), 'utf8')) as Array<{
+      name: string; value: string | null; before: boolean;
+    }>,
+  )('rejects $name Action states declarations', ({ value, before }) => {
+    const md = readFileSync(path.join(uxMapsDir, 'febt-1-job-error-states.md'), 'utf8');
+    const row = /^Action states: .*$/m.exec(md)![0];
+    const duplicate = value === null ? row : `Action states: ${value}`;
+    const rows = before ? `${duplicate}\n\n${row}` : `${row}\n\n${duplicate}`;
+    expect(() => parseRenderedUxMap(md.replace(row, rows))).toThrow(
+      'has duplicate Action states declarations',
+    );
+  });
+
   it.each(['Purpose', 'url_params'])('rejects duplicate screen %s declarations', (field) => {
     const md = readFileSync(path.join(uxMapsDir, 'workbench-operator-loop.md'), 'utf8');
     const row = new RegExp(`^${field}: .*$`, 'm').exec(md)![0];

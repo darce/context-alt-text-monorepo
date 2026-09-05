@@ -481,6 +481,31 @@ const displayWidth = (value: string): number =>
     return width + (wide ? 2 : 1);
   }, 0);
 
+const assertAsciiFrameRows = (mapRef: string, markdown: string): number => {
+  let checkedRows = 0;
+  let fenceLanguage: string | null = null;
+  for (const line of markdown.split('\n')) {
+    if (line.startsWith('```')) {
+      fenceLanguage = fenceLanguage === null ? line.slice(3) : null;
+      continue;
+    }
+    if (
+      (fenceLanguage !== '' && fenceLanguage !== 'text') ||
+      (!line.startsWith('+') && !line.startsWith('|'))
+    ) {
+      continue;
+    }
+    const closingDelimiter = line.startsWith('+') ? '+' : '|';
+    expect(
+      line.endsWith(closingDelimiter),
+      `${mapRef} ASCII row is missing its closing ${closingDelimiter} delimiter: ${line}`,
+    ).toBe(true);
+    expect(displayWidth(line), `${mapRef} has a non-62-column ASCII row: ${line}`).toBe(62);
+    checkedRows += 1;
+  }
+  return checkedRows;
+};
+
 /* ------------------------------------------------------------------ *
  * Typed view of the parts the parity assertions read.
  * ------------------------------------------------------------------ */
@@ -812,15 +837,7 @@ describe('ux-map render parity (owned maps)', () => {
       const raw = readMapJson(mapRef) as UxMapRenderSource;
       const md = readFileSync(path.join(uxMapsDir, `${mapRef}.md`), 'utf8');
       const parsed = parseRenderedUxMap(md);
-      let fenceLanguage: string | null = null;
-      for (const line of md.split('\n')) {
-        if (line.startsWith('```')) {
-          fenceLanguage = fenceLanguage === null ? line.slice(3) : null;
-        } else if ((fenceLanguage === '' || fenceLanguage === 'text') && /^[+|].*[+|]$/.test(line)) {
-          expect(displayWidth(line), `${mapRef} has a non-62-column ASCII row: ${line}`).toBe(62);
-          checkedRows += 1;
-        }
-      }
+      checkedRows += assertAsciiFrameRows(mapRef, md);
       for (const screen of raw.screens) {
         const parsedScreen = parsed.screens.find((candidate) => candidate.id === screen.id);
         expect(parsedScreen, `${mapRef} ${screen.id} is missing from its generated Markdown`).toBeDefined();
@@ -830,6 +847,18 @@ describe('ux-map render parity (owned maps)', () => {
     }
     expect(checkedScreens, 'no generated screen sketch was checked').toBeGreaterThan(0);
     expect(checkedRows, 'no ASCII frame rows were checked').toBeGreaterThan(0);
+  });
+
+  it('rejects an ASCII frame row with content appended after its closing delimiter', () => {
+    const md = readFileSync(path.join(uxMapsDir, 'workbench-operator-loop.md'), 'utf8');
+    const mutant = md.replace(
+      '| ZONES                                                      |',
+      '| ZONES                                                      |X',
+    );
+
+    expect(() => assertAsciiFrameRows('malformed-terminal mutant', mutant)).toThrow(
+      /missing its closing \| delimiter/,
+    );
   });
 
   it('rejects action boolean cells other than exact yes/no tokens with a useful location', () => {
@@ -1215,19 +1244,20 @@ describe('ux-map generated-render provenance', () => {
   );
 
   it(
-    '--check rejects visible ASCII and Mermaid mutations even without the canvas package',
+    '--check rejects any visible ASCII or Mermaid row mutation without the canvas package',
     () => {
-      const screenMutation = runMutatedRendererCheck('workbench-operator-loop', (markdown) =>
-        markdown.replace('| Workbench  [screen]', '| MUTATED   [screen]'),
-      );
-      expect(screenMutation.status, `${screenMutation.stdout}${screenMutation.stderr}`).toBe(1);
-      expect(screenMutation.stderr).toContain('visible title');
-
-      const flowMutation = runMutatedRendererCheck('workbench-operator-loop', (markdown) =>
-        markdown.replace('-->|settings health|', '-->|MUTATED flow row|'),
-      );
-      expect(flowMutation.status, `${flowMutation.stdout}${flowMutation.stderr}`).toBe(1);
-      expect(flowMutation.stderr).toContain('visible Mermaid label');
+      const mutations = [
+        (markdown: string) => markdown.replace('| Workbench  [screen]', '| MUTATED   [screen]'),
+        (markdown: string) => markdown.replace('-->|settings health|', '-->|MUTATED flow row|'),
+        (markdown: string) => markdown.replace('| ZONES', '| XONES'),
+        (markdown: string) =>
+          markdown.replace('Settings / service health (exit)', 'Xettings / service health (exit)'),
+      ];
+      for (const mutate of mutations) {
+        const result = runMutatedRendererCheck('workbench-operator-loop', mutate);
+        expect(result.status, `${result.stdout}${result.stderr}`).toBe(1);
+        expect(result.stderr).toContain('visibleProjectionSha256');
+      }
     },
     60_000,
   );

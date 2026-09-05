@@ -849,20 +849,33 @@ const listProcessStates = (): string => execFileSync('ps', ['-A', '-o', 'pid=,pg
   stdio: ['ignore', 'pipe', 'ignore'],
 });
 
-const listedGroupIsAlive = (processGroupId: number, listProcesses: () => string): boolean => {
+const listedGroupIsAlive = (
+  processGroupId: number,
+  listProcesses: () => string,
+  report: (detail: string) => void = () => {},
+): boolean => {
   try {
-    const output = listProcesses().trim();
+    const output = listProcesses();
     // A complete system listing includes at least ps itself. Empty or malformed output
     // cannot establish that a group is gone.
-    if (output === '') return true;
+    let parsed = 0;
     let alive = false;
+    const matches: string[] = [];
     for (const line of output.split('\n')) {
-      const member = /^\s*(\d+)\s+(\d+)\s+([A-Za-z][A-Za-z0-9<+\s-]*)\s*$/.exec(line);
-      if (member === null) return true;
-      if (Number(member[2]) === processGroupId && !member[3].startsWith('Z')) alive = true;
+      const [pid, pgid, stat] = line.trim().split(/\s+/);
+      if (!/^\d+$/.test(pid ?? '') || !/^\d+$/.test(pgid ?? '') || !stat) continue;
+      parsed++;
+      if (Number(pgid) === processGroupId) {
+        matches.push(line);
+        if (!stat.startsWith('Z')) alive = true;
+      }
     }
-    return alive;
-  } catch {
+    report(parsed === 0
+      ? `ps parsed zero lines; output=${JSON.stringify(output)}`
+      : `ps matching lines (pid pgid stat)=${JSON.stringify(matches)}`);
+    return parsed === 0 || alive;
+  } catch (error) {
+    report(`ps listing failed: ${(error as NodeJS.ErrnoException).code ?? 'unknown'} ${String(error)}`);
     return true;
   }
 };
@@ -924,17 +937,25 @@ const processGroupIsAlive = (
   processGroupId: number,
   sendSignal: (pidOrGroup: number, signal: ProcessSignal) => void,
   listProcesses: () => string = listProcessStates,
+  report: (detail: string) => void = () => {},
 ): boolean => {
   try {
     sendSignal(-processGroupId, 0);
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ESRCH') return false;
+    const code = (error as NodeJS.ErrnoException).code ?? 'unknown';
+    if (code === 'ESRCH') { report('signal probe: ESRCH'); return false; }
     // EPERM can also describe a retired zombie-only group on macOS.
-    return listedGroupIsAlive(processGroupId, listProcesses);
+    return listedGroupIsAlive(processGroupId, listProcesses, detail => report(`signal probe: ${code}; ${detail}`));
   }
   // kill(2) reports zombie-only groups as existing. They cannot execute or retain resources, and
   // descendants may remain zombies until their own parent reaps them.
-  return processGroupHasNonZombieMember(processGroupId);
+  if (process.platform !== 'linux') {
+    return listedGroupIsAlive(processGroupId, listProcesses, detail => report(`signal probe: success; ${detail}`));
+  }
+  const alive = processGroupHasNonZombieMember(processGroupId);
+  report(`signal probe: success; /proc non-zombie member or uncertain inspection: ${alive}`);
+  if (alive) listedGroupIsAlive(processGroupId, listProcesses, detail => report(`signal probe: success; /proc alive; ${detail}`));
+  return alive;
 };
 
 const terminateProcessGroup = (
@@ -990,13 +1011,15 @@ const terminateProcessGroup = (
 
 /** Synchronously supervise a detached process group without relying on an unbounded sync timeout. */
 export const waitForProcessGroup = (pid: number, options: ProcessGroupWaitOptions): number => {
+  let lastProbe = 'group liveness probe not run (or supplied by caller)';
   const startToken =
     options.processGroupStartToken ?? (options.readProcessStartToken ?? processStartToken)(pid);
   try {
-    return waitForIdentifiedProcessGroup(pid, options, startToken);
+    return waitForIdentifiedProcessGroup(pid, options, startToken, detail => { lastProbe = detail; });
   } catch (error) {
     if (error instanceof ProductionCssBuildTeardownError) {
       error.supervisedGroup = { pgid: pid, startToken };
+      error.message += ` Final group confirmation: ${lastProbe}.`;
     }
     throw error;
   }
@@ -1006,6 +1029,7 @@ const waitForIdentifiedProcessGroup = (
   pid: number,
   options: ProcessGroupWaitOptions,
   expectedStartToken: string | null,
+  report: (detail: string) => void,
 ): number => {
   const now = options.now ?? monotonicNow;
   const pause = options.sleep ?? sleepSync;
@@ -1015,7 +1039,7 @@ const waitForIdentifiedProcessGroup = (
     options.isProcessAlive ??
     (() =>
       options.sendSignal === undefined
-        ? processGroupIsAlive(pid, sendSignal, options.listProcesses)
+        ? processGroupIsAlive(pid, sendSignal, options.listProcesses, report)
         : processGroupExistsViaSignal(pid, sendSignal));
   const readStartToken = options.readProcessStartToken ?? processStartToken;
   if (expectedStartToken === null) {

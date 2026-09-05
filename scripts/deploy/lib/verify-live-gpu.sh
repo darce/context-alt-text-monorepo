@@ -54,13 +54,16 @@ with open(sys.argv[1], "w", encoding="utf-8") as handle:
     handle.write(f"header = \"X-Tenant-ID: {curl_quote(values[1])}\"\n")
 ' "$curl_config"
 python3 - "$smoke_image" <<'PY'
+import secrets
 import struct
 import sys
 import zlib
 
 width = height = 64
+# Vary pixels, not just metadata: description caching keys on image content.
+noise = secrets.token_bytes(width * height)
 rows = b"".join(
-    b"\0" + b"".join(bytes((x * 4, y * 4, 96)) for x in range(width))
+    b"\0" + b"".join(bytes((x * 4, y * 4, 80 + noise[y * width + x] % 32)) for x in range(width))
     for y in range(height)
 )
 
@@ -77,7 +80,7 @@ with open(sys.argv[1], "wb") as handle:
     handle.write(png)
 PY
 
-# A random media id makes an existing cache row overwhelmingly unlikely. The
+# Unique image bytes make an existing cache row overwhelmingly unlikely. The
 # describe-run route durably queues work, which publishes describe load for the
 # start timer before the worker waits for GPU readiness. The response must still
 # report cached=false, so a collision fails closed.

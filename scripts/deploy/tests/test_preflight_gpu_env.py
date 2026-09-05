@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import re
 import shutil
@@ -178,6 +179,10 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --output) output_file="$2"; shift 2 ;;
     --config) test -f "$2"; shift 2 ;;
+    -F)
+      image_path="${2#*=@}"
+      cp "${image_path%;type=image/png}" "$FAKE_SMOKE_IMAGE"
+      shift 2 ;;
     --form-string)
       case "$2" in media_ids=*) printf '%s' "${2#media_ids=}" > "$FAKE_MEDIA_IDS" ;; esac
       shift 2 ;;
@@ -243,6 +248,7 @@ printf '%s\n' "$current"
             "FAKE_CURL_STATUS": str(curl_status),
             "FAKE_CURL_ITEM": json.dumps(payload or live_gpu_payload()),
             "FAKE_MEDIA_IDS": str(tmp_path / "media_ids.json"),
+            "FAKE_SMOKE_IMAGE": str(tmp_path / "smoke.png"),
             "FAKE_CURL_LOG": str(tmp_path / "curl.log"),
             "FAKE_CURL_ARGV_LOG": str(tmp_path / "curl-argv.log"),
             "FAKE_CURL_ENQUEUE_RESPONSE": json.dumps(
@@ -1633,6 +1639,19 @@ def test_live_gpu_verifier_accepts_only_a_fresh_pinned_gpu_result(tmp_path: Path
         ("https://api.altcontext.com/scene/describe/run/123e4567-e89b-42d3-a456-426614174999"),
         "https://api.altcontext.com/scene/describe/run/123e4567-e89b-42d3-a456-426614174999/items",
     ]
+
+
+def test_live_gpu_verifier_consecutive_requests_have_unique_image_hashes(tmp_path: Path) -> None:
+    hashes = []
+    for invocation in ("first", "second"):
+        request_dir = tmp_path / invocation
+        request_dir.mkdir()
+        result = run_live_gpu_verifier(request_dir)
+        assert result.returncode == 0, result.stderr
+        image = (request_dir / "smoke.png").read_bytes()
+        assert image.startswith(b"\x89PNG\r\n\x1a\n")
+        hashes.append(hashlib.sha256(image).hexdigest())
+    assert hashes[0] != hashes[1], "Repeated smoke images hit the description cache"
 
 
 def test_live_gpu_verifier_queues_work_before_polling_for_gpu_start(tmp_path: Path) -> None:

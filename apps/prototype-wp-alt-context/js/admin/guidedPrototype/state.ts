@@ -3,6 +3,25 @@ import samplePhoto from '../assets/guided/altcontext-sample.jpeg';
 export type GuidedCandidateStatus = 'ready' | 'edited' | 'rejected';
 export type GuidedIdentityStatus = 'unconfirmed' | 'confirmed' | 'unidentified';
 
+export type GuidedMatchStrength = 'strong' | 'weak';
+
+export interface GuidedFaceBox {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+/** A face-recognition result saved from an earlier run. The demo never runs recognition live. */
+export interface GuidedFaceMatch {
+  faceCount: number;
+  box: GuidedFaceBox;
+  matchedPersonName: string;
+  similarPhotoCount: number;
+  strength: GuidedMatchStrength;
+  source: 'saved-example';
+}
+
 export interface GuidedIdentity {
   status: GuidedIdentityStatus;
   name?: string;
@@ -39,6 +58,7 @@ export interface GuidedScenario {
     summary: string;
   };
   visualFacts: string[];
+  faceMatch: GuidedFaceMatch;
   genericDraft: string;
   namedDraft: string;
   unnamedDraft: string;
@@ -68,6 +88,14 @@ const GUIDED_SCENARIO_SEED: Omit<GuidedScenario, 'identity' | 'candidate' | 'app
     summary: 'A portrait used in an actor profile where a confirmed name helps the description make sense.',
   },
   visualFacts: ['Portrait crop', 'Grey jacket', 'Plain background'],
+  faceMatch: {
+    faceCount: 1,
+    box: { x: 370, y: 320, width: 660, height: 800 },
+    matchedPersonName: 'Keanu Reeves',
+    similarPhotoCount: 3,
+    strength: 'strong',
+    source: 'saved-example',
+  },
   genericDraft: 'Portrait of a person in a grey jacket.',
   namedDraft: 'Keanu Reeves wears a grey jacket against a plain background.',
   unnamedDraft: 'Portrait of a person in a grey jacket.',
@@ -79,6 +107,7 @@ const cloneSeed = (): Omit<GuidedScenario, 'identity' | 'candidate' | 'appliedTe
   sourceRecord: { ...GUIDED_SCENARIO_SEED.sourceRecord },
   pageContext: { ...GUIDED_SCENARIO_SEED.pageContext },
   visualFacts: [...GUIDED_SCENARIO_SEED.visualFacts],
+  faceMatch: { ...GUIDED_SCENARIO_SEED.faceMatch, box: { ...GUIDED_SCENARIO_SEED.faceMatch.box } },
 });
 
 const cloneScenario = (scenario: GuidedScenario): GuidedScenario => ({
@@ -87,6 +116,7 @@ const cloneScenario = (scenario: GuidedScenario): GuidedScenario => ({
   sourceRecord: { ...scenario.sourceRecord },
   pageContext: { ...scenario.pageContext },
   visualFacts: [...scenario.visualFacts],
+  faceMatch: { ...scenario.faceMatch, box: { ...scenario.faceMatch.box } },
   identity: { ...scenario.identity },
   candidate: { ...scenario.candidate },
   history: scenario.history.map((event) => ({ ...event })),

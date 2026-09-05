@@ -928,6 +928,7 @@ def reaper_systemctl_script(
     start_timer_active: bool = True,
     exec_start: str | None = None,
     environment_files: str | None = None,
+    working_directory: Path = ROOT,
 ) -> str:
     reap_active_result = "exit 0" if reap_timer_active else "exit 3"
     start_active_result = "exit 0" if start_timer_active else "exit 3"
@@ -945,7 +946,7 @@ case "$1:$3" in
   show:*)
     cat <<'PROPERTIES'
 ExecStart={exec_start}
-WorkingDirectory={ROOT}
+WorkingDirectory={working_directory}
 FragmentPath=/etc/systemd/system/acx-gpu-reap.service
 DropInPaths=
 EnvironmentFiles={environment_files}
@@ -954,6 +955,68 @@ PROPERTIES
   *) exit 2 ;;
 esac
 """
+
+
+@pytest.mark.parametrize("executable", ["/usr/bin/true", "/bin/false"])
+def test_11_reaper_preflight_rejects_executable_argv_mismatch(tmp_path: Path, executable: str) -> None:
+    reaper_env = tmp_path / "gpu-lifecycle.env"
+    reaper_env.write_text("GPU_INSTANCE_ID=ocid1.instance.oc1.iad.fakeinstance\nMAX_LEASE_SECONDS=3600\n")
+    unit = reaper_systemctl_script(reaper_env).replace("path=/usr/bin/python3", f"path={executable}")
+    result = run_preflight(tmp_path, check_reaper=True, systemctl_script=unit)
+    assert result.returncode != 0
+    assert "structurally valid GPU lifecycle reaper" in result.stderr
+    assert "MANUAL STOP" not in result.stdout
+
+
+@pytest.mark.parametrize("assignment", [
+    " MAX_LEASE_SECONDS=0", "\tMAX_LEASE_SECONDS=0", "\rMAX_LEASE_SECONDS=0", ' MAX_LEASE_SECONDS="0"',
+    "MAX_LEASE_SECONDS =0", "MAX_LEASE_SECONDS=3600\\\nMAX_LEASE_SECONDS=0",
+])
+def test_11_reaper_preflight_rejects_ambiguous_systemd_assignment(tmp_path: Path, assignment: str) -> None:
+    reaper_env = tmp_path / "gpu-lifecycle.env"
+    reaper_env.write_text(
+        "GPU_INSTANCE_ID=ocid1.instance.oc1.iad.fakeinstance\nMAX_LEASE_SECONDS=3600\n" + assignment + "\n"
+    )
+    result = run_preflight(tmp_path, check_reaper=True, systemctl_script=reaper_systemctl_script(reaper_env))
+    assert result.returncode != 0
+    assert "EnvironmentFile must use canonical" in result.stderr
+    assert "MANUAL STOP" not in result.stdout
+
+
+def test_11_reaper_preflight_accepts_quoted_last_wins_systemd_assignment(tmp_path: Path) -> None:
+    reaper_env = tmp_path / "gpu-lifecycle.env"
+    reaper_env.write_text(
+        '# generated environment\nGPU_INSTANCE_ID="ocid1.instance.oc1.iad.fakeinstance"\n'
+        "MAX_LEASE_SECONDS=0\nMAX_LEASE_SECONDS='3600'\n"
+    )
+    result = run_preflight(tmp_path, check_reaper=True, systemctl_script=reaper_systemctl_script(reaper_env))
+    assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.parametrize("registry_content", [None, "invalid registry\n"])
+def test_11_reaper_preflight_validates_service_deployment_registry(tmp_path: Path, registry_content: str | None) -> None:
+    service_root = tmp_path / "service"
+    shutil.copytree(ROOT / "infra/oci/gpu_lifecycle", service_root / "infra/oci/gpu_lifecycle")
+    # Preserve regular-package boundaries so Python cannot fall back to the
+    # verification checkout when importing the staged service.
+    for relative in ("infra/__init__.py", "infra/oci/__init__.py"):
+        shutil.copyfile(ROOT / relative, service_root / relative)
+    registry = service_root / "scripts/deploy/gpu-snapshot-deployments.conf"
+    registry.parent.mkdir(parents=True)
+    shutil.copyfile(ROOT / "scripts/deploy/gpu-snapshot-deployments.conf", registry)
+    reaper_env = tmp_path / "gpu-lifecycle.env"
+    reaper_env.write_text("GPU_INSTANCE_ID=ocid1.instance.oc1.iad.fakeinstance\nMAX_LEASE_SECONDS=3600\n")
+    unit = reaper_systemctl_script(reaper_env, working_directory=service_root)
+    control = run_preflight(tmp_path, check_reaper=True, systemctl_script=unit)
+    assert control.returncode == 0, control.stderr
+    if registry_content is None:
+        registry.unlink()
+    else:
+        registry.write_text(registry_content)
+    result = run_preflight(tmp_path, check_reaper=True, systemctl_script=unit)
+    assert result.returncode != 0
+    assert "structurally valid GPU lifecycle reaper" in result.stderr
+    assert "MANUAL STOP" not in result.stdout
 
 
 @pytest.mark.parametrize("installed_options", [False, True])
@@ -1085,8 +1148,17 @@ def test_11_reaper_preflight_rejects_a_second_effective_mode(tmp_path: Path, suf
     trailing_mode = (
         "{ path=/usr/bin/python3 ; argv[]=/usr/bin/python3 -m infra.oci.gpu_lifecycle "
         "--mode reap --instance-id ${GPU_INSTANCE_ID} "
-        "--max-lease-seconds ${MAX_LEASE_SECONDS} " + suffix + " ; ignore_errors=no ; }"
+        "--max-lease-seconds ${MAX_LEASE_SECONDS} --load-dir /run/acx-write " + suffix + " ; ignore_errors=no ; }"
     )
+
+    control = run_preflight(
+        tmp_path,
+        check_reaper=True,
+        systemctl_script=reaper_systemctl_script(
+            reaper_env, exec_start=trailing_mode.replace(" " + suffix + " ;", " ;")
+        ),
+    )
+    assert control.returncode == 0, control.stderr
 
     result = run_preflight(
         tmp_path,
@@ -1368,7 +1440,8 @@ def test_runbook_final_verification_requires_uncached_live_gpu_inference() -> No
 
 
 def run_stop_block(
-    tmp_path: Path, *, process_status: int = 1, cancel: bool = False, lease: str | None = None, occupied: bool = False
+    tmp_path: Path, *, process_status: int = 1, cancel: bool = False, lease: str | None = None,
+    occupied: bool = False, lease_status: int | None = None,
 ) -> subprocess.CompletedProcess[str]:
     runbook = (ROOT / "docs/runbooks/gpu-demo-env-flip.md").read_text()
     block = runbook.rsplit("```bash\n", 1)[1].split("```", 1)[0]
@@ -1386,7 +1459,10 @@ def run_stop_block(
         # mkdir/rmdir/test keep their requested basenames, exposing wrong locks.
         "ssh": r'''command_text="${2//\/run\/acx-gpu/$REMOTE_ROOT}"
 exec bash -c "$command_text"''',
-        "sudo": 'exec "$@"',
+        "sudo": '''if [[ "$1" == test && -n "$LEASE_STATUS" ]]; then
+    exit "$LEASE_STATUS"
+fi
+exec "$@"''',
         "pgrep": '''if [[ "$CANCEL_STOP" == 1 ]]; then
     kill -TERM "$STOP_PID"
 fi
@@ -1409,6 +1485,7 @@ test ! -e "$RACED_ACTIVITY_LOG"''',
         REMOTE_ROOT=str(remote),
         PROCESS_STATUS=str(process_status),
         CANCEL_STOP=str(int(cancel)),
+        LEASE_STATUS="" if lease_status is None else str(lease_status),
         OCI_CALL_LOG=str(tmp_path / "oci-called"),
         RACED_ACTIVITY_LOG=str(tmp_path / "raced-activity"),
     )
@@ -1461,6 +1538,15 @@ def test_runbook_stop_guard_rejects_occupied_mutex(tmp_path: Path) -> None:
     assert result.returncode != 0
     assert not (tmp_path / "oci-called").exists()
     assert (tmp_path / "remote/activity.lock").is_dir()
+
+
+@pytest.mark.parametrize("status", [1, 2, 127])
+def test_runbook_stop_guard_fails_closed_on_lease_inspection_error(tmp_path: Path, status: int) -> None:
+    result = run_stop_block(tmp_path, lease="bake.lease", lease_status=status)
+    assert result.returncode != 0
+    assert "lease inspection failed" in result.stderr
+    assert not (tmp_path / "oci-called").exists()
+    assert not (tmp_path / "remote/activity.lock").exists()
 
 
 @pytest.mark.parametrize("envelope", ["", '"'])
@@ -1710,6 +1796,22 @@ def test_reaper_requires_runnable_production_load_source(tmp_path: Path, load_op
     assert "MANUAL STOP" not in result.stdout
 
 
+def test_sync_demo_missing_contract_fails_before_remote_mutation(tmp_path: Path) -> None:
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    remote_log = tmp_path / "remote-called"
+    for name in ("ssh", "scp"):
+        stub = fake_bin / name
+        stub.write_text('#!/bin/sh\nprintf called >> "$REMOTE_CALL_LOG"\nexit 99\n')
+        stub.chmod(0o700)
+    env = dict(os.environ, PATH=f"{fake_bin}:{os.environ['PATH']}", REMOTE_CALL_LOG=str(remote_log),
+               GPU_ENV_CONTRACT_SRC=str(tmp_path / "missing-contract.sh"), OCI_HOST="fake.invalid")
+    result = subprocess.run(["bash", str(SYNC_DEMO)], cwd=ROOT, env=env, text=True, capture_output=True, timeout=8)
+    assert result.returncode == 2, result.stderr
+    assert "source file not found" in result.stderr
+    assert not remote_log.exists()
+
+
 def test_bootstrap_missing_staged_contract_fails_before_mutation(tmp_path: Path) -> None:
     # Reproduce the deployment transfer phase using its actual source list.
     # No manual runbook helper copy: that previously hid the missing SCP.
@@ -1736,6 +1838,7 @@ esac
     transfer = transfer.replace('$(dirname "${BASH_SOURCE[0]}")', str(SYNC_DEMO.parent))
     result = subprocess.run(["bash"], input=transfer, cwd=ROOT, env=env, text=True, capture_output=True)
     assert result.returncode == 0, result.stderr
+    assert (staged / "lib/gpu-env-contract.sh").read_bytes() == CONTRACT.read_bytes()
     # Even after the sibling transfer fix lands, exercise the fail-fast guard.
     (staged / "lib/gpu-env-contract.sh").unlink(missing_ok=True)
     result = subprocess.run(

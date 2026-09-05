@@ -319,6 +319,11 @@ from pathlib import Path
 
 raw = sys.argv[1].strip()
 if raw.startswith("{"):
+    # systemd permits @ to make argv[0] differ from the executable. Check
+    # both, and reject multiple ExecStart records rather than certifying one.
+    if (raw.split(" ; ", 1)[0].strip() != "{ path=/usr/bin/python3"
+            or raw.count("argv[]=") != 1 or not raw.endswith("}")):
+        raise SystemExit(1)
     marker = "argv[]="
     start = raw.find(marker)
     if start < 0:
@@ -390,16 +395,44 @@ if (args.oci_timeout_seconds <= 0 or args.max_wait_seconds <= 0
         or not math.isfinite(args.fence_delay_seconds) or args.fence_delay_seconds < 0
         or not math.isfinite(args.ready_sleep_seconds) or args.ready_sleep_seconds < 0):
     raise SystemExit(1)
-# Reuse the runtime load-source constructor validation; construction reads no
-# snapshots and performs no actuation. The explicit environments avoid reading
-# a deployment registry on the verification machine.
+# Use exactly the production constructor inputs: this validates the deployment
+# registry shipped with the effective service checkout. Construction reads no
+# snapshots and performs no actuation.
 reaper.AggregateJobLoadSource(
     directory=args.load_dir,
     stale_seconds=args.load_max_age_seconds,
     stale_grace_seconds=args.load_stale_grace_seconds,
-    expected_environments=("demo",),
 )
 ' "$@" 2>/dev/null
+}
+
+validate_reaper_environment_file() {
+    # Deliberately accept only an unambiguous subset of systemd syntax. This
+    # makes env_get byte-equivalent to runtime parsing (including last-wins).
+    # Reject continuations, embedded quotes, whitespace and unknown keys.
+    python3 - "$1" <<'PY'
+import re
+import sys
+from pathlib import Path
+
+keys = {"GPU_INSTANCE_ID", "MAX_LEASE_SECONDS", "IDLE_SECONDS",
+        "ACX_DESCRIBE_LOAD_STALE_GRACE_SECONDS", "READY_URL"}
+with Path(sys.argv[1]).open(newline="") as stream:
+    lines = stream.read().split("\n")
+for line in lines:
+    line = line.removesuffix("\r")
+    if not line.strip() or line.lstrip().startswith(("#", ";")):
+        continue
+    key, separator, value = line.partition("=")
+    if not separator or key not in keys:
+        raise SystemExit(1)
+    if value.startswith(("\"", "'")):
+        if len(value) < 2 or value[-1] != value[0]:
+            raise SystemExit(1)
+        value = value[1:-1]
+    if re.search(r"[\s\x00-\x1f\x7f\"'\\$]", value):
+        raise SystemExit(1)
+PY
 }
 
 preflight_gpu_reaper() {
@@ -460,6 +493,10 @@ preflight_gpu_reaper() {
             exit 1
         fi
         environment_file_count=$((environment_file_count + 1))
+        validate_reaper_environment_file "$environment_file" 2>/dev/null || {
+            echo "ERROR [11] reaper EnvironmentFile must use canonical recognised KEY=value assignments with optional whole-value quotes; values are redacted." >&2
+            exit 1
+        }
         if LC_ALL=C grep -q '^GPU_INSTANCE_ID=' "$environment_file"; then
             value="$(env_get "$environment_file" GPU_INSTANCE_ID)"
             instance_id="$value"

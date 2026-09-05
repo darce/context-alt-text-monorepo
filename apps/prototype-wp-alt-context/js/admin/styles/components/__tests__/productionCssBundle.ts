@@ -899,7 +899,12 @@ const processGroupIsAlive = (
   processGroupId: number,
   sendSignal: (pidOrGroup: number, signal: ProcessSignal) => void,
 ): boolean => {
-  if (!processGroupExistsViaSignal(processGroupId, sendSignal)) return false;
+  try {
+    sendSignal(-processGroupId, 0);
+  } catch (error) {
+    // An incomplete process listing must not turn EPERM into successful teardown.
+    return (error as NodeJS.ErrnoException).code !== 'ESRCH';
+  }
   // kill(2) reports zombie-only groups as existing. They cannot execute or retain resources, and
   // descendants may remain zombies until their own parent reaps them.
   return processGroupHasNonZombieMember(processGroupId);

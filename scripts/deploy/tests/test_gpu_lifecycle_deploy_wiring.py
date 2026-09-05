@@ -638,6 +638,19 @@ def test_every_remote_shell_enables_pipefail() -> None:
     assert 'ssh "${SSH_OPTIONS[@]}" -l "$SSH_USER" -- "$HOST" "set -eu\n' not in source
 
 
+def test_rendered_install_body_hashes_portably_on_linux_and_macos() -> None:
+    source = INSTALLER.read_text(encoding="utf-8")
+    transaction = source[source.index('run_with_deadline "systemd unit installation"') :]
+
+    assert "command -v sha256sum" in source
+    assert "command -v shasum" in source
+    assert 'shasum -a 256 "$1"' in source
+    assert "sha256_function=$(declare -f sha256_file)" in source
+    assert "${sha256_function}" in transaction
+    assert "expected_start_service_hash=\\$(sha256_file " in transaction
+    assert "expected_reap_timer_hash=\\$(sha256_file " in transaction
+
+
 def test_installer_preserves_units_with_previous_content_addressed_release() -> None:
     source = INSTALLER.read_text(encoding="utf-8")
 

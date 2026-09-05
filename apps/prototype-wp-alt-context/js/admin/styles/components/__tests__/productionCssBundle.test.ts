@@ -343,6 +343,176 @@ describe('fingerprint stability while building [FIXWAV-M-03]', () => {
 });
 
 describe('fenced directory lock', () => {
+  it.skipIf(process.platform !== 'linux').each([
+    'EACCES', 'EPERM', 'EIO', 'ENOENT', 'malformed', 'signal-EPERM', 'different-token', 'ESRCH',
+  ])('retains owners whose identity inspection is uncertain: %s [D5-R9-01]', (scenario) => {
+    const root = mkdtempSync(join(tmpdir(), 'acx-lock-inspection-'));
+    try {
+      runFixtureProbe(root, scenario, String.raw`
+const lockDir = join(root, '.gc-lock');
+const ownerPath = join(lockDir, fixture.LOCK_OWNER_FILE);
+const owner = fixture.tryAcquireDirectoryLock(lockDir);
+// The parent is a real live process, distinct from this contender's identity probe.
+const statPath = '/proc/' + process.ppid + '/stat';
+const fields = fs.readFileSync(statPath, 'utf8').split(') ').pop().trim().split(/\s+/);
+owner.pid = process.ppid;
+owner.startToken = 'v1:linux:' + fields[19];
+fs.writeFileSync(ownerPath, JSON.stringify(owner));
+fs.utimesSync(ownerPath, new Date(0), new Date(0));
+const read = fs.readFileSync;
+fs.readFileSync = (path, ...args) => {
+  if (path !== statPath) return read(path, ...args);
+  if (scenario === 'different-token') {
+    return read(path, ...args).replace(/\) (.*)/, (_, tail) => {
+      const fields = tail.split(' ');
+      fields[19] = String(BigInt(fields[19]) + 1n);
+      return ') ' + fields.join(' ');
+    });
+  }
+  if (scenario === 'malformed') return 'unparseable stat';
+  throw Object.assign(new Error('Injected inspection failure'), { code: scenario });
+};
+if (scenario === 'ESRCH' || scenario === 'signal-EPERM') {
+  const kill = process.kill;
+  process.kill = (pid, signal) => {
+    if (pid === owner.pid) {
+      throw Object.assign(new Error('Injected signal probe failure'), {
+        code: scenario === 'ESRCH' ? 'ESRCH' : 'EPERM',
+      });
+    }
+    return kill(pid, signal);
+  };
+}
+syncBuiltinESMExports();
+const successor = fixture.tryAcquireDirectoryLock(lockDir, { staleAfterMs: 1 });
+if (scenario === 'different-token' || scenario === 'ESRCH') {
+  assert.notEqual(successor, null, 'positive evidence of death permits recovery');
+} else {
+  assert.equal(successor, null, 'inspection failure must not steal a live lease');
+  assert.deepEqual(JSON.parse(read(ownerPath, 'utf8')), owner);
+}
+`);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('retries when the incumbent vanishes before recovery claim creation [D5-R9-02]', () => {
+    const root = mkdtempSync(join(tmpdir(), 'acx-lock-vanished-'));
+    try {
+      runFixtureProbe(root, '', String.raw`
+const lockDir = join(root, '.gc-lock');
+fixture.tryAcquireDirectoryLock(lockDir);
+fs.utimesSync(join(lockDir, fixture.LOCK_OWNER_FILE), new Date(0), new Date(0));
+let intercepted = false;
+// Cover both the old mkdir claim and the atomic metadata claim used by the fix.
+for (const method of ['mkdirSync', 'symlinkSync']) {
+  const original = fs[method];
+  fs[method] = (...args) => {
+    const path = args[method === 'symlinkSync' ? 1 : 0];
+    if (path === join(lockDir, '.reaping') && !intercepted) {
+      intercepted = true;
+      fs.rmSync(lockDir, { recursive: true });
+    }
+    return original(...args);
+  };
+}
+syncBuiltinESMExports();
+assert.equal(fixture.tryAcquireDirectoryLock(lockDir, {
+  staleAfterMs: 1, isProcessAlive: () => false,
+}), null);
+assert.equal(intercepted, true);
+assert.notEqual(fixture.tryAcquireDirectoryLock(lockDir), null);
+`);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('recovers a claim abandoned immediately after creation by a dying reaper [D5-R9-03]', () => {
+    const root = mkdtempSync(join(tmpdir(), 'acx-lock-abandoned-'));
+    try {
+      const child = spawnSync(process.execPath, [
+        '--input-type=module', '-e', fixtureProbePrelude + String.raw`
+const lockDir = join(root, '.gc-lock');
+fixture.tryAcquireDirectoryLock(lockDir);
+fs.utimesSync(join(lockDir, fixture.LOCK_OWNER_FILE), new Date(0), new Date(0));
+for (const method of ['mkdirSync', 'symlinkSync']) {
+  const original = fs[method];
+  fs[method] = (...args) => {
+    const result = original(...args);
+    if (args[method === 'symlinkSync' ? 1 : 0] === join(lockDir, '.reaping')) process.exit(23);
+    return result;
+  };
+}
+syncBuiltinESMExports();
+fixture.tryAcquireDirectoryLock(lockDir, { staleAfterMs: 1, isProcessAlive: () => false });
+throw new Error('The reaper never acquired its claim');
+`, join(__dirname, 'productionCssBundle.ts'), root, '',
+      ], { timeout: 10_000, stdio: 'inherit' });
+      expect(child.error).toBeUndefined();
+      expect(child.status).toBe(23);
+      const lockDir = join(root, '.gc-lock');
+      // A young claim remains fenced even when its owner is dead.
+      expect(tryAcquireDirectoryLock(lockDir, { staleAfterMs: 60_000 })).toBeNull();
+      const options = { staleAfterMs: 1, now: () => Date.now() + 60_000 };
+      // The first attempt clears the abandoned claim; the bounded caller retries acquisition.
+      let successor = tryAcquireDirectoryLock(lockDir, options);
+      if (successor === null) successor = tryAcquireDirectoryLock(lockDir, options);
+      expect(successor).not.toBeNull();
+      if (successor !== null) expect(releaseDirectoryLock(lockDir, successor)).toBe(true);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it.each(['live', 'secondary', 'replacement'])(
+    'preserves recovery ownership under %s contention [D5-R9-03]', (scenario) => {
+      const root = mkdtempSync(join(tmpdir(), 'acx-lock-reaper-contention-'));
+      try {
+        runFixtureProbe(root, scenario, String.raw`
+const lockDir = join(root, '.gc-lock');
+const owner = fixture.tryAcquireDirectoryLock(lockDir);
+const claimPath = join(lockDir, '.reaping');
+const dead = { ...owner, nonce: 'abandoned', createdAt: 0 };
+const live = { ...owner, nonce: 'replacement', createdAt: 0 };
+fs.utimesSync(join(lockDir, fixture.LOCK_OWNER_FILE), new Date(0), new Date(0));
+const options = {
+  staleAfterMs: 1,
+  isProcessAlive: () => scenario === 'live' && ++probes > 1,
+};
+let probes = 0;
+fs.symlinkSync(JSON.stringify(dead), claimPath);
+if (scenario === 'secondary') {
+  fs.symlinkSync(JSON.stringify({ ...dead, nonce: 'secondary' }), join(lockDir, '.reaping-abandoned'));
+}
+if (scenario === 'replacement') {
+  const symlink = fs.symlinkSync;
+  fs.symlinkSync = (target, path, ...args) => {
+    const result = symlink(target, path, ...args);
+    if (path === join(lockDir, '.reaping-abandoned')) {
+      // Another reaper replaced the primary after this contender inspected it.
+      fs.rmSync(claimPath);
+      symlink(JSON.stringify(live), claimPath);
+    }
+    return result;
+  };
+  syncBuiltinESMExports();
+}
+assert.equal(fixture.tryAcquireDirectoryLock(lockDir, options), null);
+if (scenario === 'live' || scenario === 'replacement') {
+  assert.deepEqual(JSON.parse(fs.readlinkSync(claimPath)), scenario === 'live' ? dead : live);
+} else {
+  assert.equal(fixture.tryAcquireDirectoryLock(lockDir, options), null);
+  assert.notEqual(fixture.tryAcquireDirectoryLock(lockDir, options), null);
+}
+`);
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    },
+  );
+
   it('removes its exclusive lock directory when owner publication fails', () => {
     const fixtureRoot = mkdtempSync(join(tmpdir(), 'acx-style-lock-publication-test-'));
     const lockDir = join(fixtureRoot, '.lock');

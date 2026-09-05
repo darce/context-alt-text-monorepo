@@ -39,7 +39,10 @@ from recognition.interface_adapters.http.middleware.correlation import (
     CORRELATION_ID_HEADER,
     CorrelationIdMiddleware,
 )
-from recognition.interface_adapters.http.routers.analyze_multipart import router
+from recognition.interface_adapters.http.routers.analyze_multipart import (
+    _parse_multipart_form,
+    router,
+)
 
 PNG_BYTES = b"\x89PNG\r\n\x1a\nfake-png-bytes-for-tests"
 
@@ -496,6 +499,51 @@ def test_multipart_rejects_unsupported_mime(app_with_overrides, tenant_id: str) 
         ],
     )
     assert response.status_code == 415
+
+
+@pytest.mark.asyncio
+async def test_parse_multipart_form_rejects_sixth_image_part(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The parser bulkhead must fire independently of the route/helper cap."""
+    created_spools = []
+
+    def tracked_spooled_file(*args, **kwargs):
+        spool = tempfile.SpooledTemporaryFile(*args, **kwargs)  # noqa: SIM115 - parser owns and closes the spool
+        created_spools.append(spool)
+        return spool
+
+    monkeypatch.setattr("starlette.formparsers.SpooledTemporaryFile", tracked_spooled_file)
+    encoded_request = httpx.Request(
+        "POST",
+        "http://testserver/recognition/analyze/multipart",
+        files=[(f"image_{media_id}", (f"{media_id}.png", PNG_BYTES, "image/png")) for media_id in range(1, 7)],
+    )
+    request_body = encoded_request.read()
+    delivered = False
+
+    async def receive() -> dict:
+        nonlocal delivered
+        if delivered:
+            return {"type": "http.request", "body": b"", "more_body": False}
+        delivered = True
+        return {"type": "http.request", "body": request_body, "more_body": False}
+
+    request = Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": "/recognition/analyze/multipart",
+            "headers": [(key.lower(), value) for key, value in encoded_request.headers.raw],
+        },
+        receive,
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        await _parse_multipart_form(request)
+
+    assert exc_info.value.status_code == status.HTTP_400_BAD_REQUEST
+    assert exc_info.value.detail == "multipart submission accepts at most 5 image parts"
+    assert len(created_spools) == 5
+    assert all(spool.closed for spool in created_spools)
 
 
 @pytest.mark.asyncio

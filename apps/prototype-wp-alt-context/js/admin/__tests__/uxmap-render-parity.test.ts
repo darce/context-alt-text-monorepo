@@ -1096,7 +1096,7 @@ describe('ux-map render parity (owned maps)', () => {
     );
   });
 
-  it.each(['_Action states_:', '_Action states:_', '*Action states*:', '*Action states:*'])(
+  it.each(['_Action states_:', '_Action states:_', '*Action states*:', '*Action states:*', '_Action_ states:', 'Action _states_:', '_Action_ _states_:', '__Action__ states:', 'Action __states__:', '__Action__ __states__:'])(
     'rejects a contradictory italic declaration %s', (label) => {
       const md = readFileSync(path.join(uxMapsDir, 'febt-1-job-error-states.md'), 'utf8');
       const row = /^Action states: .*$/m.exec(md)![0];
@@ -1106,31 +1106,29 @@ describe('ux-map render parity (owned maps)', () => {
     },
   );
 
-  it('rejects every shared declaration variant for every consumed key', () => {
+  it.each(SCREEN_METADATA_KEYS)('rejects every shared declaration variant for %s', (field) => {
     const fixture = JSON.parse(readFileSync(path.join(negativeFixturesDir, 'declaration-mutations.json'), 'utf8')) as {
-      keys: string[]; variants: string[];
+      keys: string[]; variants: string[]; emphasis: Record<string, string[]>;
     };
     expect(fixture.keys).toEqual([...SCREEN_METADATA_KEYS]);
     const source = readMapJson('febt-1-job-error-states') as UxMapRenderSource;
     const md = readFileSync(path.join(uxMapsDir, 'febt-1-job-error-states.md'), 'utf8')
       .replace('Purpose:', `url_params: \`probe\`\n\nScreen states: ${source.screens[0]!.states!.join(', ')}\n\nPurpose:`);
-    for (const field of SCREEN_METADATA_KEYS) {
-      const row = new RegExp(`^${field}: .*$`, 'm').exec(md)![0];
-      for (const template of fixture.variants) {
-        for (const key of [field, field.toUpperCase(), field.toLowerCase()]) {
-          for (const value of [row.slice(row.indexOf(': ') + 2), 'retired_state']) {
-            const duplicate = template.replace('{key}', key).replace('{value}', value);
-            for (const rows of [[row, duplicate], [duplicate, row]]) {
-              const first = md.slice(0, md.indexOf(row)).split('\n').length;
-              expect(() => parseRenderedUxMap(md.replace(row, rows.join('\n\n')))).toThrow(
-                `duplicate ${field} declarations at lines ${first} and ${first + 2}`,
-              );
-            }
+    const row = new RegExp(`^${field}: .*$`, 'm').exec(md)![0];
+    for (const template of [...fixture.variants, ...fixture.emphasis[field]!]) {
+      for (const key of [field, field.toUpperCase(), field.toLowerCase()]) {
+        for (const value of [row.slice(row.indexOf(': ') + 2), 'retired_state']) {
+          const duplicate = template.replace('{key}', key).replace('{value}', value);
+          for (const rows of [[row, duplicate], [duplicate, row]]) {
+            const first = md.slice(0, md.indexOf(row)).split('\n').length;
+            expect(() => parseRenderedUxMap(md.replace(row, rows.join('\n\n')))).toThrow(
+              `duplicate ${field} declarations at lines ${first} and ${first + 2}`,
+            );
           }
         }
       }
     }
-  });
+  }, 15000);
 
   it.each(['Purpose', 'url_params'])('rejects duplicate screen %s declarations', (field) => {
     const md = readFileSync(path.join(uxMapsDir, 'workbench-operator-loop.md'), 'utf8');

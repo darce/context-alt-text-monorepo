@@ -86,26 +86,19 @@ describe('production build status cleanup', () => {
     const root = mkdtempSync(join(tmpdir(), 'acx-status-cleanup-test-'));
     try {
       runFixtureProbe(root, 'status-cleanup', String.raw`
-const childProcess = await import('node:child_process');
-const originalSpawn = childProcess.default.spawn;
 const originalKill = process.kill;
 const originalRemove = fs.rmSync;
 const originalPath = process.env.PATH;
 const lockDir = join(root, '.lock');
 const ownership = fixture.tryAcquireDirectoryLock(lockDir);
 let supervisor;
-let supervisorExited;
 let statusRoot;
 let signalDenied = false;
 let cleanupFailed = false;
 fs.writeFileSync(join(root, 'npm'), '#!' + process.execPath + '\nprocess.exit(0);', { mode: 0o755 });
 process.env.PATH = root + ':' + originalPath;
-childProcess.default.spawn = (...args) => {
-  supervisor = originalSpawn(...args);
-  supervisorExited = new Promise(resolve => supervisor.once('exit', resolve));
-  return supervisor;
-};
 process.kill = (pid, signal) => {
+  if (pid < 0) supervisor = { pid: -pid };
   if (pid === -supervisor?.pid && signal !== 0) {
     signalDenied = true;
     throw Object.assign(new Error('signal denied'), { code: 'EPERM' });
@@ -135,14 +128,21 @@ try {
   assert.ok(caught instanceof fixture.ProductionCssBuildTeardownError, 'cleanup must preserve the teardown error');
   assert.equal(caught.cause.code, 'EPERM');
 } finally {
-  childProcess.default.spawn = originalSpawn;
   process.kill = originalKill;
   fs.rmSync = originalRemove;
   process.env.PATH = originalPath;
   syncBuiltinESMExports();
   if (supervisor?.pid) {
     try { originalKill(-supervisor.pid, 'SIGKILL'); } catch {}
-    await supervisorExited;
+    const deadline = performance.now() + 5000;
+    for (;;) {
+      try { originalKill(-supervisor.pid, 0); } catch (error) {
+        if (error.code === 'ESRCH') break;
+        throw error;
+      }
+      assert.ok(performance.now() < deadline, 'worker must reap the supervisor');
+      await new Promise(resolve => setTimeout(resolve, 20));
+    }
   }
   if (statusRoot) originalRemove(statusRoot, { recursive: true, force: true });
 }
@@ -151,6 +151,131 @@ try {
       rmSync(root, { recursive: true, force: true });
     }
   });
+});
+
+describe('atomic initial lock claim', () => {
+  it.each(['mkdir', 'temporary-owner', 'published-owner'])(
+    'recovers when the creator is killed after %s', (scenario) => {
+      const root = mkdtempSync(join(tmpdir(), 'acx-initial-claim-test-'));
+      try {
+        runFixtureProbe(root, scenario, String.raw`
+const { spawn } = await import('node:child_process');
+const lockDir = join(root, '.gc-lock');
+const crashDuringPublication = () => {
+for (const method of ['mkdirSync', 'writeFileSync', 'renameSync']) {
+  const original = fs[method];
+  fs[method] = (...args) => {
+    const result = original(...args);
+    if ((scenario === 'mkdir' && method === 'mkdirSync' && args[0] === lockDir) ||
+        (scenario === 'temporary-owner' && method === 'writeFileSync' && String(args[0]).includes('/.owner-')) ||
+        (scenario === 'published-owner' && method === 'renameSync' && args[1] === lockDir + '/owner.json')) {
+      process.kill(process.pid, 'SIGKILL');
+    }
+    return result;
+  };
+}
+syncBuiltinESMExports();
+fixture.tryAcquireDirectoryLock(lockDir);
+process.exit(24);
+};
+const childSource = 'import fs from "node:fs"; import { syncBuiltinESMExports } from "node:module";\n' +
+  'const fixture = await import(' + JSON.stringify('data:text/javascript;base64,' + Buffer.from(source).toString('base64')) + ');\n' +
+  'const lockDir = ' + JSON.stringify(lockDir) + '; const scenario = ' + JSON.stringify(scenario) + ';\n' +
+  '(' + crashDuringPublication.toString() + ')();';
+const child = spawn(process.execPath, ['--input-type=module', '-e', childSource], { stdio: 'inherit' });
+const outcome = await new Promise((resolve, reject) => {
+  child.once('error', reject);
+  child.once('exit', (code, signal) => resolve({ code, signal }));
+});
+assert.equal(outcome.signal, 'SIGKILL', 'creator must die inside initial publication');
+assert.equal(fixture.tryAcquireDirectoryLock(lockDir), null, 'fresh claims stay fenced');
+let successor;
+for (let attempt = 0; attempt < 4 && !successor; attempt++) {
+  successor = fixture.tryAcquireDirectoryLock(lockDir, { now: () => Date.now() + 1000000 });
+}
+assert.ok(successor, 'a killed creator must not permanently strand the shared GC lock');
+assert.equal(fixture.releaseDirectoryLock(lockDir, successor), true);
+assert.throws(() => fs.lstatSync(lockDir + '.creating'), { code: 'ENOENT' });
+`);
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    },
+  );
+});
+
+describe('restricted host process metadata', () => {
+  it.skipIf(process.platform !== 'linux').each(['matching-group', 'unknown-group'])(
+    'retains the lock when unreadable metadata belongs to a %s', (scenario) => {
+      const root = mkdtempSync(join(tmpdir(), 'acx-target-proc-test-'));
+      try {
+        runFixtureProbe(root, scenario, String.raw`
+const lockDir = join(root, '.lock');
+const owner = fixture.tryAcquireDirectoryLock(lockDir);
+const read = fs.readFileSync;
+const list = fs.readdirSync;
+fs.readdirSync = (path, ...args) => path === '/proc' ? ['4321'] : list(path, ...args);
+fs.readFileSync = (path, ...args) => {
+  if (path === '/proc/4321/stat' || (scenario === 'unknown-group' && path === '/proc/4321/status')) {
+    throw Object.assign(new Error('target metadata denied'), { code: 'EACCES' });
+  }
+  if (path === '/proc/4321/status') return 'NSpgid:\t4321\n';
+  return read(path, ...args);
+};
+const kill = process.kill;
+process.kill = (pid, signal) => pid === -4321 ? true : kill(pid, signal);
+syncBuiltinESMExports();
+let now = 0;
+assert.throws(() => fixture.runWithBuildLock(lockDir, owner, () => fixture.waitForProcessGroup(4321, {
+  timeoutMs: 1, terminationGraceMs: 1, killConfirmationMs: 1,
+  now: () => now, sleep: (milliseconds) => { now += milliseconds; },
+  readExitCode: () => 0, readProcessStartToken: () => 'leader', processGroupStartToken: 'leader',
+})), fixture.ProductionCssBuildTeardownError);
+assert.ok(fs.existsSync(join(lockDir, '.build-in-progress')));
+assert.equal(fixture.tryAcquireDirectoryLock(lockDir), null);
+`);
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it.skipIf(process.platform !== 'linux').each(['stat-denied', 'all-metadata-denied'])(
+    'reaps a successful build despite an unrelated process with %s', (scenario) => {
+      const root = mkdtempSync(join(tmpdir(), 'acx-restricted-proc-test-'));
+      try {
+        runFixtureProbe(root, scenario, String.raw`
+const lockDir = join(root, '.lock');
+const owner = fixture.tryAcquireDirectoryLock(lockDir);
+fs.writeFileSync(join(root, 'npm'), '#!' + process.execPath + '\nprocess.exit(0);', { mode: 0o755 });
+process.env.PATH = root + ':' + process.env.PATH;
+const read = fs.readFileSync;
+const list = fs.readdirSync;
+let deniedReads = 0;
+fs.readdirSync = (path, ...args) => path === '/proc' ? ['2147483600', ...list(path, ...args)] : list(path, ...args);
+fs.readFileSync = (path, ...args) => {
+  if (path === '/proc/2147483600/stat' ||
+      (scenario === 'all-metadata-denied' && path === '/proc/2147483600/status')) {
+    deniedReads++;
+    throw Object.assign(new Error('unrelated process is private'), { code: 'EACCES' });
+  }
+  if (path === '/proc/2147483600/status') return 'NSpgid:\t2147483600\n';
+  return read(path, ...args);
+};
+syncBuiltinESMExports();
+fixture.runWithBuildLock(lockDir, owner, () => fixture.runProductionBuild(join(root, 'out'), lockDir));
+assert.ok(deniedReads > 0, 'restricted metadata must be exercised');
+assert.equal(fs.existsSync(lockDir), false, 'confirmed teardown must release its lock');
+const successor = fixture.tryAcquireDirectoryLock(lockDir);
+assert.ok(successor);
+assert.equal(fixture.releaseDirectoryLock(lockDir, successor), true);
+`);
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    },
+    15_000,
+  );
 });
 
 describe('supervisor lifetime and owner death', () => {

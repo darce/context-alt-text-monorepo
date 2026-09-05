@@ -22,6 +22,7 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, relative, resolve } from 'node:path';
+import { Worker } from 'node:worker_threads';
 
 /**
  * Why this exists (FEBT1-LH-01 / FEBT1-GATE-04):
@@ -415,11 +416,12 @@ const tryAcquireRecoveryClaim = (
   ownership: DirectoryLockOwnership,
   options: DirectoryLockOptions,
   depth = 0,
+  beforeReclaim?: (incumbent: DirectoryLockOwnership) => void,
 ): boolean => {
   if (depth >= 32) return false;
   const now = options.now ?? Date.now;
   try {
-    symlinkSync(JSON.stringify({ ...ownership, nonce: randomUUID(), createdAt: now() }), claimPath);
+    symlinkSync(JSON.stringify({ ...ownership, createdAt: now() }), claimPath);
     return true;
   } catch (error) {
     const code = (error as NodeJS.ErrnoException).code;
@@ -447,7 +449,10 @@ const tryAcquireRecoveryClaim = (
   const recoveryPath = join(dirname(claimPath), `.reaping-${incumbent.nonce}`);
   if (!tryAcquireRecoveryClaim(recoveryPath, ownership, options, depth + 1)) return false;
   try {
-    if (readlinkSync(claimPath) === target) rmSync(claimPath, { force: true });
+    if (readlinkSync(claimPath) === target) {
+      beforeReclaim?.(incumbent);
+      rmSync(claimPath, { force: true });
+    }
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
   } finally {
@@ -460,7 +465,7 @@ const publishLockOwnership = (
   lockDir: string,
   ownership: DirectoryLockOwnership,
 ): DirectoryLockOwnership | null => {
-  const temporaryOwnerPath = join(lockDir, `.owner-${ownership.pid}-${randomUUID()}.tmp`);
+  const temporaryOwnerPath = join(lockDir, `.owner-${ownership.pid}-${ownership.nonce}.tmp`);
   try {
     writeFileSync(temporaryOwnerPath, `${JSON.stringify(ownership)}\n`, {
       encoding: 'utf8',
@@ -492,18 +497,36 @@ export const tryAcquireDirectoryLock = (
   const ownership = { pid: process.pid, startToken, nonce: randomUUID() };
   const publishOwnership = options.publishOwnership ?? publishLockOwnership;
   const createPublishedLock = (): DirectoryLockOwnership | null => {
-    mkdirSync(lockDir);
-    const published = publishOwnership(lockDir, ownership);
-    if (published === null) {
-      // We exclusively created this namespace, so a failed owner publication must not turn it
-      // into a permanent malformed lock. Preserve it only if another valid owner somehow replaced
-      // our namespace during publication; that ownership is authoritative and must not be unlinked.
-      const incumbent = readLockOwnership(lockDir);
-      if (incumbent === null || sameOwnership(incumbent, ownership)) {
-        rmSync(lockDir, { recursive: true, force: true });
+    // The initial claim and its recovery identity appear in one syscall, BEFORE mkdir.
+    // A dead creator's empty directory can only be removed while holding the recovery
+    // claim for this exact creation nonce. Only this creator's unpublished temp file is
+    // also safe to remove; other nonempty/malformed leases remain fenced.
+    const creationClaim = `${lockDir}.creating`;
+    if (!tryAcquireRecoveryClaim(creationClaim, ownership, options, 0, (creator) => {
+      try {
+        const files = readdirSync(lockDir);
+        if (files.every((file) => file === `.owner-${creator.pid}-${creator.nonce}.tmp`)) {
+          rmSync(lockDir, { recursive: true });
+        }
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
       }
+    })) return null;
+    try {
+      mkdirSync(lockDir);
+      const published = publishOwnership(lockDir, ownership);
+      if (published === null) {
+        // We exclusively created this namespace, so a failed owner publication must not turn it
+        // into a permanent malformed lock. Preserve any valid replacement ownership.
+        const incumbent = readLockOwnership(lockDir);
+        if (incumbent === null || sameOwnership(incumbent, ownership)) {
+          rmSync(lockDir, { recursive: true, force: true });
+        }
+      }
+      return published;
+    } finally {
+      rmSync(creationClaim, { force: true });
     }
-    return published;
   };
   try {
     return createPublishedLock();
@@ -814,9 +837,16 @@ const processGroupHasNonZombieMember = (processGroupId: number): boolean => {
           // fields[0] is state (field 3), fields[2] is process group ID (field 5).
           if (fields[0] !== 'Z' && Number(fields[2]) === processGroupId) return true;
         } catch (error) {
-          // Processes can disappear while /proc is enumerated. Any other read failure is not
-          // evidence that a kill(2)-visible group is safely empty.
-          if ((error as NodeJS.ErrnoException).code !== 'ENOENT') return true;
+          if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue;
+          // stat may be restricted for unrelated users. status exposes group membership
+          // separately; never make a known unrelated process fence this build's teardown.
+          try {
+            const status = readFileSync(`/proc/${entry}/status`, 'utf8');
+            const group = /^NSpgid:\s+(\d+)/m.exec(status);
+            if (group === null || Number(group[1]) === processGroupId) return true;
+          } catch (statusError) {
+            if ((statusError as NodeJS.ErrnoException).code !== 'ENOENT') return true;
+          }
         }
       }
       return false;
@@ -855,7 +885,7 @@ const processGroupIsAlive = (
 ): boolean => {
   if (!processGroupExistsViaSignal(processGroupId, sendSignal)) return false;
   // kill(2) reports zombie-only groups as existing. They cannot execute or retain resources, and
-  // the synchronous parent cannot reap its leader until this function returns to the event loop.
+  // descendants may remain zombies until their own parent reaps them.
   return processGroupHasNonZombieMember(processGroupId);
 };
 
@@ -1065,19 +1095,41 @@ child.once('exit', (code, signal) => {
 }
 `;
   const buildArgs = ['run', 'build', '--', '--outDir', outDir, '--emptyOutDir'];
-  const supervisor = spawn(
-    process.execPath,
-    ['-e', supervisorSource, statusPath, appRoot, 'npm', JSON.stringify(buildArgs),
+  // The fixture API is synchronous. Spawn on a separate event loop so libuv can reap the
+  // supervised child while this thread waits; a successfully killed leader must not remain
+  // a zombie solely because its parent is polling synchronously.
+  const launchState = new Int32Array(new SharedArrayBuffer(4));
+  const reaper = new Worker(String.raw`
+const { workerData } = require('node:worker_threads');
+const { spawn } = require('node:child_process');
+const state = new Int32Array(workerData.state);
+const report = (pid) => { Atomics.store(state, 0, pid); Atomics.notify(state, 0); };
+try {
+  const child = spawn(process.execPath, workerData.args, { detached: true, stdio: 'ignore' });
+  child.once('error', () => report(-1));
+  child.once('exit', () => {}); // Keep the event loop alive until waitpid has reaped the child.
+  report(child.pid ?? -1);
+} catch { report(-1); }
+`, { eval: true, execArgv: [], workerData: {
+    state: launchState.buffer,
+    args: ['-e', supervisorSource, statusPath, appRoot, 'npm', JSON.stringify(buildArgs),
       String(process.pid), lockDir === undefined ? '' : join(lockDir, BUILD_GUARD_FILE),
       String(BUILD_TIMEOUT_MS + BUILD_TERMINATION_GRACE_MS), String(BUILD_TERMINATION_GRACE_MS)],
-    { detached: true, stdio: 'ignore' },
-  );
-  if (supervisor.pid === undefined) {
-    rmSync(statusRoot, { recursive: true, force: true });
-    throw new Error('Failed to start the detached production CSS build process group.');
-  }
+  } });
+  reaper.on('error', () => {}); // Startup is checked through the bounded shared-state handshake.
+  reaper.unref();
+  Atomics.wait(launchState, 0, 0, Math.max(5_000, BUILD_TERMINATION_GRACE_MS));
+  const supervisor = { pid: Atomics.load(launchState, 0) };
   let teardownUncertain = false;
   try {
+    if (supervisor.pid <= 0) {
+      void reaper.terminate();
+      if (supervisor.pid === -1) {
+        throw new Error('Failed to start the detached production CSS build process group.');
+      }
+      throw new ProductionCssBuildTeardownError(BUILD_TERMINATION_GRACE_MS,
+        'Could not confirm production CSS supervisor startup; retaining the build lock.');
+    }
     const supervisorStartToken = processStartToken(supervisor.pid);
     const exitCode = waitForProcessGroup(supervisor.pid, {
       timeoutMs: BUILD_TIMEOUT_MS,

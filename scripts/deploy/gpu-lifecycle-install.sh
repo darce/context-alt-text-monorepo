@@ -530,25 +530,26 @@ trap cleanup_gpu_lifecycle_transaction ERR EXIT
 # any effective lifecycle artifact. The trap remains armed until the reaper is
 # proved and START is re-enabled and verified.
 fence_gpu_lifecycle_start
-previous_release=\$(readlink -f /opt/acx-gpu/current 2>/dev/null || true)
-if [ -n "\$previous_release" ] && [ "\$previous_release" != '${remote_release}' ] \
-    && [ -d "\$previous_release" ]; then
+previous_release=\$(python3 -c 'import os, sys; print(os.path.realpath(sys.argv[1]))' /opt/acx-gpu/current)
+if [ -n \"\$previous_release\" ] && [ \"\$previous_release\" != '${remote_release}' ] \
+    && [ -d \"\$previous_release\" ]; then
     # Upgrade older releases into rollback-capable generations before changing
     # the live symlink. Never overwrite an existing release snapshot.
-    if [ ! -d "\$previous_release/systemd" ]; then
-        sudo mkdir -p "\$previous_release/systemd"
-        sudo cp /etc/acx/gpu-lifecycle.env "\$previous_release/systemd/gpu-lifecycle.env"
-        sudo cp /etc/tmpfiles.d/acx-gpu.conf "\$previous_release/systemd/acx-gpu.conf"
+    if [ ! -d \"\$previous_release/systemd\" ]; then
+        sudo mkdir -p \"\$previous_release/systemd\"
+        sudo cp /etc/acx/gpu-lifecycle.env \"\$previous_release/systemd/gpu-lifecycle.env\"
+        sudo cp /etc/tmpfiles.d/acx-gpu.conf \"\$previous_release/systemd/acx-gpu.conf\"
         for unit in acx-gpu-start.service acx-gpu-start.timer acx-gpu-reap.service acx-gpu-reap.timer; do
-            sudo cp "/etc/systemd/system/\$unit" "\$previous_release/systemd/\$unit"
+            sudo cp \"/etc/systemd/system/\$unit\" \"\$previous_release/systemd/\$unit\"
         done
-        sudo chmod 0644 "\$previous_release/systemd/"*
+        sudo chmod 0644 \"\$previous_release/systemd/\"*
     fi
-    ln -sfn "\$previous_release" '/opt/acx-gpu/.previous-${release_id}'
-    sudo mv -Tf '/opt/acx-gpu/.previous-${release_id}' /opt/acx-gpu/previous
+    ln -sfn \"\$previous_release\" '/opt/acx-gpu/.previous-${release_id}'
+    sudo python3 -c 'import os, sys; os.replace(sys.argv[1], sys.argv[2])' '/opt/acx-gpu/.previous-${release_id}' /opt/acx-gpu/previous
 fi
 ln -sfn '${remote_release}' '/opt/acx-gpu/.current-${release_id}'
-sudo mv -Tf '/opt/acx-gpu/.current-${release_id}' /opt/acx-gpu/current
+# os.replace atomically replaces the symlink itself on both Linux and BSD.
+sudo python3 -c 'import os, sys; os.replace(sys.argv[1], sys.argv[2])' '/opt/acx-gpu/.current-${release_id}' /opt/acx-gpu/current
 
 sudo mkdir -p '${remote_release}/systemd'
 sudo tee '${remote_release}/systemd/gpu-lifecycle.env' >/dev/null <<ENV
@@ -663,7 +664,7 @@ TMPF
 sudo install -m 0644 '${remote_release}/systemd/gpu-lifecycle.env' /etc/acx/gpu-lifecycle.env
 sudo install -m 0644 '${remote_release}/systemd/acx-gpu.conf' /etc/tmpfiles.d/acx-gpu.conf
 for unit in acx-gpu-start.service acx-gpu-start.timer acx-gpu-reap.service acx-gpu-reap.timer; do
-    sudo install -m 0644 "${remote_release}/systemd/\$unit" "/etc/systemd/system/\$unit"
+    sudo install -m 0644 \"${remote_release}/systemd/\$unit\" \"/etc/systemd/system/\$unit\"
 done
 sudo chmod 0644 '${remote_release}/systemd/'*
 expected_start_service_hash=\$(sha256_file '${remote_release}/systemd/acx-gpu-start.service' | awk '{print \$1}')
@@ -673,8 +674,8 @@ expected_reap_timer_hash=\$(sha256_file '${remote_release}/systemd/acx-gpu-reap.
 
 sudo systemctl daemon-reload
 activate_gpu_lifecycle_timers \
-    "\$expected_start_service_hash" "\$expected_start_timer_hash" \
-    "\$expected_reap_service_hash" "\$expected_reap_timer_hash" \
+    \"\$expected_start_service_hash\" \"\$expected_start_timer_hash\" \
+    \"\$expected_reap_service_hash\" \"\$expected_reap_timer_hash\" \
     '${MAX_LEASE_SECONDS}'
 lifecycle_transaction_complete=1
 trap - ERR EXIT

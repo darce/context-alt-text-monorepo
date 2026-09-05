@@ -220,17 +220,61 @@ const parseScreens = (markdown: string): RenderParityMap['screens'] => {
       throw new Error(`screen ${id} has different url_params in the Screens table and detail block`);
     }
     const zones: RenderParityMap['screens'][number]['zones'] = [];
+    const zoneLines: string[] = [];
+    let fence: string | undefined;
+    let inZoneTable = false;
     for (const line of block.split('\n')) {
-      if (!line.startsWith('| `')) {
+      // Screen sketches contain pipe-prefixed rows too; only actual Markdown
+      // tables outside fenced code blocks belong to the zone inventory.
+      if (fence) {
+        const close = /^ {0,3}(`+|~+)[ \t]*$/.exec(line)?.[1];
+        if (close && close[0] === fence[0] && close.length >= fence.length) {
+          fence = undefined;
+        }
         continue;
       }
-      const [rawZoneId, label, role, rawStates] = splitTableRow(line);
+      const open = /^ {0,3}(`{3,}|~{3,})/.exec(line)?.[1];
+      if (open) {
+        fence = open;
+        inZoneTable = false;
+        continue;
+      }
+      if (!line.trim()) {
+        inZoneTable = false;
+      } else if (inZoneTable || line.trimStart().startsWith('|')) {
+        zoneLines.push(line);
+        inZoneTable = true;
+      }
+    }
+    const zoneIds = new Set<string>();
+    for (const [index, line] of zoneLines.entries()) {
+      if (index < 2) {
+        const expected = index === 0 ? '| zone id | label | role | states |' : '| --- | --- | --- | --- |';
+        if (line !== expected) {
+          throw new Error(`noncanonical Zones table row: ${line}`);
+        }
+        continue;
+      }
+      const cells = splitTableRow(line);
+      const canonicalRow = `| ${cells.map((cell) => cell.replaceAll('|', '\\|')).join(' | ')} |`;
+      if (line !== canonicalRow || cells.length !== 4 || !/^`[^`]+`$/.test(cells[0] ?? '')) {
+        throw new Error(`noncanonical Zones table row: ${line}`);
+      }
+      const [rawZoneId, label, role, rawStates] = cells;
+      const zoneId = unquote(rawZoneId ?? '');
+      if (zoneIds.has(zoneId)) {
+        throw new Error(`zone ${zoneId} has duplicate Zones table rows: ${line}`);
+      }
+      zoneIds.add(zoneId);
       zones.push({
-        id: unquote(rawZoneId ?? ''),
+        id: zoneId,
         label: label ?? '',
         role: role ?? '',
         states: (rawStates ?? '').split(', ').filter(Boolean),
       });
+    }
+    if (zoneLines.length === 1) {
+      throw new Error(`screen ${id} has an incomplete Zones table`);
     }
     return {
       ...base,

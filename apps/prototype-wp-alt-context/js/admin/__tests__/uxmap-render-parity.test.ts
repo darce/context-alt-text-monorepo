@@ -1107,6 +1107,29 @@ describe('ux-map render parity (owned maps)', () => {
     },
   );
 
+  it.each(
+    JSON.parse(readFileSync(path.join(negativeFixturesDir, 'zone-row-mutations.json'), 'utf8')) as Array<{
+      name: string;
+      row: string;
+    }>,
+  )('rejects $name in zone tables with the original row text', ({ row }) => {
+    const md = readFileSync(path.join(uxMapsDir, 'febt-1-job-error-states.md'), 'utf8');
+    const original = /^\| `error-action` \|.*$/m.exec(md)![0];
+    expect(() => parseRenderedUxMap(md)).not.toThrow();
+    expect(() => parseRenderedUxMap(md.replace(original, `${row}\n${original}`))).toThrow(
+      `noncanonical Zones table row: ${row}`,
+    );
+  });
+
+  it.each(['identical', 'conflicting'])('rejects %s duplicate zone rows', (mutation) => {
+    const md = readFileSync(path.join(uxMapsDir, 'febt-1-job-error-states.md'), 'utf8');
+    const row = /^\| `error-action` \|.*$/m.exec(md)![0];
+    const duplicate = mutation === 'identical' ? row : '| `error-action` | Incorrect recovery | form | error |';
+    expect(() => parseRenderedUxMap(md.replace(row, `${duplicate}\n${row}`))).toThrow(
+      'zone error-action has duplicate Zones table rows',
+    );
+  });
+
   it('normalizes omitted zone states to an empty list', () => {
     const raw = readMapJson('workbench-operator-loop') as UxMapRenderSource;
     const md = readFileSync(path.join(uxMapsDir, 'workbench-operator-loop.md'), 'utf8');

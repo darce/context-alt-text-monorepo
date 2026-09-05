@@ -191,7 +191,8 @@ fence_gpu_lifecycle_start() {
 }
 
 snapshot_gpu_lifecycle_release() {
-    local previous_release=$1 snapshot_stage artifact
+    local previous_release=$1 snapshot_stage="" snapshot_dir artifact
+    snapshot_dir="$previous_release/systemd"
     if [ ! -d "$previous_release/systemd" ]; then
         # Only the final rename publishes a snapshot. A copy failure must not
         # leave a directory that the next deploy mistakes for a complete one.
@@ -207,23 +208,33 @@ snapshot_gpu_lifecycle_release() {
         # mktemp runs as root with mode 0700; allow the deploy shell to expand
         # the file glob before applying modes and publishing the directory.
         if ! sudo chmod 0755 "$snapshot_stage" \
-            || ! sudo chmod 0644 "$snapshot_stage/"* \
-            || ! sudo python3 -c 'import os, sys; os.rename(sys.argv[1], sys.argv[2])' \
-                "$snapshot_stage" "$previous_release/systemd"; then
+            || ! sudo chmod 0644 "$snapshot_stage/"*; then
             sudo rm -rf "$snapshot_stage"
             return 1
         fi
+        snapshot_dir="$snapshot_stage"
     fi
-    # Older installers may already have left a partial snapshot. Fail closed
-    # rather than publishing it or overwriting historical rollback artifacts.
+    # Validate staged and historical snapshots before publication or updating
+    # previous. Empty artifacts cannot restore the STOP backstop on rollback.
     for artifact in gpu-lifecycle.env acx-gpu.conf acx-gpu-start.service \
         acx-gpu-start.timer acx-gpu-reap.service acx-gpu-reap.timer; do
-        if [ ! -f "$previous_release/systemd/$artifact" ] \
-            || [ ! -r "$previous_release/systemd/$artifact" ]; then
-            echo "error: incomplete rollback snapshot: $previous_release/systemd/$artifact" >&2
+        if [ ! -f "$snapshot_dir/$artifact" ] \
+            || [ ! -r "$snapshot_dir/$artifact" ] \
+            || [ ! -s "$snapshot_dir/$artifact" ]; then
+            echo "error: incomplete rollback snapshot: $snapshot_dir/$artifact" >&2
+            if [ -n "$snapshot_stage" ]; then
+                sudo rm -rf "$snapshot_stage"
+            fi
             return 1
         fi
     done
+    if [ -n "$snapshot_stage" ]; then
+        sudo python3 -c 'import os, sys; os.rename(sys.argv[1], sys.argv[2])' \
+            "$snapshot_stage" "$previous_release/systemd" || {
+            sudo rm -rf "$snapshot_stage"
+            return 1
+        }
+    fi
 }
 
 lifecycle_transaction_complete=0

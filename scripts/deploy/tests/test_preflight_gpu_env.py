@@ -1000,6 +1000,70 @@ def test_11_reaper_preflight_accepts_quoted_last_wins_systemd_assignment(tmp_pat
     assert result.returncode == 0, result.stderr
 
 
+def test_11_installer_payload_passes_reaper_preflight(tmp_path: Path) -> None:
+    installer = (ROOT / "scripts/deploy/gpu-lifecycle-install.sh").read_text()
+    staging = installer.split('run_with_deadline "remote release staging"', 1)[1]
+    staging = 'run_with_deadline "remote release staging"' + staging.split(
+        'run_with_deadline "remote release validation and switch"', 1
+    )[0]
+    service_root = tmp_path / "service"
+    # Run the actual staging commands with local transports and no privileges.
+    # No installer startup, OCI calls, units, or live host are exercised.
+    staging = staging.replace("/etc/acx", str(tmp_path / "etc-acx"))
+    staging = staging.replace("/opt/acx-gpu", str(tmp_path / "opt-acx-gpu"))
+    result = subprocess.run(
+        ["bash", "-c", r'''
+set -eu
+repo_root=$1
+remote_stage=$2
+HOST=local
+SSH_OPTIONS=()
+run_with_deadline() { shift; "$@"; }
+sudo() { if [ "$1" != chown ]; then "$@"; fi; }
+ssh() { eval "$2"; }
+scp() {
+    shift # -q
+    local destination="${!#}"
+    set -- "${@:1:$#-1}" "${destination#local:}"
+    cp "$@"
+}
+''' + staging, "installer-payload", str(ROOT), str(service_root)],
+        text=True, capture_output=True, check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    reaper_env = tmp_path / "gpu-lifecycle.env"
+    reaper_env.write_text("GPU_INSTANCE_ID=ocid1.instance.oc1.iad.fakeinstance\nMAX_LEASE_SECONDS=3600\n")
+    result = run_preflight(tmp_path, check_reaper=True, systemctl_script=reaper_systemctl_script(
+        reaper_env, working_directory=service_root,
+    ))
+    assert result.returncode == 0, result.stderr
+
+
+def test_11_installer_release_identity_includes_deployment_registry(tmp_path: Path) -> None:
+    installer = (ROOT / "scripts/deploy/gpu-lifecycle-install.sh").read_text()
+    identity = installer.split("release_id=$(", 1)[1].split("\nremote_release=", 1)[0]
+    source_root = tmp_path / "source"
+    lifecycle = source_root / "infra/oci/gpu_lifecycle"
+    lifecycle.mkdir(parents=True)
+    (lifecycle / "reaper.py").write_text("# unchanged module\n")
+    registry = source_root / "scripts/deploy/gpu-snapshot-deployments.conf"
+    registry.parent.mkdir(parents=True)
+
+    def release_id() -> str:
+        result = subprocess.run(
+            ["bash", "-ec", 'repo_root=$1\nrelease_id=$(' + identity + '\nprintf "%s" "$release_id"',
+             "release-identity", str(source_root)],
+            text=True, capture_output=True, check=False,
+        )
+        assert result.returncode == 0, result.stderr
+        return result.stdout
+
+    registry.write_text("# registry version one\n")
+    original = release_id()
+    registry.write_text("# registry version two\n")
+    assert release_id() != original
+
+
 @pytest.mark.parametrize("registry_content", [None, "invalid registry\n"])
 def test_11_reaper_preflight_validates_service_deployment_registry(tmp_path: Path, registry_content: str | None) -> None:
     service_root = tmp_path / "service"

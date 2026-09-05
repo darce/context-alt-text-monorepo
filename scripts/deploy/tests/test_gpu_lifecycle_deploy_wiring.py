@@ -43,14 +43,17 @@ def _run_lifecycle(
     remote_timeout: int = 20,
     fixture_timeout: int = 30,
     remote_stall: int = 0,
+    reap_interval: str = "2min",
+    snapshot_kind: str = "complete",
+    snapshot_copy_failure: bool = False,
 ) -> tuple[subprocess.CompletedProcess[str], str]:
     fake_bin = tmp_path / "bin"
-    fake_bin.mkdir()
+    fake_bin.mkdir(exist_ok=True)
     transport_log = tmp_path / "transport.log"
     expected_systemd = tmp_path / "expected-systemd"
     effective_systemd = tmp_path / "effective-systemd"
-    expected_systemd.mkdir()
-    effective_systemd.mkdir()
+    expected_systemd.mkdir(exist_ok=True)
+    effective_systemd.mkdir(exist_ok=True)
     # Fresh hosts have no lifecycle units; upgrades retain the old units.
     for unit in (() if not previous_release else (
         "acx-gpu-start.service",
@@ -64,7 +67,7 @@ def _run_lifecycle(
     lifecycle_env = tmp_path / "gpu-lifecycle.env"
     lifecycle_env.write_text("MAX_LEASE_SECONDS=3600\n", encoding="utf-8")
     fake_host = tmp_path / "host"
-    fake_host.mkdir()
+    fake_host.mkdir(exist_ok=True)
     for directory in (
         "opt-acx-gpu",
         "etc-acx",
@@ -73,10 +76,21 @@ def _run_lifecycle(
         "run-acx-write",
         "var-lib-acx-gpu",
     ):
-        (fake_host / directory).mkdir()
-    if previous_release:
+        (fake_host / directory).mkdir(exist_ok=True)
+    if previous_release and not (fake_host / "opt-acx-gpu/current").is_symlink():
         release_root = fake_host / "opt-acx-gpu"
-        (release_root / "old release" / "systemd").mkdir(parents=True)
+        old_release = release_root / "old release"
+        old_release.mkdir()
+        (fake_host / "etc-acx/gpu-lifecycle.env").write_text("MAX_LEASE_SECONDS=3600\n")
+        (fake_host / "etc-tmpfiles/acx-gpu.conf").write_text("# old tmpfiles\n")
+        if snapshot_kind != "missing":
+            snapshot = old_release / "systemd"
+            snapshot.mkdir()
+            (snapshot / "gpu-lifecycle.env").write_text("MAX_LEASE_SECONDS=3600\n")
+            if snapshot_kind == "complete":
+                (snapshot / "acx-gpu.conf").write_text("# old tmpfiles\n")
+                for unit in effective_systemd.iterdir():
+                    (snapshot / unit.name).write_text(unit.read_text())
         (release_root / "older release").mkdir()
         (release_root / "current").symlink_to("old release", target_is_directory=True)
         (release_root / "previous").symlink_to("older release", target_is_directory=True)
@@ -139,6 +153,13 @@ fi
 set -euo pipefail
 case "${1:-}" in
   chown) exit 0 ;;
+  cp)
+    if [ "${FAKE_SNAPSHOT_COPY_FAILURE:-0}" = 1 ] && [[ "$2" == */acx-gpu.conf ]]; then
+      echo 'injected snapshot copy failure' >&2
+      exit 74
+    fi
+    exec "$@"
+    ;;
   *) exec "$@" ;;
 esac
 """,
@@ -257,6 +278,8 @@ printf '\n' >>"$FAKE_TRANSPORT_LOG"
             # A stalled fake transport must fail quickly on every host.
             "REMOTE_COMMAND_TIMEOUT_SECONDS": str(remote_timeout),
             "FAKE_REMOTE_STALL": str(remote_stall),
+            "REAP_INTERVAL": reap_interval,
+            "FAKE_SNAPSHOT_COPY_FAILURE": "1" if snapshot_copy_failure else "0",
             "FAKE_FENCE_FAILURE": fence_failure,
             "FAKE_FENCE_LOAD_STATE": fence_load_state,
             "PATH": f"{fake_bin}:{os.environ['PATH']}",
@@ -695,6 +718,54 @@ def test_release_upgrade_replaces_symlinks_and_preserves_old_directories(tmp_pat
     assert list((release_root / "older release").iterdir()) == []
     assert list((release_root / "old release").iterdir()) == [release_root / "old release" / "systemd"]
     _assert_rendered_activation_contract(result, calls)
+
+
+@pytest.mark.parametrize("interval", ["not-a-duration", "0s", "infinity", "", "2min\nOnUnitActiveSec=", "999999999999999999999d"])
+def test_invalid_reap_interval_fails_before_transport_or_unit_writes(tmp_path: Path, interval: str) -> None:
+    result, calls = _run_lifecycle(
+        tmp_path, enabled=True, ready_url="http://gpu.test:8000/health",
+        dry_run=False, reap_interval=interval,
+    )
+    assert result.returncode != 0, result.stdout + result.stderr
+    assert "REAP_INTERVAL" in result.stderr
+    assert calls == ""
+    assert list((tmp_path / "effective-systemd").iterdir()) == []
+
+
+def test_partial_existing_snapshot_is_never_published_as_previous(tmp_path: Path) -> None:
+    result, _ = _run_lifecycle(
+        tmp_path, enabled=True, ready_url="http://gpu.test:8000/health",
+        dry_run=False, previous_release=True, snapshot_kind="partial",
+    )
+    assert result.returncode != 0, result.stdout + result.stderr
+    assert "incomplete rollback snapshot" in result.stderr
+    release_root = tmp_path / "host/opt-acx-gpu"
+    assert (release_root / "previous").resolve().name == "older release"
+    assert (release_root / "current").resolve().name == "old release"
+
+
+def test_snapshot_copy_failure_retry_publishes_only_complete_generation(tmp_path: Path) -> None:
+    result, _ = _run_lifecycle(
+        tmp_path, enabled=True, ready_url="http://gpu.test:8000/health",
+        dry_run=False, previous_release=True, snapshot_kind="missing", snapshot_copy_failure=True,
+    )
+    assert result.returncode != 0
+    assert "injected snapshot copy failure" in result.stderr
+    release_root = tmp_path / "host/opt-acx-gpu"
+    assert (release_root / "previous").resolve().name == "older release"
+    assert not (release_root / "old release/systemd").exists()
+
+    result, _ = _run_lifecycle(
+        tmp_path, enabled=True, ready_url="http://gpu.test:8000/health",
+        dry_run=False, previous_release=True, snapshot_kind="missing",
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    previous = release_root / "previous"
+    assert previous.resolve().name == "old release"
+    assert {path.name for path in (previous / "systemd").iterdir()} == {
+        "gpu-lifecycle.env", "acx-gpu.conf", "acx-gpu-start.service",
+        "acx-gpu-start.timer", "acx-gpu-reap.service", "acx-gpu-reap.timer",
+    }
 
 
 def _assert_rendered_activation_contract(result: subprocess.CompletedProcess[str], calls: str) -> None:

@@ -190,6 +190,42 @@ fence_gpu_lifecycle_start() {
     }
 }
 
+snapshot_gpu_lifecycle_release() {
+    local previous_release=$1 snapshot_stage artifact
+    if [ ! -d "$previous_release/systemd" ]; then
+        # Only the final rename publishes a snapshot. A copy failure must not
+        # leave a directory that the next deploy mistakes for a complete one.
+        snapshot_stage=$(sudo mktemp -d "$previous_release/.systemd.XXXXXX") || return 1
+        for artifact in /etc/acx/gpu-lifecycle.env /etc/tmpfiles.d/acx-gpu.conf \
+            /etc/systemd/system/acx-gpu-start.service /etc/systemd/system/acx-gpu-start.timer \
+            /etc/systemd/system/acx-gpu-reap.service /etc/systemd/system/acx-gpu-reap.timer; do
+            sudo cp "$artifact" "$snapshot_stage/${artifact##*/}" || {
+                sudo rm -rf "$snapshot_stage"
+                return 1
+            }
+        done
+        # mktemp runs as root with mode 0700; allow the deploy shell to expand
+        # the file glob before applying modes and publishing the directory.
+        if ! sudo chmod 0755 "$snapshot_stage" \
+            || ! sudo chmod 0644 "$snapshot_stage/"* \
+            || ! sudo python3 -c 'import os, sys; os.rename(sys.argv[1], sys.argv[2])' \
+                "$snapshot_stage" "$previous_release/systemd"; then
+            sudo rm -rf "$snapshot_stage"
+            return 1
+        fi
+    fi
+    # Older installers may already have left a partial snapshot. Fail closed
+    # rather than publishing it or overwriting historical rollback artifacts.
+    for artifact in gpu-lifecycle.env acx-gpu.conf acx-gpu-start.service \
+        acx-gpu-start.timer acx-gpu-reap.service acx-gpu-reap.timer; do
+        if [ ! -f "$previous_release/systemd/$artifact" ] \
+            || [ ! -r "$previous_release/systemd/$artifact" ]; then
+            echo "error: incomplete rollback snapshot: $previous_release/systemd/$artifact" >&2
+            return 1
+        fi
+    done
+}
+
 lifecycle_transaction_complete=0
 cleanup_gpu_lifecycle_transaction() {
     local status=$?
@@ -243,8 +279,8 @@ GPU_INSTANCE_NAME="${GPU_INSTANCE_NAME:-acx-gpu-burst}"
 GPU_INSTANCE_ID="${GPU_INSTANCE_ID:-}"
 MAX_LEASE_SECONDS="${MAX_LEASE_SECONDS:-3600}"
 IDLE_SECONDS="${IDLE_SECONDS-300}"
-START_INTERVAL="${START_INTERVAL:-30s}"
-REAP_INTERVAL="${REAP_INTERVAL:-2min}"
+START_INTERVAL="${START_INTERVAL-30s}"
+REAP_INTERVAL="${REAP_INTERVAL-2min}"
 READY_URL="${READY_URL-}"
 LOAD_STALE_GRACE_SECONDS="${ACX_DESCRIBE_LOAD_STALE_GRACE_SECONDS:-600}"
 REMOTE_COMMAND_TIMEOUT_SECONDS="${REMOTE_COMMAND_TIMEOUT_SECONDS:-180}"
@@ -340,6 +376,21 @@ assert_safe_ssh_identity() {
 }
 assert_safe_ssh_identity "SSH user" "$SSH_USER"
 assert_safe_ssh_identity "SSH host" "$HOST"
+
+# Accept a deliberately small, portable subset of systemd monotonic timespans.
+# Validate before OCI lookup, transport, or rendering: systemd may merely warn
+# about an invalid OnUnitActiveSec and leave a boot-only timer active.
+python3 - "$START_INTERVAL" "$REAP_INTERVAL" <<'PY'
+import re
+import sys
+
+units = {"s": 1, "min": 60, "h": 3600, "d": 86400}
+for name, value in zip(("START_INTERVAL", "REAP_INTERVAL"), sys.argv[1:]):
+    match = re.fullmatch(r"([1-9][0-9]{0,19})(s|min|h|d)", value)
+    if match and int(match[1]) * units[match[2]] * 1_000_000 < 2**64 - 1:
+        continue
+    sys.exit(f"error: {name} must be a finite positive integer timespan with suffix s, min, h, or d")
+PY
 
 # A cap of 0 disables the cost backstop. That is exactly the [RES-07] shape this
 # work exists to remove, so refuse it here rather than discover it on a bill.
@@ -535,6 +586,7 @@ start_verification_function=$(declare -f verify_gpu_lifecycle_start_timer)
 activation_function=$(declare -f activate_gpu_lifecycle_timers)
 start_fence_function=$(declare -f fence_gpu_lifecycle_start)
 cleanup_function=$(declare -f cleanup_gpu_lifecycle_transaction)
+snapshot_function=$(declare -f snapshot_gpu_lifecycle_release)
 run_with_deadline "systemd unit installation" \
     ssh "${SSH_OPTIONS[@]}" -l "$SSH_USER" -- "$HOST" "set -euo pipefail
 ${sha256_function}
@@ -543,6 +595,7 @@ ${start_verification_function}
 ${activation_function}
 ${start_fence_function}
 ${cleanup_function}
+${snapshot_function}
 lifecycle_transaction_complete=0
 trap cleanup_gpu_lifecycle_transaction ERR EXIT
 
@@ -553,17 +606,7 @@ fence_gpu_lifecycle_start
 previous_release=\$(python3 -c 'import os, sys; print(os.path.realpath(sys.argv[1]))' /opt/acx-gpu/current)
 if [ -n \"\$previous_release\" ] && [ \"\$previous_release\" != '${remote_release}' ] \
     && [ -d \"\$previous_release\" ]; then
-    # Upgrade older releases into rollback-capable generations before changing
-    # the live symlink. Never overwrite an existing release snapshot.
-    if [ ! -d \"\$previous_release/systemd\" ]; then
-        sudo mkdir -p \"\$previous_release/systemd\"
-        sudo cp /etc/acx/gpu-lifecycle.env \"\$previous_release/systemd/gpu-lifecycle.env\"
-        sudo cp /etc/tmpfiles.d/acx-gpu.conf \"\$previous_release/systemd/acx-gpu.conf\"
-        for unit in acx-gpu-start.service acx-gpu-start.timer acx-gpu-reap.service acx-gpu-reap.timer; do
-            sudo cp \"/etc/systemd/system/\$unit\" \"\$previous_release/systemd/\$unit\"
-        done
-        sudo chmod 0644 \"\$previous_release/systemd/\"*
-    fi
+    snapshot_gpu_lifecycle_release \"\$previous_release\"
     ln -sfn \"\$previous_release\" '/opt/acx-gpu/.previous-${release_id}'
     sudo python3 -c 'import os, sys; os.replace(sys.argv[1], sys.argv[2])' '/opt/acx-gpu/.previous-${release_id}' /opt/acx-gpu/previous
 fi

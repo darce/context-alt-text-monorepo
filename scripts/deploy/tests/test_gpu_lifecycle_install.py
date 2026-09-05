@@ -63,6 +63,20 @@ def test_installer_accepts_positive_idle_seconds() -> None:
     assert result.returncode == 0, result.stdout + result.stderr
 
 
+@pytest.mark.parametrize("name", ["START_INTERVAL", "REAP_INTERVAL"])
+@pytest.mark.parametrize("interval", ["1s", "30s", "2min", "1h", "1d"])
+def test_installer_accepts_supported_monotonic_intervals(name: str, interval: str) -> None:
+    result = _run_installer(environment={name: interval, "READY_URL": "http://gpu.test/health"})
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+@pytest.mark.parametrize("interval", ["0s", "-1s", "1.5s", "1h 2min", "daily", "1", "1ms", " 1s", "1s\n"])
+def test_installer_rejects_unsupported_start_intervals(interval: str) -> None:
+    result = _run_installer(environment={"START_INTERVAL": interval, "READY_URL": "http://gpu.test/health"})
+    assert result.returncode != 0
+    assert "START_INTERVAL" in result.stderr
+
+
 def test_installer_requires_readiness_url() -> None:
     result = _run_installer("--idle-seconds", "300")
 

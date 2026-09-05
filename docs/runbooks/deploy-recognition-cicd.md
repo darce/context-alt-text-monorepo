@@ -195,6 +195,12 @@ installer argv never contains an OCI `instance action START` or `launch`
 operation: deployment installs and schedules the units; it does not directly
 start or provision a GPU instance.
 
+`START_INTERVAL` (default `30s`) and `REAP_INTERVAL` (default `2min`) accept
+a positive integer followed by `s`, `min`, `h`, or `d`, within systemd's finite
+microsecond range. Empty, zero, infinite, compound, and calendar values are
+rejected before transport so a malformed interval cannot leave a boot-only
+reaper timer.
+
 ## Rollback
 
 Roll back by re-pointing the tag to a known-good image (no rebuild) or
@@ -213,6 +219,13 @@ verbatim, `git rev-parse` rejects it, and the rollback fails at the worst
 possible moment. `scripts/test_deploy_workflow_gate.py` asserts this.
 
 ### Roll back the GPU lifecycle release
+
+The installer stages rollback snapshots in a temporary directory and publishes
+them with an atomic rename. Before updating `previous`, it requires the saved
+environment, tmpfiles configuration, and all four unit files. An incomplete
+snapshot from an older installer aborts deployment and leaves both release
+links unchanged; restore its missing artifacts from that generation before
+retrying.
 
 The installer preserves the previous content-addressed lifecycle generation at
 `/opt/acx-gpu/previous`. This rollback disables the start timer first, leaves

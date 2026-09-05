@@ -16,6 +16,7 @@ prod_compose="${root}/apps/prototype-description-service/docker-compose.prod.yml
 prod_env="${root}/apps/prototype-description-service/.env.prod.example"
 environment_compose="${root}/apps/prototype-description-service/docker-compose.env.yml"
 makefile=${ACX_GPU_TEST_MAKEFILE:-${root}/Makefile}
+fake_gpu_instance_id=ocid1.instance.oc1.phx.anyhqljtestfakegpu000000000000000000000000000000000000000000
 fixture_root=$(mktemp -d)
 trap 'rm -rf "$fixture_root"' EXIT
 
@@ -357,7 +358,7 @@ printf 'future-preview\n' >>"${fixture_root}/deployments-with-future.conf"
 expect_failure "checker derives future deployments from the shared registry" \
     "missing describe-load environment directory: ${fixture_root}/run/acx-write/future-preview" \
     ACX_GPU_DEPLOYMENTS_FILE="${fixture_root}/deployments-with-future.conf"
-installer_future_output=$(GPU_INSTANCE_ID=ocid1.test \
+installer_future_output=$(GPU_INSTANCE_ID="$fake_gpu_instance_id" \
     READY_URL=http://10.0.1.2:8000/health \
     ACX_GPU_DEPLOYMENTS_FILE="${fixture_root}/deployments-with-future.conf" \
     "${root}/scripts/deploy/gpu-lifecycle-install.sh" --host test.invalid \
@@ -374,7 +375,7 @@ printf 'dev\ninvalid deployment\n' >"${fixture_root}/deployments-invalid.conf"
 expect_failure "checker rejects an invalid shared deployment registry" \
     "invalid GPU snapshot deployment" \
     ACX_GPU_DEPLOYMENTS_FILE="${fixture_root}/deployments-invalid.conf"
-installer_invalid_output=$(GPU_INSTANCE_ID=ocid1.test \
+installer_invalid_output=$(GPU_INSTANCE_ID="$fake_gpu_instance_id" \
     READY_URL=http://10.0.1.2:8000/health \
     ACX_GPU_DEPLOYMENTS_FILE="${fixture_root}/deployments-invalid.conf" \
     "${root}/scripts/deploy/gpu-lifecycle-install.sh" --host test.invalid --dry-run 2>&1) && \

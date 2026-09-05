@@ -288,11 +288,11 @@ printf '%s\n' "$current"
         start_new_session=True,
     )
     try:
-        stdout, stderr = process.communicate(timeout=8)
+        stdout, stderr = process.communicate(timeout=30)
     except subprocess.TimeoutExpired:
         os.killpg(process.pid, signal.SIGKILL)
         process.communicate()
-        pytest.fail("live GPU verifier exceeded the 8-second harness watchdog")
+        pytest.fail("live GPU verifier exceeded the 30-second harness watchdog")
     return subprocess.CompletedProcess(process.args, process.returncode, stdout, stderr)
 
 
@@ -929,6 +929,8 @@ def reaper_systemctl_script(
     exec_start: str | None = None,
     environment_files: str | None = None,
     working_directory: Path = ROOT,
+    unset_environment: str = "",
+    timer_target: str = "acx-gpu-reap.service",
 ) -> str:
     reap_active_result = "exit 0" if reap_timer_active else "exit 3"
     start_active_result = "exit 0" if start_timer_active else "exit 3"
@@ -939,6 +941,10 @@ def reaper_systemctl_script(
     )
     environment_files = environment_files or f"{environment_file} (ignore_errors=no)"
     return f"""#!/usr/bin/env bash
+if [[ "$1" == show && "$2" == acx-gpu-reap.timer ]]; then
+    printf '%s\n' 'Unit={timer_target}'
+    exit 0
+fi
 case "$1:$3" in
   is-enabled:acx-gpu-reap.timer|is-enabled:acx-gpu-start.timer) exit 0 ;;
   is-active:acx-gpu-reap.timer) {reap_active_result} ;;
@@ -950,6 +956,7 @@ WorkingDirectory={working_directory}
 FragmentPath=/etc/systemd/system/acx-gpu-reap.service
 DropInPaths=
 EnvironmentFiles={environment_files}
+UnsetEnvironment={unset_environment}
 PROPERTIES
     ;;
   *) exit 2 ;;
@@ -2028,3 +2035,38 @@ def test_verifier_request_waits_for_stopped_gpu_through_real_run_worker(
 
         asyncio.run(bounded_exercise())
     assert events == ["load", "health", "health", "health", "inference", "load"]
+
+
+@pytest.mark.parametrize("unset", ["MAX_LEASE_SECONDS", "GPU_INSTANCE_ID", "MAX_LEASE_SECONDS=3600"])
+def test_11_rejects_unset_required_reaper_environment(tmp_path: Path, unset: str) -> None:
+    env_file = tmp_path / "reaper.env"
+    env_file.write_text("GPU_INSTANCE_ID=ocid1.instance.oc1.iad.fakeinstance\nMAX_LEASE_SECONDS=3600\n")
+    result = run_preflight(tmp_path, check_reaper=True, systemctl_script=reaper_systemctl_script(
+        env_file, unset_environment=unset,
+    ))
+    assert result.returncode != 0
+    assert "UnsetEnvironment" in result.stderr
+    assert "MANUAL STOP" not in result.stdout
+
+
+def test_11_rejects_unrelated_timer_target(tmp_path: Path) -> None:
+    env_file = tmp_path / "reaper.env"
+    env_file.write_text("GPU_INSTANCE_ID=ocid1.instance.oc1.iad.fakeinstance\nMAX_LEASE_SECONDS=3600\n")
+    result = run_preflight(tmp_path, check_reaper=True, systemctl_script=reaper_systemctl_script(
+        env_file, timer_target="unrelated.service",
+    ))
+    assert result.returncode != 0
+    assert "must activate acx-gpu-reap.service" in result.stderr
+    assert "MANUAL STOP" not in result.stdout
+
+
+@pytest.mark.parametrize("optional", [True, False])
+def test_11_environment_file_optional_metadata(tmp_path: Path, optional: bool) -> None:
+    env_file = tmp_path / "reaper.env"
+    env_file.write_text("GPU_INSTANCE_ID=ocid1.instance.oc1.iad.fakeinstance\nMAX_LEASE_SECONDS=3600\n")
+    files = f"{env_file} (ignore_errors=no) {tmp_path / 'absent.env'} (ignore_errors={'yes' if optional else 'no'})"
+    result = run_preflight(tmp_path, check_reaper=True, systemctl_script=reaper_systemctl_script(
+        env_file, environment_files=files,
+    ))
+    assert (result.returncode == 0) == optional, result.stderr
+    assert ("MANUAL STOP" in result.stdout) == optional

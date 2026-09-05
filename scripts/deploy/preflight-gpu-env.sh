@@ -437,6 +437,7 @@ PY
 
 preflight_gpu_reaper() {
     local timer unit_properties exec_start fragment_path environment_files working_directory
+    local timer_target unset_environment parsed_environment_files
     local idle_seconds="" stale_grace=""
     local environment_file optional_file instance_id="" max_lease="" value
     local environment_file_count=0
@@ -453,11 +454,21 @@ preflight_gpu_reaper() {
         }
     done
 
+    timer_target="$(systemctl show acx-gpu-reap.timer --property=Unit 2>/dev/null)" || {
+        echo "ERROR [11] acx-gpu-reap.timer effective Unit could not be read." >&2
+        exit 1
+    }
+    [[ "$timer_target" == "Unit=acx-gpu-reap.service" ]] || {
+        echo "ERROR [11] acx-gpu-reap.timer must activate acx-gpu-reap.service." >&2
+        exit 1
+    }
+
     unit_properties="$(systemctl show acx-gpu-reap.service \
         --property=ExecStart \
         --property=WorkingDirectory \
         --property=FragmentPath \
         --property=DropInPaths \
+        --property=UnsetEnvironment \
         --property=EnvironmentFiles 2>/dev/null)" || {
         echo "ERROR [11] acx-gpu-reap.service effective properties could not be read." >&2
         exit 1
@@ -471,8 +482,43 @@ preflight_gpu_reaper() {
         exit 1
     }
 
+    unset_environment="$(printf '%s\n' "$unit_properties" | sed -n 's/^UnsetEnvironment=//p')"
+    # Unsetting is applied after every EnvironmentFile. Reject removals of
+    # validated variables, including value-specific removals, conservatively.
+    python3 -c '
+import shlex, sys
+required = {"GPU_INSTANCE_ID", "MAX_LEASE_SECONDS", "IDLE_SECONDS",
+            "ACX_DESCRIBE_LOAD_STALE_GRACE_SECONDS"}
+try:
+    entries = shlex.split(sys.argv[1])
+except ValueError:
+    raise SystemExit(1)
+if any(entry.split("=", 1)[0] in required for entry in entries):
+    raise SystemExit(1)
+' "$unset_environment" || {
+        echo "ERROR [11] reaper UnsetEnvironment may remove a required lifecycle variable." >&2
+        exit 1
+    }
+
     [[ -n "$environment_files" ]] || {
         echo "ERROR [11] acx-gpu-reap.service has no effective EnvironmentFiles." >&2
+        exit 1
+    }
+    # Keep systemctl metadata attached to its path. Unknown/ambiguous rendered
+    # syntax fails closed instead of silently skipping a possibly required file.
+    parsed_environment_files="$(python3 -c '
+import re, sys
+raw = sys.argv[1]
+pattern = re.compile(r"(-?/[^\s]+)(?: +\(ignore_errors=(yes|no)\))?(?: +|$)")
+while raw:
+    match = pattern.match(raw)
+    if not match:
+        raise SystemExit(1)
+    path, optional = match.groups()
+    print(("-" if optional == "yes" and not path.startswith("-") else "") + path)
+    raw = raw[match.end():]
+' "$environment_files")" || {
+        echo "ERROR [11] reaper EnvironmentFiles rendering is ambiguous." >&2
         exit 1
     }
     while IFS= read -r environment_file; do
@@ -511,7 +557,7 @@ preflight_gpu_reaper() {
         if LC_ALL=C grep -q '^ACX_DESCRIBE_LOAD_STALE_GRACE_SECONDS=' "$environment_file"; then
             stale_grace="$(env_get "$environment_file" ACX_DESCRIBE_LOAD_STALE_GRACE_SECONDS)"
         fi
-    done < <(printf '%s\n' "$environment_files" | tr ' ' '\n')
+    done < <(printf '%s\n' "$parsed_environment_files")
 
     (( environment_file_count > 0 )) || {
         echo "ERROR [11] acx-gpu-reap.service has no readable effective EnvironmentFiles." >&2

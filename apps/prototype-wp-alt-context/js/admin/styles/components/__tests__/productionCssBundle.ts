@@ -382,7 +382,7 @@ export const isValidProcessStartToken = (startToken: string): boolean => {
   return startToken.startsWith(platformPrefix) && /^[A-Za-z0-9_-]+$/.test(startToken.slice(platformPrefix.length));
 };
 
-const processStartToken = (pid: number): string | null => {
+const processStartToken = (pid: number, timeoutMs = 1000): string | null => {
   try {
     if (process.platform === 'linux') {
       const stat = readFileSync(`/proc/${pid}/stat`, 'utf8');
@@ -393,6 +393,7 @@ const processStartToken = (pid: number): string | null => {
         : null;
     }
     const started = execFileSync('ps', ['-o', 'lstart=', '-p', String(pid)], {
+      ...processProbeOptions(timeoutMs),
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'ignore'],
     }).trim();
@@ -844,7 +845,15 @@ export interface ProcessGroupWaitOptions {
   readonly listProcesses?: () => string;
 }
 
-const listProcessStates = (): string => execFileSync('ps', ['-A', '-o', 'pid=,pgid=,stat='], {
+// Never pass zero to execFileSync: it disables the timeout. An exhausted phase
+// cannot establish absence, and must not launch another subprocess.
+const processProbeOptions = (timeoutMs: number): { timeout: number; killSignal: 'SIGKILL' } => {
+  if (timeoutMs <= 0) throw Object.assign(new Error('Process probe deadline exhausted'), { code: 'ETIMEDOUT' });
+  return { timeout: Math.max(1, Math.ceil(timeoutMs)), killSignal: 'SIGKILL' };
+};
+
+const listProcessStates = (timeoutMs: number): string => execFileSync('ps', ['-A', '-o', 'pid=,pgid=,stat='], {
+  ...processProbeOptions(timeoutMs),
   encoding: 'utf8',
   stdio: ['ignore', 'pipe', 'ignore'],
 });
@@ -893,7 +902,7 @@ const listedGroupIsAlive = (
   }
 };
 
-const processGroupHasNonZombieMember = (processGroupId: number): boolean => {
+const processGroupHasNonZombieMember = (processGroupId: number, timeoutMs: number): boolean => {
   try {
     if (process.platform === 'linux') {
       for (const entry of readdirSync('/proc')) {
@@ -919,6 +928,7 @@ const processGroupHasNonZombieMember = (processGroupId: number): boolean => {
       return false;
     }
     const states = execFileSync('ps', ['-o', 'stat=', '-g', String(processGroupId)], {
+      ...processProbeOptions(timeoutMs),
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'ignore'],
     })
@@ -949,7 +959,7 @@ const processGroupExistsViaSignal = (
 const processGroupIsAlive = (
   processGroupId: number,
   sendSignal: (pidOrGroup: number, signal: ProcessSignal) => void,
-  listProcesses: () => string = listProcessStates,
+  listProcesses: () => string,
   report: (detail: string) => void = () => {},
 ): boolean => {
   try {
@@ -965,7 +975,7 @@ const processGroupIsAlive = (
   if (process.platform !== 'linux') {
     return listedGroupIsAlive(processGroupId, listProcesses, detail => report(`signal probe: success; ${detail}`));
   }
-  const alive = processGroupHasNonZombieMember(processGroupId);
+  const alive = processGroupHasNonZombieMember(processGroupId, 1000);
   report(`signal probe: success; /proc non-zombie member or uncertain inspection: ${alive}`);
   if (alive) listedGroupIsAlive(processGroupId, listProcesses, detail => report(`signal probe: success; /proc alive; ${detail}`));
   return alive;
@@ -979,6 +989,7 @@ const terminateProcessGroup = (
   pause: (milliseconds: number) => void,
   sendSignal: (pidOrGroup: number, signal: ProcessSignal) => void,
   identityMatches: () => boolean,
+  setProbeDeadline: (deadline: number) => void,
 ): void => {
   const signalGroup = (signal: NodeJS.Signals): void => {
     if (!identityMatches()) {
@@ -1004,16 +1015,18 @@ const terminateProcessGroup = (
     }
   };
 
-  signalGroup('SIGTERM');
   const termDeadline = now() + (options.terminationGraceMs ?? BUILD_TERMINATION_GRACE_MS);
+  setProbeDeadline(termDeadline);
+  signalGroup('SIGTERM');
   while (isGroupAlive() && now() < termDeadline) {
     pause(Math.min(25, Math.max(1, termDeadline - now())));
   }
   if (!isGroupAlive()) return;
 
-  signalGroup('SIGKILL');
   const killConfirmationMs = options.killConfirmationMs ?? BUILD_TERMINATION_GRACE_MS;
   const killDeadline = now() + killConfirmationMs;
+  setProbeDeadline(killDeadline);
+  signalGroup('SIGKILL');
   while (isGroupAlive() && now() < killDeadline) {
     pause(Math.min(25, Math.max(1, killDeadline - now())));
   }
@@ -1024,11 +1037,13 @@ const terminateProcessGroup = (
 
 /** Synchronously supervise a detached process group without relying on an unbounded sync timeout. */
 export const waitForProcessGroup = (pid: number, options: ProcessGroupWaitOptions): number => {
+  const now = options.now ?? monotonicNow;
+  const deadline = now() + options.timeoutMs;
   let lastProbe = 'group liveness probe not run (or supplied by caller)';
   const startToken =
-    options.processGroupStartToken ?? (options.readProcessStartToken ?? processStartToken)(pid);
+    options.processGroupStartToken ?? (options.readProcessStartToken ?? ((id: number) => processStartToken(id, deadline - now())))(pid);
   try {
-    return waitForIdentifiedProcessGroup(pid, options, startToken, detail => { lastProbe = detail; });
+    return waitForIdentifiedProcessGroup(pid, options, startToken, deadline, detail => { lastProbe = detail; });
   } catch (error) {
     if (error instanceof ProductionCssBuildTeardownError) {
       error.supervisedGroup = { pgid: pid, startToken };
@@ -1042,19 +1057,22 @@ const waitForIdentifiedProcessGroup = (
   pid: number,
   options: ProcessGroupWaitOptions,
   expectedStartToken: string | null,
+  deadline: number,
   report: (detail: string) => void,
 ): number => {
   const now = options.now ?? monotonicNow;
   const pause = options.sleep ?? sleepSync;
+  let probeDeadline = deadline;
+  const setProbeDeadline = (value: number): void => { probeDeadline = value; };
   const sendSignal = options.sendSignal ?? ((pidOrGroup, signal) => process.kill(pidOrGroup, signal));
   const rawGroupIsAlive =
     options.isProcessGroupAlive ??
     options.isProcessAlive ??
     (() =>
       options.sendSignal === undefined
-        ? processGroupIsAlive(pid, sendSignal, options.listProcesses, report)
+        ? processGroupIsAlive(pid, sendSignal, options.listProcesses ?? (() => listProcessStates(probeDeadline - now())), report)
         : processGroupExistsViaSignal(pid, sendSignal));
-  const readStartToken = options.readProcessStartToken ?? processStartToken;
+  const readStartToken = options.readProcessStartToken ?? ((id: number) => processStartToken(id, probeDeadline - now()));
   if (expectedStartToken === null) {
     throw new ProductionCssBuildTeardownError(
       options.killConfirmationMs ?? BUILD_TERMINATION_GRACE_MS,
@@ -1081,7 +1099,6 @@ const waitForIdentifiedProcessGroup = (
     assertVerifiable(state);
     return state === 'owned';
   };
-  const deadline = now() + options.timeoutMs;
 
   for (;;) {
     const exitCode = options.readExitCode();
@@ -1089,7 +1106,7 @@ const waitForIdentifiedProcessGroup = (
     assertVerifiable(state);
     if (exitCode !== null) {
       if (state === 'owned') {
-        terminateProcessGroup(pid, options, isOwnedGroupAlive, now, pause, sendSignal, identityMatches);
+        terminateProcessGroup(pid, options, isOwnedGroupAlive, now, pause, sendSignal, identityMatches, setProbeDeadline);
       }
       return exitCode;
     }
@@ -1102,7 +1119,7 @@ const waitForIdentifiedProcessGroup = (
     pause(Math.min(25, Math.max(1, deadline - now())));
   }
 
-  terminateProcessGroup(pid, options, isOwnedGroupAlive, now, pause, sendSignal, identityMatches);
+  terminateProcessGroup(pid, options, isOwnedGroupAlive, now, pause, sendSignal, identityMatches, setProbeDeadline);
   throw new ProductionCssBuildTimeoutError(options.timeoutMs);
 };
 
@@ -1128,7 +1145,8 @@ const processStartToken = (pid) => {
       const fields = stat.slice(stat.lastIndexOf(')') + 2).trim().split(/\s+/);
       return /^[0-9]+$/.test(fields[19]) ? 'v1:linux:' + fields[19] : null;
     }
-    const started = execFileSync('ps', ['-o', 'lstart=', '-p', String(pid)], { encoding: 'utf8' }).trim();
+    const started = execFileSync('ps', ['-o', 'lstart=', '-p', String(pid)], {
+      encoding: 'utf8', timeout: 1000, killSignal: 'SIGKILL' }).trim();
     return started ? 'v1:' + process.platform + ':' + Buffer.from(started).toString('base64url') : null;
   } catch { return null; }
 };

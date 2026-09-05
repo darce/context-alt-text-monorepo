@@ -32,6 +32,7 @@ import subprocess
 import sys
 import tempfile
 import unicodedata
+from collections.abc import Iterator
 from difflib import unified_diff
 from pathlib import Path
 
@@ -90,23 +91,56 @@ def _ascii_state_rows(states: list[str], width: int = 60) -> list[str]:
     content = " states: "
     for state in states:
         suffix = state if content.endswith(": ") else f" | {state}"
-        if len(content) + len(suffix) > width:
-            rows.append(f"|{content.ljust(width)}|")
+        if _display_width(content) + _display_width(suffix) > width:
+            rows.append(f"|{content}{' ' * (width - _display_width(content))}|")
             content = f" states+: {state}"
         else:
             content += suffix
-    rows.append(f"|{content.ljust(width)}|")
+    rows.append(f"|{content}{' ' * (width - _display_width(content))}|")
     return rows
 
 
-def _display_width(value: str) -> int:
-    """Return terminal-cell width without adding an optional wcwidth dependency."""
-    width = 0
+def _is_grapheme_extension(char: str) -> bool:
+    return (
+        unicodedata.category(char).startswith("M")
+        or char in {"\ufe0e", "\ufe0f"}
+        or "\U0001f3fb" <= char <= "\U0001f3ff"
+    )
+
+
+def _graphemes(value: str) -> Iterator[str]:
+    """Yield the extended clusters used by UX-map labels and ASCII sketches."""
+    cluster = ""
     for char in value:
-        if unicodedata.combining(char) or char in {"\u200d", "\ufe0e", "\ufe0f"}:
-            continue
-        width += 2 if unicodedata.east_asian_width(char) in {"W", "F"} else 1
-    return width
+        if not cluster:
+            cluster = char
+        elif _is_grapheme_extension(char) or char == "\u200d" or cluster.endswith("\u200d"):
+            cluster += char
+        else:
+            yield cluster
+            cluster = char
+    if cluster:
+        yield cluster
+
+
+def _grapheme_width(cluster: str) -> int:
+    visible = [
+        char
+        for char in cluster
+        if not _is_grapheme_extension(char) and char != "\u200d" and unicodedata.category(char) != "Cf"
+    ]
+    if not visible:
+        return 0
+    # Keycaps and emoji joined into one pictograph occupy one two-cell terminal glyph,
+    # irrespective of the number of code points that encode the cluster.
+    if "\u20e3" in cluster or "\u200d" in cluster:
+        return 2
+    return 2 if any(unicodedata.east_asian_width(char) in {"W", "F"} for char in visible) else 1
+
+
+def _display_width(value: str) -> int:
+    """Return terminal-cell width by grapheme cluster, not by Unicode code point."""
+    return sum(_grapheme_width(cluster) for cluster in _graphemes(value))
 
 
 def _truncate_display(value: str, width: int) -> str:
@@ -114,12 +148,12 @@ def _truncate_display(value: str, width: int) -> str:
         return value
     kept: list[str] = []
     used = 0
-    for char in value:
-        char_width = _display_width(char)
-        if used + char_width > width - 1:
+    for cluster in _graphemes(value):
+        cluster_width = _grapheme_width(cluster)
+        if used + cluster_width > width - 1:
             break
-        kept.append(char)
-        used += char_width
+        kept.append(cluster)
+        used += cluster_width
     return "".join(kept) + "…"
 
 
@@ -397,11 +431,15 @@ def _check_projection(map_ref: str, rendered: str | None = None) -> tuple[str, s
         raise RuntimeError(completed.stderr.strip() or completed.stdout.strip())
     projections = json.loads(completed.stdout)
     markdown = markdown_path.read_text(encoding="utf8")
-    projections["expected"]["visibleProjectionSha256"] = (
-        _projection_digest(_visible_projection(rendered))
-        if rendered is not None
-        else _read_visible_snapshot(map_ref, json_path)
-    )
+    snapshot_digest = _read_visible_snapshot(map_ref, json_path)
+    if rendered is not None:
+        rendered_digest = _projection_digest(_visible_projection(rendered))
+        if rendered_digest != snapshot_digest:
+            raise RuntimeError(
+                f"{map_ref}: renderer visibleProjectionSha256 {rendered_digest} differs "
+                f"from source-pinned snapshot {snapshot_digest}"
+            )
+    projections["expected"]["visibleProjectionSha256"] = snapshot_digest
     projections["actual"]["visibleProjectionSha256"] = _projection_digest(
         _visible_projection(markdown)
     )

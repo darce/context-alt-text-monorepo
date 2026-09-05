@@ -45,7 +45,14 @@ or link-local, including IPv4-mapped IPv6 and allowlisted DNS answers.
 
 Stage the validator in a private temporary directory on the VM, then validate
 both halves in one invocation. The reaper check loads the argument parser
-from the effective service WorkingDirectory; that checkout must be readable.
+from the effective service WorkingDirectory; that checkout and its
+`scripts/deploy/gpu-snapshot-deployments.conf` registry must be readable and
+valid. It verifies both the executable path and the effective arguments.
+Reaper EnvironmentFiles must use exact `KEY=value` assignments for the
+installer keys (`GPU_INSTANCE_ID`, `MAX_LEASE_SECONDS`, `IDLE_SECONDS`,
+`ACX_DESCRIBE_LOAD_STALE_GRACE_SECONDS`, and `READY_URL`). Whole-value single
+or double quotes and repeated assignments (last wins) are supported; leading
+assignment whitespace, escapes, multiline values, and unknown keys fail closed.
 `--check-reaper` is mandatory for this flip: it
 fails unless `acx-gpu-reap.timer` is enabled and active and its effective
 service targets an instance OCID with a finite positive maximum lease. It also
@@ -163,8 +170,10 @@ else
     fi
 fi
 for lease in /run/acx-gpu/bake.lease /run/acx-gpu/evaluation.lease; do
-    if sudo test -e "$lease"; then
-        echo "Refusing STOP: active activity lease at $lease." >&2
+    # Require successful proof of absence. sudo failures can also return 1,
+    # so a failed positive existence test cannot establish that no lease exists.
+    if ! sudo test ! -e "$lease"; then
+        echo "Refusing STOP: active activity lease or lease inspection failed at $lease." >&2
         exit 1
     fi
 done'

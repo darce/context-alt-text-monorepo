@@ -69,6 +69,7 @@ const expectProductionEntryPoints = (bundle: ProductionCssBundle): void => {
 // Isolate builtin interception from Vitest and exercise the actual fixture and supervisor.
 const fixtureProbePrelude = String.raw`
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import { dirname, join } from 'node:path';
 import { stripTypeScriptTypes, syncBuiltinESMExports } from 'node:module';
@@ -88,6 +89,33 @@ const runFixtureProbe = (root: string, scenario: string, body: string): void => 
 };
 
 describe('production build status cleanup', () => {
+  it('retains the lock when the default kill probe returns EPERM for an unlisted group', () => {
+    const root = mkdtempSync(join(tmpdir(), 'acx-eperm-probe-'));
+    const lockDir = join(root, '.lock');
+    const ownership = acquireDirectoryLock(lockDir);
+    const denied = Object.assign(new Error('kill EPERM'), { code: 'EPERM' });
+    // No real process is signalled; this PGID is absent from process listings.
+    const kill = vi.spyOn(process, 'kill').mockImplementation(() => { throw denied; });
+    try {
+      let caught: unknown;
+      try {
+        runWithBuildLock(lockDir, ownership, () => waitForProcessGroup(2147483647, {
+          timeoutMs: 1,
+          readExitCode: () => 0,
+          processGroupStartToken: 'supervised',
+          readProcessStartToken: () => 'supervised',
+        }));
+      } catch (error) { caught = error; }
+      expect(caught).toBeInstanceOf(ProductionCssBuildTeardownError);
+      expect((caught as Error).cause).toBe(denied);
+      expect(existsSync(join(lockDir, '.build-in-progress'))).toBe(true);
+      expect(tryAcquireDirectoryLock(lockDir)).toBeNull();
+    } finally {
+      kill.mockRestore();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('retains the teardown error and lock when signalling and status cleanup both fail', () => {
     const root = mkdtempSync(join(tmpdir(), 'acx-status-cleanup-test-'));
     try {
@@ -102,6 +130,13 @@ let supervisor;
 let statusRoot;
 let signalDenied = false;
 let cleanupFailed = false;
+const groupHasExecutableMembers = (groupId) => {
+  const members = execFileSync('ps', ['-A', '-o', 'pid=,pgid=,stat='], { encoding: 'utf8' });
+  return members.trim().split('\n').some(line => {
+    const [, pgid, state] = line.trim().split(/\s+/);
+    return Number(pgid) === groupId && !state.startsWith('Z');
+  });
+};
 const readyPath = join(root, 'build-ready');
 // Keep the supervisor away from its post-exit self-teardown timer. Publish a result to
 // the parent only after the real build member is alive, then inject the signal failure.
@@ -138,7 +173,7 @@ try {
     fixture.runWithBuildLock(lockDir, ownership, () => fixture.runProductionBuild(join(root, 'out'), lockDir));
   } catch (error) { caught = error; }
   assert.ok(signalDenied && cleanupFailed, 'both failures must be exercised');
-  assert.equal(originalKill(-supervisor.pid, 0), true, 'the supervised group must still be alive');
+  assert.ok(groupHasExecutableMembers(supervisor.pid), 'the supervised group must still be alive');
   assert.ok(fs.existsSync(join(lockDir, '.build-in-progress')), 'uncertain teardown must retain the guard');
   assert.equal(fixture.tryAcquireDirectoryLock(lockDir, { now: () => Date.now() + 1000000 }), null,
     'a successor must not acquire while the previous group is alive');
@@ -154,10 +189,9 @@ try {
     try { originalKill(-supervisor.pid, 'SIGKILL'); } catch {}
     const deadline = performance.now() + 5000;
     for (;;) {
-      try { originalKill(-supervisor.pid, 0); } catch (error) {
-        if (error.code === 'ESRCH') break;
-        throw error;
-      }
+      // macOS can report EPERM for the retired group. Independently confirm that
+      // no executable members remain instead of requiring kill(0) to yield ESRCH.
+      if (!groupHasExecutableMembers(supervisor.pid)) break;
       assert.ok(performance.now() < deadline, 'worker must reap the supervisor');
       await new Promise(resolve => setTimeout(resolve, 20));
     }

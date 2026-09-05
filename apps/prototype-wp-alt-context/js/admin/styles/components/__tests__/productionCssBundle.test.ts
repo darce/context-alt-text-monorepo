@@ -40,6 +40,8 @@ import {
   loadFingerprintStableArtifact,
   loadProductionCssBundle,
   manifestBuildSources,
+  readArtifactStamp,
+  readProductionCssArtifact,
   MAX_RETAINED_ARTIFACTS,
   LOCK_OWNER_FILE,
   type NamespaceEntry,
@@ -88,6 +90,7 @@ describe('production build status cleanup', () => {
       runFixtureProbe(root, 'status-cleanup', String.raw`
 const originalKill = process.kill;
 const originalRemove = fs.rmSync;
+const originalRead = fs.readFileSync;
 const originalPath = process.env.PATH;
 const lockDir = join(root, '.lock');
 const ownership = fixture.tryAcquireDirectoryLock(lockDir);
@@ -95,8 +98,18 @@ let supervisor;
 let statusRoot;
 let signalDenied = false;
 let cleanupFailed = false;
-fs.writeFileSync(join(root, 'npm'), '#!' + process.execPath + '\nprocess.exit(0);', { mode: 0o755 });
+const readyPath = join(root, 'build-ready');
+// Keep the supervisor away from its post-exit self-teardown timer. Publish a result to
+// the parent only after the real build member is alive, then inject the signal failure.
+fs.writeFileSync(join(root, 'npm'), '#!' + process.execPath + '\n' +
+  'require("node:fs").writeFileSync(' + JSON.stringify(readyPath) + ', "ready");\n' +
+  'setInterval(() => {}, 1000);\n', { mode: 0o755 });
 process.env.PATH = root + ':' + originalPath;
+fs.readFileSync = (path, ...args) => {
+  if (typeof path === 'string' && path.includes('/acx-style-build-status-') &&
+      path.endsWith('/exit-code') && fs.existsSync(readyPath)) return '0';
+  return originalRead(path, ...args);
+};
 process.kill = (pid, signal) => {
   if (pid < 0) supervisor = { pid: -pid };
   if (pid === -supervisor?.pid && signal !== 0) {
@@ -130,6 +143,7 @@ try {
 } finally {
   process.kill = originalKill;
   fs.rmSync = originalRemove;
+  fs.readFileSync = originalRead;
   process.env.PATH = originalPath;
   syncBuiltinESMExports();
   if (supervisor?.pid) {
@@ -461,6 +475,47 @@ assert.equal(fs.existsSync(join(cache, '.gc-lock')), false);
 });
 
 describe('fingerprint stability while building [FIXWAV-M-03]', () => {
+  it.each(['waiting', 'reading'])('preserves existing readers when inputs change during %s [D5-R11-01]', (timing) => {
+    const root = mkdtempSync(join(tmpdir(), 'acx-reader-snapshot-'));
+    const state = (fingerprint: string): BuildInputState => ({ fingerprint, generation: fingerprint });
+    const create = (fingerprint: string): string => {
+      const outDir = join(root, fingerprint);
+      mkdirSync(join(outDir, 'assets'), { recursive: true });
+      mkdirSync(join(outDir, '.vite'), { recursive: true });
+      writeFileSync(join(outDir, 'assets/admin.css'), fingerprint);
+      writeFileSync(join(outDir, '.vite/manifest.json'), JSON.stringify({ main: { src: 'js/admin/main.tsx' } }));
+      writeFileSync(join(outDir, 'build-stamp.json'), JSON.stringify({ fingerprint }));
+      return outDir;
+    };
+    try {
+      const oldDir = create('A');
+      const reader = readProductionCssArtifact(oldDir, 'A');
+      let current = timing === 'waiting' ? 'B' : 'A';
+      const result = loadFingerprintStableArtifact(state('A'), () => state(current), {
+        artifactDirForFingerprint: (fingerprint) => join(root, fingerprint),
+        prepareArtifact: () => undefined,
+        readStampedFingerprint: (outDir) => existsSync(join(outDir, 'build-stamp.json'))
+          ? JSON.parse(readFileSync(join(outDir, 'build-stamp.json'), 'utf8')).fingerprint as string : null,
+        touchArtifact: () => undefined,
+        discardArtifact: (outDir) => rmSync(outDir, { recursive: true, force: true }),
+        buildArtifact: (outDir) => { create(basename(outDir)); },
+        stampArtifact: () => undefined,
+        readArtifact: (outDir, fingerprint) => {
+          const bundle = readProductionCssArtifact(outDir, fingerprint);
+          current = 'B';
+          return bundle;
+        },
+      });
+      expect(result.fingerprint).toBe('B');
+      expect(existsSync(oldDir)).toBe(true);
+      // Even eventual TTL/cap eviction cannot invalidate the first reader's metadata.
+      rmSync(oldDir, { recursive: true });
+      expect(readArtifactStamp(reader)).toBe('A');
+      expect(manifestBuildSources(reader)).toEqual(['js/admin/main.tsx']);
+      expect(reader.css).toBe('A');
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  });
+
   it('detects an A-B-A rewrite from real temporary inputs', () => {
     const fixtureRoot = mkdtempSync(join(tmpdir(), 'acx-style-input-generation-test-'));
     const sourcePath = join(fixtureRoot, 'js', 'source.scss');
@@ -982,6 +1037,33 @@ const statMtime = (path: string): number => {
 };
 
 describe('production build deadline', () => {
+  it.each([
+    ['SIGTERM', false], ['SIGTERM', true], ['SIGKILL', false], ['SIGKILL', true],
+  ] as const)('rechecks group liveness when the leader vanishes before %s (survives=%s) [D5-R11-02]', (signal, survives) => {
+    let reads = 0;
+    let alive = true;
+    const signals: Array<NodeJS.Signals | 0> = [];
+    const wait = () => waitForProcessGroup(2468, {
+      timeoutMs: 100,
+      terminationGraceMs: 0,
+      readExitCode: () => 42,
+      processGroupStartToken: 'leader',
+      readProcessStartToken: () => {
+        // groupState, TERM identity, grace liveness, KILL liveness, KILL identity.
+        if (++reads >= (signal === 'SIGTERM' ? 2 : 5)) {
+          alive = survives;
+          return null;
+        }
+        return 'leader';
+      },
+      isProcessGroupAlive: () => alive,
+      sendSignal: (_pid, sent) => { signals.push(sent); },
+    });
+    if (survives) expect(wait).toThrow(ProductionCssBuildTeardownError);
+    else expect(wait()).toBe(42);
+    expect(signals).toEqual(signal === 'SIGTERM' ? [] : ['SIGTERM']);
+  });
+
   it('terminates and then kills the detached process group before reporting RES-13', () => {
     let now = 0;
     let alive = true;

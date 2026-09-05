@@ -140,6 +140,9 @@ export interface ProductionCssBundle {
   readonly fingerprint: string;
   /** Content-addressed directory the artifact was read from. */
   readonly outDir: string;
+  /** Metadata read under the build lock, before another builder can evict the artifact. */
+  readonly artifactStamp: string | null;
+  readonly manifestSources: readonly string[];
 }
 
 /**
@@ -235,8 +238,10 @@ export const uncoveredBuildInputs = (): string[] =>
  * rather than guessed from the entry list. Throws on a missing manifest: an absent one
  * would otherwise yield an empty source list, which every coverage check trivially passes.
  */
-export const manifestBuildSources = (bundle: ProductionCssBundle): string[] => {
-  const manifestPath = join(bundle.outDir, '.vite', 'manifest.json');
+export const manifestBuildSources = (bundle: ProductionCssBundle): string[] => [...bundle.manifestSources];
+
+const readManifestBuildSources = (outDir: string): string[] => {
+  const manifestPath = join(outDir, '.vite', 'manifest.json');
   if (!existsSync(manifestPath)) {
     throw new Error(
       `No rollup manifest at ${manifestPath}. vite.config.ts sets build.manifest; a missing ` +
@@ -900,6 +905,10 @@ const terminateProcessGroup = (
 ): void => {
   const signalGroup = (signal: NodeJS.Signals): void => {
     if (!identityMatches()) {
+      // The supervisor can finish its own teardown and be reaped between the liveness
+      // check and this identity check. Confirm the whole group is gone before refusing;
+      // a missing leader with surviving members must still keep the lock fenced.
+      if (!isGroupAlive()) return;
       throw new ProductionCssBuildTeardownError(
         options.killConfirmationMs ?? BUILD_TERMINATION_GRACE_MS,
         `Refusing to send ${signal} because process group ${processGroupId} no longer has the supervised leader identity (RES-13-TEARDOWN).`,
@@ -1429,17 +1438,14 @@ export interface FingerprintStableArtifactOperations<T> {
  * prevents a source change during artifact reads from entering the in-process cache.
  */
 export const loadFingerprintStableArtifact = <T>(
-  initialState: BuildInputState,
+  _initialState: BuildInputState,
   computeState: () => BuildInputState,
   operations: FingerprintStableArtifactOperations<T>,
   maxAttempts: number = MAX_FINGERPRINT_STABILITY_ATTEMPTS,
 ): T => {
-  let state = initialState;
-  const stateAfterLock = computeState();
-  if (stateAfterLock.fingerprint !== state.fingerprint) {
-    operations.discardArtifact(operations.artifactDirForFingerprint(state.fingerprint));
-  }
-  state = stateAfterLock;
+  // No artifact was built on this caller's behalf while it waited. In particular, a
+  // changed fingerprint does not invalidate a stamped artifact another reader holds.
+  let state = computeState();
 
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     const { fingerprint } = state;
@@ -1470,7 +1476,8 @@ export const loadFingerprintStableArtifact = <T>(
       return artifact;
     }
 
-    operations.discardArtifact(outDir);
+    // This artifact was successfully stamped for its own fingerprint. Keep it reusable;
+    // a later source change does not invalidate its contents or existing readers.
     state = stateBeforeReturn;
   }
 
@@ -1532,24 +1539,29 @@ export const loadProductionCssBundle = (): ProductionCssBundle => {
         stampArtifact: (outDir, fingerprint) => {
           writeFileSync(join(outDir, STAMP_FILE), `${JSON.stringify({ fingerprint }, null, 2)}\n`, 'utf8');
         },
-        readArtifact: (outDir, fingerprint) => {
-          const cssFilePaths = globSync(join(outDir, 'assets/*.css')).sort();
-          if (cssFilePaths.length === 0) {
-            throw new Error(
-              `The production build emitted no CSS into ${outDir}. This is a build failure, not a stylesheet regression.`,
-            );
-          }
-          const css = cssFilePaths.map((filePath) => readFileSync(filePath, 'utf8')).join('\n');
-          return Object.freeze({
-            css,
-            cssFilePaths: Object.freeze([...cssFilePaths]),
-            fingerprint,
-            outDir,
-          });
-        },
+        readArtifact: readProductionCssArtifact,
       },
     );
     return cachedBundle;
+  });
+};
+
+/** Read an artifact while holding its build lock. */
+export const readProductionCssArtifact = (outDir: string, fingerprint: string): ProductionCssBundle => {
+  const cssFilePaths = globSync(join(outDir, 'assets/*.css')).sort();
+  if (cssFilePaths.length === 0) {
+    throw new Error(
+      `The production build emitted no CSS into ${outDir}. This is a build failure, not a stylesheet regression.`,
+    );
+  }
+  const css = cssFilePaths.map((filePath) => readFileSync(filePath, 'utf8')).join('\n');
+  return Object.freeze({
+    css,
+    cssFilePaths: Object.freeze([...cssFilePaths]),
+    fingerprint,
+    outDir,
+    artifactStamp: readStampedFingerprint(join(outDir, STAMP_FILE)),
+    manifestSources: Object.freeze(readManifestBuildSources(outDir)),
   });
 };
 
@@ -1557,10 +1569,10 @@ export const loadProductionCssBundle = (): ProductionCssBundle => {
  * Read back the fingerprint an artifact directory was stamped with. A stamp is only written after
  * a successful build, so `stamp === bundle.fingerprint` proves the CSS under assertion was emitted
  * by a build of a tree hashing to that fingerprint — not by a leftover or half-written artifact.
- * Safe to call at any time: a stamped artifact directory is immutable.
+ * Safe after cache eviction: this metadata was read with the CSS while holding the build lock.
  */
 export const readArtifactStamp = (bundle: ProductionCssBundle): string | null => {
-  return readStampedFingerprint(join(bundle.outDir, STAMP_FILE));
+  return bundle.artifactStamp;
 };
 
 /** Exposed so a test can assert the fixture never reads from the shared, emptyable build output. */

@@ -46,6 +46,7 @@ def _run_lifecycle(
     reap_interval: str = "2min",
     snapshot_kind: str = "complete",
     snapshot_copy_failure: bool = False,
+    empty_rollback_artifact: str | None = None,
 ) -> tuple[subprocess.CompletedProcess[str], str]:
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir(exist_ok=True)
@@ -94,6 +95,15 @@ def _run_lifecycle(
         (release_root / "older release").mkdir()
         (release_root / "current").symlink_to("old release", target_is_directory=True)
         (release_root / "previous").symlink_to("older release", target_is_directory=True)
+        if empty_rollback_artifact is not None:
+            if snapshot_kind == "missing":
+                artifact_dir = {
+                    "gpu-lifecycle.env": fake_host / "etc-acx",
+                    "acx-gpu.conf": fake_host / "etc-tmpfiles",
+                }.get(empty_rollback_artifact, effective_systemd)
+            else:
+                artifact_dir = old_release / "systemd"
+            (artifact_dir / empty_rollback_artifact).write_text("")
     _write_executable(
         fake_bin / "ssh",
         r"""#!/usr/bin/env bash
@@ -742,6 +752,33 @@ def test_partial_existing_snapshot_is_never_published_as_previous(tmp_path: Path
     release_root = tmp_path / "host/opt-acx-gpu"
     assert (release_root / "previous").resolve().name == "older release"
     assert (release_root / "current").resolve().name == "old release"
+
+
+@pytest.mark.parametrize("snapshot_kind", ["complete", "missing"])
+@pytest.mark.parametrize("artifact", [
+    "gpu-lifecycle.env", "acx-gpu.conf", "acx-gpu-start.service",
+    "acx-gpu-start.timer", "acx-gpu-reap.service", "acx-gpu-reap.timer",
+])
+def test_empty_rollback_artifact_must_not_replace_previous(
+    tmp_path: Path, snapshot_kind: str, artifact: str,
+) -> None:
+    result, calls = _run_lifecycle(
+        tmp_path, enabled=True, ready_url="http://gpu.test:8000/health",
+        dry_run=False, previous_release=True, snapshot_kind=snapshot_kind,
+        empty_rollback_artifact=artifact,
+    )
+    assert result.returncode != 0, result.stdout + result.stderr
+    assert "incomplete rollback snapshot" in result.stderr
+    assert artifact in result.stderr
+    release_root = tmp_path / "host/opt-acx-gpu"
+    assert (release_root / "previous").resolve().name == "older release"
+    assert (release_root / "current").resolve().name == "old release"
+    assert "systemctl <enable> <--now> <acx-gpu-start.timer>" not in calls
+    if snapshot_kind == "missing":
+        assert not (release_root / "old release/systemd").exists()
+        assert list((release_root / "old release").glob(".systemd.*")) == []
+    else:
+        assert (release_root / "old release/systemd" / artifact).read_bytes() == b""
 
 
 def test_snapshot_copy_failure_retry_publishes_only_complete_generation(tmp_path: Path) -> None:

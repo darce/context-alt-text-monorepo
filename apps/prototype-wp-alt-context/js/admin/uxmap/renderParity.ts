@@ -213,8 +213,15 @@ const parseScreens = (markdown: string): RenderParityMap['screens'] => {
     if (!base) {
       throw new Error(`screen ${id} has a detail block but no Screens table row`);
     }
-    const purpose = /^Purpose: (.*)$/m.exec(block)?.[1] ?? '';
-    const params = /^url_params: (.*)$/m.exec(block)?.[1];
+    const metadata = (field: string): string | undefined => {
+      const declarations = [...block.matchAll(new RegExp(`^${field}:[ \\t]*(.*)$`, 'gm'))];
+      if (declarations.length > 1) {
+        throw new Error(`screen ${id} has duplicate ${field} declarations`);
+      }
+      return declarations[0]?.[1];
+    };
+    const purpose = metadata('Purpose') ?? '';
+    const params = metadata('url_params');
     const parsedParams = params ? params.split(', ').map(unquote) : base.url_params;
     if (params && fifthColumn === 'url_params' && JSON.stringify(parsedParams) !== JSON.stringify(base.url_params)) {
       throw new Error(`screen ${id} has different url_params in the Screens table and detail block`);

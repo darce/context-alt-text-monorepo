@@ -503,7 +503,7 @@ def test_multipart_rejects_unsupported_mime(app_with_overrides, tenant_id: str) 
 
 @pytest.mark.asyncio
 async def test_parse_multipart_form_rejects_sixth_image_part(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The parser bulkhead must fire independently of the route/helper cap."""
+    """TEST-15: the image-part bulkhead must fire at ``_MAX_IMAGE_PARTS``."""
     created_spools = []
 
     def tracked_spooled_file(*args, **kwargs):
@@ -543,6 +543,54 @@ async def test_parse_multipart_form_rejects_sixth_image_part(monkeypatch: pytest
     assert exc_info.value.status_code == status.HTTP_400_BAD_REQUEST
     assert exc_info.value.detail == "multipart submission accepts at most 5 image parts"
     assert len(created_spools) == 5
+    assert all(spool.closed for spool in created_spools)
+
+
+@pytest.mark.asyncio
+async def test_parse_multipart_form_rejects_seventh_non_image_file(monkeypatch: pytest.MonkeyPatch) -> None:
+    """TEST-15: the total-file bulkhead must also bound non-image uploads."""
+    created_spools = []
+
+    def tracked_spooled_file(*args, **kwargs):
+        spool = tempfile.SpooledTemporaryFile(*args, **kwargs)  # noqa: SIM115 - parser owns and closes the spool
+        created_spools.append(spool)
+        return spool
+
+    monkeypatch.setattr("starlette.formparsers.SpooledTemporaryFile", tracked_spooled_file)
+    encoded_request = httpx.Request(
+        "POST",
+        "http://testserver/recognition/analyze/multipart",
+        files=[
+            (f"attachment_{part_id}", (f"{part_id}.bin", b"metadata", "application/octet-stream"))
+            for part_id in range(1, 8)
+        ],
+    )
+    request_body = encoded_request.read()
+    delivered = False
+
+    async def receive() -> dict:
+        nonlocal delivered
+        if delivered:
+            return {"type": "http.request", "body": b"", "more_body": False}
+        delivered = True
+        return {"type": "http.request", "body": request_body, "more_body": False}
+
+    request = Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": "/recognition/analyze/multipart",
+            "headers": [(key.lower(), value) for key, value in encoded_request.headers.raw],
+        },
+        receive,
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        await _parse_multipart_form(request)
+
+    assert exc_info.value.status_code == status.HTTP_400_BAD_REQUEST
+    assert exc_info.value.detail == "Too many files. Maximum number of files is 6."
+    assert len(created_spools) == 6
     assert all(spool.closed for spool in created_spools)
 
 

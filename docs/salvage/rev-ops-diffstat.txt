@@ -1,0 +1,14 @@
+ .lane-anchor/ocirv-1-rev-ops.txt                   |   2 +
+ .task-state/review-ocirv1-rev-ops.md               |  35 +++
+ Makefile                                           |   2 +-
+ docs/runbooks/deploy-recognition-cicd.md           |   5 +-
+ infra/oci/README.md                                |  32 +--
+ scripts/deploy/_vault_put_secret.py                | 254 ++++++++++++-----
+ scripts/deploy/ocir-token-rotate.sh                | 123 +++++---
+ scripts/deploy/recognition-service.sh              | 309 ++++++++++++++++-----
+ scripts/deploy/tests/test-ocir-rotate.sh           |  47 +++-
+ .../deploy/tests/test_recognition_ocir_config.py   |  60 +++-
+ scripts/test_deploy_workflow_gate.py               |  11 +
+ scripts/test_e15_33_boot_smoke.py                  |  17 +-
+ scripts/test_ocirv1_vault_readiness.py             |  93 +++++--
+ 13 files changed, 737 insertions(+), 253 deletions(-)

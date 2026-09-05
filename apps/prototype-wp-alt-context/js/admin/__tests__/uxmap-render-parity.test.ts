@@ -1091,6 +1091,48 @@ describe('ux-map render parity (owned maps)', () => {
     expect(() => parseRenderedUxMap(mutant)).toThrow(`noncanonical Screens table row: ${row}`);
   });
 
+  it.each(['### Retired screen inventory', '  ### Retired screen inventory'])(
+    'rejects unrecognized screen heading %s at every detail boundary',
+    (heading) => {
+      const md = readFileSync(path.join(uxMapsDir, 'workbench-operator-loop.md'), 'utf8');
+      const row = /^\| `workbench-shell` \|.*$/m.exec(md)![0].replace('workbench-shell', 'retired-screen');
+      const inventory = `${heading}\n\n| id | kind | route | title |\n| --- | --- | --- | --- |\n${row}\n\n`;
+      const screenEnd = md.indexOf('\n## ', md.indexOf('## Screens\n') + 1) + 1;
+      const boundaries = [...md.slice(0, screenEnd).matchAll(/^### .+$/gm)].map((match) => match.index!);
+      boundaries.push(screenEnd);
+      for (const boundary of boundaries) {
+        const mutant = md.slice(0, boundary) + inventory + md.slice(boundary);
+        expect(() => parseRenderedUxMap(mutant)).toThrow(`noncanonical Screens detail heading: ${heading}`);
+      }
+    },
+  );
+
+  it('normalizes omitted zone states to an empty list', () => {
+    const raw = readMapJson('workbench-operator-loop') as UxMapRenderSource;
+    const md = readFileSync(path.join(uxMapsDir, 'workbench-operator-loop.md'), 'utf8');
+    delete raw.screens[0]!.zones![0]!.states;
+    const mutant = md.replace(
+      '| `z-tabs` | Workbench steps tabs | nav | default |',
+      '| `z-tabs` | Workbench steps tabs | nav |  |',
+    );
+    expect(mutant).not.toBe(md);
+    expect(projectUxMapForRenderParity(raw)).toEqual(parseRenderedUxMap(mutant));
+  });
+
+  it.each(['slices', 'domain_state_mappings'] as const)('normalizes empty %s to an absent extension', (field) => {
+    const raw = readMapJson('workbench-operator-loop') as UxMapRenderSource;
+    const md = readFileSync(path.join(uxMapsDir, 'workbench-operator-loop.md'), 'utf8');
+    const heading = field === 'slices' ? 'Suggested task-slice decomposition (from map)' : 'Domain state mapping';
+    const withoutExtension = md.replace(
+      new RegExp(`^## ${heading.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\n[\\s\\S]*?(?=^## |$(?![\\s\\S]))`, 'gm'),
+      '',
+    );
+    raw[field] = [];
+    expect(projectUxMapForRenderParity(raw)).toEqual(parseRenderedUxMap(withoutExtension));
+    delete raw[field];
+    expect(projectUxMapForRenderParity(raw)).toEqual(parseRenderedUxMap(withoutExtension));
+  });
+
   it.each(['unquoted', 'indented', 'duplicate'])('rejects %s conflicting action rows', (mutation) => {
     const md = readFileSync(path.join(uxMapsDir, 'febt-1-job-error-states.md'), 'utf8');
     const row = /^\| `reload` \|.*$/m.exec(md)![0];

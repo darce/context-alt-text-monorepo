@@ -1772,9 +1772,21 @@ if (!function_exists('get_option')) {
     }
 }
 
+if (!function_exists('wp_cache_delete')) {
+    function wp_cache_delete($key, $group = ''): bool
+    {
+        $GLOBALS['__ac_cache_deletions'][] = [$key, $group];
+        return true;
+    }
+}
+
 if (!function_exists('delete_option')) {
     function delete_option($key): void
     {
+        $beforeDelete = $GLOBALS['__ac_option_before_delete'][$key] ?? null;
+        if (is_callable($beforeDelete)) {
+            $beforeDelete();
+        }
         unset($GLOBALS['__ac_options'][$key]);
     }
 }
@@ -2348,6 +2360,7 @@ if (!isset($GLOBALS['wpdb'])) {
         /** @var mixed */
         public $defaultQueryResult = true;
         public string $prefix = 'wp_';
+        public string $options = 'wp_options';
         public string $postmeta = 'wp_postmeta';
         public string $term_relationships = 'wp_term_relationships';
         /** @var array<int,array<string,mixed>> */
@@ -2448,6 +2461,22 @@ if (!isset($GLOBALS['wpdb'])) {
             if ($result === false || $result === null) {
                 $this->rows_affected = 0;
                 return $result;
+            }
+
+            if (preg_match("/^DELETE FROM " . preg_quote($this->options, '/') . " WHERE option_name = '((?:\\\\.|[^'])*)' AND BINARY option_value = '((?:\\\\.|[^'])*)'$/s", $normalizedSql, $matches)) {
+                $key = stripslashes($matches[1]);
+                $expected = stripslashes($matches[2]);
+                $beforeDelete = $GLOBALS['__ac_option_before_delete'][$key] ?? null;
+                if (is_callable($beforeDelete)) {
+                    $beforeDelete();
+                }
+                $matchesOwner = array_key_exists($key, $GLOBALS['__ac_options'])
+                    && serialize($GLOBALS['__ac_options'][$key]) === $expected;
+                if ($matchesOwner) {
+                    unset($GLOBALS['__ac_options'][$key]);
+                }
+                $this->rows_affected = $matchesOwner ? 1 : 0;
+                return $this->rows_affected;
             }
 
             $applied = $this->applyRawQueryToRows($normalizedSql);

@@ -6,6 +6,7 @@ import os
 import pwd
 import re
 import shutil
+import shlex
 import signal
 import subprocess
 import sys
@@ -22,6 +23,72 @@ DESCRIBE_GATE = ROOT / "infra/oci/demo/lib/describe-gate.sh"
 SYNC_DEMO = ROOT / "scripts/deploy/sync-demo.sh"
 PRODUCER_EXAMPLE = ROOT / "apps/prototype-description-service/.env.prod.example"
 DEMO_EXAMPLE = ROOT / "infra/oci/demo/.env.example"
+
+
+def install_probe_python(fake_bin: Path) -> None:
+    """Intercept ExecStart probes in every shared-harness subprocess.
+
+    Keep production's unit/interpreter validation intact, but execute tests
+    with pytest's interpreter and a synthetic boot identity on non-Linux hosts.
+    """
+    bootstrap = fake_bin / "probe-python.py"
+    bootstrap.write_text('''import subprocess
+import sys
+original_run = subprocess.run
+def run(command, **kwargs):
+    if command[0] == "/usr/bin/python3":
+        command = [sys.executable, *command[1:]]
+        if "store = RunningSinceLeaseStore(" in command[2]:
+            command.append("preflight-test-boot")
+    return original_run(command, **kwargs)
+subprocess.run = run
+args = sys.argv[1:]
+if args[0] == "-c":
+    code = args[1]
+    sys.argv = ["-c", *args[2:]]
+elif args[0] == "-":
+    code = sys.stdin.read()
+    sys.argv = args
+else:
+    raise RuntimeError("unexpected preflight Python invocation")
+exec(compile(code, "<preflight-test>", "exec"), {"__name__": "__main__"})
+''')
+    wrapper = fake_bin / "python3"
+    wrapper.write_text(
+        f'#!/bin/sh\nexec {shlex.quote(sys.executable)} {shlex.quote(str(bootstrap))} "$@"\n'
+    )
+    wrapper.chmod(0o755)
+
+
+def test_probe_harness_handles_old_system_python_and_missing_proc(tmp_path: Path) -> None:
+    install_probe_python(tmp_path)
+    bootstrap = tmp_path / "probe-python.py"
+    bootstrap.write_text(bootstrap.read_text().replace(
+        "original_run = subprocess.run",
+        '''host_run = subprocess.run
+def original_run(command, **kwargs):
+    if command[0] == "/usr/bin/python3":
+        return subprocess.CompletedProcess(command, 1, "3.9.6", "ImportError: datetime.UTC")
+    return host_run(command, **kwargs)''',
+    ))
+    lease_probe = SCRIPT.read_text().split('lease_probe = """', 1)[1].split('"""', 1)[0]
+    # Simulate macOS/masked procfs even when verification runs on Linux.
+    lease_probe = '''from pathlib import Path
+original_read_text = Path.read_text
+def read_text(path, *args, **kwargs):
+    if str(path) == "/proc/sys/kernel/random/boot_id":
+        raise FileNotFoundError("simulated missing procfs")
+    return original_read_text(path, *args, **kwargs)
+Path.read_text = read_text
+''' + lease_probe
+    command = ["/usr/bin/python3", "-c", lease_probe, str(ROOT), str(tmp_path / "lease.json")]
+    result = subprocess.run(
+        [str(tmp_path / "python3"), "-c",
+         f"import subprocess; result = subprocess.run({command!r}); raise SystemExit(result.returncode)"],
+        capture_output=True, text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    assert not list(tmp_path.glob(".acx-lease-preflight-*"))
 
 
 def wordpress_config(
@@ -90,6 +157,7 @@ def run_preflight(
     )
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir(exist_ok=True)
+    install_probe_python(fake_bin)
     getent = fake_bin / "getent"
     getent.write_text(
         """#!/usr/bin/env bash
@@ -2295,6 +2363,8 @@ def test_11_lease_probe_interpreter_selection(
             command = command[3:]  # HOME, PATH and LC_ALL
         if command[0] == "/usr/bin/python3":
             command = [str(system_python), *command[1:]]
+            if "store = RunningSinceLeaseStore(" in command[2]:
+                command.append("preflight-test-boot")
         return original_run(command, **kwargs)
 
     monkeypatch.setattr(subprocess, "run", run)

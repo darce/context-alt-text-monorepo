@@ -191,3 +191,11 @@ Design grounding: Release It!, ch. 5.5 (fail before consuming deployment
 capacity), plus the lane's `rg-008` load-time configuration validation and
 `rg-006` copy-pasteable-command rules. Preflight output follows the OBS
 redaction rule: secret key names and redacted lengths only.
+
+The reaper preflight executes import and disposable lease-store probes with
+the interpreter declared by the service's ExecStart. Its shared test harness
+redirects that executable to the pytest interpreter and supplies a synthetic
+boot identity to the disposable lease probe, so tests can run on macOS or
+with masked procfs. Production does not supply this override: the lease store
+must obtain the host's boot identity. The test override is an internal probe
+argument, not a deployment environment setting.

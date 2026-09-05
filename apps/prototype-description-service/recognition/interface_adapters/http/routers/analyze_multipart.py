@@ -28,6 +28,7 @@ from collections.abc import Iterable
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
+from python_multipart.exceptions import FormParserError
 from python_multipart.multipart import parse_options_header
 from sqlalchemy.ext.asyncio import async_sessionmaker
 from starlette.datastructures import FormData, UploadFile
@@ -67,6 +68,7 @@ _IMAGE_KEY_PREFIX = "image_"
 _MAX_IMAGE_PARTS = 5
 _MAX_MULTIPART_FILES = _MAX_IMAGE_PARTS + 1  # JSON request envelope may itself be an UploadFile.
 _TOO_MANY_IMAGE_PARTS_DETAIL = f"multipart submission accepts at most {_MAX_IMAGE_PARTS} image parts"
+_INVALID_MULTIPART_DETAIL = "invalid multipart form"
 
 
 class _ClosingMultiPartParser(MultiPartParser):
@@ -89,15 +91,24 @@ class _ClosingMultiPartParser(MultiPartParser):
         super().on_headers_finished()
 
     async def parse(self) -> FormData:
+        parsed_form: FormData | None = None
         try:
-            return await super().parse()
-        except BaseException:
-            # Starlette 0.52.1 closes these only for MultiPartException. A
-            # ClientDisconnect can therefore strand every spool opened before
-            # the disconnect unless the request boundary closes them here.
+            parsed_form = await super().parse()
+            return parsed_form
+        finally:
+            # Starlette 0.52.1 closes these only for MultiPartException. Other
+            # failures (including ClientDisconnect) can strand every spool, and
+            # clean EOF can omit an unfinished UploadFile from the FormData that
+            # the route later closes. Keep only files represented in a successful
+            # parse; the parser still owns and closes every other allocation.
+            retained_files = (
+                tuple(value.file for _, value in parsed_form.multi_items() if isinstance(value, UploadFile))
+                if parsed_form is not None
+                else ()
+            )
             for file in self._files_to_close_on_error:
-                file.close()
-            raise
+                if not any(file is retained_file for retained_file in retained_files):
+                    file.close()
 
 
 async def _parse_multipart_form(request: Request) -> FormData:
@@ -113,8 +124,9 @@ async def _parse_multipart_form(request: Request) -> FormData:
     )
     try:
         return await parser.parse()
-    except MultiPartException as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=exc.message) from exc
+    except (MultiPartException, FormParserError) as exc:
+        detail = exc.message if isinstance(exc, MultiPartException) else _INVALID_MULTIPART_DETAIL
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=detail) from exc
 
 
 def multipart_to_media_items(

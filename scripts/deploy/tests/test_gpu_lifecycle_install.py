@@ -92,6 +92,22 @@ def test_oneshot_units_have_systemd_execution_deadlines() -> None:
         assert re.search(r"^RuntimeMaxSec=\d+s$", service, flags=re.MULTILINE)
 
 
+def test_oneshot_units_share_persistent_boot_fenced_lifecycle_state() -> None:
+    script = INSTALLER.read_text(encoding="utf-8")
+    services = re.findall(
+        r"tee /etc/systemd/system/acx-gpu-(?:start|reap)\.service.*?<<UNIT\n(.*?)\nUNIT",
+        script,
+        flags=re.DOTALL,
+    )
+
+    assert len(services) == 2
+    for service in services:
+        assert "StateDirectory=acx-gpu" in service
+        assert "--running-since-path /var/lib/acx-gpu/running-since.json" in service
+        assert "/usr/bin/flock --wait 120 /var/lib/acx-gpu/lifecycle.lock" in service
+        assert "RuntimeDirectory=acx-gpu" not in service
+
+
 def test_transport_is_bounded_and_release_switch_is_atomic() -> None:
     script = INSTALLER.read_text(encoding="utf-8")
 

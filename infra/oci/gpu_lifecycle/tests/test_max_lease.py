@@ -304,11 +304,22 @@ def test_oci_probe_never_derives_lease_age_from_time_created(monkeypatch) -> Non
     assert fetch_instance_idle_seconds(instance_id="instance-a") == ("RUNNING", 0)
 
 
-def test_first_running_observation_starts_lease_without_expiring_it(
+@pytest.mark.parametrize(
+    "unsafe_contents",
+    (
+        None,
+        "{not-json\n",
+        json.dumps({"schema_version": 2, "instances": {"instance-a": {"source": "unknown"}}}),
+    ),
+)
+def test_running_instance_without_trustworthy_origin_forces_fail_safe_stop(
     tmp_path: Path,
+    unsafe_contents: str | None,
 ) -> None:
-    """The bounded compensation begins at first observation."""
+    """Missing or malformed durable lease state can never mint an age-zero lease."""
     path = tmp_path / "running-since.json"
+    if unsafe_contents is not None:
+        path.write_text(unsafe_contents)
     actuator = RecordingActuator()
 
     result = run_reap_cycle(
@@ -321,19 +332,35 @@ def test_first_running_observation_starts_lease_without_expiring_it(
         running_since_store=_lease_store(path),
     )
 
-    assert actuator.stopped == []
-    assert result.lease_expired == []
-    assert json.loads(path.read_text()) == {
-        "instances": {
-            "instance-a": {
-                "boot_id": TEST_BOOT_ID,
-                "monotonic_since": TEST_MONOTONIC,
-                "since": "2026-09-03T12:00:00Z",
-                "source": "first_observed",
-            }
-        },
-        "schema_version": 2,
-    }
+    assert actuator.stopped == ["instance-a"]
+    assert result.lease_expired == [("STOP", "instance-a")]
+    if unsafe_contents is None:
+        assert not path.exists()
+
+
+def test_pre_reboot_running_lease_forces_fail_safe_stop(tmp_path: Path) -> None:
+    path = tmp_path / "running-since.json"
+    _write_lease(path, since="2026-09-03T11:59:59Z")
+    actuator = RecordingActuator()
+    store = RunningSinceLeaseStore(
+        path=path,
+        now=lambda: NOW,
+        monotonic=lambda: TEST_MONOTONIC,
+        boot_id="boot-after-reboot",
+    )
+
+    result = run_reap_cycle(
+        controller=GpuLifecycleController(idle_seconds=300),
+        instances=[_running(0, "instance-a")],
+        load_source=BusyLoadSource(),
+        actuator=actuator,
+        fence_delay_seconds=0,
+        max_lease_seconds=3600,
+        running_since_store=store,
+    )
+
+    assert actuator.stopped == ["instance-a"]
+    assert result.lease_expired == [("STOP", "instance-a")]
 
 
 @pytest.mark.parametrize("wall_jump", [timedelta(hours=-1), timedelta(days=365)])
@@ -492,6 +519,7 @@ def test_stopped_sibling_does_not_reset_running_instance_lease(tmp_path: Path) -
         monotonic=lambda: current["monotonic"],
         boot_id=TEST_BOOT_ID,
     )
+    store.record_start("instance-a")
     actuator = RecordingActuator()
     instances = [
         _running(0, "instance-a"),
@@ -859,6 +887,8 @@ def test_cli_accepts_running_since_path_override(tmp_path: Path) -> None:
 
 def test_cli_state_override_uses_running_since_without_oci_age_probe(tmp_path: Path, monkeypatch) -> None:
     path = tmp_path / "lease.json"
+    RunningSinceLeaseStore(path=path).record_start("instance-a")
+    before = path.read_bytes()
 
     def fail_probe(**_kwargs):
         raise AssertionError("OCI age probe must not run")
@@ -884,4 +914,4 @@ def test_cli_state_override_uses_running_since_without_oci_age_probe(tmp_path: P
     )
 
     assert exit_code == 0
-    assert not path.exists()
+    assert path.read_bytes() == before

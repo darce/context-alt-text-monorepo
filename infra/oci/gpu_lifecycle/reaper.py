@@ -87,7 +87,7 @@ _DEFAULT_READY_STALL_CYCLES = 3
 _DEFAULT_READY_SLEEP_SECONDS = 10.0
 _DEFAULT_LOCK_TIMEOUT_SECONDS = 30.0
 _LOCK_RETRY_SECONDS = 0.05
-_DEFAULT_RUNNING_SINCE_PATH = Path("/run/acx/gpu-running-since.json")
+_DEFAULT_RUNNING_SINCE_PATH = Path("/var/lib/acx-gpu/running-since.json")
 _RUNNING_SINCE_READ_FAILURE_RECOVERY_CYCLES = 3
 _RUNNING_SINCE_FUTURE_SKEW_SECONDS = 5.0
 # Live describe dumps omit batch_in_progress; warn once per process, not per poll.
@@ -627,9 +627,12 @@ class RunningSinceLeaseStore:
 
     def observe_running(self, instance_id: str) -> RunningSinceRecord:
         record = self.read(instance_id)
-        if record is not None:
-            return record
-        return self.write(instance_id, source="first_observed")
+        if record is None:
+            raise CorruptRunningSinceLeaseError(
+                f"RUNNING instance {instance_id} has no trustworthy durable lease origin; "
+                "treating lease as expired"
+            )
+        return record
 
     @property
     def _read_failures_path(self) -> Path:
@@ -1004,12 +1007,10 @@ def _apply_running_since_leases(
             if dry_run:
                 record = store.read(instance.instance_id)
                 if record is None:
-                    logger.info(
-                        "dry-run would record RUNNING lease instance=%s source=first_observed",
-                        instance.instance_id,
+                    raise CorruptRunningSinceLeaseError(
+                        f"RUNNING instance {instance.instance_id} has no trustworthy "
+                        "durable lease origin; treating lease as expired"
                     )
-                    observed.append(instance)
-                    continue
             else:
                 record = store.observe_running(instance.instance_id)
             age_seconds = store.age_seconds(record)

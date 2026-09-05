@@ -129,16 +129,49 @@ activate_gpu_lifecycle_timers() {
     verify_gpu_lifecycle_start_timer
 }
 
+fence_gpu_lifecycle_start() {
+    local lock_path="${ACX_GPU_LIFECYCLE_LOCK_PATH:-/var/lib/acx-gpu/lifecycle.lock}"
+
+    # `systemctl stop` waits for an in-flight oneshot to terminate. The shared
+    # flock then proves no older START process survived outside systemd's view
+    # before cleanup is allowed to invoke the reaper.
+    sudo systemctl disable --now acx-gpu-start.timer || {
+        echo 'error: failed to disable acx-gpu-start.timer' >&2
+        return 1
+    }
+    sudo systemctl stop acx-gpu-start.service || {
+        echo 'error: failed to stop acx-gpu-start.service' >&2
+        return 1
+    }
+    if systemctl is-active --quiet acx-gpu-start.timer; then
+        echo 'error: acx-gpu-start.timer remained active after disable' >&2
+        return 1
+    fi
+    if systemctl is-active --quiet acx-gpu-start.service; then
+        echo 'error: acx-gpu-start.service remained active after stop' >&2
+        return 1
+    fi
+
+    sudo mkdir -p "${lock_path%/*}"
+    sudo touch "$lock_path"
+    sudo chown ubuntu:ubuntu "${lock_path%/*}" "$lock_path"
+    sudo chmod 0700 "${lock_path%/*}"
+    sudo chmod 0600 "$lock_path"
+    sudo flock --wait 120 "$lock_path" true || {
+        echo 'error: timed out waiting for the GPU lifecycle lock to quiesce' >&2
+        return 1
+    }
+}
+
 lifecycle_transaction_complete=0
 cleanup_gpu_lifecycle_transaction() {
     local status=$?
     trap - ERR EXIT
     if [ "$status" -ne 0 ] && [ "$lifecycle_transaction_complete" -eq 0 ]; then
         echo 'error: lifecycle transaction failed; running fail-safe STOP path' >&2
-        if ! sudo systemctl disable --now acx-gpu-start.timer; then
-            echo 'error: failed to disable acx-gpu-start.timer during cleanup' >&2
-        fi
-        if ! sudo systemctl start acx-gpu-reap.service; then
+        if ! fence_gpu_lifecycle_start; then
+            echo 'error: could not fence START during cleanup; reaper not invoked concurrently' >&2
+        elif ! sudo systemctl start acx-gpu-reap.service; then
             echo 'error: fail-safe acx-gpu-reap.service invocation failed' >&2
         fi
     fi
@@ -164,7 +197,7 @@ if [ "${1:-}" = "--activate-systemd-only" ]; then
     [ "$#" -eq 1 ] || { echo "error: --activate-systemd-only accepts no arguments" >&2; exit 2; }
     expected_unit_dir="${ACX_EXPECTED_SYSTEMD_DIR:-/etc/systemd/system}"
     trap cleanup_gpu_lifecycle_transaction ERR EXIT
-    sudo systemctl disable --now acx-gpu-start.timer
+    fence_gpu_lifecycle_start
     activate_gpu_lifecycle_timers \
         "$(sha256sum "${expected_unit_dir}/acx-gpu-start.service" | awk '{print $1}')" \
         "$(sha256sum "${expected_unit_dir}/acx-gpu-start.timer" | awk '{print $1}')" \
@@ -462,12 +495,14 @@ fi"
 verification_function=$(declare -f verify_gpu_lifecycle_timers)
 start_verification_function=$(declare -f verify_gpu_lifecycle_start_timer)
 activation_function=$(declare -f activate_gpu_lifecycle_timers)
+start_fence_function=$(declare -f fence_gpu_lifecycle_start)
 cleanup_function=$(declare -f cleanup_gpu_lifecycle_transaction)
 run_with_deadline "systemd unit installation" \
     ssh "${SSH_OPTIONS[@]}" -l "$SSH_USER" -- "$HOST" "set -euo pipefail
 ${verification_function}
 ${start_verification_function}
 ${activation_function}
+${start_fence_function}
 ${cleanup_function}
 lifecycle_transaction_complete=0
 trap cleanup_gpu_lifecycle_transaction ERR EXIT
@@ -475,7 +510,7 @@ trap cleanup_gpu_lifecycle_transaction ERR EXIT
 # ARCH-13/COST-04: establish the fail-safe before changing the live release or
 # any effective lifecycle artifact. The trap remains armed until the reaper is
 # proved and START is re-enabled and verified.
-sudo systemctl disable --now acx-gpu-start.timer
+fence_gpu_lifecycle_start
 previous_release=\$(readlink -f /opt/acx-gpu/current 2>/dev/null || true)
 if [ -n "\$previous_release" ] && [ "\$previous_release" != '${remote_release}' ] \
     && [ -d "\$previous_release" ]; then
@@ -519,14 +554,14 @@ TimeoutStartSec=1200s
 RuntimeMaxSec=1200s
 User=ubuntu
 SupplementaryGroups=10001
-RuntimeDirectory=acx-gpu
-RuntimeDirectoryPreserve=yes
+StateDirectory=acx-gpu
+StateDirectoryMode=0700
 # instance_principal: the VM carries no API key. Requires a dynamic-group grant
 # of INSTANCE_POWER_ACTIONS on the GPU compartment, else every run 404s.
 Environment=OCI_CLI_AUTH=instance_principal
 EnvironmentFile=/etc/acx/gpu-lifecycle.env
 WorkingDirectory=/opt/acx-gpu/current
-ExecStart=/usr/bin/python3 -m infra.oci.gpu_lifecycle --mode start --instance-id \\\${GPU_INSTANCE_ID} --load-dir /run/acx-write --load-stale-grace-seconds \\\${ACX_DESCRIBE_LOAD_STALE_GRACE_SECONDS} --gpu-state-json /run/acx/gpu-state.json --running-since-path /run/acx-gpu/running-since.json --probe-oci --oci-bin /home/ubuntu/.oci-venv/bin/oci --ready-url \\\${READY_URL}
+ExecStart=/usr/bin/flock --wait 120 /var/lib/acx-gpu/lifecycle.lock /usr/bin/python3 -m infra.oci.gpu_lifecycle --mode start --instance-id \\\${GPU_INSTANCE_ID} --load-dir /run/acx-write --load-stale-grace-seconds \\\${ACX_DESCRIBE_LOAD_STALE_GRACE_SECONDS} --gpu-state-json /run/acx/gpu-state.json --running-since-path /var/lib/acx-gpu/running-since.json --probe-oci --oci-bin /home/ubuntu/.oci-venv/bin/oci --ready-url \\\${READY_URL}
 UNIT
 
 sudo tee /etc/systemd/system/acx-gpu-start.timer \
@@ -556,12 +591,12 @@ TimeoutStartSec=1200s
 RuntimeMaxSec=1200s
 User=ubuntu
 SupplementaryGroups=10001
-RuntimeDirectory=acx-gpu
-RuntimeDirectoryPreserve=yes
+StateDirectory=acx-gpu
+StateDirectoryMode=0700
 Environment=OCI_CLI_AUTH=instance_principal
 EnvironmentFile=/etc/acx/gpu-lifecycle.env
 WorkingDirectory=/opt/acx-gpu/current
-ExecStart=/usr/bin/python3 -m infra.oci.gpu_lifecycle --mode reap --instance-id \\\${GPU_INSTANCE_ID} --load-dir /run/acx-write --load-stale-grace-seconds \\\${ACX_DESCRIBE_LOAD_STALE_GRACE_SECONDS} --gpu-state-json /run/acx/gpu-state.json --running-since-path /run/acx-gpu/running-since.json --idle-seconds \\\${IDLE_SECONDS} --max-lease-seconds \\\${MAX_LEASE_SECONDS} --fence-delay-seconds 2 --probe-oci --oci-bin /home/ubuntu/.oci-venv/bin/oci
+ExecStart=/usr/bin/flock --wait 120 /var/lib/acx-gpu/lifecycle.lock /usr/bin/python3 -m infra.oci.gpu_lifecycle --mode reap --instance-id \\\${GPU_INSTANCE_ID} --load-dir /run/acx-write --load-stale-grace-seconds \\\${ACX_DESCRIBE_LOAD_STALE_GRACE_SECONDS} --gpu-state-json /run/acx/gpu-state.json --running-since-path /var/lib/acx-gpu/running-since.json --idle-seconds \\\${IDLE_SECONDS} --max-lease-seconds \\\${MAX_LEASE_SECONDS} --fence-delay-seconds 2 --probe-oci --oci-bin /home/ubuntu/.oci-venv/bin/oci
 UNIT
 
 sudo tee /etc/systemd/system/acx-gpu-reap.timer \

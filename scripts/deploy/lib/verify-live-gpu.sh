@@ -16,7 +16,7 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${script_dir}/gpu-env-contract.sh"
 
 wordpress_config_lines=()
-while IFS= read -r line; do
+while IFS= read -r line || [[ -n "$line" ]]; do
     wordpress_config_lines+=("$line")
 done < <(sed -n 's/^WORDPRESS_CONFIG_EXTRA=//p' "$demo_env")
 if [[ ${#wordpress_config_lines[@]} -ne 1 ]]; then

@@ -3,9 +3,9 @@ import { resolve } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-type UxMapAction = { id: string; [key: string]: unknown };
-type UxMapScreen = { id: string; [key: string]: unknown };
-type UxMap = { screens: UxMapScreen[]; actions: UxMapAction[]; [key: string]: unknown };
+interface UxMapAction { id: string; [key: string]: unknown }
+interface UxMapScreen { id: string; [key: string]: unknown }
+interface UxMap { screens: UxMapScreen[]; actions: UxMapAction[]; [key: string]: unknown }
 
 const MAP_PATH = resolve(__dirname, '../../../../../docs/ux-maps/guided-prototype.uxmap.json');
 

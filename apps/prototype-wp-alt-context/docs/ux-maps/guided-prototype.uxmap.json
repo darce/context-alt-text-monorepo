@@ -1,9 +1,9 @@
 {
   "map_ref": "guided-prototype",
-  "product": "AltContext \u2014 authenticated guided prototype",
+  "product": "AltContext — authenticated guided prototype",
   "goals": [
     "Implementation inventory and correction target for feature/guided-prototype-1; one in-memory example inside authenticated WordPress admin, not the public homepage.",
-    "Show visual draft + confirmed identity + page context \u2192 named description; editing/rejection never applies automatically.",
+    "Show visual draft + confirmed identity + page context → named description; editing/rejection never applies automatically.",
     "Only the saved candidate can be applied; pending text is labelled and must be saved or discarded before Apply.",
     "Guide navigation reaches its named region; reset dialog preserves edits on cancel; all disappearing actions restore focus.",
     "Clear illustrative provenance, bundled sample with text fallback, no live inference dependency.",
@@ -31,19 +31,25 @@
       "url_params": [],
       "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/GuidedPrototypeEntrance.tsx",
       "primary_action_id": "open",
-      "states": ["default"],
+      "states": [
+        "default"
+      ],
       "zones": [
         {
           "id": "intro-0",
           "label": "Guided demo, scope, and current build status",
           "role": "content",
-          "states": ["default"]
+          "states": [
+            "default"
+          ]
         },
         {
           "id": "intro-1",
           "label": "Start the demo and read the AltContext case study",
           "role": "nav",
-          "states": ["default"]
+          "states": [
+            "default"
+          ]
         }
       ]
     },
@@ -58,19 +64,26 @@
       "url_params": [],
       "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/guided/GuidedPrototypeGuide.tsx",
       "primary_action_id": "toggle-guide",
-      "states": ["first_time", "default"],
+      "states": [
+        "first_time",
+        "default"
+      ],
       "zones": [
         {
           "id": "guide-0",
           "label": "Current step, Skip to this step, and Show steps / Hide steps",
           "role": "nav",
-          "states": ["default"]
+          "states": [
+            "default"
+          ]
         },
         {
           "id": "guide-1",
           "label": "Five steps: Look at the photo, Find the face, Confirm the match, Check the description, and Apply it yourself; Close the steps",
           "role": "nav",
-          "states": ["default"]
+          "states": [
+            "default"
+          ]
         }
       ]
     },
@@ -85,20 +98,26 @@
       "url_params": [],
       "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/guided/GuidedPrototypePage.tsx",
       "primary_action_id": null,
-      "states": ["default"],
+      "states": [
+        "default"
+      ],
       "zones": [
         {
           "id": "evidence-0",
           "label": "The photo; Alt text on the page right now; Photo credit; and the next-step face note",
           "role": "ai_review",
-          "states": ["default"],
+          "states": [
+            "default"
+          ],
           "evidence_linked": true
         },
         {
           "id": "evidence-1",
           "label": "Where this example comes from: Example, Page, and Person on file",
           "role": "content",
-          "states": ["default"]
+          "states": [
+            "default"
+          ]
         }
       ]
     },
@@ -113,26 +132,42 @@
       "url_params": [],
       "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/guided/GuidedFaceMatchCard.tsx",
       "primary_action_id": "confirm",
-      "states": ["undecided", "confirmed", "unnamed"],
+      "states": [
+        "undecided",
+        "confirmed",
+        "unnamed"
+      ],
       "zones": [
         {
           "id": "face-0",
           "label": "Face crop, face count, match, and match strength",
           "role": "ai_review",
-          "states": ["undecided", "confirmed", "unnamed"],
+          "states": [
+            "undecided",
+            "confirmed",
+            "unnamed"
+          ],
           "evidence_linked": true
         },
         {
           "id": "face-1",
           "label": "How this works list and saved-run disclosure",
           "role": "content",
-          "states": ["undecided", "confirmed", "unnamed"]
+          "states": [
+            "undecided",
+            "confirmed",
+            "unnamed"
+          ]
         },
         {
           "id": "face-2",
           "label": "Decision status and Yes, this is Keanu Reeves / Keep the person unnamed buttons",
           "role": "form",
-          "states": ["undecided", "confirmed", "unnamed"]
+          "states": [
+            "undecided",
+            "confirmed",
+            "unnamed"
+          ]
         }
       ]
     },
@@ -147,26 +182,36 @@
       "url_params": [],
       "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/guided/GuidedDescriptionReview.tsx",
       "primary_action_id": "save",
-      "states": ["default", "error"],
+      "states": [
+        "default",
+        "error"
+      ],
       "zones": [
         {
           "id": "draft-0",
           "label": "Ready for you to check, Edited by you, or Rejected. The saved text did not change",
           "role": "form",
-          "states": ["default"]
+          "states": [
+            "default"
+          ]
         },
         {
           "id": "draft-1",
           "label": "Without the name and Draft for you to check; this draft comes from a saved example, not a live run",
           "role": "ai_review",
-          "states": ["default"],
+          "states": [
+            "default"
+          ],
           "evidence_linked": true
         },
         {
           "id": "draft-2",
           "label": "Description draft with Save my edit, Discard my edit, and Reject this draft",
           "role": "form",
-          "states": ["default", "error"]
+          "states": [
+            "default",
+            "error"
+          ]
         }
       ]
     },
@@ -181,20 +226,29 @@
       "url_params": [],
       "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/guided/GuidedDescriptionReview.tsx",
       "primary_action_id": "apply-now",
-      "states": ["default", "error"],
+      "states": [
+        "default",
+        "error"
+      ],
       "zones": [
         {
           "id": "apply-0",
           "label": "The practice copy says {appliedText}; pressing Apply writes the saved draft to this practice copy only",
           "role": "ai_review",
-          "states": ["default", "error"],
+          "states": [
+            "default",
+            "error"
+          ],
           "evidence_linked": true
         },
         {
           "id": "apply-1",
           "label": "Apply to practice copy and Undo; Apply is off while your edit is unsaved",
           "role": "form",
-          "states": ["default", "error"]
+          "states": [
+            "default",
+            "error"
+          ]
         }
       ]
     },
@@ -209,25 +263,35 @@
       "url_params": [],
       "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/guided/GuidedPrototypePage.tsx",
       "primary_action_id": "reset-open",
-      "states": ["default", "empty"],
+      "states": [
+        "default",
+        "empty"
+      ],
       "zones": [
         {
           "id": "result-0",
           "label": "Applied description and unchanged original media scope",
           "role": "content",
-          "states": ["default"]
+          "states": [
+            "default"
+          ]
         },
         {
           "id": "result-1",
           "label": "Chronological decision history; empty state before any decisions",
           "role": "status",
-          "states": ["default", "empty"]
+          "states": [
+            "default",
+            "empty"
+          ]
         },
         {
           "id": "result-2",
           "label": "Reset practice trigger in the workspace header",
           "role": "nav",
-          "states": ["default"]
+          "states": [
+            "default"
+          ]
         }
       ]
     },
@@ -242,19 +306,25 @@
       "url_params": [],
       "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/guided/GuidedResetDialog.tsx",
       "primary_action_id": "keep",
-      "states": ["default"],
+      "states": [
+        "default"
+      ],
       "zones": [
         {
           "id": "reset-0",
           "label": "Explicit effects: remove practice changes, preserve original WordPress attachment",
           "role": "content",
-          "states": ["default"]
+          "states": [
+            "default"
+          ]
         },
         {
           "id": "reset-1",
           "label": "Cancel / Reset practice; Escape cancels",
           "role": "form",
-          "states": ["default"]
+          "states": [
+            "default"
+          ]
         }
       ]
     },
@@ -269,19 +339,25 @@
       "url_params": [],
       "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/guided/GuidedSamplePhoto.tsx",
       "primary_action_id": null,
-      "states": ["default"],
+      "states": [
+        "default"
+      ],
       "zones": [
         {
           "id": "image-fallback-0",
           "label": "Visible image unavailable explanation and independent visual facts",
           "role": "status",
-          "states": ["default"]
+          "states": [
+            "default"
+          ]
         },
         {
           "id": "image-fallback-1",
           "label": "Sample record and text-based review remain available",
           "role": "ai_review",
-          "states": ["default"],
+          "states": [
+            "default"
+          ],
           "evidence_linked": true
         }
       ]
@@ -297,13 +373,17 @@
       "url_params": [],
       "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/GuidedPrototypeEntrance.tsx",
       "primary_action_id": null,
-      "states": ["default"],
+      "states": [
+        "default"
+      ],
       "zones": [
         {
           "id": "case-study-0",
           "label": "Case study content",
           "role": "content",
-          "states": ["default"]
+          "states": [
+            "default"
+          ]
         }
       ]
     }
@@ -592,7 +672,7 @@
   ],
   "open_questions": [
     "Live recognition: when the demo runs recognition for real, the face card must show a fresh timestamp and drop the saved-run disclosure.",
-    "Which recognition engine produced the saved match? InsightFace."
+    "Engine note: the saved match is stored output of an InsightFace run. Keep the engine name out of screen copy; when live recognition ships, decide whether the face card should say which engine ran."
   ],
   "not_doing": [
     "Public homepage or marketing deployment",

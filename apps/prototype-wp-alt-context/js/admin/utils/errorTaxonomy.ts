@@ -56,6 +56,8 @@ export type AppErrorTag = (typeof APP_ERROR_TAGS)[number];
  */
 export const JOB_STREAM_ERROR_CODE = {
   JOB_NOT_FOUND: 'job_not_found',
+  UNEXPECTED_RESPONSE: 'unexpected_response',
+  INVALID_JOB_RESPONSE: 'invalid_job_response',
 } as const;
 
 export type JobStreamErrorCode = (typeof JOB_STREAM_ERROR_CODE)[keyof typeof JOB_STREAM_ERROR_CODE];

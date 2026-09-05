@@ -67,6 +67,14 @@ const captureRecords = (): LogRecord[] => {
 };
 
 describe('useJobProgressStream', () => {
+  it('keeps the consumer error vocabulary in parity with the PHP stream producer', () => {
+    expect(Object.values(JOB_STREAM_ERROR_CODE)).toEqual([
+      'job_not_found',
+      'unexpected_response',
+      'invalid_job_response',
+    ]);
+  });
+
   const useJobCoordinationMock = vi.mocked(useJobCoordination);
 
   beforeEach(() => {

@@ -121,12 +121,34 @@ const listSection = (markdown: string, heading: string): string[] =>
     .filter((line) => line.startsWith('- '))
     .map((line) => line.slice(2));
 
-const parseScreenStates = (block: string, screenId: string): string[] => {
-  const declarations = [...block.matchAll(/^Screen states:[ \t]*(.*)$/gm)];
-  if (declarations.length > 1) {
-    throw new Error(`screen ${screenId} has duplicate Screen states declarations`);
+export const SCREEN_METADATA_KEYS = ['Purpose', 'url_params', 'Action states', 'Screen states'] as const;
+type MetadataKey = (typeof SCREEN_METADATA_KEYS)[number];
+
+// Both Python --check branches call this parser. Scan every line once, including
+// code indentation and Markdown containers: formatting must not hide a declaration.
+const scanDeclarations = (block: string, screenId: string, firstLine: number): Map<MetadataKey, string> => {
+  const declarations = new Map<MetadataKey, string>();
+  const locations = new Map<MetadataKey, number>();
+  for (const [index, line] of block.split('\n').entries()) {
+    const candidate = line.trimStart().replace(/^(?:(?:>|[-+*]|\d+[.)])\s*)+/, '').trim();
+    const colon = candidate.indexOf(':');
+    if (colon < 0) continue;
+    const label = candidate.slice(0, colon).replace(/__|[*`]/g, '').trim().replace(/\s+/g, ' ').toLowerCase();
+    const key = SCREEN_METADATA_KEYS.find((field) => field.toLowerCase() === label);
+    if (!key) continue;
+    const lineNumber = firstLine + index;
+    const previous = locations.get(key);
+    if (previous !== undefined) {
+      throw new Error(`screen ${screenId} has duplicate ${key} declarations at lines ${previous} and ${lineNumber}`);
+    }
+    locations.set(key, lineNumber);
+    declarations.set(key, candidate.slice(colon + 1).replace(/^(?:__|[*`])+/, '').trim());
   }
-  const explicit = /^Screen states:\s*(.+?)\.?$/m.exec(block)?.[1];
+  return declarations;
+};
+
+const parseScreenStates = (block: string, screenId: string, declaration: string | undefined): string[] => {
+  const explicit = declaration?.replace(/\.$/, '');
   const explicitStates = explicit
     ? explicit
         .split(/,\s*|\s+/)
@@ -164,6 +186,7 @@ const parseScreens = (markdown: string): RenderParityMap['screens'] => {
     return {
       id: match[1]!,
       body: screensSection.slice(heading.index! + heading[0].length, headings[index + 1]?.index),
+      firstLine: markdown.slice(0, markdown.indexOf(screensSection) + heading.index! + heading[0].length).split('\n').length,
     };
   });
   const summary = screensSection.slice(0, headings[0]?.index);
@@ -208,7 +231,7 @@ const parseScreens = (markdown: string): RenderParityMap['screens'] => {
   }
 
   const detailIds = new Set<string>();
-  const screens = blocks.map(({ id, body: block }) => {
+  const screens = blocks.map(({ id, body: block, firstLine }) => {
     if (detailIds.has(id)) {
       throw new Error(`screen ${id} has duplicate detail blocks`);
     }
@@ -217,16 +240,10 @@ const parseScreens = (markdown: string): RenderParityMap['screens'] => {
     if (!base) {
       throw new Error(`screen ${id} has a detail block but no Screens table row`);
     }
-    const metadata = (field: string): string | undefined => {
-      const declarations = [...block.matchAll(new RegExp(`^${field}:[ \\t]*(.*)$`, 'gm'))];
-      if (declarations.length > 1) {
-        throw new Error(`screen ${id} has duplicate ${field} declarations`);
-      }
-      return declarations[0]?.[1];
-    };
-    const purpose = metadata('Purpose') ?? '';
-    const params = metadata('url_params');
-    const actionStates = metadata('Action states');
+    const metadata = scanDeclarations(block, id, firstLine);
+    const purpose = metadata.get('Purpose') ?? '';
+    const params = metadata.get('url_params');
+    const actionStates = metadata.get('Action states');
     const parsedParams = params ? params.split(', ').map(unquote) : base.url_params;
     if (params && fifthColumn === 'url_params' && JSON.stringify(parsedParams) !== JSON.stringify(base.url_params)) {
       throw new Error(`screen ${id} has different url_params in the Screens table and detail block`);
@@ -292,7 +309,7 @@ const parseScreens = (markdown: string): RenderParityMap['screens'] => {
       ...base,
       purpose,
       url_params: parsedParams,
-      states: parseScreenStates(block, id),
+      states: parseScreenStates(block, id, metadata.get('Screen states')),
       ...(actionStates
         ? { action_states: actionStates.split(', ') }
         : {}),

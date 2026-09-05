@@ -10,6 +10,7 @@
  * fail today, so the pure `selectUnfingerprinted` seam is exercised with a planted
  * unlisted file — the permanent discrimination guard TEST-15 asks for.
  */
+import { spawn } from 'node:child_process';
 import {
   existsSync,
   mkdirSync,
@@ -52,6 +53,7 @@ import {
   unfingerprintedManifestSources,
   waitForProcessGroup,
   ProductionCssBuildTimeoutError,
+  ProductionCssBuildTeardownError,
 } from './productionCssBundle';
 
 const ROLLUP_ENTRY_POINTS = ['js/admin/main.tsx', 'js/attachment-edit/main.tsx'] as const;
@@ -224,6 +226,7 @@ describe('fenced directory lock', () => {
     const lockDir = join(fixtureRoot, '.lock');
     const holder = tryAcquireDirectoryLock(lockDir);
     expect(holder).not.toBeNull();
+    expect(holder!.startToken.startsWith(`v1:${process.platform}:`)).toBe(true);
 
     try {
       const ownerPath = join(lockDir, LOCK_OWNER_FILE);
@@ -264,7 +267,36 @@ describe('fenced directory lock', () => {
     }
   });
 
-  it('heartbeats a lease during an operation longer than staleAfterMs', () => {
+  it('does not reap a live PID whose start token has malformed syntax', () => {
+    const fixtureRoot = mkdtempSync(join(tmpdir(), 'acx-style-lock-token-test-'));
+    const lockDir = join(fixtureRoot, '.lock');
+    const ownerPath = join(lockDir, LOCK_OWNER_FILE);
+    mkdirSync(lockDir);
+    writeFileSync(
+      ownerPath,
+      `${JSON.stringify({ pid: process.pid, startToken: 'not-a-versioned-token', nonce: 'owner' })}\n`,
+      'utf8',
+    );
+    utimesSync(ownerPath, new Date(0), new Date(0));
+
+    try {
+      expect(
+        tryAcquireDirectoryLock(lockDir, {
+          now: () => 10_000,
+          staleAfterMs: 1,
+        }),
+      ).toBeNull();
+      expect(JSON.parse(readFileSync(ownerPath, 'utf8'))).toEqual({
+        pid: process.pid,
+        startToken: 'not-a-versioned-token',
+        nonce: 'owner',
+      });
+    } finally {
+      rmSync(fixtureRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('waits for heartbeat readiness and observes lease progress by a bounded deadline', () => {
     const fixtureRoot = mkdtempSync(join(tmpdir(), 'acx-style-lock-heartbeat-test-'));
     const lockDir = join(fixtureRoot, '.lock');
     const ownership = tryAcquireDirectoryLock(lockDir);
@@ -272,17 +304,27 @@ describe('fenced directory lock', () => {
 
     try {
       const before = statMtime(join(lockDir, LOCK_OWNER_FILE));
+      let observedHeartbeatMtime = before;
       runWithLockHeartbeat(
         lockDir,
         ownership!,
-        () => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 150),
-        10,
+        () => {
+          const observationDeadline = Date.now() + 10_000;
+          while (observedHeartbeatMtime <= before && Date.now() < observationDeadline) {
+            observedHeartbeatMtime = statMtime(join(lockDir, LOCK_OWNER_FILE));
+            if (observedHeartbeatMtime <= before) {
+              Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 100);
+            }
+          }
+        },
       );
       const after = statMtime(join(lockDir, LOCK_OWNER_FILE));
-      expect(after).toBeGreaterThan(before);
+      expect(observedHeartbeatMtime).toBeGreaterThan(before);
+      expect(after).toBeGreaterThanOrEqual(observedHeartbeatMtime);
       expect(
         tryAcquireDirectoryLock(lockDir, {
-          staleAfterMs: 80,
+          staleAfterMs: 60_000,
+          now: () => after + 60_000,
           isProcessAlive: () => false,
         }),
       ).toBeNull();
@@ -355,7 +397,7 @@ describe('production build deadline', () => {
   it('terminates and then kills the detached process group before reporting RES-13', () => {
     let now = 0;
     let alive = true;
-    const signals: Array<[number, NodeJS.Signals]> = [];
+    const signals: Array<[number, NodeJS.Signals | 0]> = [];
 
     expect(() =>
       waitForProcessGroup(4321, {
@@ -366,18 +408,140 @@ describe('production build deadline', () => {
           now += milliseconds;
         },
         readExitCode: () => null,
-        isProcessAlive: () => alive,
+        sendSignal: (pidOrGroup, signal) => {
+          signals.push([pidOrGroup, signal]);
+          if (signal === 0 && !alive) {
+            const error = new Error('No such process group') as NodeJS.ErrnoException;
+            error.code = 'ESRCH';
+            throw error;
+          }
+          if (signal === 'SIGKILL') alive = false;
+        },
+      }),
+    ).toThrow(ProductionCssBuildTimeoutError);
+    expect(signals).toContainEqual([-4321, 0]);
+    expect(signals.filter(([, signal]) => signal !== 0)).toEqual([
+      [-4321, 'SIGTERM'],
+      [-4321, 'SIGKILL'],
+    ]);
+  });
+
+  it('bounds post-SIGKILL confirmation when group liveness never clears', () => {
+    let now = 0;
+    const signals: Array<[number, NodeJS.Signals | 0]> = [];
+
+    expect(() =>
+      waitForProcessGroup(9876, {
+        timeoutMs: 1,
+        terminationGraceMs: 2,
+        killConfirmationMs: 3,
+        now: () => now,
+        sleep: (milliseconds) => {
+          now += milliseconds;
+        },
+        readExitCode: () => null,
+        isProcessGroupAlive: () => true,
+        sendSignal: (pidOrGroup, signal) => signals.push([pidOrGroup, signal]),
+      }),
+    ).toThrow(ProductionCssBuildTeardownError);
+    expect(now).toBe(6);
+    expect(signals).toEqual([
+      [-9876, 'SIGTERM'],
+      [-9876, 'SIGKILL'],
+    ]);
+  });
+
+  it('cleans up a surviving process group before returning a published exit code', () => {
+    let alive = true;
+    const signals: Array<[number, NodeJS.Signals | 0]> = [];
+
+    expect(
+      waitForProcessGroup(2468, {
+        timeoutMs: 100,
+        terminationGraceMs: 0,
+        readExitCode: () => 0,
+        isProcessGroupAlive: () => alive,
         sendSignal: (pidOrGroup, signal) => {
           signals.push([pidOrGroup, signal]);
           if (signal === 'SIGKILL') alive = false;
         },
       }),
-    ).toThrow(ProductionCssBuildTimeoutError);
+    ).toBe(0);
     expect(signals).toEqual([
-      [-4321, 'SIGTERM'],
-      [-4321, 'SIGKILL'],
+      [-2468, 'SIGTERM'],
+      [-2468, 'SIGKILL'],
     ]);
   });
+
+  it.skipIf(process.platform === 'win32')(
+    'kills a SIGTERM-ignoring descendant after the process-group leader exits',
+    () => {
+      const fixtureRoot = mkdtempSync(join(tmpdir(), 'acx-style-process-group-test-'));
+      const readyPath = join(fixtureRoot, 'descendant-ready');
+      const pidPath = join(fixtureRoot, 'descendant-pid');
+      const descendantSource = String.raw`
+const fs = require('node:fs');
+const [readyPath, pidPath] = process.argv.slice(1);
+process.on('SIGTERM', () => {});
+fs.writeFileSync(pidPath, String(process.pid));
+fs.writeFileSync(readyPath, 'ready');
+setInterval(() => {}, 0x7fffffff);
+`;
+      const leaderSource = String.raw`
+const { spawn } = require('node:child_process');
+const [readyPath, pidPath, descendantSource] = process.argv.slice(1);
+spawn(process.execPath, ['-e', descendantSource, readyPath, pidPath], { stdio: 'ignore' });
+setInterval(() => {}, 0x7fffffff);
+`;
+      const leader = spawn(
+        process.execPath,
+        ['-e', leaderSource, readyPath, pidPath, descendantSource],
+        { detached: true, stdio: 'ignore' },
+      );
+      expect(leader.pid).toBeDefined();
+
+      try {
+        const readyDeadline = Date.now() + 5_000;
+        while (!existsSync(readyPath) && Date.now() < readyDeadline) {
+          Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 25);
+        }
+        expect(existsSync(readyPath)).toBe(true);
+        const descendantPid = Number(readFileSync(pidPath, 'utf8'));
+
+        expect(() =>
+          waitForProcessGroup(leader.pid!, {
+            timeoutMs: 250,
+            terminationGraceMs: 250,
+            killConfirmationMs: 5_000,
+            readExitCode: () => null,
+          }),
+        ).toThrow(ProductionCssBuildTimeoutError);
+
+        if (process.platform === 'linux') {
+          let state: string | null = null;
+          try {
+            const stat = readFileSync(`/proc/${descendantPid}/stat`, 'utf8');
+            state = stat.slice(stat.lastIndexOf(')') + 2).trim().split(/\s+/, 1)[0];
+          } catch {
+            // A missing proc entry is the expected fully-reaped case.
+          }
+          expect(state === null || state === 'Z').toBe(true);
+        } else {
+          expect(() => process.kill(descendantPid, 0)).toThrow();
+        }
+      } finally {
+        if (leader.pid !== undefined) {
+          try {
+            process.kill(-leader.pid, 'SIGKILL');
+          } catch {
+            // The supervised group is expected to be gone already.
+          }
+        }
+        rmSync(fixtureRoot, { recursive: true, force: true });
+      }
+    },
+    15_000,
+  );
 });
 
 describe('build-input fingerprint coverage [FEBT2-LG-NEW-02]', () => {

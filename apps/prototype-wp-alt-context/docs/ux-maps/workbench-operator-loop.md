@@ -92,13 +92,13 @@ url_params: `tab`, `status`, `media`, `s`, `p`, `perPage`, `rq`, `panel`, `clust
 +------------------------------------------------------------+
 | ZONES                                                      |
 |   - Review queue header / count with kind+band filter ch…  |
-|     (queue) states=[default,loading,empty,error,first_time,edge_input] |
+|     (queue) states=[default,loading,empty,error,first_time…|
 |   - Face-group review panel (panel=review&cluster=)        |
-|     (ai_review) states=[default,loading,empty,error,first_time,edge_input] |
+|     (ai_review) states=[default,loading,empty,error,first_…|
 |   - Status / search filters (form)                         |
-|     states=[default,loading,empty,error,first_time,edge_input] |
+|     states=[default,loading,empty,error,first_time,edge_in…|
 |   - Media selection table (queue)                          |
-|     states=[default,loading,empty,error,first_time,edge_input] |
+|     states=[default,loading,empty,error,first_time,edge_in…|
 |   - Scan / analyze CTAs + job progress (job)               |
 |     states=[default,loading,error]                         |
 |   - Identity / findings preview (AI-assisted; offline = r… |

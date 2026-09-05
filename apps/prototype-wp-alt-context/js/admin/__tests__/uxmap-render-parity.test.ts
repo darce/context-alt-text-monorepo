@@ -14,7 +14,17 @@
  * of truth). The cast is now a validated parse.
  */
 import { spawnSync } from 'node:child_process';
-import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -25,8 +35,9 @@ import { parseRenderedUxMap, projectUxMapForRenderParity, type UxMapRenderSource
 const uxMapsDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../docs/ux-maps');
 const enumSnapshotPath = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
-  'fixtures/uxmap-enums.snapshot.json',
+  'uxmap-render-parity.fixtures/uxmap-enums.snapshot.json',
 );
+const enumVerifierPath = path.join(uxMapsDir, 'sync_uxmap_enums.py');
 const negativeFixturesDir = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   'uxmap-render-parity.fixtures',
@@ -443,9 +454,32 @@ const formatIssues = (issues: Issue[]): string[] =>
   issues.map((issue) => `${issue.loc} | ${issue.type} | ${preview(issue.input)}`);
 
 interface UxMapEnumSnapshot {
+  source_revision: string;
   mapStates: string[];
   zoneRoles: string[];
 }
+
+const displayWidth = (value: string): number =>
+  Array.from(value).reduce((width, char) => {
+    if (/\p{Mark}/u.test(char) || char === '\u200d' || char === '\ufe0e' || char === '\ufe0f') {
+      return width;
+    }
+    const codePoint = char.codePointAt(0) ?? 0;
+    const wide =
+      codePoint >= 0x1100 &&
+      (codePoint <= 0x115f ||
+        codePoint === 0x2329 ||
+        codePoint === 0x232a ||
+        (codePoint >= 0x2e80 && codePoint <= 0xa4cf) ||
+        (codePoint >= 0xac00 && codePoint <= 0xd7a3) ||
+        (codePoint >= 0xf900 && codePoint <= 0xfaff) ||
+        (codePoint >= 0xfe10 && codePoint <= 0xfe6f) ||
+        (codePoint >= 0xff00 && codePoint <= 0xff60) ||
+        (codePoint >= 0xffe0 && codePoint <= 0xffe6) ||
+        (codePoint >= 0x1f300 && codePoint <= 0x1faff) ||
+        (codePoint >= 0x20000 && codePoint <= 0x3fffd));
+    return width + (wide ? 2 : 1);
+  }, 0);
 
 /* ------------------------------------------------------------------ *
  * Typed view of the parts the parity assertions read.
@@ -693,8 +727,46 @@ describe('ux-map SSOT schema conformance (owned maps)', () => {
   it('keeps the TypeScript enum mirrors equal to the Python enum snapshot', () => {
     const snapshot = JSON.parse(readFileSync(enumSnapshotPath, 'utf8')) as UxMapEnumSnapshot;
 
+    expect(snapshot.source_revision).toMatch(/^(?:git|sha256):[0-9a-f]{40,64}$/);
     expect(new Set(MAP_STATES)).toEqual(new Set(snapshot.mapStates));
     expect(new Set(ZONE_ROLES)).toEqual(new Set(snapshot.zoneRoles));
+  });
+
+  it('verifies the enum snapshot against the canonical Python models when importable', () => {
+    const result = spawnSync('python3', [enumVerifierPath, '--check'], { encoding: 'utf8' });
+
+    expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
+    expect(`${result.stdout}${result.stderr}`).toMatch(/enum snapshot matches|SKIP enum derivation:/);
+  });
+
+  it('rejects the enum snapshot when derived Python enum output differs', () => {
+    const scratch = mkdtempSync(path.join(tmpdir(), 'uxmap-enum-model-'));
+    try {
+      const packageDir = path.join(scratch, 'workbay_canvas_mcp', 'ux_map');
+      mkdirSync(packageDir, { recursive: true });
+      writeFileSync(path.join(scratch, 'workbay_canvas_mcp', '__init__.py'), '', 'utf8');
+      writeFileSync(path.join(packageDir, '__init__.py'), '', 'utf8');
+      writeFileSync(
+        path.join(packageDir, 'models.py'),
+        [
+          'from enum import Enum',
+          'class MapState(str, Enum):',
+          '    mutant = "mutant"',
+          'class ZoneRole(str, Enum):',
+          '    content = "content"',
+        ].join('\n'),
+        'utf8',
+      );
+      const result = spawnSync('python3', [enumVerifierPath, '--check'], {
+        encoding: 'utf8',
+        env: { ...process.env, PYTHONPATH: scratch },
+      });
+
+      expect(result.status, `${result.stdout}${result.stderr}`).toBe(1);
+      expect(result.stderr).toContain('enum snapshot differs');
+    } finally {
+      rmSync(scratch, { recursive: true, force: true });
+    }
   });
 
   for (const mapRef of OWNED_MAPS) {
@@ -734,8 +806,8 @@ describe('ux-map render parity (owned maps)', () => {
   });
 
   it('keeps generated ASCII frames at one width and their ordered states equal to JSON', () => {
-    const widths = new Set<number>();
     let checkedScreens = 0;
+    let checkedRows = 0;
     for (const mapRef of OWNED_MAPS) {
       const raw = readMapJson(mapRef) as UxMapRenderSource;
       const md = readFileSync(path.join(uxMapsDir, `${mapRef}.md`), 'utf8');
@@ -744,11 +816,9 @@ describe('ux-map render parity (owned maps)', () => {
       for (const line of md.split('\n')) {
         if (line.startsWith('```')) {
           fenceLanguage = fenceLanguage === null ? line.slice(3) : null;
-        } else if (
-          (fenceLanguage === '' || fenceLanguage === 'text') &&
-          (/^\+-+\+$/.test(line) || /^\| states(?:\+|):/.test(line))
-        ) {
-          widths.add(line.length);
+        } else if ((fenceLanguage === '' || fenceLanguage === 'text') && /^[+|].*[+|]$/.test(line)) {
+          expect(displayWidth(line), `${mapRef} has a non-62-column ASCII row: ${line}`).toBe(62);
+          checkedRows += 1;
         }
       }
       for (const screen of raw.screens) {
@@ -759,7 +829,7 @@ describe('ux-map render parity (owned maps)', () => {
       }
     }
     expect(checkedScreens, 'no generated screen sketch was checked').toBeGreaterThan(0);
-    expect([...widths], 'generated ASCII frames must use one canonical width').toEqual([62]);
+    expect(checkedRows, 'no ASCII frame rows were checked').toBeGreaterThan(0);
   });
 
   it('rejects action boolean cells other than exact yes/no tokens with a useful location', () => {
@@ -1083,6 +1153,24 @@ describe('workbench-library footer state contract (z-lib-actions)', () => {
 
 const rendererPath = path.join(uxMapsDir, 'render_ux_maps.py');
 
+const runMutatedRendererCheck = (mapRef: string, mutate: (markdown: string) => string) => {
+  const scratch = mkdtempSync(path.join(tmpdir(), 'uxmap-render-check-'));
+  try {
+    const jsonName = `${mapRef}.uxmap.json`;
+    const markdownName = `${mapRef}.md`;
+    copyFileSync(path.join(uxMapsDir, jsonName), path.join(scratch, jsonName));
+    const original = readFileSync(path.join(uxMapsDir, markdownName), 'utf8');
+    writeFileSync(path.join(scratch, markdownName), mutate(original), 'utf8');
+    return spawnSync('python3', [rendererPath, '--check', mapRef], {
+      cwd: path.resolve(uxMapsDir, '..'),
+      encoding: 'utf8',
+      env: { ...process.env, UX_MAPS_DIR: scratch },
+    });
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
+};
+
 const sectionRows = (markdown: string, heading: string): number => {
   const start = markdown.indexOf(heading);
   if (start < 0) {
@@ -1112,14 +1200,60 @@ const VOCABULARY_MAPS = ['workbench-2pane', 'roster-people'] as const;
 const VOCABULARY_HEADING = "## Vocabulary (say / don't say)";
 
 describe('ux-map generated-render provenance', () => {
-  it('executes the sanctioned renderer in --check mode without its optional canvas package', () => {
-    const result = spawnSync('python3', [rendererPath, '--check'], {
-      cwd: path.resolve(uxMapsDir, '..'),
-      encoding: 'utf8',
-    });
+  it(
+    'executes the sanctioned renderer in --check mode without its optional canvas package',
+    () => {
+      const result = spawnSync('python3', [rendererPath, '--check'], {
+        cwd: path.resolve(uxMapsDir, '..'),
+        encoding: 'utf8',
+      });
+
+      expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
+      expect(result.stdout).toContain('all UX-map artifacts are current');
+    },
+    60_000,
+  );
+
+  it(
+    '--check rejects visible ASCII and Mermaid mutations even without the canvas package',
+    () => {
+      const screenMutation = runMutatedRendererCheck('workbench-operator-loop', (markdown) =>
+        markdown.replace('| Workbench  [screen]', '| MUTATED   [screen]'),
+      );
+      expect(screenMutation.status, `${screenMutation.stdout}${screenMutation.stderr}`).toBe(1);
+      expect(screenMutation.stderr).toContain('visible title');
+
+      const flowMutation = runMutatedRendererCheck('workbench-operator-loop', (markdown) =>
+        markdown.replace('-->|settings health|', '-->|MUTATED flow row|'),
+      );
+      expect(flowMutation.status, `${flowMutation.stdout}${flowMutation.stderr}`).toBe(1);
+      expect(flowMutation.stderr).toContain('visible Mermaid label');
+    },
+    60_000,
+  );
+
+  it('does not replace any target when a later artifact fails to render', () => {
+    const probe = [
+      'import importlib.util, pathlib, sys, tempfile',
+      `p = pathlib.Path(${JSON.stringify(rendererPath)})`,
+      's = importlib.util.spec_from_file_location("uxmap_renderer", p)',
+      'm = importlib.util.module_from_spec(s)',
+      's.loader.exec_module(m)',
+      'scratch = tempfile.TemporaryDirectory()',
+      'm.MAPS_DIR = pathlib.Path(scratch.name)',
+      '(m.MAPS_DIR / "first.md").write_text("old-first")',
+      '(m.MAPS_DIR / "second.md").write_text("old-second")',
+      'def fake_render(ref):\n    if ref == "second": raise ValueError("second render failed")\n    return "new-first"',
+      'm.render = fake_render',
+      'failed = False',
+      'try:\n    m._render_and_write(["first", "second"])\nexcept ValueError:\n    failed = True',
+      'unchanged = (m.MAPS_DIR / "first.md").read_text() == "old-first" and (m.MAPS_DIR / "second.md").read_text() == "old-second"',
+      'scratch.cleanup()',
+      'sys.exit(0 if failed and unchanged else 1)',
+    ].join('\n');
+    const result = spawnSync('python3', ['-c', probe], { encoding: 'utf8' });
 
     expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
-    expect(result.stdout).toContain('all UX-map artifacts are current');
   });
 
   it('restores kept sections at their original generated-heading anchors', () => {

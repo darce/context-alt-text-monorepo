@@ -55,6 +55,7 @@ export type AppErrorTag = (typeof APP_ERROR_TAGS)[number];
  * docs/reviews/uxp-2/lexicons/engineering.md:293).
  */
 export const JOB_STREAM_ERROR_CODE = {
+  PROXY_ERROR: 'proxy_error',
   JOB_NOT_FOUND: 'job_not_found',
   UNEXPECTED_RESPONSE: 'unexpected_response',
   INVALID_JOB_RESPONSE: 'invalid_job_response',

@@ -1,3 +1,6 @@
+import { readdirSync, readFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -68,11 +71,22 @@ const captureRecords = (): LogRecord[] => {
 
 describe('useJobProgressStream', () => {
   it('keeps the consumer error vocabulary in parity with the PHP stream producer', () => {
-    expect(Object.values(JOB_STREAM_ERROR_CODE)).toEqual([
-      'job_not_found',
-      'unexpected_response',
-      'invalid_job_response',
-    ]);
+    const servicesDirectory = resolve(
+      dirname(fileURLToPath(import.meta.url)),
+      '../../../../src/api/services',
+    );
+    const phpErrorCodeSource = readdirSync(servicesDirectory)
+      .filter((file) => file.endsWith('.php'))
+      .map((file) => readFileSync(resolve(servicesDirectory, file), 'utf8'))
+      .find((source) => /(?:enum|class)\s+JobStreamErrorCode\b/.test(source));
+
+    expect(phpErrorCodeSource, 'PHP JobStreamErrorCode owner must exist').toBeDefined();
+    const phpCodes = Array.from(
+      phpErrorCodeSource?.matchAll(/(?:case|public\s+const)\s+[A-Z_]+\s*=\s*['"]([^'"]+)['"]/g) ?? [],
+      (match) => match[1],
+    );
+
+    expect([...Object.values(JOB_STREAM_ERROR_CODE)].sort()).toEqual(phpCodes.sort());
   });
 
   const useJobCoordinationMock = vi.mocked(useJobCoordination);

@@ -19,7 +19,6 @@ import { offlineActionReason, useRemoteActionGate } from '../../../hooks/useRemo
 import { useSyncOffline } from '../../../hooks/useSyncOffline';
 import { isScanSuccessStatus } from '../../../hooks/jobStateMachineUtils';
 import {
-  delay,
   getClusterErrorCode,
   getClusterMutationErrorMessage,
   isDeliberateCancelError,
@@ -39,10 +38,63 @@ const SPLIT_ASYNC_THRESHOLD = 50;
 const SPLIT_POLL_INTERVAL_MS = 1500;
 const SPLIT_TIMEOUT_MS = 120_000;
 
-const pollSplitJob = async (jobId: string): Promise<void> => {
+const splitAbortReason = (signal: AbortSignal): unknown =>
+  signal.reason ?? new DOMException('The split operation was aborted.', 'AbortError');
+
+const rejectIfSplitAborted = (signal: AbortSignal): void => {
+  if (signal.aborted) {
+    throw splitAbortReason(signal);
+  }
+};
+
+/**
+ * Bound an in-flight poll operation to the split owner even while older API
+ * clients still expose a one-argument fetchScanStatus signature. The transport
+ * has its own 15s deadline; this race is the lifecycle fence that prevents its
+ * eventual result from reaching a superseded or unmounted mutation (DDIA
+ * unknown outcomes; RES-13, docs/reviews/uxp-2/lexicons/engineering.md:47).
+ */
+const waitForSplitOperation = <T>(operation: Promise<T>, signal: AbortSignal): Promise<T> => {
+  rejectIfSplitAborted(signal);
+
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => reject(splitAbortReason(signal));
+    const settle = (callback: (value: T) => void, value: T) => {
+      signal.removeEventListener('abort', onAbort);
+      callback(value);
+    };
+
+    signal.addEventListener('abort', onAbort, { once: true });
+    operation.then(
+      (value) => settle(resolve, value),
+      (error: unknown) => {
+        signal.removeEventListener('abort', onAbort);
+        reject(error);
+      },
+    );
+  });
+};
+
+const delaySplitPoll = (ms: number, signal: AbortSignal): Promise<void> => {
+  rejectIfSplitAborted(signal);
+
+  return new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      signal.removeEventListener('abort', onAbort);
+      resolve();
+    }, ms);
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(splitAbortReason(signal));
+    };
+    signal.addEventListener('abort', onAbort, { once: true });
+  });
+};
+
+const pollSplitJob = async (jobId: string, signal: AbortSignal): Promise<void> => {
   const startedAt = Date.now();
   while (Date.now() - startedAt < SPLIT_TIMEOUT_MS) {
-    const status = await fetchScanStatus(jobId);
+    const status = await waitForSplitOperation(fetchScanStatus(jobId), signal);
     // BND-1: completed_with_errors is a terminal partial-success — resolve the poll, else it spins
     // until SPLIT_TIMEOUT_MS and throws a spurious timeout. 'failed' remains the only hard failure.
     if (isScanSuccessStatus(status.status)) {
@@ -51,7 +103,7 @@ const pollSplitJob = async (jobId: string): Promise<void> => {
     if (status.status === 'failed') {
       throw new Error(status.message ?? __('Split job failed.', 'alt-context'));
     }
-    await delay(SPLIT_POLL_INTERVAL_MS);
+    await delaySplitPoll(SPLIT_POLL_INTERVAL_MS, signal);
   }
   throw new Error(__('Split job timed out. Please retry.', 'alt-context'));
 };
@@ -223,7 +275,7 @@ export const useClusterActionMutations = ({
         signal,
       );
       if ('job_id' in result) {
-        await pollSplitJob(result.job_id);
+        await pollSplitJob(result.job_id, signal);
       }
       return result;
     },
@@ -232,6 +284,12 @@ export const useClusterActionMutations = ({
       invalidateQueries();
     },
     onError: (err: unknown) => {
+      // Replacement and unmount own this AbortController. Their rejection is a
+      // lifecycle fence, not a user-visible terminal result, so neither onError
+      // nor onAbort may update stale UI after the owner has moved on.
+      if (isDeliberateCancelError(err)) {
+        return;
+      }
       routeMutationFailure(err, { onAbort, onError });
     },
     onSettled: (_data, _error, variables) => {

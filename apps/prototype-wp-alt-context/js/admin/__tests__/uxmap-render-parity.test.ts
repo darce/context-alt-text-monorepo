@@ -37,8 +37,9 @@ import unicodeWidth from './uxmap-render-parity.fixtures/unicode-width.json';
 
 // Synchronous children need OS-enforced deadlines; Vitest timers cannot interrupt them.
 const SHORT_COMMAND_DEADLINE_MS = 55_000;
-// The boundary suite took 281 seconds under sandbox contention.
-const BOUNDARY_SUITE_DEADLINE_MS = 300_000;
+// 2026-09-05: the combined suite took up to 310 seconds under review contention.
+// Bound each discovered mutation test separately instead of budgeting the whole suite.
+const BOUNDARY_SHARD_DEADLINE_MS = 120_000;
 const vitestBudget = (deadlineMs: number): number => deadlineMs + Math.max(5_000, deadlineMs / 10);
 const spawnSync: typeof spawnSyncUnbounded = ((...args: Parameters<typeof spawnSyncUnbounded>) => {
   const [command, argv, options] = args;
@@ -1727,15 +1728,30 @@ const VOCABULARY_MAPS = ['workbench-2pane', 'roster-people'] as const;
 const VOCABULARY_HEADING = "## Vocabulary (say / don't say)";
 
 describe('ux-map generated-render provenance', () => {
-  it('runs the renderer boundary mutation probes', () => {
+  const discovery = spawnSync(uxMapPython, ['-c', [
+    'import json, unittest',
+    'def ids(suite):',
+    '    for test in suite:',
+    '        if isinstance(test, unittest.TestSuite): yield from ids(test)',
+    '        else: yield test.id()',
+    'print(json.dumps(list(ids(unittest.defaultTestLoader.discover(".", pattern="test_render_ux_maps.py")))))',
+  ].join('\n')], { cwd: uxMapsDir, encoding: 'utf8' });
+  if (discovery.status !== 0) throw new Error(`Boundary discovery failed: ${discovery.stdout}${discovery.stderr}`);
+  const boundaryTestIds: unknown = JSON.parse(discovery.stdout);
+  if (!Array.isArray(boundaryTestIds) || boundaryTestIds.length === 0
+    || !boundaryTestIds.every((id) => typeof id === 'string' && id.startsWith('test_render_ux_maps.'))) {
+    throw new Error(`Invalid boundary discovery: ${discovery.stdout}`);
+  }
+
+  it.each(boundaryTestIds)('runs renderer boundary mutation probe %s', (testId: string) => {
     const result = spawnSync(
       uxMapPython,
-      ['-m', 'unittest', 'discover', '-s', uxMapsDir, '-p', 'test_render_ux_maps.py'],
-      { encoding: 'utf8', timeout: BOUNDARY_SUITE_DEADLINE_MS },
+      ['-m', 'unittest', testId],
+      { cwd: uxMapsDir, encoding: 'utf8', timeout: BOUNDARY_SHARD_DEADLINE_MS },
     );
     expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
     // Exhaustive declarations run in-process; only representatives cross the boundary.
-  }, vitestBudget(BOUNDARY_SUITE_DEADLINE_MS));
+  }, vitestBudget(BOUNDARY_SHARD_DEADLINE_MS));
 
   it('executes the sanctioned renderer in --check mode without its optional canvas package', () => {
     const result = spawnSync(uxMapPython, [rendererPath, '--check'], {

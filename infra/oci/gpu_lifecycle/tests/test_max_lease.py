@@ -71,6 +71,44 @@ TEST_MONOTONIC = 100_000.0
 TEST_BOOT_ID = "test-boot"
 
 
+@pytest.fixture(autouse=True)
+def synthetic_host_boot_id(monkeypatch):
+    """CLI tests must not depend on the execution host's Linux proc filesystem."""
+    original_read_text = Path.read_text
+
+    def read_text(path, *args, **kwargs):
+        if path == Path("/proc/sys/kernel/random/boot_id"):
+            return TEST_BOOT_ID
+        return original_read_text(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", read_text)
+
+
+def test_cli_missing_boot_identity_is_a_fatal_startup_error(tmp_path, monkeypatch, capsys):
+    original_read_text = Path.read_text
+
+    def read_text(path, *args, **kwargs):
+        if path == Path("/proc/sys/kernel/random/boot_id"):
+            raise FileNotFoundError("simulated host without Linux boot identity")
+        return original_read_text(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", read_text)
+    lease_path = tmp_path / "lease.json"
+    exit_code = main([
+        "--instance-id", "instance-a",
+        "--running-since-path", str(lease_path),
+        "--dry-run",
+    ])
+
+    assert exit_code != 0
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert len(captured.err.splitlines()) == 1
+    assert captured.err.startswith("fatal: running-since boot identity unavailable:")
+    assert "Traceback" not in captured.err
+    assert not lease_path.exists()
+
+
 def _lease_store(path: Path) -> RunningSinceLeaseStore:
     return RunningSinceLeaseStore(
         path=path,
@@ -594,7 +632,7 @@ def test_concurrent_lease_writers_preserve_both_instance_records(tmp_path: Path)
             return instances
 
     def write(instance_id: str) -> None:
-        CoordinatedLeaseStore(path=path, now=lambda: NOW).record_start(instance_id)
+        CoordinatedLeaseStore(path=path, now=lambda: NOW, boot_id=TEST_BOOT_ID).record_start(instance_id)
 
     with ThreadPoolExecutor(max_workers=2) as executor:
         futures = [executor.submit(write, instance_id) for instance_id in ("instance-a", "instance-b")]

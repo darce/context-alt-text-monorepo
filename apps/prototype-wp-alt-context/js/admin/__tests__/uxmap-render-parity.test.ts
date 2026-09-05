@@ -13,7 +13,7 @@
  * owns the schema (DRIFT-03: an SSOT that cannot be loaded has stopped being a source
  * of truth). The cast is now a validated parse.
  */
-import { spawnSync } from 'node:child_process';
+import { spawnSync as spawnSyncUnbounded } from 'node:child_process';
 import {
   accessSync,
   constants,
@@ -32,8 +32,16 @@ import { fileURLToPath } from 'node:url';
 
 import { describe, expect, it } from 'vitest';
 
-import { SCREEN_METADATA_KEYS, parseRenderedUxMap, projectUxMapForRenderParity, type UxMapRenderSource } from '../uxmap/renderParity';
+import { SCREEN_METADATA_KEYS, scanDeclarations, parseRenderedUxMap, projectUxMapForRenderParity, type UxMapRenderSource } from '../uxmap/renderParity';
 import unicodeWidth from './uxmap-render-parity.fixtures/unicode-width.json';
+
+// Synchronous children need OS-enforced deadlines; Vitest timers cannot interrupt them.
+const spawnSync: typeof spawnSyncUnbounded = ((...args: Parameters<typeof spawnSyncUnbounded>) => {
+  const [command, argv, options] = args;
+  const result = spawnSyncUnbounded(command, argv, { ...options, timeout: 55_000, killSignal: 'SIGKILL' });
+  if (result.error) throw new Error(`Subprocess ${command} failed (55s deadline): ${result.error.message}`);
+  return result;
+}) as typeof spawnSyncUnbounded;
 
 const uxMapsDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../docs/ux-maps');
 
@@ -1115,18 +1123,21 @@ describe('ux-map render parity (owned maps)', () => {
     const md = readFileSync(path.join(uxMapsDir, 'febt-1-job-error-states.md'), 'utf8')
       .replace('Purpose:', `url_params: \`probe\`\n\nScreen states: ${source.screens[0]!.states!.join(', ')}\n\nPurpose:`);
     const row = new RegExp(`^${field}: .*$`, 'm').exec(md)![0];
+    const cases = new Set<string>();
     for (const template of [...fixture.variants, ...fixture.emphasis[field]!]) {
       for (const key of [field, field.toUpperCase(), field.toLowerCase()]) {
         for (const value of [row.slice(row.indexOf(': ') + 2), 'retired_state']) {
           const duplicate = template.replace('{key}', key).replace('{value}', value);
           for (const rows of [[row, duplicate], [duplicate, row]]) {
-            const first = md.slice(0, md.indexOf(row)).split('\n').length;
-            expect(() => parseRenderedUxMap(md.replace(row, rows.join('\n\n')))).toThrow(
-              `duplicate ${field} declarations at lines ${first} and ${first + 2}`,
-            );
+            cases.add(rows.join('\n\n'));
           }
         }
       }
+    }
+    for (const block of cases) {
+      expect(() => scanDeclarations(block, 'matrix', 1)).toThrow(
+        `duplicate ${field} declarations at lines 1 and 3`,
+      );
     }
   }, 15000);
 
@@ -1707,7 +1718,7 @@ describe('ux-map generated-render provenance', () => {
       { encoding: 'utf8' },
     );
     expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
-    // The expanded integration suite starts Node for each mutation in both check paths.
+    // Exhaustive declarations run in-process; only representatives cross the boundary.
   }, 300_000);
 
   it('executes the sanctioned renderer in --check mode without its optional canvas package', () => {

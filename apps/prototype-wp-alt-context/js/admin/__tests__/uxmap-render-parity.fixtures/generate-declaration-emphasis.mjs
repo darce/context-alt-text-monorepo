@@ -29,6 +29,6 @@ for (const key of fixture.keys) {
       }
     }
   }
-  fixture.emphasis[key] = cases;
+  fixture.emphasis[key] = [...new Set(cases)];
 }
 fs.writeFileSync(file, JSON.stringify(fixture, null, 2) + '\n');

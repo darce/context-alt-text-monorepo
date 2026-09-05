@@ -509,6 +509,30 @@ def _read_visible_snapshot(map_ref: str, json_path: Path) -> str:
     return projection_digest
 
 
+SCREEN_METADATA_KEYS = ("Purpose", "url_params", "Action states", "Screen states")
+
+
+def scan_declarations(block: str, screen_id: str, first_line: int = 1) -> dict[str, str]:
+    """Pure counterpart of renderParity.scanDeclarations for exhaustive probes."""
+    declarations = {}
+    locations = {}
+    for index, line in enumerate(block.split("\n")):
+        candidate = re.sub(r"^(?:(?:>|[-+*]|\d+[.)])\s*)+", "", line.lstrip()).strip()
+        label, colon, value = candidate.partition(":")
+        if not colon:
+            continue
+        label = " ".join(re.sub(r"[_*`]+", "", label).split()).lower()
+        key = next((key for key in SCREEN_METADATA_KEYS if key.replace("_", "").lower() == label), None)
+        if key is None:
+            continue
+        number = first_line + index
+        if key in locations:
+            raise ValueError(f"screen {screen_id} has duplicate {key} declarations at lines {locations[key]} and {number}")
+        locations[key] = number
+        declarations[key] = re.sub(r"^[_*`]+", "", value).strip()
+    return declarations
+
+
 def _check_projection(map_ref: str, rendered: str | None = None) -> tuple[str, str]:
     """Return complete expected/actual projections with or without the optional renderer."""
     parity_module = REPO_ROOT / "apps/prototype-wp-alt-context/js/admin/uxmap/renderParity.ts"
@@ -524,12 +548,16 @@ def _check_projection(map_ref: str, rendered: str | None = None) -> tuple[str, s
             "console.log(JSON.stringify({expected: projectUxMapForRenderParity(source), actual: parseRenderedUxMap(markdown)}, null, 2));",
         ]
     )
-    completed = subprocess.run(
-        ["node", "--experimental-strip-types", "--input-type=module", "--eval", script],
-        check=False,
-        capture_output=True,
-        text=True,
-    )
+    try:
+        completed = subprocess.run(
+            ["node", "--experimental-strip-types", "--input-type=module", "--eval", script],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError(f"{map_ref}: Node parity check exceeded 10s deadline") from exc
     if completed.returncode != 0:
         raise RuntimeError(completed.stderr.strip() or completed.stdout.strip())
     projections = json.loads(completed.stdout)

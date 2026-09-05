@@ -60,4 +60,40 @@ describe('useClusterActionMutations split cancellation', () => {
 
     expect(splitSignal?.aborted).toBe(true);
   });
+
+  // TEST-15 (heuristics-canon-research/lexicons/engineering.md:396): observe the
+  // transport seam so removing the replacement abort makes this test go red.
+  // RES-13 (heuristics-canon-research/lexicons/engineering.md:124): exercise the
+  // failure/containment path of this external write, not only its happy path.
+  it('aborts an in-flight split before starting its replacement', async () => {
+    const splitSignals: AbortSignal[] = [];
+    vi.mocked(recognitionApi.splitCluster).mockImplementation((_clusterId, _request, signal) => {
+      if (signal) {
+        splitSignals.push(signal);
+      }
+      return new Promise<never>(() => undefined);
+    });
+    const queryClient = new QueryClient({ defaultOptions: { mutations: { retry: false } } });
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+    );
+    const { result } = renderHook(
+      () =>
+        useClusterActionMutations({
+          clusterId: 'c1',
+          invalidateQueries: vi.fn(),
+        }),
+      { wrapper },
+    );
+
+    result.current.split('c1', 2);
+    await waitFor(() => expect(splitSignals).toHaveLength(1));
+    expect(splitSignals[0].aborted).toBe(false);
+
+    result.current.split('c1', 3);
+    await waitFor(() => expect(splitSignals).toHaveLength(2));
+
+    expect(splitSignals[0].aborted).toBe(true);
+    expect(splitSignals[1].aborted).toBe(false);
+  });
 });

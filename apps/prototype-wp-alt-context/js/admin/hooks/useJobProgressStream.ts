@@ -114,9 +114,10 @@ const isMissingJobStreamError = (error: JobStreamErrorEventData): boolean => {
     return true;
   }
 
-  // LEGACY FALLBACK: current WordPress producers can still emit message-only
-  // SSE errors. Remove this English-copy check, and its dedicated test, once
-  // every supported server version always sends the typed `code` field.
+  // LEGACY FALLBACK: server versions predating the matching typed PHP stream
+  // producer can still emit message-only SSE errors. Remove this English-copy
+  // check, and its dedicated test, once every supported server version sends
+  // the typed `code` field.
   return error.code === undefined && error.message?.includes('not found') === true;
 };
 

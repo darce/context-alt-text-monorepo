@@ -10,9 +10,9 @@ It wraps `workbay_canvas_mcp.ux_map.render_markdown.render_markdown_bundle` and 
 per-screen inventory blocks (purpose / url_params / zone table) and the parity index that
 `js/admin/__tests__/uxmap-render-parity.test.ts` asserts against.
 
-Hand-authored prose sections listed in `KEEP_SECTIONS` are lifted out of the existing
-`.md` and re-injected verbatim at their original generated-heading anchors, so narrative
-that the structural renderer cannot express survives a regeneration without moving.
+Hand-authored prose sections listed in `KEEP_SECTIONS` come from the independent
+`render_ux_maps.contracts.json` authority, with their original heading anchors. Normal
+regeneration never rewrites that source or learns expected contracts from an artifact.
 
 Usage (the canvas package is optional and only required when writing artifacts):
 
@@ -41,6 +41,7 @@ MAPS_DIR = Path(os.environ.get("UX_MAPS_DIR", Path(__file__).resolve().parent)).
 ASCII_FRAME_WIDTH = 62
 ASCII_CONTENT_WIDTH = ASCII_FRAME_WIDTH - 2
 VISIBLE_PROJECTION_PATH = Path(__file__).resolve().with_name("render_ux_maps.visible.json")
+CONTRACTS_PATH = Path(__file__).resolve().with_name("render_ux_maps.contracts.json")
 
 # Hand-authored sections preserved across regeneration. Order is significant and stable.
 KEEP_SECTIONS = (
@@ -50,12 +51,18 @@ KEEP_SECTIONS = (
 )
 
 
+class OptionalRendererUnavailable(ImportError):
+    """Only absence of the top-level optional package permits snapshot fallback."""
+
+
 def _load_renderer():
     try:
         from workbay_canvas_mcp.ux_map.models import UxMap
         from workbay_canvas_mcp.ux_map.render_markdown import render_markdown_bundle
-    except ImportError as exc:  # pragma: no cover - operator-facing guidance
-        raise ImportError(
+    except ModuleNotFoundError as exc:  # pragma: no cover - operator-facing guidance
+        if exc.name != "workbay_canvas_mcp":
+            raise
+        raise OptionalRendererUnavailable(
             "workbay_canvas_mcp is not importable. Install mcp-workbay-canvas or set "
             "PYTHONPATH to a checkout/venv that contains it, then re-run."
         ) from exc
@@ -78,6 +85,8 @@ def _screen_block(screen: dict) -> list[str]:
     params = screen.get("url_params") or []
     if params:
         out += ["url_params: " + ", ".join(f"`{p}`" for p in params), ""]
+    if screen.get("action_states"):
+        out += ["Action states: " + ", ".join(screen["action_states"]), ""]
     if screen.get("zones"):
         out += _zone_table(screen) + [""]
     return out
@@ -114,13 +123,18 @@ def _graphemes(value: str) -> Iterator[str]:
     for char in value:
         if not cluster:
             cluster = char
-        elif _is_grapheme_extension(char) or char == "\u200d" or cluster.endswith("\u200d"):
+        elif (_is_grapheme_extension(char) or char == "\u200d" or cluster.endswith("\u200d")
+              or (len(cluster) == 1 and _is_regional_indicator(cluster) and _is_regional_indicator(char))):
             cluster += char
         else:
             yield cluster
             cluster = char
     if cluster:
         yield cluster
+
+
+def _is_regional_indicator(char: str) -> bool:
+    return "\U0001f1e6" <= char <= "\U0001f1ff"
 
 
 def _grapheme_width(cluster: str) -> int:
@@ -133,7 +147,7 @@ def _grapheme_width(cluster: str) -> int:
         return 0
     # Keycaps and emoji joined into one pictograph occupy one two-cell terminal glyph,
     # irrespective of the number of code points that encode the cluster.
-    if "\u20e3" in cluster or "\u200d" in cluster:
+    if "\u20e3" in cluster or "\u200d" in cluster or "\ufe0f" in cluster or any(_is_regional_indicator(c) for c in visible):
         return 2
     return 2 if any(unicodedata.east_asian_width(char) in {"W", "F"} for char in visible) else 1
 
@@ -220,12 +234,16 @@ def _parity_index(doc: dict) -> list[str]:
 
 
 def _action_table(doc: dict) -> list[str]:
+    conditional = any("when" in action for action in doc.get("actions", []))
     rows = [
         "## Actions",
         "",
         "| id | verb | target | hierarchy | costly | irreversible | preview required | screen id |",
         "| --- | --- | --- | --- | --- | --- | --- | --- |",
     ]
+    if conditional:
+        rows[2] += " when (recovery state) |"
+        rows[3] += " --- |"
     for action in doc.get("actions", []):
         def escaped(key: str) -> str:
             return str(action.get(key, "")).replace("|", "\\|")
@@ -237,7 +255,49 @@ def _action_table(doc: dict) -> list[str]:
             f"{'yes' if action.get('irreversible') else 'no'} | "
             f"{'yes' if action.get('preview_required') else 'no'} | {screen_id} |"
         )
+        if conditional:
+            rows[-1] += " " + ", ".join(action.get("when", ["always"])) + " |"
     return rows + [""]
+
+
+def _conditional_action_rows(doc: dict, screen: dict) -> list[str]:
+    """Show each mutually exclusive recovery separately; never truncate its condition."""
+    rows = []
+    actions = [action for action in doc.get("actions", []) if action.get("screen_id") == screen["id"]]
+    for state in screen["action_states"]:
+        rows.append(_fit_ascii_row(f"| when {state} |"))
+        available = [action for action in actions if state in action.get("when", screen["action_states"])]
+        for action in available:
+            mark = "PRIMARY" if action["hierarchy"] == "primary" else action["hierarchy"]
+            rows.append(_fit_ascii_row(f"|   [{mark}] {action['verb']} |"))
+        if not available:
+            rows.append(_fit_ascii_row("|   No action (silent) |"))
+    return rows
+
+
+def _validate_action_conditions(doc: dict) -> None:
+    """Local schema extension: disjoint cases bound primary actions on each screen."""
+    screens = {screen["id"]: screen for screen in doc["screens"]}
+    for action in doc.get("actions", []):
+        if "when" not in action:
+            continue
+        states = screens.get(action.get("screen_id"), {}).get("action_states", [])
+        when = action["when"]
+        if not isinstance(when, list) or not when or any(state not in states for state in when):
+            raise ValueError(f"{action['id']}: invalid action condition")
+    for screen in screens.values():
+        states = screen.get("action_states", ["default"])
+        if not isinstance(states, list) or not states or any(not isinstance(state, str) or not state.strip() for state in states):
+            raise ValueError(f"{screen['id']}: invalid action states")
+        primaries = [action for action in doc.get("actions", []) if action.get("screen_id") == screen["id"] and action["hierarchy"] == "primary"]
+        for state in states:
+            if sum(state in action.get("when", states) for action in primaries) > 1:
+                raise ValueError(f"{screen['id']}: multiple primary actions for {state}")
+
+
+def _slice_section(doc: dict) -> list[str]:
+    slices = doc.get("slices", [])
+    return ["## Suggested task-slice decomposition (from map)", "", *[f"{i}. {item}" for i, item in enumerate(slices, 1)], ""] if slices else []
 
 
 def _domain_state_mapping(doc: dict) -> list[str]:
@@ -261,9 +321,12 @@ def _extract_kept_text(text: str, headings: tuple[str, ...] = KEEP_SECTIONS) -> 
     heading_matches = list(re.finditer(r"^## .+$", text, re.MULTILINE))
     kept: list[tuple[int, str | None, str]] = []
     for heading in headings:
-        match = re.search(rf"^{re.escape(heading)}$", text, re.MULTILINE)
-        if not match:
+        matches = list(re.finditer(rf"^{re.escape(heading)}$", text, re.MULTILINE))
+        if len(matches) > 1:
+            raise ValueError(f"duplicate retained contract heading: {heading}")
+        if not matches:
             continue
+        match = matches[0]
         following = next((item for item in heading_matches if item.start() > match.start()), None)
         end = following.start() if following else len(text)
         anchor = following.group(0) if following else None
@@ -275,6 +338,26 @@ def _extract_kept(md_path: Path) -> list[tuple[str | None, str]]:
     if not md_path.exists():
         return []
     return _extract_kept_text(md_path.read_text(encoding="utf8"))
+
+
+def _kept_contract(map_ref: str) -> list[tuple[str | None, str]]:
+    """Read the reviewed source; no regeneration path may write this file."""
+    source = json.loads(CONTRACTS_PATH.read_text(encoding="utf8"))
+    if source.get("version") != 1 or map_ref not in source.get("maps", {}):
+        raise ValueError(f"{map_ref}: retained contract authority is absent or invalid")
+    sections = source["maps"][map_ref]
+    if not isinstance(sections, list) or any(
+        not isinstance(item, list) or len(item) != 2
+        or (item[0] is not None and not isinstance(item[0], str))
+        or not isinstance(item[1], str) for item in sections
+    ):
+        raise ValueError(f"{map_ref}: retained contract authority is invalid")
+    return [(anchor, section) for anchor, section in sections]
+
+
+def _validate_retained_contract(map_ref: str, markdown: str) -> None:
+    if _extract_kept_text(markdown) != _kept_contract(map_ref):
+        raise ValueError(f"{map_ref}: retained contract differs from independent authority {CONTRACTS_PATH.name}")
 
 
 def _restore_kept(generated: str, kept: list[tuple[str | None, str]]) -> str:
@@ -300,22 +383,36 @@ def _restore_kept(generated: str, kept: list[tuple[str | None, str]]) -> str:
 def render(map_ref: str) -> str:
     ux_map_model, render_markdown_bundle = _load_renderer()
     doc = json.loads((MAPS_DIR / f"{map_ref}.uxmap.json").read_text(encoding="utf8"))
+    _validate_action_conditions(doc)
     # Local render extensions are lossless tables appended around the upstream bundle;
     # keep them out of the strict upstream Pydantic model and render them below.
-    canonical_doc = {key: value for key, value in doc.items() if key != "domain_state_mappings"}
+    canonical_doc = {key: value for key, value in doc.items() if key not in {"domain_state_mappings", "slices"}}
+    canonical_doc["actions"] = [{k: v for k, v in action.items() if k != "when"} for action in doc.get("actions", [])]
+    canonical_doc["screens"] = [{k: v for k, v in screen.items() if k != "action_states"} for screen in doc["screens"]]
     bundle = render_markdown_bundle(ux_map_model.model_validate(canonical_doc)).split("\n")
     screens = {screen["id"]: screen for screen in doc["screens"]}
     flows = {flow["id"]: flow for flow in doc["flows"]}
 
     out: list[str] = []
-    kept = _extract_kept(MAPS_DIR / f"{map_ref}.md")
+    kept = _kept_contract(map_ref)
     active_flow: dict | None = None
     active_screen: dict | None = None
+    skip_actions = False
 
     for line in bundle:
+        if skip_actions:
+            if not line.startswith("+"):
+                continue
+            skip_actions = False
+        if active_screen is not None and active_screen.get("action_states") and line.startswith("| ACTIONS"):
+            out.append(line)
+            out += _conditional_action_rows(doc, active_screen)
+            skip_actions = True
+            continue
         if line == "## Flows":
             out += _action_table(doc)
         if line == "## Not doing":
+            out += _slice_section(doc)
             out += _domain_state_mapping(doc)
             out += _parity_index(doc)
         if active_screen is not None and line.startswith("| states:"):
@@ -382,7 +479,8 @@ def _visible_projection(markdown: str) -> list[dict[str, object]]:
 
 
 def _source_digest(json_path: Path) -> str:
-    return hashlib.sha256(json_path.read_bytes()).hexdigest()
+    # Universal-newline decoding keeps LF and autocrlf checkouts equivalent.
+    return hashlib.sha256(json_path.read_text(encoding="utf8").encode("utf8")).hexdigest()
 
 
 def _projection_digest(projection: list[dict[str, object]]) -> str:
@@ -412,6 +510,7 @@ def _check_projection(map_ref: str, rendered: str | None = None) -> tuple[str, s
     parity_module = REPO_ROOT / "apps/prototype-wp-alt-context/js/admin/uxmap/renderParity.ts"
     json_path = MAPS_DIR / f"{map_ref}.uxmap.json"
     markdown_path = MAPS_DIR / f"{map_ref}.md"
+    _validate_action_conditions(json.loads(json_path.read_text(encoding="utf8")))
     script = "\n".join(
         [
             "import fs from 'node:fs';",
@@ -439,6 +538,9 @@ def _check_projection(map_ref: str, rendered: str | None = None) -> tuple[str, s
                 f"{map_ref}: renderer visibleProjectionSha256 {rendered_digest} differs "
                 f"from source-pinned snapshot {snapshot_digest}"
             )
+        _validate_retained_contract(map_ref, rendered)
+    projections["expected"]["retainedContracts"] = _kept_contract(map_ref)
+    projections["actual"]["retainedContracts"] = _extract_kept_text(markdown)
     projections["expected"]["visibleProjectionSha256"] = snapshot_digest
     projections["actual"]["visibleProjectionSha256"] = _projection_digest(
         _visible_projection(markdown)
@@ -455,12 +557,12 @@ def check(refs: list[str]) -> int:
             try:
                 rendered = render(ref)
                 expected, actual = _check_projection(ref, rendered)
-            except ImportError:
+            except OptionalRendererUnavailable:
                 # The optional canvas package is deliberately not an app dependency.
                 # A source-pinned snapshot supplies the renderer-side visible rows;
                 # both branches use the same complete projection and comparison.
                 expected, actual = _check_projection(ref)
-        except (OSError, RuntimeError, ValueError) as exc:
+        except (OSError, RuntimeError, ValueError, ImportError) as exc:
             print(f"{ref}: parity check failed: {exc}", file=sys.stderr)
             drifted = True
             continue
@@ -505,7 +607,7 @@ def _atomic_write(target: Path, rendered: str) -> None:
 
 
 def _updated_visible_snapshot(rendered_by_ref: dict[str, str]) -> str:
-    """Record renderer output for dependency-free checks, pinned to exact JSON bytes."""
+    """Record generated rows only after checking the independent retained authority."""
     try:
         snapshot = json.loads(VISIBLE_PROJECTION_PATH.read_text(encoding="utf8"))
     except FileNotFoundError:
@@ -513,6 +615,7 @@ def _updated_visible_snapshot(rendered_by_ref: dict[str, str]) -> str:
     if snapshot.get("version") != 1 or not isinstance(snapshot.get("maps"), dict):
         raise ValueError(f"invalid visible projection snapshot: {VISIBLE_PROJECTION_PATH}")
     for ref, markdown in rendered_by_ref.items():
+        _validate_retained_contract(ref, markdown)
         json_path = MAPS_DIR / f"{ref}.uxmap.json"
         snapshot["maps"][ref] = {
             "source_sha256": _source_digest(json_path),

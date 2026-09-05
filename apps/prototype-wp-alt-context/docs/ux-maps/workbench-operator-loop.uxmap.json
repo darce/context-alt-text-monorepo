@@ -478,6 +478,13 @@
       "canonical_state": "edge_input"
     }
   ],
+  "slices": [
+    "**Scan queue empty/first-time** — design empty + first_time states on `z-media-queue` / CTAs",
+    "**Scan costly action preview** — `act-scan-selected` requires preview_required surface",
+    "**Conflict forced-choice bound** — `z-conflict-detail` max_candidates=5 + evidence",
+    "**Dead-letter discard confirm** — destructive + irreversible path",
+    "**Deep-link parity** — panel/tab/status round-trip via `appLinks` ([NAV-11])"
+  ],
   "open_questions": [
     "Should Scan CTAs require selection count preview on the same surface before start? ([INT-07])",
     "Conflict shortlist max_candidates=5 — confirm product policy vs model top-k",

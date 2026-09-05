@@ -52,6 +52,8 @@ Purpose: Shows the active job's phase, progress, ETA and stall state driven by j
 
 Purpose: One banner per AppError tag with tag-specific copy and recovery; raw messages never reach the DOM. Canonical UX state does not erase the tag: http, parse, auth_expired, nonce_refresh, timeout and unknown are error; transport is offline; abort is default because its frozen poll is silent; an http cooldown (429, or 503 with Retry-After) is degraded while it waits to auto-retry.
 
+Action states: http, parse, auth_expired, nonce_refresh, timeout, transport, unknown, abort, http_cooldown
+
 | zone id | label | role | states |
 | --- | --- | --- | --- |
 | `error-copy` | User-facing copy by AppError tag — http: status-aware safe copy; parse: unexpected response; auth_expired: session expired; nonce_refresh and transport: check connection; timeout: server took too long; unknown: caller fallback; abort: silent frozen poll. Cooldown remains the http tag plus isCooldown and Retry-After, never a ninth tag. | content | default, error, offline, degraded |
@@ -67,9 +69,24 @@ Purpose: One banner per AppError tag with tag-specific copy and recovery; raw me
 |   - Recovery by AppError tag — Retry: http, parse, nonce_… |
 +------------------------------------------------------------+
 | ACTIONS                                                    |
-|   [PRIMARY] Retry -> request-error-banner                  |
-|   [PRIMARY] Reload page -> reload-page                     |
-|   [secondary] Wait (countdown) -> request-error-banner     |
+| when http                                                  |
+|   [PRIMARY] Retry                                          |
+| when parse                                                 |
+|   [PRIMARY] Retry                                          |
+| when auth_expired                                          |
+|   [PRIMARY] Reload page                                    |
+| when nonce_refresh                                         |
+|   [PRIMARY] Retry                                          |
+| when timeout                                               |
+|   [PRIMARY] Retry                                          |
+| when transport                                             |
+|   [PRIMARY] Retry                                          |
+| when unknown                                               |
+|   [PRIMARY] Retry                                          |
+| when abort                                                 |
+|   No action (silent)                                       |
+| when http_cooldown                                         |
+|   [secondary] Wait (countdown)                             |
 +------------------------------------------------------------+
 | states: default | error | offline | degraded               |
 +------------------------------------------------------------+
@@ -94,7 +111,7 @@ Purpose: Only exit from auth_expired; WordPress login handles the rest.
 idle      : "No job running"                         [Start job] (primary)
 pending   : "Queued…"                                [Cancel]
 running   : "Describing 42/120  ETA 1m 10s"          [Cancel]
-stalled   : "No progress for 35 s — reconnecting"     [Cancel]
+stalled   : "! No progress for 35 s - reconnecting"     [Cancel]
 offline   : "You are offline — will resume"
 completed : "Done 120/120"                           [Start job] (primary)
 completed_with_errors : "Done, 3 failed"             [Retry failed]
@@ -116,7 +133,7 @@ Every state×event cell is explicit; `never` guards the rest (GRPH-27).
 
 ### AppError banner and recovery rows
 
-`cooldown` and `not_found` are not tags: they are `isCooldown(http)` (429/503 + Retry-After) and `isHttpStatus(http, 404)`. Abort has copy but no recovery action (frozen poll, not a banner).
+`http_cooldown` is the mutually exclusive recovery state for `http` with `isCooldown`; `http` in the action conditions means a non-cooldown HTTP failure. `cooldown` and `not_found` are not tags: they are `isCooldown(http)` (429/503 + Retry-After) and `isHttpStatus(http, 404)`. Abort has copy but no recovery action (frozen poll, not a banner).
 
 | AppError tag | Banner example | Recovery |
 | --- | --- | --- |
@@ -137,13 +154,13 @@ The reconnect counter is internal (`reconnectAttempts`) and never rendered; the 
 
 ## Actions
 
-| id | verb | target | hierarchy | costly | irreversible | preview required | screen id |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| `start-job` | Start job | `workbench-pipeline` | primary | yes | no | no | `workbench-pipeline` |
-| `cancel-job` | Cancel job | `workbench-pipeline` | secondary | no | yes | no | `workbench-pipeline` |
-| `retry-request` | Retry | `request-error-banner` | primary | no | no | no | `request-error-banner` |
-| `reload` | Reload page | `reload-page` | primary | no | no | no | `request-error-banner` |
-| `wait-cooldown` | Wait (countdown) | `request-error-banner` | secondary | no | no | no | `request-error-banner` |
+| id | verb | target | hierarchy | costly | irreversible | preview required | screen id | when (recovery state) |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `start-job` | Start job | `workbench-pipeline` | primary | yes | no | no | `workbench-pipeline` | always |
+| `cancel-job` | Cancel job | `workbench-pipeline` | secondary | no | yes | no | `workbench-pipeline` | always |
+| `retry-request` | Retry | `request-error-banner` | primary | no | no | no | `request-error-banner` | http, parse, nonce_refresh, timeout, transport, unknown |
+| `reload` | Reload page | `reload-page` | primary | no | no | no | `request-error-banner` | auth_expired |
+| `wait-cooldown` | Wait (countdown) | `request-error-banner` | secondary | no | no | no | `request-error-banner` | http_cooldown |
 
 ## Flows
 ### idle → pending → running → completed (`job-happy-path`)

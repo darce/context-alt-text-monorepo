@@ -47,6 +47,7 @@
     },
     {
       "id": "request-error-banner",
+      "action_states": ["http", "parse", "auth_expired", "nonce_refresh", "timeout", "transport", "unknown", "abort", "http_cooldown"],
       "kind": "overlay",
       "title": "Request error banner",
       "purpose": "One banner per AppError tag with tag-specific copy and recovery; raw messages never reach the DOM. Canonical UX state does not erase the tag: http, parse, auth_expired, nonce_refresh, timeout and unknown are error; transport is offline; abort is default because its frozen poll is silent; an http cooldown (429, or 503 with Retry-After) is degraded while it waits to auto-retry.",
@@ -101,6 +102,7 @@
     },
     {
       "id": "retry-request",
+      "when": ["http", "parse", "nonce_refresh", "timeout", "transport", "unknown"],
       "verb": "Retry",
       "target": "request-error-banner",
       "hierarchy": "primary",
@@ -111,6 +113,7 @@
     },
     {
       "id": "reload",
+      "when": ["auth_expired"],
       "verb": "Reload page",
       "target": "reload-page",
       "hierarchy": "primary",
@@ -121,6 +124,7 @@
     },
     {
       "id": "wait-cooldown",
+      "when": ["http_cooldown"],
       "verb": "Wait (countdown)",
       "target": "request-error-banner",
       "hierarchy": "secondary",

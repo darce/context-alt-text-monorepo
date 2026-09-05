@@ -56,8 +56,8 @@ class RendererBoundaryTests(unittest.TestCase):
                             row = re.search(rf"^{field}: .*$", original, re.MULTILINE)[0]
                             # TypeScript covers the full Cartesian product in-process.
                             # Exercise every format/key through both process boundaries,
-                            # distributing case, value and order across these probes.
-                            for index, template in enumerate(fixture["variants"]):
+                            # covering both identical and contradictory values for every format.
+                            for index, template in enumerate([variant for variant in fixture["variants"] + fixture["emphasis"][field] for _ in range(2)]):
                                 key = [field, field.upper(), field.lower()][index % 3]
                                 value = row.split(": ", 1)[1] if index % 2 else "retired_state"
                                 duplicate = template.format(key=key, value=value)

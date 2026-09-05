@@ -133,12 +133,13 @@ const scanDeclarations = (block: string, screenId: string, firstLine: number): M
     const candidate = line.trimStart().replace(/^(?:(?:>|[-+*]|\d+[.)])\s*)+/, '').trim();
     const colon = candidate.indexOf(':');
     if (colon < 0) continue;
-    // Strip single underscore emphasis at the edges, preserving url_params.
+    // Normalize label formatting everywhere, including emphasis around individual
+    // words. Normalize canonical keys too, since url_params contains an underscore.
+    // Declaration values never participate in this normalization.
     const label = candidate.slice(0, colon)
-      .replace(/__|[*`]/g, '').trim()
-      .replace(/^_+|_+$/g, '').trim()
+      .replace(/[_*`]+/g, '').trim()
       .replace(/\s+/g, ' ').toLowerCase();
-    const key = SCREEN_METADATA_KEYS.find((field) => field.toLowerCase() === label);
+    const key = SCREEN_METADATA_KEYS.find((field) => field.replace(/_/g, '').toLowerCase() === label);
     if (!key) continue;
     const lineNumber = firstLine + index;
     const previous = locations.get(key);

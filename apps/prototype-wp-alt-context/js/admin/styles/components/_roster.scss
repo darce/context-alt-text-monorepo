@@ -243,6 +243,31 @@
     }
   }
 
+  &--tertiary {
+    background: transparent;
+    border-color: transparent;
+    color: var(--acx-color-text);
+    text-decoration: underline;
+    text-underline-offset: var(--acx-space-2);
+    &:hover {
+      background: var(--acx-color-surface-alt);
+    }
+  }
+
+  &--danger {
+    background: var(--acx-color-danger);
+    border-color: var(--acx-color-danger);
+    color: var(--acx-color-accent-contrast);
+    &:hover {
+      background: var(--acx-color-danger-hover);
+    }
+  }
+
+  &:focus-visible {
+    outline: var(--acx-space-2) solid var(--acx-color-accent);
+    outline-offset: var(--acx-space-2);
+  }
+
   &:disabled {
     opacity: 0.5;
     cursor: not-allowed;

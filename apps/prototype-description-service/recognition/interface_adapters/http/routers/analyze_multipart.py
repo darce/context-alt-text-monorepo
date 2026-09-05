@@ -114,8 +114,14 @@ class _ClosingMultiPartParser(MultiPartParser):
 async def _parse_multipart_form(request: Request) -> FormData:
     """Parse a bounded multipart form while retaining ownership of partial spools."""
     content_type = request.headers.get("content-type", "")
-    if not content_type.lower().startswith("multipart/form-data"):
-        return await request.form(max_files=_MAX_MULTIPART_FILES)
+    # Use the same normalization as the parser: tolerated whitespace must not
+    # route uploads around the parser that owns and closes their partial spools.
+    media_type, _options = parse_options_header(content_type)
+    if media_type.lower() != b"multipart/form-data":
+        raise HTTPException(
+            status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+            detail="content-type must be multipart/form-data",
+        )
 
     parser = _ClosingMultiPartParser(
         request.headers,

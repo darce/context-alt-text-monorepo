@@ -880,6 +880,132 @@ async def test_multipart_parser_closes_boundaryless_trailing_spool(monkeypatch: 
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("media_type", "ending", "expected_status", "expected_detail"),
+    [
+        (
+            b"\xa0multipart/form-data",
+            "eof",
+            422,
+            "multipart submission must include at least one image_<media_id> part",
+        ),
+        (b"\xa0multipart/form-data", "malformed", 400, "invalid multipart form"),
+        (b"\t multipart/form-data", "malformed", 400, "invalid multipart form"),
+        (b"MULTIPART/FORM-DATA", "complete", 202, None),
+        (b"application/octet-stream", "complete", 415, "content-type must be multipart/form-data"),
+        (b"multipart/form-data-extra", "complete", 415, "content-type must be multipart/form-data"),
+        (b"application/x-www-form-urlencoded", "complete", 415, "content-type must be multipart/form-data"),
+        (b"", "complete", 415, "content-type must be multipart/form-data"),
+    ],
+)
+async def test_multipart_route_normalizes_content_type_and_owns_spools(
+    tenant_id: str,
+    monkeypatch: pytest.MonkeyPatch,
+    media_type: bytes,
+    ending: str,
+    expected_status: int,
+    expected_detail: str | None,
+) -> None:
+    """Exercise parser selection at the HTTP boundary with a disk-backed upload."""
+    import io
+
+    from starlette import formparsers
+
+    from recognition.interface_adapters.http.routers import analyze_multipart as mod
+
+    opened_spools: list = []
+    real_spooled_temporary_file = tempfile.SpooledTemporaryFile
+
+    def _tracking_spool(*args, **kwargs):
+        spool = real_spooled_temporary_file(*args, **kwargs)
+        opened_spools.append(spool)
+        return spool
+
+    monkeypatch.setattr(formparsers, "SpooledTemporaryFile", _tracking_spool)
+    image_data = PNG_BYTES + b"x" * (1024 * 1024)
+
+    class _MemoryStore:
+        def put(self, **_kwargs):
+            return "memory://image"
+
+        def open(self, _uri):
+            return io.BytesIO(image_data)
+
+        def cleanup(self, **_kwargs):
+            pass
+
+    async def _auth_provider():
+        return AuthContext(token="t", tenant_claim=tenant_id)
+
+    async def _no_session_provider():
+        return None
+
+    queue = _FakeScanQueue()
+
+    async def _queue_provider():
+        return queue
+
+    async def _factory_provider():
+        return lambda _tenant_id: _MemoryStore()
+
+    async def _noop_chain(**_kwargs):
+        pass
+
+    monkeypatch.setattr(mod, "chain_populate_and_process", _noop_chain)
+    app = FastAPI()
+    app.include_router(router, prefix="/recognition")
+    app.dependency_overrides[require_write_access] = _auth_provider
+    app.dependency_overrides[get_optional_session] = _no_session_provider
+    app.dependency_overrides[get_scan_queue_service_optional] = _queue_provider
+    app.dependency_overrides[get_object_store_factory_for_request] = _factory_provider
+    boundary = "normalized-content-type"
+
+    async def _body():
+        yield (
+            f"--{boundary}\r\n"
+            'Content-Disposition: form-data; name="request"\r\n\r\n'
+            f"{json.dumps({'tenant_id': tenant_id})}\r\n"
+            f"--{boundary}\r\n"
+            'Content-Disposition: form-data; name="image_1"; filename="a.png"\r\n'
+            "Content-Type: image/png\r\n\r\n"
+        ).encode() + image_data
+        # Separate chunks ensure the upload reaches disk before the parser
+        # encounters clean EOF or malformed subsequent headers.
+        if ending == "malformed":
+            yield f"\r\n--{boundary}\r\nInvalid Header: value\r\n\r\n".encode()
+        elif ending == "complete":
+            yield f"\r\n--{boundary}--\r\n".encode()
+
+    fd_directory = Path("/proc/self/fd")
+    transport = httpx.ASGITransport(app=app, raise_app_exceptions=False)
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        # Read the local procfs snapshot without introducing thread-pool activity.
+        before_fds = len(list(fd_directory.iterdir())) if fd_directory.exists() else None  # noqa: ASYNC240
+        try:
+            response = await client.post(
+                "/recognition/analyze/multipart",
+                headers={b"content-type": media_type + f"; boundary={boundary}".encode()},
+                content=_body(),
+            )
+            assert response.status_code == expected_status, response.text
+            if expected_detail is not None:
+                assert response.json() == {"detail": expected_detail}
+            if expected_status == 415:
+                assert opened_spools == [], "unsupported media types must fail before spool allocation"
+            else:
+                assert len(opened_spools) == 1
+                assert opened_spools[0]._rolled, "probe must exercise an upload exceeding the memory limit"
+                assert all(spool.closed for spool in opened_spools)
+            if before_fds is not None:
+                assert len(list(fd_directory.iterdir())) == before_fds  # noqa: ASYNC240
+            assert len(queue.calls) == (1 if expected_status == 202 else 0)
+        finally:
+            # A failing regression must not itself leak descriptors into later tests.
+            for spool in opened_spools:
+                spool.close()
+
+
+@pytest.mark.asyncio
 async def test_multipart_route_rejects_malformed_parser_input_and_closes_spool(
     tenant_id: str,
     monkeypatch: pytest.MonkeyPatch,

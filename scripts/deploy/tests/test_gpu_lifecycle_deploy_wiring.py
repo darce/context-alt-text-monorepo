@@ -33,6 +33,7 @@ def _run_lifecycle(
         "/usr/bin/python3 -m infra.oci.gpu_lifecycle --mode reap "
         "--max-lease-seconds ${MAX_LEASE_SECONDS}"
     ),
+    remote_body_mutation: str = "",
 ) -> tuple[subprocess.CompletedProcess[str], str]:
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
@@ -50,13 +51,15 @@ def _run_lifecycle(
         content = f"test fixture for {unit}\n"
         (expected_systemd / unit).write_text(content, encoding="utf-8")
         (effective_systemd / unit).write_text(content, encoding="utf-8")
-    if mismatched_unit is not None:
-        (effective_systemd / mismatched_unit).write_text("stale effective unit\n", encoding="utf-8")
     lifecycle_env = tmp_path / "gpu-lifecycle.env"
     lifecycle_env.write_text("MAX_LEASE_SECONDS=3600\n", encoding="utf-8")
+    fake_host = tmp_path / "host"
+    fake_host.mkdir()
+    for directory in ("opt-acx-gpu", "etc-acx", "etc-tmpfiles", "run-acx", "run-acx-write"):
+        (fake_host / directory).mkdir()
     _write_executable(
         fake_bin / "ssh",
-        """#!/usr/bin/env bash
+        r"""#!/usr/bin/env bash
 set -euo pipefail
 printf 'ssh' >>"$FAKE_TRANSPORT_LOG"
 argument_number=0
@@ -69,7 +72,22 @@ done
 printf '\n' >>"$FAKE_TRANSPORT_LOG"
 remote_body=${!#}
 if [[ "$remote_body" == *"activate_gpu_lifecycle_timers"* ]]; then
-  "$FAKE_INSTALLER" --activate-systemd-only
+  case "${FAKE_REMOTE_BODY_MUTATION:-}" in
+    delete_activation_definition)
+      remote_body=$(printf '%s\n' "$remote_body" | sed '/^activate_gpu_lifecycle_timers ()/,/^}$/d')
+      ;;
+    delete_activation_call)
+      remote_body=$(printf '%s\n' "$remote_body" | tac | sed '0,/activate_gpu_lifecycle_timers/{/activate_gpu_lifecycle_timers/d;}' | tac)
+      ;;
+  esac
+  remote_body=${remote_body//\/opt\/acx-gpu/$FAKE_OPT_ACX_GPU}
+  remote_body=${remote_body//\/etc\/systemd\/system/$ACX_EFFECTIVE_SYSTEMD_DIR}
+  remote_body=${remote_body//\/etc\/acx/$FAKE_ETC_ACX}
+  remote_body=${remote_body//\/etc\/tmpfiles.d/$FAKE_ETC_TMPFILES}
+  remote_body=${remote_body//\/run\/acx-write/$FAKE_RUN_ACX_WRITE}
+  remote_body=${remote_body//\/run\/acx-gpu/$FAKE_RUN_ACX_GPU}
+  remote_body=${remote_body//\/run\/acx/$FAKE_RUN_ACX}
+  bash --noprofile --norc -euo pipefail -c "$remote_body"
 fi
 """,
     )
@@ -77,7 +95,10 @@ fi
         fake_bin / "sudo",
         """#!/usr/bin/env bash
 set -euo pipefail
-exec "$@"
+case "${1:-}" in
+  chown) exit 0 ;;
+  *) exec "$@" ;;
+esac
 """,
     )
     _write_executable(
@@ -92,7 +113,12 @@ if [ "$1" = start ] && [ "$2" = acx-gpu-reap.service ]; then
 fi
 if [ "$1" = show ]; then
   case "$*" in
-    *"--property=FragmentPath"*) printf '%s/%s\n' "$ACX_EFFECTIVE_SYSTEMD_DIR" "$2" ;;
+    *"--property=FragmentPath"*)
+      if [ -n "${FAKE_MISMATCHED_UNIT:-}" ] && [ "$2" = "$FAKE_MISMATCHED_UNIT" ]; then
+        printf '%s\n' 'stale effective mutation' >>"$ACX_EFFECTIVE_SYSTEMD_DIR/$2"
+      fi
+      printf '%s/%s\n' "$ACX_EFFECTIVE_SYSTEMD_DIR" "$2"
+      ;;
     *"--property=DropInPaths"*) printf '%s\n' "${FAKE_DROP_IN_PATHS:-}" ;;
     *"--property=ExecStart"*)
       printf '%s\n' "$FAKE_REAP_EXEC_START"
@@ -128,8 +154,15 @@ printf '\n' >>"$FAKE_TRANSPORT_LOG"
             "FAKE_VERIFY_RC": str(verify_rc),
             "FAKE_REAPER_RC": str(reaper_rc),
             "FAKE_DROP_IN_PATHS": drop_in_paths,
+            "FAKE_MISMATCHED_UNIT": mismatched_unit or "",
             "FAKE_REAP_EXEC_START": reap_exec_start,
-            "FAKE_INSTALLER": str(INSTALLER),
+            "FAKE_REMOTE_BODY_MUTATION": remote_body_mutation,
+            "FAKE_OPT_ACX_GPU": str(fake_host / "opt-acx-gpu"),
+            "FAKE_ETC_ACX": str(fake_host / "etc-acx"),
+            "FAKE_ETC_TMPFILES": str(fake_host / "etc-tmpfiles"),
+            "FAKE_RUN_ACX": str(fake_host / "run-acx"),
+            "FAKE_RUN_ACX_WRITE": str(fake_host / "run-acx-write"),
+            "FAKE_RUN_ACX_GPU": str(fake_host / "run-acx-gpu"),
             "ACX_EXPECTED_SYSTEMD_DIR": str(expected_systemd),
             "ACX_EFFECTIVE_SYSTEMD_DIR": str(effective_systemd),
             "ACX_EXPECTED_ENV_FILE": str(lifecycle_env),
@@ -428,6 +461,46 @@ def test_reaper_is_proved_before_start_timer_is_enabled(tmp_path: Path) -> None:
     assert reap_proof < start_timer_enable
     assert "systemctl <start> <acx-gpu-start" not in calls
     assert calls.index("systemctl <show> <acx-gpu-reap.service>") < start_timer_enable
+
+
+def _assert_rendered_activation_contract(result: subprocess.CompletedProcess[str], calls: str) -> None:
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "systemctl <start> <acx-gpu-reap.service>" in calls
+    assert "systemctl <show> <acx-gpu-reap.service>" in calls
+    assert "systemctl <enable> <--now> <acx-gpu-start.timer>" in calls
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    ("delete_activation_definition", "delete_activation_call"),
+)
+def test_rendered_remote_body_activation_mutants_go_red(tmp_path: Path, mutation: str) -> None:
+    result, calls = _run_lifecycle(
+        tmp_path,
+        enabled=True,
+        ready_url="http://10.0.1.36:8000/health",
+        dry_run=False,
+        remote_body_mutation=mutation,
+    )
+
+    with pytest.raises(AssertionError):
+        _assert_rendered_activation_contract(result, calls)
+
+
+def test_fail_safe_guard_precedes_live_release_and_effective_artifact_mutations() -> None:
+    source = INSTALLER.read_text(encoding="utf-8")
+    transaction = source[source.index('run_with_deadline "systemd unit installation"') :]
+
+    guard = transaction.index("trap cleanup_gpu_lifecycle_transaction ERR EXIT")
+    disable = transaction.index("sudo systemctl disable --now acx-gpu-start.timer")
+    switch = transaction.index("previous_release=\\$(readlink -f /opt/acx-gpu/current")
+    artifact_write = transaction.index("sudo tee /etc/systemd/system/acx-gpu-start.service")
+    prove_reaper = transaction.index("activate_gpu_lifecycle_timers \\")
+    rearm_start = source.index("sudo systemctl enable --now acx-gpu-start.timer")
+
+    assert guard < disable < switch < artifact_write < prove_reaper
+    assert "sudo systemctl start acx-gpu-reap.service" in source
+    assert source.index("sudo systemctl start acx-gpu-reap.service") < rearm_start
 
 
 def test_every_remote_shell_enables_pipefail() -> None:

@@ -34,12 +34,10 @@ export const GuidedSamplePhoto = ({ mediaAltText, credit }: GuidedSamplePhotoPro
         />
       )}
       <figcaption>
-        <strong>Original media · supplied sample photo</strong>
-        <span>
-          <strong>Current alt text on the page:</strong> {mediaAltText}
-        </span>
+        <strong>The photo</strong>
+        <span>Alt text on the page right now: {mediaAltText}</span>
         <span>Photo credit: {credit}.</span>
-        <span>Identity evidence comes from the sample record; it was not inferred from the image.</span>
+        <span>AltContext found one face in this photo. The next step shows the match.</span>
       </figcaption>
     </figure>
   );

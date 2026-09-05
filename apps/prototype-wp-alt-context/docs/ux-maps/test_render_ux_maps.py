@@ -36,6 +36,25 @@ class RendererBoundaryTests(unittest.TestCase):
                                 with contextlib.redirect_stderr(output), contextlib.redirect_stdout(io.StringIO()):
                                     self.assertEqual(renderer.check([ref]), 0, output.getvalue())
 
+    def test_declaration_matrix_in_process(self):
+        fixtures = renderer.REPO_ROOT / "apps/prototype-wp-alt-context/js/admin/__tests__/uxmap-render-parity.fixtures"
+        fixture = json.loads((fixtures / "declaration-mutations.json").read_text())
+        self.assertEqual(fixture["keys"], list(renderer.SCREEN_METADATA_KEYS))
+        for field in fixture["keys"]:
+            cases = set()
+            for template in fixture["variants"] + fixture["emphasis"][field]:
+                for key in (field, field.upper(), field.lower()):
+                    for value in ("probe_value", "retired_state"):
+                        duplicate = template.format(key=key, value=value)
+                        row = f"{field}: probe_value"
+                        cases.update((f"{row}\n\n{duplicate}", f"{duplicate}\n\n{row}"))
+            for block in sorted(cases):
+                with self.subTest(field=field, block=block):
+                    with self.assertRaisesRegex(ValueError, f"duplicate {field} declarations at lines 1 and 3"):
+                        renderer.scan_declarations(block, "matrix")
+        self.assertEqual(renderer.scan_declarations("url_params: `probe_value`", "matrix"),
+                         {"url_params": "`probe_value`"})
+
     def test_declaration_variants_fail_both_check_paths(self):
         ref = "febt-1-job-error-states"
         original = SOURCE.with_name(f"{ref}.md").read_text()
@@ -54,10 +73,16 @@ class RendererBoundaryTests(unittest.TestCase):
                                       side_effect=None if available else renderer.OptionalRendererUnavailable()):
                         for field in fixture["keys"]:
                             row = re.search(rf"^{field}: .*$", original, re.MULTILINE)[0]
-                            # TypeScript covers the full Cartesian product in-process.
-                            # Exercise every format/key through both process boundaries,
-                            # covering both identical and contradictory values for every format.
-                            for index, template in enumerate([variant for variant in fixture["variants"] + fixture["emphasis"][field] for _ in range(2)]):
+                            # Label formatting has the same semantics for every key.
+                            # Cross the boundary once per unique emphasis class on the
+                            # multi-word key; cover containers/case on all keys. Values
+                            # and order are orthogonal and exhaustive in-process above.
+                            templates = ["{key}: {value}", "   {key}: {value}",
+                                         "> - **{key}**: {value}", "\t{key}: {value}",
+                                         "`{key}`: {value}"]
+                            if field == "Action states":
+                                templates += fixture["emphasis"][field]
+                            for index, template in enumerate(dict.fromkeys(templates)):
                                 key = [field, field.upper(), field.lower()][index % 3]
                                 value = row.split(": ", 1)[1] if index % 2 else "retired_state"
                                 duplicate = template.format(key=key, value=value)

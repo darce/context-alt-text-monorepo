@@ -126,7 +126,7 @@ type MetadataKey = (typeof SCREEN_METADATA_KEYS)[number];
 
 // Both Python --check branches call this parser. Scan every line once, including
 // code indentation and Markdown containers: formatting must not hide a declaration.
-const scanDeclarations = (block: string, screenId: string, firstLine: number): Map<MetadataKey, string> => {
+export const scanDeclarations = (block: string, screenId: string, firstLine: number): Map<MetadataKey, string> => {
   const declarations = new Map<MetadataKey, string>();
   const locations = new Map<MetadataKey, number>();
   for (const [index, line] of block.split('\n').entries()) {

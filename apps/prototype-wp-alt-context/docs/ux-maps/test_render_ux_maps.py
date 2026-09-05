@@ -105,6 +105,66 @@ class RendererBoundaryTests(unittest.TestCase):
                                 self.assertEqual(status, 1)
                                 self.assertIn("noncanonical Screens table row: " + mutation["row"], output.getvalue())
 
+    def test_unrecognized_screen_headings_fail_both_check_paths(self):
+        ref = "workbench-operator-loop"
+        original = SOURCE.with_name(f"{ref}.md").read_text()
+        row = re.search(r"^\| `workbench-shell` \|.*$", original, re.MULTILINE)[0].replace("workbench-shell", "retired-screen")
+        screen_end = original.index("\n## ", original.index("## Screens\n") + 1) + 1
+        boundaries = [match.start() for match in re.finditer(r"^### .+$", original[:screen_end], re.MULTILINE)]
+        boundaries.append(screen_end)
+        with tempfile.TemporaryDirectory() as directory:
+            maps = Path(directory)
+            shutil.copyfile(SOURCE.with_name(f"{ref}.uxmap.json"), maps / f"{ref}.uxmap.json")
+            target = maps / f"{ref}.md"
+            with patch.object(renderer, "MAPS_DIR", maps):
+                for available in [False, True]:
+                    with patch.object(renderer, "render", return_value=original,
+                                      side_effect=None if available else renderer.OptionalRendererUnavailable()):
+                        for heading in ["### Retired screen inventory", "  ### Retired screen inventory"]:
+                            inventory = f"{heading}\n\n| id | kind | route | title |\n| --- | --- | --- | --- |\n{row}\n\n"
+                            for boundary in boundaries:
+                                with self.subTest(available=available, heading=heading, boundary=boundary):
+                                    target.write_text(original[:boundary] + inventory + original[boundary:])
+                                    output = io.StringIO()
+                                    with contextlib.redirect_stderr(output), contextlib.redirect_stdout(io.StringIO()):
+                                        self.assertEqual(renderer.check([ref]), 1)
+                                    self.assertIn("noncanonical Screens detail heading: " + heading, output.getvalue())
+
+    def test_optional_zone_states_and_empty_extensions_match_both_check_paths(self):
+        ref = "workbench-operator-loop"
+        original = SOURCE.with_name(f"{ref}.md").read_text()
+        for field in ["zone.states", "slices", "domain_state_mappings"]:
+            with self.subTest(field=field), tempfile.TemporaryDirectory() as directory:
+                doc = json.loads(SOURCE.with_name(f"{ref}.uxmap.json").read_text())
+                regenerated = original
+                if field == "zone.states":
+                    screen = doc["screens"][0]
+                    before = "\n".join(renderer._screen_block(screen))
+                    del screen["zones"][0]["states"]
+                    after = "\n".join(renderer._screen_block(screen))
+                    # Older artifacts omit the explicit screen-states line. Replace
+                    # the zone row emitted by the real Python screen renderer.
+                    before_row = next(line for line in before.splitlines() if line.startswith("| `z-tabs`"))
+                    after_row = next(line for line in after.splitlines() if line.startswith("| `z-tabs`"))
+                    regenerated = regenerated.replace(before_row, after_row)
+                    self.assertNotEqual(regenerated, original)
+                else:
+                    doc[field] = []
+                    heading = "Suggested task-slice decomposition (from map)" if field == "slices" else "Domain state mapping"
+                    regenerated = re.sub(r"^## " + re.escape(heading) + r"\n[\s\S]*?(?=^## |\Z)", "", regenerated, flags=re.MULTILINE)
+                    self.assertEqual(renderer._slice_section(doc) if field == "slices" else renderer._domain_state_mapping(doc), [])
+                maps = Path(directory)
+                (maps / f"{ref}.uxmap.json").write_text(json.dumps(doc))
+                (maps / f"{ref}.md").write_text(regenerated)
+                snapshot = maps / "visible.json"
+                with patch.object(renderer, "MAPS_DIR", maps), patch.object(renderer, "VISIBLE_PROJECTION_PATH", snapshot):
+                    snapshot.write_text(renderer._updated_visible_snapshot({ref: regenerated}))
+                    for available in [False, True]:
+                        with patch.object(renderer, "render", return_value=regenerated,
+                                          side_effect=None if available else renderer.OptionalRendererUnavailable()), \
+                                contextlib.redirect_stdout(io.StringIO()):
+                            self.assertEqual(renderer.check([ref]), 0)
+
     def test_duplicate_retained_contract_cannot_hide_an_unchecked_table(self):
         text = SOURCE.with_name("febt-1-job-error-states.md").read_text()
         with self.assertRaisesRegex(ValueError, "duplicate retained contract"):

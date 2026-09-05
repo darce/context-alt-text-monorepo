@@ -67,10 +67,10 @@ export interface UxMapRenderSource extends Omit<RenderParityMap, 'screens' | 'fl
     }
   >;
   screens: Array<
-    Omit<RenderParityMap['screens'][number], 'url_params' | 'zones'> & {
+    Omit<RenderParityMap['screens'][number], 'states' | 'url_params' | 'zones'> & {
       states?: string[];
       url_params?: string[];
-      zones?: RenderParityMap['screens'][number]['zones'];
+      zones?: Array<Omit<RenderParityMap['screens'][number]['zones'][number], 'states'> & { states?: string[] }>;
     }
   >;
   flows: Array<{
@@ -148,7 +148,21 @@ const parseScreenStates = (block: string, screenId: string): string[] => {
 
 const parseScreens = (markdown: string): RenderParityMap['screens'] => {
   const screensSection = section(markdown, 'Screens');
-  const summary = screensSection.split('\n### ')[0] ?? '';
+  // Account for every level-three screen heading, including malformed headings.
+  // Matching only valid blocks would silently discard a retired inventory between them.
+  // Deeper headings belong to retained per-state sketches within a screen block.
+  const headings = [...screensSection.matchAll(/^[\t ]*###(?:[\t ]+[^\n]*)?$/gm)];
+  const blocks = headings.map((heading, index) => {
+    const match = /^### .+ \(`([^`]+)`\)$/.exec(heading[0]);
+    if (!match) {
+      throw new Error(`noncanonical Screens detail heading: ${heading[0]}`);
+    }
+    return {
+      id: match[1]!,
+      body: screensSection.slice(heading.index! + heading[0].length, headings[index + 1]?.index),
+    };
+  });
+  const summary = screensSection.slice(0, headings[0]?.index);
   const summaryLines = summary.split('\n').filter((line) => line.trim() !== '');
   const header = summaryLines[0] ?? '';
   const headerMatch = /^\| id \| kind \| route \| title \|(?: (url_params|wp_page) \|)?$/.exec(header);
@@ -189,15 +203,12 @@ const parseScreens = (markdown: string): RenderParityMap['screens'] => {
     });
   }
 
-  const blocks = [...screensSection.matchAll(/^### .+ \(`([^`]+)`\)\n([\s\S]*?)(?=^### |(?![\s\S]))/gm)];
   const detailIds = new Set<string>();
-  const screens = blocks.map((match) => {
-    const id = match[1] ?? '';
+  const screens = blocks.map(({ id, body: block }) => {
     if (detailIds.has(id)) {
       throw new Error(`screen ${id} has duplicate detail blocks`);
     }
     detailIds.add(id);
-    const block = match[2] ?? '';
     const base = summaries.get(id);
     if (!base) {
       throw new Error(`screen ${id} has a detail block but no Screens table row`);
@@ -388,7 +399,7 @@ export const projectUxMapForRenderParity = (doc: UxMapRenderSource): RenderedUxM
       }
     }
     for (const zone of screen.zones ?? []) {
-      for (const state of zone.states) {
+      for (const state of zone.states ?? []) {
         if (!states.includes(state)) {
           states.push(state);
         }
@@ -435,8 +446,8 @@ export const projectUxMapForRenderParity = (doc: UxMapRenderSource): RenderedUxM
         branch_label: step.branch_label ?? null,
       })),
     })),
-    ...(doc.domain_state_mappings ? { domain_state_mappings: doc.domain_state_mappings } : {}),
-    ...(doc.slices ? { slices: doc.slices } : {}),
+    ...(doc.domain_state_mappings?.length ? { domain_state_mappings: doc.domain_state_mappings } : {}),
+    ...(doc.slices?.length ? { slices: doc.slices } : {}),
     open_questions: doc.open_questions,
     not_doing: doc.not_doing,
     parityIndex: {

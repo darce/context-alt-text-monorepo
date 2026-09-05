@@ -122,6 +122,10 @@ const listSection = (markdown: string, heading: string): string[] =>
     .map((line) => line.slice(2));
 
 const parseScreenStates = (block: string, screenId: string): string[] => {
+  const declarations = [...block.matchAll(/^Screen states:[ \t]*(.*)$/gm)];
+  if (declarations.length > 1) {
+    throw new Error(`screen ${screenId} has duplicate Screen states declarations`);
+  }
   const explicit = /^Screen states:\s*(.+?)\.?$/m.exec(block)?.[1];
   const explicitStates = explicit
     ? explicit

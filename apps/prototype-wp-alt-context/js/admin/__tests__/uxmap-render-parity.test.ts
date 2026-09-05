@@ -1056,6 +1056,23 @@ describe('ux-map render parity (owned maps)', () => {
   });
 
   it.each(
+    JSON.parse(readFileSync(path.join(negativeFixturesDir, 'screen-state-mutations.json'), 'utf8')) as Array<{
+      name: string; value: string | null; before: boolean;
+    }>,
+  )('rejects $name Screen states declarations', ({ value, before }) => {
+    const md = readFileSync(path.join(uxMapsDir, 'describe-gpu-tier.md'), 'utf8');
+    const source = readMapJson('describe-gpu-tier') as UxMapRenderSource;
+    const row = `Screen states: ${source.screens[0]!.states!.join(', ')}`;
+    const declared = md.replace('Purpose:', `${row}\n\nPurpose:`);
+    expect(parseRenderedUxMap(declared)).toEqual(parseRenderedUxMap(md));
+    const duplicate = value === null ? row : `Screen states: ${value}`;
+    const rows = before ? `${duplicate}\n\n${row}` : `${row}\n\n${duplicate}`;
+    expect(() => parseRenderedUxMap(declared.replace(row, rows))).toThrow(
+      'has duplicate Screen states declarations',
+    );
+  });
+
+  it.each(
     JSON.parse(readFileSync(path.join(negativeFixturesDir, 'action-state-mutations.json'), 'utf8')) as Array<{
       name: string; value: string | null; before: boolean;
     }>,

@@ -65,8 +65,10 @@ describe('guided prototype scenario state', () => {
     expect(applied.history.at(-1)).toMatchObject({ kind: 'applied' });
 
     const undone = undoGuidedApplication(applied);
+    const repeatedUndo = undoGuidedApplication(undone);
     expect(undone.appliedText).toBe(confirmed.appliedText);
     expect(undone.history.at(-1)).toMatchObject({ kind: 'application-undone' });
+    expect(repeatedUndo).toEqual(undone);
   });
 
   it('treats applying the already-applied text as an idempotent action', () => {

@@ -148,17 +148,27 @@ activate_gpu_lifecycle_timers() {
 
 fence_gpu_lifecycle_start() {
     local lock_path="${ACX_GPU_LIFECYCLE_LOCK_PATH:-/var/lib/acx-gpu/lifecycle.lock}"
+    local load_state
 
     # `systemctl stop` waits for an in-flight oneshot to terminate. The shared
     # flock then proves no older START process survived outside systemd's view
     # before cleanup is allowed to invoke the reaper.
+    # Fresh hosts have neither unit. Accept a failed disable/stop only when
+    # systemd positively identifies that unit as absent; query errors and
+    # failures affecting existing units must still abort the transaction.
     sudo systemctl disable --now acx-gpu-start.timer || {
-        echo 'error: failed to disable acx-gpu-start.timer' >&2
-        return 1
+        if ! load_state=$(systemctl show acx-gpu-start.timer --property=LoadState --value) \
+            || [ "$load_state" != not-found ]; then
+            echo 'error: failed to disable acx-gpu-start.timer' >&2
+            return 1
+        fi
     }
     sudo systemctl stop acx-gpu-start.service || {
-        echo 'error: failed to stop acx-gpu-start.service' >&2
-        return 1
+        if ! load_state=$(systemctl show acx-gpu-start.service --property=LoadState --value) \
+            || [ "$load_state" != not-found ]; then
+            echo 'error: failed to stop acx-gpu-start.service' >&2
+            return 1
+        fi
     }
     if systemctl is-active --quiet acx-gpu-start.timer; then
         echo 'error: acx-gpu-start.timer remained active after disable' >&2
@@ -448,29 +458,39 @@ SSH_OPTIONS=(
 )
 
 run_with_deadline() {
-    local description=$1 process_id sleep_id="" status timer_id
+    local description=$1
     shift
-    "$@" &
-    process_id=$!
-    (
-        trap 'kill "$sleep_id" 2>/dev/null || true; exit 0' TERM INT
-        sleep "$REMOTE_COMMAND_TIMEOUT_SECONDS" &
-        sleep_id=$!
-        wait "$sleep_id"
-        echo "error: ${description} exceeded ${REMOTE_COMMAND_TIMEOUT_SECONDS}s" >&2
-        kill -TERM "$process_id" 2>/dev/null || true
-        sleep 5
-        kill -KILL "$process_id" 2>/dev/null || true
-    ) &
-    timer_id=$!
-    if wait "$process_id"; then
-        status=0
-    else
-        status=$?
-    fi
-    kill -TERM "$timer_id" 2>/dev/null || true
-    wait "$timer_id" 2>/dev/null || true
-    return "$status"
+    # Python provides sessions on Linux and macOS without GNU setsid/timeout.
+    # Killing only ssh leaves local descendants holding the captured pipes.
+    python3 - "$description" "$REMOTE_COMMAND_TIMEOUT_SECONDS" "$@" <<'PY'
+import os
+import signal
+import subprocess
+import sys
+
+description, seconds = sys.argv[1:3]
+process = subprocess.Popen(sys.argv[3:], start_new_session=True)
+try:
+    status = process.wait(timeout=int(seconds))
+except subprocess.TimeoutExpired:
+    print(f"error: {description} exceeded {seconds}s", file=sys.stderr, flush=True)
+    def signal_group(sig):
+        try:
+            os.killpg(process.pid, sig)
+        except ProcessLookupError:
+            pass
+    signal_group(signal.SIGTERM)
+    try:
+        process.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        pass
+    finally:
+        # Even if the leader exited on TERM, descendants may have ignored it.
+        signal_group(signal.SIGKILL)
+        process.wait()
+    status = 124
+sys.exit(status if status >= 0 else 128 - status)
+PY
 }
 
 if [ "$DRY_RUN" -eq 1 ]; then

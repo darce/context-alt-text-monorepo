@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import re
 import subprocess
+import time
 from pathlib import Path
 
 import pytest
@@ -37,6 +38,11 @@ def _run_lifecycle(
     ),
     remote_body_mutation: str = "",
     previous_release: bool = False,
+    fence_failure: str = "",
+    fence_load_state: str = "loaded",
+    remote_timeout: int = 20,
+    fixture_timeout: int = 30,
+    remote_stall: int = 0,
 ) -> tuple[subprocess.CompletedProcess[str], str]:
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
@@ -45,12 +51,13 @@ def _run_lifecycle(
     effective_systemd = tmp_path / "effective-systemd"
     expected_systemd.mkdir()
     effective_systemd.mkdir()
-    for unit in (
+    # Fresh hosts have no lifecycle units; upgrades retain the old units.
+    for unit in (() if not previous_release else (
         "acx-gpu-start.service",
         "acx-gpu-start.timer",
         "acx-gpu-reap.service",
         "acx-gpu-reap.timer",
-    ):
+    )):
         content = f"test fixture for {unit}\n"
         (expected_systemd / unit).write_text(content, encoding="utf-8")
         (effective_systemd / unit).write_text(content, encoding="utf-8")
@@ -89,6 +96,11 @@ printf '\n' >>"$FAKE_TRANSPORT_LOG"
 remote_body=${!#}
 printf '%s\n' "$remote_body" >>"$FAKE_REMOTE_BODY_LOG"
 if [[ "$remote_body" == *"activate_gpu_lifecycle_timers"* ]]; then
+  # A descendant holds the captured pipes, just as a stalled remote body does.
+  if [ "${FAKE_REMOTE_STALL:-0}" -gt 0 ]; then
+    bash -c 'trap "" TERM; sleep "$FAKE_REMOTE_STALL"' &
+    wait "$!"
+  fi
   case "${FAKE_REMOTE_BODY_MUTATION:-}" in
     delete_activation_definition)
       remote_body=$(printf '%s\n' "$remote_body" | sed '/^activate_gpu_lifecycle_timers ()/,/^}$/d')
@@ -142,6 +154,8 @@ if [ "$1" = start ] && [ "$2" = acx-gpu-reap.service ]; then
   exit "${FAKE_REAPER_RC:-0}"
 fi
 if [ "$1" = disable ] && [ "${3:-}" = acx-gpu-start.timer ]; then
+  [ "${FAKE_FENCE_FAILURE:-}" != timer ] || exit 1
+  [ -f "$ACX_EFFECTIVE_SYSTEMD_DIR/acx-gpu-start.timer" ] || exit 1
   rm -f "$FAKE_START_TIMER_ACTIVE"
   exit 0
 fi
@@ -150,11 +164,23 @@ if [ "$1" = enable ] && [ "${3:-}" = acx-gpu-start.timer ]; then
   exit 0
 fi
 if [ "$1" = stop ] && [ "${2:-}" = acx-gpu-start.service ]; then
+  [ "${FAKE_FENCE_FAILURE:-}" != service ] || exit 1
+  [ -f "$ACX_EFFECTIVE_SYSTEMD_DIR/acx-gpu-start.service" ] || exit 5
   rm -f "$FAKE_START_SERVICE_ACTIVE"
   exit 0
 fi
 if [ "$1" = show ]; then
   case "$*" in
+    *"--property=LoadState"*)
+      if [ -n "${FAKE_FENCE_FAILURE:-}" ]; then
+        [ "$FAKE_FENCE_LOAD_STATE" != query-error ] || exit 1
+        printf '%s\n' "$FAKE_FENCE_LOAD_STATE"
+      elif [ -f "$ACX_EFFECTIVE_SYSTEMD_DIR/$2" ]; then
+        printf 'loaded\n'
+      else
+        printf 'not-found\n'
+      fi
+      ;;
     *"--property=FragmentPath"*)
       if [ -n "${FAKE_MISMATCHED_UNIT:-}" ] && [ "$2" = "$FAKE_MISMATCHED_UNIT" ]; then
         printf '%s\n' 'stale effective mutation' >>"$ACX_EFFECTIVE_SYSTEMD_DIR/$2"
@@ -229,7 +255,10 @@ printf '\n' >>"$FAKE_TRANSPORT_LOG"
             "OCI_HOST": "backend.test",
             "GPU_INSTANCE_ID": instance_id,
             # A stalled fake transport must fail quickly on every host.
-            "REMOTE_COMMAND_TIMEOUT_SECONDS": "20",
+            "REMOTE_COMMAND_TIMEOUT_SECONDS": str(remote_timeout),
+            "FAKE_REMOTE_STALL": str(remote_stall),
+            "FAKE_FENCE_FAILURE": fence_failure,
+            "FAKE_FENCE_LOAD_STATE": fence_load_state,
             "PATH": f"{fake_bin}:{os.environ['PATH']}",
             "FAKE_TRANSPORT_LOG": str(transport_log),
             "FAKE_REMOTE_BODY_LOG": str(tmp_path / "remote-body.sh"),
@@ -269,6 +298,7 @@ printf '\n' >>"$FAKE_TRANSPORT_LOG"
         capture_output=True,
         text=True,
         check=False,
+        timeout=fixture_timeout,
     )
     assert not re.search(r"error: .* exceeded \d+s", result.stderr), result.stderr
     calls = transport_log.read_text(encoding="utf-8") if transport_log.exists() else ""
@@ -444,6 +474,36 @@ def test_install_fails_when_timer_verification_finds_an_inactive_timer(tmp_path:
         assert "<-l> <ci-user> <--> <backend.test>" in ssh_call
 
 
+def test_remote_body_stall_reaches_timeout_rejection(tmp_path: Path) -> None:
+    started = time.monotonic()
+    # Must reach the fixture's assertion, rather than hang on descendant pipes
+    # or mistake a deadline failure for the expected inactive-timer failure.
+    with pytest.raises(AssertionError, match="systemd unit installation exceeded 1s"):
+        _run_lifecycle(
+            tmp_path, enabled=True, ready_url="http://gpu.test:8000/health",
+            dry_run=False, verify_rc=3, remote_timeout=1, fixture_timeout=8,
+            remote_stall=30,
+        )
+    assert time.monotonic() - started < 8
+
+
+@pytest.mark.parametrize("unit", ("timer", "service"))
+@pytest.mark.parametrize("load_state", ("loaded", "error", "", "query-error"))
+def test_fence_failure_requires_confirmed_absent_unit(
+    tmp_path: Path, unit: str, load_state: str,
+) -> None:
+    result, calls = _run_lifecycle(
+        tmp_path, enabled=True, ready_url="http://gpu.test:8000/health",
+        dry_run=False, previous_release=True, fence_failure=unit,
+        fence_load_state=load_state,
+    )
+    assert result.returncode != 0
+    assert "could not fence START during cleanup" in result.stderr
+    assert "systemctl <start> <acx-gpu-reap.service>" not in calls
+    assert "systemctl <enable> <--now> <acx-gpu-start.timer>" not in calls
+    assert (tmp_path / "host/opt-acx-gpu/current").resolve().name == "old release"
+
+
 def test_cleanup_never_reaps_concurrently_when_start_fence_cannot_quiesce(tmp_path: Path) -> None:
     result, calls = _run_lifecycle(
         tmp_path,
@@ -583,6 +643,9 @@ def test_reaper_is_proved_before_start_timer_is_enabled(tmp_path: Path) -> None:
     assert result.returncode == 0, result.stdout + result.stderr
     disable = calls.index("systemctl <disable> <--now> <acx-gpu-start.timer>")
     stop_start = calls.index("systemctl <stop> <acx-gpu-start.service>")
+    # Neither unit existed when the initial fence ran on this fresh host.
+    assert "systemctl <show> <acx-gpu-start.timer> <--property=LoadState>" in calls
+    assert "systemctl <show> <acx-gpu-start.service> <--property=LoadState>" in calls
     lock_quiesced = calls.index("flock <--wait> <120>")
     reap_proof = calls.index("systemctl <start> <acx-gpu-reap.service>")
     start_timer_enable = calls.index("systemctl <enable> <--now> <acx-gpu-start.timer>")
@@ -733,6 +796,8 @@ def test_failed_synchronous_reaper_never_enables_start_timer(tmp_path: Path) -> 
 
     assert result.returncode != 0
     assert "systemctl <start> <acx-gpu-reap.service>" in calls
-    # The verifier is shipped in the rendered script, but no effective-unit
-    # query runs after the synchronous reaper fails.
-    assert "systemctl <show>" not in calls
+    # Initial LoadState queries prove absent units on a fresh host. Effective
+    # artifact verification must not run after the synchronous reaper fails.
+    assert "<--property=FragmentPath>" not in calls
+    assert "<--property=DropInPaths>" not in calls
+    assert "<--property=ExecStart>" not in calls

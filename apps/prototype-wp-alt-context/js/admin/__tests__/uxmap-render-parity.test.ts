@@ -1096,6 +1096,16 @@ describe('ux-map render parity (owned maps)', () => {
     );
   });
 
+  it.each(['_Action states_:', '_Action states:_', '*Action states*:', '*Action states:*'])(
+    'rejects a contradictory italic declaration %s', (label) => {
+      const md = readFileSync(path.join(uxMapsDir, 'febt-1-job-error-states.md'), 'utf8');
+      const row = /^Action states: .*$/m.exec(md)![0];
+      expect(() => parseRenderedUxMap(md.replace(row, `${row}\n\n${label} retired_state`))).toThrow(
+        'has duplicate Action states declarations',
+      );
+    },
+  );
+
   it('rejects every shared declaration variant for every consumed key', () => {
     const fixture = JSON.parse(readFileSync(path.join(negativeFixturesDir, 'declaration-mutations.json'), 'utf8')) as {
       keys: string[]; variants: string[];

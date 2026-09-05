@@ -133,7 +133,11 @@ const scanDeclarations = (block: string, screenId: string, firstLine: number): M
     const candidate = line.trimStart().replace(/^(?:(?:>|[-+*]|\d+[.)])\s*)+/, '').trim();
     const colon = candidate.indexOf(':');
     if (colon < 0) continue;
-    const label = candidate.slice(0, colon).replace(/__|[*`]/g, '').trim().replace(/\s+/g, ' ').toLowerCase();
+    // Strip single underscore emphasis at the edges, preserving url_params.
+    const label = candidate.slice(0, colon)
+      .replace(/__|[*`]/g, '').trim()
+      .replace(/^_+|_+$/g, '').trim()
+      .replace(/\s+/g, ' ').toLowerCase();
     const key = SCREEN_METADATA_KEYS.find((field) => field.toLowerCase() === label);
     if (!key) continue;
     const lineNumber = firstLine + index;
@@ -142,7 +146,7 @@ const scanDeclarations = (block: string, screenId: string, firstLine: number): M
       throw new Error(`screen ${screenId} has duplicate ${key} declarations at lines ${previous} and ${lineNumber}`);
     }
     locations.set(key, lineNumber);
-    declarations.set(key, candidate.slice(colon + 1).replace(/^(?:__|[*`])+/, '').trim());
+    declarations.set(key, candidate.slice(colon + 1).replace(/^[_*`]+/, '').trim());
   }
   return declarations;
 };

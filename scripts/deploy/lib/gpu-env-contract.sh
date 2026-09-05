@@ -16,65 +16,49 @@ fi
 # shellcheck source=../../../infra/oci/demo/lib/describe-gate.sh
 source "$describe_gate_contract"
 
-# The shared demo helper intentionally has a very small sed grammar, but the
-# deployment preflight also needs to distinguish executable PHP from comments.
-# Keep the accepted define('NAME','value') shape unchanged while removing PHP
-# line/block comments with a quote-aware scanner before looking for constants.
+# Decode one dotenv quote envelope without evaluating interpolation or PHP.
+acx_env_literal_value() {
+    local value="${1%$'\r'}"
+    if [[ ${#value} -ge 2 ]]; then
+        case "$value" in
+            \"*\") value="${value:1:${#value}-2}" ;;
+            \'*\') value="${value:1:${#value}-2}" ;;
+        esac
+    fi
+    printf '%s' "$value"
+}
+
+# Accepted PHP is deliberately restricted to unconditional, literal define
+# statements and comments. Unsupported code fails closed; env input is never
+# evaluated. Bootstrap sources this same helper for credential parity.
 php_define_value() {
     local name="$1" src="$2"
-    [ -n "$name" ] || { printf '%s' ""; return; }
     printf '%s' "$src" | python3 -c '
 import re
 import sys
 
-name = sys.argv[1]
 source = sys.stdin.read()
-out = []
+name = sys.argv[1]
+# Single-quoted values have PHP literal semantics; reject escapes and double
+# quotes (which could interpolate PHP variables) rather than guessing values.
+statement = re.compile(r"define\([ \t\r\n]*\x27([A-Z][A-Z0-9_]*)\x27[ \t\r\n]*,[ \t\r\n]*(?:\x27([^\x27\\]*)\x27|true|false|0|[1-9][0-9]*)[ \t\r\n]*\)[ \t\r\n]*;")
+comment = re.compile(r"/\*.*?\*/|//[^\n]*(?:\n|$)|\#[^\n]*(?:\n|$)", re.S)
+values = {}
 i = 0
-quote = None
 while i < len(source):
-    char = source[i]
-    following = source[i + 1] if i + 1 < len(source) else ""
-    if quote is not None:
-        out.append(char)
-        if char == "\\" and following:
-            out.append(following)
-            i += 2
-            continue
-        if char == quote:
-            quote = None
+    if source[i] in " \t\r\n":
         i += 1
         continue
-    if char in ("\"", "\x27"):
-        quote = char
-        out.append(char)
-        i += 1
+    match = comment.match(source, i)
+    if match:
+        i = match.end()
         continue
-    if char == "/" and following == "*":
-        end = source.find("*/", i + 2)
-        i = len(source) if end < 0 else end + 2
-        out.append(" ")
-        continue
-    if char == "/" and following == "/":
-        end = source.find("\n", i + 2)
-        i = len(source) if end < 0 else end
-        out.append("\n")
-        continue
-    if char == "#":
-        end = source.find("\n", i + 1)
-        i = len(source) if end < 0 else end
-        out.append("\n")
-        continue
-    out.append(char)
-    i += 1
-
-code = "".join(out)
-pattern = re.compile(
-    r"define\(([\x27\"])" + re.escape(name) + r"\1,([\x27\"])([^\x27\"]*)\2\)"
-)
-match = pattern.search(code)
-if match:
-    sys.stdout.write(match.group(3))
+    match = statement.match(source, i)
+    if not match or match.group(1) in values:
+        raise SystemExit(0)  # No value: caller reports missing config, redacted.
+    values[match.group(1)] = match.group(2)
+    i = match.end()
+sys.stdout.write(values.get(name) or "")
 ' "$name" 2>/dev/null
 }
 

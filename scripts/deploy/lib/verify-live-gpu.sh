@@ -23,7 +23,7 @@ if [[ ${#wordpress_config_lines[@]} -ne 1 ]]; then
     echo "ERROR: demo env must contain exactly one canonical WORDPRESS_CONFIG_EXTRA assignment." >&2
     exit 1
 fi
-wordpress_config_extra="${wordpress_config_lines[0]}"
+wordpress_config_extra="$(acx_env_literal_value "${wordpress_config_lines[0]}")"
 base_url="$(php_define_value ACX_RECOGNITION_URL "$wordpress_config_extra")"
 api_key="$(php_define_value ACX_RECOGNITION_API_KEY "$wordpress_config_extra")"
 tenant_id="$(php_define_value ACX_RECOGNITION_TENANT_ID "$wordpress_config_extra")"

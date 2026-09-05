@@ -30,10 +30,18 @@ demo file because WordPress does not consume it. Recognition URL, API key, and t
 operative plugin configuration. Do not paste live credentials into the
 repository or terminal output.
 
+Recognition constants must use unconditional, literal single-quoted `define`
+statements. The shared PHP reader accepts comments and literal boolean/integer
+values for other constants, but rejects conditional or interpolated PHP.
+GPU addresses must be private and cannot be loopback, unspecified, multicast,
+or link-local, including IPv4-mapped IPv6 and allowlisted DNS answers.
+
 ## 2. Prove the reaper and preflight both files
 
 Stage the validator in a private temporary directory on the VM, then validate
-both halves in one invocation. `--check-reaper` is mandatory for this flip: it
+both halves in one invocation. The reaper check loads the argument parser
+from the effective service WorkingDirectory; that checkout must be readable.
+`--check-reaper` is mandatory for this flip: it
 fails unless `acx-gpu-reap.timer` is enabled and active and its effective
 service targets an instance OCID with a finite positive maximum lease. It also
 prints the exact `MANUAL STOP fallback:` command. The final success line is `OK:`; any
@@ -58,6 +66,8 @@ an unverified adapter.
 
 ```bash
 set -euo pipefail
+# Persist the same PHP reader for bootstrap; sync-demo preserves this helper.
+ssh ubuntu@acx-backend.tail1a44b8.ts.net 'sudo install -m 644 /tmp/acx-gpu-preflight/lib/gpu-env-contract.sh /opt/acx-backend/demo/lib/gpu-env-contract.sh'
 CONFIRM=PROMOTE scripts/deploy/recognition-service.sh deploy prod
 PLUGIN_ZIP=dist/alt-context-reviewed.zip # Replace with the artifact named in the review record.
 PLUGIN_ZIP_SHA256=replace-with-reviewed-sha256 # Replace with that record's SHA-256.
@@ -127,7 +137,8 @@ release_activity_lock() {
         activity_lock_held=0
     fi
 }
-trap release_activity_lock EXIT HUP INT TERM
+trap release_activity_lock EXIT
+trap 'exit 130' HUP INT TERM
 if ! ssh "$GPU_HOST" "sudo mkdir '$ACTIVITY_LOCK'"; then
     echo "Refusing STOP: the shared A10 activity mutex is occupied." >&2
     exit 1
@@ -138,6 +149,12 @@ command -v pgrep >/dev/null
 if pgrep -af "scripts[.]eval_harness[.](bakeoff|cli)|gpu[-_]bake" >/dev/null; then
     echo "Refusing STOP: an A10 bake/evaluation process is active." >&2
     exit 1
+else
+    process_status=$?
+    if [[ "$process_status" -ne 1 ]]; then
+        echo "Refusing STOP: process inspection failed." >&2
+        exit 1
+    fi
 fi
 for lease in /run/acx-gpu/bake.lease /run/acx-gpu/evaluation.lease; do
     if sudo test -e "$lease"; then

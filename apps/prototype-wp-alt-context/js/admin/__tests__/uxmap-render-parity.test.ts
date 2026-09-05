@@ -1156,6 +1156,18 @@ describe('ux-map render parity (owned maps)', () => {
     expect(projectUxMapForRenderParity(raw)).toEqual(parseRenderedUxMap(withoutExtension));
   });
 
+  it.each(
+    JSON.parse(readFileSync(path.join(negativeFixturesDir, 'domain-state-mutations.json'), 'utf8')) as Array<{
+      name: string; row: string;
+    }>,
+  )('rejects $name domain-state rows', ({ row }) => {
+    const md = readFileSync(path.join(uxMapsDir, 'workbench-operator-loop.md'), 'utf8');
+    const original = '| `unavailable` | `offline` |';
+    expect(md).toContain(original);
+    expect(() => parseRenderedUxMap(md)).not.toThrow();
+    expect(() => parseRenderedUxMap(md.replace(original, `${row}\n${original}`))).toThrow();
+  });
+
   it.each(['unquoted', 'indented', 'duplicate'])('rejects %s conflicting action rows', (mutation) => {
     const md = readFileSync(path.join(uxMapsDir, 'febt-1-job-error-states.md'), 'utf8');
     const row = /^\| `reload` \|.*$/m.exec(md)![0];

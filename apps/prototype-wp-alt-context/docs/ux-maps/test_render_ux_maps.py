@@ -105,6 +105,34 @@ class RendererBoundaryTests(unittest.TestCase):
                                 self.assertEqual(status, 1)
                                 self.assertIn("noncanonical Screens table row: " + mutation["row"], output.getvalue())
 
+    def test_domain_state_rows_fail_both_check_paths(self):
+        ref = "workbench-operator-loop"
+        original = SOURCE.with_name(f"{ref}.md").read_text()
+        row = re.search(r"^\| `unavailable` \|.*$", original, re.MULTILINE)[0]
+        fixtures = renderer.REPO_ROOT / "apps/prototype-wp-alt-context/js/admin/__tests__/uxmap-render-parity.fixtures"
+        mutations = json.loads((fixtures / "domain-state-mutations.json").read_text())
+        with tempfile.TemporaryDirectory() as directory:
+            maps = Path(directory)
+            shutil.copyfile(SOURCE.with_name(f"{ref}.uxmap.json"), maps / f"{ref}.uxmap.json")
+            target = maps / f"{ref}.md"
+            with patch.object(renderer, "MAPS_DIR", maps):
+                for renderer_available in [False, True]:
+                    # Exercise the real check/projection in both branches; only the
+                    # optional canvas renderer is replaced with its committed output.
+                    with patch.object(renderer, "render", return_value=original,
+                                      side_effect=None if renderer_available else renderer.OptionalRendererUnavailable()):
+                        target.write_text(original)
+                        with contextlib.redirect_stdout(io.StringIO()):
+                            self.assertEqual(renderer.check([ref]), 0)
+                        for mutation in mutations:
+                            with self.subTest(renderer_available=renderer_available, mutation=mutation["name"]):
+                                target.write_text(original.replace(row, mutation["row"] + "\n" + row, 1))
+                                output = io.StringIO()
+                                with contextlib.redirect_stderr(output), contextlib.redirect_stdout(io.StringIO()):
+                                    status = renderer.check([ref])
+                                self.assertEqual(status, 1)
+                                self.assertIn("Domain state mapping", output.getvalue())
+
     def test_unrecognized_screen_headings_fail_both_check_paths(self):
         ref = "workbench-operator-loop"
         original = SOURCE.with_name(f"{ref}.md").read_text()

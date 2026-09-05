@@ -18,11 +18,7 @@ import {
 import { offlineActionReason, useRemoteActionGate } from '../../../hooks/useRemoteActionGate';
 import { useSyncOffline } from '../../../hooks/useSyncOffline';
 import { isScanSuccessStatus } from '../../../hooks/jobStateMachineUtils';
-import {
-  getClusterErrorCode,
-  getClusterMutationErrorMessage,
-  isDeliberateCancelError,
-} from './clusterMutationUtils';
+import { getClusterErrorCode, getClusterMutationErrorMessage, isDeliberateCancelError } from './clusterMutationUtils';
 import { removePendingSuggestionFromCache } from './suggestionProjection';
 
 interface UseClusterActionMutationsOptions {
@@ -271,25 +267,29 @@ export const useClusterActionMutations = ({
         throw new Error(offlineActionReason());
       }
       const mode = (identityCount ?? 0) > SPLIT_ASYNC_THRESHOLD ? 'async' : 'sync';
-      const result = await splitCluster(
-        clusterId,
-        { nClusters, anchorIdentityId, splitMode: 'forced', mode },
-        signal,
-      );
+      const result = await splitCluster(clusterId, { nClusters, anchorIdentityId, splitMode: 'forced', mode }, signal);
+      // RES-13 (/home/gate/canon/engineering.md:124): cancellation must fence
+      // late responses before either polling or reporting success. Aborting
+      // the wait says nothing about the remote write outcome (DDIA ch-8,
+      // /home/gate/canon/designing-data-intensive-applications.md:305).
+      rejectIfSplitAborted(signal);
       if ('job_id' in result) {
         await pollSplitJob(result.job_id, signal);
       }
+      rejectIfSplitAborted(signal);
       return result;
     },
     retry: false,
-    onSuccess: () => {
-      invalidateQueries();
+    onSuccess: (_result, { signal }) => {
+      if (!signal.aborted) {
+        invalidateQueries();
+      }
     },
-    onError: (err: unknown) => {
+    onError: (err: unknown, { signal }) => {
       // Replacement and unmount own this AbortController. Their rejection is a
       // lifecycle fence, not a user-visible terminal result, so neither onError
       // nor onAbort may update stale UI after the owner has moved on.
-      if (isDeliberateCancelError(err)) {
+      if (signal.aborted || isDeliberateCancelError(err)) {
         return;
       }
       routeMutationFailure(err, { onAbort, onError });

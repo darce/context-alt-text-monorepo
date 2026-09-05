@@ -101,7 +101,15 @@ class JobProgressStreamServiceTest extends TestCase
     {
         $this->assertSame(
             ['proxy_error', 'job_not_found', 'unexpected_response', 'invalid_job_response'],
-            array_map(static fn(JobStreamErrorCode $code): string => $code->value, JobStreamErrorCode::cases())
+            JobStreamErrorCode::cases()
+        );
+        // String constants preserve the plugin's declared PHP 8.0 floor.
+        // TEST-15 (/home/gate/canon/engineering.md:396): this goes red if a
+        // PHP 8.1 enum replaces the PHP 8.0-compatible vocabulary again.
+        $this->assertSame('job_not_found', JobStreamErrorCode::JOB_NOT_FOUND);
+        $this->assertSame(
+            array_values((new \ReflectionClass(JobStreamErrorCode::class))->getConstants()),
+            JobStreamErrorCode::cases()
         );
     }
 

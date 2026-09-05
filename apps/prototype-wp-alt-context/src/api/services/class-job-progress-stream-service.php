@@ -181,12 +181,14 @@ class JobProgressStreamService {
 	 * result, not that a remote operation failed; definite negatives therefore
 	 * need an application-level response (DDIA ch-8; heuristics-canon-research/
 	 * distilled/engineering/designing-data-intensive-applications.md:305-308).
+	 *
+	 * @param JobStreamErrorCode::* $code Stable wire code from the vocabulary.
 	 */
-	private function emit_error( JobStreamErrorCode $code, string $message ): void {
+	private function emit_error( string $code, string $message ): void {
 		echo "event: error\n";
 		echo 'data: ' . wp_json_encode(
 			array(
-				'code'    => $code->value,
+				'code'    => $code,
 				'message' => $message,
 			)
 		) . "\n\n";

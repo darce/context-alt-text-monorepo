@@ -13,9 +13,18 @@ namespace AltContext\Api\Services;
  * avoids the silent-failure trap in RLSE-05
  * (heuristics-canon-research/lexicons/engineering.md:696).
  */
-enum JobStreamErrorCode: string {
-	case PROXY_ERROR          = 'proxy_error';
-	case JOB_NOT_FOUND        = 'job_not_found';
-	case UNEXPECTED_RESPONSE  = 'unexpected_response';
-	case INVALID_JOB_RESPONSE = 'invalid_job_response';
+final class JobStreamErrorCode {
+	// Keep the centralized wire vocabulary compatible with the advertised PHP
+	// 8.0 minimum; backed enums require PHP 8.1.
+	public const PROXY_ERROR          = 'proxy_error';
+	public const JOB_NOT_FOUND        = 'job_not_found';
+	public const UNEXPECTED_RESPONSE  = 'unexpected_response';
+	public const INVALID_JOB_RESPONSE = 'invalid_job_response';
+
+	private function __construct() {}
+
+	/** @return list<string> */
+	public static function cases(): array {
+		return array_values( ( new \ReflectionClass( self::class ) )->getConstants() );
+	}
 }

@@ -114,6 +114,9 @@ describe('production build status cleanup', () => {
       } catch (error) { caught = error; }
       expect(caught).toBeInstanceOf(ProductionCssBuildTeardownError);
       expect((caught as Error).cause).toBe(denied);
+      expect((caught as Error).message).toContain('signal probe: EPERM');
+      expect((caught as Error).message).toContain(listing === 'failed' ? 'ps listing failed'
+        : listing === 'live' ? '123 2147483647 S' : 'ps parsed zero lines');
       expect(existsSync(join(lockDir, '.build-in-progress'))).toBe(true);
       expect(tryAcquireDirectoryLock(lockDir)).toBeNull();
     } finally {
@@ -135,7 +138,7 @@ describe('production build status cleanup', () => {
         readExitCode: () => 0,
         processGroupStartToken: 'supervised',
         readProcessStartToken: () => 'supervised',
-        listProcesses: () => '1 1 S\n123 2147483647 Z\n',
+        listProcesses: () => 'unrelated malformed line\n1 1 S\n123 2147483647 Z\n',
       }))).toBe(0);
       expect(existsSync(lockDir)).toBe(false);
     } finally {

@@ -1,6 +1,6 @@
 import React, { useEffect, useRef } from 'react';
 
-export type GuidedGuideStep = 'understand' | 'identity' | 'review' | 'apply';
+export type GuidedGuideStep = 'understand' | 'face' | 'identity' | 'review' | 'apply';
 
 interface GuidedGuideStepDefinition {
   id: GuidedGuideStep;
@@ -9,10 +9,11 @@ interface GuidedGuideStepDefinition {
 }
 
 export const GUIDE_STEPS: readonly GuidedGuideStepDefinition[] = [
-  { id: 'understand', label: 'Understand the context', description: 'See the image, page, and source record.' },
-  { id: 'identity', label: 'Confirm identity', description: 'Use the sample record or leave the person unidentified.' },
-  { id: 'review', label: 'Review the description', description: 'Edit or reject the identity-informed draft.' },
-  { id: 'apply', label: 'Apply deliberately', description: 'Write only after you choose Apply.' },
+  { id: 'understand', label: 'Look at the photo', description: 'See the photo and the page it sits on.' },
+  { id: 'face', label: 'Find the face', description: 'AltContext found a face and matched it to a person you named before.' },
+  { id: 'identity', label: 'Confirm the match', description: 'Say yes to the match, or keep the person unnamed.' },
+  { id: 'review', label: 'Check the description', description: 'Read the draft. Edit it or reject it.' },
+  { id: 'apply', label: 'Apply it yourself', description: 'Nothing changes until you press Apply.' },
 ];
 
 export const guidedStepLabel = (step: GuidedGuideStep): string =>
@@ -20,6 +21,7 @@ export const guidedStepLabel = (step: GuidedGuideStep): string =>
 
 export const GUIDED_SECTION_IDS: Record<GuidedGuideStep, string> = {
   understand: 'guided-section-understand',
+  face: 'guided-section-face',
   identity: 'guided-section-identity',
   review: 'guided-section-review',
   apply: 'guided-section-apply',
@@ -67,7 +69,7 @@ export const GuidedPrototypeGuide = ({
     <nav className="acx-guided-guide" aria-label="Guided review steps">
       <div className="acx-guided-guide__bar">
         <div>
-          <p className="acx-guided-guide__eyebrow">Inline guide</p>
+          <p className="acx-guided-guide__eyebrow">Step by step</p>
           <strong>{activeDefinition.label}</strong>
         </div>
         <a
@@ -78,7 +80,7 @@ export const GuidedPrototypeGuide = ({
             focusGuidedSection(activeStep);
           }}
         >
-          Skip guide to current section
+          Skip to this step
         </a>
         <button
           type="button"
@@ -86,7 +88,7 @@ export const GuidedPrototypeGuide = ({
           aria-expanded={open}
           onClick={onToggle}
         >
-          {open ? 'Hide guide' : 'Show guide'}
+          {open ? 'Hide steps' : 'Show steps'}
         </button>
       </div>
       <div
@@ -124,7 +126,7 @@ export const GuidedPrototypeGuide = ({
             })}
           </ol>
           <button type="button" className="acx-button acx-button--tertiary" onClick={onEnd}>
-            End guide
+            Close the steps
           </button>
         </div>
       ) : null}

@@ -155,6 +155,7 @@ def run_live_gpu_verifier(
     clock_step_seconds: int | None = None,
     wordpress_config_extra: str | None = None,
     enforce_bsd_mktemp: bool = False,
+    final_newline: bool = True,
 ) -> subprocess.CompletedProcess[str]:
     staged_lib = tmp_path / "lib"
     staged_lib.mkdir()
@@ -165,7 +166,7 @@ def run_live_gpu_verifier(
     (staged_lib / "describe-gate.sh").write_text(DESCRIBE_GATE.read_text(encoding="utf-8"), encoding="utf-8")
     demo_env = tmp_path / "demo.env"
     demo_env.write_text(
-        f"WORDPRESS_CONFIG_EXTRA={wordpress_config_extra or wordpress_config()}\n",
+        f"WORDPRESS_CONFIG_EXTRA={wordpress_config_extra or wordpress_config()}" + ("\n" if final_newline else ""),
         encoding="utf-8",
     )
     fake_bin = tmp_path / "bin"
@@ -943,16 +944,19 @@ def reaper_systemctl_script(
     oci = environment_file.parent / "oci-stub"
     oci.write_text("#!/bin/sh\n[ \"$1\" = --help ] || exit 9\nprintf 'Oracle Cloud Infrastructure CLI\\n'\n")
     oci.chmod(0o755)
+    lease_path = environment_file.parent / "running-since.json"
     reap_active_result = "exit 0" if reap_timer_active else "exit 3"
     start_active_result = "exit 0" if start_timer_active else "exit 3"
     exec_start = exec_start or (
         "{ path=/usr/bin/python3 ; argv[]=/usr/bin/python3 -m infra.oci.gpu_lifecycle "
         "--mode reap --instance-id ${GPU_INSTANCE_ID} "
         "--max-lease-seconds ${MAX_LEASE_SECONDS} --load-dir /run/acx-write "
-        f"--oci-bin {oci} ; ignore_errors=no ; }}"
+        f"--running-since-path {lease_path} --oci-bin {oci} ; ignore_errors=no ; }}"
     )
     if "--oci-bin" not in exec_start:
         exec_start = exec_start.replace(" ; ignore_errors=", f" --oci-bin {oci} ; ignore_errors=")
+    if "--running-since-path" not in exec_start:
+        exec_start = exec_start.replace(" ; ignore_errors=", f" --running-since-path {lease_path} ; ignore_errors=")
     environment_files = environment_files or f"{environment_file} (ignore_errors=no)"
     return f"""#!/usr/bin/env bash
 if [[ "$1" == show && "$2" == acx-gpu-reap.timer ]]; then
@@ -1143,7 +1147,7 @@ def test_11_reaper_preflight_proves_timer_target_and_stop_fallback(tmp_path: Pat
             " ; ignore_errors=no",
             (
                 " --load-stale-grace-seconds ${ACX_DESCRIBE_LOAD_STALE_GRACE_SECONDS}"
-                " --gpu-state-json /run/acx/gpu-state.json --running-since-path /run/acx-gpu/running-since.json"
+                " --gpu-state-json /run/acx/gpu-state.json"
                 " --idle-seconds ${IDLE_SECONDS} --fence-delay-seconds 2 --probe-oci"
                 " ; ignore_errors=no"
             ),
@@ -2206,3 +2210,44 @@ def test_11_reaper_oci_executable(tmp_path: Path, kind: str) -> None:
         assert result.returncode != 0
         assert "OCI executable must run as the service user" in result.stderr
         assert "MANUAL STOP" not in result.stdout
+
+
+def test_11_reaper_rejects_inaccessible_lease_path(tmp_path: Path) -> None:
+    env_file = tmp_path / "reaper.env"
+    env_file.write_text("GPU_INSTANCE_ID=ocid1.instance.oc1.iad.fakeinstance\nMAX_LEASE_SECONDS=3600\n")
+    unit = reaper_systemctl_script(env_file)
+    unit = unit.replace(str(tmp_path / "running-since.json"), "/proc/acx-review/running-since.json")
+    result = run_preflight(tmp_path, check_reaper=True, systemctl_script=unit)
+    assert result.returncode != 0
+    assert "lease" in result.stderr
+
+
+def test_live_gpu_verifier_accepts_unterminated_env(tmp_path: Path) -> None:
+    result = run_live_gpu_verifier(tmp_path, final_newline=False)
+    assert result.returncode == 0, result.stderr
+
+
+def test_11_reaper_checks_lease_directory_writes_without_changing_state(tmp_path: Path) -> None:
+    env_file = tmp_path / "reaper.env"
+    env_file.write_text("GPU_INSTANCE_ID=ocid1.instance.oc1.iad.fakeinstance\nMAX_LEASE_SECONDS=3600\n")
+    unit = reaper_systemctl_script(env_file)
+    directory = tmp_path / "leases"
+    directory.mkdir()
+    lease = directory / "running-since.json"
+    lease.write_text('{"existing": "lease must survive preflight"}\n')
+    original = lease.read_bytes()
+    unit = unit.replace(str(tmp_path / "running-since.json"), str(lease))
+    control = run_preflight(tmp_path, check_reaper=True, systemctl_script=unit)
+    assert control.returncode == 0, control.stderr
+    assert lease.read_bytes() == original
+    assert list(directory.iterdir()) == [lease]
+    if os.geteuid() == 0:
+        pytest.skip("root bypasses directory mode restrictions")
+    directory.chmod(0o500)
+    try:
+        result = run_preflight(tmp_path, check_reaper=True, systemctl_script=unit)
+        assert result.returncode != 0
+        assert "lease" in result.stderr
+        assert lease.read_bytes() == original
+    finally:
+        directory.chmod(0o700)

@@ -422,6 +422,59 @@ except (KeyError, OSError, ValueError, subprocess.SubprocessError):
     print("ERROR [11] OCI executable must run as the service user and identify "
           "the Oracle Cloud Infrastructure CLI via --help.", file=os.fdopen(3, "w"))
     raise SystemExit(1)
+# Exercise the installed lease store in the actual parent directory, with a
+# unique disposable state file. Do not reset or lock the live GPU lease.
+lease_probe = """
+import os
+import sys
+import tempfile
+from pathlib import Path
+root, raw_path = sys.argv[1:]
+sys.path.insert(0, root)
+from infra.oci.gpu_lifecycle.reaper import RunningSinceLeaseStore
+path = Path(raw_path)
+if not path.is_absolute() or path.name in ("", ".", ".."):
+    raise ValueError("lease path must be an absolute file path")
+# Existing runtime files must also support the stores read/update contract.
+for candidate, access in (
+    (path, os.R_OK | os.W_OK),
+    (path.with_name(f".{path.name}.lock"), os.R_OK | os.W_OK),
+    (path.with_name(f".{path.name}.tmp"), os.W_OK),
+):
+    if candidate.is_symlink() or (candidate.exists() and
+            (not candidate.is_file() or not os.access(candidate, access))):
+        raise ValueError("unusable lease state, lock or temporary file")
+# Require the runtime directory to exist: systemd provisions it at service
+# startup. Preflight must not silently create a misconfigured directory.
+fd, probe_name = tempfile.mkstemp(prefix=".acx-lease-preflight-", dir=path.parent)
+os.close(fd)
+probe = Path(probe_name)
+try:
+    probe.unlink()
+    store = RunningSinceLeaseStore(path=probe)
+    store.write("preflight", source="first_observed")
+    store.write("preflight", source="first_observed")
+    assert store.read("preflight") is not None
+    store.remove("preflight")
+finally:
+    for candidate in (probe, probe.with_name(f".{probe.name}.lock"),
+                      probe.with_name(f".{probe.name}.tmp")):
+        candidate.unlink(missing_ok=True)
+"""
+try:
+    command = ["/usr/bin/python3", "-c", lease_probe, str(root), str(args.running_since_path)]
+    if account.pw_uid != os.geteuid():
+        command = ["/usr/bin/sudo", "-n", "-u", account.pw_name, "--",
+                   "/usr/bin/env", "-i",
+                   *[f"{key}={value}" for key, value in runtime_env.items()], *command]
+    result = subprocess.run(command, cwd=root, env=runtime_env,
+                            capture_output=True, text=True, timeout=10)
+    if result.returncode:
+        raise ValueError("lease store probe failed")
+except (OSError, ValueError, subprocess.SubprocessError):
+    print("ERROR [11] running-since lease path must support lifecycle state, lock "
+          "and atomic replacement writes as the service user.", file=os.fdopen(3, "w"))
+    raise SystemExit(1)
 # Use exactly the production constructor inputs: this validates the deployment
 # registry shipped with the effective service checkout. Construction reads no
 # snapshots and performs no actuation.

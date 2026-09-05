@@ -869,11 +869,12 @@ const listedGroupIsAlive = (
     let alive = false;
     const matches: string[] = [];
     for (const line of output.split('\n')) {
-      const [pid, pgid, stat] = line.trim().split(/\s+/);
+      const fields = line.trim().split(/\s+/);
+      const [pid, pgid, stat] = fields;
       const matchingGroup = pgid !== undefined && Number(pgid) === processGroupId;
       // Check membership before dropping malformed rows: an unreadable member cannot
       // establish teardown, even when other rows in the listing are parsable.
-      const valid = isValidProcessIdField(pid) && isValidProcessIdField(pgid) &&
+      const valid = fields.length === 3 && isValidProcessIdField(pid) && isValidProcessIdField(pgid) &&
         /^[RSDTtZXxKWPIU][<NLsl+>EXVW-]*$/.test(stat ?? '');
       if (matchingGroup) {
         matches.push(line);

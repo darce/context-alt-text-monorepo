@@ -99,7 +99,7 @@ describe('production build status cleanup', () => {
     try {
       let caught: unknown;
       try {
-        runWithBuildLock(lockDir, ownership, () => waitForProcessGroup(2147483647, {
+        runWithBuildLock(lockDir, ownership, () => waitForProcessGroup(4194304, {
           timeoutMs: 1,
           readExitCode: () => 0,
           processGroupStartToken: 'supervised',
@@ -108,10 +108,10 @@ describe('production build status cleanup', () => {
             if (listing === 'failed') throw new Error('ps failed');
             if (listing === 'empty') return '';
             if (listing === 'malformed') return 'unreadable';
-            if (listing === 'missing-state') return '1 1 S\n123 2147483647\n';
-            if (listing === 'garbage-state') return '1 1 S\n123 2147483647 Zgarbage\n';
-            if (listing === 'garbage-pid') return '1 1 S\nunreadable 2147483647 Z\n';
-            return '123 2147483647 S\n';
+            if (listing === 'missing-state') return '1 1 S\n123 4194304\n';
+            if (listing === 'garbage-state') return '1 1 S\n123 4194304 Zgarbage\n';
+            if (listing === 'garbage-pid') return '1 1 S\nunreadable 4194304 Z\n';
+            return '123 4194304 S\n';
           },
         }));
       } catch (error) { caught = error; }
@@ -119,12 +119,65 @@ describe('production build status cleanup', () => {
       expect((caught as Error).cause).toBe(denied);
       expect((caught as Error).message).toContain('signal probe: EPERM');
       expect((caught as Error).message).toContain(listing === 'failed' ? 'ps listing failed'
-        : listing === 'live' ? '123 2147483647 S'
-        : listing === 'missing-state' ? '123 2147483647'
-        : listing === 'garbage-state' ? '123 2147483647 Zgarbage'
-        : listing === 'garbage-pid' ? 'unreadable 2147483647 Z' : 'ps parsed zero lines');
+        : listing === 'live' ? '123 4194304 S'
+        : listing === 'missing-state' ? '123 4194304'
+        : listing === 'garbage-state' ? '123 4194304 Zgarbage'
+        : listing === 'garbage-pid' ? 'unreadable 4194304 Z' : 'ps parsed zero lines');
       expect(existsSync(join(lockDir, '.build-in-progress'))).toBe(true);
       expect(tryAcquireDirectoryLock(lockDir)).toBeNull();
+    } finally {
+      kill.mockRestore();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    ['oversized PID', '999999999999999999999999999999999999 42 Z', 42, true],
+    ['negative PID', '-123 42 Z', 42, true],
+    ['leading-zero PID', '0123 42 Z', 42, true],
+    ['zero PID', '0 42 Z', 42, true],
+    ['float PID', '123.0 42 Z', 42, true],
+    ['hex PID', '0x7b 42 Z', 42, true],
+    ['above-platform PID', '4194305 42 Z', 42, true],
+    ['oversized matching PGID', '123 4194305 Z', 4194305, true],
+    ['leading-zero PGID', '123 042 Z', 42, true],
+    ['float PGID', '123 42.0 Z', 42, true],
+    ['hex PGID', '123 0x2a Z', 42, true],
+    // Padding separates ps columns; it is not part of an identifier token.
+    ['whitespace-padded fields', '  123\t 42   Z  ', 42, false],
+    ['empty state', '123 42', 42, true],
+    ['numeric state', '123 42 0', 42, true],
+    ['lowercase state', '123 42 z', 42, true],
+    ['valid zombie', '123 42 Z', 42, false],
+    ['maximum PID zombie', '4194304 42 Z', 42, false],
+    ['unrelated malformed row', '0 43 z', 42, false],
+  ] as const)('validates ps fields on EPERM: %s', (_name, line, group, retained) => {
+    const root = mkdtempSync(join(tmpdir(), 'acx-ps-fields-'));
+    const lockDir = join(root, '.lock');
+    const ownership = acquireDirectoryLock(lockDir);
+    const denied = Object.assign(new Error('kill EPERM'), { code: 'EPERM' });
+    const kill = vi.spyOn(process, 'kill').mockImplementation(() => { throw denied; });
+    try {
+      let caught: unknown;
+      try {
+        runWithBuildLock(lockDir, ownership, () => waitForProcessGroup(group, {
+          timeoutMs: 1,
+          readExitCode: () => 0,
+          processGroupStartToken: 'supervised',
+          readProcessStartToken: () => 'supervised',
+          listProcesses: () => '1 1 S\n' + line + '\n',
+        }));
+      } catch (error) { caught = error; }
+      if (retained) {
+        expect(caught).toBeInstanceOf(ProductionCssBuildTeardownError);
+        expect((caught as Error).message).toContain('RES-13-TEARDOWN');
+        expect((caught as Error).message).toContain(JSON.stringify(line).slice(1, -1));
+        expect(tryAcquireDirectoryLock(lockDir)).toBeNull();
+      } else {
+        expect(caught).toBeUndefined();
+      }
+      expect(existsSync(lockDir)).toBe(retained);
+      expect(existsSync(join(lockDir, '.build-in-progress'))).toBe(retained);
     } finally {
       kill.mockRestore();
       rmSync(root, { recursive: true, force: true });
@@ -139,12 +192,12 @@ describe('production build status cleanup', () => {
       throw Object.assign(new Error('probe failed'), { code });
     });
     try {
-      expect(runWithBuildLock(lockDir, ownership, () => waitForProcessGroup(2147483647, {
+      expect(runWithBuildLock(lockDir, ownership, () => waitForProcessGroup(4194304, {
         timeoutMs: 1,
         readExitCode: () => 0,
         processGroupStartToken: 'supervised',
         readProcessStartToken: () => 'supervised',
-        listProcesses: () => 'unrelated malformed line\n1 1 S\n123 2147483647 Z\n',
+        listProcesses: () => 'unrelated malformed line\n1 1 S\n123 4194304 Z\n',
       }))).toBe(0);
       expect(existsSync(lockDir)).toBe(false);
     } finally {

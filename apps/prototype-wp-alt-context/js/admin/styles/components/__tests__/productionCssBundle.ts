@@ -849,6 +849,13 @@ const listProcessStates = (): string => execFileSync('ps', ['-A', '-o', 'pid=,pg
   stdio: ['ignore', 'pipe', 'ignore'],
 });
 
+// ps emits decimal process identifiers; reject impossible and non-canonical fields.
+const isValidProcessIdField = (field: string | undefined): boolean => {
+  if (field === undefined || !/^[1-9][0-9]*$/.test(field)) return false;
+  const value = Number(field);
+  return Number.isSafeInteger(value) && value <= 4194304;
+};
+
 const listedGroupIsAlive = (
   processGroupId: number,
   listProcesses: () => string,
@@ -863,10 +870,10 @@ const listedGroupIsAlive = (
     const matches: string[] = [];
     for (const line of output.split('\n')) {
       const [pid, pgid, stat] = line.trim().split(/\s+/);
-      const matchingGroup = /^\d+$/.test(pgid ?? '') && Number(pgid) === processGroupId;
+      const matchingGroup = pgid !== undefined && Number(pgid) === processGroupId;
       // Check membership before dropping malformed rows: an unreadable member cannot
       // establish teardown, even when other rows in the listing are parsable.
-      const valid = /^\d+$/.test(pid ?? '') && /^\d+$/.test(pgid ?? '') &&
+      const valid = isValidProcessIdField(pid) && isValidProcessIdField(pgid) &&
         /^[RSDTtZXxKWPIU][<NLsl+>EXVW-]*$/.test(stat ?? '');
       if (matchingGroup) {
         matches.push(line);

@@ -26,6 +26,7 @@ def _run_lifecycle(
     dry_run: bool = True,
     verify_rc: int = 0,
     reaper_rc: int = 0,
+    flock_rc: int = 0,
     instance_id: str = "ocid1.instance.oc1.us-ashburn-1.aaaa",
     drop_in_paths: str = "",
     mismatched_unit: str | None = None,
@@ -55,7 +56,14 @@ def _run_lifecycle(
     lifecycle_env.write_text("MAX_LEASE_SECONDS=3600\n", encoding="utf-8")
     fake_host = tmp_path / "host"
     fake_host.mkdir()
-    for directory in ("opt-acx-gpu", "etc-acx", "etc-tmpfiles", "run-acx", "run-acx-write"):
+    for directory in (
+        "opt-acx-gpu",
+        "etc-acx",
+        "etc-tmpfiles",
+        "run-acx",
+        "run-acx-write",
+        "var-lib-acx-gpu",
+    ):
         (fake_host / directory).mkdir()
     _write_executable(
         fake_bin / "ssh",
@@ -77,7 +85,7 @@ if [[ "$remote_body" == *"activate_gpu_lifecycle_timers"* ]]; then
       remote_body=$(printf '%s\n' "$remote_body" | sed '/^activate_gpu_lifecycle_timers ()/,/^}$/d')
       ;;
     delete_activation_call)
-      remote_body=$(printf '%s\n' "$remote_body" | tac | sed '0,/activate_gpu_lifecycle_timers/{/activate_gpu_lifecycle_timers/d;}' | tac)
+      remote_body=$(printf '%s\n' "$remote_body" | delete-activation-call)
       ;;
   esac
   remote_body=${remote_body//\/opt\/acx-gpu/$FAKE_OPT_ACX_GPU}
@@ -87,6 +95,7 @@ if [[ "$remote_body" == *"activate_gpu_lifecycle_timers"* ]]; then
   remote_body=${remote_body//\/run\/acx-write/$FAKE_RUN_ACX_WRITE}
   remote_body=${remote_body//\/run\/acx-gpu/$FAKE_RUN_ACX_GPU}
   remote_body=${remote_body//\/run\/acx/$FAKE_RUN_ACX}
+  remote_body=${remote_body//\/var\/lib\/acx-gpu/$FAKE_VAR_LIB_ACX_GPU}
   bash --noprofile --norc -euo pipefail -c "$remote_body"
 fi
 """,
@@ -111,6 +120,18 @@ printf '\n' >>"$FAKE_TRANSPORT_LOG"
 if [ "$1" = start ] && [ "$2" = acx-gpu-reap.service ]; then
   exit "${FAKE_REAPER_RC:-0}"
 fi
+if [ "$1" = disable ] && [ "${3:-}" = acx-gpu-start.timer ]; then
+  rm -f "$FAKE_START_TIMER_ACTIVE"
+  exit 0
+fi
+if [ "$1" = enable ] && [ "${3:-}" = acx-gpu-start.timer ]; then
+  : >"$FAKE_START_TIMER_ACTIVE"
+  exit 0
+fi
+if [ "$1" = stop ] && [ "${2:-}" = acx-gpu-start.service ]; then
+  rm -f "$FAKE_START_SERVICE_ACTIVE"
+  exit 0
+fi
 if [ "$1" = show ]; then
   case "$*" in
     *"--property=FragmentPath"*)
@@ -127,8 +148,55 @@ if [ "$1" = show ]; then
   exit 0
 fi
 if [ "$1" = is-active ] && [ "${3:-}" = acx-gpu-start.timer ]; then
+  [ -e "$FAKE_START_TIMER_ACTIVE" ] || exit 3
   exit "${FAKE_VERIFY_RC:-0}"
 fi
+if [ "$1" = is-active ] && [ "${3:-}" = acx-gpu-start.service ]; then
+  [ -e "$FAKE_START_SERVICE_ACTIVE" ]
+  exit $?
+fi
+""",
+    )
+    _write_executable(
+        fake_bin / "flock",
+        """#!/usr/bin/env bash
+set -euo pipefail
+printf 'flock' >>"$FAKE_TRANSPORT_LOG"
+printf ' <%s>' "$@" >>"$FAKE_TRANSPORT_LOG"
+printf '\n' >>"$FAKE_TRANSPORT_LOG"
+exit "${FAKE_FLOCK_RC:-0}"
+""",
+    )
+    _write_executable(
+        fake_bin / "delete-activation-call",
+        """#!/usr/bin/env python3
+import sys
+
+lines = sys.stdin.readlines()
+matches = [
+    index
+    for index, line in enumerate(lines)
+    if line.lstrip().startswith("activate_gpu_lifecycle_timers ")
+    and "()" not in line
+]
+if not matches:
+    sys.stderr.write("delete-activation-call: activation call not found\\n")
+    raise SystemExit(2)
+start = matches[-1]
+end = start + 1
+while end < len(lines) and lines[end - 1].rstrip().endswith("\\\\"):
+    end += 1
+sys.stdout.writelines(lines[:start] + lines[end:])
+""",
+    )
+    _write_executable(
+        fake_bin / "mv",
+        """#!/usr/bin/env bash
+set -euo pipefail
+case "${1:-}" in
+  -Tf|-fT) shift; exec /bin/mv -f "$@" ;;
+  *) exec /bin/mv "$@" ;;
+esac
 """,
     )
     _write_executable(
@@ -153,16 +221,20 @@ printf '\n' >>"$FAKE_TRANSPORT_LOG"
             "FAKE_TRANSPORT_LOG": str(transport_log),
             "FAKE_VERIFY_RC": str(verify_rc),
             "FAKE_REAPER_RC": str(reaper_rc),
+            "FAKE_FLOCK_RC": str(flock_rc),
             "FAKE_DROP_IN_PATHS": drop_in_paths,
             "FAKE_MISMATCHED_UNIT": mismatched_unit or "",
             "FAKE_REAP_EXEC_START": reap_exec_start,
             "FAKE_REMOTE_BODY_MUTATION": remote_body_mutation,
+            "FAKE_START_TIMER_ACTIVE": str(tmp_path / "start-timer.active"),
+            "FAKE_START_SERVICE_ACTIVE": str(tmp_path / "start-service.active"),
             "FAKE_OPT_ACX_GPU": str(fake_host / "opt-acx-gpu"),
             "FAKE_ETC_ACX": str(fake_host / "etc-acx"),
             "FAKE_ETC_TMPFILES": str(fake_host / "etc-tmpfiles"),
             "FAKE_RUN_ACX": str(fake_host / "run-acx"),
             "FAKE_RUN_ACX_WRITE": str(fake_host / "run-acx-write"),
             "FAKE_RUN_ACX_GPU": str(fake_host / "run-acx-gpu"),
+            "FAKE_VAR_LIB_ACX_GPU": str(fake_host / "var-lib-acx-gpu"),
             "ACX_EXPECTED_SYSTEMD_DIR": str(expected_systemd),
             "ACX_EFFECTIVE_SYSTEMD_DIR": str(effective_systemd),
             "ACX_EXPECTED_ENV_FILE": str(lifecycle_env),
@@ -336,9 +408,39 @@ def test_install_fails_when_timer_verification_finds_an_inactive_timer(tmp_path:
     assert "acx-gpu-start.timer is not active" in result.stderr
     assert calls.count("systemctl <start> <acx-gpu-reap.service>") == 2
     assert calls.count("systemctl <disable> <--now> <acx-gpu-start.timer>") == 2
+    stop_fences = [
+        index
+        for index, call in enumerate(calls.splitlines())
+        if call == "systemctl <stop> <acx-gpu-start.service>"
+    ]
+    lock_fences = [
+        index for index, call in enumerate(calls.splitlines()) if call.startswith("flock <--wait> <120>")
+    ]
+    reapers = [
+        index
+        for index, call in enumerate(calls.splitlines())
+        if call == "systemctl <start> <acx-gpu-reap.service>"
+    ]
+    assert len(stop_fences) == len(lock_fences) == len(reapers) == 2
+    assert all(stop < lock < reap for stop, lock, reap in zip(stop_fences, lock_fences, reapers))
     assert "running fail-safe STOP path" in result.stderr
     for ssh_call in (line for line in calls.splitlines() if line.startswith("ssh")):
         assert "<-l> <ci-user> <--> <backend.test>" in ssh_call
+
+
+def test_cleanup_never_reaps_concurrently_when_start_fence_cannot_quiesce(tmp_path: Path) -> None:
+    result, calls = _run_lifecycle(
+        tmp_path,
+        enabled=True,
+        ready_url="http://10.0.1.36:8000/health",
+        dry_run=False,
+        flock_rc=9,
+    )
+
+    assert result.returncode != 0
+    assert calls.count("systemctl <stop> <acx-gpu-start.service>") == 2
+    assert "systemctl <start> <acx-gpu-reap.service>" not in calls
+    assert "reaper not invoked concurrently" in result.stderr
 
 
 def test_effective_unit_drop_in_fails_and_disables_start_timer(tmp_path: Path) -> None:
@@ -405,7 +507,10 @@ def test_installer_own_verifier_fails_loudly_with_fake_systemctl(tmp_path: Path)
         fake_bin / "sudo",
         """#!/usr/bin/env bash
 set -euo pipefail
-exec "$@"
+case "${1:-}" in
+  chown) exit 0 ;;
+  *) exec "$@" ;;
+esac
 """,
     )
     _write_executable(
@@ -421,8 +526,10 @@ if [ "$1" = show ]; then
   esac
   exit 0
 fi
-if [ "$1" = is-active ] && [ "${3:-}" = acx-gpu-start.timer ]; then
-  exit 3
+if [ "$1" = is-active ]; then
+  case "${3:-}" in
+    acx-gpu-start.timer|acx-gpu-start.service) exit 3 ;;
+  esac
 fi
 exit 0
 """,
@@ -433,6 +540,7 @@ exit 0
     environment["ACX_EFFECTIVE_SYSTEMD_DIR"] = str(effective_systemd)
     environment["ACX_EXPECTED_ENV_FILE"] = str(lifecycle_env)
     environment["ACX_EXPECTED_MAX_LEASE_SECONDS"] = "3600"
+    environment["ACX_GPU_LIFECYCLE_LOCK_PATH"] = str(tmp_path / "state" / "lifecycle.lock")
 
     result = subprocess.run(
         [str(INSTALLER), "--activate-systemd-only"],
@@ -456,9 +564,12 @@ def test_reaper_is_proved_before_start_timer_is_enabled(tmp_path: Path) -> None:
     )
 
     assert result.returncode == 0, result.stdout + result.stderr
+    disable = calls.index("systemctl <disable> <--now> <acx-gpu-start.timer>")
+    stop_start = calls.index("systemctl <stop> <acx-gpu-start.service>")
+    lock_quiesced = calls.index("flock <--wait> <120>")
     reap_proof = calls.index("systemctl <start> <acx-gpu-reap.service>")
     start_timer_enable = calls.index("systemctl <enable> <--now> <acx-gpu-start.timer>")
-    assert reap_proof < start_timer_enable
+    assert disable < stop_start < lock_quiesced < reap_proof < start_timer_enable
     assert "systemctl <start> <acx-gpu-start" not in calls
     assert calls.index("systemctl <show> <acx-gpu-reap.service>") < start_timer_enable
 
@@ -468,6 +579,20 @@ def _assert_rendered_activation_contract(result: subprocess.CompletedProcess[str
     assert "systemctl <start> <acx-gpu-reap.service>" in calls
     assert "systemctl <show> <acx-gpu-reap.service>" in calls
     assert "systemctl <enable> <--now> <acx-gpu-start.timer>" in calls
+
+
+def _assert_specific_activation_mutant_failure(
+    mutation: str,
+    result: subprocess.CompletedProcess[str],
+    calls: str,
+) -> None:
+    if mutation == "delete_activation_definition":
+        assert result.returncode != 0
+        assert "activate_gpu_lifecycle_timers: command not found" in result.stderr
+    else:
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert "systemctl <start> <acx-gpu-reap.service>" not in calls
+        assert "systemctl <enable> <--now> <acx-gpu-start.timer>" not in calls
 
 
 @pytest.mark.parametrize(
@@ -483,8 +608,7 @@ def test_rendered_remote_body_activation_mutants_go_red(tmp_path: Path, mutation
         remote_body_mutation=mutation,
     )
 
-    with pytest.raises(AssertionError):
-        _assert_rendered_activation_contract(result, calls)
+    _assert_specific_activation_mutant_failure(mutation, result, calls)
 
 
 def test_fail_safe_guard_precedes_live_release_and_effective_artifact_mutations() -> None:
@@ -492,15 +616,18 @@ def test_fail_safe_guard_precedes_live_release_and_effective_artifact_mutations(
     transaction = source[source.index('run_with_deadline "systemd unit installation"') :]
 
     guard = transaction.index("trap cleanup_gpu_lifecycle_transaction ERR EXIT")
-    disable = transaction.index("sudo systemctl disable --now acx-gpu-start.timer")
+    fence = transaction.index("fence_gpu_lifecycle_start")
     switch = transaction.index("previous_release=\\$(readlink -f /opt/acx-gpu/current")
     artifact_write = transaction.index("sudo tee /etc/systemd/system/acx-gpu-start.service")
     prove_reaper = transaction.index("activate_gpu_lifecycle_timers \\")
     rearm_start = source.index("sudo systemctl enable --now acx-gpu-start.timer")
 
-    assert guard < disable < switch < artifact_write < prove_reaper
+    assert guard < fence < switch < artifact_write < prove_reaper
     assert "sudo systemctl start acx-gpu-reap.service" in source
     assert source.index("sudo systemctl start acx-gpu-reap.service") < rearm_start
+    assert "sudo systemctl stop acx-gpu-start.service" in source
+    assert "systemctl is-active --quiet acx-gpu-start.service" in source
+    assert "flock --wait 120" in source
 
 
 def test_every_remote_shell_enables_pipefail() -> None:

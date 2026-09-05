@@ -121,34 +121,28 @@ activate_gpu_lifecycle_timers() {
         echo "error: lifecycle activation requires four expected hashes and max lease" >&2
         return 2
     }
-    local start_timer_armed=0
-    cleanup_unverified_start_timer() {
-        local status=$?
-        trap - ERR EXIT
-        if [ "$status" -ne 0 ] && [ "$start_timer_armed" -eq 1 ]; then
-            echo 'error: lifecycle verification failed; running fail-safe STOP path' >&2
-            if ! sudo systemctl disable --now acx-gpu-start.timer; then
-                echo 'error: failed to disable acx-gpu-start.timer during cleanup' >&2
-            fi
-            if ! sudo systemctl start acx-gpu-reap.service; then
-                echo 'error: fail-safe acx-gpu-reap.service invocation failed' >&2
-            fi
-        fi
-        exit "$status"
-    }
-    trap cleanup_unverified_start_timer ERR EXIT
-
-    sudo systemctl disable --now acx-gpu-start.timer
     sudo systemctl enable --now acx-gpu-reap.timer
     sudo systemctl start acx-gpu-reap.service
     verify_gpu_lifecycle_timers "$@"
 
-    # Set the cleanup guard first: enable --now can partially succeed.
-    start_timer_armed=1
     sudo systemctl enable --now acx-gpu-start.timer
     verify_gpu_lifecycle_start_timer
-    start_timer_armed=0
+}
+
+lifecycle_transaction_complete=0
+cleanup_gpu_lifecycle_transaction() {
+    local status=$?
     trap - ERR EXIT
+    if [ "$status" -ne 0 ] && [ "$lifecycle_transaction_complete" -eq 0 ]; then
+        echo 'error: lifecycle transaction failed; running fail-safe STOP path' >&2
+        if ! sudo systemctl disable --now acx-gpu-start.timer; then
+            echo 'error: failed to disable acx-gpu-start.timer during cleanup' >&2
+        fi
+        if ! sudo systemctl start acx-gpu-reap.service; then
+            echo 'error: fail-safe acx-gpu-reap.service invocation failed' >&2
+        fi
+    fi
+    exit "$status"
 }
 
 # Hermetic verification entrypoint used by deploy-contract tests. Keeping the
@@ -169,12 +163,16 @@ fi
 if [ "${1:-}" = "--activate-systemd-only" ]; then
     [ "$#" -eq 1 ] || { echo "error: --activate-systemd-only accepts no arguments" >&2; exit 2; }
     expected_unit_dir="${ACX_EXPECTED_SYSTEMD_DIR:-/etc/systemd/system}"
+    trap cleanup_gpu_lifecycle_transaction ERR EXIT
+    sudo systemctl disable --now acx-gpu-start.timer
     activate_gpu_lifecycle_timers \
         "$(sha256sum "${expected_unit_dir}/acx-gpu-start.service" | awk '{print $1}')" \
         "$(sha256sum "${expected_unit_dir}/acx-gpu-start.timer" | awk '{print $1}')" \
         "$(sha256sum "${expected_unit_dir}/acx-gpu-reap.service" | awk '{print $1}')" \
         "$(sha256sum "${expected_unit_dir}/acx-gpu-reap.timer" | awk '{print $1}')" \
         "${ACX_EXPECTED_MAX_LEASE_SECONDS:?ACX_EXPECTED_MAX_LEASE_SECONDS is required}"
+    lifecycle_transaction_complete=1
+    trap - ERR EXIT
     exit $?
 fi
 
@@ -458,7 +456,26 @@ if [ -e '${remote_release}' ]; then
     sudo rm -rf '${remote_stage}'
 else
     sudo mv '${remote_stage}' '${remote_release}'
-fi
+fi"
+
+# --- install units -----------------------------------------------------------
+verification_function=$(declare -f verify_gpu_lifecycle_timers)
+start_verification_function=$(declare -f verify_gpu_lifecycle_start_timer)
+activation_function=$(declare -f activate_gpu_lifecycle_timers)
+cleanup_function=$(declare -f cleanup_gpu_lifecycle_transaction)
+run_with_deadline "systemd unit installation" \
+    ssh "${SSH_OPTIONS[@]}" -l "$SSH_USER" -- "$HOST" "set -euo pipefail
+${verification_function}
+${start_verification_function}
+${activation_function}
+${cleanup_function}
+lifecycle_transaction_complete=0
+trap cleanup_gpu_lifecycle_transaction ERR EXIT
+
+# ARCH-13/COST-04: establish the fail-safe before changing the live release or
+# any effective lifecycle artifact. The trap remains armed until the reaper is
+# proved and START is re-enabled and verified.
+sudo systemctl disable --now acx-gpu-start.timer
 previous_release=\$(readlink -f /opt/acx-gpu/current 2>/dev/null || true)
 if [ -n "\$previous_release" ] && [ "\$previous_release" != '${remote_release}' ] \
     && [ -d "\$previous_release" ]; then
@@ -477,17 +494,8 @@ if [ -n "\$previous_release" ] && [ "\$previous_release" != '${remote_release}' 
     sudo mv -Tf '/opt/acx-gpu/.previous-${release_id}' /opt/acx-gpu/previous
 fi
 ln -sfn '${remote_release}' '/opt/acx-gpu/.current-${release_id}'
-sudo mv -Tf '/opt/acx-gpu/.current-${release_id}' /opt/acx-gpu/current"
+sudo mv -Tf '/opt/acx-gpu/.current-${release_id}' /opt/acx-gpu/current
 
-# --- install units -----------------------------------------------------------
-verification_function=$(declare -f verify_gpu_lifecycle_timers)
-start_verification_function=$(declare -f verify_gpu_lifecycle_start_timer)
-activation_function=$(declare -f activate_gpu_lifecycle_timers)
-run_with_deadline "systemd unit installation" \
-    ssh "${SSH_OPTIONS[@]}" -l "$SSH_USER" -- "$HOST" "set -euo pipefail
-${verification_function}
-${start_verification_function}
-${activation_function}
 sudo mkdir -p '${remote_release}/systemd'
 sudo tee '${remote_release}/systemd/gpu-lifecycle.env' >/dev/null <<ENV
 GPU_INSTANCE_ID=${remote_gpu_instance_id}
@@ -614,6 +622,8 @@ activate_gpu_lifecycle_timers \
     "\$expected_start_service_hash" "\$expected_start_timer_hash" \
     "\$expected_reap_service_hash" "\$expected_reap_timer_hash" \
     '${MAX_LEASE_SECONDS}'
+lifecycle_transaction_complete=1
+trap - ERR EXIT
 echo '--- installed timers ---'
 if ! systemctl list-timers --all --no-pager | grep acx-gpu; then
     echo 'warning: installed timers were verified but list-timers diagnostic was empty' >&2

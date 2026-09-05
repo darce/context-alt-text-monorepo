@@ -88,6 +88,7 @@ _DEFAULT_READY_SLEEP_SECONDS = 10.0
 _DEFAULT_LOCK_TIMEOUT_SECONDS = 30.0
 _LOCK_RETRY_SECONDS = 0.05
 _DEFAULT_RUNNING_SINCE_PATH = Path("/run/acx/gpu-running-since.json")
+_RUNNING_SINCE_READ_FAILURE_RECOVERY_CYCLES = 3
 _RUNNING_SINCE_FUTURE_SKEW_SECONDS = 5.0
 # Live describe dumps omit batch_in_progress; warn once per process, not per poll.
 _ABSENT_BATCH_KEY_WARNED = False
@@ -449,6 +450,7 @@ class RunningSinceLeaseStore:
 
     _SOURCES = frozenset({"start_actuator", "first_observed"})
     _SCHEMA_VERSION = 2
+    _FAILURE_SCHEMA_VERSION = 1
 
     def __init__(
         self,
@@ -629,6 +631,68 @@ class RunningSinceLeaseStore:
             return record
         return self.write(instance_id, source="first_observed")
 
+    @property
+    def _read_failures_path(self) -> Path:
+        return self.path.with_name(f".{self.path.name}.read-failures.json")
+
+    def record_read_failure(self, instance_id: str) -> int:
+        """Durably count consecutive read failures across oneshot invocations."""
+        with self._locked_for_update():
+            failures = self._read_failure_counts()
+            count = failures.get(instance_id, 0) + 1
+            failures[instance_id] = count
+            self._write_failure_counts(failures)
+        return count
+
+    def clear_read_failures(self, instance_id: str) -> None:
+        if not self._read_failures_path.exists():
+            return
+        with self._locked_for_update():
+            failures = self._read_failure_counts()
+            if instance_id not in failures:
+                return
+            del failures[instance_id]
+            self._write_failure_counts(failures)
+
+    def _read_failure_counts(self) -> dict[str, int]:
+        try:
+            payload = json.loads(self._read_failures_path.read_text())
+        except FileNotFoundError:
+            return {}
+        except (OSError, json.JSONDecodeError, TypeError, ValueError):
+            # An unreadable recovery counter cannot safely extend the lease.
+            raise CorruptRunningSinceLeaseError(
+                f"running-since recovery counter is unreadable: {self._read_failures_path}"
+            )
+        if (
+            not isinstance(payload, dict)
+            or payload.get("schema_version") != self._FAILURE_SCHEMA_VERSION
+            or not isinstance(payload.get("instances"), dict)
+        ):
+            raise CorruptRunningSinceLeaseError(
+                f"running-since recovery counter is invalid: {self._read_failures_path}"
+            )
+        failures: dict[str, int] = {}
+        for key, value in payload["instances"].items():
+            if not isinstance(key, str) or isinstance(value, bool) or not isinstance(value, int) or value < 1:
+                raise CorruptRunningSinceLeaseError(
+                    f"running-since recovery counter is invalid: {self._read_failures_path}"
+                )
+            failures[key] = value
+        return failures
+
+    def _write_failure_counts(self, failures: dict[str, int]) -> None:
+        if not failures:
+            self._read_failures_path.unlink(missing_ok=True)
+            return
+        payload = {
+            "schema_version": self._FAILURE_SCHEMA_VERSION,
+            "instances": failures,
+        }
+        temporary = self._read_failures_path.with_name(f".{self._read_failures_path.name}.tmp")
+        temporary.write_text(json.dumps(payload, sort_keys=True) + "\n")
+        temporary.replace(self._read_failures_path)
+
     def remove(self, instance_id: str) -> None:
         with self._locked_for_update():
             instances = self._read_instances_for_update()
@@ -727,9 +791,9 @@ class ReapCycleResult:
     actuated: list[tuple[str, str]]
     fenced_off: bool
     errors: list[str]
-    # STOPs forced by the max-lease cost cap after the load boundary is known to
-    # be trustworthy. Reported separately so an operator can distinguish the
-    # queue draining from the cost backstop firing.
+    # STOPs forced unconditionally by the max-lease cost cap. Reported
+    # separately so an operator can distinguish the queue draining from the
+    # cost backstop firing.
     lease_expired: list[tuple[str, str]] = field(default_factory=list)
     snapshot_persisted: bool = True
 
@@ -915,7 +979,8 @@ def _apply_running_since_leases(
                 continue
             try:
                 store.remove(instance.instance_id)
-            except OSError as exc:
+                store.clear_read_failures(instance.instance_id)
+            except (OSError, ValueError) as exc:
                 msg = (
                     f"{instance.instance_id}: running-since removal failed; lease cap disabled: "
                     f"{type(exc).__name__}: {exc}"
@@ -961,16 +1026,61 @@ def _apply_running_since_leases(
             )
             continue
         except (OSError, ValueError) as exc:
+            failure_count = 0
+            counter_error: Exception | None = None
+            if not dry_run:
+                try:
+                    failure_count = store.record_read_failure(instance.instance_id)
+                except (OSError, ValueError) as recovery_exc:
+                    counter_error = recovery_exc
+            if counter_error is not None or failure_count >= _RUNNING_SINCE_READ_FAILURE_RECOVERY_CYCLES:
+                detail = (
+                    f"recovery counter unavailable ({type(counter_error).__name__}: {counter_error})"
+                    if counter_error is not None
+                    else (
+                        f"failure {failure_count}/{_RUNNING_SINCE_READ_FAILURE_RECOVERY_CYCLES}"
+                    )
+                )
+                msg = (
+                    f"{instance.instance_id}: running-since observation failed; bounded RES-13 "
+                    f"recovery exhausted ({detail}); forcing cost-cap expiry: "
+                    f"{type(exc).__name__}: {exc}"
+                )
+                logger.error(msg)
+                errors.append(msg)
+                observed.append(
+                    GpuInstance(
+                        instance_id=instance.instance_id,
+                        state=instance.state,
+                        idle_for_seconds=sys.maxsize,
+                    )
+                )
+                continue
             msg = (
-                f"{instance.instance_id}: running-since observation failed; lease cap disabled: "
+                f"{instance.instance_id}: running-since observation failed; lease cap disabled "
+                f"only during bounded RES-13 recovery "
+                f"({failure_count}/{_RUNNING_SINCE_READ_FAILURE_RECOVERY_CYCLES}): "
                 f"{type(exc).__name__}: {exc}"
             )
-            logger.error(msg)
+            logger.warning(msg)
             errors.append(msg)
             observed.append(instance)
             continue
         else:
             source = record.source
+            if not dry_run:
+                try:
+                    store.clear_read_failures(instance.instance_id)
+                except (OSError, ValueError) as exc:
+                    # The authoritative lease remains usable. A stale recovery
+                    # count can only shorten a later degraded lease, never
+                    # extend the cost cap.
+                    logger.warning(
+                        "%s: could not clear running-since recovery state: %s: %s",
+                        instance.instance_id,
+                        type(exc).__name__,
+                        exc,
+                    )
         logger.info(
             "evaluating RUNNING lease instance=%s source=%s age_seconds=%s",
             instance.instance_id,
@@ -1003,9 +1113,8 @@ def _run_reap_cycle(
 
     Per-instance STOP failures are collected; the loop continues (rg-007).
 
-    The max-lease cost cap may override trustworthy busy evidence, but it never
-    STOPs while the load boundary is untrustworthy. Otherwise the same evidence
-    would refuse the compensating START and strand the GPU unavailable.
+    The max-lease cost cap is unconditional. Load evidence gates only ordinary
+    idle STOP decisions and cannot extend a RUNNING lease beyond its cost cap.
     """
     lease_expired: list[tuple[str, str]] = []
     lease_errors: list[str] = []
@@ -1016,20 +1125,10 @@ def _run_reap_cycle(
             use_recorded_age=use_recorded_lease_age,
             dry_run=dry_run,
         )
-    load = load_source.snapshot()
-    if not isinstance(load, JobLoadSnapshot) or load.untrustworthy:
-        logger.error("load snapshot untrustworthy; refusing STOP (fail closed)")
-        return ReapCycleResult(
-            decided=[],
-            actuated=[],
-            fenced_off=True,
-            errors=[*lease_errors, "load snapshot untrustworthy; refusing STOP"],
-        )
-
     forced = controller.lease_expired_instances(instances, max_lease_seconds=max_lease_seconds)
     for action, instance_id in forced:
         logger.warning(
-            "max lease %ss exceeded; forcing STOP despite trustworthy busy load: %s",
+            "max lease %ss exceeded; forcing STOP regardless of load evidence: %s",
             max_lease_seconds,
             instance_id,
         )
@@ -1054,6 +1153,17 @@ def _run_reap_cycle(
     forced_ids = {instance_id for _, instance_id in lease_expired}
     if forced_ids:
         instances = [i for i in instances if i.instance_id not in forced_ids]
+
+    load = load_source.snapshot()
+    if not isinstance(load, JobLoadSnapshot) or load.untrustworthy:
+        logger.error("load snapshot untrustworthy; refusing ordinary idle STOP")
+        return ReapCycleResult(
+            decided=[],
+            actuated=[],
+            fenced_off=True,
+            errors=[*lease_errors, "load snapshot untrustworthy; refusing ordinary idle STOP"],
+            lease_expired=lease_expired,
+        )
 
     decided = controller.reap_idle_instances(
         instances,

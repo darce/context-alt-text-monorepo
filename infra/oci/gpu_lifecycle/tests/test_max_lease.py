@@ -164,7 +164,7 @@ def test_lease_expiry_stops_even_when_load_claims_a_batch_is_running() -> None:
     assert result.actuated == []
 
 
-def test_lease_expiry_does_not_strand_gpu_on_untrustworthy_load() -> None:
+def test_lease_expiry_stops_even_when_load_snapshot_is_untrustworthy() -> None:
     controller = GpuLifecycleController(idle_seconds=300)
     actuator = RecordingActuator()
 
@@ -177,10 +177,28 @@ def test_lease_expiry_does_not_strand_gpu_on_untrustworthy_load() -> None:
         max_lease_seconds=3600,
     )
 
+    assert actuator.stopped == ["ocid1.instance.oc1..gpu"]
+    assert result.lease_expired == [("STOP", "ocid1.instance.oc1..gpu")]
+    assert result.fenced_off is True
+    assert "load snapshot untrustworthy" in result.errors[-1]
+
+
+def test_untrustworthy_load_still_blocks_ordinary_idle_stop_within_lease() -> None:
+    controller = GpuLifecycleController(idle_seconds=300)
+    actuator = RecordingActuator()
+
+    result = run_reap_cycle(
+        controller=controller,
+        instances=[_running(600)],
+        load_source=UntrustworthyLoadSource(),
+        actuator=actuator,
+        fence_delay_seconds=0,
+        max_lease_seconds=3600,
+    )
+
     assert actuator.stopped == []
     assert result.lease_expired == []
     assert result.fenced_off is True
-    assert "load snapshot untrustworthy" in result.errors[-1]
 
 
 def test_within_lease_the_busy_fence_still_protects_the_batch() -> None:
@@ -521,7 +539,9 @@ def test_stopped_sibling_does_not_reset_running_instance_lease(tmp_path: Path) -
     assert third.lease_expired == [("STOP", "instance-a")]
 
 
-def test_reap_lease_write_failure_disables_cap_loudly(monkeypatch, caplog) -> None:
+def test_reap_lease_write_failure_exhausts_recovery_loudly_when_counter_is_unavailable(
+    monkeypatch, caplog
+) -> None:
     def fail_observe(self, instance_id: str):
         raise PermissionError(f"cannot write lease for {instance_id}")
 
@@ -543,7 +563,7 @@ def test_reap_lease_write_failure_disables_cap_loudly(monkeypatch, caplog) -> No
     )
 
     assert exit_code != 0
-    assert "lease cap disabled" in caplog.text
+    assert "forcing cost-cap expiry" in caplog.text
 
 
 def test_one_lease_store_failure_does_not_abort_healthy_sibling_reap(tmp_path: Path) -> None:
@@ -580,6 +600,55 @@ def test_one_lease_store_failure_does_not_abort_healthy_sibling_reap(tmp_path: P
     assert result.lease_expired == [("STOP", "instance-good")]
     assert len(result.errors) == 1
     assert "instance-bad" in result.errors[0]
+
+
+def test_persistent_running_since_read_failure_forces_stop_after_bounded_recovery(
+    tmp_path: Path, caplog
+) -> None:
+    path = tmp_path / "running-since.json"
+    _write_lease(path, since="2026-09-03T11:59:00Z")
+
+    class UnreadableLeaseStore(RunningSinceLeaseStore):
+        def observe_running(self, instance_id: str):
+            raise OSError(f"injected persistent read error for {instance_id}")
+
+    store = UnreadableLeaseStore(
+        path=path,
+        now=lambda: NOW,
+        monotonic=lambda: TEST_MONOTONIC,
+        boot_id=TEST_BOOT_ID,
+    )
+    actuator = RecordingActuator()
+
+    for expected_count in (1, 2):
+        result = run_reap_cycle(
+            controller=GpuLifecycleController(idle_seconds=300),
+            instances=[_running(0, "instance-a")],
+            load_source=BusyLoadSource(),
+            actuator=actuator,
+            fence_delay_seconds=0,
+            max_lease_seconds=3600,
+            running_since_store=store,
+        )
+        assert actuator.stopped == []
+        assert result.lease_expired == []
+        assert f"({expected_count}/3)" in result.errors[0]
+
+    result = run_reap_cycle(
+        controller=GpuLifecycleController(idle_seconds=300),
+        instances=[_running(0, "instance-a")],
+        load_source=BusyLoadSource(),
+        actuator=actuator,
+        fence_delay_seconds=0,
+        max_lease_seconds=3600,
+        running_since_store=store,
+    )
+
+    assert actuator.stopped == ["instance-a"]
+    assert result.lease_expired == [("STOP", "instance-a")]
+    assert "bounded RES-13 recovery exhausted" in caplog.text
+    # The last durable origin is never replaced with a fresh zero-age lease.
+    assert json.loads(path.read_text())["instances"]["instance-a"]["since"] == "2026-09-03T11:59:00Z"
 
 
 def test_concurrent_lease_writers_preserve_both_instance_records(tmp_path: Path) -> None:

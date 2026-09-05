@@ -89,6 +89,46 @@ const runFixtureProbe = (root: string, scenario: string, body: string): void => 
 };
 
 describe('production build status cleanup', () => {
+  it.each(['denied', 'successful'])('bounds a stalled ps probe after a %s signal probe', (scenario) => {
+    const root = mkdtempSync(join(tmpdir(), 'acx-stalled-ps-'));
+    try {
+      runFixtureProbe(root, scenario, String.raw`
+const lockDir = join(root, '.lock');
+const owner = fixture.acquireDirectoryLock(lockDir);
+const ps = join(root, 'ps');
+fs.writeFileSync(ps, '#!' + process.execPath + '\n' +
+  'process.on("SIGTERM", () => {}); const end = Date.now() + 2000; while (Date.now() < end) {}');
+fs.chmodSync(ps, 0o755);
+process.env.PATH = root + ':' + process.env.PATH;
+// Exercise both EPERM fallback and normal macOS listing without signalling real groups.
+const originalPlatform = process.platform;
+process.kill = (_pid, signal) => {
+  if (signal === 0 && scenario === 'denied') throw Object.assign(new Error('denied'), { code: 'EPERM' });
+  return true;
+};
+const started = performance.now();
+let caught;
+try {
+  fixture.runWithBuildLock(lockDir, owner, () => {
+    Object.defineProperty(process, 'platform', { value: 'darwin' });
+    return fixture.waitForProcessGroup(4321, {
+    timeoutMs: 100, terminationGraceMs: 100, killConfirmationMs: 100,
+    processGroupStartToken: 'supervised', readProcessStartToken: () => 'supervised',
+    readExitCode: () => null,
+  }); });
+} catch (error) { caught = error; }
+Object.defineProperty(process, 'platform', { value: originalPlatform });
+assert.ok(caught instanceof fixture.ProductionCssBuildTeardownError, String(caught));
+assert.match(caught.message, /ETIMEDOUT/);
+assert.ok(performance.now() - started < 1000, 'stalled ps exceeded supervision budgets');
+assert.ok(fs.existsSync(join(lockDir, '.build-in-progress')));
+assert.equal(fixture.tryAcquireDirectoryLock(lockDir), null);
+`);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it.each(['live', 'empty', 'malformed', 'failed', 'missing-state', 'garbage-state', 'garbage-pid'])('retains the lock on EPERM with a %s listing', (listing) => {
     const root = mkdtempSync(join(tmpdir(), 'acx-eperm-probe-'));
     const lockDir = join(root, '.lock');

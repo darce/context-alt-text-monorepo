@@ -37,8 +37,18 @@ const candidateStatusLabel = (status: GuidedCandidateStatus): string => {
   return 'Ready for your review';
 };
 
-const lastApplication = (history: GuidedHistoryEvent[]): GuidedHistoryEvent | undefined =>
-  [...history].reverse().find((event) => event.kind === 'applied');
+const lastApplication = (history: GuidedHistoryEvent[]): GuidedHistoryEvent | undefined => {
+  for (let index = history.length - 1; index >= 0; index -= 1) {
+    const event = history[index];
+    if (event.kind === 'application-undone') {
+      return undefined;
+    }
+    if (event.kind === 'applied') {
+      return event;
+    }
+  }
+  return undefined;
+};
 
 export const GuidedDescriptionReview = ({
   scenario,

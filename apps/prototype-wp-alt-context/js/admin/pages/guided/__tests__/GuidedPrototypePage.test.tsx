@@ -34,6 +34,7 @@ describe('GuidedPrototypePage', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Undo practice apply' }));
     expect(screen.getAllByText('Application undone.').length).toBeGreaterThan(0);
     expect(document.querySelector('[data-applied-text]')).toHaveTextContent('Portrait of a person in a grey jacket.');
+    expect(screen.queryByRole('button', { name: 'Undo practice apply' })).not.toBeInTheDocument();
   });
 
   it('keeps the unidentified path useful without using the sample name', () => {

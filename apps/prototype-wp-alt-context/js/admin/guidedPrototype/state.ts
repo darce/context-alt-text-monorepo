@@ -148,7 +148,17 @@ export const applyGuidedCandidate = (scenario: GuidedScenario): GuidedScenario =
 };
 
 export const undoGuidedApplication = (scenario: GuidedScenario): GuidedScenario => {
-  const lastApplication = [...scenario.history].reverse().find((event) => event.kind === 'applied');
+  let lastApplication: GuidedHistoryEvent | undefined;
+  for (let index = scenario.history.length - 1; index >= 0; index -= 1) {
+    const event = scenario.history[index];
+    if (event.kind === 'application-undone') {
+      break;
+    }
+    if (event.kind === 'applied') {
+      lastApplication = event;
+      break;
+    }
+  }
   if (lastApplication?.previousAppliedText === undefined) {
     return cloneScenario(scenario);
   }

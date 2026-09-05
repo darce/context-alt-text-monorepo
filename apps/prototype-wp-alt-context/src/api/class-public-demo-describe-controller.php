@@ -172,10 +172,31 @@ final class PublicDemoDescribeController implements RecognitionRouteControllerIn
 
 		$pipeline_request = new WP_REST_Request( 'POST', '/acx/v1/recognition/describe/runs' );
 		$pipeline_request->set_param( 'media_ids', array( $media_id ) );
+		// Persist uncertainty before dispatch: a timeout or worker death can
+		// hide backend acceptance and must never turn into an expired free slot.
+		if ( ! $this->mark_submission_started() ) {
+			return $this->limited_response( PublicDemoErrorCode::STATE_UNAVAILABLE, 'The demo is temporarily busy. Please retry.', 5 );
+		}
 		$response = $this->pipeline->submit_describe_run( $pipeline_request );
 
 		if ( $response instanceof WP_Error || $response->get_status() >= 400 ) {
-			$this->release_inflight_bulkhead();
+			$error_data = $response instanceof WP_Error ? $response->get_error_data() : $response->get_data();
+			$accepted_run_id = is_array( $error_data ) && is_string( $error_data['run_id'] ?? null )
+				? sanitize_text_field( $error_data['run_id'] ) : '';
+			if ( '' !== $accepted_run_id ) {
+				// Tracking persistence may fail after acceptance. Keep the run ID
+				// so polling and expiry reconciliation can resolve its ownership.
+				$this->bind_inflight_run( $accepted_run_id );
+			} elseif ( $response instanceof WP_Error && in_array( $response->get_error_code(), array(
+				'missing_media_ids',
+				'too_many_media_ids',
+				'describe_run_attachment_unreadable',
+				'describe_run_payload_too_large',
+			), true ) ) {
+				// These local validation failures precede the transport call.
+				// Unrecognized errors (including HTTP errors) remain uncertain.
+				$this->release_inflight_bulkhead();
+			}
 			return $this->translated_pipeline_error( $response );
 		}
 
@@ -349,8 +370,12 @@ final class PublicDemoDescribeController implements RecognitionRouteControllerIn
 
 			$run_id = is_string( $current['run_id'] ?? null ) ? $current['run_id'] : '';
 			if ( 'pending' === $run_id ) {
-				// A submitter can die after acquiring the lease but before binding a
-				// backend run. Once that pending lease expires, replace it in-place
+				if ( ! empty( $current['submission_started'] ) ) {
+					// No run ID is available to reconcile an uncertain dispatch.
+					// An operator must verify backend quiescence before clearing it.
+					return false;
+				}
+				// A submitter can die before dispatch. Replace that expired lease
 				// while holding the same guard used by bind_inflight_run(). Fence the
 				// write against the exact expired owner snapshot: a renewed or replaced
 				// lease must never be overwritten by this recovery attempt.
@@ -367,8 +392,7 @@ final class PublicDemoDescribeController implements RecognitionRouteControllerIn
 				) {
 					return false;
 				}
-				update_option( self::INFLIGHT_OPTION, $value, false );
-				$acquired = $value === get_option( self::INFLIGHT_OPTION, false );
+				$acquired = $this->update_inflight_lease( $current, $value );
 				$this->inflight_token = $acquired ? $token : null;
 				return $acquired;
 			}
@@ -403,7 +427,23 @@ final class PublicDemoDescribeController implements RecognitionRouteControllerIn
 		}
 		$current['expires_at'] = time() + self::INFLIGHT_TTL_SECONDS;
 		$current['run_id'] = $run_id;
-		update_option( self::INFLIGHT_OPTION, $current, false );
+		$this->update_inflight_lease( $expected, $current );
+	}
+
+	private function mark_submission_started(): bool {
+		$current = get_option( self::INFLIGHT_OPTION, false );
+		if (
+			null === $this->inflight_token
+			|| ! is_array( $current )
+			|| 'pending' !== ( $current['run_id'] ?? null )
+			|| ! is_string( $current['token'] ?? null )
+			|| ! hash_equals( $current['token'], $this->inflight_token )
+		) {
+			return false;
+		}
+		$started = $current;
+		$started['submission_started'] = true;
+		return $this->update_inflight_lease( $current, $started );
 	}
 
 	private function reconcile_backend_run( string $run_id ): string {
@@ -460,8 +500,7 @@ final class PublicDemoDescribeController implements RecognitionRouteControllerIn
 				'token'     => $current['token'],
 				'expires_at' => time() + self::INFLIGHT_TTL_SECONDS,
 			);
-			update_option( self::INFLIGHT_OPTION, $bound, false );
-			return $bound === get_option( self::INFLIGHT_OPTION, false );
+			return $this->update_inflight_lease( $current, $bound );
 		} finally {
 			$this->release_lock( self::INFLIGHT_OPTION . '_reconcile', $guard );
 		}
@@ -480,6 +519,27 @@ final class PublicDemoDescribeController implements RecognitionRouteControllerIn
 			return;
 		}
 		$this->delete_inflight_lease( $current );
+	}
+
+	/**
+	 * @param array<string,mixed> $expected
+	 * @param array<string,mixed> $replacement
+	 */
+	private function update_inflight_lease( array $expected, array $replacement ): bool {
+		global $wpdb;
+
+		// Fence the write itself. The reconciliation guard can expire while a
+		// request is paused; a prior ownership read cannot protect a later write.
+		$updated = $wpdb->query(
+			$wpdb->prepare(
+				"UPDATE {$wpdb->options} SET option_value = %s WHERE option_name = %s AND BINARY option_value = %s",
+				serialize( $replacement ),
+				self::INFLIGHT_OPTION,
+				serialize( $expected )
+			)
+		);
+		wp_cache_delete( self::INFLIGHT_OPTION, 'options' );
+		return 1 === $updated;
 	}
 
 	/** @param array<string,mixed> $expected */

@@ -19,6 +19,23 @@ spec.loader.exec_module(renderer)
 
 
 class RendererBoundaryTests(unittest.TestCase):
+    def test_markdown_newlines_pass_both_check_paths(self):
+        ref = "workbench-operator-loop"
+        original = SOURCE.with_name(f"{ref}.md").read_text()
+        with tempfile.TemporaryDirectory() as directory:
+            maps = Path(directory)
+            shutil.copyfile(SOURCE.with_name(f"{ref}.uxmap.json"), maps / f"{ref}.uxmap.json")
+            with patch.object(renderer, "MAPS_DIR", maps):
+                for available in [False, True]:
+                    with patch.object(renderer, "render", return_value=original,
+                                      side_effect=None if available else renderer.OptionalRendererUnavailable()):
+                        for newline in ["\n", "\r\n"]:
+                            with self.subTest(available=available, newline=repr(newline)):
+                                (maps / f"{ref}.md").write_bytes(original.replace("\n", newline).encode("utf8"))
+                                output = io.StringIO()
+                                with contextlib.redirect_stderr(output), contextlib.redirect_stdout(io.StringIO()):
+                                    self.assertEqual(renderer.check([ref]), 0, output.getvalue())
+
     def test_declaration_variants_fail_both_check_paths(self):
         ref = "febt-1-job-error-states"
         original = SOURCE.with_name(f"{ref}.md").read_text()

@@ -12,13 +12,25 @@ import {
   undoGuidedApplication,
 } from './state';
 
+const NAME_GUARD_ERROR = 'You can only use the name after you confirm the face match.';
+
 describe('guided prototype scenario state', () => {
-  it('starts from an illustrative saved scenario without changing the original media', () => {
+  it('starts from a saved example with one recognised face and no decision yet', () => {
     const scenario = createGuidedScenario();
 
     expect(scenario.origin).toBe('illustrative');
-    expect(scenario.scenarioVersion).toBe('guided-portrait-v1');
-    expect(scenario.identity.status).toBe('unconfirmed');
+    expect(scenario.scenarioVersion).toBe('guided-portrait-v2');
+    expect(scenario.identity).toEqual({ status: 'unconfirmed', source: 'none' });
+    expect(scenario.faceMatch).toEqual({
+      faceCount: 1,
+      box: { x: 370, y: 320, width: 660, height: 800 },
+      matchedPersonName: 'Keanu Reeves',
+      similarPhotoCount: 3,
+      strength: 'strong',
+      source: 'saved-example',
+    });
+    expect(scenario.faceMatch.matchedPersonName).toBe(scenario.sourceRecord.name);
+    expect(scenario.sourceRecord.note).toBe('Named earlier from a saved example. The demo does not run recognition live.');
     expect(scenario.candidate.text).toContain('person');
     expect(scenario.originalMedia.src).toContain('altcontext-sample');
     expect(scenario.appliedText).toBe('Portrait of a person in a grey jacket.');
@@ -26,30 +38,32 @@ describe('guided prototype scenario state', () => {
     expect(scenario.history).toEqual([]);
   });
 
-  it('weaves a confirmed identity into the candidate while leaving applied text alone', () => {
+  it('puts the matched name into the draft when the face match is confirmed, leaving applied text alone', () => {
     const initial = createGuidedScenario();
 
     const confirmed = confirmGuidedIdentity(initial);
 
     expect(confirmed.identity).toEqual({
       status: 'confirmed',
-      name: 'Keanu Reeves',
-      source: 'sample-record',
+      name: initial.faceMatch.matchedPersonName,
+      source: 'face-match',
     });
+    expect(confirmed.candidate.text).toBe(initial.namedDraft);
     expect(confirmed.candidate.text).toContain('Keanu Reeves');
     expect(confirmed.appliedText).toBe(initial.appliedText);
     expect(confirmed.history.at(-1)).toMatchObject({ kind: 'identity-confirmed' });
   });
 
-  it('keeps the unresolved route useful and prevents a name from leaking into the draft', () => {
+  it('keeps the unnamed route useful and prevents a name from leaking into the draft', () => {
     const initial = createGuidedScenario();
 
     const unresolved = leaveGuidedIdentityUnidentified(initial);
 
     expect(unresolved.identity).toEqual({ status: 'unidentified', source: 'none' });
-    expect(unresolved.candidate.text).toBe('Portrait of a person in a grey jacket.');
+    expect(unresolved.candidate.text).toBe(initial.unnamedDraft);
     expect(unresolved.candidate.text).not.toContain('Keanu Reeves');
     expect(unresolved.appliedText).toBe(initial.appliedText);
+    expect(unresolved.history.at(-1)).toMatchObject({ kind: 'identity-unidentified' });
   });
 
   it('keeps editing and rejection separate from explicit application, then supports undo', () => {
@@ -86,18 +100,25 @@ describe('guided prototype scenario state', () => {
     expect(undone.appliedText).toBe(confirmed.appliedText);
   });
 
-  it('does not allow an unconfirmed route to save or apply the sample identity', () => {
+  it('refuses the matched name in a saved edit or apply until the face match is confirmed', () => {
     const unidentified = leaveGuidedIdentityUnidentified(createGuidedScenario());
+    const undecided = createGuidedScenario();
 
-    expect(() => saveGuidedEdit(unidentified, 'Keanu Reeves is pictured in a grey jacket.')).toThrow(
-      'identity is confirmed',
-    );
+    expect(() => saveGuidedEdit(unidentified, 'Keanu Reeves is pictured in a grey jacket.')).toThrow(NAME_GUARD_ERROR);
+    expect(() => saveGuidedEdit(undecided, 'Keanu Reeves is pictured in a grey jacket.')).toThrow(NAME_GUARD_ERROR);
     expect(() =>
       applyGuidedCandidate({
         ...unidentified,
         candidate: { text: 'Keanu Reeves is pictured in a grey jacket.', status: 'edited' },
       }),
-    ).toThrow('identity is confirmed');
+    ).toThrow(NAME_GUARD_ERROR);
+    expect(() =>
+      applyGuidedCandidate({
+        ...unidentified,
+        identity: { status: 'confirmed', name: 'Keanu Reeves', source: 'none' },
+        candidate: { text: 'Keanu Reeves is pictured in a grey jacket.', status: 'edited' },
+      }),
+    ).toThrow(NAME_GUARD_ERROR);
     expect(unidentified.appliedText).toBe(unidentified.originalMedia.altText);
   });
 
@@ -119,17 +140,21 @@ describe('guided prototype scenario state', () => {
     expect(exhausted).toEqual(undoFirst);
   });
 
-  it('clones the illustrative seed so practice instances stay isolated', () => {
+  it('clones the saved example so practice instances stay isolated', () => {
     const first = createGuidedScenario();
     first.visualFacts.push('Mutated during practice');
     first.originalMedia.altText = 'Mutated during practice';
     first.sourceRecord.name = 'Mutated during practice';
+    first.faceMatch.box.x = 0;
+    first.faceMatch.matchedPersonName = 'Mutated during practice';
 
     const second = createGuidedScenario();
 
     expect(second.visualFacts).toEqual(['Portrait crop', 'Grey jacket', 'Plain background']);
     expect(second.originalMedia.altText).toBe('Portrait of a person in a grey jacket.');
     expect(second.sourceRecord.name).toBe('Keanu Reeves');
+    expect(second.faceMatch.box.x).toBe(370);
+    expect(second.faceMatch.matchedPersonName).toBe('Keanu Reeves');
   });
 
   it('resets to a fresh memory-only scenario without carrying decisions forward', () => {

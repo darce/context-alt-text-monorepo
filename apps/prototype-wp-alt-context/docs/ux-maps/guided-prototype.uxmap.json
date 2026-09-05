@@ -23,8 +23,8 @@
     {
       "id": "intro",
       "kind": "screen",
-      "title": "Guided prototype entrance",
-      "purpose": "Explains illustrative memory-only scope; case study and current build status; primary CTA opens the inline guide nav and focuses the guide status region without navigating to a separate screen.",
+      "title": "AltContext guided demo",
+      "purpose": "Follow one photo from start to finish. AltContext finds a face, matches it to a person you already named, and puts that name in the image description. You choose what gets saved.",
       "route": "#/guided-prototype",
       "job_entry": true,
       "deep_link": true,
@@ -35,13 +35,13 @@
       "zones": [
         {
           "id": "intro-0",
-          "label": "Branded heading, scope and current build status",
+          "label": "Guided demo, scope, and current build status",
           "role": "content",
           "states": ["default"]
         },
         {
           "id": "intro-1",
-          "label": "Start the guided walkthrough and case study exit",
+          "label": "Start the demo and read the AltContext case study",
           "role": "nav",
           "states": ["default"]
         }
@@ -50,8 +50,8 @@
     {
       "id": "guide",
       "kind": "screen",
-      "title": "Inline guided review nav",
-      "purpose": "Persistent inline nav shows the current step, lets you show/hide the full step list, skip to the current step's section, jump between steps, or end the guide; steps mirror the four review sections and never navigate away from the single-route page.",
+      "title": "Step by step",
+      "purpose": "Five steps show the path from the photo to the description: Look at the photo, Find the face, Confirm the match, Check the description, and Apply it yourself.",
       "route": "#/guided-prototype",
       "job_entry": false,
       "deep_link": true,
@@ -62,13 +62,13 @@
       "zones": [
         {
           "id": "guide-0",
-          "label": "Status bar: current step label, skip-to-current-section link, Show/Hide guide toggle",
+          "label": "Current step, Skip to this step, and Show steps / Hide steps",
           "role": "nav",
           "states": ["default"]
         },
         {
           "id": "guide-1",
-          "label": "Expanded step list (understand/identity/review/apply) and End guide",
+          "label": "Five steps: Look at the photo, Find the face, Confirm the match, Check the description, and Apply it yourself; Close the steps",
           "role": "nav",
           "states": ["default"]
         }
@@ -77,8 +77,8 @@
     {
       "id": "evidence",
       "kind": "screen",
-      "title": "Image and page context",
-      "purpose": "Inspect sample photograph/text equivalent, source record and page context; no live recognition claim. Identity confirmation itself lives in the identity evidence card on the review screen, not here.",
+      "title": "Photo and page",
+      "purpose": "See the photo and the page it sits on. AltContext found a face and the next step shows the match.",
       "route": "#/guided-prototype",
       "job_entry": false,
       "deep_link": true,
@@ -89,24 +89,58 @@
       "zones": [
         {
           "id": "evidence-0",
-          "label": "Photograph with descriptive fallback; figcaption shows current alt text on the page and photo credit",
+          "label": "The photo; Alt text on the page right now; Photo credit; and the next-step face note",
           "role": "ai_review",
           "states": ["default"],
           "evidence_linked": true
         },
         {
           "id": "evidence-1",
-          "label": "Provenance list with humanised scenario-origin label, page title/summary and sample record",
+          "label": "Where this example comes from: Example, Page, and Person on file",
           "role": "content",
           "states": ["default"]
         }
       ]
     },
     {
+      "id": "face",
+      "kind": "screen",
+      "title": "Face found in the photo",
+      "purpose": "AltContext found a face and matched it to a person you named before. You choose whether to put the name in the description.",
+      "route": "#/guided-prototype",
+      "job_entry": false,
+      "deep_link": true,
+      "url_params": [],
+      "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/guided/GuidedFaceMatchCard.tsx",
+      "primary_action_id": "confirm",
+      "states": ["undecided", "confirmed", "unnamed"],
+      "zones": [
+        {
+          "id": "face-0",
+          "label": "Face crop, face count, match, and match strength",
+          "role": "ai_review",
+          "states": ["undecided", "confirmed", "unnamed"],
+          "evidence_linked": true
+        },
+        {
+          "id": "face-1",
+          "label": "How this works list and saved-run disclosure",
+          "role": "content",
+          "states": ["undecided", "confirmed", "unnamed"]
+        },
+        {
+          "id": "face-2",
+          "label": "Decision status and Yes, this is Keanu Reeves / Keep the person unnamed buttons",
+          "role": "form",
+          "states": ["undecided", "confirmed", "unnamed"]
+        }
+      ]
+    },
+    {
       "id": "draft",
       "kind": "screen",
-      "title": "Description review",
-      "purpose": "Identity evidence card, saved draft and immutable visual-only baseline are distinguishable from current applied text; pending edits require save/discard; proposed-draft origin is humanised and a rejected draft shows a recovery notice.",
+      "title": "Check the description before anything changes",
+      "purpose": "Read the draft. Edit it or reject it. Nothing changes until you press Apply.",
       "route": "#/guided-prototype",
       "job_entry": false,
       "deep_link": true,
@@ -117,20 +151,20 @@
       "zones": [
         {
           "id": "draft-0",
-          "label": "Identity evidence card: confirm sample identity or leave unidentified; disabled while an unsaved edit exists",
+          "label": "Ready for you to check, Edited by you, or Rejected. The saved text did not change",
           "role": "form",
           "states": ["default"]
         },
         {
           "id": "draft-1",
-          "label": "Before (generic draft) vs Proposed draft with humanised draft-origin label; rejected-draft recovery notice when applicable",
+          "label": "Without the name and Draft for you to check; this draft comes from a saved example, not a live run",
           "role": "ai_review",
           "states": ["default"],
           "evidence_linked": true
         },
         {
           "id": "draft-2",
-          "label": "Labelled editor with save/discard/reject actions; inline empty-description alert",
+          "label": "Description draft with Save my edit, Discard my edit, and Reject this draft",
           "role": "form",
           "states": ["default", "error"]
         }
@@ -139,8 +173,8 @@
     {
       "id": "apply",
       "kind": "screen",
-      "title": "Review exact application",
-      "purpose": "Before/after shows current practice value and the actual saved candidate that Apply commits; Apply and Undo live in the same explicit-apply section; never commits a hidden older value, and applying a rejected draft is prevented by a disabled button.",
+      "title": "Apply it yourself",
+      "purpose": "Nothing changes until you press Apply. Pressing Apply writes the saved draft to this practice copy only.",
       "route": "#/guided-prototype",
       "job_entry": false,
       "deep_link": true,
@@ -151,14 +185,14 @@
       "zones": [
         {
           "id": "apply-0",
-          "label": "Current value and reviewed saved candidate; explicit practice-only destination",
+          "label": "The practice copy says {appliedText}; pressing Apply writes the saved draft to this practice copy only",
           "role": "ai_review",
           "states": ["default", "error"],
           "evidence_linked": true
         },
         {
           "id": "apply-1",
-          "label": "Apply / Undo actions; blocked with explanation while pending or rejected",
+          "label": "Apply to practice copy and Undo; Apply is off while your edit is unsaved",
           "role": "form",
           "states": ["default", "error"]
         }
@@ -278,7 +312,7 @@
     {
       "id": "open",
       "screen_id": "intro",
-      "verb": "Start the guided walkthrough",
+      "verb": "Start the demo",
       "target": "guide",
       "hierarchy": "primary",
       "costly": false,
@@ -287,7 +321,7 @@
     {
       "id": "toggle-guide",
       "screen_id": "guide",
-      "verb": "Show guide / Hide guide",
+      "verb": "Show steps / Hide steps",
       "target": "guide",
       "hierarchy": "secondary",
       "costly": false,
@@ -296,7 +330,7 @@
     {
       "id": "skip-guide",
       "screen_id": "guide",
-      "verb": "Skip guide to current section",
+      "verb": "Skip to this step",
       "target": "evidence",
       "hierarchy": "tertiary",
       "costly": false,
@@ -305,7 +339,7 @@
     {
       "id": "guide-step",
       "screen_id": "guide",
-      "verb": "Jump to a guide step (understand/identity/review/apply)",
+      "verb": "Choose a step",
       "target": "draft",
       "hierarchy": "secondary",
       "costly": false,
@@ -314,7 +348,7 @@
     {
       "id": "end-guide",
       "screen_id": "guide",
-      "verb": "End guide",
+      "verb": "Close the steps",
       "target": "evidence",
       "hierarchy": "tertiary",
       "costly": false,
@@ -322,8 +356,8 @@
     },
     {
       "id": "confirm",
-      "screen_id": "draft",
-      "verb": "Confirm Keanu Reeves",
+      "screen_id": "face",
+      "verb": "Yes, this is Keanu Reeves",
       "target": "draft",
       "hierarchy": "secondary",
       "costly": false,
@@ -331,8 +365,8 @@
     },
     {
       "id": "unnamed",
-      "screen_id": "draft",
-      "verb": "Keep the person unidentified",
+      "screen_id": "face",
+      "verb": "Keep the person unnamed",
       "target": "draft",
       "hierarchy": "tertiary",
       "costly": false,
@@ -341,7 +375,7 @@
     {
       "id": "save",
       "screen_id": "draft",
-      "verb": "Save description edit",
+      "verb": "Save my edit",
       "target": "apply",
       "hierarchy": "primary",
       "costly": false,
@@ -350,7 +384,7 @@
     {
       "id": "discard",
       "screen_id": "draft",
-      "verb": "Discard unsaved edit",
+      "verb": "Discard my edit",
       "target": "draft",
       "hierarchy": "tertiary",
       "costly": false,
@@ -359,7 +393,7 @@
     {
       "id": "reject",
       "screen_id": "draft",
-      "verb": "Reject draft",
+      "verb": "Reject this draft",
       "target": "draft",
       "hierarchy": "secondary",
       "costly": false,
@@ -377,7 +411,7 @@
     {
       "id": "undo",
       "screen_id": "apply",
-      "verb": "Undo practice apply",
+      "verb": "Undo",
       "target": "apply",
       "hierarchy": "tertiary",
       "costly": false,
@@ -404,7 +438,7 @@
     {
       "id": "case",
       "screen_id": "intro",
-      "verb": "Read the case study",
+      "verb": "Read the AltContext case study",
       "target": "case-study",
       "hierarchy": "secondary",
       "costly": false,
@@ -425,7 +459,7 @@
     {
       "id": "named",
       "job": "review",
-      "label": "Confirmed identity woven into description, reviewed and applied",
+      "label": "You confirm the match, check the description, and apply it",
       "steps": [
         {
           "screen_id": "intro"
@@ -435,6 +469,9 @@
         },
         {
           "screen_id": "evidence"
+        },
+        {
+          "screen_id": "face"
         },
         {
           "screen_id": "draft"
@@ -450,10 +487,20 @@
     {
       "id": "unnamed",
       "job": "review",
-      "label": "Unresolved identity keeps description generic",
+      "label": "The person stays unnamed and the description stays generic",
       "steps": [
         {
+          "screen_id": "intro"
+        },
+        {
+          "screen_id": "guide"
+        },
+        {
           "screen_id": "evidence"
+        },
+        {
+          "screen_id": "face",
+          "note": "Stage 5 of the flow strip reads skipped on this path."
         },
         {
           "screen_id": "draft"
@@ -469,7 +516,7 @@
     {
       "id": "pending",
       "job": "review",
-      "label": "Pending edit cannot apply old candidate",
+      "label": "Save or discard your edit before Apply",
       "steps": [
         {
           "screen_id": "draft"
@@ -485,7 +532,7 @@
     {
       "id": "undo-flow",
       "job": "recover",
-      "label": "Apply two revisions and undo in order",
+      "label": "Apply two edits and undo in order",
       "steps": [
         {
           "screen_id": "draft"
@@ -529,7 +576,7 @@
     {
       "id": "image-error",
       "job": "review",
-      "label": "Text fallback retains review path",
+      "label": "The photo is unavailable, but text lets you keep practising",
       "steps": [
         {
           "screen_id": "image-fallback"
@@ -543,7 +590,10 @@
       ]
     }
   ],
-  "open_questions": [],
+  "open_questions": [
+    "Live recognition: when the demo runs recognition for real, the face card must show a fresh timestamp and drop the saved-run disclosure.",
+    "Which recognition engine produced the saved match? InsightFace."
+  ],
   "not_doing": [
     "Public homepage or marketing deployment",
     "Guest-session authentication or credentials settings",

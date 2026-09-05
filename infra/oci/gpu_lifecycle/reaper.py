@@ -1676,7 +1676,11 @@ def main(argv: list[str] | None = None) -> int:
             file=sys.stderr,
         )
         return 2
-    running_since_store = RunningSinceLeaseStore(path=args.running_since_path)
+    try:
+        running_since_store = RunningSinceLeaseStore(path=args.running_since_path)
+    except BootIdentityUnavailableError as exc:
+        print(f"fatal: {exc}", file=sys.stderr)
+        return 1
     explicit_idle_override = args.instance_idle_for is not None
 
     if args.load_dir is not None:

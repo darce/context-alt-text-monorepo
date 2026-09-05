@@ -15,6 +15,27 @@ const GUIDE_STEPS: readonly GuidedGuideStepDefinition[] = [
   { id: 'apply', label: 'Apply deliberately', description: 'Write only after you choose Apply.' },
 ];
 
+export const GUIDED_SECTION_IDS: Record<GuidedGuideStep, string> = {
+  understand: 'guided-section-understand',
+  identity: 'guided-section-identity',
+  review: 'guided-section-review',
+  apply: 'guided-section-apply',
+};
+
+export const focusGuidedSection = (step: GuidedGuideStep): void => {
+  const target = document.getElementById(GUIDED_SECTION_IDS[step]);
+  if (!target) {
+    return;
+  }
+
+  const prefersReducedMotion =
+    typeof window !== 'undefined' &&
+    typeof window.matchMedia === 'function' &&
+    window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  target.scrollIntoView({ behavior: prefersReducedMotion ? 'auto' : 'smooth', block: 'start' });
+  target.focus();
+};
+
 export interface GuidedPrototypeGuideProps {
   activeStep: GuidedGuideStep;
   open: boolean;
@@ -46,6 +67,16 @@ export const GuidedPrototypeGuide = ({
           <p className="acx-guided-guide__eyebrow">Inline guide</p>
           <strong>{activeDefinition.label}</strong>
         </div>
+        <a
+          className="acx-guided-guide__skip-link"
+          href={`#${GUIDED_SECTION_IDS[activeStep]}`}
+          onClick={(event) => {
+            event.preventDefault();
+            focusGuidedSection(activeStep);
+          }}
+        >
+          Skip guide to current section
+        </a>
         <button
           type="button"
           className="acx-button acx-button--secondary acx-guided-guide__toggle"
@@ -58,8 +89,6 @@ export const GuidedPrototypeGuide = ({
       <div
         ref={focusTargetRef}
         className="acx-guided-guide__status"
-        role="status"
-        aria-live="polite"
         tabIndex={open ? -1 : undefined}
         data-guided-focus-target={open ? 'true' : undefined}
       >
@@ -72,7 +101,15 @@ export const GuidedPrototypeGuide = ({
               const isCurrent = step.id === activeStep;
               return (
                 <li key={step.id} className={isCurrent ? 'is-current' : undefined}>
-                  <button type="button" onClick={() => onSelect(step.id)} aria-current={isCurrent ? 'step' : undefined}>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onSelect(step.id);
+                      focusGuidedSection(step.id);
+                    }}
+                    aria-current={isCurrent ? 'step' : undefined}
+                    aria-controls={GUIDED_SECTION_IDS[step.id]}
+                  >
                     <span aria-hidden="true">{index + 1}</span>
                     <span>
                       <strong>{step.label}</strong>

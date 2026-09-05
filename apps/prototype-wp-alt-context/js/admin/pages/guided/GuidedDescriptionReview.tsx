@@ -1,17 +1,14 @@
 import React, { useEffect, useRef, useState } from 'react';
 
-import type {
-  GuidedCandidateStatus,
-  GuidedHistoryEvent,
-  GuidedIdentity,
-  GuidedScenario,
-} from '../../guidedPrototype/state';
+import { getLastGuidedApplication } from '../../guidedPrototype/state';
+import type { GuidedCandidateStatus, GuidedIdentity, GuidedScenario } from '../../guidedPrototype/state';
 
 export interface GuidedDescriptionReviewProps {
   scenario: GuidedScenario;
+  resetVersion: number;
   onConfirmIdentity: () => void;
   onLeaveUnidentified: () => void;
-  onSaveEdit: (text: string) => void;
+  onSaveEdit: (text: string) => string | undefined;
   onReject: () => void;
   onApply: () => void;
   onUndo: () => void;
@@ -37,21 +34,9 @@ const candidateStatusLabel = (status: GuidedCandidateStatus): string => {
   return 'Ready for your review';
 };
 
-const lastApplication = (history: GuidedHistoryEvent[]): GuidedHistoryEvent | undefined => {
-  for (let index = history.length - 1; index >= 0; index -= 1) {
-    const event = history[index];
-    if (event.kind === 'application-undone') {
-      return undefined;
-    }
-    if (event.kind === 'applied') {
-      return event;
-    }
-  }
-  return undefined;
-};
-
 export const GuidedDescriptionReview = ({
   scenario,
+  resetVersion,
   onConfirmIdentity,
   onLeaveUnidentified,
   onSaveEdit,
@@ -66,9 +51,14 @@ export const GuidedDescriptionReview = ({
   useEffect(() => {
     setEditValue(scenario.candidate.text);
     setEditError('');
-  }, [scenario.candidate.text]);
+  }, [scenario.candidate.text, resetVersion]);
 
-  const appliedEvent = lastApplication(scenario.history);
+  const appliedEvent = getLastGuidedApplication(scenario.history);
+  const hasUnsavedEdit = editValue !== scenario.candidate.text;
+  const unsavedEditReasonId = 'guided-description-unsaved-reason';
+  const identityChangeReasonId = 'guided-identity-change-reason';
+  const identityConfirmed = scenario.identity.status === 'confirmed';
+  const identityUnidentified = scenario.identity.status === 'unidentified';
 
   const handleSaveEdit = (): void => {
     if (editValue.trim() === '') {
@@ -77,8 +67,20 @@ export const GuidedDescriptionReview = ({
       return;
     }
 
+    const saveError = onSaveEdit(editValue);
+    if (saveError) {
+      setEditError(saveError);
+      editorRef.current?.focus();
+      return;
+    }
+
     setEditError('');
-    onSaveEdit(editValue);
+  };
+
+  const handleDiscardEdit = (): void => {
+    setEditValue(scenario.candidate.text);
+    setEditError('');
+    editorRef.current?.focus();
   };
 
   return (
@@ -95,37 +97,71 @@ export const GuidedDescriptionReview = ({
 
       <div className="acx-guided-review__context-grid">
         <div className="acx-guided-review__context-card">
-          <h3>Visual description</h3>
+          <h3 id="guided-visual-description-title">Visual description</h3>
           <ul>
             {scenario.visualFacts.map((fact) => (
               <li key={fact}>{fact}</li>
             ))}
           </ul>
+          <p>
+            Generic draft from visual facts: <span data-generic-draft>{scenario.genericDraft}</span>
+          </p>
           <p>Current applied alt text: {scenario.appliedText}</p>
         </div>
         <div className="acx-guided-review__context-card">
-          <h3>Page context</h3>
+          <h3 id="guided-page-context-title">Page context</h3>
           <p>
             <strong>{scenario.pageContext.title}</strong>
           </p>
           <p>{scenario.pageContext.summary}</p>
         </div>
-        <div className="acx-guided-review__context-card">
-          <h3>Identity evidence</h3>
+        <div
+          id="guided-section-identity"
+          className="acx-guided-review__context-card"
+          aria-labelledby="guided-identity-evidence-title"
+          tabIndex={-1}
+        >
+          <h3 id="guided-identity-evidence-title">Identity evidence</h3>
           <p>{identityLabel(scenario.identity)}</p>
           <p>{scenario.sourceRecord.note}</p>
+          <p id={identityChangeReasonId} className="acx-guided-review__identity-change-note">
+            Changing the identity decision selects a different saved candidate description. Save or discard an unsaved
+            edit first.
+          </p>
           <div className="acx-guided-review__identity-actions">
-            <button type="button" className="acx-button acx-button--secondary" onClick={onConfirmIdentity}>
+            <button
+              type="button"
+              className="acx-button acx-button--secondary"
+              onClick={onConfirmIdentity}
+              disabled={hasUnsavedEdit || identityConfirmed}
+              aria-describedby={
+                hasUnsavedEdit ? unsavedEditReasonId : identityConfirmed ? identityChangeReasonId : undefined
+              }
+            >
               Confirm {scenario.sourceRecord.name}
             </button>
-            <button type="button" className="acx-button acx-button--tertiary" onClick={onLeaveUnidentified}>
+            <button
+              type="button"
+              className="acx-button acx-button--tertiary"
+              onClick={onLeaveUnidentified}
+              disabled={hasUnsavedEdit || identityUnidentified}
+              aria-describedby={
+                hasUnsavedEdit ? unsavedEditReasonId : identityUnidentified ? identityChangeReasonId : undefined
+              }
+            >
               Keep the person unidentified
             </button>
           </div>
         </div>
       </div>
 
-      <div className="acx-guided-review__comparison" data-testid="guided-candidate">
+      <section
+        id="guided-section-review"
+        className="acx-guided-review__comparison"
+        aria-label="Review the description"
+        data-testid="guided-candidate"
+        tabIndex={-1}
+      >
         <p className="acx-guided-review__explanation">
           {scenario.identity.status === 'confirmed'
             ? 'Confirmed identity changes the name in the candidate; the visual facts and page context stay visible.'
@@ -133,7 +169,7 @@ export const GuidedDescriptionReview = ({
         </p>
         <div>
           <h3>Before</h3>
-          <p>{scenario.appliedText}</p>
+          <p>{scenario.genericDraft}</p>
         </div>
         <div>
           <h3>Proposed draft</h3>
@@ -155,10 +191,20 @@ export const GuidedDescriptionReview = ({
               {editError}
             </p>
           ) : null}
+          {hasUnsavedEdit ? (
+            <p id={unsavedEditReasonId} className="acx-guided-review__unsaved-notice">
+              Unsaved edit. Save this description before applying, or discard it to restore the saved candidate.
+            </p>
+          ) : null}
           <div className="acx-guided-review__actions">
             <button type="button" className="acx-button acx-button--secondary" onClick={handleSaveEdit}>
               Save description edit
             </button>
+            {hasUnsavedEdit ? (
+              <button type="button" className="acx-button acx-button--tertiary" onClick={handleDiscardEdit}>
+                Discard unsaved edit
+              </button>
+            ) : null}
             <button
               type="button"
               className="acx-button acx-button--tertiary"
@@ -169,22 +215,33 @@ export const GuidedDescriptionReview = ({
             </button>
           </div>
         </div>
-      </div>
+      </section>
 
-      <div className="acx-guided-review__apply" aria-live="polite">
+      <section
+        id="guided-section-apply"
+        className="acx-guided-review__apply"
+        aria-label="Apply the description"
+        tabIndex={-1}
+      >
         <div>
           <h3>Explicit apply</h3>
           <p>
             The practice copy currently says <strong data-applied-text>{scenario.appliedText}</strong>. Applying writes
-            the proposed draft to this saved scenario only.
+            the saved proposed draft to this practice scenario only.
           </p>
+          {hasUnsavedEdit ? (
+            <p className="acx-guided-review__apply-reason" id="guided-apply-reason">
+              Apply is unavailable while your draft has unsaved edits. Save or discard the edit first.
+            </p>
+          ) : null}
         </div>
         <div className="acx-guided-review__actions">
           <button
             type="button"
             className="acx-button acx-button--primary"
             onClick={onApply}
-            disabled={scenario.candidate.status === 'rejected'}
+            disabled={scenario.candidate.status === 'rejected' || hasUnsavedEdit}
+            aria-describedby={hasUnsavedEdit ? 'guided-apply-reason' : undefined}
           >
             Apply to practice copy
           </button>
@@ -194,7 +251,7 @@ export const GuidedDescriptionReview = ({
             </button>
           ) : null}
         </div>
-      </div>
+      </section>
     </section>
   );
 };

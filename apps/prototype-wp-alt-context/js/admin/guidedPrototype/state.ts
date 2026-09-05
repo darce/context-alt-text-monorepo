@@ -1,3 +1,5 @@
+import samplePhoto from '../assets/guided/altcontext-sample.jpeg';
+
 export type GuidedCandidateStatus = 'ready' | 'edited' | 'rejected';
 export type GuidedIdentityStatus = 'unconfirmed' | 'confirmed' | 'unidentified';
 
@@ -46,7 +48,7 @@ const GUIDED_SCENARIO_SEED: Omit<GuidedScenario, 'identity' | 'candidate' | 'app
   origin: 'illustrative',
   scenarioVersion: 'guided-portrait-v1',
   originalMedia: {
-    src: '/wp-content/uploads/2026/09/guided-portrait.jpg',
+    src: samplePhoto,
     altText: 'Portrait of a person in a grey jacket.',
   },
   sourceRecord: {
@@ -63,6 +65,14 @@ const GUIDED_SCENARIO_SEED: Omit<GuidedScenario, 'identity' | 'candidate' | 'app
   namedDraft: 'Keanu Reeves wears a grey jacket against a plain background.',
   unnamedDraft: 'Portrait of a person in a grey jacket.',
 };
+
+const cloneSeed = (): Omit<GuidedScenario, 'identity' | 'candidate' | 'appliedText' | 'history'> => ({
+  ...GUIDED_SCENARIO_SEED,
+  originalMedia: { ...GUIDED_SCENARIO_SEED.originalMedia },
+  sourceRecord: { ...GUIDED_SCENARIO_SEED.sourceRecord },
+  pageContext: { ...GUIDED_SCENARIO_SEED.pageContext },
+  visualFacts: [...GUIDED_SCENARIO_SEED.visualFacts],
+});
 
 const cloneScenario = (scenario: GuidedScenario): GuidedScenario => ({
   ...scenario,
@@ -81,12 +91,49 @@ const withHistory = (scenario: GuidedScenario, event: GuidedHistoryEvent): Guide
 });
 
 export const createGuidedScenario = (): GuidedScenario => ({
-  ...GUIDED_SCENARIO_SEED,
+  ...cloneSeed(),
   identity: { status: 'unconfirmed', source: 'none' },
   candidate: { text: GUIDED_SCENARIO_SEED.genericDraft, status: 'ready' },
   appliedText: GUIDED_SCENARIO_SEED.originalMedia.altText,
   history: [],
 });
+
+export const resetGuidedScenario = (): GuidedScenario => createGuidedScenario();
+
+const containsSampleIdentity = (text: string, name: string): boolean => {
+  const escapedName = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`\\b${escapedName}\\b`, 'i').test(text);
+};
+
+const assertCandidateIdentity = (scenario: GuidedScenario): void => {
+  const sampleName = scenario.sourceRecord.name.trim();
+  if (sampleName === '' || !containsSampleIdentity(scenario.candidate.text, sampleName)) {
+    return;
+  }
+
+  if (
+    scenario.identity.status !== 'confirmed' ||
+    scenario.identity.source !== 'sample-record' ||
+    scenario.identity.name?.trim().toLowerCase() !== sampleName.toLowerCase()
+  ) {
+    throw new Error('Cannot use the sample name until the identity is confirmed from the sample record.');
+  }
+};
+
+const availableGuidedApplications = (history: GuidedHistoryEvent[]): GuidedHistoryEvent[] => {
+  const availableApplications: GuidedHistoryEvent[] = [];
+  for (const event of history) {
+    if (event.kind === 'applied') {
+      availableApplications.push(event);
+    } else if (event.kind === 'application-undone') {
+      availableApplications.pop();
+    }
+  }
+  return availableApplications;
+};
+
+export const getLastGuidedApplication = (history: GuidedHistoryEvent[]): GuidedHistoryEvent | undefined =>
+  availableGuidedApplications(history).at(-1);
 
 export const confirmGuidedIdentity = (scenario: GuidedScenario): GuidedScenario =>
   withHistory(
@@ -114,13 +161,13 @@ export const saveGuidedEdit = (scenario: GuidedScenario, text: string): GuidedSc
     throw new Error('A description cannot be empty.');
   }
 
-  return withHistory(
-    {
-      ...cloneScenario(scenario),
-      candidate: { text: trimmedText, status: 'edited' },
-    },
-    { kind: 'edit-saved', text: trimmedText },
-  );
+  const editedScenario = {
+    ...cloneScenario(scenario),
+    candidate: { text: trimmedText, status: 'edited' as const },
+  };
+  assertCandidateIdentity(editedScenario);
+
+  return withHistory(editedScenario, { kind: 'edit-saved', text: trimmedText });
 };
 
 export const rejectGuidedCandidate = (scenario: GuidedScenario): GuidedScenario =>
@@ -137,6 +184,8 @@ export const applyGuidedCandidate = (scenario: GuidedScenario): GuidedScenario =
     throw new Error('Cannot apply a rejected description.');
   }
 
+  assertCandidateIdentity(scenario);
+
   if (scenario.candidate.text === scenario.appliedText) {
     return cloneScenario(scenario);
   }
@@ -148,17 +197,7 @@ export const applyGuidedCandidate = (scenario: GuidedScenario): GuidedScenario =
 };
 
 export const undoGuidedApplication = (scenario: GuidedScenario): GuidedScenario => {
-  let lastApplication: GuidedHistoryEvent | undefined;
-  for (let index = scenario.history.length - 1; index >= 0; index -= 1) {
-    const event = scenario.history[index];
-    if (event.kind === 'application-undone') {
-      break;
-    }
-    if (event.kind === 'applied') {
-      lastApplication = event;
-      break;
-    }
-  }
+  const lastApplication = getLastGuidedApplication(scenario.history);
   if (lastApplication?.previousAppliedText === undefined) {
     return cloneScenario(scenario);
   }

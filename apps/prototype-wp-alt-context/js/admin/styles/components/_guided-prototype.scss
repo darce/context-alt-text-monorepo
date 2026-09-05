@@ -96,7 +96,7 @@
     font-size: var(--acx-text-lg);
   }
 
-  &__session {
+  &__status {
     display: grid;
     gap: var(--acx-space-2);
     max-width: 32rem;
@@ -107,10 +107,6 @@
 
     span {
       font-size: var(--acx-text-sm);
-    }
-
-    &--warning {
-      border-left-color: var(--acx-color-warning-border);
     }
   }
 
@@ -230,6 +226,12 @@
   &__toggle {
     flex-shrink: 0;
   }
+
+  &__skip-link {
+    color: var(--acx-color-primary);
+    font-size: var(--acx-text-sm);
+    font-weight: var(--acx-font-weight-semibold);
+  }
 }
 
 .acx-guided-page__workspace {
@@ -289,6 +291,15 @@
   overflow: hidden;
 }
 
+.acx-guided-page__image {
+  display: block;
+  width: 100%;
+  height: 100%;
+  min-height: 12rem;
+  object-fit: cover;
+  background: var(--acx-color-panel);
+}
+
 .acx-guided-page__image-placeholder {
   display: grid;
   min-height: 12rem;
@@ -299,6 +310,17 @@
   font-size: var(--acx-text-lg);
   font-weight: var(--acx-font-weight-semibold);
   text-align: center;
+
+  &--fallback {
+    align-content: center;
+    gap: var(--acx-space-8);
+
+    span {
+      max-width: 28rem;
+      font-size: var(--acx-text-sm);
+      font-weight: var(--acx-font-weight-normal);
+    }
+  }
 }
 
 .acx-guided-page__media-card figcaption {
@@ -363,7 +385,12 @@
     align-items: flex-start;
     justify-content: space-between;
     gap: var(--acx-space-16);
+    flex-wrap: wrap;
     border-bottom: 1px solid var(--acx-color-border);
+
+    > div {
+      min-width: 0;
+    }
 
     h2 {
       margin-bottom: 0;
@@ -372,7 +399,10 @@
   }
 
   &__status {
-    flex-shrink: 0;
+    min-width: 0;
+    max-width: 100%;
+    flex-shrink: 1;
+    overflow-wrap: anywhere;
     padding: var(--acx-space-4) var(--acx-space-8);
     border-radius: var(--acx-radius-pill);
     background: var(--acx-color-panel);
@@ -440,6 +470,12 @@
     margin-top: var(--acx-space-16);
   }
 
+  &__identity-change-note {
+    color: var(--acx-color-text-muted);
+    font-size: var(--acx-text-sm);
+    font-style: italic;
+  }
+
   &__comparison {
     display: grid;
     grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr);
@@ -487,6 +523,18 @@
     margin-bottom: var(--acx-space-12);
     color: var(--acx-color-danger-strong);
     font-weight: var(--acx-font-weight-semibold);
+  }
+
+  &__unsaved-notice,
+  &__apply-reason {
+    margin-top: calc(var(--acx-space-8) * -1);
+    color: var(--acx-color-warning-pill-text);
+    font-size: var(--acx-text-sm);
+    font-weight: var(--acx-font-weight-semibold);
+  }
+
+  &__apply-reason {
+    margin-top: var(--acx-space-8);
   }
 
   &__apply {

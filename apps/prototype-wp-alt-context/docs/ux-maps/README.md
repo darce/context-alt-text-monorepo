@@ -19,8 +19,24 @@ Local schema extensions are rendered outside the upstream canvas model:
 The Python and TypeScript width calculations share Python-generated Unicode property
 ranges. Run `sync_unicode_width.py --write` to explicitly update the committed fixture
 for a Unicode-version change, then `sync_unicode_width.py --check` and the parity tests.
+The fixture records `unicode_version`. The check reports version mismatches explicitly;
+identical property ranges pass, while changed ranges require deliberate regeneration.
 
-Run `python3 -m unittest discover -s docs/ux-maps -p test_render_ux_maps.py` from the app
-directory for the renderer boundary mutation probes. The Vitest parity suite runs them
-as well. Only a missing top-level canvas package permits the dependency-free snapshot
+The Vitest suite uses the absolute `ACX_UXMAP_PYTHON` override when set, otherwise the
+repository-root `.venv/bin/python`. A missing interpreter fails with instructions to set
+the override; the suite never searches PATH for Python. Use a Python interpreter with the
+fixture's Unicode properties (currently Unicode 15.0.0) for reproducible verification.
+From the app directory, run the same checks with that interpreter:
+
+```sh
+uxmap_python="${ACX_UXMAP_PYTHON:-$(git rev-parse --show-toplevel)/.venv/bin/python}"
+"$uxmap_python" docs/ux-maps/render_ux_maps.py --check
+"$uxmap_python" docs/ux-maps/sync_unicode_width.py --check
+"$uxmap_python" -m unittest discover -s docs/ux-maps -p 'test_*.py'
+./node_modules/.bin/vitest run js/admin/__tests__/uxmap-render-parity.test.ts
+./node_modules/.bin/tsc --noEmit -p tsconfig.json
+```
+
+The Vitest parity suite runs both Python mutation suites as well.
+Only a missing top-level canvas package permits the dependency-free snapshot
 check; import failures within an installed renderer fail closed.

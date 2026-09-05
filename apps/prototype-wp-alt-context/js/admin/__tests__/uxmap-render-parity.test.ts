@@ -15,6 +15,8 @@
  */
 import { spawnSync } from 'node:child_process';
 import {
+  accessSync,
+  constants,
   copyFileSync,
   existsSync,
   mkdirSync,
@@ -40,6 +42,35 @@ const enumSnapshotPath = path.resolve(
 );
 const enumVerifierPath = path.join(uxMapsDir, 'sync_uxmap_enums.py');
 const negativeFixturesDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), 'uxmap-render-parity.fixtures');
+
+function resolveUxMapPython(repoRoot: string, override?: string): string {
+  const executable = override ?? path.join(repoRoot, '.venv', 'bin', 'python');
+  if (!path.isAbsolute(executable)) {
+    throw new Error('ACX_UXMAP_PYTHON must be an absolute executable path');
+  }
+  try {
+    accessSync(executable, constants.X_OK);
+  } catch {
+    throw new Error(`Python is unavailable at ${executable}; set ACX_UXMAP_PYTHON to an absolute executable path`);
+  }
+  return executable;
+}
+
+const uxMapPython = resolveUxMapPython(path.resolve(uxMapsDir, '../../../..'), process.env.ACX_UXMAP_PYTHON);
+
+describe('ux-map Python interpreter selection', () => {
+  it('selects the repository environment independently of PATH', () => {
+    // Node supplies an executable for testing the override without another Python install.
+    expect(resolveUxMapPython('/unused', process.execPath)).toBe(process.execPath);
+    expect(() => resolveUxMapPython('/unused', 'python3')).toThrow('absolute executable path');
+    expect(() => resolveUxMapPython('/unused', '/missing-uxmap-python')).toThrow('Python is unavailable');
+    const repoRoot = path.resolve(uxMapsDir, '../../../..');
+    if (existsSync(path.join(repoRoot, '.venv/bin/python'))) {
+      expect(resolveUxMapPython(repoRoot)).toBe(path.join(repoRoot, '.venv/bin/python'));
+    }
+    expect(() => resolveUxMapPython('/missing-uxmap-repo')).toThrow('ACX_UXMAP_PYTHON');
+  });
+});
 
 const OWNED_MAPS = [
   'roster-people',
@@ -803,10 +834,10 @@ describe('ux-map SSOT schema conformance (owned maps)', () => {
   });
 
   it('verifies the enum snapshot against the canonical Python models when importable', () => {
-    const importProbe = spawnSync('python3', ['-c', 'import workbay_canvas_mcp.ux_map.models'], {
+    const importProbe = spawnSync(uxMapPython, ['-c', 'import workbay_canvas_mcp.ux_map.models'], {
       encoding: 'utf8',
     });
-    const result = spawnSync('python3', [enumVerifierPath, '--check'], { encoding: 'utf8' });
+    const result = spawnSync(uxMapPython, [enumVerifierPath, '--check'], { encoding: 'utf8' });
 
     if (importProbe.status === 0) {
       expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
@@ -818,7 +849,7 @@ describe('ux-map SSOT schema conformance (owned maps)', () => {
   });
 
   it('fails closed when the canonical Python enum module is unavailable', () => {
-    const result = spawnSync('python3', ['-S', enumVerifierPath, '--check'], { encoding: 'utf8' });
+    const result = spawnSync(uxMapPython, ['-S', enumVerifierPath, '--check'], { encoding: 'utf8' });
 
     expect(result.status, `${result.stdout}${result.stderr}`).toBe(1);
     expect(result.stdout).not.toContain('SKIP');
@@ -843,7 +874,7 @@ describe('ux-map SSOT schema conformance (owned maps)', () => {
         ].join('\n'),
         'utf8',
       );
-      const result = spawnSync('python3', [enumVerifierPath, '--check'], {
+      const result = spawnSync(uxMapPython, [enumVerifierPath, '--check'], {
         encoding: 'utf8',
         env: { ...process.env, PYTHONPATH: scratch },
       });
@@ -941,7 +972,7 @@ describe('ux-map render parity (owned maps)', () => {
       'values = ["界", "e\\u0301", "\\u093e", "का", "1\\ufe0f\\u20e3", "👨\\u200d👩\\u200d👧\\u200d👦"]',
       'print(json.dumps([m._display_width(value) for value in values]))',
     ].join('\n');
-    const result = spawnSync('python3', ['-c', probe], { encoding: 'utf8' });
+    const result = spawnSync(uxMapPython, ['-c', probe], { encoding: 'utf8' });
 
     expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
     expect(JSON.parse(result.stdout)).toEqual([2, 1, 0, 1, 2, 2]);
@@ -958,7 +989,7 @@ describe('ux-map render parity (owned maps)', () => {
       `values = json.loads(${JSON.stringify(JSON.stringify(values))})`,
       'print(json.dumps([m._fit_ascii_row("| " + value + " |") for value in values]))',
     ].join('\n');
-    const result = spawnSync('python3', ['-c', probe], { encoding: 'utf8' });
+    const result = spawnSync(uxMapPython, ['-c', probe], { encoding: 'utf8' });
     expect(result.status, result.stderr).toBe(0);
     for (const row of JSON.parse(result.stdout) as string[]) {
       expect(displayWidth(row), row).toBe(62);
@@ -967,7 +998,14 @@ describe('ux-map render parity (owned maps)', () => {
   });
 
   it('verifies the generated Unicode property ranges against Python', () => {
-    const result = spawnSync('python3', [path.join(uxMapsDir, 'sync_unicode_width.py'), '--check'], {
+    const result = spawnSync(uxMapPython, [path.join(uxMapsDir, 'sync_unicode_width.py'), '--check'], {
+      encoding: 'utf8',
+    });
+    expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
+  }, 60_000);
+
+  it('distinguishes Unicode version metadata from real property-range drift', () => {
+    const result = spawnSync(uxMapPython, [path.join(uxMapsDir, 'test_sync_unicode_width.py')], {
       encoding: 'utf8',
     });
     expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
@@ -1346,7 +1384,7 @@ const runMutatedRendererCheck = (mapRef: string, mutate: (markdown: string) => s
     copyFileSync(path.join(uxMapsDir, jsonName), path.join(scratch, jsonName));
     const original = readFileSync(path.join(uxMapsDir, markdownName), 'utf8');
     writeFileSync(path.join(scratch, markdownName), mutate(original), 'utf8');
-    return spawnSync('python3', [rendererPath, '--check', mapRef], {
+    return spawnSync(uxMapPython, [rendererPath, '--check', mapRef], {
       cwd: path.resolve(uxMapsDir, '..'),
       encoding: 'utf8',
       env: { ...process.env, UX_MAPS_DIR: scratch },
@@ -1387,7 +1425,7 @@ const VOCABULARY_HEADING = "## Vocabulary (say / don't say)";
 describe('ux-map generated-render provenance', () => {
   it('runs the renderer boundary mutation probes', () => {
     const result = spawnSync(
-      'python3',
+      uxMapPython,
       ['-m', 'unittest', 'discover', '-s', uxMapsDir, '-p', 'test_render_ux_maps.py'],
       { encoding: 'utf8' },
     );
@@ -1395,7 +1433,7 @@ describe('ux-map generated-render provenance', () => {
   }, 60_000);
 
   it('executes the sanctioned renderer in --check mode without its optional canvas package', () => {
-    const result = spawnSync('python3', [rendererPath, '--check'], {
+    const result = spawnSync(uxMapPython, [rendererPath, '--check'], {
       cwd: path.resolve(uxMapsDir, '..'),
       encoding: 'utf8',
     });
@@ -1439,7 +1477,7 @@ describe('ux-map generated-render provenance', () => {
       'scratch.cleanup()',
       'sys.exit(0 if status == 1 else 1)',
     ].join('\n');
-    const result = spawnSync('python3', ['-c', probe], { encoding: 'utf8' });
+    const result = spawnSync(uxMapPython, ['-c', probe], { encoding: 'utf8' });
 
     expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
     expect(result.stderr).toContain('renderer visibleProjectionSha256');
@@ -1465,7 +1503,7 @@ describe('ux-map generated-render provenance', () => {
       'scratch.cleanup()',
       'sys.exit(0 if failed and unchanged else 1)',
     ].join('\n');
-    const result = spawnSync('python3', ['-c', probe], { encoding: 'utf8' });
+    const result = spawnSync(uxMapPython, ['-c', probe], { encoding: 'utf8' });
 
     expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
   });
@@ -1486,7 +1524,7 @@ describe('ux-map generated-render provenance', () => {
       'wanted = {"roster-people": ["## Screens"], "workbench-operator-loop": ["## Actions"], "febt-1-job-error-states": ["## Actions"]}',
       'sys.exit(0 if actual == expected and anchors == wanted else 1)',
     ].join('; ');
-    const result = spawnSync('python3', ['-c', probe], { encoding: 'utf8' });
+    const result = spawnSync(uxMapPython, ['-c', probe], { encoding: 'utf8' });
 
     expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
   });

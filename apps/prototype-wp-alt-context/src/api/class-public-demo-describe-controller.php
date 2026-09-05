@@ -17,6 +17,7 @@ use function absint;
 use function add_option;
 use function apply_filters;
 use function array_filter;
+use function array_key_exists;
 use function array_map;
 use function array_merge;
 use function array_unique;
@@ -215,23 +216,44 @@ final class PublicDemoDescribeController implements RecognitionRouteControllerIn
 		$current_run_id = is_array( $current_inflight ) && is_string( $current_inflight['run_id'] ?? null )
 			? $current_inflight['run_id']
 			: '';
+		$lease_token = is_string( $inflight['token'] ?? null ) ? $inflight['token'] : '';
+		$current_token = is_array( $current_inflight ) && is_string( $current_inflight['token'] ?? null )
+			? $current_inflight['token']
+			: '';
 		if (
 			'' === $response_run_id
 			|| '' === $current_run_id
+			|| '' === $lease_token
+			|| '' === $current_token
 			|| ! hash_equals( $run_id, $response_run_id )
 			|| ! hash_equals( $run_id, $current_run_id )
+			|| ! hash_equals( $lease_token, $current_token )
 		) {
 			return $this->invalid_pipeline_response();
 		}
-		$status = is_array( $data ) && is_string( $data['status'] ?? null ) ? $data['status'] : '';
-		$description = 'completed' === $status
-			? $this->public_description( $pipeline_request, absint( $inflight['media_id'] ?? 0 ) )
-			: '';
-		if ( in_array( $status, self::TERMINAL_STATUSES, true ) ) {
-			$this->release_inflight_bulkhead( $run_id );
+
+		$public_response = $this->public_envelope_response( $response, false );
+		if ( $public_response instanceof WP_Error ) {
+			return $public_response;
 		}
 
-		return $this->public_envelope_response( $response, false, $description );
+		$status = $public_response->get_data()['status'];
+		if ( 'completed' === $status ) {
+			$description = $this->public_description( $pipeline_request, absint( $inflight['media_id'] ?? 0 ), $run_id, $lease_token );
+			if ( $description instanceof WP_Error ) {
+				return $description;
+			}
+			$public_response = $this->public_envelope_response( $response, false, $description );
+			if ( $public_response instanceof WP_Error ) {
+				return $public_response;
+			}
+		}
+
+		if ( in_array( $status, self::TERMINAL_STATUSES, true ) ) {
+			$this->release_inflight_bulkhead( $run_id, $lease_token );
+		}
+
+		return $public_response;
 	}
 
 	/** @return list<int> */
@@ -324,8 +346,19 @@ final class PublicDemoDescribeController implements RecognitionRouteControllerIn
 			}
 
 			$run_id = is_string( $current['run_id'] ?? null ) ? $current['run_id'] : '';
-			if ( '' === $run_id || 'pending' === $run_id ) {
-				$this->renew_inflight_lease( $current, $run_id );
+			if ( 'pending' === $run_id ) {
+				// A submitter can die after acquiring the lease but before binding a
+				// backend run. Once that pending lease expires, replace it in-place
+				// while holding the same guard used by bind_inflight_run().
+				if ( ! is_string( $current['token'] ?? null ) || '' === $current['token'] ) {
+					return false;
+				}
+				update_option( self::INFLIGHT_OPTION, $value, false );
+				$acquired = $value === get_option( self::INFLIGHT_OPTION, false );
+				$this->inflight_token = $acquired ? $token : null;
+				return $acquired;
+			}
+			if ( '' === $run_id ) {
 				return false;
 			}
 			$state = $this->reconcile_backend_run( $run_id );
@@ -384,30 +417,42 @@ final class PublicDemoDescribeController implements RecognitionRouteControllerIn
 	}
 
 	private function bind_inflight_run( string $run_id ): bool {
-		$current = get_option( self::INFLIGHT_OPTION, false );
-		if (
-			null === $this->inflight_token
-			|| ! is_array( $current )
-			|| 'pending' !== ( $current['run_id'] ?? null )
-			|| ! is_string( $current['token'] ?? null )
-			|| ! hash_equals( $current['token'], $this->inflight_token )
-		) {
+		$guard = $this->acquire_lock( self::INFLIGHT_OPTION . '_reconcile', 5 );
+		if ( false === $guard ) {
 			return false;
 		}
 
-		$bound = array(
-			'run_id'    => $run_id,
-			'media_id'  => absint( $current['media_id'] ?? 0 ),
-			'token'     => is_string( $current['token'] ?? null ) ? $current['token'] : '',
-			'expires_at' => time() + self::INFLIGHT_TTL_SECONDS,
-		);
-		update_option( self::INFLIGHT_OPTION, $bound, false );
-		return $bound === get_option( self::INFLIGHT_OPTION, false );
+		try {
+			$current = get_option( self::INFLIGHT_OPTION, false );
+			if (
+				null === $this->inflight_token
+				|| ! is_array( $current )
+				|| 'pending' !== ( $current['run_id'] ?? null )
+				|| ! is_string( $current['token'] ?? null )
+				|| ! hash_equals( $current['token'], $this->inflight_token )
+			) {
+				return false;
+			}
+
+			$bound = array(
+				'run_id'    => $run_id,
+				'media_id'  => absint( $current['media_id'] ?? 0 ),
+				'token'     => $current['token'],
+				'expires_at' => time() + self::INFLIGHT_TTL_SECONDS,
+			);
+			update_option( self::INFLIGHT_OPTION, $bound, false );
+			return $bound === get_option( self::INFLIGHT_OPTION, false );
+		} finally {
+			$this->release_lock( self::INFLIGHT_OPTION . '_reconcile', $guard );
+		}
 	}
 
-	private function release_inflight_bulkhead( ?string $expected_run_id = null ): void {
+	private function release_inflight_bulkhead( ?string $expected_run_id = null, ?string $expected_token = null ): void {
 		$current = get_option( self::INFLIGHT_OPTION, false );
 		if ( null !== $expected_run_id && ( ! is_array( $current ) || ! is_string( $current['run_id'] ?? null ) || ! hash_equals( $current['run_id'], $expected_run_id ) ) ) {
+			return;
+		}
+		if ( null !== $expected_token && ( ! is_array( $current ) || ! is_string( $current['token'] ?? null ) || ! hash_equals( $current['token'], $expected_token ) ) ) {
 			return;
 		}
 		if ( null === $expected_run_id && null !== $this->inflight_token && ( ! is_array( $current ) || ! is_string( $current['token'] ?? null ) || ! hash_equals( $current['token'], $this->inflight_token ) ) ) {
@@ -471,13 +516,27 @@ final class PublicDemoDescribeController implements RecognitionRouteControllerIn
 		delete_option( $option );
 	}
 
-	private function public_description( WP_REST_Request $pipeline_request, int $media_id ): string {
+	private function public_description( WP_REST_Request $pipeline_request, int $media_id, string $expected_run_id, string $expected_token ): string|WP_Error {
 		$items_response = $this->pipeline->get_describe_run_items( $pipeline_request );
 		if ( ! $items_response instanceof WP_REST_Response || $items_response->get_status() >= 400 ) {
-			return '';
+			return $this->invalid_pipeline_response();
 		}
 
 		$items_data = $items_response->get_data();
+		$items_run_id = is_array( $items_data ) && is_string( $items_data['run_id'] ?? null ) ? $items_data['run_id'] : '';
+		$current = get_option( self::INFLIGHT_OPTION, false );
+		$current_run_id = is_array( $current ) && is_string( $current['run_id'] ?? null ) ? $current['run_id'] : '';
+		$current_token = is_array( $current ) && is_string( $current['token'] ?? null ) ? $current['token'] : '';
+		if (
+			'' === $items_run_id
+			|| '' === $current_run_id
+			|| '' === $current_token
+			|| ! hash_equals( $expected_run_id, $items_run_id )
+			|| ! hash_equals( $expected_run_id, $current_run_id )
+			|| ! hash_equals( $expected_token, $current_token )
+		) {
+			return $this->invalid_pipeline_response();
+		}
 		$items      = is_array( $items_data ) && is_array( $items_data['items'] ?? null ) ? $items_data['items'] : array();
 		foreach ( $items as $item ) {
 			if ( ! is_array( $item ) || $media_id !== absint( $item['media_id'] ?? 0 ) ) {
@@ -501,8 +560,8 @@ final class PublicDemoDescribeController implements RecognitionRouteControllerIn
 		$run_id = is_string( $data['run_id'] ?? null ) ? sanitize_text_field( $data['run_id'] ) : '';
 		$status = is_string( $data['status'] ?? null ) ? $data['status'] : '';
 		$phase = is_string( $data['phase'] ?? null ) ? $data['phase'] : '';
-		$raw_gpu_state = $data['gpu_state'] ?? null;
-		$gpu_state = null === $raw_gpu_state ? 'unknown' : ( is_string( $raw_gpu_state ) ? $raw_gpu_state : '' );
+		$has_gpu_state = array_key_exists( 'gpu_state', $data );
+		$gpu_state = $has_gpu_state ? $data['gpu_state'] : null;
 		$completed = $data['completed'] ?? null;
 		$failed = $data['failed'] ?? null;
 		$skipped = $data['skipped'] ?? null;
@@ -511,7 +570,7 @@ final class PublicDemoDescribeController implements RecognitionRouteControllerIn
 			'' === $run_id
 			|| ! in_array( $status, array_merge( self::LIVE_STATUSES, self::TERMINAL_STATUSES ), true )
 			|| ! in_array( $phase, self::PHASES, true )
-			|| ! in_array( $gpu_state, self::GPU_STATES, true )
+			|| ( $has_gpu_state && null !== $gpu_state && ( ! is_string( $gpu_state ) || ! in_array( $gpu_state, self::GPU_STATES, true ) ) )
 			|| ! is_int( $completed ) || ! is_int( $failed ) || ! is_int( $skipped ) || ! is_int( $total )
 			|| ! $this->status_matches_phase( $status, $phase )
 		) {
@@ -531,9 +590,11 @@ final class PublicDemoDescribeController implements RecognitionRouteControllerIn
 			'run_id' => $run_id,
 			'status' => $status,
 			'phase' => $phase,
-			'gpu_state' => $gpu_state,
-			'progress' => array( 'done' => $done, 'total' => $total ),
 		);
+		if ( $has_gpu_state ) {
+			$public['gpu_state'] = $gpu_state;
+		}
+		$public['progress'] = array( 'done' => $done, 'total' => $total );
 		if ( $include_deadline ) {
 			$public['deadline_seconds'] = $this->public_deadline_seconds();
 		}

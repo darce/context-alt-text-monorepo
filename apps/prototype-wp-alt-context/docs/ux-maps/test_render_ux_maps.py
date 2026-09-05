@@ -44,6 +44,33 @@ class RendererBoundaryTests(unittest.TestCase):
                                             self.assertEqual(renderer.check([ref]), 1)
                                         self.assertIn(f"screen workbench-shell has duplicate {field} declarations", output.getvalue())
 
+    def test_duplicate_action_states_fail_both_check_paths(self):
+        ref = "febt-1-job-error-states"
+        original = SOURCE.with_name(f"{ref}.md").read_text()
+        row = re.search(r"^Action states: .*$", original, re.MULTILINE)[0]
+        fixtures = renderer.REPO_ROOT / "apps/prototype-wp-alt-context/js/admin/__tests__/uxmap-render-parity.fixtures"
+        mutations = json.loads((fixtures / "action-state-mutations.json").read_text())
+        with tempfile.TemporaryDirectory() as directory:
+            maps = Path(directory)
+            shutil.copyfile(SOURCE.with_name(f"{ref}.uxmap.json"), maps / f"{ref}.uxmap.json")
+            target = maps / f"{ref}.md"
+            with patch.object(renderer, "MAPS_DIR", maps):
+                for available in [False, True]:
+                    with patch.object(renderer, "render", return_value=original,
+                                      side_effect=None if available else renderer.OptionalRendererUnavailable()):
+                        target.write_text(original)
+                        with contextlib.redirect_stdout(io.StringIO()):
+                            self.assertEqual(renderer.check([ref]), 0)
+                        for mutation in mutations:
+                            duplicate = row if mutation["value"] is None else "Action states: " + mutation["value"]
+                            rows = [duplicate, row] if mutation["before"] else [row, duplicate]
+                            with self.subTest(available=available, mutation=mutation["name"]):
+                                target.write_text(original.replace(row, "\n\n".join(rows), 1))
+                                output = io.StringIO()
+                                with contextlib.redirect_stderr(output), contextlib.redirect_stdout(io.StringIO()):
+                                    self.assertEqual(renderer.check([ref]), 1)
+                                self.assertIn("has duplicate Action states declarations", output.getvalue())
+
     def test_action_rows_and_duplicate_sections_fail_both_check_paths(self):
         ref = "febt-1-job-error-states"
         original = SOURCE.with_name(f"{ref}.md").read_text()

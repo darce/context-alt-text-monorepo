@@ -222,6 +222,7 @@ const parseScreens = (markdown: string): RenderParityMap['screens'] => {
     };
     const purpose = metadata('Purpose') ?? '';
     const params = metadata('url_params');
+    const actionStates = metadata('Action states');
     const parsedParams = params ? params.split(', ').map(unquote) : base.url_params;
     if (params && fifthColumn === 'url_params' && JSON.stringify(parsedParams) !== JSON.stringify(base.url_params)) {
       throw new Error(`screen ${id} has different url_params in the Screens table and detail block`);
@@ -288,8 +289,8 @@ const parseScreens = (markdown: string): RenderParityMap['screens'] => {
       purpose,
       url_params: parsedParams,
       states: parseScreenStates(block, id),
-      ...(/^Action states: (.+)$/m.test(block)
-        ? { action_states: /^Action states: (.+)$/m.exec(block)![1]!.split(', ') }
+      ...(actionStates
+        ? { action_states: actionStates.split(', ') }
         : {}),
       zones,
     };

@@ -102,6 +102,11 @@ export const GuidedDescriptionReview = ({
       </div>
 
       <div className="acx-guided-review__comparison" data-testid="guided-candidate">
+        <p className="acx-guided-review__explanation">
+          {scenario.identity.status === 'confirmed'
+            ? 'Confirmed identity changes the name in the candidate; the visual facts and page context stay visible.'
+            : 'No confirmed name supplied; the visual description remains unchanged.'}
+        </p>
         <div>
           <h3>Before</h3>
           <p>{scenario.appliedText}</p>

@@ -68,4 +68,16 @@ describe('guided prototype scenario state', () => {
     expect(undone.appliedText).toBe(confirmed.appliedText);
     expect(undone.history.at(-1)).toMatchObject({ kind: 'application-undone' });
   });
+
+  it('treats applying the already-applied text as an idempotent action', () => {
+    const confirmed = confirmGuidedIdentity(createGuidedScenario());
+    const edited = saveGuidedEdit(confirmed, 'Keanu Reeves wears a grey jacket against a plain background.');
+
+    const applied = applyGuidedCandidate(edited);
+    const repeated = applyGuidedCandidate(applied);
+    const undone = undoGuidedApplication(repeated);
+
+    expect(repeated.history).toEqual(applied.history);
+    expect(undone.appliedText).toBe(confirmed.appliedText);
+  });
 });

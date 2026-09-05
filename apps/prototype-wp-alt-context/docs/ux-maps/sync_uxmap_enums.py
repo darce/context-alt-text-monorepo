@@ -39,14 +39,12 @@ def main(argv: list[str]) -> int:
     try:
         derived, current_revision = _derive()
     except ImportError as exc:
-        if write:
-            print(f"cannot generate enum snapshot: {exc}", file=sys.stderr)
-            return 1
         print(
-            "SKIP enum derivation: workbay_canvas_mcp is unimportable; "
-            f"fixture records {revision}",
+            "cannot verify enum snapshot: canonical workbay_canvas_mcp.ux_map.models "
+            f"is unimportable ({exc}); fixture records {revision}",
+            file=sys.stderr,
         )
-        return 0
+        return 1
     expected = {"mapStates": fixture.get("mapStates"), "zoneRoles": fixture.get("zoneRoles")}
     if write:
         SNAPSHOT.write_text(

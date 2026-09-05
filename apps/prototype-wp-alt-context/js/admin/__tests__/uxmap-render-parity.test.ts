@@ -459,13 +459,21 @@ interface UxMapEnumSnapshot {
   zoneRoles: string[];
 }
 
-const displayWidth = (value: string): number =>
-  Array.from(value).reduce((width, char) => {
-    if (/\p{Mark}/u.test(char) || char === '\u200d' || char === '\ufe0e' || char === '\ufe0f') {
-      return width;
-    }
+const graphemeSegmenter = new Intl.Segmenter('en', { granularity: 'grapheme' });
+
+const graphemeWidth = (cluster: string): number => {
+  const visible = Array.from(cluster).filter(
+    (char) => !/\p{Mark}/u.test(char) && char !== '\u200d' && char !== '\ufe0e' && char !== '\ufe0f',
+  );
+  if (visible.length === 0) {
+    return 0;
+  }
+  if (cluster.includes('\u20e3') || cluster.includes('\u200d')) {
+    return 2;
+  }
+  return visible.some((char) => {
     const codePoint = char.codePointAt(0) ?? 0;
-    const wide =
+    return (
       codePoint >= 0x1100 &&
       (codePoint <= 0x115f ||
         codePoint === 0x2329 ||
@@ -477,9 +485,18 @@ const displayWidth = (value: string): number =>
         (codePoint >= 0xff00 && codePoint <= 0xff60) ||
         (codePoint >= 0xffe0 && codePoint <= 0xffe6) ||
         (codePoint >= 0x1f300 && codePoint <= 0x1faff) ||
-        (codePoint >= 0x20000 && codePoint <= 0x3fffd));
-    return width + (wide ? 2 : 1);
-  }, 0);
+        (codePoint >= 0x20000 && codePoint <= 0x3fffd))
+    );
+  })
+    ? 2
+    : 1;
+};
+
+const displayWidth = (value: string): number =>
+  Array.from(graphemeSegmenter.segment(value)).reduce(
+    (width, { segment }) => width + graphemeWidth(segment),
+    0,
+  );
 
 const assertAsciiFrameRows = (mapRef: string, markdown: string): number => {
   let checkedRows = 0;
@@ -758,10 +775,26 @@ describe('ux-map SSOT schema conformance (owned maps)', () => {
   });
 
   it('verifies the enum snapshot against the canonical Python models when importable', () => {
+    const importProbe = spawnSync('python3', ['-c', 'import workbay_canvas_mcp.ux_map.models'], {
+      encoding: 'utf8',
+    });
     const result = spawnSync('python3', [enumVerifierPath, '--check'], { encoding: 'utf8' });
 
-    expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
-    expect(`${result.stdout}${result.stderr}`).toMatch(/enum snapshot matches|SKIP enum derivation:/);
+    if (importProbe.status === 0) {
+      expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
+      expect(result.stdout).toMatch(/enum snapshot matches/);
+    } else {
+      expect(result.status, `${result.stdout}${result.stderr}`).toBe(1);
+      expect(result.stderr).toContain('canonical workbay_canvas_mcp.ux_map.models is unimportable');
+    }
+  });
+
+  it('fails closed when the canonical Python enum module is unavailable', () => {
+    const result = spawnSync('python3', ['-S', enumVerifierPath, '--check'], { encoding: 'utf8' });
+
+    expect(result.status, `${result.stdout}${result.stderr}`).toBe(1);
+    expect(result.stdout).not.toContain('SKIP');
+    expect(result.stderr).toContain('canonical workbay_canvas_mcp.ux_map.models is unimportable');
   });
 
   it('rejects the enum snapshot when derived Python enum output differs', () => {
@@ -859,6 +892,33 @@ describe('ux-map render parity (owned maps)', () => {
     expect(() => assertAsciiFrameRows('malformed-terminal mutant', mutant)).toThrow(
       /missing its closing \| delimiter/,
     );
+  });
+
+  it.each([
+    ['CJK', '界', 2],
+    ['combining mark', 'e\u0301', 1],
+    ['spacing mark', '\u093e', 0],
+    ['spacing-mark cluster', 'का', 1],
+    ['keycap', '1\ufe0f\u20e3', 2],
+    ['ZWJ family', '👨\u200d👩\u200d👧\u200d👦', 2],
+  ] as const)('measures a %s grapheme as %i terminal cell(s)', (_name, value, expected) => {
+    expect(displayWidth(value)).toBe(expected);
+  });
+
+  it('keeps the Python renderer on the same grapheme-width contract', () => {
+    const probe = [
+      'import importlib.util, json, pathlib',
+      `p = pathlib.Path(${JSON.stringify(path.join(uxMapsDir, 'render_ux_maps.py'))})`,
+      's = importlib.util.spec_from_file_location("uxmap_renderer", p)',
+      'm = importlib.util.module_from_spec(s)',
+      's.loader.exec_module(m)',
+      'values = ["界", "e\\u0301", "\\u093e", "का", "1\\ufe0f\\u20e3", "👨\\u200d👩\\u200d👧\\u200d👦"]',
+      'print(json.dumps([m._display_width(value) for value in values]))',
+    ].join('\n');
+    const result = spawnSync('python3', ['-c', probe], { encoding: 'utf8' });
+
+    expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
+    expect(JSON.parse(result.stdout)).toEqual([2, 1, 0, 1, 2, 2]);
   });
 
   it('rejects action boolean cells other than exact yes/no tokens with a useful location', () => {
@@ -1261,6 +1321,34 @@ describe('ux-map generated-render provenance', () => {
     },
     60_000,
   );
+
+  it('renderer-backed --check rejects a mutation inside a retained detailed-contract fence', () => {
+    const probe = [
+      'import importlib.util, pathlib, shutil, sys, tempfile',
+      `p = pathlib.Path(${JSON.stringify(rendererPath)})`,
+      's = importlib.util.spec_from_file_location("uxmap_renderer", p)',
+      'm = importlib.util.module_from_spec(s)',
+      's.loader.exec_module(m)',
+      'source = p.parent',
+      'scratch = tempfile.TemporaryDirectory()',
+      'm.MAPS_DIR = pathlib.Path(scratch.name)',
+      'ref = "febt-1-job-error-states"',
+      'shutil.copyfile(source / f"{ref}.uxmap.json", m.MAPS_DIR / f"{ref}.uxmap.json")',
+      'original = (source / f"{ref}.md").read_text()',
+      'mutated = original.replace("No job running", "Xo job running", 1)',
+      'assert mutated != original',
+      '(m.MAPS_DIR / f"{ref}.md").write_text(mutated)',
+      'm.render = lambda _: mutated',
+      'status = m.check([ref])',
+      'scratch.cleanup()',
+      'sys.exit(0 if status == 1 else 1)',
+    ].join('\n');
+    const result = spawnSync('python3', ['-c', probe], { encoding: 'utf8' });
+
+    expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
+    expect(result.stderr).toContain('renderer visibleProjectionSha256');
+    expect(result.stderr).toContain('source-pinned snapshot');
+  });
 
   it('does not replace any target when a later artifact fails to render', () => {
     const probe = [

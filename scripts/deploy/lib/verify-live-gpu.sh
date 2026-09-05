@@ -12,8 +12,8 @@ fi
 
 demo_env="$1"
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# shellcheck source=describe-gate.sh
-source "${script_dir}/describe-gate.sh"
+# shellcheck source=gpu-env-contract.sh
+source "${script_dir}/gpu-env-contract.sh"
 
 wordpress_config_lines=()
 while IFS= read -r line; do
@@ -92,10 +92,22 @@ print(job_id)
 PY
 )"
 
-poll_attempt=0
+readonly LIVE_GPU_POLL_TIMEOUT_SECONDS="${LIVE_GPU_POLL_TIMEOUT_SECONDS:-900}"
+case "$LIVE_GPU_POLL_TIMEOUT_SECONDS" in
+    ''|*[!0-9]*|0)
+        echo "live GPU smoke failed: LIVE_GPU_POLL_TIMEOUT_SECONDS must be a positive integer" >&2
+        exit 2
+        ;;
+esac
+poll_deadline=$(( $(date +%s) + LIVE_GPU_POLL_TIMEOUT_SECONDS ))
 poll_complete=0
-while (( poll_attempt < 180 )); do
-    curl --fail-with-body --silent --show-error --max-time 30 \
+while :; do
+    poll_now="$(date +%s)"
+    poll_remaining=$(( poll_deadline - poll_now ))
+    (( poll_remaining > 0 )) || break
+    request_timeout=30
+    (( poll_remaining < request_timeout )) && request_timeout="$poll_remaining"
+    curl --fail-with-body --silent --show-error --max-time "$request_timeout" \
         -H "X-API-Key: ${api_key}" \
         -H "X-Tenant-ID: ${tenant_id}" \
         --output "$response_file" \
@@ -132,11 +144,15 @@ PY
         poll_status=$?
         [[ "$poll_status" -eq 10 ]] || exit "$poll_status"
     fi
-    poll_attempt=$((poll_attempt + 1))
-    sleep 5
+    poll_now="$(date +%s)"
+    poll_remaining=$(( poll_deadline - poll_now ))
+    (( poll_remaining > 0 )) || break
+    sleep_seconds=5
+    (( poll_remaining < sleep_seconds )) && sleep_seconds="$poll_remaining"
+    sleep "$sleep_seconds"
 done
 if [[ "$poll_complete" -ne 1 ]]; then
-    echo "live GPU smoke failed: async job did not finish within 15 minutes" >&2
+    echo "live GPU smoke failed: async job did not finish within ${LIVE_GPU_POLL_TIMEOUT_SECONDS} seconds" >&2
     exit 1
 fi
 

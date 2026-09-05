@@ -92,9 +92,12 @@ ssh ubuntu@acx-backend.tail1a44b8.ts.net 'rm -f /tmp/acx-gpu-preflight/preflight
 
 If verification fails, do not run the describe pass manually. Restore the
 pre-flip env files and restart both consumers. If the A10 is unexpectedly
-running after any failure, run the STOP block after checking that no bake or
-evaluation is in flight. These commands are compensating actions, so run them
-as a separate block rather than appending them to the happy path.
+running after any failure, run the STOP block only after its executable guard
+proves that no bake or evaluation is in flight. Bake/evaluation operators must
+hold `/run/acx-gpu/bake.lease` or `/run/acx-gpu/evaluation.lease` for the full
+activity; the guard also checks the corresponding live processes and fails
+closed when `pgrep` is unavailable. These commands are compensating actions,
+so run them as a separate block rather than appending them to the happy path.
 
 ```bash
 set -euo pipefail
@@ -103,8 +106,21 @@ ssh ubuntu@acx-backend.tail1a44b8.ts.net 'sudo cp -a /opt/acx-backend/prod/secre
 
 ```bash
 set -euo pipefail
+GPU_HOST=ubuntu@acx-backend.tail1a44b8.ts.net
 GPU_INSTANCE_ID="$(terraform -chdir=infra/oci output -raw gpu_instance_id)"
 test -n "$GPU_INSTANCE_ID"
+ssh "$GPU_HOST" 'set -euo pipefail
+command -v pgrep >/dev/null
+if pgrep -af "scripts[.]eval_harness[.](bakeoff|cli)|gpu[-_]bake" >/dev/null; then
+    echo "Refusing STOP: an A10 bake/evaluation process is active." >&2
+    exit 1
+fi
+for lease in /run/acx-gpu/bake.lease /run/acx-gpu/evaluation.lease; do
+    if sudo test -e "$lease"; then
+        echo "Refusing STOP: active activity lease at $lease." >&2
+        exit 1
+    fi
+done'
 oci compute instance action --action STOP --instance-id "$GPU_INSTANCE_ID"
 ```
 

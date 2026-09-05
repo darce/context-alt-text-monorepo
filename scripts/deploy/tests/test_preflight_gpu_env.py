@@ -143,17 +143,27 @@ def run_live_gpu_verifier(
     payload: dict[str, object] | None = None,
     curl_status: int = 0,
     enqueue_payload: dict[str, object] | None = None,
+    poll_response: dict[str, object] | None = None,
+    timeout_seconds: int | None = None,
+    clock_step_seconds: int | None = None,
+    wordpress_config_extra: str | None = None,
 ) -> subprocess.CompletedProcess[str]:
     staged_lib = tmp_path / "lib"
     staged_lib.mkdir()
     staged_verifier = staged_lib / "verify-live-gpu.sh"
     staged_verifier.write_text(VERIFY_LIVE_GPU.read_text(encoding="utf-8"), encoding="utf-8")
     staged_verifier.chmod(0o700)
+    (staged_lib / "gpu-env-contract.sh").write_text(
+        CONTRACT.read_text(encoding="utf-8"), encoding="utf-8"
+    )
     (staged_lib / "describe-gate.sh").write_text(
         DESCRIBE_GATE.read_text(encoding="utf-8"), encoding="utf-8"
     )
     demo_env = tmp_path / "demo.env"
-    demo_env.write_text(f"WORDPRESS_CONFIG_EXTRA={wordpress_config()}\n", encoding="utf-8")
+    demo_env.write_text(
+        f"WORDPRESS_CONFIG_EXTRA={wordpress_config_extra or wordpress_config()}\n",
+        encoding="utf-8",
+    )
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
     fake_curl = fake_bin / "curl"
@@ -181,6 +191,24 @@ esac
         encoding="utf-8",
     )
     fake_curl.chmod(0o700)
+    if clock_step_seconds is not None:
+        fake_date = fake_bin / "date"
+        fake_date.write_text(
+            """#!/usr/bin/env bash
+test "$1" = +%s
+current=1000
+if [[ -f "$FAKE_DATE_COUNTER" ]]; then
+  current="$(<"$FAKE_DATE_COUNTER")"
+fi
+printf '%s\n' "$((current + FAKE_DATE_STEP))" > "$FAKE_DATE_COUNTER"
+printf '%s\n' "$current"
+""",
+            encoding="utf-8",
+        )
+        fake_date.chmod(0o700)
+        fake_sleep = fake_bin / "sleep"
+        fake_sleep.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+        fake_sleep.chmod(0o700)
     env = os.environ.copy()
     env.update(
         {
@@ -199,7 +227,9 @@ esac
                 }
             ),
             "FAKE_CURL_RESPONSE": json.dumps(
-                {
+                poll_response
+                if poll_response is not None
+                else {
                     "job_id": "123e4567-e89b-42d3-a456-426614174999",
                     "status": "final",
                     "tier": "final_gpu",
@@ -210,6 +240,11 @@ esac
             ),
         }
     )
+    if timeout_seconds is not None:
+        env["LIVE_GPU_POLL_TIMEOUT_SECONDS"] = str(timeout_seconds)
+    if clock_step_seconds is not None:
+        env["FAKE_DATE_COUNTER"] = str(tmp_path / "date.counter")
+        env["FAKE_DATE_STEP"] = str(clock_step_seconds)
     return subprocess.run(
         [str(staged_verifier), str(demo_env)],
         cwd=ROOT,
@@ -256,6 +291,16 @@ def test_03_env_backend_requires_real_api_key(tmp_path: Path, credential: str) -
     assert f"redacted length={len(credential)}" in result.stderr
     if credential:
         assert credential not in result.stderr
+
+
+def test_03_env_backend_rejects_whitespace_only_api_key(tmp_path: Path) -> None:
+    producer = valid_env()
+    producer["ACX_GPU_ENDPOINT_API_KEY"] = " \t "
+
+    result = run_preflight(tmp_path, producer=producer)
+
+    assert result.returncode != 0
+    assert "ERROR [3] producer env backend" in result.stderr
 
 
 def test_03_vault_backend_accepts_map_reference_and_blank_direct_value(tmp_path: Path) -> None:
@@ -360,6 +405,17 @@ def test_03_vault_backend_parses_complete_unique_string_map(tmp_path: Path, vaul
     assert vault_map not in result.stderr
 
 
+@pytest.mark.parametrize("backend", ["", "ENV", "file", "env-with-fallback", "oci_vault "])
+def test_03_secret_backend_is_an_exact_allowlist(tmp_path: Path, backend: str) -> None:
+    producer = valid_env()
+    producer["RECOGNITION_SECRET_BACKEND"] = backend
+
+    result = run_preflight(tmp_path, producer=producer)
+
+    assert result.returncode != 0
+    assert "RECOGNITION_SECRET_BACKEND must be exactly env or oci_vault" in result.stderr
+
+
 @pytest.mark.parametrize(
     ("snapshot_dir", "state_path"),
     [
@@ -368,6 +424,7 @@ def test_03_vault_backend_parses_complete_unique_string_map(tmp_path: Path, vaul
         ("/run/acx", "/run/other/gpu-state.json"),
         ("/tmp/not-mounted", "/tmp/not-mounted/not-the-runtime-file.json"),
         ("/run/acx", "/run/acx/not-the-runtime-file.json"),
+        ("/run/acx/", "/run/acx/gpu-state.json"),
     ],
 )
 def test_04_snapshot_dir_and_state_path_must_agree(tmp_path: Path, snapshot_dir: str, state_path: str) -> None:
@@ -459,6 +516,22 @@ def test_06_recognition_placeholder_is_rejected_without_disclosure(tmp_path: Pat
     assert result.returncode != 0
     assert "ERROR [6] demo ACX_RECOGNITION_API_KEY" in result.stderr
     assert placeholder not in result.stderr
+
+
+def test_06_php_defines_inside_block_comments_do_not_supply_config(tmp_path: Path) -> None:
+    demo = valid_demo_env()
+    demo["WORDPRESS_CONFIG_EXTRA"] = (
+        "define('ACX_RECOGNITION_URL','https://api.altcontext.com'); "
+        "/* define('ACX_RECOGNITION_API_KEY','commented-key'); */ "
+        "define('ACX_RECOGNITION_TENANT_ID','123e4567-e89b-42d3-a456-426614174000');"
+    )
+
+    result = run_preflight(tmp_path, demo=demo)
+
+    assert result.returncode != 0
+    assert "demo recognition config is incomplete" in result.stderr
+    assert "ACX_RECOGNITION_API_KEY" in result.stderr
+    assert "commented-key" not in result.stderr
 
 
 @pytest.mark.parametrize(
@@ -636,6 +709,33 @@ def test_09_rejects_public_gpu_endpoint(tmp_path: Path, endpoint: str) -> None:
     assert endpoint not in result.stderr
 
 
+@pytest.mark.parametrize("endpoint", ["http://169.254.169.254", "http://[fe80::1]:8000"])
+def test_09_rejects_link_local_gpu_endpoint(tmp_path: Path, endpoint: str) -> None:
+    producer = valid_env()
+    producer["ACX_GPU_ENDPOINT_URL"] = endpoint
+
+    result = run_preflight(tmp_path, producer=producer)
+
+    assert result.returncode != 0
+    assert "ERROR [9] producer ACX_GPU_ENDPOINT_URL" in result.stderr
+    assert endpoint not in result.stderr
+
+
+@pytest.mark.parametrize(
+    "endpoint",
+    ["https://acx-gpu-burst:not-a-port", "https://:8000", "https://acx-gpu-burst:0"],
+)
+def test_02_rejects_malformed_authority_or_port(tmp_path: Path, endpoint: str) -> None:
+    producer = valid_env()
+    producer["ACX_GPU_ENDPOINT_URL"] = endpoint
+
+    result = run_preflight(tmp_path, producer=producer)
+
+    assert result.returncode != 0
+    assert "ERROR [2] producer ACX_GPU_ENDPOINT_URL" in result.stderr
+    assert endpoint not in result.stderr
+
+
 def test_09_honors_producer_endpoint_allowlist(tmp_path: Path) -> None:
     producer = valid_env()
     demo = valid_demo_env()
@@ -714,6 +814,16 @@ def test_10_rejects_invalid_runtime_gpu_setting(tmp_path: Path, key: str, value:
     assert f"ERROR [10] producer {key}" in result.stderr
     if value:
         assert value not in result.stderr
+
+
+def test_10_rejects_whitespace_only_prompt_version(tmp_path: Path) -> None:
+    producer = valid_env()
+    producer["ACX_GPU_PROMPT_VERSION"] = " \t "
+
+    result = run_preflight(tmp_path, producer=producer)
+
+    assert result.returncode != 0
+    assert "ERROR [10] producer ACX_GPU_PROMPT_VERSION" in result.stderr
 
 
 def reaper_systemctl_script(
@@ -818,6 +928,28 @@ def test_11_reaper_preflight_rejects_non_reaper_execstart(tmp_path: Path) -> Non
 
     assert result.returncode != 0
     assert "ERROR [11] acx-gpu-reap.service ExecStart" in result.stderr
+
+
+def test_11_reaper_preflight_rejects_required_text_inside_one_label_argument(tmp_path: Path) -> None:
+    reaper_env = tmp_path / "gpu-lifecycle.env"
+    reaper_env.write_text(
+        "GPU_INSTANCE_ID=ocid1.instance.oc1.iad.fakeinstance\nMAX_LEASE_SECONDS=3600\n",
+        encoding="utf-8",
+    )
+    disguised_arguments = (
+        "{ path=/usr/bin/python3 ; argv[]=/usr/bin/python3 -m infra.oci.gpu_lifecycle "
+        "--mode reap --label \"--instance-id ${GPU_INSTANCE_ID} "
+        "--max-lease-seconds ${MAX_LEASE_SECONDS}\" ; ignore_errors=no ; }"
+    )
+
+    result = run_preflight(
+        tmp_path,
+        check_reaper=True,
+        systemctl_script=reaper_systemctl_script(reaper_env, exec_start=disguised_arguments),
+    )
+
+    assert result.returncode != 0
+    assert "structurally valid GPU lifecycle reaper" in result.stderr
 
 
 def test_11_reaper_preflight_honors_all_environment_files_in_order(tmp_path: Path) -> None:
@@ -1033,6 +1165,46 @@ def test_runbook_final_verification_requires_uncached_live_gpu_inference() -> No
     assert syntax.returncode == 0, syntax.stderr
 
 
+def test_runbook_stop_guard_prevents_oci_stop_during_active_evaluation(tmp_path: Path) -> None:
+    runbook = (ROOT / "docs/runbooks/gpu-demo-env-flip.md").read_text(encoding="utf-8")
+    stop_block = runbook.rsplit("```bash\n", 1)[1].split("```", 1)[0]
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    (fake_bin / "terraform").write_text(
+        "#!/usr/bin/env bash\nprintf '%s\\n' ocid1.instance.oc1.iad.test\n",
+        encoding="utf-8",
+    )
+    (fake_bin / "ssh").write_text(
+        "#!/usr/bin/env bash\nshift\n/bin/bash -c \"$1\"\n",
+        encoding="utf-8",
+    )
+    (fake_bin / "pgrep").write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+    (fake_bin / "sudo").write_text("#!/usr/bin/env bash\nexit 1\n", encoding="utf-8")
+    (fake_bin / "oci").write_text(
+        "#!/usr/bin/env bash\nprintf called > \"$OCI_CALL_LOG\"\n",
+        encoding="utf-8",
+    )
+    for executable in fake_bin.iterdir():
+        executable.chmod(0o700)
+    env = os.environ.copy()
+    env["PATH"] = f"{fake_bin}:{env['PATH']}"
+    env["OCI_CALL_LOG"] = str(tmp_path / "oci-called")
+
+    result = subprocess.run(
+        ["bash"],
+        input=stop_block,
+        cwd=ROOT,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert "Refusing STOP: an A10 bake/evaluation process is active." in result.stderr
+    assert not (tmp_path / "oci-called").exists()
+
+
 def test_live_gpu_verifier_accepts_only_a_fresh_pinned_gpu_result(tmp_path: Path) -> None:
     result = run_live_gpu_verifier(tmp_path)
 
@@ -1057,6 +1229,37 @@ def test_live_gpu_verifier_queues_work_before_polling_for_gpu_start(tmp_path: Pa
     assert "/scene/describe/async" in verifier
     assert "/scene/describe/jobs/" in verifier
     assert "/scene/describe/multipart" not in verifier
+
+
+def test_live_gpu_verifier_does_not_use_commented_recognition_key(tmp_path: Path) -> None:
+    config = (
+        "define('ACX_RECOGNITION_URL','https://api.altcontext.com'); "
+        "/* define('ACX_RECOGNITION_API_KEY','commented-key'); */ "
+        "define('ACX_RECOGNITION_TENANT_ID','123e4567-e89b-42d3-a456-426614174000');"
+    )
+
+    result = run_live_gpu_verifier(tmp_path, wordpress_config_extra=config)
+
+    assert result.returncode != 0
+    assert "api_key is missing" in result.stderr
+    assert "commented-key" not in result.stdout + result.stderr
+
+
+def test_live_gpu_verifier_uses_wall_clock_deadline_not_attempt_count(tmp_path: Path) -> None:
+    result = run_live_gpu_verifier(
+        tmp_path,
+        poll_response={
+            "job_id": "123e4567-e89b-42d3-a456-426614174999",
+            "status": "queued",
+        },
+        timeout_seconds=900,
+        clock_step_seconds=400,
+    )
+
+    assert result.returncode != 0
+    assert "did not finish within 900 seconds" in result.stderr
+    requests = (tmp_path / "curl.log").read_text(encoding="utf-8").splitlines()
+    assert len([request for request in requests if "/scene/describe/jobs/" in request]) == 1
 
 
 @pytest.mark.parametrize(

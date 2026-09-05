@@ -106,7 +106,7 @@ env_get() {
 
 is_placeholder() {
     local lowered
-    lowered="$(printf '%s' "$1" | LC_ALL=C tr '[:upper:]' '[:lower:]')"
+    lowered="$(printf '%s' "$1" | LC_ALL=C tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')"
     case "$lowered" in
         ''|*replace*|*placeholder*|*change-me*|*changeme*|*paste-key*|*paste_secret*|'<'*|'>'*) return 0 ;;
         *) return 1 ;;
@@ -114,7 +114,40 @@ is_placeholder() {
 }
 
 is_http_url() {
-    printf '%s' "$1" | LC_ALL=C grep -Eq '^https?://[^/[:space:]]+(/[^[:space:]]*)?$'
+    python3 -c '
+import sys
+import ipaddress
+import re
+from urllib.parse import urlsplit
+
+raw = sys.argv[1]
+if not raw or any(char.isspace() for char in raw):
+    raise SystemExit(1)
+try:
+    parsed = urlsplit(raw)
+    port = parsed.port
+except ValueError:
+    raise SystemExit(1)
+if parsed.scheme not in {"http", "https"}:
+    raise SystemExit(1)
+host = parsed.hostname
+if not parsed.netloc or host is None or parsed.username is not None or parsed.password is not None:
+    raise SystemExit(1)
+if parsed.netloc.endswith(":"):
+    raise SystemExit(1)
+if port is not None and not 1 <= port <= 65535:
+    raise SystemExit(1)
+if ":" in host:
+    try:
+        ipaddress.IPv6Address(host)
+    except ValueError:
+        raise SystemExit(1)
+else:
+    labels = host.split(".")
+    if any(not re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?", label) for label in labels):
+        raise SystemExit(1)
+raise SystemExit(0)
+' "$1" 2>/dev/null
 }
 
 hostname_matches_allowlist() {
@@ -137,7 +170,7 @@ try:
     address = ipaddress.ip_address(sys.argv[1])
 except ValueError:
     raise SystemExit(2)
-raise SystemExit(0 if address.is_private or address.is_loopback else 1)
+raise SystemExit(0 if (address.is_private or address.is_loopback) and not address.is_link_local else 1)
 ' "$1" 2>/dev/null
 }
 
@@ -156,7 +189,7 @@ for raw in addresses:
         address = ipaddress.ip_address(raw)
     except ValueError:
         raise SystemExit(1)
-    if not (address.is_private or address.is_loopback):
+    if address.is_link_local or not (address.is_private or address.is_loopback):
         raise SystemExit(1)
 ' 2>/dev/null
 }
@@ -268,10 +301,45 @@ validate_runtime_gpu_settings() {
     done < <(printf '%s' "$value" | tr ',' '\n')
 
     value="$(env_get "$file" ACX_GPU_PROMPT_VERSION)"
-    [[ -n "$value" ]] || {
-        echo "ERROR [10] producer ACX_GPU_PROMPT_VERSION must be non-empty." >&2
+    if is_placeholder "$value"; then
+        echo "ERROR [10] producer ACX_GPU_PROMPT_VERSION must be non-empty and non-placeholder." >&2
         exit 1
-    }
+    fi
+}
+
+reaper_execstart_is_structural() {
+    python3 -c '
+import shlex
+import sys
+
+raw = sys.argv[1].strip()
+if raw.startswith("{"):
+    marker = "argv[]="
+    start = raw.find(marker)
+    if start < 0:
+        raise SystemExit(1)
+    argv_text = raw[start + len(marker):]
+    argv_text = argv_text.split(" ; ", 1)[0]
+else:
+    argv_text = raw
+try:
+    argv = shlex.split(argv_text)
+except ValueError:
+    raise SystemExit(1)
+if argv[:4] != ["/usr/bin/python3", "-m", "infra.oci.gpu_lifecycle", "--mode"]:
+    raise SystemExit(1)
+if len(argv) < 5 or argv[4] != "reap":
+    raise SystemExit(1)
+
+required = {
+    "--instance-id": "${GPU_INSTANCE_ID}",
+    "--max-lease-seconds": "${MAX_LEASE_SECONDS}",
+}
+for option, expected in required.items():
+    positions = [index for index, token in enumerate(argv) if token == option]
+    if len(positions) != 1 or positions[0] + 1 >= len(argv) or argv[positions[0] + 1] != expected:
+        raise SystemExit(1)
+' "$1" 2>/dev/null
 }
 
 preflight_gpu_reaper() {
@@ -302,16 +370,11 @@ preflight_gpu_reaper() {
     exec_start="$(printf '%s\n' "$unit_properties" | sed -n 's/^ExecStart=//p')"
     fragment_path="$(printf '%s\n' "$unit_properties" | sed -n 's/^FragmentPath=//p')"
     environment_files="$(printf '%s\n' "$unit_properties" | sed -n 's/^EnvironmentFiles=//p')"
-    case "$exec_start" in
-        '/usr/bin/python3 -m infra.oci.gpu_lifecycle --mode reap '*|\{\ path=/usr/bin/python3\ \;\ argv\[\]=/usr/bin/python3\ -m\ infra.oci.gpu_lifecycle\ --mode\ reap\ *) ;;
-        *)
-            echo "ERROR [11] acx-gpu-reap.service ExecStart must be the GPU lifecycle reaper." >&2
-            exit 1
-            ;;
-    esac
-    [[ "$exec_start" == *'--instance-id ${GPU_INSTANCE_ID}'* \
-        && "$exec_start" == *'--max-lease-seconds ${MAX_LEASE_SECONDS}'* \
-        && "$fragment_path" == /* && "$fragment_path" != /dev/null ]] || {
+    reaper_execstart_is_structural "$exec_start" || {
+        echo "ERROR [11] acx-gpu-reap.service ExecStart must be the structurally valid GPU lifecycle reaper." >&2
+        exit 1
+    }
+    [[ "$fragment_path" == /* && "$fragment_path" != /dev/null ]] || {
         echo "ERROR [11] acx-gpu-reap.service must structurally target GPU_INSTANCE_ID and MAX_LEASE_SECONDS." >&2
         exit 1
     }
@@ -391,6 +454,23 @@ validate_side() {
     fi
 
     secret_backend="$(env_get "$file" RECOGNITION_SECRET_BACKEND)"
+    if [[ "$role" == producer ]]; then
+        case "$secret_backend" in
+            env|oci_vault) ;;
+            *)
+                echo "ERROR [3] producer RECOGNITION_SECRET_BACKEND must be exactly env or oci_vault (redacted length=${#secret_backend})." >&2
+                exit 1
+                ;;
+        esac
+    elif [[ -n "$secret_backend" ]]; then
+        case "$secret_backend" in
+            env|oci_vault) ;;
+            *)
+                echo "ERROR [3] demo RECOGNITION_SECRET_BACKEND, when present, must be exactly env or oci_vault (redacted length=${#secret_backend})." >&2
+                exit 1
+                ;;
+        esac
+    fi
     if [[ "$role" == producer && "$secret_backend" == oci_vault ]]; then
         vault_map="$(env_get "$file" RECOGNITION_VAULT_SECRET_MAP)"
         if ! vault_gpu_ref="$(vault_map_value "$vault_map" ACX_GPU_ENDPOINT_API_KEY)"; then
@@ -412,15 +492,7 @@ validate_side() {
         exit 1
     fi
 
-    normalized_snapshot_dir="${snapshot_dir%/}"
-    [[ -n "$normalized_snapshot_dir" ]] || normalized_snapshot_dir="/"
-    state_dir=""
-    if [[ "$state_path" == */* ]]; then
-        state_dir="${state_path%/*}"
-        [[ -n "$state_dir" ]] || state_dir="/"
-    fi
-    if [[ "$normalized_snapshot_dir" != /run/acx || "$state_dir" != /run/acx \
-        || "${state_path##*/}" != gpu-state.json ]]; then
+    if [[ "$snapshot_dir" != /run/acx || "$state_path" != /run/acx/gpu-state.json ]]; then
         echo "ERROR [4] ${role} ACX_GPU_SNAPSHOT_DIR and ACX_GPU_STATE_PATH must be /run/acx and /run/acx/gpu-state.json, respectively, as required by the compose mount and lifecycle units." >&2
         exit 1
     fi

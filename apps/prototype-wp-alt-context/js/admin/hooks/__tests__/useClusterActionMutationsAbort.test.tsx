@@ -29,7 +29,81 @@ vi.mock('../../hooks/useSyncOffline', () => ({
 
 describe('useClusterActionMutations split cancellation', () => {
   beforeEach(() => {
-    vi.clearAllMocks();
+    vi.resetAllMocks();
+  });
+
+  it.each([
+    ['sync', 'unmount'],
+    ['async', 'unmount'],
+    ['sync', 'supersede'],
+    ['async', 'supersede'],
+  ] as const)('ignores a %s response resolved immediately before %s', async (mode, cancellation) => {
+    type SplitResult = Awaited<ReturnType<typeof recognitionApi.splitCluster>>;
+    let resolveSplit!: (value: SplitResult) => void;
+    const response = new Promise<SplitResult>((resolve) => {
+      resolveSplit = resolve;
+    });
+    const syncResult = {
+      new_cluster_ids: ['replacement-cluster'],
+      moved_counts: [2],
+      new_cluster_id: 'replacement-cluster',
+      moved_count: 2,
+    };
+    vi.mocked(recognitionApi.splitCluster).mockReturnValueOnce(response).mockResolvedValueOnce(syncResult);
+    vi.mocked(recognitionApi.fetchScanStatus).mockResolvedValue({
+      id: 'old-job',
+      type: 'split',
+      status: 'completed',
+      progress: null,
+      started_at: '2026-09-05T00:00:00.000Z',
+      finished_at: '2026-09-05T00:00:01.000Z',
+    });
+    const onError = vi.fn();
+    const onAbort = vi.fn();
+    const invalidateQueries = vi.fn();
+    const queryClient = new QueryClient({ defaultOptions: { mutations: { retry: false } } });
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+    );
+    const { result, unmount } = renderHook(
+      () =>
+        useClusterActionMutations({
+          clusterId: 'c1',
+          identityCount: mode === 'async' ? 100 : 2,
+          onError,
+          onAbort,
+          invalidateQueries,
+        }),
+      { wrapper },
+    );
+
+    act(() => result.current.split('c1', 2));
+    await waitFor(() => expect(recognitionApi.splitCluster).toHaveBeenCalledTimes(1));
+    // Cancel in the same turn as resolution, before the awaited continuation.
+    act(() => {
+      resolveSplit(mode === 'sync' ? syncResult : { job_id: 'old-job', status: 'pending', message: 'queued' });
+      if (cancellation === 'unmount') {
+        unmount();
+      } else {
+        result.current.split('c2', 2);
+      }
+    });
+    await waitFor(() =>
+      expect(
+        queryClient
+          .getMutationCache()
+          .getAll()
+          .every((mutation) => mutation.state.status !== 'pending'),
+      ).toBe(true),
+    );
+
+    expect(recognitionApi.fetchScanStatus).not.toHaveBeenCalled();
+    expect(invalidateQueries).toHaveBeenCalledTimes(cancellation === 'unmount' ? 0 : 1);
+    expect(onError).not.toHaveBeenCalled();
+    expect(onAbort).not.toHaveBeenCalled();
+    if (cancellation === 'supersede') {
+      await waitFor(() => expect(result.current.isSplitting).toBe(false));
+    }
   });
 
   it('settles an aborted split before its replacement completes without stale callbacks', async () => {
@@ -41,11 +115,9 @@ describe('useClusterActionMutations split cancellation', () => {
         }
         splitSignals.push(signal);
         return new Promise<never>((_resolve, reject) => {
-          signal.addEventListener(
-            'abort',
-            () => reject(new DOMException('The split was superseded.', 'AbortError')),
-            { once: true },
-          );
+          signal.addEventListener('abort', () => reject(new DOMException('The split was superseded.', 'AbortError')), {
+            once: true,
+          });
         });
       })
       .mockImplementationOnce((_clusterId, _request, signal) => {
@@ -190,19 +262,18 @@ describe('useClusterActionMutations split cancellation', () => {
     );
 
     act(() => result.current.split('c1', 2));
-    await waitFor(() =>
-      expect(recognitionApi.fetchScanStatus).toHaveBeenCalledWith('job-c1', expect.any(AbortSignal)),
-    );
+    await waitFor(() => expect(recognitionApi.fetchScanStatus).toHaveBeenCalledWith('job-c1', expect.any(AbortSignal)));
 
     act(() => result.current.split('c2', 2));
-    await waitFor(() =>
-      expect(recognitionApi.fetchScanStatus).toHaveBeenCalledWith('job-c2', expect.any(AbortSignal)),
-    );
+    await waitFor(() => expect(recognitionApi.fetchScanStatus).toHaveBeenCalledWith('job-c2', expect.any(AbortSignal)));
     await waitFor(() => expect(result.current.isSplitting).toBe(false));
     await waitFor(() =>
-      expect(queryClient.getMutationCache().getAll().every((mutation) => mutation.state.status !== 'pending')).toBe(
-        true,
-      ),
+      expect(
+        queryClient
+          .getMutationCache()
+          .getAll()
+          .every((mutation) => mutation.state.status !== 'pending'),
+      ).toBe(true),
     );
 
     expect(onError).not.toHaveBeenCalled();
@@ -244,17 +315,18 @@ describe('useClusterActionMutations split cancellation', () => {
     );
 
     act(() => result.current.split('c1', 2));
-    await waitFor(() =>
-      expect(recognitionApi.fetchScanStatus).toHaveBeenCalledWith('job-c1', expect.any(AbortSignal)),
-    );
+    await waitFor(() => expect(recognitionApi.fetchScanStatus).toHaveBeenCalledWith('job-c1', expect.any(AbortSignal)));
     await Promise.resolve();
 
     act(() => result.current.split('c2', 2));
     await waitFor(() => expect(result.current.isSplitting).toBe(false));
     await waitFor(() =>
-      expect(queryClient.getMutationCache().getAll().every((mutation) => mutation.state.status !== 'pending')).toBe(
-        true,
-      ),
+      expect(
+        queryClient
+          .getMutationCache()
+          .getAll()
+          .every((mutation) => mutation.state.status !== 'pending'),
+      ).toBe(true),
     );
 
     expect(onError).not.toHaveBeenCalled();

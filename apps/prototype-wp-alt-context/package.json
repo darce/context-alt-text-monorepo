@@ -1,6 +1,6 @@
 {
   "name": "prototype-wp-alt-context",
-  "version": "0.0.6",
+  "version": "0.0.7",
   "description": "WordPress plugin configuration",
   "packageManager": "npm@11.14.1",
   "scripts": {

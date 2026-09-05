@@ -59,4 +59,18 @@ describe('GuidedPrototypePage', () => {
     expect(screen.getByRole('button', { name: 'Apply to practice copy' })).toBeDisabled();
     expect(document.querySelector('[data-applied-text]')).toHaveTextContent('Portrait of a person in a grey jacket.');
   });
+
+  it('keeps an empty edit visible and focused for correction', () => {
+    render(<GuidedPrototypePage />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Start the guided review' }));
+    const editor = screen.getByRole('textbox', { name: 'Description draft' });
+    fireEvent.change(editor, { target: { value: '   ' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save description edit' }));
+
+    expect(screen.getByRole('alert')).toHaveTextContent('A description cannot be empty.');
+    expect(editor).toHaveValue('   ');
+    expect(document.activeElement).toBe(editor);
+    expect(document.querySelector('[data-applied-text]')).toHaveTextContent('Portrait of a person in a grey jacket.');
+  });
 });

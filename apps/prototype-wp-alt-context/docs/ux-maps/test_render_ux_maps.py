@@ -44,6 +44,35 @@ class RendererBoundaryTests(unittest.TestCase):
                                             self.assertEqual(renderer.check([ref]), 1)
                                         self.assertIn(f"screen workbench-shell has duplicate {field} declarations", output.getvalue())
 
+    def test_duplicate_screen_states_fail_both_check_paths(self):
+        ref = "describe-gpu-tier"
+        original = SOURCE.with_name(f"{ref}.md").read_text()
+        source = json.loads(SOURCE.with_name(f"{ref}.uxmap.json").read_text())
+        row = "Screen states: " + ", ".join(source["screens"][0]["states"])
+        original = original.replace("Purpose:", row + "\n\nPurpose:", 1)
+        fixtures = renderer.REPO_ROOT / "apps/prototype-wp-alt-context/js/admin/__tests__/uxmap-render-parity.fixtures"
+        mutations = json.loads((fixtures / "screen-state-mutations.json").read_text())
+        with tempfile.TemporaryDirectory() as directory:
+            maps = Path(directory)
+            shutil.copyfile(SOURCE.with_name(f"{ref}.uxmap.json"), maps / f"{ref}.uxmap.json")
+            target = maps / f"{ref}.md"
+            with patch.object(renderer, "MAPS_DIR", maps):
+                for available in [False, True]:
+                    with patch.object(renderer, "render", return_value=original,
+                                      side_effect=None if available else renderer.OptionalRendererUnavailable()):
+                        target.write_text(original)
+                        with contextlib.redirect_stdout(io.StringIO()):
+                            self.assertEqual(renderer.check([ref]), 0)
+                        for mutation in mutations:
+                            duplicate = row if mutation["value"] is None else "Screen states: " + mutation["value"]
+                            rows = [duplicate, row] if mutation["before"] else [row, duplicate]
+                            with self.subTest(available=available, mutation=mutation["name"]):
+                                target.write_text(original.replace(row, "\n\n".join(rows), 1))
+                                output = io.StringIO()
+                                with contextlib.redirect_stderr(output), contextlib.redirect_stdout(io.StringIO()):
+                                    self.assertEqual(renderer.check([ref]), 1)
+                                self.assertIn("has duplicate Screen states declarations", output.getvalue())
+
     def test_duplicate_action_states_fail_both_check_paths(self):
         ref = "febt-1-job-error-states"
         original = SOURCE.with_name(f"{ref}.md").read_text()

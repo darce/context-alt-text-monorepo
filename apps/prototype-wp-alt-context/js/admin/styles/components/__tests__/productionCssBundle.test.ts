@@ -10,14 +10,15 @@
  * fail today, so the pure `selectUnfingerprinted` seam is exercised with a planted
  * unlisted file — the permanent discrimination guard TEST-15 asks for.
  */
-import { spawn } from 'node:child_process';
 import {
   existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
   rmSync,
+  statSync,
   symlinkSync,
+  utimesSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -28,9 +29,11 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { ProductionCssBundle } from './productionCssBundle';
 import {
   artifactFixtureRootForAppRoot,
+  acquireDirectoryLock,
   type BuildInputState,
   type ArtifactEntry,
   buildInputCandidates,
+  computeBuildInputState,
   fingerprintedBuildInputs,
   loadFingerprintStableArtifact,
   loadProductionCssBundle,
@@ -43,14 +46,38 @@ import {
   selectNamespacesToPrune,
   selectUnfingerprinted,
   releaseDirectoryLock,
+  runWithLockHeartbeat,
   tryAcquireDirectoryLock,
   uncoveredBuildInputs,
   unfingerprintedManifestSources,
+  waitForProcessGroup,
+  ProductionCssBuildTimeoutError,
 } from './productionCssBundle';
 
 const ROLLUP_ENTRY_POINTS = ['js/admin/main.tsx', 'js/attachment-edit/main.tsx'] as const;
 
 describe('fingerprint stability while building [FIXWAV-M-03]', () => {
+  it('detects an A-B-A rewrite from real temporary inputs', () => {
+    const fixtureRoot = mkdtempSync(join(tmpdir(), 'acx-style-input-generation-test-'));
+    const sourcePath = join(fixtureRoot, 'js', 'source.scss');
+    mkdirSync(dirname(sourcePath), { recursive: true });
+    writeFileSync(sourcePath, 'A', 'utf8');
+
+    try {
+      const firstA = computeBuildInputState(fixtureRoot);
+      writeFileSync(sourcePath, 'B', 'utf8');
+      const stateB = computeBuildInputState(fixtureRoot);
+      writeFileSync(sourcePath, 'A', 'utf8');
+      const secondA = computeBuildInputState(fixtureRoot);
+
+      expect(stateB.fingerprint).not.toBe(firstA.fingerprint);
+      expect(secondA.fingerprint).toBe(firstA.fingerprint);
+      expect(secondA.generation).not.toBe(firstA.generation);
+    } finally {
+      rmSync(fixtureRoot, { recursive: true, force: true });
+    }
+  });
+
   it('discards and retries an artifact when a source changes during the build', () => {
     const fixtureRoot = mkdtempSync(join(tmpdir(), 'acx-style-bundle-race-test-'));
     const sourcePath = join(fixtureRoot, 'source.scss');
@@ -195,33 +222,161 @@ describe('fenced directory lock', () => {
   it('does not steal an expired-looking lease from a live holder process', () => {
     const fixtureRoot = mkdtempSync(join(tmpdir(), 'acx-style-lock-test-'));
     const lockDir = join(fixtureRoot, '.lock');
-    const holderSource = String.raw`
-const fs = require('node:fs');
-const path = require('node:path');
-const lockDir = process.argv[1];
-fs.mkdirSync(lockDir);
-fs.writeFileSync(path.join(lockDir, ${JSON.stringify(LOCK_OWNER_FILE)}), JSON.stringify({pid: process.pid, nonce: 'holder'}) + '\n');
-setInterval(() => {}, 0x7fffffff);
-`;
-    const holder = spawn(process.execPath, ['-e', holderSource, lockDir], { stdio: 'ignore' });
+    const holder = tryAcquireDirectoryLock(lockDir);
+    expect(holder).not.toBeNull();
 
     try {
       const ownerPath = join(lockDir, LOCK_OWNER_FILE);
-      const deadline = Date.now() + 5_000;
-      while (!existsSync(ownerPath) && Date.now() < deadline) {
-        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
-      }
-      expect(existsSync(ownerPath)).toBe(true);
-      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 25);
+      utimesSync(ownerPath, new Date(0), new Date(0));
 
-      expect(tryAcquireDirectoryLock(lockDir, { staleLockMs: 10 })).toBeNull();
-      expect(JSON.parse(readFileSync(ownerPath, 'utf8'))).toEqual({ pid: holder.pid, nonce: 'holder' });
-      expect(releaseDirectoryLock(lockDir, { pid: process.pid, nonce: 'impostor' })).toBe(false);
+      expect(tryAcquireDirectoryLock(lockDir, { staleAfterMs: 10 })).toBeNull();
+      expect(JSON.parse(readFileSync(ownerPath, 'utf8'))).toEqual(holder);
+      expect(
+        releaseDirectoryLock(lockDir, { pid: process.pid, startToken: 'impostor', nonce: 'impostor' }),
+      ).toBe(false);
       expect(existsSync(lockDir)).toBe(true);
     } finally {
-      holder.kill();
+      if (holder !== null) releaseDirectoryLock(lockDir, holder);
       rmSync(fixtureRoot, { recursive: true, force: true });
     }
+  });
+
+  it('fails closed on stale malformed metadata', () => {
+    const fixtureRoot = mkdtempSync(join(tmpdir(), 'acx-style-lock-malformed-test-'));
+    const lockDir = join(fixtureRoot, '.lock');
+    mkdirSync(lockDir);
+    const ownerPath = join(lockDir, LOCK_OWNER_FILE);
+    writeFileSync(ownerPath, '{not-json', 'utf8');
+    utimesSync(ownerPath, new Date(0), new Date(0));
+    utimesSync(lockDir, new Date(0), new Date(0));
+
+    try {
+      expect(
+        tryAcquireDirectoryLock(lockDir, {
+          now: () => 10_000,
+          staleAfterMs: 1,
+          isProcessAlive: () => false,
+        }),
+      ).toBeNull();
+      expect(readFileSync(ownerPath, 'utf8')).toBe('{not-json');
+    } finally {
+      rmSync(fixtureRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('heartbeats a lease during an operation longer than staleAfterMs', () => {
+    const fixtureRoot = mkdtempSync(join(tmpdir(), 'acx-style-lock-heartbeat-test-'));
+    const lockDir = join(fixtureRoot, '.lock');
+    const ownership = tryAcquireDirectoryLock(lockDir);
+    expect(ownership).not.toBeNull();
+
+    try {
+      const before = statMtime(join(lockDir, LOCK_OWNER_FILE));
+      runWithLockHeartbeat(
+        lockDir,
+        ownership!,
+        () => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 150),
+        10,
+      );
+      const after = statMtime(join(lockDir, LOCK_OWNER_FILE));
+      expect(after).toBeGreaterThan(before);
+      expect(
+        tryAcquireDirectoryLock(lockDir, {
+          staleAfterMs: 80,
+          isProcessAlive: () => false,
+        }),
+      ).toBeNull();
+      expect(existsSync(lockDir)).toBe(true);
+    } finally {
+      if (ownership !== null) releaseDirectoryLock(lockDir, ownership);
+      rmSync(fixtureRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('times out before an unexpired lease can be reclaimed', () => {
+    const fixtureRoot = mkdtempSync(join(tmpdir(), 'acx-style-lock-timeout-test-'));
+    const lockDir = join(fixtureRoot, '.lock');
+    const ownership = tryAcquireDirectoryLock(lockDir);
+    expect(ownership).not.toBeNull();
+    let now = 10_000;
+
+    try {
+      expect(() =>
+        acquireDirectoryLock(lockDir, {
+          now: () => (now += 1),
+          timeoutMs: 0,
+          staleAfterMs: 60_000,
+          pollMs: 0,
+          isProcessAlive: () => false,
+        }),
+      ).toThrow('Timed out after 0ms');
+      expect(existsSync(lockDir)).toBe(true);
+    } finally {
+      if (ownership !== null) releaseDirectoryLock(lockDir, ownership);
+      rmSync(fixtureRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('rechecks process identity after claiming stale recovery', () => {
+    const fixtureRoot = mkdtempSync(join(tmpdir(), 'acx-style-lock-recheck-test-'));
+    const lockDir = join(fixtureRoot, '.lock');
+    const ownership = tryAcquireDirectoryLock(lockDir);
+    expect(ownership).not.toBeNull();
+    const old = new Date(0);
+    utimesSync(join(lockDir, LOCK_OWNER_FILE), old, old);
+    const livenessChecks: boolean[] = [];
+
+    try {
+      expect(
+        tryAcquireDirectoryLock(lockDir, {
+          now: () => 10_000,
+          staleAfterMs: 1,
+          isProcessAlive: () => {
+            const alive = livenessChecks.length > 0;
+            livenessChecks.push(alive);
+            return alive;
+          },
+        }),
+      ).toBeNull();
+      expect(livenessChecks).toEqual([false, true]);
+      expect(existsSync(lockDir)).toBe(true);
+    } finally {
+      if (ownership !== null) releaseDirectoryLock(lockDir, ownership);
+      rmSync(fixtureRoot, { recursive: true, force: true });
+    }
+  });
+});
+
+const statMtime = (path: string): number => {
+  return statSync(path).mtimeMs;
+};
+
+describe('production build deadline', () => {
+  it('terminates and then kills the detached process group before reporting RES-13', () => {
+    let now = 0;
+    let alive = true;
+    const signals: Array<[number, NodeJS.Signals]> = [];
+
+    expect(() =>
+      waitForProcessGroup(4321, {
+        timeoutMs: 20,
+        terminationGraceMs: 5,
+        now: () => now,
+        sleep: (milliseconds) => {
+          now += milliseconds;
+        },
+        readExitCode: () => null,
+        isProcessAlive: () => alive,
+        sendSignal: (pidOrGroup, signal) => {
+          signals.push([pidOrGroup, signal]);
+          if (signal === 'SIGKILL') alive = false;
+        },
+      }),
+    ).toThrow(ProductionCssBuildTimeoutError);
+    expect(signals).toEqual([
+      [-4321, 'SIGTERM'],
+      [-4321, 'SIGKILL'],
+    ]);
   });
 });
 

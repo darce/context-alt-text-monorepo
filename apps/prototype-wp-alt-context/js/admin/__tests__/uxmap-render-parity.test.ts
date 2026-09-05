@@ -1055,6 +1055,29 @@ describe('ux-map render parity (owned maps)', () => {
     expect(parseRenderedUxMap(mutant)).not.toEqual(parseRenderedUxMap(md));
   });
 
+  it.each([
+    ['orphan summary', 'screen retired-screen has a Screens table row but no detail block'],
+    ['conflicting duplicate summary', 'screen workbench-shell has duplicate Screens table rows'],
+    ['identical duplicate summary', 'screen workbench-shell has duplicate Screens table rows'],
+    ['orphan detail', 'screen workbench-shell has a detail block but no Screens table row'],
+    ['duplicate detail', 'screen workbench-shell has duplicate detail blocks'],
+  ])('rejects %s in the screen inventory', (mutation, error) => {
+    const md = readFileSync(path.join(uxMapsDir, 'workbench-operator-loop.md'), 'utf8');
+    const row = /^\| `workbench-shell` \|.*$/m.exec(md)![0];
+    const detail = /^### Workbench \(`workbench-shell`\)\n[\s\S]*?(?=^### )/m.exec(md)![0];
+    const mutations: Record<string, string> = {
+      'orphan summary': md.replace(row, `${row.replace('workbench-shell', 'retired-screen')}\n${row}`),
+      'conflicting duplicate summary': md.replace(row, `${row.replace('Workbench', 'Retired workbench')}\n${row}`),
+      'identical duplicate summary': md.replace(row, `${row}\n${row}`),
+      'orphan detail': md.replace(`${row}\n`, ''),
+      'duplicate detail': md.replace(detail, `${detail}${detail}`),
+    };
+    const mutant = mutations[mutation]!;
+    expect(mutant).not.toBe(md);
+    expect(() => parseRenderedUxMap(md)).not.toThrow();
+    expect(() => parseRenderedUxMap(mutant)).toThrow(error);
+  });
+
   it('rejects action boolean cells other than exact yes/no tokens with a useful location', () => {
     const md = readFileSync(path.join(uxMapsDir, 'workbench-operator-loop.md'), 'utf8');
     const mutant = md.replace('| no | no | no | `workbench-shell` |', '| MUTANT | no | no | `workbench-shell` |');

@@ -146,6 +146,9 @@ const parseScreens = (markdown: string): RenderParityMap['screens'] => {
     }
     const [rawId, kind, rawRoute, title, rawParams = '—'] = splitTableRow(line);
     const id = unquote(rawId ?? '');
+    if (summaries.has(id)) {
+      throw new Error(`screen ${id} has duplicate Screens table rows`);
+    }
     summaries.set(id, {
       id,
       kind: kind ?? '',
@@ -157,8 +160,13 @@ const parseScreens = (markdown: string): RenderParityMap['screens'] => {
   }
 
   const blocks = [...screensSection.matchAll(/^### .+ \(`([^`]+)`\)\n([\s\S]*?)(?=^### |(?![\s\S]))/gm)];
+  const detailIds = new Set<string>();
   const screens = blocks.map((match) => {
     const id = match[1] ?? '';
+    if (detailIds.has(id)) {
+      throw new Error(`screen ${id} has duplicate detail blocks`);
+    }
+    detailIds.add(id);
     const block = match[2] ?? '';
     const base = summaries.get(id);
     if (!base) {
@@ -195,6 +203,11 @@ const parseScreens = (markdown: string): RenderParityMap['screens'] => {
     };
   });
 
+  for (const id of summaries.keys()) {
+    if (!detailIds.has(id)) {
+      throw new Error(`screen ${id} has a Screens table row but no detail block`);
+    }
+  }
   return screens.sort((a, b) => a.id.localeCompare(b.id));
 };
 

@@ -40,11 +40,13 @@ use function max;
 use function min;
 use function register_rest_route;
 use function sanitize_text_field;
+use function serialize;
 use function set_transient;
 use function time;
 use function trim;
 use function update_option;
 use function wp_verify_nonce;
+use function wp_cache_delete;
 use function wp_generate_uuid4;
 
 use const FILTER_VALIDATE_IP;
@@ -382,7 +384,9 @@ final class PublicDemoDescribeController implements RecognitionRouteControllerIn
 			if ( get_option( self::INFLIGHT_OPTION, false ) !== $current ) {
 				return false;
 			}
-			delete_option( self::INFLIGHT_OPTION );
+			if ( ! $this->delete_inflight_lease( $current ) ) {
+				return false;
+			}
 			$acquired = add_option( self::INFLIGHT_OPTION, $value, '', false );
 			$this->inflight_token = $acquired ? $token : null;
 			return $acquired;
@@ -421,7 +425,11 @@ final class PublicDemoDescribeController implements RecognitionRouteControllerIn
 		if ( '' === $response_run_id || ! hash_equals( $run_id, $response_run_id ) ) {
 			return 'indeterminate';
 		}
-		$status = is_array( $data ) && is_string( $data['status'] ?? null ) ? $data['status'] : '';
+		$validated = $this->public_envelope_response( $response, false );
+		if ( $validated instanceof WP_Error ) {
+			return 'indeterminate';
+		}
+		$status = $validated->get_data()['status'];
 		if ( in_array( $status, self::TERMINAL_STATUSES, true ) ) {
 			return 'terminal';
 		}
@@ -461,16 +469,37 @@ final class PublicDemoDescribeController implements RecognitionRouteControllerIn
 
 	private function release_inflight_bulkhead( ?string $expected_run_id = null, ?string $expected_token = null ): void {
 		$current = get_option( self::INFLIGHT_OPTION, false );
-		if ( null !== $expected_run_id && ( ! is_array( $current ) || ! is_string( $current['run_id'] ?? null ) || ! hash_equals( $current['run_id'], $expected_run_id ) ) ) {
+		$expected_token = $expected_token ?? $this->inflight_token;
+		if ( ! is_array( $current ) || null === $expected_token ) {
 			return;
 		}
-		if ( null !== $expected_token && ( ! is_array( $current ) || ! is_string( $current['token'] ?? null ) || ! hash_equals( $current['token'], $expected_token ) ) ) {
+		if ( null !== $expected_run_id && ( ! is_string( $current['run_id'] ?? null ) || ! hash_equals( $current['run_id'], $expected_run_id ) ) ) {
 			return;
 		}
-		if ( null === $expected_run_id && null !== $this->inflight_token && ( ! is_array( $current ) || ! is_string( $current['token'] ?? null ) || ! hash_equals( $current['token'], $this->inflight_token ) ) ) {
+		if ( ! is_string( $current['token'] ?? null ) || ! hash_equals( $current['token'], $expected_token ) ) {
 			return;
 		}
-		delete_option( self::INFLIGHT_OPTION );
+		$this->delete_inflight_lease( $current );
+	}
+
+	/** @param array<string,mixed> $expected */
+	private function delete_inflight_lease( array $expected ): bool {
+		global $wpdb;
+
+		// Compare the complete owner snapshot in the DELETE itself. An option
+		// read followed by delete_option() can erase a concurrently replaced or
+		// renewed lease, even after checking its token immediately beforehand.
+		$deleted = $wpdb->query(
+			$wpdb->prepare(
+				"DELETE FROM {$wpdb->options} WHERE option_name = %s AND BINARY option_value = %s",
+				self::INFLIGHT_OPTION,
+				serialize( $expected )
+			)
+		);
+		// This option is always non-autoloaded. Invalidate even on a compare
+		// miss so a stale cached owner cannot hide the database's replacement.
+		wp_cache_delete( self::INFLIGHT_OPTION, 'options' );
+		return 1 === $deleted;
 	}
 
 	private function reserve_daily_capacity(): bool|WP_REST_Response {
@@ -595,6 +624,12 @@ final class PublicDemoDescribeController implements RecognitionRouteControllerIn
 		$done = $completed + $failed + $skipped;
 		$total = (int) $total;
 		if ( $done > $total ) {
+			return $this->invalid_pipeline_response();
+		}
+		if (
+			( in_array( $status, array( 'completed', 'completed_with_errors' ), true ) && $done !== $total )
+			|| ( 'completed' === $status && 0 !== $failed )
+		) {
 			return $this->invalid_pipeline_response();
 		}
 

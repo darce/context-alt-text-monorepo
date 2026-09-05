@@ -223,6 +223,7 @@ final class PublicDemoDescribeControllerTest extends TestCase
     {
         $this->enable([41]);
         $this->pipeline->status = 'completed';
+        $this->pipeline->statusData = ['phase' => 'complete', 'completed' => 1];
         $this->setOption('acx_public_demo_inflight', [
             'run_id' => 'finished-run',
             'media_id' => 41,
@@ -235,6 +236,63 @@ final class PublicDemoDescribeControllerTest extends TestCase
         self::assertSame(202, $result->get_status());
         self::assertSame([41], $this->pipeline->submissions[0]);
         self::assertSame('public-run-1', $GLOBALS['__ac_options']['acx_public_demo_inflight']['run_id']);
+    }
+
+    /** @dataProvider malformedExpiredTerminalProvider */
+    public function testR5MalformedExpiredTerminalMustNotAdmitPaidWork(array $overrides): void
+    {
+        $this->enable([41]);
+        $this->pipeline->status = 'completed';
+        $this->pipeline->statusData = array_merge(['phase' => 'complete', 'completed' => 1], $overrides);
+        $this->setOption('acx_public_demo_inflight', [
+            'run_id' => 'finished-run', 'media_id' => 41,
+            'token' => 'old-token', 'expires_at' => time() - 1,
+        ]);
+
+        $result = $this->controller->submit($this->authorizedRequest('POST', ['media_id' => 41]));
+
+        self::assertSame(429, $result->get_status());
+        self::assertSame(PublicDemoErrorCode::BUSY, $result->get_data()['code']);
+        self::assertSame([], $this->pipeline->submissions);
+        self::assertSame('old-token', $GLOBALS['__ac_options']['acx_public_demo_inflight']['token']);
+    }
+
+    public static function malformedExpiredTerminalProvider(): iterable
+    {
+        yield 'fractional completed' => [['completed' => 0.5]];
+        yield 'live phase' => [['phase' => 'describing']];
+        yield 'missing phase' => [['phase' => null]];
+        yield 'invalid GPU state' => [['gpu_state' => 'invalid']];
+        yield 'missing counter' => [['failed' => null]];
+        yield 'unfinished completed run' => [['completed' => 0]];
+        yield 'completed run with failed items' => [['completed' => 0, 'failed' => 1]];
+    }
+
+    public function testR5TerminalReleaseMustNotDeleteReplacementLease(): void
+    {
+        $this->enable([41]);
+        $this->controller->submit($this->authorizedRequest('POST', ['media_id' => 41]));
+        $this->pipeline->status = 'completed';
+        $this->pipeline->statusData = ['phase' => 'complete', 'completed' => 1];
+        $GLOBALS['__ac_options']['acx_public_demo_inflight']['expires_at'] = time() - 1;
+        $replacement = null;
+        // Pause the old status request after its ownership read, immediately
+        // before deletion, and let a second request replace the expired lease.
+        $GLOBALS['__ac_option_before_delete']['acx_public_demo_inflight'] = function () use (&$replacement): void {
+            unset($GLOBALS['__ac_option_before_delete']['acx_public_demo_inflight']);
+            $second = new PublicDemoDescribeController($this->pipeline);
+            $response = $second->submit($this->authorizedRequest('POST', ['media_id' => 41]));
+            self::assertSame(202, $response->get_status());
+            $replacement = $GLOBALS['__ac_options']['acx_public_demo_inflight'];
+        };
+
+        $status = $this->controller->status($this->authorizedRequest('GET', ['run_id' => 'public-run-1']));
+        self::assertSame(200, $status->get_status());
+        $third = new PublicDemoDescribeController($this->pipeline);
+        $response = $third->submit($this->authorizedRequest('POST', ['media_id' => 41]));
+        self::assertSame(429, $response->get_status());
+        self::assertSame($replacement, $GLOBALS['__ac_options']['acx_public_demo_inflight']);
+        self::assertCount(2, $this->pipeline->submissions);
     }
 
     public function testExpiredPendingLeaseCanBeReclaimedRepeatedlyAndOldOwnersCannotBind(): void

@@ -5,22 +5,12 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
 import { JOB_STREAM_ERROR_CODE } from '../errorTaxonomy';
+import { shouldSkipPhpParity } from './helpers/phpParityAvailability';
 
 const pluginRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../../../..');
 const producerSource = readFileSync(resolve(pluginRoot, 'src/api/services/class-job-stream-error-code.php'), 'utf8');
 const consumerCodes = Object.values(JOB_STREAM_ERROR_CODE).sort();
-const phpProbe = spawnSync('php', ['--version'], { encoding: 'utf8', timeout: 5000 });
-const phpErrorCode = (phpProbe.error as NodeJS.ErrnoException | undefined)?.code;
-// Some worker sandboxes forbid child processes or do not supply PHP. Make this
-// verification gap visible; syntax/runtime errors from the producer must fail.
-const phpUnavailable = ['EPERM', 'EACCES', 'ENOENT'].includes(phpErrorCode ?? '');
-if (phpUnavailable) {
-  process.stderr.write(
-    `SKIP PHP wire-code parity: php cannot execute (${phpErrorCode}). Run on a PHP-enabled worker.\n`,
-  );
-} else if (phpProbe.error || phpProbe.status !== 0) {
-  throw phpProbe.error ?? new Error(`PHP availability check failed: ${phpProbe.stderr}`);
-}
+const skipPhpParity = shouldSkipPhpParity();
 
 const producerCodesFrom = (source: string): string[] => {
   const result = spawnSync('php', [resolve(pluginRoot, 'tests/job-stream-error-codes.php')], {
@@ -38,7 +28,7 @@ const producerCodesFrom = (source: string): string[] => {
   return codes;
 };
 
-describe.skipIf(phpUnavailable)('job stream error code contract', () => {
+describe.skipIf(skipPhpParity)('job stream error code contract', () => {
   it('derives producer codes from the PHP runtime vocabulary so wire drift fails', () => {
     const producerCodes = producerCodesFrom(producerSource);
 

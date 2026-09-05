@@ -2251,3 +2251,64 @@ def test_11_reaper_checks_lease_directory_writes_without_changing_state(tmp_path
         assert lease.read_bytes() == original
     finally:
         directory.chmod(0o700)
+
+
+@pytest.mark.parametrize("escalate", [False, True])
+@pytest.mark.parametrize("system_imports", [False, True])
+def test_11_lease_probe_interpreter_selection(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, escalate: bool, system_imports: bool,
+) -> None:
+    """Intercept absolute system executables without changing the host or using sudo."""
+    import io
+    import shlex
+    from types import SimpleNamespace
+
+    system_python = tmp_path / "system-python3"
+    system_python.write_text(
+        "#!/bin/sh\n" + (
+            f"exec {shlex.quote(sys.executable)} \"$@\"\n" if system_imports
+            else "echo 3.9.6\necho 'ImportError: datetime.UTC' >&2\nexit 1\n"
+        )
+    )
+    system_python.chmod(0o755)
+    env_file = tmp_path / "reaper.env"
+    unit = reaper_systemctl_script(env_file)
+    exec_start = next(line.removeprefix("ExecStart=") for line in unit.splitlines() if line.startswith("ExecStart="))
+    monkeypatch.setattr(sys, "argv", [
+        "-c", exec_start, str(ROOT), "ocid1.instance.oc1.iad.fakeinstance",
+        "3600", "600", "60", "probe-user",
+    ])
+    monkeypatch.setattr(sys, "path", sys.path.copy())
+    monkeypatch.setattr(pwd, "getpwnam", lambda name: SimpleNamespace(
+        pw_uid=os.geteuid() + int(escalate), pw_name=name, pw_dir=str(tmp_path),
+    ))
+    diagnostics = io.StringIO()
+    monkeypatch.setattr(os, "fdopen", lambda *args: diagnostics)
+    original_run = subprocess.run
+    calls = []
+
+    def run(command, **kwargs):
+        calls.append(command)
+        if command[0] == "/usr/bin/sudo":
+            assert escalate
+            command = command[command.index("-i") + 1:]
+            command = command[3:]  # HOME, PATH and LC_ALL
+        if command[0] == "/usr/bin/python3":
+            command = [str(system_python), *command[1:]]
+        return original_run(command, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", run)
+    program = SCRIPT.read_text().split("reaper_execstart_is_structural() {\n    python3 -c '\n", 1)[1].split("\n' \"$@\" 3>&2", 1)[0]
+    status = 0
+    try:
+        exec(compile(program, str(SCRIPT), "exec"), {})
+    except SystemExit as error:
+        status = error.code
+    assert status == (1 if escalate and not system_imports else 0), diagnostics.getvalue()
+    if escalate and not system_imports:
+        assert "probe interpreter /usr/bin/python3 (version 3.9.6)" in diagnostics.getvalue()
+        assert "cannot import" in diagnostics.getvalue()
+        assert "lease path" not in diagnostics.getvalue()
+    if not escalate:
+        assert all(command[0] != "/usr/bin/python3" for command in calls)
+    assert not list(tmp_path.glob(".acx-lease-preflight-*"))

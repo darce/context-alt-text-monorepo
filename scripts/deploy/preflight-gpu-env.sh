@@ -461,14 +461,40 @@ finally:
                       probe.with_name(f".{probe.name}.tmp")):
         candidate.unlink(missing_ok=True)
 """
-try:
-    command = ["/usr/bin/python3", "-c", lease_probe, str(root), str(args.running_since_path)]
+# The deployed ExecStart is checked above, but a local validation may run on a
+# workstation whose system Python cannot import the deployed package.
+probe_python = argv[0] if account.pw_uid != os.geteuid() else sys.executable
+def run_python_probe(code, *arguments):
+    command = [probe_python, "-c", code, str(root), *arguments]
     if account.pw_uid != os.geteuid():
         command = ["/usr/bin/sudo", "-n", "-u", account.pw_name, "--",
                    "/usr/bin/env", "-i",
                    *[f"{key}={value}" for key, value in runtime_env.items()], *command]
-    result = subprocess.run(command, cwd=root, env=runtime_env,
-                            capture_output=True, text=True, timeout=10)
+    return subprocess.run(command, cwd=root, env=runtime_env,
+                          capture_output=True, text=True, timeout=10)
+
+import_probe = """
+import sys
+from pathlib import Path
+print(sys.version.split()[0], flush=True)
+root = Path(sys.argv[1]).resolve()
+sys.path.insert(0, str(root))
+from infra.oci.gpu_lifecycle import reaper
+Path(reaper.__file__).resolve().relative_to(root)
+"""
+probe_version = "unavailable"
+try:
+    result = run_python_probe(import_probe)
+    probe_version = result.stdout.strip().splitlines()[0] if result.stdout.strip() else "unavailable"
+    if result.returncode:
+        raise ValueError("reaper import failed")
+except (OSError, ValueError, subprocess.SubprocessError):
+    print(f"ERROR [11] probe interpreter {probe_python} (version {probe_version}) "
+          "cannot import the installed infra.oci.gpu_lifecycle.reaper as the service user.",
+          file=os.fdopen(3, "w"))
+    raise SystemExit(1)
+try:
+    result = run_python_probe(lease_probe, str(args.running_since_path))
     if result.returncode:
         raise ValueError("lease store probe failed")
 except (OSError, ValueError, subprocess.SubprocessError):

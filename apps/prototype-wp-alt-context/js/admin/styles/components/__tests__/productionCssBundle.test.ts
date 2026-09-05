@@ -25,7 +25,7 @@ import {
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import type { ProductionCssBundle } from './productionCssBundle';
 import {
@@ -47,6 +47,7 @@ import {
   selectNamespacesToPrune,
   selectUnfingerprinted,
   releaseDirectoryLock,
+  runWithBuildLock,
   runWithLockHeartbeat,
   tryAcquireDirectoryLock,
   uncoveredBuildInputs,
@@ -221,6 +222,22 @@ describe('fingerprint stability while building [FIXWAV-M-03]', () => {
 });
 
 describe('fenced directory lock', () => {
+  it('removes its exclusive lock directory when owner publication fails', () => {
+    const fixtureRoot = mkdtempSync(join(tmpdir(), 'acx-style-lock-publication-test-'));
+    const lockDir = join(fixtureRoot, '.lock');
+
+    try {
+      expect(
+        tryAcquireDirectoryLock(lockDir, {
+          publishOwnership: () => null,
+        }),
+      ).toBeNull();
+      expect(existsSync(lockDir)).toBe(false);
+    } finally {
+      rmSync(fixtureRoot, { recursive: true, force: true });
+    }
+  });
+
   it('does not steal an expired-looking lease from a live holder process', () => {
     const fixtureRoot = mkdtempSync(join(tmpdir(), 'acx-style-lock-test-'));
     const lockDir = join(fixtureRoot, '.lock');
@@ -408,6 +425,8 @@ describe('production build deadline', () => {
           now += milliseconds;
         },
         readExitCode: () => null,
+        processGroupStartToken: 'leader-4321',
+        readProcessStartToken: () => 'leader-4321',
         sendSignal: (pidOrGroup, signal) => {
           signals.push([pidOrGroup, signal]);
           if (signal === 0 && !alive) {
@@ -440,6 +459,8 @@ describe('production build deadline', () => {
           now += milliseconds;
         },
         readExitCode: () => null,
+        processGroupStartToken: 'leader-9876',
+        readProcessStartToken: () => 'leader-9876',
         isProcessGroupAlive: () => true,
         sendSignal: (pidOrGroup, signal) => signals.push([pidOrGroup, signal]),
       }),
@@ -460,6 +481,8 @@ describe('production build deadline', () => {
         timeoutMs: 100,
         terminationGraceMs: 0,
         readExitCode: () => 0,
+        processGroupStartToken: 'leader-2468',
+        readProcessStartToken: () => 'leader-2468',
         isProcessGroupAlive: () => alive,
         sendSignal: (pidOrGroup, signal) => {
           signals.push([pidOrGroup, signal]);
@@ -471,6 +494,76 @@ describe('production build deadline', () => {
       [-2468, 'SIGTERM'],
       [-2468, 'SIGKILL'],
     ]);
+  });
+
+  it('never signals a live group after the supervised PGID has been reused', () => {
+    const signals: Array<[number, NodeJS.Signals | 0]> = [];
+
+    expect(() =>
+      waitForProcessGroup(2468, {
+        timeoutMs: 100,
+        readExitCode: () => 0,
+        isProcessGroupAlive: () => true,
+        processGroupStartToken: 'original-leader',
+        readProcessStartToken: () => 'replacement-leader',
+        sendSignal: (pidOrGroup, signal) => signals.push([pidOrGroup, signal]),
+      }),
+    ).toThrow(ProductionCssBuildTeardownError);
+    expect(signals).toEqual([]);
+  });
+
+  it('retains the build lock when signalling the live group fails with EPERM', () => {
+    const fixtureRoot = mkdtempSync(join(tmpdir(), 'acx-style-lock-teardown-test-'));
+    const lockDir = join(fixtureRoot, '.lock');
+    const ownership = tryAcquireDirectoryLock(lockDir);
+    expect(ownership).not.toBeNull();
+
+    try {
+      expect(() =>
+        runWithBuildLock(lockDir, ownership!, () =>
+          waitForProcessGroup(1357, {
+            timeoutMs: 100,
+            readExitCode: () => 0,
+            isProcessGroupAlive: () => true,
+            processGroupStartToken: 'leader-1357',
+            readProcessStartToken: () => 'leader-1357',
+            sendSignal: () => {
+              const error = new Error('Operation not permitted') as NodeJS.ErrnoException;
+              error.code = 'EPERM';
+              throw error;
+            },
+          }),
+        ),
+      ).toThrow(ProductionCssBuildTeardownError);
+      expect(existsSync(lockDir)).toBe(true);
+    } finally {
+      if (ownership !== null) releaseDirectoryLock(lockDir, ownership);
+      rmSync(fixtureRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('does not consult the wall clock for process or termination deadlines', () => {
+    let alive = true;
+    const wallClock = vi.spyOn(Date, 'now').mockImplementation(() => {
+      throw new Error('wall clock unavailable');
+    });
+
+    try {
+      expect(
+        waitForProcessGroup(8642, {
+          timeoutMs: 100,
+          readExitCode: () => 0,
+          isProcessGroupAlive: () => alive,
+          processGroupStartToken: 'leader-8642',
+          readProcessStartToken: () => 'leader-8642',
+          sendSignal: (_pidOrGroup, signal) => {
+            if (signal === 'SIGTERM') alive = false;
+          },
+        }),
+      ).toBe(0);
+    } finally {
+      wallClock.mockRestore();
+    }
   });
 
   it.skipIf(process.platform === 'win32')(

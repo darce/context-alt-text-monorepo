@@ -263,6 +263,11 @@ export interface DirectoryLockOptions {
   readonly pollMs?: number;
   readonly now?: () => number;
   readonly isProcessAlive?: (pid: number, startToken: string) => boolean;
+  /** Deterministic fault-injection seam for owner-publication tests. */
+  readonly publishOwnership?: (
+    lockDir: string,
+    ownership: DirectoryLockOwnership,
+  ) => DirectoryLockOwnership | null;
 }
 
 const ownerPathForLock = (lockDir: string): string => join(lockDir, LOCK_OWNER_FILE);
@@ -369,10 +374,23 @@ export const tryAcquireDirectoryLock = (
     throw new Error(`Cannot establish the current process identity for lock ${lockDir}.`);
   }
   const ownership = { pid: process.pid, startToken, nonce: randomUUID() };
-  try {
+  const publishOwnership = options.publishOwnership ?? publishLockOwnership;
+  const createPublishedLock = (): DirectoryLockOwnership | null => {
     mkdirSync(lockDir);
-    const published = publishLockOwnership(lockDir, ownership);
+    const published = publishOwnership(lockDir, ownership);
+    if (published === null) {
+      // We exclusively created this namespace, so a failed owner publication must not turn it
+      // into a permanent malformed lock. Preserve it only if another valid owner somehow replaced
+      // our namespace during publication; that ownership is authoritative and must not be unlinked.
+      const incumbent = readLockOwnership(lockDir);
+      if (incumbent === null || sameOwnership(incumbent, ownership)) {
+        rmSync(lockDir, { recursive: true, force: true });
+      }
+    }
     return published;
+  };
+  try {
+    return createPublishedLock();
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'EEXIST') {
       throw error;
@@ -424,14 +442,13 @@ export const tryAcquireDirectoryLock = (
       ) {
         rmSync(lockDir, { recursive: true, force: true });
         try {
-          mkdirSync(lockDir);
+          return createPublishedLock();
         } catch (replacementError) {
           if ((replacementError as NodeJS.ErrnoException).code !== 'EEXIST') {
             throw replacementError;
           }
           return null;
         }
-        return publishLockOwnership(lockDir, ownership);
       } else {
         rmSync(recoveryClaim, { recursive: true, force: true });
       }
@@ -445,14 +462,16 @@ export const acquireDirectoryLock = (
   options: DirectoryLockOptions = {},
 ): DirectoryLockOwnership => {
   const timeoutMs = options.timeoutMs ?? LOCK_TIMEOUT_MS;
-  const now = options.now ?? Date.now;
-  const deadline = now() + timeoutMs;
+  // `options.now` remains a combined deterministic seam for lease-age tests. In production the
+  // wait budget is monotonic while tryAcquireDirectoryLock separately uses wall time for mtimes.
+  const deadlineNow = options.now ?? monotonicNow;
+  const deadline = deadlineNow() + timeoutMs;
   for (;;) {
     const ownership = tryAcquireDirectoryLock(lockDir, options);
     if (ownership !== null) {
       return ownership;
     }
-    if (now() > deadline) {
+    if (deadlineNow() > deadline) {
       throw new Error(
         `Timed out after ${timeoutMs}ms waiting for the production-CSS lock at ${lockDir}. ` +
           'Remove it if no build is running.',
@@ -509,9 +528,9 @@ setInterval(() => {}, 0x7fffffff);
   );
   try {
     const readyTimeoutMs = Math.max(5_000, heartbeatMs * 5);
-    const readyDeadline = Date.now() + readyTimeoutMs;
+    const readyDeadline = monotonicNow() + readyTimeoutMs;
     while (!existsSync(readyPath)) {
-      if (Date.now() >= readyDeadline) {
+      if (monotonicNow() >= readyDeadline) {
         throw new Error(`Lock heartbeat did not become ready within ${readyTimeoutMs}ms.`);
       }
       sleepSync(10);
@@ -534,14 +553,38 @@ export class ProductionCssBuildTimeoutError extends Error {
 
 export class ProductionCssBuildTeardownError extends Error {
   readonly code = 'RES-13-TEARDOWN';
+  /** A successor must not enter while the previous process group may still be alive. */
+  readonly retainBuildLock = true;
 
-  constructor(timeoutMs: number) {
-    super(`Production CSS process group survived SIGKILL for ${timeoutMs}ms (RES-13-TEARDOWN).`);
+  constructor(timeoutMs: number, detail?: string, options?: ErrorOptions) {
+    super(
+      detail ?? `Production CSS process group survived SIGKILL for ${timeoutMs}ms (RES-13-TEARDOWN).`,
+      options,
+    );
     this.name = 'ProductionCssBuildTeardownError';
   }
 }
 
+/** Release ordinary failures, but deliberately strand the lease when teardown is uncertain. */
+export const runWithBuildLock = <T>(
+  lockDir: string,
+  ownership: DirectoryLockOwnership,
+  operation: () => T,
+): T => {
+  let retainLock = false;
+  try {
+    return operation();
+  } catch (error) {
+    retainLock = error instanceof ProductionCssBuildTeardownError && error.retainBuildLock;
+    throw error;
+  } finally {
+    if (!retainLock) releaseDirectoryLock(lockDir, ownership);
+  }
+};
+
 type ProcessSignal = NodeJS.Signals | 0;
+
+const monotonicNow = (): number => Number(process.hrtime.bigint()) / 1_000_000;
 
 export interface ProcessGroupWaitOptions {
   readonly timeoutMs: number;
@@ -554,6 +597,10 @@ export interface ProcessGroupWaitOptions {
   readonly isProcessAlive?: (pid: number) => boolean;
   readonly isProcessGroupAlive?: (processGroupId: number) => boolean;
   readonly sendSignal?: (pidOrGroup: number, signal: ProcessSignal) => void;
+  /** Identity of the detached group leader, captured immediately after spawn. */
+  readonly processGroupStartToken?: string;
+  /** Test seam for detecting replacement of a process-group leader. */
+  readonly readProcessStartToken?: (pid: number) => string | null;
 }
 
 const processGroupHasNonZombieMember = (processGroupId: number): boolean => {
@@ -619,12 +666,25 @@ const terminateProcessGroup = (
   now: () => number,
   pause: (milliseconds: number) => void,
   sendSignal: (pidOrGroup: number, signal: ProcessSignal) => void,
+  identityMatches: () => boolean,
 ): void => {
   const signalGroup = (signal: NodeJS.Signals): void => {
+    if (!identityMatches()) {
+      throw new ProductionCssBuildTeardownError(
+        options.killConfirmationMs ?? BUILD_TERMINATION_GRACE_MS,
+        `Refusing to send ${signal} because process group ${processGroupId} no longer has the supervised leader identity (RES-13-TEARDOWN).`,
+      );
+    }
     try {
       sendSignal(-processGroupId, signal);
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error;
+      if ((error as NodeJS.ErrnoException).code !== 'ESRCH') {
+        throw new ProductionCssBuildTeardownError(
+          options.killConfirmationMs ?? BUILD_TERMINATION_GRACE_MS,
+          `Could not send ${signal} to production CSS process group ${processGroupId}; its lock must remain held (RES-13-TEARDOWN).`,
+          { cause: error },
+        );
+      }
     }
   };
 
@@ -648,26 +708,57 @@ const terminateProcessGroup = (
 
 /** Synchronously supervise a detached process group without relying on an unbounded sync timeout. */
 export const waitForProcessGroup = (pid: number, options: ProcessGroupWaitOptions): number => {
-  const now = options.now ?? Date.now;
+  const now = options.now ?? monotonicNow;
   const pause = options.sleep ?? sleepSync;
   const sendSignal = options.sendSignal ?? ((pidOrGroup, signal) => process.kill(pidOrGroup, signal));
-  const isGroupAlive =
+  const rawGroupIsAlive =
     options.isProcessGroupAlive ??
     options.isProcessAlive ??
     (() =>
       options.sendSignal === undefined
         ? processGroupIsAlive(pid, sendSignal)
         : processGroupExistsViaSignal(pid, sendSignal));
+  const readStartToken = options.readProcessStartToken ?? processStartToken;
+  const expectedStartToken = options.processGroupStartToken ?? readStartToken(pid);
+  if (expectedStartToken === null) {
+    throw new ProductionCssBuildTeardownError(
+      options.killConfirmationMs ?? BUILD_TERMINATION_GRACE_MS,
+      `Cannot establish the supervised leader identity for process group ${pid} (RES-13-TEARDOWN).`,
+    );
+  }
+  const identityMatches = (): boolean => readStartToken(pid) === expectedStartToken;
+  const groupState = (): 'owned' | 'gone' | 'unverifiable' => {
+    const matches = identityMatches();
+    const alive = rawGroupIsAlive(pid);
+    if (!alive) return 'gone';
+    return matches ? 'owned' : 'unverifiable';
+  };
+  const assertVerifiable = (state: ReturnType<typeof groupState>): void => {
+    if (state === 'unverifiable') {
+      throw new ProductionCssBuildTeardownError(
+        options.killConfirmationMs ?? BUILD_TERMINATION_GRACE_MS,
+        `Process group ${pid} is live but its leader identity changed; refusing to signal a reused PGID (RES-13-TEARDOWN).`,
+      );
+    }
+  };
+  const isOwnedGroupAlive = (): boolean => {
+    const state = groupState();
+    assertVerifiable(state);
+    return state === 'owned';
+  };
   const deadline = now() + options.timeoutMs;
 
   for (;;) {
     const exitCode = options.readExitCode();
-    const groupAlive = isGroupAlive(pid);
+    const state = groupState();
+    assertVerifiable(state);
     if (exitCode !== null) {
-      if (groupAlive) terminateProcessGroup(pid, options, () => isGroupAlive(pid), now, pause, sendSignal);
+      if (state === 'owned') {
+        terminateProcessGroup(pid, options, isOwnedGroupAlive, now, pause, sendSignal, identityMatches);
+      }
       return exitCode;
     }
-    if (!groupAlive) {
+    if (state === 'gone') {
       throw new Error('Production CSS build exited without publishing an exit status.');
     }
     if (now() >= deadline) {
@@ -676,7 +767,7 @@ export const waitForProcessGroup = (pid: number, options: ProcessGroupWaitOption
     pause(Math.min(25, Math.max(1, deadline - now())));
   }
 
-  terminateProcessGroup(pid, options, () => isGroupAlive(pid), now, pause, sendSignal);
+  terminateProcessGroup(pid, options, isOwnedGroupAlive, now, pause, sendSignal, identityMatches);
   throw new ProductionCssBuildTimeoutError(options.timeoutMs);
 };
 
@@ -688,11 +779,14 @@ const { spawn } = require('node:child_process');
 const fs = require('node:fs');
 const [statusPath, cwd, command, argsToken] = process.argv.slice(1);
 const child = spawn(command, JSON.parse(argsToken), { cwd, stdio: 'ignore' });
-child.once('error', () => { fs.writeFileSync(statusPath, '127'); process.exit(127); });
+const retainGroupIdentity = () => setInterval(() => {}, 0x7fffffff);
+child.once('error', () => { fs.writeFileSync(statusPath, '127'); retainGroupIdentity(); });
 child.once('exit', (code, signal) => {
   const exitCode = code === null ? 128 + ({ SIGTERM: 15, SIGKILL: 9 }[signal] || 1) : code;
   fs.writeFileSync(statusPath, String(exitCode));
-  process.exit(exitCode);
+  // Stay alive as the group leader until the parent tears the group down. A live leader with a
+  // stable start token prevents this numeric PGID from being recycled before the signal.
+  retainGroupIdentity();
 });
 `;
   const buildArgs = ['run', 'build', '--', '--outDir', outDir, '--emptyOutDir'];
@@ -706,8 +800,16 @@ child.once('exit', (code, signal) => {
     throw new Error('Failed to start the detached production CSS build process group.');
   }
   try {
+    const supervisorStartToken = processStartToken(supervisor.pid);
+    if (supervisorStartToken === null) {
+      throw new ProductionCssBuildTeardownError(
+        BUILD_TERMINATION_GRACE_MS,
+        `Cannot establish the detached production CSS leader identity for process group ${supervisor.pid} (RES-13-TEARDOWN).`,
+      );
+    }
     const exitCode = waitForProcessGroup(supervisor.pid, {
       timeoutMs: BUILD_TIMEOUT_MS,
+      processGroupStartToken: supervisorStartToken,
       readExitCode: () => {
         try {
           const value = Number(readFileSync(statusPath, 'utf8'));
@@ -832,7 +934,7 @@ export const registerAndPruneNamespaces = (
   buildLockDir?: string,
 ): DirectoryLockOwnership | null => {
   const gcLockDir = join(cacheRoot, '.gc-lock');
-  const buildDeadline = Date.now() + LOCK_TIMEOUT_MS;
+  const buildDeadline = monotonicNow() + LOCK_TIMEOUT_MS;
   const relativeFixtureRoot = relative(cacheRoot, fixtureRoot);
   if (
     relativeFixtureRoot === '' ||
@@ -874,7 +976,7 @@ export const registerAndPruneNamespaces = (
     }
     // Never wait for a lane-local build while holding the cache-parent GC lock: a second process
     // in one lane must not stall unrelated lanes from registering or collecting their namespaces.
-    if (Date.now() > buildDeadline) {
+    if (monotonicNow() > buildDeadline) {
       throw new Error(
         `Timed out after ${LOCK_TIMEOUT_MS}ms waiting for the production-CSS lock at ${buildLockDir}. ` +
           'Remove it if no build is running.',
@@ -1051,7 +1153,7 @@ export const loadProductionCssBundle = (): ProductionCssBundle => {
   if (lockOwnership === null) {
     throw new Error(`Failed to acquire the production-CSS lock at ${LOCK_DIR}.`);
   }
-  try {
+  return runWithBuildLock(LOCK_DIR, lockOwnership, () => {
     cachedBundle = loadFingerprintStableArtifact(
       stateBeforeLock,
       computeBuildInputState,
@@ -1095,9 +1197,7 @@ export const loadProductionCssBundle = (): ProductionCssBundle => {
       },
     );
     return cachedBundle;
-  } finally {
-    releaseDirectoryLock(LOCK_DIR, lockOwnership);
-  }
+  });
 };
 
 /**

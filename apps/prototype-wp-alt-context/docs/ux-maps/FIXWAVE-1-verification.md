@@ -1,17 +1,23 @@
-# FIXWAVE-1 D2 round-9 verification
+# FIXWAVE-1 D2 round-10 verification
 
 All paths below are relative to `apps/prototype-wp-alt-context`.
 
-| Findings | Change and mutation evidence |
-| --- | --- |
-| D2-R7-01 / D2-R8-01 — FIXED | `docs/ux-maps/render_ux_maps.py:54`: fallback is limited to absence of the top-level optional canvas package. The internal-ImportError probe returned success before the fix and now fails without consulting the snapshot. Nested missing dependencies also fail closed. |
-| D2-R7-02 / D2-R8-02 / D2-R8-07 — FIXED | `docs/ux-maps/render_ux_maps.py:343`: retained text, fences, tables, and heading anchors come from the independently reviewed `render_ux_maps.contracts.json`. Regeneration never writes this source. Before the fix, mutated banner text and recovery tables could refresh the snapshot successfully; both now reject the write. The recovery-table mutation fails both projection paths, and real `render()` restores the source contract even when the current Markdown is mutated. Duplicate retained headings also fail. |
-| D2-R7-03 / D2-R8-03 — FIXED | `docs/ux-maps/render_ux_maps.py:120` and `js/admin/__tests__/uxmap-render-parity.test.ts:950`: generated Python Unicode property ranges replace approximate TypeScript ranges; cluster handling agrees for flags, modifiers, format characters, and VS16. The prior WATCH row measured 61 in TypeScript. Python-rendered rows for WATCH, a US flag, soft hyphen, standalone skin tone, and VS16 now all measure 62; existing CJK, combining, spacing-mark, keycap, and ZWJ cases remain covered. |
-| D2-R7-04 / D2-R8-04 — FIXED | `docs/ux-maps/render_ux_maps.py:481`: universal-newline decoding precedes source hashing. The same LF-to-CRLF mutation that previously changed the digest now leaves it unchanged. |
-| D2-CX-01 / D2-R8-05 — FIXED | `docs/ux-maps/workbench-operator-loop.md:313`: all five original task slices are restored from the donor's original map into JSON and generated Markdown. Each deletion changes the parsed projection, and exact source text is pinned by the test at `js/admin/__tests__/uxmap-render-parity.test.ts:1576`. Exact reducer and per-tag copy is preserved in the independent retained source, including the requested stalled-banner example. |
-| D2-R8-06 — FIXED | `docs/ux-maps/render_ux_maps.py:278`: `action_states` and `when` express mutually exclusive recovery cases. Both validators reject extra unconditional primaries, overlapping conditions, and empty/unknown conditions. The extra-primary probe was green before the fix and now rejects the mutation. Generated sketches show the appropriate recovery under each case; the action table carries lossless conditions without reordering existing columns. |
+Review findings are tracked by the orchestrator: D2-R9-01, D2-R9-02, D2-LV-01.
 
-## Verification limits
+## Current verification
+
+The targeted parity suite passed (83 tests), both Python mutation suites passed
+(10 tests), and the renderer check, Unicode fixture check, and TypeScript check passed.
+The version-only mutation failed before the change and passed afterward; mutations to
+each of the three property ranges still fail. A hostile-PATH probe selected a failing
+stub with the old command and succeeded with the repository interpreter. The findings
+placement probe rejected the prior document and accepted the updated document.
+See `README.md` for reproducible commands and interpreter selection.
+
+An initial standalone Node subprocess probe encountered sandbox `EPERM`; shell execution
+and in-process Node checks completed the same probe successfully.
+
+## Prior verification limits
 
 The targeted parity and dashboard suites passed together (90 tests). The standalone
 Python mutation suite, Unicode fixture verification, TypeScript check, and dependency-free

@@ -35,8 +35,19 @@ if __name__ == "__main__":
     if sys.argv[1:] == ["--write"]:
         FIXTURE.write_text(json.dumps(expected, separators=(",", ":")) + "\n", encoding="utf8")
     elif sys.argv[1:] == ["--check"]:
-        if json.loads(FIXTURE.read_text(encoding="utf8")) != expected:
+        fixture = json.loads(FIXTURE.read_text(encoding="utf8"))
+        fixture_version = fixture.pop("unicode_version", None)
+        interpreter_version = expected.pop("unicode_version")
+        if not isinstance(fixture_version, str) or not fixture_version:
+            raise SystemExit("Unicode width fixture must record unicode_version; regenerate explicitly")
+        if fixture_version != interpreter_version:
+            print(
+                f"Unicode version mismatch: fixture {fixture_version}, Python {interpreter_version}; "
+                "comparing property ranges",
+                file=sys.stderr,
+            )
+        if fixture != expected:
             raise SystemExit("Unicode width fixture differs from Python unicodedata; regenerate explicitly")
-        print("Unicode width fixture matches Python " + unicodedata.unidata_version)
+        print("Unicode width fixture property ranges match Python " + interpreter_version)
     else:
         raise SystemExit("usage: sync_unicode_width.py --write|--check")

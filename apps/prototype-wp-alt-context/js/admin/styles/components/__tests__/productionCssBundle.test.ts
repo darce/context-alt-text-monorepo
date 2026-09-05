@@ -60,6 +60,126 @@ import {
 
 const ROLLUP_ENTRY_POINTS = ['js/admin/main.tsx', 'js/attachment-edit/main.tsx'] as const;
 
+// Isolate builtin interception from Vitest and exercise the actual fixture and supervisor.
+const fixtureProbePrelude = String.raw`
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import { dirname, join } from 'node:path';
+import { stripTypeScriptTypes, syncBuiltinESMExports } from 'node:module';
+const [sourcePath, root, scenario] = process.argv.slice(1);
+const source = 'const __dirname = ' + JSON.stringify(dirname(sourcePath)) + ';\n' +
+  stripTypeScriptTypes(fs.readFileSync(sourcePath, 'utf8')) + '\nexport { runProductionBuild };';
+const fixture = await import('data:text/javascript;base64,' + Buffer.from(source).toString('base64'));
+`;
+
+const runFixtureProbe = (root: string, scenario: string, body: string): void => {
+  const result = spawnSync(process.execPath, [
+    '--input-type=module', '-e', fixtureProbePrelude + body,
+    join(__dirname, 'productionCssBundle.ts'), root, scenario,
+  ], { timeout: 15_000, stdio: 'inherit' });
+  expect(result.error).toBeUndefined();
+  expect(result.status).toBe(0);
+};
+
+describe('production status publication races', () => {
+  it.each(['publication-race', '', ' ', '0x0', '0\n', '1.5', '256'])(
+    'does not accept partial or malformed status %j as build success',
+    (scenario) => {
+      const root = mkdtempSync(join(tmpdir(), 'acx-status-race-test-'));
+      try {
+        writeFileSync(join(root, 'npm'), '#!/bin/sh\nexit 42\n', { mode: 0o755 });
+        // Force the real supervisor to pause between file creation and writing status 42.
+        writeFileSync(join(root, 'pause-status.cjs'), String.raw`
+const fs = require('node:fs');
+const write = fs.writeFileSync;
+fs.writeFileSync = (path, ...args) => {
+  if (typeof path === 'string' && /\/exit-code(?:\.tmp)?$/.test(path)) {
+    const fd = fs.openSync(path, 'w');
+    fs.closeSync(fd);
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 200);
+  }
+  return write(path, ...args);
+};
+`);
+        runFixtureProbe(root, scenario, String.raw`
+process.env.PATH = root + ':' + process.env.PATH;
+process.env.NODE_OPTIONS = '--require=' + join(root, 'pause-status.cjs');
+const read = fs.readFileSync;
+let statusReads = 0;
+let sawEmptyPublication = false;
+fs.readFileSync = (path, ...args) => {
+  const value = read(path, ...args);
+  if (typeof path === 'string' && path.endsWith('/exit-code')) {
+    statusReads++;
+    sawEmptyPublication ||= value === '';
+    if (scenario !== 'publication-race' && statusReads === 1) return scenario;
+  }
+  return value;
+};
+syncBuiltinESMExports();
+assert.throws(() => fixture.runProductionBuild(join(root, 'out')), /exited with status 42/);
+assert.equal(sawEmptyPublication, false, 'the public status file must never be empty');
+if (scenario !== 'publication-race') assert.ok(statusReads >= 2, 'invalid status must be rejected');
+`);
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    },
+  );
+});
+
+describe('namespace registration during sibling pruning', () => {
+  it.each(['live', 'locked', 'current', 'vanished-stamp', 'vanished-root', 'io-error'])(
+    'handles %s activity metadata',
+    (scenario) => {
+      const root = mkdtempSync(join(tmpdir(), 'acx-namespace-race-test-'));
+      try {
+        runFixtureProbe(root, scenario, String.raw`
+const cache = join(root, 'cache');
+const owner = join(root, 'owner');
+const sibling = join(cache, 'sibling');
+const current = scenario === 'current' ? sibling : join(cache, 'current');
+const stamp = join(sibling, 'artifact', 'build-stamp.json');
+fs.mkdirSync(owner);
+fs.mkdirSync(dirname(stamp), { recursive: true });
+fs.writeFileSync(stamp, '{}');
+if (scenario === 'live') {
+  fs.writeFileSync(join(sibling, 'namespace-owner.json'), JSON.stringify({ appRoot: owner }));
+}
+if (scenario === 'locked') fs.mkdirSync(join(sibling, '.lock'));
+const stat = fs.statSync;
+let intercepted = false;
+fs.statSync = (path, ...args) => {
+  if (['live', 'locked', 'current'].includes(scenario) && path === sibling) {
+    throw new Error('Protected namespace activity must not be inspected');
+  }
+  if (scenario === 'vanished-root' && path === sibling) {
+    intercepted = true;
+    fs.rmSync(sibling, { recursive: true });
+  }
+  if (path === stamp) {
+    intercepted = true;
+    if (scenario === 'io-error') throw Object.assign(new Error('Injected I/O failure'), { code: 'EIO' });
+    // Prune after enumeration (and after existsSync in the original collector), before stat.
+    fs.rmSync(dirname(stamp), { recursive: true });
+  }
+  return stat(path, ...args);
+};
+syncBuiltinESMExports();
+const register = () => fixture.registerAndPruneNamespaces(cache, current, owner);
+if (scenario === 'io-error') assert.throws(register, /Injected I\/O failure/);
+else register();
+if (['vanished-stamp', 'vanished-root', 'io-error'].includes(scenario)) assert.ok(intercepted);
+else assert.ok(fs.existsSync(stamp), 'protected sibling artifacts must be untouched');
+assert.equal(fs.existsSync(join(cache, '.gc-lock')), false);
+`);
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    },
+  );
+});
+
 describe('fingerprint stability while building [FIXWAV-M-03]', () => {
   it('detects an A-B-A rewrite from real temporary inputs', () => {
     const fixtureRoot = mkdtempSync(join(tmpdir(), 'acx-style-input-generation-test-'));

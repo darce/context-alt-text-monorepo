@@ -10,6 +10,7 @@ describe('GuidedPrototypePage', () => {
     expect(screen.getByRole('heading', { name: 'Guided description review' })).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Start the guided review' }));
     expect(screen.getByRole('navigation', { name: 'Guided review steps' })).toBeInTheDocument();
+    expect(document.activeElement).toHaveAttribute('data-guided-focus-target', 'true');
 
     fireEvent.click(screen.getByRole('button', { name: 'Confirm Keanu Reeves' }));
     expect(screen.getByText('Keanu Reeves wears a grey jacket against a plain background.')).toBeInTheDocument();
@@ -40,5 +41,16 @@ describe('GuidedPrototypePage', () => {
       'Portrait of a person in a grey jacket.',
     );
     expect(screen.getByTestId('guided-candidate')).not.toHaveTextContent('Keanu Reeves');
+  });
+
+  it('blocks apply after rejection while preserving the current applied text', () => {
+    render(<GuidedPrototypePage />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Start the guided review' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm Keanu Reeves' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Reject draft' }));
+
+    expect(screen.getByRole('button', { name: 'Apply to practice copy' })).toBeDisabled();
+    expect(document.querySelector('[data-applied-text]')).toHaveTextContent('Portrait of a person in a grey jacket.');
   });
 });

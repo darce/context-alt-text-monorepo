@@ -24,6 +24,7 @@ SYSTEMD_SRC="${SYSTEMD_SRC:-apps/prototype-description-service/systemd/acx-demo.
 ENV_EXAMPLE_SRC="${ENV_EXAMPLE_SRC:-infra/oci/demo/.env.example}"
 BOOTSTRAP_SRC="${BOOTSTRAP_SRC:-infra/oci/demo/bootstrap-wp.sh}"
 DESCRIBE_GATE_SRC="${DESCRIBE_GATE_SRC:-infra/oci/demo/lib/describe-gate.sh}"
+GPU_ENV_CONTRACT_SRC="${GPU_ENV_CONTRACT_SRC:-scripts/deploy/lib/gpu-env-contract.sh}"
 SEED_IMPORT_SRC="${SEED_IMPORT_SRC:-infra/oci/demo/seed/import.sh}"
 SEED_MEDIA_DIR="${SEED_MEDIA_DIR:-infra/oci/demo/seed/media}"
 
@@ -50,7 +51,7 @@ fi
 SMOKE_GATE_LIB="$(dirname "${BASH_SOURCE[0]}")/lib/smoke-gate.sh"
 FIXTURE_DENYLIST_LIB="$(dirname "${BASH_SOURCE[0]}")/lib/fixture-denylist.sh"
 
-for src in "$DEMO_COMPOSE_SRC" "$CADDYFILE_SRC" "$CADDY_COMPOSE_SRC" "$SYSTEMD_SRC" "$ENV_EXAMPLE_SRC" "$BOOTSTRAP_SRC" "$DESCRIBE_GATE_SRC" "$SEED_IMPORT_SRC" "$SMOKE_GATE_LIB" "$FIXTURE_DENYLIST_LIB"; do
+for src in "$DEMO_COMPOSE_SRC" "$CADDYFILE_SRC" "$CADDY_COMPOSE_SRC" "$SYSTEMD_SRC" "$ENV_EXAMPLE_SRC" "$BOOTSTRAP_SRC" "$DESCRIBE_GATE_SRC" "$GPU_ENV_CONTRACT_SRC" "$SEED_IMPORT_SRC" "$SMOKE_GATE_LIB" "$FIXTURE_DENYLIST_LIB"; do
   if [[ ! -f "$src" ]]; then
     echo "ERROR: source file not found: $src" >&2
     exit 2
@@ -68,6 +69,7 @@ echo "==> Rsync demo compose, bootstrap script, seed import, and env example"
 $SCP "$DEMO_COMPOSE_SRC" "${OCI_USER}@${OCI_HOST}:${REMOTE_DEMO_DIR}/docker-compose.demo.yml"
 $SCP "$BOOTSTRAP_SRC" "${OCI_USER}@${OCI_HOST}:${REMOTE_DEMO_DIR}/bootstrap-wp.sh"
 $SCP "$DESCRIBE_GATE_SRC" "${OCI_USER}@${OCI_HOST}:${REMOTE_DEMO_DIR}/lib/describe-gate.sh"
+$SCP "$GPU_ENV_CONTRACT_SRC" "${OCI_USER}@${OCI_HOST}:${REMOTE_DEMO_DIR}/lib/gpu-env-contract.sh"
 $SCP "$SEED_IMPORT_SRC" "${OCI_USER}@${OCI_HOST}:${REMOTE_DEMO_DIR}/seed/import.sh"
 $SCP "$ENV_EXAMPLE_SRC" "${OCI_USER}@${OCI_HOST}:${REMOTE_DEMO_DIR}/secrets/.env.example"
 $SSH "chmod +x '${REMOTE_DEMO_DIR}/bootstrap-wp.sh' '${REMOTE_DEMO_DIR}/seed/import.sh'"

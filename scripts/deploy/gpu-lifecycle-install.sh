@@ -534,7 +534,8 @@ echo "OCID source:  ${gpu_instance_id_source}"
 echo "max lease:    ${MAX_LEASE_SECONDS}s   idle: ${IDLE_SECONDS}s"
 
 release_id=$({
-    for source_path in "${repo_root}"/infra/oci/gpu_lifecycle/*.py; do
+    for source_path in "${repo_root}"/infra/oci/gpu_lifecycle/*.py \
+        "$DEPLOYMENTS_FILE"; do
         printf '%s %s\n' "${source_path#"${repo_root}/"}" \
             "$(git -C "$repo_root" hash-object "$source_path")"
     done
@@ -607,7 +608,7 @@ fi
 # older release directories remain available for rollback.
 run_with_deadline "remote release staging" \
     ssh "${SSH_OPTIONS[@]}" -l "$SSH_USER" -- "$HOST" "set -euo pipefail
-sudo mkdir -p '${remote_stage}/infra/oci/gpu_lifecycle' /etc/acx
+sudo mkdir -p '${remote_stage}/infra/oci/gpu_lifecycle' '${remote_stage}/scripts/deploy' /etc/acx
 sudo chown -R ubuntu:ubuntu /opt/acx-gpu
 find '${remote_stage}/infra/oci/gpu_lifecycle' -mindepth 1 -maxdepth 1 -delete
 touch '${remote_stage}/infra/__init__.py' '${remote_stage}/infra/oci/__init__.py'"
@@ -615,6 +616,9 @@ run_with_deadline "GPU lifecycle module copy" \
     scp -q "${SSH_OPTIONS[@]}" -o "User=${SSH_USER}" -- \
         "${repo_root}"/infra/oci/gpu_lifecycle/*.py \
         "${HOST}:${remote_stage}/infra/oci/gpu_lifecycle/"
+run_with_deadline "GPU deployment registry copy" \
+    scp -q "${SSH_OPTIONS[@]}" -o "User=${SSH_USER}" -- "$DEPLOYMENTS_FILE" \
+        "${HOST}:${remote_stage}/scripts/deploy/gpu-snapshot-deployments.conf"
 run_with_deadline "remote release validation and switch" \
     ssh "${SSH_OPTIONS[@]}" -l "$SSH_USER" -- "$HOST" "set -euo pipefail
 PYTHONPATH='${remote_stage}' python3 -c 'import infra.oci.gpu_lifecycle.reaper'

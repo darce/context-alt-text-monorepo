@@ -393,14 +393,29 @@ const parseFlows = (markdown: string): RenderParityMap['flows'] => {
 
 const parseDomainStateMappings = (markdown: string): RenderParityMap['domain_state_mappings'] => {
   const mappings: NonNullable<RenderParityMap['domain_state_mappings']> = [];
-  for (const line of section(markdown, 'Domain state mapping').split('\n')) {
-    if (!line.startsWith('| `')) {
-      continue;
+  const lines = section(markdown, 'Domain state mapping').split('\n').filter((line) => line.trim() !== '');
+  const header = ['| domain state(s) | canonical state |', '| --- | --- |'];
+  for (let index = 0; lines.length > 0 && index < header.length; index += 1) {
+    if (lines[index] !== header[index]) {
+      throw new Error(`noncanonical Domain state mapping table row: ${lines[index] ?? ''}`);
     }
-    const [rawDomainStates, rawCanonical] = splitTableRow(line);
+  }
+  const seen = new Set<string>();
+  for (const line of lines.slice(2)) {
+    const match = /^\| (`[^`|]+`(?:, `[^`|]+`)*) \| `([^`|]+)` \|$/.exec(line);
+    if (!match) {
+      throw new Error(`noncanonical Domain state mapping table row: ${line}`);
+    }
+    const domainStates = match[1]!.split(', ').map(unquote);
+    for (const state of domainStates) {
+      if (seen.has(state)) {
+        throw new Error(`Domain state mapping has duplicate domain state ${state}: ${line}`);
+      }
+      seen.add(state);
+    }
     mappings.push({
-      domain_states: (rawDomainStates ?? '').split(', ').map(unquote),
-      canonical_state: unquote(rawCanonical ?? ''),
+      domain_states: domainStates,
+      canonical_state: match[2]!,
     });
   }
   return mappings.length > 0 ? mappings : undefined;

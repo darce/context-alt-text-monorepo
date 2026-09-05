@@ -28,6 +28,7 @@ final class PublicDemoDescribeControllerTest extends TestCase
             public string $status = 'running';
             public mixed $gpuState = 'ready';
             public bool $omitGpuState = false;
+            public ?string $itemsRunId = null;
             public int $itemRequests = 0;
             /** @var array<string,mixed> */
             public array $statusData = [];
@@ -83,10 +84,13 @@ final class PublicDemoDescribeControllerTest extends TestCase
             public function get_describe_run_items(WP_REST_Request $request): WP_REST_Response|WP_Error
             {
                 ++$this->itemRequests;
-                return new WP_REST_Response(['items' => [[
-                    'media_id' => 41,
-                    'alt_text_draft' => 'A person walking beside a lake.',
-                ]]]);
+                return new WP_REST_Response([
+                    'run_id' => $this->itemsRunId ?? (string) $request->get_param('run_id'),
+                    'items' => [[
+                        'media_id' => 41,
+                        'alt_text_draft' => 'A person walking beside a lake.',
+                    ]],
+                ]);
             }
         };
         $this->controller = new PublicDemoDescribeController($this->pipeline);
@@ -233,6 +237,34 @@ final class PublicDemoDescribeControllerTest extends TestCase
         self::assertSame('public-run-1', $GLOBALS['__ac_options']['acx_public_demo_inflight']['run_id']);
     }
 
+    public function testExpiredPendingLeaseCanBeReclaimedRepeatedlyAndOldOwnersCannotBind(): void
+    {
+        $acquire = new \ReflectionMethod(PublicDemoDescribeController::class, 'acquire_inflight_bulkhead');
+        $bind = new \ReflectionMethod(PublicDemoDescribeController::class, 'bind_inflight_run');
+        $first = new PublicDemoDescribeController($this->pipeline);
+        $second = new PublicDemoDescribeController($this->pipeline);
+        $third = new PublicDemoDescribeController($this->pipeline);
+
+        self::assertTrue($acquire->invoke($first, 41));
+        $firstToken = $GLOBALS['__ac_options']['acx_public_demo_inflight']['token'];
+        $GLOBALS['__ac_options']['acx_public_demo_inflight']['expires_at'] = time() - 1;
+
+        self::assertTrue($acquire->invoke($second, 41));
+        $secondToken = $GLOBALS['__ac_options']['acx_public_demo_inflight']['token'];
+        self::assertNotSame($firstToken, $secondToken);
+        self::assertFalse($bind->invoke($first, 'late-first-run'));
+        self::assertSame('pending', $GLOBALS['__ac_options']['acx_public_demo_inflight']['run_id']);
+
+        $GLOBALS['__ac_options']['acx_public_demo_inflight']['expires_at'] = time() - 1;
+        self::assertTrue($acquire->invoke($third, 41));
+        $thirdToken = $GLOBALS['__ac_options']['acx_public_demo_inflight']['token'];
+        self::assertNotSame($secondToken, $thirdToken);
+        self::assertFalse($bind->invoke($second, 'late-second-run'));
+        self::assertTrue($bind->invoke($third, 'current-run'));
+        self::assertSame('current-run', $GLOBALS['__ac_options']['acx_public_demo_inflight']['run_id']);
+        self::assertSame($thirdToken, $GLOBALS['__ac_options']['acx_public_demo_inflight']['token']);
+    }
+
     public function testAgedLeaseWithMismatchedTerminalBackendRunIsRenewedAndRejectsAdmission(): void
     {
         $this->enable([41]);
@@ -270,25 +302,58 @@ final class PublicDemoDescribeControllerTest extends TestCase
         self::assertSame('public-run-1', $GLOBALS['__ac_options']['acx_public_demo_inflight']['run_id']);
     }
 
-    public function testNullAndAbsentGpuStateAreNormalizedToUnknownOnSubmitAndStatus(): void
+    public function testNullAndAbsentGpuStateArePreservedOnSubmitAndStatus(): void
     {
         $this->enable([41]);
         $this->pipeline->gpuState = null;
 
         $submitted = $this->controller->submit($this->authorizedRequest('POST', ['media_id' => 41]));
-        self::assertSame('unknown', $submitted->get_data()['gpu_state']);
+        self::assertArrayHasKey('gpu_state', $submitted->get_data());
+        self::assertNull($submitted->get_data()['gpu_state']);
 
         $status = $this->controller->status($this->authorizedRequest('GET', ['run_id' => 'public-run-1']));
-        self::assertSame('unknown', $status->get_data()['gpu_state']);
+        self::assertArrayHasKey('gpu_state', $status->get_data());
+        self::assertNull($status->get_data()['gpu_state']);
 
         unset($GLOBALS['__ac_options']['acx_public_demo_inflight']);
         $this->pipeline->gpuState = 'ready';
         $this->pipeline->omitGpuState = true;
         $submittedWithoutState = $this->controller->submit($this->authorizedRequest('POST', ['media_id' => 41]));
-        self::assertSame('unknown', $submittedWithoutState->get_data()['gpu_state']);
+        self::assertArrayNotHasKey('gpu_state', $submittedWithoutState->get_data());
 
         $statusWithoutState = $this->controller->status($this->authorizedRequest('GET', ['run_id' => 'public-run-2']));
-        self::assertSame('unknown', $statusWithoutState->get_data()['gpu_state']);
+        self::assertArrayNotHasKey('gpu_state', $statusWithoutState->get_data());
+    }
+
+    public function testMalformedTerminalEnvelopeDoesNotReleaseBulkhead(): void
+    {
+        $this->enable([41]);
+        $this->controller->submit($this->authorizedRequest('POST', ['media_id' => 41]));
+        $this->pipeline->status = 'completed';
+        $this->pipeline->statusData = ['phase' => 'complete', 'completed' => 0.5];
+
+        $result = $this->controller->status($this->authorizedRequest('GET', ['run_id' => 'public-run-1']));
+
+        self::assertInstanceOf(WP_Error::class, $result);
+        self::assertSame(PublicDemoErrorCode::INVALID_RESPONSE, $result->get_error_code());
+        self::assertSame('public-run-1', $GLOBALS['__ac_options']['acx_public_demo_inflight']['run_id']);
+        self::assertSame(0, $this->pipeline->itemRequests);
+    }
+
+    public function testForeignRunItemsEnvelopeIsRejectedWithoutReleasingBulkhead(): void
+    {
+        $this->enable([41]);
+        $this->controller->submit($this->authorizedRequest('POST', ['media_id' => 41]));
+        $this->pipeline->status = 'completed';
+        $this->pipeline->statusData = ['phase' => 'complete', 'completed' => 1];
+        $this->pipeline->itemsRunId = 'foreign-run';
+
+        $result = $this->controller->status($this->authorizedRequest('GET', ['run_id' => 'public-run-1']));
+
+        self::assertInstanceOf(WP_Error::class, $result);
+        self::assertSame(PublicDemoErrorCode::INVALID_RESPONSE, $result->get_error_code());
+        self::assertSame(1, $this->pipeline->itemRequests);
+        self::assertSame('public-run-1', $GLOBALS['__ac_options']['acx_public_demo_inflight']['run_id']);
     }
 
     /** @dataProvider invalidCounterProvider */

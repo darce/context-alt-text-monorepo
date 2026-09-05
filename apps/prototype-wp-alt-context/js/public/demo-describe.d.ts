@@ -16,7 +16,7 @@ export interface PublicDemoEnvelope {
   run_id: string;
   status: PublicDemoStatus;
   phase: PublicDemoPhase;
-  gpu_state: PublicDemoGpuState;
+  gpu_state?: PublicDemoGpuState | null;
   progress: { done: number; total: number };
   deadline_seconds?: number;
   description?: string;

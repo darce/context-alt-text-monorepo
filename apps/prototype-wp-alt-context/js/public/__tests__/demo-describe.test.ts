@@ -188,6 +188,44 @@ describe('public demo describe polling', () => {
     ).rejects.toMatchObject({ code: 'acx_public_demo_request_aborted' });
   });
 
+  it('reports navigation during the five-second backoff as an aborted degradation path', async () => {
+    const navigation = new AbortController();
+    const fetchImpl = vi.fn<typeof fetch>().mockImplementation(async () => response(running()));
+    let waits = 0;
+
+    await expect(
+      pollRun({
+        statusUrl: '/status/backoff-navigation',
+        nonce: 'nonce',
+        fetchImpl,
+        navigationSignal: navigation.signal,
+        sleep: async (milliseconds: number) => {
+          waits += 1;
+          if (milliseconds === 5_000) {
+            navigation.abort();
+            return new Promise<void>(() => {});
+          }
+        },
+      }),
+    ).rejects.toMatchObject({ code: 'acx_public_demo_request_aborted' });
+
+    expect(waits).toBe(5);
+    expect(fetchImpl).toHaveBeenCalledTimes(5);
+  });
+
+  it.each([
+    { gpu_state: null },
+    { gpu_state: undefined },
+  ])('preserves null and absent gpu_state without inventing metadata', ({ gpu_state }) => {
+    const payload: Record<string, unknown> = running();
+    if (gpu_state === undefined) delete payload.gpu_state;
+    else payload.gpu_state = gpu_state;
+
+    const parsed = parsePublicDemoEnvelope(payload);
+    expect(Object.prototype.hasOwnProperty.call(parsed, 'gpu_state')).toBe(gpu_state !== undefined);
+    if (gpu_state === null) expect(parsed.gpu_state).toBeNull();
+  });
+
   it('renders warming and describing phases honestly', () => {
     expect(statusPresentation(parsePublicDemoEnvelope(running({ phase: 'warming', gpu_state: 'starting' }))).message).toContain('warming up');
     expect(statusPresentation(parsePublicDemoEnvelope(running({ phase: 'describing', progress: { done: 1, total: 2 } }))).message).toContain('50%');

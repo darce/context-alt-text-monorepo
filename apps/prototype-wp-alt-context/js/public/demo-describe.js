@@ -26,6 +26,11 @@ const invalidResponse = () => new PublicDemoClientError(
   PUBLIC_DEMO_ERROR_CODE.INVALID_RESPONSE,
   'The demo returned an invalid response. Please refresh the page and try again.',
 );
+const timeoutError = () => new PublicDemoClientError(PUBLIC_DEMO_ERROR_CODE.POLL_TIMEOUT, POLL_TIMEOUT_MESSAGE);
+const requestAbortedError = () => new PublicDemoClientError(
+  PUBLIC_DEMO_ERROR_CODE.REQUEST_ABORTED,
+  'The demo request was stopped because the page is closing.',
+);
 
 const isRecord = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
 const isCounter = (value) => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
@@ -41,7 +46,8 @@ export const parsePublicDemoEnvelope = (body) => {
   if (typeof body.phase !== 'string' || !PHASES.has(body.phase)) {
     throw invalidResponse();
   }
-  if (typeof body.gpu_state !== 'string' || !GPU_STATES.has(body.gpu_state)) {
+  const hasGpuState = Object.prototype.hasOwnProperty.call(body, 'gpu_state');
+  if (hasGpuState && body.gpu_state !== null && (typeof body.gpu_state !== 'string' || !GPU_STATES.has(body.gpu_state))) {
     throw invalidResponse();
   }
   if (!isRecord(body.progress) || !isCounter(body.progress.done) || !isCounter(body.progress.total)) {
@@ -90,8 +96,8 @@ export const parsePublicDemoEnvelope = (body) => {
     run_id: body.run_id,
     status: body.status,
     phase: body.phase,
-    gpu_state: body.gpu_state,
     progress: { done: body.progress.done, total: body.progress.total },
+    ...(hasGpuState ? { gpu_state: body.gpu_state } : {}),
     ...(typeof body.deadline_seconds === 'number' ? { deadline_seconds: body.deadline_seconds } : {}),
     ...(typeof body.description === 'string' ? { description: body.description.trim() } : {}),
     ...(isRecord(body.error) ? { error: { code: body.error.code, message: body.error.message } } : {}),
@@ -99,6 +105,36 @@ export const parsePublicDemoEnvelope = (body) => {
 };
 
 const defaultSleep = (milliseconds) => new Promise((resolve) => globalThis.setTimeout(resolve, milliseconds));
+
+const waitForBackoff = async ({ sleep, milliseconds, deadlineAt, now, navigationSignal }) => {
+  if (navigationSignal?.aborted) throw requestAbortedError();
+
+  const remaining = deadlineAt - now();
+  if (remaining <= 0) throw timeoutError();
+
+  let rejectDeadline;
+  let rejectNavigation;
+  const deadlinePromise = new Promise((_resolve, reject) => {
+    rejectDeadline = reject;
+  });
+  const navigationPromise = new Promise((_resolve, reject) => {
+    rejectNavigation = reject;
+  });
+  const timer = globalThis.setTimeout(() => rejectDeadline(timeoutError()), remaining);
+  const onNavigation = () => rejectNavigation(requestAbortedError());
+  navigationSignal?.addEventListener('abort', onNavigation, { once: true });
+
+  try {
+    await Promise.race([
+      Promise.resolve().then(() => sleep(Math.min(milliseconds, remaining))),
+      deadlinePromise,
+      navigationPromise,
+    ]);
+  } finally {
+    globalThis.clearTimeout(timer);
+    navigationSignal?.removeEventListener('abort', onNavigation);
+  }
+};
 
 const requestJson = async (url, options, fetchImpl, { deadlineAt, now, navigationSignal }) => {
   const controller = new AbortController();
@@ -142,13 +178,10 @@ const requestJson = async (url, options, fetchImpl, { deadlineAt, now, navigatio
     return body;
   } catch (error) {
     if (abortKind === 'deadline') {
-      throw new PublicDemoClientError(PUBLIC_DEMO_ERROR_CODE.POLL_TIMEOUT, POLL_TIMEOUT_MESSAGE);
+      throw timeoutError();
     }
     if (abortKind === 'navigation') {
-      throw new PublicDemoClientError(
-        PUBLIC_DEMO_ERROR_CODE.REQUEST_ABORTED,
-        'The demo request was stopped because the page is closing.',
-      );
+      throw requestAbortedError();
     }
     throw error;
   } finally {
@@ -180,9 +213,9 @@ export const pollRun = async ({
   const deadlineAt = now() + timeoutMs;
   let delay = 500;
   const timedOut = () => now() >= deadlineAt;
-  const timeoutError = () => new PublicDemoClientError(PUBLIC_DEMO_ERROR_CODE.POLL_TIMEOUT, POLL_TIMEOUT_MESSAGE);
 
   while (!timedOut()) {
+    if (navigationSignal?.aborted) throw requestAbortedError();
     const raw = await requestJson(
       statusUrl,
       { method: 'GET', credentials: 'same-origin', headers: { 'X-WP-Nonce': nonce } },
@@ -206,7 +239,7 @@ export const pollRun = async ({
       throw terminalFailure(body);
     }
 
-    await sleep(Math.min(delay, Math.max(0, deadlineAt - now())));
+    await waitForBackoff({ sleep, milliseconds: delay, deadlineAt, now, navigationSignal });
     delay = Math.min(delay * 2, 5_000);
   }
 

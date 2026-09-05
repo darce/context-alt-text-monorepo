@@ -121,14 +121,14 @@ def test_transport_is_bounded_and_release_switch_is_atomic() -> None:
     assert "run_with_deadline" in script
     assert "/opt/acx-gpu/releases/" in script
     assert "python3 -c 'import infra.oci.gpu_lifecycle.reaper'" in script
-    assert "mv -Tf" in script
+    assert "os.replace(sys.argv[1], sys.argv[2])" in script
     assert "WorkingDirectory=/opt/acx-gpu/current" in script
     assert "rm -rf /opt/acx-gpu/infra/oci/gpu_lifecycle" not in script
 
     stage_position = script.index('remote_stage="/opt/acx-gpu/releases/.staging-')
     copy_position = script.index('scp -q "${SSH_OPTIONS[@]}"')
     validate_position = script.index("python3 -c 'import infra.oci.gpu_lifecycle.reaper'")
-    switch_position = script.index("sudo mv -Tf '/opt/acx-gpu/.current-${release_id}' /opt/acx-gpu/current")
+    switch_position = script.index("' '/opt/acx-gpu/.current-${release_id}' /opt/acx-gpu/current")
     assert stage_position < copy_position < validate_position < switch_position
 
 

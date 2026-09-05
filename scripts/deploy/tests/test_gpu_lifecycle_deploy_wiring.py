@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 from pathlib import Path
 
@@ -35,6 +36,7 @@ def _run_lifecycle(
         "--max-lease-seconds ${MAX_LEASE_SECONDS}"
     ),
     remote_body_mutation: str = "",
+    previous_release: bool = False,
 ) -> tuple[subprocess.CompletedProcess[str], str]:
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
@@ -65,6 +67,12 @@ def _run_lifecycle(
         "var-lib-acx-gpu",
     ):
         (fake_host / directory).mkdir()
+    if previous_release:
+        release_root = fake_host / "opt-acx-gpu"
+        (release_root / "old release" / "systemd").mkdir(parents=True)
+        (release_root / "older release").mkdir()
+        (release_root / "current").symlink_to("old release", target_is_directory=True)
+        (release_root / "previous").symlink_to("older release", target_is_directory=True)
     _write_executable(
         fake_bin / "ssh",
         r"""#!/usr/bin/env bash
@@ -79,6 +87,7 @@ for argument in "$@"; do
 done
 printf '\n' >>"$FAKE_TRANSPORT_LOG"
 remote_body=${!#}
+printf '%s\n' "$remote_body" >>"$FAKE_REMOTE_BODY_LOG"
 if [[ "$remote_body" == *"activate_gpu_lifecycle_timers"* ]]; then
   case "${FAKE_REMOTE_BODY_MUTATION:-}" in
     delete_activation_definition)
@@ -190,16 +199,6 @@ sys.stdout.writelines(lines[:start] + lines[end:])
 """,
     )
     _write_executable(
-        fake_bin / "mv",
-        """#!/usr/bin/env bash
-set -euo pipefail
-case "${1:-}" in
-  -Tf|-fT) shift; exec /bin/mv -f "$@" ;;
-  *) exec /bin/mv "$@" ;;
-esac
-""",
-    )
-    _write_executable(
         fake_bin / "scp",
         """#!/usr/bin/env bash
 set -eu
@@ -219,6 +218,7 @@ printf '\n' >>"$FAKE_TRANSPORT_LOG"
             "GPU_INSTANCE_ID": instance_id,
             "PATH": f"{fake_bin}:{os.environ['PATH']}",
             "FAKE_TRANSPORT_LOG": str(transport_log),
+            "FAKE_REMOTE_BODY_LOG": str(tmp_path / "remote-body.sh"),
             "FAKE_VERIFY_RC": str(verify_rc),
             "FAKE_REAPER_RC": str(reaper_rc),
             "FAKE_FLOCK_RC": str(flock_rc),
@@ -541,6 +541,7 @@ exit 0
     environment["ACX_EXPECTED_ENV_FILE"] = str(lifecycle_env)
     environment["ACX_EXPECTED_MAX_LEASE_SECONDS"] = "3600"
     environment["ACX_GPU_LIFECYCLE_LOCK_PATH"] = str(tmp_path / "state" / "lifecycle.lock")
+    _write_executable(fake_bin / "flock", "#!/usr/bin/env bash\nexit 0\n")
 
     result = subprocess.run(
         [str(INSTALLER), "--activate-systemd-only"],
@@ -572,6 +573,38 @@ def test_reaper_is_proved_before_start_timer_is_enabled(tmp_path: Path) -> None:
     assert disable < stop_start < lock_quiesced < reap_proof < start_timer_enable
     assert "systemctl <start> <acx-gpu-start" not in calls
     assert calls.index("systemctl <show> <acx-gpu-reap.service>") < start_timer_enable
+
+
+def test_rendered_remote_body_avoids_nonportable_shell_constructs(tmp_path: Path) -> None:
+    result, _ = _run_lifecycle(
+        tmp_path, enabled=True, ready_url="http://gpu.test:8000/health", dry_run=False,
+    )
+    body = (tmp_path / "remote-body.sh").read_text(encoding="utf-8")
+    for pattern in (
+        r"\bmv\s+-\w*T", r"\breadlink\s+-f\b", r"\btac\b",
+        r"\b(?:mapfile|readarray)\b", r"\$\{[^}]*,,[^}]*\}",
+        r"\[\s+(?:-\w\s+)?\$",  # unquoted first test operand
+        r"(?:!=|=)\s+\$[^\n]*\]",  # unquoted comparison operand
+    ):
+        assert not re.search(pattern, body), f"nonportable rendered shell: {pattern}"
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_release_upgrade_replaces_symlinks_and_preserves_old_directories(tmp_path: Path) -> None:
+    result, calls = _run_lifecycle(
+        tmp_path, enabled=True, ready_url="http://gpu.test:8000/health",
+        dry_run=False, previous_release=True,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    release_root = tmp_path / "host" / "opt-acx-gpu"
+    current = release_root / "current"
+    assert current.is_symlink()
+    assert current.resolve().parent == release_root / "releases"
+    assert (current / "systemd" / "acx-gpu-reap.service").is_file()
+    assert (release_root / "previous").resolve() == release_root / "old release"
+    assert list((release_root / "older release").iterdir()) == []
+    assert list((release_root / "old release").iterdir()) == [release_root / "old release" / "systemd"]
+    _assert_rendered_activation_contract(result, calls)
 
 
 def _assert_rendered_activation_contract(result: subprocess.CompletedProcess[str], calls: str) -> None:
@@ -617,7 +650,7 @@ def test_fail_safe_guard_precedes_live_release_and_effective_artifact_mutations(
 
     guard = transaction.index("trap cleanup_gpu_lifecycle_transaction ERR EXIT")
     fence = transaction.index("fence_gpu_lifecycle_start")
-    switch = transaction.index("previous_release=\\$(readlink -f /opt/acx-gpu/current")
+    switch = transaction.index("previous_release=\\$(python3 -c")
     artifact_write = transaction.index("sudo tee /etc/systemd/system/acx-gpu-start.service")
     prove_reaper = transaction.index("activate_gpu_lifecycle_timers \\")
     rearm_start = source.index("sudo systemctl enable --now acx-gpu-start.timer")
@@ -654,7 +687,7 @@ def test_rendered_install_body_hashes_portably_on_linux_and_macos() -> None:
 def test_installer_preserves_units_with_previous_content_addressed_release() -> None:
     source = INSTALLER.read_text(encoding="utf-8")
 
-    assert "previous_release=\\$(readlink -f /opt/acx-gpu/current" in source
+    assert "previous_release=\\$(python3 -c" in source
     assert "/opt/acx-gpu/previous" in source
     assert "${remote_release}/systemd/acx-gpu-reap.service" in source
     assert "${remote_release}/systemd/acx-gpu-start.timer" in source

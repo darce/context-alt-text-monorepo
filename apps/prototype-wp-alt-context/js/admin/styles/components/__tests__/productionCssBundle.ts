@@ -921,13 +921,18 @@ const fs = require('node:fs');
 const [statusPath, cwd, command, argsToken] = process.argv.slice(1);
 const child = spawn(command, JSON.parse(argsToken), { cwd, stdio: 'ignore' });
 const retainGroupIdentity = () => setInterval(() => {}, 0x7fffffff);
-child.once('error', () => { fs.writeFileSync(statusPath, '127'); retainGroupIdentity(); });
+const publishExitCode = (code) => {
+  const temporaryPath = statusPath + '.tmp';
+  fs.writeFileSync(temporaryPath, String(code));
+  fs.renameSync(temporaryPath, statusPath);
+  retainGroupIdentity();
+};
+child.once('error', () => { publishExitCode(127); });
 child.once('exit', (code, signal) => {
   const exitCode = code === null ? 128 + ({ SIGTERM: 15, SIGKILL: 9 }[signal] || 1) : code;
-  fs.writeFileSync(statusPath, String(exitCode));
   // Stay alive as the group leader until the parent tears the group down. A live leader with a
   // stable start token prevents this numeric PGID from being recycled before the signal.
-  retainGroupIdentity();
+  publishExitCode(exitCode);
 });
 `;
   const buildArgs = ['run', 'build', '--', '--outDir', outDir, '--emptyOutDir'];
@@ -947,8 +952,10 @@ child.once('exit', (code, signal) => {
       processGroupStartToken: supervisorStartToken ?? undefined,
       readExitCode: () => {
         try {
-          const value = Number(readFileSync(statusPath, 'utf8'));
-          return Number.isInteger(value) ? value : null;
+          const contents = readFileSync(statusPath, 'utf8');
+          if (contents === '' || /[^0-9]/.test(contents)) return null;
+          const value = Number(contents);
+          return Number.isSafeInteger(value) && value <= 255 ? value : null;
         } catch {
           return null;
         }
@@ -1028,30 +1035,41 @@ const readNamespaceOwner = (namespaceRoot: string): string | null => {
 };
 
 const namespaceLastUsedMs = (namespaceRoot: string): number => {
-  let latest = statSync(namespaceRoot).mtimeMs;
-  for (const child of readdirSync(namespaceRoot, { withFileTypes: true })) {
-    const activityPath = child.isDirectory()
-      ? join(namespaceRoot, child.name, STAMP_FILE)
-      : join(namespaceRoot, child.name);
-    if (existsSync(activityPath)) {
-      latest = Math.max(latest, statSync(activityPath).mtimeMs);
+  let latest = 0;
+  try {
+    latest = statSync(namespaceRoot).mtimeMs;
+    for (const child of readdirSync(namespaceRoot, { withFileTypes: true })) {
+      const activityPath = child.isDirectory()
+        ? join(namespaceRoot, child.name, STAMP_FILE)
+        : join(namespaceRoot, child.name);
+      try {
+        latest = Math.max(latest, statSync(activityPath).mtimeMs);
+      } catch (error) {
+        // Sibling artifact pruning does not take the parent GC lock.
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+      }
     }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
   }
   return latest;
 };
 
-const readNamespaceEntries = (cacheRoot: string): NamespaceEntry[] =>
+const readNamespaceEntries = (cacheRoot: string, keepNamespace: string): NamespaceEntry[] =>
   readdirSync(cacheRoot, { withFileTypes: true })
-    .filter((entry) => entry.isDirectory() && entry.name !== '.gc-lock')
-    .map((entry) => {
+    .filter((entry) => entry.isDirectory() && entry.name !== '.gc-lock' && entry.name !== keepNamespace)
+    .flatMap((entry) => {
       const namespaceRoot = join(cacheRoot, entry.name);
+      if (existsSync(join(namespaceRoot, '.lock'))) return [];
       const ownerRoot = readNamespaceOwner(namespaceRoot);
-      return {
+      const ownerRootExists = ownerRoot === null ? null : existsSync(ownerRoot);
+      if (ownerRootExists === true) return [];
+      return [{
         name: entry.name,
         lastUsedMs: namespaceLastUsedMs(namespaceRoot),
-        ownerRootExists: ownerRoot === null ? null : existsSync(ownerRoot),
-        lockHeld: existsSync(join(namespaceRoot, '.lock')),
-      };
+        ownerRootExists,
+        lockHeld: false,
+      }];
     });
 
 /**
@@ -1091,7 +1109,7 @@ export const registerAndPruneNamespaces = (
         'utf8',
       );
       const doomed = selectNamespacesToPrune(
-        readNamespaceEntries(cacheRoot),
+        readNamespaceEntries(cacheRoot, relativeFixtureRoot),
         relativeFixtureRoot,
         nowMs - ARTIFACT_TTL_MS,
       );

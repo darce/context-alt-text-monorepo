@@ -62,6 +62,10 @@ import {
 
 const ROLLUP_ENTRY_POINTS = ['js/admin/main.tsx', 'js/attachment-edit/main.tsx'] as const;
 
+const expectProductionEntryPoints = (bundle: ProductionCssBundle): void => {
+  expect(bundle.manifestEntryPoints).toEqual([...ROLLUP_ENTRY_POINTS].sort());
+};
+
 // Isolate builtin interception from Vitest and exercise the actual fixture and supervisor.
 const fixtureProbePrelude = String.raw`
 import assert from 'node:assert/strict';
@@ -472,6 +476,30 @@ assert.equal(fs.existsSync(join(cache, '.gc-lock')), false);
       }
     },
   );
+});
+
+describe('production bundle metadata snapshot', () => {
+  it('asserts production entry points after the artifact is evicted', () => {
+    const outDir = mkdtempSync(join(tmpdir(), 'acx-entry-snapshot-'));
+    try {
+      mkdirSync(join(outDir, 'assets'));
+      mkdirSync(join(outDir, '.vite'));
+      writeFileSync(join(outDir, 'assets/admin.css'), 'body { color: red; }');
+      writeFileSync(join(outDir, '.vite/manifest.json'), JSON.stringify({
+        [ROLLUP_ENTRY_POINTS[1]]: { isEntry: true, src: ROLLUP_ENTRY_POINTS[1] },
+        shared: { src: 'js/shared.ts' },
+        dynamic: { isEntry: false, isDynamicEntry: true },
+        [ROLLUP_ENTRY_POINTS[0]]: { isEntry: true, src: ROLLUP_ENTRY_POINTS[0] },
+      }));
+      const bundle = readProductionCssArtifact(outDir, 'snapshot');
+      rmSync(outDir, { recursive: true });
+
+      expectProductionEntryPoints(bundle);
+      expect(Object.isFrozen(bundle.manifestEntryPoints)).toBe(true);
+    } finally {
+      rmSync(outDir, { recursive: true, force: true });
+    }
+  });
 });
 
 describe('fingerprint stability while building [FIXWAV-M-03]', () => {
@@ -1580,13 +1608,7 @@ describe('rollup agrees with the fingerprint [FEBT2-LG-NEW-02]', () => {
   });
 
   it('ships both entry points, so the post.php bundle is really built', () => {
-    const manifest = JSON.parse(readFileSync(join(bundle.outDir, '.vite', 'manifest.json'), 'utf8')) as Record<
-      string,
-      { isEntry?: boolean; file?: string }
-    >;
-
-    const entries = Object.keys(manifest).filter((key) => manifest[key].isEntry === true);
-    expect(entries.sort()).toEqual([...ROLLUP_ENTRY_POINTS].sort());
+    expectProductionEntryPoints(bundle);
   });
 });
 

@@ -78,17 +78,18 @@ with open(sys.argv[1], "wb") as handle:
 PY
 
 # A random media id makes an existing cache row overwhelmingly unlikely. The
-# asynchronous route durably queues work, which publishes describe load for the
+# describe-run route durably queues work, which publishes describe load for the
 # start timer before the worker waits for GPU readiness. The response must still
 # report cached=false, so a collision fails closed.
 media_id="$(python3 -c 'import secrets; print(secrets.randbelow(2_000_000_000) + 1)')"
-request_json="$(printf '{\"tenant_id\":\"%s\",\"media_id\":%s,\"tier\":\"gpu\",\"context\":{\"filename\":\"gpu-flip-smoke.png\"}}' "$tenant_id" "$media_id")"
 curl --fail-with-body --silent --show-error --max-time 30 \
     --config "$curl_config" \
-    -F "request=${request_json};type=application/json" \
+    --form-string "tenant_id=${tenant_id}" \
+    --form-string "media_ids=[${media_id}]" \
+    --form-string "recognition_enabled=false" \
     -F "image_${media_id}=@${smoke_image};type=image/png" \
     --output "$response_file" \
-    "${base_url%/}/scene/describe/async"
+    "${base_url%/}/scene/describe/run"
 
 job_id="$(python3 - "$response_file" <<'PY'
 import json
@@ -98,11 +99,11 @@ import uuid
 with open(sys.argv[1], encoding="utf-8") as handle:
     payload = json.load(handle)
 try:
-    job_id = str(uuid.UUID(payload.get("job_id", "")))
+    job_id = str(uuid.UUID(payload.get("run_id", "")))
 except (AttributeError, TypeError, ValueError):
-    raise SystemExit("live GPU smoke failed: async enqueue returned no valid job_id") from None
-if payload.get("status") not in {"queued", "running", "provisional", "final"}:
-    raise SystemExit("live GPU smoke failed: async enqueue did not accept the job")
+    raise SystemExit("live GPU smoke failed: run enqueue returned no valid run_id") from None
+if payload.get("status") not in {"pending", "running", "completed"}:
+    raise SystemExit("live GPU smoke failed: run enqueue did not accept the job")
 print(job_id)
 PY
 )"
@@ -128,7 +129,7 @@ while :; do
     curl --fail-with-body --silent --show-error --max-time "$request_timeout" \
         --config "$curl_config" \
         --output "$response_file" \
-        "${base_url%/}/scene/describe/jobs/${job_id}"
+        "${base_url%/}/scene/describe/run/${job_id}"
     if python3 - "$response_file" "$job_id" <<'PY'
 import json
 import sys
@@ -136,22 +137,17 @@ import sys
 path, expected_job_id = sys.argv[1:]
 with open(path, encoding="utf-8") as handle:
     payload = json.load(handle)
-if payload.get("job_id") != expected_job_id:
-    raise SystemExit("live GPU smoke failed: poll returned a different job_id")
+if payload.get("run_id") != expected_job_id:
+    raise SystemExit("live GPU smoke failed: poll returned a different run_id")
 status = payload.get("status")
-if status == "final":
-    if payload.get("tier") != "final_gpu":
-        raise SystemExit("live GPU smoke failed: final job tier is not final_gpu")
-    visual_facts = payload.get("visual_facts")
-    if not isinstance(visual_facts, dict):
-        raise SystemExit("live GPU smoke failed: final job has no visual_facts")
-    with open(path, "w", encoding="utf-8") as handle:
-        json.dump(visual_facts, handle)
+if status == "completed":
+    if payload.get("completed") != 1 or payload.get("total") != 1 or payload.get("failed") != 0:
+        raise SystemExit("live GPU smoke failed: run did not complete exactly one image")
     raise SystemExit(0)
-if status in {"degraded", "failed"}:
-    raise SystemExit(f"live GPU smoke failed: async job ended with status {status}")
-if status not in {"queued", "running", "provisional"}:
-    raise SystemExit("live GPU smoke failed: async job returned an unknown status")
+if status in {"completed_with_errors", "failed", "cancelled"}:
+    raise SystemExit(f"live GPU smoke failed: run ended with status {status}")
+if status not in {"pending", "running"}:
+    raise SystemExit("live GPU smoke failed: run returned an unknown status")
 raise SystemExit(10)
 PY
     then
@@ -173,12 +169,28 @@ if [[ "$poll_complete" -ne 1 ]]; then
     exit 1
 fi
 
-python3 - "$response_file" <<'PY'
+curl --fail-with-body --silent --show-error --max-time 30 \
+    --config "$curl_config" --output "$response_file" \
+    "${base_url%/}/scene/describe/run/${job_id}/items"
+
+python3 - "$response_file" "$job_id" "$media_id" <<'PY'
 import json
 import sys
 
 with open(sys.argv[1], encoding="utf-8") as handle:
-    payload = json.load(handle)
+    response = json.load(handle)
+if response.get("run_id") != sys.argv[2]:
+    raise SystemExit("live GPU smoke failed: items returned a different run_id")
+items = response.get("items")
+if not isinstance(items, list) or len(items) != 1 or not isinstance(items[0], dict):
+    raise SystemExit("live GPU smoke failed: expected exactly one result item")
+item = items[0]
+if item.get("media_id") != int(sys.argv[3]) or item.get("status") != "completed":
+    raise SystemExit("live GPU smoke failed: image result is missing or incomplete")
+payload = item.get("provenance")
+if not isinstance(payload, dict):
+    raise SystemExit("live GPU smoke failed: result has no provenance")
+payload = dict(payload, tier=item.get("tier"), alt_text_draft=item.get("alt_text_draft"))
 if payload.get("adapter") != "gpu":
     raise SystemExit("live GPU smoke failed: response adapter is not gpu")
 if payload.get("tier") != "final_gpu":

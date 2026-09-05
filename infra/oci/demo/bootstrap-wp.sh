@@ -26,6 +26,21 @@ PLUGIN_ZIP="${PLUGIN_ZIP:-}"
 WP_URL="${WP_URL:-https://demo.altcontext.com}"
 WP_TITLE="${WP_TITLE:-ACX Demo}"
 
+# Fail-closed describe-apply: canned `seeded` captions are worse than empty alt.
+# BOOTSTRAP_GPU_CONTRACT_BEGIN
+# Repository invocations use the identical source without a generated copy.
+bootstrap_contract="$(dirname "${BASH_SOURCE[0]}")/lib/gpu-env-contract.sh"
+if [[ ! -r "$bootstrap_contract" ]]; then
+  bootstrap_contract="$(dirname "${BASH_SOURCE[0]}")/../../../scripts/deploy/lib/gpu-env-contract.sh"
+fi
+# shellcheck source=../../../scripts/deploy/lib/gpu-env-contract.sh
+if [[ ! -r "$bootstrap_contract" ]]; then
+  echo "ERROR: missing staged lib/gpu-env-contract.sh; deploy must transfer it before bootstrap." >&2
+  exit 2
+fi
+source "$bootstrap_contract"
+# BOOTSTRAP_GPU_CONTRACT_END
+
 cd "$DEMO_DIR"
 
 if [[ ! -f secrets/.env ]]; then
@@ -47,7 +62,7 @@ WP_ADMIN_EMAIL="$(env_get WP_ADMIN_EMAIL)"
 WP_CI_USER="$(env_get WP_CI_USER)"
 WP_CI_PASSWORD="$(env_get WP_CI_PASSWORD)"
 WP_CI_EMAIL="$(env_get WP_CI_EMAIL)"
-WORDPRESS_CONFIG_EXTRA="$(env_get WORDPRESS_CONFIG_EXTRA)"
+WORDPRESS_CONFIG_EXTRA="$(acx_env_literal_value "$(env_get WORDPRESS_CONFIG_EXTRA)")"
 
 for var in WP_ADMIN_USER WP_ADMIN_PASSWORD WP_ADMIN_EMAIL WP_CI_USER WP_CI_PASSWORD WP_CI_EMAIL WORDPRESS_CONFIG_EXTRA; do
   if [[ -z "${!var:-}" ]]; then
@@ -255,19 +270,6 @@ compose run --rm --no-deps \
 echo "==> Cycle plugin activation so activation-hook dbDelta applies schema changes"
 compose run --rm --no-deps wpcli wp plugin deactivate alt-context || true
 compose run --rm --no-deps wpcli wp plugin activate alt-context
-
-# Fail-closed describe-apply: canned `seeded` captions are worse than empty alt.
-# The flip runbook installs this contract beside describe-gate.sh before sync.
-# Repository invocations use the identical source without a generated copy.
-bootstrap_contract="$(dirname "${BASH_SOURCE[0]}")/lib/gpu-env-contract.sh"
-if [[ ! -r "$bootstrap_contract" ]]; then
-  bootstrap_contract="$(dirname "${BASH_SOURCE[0]}")/../../../scripts/deploy/lib/gpu-env-contract.sh"
-fi
-# shellcheck source=../../../scripts/deploy/lib/gpu-env-contract.sh
-source "$bootstrap_contract"
-if [[ -n "${WORDPRESS_CONFIG_EXTRA:-}" ]]; then
-  WORDPRESS_CONFIG_EXTRA="$(acx_env_literal_value "$WORDPRESS_CONFIG_EXTRA")"
-fi
 
 # wp-cli --format=count -> digits, or "" on failure/non-numeric so the
 # classifier BLOCKs instead of guessing.

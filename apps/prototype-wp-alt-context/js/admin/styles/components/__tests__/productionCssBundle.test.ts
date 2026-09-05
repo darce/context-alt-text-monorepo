@@ -30,6 +30,7 @@ import {
 } from './productionCssBundle';
 
 const ROLLUP_ENTRY_POINTS = ['js/admin/main.tsx', 'js/attachment-edit/main.tsx'] as const;
+const ROLLUP_BUILD_SOURCES = [...ROLLUP_ENTRY_POINTS, 'js/admin/assets/guided/altcontext-sample.jpeg'] as const;
 
 describe('build-input fingerprint coverage [FEBT2-LG-NEW-02]', () => {
   it('hashes every non-test file under js/', () => {
@@ -94,7 +95,7 @@ describe('rollup agrees with the fingerprint [FEBT2-LG-NEW-02]', () => {
   it('hashes every source rollup recorded in its manifest', () => {
     // Assert the input side too: an empty source list passes the coverage check while
     // proving nothing (mutant LG2-M7).
-    expect(manifestBuildSources(bundle)).toEqual([...ROLLUP_ENTRY_POINTS].sort());
+    expect(manifestBuildSources(bundle)).toEqual([...ROLLUP_BUILD_SOURCES].sort());
     expect(unfingerprintedManifestSources(bundle)).toEqual([]);
   });
 

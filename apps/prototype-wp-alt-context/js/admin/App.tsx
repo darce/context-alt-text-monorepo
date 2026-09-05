@@ -6,6 +6,7 @@ import { WorkbenchPage } from './pages/WorkbenchPage';
 import { RosterPage } from './pages/RosterPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { DescriptionHistoryPage } from './pages/DescriptionHistoryPage';
+import { GuidedPrototypePage } from './pages/guided/GuidedPrototypePage';
 import { ErrorBoundary } from '../components/ErrorBoundary';
 import { ToastProvider } from './context/ToastContext';
 import { DegradedModeBanner } from './pages/workbench/DegradedModeBanner';
@@ -72,6 +73,14 @@ export const App = (): React.JSX.Element => {
               element={
                 <ErrorBoundary>
                   <DescriptionHistoryPage />
+                </ErrorBoundary>
+              }
+            />
+            <Route
+              path="/guided-prototype"
+              element={
+                <ErrorBoundary>
+                  <GuidedPrototypePage />
                 </ErrorBoundary>
               }
             />

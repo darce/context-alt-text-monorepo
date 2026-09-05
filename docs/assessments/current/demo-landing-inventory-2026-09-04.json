@@ -1,0 +1,945 @@
+{
+  "observed_at": "2026-09-04T21:52:15.783543+00:00",
+  "main_sha": "b2437345851066c8d3d14177e914fc4d48182a24",
+  "origin_main_live_sha": "b2437345851066c8d3d14177e914fc4d48182a24",
+  "remote_scope": "All locally known remote-tracking refs; only origin/main refreshed by ls-remote. No remote refs pruned or other remotes fetched.",
+  "worktrees": [
+    {
+      "worktree": "/Users/daniel/Development/context-alt-text-monorepo",
+      "HEAD": "b2437345851066c8d3d14177e914fc4d48182a24",
+      "branch": "refs/heads/main",
+      "status": "M .codex/config.toml\n M .mcp.json\n M apps/prototype-description-service/Caddyfile\n?? docs/research/supertab-porting-candidates-2026-09-03.md"
+    },
+    {
+      "worktree": "/Users/daniel/Development/context-alt-text-monorepo-defwave-1",
+      "HEAD": "6d68eea0437b883aa7e21a67e4ba003f664789ab",
+      "branch": "refs/heads/feature/defwave-1",
+      "status": ""
+    },
+    {
+      "worktree": "/Users/daniel/Development/context-alt-text-monorepo-defwave-1-d1-lintratchet",
+      "HEAD": "71f3b3acbd3d5384a4f4b5640e37c4dd19dd76b3",
+      "branch": "refs/heads/feature/defwave-1-d1-lintratchet",
+      "status": ""
+    },
+    {
+      "worktree": "/Users/daniel/Development/context-alt-text-monorepo-defwave-1-d2-uxmap",
+      "HEAD": "08dfafcf445f5ca347bbf855006b3614a83e0918",
+      "branch": "refs/heads/feature/defwave-1-d2-uxmap",
+      "status": ""
+    },
+    {
+      "worktree": "/Users/daniel/Development/context-alt-text-monorepo-defwave-1-d3-leak",
+      "HEAD": "33a0965ea59a9b5adce46447c7104cf1e28ebd33",
+      "branch": "refs/heads/feature/defwave-1-d3-leak",
+      "status": ""
+    },
+    {
+      "worktree": "/Users/daniel/Development/context-alt-text-monorepo-defwave-1-d4-errcodes",
+      "HEAD": "9034d1ff0c0608ff7a3bdc50364a517e03423dff",
+      "branch": "refs/heads/feature/defwave-1-d4-errcodes",
+      "status": ""
+    },
+    {
+      "worktree": "/Users/daniel/Development/context-alt-text-monorepo-defwave-1-d5-gatewrap",
+      "HEAD": "19f26a18ef3e91ab12e58f96047530405dae6d5f",
+      "branch": "refs/heads/feature/defwave-1-d5-gatewrap",
+      "status": ""
+    },
+    {
+      "worktree": "/Users/daniel/Development/context-alt-text-monorepo-demoland-1-g1",
+      "HEAD": "b2437345851066c8d3d14177e914fc4d48182a24",
+      "branch": "refs/heads/feature/demoland-1-g1",
+      "status": ""
+    },
+    {
+      "worktree": "/Users/daniel/Development/context-alt-text-monorepo-demoland-1-g3",
+      "HEAD": "b2437345851066c8d3d14177e914fc4d48182a24",
+      "branch": "refs/heads/feature/demoland-1-g3",
+      "status": ""
+    },
+    {
+      "worktree": "/Users/daniel/Development/context-alt-text-monorepo-demoland-1-g6",
+      "HEAD": "b2437345851066c8d3d14177e914fc4d48182a24",
+      "branch": "refs/heads/feature/demoland-1-g6",
+      "status": ""
+    },
+    {
+      "worktree": "/Users/daniel/Development/context-alt-text-monorepo-fixwave-1-d2",
+      "HEAD": "08dfafcf445f5ca347bbf855006b3614a83e0918",
+      "branch": "refs/heads/feature/fixwave-1-d2",
+      "status": ""
+    },
+    {
+      "worktree": "/Users/daniel/Development/context-alt-text-monorepo-fixwave-1-d5",
+      "HEAD": "19f26a18ef3e91ab12e58f96047530405dae6d5f",
+      "branch": "refs/heads/feature/fixwave-1-d5",
+      "status": ""
+    },
+    {
+      "worktree": "/Users/daniel/Development/context-alt-text-monorepo-ocirrev-1",
+      "HEAD": "c86ccfe3c42e03312a243496003f970a73b7e173",
+      "branch": "refs/heads/feature/ocirrev-1",
+      "status": ""
+    },
+    {
+      "worktree": "/Users/daniel/Development/context-alt-text-monorepo-ocirv-1-rev-ops",
+      "HEAD": "36d79c1cb5ba62b962d346291fe53902bb507f2d",
+      "branch": "refs/heads/feature/ocirv-1-rev-ops",
+      "status": ""
+    },
+    {
+      "worktree": "/Users/daniel/Development/context-alt-text-monorepo-rev-d1",
+      "HEAD": "71f3b3acbd3d5384a4f4b5640e37c4dd19dd76b3",
+      "branch": "refs/heads/review/defwave-1-d1",
+      "status": ""
+    },
+    {
+      "worktree": "/Users/daniel/Development/context-alt-text-monorepo-rev-d2",
+      "HEAD": "08dfafcf445f5ca347bbf855006b3614a83e0918",
+      "branch": "refs/heads/review/defwave-1-d2",
+      "status": ""
+    },
+    {
+      "worktree": "/Users/daniel/Development/context-alt-text-monorepo-rev-d5",
+      "HEAD": "19f26a18ef3e91ab12e58f96047530405dae6d5f",
+      "branch": "refs/heads/review/defwave-1-d5",
+      "status": ""
+    }
+  ],
+  "refs": [
+    {
+      "ref": "refs/heads/feature/cmap-1",
+      "sha": "8f8c2a26d016149bec7817166ef9f2292ced1029",
+      "behind_main": 1928,
+      "ahead_main": 1,
+      "contained_in_main": false
+    },
+    {
+      "ref": "refs/heads/feature/corpus-1",
+      "sha": "db7ba92583964b20d1bd3cc919b0e7b93339307f",
+      "behind_main": 789,
+      "ahead_main": 2,
+      "contained_in_main": false
+    },
+    {
+      "ref": "refs/heads/feature/defwave-1",
+      "sha": "6d68eea0437b883aa7e21a67e4ba003f664789ab",
+      "behind_main": 2,
+      "ahead_main": 0,
+      "contained_in_main": true
+    },
+    {
+      "ref": "refs/heads/feature/defwave-1-d1-lintratchet",
+      "sha": "71f3b3acbd3d5384a4f4b5640e37c4dd19dd76b3",
+      "behind_main": 2,
+      "ahead_main": 1,
+      "contained_in_main": false
+    },
+    {
+      "ref": "refs/heads/feature/defwave-1-d2-uxmap",
+      "sha": "08dfafcf445f5ca347bbf855006b3614a83e0918",
+      "behind_main": 2,
+      "ahead_main": 1,
+      "contained_in_main": false
+    },
+    {
+      "ref": "refs/heads/feature/defwave-1-d3-leak",
+      "sha": "33a0965ea59a9b5adce46447c7104cf1e28ebd33",
+      "behind_main": 2,
+      "ahead_main": 1,
+      "contained_in_main": false
+    },
+    {
+      "ref": "refs/heads/feature/defwave-1-d4-errcodes",
+      "sha": "9034d1ff0c0608ff7a3bdc50364a517e03423dff",
+      "behind_main": 2,
+      "ahead_main": 1,
+      "contained_in_main": false
+    },
+    {
+      "ref": "refs/heads/feature/defwave-1-d5-gatewrap",
+      "sha": "19f26a18ef3e91ab12e58f96047530405dae6d5f",
+      "behind_main": 2,
+      "ahead_main": 1,
+      "contained_in_main": false
+    },
+    {
+      "ref": "refs/heads/feature/demoland-1-g1",
+      "sha": "b2437345851066c8d3d14177e914fc4d48182a24",
+      "behind_main": 0,
+      "ahead_main": 0,
+      "contained_in_main": true
+    },
+    {
+      "ref": "refs/heads/feature/demoland-1-g3",
+      "sha": "b2437345851066c8d3d14177e914fc4d48182a24",
+      "behind_main": 0,
+      "ahead_main": 0,
+      "contained_in_main": true
+    },
+    {
+      "ref": "refs/heads/feature/demoland-1-g6",
+      "sha": "b2437345851066c8d3d14177e914fc4d48182a24",
+      "behind_main": 0,
+      "ahead_main": 0,
+      "contained_in_main": true
+    },
+    {
+      "ref": "refs/heads/feature/descqual-2",
+      "sha": "dca7bdd31619d2952b09fd9161eb5b0ea93394fb",
+      "behind_main": 790,
+      "ahead_main": 62,
+      "contained_in_main": false
+    },
+    {
+      "ref": "refs/heads/feature/evalsurf-1",
+      "sha": "0bbdb3f41f864d77525a4dbe9aadc808fbb4f276",
+      "behind_main": 790,
+      "ahead_main": 1,
+      "contained_in_main": false
+    },
+    {
+      "ref": "refs/heads/feature/fir-12",
+      "sha": "d567a341cdb756a93c1908ab62449d738f3d5aeb",
+      "behind_main": 790,
+      "ahead_main": 87,
+      "contained_in_main": false
+    },
+    {
+      "ref": "refs/heads/feature/fir12-r7-int",
+      "sha": "d2a2dcf922bf0c5bc74ff3d5a212cc1afe1077d6",
+      "behind_main": 790,
+      "ahead_main": 81,
+      "contained_in_main": false
+    },
+    {
+      "ref": "refs/heads/feature/fixwave-1-d2",
+      "sha": "08dfafcf445f5ca347bbf855006b3614a83e0918",
+      "behind_main": 2,
+      "ahead_main": 1,
+      "contained_in_main": false
+    },
+    {
+      "ref": "refs/heads/feature/fixwave-1-d5",
+      "sha": "19f26a18ef3e91ab12e58f96047530405dae6d5f",
+      "behind_main": 2,
+      "ahead_main": 1,
+      "contained_in_main": false
+    },
+    {
+      "ref": "refs/heads/feature/ocirrev-1",
+      "sha": "c86ccfe3c42e03312a243496003f970a73b7e173",
+      "behind_main": 0,
+      "ahead_main": 2,
+      "contained_in_main": false
+    },
+    {
+      "ref": "refs/heads/feature/ocirv-1-rev-ops",
+      "sha": "36d79c1cb5ba62b962d346291fe53902bb507f2d",
+      "behind_main": 318,
+      "ahead_main": 3,
+      "contained_in_main": false
+    },
+    {
+      "ref": "refs/heads/feature/vlm-6",
+      "sha": "e93c41d1707b6dbdb3fed5b3e6eb7d978ead2b0c",
+      "behind_main": 789,
+      "ahead_main": 329,
+      "contained_in_main": false
+    },
+    {
+      "ref": "refs/heads/feature/vlm6-lex",
+      "sha": "15da53d755c1bca01b5501171fb326dd3db0e6a1",
+      "behind_main": 790,
+      "ahead_main": 5,
+      "contained_in_main": false
+    },
+    {
+      "ref": "refs/heads/lane/l11-rescue",
+      "sha": "6f0da782163fc3de304be8836db7bedd14dbe60f",
+      "behind_main": 789,
+      "ahead_main": 350,
+      "contained_in_main": false
+    },
+    {
+      "ref": "refs/heads/main",
+      "sha": "b2437345851066c8d3d14177e914fc4d48182a24",
+      "behind_main": 0,
+      "ahead_main": 0,
+      "contained_in_main": true
+    },
+    {
+      "ref": "refs/heads/review/defwave-1-d1",
+      "sha": "71f3b3acbd3d5384a4f4b5640e37c4dd19dd76b3",
+      "behind_main": 2,
+      "ahead_main": 1,
+      "contained_in_main": false
+    },
+    {
+      "ref": "refs/heads/review/defwave-1-d2",
+      "sha": "08dfafcf445f5ca347bbf855006b3614a83e0918",
+      "behind_main": 2,
+      "ahead_main": 1,
+      "contained_in_main": false
+    },
+    {
+      "ref": "refs/heads/review/defwave-1-d5",
+      "sha": "19f26a18ef3e91ab12e58f96047530405dae6d5f",
+      "behind_main": 2,
+      "ahead_main": 1,
+      "contained_in_main": false
+    },
+    {
+      "ref": "refs/remotes/laneD/f22-merged",
+      "sha": "8a9db2c2c85766872dae05a82679141fa9f504a5",
+      "behind_main": 2000,
+      "ahead_main": 0,
+      "contained_in_main": true
+    },
+    {
+      "ref": "refs/remotes/laneG/f23-g",
+      "sha": "90220283190efcda688ca9dc25e1a970b63eee79",
+      "behind_main": 1977,
+      "ahead_main": 0,
+      "contained_in_main": true
+    },
+    {
+      "ref": "refs/remotes/n16/int/n15",
+      "sha": "d330ecb692673b4d47d1d7ced887101144bf664f",
+      "behind_main": 790,
+      "ahead_main": 60,
+      "contained_in_main": false
+    },
+    {
+      "ref": "refs/remotes/n16/lane-n18",
+      "sha": "7da76a88f7dc9d84cd0dd09b9d4e5fc8d42a3aaa",
+      "behind_main": 790,
+      "ahead_main": 63,
+      "contained_in_main": false
+    },
+    {
+      "ref": "refs/remotes/n16/lane-n19",
+      "sha": "5578aa658fe3ae13b8eb81ee50ff709e04c1d15c",
+      "behind_main": 790,
+      "ahead_main": 63,
+      "contained_in_main": false
+    },
+    {
+      "ref": "refs/remotes/n16/lane/n16",
+      "sha": "95a46cd59e404ca3835cd99cd2fc3bf14e72366b",
+      "behind_main": 790,
+      "ahead_main": 65,
+      "contained_in_main": false
+    },
+    {
+      "ref": "refs/remotes/n16/lane/n17",
+      "sha": "dca7bdd31619d2952b09fd9161eb5b0ea93394fb",
+      "behind_main": 790,
+      "ahead_main": 62,
+      "contained_in_main": false
+    },
+    {
+      "ref": "refs/remotes/origin/codex/phase0-closeout",
+      "sha": "a56319ccad0ff6e62a9ab99e071840dec5f6bdcd",
+      "behind_main": 4780,
+      "ahead_main": 0,
+      "contained_in_main": true
+    },
+    {
+      "ref": "refs/remotes/origin/docs/4.13.1-update-documentation",
+      "sha": "435ee83c22df829d9f988b0634977b8d0854a782",
+      "behind_main": 4830,
+      "ahead_main": 0,
+      "contained_in_main": true
+    },
+    {
+      "ref": "refs/remotes/origin/docs/cleanup+restructure",
+      "sha": "7c3ab4dc98bbac810b1de1ee515a869de6ee1dca",
+      "behind_main": 4537,
+      "ahead_main": 0,
+      "contained_in_main": true
+    },
+    {
+      "ref": "refs/remotes/origin/feature/12.0-mcp-updates",
+      "sha": "e86364a6432869c99c594375537916a607a48aba",
+      "behind_main": 4494,
+      "ahead_main": 0,
+      "contained_in_main": true
+    },
+    {
+      "ref": "refs/remotes/origin/feature/13-oci-deployment",
+      "sha": "cf76085b6cad2dd4204a92879a8771662284c097",
+      "behind_main": 4483,
+      "ahead_main": 0,
+      "contained_in_main": true
+    },
+    {
+      "ref": "refs/remotes/origin/feature/4.10.1-dynamic-suggestions",
+      "sha": "639e740bf80f85bb82491b1a80b782c7b49f932b",
+      "behind_main": 4918,
+      "ahead_main": 0,
+      "contained_in_main": true
+    },
+    {
+      "ref": "refs/remotes/origin/feature/4.12.0-suggestion-panel",
+      "sha": "f99ecef578a29d78f5ee7f1e690de751a83ac2c3",
+      "behind_main": 4857,
+      "ahead_main": 0,
+      "contained_in_main": true
+    },
+    {
+      "ref": "refs/remotes/origin/feature/4.13.2-sovereign-plugin",
+      "sha": "cf7c6f591aef4bc24bb52812307942a14516a6e1",
+      "behind_main": 4801,
+      "ahead_main": 0,
+      "contained_in_main": true
+    },
+    {
+      "ref": "refs/remotes/origin/feature/4.13.3-sovereign-plugin",
+      "sha": "c648486278214fe4bdc96f25f97d982ac7a99ae6",
+      "behind_main": 4788,
+      "ahead_main": 0,
+      "contained_in_main": true
+    },
+    {
+      "ref": "refs/remotes/origin/feature/4.2-centroid-clustering",
+      "sha": "2a24bf7dca38ca9000b2ad0f3c969b31189ff488",
+      "behind_main": 5197,
+      "ahead_main": 0,
+      "contained_in_main": true
+    },
+    {
+      "ref": "refs/remotes/origin/feature/4.2.8-async-queue",
+      "sha": "8b3123aa16e37e60476b09e31c91b26669629195",
+      "behind_main": 4984,
+      "ahead_main": 0,
+      "contained_in_main": true
+    },
+    {
+      "ref": "refs/remotes/origin/feature/4.2.8-async-queue-status",
+      "sha": "b276ea41a0a9362ff69db21d84de7bb4acf5433d",
+      "behind_main": 4977,
+      "ahead_main": 0,
+      "contained_in_main": true
+    },
+    {
+      "ref": "refs/remotes/origin/feature/4.9.10-dynamic-cluster-suggestions",
+      "sha": "84bb11d213f8ec2b7f7f3ea6aab7698e1c59e967",
+      "behind_main": 4929,
+      "ahead_main": 0,
+      "contained_in_main": true
+    },
+    {
+      "ref": "refs/remotes/origin/feature/5.0.1-fe-ux",
+      "sha": "2afef9fcb8df50e14700f6789e6d6c85537850c6",
+      "behind_main": 5531,
+      "ahead_main": 775,
+      "contained_in_main": false
+    },
+    {
+      "ref": "refs/remotes/origin/feature/5.0.2-ux-dashboard",
+      "sha": "8a06d87a3a967cd5b426b4a8dcb7c1b9d49be55c",
+      "behind_main": 4750,
+      "ahead_main": 0,
+      "contained_in_main": true
+    },
+    {
+      "ref": "refs/remotes/origin/feature/5.0.3-ux-dashboard",
+      "sha": "04e388f437c3b09b494887775f5d1ae3b3ce6335",
+      "behind_main": 4748,
+      "ahead_main": 0,
+      "contained_in_main": true
+    },
+    {
+      "ref": "refs/remotes/origin/feature/5.0.5-unassigned-person",
+      "sha": "f54e8d0d146a1f5d7d4524199cfa2b59cf01c20a",
+      "behind_main": 4740,
+      "ahead_main": 0,
+      "contained_in_main": true
+    },
+    {
+      "ref": "refs/remotes/origin/feature/6.0.0-recognition-state-reconciliation",
+      "sha": "794b106143d95329fca5e661c4ac0a8715343414",
+      "behind_main": 4719,
+      "ahead_main": 0,
+      "contained_in_main": true
+    },
+    {
+      "ref": "refs/remotes/origin/feature/6.0.1-offline-conflict-ux",
+      "sha": "b296ce38f463cbdf1e893f99a765f6d0da26c6d9",
+      "behind_main": 4714,
+      "ahead_main": 0,
+      "contained_in_main": true
+    },
+    {
+      "ref": "refs/remotes/origin/feature/6.0.2-retention-export",
+      "sha": "ba2823caab7abb9b246683f121d39666ae3d90e4",
+      "behind_main": 4623,
+      "ahead_main": 0,
+      "contained_in_main": true
+    },
+    {
+      "ref": "refs/remotes/origin/feature/6.1.2-workbech-sync",
+      "sha": "42d4e99b0e43ffef8ee59b11dd20af9ee49dc6a8",
+      "behind_main": 4567,
+      "ahead_main": 0,
+      "contained_in_main": true
+    },
+    {
+      "ref": "refs/remotes/origin/feature/depiction-canon-eval-2026-07-27",
+      "sha": "7396a67889a45d78b208a979fa4c1501607e2062",
+      "behind_main": 2045,
+      "ahead_main": 0,
+      "contained_in_main": true
+    },
+    {
+      "ref": "refs/remotes/origin/feature/e15-12",
+      "sha": "c65ec6cf0d85436a4769c22707fd627af8a5840c",
+      "behind_main": 3741,
+      "ahead_main": 0,
+      "contained_in_main": true
+    },
+    {
+      "ref": "refs/remotes/origin/feature/e15-22",
+      "sha": "db1aa3fba7cef66da16859833d972ba32c3d0dcb",
+      "behind_main": 3421,
+      "ahead_main": 0,
+      "contained_in_main": true
+    },
+    {
+      "ref": "refs/remotes/origin/feature/e15-27",
+      "sha": "6543a54264295742053bb62cb18180fb0ed8948b",
+      "behind_main": 3352,
+      "ahead_main": 0,
+      "contained_in_main": true
+    },
+    {
+      "ref": "refs/remotes/origin/feature/maint-e17-8-br-20260418",
+      "sha": "18c7a65bb7ce30c2897d92e1f44f9f9970b2d70c",
+      "behind_main": 4133,
+      "ahead_main": 0,
+      "contained_in_main": true
+    },
+    {
+      "ref": "refs/remotes/origin/feature/recognition-ux-person-crud",
+      "sha": "c2544d59aa29d4d38521e3a7f199bb627e89a9f7",
+      "behind_main": 4752,
+      "ahead_main": 0,
+      "contained_in_main": true
+    },
+    {
+      "ref": "refs/remotes/origin/feature/slr-003-suppress-cleanup",
+      "sha": "da641df12da4b0b1548aa1c18a1af83866913329",
+      "behind_main": 4344,
+      "ahead_main": 2,
+      "contained_in_main": false
+    },
+    {
+      "ref": "refs/remotes/origin/features/5.0.4-curation-upgrades",
+      "sha": "b3edad3f229871b59111ba3b23fa88222448d331",
+      "behind_main": 4744,
+      "ahead_main": 0,
+      "contained_in_main": true
+    },
+    {
+      "ref": "refs/remotes/origin/fix/4.10.3-batch-status",
+      "sha": "7a5fc9f80a0629696e577a139590529517e019ce",
+      "behind_main": 4909,
+      "ahead_main": 0,
+      "contained_in_main": true
+    },
+    {
+      "ref": "refs/remotes/origin/fix/4.11.2-db-transaction-hanging",
+      "sha": "f6d526e318d71914e8c0cf7a53a94b2c09b7b443",
+      "behind_main": 4871,
+      "ahead_main": 0,
+      "contained_in_main": true
+    },
+    {
+      "ref": "refs/remotes/origin/fix/4.2.1-clustering-fix",
+      "sha": "563d5a249a08825cd737fe7ea7c7c38039c36fd1",
+      "behind_main": 5115,
+      "ahead_main": 0,
+      "contained_in_main": true
+    },
+    {
+      "ref": "refs/remotes/origin/fix/4.2.3-clustering-cw-vs-hdbscan",
+      "sha": "94202c6942b10c71a5013dd2b164235ba4854a3c",
+      "behind_main": 5156,
+      "ahead_main": 0,
+      "contained_in_main": true
+    },
+    {
+      "ref": "refs/remotes/origin/fix/4.2.5-avatar-thumbnails",
+      "sha": "9003fb7cd4e34227408001cc8969af1a472af174",
+      "behind_main": 5050,
+      "ahead_main": 0,
+      "contained_in_main": true
+    },
+    {
+      "ref": "refs/remotes/origin/fix/4.2.6-batch-consistency",
+      "sha": "f8c38aef978534b4c7bea34b800c612cad7b4135",
+      "behind_main": 5037,
+      "ahead_main": 0,
+      "contained_in_main": true
+    },
+    {
+      "ref": "refs/remotes/origin/fix/4.2.9-cluster-ui-errors",
+      "sha": "bdfbe04450b57ed04923e31340e6becaa15ce125",
+      "behind_main": 4954,
+      "ahead_main": 0,
+      "contained_in_main": true
+    },
+    {
+      "ref": "refs/remotes/origin/fix/4.9.11-latency-errors",
+      "sha": "5c39e2447d165ad29632d87fe4cb897ee5e9cc26",
+      "behind_main": 4920,
+      "ahead_main": 0,
+      "contained_in_main": true
+    },
+    {
+      "ref": "refs/remotes/origin/infra/oci-provisioning",
+      "sha": "e74ef71c22ad2742afa43e4d6e24a6bf2b75b2e4",
+      "behind_main": 4754,
+      "ahead_main": 0,
+      "contained_in_main": true
+    },
+    {
+      "ref": "refs/remotes/origin/main",
+      "sha": "b2437345851066c8d3d14177e914fc4d48182a24",
+      "behind_main": 0,
+      "ahead_main": 0,
+      "contained_in_main": true
+    },
+    {
+      "ref": "refs/remotes/origin/refactor/14-mcp-rewrite",
+      "sha": "3d5b35b64d94d2dded101b4471f4d6b37558fb18",
+      "behind_main": 4483,
+      "ahead_main": 4,
+      "contained_in_main": false
+    },
+    {
+      "ref": "refs/remotes/origin/refactor/4.0-rewrite-prototype",
+      "sha": "4fa3919d6514465cf51c0c40b352799925dcb28e",
+      "behind_main": 5225,
+      "ahead_main": 0,
+      "contained_in_main": true
+    },
+    {
+      "ref": "refs/remotes/origin/refactor/4.10.3",
+      "sha": "6cf3268800b5475253dc7e14b1a5169cc03b146c",
+      "behind_main": 4905,
+      "ahead_main": 0,
+      "contained_in_main": true
+    },
+    {
+      "ref": "refs/remotes/origin/refactor/4.13.1-wp-sovereign-phase-3",
+      "sha": "f16dba36ffab50044537c2fcc0e6afb1248ba0af",
+      "behind_main": 4810,
+      "ahead_main": 0,
+      "contained_in_main": true
+    },
+    {
+      "ref": "refs/remotes/origin/refactor/4.2.6-clustering-persist-centroid",
+      "sha": "d86f60fea1831b843dc4aa31bff5525cdbe8764b",
+      "behind_main": 5045,
+      "ahead_main": 0,
+      "contained_in_main": true
+    },
+    {
+      "ref": "refs/remotes/origin/refactor/4.2.9-recognition",
+      "sha": "2864d762a20559a546bdedacfa8d3e92f8910ea5",
+      "behind_main": 4937,
+      "ahead_main": 0,
+      "contained_in_main": true
+    },
+    {
+      "ref": "refs/remotes/origin/refactor/tactical-cleanup",
+      "sha": "104a6e2bea5532fcc991f67f3615051b881b377f",
+      "behind_main": 5380,
+      "ahead_main": 0,
+      "contained_in_main": true
+    },
+    {
+      "ref": "refs/remotes/origin/rewrite/4.2.4-single-pipeline",
+      "sha": "3bad1bf38b93f65c5ac3645c9f67479b7ae010e8",
+      "behind_main": 5058,
+      "ahead_main": 0,
+      "contained_in_main": true
+    },
+    {
+      "ref": "refs/remotes/origin/subfeature/backend-clustering-persistence",
+      "sha": "07eabf0fd1b7cf7b38ef3143cf7be0c070c88be8",
+      "behind_main": 5286,
+      "ahead_main": 0,
+      "contained_in_main": true
+    },
+    {
+      "ref": "refs/remotes/origin/subfeature/face-clustering-poc",
+      "sha": "63a4b26f3262b85fffd3f95a8763dfc990e64059",
+      "behind_main": 5350,
+      "ahead_main": 0,
+      "contained_in_main": true
+    },
+    {
+      "ref": "refs/remotes/origin/task/backend-vector-db",
+      "sha": "2996caae836985e4703673b85f0fc6f2d44bc03d",
+      "behind_main": 5272,
+      "ahead_main": 0,
+      "contained_in_main": true
+    },
+    {
+      "ref": "refs/remotes/origin/tooling/agent-handoff-mcp",
+      "sha": "aa6688135d41dcb762b0a938211cb604ce9e9a54",
+      "behind_main": 4742,
+      "ahead_main": 0,
+      "contained_in_main": true
+    },
+    {
+      "ref": "refs/remotes/origin/tooling/review-hardening",
+      "sha": "f98969deab442626bf976c5a699be5dc29ca3e5d",
+      "behind_main": 4541,
+      "ahead_main": 0,
+      "contained_in_main": true
+    },
+    {
+      "ref": "refs/remotes/r4int/dux-base",
+      "sha": "f49883daeb88f5795c90e662828fc9f39f67799d",
+      "behind_main": 754,
+      "ahead_main": 0,
+      "contained_in_main": true
+    },
+    {
+      "ref": "refs/remotes/r4int/dux/a11y",
+      "sha": "ed4e80a27919686bfb26df52800bcae77cea95b0",
+      "behind_main": 754,
+      "ahead_main": 1,
+      "contained_in_main": false
+    },
+    {
+      "ref": "refs/remotes/r4int/dux/auth",
+      "sha": "5919ab6d6d48508f5276c3fce7c15b8fbab2ef03",
+      "behind_main": 754,
+      "ahead_main": 2,
+      "contained_in_main": false
+    },
+    {
+      "ref": "refs/remotes/r4int/dux/degraded",
+      "sha": "c27556fe57291d968de44a6212d1a79c64606934",
+      "behind_main": 754,
+      "ahead_main": 4,
+      "contained_in_main": false
+    },
+    {
+      "ref": "refs/remotes/r4int/dux/gpu",
+      "sha": "9640c760a093e8a9e2b9a756acc5bb3d0f4f6c46",
+      "behind_main": 754,
+      "ahead_main": 4,
+      "contained_in_main": false
+    },
+    {
+      "ref": "refs/remotes/r4int/dux/hai",
+      "sha": "fe9fdf01e199ed7691cf2e55847062165112fb1b",
+      "behind_main": 754,
+      "ahead_main": 2,
+      "contained_in_main": false
+    },
+    {
+      "ref": "refs/remotes/r4int/dux/probe",
+      "sha": "6467945e838868bbe537b3f2b7c5dbf0391f50eb",
+      "behind_main": 754,
+      "ahead_main": 1,
+      "contained_in_main": false
+    },
+    {
+      "ref": "refs/remotes/r4int/dux/vocab",
+      "sha": "21254b6a133caa763f6adbc8262195d7dcbe3a09",
+      "behind_main": 754,
+      "ahead_main": 2,
+      "contained_in_main": false
+    },
+    {
+      "ref": "refs/remotes/r4int/int/f34f35",
+      "sha": "d8e5b15e875c27aa5986fb2ac50b064a38d82905",
+      "behind_main": 790,
+      "ahead_main": 43,
+      "contained_in_main": false
+    },
+    {
+      "ref": "refs/remotes/r4int/int/round4",
+      "sha": "b2ad134a7bf1891604804a88d9b94c68c2f13201",
+      "behind_main": 790,
+      "ahead_main": 54,
+      "contained_in_main": false
+    },
+    {
+      "ref": "refs/remotes/r4int/lane-f39",
+      "sha": "9ea81295db69b7cdefff5112851ad54611190156",
+      "behind_main": 790,
+      "ahead_main": 48,
+      "contained_in_main": false
+    },
+    {
+      "ref": "refs/remotes/r4int/lane-f40",
+      "sha": "a829e663d9b3bf94440730afac24c07daf80a2dd",
+      "behind_main": 790,
+      "ahead_main": 48,
+      "contained_in_main": false
+    },
+    {
+      "ref": "refs/remotes/r4int/lane-f41",
+      "sha": "78f2fd855fdbb508bbd853ca2ee00cd1ed59b651",
+      "behind_main": 790,
+      "ahead_main": 48,
+      "contained_in_main": false
+    },
+    {
+      "ref": "refs/remotes/r4int/lane-f42",
+      "sha": "7449fddbe4af63366c81f00b642eb193b12cb5b6",
+      "behind_main": 790,
+      "ahead_main": 48,
+      "contained_in_main": false
+    },
+    {
+      "ref": "refs/remotes/r4int/lane/f38",
+      "sha": "bbfb823917bfb26d6c61bc9c452e0f44174a7f5a",
+      "behind_main": 790,
+      "ahead_main": 47,
+      "contained_in_main": false
+    },
+    {
+      "ref": "refs/remotes/r7int/feature/demo-ux-1",
+      "sha": "4cd88bc54603a658e24fda362dd46506b8b35703",
+      "behind_main": 753,
+      "ahead_main": 0,
+      "contained_in_main": true
+    },
+    {
+      "ref": "refs/remotes/r7int/fir12-r7-int",
+      "sha": "3835cef257014f3e45f08138b3b5944fb65bc2d9",
+      "behind_main": 790,
+      "ahead_main": 73,
+      "contained_in_main": false
+    },
+    {
+      "ref": "refs/remotes/r7int/int/round10",
+      "sha": "13f1b467c6842f2c2e739e6664c3deea21a87076",
+      "behind_main": 789,
+      "ahead_main": 354,
+      "contained_in_main": false
+    },
+    {
+      "ref": "refs/remotes/r7int/int/round4",
+      "sha": "b2ad134a7bf1891604804a88d9b94c68c2f13201",
+      "behind_main": 790,
+      "ahead_main": 54,
+      "contained_in_main": false
+    },
+    {
+      "ref": "refs/remotes/r7int/int/round9",
+      "sha": "f2ff254843503e73ab945c72756518161f0f2a08",
+      "behind_main": 789,
+      "ahead_main": 349,
+      "contained_in_main": false
+    },
+    {
+      "ref": "refs/remotes/r7int/lane/L1-gate",
+      "sha": "44df0755559a41902d8d70b0fcfbbad36c68b1f4",
+      "behind_main": 789,
+      "ahead_main": 331,
+      "contained_in_main": false
+    },
+    {
+      "ref": "refs/remotes/r7int/lane/L2-roster",
+      "sha": "898a90ea7deb65a2c8e14b02a13853dd3481d9f1",
+      "behind_main": 789,
+      "ahead_main": 329,
+      "contained_in_main": false
+    },
+    {
+      "ref": "refs/remotes/r7int/lane/L3-split",
+      "sha": "70ba40900d607f5a9c1b25f3e63c61e9bc44de1b",
+      "behind_main": 789,
+      "ahead_main": 333,
+      "contained_in_main": false
+    },
+    {
+      "ref": "refs/remotes/r7int/lane/L4-surf",
+      "sha": "794dddf0feee558b83c33873b88affea89163ef8",
+      "behind_main": 790,
+      "ahead_main": 5,
+      "contained_in_main": false
+    },
+    {
+      "ref": "refs/remotes/r7int/vlm6-merged",
+      "sha": "231a39d651c3ce048b1191d64dc8ae1d71c9ff29",
+      "behind_main": 789,
+      "ahead_main": 327,
+      "contained_in_main": false
+    },
+    {
+      "ref": "refs/remotes/r7int/vlm6-merged2",
+      "sha": "e5641a272eb90f9804a5e6f1097183abdc37b60b",
+      "behind_main": 789,
+      "ahead_main": 328,
+      "contained_in_main": false
+    },
+    {
+      "ref": "refs/remotes/vmbundle/vlm-6",
+      "sha": "8ae228aa0ec8af2b3235f16e47855dbf4b5b3e6b",
+      "behind_main": 1901,
+      "ahead_main": 97,
+      "contained_in_main": false
+    },
+    {
+      "ref": "refs/remotes/vmd/r6dint",
+      "sha": "e2930511341210a9335137e9e88f65bd2d3629dd",
+      "behind_main": 1942,
+      "ahead_main": 0,
+      "contained_in_main": true
+    },
+    {
+      "ref": "refs/remotes/vmf/r6fint",
+      "sha": "0f06667777c8d07cd05de0baf55adb83a3e141af",
+      "behind_main": 1924,
+      "ahead_main": 0,
+      "contained_in_main": true
+    },
+    {
+      "ref": "refs/remotes/vmf20/lane-f20",
+      "sha": "c3be0630d3de4198e06ae25c4e1053618ce083cf",
+      "behind_main": 790,
+      "ahead_main": 19,
+      "contained_in_main": false
+    },
+    {
+      "ref": "refs/remotes/vmf21/lane-f21",
+      "sha": "a3bed19d6e9770fd195584c826ebad49ea78e599",
+      "behind_main": 799,
+      "ahead_main": 36,
+      "contained_in_main": false
+    },
+    {
+      "ref": "refs/remotes/vmgate/feature/duxw2-integration",
+      "sha": "972767f772a67842e4a9367b4e1aad9d77549098",
+      "behind_main": 727,
+      "ahead_main": 0,
+      "contained_in_main": true
+    },
+    {
+      "ref": "refs/remotes/vmgate/main",
+      "sha": "f49883daeb88f5795c90e662828fc9f39f67799d",
+      "behind_main": 754,
+      "ahead_main": 0,
+      "contained_in_main": true
+    },
+    {
+      "ref": "refs/remotes/vmlic3/lic3",
+      "sha": "41d0bf6e932f5ae1b7277ec945160a07b89e69f6",
+      "behind_main": 5531,
+      "ahead_main": 106,
+      "contained_in_main": false
+    }
+  ]
+}

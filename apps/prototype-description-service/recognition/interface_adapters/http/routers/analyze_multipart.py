@@ -28,6 +28,7 @@ from collections.abc import Iterable
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
+from python_multipart.multipart import parse_options_header
 from sqlalchemy.ext.asyncio import async_sessionmaker
 from starlette.datastructures import FormData, UploadFile
 from starlette.formparsers import MultiPartException, MultiPartParser
@@ -65,10 +66,27 @@ _DEFAULT_ALLOWED_MIME_TYPES: frozenset[str] = frozenset({"image/jpeg", "image/pn
 _IMAGE_KEY_PREFIX = "image_"
 _MAX_IMAGE_PARTS = 5
 _MAX_MULTIPART_FILES = _MAX_IMAGE_PARTS + 1  # JSON request envelope may itself be an UploadFile.
+_TOO_MANY_IMAGE_PARTS_DETAIL = f"multipart submission accepts at most {_MAX_IMAGE_PARTS} image parts"
 
 
 class _ClosingMultiPartParser(MultiPartParser):
     """Close partial upload spools for every parser failure, including disconnects."""
+
+    _current_image_files = 0
+
+    def on_headers_finished(self) -> None:
+        """Reject an oversized image batch before allocating its next spool."""
+        _disposition, options = parse_options_header(self._current_part.content_disposition)
+        field_name = options.get(b"name")
+        if (
+            b"filename" in options
+            and field_name is not None
+            and field_name.startswith(_IMAGE_KEY_PREFIX.encode("ascii"))
+        ):
+            self._current_image_files += 1
+            if self._current_image_files > _MAX_IMAGE_PARTS:
+                raise MultiPartException(_TOO_MANY_IMAGE_PARTS_DETAIL)
+        super().on_headers_finished()
 
     async def parse(self) -> FormData:
         try:
@@ -133,7 +151,7 @@ def multipart_to_media_items(
         if len(validated_parts) >= _MAX_IMAGE_PARTS:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"multipart submission accepts at most {_MAX_IMAGE_PARTS} image parts",
+                detail=_TOO_MANY_IMAGE_PARTS_DETAIL,
             )
         if not isinstance(value, UploadFile):
             raise HTTPException(

@@ -376,7 +376,7 @@ final class PublicDemoDescribeController implements RecognitionRouteControllerIn
 					return false;
 				}
 				// A submitter can die before dispatch. Replace that expired lease
-				// while holding the same guard used by bind_inflight_run(). Fence the
+				// while holding the reconciliation guard. Fence the
 				// write against the exact expired owner snapshot: a renewed or replaced
 				// lease must never be overwritten by this recovery attempt.
 				if ( ! is_string( $current['token'] ?? null ) || '' === $current['token'] ) {
@@ -477,33 +477,27 @@ final class PublicDemoDescribeController implements RecognitionRouteControllerIn
 	}
 
 	private function bind_inflight_run( string $run_id ): bool {
-		$guard = $this->acquire_lock( self::INFLIGHT_OPTION . '_reconcile', 5 );
-		if ( false === $guard ) {
+		// Acceptance must be recorded even while another submit holds the
+		// reconciliation guard. The snapshot CAS fences this write against
+		// replacement; guard contention must not discard the accepted run ID.
+		$current = get_option( self::INFLIGHT_OPTION, false );
+		if (
+			null === $this->inflight_token
+			|| ! is_array( $current )
+			|| 'pending' !== ( $current['run_id'] ?? null )
+			|| ! is_string( $current['token'] ?? null )
+			|| ! hash_equals( $current['token'], $this->inflight_token )
+		) {
 			return false;
 		}
 
-		try {
-			$current = get_option( self::INFLIGHT_OPTION, false );
-			if (
-				null === $this->inflight_token
-				|| ! is_array( $current )
-				|| 'pending' !== ( $current['run_id'] ?? null )
-				|| ! is_string( $current['token'] ?? null )
-				|| ! hash_equals( $current['token'], $this->inflight_token )
-			) {
-				return false;
-			}
-
-			$bound = array(
-				'run_id'    => $run_id,
-				'media_id'  => absint( $current['media_id'] ?? 0 ),
-				'token'     => $current['token'],
-				'expires_at' => time() + self::INFLIGHT_TTL_SECONDS,
-			);
-			return $this->update_inflight_lease( $current, $bound );
-		} finally {
-			$this->release_lock( self::INFLIGHT_OPTION . '_reconcile', $guard );
-		}
+		$bound = array(
+			'run_id'    => $run_id,
+			'media_id'  => absint( $current['media_id'] ?? 0 ),
+			'token'     => $current['token'],
+			'expires_at' => time() + self::INFLIGHT_TTL_SECONDS,
+		);
+		return $this->update_inflight_lease( $current, $bound );
 	}
 
 	private function release_inflight_bulkhead( ?string $expected_run_id = null, ?string $expected_token = null ): void {

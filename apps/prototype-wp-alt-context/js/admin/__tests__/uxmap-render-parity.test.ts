@@ -31,6 +31,7 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
 import { parseRenderedUxMap, projectUxMapForRenderParity, type UxMapRenderSource } from '../uxmap/renderParity';
+import unicodeWidth from './uxmap-render-parity.fixtures/unicode-width.json';
 
 const uxMapsDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../docs/ux-maps');
 const enumSnapshotPath = path.resolve(
@@ -38,10 +39,7 @@ const enumSnapshotPath = path.resolve(
   'uxmap-render-parity.fixtures/uxmap-enums.snapshot.json',
 );
 const enumVerifierPath = path.join(uxMapsDir, 'sync_uxmap_enums.py');
-const negativeFixturesDir = path.resolve(
-  path.dirname(fileURLToPath(import.meta.url)),
-  'uxmap-render-parity.fixtures',
-);
+const negativeFixturesDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), 'uxmap-render-parity.fixtures');
 
 const OWNED_MAPS = [
   'roster-people',
@@ -145,6 +143,7 @@ const SCREEN_MODEL: ModelSpec = {
     zones: { kind: 'modelList', model: () => ZONE_MODEL },
     states: { kind: 'enumList', values: MAP_STATES },
     primary_action_id: { kind: 'str', nullable: true },
+    action_states: { kind: 'strList' },
     code_ref: { kind: 'str', nullable: true },
   },
 };
@@ -178,6 +177,7 @@ const ACTION_MODEL: ModelSpec = {
     irreversible: { kind: 'bool' },
     preview_required: { kind: 'bool' },
     screen_id: { kind: 'str', nullable: true },
+    when: { kind: 'strList' },
   },
 };
 
@@ -205,6 +205,7 @@ const UX_MAP_MODEL: ModelSpec = {
     open_questions: { kind: 'strList' },
     not_doing: { kind: 'strList' },
     domain_state_mappings: { kind: 'modelList', model: () => DOMAIN_STATE_MAPPING_MODEL },
+    slices: { kind: 'strList' },
   },
 };
 
@@ -353,8 +354,7 @@ const validateCompletenessAndReferences = (doc: unknown, issues: Issue[]): void 
     return;
   }
 
-  const rows = (key: string): Record<string, unknown>[] =>
-    Array.isArray(doc[key]) ? doc[key].filter(isRecord) : [];
+  const rows = (key: string): Record<string, unknown>[] => (Array.isArray(doc[key]) ? doc[key].filter(isRecord) : []);
   const screens = rows('screens');
   const jobs = rows('jobs');
   const actions = rows('actions');
@@ -376,6 +376,21 @@ const validateCompletenessAndReferences = (doc: unknown, issues: Issue[]): void 
     });
   }
   screens.forEach((screen, screenIndex) => {
+    const actionStates = Array.isArray(screen.action_states) ? screen.action_states : ['default'];
+    if (actionStates.length === 0 || actionStates.some((state) => typeof state !== 'string' || state.trim() === '')) {
+      issues.push({ loc: `screens.${screenIndex}.action_states`, type: 'invalid_action_states', input: actionStates });
+    }
+    const primaries = actions.filter((action) => action.screen_id === screen.id && action.hierarchy === 'primary');
+    for (const state of actionStates) {
+      const available = primaries.filter((action) => !Array.isArray(action.when) || action.when.includes(state));
+      if (available.length > 1) {
+        issues.push({
+          loc: `screens.${screenIndex}.${String(state)}`,
+          type: 'multiple_primary_actions',
+          input: available.map((action) => action.id),
+        });
+      }
+    }
     if (typeof screen.primary_action_id === 'string' && !actionIds.has(screen.primary_action_id)) {
       issues.push({
         loc: `screens.${screenIndex}.primary_action_id`,
@@ -398,6 +413,13 @@ const validateCompletenessAndReferences = (doc: unknown, issues: Issue[]): void 
     }
   });
   actions.forEach((action, actionIndex) => {
+    if (Array.isArray(action.when)) {
+      const screen = screens.find((item) => item.id === action.screen_id);
+      const states = screen?.action_states;
+      if (action.when.length === 0 || !Array.isArray(states) || action.when.some((state) => !states.includes(state))) {
+        issues.push({ loc: `actions.${actionIndex}.when`, type: 'invalid_action_condition', input: action.when });
+      }
+    }
     if (typeof action.screen_id === 'string' && !screenIds.has(action.screen_id)) {
       issues.push({ loc: `actions.${actionIndex}.screen_id`, type: 'unknown_screen_id', input: action.screen_id });
     }
@@ -459,44 +481,53 @@ interface UxMapEnumSnapshot {
   zoneRoles: string[];
 }
 
-const graphemeSegmenter = new Intl.Segmenter('en', { granularity: 'grapheme' });
+// These properties are generated from Python unicodedata; no hand-maintained ranges.
+const inRanges = (char: string, ranges: number[][]): boolean => {
+  const code = char.codePointAt(0)!;
+  return ranges.some(([start, end]) => code >= start! && code <= end!);
+};
+const isModifier = (char: string): boolean => char >= '\u{1f3fb}' && char <= '\u{1f3ff}';
+const isRegionalIndicator = (char: string): boolean => char >= '\u{1f1e6}' && char <= '\u{1f1ff}';
+const isExtension = (char: string): boolean => inRanges(char, unicodeWidth.marks) || isModifier(char);
 
 const graphemeWidth = (cluster: string): number => {
   const visible = Array.from(cluster).filter(
-    (char) => !/\p{Mark}/u.test(char) && char !== '\u200d' && char !== '\ufe0e' && char !== '\ufe0f',
+    (char) => !isExtension(char) && char !== '\u200d' && !inRanges(char, unicodeWidth.format),
   );
   if (visible.length === 0) {
     return 0;
   }
-  if (cluster.includes('\u20e3') || cluster.includes('\u200d')) {
+  if (
+    cluster.includes('\u20e3') ||
+    cluster.includes('\u200d') ||
+    cluster.includes('\ufe0f') ||
+    visible.some(isRegionalIndicator)
+  ) {
     return 2;
   }
-  return visible.some((char) => {
-    const codePoint = char.codePointAt(0) ?? 0;
-    return (
-      codePoint >= 0x1100 &&
-      (codePoint <= 0x115f ||
-        codePoint === 0x2329 ||
-        codePoint === 0x232a ||
-        (codePoint >= 0x2e80 && codePoint <= 0xa4cf) ||
-        (codePoint >= 0xac00 && codePoint <= 0xd7a3) ||
-        (codePoint >= 0xf900 && codePoint <= 0xfaff) ||
-        (codePoint >= 0xfe10 && codePoint <= 0xfe6f) ||
-        (codePoint >= 0xff00 && codePoint <= 0xff60) ||
-        (codePoint >= 0xffe0 && codePoint <= 0xffe6) ||
-        (codePoint >= 0x1f300 && codePoint <= 0x1faff) ||
-        (codePoint >= 0x20000 && codePoint <= 0x3fffd))
-    );
-  })
-    ? 2
-    : 1;
+  return visible.some((char) => inRanges(char, unicodeWidth.wide)) ? 2 : 1;
 };
 
-const displayWidth = (value: string): number =>
-  Array.from(graphemeSegmenter.segment(value)).reduce(
-    (width, { segment }) => width + graphemeWidth(segment),
-    0,
-  );
+// Mirror the renderer's cluster boundaries as well as its widths, including flag pairs.
+const displayWidth = (value: string): number => {
+  let cluster = '';
+  let width = 0;
+  for (const char of value) {
+    if (
+      !cluster ||
+      isExtension(char) ||
+      char === '\u200d' ||
+      cluster.endsWith('\u200d') ||
+      (Array.from(cluster).length === 1 && isRegionalIndicator(cluster) && isRegionalIndicator(char))
+    ) {
+      cluster += char;
+    } else {
+      width += graphemeWidth(cluster);
+      cluster = char;
+    }
+  }
+  return width + graphemeWidth(cluster);
+};
 
 const assertAsciiFrameRows = (mapRef: string, markdown: string): number => {
   let checkedRows = 0;
@@ -506,10 +537,7 @@ const assertAsciiFrameRows = (mapRef: string, markdown: string): number => {
       fenceLanguage = fenceLanguage === null ? line.slice(3) : null;
       continue;
     }
-    if (
-      (fenceLanguage !== '' && fenceLanguage !== 'text') ||
-      (!line.startsWith('+') && !line.startsWith('|'))
-    ) {
+    if ((fenceLanguage !== '' && fenceLanguage !== 'text') || (!line.startsWith('+') && !line.startsWith('|'))) {
       continue;
     }
     const closingDelimiter = line.startsWith('+') ? '+' : '|';
@@ -889,9 +917,7 @@ describe('ux-map render parity (owned maps)', () => {
       '| ZONES                                                      |X',
     );
 
-    expect(() => assertAsciiFrameRows('malformed-terminal mutant', mutant)).toThrow(
-      /missing its closing \| delimiter/,
-    );
+    expect(() => assertAsciiFrameRows('malformed-terminal mutant', mutant)).toThrow(/missing its closing \| delimiter/);
   });
 
   it.each([
@@ -919,6 +945,76 @@ describe('ux-map render parity (owned maps)', () => {
 
     expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
     expect(JSON.parse(result.stdout)).toEqual([2, 1, 0, 1, 2, 2]);
+  });
+
+  it('accepts Python-rendered 62-cell rows across Unicode width edge cases', () => {
+    const values = ['⌚', '🇺🇸', '\u00ad', '\u{1f3fb}', '☀\ufe0f'];
+    const probe = [
+      'import importlib.util, json, pathlib',
+      `p = pathlib.Path(${JSON.stringify(path.join(uxMapsDir, 'render_ux_maps.py'))})`,
+      's = importlib.util.spec_from_file_location("uxmap_renderer", p)',
+      'm = importlib.util.module_from_spec(s)',
+      's.loader.exec_module(m)',
+      `values = json.loads(${JSON.stringify(JSON.stringify(values))})`,
+      'print(json.dumps([m._fit_ascii_row("| " + value + " |") for value in values]))',
+    ].join('\n');
+    const result = spawnSync('python3', ['-c', probe], { encoding: 'utf8' });
+    expect(result.status, result.stderr).toBe(0);
+    for (const row of JSON.parse(result.stdout) as string[]) {
+      expect(displayWidth(row), row).toBe(62);
+    }
+    expect(values.map(displayWidth)).toEqual([2, 2, 0, 0, 2]);
+  });
+
+  it('verifies the generated Unicode property ranges against Python', () => {
+    const result = spawnSync('python3', [path.join(uxMapsDir, 'sync_unicode_width.py'), '--check'], {
+      encoding: 'utf8',
+    });
+    expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
+  }, 60_000);
+
+  it('rejects an extra unconditional primary recovery on the same screen', () => {
+    const raw = readMapJson('febt-1-job-error-states') as { actions: Record<string, unknown>[] };
+    raw.actions.push({
+      id: 'mutant-primary',
+      verb: 'Mutant',
+      target: 'request-error-banner',
+      hierarchy: 'primary',
+      screen_id: 'request-error-banner',
+    });
+    expect(formatIssues(validateUxMap(raw)).join('\n')).toContain('multiple_primary_actions');
+  });
+
+  it('rejects overlapping, empty, or undeclared recovery conditions', () => {
+    for (const when of [['auth_expired'], [], ['made_up']]) {
+      const raw = readMapJson('febt-1-job-error-states') as { actions: Record<string, unknown>[] };
+      raw.actions.find((action) => action.id === 'retry-request')!.when = when;
+      expect(validateUxMap(raw).length).toBeGreaterThan(0);
+    }
+  });
+
+  it('renders exactly the tag-appropriate recovery for each mutually exclusive state', () => {
+    const md = readFileSync(path.join(uxMapsDir, 'febt-1-job-error-states.md'), 'utf8');
+    const sketch = md.split('### Request error banner')[1]!.split('```')[1]!;
+    const cases: Record<string, string> = {
+      http: '[PRIMARY] Retry',
+      parse: '[PRIMARY] Retry',
+      nonce_refresh: '[PRIMARY] Retry',
+      timeout: '[PRIMARY] Retry',
+      transport: '[PRIMARY] Retry',
+      unknown: '[PRIMARY] Retry',
+      auth_expired: '[PRIMARY] Reload page',
+      http_cooldown: '[secondary] Wait (countdown)',
+      abort: 'No action (silent)',
+    };
+    for (const [state, recovery] of Object.entries(cases)) {
+      const block = sketch.split(`| when ${state} `)[1]!.split('| when ')[0]!;
+      expect(block).toContain(recovery);
+      expect((block.match(/\[PRIMARY\]/g) ?? []).length).toBe(recovery.includes('[PRIMARY]') ? 1 : 0);
+    }
+    const mutant = md.replace('| `request-error-banner` | auth_expired |', '| `request-error-banner` | http |');
+    expect(mutant).not.toBe(md);
+    expect(parseRenderedUxMap(mutant)).not.toEqual(parseRenderedUxMap(md));
   });
 
   it('rejects action boolean cells other than exact yes/no tokens with a useful location', () => {
@@ -1289,38 +1385,38 @@ const VOCABULARY_MAPS = ['workbench-2pane', 'roster-people'] as const;
 const VOCABULARY_HEADING = "## Vocabulary (say / don't say)";
 
 describe('ux-map generated-render provenance', () => {
-  it(
-    'executes the sanctioned renderer in --check mode without its optional canvas package',
-    () => {
-      const result = spawnSync('python3', [rendererPath, '--check'], {
-        cwd: path.resolve(uxMapsDir, '..'),
-        encoding: 'utf8',
-      });
+  it('runs the renderer boundary mutation probes', () => {
+    const result = spawnSync(
+      'python3',
+      ['-m', 'unittest', 'discover', '-s', uxMapsDir, '-p', 'test_render_ux_maps.py'],
+      { encoding: 'utf8' },
+    );
+    expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
+  }, 60_000);
 
-      expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
-      expect(result.stdout).toContain('all UX-map artifacts are current');
-    },
-    60_000,
-  );
+  it('executes the sanctioned renderer in --check mode without its optional canvas package', () => {
+    const result = spawnSync('python3', [rendererPath, '--check'], {
+      cwd: path.resolve(uxMapsDir, '..'),
+      encoding: 'utf8',
+    });
 
-  it(
-    '--check rejects any visible ASCII or Mermaid row mutation without the canvas package',
-    () => {
-      const mutations = [
-        (markdown: string) => markdown.replace('| Workbench  [screen]', '| MUTATED   [screen]'),
-        (markdown: string) => markdown.replace('-->|settings health|', '-->|MUTATED flow row|'),
-        (markdown: string) => markdown.replace('| ZONES', '| XONES'),
-        (markdown: string) =>
-          markdown.replace('Settings / service health (exit)', 'Xettings / service health (exit)'),
-      ];
-      for (const mutate of mutations) {
-        const result = runMutatedRendererCheck('workbench-operator-loop', mutate);
-        expect(result.status, `${result.stdout}${result.stderr}`).toBe(1);
-        expect(result.stderr).toContain('visibleProjectionSha256');
-      }
-    },
-    60_000,
-  );
+    expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
+    expect(result.stdout).toContain('all UX-map artifacts are current');
+  }, 60_000);
+
+  it('--check rejects any visible ASCII or Mermaid row mutation without the canvas package', () => {
+    const mutations = [
+      (markdown: string) => markdown.replace('| Workbench  [screen]', '| MUTATED   [screen]'),
+      (markdown: string) => markdown.replace('-->|settings health|', '-->|MUTATED flow row|'),
+      (markdown: string) => markdown.replace('| ZONES', '| XONES'),
+      (markdown: string) => markdown.replace('Settings / service health (exit)', 'Xettings / service health (exit)'),
+    ];
+    for (const mutate of mutations) {
+      const result = runMutatedRendererCheck('workbench-operator-loop', mutate);
+      expect(result.status, `${result.stdout}${result.stderr}`).toBe(1);
+      expect(result.stderr).toContain('visibleProjectionSha256');
+    }
+  }, 60_000);
 
   it('renderer-backed --check rejects a mutation inside a retained detailed-contract fence', () => {
     const probe = [
@@ -1459,10 +1555,39 @@ describe('ux-map generated-render provenance', () => {
     expect(reducer).toContain('### AppError banner and recovery rows');
     expect(reducer).toContain('### Stalled/offline reconciliation');
     expect(reducer).toContain('The reconnect counter is internal (`reconnectAttempts`) and never rendered');
+    for (const copy of [
+      'No job running',
+      '! No progress for 35 s - reconnecting',
+      'Done, 3 failed',
+      'Job failed: <toUserMessage>',
+      'Unexpected response from server',
+      'Your session expired — reload the page and sign in again.',
+      'Network error — check your connection',
+      'The server took too long to respond — try again',
+    ]) {
+      expect(reducer).toContain(copy);
+    }
     expect(
       sectionRows(reducer, '## Detailed reducer and recovery contract'),
       'recovered reducer contract must retain substantive tables',
     ).toBeGreaterThan(10);
+  });
+
+  it('preserves all five original suggested task slices in source and rendered Markdown', () => {
+    const { md } = loadOwnedMap('workbench-operator-loop');
+    const raw = readMapJson('workbench-operator-loop') as { slices: string[] };
+    expect(raw.slices).toEqual([
+      '**Scan queue empty/first-time** — design empty + first_time states on `z-media-queue` / CTAs',
+      '**Scan costly action preview** — `act-scan-selected` requires preview_required surface',
+      '**Conflict forced-choice bound** — `z-conflict-detail` max_candidates=5 + evidence',
+      '**Dead-letter discard confirm** — destructive + irreversible path',
+      '**Deep-link parity** — panel/tab/status round-trip via `appLinks` ([NAV-11])',
+    ]);
+    expect(parseRenderedUxMap(md).slices).toEqual(raw.slices);
+    for (const [index, slice] of raw.slices.entries()) {
+      const mutant = md.replace(`${index + 1}. ${slice}\n`, '');
+      expect(parseRenderedUxMap(mutant).slices).not.toEqual(raw.slices);
+    }
   });
 
   it('every owned map describes a journey: non-empty flows and a source fixture', () => {

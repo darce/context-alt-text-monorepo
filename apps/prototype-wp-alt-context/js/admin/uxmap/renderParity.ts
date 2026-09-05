@@ -20,6 +20,7 @@ export interface RenderParityMap {
     route: string;
     url_params: string[];
     states: string[];
+    action_states?: string[];
     zones: Array<{ id: string; label: string; role: string; states: string[] }>;
   }>;
   actions: Array<{
@@ -31,6 +32,7 @@ export interface RenderParityMap {
     irreversible: boolean;
     preview_required: boolean;
     screen_id: string | null;
+    when?: string[];
   }>;
   flows: Array<{
     id: string;
@@ -39,6 +41,7 @@ export interface RenderParityMap {
     steps: Array<{ screen_id: string; branch_label: string | null }>;
   }>;
   domain_state_mappings?: Array<{ domain_states: string[]; canonical_state: string }>;
+  slices?: string[];
   open_questions: string[];
   not_doing: string[];
 }
@@ -111,9 +114,7 @@ const parseScreenStates = (block: string, screenId: string): string[] => {
         .map(unquote)
         .filter(Boolean)
     : undefined;
-  const asciiLines = block
-    .split('\n')
-    .filter((line) => /^\| states(?:\+|):/.test(line));
+  const asciiLines = block.split('\n').filter((line) => /^\| states(?:\+|):/.test(line));
   const asciiStates = asciiLines.flatMap((line) => {
     const body = /^\| states(?:\+|):\s*(.*?)\s*\|$/.exec(line)?.[1] ?? '';
     return body
@@ -124,11 +125,7 @@ const parseScreenStates = (block: string, screenId: string): string[] => {
   if (asciiStates.includes('…')) {
     throw new Error(`screen ${screenId} has truncated ASCII states`);
   }
-  if (
-    explicitStates &&
-    asciiStates.length > 0 &&
-    JSON.stringify(explicitStates) !== JSON.stringify(asciiStates)
-  ) {
+  if (explicitStates && asciiStates.length > 0 && JSON.stringify(explicitStates) !== JSON.stringify(asciiStates)) {
     throw new Error(`screen ${screenId} has different states in its lossless block and ASCII sketch`);
   }
   return explicitStates ?? asciiStates;
@@ -191,6 +188,9 @@ const parseScreens = (markdown: string): RenderParityMap['screens'] => {
       purpose,
       url_params: parsedParams,
       states: parseScreenStates(block, id),
+      ...(/^Action states: (.+)$/m.test(block)
+        ? { action_states: /^Action states: (.+)$/m.exec(block)![1]!.split(', ') }
+        : {}),
       zones,
     };
   });
@@ -214,7 +214,8 @@ const parseActions = (markdown: string): RenderParityMap['actions'] => {
     if (!line.startsWith('| `')) {
       continue;
     }
-    const [rawId, verb, target, hierarchy, costly, irreversible, previewRequired, rawScreenId] = splitTableRow(line);
+    const [rawId, verb, target, hierarchy, costly, irreversible, previewRequired, rawScreenId, when] =
+      splitTableRow(line);
     const id = unquote(rawId ?? '');
     actions.push({
       id,
@@ -225,6 +226,7 @@ const parseActions = (markdown: string): RenderParityMap['actions'] => {
       irreversible: parseBooleanCell(irreversible, id, 'irreversible'),
       preview_required: parseBooleanCell(previewRequired, id, 'preview_required'),
       screen_id: rawScreenId === '—' ? null : unquote(rawScreenId ?? ''),
+      ...(when !== undefined && when !== 'always' ? { when: when.split(', ') } : {}),
     });
   }
   return actions;
@@ -343,6 +345,7 @@ export const projectUxMapForRenderParity = (doc: UxMapRenderSource): RenderedUxM
         route: screen.route,
         url_params: screen.url_params ?? [],
         states: screen.states ?? [],
+        ...(screen.action_states ? { action_states: screen.action_states } : {}),
         zones: (screen.zones ?? []).map((zone) => ({
           id: zone.id,
           label: zone.label,
@@ -352,17 +355,17 @@ export const projectUxMapForRenderParity = (doc: UxMapRenderSource): RenderedUxM
       }))
       .sort((a, b) => a.id.localeCompare(b.id)),
     actions: doc.actions,
-    flows: doc.flows
-      .map((flow) => ({
-        id: flow.id,
-        label: flow.label ?? flow.id,
-        job: flow.job,
-        steps: flow.steps.map((step) => ({
-          screen_id: step.screen_id,
-          branch_label: step.branch_label ?? null,
-        })),
+    flows: doc.flows.map((flow) => ({
+      id: flow.id,
+      label: flow.label ?? flow.id,
+      job: flow.job,
+      steps: flow.steps.map((step) => ({
+        screen_id: step.screen_id,
+        branch_label: step.branch_label ?? null,
       })),
+    })),
     ...(doc.domain_state_mappings ? { domain_state_mappings: doc.domain_state_mappings } : {}),
+    ...(doc.slices ? { slices: doc.slices } : {}),
     open_questions: doc.open_questions,
     not_doing: doc.not_doing,
     parityIndex: {
@@ -391,6 +394,14 @@ export const parseRenderedUxMap = (markdown: string): RenderedUxMapProjection =>
     jobs,
     screens: parseScreens(markdown),
     actions: parseActions(markdown),
+    ...(section(markdown, 'Suggested task-slice decomposition (from map)')
+      ? {
+          slices: section(markdown, 'Suggested task-slice decomposition (from map)')
+            .split('\n')
+            .filter((line) => /^\d+\. /.test(line))
+            .map((line) => line.replace(/^\d+\. /, '')),
+        }
+      : {}),
     flows: parseFlows(markdown),
     ...(parseDomainStateMappings(markdown) ? { domain_state_mappings: parseDomainStateMappings(markdown) } : {}),
     open_questions: listSection(markdown, 'Open questions'),

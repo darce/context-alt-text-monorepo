@@ -25,7 +25,7 @@ export interface GuidedFaceMatch {
 export interface GuidedIdentity {
   status: GuidedIdentityStatus;
   name?: string;
-  source: 'sample-record' | 'none';
+  source: 'face-match' | 'none';
 }
 
 export interface GuidedHistoryEvent {
@@ -73,7 +73,7 @@ export interface GuidedScenario {
 
 const GUIDED_SCENARIO_SEED: Omit<GuidedScenario, 'identity' | 'candidate' | 'appliedText' | 'history'> = {
   origin: 'illustrative',
-  scenarioVersion: 'guided-portrait-v1',
+  scenarioVersion: 'guided-portrait-v2',
   originalMedia: {
     src: samplePhoto,
     altText: 'Portrait of a person in a grey jacket.',
@@ -81,7 +81,7 @@ const GUIDED_SCENARIO_SEED: Omit<GuidedScenario, 'identity' | 'candidate' | 'app
   sourceRecord: {
     name: 'Keanu Reeves',
     credit: 'Governo do Estado de São Paulo',
-    note: 'Sample record metadata is evidence for practice. It is not facial identification by the tour.',
+    note: 'Named earlier from a saved example. The demo does not run recognition live.',
   },
   pageContext: {
     title: 'Illustrative actor profile',
@@ -143,17 +143,17 @@ const containsSampleIdentity = (text: string, name: string): boolean => {
 };
 
 const assertCandidateIdentity = (scenario: GuidedScenario): void => {
-  const sampleName = scenario.sourceRecord.name.trim();
-  if (sampleName === '' || !containsSampleIdentity(scenario.candidate.text, sampleName)) {
+  const matchedName = scenario.faceMatch.matchedPersonName.trim();
+  if (matchedName === '' || !containsSampleIdentity(scenario.candidate.text, matchedName)) {
     return;
   }
 
   if (
     scenario.identity.status !== 'confirmed' ||
-    scenario.identity.source !== 'sample-record' ||
-    scenario.identity.name?.trim().toLowerCase() !== sampleName.toLowerCase()
+    scenario.identity.source !== 'face-match' ||
+    scenario.identity.name?.trim().toLowerCase() !== matchedName.toLowerCase()
   ) {
-    throw new Error('Cannot use the sample name until the identity is confirmed from the sample record.');
+    throw new Error('You can only use the name after you confirm the face match.');
   }
 };
 
@@ -176,7 +176,7 @@ export const confirmGuidedIdentity = (scenario: GuidedScenario): GuidedScenario 
   withHistory(
     {
       ...cloneScenario(scenario),
-      identity: { status: 'confirmed', name: scenario.sourceRecord.name, source: 'sample-record' },
+      identity: { status: 'confirmed', name: scenario.faceMatch.matchedPersonName, source: 'face-match' },
       candidate: { text: scenario.namedDraft, status: 'ready' },
     },
     { kind: 'identity-confirmed' },

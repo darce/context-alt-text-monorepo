@@ -64,7 +64,7 @@ url_params: `person`, `personFilter`, `queue`, `face`, `cluster`
 +------------------------------------------------------------+
 | ACTIONS                                                    |
 |   [PRIMARY] Add Person -> roster-shell                     |
-|   [secondary] Open person workspace -> roster-person-worksp… |
+|   [secondary] Open person workspace -> roster-person-works…|
 |   [secondary] Go to Workbench -> exit-workbench            |
 |   [secondary] Open face-group drawer -> roster-cluster-dr… |
 +------------------------------------------------------------+

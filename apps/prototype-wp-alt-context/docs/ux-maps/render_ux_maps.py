@@ -25,13 +25,19 @@ Usage (the canvas package is optional and only required when writing artifacts):
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 import sys
+import tempfile
+import unicodedata
 from difflib import unified_diff
 from pathlib import Path
 
-MAPS_DIR = Path(__file__).resolve().parent
+REPO_ROOT = Path(__file__).resolve().parents[4]
+MAPS_DIR = Path(os.environ.get("UX_MAPS_DIR", Path(__file__).resolve().parent)).resolve()
+ASCII_FRAME_WIDTH = 62
+ASCII_CONTENT_WIDTH = ASCII_FRAME_WIDTH - 2
 
 # Hand-authored sections preserved across regeneration. Order is significant and stable.
 KEEP_SECTIONS = (
@@ -89,6 +95,53 @@ def _ascii_state_rows(states: list[str], width: int = 60) -> list[str]:
             content += suffix
     rows.append(f"|{content.ljust(width)}|")
     return rows
+
+
+def _display_width(value: str) -> int:
+    """Return terminal-cell width without adding an optional wcwidth dependency."""
+    width = 0
+    for char in value:
+        if unicodedata.combining(char) or char in {"\u200d", "\ufe0e", "\ufe0f"}:
+            continue
+        width += 2 if unicodedata.east_asian_width(char) in {"W", "F"} else 1
+    return width
+
+
+def _truncate_display(value: str, width: int) -> str:
+    if _display_width(value) <= width:
+        return value
+    kept: list[str] = []
+    used = 0
+    for char in value:
+        char_width = _display_width(char)
+        if used + char_width > width - 1:
+            break
+        kept.append(char)
+        used += char_width
+    return "".join(kept) + "…"
+
+
+def _fit_ascii_row(line: str) -> str:
+    """Fit every emitted ASCII row to the one 62-cell frame contract."""
+    if line.startswith("+") and line.endswith("+"):
+        return "+" + ("-" * ASCII_CONTENT_WIDTH) + "+"
+    if not line.startswith("|"):
+        return line
+    content = line[1:-1] if line.endswith("|") else line[1:]
+    content = _truncate_display(content.rstrip(), ASCII_CONTENT_WIDTH)
+    return "|" + content + (" " * (ASCII_CONTENT_WIDTH - _display_width(content))) + "|"
+
+
+def _normalize_ascii_frames(markdown: str) -> str:
+    """Normalize all plain-text fenced sketches, including retained detailed sketches."""
+    lines = markdown.split("\n")
+    fence_language: str | None = None
+    for index, line in enumerate(lines):
+        if line.startswith("```"):
+            fence_language = line[3:] if fence_language is None else None
+        elif fence_language in {"", "text"} and (line.startswith("|") or line.startswith("+")):
+            lines[index] = _fit_ascii_row(line)
+    return "\n".join(lines)
 
 
 def _parity_index(doc: dict) -> list[str]:
@@ -254,13 +307,58 @@ def render(map_ref: str) -> str:
             # emits immediately after the heading.
             if out and out[-1] == "":
                 out.pop()
-    return _restore_kept("\n".join(out), kept)
+    return _normalize_ascii_frames(_restore_kept("\n".join(out), kept))
+
+
+def _visible_render_issues(doc: dict, markdown: str) -> list[str]:
+    """Validate visible ASCII/Mermaid rows that the lossless comments cannot cover."""
+    issues: list[str] = []
+    screens_section = markdown.partition("## Screens")[2].partition("\n## Actions")[0]
+    for screen in doc["screens"]:
+        match = re.search(
+            rf"^### .* \(`{re.escape(screen['id'])}`\)\n([\s\S]*?)(?=^### |\Z)",
+            screens_section,
+            re.MULTILINE,
+        )
+        if not match:
+            issues.append(f"screen {screen['id']}: visible block is absent")
+            continue
+        fence = re.search(r"```(?:text)?\n([\s\S]*?)```", match.group(1))
+        visible = fence.group(1) if fence else ""
+        # The canonical renderer truncates long values, so a stable leading fragment
+        # is the discriminating comparison for the operator-visible screen title row.
+        fragment = screen["title"][: min(len(screen["title"]), 24)]
+        kind_marker = f"[{screen['kind']}]"
+        header_row = next((line for line in visible.splitlines() if kind_marker in line), None)
+        if fragment not in (header_row if header_row is not None else visible):
+            issues.append(f"screen {screen['id']}: visible title {fragment!r} is absent")
+
+    flows_section = markdown.partition("## Flows")[2].partition("\n## Open questions")[0]
+    for flow in doc["flows"]:
+        match = re.search(
+            rf"^### .* \(`{re.escape(flow['id'])}`\)\n([\s\S]*?)(?=^### |\Z)",
+            flows_section,
+            re.MULTILINE,
+        )
+        if not match:
+            issues.append(f"flow {flow['id']}: visible Mermaid block is absent")
+            continue
+        mermaid = re.search(r"```mermaid\n([\s\S]*?)```", match.group(1))
+        edge_labels = re.findall(r"-->\|([^|]+)\|", mermaid.group(1) if mermaid else "")
+        expected_labels = [
+            step["branch_label"] for step in flow["steps"] if step.get("branch_label")
+        ]
+        if len(edge_labels) < max(1, len(flow["steps"]) - 1):
+            issues.append(f"flow {flow['id']}: visible Mermaid edge row is absent")
+        for label in edge_labels:
+            if not any(label == expected or label in expected or expected in label for expected in expected_labels):
+                issues.append(f"flow {flow['id']}: visible Mermaid label {label!r} is not sourced by JSON")
+    return issues
 
 
 def _check_projection(map_ref: str) -> tuple[str, str]:
     """Return expected/actual lossless projections without importing the optional renderer."""
-    repo_root = MAPS_DIR.parents[3]
-    parity_module = repo_root / "apps/prototype-wp-alt-context/js/admin/uxmap/renderParity.ts"
+    parity_module = REPO_ROOT / "apps/prototype-wp-alt-context/js/admin/uxmap/renderParity.ts"
     json_path = MAPS_DIR / f"{map_ref}.uxmap.json"
     markdown_path = MAPS_DIR / f"{map_ref}.md"
     script = "\n".join(
@@ -281,6 +379,10 @@ def _check_projection(map_ref: str) -> tuple[str, str]:
     if completed.returncode != 0:
         raise RuntimeError(completed.stderr.strip() or completed.stdout.strip())
     projections = json.loads(completed.stdout)
+    doc = json.loads(json_path.read_text(encoding="utf8"))
+    markdown = markdown_path.read_text(encoding="utf8")
+    projections["expected"]["visibleRenderIssues"] = []
+    projections["actual"]["visibleRenderIssues"] = _visible_render_issues(doc, markdown)
     expected = json.dumps(projections["expected"], ensure_ascii=False, indent=2, sort_keys=True) + "\n"
     actual = json.dumps(projections["actual"], ensure_ascii=False, indent=2, sort_keys=True) + "\n"
     return expected, actual
@@ -319,6 +421,42 @@ def check(refs: list[str]) -> int:
     return 0
 
 
+def _atomic_write(target: Path, rendered: str) -> None:
+    """Durably replace one artifact without exposing a partial file."""
+    temporary: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf8",
+            dir=target.parent,
+            prefix=f".{target.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as handle:
+            temporary = Path(handle.name)
+            handle.write(rendered)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, target)
+        temporary = None
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+
+
+def _render_and_write(refs: list[str]) -> None:
+    """Render and validate the complete batch before replacing any target."""
+    batch: list[tuple[Path, str]] = []
+    for ref in refs:
+        rendered = render(ref)
+        if not rendered.strip():
+            raise ValueError(f"{ref}: renderer produced an empty artifact")
+        batch.append((MAPS_DIR / f"{ref}.md", rendered))
+    for target, rendered in batch:
+        _atomic_write(target, rendered)
+        print(f"rendered {target.name}")
+
+
 def main(argv: list[str]) -> int:
     args = argv[1:]
     check_only = bool(args and args[0] == "--check")
@@ -328,10 +466,7 @@ def main(argv: list[str]) -> int:
     if check_only:
         return check(refs)
     try:
-        for ref in refs:
-            target = MAPS_DIR / f"{ref}.md"
-            target.write_text(render(ref), encoding="utf8")
-            print(f"rendered {target.name}")
+        _render_and_write(refs)
     except ImportError as exc:
         raise SystemExit(str(exc)) from exc
     return 0

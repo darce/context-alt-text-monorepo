@@ -265,6 +265,31 @@ final class PublicDemoDescribeControllerTest extends TestCase
         self::assertSame($thirdToken, $GLOBALS['__ac_options']['acx_public_demo_inflight']['token']);
     }
 
+    public function testExpiredPendingLeaseDoesNotOverwriteOwnerThatChangesBeforeReplacement(): void
+    {
+        $acquire = new \ReflectionMethod(PublicDemoDescribeController::class, 'acquire_inflight_bulkhead');
+        $this->setOption('acx_public_demo_inflight', [
+            'run_id' => 'pending',
+            'media_id' => 41,
+            'token' => 'expired-owner',
+            'expires_at' => time() - 1,
+        ]);
+        $contendingOwner = [
+            'run_id' => 'pending',
+            'media_id' => 41,
+            'token' => 'contending-owner',
+            'expires_at' => time() + 600,
+        ];
+        $GLOBALS['__ac_get_option_before_read']['acx_public_demo_inflight'] = static function (string $key, int $read) use ($contendingOwner): void {
+            if (2 === $read) {
+                $GLOBALS['__ac_options'][$key] = $contendingOwner;
+            }
+        };
+
+        self::assertFalse($acquire->invoke($this->controller, 41));
+        self::assertSame($contendingOwner, $GLOBALS['__ac_options']['acx_public_demo_inflight']);
+    }
+
     public function testAgedLeaseWithMismatchedTerminalBackendRunIsRenewedAndRejectsAdmission(): void
     {
         $this->enable([41]);
@@ -433,6 +458,18 @@ PHP];
         yield 'dotenv SERVER store' => [<<<'PHP'
 putenv('ACX_GPU_WARMUP_TIMEOUT_SECONDS');
 unset($_ENV['ACX_GPU_WARMUP_TIMEOUT_SECONDS']);
+$_SERVER['ACX_GPU_WARMUP_TIMEOUT_SECONDS'] = '37';
+
+PHP];
+        yield 'blank dotenv ENV falls through to SERVER' => [<<<'PHP'
+putenv('ACX_GPU_WARMUP_TIMEOUT_SECONDS');
+$_ENV['ACX_GPU_WARMUP_TIMEOUT_SECONDS'] = '   ';
+$_SERVER['ACX_GPU_WARMUP_TIMEOUT_SECONDS'] = '37';
+
+PHP];
+        yield 'blank process and ENV stores fall through to SERVER' => [<<<'PHP'
+putenv('ACX_GPU_WARMUP_TIMEOUT_SECONDS=   ');
+$_ENV['ACX_GPU_WARMUP_TIMEOUT_SECONDS'] = '';
 $_SERVER['ACX_GPU_WARMUP_TIMEOUT_SECONDS'] = '37';
 
 PHP];

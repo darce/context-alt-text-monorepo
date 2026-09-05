@@ -349,8 +349,20 @@ final class PublicDemoDescribeController implements RecognitionRouteControllerIn
 			if ( 'pending' === $run_id ) {
 				// A submitter can die after acquiring the lease but before binding a
 				// backend run. Once that pending lease expires, replace it in-place
-				// while holding the same guard used by bind_inflight_run().
+				// while holding the same guard used by bind_inflight_run(). Fence the
+				// write against the exact expired owner snapshot: a renewed or replaced
+				// lease must never be overwritten by this recovery attempt.
 				if ( ! is_string( $current['token'] ?? null ) || '' === $current['token'] ) {
+					return false;
+				}
+				$observed = get_option( self::INFLIGHT_OPTION, false );
+				if (
+					$current !== $observed
+					|| ! is_array( $observed )
+					|| ! is_string( $observed['token'] ?? null )
+					|| ! hash_equals( $current['token'], $observed['token'] )
+					|| (int) ( $observed['expires_at'] ?? 0 ) >= time()
+				) {
 					return false;
 				}
 				update_option( self::INFLIGHT_OPTION, $value, false );

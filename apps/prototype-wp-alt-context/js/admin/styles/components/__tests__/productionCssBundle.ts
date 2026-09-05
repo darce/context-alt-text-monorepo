@@ -68,6 +68,7 @@ const appRoot = resolve(testsRoot, '..', '..', '..', '..', '..');
  * feeds them to rollup, so including them would force a rebuild every time a suite is edited.
  */
 const BUILD_INPUT_GLOBS = [
+  'js/**/*.js',
   'js/**/*.ts',
   'js/**/*.tsx',
   'js/**/*.scss',

@@ -58,6 +58,28 @@ tailnet uses the **grants** policy model (not the legacy `acls` key).
   tailnet, not TCP/22 on the deployment VM. Remove the wildcard, or record the
   accepted blast radius explicitly. Leaving it in place unexamined is not a
   default this runbook endorses.
+
+  **Make the tailnet check it, not you.** Merge a `tests` block into the same
+  top-level policy file (do not create a duplicate key):
+  ```jsonc
+  "tests": [
+    {
+      "src": "tag:ci",
+      "proto": "tcp",
+      "accept": ["tag:oci-vm:22"],
+      "deny": ["tag:oci-vm:443", "tag:oci-vm:55432"]
+    }
+  ]
+  ```
+  Then click **Save policy**. That save *is* the enforcement check: Tailscale
+  evaluates `tests` on every policy change and rejects the save unless `tag:ci`
+  can still reach TCP/22 while TCP/443 and the database listener on TCP/55432
+  stay denied. A surviving or re-added wildcard grant fails both `deny`
+  assertions and cannot be saved, so the narrow grant above stops depending on
+  an operator remembering it. Preserve any other narrowly scoped grants and
+  policy tests; do not preserve or re-add a wildcard. The workflow's **Pin VM
+  tailnet address + wait for SSH reachability** step then exercises the allowed
+  TCP/22 path on every deploy.
 - **OAuth client** (*Settings → OAuth clients → Generate OAuth client*): scope
   **Auth Keys / `auth_keys` = Write**, and assign tag **`tag:ci`**. Copy the
   client **ID** and **secret** (secret shown once). The GitHub Action uses this
@@ -133,9 +155,16 @@ redeploying a prior SHA:
 ```bash
 # fastest: retag the last-good image on OCIR + restart + verify
 CONFIRM=PROMOTE scripts/deploy/recognition-service.sh promote staging prod
-# or redeploy a specific commit
-CONFIRM=PROMOTE GIT_REF=<good-sha> REMOTE_BUILD=1 scripts/deploy/recognition-service.sh deploy prod
+# or redeploy a specific commit (export GOOD_SHA first — see below)
+CONFIRM=PROMOTE GIT_REF="$GOOD_SHA" REMOTE_BUILD=1 scripts/deploy/recognition-service.sh deploy prod
 ```
+Before the second command, set `GOOD_SHA` to the full 40-character known-good
+commit — `export GOOD_SHA=$(git rev-parse origin/main~1)`, or paste the SHA from
+the last green deploy run. Both commands then run exactly as written. Do not
+re-introduce an angle-bracket placeholder here: the shell passes it through
+verbatim, `git rev-parse` rejects it, and the rollback fails at the worst
+possible moment. `scripts/test_deploy_workflow_gate.py` asserts this.
+
 The same `promote`/`GIT_REF` levers are available by dispatching the workflow
 from an older commit.
 

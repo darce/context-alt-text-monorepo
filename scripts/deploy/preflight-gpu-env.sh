@@ -457,7 +457,7 @@ import os
 import sys
 import tempfile
 from pathlib import Path
-root, raw_path = sys.argv[1:]
+root, raw_path, *probe_boot_id = sys.argv[1:]
 sys.path.insert(0, root)
 from infra.oci.gpu_lifecycle.reaper import RunningSinceLeaseStore
 path = Path(raw_path)
@@ -479,7 +479,9 @@ os.close(fd)
 probe = Path(probe_name)
 try:
     probe.unlink()
-    store = RunningSinceLeaseStore(path=probe)
+    # The disposable probe can receive a boot identity from the test harness.
+    # Production supplies none and validates the host identity normally.
+    store = RunningSinceLeaseStore(path=probe, boot_id=probe_boot_id[0] if probe_boot_id else None)
     store.write("preflight", source="first_observed")
     store.write("preflight", source="first_observed")
     assert store.read("preflight") is not None

@@ -89,12 +89,12 @@ const runFixtureProbe = (root: string, scenario: string, body: string): void => 
 };
 
 describe('production build status cleanup', () => {
-  it('retains the lock when the default kill probe returns EPERM for an unlisted group', () => {
+  it.each(['live', 'empty', 'malformed', 'failed'])('retains the lock on EPERM with a %s listing', (listing) => {
     const root = mkdtempSync(join(tmpdir(), 'acx-eperm-probe-'));
     const lockDir = join(root, '.lock');
     const ownership = acquireDirectoryLock(lockDir);
     const denied = Object.assign(new Error('kill EPERM'), { code: 'EPERM' });
-    // No real process is signalled; this PGID is absent from process listings.
+    // No real process is signalled; the listing is controlled independently of kill.
     const kill = vi.spyOn(process, 'kill').mockImplementation(() => { throw denied; });
     try {
       let caught: unknown;
@@ -104,12 +104,40 @@ describe('production build status cleanup', () => {
           readExitCode: () => 0,
           processGroupStartToken: 'supervised',
           readProcessStartToken: () => 'supervised',
+          listProcesses: () => {
+            if (listing === 'failed') throw new Error('ps failed');
+            if (listing === 'empty') return '';
+            if (listing === 'malformed') return 'unreadable';
+            return '123 2147483647 S\n';
+          },
         }));
       } catch (error) { caught = error; }
       expect(caught).toBeInstanceOf(ProductionCssBuildTeardownError);
       expect((caught as Error).cause).toBe(denied);
       expect(existsSync(join(lockDir, '.build-in-progress'))).toBe(true);
       expect(tryAcquireDirectoryLock(lockDir)).toBeNull();
+    } finally {
+      kill.mockRestore();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it.each(['EPERM', 'EIO'])('releases the lock on %s when a complete listing has no live group members', (code) => {
+    const root = mkdtempSync(join(tmpdir(), 'acx-retired-probe-'));
+    const lockDir = join(root, '.lock');
+    const ownership = acquireDirectoryLock(lockDir);
+    const kill = vi.spyOn(process, 'kill').mockImplementation(() => {
+      throw Object.assign(new Error('probe failed'), { code });
+    });
+    try {
+      expect(runWithBuildLock(lockDir, ownership, () => waitForProcessGroup(2147483647, {
+        timeoutMs: 1,
+        readExitCode: () => 0,
+        processGroupStartToken: 'supervised',
+        readProcessStartToken: () => 'supervised',
+        listProcesses: () => '1 1 S\n123 2147483647 Z\n',
+      }))).toBe(0);
+      expect(existsSync(lockDir)).toBe(false);
     } finally {
       kill.mockRestore();
       rmSync(root, { recursive: true, force: true });

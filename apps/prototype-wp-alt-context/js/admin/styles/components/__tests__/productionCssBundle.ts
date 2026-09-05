@@ -840,7 +840,32 @@ export interface ProcessGroupWaitOptions {
   readonly processGroupStartToken?: string;
   /** Test seam for detecting replacement of a process-group leader. */
   readonly readProcessStartToken?: (pid: number) => string | null;
+  /** Complete `ps -A -o pid=,pgid=,stat=` output; failures must throw. */
+  readonly listProcesses?: () => string;
 }
+
+const listProcessStates = (): string => execFileSync('ps', ['-A', '-o', 'pid=,pgid=,stat='], {
+  encoding: 'utf8',
+  stdio: ['ignore', 'pipe', 'ignore'],
+});
+
+const listedGroupIsAlive = (processGroupId: number, listProcesses: () => string): boolean => {
+  try {
+    const output = listProcesses().trim();
+    // A complete system listing includes at least ps itself. Empty or malformed output
+    // cannot establish that a group is gone.
+    if (output === '') return true;
+    let alive = false;
+    for (const line of output.split('\n')) {
+      const member = /^\s*(\d+)\s+(\d+)\s+([A-Za-z][A-Za-z0-9<+\s-]*)\s*$/.exec(line);
+      if (member === null) return true;
+      if (Number(member[2]) === processGroupId && !member[3].startsWith('Z')) alive = true;
+    }
+    return alive;
+  } catch {
+    return true;
+  }
+};
 
 const processGroupHasNonZombieMember = (processGroupId: number): boolean => {
   try {
@@ -898,12 +923,14 @@ const processGroupExistsViaSignal = (
 const processGroupIsAlive = (
   processGroupId: number,
   sendSignal: (pidOrGroup: number, signal: ProcessSignal) => void,
+  listProcesses: () => string = listProcessStates,
 ): boolean => {
   try {
     sendSignal(-processGroupId, 0);
   } catch (error) {
-    // An incomplete process listing must not turn EPERM into successful teardown.
-    return (error as NodeJS.ErrnoException).code !== 'ESRCH';
+    if ((error as NodeJS.ErrnoException).code === 'ESRCH') return false;
+    // EPERM can also describe a retired zombie-only group on macOS.
+    return listedGroupIsAlive(processGroupId, listProcesses);
   }
   // kill(2) reports zombie-only groups as existing. They cannot execute or retain resources, and
   // descendants may remain zombies until their own parent reaps them.
@@ -988,7 +1015,7 @@ const waitForIdentifiedProcessGroup = (
     options.isProcessAlive ??
     (() =>
       options.sendSignal === undefined
-        ? processGroupIsAlive(pid, sendSignal)
+        ? processGroupIsAlive(pid, sendSignal, options.listProcesses)
         : processGroupExistsViaSignal(pid, sendSignal));
   const readStartToken = options.readProcessStartToken ?? processStartToken;
   if (expectedStartToken === null) {

@@ -1,0 +1,554 @@
+{
+  "map_ref": "guided-prototype",
+  "product": "AltContext \u2014 authenticated guided prototype",
+  "goals": [
+    "Implementation inventory and correction target for feature/guided-prototype-1; one in-memory example inside authenticated WordPress admin, not the public homepage.",
+    "Show visual draft + confirmed identity + page context \u2192 named description; editing/rejection never applies automatically.",
+    "Only the saved candidate can be applied; pending text is labelled and must be saved or discarded before Apply.",
+    "Guide navigation reaches its named region; reset dialog preserves edits on cancel; all disappearing actions restore focus.",
+    "Clear illustrative provenance, bundled sample with text fallback, no live inference dependency.",
+    "State variants share one route; refresh resets memory, and the UI explains this."
+  ],
+  "jobs": [
+    {
+      "id": "review",
+      "label": "Review identity-informed description and apply to practice copy"
+    },
+    {
+      "id": "recover",
+      "label": "Undo or reset practice without hidden losses"
+    }
+  ],
+  "screens": [
+    {
+      "id": "intro",
+      "kind": "screen",
+      "title": "Guided prototype entrance",
+      "purpose": "Explains illustrative memory-only scope; case study and current build status; primary CTA opens the inline guide nav and focuses the guide status region without navigating to a separate screen.",
+      "route": "#/guided-prototype",
+      "job_entry": true,
+      "deep_link": true,
+      "url_params": [],
+      "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/GuidedPrototypeEntrance.tsx",
+      "primary_action_id": "open",
+      "states": ["default"],
+      "zones": [
+        {
+          "id": "intro-0",
+          "label": "Branded heading, scope and current build status",
+          "role": "content",
+          "states": ["default"]
+        },
+        {
+          "id": "intro-1",
+          "label": "Start the guided walkthrough and case study exit",
+          "role": "nav",
+          "states": ["default"]
+        }
+      ]
+    },
+    {
+      "id": "guide",
+      "kind": "screen",
+      "title": "Inline guided review nav",
+      "purpose": "Persistent inline nav shows the current step, lets you show/hide the full step list, skip to the current step's section, jump between steps, or end the guide; steps mirror the four review sections and never navigate away from the single-route page.",
+      "route": "#/guided-prototype",
+      "job_entry": false,
+      "deep_link": true,
+      "url_params": [],
+      "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/guided/GuidedPrototypeGuide.tsx",
+      "primary_action_id": "toggle-guide",
+      "states": ["first_time", "default"],
+      "zones": [
+        {
+          "id": "guide-0",
+          "label": "Status bar: current step label, skip-to-current-section link, Show/Hide guide toggle",
+          "role": "nav",
+          "states": ["default"]
+        },
+        {
+          "id": "guide-1",
+          "label": "Expanded step list (understand/identity/review/apply) and End guide",
+          "role": "nav",
+          "states": ["default"]
+        }
+      ]
+    },
+    {
+      "id": "evidence",
+      "kind": "screen",
+      "title": "Image and page context",
+      "purpose": "Inspect sample photograph/text equivalent, source record and page context; no live recognition claim. Identity confirmation itself lives in the identity evidence card on the review screen, not here.",
+      "route": "#/guided-prototype",
+      "job_entry": false,
+      "deep_link": true,
+      "url_params": [],
+      "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/guided/GuidedPrototypePage.tsx",
+      "primary_action_id": null,
+      "states": ["default"],
+      "zones": [
+        {
+          "id": "evidence-0",
+          "label": "Photograph with descriptive fallback; figcaption shows current alt text on the page and photo credit",
+          "role": "ai_review",
+          "states": ["default"],
+          "evidence_linked": true
+        },
+        {
+          "id": "evidence-1",
+          "label": "Provenance list with humanised scenario-origin label, page title/summary and sample record",
+          "role": "content",
+          "states": ["default"]
+        }
+      ]
+    },
+    {
+      "id": "draft",
+      "kind": "screen",
+      "title": "Description review",
+      "purpose": "Identity evidence card, saved draft and immutable visual-only baseline are distinguishable from current applied text; pending edits require save/discard; proposed-draft origin is humanised and a rejected draft shows a recovery notice.",
+      "route": "#/guided-prototype",
+      "job_entry": false,
+      "deep_link": true,
+      "url_params": [],
+      "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/guided/GuidedDescriptionReview.tsx",
+      "primary_action_id": "save",
+      "states": ["default", "error"],
+      "zones": [
+        {
+          "id": "draft-0",
+          "label": "Identity evidence card: confirm sample identity or leave unidentified; disabled while an unsaved edit exists",
+          "role": "form",
+          "states": ["default"]
+        },
+        {
+          "id": "draft-1",
+          "label": "Before (generic draft) vs Proposed draft with humanised draft-origin label; rejected-draft recovery notice when applicable",
+          "role": "ai_review",
+          "states": ["default"],
+          "evidence_linked": true
+        },
+        {
+          "id": "draft-2",
+          "label": "Labelled editor with save/discard/reject actions; inline empty-description alert",
+          "role": "form",
+          "states": ["default", "error"]
+        }
+      ]
+    },
+    {
+      "id": "apply",
+      "kind": "screen",
+      "title": "Review exact application",
+      "purpose": "Before/after shows current practice value and the actual saved candidate that Apply commits; Apply and Undo live in the same explicit-apply section; never commits a hidden older value, and applying a rejected draft is prevented by a disabled button.",
+      "route": "#/guided-prototype",
+      "job_entry": false,
+      "deep_link": true,
+      "url_params": [],
+      "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/guided/GuidedDescriptionReview.tsx",
+      "primary_action_id": "apply-now",
+      "states": ["default", "error"],
+      "zones": [
+        {
+          "id": "apply-0",
+          "label": "Current value and reviewed saved candidate; explicit practice-only destination",
+          "role": "ai_review",
+          "states": ["default", "error"],
+          "evidence_linked": true
+        },
+        {
+          "id": "apply-1",
+          "label": "Apply / Undo actions; blocked with explanation while pending or rejected",
+          "role": "form",
+          "states": ["default", "error"]
+        }
+      ]
+    },
+    {
+      "id": "result",
+      "kind": "screen",
+      "title": "Applied result and history",
+      "purpose": "Applied value is separate from draft; history preserves original revisions and shows an empty state before any decisions are recorded; the Reset practice trigger lives in the workspace header.",
+      "route": "#/guided-prototype",
+      "job_entry": false,
+      "deep_link": true,
+      "url_params": [],
+      "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/guided/GuidedPrototypePage.tsx",
+      "primary_action_id": "reset-open",
+      "states": ["default", "empty"],
+      "zones": [
+        {
+          "id": "result-0",
+          "label": "Applied description and unchanged original media scope",
+          "role": "content",
+          "states": ["default"]
+        },
+        {
+          "id": "result-1",
+          "label": "Chronological decision history; empty state before any decisions",
+          "role": "status",
+          "states": ["default", "empty"]
+        },
+        {
+          "id": "result-2",
+          "label": "Reset practice trigger in the workspace header",
+          "role": "nav",
+          "states": ["default"]
+        }
+      ]
+    },
+    {
+      "id": "reset",
+      "kind": "overlay",
+      "title": "Reset practice confirmation",
+      "purpose": "Radix dialog overlay; safe default Cancel preserves unsaved and saved edits; danger-styled Reset practice confirm clears session state and pending buffer then focuses the scenario.",
+      "route": "#/guided-prototype",
+      "job_entry": false,
+      "deep_link": false,
+      "url_params": [],
+      "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/guided/GuidedResetDialog.tsx",
+      "primary_action_id": "keep",
+      "states": ["default"],
+      "zones": [
+        {
+          "id": "reset-0",
+          "label": "Explicit effects: remove practice changes, preserve original WordPress attachment",
+          "role": "content",
+          "states": ["default"]
+        },
+        {
+          "id": "reset-1",
+          "label": "Cancel / Reset practice; Escape cancels",
+          "role": "form",
+          "states": ["default"]
+        }
+      ]
+    },
+    {
+      "id": "image-fallback",
+      "kind": "screen",
+      "title": "Image unavailable, text evidence remains",
+      "purpose": "Image load failure does not invent a rendered photograph or prevent practice decisions.",
+      "route": "#/guided-prototype",
+      "job_entry": false,
+      "deep_link": true,
+      "url_params": [],
+      "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/guided/GuidedSamplePhoto.tsx",
+      "primary_action_id": null,
+      "states": ["default"],
+      "zones": [
+        {
+          "id": "image-fallback-0",
+          "label": "Visible image unavailable explanation and independent visual facts",
+          "role": "status",
+          "states": ["default"]
+        },
+        {
+          "id": "image-fallback-1",
+          "label": "Sample record and text-based review remain available",
+          "role": "ai_review",
+          "states": ["default"],
+          "evidence_linked": true
+        }
+      ]
+    },
+    {
+      "id": "case-study",
+      "kind": "exit",
+      "title": "Authoritative case study",
+      "purpose": "External destination in a new tab; browser owns network failure; closing it returns to the practice tab.",
+      "route": "https://darce.xyz/projects/altcontext/",
+      "job_entry": false,
+      "deep_link": true,
+      "url_params": [],
+      "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/GuidedPrototypeEntrance.tsx",
+      "primary_action_id": null,
+      "states": ["default"],
+      "zones": [
+        {
+          "id": "case-study-0",
+          "label": "Case study content",
+          "role": "content",
+          "states": ["default"]
+        }
+      ]
+    }
+  ],
+  "actions": [
+    {
+      "id": "open",
+      "screen_id": "intro",
+      "verb": "Start the guided walkthrough",
+      "target": "guide",
+      "hierarchy": "primary",
+      "costly": false,
+      "irreversible": false
+    },
+    {
+      "id": "toggle-guide",
+      "screen_id": "guide",
+      "verb": "Show guide / Hide guide",
+      "target": "guide",
+      "hierarchy": "secondary",
+      "costly": false,
+      "irreversible": false
+    },
+    {
+      "id": "skip-guide",
+      "screen_id": "guide",
+      "verb": "Skip guide to current section",
+      "target": "evidence",
+      "hierarchy": "tertiary",
+      "costly": false,
+      "irreversible": false
+    },
+    {
+      "id": "guide-step",
+      "screen_id": "guide",
+      "verb": "Jump to a guide step (understand/identity/review/apply)",
+      "target": "draft",
+      "hierarchy": "secondary",
+      "costly": false,
+      "irreversible": false
+    },
+    {
+      "id": "end-guide",
+      "screen_id": "guide",
+      "verb": "End guide",
+      "target": "evidence",
+      "hierarchy": "tertiary",
+      "costly": false,
+      "irreversible": false
+    },
+    {
+      "id": "confirm",
+      "screen_id": "draft",
+      "verb": "Confirm Keanu Reeves",
+      "target": "draft",
+      "hierarchy": "secondary",
+      "costly": false,
+      "irreversible": false
+    },
+    {
+      "id": "unnamed",
+      "screen_id": "draft",
+      "verb": "Keep the person unidentified",
+      "target": "draft",
+      "hierarchy": "tertiary",
+      "costly": false,
+      "irreversible": false
+    },
+    {
+      "id": "save",
+      "screen_id": "draft",
+      "verb": "Save description edit",
+      "target": "apply",
+      "hierarchy": "primary",
+      "costly": false,
+      "irreversible": false
+    },
+    {
+      "id": "discard",
+      "screen_id": "draft",
+      "verb": "Discard unsaved edit",
+      "target": "draft",
+      "hierarchy": "tertiary",
+      "costly": false,
+      "irreversible": false
+    },
+    {
+      "id": "reject",
+      "screen_id": "draft",
+      "verb": "Reject draft",
+      "target": "draft",
+      "hierarchy": "secondary",
+      "costly": false,
+      "irreversible": false
+    },
+    {
+      "id": "apply-now",
+      "screen_id": "apply",
+      "verb": "Apply to practice copy",
+      "target": "result",
+      "hierarchy": "primary",
+      "costly": false,
+      "irreversible": false
+    },
+    {
+      "id": "undo",
+      "screen_id": "apply",
+      "verb": "Undo practice apply",
+      "target": "apply",
+      "hierarchy": "tertiary",
+      "costly": false,
+      "irreversible": false
+    },
+    {
+      "id": "reset-open",
+      "screen_id": "result",
+      "verb": "Reset practice",
+      "target": "reset",
+      "hierarchy": "tertiary",
+      "costly": false,
+      "irreversible": false
+    },
+    {
+      "id": "keep",
+      "screen_id": "reset",
+      "verb": "Cancel",
+      "target": "draft",
+      "hierarchy": "primary",
+      "costly": false,
+      "irreversible": false
+    },
+    {
+      "id": "case",
+      "screen_id": "intro",
+      "verb": "Read the case study",
+      "target": "case-study",
+      "hierarchy": "secondary",
+      "costly": false,
+      "irreversible": false
+    },
+    {
+      "id": "reset-confirm",
+      "screen_id": "reset",
+      "verb": "Reset practice",
+      "target": "evidence",
+      "hierarchy": "destructive",
+      "costly": false,
+      "irreversible": true,
+      "preview_required": true
+    }
+  ],
+  "flows": [
+    {
+      "id": "named",
+      "job": "review",
+      "label": "Confirmed identity woven into description, reviewed and applied",
+      "steps": [
+        {
+          "screen_id": "intro"
+        },
+        {
+          "screen_id": "guide"
+        },
+        {
+          "screen_id": "evidence"
+        },
+        {
+          "screen_id": "draft"
+        },
+        {
+          "screen_id": "apply"
+        },
+        {
+          "screen_id": "result"
+        }
+      ]
+    },
+    {
+      "id": "unnamed",
+      "job": "review",
+      "label": "Unresolved identity keeps description generic",
+      "steps": [
+        {
+          "screen_id": "evidence"
+        },
+        {
+          "screen_id": "draft"
+        },
+        {
+          "screen_id": "apply"
+        },
+        {
+          "screen_id": "result"
+        }
+      ]
+    },
+    {
+      "id": "pending",
+      "job": "review",
+      "label": "Pending edit cannot apply old candidate",
+      "steps": [
+        {
+          "screen_id": "draft"
+        },
+        {
+          "screen_id": "apply"
+        },
+        {
+          "screen_id": "result"
+        }
+      ]
+    },
+    {
+      "id": "undo-flow",
+      "job": "recover",
+      "label": "Apply two revisions and undo in order",
+      "steps": [
+        {
+          "screen_id": "draft"
+        },
+        {
+          "screen_id": "apply"
+        },
+        {
+          "screen_id": "result"
+        },
+        {
+          "screen_id": "draft"
+        },
+        {
+          "screen_id": "apply"
+        },
+        {
+          "screen_id": "result"
+        },
+        {
+          "screen_id": "apply"
+        }
+      ]
+    },
+    {
+      "id": "reset-flow",
+      "job": "recover",
+      "label": "Cancel or confirm reset safely",
+      "steps": [
+        {
+          "screen_id": "draft"
+        },
+        {
+          "screen_id": "reset"
+        },
+        {
+          "screen_id": "evidence"
+        }
+      ]
+    },
+    {
+      "id": "image-error",
+      "job": "review",
+      "label": "Text fallback retains review path",
+      "steps": [
+        {
+          "screen_id": "image-fallback"
+        },
+        {
+          "screen_id": "draft"
+        },
+        {
+          "screen_id": "apply"
+        }
+      ]
+    }
+  ],
+  "open_questions": [],
+  "not_doing": [
+    "Public homepage or marketing deployment",
+    "Guest-session authentication or credentials settings",
+    "Live generation",
+    "Multi-scenario library and production privacy settings",
+    "Full WordPress or screen-reader conformance claim from component-only browser tests"
+  ]
+}

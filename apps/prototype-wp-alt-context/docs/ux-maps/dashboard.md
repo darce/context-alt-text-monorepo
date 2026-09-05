@@ -194,7 +194,8 @@ There is no page-wide loading replacement. The hero and orientation can remain v
 +------------------------------------------------------------+
 | Library Coverage                                           |
 |   Loading coverage insights…                               |
-|   (progress bar and [Fix missing descriptions] render rega…|
+|   progress bar remains available while coverage loads      |
+|   [Fix missing descriptions]                               |
 +------------------------------------------------------------+
 | Recent Activity                                            |
 |   History area remains in its hook-provided state          |
@@ -220,7 +221,8 @@ Identity Recognition actually has two distinct, independently-triggered retry co
 +------------------------------------------------------------+
 | Identity Recognition                                       |
 |   Unable to load identity stats.             [Retry]       |
-|   (or) Identity stats are unavailable. [Retry identity sta…|
+|   (or) Identity stats are unavailable.                     |
+|   [Retry identity stats]                                   |
 +------------------------------------------------------------+
 | Library Coverage                                           |
 |   Coverage counters and [Fix missing descriptions]         |
@@ -233,7 +235,8 @@ Identity Recognition actually has two distinct, independently-triggered retry co
 +------------------------------------------------------------+
 | Data Retention                                             |
 |   Retention status could not load. Check the connection    |
-|   on the Settings page.                      [Open Data Re…|
+|   on the Settings page.                                    |
+|   [Open Data Retention]                                    |
 +------------------------------------------------------------+
 ```
 
@@ -250,7 +253,8 @@ Degraded is an intact first_named dashboard with an attention-bearing sync state
 | Sync Health                          (attention / offline) |
 |   Mirror is out of sync; pending / conflicts / failures    |
 |   [Open Review Queue]                                      |
-|   [Reset mirror] [Open Conflict Inbox] [Open Failed Sync Q…|
+|   [Reset mirror] [Open Conflict Inbox]                     |
+|   [Open Failed Sync Queue]                                 |
 +------------------------------------------------------------+
 | Identity Recognition                                       |
 |   People 24 | Assigned 20 | Pending Review 0               |
@@ -533,7 +537,7 @@ Zone labels (verbatim):
 - Data Retention entry
 - Roster entry
 
-Screen states: default loading error first_time degraded empty
+States (all zones and screens): default loading error first_time degraded empty
 
 ## Not doing
 

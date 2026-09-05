@@ -287,7 +287,7 @@ const readLockOwnership = (lockDir: string): DirectoryLockOwnership | null => {
       Number.isSafeInteger(pid) &&
       pid > 0 &&
       typeof startToken === 'string' &&
-      startToken.length > 0 &&
+      isValidProcessStartToken(startToken) &&
       typeof nonce === 'string' &&
       nonce.length > 0
       ? { pid, startToken, nonce }
@@ -297,19 +297,36 @@ const readLockOwnership = (lockDir: string): DirectoryLockOwnership | null => {
   }
 };
 
+/**
+ * Lock identities are local to one host, so metadata from another platform (or an older,
+ * unversioned writer) is not authoritative. In particular, an arbitrary non-empty token must
+ * never turn a live PID into evidence of PID reuse.
+ */
+export const isValidProcessStartToken = (startToken: string): boolean => {
+  if (process.platform === 'linux') {
+    return /^v1:linux:[0-9]+$/.test(startToken);
+  }
+  const platformPrefix = `v1:${process.platform}:`;
+  return startToken.startsWith(platformPrefix) && /^[A-Za-z0-9_-]+$/.test(startToken.slice(platformPrefix.length));
+};
+
 const processStartToken = (pid: number): string | null => {
   try {
     if (process.platform === 'linux') {
       const stat = readFileSync(`/proc/${pid}/stat`, 'utf8');
       const afterCommand = stat.slice(stat.lastIndexOf(')') + 2).trim().split(/\s+/);
       // `afterCommand[0]` is field 3 (state); field 22 is the kernel process start time.
-      return afterCommand.length >= 20 ? `linux:${afterCommand[19]}` : null;
+      return afterCommand.length >= 20 && /^[0-9]+$/.test(afterCommand[19])
+        ? `v1:linux:${afterCommand[19]}`
+        : null;
     }
     const started = execFileSync('ps', ['-o', 'lstart=', '-p', String(pid)], {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'ignore'],
     }).trim();
-    return started === '' ? null : `${process.platform}:${started}`;
+    return started === ''
+      ? null
+      : `v1:${process.platform}:${Buffer.from(started, 'utf8').toString('base64url')}`;
   } catch {
     return null;
   }
@@ -463,10 +480,11 @@ export const runWithLockHeartbeat = <T>(
   operation: () => T,
   heartbeatMs: number = LOCK_HEARTBEAT_MS,
 ): T => {
+  const readyPath = join(lockDir, `.heartbeat-${ownership.nonce}.ready`);
   const heartbeatSource = String.raw`
 const fs = require('node:fs');
 const path = require('node:path');
-const [lockDir, expectedToken, intervalText] = process.argv.slice(1);
+const [lockDir, expectedToken, intervalText, readyPath] = process.argv.slice(1);
 const expectedOwner = JSON.parse(expectedToken);
 const ownerPath = path.join(lockDir, ${JSON.stringify(LOCK_OWNER_FILE)});
 const beat = () => {
@@ -479,19 +497,29 @@ const beat = () => {
   } catch { process.exit(0); }
 };
 beat();
+fs.writeFileSync(readyPath, 'ready');
 setInterval(beat, Number(intervalText)).unref();
 setInterval(() => {}, 0x7fffffff);
 `;
   const token = JSON.stringify(ownership);
   const heartbeat = spawn(
     process.execPath,
-    ['-e', heartbeatSource, lockDir, token, String(heartbeatMs)],
+    ['-e', heartbeatSource, lockDir, token, String(heartbeatMs), readyPath],
     { stdio: 'ignore' },
   );
   try {
+    const readyTimeoutMs = Math.max(5_000, heartbeatMs * 5);
+    const readyDeadline = Date.now() + readyTimeoutMs;
+    while (!existsSync(readyPath)) {
+      if (Date.now() >= readyDeadline) {
+        throw new Error(`Lock heartbeat did not become ready within ${readyTimeoutMs}ms.`);
+      }
+      sleepSync(10);
+    }
     return operation();
   } finally {
     heartbeat.kill();
+    rmSync(readyPath, { force: true });
   }
 };
 
@@ -504,31 +532,117 @@ export class ProductionCssBuildTimeoutError extends Error {
   }
 }
 
+export class ProductionCssBuildTeardownError extends Error {
+  readonly code = 'RES-13-TEARDOWN';
+
+  constructor(timeoutMs: number) {
+    super(`Production CSS process group survived SIGKILL for ${timeoutMs}ms (RES-13-TEARDOWN).`);
+    this.name = 'ProductionCssBuildTeardownError';
+  }
+}
+
+type ProcessSignal = NodeJS.Signals | 0;
+
 export interface ProcessGroupWaitOptions {
   readonly timeoutMs: number;
   readonly terminationGraceMs?: number;
+  readonly killConfirmationMs?: number;
   readonly now?: () => number;
   readonly sleep?: (milliseconds: number) => void;
   readonly readExitCode: () => number | null;
+  /** Test seam retained for deterministic supervision tests; it represents the whole group. */
   readonly isProcessAlive?: (pid: number) => boolean;
-  readonly sendSignal?: (pidOrGroup: number, signal: NodeJS.Signals) => void;
+  readonly isProcessGroupAlive?: (processGroupId: number) => boolean;
+  readonly sendSignal?: (pidOrGroup: number, signal: ProcessSignal) => void;
 }
 
-const pidIsAlive = (pid: number): boolean => {
+const processGroupHasNonZombieMember = (processGroupId: number): boolean => {
   try {
     if (process.platform === 'linux') {
-      const stat = readFileSync(`/proc/${pid}/stat`, 'utf8');
-      const state = stat.slice(stat.lastIndexOf(')') + 2).trim().split(/\s+/, 1)[0];
-      return state !== 'Z';
+      for (const entry of readdirSync('/proc')) {
+        if (!/^[0-9]+$/.test(entry)) continue;
+        try {
+          const stat = readFileSync(`/proc/${entry}/stat`, 'utf8');
+          const fields = stat.slice(stat.lastIndexOf(')') + 2).trim().split(/\s+/);
+          // fields[0] is state (field 3), fields[2] is process group ID (field 5).
+          if (fields[0] !== 'Z' && Number(fields[2]) === processGroupId) return true;
+        } catch (error) {
+          // Processes can disappear while /proc is enumerated. Any other read failure is not
+          // evidence that a kill(2)-visible group is safely empty.
+          if ((error as NodeJS.ErrnoException).code !== 'ENOENT') return true;
+        }
+      }
+      return false;
     }
-    const state = execFileSync('ps', ['-o', 'stat=', '-p', String(pid)], {
+    const states = execFileSync('ps', ['-o', 'stat=', '-g', String(processGroupId)], {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'ignore'],
-    }).trim();
-    return state !== '' && !state.startsWith('Z');
+    })
+      .trim()
+      .split(/\s+/);
+    return states.some((state) => state !== '' && !state.startsWith('Z'));
+  } catch {
+    // The kill(2) probe already proved existence; an unavailable inspection mechanism must fail
+    // closed rather than declaring teardown complete.
+    return true;
+  }
+};
+
+const processGroupExistsViaSignal = (
+  processGroupId: number,
+  sendSignal: (pidOrGroup: number, signal: ProcessSignal) => void,
+): boolean => {
+  try {
+    sendSignal(-processGroupId, 0);
   } catch (error) {
-    const code = (error as NodeJS.ErrnoException).code;
-    return code !== 'ESRCH' && code !== 'ENOENT';
+    if ((error as NodeJS.ErrnoException).code === 'ESRCH') return false;
+    // EPERM still proves that the group exists; unexpected errors fail closed as alive.
+    return true;
+  }
+  return true;
+};
+
+const processGroupIsAlive = (
+  processGroupId: number,
+  sendSignal: (pidOrGroup: number, signal: ProcessSignal) => void,
+): boolean => {
+  if (!processGroupExistsViaSignal(processGroupId, sendSignal)) return false;
+  // kill(2) reports zombie-only groups as existing. They cannot execute or retain resources, and
+  // the synchronous parent cannot reap its leader until this function returns to the event loop.
+  return processGroupHasNonZombieMember(processGroupId);
+};
+
+const terminateProcessGroup = (
+  processGroupId: number,
+  options: ProcessGroupWaitOptions,
+  isGroupAlive: () => boolean,
+  now: () => number,
+  pause: (milliseconds: number) => void,
+  sendSignal: (pidOrGroup: number, signal: ProcessSignal) => void,
+): void => {
+  const signalGroup = (signal: NodeJS.Signals): void => {
+    try {
+      sendSignal(-processGroupId, signal);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error;
+    }
+  };
+
+  signalGroup('SIGTERM');
+  const termDeadline = now() + (options.terminationGraceMs ?? BUILD_TERMINATION_GRACE_MS);
+  while (isGroupAlive() && now() < termDeadline) {
+    pause(Math.min(25, Math.max(1, termDeadline - now())));
+  }
+  if (!isGroupAlive()) return;
+
+  signalGroup('SIGKILL');
+  const killConfirmationMs = options.killConfirmationMs ?? BUILD_TERMINATION_GRACE_MS;
+  const killDeadline = now() + killConfirmationMs;
+  while (isGroupAlive() && now() < killDeadline) {
+    pause(Math.min(25, Math.max(1, killDeadline - now())));
+  }
+  if (isGroupAlive()) {
+    throw new ProductionCssBuildTeardownError(killConfirmationMs);
   }
 };
 
@@ -536,17 +650,24 @@ const pidIsAlive = (pid: number): boolean => {
 export const waitForProcessGroup = (pid: number, options: ProcessGroupWaitOptions): number => {
   const now = options.now ?? Date.now;
   const pause = options.sleep ?? sleepSync;
-  const isAlive = options.isProcessAlive ?? pidIsAlive;
   const sendSignal = options.sendSignal ?? ((pidOrGroup, signal) => process.kill(pidOrGroup, signal));
+  const isGroupAlive =
+    options.isProcessGroupAlive ??
+    options.isProcessAlive ??
+    (() =>
+      options.sendSignal === undefined
+        ? processGroupIsAlive(pid, sendSignal)
+        : processGroupExistsViaSignal(pid, sendSignal));
   const deadline = now() + options.timeoutMs;
 
   for (;;) {
     const exitCode = options.readExitCode();
-    const alive = isAlive(pid);
-    if (exitCode !== null && !alive) {
+    const groupAlive = isGroupAlive(pid);
+    if (exitCode !== null) {
+      if (groupAlive) terminateProcessGroup(pid, options, () => isGroupAlive(pid), now, pause, sendSignal);
       return exitCode;
     }
-    if (!alive) {
+    if (!groupAlive) {
       throw new Error('Production CSS build exited without publishing an exit status.');
     }
     if (now() >= deadline) {
@@ -555,17 +676,7 @@ export const waitForProcessGroup = (pid: number, options: ProcessGroupWaitOption
     pause(Math.min(25, Math.max(1, deadline - now())));
   }
 
-  sendSignal(-pid, 'SIGTERM');
-  const killDeadline = now() + (options.terminationGraceMs ?? BUILD_TERMINATION_GRACE_MS);
-  while (isAlive(pid) && now() < killDeadline) {
-    pause(Math.min(25, Math.max(1, killDeadline - now())));
-  }
-  if (isAlive(pid)) {
-    sendSignal(-pid, 'SIGKILL');
-    while (isAlive(pid)) {
-      pause(10);
-    }
-  }
+  terminateProcessGroup(pid, options, () => isGroupAlive(pid), now, pause, sendSignal);
   throw new ProductionCssBuildTimeoutError(options.timeoutMs);
 };
 

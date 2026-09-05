@@ -97,14 +97,26 @@ if [[ "$remote_body" == *"activate_gpu_lifecycle_timers"* ]]; then
       remote_body=$(printf '%s\n' "$remote_body" | delete-activation-call)
       ;;
   esac
-  remote_body=${remote_body//\/opt\/acx-gpu/$FAKE_OPT_ACX_GPU}
-  remote_body=${remote_body//\/etc\/systemd\/system/$ACX_EFFECTIVE_SYSTEMD_DIR}
-  remote_body=${remote_body//\/etc\/acx/$FAKE_ETC_ACX}
-  remote_body=${remote_body//\/etc\/tmpfiles.d/$FAKE_ETC_TMPFILES}
-  remote_body=${remote_body//\/run\/acx-write/$FAKE_RUN_ACX_WRITE}
-  remote_body=${remote_body//\/run\/acx-gpu/$FAKE_RUN_ACX_GPU}
-  remote_body=${remote_body//\/run\/acx/$FAKE_RUN_ACX}
-  remote_body=${remote_body//\/var\/lib\/acx-gpu/$FAKE_VAR_LIB_ACX_GPU}
+  # Bash 3.2 bulk substitutions are extremely slow in UTF-8 locales. Rewrite
+  # in one Python pass, matching longer paths before their shared prefixes.
+  remote_body=$(printf '%s\n' "$remote_body" | python3 -c '
+import os
+import re
+import sys
+
+paths = {
+    "/opt/acx-gpu": "FAKE_OPT_ACX_GPU",
+    "/etc/systemd/system": "ACX_EFFECTIVE_SYSTEMD_DIR",
+    "/etc/acx": "FAKE_ETC_ACX",
+    "/etc/tmpfiles.d": "FAKE_ETC_TMPFILES",
+    "/run/acx-write": "FAKE_RUN_ACX_WRITE",
+    "/run/acx-gpu": "FAKE_RUN_ACX_GPU",
+    "/run/acx": "FAKE_RUN_ACX",
+    "/var/lib/acx-gpu": "FAKE_VAR_LIB_ACX_GPU",
+}
+pattern = "|".join(re.escape(path) for path in sorted(paths, key=len, reverse=True))
+sys.stdout.write(re.sub(pattern, lambda match: os.environ[paths[match[0]]], sys.stdin.read()))
+')
   bash --noprofile --norc -euo pipefail -c "$remote_body"
 fi
 """,
@@ -216,6 +228,8 @@ printf '\n' >>"$FAKE_TRANSPORT_LOG"
             "OCI_USER": "ci-user",
             "OCI_HOST": "backend.test",
             "GPU_INSTANCE_ID": instance_id,
+            # A stalled fake transport must fail quickly on every host.
+            "REMOTE_COMMAND_TIMEOUT_SECONDS": "20",
             "PATH": f"{fake_bin}:{os.environ['PATH']}",
             "FAKE_TRANSPORT_LOG": str(transport_log),
             "FAKE_REMOTE_BODY_LOG": str(tmp_path / "remote-body.sh"),
@@ -256,6 +270,7 @@ printf '\n' >>"$FAKE_TRANSPORT_LOG"
         text=True,
         check=False,
     )
+    assert not re.search(r"error: .* exceeded \d+s", result.stderr), result.stderr
     calls = transport_log.read_text(encoding="utf-8") if transport_log.exists() else ""
     return result, calls
 
@@ -401,6 +416,7 @@ def test_install_fails_when_timer_verification_finds_an_inactive_timer(tmp_path:
     )
 
     assert result.returncode != 0
+    assert "exceeded 20s" not in result.stderr
     assert "acx-gpu-start.timer" in calls
     assert "acx-gpu-reap.timer" in calls
     assert "systemctl <is-enabled>" in calls
@@ -587,6 +603,17 @@ def test_rendered_remote_body_avoids_nonportable_shell_constructs(tmp_path: Path
         r"(?:!=|=)\s+\$[^\n]*\]",  # unquoted comparison operand
     ):
         assert not re.search(pattern, body), f"nonportable rendered shell: {pattern}"
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_fake_ssh_avoids_locale_sensitive_bulk_shell_rewrites(tmp_path: Path) -> None:
+    result, _ = _run_lifecycle(
+        tmp_path, enabled=True, ready_url="http://gpu.test:8000/health", dry_run=False,
+    )
+    transport = (tmp_path / "bin" / "ssh").read_text(encoding="utf-8")
+    # Bash 3.2 in a UTF-8 locale takes tens of seconds per substitution on
+    # the rendered body; even a successful Linux run must reject that path.
+    assert "${remote_body//" not in transport
     assert result.returncode == 0, result.stdout + result.stderr
 
 

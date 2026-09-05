@@ -31,7 +31,7 @@ Keep the portfolio and resume linked to the [AltContext case study](https://darc
 
 | Action                                                            | Expected result                                                                                                                         |
 | ----------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
-| Choose **Open a saved example**                                   | The guide opens and receives focus. No inference job starts.                                                                            |
+| Choose **Start the guided walkthrough**                           | The guide opens and receives focus. No inference job starts.                                                                            |
 | Choose **Confirm identity** in the guide                          | The identity section scrolls into view and receives focus.                                                                              |
 | Inspect the source record, then choose **Confirm Keanu Reeves**   | The proposed description uses the supplied name; generic visual description and page context remain visible. Applied text is unchanged. |
 | Edit **Description draft** to `Keanu Reeves wears a grey jacket.` | A pending-edit notice appears. Apply is unavailable with a visible explanation.                                                         |
@@ -97,7 +97,7 @@ The machine-readable inventory is [guided-prototype.uxmap.json](ux-maps/guided-p
 +-----------------------------------------------------------+
 | ALTCONTEXT - guided WordPress prototype                    |
 | Saved example available. Live generation unavailable.      |
-| [Open a saved example]    [Read the case study]             |
+| [Start the guided walkthrough]    [Read the case study]             |
 | Practice changes stay in memory.                          |
 +-----------------------------------------------------------+
 | GUIDE: Context > Identity > Review > Apply                 |

@@ -4,6 +4,7 @@ import {
   applyGuidedCandidate,
   confirmGuidedIdentity,
   createGuidedScenario,
+  GUIDED_SCENARIO_ORIGIN_LABELS,
   leaveGuidedIdentityUnidentified,
   rejectGuidedCandidate,
   saveGuidedEdit,
@@ -12,7 +13,12 @@ import {
 } from '../../guidedPrototype/state';
 import { GuidedPrototypeEntrance } from '../GuidedPrototypeEntrance';
 import { GuidedDescriptionReview } from './GuidedDescriptionReview';
-import { focusGuidedSection, GuidedPrototypeGuide, type GuidedGuideStep } from './GuidedPrototypeGuide';
+import {
+  focusGuidedSection,
+  guidedStepLabel,
+  GuidedPrototypeGuide,
+  type GuidedGuideStep,
+} from './GuidedPrototypeGuide';
 import { GuidedResetDialog } from './GuidedResetDialog';
 import { GuidedSamplePhoto } from './GuidedSamplePhoto';
 
@@ -53,7 +59,7 @@ export const GuidedPrototypePage = (): React.JSX.Element => {
 
   const handleGuideSelect = (step: GuidedGuideStep): void => {
     setActiveStep(step);
-    setFeedback(`Guide moved to ${step}.`);
+    setFeedback(`Guide moved to: ${guidedStepLabel(step)}.`);
   };
 
   const handleGuideEnd = (): void => {
@@ -131,12 +137,12 @@ export const GuidedPrototypePage = (): React.JSX.Element => {
   };
 
   const handleUndo = (): void => {
-    updateScenario((current) => undoGuidedApplication(current), 'Application undone.', 'review');
+    updateScenario((current) => undoGuidedApplication(current), 'Application undone.', 'apply');
     focusGuidedSection('apply');
   };
 
   return (
-    <main className="acx-guided-page" aria-labelledby="acx-guided-page-title">
+    <main className="acx-guided-page" aria-labelledby="acx-guided-entrance-title">
       <GuidedPrototypeEntrance onBegin={beginGuide} />
       <GuidedPrototypeGuide
         activeStep={activeStep}
@@ -171,7 +177,7 @@ export const GuidedPrototypePage = (): React.JSX.Element => {
             <dl>
               <div>
                 <dt>Scenario origin</dt>
-                <dd>{scenario.origin}</dd>
+                <dd>{GUIDED_SCENARIO_ORIGIN_LABELS[scenario.origin]}</dd>
               </div>
               <div>
                 <dt>Page</dt>

@@ -35,7 +35,9 @@ export const GuidedSamplePhoto = ({ mediaAltText, credit }: GuidedSamplePhotoPro
       )}
       <figcaption>
         <strong>Original media · supplied sample photo</strong>
-        <span>{mediaAltText}</span>
+        <span>
+          <strong>Current alt text on the page:</strong> {mediaAltText}
+        </span>
         <span>Photo credit: {credit}.</span>
         <span>Identity evidence comes from the sample record; it was not inferred from the image.</span>
       </figcaption>

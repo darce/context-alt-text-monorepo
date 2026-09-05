@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 
-import { getLastGuidedApplication } from '../../guidedPrototype/state';
+import { getLastGuidedApplication, GUIDED_SCENARIO_ORIGIN_LABELS } from '../../guidedPrototype/state';
 import type { GuidedCandidateStatus, GuidedIdentity, GuidedScenario } from '../../guidedPrototype/state';
 
 export interface GuidedDescriptionReviewProps {
@@ -173,6 +173,7 @@ export const GuidedDescriptionReview = ({
         </div>
         <div>
           <h3>Proposed draft</h3>
+          <p className="acx-guided-review__origin">Draft origin: {GUIDED_SCENARIO_ORIGIN_LABELS[scenario.origin]}</p>
           <label htmlFor="guided-description-draft">Description draft</label>
           <textarea
             ref={editorRef}
@@ -189,6 +190,12 @@ export const GuidedDescriptionReview = ({
           {editError ? (
             <p id="guided-description-draft-error" className="acx-guided-review__field-error" role="alert">
               {editError}
+            </p>
+          ) : null}
+          {scenario.candidate.status === 'rejected' && !hasUnsavedEdit ? (
+            <p className="acx-guided-review__rejected-notice">
+              This draft is rejected, so Apply is unavailable. Edit and save the description, or change the identity
+              decision, to get a fresh draft to review.
             </p>
           ) : null}
           {hasUnsavedEdit ? (

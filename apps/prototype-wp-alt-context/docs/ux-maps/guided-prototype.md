@@ -18,7 +18,8 @@
 | id | kind | route | title |
 | --- | --- | --- | --- |
 | `intro` | screen | `#/guided-prototype` | Guided prototype entrance |
-| `evidence` | screen | `#/guided-prototype` | Image, context and identity |
+| `guide` | screen | `#/guided-prototype` | Inline guided review nav |
+| `evidence` | screen | `#/guided-prototype` | Image and page context |
 | `draft` | screen | `#/guided-prototype` | Description review |
 | `apply` | screen | `#/guided-prototype` | Review exact application |
 | `result` | screen | `#/guided-prototype` | Applied result and history |
@@ -28,12 +29,13 @@
 
 ## Code references
 - `screen:intro` — `apps/prototype-wp-alt-context/js/admin/pages/GuidedPrototypeEntrance.tsx`
+- `screen:guide` — `apps/prototype-wp-alt-context/js/admin/pages/guided/GuidedPrototypeGuide.tsx`
 - `screen:evidence` — `apps/prototype-wp-alt-context/js/admin/pages/guided/GuidedPrototypePage.tsx`
 - `screen:draft` — `apps/prototype-wp-alt-context/js/admin/pages/guided/GuidedDescriptionReview.tsx`
 - `screen:apply` — `apps/prototype-wp-alt-context/js/admin/pages/guided/GuidedDescriptionReview.tsx`
 - `screen:result` — `apps/prototype-wp-alt-context/js/admin/pages/guided/GuidedPrototypePage.tsx`
-- `screen:reset` — `apps/prototype-wp-alt-context/js/admin/pages/guided/GuidedPrototypePage.tsx`
-- `screen:image-fallback` — `apps/prototype-wp-alt-context/js/admin/pages/guided/GuidedPrototypePage.tsx`
+- `screen:reset` — `apps/prototype-wp-alt-context/js/admin/pages/guided/GuidedResetDialog.tsx`
+- `screen:image-fallback` — `apps/prototype-wp-alt-context/js/admin/pages/guided/GuidedSamplePhoto.tsx`
 - `screen:case-study` — `apps/prototype-wp-alt-context/js/admin/pages/GuidedPrototypeEntrance.tsx`
 
 ### Guided prototype entrance (`intro`)
@@ -45,33 +47,49 @@
 +------------------------------------------------------------+
 | ZONES                                                      |
 |   - Branded heading, scope and current build status (cont… |
-|   - Open a saved example and case study exit (nav) states… |
+|   - Start the guided walkthrough and case study exit (nav… |
 +------------------------------------------------------------+
 | ACTIONS                                                    |
-|   [PRIMARY] Open a saved example -> evidence               |
+|   [PRIMARY] Start the guided walkthrough -> guide          |
 |   [secondary] Read the case study -> case-study            |
 +------------------------------------------------------------+
-| states: default | error                                    |
+| states: default                                            |
 +------------------------------------------------------------+
 ```
 
-### Image, context and identity (`evidence`)
+### Inline guided review nav (`guide`)
 
 ```
 +------------------------------------------------------------+
-| Image, context and identity  [screen]  #/guided-prototype  |
-| Inspect sample photograph/text equivalent and source reco… |
+| Inline guided review nav  [screen]  #/guided-prototype     |
+| Persistent inline nav shows the current step, lets you sh… |
 +------------------------------------------------------------+
 | ZONES                                                      |
-|   - Guide steps and jump to controls in document flow (na… |
-|   - Photograph with descriptive fallback, credited sample… |
-|   - Confirm identity / keep unidentified; recorded choice… |
+|   - Status bar: current step label, skip-to-current-secti… |
+|   - Expanded step list (understand/identity/review/apply)… |
 +------------------------------------------------------------+
 | ACTIONS                                                    |
-|   [PRIMARY] Confirm sample identity -> draft               |
-|   [secondary] Keep person unidentified -> draft            |
+|   [secondary] Show guide / Hide guide -> guide             |
+|   [secondary] Jump to a guide step (understand/identity/r… |
+|   [tertiary] End guide -> evidence                         |
+|   [tertiary] Skip guide to current section -> evidence     |
 +------------------------------------------------------------+
-| states: default | error                                    |
+| states: first_time | default                               |
++------------------------------------------------------------+
+```
+
+### Image and page context (`evidence`)
+
+```
++------------------------------------------------------------+
+| Image and page context  [screen]  #/guided-prototype       |
+| Inspect sample photograph/text equivalent, source record … |
++------------------------------------------------------------+
+| ZONES                                                      |
+|   - Photograph with descriptive fallback; figcaption show… |
+|   - Provenance list with humanised scenario-origin label,… |
++------------------------------------------------------------+
+| states: default                                            |
 +------------------------------------------------------------+
 ```
 
@@ -80,19 +98,21 @@
 ```
 +------------------------------------------------------------+
 | Description review  [screen]  #/guided-prototype           |
-| Saved draft and immutable visual-only baseline are distin… |
+| Identity evidence card, saved draft and immutable visual-… |
 +------------------------------------------------------------+
 | ZONES                                                      |
-|   - Generic visual description, identity and page context… |
-|   - Labelled editor with pending/saved/error/rejected fee… |
-|   - Save edit / discard / reject; Apply availability reas… |
+|   - Identity evidence card: confirm sample identity or le… |
+|   - Before (generic draft) vs Proposed draft with humanis… |
+|   - Labelled editor with save/discard/reject actions; inl… |
 +------------------------------------------------------------+
 | ACTIONS                                                    |
 |   [PRIMARY] Save description edit -> apply                 |
-|   [secondary] Discard unsaved changes -> draft             |
+|   [secondary] Confirm Keanu Reeves -> draft                |
 |   [secondary] Reject draft -> draft                        |
+|   [tertiary] Discard unsaved edit -> draft                 |
+|   [tertiary] Keep the person unidentified -> draft         |
 +------------------------------------------------------------+
-| states: default | edge_input | error                       |
+| states: default | error                                    |
 +------------------------------------------------------------+
 ```
 
@@ -105,10 +125,11 @@
 +------------------------------------------------------------+
 | ZONES                                                      |
 |   - Current value and reviewed saved candidate; explicit … |
-|   - Apply, blocked with explanation while pending or reje… |
+|   - Apply / Undo actions; blocked with explanation while … |
 +------------------------------------------------------------+
 | ACTIONS                                                    |
 |   [PRIMARY] Apply to practice copy -> result               |
+|   [tertiary] Undo practice apply -> apply                  |
 +------------------------------------------------------------+
 | states: default | error                                    |
 +------------------------------------------------------------+
@@ -123,14 +144,13 @@
 +------------------------------------------------------------+
 | ZONES                                                      |
 |   - Applied description and unchanged original media scop… |
-|   - Chronological decision history and prior text; undo a… |
-|   - Undo restores focus to stable Apply control (form) st… |
+|   - Chronological decision history; empty state before an… |
+|   - Reset practice trigger in the workspace header (nav) … |
 +------------------------------------------------------------+
 | ACTIONS                                                    |
-|   [PRIMARY] Undo practice apply -> apply                   |
-|   [secondary] Reset practice… -> reset                     |
+|   [tertiary] Reset practice -> reset                       |
 +------------------------------------------------------------+
-| states: default | error                                    |
+| states: default | empty                                    |
 +------------------------------------------------------------+
 ```
 
@@ -139,17 +159,17 @@
 ```
 +------------------------------------------------------------+
 | Reset practice confirmation  [overlay]  #/guided-prototype |
-| Safe default Keep; cancel preserves unsaved and saved edi… |
+| Radix dialog overlay; safe default Cancel preserves unsav… |
 +------------------------------------------------------------+
 | ZONES                                                      |
 |   - Explicit effects: remove practice changes, preserve o… |
-|   - Keep changes / Reset practice; Escape cancels (form) … |
+|   - Cancel / Reset practice; Escape cancels (form) states… |
 +------------------------------------------------------------+
 | ACTIONS                                                    |
-|   [PRIMARY] Keep changes -> draft                          |
+|   [PRIMARY] Cancel -> draft                                |
 |   [DESTRUCTIVE] Reset practice -> evidence (preview,irrev… |
 +------------------------------------------------------------+
-| states: default | error                                    |
+| states: default                                            |
 +------------------------------------------------------------+
 ```
 
@@ -164,10 +184,7 @@
 |   - Visible image unavailable explanation and independent… |
 |   - Sample record and text-based review remain available … |
 +------------------------------------------------------------+
-| ACTIONS                                                    |
-|   [PRIMARY] Continue with text evidence -> draft           |
-+------------------------------------------------------------+
-| states: default | error | offline                          |
+| states: default                                            |
 +------------------------------------------------------------+
 ```
 
@@ -176,12 +193,12 @@
 ```
 +------------------------------------------------------------+
 | Authoritative case study  [exit]  https://darce.xyz/proje… |
-| External destination; browser owns network failure; Back … |
+| External destination in a new tab; browser owns network f… |
 +------------------------------------------------------------+
 | ZONES                                                      |
-|   - Case study content (content) states=[default,error]    |
+|   - Case study content (content) states=[default]          |
 +------------------------------------------------------------+
-| states: default | offline | error                          |
+| states: default                                            |
 +------------------------------------------------------------+
 ```
 
@@ -192,8 +209,10 @@
 flowchart TD
   %% flow: Confirmed identity woven into description, reviewed and applied job=review
   n_intro["Guided prototype entrance (screen)"]
-  n_evidence["Image, context and identity (screen)"]
-  n_intro --> n_evidence
+  n_guide["Inline guided review nav (screen)"]
+  n_intro --> n_guide
+  n_evidence["Image and page context (screen)"]
+  n_guide --> n_evidence
   n_draft["Description review (screen)"]
   n_evidence --> n_draft
   n_apply["Review exact application (screen)"]
@@ -207,7 +226,7 @@ flowchart TD
 ```mermaid
 flowchart TD
   %% flow: Unresolved identity keeps description generic job=review
-  n_evidence["Image, context and identity (screen)"]
+  n_evidence["Image and page context (screen)"]
   n_draft["Description review (screen)"]
   n_evidence --> n_draft
   n_apply["Review exact application (screen)"]
@@ -252,7 +271,7 @@ flowchart TD
   n_draft["Description review (screen)"]
   n_reset["Reset practice confirmation (overlay)"]
   n_draft --> n_reset
-  n_evidence["Image, context and identity (screen)"]
+  n_evidence["Image and page context (screen)"]
   n_reset --> n_evidence
 ```
 

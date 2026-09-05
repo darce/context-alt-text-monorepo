@@ -526,6 +526,7 @@
   }
 
   &__unsaved-notice,
+  &__rejected-notice,
   &__apply-reason {
     margin-top: calc(var(--acx-space-8) * -1);
     color: var(--acx-color-warning-pill-text);
@@ -535,6 +536,12 @@
 
   &__apply-reason {
     margin-top: var(--acx-space-8);
+  }
+
+  &__origin {
+    margin-bottom: var(--acx-space-8);
+    color: var(--acx-color-text-muted);
+    font-size: var(--acx-text-sm);
   }
 
   &__apply {

@@ -81,6 +81,78 @@ const runFixtureProbe = (root: string, scenario: string, body: string): void => 
   expect(result.status).toBe(0);
 };
 
+describe('production build status cleanup', () => {
+  it('retains the teardown error and lock when signalling and status cleanup both fail', () => {
+    const root = mkdtempSync(join(tmpdir(), 'acx-status-cleanup-test-'));
+    try {
+      runFixtureProbe(root, 'status-cleanup', String.raw`
+const childProcess = await import('node:child_process');
+const originalSpawn = childProcess.default.spawn;
+const originalKill = process.kill;
+const originalRemove = fs.rmSync;
+const originalPath = process.env.PATH;
+const lockDir = join(root, '.lock');
+const ownership = fixture.tryAcquireDirectoryLock(lockDir);
+let supervisor;
+let supervisorExited;
+let statusRoot;
+let signalDenied = false;
+let cleanupFailed = false;
+fs.writeFileSync(join(root, 'npm'), '#!' + process.execPath + '\nprocess.exit(0);', { mode: 0o755 });
+process.env.PATH = root + ':' + originalPath;
+childProcess.default.spawn = (...args) => {
+  supervisor = originalSpawn(...args);
+  supervisorExited = new Promise(resolve => supervisor.once('exit', resolve));
+  return supervisor;
+};
+process.kill = (pid, signal) => {
+  if (pid === -supervisor?.pid && signal !== 0) {
+    signalDenied = true;
+    throw Object.assign(new Error('signal denied'), { code: 'EPERM' });
+  }
+  return originalKill(pid, signal);
+};
+fs.rmSync = (path, ...args) => {
+  if (typeof path === 'string' && path.includes('/acx-style-build-status-')) {
+    assert.ok(signalDenied, 'cleanup must fail after teardown signalling');
+    statusRoot = path;
+    cleanupFailed = true;
+    throw Object.assign(new Error('status cleanup failed'), { code: 'EIO' });
+  }
+  return originalRemove(path, ...args);
+};
+syncBuiltinESMExports();
+try {
+  let caught;
+  try {
+    fixture.runWithBuildLock(lockDir, ownership, () => fixture.runProductionBuild(join(root, 'out'), lockDir));
+  } catch (error) { caught = error; }
+  assert.ok(signalDenied && cleanupFailed, 'both failures must be exercised');
+  assert.equal(originalKill(-supervisor.pid, 0), true, 'the supervised group must still be alive');
+  assert.ok(fs.existsSync(join(lockDir, '.build-in-progress')), 'uncertain teardown must retain the guard');
+  assert.equal(fixture.tryAcquireDirectoryLock(lockDir, { now: () => Date.now() + 1000000 }), null,
+    'a successor must not acquire while the previous group is alive');
+  assert.ok(caught instanceof fixture.ProductionCssBuildTeardownError, 'cleanup must preserve the teardown error');
+  assert.equal(caught.cause.code, 'EPERM');
+} finally {
+  childProcess.default.spawn = originalSpawn;
+  process.kill = originalKill;
+  fs.rmSync = originalRemove;
+  process.env.PATH = originalPath;
+  syncBuiltinESMExports();
+  if (supervisor?.pid) {
+    try { originalKill(-supervisor.pid, 'SIGKILL'); } catch {}
+    await supervisorExited;
+  }
+  if (statusRoot) originalRemove(statusRoot, { recursive: true, force: true });
+}
+`);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
 describe('supervisor lifetime and owner death', () => {
   it.each(['owner-dies-running', 'owner-dies-finished', 'deadline'])(
     'tears down the whole group and recovers the lock after %s',

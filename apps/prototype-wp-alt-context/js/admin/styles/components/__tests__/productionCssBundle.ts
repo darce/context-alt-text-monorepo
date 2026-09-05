@@ -1076,6 +1076,7 @@ child.once('exit', (code, signal) => {
     rmSync(statusRoot, { recursive: true, force: true });
     throw new Error('Failed to start the detached production CSS build process group.');
   }
+  let teardownUncertain = false;
   try {
     const supervisorStartToken = processStartToken(supervisor.pid);
     const exitCode = waitForProcessGroup(supervisor.pid, {
@@ -1095,8 +1096,16 @@ child.once('exit', (code, signal) => {
     if (exitCode !== 0) {
       throw new Error(`Production CSS build exited with status ${exitCode}.`);
     }
+  } catch (error) {
+    teardownUncertain = error instanceof ProductionCssBuildTeardownError;
+    throw error;
   } finally {
-    rmSync(statusRoot, { recursive: true, force: true });
+    try {
+      rmSync(statusRoot, { recursive: true, force: true });
+    } catch (cleanupError) {
+      // Preserve the teardown error so runWithBuildLock keeps the surviving group fenced.
+      if (!teardownUncertain) throw cleanupError;
+    }
   }
 };
 

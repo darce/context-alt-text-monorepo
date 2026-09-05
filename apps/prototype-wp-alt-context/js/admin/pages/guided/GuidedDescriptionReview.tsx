@@ -1,7 +1,9 @@
 import React, { useEffect, useRef, useState } from 'react';
 
-import { getLastGuidedApplication, GUIDED_SCENARIO_ORIGIN_LABELS } from '../../guidedPrototype/state';
-import type { GuidedCandidateStatus, GuidedIdentity, GuidedScenario } from '../../guidedPrototype/state';
+import { getLastGuidedApplication } from '../../guidedPrototype/state';
+import type { GuidedCandidateStatus, GuidedScenario } from '../../guidedPrototype/state';
+
+import { GuidedFaceMatchCard } from './GuidedFaceMatchCard';
 
 export interface GuidedDescriptionReviewProps {
   scenario: GuidedScenario;
@@ -14,24 +16,14 @@ export interface GuidedDescriptionReviewProps {
   onUndo: () => void;
 }
 
-const identityLabel = (identity: GuidedIdentity): string => {
-  if (identity.status === 'confirmed') {
-    return `${identity.name} confirmed from the sample record.`;
-  }
-  if (identity.status === 'unidentified') {
-    return 'Identity left unidentified.';
-  }
-  return 'Identity has not been confirmed.';
-};
-
 const candidateStatusLabel = (status: GuidedCandidateStatus): string => {
   if (status === 'edited') {
     return 'Edited by you';
   }
   if (status === 'rejected') {
-    return 'Rejected; the applied text is unchanged';
+    return 'Rejected. The saved text did not change';
   }
-  return 'Ready for your review';
+  return 'Ready for you to check';
 };
 
 export const GuidedDescriptionReview = ({
@@ -56,9 +48,6 @@ export const GuidedDescriptionReview = ({
   const appliedEvent = getLastGuidedApplication(scenario.history);
   const hasUnsavedEdit = editValue !== scenario.candidate.text;
   const unsavedEditReasonId = 'guided-description-unsaved-reason';
-  const identityChangeReasonId = 'guided-identity-change-reason';
-  const identityConfirmed = scenario.identity.status === 'confirmed';
-  const identityUnidentified = scenario.identity.status === 'unidentified';
 
   const handleSaveEdit = (): void => {
     if (editValue.trim() === '') {
@@ -87,71 +76,44 @@ export const GuidedDescriptionReview = ({
     <section className="acx-guided-review" aria-labelledby="acx-guided-review-title">
       <header className="acx-guided-review__header">
         <div>
-          <p className="acx-guided-review__eyebrow">Identity-informed description</p>
-          <h2 id="acx-guided-review-title">Review before anything changes</h2>
+          <p className="acx-guided-review__eyebrow">The description</p>
+          <h2 id="acx-guided-review-title">Check the description before anything changes</h2>
         </div>
         <span className={`acx-guided-review__status acx-guided-review__status--${scenario.candidate.status}`}>
           {candidateStatusLabel(scenario.candidate.status)}
         </span>
       </header>
 
+      <GuidedFaceMatchCard
+        faceMatch={scenario.faceMatch}
+        identity={scenario.identity}
+        mediaUrl={scenario.originalMedia.src}
+        hasUnsavedEdit={hasUnsavedEdit}
+        onConfirm={onConfirmIdentity}
+        onLeaveUnnamed={onLeaveUnidentified}
+      />
+
       <div className="acx-guided-review__context-grid">
         <div className="acx-guided-review__context-card">
-          <h3 id="guided-visual-description-title">Visual description</h3>
+          <h3 id="guided-visual-description-title">What the photo shows</h3>
           <ul>
             {scenario.visualFacts.map((fact) => (
               <li key={fact}>{fact}</li>
             ))}
           </ul>
           <p>
-            Generic draft from visual facts: <span data-generic-draft>{scenario.genericDraft}</span>
+            Draft without a name: <span data-generic-draft>{scenario.genericDraft}</span>
           </p>
-          <p>Current applied alt text: {scenario.appliedText}</p>
+          <p>
+            Alt text on the page right now: <span data-current-applied-text>{scenario.appliedText}</span>
+          </p>
         </div>
         <div className="acx-guided-review__context-card">
-          <h3 id="guided-page-context-title">Page context</h3>
+          <h3 id="guided-page-context-title">The page</h3>
           <p>
             <strong>{scenario.pageContext.title}</strong>
           </p>
           <p>{scenario.pageContext.summary}</p>
-        </div>
-        <div
-          id="guided-section-identity"
-          className="acx-guided-review__context-card"
-          aria-labelledby="guided-identity-evidence-title"
-          tabIndex={-1}
-        >
-          <h3 id="guided-identity-evidence-title">Identity evidence</h3>
-          <p>{identityLabel(scenario.identity)}</p>
-          <p>{scenario.sourceRecord.note}</p>
-          <p id={identityChangeReasonId} className="acx-guided-review__identity-change-note">
-            Changing the identity decision selects a different saved candidate description. Save or discard an unsaved
-            edit first.
-          </p>
-          <div className="acx-guided-review__identity-actions">
-            <button
-              type="button"
-              className="acx-button acx-button--secondary"
-              onClick={onConfirmIdentity}
-              disabled={hasUnsavedEdit || identityConfirmed}
-              aria-describedby={
-                hasUnsavedEdit ? unsavedEditReasonId : identityConfirmed ? identityChangeReasonId : undefined
-              }
-            >
-              Confirm {scenario.sourceRecord.name}
-            </button>
-            <button
-              type="button"
-              className="acx-button acx-button--tertiary"
-              onClick={onLeaveUnidentified}
-              disabled={hasUnsavedEdit || identityUnidentified}
-              aria-describedby={
-                hasUnsavedEdit ? unsavedEditReasonId : identityUnidentified ? identityChangeReasonId : undefined
-              }
-            >
-              Keep the person unidentified
-            </button>
-          </div>
         </div>
       </div>
 
@@ -164,16 +126,18 @@ export const GuidedDescriptionReview = ({
       >
         <p className="acx-guided-review__explanation">
           {scenario.identity.status === 'confirmed'
-            ? 'Confirmed identity changes the name in the candidate; the visual facts and page context stay visible.'
-            : 'No confirmed name supplied; the visual description remains unchanged.'}
+            ? 'You confirmed the match, so the name is in the draft. The visual details and page context stay the same.'
+            : scenario.identity.status === 'unidentified'
+              ? 'You kept the person unnamed, so the draft only says what is visible.'
+              : 'Confirm or skip the face match first. Until then the draft only says what is visible.'}
         </p>
         <div>
-          <h3>Before</h3>
+          <h3>Without the name</h3>
           <p>{scenario.genericDraft}</p>
         </div>
         <div>
-          <h3>Proposed draft</h3>
-          <p className="acx-guided-review__origin">Draft origin: {GUIDED_SCENARIO_ORIGIN_LABELS[scenario.origin]}</p>
+          <h3>Draft for you to check</h3>
+          <p className="acx-guided-review__origin">This draft comes from a saved example, not a live run.</p>
           <label htmlFor="guided-description-draft">Description draft</label>
           <textarea
             ref={editorRef}
@@ -194,22 +158,22 @@ export const GuidedDescriptionReview = ({
           ) : null}
           {scenario.candidate.status === 'rejected' && !hasUnsavedEdit ? (
             <p className="acx-guided-review__rejected-notice">
-              This draft is rejected, so Apply is unavailable. Edit and save the description, or change the identity
-              decision, to get a fresh draft to review.
+              You rejected this draft, so Apply is off. Edit and save the text, or change your answer about the face,
+              to get a new draft.
             </p>
           ) : null}
           {hasUnsavedEdit ? (
             <p id={unsavedEditReasonId} className="acx-guided-review__unsaved-notice">
-              Unsaved edit. Save this description before applying, or discard it to restore the saved candidate.
+              Unsaved edit. Save it before you apply, or discard it to go back to the saved draft.
             </p>
           ) : null}
           <div className="acx-guided-review__actions">
             <button type="button" className="acx-button acx-button--secondary" onClick={handleSaveEdit}>
-              Save description edit
+              Save my edit
             </button>
             {hasUnsavedEdit ? (
               <button type="button" className="acx-button acx-button--tertiary" onClick={handleDiscardEdit}>
-                Discard unsaved edit
+                Discard my edit
               </button>
             ) : null}
             <button
@@ -218,7 +182,7 @@ export const GuidedDescriptionReview = ({
               onClick={onReject}
               disabled={scenario.candidate.status === 'rejected'}
             >
-              Reject draft
+              Reject this draft
             </button>
           </div>
         </div>
@@ -231,14 +195,14 @@ export const GuidedDescriptionReview = ({
         tabIndex={-1}
       >
         <div>
-          <h3>Explicit apply</h3>
+          <h3>Apply it yourself</h3>
           <p>
-            The practice copy currently says <strong data-applied-text>{scenario.appliedText}</strong>. Applying writes
-            the saved proposed draft to this practice scenario only.
+            The practice copy says <strong data-applied-text>{scenario.appliedText}</strong>. Pressing Apply writes the
+            saved draft to this practice copy only.
           </p>
           {hasUnsavedEdit ? (
             <p className="acx-guided-review__apply-reason" id="guided-apply-reason">
-              Apply is unavailable while your draft has unsaved edits. Save or discard the edit first.
+              Apply is off while your edit is unsaved. Save or discard it first.
             </p>
           ) : null}
         </div>
@@ -254,7 +218,7 @@ export const GuidedDescriptionReview = ({
           </button>
           {appliedEvent ? (
             <button type="button" className="acx-button acx-button--tertiary" onClick={onUndo}>
-              Undo practice apply
+              Undo
             </button>
           ) : null}
         </div>

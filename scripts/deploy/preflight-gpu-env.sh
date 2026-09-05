@@ -57,6 +57,34 @@ relevant_keys=(
 # cannot conceal an earlier safe-looking value.
 validate_contract_assignments() {
     local role="$1" file="$2" key line count value
+    # Inspect every assignment before scanning contract keys. Compose permits
+    # quoted values to span lines, including lines that look like assignments.
+    # Reject that syntax even for unrelated keys so it cannot hide a contract.
+    python3 - "$role" "$file" <<'PY'
+import re
+import sys
+
+with open(sys.argv[2], encoding="utf-8") as document:
+    for line in document:
+        assignment = re.match(r"^\s*(?:export\s+)?[^\s=:#]+\s*[=:]\s*(.*)$", line.rstrip("\r\n"))
+        if not assignment:
+            continue
+        value = assignment.group(1)
+        if not value or value[0] not in ("'", '"'):
+            continue
+        quote = value[0]
+        escaped = False
+        for character in value[1:]:
+            if escaped:
+                escaped = False
+            elif character == "\\":
+                escaped = True
+            elif character == quote:
+                break
+        else:
+            print(f"ERROR [7] {sys.argv[1]} env has unsupported multiline or unterminated dotenv quoting (value redacted).", file=sys.stderr)
+            raise SystemExit(1)
+PY
     for key in "${relevant_keys[@]}"; do
         count=0
         while IFS= read -r line || [[ -n "$line" ]]; do
@@ -461,9 +489,9 @@ finally:
                       probe.with_name(f".{probe.name}.tmp")):
         candidate.unlink(missing_ok=True)
 """
-# The deployed ExecStart is checked above, but a local validation may run on a
-# workstation whose system Python cannot import the deployed package.
-probe_python = argv[0] if account.pw_uid != os.geteuid() else sys.executable
+# Validate the interpreter the service actually executes, independently of
+# whether changing to the service account is necessary.
+probe_python = argv[0]
 def run_python_probe(code, *arguments):
     command = [probe_python, "-c", code, str(root), *arguments]
     if account.pw_uid != os.geteuid():

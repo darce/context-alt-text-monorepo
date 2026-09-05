@@ -16,15 +16,30 @@ fi
 # shellcheck source=../../../infra/oci/demo/lib/describe-gate.sh
 source "$describe_gate_contract"
 
-# Decode one dotenv quote envelope without evaluating interpolation or PHP.
+# Decode a strict single-line Compose dotenv subset. Reject escapes rather than
+# guessing whether Compose would interpolate/decode them. A quote envelope may
+# not contain its own delimiter (e.g. single-quoted PHP inside single quotes).
 acx_env_literal_value() {
     local value="${1%$'\r'}"
-    if [[ ${#value} -ge 2 ]]; then
-        case "$value" in
-            \"*\") value="${value:1:${#value}-2}" ;;
-            \'*\') value="${value:1:${#value}-2}" ;;
-        esac
-    fi
+    case "$value" in
+        *\\*|*'$'*|*$'\n'*|*$'\r'*)
+            echo "ERROR: unsupported dotenv escape, interpolation or multiline value (redacted)." >&2
+            return 1 ;;
+    esac
+    case "$value" in
+        \"*|\'*)
+            local delimiter="${value:0:1}"
+            if [[ ${#value} -lt 2 || "${value: -1}" != "$delimiter" ]]; then
+                echo "ERROR: unterminated dotenv quote (redacted)." >&2
+                return 1
+            fi
+            value="${value:1:${#value}-2}"
+            if [[ "$value" == *"$delimiter"* ]]; then
+                echo "ERROR: embedded dotenv quote delimiter (redacted)." >&2
+                return 1
+            fi
+            ;;
+    esac
     printf '%s' "$value"
 }
 

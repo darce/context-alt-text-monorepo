@@ -33,6 +33,11 @@ repository or terminal output.
 Recognition constants must use unconditional, literal single-quoted `define`
 statements. The shared PHP reader accepts comments and literal boolean/integer
 values for other constants, but rejects conditional or interpolated PHP.
+Leave the whole `WORDPRESS_CONFIG_EXTRA` dotenv value unquoted, as in the
+example, or wrap it in double quotes. An outer single quote conflicts with
+the PHP string delimiters. Preflight rejects unterminated quotes, embedded
+matching delimiters, escapes and multiline values instead of guessing how
+Compose would decode them.
 GPU addresses must be private and cannot be loopback, unspecified, multicast,
 or link-local, including IPv4-mapped IPv6 and allowlisted DNS answers.
 
@@ -91,10 +96,11 @@ Verify the container received the requested non-secret profile and re-run the
 demo bootstrap gate. The bootstrap command is idempotent and must finish with
 `Bootstrap complete`, but it is not proof of inference: it can legitimately
 skip generation when the demo has no media or already has complete coverage.
-The remote block therefore submits a fresh, authenticated asynchronous request
-with explicit `tier=gpu`. Enqueueing publishes pending describe load so
+The remote block therefore submits one fresh image to `/scene/describe/run`
+with `recognition_enabled=false`, using the configured GPU adapter. This run
+worker waits for readiness before invoking that adapter. Enqueueing publishes pending describe load so
 `acx-gpu-start.timer` can wake a stopped burst instance; the verifier then polls
-the durable job for up to 15 minutes. It fails unless the response proves an
+the durable run for up to 15 minutes, then verifies the completed item’s provenance. It fails unless the response proves an
 uncached final GPU result with model identity and non-empty generated alt text.
 Do not remove the staged contract helpers until this live request succeeds.
 

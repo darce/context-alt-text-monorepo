@@ -68,6 +68,10 @@ validate_contract_assignments() {
                     exit 1
                 fi
                 value="${line#*=}"
+                if ! acx_env_literal_value "$value" >/dev/null; then
+                    echo "ERROR [7] ${role} env ${key} has invalid dotenv quoting (value redacted)." >&2
+                    exit 1
+                fi
                 if [[ "$value" == *'$'* || "$value" =~ [[:space:]]# ]]; then
                     echo "ERROR [7] ${role} env ${key} must not use interpolation or an inline comment. Store the exact deployed value." >&2
                     exit 1
@@ -310,6 +314,7 @@ reaper_execstart_is_structural() {
     python3 -c '
 import shlex
 import sys
+import math
 from pathlib import Path
 
 raw = sys.argv[1].strip()
@@ -377,6 +382,23 @@ if args.mode != "reap" or args.max_lease_seconds <= 0 or args.dry_run:
     raise SystemExit(1)
 if args.instance_ids != [sys.argv[3]]:
     raise SystemExit(1)
+# Parser success alone does not make main runnable: production requires the
+# aggregate load source, and main rejects non-finite/negative lifecycle delays.
+if args.load_dir != Path("/run/acx-write"):
+    raise SystemExit(1)
+if (args.oci_timeout_seconds <= 0 or args.max_wait_seconds <= 0
+        or not math.isfinite(args.fence_delay_seconds) or args.fence_delay_seconds < 0
+        or not math.isfinite(args.ready_sleep_seconds) or args.ready_sleep_seconds < 0):
+    raise SystemExit(1)
+# Reuse the runtime load-source constructor validation; construction reads no
+# snapshots and performs no actuation. The explicit environments avoid reading
+# a deployment registry on the verification machine.
+reaper.AggregateJobLoadSource(
+    directory=args.load_dir,
+    stale_seconds=args.load_max_age_seconds,
+    stale_grace_seconds=args.load_stale_grace_seconds,
+    expected_environments=("demo",),
+)
 ' "$@" 2>/dev/null
 }
 

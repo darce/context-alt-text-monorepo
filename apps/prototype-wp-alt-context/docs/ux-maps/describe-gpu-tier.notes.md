@@ -1,7 +1,7 @@
 # describe-gpu-tier — ASCII screens, canon critique, lane DAG
 
 Source of truth: `describe-gpu-tier.uxmap.json` (hand-authored 2026-09-02; no `ux-map` CLI installed locally — render by hand, re-render via `ux-map render` once the Design Canvas CLI ships).
-Predecessor finding: `DEMO-UX-1-GPU-01` (open, db id 10035). Reserved wire field: `DescribeRunResponse.gpu_state` (WBUX-3, typed `null` both sides).
+Predecessor finding: `DEMO-UX-1-GPU-01`. Reserved wire field: `DescribeRunResponse.gpu_state` (WBUX-3, typed `null` both sides).
 
 ## Proposed `gpu_state` vocabulary (sr-007: `StrEnum` backend / `as const` TS)
 

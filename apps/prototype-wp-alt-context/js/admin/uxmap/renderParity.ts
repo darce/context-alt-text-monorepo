@@ -134,20 +134,35 @@ const parseScreenStates = (block: string, screenId: string): string[] => {
 const parseScreens = (markdown: string): RenderParityMap['screens'] => {
   const screensSection = section(markdown, 'Screens');
   const summary = screensSection.split('\n### ')[0] ?? '';
-  const fifthColumn = /^\| id \| kind \| route \| title \| ([^|]+) \|$/m.exec(summary)?.[1]?.trim();
+  const summaryLines = summary.split('\n').filter((line) => line.trim() !== '');
+  const header = summaryLines[0] ?? '';
+  const headerMatch = /^\| id \| kind \| route \| title \|(?: (url_params|wp_page) \|)?$/.exec(header);
+  const fifthColumn = headerMatch?.[1];
+  const columnCount = fifthColumn ? 5 : 4;
+  if (summaryLines.length > 0 && !headerMatch) {
+    throw new Error(`noncanonical Screens table row: ${header}`);
+  }
+  const separator = summaryLines[1] ?? '';
+  if (summaryLines.length > 0 && separator !== `|${' --- |'.repeat(columnCount)}`) {
+    throw new Error(`noncanonical Screens table row: ${separator}`);
+  }
   const summaries = new Map<
     string,
     Pick<RenderParityMap['screens'][number], 'id' | 'kind' | 'title' | 'route' | 'url_params'>
   >();
 
-  for (const line of summary.split('\n')) {
-    if (!line.startsWith('| `')) {
-      continue;
+  // Every nonblank summary line must belong to the canonical table. In particular,
+  // indentation and missing ID backticks must never hide duplicate or orphan rows.
+  for (const line of summaryLines.slice(2)) {
+    const cells = splitTableRow(line);
+    const canonicalRow = `| ${cells.map((cell) => cell.replaceAll('|', '\\|')).join(' | ')} |`;
+    if (line !== canonicalRow || cells.length !== columnCount || !/^`[^`]+`$/.test(cells[0] ?? '')) {
+      throw new Error(`noncanonical Screens table row: ${line}`);
     }
-    const [rawId, kind, rawRoute, title, rawParams = '—'] = splitTableRow(line);
+    const [rawId, kind, rawRoute, title, rawParams = '—'] = cells;
     const id = unquote(rawId ?? '');
     if (summaries.has(id)) {
-      throw new Error(`screen ${id} has duplicate Screens table rows`);
+      throw new Error(`screen ${id} has duplicate Screens table rows: ${line}`);
     }
     summaries.set(id, {
       id,

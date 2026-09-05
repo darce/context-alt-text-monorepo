@@ -1078,6 +1078,19 @@ describe('ux-map render parity (owned maps)', () => {
     expect(() => parseRenderedUxMap(mutant)).toThrow(error);
   });
 
+  it.each(
+    JSON.parse(readFileSync(path.join(negativeFixturesDir, 'screen-summary-mutations.json'), 'utf8')) as Array<{
+      name: string;
+      row: string;
+    }>,
+  )('rejects $name in the screen summary with the original row text', ({ row }) => {
+    const md = readFileSync(path.join(uxMapsDir, 'workbench-operator-loop.md'), 'utf8');
+    const original = /^\| `workbench-shell` \|.*$/m.exec(md)![0];
+    const mutant = md.replace(original, `${row}\n${original}`);
+    expect(() => parseRenderedUxMap(md)).not.toThrow();
+    expect(() => parseRenderedUxMap(mutant)).toThrow(`noncanonical Screens table row: ${row}`);
+  });
+
   it('rejects action boolean cells other than exact yes/no tokens with a useful location', () => {
     const md = readFileSync(path.join(uxMapsDir, 'workbench-operator-loop.md'), 'utf8');
     const mutant = md.replace('| no | no | no | `workbench-shell` |', '| MUTANT | no | no | `workbench-shell` |');

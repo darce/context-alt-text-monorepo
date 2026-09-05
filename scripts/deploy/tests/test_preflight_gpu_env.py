@@ -1167,7 +1167,13 @@ ssh() {
     while [ "$#" -gt 0 ]; do
         case "$1" in
             -l) transport_user=$2; shift 2 ;;
-            -o) shift 2 ;;
+            -o)
+                case "${2:-}" in
+                    BatchMode=*|ConnectTimeout=*|ServerAliveInterval=*|ServerAliveCountMax=*) ;;
+                    *) echo "unexpected ssh -o option: ${2:-<missing>}" >&2; return 2 ;;
+                esac
+                shift 2
+                ;;
             --) shift; break ;;
             *) echo "unexpected ssh option: $1" >&2; return 2 ;;
         esac
@@ -1183,7 +1189,11 @@ scp() {
         case "$1" in
             -q) shift ;;
             -o)
-                case "$2" in User=*) transport_user=${2#User=} ;; esac
+                case "${2:-}" in
+                    BatchMode=*|ConnectTimeout=*|ServerAliveInterval=*|ServerAliveCountMax=*) ;;
+                    User=*) transport_user=${2#User=} ;;
+                    *) echo "unexpected scp -o option: ${2:-<missing>}" >&2; return 2 ;;
+                esac
                 shift 2
                 ;;
             --) shift; break ;;
@@ -1244,11 +1254,14 @@ def test_11_installer_payload_fails_closed_without_ssh_user() -> None:
     installer = (ROOT / "scripts/deploy/gpu-lifecycle-install.sh").read_text()
     staging = installer.split("# Validate the identity at the boundary where remote transport begins.", 1)[1]
     staging = staging.split('run_with_deadline "remote release staging"', 1)[0]
+    command_environment = dict(os.environ)
+    command_environment.pop("SSH_USER", None)
     result = subprocess.run(
         ["bash", "-c", "set -eu\n" + staging],
         text=True,
         capture_output=True,
         check=False,
+        env=command_environment,
     )
     assert result.returncode != 0
     assert "SSH_USER must be set before remote staging" in result.stderr

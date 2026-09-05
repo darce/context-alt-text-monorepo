@@ -89,8 +89,7 @@ def test_reader_blank_path_env_uses_default(
 def test_snapshot_directories_enforce_distinct_writer_ownership() -> None:
     script = INSTALL_SCRIPT.read_text(encoding="utf-8")
     service_bodies = re.findall(
-        r"tee (?:/etc/systemd/system/|\\\"\\\$unit_stage/)"
-        r"acx-gpu-(?:start|reap)\.service(?:\\\")?.*?<<UNIT\n(.*?)\nUNIT",
+        r'tee \\\"\\\$unit_stage/acx-gpu-(?:start|reap)\.service\\\".*?<<UNIT\n(.*?)\nUNIT',
         script,
         flags=re.DOTALL,
     )
@@ -136,9 +135,11 @@ def test_snapshot_directories_enforce_distinct_writer_ownership() -> None:
     )
     lock_mode, lock_owner, lock_group = lock_tmpfiles_match.groups()
     assert (state_boot_owner, state_boot_group) == (state_owner, state_group)
+    assert state_mode == "0755"
     assert int(state_mode[-3]) & 0o2, "the lifecycle owner must be able to write"
     assert (load_boot_owner, load_boot_group) == (load_owner, load_group)
     assert load_group == "10001"
+    assert load_mode == environment_load_mode == "0775"
     assert int(load_mode[-2]) & 0o2, "API gid 10001 must be able to write load dumps"
     assert (environment_load_owner, environment_load_group) == (load_owner, load_group)
     assert int(environment_load_mode[-2]) & 0o2, (
@@ -146,6 +147,7 @@ def test_snapshot_directories_enforce_distinct_writer_ownership() -> None:
     )
     assert (state_owner, state_group) != (load_owner, load_group)
     assert (lock_owner, lock_group) == (state_owner, state_group)
+    assert lock_mode == "0600"
     assert int(lock_mode, 8) & 0o600 == 0o600
 
     for body in service_bodies:

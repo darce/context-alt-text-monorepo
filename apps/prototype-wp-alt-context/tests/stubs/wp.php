@@ -1763,6 +1763,11 @@ if (!function_exists('add_option')) {
 if (!function_exists('get_option')) {
     function get_option($key, $default = false)
     {
+        $beforeRead = $GLOBALS['__ac_get_option_before_read'][$key] ?? null;
+        if (is_callable($beforeRead)) {
+            $GLOBALS['__ac_get_option_read_calls'][$key] = ($GLOBALS['__ac_get_option_read_calls'][$key] ?? 0) + 1;
+            $beforeRead($key, $GLOBALS['__ac_get_option_read_calls'][$key]);
+        }
         return $GLOBALS['__ac_options'][$key] ?? $default;
     }
 }

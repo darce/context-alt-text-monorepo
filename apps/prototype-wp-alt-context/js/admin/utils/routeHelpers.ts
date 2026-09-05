@@ -1,4 +1,11 @@
-export type RoutePath = '/dashboard' | '/workbench' | '/roster' | '/retention' | '/settings' | '/description-history';
+export type RoutePath =
+  | '/dashboard'
+  | '/workbench'
+  | '/roster'
+  | '/retention'
+  | '/settings'
+  | '/description-history'
+  | '/guided-prototype';
 export const DEFAULT_ROUTE: RoutePath = '/dashboard';
 
 export const extractRouteFromHash = (): RoutePath | null => {
@@ -27,6 +34,10 @@ export const extractRouteFromHash = (): RoutePath | null => {
 
   if (path === '/description-history') {
     return '/description-history';
+  }
+
+  if (path === '/guided-prototype') {
+    return '/guided-prototype';
   }
 
   return null;

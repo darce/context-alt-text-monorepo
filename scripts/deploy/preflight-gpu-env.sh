@@ -91,13 +91,7 @@ env_get() {
         line="${line%$'\r'}"
         case "$line" in
             "${key}="*)
-                value="${line#*=}"
-                if [[ ${#value} -ge 2 ]]; then
-                    case "$value" in
-                        \"*\") value="${value:1:${#value}-2}" ;;
-                        \'*\') value="${value:1:${#value}-2}" ;;
-                    esac
-                fi
+                value="$(acx_env_literal_value "${line#*=}")"
                 ;;
         esac
     done < "$file"
@@ -171,9 +165,10 @@ import ipaddress
 import sys
 try:
     address = ipaddress.ip_address(sys.argv[1])
+    address = getattr(address, "ipv4_mapped", None) or address
 except ValueError:
     raise SystemExit(2)
-raise SystemExit(0 if (address.is_private or address.is_loopback) and not address.is_link_local else 1)
+raise SystemExit(0 if address.is_private and not (address.is_link_local or address.is_loopback or address.is_unspecified or address.is_multicast) else 1)
 ' "$1" 2>/dev/null
 }
 
@@ -190,9 +185,10 @@ if not addresses:
 for raw in addresses:
     try:
         address = ipaddress.ip_address(raw)
+        address = getattr(address, "ipv4_mapped", None) or address
     except ValueError:
         raise SystemExit(1)
-    if address.is_link_local or not (address.is_private or address.is_loopback):
+    if not address.is_private or address.is_link_local or address.is_loopback or address.is_unspecified or address.is_multicast:
         raise SystemExit(1)
 ' 2>/dev/null
 }
@@ -314,6 +310,7 @@ reaper_execstart_is_structural() {
     python3 -c '
 import shlex
 import sys
+from pathlib import Path
 
 raw = sys.argv[1].strip()
 if raw.startswith("{"):
@@ -344,11 +341,48 @@ for option, expected in required.items():
     positions = [index for index, token in enumerate(argv) if token == option]
     if len(positions) != 1 or positions[0] + 1 >= len(argv) or argv[positions[0] + 1] != expected:
         raise SystemExit(1)
-' "$1" 2>/dev/null
+# Only the installer option surface is permitted. Exact spellings and one
+# occurrence prevent argparse abbreviations, overrides and no-op/test flags.
+allowed = {"--mode", "--instance-id", "--max-lease-seconds", "--load-dir",
+           "--load-stale-grace-seconds", "--gpu-state-json", "--running-since-path",
+           "--idle-seconds", "--fence-delay-seconds", "--probe-oci", "--oci-bin"}
+seen = set()
+i = 3
+while i < len(argv):
+    option = argv[i]
+    if option not in allowed or option in seen:
+        raise SystemExit(1)
+    seen.add(option)
+    i += 1 if option == "--probe-oci" else 2
+    if i > len(argv):
+        raise SystemExit(1)
+
+# Use the parser shipped with the effective service, without invoking main or
+# any actuator. Never silently import a different checkout from ambient PATH.
+root = Path(sys.argv[2]).resolve(strict=True)
+sys.path.insert(0, str(root))
+from infra.oci.gpu_lifecycle import reaper
+Path(reaper.__file__).resolve().relative_to(root)
+parser = reaper._build_parser()
+parser.allow_abbrev = False
+values = dict(zip(("GPU_INSTANCE_ID", "MAX_LEASE_SECONDS", "IDLE_SECONDS",
+                   "ACX_DESCRIBE_LOAD_STALE_GRACE_SECONDS"), sys.argv[3:]))
+resolved = []
+for token in argv[3:]:
+    if token.startswith("${") and token.endswith("}"):
+        token = values.get(token[2:-1], "")
+    resolved.append(token)
+args = parser.parse_args(resolved)
+if args.mode != "reap" or args.max_lease_seconds <= 0 or args.dry_run:
+    raise SystemExit(1)
+if args.instance_ids != [sys.argv[3]]:
+    raise SystemExit(1)
+' "$@" 2>/dev/null
 }
 
 preflight_gpu_reaper() {
-    local timer unit_properties exec_start fragment_path environment_files
+    local timer unit_properties exec_start fragment_path environment_files working_directory
+    local idle_seconds="" stale_grace=""
     local environment_file optional_file instance_id="" max_lease="" value
     local environment_file_count=0
     command -v systemctl >/dev/null 2>&1 || {
@@ -366,6 +400,7 @@ preflight_gpu_reaper() {
 
     unit_properties="$(systemctl show acx-gpu-reap.service \
         --property=ExecStart \
+        --property=WorkingDirectory \
         --property=FragmentPath \
         --property=DropInPaths \
         --property=EnvironmentFiles 2>/dev/null)" || {
@@ -375,11 +410,8 @@ preflight_gpu_reaper() {
     exec_start="$(printf '%s\n' "$unit_properties" | sed -n 's/^ExecStart=//p')"
     fragment_path="$(printf '%s\n' "$unit_properties" | sed -n 's/^FragmentPath=//p')"
     environment_files="$(printf '%s\n' "$unit_properties" | sed -n 's/^EnvironmentFiles=//p')"
-    reaper_execstart_is_structural "$exec_start" || {
-        echo "ERROR [11] acx-gpu-reap.service ExecStart must be the structurally valid GPU lifecycle reaper." >&2
-        exit 1
-    }
-    [[ "$fragment_path" == /* && "$fragment_path" != /dev/null ]] || {
+    working_directory="$(printf '%s\n' "$unit_properties" | sed -n 's/^WorkingDirectory=//p')"
+    [[ "$working_directory" == /* && "$fragment_path" == /* && "$fragment_path" != /dev/null ]] || {
         echo "ERROR [11] acx-gpu-reap.service must structurally target GPU_INSTANCE_ID and MAX_LEASE_SECONDS." >&2
         exit 1
     }
@@ -414,6 +446,12 @@ preflight_gpu_reaper() {
             value="$(env_get "$environment_file" MAX_LEASE_SECONDS)"
             max_lease="$value"
         fi
+        if LC_ALL=C grep -q '^IDLE_SECONDS=' "$environment_file"; then
+            idle_seconds="$(env_get "$environment_file" IDLE_SECONDS)"
+        fi
+        if LC_ALL=C grep -q '^ACX_DESCRIBE_LOAD_STALE_GRACE_SECONDS=' "$environment_file"; then
+            stale_grace="$(env_get "$environment_file" ACX_DESCRIBE_LOAD_STALE_GRACE_SECONDS)"
+        fi
     done < <(printf '%s\n' "$environment_files" | tr ' ' '\n')
 
     (( environment_file_count > 0 )) || {
@@ -424,6 +462,10 @@ preflight_gpu_reaper() {
         && "$max_lease" =~ ^[1-9][0-9]{0,4}$ ]] \
         && (( max_lease <= 86400 )) || {
         echo "ERROR [11] reaper GPU_INSTANCE_ID must be an instance OCID and MAX_LEASE_SECONDS must be in 1..86400." >&2
+        exit 1
+    }
+    reaper_execstart_is_structural "$exec_start" "$working_directory" "$instance_id" "$max_lease" "$idle_seconds" "$stale_grace" || {
+        echo "ERROR [11] acx-gpu-reap.service ExecStart must be the structurally valid GPU lifecycle reaper." >&2
         exit 1
     }
     printf "MANUAL STOP fallback: oci compute instance action --action STOP --instance-id '%s'\n" "$instance_id"

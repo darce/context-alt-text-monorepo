@@ -257,12 +257,17 @@ compose run --rm --no-deps wpcli wp plugin deactivate alt-context || true
 compose run --rm --no-deps wpcli wp plugin activate alt-context
 
 # Fail-closed describe-apply: canned `seeded` captions are worse than empty alt.
-# shellcheck source=lib/describe-gate.sh
-source "$(dirname "${BASH_SOURCE[0]}")/lib/describe-gate.sh"
-# describe-gate.sh is deliberately the only runtime dependency here: sync-demo
-# already validates and ships it beside bootstrap-wp.sh. The repository test
-# suite binds its trusted-profile behavior to gpu-env-contract.sh, so preflight
-# and the staged VM gate cannot drift without failing before deployment.
+# The flip runbook installs this contract beside describe-gate.sh before sync.
+# Repository invocations use the identical source without a generated copy.
+bootstrap_contract="$(dirname "${BASH_SOURCE[0]}")/lib/gpu-env-contract.sh"
+if [[ ! -r "$bootstrap_contract" ]]; then
+  bootstrap_contract="$(dirname "${BASH_SOURCE[0]}")/../../../scripts/deploy/lib/gpu-env-contract.sh"
+fi
+# shellcheck source=../../../scripts/deploy/lib/gpu-env-contract.sh
+source "$bootstrap_contract"
+if [[ -n "${WORDPRESS_CONFIG_EXTRA:-}" ]]; then
+  WORDPRESS_CONFIG_EXTRA="$(acx_env_literal_value "$WORDPRESS_CONFIG_EXTRA")"
+fi
 
 # wp-cli --format=count -> digits, or "" on failure/non-numeric so the
 # classifier BLOCKs instead of guessing.

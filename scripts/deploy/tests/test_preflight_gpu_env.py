@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import signal
 import subprocess
 from pathlib import Path
 
@@ -71,6 +72,7 @@ def run_preflight(
     demo_text: str | None = None,
     check_reaper: bool = False,
     systemctl_script: str | None = None,
+    dns_address: str | None = None,
 ) -> subprocess.CompletedProcess[str]:
     producer_file = tmp_path / "producer.env"
     demo_file = tmp_path / "demo.env"
@@ -99,6 +101,9 @@ esac
 """,
         encoding="utf-8",
     )
+    if dns_address is not None:
+        getent.write_text("#!/usr/bin/env bash\nprintf '%s STREAM fake\\n' "+
+                          "\"$FAKE_DNS_ADDRESS\"\n")
     getent.chmod(0o755)
     if systemctl_script is not None:
         systemctl = fake_bin / "systemctl"
@@ -106,6 +111,8 @@ esac
         systemctl.chmod(0o755)
     env = os.environ.copy()
     env["PATH"] = f"{fake_bin}:{env['PATH']}"
+    if dns_address is not None:
+        env["FAKE_DNS_ADDRESS"] = dns_address
     args = [str(SCRIPT)]
     if check_reaper:
         args.append("--check-reaper")
@@ -259,14 +266,19 @@ printf '%s\n' "$current"
     if clock_step_seconds is not None:
         env["FAKE_DATE_COUNTER"] = str(tmp_path / "date.counter")
         env["FAKE_DATE_STEP"] = str(clock_step_seconds)
-    return subprocess.run(
-        [str(staged_verifier), str(demo_env)],
-        cwd=ROOT,
-        env=env,
-        text=True,
-        capture_output=True,
-        check=False,
+    process = subprocess.Popen(
+        [str(staged_verifier), str(demo_env)], cwd=ROOT, env=env,
+        text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        start_new_session=True,
     )
+    try:
+        stdout, stderr = process.communicate(timeout=8)
+    except subprocess.TimeoutExpired:
+        os.killpg(process.pid, signal.SIGKILL)
+        process.communicate()
+        pytest.fail("live GPU verifier exceeded the 8-second harness watchdog")
+    return subprocess.CompletedProcess(process.args, process.returncode, stdout, stderr)
+
 
 
 @pytest.mark.parametrize("adapter", ["", "seeded", "unknown"])
@@ -725,7 +737,6 @@ def test_producer_does_not_require_plugin_recognition_config(tmp_path: Path) -> 
     "endpoint",
     [
         "http://10.20.30.40:8000",
-        "http://127.0.0.1:8000",
         "http://acx-gpu-burst:8000",
         "https://worker.compute.oraclevcn.com:8000",
     ],
@@ -756,16 +767,30 @@ def test_09_rejects_public_gpu_endpoint(tmp_path: Path, endpoint: str) -> None:
     assert endpoint not in result.stderr
 
 
-@pytest.mark.parametrize("endpoint", ["http://169.254.169.254", "http://[fe80::1]:8000"])
+@pytest.mark.parametrize("endpoint", [
+    "http://169.254.169.254", "http://[fe80::1]:8000",
+    "http://[::ffff:169.254.169.254]:8000", "http://[::ffff:a9fe:a9fe]:8000",
+    "http://127.0.0.1:8000", "http://[::1]:8000", "http://0.0.0.0:8000",
+    "http://[::]:8000", "http://[::ffff:127.0.0.1]:8000", "http://localhost:8000",
+])
 def test_09_rejects_link_local_gpu_endpoint(tmp_path: Path, endpoint: str) -> None:
     producer = valid_env()
     producer["ACX_GPU_ENDPOINT_URL"] = endpoint
 
-    result = run_preflight(tmp_path, producer=producer)
+    demo = valid_demo_env()
+    demo["ACX_GPU_ENDPOINT_URL"] = endpoint
+    result = run_preflight(tmp_path, producer=producer, demo=demo)
 
     assert result.returncode != 0
     assert "ERROR [9] producer ACX_GPU_ENDPOINT_URL" in result.stderr
     assert endpoint not in result.stderr
+
+
+@pytest.mark.parametrize("address", ["::ffff:169.254.169.254", "::ffff:a9fe:a9fe", "::1", "0.0.0.0"])
+def test_09_rejects_unsafe_resolved_gpu_address(tmp_path: Path, address: str) -> None:
+    result = run_preflight(tmp_path, dns_address=address)
+    assert result.returncode != 0
+    assert "ERROR [9] producer ACX_GPU_ENDPOINT_URL" in result.stderr
 
 
 @pytest.mark.parametrize(
@@ -830,14 +855,13 @@ def test_demo_rejects_stale_standalone_recognition_values(tmp_path: Path) -> Non
     assert "replace-with-operative-key" not in result.stderr
 
 
-def test_preflight_uses_shared_php_define_grammar(tmp_path: Path) -> None:
+def test_preflight_accepts_literal_php_define_whitespace(tmp_path: Path) -> None:
     demo = valid_demo_env()
     demo["WORDPRESS_CONFIG_EXTRA"] = wordpress_config(comma_padding=" ")
 
     result = run_preflight(tmp_path, demo=demo)
 
-    assert result.returncode != 0
-    assert "ERROR [6] demo recognition config is incomplete" in result.stderr
+    assert result.returncode == 0, result.stderr
 
 
 @pytest.mark.parametrize(
@@ -897,6 +921,7 @@ case "$1:$3" in
   show:*)
     cat <<'PROPERTIES'
 ExecStart={exec_start}
+WorkingDirectory={ROOT}
 FragmentPath=/etc/systemd/system/acx-gpu-reap.service
 DropInPaths=
 EnvironmentFiles={environment_files}
@@ -907,17 +932,29 @@ esac
 """
 
 
-def test_11_reaper_preflight_proves_timer_target_and_stop_fallback(tmp_path: Path) -> None:
+@pytest.mark.parametrize("installed_options", [False, True])
+def test_11_reaper_preflight_proves_timer_target_and_stop_fallback(tmp_path: Path, installed_options: bool) -> None:
     reaper_env = tmp_path / "gpu-lifecycle.env"
     reaper_env.write_text(
         "GPU_INSTANCE_ID=ocid1.instance.oc1.iad.fakeinstance\nMAX_LEASE_SECONDS=3600\n",
         encoding="utf-8",
     )
 
+    systemctl = reaper_systemctl_script(reaper_env)
+    if installed_options:
+        with reaper_env.open("a") as stream:
+            stream.write("IDLE_SECONDS=300\nACX_DESCRIBE_LOAD_STALE_GRACE_SECONDS=600\n")
+        systemctl = systemctl.replace(" ; ignore_errors=no", (
+            " --load-dir /run/acx-write --load-stale-grace-seconds ${ACX_DESCRIBE_LOAD_STALE_GRACE_SECONDS}"
+            " --gpu-state-json /run/acx/gpu-state.json --running-since-path /run/acx-gpu/running-since.json"
+            " --idle-seconds ${IDLE_SECONDS} --fence-delay-seconds 2 --probe-oci"
+            " --oci-bin /home/ubuntu/.oci-venv/bin/oci ; ignore_errors=no"
+        ))
+
     result = run_preflight(
         tmp_path,
         check_reaper=True,
-        systemctl_script=reaper_systemctl_script(reaper_env),
+        systemctl_script=systemctl,
     )
 
     assert result.returncode == 0, result.stderr
@@ -999,7 +1036,11 @@ def test_11_reaper_preflight_rejects_required_text_inside_one_label_argument(tmp
     assert "structurally valid GPU lifecycle reaper" in result.stderr
 
 
-def test_11_reaper_preflight_rejects_a_second_effective_mode(tmp_path: Path) -> None:
+@pytest.mark.parametrize("suffix", [
+    "--mode start", "--mode=start", "--mo start", "--max-lease-seconds=0",
+    "--dry-run", "--dry", "--unknown", "--instance-state STOPPED",
+])
+def test_11_reaper_preflight_rejects_a_second_effective_mode(tmp_path: Path, suffix: str) -> None:
     reaper_env = tmp_path / "gpu-lifecycle.env"
     reaper_env.write_text(
         "GPU_INSTANCE_ID=ocid1.instance.oc1.iad.fakeinstance\nMAX_LEASE_SECONDS=3600\n",
@@ -1008,7 +1049,7 @@ def test_11_reaper_preflight_rejects_a_second_effective_mode(tmp_path: Path) -> 
     trailing_mode = (
         "{ path=/usr/bin/python3 ; argv[]=/usr/bin/python3 -m infra.oci.gpu_lifecycle "
         "--mode reap --instance-id ${GPU_INSTANCE_ID} "
-        "--max-lease-seconds ${MAX_LEASE_SECONDS} --mode start ; ignore_errors=no ; }"
+        "--max-lease-seconds ${MAX_LEASE_SECONDS} " + suffix + " ; ignore_errors=no ; }"
     )
 
     result = run_preflight(
@@ -1130,44 +1171,51 @@ def test_repository_and_staged_contract_have_one_definition_and_runtime_parity(t
     )
 
 
+def bootstrap_contract_block() -> str:
+    text = BOOTSTRAP.read_text(encoding="utf-8")
+    return text.split("# The flip runbook installs", 1)[1].split("# wp-cli --format=count", 1)[0].split("\n", 1)[1]
+
+
 def test_staged_bootstrap_layout_contains_every_runtime_dependency(tmp_path: Path) -> None:
-    sync_text = SYNC_DEMO.read_text(encoding="utf-8")
-    bootstrap_text = BOOTSTRAP.read_text(encoding="utf-8")
     staged_demo = tmp_path / "demo"
     staged_lib = staged_demo / "lib"
     staged_lib.mkdir(parents=True)
-    (staged_demo / "bootstrap-wp.sh").write_text(bootstrap_text, encoding="utf-8")
-    (staged_lib / "describe-gate.sh").write_text(DESCRIBE_GATE.read_text(encoding="utf-8"), encoding="utf-8")
-
-    assert 'source "$(dirname "${BASH_SOURCE[0]}")/lib/describe-gate.sh"' in bootstrap_text
-    assert "gpu-env-contract.sh" not in "\n".join(
-        line for line in bootstrap_text.splitlines() if line.lstrip().startswith("source ")
-    )
-    assert '$SCP "$DESCRIBE_GATE_SRC"' in sync_text
-    result = subprocess.run(
-        [
-            "bash",
-            "-c",
-            'source "$1/lib/describe-gate.sh"; is_trusted_describe_profile gpu_qwen30b',
-            "staged-bootstrap-test",
-            str(staged_demo),
-        ],
-        text=True,
-        capture_output=True,
-        check=False,
-    )
+    (staged_lib / "describe-gate.sh").write_text(DESCRIBE_GATE.read_text())
+    (staged_lib / "gpu-env-contract.sh").write_text(CONTRACT.read_text())
+    bootstrap = staged_demo / "bootstrap-wp.sh"
+    bootstrap.write_text("set -euo pipefail\n" + bootstrap_contract_block() +
+                         "is_trusted_describe_profile gpu_qwen30b\n")
+    result = subprocess.run(["bash", str(bootstrap)], text=True, capture_output=True)
     assert result.returncode == 0, result.stderr
 
 
-@pytest.mark.parametrize("example", [PRODUCER_EXAMPLE, DEMO_EXAMPLE])
-def test_worked_examples_document_gpu_burst_profile_and_preflight(example: Path) -> None:
-    text = example.read_text(encoding="utf-8")
+@pytest.mark.parametrize("wrapper", ['"{}";', "if (false) {{ {} }}", "\u00a0{}", "{} define('EXTRA',09);"])
+def test_php_nonexecuting_defines_fail_closed(tmp_path: Path, wrapper: str) -> None:
+    demo = valid_demo_env()
+    demo["WORDPRESS_CONFIG_EXTRA"] = wrapper.format(wordpress_config())
+    result = run_preflight(tmp_path, demo=demo)
+    assert result.returncode != 0
+    assert "recognition config is incomplete" in result.stderr
 
-    assert "# --- GPU burst profile (demo) ---" in text
-    assert (
-        "scripts/deploy/preflight-gpu-env.sh --check-reaper /path/to/prod.env /path/to/demo.env"
-        in text
-    )
+
+@pytest.mark.parametrize("envelope", ["", '"', "'"])
+def test_bootstrap_and_preflight_read_the_same_active_php_key(tmp_path: Path, envelope: str) -> None:
+    config = "/* define('ACX_RECOGNITION_API_KEY','obsolete-key'); */ " + wordpress_config()
+    demo = valid_demo_env()
+    config = envelope + config + envelope
+    demo["WORDPRESS_CONFIG_EXTRA"] = config
+    result = run_preflight(tmp_path, demo=demo)
+    assert result.returncode == 0, result.stderr
+    staged = tmp_path / "demo"
+    (staged / "lib").mkdir(parents=True)
+    (staged / "lib/describe-gate.sh").write_text(DESCRIBE_GATE.read_text())
+    (staged / "lib/gpu-env-contract.sh").write_text(CONTRACT.read_text())
+    bootstrap = staged / "bootstrap-wp.sh"
+    bootstrap.write_text('set -euo pipefail\nWORDPRESS_CONFIG_EXTRA="$1"\n' + bootstrap_contract_block() +
+                         'php_define_value ACX_RECOGNITION_API_KEY "$WORDPRESS_CONFIG_EXTRA"\n')
+    result = subprocess.run(["bash", str(bootstrap), config], text=True, capture_output=True)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "fake-tenant-key-for-preflight-tests"
 
 
 def test_producer_example_documents_every_runtime_gpu_setting() -> None:
@@ -1205,7 +1253,8 @@ def test_runbook_requires_reaper_fail_fast_and_checksum_bound_reviewed_artifact(
     assert "oci compute instance action --action STOP" in runbook
 
 
-def test_runbook_deploys_the_checksum_bound_artifact_not_newest_mtime(tmp_path: Path) -> None:
+@pytest.mark.parametrize("tampered", [False, True])
+def test_runbook_deploys_the_checksum_bound_artifact_not_newest_mtime(tmp_path: Path, tampered: bool) -> None:
     runbook = (ROOT / "docs/runbooks/gpu-demo-env-flip.md").read_text(encoding="utf-8")
     deploy_block = runbook.split("## 3. Deploy in producer-then-consumer order", 1)[1]
     deploy_block = deploy_block.split("```bash\n", 1)[1].split("```", 1)[0]
@@ -1227,6 +1276,11 @@ def test_runbook_deploys_the_checksum_bound_artifact_not_newest_mtime(tmp_path: 
     ).replace("replace-with-reviewed-sha256", reviewed_sha256)
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
+    fake_ssh = fake_bin / "ssh"
+    fake_ssh.write_text("#!/usr/bin/env bash\nexit 0\n")
+    fake_ssh.chmod(0o700)
+    if tampered:
+        reviewed.write_bytes(b"tampered after review")
     fake_make = fake_bin / "make"
     fake_make.write_text(
         "#!/usr/bin/env bash\nprintf '%s' \"$PLUGIN_ZIP\" > \"$MAKE_ARTIFACT_LOG\"\n",
@@ -1241,6 +1295,10 @@ def test_runbook_deploys_the_checksum_bound_artifact_not_newest_mtime(tmp_path: 
         ["bash"], input=deploy_block, cwd=tmp_path, env=env, text=True, capture_output=True
     )
 
+    if tampered:
+        assert result.returncode != 0
+        assert not (tmp_path / "artifact.log").exists()
+        return
     assert result.returncode == 0, result.stderr
     assert (tmp_path / "artifact.log").read_text(encoding="utf-8") == str(
         reviewed.relative_to(tmp_path)
@@ -1278,114 +1336,100 @@ def test_runbook_final_verification_requires_uncached_live_gpu_inference() -> No
     assert syntax.returncode == 0, syntax.stderr
 
 
-def test_runbook_stop_guard_prevents_oci_stop_during_active_evaluation(tmp_path: Path) -> None:
-    runbook = (ROOT / "docs/runbooks/gpu-demo-env-flip.md").read_text(encoding="utf-8")
-    stop_block = runbook.rsplit("```bash\n", 1)[1].split("```", 1)[0]
+def run_stop_block(tmp_path: Path, *, process_status: int = 1,
+                   cancel: bool = False, lease: str | None = None,
+                   occupied: bool = False) -> subprocess.CompletedProcess[str]:
+    runbook = (ROOT / "docs/runbooks/gpu-demo-env-flip.md").read_text()
+    block = runbook.rsplit("```bash\n", 1)[1].split("```", 1)[0]
+    remote = tmp_path / "remote"
+    remote.mkdir()
+    if lease:
+        (remote / lease).touch()
+    if occupied:
+        (remote / "activity.lock").mkdir()
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
-    (fake_bin / "terraform").write_text(
-        "#!/usr/bin/env bash\nprintf '%s\\n' ocid1.instance.oc1.iad.test\n",
-        encoding="utf-8",
-    )
-    (fake_bin / "ssh").write_text(
-        """#!/usr/bin/env bash
-command_text="$2"
-case "$command_text" in
-  *"sudo mkdir"*) mkdir "$REMOTE_ACTIVITY_LOCK" ;;
-  *"sudo rmdir"*) rmdir "$REMOTE_ACTIVITY_LOCK" ;;
-  *"pgrep -af"*) echo "Refusing STOP: an A10 bake/evaluation process is active." >&2; exit 1 ;;
-  *) exit 64 ;;
-esac
-""",
-        encoding="utf-8",
-    )
-    (fake_bin / "oci").write_text(
-        "#!/usr/bin/env bash\nprintf called > \"$OCI_CALL_LOG\"\n",
-        encoding="utf-8",
-    )
-    for executable in fake_bin.iterdir():
-        executable.chmod(0o700)
-    env = os.environ.copy()
-    env["PATH"] = f"{fake_bin}:{env['PATH']}"
-    env["OCI_CALL_LOG"] = str(tmp_path / "oci-called")
-    env["REMOTE_ACTIVITY_LOCK"] = str(tmp_path / "activity.lock")
+    scripts = {
+        "terraform": "printf '%s\\n' ocid1.instance.oc1.iad.test",
+        # Execute every rendered command; only remap the fake filesystem root.
+        # mkdir/rmdir/test keep their requested basenames, exposing wrong locks.
+        "ssh": r'''command_text="${2//\/run\/acx-gpu/$REMOTE_ROOT}"
+exec bash -c "$command_text"''',
+        "sudo": 'exec "$@"',
+        "pgrep": '''if [[ "$CANCEL_STOP" == 1 ]]; then
+    kill -TERM "$STOP_PID"
+fi
+if mkdir "$REMOTE_ROOT/activity.lock" 2>/dev/null; then
+    printf active > "$RACED_ACTIVITY_LOG"
+    rmdir "$REMOTE_ROOT/activity.lock"
+fi
+exit "$PROCESS_STATUS"''',
+        "oci": '''printf called > "$OCI_CALL_LOG"
+test -d "$REMOTE_ROOT/activity.lock"
+test ! -e "$RACED_ACTIVITY_LOG"''',
+    }
+    for name, body in scripts.items():
+        path = fake_bin / name
+        path.write_text("#!/usr/bin/env bash\nset -euo pipefail\n" + body + "\n")
+        path.chmod(0o700)
+    env = dict(os.environ, PATH=f"{fake_bin}:{os.environ['PATH']}",
+               REMOTE_ROOT=str(remote), PROCESS_STATUS=str(process_status),
+               CANCEL_STOP=str(int(cancel)),
+               OCI_CALL_LOG=str(tmp_path / "oci-called"),
+               RACED_ACTIVITY_LOG=str(tmp_path / "raced-activity"))
+    return subprocess.run(["bash"], input='export STOP_PID=$$\n' + block,
+                          cwd=tmp_path, env=env, text=True, capture_output=True, timeout=8)
 
-    result = subprocess.run(
-        ["bash"],
-        input=stop_block,
-        cwd=ROOT,
-        env=env,
-        text=True,
-        capture_output=True,
-        check=False,
-    )
 
+def test_runbook_stop_guard_prevents_oci_stop_during_active_evaluation(tmp_path: Path) -> None:
+    result = run_stop_block(tmp_path, process_status=0)
     assert result.returncode != 0
-    assert "Refusing STOP: an A10 bake/evaluation process is active." in result.stderr
+    assert "bake/evaluation process is active" in result.stderr
     assert not (tmp_path / "oci-called").exists()
+    assert not (tmp_path / "remote/activity.lock").exists()
 
 
 def test_runbook_stop_guard_holds_shared_lock_across_guard_and_stop(tmp_path: Path) -> None:
-    runbook = (ROOT / "docs/runbooks/gpu-demo-env-flip.md").read_text(encoding="utf-8")
-    stop_block = runbook.rsplit("```bash\n", 1)[1].split("```", 1)[0]
-    fake_bin = tmp_path / "bin"
-    fake_bin.mkdir()
-    (fake_bin / "terraform").write_text(
-        "#!/usr/bin/env bash\nprintf '%s\\n' ocid1.instance.oc1.iad.test\n", encoding="utf-8"
-    )
-    (fake_bin / "ssh").write_text(
-        """#!/usr/bin/env bash
-command_text="$2"
-case "$command_text" in
-  *"sudo mkdir"*) mkdir "$REMOTE_ACTIVITY_LOCK" ;;
-  *"sudo rmdir"*) rmdir "$REMOTE_ACTIVITY_LOCK" ;;
-  *"pgrep -af"*)
-    (
-      /bin/sleep 0.01
-      if mkdir "$REMOTE_ACTIVITY_LOCK" 2>/dev/null; then
-        printf active > "$RACED_ACTIVITY_LOG"
-        rmdir "$REMOTE_ACTIVITY_LOCK"
-      fi
-    ) &
-    ;;
-  *) exit 64 ;;
-esac
-""",
-        encoding="utf-8",
-    )
-    (fake_bin / "oci").write_text(
-        """#!/usr/bin/env bash
-/bin/sleep 0.05
-test -d "$REMOTE_ACTIVITY_LOCK"
-test ! -e "$RACED_ACTIVITY_LOG"
-printf called > "$OCI_CALL_LOG"
-""",
-        encoding="utf-8",
-    )
-    for executable in fake_bin.iterdir():
-        executable.chmod(0o700)
-    env = os.environ.copy()
-    env.update(
-        {
-            "PATH": f"{fake_bin}:{env['PATH']}",
-            "OCI_CALL_LOG": str(tmp_path / "oci-called"),
-            "RACED_ACTIVITY_LOG": str(tmp_path / "raced-activity"),
-            "REMOTE_ACTIVITY_LOCK": str(tmp_path / "activity.lock"),
-        }
-    )
-
-    result = subprocess.run(
-        ["bash"], input=stop_block, cwd=ROOT, env=env, text=True, capture_output=True
-    )
-
+    result = run_stop_block(tmp_path)
     assert result.returncode == 0, result.stderr
     assert (tmp_path / "oci-called").exists()
     assert not (tmp_path / "raced-activity").exists()
-    assert not (tmp_path / "activity.lock").exists()
+    assert not (tmp_path / "remote/activity.lock").exists()
 
 
-def test_live_gpu_verifier_accepts_only_a_fresh_pinned_gpu_result(tmp_path: Path) -> None:
-    result = run_live_gpu_verifier(tmp_path)
+@pytest.mark.parametrize("status", [2, 127])
+def test_runbook_stop_guard_fails_closed_on_process_inspection_error(tmp_path: Path, status: int) -> None:
+    result = run_stop_block(tmp_path, process_status=status)
+    assert result.returncode != 0
+    assert "process inspection failed" in result.stderr
+    assert not (tmp_path / "oci-called").exists()
+
+
+def test_runbook_stop_guard_exits_on_signal_and_releases_lock(tmp_path: Path) -> None:
+    result = run_stop_block(tmp_path, cancel=True)
+    assert result.returncode == 130, result.stderr
+    assert not (tmp_path / "oci-called").exists()
+    assert not (tmp_path / "remote/activity.lock").exists()
+
+
+@pytest.mark.parametrize("lease", ["bake.lease", "evaluation.lease"])
+def test_runbook_stop_guard_rejects_activity_lease(tmp_path: Path, lease: str) -> None:
+    result = run_stop_block(tmp_path, lease=lease)
+    assert result.returncode != 0
+    assert "active activity lease" in result.stderr
+    assert not (tmp_path / "oci-called").exists()
+
+
+def test_runbook_stop_guard_rejects_occupied_mutex(tmp_path: Path) -> None:
+    result = run_stop_block(tmp_path, occupied=True)
+    assert result.returncode != 0
+    assert not (tmp_path / "oci-called").exists()
+    assert (tmp_path / "remote/activity.lock").is_dir()
+
+
+@pytest.mark.parametrize("envelope", ["", '"', "'"])
+def test_live_gpu_verifier_accepts_only_a_fresh_pinned_gpu_result(tmp_path: Path, envelope: str) -> None:
+    result = run_live_gpu_verifier(tmp_path, wordpress_config_extra=envelope + wordpress_config() + envelope)
 
     assert result.returncode == 0, result.stderr
     assert result.stderr == ""

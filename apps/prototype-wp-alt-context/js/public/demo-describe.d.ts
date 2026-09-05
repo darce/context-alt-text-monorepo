@@ -46,3 +46,4 @@ export function statusPresentation(body: PublicDemoEnvelope): {
   state: 'queued' | 'warming' | 'describing' | 'completed' | 'failed';
   message: string;
 };
+export function initializeDemo(root: HTMLElement): void;

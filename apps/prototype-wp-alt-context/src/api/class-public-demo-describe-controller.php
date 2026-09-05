@@ -24,7 +24,6 @@ use function array_values;
 use function ceil;
 use function delete_option;
 use function filter_var;
-use function getenv;
 use function get_option;
 use function get_transient;
 use function gmdate;
@@ -211,6 +210,19 @@ final class PublicDemoDescribeController implements RecognitionRouteControllerIn
 		}
 
 		$data   = $response->get_data();
+		$current_inflight = get_option( self::INFLIGHT_OPTION, false );
+		$response_run_id = is_array( $data ) && is_string( $data['run_id'] ?? null ) ? $data['run_id'] : '';
+		$current_run_id = is_array( $current_inflight ) && is_string( $current_inflight['run_id'] ?? null )
+			? $current_inflight['run_id']
+			: '';
+		if (
+			'' === $response_run_id
+			|| '' === $current_run_id
+			|| ! hash_equals( $run_id, $response_run_id )
+			|| ! hash_equals( $run_id, $current_run_id )
+		) {
+			return $this->invalid_pipeline_response();
+		}
 		$status = is_array( $data ) && is_string( $data['status'] ?? null ) ? $data['status'] : '';
 		$description = 'completed' === $status
 			? $this->public_description( $pipeline_request, absint( $inflight['media_id'] ?? 0 ) )
@@ -360,6 +372,10 @@ final class PublicDemoDescribeController implements RecognitionRouteControllerIn
 			return 'indeterminate';
 		}
 		$data = $response->get_data();
+		$response_run_id = is_array( $data ) && is_string( $data['run_id'] ?? null ) ? $data['run_id'] : '';
+		if ( '' === $response_run_id || ! hash_equals( $run_id, $response_run_id ) ) {
+			return 'indeterminate';
+		}
 		$status = is_array( $data ) && is_string( $data['status'] ?? null ) ? $data['status'] : '';
 		if ( in_array( $status, self::TERMINAL_STATUSES, true ) ) {
 			return 'terminal';
@@ -485,10 +501,11 @@ final class PublicDemoDescribeController implements RecognitionRouteControllerIn
 		$run_id = is_string( $data['run_id'] ?? null ) ? sanitize_text_field( $data['run_id'] ) : '';
 		$status = is_string( $data['status'] ?? null ) ? $data['status'] : '';
 		$phase = is_string( $data['phase'] ?? null ) ? $data['phase'] : '';
-		$gpu_state = is_string( $data['gpu_state'] ?? null ) ? $data['gpu_state'] : '';
+		$raw_gpu_state = $data['gpu_state'] ?? null;
+		$gpu_state = null === $raw_gpu_state ? 'unknown' : ( is_string( $raw_gpu_state ) ? $raw_gpu_state : '' );
 		$completed = $data['completed'] ?? null;
-		$failed = $data['failed'] ?? 0;
-		$skipped = $data['skipped'] ?? 0;
+		$failed = $data['failed'] ?? null;
+		$skipped = $data['skipped'] ?? null;
 		$total = $data['total'] ?? null;
 		if (
 			'' === $run_id
@@ -500,9 +517,13 @@ final class PublicDemoDescribeController implements RecognitionRouteControllerIn
 		) {
 			return $this->invalid_pipeline_response();
 		}
-		$done = (int) $completed + (int) $failed + (int) $skipped;
+		if ( $completed < 0 || $failed < 0 || $skipped < 0 || $total < 0 ) {
+			return $this->invalid_pipeline_response();
+		}
+
+		$done = $completed + $failed + $skipped;
 		$total = (int) $total;
-		if ( $done < 0 || $total < 0 || $done > $total ) {
+		if ( $done > $total ) {
 			return $this->invalid_pipeline_response();
 		}
 
@@ -551,9 +572,17 @@ final class PublicDemoDescribeController implements RecognitionRouteControllerIn
 	}
 
 	private function public_deadline_seconds(): int {
-		$configured = getenv( 'ACX_GPU_WARMUP_TIMEOUT_SECONDS' );
-		$warmup = is_string( $configured ) && is_numeric( $configured )
-			? max( 1, (int) $configured )
+		if ( ! defined( 'ACX_GPU_WARMUP_TIMEOUT_SECONDS' ) && function_exists( 'acx_define_env_constant' ) ) {
+			\acx_define_env_constant(
+				'ACX_GPU_WARMUP_TIMEOUT_SECONDS',
+				array( 'ACX_GPU_WARMUP_TIMEOUT_SECONDS' ),
+				static fn ( string $value ): int => is_numeric( $value )
+					? max( 1, (int) $value )
+					: self::DEFAULT_GPU_WARMUP_TIMEOUT_SECONDS
+			);
+		}
+		$warmup = defined( 'ACX_GPU_WARMUP_TIMEOUT_SECONDS' )
+			? max( 1, (int) constant( 'ACX_GPU_WARMUP_TIMEOUT_SECONDS' ) )
 			: self::DEFAULT_GPU_WARMUP_TIMEOUT_SECONDS;
 		$inference = max( 1, (int) apply_filters( 'acx_proxy_timeout_description_seconds', self::DEFAULT_INFERENCE_TIMEOUT_SECONDS ) );
 		return $warmup + $inference;
@@ -561,7 +590,7 @@ final class PublicDemoDescribeController implements RecognitionRouteControllerIn
 
 	private function invalid_pipeline_response(): WP_Error {
 		return new WP_Error(
-			PublicDemoErrorCode::INVALID_PIPELINE_DATA,
+			PublicDemoErrorCode::INVALID_RESPONSE,
 			'The description service returned an invalid response. Please try again later.',
 			array( 'status' => 502 )
 		);

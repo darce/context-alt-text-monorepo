@@ -444,6 +444,10 @@ class CorruptRunningSinceLeaseError(ValueError):
     """Persisted lease metadata is unsafe to use as a duration origin."""
 
 
+class BootIdentityUnavailableError(RuntimeError):
+    """The host cannot supply a boot identity for monotonic lease records."""
+
+
 class RunningSinceLeaseStore:
     """Controller-owned grant times for RUNNING leases, keyed by instance."""
 
@@ -482,11 +486,19 @@ class RunningSinceLeaseStore:
         if boot_id is None:
             try:
                 boot_id = Path("/proc/sys/kernel/random/boot_id").read_text().strip()
-            except OSError:
-                boot_id = ""
+            except OSError as exc:
+                raise BootIdentityUnavailableError(
+                    "running-since boot identity unavailable: cannot read "
+                    "/proc/sys/kernel/random/boot_id; supply an explicit boot_id"
+                ) from exc
+            if not boot_id:
+                raise BootIdentityUnavailableError(
+                    "running-since boot identity unavailable: "
+                    "/proc/sys/kernel/random/boot_id is blank; supply an explicit boot_id"
+                )
         elif not isinstance(boot_id, str) or not boot_id.strip():
             raise ValueError("boot_id must be a non-blank string or None")
-        self._boot_id = boot_id or None
+        self._boot_id = boot_id
 
     def _utc_now(self) -> datetime:
         value = self._now()
@@ -1664,7 +1676,11 @@ def main(argv: list[str] | None = None) -> int:
             file=sys.stderr,
         )
         return 2
-    running_since_store = RunningSinceLeaseStore(path=args.running_since_path)
+    try:
+        running_since_store = RunningSinceLeaseStore(path=args.running_since_path)
+    except BootIdentityUnavailableError as exc:
+        print(f"fatal: {exc}", file=sys.stderr)
+        return 1
     explicit_idle_override = args.instance_idle_for is not None
 
     if args.load_dir is not None:

@@ -830,6 +830,115 @@ async def test_multipart_parser_closes_partial_spool_on_client_disconnect(monkey
     assert all(spool.closed for spool in opened_spools)
 
 
+@pytest.mark.asyncio
+async def test_multipart_parser_closes_boundaryless_trailing_spool(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A clean EOF must not orphan a file omitted from the returned FormData."""
+    from starlette import formparsers
+
+    from recognition.interface_adapters.http.routers import analyze_multipart as mod
+
+    opened_spools: list = []
+    real_spooled_temporary_file = tempfile.SpooledTemporaryFile
+
+    def _tracking_spool(*args, **kwargs):
+        spool = real_spooled_temporary_file(*args, **kwargs)
+        opened_spools.append(spool)
+        return spool
+
+    monkeypatch.setattr(formparsers, "SpooledTemporaryFile", _tracking_spool)
+    boundary = "missing-terminal-boundary"
+    body = (
+        f"--{boundary}\r\n"
+        'Content-Disposition: form-data; name="image_1"; filename="a.png"\r\n'
+        "Content-Type: image/png\r\n\r\n"
+    ).encode() + PNG_BYTES
+    delivered = False
+
+    async def receive():
+        nonlocal delivered
+        if delivered:
+            return {"type": "http.request", "body": b"", "more_body": False}
+        delivered = True
+        return {"type": "http.request", "body": body, "more_body": False}
+
+    request = Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": "/recognition/analyze/multipart",
+            "headers": [(b"content-type", f"multipart/form-data; boundary={boundary}".encode())],
+        },
+        receive,
+    )
+
+    form = await mod._parse_multipart_form(request)
+    await form.close()
+
+    assert list(form.multi_items()) == []
+    assert len(opened_spools) == 1, "test must reach file-spool allocation before clean EOF"
+    assert opened_spools[0].closed is True
+
+
+@pytest.mark.asyncio
+async def test_multipart_route_rejects_malformed_parser_input_and_closes_spool(
+    tenant_id: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Malformed bytes after a part boundary are a bounded client error."""
+    from starlette import formparsers
+
+    opened_spools: list = []
+    real_spooled_temporary_file = tempfile.SpooledTemporaryFile
+
+    def _tracking_spool(*args, **kwargs):
+        spool = real_spooled_temporary_file(*args, **kwargs)
+        opened_spools.append(spool)
+        return spool
+
+    monkeypatch.setattr(formparsers, "SpooledTemporaryFile", _tracking_spool)
+
+    async def _auth_provider():
+        return AuthContext(token="t", tenant_claim=tenant_id)
+
+    async def _no_session_provider():
+        return None
+
+    async def _queue_provider():
+        return _FakeScanQueue()
+
+    async def _factory_provider():
+        return lambda _tenant_id: None
+
+    app = FastAPI()
+    app.include_router(router, prefix="/recognition")
+    app.dependency_overrides[require_write_access] = _auth_provider
+    app.dependency_overrides[get_optional_session] = _no_session_provider
+    app.dependency_overrides[get_scan_queue_service_optional] = _queue_provider
+    app.dependency_overrides[get_object_store_factory_for_request] = _factory_provider
+    boundary = "malformed-next-part"
+    body = (
+        f"--{boundary}\r\n"
+        'Content-Disposition: form-data; name="request"; filename="request.json"\r\n'
+        "Content-Type: application/json\r\n\r\n"
+        "{}\r\n"
+        f"--{boundary}\r\n"
+        "Invalid Header: value\r\n\r\n"
+    ).encode()
+
+    transport = httpx.ASGITransport(app=app, raise_app_exceptions=False)
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.post(
+            "/recognition/analyze/multipart",
+            headers={"content-type": f"multipart/form-data; boundary={boundary}"},
+            content=body,
+        )
+
+    assert response.status_code == status.HTTP_400_BAD_REQUEST
+    assert response.json() == {"detail": "invalid multipart form"}
+    assert len(opened_spools) == 1, "test must allocate a spool before the malformed bytes"
+    assert opened_spools[0].closed is True
+
+
 # ---------------------------------------------------------------------------
 # BR-05 + BR-06 regression tests
 # ---------------------------------------------------------------------------

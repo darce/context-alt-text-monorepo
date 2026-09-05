@@ -25,7 +25,7 @@ export const GuidedPrototypeEntrance = ({ onBegin }: GuidedPrototypeEntranceProp
     </div>
 
     <button type="button" className="acx-button acx-button--primary" onClick={onBegin}>
-      Open a saved example
+      Start the guided walkthrough
     </button>
 
     <p className="acx-guided-entrance__boundary">

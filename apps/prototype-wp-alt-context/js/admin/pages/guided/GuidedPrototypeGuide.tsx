@@ -8,12 +8,15 @@ interface GuidedGuideStepDefinition {
   description: string;
 }
 
-const GUIDE_STEPS: readonly GuidedGuideStepDefinition[] = [
+export const GUIDE_STEPS: readonly GuidedGuideStepDefinition[] = [
   { id: 'understand', label: 'Understand the context', description: 'See the image, page, and source record.' },
   { id: 'identity', label: 'Confirm identity', description: 'Use the sample record or leave the person unidentified.' },
   { id: 'review', label: 'Review the description', description: 'Edit or reject the identity-informed draft.' },
   { id: 'apply', label: 'Apply deliberately', description: 'Write only after you choose Apply.' },
 ];
+
+export const guidedStepLabel = (step: GuidedGuideStep): string =>
+  GUIDE_STEPS.find((definition) => definition.id === step)?.label ?? step;
 
 export const GUIDED_SECTION_IDS: Record<GuidedGuideStep, string> = {
   understand: 'guided-section-understand',

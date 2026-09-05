@@ -26,6 +26,18 @@ def digest(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def load_json_object(path: Path, key: str) -> dict:
+    try:
+        payload = json.loads(path.read_text())
+    except FileNotFoundError:
+        raise SystemExit(f"Input not found: {path}")
+    except json.JSONDecodeError as exc:
+        raise SystemExit(f"Input is not valid JSON: {path} ({exc})")
+    if not isinstance(payload, dict) or not isinstance(payload.get(key), list):
+        raise SystemExit(f"Input {path} must be a JSON object with a '{key}' list")
+    return payload
+
+
 def unique_by_id(rows: list[dict]) -> dict[int, dict]:
     result = {int(row["media_id"]): row for row in rows}
     if len(result) != len(rows):
@@ -39,8 +51,8 @@ def main() -> None:
     parser.add_argument("--run", type=Path, default=Path("docs/tasks/altq/bakeoff-results/run-altq-646-interleave-v3.json"))
     parser.add_argument("--output", type=Path, default=Path("benchmarks/reports/fir-occlusion-caption-mining-20260904.json"))
     args = parser.parse_args()
-    manifest = json.loads(args.manifest.read_text())
-    run = json.loads(args.run.read_text())
+    manifest = load_json_object(args.manifest, "entries")
+    run = load_json_object(args.run, "items")
     entries = unique_by_id(manifest["entries"])
     items = unique_by_id(run["items"])
     if set(entries) != set(items):
@@ -109,8 +121,11 @@ def main() -> None:
                      "Seal grouped train/calibration/test allocation before selecting or labeling a claim corpus."],
         "candidates": queue,
     }
-    args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(json.dumps(result, indent=2, ensure_ascii=False) + "\n")
+    try:
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        args.output.write_text(json.dumps(result, indent=2, ensure_ascii=False) + "\n")
+    except OSError as exc:
+        raise SystemExit(f"Could not write output {args.output}: {exc}")
     print(json.dumps({"output": str(args.output), "counts": result["counts"], "per_class": stats}, indent=2))
 
 

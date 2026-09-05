@@ -11,7 +11,7 @@ site change, guest account creation, GPU request or publication.
 
 The full-width sketches are in the design document. The CLI bundle is the
 deterministic structural rendering; its compact labels are intentionally shorter.
-The map contains 13 screen/overlay/exit records and seven flows.
+The map contains 9 screen/overlay/exit records (7 screens, 1 overlay, 1 exit) and 6 flows.
 
 ## Iteration evidence
 
@@ -32,9 +32,9 @@ The map contains 13 screen/overlay/exit records and seven flows.
 
 ## Reproduce
 
-The available CLI is at
-`/Users/daniel/Development/agentic-protocol-monorepo/.venv/bin/ux-map`.
-Set `UXMAP_CLI` to that executable, or an equivalent installed `ux-map`.
+The CLI ships with the Design Canvas package in the agentic-protocol monorepo.
+Set `UXMAP_CLI` to its installed `ux-map` executable (for a venv checkout,
+`<agentic-protocol-monorepo>/.venv/bin/ux-map`), or to an equivalent `ux-map` on `PATH`.
 Run from this repository root:
 
 ```sh

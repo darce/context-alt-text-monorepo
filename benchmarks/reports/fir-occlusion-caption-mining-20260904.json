@@ -6,7 +6,7 @@
     "manifest_sha256": "0198531b45cffde474006a6c3ebee647b3b2b52e07c0696afc0f5de42a8b88b6",
     "run": "docs/tasks/altq/bakeoff-results/run-altq-646-interleave-v3.json",
     "run_sha256": "ea377f2e1505a11e69017184f35ec67e5254e9c17ec23e8c78a1f6e4c1d291ba",
-    "script_sha256": "69fec2e8d8ea27dee914787d93cc6576c77be9bc77766828427437f2d66bf945",
+    "script_sha256": "268ab8ee428fe7599eaf68c39e01ade7467d6139644ebfd064451be83a69c679",
     "run_provenance": {
       "base_url": "http://localhost:8000",
       "head_sha": "5a67b070fe8e383ffd243a77029d2225b6f8d700",

@@ -15,7 +15,7 @@ But Supertab Connect's internal architecture maps onto a gap this repo already h
 
 **Corrected 2026-09-03** — an earlier draft of this doc claimed *both* `Tenant.plan` and `ApiKey.rate_limit_tier` were dead columns. That is wrong for the second one, and the difference matters:
 
-- `db/models/tenant.py:49` → `Tenant.plan` (`Mapped[str | None]`) — **enforcement-dead.** It is written at provisioning (`scripts/provision_customer.py:162`, `recognition/application/services/customer_provision_service.py:103,124,164`) and read only to echo itself forward (`plan=tenant.plan or resolved_plan`). No code branches on its value.
+- `db/models/tenant.py:49` → `Tenant.plan` (`Mapped[str | None]`) — **enforcement-dead.** It is written at provisioning (`recognition/application/services/customer_provision_service.py:124` sets `plan=resolved_plan`; `scripts/provision_customer.py:162` only forwards `plan=args.plan`) and read only to echo itself forward (`customer_provision_service.py:103`, `plan=tenant.plan or resolved_plan`). No code branches on its value.
 - `db/models/tenant.py:88` → `ApiKey.rate_limit_tier` — **already live.** It is loaded in `recognition/interface_adapters/http/deps/auth.py:265`, carried on `AuthContext` (`deps/auth.py:230`), and enforced per-request at `deps/rate_limit.py:54` via `tier_rpm(auth.rate_limit_tier, settings)`. It is also surfaced in the admin console and admin router.
 
 So the entitlement hook is not missing — **it exists at the API-key level and is enforced.** What is missing is (a) anything at the *tenant/plan* level, and (b) any metering or aggregation feeding it. There is still no billing, subscription, checkout, or paywall implementation anywhere in `apps/` or `packages/`.
@@ -103,7 +103,7 @@ For comparison, Supertab's WordPress plugin stores a Website URN (`urn:stc:merch
 
 ### 4b. Distribution — arguably the bigger miss
 
-Supertab Connect ships through wordpress.org: *Plugins → Add Plugin → search "Supertab Connect" → activate*. AltContext ships a standalone `dist/alt-context-<version>.zip` + sha256 via `scripts/release/package-plugin.sh`, per `docs/portable-packaging-runbook.md`.
+Supertab Connect ships through wordpress.org: *Plugins → Add Plugin → search "Supertab Connect" → activate*. AltContext ships a standalone `dist/alt-context-<version>.zip` + sha256 via `scripts/release/package-plugin.sh`, per `apps/prototype-wp-alt-context/docs/portable-packaging-runbook.md`.
 
 The standalone ZIP is a deliberate choice with real tradeoffs (no review latency, no wordpress.org policy constraints), so this is a **question, not a defect** — but the reach difference is the reason Supertab's plugin launch post leans on the WordPress market-share stat.
 

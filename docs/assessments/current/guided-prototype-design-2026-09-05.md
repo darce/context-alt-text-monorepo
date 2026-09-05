@@ -160,7 +160,11 @@ These are two design passes, not user-test results.
 ## ASCII screens, revision 2
 
 `[button]` denotes an action; underlined-style text is represented as a plain link.
-Map IDs match `guided-prototype.uxmap.json`. These are proposed states, not
+Screen IDs below are design-proposal labels. The shipped map
+`apps/prototype-wp-alt-context/docs/ux-maps/guided-prototype.uxmap.json` uses its own IDs
+(intro, guide, evidence, draft, apply, result, reset, image-fallback, case-study), and the
+shipped entry route is `admin.php?page=alt-context-dashboard#/guided-prototype` inside
+WordPress admin rather than a public-domain entrance. These are proposed states, not
 screenshots of shipped behavior. Product navigation shown is a restricted tour
 subset; retain WordPress chrome and current plugin labels when implemented.
 

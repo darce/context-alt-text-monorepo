@@ -1,7 +1,7 @@
 {
   "maps": {
     "dashboard": {
-      "projection_sha256": "70ca465a81006a1faf54a59f02d0dd50b68ee4cbda44dc7f459e56b3507f1e86",
+      "projection_sha256": "6e65af9fb7d71cd0d5396af87ca4e2be53c64aca48a388cf51bb650fb59c189d",
       "source_sha256": "4de444cbf7c7283ec6761a07344bd70b436f82b4553c8044243cbc9cce25f29f"
     },
     "describe-gpu-tier": {

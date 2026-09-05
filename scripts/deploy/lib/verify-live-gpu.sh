@@ -34,6 +34,8 @@ for required_name in base_url api_key tenant_id; do
     fi
 done
 
+acx_validate_recognition_target "$wordpress_config_extra" "$base_url"
+
 smoke_image="$(mktemp /tmp/acx-gpu-smoke.XXXXXX)"
 response_file="$(mktemp /tmp/acx-gpu-response.XXXXXX)"
 curl_config="$(mktemp /tmp/acx-gpu-curl.XXXXXX)"

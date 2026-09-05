@@ -10,8 +10,9 @@
  * fail today, so the pure `selectUnfingerprinted` seam is exercised with a planted
  * unlisted file — the permanent discrimination guard TEST-15 asks for.
  */
-import { execFileSync, spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -512,6 +513,29 @@ describe('production build deadline', () => {
     expect(signals).toEqual([]);
   });
 
+  it.each([false, true])('releases the prepared guard after a settled build (failure=%s)', (failure) => {
+    const fixtureRoot = mkdtempSync(join(tmpdir(), 'acx-style-settled-build-test-'));
+    const lockDir = join(fixtureRoot, '.lock');
+    const ownership = acquireDirectoryLock(lockDir);
+    try {
+      const build = () => runWithBuildLock(lockDir, ownership, () => {
+        if (failure) throw new Error('Build failed with no surviving group');
+        return 'complete';
+      });
+      if (failure) {
+        expect(build).toThrow('Build failed with no surviving group');
+      } else {
+        expect(build()).toBe('complete');
+      }
+      expect(existsSync(lockDir)).toBe(false);
+      const successor = tryAcquireDirectoryLock(lockDir);
+      expect(successor).not.toBeNull();
+      if (successor !== null) releaseDirectoryLock(lockDir, successor);
+    } finally {
+      rmSync(fixtureRoot, { recursive: true, force: true });
+    }
+  });
+
   it('retains the build lock when signalling the live group fails with EPERM', () => {
     const fixtureRoot = mkdtempSync(join(tmpdir(), 'acx-style-lock-teardown-test-'));
     const lockDir = join(fixtureRoot, '.lock');
@@ -591,8 +615,10 @@ describe('production build deadline', () => {
     },
   );
 
-  it.skipIf(process.platform === 'win32').each(['EPERM', 'kill-confirmation'] as const)(
-    'fences successors after the owner exits following %s teardown [D5-R6-02/D5-R7-01]',
+  it.skipIf(process.platform === 'win32').each([
+    'EPERM', 'kill-confirmation', 'publication-failure', 'unwritable-directory', 'all-writes-fail',
+  ] as const)(
+    'fences successors after the owner exits following %s teardown [D5-R6-02/D5-R7-01/D5-R8-01]',
     (failure) => {
       const fixtureRoot = mkdtempSync(join(tmpdir(), 'acx-style-orphan-fence-test-'));
       const lockDir = join(fixtureRoot, '.lock');
@@ -603,12 +629,12 @@ describe('production build deadline', () => {
 import fs from 'node:fs';
 import { spawn } from 'node:child_process';
 import { dirname } from 'node:path';
-import { stripTypeScriptTypes } from 'node:module';
+import { stripTypeScriptTypes, syncBuiltinESMExports } from 'node:module';
 const [sourcePath, lockDir, pidPath, failure] = process.argv.slice(1);
 const source = 'const __dirname = ' + JSON.stringify(dirname(sourcePath)) + ';\n' +
   stripTypeScriptTypes(fs.readFileSync(sourcePath, 'utf8'));
 const fixture = await import('data:text/javascript;base64,' + Buffer.from(source).toString('base64'));
-const { tryAcquireDirectoryLock, runWithBuildLock, waitForProcessGroup,
+const { tryAcquireDirectoryLock, runWithBuildLock, runWithLockHeartbeat, waitForProcessGroup,
   ProductionCssBuildTeardownError } = fixture;
 const ownership = tryAcquireDirectoryLock(lockDir);
 const group = spawn(process.execPath, ['-e', 'setInterval(() => {}, 0x7fffffff)'], {
@@ -618,29 +644,58 @@ group.unref();
 fs.writeFileSync(pidPath, String(group.pid));
 let now = 0;
 try {
-  runWithBuildLock(lockDir, ownership, () => waitForProcessGroup(group.pid, {
-    timeoutMs: 1, terminationGraceMs: 1, killConfirmationMs: 1,
-    now: () => now, sleep: ms => { now += ms; }, readExitCode: () => null,
-    sendSignal: (id, signal) => {
-      if (signal === 0) return process.kill(id, 0);
-      if (failure === 'EPERM') {
-        const error = new Error('Injected signal permission failure');
-        error.code = 'EPERM';
-        throw error;
+  runWithBuildLock(lockDir, ownership, () => runWithLockHeartbeat(lockDir, ownership, () => {
+    // Inject after preparation, exactly when the real build could have changed permissions.
+    if (failure === 'unwritable-directory') {
+      fs.chmodSync(lockDir, 0o500);
+      try {
+        fs.writeFileSync(lockDir + '/permission-check', 'must fail');
+        throw new Error('Directory permission probe requires an unprivileged process');
+      } catch (error) {
+        if (error.code !== 'EACCES') throw error;
       }
-      // Model accepted signals whose teardown cannot be confirmed; the real group survives.
-    },
+    }
+    if (failure === 'publication-failure' || failure === 'all-writes-fail') {
+      const write = fs.writeFileSync;
+      fs.writeFileSync = (path, ...args) => {
+        if (failure === 'all-writes-fail' || typeof path === 'string') {
+          throw Object.assign(new Error('Injected fence write failure'), { code: 'EIO' });
+        }
+        return write(path, ...args);
+      };
+      fs.renameSync = () => {
+        throw Object.assign(new Error('Injected fence rename failure'), { code: 'EIO' });
+      };
+      syncBuiltinESMExports();
+    }
+    return waitForProcessGroup(group.pid, {
+      timeoutMs: 1, terminationGraceMs: 1, killConfirmationMs: 1,
+      now: () => now, sleep: ms => { now += ms; }, readExitCode: () => null,
+      sendSignal: (id, signal) => {
+        if (signal === 0) return process.kill(id, 0);
+        if (failure !== 'kill-confirmation') {
+          const error = new Error('Injected signal permission failure');
+          error.code = 'EPERM';
+          throw error;
+        }
+        // Model accepted signals whose teardown cannot be confirmed; the real group survives.
+      },
+    });
   }));
   throw new Error('Expected uncertain teardown');
 } catch (error) {
-  if (!(error instanceof ProductionCssBuildTeardownError)) throw error;
+  console.error(error.message);
+  process.exitCode = error instanceof ProductionCssBuildTeardownError ? 23 : 24;
 }
 `;
       try {
-        execFileSync(process.execPath, ['--input-type=module', '-e', ownerSource,
+        const ownerResult = spawnSync(process.execPath, ['--input-type=module', '-e', ownerSource,
           join(__dirname, 'productionCssBundle.ts'),
           lockDir, pidPath, failure,
-        ], { timeout: 10_000, stdio: 'pipe' });
+        ], { timeout: 10_000, stdio: 'inherit' });
+        expect(ownerResult.error).toBeUndefined();
+        expect(ownerResult.status).toBe(23);
+        chmodSync(lockDir, 0o700);
         const pgid = Number(readFileSync(pidPath, 'utf8'));
         expect(() => process.kill(-pgid, 0)).not.toThrow();
         const ownerPath = join(lockDir, LOCK_OWNER_FILE);
@@ -651,7 +706,9 @@ try {
         // is stale, yet the supervised process group can still mutate the build artifacts.
         expect(tryAcquireDirectoryLock(lockDir, { staleAfterMs: 1 })).toBeNull();
         const owner = JSON.parse(readFileSync(ownerPath, 'utf8'));
-        expect(owner.teardown_uncertain).toEqual({ pgid, startToken: expect.any(String) });
+        if (failure !== 'all-writes-fail') {
+          expect(owner.teardown_uncertain).toEqual({ pgid, startToken: expect.any(String) });
+        }
         expect(releaseDirectoryLock(lockDir, owner)).toBe(false);
 
         // A group-probe failure is uncertainty, including after the owner has exited.
@@ -664,9 +721,15 @@ try {
         const successor = tryAcquireDirectoryLock(lockDir, {
           staleAfterMs: 1, isProcessGroupAlive: () => false,
         });
-        expect(successor).not.toBeNull();
-        if (successor !== null) releaseDirectoryLock(lockDir, successor);
+        if (failure === 'all-writes-fail') {
+          // No persisted group identity: only the documented operator override can release it.
+          expect(successor).toBeNull();
+        } else {
+          expect(successor).not.toBeNull();
+          if (successor !== null) releaseDirectoryLock(lockDir, successor);
+        }
       } finally {
+        if (existsSync(lockDir)) chmodSync(lockDir, 0o700);
         if (existsSync(pidPath)) {
           try {
             process.kill(-Number(readFileSync(pidPath, 'utf8')), 'SIGKILL');

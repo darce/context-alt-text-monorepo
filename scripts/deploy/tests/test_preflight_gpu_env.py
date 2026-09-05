@@ -2304,11 +2304,45 @@ def test_11_lease_probe_interpreter_selection(
         exec(compile(program, str(SCRIPT), "exec"), {})
     except SystemExit as error:
         status = error.code
-    assert status == (1 if escalate and not system_imports else 0), diagnostics.getvalue()
-    if escalate and not system_imports:
+    assert status == (1 if not system_imports else 0), diagnostics.getvalue()
+    if not system_imports:
         assert "probe interpreter /usr/bin/python3 (version 3.9.6)" in diagnostics.getvalue()
         assert "cannot import" in diagnostics.getvalue()
         assert "lease path" not in diagnostics.getvalue()
     if not escalate:
-        assert all(command[0] != "/usr/bin/python3" for command in calls)
+        assert any(command[0] == "/usr/bin/python3" for command in calls)
     assert not list(tmp_path.glob(".acx-lease-preflight-*"))
+
+
+@pytest.mark.parametrize("quote", ["'", '"'])
+@pytest.mark.parametrize("role", ["producer", "demo"])
+def test_unrelated_multiline_value_cannot_hide_adapter(tmp_path: Path, quote: str, role: str) -> None:
+    values = valid_env() if role == "producer" else valid_demo_env()
+    values.pop("ACX_DESCRIPTION_ADAPTER")
+    document = "OTHER=" + quote + "\nACX_DESCRIPTION_ADAPTER=gpu_qwen30b\n" + quote + "\n" + env_text(values)
+    result = run_preflight(tmp_path, **{role + "_text": document})
+    assert result.returncode != 0
+    assert "multiline" in result.stderr
+
+
+@pytest.mark.parametrize("quote", ["'", '"'])
+def test_multiline_adapter_assignment_matches_compose(tmp_path: Path, quote: str) -> None:
+    if not shutil.which("docker") or subprocess.run(["docker", "compose", "version"], capture_output=True).returncode:
+        pytest.skip("Docker Compose is required for dotenv parity")
+    values = valid_env()
+    values.pop("ACX_DESCRIPTION_ADAPTER")
+    values["WORDPRESS_CONFIG_EXTRA"] = '"' + wordpress_config() + '"'
+    document = "OTHER=" + quote + "\nACX_DESCRIPTION_ADAPTER=gpu_qwen30b\n" + quote + "\n" + env_text(values)
+    preflight = run_preflight(tmp_path, producer_text=document)
+    compose_file = tmp_path / "compose.yml"
+    compose_file.write_text("services:\n  smoke:\n    image: scratch\n    env_file: producer.env\n")
+    result = subprocess.run(
+        ["docker", "compose", "--env-file", str(tmp_path / "producer.env"),
+         "-f", str(compose_file), "config", "--format", "json"],
+        text=True, capture_output=True, timeout=15,
+    )
+    assert result.returncode == 0, result.stderr
+    deployed = json.loads(result.stdout)["services"]["smoke"]["environment"]
+    assert "ACX_DESCRIPTION_ADAPTER" not in deployed
+    assert "ACX_DESCRIPTION_ADAPTER=gpu_qwen30b" in deployed["OTHER"]
+    assert preflight.returncode != 0

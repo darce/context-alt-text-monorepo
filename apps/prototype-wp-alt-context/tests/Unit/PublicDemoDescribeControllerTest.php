@@ -30,6 +30,7 @@ final class PublicDemoDescribeControllerTest extends TestCase
             public bool $omitGpuState = false;
             public ?string $itemsRunId = null;
             public int $itemRequests = 0;
+            public WP_REST_Response|WP_Error|null $submitResult = null;
             /** @var array<string,mixed> */
             public array $statusData = [];
 
@@ -42,6 +43,9 @@ final class PublicDemoDescribeControllerTest extends TestCase
                 /** @var list<int> $ids */
                 $ids = $request->get_param('media_ids');
                 $this->submissions[] = $ids;
+                if (null !== $this->submitResult) {
+                    return $this->submitResult;
+                }
 
                 $data = [
                     'run_id' => 'public-run-' . $this->nextRun++,
@@ -293,6 +297,134 @@ final class PublicDemoDescribeControllerTest extends TestCase
         self::assertSame(429, $response->get_status());
         self::assertSame($replacement, $GLOBALS['__ac_options']['acx_public_demo_inflight']);
         self::assertCount(2, $this->pipeline->submissions);
+    }
+
+    public function testR6RenewalMustNotOverwriteReplacementLease(): void
+    {
+        $this->enable([41]);
+        $this->controller->submit($this->authorizedRequest('POST', ['media_id' => 41]));
+        $GLOBALS['__ac_options']['acx_public_demo_inflight']['expires_at'] = time() - 1;
+        $replacement = null;
+        // Interleave at the write boundary for both update_option and SQL CAS.
+        $GLOBALS['__ac_option_before_update']['acx_public_demo_inflight'] = function () use (&$replacement): void {
+            unset($GLOBALS['__ac_option_before_update']['acx_public_demo_inflight']);
+            $this->pipeline->status = 'completed';
+            $this->pipeline->statusData = ['phase' => 'complete', 'completed' => 1];
+            self::assertSame(200, $this->controller->status($this->authorizedRequest('GET', ['run_id' => 'public-run-1']))->get_status());
+            // The backend status request outlived the five-second guard.
+            $GLOBALS['__ac_options']['acx_public_demo_inflight_reconcile']['expires_at'] = time() - 1;
+            $second = new PublicDemoDescribeController($this->pipeline);
+            self::assertSame(202, $second->submit($this->authorizedRequest('POST', ['media_id' => 41]))->get_status());
+            $replacement = $GLOBALS['__ac_options']['acx_public_demo_inflight'];
+        };
+
+        $_SERVER['REMOTE_ADDR'] = '203.0.113.43';
+        $reconciler = new PublicDemoDescribeController($this->pipeline);
+        self::assertSame(429, $reconciler->submit($this->authorizedRequest('POST', ['media_id' => 41]))->get_status());
+        $this->controller->status($this->authorizedRequest('GET', ['run_id' => 'public-run-1']));
+        $_SERVER['REMOTE_ADDR'] = '203.0.113.44';
+        $third = new PublicDemoDescribeController($this->pipeline);
+        self::assertSame(429, $third->submit($this->authorizedRequest('POST', ['media_id' => 41]))->get_status());
+        self::assertSame($replacement, $GLOBALS['__ac_options']['acx_public_demo_inflight']);
+        self::assertCount(2, $this->pipeline->submissions);
+    }
+
+    public function testR6AcceptedRunTrackingFailureMustKeepBulkhead(): void
+    {
+        $this->enable([41]);
+        // Exercise the real attachment loading, submission and tracking write;
+        // only the transport boundary is replaced with backend acceptance.
+        $pipeline = new class extends DescribeController {
+            public int $accepted = 0;
+            public string $status = 'running';
+            public function __construct() {}
+            public function get_tenant_id(): string { return 'public-demo-test'; }
+            public function proxy_recognition_request(
+                string $method, string $path, array $body = [], array $query = [],
+                string $request_class = 'auto', string $body_kind = 'json', ?int $max_body_bytes = null
+            ): WP_REST_Response|WP_Error {
+                if ('POST' === $method) {
+                    ++$this->accepted;
+                }
+                return new WP_REST_Response([
+                    'run_id' => 'accepted-' . $this->accepted,
+                    'status' => $this->status,
+                    'phase' => 'failed' === $this->status ? 'failed' : 'describing',
+                    'gpu_state' => 'ready', 'completed' => 0,
+                    'failed' => 'failed' === $this->status ? 1 : 0,
+                    'skipped' => 0, 'total' => 1,
+                ], 'POST' === $method ? 202 : 200);
+            }
+        };
+        $file = tempnam(sys_get_temp_dir(), 'acx-public-r6-');
+        file_put_contents($file, "\xff\xd8\xff\xe0jpeg-test");
+        $GLOBALS['__ac_attached_file'][41] = $file;
+        $GLOBALS['__ac_update_option_fail']['acx_describe_run_media_ids_accepted-1'] = true;
+        $GLOBALS['__ac_update_option_fail']['acx_describe_run_media_ids_accepted-2'] = true;
+        try {
+            $first = new PublicDemoDescribeController($pipeline);
+            self::assertInstanceOf(WP_Error::class, $first->submit($this->authorizedRequest('POST', ['media_id' => 41])));
+            $second = new PublicDemoDescribeController($pipeline);
+            $result = $second->submit($this->authorizedRequest('POST', ['media_id' => 41]));
+            self::assertSame(1, $pipeline->accepted);
+            self::assertSame(429, $result->get_status());
+            self::assertSame('accepted-1', $GLOBALS['__ac_options']['acx_public_demo_inflight']['run_id']);
+            $GLOBALS['__ac_options']['acx_public_demo_inflight']['expires_at'] = time() - 1;
+            self::assertSame(429, $second->submit($this->authorizedRequest('POST', ['media_id' => 41]))->get_status());
+            self::assertSame(1, $pipeline->accepted);
+
+            $pipeline->status = 'failed';
+            self::assertSame(200, $first->status($this->authorizedRequest('GET', ['run_id' => 'accepted-1']))->get_status());
+            self::assertArrayNotHasKey('acx_public_demo_inflight', $GLOBALS['__ac_options']);
+        } finally {
+            unset($GLOBALS['__ac_update_option_fail']['acx_describe_run_media_ids_accepted-1'], $GLOBALS['__ac_update_option_fail']['acx_describe_run_media_ids_accepted-2']);
+            unlink($file);
+        }
+    }
+
+    /** @dataProvider uncertainSubmissionProvider */
+    public function testUncertainSubmissionWithoutRunIdCannotExpireIntoFreeCapacity(string $failure): void
+    {
+        $this->enable([41]);
+        $this->pipeline->submitResult = match ($failure) {
+            'timeout' => new WP_Error('http_request_failed', 'Timed out', ['status' => 504]),
+            'tracking' => new WP_Error('describe_run_media_ids_store_failed', 'Tracking failed', ['status' => 500]),
+            'upstream' => new WP_REST_Response(['error' => 'upstream failure'], 503),
+            'malformed acceptance' => new WP_REST_Response(['status' => 'pending'], 202),
+        };
+        $this->controller->submit($this->authorizedRequest('POST', ['media_id' => 41]));
+        self::assertSame(true, $GLOBALS['__ac_options']['acx_public_demo_inflight']['submission_started']);
+        $GLOBALS['__ac_options']['acx_public_demo_inflight']['expires_at'] = time() - 1;
+        $second = new PublicDemoDescribeController($this->pipeline);
+        self::assertSame(429, $second->submit($this->authorizedRequest('POST', ['media_id' => 41]))->get_status());
+        self::assertCount(1, $this->pipeline->submissions);
+    }
+
+    public static function uncertainSubmissionProvider(): iterable
+    {
+        foreach (['timeout', 'tracking', 'upstream', 'malformed acceptance'] as $failure) {
+            yield $failure => [$failure];
+        }
+    }
+
+    public function testLocalAttachmentFailureReleasesCapacityBeforeAnyBackendAcceptance(): void
+    {
+        $this->enable([41]);
+        $controller = new PublicDemoDescribeController(new DescribeController());
+        $result = $controller->submit($this->authorizedRequest('POST', ['media_id' => 41]));
+        self::assertInstanceOf(WP_Error::class, $result);
+        self::assertSame([], $this->getHttpCalls());
+        self::assertArrayNotHasKey('acx_public_demo_inflight', $GLOBALS['__ac_options']);
+        self::assertSame(202, $this->controller->submit($this->authorizedRequest('POST', ['media_id' => 41]))->get_status());
+    }
+
+    public function testSubmissionMarkerWriteFailurePreventsBackendDispatch(): void
+    {
+        $this->enable([41]);
+        $GLOBALS['wpdb']->defaultQueryResult = false;
+        $result = $this->controller->submit($this->authorizedRequest('POST', ['media_id' => 41]));
+        self::assertSame(429, $result->get_status());
+        self::assertSame([], $this->pipeline->submissions);
     }
 
     public function testExpiredPendingLeaseCanBeReclaimedRepeatedlyAndOldOwnersCannotBind(): void

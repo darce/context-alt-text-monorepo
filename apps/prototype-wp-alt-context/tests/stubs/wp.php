@@ -1705,6 +1705,10 @@ if (!function_exists('update_option')) {
         // update_option(..., false): false === false → no-op, no row inserted.
         // Failure and no-op share the same return — recovery must re-read.
         $old = get_option($key);
+        $beforeUpdate = $GLOBALS['__ac_option_before_update'][$key] ?? null;
+        if (is_callable($beforeUpdate)) {
+            $beforeUpdate();
+        }
         if ($old === $value) {
             return false;
         }
@@ -2474,6 +2478,23 @@ if (!isset($GLOBALS['wpdb'])) {
                     && serialize($GLOBALS['__ac_options'][$key]) === $expected;
                 if ($matchesOwner) {
                     unset($GLOBALS['__ac_options'][$key]);
+                }
+                $this->rows_affected = $matchesOwner ? 1 : 0;
+                return $this->rows_affected;
+            }
+
+            if (preg_match("/^UPDATE " . preg_quote($this->options, '/') . " SET option_value = '((?:\\\\.|[^'])*)' WHERE option_name = '((?:\\\\.|[^'])*)' AND BINARY option_value = '((?:\\\\.|[^'])*)'$/s", $normalizedSql, $matches)) {
+                $value = stripslashes($matches[1]);
+                $key = stripslashes($matches[2]);
+                $expected = stripslashes($matches[3]);
+                $beforeUpdate = $GLOBALS['__ac_option_before_update'][$key] ?? null;
+                if (is_callable($beforeUpdate)) {
+                    $beforeUpdate();
+                }
+                $matchesOwner = array_key_exists($key, $GLOBALS['__ac_options'])
+                    && serialize($GLOBALS['__ac_options'][$key]) === $expected;
+                if ($matchesOwner) {
+                    $GLOBALS['__ac_options'][$key] = unserialize($value, ['allowed_classes' => false]);
                 }
                 $this->rows_affected = $matchesOwner ? 1 : 0;
                 return $this->rows_affected;

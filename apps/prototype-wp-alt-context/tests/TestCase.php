@@ -43,6 +43,7 @@ abstract class TestCase extends PHPUnitTestCase
         $GLOBALS['__ac_get_option_before_read'] = [];
         $GLOBALS['__ac_get_option_read_calls'] = [];
         $GLOBALS['__ac_option_before_delete'] = [];
+        $GLOBALS['__ac_option_before_update'] = [];
         $GLOBALS['__ac_cache_deletions'] = [];
         $GLOBALS['__ac_post_meta'] = [];
         $GLOBALS['__ac_update_post_meta_fail'] = [];

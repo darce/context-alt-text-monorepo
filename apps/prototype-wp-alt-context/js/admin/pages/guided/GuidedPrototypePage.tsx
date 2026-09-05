@@ -4,7 +4,6 @@ import {
   applyGuidedCandidate,
   confirmGuidedIdentity,
   createGuidedScenario,
-  GUIDED_SCENARIO_ORIGIN_LABELS,
   leaveGuidedIdentityUnidentified,
   rejectGuidedCandidate,
   saveGuidedEdit,
@@ -30,27 +29,34 @@ export const GuidedPrototypePage = (): React.JSX.Element => {
   const [activeStep, setActiveStep] = useState<GuidedGuideStep>('understand');
   const [feedback, setFeedback] = useState('');
   const [resetVersion, setResetVersion] = useState(0);
+  const identityUnconfirmed = scenario.identity.status === 'unconfirmed';
+  const flowIdentityState = identityUnconfirmed ? 'now' : 'done';
+  const flowDescriptionState = identityUnconfirmed
+    ? 'waiting'
+    : scenario.identity.status === 'confirmed'
+      ? 'done'
+      : 'skipped';
 
   const historyLabels = useMemo(
     () =>
       scenario.history.map((event, index) => {
         const labels: Record<typeof event.kind, string> = {
-          'identity-confirmed': 'Identity confirmed from the sample record.',
-          'identity-unidentified': 'Identity left unidentified.',
-          'edit-saved': 'Your description edit was saved for review.',
-          rejected: 'Draft rejected; the applied text was left alone.',
-          applied: 'Applied to the practice copy.',
-          'application-undone': 'Application undone.',
+          'identity-confirmed': `You confirmed the face match: ${scenario.sourceRecord.name}.`,
+          'identity-unidentified': 'You kept the person unnamed.',
+          'edit-saved': 'You saved an edit.',
+          rejected: 'You rejected the draft. The saved text did not change.',
+          applied: 'You applied the draft to the practice copy.',
+          'application-undone': 'You undid the apply.',
         };
         return { id: `${event.kind}-${index}`, label: labels[event.kind] };
       }),
-    [scenario.history],
+    [scenario.history, scenario.sourceRecord.name],
   );
 
   const beginGuide = (): void => {
     setGuideOpen(true);
     setActiveStep('understand');
-    setFeedback('The guide is open. Start with the image and page context.');
+    setFeedback('The steps are open. Start with the photo.');
   };
 
   const handleGuideToggle = (): void => {
@@ -59,12 +65,12 @@ export const GuidedPrototypePage = (): React.JSX.Element => {
 
   const handleGuideSelect = (step: GuidedGuideStep): void => {
     setActiveStep(step);
-    setFeedback(`Guide moved to: ${guidedStepLabel(step)}.`);
+    setFeedback(`Now on: ${guidedStepLabel(step)}.`);
   };
 
   const handleGuideEnd = (): void => {
     setGuideOpen(false);
-    setFeedback('Guide ended. You can continue with the same practice scenario.');
+    setFeedback('Steps closed. You can keep practising.');
     focusGuidedSection('understand');
   };
 
@@ -95,7 +101,7 @@ export const GuidedPrototypePage = (): React.JSX.Element => {
   const handleSaveEdit = (text: string): string | undefined => {
     return updateScenario(
       (current) => saveGuidedEdit(current, text),
-      'Your edit is ready for review.',
+      'Your edit is saved and ready to check.',
       'review',
       false,
     );
@@ -109,13 +115,13 @@ export const GuidedPrototypePage = (): React.JSX.Element => {
     setScenario(initialScenario());
     setResetVersion((current) => current + 1);
     setActiveStep('understand');
-    setFeedback('Practice reset. The original applied text is back.');
+    setFeedback('Practice reset. The original text is back.');
   };
 
   const handleConfirmIdentity = (): void => {
     updateScenario(
       (current) => confirmGuidedIdentity(current),
-      'Identity confirmed from the sample record. The description has not been applied.',
+      'Match confirmed. The name is in the draft. Nothing is applied yet.',
       'review',
     );
   };
@@ -123,7 +129,7 @@ export const GuidedPrototypePage = (): React.JSX.Element => {
   const handleLeaveUnidentified = (): void => {
     updateScenario(
       (current) => leaveGuidedIdentityUnidentified(current),
-      'Identity left unidentified. You can still review a description.',
+      'The person stays unnamed. You can still check the description.',
       'review',
     );
   };
@@ -131,13 +137,13 @@ export const GuidedPrototypePage = (): React.JSX.Element => {
   const handleReject = (): void => {
     updateScenario(
       (current) => rejectGuidedCandidate(current),
-      'Draft rejected; the applied text was left alone.',
+      'Draft rejected. The saved text did not change.',
       'review',
     );
   };
 
   const handleUndo = (): void => {
-    updateScenario((current) => undoGuidedApplication(current), 'Application undone.', 'apply');
+    updateScenario((current) => undoGuidedApplication(current), 'Apply undone.', 'apply');
     focusGuidedSection('apply');
   };
 
@@ -155,39 +161,62 @@ export const GuidedPrototypePage = (): React.JSX.Element => {
       <section className="acx-guided-page__workspace" aria-labelledby="acx-guided-page-title">
         <header className="acx-guided-page__hero">
           <div>
-            <p className="acx-guided-page__eyebrow">Saved illustrative scenario · {scenario.scenarioVersion}</p>
-            <h2 id="acx-guided-page-title">Practice with page context</h2>
+            <p className="acx-guided-page__eyebrow">Saved example</p>
+            <h2 id="acx-guided-page-title">How a face becomes a name in the description</h2>
             <p>
-              Description quality comes from combining what the image shows, who the page says is present, and your
-              final review.
+              AltContext looks at the photo, finds a face, and checks it against people you already named. If you confirm
+              the match, the name goes into the description. You always have the last word.
             </p>
           </div>
           <GuidedResetDialog onConfirm={resetPractice} />
         </header>
 
+        <div className="acx-guided-flow">
+          <ol aria-label="How the face reaches the description">
+            <li data-state="done">
+              <span>Photo</span>
+              <span className="acx-guided-flow__state">[done]</span>
+            </li>
+            <li data-state="done">
+              <span>Face found</span>
+              <span className="acx-guided-flow__state">[done]</span>
+            </li>
+            <li data-state="done">
+              <span>Matched to {scenario.faceMatch.matchedPersonName}</span>
+              <span className="acx-guided-flow__state">[done]</span>
+            </li>
+            <li data-state={flowIdentityState}>
+              <span>You confirm</span>
+              <span className="acx-guided-flow__state">[{flowIdentityState}]</span>
+            </li>
+            <li data-state={flowDescriptionState}>
+              <span>Name in the description</span>
+              <span className="acx-guided-flow__state">[{flowDescriptionState}]</span>
+            </li>
+          </ol>
+        </div>
+
         <section
           id="guided-section-understand"
           className="acx-guided-page__scenario"
-          aria-label="Image and page context"
+          aria-label="Photo and page"
           tabIndex={-1}
         >
           <GuidedSamplePhoto mediaAltText={scenario.originalMedia.altText} credit={scenario.sourceRecord.credit} />
           <div className="acx-guided-page__provenance">
-            <h3>Provenance you can inspect</h3>
+            <h3>Where this example comes from</h3>
             <dl>
               <div>
-                <dt>Scenario origin</dt>
-                <dd>{GUIDED_SCENARIO_ORIGIN_LABELS[scenario.origin]}</dd>
+                <dt>Example</dt>
+                <dd>Saved example, not a live run</dd>
               </div>
               <div>
                 <dt>Page</dt>
                 <dd>{scenario.pageContext.title}</dd>
               </div>
               <div>
-                <dt>Sample record</dt>
-                <dd>
-                  {scenario.sourceRecord.name} · {scenario.sourceRecord.credit}
-                </dd>
+                <dt>Person on file</dt>
+                <dd>{scenario.sourceRecord.name} · photo credit {scenario.sourceRecord.credit}</dd>
               </div>
             </dl>
           </div>
@@ -210,11 +239,11 @@ export const GuidedPrototypePage = (): React.JSX.Element => {
 
         <section className="acx-guided-history" aria-labelledby="acx-guided-history-title">
           <div>
-            <p className="acx-guided-page__eyebrow">Recovery and provenance</p>
-            <h2 id="acx-guided-history-title">Decision history</h2>
+            <p className="acx-guided-page__eyebrow">What you did</p>
+            <h2 id="acx-guided-history-title">Your decisions</h2>
           </div>
           {historyLabels.length === 0 ? (
-            <p>No decisions recorded yet. Your next action will appear here.</p>
+            <p>Nothing yet. Your next action will show up here.</p>
           ) : (
             <ol>
               {historyLabels.map((event) => (

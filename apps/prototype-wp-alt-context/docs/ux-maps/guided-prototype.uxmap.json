@@ -133,9 +133,8 @@
       "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/guided/GuidedFaceMatchCard.tsx",
       "primary_action_id": "confirm",
       "states": [
-        "undecided",
-        "confirmed",
-        "unnamed"
+        "first_time",
+        "default"
       ],
       "zones": [
         {
@@ -143,9 +142,8 @@
           "label": "Face crop, face count, match, and match strength",
           "role": "ai_review",
           "states": [
-            "undecided",
-            "confirmed",
-            "unnamed"
+            "first_time",
+            "default"
           ],
           "evidence_linked": true
         },
@@ -154,19 +152,17 @@
           "label": "How this works list and saved-run disclosure",
           "role": "content",
           "states": [
-            "undecided",
-            "confirmed",
-            "unnamed"
+            "first_time",
+            "default"
           ]
         },
         {
           "id": "face-2",
-          "label": "Decision status and Yes, this is Keanu Reeves / Keep the person unnamed buttons",
+          "label": "Decision status (not decided yet / confirmed / kept unnamed) and Yes, this is Keanu Reeves / Keep the person unnamed buttons",
           "role": "form",
           "states": [
-            "undecided",
-            "confirmed",
-            "unnamed"
+            "first_time",
+            "default"
           ]
         }
       ]
@@ -567,7 +563,7 @@
     {
       "id": "unnamed",
       "job": "review",
-      "label": "The person stays unnamed and the description stays generic",
+      "label": "The person stays unnamed and the description stays generic. The flow strip reads skipped for the name step.",
       "steps": [
         {
           "screen_id": "intro"
@@ -579,8 +575,7 @@
           "screen_id": "evidence"
         },
         {
-          "screen_id": "face",
-          "note": "Stage 5 of the flow strip reads skipped on this path."
+          "screen_id": "face"
         },
         {
           "screen_id": "draft"

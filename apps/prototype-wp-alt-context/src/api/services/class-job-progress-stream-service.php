@@ -86,15 +86,13 @@ class JobProgressStreamService {
 			);
 
 			if ( is_wp_error( $response ) ) {
-				echo "event: error\n";
-				echo 'data: ' . wp_json_encode( array( 'message' => $response->get_error_message() ) ) . "\n\n";
+				$this->emit_error( JobStreamErrorCode::PROXY_ERROR, $response->get_error_message() );
 				$this->flush_stream_output();
 				break;
 			}
 
 			if ( ! ( $response instanceof WP_REST_Response ) ) {
-				echo "event: error\n";
-				echo 'data: ' . wp_json_encode( array( 'message' => 'Unexpected response type.' ) ) . "\n\n";
+				$this->emit_error( JobStreamErrorCode::UNEXPECTED_RESPONSE, 'Unexpected response type.' );
 				$this->flush_stream_output();
 				break;
 			}
@@ -102,16 +100,14 @@ class JobProgressStreamService {
 			$status_code = $response->get_status();
 			if ( 404 === $status_code ) {
 				$this->job_status_service->record_observed_job_status_from_response( $job_id, $response );
-				echo "event: error\n";
-				echo 'data: ' . wp_json_encode( array( 'message' => 'Job not found.' ) ) . "\n\n";
+				$this->emit_error( JobStreamErrorCode::JOB_NOT_FOUND, 'Job not found.' );
 				$this->flush_stream_output();
 				break;
 			}
 
 			$data = $response->get_data();
 			if ( ! is_array( $data ) ) {
-				echo "event: error\n";
-				echo 'data: ' . wp_json_encode( array( 'message' => 'Invalid job response.' ) ) . "\n\n";
+				$this->emit_error( JobStreamErrorCode::INVALID_JOB_RESPONSE, 'Invalid job response.' );
 				$this->flush_stream_output();
 				break;
 			}
@@ -176,6 +172,24 @@ class JobProgressStreamService {
 		}
 
 		$this->terminate_job_progress_stream();
+	}
+
+	/**
+	 * Emit the stable control field beside human-readable diagnostic copy.
+	 *
+	 * A timeout or disconnect only establishes that the client did not hear a
+	 * result, not that a remote operation failed; definite negatives therefore
+	 * need an application-level response (DDIA ch-8; heuristics-canon-research/
+	 * distilled/engineering/designing-data-intensive-applications.md:305-308).
+	 */
+	private function emit_error( JobStreamErrorCode $code, string $message ): void {
+		echo "event: error\n";
+		echo 'data: ' . wp_json_encode(
+			array(
+				'code'    => $code->value,
+				'message' => $message,
+			)
+		) . "\n\n";
 	}
 
 	/**

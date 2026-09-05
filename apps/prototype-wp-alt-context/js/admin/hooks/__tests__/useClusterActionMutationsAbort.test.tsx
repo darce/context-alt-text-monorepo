@@ -151,9 +151,15 @@ describe('useClusterActionMutations split cancellation', () => {
     vi.mocked(recognitionApi.splitCluster).mockImplementation((clusterId) =>
       Promise.resolve({ job_id: `job-${clusterId}`, status: 'pending', message: 'queued' }),
     );
-    vi.mocked(recognitionApi.fetchScanStatus).mockImplementation((jobId) => {
+    vi.mocked(recognitionApi.fetchScanStatus).mockImplementation((jobId, signal) => {
       if (jobId === 'job-c1') {
-        return new Promise<never>(() => undefined);
+        return new Promise<never>((_resolve, reject) => {
+          signal?.addEventListener(
+            'abort',
+            () => reject(new DOMException('The split poll was superseded.', 'AbortError')),
+            { once: true },
+          );
+        });
       }
       return Promise.resolve({
         id: jobId,
@@ -184,10 +190,14 @@ describe('useClusterActionMutations split cancellation', () => {
     );
 
     act(() => result.current.split('c1', 2));
-    await waitFor(() => expect(recognitionApi.fetchScanStatus).toHaveBeenCalledWith('job-c1'));
+    await waitFor(() =>
+      expect(recognitionApi.fetchScanStatus).toHaveBeenCalledWith('job-c1', expect.any(AbortSignal)),
+    );
 
     act(() => result.current.split('c2', 2));
-    await waitFor(() => expect(recognitionApi.fetchScanStatus).toHaveBeenCalledWith('job-c2'));
+    await waitFor(() =>
+      expect(recognitionApi.fetchScanStatus).toHaveBeenCalledWith('job-c2', expect.any(AbortSignal)),
+    );
     await waitFor(() => expect(result.current.isSplitting).toBe(false));
     await waitFor(() =>
       expect(queryClient.getMutationCache().getAll().every((mutation) => mutation.state.status !== 'pending')).toBe(
@@ -234,7 +244,9 @@ describe('useClusterActionMutations split cancellation', () => {
     );
 
     act(() => result.current.split('c1', 2));
-    await waitFor(() => expect(recognitionApi.fetchScanStatus).toHaveBeenCalledWith('job-c1'));
+    await waitFor(() =>
+      expect(recognitionApi.fetchScanStatus).toHaveBeenCalledWith('job-c1', expect.any(AbortSignal)),
+    );
     await Promise.resolve();
 
     act(() => result.current.split('c2', 2));

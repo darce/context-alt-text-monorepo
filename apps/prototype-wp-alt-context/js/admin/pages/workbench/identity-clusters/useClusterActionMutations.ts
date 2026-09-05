@@ -48,11 +48,13 @@ const rejectIfSplitAborted = (signal: AbortSignal): void => {
 };
 
 /**
- * Bound an in-flight poll operation to the split owner even while older API
- * clients still expose a one-argument fetchScanStatus signature. The transport
- * has its own 15s deadline; this race is the lifecycle fence that prevents its
- * eventual result from reaching a superseded or unmounted mutation (DDIA
- * unknown outcomes; RES-13, docs/reviews/uxp-2/lexicons/engineering.md:47).
+ * Bound an in-flight poll operation to the split owner. The transport receives
+ * the same signal and has its own 15s deadline; this race is an additional
+ * lifecycle fence for substitutes or clients that settle late. A disconnect
+ * leaves the remote write outcome unknown (DDIA ch-8,
+ * heuristics-canon-research/distilled/engineering/
+ * designing-data-intensive-applications.md:301-308; RES-13,
+ * heuristics-canon-research/lexicons/engineering.md:124).
  */
 const waitForSplitOperation = <T>(operation: Promise<T>, signal: AbortSignal): Promise<T> => {
   rejectIfSplitAborted(signal);
@@ -94,7 +96,7 @@ const delaySplitPoll = (ms: number, signal: AbortSignal): Promise<void> => {
 const pollSplitJob = async (jobId: string, signal: AbortSignal): Promise<void> => {
   const startedAt = Date.now();
   while (Date.now() - startedAt < SPLIT_TIMEOUT_MS) {
-    const status = await waitForSplitOperation(fetchScanStatus(jobId), signal);
+    const status = await waitForSplitOperation(fetchScanStatus(jobId, signal), signal);
     // BND-1: completed_with_errors is a terminal partial-success — resolve the poll, else it spins
     // until SPLIT_TIMEOUT_MS and throws a spurious timeout. 'failed' remains the only hard failure.
     if (isScanSuccessStatus(status.status)) {

@@ -1,10 +1,14 @@
 import { execFileSync, spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import {
+  closeSync,
   existsSync,
+  fsyncSync,
+  ftruncateSync,
   globSync,
   mkdtempSync,
   mkdirSync,
+  openSync,
   readFileSync,
   readdirSync,
   realpathSync,
@@ -40,6 +44,8 @@ import { dirname, join, relative, resolve } from 'node:path';
  *      mutate a shared fixture (TEST-07).
  *
  * RES-13-TEARDOWN: an uncertain teardown persists `teardown_uncertain` in owner.json.
+ * A pre-created .build-in-progress guard also fences an ordinary lease if all later writes fail.
+ * Without persisted group metadata this guard requires the operator override below.
  * Owner death or a missing/reused group leader does not clear this fence: recovery must observe
  * ESRCH for the entire PGID. Permission/probe failures retain it. Operator override: stop all
  * fixture users, inspect the recorded PGID/startToken and terminate any surviving build members,
@@ -79,6 +85,7 @@ const LOCK_HEARTBEAT_MS = 1_000;
 const BUILD_TIMEOUT_MS = STALE_LOCK_MS - 30_000;
 const BUILD_TERMINATION_GRACE_MS = 5_000;
 export const LOCK_OWNER_FILE = 'owner.json';
+const BUILD_GUARD_FILE = '.build-in-progress';
 /** Artifact directories untouched for longer than this are pruned. */
 const ARTIFACT_TTL_MS = 24 * 60 * 60_000;
 /** Stop retrying when build inputs are being rewritten continuously. */
@@ -287,6 +294,15 @@ export interface DirectoryLockOptions {
 
 const ownerPathForLock = (lockDir: string): string => join(lockDir, LOCK_OWNER_FILE);
 
+const buildGuardExists = (lockDir: string): boolean => {
+  try {
+    statSync(join(lockDir, BUILD_GUARD_FILE));
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code !== 'ENOENT';
+  }
+};
+
 const sameOwnership = (left: DirectoryLockOwnership, right: DirectoryLockOwnership): boolean =>
   left.pid === right.pid && left.startToken === right.startToken && left.nonce === right.nonce;
 
@@ -443,7 +459,9 @@ export const tryAcquireDirectoryLock = (
     const staleAfterMs = options.staleAfterMs ?? STALE_LOCK_MS;
     const isProcessAlive = options.isProcessAlive ?? processIdentityIsAlive;
     const teardownIsComplete = (owner: DirectoryLockOwnership): boolean => {
-      if (owner.teardown_uncertain === undefined) return true;
+      if (owner.teardown_uncertain === undefined) {
+        return !buildGuardExists(lockDir);
+      }
       try {
         const isGroupAlive =
           options.isProcessGroupAlive ??
@@ -537,7 +555,8 @@ export const releaseDirectoryLock = (
   if (
     incumbent === null ||
     !sameOwnership(incumbent, ownership) ||
-    incumbent.teardown_uncertain !== undefined
+    incumbent.teardown_uncertain !== undefined ||
+    buildGuardExists(lockDir)
   ) {
     return false;
   }
@@ -590,7 +609,12 @@ setInterval(() => {}, 0x7fffffff);
     return operation();
   } finally {
     heartbeat.kill();
-    rmSync(readyPath, { force: true });
+    try {
+      rmSync(readyPath, { force: true });
+    } catch {
+      // The lock namespace also owns this sentinel. Permission changes must not replace an
+      // uncertain teardown error before runWithBuildLock can persist its group identity.
+    }
   }
 };
 
@@ -624,30 +648,62 @@ export const runWithBuildLock = <T>(
   ownership: DirectoryLockOwnership,
   operation: () => T,
 ): T => {
+  const incumbent = readLockOwnership(lockDir);
+  if (incumbent === null || !sameOwnership(incumbent, ownership) || incumbent.teardown_uncertain !== undefined) {
+    throw new Error(`Cannot prepare a build without exclusive ownership of ${lockDir}.`);
+  }
+  const guardPath = join(lockDir, BUILD_GUARD_FILE);
+  let ownerFd: number | undefined;
+  let guardCreated = false;
   let retainLock = false;
   try {
+    // Prepare both before operation can spawn a group. The open lease remains writable after
+    // directory permissions change; the guard survives even a total failure of later writes.
+    ownerFd = openSync(ownerPathForLock(lockDir), 'r+');
+    const guardFd = openSync(guardPath, 'wx');
+    guardCreated = true;
+    try {
+      writeFileSync(guardFd, `${JSON.stringify(ownership)}\n`);
+      fsyncSync(guardFd);
+    } finally {
+      closeSync(guardFd);
+    }
     return operation();
   } catch (error) {
     retainLock = error instanceof ProductionCssBuildTeardownError && error.retainBuildLock;
     if (error instanceof ProductionCssBuildTeardownError) {
       const incumbent = readLockOwnership(lockDir);
       if (incumbent !== null && sameOwnership(incumbent, ownership)) {
-        if (
-          error.supervisedGroup === undefined ||
-          publishLockOwnership(lockDir, {
+        if (error.supervisedGroup !== undefined) {
+          const fencedOwner = {
             ...incumbent,
             teardown_uncertain: error.supervisedGroup,
-          }) === null
-        ) {
-          // Missing metadata fails closed too. If publication failed (or no group identity was
-          // supplied), remove the ordinary lease from recovery's view, preserving it for diagnosis.
-          renameSync(ownerPathForLock(lockDir), join(lockDir, `.teardown-uncertain-${ownership.nonce}`));
+          };
+          if (publishLockOwnership(lockDir, fencedOwner) === null && ownerFd !== undefined) {
+            try {
+              const content = `${JSON.stringify(fencedOwner)}\n`;
+              writeFileSync(ownerFd, content);
+              ftruncateSync(ownerFd, Buffer.byteLength(content));
+              fsyncSync(ownerFd);
+            } catch {
+              // Partial/unreadable metadata already fails closed. If the ordinary lease survived,
+              // the pre-created guard prevents stale recovery after this owner exits as well.
+            }
+          }
         }
       }
+      const group = error.supervisedGroup;
+      error.message += ` Lock retained at ${lockDir}; supervised PGID ${group?.pgid ?? 'unknown'}, ` +
+        `start token ${group?.startToken ?? 'unknown'}. If group metadata could not be persisted, ` +
+        'stop fixture users, terminate surviving build members, then remove the lock directory manually.';
     }
     throw error;
   } finally {
-    if (!retainLock) releaseDirectoryLock(lockDir, ownership);
+    if (ownerFd !== undefined) closeSync(ownerFd);
+    if (!retainLock) {
+      if (guardCreated) rmSync(guardPath, { force: true });
+      releaseDirectoryLock(lockDir, ownership);
+    }
   }
 };
 

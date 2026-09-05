@@ -37,6 +37,10 @@ vi.mock('../pages/DescriptionHistoryPage', () => ({
   DescriptionHistoryPage: () => <div>Description History</div>,
 }));
 
+vi.mock('../pages/guided/GuidedPrototypePage', () => ({
+  GuidedPrototypePage: () => <div>Guided Prototype</div>,
+}));
+
 vi.mock('../context/ToastContext', () => ({
   ToastProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
   useToast: () => ({
@@ -114,5 +118,15 @@ describe('App route boot', () => {
 
     expect(window.location.hash).toBe('#/settings?section=retention');
     expect(screen.getByText('Settings')).toBeInTheDocument();
+  });
+
+  it('boots the guided prototype from its authenticated plugin hash route', () => {
+    window.history.replaceState({}, '', '/wp-admin/admin.php?page=alt-context-dashboard');
+    window.location.hash = '#/guided-prototype';
+
+    render(<App />);
+
+    expect(window.location.hash).toBe('#/guided-prototype');
+    expect(screen.getByText('Guided Prototype')).toBeInTheDocument();
   });
 });

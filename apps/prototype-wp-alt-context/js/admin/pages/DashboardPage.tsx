@@ -317,6 +317,11 @@ export const DashboardPage = (): React.JSX.Element => {
         <p className="acx-dashboard__subtitle">
           {__('It finds the people in your media library and writes alt text that names them.', 'alt-context')}
         </p>
+        <div className="acx-dashboard__actions">
+          <a href="#/guided-prototype" className="acx-button acx-button--primary">
+            {__('Try the guided practice', 'alt-context')}
+          </a>
+        </div>
       </header>
 
       {priorityModel.orientationPosition === DASHBOARD_ORIENTATION_POSITION.BEFORE_GRID ? <OrientationCard /> : null}

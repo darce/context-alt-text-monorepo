@@ -4,6 +4,7 @@ import contextlib
 import importlib.util
 import io
 import json
+import re
 from pathlib import Path
 import shutil
 import tempfile
@@ -18,6 +19,34 @@ spec.loader.exec_module(renderer)
 
 
 class RendererBoundaryTests(unittest.TestCase):
+    def test_noncanonical_screen_rows_fail_both_check_paths_with_row_text(self):
+        ref = "workbench-operator-loop"
+        original = SOURCE.with_name(f"{ref}.md").read_text()
+        row = re.search(r"^\| `workbench-shell` \|.*$", original, re.MULTILINE)[0]
+        fixtures = renderer.REPO_ROOT / "apps/prototype-wp-alt-context/js/admin/__tests__/uxmap-render-parity.fixtures"
+        mutations = json.loads((fixtures / "screen-summary-mutations.json").read_text())
+        with tempfile.TemporaryDirectory() as directory:
+            maps = Path(directory)
+            shutil.copyfile(SOURCE.with_name(f"{ref}.uxmap.json"), maps / f"{ref}.uxmap.json")
+            target = maps / f"{ref}.md"
+            with patch.object(renderer, "MAPS_DIR", maps):
+                for renderer_available in [False, True]:
+                    # Exercise the real check/projection in both branches; only the
+                    # optional canvas renderer is replaced with its committed output.
+                    with patch.object(renderer, "render", return_value=original,
+                                      side_effect=None if renderer_available else renderer.OptionalRendererUnavailable()):
+                        target.write_text(original)
+                        with contextlib.redirect_stdout(io.StringIO()):
+                            self.assertEqual(renderer.check([ref]), 0)
+                        for mutation in mutations:
+                            with self.subTest(renderer_available=renderer_available, mutation=mutation["name"]):
+                                target.write_text(original.replace(row, mutation["row"] + "\n" + row, 1))
+                                output = io.StringIO()
+                                with contextlib.redirect_stderr(output), contextlib.redirect_stdout(io.StringIO()):
+                                    status = renderer.check([ref])
+                                self.assertEqual(status, 1)
+                                self.assertIn("noncanonical Screens table row: " + mutation["row"], output.getvalue())
+
     def test_duplicate_retained_contract_cannot_hide_an_unchecked_table(self):
         text = SOURCE.with_name("febt-1-job-error-states.md").read_text()
         with self.assertRaisesRegex(ValueError, "duplicate retained contract"):

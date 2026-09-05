@@ -26,6 +26,21 @@ PLUGIN_ZIP="${PLUGIN_ZIP:-}"
 WP_URL="${WP_URL:-https://demo.altcontext.com}"
 WP_TITLE="${WP_TITLE:-ACX Demo}"
 
+# Fail-closed describe-apply: canned `seeded` captions are worse than empty alt.
+# BOOTSTRAP_GPU_CONTRACT_BEGIN
+# Repository invocations use the identical source without a generated copy.
+bootstrap_contract="$(dirname "${BASH_SOURCE[0]}")/lib/gpu-env-contract.sh"
+if [[ ! -r "$bootstrap_contract" ]]; then
+  bootstrap_contract="$(dirname "${BASH_SOURCE[0]}")/../../../scripts/deploy/lib/gpu-env-contract.sh"
+fi
+# shellcheck source=../../../scripts/deploy/lib/gpu-env-contract.sh
+if [[ ! -r "$bootstrap_contract" ]]; then
+  echo "ERROR: missing staged lib/gpu-env-contract.sh; deploy must transfer it before bootstrap." >&2
+  exit 2
+fi
+source "$bootstrap_contract"
+# BOOTSTRAP_GPU_CONTRACT_END
+
 cd "$DEMO_DIR"
 
 if [[ ! -f secrets/.env ]]; then
@@ -47,7 +62,7 @@ WP_ADMIN_EMAIL="$(env_get WP_ADMIN_EMAIL)"
 WP_CI_USER="$(env_get WP_CI_USER)"
 WP_CI_PASSWORD="$(env_get WP_CI_PASSWORD)"
 WP_CI_EMAIL="$(env_get WP_CI_EMAIL)"
-WORDPRESS_CONFIG_EXTRA="$(env_get WORDPRESS_CONFIG_EXTRA)"
+WORDPRESS_CONFIG_EXTRA="$(acx_env_literal_value "$(env_get WORDPRESS_CONFIG_EXTRA)")"
 
 for var in WP_ADMIN_USER WP_ADMIN_PASSWORD WP_ADMIN_EMAIL WP_CI_USER WP_CI_PASSWORD WP_CI_EMAIL WORDPRESS_CONFIG_EXTRA; do
   if [[ -z "${!var:-}" ]]; then
@@ -256,10 +271,6 @@ echo "==> Cycle plugin activation so activation-hook dbDelta applies schema chan
 compose run --rm --no-deps wpcli wp plugin deactivate alt-context || true
 compose run --rm --no-deps wpcli wp plugin activate alt-context
 
-# Fail-closed describe-apply: canned `seeded` captions are worse than empty alt.
-# shellcheck source=lib/describe-gate.sh
-source "$(dirname "${BASH_SOURCE[0]}")/lib/describe-gate.sh"
-
 # wp-cli --format=count -> digits, or "" on failure/non-numeric so the
 # classifier BLOCKs instead of guessing.
 wpcli_count_or_empty() {
@@ -363,7 +374,7 @@ case "$DESCRIBE_VERDICT" in
         echo "==> BLOCKED: cannot verify description provenance (got '${PROVENANCE}') for adapter '${ADAPTER_PROFILE}' (coverage=${MEDIA_WITH_ALT}/${TOTAL_MEDIA}). Fail closed; this is an environment fault, not a config fault. Describe pass skipped." >&2
       fi
     else
-      echo "==> BLOCKED: refusing to publish descriptions — live description service adapter='${ADAPTER_PROFILE}' produces canned fixture captions, which is worse for accessibility than empty alt text. Change the description SERVICE profile (the running producer's ACX_DESCRIPTION_ADAPTER), not the demo host secrets/.env. Trusted service profiles: florence_small, gpu_qwen30b, gpu_qwen30b_ensemble. (coverage=${MEDIA_WITH_ALT}/${TOTAL_MEDIA})" >&2
+      echo "==> BLOCKED: refusing to publish descriptions — live description service adapter='${ADAPTER_PROFILE}' produces canned fixture captions, which is worse for accessibility than empty alt text. Change the description SERVICE profile (the running producer's ACX_DESCRIPTION_ADAPTER), not the demo host secrets/.env. Trusted service profiles: ${ACX_TRUSTED_DESCRIBE_PROFILES}. (coverage=${MEDIA_WITH_ALT}/${TOTAL_MEDIA})" >&2
     fi
     exit 1
     ;;

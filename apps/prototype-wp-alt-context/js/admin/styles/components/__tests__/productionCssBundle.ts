@@ -74,6 +74,7 @@ const BUILD_INPUT_GLOBS = [
   'js/**/*.scss',
   'js/**/*.css',
   'js/**/*.json',
+  'js/**/*.jpeg',
   'vite.config.ts',
   'tsconfig.json',
   'tsconfig.type-check.json',

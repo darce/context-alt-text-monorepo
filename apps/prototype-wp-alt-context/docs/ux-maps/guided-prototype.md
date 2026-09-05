@@ -45,17 +45,14 @@
 ```
 +------------------------------------------------------------+
 | AltContext guided demo  [screen]  #/guided-prototype       |
-| Follow one photo from start to finish. AltContext finds a  |
-| face, matches it to a person you already named, and puts   |
-| that name in the image description. You choose what gets   |
-| saved.                                                       |
+| Follow one photo from start to finish. AltContext finds a… |
 +------------------------------------------------------------+
 | ZONES                                                      |
-|   - Guided demo, scope, and current build status (content)  |
-|   - Start the demo and read the AltContext case study (nav) |
+|   - Guided demo, scope, and current build status (content… |
+|   - Start the demo and read the AltContext case study (na… |
 +------------------------------------------------------------+
 | ACTIONS                                                    |
-|   [PRIMARY] Start the demo -> guide                       |
+|   [PRIMARY] Start the demo -> guide                        |
 |   [secondary] Read the AltContext case study -> case-study |
 +------------------------------------------------------------+
 | states: default                                            |
@@ -66,15 +63,12 @@
 
 ```
 +------------------------------------------------------------+
-| Step by step  [screen]  #/guided-prototype                |
-| Five steps show the path from the photo to the description:|
-| Look at the photo, Find the face, Confirm the match, Check |
-| the description, and Apply it yourself.                   |
+| Step by step  [screen]  #/guided-prototype                 |
+| Five steps show the path from the photo to the descriptio… |
 +------------------------------------------------------------+
 | ZONES                                                      |
-|   - Current step, Skip to this step, and Show steps / Hide  |
-|     steps (nav)                                             |
-|   - Five steps and Close the steps (nav)                   |
+|   - Current step, Skip to this step, and Show steps / Hid… |
+|   - Five steps: Look at the photo, Find the face, Confirm… |
 +------------------------------------------------------------+
 | ACTIONS                                                    |
 |   [secondary] Show steps / Hide steps -> guide             |
@@ -91,14 +85,11 @@
 ```
 +------------------------------------------------------------+
 | Photo and page  [screen]  #/guided-prototype               |
-| See the photo and the page it sits on. AltContext found a  |
-| face and the next step shows the match.                    |
+| See the photo and the page it sits on. AltContext found a… |
 +------------------------------------------------------------+
 | ZONES                                                      |
-|   - The photo; current alt text; photo credit; and the     |
-|     next-step face note (ai_review)                        |
-|   - Where this example comes from: Example, Page, and      |
-|     Person on file (content)                               |
+|   - The photo; Alt text on the page right now; Photo cred… |
+|   - Where this example comes from: Example, Page, and Per… |
 +------------------------------------------------------------+
 | states: default                                            |
 +------------------------------------------------------------+
@@ -109,21 +100,18 @@
 ```
 +------------------------------------------------------------+
 | Face found in the photo  [screen]  #/guided-prototype      |
-| AltContext found a face and matched it to a person you     |
-| named before. You choose whether to put the name in the    |
-| description.                                               |
+| AltContext found a face and matched it to a person you na… |
 +------------------------------------------------------------+
 | ZONES                                                      |
-|   - Face crop, face count, match, and match strength       |
-|     (ai_review)                                            |
-|   - How this works list and saved-run disclosure (content) |
-|   - Decision status and two name-choice buttons (form)     |
+|   - Face crop, face count, match, and match strength (ai_… |
+|   - How this works list and saved-run disclosure (content… |
+|   - Decision status (not decided yet / confirmed / kept u… |
 +------------------------------------------------------------+
 | ACTIONS                                                    |
 |   [secondary] Yes, this is Keanu Reeves -> draft           |
 |   [tertiary] Keep the person unnamed -> draft              |
 +------------------------------------------------------------+
-| states: undecided | confirmed | unnamed                    |
+| states: first_time | default                               |
 +------------------------------------------------------------+
 ```
 
@@ -131,18 +119,13 @@
 
 ```
 +------------------------------------------------------------+
-| Check the description before anything changes              |
-| [screen]  #/guided-prototype                               |
-| Read the draft. Edit it or reject it. Nothing changes      |
-| until you press Apply.                                     |
+| Check the description before anything changes  [screen]  … |
+| Read the draft. Edit it or reject it. Nothing changes unt… |
 +------------------------------------------------------------+
 | ZONES                                                      |
-|   - Ready for you to check, Edited by you, or Rejected.     |
-|     The saved text did not change (form)                   |
-|   - Without the name and Draft for you to check; saved      |
-|     example, not a live run (ai_review)                    |
-|   - Description draft with Save my edit, Discard my edit,  |
-|     and Reject this draft (form)                            |
+|   - Ready for you to check, Edited by you, or Rejected. T… |
+|   - Without the name and Draft for you to check; this dra… |
+|   - Description draft with Save my edit, Discard my edit,… |
 +------------------------------------------------------------+
 | ACTIONS                                                    |
 |   [PRIMARY] Save my edit -> apply                          |
@@ -158,18 +141,15 @@
 ```
 +------------------------------------------------------------+
 | Apply it yourself  [screen]  #/guided-prototype            |
-| Nothing changes until you press Apply. Pressing Apply      |
-| writes the saved draft to this practice copy only.         |
+| Nothing changes until you press Apply. Pressing Apply wri… |
 +------------------------------------------------------------+
 | ZONES                                                      |
-|   - The practice copy says {appliedText}; pressing Apply    |
-|     writes the saved draft to this practice copy only      |
-|   - Apply to practice copy and Undo; Apply is off while     |
-|     your edit is unsaved                                  |
+|   - The practice copy says {appliedText}; pressing Apply … |
+|   - Apply to practice copy and Undo; Apply is off while y… |
 +------------------------------------------------------------+
 | ACTIONS                                                    |
 |   [PRIMARY] Apply to practice copy -> result               |
-|   [tertiary] Undo -> apply                                  |
+|   [tertiary] Undo -> apply                                 |
 +------------------------------------------------------------+
 | states: default | error                                    |
 +------------------------------------------------------------+
@@ -263,11 +243,11 @@ flowchart TD
   n_apply --> n_result
 ```
 
-### The person stays unnamed and the description stays generic (`unnamed`)
+### The person stays unnamed and the description stays generic. The flow strip reads skipped for the name step. (`unnamed`)
 
 ```mermaid
 flowchart TD
-  %% flow: The person stays unnamed and the description stays generic job=review
+  %% flow: The person stays unnamed and the description stays generic. The flow strip reads skipped for the name step. job=review
   n_intro["AltContext guided demo (screen)"]
   n_guide["Step by step (screen)"]
   n_intro --> n_guide
@@ -276,7 +256,7 @@ flowchart TD
   n_face["Face found in the photo (screen)"]
   n_evidence --> n_face
   n_draft["Check the description before anything changes (screen)"]
-  n_face -->|stage 5: skipped| n_draft
+  n_face --> n_draft
   n_apply["Apply it yourself (screen)"]
   n_draft --> n_apply
   n_result["Applied result and history (screen)"]
@@ -337,7 +317,7 @@ flowchart TD
 
 ## Open questions
 - Live recognition: when the demo runs recognition for real, the face card must show a fresh timestamp and drop the saved-run disclosure.
-- Which recognition engine produced the saved match? InsightFace.
+- Engine note: the saved match is stored output of an InsightFace run. Keep the engine name out of screen copy; when live recognition ships, decide whether the face card should say which engine ran.
 
 ## Not doing
 - Public homepage or marketing deployment

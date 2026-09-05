@@ -13,6 +13,10 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[3]
 INSTALLER = REPO_ROOT / "scripts/deploy/gpu-lifecycle-install.sh"
 DEPLOYMENTS = REPO_ROOT / "scripts/deploy/gpu-snapshot-deployments.conf"
+FAKE_GPU_INSTANCE_ID = (
+    "ocid1.instance.oc1.phx."
+    "anyhqljtestfakegpu000000000000000000000000000000000000000000"
+)
 
 
 def _run_installer(*arguments: str, environment: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
@@ -20,7 +24,7 @@ def _run_installer(*arguments: str, environment: dict[str, str] | None = None) -
     command_environment.update(
         {
             "ACX_GPU_DEPLOYMENTS_FILE": str(DEPLOYMENTS),
-            "GPU_INSTANCE_ID": "ocid1.instance.test",
+            "GPU_INSTANCE_ID": FAKE_GPU_INSTANCE_ID,
         }
     )
     if environment:
@@ -159,7 +163,7 @@ def test_mid_sequence_copy_failure_never_switches_the_live_release(tmp_path: Pat
     command_environment.update(
         {
             "ACX_GPU_DEPLOYMENTS_FILE": str(DEPLOYMENTS),
-            "GPU_INSTANCE_ID": "ocid1.instance.test",
+            "GPU_INSTANCE_ID": FAKE_GPU_INSTANCE_ID,
             "PATH": f"{fake_bin}:{os.environ['PATH']}",
             "FAKE_TRANSPORT_LOG": str(transport_log),
         }

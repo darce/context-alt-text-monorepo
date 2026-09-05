@@ -277,6 +277,82 @@
 .acx-guided-page__provenance,
 .acx-guided-history,
 .acx-guided-review {
+  display: grid;
+  gap: var(--acx-space-20);
+  padding: var(--acx-space-20);
+  border-bottom: 1px solid var(--acx-color-border);
+  background: var(--acx-color-surface);
+}
+
+.acx-guided-face {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
+  gap: var(--acx-space-20);
+  padding: var(--acx-space-20);
+  border-bottom: 1px solid var(--acx-color-border);
+  background: var(--acx-color-surface);
+
+  &__crop {
+    display: flex;
+    align-items: flex-start;
+    justify-content: center;
+    min-width: 0;
+  }
+
+  &__content {
+    display: grid;
+    gap: var(--acx-space-12);
+    min-width: 0;
+  }
+
+  h3 {
+    margin-bottom: 0;
+    font-size: var(--acx-text-lg);
+  }
+
+  p {
+    margin: 0;
+    color: var(--acx-color-text-muted);
+  }
+
+  &__strength {
+    display: flex;
+    align-items: baseline;
+    gap: var(--acx-space-4);
+  }
+
+  &__strength-icon {
+    color: var(--acx-color-success-text);
+    font-weight: var(--acx-font-weight-bold);
+  }
+
+  ol {
+    display: grid;
+    gap: var(--acx-space-4);
+    margin: var(--acx-space-8) 0 0;
+    padding-left: var(--acx-space-20);
+    color: var(--acx-color-text-muted);
+    font-size: var(--acx-text-sm);
+  }
+
+  &__disclosure,
+  &__change-note {
+    font-size: var(--acx-text-sm);
+  }
+
+  &__decision {
+    color: var(--acx-color-text);
+    font-weight: var(--acx-font-weight-semibold);
+  }
+
+  &__actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--acx-space-8);
+  }
+}
+
+.acx-guided-review {
   min-width: 0;
   border: 1px solid var(--acx-color-border);
   border-radius: var(--acx-radius-lg);
@@ -459,21 +535,10 @@
     }
   }
 
-  &__identity-actions,
   &__actions {
     display: flex;
     flex-wrap: wrap;
     gap: var(--acx-space-8);
-  }
-
-  &__identity-actions {
-    margin-top: var(--acx-space-16);
-  }
-
-  &__identity-change-note {
-    color: var(--acx-color-text-muted);
-    font-size: var(--acx-text-sm);
-    font-style: italic;
   }
 
   &__comparison {
@@ -602,6 +667,12 @@
   }
 }
 
+@media (max-width: 40rem) {
+  .acx-guided-face {
+    grid-template-columns: 1fr;
+  }
+}
+
 @media (max-width: 20rem) {
   .acx-guided-page {
     padding: var(--acx-space-12);
@@ -634,7 +705,7 @@
   }
 
   .acx-guided-review__actions,
-  .acx-guided-review__identity-actions {
+  .acx-guided-face__actions {
     flex-direction: column;
 
     .acx-button {

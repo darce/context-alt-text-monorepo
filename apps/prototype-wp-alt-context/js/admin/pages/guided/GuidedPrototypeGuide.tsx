@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useRef } from 'react';
 
 export type GuidedGuideStep = 'understand' | 'identity' | 'review' | 'apply';
 
@@ -31,6 +31,13 @@ export const GuidedPrototypeGuide = ({
   onEnd,
 }: GuidedPrototypeGuideProps): React.JSX.Element => {
   const activeDefinition = GUIDE_STEPS.find((step) => step.id === activeStep) ?? GUIDE_STEPS[0];
+  const focusTargetRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (open) {
+      focusTargetRef.current?.focus();
+    }
+  }, [open]);
 
   return (
     <nav className="acx-guided-guide" aria-label="Guided review steps">
@@ -48,7 +55,14 @@ export const GuidedPrototypeGuide = ({
           {open ? 'Hide guide' : 'Show guide'}
         </button>
       </div>
-      <div className="acx-guided-guide__status" role="status" aria-live="polite">
+      <div
+        ref={focusTargetRef}
+        className="acx-guided-guide__status"
+        role="status"
+        aria-live="polite"
+        tabIndex={open ? -1 : undefined}
+        data-guided-focus-target={open ? 'true' : undefined}
+      >
         {activeDefinition.description}
       </div>
       {open ? (

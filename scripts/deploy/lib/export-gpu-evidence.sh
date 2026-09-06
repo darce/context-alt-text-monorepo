@@ -3,8 +3,8 @@
 #
 # The bundle is intentionally a collection of immutable JSON receipts.  This
 # script never changes OCI state: every OCI invocation goes through run_oci,
-# whose deny-list is a second line of defence against accidentally adding an
-# actuator command here.
+# whose operation allowlist is the safety boundary against accidentally adding
+# an actuator command here.
 
 set -euo pipefail
 
@@ -160,47 +160,31 @@ for timeout_value in "$oci_connection_timeout" "$oci_read_timeout" "$curl_connec
     esac
 done
 
-is_forbidden_oci_token() {
-    local token="$1"
-    case "$token" in
-        --*) token="${token#--}" ;;
-        -*) token="${token#-}" ;;
-    esac
-    token="$(printf '%s' "$token" | tr '[:upper:]' '[:lower:]')"
-    case "$token" in
-        start|stop|terminate|action|update|delete|create|launch|attach|detach|reboot|reset|softstop|softreset)
-            return 0
-            ;;
-        *)
-            return 1
-            ;;
-    esac
-}
-
 is_allowed_oci_read() {
     [ "$#" -ge 3 ] || return 1
     case "$1:$2:$3" in
-        compute:instance:get|audit:event:list)
-            return 0
-            ;;
+        compute:instance:get|audit:event:list) ;;
         *)
             return 1
             ;;
     esac
+    shift 3
+    local arg
+    for arg in "$@"; do
+        case "$arg" in
+            start|stop|terminate|action|--start|--stop|--terminate|--action)
+                return 1
+                ;;
+        esac
+    done
+    return 0
 }
 
 run_oci() {
-    local arg
     if ! is_allowed_oci_read "$@"; then
         echo "ERROR: refusing non-read-only OCI command: $*" >&2
         return 3
     fi
-    for arg in "$@"; do
-        if is_forbidden_oci_token "$arg"; then
-            echo "ERROR: refusing forbidden OCI operation token: $arg" >&2
-            return 3
-        fi
-    done
     "$oci_bin" "$@" \
         --connection-timeout "$oci_connection_timeout" \
         --read-timeout "$oci_read_timeout" \
@@ -219,6 +203,20 @@ quote_for_manifest() {
             ;;
         *)
             printf '%s' "$value"
+            ;;
+    esac
+}
+
+redact_url_for_manifest() {
+    local url="$1"
+    case "$url" in
+        *\?*)
+            # Keep the object URL identifiable while never persisting query
+            # credentials or presigned expiry/signature parameters.
+            printf '%s?<redacted-url>' "${url%%\?*}"
+            ;;
+        *)
+            printf '%s' "$url"
             ;;
     esac
 }
@@ -275,7 +273,8 @@ if [ -n "$state_snapshot_source" ]; then
                 --connect-timeout "$curl_connection_timeout" \
                 --max-time "$curl_max_time" \
                 --output "$snapshot_file" "$state_snapshot_source"
-            snapshot_command="curl --fail --silent --show-error --location --connect-timeout ${curl_connection_timeout} --max-time ${curl_max_time} --output state_snapshot.json <redacted-url>"
+            redacted_snapshot_url="$(redact_url_for_manifest "$state_snapshot_source")"
+            snapshot_command="curl --fail --silent --show-error --location --connect-timeout ${curl_connection_timeout} --max-time ${curl_max_time} --output state_snapshot.json ${redacted_snapshot_url}"
             ;;
         *)
             cp "$state_snapshot_source" "$snapshot_file"

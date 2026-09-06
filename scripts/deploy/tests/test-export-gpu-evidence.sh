@@ -205,5 +205,9 @@ if ! grep -Fq -- '<redacted-url>' "${url_bundle}/manifest.json"; then
     echo "FAIL: snapshot manifest command was not redacted" >&2
     exit 1
 fi
+if ! grep -Fq -- 'https://snapshot.example.test/gpu-state.json?<redacted-url>' "${url_bundle}/manifest.json"; then
+    echo "FAIL: snapshot manifest command did not retain the object path" >&2
+    exit 1
+fi
 
 echo "all assertions passed"

@@ -29,6 +29,8 @@ point-in-time instance read as the window end. If the receipts do not contain
 an independently observed `STOPPED → RUNNING → STOPPED` history, the checker
 fails closed and the window must be recaptured with the required Audit state
 change fields.
+Any state-history observation marked `inferred`, `synthetic`, or `synthesized`
+is ignored by the checker and cannot satisfy the lifecycle proof.
 
 The distinction between lifecycle state and billing matters: a stopped
 instance stops OCPU/GPU compute charges, while its boot volume still costs

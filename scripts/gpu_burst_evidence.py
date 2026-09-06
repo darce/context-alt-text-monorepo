@@ -270,6 +270,8 @@ def _state_observations(payload: Any) -> list[tuple[float, str, str]]:
         data = payload.get("data")
         if isinstance(data, list):
             return _state_observations(data)
+        if _observation_is_inferred(payload):
+            return []
         state = _state_from_mapping(payload)
         timestamp = _parse_time(
             _first_value(
@@ -298,6 +300,28 @@ def _state_observations(payload: Any) -> list[tuple[float, str, str]]:
     return []
 
 
+def _observation_is_inferred(value: Mapping[str, Any]) -> bool:
+    """Return whether a state observation was synthesized rather than observed."""
+
+    for key in ("inferred", "is_inferred", "synthetic", "synthesized"):
+        flag = value.get(key)
+        if flag is True:
+            return True
+        if isinstance(flag, str) and flag.strip().casefold() in {"true", "yes", "1", "inferred", "synthetic"}:
+            return True
+    source = _as_text(value.get("source"))
+    return source is not None and source.casefold() in {"inferred", "inferred_boundary", "synthetic", "synthesized"}
+
+
+def _inferred_observation_count(payload: Any) -> int:
+    if isinstance(payload, Mapping):
+        own = int(_state_from_mapping(payload) is not None and _observation_is_inferred(payload))
+        return own + sum(_inferred_observation_count(child) for child in payload.values())
+    if isinstance(payload, list):
+        return sum(_inferred_observation_count(child) for child in payload)
+    return 0
+
+
 def _audit_items(payload: Any) -> list[Mapping[str, Any]]:
     return [
         item
@@ -317,18 +341,19 @@ def _event_time(event: Mapping[str, Any]) -> float | None:
 
 
 def _event_resource_id(event: Mapping[str, Any]) -> str | None:
-    return _as_text(_first_value(event, ("resourceId", "resource_id", "instanceId", "instance_id")))
+    return _as_text(_first_value(event, ("resourceId", "resource_id")))
 
 
 def _action_from_value(value: Any) -> str | None:
     text = _as_text(value)
     if text is None:
         return None
-    for token in re.split(r"[^A-Z0-9]+", text.upper()):
-        if token in {"START", "STARTINSTANCE"}:
-            return "START"
-        if token in {"STOP", "STOPINSTANCE"}:
-            return "STOP"
+    text = re.sub(r"[._ -]+(?:BEGIN|END)$", "", text, flags=re.IGNORECASE)
+    action = re.sub(r"[._ -]+", "", text).upper()
+    if action in {"START", "STARTINSTANCE"}:
+        return "START"
+    if action in {"STOP", "STOPINSTANCE"}:
+        return "STOP"
     return None
 
 
@@ -363,11 +388,11 @@ def _event_phase(event: Mapping[str, Any]) -> str | None:
     return None
 
 
-def _event_identity(event: Mapping[str, Any], action: str) -> str:
+def _event_identity(event: Mapping[str, Any], action: str, occurrence: int) -> str:
     value = _as_text(_first_value(event, ("eventId", "event_id", "requestId", "request_id", "id")))
     if value is not None:
         return f"id:{value}"
-    return f"fallback:{action}:{_event_resource_id(event) or ''}:{_event_time(event)!r}"
+    return f"fallback:{action}:{_event_resource_id(event) or ''}:{_event_time(event)!r}:{occurrence}"
 
 
 def _event_status(event: Mapping[str, Any]) -> Any:
@@ -415,11 +440,11 @@ def _authoritative_audit_events(
     if instance_id is None:
         return []
     grouped: dict[tuple[str, str], list[Mapping[str, Any]]] = {}
-    for event in _audit_items(payload):
+    for occurrence, event in enumerate(_audit_items(payload)):
         if _event_resource_id(event) != instance_id:
             continue
         for action in _event_actions(event):
-            grouped.setdefault((action, _event_identity(event, action)), []).append(event)
+            grouped.setdefault((action, _event_identity(event, action, occurrence)), []).append(event)
 
     authoritative: list[tuple[str, Mapping[str, Any], float]] = []
     for (action, _identity), events in grouped.items():
@@ -439,6 +464,30 @@ def _authoritative_audit_events(
         authoritative.append((action, event, timestamp))
     authoritative.sort(key=lambda item: item[2])
     return authoritative
+
+
+def _successful_audit_action_sequence(
+    payload: Any,
+    *,
+    instance_id: str | None,
+    since: float,
+    until: float,
+) -> list[str]:
+    """Read the raw successful action order before event identities are collapsed."""
+
+    if instance_id is None:
+        return []
+    ordered: list[tuple[float, int, str]] = []
+    for position, event in enumerate(_audit_items(payload)):
+        if _event_resource_id(event) != instance_id:
+            continue
+        timestamp = _event_time(event)
+        if timestamp is None or not since <= timestamp <= until or not _status_success(_event_status(event)):
+            continue
+        for action in sorted(_event_actions(event)):
+            ordered.append((timestamp, position, action))
+    ordered.sort(key=lambda item: (item[0], item[1]))
+    return [action for _timestamp, _position, action in ordered]
 
 
 def _principal_values(event: Mapping[str, Any]) -> set[str]:
@@ -479,6 +528,64 @@ def _state_sequence(observations: Sequence[tuple[float, str, str]]) -> list[str]
     for _timestamp, state, _source in sorted(observations, key=lambda item: item[0]):
         if not sequence or sequence[-1] != state:
             sequence.append(state)
+    return sequence
+
+
+def _state_order_is_valid(observations: Sequence[tuple[float, str, str]]) -> bool:
+    """Validate lifecycle phases from raw observations before state collapsing."""
+
+    phase = 0
+    for _timestamp, state, _source in sorted(observations, key=lambda item: item[0]):
+        if phase == 0:
+            if state == "STOPPED":
+                continue
+            if state == "RUNNING":
+                phase = 1
+                continue
+            return False
+        if phase == 1:
+            if state == "RUNNING":
+                continue
+            if state == "STOPPED":
+                phase = 2
+                continue
+            return False
+        if state != "STOPPED":
+            return False
+    return phase == 2
+
+
+def _state_action_sequence(payload: Any) -> list[tuple[float, str]]:
+    """Read transition actions in raw receipt order when the history records them."""
+
+    sequence: list[tuple[float, str]] = []
+
+    def visit(value: Any) -> None:
+        if isinstance(value, Mapping):
+            if _state_from_mapping(value) is not None and not _observation_is_inferred(value):
+                timestamp = _parse_time(
+                    _first_value(
+                        value,
+                        (
+                            "timestamp",
+                            "time",
+                            "observed_at",
+                            "observedAt",
+                            "eventTime",
+                            "event_time",
+                            "at",
+                        ),
+                    )
+                )
+                if timestamp is not None:
+                    sequence.extend((timestamp, action) for action in sorted(_event_actions(value)))
+            for child in value.values():
+                visit(child)
+        elif isinstance(value, list):
+            for child in value:
+                visit(child)
+
+    visit(payload)
     return sequence
 
 
@@ -648,20 +755,58 @@ def _instance_checks(
     return payload, payload_id, [receipt_check, identity_check]
 
 
+def _history_instance_id(payload: Any) -> str | None:
+    if not isinstance(payload, Mapping):
+        return None
+    for key in ("instance_id", "instanceId"):
+        value = _as_text(payload.get(key))
+        if value is not None:
+            return value
+    data = payload.get("data")
+    if isinstance(data, Mapping):
+        return _as_text(data.get("id", data.get("instance_id", data.get("instanceId"))))
+    return None
+
+
 def _state_checks(
-    path: Path | None, since: float, until: float
+    path: Path | None, *, since: float, until: float, expected_instance_id: str | None
 ) -> tuple[Any, list[tuple[float, str, str]], list[dict[str, Any]]]:
     payload, receipt_check = _load_required(path, "state_history_receipt")
     observations = _state_observations(payload)
     in_window = [item for item in observations if since <= item[0] <= until]
+    raw_order_ok = _state_order_is_valid(in_window)
     sequence = _state_sequence(in_window)
-    passed = sequence == ["STOPPED", "RUNNING", "STOPPED"]
+    history_actions = [action for timestamp, action in _state_action_sequence(payload) if since <= timestamp <= until]
+    action_order_ok = not history_actions or (
+        history_actions[0] == "START" and any(action == "STOP" for action in history_actions[1:])
+    )
+    inferred_count = _inferred_observation_count(payload)
+    history_id = _history_instance_id(payload)
+    identity_ok = history_id is None or history_id == expected_instance_id
+    identity_detail = (
+        "state history has no explicit instance id"
+        if history_id is None
+        else f"state history identifies {history_id}, expected {expected_instance_id}"
+    )
+    passed = raw_order_ok and action_order_ok and sequence == ["STOPPED", "RUNNING", "STOPPED"]
     detail = (
         "observed STOPPED -> RUNNING -> STOPPED inside capture window"
         if passed
-        else f"observed state sequence {sequence or ['none']}; expected STOPPED -> RUNNING -> STOPPED"
+        else (
+            f"observed state sequence {sequence or ['none']}; expected STOPPED -> RUNNING -> STOPPED"
+            + (f"; ignored {inferred_count} inferred observation(s)" if inferred_count else "")
+            + ("; state history transition order is invalid" if not action_order_ok else "")
+        )
     )
-    return payload, in_window, [receipt_check, _result("state_history_burst", passed, detail)]
+    return (
+        payload,
+        in_window,
+        [
+            receipt_check,
+            _result("state_history_identity", identity_ok, identity_detail),
+            _result("state_history_burst", passed, detail),
+        ],
+    )
 
 
 def _audit_checks(
@@ -697,7 +842,12 @@ def _audit_checks(
         if matching_stops
         else f"no StopInstance audit event matched principal {expected_stop_principal!r} (observed {len(stops)})",
     )
-    actions = [action for action, _event, _timestamp in events]
+    actions = _successful_audit_action_sequence(
+        payload,
+        instance_id=instance_id,
+        since=since,
+        until=until,
+    )
     order_ok = bool(actions) and actions[0] == "START" and any(action == "STOP" for action in actions[1:])
     order_check = _result(
         "audit_transition_order",
@@ -805,7 +955,12 @@ def check_bundle(
     target_instance_id = (
         manifest_instance_id if manifest_instance_id and payload_instance_id == manifest_instance_id else None
     )
-    _history_payload, observations, history_checks = _state_checks(paths["history"], since_epoch, until_epoch)
+    _history_payload, observations, history_checks = _state_checks(
+        paths["history"],
+        since=since_epoch,
+        until=until_epoch,
+        expected_instance_id=target_instance_id,
+    )
     checks.extend(history_checks)
     _audit_events, audit_checks = _audit_checks(
         paths["audit"],
@@ -880,6 +1035,7 @@ def build_state_history_document(
                         "state": previous,
                         "timestamp": event.get("eventTime", event.get("event_time", timestamp)),
                         "source": "oci_audit_previous_state",
+                        "action": "StartInstance",
                     }
                 )
             state = "RUNNING"
@@ -890,6 +1046,7 @@ def build_state_history_document(
                 "state": state,
                 "timestamp": event.get("eventTime", event.get("event_time", timestamp)),
                 "source": "oci_audit_transition",
+                "action": "StartInstance" if action == "START" else "StopInstance",
                 "event_id": _first_value(event, ("eventId", "event_id", "requestId", "request_id")),
             }
         )

@@ -1,4 +1,5 @@
 export const POLL_TIMEOUT_MESSAGE: string;
+export const PUBLIC_DEMO_CLIENT_DEADLINE_CEILING_SECONDS: 120;
 
 export const PUBLIC_DEMO_ERROR_CODE: Readonly<{
   POLL_TIMEOUT: 'acx_public_demo_poll_timeout';

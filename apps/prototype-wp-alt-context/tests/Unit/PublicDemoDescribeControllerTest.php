@@ -169,6 +169,121 @@ final class PublicDemoDescribeControllerTest extends TestCase
         self::assertArrayHasKey('Retry-After', $limited->get_headers());
     }
 
+    public function testSameIdempotencyKeyReturnsExistingRunWithoutCreatingAnother(): void
+    {
+        $this->enable([41]);
+        $first = $this->controller->submit($this->authorizedRequest('POST', [
+            'media_id' => 41,
+            'idempotency_key' => 'trigger-one',
+        ]));
+        $retry = $this->controller->submit($this->authorizedRequest('POST', [
+            'media_id' => 41,
+            'idempotency_key' => 'trigger-one',
+        ]));
+
+        self::assertSame(202, $first->get_status());
+        self::assertSame(202, $retry->get_status());
+        self::assertSame('public-run-1', $first->get_data()['run_id']);
+        self::assertSame($first->get_data()['run_id'], $retry->get_data()['run_id']);
+        self::assertCount(1, $this->pipeline->submissions);
+    }
+
+    public function testDifferentIdempotencyKeyCreatesDistinctRun(): void
+    {
+        $this->enable([41]);
+        $first = $this->controller->submit($this->authorizedRequest('POST', [
+            'media_id' => 41,
+            'idempotency_key' => 'trigger-one',
+        ]));
+        unset($GLOBALS['__ac_options']['acx_public_demo_inflight']);
+        $second = $this->controller->submit($this->authorizedRequest('POST', [
+            'media_id' => 41,
+            'idempotency_key' => 'trigger-two',
+        ]));
+
+        self::assertSame(202, $first->get_status());
+        self::assertSame(202, $second->get_status());
+        self::assertNotSame($first->get_data()['run_id'], $second->get_data()['run_id']);
+        self::assertCount(2, $this->pipeline->submissions);
+    }
+
+    public function testExpiredIdempotencyMappingAllowsAFreshTrigger(): void
+    {
+        $this->enable([41]);
+        $key = 'trigger-expiring';
+        $first = $this->controller->submit($this->authorizedRequest('POST', [
+            'media_id' => 41,
+            'idempotency_key' => $key,
+        ]));
+        $rateKey = hash('sha256', (string) $_SERVER['REMOTE_ADDR']);
+        $idempotencyKey = (new \ReflectionMethod(PublicDemoDescribeController::class, 'idempotency_transient_key'));
+        $idempotencyKey->setAccessible(true);
+        $transient = $idempotencyKey->invoke($this->controller, $rateKey, $key);
+        $GLOBALS['__ac_transients'][$transient]['expires_at'] = time() - 1;
+        unset($GLOBALS['__ac_options']['acx_public_demo_inflight']);
+
+        $second = $this->controller->submit($this->authorizedRequest('POST', [
+            'media_id' => 41,
+            'idempotency_key' => $key,
+        ]));
+
+        self::assertSame(202, $first->get_status());
+        self::assertSame(202, $second->get_status());
+        self::assertNotSame($first->get_data()['run_id'], $second->get_data()['run_id']);
+        self::assertCount(2, $this->pipeline->submissions);
+    }
+
+    public function testLockCannotBeAcquiredWhileLiveOwnerIsHeld(): void
+    {
+        $acquire = new \ReflectionMethod(PublicDemoDescribeController::class, 'acquire_lock');
+        $acquire->setAccessible(true);
+        $first = $acquire->invoke($this->controller, 'acx_public_demo_test_lock', 5);
+        $second = $acquire->invoke($this->controller, 'acx_public_demo_test_lock', 5);
+
+        self::assertIsString($first);
+        self::assertFalse($second);
+    }
+
+    public function testStaleLockReleaseCannotRemoveReplacementOwner(): void
+    {
+        $acquire = new \ReflectionMethod(PublicDemoDescribeController::class, 'acquire_lock');
+        $release = new \ReflectionMethod(PublicDemoDescribeController::class, 'release_lock');
+        $acquire->setAccessible(true);
+        $release->setAccessible(true);
+        $option = 'acx_public_demo_test_lock';
+        $first = $acquire->invoke($this->controller, $option, 5);
+        self::assertIsString($first);
+        $replacement = [
+            'run_id' => '',
+            'token' => 'replacement-token',
+            'expires_at' => time() + 5,
+        ];
+        $GLOBALS['__ac_option_before_delete'][$option] = static function () use ($option, $replacement): void {
+            unset($GLOBALS['__ac_option_before_delete'][$option]);
+            $GLOBALS['__ac_options'][$option] = $replacement;
+        };
+
+        $release->invoke($this->controller, $option, $first);
+
+        self::assertSame($replacement, $GLOBALS['__ac_options'][$option]);
+    }
+
+    public function testLockCanBeReacquiredAfterTtlExpiry(): void
+    {
+        $acquire = new \ReflectionMethod(PublicDemoDescribeController::class, 'acquire_lock');
+        $acquire->setAccessible(true);
+        $option = 'acx_public_demo_test_lock';
+        $first = $acquire->invoke($this->controller, $option, 5);
+        self::assertIsString($first);
+        $GLOBALS['__ac_options'][$option]['expires_at'] = time() - 1;
+
+        $second = $acquire->invoke($this->controller, $option, 5);
+
+        self::assertIsString($second);
+        self::assertNotSame($first, $second);
+        self::assertSame($second, $GLOBALS['__ac_options'][$option]['token']);
+    }
+
     public function testConcurrencyBulkheadAllowsOnlyOneInflightRun(): void
     {
         $this->enable([41]);

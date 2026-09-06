@@ -16,6 +16,7 @@ final class PublicDemoErrorCode {
 	public const DAILY_CAP_REACHED     = 'acx_public_demo_daily_cap_reached';
 	public const BUSY                  = 'acx_public_demo_busy';
 	public const STATE_UNAVAILABLE     = 'acx_public_demo_state_unavailable';
+	public const IDEMPOTENCY_CONFLICT  = 'acx_public_demo_idempotency_conflict';
 	public const RUN_NOT_AVAILABLE     = 'acx_public_demo_run_not_available';
 	public const INVALID_RESPONSE      = 'acx_public_demo_invalid_response';
 	public const INVALID_PIPELINE_DATA = 'acx_public_demo_invalid_pipeline_data';

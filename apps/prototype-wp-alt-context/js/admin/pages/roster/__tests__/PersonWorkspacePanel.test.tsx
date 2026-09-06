@@ -365,7 +365,11 @@ describe('PersonWorkspacePanel evidence images', () => {
 
     await waitFor(() => {
       expect(screen.getByRole('option', { name: 'Face from media 101 in face group 1' })).toBeInTheDocument();
-      expect(within(openButton).getByRole('img', { name: 'Face image unavailable' })).toBeInTheDocument();
+      expect(
+        within(openButton).getByRole('img', {
+          name: 'Face image unavailable. Face from media 101 in face group 1',
+        }),
+      ).toBeInTheDocument();
     });
     expect(screen.queryByRole('option', { name: 'Face image unavailable' })).not.toBeInTheDocument();
   });
@@ -478,16 +482,12 @@ describe('D-23 PersonWorkspacePanel failure states', () => {
   });
 
   it('renders linked-faces degraded when projection is stale', () => {
-    renderPanel(
-      <PersonWorkspacePanel entry={baseEntry({ projection_status: 'stale' })} onOpenQueue={vi.fn()} />,
-    );
+    renderPanel(<PersonWorkspacePanel entry={baseEntry({ projection_status: 'stale' })} onOpenQueue={vi.fn()} />);
     expect(screen.getByText('Linked faces may be out of date.')).toBeInTheDocument();
   });
 
   it('labels refreshing distinctly from stale', () => {
-    renderPanel(
-      <PersonWorkspacePanel entry={baseEntry({ projection_status: 'refreshing' })} onOpenQueue={vi.fn()} />,
-    );
+    renderPanel(<PersonWorkspacePanel entry={baseEntry({ projection_status: 'refreshing' })} onOpenQueue={vi.fn()} />);
     expect(screen.getByText('Refreshing linked faces…')).toBeInTheDocument();
     expect(screen.queryByText('Linked faces may be out of date.')).not.toBeInTheDocument();
   });

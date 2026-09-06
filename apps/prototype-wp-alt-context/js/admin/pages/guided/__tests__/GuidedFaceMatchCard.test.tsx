@@ -151,8 +151,8 @@ describe('GuidedFacesPanel and GuidedFaceMatchCard', () => {
     ).toBe(true);
     expect(within(leftCard).getByText('Saved photos of Justin Trudeau: 2 of 2 shown.')).toBeInTheDocument();
     expect(within(rightCard).getByText('Saved photos of Katy Perry: 3 of 5 shown.')).toBeInTheDocument();
-    expect(within(leftCard).getAllByText('European Union, 2025')).toHaveLength(2);
-    expect(within(rightCard).getByText('Justin Higuchi, CC BY 4.0')).toHaveClass('screen-reader-text');
+    expect(within(leftCard).getAllByText('© European Union, 2025, EU reuse licence, resized')).toHaveLength(2);
+    expect(within(rightCard).getByText('Justin Higuchi, CC BY 4.0, resized')).toHaveClass('screen-reader-text');
 
     const decisions = getDecisionBlock();
     expect(decisions).toHaveAttribute('tabindex', '-1');
@@ -223,7 +223,9 @@ describe('GuidedFacesPanel and GuidedFaceMatchCard', () => {
     expect(screen.getByRole('heading', { level: 3, name: 'Without the names' })).toBeInTheDocument();
     expect(screen.getByText('This draft comes from a saved run, not a live one.')).toBeInTheDocument();
     expect(
-      screen.getByText('Decide each face match first: confirm it, or keep the person unnamed. Until then the draft only says what is visible.'),
+      screen.getByText(
+        'Decide each face match first: confirm it, or keep the person unnamed. Until then the draft only says what is visible.',
+      ),
     ).toBeInTheDocument();
   });
 

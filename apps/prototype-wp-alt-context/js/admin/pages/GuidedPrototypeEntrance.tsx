@@ -38,7 +38,8 @@ export const GuidedPrototypeEntrance = ({ onBegin }: GuidedPrototypeEntranceProp
         rel="noreferrer"
       >
         Read the AltContext case study
-      </a>.
+      </a>
+      .
     </p>
   </section>
 );

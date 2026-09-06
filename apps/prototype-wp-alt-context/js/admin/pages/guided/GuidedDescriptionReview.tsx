@@ -221,12 +221,7 @@ export const GuidedDescriptionReview = ({
           >
             Apply to practice copy
           </button>
-          <button
-            type="button"
-            className="acx-button acx-button--tertiary"
-            onClick={onUndo}
-            disabled={!appliedEvent}
-          >
+          <button type="button" className="acx-button acx-button--tertiary" onClick={onUndo} disabled={!appliedEvent}>
             Undo
           </button>
         </div>

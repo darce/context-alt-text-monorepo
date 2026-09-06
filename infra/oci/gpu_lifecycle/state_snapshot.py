@@ -69,9 +69,7 @@ def read_previous_gpu_state(
     expected_instance_id: str | None,
     now: datetime | float | None = None,
     max_age_seconds: float = DEFAULT_PREVIOUS_GPU_STATE_MAX_AGE_SECONDS,
-    max_future_skew_seconds: float = (
-        DEFAULT_PREVIOUS_GPU_STATE_MAX_FUTURE_SKEW_SECONDS
-    ),
+    max_future_skew_seconds: float = (DEFAULT_PREVIOUS_GPU_STATE_MAX_FUTURE_SKEW_SECONDS),
 ) -> GpuLifecycleState | None:
     """Read state only when it belongs to the currently reconciled instance."""
     if expected_instance_id is not None and (
@@ -95,9 +93,7 @@ def read_previous_gpu_state(
         return None
 
     instance_id = payload.get("instance_id")
-    if instance_id is not None and (
-        not isinstance(instance_id, str) or not instance_id.strip()
-    ):
+    if instance_id is not None and (not isinstance(instance_id, str) or not instance_id.strip()):
         return None
     if expected_instance_id is None or instance_id != expected_instance_id:
         return None
@@ -126,9 +122,7 @@ def read_previous_gpu_state(
         or not math.isfinite(max_future_skew_seconds)
         or max_future_skew_seconds < 0
     ):
-        raise ValueError(
-            "max_future_skew_seconds must be finite and non-negative"
-        )
+        raise ValueError("max_future_skew_seconds must be finite and non-negative")
 
     if now is None:
         current_time = time.time()
@@ -195,9 +189,7 @@ def write_gpu_state_snapshot(
         raise ValueError("written_at must be epoch seconds")
     if not math.isfinite(written_at):
         raise ValueError("written_at must be finite epoch seconds")
-    if instance_id is not None and (
-        not isinstance(instance_id, str) or not instance_id.strip()
-    ):
+    if instance_id is not None and (not isinstance(instance_id, str) or not instance_id.strip()):
         raise ValueError("instance_id must be a non-blank string or None")
     if published_state is GpuLifecycleState.DEGRADED:
         if not isinstance(reason, str) or not reason.strip():

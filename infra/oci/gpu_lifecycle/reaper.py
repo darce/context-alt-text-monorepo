@@ -510,12 +510,7 @@ class RunningSinceLeaseStore:
 
     def _monotonic_now(self) -> float:
         value = self._monotonic()
-        if (
-            isinstance(value, bool)
-            or not isinstance(value, (int, float))
-            or not math.isfinite(value)
-            or value < 0
-        ):
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value < 0:
             raise ValueError("monotonic clock must return finite non-negative seconds")
         return float(value)
 
@@ -588,10 +583,7 @@ class RunningSinceLeaseStore:
                 )
                 logger.warning("%s; treating lease as expired", message)
                 raise CorruptRunningSinceLeaseError(message)
-            message = (
-                "running-since monotonic origin is missing or belongs to a "
-                f"different boot: {self.path}"
-            )
+            message = f"running-since monotonic origin is missing or belongs to a different boot: {self.path}"
             logger.warning("%s; treating lease as expired", message)
             raise CorruptRunningSinceLeaseError(message)
         return RunningSinceRecord(
@@ -609,7 +601,7 @@ class RunningSinceLeaseStore:
         monotonic_now = self._monotonic_now()
         with self._locked_for_update():
             instances = self._read_instances_for_update()
-            record_payload: dict[str, str | float] = {
+            record_payload: dict[str, object] = {
                 "since": now.isoformat().replace("+00:00", "Z"),
                 "source": source,
             }
@@ -641,8 +633,7 @@ class RunningSinceLeaseStore:
         record = self.read(instance_id)
         if record is None:
             raise CorruptRunningSinceLeaseError(
-                f"RUNNING instance {instance_id} has no trustworthy durable lease origin; "
-                "treating lease as expired"
+                f"RUNNING instance {instance_id} has no trustworthy durable lease origin; treating lease as expired"
             )
         return record
 
@@ -1050,9 +1041,7 @@ def _apply_running_since_leases(
                 detail = (
                     f"recovery counter unavailable ({type(counter_error).__name__}: {counter_error})"
                     if counter_error is not None
-                    else (
-                        f"failure {failure_count}/{_RUNNING_SINCE_READ_FAILURE_RECOVERY_CYCLES}"
-                    )
+                    else (f"failure {failure_count}/{_RUNNING_SINCE_READ_FAILURE_RECOVERY_CYCLES}")
                 )
                 msg = (
                     f"{instance.instance_id}: running-since observation failed; bounded RES-13 "
@@ -1293,9 +1282,9 @@ def _run_reap_cycle(
             )
             if not stopped:
                 logger.info("atomic generation fence cancelled STOP for %s", instance_id)
-                fence_errors = [] if fence_supported else [
-                    f"{instance_id}: writer-coordinated STOP generation fence unavailable"
-                ]
+                fence_errors = (
+                    [] if fence_supported else [f"{instance_id}: writer-coordinated STOP generation fence unavailable"]
+                )
                 return ReapCycleResult(
                     decided=decided,
                     actuated=actuated,

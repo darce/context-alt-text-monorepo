@@ -80,6 +80,8 @@ deploy-help:
 	@echo ""
 	@echo "  Demo WordPress stack (compose + Caddy edge; recreates Caddy to join acx-demo-net):"
 	@echo "    make deploy-demo                           Sync demo stack + bootstrap + Caddy config"
+	@echo "    ACX_DEMO_GPU_PREFLIGHT=1 make deploy-demo  Fail closed on GPU/reaper env drift before stack up"
+	@echo "    ACX_DEMO_DESCRIBE_CHUNK=10 ACX_DEMO_DESCRIBE_MAX=100 make deploy-demo  Bound first describe burst"
 	@echo "    PLUGIN_ZIP=dist/alt-context-x.y.z.zip make deploy-demo   Pin plugin artifact explicitly"
 	@echo ""
 	@echo "  Demo walkthrough proof (Playwright evidence — screenshots + smoke-log fragment):"
@@ -227,7 +229,10 @@ deploy-compose-prod:
 	@ENV=prod CONFIRM="$(CONFIRM)" "$(DEPLOY_COMPOSE_SCRIPT)"
 
 deploy-demo:
-	@"$(DEPLOY_DEMO_SCRIPT)"
+	@ACX_DEMO_GPU_PREFLIGHT="$(ACX_DEMO_GPU_PREFLIGHT)" \
+		ACX_DEMO_DESCRIBE_CHUNK="$(ACX_DEMO_DESCRIBE_CHUNK)" \
+		ACX_DEMO_DESCRIBE_MAX="$(ACX_DEMO_DESCRIBE_MAX)" \
+		"$(DEPLOY_DEMO_SCRIPT)"
 
 # Demo walkthrough proof: runs the Playwright `evidence` project's demo-walkthrough
 # spec against WP_BASE_URL (default https://demo.altcontext.com), emitting screenshots,

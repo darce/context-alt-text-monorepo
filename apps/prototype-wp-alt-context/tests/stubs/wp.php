@@ -61,6 +61,8 @@ if (!class_exists('WP_REST_Request')) {
         private $params;
         /** @var array<string,mixed> */
         private $bodyParams;
+        /** @var array<string,string> */
+        private $headers;
 
         /**
          * @param string|array<string,mixed> $method HTTP method or params array (backward compatible)
@@ -80,12 +82,24 @@ if (!class_exists('WP_REST_Request')) {
                 $this->route = '';
                 $this->params = $method;
                 $this->bodyParams = [];
+                $this->headers = [];
             } else {
                 $this->method = $method;
                 $this->route = $route;
                 $this->params = $params;
                 $this->bodyParams = [];
+                $this->headers = [];
             }
+        }
+
+        public function set_header(string $key, string $value): void
+        {
+            $this->headers[strtolower($key)] = $value;
+        }
+
+        public function get_header(string $key): string
+        {
+            return $this->headers[strtolower($key)] ?? '';
         }
 
         public function get_param(string $key)
@@ -421,6 +435,13 @@ if (!function_exists('add_action')) {
         ];
 
         return true;
+    }
+}
+
+if (!function_exists('add_shortcode')) {
+    function add_shortcode($tag, $callback): void
+    {
+        $GLOBALS['__ac_shortcodes'][(string) $tag] = $callback;
     }
 }
 
@@ -802,6 +823,25 @@ if (!function_exists('wp_get_attachment_image_src')) {
         $height = is_array($meta) ? (int) ($meta['height'] ?? 0) : 0;
 
         return [$url, $width, $height];
+    }
+}
+
+if (!function_exists('wp_get_attachment_image_url')) {
+    function wp_get_attachment_image_url($attachment_id, $size = 'thumbnail', $icon = false)
+    {
+        $source = wp_get_attachment_image_src($attachment_id, $size, $icon);
+        return is_array($source) ? (string) ($source[0] ?? '') : false;
+    }
+}
+
+if (!function_exists('get_the_title')) {
+    function get_the_title($post = 0): string
+    {
+        $id = is_object($post) ? (int) ($post->ID ?? 0) : (int) $post;
+        if (isset($GLOBALS['__ac_posts'][$id]) && is_object($GLOBALS['__ac_posts'][$id])) {
+            return (string) ($GLOBALS['__ac_posts'][$id]->post_title ?? '');
+        }
+        return (string) ($GLOBALS['__ac_attachment_titles'][$id] ?? '');
     }
 }
 
@@ -1665,6 +1705,10 @@ if (!function_exists('update_option')) {
         // update_option(..., false): false === false → no-op, no row inserted.
         // Failure and no-op share the same return — recovery must re-read.
         $old = get_option($key);
+        $beforeUpdate = $GLOBALS['__ac_option_before_update'][$key] ?? null;
+        if (is_callable($beforeUpdate)) {
+            $beforeUpdate();
+        }
         if ($old === $value) {
             return false;
         }
@@ -1723,13 +1767,30 @@ if (!function_exists('add_option')) {
 if (!function_exists('get_option')) {
     function get_option($key, $default = false)
     {
+        $beforeRead = $GLOBALS['__ac_get_option_before_read'][$key] ?? null;
+        if (is_callable($beforeRead)) {
+            $GLOBALS['__ac_get_option_read_calls'][$key] = ($GLOBALS['__ac_get_option_read_calls'][$key] ?? 0) + 1;
+            $beforeRead($key, $GLOBALS['__ac_get_option_read_calls'][$key]);
+        }
         return $GLOBALS['__ac_options'][$key] ?? $default;
+    }
+}
+
+if (!function_exists('wp_cache_delete')) {
+    function wp_cache_delete($key, $group = ''): bool
+    {
+        $GLOBALS['__ac_cache_deletions'][] = [$key, $group];
+        return true;
     }
 }
 
 if (!function_exists('delete_option')) {
     function delete_option($key): void
     {
+        $beforeDelete = $GLOBALS['__ac_option_before_delete'][$key] ?? null;
+        if (is_callable($beforeDelete)) {
+            $beforeDelete();
+        }
         unset($GLOBALS['__ac_options'][$key]);
     }
 }
@@ -2303,6 +2364,7 @@ if (!isset($GLOBALS['wpdb'])) {
         /** @var mixed */
         public $defaultQueryResult = true;
         public string $prefix = 'wp_';
+        public string $options = 'wp_options';
         public string $postmeta = 'wp_postmeta';
         public string $term_relationships = 'wp_term_relationships';
         /** @var array<int,array<string,mixed>> */
@@ -2403,6 +2465,39 @@ if (!isset($GLOBALS['wpdb'])) {
             if ($result === false || $result === null) {
                 $this->rows_affected = 0;
                 return $result;
+            }
+
+            if (preg_match("/^DELETE FROM " . preg_quote($this->options, '/') . " WHERE option_name = '((?:\\\\.|[^'])*)' AND BINARY option_value = '((?:\\\\.|[^'])*)'$/s", $normalizedSql, $matches)) {
+                $key = stripslashes($matches[1]);
+                $expected = stripslashes($matches[2]);
+                $beforeDelete = $GLOBALS['__ac_option_before_delete'][$key] ?? null;
+                if (is_callable($beforeDelete)) {
+                    $beforeDelete();
+                }
+                $matchesOwner = array_key_exists($key, $GLOBALS['__ac_options'])
+                    && serialize($GLOBALS['__ac_options'][$key]) === $expected;
+                if ($matchesOwner) {
+                    unset($GLOBALS['__ac_options'][$key]);
+                }
+                $this->rows_affected = $matchesOwner ? 1 : 0;
+                return $this->rows_affected;
+            }
+
+            if (preg_match("/^UPDATE " . preg_quote($this->options, '/') . " SET option_value = '((?:\\\\.|[^'])*)' WHERE option_name = '((?:\\\\.|[^'])*)' AND BINARY option_value = '((?:\\\\.|[^'])*)'$/s", $normalizedSql, $matches)) {
+                $value = stripslashes($matches[1]);
+                $key = stripslashes($matches[2]);
+                $expected = stripslashes($matches[3]);
+                $beforeUpdate = $GLOBALS['__ac_option_before_update'][$key] ?? null;
+                if (is_callable($beforeUpdate)) {
+                    $beforeUpdate();
+                }
+                $matchesOwner = array_key_exists($key, $GLOBALS['__ac_options'])
+                    && serialize($GLOBALS['__ac_options'][$key]) === $expected;
+                if ($matchesOwner) {
+                    $GLOBALS['__ac_options'][$key] = unserialize($value, ['allowed_classes' => false]);
+                }
+                $this->rows_affected = $matchesOwner ? 1 : 0;
+                return $this->rows_affected;
             }
 
             $applied = $this->applyRawQueryToRows($normalizedSql);

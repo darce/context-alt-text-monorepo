@@ -7,6 +7,11 @@ runs the existing `scripts/deploy/sync-demo.sh` — the script remains the singl
 source of truth for rsync → demo stack up → `bootstrap-wp.sh` plugin install →
 Caddy promote → vhost smoke.
 
+For the required producer-flip → prod API redeploy → preflight → deploy-demo
+ordering, see [gpu-demo-env-flip.md](gpu-demo-env-flip.md#green-ordering). The
+demo is the consumer: never run `deploy-demo` before the producer redeploy and
+its verification pass.
+
 **Why:** public port 22 is closed and the tailnet SSH ACL authorizes only the
 ephemeral CI identity (`tag:ci`), so a laptop-bound `make deploy-demo` required a
 specific operator on a specific machine. This pipeline moves the existing deploy
@@ -22,6 +27,19 @@ Deploys are serialized by the `deploy-demo` concurrency group
 (`cancel-in-progress: false`) — one in-flight deploy, never cancelled mid-run.
 The job carries `timeout-minutes: 30` so a hung network step cannot hold the
 serialized lane and block later deploys.
+
+## GPU producer-to-demo ordering
+
+When changing the description adapter, the green sequence is strict:
+
+1. Flip the description-service producer profile.
+2. Redeploy the prod API and wait for its adapter/health verification to pass.
+3. Run the GPU/reaper preflight against the prod and demo env files.
+4. Run `ACX_DEMO_GPU_PREFLIGHT=1 make deploy-demo` to publish the demo consumer.
+
+The producer owns `ACX_DESCRIPTION_ADAPTER`; a demo-only env edit is not a
+producer flip. The full command blocks and recovery procedure are in
+[gpu-demo-env-flip.md](gpu-demo-env-flip.md#green-ordering).
 
 **Ref guard:** the workflow **fails** on non-`main` refs unless the
 `allow_non_main` dispatch input is set (reserved for rollback to a known-good
@@ -65,8 +83,8 @@ in logs — only genuinely sensitive values belong here):
 | --- | --- |
 | `TS_OAUTH_CLIENT_ID` / `TS_OAUTH_SECRET` | Tailscale OAuth client (may live at repo level, shared with recognition) |
 | `ACX_DEPLOY_SSH_KEY` | Private half of the CI deploy key (may live at repo level) |
-| `ACX_E2E_WP_ADMIN_USER` | Demo WP admin user (e.g. `acx-demo-admin`) |
-| `ACX_E2E_WP_ADMIN_PASS` | Demo WP admin password |
+| `ACX_E2E_WP_CI_USER` | Dedicated least-privilege CI WP user; its value must equal the VM template's `WP_CI_USER` (for example, `acx-demo-ci`) |
+| `ACX_E2E_WP_CI_PASS` | Password for the VM template's `WP_CI_PASSWORD` value; do not use the demo admin password |
 | `ACX_VM_SSH_HOST_KEY` | VM SSH host public key: run `ssh-keyscan -t ed25519 acx-backend.tail1a44b8.ts.net` from an authorized machine and paste the output line. With it set, the workflow pins the key (`StrictHostKeyChecking yes`); without it, it falls back to `accept-new` (per-run TOFU on an ephemeral runner) with a loud warning. |
 
 **Variables** (*Settings → Environments → demo → Variables*, or repo-level) —
@@ -79,11 +97,16 @@ redact every navigation URL in Playwright failure output:
 | `OCI_VM_TS_IP` | `100.115.186.109` | Repo-level; shared with `deploy-recognition.yml` so a VM rebuild is a one-place edit |
 | `ACX_E2E_RECOGNITION_URL` | `https://api.altcontext.com` | Stamped into the evidence manifest as recognition provenance; without it the spec defaults to **staging**, fabricating the manifest's lineage |
 
-The admin creds drive the post-deploy walkthrough smoke (Playwright login via
-the `auth-setup` project dependency — there is no separate mint step). The
-storage state is written runner-local (`tests/e2e/.auth/storageState.json` on
-the ephemeral runner) and must never be cached or uploaded as an artifact. The
-workflow also pins `ACX_E2E_REQUIRE_CONSTANT_PROVENANCE=1` and
+The CI creds drive the post-deploy walkthrough smoke (Playwright login via the
+`auth-setup` project dependency — there is no separate mint step). The VM
+bootstrap deliberately reads `WP_CI_USER`, `WP_CI_PASSWORD`, and `WP_CI_EMAIL`,
+not the GitHub secret names. `deploy-demo.yml` maps the GitHub secrets
+`ACX_E2E_WP_CI_USER` and `ACX_E2E_WP_CI_PASS` to those VM values, then exposes
+them to the existing Playwright auth interface as `ACX_E2E_WP_ADMIN_USER` and
+`ACX_E2E_WP_ADMIN_PASS`; the latter are compatibility names in the test
+harness, not permission to use the demo administrator. The storage state is
+written runner-local (`tests/e2e/.auth/storageState.json` on the ephemeral
+runner) and must never be cached or uploaded as an artifact. The workflow also pins `ACX_E2E_REQUIRE_CONSTANT_PROVENANCE=1` and
 `ACX_E2E_REQUIRE_SERVICE_TARGET=1` — the provenance-badge gate and the RECOG-1
 single-target contract gate are independent flags; opting out of one must not
 disable the other.

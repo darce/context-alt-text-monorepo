@@ -13,6 +13,10 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[3]
 INSTALLER = REPO_ROOT / "scripts/deploy/gpu-lifecycle-install.sh"
 DEPLOYMENTS = REPO_ROOT / "scripts/deploy/gpu-snapshot-deployments.conf"
+FAKE_GPU_INSTANCE_ID = (
+    "ocid1.instance.oc1.phx."
+    "anyhqljtestfakegpu000000000000000000000000000000000000000000"
+)
 
 
 def _run_installer(*arguments: str, environment: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
@@ -20,7 +24,7 @@ def _run_installer(*arguments: str, environment: dict[str, str] | None = None) -
     command_environment.update(
         {
             "ACX_GPU_DEPLOYMENTS_FILE": str(DEPLOYMENTS),
-            "GPU_INSTANCE_ID": "ocid1.instance.test",
+            "GPU_INSTANCE_ID": FAKE_GPU_INSTANCE_ID,
         }
     )
     if environment:
@@ -59,6 +63,20 @@ def test_installer_accepts_positive_idle_seconds() -> None:
     assert result.returncode == 0, result.stdout + result.stderr
 
 
+@pytest.mark.parametrize("name", ["START_INTERVAL", "REAP_INTERVAL"])
+@pytest.mark.parametrize("interval", ["1s", "30s", "2min", "1h", "1d"])
+def test_installer_accepts_supported_monotonic_intervals(name: str, interval: str) -> None:
+    result = _run_installer(environment={name: interval, "READY_URL": "http://gpu.test/health"})
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+@pytest.mark.parametrize("interval", ["0s", "-1s", "1.5s", "1h 2min", "daily", "1", "1ms", " 1s", "1s\n"])
+def test_installer_rejects_unsupported_start_intervals(interval: str) -> None:
+    result = _run_installer(environment={"START_INTERVAL": interval, "READY_URL": "http://gpu.test/health"})
+    assert result.returncode != 0
+    assert "START_INTERVAL" in result.stderr
+
+
 def test_installer_requires_readiness_url() -> None:
     result = _run_installer("--idle-seconds", "300")
 
@@ -68,7 +86,10 @@ def test_installer_requires_readiness_url() -> None:
 
 def test_start_unit_always_executes_a_readiness_probe() -> None:
     script = INSTALLER.read_text(encoding="utf-8")
-    start_unit = script.split("sudo tee /etc/systemd/system/acx-gpu-start.service", 1)[1].split("\nUNIT", 1)[0]
+    start_unit = re.search(
+        r"sudo tee [^\n]*/acx-gpu-start\.service.*?<<UNIT\n(.*?)\nUNIT",
+        script, flags=re.DOTALL,
+    ).group(1)
 
     assert "--ready-url" in start_unit
     assert "${READY_URL}" in start_unit
@@ -77,7 +98,7 @@ def test_start_unit_always_executes_a_readiness_probe() -> None:
 def test_oneshot_units_have_systemd_execution_deadlines() -> None:
     script = INSTALLER.read_text(encoding="utf-8")
     services = re.findall(
-        r"tee /etc/systemd/system/acx-gpu-(?:start|reap)\.service.*?<<UNIT\n(.*?)\nUNIT",
+        r"sudo tee [^\n]*/acx-gpu-(?:start|reap)\.service.*?<<UNIT\n(.*?)\nUNIT",
         script,
         flags=re.DOTALL,
     )
@@ -86,6 +107,50 @@ def test_oneshot_units_have_systemd_execution_deadlines() -> None:
     for service in services:
         assert re.search(r"^TimeoutStartSec=\d+s$", service, flags=re.MULTILINE)
         assert re.search(r"^RuntimeMaxSec=\d+s$", service, flags=re.MULTILINE)
+
+
+def test_timers_delay_their_first_trigger_relative_to_activation_not_boot() -> None:
+    """A boot-relative first trigger is already elapsed on a redeploy.
+
+    Both timers are enabled with `systemctl enable --now` against a host that has been
+    up for hours. systemd.timer(5): an OnBootSec deadline in the past fires the unit
+    immediately at activation, so the settling window would be skipped on every
+    redeploy and the start poll could power the GPU on before the load snapshot the
+    poll reads has been written. OnActiveSec is measured from activation instead, which
+    is the same delay at boot and the intended delay on a running host.
+    """
+    script = INSTALLER.read_text(encoding="utf-8")
+    timers = dict(
+        re.findall(
+            r"sudo tee [^\n]*/acx-gpu-(start|reap)\.timer.*?<<UNIT\n(.*?)\nUNIT",
+            script,
+            flags=re.DOTALL,
+        )
+    )
+
+    assert set(timers) == {"start", "reap"}
+    for name, timer in timers.items():
+        assert "OnBootSec=" not in timer, f"acx-gpu-{name}.timer would fire immediately on a redeploy"
+        assert re.search(r"^OnActiveSec=\d+min$", timer, flags=re.MULTILINE), (
+            f"acx-gpu-{name}.timer has no activation-relative first trigger"
+        )
+        assert re.search(r"^OnUnitActiveSec=", timer, flags=re.MULTILINE)
+
+
+def test_oneshot_units_share_persistent_boot_fenced_lifecycle_state() -> None:
+    script = INSTALLER.read_text(encoding="utf-8")
+    services = re.findall(
+        r"sudo tee [^\n]*/acx-gpu-(?:start|reap)\.service.*?<<UNIT\n(.*?)\nUNIT",
+        script,
+        flags=re.DOTALL,
+    )
+
+    assert len(services) == 2
+    for service in services:
+        assert "StateDirectory=acx-gpu" in service
+        assert "--running-since-path /var/lib/acx-gpu/running-since.json" in service
+        assert "/usr/bin/flock --wait 120 /var/lib/acx-gpu/lifecycle.lock" in service
+        assert "RuntimeDirectory=acx-gpu" not in service
 
 
 def test_transport_is_bounded_and_release_switch_is_atomic() -> None:
@@ -101,14 +166,14 @@ def test_transport_is_bounded_and_release_switch_is_atomic() -> None:
     assert "run_with_deadline" in script
     assert "/opt/acx-gpu/releases/" in script
     assert "python3 -c 'import infra.oci.gpu_lifecycle.reaper'" in script
-    assert "mv -Tf" in script
+    assert "os.replace(sys.argv[1], sys.argv[2])" in script
     assert "WorkingDirectory=/opt/acx-gpu/current" in script
     assert "rm -rf /opt/acx-gpu/infra/oci/gpu_lifecycle" not in script
 
     stage_position = script.index('remote_stage="/opt/acx-gpu/releases/.staging-')
     copy_position = script.index('scp -q "${SSH_OPTIONS[@]}"')
     validate_position = script.index("python3 -c 'import infra.oci.gpu_lifecycle.reaper'")
-    switch_position = script.index("sudo mv -Tf '/opt/acx-gpu/.current-${release_id}' /opt/acx-gpu/current")
+    switch_position = script.index("' '/opt/acx-gpu/.current-${release_id}' /opt/acx-gpu/current")
     assert stage_position < copy_position < validate_position < switch_position
 
 
@@ -159,7 +224,7 @@ def test_mid_sequence_copy_failure_never_switches_the_live_release(tmp_path: Pat
     command_environment.update(
         {
             "ACX_GPU_DEPLOYMENTS_FILE": str(DEPLOYMENTS),
-            "GPU_INSTANCE_ID": "ocid1.instance.test",
+            "GPU_INSTANCE_ID": FAKE_GPU_INSTANCE_ID,
             "PATH": f"{fake_bin}:{os.environ['PATH']}",
             "FAKE_TRANSPORT_LOG": str(transport_log),
         }

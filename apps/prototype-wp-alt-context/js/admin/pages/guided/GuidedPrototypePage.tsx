@@ -1,11 +1,13 @@
 import React, { useEffect, useMemo, useState } from 'react';
 
 import {
+  GUIDED_IDENTITY_STATUS,
   applyGuidedCandidate,
   confirmGuidedIdentity,
   confirmedPersonKeys,
   createGuidedScenario,
   getGuidedFace,
+  getLastGuidedApplication,
   getGuidedPerson,
   leaveGuidedIdentityUnidentified,
   rejectGuidedCandidate,
@@ -36,10 +38,10 @@ const assertNever = (value: never): never => {
 
 const isIdentityDecided = (status: GuidedIdentityStatus): boolean => {
   switch (status) {
-    case 'confirmed':
-    case 'unidentified':
+    case GUIDED_IDENTITY_STATUS.CONFIRMED:
+    case GUIDED_IDENTITY_STATUS.UNIDENTIFIED:
       return true;
-    case 'unconfirmed':
+    case GUIDED_IDENTITY_STATUS.UNCONFIRMED:
       return false;
     default:
       return assertNever(status);
@@ -224,6 +226,7 @@ export const GuidedPrototypePage = (): React.JSX.Element => {
       `Match confirmed. ${person.name} is in the draft. Nothing is applied yet.`,
       'review',
     );
+    focusGuidedSection('review');
   };
 
   const handleLeaveUnidentified = (faceId: GuidedPersonKey): void => {
@@ -233,6 +236,7 @@ export const GuidedPrototypePage = (): React.JSX.Element => {
       `The person on the ${face.position} stays unnamed. You can still check the description.`,
       'review',
     );
+    focusGuidedSection('review');
   };
 
   const handleReject = (): void => {
@@ -241,9 +245,14 @@ export const GuidedPrototypePage = (): React.JSX.Element => {
       'Draft rejected. The saved text did not change.',
       'review',
     );
+    focusGuidedSection('review');
   };
 
   const handleUndo = (): void => {
+    if (!getLastGuidedApplication(scenario.history)) {
+      return;
+    }
+
     updateScenario((current) => undoGuidedApplication(current), 'Apply undone.', 'apply');
     focusGuidedSection('apply');
   };

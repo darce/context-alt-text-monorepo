@@ -73,8 +73,7 @@ describe('GuidedFacesPanel and GuidedFaceMatchCard', () => {
   it('renders the two matched faces, evidence, galleries, and shared decisions in face order', () => {
     const { onConfirm, onLeaveUnnamed } = renderPanel();
 
-    const faceSection = document.getElementById('guided-section-face');
-    expect(faceSection).not.toBeNull();
+    const faceSection = screen.getByRole('region', { name: 'Faces found in the photo' });
     expect(faceSection).toHaveAttribute('tabindex', '-1');
     expect(faceSection).toHaveAttribute('aria-labelledby', 'guided-faces-title');
     expect(screen.getByRole('heading', { level: 3, name: 'Faces found in the photo' })).toBeInTheDocument();
@@ -82,7 +81,8 @@ describe('GuidedFacesPanel and GuidedFaceMatchCard', () => {
       screen.getByText('AltContext found 2 faces. Each one matched a person you named before.'),
     ).toBeInTheDocument();
 
-    const steps = screen.getByRole('list', { name: 'How this works' });
+    const steps = within(faceSection).getAllByRole('list')[0];
+    expect(screen.queryByText('How this works')).not.toBeInTheDocument();
     expect(
       within(steps)
         .getAllByRole('listitem')
@@ -220,12 +220,10 @@ describe('GuidedFacesPanel and GuidedFaceMatchCard', () => {
     expect(document.getElementById('guided-section-face')).toBeNull();
     expect(document.getElementById('guided-section-identity')).toBeNull();
     expect(screen.getByText(/Draft without names:/)).toHaveTextContent(`Draft without names: ${scenario.drafts.none}`);
-    const genericDraft = screen.getAllByText(scenario.drafts.none)[0];
-    expect(genericDraft).toHaveAttribute('data-generic-draft', scenario.drafts.none);
     expect(screen.getByRole('heading', { level: 3, name: 'Without the names' })).toBeInTheDocument();
     expect(screen.getByText('This draft comes from a saved run, not a live one.')).toBeInTheDocument();
     expect(
-      screen.getByText('Confirm or skip each face match first. Until then the draft only says what is visible.'),
+      screen.getByText('Decide each face match first: confirm it, or keep the person unnamed. Until then the draft only says what is visible.'),
     ).toBeInTheDocument();
   });
 

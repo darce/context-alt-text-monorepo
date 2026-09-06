@@ -46,6 +46,7 @@ def _run(
     app_password: str = "not-a-secret",
     service_api_key: str = "dry-service-key",
     extra: tuple[str, ...] = (),
+    transport: httpx.BaseTransport | None = None,
 ) -> tuple[smoke.SmokeResult, smoke.FakeOci]:
     scenario = scenario or smoke.DryScenario()
     scenario.service_api_key = service_api_key
@@ -65,7 +66,10 @@ def _run(
             },
         }
 
-    client = httpx.Client(transport=smoke.make_mock_transport(scenario, now=clock.now), follow_redirects=False)
+    client = httpx.Client(
+        transport=transport or smoke.make_mock_transport(scenario, now=clock.now),
+        follow_redirects=False,
+    )
     try:
         result = smoke.run_smoke(
             _args(tmp_path, *extra),
@@ -143,6 +147,28 @@ def test_items_boundary_preserves_a_well_formed_list() -> None:
     items = [_valid_boundary_item()]
 
     assert smoke._validate_items_payload(items) is items
+
+
+def test_items_boundary_rejects_a_foreign_tenant_or_run_envelope(tmp_path: Path) -> None:
+    scenario = smoke.DryScenario()
+    base_transport = smoke.make_mock_transport(scenario)
+
+    def misroute_items(request: httpx.Request) -> httpx.Response:
+        response = base_transport.handle_request(request)
+        if request.method == "GET" and request.url.path.endswith("/items"):
+            payload = response.json()
+            payload["tenant_id"] = "foreign-tenant"
+            return httpx.Response(response.status_code, json=payload)
+        return response
+
+    result, _ = _run(
+        tmp_path,
+        scenario=scenario,
+        transport=httpx.MockTransport(misroute_items),
+    )
+
+    assert result.exit_code == 1
+    assert "tenant" in _detail(result, "flow_completed")
 
 
 def test_service_router_items_satisfy_smoke_contract() -> None:
@@ -595,6 +621,20 @@ def test_red_service_health_degrades_during_processing(tmp_path: Path) -> None:
 
 
 def test_red_missing_fresh_load_snapshot_after_trigger(tmp_path: Path) -> None:
+    scenario = smoke.DryScenario(load_snapshot_after_trigger=None)
+    result, oci = _run(
+        tmp_path,
+        scenario=scenario,
+    )
+
+    assert result.exit_code == 1
+    assert not _check(result, "load_snapshot_observed_after_trigger")
+    assert scenario.transport_counts["enqueue_posts"] == 0
+    assert oci.armed is False
+
+
+def test_red_missing_fresh_load_snapshot_after_trigger_legacy_shape(tmp_path: Path) -> None:
+    """Keep the original assertion close to the preflight regression above."""
     result, _ = _run(
         tmp_path,
         scenario=smoke.DryScenario(load_snapshot_after_trigger=None),
@@ -933,6 +973,23 @@ def test_red_orphan_running(tmp_path: Path) -> None:
     assert not _check(result, "no_orphan_running")
 
 
+def test_red_tag_owned_orphan_with_changed_name_and_shape_is_reported(tmp_path: Path) -> None:
+    orphan = {
+        "id": "orphan-renamed-id",
+        "display-name": "renamed-gpu-burst",
+        "shape": "VM.GPU.A10.2",
+        "lifecycle-state": "RUNNING",
+        "freeform-tags": dict(smoke.EXPECTED_GPU_BURST_TAGS),
+    }
+
+    result, _ = _run(tmp_path, oci=smoke.FakeOci(orphan_instances=[orphan]))
+
+    assert result.exit_code == 1
+    assert not _check(result, "no_orphan_running")
+    assert "orphan-renamed-id" in _detail(result, "no_orphan_running")
+    assert not _check(result, "orphan_identity_matches")
+
+
 def test_red_deadline_still_issues_stop(tmp_path: Path) -> None:
     scenario = smoke.DryScenario(run_statuses=["running"])
     result, oci = _run(tmp_path, scenario=scenario, extra=("--max-seconds", "3"))
@@ -998,6 +1055,25 @@ def test_red_compensating_stop_times_out_in_stopping(tmp_path: Path) -> None:
     assert result.exit_code == 1
     assert not _check(result, "instance_stopped_finally")
     assert "STOPPING" in _detail(result, "instance_stopped_finally")
+
+
+def test_red_unknown_compensation_state_still_issues_stop(tmp_path: Path) -> None:
+    class UnknownAfterStartOci(smoke.FakeOci):
+        begin_reaper = None
+
+        def get_instance(self, instance_id: str, *, timeout: float) -> dict[str, object]:
+            instance = super().get_instance(instance_id, timeout=timeout)
+            if self.startup_states == [] and self.current_state == "RUNNING" and self.stop_calls == 0:
+                instance["lifecycle-state"] = "FUTURE_RUNNING_STATE"
+            return instance
+
+    oci = UnknownAfterStartOci()
+    result, used_oci = _run(tmp_path, oci=oci, extra=("--max-seconds", "5"))
+
+    assert result.exit_code == 1
+    assert used_oci.stop_calls >= 1
+    assert _check(result, "finally_stop_issued")
+    assert _check(result, "instance_stopped_finally")
 
 
 def test_evidence_writer_refuses_to_overwrite_without_force(tmp_path: Path) -> None:
@@ -1198,6 +1274,8 @@ def test_gpu_burst_runbook_documents_all_four_smoke_proofs() -> None:
         "gpu_cost_report.py",
     ):
         assert required in runbook
+    assert "GPUSMOKE-1-evidence.json" not in runbook
+    assert "SMOKE_EVIDENCE" in runbook
 
 
 def test_missing_gpu_state_json_is_recorded_not_failed(tmp_path: Path) -> None:
@@ -1673,6 +1751,46 @@ def test_second_burst_duplicate_enqueue_fixture_fails(tmp_path: Path) -> None:
     assert result.evidence["second_burst"]["new_items"]
 
 
+def test_second_burst_replay_issues_a_second_enqueue_and_proves_idempotency(tmp_path: Path) -> None:
+    scenario = smoke.DryScenario()
+
+    result, _ = _run(tmp_path, scenario=scenario)
+
+    assert result.exit_code == 0
+    assert scenario.transport_counts["enqueue_posts"] == 2
+    assert result.evidence["second_burst"]["enqueue_posts_during_replay"] == 1
+    assert result.evidence["second_burst"]["idempotent_response"] is True
+
+
+def test_second_burst_without_idempotent_response_fails_closed_without_transport_telemetry(
+    tmp_path: Path,
+) -> None:
+    scenario = smoke.DryScenario()
+    base_transport = smoke.make_mock_transport(scenario)
+    replay_posts = 0
+
+    def non_idempotent_replay(request: httpx.Request) -> httpx.Response:
+        nonlocal replay_posts
+        response = base_transport.handle_request(request)
+        if request.method == "POST" and request.url.path.endswith("/describe/runs"):
+            replay_posts += 1
+            if replay_posts == 2:
+                payload = response.json()
+                payload["run_id"] = "22222222-2222-4222-8222-222222222222"
+                return httpx.Response(response.status_code, json=payload)
+        return response
+
+    result, _ = _run(
+        tmp_path,
+        scenario=scenario,
+        transport=httpx.MockTransport(non_idempotent_replay),
+    )
+
+    assert result.exit_code == 1
+    assert not _check(result, "second_burst_no_enqueue")
+    assert "idempotent" in _detail(result, "second_burst_no_enqueue")
+
+
 def test_dry_gpu_states_use_live_transition_shape_and_fast_clock(tmp_path: Path) -> None:
     scenario = smoke.DryScenario(
         gpu_states=[
@@ -1712,3 +1830,14 @@ def test_run_smoke_is_decomposed_into_phase_helpers() -> None:
     function = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "run_smoke")
 
     assert function.end_lineno - function.lineno + 1 <= 300
+
+
+def test_cleanup_is_decomposed_into_bounded_helpers() -> None:
+    tree = ast.parse(Path(smoke.__file__).read_text(encoding="utf-8"))
+    function = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "_compensate_and_audit_stop"
+    )
+
+    assert function.end_lineno - function.lineno + 1 <= 100

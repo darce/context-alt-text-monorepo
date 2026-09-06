@@ -227,3 +227,55 @@ def test_cost_report_requires_a_closed_successful_smoke(
 
     with pytest.raises(report.CostReportError, match=message):
         report.report_costs([str(usage)], str(smoke))
+
+
+def test_cost_report_requires_canonical_safety_checks(tmp_path: Path) -> None:
+    usage = tmp_path / "usage.json"
+    smoke = tmp_path / "smoke.json"
+    _write_json(
+        usage,
+        {"data": {"items": [{"computedAmount": 0.2, "resourceId": "ocid1.instance.oc1.iad.gpu"}]}},
+    )
+    report_payload = _smoke_report()
+    report_payload["checks"] = [{"name": "smoke_verdict", "passed": True}]
+    _write_json(smoke, report_payload)
+
+    with pytest.raises(report.CostReportError, match="required safety check"):
+        report.report_costs([str(usage)], str(smoke))
+
+
+def test_cost_report_rejects_open_or_nonmonotonic_transition_evidence(tmp_path: Path) -> None:
+    usage = tmp_path / "usage.json"
+    smoke = tmp_path / "smoke.json"
+    _write_json(
+        usage,
+        {"data": {"items": [{"computedAmount": 0.0, "resourceId": "ocid1.instance.oc1.iad.gpu"}]}},
+    )
+    report_payload = _smoke_report()
+    report_payload["transitions"] = [
+        {"state": "STOPPED", "timestamp": "2026-01-01T00:00:00Z", "elapsed_seconds": 0.0},
+        {"state": "RUNNING", "timestamp": "2026-01-01T00:00:10Z", "elapsed_seconds": 10.0},
+        {"state": "STOPPING", "timestamp": "2026-01-01T00:00:09Z", "elapsed_seconds": 9.0},
+    ]
+    _write_json(smoke, report_payload)
+
+    with pytest.raises(report.CostReportError, match="monotonic|STOPPED"):
+        report.report_costs([str(usage)], str(smoke))
+
+
+def test_cost_report_rejects_running_seconds_that_disagree_with_transitions(tmp_path: Path) -> None:
+    usage = tmp_path / "usage.json"
+    smoke = tmp_path / "smoke.json"
+    _write_json(
+        usage,
+        {"data": {"items": [{"computedAmount": 0.2, "resourceId": "ocid1.instance.oc1.iad.gpu"}]}},
+    )
+    report_payload = _smoke_report()
+    report_payload["measurements"] = {
+        "running_seconds": 999.0,
+        "running_seconds_ongoing": False,
+    }
+    _write_json(smoke, report_payload)
+
+    with pytest.raises(report.CostReportError, match="running_seconds"):
+        report.report_costs([str(usage)], str(smoke))

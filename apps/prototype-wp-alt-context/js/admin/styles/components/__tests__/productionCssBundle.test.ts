@@ -30,7 +30,15 @@ import {
 } from './productionCssBundle';
 
 const ROLLUP_ENTRY_POINTS = ['js/admin/main.tsx', 'js/attachment-edit/main.tsx'] as const;
-const ROLLUP_BUILD_SOURCES = [...ROLLUP_ENTRY_POINTS, 'js/admin/assets/guided/altcontext-sample.jpeg'] as const;
+const GUIDED_ASSETS = [
+  'js/admin/assets/guided/guided-justin-trudeau-2025-b.jpg',
+  'js/admin/assets/guided/guided-justin-trudeau-2025.jpg',
+  'js/admin/assets/guided/guided-katy-perry-2016.jpg',
+  'js/admin/assets/guided/guided-katy-perry-2019.jpg',
+  'js/admin/assets/guided/guided-katy-perry-2026.jpg',
+  'js/admin/assets/guided/guided-press-tribeca-2026.jpg',
+] as const;
+const ROLLUP_BUILD_SOURCES = [...ROLLUP_ENTRY_POINTS, ...GUIDED_ASSETS] as const;
 
 describe('build-input fingerprint coverage [FEBT2-LG-NEW-02]', () => {
   it('hashes every non-test file under js/', () => {

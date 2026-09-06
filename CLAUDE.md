@@ -82,7 +82,7 @@ Full surface table: [instructions.md § Output Brevity](docs/workbay/instruction
 
 > **No feature branch merges to `main` without a passing `handoff_close_check(enforce=True)`.**
 
-Every merge to `main` requires: (1) at least one review pass with findings recorded in MCP, (2) zero open findings on the task ref, (3) fresh `test_result` evidence tied to the current HEAD SHA, (4) `handoff_close_check(enforce=True)` passes, and (5) a slice-complete decision recorded. The check is enforced by the handoff DB; bypassing it via `enforce=False` defeats the gate. Open findings must be `fixed` or explicitly `deferred`/`wontfix` with rationale — never skipped.
+Every merge to `main` requires: (1) at least one review pass with findings recorded in MCP, (2) zero open findings on the task ref, (3) fresh `test_result` evidence tied to the current HEAD SHA, (4) `handoff_close_check(enforce=True)` passes, and (5) a slice-complete decision recorded. The check is enforced by the handoff DB; bypassing it via `enforce=False` defeats the gate. Open findings must be `fixed` or explicitly `deferred`/`wontfix` with rationale — never skipped. **`ruff`/`mypy` (and `eslint`/`prettier`/`phpcs`) violations do not block a merge:** record each as a `low` finding prefixed `lint(<tool>):`, defer it with `resolution_notes="lint-only; fix in next wave <task-ref>/<lane-id>"` before the gate, and fix it in that next wave (one deferral only). See [development-workflow.md § Formatting and Type-Check Findings](docs/workbay/rules/development-workflow.md#formatting-and-type-check-findings-do-not-block-merge-mandatory).
 See [development-workflow.md § Pre-Merge Gate](docs/workbay/rules/development-workflow.md#pre-merge-gate-mandatory) for the full pre-merge sequence and recovery steps.
 
 ### Branch Isolation Rule
@@ -186,6 +186,7 @@ Derived copy from the canonical source: [docs/workbay/constitution.md](docs/work
 - [sr-008] helpful=1 harmful=0 :: When a hook, function, or constructor takes more than 8 destructured parameters, group them into 2-3 cohesive typed objects (e.g., state, actions, mutations). This prevents the "parameter slippery slope" that compounds with each new feature.
 - [sr-009] helpful=1 harmful=0 :: PHP controller methods that run transactions must use a shared `run_transactional(callable)` wrapper instead of inlining START TRANSACTION / COMMIT / ROLLBACK boilerplate.
 - [sr-010] helpful=1 harmful=0 :: For a full local-only development reset of both databases, use `make reset-local WP_PATH="<wordpress>/app/public" CONFIRM_LOCAL_RESET="RESET"` from the repo root. `WP_PATH` must point to the WordPress directory containing `wp-load.php` (for LocalWP here, typically `${LOCAL_WP_ROOT:-$HOME/Development/wp-context-alt-text}/app/public`). Never use this against non-local environments.
+- [sr-011] helpful=0 harmful=0 :: `ruff`/`mypy` (and `eslint`/`prettier`/`phpcs`) violations never block a merge. Record each as a `low` finding prefixed `lint(<tool>):`, defer it with `resolution_notes="lint-only; fix in next wave <task-ref>/<lane-id>"` before the gate, list it in the next wave's brief, and close it `fixed` there. One deferral only; never silence the tool ([sr-001]) and never skip the finding.
 
 ### Cross-Branch Regression Guards
 

@@ -59,6 +59,21 @@ def test_gpu_instance_uses_configurable_a10_shape_and_dedicated_cloud_init() -> 
     assert "cloud-init" in main_tf.lower() or "gpu-cloud-init" in main_tf
 
 
+def test_gpu_watchdog_rollout_checks_capacity_and_preserves_existing_boot_volume() -> None:
+    main_tf = (OCI_ROOT / "main.tf").read_text()
+    gpu_block = _gpu_instance_block()
+
+    assert 'resource "oci_core_compute_capacity_report" "acx_gpu_replacement"' in main_tf
+    assert "shape_availabilities" in main_tf
+    assert "availability_status == \"AVAILABLE\"" in main_tf
+    assert "available_count >= 1" in main_tf
+    assert "create_before_destroy = true" in gpu_block
+    assert "preserve_boot_volume = true" in gpu_block
+    assert "precondition" in gpu_block
+    assert "metadata.user_data" in main_tf
+    assert "operator" in gpu_block.lower() or "migration" in gpu_block.lower()
+
+
 def test_gpu_instance_security_posture_private_only() -> None:
     """Pin private placement + VCN-scoped VLM ingress (no public exposure)."""
     main_tf = (OCI_ROOT / "main.tf").read_text()
@@ -165,6 +180,242 @@ def test_gpu_cloud_init_bakes_qwen_measurement_candidate() -> None:
     assert "StartLimitBurst=3" in cloud_init
 
 
+def _self_stop_script(cloud_init: dict, tmp_path: Path) -> tuple[Path, Path]:
+    files = {entry["path"]: entry for entry in cloud_init["write_files"]}
+    script = files["/usr/local/bin/acx-gpu-self-stop.sh"]["content"].replace("$${", "${")
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    env_path = tmp_path / "watchdog.env"
+    env_path.write_text(
+        "MAX_UPTIME_SECONDS=3600\n"
+        "ACX_SELF_STOP_ENABLED=1\n"
+        "ACX_SELF_STOP_FALLBACK_POWEROFF=0\n"
+    )
+    # Keep production commands on fixed absolute paths while allowing this
+    # test to exercise the enabled branch without touching host /usr/bin.
+    script = script.replace("/etc/acx-gpu-self-stop.env", str(env_path))
+    script = script.replace("/usr/bin/curl", str(bin_dir / "curl"))
+    script = script.replace("/usr/bin/python3", str(bin_dir / "python3"))
+    script = script.replace("/usr/bin/oci", str(bin_dir / "oci"))
+    # Keep failure-mode tests fast; production values remain bounded and
+    # deliberately non-zero in the cloud-init template.
+    script = script.replace("readonly METADATA_RETRY_DELAY_SECONDS=2", "readonly METADATA_RETRY_DELAY_SECONDS=0")
+    script = script.replace("readonly STOP_RETRY_DELAY_SECONDS=5", "readonly STOP_RETRY_DELAY_SECONDS=0")
+    script_path = tmp_path / "acx-gpu-self-stop.sh"
+    script_path.write_text(script)
+    script_path.chmod(0o755)
+    logger_log = tmp_path / "logger.log"
+    (bin_dir / "logger").write_text(f"#!/bin/sh\nprintf '%s\\n' \"$*\" >> {logger_log}\n")
+    (bin_dir / "logger").chmod(0o755)
+    return script_path, bin_dir
+
+
+def test_gpu_self_stop_bakes_and_validates_fixed_runtime_dependencies() -> None:
+    cloud_init = (OCI_ROOT / "gpu-cloud-init.yaml").read_text()
+    parsed = yaml.safe_load(cloud_init)
+    files = {entry["path"]: entry for entry in parsed["write_files"]}
+    runtime_check = files["/usr/local/bin/acx-gpu-runtime-check.sh"]["content"]
+    readme = files["/opt/acx-gpu/README.md"]["content"]
+
+    assert "OCI CLI" in readme
+    assert "/usr/bin/curl" in readme
+    assert "/usr/bin/python3" in readme
+    assert "/usr/bin/oci" in readme
+    assert "test -x /usr/bin/curl" in runtime_check
+    assert "test -x /usr/bin/python3" in runtime_check
+    assert "test -x /usr/bin/oci" in runtime_check
+
+
+def test_gpu_self_stop_enabled_path_retries_and_verifies_stopped(tmp_path: Path) -> None:
+    cloud_init = yaml.safe_load((OCI_ROOT / "gpu-cloud-init.yaml").read_text())
+    script_path, bin_dir = _self_stop_script(cloud_init, tmp_path)
+    instance_id = "ocid1.instance.oc1..selfstoptest"
+    action_log = tmp_path / "actions.log"
+    (bin_dir / "curl").write_text("#!/bin/sh\nprintf '%s\\n' '{\"id\":\"" + instance_id + "\"}'\n")
+    (bin_dir / "curl").chmod(0o755)
+    (bin_dir / "python3").write_text("#!/bin/sh\ncat >/dev/null\nprintf '%s\\n' '" + instance_id + "'\n")
+    (bin_dir / "python3").chmod(0o755)
+    (bin_dir / "oci").write_text(
+        "#!/bin/sh\n"
+        "case \" $* \" in\n"
+        "  *' compute instance action '*)\n"
+        f"    printf '%s\\n' \"$*\" >> {action_log}\n"
+        "    count=$(grep -c 'compute instance action' " + str(action_log) + " 2>/dev/null || true)\n"
+        "    [ \"$count\" -ge 2 ] || exit 1\n"
+        "    exit 0;;\n"
+        "  *' compute instance get '*)\n"
+        f"    printf '%s\\n' \"$*\" >> {action_log}\n"
+        "    printf '%s\\n' STOPPED\n"
+        "    exit 0;;\n"
+        "esac\n"
+        "exit 9\n"
+    )
+    (bin_dir / "oci").chmod(0o755)
+
+    result = subprocess.run(
+        [str(script_path)],
+        env={**os.environ, "PATH": f"{bin_dir}:/usr/bin:/bin"},
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    calls = action_log.read_text().splitlines()
+    assert sum("compute instance action" in call for call in calls) == 2
+    assert any("--auth instance_principal" in call for call in calls)
+    assert any("--wait-for-state STOPPED" in call for call in calls)
+    assert any("--max-wait-seconds" in call for call in calls)
+    assert any("compute instance get" in call and "--raw-output" in call for call in calls)
+
+
+def _write_metadata_fakes(bin_dir: Path, instance_id: str) -> None:
+    (bin_dir / "curl").write_text("#!/bin/sh\nprintf '%s\\n' '{\"id\":\"" + instance_id + "\"}'\n")
+    (bin_dir / "curl").chmod(0o755)
+    (bin_dir / "python3").write_text("#!/bin/sh\ncat >/dev/null\nprintf '%s\\n' '" + instance_id + "'\n")
+    (bin_dir / "python3").chmod(0o755)
+
+
+def test_gpu_self_stop_enabled_path_retries_iam_failure_three_times(tmp_path: Path) -> None:
+    cloud_init = yaml.safe_load((OCI_ROOT / "gpu-cloud-init.yaml").read_text())
+    script_path, bin_dir = _self_stop_script(cloud_init, tmp_path)
+    instance_id = "ocid1.instance.oc1..iamfailure"
+    action_log = tmp_path / "actions.log"
+    _write_metadata_fakes(bin_dir, instance_id)
+    (bin_dir / "oci").write_text(
+        "#!/bin/sh\n"
+        "case \" $* \" in\n"
+        "  *' compute instance action '*)\n"
+        f"    printf '%s\\n' \"$*\" >> {action_log}; exit 1;;\n"
+        "esac\n"
+        "exit 9\n"
+    )
+    (bin_dir / "oci").chmod(0o755)
+
+    result = subprocess.run(
+        [str(script_path)],
+        env={**os.environ, "PATH": f"{bin_dir}:/usr/bin:/bin"},
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode != 0
+    assert len(action_log.read_text().splitlines()) == 3
+    assert "OCI STOP request failed" in (tmp_path / "logger.log").read_text()
+    assert "did not converge" in (tmp_path / "logger.log").read_text()
+
+
+def test_gpu_self_stop_enabled_path_retries_cli_timeout(tmp_path: Path) -> None:
+    cloud_init = yaml.safe_load((OCI_ROOT / "gpu-cloud-init.yaml").read_text())
+    script_path, bin_dir = _self_stop_script(cloud_init, tmp_path)
+    instance_id = "ocid1.instance.oc1..timeout"
+    action_log = tmp_path / "actions.log"
+    _write_metadata_fakes(bin_dir, instance_id)
+    (bin_dir / "oci").write_text(
+        "#!/bin/sh\n"
+        "case \" $* \" in\n"
+        "  *' compute instance action '*)\n"
+        f"    printf '%s\\n' \"$*\" >> {action_log}; exit 124;;\n"
+        "esac\n"
+        "exit 9\n"
+    )
+    (bin_dir / "oci").chmod(0o755)
+
+    result = subprocess.run(
+        [str(script_path)],
+        env={**os.environ, "PATH": f"{bin_dir}:/usr/bin:/bin"},
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode != 0
+    assert len(action_log.read_text().splitlines()) == 3
+    assert "OCI STOP request failed" in (tmp_path / "logger.log").read_text()
+
+
+def test_gpu_self_stop_enabled_path_rejects_non_terminal_state(tmp_path: Path) -> None:
+    cloud_init = yaml.safe_load((OCI_ROOT / "gpu-cloud-init.yaml").read_text())
+    script_path, bin_dir = _self_stop_script(cloud_init, tmp_path)
+    instance_id = "ocid1.instance.oc1..stillrunning"
+    action_log = tmp_path / "actions.log"
+    _write_metadata_fakes(bin_dir, instance_id)
+    (bin_dir / "oci").write_text(
+        "#!/bin/sh\n"
+        "case \" $* \" in\n"
+        "  *' compute instance action '*)\n"
+        f"    printf '%s\\n' \"$*\" >> {action_log}; exit 0;;\n"
+        "  *' compute instance get '*)\n"
+        f"    printf '%s\\n' \"$*\" >> {action_log}; printf '%s\\n' RUNNING; exit 0;;\n"
+        "esac\n"
+        "exit 9\n"
+    )
+    (bin_dir / "oci").chmod(0o755)
+
+    result = subprocess.run(
+        [str(script_path)],
+        env={**os.environ, "PATH": f"{bin_dir}:/usr/bin:/bin"},
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode != 0
+    calls = action_log.read_text().splitlines()
+    assert sum("compute instance action" in call for call in calls) == 3
+    assert sum("compute instance get" in call for call in calls) == 3
+    assert "observed RUNNING, expected STOPPED" in (tmp_path / "logger.log").read_text()
+
+
+def test_gpu_self_stop_enabled_path_retries_metadata_timeout(tmp_path: Path) -> None:
+    cloud_init = yaml.safe_load((OCI_ROOT / "gpu-cloud-init.yaml").read_text())
+    script_path, bin_dir = _self_stop_script(cloud_init, tmp_path)
+    (bin_dir / "curl").write_text("#!/bin/sh\nexit 28\n")
+    (bin_dir / "curl").chmod(0o755)
+    (bin_dir / "python3").write_text("#!/bin/sh\ncat >/dev/null\nexit 1\n")
+    (bin_dir / "python3").chmod(0o755)
+    # The CLI must exist before metadata is attempted, even though it is not
+    # reached after all metadata attempts fail.
+    (bin_dir / "oci").write_text("#!/bin/sh\nexit 9\n")
+    (bin_dir / "oci").chmod(0o755)
+
+    result = subprocess.run(
+        [str(script_path)],
+        env={**os.environ, "PATH": f"{bin_dir}:/usr/bin:/bin"},
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode != 0
+    logs = (tmp_path / "logger.log").read_text()
+    assert logs.count("metadata request failed") == 3
+    assert "unable to read instance OCID" in logs
+
+
+def test_gpu_self_stop_enabled_path_fails_closed_when_cli_missing(tmp_path: Path) -> None:
+    cloud_init = yaml.safe_load((OCI_ROOT / "gpu-cloud-init.yaml").read_text())
+    script_path, bin_dir = _self_stop_script(cloud_init, tmp_path)
+    script = script_path.read_text().replace(str(bin_dir / "oci"), str(tmp_path / "missing-oci"))
+    script_path.write_text(script)
+    (bin_dir / "curl").write_text("#!/bin/sh\nprintf '%s\\n' '{\"id\":\"ocid1.instance.oc1..missingcli\"}'\n")
+    (bin_dir / "curl").chmod(0o755)
+    (bin_dir / "python3").write_text("#!/bin/sh\ncat >/dev/null\nprintf '%s\\n' 'ocid1.instance.oc1..missingcli'\n")
+    (bin_dir / "python3").chmod(0o755)
+
+    result = subprocess.run(
+        [str(script_path)],
+        env={**os.environ, "PATH": f"{bin_dir}:/usr/bin:/bin"},
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode != 0
+    assert "OCI CLI" in (tmp_path / "logger.log").read_text()
+
+
 def test_terraform_configuration_validates() -> None:
     if shutil.which("terraform") is None:
         pytest.skip(
@@ -250,10 +501,23 @@ def test_gpu_self_stop_watchdog_units_and_bootstrap_are_configured() -> None:
     assert "ACX_SELF_STOP_ENABLED:-0" in script
     assert "systemctl poweroff" in script
     assert "ACX_SELF_STOP_FALLBACK_POWEROFF:-0" in script
+    assert "Restart=on-failure" in service
+    assert "RestartSec=" in service
+    assert "TimeoutStartSec=" in service
+    assert "--connect-timeout" in script
+    assert "--max-time" in script
+    assert "--wait-for-state STOPPED" in script
+    assert "--max-wait-seconds" in script
+    assert "compute instance get" in script
+    assert "/usr/bin/oci" in script
 
     commands = "\n".join(parsed["runcmd"])
     assert "systemctl enable acx-gpu-self-stop.timer" in commands
     assert "systemctl start acx-gpu-self-stop.timer" in commands
+    assert "systemctl is-active --quiet acx-gpu-self-stop.timer" in commands
+    assert commands.index("systemctl start acx-gpu-self-stop.timer") < commands.index(
+        "systemctl start acx-gpu-vlm.service"
+    )
 
 
 def test_gpu_self_stop_script_exits_without_stop_when_disabled(tmp_path: Path) -> None:
@@ -309,6 +573,22 @@ def test_gpu_self_stop_terraform_wiring_and_narrow_policy_are_present() -> None:
     assert "instance.compartment.id" in watchdog_tf
     assert "instance.id" in watchdog_tf
     assert "in compartment id ${var.compartment_ocid}" in watchdog_tf
-    assert "INSTANCE_STOP" in watchdog_tf
-    assert "where request.permission = INSTANCE_STOP" in watchdog_tf
+    assert "request.permission = 'INSTANCE_POWER_ACTIONS'" in watchdog_tf
+    assert "target.instance.id = '${oci_core_instance.acx_gpu_burst.id}'" in watchdog_tf
+    assert "request.permission = INSTANCE_STOP" not in watchdog_tf
+    assert "INSTANCE_STOP" not in watchdog_tf
     assert "manage instances" not in watchdog_tf.lower()
+
+
+def test_gpu_self_stop_policy_allows_only_targeted_read_for_verification() -> None:
+    watchdog_tf = (OCI_ROOT / "watchdog.tf").read_text()
+
+    assert "to read instances" in watchdog_tf
+    assert "request.permission = 'INSTANCE_READ'" in watchdog_tf
+    assert watchdog_tf.count("target.instance.id = '${oci_core_instance.acx_gpu_burst.id}'") >= 2
+    # A compromised GPU principal must not be able to power-action the backend
+    # or any other instance merely because it shares the parent compartment.
+    assert "oci_core_instance.acx_backend.id" not in watchdog_tf
+    assert "target.instance.id = '${oci_core_instance.acx_backend.id}'" not in watchdog_tf
+    assert "to use instance-family" not in watchdog_tf
+    assert "to manage instance-family" not in watchdog_tf

@@ -75,6 +75,8 @@ esac
         pytest.param("free", 41, id="free-exit-41"),
         pytest.param("df", 23, id="df-exit-23"),
         pytest.param("df", 41, id="df-exit-41"),
+        pytest.param("make", 23, id="make-exit-23"),
+        pytest.param("make", 41, id="make-exit-41"),
     ],
 )
 def test_remote_doctor_propagates_a_pipeline_failure_across_ssh(
@@ -106,6 +108,14 @@ exit 0
         """#!/usr/bin/env bash
 printf 'header\\nrow a b available\\n'
 [[ "${REMOTE_GATE_TEST_FAILING_PROGRAM:-}" == df ]] && exit "$REMOTE_GATE_TEST_INJECTED_EXIT"
+exit 0
+""",
+    )
+    _write_executable(
+        fake_bin / "make",
+        """#!/usr/bin/env bash
+printf 'GNU Make 4.4\\n'
+[[ "${REMOTE_GATE_TEST_FAILING_PROGRAM:-}" == make ]] && exit "$REMOTE_GATE_TEST_INJECTED_EXIT"
 exit 0
 """,
     )

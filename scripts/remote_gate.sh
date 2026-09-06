@@ -185,7 +185,11 @@ doctor)
         df -h "$HOME" | awk "NR==2{print \"disk_free=\" \$4}"
         du -sh "$HOME/.cache/uv" 2>/dev/null || echo "uv_cache=none"
         if [ -x "$HOME/.local/bin/uv" ]; then "$HOME/.local/bin/uv" --version; else echo "uv: MISSING (runbook Phase 1)"; fi
-        command -v make >/dev/null && make --version | head -1 || echo "make: MISSING (apt-get install make)"
+        if command -v make >/dev/null; then
+            make --version | head -1
+        else
+            echo "make: MISSING (apt-get install make)"
+        fi
         command -v systemd-run >/dev/null || echo "systemd-run: MISSING (per-run caps unavailable)"
         hostgov_found=""
         for cand in "$HOME/'"$REMOTE_DIR"'/'"$WORKDIR"'/.venv/bin/workbay-hostgov" "$HOME/.local/bin/workbay-hostgov" "$(command -v workbay-hostgov 2>/dev/null || true)"; do

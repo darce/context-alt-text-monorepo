@@ -15,4 +15,8 @@ ubuntu_image_ocid  = "ocid1.image.oc1.iad.aaaaaaaa5hgxi6voge43kultiindj3cbcnsimy
 gpu_image_ocid = "ocid1.image.oc1.iad.aaaaaaaa-gpu-golden-image"
 gpu_shape      = "VM.GPU.A10.1"
 
+# Independent on-instance cost guard; the timer starts after GPU cloud-init.
+gpu_max_uptime_seconds = 3600
+gpu_self_stop_enabled  = true
+
 ssh_allowed_cidrs = ["YOUR_IP/32"]

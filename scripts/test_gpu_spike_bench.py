@@ -541,9 +541,13 @@ def test_documentation_dispositions_preserve_evidence_boundaries() -> None:
 
 def test_lifecycle_installer_gives_both_units_the_same_writable_lease_path() -> None:
     installer = (Path(__file__).resolve().parent / "deploy" / "gpu-lifecycle-install.sh").read_text()
-    assert installer.count("RuntimeDirectory=acx-gpu") == 2
-    assert installer.count("RuntimeDirectoryPreserve=yes") == 2
-    assert installer.count("--running-since-path /run/acx-gpu/running-since.json") == 2
+    # The lease path must be durable, not tmpfs-backed: a reboot that wiped
+    # /run/acx-gpu/running-since.json erased the running-since stamp, so the reaper
+    # could not tell how long an already-RUNNING A10 had been billing.
+    assert installer.count("--running-since-path /var/lib/acx-gpu/running-since.json") == 2
+    assert installer.count("/usr/bin/flock --wait 120 /var/lib/acx-gpu/lifecycle.lock") == 2
+    assert "RuntimeDirectory=acx-gpu" not in installer
+    assert "/run/acx-gpu/running-since.json" not in installer
 
 
 # ---------------------------------------------------------------------------

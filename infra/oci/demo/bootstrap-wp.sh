@@ -398,6 +398,13 @@ case "$DESCRIBE_VERDICT" in
     fi
     describe_chunk_number=0
     describe_admitted=0
+    # A normal run only needs to admit the media that still lacks usable alt
+    # text. RUN_FORCE deliberately rewrites an already-covered population, so
+    # its bounded repair burst may use the full live population as its budget.
+    describe_media_budget="$TOTAL_MEDIA"
+    if (( ! describe_force )); then
+      describe_media_budget=$((TOTAL_MEDIA - MEDIA_WITH_ALT))
+    fi
     # The historical single-pass force form was `describe generate --write --force --limit=100`.
     # Keep each request bounded while allowing coverage to converge in chunks.
     while :; do
@@ -406,13 +413,17 @@ case "$DESCRIBE_VERDICT" in
       if (( describe_chunk_number > 0 && MEDIA_WITH_ALT >= TOTAL_MEDIA )); then
         break
       fi
-      if (( describe_admitted >= ACX_DEMO_DESCRIBE_MAX )); then
+      if (( describe_admitted >= ACX_DEMO_DESCRIBE_MAX || describe_admitted >= describe_media_budget )); then
         break
       fi
       remaining=$((ACX_DEMO_DESCRIBE_MAX - describe_admitted))
+      remaining_media=$((describe_media_budget - describe_admitted))
       chunk_limit="$ACX_DEMO_DESCRIBE_CHUNK"
       if (( chunk_limit > remaining )); then
         chunk_limit="$remaining"
+      fi
+      if (( chunk_limit > remaining_media )); then
+        chunk_limit="$remaining_media"
       fi
       if (( chunk_limit < 1 )); then
         break

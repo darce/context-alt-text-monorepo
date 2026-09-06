@@ -81,7 +81,10 @@ run_gpu_env_preflight() {
   done
 
   echo "==> Run GPU environment preflight before bringing up the demo stack"
-  $SSH "sudo install -d -m 700 '${REMOTE_GPU_PREFLIGHT_DIR}/lib'"
+  # The following scp commands run as OCI_USER. Create both temporary
+  # directories as that user so a clean VM does not leave a root-only staging
+  # tree that blocks the upload before the preflight can run.
+  $SSH "install -d -m 700 '${REMOTE_GPU_PREFLIGHT_DIR}/lib'"
   $SCP "$GPU_PREFLIGHT_SRC" "${OCI_USER}@${OCI_HOST}:${REMOTE_GPU_PREFLIGHT_DIR}/preflight-gpu-env.sh"
   $SCP "$GPU_ENV_CONTRACT_SRC" "${OCI_USER}@${OCI_HOST}:${REMOTE_GPU_PREFLIGHT_DIR}/lib/gpu-env-contract.sh"
   $SCP "$DESCRIBE_GATE_SRC" "${OCI_USER}@${OCI_HOST}:${REMOTE_GPU_PREFLIGHT_DIR}/lib/describe-gate.sh"
@@ -170,8 +173,10 @@ PLUGIN_ZIP='${REMOTE_PLUGIN_ZIP}' ./bootstrap-wp.sh
 EOF
 fi
 
+BOOTSTRAP_RAN=0
 FIRST_BURST_COUNT=""
 if [[ -n "${PLUGIN_ZIP}" ]]; then
+  BOOTSTRAP_RAN=1
   FIRST_BURST_COUNT=$($SSH "cat '${REMOTE_DEMO_DIR}/.acx-describe-first-burst.count' 2>/dev/null" || true)
 fi
 
@@ -263,6 +268,7 @@ echo "==> Smoke four vhosts (api.* via /health, demo via / + media alt-text)"
   printf 'PRE_CODES="%s"\n' "$PRE_CODES"
   printf 'DEMO_ALT_MIN_COVERAGE_PCT="%s"\n' "${DEMO_ALT_MIN_COVERAGE_PCT:-95}"
   printf 'DEMO_ALT_GATE_ENFORCE="%s"\n' "${DEMO_ALT_GATE_ENFORCE:-1}"
+  printf 'BOOTSTRAP_RAN="%s"\n' "$BOOTSTRAP_RAN"
   printf 'FIRST_BURST_COUNT="%s"\n' "$FIRST_BURST_COUNT"
   printf 'DESCRIBE_MAX="%s"\n' "${ACX_DEMO_DESCRIBE_MAX:-100}"
   cat <<'EOF'
@@ -351,12 +357,16 @@ header_total=$(grep -i '^x-wp-total:' "$media_headers" | tr -d '\r ' | sed 's/.*
 load_alt_counts_from_media_body "$media_body"
 set -o pipefail
 rm -f "$media_headers" "$media_body"
-first_burst_verdict=$(classify_first_burst_bounded "$FIRST_BURST_COUNT" "$DESCRIBE_MAX" "$header_total") || true
-if [[ "$first_burst_verdict" == "PASS" ]]; then
-  echo "PASS demo first describe burst (count=${FIRST_BURST_COUNT}, max=${DESCRIBE_MAX}, total=${header_total})"
+if [[ "$BOOTSTRAP_RAN" == "1" ]]; then
+  first_burst_verdict=$(classify_first_burst_bounded "$FIRST_BURST_COUNT" "$DESCRIBE_MAX" "$header_total") || true
+  if [[ "$first_burst_verdict" == "PASS" ]]; then
+    echo "PASS demo first describe burst (count=${FIRST_BURST_COUNT}, max=${DESCRIBE_MAX}, total=${header_total})"
+  else
+    echo "FAIL demo first describe burst (count=${FIRST_BURST_COUNT:-empty}, max=${DESCRIBE_MAX:-empty}, total=${header_total:-empty})"
+    smoke_fail=1
+  fi
 else
-  echo "FAIL demo first describe burst (count=${FIRST_BURST_COUNT:-empty}, max=${DESCRIBE_MAX:-empty}, total=${header_total:-empty})"
-  smoke_fail=1
+  echo "SKIP demo first describe burst (bootstrap did not run; no plugin artifact was deployed)"
 fi
 min="${DEMO_ALT_MIN_COVERAGE_PCT:-95}"
 pop=$(classify_alt_population "$header_total" "$body_total") || true

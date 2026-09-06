@@ -187,6 +187,7 @@ class _FailingLeaseStore:
     def __init__(self, error: Exception) -> None:
         self._error = error
         self.path = None
+        self.read_failures: dict[str, int] = {}
 
     def record_start(self, instance_id: str) -> None:  # pragma: no cover - unused
         raise AssertionError("record_start must not be called in this test")
@@ -196,6 +197,19 @@ class _FailingLeaseStore:
 
     def age_seconds(self, record: object) -> int:  # pragma: no cover - unreachable
         raise AssertionError("age_seconds must not be reached")
+
+    def record_read_failure(self, instance_id: str) -> int:
+        """Count consecutive failures the way the durable store does.
+
+        The first failure sits inside the bounded RES-13 recovery window, which is
+        the state this test is about: the cap is disabled, not forced.
+        """
+        count = self.read_failures.get(instance_id, 0) + 1
+        self.read_failures[instance_id] = count
+        return count
+
+    def clear_read_failures(self, instance_id: str) -> None:  # pragma: no cover - unreachable
+        raise AssertionError("clear_read_failures must not be reached after a failed read")
 
 
 class TrustworthyIdleLoadSource:

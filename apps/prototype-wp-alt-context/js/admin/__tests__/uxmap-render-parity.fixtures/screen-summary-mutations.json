@@ -1,0 +1,12 @@
+[
+  { "name": "unquoted row", "row": "| workbench-shell | screen | `#/workbench` | Workbench |" },
+  { "name": "unquoted conflicting row", "row": "| workbench-shell | screen | `#/retired` | Retired workbench |" },
+  { "name": "unquoted orphan row", "row": "| retired-screen | screen | `#/retired` | Retired workbench |" },
+  { "name": "indented row", "row": "  | `workbench-shell` | screen | `#/workbench` | Workbench |" },
+  { "name": "indented conflicting row", "row": "  | `workbench-shell` | screen | `#/retired` | Retired workbench |" },
+  { "name": "indented orphan row", "row": "  | `retired-screen` | screen | `#/retired` | Retired workbench |" },
+  { "name": "tab-indented orphan row", "row": "\t| `retired-screen` | screen | `#/retired` | Retired workbench |" },
+  { "name": "missing leading pipe", "row": "`retired-screen` | screen | `#/retired` | Retired workbench |" },
+  { "name": "missing trailing pipe", "row": "| `retired-screen` | screen | `#/retired` | Retired workbench" },
+  { "name": "extra column", "row": "| `retired-screen` | screen | `#/retired` | Retired workbench | extra |" }
+]

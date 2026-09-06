@@ -25,6 +25,7 @@ Canonical authoring source for the repo's `[sr-NNN]` short rules and `[rg-NNN]` 
 - [sr-008] helpful=1 harmful=0 :: When a hook, function, or constructor takes more than 8 destructured parameters, group them into 2-3 cohesive typed objects (e.g., state, actions, mutations). This prevents the "parameter slippery slope" that compounds with each new feature.
 - [sr-009] helpful=1 harmful=0 :: PHP controller methods that run transactions must use a shared `run_transactional(callable)` wrapper instead of inlining START TRANSACTION / COMMIT / ROLLBACK boilerplate.
 - [sr-010] helpful=1 harmful=0 :: For a full local-only development reset of both databases, use `make reset-local WP_PATH="<wordpress>/app/public" CONFIRM_LOCAL_RESET="RESET"` from the repo root. `WP_PATH` must point to the WordPress directory containing `wp-load.php` (for LocalWP here, typically `${LOCAL_WP_ROOT:-$HOME/Development/wp-context-alt-text}/app/public`). Never use this against non-local environments.
+- [sr-011] helpful=0 harmful=0 :: `ruff`/`mypy` (and `eslint`/`prettier`/`phpcs`) violations never block a merge. Record each as a `low` finding prefixed `lint(<tool>):`, defer it with `resolution_notes="lint-only; fix in next wave <task-ref>/<lane-id>"` before the gate, list it in the next wave's brief, and close it `fixed` there. One deferral only; never silence the tool ([sr-001]) and never skip the finding.
 
 ## Cross-Branch Regression Guards
 

@@ -135,6 +135,27 @@ else
 fi
 unset _saved_floor
 
+# --- classify_first_burst_bounded <chunk_count> <max> <total> ---
+# The describe publish is bounded by both the configured first-burst maximum
+# and the live media total.  FAIL is returned for malformed or impossible
+# measurements so smoke cannot certify an unbounded publish.
+assert_verdict_rc "first burst 10 <= max 100 and total 250" PASS 0 \
+    classify_first_burst_bounded 10 100 250
+assert_verdict_rc "first burst at max 100" PASS 0 \
+    classify_first_burst_bounded 100 100 250
+assert_verdict_rc "first burst at total 100" PASS 0 \
+    classify_first_burst_bounded 100 250 100
+assert_verdict_rc "first burst zero count (SKIP)" PASS 0 \
+    classify_first_burst_bounded 0 100 0
+assert_verdict_rc "first burst exceeds max" FAIL 1 \
+    classify_first_burst_bounded 101 100 250
+assert_verdict_rc "first burst exceeds total" FAIL 1 \
+    classify_first_burst_bounded 101 250 100
+assert_verdict_rc "first burst empty count" FAIL 1 \
+    classify_first_burst_bounded '' 100 250
+assert_verdict_rc "first burst zero max" FAIL 1 \
+    classify_first_burst_bounded 1 0 250
+
 # --- classify_alt_population <header_total> <body_total> ---
 assert_eq "alt population 100 == 100" PASS "$(classify_alt_population 100 100)"
 assert_eq "alt population 250 vs 100 (paged subset)" FAIL "$(classify_alt_population 250 100)"
@@ -707,6 +728,139 @@ PY
         rm -f "$media_json"
     fi
 fi
+
+# --- bootstrap first describe burst: chunking + mid-run provenance recheck ---
+# Run the real bootstrap against a local fake compose/wp-cli seam. The positive
+# fixture proves the final chunk is trimmed to the remaining media, while the
+# negative fixture flips provenance after chunk one and proves no second chunk
+# is admitted.
+bootstrap_file="${script_dir}/../../../infra/oci/demo/bootstrap-wp.sh"
+burst_root=$(mktemp -d)
+mkdir -p "$burst_root/bin" "$burst_root/demo/lib" "$burst_root/demo/secrets"
+cp "${script_dir}/../../../infra/oci/demo/lib/describe-gate.sh" "$burst_root/demo/lib/describe-gate.sh"
+cp "${script_dir}/../lib/gpu-env-contract.sh" "$burst_root/demo/lib/gpu-env-contract.sh"
+cat >"$burst_root/demo/secrets/.env" <<'EOF'
+WP_ADMIN_USER=demo-admin
+WP_ADMIN_PASSWORD=demo-admin-password
+WP_ADMIN_EMAIL=admin@example.test
+WP_CI_USER=demo-ci
+WP_CI_PASSWORD=demo-ci-password
+WP_CI_EMAIL=ci@example.test
+WORDPRESS_CONFIG_EXTRA=define('ACX_RECOGNITION_URL','http://127.0.0.1:18080'); define('ACX_RECOGNITION_API_KEY','tenant-key'); define('ACX_RECOGNITION_TENANT_ID','123e4567-e89b-42d3-a456-426614174000');
+EOF
+: >"$burst_root/plugin.zip"
+cat >"$burst_root/bin/docker" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+log="${BOOTSTRAP_LOG:?}"
+state="${BOOTSTRAP_STATE:?}"
+printf 'docker %q ' "$@" >>"$log"
+printf '\n' >>"$log"
+joined="$*"
+if [[ "$joined" == *"alt-context describe generate"* ]]; then
+    limit=0
+    for arg in "$@"; do
+        case "$arg" in
+            --limit=*) limit="${arg#--limit=}" ;;
+        esac
+    done
+    current=$(<"$state")
+    if [[ "${BOOTSTRAP_BURST_MODE:-}" == flip ]]; then
+        current=10
+    else
+        current=$((current + limit))
+        if (( current > 25 )); then current=25; fi
+    fi
+    printf '%s\n' "$current" >"$state"
+    exit 0
+fi
+if [[ "$joined" == *"wp post list"* ]]; then
+    if [[ "$joined" == *"--meta_key=_wp_attachment_image_alt"* ]]; then
+        cat "$state"
+    else
+        printf '25\n'
+    fi
+    exit 0
+fi
+if [[ "$joined" == *"wp eval"* ]]; then
+    current=$(<"$state")
+    if (( current > 0 )); then
+        if [[ "${BOOTSTRAP_BURST_MODE:-}" == flip ]]; then
+            printf '%s\n' 'A close-up of a small object on a neutral background.'
+        else
+            printf '%s\n' 'A woman in a red coat speaks at a podium in front of a blue backdrop.'
+        fi
+    fi
+    exit 0
+fi
+if [[ "$joined" == *"--field=user_email"* ]]; then
+    printf 'ci@example.test\n'
+fi
+exit 0
+EOF
+cat >"$burst_root/bin/curl" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+body=""
+while (( $# > 0 )); do
+    if [[ "$1" == "-o" ]]; then body="$2"; shift 2; else shift; fi
+done
+printf '%s' '{"description_adapter":"florence_small"}' >"$body"
+printf '200'
+EOF
+chmod 700 "$burst_root/bin/docker" "$burst_root/bin/curl"
+run_bootstrap_burst() {
+    local mode="$1" output_file="$2" log_file
+    log_file="$burst_root/${mode}.log"
+    printf '0\n' >"$burst_root/state"
+    : >"$log_file"
+    local rc=0 output
+    if output=$(
+        PATH="$burst_root/bin:$PATH" \
+        BOOTSTRAP_LOG="$log_file" \
+        BOOTSTRAP_STATE="$burst_root/state" \
+        BOOTSTRAP_BURST_MODE="$mode" \
+        DEMO_DIR="$burst_root/demo" \
+        PLUGIN_ZIP="$burst_root/plugin.zip" \
+        ACX_DEMO_DESCRIBE_CHUNK=10 \
+        ACX_DEMO_DESCRIBE_MAX=25 \
+        bash "$bootstrap_file" 2>&1
+    ); then
+        rc=0
+    else
+        rc=$?
+    fi
+    printf '%s\n' "$rc" >"$output_file.rc"
+    printf '%s\n' "$output" >"$output_file"
+    return "$rc"
+}
+
+positive_output="$burst_root/positive.out"
+positive_rc=0
+run_bootstrap_burst positive "$positive_output" || positive_rc=$?
+assert_eq "describe burst positive rc" 0 "$positive_rc"
+positive_limits=$(sed -n 's/.*--limit=\([0-9][0-9]*\).*/\1/p' "$burst_root/positive.log" | tr '\n' ' ' | sed 's/[[:space:]]*$//')
+assert_eq "describe burst trims final chunk" "10 10 5" "$positive_limits"
+if grep -q 'Describe burst bounded: admitted=25/25 chunks=3' "$positive_output"; then
+    echo "ok   describe burst reports bounded admitted count"
+else
+    echo "FAIL describe burst reports bounded admitted count"
+    failures=$((failures + 1))
+fi
+
+negative_output="$burst_root/negative.out"
+negative_rc=0
+run_bootstrap_burst flip "$negative_output" || negative_rc=$?
+assert_eq "describe burst provenance flip rc" 1 "$negative_rc"
+negative_calls=$(grep -c -- '--limit=10' "$burst_root/flip.log" || true)
+assert_eq "describe burst stops after provenance flip" 1 "$negative_calls"
+if grep -q 'provenance became untrusted after describe chunk 1' "$negative_output"; then
+    echo "ok   describe burst blocks on mid-run provenance drift"
+else
+    echo "FAIL describe burst blocks on mid-run provenance drift"
+    failures=$((failures + 1))
+fi
+rm -rf "$burst_root"
 
 echo
 if [ "$failures" -gt 0 ]; then

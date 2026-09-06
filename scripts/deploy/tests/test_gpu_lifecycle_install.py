@@ -250,3 +250,26 @@ def test_mid_sequence_copy_failure_never_switches_the_live_release(tmp_path: Pat
     assert "/opt/acx-gpu/current" not in calls, (
         "the live release was switched despite a failed module copy"
     )
+
+
+def test_installer_provisions_every_supplementary_group_it_references() -> None:
+    """216/GROUP regression: systemd resolves SupplementaryGroups through NSS.
+
+    The installer chowns the load directories to GID 10001 numerically, which
+    succeeds without a group entry, but systemd refuses to start a unit whose
+    SupplementaryGroups GID cannot be resolved. On acx-backend both lifecycle
+    units died before ExecStart with
+    `Failed to determine supplementary groups: No such process`
+    (status=216/GROUP), leaving the burst GPU with no working stop path.
+    """
+    script = INSTALLER.read_text(encoding="utf-8")
+    referenced = set(re.findall(r"^SupplementaryGroups=(\d+)$", script, flags=re.MULTILINE))
+
+    assert referenced, "installer no longer pins a numeric supplementary group"
+    for gid in sorted(referenced):
+        assert re.search(rf"getent group {gid}\b", script), (
+            f"group {gid} provisioning must be idempotent via getent"
+        )
+        assert re.search(rf"groupadd[^\n]*-g {gid}\b", script), (
+            f"installer references SupplementaryGroups={gid} but never creates that group"
+        )

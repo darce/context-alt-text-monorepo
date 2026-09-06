@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 
 import {
+  GUIDED_HISTORY_KIND,
   GUIDED_IDENTITY_STATUS,
   applyGuidedCandidate,
   confirmGuidedIdentity,
@@ -58,24 +59,24 @@ const assertHistoryFaceId: (
 
 const historyLabel = (scenario: GuidedScenario, event: GuidedHistoryEvent): string => {
   switch (event.kind) {
-    case 'identity-confirmed': {
+    case GUIDED_HISTORY_KIND.IDENTITY_CONFIRMED: {
       assertHistoryFaceId(event);
       const face = getGuidedFace(scenario, event.faceId);
       const person = getGuidedPerson(scenario, face.matchedPersonKey);
       return `You confirmed the face match: ${person.name}.`;
     }
-    case 'identity-unidentified': {
+    case GUIDED_HISTORY_KIND.IDENTITY_UNIDENTIFIED: {
       assertHistoryFaceId(event);
       const face = getGuidedFace(scenario, event.faceId);
       return `You kept the person on the ${face.position} unnamed.`;
     }
-    case 'edit-saved':
+    case GUIDED_HISTORY_KIND.EDIT_SAVED:
       return 'You saved an edit.';
-    case 'rejected':
+    case GUIDED_HISTORY_KIND.REJECTED:
       return 'You rejected the draft. The saved text did not change.';
-    case 'applied':
+    case GUIDED_HISTORY_KIND.APPLIED:
       return 'You applied the draft to the practice copy.';
-    case 'application-undone':
+    case GUIDED_HISTORY_KIND.APPLICATION_UNDONE:
       return 'You undid the apply.';
     default:
       return assertNever(event.kind);

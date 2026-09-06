@@ -17,12 +17,12 @@ export const GUIDED_IDENTITY_STATUS = {
   UNIDENTIFIED: 'unidentified',
 } as const;
 
-const GUIDED_IDENTITY_SOURCE = {
+export const GUIDED_IDENTITY_SOURCE = {
   FACE_MATCH: 'face-match',
   NONE: 'none',
 } as const;
 
-const GUIDED_HISTORY_KIND = {
+export const GUIDED_HISTORY_KIND = {
   IDENTITY_CONFIRMED: 'identity-confirmed',
   IDENTITY_UNIDENTIFIED: 'identity-unidentified',
   EDIT_SAVED: 'edit-saved',

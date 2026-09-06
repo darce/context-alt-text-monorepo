@@ -33,8 +33,19 @@ REMOTE_DEMO_DIR="/opt/acx-backend/demo"
 REMOTE_BACKEND_DIR="/opt/acx-backend"
 REMOTE_PLUGIN_ZIP="/tmp/alt-context.zip"
 REMOTE_GPU_PREFLIGHT_DIR="/tmp/acx-gpu-preflight"
+DESCRIBE_CHUNK_VALUE="${ACX_DEMO_DESCRIBE_CHUNK:-10}"
+DESCRIBE_MAX_VALUE="${ACX_DEMO_DESCRIBE_MAX:-100}"
 SSH="ssh ${OCI_USER}@${OCI_HOST}"
 SCP="scp"
+
+# Quote operator-provided describe bounds before embedding them in the remote
+# bootstrap heredoc. The bootstrap validates the values semantically; this
+# helper keeps a malformed value from becoming remote shell syntax first.
+shell_quote() {
+  local value="$1"
+  value=${value//\'/\'\\\'\'}
+  printf "'%s'" "$value"
+}
 
 if [[ -z "${PLUGIN_ZIP:-}" ]]; then
   PLUGIN_ZIP="$(ls -t dist/alt-context-*.zip 2>/dev/null | head -1 || true)"
@@ -153,6 +164,8 @@ if [[ -n "${PLUGIN_ZIP}" ]]; then
   $SSH bash -se <<EOF
 set -euo pipefail
 cd '${REMOTE_DEMO_DIR}'
+ACX_DEMO_DESCRIBE_CHUNK=$(shell_quote "$DESCRIBE_CHUNK_VALUE") \
+ACX_DEMO_DESCRIBE_MAX=$(shell_quote "$DESCRIBE_MAX_VALUE") \
 PLUGIN_ZIP='${REMOTE_PLUGIN_ZIP}' ./bootstrap-wp.sh
 EOF
 fi

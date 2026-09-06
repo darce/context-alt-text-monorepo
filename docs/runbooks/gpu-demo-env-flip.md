@@ -41,10 +41,12 @@ Compose would decode them.
 GPU addresses must be private and cannot be loopback, unspecified, multicast,
 or link-local, including IPv4-mapped IPv6 and allowlisted DNS answers.
 
-## 2. Prove the reaper and preflight both files
+## 2. Stage and optionally prove the preflight contract
 
-Stage the validator in a private temporary directory on the VM, then validate
-both halves in one invocation. The reaper check loads the argument parser
+Stage the validator in a private temporary directory on the VM, then optionally
+validate both halves in one invocation. This is a contract check only; it does
+not replace the release gate that `deploy-demo` repeats after the prod API
+redeploy. The reaper check loads the argument parser
 from the effective service WorkingDirectory; that checkout and its
 `scripts/deploy/gpu-snapshot-deployments.conf` registry must be readable and
 valid. It verifies both the executable path and the effective arguments.
@@ -75,11 +77,31 @@ scp scripts/deploy/lib/verify-live-gpu.sh ubuntu@acx-backend.tail1a44b8.ts.net:/
 ssh ubuntu@acx-backend.tail1a44b8.ts.net 'chmod 700 /tmp/acx-gpu-preflight/preflight-gpu-env.sh /tmp/acx-gpu-preflight/lib/verify-live-gpu.sh && sudo /tmp/acx-gpu-preflight/preflight-gpu-env.sh --check-reaper /opt/acx-backend/prod/secrets/.env /opt/acx-backend/demo/secrets/.env'
 ```
 
+If this optional check is run before the producer change, leave the staged
+helpers in place and continue with the producer flip; do not treat this early
+check as permission to publish the demo.
+
 ## 3. Deploy in producer-then-consumer order
 
 Deploy the description producer first. Deploy WordPress only after the
 recognition deploy's verification passes, so the demo never publishes against
 an unverified adapter.
+
+### Green ordering
+
+Use this producer-to-consumer order for the live flip:
+
+1. Flip the description SERVICE producer profile by setting
+   `ACX_DESCRIPTION_ADAPTER` on the running producer. The producer is the
+   authority; do not make a demo-only env edit stand in for this change.
+2. Redeploy the prod API and wait for its health/adapter verification to pass.
+3. Verify both env halves with `preflight-gpu-env.sh --check-reaper` after the
+   prod redeploy and before publishing any demo descriptions.
+4. Run `deploy-demo` with `ACX_DEMO_GPU_PREFLIGHT=1`, so the deploy repeats the
+   reaper/environment gate immediately before the demo stack is brought up.
+5. Confirm the bounded first-burst result (`Describe burst bounded` and
+   `PASS demo first describe burst`) and retain the preflight's `MANUAL STOP
+   fallback` line as the operator's reaper-stop backstop.
 
 ```bash
 set -euo pipefail
@@ -95,7 +117,7 @@ test -f "$PLUGIN_ZIP"
 ACTUAL_PLUGIN_ZIP_SHA256="$(shasum -a 256 "$PLUGIN_ZIP" | awk '{print $1}')"
 test "$ACTUAL_PLUGIN_ZIP_SHA256" = "$PLUGIN_ZIP_SHA256"
 printf 'Deploying reviewed plugin artifact: %s\n' "$PLUGIN_ZIP"
-PLUGIN_ZIP="$PLUGIN_ZIP" make deploy-demo
+ACX_DEMO_GPU_PREFLIGHT=1 PLUGIN_ZIP="$PLUGIN_ZIP" make deploy-demo
 ```
 
 `bootstrap-wp.sh` probes the running service's authenticated

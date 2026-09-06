@@ -46,9 +46,9 @@ const isIdentityDecided = (status: GuidedIdentityStatus): boolean => {
   }
 };
 
-const assertHistoryFaceId = (
+const assertHistoryFaceId: (
   event: GuidedHistoryEvent,
-): asserts event is GuidedHistoryEvent & { faceId: GuidedPersonKey } => {
+) => asserts event is GuidedHistoryEvent & { faceId: GuidedPersonKey } = (event) => {
   if (!event.faceId) {
     throw new Error('Guided identity history event is missing a face id.');
   }
@@ -94,7 +94,9 @@ export const GuidedPrototypePage = (): React.JSX.Element => {
     : confirmedPersonKeys(scenario).length > 0
       ? 'done'
       : 'skipped';
-  const matchedPeople = scenario.faces.map((face) => getGuidedPerson(scenario, face.matchedPersonKey).name).join(' and ');
+  const matchedPeople = scenario.faces
+    .map((face) => getGuidedPerson(scenario, face.matchedPersonKey).name)
+    .join(' and ');
   const peopleOnFile = scenario.people
     .map((person) => `${person.name} (${person.savedPhotoCount} saved photos)`)
     .join(' · ');

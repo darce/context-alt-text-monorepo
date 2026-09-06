@@ -31,6 +31,7 @@ const OWNED_MAPS = [
   'workbench-operator-loop',
   'dashboard',
   'describe-gpu-tier',
+  'guided-prototype',
 ] as const;
 
 /**

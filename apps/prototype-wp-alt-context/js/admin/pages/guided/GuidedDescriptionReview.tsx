@@ -1,13 +1,11 @@
 import React, { useEffect, useRef, useState } from 'react';
 
 import { confirmedPersonKeys, getLastGuidedApplication } from '../../guidedPrototype/state';
-import type { GuidedCandidateStatus, GuidedPersonKey, GuidedScenario } from '../../guidedPrototype/state';
+import type { GuidedCandidateStatus, GuidedScenario } from '../../guidedPrototype/state';
 
 export interface GuidedDescriptionReviewProps {
   scenario: GuidedScenario;
   resetVersion: number;
-  onConfirmIdentity: (faceId: GuidedPersonKey) => void;
-  onLeaveUnidentified: (faceId: GuidedPersonKey) => void;
   onSaveEdit: (text: string) => string | undefined;
   onReject: () => void;
   onApply: () => void;
@@ -108,8 +106,7 @@ export const GuidedDescriptionReview = ({
             ))}
           </ul>
           <p>
-            Draft without names:{' '}
-            <span data-generic-draft={scenario.drafts.none}>{scenario.drafts.none}</span>
+            Draft without names: <span data-generic-draft={scenario.drafts.none}>{scenario.drafts.none}</span>
           </p>
           <p>
             Alt text on the page right now: <span data-current-applied-text>{scenario.appliedText}</span>

@@ -182,7 +182,9 @@ describe('guided prototype scenario state (two people, one press photo)', () => 
 
   it('refuses a name in a saved edit or an apply until that face match is confirmed', () => {
     const start = createGuidedScenario();
-    expect(nameGuardError('Katy Perry')).toBe('You can only use the name Katy Perry after you confirm that face match.');
+    expect(nameGuardError('Katy Perry')).toBe(
+      'You can only use the name Katy Perry after you confirm that face match.',
+    );
 
     expect(() => saveGuidedEdit(start, 'katy perry on the red carpet')).toThrow(nameGuardError('Katy Perry'));
     expect(() => saveGuidedEdit(start, 'Justin Trudeau on the red carpet')).toThrow(nameGuardError('Justin Trudeau'));

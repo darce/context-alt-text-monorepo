@@ -1,5 +1,6 @@
 {
   "map_ref": "guided-prototype",
+  "source_fixture": "apps/prototype-wp-alt-context/js/admin/pages/guided/GuidedPrototypePage.tsx",
   "product": "AltContext — authenticated guided prototype",
   "goals": [
     "Implementation inventory and correction target for feature/guided-prototype-1; one in-memory example inside authenticated WordPress admin, not the public homepage.",

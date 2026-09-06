@@ -51,8 +51,6 @@ const renderReview = (currentScenario = scenario) =>
     <GuidedDescriptionReview
       scenario={currentScenario}
       resetVersion={0}
-      onConfirmIdentity={vi.fn()}
-      onLeaveUnidentified={vi.fn()}
       onSaveEdit={vi.fn(() => undefined)}
       onReject={vi.fn()}
       onApply={vi.fn()}
@@ -80,15 +78,23 @@ describe('GuidedFacesPanel and GuidedFaceMatchCard', () => {
     expect(faceSection).toHaveAttribute('tabindex', '-1');
     expect(faceSection).toHaveAttribute('aria-labelledby', 'guided-faces-title');
     expect(screen.getByRole('heading', { level: 3, name: 'Faces found in the photo' })).toBeInTheDocument();
-    expect(screen.getByText('AltContext found 2 faces. Each one matched a person you named before.')).toBeInTheDocument();
+    expect(
+      screen.getByText('AltContext found 2 faces. Each one matched a person you named before.'),
+    ).toBeInTheDocument();
 
     const steps = screen.getByRole('list', { name: 'How this works' });
-    expect(within(steps).getAllByRole('listitem').map((item) => item.textContent)).toEqual([
+    expect(
+      within(steps)
+        .getAllByRole('listitem')
+        .map((item) => item.textContent),
+    ).toEqual([
       'AltContext finds every face in the photo.',
       'It compares each face to the people you already named.',
       'It asks you to confirm each match. Nothing is named without your OK.',
     ]);
-    expect(screen.getByText('These matches were saved from a real run. The demo does not run recognition live.')).toBeInTheDocument();
+    expect(
+      screen.getByText('These matches were saved from a real run. The demo does not run recognition live.'),
+    ).toBeInTheDocument();
 
     const cards = screen.getAllByRole('article');
     expect(cards).toHaveLength(2);
@@ -125,14 +131,24 @@ describe('GuidedFacesPanel and GuidedFaceMatchCard', () => {
     ]);
     expect(thumbnails.every((thumbnail) => thumbnail.getAttribute('data-size') === 'lg')).toBe(true);
     expect(thumbnails.every((thumbnail) => thumbnail.getAttribute('data-shape') === 'square')).toBe(true);
-    expect(thumbnails.every((thumbnail) => thumbnail.getAttribute('data-media-url') === scenario.pressPhoto.src)).toBe(true);
+    expect(thumbnails.every((thumbnail) => thumbnail.getAttribute('data-media-url') === scenario.pressPhoto.src)).toBe(
+      true,
+    );
 
     const justinGallery = within(leftCard).getByRole('list', { name: 'Saved photos of Justin Trudeau' });
     const katyGallery = within(rightCard).getByRole('list', { name: 'Saved photos of Katy Perry' });
     expect(within(justinGallery).getAllByRole('img')).toHaveLength(2);
     expect(within(katyGallery).getAllByRole('img')).toHaveLength(3);
-    expect(within(justinGallery).getAllByRole('img').every((image) => image.getAttribute('loading') === 'lazy')).toBe(true);
-    expect(within(katyGallery).getAllByRole('img').every((image) => image.getAttribute('loading') === 'lazy')).toBe(true);
+    expect(
+      within(justinGallery)
+        .getAllByRole('img')
+        .every((image) => image.getAttribute('loading') === 'lazy'),
+    ).toBe(true);
+    expect(
+      within(katyGallery)
+        .getAllByRole('img')
+        .every((image) => image.getAttribute('loading') === 'lazy'),
+    ).toBe(true);
     expect(within(leftCard).getByText('Saved photos of Justin Trudeau: 2 of 2 shown.')).toBeInTheDocument();
     expect(within(rightCard).getByText('Saved photos of Katy Perry: 3 of 5 shown.')).toBeInTheDocument();
     expect(within(leftCard).getAllByText('European Union, 2025')).toHaveLength(2);
@@ -143,10 +159,9 @@ describe('GuidedFacesPanel and GuidedFaceMatchCard', () => {
     expect(decisions).toHaveAttribute('aria-label', 'Confirm each match');
     expect(decisions).toHaveClass('acx-guided-face__decisions');
     expect(screen.getByRole('heading', { level: 4, name: 'Confirm each match' })).toBeInTheDocument();
-    expect(screen.getByText('Changing an answer swaps in a different saved draft. Save or discard your edit first.')).toHaveAttribute(
-      'id',
-      'guided-identity-change-reason',
-    );
+    expect(
+      screen.getByText('Changing an answer swaps in a different saved draft. Save or discard your edit first.'),
+    ).toHaveAttribute('id', 'guided-identity-change-reason');
 
     const rows = getDecisionRows(decisions);
     expect(rows).toHaveLength(2);
@@ -209,7 +224,9 @@ describe('GuidedFacesPanel and GuidedFaceMatchCard', () => {
     expect(genericDraft).toHaveAttribute('data-generic-draft', scenario.drafts.none);
     expect(screen.getByRole('heading', { level: 3, name: 'Without the names' })).toBeInTheDocument();
     expect(screen.getByText('This draft comes from a saved run, not a live one.')).toBeInTheDocument();
-    expect(screen.getByText('Confirm or skip each face match first. Until then the draft only says what is visible.')).toBeInTheDocument();
+    expect(
+      screen.getByText('Confirm or skip each face match first. Until then the draft only says what is visible.'),
+    ).toBeInTheDocument();
   });
 
   it('updates the review explanation for both, one, and zero confirmed matches', () => {
@@ -225,13 +242,17 @@ describe('GuidedFacesPanel and GuidedFaceMatchCard', () => {
     const oneConfirmed = confirmGuidedIdentity(scenario, JUSTIN);
     renderReview(oneConfirmed);
     expect(
-      screen.getByText('You confirmed one match, so one name is in the draft. The other person is described, not named.'),
+      screen.getByText(
+        'You confirmed one match, so one name is in the draft. The other person is described, not named.',
+      ),
     ).toBeInTheDocument();
 
     cleanup();
     const noneConfirmed = leaveGuidedIdentityUnidentified(leaveGuidedIdentityUnidentified(scenario, JUSTIN), KATY);
     renderReview(noneConfirmed);
-    expect(screen.getByText('You kept both people unnamed, so the draft only says what is visible.')).toBeInTheDocument();
+    expect(
+      screen.getByText('You kept both people unnamed, so the draft only says what is visible.'),
+    ).toBeInTheDocument();
   });
 
   it('renders a presentational card without decision controls when mounted by itself', () => {

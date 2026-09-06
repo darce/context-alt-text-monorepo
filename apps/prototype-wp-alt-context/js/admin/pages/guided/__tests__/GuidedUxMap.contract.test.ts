@@ -3,9 +3,19 @@ import { resolve } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-interface UxMapAction { id: string; [key: string]: unknown }
-interface UxMapScreen { id: string; [key: string]: unknown }
-interface UxMap { screens: UxMapScreen[]; actions: UxMapAction[]; [key: string]: unknown }
+interface UxMapAction {
+  id: string;
+  [key: string]: unknown;
+}
+interface UxMapScreen {
+  id: string;
+  [key: string]: unknown;
+}
+interface UxMap {
+  screens: UxMapScreen[];
+  actions: UxMapAction[];
+  [key: string]: unknown;
+}
 
 const MAP_PATH = resolve(__dirname, '../../../../../docs/ux-maps/guided-prototype.uxmap.json');
 
@@ -45,7 +55,7 @@ describe('guided prototype ux-map contract (GPFACE-1 wave 2)', () => {
 
   it('has a flow where one person is named and the other is kept unnamed', () => {
     const map = loadMap();
-    const flows = map.flows as Array<{ id: string }>;
+    const flows = map.flows as { id: string }[];
     expect(flows.map((flow) => flow.id)).toContain('one-named');
   });
 });

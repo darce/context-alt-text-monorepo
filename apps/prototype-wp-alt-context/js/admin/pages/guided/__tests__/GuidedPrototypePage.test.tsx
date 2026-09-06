@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 
 import { GuidedPrototypePage } from '../GuidedPrototypePage';
 
+const SEED_ALT_TEXT = 'Two people at a film festival.';
 const GENERIC_DRAFT =
   'A man in a black tuxedo and a woman in a white draped gown pose side by side at the Tribeca Festival. Her hand rests on his chest.';
 const JUSTIN_DRAFT =
@@ -35,7 +36,9 @@ describe('GuidedPrototypePage shell', () => {
     render(<GuidedPrototypePage />);
 
     expect(screen.getByRole('heading', { name: 'AltContext guided demo' })).toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: 'How two faces become two names in the description' })).toBeInTheDocument();
+    expect(
+      screen.getByRole('heading', { name: 'How two faces become two names in the description' }),
+    ).toBeInTheDocument();
     expect(
       screen.getByText(
         'Follow one photo from start to finish. AltContext finds two faces, matches each one to a person you already named, and puts their names in the image description. You choose what gets saved.',
@@ -64,14 +67,14 @@ describe('GuidedPrototypePage shell', () => {
     expect(screen.getByText('People on file').nextElementSibling).toHaveTextContent(
       'Katy Perry (5 saved photos) · Justin Trudeau (2 saved photos)',
     );
-    expect(screen.getByText('Photo credit').nextElementSibling).toHaveTextContent(
-      'Colleen Sturtevant, CC BY-SA 4.0',
-    );
+    expect(screen.getByText('Photo credit').nextElementSibling).toHaveTextContent('Colleen Sturtevant, CC BY-SA 4.0');
     expect(screen.getByText('Also checked').nextElementSibling).toHaveTextContent(
       'A Coachella press photo of the same two people matched both, even with a hand over her mouth. It is not bundled because of licensing.',
     );
     expect(screen.getByText('Nothing yet. Your next action will show up here.')).toBeInTheDocument();
-    expect(screen.getByText('AltContext found two faces in this photo. The next step shows the matches.')).toBeInTheDocument();
+    expect(
+      screen.getByText('AltContext found two faces in this photo. The next step shows the matches.'),
+    ).toBeInTheDocument();
 
     const stages = flowStages();
     expect(stages.map((item) => item.textContent)).toEqual([
@@ -129,7 +132,9 @@ describe('GuidedPrototypePage shell', () => {
 
     await user.click(screen.getByRole('button', { name: 'Reset practice' }));
     await user.click(
-      within(screen.getByRole('dialog', { name: 'Reset this practice?' })).getByRole('button', { name: 'Reset practice' }),
+      within(screen.getByRole('dialog', { name: 'Reset this practice?' })).getByRole('button', {
+        name: 'Reset practice',
+      }),
     );
     expect(screen.getByRole('textbox', { name: 'Description draft' })).toHaveValue(GENERIC_DRAFT);
     expect(screen.getByRole('status')).toHaveTextContent('Practice reset. The original text is back.');
@@ -161,9 +166,9 @@ describe('GuidedPrototypePage shell', () => {
     expect(image.tagName).toBe('IMG');
     expect(image).toHaveAttribute('src', expect.stringContaining('guided-press-tribeca-2026'));
     fireEvent.error(image);
-    expect(screen.getByRole('img', { name: new RegExp(`Sample photo unavailable\\. ${GENERIC_DRAFT}`) })).toHaveTextContent(
-      'Sample photo unavailable',
-    );
+    expect(
+      screen.getByRole('img', { name: new RegExp(`Sample photo unavailable\\. ${GENERIC_DRAFT}`) }),
+    ).toHaveTextContent('Sample photo unavailable');
   });
 });
 
@@ -173,8 +178,12 @@ describe('GuidedPrototypePage journey', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Start the demo' }));
     expect(screen.getAllByText('You have not decided yet.')).toHaveLength(2);
-    expect(within(faceCard('left')).getByText(/It matches a person you named before:/)).toHaveTextContent('Justin Trudeau');
-    expect(within(faceCard('right')).getByText(/It matches a person you named before:/)).toHaveTextContent('Katy Perry');
+    expect(within(faceCard('left')).getByText(/It matches a person you named before:/)).toHaveTextContent(
+      'Justin Trudeau',
+    );
+    expect(within(faceCard('right')).getByText(/It matches a person you named before:/)).toHaveTextContent(
+      'Katy Perry',
+    );
 
     fireEvent.click(confirmButton('Justin Trudeau'));
     expect(screen.getByRole('status')).toHaveTextContent(
@@ -198,7 +207,13 @@ describe('GuidedPrototypePage journey', () => {
     expect(screen.getByText('You confirmed: Katy Perry.')).toBeInTheDocument();
     expect(flowStages()[3]).toHaveTextContent('done');
     expect(flowStages()[4]).toHaveTextContent('done');
-    expect(flowStages().map((item) => item.getAttribute('data-state'))).toEqual(['done', 'done', 'done', 'done', 'done']);
+    expect(flowStages().map((item) => item.getAttribute('data-state'))).toEqual([
+      'done',
+      'done',
+      'done',
+      'done',
+      'done',
+    ]);
     expect(screen.getByRole('navigation', { name: 'Guided review steps' })).toHaveTextContent('Check the description');
 
     const editor = screen.getByRole('textbox', { name: 'Description draft' });
@@ -219,7 +234,7 @@ describe('GuidedPrototypePage journey', () => {
     expect(screen.getByText('You undid the apply.')).toBeInTheDocument();
     expect(document.activeElement).toHaveAttribute('id', 'guided-section-apply');
     expect(screen.getByRole('navigation', { name: 'Guided review steps' })).toHaveTextContent('Apply it yourself');
-    expect(document.querySelector('[data-applied-text]')).toHaveTextContent(GENERIC_DRAFT);
+    expect(document.querySelector('[data-applied-text]')).toHaveTextContent(SEED_ALT_TEXT);
     expect(screen.queryByRole('button', { name: 'Undo' })).not.toBeInTheDocument();
   });
 
@@ -237,11 +252,19 @@ describe('GuidedPrototypePage journey', () => {
     expect(screen.getByRole('textbox', { name: 'Description draft' })).toHaveValue(JUSTIN_DRAFT);
     expect(screen.getByTestId('guided-candidate')).not.toHaveTextContent('Katy Perry');
     expect(
-      screen.getByText('You confirmed one match, so one name is in the draft. The other person is described, not named.'),
+      screen.getByText(
+        'You confirmed one match, so one name is in the draft. The other person is described, not named.',
+      ),
     ).toBeInTheDocument();
     expect(flowStages()[3]).toHaveTextContent('done');
     expect(flowStages()[4]).toHaveTextContent('done');
-    expect(flowStages().map((item) => item.getAttribute('data-state'))).toEqual(['done', 'done', 'done', 'done', 'done']);
+    expect(flowStages().map((item) => item.getAttribute('data-state'))).toEqual([
+      'done',
+      'done',
+      'done',
+      'done',
+      'done',
+    ]);
   });
 
   it('marks the names stage skipped when both faces stay unnamed', () => {
@@ -257,10 +280,18 @@ describe('GuidedPrototypePage journey', () => {
     expect(screen.getByText('You kept the person on the left unnamed.', { selector: 'li' })).toBeInTheDocument();
     expect(screen.getByText('You kept the person on the right unnamed.', { selector: 'li' })).toBeInTheDocument();
     expect(screen.getByRole('textbox', { name: 'Description draft' })).toHaveValue(GENERIC_DRAFT);
-    expect(screen.getByText('You kept both people unnamed, so the draft only says what is visible.')).toBeInTheDocument();
+    expect(
+      screen.getByText('You kept both people unnamed, so the draft only says what is visible.'),
+    ).toBeInTheDocument();
     expect(flowStages()[3]).toHaveTextContent('done');
     expect(flowStages()[4]).toHaveTextContent('skipped');
-    expect(flowStages().map((item) => item.getAttribute('data-state'))).toEqual(['done', 'done', 'done', 'done', 'skipped']);
+    expect(flowStages().map((item) => item.getAttribute('data-state'))).toEqual([
+      'done',
+      'done',
+      'done',
+      'done',
+      'skipped',
+    ]);
   });
 
   it('blocks apply after rejection while preserving the current applied text', () => {
@@ -301,7 +332,9 @@ describe('GuidedPrototypePage journey', () => {
     expect(applyButton).toBeDisabled();
     expect(screen.getByText('Apply is off while your edit is unsaved. Save or discard it first.')).toBeInTheDocument();
     expect(
-      screen.getAllByRole('button', { name: 'Keep this person unnamed' }).every((button) => button.hasAttribute('disabled')),
+      screen
+        .getAllByRole('button', { name: 'Keep this person unnamed' })
+        .every((button) => button.hasAttribute('disabled')),
     ).toBe(true);
 
     await user.click(screen.getByRole('button', { name: 'Discard my edit' }));
@@ -346,7 +379,7 @@ describe('GuidedPrototypePage journey', () => {
     expect(document.activeElement).toHaveAttribute('id', 'guided-section-apply');
 
     await user.click(screen.getByRole('button', { name: 'Undo' }));
-    expect(document.querySelector('[data-applied-text]')).toHaveTextContent(GENERIC_DRAFT);
+    expect(document.querySelector('[data-applied-text]')).toHaveTextContent(SEED_ALT_TEXT);
     expect(screen.queryByRole('button', { name: 'Undo' })).not.toBeInTheDocument();
     expect(document.activeElement).toHaveAttribute('id', 'guided-section-apply');
   });

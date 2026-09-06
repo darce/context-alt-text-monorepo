@@ -7,7 +7,12 @@ export interface GuidedSamplePhotoProps {
   credit: string;
 }
 
-export const GuidedSamplePhoto = ({ src, altText, currentAltText, credit }: GuidedSamplePhotoProps): React.JSX.Element => {
+export const GuidedSamplePhoto = ({
+  src,
+  altText,
+  currentAltText,
+  credit,
+}: GuidedSamplePhotoProps): React.JSX.Element => {
   const [imageFailed, setImageFailed] = useState(false);
   const fallbackLabel = `Sample photo unavailable. ${altText}`;
 
@@ -23,12 +28,7 @@ export const GuidedSamplePhoto = ({ src, altText, currentAltText, credit }: Guid
           <span>{altText}</span>
         </div>
       ) : (
-        <img
-          className="acx-guided-page__image"
-          src={src}
-          alt={altText}
-          onError={() => setImageFailed(true)}
-        />
+        <img className="acx-guided-page__image" src={src} alt={altText} onError={() => setImageFailed(true)} />
       )}
       <figcaption>
         <strong>The photo</strong>

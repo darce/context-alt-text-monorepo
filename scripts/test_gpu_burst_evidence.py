@@ -242,7 +242,7 @@ def _rewrite_manifest(bundle: Path) -> None:
 def test_json_verdict_and_optional_receipts_pass(tmp_path: Path) -> None:
     bundle = _custom_bundle(
         tmp_path,
-        snapshot={"gpu_state": "STOPPED", "written_at": STOPPED_AT},
+        snapshot={"gpu_state": "STOPPED", "instance_id": INSTANCE_ID, "written_at": STOPPED_AT},
         receipts={"items": [{"description": "A red bicycle", "timestamp": "2026-09-01T00:20:00Z"}]},
     )
 
@@ -507,6 +507,23 @@ def test_reaper_snapshot_must_be_in_window_and_agree(tmp_path: Path, snapshot: o
     assert "reaper_snapshot" in result.stdout
 
 
+def test_reaper_snapshot_must_match_selected_instance(tmp_path: Path) -> None:
+    bundle = _custom_bundle(
+        tmp_path,
+        snapshot={
+            "gpu_state": "STOPPED",
+            "instance_id": "ocid1.instance.other",
+            "written_at": STOPPED_AT,
+        },
+    )
+
+    result = _run_checker(bundle)
+
+    assert result.returncode == 1
+    assert "reaper_snapshot" in result.stdout
+    assert "identifies ocid1.instance.other" in result.stdout
+
+
 def test_wp_receipts_need_nonempty_descriptions_inside_running_interval(tmp_path: Path) -> None:
     bundle = _custom_bundle(
         tmp_path,
@@ -739,6 +756,71 @@ def test_failed_audit_action_is_not_evidence(tmp_path: Path) -> None:
                 "eventId": "start-failed",
                 "responseStatus": 500,
                 "data": {"resourceId": INSTANCE_ID},
+            },
+            {
+                "eventName": "StopInstance",
+                "eventTime": STOPPED_AT,
+                "eventId": "stop-1",
+                "responseStatus": 200,
+                "data": {
+                    "resourceId": INSTANCE_ID,
+                    "identity": {"principalName": "gpu-reaper"},
+                },
+            },
+        ]
+    }
+    bundle = _custom_bundle(tmp_path, audit=audit)
+
+    result = _run_checker(bundle)
+
+    assert result.returncode == 1
+    assert "observed 0 StartInstance audit events" in result.stdout
+
+
+def test_request_status_cannot_override_conflicting_response_status(tmp_path: Path) -> None:
+    audit = {
+        "data": [
+            {
+                "eventName": "StartInstance",
+                "eventTime": RUNNING_AT,
+                "eventId": "start-conflicting-status",
+                "data": {
+                    "resourceId": INSTANCE_ID,
+                    "request": {"status": 200},
+                    "response": {"status": 500},
+                },
+            },
+            {
+                "eventName": "StopInstance",
+                "eventTime": STOPPED_AT,
+                "eventId": "stop-1",
+                "responseStatus": 200,
+                "data": {
+                    "resourceId": INSTANCE_ID,
+                    "identity": {"principalName": "gpu-reaper"},
+                },
+            },
+        ]
+    }
+    bundle = _custom_bundle(tmp_path, audit=audit)
+
+    result = _run_checker(bundle)
+
+    assert result.returncode == 1
+    assert "observed 0 StartInstance audit events" in result.stdout
+
+
+def test_missing_response_status_cannot_prove_audit_action(tmp_path: Path) -> None:
+    audit = {
+        "data": [
+            {
+                "eventName": "StartInstance",
+                "eventTime": RUNNING_AT,
+                "eventId": "start-missing-status",
+                "data": {
+                    "resourceId": INSTANCE_ID,
+                    "request": {"status": 200},
+                },
             },
             {
                 "eventName": "StopInstance",

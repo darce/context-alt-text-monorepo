@@ -395,20 +395,38 @@ def _event_identity(event: Mapping[str, Any], action: str, occurrence: int) -> s
     return f"fallback:{action}:{_event_resource_id(event) or ''}:{_event_time(event)!r}:{occurrence}"
 
 
+def _response_status_values(value: Any) -> Iterable[Any]:
+    """Yield status values only from fields that identify an OCI response."""
+
+    if not isinstance(value, Mapping):
+        return
+    for key in ("responseStatus", "response_status"):
+        candidate = value.get(key)
+        if candidate is not None:
+            yield candidate
+    for key in ("response", "responseData", "response_data"):
+        response = value.get(key)
+        if isinstance(response, Mapping):
+            for status_key in ("status", "statusCode", "status_code", "code", "result"):
+                candidate = response.get(status_key)
+                if candidate is not None:
+                    yield candidate
+        elif response is not None:
+            yield response
+    for child in value.values():
+        if isinstance(child, Mapping):
+            yield from _response_status_values(child)
+        elif isinstance(child, list):
+            for item in child:
+                if isinstance(item, Mapping):
+                    yield from _response_status_values(item)
+
+
 def _event_status(event: Mapping[str, Any]) -> Any:
-    return _first_value(
-        event,
-        (
-            "responseStatus",
-            "response_status",
-            "statusCode",
-            "status_code",
-            "resultStatus",
-            "result_status",
-            "status",
-            "result",
-        ),
-    )
+    """Return one unambiguous OCI response status, or ``None``."""
+
+    values = list(_response_status_values(event))
+    return values[0] if len(values) == 1 else None
 
 
 def _status_success(value: Any) -> bool:
@@ -859,7 +877,14 @@ def _audit_checks(
     return events, [receipt_check, start_check, principal_check, order_check]
 
 
-def _snapshot_check(path: Path | None, *, since: float, until: float, final_state: str | None) -> dict[str, Any]:
+def _snapshot_check(
+    path: Path | None,
+    *,
+    since: float,
+    until: float,
+    final_state: str | None,
+    expected_instance_id: str | None,
+) -> dict[str, Any]:
     if path is None:
         return _result("reaper_snapshot", True, "state snapshot not supplied (optional)")
     try:
@@ -872,14 +897,24 @@ def _snapshot_check(path: Path | None, *, since: float, until: float, final_stat
     snapshot_state = _normalise_state(
         _first_value(snapshot, ("gpu_state", "gpuState", "lifecycle-state", "lifecycle_state", "state"))
     )
+    snapshot_instance_id = _as_text(_first_value(snapshot, ("instance_id", "instanceId")))
     written_ok = written_at is not None and since <= written_at <= until
     state_ok = snapshot_state == final_state == "STOPPED"
+    identity_ok = expected_instance_id is not None and snapshot_instance_id == expected_instance_id
+    if identity_ok:
+        identity_detail = f"instance_id={snapshot_instance_id}"
+    elif snapshot_instance_id is None:
+        identity_detail = f"snapshot is missing instance_id; expected {expected_instance_id or 'selected instance'}"
+    else:
+        identity_detail = f"snapshot identifies {snapshot_instance_id}, expected {expected_instance_id or 'selected instance'}"
+    passed = written_ok and state_ok and identity_ok
     return _result(
         "reaper_snapshot",
-        written_ok and state_ok,
-        f"written_at={_format_time(written_at)} and gpu_state=STOPPED agree with final OCI state"
-        if written_ok and state_ok
-        else f"written_at={_format_time(written_at)}, gpu_state={snapshot_state or 'missing'}, final OCI state={final_state or 'missing'}",
+        passed,
+        f"written_at={_format_time(written_at)}, gpu_state=STOPPED, {identity_detail} agree with final OCI state"
+        if passed
+        else f"written_at={_format_time(written_at)}, gpu_state={snapshot_state or 'missing'}, "
+        f"final OCI state={final_state or 'missing'}, {identity_detail}",
     )
 
 
@@ -980,7 +1015,15 @@ def check_bundle(
             else f"final OCI lifecycle state is {final_state or 'missing'}",
         )
     )
-    checks.append(_snapshot_check(paths["snapshot"], since=since_epoch, until=until_epoch, final_state=final_state))
+    checks.append(
+        _snapshot_check(
+            paths["snapshot"],
+            since=since_epoch,
+            until=until_epoch,
+            final_state=final_state,
+            expected_instance_id=target_instance_id,
+        )
+    )
     checks.append(
         _receipts_check(
             paths["receipts"], intervals=_running_intervals(observations), min_descriptions=min_descriptions

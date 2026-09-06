@@ -59,7 +59,15 @@
   }
 
   li[data-state='skipped'] .acx-guided-flow__state {
-    color: var(--acx-color-danger-strong);
+    color: var(--acx-color-text-muted);
+
+    &::before {
+      width: auto;
+      height: auto;
+      border-radius: 0;
+      background: transparent;
+      content: '\2014';
+    }
   }
 
   @media (max-width: 48rem) {

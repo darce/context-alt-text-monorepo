@@ -4,43 +4,87 @@ import { describe, expect, it } from 'vitest';
 
 import { GuidedPrototypePage } from '../GuidedPrototypePage';
 
-const NAMED_DRAFT = 'Keanu Reeves wears a grey jacket against a plain background.';
-const GENERIC_DRAFT = 'Portrait of a person in a grey jacket.';
+const GENERIC_DRAFT =
+  'A man in a black tuxedo and a woman in a white draped gown pose side by side at the Tribeca Festival. Her hand rests on his chest.';
+const JUSTIN_DRAFT =
+  'Justin Trudeau, in a black tuxedo and white shirt, poses with a woman in a white draped gown at the Tribeca Festival. Her hand rests on his chest.';
+const BOTH_NAMES_DRAFT =
+  'Justin Trudeau and Katy Perry pose side by side at the Tribeca Festival. He wears a black tuxedo with a white shirt; she wears a white draped gown with her dark hair pinned up and rests a hand on his chest.';
 
 const flowStages = () =>
-  within(screen.getByRole('list', { name: 'How the face reaches the description' })).getAllByRole('listitem');
+  within(screen.getByRole('list', { name: 'How the faces reach the description' })).getAllByRole('listitem');
+
+const faceCard = (faceName: 'left' | 'right') => screen.getByRole('article', { name: `Face on the ${faceName}` });
+
+const identitySection = (): HTMLElement => {
+  const section = document.getElementById('guided-section-identity');
+  if (!section) {
+    throw new Error('The guided identity section is missing.');
+  }
+  return section;
+};
+
+const confirmButton = (name: 'Justin Trudeau' | 'Katy Perry') =>
+  within(identitySection()).getByRole('button', { name: `Yes, this is ${name}` });
+
+const unnamedButton = (position: 'left' | 'right') =>
+  within(identitySection()).getAllByRole('button', { name: 'Keep this person unnamed' })[position === 'left' ? 0 : 1];
 
 describe('GuidedPrototypePage shell', () => {
-  it('opens with plain-language framing and five steps that name the face stage', () => {
+  it('opens with plain-language framing and five steps that name both faces', () => {
     render(<GuidedPrototypePage />);
 
     expect(screen.getByRole('heading', { name: 'AltContext guided demo' })).toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: 'How a face becomes a name in the description' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'How two faces become two names in the description' })).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        'Follow one photo from start to finish. AltContext finds two faces, matches each one to a person you already named, and puts their names in the image description. You choose what gets saved.',
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByText('This demo uses one saved run. It does not run recognition live.')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Start the demo' }));
     expect(screen.getByRole('status')).toHaveTextContent('The steps are open. Start with the photo.');
     expect(document.activeElement).toHaveAttribute('data-guided-focus-target', 'true');
 
     const nav = screen.getByRole('navigation', { name: 'Guided review steps' });
     expect(nav).toHaveTextContent('Step by step');
-    for (const label of ['Look at the photo', 'Find the face', 'Confirm the match', 'Check the description', 'Apply it yourself']) {
+    for (const label of [
+      'Look at the photo',
+      'Find the faces',
+      'Confirm each match',
+      'Check the description',
+      'Apply it yourself',
+    ]) {
       expect(within(nav).getByRole('button', { name: new RegExp(`^${label}`) })).toBeInTheDocument();
     }
-    expect(screen.getByText('Example').nextElementSibling).toHaveTextContent('Saved example, not a live run');
-    expect(screen.getByText('Person on file').nextElementSibling).toHaveTextContent('Keanu Reeves');
+    expect(screen.getByText('Example').nextElementSibling).toHaveTextContent(
+      'Saved from a real run on 2026-09-06, not a live run',
+    );
+    expect(screen.getByText('Page').nextElementSibling).toHaveTextContent('Tribeca Festival 2026: red carpet photos');
+    expect(screen.getByText('People on file').nextElementSibling).toHaveTextContent(
+      'Katy Perry (5 saved photos) · Justin Trudeau (2 saved photos)',
+    );
+    expect(screen.getByText('Photo credit').nextElementSibling).toHaveTextContent(
+      'Colleen Sturtevant, CC BY-SA 4.0',
+    );
+    expect(screen.getByText('Also checked').nextElementSibling).toHaveTextContent(
+      'A Coachella press photo of the same two people matched both, even with a hand over her mouth. It is not bundled because of licensing.',
+    );
     expect(screen.getByText('Nothing yet. Your next action will show up here.')).toBeInTheDocument();
-    expect(screen.getByText('AltContext found one face in this photo. The next step shows the match.')).toBeInTheDocument();
+    expect(screen.getByText('AltContext found two faces in this photo. The next step shows the matches.')).toBeInTheDocument();
 
     const stages = flowStages();
     expect(stages.map((item) => item.textContent)).toEqual([
       expect.stringContaining('Photo'),
-      expect.stringContaining('Face found'),
-      expect.stringContaining('Matched to Keanu Reeves'),
-      expect.stringContaining('You confirm'),
-      expect.stringContaining('Name in the description'),
+      expect.stringContaining('2 faces found'),
+      expect.stringContaining('Matched to Justin Trudeau and Katy Perry'),
+      expect.stringContaining('You confirm each match'),
+      expect.stringContaining('Names in the description'),
     ]);
     expect(stages[2]).toHaveTextContent('done');
     expect(stages[3]).toHaveTextContent('now');
     expect(stages[4]).toHaveTextContent('waiting');
+    expect(stages.map((item) => item.getAttribute('data-state'))).toEqual(['done', 'done', 'done', 'now', 'waiting']);
   });
 
   it('moves focus to the face section from the steps and closes the steps back to the photo', async () => {
@@ -48,11 +92,11 @@ describe('GuidedPrototypePage shell', () => {
     render(<GuidedPrototypePage />);
 
     await user.click(screen.getByRole('button', { name: 'Start the demo' }));
-    await user.click(screen.getByRole('button', { name: /^Find the face/ }));
-    expect(screen.getByRole('status')).toHaveTextContent('Now on: Find the face.');
+    await user.click(screen.getByRole('button', { name: /^Find the faces/ }));
+    expect(screen.getByRole('status')).toHaveTextContent('Now on: Find the faces.');
     expect(document.activeElement).toHaveAttribute('id', 'guided-section-face');
 
-    await user.click(screen.getByRole('button', { name: /^Confirm the match/ }));
+    await user.click(screen.getByRole('button', { name: /^Confirm each match/ }));
     expect(document.activeElement).toHaveAttribute('id', 'guided-section-identity');
 
     await user.click(screen.getByRole('button', { name: 'Close the steps' }));
@@ -60,11 +104,13 @@ describe('GuidedPrototypePage shell', () => {
     expect(document.activeElement).toHaveAttribute('id', 'guided-section-understand');
   });
 
-  it('keeps practice changes on cancel and resets edits, errors, and focus on confirm', async () => {
+  it('keeps practice changes on cancel and resets edits, errors, decisions, and focus on confirm', async () => {
     const user = userEvent.setup();
     render(<GuidedPrototypePage />);
 
     await user.click(screen.getByRole('button', { name: 'Start the demo' }));
+    await user.click(confirmButton('Justin Trudeau'));
+    await user.click(confirmButton('Katy Perry'));
     const editor = screen.getByRole('textbox', { name: 'Description draft' });
     fireEvent.change(editor, { target: { value: 'Saved local practice edit.' } });
     await user.click(screen.getByRole('button', { name: 'Save my edit' }));
@@ -88,6 +134,9 @@ describe('GuidedPrototypePage shell', () => {
     expect(screen.getByRole('textbox', { name: 'Description draft' })).toHaveValue(GENERIC_DRAFT);
     expect(screen.getByRole('status')).toHaveTextContent('Practice reset. The original text is back.');
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(screen.getAllByText('You have not decided yet.')).toHaveLength(2);
+    expect(flowStages()[3]).toHaveTextContent('now');
+    expect(flowStages()[4]).toHaveTextContent('waiting');
     expect(document.activeElement).toHaveAttribute('id', 'guided-section-understand');
   });
 
@@ -105,46 +154,55 @@ describe('GuidedPrototypePage shell', () => {
     expect(document.activeElement).toBe(resetButton);
   });
 
-  it('renders the sample photo and describes a useful fallback when it fails', () => {
+  it('renders the press photo and describes a useful fallback when it fails', () => {
     render(<GuidedPrototypePage />);
 
-    const image = screen.getByRole('img', {
-      name: 'Portrait photograph of a man with shoulder-length dark hair and a beard, wearing a grey jacket over a dark shirt, against a light background.',
-    });
+    const image = screen.getByRole('img', { name: GENERIC_DRAFT });
     expect(image.tagName).toBe('IMG');
+    expect(image).toHaveAttribute('src', expect.stringContaining('guided-press-tribeca-2026'));
     fireEvent.error(image);
-    expect(
-      screen.getByRole('img', {
-        name: /Sample photo unavailable\. Portrait photograph of a man with shoulder-length dark hair/,
-      }),
-    ).toHaveTextContent('Sample photo unavailable');
+    expect(screen.getByRole('img', { name: new RegExp(`Sample photo unavailable\\. ${GENERIC_DRAFT}`) })).toHaveTextContent(
+      'Sample photo unavailable',
+    );
   });
 });
 
 describe('GuidedPrototypePage journey', () => {
-  it('carries a confirmed face match into the draft, through apply, and back out with undo', () => {
+  it('carries both confirmed face matches into the draft, through apply, and back out with undo', () => {
     render(<GuidedPrototypePage />);
 
     fireEvent.click(screen.getByRole('button', { name: 'Start the demo' }));
-    expect(screen.getByText('You have not decided yet.')).toBeInTheDocument();
-    expect(screen.getByText(/It matches a person you named before:/)).toHaveTextContent('Keanu Reeves');
+    expect(screen.getAllByText('You have not decided yet.')).toHaveLength(2);
+    expect(within(faceCard('left')).getByText(/It matches a person you named before:/)).toHaveTextContent('Justin Trudeau');
+    expect(within(faceCard('right')).getByText(/It matches a person you named before:/)).toHaveTextContent('Katy Perry');
 
-    fireEvent.click(screen.getByRole('button', { name: 'Yes, this is Keanu Reeves' }));
-    expect(screen.getByRole('status')).toHaveTextContent('Match confirmed. The name is in the draft. Nothing is applied yet.');
-    expect(screen.getByRole('textbox', { name: 'Description draft' })).toHaveValue(NAMED_DRAFT);
+    fireEvent.click(confirmButton('Justin Trudeau'));
+    expect(screen.getByRole('status')).toHaveTextContent(
+      'Match confirmed. Justin Trudeau is in the draft. Nothing is applied yet.',
+    );
+    expect(screen.getByRole('textbox', { name: 'Description draft' })).toHaveValue(JUSTIN_DRAFT);
+
+    fireEvent.click(confirmButton('Katy Perry'));
+    expect(screen.getByRole('status')).toHaveTextContent(
+      'Match confirmed. Katy Perry is in the draft. Nothing is applied yet.',
+    );
+    expect(screen.getByRole('textbox', { name: 'Description draft' })).toHaveValue(BOTH_NAMES_DRAFT);
     expect(
       screen.getByText(
-        'You confirmed the match, so the name is in the draft. The visual details and page context stay the same.',
+        'You confirmed both matches, so both names are in the draft. The visual details and page context stay the same.',
       ),
     ).toBeInTheDocument();
-    expect(screen.getByText('You confirmed: Keanu Reeves.')).toBeInTheDocument();
-    expect(screen.getByText('You confirmed the face match: Keanu Reeves.')).toBeInTheDocument();
+    expect(screen.getByText('You confirmed the face match: Justin Trudeau.', { selector: 'li' })).toBeInTheDocument();
+    expect(screen.getByText('You confirmed the face match: Katy Perry.', { selector: 'li' })).toBeInTheDocument();
+    expect(screen.getByText('You confirmed: Justin Trudeau.')).toBeInTheDocument();
+    expect(screen.getByText('You confirmed: Katy Perry.')).toBeInTheDocument();
     expect(flowStages()[3]).toHaveTextContent('done');
     expect(flowStages()[4]).toHaveTextContent('done');
+    expect(flowStages().map((item) => item.getAttribute('data-state'))).toEqual(['done', 'done', 'done', 'done', 'done']);
     expect(screen.getByRole('navigation', { name: 'Guided review steps' })).toHaveTextContent('Check the description');
 
     const editor = screen.getByRole('textbox', { name: 'Description draft' });
-    fireEvent.change(editor, { target: { value: 'Keanu Reeves wears a grey jacket.' } });
+    fireEvent.change(editor, { target: { value: 'Justin Trudeau and Katy Perry pose at the festival.' } });
     fireEvent.click(screen.getByRole('button', { name: 'Save my edit' }));
     expect(screen.getByText('Edited by you')).toBeInTheDocument();
     expect(screen.getByText('You saved an edit.')).toBeInTheDocument();
@@ -152,7 +210,9 @@ describe('GuidedPrototypePage journey', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Apply to practice copy' }));
     fireEvent.click(screen.getByRole('button', { name: 'Apply to practice copy' }));
     expect(screen.getByText('You applied the draft to the practice copy.')).toBeInTheDocument();
-    expect(document.querySelector('[data-applied-text]')).toHaveTextContent('Keanu Reeves wears a grey jacket.');
+    expect(document.querySelector('[data-applied-text]')).toHaveTextContent(
+      'Justin Trudeau and Katy Perry pose at the festival.',
+    );
 
     fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
     expect(screen.getByRole('status')).toHaveTextContent('Apply undone.');
@@ -163,33 +223,56 @@ describe('GuidedPrototypePage journey', () => {
     expect(screen.queryByRole('button', { name: 'Undo' })).not.toBeInTheDocument();
   });
 
-  it('keeps the unnamed path useful without using the matched name', () => {
+  it('keeps one face unnamed while putting only the other confirmed name in the draft', () => {
     render(<GuidedPrototypePage />);
 
     fireEvent.click(screen.getByRole('button', { name: 'Start the demo' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Keep the person unnamed' }));
+    fireEvent.click(confirmButton('Justin Trudeau'));
+    fireEvent.click(unnamedButton('right'));
 
-    expect(screen.getByRole('status')).toHaveTextContent('The person stays unnamed. You can still check the description.');
-    expect(screen.getByText('You kept the person unnamed.', { selector: 'li' })).toBeInTheDocument();
-    expect(screen.getByRole('textbox', { name: 'Description draft' })).toHaveValue(GENERIC_DRAFT);
-    expect(screen.getByTestId('guided-candidate')).not.toHaveTextContent('Keanu Reeves');
+    expect(screen.getByRole('status')).toHaveTextContent(
+      'The person on the right stays unnamed. You can still check the description.',
+    );
+    expect(screen.getByText('You kept the person on the right unnamed.', { selector: 'li' })).toBeInTheDocument();
+    expect(screen.getByRole('textbox', { name: 'Description draft' })).toHaveValue(JUSTIN_DRAFT);
+    expect(screen.getByTestId('guided-candidate')).not.toHaveTextContent('Katy Perry');
     expect(
-      screen.getByText('You kept the person unnamed, so the draft only says what is visible.'),
+      screen.getByText('You confirmed one match, so one name is in the draft. The other person is described, not named.'),
     ).toBeInTheDocument();
+    expect(flowStages()[3]).toHaveTextContent('done');
+    expect(flowStages()[4]).toHaveTextContent('done');
+    expect(flowStages().map((item) => item.getAttribute('data-state'))).toEqual(['done', 'done', 'done', 'done', 'done']);
+  });
+
+  it('marks the names stage skipped when both faces stay unnamed', () => {
+    render(<GuidedPrototypePage />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Start the demo' }));
+    fireEvent.click(unnamedButton('left'));
+    fireEvent.click(unnamedButton('right'));
+
+    expect(screen.getByRole('status')).toHaveTextContent(
+      'The person on the right stays unnamed. You can still check the description.',
+    );
+    expect(screen.getByText('You kept the person on the left unnamed.', { selector: 'li' })).toBeInTheDocument();
+    expect(screen.getByText('You kept the person on the right unnamed.', { selector: 'li' })).toBeInTheDocument();
+    expect(screen.getByRole('textbox', { name: 'Description draft' })).toHaveValue(GENERIC_DRAFT);
+    expect(screen.getByText('You kept both people unnamed, so the draft only says what is visible.')).toBeInTheDocument();
+    expect(flowStages()[3]).toHaveTextContent('done');
     expect(flowStages()[4]).toHaveTextContent('skipped');
+    expect(flowStages().map((item) => item.getAttribute('data-state'))).toEqual(['done', 'done', 'done', 'done', 'skipped']);
   });
 
   it('blocks apply after rejection while preserving the current applied text', () => {
     render(<GuidedPrototypePage />);
 
     fireEvent.click(screen.getByRole('button', { name: 'Start the demo' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Yes, this is Keanu Reeves' }));
     fireEvent.click(screen.getByRole('button', { name: 'Reject this draft' }));
 
     expect(screen.getByRole('status')).toHaveTextContent('Draft rejected. The saved text did not change.');
     expect(screen.getByText('Rejected. The saved text did not change')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Apply to practice copy' })).toBeDisabled();
-    expect(document.querySelector('[data-applied-text]')).toHaveTextContent(GENERIC_DRAFT);
+    expect(document.querySelector('[data-applied-text]')).toHaveTextContent('Two people at a film festival.');
   });
 
   it('keeps an empty edit visible and focused for correction', () => {
@@ -210,7 +293,6 @@ describe('GuidedPrototypePage journey', () => {
     render(<GuidedPrototypePage />);
 
     await user.click(screen.getByRole('button', { name: 'Start the demo' }));
-    await user.click(screen.getByRole('button', { name: 'Yes, this is Keanu Reeves' }));
     const editor = screen.getByRole('textbox', { name: 'Description draft' });
     await user.clear(editor);
     await user.type(editor, 'A locally edited portrait description.');
@@ -218,25 +300,29 @@ describe('GuidedPrototypePage journey', () => {
     const applyButton = screen.getByRole('button', { name: 'Apply to practice copy' });
     expect(applyButton).toBeDisabled();
     expect(screen.getByText('Apply is off while your edit is unsaved. Save or discard it first.')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Keep the person unnamed' })).toBeDisabled();
+    expect(
+      screen.getAllByRole('button', { name: 'Keep this person unnamed' }).every((button) => button.hasAttribute('disabled')),
+    ).toBe(true);
 
     await user.click(screen.getByRole('button', { name: 'Discard my edit' }));
-    expect(editor).toHaveValue(NAMED_DRAFT);
+    expect(editor).toHaveValue(GENERIC_DRAFT);
     expect(applyButton).not.toBeDisabled();
     await user.click(applyButton);
-    expect(document.querySelector('[data-applied-text]')).toHaveTextContent(NAMED_DRAFT);
+    expect(document.querySelector('[data-applied-text]')).toHaveTextContent(GENERIC_DRAFT);
   });
 
-  it('explains in plain words why the name cannot be used before the match is confirmed', async () => {
+  it('explains in plain words why either name cannot be used before its match is confirmed', async () => {
     const user = userEvent.setup();
     render(<GuidedPrototypePage />);
 
     await user.click(screen.getByRole('button', { name: 'Start the demo' }));
     const editor = screen.getByRole('textbox', { name: 'Description draft' });
-    fireEvent.change(editor, { target: { value: 'Keanu Reeves is pictured in a grey jacket.' } });
+    fireEvent.change(editor, { target: { value: 'Katy Perry is pictured beside a man in a tuxedo.' } });
     await user.click(screen.getByRole('button', { name: 'Save my edit' }));
 
-    expect(screen.getByRole('alert')).toHaveTextContent('You can only use the name after you confirm the face match.');
+    expect(screen.getByRole('alert')).toHaveTextContent(
+      'You can only use the name Katy Perry after you confirm that face match.',
+    );
     expect(document.activeElement).toBe(editor);
     expect(screen.getByRole('status')).not.toHaveTextContent('You can only use the name');
   });
@@ -246,19 +332,16 @@ describe('GuidedPrototypePage journey', () => {
     render(<GuidedPrototypePage />);
 
     await user.click(screen.getByRole('button', { name: 'Start the demo' }));
-    await user.click(screen.getByRole('button', { name: 'Yes, this is Keanu Reeves' }));
+    await user.click(confirmButton('Justin Trudeau'));
     await user.click(screen.getByRole('button', { name: 'Apply to practice copy' }));
-    expect(document.querySelector('[data-applied-text]')).toHaveTextContent(NAMED_DRAFT);
+    expect(document.querySelector('[data-applied-text]')).toHaveTextContent(JUSTIN_DRAFT);
 
-    const editor = screen.getByRole('textbox', { name: 'Description draft' });
-    await user.clear(editor);
-    await user.type(editor, 'Keanu Reeves wears a grey jacket.');
-    await user.click(screen.getByRole('button', { name: 'Save my edit' }));
+    await user.click(confirmButton('Katy Perry'));
     await user.click(screen.getByRole('button', { name: 'Apply to practice copy' }));
-    expect(document.querySelector('[data-applied-text]')).toHaveTextContent('Keanu Reeves wears a grey jacket.');
+    expect(document.querySelector('[data-applied-text]')).toHaveTextContent(BOTH_NAMES_DRAFT);
 
     await user.click(screen.getByRole('button', { name: 'Undo' }));
-    expect(document.querySelector('[data-applied-text]')).toHaveTextContent(NAMED_DRAFT);
+    expect(document.querySelector('[data-applied-text]')).toHaveTextContent(JUSTIN_DRAFT);
     expect(screen.getByRole('button', { name: 'Undo' })).toBeInTheDocument();
     expect(document.activeElement).toHaveAttribute('id', 'guided-section-apply');
 

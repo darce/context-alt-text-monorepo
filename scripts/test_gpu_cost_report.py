@@ -142,16 +142,9 @@ def test_cost_report_imports_only_stdlib_modules() -> None:
     tree = ast.parse(Path(report.__file__).read_text(encoding="utf-8"))
     imports = [node for node in ast.walk(tree) if isinstance(node, (ast.Import, ast.ImportFrom))]
 
-    modules = {
-        alias.name.split(".")[0]
-        for node in imports
-        if isinstance(node, ast.Import)
-        for alias in node.names
-    }
+    modules = {alias.name.split(".")[0] for node in imports if isinstance(node, ast.Import) for alias in node.names}
     modules.update(
-        node.module.split(".")[0]
-        for node in imports
-        if isinstance(node, ast.ImportFrom) and node.module is not None
+        node.module.split(".")[0] for node in imports if isinstance(node, ast.ImportFrom) and node.module is not None
     )
 
     assert modules <= {

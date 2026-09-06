@@ -18,13 +18,17 @@ environment named by ``--service-api-key-env``::
       --wp-base-url https://wordpress.example --wp-user operator \
       --media-ids 101,102 --service-base-url http://<burst-private-ip>:8000 \
       --service-api-key-env ACX_DESCRIPTION_API_KEY \
-      --instance-id <burst-instance-ocid> --max-seconds 900
+      --instance-id <burst-instance-ocid> --max-seconds 1200
 
 No password is accepted on argv.  Every HTTP/OCI operation has a timeout, every
 poll loop checks one overall deadline, and live execution always issues STOP in
 ``finally`` before it reports success or failure.  SIGTERM and SIGHUP are routed
 into that same unwind so an orchestrator or CI timeout cannot leave the instance
 RUNNING; SIGKILL is uncatchable and remains the host reaper's problem.
+
+The enqueue proof captures a fresh idle load baseline immediately before the
+WordPress POST, then requires fresh pending work after that accepted trigger.
+This keeps pre-existing work from being attributed to the current run.
 """
 
 from __future__ import annotations
@@ -115,7 +119,6 @@ MIN_COMPOSED_BUDGET_SECONDS = (
     + FENCE_BUDGET_SECONDS
     + AUDIT_INDEX_TIMEOUT_SECONDS
 )
-POST_STOP_HEALTH_TIMEOUT_SECONDS = 20.0
 LOAD_SNAPSHOT_SKEW_SECONDS = 2.0
 # WBUX6-MRG-02 moved publication from one `/run/acx/describe-load.json` to a
 # per-environment layout. Keep this in parity with the `--load-dir` flag the
@@ -653,6 +656,13 @@ class DryScenario:
         }
     )
     load_snapshot_written_offset_seconds: float = 0.0
+    load_snapshot_before_trigger: dict[str, Any] = field(
+        default_factory=lambda: {
+            "queue_depth": 0,
+            "in_flight": 0,
+            "batch_in_progress": False,
+        }
+    )
     submitted_at: datetime | None = field(default=None, init=False)
     transport_counts: dict[str, int] = field(default_factory=dict, init=False)
 
@@ -832,6 +842,7 @@ class FakeOci:
     stop_event_time: str | None = "2026-01-01T00:00:10Z"
     stop_events: list[dict[str, Any]] | None = None
     gpu_states: list[dict[str, Any]] | None = None
+    start_event_time: str | None = "2026-01-01T00:00:00Z"
     observed_gpu_states: list[dict[str, Any]] = field(default_factory=list, init=False)
     gpu_states_enabled: bool = field(default=False, init=False)
 
@@ -854,7 +865,9 @@ class FakeOci:
                 self.observed_gpu_states.append(snapshot)
                 self.current_state = _gpu_snapshot_lifecycle_state(snapshot)
         else:
-            states = self.stop_states if self.stopping else (self.reaper_states if self.reaping else self.startup_states)
+            states = (
+                self.stop_states if self.stopping else (self.reaper_states if self.reaping else self.startup_states)
+            )
             if self.stopping and states or self.armed and states:
                 self.current_state = states.pop(0)
         return {
@@ -900,6 +913,7 @@ class FakeOci:
             {
                 "eventType": "com.oraclecloud.computeapi.instanceaction.end",
                 "eventId": f"dry-start-event-{index}",
+                "eventTime": self.start_event_time,
                 "data": {
                     "resourceId": instance_id,
                     "request": {
@@ -982,12 +996,6 @@ def _gpu_burst_identity_mismatches(instance: Mapping[str, Any]) -> list[str]:
     return mismatches
 
 
-def _is_gpu_burst(instance: dict[str, Any]) -> bool:
-    """Require the complete Terraform-owned identity before any lifecycle action."""
-
-    return not _gpu_burst_identity_mismatches(instance)
-
-
 def _has_gpu_burst_ownership_tag(instance: Mapping[str, Any]) -> bool:
     """Scope orphan discovery by the stable ownership role, not mutable identity."""
 
@@ -1059,10 +1067,7 @@ def _is_stop_event(event: dict[str, Any], instance_id: str) -> bool:
         return False
     if _audit_resource_id(event) != instance_id:
         return False
-    return any(
-        _normalized_audit_action(value) in {"STOP", "STOPINSTANCE"}
-        for value in _audit_action_values(event)
-    )
+    return any(_normalized_audit_action(value) in {"STOP", "STOPINSTANCE"} for value in _audit_action_values(event))
 
 
 def _stop_event_identity(event: dict[str, Any]) -> str:
@@ -1196,10 +1201,35 @@ def _unique_start_events(events: Sequence[dict[str, Any]], instance_id: str) -> 
     return list(unique.values())
 
 
+def _start_events_in_window(
+    events: Sequence[dict[str, Any]],
+    instance_id: str,
+    *,
+    start_time: str,
+    end_time: str,
+) -> list[dict[str, Any]]:
+    """Keep only timestamped START records for this instance and smoke window."""
+
+    start = _parse_audit_event_time(start_time)
+    end = _parse_audit_event_time(end_time)
+    if start is None or end is None or end < start:
+        return []
+    in_window: list[dict[str, Any]] = []
+    for event in events:
+        if not _is_start_event(event, instance_id):
+            continue
+        event_time = _audit_event_time(event)
+        parsed_event_time = _parse_audit_event_time(event_time) if event_time is not None else None
+        if parsed_event_time is not None and start <= parsed_event_time <= end:
+            in_window.append(event)
+    return in_window
+
+
 def _load_snapshot_has_fresh_work(
     snapshot: dict[str, Any],
     *,
     freshness_anchor: datetime,
+    require_pending: bool = True,
 ) -> tuple[bool, str]:
     if snapshot.get("availability") != "available" or not isinstance(snapshot.get("value"), dict):
         return False, (
@@ -1229,9 +1259,11 @@ def _load_snapshot_has_fresh_work(
     batch_value = value.get("batch_in_progress")
     batch_valid = isinstance(batch_value, bool)
     pending = sum(counts) + int(batch_value) if counts_valid and batch_valid else 0
-    observed = bool(fresh and counts_valid and batch_valid and pending > 0)
+    pending_matches = pending > 0 if require_pending else pending == 0
+    observed = bool(fresh and counts_valid and batch_valid and pending_matches)
     return observed, (
         f"fresh={fresh}; pending={pending}; batch_in_progress={batch_value!r}; written_at={written_at!r}; "
+        f"expected={'pending' if require_pending else 'idle'}; "
         f"freshness_anchor={_iso_utc(freshness_anchor)}; skew_seconds={LOAD_SNAPSHOT_SKEW_SECONDS}"
     )
 
@@ -1289,9 +1321,7 @@ def _validate_run_envelope(
 
     run_id, tenant_id = _run_envelope(body, endpoint=endpoint)
     if run_id != expected_run_id:
-        raise SmokeFailure(
-            f"{endpoint} response run_id {run_id!r} does not match expected {expected_run_id!r}"
-        )
+        raise SmokeFailure(f"{endpoint} response run_id {run_id!r} does not match expected {expected_run_id!r}")
     if tenant_id != expected_tenant_id:
         raise SmokeFailure(
             f"{endpoint} response tenant_id {tenant_id!r} does not match expected {expected_tenant_id!r}"
@@ -1486,6 +1516,7 @@ class _SmokeExecution:
     stop_event_time: str | None = None
     preflight_refused: bool = False
     instance_validated: bool = False
+    trigger_issued: bool = False
     compartment_id: str = "unavailable"
     run_window_started_at: str = "unavailable"
     trigger_elapsed: float = 0.0
@@ -1675,14 +1706,23 @@ def _submit_and_observe_load(run: _SmokeExecution) -> None:
     run.auth = httpx.BasicAuth(run.args.wp_user, run.app_password)
     load_freshness_anchor = run.now()
     run.run_window_started_at = _iso_utc(load_freshness_anchor)
+    # Establish an identity-grounded idle baseline immediately before the
+    # trigger. A pending snapshot here belongs to existing work, so accepting
+    # it would make the post-submit observation impossible to attribute to
+    # this run.
+    run.load_snapshot_before_trigger = run.load_snapshot_reader(run.load_source)
     load_ready, load_detail = _load_snapshot_has_fresh_work(
         run.load_snapshot_before_trigger,
         freshness_anchor=load_freshness_anchor,
+        require_pending=False,
     )
     run.check("load_snapshot_ready_before_trigger", load_ready, load_detail)
     if not load_ready:
         run.check("load_snapshot_observed_after_trigger", False, load_detail)
-        raise SmokeFailure(f"load snapshot precondition failed before enqueue: {load_detail}")
+        raise SmokeFailure(f"load snapshot baseline failed before enqueue: {load_detail}")
+    # Mark the mutation before sending it: a timeout or malformed response can
+    # still mean WordPress accepted the enqueue, so cleanup must remain armed.
+    run.trigger_issued = True
     submitted = _request_json(
         run.client,
         "POST",
@@ -1694,10 +1734,11 @@ def _submit_and_observe_load(run: _SmokeExecution) -> None:
     candidate_run_id, candidate_tenant_id = _run_envelope(submitted, endpoint="submit")
     run.run_id = candidate_run_id
     run.tenant_id = candidate_tenant_id
-    run.trigger_elapsed = run.deadline.elapsed()
     trigger = getattr(run.oci, "trigger", None)
     if callable(trigger):
         trigger()
+    post_trigger_anchor = run.now()
+    run.trigger_elapsed = run.deadline.elapsed()
 
     load_observation_deadline = Deadline(
         min(LOAD_SNAPSHOT_OBSERVATION_SECONDS, max(0.0, run.deadline.remaining())),
@@ -1707,7 +1748,7 @@ def _submit_and_observe_load(run: _SmokeExecution) -> None:
         run.load_snapshot_after_trigger = run.load_snapshot_reader(run.load_source)
         load_observed, load_detail = _load_snapshot_has_fresh_work(
             run.load_snapshot_after_trigger,
-            freshness_anchor=load_freshness_anchor,
+            freshness_anchor=post_trigger_anchor,
         )
         if load_observed or load_observation_deadline.remaining() <= 0 or run.deadline.remaining() <= 0:
             break
@@ -1751,12 +1792,16 @@ def _warm_and_process(run: _SmokeExecution) -> None:
         _poll_health(run, "warm_up")
         if not warm_started:
             run.sleep(POLL_SECONDS)
+    warm_start_elapsed = run.deadline.elapsed() - warm_start_started
     if warm_start_budget_ok:
+        completed_within_budget = not warm_started or warm_start_elapsed < WARM_START_BUDGET_SECONDS
         run.check(
             "warm_start_budget",
-            warm_started or run.deadline.elapsed() - warm_start_started < WARM_START_BUDGET_SECONDS,
+            completed_within_budget,
             (
-                f"warm start completed in {run.deadline.elapsed() - warm_start_started:.3f}s"
+                f"warm start completed in {warm_start_elapsed:.3f}s"
+                if warm_started and completed_within_budget
+                else f"warm start exceeded {WARM_START_BUDGET_SECONDS:g}s budget at {warm_start_elapsed:.3f}s"
                 if warm_started
                 else f"overall deadline ended before {WARM_START_BUDGET_SECONDS:g}s warm-start budget"
             ),
@@ -1814,7 +1859,7 @@ def _warm_and_process(run: _SmokeExecution) -> None:
     )
 
 
-def _validate_completed_items(run: _SmokeExecution) -> None:
+def _check_item_progress(run: _SmokeExecution) -> None:
     run.check(
         "no_item_terminal_before_running",
         not run.terminal_before_running,
@@ -1826,6 +1871,10 @@ def _validate_completed_items(run: _SmokeExecution) -> None:
         f"offending media_ids: {sorted(run.degraded_items, key=str)}",
     )
 
+
+def _requested_item_views(
+    run: _SmokeExecution,
+) -> tuple[set[int], set[int], list[dict[str, Any]]]:
     returned_media_id_rows = [item.get("media_id") for item in run.items]
     duplicate_ids = {media_id for media_id in returned_media_id_rows if returned_media_id_rows.count(media_id) > 1}
     if duplicate_ids:
@@ -1849,8 +1898,15 @@ def _validate_completed_items(run: _SmokeExecution) -> None:
         not missing_ids and not incomplete_ids,
         f"missing media_ids: {sorted(missing_ids)}; non-completed media_ids: {sorted(incomplete_ids)}",
     )
-
     requested_items = [items_by_id[media_id] for media_id in run.args.media_ids if media_id in items_by_id]
+    return requested_ids, missing_ids, requested_items
+
+
+def _check_item_provenance(
+    run: _SmokeExecution,
+    requested_items: Sequence[Mapping[str, Any]],
+    missing_ids: set[int],
+) -> None:
     wrong_tier_ids: set[int] = set(missing_ids)
     wrong_model_ids: set[int] = set(missing_ids)
     wrong_revision_ids: set[int] = set(missing_ids)
@@ -1866,7 +1922,23 @@ def _validate_completed_items(run: _SmokeExecution) -> None:
         if not separator or revision != EXPECTED_REVISION:
             wrong_revision_ids.add(media_id)
     run.check("tier_final_gpu", not wrong_tier_ids, f"offending media_ids: {sorted(wrong_tier_ids)}")
+    run.check(
+        "model_id_qwen30b",
+        not wrong_model_ids,
+        f"offending media_ids: {sorted(wrong_model_ids)}; expected {EXPECTED_MODEL_ID}",
+    )
+    run.check(
+        "model_revision_pinned",
+        not wrong_revision_ids,
+        f"offending media_ids: {sorted(wrong_revision_ids)}; expected {EXPECTED_REVISION}",
+    )
 
+
+def _check_item_denylist(
+    run: _SmokeExecution,
+    requested_items: Sequence[Mapping[str, Any]],
+    missing_ids: set[int],
+) -> None:
     denied_ids: set[int] = set(missing_ids)
     for item in requested_items:
         for field_name in ("caption", "alt_text_draft"):
@@ -1883,17 +1955,13 @@ def _validate_completed_items(run: _SmokeExecution) -> None:
             if denied:
                 denied_ids.add(item["media_id"])
     run.check("caption_not_fixture", not denied_ids, f"offending media_ids: {sorted(denied_ids)}")
-    run.check(
-        "model_id_qwen30b",
-        not wrong_model_ids,
-        f"offending media_ids: {sorted(wrong_model_ids)}; expected {EXPECTED_MODEL_ID}",
-    )
-    run.check(
-        "model_revision_pinned",
-        not wrong_revision_ids,
-        f"offending media_ids: {sorted(wrong_revision_ids)}; expected {EXPECTED_REVISION}",
-    )
 
+
+def _check_generation_supersession(
+    run: _SmokeExecution,
+    requested_ids: set[int],
+    missing_ids: set[int],
+) -> None:
     non_superseded_ids: set[int] = set(missing_ids)
     for media_id in requested_ids - missing_ids:
         observations = run.generations_by_media_id.get(media_id, [])
@@ -1913,6 +1981,14 @@ def _validate_completed_items(run: _SmokeExecution) -> None:
         not non_superseded_ids,
         f"offending media_ids: {sorted(non_superseded_ids)}",
     )
+
+
+def _validate_completed_items(run: _SmokeExecution) -> None:
+    _check_item_progress(run)
+    requested_ids, missing_ids, requested_items = _requested_item_views(run)
+    _check_item_provenance(run, requested_items, missing_ids)
+    _check_item_denylist(run, requested_items, missing_ids)
+    _check_generation_supersession(run, requested_ids, missing_ids)
 
 
 def _wait_for_reaper(run: _SmokeExecution) -> None:
@@ -1986,7 +2062,7 @@ def _wait_for_reaper(run: _SmokeExecution) -> None:
     )
 
 
-def _audit_start_and_second_poll(run: _SmokeExecution) -> None:
+def _poll_start_events(run: _SmokeExecution) -> tuple[list[dict[str, Any]], float]:
     audit_started = run.deadline.elapsed()
     audit_deadline = Deadline(AUDIT_INDEX_TIMEOUT_SECONDS, run.monotonic)
     start_events: list[dict[str, Any]] = []
@@ -2003,18 +2079,34 @@ def _audit_start_and_second_poll(run: _SmokeExecution) -> None:
         except SmokeFailure:
             break
         audit_attempted = True
+        window_end = _iso_utc(run.now())
         raw_start_events = run.oci.list_start_events(
             run.compartment_id,
             run.args.instance_id,
             start_time=run.run_window_started_at,
-            end_time=_iso_utc(run.now()),
+            end_time=window_end,
             timeout=audit_timeout,
         )
-        start_events = _unique_start_events(raw_start_events, run.args.instance_id)
+        start_events = _unique_start_events(
+            _start_events_in_window(
+                raw_start_events,
+                run.args.instance_id,
+                start_time=run.run_window_started_at,
+                end_time=window_end,
+            ),
+            run.args.instance_id,
+        )
         if start_events:
             break
         run.sleep(POLL_SECONDS)
-    audit_lag_seconds = round(run.deadline.elapsed() - audit_started, 3)
+    return start_events, round(run.deadline.elapsed() - audit_started, 3)
+
+
+def _record_start_action_evidence(
+    run: _SmokeExecution,
+    start_events: Sequence[dict[str, Any]],
+    audit_lag_seconds: float,
+) -> None:
     run.phase_durations_seconds["audit_index"] = audit_lag_seconds
     run.start_action_evidence = {
         "source": "oci_audit",
@@ -2033,116 +2125,107 @@ def _audit_start_and_second_poll(run: _SmokeExecution) -> None:
             else f"zero START events indexed after {audit_lag_seconds:.3f}s"
         ),
     )
-    if run.reaper_stopped and run.items:
-        before_second_poll = [dict(item) for item in run.items]
-        counts_before_replay = _client_transport_counts(run.client)
-        enqueue_before_replay = (
-            counts_before_replay.get("enqueue_posts") if counts_before_replay is not None else None
+
+
+def _enqueue_posts(client: httpx.Client) -> int | None:
+    counts = _client_transport_counts(client)
+    value = counts.get("enqueue_posts") if counts is not None else None
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+
+def _enqueue_delta(before: int | None, after: int | None) -> int | None:
+    return after - before if before is not None and after is not None else None
+
+
+def _second_burst_success(
+    run: _SmokeExecution,
+    before_second_poll: Sequence[Mapping[str, Any]],
+    enqueue_before_replay: int | None,
+) -> None:
+    if run.auth is None:
+        raise SmokeFailure("WordPress authentication was not initialized")
+    replay = _request_json(
+        run.client,
+        "POST",
+        f"{run.args.wp_base_url.rstrip('/')}/wp-json/acx/v1/recognition/describe/runs",
+        deadline=run.deadline,
+        auth=run.auth,
+        payload={"media_ids": run.args.media_ids},
+    )
+    replay_run_id, replay_tenant_id = _run_envelope(replay, endpoint="second enqueue")
+    idempotent_response = replay_run_id == run.run_id and replay_tenant_id == run.tenant_id
+    if not idempotent_response:
+        raise SmokeFailure(
+            f"second enqueue response is not idempotent: run_id={replay_run_id!r}, tenant_id={replay_tenant_id!r}"
         )
-        try:
-            if run.auth is None:
-                raise SmokeFailure("WordPress authentication was not initialized")
-            replay = _request_json(
-                run.client,
-                "POST",
-                f"{run.args.wp_base_url.rstrip('/')}/wp-json/acx/v1/recognition/describe/runs",
-                deadline=run.deadline,
-                auth=run.auth,
-                payload={"media_ids": run.args.media_ids},
-            )
-            replay_run_id, replay_tenant_id = _run_envelope(replay, endpoint="second enqueue")
-            idempotent_response = replay_run_id == run.run_id and replay_tenant_id == run.tenant_id
-            if not idempotent_response:
-                raise SmokeFailure(
-                    "second enqueue response is not idempotent: "
-                    f"run_id={replay_run_id!r}, tenant_id={replay_tenant_id!r}"
+    enqueue_after_replay = _enqueue_posts(run.client)
+    enqueue_replay_delta = _enqueue_delta(enqueue_before_replay, enqueue_after_replay)
+    after_second_poll = _poll_items(run, record_timeline=False)
+    enqueue_after_poll = _enqueue_posts(run.client)
+    enqueue_poll_delta = _enqueue_delta(enqueue_after_replay, enqueue_after_poll)
+    new_items = _new_queue_items(before_second_poll, after_second_poll)
+    telemetry_available = all(
+        value is not None for value in (enqueue_before_replay, enqueue_after_replay, enqueue_after_poll)
+    )
+    # Live HTTPTransport does not expose the dry MockTransport's request
+    # counters. The replay response is the authoritative idempotence proof
+    # there, while the item comparison catches an extra persisted row.
+    replay_post_observed = not telemetry_available or enqueue_replay_delta == 1
+    no_duplicate_replay = idempotent_response and not new_items and replay_post_observed
+    no_enqueue_during_poll = not telemetry_available or enqueue_poll_delta == 0
+    passed = no_duplicate_replay and no_enqueue_during_poll
+    run.second_burst_evidence = {
+        "status": "observed" if passed else "failed",
+        "items_before": [list(_queue_item_identity(item)) for item in before_second_poll],
+        "items_after": [list(_queue_item_identity(item)) for item in after_second_poll],
+        "new_items": new_items,
+        "enqueue_posts_before": enqueue_before_replay,
+        "enqueue_posts_after_replay": enqueue_after_replay,
+        "enqueue_posts_after": enqueue_after_poll,
+        "enqueue_posts_during_replay": enqueue_replay_delta,
+        "enqueue_posts_during_poll": enqueue_poll_delta,
+        "transport_telemetry_available": telemetry_available,
+        "idempotent_response": idempotent_response,
+    }
+    run.check(
+        "second_burst_no_enqueue",
+        passed,
+        (
+            "idempotent replay created no new item and the follow-up poll issued zero enqueue POSTs"
+            if passed
+            else (
+                "idempotent replay or persisted-item comparison failed"
+                if not telemetry_available
+                else (
+                    f"new_items={new_items}; enqueue_posts_during_replay={enqueue_replay_delta!r}; "
+                    f"enqueue_posts_during_poll={enqueue_poll_delta!r}; "
+                    f"idempotent_response={idempotent_response!r}"
                 )
-            counts_after_replay = _client_transport_counts(run.client)
-            enqueue_after_replay = (
-                counts_after_replay.get("enqueue_posts") if counts_after_replay is not None else None
             )
-            enqueue_replay_delta = (
-                int(enqueue_after_replay) - int(enqueue_before_replay)
-                if enqueue_before_replay is not None and enqueue_after_replay is not None
-                else None
-            )
-            after_second_poll = _poll_items(run, record_timeline=False)
-            counts_after_poll = _client_transport_counts(run.client)
-            enqueue_after_poll = counts_after_poll.get("enqueue_posts") if counts_after_poll is not None else None
-            enqueue_poll_delta = (
-                int(enqueue_after_poll) - int(enqueue_after_replay)
-                if enqueue_after_poll is not None and enqueue_after_replay is not None
-                else None
-            )
-            new_items = _new_queue_items(before_second_poll, after_second_poll)
-            telemetry_available = (
-                enqueue_before_replay is not None
-                and enqueue_after_replay is not None
-                and enqueue_after_poll is not None
-            )
-            no_new_items = not new_items
-            # Live HTTPTransport does not expose the dry MockTransport's
-            # request counters.  The replay response is the authoritative
-            # idempotence proof there: a duplicate enqueue would return a new
-            # run envelope, while the follow-up item comparison catches an
-            # extra persisted row in a reused run.
-            replay_post_observed = not telemetry_available or enqueue_replay_delta == 1
-            no_duplicate_replay = idempotent_response and no_new_items and replay_post_observed
-            no_enqueue_during_poll = not telemetry_available or enqueue_poll_delta == 0
-            passed = no_duplicate_replay and no_enqueue_during_poll
-            run.second_burst_evidence = {
-                "status": "observed" if passed else "failed",
-                "items_before": [list(_queue_item_identity(item)) for item in before_second_poll],
-                "items_after": [list(_queue_item_identity(item)) for item in after_second_poll],
-                "new_items": new_items,
-                "enqueue_posts_before": enqueue_before_replay,
-                "enqueue_posts_after_replay": enqueue_after_replay,
-                "enqueue_posts_after": enqueue_after_poll,
-                "enqueue_posts_during_replay": enqueue_replay_delta,
-                "enqueue_posts_during_poll": enqueue_poll_delta,
-                "transport_telemetry_available": telemetry_available,
-                "idempotent_response": idempotent_response,
-            }
-            run.check(
-                "second_burst_no_enqueue",
-                passed,
-                (
-                    "idempotent replay created no new item and the follow-up poll issued zero enqueue POSTs"
-                    if passed
-                    else (
-                        "idempotent replay or persisted-item comparison failed"
-                        if not telemetry_available
-                        else (
-                            f"new_items={new_items}; enqueue_posts_during_replay={enqueue_replay_delta!r}; "
-                            f"enqueue_posts_during_poll={enqueue_poll_delta!r}; "
-                            f"idempotent_response={idempotent_response!r}"
-                        )
-                    )
-                ),
-            )
-        except (SmokeFailure, OSError, ValueError) as exc:
-            counts_after_failure = _client_transport_counts(run.client)
-            enqueue_after_failure = (
-                counts_after_failure.get("enqueue_posts") if counts_after_failure is not None else None
-            )
-            enqueue_replay_delta = (
-                int(enqueue_after_failure) - int(enqueue_before_replay)
-                if enqueue_before_replay is not None and enqueue_after_failure is not None
-                else None
-            )
-            run.second_burst_evidence = {
-                "status": "failed",
-                "new_items": [],
-                "enqueue_posts_during_poll": None,
-                "enqueue_posts_during_replay": enqueue_replay_delta,
-                "transport_telemetry_available": (
-                    enqueue_before_replay is not None and enqueue_after_failure is not None
-                ),
-                "idempotent_response": False,
-                "error": str(exc),
-            }
-            run.check("second_burst_no_enqueue", False, str(exc))
-    else:
+        ),
+    )
+
+
+def _record_second_burst_failure(
+    run: _SmokeExecution,
+    enqueue_before_replay: int | None,
+    exc: Exception,
+) -> None:
+    enqueue_after_failure = _enqueue_posts(run.client)
+    run.second_burst_evidence = {
+        "status": "failed",
+        "new_items": [],
+        "enqueue_posts_during_poll": None,
+        "enqueue_posts_during_replay": _enqueue_delta(enqueue_before_replay, enqueue_after_failure),
+        "transport_telemetry_available": (enqueue_before_replay is not None and enqueue_after_failure is not None),
+        "idempotent_response": False,
+        "error": str(exc),
+    }
+    run.check("second_burst_no_enqueue", False, str(exc))
+
+
+def _second_burst_proof(run: _SmokeExecution) -> None:
+    if not run.reaper_stopped or not run.items:
         run.second_burst_evidence = {
             "status": "not_attempted",
             "new_items": [],
@@ -2156,6 +2239,19 @@ def _audit_start_and_second_poll(run: _SmokeExecution) -> None:
             False,
             "second poll requires a completed run with a STOPPED instance",
         )
+        return
+    before_second_poll = [dict(item) for item in run.items]
+    enqueue_before_replay = _enqueue_posts(run.client)
+    try:
+        _second_burst_success(run, before_second_poll, enqueue_before_replay)
+    except (SmokeFailure, OSError, ValueError) as exc:
+        _record_second_burst_failure(run, enqueue_before_replay, exc)
+
+
+def _audit_start_and_second_poll(run: _SmokeExecution) -> None:
+    start_events, audit_lag_seconds = _poll_start_events(run)
+    _record_start_action_evidence(run, start_events, audit_lag_seconds)
+    _second_burst_proof(run)
 
 
 def _cleanup_timeout(run: _SmokeExecution, ceiling: float = OCI_CALL_TIMEOUT_SECONDS) -> float:
@@ -2211,9 +2307,7 @@ def _compensate_instance_stop(run: _SmokeExecution) -> tuple[str, list[str], int
         if final_state in NON_BILLING_TERMINAL_STATES:
             break
         if run.oci.stop_calls >= MAX_EMERGENCY_STOP_ATTEMPTS:
-            stop_failures.append(
-                state_error or f"bounded compensating STOP retries exhausted in state {final_state}"
-            )
+            stop_failures.append(state_error or f"bounded compensating STOP retries exhausted in state {final_state}")
             break
         if final_state != "STOPPING" or not stop_requested:
             stopped, stop_error = _issue_compensating_stop(run)
@@ -2332,7 +2426,11 @@ def _discover_orphans(run: _SmokeExecution) -> None:
             if _gpu_burst_identity_mismatches(instance)
         }
         running = [instance for instance in owned if _state(instance) not in NON_BILLING_TERMINAL_STATES]
-        run.check("orphan_identity_matches", not mismatches, str(mismatches) if mismatches else "all ownership-tagged identities match")
+        run.check(
+            "orphan_identity_matches",
+            not mismatches,
+            str(mismatches) if mismatches else "all ownership-tagged identities match",
+        )
         run.check(
             "no_orphan_running",
             not running,
@@ -2344,13 +2442,16 @@ def _discover_orphans(run: _SmokeExecution) -> None:
 
 
 def _compensate_and_audit_stop(run: _SmokeExecution) -> None:
-    if not run.instance_validated:
-        run.check("finally_stop_skipped", True, "instance was not validated; STOP and OCI follow-up skipped")
+    if not run.instance_validated or not run.trigger_issued:
+        reason = "instance was not validated" if not run.instance_validated else "no WordPress enqueue was accepted"
+        run.check("finally_stop_skipped", True, f"{reason}; STOP and OCI follow-up skipped")
         return
 
     final_state, stop_failures, successful_stop_calls = _compensate_instance_stop(run)
-    stop_detail = "already terminal; no compensating STOP needed" if run.oci.stop_calls == 0 else (
-        f"STOP issued ({run.oci.stop_calls} attempt(s))"
+    stop_detail = (
+        "already terminal; no compensating STOP needed"
+        if run.oci.stop_calls == 0
+        else (f"STOP issued ({run.oci.stop_calls} attempt(s))")
     )
     run.check(
         "finally_stop_issued",
@@ -2378,8 +2479,6 @@ def _compensate_and_audit_stop(run: _SmokeExecution) -> None:
     _record_stop_attribution(run, stop_events, lag, error)
 
 
-
-
 def _emit_smoke_result(run: _SmokeExecution) -> SmokeResult:
     unhealthy_samples = [sample for sample in run.service_health_samples if not sample["healthy"]]
     run.check(
@@ -2391,9 +2490,7 @@ def _emit_smoke_result(run: _SmokeExecution) -> SmokeResult:
     evidence_elapsed_seconds = run.deadline.elapsed()
     running_seconds = _running_seconds(run.transitions, final_elapsed_seconds=evidence_elapsed_seconds)
     cost = round(running_seconds * GPU_USD_PER_HOUR / 3600.0, 6)
-    stopped_finally = any(
-        check["name"] == "instance_stopped_finally" and check["passed"] for check in run.checks
-    )
+    stopped_finally = any(check["name"] == "instance_stopped_finally" and check["passed"] for check in run.checks)
     running_seconds_ongoing = run.instance_validated and not stopped_finally
     cost_estimate_ongoing = running_seconds_ongoing
     measurements = {
@@ -2548,8 +2645,6 @@ def _run_smoke_phase_machine(
     return _emit_smoke_result(run)
 
 
-
-
 def run_smoke(
     args: argparse.Namespace,
     *,
@@ -2623,8 +2718,7 @@ def build_parser() -> argparse.ArgumentParser:
         default=[DEFAULT_STOP_PRINCIPAL],
         metavar="PRINCIPAL",
         help=(
-            "principal name or OCID allowed to stop the burst; repeat for aliases "
-            f"(default: {DEFAULT_STOP_PRINCIPAL})"
+            f"principal name or OCID allowed to stop the burst; repeat for aliases (default: {DEFAULT_STOP_PRINCIPAL})"
         ),
     )
     parser.add_argument("--gpu-state-json", default="/run/acx/gpu-state.json")
@@ -2684,8 +2778,7 @@ def _validate_args(args: argparse.Namespace) -> tuple[str, str]:
         raise PreflightRefusal(f"--max-seconds must be between 1 and {MAX_LIVE_SECONDS}")
     expected_stop_principals = getattr(args, "expected_stop_principal", [DEFAULT_STOP_PRINCIPAL])
     if not expected_stop_principals or any(
-        not isinstance(principal, str) or not principal.strip()
-        for principal in expected_stop_principals
+        not isinstance(principal, str) or not principal.strip() for principal in expected_stop_principals
     ):
         raise PreflightRefusal("--expected-stop-principal must name at least one non-empty principal")
     environment_options = (
@@ -2767,11 +2860,16 @@ def main(
 
             def dry_load_snapshot_reader(path: str) -> dict[str, Any]:
                 written_at = scenario.submitted_at or clock.now()
+                snapshot_value = (
+                    scenario.load_snapshot_after_trigger
+                    if scenario.submitted_at is not None
+                    else scenario.load_snapshot_before_trigger
+                )
                 return {
                     "availability": "available",
                     "path": path,
                     "value": {
-                        **(scenario.load_snapshot_after_trigger or {}),
+                        **(snapshot_value or {}),
                         "written_at": (written_at.timestamp() + scenario.load_snapshot_written_offset_seconds),
                     },
                 }

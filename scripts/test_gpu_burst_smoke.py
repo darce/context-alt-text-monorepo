@@ -47,21 +47,27 @@ def _run(
     service_api_key: str = "dry-service-key",
     extra: tuple[str, ...] = (),
     transport: httpx.BaseTransport | None = None,
+    clock: smoke.FastClock | None = None,
 ) -> tuple[smoke.SmokeResult, smoke.FakeOci]:
     scenario = scenario or smoke.DryScenario()
     scenario.service_api_key = service_api_key
     fake_oci = oci or smoke.FakeOci(gpu_states=scenario.gpu_states)
-    clock = smoke.FastClock()
+    clock = clock or smoke.FastClock()
 
     def load_snapshot_reader(_path: str) -> dict[str, object]:
-        if scenario.load_snapshot_after_trigger is None:
+        snapshot_value = (
+            scenario.load_snapshot_after_trigger
+            if scenario.submitted_at is not None
+            else scenario.load_snapshot_before_trigger
+        )
+        if snapshot_value is None:
             return {"availability": "unavailable", "path": _path}
         written_at = scenario.submitted_at or clock.now()
         return {
             "availability": "available",
             "path": _path,
             "value": {
-                **scenario.load_snapshot_after_trigger,
+                **snapshot_value,
                 "written_at": written_at.timestamp() + scenario.load_snapshot_written_offset_seconds,
             },
         }
@@ -486,6 +492,54 @@ def test_dry_run_exercises_whole_flow_and_writes_cost_evidence(tmp_path: Path) -
     assert (tmp_path / "evidence.json").is_file()
 
 
+def test_live_phase_machine_uses_the_same_protocol_proofs_offline(tmp_path: Path) -> None:
+    scenario = smoke.DryScenario()
+    clock = smoke.FastClock()
+    base_transport = smoke.make_mock_transport(scenario, now=clock.now)
+
+    def load_snapshot_reader(path: str) -> dict[str, object]:
+        snapshot_value = (
+            scenario.load_snapshot_after_trigger
+            if scenario.submitted_at is not None
+            else scenario.load_snapshot_before_trigger
+        )
+        return {
+            "availability": "available",
+            "path": path,
+            "value": {
+                **(snapshot_value or {}),
+                "written_at": clock.now().timestamp(),
+            },
+        }
+
+    args = _args(tmp_path)
+    args.live = True
+    with httpx.Client(transport=base_transport, follow_redirects=False) as client:
+        result = smoke.run_smoke(
+            args,
+            client=client,
+            oci=smoke.FakeOci(gpu_states=None),
+            app_password="not-a-secret",
+            service_api_key="dry-service-key",
+            monotonic=clock.monotonic,
+            sleep=clock.sleep,
+            now=clock.now,
+            load_snapshot_reader=load_snapshot_reader,
+        )
+
+    assert result.exit_code == 0
+    assert result.evidence["mode"] == "live"
+    assert [entry["state"] for entry in result.evidence["transitions"]] == [
+        "STOPPED",
+        "STARTING",
+        "RUNNING",
+        "STOPPING",
+        "STOPPED",
+    ]
+    assert _check(result, "stop_attribution")
+    assert _check(result, "second_burst_no_enqueue")
+
+
 def test_application_password_is_absent_from_output_and_evidence(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
@@ -631,8 +685,26 @@ def test_red_missing_fresh_load_snapshot_after_trigger(tmp_path: Path) -> None:
 
     assert result.exit_code == 1
     assert not _check(result, "load_snapshot_observed_after_trigger")
-    assert scenario.transport_counts["enqueue_posts"] == 0
+    assert scenario.transport_counts["enqueue_posts"] == 1
     assert oci.armed is False
+
+
+def test_preexisting_load_is_refused_before_enqueue(tmp_path: Path) -> None:
+    scenario = smoke.DryScenario(
+        load_snapshot_before_trigger={
+            "queue_depth": 1,
+            "in_flight": 0,
+            "batch_in_progress": False,
+        }
+    )
+
+    result, oci = _run(tmp_path, scenario=scenario)
+
+    assert result.exit_code == 1
+    assert scenario.transport_counts["enqueue_posts"] == 0
+    assert not _check(result, "load_snapshot_ready_before_trigger")
+    assert "expected=idle" in _detail(result, "load_snapshot_ready_before_trigger")
+    assert oci.stop_calls == 0
 
 
 def test_red_missing_fresh_load_snapshot_after_trigger_legacy_shape(tmp_path: Path) -> None:
@@ -724,9 +796,11 @@ def test_service_health_preflight_sends_bearer_auth(tmp_path: Path) -> None:
                 "availability": "available",
                 "path": path,
                 "value": {
-                    "queue_depth": 0,
-                    "in_flight": 0,
-                    "batch_in_progress": True,
+                    **(
+                        scenario.load_snapshot_after_trigger
+                        if scenario.submitted_at is not None
+                        else scenario.load_snapshot_before_trigger
+                    ),
                     "written_at": clock.now().timestamp(),
                 },
             },
@@ -900,11 +974,13 @@ def test_audit_begin_and_end_pair_counts_as_one_start(tmp_path: Path) -> None:
                 {
                     "eventType": "com.oraclecloud.computeapi.instanceaction.begin",
                     "eventId": "begin-placeholder",
+                    "eventTime": "2026-01-01T00:00:00Z",
                     "data": {"resourceId": "<burst-instance-ocid>", "request": request},
                 },
                 {
                     "eventType": "com.oraclecloud.computeapi.instanceaction.end",
                     "eventId": "end-placeholder",
+                    "eventTime": "2026-01-01T00:00:00Z",
                     "data": {"resourceId": "<burst-instance-ocid>", "request": request},
                 },
             ]
@@ -940,6 +1016,31 @@ def test_zero_audit_events_has_distinct_indexing_failure(tmp_path: Path) -> None
     assert not _check(result, "exactly_one_start_action")
     assert "zero START events indexed" in _detail(result, "exactly_one_start_action")
     assert result.evidence["start_action_evidence"]["status"] == "not_indexed"
+
+
+def test_stale_start_audit_event_is_not_attributed_to_this_run(tmp_path: Path) -> None:
+    result, _ = _run(
+        tmp_path,
+        oci=smoke.FakeOci(start_event_time="2025-12-31T23:59:59Z"),
+    )
+
+    assert result.exit_code == 1
+    assert not _check(result, "exactly_one_start_action")
+    assert result.evidence["start_action_evidence"]["count"] == 0
+    assert "zero START events indexed" in _detail(result, "exactly_one_start_action")
+
+
+def test_stale_duplicate_start_does_not_hide_a_fresh_event(tmp_path: Path) -> None:
+    class StaleThenFreshOci(smoke.FakeOci):
+        def list_start_events(self, *args: object, **kwargs: object) -> list[dict[str, object]]:
+            events = super().list_start_events(*args, **kwargs)
+            stale = {**events[0], "eventTime": "2025-12-31T23:59:59Z"}
+            return [stale, events[0]]
+
+    result, _ = _run(tmp_path, oci=StaleThenFreshOci())
+
+    assert result.exit_code == 0
+    assert _check(result, "exactly_one_start_action")
 
 
 def test_red_warm_start_deadline_still_issues_stop(tmp_path: Path) -> None:
@@ -1224,6 +1325,19 @@ def test_subprocess_oci_error_includes_output_tails(monkeypatch: pytest.MonkeyPa
     monkeypatch.setattr(smoke.subprocess, "run", fail)
 
     with pytest.raises(smoke.SmokeFailure, match="NotAuthorizedOrNotFound"):
+        smoke.SubprocessOci("oci-placeholder").get_instance("instance-placeholder", timeout=3)
+
+
+def test_subprocess_oci_timeout_is_reported_as_a_smoke_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def timeout(*args: object, **kwargs: object) -> None:
+        del args, kwargs
+        raise subprocess.TimeoutExpired(["oci-placeholder"], 3)
+
+    monkeypatch.setattr(smoke.subprocess, "run", timeout)
+
+    with pytest.raises(smoke.SmokeFailure, match="timed out"):
         smoke.SubprocessOci("oci-placeholder").get_instance("instance-placeholder", timeout=3)
 
 
@@ -1638,6 +1752,30 @@ def test_warm_start_budget_is_enforced_independently_of_overall_deadline(
     assert not _check(result, "warm_start_budget")
 
 
+def test_warm_start_budget_fails_when_final_running_probe_crosses_deadline(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(smoke, "WARM_START_BUDGET_SECONDS", 3.0)
+    clock = smoke.FastClock()
+
+    class SlowRunningProbeOci(smoke.FakeOci):
+        crossed = False
+
+        def get_instance(self, instance_id: str, *, timeout: float) -> dict[str, object]:
+            instance = super().get_instance(instance_id, timeout=timeout)
+            if instance["lifecycle-state"] == "RUNNING" and not self.crossed:
+                self.crossed = True
+                clock.seconds += 4.0
+            return instance
+
+    result, _ = _run(tmp_path, oci=SlowRunningProbeOci(), clock=clock)
+
+    assert result.exit_code == 1
+    assert not _check(result, "warm_start_budget")
+    assert "exceeded" in _detail(result, "warm_start_budget")
+
+
 def test_idle_and_reaper_budgets_are_enforced_independently_of_overall_deadline(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1845,6 +1983,39 @@ def test_load_observation_failure_stops_before_gpu_processing(tmp_path: Path) ->
     assert oci.stop_calls == 1
 
 
+def test_malformed_submit_response_keeps_compensation_armed(tmp_path: Path) -> None:
+    scenario = smoke.DryScenario()
+    base_transport = smoke.make_mock_transport(scenario)
+
+    def malformed_submit(request: httpx.Request) -> httpx.Response:
+        response = base_transport.handle_request(request)
+        if request.method == "POST" and request.url.path.endswith("/describe/runs"):
+            return httpx.Response(202, json={"accepted": True})
+        return response
+
+    class AcceptedThenRunningOci(smoke.FakeOci):
+        reads = 0
+
+        def get_instance(self, instance_id: str, *, timeout: float) -> dict[str, object]:
+            self.reads += 1
+            if self.reads > 1:
+                self.current_state = "RUNNING"
+            return super().get_instance(instance_id, timeout=timeout)
+
+    oci = AcceptedThenRunningOci(gpu_states=None)
+    result, used_oci = _run(
+        tmp_path,
+        scenario=scenario,
+        oci=oci,
+        transport=httpx.MockTransport(malformed_submit),
+    )
+
+    assert result.exit_code == 1
+    assert scenario.transport_counts["enqueue_posts"] == 1
+    assert used_oci.stop_calls == 1
+    assert _check(result, "instance_stopped_finally")
+
+
 def test_dry_gpu_states_use_live_transition_shape_and_fast_clock(tmp_path: Path) -> None:
     scenario = smoke.DryScenario(
         gpu_states=[
@@ -1889,9 +2060,7 @@ def test_run_smoke_is_decomposed_into_phase_helpers() -> None:
 def test_cleanup_is_decomposed_into_bounded_helpers() -> None:
     tree = ast.parse(Path(smoke.__file__).read_text(encoding="utf-8"))
     function = next(
-        node
-        for node in tree.body
-        if isinstance(node, ast.FunctionDef) and node.name == "_compensate_and_audit_stop"
+        node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "_compensate_and_audit_stop"
     )
 
     assert function.end_lineno - function.lineno + 1 <= 100

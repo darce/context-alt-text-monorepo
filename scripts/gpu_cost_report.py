@@ -138,7 +138,7 @@ def _usage_items(payload: Any) -> list[dict[str, Any]]:
     return items
 
 
-def _smoke_bursts(payload: Any) -> list[dict[str, Any]]:
+def _coerce_smoke_bursts(payload: Any) -> list[dict[str, Any]]:
     if isinstance(payload, list):
         bursts = payload
     elif isinstance(payload, dict):
@@ -152,66 +152,79 @@ def _smoke_bursts(payload: Any) -> list[dict[str, Any]]:
         raise CostReportError("smoke report must be an object or list")
     if not bursts or not all(isinstance(burst, dict) for burst in bursts):
         raise CostReportError("smoke report must contain one or more object bursts")
-    for index, burst in enumerate(bursts, start=1):
-        checks = burst.get("checks")
-        if not isinstance(checks, list) or not checks:
-            raise CostReportError(f"smoke report burst {index} has no smoke checks/verdict")
-        failed_checks: list[str] = []
-        check_names: set[str] = set()
-        for check_index, check in enumerate(checks, start=1):
-            if not isinstance(check, dict):
-                failed_checks.append(f"check-{check_index}")
-                continue
-            name = check.get("name")
-            if isinstance(name, str) and name.strip():
-                check_names.add(name)
-            if check.get("passed") is not True:
-                failed_checks.append(str(name or f"check-{check_index}"))
-        if failed_checks:
-            raise CostReportError(
-                f"smoke report burst {index} has failed check(s): {', '.join(failed_checks)}"
-            )
-        missing_checks = sorted(REQUIRED_SAFETY_CHECKS - check_names)
-        if missing_checks:
-            raise CostReportError(
-                f"smoke report burst {index} is missing required safety check(s): "
-                + ", ".join(missing_checks)
-            )
-        run_status = burst.get("run_status")
-        if run_status != "completed":
-            raise CostReportError(f"smoke report burst {index} is not completed: run_status={run_status!r}")
-        if burst.get("running_seconds_ongoing") is not False:
-            raise CostReportError(f"smoke report burst {index} is still running or has no closed duration")
-        measurements = burst.get("measurements")
-        if not isinstance(measurements, dict) or "running_seconds" not in measurements:
-            raise CostReportError(f"smoke report burst {index} has no closed running_seconds measurements")
-        if measurements.get("running_seconds_ongoing") is not False:
-            raise CostReportError(f"smoke report burst {index} is still running according to measurements")
-        if measurements.get("cost_estimate_ongoing") is not False:
-            raise CostReportError(f"smoke report burst {index} has an ongoing measurement cost estimate")
-        _number(measurements["running_seconds"], field="measurements.running_seconds")
-        if float(measurements["running_seconds"]) < 0:
-            raise CostReportError(f"smoke report burst {index} has negative running_seconds")
-        if "cost_estimate_usd" in measurements:
-            cost_estimate = _number(measurements["cost_estimate_usd"], field="measurements.cost_estimate_usd")
-            if cost_estimate < 0:
-                raise CostReportError(f"smoke report burst {index} has negative cost_estimate_usd")
-        if burst.get("cost_estimate_ongoing") is not False:
-            raise CostReportError(f"smoke report burst {index} has an ongoing cost estimate")
     return bursts
 
 
-def _running_seconds_from_transitions(burst: dict[str, Any]) -> float:
+def _validate_smoke_checks(burst: dict[str, Any], index: int) -> None:
+    checks = burst.get("checks")
+    if not isinstance(checks, list) or not checks:
+        raise CostReportError(f"smoke report burst {index} has no smoke checks/verdict")
+    failed_checks: list[str] = []
+    check_names: set[str] = set()
+    for check_index, check in enumerate(checks, start=1):
+        if not isinstance(check, dict):
+            failed_checks.append(f"check-{check_index}")
+            continue
+        name = check.get("name")
+        if isinstance(name, str) and name.strip():
+            check_names.add(name)
+        if check.get("passed") is not True:
+            failed_checks.append(str(name or f"check-{check_index}"))
+    if failed_checks:
+        raise CostReportError(f"smoke report burst {index} has failed check(s): {', '.join(failed_checks)}")
+    missing_checks = sorted(REQUIRED_SAFETY_CHECKS - check_names)
+    if missing_checks:
+        raise CostReportError(
+            f"smoke report burst {index} is missing required safety check(s): " + ", ".join(missing_checks)
+        )
+
+
+def _validate_smoke_measurements(burst: dict[str, Any], index: int) -> None:
+    run_status = burst.get("run_status")
+    if run_status != "completed":
+        raise CostReportError(f"smoke report burst {index} is not completed: run_status={run_status!r}")
+    if burst.get("running_seconds_ongoing") is not False:
+        raise CostReportError(f"smoke report burst {index} is still running or has no closed duration")
+    measurements = burst.get("measurements")
+    if not isinstance(measurements, dict) or "running_seconds" not in measurements:
+        raise CostReportError(f"smoke report burst {index} has no closed running_seconds measurements")
+    if measurements.get("running_seconds_ongoing") is not False:
+        raise CostReportError(f"smoke report burst {index} is still running according to measurements")
+    if measurements.get("cost_estimate_ongoing") is not False:
+        raise CostReportError(f"smoke report burst {index} has an ongoing measurement cost estimate")
+    _number(measurements["running_seconds"], field="measurements.running_seconds")
+    if float(measurements["running_seconds"]) < 0:
+        raise CostReportError(f"smoke report burst {index} has negative running_seconds")
+    if "cost_estimate_usd" in measurements:
+        cost_estimate = _number(measurements["cost_estimate_usd"], field="measurements.cost_estimate_usd")
+        if cost_estimate < 0:
+            raise CostReportError(f"smoke report burst {index} has negative cost_estimate_usd")
+    if burst.get("cost_estimate_ongoing") is not False:
+        raise CostReportError(f"smoke report burst {index} has an ongoing cost estimate")
+
+
+def _validate_smoke_burst(burst: dict[str, Any], index: int) -> None:
+    _validate_smoke_checks(burst, index)
+    _validate_smoke_measurements(burst, index)
+
+
+def _smoke_bursts(payload: Any) -> list[dict[str, Any]]:
+    bursts = _coerce_smoke_bursts(payload)
+    for index, burst in enumerate(bursts, start=1):
+        _validate_smoke_burst(burst, index)
+    return bursts
+
+
+def _transition_timeline(burst: dict[str, Any]) -> list[tuple[str, float]]:
     transitions = burst.get("transitions")
     if not isinstance(transitions, list):
         raise CostReportError("smoke report has no transitions list")
     if not transitions:
         raise CostReportError("smoke report has no transitions")
-    total = 0.0
     previous_elapsed = -math.inf
     previous_timestamp: datetime | None = None
-    states: list[str] = []
-    for index, transition in enumerate(transitions):
+    timeline: list[tuple[str, float]] = []
+    for _index, transition in enumerate(transitions):
         if not isinstance(transition, dict):
             raise CostReportError("smoke transitions must be objects")
         current_elapsed = _number(transition.get("elapsed_seconds"), field="transition elapsed_seconds")
@@ -223,23 +236,26 @@ def _running_seconds_from_transitions(burst: dict[str, Any]) -> float:
         state = str(transition.get("state") or "").upper()
         if state not in GPU_LIFECYCLE_STATES:
             raise CostReportError(f"smoke transition has unknown lifecycle state: {state!r}")
-        states.append(state)
         timestamp = transition.get("timestamp")
         if timestamp is not None:
             parsed_timestamp = _moment(timestamp, field="transition timestamp")
             if previous_timestamp is not None and parsed_timestamp < previous_timestamp:
                 raise CostReportError("smoke transition timestamps must be monotonic")
             previous_timestamp = parsed_timestamp
+        timeline.append((state, current_elapsed))
+    return timeline
+
+
+def _running_interval_seconds(
+    burst: dict[str, Any],
+    timeline: Sequence[tuple[str, float]],
+) -> float:
+    total = 0.0
+    for index, (state, current_elapsed) in enumerate(timeline):
         if state != "RUNNING":
             continue
-        if index + 1 < len(transitions):
-            following = transitions[index + 1]
-            if not isinstance(following, dict):
-                raise CostReportError("smoke transitions must be objects")
-            following_elapsed = _number(
-                following.get("elapsed_seconds"),
-                field="transition elapsed_seconds",
-            )
+        if index + 1 < len(timeline):
+            following_elapsed = timeline[index + 1][1]
         else:
             measurements = burst.get("measurements")
             measurement = measurements if isinstance(measurements, dict) else burst
@@ -249,6 +265,10 @@ def _running_seconds_from_transitions(burst: dict[str, Any]) -> float:
         if following_elapsed < current_elapsed:
             raise CostReportError("running_seconds evidence is not monotonic")
         total += following_elapsed - current_elapsed
+    return total
+
+
+def _validate_lifecycle_timeline(states: Sequence[str]) -> None:
     if states[0] != "STOPPED":
         raise CostReportError("smoke transition evidence must start in STOPPED")
     if states[-1] != "STOPPED":
@@ -267,6 +287,13 @@ def _running_seconds_from_transitions(burst: dict[str, Any]) -> float:
     for current, following in zip(states, states[1:], strict=False):
         if following not in allowed_successors[current]:
             raise CostReportError(f"invalid smoke lifecycle transition: {current} -> {following}")
+
+
+def _running_seconds_from_transitions(burst: dict[str, Any]) -> float:
+    timeline = _transition_timeline(burst)
+    states = [state for state, _elapsed in timeline]
+    _validate_lifecycle_timeline(states)
+    total = _running_interval_seconds(burst, timeline)
     return round(total, 3)
 
 
@@ -310,10 +337,15 @@ def _burst_window(burst: dict[str, Any]) -> tuple[datetime | None, datetime | No
         burst,
         ("window_start", "start_time", "started_at"),
     ) or start_evidence.get("window_start")
-    end_raw = _first_value(
-        burst,
-        ("window_end", "end_time", "ended_at"),
-    ) or stop_evidence.get("window_end") or burst.get("stop_event_time") or burst.get("generated_at")
+    end_raw = (
+        _first_value(
+            burst,
+            ("window_end", "end_time", "ended_at"),
+        )
+        or stop_evidence.get("window_end")
+        or burst.get("stop_event_time")
+        or burst.get("generated_at")
+    )
     start = _moment(start_raw, field="smoke window_start") if start_raw is not None else None
     end = _moment(end_raw, field="smoke window_end") if end_raw is not None else None
     if start is not None and end is not None and end < start:
@@ -400,9 +432,7 @@ def _usage_amount_for_bursts(
             if identifiers:
                 if resource_id is None:
                     if _windows_overlap(usage_start, usage_end, smoke_start, smoke_end):
-                        raise CostReportError(
-                            "usage item overlapping an identified burst has no resourceId"
-                        )
+                        raise CostReportError("usage item overlapping an identified burst has no resourceId")
                     continue
                 if resource_id not in identifiers:
                     continue
@@ -410,12 +440,15 @@ def _usage_amount_for_bursts(
                 continue
             if _windows_overlap(usage_start, usage_end, smoke_start, smoke_end):
                 matching_bursts.append(index)
-                overlap_weights[index] = _overlap_seconds(
-                    usage_start,
-                    usage_end,
-                    smoke_start,
-                    smoke_end,
-                ) or 0.0
+                overlap_weights[index] = (
+                    _overlap_seconds(
+                        usage_start,
+                        usage_end,
+                        smoke_start,
+                        smoke_end,
+                    )
+                    or 0.0
+                )
         if matching_bursts:
             # A Usage API line can cover an entire granularity bucket. Allocate
             # it across every matching burst by the overlap duration instead of

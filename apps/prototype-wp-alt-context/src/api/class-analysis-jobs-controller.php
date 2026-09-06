@@ -11,6 +11,7 @@ require_once __DIR__ . '/interface-analysis-jobs-host.php';
 require_once __DIR__ . '/services/class-batch-run-service.php';
 require_once __DIR__ . '/services/class-projection-sync-service.php';
 require_once __DIR__ . '/services/class-job-status-service.php';
+require_once __DIR__ . '/services/class-job-stream-error-code.php';
 require_once __DIR__ . '/services/class-job-progress-stream-service.php';
 require_once __DIR__ . '/services/class-analyze-media-service.php';
 require_once __DIR__ . '/../sovereign/repositories/interface-sync-state-repository.php';

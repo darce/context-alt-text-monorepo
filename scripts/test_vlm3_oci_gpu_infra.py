@@ -1,4 +1,5 @@
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -52,7 +53,7 @@ def test_gpu_instance_uses_configurable_a10_shape_and_dedicated_cloud_init() -> 
     assert "source_id               = var.gpu_image_ocid" in main_tf
     assert "boot_volume_size_in_gbs = var.gpu_boot_volume_size_in_gbs" in main_tf
     assert 'display_name        = "acx-gpu-burst"' in main_tf
-    assert 'user_data           = base64encode(file("${path.module}/gpu-cloud-init.yaml"))' in main_tf
+    assert 'user_data           = base64encode(templatefile("${path.module}/gpu-cloud-init.yaml"' in main_tf
     # First-boot RUNNING so cloud-init finishes; operator stops after bootstrap (S2-05).
     assert 'state = "RUNNING"' in main_tf
     assert "cloud-init" in main_tf.lower() or "gpu-cloud-init" in main_tf
@@ -221,3 +222,93 @@ def test_spike_artifact_records_e19_1_measurement_fields() -> None:
     assert artifact["measurement_candidate"]["model_id"] == "Qwen3-VL-30B-A3B-Instruct"
     assert artifact["measurements"]["warm_start_p95_seconds"]["target_seconds"] == 90
     assert "a10_quota_confirmed" in artifact["oci_capacity"]
+
+
+def test_gpu_self_stop_watchdog_units_and_bootstrap_are_configured() -> None:
+    cloud_init = (OCI_ROOT / "gpu-cloud-init.yaml").read_text()
+    parsed = yaml.safe_load(cloud_init)
+    files = {entry["path"]: entry for entry in parsed["write_files"]}
+
+    service = files["/etc/systemd/system/acx-gpu-self-stop.service"]["content"]
+    timer = files["/etc/systemd/system/acx-gpu-self-stop.timer"]["content"]
+    script = files["/usr/local/bin/acx-gpu-self-stop.sh"]["content"]
+    env = files["/etc/acx-gpu-self-stop.env"]["content"]
+
+    assert "Type=oneshot" in service
+    assert "ExecStart=/usr/local/bin/acx-gpu-self-stop.sh" in service
+    assert "EnvironmentFile=-/etc/acx-gpu-self-stop.env" in service
+    assert "source /etc/acx-gpu-self-stop.env" in script
+    assert "OnBootSec=${max_uptime_seconds}" in timer
+    assert "AccuracySec=30s" in timer
+    assert "Persistent=false" in timer
+    assert "Unit=acx-gpu-self-stop.service" in timer
+    assert "MAX_UPTIME_SECONDS=${max_uptime_seconds}" in env
+    assert "ACX_SELF_STOP_ENABLED=${self_stop_enabled}" in env
+    assert "ACX_SELF_STOP_FALLBACK_POWEROFF=0" in env
+    assert "oci compute instance action" in script
+    assert "--auth instance_principal" in script
+    assert "ACX_SELF_STOP_ENABLED:-0" in script
+    assert "systemctl poweroff" in script
+    assert "ACX_SELF_STOP_FALLBACK_POWEROFF:-0" in script
+
+    commands = "\n".join(parsed["runcmd"])
+    assert "systemctl enable acx-gpu-self-stop.timer" in commands
+    assert "systemctl start acx-gpu-self-stop.timer" in commands
+
+
+def test_gpu_self_stop_script_exits_without_stop_when_disabled(tmp_path: Path) -> None:
+    cloud_init = yaml.safe_load((OCI_ROOT / "gpu-cloud-init.yaml").read_text())
+    files = {entry["path"]: entry for entry in cloud_init["write_files"]}
+    script_path = tmp_path / "acx-gpu-self-stop.sh"
+    # Terraform's $${...} escape emits a literal ${...} in the rendered script.
+    script = files["/usr/local/bin/acx-gpu-self-stop.sh"]["content"].replace("$${", "${")
+    script_path.write_text(script)
+    script_path.chmod(0o755)
+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "logger").write_text("#!/bin/sh\nexit 0\n")
+    (bin_dir / "logger").chmod(0o755)
+    stop_marker = tmp_path / "stop-called"
+    (bin_dir / "oci").write_text(f"#!/bin/sh\ntouch {stop_marker}\n")
+    (bin_dir / "oci").chmod(0o755)
+
+    result = subprocess.run(
+        [str(script_path)],
+        env={**os.environ, "PATH": f"{bin_dir}:/usr/bin:/bin", "ACX_SELF_STOP_ENABLED": "0"},
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert not stop_marker.exists(), "disabled self-stop must not invoke the OCI stop command"
+
+
+def test_gpu_self_stop_terraform_wiring_and_narrow_policy_are_present() -> None:
+    main_tf = (OCI_ROOT / "main.tf").read_text()
+    variables_tf = (OCI_ROOT / "variables.tf").read_text()
+    outputs_tf = (OCI_ROOT / "outputs.tf").read_text()
+    tfvars_example = (OCI_ROOT / "terraform.tfvars.example").read_text()
+    watchdog_tf = (OCI_ROOT / "watchdog.tf").read_text()
+
+    assert 'variable "gpu_max_uptime_seconds"' in variables_tf
+    assert re.search(r'variable "gpu_max_uptime_seconds".*?default\s*=\s*3600', variables_tf, re.DOTALL)
+    assert 'variable "gpu_self_stop_enabled"' in variables_tf
+    assert re.search(r'variable "gpu_self_stop_enabled".*?default\s*=\s*true', variables_tf, re.DOTALL)
+    assert "templatefile(\"${path.module}/gpu-cloud-init.yaml\"" in main_tf
+    assert "max_uptime_seconds = var.gpu_max_uptime_seconds" in main_tf
+    assert "self_stop_enabled  = var.gpu_self_stop_enabled ? 1 : 0" in main_tf
+    assert "gpu_max_uptime_seconds" in tfvars_example
+    assert "gpu_self_stop_enabled" in tfvars_example
+    assert 'output "self_stop_dynamic_group_id"' in outputs_tf
+    assert 'output "gpu_max_uptime_seconds"' in outputs_tf
+
+    assert 'resource "oci_identity_dynamic_group" "acx_gpu_self_stop"' in watchdog_tf
+    assert 'resource "oci_identity_policy" "acx_gpu_self_stop"' in watchdog_tf
+    assert "instance.compartment.id" in watchdog_tf
+    assert "instance.id" in watchdog_tf
+    assert "in compartment id ${var.compartment_ocid}" in watchdog_tf
+    assert "INSTANCE_STOP" in watchdog_tf
+    assert "where request.permission = INSTANCE_STOP" in watchdog_tf
+    assert "manage instances" not in watchdog_tf.lower()

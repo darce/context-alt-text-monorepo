@@ -46,6 +46,103 @@ write_files:
       dpkg -s nvidia-container-toolkit >/dev/null
       docker image inspect ghcr.io/ggerganov/llama.cpp:server-cuda >/dev/null
 
+  # The watchdog is rendered by Terraform so the timer and its audit context
+  # use the same MAX_UPTIME_SECONDS value.
+  - path: /etc/acx-gpu-self-stop.env
+    owner: root:root
+    permissions: "0644"
+    content: |
+      MAX_UPTIME_SECONDS=${max_uptime_seconds}
+      ACX_SELF_STOP_ENABLED=${self_stop_enabled}
+      # Keep this disabled: guest poweroff is STOPPED-by-guest in the audit trail.
+      ACX_SELF_STOP_FALLBACK_POWEROFF=0
+
+  - path: /usr/local/bin/acx-gpu-self-stop.sh
+    owner: root:root
+    permissions: "0755"
+    content: |
+      #!/usr/bin/env bash
+      set -euo pipefail
+
+      log() {
+        logger -t acx-gpu-self-stop -- "$*"
+      }
+
+      # Keep the script safe to invoke manually as well as through systemd.
+      if [[ -r /etc/acx-gpu-self-stop.env ]]; then
+        # shellcheck disable=SC1091
+        source /etc/acx-gpu-self-stop.env
+      fi
+
+      # A disabled watchdog must be a no-op, including no metadata or OCI call.
+      if [[ "$${ACX_SELF_STOP_ENABLED:-0}" != "1" ]]; then
+        log "self-stop disabled (ACX_SELF_STOP_ENABLED != 1)"
+        exit 0
+      fi
+
+      if ! [[ "$${MAX_UPTIME_SECONDS:-}" =~ ^[1-9][0-9]*$ ]]; then
+        log "refusing self-stop: invalid MAX_UPTIME_SECONDS"
+        exit 1
+      fi
+
+      # OCI exposes the instance OCID only through the v2 metadata endpoint.
+      # The Bearer header is required for the protected endpoint.
+      metadata_url=http://169.254.169.254/opc/v2/instance/
+      if ! instance_id="$(
+        /usr/bin/curl --fail --silent --show-error \
+          -H 'Authorization: Bearer Oracle' \
+          "$metadata_url" |
+          /usr/bin/python3 -c 'import json, sys; print(json.load(sys.stdin)["id"])'
+      )" || [[ -z "$instance_id" ]]; then
+        log "refusing self-stop: unable to read instance OCID from metadata"
+        exit 1
+      fi
+
+      if command -v oci >/dev/null && oci compute instance action \
+        --instance-id "$instance_id" --action STOP --auth instance_principal; then
+        log "requested OCI STOP for instance $instance_id"
+        exit 0
+      fi
+
+      log "OCI instance-principal STOP failed for instance $instance_id"
+      if [[ "$${ACX_SELF_STOP_FALLBACK_POWEROFF:-0}" == "1" ]]; then
+        log "using guest poweroff fallback (audit state is STOPPED-by-guest)"
+        exec systemctl poweroff
+      fi
+
+      log "self-stop failed and guest poweroff fallback is disabled"
+      exit 1
+
+  - path: /etc/systemd/system/acx-gpu-self-stop.service
+    owner: root:root
+    permissions: "0644"
+    content: |
+      [Unit]
+      Description=ACX GPU maximum-uptime self-stop
+      Wants=network-online.target
+      After=network-online.target
+
+      [Service]
+      Type=oneshot
+      EnvironmentFile=-/etc/acx-gpu-self-stop.env
+      ExecStart=/usr/local/bin/acx-gpu-self-stop.sh
+
+  - path: /etc/systemd/system/acx-gpu-self-stop.timer
+    owner: root:root
+    permissions: "0644"
+    content: |
+      [Unit]
+      Description=Stop ACX GPU instance after its maximum uptime
+
+      [Timer]
+      OnBootSec=${max_uptime_seconds}
+      AccuracySec=30s
+      Persistent=false
+      Unit=acx-gpu-self-stop.service
+
+      [Install]
+      WantedBy=timers.target
+
   - path: /etc/systemd/system/acx-gpu-vlm.service
     permissions: "0644"
     content: |
@@ -87,4 +184,6 @@ runcmd:
   - systemctl daemon-reload
   - systemctl enable acx-gpu-vlm.service
   - systemctl start acx-gpu-vlm.service
+  - systemctl enable acx-gpu-self-stop.timer
+  - systemctl start acx-gpu-self-stop.timer
   - echo "ACX GPU cloud-init bootstrap complete"

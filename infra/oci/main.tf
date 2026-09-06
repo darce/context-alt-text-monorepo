@@ -266,7 +266,10 @@ resource "oci_core_instance" "acx_gpu_burst" {
 
   metadata = {
     ssh_authorized_keys = file(pathexpand(var.ssh_public_key_path))
-    user_data           = base64encode(file("${path.module}/gpu-cloud-init.yaml"))
+    user_data           = base64encode(templatefile("${path.module}/gpu-cloud-init.yaml", {
+      max_uptime_seconds = var.gpu_max_uptime_seconds
+      self_stop_enabled  = var.gpu_self_stop_enabled ? 1 : 0
+    }))
   }
 
   freeform_tags = {

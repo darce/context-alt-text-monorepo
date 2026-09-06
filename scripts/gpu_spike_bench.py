@@ -442,7 +442,8 @@ def endpoint_ready(
 # ---------------------------------------------------------------------------
 
 
-def _is_permitted_endpoint_address(address: str) -> bool:
+def _is_permitted_endpoint_address(address: str | int) -> bool:
+    """Accept a ``getaddrinfo`` sockaddr address element, which is ``str | int``."""
     ip = ipaddress.ip_address(address)
     if ip.is_loopback:
         return True

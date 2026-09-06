@@ -10,8 +10,12 @@ interface GuidedGuideStepDefinition {
 
 export const GUIDE_STEPS: readonly GuidedGuideStepDefinition[] = [
   { id: 'understand', label: 'Look at the photo', description: 'See the photo and the page it sits on.' },
-  { id: 'face', label: 'Find the face', description: 'AltContext found a face and matched it to a person you named before.' },
-  { id: 'identity', label: 'Confirm the match', description: 'Say yes to the match, or keep the person unnamed.' },
+  {
+    id: 'face',
+    label: 'Find the faces',
+    description: 'AltContext found two faces and matched each one to a person you named before.',
+  },
+  { id: 'identity', label: 'Confirm each match', description: 'Say yes to each match, or keep that person unnamed.' },
   { id: 'review', label: 'Check the description', description: 'Read the draft. Edit it or reject it.' },
   { id: 'apply', label: 'Apply it yourself', description: 'Nothing changes until you press Apply.' },
 ];

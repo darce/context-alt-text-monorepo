@@ -84,7 +84,7 @@
   }
 
   &__eyebrow {
-    color: var(--acx-color-primary-subtle);
+    color: var(--acx-color-accent-contrast);
     font-weight: var(--acx-font-weight-semibold);
     text-transform: uppercase;
     letter-spacing: 0.04em;
@@ -112,7 +112,7 @@
 
   &__boundary {
     max-width: 44rem;
-    color: var(--acx-color-primary-subtle);
+    color: var(--acx-color-accent-contrast);
   }
 
   .acx-button--primary {

@@ -30,7 +30,7 @@ export const GuidedPrototypeEntrance = ({ onBegin }: GuidedPrototypeEntranceProp
 
     <p className="acx-guided-entrance__boundary">
       This is a practice copy. Changes stay in this tab and reset when you reload the page. Live recognition and guest
-      access are still in progress.{' '}
+      access are still in progress.
       <a
         className="acx-button acx-button--secondary acx-guided-entrance__case-study"
         href="https://darce.xyz/projects/altcontext/"
@@ -38,8 +38,7 @@ export const GuidedPrototypeEntrance = ({ onBegin }: GuidedPrototypeEntranceProp
         rel="noreferrer"
       >
         Read the AltContext case study
-      </a>
-      .
+      </a>.
     </p>
   </section>
 );

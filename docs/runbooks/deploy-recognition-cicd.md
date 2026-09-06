@@ -105,6 +105,19 @@ ssh ubuntu@acx-backend.tail1a44b8.ts.net \
 | `TS_OAUTH_SECRET` | Tailscale OAuth client secret |
 | `ACX_DEPLOY_SSH_KEY` | Contents of the **private** `acx-ci-deploy` key |
 
+In the same repository's *Settings → Secrets and variables → Actions →
+Variables* tab, add these non-secret deployment values:
+
+| Variable | Value |
+| --- | --- |
+| `ACX_GPU_READY_URL` | The current private HTTP(S) readiness URL for the burst-GPU service |
+| `ACX_GPU_INSTANCE_ID` | The current `acx-gpu-burst` instance OCID |
+
+The workflow has no fallback readiness endpoint. Selecting the GPU lifecycle
+option with an empty `ACX_GPU_READY_URL` fails before any host mutation. Pinning
+the OCID as a repository variable also avoids giving the Actions runner OCI API
+credentials merely to resolve a display name.
+
 ### 4. GitHub Environments
 
 *Settings → Environments →* create `dev`, `staging`, `prod` (for deploy history +
@@ -144,9 +157,49 @@ prod can only deploy from `main`).
   → pick the environment. On the private Free-plan repository, `prod` is gated
   by typing `PROMOTE`; there is no required-reviewer pause. The script's own
   `CONFIRM=PROMOTE` check, boot-smoke, and `/health` verification then run.
+- **Install GPU lifecycle timers**: on a manual run, select
+  **gpu_lifecycle**. After the recognition deploy succeeds, the separately
+  flag-gated step runs `recognition-service.sh gpu-lifecycle`, converges the two
+  timers idempotently, and fails the workflow unless both timers are enabled and
+  active. Leaving the option off (the default) does not invoke the installer.
 - **Verify**: the script fails closed — it GETs `/health` and compares
   `commit_sha` to the deployed ref (retries for warm-up). A green run means the
   running service is at that SHA.
+
+The successful timer step ends with these verification lines:
+
+```text
+acx-gpu-start.timer enabled active
+acx-gpu-reap.timer enabled active
+gpu-lifecycle-install: done
+```
+
+For a local, transport-free review of exactly what the pipeline will install,
+run the following from the repository root. These commands read the same
+repository variables configured above; they do not open SSH or start a GPU:
+
+```bash
+ACX_GPU_READY_URL="$(gh variable get ACX_GPU_READY_URL)" || exit 1
+export ACX_GPU_READY_URL
+GPU_INSTANCE_ID="$(gh variable get ACX_GPU_INSTANCE_ID)" || exit 1
+export GPU_INSTANCE_ID
+ACX_DEPLOY_GPU_LIFECYCLE=1 ACX_GPU_LIFECYCLE_DRY_RUN=1 \
+  scripts/deploy/recognition-service.sh gpu-lifecycle
+```
+
+The dry-run output identifies the OCID source as `pinned` (when
+`GPU_INSTANCE_ID` is supplied) or `resolved-by-name`, and includes the rendered
+reaper `--max-lease-seconds` argument
+and the planned `systemctl is-enabled` / `systemctl is-active` checks. The
+installer argv never contains an OCI `instance action START` or `launch`
+operation: deployment installs and schedules the units; it does not directly
+start or provision a GPU instance.
+
+`START_INTERVAL` (default `30s`) and `REAP_INTERVAL` (default `2min`) accept
+a positive integer followed by `s`, `min`, `h`, or `d`, within systemd's finite
+microsecond range. Empty, zero, infinite, compound, and calendar values are
+rejected before transport so a malformed interval cannot leave a boot-only
+reaper timer.
 
 ## Rollback
 
@@ -164,6 +217,104 @@ the last green deploy run. Both commands then run exactly as written. Do not
 re-introduce an angle-bracket placeholder here: the shell passes it through
 verbatim, `git rev-parse` rejects it, and the rollback fails at the worst
 possible moment. `scripts/test_deploy_workflow_gate.py` asserts this.
+
+### Roll back the GPU lifecycle release
+
+The installer renders units into a fresh directory on every run, including
+idempotent reruns, and atomically replaces the release's `systemd` symlink only
+after validation. Published directories remain intact, so a partial write cannot
+damage an existing rollback snapshot. Before publishing or updating `previous`,
+it requires a non-empty saved environment, tmpfiles configuration, and all four
+unit files, plus `Service.ExecStart` and `Timer.OnUnitActiveSec`. An incomplete
+snapshot from an older installer aborts deployment and leaves both release
+links unchanged; restore its missing artifacts from that generation before
+retrying.
+
+The installer preserves the previous content-addressed lifecycle generation at
+`/opt/acx-gpu/previous`. This rollback disables the start timer first, leaves
+the reap timer in place while restoring, then restores the previous Python
+release, environment, tmpfiles configuration, and exact units. It verifies the
+effective fragments and rejects drop-ins before re-arming the start timer
+([RLSE-08]). Run it from a machine with the same SSH access as the deploy:
+
+<!-- gpu-lifecycle-rollback:start -->
+```bash
+ssh -l "${OCI_USER:-ubuntu}" -- "${OCI_HOST:?set OCI_HOST}" \
+  'bash --noprofile --norc -s' <<'REMOTE'
+set -euo pipefail
+start_timer_armed=0
+cleanup_unverified_start_timer() {
+  status=$?
+  if [ "$status" -ne 0 ] && [ "$start_timer_armed" -eq 1 ]; then
+    sudo systemctl disable --now acx-gpu-start.timer || \
+      echo "ERROR: could not disable START timer" >&2
+    sudo systemctl start acx-gpu-reap.service || \
+      echo "ERROR: fail-safe STOP invocation failed" >&2
+  fi
+  exit "$status"
+}
+trap cleanup_unverified_start_timer EXIT
+
+sudo systemctl disable --now acx-gpu-start.timer
+previous_release=$(readlink -f /opt/acx-gpu/previous)
+test -d "$previous_release/infra/oci/gpu_lifecycle"
+test -d "$previous_release/systemd"
+
+# Reject a generation whose cost cap is absent, disabled, or unreasonable.
+max_lease=$(sed -n 's/^MAX_LEASE_SECONDS=//p' \
+  "$previous_release/systemd/gpu-lifecycle.env")
+[[ "$max_lease" =~ ^[0-9]+$ ]]
+(( max_lease >= 1 && max_lease <= 86400 ))
+
+sudo install -m 0644 "$previous_release/systemd/gpu-lifecycle.env" \
+  /etc/acx/gpu-lifecycle.env
+sudo install -m 0644 "$previous_release/systemd/acx-gpu.conf" \
+  /etc/tmpfiles.d/acx-gpu.conf
+for unit in acx-gpu-start.service acx-gpu-start.timer \
+  acx-gpu-reap.service acx-gpu-reap.timer; do
+  sudo install -m 0644 "$previous_release/systemd/$unit" \
+    "/etc/systemd/system/$unit"
+done
+ln -sfn "$previous_release" /opt/acx-gpu/.rollback-current
+sudo mv -Tf /opt/acx-gpu/.rollback-current /opt/acx-gpu/current
+sudo systemctl daemon-reload
+sudo cmp -s "$previous_release/systemd/gpu-lifecycle.env" \
+  /etc/acx/gpu-lifecycle.env
+
+# Restore and synchronously prove the STOP-only backstop before start is armed.
+sudo systemctl enable --now acx-gpu-reap.timer
+sudo systemctl start acx-gpu-reap.service
+for unit in acx-gpu-start.service acx-gpu-start.timer \
+  acx-gpu-reap.service acx-gpu-reap.timer; do
+  fragment=$(systemctl show "$unit" --property=FragmentPath --value)
+  test "$fragment" = "/etc/systemd/system/$unit"
+  test -z "$(systemctl show "$unit" --property=DropInPaths --value)"
+  sudo cmp -s "$previous_release/systemd/$unit" "$fragment"
+done
+expected_exec=$(sed -n 's/^ExecStart=//p' \
+  "$previous_release/systemd/acx-gpu-reap.service")
+effective_exec=$(systemctl show acx-gpu-reap.service \
+  --property=ExecStart --value)
+case "$effective_exec" in
+  *"argv[]=$expected_exec ;"*) ;;
+  *) echo "ERROR: effective reaper command differs from selected generation" >&2; exit 1 ;;
+esac
+case "$effective_exec" in
+  *'--max-lease-seconds ${MAX_LEASE_SECONDS}'*) ;;
+  *) echo "ERROR: effective reaper does not consume MAX_LEASE_SECONDS" >&2; exit 1 ;;
+esac
+systemctl is-enabled --quiet acx-gpu-reap.timer
+systemctl is-active --quiet acx-gpu-reap.timer
+
+start_timer_armed=1
+sudo systemctl enable --now acx-gpu-start.timer
+systemctl is-enabled --quiet acx-gpu-start.timer
+systemctl is-active --quiet acx-gpu-start.timer
+start_timer_armed=0
+trap - EXIT
+REMOTE
+```
+<!-- gpu-lifecycle-rollback:end -->
 
 The same `promote`/`GIT_REF` levers are available by dispatching the workflow
 from an older commit.

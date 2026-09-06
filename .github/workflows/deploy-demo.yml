@@ -59,6 +59,9 @@ jobs:
       # redact every URL in Playwright failure output, blinding the smoke's own
       # diagnostics. Fallback keeps the workflow runnable before vars are set.
       WP_BASE_URL: ${{ vars.WP_BASE_URL || 'https://demo.altcontext.com' }}
+      # Opt-in only: an unset repository variable keeps the historical deploy
+      # path unchanged; setting it to 1 enables the remote GPU/reaper preflight.
+      ACX_DEMO_GPU_PREFLIGHT: ${{ vars.ACX_DEMO_GPU_PREFLIGHT || '' }}
     steps:
       # Env indirection on purpose (here and on every dispatch-controlled value,
       # including ref names — $(), backticks and quotes are legal in git refs):
@@ -184,7 +187,24 @@ jobs:
       # dist/alt-context-*.zip from the repo root. A command-prefix glob
       # assignment would pass the literal string and break scp mid-deploy.
       - name: Deploy demo stack + plugin
-        run: bash scripts/deploy/sync-demo.sh
+        run: |
+          set -o pipefail
+          bash scripts/deploy/sync-demo.sh 2>&1 | tee "$RUNNER_TEMP/deploy-demo.log"
+
+      - name: Report GPU environment preflight
+        if: always()
+        run: |
+          {
+            echo "## GPU environment preflight"
+            if [ -f "$RUNNER_TEMP/deploy-demo.log" ]; then
+              echo '```text'
+              grep -E 'GPU environment preflight|MANUAL STOP fallback:|^OK: GPU env preflight|^ERROR' \
+                "$RUNNER_TEMP/deploy-demo.log" || echo "No preflight output (ACX_DEMO_GPU_PREFLIGHT is unset or the deploy failed earlier)."
+              echo '```'
+            else
+              echo "No deploy log found (deploy step did not start)."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
 
       # sync-demo.sh's smoke runs ON the VM (its own network namespace); this
       # probe traverses the public path (DNS, 443 ingress, security lists) the
@@ -220,6 +240,8 @@ jobs:
       # AUTH-03: CI smoke uses a dedicated least-privilege WP user, never the
       # demo viewer/admin login. Playwright still reads ACX_E2E_WP_ADMIN_* env
       # names (auth.setup.ts); the *values* come from ACX_E2E_WP_CI_* secrets.
+      # The VM template names the same values WP_CI_USER/WP_CI_PASSWORD; the
+      # GitHub names are intentionally annotated in infra/oci/demo/.env.example.
       # ACX_E2E_WP_CI_USER must equal the VM secrets/.env WP_CI_USER (same
       # principal bootstrap converges), not merely avoid two denylist literals.
       - name: Refuse demo-admin identity for CI smoke

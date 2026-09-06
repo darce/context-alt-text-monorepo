@@ -61,6 +61,15 @@ describe('build-input fingerprint coverage [FEBT2-LG-NEW-02]', () => {
     ]);
   });
 
+  it('hashes the public demo script, declarations, and styles', () => {
+    const publicInputs = fingerprintedBuildInputs().filter((file) => file.startsWith('js/public/'));
+    expect(publicInputs).toEqual(expect.arrayContaining([
+      'js/public/demo-describe.js',
+      'js/public/demo-describe.d.ts',
+      'js/public/demo-describe.css',
+    ]));
+  });
+
   it('reports nothing when every candidate is hashed', () => {
     const fingerprinted = fingerprintedBuildInputs();
 

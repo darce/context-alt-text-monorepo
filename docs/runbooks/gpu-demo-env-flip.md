@@ -41,10 +41,12 @@ Compose would decode them.
 GPU addresses must be private and cannot be loopback, unspecified, multicast,
 or link-local, including IPv4-mapped IPv6 and allowlisted DNS answers.
 
-## 2. Prove the reaper and preflight both files
+## 2. Stage and optionally prove the preflight contract
 
-Stage the validator in a private temporary directory on the VM, then validate
-both halves in one invocation. The reaper check loads the argument parser
+Stage the validator in a private temporary directory on the VM, then optionally
+validate both halves in one invocation. This is a contract check only; it does
+not replace the release gate that `deploy-demo` repeats after the prod API
+redeploy. The reaper check loads the argument parser
 from the effective service WorkingDirectory; that checkout and its
 `scripts/deploy/gpu-snapshot-deployments.conf` registry must be readable and
 valid. It verifies both the executable path and the effective arguments.
@@ -74,6 +76,10 @@ scp infra/oci/demo/lib/describe-gate.sh ubuntu@acx-backend.tail1a44b8.ts.net:/tm
 scp scripts/deploy/lib/verify-live-gpu.sh ubuntu@acx-backend.tail1a44b8.ts.net:/tmp/acx-gpu-preflight/lib/
 ssh ubuntu@acx-backend.tail1a44b8.ts.net 'chmod 700 /tmp/acx-gpu-preflight/preflight-gpu-env.sh /tmp/acx-gpu-preflight/lib/verify-live-gpu.sh && sudo /tmp/acx-gpu-preflight/preflight-gpu-env.sh --check-reaper /opt/acx-backend/prod/secrets/.env /opt/acx-backend/demo/secrets/.env'
 ```
+
+If this optional check is run before the producer change, leave the staged
+helpers in place and continue with the producer flip; do not treat this early
+check as permission to publish the demo.
 
 ## 3. Deploy in producer-then-consumer order
 

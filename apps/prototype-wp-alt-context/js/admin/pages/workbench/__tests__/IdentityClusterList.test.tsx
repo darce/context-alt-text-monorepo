@@ -1051,7 +1051,20 @@ describe('IdentityClusterList', () => {
 
   it('allows splitting a cluster', async () => {
     const splitDeferred = createDeferred<unknown>();
-    (api.splitCluster as Mock).mockReturnValue(splitDeferred.promise);
+    let splitSignalAtCall: AbortSignal | undefined;
+    // Pin the transport contract itself (TEST-15, lexicons/engineering.md:396):
+    // the live signal bounds the client wait (RES-02,
+    // docs/reviews/uxp-2/lexicons/engineering.md:36; Release It! ch-5,
+    // literature/extracted/refactoring/distilled/release-it.md:188) without
+    // claiming the write did not land (DDIA ch-8,
+    // literature/extracted/refactoring/distilled/designing-data-intensive-applications.md:305).
+    (api.splitCluster as Mock).mockImplementation(
+      (_clusterId: string, _request: unknown, signal: AbortSignal) => {
+        splitSignalAtCall = signal;
+        expect(signal.aborted).toBe(false);
+        return splitDeferred.promise;
+      },
+    );
 
     const secondIdentity = {
       ...baseIdentity,
@@ -1087,13 +1100,18 @@ describe('IdentityClusterList', () => {
 
     // Split always forces 2 clusters to guarantee a split happens
     await waitFor(() =>
-      expect(api.splitCluster).toHaveBeenCalledWith('cluster-1', {
-        nClusters: 2,
-        anchorIdentityId: 'identity-1',
-        splitMode: 'forced',
-        mode: 'sync',
-      }),
+      expect(api.splitCluster).toHaveBeenCalledWith(
+        'cluster-1',
+        {
+          nClusters: 2,
+          anchorIdentityId: 'identity-1',
+          splitMode: 'forced',
+          mode: 'sync',
+        },
+        expect.any(AbortSignal),
+      ),
     );
+    expect(splitSignalAtCall).toBeInstanceOf(AbortSignal);
   });
 
   describe('inline suggestion batching', () => {

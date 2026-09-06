@@ -244,6 +244,7 @@ write_files:
 
       [Timer]
       OnBootSec=${max_uptime_seconds}
+      OnUnitActiveSec=${max_uptime_seconds}
       AccuracySec=30s
       Persistent=false
       Unit=acx-gpu-self-stop.service

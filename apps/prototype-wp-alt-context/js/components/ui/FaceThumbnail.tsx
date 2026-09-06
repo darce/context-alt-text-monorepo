@@ -59,7 +59,7 @@ export const FaceThumbnail = React.forwardRef<HTMLDivElement, FaceThumbnailProps
       size = 'md',
       sizePx,
       shape = 'circle',
-      alt = __('Detected face', 'alt-context'),
+      alt,
       loading,
       className = '',
       onLoad,
@@ -69,6 +69,7 @@ export const FaceThumbnail = React.forwardRef<HTMLDivElement, FaceThumbnailProps
   ) => {
     const [loadState, setLoadState] = React.useState<LoadingState>('loading');
     const imgRef = React.useRef<HTMLImageElement | null>(null);
+    const resolvedAlt = alt ?? __('Detected face', 'alt-context');
     const displaySize = sizePx ?? sizeMap[size];
     const iconSize = Math.max(12, Math.round(displaySize * 0.35));
     const borderRadius = shape === 'square' ? '0' : '50%';
@@ -108,7 +109,7 @@ export const FaceThumbnail = React.forwardRef<HTMLDivElement, FaceThumbnailProps
 
     // Show placeholder on error
     if (loadState === 'error') {
-      const errorLabel = __('Face image unavailable', 'alt-context');
+      const errorLabel = alt ?? __('Face image unavailable', 'alt-context');
       return (
         <div
           ref={ref}
@@ -155,7 +156,7 @@ export const FaceThumbnail = React.forwardRef<HTMLDivElement, FaceThumbnailProps
         <img
           ref={imgRef}
           src={mediaUrl}
-          alt={alt}
+          alt={resolvedAlt}
           loading={loading}
           onLoad={handleLoad}
           onError={handleError}

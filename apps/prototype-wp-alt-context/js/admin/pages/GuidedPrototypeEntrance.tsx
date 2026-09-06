@@ -39,7 +39,6 @@ export const GuidedPrototypeEntrance = ({ onBegin }: GuidedPrototypeEntranceProp
       >
         Read the AltContext case study
       </a>
-      .
     </p>
   </section>
 );

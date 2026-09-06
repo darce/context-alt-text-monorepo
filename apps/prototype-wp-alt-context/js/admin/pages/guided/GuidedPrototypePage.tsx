@@ -7,6 +7,7 @@ import {
   createGuidedScenario,
   getGuidedFace,
   getGuidedPerson,
+  getLastGuidedApplication,
   leaveGuidedIdentityUnidentified,
   rejectGuidedCandidate,
   saveGuidedEdit,
@@ -244,8 +245,15 @@ export const GuidedPrototypePage = (): React.JSX.Element => {
   };
 
   const handleUndo = (): void => {
-    updateScenario((current) => undoGuidedApplication(current), 'Apply undone.', 'apply');
-    focusGuidedSection('apply');
+    const lastApplication = getLastGuidedApplication(scenario.history);
+    if (lastApplication?.previousAppliedText === undefined) {
+      return;
+    }
+
+    const errorMessage = updateScenario((current) => undoGuidedApplication(current), 'Apply undone.', 'apply');
+    if (errorMessage === undefined) {
+      focusGuidedSection('apply');
+    }
   };
 
   return (

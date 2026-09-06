@@ -38,7 +38,7 @@ const descriptionExplanation = (scenario: GuidedScenario): string => {
     return 'You kept both people unnamed, so the draft only says what is visible.';
   }
 
-  return 'Confirm or skip each face match first. Until then the draft only says what is visible.';
+  return 'Confirm each face match or keep the person unnamed first. Until then the draft only says what is visible.';
 };
 
 export const GuidedDescriptionReview = ({

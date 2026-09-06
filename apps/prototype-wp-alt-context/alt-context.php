@@ -212,9 +212,13 @@ function acx_define_env_constant(string $constantName, array $envNames, ?callabl
     // runs during early plugin bootstrap and the test fixtures stub WP
     // functions selectively, and (2) trimming would corrupt API keys or
     // base URLs that legitimately contain characters those filters strip.
+    // Names are the outer loop so the canonical name still wins over a legacy
+    // alias regardless of which superglobal carries it. Stores are the inner
+    // loop so a blank $_ENV entry falls through to $_SERVER for the same name
+    // instead of skipping straight to the next name.
     // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized,WordPress.Security.ValidatedSanitizedInput.MissingUnslash -- env-loaded config, see comment above
-    foreach ([$_ENV, $_SERVER] as $environmentStore) {
-        foreach ($envNames as $envName) {
+    foreach ($envNames as $envName) {
+        foreach ([$_ENV, $_SERVER] as $environmentStore) {
             $value = $environmentStore[$envName] ?? null;
             if (null === $value) {
                 continue;

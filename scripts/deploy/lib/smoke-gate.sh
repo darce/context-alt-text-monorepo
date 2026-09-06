@@ -81,6 +81,25 @@ classify_demo_probe() {
     esac
 }
 
+# classify_first_burst_bounded <chunk_count> <max> <total> -> PASS|FAIL
+# The bootstrap marker records the number of describe items admitted to the
+# first burst. It must be a non-negative integer no larger than either the
+# configured burst maximum or the live media population. A zero count is valid
+# for an idempotent SKIP/no-media bootstrap; malformed or negative values fail
+# closed so smoke cannot certify an unbounded publish.
+classify_first_burst_bounded() {
+    local chunk_count="$1" max="$2" total="$3"
+    case "$chunk_count" in *[!0-9]*|'') echo FAIL; return 1 ;; esac
+    case "$max" in *[!0-9]*|'') echo FAIL; return 1 ;; esac
+    case "$total" in *[!0-9]*|'') echo FAIL; return 1 ;; esac
+    if [ "$max" -eq 0 ] || [ "$chunk_count" -gt "$max" ] || [ "$chunk_count" -gt "$total" ]; then
+        echo FAIL
+        return 1
+    fi
+    echo PASS
+    return 0
+}
+
 # classify_alt_coverage <total> <with_alt> <min_pct> -> PASS|FAIL
 # Integer-only: (with_alt * 100 / total) >= min_pct. Fail closed on anything
 # that is not a measurable non-empty media set. The default IS the floor:

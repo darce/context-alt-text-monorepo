@@ -25,31 +25,47 @@ want both:
 | Instance | Shape | Expected state | Notes |
 | --- | --- | --- | --- |
 | `acx-backend` | `VM.Standard.A1.Flex` (4 OCPU / 24 GB, ARM, no GPU) | **RUNNING** | Always-Free; serves dev/staging/prod recognition |
-| `acx-gpu-burst` | `VM.GPU.A10.1` (1× A10 24 GB VRAM, 30 OCPU / 240 GB host) | **STOPPED** | ~$2.00/GPU-hour **while running**. Created RUNNING so cloud-init finishes, then stopped. **No idle reaper is live** — see the warning below |
+| `acx-gpu-burst` | `VM.GPU.A10.1` (1× A10 24 GB VRAM, 30 OCPU / 240 GB host) | **STOPPED** | ~$2.00/GPU-hour **while running**. Created RUNNING so cloud-init finishes, then stopped. Two-layer cost cap (backend reaper + guest self-stop) — verify both, see below |
 
 Anything else non-terminated in the tenancy is unexpected — investigate.
 
-> **There is no automatic GPU cost cap today.** `infra/oci/cloud-init.yaml`
-> defines `acx-gpu-idle-reaper.service` / `.timer`, but that block is a **dead
-> template**: verified on `acx-backend` 2026-08-04 (`which oci` absent, no
-> `acx-gpu` timer, no reaper unit files, `/etc/acx` does not exist,
-> `acx-gpu-idle-reaper.timer` **not-found**), and recorded in
-> [`docs/tasks/ocigov/OCIGOV-1-workbay-estate-governance.md`](../tasks/ocigov/OCIGOV-1-workbay-estate-governance.md)
-> § Current State Analysis. `infra/oci/gpu_lifecycle/reaper.py` has never been
-> deployed on any booted host. Until OCIGOV-1 lands a supervisor, the only
-> things that stop a burst GPU are (a) the compensating STOP inside
-> `scripts/gpu_burst_smoke.py`, which covers its own run only, and (b) an
-> operator. Budget as if nothing will stop the instance for you, and set the
-> Budget alert described below.
+> **The GPU cost cap has two layers. Verify both before trusting either.**
+>
+> **Layer 1 — backend-side reaper (`acx-backend`).**
+> `scripts/deploy/gpu-lifecycle-install.sh` installs `acx-gpu-reap.timer` /
+> `.service` on `acx-backend`. It runs every 2 min and STOPs `acx-gpu-burst`
+> when the describe queue drains or the max lease expires. It reads
+> `/run/acx/describe-load.json` and **fails closed** — if that snapshot is
+> missing or stale it logs `load snapshot untrustworthy; refusing STOP`, exits
+> `1`, and stops nothing. A failing `acx-gpu-reap.service` therefore means
+> **no backend-side cap is in effect**, even though the timer looks healthy.
+> Check both units, not just the timer:
+>
+> ```bash
+> ssh ubuntu@acx-backend 'systemctl status acx-gpu-reap.timer acx-gpu-reap.service --no-pager | head -20'
+> ssh ubuntu@acx-backend 'journalctl -u acx-gpu-reap.service -n 20 --no-pager'
+> ssh ubuntu@acx-backend 'ls -l /run/acx/describe-load.json'
+> ```
+>
+> **Layer 2 — guest-side self-stop watchdog (`acx-gpu-burst`).**
+> `infra/oci/gpu-cloud-init.yaml` installs `acx-gpu-self-stop.timer`, gated by
+> `gpu_watchdog_enabled` and bounded by `gpu_max_uptime_seconds`
+> (`infra/oci/variables.tf`). It calls OCI `instance-action --action STOP`
+> using an instance principal, retries with explicit connect/read timeouts, and
+> falls back to a local `poweroff` if the API path does not converge. It runs
+> **inside the guest**, so a guest kernel hang or broken systemd defeats it;
+> it is a backstop for layer 1, not a replacement.
+>
+> **Neither layer covers instances outside the pinned OCID** — the dynamic
+> group and the reaper both target `acx-gpu-burst` by id. Hand-created smoke
+> and one-off GPUs are unreaped by construction. Always answer from the full
+> instance list plus Cost Analysis, and keep the Budget alert below.
 
-> **Observed 2026-08-04.** That line earned itself. The tenancy held a *second*
-> A10, `acx-gpu-smoke-20260728-0218` (`role=gpu-smoke-ephemeral`,
-> `owner=wanlora`), **`RUNNING` for 173 h** since 2026-07-28 — nothing reaped it
-> despite the "ephemeral" role tag. The committed `acx-gpu-idle-reaper.timer`
-> makes GPU spend *look* self-limiting in the repo, but it is not installed on
-> any host (see the warning above), and hand-created smoke and one-off
-> instances would be outside its OCID pin even if it were. **Always answer from
-> the full instance list plus Cost Analysis, never from one named instance.**
+> **Observed 2026-08-04.** The unreaped-instance risk is not theoretical. The
+> tenancy held a *second* A10, `acx-gpu-smoke-20260728-0218`
+> (`role=gpu-smoke-ephemeral`, `owner=wanlora`), **`RUNNING` for 173 h** since
+> 2026-07-28 — nothing reaped it despite the "ephemeral" role tag, because it
+> was outside the OCID pin.
 
 Region: **`us-ashburn-1`** (iad). There are **no child compartments**; every
 resource lives under the tenancy root.

@@ -38,3 +38,13 @@ output "gpu_endpoint_url" {
   description = "Infra-produced value for ACX_GPU_ENDPOINT_URL (http://<private-ip>:8000)."
   value       = "http://${oci_core_instance.acx_gpu_burst.private_ip}:8000"
 }
+
+output "self_stop_dynamic_group_id" {
+  description = "OCID of the dynamic group used by the GPU instance self-stop watchdog."
+  value       = oci_identity_dynamic_group.acx_gpu_self_stop.id
+}
+
+output "gpu_max_uptime_seconds" {
+  description = "Configured maximum GPU instance uptime in seconds before self-stop."
+  value       = var.gpu_max_uptime_seconds
+}

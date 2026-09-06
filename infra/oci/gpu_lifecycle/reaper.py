@@ -87,7 +87,8 @@ _DEFAULT_READY_STALL_CYCLES = 3
 _DEFAULT_READY_SLEEP_SECONDS = 10.0
 _DEFAULT_LOCK_TIMEOUT_SECONDS = 30.0
 _LOCK_RETRY_SECONDS = 0.05
-_DEFAULT_RUNNING_SINCE_PATH = Path("/run/acx/gpu-running-since.json")
+_DEFAULT_RUNNING_SINCE_PATH = Path("/var/lib/acx-gpu/running-since.json")
+_RUNNING_SINCE_READ_FAILURE_RECOVERY_CYCLES = 3
 _RUNNING_SINCE_FUTURE_SKEW_SECONDS = 5.0
 # Live describe dumps omit batch_in_progress; warn once per process, not per poll.
 _ABSENT_BATCH_KEY_WARNED = False
@@ -453,6 +454,7 @@ class RunningSinceLeaseStore:
 
     _SOURCES = frozenset({"start_actuator", "first_observed"})
     _SCHEMA_VERSION = 2
+    _FAILURE_SCHEMA_VERSION = 1
 
     def __init__(
         self,
@@ -637,9 +639,74 @@ class RunningSinceLeaseStore:
 
     def observe_running(self, instance_id: str) -> RunningSinceRecord:
         record = self.read(instance_id)
-        if record is not None:
-            return record
-        return self.write(instance_id, source="first_observed")
+        if record is None:
+            raise CorruptRunningSinceLeaseError(
+                f"RUNNING instance {instance_id} has no trustworthy durable lease origin; "
+                "treating lease as expired"
+            )
+        return record
+
+    @property
+    def _read_failures_path(self) -> Path:
+        return self.path.with_name(f".{self.path.name}.read-failures.json")
+
+    def record_read_failure(self, instance_id: str) -> int:
+        """Durably count consecutive read failures across oneshot invocations."""
+        with self._locked_for_update():
+            failures = self._read_failure_counts()
+            count = failures.get(instance_id, 0) + 1
+            failures[instance_id] = count
+            self._write_failure_counts(failures)
+        return count
+
+    def clear_read_failures(self, instance_id: str) -> None:
+        if not self._read_failures_path.exists():
+            return
+        with self._locked_for_update():
+            failures = self._read_failure_counts()
+            if instance_id not in failures:
+                return
+            del failures[instance_id]
+            self._write_failure_counts(failures)
+
+    def _read_failure_counts(self) -> dict[str, int]:
+        try:
+            payload = json.loads(self._read_failures_path.read_text())
+        except FileNotFoundError:
+            return {}
+        except (OSError, json.JSONDecodeError, TypeError, ValueError):
+            # An unreadable recovery counter cannot safely extend the lease.
+            raise CorruptRunningSinceLeaseError(
+                f"running-since recovery counter is unreadable: {self._read_failures_path}"
+            )
+        if (
+            not isinstance(payload, dict)
+            or payload.get("schema_version") != self._FAILURE_SCHEMA_VERSION
+            or not isinstance(payload.get("instances"), dict)
+        ):
+            raise CorruptRunningSinceLeaseError(
+                f"running-since recovery counter is invalid: {self._read_failures_path}"
+            )
+        failures: dict[str, int] = {}
+        for key, value in payload["instances"].items():
+            if not isinstance(key, str) or isinstance(value, bool) or not isinstance(value, int) or value < 1:
+                raise CorruptRunningSinceLeaseError(
+                    f"running-since recovery counter is invalid: {self._read_failures_path}"
+                )
+            failures[key] = value
+        return failures
+
+    def _write_failure_counts(self, failures: dict[str, int]) -> None:
+        if not failures:
+            self._read_failures_path.unlink(missing_ok=True)
+            return
+        payload = {
+            "schema_version": self._FAILURE_SCHEMA_VERSION,
+            "instances": failures,
+        }
+        temporary = self._read_failures_path.with_name(f".{self._read_failures_path.name}.tmp")
+        temporary.write_text(json.dumps(payload, sort_keys=True) + "\n")
+        temporary.replace(self._read_failures_path)
 
     def remove(self, instance_id: str) -> None:
         with self._locked_for_update():
@@ -927,7 +994,8 @@ def _apply_running_since_leases(
                 continue
             try:
                 store.remove(instance.instance_id)
-            except OSError as exc:
+                store.clear_read_failures(instance.instance_id)
+            except (OSError, ValueError) as exc:
                 msg = (
                     f"{instance.instance_id}: running-since removal failed; lease cap disabled: "
                     f"{type(exc).__name__}: {exc}"
@@ -951,12 +1019,10 @@ def _apply_running_since_leases(
             if dry_run:
                 record = store.read(instance.instance_id)
                 if record is None:
-                    logger.info(
-                        "dry-run would record RUNNING lease instance=%s source=first_observed",
-                        instance.instance_id,
+                    raise CorruptRunningSinceLeaseError(
+                        f"RUNNING instance {instance.instance_id} has no trustworthy "
+                        "durable lease origin; treating lease as expired"
                     )
-                    observed.append(instance)
-                    continue
             else:
                 record = store.observe_running(instance.instance_id)
             age_seconds = store.age_seconds(record)
@@ -973,11 +1039,43 @@ def _apply_running_since_leases(
             )
             continue
         except (OSError, ValueError) as exc:
+            failure_count = 0
+            counter_error: Exception | None = None
+            if not dry_run:
+                try:
+                    failure_count = store.record_read_failure(instance.instance_id)
+                except (OSError, ValueError) as recovery_exc:
+                    counter_error = recovery_exc
+            if counter_error is not None or failure_count >= _RUNNING_SINCE_READ_FAILURE_RECOVERY_CYCLES:
+                detail = (
+                    f"recovery counter unavailable ({type(counter_error).__name__}: {counter_error})"
+                    if counter_error is not None
+                    else (
+                        f"failure {failure_count}/{_RUNNING_SINCE_READ_FAILURE_RECOVERY_CYCLES}"
+                    )
+                )
+                msg = (
+                    f"{instance.instance_id}: running-since observation failed; bounded RES-13 "
+                    f"recovery exhausted ({detail}); forcing cost-cap expiry: "
+                    f"{type(exc).__name__}: {exc}"
+                )
+                logger.error(msg)
+                errors.append(msg)
+                observed.append(
+                    GpuInstance(
+                        instance_id=instance.instance_id,
+                        state=instance.state,
+                        idle_for_seconds=sys.maxsize,
+                    )
+                )
+                continue
             msg = (
-                f"{instance.instance_id}: running-since observation failed; lease cap disabled: "
+                f"{instance.instance_id}: running-since observation failed; lease cap disabled "
+                f"only during bounded RES-13 recovery "
+                f"({failure_count}/{_RUNNING_SINCE_READ_FAILURE_RECOVERY_CYCLES}): "
                 f"{type(exc).__name__}: {exc}"
             )
-            logger.error(msg)
+            logger.warning(msg)
             errors.append(msg)
             # The age this instance carries came from OCI, not from the lease, so
             # feeding it to the absolute cost cap would STOP a machine whose lease
@@ -992,6 +1090,19 @@ def _apply_running_since_leases(
             continue
         else:
             source = record.source
+            if not dry_run:
+                try:
+                    store.clear_read_failures(instance.instance_id)
+                except (OSError, ValueError) as exc:
+                    # The authoritative lease remains usable. A stale recovery
+                    # count can only shorten a later degraded lease, never
+                    # extend the cost cap.
+                    logger.warning(
+                        "%s: could not clear running-since recovery state: %s: %s",
+                        instance.instance_id,
+                        type(exc).__name__,
+                        exc,
+                    )
         logger.info(
             "evaluating RUNNING lease instance=%s source=%s age_seconds=%s",
             instance.instance_id,

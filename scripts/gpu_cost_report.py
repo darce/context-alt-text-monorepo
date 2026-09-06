@@ -108,11 +108,13 @@ def _usage_items(payload: Any) -> list[dict[str, Any]]:
         elif "computedAmount" in payload or "computed_amount" in payload:
             items = [payload]
         else:
-            items = []
+            raise CostReportError("usage export has no recognized items list")
     else:
         raise CostReportError("usage export must be an object or list")
     if not all(isinstance(item, dict) for item in items):
         raise CostReportError("usage export items must be objects")
+    if not items:
+        raise CostReportError("usage export contains no usage items")
     return items
 
 
@@ -130,6 +132,30 @@ def _smoke_bursts(payload: Any) -> list[dict[str, Any]]:
         raise CostReportError("smoke report must be an object or list")
     if not bursts or not all(isinstance(burst, dict) for burst in bursts):
         raise CostReportError("smoke report must contain one or more object bursts")
+    for index, burst in enumerate(bursts, start=1):
+        checks = burst.get("checks")
+        if not isinstance(checks, list) or not checks:
+            raise CostReportError(f"smoke report burst {index} has no smoke checks/verdict")
+        failed_checks: list[str] = []
+        for check_index, check in enumerate(checks, start=1):
+            if not isinstance(check, dict):
+                failed_checks.append(f"check-{check_index}")
+            elif check.get("passed") is not True:
+                failed_checks.append(str(check.get("name") or f"check-{check_index}"))
+        if failed_checks:
+            raise CostReportError(
+                f"smoke report burst {index} has failed check(s): {', '.join(failed_checks)}"
+            )
+        run_status = burst.get("run_status")
+        if run_status is not None and run_status != "completed":
+            raise CostReportError(f"smoke report burst {index} is not completed: run_status={run_status!r}")
+        if burst.get("running_seconds_ongoing") is not False:
+            raise CostReportError(f"smoke report burst {index} is still running or has no closed duration")
+        measurements = burst.get("measurements")
+        if isinstance(measurements, dict) and measurements.get("running_seconds_ongoing") is not False:
+            raise CostReportError(f"smoke report burst {index} is still running according to measurements")
+        if burst.get("cost_estimate_ongoing") is True:
+            raise CostReportError(f"smoke report burst {index} has an ongoing cost estimate")
     return bursts
 
 
@@ -234,6 +260,21 @@ def _windows_overlap(
     return usage_start < smoke_end and usage_end > smoke_start
 
 
+def _overlap_seconds(
+    usage_start: datetime | None,
+    usage_end: datetime | None,
+    smoke_start: datetime | None,
+    smoke_end: datetime | None,
+) -> float | None:
+    """Return the intersection duration, or ``None`` when a window is absent."""
+
+    if usage_start is None or usage_end is None or smoke_start is None or smoke_end is None:
+        return None
+    start = max(usage_start, smoke_start)
+    end = min(usage_end, smoke_end)
+    return max(0.0, (end - start).total_seconds())
+
+
 def _usage_amount_for_bursts(
     usage_items: Iterable[dict[str, Any]],
     bursts: Sequence[dict[str, Any]],
@@ -249,16 +290,38 @@ def _usage_amount_for_bursts(
         usage_start, usage_end = _usage_window(item)
         resource_id = _usage_resource_id(item)
         matching_bursts: list[int] = []
+        overlap_weights: dict[int, float] = {}
         for index, ((smoke_start, smoke_end), identifiers) in enumerate(zip(windows, target_ids, strict=True)):
-            if identifiers and resource_id is not None and resource_id not in identifiers:
+            if identifiers:
+                if resource_id is None:
+                    if _windows_overlap(usage_start, usage_end, smoke_start, smoke_end):
+                        raise CostReportError(
+                            "usage item overlapping an identified burst has no resourceId"
+                        )
+                    continue
+                if resource_id not in identifiers:
+                    continue
+            elif resource_id is not None:
                 continue
             if _windows_overlap(usage_start, usage_end, smoke_start, smoke_end):
                 matching_bursts.append(index)
+                overlap_weights[index] = _overlap_seconds(
+                    usage_start,
+                    usage_end,
+                    smoke_start,
+                    smoke_end,
+                ) or 0.0
         if matching_bursts:
-            # A Usage API line can cover an entire granularity bucket. Count it
-            # once, against the first matching burst, rather than multiplying
-            # one ledger line when a report contains adjacent bursts.
-            amounts[matching_bursts[0]] += amount
+            # A Usage API line can cover an entire granularity bucket. Allocate
+            # it across every matching burst by the overlap duration instead of
+            # assigning the whole bucket to whichever burst appears first.
+            weights = [overlap_weights[index] for index in matching_bursts]
+            weight_total = sum(weights)
+            if weight_total <= 0:
+                weight_total = float(len(matching_bursts))
+                weights = [1.0] * len(matching_bursts)
+            for index, weight in zip(matching_bursts, weights, strict=True):
+                amounts[index] += amount * weight / weight_total
     return [round(amount, 6) for amount in amounts]
 
 

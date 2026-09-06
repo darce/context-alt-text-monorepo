@@ -182,6 +182,13 @@ compensating STOP or the host reaper.
 
 The smoke records four independent checks:
 
+Before the WordPress POST it captures a fresh, identity-pinned idle load
+snapshot (`queue_depth=0`, `in_flight=0`, and `batch_in_progress=false`). It
+then anchors the post-submit observation at the accepted enqueue/trigger and
+requires a fresh snapshot with pending work. This prevents work that was
+already present, or a stale wrapped-client response, from being credited to
+this run.
+
 1. **STOP attribution.** After the instance is `STOPPED`, it queries the OCI Audit
    event window for the first completed `STOP`/`StopInstance` event for that OCID and
    records its `principalName` (or `principalId`) as `stop_principal`, together with

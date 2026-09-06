@@ -171,15 +171,17 @@ describe('GuidedPrototypePage shell', () => {
     const fallback = screen.getByRole('img', {
       name: new RegExp(`Sample photo unavailable\\. ${INITIAL_SCENARIO.drafts.none}`),
     });
-    expect(fallback.textContent).toBe(`Sample photo unavailable. ${INITIAL_SCENARIO.drafts.none}`);
+    expect(fallback.textContent).toBe(`Sample photo unavailable.${INITIAL_SCENARIO.drafts.none}`);
   });
 
-  it('keeps the case-study sentence free of a space before its full stop', () => {
+  it('spaces the case-study link and closes the sentence without a gap before the full stop', () => {
     render(<GuidedPrototypePage />);
 
     const boundary = screen.getByText(/This is a practice copy\./, { selector: 'p' });
-    expect(boundary.textContent).not.toContain(' .');
-    expect(boundary.textContent?.endsWith('.')).toBe(true);
+    expect(boundary.textContent).toBe(
+      'This is a practice copy. Changes stay in this tab and reset when you reload the page. Live recognition and ' +
+        'guest access are still in progress. Read the AltContext case study.',
+    );
   });
 });
 

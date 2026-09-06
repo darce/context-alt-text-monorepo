@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 import pytest
-
 from infra.oci.gpu_lifecycle.controller import (
     GpuInstance,
     GpuLifecycleController,
@@ -77,7 +77,7 @@ def test_expired_lease_forces_stop_before_untrustworthy_load_return(load_source:
 
 
 def test_running_lease_store_age_forces_stop_on_untrustworthy_load(tmp_path) -> None:
-    clock = {
+    clock: dict[str, Any] = {
         "wall": datetime(2026, 9, 6, 12, 0, tzinfo=UTC) - timedelta(seconds=7200),
         "monotonic": 100.0,
     }
@@ -179,3 +179,70 @@ def test_lease_stop_failure_does_not_block_another_on_untrustworthy_load() -> No
     assert result.lease_expired == [("STOP", "good")]
     assert any("STOP failed for bad" in error for error in result.errors)
     assert any("load snapshot untrustworthy" in error for error in result.errors)
+
+
+class _FailingLeaseStore:
+    """A lease store whose observation raises the transient I/O error path."""
+
+    def __init__(self, error: Exception) -> None:
+        self._error = error
+        self.path = None
+
+    def record_start(self, instance_id: str) -> None:  # pragma: no cover - unused
+        raise AssertionError("record_start must not be called in this test")
+
+    def observe_running(self, instance_id: str) -> object:
+        raise self._error
+
+    def age_seconds(self, record: object) -> int:  # pragma: no cover - unreachable
+        raise AssertionError("age_seconds must not be reached")
+
+
+class TrustworthyIdleLoadSource:
+    def snapshot(self) -> JobLoadSnapshot:
+        return JobLoadSnapshot(queue_depth=0, in_flight=0, batch_in_progress=False)
+
+
+def test_lease_store_failure_disables_the_cap_instead_of_using_a_foreign_age() -> None:
+    """A failed lease observation must not leave a stale age eligible for the cap.
+
+    The instance arrives carrying the OCI-reported idle time. That is not a lease
+    age, so honouring it would STOP a machine whose lease age is unknown while the
+    log claims the cap is disabled.
+    """
+    actuator = RecordingActuator()
+
+    result = run_reap_cycle(
+        controller=GpuLifecycleController(idle_seconds=300),
+        instances=[_running("unknown-age", age_seconds=7200)],
+        load_source=UntrustworthyLoadSource(),
+        actuator=actuator,
+        fence_delay_seconds=0,
+        max_lease_seconds=3600,
+        running_since_store=_FailingLeaseStore(  # type: ignore[arg-type]
+            OSError("lease store unreadable")
+        ),
+    )
+
+    assert actuator.stopped == []
+    assert result.lease_expired == []
+    assert any("lease cap disabled" in error for error in result.errors)
+
+
+def test_dry_run_does_not_actuate_the_ordinary_idle_stop() -> None:
+    """dry_run must suppress every STOP, not only the forced lease-cap STOP."""
+    actuator = RecordingActuator()
+
+    result = run_reap_cycle(
+        controller=GpuLifecycleController(idle_seconds=300),
+        instances=[_running("idle-instance", age_seconds=3600)],
+        load_source=TrustworthyIdleLoadSource(),
+        actuator=actuator,
+        fence_delay_seconds=0,
+        max_lease_seconds=0,
+        dry_run=True,
+    )
+
+    assert actuator.stopped == []
+    assert result.actuated == [("STOP", "idle-instance")]
+    assert result.decided == [("STOP", "idle-instance")]

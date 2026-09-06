@@ -19,7 +19,6 @@ from dataclasses import dataclass
 from pathlib import Path, PureWindowsPath
 from typing import Any
 
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_MANIFEST_DIR = REPO_ROOT / "config" / "lane-orchestration"
 TERMINAL_STATUSES = frozenset({"closed", "merged"})
@@ -70,12 +69,8 @@ def normalize_owned_path(path: str) -> str:
     value = _normalise_slashes(path)
     value = posixpath.normpath(value or ".")
 
-    if posixpath.isabs(value) or PureWindowsPath(value).is_absolute() or re.match(
-        r"^[A-Za-z]:", value
-    ):
-        raise ManifestError(
-            f"owned path {path!r} is absolute; paths must be repository-relative"
-        )
+    if posixpath.isabs(value) or PureWindowsPath(value).is_absolute() or re.match(r"^[A-Za-z]:", value):
+        raise ManifestError(f"owned path {path!r} is absolute; paths must be repository-relative")
 
     # Repeated suffixes occur in patterns such as ``src/**/*``.  They all
     # denote a directory prefix for this checker.
@@ -87,9 +82,7 @@ def normalize_owned_path(path: str) -> str:
         value = posixpath.normpath(value or ".")
 
     if value == ".." or value.startswith("../"):
-        raise ManifestError(
-            f"owned path {path!r} escapes the repository root after normalization"
-        )
+        raise ManifestError(f"owned path {path!r} escapes the repository root after normalization")
 
     # A root glob (or an explicit current-directory path) owns the whole
     # repository.  The empty spelling is convenient for prefix checks.
@@ -147,9 +140,7 @@ def _lane_entries(document: dict[str, Any], manifest_path: Path) -> Iterable[dic
         entries: list[dict[str, Any]] = []
         for lane_id, config in raw_lanes.items():
             if not isinstance(config, dict):
-                raise ManifestError(
-                    f"{manifest_path}: lane {lane_id!r} must be an object"
-                )
+                raise ManifestError(f"{manifest_path}: lane {lane_id!r} must be an object")
             entry = dict(config)
             entry.setdefault("lane_id", lane_id)
             entries.append(entry)
@@ -159,9 +150,7 @@ def _lane_entries(document: dict[str, Any], manifest_path: Path) -> Iterable[dic
     entries = []
     for index, entry in enumerate(raw_lanes):
         if not isinstance(entry, dict):
-            raise ManifestError(
-                f"{manifest_path}: lanes[{index}] must be an object"
-            )
+            raise ManifestError(f"{manifest_path}: lanes[{index}] must be an object")
         entries.append(entry)
     return entries
 
@@ -178,9 +167,7 @@ def _owned_paths(entry: dict[str, Any], manifest_path: Path) -> tuple[str, ...]:
     paths: list[str] = []
     for index, path in enumerate(raw_paths):
         if not isinstance(path, str):
-            raise ManifestError(
-                f"{manifest_path}: owned_paths[{index}] must be a string"
-            )
+            raise ManifestError(f"{manifest_path}: owned_paths[{index}] must be a string")
         normalized = normalize_owned_path(path)
         if normalized not in paths:
             paths.append(normalized)
@@ -193,9 +180,9 @@ def load_lanes(manifest_dir: Path) -> tuple[list[Path], list[Lane]]:
     if manifest_dir.exists() and not manifest_dir.is_dir():
         raise ManifestError(f"{manifest_dir}: manifest path is not a directory")
 
-    manifest_paths = sorted(
-        path for path in manifest_dir.glob("*.json") if path.is_file()
-    ) if manifest_dir.exists() else []
+    manifest_paths = (
+        sorted(path for path in manifest_dir.glob("*.json") if path.is_file()) if manifest_dir.exists() else []
+    )
     lanes: list[Lane] = []
     for manifest_path in manifest_paths:
         try:
@@ -224,9 +211,7 @@ def load_lanes(manifest_dir: Path) -> tuple[list[Path], list[Lane]]:
     return manifest_paths, lanes
 
 
-def _add_status(
-    statuses: dict[str, str], key: object, value: object, *, task_ref: str | None = None
-) -> bool:
+def _add_status(statuses: dict[str, str], key: object, value: object, *, task_ref: str | None = None) -> bool:
     if not isinstance(value, str):
         return False
     key_text = str(key).strip()
@@ -251,10 +236,7 @@ def _collect_statuses(
     if isinstance(value, list):
         recognized = allow_empty and not value
         for row in value:
-            recognized = (
-                _collect_statuses(row, statuses, task_ref=task_ref)
-                or recognized
-            )
+            recognized = _collect_statuses(row, statuses, task_ref=task_ref) or recognized
         return recognized
     if not isinstance(value, dict):
         return False
@@ -293,22 +275,13 @@ def _collect_statuses(
         if isinstance(child, str):
             recognized = _add_status(statuses, key, child, task_ref=task_ref) or recognized
         elif isinstance(child, dict) and isinstance(child.get("status"), str):
-            recognized = (
-                _add_status(statuses, key, child["status"], task_ref=task_ref)
-                or recognized
-            )
-            recognized = (
-                _collect_statuses(child, statuses, task_ref=task_ref)
-                or recognized
-            )
+            recognized = _add_status(statuses, key, child["status"], task_ref=task_ref) or recognized
+            recognized = _collect_statuses(child, statuses, task_ref=task_ref) or recognized
         elif isinstance(child, (dict, list)):
             child_task = task_ref
             if "/" not in str(key):
                 child_task = str(key)
-            recognized = (
-                _collect_statuses(child, statuses, task_ref=child_task)
-                or recognized
-            )
+            recognized = _collect_statuses(child, statuses, task_ref=child_task) or recognized
     return recognized
 
 
@@ -324,20 +297,14 @@ def load_lane_statuses(status_path: Path | None) -> dict[str, str]:
     statuses: dict[str, str] = {}
     recognized = _collect_statuses(document, statuses, allow_empty=True)
     if document not in ({}, []) and not statuses and not recognized:
-        raise ManifestError(
-            f"{status_path}: status export contains no recognized lane statuses"
-        )
+        raise ManifestError(f"{status_path}: status export contains no recognized lane statuses")
     return statuses
 
 
 def _parse_status_filters(values: Iterable[str]) -> set[str]:
     statuses: set[str] = set()
     for value in values:
-        statuses.update(
-            part.strip().lower()
-            for part in value.split(",")
-            if part.strip()
-        )
+        statuses.update(part.strip().lower() for part in value.split(",") if part.strip())
     return statuses
 
 
@@ -352,16 +319,17 @@ def _lane_is_included(
     if has_status_export and lane.key not in status_override:
         return False
     if include_statuses:
-        return "all" in include_statuses or "*" in include_statuses or (
-            effective_status is not None and effective_status in include_statuses
+        return (
+            "all" in include_statuses
+            or "*" in include_statuses
+            or (effective_status is not None and effective_status in include_statuses)
         )
     # A status export is authoritative: a lane absent from it is stale, even
     # if its checked-in manifest entry still contains an old status.  Without
-    # an export, an entry must carry a lifecycle status to be considered live;
-    # callers can use ``--include-status all`` when intentionally inspecting
-    # status-less configuration rows.
+    # an export, a status-less manifest entry is live: real manifests omit the
+    # key entirely, so excluding them would hide every overlap in the repo.
     if effective_status is None:
-        return False
+        return True
     return effective_status not in TERMINAL_STATUSES
 
 
@@ -389,10 +357,7 @@ def _parse_allow_specs(values: Iterable[str]) -> dict[frozenset[str], str]:
 
         endpoints = pair_text.split(":")
         if len(endpoints) != 2 or not all(endpoint.strip() for endpoint in endpoints):
-            raise ManifestError(
-                "--allow must be TASK/LANE:TASK/LANE, optionally followed by "
-                "=REASON"
-            )
+            raise ManifestError("--allow must be TASK/LANE:TASK/LANE, optionally followed by =REASON")
         left, right = (endpoint.strip() for endpoint in endpoints)
         if "/" not in left or "/" not in right:
             raise ManifestError("--allow endpoints must be TASK/LANE identifiers")
@@ -400,9 +365,7 @@ def _parse_allow_specs(values: Iterable[str]) -> dict[frozenset[str], str]:
     return allowlist
 
 
-def find_overlaps(
-    lanes: Iterable[Lane], allowlist: dict[frozenset[str], str] | None = None
-) -> list[dict[str, Any]]:
+def find_overlaps(lanes: Iterable[Lane], allowlist: dict[frozenset[str], str] | None = None) -> list[dict[str, Any]]:
     """Return one record for every pair of lanes with one or more matches."""
 
     ordered_lanes = sorted(lanes, key=lambda lane: (lane.key, str(lane.manifest_path)))
@@ -456,10 +419,7 @@ def _print_human(
     lanes: list[Lane],
     overlaps: list[dict[str, Any]],
 ) -> None:
-    print(
-        f"Lane manifest overlap check: {len(lanes)} live lanes "
-        f"from {len(manifest_paths)} manifest(s)"
-    )
+    print(f"Lane manifest overlap check: {len(lanes)} live lanes from {len(manifest_paths)} manifest(s)")
     if not overlaps:
         print("No owned-path overlaps.")
         return
@@ -467,18 +427,14 @@ def _print_human(
     for overlap in overlaps:
         marker = "ALLOW" if overlap["allowed"] else "OVERLAP"
         lane_text = " <-> ".join(overlap["lanes"])
-        paths_text = ", ".join(
-            f"{pair['left']} <-> {pair['right']}" for pair in overlap["paths"]
-        )
+        paths_text = ", ".join(f"{pair['left']} <-> {pair['right']}" for pair in overlap["paths"])
         reason = overlap.get("allow_reason")
         reason_text = f" ({reason})" if reason else ""
         print(f"{marker}: {lane_text} | {paths_text}{reason_text}")
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
-        description="Check live lane manifests for overlapping owned paths."
-    )
+    parser = argparse.ArgumentParser(description="Check live lane manifests for overlapping owned paths.")
     parser.add_argument(
         "--manifest-dir",
         type=Path,
@@ -489,8 +445,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--lane-status-json",
         type=Path,
         help=(
-            "task/lane status export used as the authoritative live-lane set; "
-            "manifest lanes absent from it are stale"
+            "task/lane status export used as the authoritative live-lane set; manifest lanes absent from it are stale"
         ),
     )
     parser.add_argument(

@@ -11,6 +11,8 @@ import {
   getGuidedIdentity,
   getGuidedPerson,
   getLastGuidedApplication,
+  GUIDED_CANDIDATE_STATUS,
+  GUIDED_IDENTITY_STATUS,
   GUIDED_PERSON_KEYS,
   leaveGuidedIdentityUnidentified,
   nameGuardError,
@@ -36,8 +38,8 @@ describe('guided prototype scenario state (two people, one press photo)', () => 
       [KATY, 'right'],
     ]);
     expect(scenario.identities).toEqual([
-      { faceId: JUSTIN, status: 'unconfirmed', source: 'none' },
-      { faceId: KATY, status: 'unconfirmed', source: 'none' },
+      { faceId: JUSTIN, status: GUIDED_IDENTITY_STATUS.UNCONFIRMED, source: 'none' },
+      { faceId: KATY, status: GUIDED_IDENTITY_STATUS.UNCONFIRMED, source: 'none' },
     ]);
 
     expect(getGuidedPerson(scenario, KATY)).toMatchObject({
@@ -46,8 +48,8 @@ describe('guided prototype scenario state (two people, one press photo)', () => 
       savedPhotoCount: 5,
     });
     expect(getGuidedPerson(scenario, KATY).galleryPhotos.map((photo) => photo.credit)).toEqual([
-      'Justin Higuchi, CC BY 4.0',
-      'Glenn Francis, CC BY-SA 4.0',
+      'Justin Higuchi, CC BY 4.0, resized',
+      'Glenn Francis (Toglenn), CC BY-SA 4.0, resized',
       'Voice of America, public domain',
     ]);
     expect(getGuidedPerson(scenario, JUSTIN)).toMatchObject({
@@ -60,8 +62,18 @@ describe('guided prototype scenario state (two people, one press photo)', () => 
       expect.stringContaining('guided-katy-perry-2019'),
       expect.stringContaining('guided-katy-perry-2016'),
     ]);
-    expect(getGuidedPerson(scenario, JUSTIN).galleryPhotos).toHaveLength(2);
-    expect(getGuidedPerson(scenario, JUSTIN).galleryPhotos[0].src).toContain('guided-justin-trudeau-2025');
+    const justinPhotos = getGuidedPerson(scenario, JUSTIN).galleryPhotos;
+    expect(justinPhotos).toHaveLength(2);
+    expect(justinPhotos.map((photo) => photo.src)).toEqual([
+      expect.stringContaining('guided-justin-trudeau-2025'),
+      expect.stringContaining('guided-justin-trudeau-2025-b'),
+    ]);
+    expect(justinPhotos.every((photo) => photo.src.trim() !== '')).toBe(true);
+    expect(new Set(justinPhotos.map((photo) => photo.src)).size).toBe(justinPhotos.length);
+    expect(justinPhotos.map((photo) => photo.credit)).toEqual([
+      '© European Union, 2025, EU reuse licence, resized',
+      '© European Union, 2025, EU reuse licence, resized',
+    ]);
     for (const person of scenario.people) {
       expect(person.galleryPhotos.length).toBeLessThanOrEqual(person.savedPhotoCount);
       for (const photo of person.galleryPhotos) {
@@ -92,7 +104,7 @@ describe('guided prototype scenario state (two people, one press photo)', () => 
 
     expect(scenario.pressPhoto.src).toContain('guided-press-tribeca-2026');
     expect(scenario.pressPhoto.altText).toBe('Two people at a film festival.');
-    expect(scenario.pressPhoto.credit).toBe('Colleen Sturtevant, CC BY-SA 4.0');
+    expect(scenario.pressPhoto.credit).toBe('Colleen Sturtevant, CC BY-SA 4.0, resized');
     expect(scenario.pressPhoto.event).toBe('Tribeca Festival, New York, June 2026');
     expect(scenario.appliedText).toBe(scenario.pressPhoto.altText);
     expect(scenario.provenance).toEqual({
@@ -105,9 +117,25 @@ describe('guided prototype scenario state (two people, one press photo)', () => 
         'A Coachella press photo of the same two people matched both, even with a hand over her mouth. It is not bundled because of licensing.',
     });
     expect(scenario.visualFacts).toHaveLength(4);
-    expect(scenario.candidate).toEqual({ text: scenario.drafts.none, status: 'ready' });
+    expect(scenario.candidate).toEqual({ text: scenario.drafts.none, status: GUIDED_CANDIDATE_STATUS.READY });
     expect(scenario.drafts.none).not.toMatch(/Katy Perry|Justin Trudeau/);
     expect(scenario.history).toEqual([]);
+  });
+
+  it('keeps every bundled photo credit complete and marks Creative Commons edits', () => {
+    const scenario = createGuidedScenario();
+    const credits = [
+      scenario.pressPhoto.credit,
+      ...scenario.people.flatMap((person) => person.galleryPhotos.map((photo) => photo.credit)),
+    ];
+
+    for (const credit of credits) {
+      expect(credit.trim()).not.toBe('');
+      expect(credit).toMatch(/CC BY|public domain|EU reuse licence/);
+      if (credit.includes('CC BY')) {
+        expect(credit).toMatch(/resized$/);
+      }
+    }
   });
 
   it('keeps every draft coherent: names only where confirmed, visual details everywhere', () => {
@@ -134,14 +162,21 @@ describe('guided prototype scenario state (two people, one press photo)', () => 
     const katyOnly = confirmGuidedIdentity(start, KATY);
     expect(draftKeyFor(katyOnly)).toBe('katy-perry');
     expect(confirmedPersonKeys(katyOnly)).toEqual([KATY]);
-    expect(katyOnly.candidate).toEqual({ text: katyOnly.drafts['katy-perry'], status: 'ready' });
+    expect(katyOnly.candidate).toEqual({
+      text: katyOnly.drafts['katy-perry'],
+      status: GUIDED_CANDIDATE_STATUS.READY,
+    });
     expect(getGuidedIdentity(katyOnly, KATY)).toEqual({
       faceId: KATY,
-      status: 'confirmed',
+      status: GUIDED_IDENTITY_STATUS.CONFIRMED,
       name: 'Katy Perry',
       source: 'face-match',
     });
-    expect(getGuidedIdentity(katyOnly, JUSTIN)).toEqual({ faceId: JUSTIN, status: 'unconfirmed', source: 'none' });
+    expect(getGuidedIdentity(katyOnly, JUSTIN)).toEqual({
+      faceId: JUSTIN,
+      status: GUIDED_IDENTITY_STATUS.UNCONFIRMED,
+      source: 'none',
+    });
     expect(katyOnly.history).toEqual([{ kind: 'identity-confirmed', faceId: KATY }]);
     expect(katyOnly.appliedText).toBe(start.appliedText);
 
@@ -158,7 +193,11 @@ describe('guided prototype scenario state (two people, one press photo)', () => 
   it('keeps an unnamed person out of the draft and lets the other name stay', () => {
     const scenario = leaveGuidedIdentityUnidentified(confirmGuidedIdentity(createGuidedScenario(), JUSTIN), KATY);
 
-    expect(getGuidedIdentity(scenario, KATY)).toEqual({ faceId: KATY, status: 'unidentified', source: 'none' });
+    expect(getGuidedIdentity(scenario, KATY)).toEqual({
+      faceId: KATY,
+      status: GUIDED_IDENTITY_STATUS.UNIDENTIFIED,
+      source: 'none',
+    });
     expect(draftKeyFor(scenario)).toBe('justin-trudeau');
     expect(scenario.candidate.text).not.toContain('Katy Perry');
     expect(scenario.candidate.text).toContain('Justin Trudeau');
@@ -169,15 +208,21 @@ describe('guided prototype scenario state (two people, one press photo)', () => 
 
     const nobody = leaveGuidedIdentityUnidentified(scenario, JUSTIN);
     expect(draftKeyFor(nobody)).toBe('none');
-    expect(nobody.candidate).toEqual({ text: nobody.drafts.none, status: 'ready' });
+    expect(nobody.candidate).toEqual({ text: nobody.drafts.none, status: GUIDED_CANDIDATE_STATUS.READY });
   });
 
   it('drops an unsaved edit when an identity answer changes', () => {
     const edited = saveGuidedEdit(createGuidedScenario(), 'Two people on a red carpet.');
-    expect(edited.candidate).toEqual({ text: 'Two people on a red carpet.', status: 'edited' });
+    expect(edited.candidate).toEqual({
+      text: 'Two people on a red carpet.',
+      status: GUIDED_CANDIDATE_STATUS.EDITED,
+    });
 
     const confirmed = confirmGuidedIdentity(edited, KATY);
-    expect(confirmed.candidate).toEqual({ text: confirmed.drafts['katy-perry'], status: 'ready' });
+    expect(confirmed.candidate).toEqual({
+      text: confirmed.drafts['katy-perry'],
+      status: GUIDED_CANDIDATE_STATUS.READY,
+    });
   });
 
   it('refuses a name in a saved edit or an apply until that face match is confirmed', () => {
@@ -192,12 +237,19 @@ describe('guided prototype scenario state (two people, one press photo)', () => 
     const katyOnly = confirmGuidedIdentity(start, KATY);
     expect(() => saveGuidedEdit(katyOnly, 'Katy Perry with Justin Trudeau.')).toThrow(nameGuardError('Justin Trudeau'));
     const saved = saveGuidedEdit(katyOnly, 'Katy Perry with a man in a tuxedo.');
-    expect(saved.candidate.status).toBe('edited');
+    expect(saved.candidate.status).toBe(GUIDED_CANDIDATE_STATUS.EDITED);
 
     const unnamedKaty = leaveGuidedIdentityUnidentified(katyOnly, KATY);
     expect(() => saveGuidedEdit(unnamedKaty, 'Katy Perry again')).toThrow(nameGuardError('Katy Perry'));
+  });
 
-    const forged = { ...start, candidate: { text: start.drafts.both, status: 'ready' as const } };
+  it('guards applying a draft that names an unconfirmed person', () => {
+    const start = createGuidedScenario();
+    const forged = {
+      ...start,
+      candidate: { text: start.drafts['katy-perry'], status: GUIDED_CANDIDATE_STATUS.READY },
+    };
+
     expect(() => applyGuidedCandidate(forged)).toThrow(nameGuardError('Katy Perry'));
   });
 
@@ -205,7 +257,7 @@ describe('guided prototype scenario state (two people, one press photo)', () => 
     const both = confirmGuidedIdentity(confirmGuidedIdentity(createGuidedScenario(), JUSTIN), KATY);
 
     const rejected = rejectGuidedCandidate(both);
-    expect(rejected.candidate.status).toBe('rejected');
+    expect(rejected.candidate.status).toBe(GUIDED_CANDIDATE_STATUS.REJECTED);
     expect(rejected.appliedText).toBe(both.appliedText);
     expect(() => applyGuidedCandidate(rejected)).toThrow('Cannot apply a rejected description.');
 
@@ -222,6 +274,24 @@ describe('guided prototype scenario state (two people, one press photo)', () => 
     expect(undone.history.at(-1)).toEqual({ kind: 'application-undone', text: 'Two people at a film festival.' });
     expect(getLastGuidedApplication(undone.history)).toBeUndefined();
     expect(undoGuidedApplication(undone)).toEqual(undone);
+  });
+
+  it('moves a rejected candidate back to edited before applying the saved edit', () => {
+    const both = confirmGuidedIdentity(confirmGuidedIdentity(createGuidedScenario(), JUSTIN), KATY);
+    const rejected = rejectGuidedCandidate(both);
+    expect(rejected.candidate.status).toBe(GUIDED_CANDIDATE_STATUS.REJECTED);
+
+    const edited = saveGuidedEdit(rejected, 'A new description for the photo.');
+    expect(edited.candidate.status).toBe(GUIDED_CANDIDATE_STATUS.EDITED);
+
+    const applied = applyGuidedCandidate(edited);
+    expect(applied.candidate.status).toBe(GUIDED_CANDIDATE_STATUS.EDITED);
+    expect(applied.appliedText).toBe('A new description for the photo.');
+    expect(applied.history.at(-1)).toEqual({
+      kind: 'applied',
+      text: 'A new description for the photo.',
+      previousAppliedText: both.appliedText,
+    });
   });
 
   it('treats applying the already-applied text as an idempotent action', () => {
@@ -267,7 +337,7 @@ describe('guided prototype scenario state (two people, one press photo)', () => 
     const fresh = resetGuidedScenario();
 
     expect(fresh.history).toEqual([]);
-    expect(fresh.identities.every((identity) => identity.status === 'unconfirmed')).toBe(true);
+    expect(fresh.identities.every((identity) => identity.status === GUIDED_IDENTITY_STATUS.UNCONFIRMED)).toBe(true);
     expect(fresh.appliedText).toBe('Two people at a film festival.');
     expect(fresh).not.toBe(used);
   });

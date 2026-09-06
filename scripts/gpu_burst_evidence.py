@@ -135,8 +135,17 @@ def _resolve_manifest_path(bundle: Path, relative: str) -> Path:
 def _verify_manifest(bundle: Path, manifest: Mapping[str, Any]) -> tuple[list[dict[str, Any]], list[str]]:
     entries = _manifest_entries(manifest)
     failures: list[str] = []
+    raw_entries = manifest.get("files")
+    if raw_entries is None:
+        raw_entries = manifest.get("artifacts", manifest.get("entries"))
+    if isinstance(raw_entries, list):
+        failures.extend(
+            f"manifest file entry {index} must be an object"
+            for index, entry in enumerate(raw_entries)
+            if not isinstance(entry, Mapping)
+        )
     if not entries:
-        return [], ["manifest has no file entries"]
+        return [], failures + ["manifest has no file entries"]
 
     listed: set[str] = set()
     verified: list[dict[str, Any]] = []
@@ -388,8 +397,36 @@ def _event_phase(event: Mapping[str, Any]) -> str | None:
     return None
 
 
+def _event_state_change(event: Mapping[str, Any], field: str) -> str | None:
+    """Return an observed lifecycle state from OCI Audit ``stateChange``."""
+
+    state_change = _first_value(event, ("stateChange", "state_change"))
+    if not isinstance(state_change, Mapping):
+        return None
+    value = state_change.get(field)
+    if value is None:
+        value = state_change.get(f"{field}State", state_change.get(f"{field}_state"))
+    if isinstance(value, Mapping):
+        return _state_from_mapping(value)
+    return _normalise_state(value)
+
+
 def _event_identity(event: Mapping[str, Any], action: str, occurrence: int) -> str:
-    value = _as_text(_first_value(event, ("eventId", "event_id", "requestId", "request_id", "id")))
+    value = _as_text(
+        _first_value(
+            event,
+            (
+                "eventGroupingId",
+                "event_grouping_id",
+                "requestId",
+                "request_id",
+                "eventId",
+                "eventID",
+                "event_id",
+                "id",
+            ),
+        )
+    )
     if value is not None:
         return f"id:{value}"
     return f"fallback:{action}:{_event_resource_id(event) or ''}:{_event_time(event)!r}:{occurrence}"
@@ -477,7 +514,13 @@ def _authoritative_audit_events(
 
         event = max(candidates, key=event_sort_key)
         timestamp = _event_time(event)
-        if timestamp is None or not since <= timestamp <= until or not _status_success(_event_status(event)):
+        expected_state = "RUNNING" if action == "START" else "STOPPED"
+        if (
+            timestamp is None
+            or not since <= timestamp <= until
+            or not _status_success(_event_status(event))
+            or _event_state_change(event, "current") != expected_state
+        ):
             continue
         authoritative.append((action, event, timestamp))
     authoritative.sort(key=lambda item: item[2])
@@ -800,13 +843,13 @@ def _state_checks(
     )
     inferred_count = _inferred_observation_count(payload)
     history_id = _history_instance_id(payload)
-    identity_ok = history_id is None or history_id == expected_instance_id
+    identity_ok = expected_instance_id is not None and history_id == expected_instance_id
     identity_detail = (
-        "state history has no explicit instance id"
+        f"state history is missing instance_id; expected {expected_instance_id or 'selected instance'}"
         if history_id is None
         else f"state history identifies {history_id}, expected {expected_instance_id}"
     )
-    passed = raw_order_ok and action_order_ok and sequence == ["STOPPED", "RUNNING", "STOPPED"]
+    passed = identity_ok and raw_order_ok and action_order_ok and sequence == ["STOPPED", "RUNNING", "STOPPED"]
     detail = (
         "observed STOPPED -> RUNNING -> STOPPED inside capture window"
         if passed
@@ -906,7 +949,9 @@ def _snapshot_check(
     elif snapshot_instance_id is None:
         identity_detail = f"snapshot is missing instance_id; expected {expected_instance_id or 'selected instance'}"
     else:
-        identity_detail = f"snapshot identifies {snapshot_instance_id}, expected {expected_instance_id or 'selected instance'}"
+        identity_detail = (
+            f"snapshot identifies {snapshot_instance_id}, expected {expected_instance_id or 'selected instance'}"
+        )
     passed = written_ok and state_ok and identity_ok
     return _result(
         "reaper_snapshot",
@@ -1052,26 +1097,11 @@ def build_state_history_document(
         since=start,
         until=end,
     ):
+        current = _event_state_change(event, "current")
+        if current is None:
+            continue
         if action == "START":
-            previous_value = _first_value(
-                event,
-                (
-                    "previousState",
-                    "previous_state",
-                    "previousLifecycleState",
-                    "previous_lifecycle_state",
-                    "priorState",
-                    "prior_state",
-                    "fromState",
-                    "from_state",
-                ),
-            )
-            previous = _normalise_state(previous_value)
-            if previous is None and isinstance(previous_value, Mapping):
-                previous = _state_from_mapping(previous_value)
-            previous_mapping = _first_value(event, ("previous",))
-            if previous is None and isinstance(previous_mapping, Mapping):
-                previous = _state_from_mapping(previous_mapping)
+            previous = _event_state_change(event, "previous")
             if previous is not None:
                 observations.append(
                     {
@@ -1081,16 +1111,18 @@ def build_state_history_document(
                         "action": "StartInstance",
                     }
                 )
-            state = "RUNNING"
+            state = current
         else:
-            state = "STOPPED"
+            state = current
         observations.append(
             {
                 "state": state,
                 "timestamp": event.get("eventTime", event.get("event_time", timestamp)),
                 "source": "oci_audit_transition",
                 "action": "StartInstance" if action == "START" else "StopInstance",
-                "event_id": _first_value(event, ("eventId", "event_id", "requestId", "request_id")),
+                "event_id": _first_value(
+                    event, ("eventId", "eventID", "event_id", "eventGroupingId", "requestId", "request_id")
+                ),
             }
         )
     return {

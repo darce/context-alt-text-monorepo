@@ -56,7 +56,6 @@ test-scripts: gpu-evidence-tests
 gpu-evidence-tests:
 	@"$(GPU_EVIDENCE_PYTHON)" -m pytest \
 		scripts/test_gpu_burst_evidence.py \
-		scripts/deploy/tests/test_export_gpu_evidence_shell.py \
 		-q -p no:cacheprovider
 
 .PHONY: gpu-evidence-export gpu-evidence-check

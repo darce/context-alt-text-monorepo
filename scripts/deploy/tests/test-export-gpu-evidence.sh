@@ -23,7 +23,7 @@ case " $* " in
         printf '%s\n' '{"data":{"id":"ocid1.instance.example","compartment-id":"ocid1.compartment.example","lifecycle-state":"STOPPED"}}'
         ;;
     *" audit event list "*)
-        printf '%s\n' '{"data":[{"eventName":"StartInstance","eventTime":"2026-09-01T00:10:00Z","eventId":"start-1","responseStatus":200,"data":{"resourceId":"ocid1.instance.example","identity":{"principalName":"burst-start"},"stateChange":{"previous":{"lifecycleState":"STOPPED"}}}},{"eventName":"StopInstance","eventTime":"2026-09-01T00:30:00Z","eventId":"stop-1","responseStatus":200,"data":{"resourceId":"ocid1.instance.example","identity":{"principalName":"gpu-reaper"}}}]}'
+        printf '%s\n' '{"data":[{"eventType":"com.oraclecloud.computeapi.StartInstance.end","eventTime":"2026-09-01T00:10:00Z","eventId":"start-1","identity":{"principalName":"burst-start"},"data":{"resourceId":"ocid1.instance.example","request":{"parameters":{"action":"START"}},"response":{"status":"200"},"stateChange":{"previous":{"lifecycleState":"STOPPED"},"current":{"lifecycleState":"RUNNING"}}}},{"eventType":"com.oraclecloud.computeapi.StopInstance.end","eventTime":"2026-09-01T00:30:00Z","eventId":"stop-1","identity":{"principalName":"gpu-reaper"},"data":{"resourceId":"ocid1.instance.example","request":{"parameters":{"action":"STOP"}},"response":{"status":"200"},"stateChange":{"previous":{"lifecycleState":"RUNNING"},"current":{"lifecycleState":"STOPPED"}}}}]}'
         ;;
     *)
         echo "unexpected OCI argv: $*" >&2
@@ -152,6 +152,33 @@ if ! grep -Fq -- '--connection-timeout' "${call_log}" || ! grep -Fq -- '--read-t
     echo "FAIL: OCI calls did not carry explicit connection/read timeouts" >&2
     exit 1
 fi
+if ! grep -Fq -- '--end-time 2026-09-01T01:00:00.000001Z' "${call_log}"; then
+    echo "FAIL: Audit end time was not extended past the inclusive boundary" >&2
+    exit 1
+fi
+
+reuse="${fixture_root}/reuse"
+run_export "$reuse"
+"$exporter" \
+    --instance-id ocid1.instance.example \
+    --compartment-id ocid1.compartment.example \
+    --since 2026-09-01T00:00:00Z --until 2026-09-01T01:00:00Z \
+    --out "$reuse"
+if [ -e "${reuse}/state_snapshot.json" ] || [ -e "${reuse}/wp_describe_receipts.json" ]; then
+    echo "FAIL: rerunning without optional inputs left stale artifacts" >&2
+    exit 1
+fi
+"$resolved_python" - "$reuse/manifest.json" <<'PY'
+import json
+import sys
+
+manifest = json.load(open(sys.argv[1], encoding="utf-8"))
+assert [entry["path"] for entry in manifest["files"]] == [
+    "instance.json",
+    "audit-events.json",
+    "state_history.json",
+]
+PY
 
 missing_rc=0
 "$exporter" --compartment-id ocid1.compartment.example \

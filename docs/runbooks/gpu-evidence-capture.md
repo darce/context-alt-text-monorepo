@@ -23,12 +23,14 @@ the observed RUNNING interval. Audit events must identify the selected
 instance and have a successful response status.
 
 The exporter derives `state_history.json` only from successful Audit
-transitions and an explicit Audit `stateChange.previous` state when present.
-It does not invent a `STOPPED` observation at the window start or label the
-point-in-time instance read as the window end. If the receipts do not contain
-an independently observed `STOPPED → RUNNING → STOPPED` history, the checker
-fails closed and the window must be recaptured with the required Audit state
-change fields.
+transitions with an observed `stateChange.current` state, and uses an explicit
+Audit `stateChange.previous` state for the initial state when present. A start
+must report `RUNNING` and a stop must report `STOPPED`; a `STARTING` or
+`STOPPING` receipt is not enough to prove the burst. It does not invent a
+`STOPPED` observation at the window start or label the point-in-time instance
+read as the window end. If the receipts do not contain an independently
+observed `STOPPED → RUNNING → STOPPED` history, the checker fails closed and
+the window must be recaptured with the required Audit state-change fields.
 Any state-history observation marked `inferred`, `synthetic`, or `synthesized`
 is ignored by the checker and cannot satisfy the lifecycle proof.
 
@@ -43,7 +45,9 @@ sweep guidance.
 1. Record the trigger time and choose an inclusive UTC window that begins
    before the WordPress action and ends after the reaper has stopped the
    instance. Use RFC 3339 values such as
-   `2026-09-01T00:00:00Z`.
+   `2026-09-01T00:00:00Z`. The exporter extends the OCI Audit query's
+   exclusive `--end-time` by one microsecond so an event exactly at the
+   requested boundary remains eligible for the inclusive checker window.
 2. Collect the reaper `gpu-state.json` and WP describe receipt JSON through
    the approved read-only operator path, if those files are available locally.
    Keep the files unchanged; their bytes are hashed into the manifest.

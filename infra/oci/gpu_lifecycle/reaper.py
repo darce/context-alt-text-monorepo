@@ -979,7 +979,16 @@ def _apply_running_since_leases(
             )
             logger.error(msg)
             errors.append(msg)
-            observed.append(instance)
+            # The age this instance carries came from OCI, not from the lease, so
+            # feeding it to the absolute cost cap would STOP a machine whose lease
+            # age is unknown. Zero is the only value that keeps the log honest.
+            observed.append(
+                GpuInstance(
+                    instance_id=instance.instance_id,
+                    state=instance.state,
+                    idle_for_seconds=0,
+                )
+            )
             continue
         else:
             source = record.source
@@ -1160,6 +1169,10 @@ def _run_reap_cycle(
                 errors=[*lease_errors, *errors],
                 lease_expired=lease_expired,
             )
+        if dry_run:
+            logger.info("dry-run would STOP idle instance: %s", instance_id)
+            actuated.append((action, instance_id))
+            continue
         try:
             stopped, fence_supported = _actuate_stop_with_generation_fence(
                 load_source,

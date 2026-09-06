@@ -13,6 +13,7 @@ import json
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import suppress
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
@@ -71,6 +72,14 @@ TEST_MONOTONIC = 100_000.0
 TEST_BOOT_ID = "test-boot"
 
 
+@dataclass
+class MutableClock:
+    """Wall and monotonic readings a test advances independently."""
+
+    wall: datetime
+    monotonic: float
+
+
 @pytest.fixture(autouse=True)
 def synthetic_host_boot_id(monkeypatch):
     """CLI tests must not depend on the execution host's Linux proc filesystem."""
@@ -94,11 +103,15 @@ def test_cli_missing_boot_identity_is_a_fatal_startup_error(tmp_path, monkeypatc
 
     monkeypatch.setattr(Path, "read_text", read_text)
     lease_path = tmp_path / "lease.json"
-    exit_code = main([
-        "--instance-id", "instance-a",
-        "--running-since-path", str(lease_path),
-        "--dry-run",
-    ])
+    exit_code = main(
+        [
+            "--instance-id",
+            "instance-a",
+            "--running-since-path",
+            str(lease_path),
+            "--dry-run",
+        ]
+    )
 
     assert exit_code != 0
     captured = capsys.readouterr()
@@ -407,17 +420,17 @@ def test_lease_age_uses_monotonic_clock_across_wall_clock_steps(
     tmp_path: Path,
     wall_jump: timedelta,
 ) -> None:
-    clock = {"wall": NOW, "monotonic": 100.0}
+    clock = MutableClock(wall=NOW, monotonic=100.0)
     store = RunningSinceLeaseStore(
         path=tmp_path / "running-since.json",
-        now=lambda: clock["wall"],
-        monotonic=lambda: clock["monotonic"],
+        now=lambda: clock.wall,
+        monotonic=lambda: clock.monotonic,
         boot_id="boot-a",
     )
     store.record_start("instance-a")
 
-    clock["wall"] = NOW + wall_jump
-    clock["monotonic"] = 160.0
+    clock.wall = NOW + wall_jump
+    clock.monotonic = 160.0
     record = store.read("instance-a")
 
     assert record is not None
@@ -548,14 +561,14 @@ def test_two_running_instance_leases_expire_independently(tmp_path: Path) -> Non
 
 def test_stopped_sibling_does_not_reset_running_instance_lease(tmp_path: Path) -> None:
     path = tmp_path / "running-since.json"
-    current = {
-        "now": datetime(2026, 9, 3, 12, 0, tzinfo=UTC),
-        "monotonic": TEST_MONOTONIC,
-    }
+    current = MutableClock(
+        wall=datetime(2026, 9, 3, 12, 0, tzinfo=UTC),
+        monotonic=TEST_MONOTONIC,
+    )
     store = RunningSinceLeaseStore(
         path=path,
-        now=lambda: current["now"],
-        monotonic=lambda: current["monotonic"],
+        now=lambda: current.wall,
+        monotonic=lambda: current.monotonic,
         boot_id=TEST_BOOT_ID,
     )
     store.record_start("instance-a")
@@ -575,8 +588,8 @@ def test_stopped_sibling_does_not_reset_running_instance_lease(tmp_path: Path) -
         running_since_store=store,
     )
     first_bytes = path.read_bytes()
-    current["now"] = datetime(2026, 9, 3, 12, 30, tzinfo=UTC)
-    current["monotonic"] += 1_800
+    current.wall = datetime(2026, 9, 3, 12, 30, tzinfo=UTC)
+    current.monotonic += 1_800
     second = run_reap_cycle(
         controller=GpuLifecycleController(idle_seconds=300),
         instances=instances,
@@ -587,8 +600,8 @@ def test_stopped_sibling_does_not_reset_running_instance_lease(tmp_path: Path) -
         running_since_store=store,
     )
     second_bytes = path.read_bytes()
-    current["now"] = datetime(2026, 9, 3, 13, 0, 1, tzinfo=UTC)
-    current["monotonic"] += 1_801
+    current.wall = datetime(2026, 9, 3, 13, 0, 1, tzinfo=UTC)
+    current.monotonic += 1_801
     third = run_reap_cycle(
         controller=GpuLifecycleController(idle_seconds=300),
         instances=instances,
@@ -606,9 +619,7 @@ def test_stopped_sibling_does_not_reset_running_instance_lease(tmp_path: Path) -
     assert third.lease_expired == [("STOP", "instance-a")]
 
 
-def test_reap_lease_write_failure_exhausts_recovery_loudly_when_counter_is_unavailable(
-    monkeypatch, caplog
-) -> None:
+def test_reap_lease_write_failure_exhausts_recovery_loudly_when_counter_is_unavailable(monkeypatch, caplog) -> None:
     def fail_observe(self, instance_id: str):
         raise PermissionError(f"cannot write lease for {instance_id}")
 
@@ -669,9 +680,7 @@ def test_one_lease_store_failure_does_not_abort_healthy_sibling_reap(tmp_path: P
     assert "instance-bad" in result.errors[0]
 
 
-def test_persistent_running_since_read_failure_forces_stop_after_bounded_recovery(
-    tmp_path: Path, caplog
-) -> None:
+def test_persistent_running_since_read_failure_forces_stop_after_bounded_recovery(tmp_path: Path, caplog) -> None:
     path = tmp_path / "running-since.json"
     _write_lease(path, since="2026-09-03T11:59:00Z")
 
@@ -723,7 +732,7 @@ def test_concurrent_lease_writers_preserve_both_instance_records(tmp_path: Path)
     rendezvous = threading.Barrier(2)
 
     class CoordinatedLeaseStore(RunningSinceLeaseStore):
-        def _read_instances_for_update(self) -> dict[str, dict[str, str]]:
+        def _read_instances_for_update(self) -> dict[str, dict[str, object]]:
             instances = super()._read_instances_for_update()
             with suppress(threading.BrokenBarrierError):
                 rendezvous.wait(timeout=0.25)
@@ -882,9 +891,7 @@ def test_cli_defaults_the_cap_on_rather_than_off(tmp_path: Path) -> None:
     """A backstop that ships disabled is not a backstop [RES-07]."""
     load_dir = tmp_path / "load"
     load_dir.mkdir()
-    args = _build_parser().parse_args(
-        ["--instance-id", "ocid1.x", "--load-dir", str(load_dir)]
-    )
+    args = _build_parser().parse_args(["--instance-id", "ocid1.x", "--load-dir", str(load_dir)])
     assert args.max_lease_seconds == 3600
     assert args.load_dir == load_dir
 

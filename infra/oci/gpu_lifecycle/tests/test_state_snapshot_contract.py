@@ -88,6 +88,10 @@ def test_reader_blank_path_env_uses_default(
 
 def test_snapshot_directories_enforce_distinct_writer_ownership() -> None:
     script = INSTALL_SCRIPT.read_text(encoding="utf-8")
+    assert re.search(
+        r"(?m)^\s*(?:sudo\s+)?tee\s+(?:\\?['\"]?)/etc/systemd/system/acx-gpu-[^'\"\s]+\.service(?:\\?['\"]?).*<<",
+        script,
+    ) is None, "lifecycle services must be rendered into the private staged generation"
     service_bodies = re.findall(
         r'tee \\\"\\\$unit_stage/acx-gpu-(?:start|reap)\.service\\\".*?<<UNIT\n(.*?)\nUNIT',
         script,
@@ -115,6 +119,17 @@ def test_snapshot_directories_enforce_distinct_writer_ownership() -> None:
         r"d /run/acx-write/\$\{environment\} (\d+) ([^\s]+) ([^\s]+) -",
         script,
     )
+    state_chmod_match = re.search(
+        r"^sudo chmod (\d+) /run/acx$", script, flags=re.MULTILINE
+    )
+    load_chmod_match = re.search(
+        r"^sudo chmod (\d+) /run/acx-write$", script, flags=re.MULTILINE
+    )
+    environment_load_chmod_match = re.search(
+        r"^sudo chmod (\d+) \$\{LOAD_ENVIRONMENT_DIRS\}$",
+        script,
+        flags=re.MULTILINE,
+    )
     lock_tmpfiles_match = re.search(
         r"^f /run/acx/gpu-state\.json\.lock (\d+) ([^\s]+) ([^\s]+) -$",
         script,
@@ -125,6 +140,9 @@ def test_snapshot_directories_enforce_distinct_writer_ownership() -> None:
     assert load_chown_match is not None
     assert load_tmpfiles_match is not None
     assert environment_load_tmpfiles_match is not None
+    assert state_chmod_match is not None
+    assert load_chmod_match is not None
+    assert environment_load_chmod_match is not None
     assert lock_tmpfiles_match is not None
     state_owner, state_group = state_chown_match.groups()
     state_mode, state_boot_owner, state_boot_group = state_tmpfiles_match.groups()
@@ -133,13 +151,19 @@ def test_snapshot_directories_enforce_distinct_writer_ownership() -> None:
     environment_load_mode, environment_load_owner, environment_load_group = (
         environment_load_tmpfiles_match.groups()
     )
+    state_chmod_mode = state_chmod_match.group(1)
+    load_chmod_mode = load_chmod_match.group(1)
+    environment_load_chmod_mode = environment_load_chmod_match.group(1)
     lock_mode, lock_owner, lock_group = lock_tmpfiles_match.groups()
     assert (state_boot_owner, state_boot_group) == (state_owner, state_group)
     assert state_mode == "0755"
+    assert state_chmod_mode == state_mode
     assert int(state_mode[-3]) & 0o2, "the lifecycle owner must be able to write"
     assert (load_boot_owner, load_boot_group) == (load_owner, load_group)
     assert load_group == "10001"
     assert load_mode == environment_load_mode == "0775"
+    assert load_chmod_mode == load_mode
+    assert environment_load_chmod_mode == environment_load_mode
     assert int(load_mode[-2]) & 0o2, "API gid 10001 must be able to write load dumps"
     assert (environment_load_owner, environment_load_group) == (load_owner, load_group)
     assert int(environment_load_mode[-2]) & 0o2, (

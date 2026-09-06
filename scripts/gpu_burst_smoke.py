@@ -435,6 +435,9 @@ class SubprocessOci:
     def __init__(self, oci_bin: str) -> None:
         self.oci_bin = oci_bin
         self.stop_calls = 0
+        # Keep the raw lifecycle snapshots so live evidence has the same
+        # gpu_state timeline that FakeOci exposes during a dry run.
+        self.observed_gpu_states: list[dict[str, Any]] = []
 
     def _run(self, args: Sequence[str], *, timeout: float) -> Any:
         try:
@@ -462,6 +465,7 @@ class SubprocessOci:
         data = payload.get("data") if isinstance(payload, dict) else None
         if not isinstance(data, dict):
             raise SmokeFailure("OCI instance get returned no data object")
+        self.observed_gpu_states.append(dict(data))
         return data
 
     def stop_instance(self, instance_id: str, *, timeout: float) -> None:
@@ -1474,6 +1478,7 @@ class _SmokeExecution:
             "new_items": [],
             "enqueue_posts_during_poll": None,
             "enqueue_posts_during_replay": None,
+            "transport_telemetry_available": None,
             "idempotent_response": None,
         }
     )
@@ -1708,6 +1713,11 @@ def _submit_and_observe_load(run: _SmokeExecution) -> None:
             break
         run.sleep(min(POLL_SECONDS, load_observation_deadline.remaining(), run.deadline.remaining()))
     run.check("load_snapshot_observed_after_trigger", load_observed, load_detail)
+    if not load_observed:
+        # Do not warm or process after the actuator/sensor link failed.  The
+        # enqueue already happened, so finally-stop still owns cleanup, but
+        # continuing here could turn an unproven load into GPU spend.
+        raise SmokeFailure(f"load snapshot observation failed after enqueue: {load_detail}")
 
 
 def _warm_and_process(run: _SmokeExecution) -> None:
@@ -2071,11 +2081,17 @@ def _audit_start_and_second_poll(run: _SmokeExecution) -> None:
                 and enqueue_after_poll is not None
             )
             no_new_items = not new_items
-            no_duplicate_replay = enqueue_replay_delta == 1 and idempotent_response
-            no_enqueue_during_poll = enqueue_poll_delta == 0
-            passed = telemetry_available and no_new_items and no_duplicate_replay and no_enqueue_during_poll
+            # Live HTTPTransport does not expose the dry MockTransport's
+            # request counters.  The replay response is the authoritative
+            # idempotence proof there: a duplicate enqueue would return a new
+            # run envelope, while the follow-up item comparison catches an
+            # extra persisted row in a reused run.
+            replay_post_observed = not telemetry_available or enqueue_replay_delta == 1
+            no_duplicate_replay = idempotent_response and no_new_items and replay_post_observed
+            no_enqueue_during_poll = not telemetry_available or enqueue_poll_delta == 0
+            passed = no_duplicate_replay and no_enqueue_during_poll
             run.second_burst_evidence = {
-                "status": "observed" if telemetry_available else "inconclusive",
+                "status": "observed" if passed else "failed",
                 "items_before": [list(_queue_item_identity(item)) for item in before_second_poll],
                 "items_after": [list(_queue_item_identity(item)) for item in after_second_poll],
                 "new_items": new_items,
@@ -2084,6 +2100,7 @@ def _audit_start_and_second_poll(run: _SmokeExecution) -> None:
                 "enqueue_posts_after": enqueue_after_poll,
                 "enqueue_posts_during_replay": enqueue_replay_delta,
                 "enqueue_posts_during_poll": enqueue_poll_delta,
+                "transport_telemetry_available": telemetry_available,
                 "idempotent_response": idempotent_response,
             }
             run.check(
@@ -2093,7 +2110,7 @@ def _audit_start_and_second_poll(run: _SmokeExecution) -> None:
                     "idempotent replay created no new item and the follow-up poll issued zero enqueue POSTs"
                     if passed
                     else (
-                        "INCONCLUSIVE: transport enqueue counters unavailable"
+                        "idempotent replay or persisted-item comparison failed"
                         if not telemetry_available
                         else (
                             f"new_items={new_items}; enqueue_posts_during_replay={enqueue_replay_delta!r}; "
@@ -2118,6 +2135,9 @@ def _audit_start_and_second_poll(run: _SmokeExecution) -> None:
                 "new_items": [],
                 "enqueue_posts_during_poll": None,
                 "enqueue_posts_during_replay": enqueue_replay_delta,
+                "transport_telemetry_available": (
+                    enqueue_before_replay is not None and enqueue_after_failure is not None
+                ),
                 "idempotent_response": False,
                 "error": str(exc),
             }
@@ -2128,6 +2148,7 @@ def _audit_start_and_second_poll(run: _SmokeExecution) -> None:
             "new_items": [],
             "enqueue_posts_during_poll": None,
             "enqueue_posts_during_replay": None,
+            "transport_telemetry_available": None,
             "idempotent_response": None,
         }
         run.check(

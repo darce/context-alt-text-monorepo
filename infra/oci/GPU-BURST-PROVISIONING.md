@@ -192,9 +192,10 @@ The smoke records four independent checks:
 2. **Second-burst idempotence.** Once the first run and reaper have completed, the
    smoke submits the same fixture sample a second time, requires the same run/tenant
    envelope in the response, then polls the same `/items` endpoint once more. It
-   compares persisted item IDs (falling back to `created_at`) and records the replay
-   POST and follow-up poll transport counters. Missing counter telemetry is
-   inconclusive and fails the gate. The report check is named
+   compares persisted item IDs (falling back to `created_at`). Dry mode also records
+   replay POST and follow-up poll transport counters; live HTTP transports do not
+   expose those client-side counters, so the unchanged run/tenant envelope and
+   unchanged persisted-item identities are the live proof. The report check is named
    `second_burst_no_enqueue`.
 3. **Shared GPU-state timeline.** Dry mode feeds the same state snapshot vocabulary
    used by `gpu_lifecycle` through the live transition recorder. Its report therefore

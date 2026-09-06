@@ -45,6 +45,7 @@ from typing import Any
 
 DEFAULT_HOURLY_RATE = 2.0
 DEFAULT_TOLERANCE_PCT = 25.0
+GPU_LIFECYCLE_STATES = frozenset({"STOPPED", "STARTING", "RUNNING", "STOPPING"})
 REQUIRED_SAFETY_CHECKS = frozenset(
     {
         "run_terminal_success",
@@ -188,6 +189,13 @@ def _smoke_bursts(payload: Any) -> list[dict[str, Any]]:
             raise CostReportError(f"smoke report burst {index} is still running according to measurements")
         if measurements.get("cost_estimate_ongoing") is not False:
             raise CostReportError(f"smoke report burst {index} has an ongoing measurement cost estimate")
+        _number(measurements["running_seconds"], field="measurements.running_seconds")
+        if float(measurements["running_seconds"]) < 0:
+            raise CostReportError(f"smoke report burst {index} has negative running_seconds")
+        if "cost_estimate_usd" in measurements:
+            cost_estimate = _number(measurements["cost_estimate_usd"], field="measurements.cost_estimate_usd")
+            if cost_estimate < 0:
+                raise CostReportError(f"smoke report burst {index} has negative cost_estimate_usd")
         if burst.get("cost_estimate_ongoing") is not False:
             raise CostReportError(f"smoke report burst {index} has an ongoing cost estimate")
     return bursts
@@ -201,14 +209,27 @@ def _running_seconds_from_transitions(burst: dict[str, Any]) -> float:
         raise CostReportError("smoke report has no transitions")
     total = 0.0
     previous_elapsed = -math.inf
+    previous_timestamp: datetime | None = None
+    states: list[str] = []
     for index, transition in enumerate(transitions):
         if not isinstance(transition, dict):
             raise CostReportError("smoke transitions must be objects")
         current_elapsed = _number(transition.get("elapsed_seconds"), field="transition elapsed_seconds")
+        if current_elapsed < 0:
+            raise CostReportError("smoke transition elapsed_seconds must be non-negative")
         if current_elapsed < previous_elapsed:
             raise CostReportError("smoke transition elapsed_seconds must be monotonic")
         previous_elapsed = current_elapsed
         state = str(transition.get("state") or "").upper()
+        if state not in GPU_LIFECYCLE_STATES:
+            raise CostReportError(f"smoke transition has unknown lifecycle state: {state!r}")
+        states.append(state)
+        timestamp = transition.get("timestamp")
+        if timestamp is not None:
+            parsed_timestamp = _moment(timestamp, field="transition timestamp")
+            if previous_timestamp is not None and parsed_timestamp < previous_timestamp:
+                raise CostReportError("smoke transition timestamps must be monotonic")
+            previous_timestamp = parsed_timestamp
         if state != "RUNNING":
             continue
         if index + 1 < len(transitions):
@@ -228,14 +249,31 @@ def _running_seconds_from_transitions(burst: dict[str, Any]) -> float:
         if following_elapsed < current_elapsed:
             raise CostReportError("running_seconds evidence is not monotonic")
         total += following_elapsed - current_elapsed
-    if str(transitions[-1].get("state") or "").upper() != "STOPPED":
+    if states[0] != "STOPPED":
+        raise CostReportError("smoke transition evidence must start in STOPPED")
+    if states[-1] != "STOPPED":
         raise CostReportError("smoke transition evidence must end in STOPPED")
+    if "RUNNING" not in states:
+        raise CostReportError("smoke transition evidence has no RUNNING interval")
+    allowed_successors = {
+        # Some OCI exports omit a transient STARTING observation, so a direct
+        # STOPPED -> RUNNING pair is valid when the elapsed/timestamp proof is
+        # otherwise complete.
+        "STOPPED": {"STOPPED", "STARTING", "RUNNING"},
+        "STARTING": {"STARTING", "RUNNING", "STOPPING", "STOPPED"},
+        "RUNNING": {"RUNNING", "STOPPING", "STOPPED"},
+        "STOPPING": {"STOPPING", "STOPPED"},
+    }
+    for current, following in zip(states, states[1:], strict=False):
+        if following not in allowed_successors[current]:
+            raise CostReportError(f"invalid smoke lifecycle transition: {current} -> {following}")
     return round(total, 3)
 
 
 def _burst_running_seconds(burst: dict[str, Any]) -> float:
     transition_seconds = _running_seconds_from_transitions(burst)
     measurements = burst.get("measurements")
+    measured_seconds: float | None = None
     if isinstance(measurements, dict) and measurements.get("running_seconds") is not None:
         measured_seconds = round(_number(measurements["running_seconds"], field="measurements.running_seconds"), 3)
         if not math.isclose(measured_seconds, transition_seconds, abs_tol=0.001):
@@ -243,6 +281,14 @@ def _burst_running_seconds(burst: dict[str, Any]) -> float:
                 "measurements.running_seconds disagrees with transition running_seconds "
                 f"({measured_seconds} != {transition_seconds})"
             )
+    if measured_seconds is not None and burst.get("running_seconds") is not None:
+        reported_seconds = round(_number(burst["running_seconds"], field="running_seconds"), 3)
+        if not math.isclose(reported_seconds, measured_seconds, abs_tol=0.001):
+            raise CostReportError(
+                "top-level running_seconds disagrees with measurements.running_seconds "
+                f"({reported_seconds} != {measured_seconds})"
+            )
+    if measured_seconds is not None:
         return measured_seconds
     if burst.get("running_seconds") is not None:
         reported_seconds = round(_number(burst["running_seconds"], field="running_seconds"), 3)
@@ -344,6 +390,8 @@ def _usage_amount_for_bursts(
         if raw_amount is None:
             raise CostReportError("usage item has no computedAmount")
         amount = _number(raw_amount, field="usage computedAmount")
+        if amount < 0:
+            raise CostReportError("usage computedAmount must be non-negative")
         usage_start, usage_end = _usage_window(item)
         resource_id = _usage_resource_id(item)
         matching_bursts: list[int] = []

@@ -1135,6 +1135,24 @@ def test_11_reaper_preflight_accepts_quoted_last_wins_systemd_assignment(tmp_pat
 @pytest.mark.parametrize("custom_registry", [False, True])
 def test_11_installer_payload_passes_reaper_preflight(tmp_path: Path, custom_registry: bool) -> None:
     installer = (ROOT / "scripts/deploy/gpu-lifecycle-install.sh").read_text()
+    ssh_options_match = re.search(
+        r"(?ms)^SSH_OPTIONS=\(\n(?P<body>.*?)^\)", installer
+    )
+    assert ssh_options_match is not None, "installer must define its SSH_OPTIONS array"
+    ssh_options = shlex.split(ssh_options_match.group("body"))
+    assert ssh_options == [
+        "-o",
+        "BatchMode=yes",
+        "-o",
+        "ConnectTimeout=10",
+        "-o",
+        "ServerAliveInterval=15",
+        "-o",
+        "ServerAliveCountMax=3",
+    ], "installer SSH_OPTIONS changed; update transport validation deliberately"
+    ssh_options_assignment = "SSH_OPTIONS=(" + " ".join(
+        shlex.quote(option) for option in ssh_options
+    ) + ")"
     staging = installer.split("# Validate the identity at the boundary where remote transport begins.", 1)[1]
     staging = (
         staging.split('run_with_deadline "remote release validation and switch"', 1)[0]
@@ -1152,14 +1170,16 @@ def test_11_installer_payload_passes_reaper_preflight(tmp_path: Path, custom_reg
         [
             "bash",
             "-c",
-            r"""
-set -eu
+            """set -eu
 repo_root=$1
 remote_stage=$2
 DEPLOYMENTS_FILE=$3
 HOST=local
 SSH_USER=ubuntu
-SSH_OPTIONS=(-o BatchMode=yes)
+"""
+            + ssh_options_assignment
+            + r"""
+set -eu
 run_with_deadline() { shift; "$@"; }
 sudo() { if [ "$1" != chown ]; then "$@"; fi; }
 ssh() {

@@ -292,24 +292,47 @@ describe('public demo describe polling', () => {
       .mockRejectedValueOnce(new Error('new trigger failed'));
     vi.stubGlobal('fetch', fetchImpl);
 
+    // The handler disables every form control while a request is in flight, and
+    // FormData skips disabled controls -- so a submit dispatched before the
+    // previous cycle settles reads no media_id and returns without fetching.
+    // Counting microtasks to guess when that happened is what made this case
+    // read fetch call #1 before it existed. Drive it off observable state.
+    const settle = async (predicate: () => boolean): Promise<void> => {
+      for (let tick = 0; tick < 200; tick += 1) {
+        if (predicate()) return;
+        await Promise.resolve();
+        await new Promise((resolve) => { setTimeout(resolve, 0); });
+      }
+      throw new Error('timed out waiting for the demo client to settle');
+    };
+    const submitButton = () => form?.querySelector<HTMLButtonElement>('button[type="submit"]');
+    const calls = () => fetchImpl.mock.calls.length;
+    const keyOf = (index: number): string => {
+      const body = fetchImpl.mock.calls[index]?.[1]?.body;
+      expect(body, `fetch call #${index} was never issued`).toBeDefined();
+      return JSON.parse(String(body)).idempotency_key;
+    };
+    const submitAndSettle = async (expectedCalls: number): Promise<void> => {
+      form?.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+      await settle(() => calls() >= expectedCalls && submitButton()?.disabled === false);
+    };
+
     try {
       initializeDemo(root as HTMLElement);
-      form?.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
-      await Promise.resolve();
-      await Promise.resolve();
-      const firstKey = JSON.parse(String(fetchImpl.mock.calls[0]?.[1]?.body)).idempotency_key;
 
-      form?.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
-      await Promise.resolve();
-      await Promise.resolve();
-      await Promise.resolve();
-      const retryKey = JSON.parse(String(fetchImpl.mock.calls[1]?.[1]?.body)).idempotency_key;
+      // Cycle 1: the submit POST is dropped, so the trigger key must survive.
+      await submitAndSettle(1);
+      const firstKey = keyOf(0);
+
+      // Cycle 2: a retry of the same media reuses that key, then polls to
+      // completion (POST + one status poll).
+      await submitAndSettle(3);
+      const retryKey = keyOf(1);
       expect(retryKey).toBe(firstKey);
 
-      form?.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
-      await Promise.resolve();
-      await Promise.resolve();
-      const freshKey = JSON.parse(String(fetchImpl.mock.calls[3]?.[1]?.body)).idempotency_key;
+      // Cycle 3: after a completed run the key is retired, not reused.
+      await submitAndSettle(4);
+      const freshKey = keyOf(3);
       expect(freshKey).not.toBe(retryKey);
     } finally {
       vi.unstubAllGlobals();

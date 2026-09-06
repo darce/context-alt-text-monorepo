@@ -7,6 +7,7 @@ namespace AltContext\Tests\Unit;
 use AltContext\Api\AnalysisJobsController;
 use AltContext\Api\Services\BatchRunService;
 use AltContext\Api\Services\JobProgressStreamService;
+use AltContext\Api\Services\JobStreamErrorCode;
 use AltContext\Api\Services\JobStatusService;
 use AltContext\Api\Services\ProjectionSyncService;
 use AltContext\Tests\TestCase;
@@ -54,7 +55,62 @@ class JobProgressStreamServiceTest extends TestCase
         });
 
         $this->assertStringContainsString("event: error\n", $output);
+        $this->assertStringContainsString('"code":"proxy_error"', $output);
         $this->assertStringContainsString('Proxy failure.', $output);
+    }
+
+    public function testStreamJobProgressEmitsTypedNotFoundErrorFrame(): void
+    {
+        $jobId = '77777777-7777-7777-7777-777777777778';
+        $this->queueHttpResponse([
+            'response' => ['code' => 404, 'message' => 'Not Found'],
+            'body' => json_encode(['detail' => 'localized copy']),
+        ]);
+
+        $request = new WP_REST_Request('GET', '/acx/v1/recognition/jobs/' . $jobId . '/stream');
+        $request->set_param('job_id', $jobId);
+
+        $output = $this->captureStreamOutput(function () use ($request): void {
+            $this->service->stream_job_progress($request);
+        });
+
+        $this->assertStringContainsString("event: error\n", $output);
+        $this->assertStringContainsString('"code":"job_not_found"', $output);
+    }
+
+    public function testStreamJobProgressEmitsTypedInvalidResponseErrorFrame(): void
+    {
+        $jobId = '77777777-7777-7777-7777-777777777779';
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => json_encode('not-an-object'),
+        ]);
+
+        $request = new WP_REST_Request('GET', '/acx/v1/recognition/jobs/' . $jobId . '/stream');
+        $request->set_param('job_id', $jobId);
+
+        $output = $this->captureStreamOutput(function () use ($request): void {
+            $this->service->stream_job_progress($request);
+        });
+
+        $this->assertStringContainsString("event: error\n", $output);
+        $this->assertStringContainsString('"code":"invalid_job_response"', $output);
+    }
+
+    public function testJobStreamErrorCodeIsTheClosedWireVocabulary(): void
+    {
+        $this->assertSame(
+            ['proxy_error', 'job_not_found', 'unexpected_response', 'invalid_job_response'],
+            JobStreamErrorCode::cases()
+        );
+        // String constants preserve the plugin's declared PHP 8.0 floor.
+        // TEST-15 (/home/gate/canon/engineering.md:396): this goes red if a
+        // PHP 8.1 enum replaces the PHP 8.0-compatible vocabulary again.
+        $this->assertSame('job_not_found', JobStreamErrorCode::JOB_NOT_FOUND);
+        $this->assertSame(
+            array_values((new \ReflectionClass(JobStreamErrorCode::class))->getConstants()),
+            JobStreamErrorCode::cases()
+        );
     }
 
     public function testStreamJobProgressEmitsProgressAndDoneForCompletedJob(): void

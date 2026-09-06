@@ -60,6 +60,23 @@ variable "gpu_boot_volume_size_in_gbs" {
   default     = 400
 }
 
+variable "gpu_max_uptime_seconds" {
+  description = "Maximum uptime before the GPU host's independent on-instance self-stop timer runs"
+  type        = number
+  default     = 3600
+
+  validation {
+    condition     = var.gpu_max_uptime_seconds >= 1 && var.gpu_max_uptime_seconds == floor(var.gpu_max_uptime_seconds)
+    error_message = "gpu_max_uptime_seconds must be a positive whole number of seconds."
+  }
+}
+
+variable "gpu_self_stop_enabled" {
+  description = "Enable the GPU host's independent on-instance maximum-uptime self-stop watchdog"
+  type        = bool
+  default     = true
+}
+
 variable "ssh_allowed_cidrs" {
   description = "CIDR blocks allowed to SSH into the instance"
   type        = list(string)

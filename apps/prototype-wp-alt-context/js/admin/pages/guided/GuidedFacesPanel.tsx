@@ -25,12 +25,7 @@ export const GuidedFacesPanel = ({
   onLeaveUnnamed,
 }: GuidedFacesPanelProps): React.JSX.Element => {
   return (
-    <section
-      id="guided-section-face"
-      tabIndex={-1}
-      aria-labelledby="guided-faces-title"
-      className="acx-guided-face"
-    >
+    <section id="guided-section-face" tabIndex={-1} aria-labelledby="guided-faces-title" className="acx-guided-face">
       <header className="acx-guided-face__header">
         <h3 id="guided-faces-title">Faces found in the photo</h3>
         <p>AltContext found 2 faces. Each one matched a person you named before.</p>

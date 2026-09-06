@@ -64,7 +64,7 @@
     &::before {
       width: auto;
       height: auto;
-      border-radius: 0;
+      border-radius: 0; /* E21-4 disposition: zero/square radius kept raw */
       background: transparent;
       content: '\2014';
     }

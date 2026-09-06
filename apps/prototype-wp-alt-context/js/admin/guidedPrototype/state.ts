@@ -162,7 +162,8 @@ const GUIDED_SCENARIO_SEED: GuidedSeed = {
         },
         {
           src: guidedKatyPerryPhoto2016,
-          altText: 'Katy Perry singing into a microphone, long dark hair, silver striped dress, blue and red lights behind her.',
+          altText:
+            'Katy Perry singing into a microphone, long dark hair, silver striped dress, blue and red lights behind her.',
           credit: 'Voice of America, public domain',
         },
       ],
@@ -215,8 +216,10 @@ const GUIDED_SCENARIO_SEED: GuidedSeed = {
   ],
   drafts: {
     none: 'A man in a black tuxedo and a woman in a white draped gown pose side by side at the Tribeca Festival. Her hand rests on his chest.',
-    'katy-perry': 'Katy Perry, in a white draped gown with her dark hair pinned up, poses with a man in a black tuxedo at the Tribeca Festival. Her hand rests on his chest.',
-    'justin-trudeau': 'Justin Trudeau, in a black tuxedo and white shirt, poses with a woman in a white draped gown at the Tribeca Festival. Her hand rests on his chest.',
+    'katy-perry':
+      'Katy Perry, in a white draped gown with her dark hair pinned up, poses with a man in a black tuxedo at the Tribeca Festival. Her hand rests on his chest.',
+    'justin-trudeau':
+      'Justin Trudeau, in a black tuxedo and white shirt, poses with a woman in a white draped gown at the Tribeca Festival. Her hand rests on his chest.',
     both: 'Justin Trudeau and Katy Perry pose side by side at the Tribeca Festival. He wears a black tuxedo with a white shirt; she wears a white draped gown with her dark hair pinned up and rests a hand on his chest.',
   },
   provenance: {
@@ -225,7 +228,8 @@ const GUIDED_SCENARIO_SEED: GuidedSeed = {
     runDate: '2026-09-06',
     threshold: 0.6,
     note: 'Saved from a real run. The demo does not run recognition live.',
-    alsoChecked: 'A Coachella press photo of the same two people matched both, even with a hand over her mouth. It is not bundled because of licensing.',
+    alsoChecked:
+      'A Coachella press photo of the same two people matched both, even with a hand over her mouth. It is not bundled because of licensing.',
   },
 };
 
@@ -260,7 +264,7 @@ const cloneScenario = (scenario: GuidedScenario): GuidedScenario => ({
   history: scenario.history.map((event) => ({ ...event })),
 });
 
-const assertPresent = <T>(value: T | undefined, description: string): asserts value is T => {
+const assertPresent: <T>(value: T | undefined, description: string) => asserts value is T = (value, description) => {
   if (value === undefined) {
     throw new Error(`Missing guided scenario ${description}.`);
   }
@@ -305,7 +309,9 @@ export const confirmedPersonKeys = (scenario: GuidedScenario): GuidedPersonKey[]
   scenario.people
     .filter((person) => {
       const identity = getGuidedIdentity(scenario, person.key);
-      return identity.status === GUIDED_IDENTITY_STATUS.CONFIRMED && identity.source === GUIDED_IDENTITY_SOURCE.FACE_MATCH;
+      return (
+        identity.status === GUIDED_IDENTITY_STATUS.CONFIRMED && identity.source === GUIDED_IDENTITY_SOURCE.FACE_MATCH
+      );
     })
     .map((person) => person.key);
 
@@ -390,7 +396,8 @@ export const assertCandidateIdentity = (scenario: GuidedScenario): void => {
     }
 
     const identity = getGuidedIdentity(scenario, person.key);
-    const isConfirmed = identity.status === GUIDED_IDENTITY_STATUS.CONFIRMED && identity.source === GUIDED_IDENTITY_SOURCE.FACE_MATCH;
+    const isConfirmed =
+      identity.status === GUIDED_IDENTITY_STATUS.CONFIRMED && identity.source === GUIDED_IDENTITY_SOURCE.FACE_MATCH;
     if (!isConfirmed) {
       throw new Error(nameGuardError(name));
     }
@@ -427,9 +434,8 @@ const availableGuidedApplications = (history: readonly GuidedHistoryEvent[]): Gu
   return availableApplications;
 };
 
-export const getLastGuidedApplication = (
-  history: readonly GuidedHistoryEvent[],
-): GuidedHistoryEvent | undefined => availableGuidedApplications(history).at(-1);
+export const getLastGuidedApplication = (history: readonly GuidedHistoryEvent[]): GuidedHistoryEvent | undefined =>
+  availableGuidedApplications(history).at(-1);
 
 export const applyGuidedCandidate = (scenario: GuidedScenario): GuidedScenario => {
   if (scenario.candidate.status === GUIDED_CANDIDATE_STATUS.REJECTED) {
@@ -453,7 +459,7 @@ export const applyGuidedCandidate = (scenario: GuidedScenario): GuidedScenario =
 
 export const undoGuidedApplication = (scenario: GuidedScenario): GuidedScenario => {
   const lastApplication = getLastGuidedApplication(scenario.history);
-  if (lastApplication === undefined || lastApplication.previousAppliedText === undefined) {
+  if (lastApplication?.previousAppliedText === undefined) {
     return cloneScenario(scenario);
   }
 

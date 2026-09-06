@@ -87,6 +87,13 @@ const LOCK_HEARTBEAT_MS = 1_000;
 /** A build cannot outlive the lease that fences it from a successor. */
 const BUILD_TIMEOUT_MS = STALE_LOCK_MS - 30_000;
 const BUILD_TERMINATION_GRACE_MS = 5_000;
+/**
+ * A single identity/liveness probe may outlive the wait phase by this bounded amount. The
+ * extension is explicit and finite: a slow `ps` cannot consume the caller's whole wait budget,
+ * while repeated probes cannot silently turn a short phase into an unbounded wait.
+ */
+const PROCESS_PROBE_BUDGET_MS = 250;
+const PROCESS_PROBE_EXTENSION_MS = PROCESS_PROBE_BUDGET_MS * 2;
 export const LOCK_OWNER_FILE = 'owner.json';
 const BUILD_GUARD_FILE = '.build-in-progress';
 /** Artifact directories untouched for longer than this are pruned. */
@@ -382,24 +389,40 @@ export const isValidProcessStartToken = (startToken: string): boolean => {
   return startToken.startsWith(platformPrefix) && /^[A-Za-z0-9_-]+$/.test(startToken.slice(platformPrefix.length));
 };
 
-const processStartToken = (pid: number, timeoutMs = 1000): string | null => {
-  try {
-    if (process.platform === 'linux') {
-      const stat = readFileSync(`/proc/${pid}/stat`, 'utf8');
-      const afterCommand = stat.slice(stat.lastIndexOf(')') + 2).trim().split(/\s+/);
-      // `afterCommand[0]` is field 3 (state); field 22 is the kernel process start time.
-      return afterCommand.length >= 20 && /^[0-9]+$/.test(afterCommand[19])
-        ? `v1:linux:${afterCommand[19]}`
-        : null;
+const readProcessStartTokenStrict = (pid: number, timeoutMs = PROCESS_PROBE_BUDGET_MS): string | null => {
+  if (process.platform === 'linux') {
+    let stat: string;
+    try {
+      stat = readFileSync(`/proc/${pid}/stat`, 'utf8');
+    } catch (error) {
+      // A vanished leader is a real identity mismatch. Permission/I/O failures are unknown and
+      // must reach the bounded probe error path instead of becoming the same `null` value.
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+      throw error;
     }
-    const started = execFileSync('ps', ['-o', 'lstart=', '-p', String(pid)], {
-      ...processProbeOptions(timeoutMs),
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'ignore'],
-    }).trim();
-    return started === ''
-      ? null
-      : `v1:${process.platform}:${Buffer.from(started, 'utf8').toString('base64url')}`;
+    const afterCommand = stat.slice(stat.lastIndexOf(')') + 2).trim().split(/\s+/);
+    // `afterCommand[0]` is field 3 (state); field 22 is the kernel process start time.
+    if (afterCommand.length < 20 || !/^[0-9]+$/.test(afterCommand[19])) {
+      throw Object.assign(new Error(`Malformed /proc/${pid}/stat process identity`), { code: 'EPROTO' });
+    }
+    return `v1:linux:${afterCommand[19]}`;
+  }
+  const started = execFileSync('ps', ['-o', 'lstart=', '-p', String(pid)], {
+    ...processProbeOptions(timeoutMs),
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'ignore'],
+  }).trim();
+  return started === ''
+    ? null
+    : `v1:${process.platform}:${Buffer.from(started, 'utf8').toString('base64url')}`;
+};
+
+// Lock acquisition intentionally keeps the old fail-closed boolean contract. Supervision uses
+// `readProcessStartTokenStrict` through `runBoundedProcessProbe` so a timeout remains distinct
+// from a confirmed replacement leader.
+const processStartToken = (pid: number, timeoutMs = PROCESS_PROBE_BUDGET_MS): string | null => {
+  try {
+    return readProcessStartTokenStrict(pid, timeoutMs);
   } catch {
     return null;
   }
@@ -743,7 +766,7 @@ export class ProductionCssBuildTimeoutError extends Error {
 }
 
 export class ProductionCssBuildTeardownError extends Error {
-  readonly code = 'RES-13-TEARDOWN';
+  readonly code: string = 'RES-13-TEARDOWN';
   /** A successor must not enter while the previous process group may still be alive. */
   readonly retainBuildLock = true;
   supervisedGroup?: SupervisedProcessGroup;
@@ -754,6 +777,45 @@ export class ProductionCssBuildTeardownError extends Error {
       options,
     );
     this.name = 'ProductionCssBuildTeardownError';
+  }
+}
+
+/**
+ * A process probe did not produce evidence within its bounded budget.
+ *
+ * This is deliberately a subtype of the ordinary teardown error so all of the existing lock
+ * retention/fencing paths remain armed, while callers and diagnostics can distinguish an
+ * unverifiable probe from a confirmed leader-identity change. Treating a timeout as `null` is
+ * unsafe: `null` is the value used for a real identity mismatch and would authorize the wrong
+ * RES-13 diagnostic (and, in the old implementation, skip signalling entirely).
+ */
+export class ProductionCssBuildTeardownTimeoutError extends ProductionCssBuildTeardownError {
+  readonly code: string = 'RES-13-TEARDOWN-TIMEOUT';
+  readonly probe: string;
+  readonly budgetMs: number;
+  readonly elapsedMs: number;
+
+  constructor(
+    probe: string,
+    budgetMs: number,
+    elapsedMs: number,
+    options?: ErrorOptions,
+  ) {
+    const cause = options?.cause;
+    const causeCode = cause !== null && typeof cause === 'object' && 'code' in cause
+      ? String(cause.code)
+      : 'unknown';
+    super(
+      budgetMs,
+      `Production CSS teardown ${probe} probe failed after ${Math.max(0, Math.ceil(elapsedMs))}ms ` +
+        `(budget ${Math.max(0, Math.ceil(budgetMs))}ms; ${causeCode}); process state is unknown; ` +
+        'retaining the build lock (RES-13-TEARDOWN-TIMEOUT).',
+      options,
+    );
+    this.name = 'ProductionCssBuildTeardownTimeoutError';
+    this.probe = probe;
+    this.budgetMs = budgetMs;
+    this.elapsedMs = elapsedMs;
   }
 }
 
@@ -852,6 +914,39 @@ const processProbeOptions = (timeoutMs: number): { timeout: number; killSignal: 
   return { timeout: Math.max(1, Math.ceil(timeoutMs)), killSignal: 'SIGKILL' };
 };
 
+const runBoundedProcessProbe = <T>(
+  probe: string,
+  budgetMs: number,
+  now: () => number,
+  operation: () => T,
+): T => {
+  const started = now();
+  if (budgetMs <= 0) {
+    throw new ProductionCssBuildTeardownTimeoutError(
+      probe,
+      budgetMs,
+      0,
+      { cause: Object.assign(new Error('Process probe deadline exhausted'), { code: 'ETIMEDOUT' }) },
+    );
+  }
+  try {
+    const result = operation();
+    const elapsedMs = Math.max(0, now() - started);
+    if (elapsedMs > budgetMs) {
+      throw Object.assign(new Error('Process probe budget exhausted'), { code: 'ETIMEDOUT' });
+    }
+    return result;
+  } catch (error) {
+    if (error instanceof ProductionCssBuildTeardownTimeoutError) throw error;
+    throw new ProductionCssBuildTeardownTimeoutError(
+      probe,
+      budgetMs,
+      Math.max(0, now() - started),
+      { cause: error },
+    );
+  }
+};
+
 const listProcessStates = (timeoutMs: number): string => execFileSync('ps', ['-A', '-o', 'pid=,pgid=,stat='], {
   ...processProbeOptions(timeoutMs),
   encoding: 'utf8',
@@ -865,81 +960,78 @@ const isValidProcessIdField = (field: string | undefined): boolean => {
   return Number.isSafeInteger(value) && value <= 4194304;
 };
 
-const listedGroupIsAlive = (
+const listedGroupIsAliveStrict = (
   processGroupId: number,
   listProcesses: () => string,
   report: (detail: string) => void = () => {},
 ): boolean => {
-  try {
-    const output = listProcesses();
-    // A complete system listing includes at least ps itself. Empty or malformed output
-    // cannot establish that a group is gone.
-    let parsed = 0;
-    let alive = false;
-    const matches: string[] = [];
-    for (const line of output.split('\n')) {
-      const fields = line.trim().split(/\s+/);
-      const [pid, pgid, stat] = fields;
-      const matchingGroup = pgid !== undefined && Number(pgid) === processGroupId;
-      // Check membership before dropping malformed rows: an unreadable member cannot
-      // establish teardown, even when other rows in the listing are parsable.
-      const valid = fields.length === 3 && isValidProcessIdField(pid) && isValidProcessIdField(pgid) &&
-        /^[RSDTtZXxKWPIU][<NLsl+>EXVW-]*$/.test(stat ?? '');
-      if (matchingGroup) {
-        matches.push(line);
-        if (!valid || !stat.startsWith('Z')) alive = true;
-      }
-      if (!valid) continue;
-      parsed++;
+  const output = listProcesses();
+  // A complete system listing includes at least ps itself. Empty or malformed output
+  // cannot establish that a group is gone.
+  let parsed = 0;
+  let alive = false;
+  const matches: string[] = [];
+  for (const line of output.split('\n')) {
+    const fields = line.trim().split(/\s+/);
+    const [pid, pgid, stat] = fields;
+    const matchingGroup = pgid !== undefined && Number(pgid) === processGroupId;
+    // Check membership before dropping malformed rows: an unreadable member cannot
+    // establish teardown, even when other rows in the listing are parsable.
+    const valid = fields.length === 3 && isValidProcessIdField(pid) && isValidProcessIdField(pgid) &&
+      /^[RSDTtZXxKWPIU][<NLsl+>EXVW-]*$/.test(stat ?? '');
+    if (matchingGroup) {
+      matches.push(line);
+      if (!valid || !stat.startsWith('Z')) alive = true;
     }
-    report(parsed === 0
-      ? `ps parsed zero lines; output=${JSON.stringify(output)}`
-      : `ps matching lines (pid pgid stat)=${JSON.stringify(matches)}`);
-    return parsed === 0 || alive;
-  } catch (error) {
-    report(`ps listing failed: ${(error as NodeJS.ErrnoException).code ?? 'unknown'} ${String(error)}`);
-    return true;
+    if (!valid) continue;
+    parsed++;
   }
+  report(parsed === 0
+    ? `ps parsed zero lines; output=${JSON.stringify(output)}`
+    : `ps matching lines (pid pgid stat)=${JSON.stringify(matches)}`);
+  return parsed === 0 || alive;
 };
 
-const processGroupHasNonZombieMember = (processGroupId: number, timeoutMs: number): boolean => {
-  try {
-    if (process.platform === 'linux') {
-      for (const entry of readdirSync('/proc')) {
-        if (!/^[0-9]+$/.test(entry)) continue;
+const processGroupHasNonZombieMemberStrict = (
+  processGroupId: number,
+  timeoutMs: number,
+  now: () => number = monotonicNow,
+): boolean => {
+  const deadline = now() + timeoutMs;
+  if (process.platform === 'linux') {
+    for (const entry of readdirSync('/proc')) {
+      if (now() >= deadline) {
+        throw Object.assign(new Error('Process probe deadline exhausted'), { code: 'ETIMEDOUT' });
+      }
+      if (!/^[0-9]+$/.test(entry)) continue;
+      try {
+        const stat = readFileSync(`/proc/${entry}/stat`, 'utf8');
+        const fields = stat.slice(stat.lastIndexOf(')') + 2).trim().split(/\s+/);
+        // fields[0] is state (field 3), fields[2] is process group ID (field 5).
+        if (fields[0] !== 'Z' && Number(fields[2]) === processGroupId) return true;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue;
+        // stat may be restricted for unrelated users. status exposes group membership
+        // separately; never make a known unrelated process fence this build's teardown.
         try {
-          const stat = readFileSync(`/proc/${entry}/stat`, 'utf8');
-          const fields = stat.slice(stat.lastIndexOf(')') + 2).trim().split(/\s+/);
-          // fields[0] is state (field 3), fields[2] is process group ID (field 5).
-          if (fields[0] !== 'Z' && Number(fields[2]) === processGroupId) return true;
-        } catch (error) {
-          if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue;
-          // stat may be restricted for unrelated users. status exposes group membership
-          // separately; never make a known unrelated process fence this build's teardown.
-          try {
-            const status = readFileSync(`/proc/${entry}/status`, 'utf8');
-            const group = /^NSpgid:\s+(\d+)/m.exec(status);
-            if (group === null || Number(group[1]) === processGroupId) return true;
-          } catch (statusError) {
-            if ((statusError as NodeJS.ErrnoException).code !== 'ENOENT') return true;
-          }
+          const status = readFileSync(`/proc/${entry}/status`, 'utf8');
+          const group = /^NSpgid:\s+(\d+)/m.exec(status);
+          if (group === null || Number(group[1]) === processGroupId) return true;
+        } catch (statusError) {
+          if ((statusError as NodeJS.ErrnoException).code !== 'ENOENT') return true;
         }
       }
-      return false;
     }
-    const states = execFileSync('ps', ['-o', 'stat=', '-g', String(processGroupId)], {
-      ...processProbeOptions(timeoutMs),
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'ignore'],
-    })
-      .trim()
-      .split(/\s+/);
-    return states.some((state) => state !== '' && !state.startsWith('Z'));
-  } catch {
-    // The kill(2) probe already proved existence; an unavailable inspection mechanism must fail
-    // closed rather than declaring teardown complete.
-    return true;
+    return false;
   }
+  const states = execFileSync('ps', ['-o', 'stat=', '-g', String(processGroupId)], {
+    ...processProbeOptions(Math.max(0, deadline - now())),
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'ignore'],
+  })
+    .trim()
+    .split(/\s+/);
+  return states.some((state) => state !== '' && !state.startsWith('Z'));
 };
 
 const processGroupExistsViaSignal = (
@@ -956,28 +1048,46 @@ const processGroupExistsViaSignal = (
   return true;
 };
 
-const processGroupIsAlive = (
+const processGroupIsAliveStrict = (
   processGroupId: number,
   sendSignal: (pidOrGroup: number, signal: ProcessSignal) => void,
-  listProcesses: () => string,
+  listProcesses: (timeoutMs: number) => string,
   report: (detail: string) => void = () => {},
+  timeoutMs: number = PROCESS_PROBE_BUDGET_MS,
+  now: () => number = monotonicNow,
 ): boolean => {
+  const deadline = now() + timeoutMs;
+  const remainingMs = (): number => Math.max(0, deadline - now());
   try {
     sendSignal(-processGroupId, 0);
   } catch (error) {
     const code = (error as NodeJS.ErrnoException).code ?? 'unknown';
     if (code === 'ESRCH') { report('signal probe: ESRCH'); return false; }
     // EPERM can also describe a retired zombie-only group on macOS.
-    return listedGroupIsAlive(processGroupId, listProcesses, detail => report(`signal probe: ${code}; ${detail}`));
+    return listedGroupIsAliveStrict(
+      processGroupId,
+      () => listProcesses(remainingMs()),
+      detail => report(`signal probe: ${code}; ${detail}`),
+    );
   }
   // kill(2) reports zombie-only groups as existing. They cannot execute or retain resources, and
   // descendants may remain zombies until their own parent reaps them.
   if (process.platform !== 'linux') {
-    return listedGroupIsAlive(processGroupId, listProcesses, detail => report(`signal probe: success; ${detail}`));
+    return listedGroupIsAliveStrict(
+      processGroupId,
+      () => listProcesses(remainingMs()),
+      detail => report(`signal probe: success; ${detail}`),
+    );
   }
-  const alive = processGroupHasNonZombieMember(processGroupId, 1000);
+  const alive = processGroupHasNonZombieMemberStrict(processGroupId, remainingMs(), now);
   report(`signal probe: success; /proc non-zombie member or uncertain inspection: ${alive}`);
-  if (alive) listedGroupIsAlive(processGroupId, listProcesses, detail => report(`signal probe: success; /proc alive; ${detail}`));
+  if (alive) {
+    return listedGroupIsAliveStrict(
+      processGroupId,
+      () => listProcesses(remainingMs()),
+      detail => report(`signal probe: success; /proc alive; ${detail}`),
+    );
+  }
   return alive;
 };
 
@@ -989,7 +1099,7 @@ const terminateProcessGroup = (
   pause: (milliseconds: number) => void,
   sendSignal: (pidOrGroup: number, signal: ProcessSignal) => void,
   identityMatches: () => boolean,
-  setProbeDeadline: (deadline: number) => void,
+  setProbePhaseDeadline: (deadline: number) => void,
 ): void => {
   const signalGroup = (signal: NodeJS.Signals): void => {
     if (!identityMatches()) {
@@ -1016,7 +1126,7 @@ const terminateProcessGroup = (
   };
 
   const termDeadline = now() + (options.terminationGraceMs ?? BUILD_TERMINATION_GRACE_MS);
-  setProbeDeadline(termDeadline);
+  setProbePhaseDeadline(termDeadline);
   signalGroup('SIGTERM');
   while (isGroupAlive() && now() < termDeadline) {
     pause(Math.min(25, Math.max(1, termDeadline - now())));
@@ -1025,7 +1135,7 @@ const terminateProcessGroup = (
 
   const killConfirmationMs = options.killConfirmationMs ?? BUILD_TERMINATION_GRACE_MS;
   const killDeadline = now() + killConfirmationMs;
-  setProbeDeadline(killDeadline);
+  setProbePhaseDeadline(killDeadline);
   signalGroup('SIGKILL');
   while (isGroupAlive() && now() < killDeadline) {
     pause(Math.min(25, Math.max(1, killDeadline - now())));
@@ -1040,9 +1150,19 @@ export const waitForProcessGroup = (pid: number, options: ProcessGroupWaitOption
   const now = options.now ?? monotonicNow;
   const deadline = now() + options.timeoutMs;
   let lastProbe = 'group liveness probe not run (or supplied by caller)';
-  const startToken =
-    options.processGroupStartToken ?? (options.readProcessStartToken ?? ((id: number) => processStartToken(id, deadline - now())))(pid);
+  let startToken: string | null = options.processGroupStartToken ?? null;
   try {
+    if (startToken === null) {
+      // Capture the leader independently of the wait phase. A short caller timeout must not turn
+      // the identity probe into an already-expired `ps` invocation, and a failed capture must be
+      // retained as an unknown probe rather than silently becoming a replacement identity.
+      startToken = runBoundedProcessProbe(
+        'leader identity',
+        PROCESS_PROBE_BUDGET_MS,
+        now,
+        () => (options.readProcessStartToken ?? ((id: number) => readProcessStartTokenStrict(id, PROCESS_PROBE_BUDGET_MS)))(pid),
+      );
+    }
     return waitForIdentifiedProcessGroup(pid, options, startToken, deadline, detail => { lastProbe = detail; });
   } catch (error) {
     if (error instanceof ProductionCssBuildTeardownError) {
@@ -1062,17 +1182,47 @@ const waitForIdentifiedProcessGroup = (
 ): number => {
   const now = options.now ?? monotonicNow;
   const pause = options.sleep ?? sleepSync;
-  let probeDeadline = deadline;
-  const setProbeDeadline = (value: number): void => { probeDeadline = value; };
+  // The wait phase owns `deadline`; each probe gets its own budget plus a finite, documented
+  // extension. This prevents one slow identity/listing probe from starving the phase while also
+  // preventing a sequence of probes from extending it without bound.
+  let probePhaseDeadline = deadline;
+  const setProbePhaseDeadline = (value: number): void => { probePhaseDeadline = value; };
+  const probeBudget = (probe: string): number => {
+    const remainingMs = probePhaseDeadline + PROCESS_PROBE_EXTENSION_MS - now();
+    if (remainingMs <= 0) {
+      throw new ProductionCssBuildTeardownTimeoutError(
+        probe,
+        PROCESS_PROBE_BUDGET_MS,
+        PROCESS_PROBE_EXTENSION_MS,
+        { cause: Object.assign(new Error('Process probe extension budget exhausted'), { code: 'ETIMEDOUT' }) },
+      );
+    }
+    return Math.min(PROCESS_PROBE_BUDGET_MS, remainingMs);
+  };
   const sendSignal = options.sendSignal ?? ((pidOrGroup, signal) => process.kill(pidOrGroup, signal));
-  const rawGroupIsAlive =
-    options.isProcessGroupAlive ??
-    options.isProcessAlive ??
-    (() =>
-      options.sendSignal === undefined
-        ? processGroupIsAlive(pid, sendSignal, options.listProcesses ?? (() => listProcessStates(probeDeadline - now())), report)
-        : processGroupExistsViaSignal(pid, sendSignal));
-  const readStartToken = options.readProcessStartToken ?? ((id: number) => processStartToken(id, probeDeadline - now()));
+  const listProcesses = (timeoutMs: number): string => {
+    if (timeoutMs <= 0) {
+      throw Object.assign(new Error('Process probe deadline exhausted'), { code: 'ETIMEDOUT' });
+    }
+    return options.listProcesses === undefined
+      ? listProcessStates(timeoutMs)
+      : options.listProcesses();
+  };
+  const rawGroupIsAlive = (_groupId: number): boolean => {
+    const budgetMs = probeBudget('process-group liveness');
+    return runBoundedProcessProbe('process-group liveness', budgetMs, now, () => {
+      if (options.isProcessGroupAlive !== undefined) return options.isProcessGroupAlive(pid);
+      if (options.isProcessAlive !== undefined) return options.isProcessAlive(pid);
+      return options.sendSignal === undefined
+        ? processGroupIsAliveStrict(pid, sendSignal, listProcesses, report, budgetMs, now)
+        : processGroupExistsViaSignal(pid, sendSignal);
+    });
+  };
+  const readStartToken = (id: number): string | null => {
+    const budgetMs = probeBudget('leader identity');
+    return runBoundedProcessProbe('leader identity', budgetMs, now, () =>
+      (options.readProcessStartToken ?? ((processId: number) => readProcessStartTokenStrict(processId, budgetMs)))(id));
+  };
   if (expectedStartToken === null) {
     throw new ProductionCssBuildTeardownError(
       options.killConfirmationMs ?? BUILD_TERMINATION_GRACE_MS,
@@ -1080,13 +1230,41 @@ const waitForIdentifiedProcessGroup = (
     );
   }
   const identityMatches = (): boolean => readStartToken(pid) === expectedStartToken;
-  const groupState = (): 'owned' | 'gone' | 'unverifiable' => {
-    const matches = identityMatches();
-    const alive = rawGroupIsAlive(pid);
+  let unknownProbeError: ProductionCssBuildTeardownTimeoutError | undefined;
+  const groupState = (): 'owned' | 'gone' | 'unverifiable' | 'unknown' => {
+    unknownProbeError = undefined;
+    let matches: boolean;
+    try {
+      matches = identityMatches();
+    } catch (error) {
+      if (error instanceof ProductionCssBuildTeardownTimeoutError) {
+        unknownProbeError = error;
+        return 'unknown';
+      }
+      throw error;
+    }
+    let alive: boolean;
+    try {
+      alive = rawGroupIsAlive(pid);
+    } catch (error) {
+      if (error instanceof ProductionCssBuildTeardownTimeoutError) {
+        unknownProbeError = error;
+        return 'unknown';
+      }
+      throw error;
+    }
     if (!alive) return 'gone';
     return matches ? 'owned' : 'unverifiable';
   };
   const assertVerifiable = (state: ReturnType<typeof groupState>): void => {
+    if (state === 'unknown') {
+      throw unknownProbeError ?? new ProductionCssBuildTeardownTimeoutError(
+        'process-group state',
+        PROCESS_PROBE_BUDGET_MS,
+        PROCESS_PROBE_BUDGET_MS,
+        { cause: Object.assign(new Error('Process state is unknown'), { code: 'ETIMEDOUT' }) },
+      );
+    }
     if (state === 'unverifiable') {
       throw new ProductionCssBuildTeardownError(
         options.killConfirmationMs ?? BUILD_TERMINATION_GRACE_MS,
@@ -1106,7 +1284,7 @@ const waitForIdentifiedProcessGroup = (
     assertVerifiable(state);
     if (exitCode !== null) {
       if (state === 'owned') {
-        terminateProcessGroup(pid, options, isOwnedGroupAlive, now, pause, sendSignal, identityMatches, setProbeDeadline);
+        terminateProcessGroup(pid, options, isOwnedGroupAlive, now, pause, sendSignal, identityMatches, setProbePhaseDeadline);
       }
       return exitCode;
     }
@@ -1119,7 +1297,7 @@ const waitForIdentifiedProcessGroup = (
     pause(Math.min(25, Math.max(1, deadline - now())));
   }
 
-  terminateProcessGroup(pid, options, isOwnedGroupAlive, now, pause, sendSignal, identityMatches, setProbeDeadline);
+  terminateProcessGroup(pid, options, isOwnedGroupAlive, now, pause, sendSignal, identityMatches, setProbePhaseDeadline);
   throw new ProductionCssBuildTimeoutError(options.timeoutMs);
 };
 

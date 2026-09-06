@@ -58,6 +58,7 @@ import {
   waitForProcessGroup,
   ProductionCssBuildTimeoutError,
   ProductionCssBuildTeardownError,
+  ProductionCssBuildTeardownTimeoutError,
 } from './productionCssBundle';
 
 const ROLLUP_ENTRY_POINTS = ['js/admin/main.tsx', 'js/attachment-edit/main.tsx'] as const;
@@ -1367,10 +1368,78 @@ describe('production build deadline', () => {
     ]);
   });
 
+  it('reports a timed-out leader probe as unknown rather than PGID reuse [D5-R18-01]', () => {
+    const signals: Array<[number, NodeJS.Signals | 0]> = [];
+    const probeError = Object.assign(new Error('identity probe stalled'), { code: 'ETIMEDOUT' });
+    let caught: unknown;
+
+    try {
+      waitForProcessGroup(2468, {
+        timeoutMs: 1,
+        readExitCode: () => 0,
+        processGroupStartToken: 'original-leader',
+        readProcessStartToken: () => { throw probeError; },
+        isProcessGroupAlive: () => true,
+        sendSignal: (pidOrGroup, signal) => signals.push([pidOrGroup, signal]),
+      });
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(ProductionCssBuildTeardownTimeoutError);
+    const timeout = caught as ProductionCssBuildTeardownTimeoutError;
+    expect(timeout.code).toBe('RES-13-TEARDOWN-TIMEOUT');
+    expect(timeout.probe).toBe('leader identity');
+    expect(timeout.budgetMs).toBe(250);
+    expect(timeout.message).toContain('budget 250ms');
+    expect(timeout.message).toContain('process state is unknown');
+    expect(timeout.message).not.toContain('leader identity changed');
+    expect(timeout.cause).toBe(probeError);
+    expect(signals).toEqual([]);
+  });
+
+  it('reports a timed-out process listing as unknown rather than PGID reuse [D5-R18-01]', () => {
+    const originalPlatform = process.platform;
+    const kill = vi.spyOn(process, 'kill').mockImplementation(() => true);
+    const probeError = Object.assign(new Error('ps stalled'), { code: 'ETIMEDOUT' });
+    let caught: unknown;
+
+    try {
+      // The listing fallback is used on macOS after a successful signal probe. Keep this
+      // deterministic and avoid invoking a real process group while exercising that seam.
+      Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
+      try {
+        waitForProcessGroup(2468, {
+          timeoutMs: 1,
+          readExitCode: () => 0,
+          processGroupStartToken: 'original-leader',
+          readProcessStartToken: () => 'original-leader',
+          listProcesses: () => { throw probeError; },
+        });
+      } catch (error) {
+        caught = error;
+      }
+    } finally {
+      Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
+      kill.mockRestore();
+    }
+
+    expect(caught).toBeInstanceOf(ProductionCssBuildTeardownTimeoutError);
+    const timeout = caught as ProductionCssBuildTeardownTimeoutError;
+    expect(timeout.code).toBe('RES-13-TEARDOWN-TIMEOUT');
+    expect(timeout.probe).toBe('process-group liveness');
+    expect(timeout.budgetMs).toBe(250);
+    expect(timeout.message).toContain('budget 250ms');
+    expect(timeout.message).toContain('process state is unknown');
+    expect(timeout.message).not.toContain('leader identity changed');
+    expect(timeout.cause).toBe(probeError);
+  });
+
   it('never signals a live group after the supervised PGID has been reused', () => {
     const signals: Array<[number, NodeJS.Signals | 0]> = [];
+    let caught: unknown;
 
-    expect(() =>
+    try {
       waitForProcessGroup(2468, {
         timeoutMs: 100,
         readExitCode: () => 0,
@@ -1378,8 +1447,15 @@ describe('production build deadline', () => {
         processGroupStartToken: 'original-leader',
         readProcessStartToken: () => 'replacement-leader',
         sendSignal: (pidOrGroup, signal) => signals.push([pidOrGroup, signal]),
-      }),
-    ).toThrow(ProductionCssBuildTeardownError);
+      });
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(ProductionCssBuildTeardownError);
+    expect(caught).not.toBeInstanceOf(ProductionCssBuildTeardownTimeoutError);
+    expect((caught as ProductionCssBuildTeardownError).code).toBe('RES-13-TEARDOWN');
+    expect((caught as Error).message).toContain('leader identity changed');
     expect(signals).toEqual([]);
   });
 

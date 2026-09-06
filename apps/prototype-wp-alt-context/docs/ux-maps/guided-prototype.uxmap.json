@@ -89,10 +89,10 @@
       ]
     },
     {
-      "id": "evidence",
+      "id": "understand",
       "kind": "screen",
-      "title": "Photo and page",
-      "purpose": "See the photo and the page it sits on. AltContext found two faces and the next step shows the matches.",
+      "title": "Look at the photo",
+      "purpose": "See the photo and the page it sits on.",
       "route": "#/guided-prototype",
       "job_entry": false,
       "deep_link": true,
@@ -104,8 +104,8 @@
       ],
       "zones": [
         {
-          "id": "evidence-0",
-          "label": "The photo; Alt text on the page right now: Two people at a film festival.; Photo credit: Colleen Sturtevant, CC BY-SA 4.0.; AltContext found two faces in this photo. The next step shows the matches.",
+          "id": "understand-0",
+          "label": "The photo; Alt text on the page right now: Two people at a film festival.; Photo credit: Colleen Sturtevant, CC BY-SA 4.0, resized for this demo.; AltContext found two faces in this photo. The next step shows the matches.",
           "role": "ai_review",
           "states": [
             "default"
@@ -113,8 +113,8 @@
           "evidence_linked": true
         },
         {
-          "id": "evidence-1",
-          "label": "Saved run — How two faces become two names in the description. AltContext looks at the photo, finds each face, and checks it against people you already named. If you confirm a match, that name goes into the description. You always have the last word. Where this example comes from: Example — Saved from a real run, not a live run; Page — Tribeca Festival 2026: red carpet photos; People on file — Katy Perry (5 saved photos) · Justin Trudeau (2 saved photos); Photo credit — Colleen Sturtevant, CC BY-SA 4.0.; Also checked — A Coachella press photo of the same two people matched both, even with a hand over her mouth. It is not bundled because of licensing.; Flow strip (How the faces reach the description) — Photo · 2 faces found · Matched to Justin Trudeau and Katy Perry · You confirm each match · Names in the description.",
+          "id": "understand-1",
+          "label": "Saved run — How two faces become two names in the description. AltContext looks at the photo, finds each face, and checks it against people you already named. If you confirm a match, that name goes into the description. You always have the last word. Where this example comes from: Example — Saved from a real run, not a live run; Page — Tribeca Festival 2026: red carpet photos; People on file — Katy Perry (5 saved photos) · Justin Trudeau (2 saved photos); Photo credit — Colleen Sturtevant, CC BY-SA 4.0, resized for this demo.; Also checked — A Coachella press photo of the same two people matched both, even with a hand over her mouth. It is not bundled because of licensing.; Flow strip (How the faces reach the description) — Photo · 2 faces found · Matched to Justin Trudeau and Katy Perry · You confirm each match · Names in the description.",
           "role": "content",
           "states": [
             "default"
@@ -125,7 +125,7 @@
     {
       "id": "face",
       "kind": "screen",
-      "title": "Faces found in the photo",
+      "title": "Find the faces",
       "purpose": "AltContext found 2 faces. Each one matched a person you named before.",
       "route": "#/guided-prototype",
       "job_entry": false,
@@ -156,10 +156,37 @@
             "first_time",
             "default"
           ]
+        }
+      ]
+    },
+    {
+      "id": "identity",
+      "kind": "screen",
+      "title": "Confirm each match",
+      "purpose": "Say yes to each match, or keep that person unnamed.",
+      "route": "#/guided-prototype",
+      "job_entry": false,
+      "deep_link": true,
+      "url_params": [],
+      "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/guided/GuidedFacesPanel.tsx",
+      "primary_action_id": null,
+      "states": [
+        "first_time",
+        "default"
+      ],
+      "zones": [
+        {
+          "id": "identity-0",
+          "label": "Decision status: You have not decided yet. / You confirmed: Justin Trudeau. / You confirmed: Katy Perry. / You kept this person unnamed.",
+          "role": "status",
+          "states": [
+            "first_time",
+            "default"
+          ]
         },
         {
-          "id": "face-2",
-          "label": "Decision status: You have not decided yet. / You confirmed: Justin Trudeau. / You confirmed: Katy Perry. / You kept this person unnamed. Decisions block: Confirm each match. Justin Trudeau, face on the left — Yes, this is Justin Trudeau / Keep this person unnamed. Katy Perry, face on the right — Yes, this is Katy Perry / Keep this person unnamed. Changing an answer swaps in a different saved draft. Save or discard your edit first. Buttons are disabled and described by this note while an edit is unsaved; confirm is disabled when already confirmed; unnamed is disabled when already unidentified. Feedback: Match confirmed. {name} is in the draft. Nothing is applied yet. The person on the {position} stays unnamed. You can still check the description.",
+          "id": "identity-1",
+          "label": "Confirm each match. Justin Trudeau, face on the left — Yes, this is Justin Trudeau / Keep this person unnamed. Katy Perry, face on the right — Yes, this is Katy Perry / Keep this person unnamed. Changing an answer swaps in a different saved draft. Save or discard your edit first. Feedback: Match confirmed. {name} is in the draft. Nothing is applied yet. The person on the {position} stays unnamed. You can still check the description.",
           "role": "form",
           "states": [
             "first_time",
@@ -169,9 +196,9 @@
       ]
     },
     {
-      "id": "draft",
+      "id": "review",
       "kind": "screen",
-      "title": "Check the description before anything changes",
+      "title": "Check the description",
       "purpose": "Read the draft. Edit it or reject it. Nothing changes until you press Apply.",
       "route": "#/guided-prototype",
       "job_entry": false,
@@ -185,15 +212,15 @@
       ],
       "zones": [
         {
-          "id": "draft-0",
-          "label": "Ready for you to check, Edited by you, or Rejected. The saved text did not change. Both confirmed: You confirmed both matches, so both names are in the draft. The visual details and page context stay the same. One confirmed: You confirmed one match, so one name is in the draft. The other person is described, not named. None confirmed, all decided: You kept both people unnamed, so the draft only says what is visible. Otherwise: Confirm or skip each face match first. Until then the draft only says what is visible.",
+          "id": "review-0",
+          "label": "Ready for you to check, Edited by you, or Rejected. The saved text did not change. Both confirmed: You confirmed both matches, so both names are in the draft. The visual details and page context stay the same. One confirmed: You confirmed one match, so one name is in the draft. The other person is described, not named. None confirmed, all decided: You kept both people unnamed, so the draft only says what is visible. Otherwise: Confirm each face match or keep the person unnamed first. Until then the draft only says what is visible.",
           "role": "form",
           "states": [
             "default"
           ]
         },
         {
-          "id": "draft-1",
+          "id": "review-1",
           "label": "Draft without names: A man in a black tuxedo and a woman in a white draped gown pose side by side at the Tribeca Festival. Her hand rests on his chest. Without the names. This draft comes from a saved run, not a live one.",
           "role": "ai_review",
           "states": [
@@ -202,7 +229,7 @@
           "evidence_linked": true
         },
         {
-          "id": "draft-2",
+          "id": "review-2",
           "label": "Description draft with Save my edit, Discard my edit, and Reject this draft. Rejected notice: You rejected this draft, so Apply is off. Edit and save the text, or change an answer about a face, to get a new draft.",
           "role": "form",
           "states": [
@@ -408,7 +435,7 @@
       "id": "skip-guide",
       "screen_id": "guide",
       "verb": "Skip to this step",
-      "target": "evidence",
+      "target": "understand",
       "hierarchy": "tertiary",
       "costly": false,
       "irreversible": false
@@ -417,7 +444,7 @@
       "id": "guide-step",
       "screen_id": "guide",
       "verb": "Choose a step",
-      "target": "draft",
+      "target": "review",
       "hierarchy": "secondary",
       "costly": false,
       "irreversible": false
@@ -426,50 +453,50 @@
       "id": "end-guide",
       "screen_id": "guide",
       "verb": "Close the steps",
-      "target": "evidence",
+      "target": "understand",
       "hierarchy": "tertiary",
       "costly": false,
       "irreversible": false
     },
     {
       "id": "confirm-katy-perry",
-      "screen_id": "face",
+      "screen_id": "identity",
       "verb": "Yes, this is Katy Perry",
-      "target": "draft",
+      "target": "review",
       "hierarchy": "secondary",
       "costly": false,
       "irreversible": false
     },
     {
       "id": "unnamed-katy-perry",
-      "screen_id": "face",
+      "screen_id": "identity",
       "verb": "Keep this person unnamed",
-      "target": "draft",
+      "target": "review",
       "hierarchy": "tertiary",
       "costly": false,
       "irreversible": false
     },
     {
       "id": "confirm-justin-trudeau",
-      "screen_id": "face",
+      "screen_id": "identity",
       "verb": "Yes, this is Justin Trudeau",
-      "target": "draft",
+      "target": "review",
       "hierarchy": "secondary",
       "costly": false,
       "irreversible": false
     },
     {
       "id": "unnamed-justin-trudeau",
-      "screen_id": "face",
+      "screen_id": "identity",
       "verb": "Keep this person unnamed",
-      "target": "draft",
+      "target": "review",
       "hierarchy": "tertiary",
       "costly": false,
       "irreversible": false
     },
     {
       "id": "save",
-      "screen_id": "draft",
+      "screen_id": "review",
       "verb": "Save my edit",
       "target": "apply",
       "hierarchy": "primary",
@@ -478,18 +505,18 @@
     },
     {
       "id": "discard",
-      "screen_id": "draft",
+      "screen_id": "review",
       "verb": "Discard my edit",
-      "target": "draft",
+      "target": "review",
       "hierarchy": "tertiary",
       "costly": false,
       "irreversible": false
     },
     {
       "id": "reject",
-      "screen_id": "draft",
+      "screen_id": "review",
       "verb": "Reject this draft",
-      "target": "draft",
+      "target": "review",
       "hierarchy": "secondary",
       "costly": false,
       "irreversible": false
@@ -525,7 +552,7 @@
       "id": "keep",
       "screen_id": "reset",
       "verb": "Cancel",
-      "target": "draft",
+      "target": "review",
       "hierarchy": "primary",
       "costly": false,
       "irreversible": false
@@ -543,7 +570,7 @@
       "id": "reset-confirm",
       "screen_id": "reset",
       "verb": "Reset practice",
-      "target": "evidence",
+      "target": "understand",
       "hierarchy": "destructive",
       "costly": false,
       "irreversible": true,
@@ -565,7 +592,7 @@
           "branch_label": "Find the faces → Confirm each match"
         },
         {
-          "screen_id": "evidence",
+          "screen_id": "understand",
           "branch_label": "Photo → 2 faces found"
         },
         {
@@ -573,7 +600,11 @@
           "branch_label": "confirm-justin-trudeau: Yes, this is Justin Trudeau; confirm-katy-perry: Yes, this is Katy Perry"
         },
         {
-          "screen_id": "draft",
+          "screen_id": "identity",
+          "branch_label": "Confirm each match"
+        },
+        {
+          "screen_id": "review",
           "branch_label": "Expected: You confirmed both matches, so both names are in the draft. The visual details and page context stay the same."
         },
         {
@@ -604,7 +635,7 @@
           "branch_label": "Find the faces → Confirm each match"
         },
         {
-          "screen_id": "evidence",
+          "screen_id": "understand",
           "branch_label": "Photo → 2 faces found"
         },
         {
@@ -612,7 +643,11 @@
           "branch_label": "confirm-katy-perry: Yes, this is Katy Perry + unnamed-justin-trudeau: Keep this person unnamed (or confirm-justin-trudeau + unnamed-katy-perry)"
         },
         {
-          "screen_id": "draft",
+          "screen_id": "identity",
+          "branch_label": "Confirm each match"
+        },
+        {
+          "screen_id": "review",
           "branch_label": "Expected: You confirmed one match, so one name is in the draft. The other person is described, not named."
         },
         {
@@ -639,7 +674,7 @@
           "branch_label": "Find the faces → Confirm each match"
         },
         {
-          "screen_id": "evidence",
+          "screen_id": "understand",
           "branch_label": "Photo → 2 faces found"
         },
         {
@@ -647,7 +682,11 @@
           "branch_label": "unnamed-justin-trudeau: Keep this person unnamed + unnamed-katy-perry: Keep this person unnamed"
         },
         {
-          "screen_id": "draft",
+          "screen_id": "identity",
+          "branch_label": "Confirm each match"
+        },
+        {
+          "screen_id": "review",
           "branch_label": "Expected: You kept both people unnamed, so the draft only says what is visible."
         },
         {
@@ -666,7 +705,7 @@
       "label": "Save or discard your edit before Apply",
       "steps": [
         {
-          "screen_id": "draft",
+          "screen_id": "review",
           "branch_label": "save: Save my edit or discard: Discard my edit"
         },
         {
@@ -685,7 +724,7 @@
       "label": "Apply two edits and undo in order",
       "steps": [
         {
-          "screen_id": "draft",
+          "screen_id": "review",
           "branch_label": "Save the first edit"
         },
         {
@@ -697,7 +736,7 @@
           "branch_label": "Applied value is separate from draft"
         },
         {
-          "screen_id": "draft",
+          "screen_id": "review",
           "branch_label": "Save the second edit"
         },
         {
@@ -720,7 +759,7 @@
       "label": "Cancel or confirm reset safely",
       "steps": [
         {
-          "screen_id": "draft",
+          "screen_id": "review",
           "branch_label": "reset-open: Reset practice"
         },
         {
@@ -728,7 +767,7 @@
           "branch_label": "keep: Cancel or reset-confirm: Reset practice"
         },
         {
-          "screen_id": "evidence",
+          "screen_id": "understand",
           "branch_label": "Cancel preserves edits; Reset practice clears session state"
         }
       ]
@@ -743,7 +782,7 @@
           "branch_label": "Sample photo unavailable; text evidence remains"
         },
         {
-          "screen_id": "draft",
+          "screen_id": "review",
           "branch_label": "Check the description"
         },
         {

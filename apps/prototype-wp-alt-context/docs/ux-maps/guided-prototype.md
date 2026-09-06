@@ -22,9 +22,10 @@
 | --- | --- | --- | --- |
 | `intro` | screen | `#/guided-prototype` | AltContext guided demo |
 | `guide` | screen | `#/guided-prototype` | Step by step |
-| `evidence` | screen | `#/guided-prototype` | Photo and page |
-| `face` | screen | `#/guided-prototype` | Faces found in the photo |
-| `draft` | screen | `#/guided-prototype` | Check the description before anything changes |
+| `understand` | screen | `#/guided-prototype` | Look at the photo |
+| `face` | screen | `#/guided-prototype` | Find the faces |
+| `identity` | screen | `#/guided-prototype` | Confirm each match |
+| `review` | screen | `#/guided-prototype` | Check the description |
 | `apply` | screen | `#/guided-prototype` | Apply it yourself |
 | `result` | screen | `#/guided-prototype` | Applied result and history |
 | `reset` | overlay | `#/guided-prototype` | Reset practice confirmation |
@@ -35,9 +36,10 @@
 
 - `screen:intro` — `apps/prototype-wp-alt-context/js/admin/pages/GuidedPrototypeEntrance.tsx`
 - `screen:guide` — `apps/prototype-wp-alt-context/js/admin/pages/guided/GuidedPrototypeGuide.tsx`
-- `screen:evidence` — `apps/prototype-wp-alt-context/js/admin/pages/guided/GuidedPrototypePage.tsx`
+- `screen:understand` — `apps/prototype-wp-alt-context/js/admin/pages/guided/GuidedPrototypePage.tsx`
 - `screen:face` — `apps/prototype-wp-alt-context/js/admin/pages/guided/GuidedFaceMatchCard.tsx`
-- `screen:draft` — `apps/prototype-wp-alt-context/js/admin/pages/guided/GuidedDescriptionReview.tsx`
+- `screen:identity` — `apps/prototype-wp-alt-context/js/admin/pages/guided/GuidedFacesPanel.tsx`
+- `screen:review` — `apps/prototype-wp-alt-context/js/admin/pages/guided/GuidedDescriptionReview.tsx`
 - `screen:apply` — `apps/prototype-wp-alt-context/js/admin/pages/guided/GuidedDescriptionReview.tsx`
 - `screen:result` — `apps/prototype-wp-alt-context/js/admin/pages/guided/GuidedPrototypePage.tsx`
 - `screen:reset` — `apps/prototype-wp-alt-context/js/admin/pages/guided/GuidedResetDialog.tsx`
@@ -105,18 +107,18 @@ Purpose: Five steps show the path from the photo to the description: Look at the
 | `guide-0` | Current step, Skip to this step, and Show steps / Hide steps | nav | default |
 | `guide-1` | Five steps: Look at the photo — See the photo and the page it sits on.; Find the faces — AltContext found two faces and matched each one to a person you named before.; Confirm each match — Say yes to each match, or keep that person unnamed.; Check the description — Read the draft. Edit it or reject it.; Apply it yourself — Nothing changes until you press Apply.; Close the steps | nav | default |
 
-Actions: `toggle-guide` Show steps / Hide steps → `guide`; `skip-guide` Skip to this step → `evidence`; `guide-step` Choose a step → `draft`; `end-guide` Close the steps → `evidence`.
+Actions: `toggle-guide` Show steps / Hide steps → `guide`; `skip-guide` Skip to this step → `understand`; `guide-step` Choose a step → `review`; `end-guide` Close the steps → `understand`.
 
-### Photo and page (`evidence`)
+### Look at the photo (`understand`)
 
-Purpose: See the photo and the page it sits on. AltContext found two faces and the next step shows the matches.
+Purpose: See the photo and the page it sits on.
 
 | zone id | label | role | states |
 | --- | --- | --- | --- |
-| `evidence-0` | The photo; Alt text on the page right now: Two people at a film festival.; Photo credit: Colleen Sturtevant, CC BY-SA 4.0.; AltContext found two faces in this photo. The next step shows the matches. | ai_review | default |
-| `evidence-1` | Saved run — How two faces become two names in the description. AltContext looks at the photo, finds each face, and checks it against people you already named. If you confirm a match, that name goes into the description. You always have the last word. Where this example comes from: Example — Saved from a real run, not a live run; Page — Tribeca Festival 2026: red carpet photos; People on file — Katy Perry (5 saved photos) · Justin Trudeau (2 saved photos); Photo credit — Colleen Sturtevant, CC BY-SA 4.0.; Also checked — A Coachella press photo of the same two people matched both, even with a hand over her mouth. It is not bundled because of licensing.; Flow strip (How the faces reach the description) — Photo · 2 faces found · Matched to Justin Trudeau and Katy Perry · You confirm each match · Names in the description. | content | default |
+| `understand-0` | The photo; Alt text on the page right now: Two people at a film festival.; Photo credit: Colleen Sturtevant, CC BY-SA 4.0, resized for this demo.; AltContext found two faces in this photo. The next step shows the matches. | ai_review | default |
+| `understand-1` | Saved run — How two faces become two names in the description. AltContext looks at the photo, finds each face, and checks it against people you already named. If you confirm a match, that name goes into the description. You always have the last word. Where this example comes from: Example — Saved from a real run, not a live run; Page — Tribeca Festival 2026: red carpet photos; People on file — Katy Perry (5 saved photos) · Justin Trudeau (2 saved photos); Photo credit — Colleen Sturtevant, CC BY-SA 4.0, resized for this demo.; Also checked — A Coachella press photo of the same two people matched both, even with a hand over her mouth. It is not bundled because of licensing.; Flow strip (How the faces reach the description) — Photo · 2 faces found · Matched to Justin Trudeau and Katy Perry · You confirm each match · Names in the description. | content | default |
 
-### Faces found in the photo (`face`)
+### Find the faces (`face`)
 
 Purpose: AltContext found 2 faces. Each one matched a person you named before.
 
@@ -124,21 +126,29 @@ Purpose: AltContext found 2 faces. Each one matched a person you named before.
 | --- | --- | --- | --- |
 | `face-0` | Face crops and matches: Face on the left — It matches a person you named before: Justin Trudeau. ✓ Match strength: strong. This face is close to the 2 saved photos of Justin Trudeau.; Face on the right — It matches a person you named before: Katy Perry. ✓ Match strength: strong. This face is close to the 5 saved photos of Katy Perry.; Her face is turned a little to the side.; Saved photos of Justin Trudeau: 2 of 2 shown.; Saved photos of Katy Perry: 3 of 5 shown. | ai_review | first_time, default |
 | `face-1` | How this works: 1. AltContext finds every face in the photo. 2. It compares each face to the people you already named. 3. It asks you to confirm each match. Nothing is named without your OK. These matches were saved from a real run. The demo does not run recognition live. | content | first_time, default |
-| `face-2` | Decision status: You have not decided yet. / You confirmed: Justin Trudeau. / You confirmed: Katy Perry. / You kept this person unnamed. Decisions block: Confirm each match. Justin Trudeau, face on the left — Yes, this is Justin Trudeau / Keep this person unnamed. Katy Perry, face on the right — Yes, this is Katy Perry / Keep this person unnamed. Changing an answer swaps in a different saved draft. Save or discard your edit first. Buttons are disabled and described by this note while an edit is unsaved; confirm is disabled when already confirmed; unnamed is disabled when already unidentified. Feedback: Match confirmed. {name} is in the draft. Nothing is applied yet. The person on the {position} stays unnamed. You can still check the description. | form | first_time, default |
 
-Actions: `confirm-katy-perry` Yes, this is Katy Perry → `draft`; `unnamed-katy-perry` Keep this person unnamed → `draft`; `confirm-justin-trudeau` Yes, this is Justin Trudeau → `draft`; `unnamed-justin-trudeau` Keep this person unnamed → `draft`. While an edit is unsaved, all decision buttons are disabled and described by the change note; the confirm button is disabled when already confirmed and the unnamed button is disabled when already unidentified.
+### Confirm each match (`identity`)
 
-### Check the description before anything changes (`draft`)
+Purpose: Say yes to each match, or keep that person unnamed.
+
+| zone id | label | role | states |
+| --- | --- | --- | --- |
+| `identity-0` | Decision status: You have not decided yet. / You confirmed: Justin Trudeau. / You confirmed: Katy Perry. / You kept this person unnamed. | status | first_time, default |
+| `identity-1` | Confirm each match. Justin Trudeau, face on the left — Yes, this is Justin Trudeau / Keep this person unnamed. Katy Perry, face on the right — Yes, this is Katy Perry / Keep this person unnamed. Changing an answer swaps in a different saved draft. Save or discard your edit first. Feedback: Match confirmed. {name} is in the draft. Nothing is applied yet. The person on the {position} stays unnamed. You can still check the description. | form | first_time, default |
+
+Actions: `confirm-katy-perry` Yes, this is Katy Perry → `review`; `unnamed-katy-perry` Keep this person unnamed → `review`; `confirm-justin-trudeau` Yes, this is Justin Trudeau → `review`; `unnamed-justin-trudeau` Keep this person unnamed → `review`. While an edit is unsaved, all decision buttons are disabled and described by the change note; the confirm button is disabled when already confirmed and the unnamed button is disabled when already unidentified.
+
+### Check the description (`review`)
 
 Purpose: Read the draft. Edit it or reject it. Nothing changes until you press Apply.
 
 | zone id | label | role | states |
 | --- | --- | --- | --- |
-| `draft-0` | Ready for you to check, Edited by you, or Rejected. The saved text did not change. Both confirmed: You confirmed both matches, so both names are in the draft. The visual details and page context stay the same. One confirmed: You confirmed one match, so one name is in the draft. The other person is described, not named. None confirmed, all decided: You kept both people unnamed, so the draft only says what is visible. Otherwise: Confirm or skip each face match first. Until then the draft only says what is visible. | form | default |
-| `draft-1` | Draft without names: A man in a black tuxedo and a woman in a white draped gown pose side by side at the Tribeca Festival. Her hand rests on his chest. Without the names. This draft comes from a saved run, not a live one. | ai_review | default |
-| `draft-2` | Description draft with Save my edit, Discard my edit, and Reject this draft. Rejected notice: You rejected this draft, so Apply is off. Edit and save the text, or change an answer about a face, to get a new draft. | form | default, error |
+| `review-0` | Ready for you to check, Edited by you, or Rejected. The saved text did not change. Both confirmed: You confirmed both matches, so both names are in the draft. The visual details and page context stay the same. One confirmed: You confirmed one match, so one name is in the draft. The other person is described, not named. None confirmed, all decided: You kept both people unnamed, so the draft only says what is visible. Otherwise: Confirm each face match or keep the person unnamed first. Until then the draft only says what is visible. | form | default |
+| `review-1` | Draft without names: A man in a black tuxedo and a woman in a white draped gown pose side by side at the Tribeca Festival. Her hand rests on his chest. Without the names. This draft comes from a saved run, not a live one. | ai_review | default |
+| `review-2` | Description draft with Save my edit, Discard my edit, and Reject this draft. Rejected notice: You rejected this draft, so Apply is off. Edit and save the text, or change an answer about a face, to get a new draft. | form | default, error |
 
-Actions: `save` Save my edit → `apply`; `discard` Discard my edit → `draft`; `reject` Reject this draft → `draft`.
+Actions: `save` Save my edit → `apply`; `discard` Discard my edit → `review`; `reject` Reject this draft → `review`.
 
 ### Apply it yourself (`apply`)
 
@@ -172,7 +182,7 @@ Purpose: Radix dialog overlay; safe default Cancel preserves unsaved and saved e
 | `reset-0` | Explicit effects: remove practice changes, preserve original WordPress attachment | content | default |
 | `reset-1` | Cancel / Reset practice; Escape cancels | form | default |
 
-Actions: `keep` Cancel → `draft`; `reset-confirm` Reset practice → `evidence`.
+Actions: `keep` Cancel → `review`; `reset-confirm` Reset practice → `understand`.
 
 ### Image unavailable, text evidence remains (`image-fallback`)
 
@@ -197,22 +207,22 @@ Purpose: External destination in a new tab; browser owns network failure; closin
 | --- | --- | --- | --- | --- |
 | `open` | `intro` | Start the demo | `guide` | primary |
 | `toggle-guide` | `guide` | Show steps / Hide steps | `guide` | secondary |
-| `skip-guide` | `guide` | Skip to this step | `evidence` | tertiary |
-| `guide-step` | `guide` | Choose a step | `draft` | secondary |
-| `end-guide` | `guide` | Close the steps | `evidence` | tertiary |
-| `confirm-katy-perry` | `face` | Yes, this is Katy Perry | `draft` | secondary |
-| `unnamed-katy-perry` | `face` | Keep this person unnamed | `draft` | tertiary |
-| `confirm-justin-trudeau` | `face` | Yes, this is Justin Trudeau | `draft` | secondary |
-| `unnamed-justin-trudeau` | `face` | Keep this person unnamed | `draft` | tertiary |
-| `save` | `draft` | Save my edit | `apply` | primary |
-| `discard` | `draft` | Discard my edit | `draft` | tertiary |
-| `reject` | `draft` | Reject this draft | `draft` | secondary |
+| `skip-guide` | `guide` | Skip to this step | `understand` | tertiary |
+| `guide-step` | `guide` | Choose a step | `review` | secondary |
+| `end-guide` | `guide` | Close the steps | `understand` | tertiary |
+| `confirm-katy-perry` | `identity` | Yes, this is Katy Perry | `review` | secondary |
+| `unnamed-katy-perry` | `identity` | Keep this person unnamed | `review` | tertiary |
+| `confirm-justin-trudeau` | `identity` | Yes, this is Justin Trudeau | `review` | secondary |
+| `unnamed-justin-trudeau` | `identity` | Keep this person unnamed | `review` | tertiary |
+| `save` | `review` | Save my edit | `apply` | primary |
+| `discard` | `review` | Discard my edit | `review` | tertiary |
+| `reject` | `review` | Reject this draft | `review` | secondary |
 | `apply-now` | `apply` | Apply to practice copy | `result` | primary |
 | `undo` | `apply` | Undo | `apply` | tertiary |
 | `reset-open` | `result` | Reset practice | `reset` | tertiary |
-| `keep` | `reset` | Cancel | `draft` | primary |
+| `keep` | `reset` | Cancel | `review` | primary |
 | `case` | `intro` | Read the AltContext case study | `case-study` | secondary |
-| `reset-confirm` | `reset` | Reset practice | `evidence` | destructive |
+| `reset-confirm` | `reset` | Reset practice | `understand` | destructive |
 
 ## Flows
 
@@ -314,7 +324,7 @@ below must exist in the sibling `.uxmap.json`, and no `z-*`/`act-*` id may appea
 that the JSON does not define. Regenerate with `docs/ux-maps/render_ux_maps.py` when the
 renderer dependency is available.
 
-Zone ids: intro-0 intro-1 guide-0 guide-1 evidence-0 evidence-1 face-0 face-1 face-2 draft-0 draft-1 draft-2 apply-0 apply-1 result-0 result-1 result-2 reset-0 reset-1 image-fallback-0 image-fallback-1 case-study-0
+Zone ids: intro-0 intro-1 guide-0 guide-1 understand-0 understand-1 face-0 face-1 identity-0 identity-1 review-0 review-1 review-2 apply-0 apply-1 result-0 result-1 result-2 reset-0 reset-1 image-fallback-0 image-fallback-1 case-study-0
 
 Action ids: open toggle-guide skip-guide guide-step end-guide confirm-katy-perry unnamed-katy-perry confirm-justin-trudeau unnamed-justin-trudeau save discard reject apply-now undo reset-open keep case reset-confirm
 
@@ -324,12 +334,13 @@ Zone labels (verbatim; the tables above escape `|` for markdown, this list does 
 - Start the demo and read the AltContext case study
 - Current step, Skip to this step, and Show steps / Hide steps
 - Five steps: Look at the photo — See the photo and the page it sits on.; Find the faces — AltContext found two faces and matched each one to a person you named before.; Confirm each match — Say yes to each match, or keep that person unnamed.; Check the description — Read the draft. Edit it or reject it.; Apply it yourself — Nothing changes until you press Apply.; Close the steps
-- The photo; Alt text on the page right now: Two people at a film festival.; Photo credit: Colleen Sturtevant, CC BY-SA 4.0.; AltContext found two faces in this photo. The next step shows the matches.
-- Saved run — How two faces become two names in the description. AltContext looks at the photo, finds each face, and checks it against people you already named. If you confirm a match, that name goes into the description. You always have the last word. Where this example comes from: Example — Saved from a real run, not a live run; Page — Tribeca Festival 2026: red carpet photos; People on file — Katy Perry (5 saved photos) · Justin Trudeau (2 saved photos); Photo credit — Colleen Sturtevant, CC BY-SA 4.0.; Also checked — A Coachella press photo of the same two people matched both, even with a hand over her mouth. It is not bundled because of licensing.; Flow strip (How the faces reach the description) — Photo · 2 faces found · Matched to Justin Trudeau and Katy Perry · You confirm each match · Names in the description.
+- The photo; Alt text on the page right now: Two people at a film festival.; Photo credit: Colleen Sturtevant, CC BY-SA 4.0, resized for this demo.; AltContext found two faces in this photo. The next step shows the matches.
+- Saved run — How two faces become two names in the description. AltContext looks at the photo, finds each face, and checks it against people you already named. If you confirm a match, that name goes into the description. You always have the last word. Where this example comes from: Example — Saved from a real run, not a live run; Page — Tribeca Festival 2026: red carpet photos; People on file — Katy Perry (5 saved photos) · Justin Trudeau (2 saved photos); Photo credit — Colleen Sturtevant, CC BY-SA 4.0, resized for this demo.; Also checked — A Coachella press photo of the same two people matched both, even with a hand over her mouth. It is not bundled because of licensing.; Flow strip (How the faces reach the description) — Photo · 2 faces found · Matched to Justin Trudeau and Katy Perry · You confirm each match · Names in the description.
 - Face crops and matches: Face on the left — It matches a person you named before: Justin Trudeau. ✓ Match strength: strong. This face is close to the 2 saved photos of Justin Trudeau.; Face on the right — It matches a person you named before: Katy Perry. ✓ Match strength: strong. This face is close to the 5 saved photos of Katy Perry.; Her face is turned a little to the side.; Saved photos of Justin Trudeau: 2 of 2 shown.; Saved photos of Katy Perry: 3 of 5 shown.
 - How this works: 1. AltContext finds every face in the photo. 2. It compares each face to the people you already named. 3. It asks you to confirm each match. Nothing is named without your OK. These matches were saved from a real run. The demo does not run recognition live.
-- Decision status: You have not decided yet. / You confirmed: Justin Trudeau. / You confirmed: Katy Perry. / You kept this person unnamed. Decisions block: Confirm each match. Justin Trudeau, face on the left — Yes, this is Justin Trudeau / Keep this person unnamed. Katy Perry, face on the right — Yes, this is Katy Perry / Keep this person unnamed. Changing an answer swaps in a different saved draft. Save or discard your edit first. Buttons are disabled and described by this note while an edit is unsaved; confirm is disabled when already confirmed; unnamed is disabled when already unidentified. Feedback: Match confirmed. {name} is in the draft. Nothing is applied yet. The person on the {position} stays unnamed. You can still check the description.
-- Ready for you to check, Edited by you, or Rejected. The saved text did not change. Both confirmed: You confirmed both matches, so both names are in the draft. The visual details and page context stay the same. One confirmed: You confirmed one match, so one name is in the draft. The other person is described, not named. None confirmed, all decided: You kept both people unnamed, so the draft only says what is visible. Otherwise: Confirm or skip each face match first. Until then the draft only says what is visible.
+- Decision status: You have not decided yet. / You confirmed: Justin Trudeau. / You confirmed: Katy Perry. / You kept this person unnamed.
+- Confirm each match. Justin Trudeau, face on the left — Yes, this is Justin Trudeau / Keep this person unnamed. Katy Perry, face on the right — Yes, this is Katy Perry / Keep this person unnamed. Changing an answer swaps in a different saved draft. Save or discard your edit first. Feedback: Match confirmed. {name} is in the draft. Nothing is applied yet. The person on the {position} stays unnamed. You can still check the description.
+- Ready for you to check, Edited by you, or Rejected. The saved text did not change. Both confirmed: You confirmed both matches, so both names are in the draft. The visual details and page context stay the same. One confirmed: You confirmed one match, so one name is in the draft. The other person is described, not named. None confirmed, all decided: You kept both people unnamed, so the draft only says what is visible. Otherwise: Confirm each face match or keep the person unnamed first. Until then the draft only says what is visible.
 - Draft without names: A man in a black tuxedo and a woman in a white draped gown pose side by side at the Tribeca Festival. Her hand rests on his chest. Without the names. This draft comes from a saved run, not a live one.
 - Description draft with Save my edit, Discard my edit, and Reject this draft. Rejected notice: You rejected this draft, so Apply is off. Edit and save the text, or change an answer about a face, to get a new draft.
 - The practice copy says {appliedText}; pressing Apply writes the saved draft to this practice copy only

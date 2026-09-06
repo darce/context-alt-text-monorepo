@@ -136,7 +136,7 @@ const GUIDED_SCENARIO_SEED: GuidedSeed = {
   pressPhoto: {
     src: guidedPressPhoto,
     altText: 'Two people at a film festival.',
-    credit: 'Colleen Sturtevant, CC BY-SA 4.0',
+    credit: 'Colleen Sturtevant, CC BY-SA 4.0, resized for this demo',
     event: 'Tribeca Festival, New York, June 2026',
   },
   pageContext: {
@@ -153,18 +153,18 @@ const GUIDED_SCENARIO_SEED: GuidedSeed = {
         {
           src: guidedKatyPerryPhoto,
           altText: 'Katy Perry at a microphone, reading from a note, in front of a red curtain.',
-          credit: 'Justin Higuchi, CC BY 4.0',
+          credit: 'Justin Higuchi, CC BY 4.0, resized for this demo',
         },
         {
           src: guidedKatyPerryPhoto2019,
           altText: 'Katy Perry smiling at the camera, blonde hair with a headband, red lips, checked shirt.',
-          credit: 'Glenn Francis, CC BY-SA 4.0',
+          credit: 'Glenn Francis (Toglenn), CC BY-SA 4.0, cropped and resized for this demo',
         },
         {
           src: guidedKatyPerryPhoto2016,
           altText:
             'Katy Perry singing into a microphone, long dark hair, silver striped dress, blue and red lights behind her.',
-          credit: 'Voice of America, public domain',
+          credit: 'Voice of America, public domain, resized for this demo',
         },
       ],
     },
@@ -177,12 +177,12 @@ const GUIDED_SCENARIO_SEED: GuidedSeed = {
         {
           src: guidedJustinTrudeauPhoto,
           altText: 'Justin Trudeau, close up, in a grey suit and green tie, with flags behind him.',
-          credit: 'European Union, 2025',
+          credit: 'European Union, CC BY 4.0, cropped and resized for this demo',
         },
         {
           src: guidedJustinTrudeauPhotoB,
           altText: 'Justin Trudeau speaking, grey suit, white shirt and green patterned tie, flags behind him.',
-          credit: 'European Union, 2025',
+          credit: 'European Union, CC BY 4.0, resized for this demo',
         },
       ],
     },

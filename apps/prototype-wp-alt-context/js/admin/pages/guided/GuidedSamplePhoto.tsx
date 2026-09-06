@@ -24,7 +24,7 @@ export const GuidedSamplePhoto = ({
           role="img"
           aria-label={fallbackLabel}
         >
-          <strong>Sample photo unavailable</strong>
+          <strong>Sample photo unavailable.</strong>{' '}
           <span>{altText}</span>
         </div>
       ) : (

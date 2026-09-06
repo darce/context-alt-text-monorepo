@@ -32,7 +32,6 @@ export const GuidedFacesPanel = ({
       </header>
 
       <div className="acx-guided-face__how-it-works">
-        <p>How this works</p>
         <ol aria-label="How this works">
           <li>AltContext finds every face in the photo.</li>
           <li>It compares each face to the people you already named.</li>

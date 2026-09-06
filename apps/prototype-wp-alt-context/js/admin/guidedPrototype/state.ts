@@ -1,9 +1,43 @@
-import samplePhoto from '../assets/guided/altcontext-sample.jpeg';
+import guidedJustinTrudeauPhoto from '../assets/guided/guided-justin-trudeau-2025.jpg';
+import guidedJustinTrudeauPhotoB from '../assets/guided/guided-justin-trudeau-2025-b.jpg';
+import guidedKatyPerryPhoto from '../assets/guided/guided-katy-perry-2026.jpg';
+import guidedKatyPerryPhoto2019 from '../assets/guided/guided-katy-perry-2019.jpg';
+import guidedKatyPerryPhoto2016 from '../assets/guided/guided-katy-perry-2016.jpg';
+import guidedPressPhoto from '../assets/guided/guided-press-tribeca-2026.jpg';
+
+const GUIDED_CANDIDATE_STATUS = {
+  READY: 'ready',
+  EDITED: 'edited',
+  REJECTED: 'rejected',
+} as const;
+
+const GUIDED_IDENTITY_STATUS = {
+  UNCONFIRMED: 'unconfirmed',
+  CONFIRMED: 'confirmed',
+  UNIDENTIFIED: 'unidentified',
+} as const;
+
+const GUIDED_IDENTITY_SOURCE = {
+  FACE_MATCH: 'face-match',
+  NONE: 'none',
+} as const;
+
+const GUIDED_HISTORY_KIND = {
+  IDENTITY_CONFIRMED: 'identity-confirmed',
+  IDENTITY_UNIDENTIFIED: 'identity-unidentified',
+  EDIT_SAVED: 'edit-saved',
+  REJECTED: 'rejected',
+  APPLIED: 'applied',
+  APPLICATION_UNDONE: 'application-undone',
+} as const;
 
 export type GuidedCandidateStatus = 'ready' | 'edited' | 'rejected';
 export type GuidedIdentityStatus = 'unconfirmed' | 'confirmed' | 'unidentified';
-
 export type GuidedMatchStrength = 'strong' | 'weak';
+export type GuidedPersonKey = 'katy-perry' | 'justin-trudeau';
+export const GUIDED_PERSON_KEYS: readonly GuidedPersonKey[] = ['katy-perry', 'justin-trudeau'];
+export type GuidedFacePosition = 'left' | 'right';
+export type GuidedDraftKey = 'none' | 'katy-perry' | 'justin-trudeau' | 'both';
 
 export interface GuidedFaceBox {
   x: number;
@@ -12,17 +46,33 @@ export interface GuidedFaceBox {
   height: number;
 }
 
-/** A face-recognition result saved from an earlier run. The demo never runs recognition live. */
-export interface GuidedFaceMatch {
-  faceCount: number;
+export interface GuidedGalleryPhoto {
+  src: string;
+  altText: string;
+  credit: string;
+}
+
+export interface GuidedLabeledPerson {
+  key: GuidedPersonKey;
+  name: string;
+  clusterId: string;
+  savedPhotoCount: number;
+  galleryPhotos: GuidedGalleryPhoto[];
+}
+
+export interface GuidedFace {
+  id: GuidedPersonKey;
+  position: GuidedFacePosition;
   box: GuidedFaceBox;
-  matchedPersonName: string;
-  similarPhotoCount: number;
+  matchedPersonKey: GuidedPersonKey;
+  similarity: number;
   strength: GuidedMatchStrength;
-  source: 'saved-example';
+  note?: string;
+  source: 'saved-run';
 }
 
 export interface GuidedIdentity {
+  faceId: GuidedPersonKey;
   status: GuidedIdentityStatus;
   name?: string;
   source: 'face-match' | 'none';
@@ -30,8 +80,18 @@ export interface GuidedIdentity {
 
 export interface GuidedHistoryEvent {
   kind: 'identity-confirmed' | 'identity-unidentified' | 'edit-saved' | 'rejected' | 'applied' | 'application-undone';
+  faceId?: GuidedPersonKey;
   text?: string;
   previousAppliedText?: string;
+}
+
+export interface GuidedProvenance {
+  service: string;
+  model: string;
+  runDate: string;
+  threshold: number;
+  note: string;
+  alsoChecked: string;
 }
 
 export type GuidedScenarioOrigin = 'illustrative' | 'saved-build';
@@ -44,25 +104,22 @@ export const GUIDED_SCENARIO_ORIGIN_LABELS: Record<GuidedScenarioOrigin, string>
 export interface GuidedScenario {
   origin: GuidedScenarioOrigin;
   scenarioVersion: string;
-  originalMedia: {
+  pressPhoto: {
     src: string;
     altText: string;
-  };
-  sourceRecord: {
-    name: string;
     credit: string;
-    note: string;
+    event: string;
   };
   pageContext: {
     title: string;
     summary: string;
   };
+  people: GuidedLabeledPerson[];
+  faces: GuidedFace[];
+  identities: GuidedIdentity[];
   visualFacts: string[];
-  faceMatch: GuidedFaceMatch;
-  genericDraft: string;
-  namedDraft: string;
-  unnamedDraft: string;
-  identity: GuidedIdentity;
+  drafts: Record<GuidedDraftKey, string>;
+  provenance: GuidedProvenance;
   candidate: {
     text: string;
     status: GuidedCandidateStatus;
@@ -71,126 +128,274 @@ export interface GuidedScenario {
   history: GuidedHistoryEvent[];
 }
 
-const GUIDED_SCENARIO_SEED: Omit<GuidedScenario, 'identity' | 'candidate' | 'appliedText' | 'history'> = {
-  origin: 'illustrative',
-  scenarioVersion: 'guided-portrait-v2',
-  originalMedia: {
-    src: samplePhoto,
-    altText: 'Portrait of a person in a grey jacket.',
-  },
-  sourceRecord: {
-    name: 'Keanu Reeves',
-    credit: 'Governo do Estado de São Paulo',
-    note: 'Named earlier from a saved example. The demo does not run recognition live.',
+type GuidedSeed = Omit<GuidedScenario, 'identities' | 'candidate' | 'appliedText' | 'history'>;
+
+const GUIDED_SCENARIO_SEED: GuidedSeed = {
+  origin: 'saved-build',
+  scenarioVersion: 'guided-people-v3',
+  pressPhoto: {
+    src: guidedPressPhoto,
+    altText: 'Two people at a film festival.',
+    credit: 'Colleen Sturtevant, CC BY-SA 4.0',
+    event: 'Tribeca Festival, New York, June 2026',
   },
   pageContext: {
-    title: 'Illustrative actor profile',
-    summary: 'A portrait used in an actor profile where a confirmed name helps the description make sense.',
+    title: 'Tribeca Festival 2026: red carpet photos',
+    summary: 'A photo gallery from the opening nights of the Tribeca Festival in New York, June 2026.',
   },
-  visualFacts: ['Portrait crop', 'Grey jacket', 'Plain background'],
-  faceMatch: {
-    faceCount: 1,
-    box: { x: 370, y: 320, width: 660, height: 800 },
-    matchedPersonName: 'Keanu Reeves',
-    similarPhotoCount: 3,
-    strength: 'strong',
-    source: 'saved-example',
+  people: [
+    {
+      key: 'katy-perry',
+      name: 'Katy Perry',
+      clusterId: '68adc97c-f81f-42c3-9e5c-061f16770361',
+      savedPhotoCount: 5,
+      galleryPhotos: [
+        {
+          src: guidedKatyPerryPhoto,
+          altText: 'Katy Perry at a microphone, reading from a note, in front of a red curtain.',
+          credit: 'Justin Higuchi, CC BY 4.0',
+        },
+        {
+          src: guidedKatyPerryPhoto2019,
+          altText: 'Katy Perry smiling at the camera, blonde hair with a headband, red lips, checked shirt.',
+          credit: 'Glenn Francis, CC BY-SA 4.0',
+        },
+        {
+          src: guidedKatyPerryPhoto2016,
+          altText: 'Katy Perry singing into a microphone, long dark hair, silver striped dress, blue and red lights behind her.',
+          credit: 'Voice of America, public domain',
+        },
+      ],
+    },
+    {
+      key: 'justin-trudeau',
+      name: 'Justin Trudeau',
+      clusterId: 'fd0d2b5d-108a-42b7-af25-f028e40d5778',
+      savedPhotoCount: 2,
+      galleryPhotos: [
+        {
+          src: guidedJustinTrudeauPhoto,
+          altText: 'Justin Trudeau, close up, in a grey suit and green tie, with flags behind him.',
+          credit: 'European Union, 2025',
+        },
+        {
+          src: guidedJustinTrudeauPhotoB,
+          altText: 'Justin Trudeau speaking, grey suit, white shirt and green patterned tie, flags behind him.',
+          credit: 'European Union, 2025',
+        },
+      ],
+    },
+  ],
+  faces: [
+    {
+      id: 'justin-trudeau',
+      position: 'left',
+      box: { x: 514, y: 77, width: 132, height: 189 },
+      matchedPersonKey: 'justin-trudeau',
+      similarity: 0.686,
+      strength: 'strong',
+      source: 'saved-run',
+    },
+    {
+      id: 'katy-perry',
+      position: 'right',
+      box: { x: 707, y: 140, width: 121, height: 181 },
+      matchedPersonKey: 'katy-perry',
+      similarity: 0.742,
+      strength: 'strong',
+      note: 'Her face is turned a little to the side.',
+      source: 'saved-run',
+    },
+  ],
+  visualFacts: [
+    'Two people stand side by side in front of a white wall of Tribeca Festival logos.',
+    'The man on the left wears a black tuxedo with a white shirt.',
+    'The woman on the right wears a white draped gown with her dark hair pinned up.',
+    'Her hand rests on his chest.',
+  ],
+  drafts: {
+    none: 'A man in a black tuxedo and a woman in a white draped gown pose side by side at the Tribeca Festival. Her hand rests on his chest.',
+    'katy-perry': 'Katy Perry, in a white draped gown with her dark hair pinned up, poses with a man in a black tuxedo at the Tribeca Festival. Her hand rests on his chest.',
+    'justin-trudeau': 'Justin Trudeau, in a black tuxedo and white shirt, poses with a woman in a white draped gown at the Tribeca Festival. Her hand rests on his chest.',
+    both: 'Justin Trudeau and Katy Perry pose side by side at the Tribeca Festival. He wears a black tuxedo with a white shirt; she wears a white draped gown with her dark hair pinned up and rests a hand on his chest.',
   },
-  genericDraft: 'Portrait of a person in a grey jacket.',
-  namedDraft: 'Keanu Reeves wears a grey jacket against a plain background.',
-  unnamedDraft: 'Portrait of a person in a grey jacket.',
+  provenance: {
+    service: 'AltContext recognition service (dev build)',
+    model: 'InsightFace buffalo_l',
+    runDate: '2026-09-06',
+    threshold: 0.6,
+    note: 'Saved from a real run. The demo does not run recognition live.',
+    alsoChecked: 'A Coachella press photo of the same two people matched both, even with a hand over her mouth. It is not bundled because of licensing.',
+  },
 };
 
-const cloneSeed = (): Omit<GuidedScenario, 'identity' | 'candidate' | 'appliedText' | 'history'> => ({
+const cloneScenarioSeed = (): GuidedSeed => ({
   ...GUIDED_SCENARIO_SEED,
-  originalMedia: { ...GUIDED_SCENARIO_SEED.originalMedia },
-  sourceRecord: { ...GUIDED_SCENARIO_SEED.sourceRecord },
+  pressPhoto: { ...GUIDED_SCENARIO_SEED.pressPhoto },
   pageContext: { ...GUIDED_SCENARIO_SEED.pageContext },
+  people: GUIDED_SCENARIO_SEED.people.map((person) => ({
+    ...person,
+    galleryPhotos: person.galleryPhotos.map((photo) => ({ ...photo })),
+  })),
+  faces: GUIDED_SCENARIO_SEED.faces.map((face) => ({ ...face, box: { ...face.box } })),
   visualFacts: [...GUIDED_SCENARIO_SEED.visualFacts],
-  faceMatch: { ...GUIDED_SCENARIO_SEED.faceMatch, box: { ...GUIDED_SCENARIO_SEED.faceMatch.box } },
+  drafts: { ...GUIDED_SCENARIO_SEED.drafts },
+  provenance: { ...GUIDED_SCENARIO_SEED.provenance },
 });
 
 const cloneScenario = (scenario: GuidedScenario): GuidedScenario => ({
   ...scenario,
-  originalMedia: { ...scenario.originalMedia },
-  sourceRecord: { ...scenario.sourceRecord },
+  pressPhoto: { ...scenario.pressPhoto },
   pageContext: { ...scenario.pageContext },
+  people: scenario.people.map((person) => ({
+    ...person,
+    galleryPhotos: person.galleryPhotos.map((photo) => ({ ...photo })),
+  })),
+  faces: scenario.faces.map((face) => ({ ...face, box: { ...face.box } })),
+  identities: scenario.identities.map((identity) => ({ ...identity })),
   visualFacts: [...scenario.visualFacts],
-  faceMatch: { ...scenario.faceMatch, box: { ...scenario.faceMatch.box } },
-  identity: { ...scenario.identity },
+  drafts: { ...scenario.drafts },
+  provenance: { ...scenario.provenance },
   candidate: { ...scenario.candidate },
   history: scenario.history.map((event) => ({ ...event })),
 });
 
-const withHistory = (scenario: GuidedScenario, event: GuidedHistoryEvent): GuidedScenario => ({
-  ...cloneScenario(scenario),
-  history: [...scenario.history.map((item) => ({ ...item })), event],
-});
+const assertPresent = <T>(value: T | undefined, description: string): asserts value is T => {
+  if (value === undefined) {
+    throw new Error(`Missing guided scenario ${description}.`);
+  }
+};
 
-export const createGuidedScenario = (): GuidedScenario => ({
-  ...cloneSeed(),
-  identity: { status: 'unconfirmed', source: 'none' },
-  candidate: { text: GUIDED_SCENARIO_SEED.genericDraft, status: 'ready' },
-  appliedText: GUIDED_SCENARIO_SEED.originalMedia.altText,
-  history: [],
-});
+export const getGuidedPerson = (scenario: GuidedScenario, key: GuidedPersonKey): GuidedLabeledPerson => {
+  const person = scenario.people.find((candidate) => candidate.key === key);
+  assertPresent(person, `person: ${key}`);
+  return person;
+};
+
+export const getGuidedFace = (scenario: GuidedScenario, faceId: GuidedPersonKey): GuidedFace => {
+  const face = scenario.faces.find((candidate) => candidate.id === faceId);
+  assertPresent(face, `face: ${faceId}`);
+  return face;
+};
+
+export const getGuidedIdentity = (scenario: GuidedScenario, faceId: GuidedPersonKey): GuidedIdentity => {
+  const identity = scenario.identities.find((candidate) => candidate.faceId === faceId);
+  assertPresent(identity, `identity: ${faceId}`);
+  return identity;
+};
+
+export const createGuidedScenario = (): GuidedScenario => {
+  const seed = cloneScenarioSeed();
+  return {
+    ...seed,
+    identities: seed.faces.map((face) => ({
+      faceId: face.id,
+      status: GUIDED_IDENTITY_STATUS.UNCONFIRMED,
+      source: GUIDED_IDENTITY_SOURCE.NONE,
+    })),
+    candidate: { text: seed.drafts.none, status: GUIDED_CANDIDATE_STATUS.READY },
+    appliedText: seed.pressPhoto.altText,
+    history: [],
+  };
+};
 
 export const resetGuidedScenario = (): GuidedScenario => createGuidedScenario();
 
-const containsSampleIdentity = (text: string, name: string): boolean => {
-  const escapedName = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  return new RegExp(`\\b${escapedName}\\b`, 'i').test(text);
+export const confirmedPersonKeys = (scenario: GuidedScenario): GuidedPersonKey[] =>
+  scenario.people
+    .filter((person) => {
+      const identity = getGuidedIdentity(scenario, person.key);
+      return identity.status === GUIDED_IDENTITY_STATUS.CONFIRMED && identity.source === GUIDED_IDENTITY_SOURCE.FACE_MATCH;
+    })
+    .map((person) => person.key);
+
+export const draftKeyFor = (scenario: GuidedScenario): GuidedDraftKey => {
+  const confirmed = confirmedPersonKeys(scenario);
+  const katyConfirmed = confirmed.includes('katy-perry');
+  const justinConfirmed = confirmed.includes('justin-trudeau');
+
+  if (katyConfirmed && justinConfirmed) {
+    return 'both';
+  }
+  if (katyConfirmed) {
+    return 'katy-perry';
+  }
+  if (justinConfirmed) {
+    return 'justin-trudeau';
+  }
+  return 'none';
 };
 
-const assertCandidateIdentity = (scenario: GuidedScenario): void => {
-  const matchedName = scenario.faceMatch.matchedPersonName.trim();
-  if (matchedName === '' || !containsSampleIdentity(scenario.candidate.text, matchedName)) {
-    return;
-  }
+export const draftFor = (scenario: GuidedScenario): string => scenario.drafts[draftKeyFor(scenario)];
 
-  if (
-    scenario.identity.status !== 'confirmed' ||
-    scenario.identity.source !== 'face-match' ||
-    scenario.identity.name?.trim().toLowerCase() !== matchedName.toLowerCase()
-  ) {
-    throw new Error('You can only use the name after you confirm the face match.');
-  }
+const replaceIdentity = (scenario: GuidedScenario, faceId: GuidedPersonKey, replacement: GuidedIdentity): void => {
+  const currentIdentity = getGuidedIdentity(scenario, faceId);
+  scenario.identities = scenario.identities.map((identity) => (identity === currentIdentity ? replacement : identity));
 };
 
-const availableGuidedApplications = (history: GuidedHistoryEvent[]): GuidedHistoryEvent[] => {
-  const availableApplications: GuidedHistoryEvent[] = [];
-  for (const event of history) {
-    if (event.kind === 'applied') {
-      availableApplications.push(event);
-    } else if (event.kind === 'application-undone') {
-      availableApplications.pop();
+const refreshCandidate = (scenario: GuidedScenario): void => {
+  scenario.candidate = { text: draftFor(scenario), status: GUIDED_CANDIDATE_STATUS.READY };
+};
+
+const withHistory = (scenario: GuidedScenario, event: GuidedHistoryEvent): GuidedScenario => {
+  const next = cloneScenario(scenario);
+  next.history = [...next.history, { ...event }];
+  return next;
+};
+
+export const confirmGuidedIdentity = (scenario: GuidedScenario, faceId: GuidedPersonKey): GuidedScenario => {
+  const next = cloneScenario(scenario);
+  const face = getGuidedFace(next, faceId);
+  const person = getGuidedPerson(next, face.matchedPersonKey);
+  replaceIdentity(next, faceId, {
+    faceId,
+    status: GUIDED_IDENTITY_STATUS.CONFIRMED,
+    name: person.name,
+    source: GUIDED_IDENTITY_SOURCE.FACE_MATCH,
+  });
+  refreshCandidate(next);
+  return withHistory(next, { kind: GUIDED_HISTORY_KIND.IDENTITY_CONFIRMED, faceId });
+};
+
+export const leaveGuidedIdentityUnidentified = (scenario: GuidedScenario, faceId: GuidedPersonKey): GuidedScenario => {
+  const next = cloneScenario(scenario);
+  getGuidedFace(next, faceId);
+  replaceIdentity(next, faceId, {
+    faceId,
+    status: GUIDED_IDENTITY_STATUS.UNIDENTIFIED,
+    source: GUIDED_IDENTITY_SOURCE.NONE,
+  });
+  refreshCandidate(next);
+  return withHistory(next, { kind: GUIDED_HISTORY_KIND.IDENTITY_UNIDENTIFIED, faceId });
+};
+
+const containsPersonName = (text: string, name: string): boolean => {
+  const trimmedName = name.trim();
+  if (trimmedName === '') {
+    return false;
+  }
+
+  const escapedName = trimmedName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`\\b${escapedName}\\b`, 'i').test(text.trim());
+};
+
+export const nameGuardError = (name: string): string =>
+  `You can only use the name ${name} after you confirm that face match.`;
+
+export const assertCandidateIdentity = (scenario: GuidedScenario): void => {
+  for (const person of scenario.people) {
+    const name = person.name.trim();
+    if (!containsPersonName(scenario.candidate.text, name)) {
+      continue;
+    }
+
+    const identity = getGuidedIdentity(scenario, person.key);
+    const isConfirmed = identity.status === GUIDED_IDENTITY_STATUS.CONFIRMED && identity.source === GUIDED_IDENTITY_SOURCE.FACE_MATCH;
+    if (!isConfirmed) {
+      throw new Error(nameGuardError(name));
     }
   }
-  return availableApplications;
 };
-
-export const getLastGuidedApplication = (history: GuidedHistoryEvent[]): GuidedHistoryEvent | undefined =>
-  availableGuidedApplications(history).at(-1);
-
-export const confirmGuidedIdentity = (scenario: GuidedScenario): GuidedScenario =>
-  withHistory(
-    {
-      ...cloneScenario(scenario),
-      identity: { status: 'confirmed', name: scenario.faceMatch.matchedPersonName, source: 'face-match' },
-      candidate: { text: scenario.namedDraft, status: 'ready' },
-    },
-    { kind: 'identity-confirmed' },
-  );
-
-export const leaveGuidedIdentityUnidentified = (scenario: GuidedScenario): GuidedScenario =>
-  withHistory(
-    {
-      ...cloneScenario(scenario),
-      identity: { status: 'unidentified', source: 'none' },
-      candidate: { text: scenario.unnamedDraft, status: 'ready' },
-    },
-    { kind: 'identity-unidentified' },
-  );
 
 export const saveGuidedEdit = (scenario: GuidedScenario, text: string): GuidedScenario => {
   const trimmedText = text.trim();
@@ -198,49 +403,64 @@ export const saveGuidedEdit = (scenario: GuidedScenario, text: string): GuidedSc
     throw new Error('A description cannot be empty.');
   }
 
-  const editedScenario = {
-    ...cloneScenario(scenario),
-    candidate: { text: trimmedText, status: 'edited' as const },
-  };
-  assertCandidateIdentity(editedScenario);
-
-  return withHistory(editedScenario, { kind: 'edit-saved', text: trimmedText });
+  const next = cloneScenario(scenario);
+  next.candidate = { text: trimmedText, status: GUIDED_CANDIDATE_STATUS.EDITED };
+  assertCandidateIdentity(next);
+  return withHistory(next, { kind: GUIDED_HISTORY_KIND.EDIT_SAVED, text: trimmedText });
 };
 
-export const rejectGuidedCandidate = (scenario: GuidedScenario): GuidedScenario =>
-  withHistory(
-    {
-      ...cloneScenario(scenario),
-      candidate: { ...scenario.candidate, status: 'rejected' },
-    },
-    { kind: 'rejected', text: scenario.candidate.text },
-  );
+export const rejectGuidedCandidate = (scenario: GuidedScenario): GuidedScenario => {
+  const next = cloneScenario(scenario);
+  next.candidate = { ...next.candidate, status: GUIDED_CANDIDATE_STATUS.REJECTED };
+  return withHistory(next, { kind: GUIDED_HISTORY_KIND.REJECTED });
+};
+
+const availableGuidedApplications = (history: readonly GuidedHistoryEvent[]): GuidedHistoryEvent[] => {
+  const availableApplications: GuidedHistoryEvent[] = [];
+  for (const event of history) {
+    if (event.kind === GUIDED_HISTORY_KIND.APPLIED) {
+      availableApplications.push(event);
+    } else if (event.kind === GUIDED_HISTORY_KIND.APPLICATION_UNDONE) {
+      availableApplications.pop();
+    }
+  }
+  return availableApplications;
+};
+
+export const getLastGuidedApplication = (
+  history: readonly GuidedHistoryEvent[],
+): GuidedHistoryEvent | undefined => availableGuidedApplications(history).at(-1);
 
 export const applyGuidedCandidate = (scenario: GuidedScenario): GuidedScenario => {
-  if (scenario.candidate.status === 'rejected') {
+  if (scenario.candidate.status === GUIDED_CANDIDATE_STATUS.REJECTED) {
     throw new Error('Cannot apply a rejected description.');
   }
 
   assertCandidateIdentity(scenario);
-
   if (scenario.candidate.text === scenario.appliedText) {
     return cloneScenario(scenario);
   }
 
-  return withHistory(
-    { ...cloneScenario(scenario), appliedText: scenario.candidate.text },
-    { kind: 'applied', text: scenario.candidate.text, previousAppliedText: scenario.appliedText },
-  );
+  const next = cloneScenario(scenario);
+  const previousAppliedText = next.appliedText;
+  next.appliedText = next.candidate.text;
+  return withHistory(next, {
+    kind: GUIDED_HISTORY_KIND.APPLIED,
+    text: next.candidate.text,
+    previousAppliedText,
+  });
 };
 
 export const undoGuidedApplication = (scenario: GuidedScenario): GuidedScenario => {
   const lastApplication = getLastGuidedApplication(scenario.history);
-  if (lastApplication?.previousAppliedText === undefined) {
+  if (lastApplication === undefined || lastApplication.previousAppliedText === undefined) {
     return cloneScenario(scenario);
   }
 
-  return withHistory(
-    { ...cloneScenario(scenario), appliedText: lastApplication.previousAppliedText },
-    { kind: 'application-undone', text: lastApplication.previousAppliedText },
-  );
+  const next = cloneScenario(scenario);
+  next.appliedText = lastApplication.previousAppliedText;
+  return withHistory(next, {
+    kind: GUIDED_HISTORY_KIND.APPLICATION_UNDONE,
+    text: next.appliedText,
+  });
 };

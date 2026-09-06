@@ -1,18 +1,15 @@
 import React, { useState } from 'react';
 
-import samplePhoto from '../../assets/guided/altcontext-sample.jpeg';
-
-const SAMPLE_PHOTO_ALT =
-  'Portrait photograph of a man with shoulder-length dark hair and a beard, wearing a grey jacket over a dark shirt, against a light background.';
-const SAMPLE_PHOTO_FALLBACK_LABEL = `Sample photo unavailable. ${SAMPLE_PHOTO_ALT}`;
-
 export interface GuidedSamplePhotoProps {
-  mediaAltText: string;
+  src: string;
+  altText: string;
+  currentAltText: string;
   credit: string;
 }
 
-export const GuidedSamplePhoto = ({ mediaAltText, credit }: GuidedSamplePhotoProps): React.JSX.Element => {
+export const GuidedSamplePhoto = ({ src, altText, currentAltText, credit }: GuidedSamplePhotoProps): React.JSX.Element => {
   const [imageFailed, setImageFailed] = useState(false);
+  const fallbackLabel = `Sample photo unavailable. ${altText}`;
 
   return (
     <figure className="acx-guided-page__media-card">
@@ -20,24 +17,24 @@ export const GuidedSamplePhoto = ({ mediaAltText, credit }: GuidedSamplePhotoPro
         <div
           className="acx-guided-page__image-placeholder acx-guided-page__image-placeholder--fallback"
           role="img"
-          aria-label={SAMPLE_PHOTO_FALLBACK_LABEL}
+          aria-label={fallbackLabel}
         >
           <strong>Sample photo unavailable</strong>
-          <span>{SAMPLE_PHOTO_ALT}</span>
+          <span>{altText}</span>
         </div>
       ) : (
         <img
           className="acx-guided-page__image"
-          src={samplePhoto}
-          alt={SAMPLE_PHOTO_ALT}
+          src={src}
+          alt={altText}
           onError={() => setImageFailed(true)}
         />
       )}
       <figcaption>
         <strong>The photo</strong>
-        <span>Alt text on the page right now: {mediaAltText}</span>
+        <span>Alt text on the page right now: {currentAltText}</span>
         <span>Photo credit: {credit}.</span>
-        <span>AltContext found one face in this photo. The next step shows the match.</span>
+        <span>AltContext found two faces in this photo. The next step shows the matches.</span>
       </figcaption>
     </figure>
   );

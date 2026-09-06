@@ -112,6 +112,8 @@ printf '%s\n' 'console.log("demo");' >"${case_one_fixture}/js/public/demo-descri
 printf '%s\n' '.demo {}' >"${case_one_fixture}/js/public/demo-describe.css"
 printf '%s\n' 'declare const demo: unknown;' >"${case_one_fixture}/js/public/demo-describe.d.ts"
 printf '%s\n' 'test("demo", () => {});' >"${case_one_fixture}/js/public/demo-describe.test.ts"
+printf '%s\n' 'test("spec", () => {});' >"${case_one_fixture}/js/public/demo-describe.spec.ts"
+printf '%s\n' 'export const helper = 1;' >"${case_one_fixture}/js/public/__tests__/helpers.ts"
 printf '%s\n' 'test("nested", () => {});' >"${case_one_fixture}/js/public/__tests__/x.test.ts"
 
 case_one_before=$failures
@@ -129,8 +131,12 @@ if [[ "${last_rc}" -eq 0 ]]; then
             "alt-context/js/public/demo-describe.d.ts"
         assert_zip_excludes "case 1 excludes public test files" "${case_one_zip}" \
             "alt-context/js/public/demo-describe.test.ts"
+        assert_zip_excludes "case 1 excludes public spec files" "${case_one_zip}" \
+            "alt-context/js/public/demo-describe.spec.ts"
         assert_zip_excludes "case 1 excludes public __tests__" "${case_one_zip}" \
             "alt-context/js/public/__tests__/x.test.ts"
+        assert_zip_excludes "case 1 excludes __tests__ files the name filters would keep" "${case_one_zip}" \
+            "alt-context/js/public/__tests__/helpers.ts"
     fi
 else
     fail "case 1 packages with js/public (exit ${last_rc}; output: ${last_output})"

@@ -101,9 +101,9 @@
     gap: var(--acx-space-2);
     max-width: 32rem;
     padding: var(--acx-space-12) var(--acx-space-16);
+    border: 1px solid var(--acx-color-primary-subtle);
     border-left: var(--acx-space-4) solid var(--acx-color-success-border);
     background: var(--acx-color-primary);
-    border: 1px solid var(--acx-color-primary-subtle);
 
     span {
       font-size: var(--acx-text-sm);

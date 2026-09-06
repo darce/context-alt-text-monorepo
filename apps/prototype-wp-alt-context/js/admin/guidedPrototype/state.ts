@@ -388,7 +388,7 @@ const containsPersonName = (text: string, name: string): boolean => {
 export const nameGuardError = (name: string): string =>
   `You can only use the name ${name} after you confirm that face match.`;
 
-export const assertCandidateIdentity = (scenario: GuidedScenario): void => {
+const assertCandidateIdentity = (scenario: GuidedScenario): void => {
   for (const person of scenario.people) {
     const name = person.name.trim();
     if (!containsPersonName(scenario.candidate.text, name)) {

@@ -14,9 +14,10 @@ import json
 import posixpath
 import re
 import sys
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path, PureWindowsPath
-from typing import Any, Iterable
+from typing import Any
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -67,14 +68,14 @@ def normalize_owned_path(path: str) -> str:
         raise TypeError("owned paths must be strings")
 
     value = _normalise_slashes(path)
+    value = posixpath.normpath(value or ".")
+
     if posixpath.isabs(value) or PureWindowsPath(value).is_absolute() or re.match(
         r"^[A-Za-z]:", value
     ):
         raise ManifestError(
             f"owned path {path!r} is absolute; paths must be repository-relative"
         )
-
-    value = posixpath.normpath(value or ".")
 
     # Repeated suffixes occur in patterns such as ``src/**/*``.  They all
     # denote a directory prefix for this checker.
@@ -189,9 +190,12 @@ def _owned_paths(entry: dict[str, Any], manifest_path: Path) -> tuple[str, ...]:
 def load_lanes(manifest_dir: Path) -> tuple[list[Path], list[Lane]]:
     """Load all JSON lane manifests and return their paths and lane rows."""
 
+    if manifest_dir.exists() and not manifest_dir.is_dir():
+        raise ManifestError(f"{manifest_dir}: manifest path is not a directory")
+
     manifest_paths = sorted(
         path for path in manifest_dir.glob("*.json") if path.is_file()
-    ) if manifest_dir.is_dir() else []
+    ) if manifest_dir.exists() else []
     lanes: list[Lane] = []
     for manifest_path in manifest_paths:
         try:
@@ -222,58 +226,90 @@ def load_lanes(manifest_dir: Path) -> tuple[list[Path], list[Lane]]:
 
 def _add_status(
     statuses: dict[str, str], key: object, value: object, *, task_ref: str | None = None
-) -> None:
+) -> bool:
     if not isinstance(value, str):
-        return
+        return False
     key_text = str(key).strip()
     if "/" not in key_text and task_ref:
         key_text = f"{task_ref}/{key_text}"
     status_text = value.strip().lower()
     if key_text and "/" in key_text and status_text:
         statuses[key_text] = status_text
+        return True
+    return False
 
 
 def _collect_statuses(
-    value: object, statuses: dict[str, str], *, task_ref: str | None = None
-) -> None:
+    value: object,
+    statuses: dict[str, str],
+    *,
+    task_ref: str | None = None,
+    allow_empty: bool = False,
+) -> bool:
     """Accept flat maps, nested task/lane maps, and exported lane rows."""
 
     if isinstance(value, list):
+        recognized = allow_empty and not value
         for row in value:
-            _collect_statuses(row, statuses, task_ref=task_ref)
-        return
+            recognized = (
+                _collect_statuses(row, statuses, task_ref=task_ref)
+                or recognized
+            )
+        return recognized
     if not isinstance(value, dict):
-        return
+        return False
 
+    recognized = allow_empty and not value
     row_task = value.get("task_ref")
     row_lane = value.get("lane_id")
     row_status = value.get("status")
     if row_task is not None and row_lane is not None:
-        _add_status(
-            statuses,
-            f"{row_task}/{row_lane}",
-            row_status,
+        recognized = (
+            _add_status(
+                statuses,
+                f"{row_task}/{row_lane}",
+                row_status,
+            )
+            or recognized
         )
 
     # Orchestrator exports commonly wrap rows under `lanes`; recursively
     # handling this also tolerates a top-level `rows`/`data` wrapper.
     for container_key in ("lanes", "rows", "data", "statuses"):
         if container_key in value:
-            _collect_statuses(value[container_key], statuses, task_ref=task_ref)
+            recognized = (
+                _collect_statuses(
+                    value[container_key],
+                    statuses,
+                    task_ref=task_ref,
+                    allow_empty=True,
+                )
+                or recognized
+            )
 
     for key, child in value.items():
         if key in {"lanes", "rows", "data", "statuses", "task_ref", "lane_id", "status"}:
             continue
         if isinstance(child, str):
-            _add_status(statuses, key, child, task_ref=task_ref)
+            recognized = _add_status(statuses, key, child, task_ref=task_ref) or recognized
         elif isinstance(child, dict) and isinstance(child.get("status"), str):
-            _add_status(statuses, key, child["status"], task_ref=task_ref)
-            _collect_statuses(child, statuses, task_ref=task_ref)
+            recognized = (
+                _add_status(statuses, key, child["status"], task_ref=task_ref)
+                or recognized
+            )
+            recognized = (
+                _collect_statuses(child, statuses, task_ref=task_ref)
+                or recognized
+            )
         elif isinstance(child, (dict, list)):
             child_task = task_ref
             if "/" not in str(key):
                 child_task = str(key)
-            _collect_statuses(child, statuses, task_ref=child_task)
+            recognized = (
+                _collect_statuses(child, statuses, task_ref=child_task)
+                or recognized
+            )
+    return recognized
 
 
 def load_lane_statuses(status_path: Path | None) -> dict[str, str]:
@@ -286,7 +322,11 @@ def load_lane_statuses(status_path: Path | None) -> dict[str, str]:
     except (OSError, json.JSONDecodeError) as exc:
         raise ManifestError(f"{status_path}: cannot read JSON ({exc})") from exc
     statuses: dict[str, str] = {}
-    _collect_statuses(document, statuses)
+    recognized = _collect_statuses(document, statuses, allow_empty=True)
+    if document not in ({}, []) and not statuses and not recognized:
+        raise ManifestError(
+            f"{status_path}: status export contains no recognized lane statuses"
+        )
     return statuses
 
 

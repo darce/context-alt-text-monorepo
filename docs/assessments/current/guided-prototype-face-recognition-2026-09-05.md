@@ -164,7 +164,7 @@ Replaces the old "Identity evidence" card. Root `<div id="guided-section-face" t
 | page card h3 | The page |
 | explanation confirmed | You confirmed the match, so the name is in the draft. The visual details and page context stay the same. |
 | explanation unidentified | You kept the person unnamed, so the draft only says what is visible. |
-| explanation unconfirmed | Confirm or skip the face match first. Until then the draft only says what is visible. |
+| explanation unconfirmed | Decide each face match first: confirm it, or keep the person unnamed. Until then the draft only says what is visible. |
 | before h3 | Without the name |
 | proposed h3 | Draft for you to check |
 | origin line | This draft comes from a saved example, not a live run. |
@@ -455,7 +455,7 @@ Decisions block (inside the panel, after the cards): `<div id="guided-section-id
 
 #### Description review (lane W2-L2)
 
-Explanation: both confirmed `You confirmed both matches, so both names are in the draft. The visual details and page context stay the same.` · one confirmed `You confirmed one match, so one name is in the draft. The other person is described, not named.` · none confirmed, all decided `You kept both people unnamed, so the draft only says what is visible.` · otherwise `Confirm or skip each face match first. Until then the draft only says what is visible.`
+Explanation: both confirmed `You confirmed both matches, so both names are in the draft. The visual details and page context stay the same.` · one confirmed `You confirmed one match, so one name is in the draft. The other person is described, not named.` · none confirmed, all decided `You kept both people unnamed, so the draft only says what is visible.` · otherwise `Decide each face match first: confirm it, or keep the person unnamed. Until then the draft only says what is visible.`
 visual card draft line `Draft without names: {drafts.none}` · before h3 `Without the names` · origin line `This draft comes from a saved run, not a live one.` · rejected notice `You rejected this draft, so Apply is off. Edit and save the text, or change an answer about a face, to get a new draft.` (others unchanged).
 
 ### 7.5 ASCII screens (wave 2)

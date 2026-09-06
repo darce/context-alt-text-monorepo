@@ -1,6 +1,7 @@
 import React from 'react';
 
 import { FaceThumbnail } from '../../../components/ui/FaceThumbnail';
+import { GUIDED_IDENTITY_STATUS } from '../../guidedPrototype/state';
 import type { GuidedFace, GuidedIdentity, GuidedLabeledPerson } from '../../guidedPrototype/state';
 
 export interface GuidedFaceMatchCardProps {
@@ -11,11 +12,11 @@ export interface GuidedFaceMatchCardProps {
 }
 
 const decisionStatusLabel = (identity: GuidedIdentity, personName: string): string => {
-  if (identity.status === 'confirmed') {
+  if (identity.status === GUIDED_IDENTITY_STATUS.CONFIRMED) {
     return `You confirmed: ${personName}.`;
   }
 
-  if (identity.status === 'unidentified') {
+  if (identity.status === GUIDED_IDENTITY_STATUS.UNIDENTIFIED) {
     return 'You kept this person unnamed.';
   }
 

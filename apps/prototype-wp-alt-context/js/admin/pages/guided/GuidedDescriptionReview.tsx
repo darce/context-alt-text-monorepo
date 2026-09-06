@@ -1,6 +1,11 @@
 import React, { useEffect, useRef, useState } from 'react';
 
-import { confirmedPersonKeys, getLastGuidedApplication } from '../../guidedPrototype/state';
+import {
+  GUIDED_CANDIDATE_STATUS,
+  GUIDED_IDENTITY_STATUS,
+  confirmedPersonKeys,
+  getLastGuidedApplication,
+} from '../../guidedPrototype/state';
 import type { GuidedCandidateStatus, GuidedScenario } from '../../guidedPrototype/state';
 
 export interface GuidedDescriptionReviewProps {
@@ -13,10 +18,10 @@ export interface GuidedDescriptionReviewProps {
 }
 
 const candidateStatusLabel = (status: GuidedCandidateStatus): string => {
-  if (status === 'edited') {
+  if (status === GUIDED_CANDIDATE_STATUS.EDITED) {
     return 'Edited by you';
   }
-  if (status === 'rejected') {
+  if (status === GUIDED_CANDIDATE_STATUS.REJECTED) {
     return 'Rejected. The saved text did not change';
   }
   return 'Ready for you to check';
@@ -24,7 +29,9 @@ const candidateStatusLabel = (status: GuidedCandidateStatus): string => {
 
 const descriptionExplanation = (scenario: GuidedScenario): string => {
   const confirmedKeys = confirmedPersonKeys(scenario);
-  const allMatchesDecided = scenario.identities.every((identity) => identity.status !== 'unconfirmed');
+  const allMatchesDecided = scenario.identities.every(
+    (identity) => identity.status !== GUIDED_IDENTITY_STATUS.UNCONFIRMED,
+  );
 
   if (confirmedKeys.length === 2) {
     return 'You confirmed both matches, so both names are in the draft. The visual details and page context stay the same.';
@@ -38,7 +45,7 @@ const descriptionExplanation = (scenario: GuidedScenario): string => {
     return 'You kept both people unnamed, so the draft only says what is visible.';
   }
 
-  return 'Confirm or skip each face match first. Until then the draft only says what is visible.';
+  return 'Decide each face match first: confirm it, or keep the person unnamed. Until then the draft only says what is visible.';
 };
 
 export const GuidedDescriptionReview = ({
@@ -106,7 +113,7 @@ export const GuidedDescriptionReview = ({
             ))}
           </ul>
           <p>
-            Draft without names: <span data-generic-draft={scenario.drafts.none}>{scenario.drafts.none}</span>
+            Draft without names: <span>{scenario.drafts.none}</span>
           </p>
           <p>
             Alt text on the page right now: <span data-current-applied-text>{scenario.appliedText}</span>
@@ -154,7 +161,7 @@ export const GuidedDescriptionReview = ({
               {editError}
             </p>
           ) : null}
-          {scenario.candidate.status === 'rejected' && !hasUnsavedEdit ? (
+          {scenario.candidate.status === GUIDED_CANDIDATE_STATUS.REJECTED && !hasUnsavedEdit ? (
             <p className="acx-guided-review__rejected-notice">
               You rejected this draft, so Apply is off. Edit and save the text, or change an answer about a face, to get
               a new draft.
@@ -178,7 +185,7 @@ export const GuidedDescriptionReview = ({
               type="button"
               className="acx-button acx-button--tertiary"
               onClick={onReject}
-              disabled={scenario.candidate.status === 'rejected'}
+              disabled={scenario.candidate.status === GUIDED_CANDIDATE_STATUS.REJECTED}
             >
               Reject this draft
             </button>
@@ -209,16 +216,19 @@ export const GuidedDescriptionReview = ({
             type="button"
             className="acx-button acx-button--primary"
             onClick={onApply}
-            disabled={scenario.candidate.status === 'rejected' || hasUnsavedEdit}
+            disabled={scenario.candidate.status === GUIDED_CANDIDATE_STATUS.REJECTED || hasUnsavedEdit}
             aria-describedby={hasUnsavedEdit ? 'guided-apply-reason' : undefined}
           >
             Apply to practice copy
           </button>
-          {appliedEvent ? (
-            <button type="button" className="acx-button acx-button--tertiary" onClick={onUndo}>
-              Undo
-            </button>
-          ) : null}
+          <button
+            type="button"
+            className="acx-button acx-button--tertiary"
+            onClick={onUndo}
+            disabled={!appliedEvent}
+          >
+            Undo
+          </button>
         </div>
       </section>
     </section>

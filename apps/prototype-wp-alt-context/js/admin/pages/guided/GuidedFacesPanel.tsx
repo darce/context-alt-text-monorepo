@@ -1,6 +1,7 @@
 import React from 'react';
 
 import {
+  GUIDED_IDENTITY_STATUS,
   getGuidedIdentity,
   getGuidedPerson,
   type GuidedPersonKey,
@@ -32,8 +33,7 @@ export const GuidedFacesPanel = ({
       </header>
 
       <div className="acx-guided-face__how-it-works">
-        <p>How this works</p>
-        <ol aria-label="How this works">
+        <ol>
           <li>AltContext finds every face in the photo.</li>
           <li>It compares each face to the people you already named.</li>
           <li>It asks you to confirm each match. Nothing is named without your OK.</li>
@@ -74,8 +74,8 @@ export const GuidedFacesPanel = ({
         {scenario.faces.map((face) => {
           const person = getGuidedPerson(scenario, face.matchedPersonKey);
           const identity = getGuidedIdentity(scenario, face.id);
-          const confirmDisabled = hasUnsavedEdit || identity.status === 'confirmed';
-          const leaveUnnamedDisabled = hasUnsavedEdit || identity.status === 'unidentified';
+          const confirmDisabled = hasUnsavedEdit || identity.status === GUIDED_IDENTITY_STATUS.CONFIRMED;
+          const leaveUnnamedDisabled = hasUnsavedEdit || identity.status === GUIDED_IDENTITY_STATUS.UNIDENTIFIED;
           const describedBy = hasUnsavedEdit ? identityChangeReasonId : undefined;
 
           return (

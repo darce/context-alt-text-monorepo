@@ -126,7 +126,13 @@ copy_runtime_files_to_staging() {
 
     local public_runtime_dir="${PLUGIN_DIR}/js/public"
     if [[ -d "${public_runtime_dir}" ]]; then
-        if [[ -z "$(find "${public_runtime_dir}" -type f -name '*.js' | head -n 1)" ]]; then
+        if [[ -z "$(find "${public_runtime_dir}" \
+            \( -type d -name '__tests__' -prune \) -o \
+            \( -type f -name '*.js' \
+                ! -name '*.test.*' \
+                ! -name '*.spec.*' \
+                -print \
+            \) | head -n 1)" ]]; then
             echo "ERROR: Public runtime directory contains no JavaScript files: ${public_runtime_dir}." >&2
             exit 1
         fi
@@ -141,6 +147,7 @@ copy_runtime_files_to_staging() {
                     ! -name '*.test.*' \
                     ! -name '*.spec.*' \
                     -exec sh -c '
+                        set -eu
                         staging_dir="$1"
                         shift
                         for source_file do
@@ -208,8 +215,6 @@ validate_no_dev_dependencies() {
     done
 }
 
-ensure_command zip
-
 checksum_file() {
     local target_file="$1"
     local output_file="$2"
@@ -274,6 +279,8 @@ fi
 
 validate_staging_contents "${STAGING_PLUGIN_DIR}"
 validate_no_dev_dependencies "${STAGING_PLUGIN_DIR}"
+
+ensure_command zip
 
 mkdir -p "${DIST_DIR}"
 rm -f "${ZIP_PATH}" "${CHECKSUM_PATH}"

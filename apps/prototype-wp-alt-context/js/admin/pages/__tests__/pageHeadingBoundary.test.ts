@@ -59,7 +59,7 @@ const ROUTED_PAGE_FILES = routedComponentNames.map(
 // assert both so a parse break turns this guard red instead of vacuously
 // green.
 expect(ROUTED_PAGE_FILES.length).toBeGreaterThan(0);
-expect(ROUTED_PAGE_FILES).toHaveLength(5);
+expect(ROUTED_PAGE_FILES).toHaveLength(6);
 
 const FORBIDDEN_REFERENCE = /acx-page-title/;
 

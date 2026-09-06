@@ -172,8 +172,8 @@ run_packager "${case_three_fixture}" "${case_three_dist}"
 if [[ "${last_rc}" -ne 0 ]]; then
     pass "case 3 rejects js/public without JavaScript"
     assert_output_contains \
-        "case 3 names the invalid js/public directory" \
-        "${case_three_fixture}/js/public" \
+        "case 3 reports the invalid js/public directory" \
+        "ERROR: Public runtime directory contains no JavaScript files: ${case_three_fixture}/js/public" \
         "${last_output}"
 else
     fail "case 3 rejects js/public without JavaScript (unexpected exit 0; output: ${last_output})"
@@ -182,6 +182,81 @@ if [[ "${failures}" -eq "${case_three_before}" ]]; then
     pass "case 3 regression"
 else
     printf 'FAIL: case 3 regression\n' >&2
+fi
+
+# --- Case 4: reject js/public when every JavaScript file is excluded. -------
+case_four_fixture="${TEST_ROOT}/excluded-js-only"
+case_four_dist="${TEST_ROOT}/dist-excluded-js-only"
+create_common_fixture "${case_four_fixture}"
+mkdir -p "${case_four_fixture}/js/public/__tests__"
+printf '%s\n' 'test("excluded", () => {});' >"${case_four_fixture}/js/public/demo.test.js"
+printf '%s\n' 'test("excluded", () => {});' >"${case_four_fixture}/js/public/demo.spec.js"
+printf '%s\n' 'test("excluded", () => {});' >"${case_four_fixture}/js/public/__tests__/x.js"
+
+case_four_before=$failures
+run_packager "${case_four_fixture}" "${case_four_dist}"
+if [[ "${last_rc}" -ne 0 ]]; then
+    pass "case 4 rejects js/public with only excluded JavaScript"
+    assert_output_contains \
+        "case 4 reports the excluded-only js/public directory" \
+        "ERROR: Public runtime directory contains no JavaScript files: ${case_four_fixture}/js/public" \
+        "${last_output}"
+else
+    fail "case 4 rejects js/public with only excluded JavaScript (unexpected exit 0; output: ${last_output})"
+fi
+if [[ "${failures}" -eq "${case_four_before}" ]]; then
+    pass "case 4 regression"
+else
+    printf 'FAIL: case 4 regression\n' >&2
+fi
+
+# --- Case 5: stop when a staged runtime file cannot be copied. --------------
+case_five_fixture="${TEST_ROOT}/copy-failure"
+case_five_dist="${TEST_ROOT}/dist-copy-failure"
+create_common_fixture "${case_five_fixture}"
+mkdir -p "${case_five_fixture}/js/public"
+printf '%s\n' 'console.log("failure");' >"${case_five_fixture}/js/public/a-fail.js"
+printf '%s\n' 'console.log("success");' >"${case_five_fixture}/js/public/z-good.js"
+
+fake_bin="${TEST_ROOT}/fake-bin"
+real_cp="$(command -v cp)"
+mkdir -p "${fake_bin}"
+cat >"${fake_bin}/cp" <<'CP'
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ "${1:-}" == "./a-fail.js" ]]; then
+    echo "simulated cp failure for ${1}" >&2
+    exit 1
+fi
+
+exec "${ACX_TEST_REAL_CP}" "$@"
+CP
+chmod +x "${fake_bin}/cp"
+
+case_five_before=$failures
+last_output=""
+last_rc=0
+last_output="$(
+    PATH="${fake_bin}:${PATH}" \
+    ACX_TEST_REAL_CP="${real_cp}" \
+    ACX_PACKAGE_PLUGIN_DIR="${case_five_fixture}" \
+    ACX_PACKAGE_DIST_DIR="${case_five_dist}" \
+    bash "${PACKAGER}" --no-build 2>&1
+)" || last_rc=$?
+if [[ "${last_rc}" -ne 0 ]]; then
+    pass "case 5 rejects a failed public runtime copy"
+    assert_output_contains \
+        "case 5 reports the failed copy" \
+        "simulated cp failure for ./a-fail.js" \
+        "${last_output}"
+else
+    fail "case 5 rejects a failed public runtime copy (unexpected exit 0; output: ${last_output})"
+fi
+if [[ "${failures}" -eq "${case_five_before}" ]]; then
+    pass "case 5 regression"
+else
+    printf 'FAIL: case 5 regression\n' >&2
 fi
 
 if [[ "${failures}" -ne 0 ]]; then

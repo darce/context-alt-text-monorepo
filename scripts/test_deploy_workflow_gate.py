@@ -5,16 +5,100 @@ import re
 import subprocess
 from pathlib import Path
 
+import pytest
 import yaml
 
 REPO_ROOT = Path(os.environ.get("DEPLOY_GATE_REPO_ROOT", Path(__file__).resolve().parents[1]))
+WORKFLOW_DIR = REPO_ROOT / ".github" / "workflows"
 WORKFLOW_PATH = REPO_ROOT / ".github" / "workflows" / "deploy-recognition.yml"
+REQUIRED_RUN_SHELL = "bash --noprofile --norc -eo pipefail {0}"
 RUNBOOK_PATH = REPO_ROOT / "docs" / "runbooks" / "deploy-recognition-cicd.md"
+EXPECTED_WORKFLOWS_WITH_RUN_STEPS = {
+    "architecture-compliance.yml",
+    "deploy-demo.yml",
+    "deploy-recognition.yml",
+    "face-pipeline-ort-parity.yml",
+    "gpu-snapshot-gate.yml",
+    "handoff-integrity.yml",
+    "php-characterization.yml",
+}
+XFAIL_WORKFLOW_OWNERS = {
+    "architecture-compliance.yml": "architecture-compliance workflow maintainers",
+    "deploy-recognition.yml": "demoland-1-g3",
+    "face-pipeline-ort-parity.yml": "face-pipeline workflow maintainers",
+    "gpu-snapshot-gate.yml": "GPU lifecycle workflow maintainers",
+    "handoff-integrity.yml": "Workbay orchestration workflow maintainers",
+    "php-characterization.yml": "PHP characterization workflow maintainers",
+}
 
 
 def _workflow() -> dict:
     with WORKFLOW_PATH.open(encoding="utf-8") as workflow_file:
         return yaml.safe_load(workflow_file)
+
+
+def _workflow_paths_with_run_steps() -> list[Path]:
+    """Discover every workflow whose effective shell can execute repository code."""
+    paths = []
+    for workflow_path in sorted(WORKFLOW_DIR.glob("*.y*ml")):
+        with workflow_path.open(encoding="utf-8") as workflow_file:
+            workflow = yaml.safe_load(workflow_file)
+        jobs = workflow.get("jobs", {}) if isinstance(workflow, dict) else {}
+        if any(
+            isinstance(step, dict) and "run" in step
+            for job in jobs.values()
+            if isinstance(job, dict)
+            for step in job.get("steps", [])
+        ):
+            paths.append(workflow_path)
+    return paths
+
+
+def _workflow_cases() -> list[object]:
+    cases: list[object] = []
+    for workflow_path in _workflow_paths_with_run_steps():
+        owner = XFAIL_WORKFLOW_OWNERS.get(workflow_path.name)
+        if owner is not None:
+            cases.append(
+                pytest.param(
+                    workflow_path,
+                    marks=pytest.mark.xfail(
+                        strict=True,
+                        reason=f"shell default owned by {owner}, outside fixwave-1-d5 scope",
+                    ),
+                )
+            )
+        else:
+            cases.append(workflow_path)
+    return cases
+
+
+def test_run_step_workflow_discovery_matches_repository_inventory() -> None:
+    """Keep discovery independent from parameterization so an omission cannot pass silently."""
+    assert {path.name for path in _workflow_paths_with_run_steps()} == EXPECTED_WORKFLOWS_WITH_RUN_STEPS
+
+
+@pytest.mark.parametrize("workflow_path", _workflow_cases(), ids=lambda path: path.name)
+def test_every_workflow_run_step_uses_fail_closed_bash(workflow_path: Path) -> None:
+    with workflow_path.open(encoding="utf-8") as workflow_file:
+        workflow = yaml.safe_load(workflow_file)
+
+    workflow_shell = workflow.get("defaults", {}).get("run", {}).get("shell")
+    unsafe_steps = []
+    for job_name, job in workflow.get("jobs", {}).items():
+        if not isinstance(job, dict):
+            continue
+        job_shell = job.get("defaults", {}).get("run", {}).get("shell", workflow_shell)
+        for step in job.get("steps", []):
+            if not isinstance(step, dict) or "run" not in step:
+                continue
+            effective_shell = step.get("shell", job_shell)
+            if effective_shell != REQUIRED_RUN_SHELL:
+                unsafe_steps.append(f"{job_name}: {step.get('name', '<unnamed>')}")
+
+    assert unsafe_steps == [], (
+        f"{workflow_path.relative_to(REPO_ROOT)} has run steps without shell: {REQUIRED_RUN_SHELL!r}: {unsafe_steps}"
+    )
 
 
 def _contract_gate(workflow: dict) -> tuple[str, dict]:
@@ -110,6 +194,5 @@ def test_prod_rollback_commands_are_copy_pasteable() -> None:
         "the runbook still documents a literal angle-bracket placeholder for GIT_REF"
     )
     assert "GOOD_SHA" in _rollback_prose(), (
-        "the rollback section's prose never tells the operator to set GOOD_SHA "
-        "before running the redeploy command"
+        "the rollback section's prose never tells the operator to set GOOD_SHA before running the redeploy command"
     )

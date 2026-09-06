@@ -41,14 +41,6 @@ from recognition.interface_adapters.http import routers as routers_pkg
 
 ROUTERS_DIR = Path(routers_pkg.__file__).parent
 
-# Modules that still leak exception text into a 5xx ``detail`` and live outside
-# this lane's write-set. ``strict=True`` means the day another lane fixes one,
-# the XPASS fails this suite and forces the entry to be deleted -- the debt is
-# tracked by the structure, not by a comment somebody has to remember to remove
-# (ARCH-13).
-KNOWN_5XX_DETAIL_LEAKS = frozenset({"analyze_multipart"})
-
-
 def _router_modules() -> list[Path]:
     """Every router module, or an exception. Never an empty list.
 
@@ -68,16 +60,7 @@ ROUTER_MODULES = _router_modules()
 MODULE_NAMES = [p.stem for p in ROUTER_MODULES]
 
 
-def _param(path: Path, *, xfail_leaks: bool = False) -> object:
-    if xfail_leaks and path.stem in KNOWN_5XX_DETAIL_LEAKS:
-        return pytest.param(
-            path,
-            marks=pytest.mark.xfail(
-                strict=True,
-                reason=f"{path.stem} still interpolates exception text into a 5xx detail (SEC-01)",
-            ),
-            id=path.stem,
-        )
+def _param(path: Path) -> object:
     return pytest.param(path, id=path.stem)
 
 
@@ -145,7 +128,7 @@ def test_router_never_raises_501_as_a_fault_code(module_path: Path) -> None:
     )
 
 
-@pytest.mark.parametrize("module_path", [_param(p, xfail_leaks=True) for p in ROUTER_MODULES])
+@pytest.mark.parametrize("module_path", [_param(p) for p in ROUTER_MODULES])
 def test_router_5xx_detail_never_carries_caught_exception_text(module_path: Path) -> None:
     """SEC-01 / API-05: no internal exception text crosses the HTTP boundary.
 

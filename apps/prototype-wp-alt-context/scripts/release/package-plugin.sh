@@ -2,12 +2,12 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PLUGIN_DIR="$(cd "${SCRIPT_DIR}/../.." && pwd)"
-REPO_ROOT="$(cd "${PLUGIN_DIR}/../.." && pwd)"
+PLUGIN_DIR="${ACX_PACKAGE_PLUGIN_DIR:-$(cd "${SCRIPT_DIR}/../.." && pwd)}"
+REPO_ROOT="${ACX_PACKAGE_REPO_ROOT:-$(cd "${PLUGIN_DIR}/../.." && pwd)}"
 PLUGIN_SLUG="alt-context"
 PLUGIN_FILE="${PLUGIN_DIR}/alt-context.php"
 PACKAGE_JSON_FILE="${PLUGIN_DIR}/package.json"
-DIST_DIR="${REPO_ROOT}/dist"
+DIST_DIR="${ACX_PACKAGE_DIST_DIR:-${REPO_ROOT}/dist}"
 
 show_usage() {
     cat <<'USAGE'
@@ -16,6 +16,10 @@ Usage: bash scripts/release/package-plugin.sh [--no-build] [--help]
 Options:
   --no-build  Skip npm/composer build steps and package pre-built artifacts only.
   --help      Show this usage message.
+
+Runtime files:
+  js/public   If present, stage its runtime files, excluding __tests__/,
+              *.d.ts, *.test.*, and *.spec.*; require at least one *.js file.
 USAGE
 }
 
@@ -120,6 +124,41 @@ copy_runtime_files_to_staging() {
     cp -R "${PLUGIN_DIR}/public/assets/dist" "${staging_plugin_dir}/public/assets/dist"
     cp "${PLUGIN_DIR}/composer.json" "${staging_plugin_dir}/composer.json"
 
+    local public_runtime_dir="${PLUGIN_DIR}/js/public"
+    if [[ -d "${public_runtime_dir}" ]]; then
+        if [[ -z "$(find "${public_runtime_dir}" \
+            \( -type d -name '__tests__' -prune \) -o \
+            \( -type f -name '*.js' \
+                ! -name '*.test.*' \
+                ! -name '*.spec.*' \
+                -print \
+            \) | head -n 1)" ]]; then
+            echo "ERROR: Public runtime directory contains no JavaScript files: ${public_runtime_dir}." >&2
+            exit 1
+        fi
+
+        mkdir -p "${staging_plugin_dir}/js/public"
+        (
+            cd "${public_runtime_dir}"
+            find . \
+                \( -type d -name '__tests__' -prune \) -o \
+                \( -type f \
+                    ! -name '*.d.ts' \
+                    ! -name '*.test.*' \
+                    ! -name '*.spec.*' \
+                    -exec sh -c '
+                        set -eu
+                        staging_dir="$1"
+                        shift
+                        for source_file do
+                            destination="${staging_dir}/js/public/${source_file#./}"
+                            mkdir -p "$(dirname "${destination}")"
+                            cp "${source_file}" "${destination}"
+                        done
+                    ' sh "${staging_plugin_dir}" {} + \)
+        )
+    fi
+
     if [[ -f "${PLUGIN_DIR}/composer.lock" ]]; then
         cp "${PLUGIN_DIR}/composer.lock" "${staging_plugin_dir}/composer.lock"
     fi
@@ -175,8 +214,6 @@ validate_no_dev_dependencies() {
         fi
     done
 }
-
-ensure_command zip
 
 checksum_file() {
     local target_file="$1"
@@ -242,6 +279,8 @@ fi
 
 validate_staging_contents "${STAGING_PLUGIN_DIR}"
 validate_no_dev_dependencies "${STAGING_PLUGIN_DIR}"
+
+ensure_command zip
 
 mkdir -p "${DIST_DIR}"
 rm -f "${ZIP_PATH}" "${CHECKSUM_PATH}"

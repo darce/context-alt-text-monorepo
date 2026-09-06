@@ -1,0 +1,40 @@
+{
+  "map_ref": "invalid-references",
+  "product": "prototype-wp-alt-context",
+  "source_fixture": "apps/prototype-wp-alt-context/docs/ux-maps/invalid-references.uxmap.json",
+  "goals": [],
+  "jobs": [{ "id": "job-real", "label": "Real job" }],
+  "screens": [{
+    "id": "screen-real",
+    "kind": "screen",
+    "title": "Real screen",
+    "purpose": "Exercise fail-closed references",
+    "route": "#/real",
+    "primary_action_id": "action-missing",
+    "zones": [],
+    "states": []
+  }],
+  "flows": [{
+    "id": "flow-empty",
+    "job": "job-missing",
+    "label": "Broken flow",
+    "steps": [{ "screen_id": "screen-missing", "branch_label": "" }]
+  }, {
+    "id": "flow-no-steps",
+    "job": "job-real",
+    "label": "Empty flow",
+    "steps": []
+  }],
+  "actions": [{
+    "id": "action-real",
+    "verb": "Act",
+    "target": "target",
+    "hierarchy": "primary",
+    "costly": false,
+    "irreversible": false,
+    "preview_required": false,
+    "screen_id": "screen-missing"
+  }],
+  "open_questions": [],
+  "not_doing": []
+}

@@ -202,7 +202,7 @@ def test_lease_expiry_stops_even_when_load_claims_a_batch_is_running() -> None:
     assert result.actuated == []
 
 
-def test_lease_expiry_stops_even_when_load_snapshot_is_untrustworthy() -> None:
+def test_lease_expiry_forces_stop_on_untrustworthy_load() -> None:
     controller = GpuLifecycleController(idle_seconds=300)
     actuator = RecordingActuator()
 
@@ -222,6 +222,7 @@ def test_lease_expiry_stops_even_when_load_snapshot_is_untrustworthy() -> None:
 
 
 def test_untrustworthy_load_still_blocks_ordinary_idle_stop_within_lease() -> None:
+    """The cost cap is absolute; the ordinary idle path stays fail-closed."""
     controller = GpuLifecycleController(idle_seconds=300)
     actuator = RecordingActuator()
 

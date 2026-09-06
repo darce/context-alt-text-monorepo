@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import json
 import os
 import re
@@ -759,6 +760,29 @@ def test_unowned_instance_is_not_stopped(tmp_path: Path) -> None:
     assert _check(result, "finally_stop_skipped")
 
 
+def test_live_preflight_requires_the_documented_gpu_identity_metadata(tmp_path: Path) -> None:
+    class WronglyTaggedOci(smoke.FakeOci):
+        def get_instance(self, instance_id: str, *, timeout: float) -> dict[str, object]:
+            instance = super().get_instance(instance_id, timeout=timeout)
+            instance["display-name"] = "acx-gpu-burst-rogue"
+            instance["shape"] = "VM.Standard.E5.Flex"
+            instance["freeform-tags"] = {
+                "project": "other-project",
+                "env": "production",
+                "role": "gpu-burst",
+                "scale_to_zero": "true",
+                "purpose": "gpu-spike-bench",
+            }
+            return instance
+
+    result, oci = _run(tmp_path, oci=WronglyTaggedOci())
+
+    assert result.exit_code == 2
+    assert not _check(result, "instance_dedicated_gpu_burst")
+    assert oci.stop_calls == 0
+    assert _check(result, "finally_stop_skipped")
+
+
 def test_red_failed_run_terminal(tmp_path: Path) -> None:
     result, _ = _run(tmp_path, scenario=smoke.DryScenario(run_statuses=["failed"]))
 
@@ -898,9 +922,10 @@ def test_red_instance_left_running_issues_compensating_stop(tmp_path: Path) -> N
 def test_red_orphan_running(tmp_path: Path) -> None:
     orphan = {
         "id": "orphan-id",
-        "display-name": "acx-gpu-burst-orphan",
+        "display-name": smoke.EXPECTED_GPU_BURST_DISPLAY_NAME,
+        "shape": smoke.EXPECTED_GPU_BURST_SHAPE,
         "lifecycle-state": "RUNNING",
-        "freeform-tags": {"role": "gpu-burst"},
+        "freeform-tags": dict(smoke.EXPECTED_GPU_BURST_TAGS),
     }
     result, _ = _run(tmp_path, oci=smoke.FakeOci(orphan_instances=[orphan]))
 
@@ -1149,6 +1174,16 @@ def test_make_gpu_cost_report_target_uses_the_stdlib_reporter() -> None:
     assert "scripts/gpu_cost_report.py" in smoke_block
 
 
+def test_make_check_all_covers_cost_report_lint_and_tests() -> None:
+    makefile = (Path(__file__).resolve().parents[1] / "Makefile").read_text(encoding="utf-8")
+    lint_block = makefile.split("lint-scripts:", 1)[1].split("\n\n", 1)[0]
+    test_block = makefile.split("test-scripts:", 1)[1].split("\n\n", 1)[0]
+
+    assert "scripts/gpu_cost_report.py" in lint_block
+    assert "scripts/test_gpu_cost_report.py" in lint_block
+    assert "scripts/test_gpu_cost_report.py" in test_block
+
+
 def test_gpu_burst_runbook_documents_all_four_smoke_proofs() -> None:
     runbook = (Path(__file__).resolve().parents[1] / "infra" / "oci" / "GPU-BURST-PROVISIONING.md").read_text(
         encoding="utf-8"
@@ -1268,6 +1303,20 @@ def test_load_snapshot_reader_names_what_it_scanned_when_nothing_published(tmp_p
 
     assert snapshot["availability"] == "unavailable"
     assert snapshot["scanned"] == [str(tmp_path / "prod" / smoke.LOAD_SNAPSHOT_FILENAME)]
+
+
+def test_partially_readable_multi_environment_snapshot_stays_ambiguous(tmp_path: Path) -> None:
+    anchor = datetime.now(UTC)
+    fresh = anchor.timestamp() + 1.0
+    (tmp_path / "dev").mkdir()
+    _write_load_snapshot(tmp_path, "prod", written_at=fresh, queue_depth=2, in_flight=0, batch_in_progress=False)
+
+    snapshot = smoke._read_load_snapshot(str(tmp_path))
+
+    assert snapshot["attribution"] == "freshest-of-many"
+    observed, detail = smoke._load_snapshot_has_fresh_work(snapshot, freshness_anchor=anchor)
+    assert observed is False, detail
+    assert "--load-environment" in detail
 
 
 def test_load_snapshot_reader_still_reads_an_explicit_single_file(tmp_path: Path) -> None:
@@ -1493,6 +1542,56 @@ def test_dry_run_records_the_first_stop_principal_and_event_time(tmp_path: Path)
     assert _check(result, "stop_principal_allowed")
 
 
+def test_warm_start_budget_is_enforced_independently_of_overall_deadline(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(smoke, "WARM_START_BUDGET_SECONDS", 3.0)
+    oci = smoke.FakeOci(gpu_states=None, startup_states=["STARTING"] * 4)
+
+    result, _ = _run(tmp_path, oci=oci)
+
+    assert result.exit_code == 1
+    assert not _check(result, "warm_start_running")
+    assert not _check(result, "warm_start_budget")
+
+
+def test_idle_and_reaper_budgets_are_enforced_independently_of_overall_deadline(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(smoke, "IDLE_REAPER_SECONDS", 3.0)
+    monkeypatch.setattr(smoke, "REAPER_BUDGET_SECONDS", 3.0)
+    oci = smoke.FakeOci(
+        gpu_states=None,
+        reaper_states=["RUNNING"] * 4 + ["STOPPING", "STOPPED"],
+    )
+
+    result, _ = _run(tmp_path, oci=oci)
+
+    assert result.exit_code == 1
+    assert not _check(result, "idle_reaper_budget")
+    assert _check(result, "reaper_budget")
+
+
+def test_reaper_stop_convergence_has_its_own_budget(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(smoke, "IDLE_REAPER_SECONDS", 300.0)
+    monkeypatch.setattr(smoke, "REAPER_BUDGET_SECONDS", 3.0)
+    oci = smoke.FakeOci(
+        gpu_states=None,
+        reaper_states=["RUNNING", "STOPPING", "STOPPING", "STOPPED"],
+    )
+
+    result, _ = _run(tmp_path, oci=oci)
+
+    assert result.exit_code == 1
+    assert _check(result, "idle_reaper_budget")
+    assert not _check(result, "reaper_budget")
+
+
 def test_human_stop_principal_fails_the_smoke(tmp_path: Path) -> None:
     result, _ = _run(
         tmp_path,
@@ -1606,3 +1705,10 @@ def test_dry_gpu_states_use_live_transition_shape_and_fast_clock(tmp_path: Path)
         "2026-01-01T00:00:02Z",
         "2026-01-01T00:00:04Z",
     ]
+
+
+def test_run_smoke_is_decomposed_into_phase_helpers() -> None:
+    tree = ast.parse(Path(smoke.__file__).read_text(encoding="utf-8"))
+    function = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "run_smoke")
+
+    assert function.end_lineno - function.lineno + 1 <= 300

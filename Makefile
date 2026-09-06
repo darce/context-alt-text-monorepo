@@ -533,8 +533,8 @@ lint-scripts:
 	@if [ -d scripts/hooks ]; then python3 scripts/hooks/lint-no-inline-python-heredoc.py; fi
 	@if [ -d scripts/hooks ]; then python3 scripts/hooks/lint-expected-revision.py; fi
 	@python3 scripts/check_published_head_sha.py
-	@ruff check infra/oci scripts/gpu_burst_smoke.py scripts/gpu_spike_bench.py scripts/test_gpu_burst_smoke.py scripts/test_gpu_spike_bench.py $(OCIRV1_PYTHON_FILES)
-	@ruff format --check infra/oci scripts/gpu_burst_smoke.py scripts/gpu_spike_bench.py scripts/test_gpu_burst_smoke.py scripts/test_gpu_spike_bench.py $(OCIRV1_PYTHON_FILES)
+	@ruff check infra/oci scripts/gpu_burst_smoke.py scripts/gpu_cost_report.py scripts/gpu_spike_bench.py scripts/test_gpu_burst_smoke.py scripts/test_gpu_cost_report.py scripts/test_gpu_spike_bench.py $(OCIRV1_PYTHON_FILES)
+	@ruff format --check infra/oci scripts/gpu_burst_smoke.py scripts/gpu_cost_report.py scripts/gpu_spike_bench.py scripts/test_gpu_burst_smoke.py scripts/test_gpu_cost_report.py scripts/test_gpu_spike_bench.py $(OCIRV1_PYTHON_FILES)
 
 # MAINT-FB-B-05: validate every workbay-overrides/*/overrides.lock.json
 # component upstream_digest against the materialized upstream base copy
@@ -571,7 +571,7 @@ test-scripts:
 		scripts/test_deploy_workflow_gate.py \
 		scripts/test_ocirv1_vault_readiness.py \
 		scripts/test_shell_parses_under_system_bash.py \
-		scripts/test_gpu_burst_smoke.py scripts/test_gpu_spike_bench.py; \
+		scripts/test_gpu_burst_smoke.py scripts/test_gpu_cost_report.py scripts/test_gpu_spike_bench.py; \
 	if [ -d scripts/hooks ] && [ -d .github/hooks ] && [ -d scripts/consumer-hooks/git ]; then \
 		set -- scripts/hooks .github/hooks scripts/test_php_characterization_gate.py "$$@"; \
 	fi; \

@@ -41,6 +41,18 @@ GPU_EVIDENCE_EXPECTED_STOP_PRINCIPAL ?= gpu-reaper
 GPU_EVIDENCE_MIN_DESCRIPTIONS ?= 1
 GPU_EVIDENCE_PYTHON ?= python3
 
+# Keep the checker and its contract tests in the root script lint/format
+# inputs.  The root Makefile includes this fragment before defining
+# `test-scripts`, so the prerequisite below also makes the substantive checker
+# suite part of that explicit test target without changing the root file.
+OCIRV1_PYTHON_FILES += scripts/gpu_burst_evidence.py scripts/test_gpu_burst_evidence.py
+
+.PHONY: gpu-evidence-tests
+test-scripts: gpu-evidence-tests
+
+gpu-evidence-tests:
+	@"$(GPU_EVIDENCE_PYTHON)" -m pytest scripts/test_gpu_burst_evidence.py -q -p no:cacheprovider
+
 .PHONY: gpu-evidence-export gpu-evidence-check
 
 gpu-evidence-export:

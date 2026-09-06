@@ -148,6 +148,17 @@ mkdir -p "$out_dir"
 }
 
 oci_bin="${OCI_BIN:-oci}"
+oci_connection_timeout="${OCI_CONNECTION_TIMEOUT:-15}"
+oci_read_timeout="${OCI_READ_TIMEOUT:-60}"
+curl_connection_timeout="${EVIDENCE_CURL_CONNECTION_TIMEOUT:-10}"
+curl_max_time="${EVIDENCE_CURL_MAX_TIME:-60}"
+
+for timeout_value in "$oci_connection_timeout" "$oci_read_timeout" "$curl_connection_timeout" "$curl_max_time"; do
+    case "$timeout_value" in
+        ''|*[!0-9]*) fail_usage "timeouts must be positive integer seconds" ;;
+        0) fail_usage "timeouts must be positive integer seconds" ;;
+    esac
+done
 
 is_forbidden_oci_token() {
     local token="$1"
@@ -157,7 +168,19 @@ is_forbidden_oci_token() {
     esac
     token="$(printf '%s' "$token" | tr '[:upper:]' '[:lower:]')"
     case "$token" in
-        start|stop|terminate|action)
+        start|stop|terminate|action|update|delete|create|launch|attach|detach|reboot|reset|softstop|softreset)
+            return 0
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+is_allowed_oci_read() {
+    [ "$#" -ge 3 ] || return 1
+    case "$1:$2:$3" in
+        compute:instance:get|audit:event:list)
             return 0
             ;;
         *)
@@ -168,13 +191,20 @@ is_forbidden_oci_token() {
 
 run_oci() {
     local arg
+    if ! is_allowed_oci_read "$@"; then
+        echo "ERROR: refusing non-read-only OCI command: $*" >&2
+        return 3
+    fi
     for arg in "$@"; do
         if is_forbidden_oci_token "$arg"; then
             echo "ERROR: refusing forbidden OCI operation token: $arg" >&2
             return 3
         fi
     done
-    "$oci_bin" "$@" --output json
+    "$oci_bin" "$@" \
+        --connection-timeout "$oci_connection_timeout" \
+        --read-timeout "$oci_read_timeout" \
+        --output json
 }
 
 # Keep producer command strings human-readable while retaining shell quoting
@@ -199,8 +229,9 @@ history_file="${out_dir}/state_history.json"
 snapshot_file="${out_dir}/state_snapshot.json"
 receipts_file="${out_dir}/wp_describe_receipts.json"
 
-instance_command="$(quote_for_manifest "$oci_bin") compute instance get --instance-id $(quote_for_manifest "$instance_id") --output json"
-audit_command="$(quote_for_manifest "$oci_bin") audit event list --compartment-id $(quote_for_manifest "$compartment_id") --start-time $(quote_for_manifest "$since") --end-time $(quote_for_manifest "$until") --all --output json"
+oci_timeout_command="--connection-timeout ${oci_connection_timeout} --read-timeout ${oci_read_timeout}"
+instance_command="$(quote_for_manifest "$oci_bin") compute instance get --instance-id $(quote_for_manifest "$instance_id") ${oci_timeout_command} --output json"
+audit_command="$(quote_for_manifest "$oci_bin") audit event list --compartment-id $(quote_for_manifest "$compartment_id") --start-time $(quote_for_manifest "$since") --end-time $(quote_for_manifest "$until") --all ${oci_timeout_command} --output json"
 
 # Both OCI calls below are read verbs.  Do not call the configured binary
 # anywhere else in this script; run_oci is the single safety boundary.
@@ -211,227 +242,40 @@ run_oci audit event list \
     --end-time "$until" \
     --all >"$audit_file"
 
-# Build a compact, explicit state history from the raw current-state and Audit
-# receipts.  OCI exposes the current lifecycle state through instance get;
-# Audit's completed START/STOP records provide the historical edges.  The
-# window boundary is recorded as the claimed pre-burst STOPPED observation so
-# the checker can require the complete transition rather than infer it from a
-# final state alone.
-"$resolved_python" - "$instance_file" "$audit_file" "$history_file" "$instance_id" "$since" "$until" <<'PY'
-from __future__ import annotations
-
-import datetime as dt
+# Build state history from the shared strict Audit parser.  Only successful
+# transitions and explicit prior-state fields are copied; no window boundary
+# or post-window current-state observation is fabricated.
+checker_dir="${lane_root}/scripts"
+"$resolved_python" - "$audit_file" "$history_file" "$instance_id" "$since" "$until" "$checker_dir" <<'PY'
 import json
-import math
 import sys
-from collections import defaultdict
-from collections.abc import Mapping
+from pathlib import Path
 
 
-def parse_time(value):
-    if isinstance(value, bool):
-        return None
-    if isinstance(value, (int, float)):
-        number = float(value)
-        return number if math.isfinite(number) else None
-    if not isinstance(value, str) or not value.strip():
-        return None
-    text = value.strip()
-    if text.endswith(("Z", "z")):
-        text = text[:-1] + "+00:00"
-    try:
-        parsed = dt.datetime.fromisoformat(text)
-    except ValueError:
-        try:
-            number = float(text)
-        except ValueError:
-            return None
-        return number if math.isfinite(number) else None
-    if parsed.tzinfo is None or parsed.utcoffset() is None:
-        return None
-    return parsed.timestamp()
+audit_path, output_path, instance_id, since, until, checker_dir = sys.argv[1:]
+sys.path.insert(0, checker_dir)
+from gpu_burst_evidence import build_state_history_document
 
 
-def nested(value, keys, depth=3):
-    if depth < 0:
-        return
-    if isinstance(value, Mapping):
-        for key in keys:
-            if key in value:
-                yield value[key]
-        if depth:
-            for child in value.values():
-                if isinstance(child, Mapping):
-                    yield from nested(child, keys, depth - 1)
-
-
-def first(value, keys):
-    for candidate in nested(value, keys):
-        if candidate is not None:
-            return candidate
-    return None
-
-
-def text(value):
-    return value.strip() if isinstance(value, str) and value.strip() else None
-
-
-def items(payload, keys):
-    if isinstance(payload, list):
-        return payload
-    if not isinstance(payload, Mapping):
-        return []
-    for key in keys:
-        value = payload.get(key)
-        if isinstance(value, list):
-            return value
-    data = payload.get("data")
-    if isinstance(data, list):
-        return data
-    return []
-
-
-def event_time(event):
-    for key in ("eventTime", "event_time", "timestamp", "time"):
-        if event.get(key) is not None:
-            value = parse_time(event[key])
-            if value is not None:
-                return value
-    return parse_time(first(event, ("eventTime", "event_time", "timestamp", "time")))
-
-
-def actions(event):
-    values = [event[key] for key in ("eventName", "event_name", "eventType", "event_type", "action") if key in event]
-    values.extend(nested(event, ("action", "actionName", "action_name")))
-    result = set()
-    while values:
-        value = values.pop()
-        if isinstance(value, list):
-            values.extend(value)
-            continue
-        value = text(value)
-        if value is None:
-            continue
-        upper = value.upper()
-        if "STARTINSTANCE" in upper or upper in {"START", "START_INSTANCE"}:
-            result.add("START")
-        if "STOPINSTANCE" in upper or upper in {"STOP", "STOP_INSTANCE"}:
-            result.add("STOP")
-    return result
-
-
-def phase(event):
-    value = text(event.get("eventType", event.get("event_type")))
-    if value is None:
-        return None
-    lower = value.casefold()
-    if lower.endswith((".end", "_end", "-end")):
-        return "end"
-    if lower.endswith((".begin", "_begin", "-begin")):
-        return "begin"
-    return None
-
-
-def identity(event, action):
-    value = first(event, ("eventId", "event_id", "requestId", "request_id", "id"))
-    value = text(value)
-    if value is not None:
-        return f"id:{value}"
-    return f"fallback:{action}:{event_time(event)!r}:{first(event, ('resourceId', 'resource_id'))!r}"
-
-
-def resource_id(event):
-    value = first(event, ("resourceId", "resource_id", "instanceId", "instance_id"))
-    return text(value)
-
-
-def current_state(payload):
-    candidates = []
-    if isinstance(payload, Mapping):
-        data = payload.get("data")
-        if isinstance(data, Mapping):
-            candidates.append(data)
-        elif isinstance(data, list):
-            candidates.extend(reversed(data))
-        candidates.append(payload)
-    elif isinstance(payload, list):
-        candidates.extend(reversed(payload))
-    for candidate in candidates:
-        if not isinstance(candidate, Mapping):
-            continue
-        for key in ("lifecycle-state", "lifecycle_state", "lifecycleState", "state"):
-            value = text(candidate.get(key))
-            if value is not None:
-                return value.replace("_", "-").replace(" ", "-").upper()
-    return "UNKNOWN"
-
-
-instance_path, audit_path, output_path, expected_instance, since_text, until_text = sys.argv[1:]
-with open(instance_path, encoding="utf-8") as handle:
-    instance = json.load(handle)
-with open(audit_path, encoding="utf-8") as handle:
+with Path(audit_path).open(encoding="utf-8") as handle:
     audit = json.load(handle)
-
-start = parse_time(since_text)
-end = parse_time(until_text)
-if start is None or end is None:
-    raise SystemExit("evidence history generation received an invalid window")
-
-groups = defaultdict(list)
-for event in items(audit, ("events", "items", "audit_events", "audit-events")):
-    if not isinstance(event, Mapping):
-        continue
-    resource = resource_id(event)
-    if resource is not None and resource != expected_instance:
-        continue
-    timestamp = event_time(event)
-    if timestamp is None or not start <= timestamp <= end:
-        continue
-    for action in actions(event):
-        groups[(action, identity(event, action))].append(event)
-
-observations = [{"state": "STOPPED", "timestamp": since_text, "source": "window_start"}]
-for (action, _event_identity), grouped in sorted(
-    groups.items(), key=lambda item: min(event_time(event) for event in item[1] if event_time(event) is not None)
-):
-    completed = [event for event in grouped if phase(event) == "end"]
-    candidates = completed or [event for event in grouped if phase(event) is None]
-    if not candidates:
-        continue
-    event = max(candidates, key=lambda item: event_time(item) or float("-inf"))
-    timestamp = event_time(event)
-    if timestamp is None:
-        continue
-    observations.append(
-        {
-            "state": "RUNNING" if action == "START" else "STOPPED",
-            "timestamp": event.get("eventTime", event.get("event_time", timestamp)),
-            "source": "oci_audit",
-            "event_id": first(event, ("eventId", "event_id", "requestId", "request_id")),
-        }
-    )
-observations.append({"state": current_state(instance), "timestamp": until_text, "source": "oci_compute_instance_get"})
-document = {
-    "schema_version": 1,
-    "instance_id": expected_instance,
-    "since": since_text,
-    "until": until_text,
-    "observations": observations,
-}
-with open(output_path, "w", encoding="utf-8") as handle:
+document = build_state_history_document(audit, instance_id=instance_id, since=since, until=until)
+with Path(output_path).open("w", encoding="utf-8") as handle:
     json.dump(document, handle, indent=2, sort_keys=True)
     handle.write("\n")
 PY
 
-history_command="derived from instance.json and audit-events.json"
+history_command="derived from successful OCI Audit transitions; no boundary states synthesized"
 
 snapshot_command=""
 if [ -n "$state_snapshot_source" ]; then
     case "$state_snapshot_source" in
         *://*)
             curl --fail --silent --show-error --location \
+                --connect-timeout "$curl_connection_timeout" \
+                --max-time "$curl_max_time" \
                 --output "$snapshot_file" "$state_snapshot_source"
-            snapshot_command="curl --fail --silent --show-error --location --output state_snapshot.json $(quote_for_manifest "$state_snapshot_source")"
+            snapshot_command="curl --fail --silent --show-error --location --connect-timeout ${curl_connection_timeout} --max-time ${curl_max_time} --output state_snapshot.json <redacted-url>"
             ;;
         *)
             cp "$state_snapshot_source" "$snapshot_file"

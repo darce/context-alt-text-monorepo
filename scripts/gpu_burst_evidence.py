@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Check that a read-only OCI GPU evidence bundle proves one complete burst.
 
-The exporter deliberately keeps the OCI responses as JSON receipts.  This
-checker therefore accepts the small schema variations emitted by OCI Audit,
-the lifecycle reaper, and the WordPress describe route while keeping the
-verdict independent of third-party Python packages.
+The exporter keeps the OCI responses as JSON receipts.  This checker accepts
+the small schema variations emitted by OCI Audit, the lifecycle reaper, and
+the WordPress describe route while keeping the verdict independent of
+third-party Python packages.
 """
 
 from __future__ import annotations
@@ -14,13 +14,14 @@ import datetime as dt
 import hashlib
 import json
 import math
-import sys
+import re
+from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path
-from typing import Any, Iterable, Mapping, Sequence
+from typing import Any
 
-
-UTC = dt.timezone.utc
+UTC = dt.UTC
 SCHEMA_VERSION = 1
+MANIFEST_FORMAT = "oci-gpu-burst-evidence-v1"
 
 
 class EvidenceError(ValueError):
@@ -42,12 +43,13 @@ def _parse_time(value: Any) -> float | None:
     if not isinstance(value, str) or not value.strip():
         return None
     text = value.strip()
+    numeric_text: float | None
     try:
-        numeric = float(text)
+        numeric_text = float(text)
     except ValueError:
-        numeric = None
-    if numeric is not None and math.isfinite(numeric):
-        return numeric
+        numeric_text = None
+    if numeric_text is not None and math.isfinite(numeric_text):
+        return numeric_text
     if text.endswith(("Z", "z")):
         text = text[:-1] + "+00:00"
     try:
@@ -87,20 +89,35 @@ def _safe_json(path: Path) -> Any:
         raise EvidenceError(f"unreadable JSON receipt {path.name}: {exc}") from exc
 
 
+def _nested_values(value: Any, keys: Sequence[str], *, depth: int = 4) -> Iterable[Any]:
+    if depth < 0:
+        return
+    if isinstance(value, Mapping):
+        for key in keys:
+            if key in value:
+                yield value[key]
+        if depth:
+            for child in value.values():
+                if isinstance(child, Mapping):
+                    yield from _nested_values(child, keys, depth=depth - 1)
+
+
+def _first_value(value: Any, keys: Sequence[str]) -> Any:
+    return next((candidate for candidate in _nested_values(value, keys) if candidate is not None), None)
+
+
 def _manifest_entries(manifest: Mapping[str, Any]) -> list[dict[str, Any]]:
     raw = manifest.get("files")
     if raw is None:
         raw = manifest.get("artifacts", manifest.get("entries"))
-    entries: list[dict[str, Any]] = []
     if isinstance(raw, Mapping):
-        for path, metadata in raw.items():
-            if isinstance(metadata, Mapping):
-                entries.append({"path": path, **metadata})
-            else:
-                entries.append({"path": path, "sha256": metadata})
-    elif isinstance(raw, list):
-        entries = [dict(item) for item in raw if isinstance(item, Mapping)]
-    return entries
+        return [
+            {"path": path, **metadata} if isinstance(metadata, Mapping) else {"path": path, "sha256": metadata}
+            for path, metadata in raw.items()
+        ]
+    if isinstance(raw, list):
+        return [dict(item) for item in raw if isinstance(item, Mapping)]
+    return []
 
 
 def _resolve_manifest_path(bundle: Path, relative: str) -> Path:
@@ -108,9 +125,8 @@ def _resolve_manifest_path(bundle: Path, relative: str) -> Path:
     if path.is_absolute() or relative in {"", "."} or ".." in path.parts:
         raise EvidenceError(f"manifest path is not a safe relative file: {relative!r}")
     candidate = (bundle / path).resolve()
-    root = bundle.resolve()
     try:
-        candidate.relative_to(root)
+        candidate.relative_to(bundle.resolve())
     except ValueError as exc:
         raise EvidenceError(f"manifest path escapes bundle: {relative!r}") from exc
     return candidate
@@ -134,7 +150,11 @@ def _verify_manifest(bundle: Path, manifest: Mapping[str, Any]) -> tuple[list[di
             failures.append(f"manifest lists {relative!r} more than once")
             continue
         listed.add(relative)
-        if not isinstance(digest, str) or len(digest) != 64 or any(char not in "0123456789abcdefABCDEF" for char in digest):
+        if (
+            not isinstance(digest, str)
+            or len(digest) != 64
+            or any(char not in "0123456789abcdefABCDEF" for char in digest)
+        ):
             failures.append(f"manifest has invalid sha256 for {relative}")
             continue
         try:
@@ -147,8 +167,6 @@ def _verify_manifest(bundle: Path, manifest: Mapping[str, Any]) -> tuple[list[di
             failures.append(f"sha256 mismatch for {relative}: expected {digest}, got {actual}")
         verified.append({"path": relative, "file": target, **entry})
 
-    # A receipt that is not named by the manifest is not part of the proof.
-    # Ignore the manifest itself, which cannot contain its own final digest.
     try:
         actual_files = {
             str(path.relative_to(bundle.resolve()))
@@ -169,25 +187,19 @@ def _entry_path(entries: Sequence[Mapping[str, Any]], *names: str, contains: Seq
     for entry in entries:
         path = entry.get("file")
         relative = entry.get("path")
-        if not isinstance(path, Path) or not isinstance(relative, str):
-            continue
-        basename = Path(relative).name.casefold()
-        if basename in wanted:
+        if isinstance(path, Path) and isinstance(relative, str) and Path(relative).name.casefold() in wanted:
             return path
     for entry in entries:
         path = entry.get("file")
         relative = entry.get("path")
-        if not isinstance(path, Path) or not isinstance(relative, str):
-            continue
-        basename = Path(relative).name.casefold()
-        if all(fragment.casefold() in basename for fragment in contains):
-            return path
+        if isinstance(path, Path) and isinstance(relative, str):
+            basename = Path(relative).name.casefold()
+            if all(fragment.casefold() in basename for fragment in contains):
+                return path
     return None
 
 
 def _payload_items(payload: Any, keys: Sequence[str]) -> list[Any]:
-    """Extract a list from common OCI/API envelope keys."""
-
     if isinstance(payload, list):
         return payload
     if not isinstance(payload, Mapping):
@@ -207,29 +219,8 @@ def _payload_items(payload: Any, keys: Sequence[str]) -> list[Any]:
     return []
 
 
-def _nested_values(value: Any, keys: Sequence[str], *, depth: int = 3) -> Iterable[Any]:
-    if depth < 0:
-        return
-    if isinstance(value, Mapping):
-        for key in keys:
-            if key in value:
-                yield value[key]
-        if depth:
-            for child in value.values():
-                if isinstance(child, Mapping):
-                    yield from _nested_values(child, keys, depth=depth - 1)
-
-
-def _first_value(value: Any, keys: Sequence[str]) -> Any:
-    for candidate in _nested_values(value, keys):
-        if candidate is not None:
-            return candidate
-    return None
-
-
 def _instance_id_from_payload(payload: Any) -> str | None:
-    value = _first_value(payload, ("id", "instance_id", "instanceId"))
-    return _as_text(value)
+    return _as_text(_first_value(payload, ("id", "instance_id", "instanceId")))
 
 
 def _state_from_mapping(value: Mapping[str, Any]) -> str | None:
@@ -272,41 +263,33 @@ def _state_observations(payload: Any) -> list[tuple[float, str, str]]:
     if isinstance(payload, Mapping):
         for key in ("observations", "states", "state_history", "state-history", "history", "transitions"):
             value = payload.get(key)
-            if isinstance(value, list):
-                return _state_observations(value)
-        data = payload.get("data")
-        if isinstance(data, list):
-            return _state_observations(data)
-        for key in ("instance", "history", "state_history", "data", "value"):
-            value = payload.get(key)
-            if isinstance(value, Mapping | list):
+            if isinstance(value, (Mapping, list)):
                 observations = _state_observations(value)
                 if observations:
                     return observations
+        data = payload.get("data")
+        if isinstance(data, list):
+            return _state_observations(data)
         state = _state_from_mapping(payload)
         timestamp = _parse_time(
-            next(
+            _first_value(
+                payload,
                 (
-                    payload.get(key)
-                    for key in (
-                        "timestamp",
-                        "time",
-                        "observed_at",
-                        "observedAt",
-                        "eventTime",
-                        "event_time",
-                        "at",
-                        "written_at",
-                        "writtenAt",
-                    )
-                    if payload.get(key) is not None
+                    "timestamp",
+                    "time",
+                    "observed_at",
+                    "observedAt",
+                    "eventTime",
+                    "event_time",
+                    "at",
+                    "written_at",
+                    "writtenAt",
+                    "generated_at",
+                    "generatedAt",
                 ),
-                None,
             )
         )
-        if state is not None and timestamp is not None:
-            return [(timestamp, state, "state-history")]
-        return []
+        return [(timestamp, state, "state-history")] if state is not None and timestamp is not None else []
     if isinstance(payload, list):
         result: list[tuple[float, str, str]] = []
         for item in payload:
@@ -316,67 +299,108 @@ def _state_observations(payload: Any) -> list[tuple[float, str, str]]:
 
 
 def _audit_items(payload: Any) -> list[Mapping[str, Any]]:
-    items = _payload_items(payload, ("events", "items", "audit_events", "audit-events"))
-    return [item for item in items if isinstance(item, Mapping)]
+    return [
+        item
+        for item in _payload_items(payload, ("events", "items", "audit_events", "audit-events"))
+        if isinstance(item, Mapping)
+    ]
 
 
 def _event_time(event: Mapping[str, Any]) -> float | None:
-    for key in ("eventTime", "event_time", "timestamp", "time", "created_at", "createdAt"):
+    keys = ("eventTime", "event_time", "timestamp", "time", "created_at", "createdAt")
+    for key in keys:
         if event.get(key) is not None:
             value = _parse_time(event[key])
             if value is not None:
                 return value
-    return _parse_time(_first_value(event, ("eventTime", "event_time", "timestamp", "time")))
+    return _parse_time(_first_value(event, keys))
 
 
 def _event_resource_id(event: Mapping[str, Any]) -> str | None:
-    value = _first_value(event, ("resourceId", "resource_id", "instanceId", "instance_id"))
-    return _as_text(value)
+    return _as_text(_first_value(event, ("resourceId", "resource_id", "instanceId", "instance_id")))
+
+
+def _action_from_value(value: Any) -> str | None:
+    text = _as_text(value)
+    if text is None:
+        return None
+    for token in re.split(r"[^A-Z0-9]+", text.upper()):
+        if token in {"START", "STARTINSTANCE"}:
+            return "START"
+        if token in {"STOP", "STOPINSTANCE"}:
+            return "STOP"
+    return None
 
 
 def _event_actions(event: Mapping[str, Any]) -> set[str]:
     values: list[Any] = []
-    for key in ("eventName", "event_name", "eventType", "event_type", "action", "operation"):
+    action_keys = ("eventName", "event_name", "eventType", "event_type", "action", "operation")
+    for key in action_keys:
         if key in event:
             values.append(event[key])
-    values.extend(_nested_values(event, ("action", "actionName", "action_name", "operation"), depth=3))
+    values.extend(_nested_values(event, action_keys))
     actions: set[str] = set()
-    for value in values:
+    while values:
+        value = values.pop()
         if isinstance(value, list):
             values.extend(value)
             continue
-        text = _as_text(value)
-        if text is None:
-            continue
-        upper = text.upper()
-        if "STARTINSTANCE" in upper or upper in {"START", "START_INSTANCE"}:
-            actions.add("START")
-        if "STOPINSTANCE" in upper or upper in {"STOP", "STOP_INSTANCE"}:
-            actions.add("STOP")
+        action = _action_from_value(value)
+        if action is not None:
+            actions.add(action)
     return actions
 
 
 def _event_phase(event: Mapping[str, Any]) -> str | None:
-    value = event.get("eventType", event.get("event_type"))
-    text = _as_text(value)
+    text = _as_text(_first_value(event, ("eventType", "event_type")))
     if text is None:
         return None
     lower = text.casefold()
-    if lower.endswith(".end") or lower.endswith("_end") or lower.endswith("-end"):
+    if lower.endswith((".end", "_end", "-end")):
         return "end"
-    if lower.endswith(".begin") or lower.endswith("_begin") or lower.endswith("-begin"):
+    if lower.endswith((".begin", "_begin", "-begin")):
         return "begin"
     return None
 
 
 def _event_identity(event: Mapping[str, Any], action: str) -> str:
-    value = _first_value(event, ("eventId", "event_id", "requestId", "request_id", "id"))
+    value = _as_text(_first_value(event, ("eventId", "event_id", "requestId", "request_id", "id")))
+    if value is not None:
+        return f"id:{value}"
+    return f"fallback:{action}:{_event_resource_id(event) or ''}:{_event_time(event)!r}"
+
+
+def _event_status(event: Mapping[str, Any]) -> Any:
+    return _first_value(
+        event,
+        (
+            "responseStatus",
+            "response_status",
+            "statusCode",
+            "status_code",
+            "resultStatus",
+            "result_status",
+            "status",
+            "result",
+        ),
+    )
+
+
+def _status_success(value: Any) -> bool:
+    if isinstance(value, bool):
+        return False
+    if isinstance(value, (int, float)):
+        return 200 <= value < 300
+    if isinstance(value, Mapping):
+        return _status_success(_first_value(value, ("status", "statusCode", "status_code", "code", "result")))
     text = _as_text(value)
-    if text is not None:
-        return f"id:{text}"
-    timestamp = _event_time(event)
-    resource = _event_resource_id(event) or ""
-    return f"fallback:{action}:{resource}:{timestamp!r}"
+    if text is None:
+        return False
+    upper = text.upper()
+    if upper in {"OK", "SUCCESS", "SUCCEEDED", "COMPLETE", "COMPLETED"}:
+        return True
+    match = re.search(r"\b([2-9][0-9]{2})\b", upper)
+    return match is not None and 200 <= int(match.group(1)) < 300
 
 
 def _authoritative_audit_events(
@@ -386,10 +410,13 @@ def _authoritative_audit_events(
     since: float,
     until: float,
 ) -> list[tuple[str, Mapping[str, Any], float]]:
+    """Return successful, completed audit transitions for exactly one instance."""
+
+    if instance_id is None:
+        return []
     grouped: dict[tuple[str, str], list[Mapping[str, Any]]] = {}
     for event in _audit_items(payload):
-        resource = _event_resource_id(event)
-        if instance_id is not None and resource is not None and resource != instance_id:
+        if _event_resource_id(event) != instance_id:
             continue
         for action in _event_actions(event):
             grouped.setdefault((action, _event_identity(event, action)), []).append(event)
@@ -397,28 +424,26 @@ def _authoritative_audit_events(
     authoritative: list[tuple[str, Mapping[str, Any], float]] = []
     for (action, _identity), events in grouped.items():
         completed = [event for event in events if _event_phase(event) == "end"]
-        # OCI emits begin/end pairs for an action.  A completed record is the
-        # authoritative receipt; simple fixtures without a phase are already
-        # complete and remain eligible.
         candidates = completed or [event for event in events if _event_phase(event) is None]
         if not candidates:
             continue
-        event = sorted(candidates, key=lambda item: _event_time(item) or float("-inf"))[-1]
+
+        def event_sort_key(item: Mapping[str, Any]) -> float:
+            timestamp = _event_time(item)
+            return timestamp if timestamp is not None else float("-inf")
+
+        event = max(candidates, key=event_sort_key)
         timestamp = _event_time(event)
-        if timestamp is not None and since <= timestamp <= until:
-            authoritative.append((action, event, timestamp))
+        if timestamp is None or not since <= timestamp <= until or not _status_success(_event_status(event)):
+            continue
+        authoritative.append((action, event, timestamp))
     authoritative.sort(key=lambda item: item[2])
     return authoritative
 
 
-def _principal(event: Mapping[str, Any]) -> str | None:
-    principals = _principal_values(event)
-    return next(iter(principals), None)
-
-
 def _principal_values(event: Mapping[str, Any]) -> set[str]:
     values: set[str] = set()
-    for key in (
+    keys = (
         "principalName",
         "principal_name",
         "principalId",
@@ -429,25 +454,32 @@ def _principal_values(event: Mapping[str, Any]) -> set[str]:
         "actor",
         "createdBy",
         "created_by",
-    ):
-        for value in _nested_values(event, (key,)):
-            text = _as_text(value)
-            if text is not None:
-                values.add(text)
+    )
+    for value in _nested_values(event, keys):
+        text = _as_text(value)
+        if text is not None:
+            values.add(text)
     return values
 
 
 def _running_intervals(observations: Sequence[tuple[float, str, str]]) -> list[tuple[float, float]]:
-    ordered = sorted(observations, key=lambda item: item[0])
     intervals: list[tuple[float, float]] = []
     running_since: float | None = None
-    for timestamp, state, _source in ordered:
+    for timestamp, state, _source in sorted(observations, key=lambda item: item[0]):
         if state == "RUNNING" and running_since is None:
             running_since = timestamp
         elif state == "STOPPED" and running_since is not None:
             intervals.append((running_since, timestamp))
             running_since = None
     return intervals
+
+
+def _state_sequence(observations: Sequence[tuple[float, str, str]]) -> list[str]:
+    sequence: list[str] = []
+    for _timestamp, state, _source in sorted(observations, key=lambda item: item[0]):
+        if not sequence or sequence[-1] != state:
+            sequence.append(state)
+    return sequence
 
 
 def _description_value(item: Mapping[str, Any]) -> str | None:
@@ -479,9 +511,11 @@ def _receipt_items(payload: Any) -> list[Mapping[str, Any]]:
 
 
 def _receipt_time(item: Mapping[str, Any]) -> float | None:
-    for key in (
+    keys = (
         "timestamp",
         "time",
+        "generated_at",
+        "generatedAt",
         "created_at",
         "createdAt",
         "completed_at",
@@ -492,40 +526,234 @@ def _receipt_time(item: Mapping[str, Any]) -> float | None:
         "updatedAt",
         "finished_at",
         "finishedAt",
-    ):
+    )
+    for key in keys:
         if item.get(key) is not None:
             value = _parse_time(item[key])
             if value is not None:
                 return value
-    return _parse_time(
-        _first_value(
-            item,
-            (
-                "timestamp",
-                "created_at",
-                "createdAt",
-                "completed_at",
-                "completedAt",
-                "finished_at",
-                "finishedAt",
-            ),
-        )
-    )
+    return _parse_time(_first_value(item, keys))
 
 
-def _window_from_args(manifest: Mapping[str, Any], since: str | None, until: str | None) -> tuple[float | None, float | None, str | None, str | None, str | None]:
+def _window_from_args(
+    manifest: Mapping[str, Any], since: str | None, until: str | None
+) -> tuple[float | None, float | None, str | None, str | None, str | None]:
     since_value = since if since is not None else manifest.get("since")
     until_value = until if until is not None else manifest.get("until")
     since_text = since_value if isinstance(since_value, str) else str(since_value) if since_value is not None else None
     until_text = until_value if isinstance(until_value, str) else str(until_value) if until_value is not None else None
     since_epoch = _parse_time(since_text)
     until_epoch = _parse_time(until_text)
-    error: str | None = None
     if since_epoch is None or until_epoch is None:
-        error = "since and until must be timezone-aware ISO-8601 timestamps or epoch seconds"
-    elif since_epoch > until_epoch:
-        error = "since must not be later than until"
-    return since_epoch, until_epoch, since_text, until_text, error
+        return (
+            since_epoch,
+            until_epoch,
+            since_text,
+            until_text,
+            "since and until must be timezone-aware ISO-8601 timestamps or epoch seconds",
+        )
+    if since_epoch > until_epoch:
+        return since_epoch, until_epoch, since_text, until_text, "since must not be later than until"
+    return since_epoch, until_epoch, since_text, until_text, None
+
+
+def _manifest_schema_check(manifest: Mapping[str, Any]) -> dict[str, Any]:
+    failures: list[str] = []
+    version = manifest.get("schema_version")
+    if not isinstance(version, int) or isinstance(version, bool) or version != SCHEMA_VERSION:
+        failures.append(f"unsupported schema_version {version!r}; expected {SCHEMA_VERSION}")
+    manifest_format = manifest.get("format")
+    if manifest_format != MANIFEST_FORMAT:
+        failures.append(f"unsupported format {manifest_format!r}; expected {MANIFEST_FORMAT!r}")
+    return _result(
+        "manifest_schema", not failures, "supported manifest schema" if not failures else "; ".join(failures)
+    )
+
+
+def _receipt_paths(entries: Sequence[Mapping[str, Any]]) -> dict[str, Path | None]:
+    return {
+        "instance": _entry_path(
+            entries, "instance.json", "oci-instance.json", "instance-state.json", contains=("instance",)
+        ),
+        "history": _entry_path(
+            entries,
+            "state_history.json",
+            "state-history.json",
+            "instance-state-history.json",
+            "oci-instance-state-history.json",
+            contains=("state", "history"),
+        ),
+        "audit": _entry_path(
+            entries,
+            "audit-events.json",
+            "audit_events.json",
+            "audit.json",
+            "oci-audit-events.json",
+            contains=("audit",),
+        ),
+        "snapshot": _entry_path(
+            entries,
+            "state_snapshot.json",
+            "state-snapshot.json",
+            "reaper-state-snapshot.json",
+            "reaper_snapshot.json",
+            "gpu-state.json",
+            contains=("snapshot",),
+        ),
+        "receipts": _entry_path(
+            entries,
+            "wp_describe_receipts.json",
+            "wp-describe-receipts.json",
+            "wp-receipts.json",
+            "describe-receipts.json",
+            "describe_receipts.json",
+            "receipts.json",
+            contains=("receipt",),
+        ),
+    }
+
+
+def _load_required(path: Path | None, name: str) -> tuple[Any, dict[str, Any]]:
+    if path is None:
+        missing_names = {
+            "oci_instance_receipt": "instance.json",
+            "state_history_receipt": "state_history.json",
+            "audit_receipt": "audit-events.json",
+        }
+        return None, _result(name, False, f"{missing_names.get(name, name)} receipt is missing")
+    try:
+        payload = _safe_json(path)
+    except EvidenceError as exc:
+        return None, _result(name, False, str(exc))
+    return payload, _result(name, True, f"loaded {path.name}")
+
+
+def _instance_checks(
+    path: Path | None, manifest_instance_id: str | None
+) -> tuple[Any, str | None, list[dict[str, Any]]]:
+    payload, receipt_check = _load_required(path, "oci_instance_receipt")
+    payload_id = _instance_id_from_payload(payload)
+    if manifest_instance_id is None:
+        identity_check = _result("instance_identity", False, "manifest instance_id is required")
+    elif payload_id is None:
+        identity_check = _result("instance_identity", False, "instance receipt is missing an instance id")
+    elif payload_id != manifest_instance_id:
+        identity_check = _result(
+            "instance_identity",
+            False,
+            f"instance receipt identifies {payload_id}, expected {manifest_instance_id}",
+        )
+    else:
+        identity_check = _result("instance_identity", True, f"manifest instance_id={manifest_instance_id}")
+    return payload, payload_id, [receipt_check, identity_check]
+
+
+def _state_checks(
+    path: Path | None, since: float, until: float
+) -> tuple[Any, list[tuple[float, str, str]], list[dict[str, Any]]]:
+    payload, receipt_check = _load_required(path, "state_history_receipt")
+    observations = _state_observations(payload)
+    in_window = [item for item in observations if since <= item[0] <= until]
+    sequence = _state_sequence(in_window)
+    passed = sequence == ["STOPPED", "RUNNING", "STOPPED"]
+    detail = (
+        "observed STOPPED -> RUNNING -> STOPPED inside capture window"
+        if passed
+        else f"observed state sequence {sequence or ['none']}; expected STOPPED -> RUNNING -> STOPPED"
+    )
+    return payload, in_window, [receipt_check, _result("state_history_burst", passed, detail)]
+
+
+def _audit_checks(
+    path: Path | None,
+    *,
+    instance_id: str | None,
+    since: float,
+    until: float,
+    expected_stop_principal: str,
+) -> tuple[list[tuple[str, Mapping[str, Any], float]], list[dict[str, Any]]]:
+    payload, receipt_check = _load_required(path, "audit_receipt")
+    events = (
+        _authoritative_audit_events(payload, instance_id=instance_id, since=since, until=until)
+        if payload is not None
+        else []
+    )
+    starts = [(event, timestamp) for action, event, timestamp in events if action == "START"]
+    stops = [(event, timestamp) for action, event, timestamp in events if action == "STOP"]
+    start_check = _result(
+        "exactly_one_start_instance",
+        len(starts) == 1,
+        "exactly one StartInstance audit event"
+        if len(starts) == 1
+        else f"observed {len(starts)} StartInstance audit events",
+    )
+    matching_stops = [
+        (event, timestamp) for event, timestamp in stops if expected_stop_principal in _principal_values(event)
+    ]
+    principal_check = _result(
+        "expected_stop_principal",
+        bool(matching_stops),
+        f"observed StopInstance by {expected_stop_principal}"
+        if matching_stops
+        else f"no StopInstance audit event matched principal {expected_stop_principal!r} (observed {len(stops)})",
+    )
+    actions = [action for action, _event, _timestamp in events]
+    order_ok = bool(actions) and actions[0] == "START" and any(action == "STOP" for action in actions[1:])
+    order_check = _result(
+        "audit_transition_order",
+        order_ok,
+        "successful StartInstance precedes a successful StopInstance"
+        if order_ok
+        else "audit transition order must begin with StartInstance and include a later StopInstance",
+    )
+    return events, [receipt_check, start_check, principal_check, order_check]
+
+
+def _snapshot_check(path: Path | None, *, since: float, until: float, final_state: str | None) -> dict[str, Any]:
+    if path is None:
+        return _result("reaper_snapshot", True, "state snapshot not supplied (optional)")
+    try:
+        snapshot = _safe_json(path)
+    except EvidenceError as exc:
+        return _result("reaper_snapshot", False, str(exc))
+    written_at = _parse_time(
+        _first_value(snapshot, ("written_at", "writtenAt", "timestamp", "captured_at", "capturedAt"))
+    )
+    snapshot_state = _normalise_state(
+        _first_value(snapshot, ("gpu_state", "gpuState", "lifecycle-state", "lifecycle_state", "state"))
+    )
+    written_ok = written_at is not None and since <= written_at <= until
+    state_ok = snapshot_state == final_state == "STOPPED"
+    return _result(
+        "reaper_snapshot",
+        written_ok and state_ok,
+        f"written_at={_format_time(written_at)} and gpu_state=STOPPED agree with final OCI state"
+        if written_ok and state_ok
+        else f"written_at={_format_time(written_at)}, gpu_state={snapshot_state or 'missing'}, final OCI state={final_state or 'missing'}",
+    )
+
+
+def _receipts_check(
+    path: Path | None, *, intervals: Sequence[tuple[float, float]], min_descriptions: int
+) -> dict[str, Any]:
+    if path is None:
+        return _result("wp_descriptions", True, "WP describe receipts not supplied (optional)")
+    try:
+        payload = _safe_json(path)
+    except EvidenceError as exc:
+        return _result("wp_descriptions", False, str(exc))
+    valid: list[Mapping[str, Any]] = []
+    for item in _receipt_items(payload):
+        description = _description_value(item)
+        timestamp = _receipt_time(item)
+        in_running = timestamp is not None and any(start <= timestamp <= stop for start, stop in intervals)
+        if description is not None and in_running:
+            valid.append(item)
+    return _result(
+        "wp_descriptions",
+        len(valid) >= min_descriptions,
+        f"{len(valid)} description receipt(s) inside RUNNING interval; required {min_descriptions}",
+    )
 
 
 def check_bundle(
@@ -539,252 +767,139 @@ def check_bundle(
     """Return a machine-readable verdict for one evidence bundle."""
 
     bundle_path = Path(bundle)
-    checks: list[dict[str, Any]] = []
-    manifest: Mapping[str, Any] = {}
-    entries: list[dict[str, Any]] = []
     if not bundle_path.is_dir():
-        checks.append(_result("bundle_directory", False, f"bundle directory is missing: {bundle_path}"))
-        return _verdict(bundle_path, checks)
-
-    manifest_path = bundle_path / "manifest.json"
-    try:
-        loaded_manifest = _safe_json(manifest_path)
-        if not isinstance(loaded_manifest, Mapping):
-            raise EvidenceError("manifest.json must contain an object")
-        manifest = loaded_manifest
-        entries, manifest_failures = _verify_manifest(bundle_path, manifest)
-        checks.append(
-            _result(
-                "manifest_sha256",
-                not manifest_failures,
-                "all listed files match their sha256" if not manifest_failures else "; ".join(manifest_failures),
-            )
+        return _verdict(
+            bundle_path, [_result("bundle_directory", False, f"bundle directory is missing: {bundle_path}")]
         )
+    try:
+        manifest = _safe_json(bundle_path / "manifest.json")
+        if not isinstance(manifest, Mapping):
+            raise EvidenceError("manifest.json must contain an object")
     except EvidenceError as exc:
-        checks.append(_result("manifest_sha256", False, str(exc)))
-        return _verdict(bundle_path, checks)
+        return _verdict(bundle_path, [_result("manifest_sha256", False, str(exc))])
 
+    entries, manifest_failures = _verify_manifest(bundle_path, manifest)
+    checks: list[dict[str, Any]] = [
+        _manifest_schema_check(manifest),
+        _result(
+            "manifest_sha256",
+            not manifest_failures,
+            "all listed files match their sha256" if not manifest_failures else "; ".join(manifest_failures),
+        ),
+    ]
     since_epoch, until_epoch, since_text, until_text, window_error = _window_from_args(manifest, since, until)
     checks.append(
         _result(
             "capture_window",
             window_error is None,
-            (
-                f"{since_text} .. {until_text}"
-                if window_error is None
-                else window_error
-            ),
+            f"{since_text} .. {until_text}" if window_error is None else window_error,
         )
     )
     if window_error is not None or since_epoch is None or until_epoch is None:
         return _verdict(bundle_path, checks, since=since_text, until=until_text)
 
-    instance_path = _entry_path(entries, "instance.json", "oci-instance.json", "instance-state.json", contains=("instance",))
-    history_path = _entry_path(
-        entries,
-        "state_history.json",
-        "state-history.json",
-        "instance-state-history.json",
-        "oci-instance-state-history.json",
-        contains=("state", "history"),
-    )
-    audit_path = _entry_path(
-        entries,
-        "audit-events.json",
-        "audit_events.json",
-        "audit.json",
-        "oci-audit-events.json",
-        contains=("audit",),
-    )
-    snapshot_path = _entry_path(
-        entries,
-        "state_snapshot.json",
-        "state-snapshot.json",
-        "reaper-state-snapshot.json",
-        "reaper_snapshot.json",
-        "gpu-state.json",
-        contains=("snapshot",),
-    )
-    receipts_path = _entry_path(
-        entries,
-        "wp_describe_receipts.json",
-        "wp-describe-receipts.json",
-        "wp-receipts.json",
-        "describe-receipts.json",
-        "describe_receipts.json",
-        "receipts.json",
-        contains=("receipt",),
-    )
-
-    instance_payload: Any = None
-    if instance_path is None:
-        checks.append(_result("oci_instance_receipt", False, "instance.json receipt is missing"))
-    else:
-        try:
-            instance_payload = _safe_json(instance_path)
-            checks.append(_result("oci_instance_receipt", True, f"loaded {instance_path.name}"))
-        except EvidenceError as exc:
-            checks.append(_result("oci_instance_receipt", False, str(exc)))
-
+    paths = _receipt_paths(entries)
     manifest_instance_id = _as_text(manifest.get("instance_id", manifest.get("instanceId")))
-    instance_id = manifest_instance_id or _instance_id_from_payload(instance_payload)
-    if manifest_instance_id and instance_payload is not None:
-        payload_id = _instance_id_from_payload(instance_payload)
-        checks.append(
-            _result(
-                "instance_identity",
-                payload_id is None or payload_id == manifest_instance_id,
-                f"manifest instance_id={manifest_instance_id}" if payload_id in {None, manifest_instance_id} else f"instance receipt identifies {payload_id}, expected {manifest_instance_id}",
-            )
-        )
-
-    state_payload: Any = None
-    observations: list[tuple[float, str, str]] = []
-    if history_path is not None:
-        try:
-            state_payload = _safe_json(history_path)
-            observations = _state_observations(state_payload)
-        except EvidenceError as exc:
-            checks.append(_result("state_history_receipt", False, str(exc)))
-    else:
-        checks.append(_result("state_history_receipt", False, "state_history.json receipt is missing"))
-
-    in_window_observations = [
-        item for item in observations if since_epoch <= item[0] <= until_epoch
-    ]
-    states: list[str] = []
-    for _timestamp, state, _source in sorted(in_window_observations, key=lambda item: item[0]):
-        if not states or states[-1] != state:
-            states.append(state)
-    sequence_ok = any(states[index : index + 3] == ["STOPPED", "RUNNING", "STOPPED"] for index in range(max(0, len(states) - 2)))
-    checks.append(
-        _result(
-            "state_history_burst",
-            sequence_ok,
-            "observed STOPPED -> RUNNING -> STOPPED inside capture window"
-            if sequence_ok
-            else f"observed state sequence {states or ['none']}; expected STOPPED -> RUNNING -> STOPPED",
-        )
+    instance_payload, payload_instance_id, instance_checks = _instance_checks(paths["instance"], manifest_instance_id)
+    checks.extend(instance_checks)
+    target_instance_id = (
+        manifest_instance_id if manifest_instance_id and payload_instance_id == manifest_instance_id else None
     )
-    intervals = _running_intervals(in_window_observations)
-
+    _history_payload, observations, history_checks = _state_checks(paths["history"], since_epoch, until_epoch)
+    checks.extend(history_checks)
+    _audit_events, audit_checks = _audit_checks(
+        paths["audit"],
+        instance_id=target_instance_id,
+        since=since_epoch,
+        until=until_epoch,
+        expected_stop_principal=expected_stop_principal,
+    )
+    checks.extend(audit_checks)
     final_state = _instance_state(instance_payload)
     checks.append(
         _result(
             "oci_final_state",
             final_state == "STOPPED",
-            f"final OCI lifecycle state is {final_state or 'missing'}" if final_state != "STOPPED" else "final OCI lifecycle state is STOPPED",
+            "final OCI lifecycle state is STOPPED"
+            if final_state == "STOPPED"
+            else f"final OCI lifecycle state is {final_state or 'missing'}",
         )
     )
-
-    audit_payload: Any = None
-    if audit_path is None:
-        checks.append(_result("audit_receipt", False, "audit-events.json receipt is missing"))
-        audit_events: list[tuple[str, Mapping[str, Any], float]] = []
-    else:
-        try:
-            audit_payload = _safe_json(audit_path)
-            audit_events = _authoritative_audit_events(
-                audit_payload,
-                instance_id=instance_id,
-                since=since_epoch,
-                until=until_epoch,
-            )
-            checks.append(_result("audit_receipt", True, f"loaded {audit_path.name}"))
-        except EvidenceError as exc:
-            checks.append(_result("audit_receipt", False, str(exc)))
-            audit_events = []
-
-    starts = [(event, timestamp) for action, event, timestamp in audit_events if action == "START"]
-    stops = [(event, timestamp) for action, event, timestamp in audit_events if action == "STOP"]
+    checks.append(_snapshot_check(paths["snapshot"], since=since_epoch, until=until_epoch, final_state=final_state))
     checks.append(
-        _result(
-            "exactly_one_start_instance",
-            len(starts) == 1,
-            "exactly one StartInstance audit event"
-            if len(starts) == 1
-            else f"observed {len(starts)} StartInstance audit events",
+        _receipts_check(
+            paths["receipts"], intervals=_running_intervals(observations), min_descriptions=min_descriptions
         )
     )
-    matching_stops = [
-        (event, timestamp)
-        for event, timestamp in stops
-        if expected_stop_principal in _principal_values(event)
-    ]
-    checks.append(
-        _result(
-            "expected_stop_principal",
-            bool(matching_stops),
-            f"observed StopInstance by {expected_stop_principal}"
-            if matching_stops
-            else f"no StopInstance audit event matched principal {expected_stop_principal!r} (observed {len(stops)})",
-        )
-    )
+    return _verdict(bundle_path, checks, since=since_text, until=until_text, instance_id=target_instance_id)
 
-    if snapshot_path is None:
-        checks.append(_result("reaper_snapshot", True, "state snapshot not supplied (optional)"))
-    else:
-        try:
-            snapshot = _safe_json(snapshot_path)
-            written_at = _parse_time(
-                _first_value(snapshot, ("written_at", "writtenAt", "timestamp", "captured_at", "capturedAt"))
-            )
-            snapshot_state = _normalise_state(
-                _first_value(snapshot, ("gpu_state", "gpuState", "lifecycle-state", "lifecycle_state", "state"))
-            )
-            written_ok = written_at is not None and since_epoch <= written_at <= until_epoch
-            state_ok = snapshot_state == final_state == "STOPPED"
-            checks.append(
-                _result(
-                    "reaper_snapshot",
-                    written_ok and state_ok,
-                    (
-                        f"written_at={_format_time(written_at)} and gpu_state=STOPPED agree with final OCI state"
-                        if written_ok and state_ok
-                        else f"written_at={_format_time(written_at)}, gpu_state={snapshot_state or 'missing'}, final OCI state={final_state or 'missing'}"
-                    ),
-                )
-            )
-        except EvidenceError as exc:
-            checks.append(_result("reaper_snapshot", False, str(exc)))
 
-    if receipts_path is None:
-        checks.append(
-            _result(
-                "wp_descriptions",
-                True,
-                "WP describe receipts not supplied (optional)",
-            )
-        )
-    else:
-        try:
-            receipts_payload = _safe_json(receipts_path)
-            receipt_items = _receipt_items(receipts_payload)
-            valid_receipts = []
-            for item in receipt_items:
-                description = _description_value(item)
-                timestamp = _receipt_time(item)
-                in_running = timestamp is not None and any(start <= timestamp <= stop for start, stop in intervals)
-                if description is not None and in_running:
-                    valid_receipts.append(item)
-            descriptions_ok = len(valid_receipts) >= min_descriptions
-            checks.append(
-                _result(
-                    "wp_descriptions",
-                    descriptions_ok,
-                    f"{len(valid_receipts)} description receipt(s) inside RUNNING interval; required {min_descriptions}",
-                )
-            )
-        except EvidenceError as exc:
-            checks.append(_result("wp_descriptions", False, str(exc)))
+def build_state_history_document(
+    audit_payload: Any,
+    *,
+    instance_id: str,
+    since: str,
+    until: str,
+) -> dict[str, Any]:
+    """Build history from successful Audit transitions without inventing boundaries."""
 
-    return _verdict(
-        bundle_path,
-        checks,
-        since=since_text,
-        until=until_text,
+    start = _parse_time(since)
+    end = _parse_time(until)
+    if start is None or end is None or start > end:
+        raise EvidenceError("evidence history generation received an invalid window")
+    observations: list[dict[str, Any]] = []
+    for action, event, timestamp in _authoritative_audit_events(
+        audit_payload,
         instance_id=instance_id,
-    )
+        since=start,
+        until=end,
+    ):
+        if action == "START":
+            previous_value = _first_value(
+                event,
+                (
+                    "previousState",
+                    "previous_state",
+                    "previousLifecycleState",
+                    "previous_lifecycle_state",
+                    "priorState",
+                    "prior_state",
+                    "fromState",
+                    "from_state",
+                ),
+            )
+            previous = _normalise_state(previous_value)
+            if previous is None and isinstance(previous_value, Mapping):
+                previous = _state_from_mapping(previous_value)
+            previous_mapping = _first_value(event, ("previous",))
+            if previous is None and isinstance(previous_mapping, Mapping):
+                previous = _state_from_mapping(previous_mapping)
+            if previous is not None:
+                observations.append(
+                    {
+                        "state": previous,
+                        "timestamp": event.get("eventTime", event.get("event_time", timestamp)),
+                        "source": "oci_audit_previous_state",
+                    }
+                )
+            state = "RUNNING"
+        else:
+            state = "STOPPED"
+        observations.append(
+            {
+                "state": state,
+                "timestamp": event.get("eventTime", event.get("event_time", timestamp)),
+                "source": "oci_audit_transition",
+                "event_id": _first_value(event, ("eventId", "event_id", "requestId", "request_id")),
+            }
+        )
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "instance_id": instance_id,
+        "since": since,
+        "until": until,
+        "observations": observations,
+    }
 
 
 def _verdict(
@@ -828,7 +943,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--since", help="inclusive UTC/ISO-8601 capture-window start (defaults to manifest)")
     parser.add_argument("--until", help="inclusive UTC/ISO-8601 capture-window end (defaults to manifest)")
     parser.add_argument("--expected-stop-principal", required=True, help="principal expected to stop the instance")
-    parser.add_argument("--min-descriptions", type=_positive_or_zero, default=1, help="minimum valid WP descriptions (default: 1)")
+    parser.add_argument(
+        "--min-descriptions", type=_positive_or_zero, default=1, help="minimum valid WP descriptions (default: 1)"
+    )
     parser.add_argument("--json", action="store_true", help="emit only the JSON verdict")
     return parser
 

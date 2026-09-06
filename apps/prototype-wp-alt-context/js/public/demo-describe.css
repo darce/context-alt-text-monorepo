@@ -1,0 +1,89 @@
+.acx-demo {
+  max-width: 64rem;
+  padding: var(--acx-space-24, 1.5rem);
+  border: 1px solid var(--acx-color-border, #d1d5db);
+  border-radius: var(--acx-radius-md, 0.5rem);
+  background: var(--acx-color-surface, #fff);
+  color: var(--acx-color-text, #111827);
+}
+
+.acx-demo fieldset {
+  padding: 0;
+  border: 0;
+}
+
+.acx-demo legend {
+  margin-bottom: var(--acx-space-12, 0.75rem);
+  font-size: var(--acx-text-lg, 1.125rem);
+  font-weight: var(--acx-font-weight-semibold, 600);
+}
+
+.acx-demo__choices {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
+  gap: var(--acx-space-16, 1rem);
+}
+
+.acx-demo__choice {
+  display: grid;
+  gap: var(--acx-space-8, 0.5rem);
+  padding: var(--acx-space-8, 0.5rem);
+  border: 2px solid var(--acx-color-border, #d1d5db);
+  border-radius: var(--acx-radius-md, 0.5rem);
+  cursor: pointer;
+}
+
+.acx-demo__choice:has(input:checked),
+.acx-demo__choice:focus-within {
+  border-color: var(--acx-color-accent, #2563eb);
+  background: var(--acx-color-accent-soft, #eff6ff);
+}
+
+.acx-demo__choice img {
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  object-fit: cover;
+  border-radius: var(--acx-radius-sm, 0.25rem);
+}
+
+.acx-demo__submit {
+  margin-top: var(--acx-space-16, 1rem);
+  padding: var(--acx-space-8, 0.5rem) var(--acx-space-16, 1rem);
+  border: 0;
+  border-radius: var(--acx-radius-md, 0.5rem);
+  background: var(--acx-color-accent, #2563eb);
+  color: var(--acx-color-accent-contrast, #fff);
+  font-weight: var(--acx-font-weight-semibold, 600);
+}
+
+.acx-demo__submit:disabled {
+  opacity: 0.65;
+}
+
+.acx-demo__status {
+  margin: var(--acx-space-16, 1rem) 0 0;
+  color: var(--acx-color-text-secondary, #374151);
+}
+
+.acx-demo[data-state='queued'] .acx-demo__status,
+.acx-demo[data-state='warming'] .acx-demo__status,
+.acx-demo[data-state='describing'] .acx-demo__status {
+  color: var(--acx-color-accent, #2563eb);
+}
+
+.acx-demo[data-state='completed'] .acx-demo__status {
+  color: var(--acx-color-success, #15803d);
+}
+
+.acx-demo[data-state='limited'] .acx-demo__status,
+.acx-demo[data-state='error'] .acx-demo__status,
+.acx-demo[data-state='failed'] .acx-demo__status {
+  color: var(--acx-color-danger, #b91c1c);
+}
+
+.acx-demo__result {
+  margin-top: var(--acx-space-12, 0.75rem);
+  padding: var(--acx-space-16, 1rem);
+  border-left: 0.25rem solid var(--acx-color-success, #15803d);
+  background: var(--acx-color-surface-alt, #f9fafb);
+}

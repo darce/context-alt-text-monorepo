@@ -439,6 +439,37 @@ def test_start_event_count_is_exact(tmp_path: Path, audit: object, expected: str
     assert expected in result.stdout
 
 
+def test_duplicate_start_records_without_event_ids_fail_closed(tmp_path: Path) -> None:
+    audit = {
+        "data": [
+            {
+                "eventName": "StartInstance",
+                "eventTime": RUNNING_AT,
+                "responseStatus": 200,
+                "data": {"resourceId": INSTANCE_ID},
+            },
+            {
+                "eventName": "StartInstance",
+                "eventTime": RUNNING_AT,
+                "responseStatus": 200,
+                "data": {"resourceId": INSTANCE_ID},
+            },
+            {
+                "eventName": "StopInstance",
+                "eventTime": STOPPED_AT,
+                "responseStatus": 200,
+                "data": {"resourceId": INSTANCE_ID, "identity": {"principalName": "gpu-reaper"}},
+            },
+        ]
+    }
+    bundle = _custom_bundle(tmp_path, audit=audit)
+
+    result = _run_checker(bundle)
+
+    assert result.returncode == 1
+    assert "observed 2 StartInstance audit events" in result.stdout
+
+
 def test_stop_principal_must_match(tmp_path: Path) -> None:
     audit = {
         "data": [
@@ -563,6 +594,34 @@ def test_audit_event_without_resource_id_cannot_match_instance(tmp_path: Path) -
     assert "observed 0 StartInstance audit events" in result.stdout
 
 
+def test_instance_id_alias_without_resource_id_cannot_match_instance(tmp_path: Path) -> None:
+    audit = {
+        "data": [
+            {
+                "eventName": "StartInstance",
+                "eventTime": RUNNING_AT,
+                "eventId": "start-instance-id-only",
+                "responseStatus": 200,
+                "instanceId": INSTANCE_ID,
+            },
+            {
+                "eventName": "StopInstance",
+                "eventTime": STOPPED_AT,
+                "eventId": "stop-instance-id-only",
+                "responseStatus": 200,
+                "instanceId": INSTANCE_ID,
+                "identity": {"principalName": "gpu-reaper"},
+            },
+        ]
+    }
+    bundle = _custom_bundle(tmp_path, audit=audit)
+
+    result = _run_checker(bundle)
+
+    assert result.returncode == 1
+    assert "observed 0 StartInstance audit events" in result.stdout
+
+
 def test_audit_event_for_other_instance_cannot_match_target(tmp_path: Path) -> None:
     audit = {
         "data": [
@@ -604,6 +663,41 @@ def test_manifest_instance_id_is_required(tmp_path: Path) -> None:
     assert result.returncode == 1
     assert "instance_identity" in result.stdout
     assert "manifest instance_id is required" in result.stdout
+
+
+def test_history_instance_id_must_match_manifest(tmp_path: Path) -> None:
+    history = {
+        "instance_id": "ocid1.instance.other",
+        "observations": [
+            {"state": "STOPPED", "timestamp": SINCE},
+            {"state": "RUNNING", "timestamp": RUNNING_AT},
+            {"state": "STOPPED", "timestamp": STOPPED_AT},
+        ],
+    }
+    bundle = _custom_bundle(tmp_path, history=history)
+
+    result = _run_checker(bundle)
+
+    assert result.returncode == 1
+    assert "state_history_identity" in result.stdout
+    assert "identifies ocid1.instance.other" in result.stdout
+
+
+def test_inferred_history_observation_cannot_prove_burst(tmp_path: Path) -> None:
+    history = {
+        "observations": [
+            {"state": "STOPPED", "timestamp": SINCE, "inferred": True},
+            {"state": "RUNNING", "timestamp": RUNNING_AT},
+            {"state": "STOPPED", "timestamp": STOPPED_AT},
+        ]
+    }
+    bundle = _custom_bundle(tmp_path, history=history)
+
+    result = _run_checker(bundle)
+
+    assert result.returncode == 1
+    assert "state_history_burst" in result.stdout
+    assert "inferred" in result.stdout
 
 
 def test_not_start_instance_is_not_a_start_event(tmp_path: Path) -> None:
@@ -704,6 +798,27 @@ def test_stop_before_start_cannot_prove_burst(tmp_path: Path) -> None:
 
     assert result.returncode == 1
     assert "audit transition order" in result.stdout
+
+
+def test_raw_state_transition_order_is_checked_before_collapsing_states(tmp_path: Path) -> None:
+    history = {
+        "observations": [
+            {
+                "state": "STOPPED",
+                "timestamp": "2026-09-01T00:05:00Z",
+                "action": "StopInstance",
+            },
+            {"state": "STOPPED", "timestamp": RUNNING_AT, "action": "StartInstance"},
+            {"state": "RUNNING", "timestamp": RUNNING_AT, "action": "StartInstance"},
+            {"state": "STOPPED", "timestamp": STOPPED_AT, "action": "StopInstance"},
+        ]
+    }
+    bundle = _custom_bundle(tmp_path, history=history)
+
+    result = _run_checker(bundle)
+
+    assert result.returncode == 1
+    assert "state history transition order" in result.stdout
 
 
 def test_nested_oci_audit_event_fields_are_supported(tmp_path: Path) -> None:

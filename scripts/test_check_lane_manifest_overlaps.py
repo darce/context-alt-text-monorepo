@@ -94,6 +94,17 @@ def test_single_star_glob_is_a_directory_prefix(tmp_path: Path) -> None:
     assert "src <-> src/foo.py" in result.stdout
 
 
+def test_single_star_glob_does_not_escape_its_directory(tmp_path: Path) -> None:
+    manifest_dir = tmp_path / "manifests"
+    _write_manifest(manifest_dir, "task-a", [_lane("lane-a", ["src/a/*"])])
+    _write_manifest(manifest_dir, "task-b", [_lane("lane-b", ["src/b.py"])])
+
+    result = _run(manifest_dir)
+
+    assert result.returncode == 0
+    assert "No owned-path overlaps" in result.stdout
+
+
 def test_aliased_paths_are_canonicalized_before_prefix_comparison(
     tmp_path: Path,
 ) -> None:
@@ -113,7 +124,11 @@ def test_aliased_paths_are_canonicalized_before_prefix_comparison(
 
 @pytest.mark.parametrize(
     ("owned_path", "error_fragment"),
-    [("/scripts/**", "absolute"), ("../scripts/**", "escapes")],
+    [
+        ("/scripts/**", "absolute"),
+        ("../scripts/**", "escapes"),
+        ("foo/../C:/bar", "absolute"),
+    ],
 )
 def test_absolute_and_escaping_paths_are_rejected(
     tmp_path: Path, owned_path: str, error_fragment: str
@@ -243,6 +258,24 @@ def test_status_json_excludes_manifest_lanes_missing_from_live_export(
     assert "1 live lanes" in result.stdout
 
 
+@pytest.mark.parametrize(
+    "payload",
+    [{"unexpected": []}, {"data": {"unexpected": []}}],
+)
+def test_unrecognized_nonempty_status_json_is_rejected(
+    tmp_path: Path, payload: dict[str, object]
+) -> None:
+    manifest_dir = tmp_path / "manifests"
+    _write_manifest(manifest_dir, "task-a", [_lane("lane-a", ["src/shared.py"])])
+    status_path = tmp_path / "lane-status.json"
+    status_path.write_text(json.dumps(payload))
+
+    result = _run(manifest_dir, "--lane-status-json", str(status_path))
+
+    assert result.returncode == 2
+    assert "recognized" in result.stderr.lower()
+
+
 def test_allow_list_records_reason_and_clears_failure(tmp_path: Path) -> None:
     manifest_dir = tmp_path / "manifests"
     _write_manifest(manifest_dir, "task-a", [_lane("lane-a", ["src/shared.py"])])
@@ -266,6 +299,16 @@ def test_empty_manifest_directory_is_a_successful_notice(tmp_path: Path) -> None
 
     assert result.returncode == 0
     assert "No lane manifests found" in result.stdout
+
+
+def test_existing_non_directory_manifest_path_is_rejected(tmp_path: Path) -> None:
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text("{}")
+
+    result = _run(manifest_path)
+
+    assert result.returncode == 2
+    assert "directory" in result.stderr.lower()
 
 
 def test_json_output_has_machine_readable_overlap_shape(tmp_path: Path) -> None:
@@ -302,3 +345,56 @@ def test_make_include_declares_target_and_check_all_dependency() -> None:
     assert "lane-overlaps-tests:" in makefile
     assert "test-scripts: lane-overlaps-tests" in makefile
     assert "scripts/test_check_lane_manifest_overlaps.py" in makefile
+
+
+def test_make_manifest_probe_is_portable() -> None:
+    makefile = (REPO_ROOT / "mk" / "lane-overlaps.mk").read_text()
+
+    assert "find " not in makefile
+    assert "-maxdepth" not in makefile
+
+
+def test_make_status_export_fetches_all_pages(tmp_path: Path) -> None:
+    manifest_dir = tmp_path / "manifests"
+    _write_manifest(manifest_dir, "task-a", [_lane("lane-a", ["src/shared.py"])])
+    _write_manifest(manifest_dir, "task-b", [_lane("lane-b", ["src/shared.py"])])
+
+    fake_mcp = tmp_path / "fake-mcp"
+    fake_mcp.write_text(
+        "#!/bin/sh\n"
+        "offset=0\n"
+        "while [ \"$#\" -gt 0 ]; do\n"
+        "  case \"$1\" in\n"
+        "    --offset) offset=\"$2\"; shift 2 ;;\n"
+        "    *) shift ;;\n"
+        "  esac\n"
+        "done\n"
+        "if [ \"$offset\" -eq 0 ]; then\n"
+        "  printf '%s\\n' '{\"ok\":true,\"total_matching\":2,\"returned\":1,\"has_more\":true,\"lanes\":[{\"task_ref\":\"task-a\",\"lane_id\":\"lane-a\",\"status\":\"active\"}]}'\n"
+        "else\n"
+        "  printf '%s\\n' '{\"ok\":true,\"total_matching\":2,\"returned\":1,\"has_more\":false,\"lanes\":[{\"task_ref\":\"task-b\",\"lane_id\":\"lane-b\",\"status\":\"active\"}]}'\n"
+        "fi\n"
+    )
+    fake_mcp.chmod(0o755)
+
+    result = subprocess.run(
+        [
+            "make",
+            "--no-print-directory",
+            "-f",
+            str(REPO_ROOT / "mk" / "lane-overlaps.mk"),
+            "lane-overlaps-check",
+            f"LANE_OVERLAPS_MANIFEST_DIR={manifest_dir}",
+            f"MCP_CMD={fake_mcp}",
+            "MCP_STATE_ARGS=",
+        ],
+        cwd=REPO_ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    # GNU Make maps a failing recipe's status to its conventional exit 2.
+    assert result.returncode == 2
+    assert "task-a/lane-a" in result.stdout
+    assert "task-b/lane-b" in result.stdout

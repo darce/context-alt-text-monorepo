@@ -529,6 +529,9 @@ def test_gpu_self_stop_watchdog_units_and_bootstrap_are_configured() -> None:
     assert "EnvironmentFile=-/etc/acx-gpu-self-stop.env" in service
     assert "source /etc/acx-gpu-self-stop.env" in script
     assert "OnBootSec=${max_uptime_seconds}" in timer
+    # A failed service can exhaust its systemd restart burst; keep invoking the
+    # watchdog on a monotonic cadence until the instance is actually stopped.
+    assert "OnUnitActiveSec=${max_uptime_seconds}" in timer
     assert "AccuracySec=30s" in timer
     assert "Persistent=false" in timer
     assert "Unit=acx-gpu-self-stop.service" in timer

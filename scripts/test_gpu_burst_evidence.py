@@ -478,6 +478,47 @@ def test_start_event_count_is_exact(tmp_path: Path, audit: object, expected: str
     assert expected in result.stdout
 
 
+def test_successful_start_without_current_state_is_still_counted(tmp_path: Path) -> None:
+    audit = {
+        "data": [
+            {
+                "eventName": "StartInstance",
+                "eventTime": RUNNING_AT,
+                "eventId": "start-1",
+                "responseStatus": 200,
+                "data": {
+                    "resourceId": INSTANCE_ID,
+                    "stateChange": {"current": {"lifecycleState": "RUNNING"}},
+                },
+            },
+            {
+                "eventName": "StartInstance",
+                "eventTime": "2026-09-01T00:15:00Z",
+                "eventId": "start-without-current",
+                "responseStatus": 200,
+                "data": {"resourceId": INSTANCE_ID},
+            },
+            {
+                "eventName": "StopInstance",
+                "eventTime": STOPPED_AT,
+                "eventId": "stop-1",
+                "responseStatus": 200,
+                "data": {
+                    "resourceId": INSTANCE_ID,
+                    "identity": {"principalName": "gpu-reaper"},
+                    "stateChange": {"current": {"lifecycleState": "STOPPED"}},
+                },
+            },
+        ]
+    }
+    bundle = _custom_bundle(tmp_path, audit=audit)
+
+    result = _run_checker(bundle)
+
+    assert result.returncode == 1
+    assert "observed 2 StartInstance audit events" in result.stdout
+
+
 def test_duplicate_start_records_without_event_ids_fail_closed(tmp_path: Path) -> None:
     audit = {
         "data": [
@@ -571,6 +612,20 @@ def test_reaper_snapshot_must_match_selected_instance(tmp_path: Path) -> None:
     assert result.returncode == 1
     assert "reaper_snapshot" in result.stdout
     assert "identifies ocid1.instance.other" in result.stdout
+
+
+def test_unformattable_snapshot_timestamp_fails_without_traceback(tmp_path: Path) -> None:
+    bundle = _custom_bundle(
+        tmp_path,
+        snapshot={"gpu_state": "STOPPED", "instance_id": INSTANCE_ID, "written_at": 1e308},
+    )
+
+    result = _run_checker(bundle)
+
+    assert result.returncode == 1
+    assert "reaper_snapshot" in result.stdout
+    assert "invalid" in result.stdout
+    assert "Traceback" not in result.stderr
 
 
 def test_wp_receipts_need_nonempty_descriptions_inside_running_interval(tmp_path: Path) -> None:
@@ -1085,3 +1140,38 @@ def test_gpu_evidence_make_target_does_not_duplicate_deploy_shell_suite() -> Non
 
     assert "scripts/test_gpu_burst_evidence.py" in target
     assert "scripts/deploy/tests/test_export_gpu_evidence_shell.py" not in target
+
+
+@pytest.mark.parametrize(
+    ("variable", "target", "extra"),
+    [
+        ("GPU_EVIDENCE_BUNDLE", "gpu-evidence-export", ()),
+        ("GPU_EVIDENCE_STATE_SNAPSHOT", "gpu-evidence-export", ()),
+        ("GPU_EVIDENCE_OCI_BIN", "gpu-evidence-export", ()),
+        ("GPU_EVIDENCE_PYTHON", "gpu-evidence-check", ()),
+        ("GPU_EVIDENCE_EXPECTED_STOP_PRINCIPAL", "gpu-evidence-check", ()),
+    ],
+)
+def test_gpu_evidence_make_rejects_shell_metacharacters(variable: str, target: str, extra: tuple[str, ...]) -> None:
+    marker = ROOT / "scripts" / f".gpu-evidence-make-injection-{variable}"
+    if marker.exists():
+        marker.unlink()
+    values = {
+        "GPU_EVIDENCE_INSTANCE_ID": INSTANCE_ID,
+        "GPU_EVIDENCE_COMPARTMENT_ID": "ocid1.compartment.example",
+        "GPU_EVIDENCE_SINCE": SINCE,
+        "GPU_EVIDENCE_UNTIL": UNTIL,
+        "GPU_EVIDENCE_BUNDLE": str(ROOT / ".git" / "gpu-evidence" / "test-bundle"),
+        "GPU_EVIDENCE_STATE_SNAPSHOT": str(ROOT / "snapshot.json"),
+        "GPU_EVIDENCE_OCI_BIN": "oci",
+        "GPU_EVIDENCE_PYTHON": "python3",
+        "GPU_EVIDENCE_EXPECTED_STOP_PRINCIPAL": "gpu-reaper",
+    }
+    values[variable] = f"safe$(touch {marker})"
+    command = ["make", "-n", target, *extra, *[f"{key}={value}" for key, value in values.items()]]
+
+    result = subprocess.run(command, cwd=ROOT, capture_output=True, text=True, check=False)
+
+    assert result.returncode != 0, result.stdout + result.stderr
+    assert "unsafe" in result.stderr
+    assert not marker.exists()

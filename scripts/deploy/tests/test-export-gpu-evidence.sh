@@ -137,6 +137,9 @@ def without_capture_time(value):
 assert without_capture_time(load(one / "manifest.json")) == without_capture_time(load(two / "manifest.json"))
 for name in ("instance.json", "audit-events.json", "state_history.json", "state_snapshot.json", "wp_describe_receipts.json"):
     assert (one / name).read_bytes() == (two / name).read_bytes(), name
+assert (one.stat().st_mode & 0o777) == 0o700
+for path in one.iterdir():
+    assert (path.stat().st_mode & 0o777) == 0o600, (path, oct(path.stat().st_mode & 0o777))
 PY
 
 "$resolved_python" "${root}/scripts/gpu_burst_evidence.py" \
@@ -179,6 +182,100 @@ assert [entry["path"] for entry in manifest["files"]] == [
     "state_history.json",
 ]
 PY
+
+atomic_bundle="${fixture_root}/atomic"
+run_export "$atomic_bundle"
+old_manifest_sha="$(sha256sum "${atomic_bundle}/manifest.json" | awk '{print $1}')"
+old_snapshot_sha="$(sha256sum "${atomic_bundle}/state_snapshot.json" | awk '{print $1}')"
+failing_oci="${fixture_root}/failing-oci"
+cat >"${failing_oci}" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+case " $* " in
+    *" compute instance get "*)
+        printf '%s\n' '{"data":{"id":"ocid1.instance.example","lifecycle-state":"STOPPED"}}'
+        ;;
+    *)
+        echo "deliberate OCI failure" >&2
+        exit 73
+        ;;
+esac
+EOF
+chmod +x "${failing_oci}"
+atomic_rc=0
+OCI_BIN="${failing_oci}" "$exporter" \
+    --instance-id ocid1.instance.example \
+    --compartment-id ocid1.compartment.example \
+    --since 2026-09-01T00:00:00Z --until 2026-09-01T01:00:00Z \
+    --out "${atomic_bundle}" >"${fixture_root}/atomic-failure.out" 2>&1 || atomic_rc=$?
+if [ "$atomic_rc" -ne 73 ]; then
+    echo "FAIL: failed export exited ${atomic_rc}, expected 73" >&2
+    exit 1
+fi
+if [ "$(sha256sum "${atomic_bundle}/manifest.json" | awk '{print $1}')" != "$old_manifest_sha" ]; then
+    echo "FAIL: failed export replaced the previous manifest" >&2
+    exit 1
+fi
+if [ "$(sha256sum "${atomic_bundle}/state_snapshot.json" | awk '{print $1}')" != "$old_snapshot_sha" ]; then
+    echo "FAIL: failed export removed the previous snapshot" >&2
+    exit 1
+fi
+if [ -e "${atomic_bundle}.lock" ] || compgen -G "${atomic_bundle%/*}/.${atomic_bundle##*/}.tmp.*" >/dev/null; then
+    echo "FAIL: failed export left transaction artifacts behind" >&2
+    exit 1
+fi
+
+slow_oci="${fixture_root}/slow-oci"
+slow_active="${fixture_root}/slow-active"
+slow_overlap="${fixture_root}/slow-overlap"
+cat >"${slow_oci}" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+if mkdir "${SLOW_ACTIVE}" 2>/dev/null; then
+    trap 'rmdir "${SLOW_ACTIVE}"' EXIT
+    sleep 1
+else
+    : >"${SLOW_OVERLAP}"
+fi
+"${OCI_FAKE}" "$@"
+EOF
+chmod +x "${slow_oci}"
+concurrent_bundle="${fixture_root}/concurrent"
+OCI_BIN="${slow_oci}" SLOW_ACTIVE="${slow_active}" SLOW_OVERLAP="${slow_overlap}" OCI_FAKE="${fake_oci}" \
+    "$exporter" \
+    --instance-id ocid1.instance.example \
+    --compartment-id ocid1.compartment.example \
+    --since 2026-09-01T00:00:00Z --until 2026-09-01T01:00:00Z \
+    --out "${concurrent_bundle}" >"${fixture_root}/concurrent-one.out" 2>&1 &
+first_export_pid=$!
+for _ in $(seq 1 50); do
+    [ -d "${slow_active}" ] && break
+    sleep 0.1
+done
+if [ ! -d "${slow_active}" ]; then
+    echo "FAIL: slow OCI exporter did not start" >&2
+    exit 1
+fi
+OCI_BIN="${slow_oci}" SLOW_ACTIVE="${slow_active}" SLOW_OVERLAP="${slow_overlap}" OCI_FAKE="${fake_oci}" \
+    "$exporter" \
+    --instance-id ocid1.instance.example \
+    --compartment-id ocid1.compartment.example \
+    --since 2026-09-01T00:00:00Z --until 2026-09-01T01:00:00Z \
+    --out "${concurrent_bundle}" >"${fixture_root}/concurrent-two.out" 2>&1 &
+second_export_pid=$!
+first_rc=0
+second_rc=0
+wait "$first_export_pid" || first_rc=$?
+wait "$second_export_pid" || second_rc=$?
+if [ "$first_rc" -ne 0 ] || [ "$second_rc" -ne 0 ]; then
+    echo "FAIL: serialized exports returned ${first_rc} and ${second_rc}" >&2
+    cat "${fixture_root}/concurrent-one.out" "${fixture_root}/concurrent-two.out" >&2
+    exit 1
+fi
+if [ -e "${slow_overlap}" ]; then
+    echo "FAIL: concurrent exports reached OCI at the same time" >&2
+    exit 1
+fi
 
 missing_rc=0
 "$exporter" --compartment-id ocid1.compartment.example \

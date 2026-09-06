@@ -735,6 +735,24 @@ fi
 # negative fixture flips provenance after chunk one and proves no second chunk
 # is admitted.
 bootstrap_file="${script_dir}/../../../infra/oci/demo/bootstrap-wp.sh"
+# bootstrap-wp.sh uses bash 4 case-conversion expansion. macOS ships bash 3.2,
+# where every invocation dies on "bad substitution" and this block reports five
+# failures that say nothing about the product. Resolve a newer bash or skip, so
+# a harness portability gap is not read as a product defect.
+burst_bash=""
+for burst_candidate in "${BASH_FOR_BOOTSTRAP:-}" bash /opt/homebrew/bin/bash /usr/local/bin/bash; do
+    [ -n "$burst_candidate" ] || continue
+    burst_resolved=$(command -v "$burst_candidate" 2>/dev/null) || continue
+    burst_major=$("$burst_resolved" -c 'echo "${BASH_VERSINFO[0]}"' 2>/dev/null) || continue
+    case "$burst_major" in ''|*[!0-9]*) continue ;; esac
+    if [ "$burst_major" -ge 4 ]; then
+        burst_bash="$burst_resolved"
+        break
+    fi
+done
+if [ -z "$burst_bash" ]; then
+    echo "SKIP bootstrap describe-burst block (bootstrap-wp.sh needs bash >= 4; this host has $(bash --version | sed -n 1p))"
+else
 burst_root=$(mktemp -d)
 mkdir -p "$burst_root/bin" "$burst_root/demo/lib" "$burst_root/demo/secrets"
 cp "${script_dir}/../../../infra/oci/demo/lib/describe-gate.sh" "$burst_root/demo/lib/describe-gate.sh"
@@ -830,7 +848,7 @@ run_bootstrap_burst() {
         PLUGIN_ZIP="$burst_root/plugin.zip" \
         ACX_DEMO_DESCRIBE_CHUNK=10 \
         ACX_DEMO_DESCRIBE_MAX=25 \
-        bash "$bootstrap_file" 2>&1
+        "$burst_bash" "$bootstrap_file" 2>&1
     ); then
         rc=0
     else
@@ -884,7 +902,8 @@ else
     echo "FAIL describe burst blocks on mid-run provenance drift"
     failures=$((failures + 1))
 fi
-rm -rf "$burst_root"
+fi
+[ -n "${burst_root:-}" ] && rm -rf "$burst_root"
 
 echo
 if [ "$failures" -gt 0 ]; then

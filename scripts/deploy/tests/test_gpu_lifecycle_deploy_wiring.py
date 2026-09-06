@@ -773,6 +773,24 @@ def test_reinstall_does_not_recreate_an_existing_supplementary_group(
     assert "groupadd" not in calls
 
 
+def test_unprovisionable_supplementary_group_never_enables_the_start_timer(
+    tmp_path: Path,
+) -> None:
+    """A GID that cannot be created is the 216/GROUP failure in advance: both units
+    would refuse to start. Arming the start timer then buys a GPU nothing can stop."""
+    result, calls = _run_lifecycle(
+        tmp_path,
+        enabled=True,
+        ready_url="http://10.0.1.36:8000/health",
+        dry_run=False,
+        group_present=False,
+        groupadd_rc=1,
+    )
+
+    assert result.returncode != 0
+    assert "systemctl <enable> <--now> <acx-gpu-start.timer>" not in calls
+
+
 def test_rendered_remote_body_avoids_nonportable_shell_constructs(tmp_path: Path) -> None:
     result, _ = _run_lifecycle(
         tmp_path, enabled=True, ready_url="http://gpu.test:8000/health", dry_run=False,

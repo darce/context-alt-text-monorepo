@@ -24,11 +24,8 @@ export const GuidedSamplePhoto = ({
           role="img"
           aria-label={fallbackLabel}
         >
-          <strong>Sample photo unavailable</strong>
-          <span>
-            {'. '}
-            {altText}
-          </span>
+          <strong>Sample photo unavailable.</strong>
+          <span>{altText}</span>
         </div>
       ) : (
         <img className="acx-guided-page__image" src={src} alt={altText} onError={() => setImageFailed(true)} />

@@ -1,0 +1,134 @@
+{
+  "map_ref": "gpu-operator-control",
+  "product": "alt-context WP plugin admin SPA — Settings › Burst GPU operator control (start / stop / automatic)",
+  "source_fixture": "apps/prototype-wp-alt-context/js/admin/pages/SettingsPage.tsx",
+  "goals": [
+    "Operator can always see the burst GPU state, the effective intent, the lease expiry and load freshness in one place (INT-10 status–predict–stop, OBS-08 stale is shown as unknown with age).",
+    "Operator can request Start, Stop or Return to automatic; each request is acknowledged within one poll and its outcome (honoured, pending, blocked) is visible (HAI-04 activate–operate–override).",
+    "Cost is disclosed before commitment and the lease cap is named; the user is never surprised by a GPU-hour charge (INT-07, CARD-15, COST-10).",
+    "Stop never discards in-flight work: a stop while a describe run is running is deferred and the reason is shown (FLOW-08, A11Y-18)."
+  ],
+  "jobs": [
+    { "id": "job-prewarm-gpu", "label": "Pre-warm the GPU before a demo so the first describe run is fast" },
+    { "id": "job-stop-gpu", "label": "Stop the GPU now to end spend" },
+    { "id": "job-return-auto", "label": "Return the GPU to automatic lifecycle" }
+  ],
+  "screens": [
+    {
+      "id": "settings-burst-gpu",
+      "kind": "screen",
+      "title": "Settings › Burst GPU",
+      "purpose": "Card on the Settings page showing GPU state, intent, lease and load, with Start / Stop / Return to automatic controls. Domain vocabulary behind the canonical states: stopped and ready = default; starting and warming = loading; snapshot missing = empty; service unreachable = error; lifecycle degraded or intent blocked = degraded.",
+      "route": "#/settings",
+      "job_entry": true,
+      "deep_link": true,
+      "url_params": [],
+      "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/settings/GpuControlCard.tsx",
+      "primary_action_id": "act-gpu-start",
+      "states": ["default", "loading", "empty", "error", "degraded"],
+      "zones": [
+        { "id": "z-gpu-state-chip", "label": "GPU state chip — reuses gpuStatePresentation vocabulary (unknown / stopped / starting / warming / ready / degraded) with snapshot age", "role": "status", "evidence_linked": true, "states": ["default", "loading", "empty", "error", "degraded"] },
+        { "id": "z-gpu-intent", "label": "Effective intent and expiry — automatic / start until HH:MM / stop (pending, blocked: describe run in flight)", "role": "status", "states": ["default", "loading", "degraded"] },
+        { "id": "z-gpu-lease", "label": "Lease countdown — running since, auto-stops by HH:MM (lease cap)", "role": "status", "states": ["default", "empty"] },
+        { "id": "z-gpu-load", "label": "Describe load — work in flight yes/no with load snapshot freshness", "role": "status", "states": ["default", "empty", "degraded"] },
+        { "id": "z-gpu-cost", "label": "Cost disclosure — hourly rate, warm-up time, lease cap", "role": "content", "states": ["default"] },
+        { "id": "z-gpu-controls", "label": "Start GPU / Stop GPU / Return to automatic", "role": "form", "states": ["default", "loading", "error", "degraded"] }
+      ]
+    },
+    {
+      "id": "gpu-start-confirm",
+      "kind": "overlay",
+      "title": "Confirm Start GPU",
+      "purpose": "Inline confirm strip below the controls: names the hourly cost, the warm-up time and the intent TTL after which lifecycle returns to automatic. Stays until confirmed or dismissed.",
+      "route": "#/settings (inline strip; no dedicated route)",
+      "url_params": [],
+      "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/settings/GpuControlCard.tsx",
+      "primary_action_id": "act-gpu-confirm-start",
+      "states": ["default", "loading", "error"],
+      "zones": [
+        { "id": "z-start-preview", "label": "Start preview — cost per hour, warm-up estimate, auto-return after TTL", "role": "content", "states": ["default"] },
+        { "id": "z-start-actions", "label": "Confirm start / Cancel", "role": "form", "states": ["default", "loading", "error"] }
+      ]
+    },
+    {
+      "id": "gpu-stop-confirm",
+      "kind": "overlay",
+      "title": "Confirm Stop GPU",
+      "purpose": "Inline confirm strip: explains that a stop is honoured only when no describe run is in flight, otherwise it is deferred and shown as pending.",
+      "route": "#/settings (inline strip; no dedicated route)",
+      "url_params": [],
+      "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/settings/GpuControlCard.tsx",
+      "primary_action_id": "act-gpu-confirm-stop",
+      "states": ["default", "loading", "error", "degraded"],
+      "zones": [
+        { "id": "z-stop-preview", "label": "Stop preview — immediate when idle, deferred while a describe run is in flight", "role": "content", "states": ["default", "degraded"] },
+        { "id": "z-stop-actions", "label": "Confirm stop / Cancel", "role": "form", "states": ["default", "loading", "error"] }
+      ]
+    },
+    {
+      "id": "exit-workbench",
+      "kind": "exit",
+      "title": "Workbench",
+      "purpose": "Go describe media once the GPU is ready",
+      "route": "#/workbench",
+      "url_params": ["run_id"],
+      "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/workbench/MediaSelection.tsx",
+      "states": ["default"],
+      "zones": [
+        { "id": "z-wb-entry", "label": "Workbench entry", "role": "nav", "states": ["default"] }
+      ]
+    }
+  ],
+  "actions": [
+    { "id": "act-gpu-start", "verb": "Start GPU", "target": "gpu-start-confirm", "hierarchy": "primary", "costly": true, "irreversible": false, "preview_required": true, "screen_id": "settings-burst-gpu", "when": ["state in stopped|unknown|degraded", "intent != start"] },
+    { "id": "act-gpu-confirm-start", "verb": "Confirm start", "target": "POST recognition/gpu/intent {action: start}", "hierarchy": "primary", "costly": true, "irreversible": false, "preview_required": false, "screen_id": "gpu-start-confirm" },
+    { "id": "act-gpu-stop", "verb": "Stop GPU", "target": "gpu-stop-confirm", "hierarchy": "secondary", "costly": false, "irreversible": false, "preview_required": true, "screen_id": "settings-burst-gpu", "when": ["state in starting|warming|ready|degraded", "disabled with reason while load.has_work"] },
+    { "id": "act-gpu-confirm-stop", "verb": "Confirm stop", "target": "POST recognition/gpu/intent {action: stop}", "hierarchy": "primary", "costly": false, "irreversible": false, "preview_required": false, "screen_id": "gpu-stop-confirm" },
+    { "id": "act-gpu-auto", "verb": "Return to automatic", "target": "POST recognition/gpu/intent {action: auto}", "hierarchy": "secondary", "costly": false, "irreversible": false, "preview_required": false, "screen_id": "settings-burst-gpu", "when": ["intent != auto"] },
+    { "id": "act-gpu-refresh", "verb": "Refresh status", "target": "GET recognition/gpu/status", "hierarchy": "tertiary", "costly": false, "irreversible": false, "preview_required": false, "screen_id": "settings-burst-gpu" },
+    { "id": "act-cancel-confirm", "verb": "Cancel", "target": "settings-burst-gpu", "hierarchy": "secondary", "costly": false, "irreversible": false, "preview_required": false, "screen_id": "gpu-start-confirm" },
+    { "id": "act-goto-workbench", "verb": "Go to Workbench", "target": "exit-workbench", "hierarchy": "secondary", "costly": false, "irreversible": false, "preview_required": false, "screen_id": "settings-burst-gpu", "when": ["state == ready"] }
+  ],
+  "flows": [
+    {
+      "id": "flow-prewarm",
+      "job": "job-prewarm-gpu",
+      "label": "Pre-warm before a demo",
+      "steps": [
+        { "screen_id": "settings-burst-gpu", "branch_label": "state stopped → Start GPU" },
+        { "screen_id": "gpu-start-confirm", "branch_label": "preview cost + TTL → Confirm start (202)" },
+        { "screen_id": "settings-burst-gpu", "branch_label": "intent start (pending) → starting → warming (bounded ETA) → ready" },
+        { "screen_id": "exit-workbench", "branch_label": "Go to Workbench" }
+      ]
+    },
+    {
+      "id": "flow-stop-blocked",
+      "job": "job-stop-gpu",
+      "label": "Stop while a describe run is in flight",
+      "steps": [
+        { "screen_id": "settings-burst-gpu", "branch_label": "state ready, load.has_work → Stop GPU disabled with reason" },
+        { "screen_id": "settings-burst-gpu", "branch_label": "run finishes → Stop GPU enabled" },
+        { "screen_id": "gpu-stop-confirm", "branch_label": "Confirm stop (202)" },
+        { "screen_id": "settings-burst-gpu", "branch_label": "intent stop (pending) → stopped; reason operator" }
+      ]
+    },
+    {
+      "id": "flow-return-auto",
+      "job": "job-return-auto",
+      "label": "Return to automatic",
+      "steps": [
+        { "screen_id": "settings-burst-gpu", "branch_label": "intent start until HH:MM → Return to automatic" },
+        { "screen_id": "settings-burst-gpu", "branch_label": "intent automatic; idle reap resumes" }
+      ]
+    }
+  ],
+  "open_questions": [
+    "Should Start GPU be offered on the Workbench media selection as well as Settings? Current recommendation: Settings only; Workbench keeps enqueue-triggered start and the cold-GPU cost hint (describe-gpu-tier not_doing).",
+    "Default intent TTL is 30 min server-clamped to 120 min; confirm against the measured cold-start and typical demo length."
+  ],
+  "not_doing": [
+    "No modal dialog; confirmation is an inline strip (consistent with describe-gpu-tier not_doing).",
+    "No per-poll toasts; useGpuStateToasts already covers transitions.",
+    "No direct OCI calls from PHP or the SPA; every field is pass-through from gpu-state.json and the intent file (rg-015)."
+  ]
+}

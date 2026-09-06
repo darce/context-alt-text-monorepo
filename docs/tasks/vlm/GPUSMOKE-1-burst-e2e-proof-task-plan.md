@@ -102,7 +102,7 @@ GPUW-1 implemented the gate; this slice proves the *composed* behaviour (enqueue
 
 ### Slice 4 — Operator-gated live run on **dev** (local coordinator + operator)
 - [ ] Preflight (read-only, no sudo): dev `/health/detailed` still reports `gpu_qwen30b`; `systemctl --user/list-timers` shows `acx-gpu-start.timer` + `acx-gpu-reap.timer` (else operator runs `scripts/deploy/gpu-lifecycle-install.sh`); `/run/acx/describe-load.json` fresh; burst instance `STOPPED`.
-- [ ] Operator approves burst spend (~$2/hr, budget ≤ 1h, `--max-seconds 900`).
+- [ ] Operator approves burst spend (~$2/hr, budget ≤ 1h, `--max-seconds 1200`).
 - [ ] Run `make gpu-burst-smoke-live` from acx-backend as ubuntu; commit the evidence JSON; record `verified_test` with the HEAD SHA.
 - [ ] Roll env back to `seeded` unless operator promotes GPU as default; record the decision.
 

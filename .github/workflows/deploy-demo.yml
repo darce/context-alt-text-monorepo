@@ -240,6 +240,8 @@ jobs:
       # AUTH-03: CI smoke uses a dedicated least-privilege WP user, never the
       # demo viewer/admin login. Playwright still reads ACX_E2E_WP_ADMIN_* env
       # names (auth.setup.ts); the *values* come from ACX_E2E_WP_CI_* secrets.
+      # The VM template names the same values WP_CI_USER/WP_CI_PASSWORD; the
+      # GitHub names are intentionally annotated in infra/oci/demo/.env.example.
       # ACX_E2E_WP_CI_USER must equal the VM secrets/.env WP_CI_USER (same
       # principal bootstrap converges), not merely avoid two denylist literals.
       - name: Refuse demo-admin identity for CI smoke

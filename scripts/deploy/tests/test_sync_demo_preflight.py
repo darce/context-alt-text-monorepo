@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import shlex
 import subprocess
 from pathlib import Path
@@ -20,6 +21,7 @@ def _run_sync(
     describe_chunk: str | None = None,
     describe_max: str | None = None,
     with_plugin: bool = False,
+    execute_remote_smoke: bool = False,
 ) -> subprocess.CompletedProcess[str]:
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
@@ -33,7 +35,15 @@ def _run_sync(
         f"if [[ \"${{PERMISSION_AWARE:-0}}\" == 1 && \"$*\" == *\"sudo install -d -m 700 '/tmp/acx-gpu-preflight/lib'\"* ]]; then exit 23; fi\n"
         f"if [[ \"${{PERMISSION_AWARE:-0}}\" == 1 && \"$*\" == *\"install -d -m 700 '/tmp/acx-gpu-preflight/lib'\"* ]]; then : > {log_path}.staging; fi\n"
         "if [[ \"$*\" == *--check-reaper* ]] && [[ \"${FAIL_PREFLIGHT:-0}\" == 1 ]]; then exit 17; fi\n"
-        f"if [[ \"$1\" == *bash* || \"$*\" == *' bash -se'* ]]; then cat >> {log_path}.stdin; fi\n"
+        "if [[ \"$1\" == *bash* || \"$*\" == *' bash -se'* ]]; then\n"
+        "  remote_body=$(cat)\n"
+        f"  printf '%s\\n' \"$remote_body\" >> {log_path}.stdin\n"
+        "  if [[ \"${EXECUTE_REMOTE_SMOKE:-0}\" == 1 && \"$remote_body\" == *'smoke_fail=0'* ]]; then\n"
+        "    bash -se <<<\"$remote_body\"\n"
+        "    remote_rc=$?\n"
+        "    exit \"$remote_rc\"\n"
+        "  fi\n"
+        "fi\n"
         "exit 0\n",
         encoding="utf-8",
     )
@@ -48,6 +58,43 @@ def _run_sync(
     )
     for shim in (bin_dir / "ssh", bin_dir / "scp"):
         shim.chmod(0o755)
+    if execute_remote_smoke:
+        (bin_dir / "curl").write_text(
+            "#!/usr/bin/env bash\n"
+            "set -euo pipefail\n"
+            "body=''\n"
+            "headers=''\n"
+            "format=''\n"
+            "url=''\n"
+            "while (( $# > 0 )); do\n"
+            "  case \"$1\" in\n"
+            "    -D|-o|-w)\n"
+            "      target=\"$1\"\n"
+            "      value=\"$2\"\n"
+            "      case \"$target\" in\n"
+            "        -D) headers=\"$value\" ;;\n"
+            "        -o) body=\"$value\" ;;\n"
+            "        -w) format=\"$value\" ;;\n"
+            "      esac\n"
+            "      shift 2\n"
+            "      ;;\n"
+            "    http://*|https://*) url=\"$1\"; shift ;;\n"
+            "    *) shift ;;\n"
+            "  esac\n"
+            "done\n"
+            "if [[ -n \"$headers\" ]]; then\n"
+            "  printf 'x-wp-total: 1\\n' >\"$headers\"\n"
+            "fi\n"
+            "if [[ \"$url\" == */wp-json/wp/v2/media* ]]; then\n"
+            "  printf '%s\\n' '[{\"id\":1,\"alt_text\":\"A woman in a red coat speaks at a podium.\",\"acx_alt_provenance\":{\"adapter\":\"florence_small\"}}]' >\"$body\"\n"
+            "elif [[ \"$format\" == *'%{url_effective}'* ]]; then\n"
+            "  printf '200 %s' \"$url\"\n"
+            "else\n"
+            "  printf '200'\n"
+            "fi\n",
+            encoding="utf-8",
+        )
+        (bin_dir / "curl").chmod(0o755)
 
     env = os.environ.copy()
     env["PATH"] = f"{bin_dir}:{env['PATH']}"
@@ -60,6 +107,7 @@ def _run_sync(
     env["OCI_HOST"] = "test-host.invalid"
     env["OCI_USER"] = "test-user"
     env["PERMISSION_AWARE"] = "1" if permission_aware else "0"
+    env["EXECUTE_REMOTE_SMOKE"] = "1" if execute_remote_smoke else "0"
     if preflight is None:
         env.pop("ACX_DEMO_GPU_PREFLIGHT", None)
     else:
@@ -125,12 +173,32 @@ def test_failed_gpu_preflight_aborts_before_demo_compose_scp(tmp_path: Path) -> 
 
 
 def test_no_plugin_artifact_skips_first_burst_assertion(tmp_path: Path) -> None:
-    result = _run_sync(tmp_path)
+    result = _run_sync(tmp_path, execute_remote_smoke=True)
 
     assert result.returncode == 0, result.stdout + result.stderr
     bootstrap_input = (tmp_path / "commands.log.stdin").read_text(encoding="utf-8")
     assert 'BOOTSTRAP_RAN="0"' in bootstrap_input
     assert 'if [[ "$BOOTSTRAP_RAN" == "1" ]]; then' in bootstrap_input
+    assert "SKIP demo first describe burst (bootstrap did not run" in result.stdout
+
+
+def test_bootstrap_required_keys_are_all_declared_in_demo_template() -> None:
+    bootstrap = (REPO_ROOT / "infra" / "oci" / "demo" / "bootstrap-wp.sh").read_text(encoding="utf-8")
+    env_example = (REPO_ROOT / "infra" / "oci" / "demo" / ".env.example").read_text(encoding="utf-8")
+
+    required_match = re.search(r"for var in (?P<keys>[A-Z][A-Z0-9_]*(?: [A-Z][A-Z0-9_]*)*); do", bootstrap)
+    assert required_match, "bootstrap-wp.sh required-variable loop is missing or changed shape"
+    required = required_match.group("keys").split()
+    declared = {
+        match.group(1)
+        for match in re.finditer(r"^([A-Z][A-Z0-9_]*)=", env_example, flags=re.MULTILINE)
+    }
+
+    missing = sorted(set(required) - declared)
+    assert not missing, f"demo .env.example is missing bootstrap inputs: {missing}"
+    assert required.count("WP_CI_USER") == 1
+    assert required.count("WP_CI_PASSWORD") == 1
+    assert required.count("WP_CI_EMAIL") == 1
 
 
 def test_describe_bounds_are_forwarded_to_remote_bootstrap(tmp_path: Path) -> None:
@@ -161,3 +229,19 @@ def test_demo_env_template_uses_bootstrap_ci_keys_only() -> None:
 
     assert "ACX_E2E_WP_CI_USER=" not in env_example
     assert "ACX_E2E_WP_CI_PASS=" not in env_example
+
+
+def test_ci_secret_mapping_and_gpu_deploy_order_are_documented() -> None:
+    env_example = (REPO_ROOT / "infra" / "oci" / "demo" / ".env.example").read_text(encoding="utf-8")
+    deploy_runbook = (REPO_ROOT / "docs" / "runbooks" / "deploy-demo-cicd.md").read_text(encoding="utf-8")
+    gpu_runbook = (REPO_ROOT / "docs" / "runbooks" / "gpu-demo-env-flip.md").read_text(encoding="utf-8")
+
+    assert "ACX_E2E_WP_CI_USER -> WP_CI_USER" in env_example
+    assert "ACX_E2E_WP_CI_PASS -> WP_CI_PASSWORD" in env_example
+    assert "ACX_E2E_WP_CI_USER" in deploy_runbook
+    assert "ACX_E2E_WP_CI_PASS" in deploy_runbook
+
+    producer = gpu_runbook.index("Flip the description SERVICE producer profile")
+    prod_redeploy = gpu_runbook.index("Redeploy the prod API", producer)
+    deploy_demo = gpu_runbook.index("Run `deploy-demo`", prod_redeploy)
+    assert producer < prod_redeploy < deploy_demo

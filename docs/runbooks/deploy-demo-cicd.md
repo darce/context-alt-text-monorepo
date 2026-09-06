@@ -7,6 +7,9 @@ runs the existing `scripts/deploy/sync-demo.sh` — the script remains the singl
 source of truth for rsync → demo stack up → `bootstrap-wp.sh` plugin install →
 Caddy promote → vhost smoke.
 
+For the required producer-flip → prod API redeploy → preflight → deploy-demo
+ordering, see [gpu-demo-env-flip.md](gpu-demo-env-flip.md#green-ordering).
+
 **Why:** public port 22 is closed and the tailnet SSH ACL authorizes only the
 ephemeral CI identity (`tag:ci`), so a laptop-bound `make deploy-demo` required a
 specific operator on a specific machine. This pipeline moves the existing deploy

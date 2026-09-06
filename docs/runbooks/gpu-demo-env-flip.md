@@ -81,6 +81,22 @@ Deploy the description producer first. Deploy WordPress only after the
 recognition deploy's verification passes, so the demo never publishes against
 an unverified adapter.
 
+### Green ordering
+
+Use this producer-to-consumer order for the live flip:
+
+1. Flip the description SERVICE producer profile by setting
+   `ACX_DESCRIPTION_ADAPTER` on the running producer. The producer is the
+   authority; do not make a demo-only env edit stand in for this change.
+2. Redeploy the prod API and wait for its health/adapter verification to pass.
+3. Verify both env halves with `preflight-gpu-env.sh --check-reaper` after the
+   prod redeploy and before publishing any demo descriptions.
+4. Run `deploy-demo` with `ACX_DEMO_GPU_PREFLIGHT=1`, so the deploy repeats the
+   reaper/environment gate immediately before the demo stack is brought up.
+5. Confirm the bounded first-burst result (`Describe burst bounded` and
+   `PASS demo first describe burst`) and retain the preflight's `MANUAL STOP
+   fallback` line as the operator's reaper-stop backstop.
+
 ```bash
 set -euo pipefail
 # Persist the same PHP reader for bootstrap; sync-demo preserves this helper.
@@ -95,7 +111,7 @@ test -f "$PLUGIN_ZIP"
 ACTUAL_PLUGIN_ZIP_SHA256="$(shasum -a 256 "$PLUGIN_ZIP" | awk '{print $1}')"
 test "$ACTUAL_PLUGIN_ZIP_SHA256" = "$PLUGIN_ZIP_SHA256"
 printf 'Deploying reviewed plugin artifact: %s\n' "$PLUGIN_ZIP"
-PLUGIN_ZIP="$PLUGIN_ZIP" make deploy-demo
+ACX_DEMO_GPU_PREFLIGHT=1 PLUGIN_ZIP="$PLUGIN_ZIP" make deploy-demo
 ```
 
 `bootstrap-wp.sh` probes the running service's authenticated

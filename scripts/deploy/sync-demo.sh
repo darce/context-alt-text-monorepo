@@ -25,12 +25,14 @@ ENV_EXAMPLE_SRC="${ENV_EXAMPLE_SRC:-infra/oci/demo/.env.example}"
 BOOTSTRAP_SRC="${BOOTSTRAP_SRC:-infra/oci/demo/bootstrap-wp.sh}"
 DESCRIBE_GATE_SRC="${DESCRIBE_GATE_SRC:-infra/oci/demo/lib/describe-gate.sh}"
 GPU_ENV_CONTRACT_SRC="${GPU_ENV_CONTRACT_SRC:-scripts/deploy/lib/gpu-env-contract.sh}"
+GPU_PREFLIGHT_SRC="${GPU_PREFLIGHT_SRC:-scripts/deploy/preflight-gpu-env.sh}"
 SEED_IMPORT_SRC="${SEED_IMPORT_SRC:-infra/oci/demo/seed/import.sh}"
 SEED_MEDIA_DIR="${SEED_MEDIA_DIR:-infra/oci/demo/seed/media}"
 
 REMOTE_DEMO_DIR="/opt/acx-backend/demo"
 REMOTE_BACKEND_DIR="/opt/acx-backend"
 REMOTE_PLUGIN_ZIP="/tmp/alt-context.zip"
+REMOTE_GPU_PREFLIGHT_DIR="/tmp/acx-gpu-preflight"
 SSH="ssh ${OCI_USER}@${OCI_HOST}"
 SCP="scp"
 
@@ -57,6 +59,35 @@ for src in "$DEMO_COMPOSE_SRC" "$CADDYFILE_SRC" "$CADDY_COMPOSE_SRC" "$SYSTEMD_S
     exit 2
   fi
 done
+
+run_gpu_env_preflight() {
+  [[ "${ACX_DEMO_GPU_PREFLIGHT:-0}" == "1" ]] || return 0
+  for src in "$GPU_PREFLIGHT_SRC" "$DESCRIBE_GATE_SRC"; do
+    if [[ ! -f "$src" ]]; then
+      echo "ERROR: GPU environment preflight source file not found: $src" >&2
+      return 2
+    fi
+  done
+
+  echo "==> Run GPU environment preflight before bringing up the demo stack"
+  $SSH "sudo install -d -m 700 '${REMOTE_GPU_PREFLIGHT_DIR}/lib'"
+  $SCP "$GPU_PREFLIGHT_SRC" "${OCI_USER}@${OCI_HOST}:${REMOTE_GPU_PREFLIGHT_DIR}/preflight-gpu-env.sh"
+  $SCP "$GPU_ENV_CONTRACT_SRC" "${OCI_USER}@${OCI_HOST}:${REMOTE_GPU_PREFLIGHT_DIR}/lib/gpu-env-contract.sh"
+  $SCP "$DESCRIBE_GATE_SRC" "${OCI_USER}@${OCI_HOST}:${REMOTE_GPU_PREFLIGHT_DIR}/lib/describe-gate.sh"
+  if ! $SSH "sudo chmod 700 '${REMOTE_GPU_PREFLIGHT_DIR}/preflight-gpu-env.sh' && sudo chmod 644 '${REMOTE_GPU_PREFLIGHT_DIR}/lib/gpu-env-contract.sh' '${REMOTE_GPU_PREFLIGHT_DIR}/lib/describe-gate.sh' && sudo '${REMOTE_GPU_PREFLIGHT_DIR}/preflight-gpu-env.sh' --check-reaper '${REMOTE_BACKEND_DIR}/prod/secrets/.env' '${REMOTE_DEMO_DIR}/secrets/.env'"; then
+    echo "ERROR: GPU environment preflight failed; demo deploy aborted (exit 4)." >&2
+    return 4
+  fi
+  echo "==> GPU environment preflight passed"
+  $SSH "sudo rm -f '${REMOTE_GPU_PREFLIGHT_DIR}/preflight-gpu-env.sh' '${REMOTE_GPU_PREFLIGHT_DIR}/lib/gpu-env-contract.sh' '${REMOTE_GPU_PREFLIGHT_DIR}/lib/describe-gate.sh' && sudo rmdir '${REMOTE_GPU_PREFLIGHT_DIR}/lib' '${REMOTE_GPU_PREFLIGHT_DIR}'"
+}
+
+if run_gpu_env_preflight; then
+  :
+else
+  preflight_status=$?
+  exit "$preflight_status"
+fi
 
 echo "==> Target host: ${OCI_USER}@${OCI_HOST}"
 echo "==> Ensure demo secrets exist at ${REMOTE_DEMO_DIR}/secrets/.env (from ${ENV_EXAMPLE_SRC})"
@@ -124,6 +155,11 @@ set -euo pipefail
 cd '${REMOTE_DEMO_DIR}'
 PLUGIN_ZIP='${REMOTE_PLUGIN_ZIP}' ./bootstrap-wp.sh
 EOF
+fi
+
+FIRST_BURST_COUNT=""
+if [[ -n "${PLUGIN_ZIP}" ]]; then
+  FIRST_BURST_COUNT=$($SSH "cat '${REMOTE_DEMO_DIR}/.acx-describe-first-burst.count' 2>/dev/null" || true)
 fi
 
 # Baseline BEFORE the Caddy promote: an api.* vhost that was healthy (200) and
@@ -214,6 +250,8 @@ echo "==> Smoke four vhosts (api.* via /health, demo via / + media alt-text)"
   printf 'PRE_CODES="%s"\n' "$PRE_CODES"
   printf 'DEMO_ALT_MIN_COVERAGE_PCT="%s"\n' "${DEMO_ALT_MIN_COVERAGE_PCT:-95}"
   printf 'DEMO_ALT_GATE_ENFORCE="%s"\n' "${DEMO_ALT_GATE_ENFORCE:-1}"
+  printf 'FIRST_BURST_COUNT="%s"\n' "$FIRST_BURST_COUNT"
+  printf 'DESCRIBE_MAX="%s"\n' "${ACX_DEMO_DESCRIBE_MAX:-100}"
   cat <<'EOF'
 set -euo pipefail
 smoke_fail=0
@@ -300,6 +338,13 @@ header_total=$(grep -i '^x-wp-total:' "$media_headers" | tr -d '\r ' | sed 's/.*
 load_alt_counts_from_media_body "$media_body"
 set -o pipefail
 rm -f "$media_headers" "$media_body"
+first_burst_verdict=$(classify_first_burst_bounded "$FIRST_BURST_COUNT" "$DESCRIBE_MAX" "$header_total") || true
+if [[ "$first_burst_verdict" == "PASS" ]]; then
+  echo "PASS demo first describe burst (count=${FIRST_BURST_COUNT}, max=${DESCRIBE_MAX}, total=${header_total})"
+else
+  echo "FAIL demo first describe burst (count=${FIRST_BURST_COUNT:-empty}, max=${DESCRIBE_MAX:-empty}, total=${header_total:-empty})"
+  smoke_fail=1
+fi
 min="${DEMO_ALT_MIN_COVERAGE_PCT:-95}"
 pop=$(classify_alt_population "$header_total" "$body_total") || true
 if [ "$pop" = "FAIL" ]; then

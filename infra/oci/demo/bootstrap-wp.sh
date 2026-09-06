@@ -17,6 +17,8 @@
 #   PLUGIN_ZIP        path to dist/alt-context-<version>.zip (required for plugin step)
 #   WP_URL            default https://demo.altcontext.com
 #   WP_TITLE          default ACX Demo
+#   ACX_DEMO_DESCRIBE_CHUNK  first describe publish chunk size (default 10)
+#   ACX_DEMO_DESCRIBE_MAX    maximum first describe publish size (default 100)
 
 set -euo pipefail
 
@@ -25,6 +27,8 @@ COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.demo.yml}"
 PLUGIN_ZIP="${PLUGIN_ZIP:-}"
 WP_URL="${WP_URL:-https://demo.altcontext.com}"
 WP_TITLE="${WP_TITLE:-ACX Demo}"
+ACX_DEMO_DESCRIBE_CHUNK="${ACX_DEMO_DESCRIBE_CHUNK:-10}"
+ACX_DEMO_DESCRIBE_MAX="${ACX_DEMO_DESCRIBE_MAX:-100}"
 
 # Fail-closed describe-apply: canned `seeded` captions are worse than empty alt.
 # BOOTSTRAP_GPU_CONTRACT_BEGIN
@@ -42,6 +46,9 @@ source "$bootstrap_contract"
 # BOOTSTRAP_GPU_CONTRACT_END
 
 cd "$DEMO_DIR"
+
+DESCRIBE_BURST_MARKER="${DEMO_DIR}/.acx-describe-first-burst.count"
+rm -f "$DESCRIBE_BURST_MARKER"
 
 if [[ ! -f secrets/.env ]]; then
   echo "ERROR: ${DEMO_DIR}/secrets/.env missing — copy from secrets/.env.example" >&2
@@ -295,6 +302,42 @@ count_media_with_alt() {
     --meta_key=_wp_attachment_image_alt --meta_compare='!=' --meta_value='' --format=count
 }
 
+validate_describe_bounds() {
+  case "$ACX_DEMO_DESCRIBE_CHUNK" in
+    ''|*[!0-9]*)
+      echo "ERROR: ACX_DEMO_DESCRIBE_CHUNK must be a positive integer" >&2
+      return 1
+      ;;
+  esac
+  case "$ACX_DEMO_DESCRIBE_MAX" in
+    ''|*[!0-9]*)
+      echo "ERROR: ACX_DEMO_DESCRIBE_MAX must be a positive integer" >&2
+      return 1
+      ;;
+  esac
+  if (( ACX_DEMO_DESCRIBE_CHUNK < 1 || ACX_DEMO_DESCRIBE_MAX < 1 )); then
+    echo "ERROR: ACX_DEMO_DESCRIBE_CHUNK and ACX_DEMO_DESCRIBE_MAX must be positive" >&2
+    return 1
+  fi
+}
+
+write_describe_burst_marker() {
+  local count="$1"
+  if ! printf '%s\n' "$count" >"$DESCRIBE_BURST_MARKER"; then
+    echo "ERROR: cannot record bounded describe publish marker at ${DESCRIBE_BURST_MARKER}" >&2
+    return 1
+  fi
+}
+
+refresh_describe_provenance() {
+  local sample
+  if sample=$(sample_published_alt_text); then
+    PROVENANCE="$(classify_describe_provenance "$sample")"
+  else
+    PROVENANCE="UNKNOWN"
+  fi
+}
+
 echo "==> Describe-apply gate (fail-closed; seeded captions are worse than empty alt)"
 
 # Probe the RUNNING description service for description_adapter (DEMOLIVE-8
@@ -332,32 +375,87 @@ sample_published_alt_text() {
 ADAPTER_PROFILE="$(probe_live_description_adapter)"
 TOTAL_MEDIA="$(count_total_media)"
 MEDIA_WITH_ALT="$(count_media_with_alt)"
+if ! validate_describe_bounds; then
+  exit 1
+fi
 
 PROVENANCE="UNKNOWN"
 case "$MEDIA_WITH_ALT" in
   ''|*[!0-9]*) PROVENANCE="UNKNOWN" ;;
   0) PROVENANCE="PASS" ;;
   *)
-    if sample=$(sample_published_alt_text); then
-      PROVENANCE="$(classify_describe_provenance "$sample")"
-    else
-      PROVENANCE="UNKNOWN"
-    fi
+    refresh_describe_provenance
     ;;
 esac
 
 DESCRIBE_VERDICT="$(classify_describe_gate "$ADAPTER_PROFILE" "$TOTAL_MEDIA" "$MEDIA_WITH_ALT" "$PROVENANCE")"
 
 case "$DESCRIBE_VERDICT" in
-  RUN)
-    echo "==> Describe pass: wp alt-context describe generate --write --limit=100 (adapter=${ADAPTER_PROFILE} coverage=${MEDIA_WITH_ALT}/${TOTAL_MEDIA} provenance=${PROVENANCE})"
-    wpcli wp alt-context describe generate --write --limit=100
-    ;;
-  RUN_FORCE)
-    echo "==> Describe pass (force overwrite): wp alt-context describe generate --write --force --limit=100 (adapter=${ADAPTER_PROFILE} coverage=${MEDIA_WITH_ALT}/${TOTAL_MEDIA} provenance=${PROVENANCE})"
-    wpcli wp alt-context describe generate --write --force --limit=100
+  RUN|RUN_FORCE)
+    describe_force=0
+    if [[ "$DESCRIBE_VERDICT" == "RUN_FORCE" ]]; then
+      describe_force=1
+    fi
+    describe_chunk_number=0
+    describe_admitted=0
+    # The historical single-pass force form was `describe generate --write --force --limit=100`.
+    # Keep each request bounded while allowing coverage to converge in chunks.
+    while :; do
+      # RUN_FORCE must issue one chunk even when the current coverage is full:
+      # that is the repair path for already-published but untrusted captions.
+      if (( describe_chunk_number > 0 && MEDIA_WITH_ALT >= TOTAL_MEDIA )); then
+        break
+      fi
+      if (( describe_admitted >= ACX_DEMO_DESCRIBE_MAX )); then
+        break
+      fi
+      remaining=$((ACX_DEMO_DESCRIBE_MAX - describe_admitted))
+      chunk_limit="$ACX_DEMO_DESCRIBE_CHUNK"
+      if (( chunk_limit > remaining )); then
+        chunk_limit="$remaining"
+      fi
+      if (( chunk_limit < 1 )); then
+        break
+      fi
+      describe_chunk_number=$((describe_chunk_number + 1))
+      describe_before="$MEDIA_WITH_ALT"
+      echo "==> Describe chunk ${describe_chunk_number} before: coverage=${describe_before}/${TOTAL_MEDIA} admitted=${describe_admitted}/${ACX_DEMO_DESCRIBE_MAX} limit=${chunk_limit} provenance=${PROVENANCE}"
+      if (( describe_force )); then
+        wpcli wp alt-context describe generate --write --force --limit="$chunk_limit"
+      else
+        wpcli wp alt-context describe generate --write --limit="$chunk_limit"
+      fi
+      describe_admitted=$((describe_admitted + chunk_limit))
+      MEDIA_WITH_ALT="$(count_media_with_alt)"
+      echo "==> Describe chunk ${describe_chunk_number} after: coverage=${MEDIA_WITH_ALT:-empty}/${TOTAL_MEDIA} admitted=${describe_admitted}/${ACX_DEMO_DESCRIBE_MAX}"
+
+      coverage_unmeasurable=0
+      case "$TOTAL_MEDIA" in *[!0-9]*|'') coverage_unmeasurable=1 ;; esac
+      case "$MEDIA_WITH_ALT" in *[!0-9]*|'') coverage_unmeasurable=1 ;; esac
+      if [[ "$coverage_unmeasurable" -eq 0 && "$MEDIA_WITH_ALT" -gt "$TOTAL_MEDIA" ]]; then
+        coverage_unmeasurable=1
+      fi
+      if [[ "$coverage_unmeasurable" -eq 1 ]]; then
+        echo "==> BLOCKED: cannot measure demo media coverage after describe chunk ${describe_chunk_number} (total='${TOTAL_MEDIA}' with_alt='${MEDIA_WITH_ALT}'). Describe publish stopped fail closed." >&2
+        exit 1
+      fi
+
+      # A service can drift while a multi-chunk publish is in flight. Re-sample
+      # after the first chunk (and every later chunk) before admitting another
+      # request; a newly untrusted producer stops the burst immediately.
+      refresh_describe_provenance
+      echo "==> Describe chunk ${describe_chunk_number} provenance: ${PROVENANCE}"
+      if [[ "$PROVENANCE" != "PASS" ]]; then
+        echo "==> BLOCKED: description provenance became untrusted after describe chunk ${describe_chunk_number} (got '${PROVENANCE}'). Describe publish stopped fail closed." >&2
+        write_describe_burst_marker "$describe_admitted" || true
+        exit 1
+      fi
+      write_describe_burst_marker "$describe_admitted"
+    done
+    echo "==> Describe burst bounded: admitted=${describe_admitted}/${ACX_DEMO_DESCRIBE_MAX} chunks=${describe_chunk_number} coverage=${MEDIA_WITH_ALT}/${TOTAL_MEDIA}"
     ;;
   SKIP)
+    write_describe_burst_marker 0
     echo "==> Describe pass skipped (adapter=${ADAPTER_PROFILE} coverage=${MEDIA_WITH_ALT}/${TOTAL_MEDIA} provenance=${PROVENANCE})"
     ;;
   *)

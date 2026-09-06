@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import {
   POLL_TIMEOUT_MESSAGE,
+  PUBLIC_DEMO_CLIENT_DEADLINE_CEILING_SECONDS,
   PublicDemoClientError,
   parsePublicDemoEnvelope,
   pollRun,
@@ -229,6 +230,91 @@ describe('public demo describe polling', () => {
   it('renders warming and describing phases honestly', () => {
     expect(statusPresentation(parsePublicDemoEnvelope(running({ phase: 'warming', gpu_state: 'starting' }))).message).toContain('warming up');
     expect(statusPresentation(parsePublicDemoEnvelope(running({ phase: 'describing', progress: { done: 1, total: 2 } }))).message).toContain('50%');
+  });
+
+  it('clamps a large server deadline to the browser contract ceiling', async () => {
+    vi.useFakeTimers();
+    document.body.innerHTML = `
+      <div data-acx-demo data-submit-url="/submit" data-nonce="nonce">
+        <form class="acx-demo__form">
+          <input type="radio" name="acx-demo-media" value="41" checked>
+          <button type="submit">Describe</button>
+        </form>
+        <span data-acx-demo-icon></span>
+        <p data-acx-demo-message></p>
+        <p data-acx-demo-result tabindex="-1"></p>
+      </div>`;
+    const root = document.querySelector<HTMLElement>('[data-acx-demo]');
+    const form = root?.querySelector<HTMLFormElement>('form');
+    let pollSignal: AbortSignal | undefined;
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(response(running({ status: 'pending', phase: 'queued', deadline_seconds: 690 })))
+      .mockImplementationOnce((_input, init) => new Promise<Response>((_resolve, reject) => {
+        pollSignal = init?.signal ?? undefined;
+        pollSignal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')), { once: true });
+      }));
+    vi.stubGlobal('fetch', fetchImpl);
+
+    try {
+      initializeDemo(root as HTMLElement);
+      form?.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+      await vi.advanceTimersByTimeAsync(PUBLIC_DEMO_CLIENT_DEADLINE_CEILING_SECONDS * 1_000);
+      await Promise.resolve();
+
+      expect(pollSignal?.aborted).toBe(true);
+      expect(root?.querySelector('[data-acx-demo-message]')?.textContent).toBe(POLL_TIMEOUT_MESSAGE);
+    } finally {
+      vi.unstubAllGlobals();
+      vi.useRealTimers();
+      document.body.innerHTML = '';
+    }
+  });
+
+  it('reuses a trigger key for a retry and mints a new key after completion', async () => {
+    document.body.innerHTML = `
+      <div data-acx-demo data-submit-url="/submit" data-nonce="nonce">
+        <form class="acx-demo__form">
+          <input type="radio" name="acx-demo-media" value="41" checked>
+          <button type="submit">Describe</button>
+        </form>
+        <span data-acx-demo-icon></span>
+        <p data-acx-demo-message></p>
+        <p data-acx-demo-result tabindex="-1"></p>
+      </div>`;
+    const root = document.querySelector<HTMLElement>('[data-acx-demo]');
+    const form = root?.querySelector<HTMLFormElement>('form');
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockRejectedValueOnce(new Error('response dropped'))
+      .mockResolvedValueOnce(response(running({ status: 'pending', phase: 'queued', deadline_seconds: 1 })))
+      .mockResolvedValueOnce(response(running({ status: 'completed', phase: 'complete', progress: { done: 1, total: 1 }, description: 'A lakeside path.' })))
+      .mockRejectedValueOnce(new Error('new trigger failed'));
+    vi.stubGlobal('fetch', fetchImpl);
+
+    try {
+      initializeDemo(root as HTMLElement);
+      form?.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+      await Promise.resolve();
+      await Promise.resolve();
+      const firstKey = JSON.parse(String(fetchImpl.mock.calls[0]?.[1]?.body)).idempotency_key;
+
+      form?.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+      const retryKey = JSON.parse(String(fetchImpl.mock.calls[1]?.[1]?.body)).idempotency_key;
+      expect(retryKey).toBe(firstKey);
+
+      form?.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+      await Promise.resolve();
+      await Promise.resolve();
+      const freshKey = JSON.parse(String(fetchImpl.mock.calls[3]?.[1]?.body)).idempotency_key;
+      expect(freshKey).not.toBe(retryKey);
+    } finally {
+      vi.unstubAllGlobals();
+      document.body.innerHTML = '';
+    }
   });
 
   it('re-enables form controls after a polling timeout', async () => {

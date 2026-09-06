@@ -58,10 +58,14 @@ final class PublicDemoShortcode {
 			ACX_VERSION
 		);
 
+		static $instance = 0;
+		++$instance;
+		$group_name = 'acx-demo-media-' . $instance;
 		$cards = '';
 		foreach ( $choices as $choice ) {
-			$cards .= '<label class="acx-demo__choice">';
-			$cards .= '<input type="radio" name="acx-demo-media" value="' . esc_attr( (string) $choice['id'] ) . '" required>';
+			$input_id = $group_name . '-' . $choice['id'];
+			$cards .= '<label class="acx-demo__choice" for="' . esc_attr( $input_id ) . '">';
+			$cards .= '<input id="' . esc_attr( $input_id ) . '" type="radio" name="' . esc_attr( $group_name ) . '" value="' . esc_attr( (string) $choice['id'] ) . '" required>';
 			$cards .= '<img src="' . esc_url( $choice['url'] ) . '" alt="">';
 			$cards .= '<span>' . esc_html( $choice['title'] ) . '</span>';
 			$cards .= '</label>';

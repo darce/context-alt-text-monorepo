@@ -1,6 +1,10 @@
 export const POLL_TIMEOUT_MESSAGE =
   'This description is taking longer than expected. Please wait a moment, then refresh the page before trying again.';
 
+// The public browser contract ceiling is 120 seconds, not a default derived
+// from the server's GPU warm-up or inference budget.
+export const PUBLIC_DEMO_CLIENT_DEADLINE_CEILING_SECONDS = 120;
+
 export const PUBLIC_DEMO_ERROR_CODE = Object.freeze({
   POLL_TIMEOUT: 'acx_public_demo_poll_timeout',
   REQUEST_ABORTED: 'acx_public_demo_request_aborted',
@@ -106,6 +110,13 @@ export const parsePublicDemoEnvelope = (body) => {
 
 const defaultSleep = (milliseconds) => new Promise((resolve) => globalThis.setTimeout(resolve, milliseconds));
 
+const generateIdempotencyKey = () => {
+  if (typeof globalThis.crypto?.randomUUID === 'function') {
+    return globalThis.crypto.randomUUID();
+  }
+  return `acx-demo-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+};
+
 const waitForBackoff = async ({ sleep, milliseconds, deadlineAt, now, navigationSignal }) => {
   if (navigationSignal?.aborted) throw requestAbortedError();
 
@@ -206,7 +217,7 @@ export const pollRun = async ({
   fetchImpl = fetch,
   sleep = defaultSleep,
   now = Date.now,
-  timeoutMs = 120_000,
+  timeoutMs = PUBLIC_DEMO_CLIENT_DEADLINE_CEILING_SECONDS * 1_000,
   navigationSignal,
   onUpdate = () => {},
 }) => {
@@ -270,6 +281,9 @@ export const initializeDemo = (root) => {
   const result = root.querySelector('[data-acx-demo-result]');
   if (!(form instanceof HTMLFormElement) || !(statusMessage instanceof HTMLElement) || !(result instanceof HTMLElement)) return;
 
+  let retryKey = null;
+  let retryMedia = null;
+
   const setState = (state, message) => {
     root.dataset.state = state;
     statusMessage.textContent = message;
@@ -284,6 +298,11 @@ export const initializeDemo = (root) => {
     if (typeof selected !== 'string' || !/^\d+$/.test(selected)) {
       setState('error', 'Choose an image before requesting a description.');
       return;
+    }
+
+    if (retryKey === null || retryMedia !== selected) {
+      retryKey = generateIdempotencyKey();
+      retryMedia = selected;
     }
 
     const controls = Array.from(form.elements);
@@ -303,7 +322,7 @@ export const initializeDemo = (root) => {
           method: 'POST',
           credentials: 'same-origin',
           headers: { 'Content-Type': 'application/json', 'X-WP-Nonce': root.dataset.nonce ?? '' },
-          body: JSON.stringify({ media_id: Number(selected) }),
+          body: JSON.stringify({ media_id: Number(selected), idempotency_key: retryKey }),
         },
         fetch,
         { deadlineAt: submitDeadline, now: Date.now, navigationSignal: navigation.signal },
@@ -313,7 +332,10 @@ export const initializeDemo = (root) => {
       const finalState = await pollRun({
         statusUrl: `${root.dataset.submitUrl}/runs/${encodeURIComponent(submitted.run_id)}`,
         nonce: root.dataset.nonce ?? '',
-        timeoutMs: submitted.deadline_seconds * 1_000,
+        timeoutMs: Math.min(
+          submitted.deadline_seconds,
+          PUBLIC_DEMO_CLIENT_DEADLINE_CEILING_SECONDS,
+        ) * 1_000,
         navigationSignal: navigation.signal,
         onUpdate: (update) => {
           const presentation = statusPresentation(update);
@@ -325,6 +347,8 @@ export const initializeDemo = (root) => {
       result.hidden = false;
       result.focus();
       setState('completed', 'Description complete.');
+      retryKey = null;
+      retryMedia = null;
     } catch (error) {
       setState(
         error instanceof PublicDemoClientError && error.status === 429 ? 'limited' : 'failed',

@@ -23,7 +23,7 @@ use function array_merge;
 use function array_unique;
 use function array_values;
 use function ceil;
-use function delete_option;
+use function delete_transient;
 use function filter_var;
 use function get_option;
 use function get_transient;
@@ -42,6 +42,7 @@ use function register_rest_route;
 use function sanitize_text_field;
 use function serialize;
 use function set_transient;
+use function strlen;
 use function time;
 use function trim;
 use function update_option;
@@ -69,6 +70,10 @@ final class PublicDemoDescribeController implements RecognitionRouteControllerIn
 	private const INFLIGHT_OPTION       = 'acx_public_demo_inflight';
 	private const INFLIGHT_TTL_SECONDS  = 600;
 	private const RATE_TTL_SECONDS      = 120;
+	private const IDEMPOTENCY_TTL_SECONDS = 900;
+	private const IDEMPOTENCY_KEY_MAX_LENGTH = 128;
+	private const IDEMPOTENCY_TRANSIENT_PREFIX = 'acx_public_demo_idempotency_';
+	private const IDEMPOTENCY_LOCK_PREFIX = 'acx_public_demo_idempotency_lock_';
 	private const DEFAULT_RATE_PER_MIN  = 3;
 	private const DEFAULT_DAILY_CAP     = 50;
 	private const DEFAULT_GPU_WARMUP_TIMEOUT_SECONDS = 510;
@@ -98,6 +103,11 @@ final class PublicDemoDescribeController implements RecognitionRouteControllerIn
 						'type'        => 'integer',
 						'required'    => true,
 						'description' => 'One attachment ID from the configured public demo allowlist.',
+					),
+					'idempotency_key' => array(
+						'type'        => 'string',
+						'required'    => false,
+						'description' => 'Client-generated key for retrying one user-initiated trigger.',
 					),
 				),
 			)
@@ -151,68 +161,126 @@ final class PublicDemoDescribeController implements RecognitionRouteControllerIn
 			return $client_key;
 		}
 
-		$rate_result = $this->consume_rate_token( $client_key );
-		if ( $rate_result instanceof WP_REST_Response ) {
-			return $rate_result;
+		$idempotency_key = $this->request_idempotency_key( $request );
+		$idempotency_key_name = $this->idempotency_transient_key( $client_key, $idempotency_key );
+		$idempotency_lock_name = self::IDEMPOTENCY_LOCK_PREFIX . hash( 'sha256', $idempotency_key_name );
+		$idempotency_lock = $this->acquire_lock( $idempotency_lock_name, 5 );
+		if ( false === $idempotency_lock ) {
+			return $this->limited_response( PublicDemoErrorCode::STATE_UNAVAILABLE, 'The demo is temporarily busy. Please retry.', 1 );
 		}
 
-		if ( ! $this->acquire_inflight_bulkhead( $media_id ) ) {
-			return $this->limited_response(
-				PublicDemoErrorCode::BUSY,
-				'Another description is already running. Please try again shortly.',
-				5
-			);
-		}
-
-		$daily_result = $this->reserve_daily_capacity();
-		if ( $daily_result instanceof WP_REST_Response ) {
-			$this->release_inflight_bulkhead();
-			return $daily_result;
-		}
-
-		$pipeline_request = new WP_REST_Request( 'POST', '/acx/v1/recognition/describe/runs' );
-		$pipeline_request->set_param( 'media_ids', array( $media_id ) );
-		// Persist uncertainty before dispatch: a timeout or worker death can
-		// hide backend acceptance and must never turn into an expired free slot.
-		if ( ! $this->mark_submission_started() ) {
-			return $this->limited_response( PublicDemoErrorCode::STATE_UNAVAILABLE, 'The demo is temporarily busy. Please retry.', 5 );
-		}
-		$response = $this->pipeline->submit_describe_run( $pipeline_request );
-
-		if ( $response instanceof WP_Error || $response->get_status() >= 400 ) {
-			$error_data = $response instanceof WP_Error ? $response->get_error_data() : $response->get_data();
-			$accepted_run_id = is_array( $error_data ) && is_string( $error_data['run_id'] ?? null )
-				? sanitize_text_field( $error_data['run_id'] ) : '';
-			if ( '' !== $accepted_run_id ) {
-				// Tracking persistence may fail after acceptance. Keep the run ID
-				// so polling and expiry reconciliation can resolve its ownership.
-				$this->bind_inflight_run( $accepted_run_id );
-			} elseif ( $response instanceof WP_Error && in_array( $response->get_error_code(), array(
-				'missing_media_ids',
-				'too_many_media_ids',
-				'describe_run_attachment_unreadable',
-				'describe_run_payload_too_large',
-			), true ) ) {
-				// These local validation failures precede the transport call.
-				// Unrecognized errors (including HTTP errors) remain uncertain.
-				$this->release_inflight_bulkhead();
+		try {
+			$existing = get_transient( $idempotency_key_name );
+			if ( is_array( $existing ) && (int) ( $existing['expires_at'] ?? 0 ) > time() ) {
+				if ( $media_id !== absint( $existing['media_id'] ?? 0 ) ) {
+					return new WP_Error(
+						PublicDemoErrorCode::IDEMPOTENCY_CONFLICT,
+						'That retry key is already associated with another demo image.',
+						array( 'status' => 409 )
+					);
+				}
+				$existing_response = $this->idempotency_response( $existing );
+				if ( $existing_response instanceof WP_REST_Response ) {
+					return $existing_response;
+				}
+				// A durable pending reservation means another request may have
+				// accepted paid work but not yet written its run ID. Fail closed;
+				// never spend a second run while that uncertainty is live.
+				return $this->limited_response( PublicDemoErrorCode::STATE_UNAVAILABLE, 'The demo is temporarily busy. Please retry.', 5 );
 			}
-			return $this->translated_pipeline_error( $response );
-		}
 
-		$data   = $response->get_data();
-		$run_id = is_array( $data ) && is_string( $data['run_id'] ?? null )
-			? sanitize_text_field( $data['run_id'] )
-			: '';
-		if ( '' === $run_id || ! $this->bind_inflight_run( $run_id ) ) {
-			return new WP_Error(
-				PublicDemoErrorCode::INVALID_PIPELINE_DATA,
-				'The description started but its status could not be tracked safely.',
-				array( 'status' => 502 )
+			$rate_result = $this->consume_rate_token( $client_key );
+			if ( $rate_result instanceof WP_REST_Response ) {
+				return $rate_result;
+			}
+
+			if ( ! $this->acquire_inflight_bulkhead( $media_id ) ) {
+				return $this->limited_response(
+					PublicDemoErrorCode::BUSY,
+					'Another description is already running. Please try again shortly.',
+					5
+				);
+			}
+
+			$daily_result = $this->reserve_daily_capacity();
+			if ( $daily_result instanceof WP_REST_Response ) {
+				$this->release_inflight_bulkhead();
+				return $daily_result;
+			}
+
+			// Reserve the key before dispatch. The pending record survives a PHP
+			// crash and makes a retry fail closed instead of creating duplicate paid
+			// work. The same transient is immediately updated with the run ID below.
+			$pending = array(
+				'media_id'  => $media_id,
+				'run_id'    => 'pending',
+				'expires_at' => time() + self::IDEMPOTENCY_TTL_SECONDS,
 			);
-		}
+			if ( ! set_transient( $idempotency_key_name, $pending, self::IDEMPOTENCY_TTL_SECONDS ) ) {
+				$this->release_inflight_bulkhead();
+				return $this->limited_response( PublicDemoErrorCode::STATE_UNAVAILABLE, 'The demo state is temporarily unavailable. Please retry.', 5 );
+			}
 
-		return $this->public_envelope_response( $response, true );
+			$pipeline_request = new WP_REST_Request( 'POST', '/acx/v1/recognition/describe/runs' );
+			$pipeline_request->set_param( 'media_ids', array( $media_id ) );
+			$pipeline_request->set_param( 'idempotency_key', $idempotency_key );
+			// Persist uncertainty before dispatch: a timeout or worker death can
+			// hide backend acceptance and must never turn into an expired free slot.
+			if ( ! $this->mark_submission_started() ) {
+				return $this->limited_response( PublicDemoErrorCode::STATE_UNAVAILABLE, 'The demo is temporarily busy. Please retry.', 5 );
+			}
+			$response = $this->pipeline->submit_describe_run( $pipeline_request );
+
+			if ( $response instanceof WP_Error || $response->get_status() >= 400 ) {
+				$error_data = $response instanceof WP_Error ? $response->get_error_data() : $response->get_data();
+				$accepted_run_id = is_array( $error_data ) && is_string( $error_data['run_id'] ?? null )
+					? sanitize_text_field( $error_data['run_id'] ) : '';
+				if ( '' !== $accepted_run_id ) {
+					// Tracking persistence may fail after acceptance. Keep the run ID
+					// in the idempotency record so a retry cannot dispatch twice.
+					$this->bind_inflight_run( $accepted_run_id );
+					$this->store_idempotency_mapping( $idempotency_key_name, $media_id, $accepted_run_id );
+				} elseif ( $response instanceof WP_Error && in_array( $response->get_error_code(), array(
+					'missing_media_ids',
+					'too_many_media_ids',
+					'describe_run_attachment_unreadable',
+					'describe_run_payload_too_large',
+				), true ) ) {
+					// These local validation failures precede the transport call.
+					// Unrecognized errors (including HTTP errors) remain uncertain.
+					delete_transient( $idempotency_key_name );
+					$this->release_inflight_bulkhead();
+				}
+				return $this->translated_pipeline_error( $response );
+			}
+
+			$data   = $response->get_data();
+			$run_id = is_array( $data ) && is_string( $data['run_id'] ?? null )
+				? sanitize_text_field( $data['run_id'] )
+				: '';
+			if ( '' === $run_id || ! $this->bind_inflight_run( $run_id ) ) {
+				return new WP_Error(
+					PublicDemoErrorCode::INVALID_PIPELINE_DATA,
+					'The description started but its status could not be tracked safely.',
+					array( 'status' => 502 )
+				);
+			}
+
+			$public_response = $this->public_envelope_response( $response, true );
+			if ( $public_response instanceof WP_Error ) {
+				$this->store_idempotency_mapping( $idempotency_key_name, $media_id, $run_id );
+				return $public_response;
+			}
+			if ( ! $this->store_idempotency_mapping( $idempotency_key_name, $media_id, $run_id, $public_response ) ) {
+				// The run is accepted and the bulkhead remains held. Do not report a
+				// retryable success when the durable dedupe record could not be written.
+				return $this->limited_response( PublicDemoErrorCode::STATE_UNAVAILABLE, 'The demo state is temporarily unavailable. Please retry.', 5 );
+			}
+
+			return $public_response;
+		} finally {
+			$this->release_lock( $idempotency_lock_name, $idempotency_lock );
+		}
 	}
 
 	public function status( WP_REST_Request $request ): WP_REST_Response|WP_Error {
@@ -306,6 +374,76 @@ final class PublicDemoDescribeController implements RecognitionRouteControllerIn
 		}
 
 		return hash( 'sha256', $address );
+	}
+
+	private function request_idempotency_key( WP_REST_Request $request ): string {
+		$raw = $request->get_param( 'idempotency_key' );
+		if ( ! is_string( $raw ) || '' === trim( $raw ) ) {
+			$raw = $request->get_header( 'Idempotency-Key' );
+		}
+		$normalized = is_string( $raw ) ? trim( sanitize_text_field( $raw ) ) : '';
+		if ( '' === $normalized ) {
+			// Keep direct PHP callers backwards-compatible; the browser always
+			// supplies an explicit key for retry-safe public submissions.
+			return wp_generate_uuid4();
+		}
+		if ( strlen( $normalized ) > self::IDEMPOTENCY_KEY_MAX_LENGTH ) {
+			return hash( 'sha256', $normalized );
+		}
+
+		return $normalized;
+	}
+
+	private function idempotency_transient_key( string $client_key, string $idempotency_key ): string {
+		return self::IDEMPOTENCY_TRANSIENT_PREFIX . hash( 'sha256', $client_key . ':' . $idempotency_key );
+	}
+
+	/** @param array<string,mixed> $entry */
+	private function idempotency_response( array $entry ): ?WP_REST_Response {
+		$run_id = is_string( $entry['run_id'] ?? null ) ? sanitize_text_field( $entry['run_id'] ) : '';
+		if ( '' === $run_id || 'pending' === $run_id ) {
+			return null;
+		}
+		if ( is_array( $entry['response'] ?? null ) ) {
+			return new WP_REST_Response(
+				$entry['response'],
+				max( 200, (int) ( $entry['response_status'] ?? 202 ) )
+			);
+		}
+
+		// An accepted response can lose its final mapping write or report a
+		// post-acceptance tracking error. Returning a minimal valid envelope keeps
+		// retries on the same run without inventing a second paid submission.
+		return new WP_REST_Response(
+			array(
+				'run_id'           => $run_id,
+				'status'           => 'running',
+				'phase'            => 'describing',
+				'gpu_state'        => null,
+				'progress'         => array( 'done' => 0, 'total' => 1 ),
+				'deadline_seconds' => $this->public_deadline_seconds(),
+			),
+			202
+		);
+	}
+
+	private function store_idempotency_mapping(
+		string $transient_key,
+		int $media_id,
+		string $run_id,
+		?WP_REST_Response $response = null
+	): bool {
+		$mapping = array(
+			'media_id'   => $media_id,
+			'run_id'     => $run_id,
+			'expires_at' => time() + self::IDEMPOTENCY_TTL_SECONDS,
+		);
+		if ( $response instanceof WP_REST_Response ) {
+			$mapping['response'] = $response->get_data();
+			$mapping['response_status'] = $response->get_status();
+		}
+
+		return set_transient( $transient_key, $mapping, self::IDEMPOTENCY_TTL_SECONDS );
 	}
 
 	private function consume_rate_token( string $client_key ): bool|WP_REST_Response {
@@ -543,7 +681,7 @@ final class PublicDemoDescribeController implements RecognitionRouteControllerIn
 		// Compare the complete owner snapshot in the DELETE itself. An option
 		// read followed by delete_option() can erase a concurrently replaced or
 		// renewed lease, even after checking its token immediately beforehand.
-		$deleted = $wpdb->query(
+		$wpdb->query(
 			$wpdb->prepare(
 				"DELETE FROM {$wpdb->options} WHERE option_name = %s AND BINARY option_value = %s",
 				self::INFLIGHT_OPTION,
@@ -599,16 +737,41 @@ final class PublicDemoDescribeController implements RecognitionRouteControllerIn
 			return false;
 		}
 
-		delete_option( $option );
-		return add_option( $option, $value, '', false ) ? $token : false;
+		// WordPress options do not expose a conditional add-with-TTL. Replace an
+		// expired record only when its complete snapshot still matches; a newer
+		// owner then makes this compare-and-set fail instead of being deleted.
+		global $wpdb;
+		$updated = $wpdb->query(
+			$wpdb->prepare(
+				"UPDATE {$wpdb->options} SET option_value = %s WHERE option_name = %s AND BINARY option_value = %s",
+				serialize( $value ),
+				$option,
+				serialize( $current )
+			)
+		);
+		wp_cache_delete( $option, 'options' );
+		return 1 === $updated ? $token : false;
 	}
 
 	private function release_lock( string $option, string $token ): void {
+		global $wpdb;
+
 		$current = get_option( $option, false );
 		if ( ! is_array( $current ) || ! is_string( $current['token'] ?? null ) || ! hash_equals( $current['token'], $token ) ) {
 			return;
 		}
-		delete_option( $option );
+
+		// The ownership check belongs in the DELETE itself. If this request was
+		// paused until its TTL elapsed and another owner acquired the lock, the
+		// stale release affects zero rows and cannot remove the newer lock.
+		$wpdb->query(
+			$wpdb->prepare(
+				"DELETE FROM {$wpdb->options} WHERE option_name = %s AND BINARY option_value = %s",
+				$option,
+				serialize( $current )
+			)
+		);
+		wp_cache_delete( $option, 'options' );
 	}
 
 	private function public_description( WP_REST_Request $pipeline_request, int $media_id, string $expected_run_id, string $expected_token ): string|WP_Error {

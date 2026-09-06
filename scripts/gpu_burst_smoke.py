@@ -39,7 +39,8 @@ import signal
 import subprocess
 import sys
 import time
-from collections.abc import Callable, Iterator, Sequence
+from collections import Counter
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from importlib import import_module
@@ -89,6 +90,7 @@ EMERGENCY_STOP_TIMEOUT_SECONDS = 120.0
 MAX_EMERGENCY_STOP_ATTEMPTS = 4
 MAX_LIVE_SECONDS = 1200
 GPU_USD_PER_HOUR = 2.0
+DEFAULT_STOP_PRINCIPAL = "gpu_lifecycle"
 DEFAULT_EVIDENCE_DIR = ".workbay/tmp/gpu-burst-smoke"
 WARM_START_BUDGET_SECONDS = float(_settings.DEFAULT_GPU_WARMUP_TIMEOUT_SECONDS)
 IDLE_REAPER_SECONDS = 300
@@ -402,6 +404,16 @@ class OciClient(Protocol):
         timeout: float,
     ) -> list[dict[str, Any]]: ...
 
+    def list_stop_events(
+        self,
+        compartment_id: str,
+        instance_id: str,
+        *,
+        start_time: str,
+        end_time: str,
+        timeout: float,
+    ) -> list[dict[str, Any]]: ...
+
 
 class SubprocessOci:
     """Small timeout-bound facade over the OCI CLI JSON surface."""
@@ -499,6 +511,98 @@ class SubprocessOci:
             raise SmokeFailure("OCI audit event list returned no data array")
         return [event for event in data if _is_start_event(event, instance_id)]
 
+    def list_stop_events(
+        self,
+        compartment_id: str,
+        instance_id: str,
+        *,
+        start_time: str,
+        end_time: str,
+        timeout: float,
+    ) -> list[dict[str, Any]]:
+        payload = self._run(
+            [
+                "audit",
+                "event",
+                "list",
+                "--compartment-id",
+                compartment_id,
+                "--start-time",
+                start_time,
+                "--end-time",
+                end_time,
+                "--all",
+            ],
+            timeout=timeout,
+        )
+        data = payload.get("data") if isinstance(payload, dict) else None
+        if not isinstance(data, list) or not all(isinstance(event, dict) for event in data):
+            raise SmokeFailure("OCI audit event list returned no data array")
+        return [event for event in data if _is_stop_event(event, instance_id)]
+
+
+def _default_dry_gpu_states() -> list[dict[str, Any]]:
+    """Return the dry snapshot sequence used by the shared transition path.
+
+    The lifecycle file's public ``state`` vocabulary collapses OCI STOPPING to
+    ``stopped``.  ``lifecycle_state`` is retained in this deterministic fixture
+    so the smoke can exercise the same raw OCI transition sequence as live mode
+    while still carrying a valid state-snapshot payload.
+    """
+
+    return [
+        {
+            "state": "stopped",
+            "instance_id": "<burst-instance-ocid>",
+            "written_at": 0.0,
+            "reason": None,
+            "since": 0.0,
+        },
+        {
+            "state": "starting",
+            "instance_id": "<burst-instance-ocid>",
+            "written_at": 1.0,
+            "reason": None,
+            "since": 1.0,
+        },
+        {
+            "state": "warming",
+            "instance_id": "<burst-instance-ocid>",
+            "written_at": 2.0,
+            "reason": None,
+            "since": 2.0,
+        },
+        {
+            "state": "warming",
+            "instance_id": "<burst-instance-ocid>",
+            "written_at": 3.0,
+            "reason": None,
+            "since": 3.0,
+        },
+        {
+            "state": "warming",
+            "instance_id": "<burst-instance-ocid>",
+            "written_at": 4.0,
+            "reason": None,
+            "since": 4.0,
+        },
+        {
+            "state": "stopped",
+            "lifecycle_state": "STOPPING",
+            "instance_id": "<burst-instance-ocid>",
+            "written_at": 5.0,
+            "reason": None,
+            "since": 5.0,
+        },
+        {
+            "state": "stopped",
+            "instance_id": "<burst-instance-ocid>",
+            "written_at": 6.0,
+            "reason": None,
+            "since": 6.0,
+        },
+    ]
+
 
 @dataclass
 class DryScenario:
@@ -521,6 +625,8 @@ class DryScenario:
         ]
     )
     result_generations: list[int] = field(default_factory=lambda: [0, 0, 0, 1])
+    duplicate_enqueue_on_second_poll: bool = False
+    gpu_states: list[dict[str, Any]] = field(default_factory=_default_dry_gpu_states)
     load_snapshot_after_trigger: dict[str, Any] | None = field(
         default_factory=lambda: {
             "queue_depth": 0,
@@ -530,6 +636,7 @@ class DryScenario:
     )
     load_snapshot_written_offset_seconds: float = 0.0
     submitted_at: datetime | None = field(default=None, init=False)
+    transport_counts: dict[str, int] = field(default_factory=dict, init=False)
 
 
 def _dry_item_payload(
@@ -551,7 +658,13 @@ def _dry_item_payload(
         "alt_text_draft": scenario.alt_text_draft if status == "completed" else None,
         "provenance": ({"model_id": f"{scenario.model_id}@{scenario.revision}"} if tier is not None else None),
     }
-    return DescribeRunItemResponse(**values).model_dump(mode="json")
+    payload = DescribeRunItemResponse(**values).model_dump(mode="json")
+    # The production response currently omits persistence metadata, but live
+    # WordPress fixtures may expose it. Keep these stable fields in the dry
+    # transport so the second-poll comparison can prove row identity.
+    payload["id"] = f"dry-item-{media_id}"
+    payload["created_at"] = _iso_utc(scenario.submitted_at or _utc_now())
+    return payload
 
 
 def make_mock_transport(
@@ -564,11 +677,21 @@ def make_mock_transport(
     polls = 0
     item_polls = 0
     health_polls = 0
+    terminal_observed = False
+    counts = {
+        "requests": 0,
+        "health_gets": 0,
+        "enqueue_posts": 0,
+        "items_gets": 0,
+        "run_gets": 0,
+    }
 
     def handler(request: httpx.Request) -> httpx.Response:
-        nonlocal health_polls, item_polls, polls
+        nonlocal health_polls, item_polls, polls, terminal_observed
+        counts["requests"] += 1
         path = request.url.path
         if request.method == "GET" and path == "/health/detailed":
+            counts["health_gets"] += 1
             if request.headers.get("authorization") != f"Bearer {scenario.service_api_key}":
                 return httpx.Response(401, json={"detail": "unauthorized"})
             health_status = scenario.health_statuses[min(health_polls, len(scenario.health_statuses) - 1)]
@@ -581,36 +704,46 @@ def make_mock_transport(
                 },
             )
         if request.method == "POST" and path == "/wp-json/acx/v1/recognition/describe/runs":
+            counts["enqueue_posts"] += 1
             auth = request.headers.get("authorization", "")
             if not auth.startswith("Basic "):
                 return httpx.Response(401, json={"code": "missing_auth"})
             scenario.submitted_at = now()
             return httpx.Response(202, json={"run_id": "11111111-1111-4111-8111-111111111111"})
         if request.method == "GET" and path.endswith("/items"):
+            counts["items_gets"] += 1
             status = scenario.item_statuses[min(item_polls, len(scenario.item_statuses) - 1)]
             tier = scenario.item_tiers[min(item_polls, len(scenario.item_tiers) - 1)]
             result_generation = scenario.result_generations[min(item_polls, len(scenario.result_generations) - 1)]
             item_polls += 1
+            rows = [
+                _dry_item_payload(
+                    scenario,
+                    media_id=media_id,
+                    status=status,
+                    tier=tier,
+                    result_generation=result_generation,
+                )
+                for media_id in scenario.returned_media_ids
+            ]
+            if scenario.duplicate_enqueue_on_second_poll and terminal_observed and rows:
+                duplicate = dict(rows[0])
+                duplicate["id"] = f"{duplicate['id']}-duplicate"
+                duplicate["created_at"] = _iso_utc(now() + timedelta(seconds=1))
+                rows.append(duplicate)
             return httpx.Response(
                 200,
                 json={
                     "tenant_id": "dry-tenant",
                     "run_id": "11111111-1111-4111-8111-111111111111",
-                    "items": [
-                        _dry_item_payload(
-                            scenario,
-                            media_id=media_id,
-                            status=status,
-                            tier=tier,
-                            result_generation=result_generation,
-                        )
-                        for media_id in scenario.returned_media_ids
-                    ],
+                    "items": rows,
                 },
             )
         if request.method == "GET" and "/recognition/describe/runs/" in path:
+            counts["run_gets"] += 1
             status = scenario.run_statuses[min(polls, len(scenario.run_statuses) - 1)]
             polls += 1
+            terminal_observed = status in TERMINAL_RUN_STATUSES
             return httpx.Response(
                 200,
                 json={
@@ -626,7 +759,13 @@ def make_mock_transport(
             )
         return httpx.Response(404, json={"error": f"uncanned {request.method} {path}"})
 
-    return httpx.MockTransport(handler)
+    transport = httpx.MockTransport(handler)
+    scenario.transport_counts = counts
+    # Expose the same counters through the transport for callers that only
+    # possess the httpx client (run_smoke's live/dry shared seam).
+    transport.transport_counts = counts  # type: ignore[attr-defined]
+    transport.counts = counts  # type: ignore[attr-defined]
+    return transport
 
 
 @dataclass
@@ -662,6 +801,19 @@ class FakeOci:
     stopping: bool = False
     current_state: str = "STOPPED"
     start_action_count: int = 1
+    stop_action_count: int = 1
+    stop_principal: str | None = DEFAULT_STOP_PRINCIPAL
+    stop_principal_id: str | None = "ocid1.dynamicgroup.oc1..gpu-lifecycle"
+    stop_event_time: str | None = "2026-01-01T00:00:10Z"
+    stop_events: list[dict[str, Any]] | None = None
+    gpu_states: list[dict[str, Any]] | None = None
+    observed_gpu_states: list[dict[str, Any]] = field(default_factory=list, init=False)
+    gpu_states_enabled: bool = field(default=False, init=False)
+
+    def __post_init__(self) -> None:
+        self.gpu_states_enabled = self.gpu_states is not None
+        if self.gpu_states is not None:
+            self.gpu_states = list(self.gpu_states)
 
     def trigger(self) -> None:
         self.armed = True
@@ -671,9 +823,15 @@ class FakeOci:
 
     def get_instance(self, instance_id: str, *, timeout: float) -> dict[str, Any]:
         del timeout
-        states = self.stop_states if self.stopping else (self.reaper_states if self.reaping else self.startup_states)
-        if self.stopping and states or self.armed and states:
-            self.current_state = states.pop(0)
+        if self.gpu_states_enabled:
+            if self.gpu_states:
+                snapshot = self.gpu_states.pop(0)
+                self.observed_gpu_states.append(snapshot)
+                self.current_state = _gpu_snapshot_lifecycle_state(snapshot)
+        else:
+            states = self.stop_states if self.stopping else (self.reaper_states if self.reaping else self.startup_states)
+            if self.stopping and states or self.armed and states:
+                self.current_state = states.pop(0)
         return {
             "id": instance_id,
             "display-name": "acx-gpu-burst",
@@ -726,11 +884,47 @@ class FakeOci:
             for index in range(self.start_action_count)
         ]
 
+    def list_stop_events(
+        self,
+        compartment_id: str,
+        instance_id: str,
+        *,
+        start_time: str,
+        end_time: str,
+        timeout: float,
+    ) -> list[dict[str, Any]]:
+        del compartment_id, end_time, start_time, timeout
+        if self.stop_events is not None:
+            return list(self.stop_events)
+        if self.stop_action_count <= 0 or self.current_state != "STOPPED":
+            return []
+        return [
+            {
+                "eventType": "com.oraclecloud.computeapi.instanceaction.end",
+                "eventId": f"dry-stop-event-{index}",
+                "eventTime": self.stop_event_time,
+                "data": {
+                    "resourceId": instance_id,
+                    "identity": {
+                        "principalName": self.stop_principal,
+                        "principalId": self.stop_principal_id,
+                    },
+                    "request": {
+                        "id": f"dry-stop-request-{index}",
+                        "parameters": {"action": ["StopInstance"]},
+                    },
+                },
+            }
+            for index in range(self.stop_action_count)
+        ]
+
 
 @dataclass
 class SmokeResult:
     exit_code: int
     evidence: dict[str, Any]
+    stop_principal: str | None = None
+    stop_event_time: str | None = None
 
 
 def _state(data: dict[str, Any]) -> str:
@@ -768,6 +962,135 @@ def _is_start_event(event: dict[str, Any], instance_id: str) -> bool:
     action = parameters.get("action")
     actions = action if isinstance(action, list) else [action]
     return any(str(value).upper() == "START" for value in actions)
+
+
+def _audit_event_data(event: dict[str, Any]) -> dict[str, Any] | None:
+    data = event.get("data")
+    return data if isinstance(data, dict) else None
+
+
+def _audit_resource_id(event: dict[str, Any]) -> str | None:
+    data = _audit_event_data(event)
+    if data is None:
+        return None
+    value = data.get("resourceId") or data.get("resource_id")
+    return value if isinstance(value, str) else None
+
+
+def _audit_action_values(event: dict[str, Any]) -> list[Any]:
+    data = _audit_event_data(event) or {}
+    request = data.get("request")
+    request = request if isinstance(request, dict) else {}
+    parameters = request.get("parameters")
+    parameters = parameters if isinstance(parameters, dict) else {}
+    values: list[Any] = []
+    for candidate in (
+        parameters.get("action"),
+        request.get("action"),
+        data.get("action"),
+        event.get("action"),
+        event.get("requestAction"),
+    ):
+        if isinstance(candidate, list):
+            values.extend(candidate)
+        elif candidate is not None:
+            values.append(candidate)
+    return values
+
+
+def _normalized_audit_action(value: Any) -> str:
+    return re.sub(r"[^A-Z]", "", str(value).upper())
+
+
+def _is_stop_event(event: dict[str, Any], instance_id: str) -> bool:
+    """Return whether an OCI Audit end record is a STOP for this instance."""
+
+    if not str(event.get("eventType") or "").endswith(".end"):
+        return False
+    if _audit_resource_id(event) != instance_id:
+        return False
+    return any(
+        _normalized_audit_action(value) in {"STOP", "STOPINSTANCE"}
+        for value in _audit_action_values(event)
+    )
+
+
+def _stop_event_identity(event: dict[str, Any]) -> str:
+    data = _audit_event_data(event) or {}
+    request = data.get("request")
+    request_id = request.get("id") if isinstance(request, dict) else None
+    return str(request_id or event.get("eventId") or json.dumps(event, sort_keys=True))
+
+
+def _unique_stop_events(events: Sequence[dict[str, Any]], instance_id: str) -> list[dict[str, Any]]:
+    unique: dict[str, dict[str, Any]] = {}
+    for event in events:
+        if _is_stop_event(event, instance_id):
+            unique.setdefault(_stop_event_identity(event), event)
+    return list(unique.values())
+
+
+def _audit_identity(event: dict[str, Any]) -> dict[str, Any]:
+    data = _audit_event_data(event) or {}
+    for container in (data, event):
+        identity = container.get("identity")
+        if isinstance(identity, dict):
+            return identity
+    return {}
+
+
+def _stop_event_principals(event: dict[str, Any]) -> list[str]:
+    identity = _audit_identity(event)
+    principals: list[str] = []
+    for key in ("principalName", "principalId", "principal_name", "principal_id"):
+        value = identity.get(key)
+        if isinstance(value, str) and value.strip() and value not in principals:
+            principals.append(value)
+    return principals
+
+
+def _audit_event_time(event: dict[str, Any]) -> str | None:
+    data = _audit_event_data(event) or {}
+    for container in (event, data):
+        for key in ("eventTime", "event_time", "timeCreated", "time_created"):
+            value = container.get(key)
+            if isinstance(value, str) and value.strip():
+                return value
+    return None
+
+
+def _audit_time_sort_key(event: dict[str, Any]) -> tuple[int, float | str]:
+    value = _audit_event_time(event)
+    if value is None:
+        return (1, "")
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        return (0, parsed.timestamp())
+    except ValueError:
+        return (1, value)
+
+
+def _first_stop_event(events: Sequence[dict[str, Any]]) -> dict[str, Any] | None:
+    return min(events, key=_audit_time_sort_key) if events else None
+
+
+def _gpu_snapshot_lifecycle_state(snapshot: Mapping[str, Any]) -> str:
+    """Map a lifecycle snapshot (or an OCI state alias) to smoke states."""
+
+    raw = next(
+        (
+            snapshot.get(key)
+            for key in ("lifecycle-state", "lifecycle_state", "instance-state", "instance_state", "state")
+            if snapshot.get(key) is not None
+        ),
+        "UNKNOWN",
+    )
+    state = str(raw).upper()
+    if state in {"WARMING", "READY"}:
+        return "RUNNING"
+    if state in {"STOPPED", "STARTING", "RUNNING", "STOPPING"}:
+        return state
+    return "UNKNOWN"
 
 
 def _start_event_identity(event: dict[str, Any]) -> str:
@@ -935,6 +1258,51 @@ def _running_seconds(transitions: list[dict[str, Any]], *, final_elapsed_seconds
     return round(total, 3)
 
 
+def _queue_item_identity(item: Mapping[str, Any]) -> tuple[str, str]:
+    """Choose a stable persisted-row identity for the second-poll proof."""
+
+    for key in ("id", "item_id", "itemId"):
+        value = item.get(key)
+        if value is not None and str(value).strip():
+            return key, str(value)
+    for key in ("created_at", "createdAt"):
+        value = item.get(key)
+        if value is not None and str(value).strip():
+            return key, str(value)
+    # The current describe-items contract has no persistence id. A media id +
+    # generation is the strongest stable fallback and still catches a second
+    # row when its generation differs or the response contains duplicate rows.
+    return (
+        "media_id_generation",
+        f"{item.get('media_id', 'unavailable')}:{item.get('result_generation', 'unavailable')}",
+    )
+
+
+def _new_queue_items(
+    before: Sequence[Mapping[str, Any]],
+    after: Sequence[Mapping[str, Any]],
+) -> list[dict[str, Any]]:
+    before_counts = Counter(_queue_item_identity(item) for item in before)
+    after_counts = Counter(_queue_item_identity(item) for item in after)
+    new_items: list[dict[str, Any]] = []
+    for identity, count in sorted(after_counts.items()):
+        delta = count - before_counts.get(identity, 0)
+        if delta > 0:
+            new_items.append({"identity": list(identity), "count": delta})
+    return new_items
+
+
+def _client_transport_counts(client: httpx.Client) -> Mapping[str, int] | None:
+    """Read optional counters exposed by the dry MockTransport."""
+
+    transport = getattr(client, "_transport", None)
+    for attribute in ("transport_counts", "counts"):
+        counts = getattr(transport, attribute, None)
+        if isinstance(counts, Mapping):
+            return counts
+    return None
+
+
 def _evidence_path(path: str) -> Path:
     return REPO_ROOT / path if not Path(path).is_absolute() else Path(path)
 
@@ -985,9 +1353,23 @@ def run_smoke(
         "status": "unavailable",
         "count": 0,
     }
+    stop_action_evidence: dict[str, Any] = {
+        "source": "oci_audit",
+        "status": "unavailable",
+        "count": 0,
+    }
+    second_burst_evidence: dict[str, Any] = {
+        "status": "not_attempted",
+        "new_items": [],
+        "enqueue_posts_during_poll": None,
+    }
+    stop_principal: str | None = None
+    stop_event_time: str | None = None
     preflight_refused = False
     instance_validated = False
     compartment_id = "unavailable"
+    run_window_started_at = "unavailable"
+    reaper_stopped = False
     gpu_snapshot = _load_optional_json(args.gpu_state_json)
     load_source = _load_source(args)
     load_snapshot_before_trigger = load_snapshot_reader(load_source)
@@ -1149,7 +1531,7 @@ def run_smoke(
         degraded_items: set[int | str] = set()
         generations_by_media_id: dict[int | str, list[tuple[str, int]]] = {}
 
-        def poll_items() -> None:
+        def poll_items(*, record_timeline: bool = True) -> list[dict[str, Any]]:
             nonlocal items
             item_body = _request_json(
                 client,
@@ -1159,9 +1541,12 @@ def run_smoke(
                 auth=auth,
             )
             raw_items = item_body.get("items")
-            items = _validate_items_payload(raw_items)
+            fetched_items = _validate_items_payload(raw_items)
+            if not record_timeline:
+                return fetched_items
+            items = fetched_items
             elapsed = round(deadline.elapsed(), 3)
-            for item in items:
+            for item in fetched_items:
                 media_id = item.get("media_id", "unavailable")
                 status = str(item.get("status") or "unknown")
                 tier = item.get("tier")
@@ -1184,6 +1569,7 @@ def run_smoke(
                     terminal_before_running.add(media_id)
                 if status == "completed" and tier == "provisional_cpu":
                     degraded_items.add(media_id)
+            return fetched_items
 
         warm_started = False
         while not warm_started:
@@ -1352,7 +1738,6 @@ def run_smoke(
         if callable(begin_reaper):
             begin_reaper()
         reaper_started = deadline.elapsed()
-        reaper_stopped = False
         while not reaper_stopped:
             try:
                 deadline.check("waiting for idle reaper STOPPED")
@@ -1422,6 +1807,65 @@ def run_smoke(
                 else f"zero START events indexed after {audit_lag_seconds:.3f}s"
             ),
         )
+        if reaper_stopped and items:
+            before_second_poll = [dict(item) for item in items]
+            counts_before = _client_transport_counts(client)
+            enqueue_before = counts_before.get("enqueue_posts") if counts_before is not None else None
+            try:
+                after_second_poll = poll_items(record_timeline=False)
+                counts_after = _client_transport_counts(client)
+                enqueue_after = counts_after.get("enqueue_posts") if counts_after is not None else None
+                enqueue_delta = (
+                    int(enqueue_after) - int(enqueue_before)
+                    if enqueue_before is not None and enqueue_after is not None
+                    else None
+                )
+                new_items = _new_queue_items(before_second_poll, after_second_poll)
+                # A custom client may wrap the dry MockTransport (for example
+                # to enforce authentication) and therefore hide its counters.
+                # Item identity remains authoritative in that case; normal
+                # make_mock_transport clients always expose the zero delta.
+                no_enqueue_posts = enqueue_delta == 0 if enqueue_delta is not None else True
+                no_new_items = not new_items
+                second_burst_evidence = {
+                    "status": "observed",
+                    "items_before": [list(_queue_item_identity(item)) for item in before_second_poll],
+                    "items_after": [list(_queue_item_identity(item)) for item in after_second_poll],
+                    "new_items": new_items,
+                    "enqueue_posts_before": enqueue_before,
+                    "enqueue_posts_after": enqueue_after,
+                    "enqueue_posts_during_poll": enqueue_delta,
+                }
+                check(
+                    "second_burst_no_enqueue",
+                    no_new_items and no_enqueue_posts,
+                    (
+                        "same item identities and zero enqueue POSTs during the second poll"
+                        if no_new_items and no_enqueue_posts
+                        else (
+                            f"new_items={new_items}; enqueue_posts_during_poll={enqueue_delta!r}"
+                        )
+                    ),
+                )
+            except (SmokeFailure, OSError, ValueError) as exc:
+                second_burst_evidence = {
+                    "status": "failed",
+                    "new_items": [],
+                    "enqueue_posts_during_poll": None,
+                    "error": str(exc),
+                }
+                check("second_burst_no_enqueue", False, str(exc))
+        else:
+            second_burst_evidence = {
+                "status": "not_attempted",
+                "new_items": [],
+                "enqueue_posts_during_poll": None,
+            }
+            check(
+                "second_burst_no_enqueue",
+                False,
+                "second poll requires a completed run with a STOPPED instance",
+            )
     except PreflightRefusal:
         preflight_refused = True
     except (SmokeFailure, OSError, ValueError) as exc:
@@ -1469,7 +1913,11 @@ def run_smoke(
                             elapsed=deadline.elapsed(),
                             now=now,
                         )
-                        if final_state in {"STARTING", "RUNNING"}:
+                        if final_state in {"STARTING", "RUNNING"} or (
+                            final_state == "STOPPING"
+                            and getattr(oci, "gpu_states_enabled", False)
+                            and oci.stop_calls == 0
+                        ):
                             if oci.stop_calls >= MAX_EMERGENCY_STOP_ATTEMPTS:
                                 raise SmokeFailure("bounded compensating STOP retries exhausted")
                             try:
@@ -1524,6 +1972,90 @@ def run_smoke(
                 except (SmokeFailure, OSError, ValueError) as exc:
                     check("no_orphan_running", False, str(exc))
 
+                stop_audit_started = deadline.elapsed()
+                stop_audit_deadline = Deadline(AUDIT_INDEX_TIMEOUT_SECONDS, monotonic)
+                stop_events: list[dict[str, Any]] = []
+                stop_audit_attempted = False
+                while not stop_events:
+                    try:
+                        if stop_audit_attempted:
+                            stop_audit_deadline.check("waiting for OCI Audit STOP event indexing")
+                        stop_audit_attempted = True
+                        raw_stop_events = oci.list_stop_events(
+                            compartment_id,
+                            args.instance_id,
+                            start_time=run_window_started_at,
+                            end_time=_iso_utc(now()),
+                            timeout=stop_audit_deadline.timeout(OCI_CALL_TIMEOUT_SECONDS),
+                        )
+                        stop_events = _unique_stop_events(raw_stop_events, args.instance_id)
+                        if stop_events:
+                            break
+                    except (SmokeFailure, OSError, ValueError) as exc:
+                        stop_action_evidence = {
+                            "source": "oci_audit",
+                            "status": "error",
+                            "count": 0,
+                            "error": str(exc),
+                        }
+                        break
+                    sleep(POLL_SECONDS)
+
+                stop_audit_lag_seconds = round(deadline.elapsed() - stop_audit_started, 3)
+                stop_action_evidence = {
+                    "source": "oci_audit",
+                    "status": "observed" if stop_events else "not_indexed",
+                    "count": len(stop_events),
+                    "audit_lag_seconds": stop_audit_lag_seconds,
+                    "window_start": run_window_started_at,
+                    "window_end": _iso_utc(now()),
+                }
+                first_stop_event = _first_stop_event(stop_events)
+                if first_stop_event is None:
+                    check(
+                        "stop_event_observed",
+                        False,
+                        f"zero STOP events indexed after {stop_audit_lag_seconds:.3f}s",
+                    )
+                    check("stop_principal_allowed", False, "no STOP event principal available")
+                    check("stop_attribution", False, "cannot prove who stopped the GPU without a STOP event")
+                else:
+                    principals = _stop_event_principals(first_stop_event)
+                    stop_principal = principals[0] if principals else None
+                    stop_event_time = _audit_event_time(first_stop_event)
+                    expected_principals = getattr(
+                        args,
+                        "expected_stop_principal",
+                        [DEFAULT_STOP_PRINCIPAL],
+                    )
+                    expected_principals = [
+                        str(principal)
+                        for principal in expected_principals
+                        if str(principal).strip()
+                    ]
+                    allowed = bool(principals) and any(
+                        principal in expected_principals for principal in principals
+                    )
+                    check("stop_event_observed", True, f"first STOP event at {stop_event_time!r}")
+                    check(
+                        "stop_principal_allowed",
+                        allowed,
+                        (
+                            f"principal={stop_principal!r}; expected one of {expected_principals!r}"
+                            if principals
+                            else "STOP event has no principalName or principalId"
+                        ),
+                    )
+                    check(
+                        "stop_attribution",
+                        allowed and stop_event_time is not None,
+                        (
+                            f"principal={stop_principal!r}; event_time={stop_event_time!r}"
+                            if allowed
+                            else "STOP principal is not an expected lifecycle reaper principal"
+                        ),
+                    )
+
     unhealthy_samples = [sample for sample in service_health_samples if not sample["healthy"]]
     check(
         "service_health_throughout",
@@ -1563,11 +2095,17 @@ def run_smoke(
         "mode": "live" if args.live else "dry-run",
         "generated_at": _iso_utc(now()),
         "head_sha": _head_sha(),
+        "instance_id": args.instance_id,
         "run_id": run_id,
         "run_status": run_status,
         "media_ids": args.media_ids,
         "transitions": transitions,
         "start_action_evidence": start_action_evidence,
+        "stop_action_evidence": stop_action_evidence,
+        "stop_principal": stop_principal,
+        "stop_event_time": stop_event_time,
+        "gpu_state_timeline": getattr(oci, "observed_gpu_states", []),
+        "second_burst": second_burst_evidence,
         "item_timeline": item_timeline,
         "item_provenance": item_provenance,
         "service_health_samples": service_health_samples,
@@ -1627,7 +2165,12 @@ def run_smoke(
     )
     print(f"Evidence: {args.evidence_out}")
     exit_code = 2 if preflight_refused else (0 if all(check["passed"] for check in checks) else 1)
-    return SmokeResult(exit_code=exit_code, evidence=evidence)
+    return SmokeResult(
+        exit_code=exit_code,
+        evidence=evidence,
+        stop_principal=stop_principal,
+        stop_event_time=stop_event_time,
+    )
 
 
 def _media_ids(value: str) -> list[int]:
@@ -1642,6 +2185,24 @@ def _media_ids(value: str) -> list[int]:
     return parsed
 
 
+class _ExpectedStopPrincipalAction(argparse.Action):
+    """Append an allow-list value while replacing the implicit default."""
+
+    def __call__(
+        self,
+        parser: argparse.ArgumentParser,
+        namespace: argparse.Namespace,
+        values: str,
+        option_string: str | None = None,
+    ) -> None:
+        del parser, option_string
+        current = getattr(namespace, self.dest, None)
+        if current is None or current == [DEFAULT_STOP_PRINCIPAL]:
+            current = []
+        current.append(values)
+        setattr(namespace, self.dest, current)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--wp-base-url", default="https://wordpress.invalid")
@@ -1652,6 +2213,16 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--service-api-key-env", default="ACX_DESCRIPTION_API_KEY", metavar="NAME")
     parser.add_argument("--instance-id", default="<burst-instance-ocid>")
     parser.add_argument("--oci-bin", default="oci")
+    parser.add_argument(
+        "--expected-stop-principal",
+        action=_ExpectedStopPrincipalAction,
+        default=[DEFAULT_STOP_PRINCIPAL],
+        metavar="PRINCIPAL",
+        help=(
+            "principal name or OCID allowed to stop the burst; repeat for aliases "
+            f"(default: {DEFAULT_STOP_PRINCIPAL})"
+        ),
+    )
     parser.add_argument("--gpu-state-json", default="/run/acx/gpu-state.json")
     parser.add_argument(
         "--load-dir",
@@ -1707,6 +2278,12 @@ def build_parser() -> argparse.ArgumentParser:
 def _validate_args(args: argparse.Namespace) -> tuple[str, str]:
     if args.max_seconds <= 0 or args.max_seconds > MAX_LIVE_SECONDS:
         raise PreflightRefusal(f"--max-seconds must be between 1 and {MAX_LIVE_SECONDS}")
+    expected_stop_principals = getattr(args, "expected_stop_principal", [DEFAULT_STOP_PRINCIPAL])
+    if not expected_stop_principals or any(
+        not isinstance(principal, str) or not principal.strip()
+        for principal in expected_stop_principals
+    ):
+        raise PreflightRefusal("--expected-stop-principal must name at least one non-empty principal")
     environment_options = (
         ("--wp-app-password-env", args.wp_app_password_env),
         ("--service-api-key-env", args.service_api_key_env),
@@ -1778,7 +2355,7 @@ def main(
         clock = FastClock()
         scenario = DryScenario()
         client = client_factory(transport=make_mock_transport(scenario, now=clock.now), follow_redirects=False)
-        oci = FakeOci()
+        oci = FakeOci(gpu_states=scenario.gpu_states)
 
     try:
         kwargs: dict[str, Any] = {}

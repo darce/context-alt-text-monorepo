@@ -126,9 +126,17 @@ class AggregateJobLoadSource:
         )
         object.__setattr__(self, "expected_environments", environments)
 
+    @property
+    def _declared_environments(self) -> Collection[str]:
+        """`__post_init__` always resolves the optional field to a concrete tuple."""
+        environments = self.expected_environments
+        if environments is None:  # pragma: no cover - unreachable after __post_init__
+            raise RuntimeError("expected_environments was not resolved in __post_init__")
+        return environments
+
     def snapshot(self) -> AggregateJobLoadSnapshot:
         now = time.time()
-        observations = [self._observe_environment(environment, now=now) for environment in self.expected_environments]
+        observations = [self._observe_environment(environment, now=now) for environment in self._declared_environments]
 
         for observation in observations:
             self._log_transition(observation)
@@ -164,7 +172,7 @@ class AggregateJobLoadSource:
     def fence_token(self) -> tuple[tuple[str, tuple[int, int, int, int] | None], ...]:
         """Return the atomic-rename generation of every declared producer."""
         generations: list[tuple[str, tuple[int, int, int, int] | None]] = []
-        for environment in self.expected_environments:
+        for environment in self._declared_environments:
             path = self.directory / environment / "describe-load.json"
             try:
                 stat = path.stat()
@@ -190,7 +198,7 @@ class AggregateJobLoadSource:
         """
         lock_fds: list[int] = []
         try:
-            for environment in self.expected_environments:
+            for environment in self._declared_environments:
                 lock_path = self.directory / environment / "describe-load.json.lock"
                 lock_fd = self._open_fence_lock(lock_path)
                 try:

@@ -1,30 +1,126 @@
-# FEBT-1 — job pipeline error & progress states (rendered from `febt-1-job-error-states.uxmap.json`)
+# UX Map — febt-1-job-error-states
 
-Hand-rendered (ux-map CLI not installed locally). States are the `jobReducer` states; banner variants are the `AppError._tag` values.
+**Product:** `AltContext WP admin SPA — job pipeline error and progress states`
+**Source fixture:** `apps/prototype-wp-alt-context/js/admin/pages/workbench/JobPipelineContext.tsx`
 
-## Screen: workbench-pipeline
+## Goals
+- Every request failure the operator can see maps to exactly one AppError tag and one recovery action.
+- Job progress states are the reducer's states, not derived ad hoc in components.
+- Keep stalled and offline as peer reducer states with distinct recoveries: stalled advances a bounded reconnect timer, while offline waits for the browser online event; the canonical UX states are degraded and offline respectively (FEBT1F-L-02, F3/W2D-01).
+- Keep the pipeline banner sourced from useJobStateMachineDerivedState.statusText through JobPipelineProvider, WorkbenchProvider, and WorkbenchPage.
+
+## Jobs
+- `run-job` — Start a scan/describe job and watch it finish
+- `recover-from-failure` — Understand why a job or request failed and recover
+
+## Screens
+| id | kind | route | title |
+| --- | --- | --- | --- |
+| `workbench-pipeline` | screen | `/admin.php?page=alt-context-workbench` | Workbench — job pipeline |
+| `request-error-banner` | overlay | `/admin.php?page=alt-context-workbench` | Request error banner |
+| `reload-page` | exit | `/admin.php?page=alt-context-workbench` | Reload page (session expired) |
+
+### Workbench — job pipeline (`workbench-pipeline`)
+
+Purpose: Shows the active job's phase, progress, ETA and stall state driven by jobReducer state.
+
+| zone id | label | role | states |
+| --- | --- | --- | --- |
+| `pipeline-banner` | Pipeline status banner — reducer phase to canonical UX state: idle and completed = default; pending and running = loading; failed = error; offline = offline; stalled and completed_with_errors = degraded. Each reducer phase keeps its own copy and recovery. | status | default, loading, error, offline, degraded |
+| `progress-meter` | Progress + ETA — running = loading with live progress; stalled = degraded with elapsed no-progress time and reconnect status. | status | loading, degraded |
+| `job-actions` | Start / cancel / retry — idle and completed = default; running = loading; failed = error; completed_with_errors = degraded. | form | default, loading, error, degraded |
 
 ```
-+----------------------------------------------------------------------+
-| Workbench                                                            |
-+----------------------------------------------------------------------+
-| [pipeline-banner]                                                    |
-|  idle      : "No job running"                       [Start job]  (P) |
-|  pending   : "Queued…"                              [Cancel]         |
-|  running   : "Describing 42/120  ETA 1m 10s"        [Cancel]         |
-|  stalled   : "! No progress for 35 s — reconnecting" [Cancel]        |
-|  offline   : "! You are offline — will resume"                       |
-|  completed : "✓ Done 120/120"                       [Start job]  (P) |
-|  completed_with_errors : "✓ Done, 3 failed"         [Retry failed]   |
-|  failed    : "✗ Job failed: <toUserMessage>"        [Retry] [Start]  |
-+----------------------------------------------------------------------+
-| [progress-meter]  ██████████░░░░░░░░░░  35 %   (running | stalled)   |
-+----------------------------------------------------------------------+
-| [job-actions]   Start job (P)   Cancel (irreversible)   Retry        |
-+----------------------------------------------------------------------+
++------------------------------------------------------------+
+| Workbench — job pipeline  [screen]  /admin.php?page=alt-c… |
+| Shows the active job's phase, progress, ETA and stall sta… |
++------------------------------------------------------------+
+| ZONES                                                      |
+|   - Pipeline status banner — reducer phase to canonical U… |
+|   - Progress + ETA — running = loading with live progress… |
+|   - Start / cancel / retry — idle and completed = default… |
++------------------------------------------------------------+
+| ACTIONS                                                    |
+|   [PRIMARY] Start job -> workbench-pipeline (costly)       |
+|   [secondary] Cancel job -> workbench-pipeline (irreversi… |
++------------------------------------------------------------+
+| states: default | loading | error | offline | degraded     |
++------------------------------------------------------------+
 ```
 
-Reducer table (state × event → state) — every cell is explicit; `never` guards the rest (GRPH-27):
+### Request error banner (`request-error-banner`)
+
+Purpose: One banner per AppError tag with tag-specific copy and recovery; raw messages never reach the DOM. Canonical UX state does not erase the tag: http, parse, auth_expired, nonce_refresh, timeout and unknown are error; transport is offline; abort is default because its frozen poll is silent; an http cooldown (429, or 503 with Retry-After) is degraded while it waits to auto-retry.
+
+Action states: http, parse, auth_expired, nonce_refresh, timeout, transport, unknown, abort, http_cooldown
+
+| zone id | label | role | states |
+| --- | --- | --- | --- |
+| `error-copy` | User-facing copy by AppError tag — http: status-aware safe copy; parse: unexpected response; auth_expired: session expired; nonce_refresh and transport: check connection; timeout: server took too long; unknown: caller fallback; abort: silent frozen poll. Cooldown remains the http tag plus isCooldown and Retry-After, never a ninth tag. | content | default, error, offline, degraded |
+| `error-action` | Recovery by AppError tag — Retry: http, parse, nonce_refresh, transport, timeout and unknown; Reload page: auth_expired only; no banner or action: abort; Wait countdown then auto-retry: http cooldown. Retry and Reload are tag-specific primary actions; Wait is subordinate, and exactly one tag-appropriate recovery renders. | form | error, offline, degraded |
+
+```
++------------------------------------------------------------+
+| Request error banner  [overlay]  /admin.php?page=alt-cont… |
+| One banner per AppError tag with tag-specific copy and re… |
++------------------------------------------------------------+
+| ZONES                                                      |
+|   - User-facing copy by AppError tag — http: status-aware… |
+|   - Recovery by AppError tag — Retry: http, parse, nonce_… |
++------------------------------------------------------------+
+| ACTIONS                                                    |
+| when http                                                  |
+|   [PRIMARY] Retry                                          |
+| when parse                                                 |
+|   [PRIMARY] Retry                                          |
+| when auth_expired                                          |
+|   [PRIMARY] Reload page                                    |
+| when nonce_refresh                                         |
+|   [PRIMARY] Retry                                          |
+| when timeout                                               |
+|   [PRIMARY] Retry                                          |
+| when transport                                             |
+|   [PRIMARY] Retry                                          |
+| when unknown                                               |
+|   [PRIMARY] Retry                                          |
+| when abort                                                 |
+|   No action (silent)                                       |
+| when http_cooldown                                         |
+|   [secondary] Wait (countdown)                             |
++------------------------------------------------------------+
+| states: default | error | offline | degraded               |
++------------------------------------------------------------+
+```
+
+### Reload page (session expired) (`reload-page`)
+
+Purpose: Only exit from auth_expired; WordPress login handles the rest.
+
+```
++------------------------------------------------------------+
+| Reload page (session expired)  [exit]  /admin.php?page=al… |
+| Only exit from auth_expired; WordPress login handles the … |
++------------------------------------------------------------+
+```
+
+## Detailed reducer and recovery contract
+
+### Pipeline banner examples
+
+```text
+idle      : "No job running"                         [Start job] (primary)
+pending   : "Queued…"                                [Cancel]
+running   : "Describing 42/120  ETA 1m 10s"          [Cancel]
+stalled   : "! No progress for 35 s - reconnecting"     [Cancel]
+offline   : "You are offline — will resume"
+completed : "Done 120/120"                           [Start job] (primary)
+completed_with_errors : "Done, 3 failed"             [Retry failed]
+failed    : "Job failed: <toUserMessage>"             [Retry] [Start]
+```
+
+### Reducer transition matrix
+
+Every state×event cell is explicit; `never` guards the rest (GRPH-27).
 
 | state \ event | START | STREAM_OPEN | PROGRESS | STALL_TICK | RECONNECTED | OFFLINE | ONLINE | COMPLETE | COMPLETE_WITH_ERRORS | FAIL | CANCEL | RESET |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -35,55 +131,107 @@ Reducer table (state × event → state) — every cell is explicit; `never` gua
 | offline | — | — | — | offline (if attempts <= 3) else failed | — | — | (prev) | — | — | failed | idle | idle |
 | completed / completed_with_errors / failed | pending | — | — | — | — | — | — | — | — | — | — | idle |
 
-## Overlay: request-error-banner (one row per `AppError._tag`)
+### AppError banner and recovery rows
 
-`cooldown` and `not_found` are not tags: they are `isCooldown(http)` (429/503 + Retry-After) and `isHttpStatus(http, 404)`. Abort has copy but no recovery action (frozen poll, not a banner).
+`http_cooldown` is the mutually exclusive recovery state for `http` with `isCooldown`; `http` in the action conditions means a non-cooldown HTTP failure. `cooldown` and `not_found` are not tags: they are `isCooldown(http)` (429/503 + Retry-After) and `isHttpStatus(http, 404)`. Abort has copy but no recovery action (frozen poll, not a banner).
 
-```
-+----------------------------------------------------------------------+
-| http         : HTTP error (404 auto-dismiss; 429/503 Wait ▾) [Retry] |
-| parse        : "Unexpected response from server"    [Retry]          |
-| auth_expired : "Your session expired — reload the page and sign in   |
-|                 again."                              [Reload page]   |
-| nonce_refresh: "Network error — check your connection"  [Retry]      |
-|                (W2A-02: refresh timeout/transport is NOT expiry;     |
-|                 reuses transport copy, no new string)                 |
-| abort        : (silent / frozen poll — no banner)                    |
-| timeout      : "The server took too long to respond — try again"     |
-|                                                     [Retry]          |
-|                (W2A-05: split from abort; the only new string)       |
-| transport    : "Network error — check your connection"  [Retry]      |
-| unknown      : "<caller fallback copy>"             [Retry]          |
-+----------------------------------------------------------------------+
-```
+| AppError tag | Banner example | Recovery |
+| --- | --- | --- |
+| http | HTTP error (404 auto-dismiss; 429/503 Wait countdown) | Retry |
+| parse | Unexpected response from server | Retry |
+| auth_expired | Your session expired — reload the page and sign in again. | Reload page |
+| nonce_refresh | Network error — check your connection | Retry; refresh timeout/transport is not expiry |
+| abort | Silent frozen poll; no banner | No action |
+| timeout | The server took too long to respond — try again | Retry |
+| transport | Network error — check your connection | Retry |
+| unknown | Caller fallback copy | Retry |
 
-## Reconciliation — FEBT1F-L-02 (banner variants vs overlay states)
+### Stalled/offline reconciliation
 
-Codemap trace: `useJobStateMachine` ← `JobPipelineProvider` ← `WorkbenchProvider` ← `WorkbenchPage`. The view never
-branches on a `stalled`/`offline` **state**: `useJobStateMachineDerivedState` renders `statusText` from `status`
-(pending|running|completed|completed_with_errors|failed) and overlays two orthogonal **modifiers**,
-`stalledForSeconds` (no-event timer) and `isOnline` (`navigator.onLine`). Same modifier-axis shape the dashboard map
-already flagged (`dashboard.uxmap.json` note on `degraded`/`offline`).
+The reducer keeps `stalled` and `offline` as peer states because their recoveries differ: stalled advances a bounded reconnect timer, while offline waits for the browser `online` event. The hook derives the existing view contract from reducer state: `stalledForSeconds = status==='stalled' ? (now-lastEventAt)/1000 : null` and `isOnline = status!=='offline'`.
 
-Resolution (binding for F3 / W2D-01 adoption, GRPH-27/28, DATA-14):
+The reconnect counter is internal (`reconnectAttempts`) and never rendered; the banner shows elapsed stall seconds only. A stalled stream returns to running after SSE reopen or fails after bounded reconnect attempts (RES-06). `timeout` has its own overlay row, `abort` stays silent, and `nonce_refresh` reuses transport copy.
 
-- Reducer keeps `stalled` and `offline` as peer states — their recoveries differ (tick timer vs `online` event).
-- The hook **derives** the existing view contract from reducer state: `stalledForSeconds = status==='stalled' ? (now-lastEventAt)/1000 : null`,
-  `isOnline = status!=='offline'`. No view/copy changes in F3 (`not_doing` stands).
-- Reconnect counter is internal (`reconnectAttempts`, W2D-02) and never rendered; the banner shows elapsed stall seconds only.
-- `timeout` overlay row added above; `abort` stays silent. `nonce_refresh` reuses transport copy.
+## Actions
+
+| id | verb | target | hierarchy | costly | irreversible | preview required | screen id | when (recovery state) |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `start-job` | Start job | `workbench-pipeline` | primary | yes | no | no | `workbench-pipeline` | always |
+| `cancel-job` | Cancel job | `workbench-pipeline` | secondary | no | yes | no | `workbench-pipeline` | always |
+| `retry-request` | Retry | `request-error-banner` | primary | no | no | no | `request-error-banner` | http, parse, nonce_refresh, timeout, transport, unknown |
+| `reload` | Reload page | `reload-page` | primary | no | no | no | `request-error-banner` | auth_expired |
+| `wait-cooldown` | Wait (countdown) | `request-error-banner` | secondary | no | no | no | `request-error-banner` | http_cooldown |
 
 ## Flows
+### idle → pending → running → completed (`job-happy-path`)
 
-- job-happy-path: idle → pending → running → completed
-- job-stall-reconnect: running → stalled → running (SSE reopen) | failed (after bounded reconnects, RES-06)
-- auth-expired-recovery: banner(auth_expired) → exit reload-page
-- cooldown-429: banner(http + isCooldown, Retry-After countdown) → running
+```mermaid
+flowchart TD
+  %% flow: idle → pending → running → completed job=run-job
+  %% steps: [{"screen_id":"workbench-pipeline","branch_label":"idle"},{"screen_id":"workbench-pipeline","branch_label":"pending"},{"screen_id":"workbench-pipeline","branch_label":"running"},{"screen_id":"workbench-pipeline","branch_label":"completed"}]
+  n_workbench_pipeline["Workbench — job pipeline (screen)"]
+  n_workbench_pipeline -->|idle| n_workbench_pipeline
+  n_workbench_pipeline -->|pending| n_workbench_pipeline
+  n_workbench_pipeline -->|running| n_workbench_pipeline
+```
 
-## Critique against canon (advisory)
+### running → stalled (30 s no event) → running (SSE reconnect) or failed (`job-stall-reconnect`)
 
-- Status pairs colour with a glyph (✓ ! ✗) — sr-004.
-- Primary action reachable from idle (zero state) — rg-003.
-- Cancel is irreversible → keep secondary hierarchy, no preview — CARD-07.
-- Stall vs offline are distinct states because they have distinct recoveries (timer vs `online` event) — GRPH-27/28.
-- Banner owner resolved: `useJobStateMachineDerivedState.statusText` via `JobPipelineProvider` (see Reconciliation).
+```mermaid
+flowchart TD
+  %% flow: running → stalled (30 s no event) → running (SSE reconnect) or failed job=run-job
+  %% steps: [{"screen_id":"workbench-pipeline","branch_label":"running"},{"screen_id":"workbench-pipeline","branch_label":"stalled"},{"screen_id":"workbench-pipeline","branch_label":"running | failed"}]
+  n_workbench_pipeline["Workbench — job pipeline (screen)"]
+  n_workbench_pipeline -->|running| n_workbench_pipeline
+  n_workbench_pipeline -->|stalled| n_workbench_pipeline
+```
+
+### 401/403 → auth_expired banner → reload (`auth-expired-recovery`)
+
+```mermaid
+flowchart TD
+  %% flow: 401/403 → auth_expired banner → reload job=recover-from-failure
+  %% steps: [{"screen_id":"request-error-banner","branch_label":"auth_expired"},{"screen_id":"reload-page","branch_label":null}]
+  n_request_error_banner["Request error banner (overlay)"]
+  n_reload_page["Reload page (session expired) (exit)"]
+  n_request_error_banner -->|auth_expired| n_reload_page
+```
+
+### http 429/503 + Retry-After (isCooldown) → wait banner → auto retry (`cooldown-429`)
+
+```mermaid
+flowchart TD
+  %% flow: http 429/503 + Retry-After (isCooldown) → wait banner → auto retry job=recover-from-failure
+  %% steps: [{"screen_id":"request-error-banner","branch_label":"http"},{"screen_id":"workbench-pipeline","branch_label":"running"}]
+  n_request_error_banner["Request error banner (overlay)"]
+  n_workbench_pipeline["Workbench — job pipeline (screen)"]
+  n_request_error_banner -->|http| n_workbench_pipeline
+```
+
+## Parity index
+
+Machine-checked by `js/admin/__tests__/uxmap-parity.test.ts` and
+`js/admin/__tests__/uxmap-render-parity.test.ts`: every id, state, and verbatim label
+below must exist in the sibling `.uxmap.json`, and no `z-*`/`act-*` id may appear here
+that the JSON does not define. Regenerate with `docs/ux-maps/render_ux_maps.py` — never
+hand-edit one side.
+
+Zone ids: pipeline-banner progress-meter job-actions error-copy error-action
+
+Action ids: start-job cancel-job retry-request reload wait-cooldown
+
+Zone labels (verbatim; the tables above escape `|` for markdown, this list does not):
+
+- Pipeline status banner — reducer phase to canonical UX state: idle and completed = default; pending and running = loading; failed = error; offline = offline; stalled and completed_with_errors = degraded. Each reducer phase keeps its own copy and recovery.
+- Progress + ETA — running = loading with live progress; stalled = degraded with elapsed no-progress time and reconnect status.
+- Start / cancel / retry — idle and completed = default; running = loading; failed = error; completed_with_errors = degraded.
+- User-facing copy by AppError tag — http: status-aware safe copy; parse: unexpected response; auth_expired: session expired; nonce_refresh and transport: check connection; timeout: server took too long; unknown: caller fallback; abort: silent frozen poll. Cooldown remains the http tag plus isCooldown and Retry-After, never a ninth tag.
+- Recovery by AppError tag — Retry: http, parse, nonce_refresh, transport, timeout and unknown; Reload page: auth_expired only; no banner or action: abort; Wait countdown then auto-retry: http cooldown. Retry and Reload are tag-specific primary actions; Wait is subordinate, and exactly one tag-appropriate recovery renders.
+
+States (all zones and screens): default loading error offline degraded
+
+## Not doing
+- new screens
+- copy changes
+- confirm tab
+- toast redesign

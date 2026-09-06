@@ -106,13 +106,13 @@ describe('FaceThumbnail', () => {
       expect(screen.getByRole('img')).not.toHaveAttribute('loading');
     });
 
-    it('shows accessible error message on load failure', async () => {
-      render(<FaceThumbnail mediaUrl="invalid-url" bbox={mockBbox} />);
-      const img = screen.getByRole('img');
+    it('preserves the caller alt text in the accessible error message', async () => {
+      render(<FaceThumbnail mediaUrl="invalid-url" bbox={mockBbox} alt="Face on the left" />);
+      const img = screen.getByRole('img', { name: 'Face on the left' });
       fireEvent.error(img);
 
       await waitFor(() => {
-        const errorContainer = screen.getByRole('img', { name: 'Face image unavailable' });
+        const errorContainer = screen.getByRole('img', { name: 'Face image unavailable. Face on the left' });
         expect(errorContainer).toBeInTheDocument();
       });
     });

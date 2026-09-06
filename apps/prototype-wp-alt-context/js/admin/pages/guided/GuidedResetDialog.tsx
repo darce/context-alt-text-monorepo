@@ -76,11 +76,10 @@ export const GuidedResetDialog = ({ onConfirm }: GuidedResetDialogProps): React.
           <DialogContent onCloseAutoFocus={handleCloseAutoFocus}>
             <DialogTitle>Reset this practice?</DialogTitle>
             <DialogDescription>
-              This clears the saved practice decisions and any pending description edit, then restores the original safe
-              example. It only changes this in-memory practice scenario; no WordPress data is written.
+              This removes your practice changes. The real WordPress image is not touched.
             </DialogDescription>
             <div className="acx-dialog__actions">
-              <button type="button" className="acx-button acx-button--secondary" onClick={handleCancel}>
+              <button type="button" className="acx-button acx-button--secondary" onClick={handleCancel} autoFocus>
                 Cancel
               </button>
               <button type="button" className="acx-button acx-button--danger" onClick={handleConfirm}>

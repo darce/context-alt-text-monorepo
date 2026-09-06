@@ -202,7 +202,7 @@ def test_lease_expiry_stops_even_when_load_claims_a_batch_is_running() -> None:
     assert result.actuated == []
 
 
-def test_lease_expiry_does_not_strand_gpu_on_untrustworthy_load() -> None:
+def test_lease_expiry_forces_stop_on_untrustworthy_load() -> None:
     controller = GpuLifecycleController(idle_seconds=300)
     actuator = RecordingActuator()
 
@@ -215,8 +215,8 @@ def test_lease_expiry_does_not_strand_gpu_on_untrustworthy_load() -> None:
         max_lease_seconds=3600,
     )
 
-    assert actuator.stopped == []
-    assert result.lease_expired == []
+    assert actuator.stopped == ["ocid1.instance.oc1..gpu"]
+    assert result.lease_expired == [("STOP", "ocid1.instance.oc1..gpu")]
     assert result.fenced_off is True
     assert "load snapshot untrustworthy" in result.errors[-1]
 

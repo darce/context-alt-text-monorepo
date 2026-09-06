@@ -1,0 +1,24 @@
+{
+  "source_revision": "git:08dfafcf445f5ca347bbf855006b3614a83e0918",
+  "mapStates": [
+    "default",
+    "loading",
+    "empty",
+    "error",
+    "offline",
+    "first_time",
+    "edge_input",
+    "degraded"
+  ],
+  "zoneRoles": [
+    "content",
+    "nav",
+    "status",
+    "queue",
+    "job",
+    "ai_review",
+    "forced_choice",
+    "form",
+    "other"
+  ]
+}

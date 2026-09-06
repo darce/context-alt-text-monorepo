@@ -147,6 +147,32 @@ mkdir -p "$out_dir"
     exit 1
 }
 
+# Re-exporting into an existing bundle is supported, but only generated
+# artifacts may be replaced. Rejecting unknown entries keeps an interrupted or
+# hand-edited directory from silently producing a manifest that cannot be
+# checked, while removing known optional artifacts prevents stale receipts
+# from surviving a run that omits those inputs.
+for existing in "$out_dir"/* "$out_dir"/.[!.]* "$out_dir"/..?*; do
+    if [ ! -e "$existing" ] && [ ! -L "$existing" ]; then
+        continue
+    fi
+    existing_name="${existing##*/}"
+    case "$existing_name" in
+        instance.json|audit-events.json|state_history.json|state_snapshot.json|wp_describe_receipts.json|manifest.json)
+            ;;
+        *)
+            fail_usage "output directory contains an unrecognized entry: $existing_name"
+            ;;
+    esac
+done
+for artifact in instance.json audit-events.json state_history.json state_snapshot.json wp_describe_receipts.json manifest.json; do
+    artifact_path="${out_dir}/${artifact}"
+    if [ -e "$artifact_path" ] || [ -L "$artifact_path" ]; then
+        [ -f "$artifact_path" ] || fail_usage "output artifact is not a regular file: $artifact"
+        rm -f "$artifact_path"
+    fi
+done
+
 oci_bin="${OCI_BIN:-oci}"
 oci_connection_timeout="${OCI_CONNECTION_TIMEOUT:-15}"
 oci_read_timeout="${OCI_READ_TIMEOUT:-60}"
@@ -162,6 +188,36 @@ for timeout_value in "$oci_connection_timeout" "$oci_read_timeout" "$curl_connec
         *) fail_usage "timeouts must be positive integer seconds" ;;
     esac
 done
+
+# OCI Audit's --end-time is exclusive. Extend the API query by one
+# microsecond while retaining the operator's original inclusive bound in the
+# manifest and checker window.
+audit_until="$("$resolved_python" - "$until" <<'PY'
+import datetime as dt
+import math
+import sys
+
+
+value = sys.argv[1].strip()
+try:
+    numeric = float(value)
+except ValueError:
+    numeric = None
+if numeric is not None and math.isfinite(numeric):
+    print(format(numeric + 0.000001, ".6f"))
+else:
+    if value.endswith(("Z", "z")):
+        value = value[:-1] + "+00:00"
+    parsed = dt.datetime.fromisoformat(value)
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise SystemExit("timestamp must include a timezone")
+    extended = parsed + dt.timedelta(microseconds=1)
+    print(extended.astimezone(dt.UTC).isoformat(timespec="microseconds").replace("+00:00", "Z"))
+PY
+)" || {
+    echo "ERROR: could not extend --until for the OCI Audit query" >&2
+    exit 2
+}
 
 is_allowed_oci_read() {
     [ "$#" -ge 3 ] || return 1
@@ -232,7 +288,7 @@ receipts_file="${out_dir}/wp_describe_receipts.json"
 
 oci_timeout_command="--connection-timeout ${oci_connection_timeout} --read-timeout ${oci_read_timeout}"
 instance_command="$(quote_for_manifest "$oci_bin") compute instance get --instance-id $(quote_for_manifest "$instance_id") ${oci_timeout_command} --output json"
-audit_command="$(quote_for_manifest "$oci_bin") audit event list --compartment-id $(quote_for_manifest "$compartment_id") --start-time $(quote_for_manifest "$since") --end-time $(quote_for_manifest "$until") --all ${oci_timeout_command} --output json"
+audit_command="$(quote_for_manifest "$oci_bin") audit event list --compartment-id $(quote_for_manifest "$compartment_id") --start-time $(quote_for_manifest "$since") --end-time $(quote_for_manifest "$audit_until") --all ${oci_timeout_command} --output json"
 
 # Both OCI calls below are read verbs.  Do not call the configured binary
 # anywhere else in this script; run_oci is the single safety boundary.
@@ -240,12 +296,13 @@ run_oci compute instance get --instance-id "$instance_id" >"$instance_file"
 run_oci audit event list \
     --compartment-id "$compartment_id" \
     --start-time "$since" \
-    --end-time "$until" \
+    --end-time "$audit_until" \
     --all >"$audit_file"
 
-# Build state history from the shared strict Audit parser.  Only successful
-# transitions and explicit prior-state fields are copied; no window boundary
-# or post-window current-state observation is fabricated.
+# Build state history from the shared strict Audit parser. Only successful
+# transitions with observed current states and explicit prior-state fields are
+# copied; no window boundary or post-window current-state observation is
+# fabricated.
 checker_dir="${lane_root}/scripts"
 "$resolved_python" - "$audit_file" "$history_file" "$instance_id" "$since" "$until" "$checker_dir" <<'PY'
 import json

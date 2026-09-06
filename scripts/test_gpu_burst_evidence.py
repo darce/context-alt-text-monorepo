@@ -37,6 +37,10 @@ def _write_bundle(bundle: Path) -> None:
                     "data": {
                         "resourceId": "ocid1.instance.example",
                         "identity": {"principalName": "burst-start"},
+                        "stateChange": {
+                            "previous": {"lifecycleState": "STOPPED"},
+                            "current": {"lifecycleState": "RUNNING"},
+                        },
                     },
                 },
                 {
@@ -47,6 +51,10 @@ def _write_bundle(bundle: Path) -> None:
                     "data": {
                         "resourceId": "ocid1.instance.example",
                         "identity": {"principalName": "gpu-reaper"},
+                        "stateChange": {
+                            "previous": {"lifecycleState": "RUNNING"},
+                            "current": {"lifecycleState": "STOPPED"},
+                        },
                     },
                 },
             ]
@@ -138,11 +146,12 @@ def _custom_bundle(
         "state_history.json": history
         if history is not _OMITTED
         else {
+            "instance_id": INSTANCE_ID,
             "observations": [
                 {"state": "STOPPED", "timestamp": SINCE},
                 {"state": "RUNNING", "timestamp": RUNNING_AT},
                 {"state": "STOPPED", "timestamp": STOPPED_AT},
-            ]
+            ],
         },
         "audit-events.json": audit
         if audit is not _OMITTED
@@ -156,6 +165,10 @@ def _custom_bundle(
                     "data": {
                         "resourceId": INSTANCE_ID,
                         "identity": {"principalName": "burst-start"},
+                        "stateChange": {
+                            "previous": {"lifecycleState": "STOPPED"},
+                            "current": {"lifecycleState": "RUNNING"},
+                        },
                     },
                 },
                 {
@@ -166,6 +179,10 @@ def _custom_bundle(
                     "data": {
                         "resourceId": INSTANCE_ID,
                         "identity": {"principalName": "gpu-reaper"},
+                        "stateChange": {
+                            "previous": {"lifecycleState": "RUNNING"},
+                            "current": {"lifecycleState": "STOPPED"},
+                        },
                     },
                 },
             ]
@@ -292,6 +309,18 @@ def test_manifest_hash_mismatch_fails(tmp_path: Path) -> None:
     assert "sha256 mismatch" in result.stdout
 
 
+def test_manifest_rejects_non_mapping_file_entry(tmp_path: Path) -> None:
+    bundle = _custom_bundle(tmp_path)
+    manifest = json.loads((bundle / "manifest.json").read_text(encoding="utf-8"))
+    manifest["files"].append("not-an-entry")
+    (bundle / "manifest.json").write_text(json.dumps(manifest) + "\n", encoding="utf-8")
+
+    result = _run_checker(bundle)
+
+    assert result.returncode == 1
+    assert "manifest file entry 3 must be an object" in result.stdout
+
+
 def test_unlisted_file_fails_closed(tmp_path: Path) -> None:
     bundle = _custom_bundle(tmp_path, extra_file=True)
 
@@ -408,21 +437,31 @@ def test_missing_audit_receipt_fails(tmp_path: Path) -> None:
                         "eventTime": RUNNING_AT,
                         "eventId": "start-1",
                         "responseStatus": 200,
-                        "data": {"resourceId": INSTANCE_ID},
+                        "data": {
+                            "resourceId": INSTANCE_ID,
+                            "stateChange": {"current": {"lifecycleState": "RUNNING"}},
+                        },
                     },
                     {
                         "eventName": "StartInstance",
                         "eventTime": RUNNING_AT,
                         "eventId": "start-2",
                         "responseStatus": 200,
-                        "data": {"resourceId": INSTANCE_ID},
+                        "data": {
+                            "resourceId": INSTANCE_ID,
+                            "stateChange": {"current": {"lifecycleState": "RUNNING"}},
+                        },
                     },
                     {
                         "eventName": "StopInstance",
                         "eventTime": STOPPED_AT,
                         "eventId": "stop-1",
                         "responseStatus": 200,
-                        "data": {"resourceId": INSTANCE_ID, "identity": {"principalName": "gpu-reaper"}},
+                        "data": {
+                            "resourceId": INSTANCE_ID,
+                            "identity": {"principalName": "gpu-reaper"},
+                            "stateChange": {"current": {"lifecycleState": "STOPPED"}},
+                        },
                     },
                 ]
             },
@@ -446,19 +485,29 @@ def test_duplicate_start_records_without_event_ids_fail_closed(tmp_path: Path) -
                 "eventName": "StartInstance",
                 "eventTime": RUNNING_AT,
                 "responseStatus": 200,
-                "data": {"resourceId": INSTANCE_ID},
+                "data": {
+                    "resourceId": INSTANCE_ID,
+                    "stateChange": {"current": {"lifecycleState": "RUNNING"}},
+                },
             },
             {
                 "eventName": "StartInstance",
                 "eventTime": RUNNING_AT,
                 "responseStatus": 200,
-                "data": {"resourceId": INSTANCE_ID},
+                "data": {
+                    "resourceId": INSTANCE_ID,
+                    "stateChange": {"current": {"lifecycleState": "RUNNING"}},
+                },
             },
             {
                 "eventName": "StopInstance",
                 "eventTime": STOPPED_AT,
                 "responseStatus": 200,
-                "data": {"resourceId": INSTANCE_ID, "identity": {"principalName": "gpu-reaper"}},
+                "data": {
+                    "resourceId": INSTANCE_ID,
+                    "identity": {"principalName": "gpu-reaper"},
+                    "stateChange": {"current": {"lifecycleState": "STOPPED"}},
+                },
             },
         ]
     }
@@ -700,6 +749,23 @@ def test_history_instance_id_must_match_manifest(tmp_path: Path) -> None:
     assert "identifies ocid1.instance.other" in result.stdout
 
 
+def test_history_instance_id_is_required(tmp_path: Path) -> None:
+    history = {
+        "observations": [
+            {"state": "STOPPED", "timestamp": SINCE},
+            {"state": "RUNNING", "timestamp": RUNNING_AT},
+            {"state": "STOPPED", "timestamp": STOPPED_AT},
+        ],
+    }
+    bundle = _custom_bundle(tmp_path, history=history)
+
+    result = _run_checker(bundle)
+
+    assert result.returncode == 1
+    assert "state_history_identity" in result.stdout
+    assert "missing instance_id" in result.stdout
+
+
 def test_inferred_history_observation_cannot_prove_burst(tmp_path: Path) -> None:
     history = {
         "observations": [
@@ -765,6 +831,48 @@ def test_failed_audit_action_is_not_evidence(tmp_path: Path) -> None:
                 "data": {
                     "resourceId": INSTANCE_ID,
                     "identity": {"principalName": "gpu-reaper"},
+                },
+            },
+        ]
+    }
+    bundle = _custom_bundle(tmp_path, audit=audit)
+
+    result = _run_checker(bundle)
+
+    assert result.returncode == 1
+    assert "observed 0 StartInstance audit events" in result.stdout
+
+
+def test_audit_current_state_must_match_requested_transition(tmp_path: Path) -> None:
+    audit = {
+        "data": [
+            {
+                "eventType": "com.oraclecloud.computeapi.StartInstance.end",
+                "eventTime": RUNNING_AT,
+                "eventId": "start-still-starting",
+                "data": {
+                    "resourceId": INSTANCE_ID,
+                    "request": {"parameters": {"action": "START"}},
+                    "response": {"status": "200"},
+                    "stateChange": {
+                        "previous": {"lifecycleState": "STOPPED"},
+                        "current": {"lifecycleState": "STARTING"},
+                    },
+                },
+            },
+            {
+                "eventType": "com.oraclecloud.computeapi.StopInstance.end",
+                "eventTime": STOPPED_AT,
+                "eventId": "stop-complete",
+                "identity": {"principalName": "gpu-reaper"},
+                "data": {
+                    "resourceId": INSTANCE_ID,
+                    "request": {"parameters": {"action": "STOP"}},
+                    "response": {"status": "200"},
+                    "stateChange": {
+                        "previous": {"lifecycleState": "RUNNING"},
+                        "current": {"lifecycleState": "STOPPED"},
+                    },
                 },
             },
         ]
@@ -907,24 +1015,60 @@ def test_nested_oci_audit_event_fields_are_supported(tmp_path: Path) -> None:
     audit = {
         "data": [
             {
+                "eventType": "com.oraclecloud.computeapi.StartInstance.begin",
+                "eventTime": "2026-09-01T00:09:59Z",
+                "eventId": "start-begin",
+                "eventGroupingId": "start-group",
+                "identity": {"principalName": "burst-start"},
                 "data": {
-                    "eventName": "StartInstance",
-                    "eventTime": RUNNING_AT,
-                    "eventId": "start-nested",
                     "resourceId": INSTANCE_ID,
+                    "request": {"parameters": {"action": "START"}},
                     "response": {"status": "200"},
-                    "identity": {"principalName": "burst-start"},
-                }
+                },
             },
             {
+                "eventType": "com.oraclecloud.computeapi.StartInstance.end",
+                "eventTime": RUNNING_AT,
+                "eventId": "start-end",
+                "eventGroupingId": "start-group",
+                "identity": {"principalName": "burst-start"},
                 "data": {
-                    "eventName": "StopInstance",
-                    "eventTime": STOPPED_AT,
-                    "eventId": "stop-nested",
                     "resourceId": INSTANCE_ID,
+                    "request": {"parameters": {"action": "START"}},
                     "response": {"status": "200"},
-                    "identity": {"principalName": "gpu-reaper"},
-                }
+                    "stateChange": {
+                        "previous": {"lifecycleState": "STOPPED"},
+                        "current": {"lifecycleState": "RUNNING"},
+                    },
+                },
+            },
+            {
+                "eventType": "com.oraclecloud.computeapi.StopInstance.begin",
+                "eventTime": "2026-09-01T00:29:59Z",
+                "eventId": "stop-begin",
+                "eventGroupingId": "stop-group",
+                "identity": {"principalName": "gpu-reaper"},
+                "data": {
+                    "resourceId": INSTANCE_ID,
+                    "request": {"parameters": {"action": "STOP"}},
+                    "response": {"status": "200"},
+                },
+            },
+            {
+                "eventType": "com.oraclecloud.computeapi.StopInstance.end",
+                "eventTime": STOPPED_AT,
+                "eventId": "stop-end",
+                "eventGroupingId": "stop-group",
+                "identity": {"principalName": "gpu-reaper"},
+                "data": {
+                    "resourceId": INSTANCE_ID,
+                    "request": {"parameters": {"action": "STOP"}},
+                    "response": {"status": "200"},
+                    "stateChange": {
+                        "previous": {"lifecycleState": "RUNNING"},
+                        "current": {"lifecycleState": "STOPPED"},
+                    },
+                },
             },
         ]
     }
@@ -933,3 +1077,11 @@ def test_nested_oci_audit_event_fields_are_supported(tmp_path: Path) -> None:
     result = _run_checker(bundle)
 
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_gpu_evidence_make_target_does_not_duplicate_deploy_shell_suite() -> None:
+    fragment = (ROOT / "mk" / "gpu-evidence.mk").read_text(encoding="utf-8")
+    target = fragment.split("gpu-evidence-tests:", 1)[1].split(".PHONY:", 1)[0]
+
+    assert "scripts/test_gpu_burst_evidence.py" in target
+    assert "scripts/deploy/tests/test_export_gpu_evidence_shell.py" not in target

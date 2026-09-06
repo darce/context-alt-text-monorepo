@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace AltContext\Api;
 
 require_once __DIR__ . '/class-media-detail-controller.php';
+require_once __DIR__ . '/class-public-demo-describe-controller.php';
 require_once __DIR__ . '/class-recognition-data-source.php';
 require_once __DIR__ . '/class-tenant-identity.php';
 require_once __DIR__ . '/services/class-person-resolution-service.php';
@@ -81,6 +82,7 @@ class Api {
 	use RunsTransactional;
 
 	private RecognitionController $recognitionController;
+	private PublicDemoDescribeController $publicDemoDescribeController;
 	private MediaDetailController $mediaDetailController;
 	private SettingsController $settingsController;
 	private ?XmpEmbedController $xmpEmbedController;
@@ -88,8 +90,9 @@ class Api {
 	private SplitTopologyCommandDrain $splitTopologyCommandDrain;
 	private ?SyncPullJobInterface $bootstrapSyncPullJob;
 
-	public function __construct( ?XmpEmbedController $xmp_embed_controller = null, ?OutboxDrain $outbox_drain = null, ?SplitTopologyCommandDrain $split_topology_command_drain = null, ?SyncPullJobInterface $bootstrap_sync_pull_job = null ) {
+	public function __construct( ?XmpEmbedController $xmp_embed_controller = null, ?OutboxDrain $outbox_drain = null, ?SplitTopologyCommandDrain $split_topology_command_drain = null, ?SyncPullJobInterface $bootstrap_sync_pull_job = null, ?PublicDemoDescribeController $public_demo_describe_controller = null ) {
 		$this->recognitionController = new RecognitionController();
+		$this->publicDemoDescribeController = $public_demo_describe_controller ?? new PublicDemoDescribeController();
 		$this->mediaDetailController = new MediaDetailController();
 		$this->settingsController = new SettingsController();
 		$this->xmpEmbedController = $xmp_embed_controller;
@@ -305,6 +308,7 @@ class Api {
 		);
 
 		$this->recognitionController->register_routes();
+		$this->publicDemoDescribeController->register_routes();
 		$this->settingsController->register_routes();
 		if ( $this->xmpEmbedController instanceof XmpEmbedController ) {
 			$this->xmpEmbedController->register_routes();

@@ -24,7 +24,6 @@ EXPECTED_WORKFLOWS_WITH_RUN_STEPS = {
 }
 XFAIL_WORKFLOW_OWNERS = {
     "architecture-compliance.yml": "architecture-compliance workflow maintainers",
-    "deploy-recognition.yml": "demoland-1-g3",
     "face-pipeline-ort-parity.yml": "face-pipeline workflow maintainers",
     "gpu-snapshot-gate.yml": "GPU lifecycle workflow maintainers",
     "handoff-integrity.yml": "Workbay orchestration workflow maintainers",
@@ -150,6 +149,53 @@ def test_push_paths_cover_the_gate_inputs() -> None:
     assert "Makefile" in paths
 
 
+def test_gpu_lifecycle_dispatch_is_explicit_and_flag_gated() -> None:
+    workflow = _workflow()
+    triggers = workflow.get("on", workflow.get(True, {}))
+    gpu_input = triggers["workflow_dispatch"]["inputs"]["gpu_lifecycle"]
+
+    assert gpu_input["type"] == "boolean"
+    assert gpu_input["default"] is False
+
+    steps = workflow["jobs"]["deploy"]["steps"]
+    lifecycle_step = next(step for step in steps if step.get("name") == "Install GPU lifecycle timers")
+    deploy_index = next(index for index, step in enumerate(steps) if str(step.get("name", "")).startswith("Deploy "))
+    lifecycle_index = steps.index(lifecycle_step)
+
+    assert lifecycle_index > deploy_index
+    assert "gpu_lifecycle == 'true'" in lifecycle_step["if"]
+    assert lifecycle_step["env"]["ACX_DEPLOY_GPU_LIFECYCLE"] == "1"
+    assert lifecycle_step["env"]["ACX_GPU_READY_URL"] == "${{ vars.ACX_GPU_READY_URL }}"
+    assert lifecycle_step["env"]["GPU_INSTANCE_ID"] == "${{ vars.ACX_GPU_INSTANCE_ID }}"
+    assert "recognition-service.sh gpu-lifecycle" in lifecycle_step["run"]
+
+
+def test_every_run_step_uses_pipefail_shell_default() -> None:
+    workflow = _workflow()
+    expected_shell = "bash --noprofile --norc -eo pipefail {0}"
+
+    assert workflow["defaults"]["run"]["shell"] == expected_shell
+    for job_name, job in workflow["jobs"].items():
+        job_shell = job.get("defaults", {}).get("run", {}).get("shell", expected_shell)
+        for step in job.get("steps", []):
+            if "run" not in step:
+                continue
+            assert step.get("shell", job_shell) == expected_shell, (
+                f"{job_name}/{step.get('name', '<unnamed>')} does not use pipefail"
+            )
+
+
+def test_gpu_lifecycle_dry_run_does_not_mask_gh_variable_failures() -> None:
+    runbook = RUNBOOK_PATH.read_text(encoding="utf-8")
+
+    assert 'export ACX_GPU_READY_URL="$(gh variable get' not in runbook
+    assert 'export GPU_INSTANCE_ID="$(gh variable get' not in runbook
+    assert 'ACX_GPU_READY_URL="$(gh variable get ACX_GPU_READY_URL)" || exit 1' in runbook
+    assert 'GPU_INSTANCE_ID="$(gh variable get ACX_GPU_INSTANCE_ID)" || exit 1' in runbook
+    assert "`pinned`" in runbook
+    assert "`resolved-by-name`" in runbook
+
+
 def test_make_target_keeps_credential_suites() -> None:
     result = subprocess.run(
         ["make", "-n", "test-deploy-contract"],
@@ -195,4 +241,36 @@ def test_prod_rollback_commands_are_copy_pasteable() -> None:
     )
     assert "GOOD_SHA" in _rollback_prose(), (
         "the rollback section's prose never tells the operator to set GOOD_SHA before running the redeploy command"
+    )
+
+
+def test_gpu_lifecycle_rollback_is_fail_fast_and_shell_parseable() -> None:
+    runbook = RUNBOOK_PATH.read_text(encoding="utf-8")
+    marked = runbook.split("<!-- gpu-lifecycle-rollback:start -->", 1)[1].split(
+        "<!-- gpu-lifecycle-rollback:end -->", 1
+    )[0]
+    block = re.search(r"```bash\n(.*?)```", marked, flags=re.DOTALL)
+    assert block is not None
+    commands = block.group(1)
+
+    parsed = subprocess.run(
+        ["bash", "-n"], input=commands, text=True, capture_output=True, check=False
+    )
+    assert parsed.returncode == 0, parsed.stderr
+    assert "set -euo pipefail" in commands
+    assert commands.index("disable --now acx-gpu-start.timer") < commands.index(
+        "previous_release=$(readlink -f"
+    )
+    assert "systemctl start acx-gpu-reap.service" in commands
+    assert "--property=FragmentPath" in commands
+    assert "--property=DropInPaths" in commands
+    assert "cmp -s" in commands
+    assert "MAX_LEASE_SECONDS" in commands
+    assert "86400" in commands
+    assert 'cmp -s "$previous_release/systemd/gpu-lifecycle.env"' in commands
+    assert "expected_exec=" in commands
+    assert "effective_exec=" in commands
+    assert "argv[]=$expected_exec" in commands
+    assert commands.index("systemctl start acx-gpu-reap.service") < commands.index(
+        "enable --now acx-gpu-start.timer"
     )

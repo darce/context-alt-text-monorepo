@@ -1135,10 +1135,27 @@ def test_11_reaper_preflight_accepts_quoted_last_wins_systemd_assignment(tmp_pat
 @pytest.mark.parametrize("custom_registry", [False, True])
 def test_11_installer_payload_passes_reaper_preflight(tmp_path: Path, custom_registry: bool) -> None:
     installer = (ROOT / "scripts/deploy/gpu-lifecycle-install.sh").read_text()
-    staging = installer.split('run_with_deadline "remote release staging"', 1)[1]
+    ssh_options_match = re.search(
+        r"(?ms)^SSH_OPTIONS=\(\n(?P<body>.*?)^\)", installer
+    )
+    assert ssh_options_match is not None, "installer must define its SSH_OPTIONS array"
+    ssh_options = shlex.split(ssh_options_match.group("body"))
+    assert ssh_options == [
+        "-o",
+        "BatchMode=yes",
+        "-o",
+        "ConnectTimeout=10",
+        "-o",
+        "ServerAliveInterval=15",
+        "-o",
+        "ServerAliveCountMax=3",
+    ], "installer SSH_OPTIONS changed; update transport validation deliberately"
+    ssh_options_assignment = "SSH_OPTIONS=(" + " ".join(
+        shlex.quote(option) for option in ssh_options
+    ) + ")"
+    staging = installer.split("# Validate the identity at the boundary where remote transport begins.", 1)[1]
     staging = (
-        'run_with_deadline "remote release staging"'
-        + staging.split('run_with_deadline "remote release validation and switch"', 1)[0]
+        staging.split('run_with_deadline "remote release validation and switch"', 1)[0]
     )
     service_root = tmp_path / "service"
     registry = ROOT / "scripts/deploy/gpu-snapshot-deployments.conf"
@@ -1153,20 +1170,60 @@ def test_11_installer_payload_passes_reaper_preflight(tmp_path: Path, custom_reg
         [
             "bash",
             "-c",
-            r"""
-set -eu
+            """set -eu
 repo_root=$1
 remote_stage=$2
 DEPLOYMENTS_FILE=$3
 HOST=local
-SSH_OPTIONS=(-o BatchMode=yes)
+SSH_USER=ubuntu
+"""
+            + ssh_options_assignment
+            + r"""
+set -eu
 run_with_deadline() { shift; "$@"; }
 sudo() { if [ "$1" != chown ]; then "$@"; fi; }
-ssh() { shift 2; eval "$2"; }
+ssh() {
+    local transport_user=
+    while [ "$#" -gt 0 ]; do
+        case "$1" in
+            -l) transport_user=$2; shift 2 ;;
+            -o)
+                case "${2:-}" in
+                    BatchMode=*|ConnectTimeout=*|ServerAliveInterval=*|ServerAliveCountMax=*) ;;
+                    *) echo "unexpected ssh -o option: ${2:-<missing>}" >&2; return 2 ;;
+                esac
+                shift 2
+                ;;
+            --) shift; break ;;
+            *) echo "unexpected ssh option: $1" >&2; return 2 ;;
+        esac
+    done
+    [ "$transport_user" = "$SSH_USER" ]
+    [ "$1" = "$HOST" ]
+    shift
+    eval "$1"
+}
 scp() {
-    shift 3 # -q -o BatchMode=yes
+    local transport_user=
+    while [ "$#" -gt 0 ]; do
+        case "$1" in
+            -q) shift ;;
+            -o)
+                case "${2:-}" in
+                    BatchMode=*|ConnectTimeout=*|ServerAliveInterval=*|ServerAliveCountMax=*) ;;
+                    User=*) transport_user=${2#User=} ;;
+                    *) echo "unexpected scp -o option: ${2:-<missing>}" >&2; return 2 ;;
+                esac
+                shift 2
+                ;;
+            --) shift; break ;;
+            *) echo "unexpected scp option: $1" >&2; return 2 ;;
+        esac
+    done
+    [ "$transport_user" = "$SSH_USER" ]
     local destination="${!#}"
-    set -- "${@:1:$#-1}" "${destination#local:}"
+    case "$destination" in "$HOST":*) ;; *) return 2 ;; esac
+    set -- "${@:1:$#-1}" "${destination#${HOST}:}"
     cp "$@"
 }
 """
@@ -1211,6 +1268,23 @@ scp() {
         ),
     )
     assert result.returncode == 0, result.stderr
+
+
+def test_11_installer_payload_fails_closed_without_ssh_user() -> None:
+    installer = (ROOT / "scripts/deploy/gpu-lifecycle-install.sh").read_text()
+    staging = installer.split("# Validate the identity at the boundary where remote transport begins.", 1)[1]
+    staging = staging.split('run_with_deadline "remote release staging"', 1)[0]
+    command_environment = dict(os.environ)
+    command_environment.pop("SSH_USER", None)
+    result = subprocess.run(
+        ["bash", "-c", "set -eu\n" + staging],
+        text=True,
+        capture_output=True,
+        check=False,
+        env=command_environment,
+    )
+    assert result.returncode != 0
+    assert "SSH_USER must be set before remote staging" in result.stderr
 
 
 @pytest.mark.parametrize("custom_registry", [False, True])

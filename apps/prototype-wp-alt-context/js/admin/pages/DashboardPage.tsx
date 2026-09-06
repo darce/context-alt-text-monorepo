@@ -34,7 +34,7 @@ import {
   RETENTION_CARD_HEADING,
   RETENTION_CARD_LINK_HREF,
 } from './dashboard/retentionCardCopy';
-import { toWorkbench } from '../navigation/appLinks';
+import { toGuidedPrototype, toWorkbench } from '../navigation/appLinks';
 
 const normalizeCount = (value: number | null | undefined): number => {
   if (typeof value !== 'number' || Number.isNaN(value) || value <= 0) {
@@ -260,7 +260,10 @@ export const DashboardPage = (): React.JSX.Element => {
           <>
             <p>{RETENTION_CARD_ERROR_BODY}</p>
             <div className="acx-dashboard__actions">
-              <a href={RETENTION_CARD_LINK_HREF} className="acx-dashboard__action-card acx-dashboard__action-card--secondary">
+              <a
+                href={RETENTION_CARD_LINK_HREF}
+                className="acx-dashboard__action-card acx-dashboard__action-card--secondary"
+              >
                 <h3>{RETENTION_CARD_ACTION_HEADING}</h3>
                 <p>{RETENTION_CARD_ACTION_BODY}</p>
               </a>
@@ -293,7 +296,10 @@ export const DashboardPage = (): React.JSX.Element => {
               </div>
             </div>
             <div className="acx-dashboard__actions">
-              <a href={RETENTION_CARD_LINK_HREF} className="acx-dashboard__action-card acx-dashboard__action-card--secondary">
+              <a
+                href={RETENTION_CARD_LINK_HREF}
+                className="acx-dashboard__action-card acx-dashboard__action-card--secondary"
+              >
                 <h3>{RETENTION_CARD_ACTION_HEADING}</h3>
                 <p>{RETENTION_CARD_ACTION_BODY}</p>
               </a>
@@ -318,7 +324,7 @@ export const DashboardPage = (): React.JSX.Element => {
           {__('It finds the people in your media library and writes alt text that names them.', 'alt-context')}
         </p>
         <div className="acx-dashboard__actions">
-          <a href="#/guided-prototype" className="acx-button acx-button--primary">
+          <a href={toGuidedPrototype()} className="acx-button acx-button--primary">
             {__('Try the guided practice', 'alt-context')}
           </a>
         </div>

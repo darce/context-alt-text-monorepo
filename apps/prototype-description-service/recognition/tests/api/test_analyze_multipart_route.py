@@ -11,14 +11,18 @@ and returns 202 with the matching id. Negative paths assert the 422 / 400
 from __future__ import annotations
 
 import json
+import tempfile
 import uuid
 from pathlib import Path
 
+import httpx
 import pytest
-from fastapi import FastAPI, HTTPException, status
+from fastapi import BackgroundTasks, FastAPI, HTTPException, status
+from starlette.datastructures import FormData, Headers, UploadFile
+from starlette.requests import ClientDisconnect, Request
 from starlette.testclient import TestClient
 
-from recognition.application.storage import FilesystemObjectStore
+from recognition.application.storage import FilesystemObjectStore, ObjectStoreError
 from recognition.config.settings import RecognitionSettings
 from recognition.interface_adapters.http.deps import (
     get_optional_session,
@@ -28,8 +32,17 @@ from recognition.interface_adapters.http.deps import (
 from recognition.interface_adapters.http.deps.auth import AuthContext
 from recognition.interface_adapters.http.deps.object_store import (
     _settings_default,
+    get_object_store_factory_for_request,
 )
-from recognition.interface_adapters.http.routers.analyze_multipart import router
+from recognition.interface_adapters.http.exception_handlers import register_exception_handlers
+from recognition.interface_adapters.http.middleware.correlation import (
+    CORRELATION_ID_HEADER,
+    CorrelationIdMiddleware,
+)
+from recognition.interface_adapters.http.routers.analyze_multipart import (
+    _parse_multipart_form,
+    router,
+)
 
 PNG_BYTES = b"\x89PNG\r\n\x1a\nfake-png-bytes-for-tests"
 
@@ -486,6 +499,570 @@ def test_multipart_rejects_unsupported_mime(app_with_overrides, tenant_id: str) 
         ],
     )
     assert response.status_code == 415
+
+
+@pytest.mark.asyncio
+async def test_parse_multipart_form_rejects_sixth_image_part(monkeypatch: pytest.MonkeyPatch) -> None:
+    """TEST-15: the image-part bulkhead must fire at ``_MAX_IMAGE_PARTS``."""
+    created_spools = []
+
+    def tracked_spooled_file(*args, **kwargs):
+        spool = tempfile.SpooledTemporaryFile(*args, **kwargs)  # noqa: SIM115 - parser owns and closes the spool
+        created_spools.append(spool)
+        return spool
+
+    monkeypatch.setattr("starlette.formparsers.SpooledTemporaryFile", tracked_spooled_file)
+    encoded_request = httpx.Request(
+        "POST",
+        "http://testserver/recognition/analyze/multipart",
+        files=[(f"image_{media_id}", (f"{media_id}.png", PNG_BYTES, "image/png")) for media_id in range(1, 7)],
+    )
+    request_body = encoded_request.read()
+    delivered = False
+
+    async def receive() -> dict:
+        nonlocal delivered
+        if delivered:
+            return {"type": "http.request", "body": b"", "more_body": False}
+        delivered = True
+        return {"type": "http.request", "body": request_body, "more_body": False}
+
+    request = Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": "/recognition/analyze/multipart",
+            "headers": [(key.lower(), value) for key, value in encoded_request.headers.raw],
+        },
+        receive,
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        await _parse_multipart_form(request)
+
+    assert exc_info.value.status_code == status.HTTP_400_BAD_REQUEST
+    assert exc_info.value.detail == "multipart submission accepts at most 5 image parts"
+    assert len(created_spools) == 5
+    assert all(spool.closed for spool in created_spools)
+
+
+@pytest.mark.asyncio
+async def test_parse_multipart_form_rejects_seventh_non_image_file(monkeypatch: pytest.MonkeyPatch) -> None:
+    """TEST-15: the total-file bulkhead must also bound non-image uploads."""
+    created_spools = []
+
+    def tracked_spooled_file(*args, **kwargs):
+        spool = tempfile.SpooledTemporaryFile(*args, **kwargs)  # noqa: SIM115 - parser owns and closes the spool
+        created_spools.append(spool)
+        return spool
+
+    monkeypatch.setattr("starlette.formparsers.SpooledTemporaryFile", tracked_spooled_file)
+    encoded_request = httpx.Request(
+        "POST",
+        "http://testserver/recognition/analyze/multipart",
+        files=[
+            (f"attachment_{part_id}", (f"{part_id}.bin", b"metadata", "application/octet-stream"))
+            for part_id in range(1, 8)
+        ],
+    )
+    request_body = encoded_request.read()
+    delivered = False
+
+    async def receive() -> dict:
+        nonlocal delivered
+        if delivered:
+            return {"type": "http.request", "body": b"", "more_body": False}
+        delivered = True
+        return {"type": "http.request", "body": request_body, "more_body": False}
+
+    request = Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": "/recognition/analyze/multipart",
+            "headers": [(key.lower(), value) for key, value in encoded_request.headers.raw],
+        },
+        receive,
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        await _parse_multipart_form(request)
+
+    assert exc_info.value.status_code == status.HTTP_400_BAD_REQUEST
+    assert exc_info.value.detail == "Too many files. Maximum number of files is 6."
+    assert len(created_spools) == 6
+    assert all(spool.closed for spool in created_spools)
+
+
+@pytest.mark.asyncio
+async def test_multipart_accepts_five_images_and_rejects_six(
+    app_with_overrides, tenant_id: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app, queue, settings = app_with_overrides
+    from recognition.interface_adapters.http.routers import analyze_multipart as mod
+
+    async def _noop_chain(**_kwargs):
+        return None
+
+    async def _auth_provider():
+        return AuthContext(token="t", tenant_claim=tenant_id)
+
+    async def _no_session_provider():
+        return None
+
+    async def _queue_provider():
+        return queue
+
+    async def _factory_provider():
+        return lambda scoped_tenant: FilesystemObjectStore(root=settings.blob_root, tenant_id=scoped_tenant)
+
+    monkeypatch.setattr(mod, "chain_populate_and_process", _noop_chain)
+    app.dependency_overrides[require_write_access] = _auth_provider
+    app.dependency_overrides[get_optional_session] = _no_session_provider
+    app.dependency_overrides[get_scan_queue_service_optional] = _queue_provider
+    app.dependency_overrides[get_object_store_factory_for_request] = _factory_provider
+
+    def submission(image_count: int) -> dict:
+        files = [
+            (
+                "request",
+                ("request.json", json.dumps({"tenant_id": tenant_id}), "application/json"),
+            )
+        ]
+        files.extend(
+            (f"image_{media_id}", (f"{media_id}.png", PNG_BYTES, "image/png")) for media_id in range(1, image_count + 1)
+        )
+        return {"files": files}
+
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        accepted = await client.post("/recognition/analyze/multipart", **submission(5))
+        rejected = await client.post("/recognition/analyze/multipart", **submission(6))
+
+    assert accepted.status_code == 202, accepted.text
+    assert queue.calls[0]["total"] == 5
+    assert rejected.status_code == 400, rejected.text
+    assert len(queue.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_multipart_storage_failure_uses_opaque_production_error_envelope(
+    tmp_path: Path,
+    tenant_id: str,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    secret_path = tmp_path / "private" / "tenant-secret" / "image.png"
+    driver_error = f"permission denied writing {secret_path} with password=secret"
+
+    class _FailingStore:
+        def put(self, *, job_id: str, media_id: str, data: bytes) -> str:
+            raise ObjectStoreError(driver_error)
+
+        def cleanup(self, *, job_id: str) -> None:
+            return None
+
+        def open(self, uri: str):
+            raise ObjectStoreError("not reached")
+
+    async def _factory_provider():
+        return lambda _tenant_id: _FailingStore()
+
+    async def _auth_provider():
+        return AuthContext(token="t", tenant_claim=tenant_id)
+
+    async def _no_session_provider():
+        return None
+
+    async def _queue_provider():
+        return fake_queue
+
+    fake_queue = _FakeScanQueue()
+    app = FastAPI()
+    app.add_middleware(CorrelationIdMiddleware)
+    app.include_router(router, prefix="/recognition")
+    register_exception_handlers(app)
+    app.dependency_overrides[require_write_access] = _auth_provider
+    app.dependency_overrides[get_optional_session] = _no_session_provider
+    app.dependency_overrides[get_scan_queue_service_optional] = _queue_provider
+    app.dependency_overrides[get_object_store_factory_for_request] = _factory_provider
+
+    import logging
+
+    from recognition.interface_adapters.http import exception_handlers
+
+    caplog.set_level(logging.ERROR, logger=exception_handlers.logger.name)
+    transport = httpx.ASGITransport(app=app, raise_app_exceptions=False)
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.post(
+            "/recognition/analyze/multipart",
+            headers={CORRELATION_ID_HEADER: "req-storage-failure"},
+            **_multipart_submission(tenant_id),
+        )
+
+    body = response.json()
+    assert response.status_code == 500
+    assert body == {
+        "error": "internal_server_error",
+        "path": "http://testserver/recognition/analyze/multipart",
+        "correlation_id": "req-storage-failure",
+    }
+    assert driver_error not in response.text
+    assert str(secret_path) not in response.text
+    records = [record for record in caplog.records if record.name == exception_handlers.logger.name]
+    assert len(records) == 1
+    assert records[0].correlation_id == "req-storage-failure"
+    assert records[0].exc_info is not None
+    assert driver_error in str(records[0].exc_info[1])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "failure",
+    [
+        None,
+        HTTPException(status_code=400, detail="invalid multipart"),
+        ObjectStoreError("storage failed"),
+        RuntimeError("persistence failed"),
+    ],
+    ids=["success", "validation-error", "storage-error", "persistence-error"],
+)
+async def test_multipart_closes_parsed_form_on_every_exit(
+    tenant_id: str, monkeypatch: pytest.MonkeyPatch, failure: Exception | None
+) -> None:
+    from recognition.interface_adapters.http.routers import analyze_multipart as mod
+
+    upload = UploadFile(
+        filename="a.png",
+        file=tempfile.SpooledTemporaryFile(),  # noqa: SIM115 - route closure is the behavior under test
+    )
+    upload.headers = Headers({"content-type": "image/png"})
+    upload.file.write(PNG_BYTES)
+    upload.file.seek(0)
+
+    class _CloseSpyForm(FormData):
+        closed = False
+
+        async def close(self) -> None:
+            self.closed = True
+            await super().close()
+
+    form = _CloseSpyForm([("image_1", upload)])
+    expected_result = object()
+
+    async def _fake_parse(_request: Request) -> FormData:
+        return form
+
+    async def _fake_process(**_kwargs):
+        if failure is not None:
+            raise failure
+        return expected_result
+
+    monkeypatch.setattr(mod, "_parse_multipart_form", _fake_parse)
+    monkeypatch.setattr(mod, "_analyze_media_multipart_form", _fake_process)
+    request = Request({"type": "http", "method": "POST", "path": "/recognition/analyze/multipart", "headers": []})
+
+    async def _call_route():
+        return await mod.analyze_media_multipart(
+            request=request,
+            background_tasks=BackgroundTasks(),
+            auth=AuthContext(token="t", tenant_claim=tenant_id),
+            session=None,
+            scan_queue=_FakeScanQueue(),
+            object_store_factory=lambda _tenant: None,
+            _demo_quota=None,
+        )
+
+    if failure is None:
+        assert await _call_route() is expected_result
+    else:
+        with pytest.raises(type(failure)):
+            await _call_route()
+    assert form.closed is True
+    assert upload.file.closed is True
+
+
+@pytest.mark.asyncio
+async def test_multipart_parser_closes_partial_spool_on_client_disconnect(monkeypatch: pytest.MonkeyPatch) -> None:
+    from starlette import formparsers
+
+    from recognition.interface_adapters.http.routers import analyze_multipart as mod
+
+    opened_spools: list = []
+    real_spooled_temporary_file = tempfile.SpooledTemporaryFile
+
+    def _tracking_spool(*args, **kwargs):
+        spool = real_spooled_temporary_file(*args, **kwargs)
+        opened_spools.append(spool)
+        return spool
+
+    monkeypatch.setattr(formparsers, "SpooledTemporaryFile", _tracking_spool)
+    boundary = "disconnect-boundary"
+    partial_body = (
+        f"--{boundary}\r\n"
+        'Content-Disposition: form-data; name="image_1"; filename="a.png"\r\n'
+        "Content-Type: image/png\r\n\r\n"
+    ).encode() + PNG_BYTES
+    messages = iter(
+        [
+            {"type": "http.request", "body": partial_body, "more_body": True},
+            {"type": "http.disconnect"},
+        ]
+    )
+
+    async def receive():
+        return next(messages)
+
+    request = Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": "/recognition/analyze/multipart",
+            "headers": [(b"content-type", f"multipart/form-data; boundary={boundary}".encode())],
+        },
+        receive,
+    )
+
+    with pytest.raises(ClientDisconnect):
+        await mod._parse_multipart_form(request)
+
+    assert opened_spools, "test must reach file-spool allocation before disconnecting"
+    assert all(spool.closed for spool in opened_spools)
+
+
+@pytest.mark.asyncio
+async def test_multipart_parser_closes_boundaryless_trailing_spool(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A clean EOF must not orphan a file omitted from the returned FormData."""
+    from starlette import formparsers
+
+    from recognition.interface_adapters.http.routers import analyze_multipart as mod
+
+    opened_spools: list = []
+    real_spooled_temporary_file = tempfile.SpooledTemporaryFile
+
+    def _tracking_spool(*args, **kwargs):
+        spool = real_spooled_temporary_file(*args, **kwargs)
+        opened_spools.append(spool)
+        return spool
+
+    monkeypatch.setattr(formparsers, "SpooledTemporaryFile", _tracking_spool)
+    boundary = "missing-terminal-boundary"
+    body = (
+        f"--{boundary}\r\n"
+        'Content-Disposition: form-data; name="image_1"; filename="a.png"\r\n'
+        "Content-Type: image/png\r\n\r\n"
+    ).encode() + PNG_BYTES
+    delivered = False
+
+    async def receive():
+        nonlocal delivered
+        if delivered:
+            return {"type": "http.request", "body": b"", "more_body": False}
+        delivered = True
+        return {"type": "http.request", "body": body, "more_body": False}
+
+    request = Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": "/recognition/analyze/multipart",
+            "headers": [(b"content-type", f"multipart/form-data; boundary={boundary}".encode())],
+        },
+        receive,
+    )
+
+    form = await mod._parse_multipart_form(request)
+    await form.close()
+
+    assert list(form.multi_items()) == []
+    assert len(opened_spools) == 1, "test must reach file-spool allocation before clean EOF"
+    assert opened_spools[0].closed is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("media_type", "ending", "expected_status", "expected_detail"),
+    [
+        (
+            b"\xa0multipart/form-data",
+            "eof",
+            422,
+            "multipart submission must include at least one image_<media_id> part",
+        ),
+        (b"\xa0multipart/form-data", "malformed", 400, "invalid multipart form"),
+        (b"\t multipart/form-data", "malformed", 400, "invalid multipart form"),
+        (b"MULTIPART/FORM-DATA", "complete", 202, None),
+        (b"application/octet-stream", "complete", 415, "content-type must be multipart/form-data"),
+        (b"multipart/form-data-extra", "complete", 415, "content-type must be multipart/form-data"),
+        (b"application/x-www-form-urlencoded", "complete", 415, "content-type must be multipart/form-data"),
+        (b"", "complete", 415, "content-type must be multipart/form-data"),
+    ],
+)
+async def test_multipart_route_normalizes_content_type_and_owns_spools(
+    tenant_id: str,
+    monkeypatch: pytest.MonkeyPatch,
+    media_type: bytes,
+    ending: str,
+    expected_status: int,
+    expected_detail: str | None,
+) -> None:
+    """Exercise parser selection at the HTTP boundary with a disk-backed upload."""
+    import io
+
+    from starlette import formparsers
+
+    from recognition.interface_adapters.http.routers import analyze_multipart as mod
+
+    opened_spools: list = []
+    real_spooled_temporary_file = tempfile.SpooledTemporaryFile
+
+    def _tracking_spool(*args, **kwargs):
+        spool = real_spooled_temporary_file(*args, **kwargs)
+        opened_spools.append(spool)
+        return spool
+
+    monkeypatch.setattr(formparsers, "SpooledTemporaryFile", _tracking_spool)
+    image_data = PNG_BYTES + b"x" * (1024 * 1024)
+
+    class _MemoryStore:
+        def put(self, **_kwargs):
+            return "memory://image"
+
+        def open(self, _uri):
+            return io.BytesIO(image_data)
+
+        def cleanup(self, **_kwargs):
+            pass
+
+    async def _auth_provider():
+        return AuthContext(token="t", tenant_claim=tenant_id)
+
+    async def _no_session_provider():
+        return None
+
+    queue = _FakeScanQueue()
+
+    async def _queue_provider():
+        return queue
+
+    async def _factory_provider():
+        return lambda _tenant_id: _MemoryStore()
+
+    async def _noop_chain(**_kwargs):
+        pass
+
+    monkeypatch.setattr(mod, "chain_populate_and_process", _noop_chain)
+    app = FastAPI()
+    app.include_router(router, prefix="/recognition")
+    app.dependency_overrides[require_write_access] = _auth_provider
+    app.dependency_overrides[get_optional_session] = _no_session_provider
+    app.dependency_overrides[get_scan_queue_service_optional] = _queue_provider
+    app.dependency_overrides[get_object_store_factory_for_request] = _factory_provider
+    boundary = "normalized-content-type"
+
+    async def _body():
+        yield (
+            f"--{boundary}\r\n"
+            'Content-Disposition: form-data; name="request"\r\n\r\n'
+            f"{json.dumps({'tenant_id': tenant_id})}\r\n"
+            f"--{boundary}\r\n"
+            'Content-Disposition: form-data; name="image_1"; filename="a.png"\r\n'
+            "Content-Type: image/png\r\n\r\n"
+        ).encode() + image_data
+        # Separate chunks ensure the upload reaches disk before the parser
+        # encounters clean EOF or malformed subsequent headers.
+        if ending == "malformed":
+            yield f"\r\n--{boundary}\r\nInvalid Header: value\r\n\r\n".encode()
+        elif ending == "complete":
+            yield f"\r\n--{boundary}--\r\n".encode()
+
+    fd_directory = Path("/proc/self/fd")
+    transport = httpx.ASGITransport(app=app, raise_app_exceptions=False)
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        # Read the local procfs snapshot without introducing thread-pool activity.
+        before_fds = len(list(fd_directory.iterdir())) if fd_directory.exists() else None  # noqa: ASYNC240
+        try:
+            response = await client.post(
+                "/recognition/analyze/multipart",
+                headers={b"content-type": media_type + f"; boundary={boundary}".encode()},
+                content=_body(),
+            )
+            assert response.status_code == expected_status, response.text
+            if expected_detail is not None:
+                assert response.json() == {"detail": expected_detail}
+            if expected_status == 415:
+                assert opened_spools == [], "unsupported media types must fail before spool allocation"
+            else:
+                assert len(opened_spools) == 1
+                assert opened_spools[0]._rolled, "probe must exercise an upload exceeding the memory limit"
+                assert all(spool.closed for spool in opened_spools)
+            if before_fds is not None:
+                assert len(list(fd_directory.iterdir())) == before_fds  # noqa: ASYNC240
+            assert len(queue.calls) == (1 if expected_status == 202 else 0)
+        finally:
+            # A failing regression must not itself leak descriptors into later tests.
+            for spool in opened_spools:
+                spool.close()
+
+
+@pytest.mark.asyncio
+async def test_multipart_route_rejects_malformed_parser_input_and_closes_spool(
+    tenant_id: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Malformed bytes after a part boundary are a bounded client error."""
+    from starlette import formparsers
+
+    opened_spools: list = []
+    real_spooled_temporary_file = tempfile.SpooledTemporaryFile
+
+    def _tracking_spool(*args, **kwargs):
+        spool = real_spooled_temporary_file(*args, **kwargs)
+        opened_spools.append(spool)
+        return spool
+
+    monkeypatch.setattr(formparsers, "SpooledTemporaryFile", _tracking_spool)
+
+    async def _auth_provider():
+        return AuthContext(token="t", tenant_claim=tenant_id)
+
+    async def _no_session_provider():
+        return None
+
+    async def _queue_provider():
+        return _FakeScanQueue()
+
+    async def _factory_provider():
+        return lambda _tenant_id: None
+
+    app = FastAPI()
+    app.include_router(router, prefix="/recognition")
+    app.dependency_overrides[require_write_access] = _auth_provider
+    app.dependency_overrides[get_optional_session] = _no_session_provider
+    app.dependency_overrides[get_scan_queue_service_optional] = _queue_provider
+    app.dependency_overrides[get_object_store_factory_for_request] = _factory_provider
+    boundary = "malformed-next-part"
+    body = (
+        f"--{boundary}\r\n"
+        'Content-Disposition: form-data; name="request"; filename="request.json"\r\n'
+        "Content-Type: application/json\r\n\r\n"
+        "{}\r\n"
+        f"--{boundary}\r\n"
+        "Invalid Header: value\r\n\r\n"
+    ).encode()
+
+    transport = httpx.ASGITransport(app=app, raise_app_exceptions=False)
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.post(
+            "/recognition/analyze/multipart",
+            headers={"content-type": f"multipart/form-data; boundary={boundary}"},
+            content=body,
+        )
+
+    assert response.status_code == status.HTTP_400_BAD_REQUEST
+    assert response.json() == {"detail": "invalid multipart form"}
+    assert len(opened_spools) == 1, "test must allocate a spool before the malformed bytes"
+    assert opened_spools[0].closed is True
 
 
 # ---------------------------------------------------------------------------

@@ -1,7 +1,7 @@
 # UX Map — describe-gpu-tier
 
 **Product:** `alt-context WP plugin admin SPA — describe run GPU tier + lifecycle state`
-**Source fixture:** `workbench-operator-loop.uxmap.json`
+**Source fixture:** `apps/prototype-wp-alt-context/js/admin/pages/DescribeRunApplyView.tsx`
 
 ## Goals
 - Operator can start a bulk describe run and always see whether the GPU tier is stopped, warming, ready, or degraded (INT-10 status–predict–stop).
@@ -131,12 +131,25 @@ Purpose: One-shot notification for a tier transition the operator is NOT looking
 +------------------------------------------------------------+
 ```
 
+## Actions
+
+| id | verb | target | hierarchy | costly | irreversible | preview required | screen id |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `start-bulk-describe` | Describe N selected | `POST describe/run` | primary | yes | no | yes | `workbench-media-selection` |
+| `cancel-run` | Cancel run | `POST describe/run/:id/cancel` | secondary | no | no | no | `workbench-media-selection` |
+| `keep-provisional` | Use CPU drafts now | `navigate describe-run-apply` | secondary | no | no | no | `workbench-media-selection` |
+| `retry-polling` | Retry | `refetch run status` | secondary | no | no | no | `workbench-media-selection` |
+| `apply-descriptions` | Apply | `POST describe/run/:id/apply` | primary | no | no | yes | `describe-run-apply` |
+| `describe-single` | Describe with AI | `POST scene/describe` | primary | yes | no | no | `dashboard-describe-panel` |
+| `dismiss-toast` | Dismiss | `toast` | tertiary | no | no | no | `toast-gpu-transition` |
+
 ## Flows
 ### Bulk describe when GPU is stopped (`bulk-describe-cold-gpu`)
 
 ```mermaid
 flowchart TD
   %% flow: Bulk describe when GPU is stopped job=bulk-describe
+  %% steps: [{"screen_id":"workbench-media-selection","branch_label":"select → CTA shows 'GPU will warm (~2 min)' (gpu-cold-preview)"},{"screen_id":"workbench-media-selection","branch_label":"run queued → gpu-starting → gpu-warming (bounded ETA, Cancel)"},{"screen_id":"workbench-media-selection","branch_label":"CPU provisional drafts arrive → describing-provisional; 'Use CPU drafts now' offered"},{"screen_id":"workbench-media-selection","branch_label":"GPU ready → describing-final → complete"},{"screen_id":"toast-gpu-transition","branch_label":"only if operator left the screen: success-final-ready"},{"screen_id":"describe-run-apply","branch_label":"per-item final_gpu badges; apply"}]
   n_workbench_media_selection["Workbench › Media selection (screen)"]
   n_workbench_media_selection -->|select → CTA shows 'GPU will warm (~2 min)' (gpu-cold-preview)| n_workbench_media_selection
   n_workbench_media_selection -->|run queued → gpu-starting → gpu-warming (bounded ETA, Cancel)| n_workbench_media_selection
@@ -152,6 +165,7 @@ flowchart TD
 ```mermaid
 flowchart TD
   %% flow: GPU fails to come up / unreachable job=bulk-describe
+  %% steps: [{"screen_id":"workbench-media-selection","branch_label":"gpu-warming exceeds bound (>180 s) or endpoint unreachable → degraded-cpu"},{"screen_id":"toast-gpu-transition","branch_label":"error-gpu-unavailable (once), CPU drafts kept"},{"screen_id":"describe-run-apply","branch_label":"partial-provisional; z-upgrade-notice explains no upgrade coming"}]
   n_workbench_media_selection["Workbench › Media selection (screen)"]
   n_toast_gpu_transition["Toast — GPU tier transition (overlay)"]
   n_workbench_media_selection -->|gpu-warming exceeds bound (>180 s) or endpoint unreachable → degraded-cpu| n_toast_gpu_transition
@@ -164,6 +178,7 @@ flowchart TD
 ```mermaid
 flowchart TD
   %% flow: Dashboard single describe on GPU tier job=single-describe
+  %% steps: [{"screen_id":"dashboard-describe-panel","branch_label":"submit → result; z-provenance shows Adapter=gpu_qwen30b, Model"},{"screen_id":"dashboard-describe-panel","branch_label":"GPU stopped → z-inline-error gpu-unreachable names the state + what to do"}]
   n_dashboard_describe_panel["Dashboard › Describe with AI (screen)"]
   n_dashboard_describe_panel -->|submit → result; z-provenance shows Adapter=gpu_qwen30b, Model| n_dashboard_describe_panel
 ```

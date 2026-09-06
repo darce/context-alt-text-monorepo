@@ -1,10 +1,12 @@
 {
   "map_ref": "febt-1-job-error-states",
   "product": "AltContext WP admin SPA — job pipeline error and progress states",
-  "source_fixture": "workbench-operator-loop",
+  "source_fixture": "apps/prototype-wp-alt-context/js/admin/pages/workbench/JobPipelineContext.tsx",
   "goals": [
     "Every request failure the operator can see maps to exactly one AppError tag and one recovery action.",
-    "Job progress states are the reducer's states, not derived ad hoc in components."
+    "Job progress states are the reducer's states, not derived ad hoc in components.",
+    "Keep stalled and offline as peer reducer states with distinct recoveries: stalled advances a bounded reconnect timer, while offline waits for the browser online event; the canonical UX states are degraded and offline respectively (FEBT1F-L-02, F3/W2D-01).",
+    "Keep the pipeline banner sourced from useJobStateMachineDerivedState.statusText through JobPipelineProvider, WorkbenchProvider, and WorkbenchPage."
   ],
   "jobs": [
     { "id": "run-job", "label": "Start a scan/describe job and watch it finish" },
@@ -18,27 +20,54 @@
       "purpose": "Shows the active job's phase, progress, ETA and stall state driven by jobReducer state.",
       "route": "/admin.php?page=alt-context-workbench",
       "wp_page": "alt-context-workbench",
-      "job_entry": "run-job",
+      "job_entry": true,
       "code_ref": "apps/prototype-wp-alt-context/js/admin/pages/workbench/JobPipelineContext.tsx",
       "primary_action_id": "start-job",
-      "states": ["idle", "pending", "running", "stalled", "offline", "completed", "completed_with_errors", "failed"],
+      "states": ["default", "loading", "error", "offline", "degraded"],
       "zones": [
-        { "id": "pipeline-banner", "label": "Pipeline status banner", "role": "status", "states": ["pending", "running", "stalled", "offline", "completed", "completed_with_errors", "failed"] },
-        { "id": "progress-meter", "label": "Progress + ETA", "role": "status", "states": ["running", "stalled"] },
-        { "id": "job-actions", "label": "Start / cancel / retry", "role": "action", "states": ["idle", "running", "failed", "completed_with_errors"] }
+        {
+          "id": "pipeline-banner",
+          "label": "Pipeline status banner — reducer phase to canonical UX state: idle and completed = default; pending and running = loading; failed = error; offline = offline; stalled and completed_with_errors = degraded. Each reducer phase keeps its own copy and recovery.",
+          "role": "status",
+          "states": ["default", "loading", "error", "offline", "degraded"]
+        },
+        {
+          "id": "progress-meter",
+          "label": "Progress + ETA — running = loading with live progress; stalled = degraded with elapsed no-progress time and reconnect status.",
+          "role": "status",
+          "states": ["loading", "degraded"]
+        },
+        {
+          "id": "job-actions",
+          "label": "Start / cancel / retry — idle and completed = default; running = loading; failed = error; completed_with_errors = degraded.",
+          "role": "form",
+          "states": ["default", "loading", "error", "degraded"]
+        }
       ]
     },
     {
       "id": "request-error-banner",
+      "action_states": ["http", "parse", "auth_expired", "nonce_refresh", "timeout", "transport", "unknown", "abort", "http_cooldown"],
       "kind": "overlay",
       "title": "Request error banner",
-      "purpose": "One banner per AppError tag with a tag-specific recovery action; raw messages never reach the DOM.",
+      "purpose": "One banner per AppError tag with tag-specific copy and recovery; raw messages never reach the DOM. Canonical UX state does not erase the tag: http, parse, auth_expired, nonce_refresh, timeout and unknown are error; transport is offline; abort is default because its frozen poll is silent; an http cooldown (429, or 503 with Retry-After) is degraded while it waits to auto-retry.",
+      "route": "/admin.php?page=alt-context-workbench",
       "code_ref": "apps/prototype-wp-alt-context/js/admin/utils/userFacingError.ts",
       "primary_action_id": "retry-request",
-      "states": ["http", "parse", "auth_expired", "nonce_refresh", "abort", "transport", "timeout", "unknown"],
+      "states": ["default", "error", "offline", "degraded"],
       "zones": [
-        { "id": "error-copy", "label": "User-facing copy", "role": "content", "states": ["http", "parse", "auth_expired", "nonce_refresh", "abort", "transport", "timeout", "unknown"] },
-        { "id": "error-action", "label": "Recovery action", "role": "action", "states": ["http", "parse", "auth_expired", "nonce_refresh", "transport", "timeout", "unknown"] }
+        {
+          "id": "error-copy",
+          "label": "User-facing copy by AppError tag — http: status-aware safe copy; parse: unexpected response; auth_expired: session expired; nonce_refresh and transport: check connection; timeout: server took too long; unknown: caller fallback; abort: silent frozen poll. Cooldown remains the http tag plus isCooldown and Retry-After, never a ninth tag.",
+          "role": "content",
+          "states": ["default", "error", "offline", "degraded"]
+        },
+        {
+          "id": "error-action",
+          "label": "Recovery by AppError tag — Retry: http, parse, nonce_refresh, transport, timeout and unknown; Reload page: auth_expired only; no banner or action: abort; Wait countdown then auto-retry: http cooldown. Retry and Reload are tag-specific primary actions; Wait is subordinate, and exactly one tag-appropriate recovery renders.",
+          "role": "form",
+          "states": ["error", "offline", "degraded"]
+        }
       ]
     },
     {
@@ -46,26 +75,103 @@
       "kind": "exit",
       "title": "Reload page (session expired)",
       "purpose": "Only exit from auth_expired; WordPress login handles the rest.",
+      "route": "/admin.php?page=alt-context-workbench",
       "code_ref": "apps/prototype-wp-alt-context/js/admin/utils/userFacingError.ts"
     }
   ],
   "actions": [
-    { "id": "start-job", "verb": "Start job", "target": "workbench-pipeline", "hierarchy": "primary", "costly": true, "irreversible": false, "preview_required": false, "screen_id": "workbench-pipeline" },
-    { "id": "cancel-job", "verb": "Cancel job", "target": "workbench-pipeline", "hierarchy": "secondary", "costly": false, "irreversible": true, "preview_required": false, "screen_id": "workbench-pipeline" },
-    { "id": "retry-request", "verb": "Retry", "target": "request-error-banner", "hierarchy": "primary", "costly": false, "irreversible": false, "preview_required": false, "screen_id": "request-error-banner" },
-    { "id": "reload", "verb": "Reload page", "target": "reload-page", "hierarchy": "primary", "costly": false, "irreversible": false, "preview_required": false, "screen_id": "request-error-banner" },
-    { "id": "wait-cooldown", "verb": "Wait (countdown)", "target": "request-error-banner", "hierarchy": "secondary", "costly": false, "irreversible": false, "preview_required": false, "screen_id": "request-error-banner" }
+    {
+      "id": "start-job",
+      "verb": "Start job",
+      "target": "workbench-pipeline",
+      "hierarchy": "primary",
+      "costly": true,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "workbench-pipeline"
+    },
+    {
+      "id": "cancel-job",
+      "verb": "Cancel job",
+      "target": "workbench-pipeline",
+      "hierarchy": "secondary",
+      "costly": false,
+      "irreversible": true,
+      "preview_required": false,
+      "screen_id": "workbench-pipeline"
+    },
+    {
+      "id": "retry-request",
+      "when": ["http", "parse", "nonce_refresh", "timeout", "transport", "unknown"],
+      "verb": "Retry",
+      "target": "request-error-banner",
+      "hierarchy": "primary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "request-error-banner"
+    },
+    {
+      "id": "reload",
+      "when": ["auth_expired"],
+      "verb": "Reload page",
+      "target": "reload-page",
+      "hierarchy": "primary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "request-error-banner"
+    },
+    {
+      "id": "wait-cooldown",
+      "when": ["http_cooldown"],
+      "verb": "Wait (countdown)",
+      "target": "request-error-banner",
+      "hierarchy": "secondary",
+      "costly": false,
+      "irreversible": false,
+      "preview_required": false,
+      "screen_id": "request-error-banner"
+    }
   ],
   "flows": [
-    { "id": "job-happy-path", "job": "run-job", "label": "idle → pending → running → completed", "steps": [ { "screen_id": "workbench-pipeline", "branch_label": "idle" }, { "screen_id": "workbench-pipeline", "branch_label": "pending" }, { "screen_id": "workbench-pipeline", "branch_label": "running" }, { "screen_id": "workbench-pipeline", "branch_label": "completed" } ] },
-    { "id": "job-stall-reconnect", "job": "run-job", "label": "running → stalled (30 s no event) → running (SSE reconnect) or failed", "steps": [ { "screen_id": "workbench-pipeline", "branch_label": "running" }, { "screen_id": "workbench-pipeline", "branch_label": "stalled" }, { "screen_id": "workbench-pipeline", "branch_label": "running | failed" } ] },
-    { "id": "auth-expired-recovery", "job": "recover-from-failure", "label": "401/403 → auth_expired banner → reload", "steps": [ { "screen_id": "request-error-banner", "branch_label": "auth_expired" }, { "screen_id": "reload-page" } ] },
-    { "id": "cooldown-429", "job": "recover-from-failure", "label": "http 429/503 + Retry-After (isCooldown) → wait banner → auto retry", "steps": [ { "screen_id": "request-error-banner", "branch_label": "http" }, { "screen_id": "workbench-pipeline", "branch_label": "running" } ] }
+    {
+      "id": "job-happy-path",
+      "job": "run-job",
+      "label": "idle → pending → running → completed",
+      "steps": [
+        { "screen_id": "workbench-pipeline", "branch_label": "idle" },
+        { "screen_id": "workbench-pipeline", "branch_label": "pending" },
+        { "screen_id": "workbench-pipeline", "branch_label": "running" },
+        { "screen_id": "workbench-pipeline", "branch_label": "completed" }
+      ]
+    },
+    {
+      "id": "job-stall-reconnect",
+      "job": "run-job",
+      "label": "running → stalled (30 s no event) → running (SSE reconnect) or failed",
+      "steps": [
+        { "screen_id": "workbench-pipeline", "branch_label": "running" },
+        { "screen_id": "workbench-pipeline", "branch_label": "stalled" },
+        { "screen_id": "workbench-pipeline", "branch_label": "running | failed" }
+      ]
+    },
+    {
+      "id": "auth-expired-recovery",
+      "job": "recover-from-failure",
+      "label": "401/403 → auth_expired banner → reload",
+      "steps": [{ "screen_id": "request-error-banner", "branch_label": "auth_expired" }, { "screen_id": "reload-page" }]
+    },
+    {
+      "id": "cooldown-429",
+      "job": "recover-from-failure",
+      "label": "http 429/503 + Retry-After (isCooldown) → wait banner → auto retry",
+      "steps": [
+        { "screen_id": "request-error-banner", "branch_label": "http" },
+        { "screen_id": "workbench-pipeline", "branch_label": "running" }
+      ]
+    }
   ],
   "open_questions": [],
-  "resolved_questions": [
-    "stalled/offline: view renders them as modifiers (stalledForSeconds, isOnline) on statusText; reducer keeps peer states and the hook derives the modifiers (FEBT1F-L-02, F3/W2D-01).",
-    "Pipeline banner owner: useJobStateMachineDerivedState.statusText via JobPipelineProvider <- WorkbenchProvider <- WorkbenchPage (codemap trace)."
-  ],
   "not_doing": ["new screens", "copy changes", "confirm tab", "toast redesign"]
 }

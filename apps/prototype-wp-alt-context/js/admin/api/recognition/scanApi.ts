@@ -127,14 +127,18 @@ export const fetchRecentBatchRuns = async (limit = 5): Promise<RecentBatchRunsRe
   });
 };
 
-export const fetchScanStatus = async (jobId: string): Promise<JobStatusResponse> => {
+export const fetchScanStatus = async (jobId: string, signal?: AbortSignal): Promise<JobStatusResponse> => {
   const base = getEndpoint('recognitionJobs');
   const separator = base.endsWith('/') ? '' : '/';
 
   return fetchRequiredApi<JobStatusResponse>(`${base}${separator}${jobId}`, {
     method: 'GET',
     restNonce: getConfig().nonce,
-    signal: createRecognitionTimeoutSignal(15_000),
+    // The caller owns cancellation; fetchApi composes it with this deadline.
+    // RES-02/RES-13 (heuristics-canon-research/lexicons/engineering.md:113,124):
+    // both the wait bound and the integration containment path must be explicit.
+    signal,
+    timeoutMs: 15_000,
   });
 };
 

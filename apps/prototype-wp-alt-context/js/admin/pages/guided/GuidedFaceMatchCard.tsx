@@ -1,108 +1,83 @@
 import React from 'react';
 
 import { FaceThumbnail } from '../../../components/ui/FaceThumbnail';
-import type { GuidedFaceMatch, GuidedIdentity } from '../../guidedPrototype/state';
+import type { GuidedFace, GuidedIdentity, GuidedLabeledPerson } from '../../guidedPrototype/state';
 
 export interface GuidedFaceMatchCardProps {
-  faceMatch: GuidedFaceMatch;
+  face: GuidedFace;
+  person: GuidedLabeledPerson;
   identity: GuidedIdentity;
   mediaUrl: string;
-  hasUnsavedEdit: boolean;
-  onConfirm: () => void;
-  onLeaveUnnamed: () => void;
 }
 
-const decisionStatusLabel = (identity: GuidedIdentity, matchedPersonName: string): string => {
+const decisionStatusLabel = (identity: GuidedIdentity, personName: string): string => {
   if (identity.status === 'confirmed') {
-    return `You confirmed: ${identity.name ?? matchedPersonName}.`;
+    return `You confirmed: ${personName}.`;
   }
 
   if (identity.status === 'unidentified') {
-    return 'You kept the person unnamed.';
+    return 'You kept this person unnamed.';
   }
 
   return 'You have not decided yet.';
 };
 
 export const GuidedFaceMatchCard = ({
-  faceMatch,
+  face,
+  person,
   identity,
   mediaUrl,
-  hasUnsavedEdit,
-  onConfirm,
-  onLeaveUnnamed,
 }: GuidedFaceMatchCardProps): React.JSX.Element => {
-  const faceLabel = faceMatch.faceCount === 1 ? 'face' : 'faces';
-  const identityChangeReasonId = 'guided-identity-change-reason';
-  const confirmDisabled = hasUnsavedEdit || identity.status === 'confirmed';
-  const leaveUnnamedDisabled = hasUnsavedEdit || identity.status === 'unidentified';
+  const faceTitleId = `guided-face-${face.id}-title`;
 
   return (
-    <div id="guided-section-face" tabIndex={-1} aria-labelledby="guided-face-match-title" className="acx-guided-face">
+    <article aria-labelledby={faceTitleId} className="acx-guided-face__card">
       <div className="acx-guided-face__crop">
         <FaceThumbnail
           mediaUrl={mediaUrl}
-          bbox={faceMatch.box}
+          bbox={{
+            x: face.box.x,
+            y: face.box.y,
+            width: face.box.width,
+            height: face.box.height,
+          }}
           size="lg"
           shape="square"
-          alt="Face found in the photo"
+          alt={`Face on the ${face.position}`}
         />
       </div>
       <div className="acx-guided-face__content">
-        <h3 id="guided-face-match-title">Face found in the photo</h3>
-        <p>AltContext found {faceMatch.faceCount} {faceLabel}.</p>
+        <h4 id={faceTitleId}>Face on the {face.position}</h4>
         <p>
-          It matches a person you named before: <strong>{faceMatch.matchedPersonName}</strong>.
+          It matches a person you named before: <strong>{person.name}</strong>.
         </p>
         <p className="acx-guided-face__strength">
           <span className="acx-guided-face__strength-icon" aria-hidden="true">
             ✓
           </span>{' '}
-          Match strength: {faceMatch.strength}. This face is close to {faceMatch.similarPhotoCount} saved photos of{' '}
-          {faceMatch.matchedPersonName}.
+          Match strength: {face.strength}. This face is close to the {person.savedPhotoCount} saved photos of{' '}
+          {person.name}.
         </p>
+
+        {face.note ? <p className="acx-guided-face__note">{face.note}</p> : null}
+
         <div>
-          <p>How this works</p>
-          <ol aria-label="How this works">
-            <li>AltContext finds faces in the photo.</li>
-            <li>It compares each face to people you already named.</li>
-            <li>It asks you to confirm. Nothing is named without your OK.</li>
-          </ol>
+          <ul className="acx-guided-face__gallery" aria-label={`Saved photos of ${person.name}`}>
+            {person.galleryPhotos.map((photo) => (
+              <li key={photo.src}>
+                <img src={photo.src} alt={photo.altText} loading="lazy" />
+                <span className="screen-reader-text">{photo.credit}</span>
+              </li>
+            ))}
+          </ul>
+          <p className="acx-guided-face__gallery-caption">
+            Saved photos of {person.name}: {person.galleryPhotos.length} of {person.savedPhotoCount} shown.
+          </p>
         </div>
-        <p className="acx-guided-face__disclosure">
-          This match was saved from an earlier run. The demo does not run recognition live.
-        </p>
-        <p className="acx-guided-face__decision">{decisionStatusLabel(identity, faceMatch.matchedPersonName)}</p>
-        <p id={identityChangeReasonId} className="acx-guided-face__change-note">
-          Changing your answer swaps in a different saved draft. Save or discard your edit first.
-        </p>
-        <div
-          id="guided-section-identity"
-          tabIndex={-1}
-          aria-label="Confirm the match"
-          className="acx-guided-face__actions"
-        >
-          <button
-            type="button"
-            className="acx-button acx-button--secondary"
-            onClick={onConfirm}
-            disabled={confirmDisabled}
-            aria-describedby={confirmDisabled ? identityChangeReasonId : undefined}
-          >
-            Yes, this is {faceMatch.matchedPersonName}
-          </button>
-          <button
-            type="button"
-            className="acx-button acx-button--tertiary"
-            onClick={onLeaveUnnamed}
-            disabled={leaveUnnamedDisabled}
-            aria-describedby={leaveUnnamedDisabled ? identityChangeReasonId : undefined}
-          >
-            Keep the person unnamed
-          </button>
-        </div>
+
+        <p className="acx-guided-face__decision">{decisionStatusLabel(identity, person.name)}</p>
       </div>
-    </div>
+    </article>
   );
 };
 

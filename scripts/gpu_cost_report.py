@@ -19,11 +19,17 @@ smoke, then export it with the OCI CLI::
       --request-summarized-usages-details file://usage-request.json \
       --output json > usage.json
 
-Then run ``python3 scripts/gpu_cost_report.py usage.json --smoke-report
-GPUSMOKE-1-evidence.json``.  One or more usage exports may be supplied with
-repeated ``--usage-json`` options or as positional paths.  Exit status 2
-means the Usage API amount differs from the smoke estimate by more than the
-configured tolerance.
+Then select the timestamped evidence artifact and run ``python3
+scripts/gpu_cost_report.py usage.json --smoke-report "$SMOKE_REPORT"``::
+
+    SMOKE_REPORT="$(find .workbay/tmp/gpu-burst-smoke -maxdepth 1 -type f \
+      -name 'GPUSMOKE-1-evidence-*.json' -print -quit)"
+    test -n "$SMOKE_REPORT"
+    python3 scripts/gpu_cost_report.py usage.json --smoke-report "$SMOKE_REPORT"
+
+One or more usage exports may be supplied with repeated ``--usage-json`` options
+or as positional paths.  Exit status 2 means the Usage API amount differs from
+the smoke estimate by more than the configured tolerance.
 """
 
 from __future__ import annotations
@@ -39,6 +45,19 @@ from typing import Any
 
 DEFAULT_HOURLY_RATE = 2.0
 DEFAULT_TOLERANCE_PCT = 25.0
+REQUIRED_SAFETY_CHECKS = frozenset(
+    {
+        "run_terminal_success",
+        "load_snapshot_observed_after_trigger",
+        "exactly_one_start_action",
+        "second_burst_no_enqueue",
+        "no_orphan_running",
+        "instance_stopped_finally",
+        "stop_event_observed",
+        "stop_principal_allowed",
+        "stop_attribution",
+    }
+)
 
 
 class CostReportError(ValueError):
@@ -137,24 +156,39 @@ def _smoke_bursts(payload: Any) -> list[dict[str, Any]]:
         if not isinstance(checks, list) or not checks:
             raise CostReportError(f"smoke report burst {index} has no smoke checks/verdict")
         failed_checks: list[str] = []
+        check_names: set[str] = set()
         for check_index, check in enumerate(checks, start=1):
             if not isinstance(check, dict):
                 failed_checks.append(f"check-{check_index}")
-            elif check.get("passed") is not True:
-                failed_checks.append(str(check.get("name") or f"check-{check_index}"))
+                continue
+            name = check.get("name")
+            if isinstance(name, str) and name.strip():
+                check_names.add(name)
+            if check.get("passed") is not True:
+                failed_checks.append(str(name or f"check-{check_index}"))
         if failed_checks:
             raise CostReportError(
                 f"smoke report burst {index} has failed check(s): {', '.join(failed_checks)}"
             )
+        missing_checks = sorted(REQUIRED_SAFETY_CHECKS - check_names)
+        if missing_checks:
+            raise CostReportError(
+                f"smoke report burst {index} is missing required safety check(s): "
+                + ", ".join(missing_checks)
+            )
         run_status = burst.get("run_status")
-        if run_status is not None and run_status != "completed":
+        if run_status != "completed":
             raise CostReportError(f"smoke report burst {index} is not completed: run_status={run_status!r}")
         if burst.get("running_seconds_ongoing") is not False:
             raise CostReportError(f"smoke report burst {index} is still running or has no closed duration")
         measurements = burst.get("measurements")
-        if isinstance(measurements, dict) and measurements.get("running_seconds_ongoing") is not False:
+        if not isinstance(measurements, dict) or "running_seconds" not in measurements:
+            raise CostReportError(f"smoke report burst {index} has no closed running_seconds measurements")
+        if measurements.get("running_seconds_ongoing") is not False:
             raise CostReportError(f"smoke report burst {index} is still running according to measurements")
-        if burst.get("cost_estimate_ongoing") is True:
+        if measurements.get("cost_estimate_ongoing") is not False:
+            raise CostReportError(f"smoke report burst {index} has an ongoing measurement cost estimate")
+        if burst.get("cost_estimate_ongoing") is not False:
             raise CostReportError(f"smoke report burst {index} has an ongoing cost estimate")
     return bursts
 
@@ -163,13 +197,20 @@ def _running_seconds_from_transitions(burst: dict[str, Any]) -> float:
     transitions = burst.get("transitions")
     if not isinstance(transitions, list):
         raise CostReportError("smoke report has no transitions list")
+    if not transitions:
+        raise CostReportError("smoke report has no transitions")
     total = 0.0
+    previous_elapsed = -math.inf
     for index, transition in enumerate(transitions):
         if not isinstance(transition, dict):
             raise CostReportError("smoke transitions must be objects")
-        if str(transition.get("state") or "").upper() != "RUNNING":
-            continue
         current_elapsed = _number(transition.get("elapsed_seconds"), field="transition elapsed_seconds")
+        if current_elapsed < previous_elapsed:
+            raise CostReportError("smoke transition elapsed_seconds must be monotonic")
+        previous_elapsed = current_elapsed
+        state = str(transition.get("state") or "").upper()
+        if state != "RUNNING":
+            continue
         if index + 1 < len(transitions):
             following = transitions[index + 1]
             if not isinstance(following, dict):
@@ -181,21 +222,37 @@ def _running_seconds_from_transitions(burst: dict[str, Any]) -> float:
         else:
             measurements = burst.get("measurements")
             measurement = measurements if isinstance(measurements, dict) else burst
-            following_elapsed = _number(
-                measurement.get("final_elapsed_seconds", current_elapsed),
-                field="final_elapsed_seconds",
-            )
-        total += max(0.0, following_elapsed - current_elapsed)
+            if "final_elapsed_seconds" not in measurement:
+                raise CostReportError("RUNNING transition has no closing STOPPED transition")
+            following_elapsed = _number(measurement["final_elapsed_seconds"], field="final_elapsed_seconds")
+        if following_elapsed < current_elapsed:
+            raise CostReportError("running_seconds evidence is not monotonic")
+        total += following_elapsed - current_elapsed
+    if str(transitions[-1].get("state") or "").upper() != "STOPPED":
+        raise CostReportError("smoke transition evidence must end in STOPPED")
     return round(total, 3)
 
 
 def _burst_running_seconds(burst: dict[str, Any]) -> float:
+    transition_seconds = _running_seconds_from_transitions(burst)
     measurements = burst.get("measurements")
     if isinstance(measurements, dict) and measurements.get("running_seconds") is not None:
-        return round(_number(measurements["running_seconds"], field="measurements.running_seconds"), 3)
+        measured_seconds = round(_number(measurements["running_seconds"], field="measurements.running_seconds"), 3)
+        if not math.isclose(measured_seconds, transition_seconds, abs_tol=0.001):
+            raise CostReportError(
+                "measurements.running_seconds disagrees with transition running_seconds "
+                f"({measured_seconds} != {transition_seconds})"
+            )
+        return measured_seconds
     if burst.get("running_seconds") is not None:
-        return round(_number(burst["running_seconds"], field="running_seconds"), 3)
-    return _running_seconds_from_transitions(burst)
+        reported_seconds = round(_number(burst["running_seconds"], field="running_seconds"), 3)
+        if not math.isclose(reported_seconds, transition_seconds, abs_tol=0.001):
+            raise CostReportError(
+                "running_seconds disagrees with transition running_seconds "
+                f"({reported_seconds} != {transition_seconds})"
+            )
+        return reported_seconds
+    return transition_seconds
 
 
 def _burst_window(burst: dict[str, Any]) -> tuple[datetime | None, datetime | None]:

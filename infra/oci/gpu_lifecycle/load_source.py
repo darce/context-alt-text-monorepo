@@ -136,9 +136,7 @@ class AggregateJobLoadSource:
 
     def snapshot(self) -> AggregateJobLoadSnapshot:
         now = time.time()
-        observations = [
-            self._observe_environment(environment, now=now) for environment in self._declared_environments
-        ]
+        observations = [self._observe_environment(environment, now=now) for environment in self._declared_environments]
 
         for observation in observations:
             self._log_transition(observation)

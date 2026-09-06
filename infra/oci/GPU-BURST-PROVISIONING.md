@@ -190,9 +190,12 @@ The smoke records four independent checks:
    Override or add an accepted name/OCID with repeatable
    `--expected-stop-principal PRINCIPAL` options.
 2. **Second-burst idempotence.** Once the first run and reaper have completed, the
-   smoke polls the same `/items` endpoint once more. It compares persisted item IDs
-   (falling back to `created_at`) and checks the transport evidence for zero new POSTs
-   to the enqueue route. The report check is named `second_burst_no_enqueue`.
+   smoke submits the same fixture sample a second time, requires the same run/tenant
+   envelope in the response, then polls the same `/items` endpoint once more. It
+   compares persisted item IDs (falling back to `created_at`) and records the replay
+   POST and follow-up poll transport counters. Missing counter telemetry is
+   inconclusive and fails the gate. The report check is named
+   `second_burst_no_enqueue`.
 3. **Shared GPU-state timeline.** Dry mode feeds the same state snapshot vocabulary
    used by `gpu_lifecycle` through the live transition recorder. Its report therefore
    has the same transition shape,
@@ -220,16 +223,21 @@ JSON
 oci usage-api usage-summary request-summarized-usages \
   --request-summarized-usages-details file://usage-request.json \
   --output json > usage.json
-python3 scripts/gpu_cost_report.py usage.json \
-  --smoke-report .workbay/tmp/gpu-burst-smoke/GPUSMOKE-1-evidence.json
+SMOKE_EVIDENCE="$(find .workbay/tmp/gpu-burst-smoke -maxdepth 1 -type f \
+  -name 'GPUSMOKE-1-evidence-*.json' -print -quit)"
+test -n "$SMOKE_EVIDENCE"
+python3 scripts/gpu_cost_report.py usage.json --smoke-report "$SMOKE_EVIDENCE"
 ```
 
 Multiple exports may be supplied by repeating `--usage-json` (or by passing
 multiple positional paths). The equivalent Make target is:
 
 ```bash
+SMOKE_EVIDENCE="$(find .workbay/tmp/gpu-burst-smoke -maxdepth 1 -type f \
+  -name 'GPUSMOKE-1-evidence-*.json' -print -quit)"
+test -n "$SMOKE_EVIDENCE"
 make gpu-cost-report GPU_COST_USAGE_JSON="usage.json" \
-  GPU_COST_SMOKE_REPORT=.workbay/tmp/gpu-burst-smoke/GPUSMOKE-1-evidence.json
+  GPU_COST_SMOKE_REPORT="$SMOKE_EVIDENCE"
 ```
 
 ## Sources

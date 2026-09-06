@@ -852,7 +852,7 @@ gpu-burst-smoke:
 
 # Reconcile one or more OCI Usage API exports with a smoke evidence report.
 # Usage: make gpu-cost-report GPU_COST_USAGE_JSON="usage-a.json usage-b.json" \
-#          GPU_COST_SMOKE_REPORT=.workbay/tmp/gpu-burst-smoke/GPUSMOKE-1-evidence.json
+#          GPU_COST_SMOKE_REPORT=.workbay/tmp/gpu-burst-smoke/GPUSMOKE-1-evidence-<timestamp>.json
 GPU_COST_USAGE_JSON ?=
 GPU_COST_SMOKE_REPORT ?=
 GPU_COST_REPORT_ARGS ?=

@@ -14,8 +14,27 @@ def _smoke_report() -> dict[str, object]:
     return {
         "instance_id": "ocid1.instance.oc1.iad.gpu",
         "run_status": "completed",
-        "checks": [{"name": "smoke_verdict", "passed": True}],
+        "checks": [
+            {"name": name, "passed": True}
+            for name in (
+                "run_terminal_success",
+                "load_snapshot_observed_after_trigger",
+                "exactly_one_start_action",
+                "second_burst_no_enqueue",
+                "no_orphan_running",
+                "instance_stopped_finally",
+                "stop_event_observed",
+                "stop_principal_allowed",
+                "stop_attribution",
+            )
+        ],
         "running_seconds_ongoing": False,
+        "cost_estimate_ongoing": False,
+        "measurements": {
+            "running_seconds": 360.0,
+            "running_seconds_ongoing": False,
+            "cost_estimate_ongoing": False,
+        },
         "transitions": [
             {"state": "STOPPED", "timestamp": "2026-01-01T00:00:00Z", "elapsed_seconds": 0.0},
             {"state": "RUNNING", "timestamp": "2026-01-01T00:00:10Z", "elapsed_seconds": 10.0},
@@ -274,6 +293,7 @@ def test_cost_report_rejects_running_seconds_that_disagree_with_transitions(tmp_
     report_payload["measurements"] = {
         "running_seconds": 999.0,
         "running_seconds_ongoing": False,
+        "cost_estimate_ongoing": False,
     }
     _write_json(smoke, report_payload)
 

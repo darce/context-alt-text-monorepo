@@ -706,7 +706,9 @@ def test_service_health_preflight_sends_bearer_auth(tmp_path: Path) -> None:
 
     fake_oci = smoke.FakeOci()
     clock = smoke.FastClock()
-    with httpx.Client(transport=httpx.MockTransport(require_service_auth)) as client:
+    transport = httpx.MockTransport(require_service_auth)
+    transport.counts = scenario.transport_counts  # type: ignore[attr-defined]
+    with httpx.Client(transport=transport) as client:
         result = smoke.run_smoke(
             _args(tmp_path),
             client=client,
@@ -1739,7 +1741,9 @@ def test_second_burst_poll_does_not_enqueue_or_create_a_new_item(tmp_path: Path)
     assert _check(result, "second_burst_no_enqueue")
     assert result.evidence["second_burst"]["new_items"] == []
     assert result.evidence["second_burst"]["enqueue_posts_during_poll"] == 0
-    assert scenario.transport_counts["enqueue_posts"] == 1
+    assert result.evidence["second_burst"]["enqueue_posts_during_replay"] == 1
+    assert result.evidence["second_burst"]["idempotent_response"] is True
+    assert scenario.transport_counts["enqueue_posts"] == 2
 
 
 def test_second_burst_duplicate_enqueue_fixture_fails(tmp_path: Path) -> None:

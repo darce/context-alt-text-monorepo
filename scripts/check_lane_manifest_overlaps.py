@@ -10,10 +10,12 @@ explicit for both humans and automation.
 from __future__ import annotations
 
 import argparse
-from dataclasses import dataclass
 import json
-from pathlib import Path
+import posixpath
+import re
 import sys
+from dataclasses import dataclass
+from pathlib import Path, PureWindowsPath
 from typing import Any, Iterable
 
 
@@ -42,7 +44,7 @@ class ManifestError(ValueError):
 
 
 def _normalise_slashes(value: str) -> str:
-    """Return a repository-relative, slash-separated path spelling."""
+    """Return a slash-separated path spelling for POSIX normalization."""
 
     value = value.strip().replace("\\", "/")
     while value.startswith("./"):
@@ -65,21 +67,34 @@ def normalize_owned_path(path: str) -> str:
         raise TypeError("owned paths must be strings")
 
     value = _normalise_slashes(path)
-    while value.endswith("/"):
-        value = value[:-1]
+    if posixpath.isabs(value) or PureWindowsPath(value).is_absolute() or re.match(
+        r"^[A-Za-z]:", value
+    ):
+        raise ManifestError(
+            f"owned path {path!r} is absolute; paths must be repository-relative"
+        )
+
+    value = posixpath.normpath(value or ".")
 
     # Repeated suffixes occur in patterns such as ``src/**/*``.  They all
     # denote a directory prefix for this checker.
     while value.endswith("/**") or value.endswith("/*"):
-        value = value[:-3]
-        while value.endswith("/"):
-            value = value[:-1]
+        if value.endswith("/**"):
+            value = value[:-3]
+        else:
+            value = value[:-2]
+        value = posixpath.normpath(value or ".")
+
+    if value == ".." or value.startswith("../"):
+        raise ManifestError(
+            f"owned path {path!r} escapes the repository root after normalization"
+        )
 
     # A root glob (or an explicit current-directory path) owns the whole
     # repository.  The empty spelling is convenient for prefix checks.
     if value in {"", ".", "*", "**"}:
         return ""
-    return value.strip("/")
+    return value
 
 
 # British spelling is used in a few existing orchestration documents; retain
@@ -213,8 +228,9 @@ def _add_status(
     key_text = str(key).strip()
     if "/" not in key_text and task_ref:
         key_text = f"{task_ref}/{key_text}"
-    if key_text and "/" in key_text:
-        statuses[key_text] = value.strip().lower()
+    status_text = value.strip().lower()
+    if key_text and "/" in key_text and status_text:
+        statuses[key_text] = status_text
 
 
 def _collect_statuses(
@@ -250,6 +266,9 @@ def _collect_statuses(
             continue
         if isinstance(child, str):
             _add_status(statuses, key, child, task_ref=task_ref)
+        elif isinstance(child, dict) and isinstance(child.get("status"), str):
+            _add_status(statuses, key, child["status"], task_ref=task_ref)
+            _collect_statuses(child, statuses, task_ref=task_ref)
         elif isinstance(child, (dict, list)):
             child_task = task_ref
             if "/" not in str(key):
@@ -283,13 +302,26 @@ def _parse_status_filters(values: Iterable[str]) -> set[str]:
 
 
 def _lane_is_included(
-    lane: Lane, status_override: dict[str, str], include_statuses: set[str]
+    lane: Lane,
+    status_override: dict[str, str],
+    include_statuses: set[str],
+    *,
+    has_status_export: bool = False,
 ) -> bool:
     effective_status = status_override.get(lane.key, lane.status)
+    if has_status_export and lane.key not in status_override:
+        return False
     if include_statuses:
         return "all" in include_statuses or "*" in include_statuses or (
             effective_status is not None and effective_status in include_statuses
         )
+    # A status export is authoritative: a lane absent from it is stale, even
+    # if its checked-in manifest entry still contains an old status.  Without
+    # an export, an entry must carry a lifecycle status to be considered live;
+    # callers can use ``--include-status all`` when intentionally inspecting
+    # status-less configuration rows.
+    if effective_status is None:
+        return False
     return effective_status not in TERMINAL_STATUSES
 
 
@@ -416,14 +448,20 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--lane-status-json",
         type=Path,
-        help="optional task/lane status export used to filter live lanes",
+        help=(
+            "task/lane status export used as the authoritative live-lane set; "
+            "manifest lanes absent from it are stale"
+        ),
     )
     parser.add_argument(
         "--include-status",
         action="append",
         default=[],
         metavar="STATUS",
-        help="only inspect lanes with this status (repeat or use comma-separated values; all includes every status)",
+        help=(
+            "only inspect lanes with this status (repeat or use comma-separated "
+            "values; all includes every exported status)"
+        ),
     )
     parser.add_argument(
         "--allow",
@@ -474,7 +512,12 @@ def main(argv: list[str] | None = None) -> int:
     lanes = [
         lane
         for lane in all_lanes
-        if _lane_is_included(lane, status_override, include_statuses)
+        if _lane_is_included(
+            lane,
+            status_override,
+            include_statuses,
+            has_status_export=args.lane_status_json is not None,
+        )
     ]
     overlaps = find_overlaps(lanes, allowlist)
     payload = _result_payload(manifest_dir, manifest_paths, lanes, overlaps)
